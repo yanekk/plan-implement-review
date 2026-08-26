@@ -1,13 +1,13 @@
 ---
-name: plan
-description: Turn an idea into a buildable plan — brainstorm the requirements, probe the tech, settle the architecture, split the work into tasks a session can each implement and a later session can review, and write it all to plans/{slug}/. Use when the user says "plan", describes something new to build, or asks to plan a feature. Produces DESIGN.md, PLAN.md, PROGRESS.md, FINDINGS.md and one file per task — and writes no product code.
+name: pir-plan
+description: Turn an idea into a buildable plan — brainstorm the requirements, probe the tech, settle the architecture, split the work into tasks a session can each implement and a later session can review, and write it all to plans/{slug}/. Use when the user says "pir-plan" or "plan", describes something new to build, or asks to plan a feature. Produces DESIGN.md, PLAN.md, PROGRESS.md, FINDINGS.md and one file per task — and writes no product code.
 ---
 
 # plan
 
 **This session writes documents, not code.** The one exception is a throwaway spike, and
 only to settle a question the plan would otherwise have to guess at — see *Stage 3*. When
-the plan is written, you stop. `/work {slug}` builds it, one task at a time, starting with
+the plan is written, you stop. `/pir-work {slug}` builds it, one task at a time, starting with
 the next session.
 
 The output is a folder:
@@ -217,7 +217,7 @@ Commit it — `plan({slug}): <what it is>`.
 
 Report in plain English: what is going to be built, in what order, where the risk is, what
 is deliberately not being built, and anything still open. Then say the next command is
-`/work {slug}` and **stop**.
+`/pir-work {slug}` and **stop**.
 
 **Do not implement T00.** The next session does that, and it is the first of the alternating
 pairs the whole method rests on.

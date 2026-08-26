@@ -1,6 +1,6 @@
 # {Project} — Design
 
-> **Template.** Written by `/plan`, read by every session that touches the behaviour it
+> **Template.** Written by `/pir-plan`, read by every session that touches the behaviour it
 > governs. Delete a section that does not apply rather than writing "n/a" into it.
 >
 > **Every rule here carries its reason.** A rule without one gets overturned by the first

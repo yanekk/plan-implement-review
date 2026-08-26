@@ -1,13 +1,13 @@
 ---
-name: implement
-description: Implement one task from a plan's tasks/ folder and hand it to the next session for review. Invoked by the `work` skill after it picks a ⬜ or 🟡 task from plans/{slug}/PROGRESS.md — do not invoke it directly; run `work` instead, so the queue chooses the task.
+name: pir-implement
+description: Implement one task from a plan's tasks/ folder and hand it to the next session for review. Invoked by the `pir-work` skill after it picks a ⬜ or 🟡 task from plans/{slug}/PROGRESS.md — do not invoke it directly; run `pir-work` instead, so the queue chooses the task.
 ---
 
 # implement
 
-**Invoked by the `work` skill, which has already chosen the task.** If you reached this
-without a task chosen by `work`, stop and run `work` — the queue decides what gets built,
-and picking out of order is how a task gets built ahead of its dependencies.
+**Invoked by the `pir-work` skill, which has already chosen the task.** If you reached this
+without a task chosen by `pir-work`, stop and run `pir-work` — the queue decides what
+gets built, and picking out of order is how a task gets built ahead of its dependencies.
 
 The shared rules in `CLAUDE.md` apply in full and are not repeated here — scope, commit
 messages, where sessions run, and above all **anything the tests cannot establish is

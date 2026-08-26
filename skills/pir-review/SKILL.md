@@ -1,12 +1,12 @@
 ---
-name: review
-description: Review one implemented (🔍) task with fresh eyes, fix what it finds, and mark it ✅. Invoked by the `work` skill after it picks the lowest-numbered 🔍 task from plans/{slug}/PROGRESS.md — do not invoke it directly; run `work` instead.
+name: pir-review
+description: Review one implemented (🔍) task with fresh eyes, fix what it finds, and mark it ✅. Invoked by the `pir-work` skill after it picks the lowest-numbered 🔍 task from plans/{slug}/PROGRESS.md — do not invoke it directly; run `pir-work` instead.
 ---
 
 # review
 
-**Invoked by the `work` skill, which has already chosen the task.** If you reached this
-without a task chosen by `work`, stop and run `work`.
+**Invoked by the `pir-work` skill, which has already chosen the task.** If you reached this
+without a task chosen by `pir-work`, stop and run `pir-work`.
 
 **You must not have written the code you are reviewing.** If this session implemented it,
 stop — a reviewer holding the implementation in context is not a reviewer. That the task is

@@ -13,10 +13,10 @@ You act as product manager: you own *what* gets built and why. The sessions own 
 
 | Command | What it does |
 |---|---|
-| `/plan` | Brainstorm the requirements, probe the tech on the actual machine, settle the architecture, split the work into session-sized tasks, write it all to `plans/{slug}/`. Writes no product code. |
-| `/work {slug}` | Do exactly one unit of work — implement the next task, or review the last one — then stop. |
+| `/pir-plan` | Brainstorm the requirements, probe the tech on the actual machine, settle the architecture, split the work into session-sized tasks, write it all to `plans/{slug}/`. Writes no product code. |
+| `/pir-work {slug}` | Do exactly one unit of work — implement the next task, or review the last one — then stop. |
 
-`/work` dispatches on the state table in `plans/{slug}/PROGRESS.md`:
+`/pir-work` dispatches on the state table in `plans/{slug}/PROGRESS.md`:
 
 ```
 any task 🔍 ?  → REVIEW the lowest-numbered one
@@ -27,8 +27,8 @@ else           → IMPLEMENT the next ⬜ whose dependencies are ✅
 Task states: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review ·
 ✅ reviewed and done · ⛔ blocked, needs a human.
 
-`implement` and `review` are never invoked directly — `work` chooses the task, and that
-choice is what guarantees the alternation.
+`pir-implement` and `pir-review` are never invoked directly — `pir-work` chooses the
+task, and that choice is what guarantees the alternation.
 
 ## Install
 
@@ -54,7 +54,7 @@ cat /path/to/plan-implement-review/CLAUDE.md >> /path/to/project/CLAUDE.md
 Both forms are idempotent: re-running upgrades the skills in place and never appends
 `CLAUDE.md` twice. Skills are read at session start — install, then start a **new** session.
 
-## What `/plan` produces
+## What `/pir-plan` produces
 
 ```
 plans/{slug}/
@@ -76,7 +76,7 @@ finding. When a note wants a paragraph, the paragraph goes in the commit message
 ## What a run actually looks like
 
 ```
-/plan
+/pir-plan
     → conversation: what it is for, the unhappy paths, what is deliberately not built
     → probes the machine for versions and the test command
     → checkpoint: requirements played back in plain English, you say yes
@@ -84,19 +84,19 @@ finding. When a note wants a paragraph, the paragraph goes in the commit message
     → writes plans/screen-time/, commits, stops
                                              commit: plan(screen-time): …
 
-/work screen-time
+/pir-work screen-time
     → T00 is ⬜ and has no dependencies → implement
     → writes the spike, runs the test command, marks T00 🔍, stops
                                              commit: T00: prove the ground
 
-/work screen-time
+/pir-work screen-time
     → T00 is 🔍 → review (fresh session, did not write it)
     → walks the acceptance criteria, reads the tests for what they assert,
       probes past the doc for edge cases; finds nothing
     → marks T00 ✅, stops
                                              commit: T00 review: clean
 
-/work screen-time
+/pir-work screen-time
     → T01 next; its dependency T00 is ✅ → implement
     → …
 ```

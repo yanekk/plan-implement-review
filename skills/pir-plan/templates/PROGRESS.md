@@ -11,8 +11,8 @@ there**; when a note wants a paragraph, the paragraph belongs in the commit mess
 **Status:** *(two or three sentences: what is done, what is in flight, what is blocked.
 Rewritten each session, not appended to.)*
 **Last updated:** {date}
-**Next `work` will:** *(one line — which task, and why it and not another. The status table
-below is the authority; if the two disagree, trust the table.)*
+**Next `pir-work` will:** *(one line — which task, and why it and not another. The
+status table below is the authority; if the two disagree, trust the table.)*
 
 ## Tasks
 

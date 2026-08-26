@@ -10,8 +10,8 @@ alternate between building and reviewing. Two commands drive it:
 
 | Command | What it does |
 |---|---|
-| `/plan` | Brainstorm, settle the requirements, get the tech right, split the work into tasks, and write it all down under `plans/{slug}/` |
-| `/work {slug}` | Do exactly one unit of work on that plan — implement the next task, or review the last one — then stop |
+| `/pir-plan` | Brainstorm, settle the requirements, get the tech right, split the work into tasks, and write it all down under `plans/{slug}/` |
+| `/pir-work {slug}` | Do exactly one unit of work on that plan — implement the next task, or review the last one — then stop |
 
 **Read `plans/{slug}/DESIGN.md` before changing behaviour.** Every rule in it was decided
 deliberately and most carry a rationale. If you disagree with one, say so — do not quietly
@@ -91,10 +91,11 @@ you may need me to start it going again. That is cheaper than a task built on a 
 
 ---
 
-## The `work` command
+## The `pir-work` command
 
-**When I say `work`, invoke the `work` skill.** It reads `plans/{slug}/PROGRESS.md`, picks
-the one task the queue says is next, and dispatches to `implement` or `review`:
+**When I say `pir-work`, invoke the `pir-work` skill.** It reads
+`plans/{slug}/PROGRESS.md`, picks the one task the queue says is next, and dispatches to
+`pir-implement` or `pir-review`:
 
 ```
 read plans/{slug}/PROGRESS.md
@@ -103,20 +104,20 @@ read plans/{slug}/PROGRESS.md
   └─ else                  → IMPLEMENT the next ⬜ whose dependencies are ✅
 ```
 
-Then update `PROGRESS.md`, commit, report, **and stop.** One unit of work per `work`.
+Then update `PROGRESS.md`, commit, report, **and stop.** One unit of work per `pir-work`.
 
 That is the whole point: the session that reviews a task is never the session that wrote
 it. A reviewer holding the implementation in context is not a reviewer, and the alternation
 is what buys the fresh eyes.
 
 The skills live in `.claude/skills/` and hold the procedures — the dispatch and the
-blocked-task rule in `work`, the step-by-step in `implement` and `review`. **Do not invoke
-`implement` or `review` directly**: `work` chooses the task, and that choice is what
-guarantees the alternation. If you want a specific task built or reviewed out of order,
-say so to me first.
+blocked-task rule in `pir-work`, the step-by-step in `pir-implement` and `pir-review`.
+**Do not invoke `pir-implement` or `pir-review` directly**: `pir-work` chooses the task,
+and that choice is what guarantees the alternation. If you want a specific task built or
+reviewed out of order, say so to me first.
 
 The rest of this file holds the rules that bind **every** session — the ones that arrived
-through `work` and the ones that did not.
+through `pir-work` and the ones that did not.
 
 ### Scope is strict
 
@@ -179,7 +180,7 @@ T05 review: clean                      ← review found nothing; the PROGRESS up
 
 **Work in the main checkout, on the main branch. Always.** One checkout, one branch, commits
 straight onto it — no worktrees, no branch per task, and so nothing to merge, ever. The
-review boundary here is the *session*, not the branch: `work` already guarantees that
+review boundary here is the *session*, not the branch: `pir-work` already guarantees that
 whoever reviews a task did not write it, and a branch per task buys nothing on top of that
 while costing a merge every time.
 
