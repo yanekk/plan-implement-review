@@ -1,9 +1,9 @@
-# How we work together
-
 <!-- ─────────────────────────────────────────────────────────────────────────
      Appended by plan-implement-review. Everything above this line is the
      project's own CLAUDE.md; everything below is the shared working method.
      ───────────────────────────────────────────────────────────────────────── -->
+
+# How we work together
 
 Work on this project is planned once and then executed one task at a time, by sessions that
 alternate between building and reviewing. Two commands drive it:
