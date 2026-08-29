@@ -13,8 +13,9 @@ gets built, and picking out of order is how a task gets built ahead of its depen
 The shared rules in `CLAUDE.md` apply in full and are not repeated here — scope, commit
 messages, where sessions run, and above all **anything the tests cannot establish is
 verified with the user, not asserted.** The project's own rules and traps are in
-`plans/{slug}/DESIGN.md` and its *Things that will bite you* list; every entry on that list
-has already cost somebody a day.
+`plans/{slug}/DESIGN.md` and in whatever the project's `CLAUDE.md` calls its list of things
+that are true because somebody measured them. Find that list by what it holds, not by its
+title — projects name it differently. Every entry on it has already cost somebody a day.
 
 ## The procedure
 
@@ -39,11 +40,15 @@ has already cost somebody a day.
    deviation unrecorded is a defect the reviewer has to rediscover. Set the `Next work will:`
    line and the review queue.
 
-   **Sixty words in that cell, and a deviation gets one line each.** The cell is an index for
-   the next session, not the account of what you did — the account is the commit message you
-   are about to write, and writing it twice is what turns a tracker into a history nobody can
-   read. If a deviation genuinely needs a paragraph, it needs the commit message; name it in
-   the cell and point there.
+   **Sixty words in that cell, counted, and one line per deviation.** Flat prose: the cell is
+   an index for the next session, not the account of what you did. The account is the commit
+   message you are about to write, and writing it twice is what turns a tracker into a history
+   nobody reads. A deviation needing a paragraph needs the commit message; name it here and
+   point there.
+
+   **You are appending, so you compact** — `CLAUDE.md § Keeping them short is a duty`. Cut
+   the previous task's cell to one line if you have just reviewed past it, and fix any
+   over-budget row you read on the way in.
 7. **Commit**, message `T<NN>: <what it does>`.
 8. **Report and stop.** Do not review it. Marking 🔍 hands it to the next session.
 
@@ -60,10 +65,14 @@ deliberately and most carry a rationale.
 ## Scope is strict
 
 `CLAUDE.md § Scope is strict` binds this session: touch only the task you picked up, and put
-everything else you notice in the findings log, `plans/{slug}/FINDINGS.md` — **about forty
-words, newest first.** The pull is strongest here, in an implementing session, because the
+everything else you notice in the findings log, `plans/{slug}/FINDINGS.md` — **forty words,
+counted, newest first.** The pull is strongest here, in an implementing session, because the
 neighbouring code is open in front of you and the fix looks like it costs nothing. Log it and
 leave it.
+
+The one thing you may fix outside the task is an over-budget row in `PROGRESS.md` or
+`FINDINGS.md` that you read on the way in. That is not scope creep and it needs no finding
+logged; it is the maintenance those two files get instead of a session of their own.
 
 ## What you may not claim
 

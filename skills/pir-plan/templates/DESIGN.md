@@ -1,11 +1,17 @@
 # {Project} — Design
 
 > **Template.** Written by `/pir-plan`, read by every session that touches the behaviour it
-> governs. Delete a section that does not apply rather than writing "n/a" into it.
+> governs. **It is a maximum, not a form.** Delete a section that does not apply rather than
+> writing "n/a" into it, and never pad one to look complete.
 >
-> **Every rule here carries its reason.** A rule without one gets overturned by the first
-> session that finds it inconvenient, and this file's whole value is that it carries the
-> reasoning across sessions. Dense where something is surprising, absent where it is not.
+> **Every rule here carries its reason — in a sentence.** A rule without one gets overturned
+> by the first session that finds it inconvenient. A rule with three paragraphs under it does
+> not get read at all, which costs the same. Dense where something is surprising, silent
+> where it is not.
+>
+> **Flat prose.** No bold-per-clause, no em-dash asides, no sentence that is there to sound
+> right. This file is read in full by every session that touches the behaviour, so every
+> ornamental line is paid for again on every run.
 
 ## 1. Purpose
 
@@ -98,6 +104,12 @@ What the layers are, what each proves, and what none of them can prove.
 
 **It is the only evidence a session may produce on its own.** If the obvious command does not
 work here, say which one does and why — the next session will otherwise rediscover it.
+
+**It must be quiet when it passes.** One summary line per suite (`agenda-test: 637 ok`), and
+the full detail on every failure, unchanged. The dominant caller is a session that reads all
+of its output, and a passing run that prints a line per assertion is thousands of lines of
+the word `ok` re-read on every review. Say here how verbose output is turned back on for a
+person debugging, and make quiet the default — a flag that has to be remembered saves nothing.
 
 **Dependencies.** What may be added and what may not, decided once rather than one library at
 a time under pressure.

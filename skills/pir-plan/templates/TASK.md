@@ -6,10 +6,16 @@
 > date, rather than editing the body silently — the implementing session needs to see both
 > what was planned and what changed.)*
 
+> **Flat prose throughout, and only the sections this task needs.** This doc is read in full
+> by the session that builds it and again by the session that reviews it. Delete a heading
+> that does not apply rather than padding it.
+
 ## Goal
 
 One paragraph: what this is for and why it exists. Enough that somebody who has not read the
-whole design knows what they are building and what it is in service of.
+whole design knows what they are building and what it is in service of. One paragraph means
+one — the reasoning behind the task belongs in `DESIGN.md`, and a task doc that argues for
+its own existence is one nobody finishes reading.
 
 ## Design sections this implements
 

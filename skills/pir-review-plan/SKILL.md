@@ -103,6 +103,12 @@ The whole of `plans/{slug}/` has to describe one buildable thing. Check:
   is deliberately not being built.
 - **`FINDINGS.md` does not contradict the plan.** The planning session's own probes are in
   there.
+- **The plan is within its budgets, and reads flat.** `DESIGN.md` carries each rule's reason
+  in a sentence rather than an essay; no section is padded to look complete; `PROGRESS.md` and
+  `FINDINGS.md` are inside the ceilings in `CLAUDE.md § Keeping them short is a duty`. This is
+  the only session that reads the whole plan before anything is built on it, so it is the last
+  cheap moment to size the corpus. Every page here is re-read by every session afterwards, and
+  the register set now is the register every later session will append in.
 
 ### Pass 2 — Are the requirements complete
 
@@ -200,7 +206,8 @@ A second implementation of something the repo already has is the most expensive 
 > a dependency pointing at a task that does not exist or comes later · a task numbered twice
 > · a task file with no row, or a row with no file · the same file or interface named two
 > ways · a missing test list, a missing dependency line · a broken cross-reference · a
-> version number the machine has just contradicted
+> version number the machine has just contradicted · a row or cell over its word budget · a
+> section padded with "n/a" instead of deleted · a rule stated twice in two files
 
 **Fix these yourself.** Do not ask. List them afterwards, one line each.
 

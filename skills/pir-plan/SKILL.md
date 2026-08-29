@@ -110,7 +110,12 @@ Establish and write down:
 - **The test command.** One command that produces this project's automated evidence. Name
   it in DESIGN.md and mean it: from here on it is the *only* evidence a session may produce
   on its own. If the obvious command does not work here, find the one that does and record
-  why — the next session will otherwise rediscover it.
+  why — the next session will otherwise rediscover it. **Require it to be quiet when it
+  passes** — one summary line per suite, full detail on every failure — and say so in
+  DESIGN.md now, while it is one line in a document rather than a change to every test
+  harness later. Its dominant caller is a session that reads all of its output, and a
+  passing run that prints a line per assertion is thousands of lines of the word `ok`
+  re-read by every review for the life of the project.
 - **The dependency policy.** What may be added, and what may not. Decide it now, with the
   user, rather than one library at a time under pressure.
 - **What the test command cannot reach.** The verification table: each row is a thing only a
@@ -266,10 +271,21 @@ English, and get an explicit yes. This is the last cheap moment to move somethin
 
 From `templates/`, into `plans/{slug}/`:
 
+**The templates are maximums, not forms.** Delete a section that does not apply rather than
+writing "n/a" into it, and never pad one to look complete. Everything written here is re-read
+by every session for the life of the plan, so this is the moment the corpus is sized: a
+paragraph written now is paid for on every run afterwards.
+
+**Flat prose, and every rule's reason in a sentence.** No bold-per-clause, no em-dash asides,
+no aphorisms. This matters more than it sounds: the register you write these files in is the
+register every later session appends to them in, and a plan that starts out written in
+epigrams gets epigrams back for ever. See `CLAUDE.md § How to write in these files`.
+
 - **DESIGN.md** — purpose, success criteria, the behaviour specification with its reasons,
   the architecture and the boundary, the environment, the verification table and seatbelts,
   the decisions-and-rationale section, and what is explicitly out of scope. **Every rule
-  carries its reason**; that is the whole point of the file.
+  carries its reason, in a sentence**; that is the whole point of the file. A rule with three
+  paragraphs under it does not get read, which costs exactly what a rule with no reason costs.
 - **PLAN.md** — phases, task table with dependencies, critical path, sizing, and any
   decision still open.
 - **PROGRESS.md** — every task ⬜, an empty review queue, the `Next work will:` line

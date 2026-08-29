@@ -28,8 +28,11 @@ summary), then check all four:
    the test will defend — when a change makes something take longer or cost more, check that
    the assertion moved with it in both directions.
 3. **The traps** — the testability boundary held, no reaching for a clock or the network
-   from the pure side, whatever else `DESIGN.md` and `CLAUDE.md § Things that will bite you`
-   name. Every entry on that list has already cost somebody a day.
+   from the pure side, whatever else `DESIGN.md` names, and whatever the project's `CLAUDE.md`
+   lists as true because somebody measured it. Find that list by what it holds, not by its
+   title — projects name it differently, and a check skipped because a heading did not match
+   is a check that silently never ran. Every entry on it has already cost somebody a day.
+   Read the rows the diff actually touches, not the whole list.
 4. **Correctness generally** — read the diff adversarially for what the task doc did not
    anticipate: edge cases, concurrency, error paths, what happens at a boundary, what happens
    when the file is corrupt, what happens when the clock goes backwards or the network
@@ -51,8 +54,12 @@ T05 review: clean                      ← review found nothing; the PROGRESS up
 ```
 
 If a finding is out of this task's scope, it goes in the findings log,
-`plans/{slug}/FINDINGS.md` — about forty words — and is left alone. The scope rule binds a
-review session exactly as it binds an implementing one.
+`plans/{slug}/FINDINGS.md` — **forty words, counted** — and is left alone. The scope rule
+binds a review session exactly as it binds an implementing one.
+
+A row there states what was found and what happened about it. It does not argue the case: a
+finding that reads like it is making an argument is one somebody will skim, and it is being
+re-read by every session from here on.
 
 ## Close it out
 
@@ -61,9 +68,15 @@ Mark the task ✅ in `PROGRESS.md` and **note in its cell what the review found*
 That note is what tells the next session whether a green tick means anything. Update the
 `Next work will:` line and the review queue. Commit, report, stop.
 
-**Sixty words in that cell.** The verdict, the defects by name, and one clause for what you
-probed — enough that the next session knows what the ✅ is worth. The reasoning goes in the
-review commit message, which is written for exactly this and is already in `git log`.
+**Sixty words in that cell, counted.** The verdict, the defects by name, and one clause for
+what you probed — enough that the next session knows what the ✅ is worth. Flat prose, no
+bold-per-clause: the reasoning goes in the review commit message, which is written for exactly
+this and is already in `git log`.
+
+**You are appending, so you compact** — `CLAUDE.md § Keeping them short is a duty`. The task
+before this one is now two reviews back, so cut its cell to one line, and fix any over-budget
+row you read on the way in. A review session is the right place for this: you have just read
+both files with fresh eyes and you can see which rows have stopped earning their space.
 
 **Do not start the next task.** The verdict is where a review session ends.
 

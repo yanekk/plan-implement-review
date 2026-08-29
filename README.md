@@ -104,7 +104,15 @@ plans/{slug}/
 
 `PROGRESS.md` is the handoff; `FINDINGS.md` is the memory. Both are read at the start of
 every session, so both are kept short on purpose — sixty words to a Notes cell, forty to a
-finding. When a note wants a paragraph, the paragraph goes in the commit message.
+finding, counted rather than estimated. When a note wants a paragraph, the paragraph goes in
+the commit message.
+
+Those budgets are enforced by a duty rather than by good intentions: **whoever appends,
+compacts.** A session adding a row first shrinks the file if it is over its ceiling, and fixes
+any over-budget row it read on the way in. Nothing else maintains these two files, and a limit
+nobody enforces holds for about a week — the project this method came from grew one such file
+to 175 000 characters, three quarters of it about tasks long closed, re-read in full by every
+session before it could start.
 
 ## What a run actually looks like
 

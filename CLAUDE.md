@@ -231,8 +231,8 @@ Each plan is a folder under `plans/`. `ls plans/` lists them.
 
 1. **`plans/{slug}/PROGRESS.md`** — task states and the queue. Always current.
    **Sixty words to a Notes cell**: it is the index, and the account is the commit message.
-2. **`plans/{slug}/FINDINGS.md`** — what the build taught, newest first, about forty words a
-   row. **Where "verified by hand with the user" is written down**, and therefore the only
+2. **`plans/{slug}/FINDINGS.md`** — what the build taught, newest first, **forty words a
+   row**. **Where "verified by hand with the user" is written down**, and therefore the only
    record that anything was ever seen working for real.
 3. **`plans/{slug}/PLAN.md`** — the task list, its phases and dependencies. Written once,
    at plan time; changed only by a decision of mine.
@@ -248,6 +248,45 @@ limits above are what stop them growing into a history of the project: when a no
 paragraph, the paragraph goes in the commit message. In the project this method came from
 they were one file, and it reached 175 000 characters — three quarters of it history about
 tasks long closed, re-read in full by every session before it could start.
+
+### Keeping them short is a duty, not an aspiration
+
+That file did not grow because anybody decided to write a history. It grew because every
+session appended and no session ever removed, and a limit nobody enforces is a limit that
+holds for about a week. So:
+
+**Count the words. "About forty" is how forty becomes ninety.** A budget is per *row*, not
+per column: a `FINDINGS.md` row is forty words including whatever the second column holds.
+
+**Whoever appends, compacts.** Before adding to `FINDINGS.md` or `PROGRESS.md`, if the file
+is over its ceiling — 60 rows or 15 KB for findings, 12 KB for progress — spend two minutes
+shrinking it first. That is the only maintenance either file gets. Merge rows that are one
+lesson twice; drop a row whose lesson is now enforced by code, a test or a rule in
+`DESIGN.md`, naming where it went; cut a ✅ task's Notes cell to one line once the following
+task has been reviewed.
+
+**Two things are never dropped**, only shortened: a ✅ hand-verification row and its date,
+because it is the only record that anything was seen working for real; and any term somebody
+would grep for — a flag, an error string, a path.
+
+**And fix the over-budget row you walk past.** Not the whole file, not a tidy-up — the one
+row you were reading anyway. This is the single exception to the scope rule, it needs no
+finding logged, and it is what keeps the ceilings from ever being reached.
+
+### How to write in these files
+
+**Flat prose.** These files are re-read in full by every session, so an ornamental sentence
+is not written once — it is paid for on every run for the life of the project.
+
+- One bold phrase in a row at most, and none is better than one.
+- No em-dash asides, no clause that is there to sound right, no aphorism.
+- Never restate what the row above already said, or what the code and its tests now say for
+  themselves.
+- If a row reads like it is arguing a case, it is too long. State the fact; the argument is
+  in the commit message, which is written for exactly that and costs nothing to skip.
+
+The register is contagious in both directions: a file written in flat prose keeps getting
+flat prose appended to it, and one written in epigrams gets epigrams back for ever.
 
 ---
 
