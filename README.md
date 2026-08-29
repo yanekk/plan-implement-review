@@ -2,33 +2,66 @@
 
 A working method for Claude Code, packaged so it can be dropped into any project.
 
-Work is planned once, then executed one task at a time by sessions that alternate between
-building and reviewing. The session that reviews a task is never the session that wrote it —
+Work is planned once, read back once before anything is built, then executed one task at a
+time by sessions that alternate between building and reviewing. The session that reviews a task is never the session that wrote it —
 that alternation is the whole point, and it is what buys a genuine fresh-eyes pass on every
 task.
 
 You act as product manager: you own *what* gets built and why. The sessions own *how*.
 
-## The two commands
+## The three commands
 
 | Command | What it does |
 |---|---|
-| `/pir-plan` | Brainstorm the requirements, probe the tech on the actual machine, settle the architecture, split the work into session-sized tasks, write it all to `plans/{slug}/`. Writes no product code. |
+| `/pir-plan` | Brainstorm the requirements, probe the tech on the actual machine, survey what the codebase already does so nothing gets built twice, settle the architecture, split the work into session-sized tasks, write it all to `plans/{slug}/`. Writes no product code. |
+| `/pir-review-plan {slug}` | Read the finished plan back with fresh eyes, before a line of it is built. Fixes what has one right answer, brings everything else to you as a decision, applies what you decide, marks the plan reviewed. Runs once. |
 | `/pir-work {slug}` | Do exactly one unit of work — implement the next task, or review the last one — then stop. |
 
 `/pir-work` dispatches on the state table in `plans/{slug}/PROGRESS.md`:
 
 ```
-any task 🔍 ?  → REVIEW the lowest-numbered one
-else any 🟡 ?  → FINISH it
-else           → IMPLEMENT the next ⬜ whose dependencies are ✅
+plan not reviewed ?  → STOP — /pir-review-plan runs first
+any task 🔍 ?        → REVIEW the lowest-numbered one
+else any 🟡 ?        → FINISH it
+else                 → IMPLEMENT the next ⬜ whose dependencies are ✅
 ```
 
 Task states: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review ·
 ✅ reviewed and done · ⛔ blocked, needs a human.
 
+## Why the plan gets reviewed too
+
+A defect in a plan is copied into every task built from it, and the build-review alternation
+cannot catch it: `pir-review` checks a task *against* the plan, so a wrong plan passes review
+task after task, correctly. `/pir-review-plan` is the only pass that questions the plan itself,
+and it runs in a session that did not write it. It looks for four things:
+
+- **whether the documents agree** — dependencies pointing at tasks that exist and come
+  earlier, one interface described the same way in both tasks that meet at it, no task quietly
+  breaking a rule in `DESIGN.md`, every "Done when" checkable by somebody who was not there
+- **whether the requirements are complete** — the unhappy path nobody specified, the thing a
+  user would see that was never described, the choice the plan made silently. These are never
+  filled in; each one is a question for you
+- **whether the machine claims still hold** — the test command runs here, the versions are
+  what `DESIGN.md` says, the seatbelts it names actually exist
+- **whether any of it is already built** — every task checked against the code that is
+  actually there, searching by what a thing *does* rather than what the plan calls it, because
+  the near-duplicate is never named the same. A task that rebuilds what the repo already has
+  passes every other check and still ships a second copy of something to maintain; the
+  recommendation is to extend
+
+It fixes what has exactly one right answer and tells you afterwards. Everything that changes
+*what gets built* comes to you — the whole list first, so you can see its size, then one
+decision at a time. Then it applies what you decided and stops.
+
+It refuses to run in the session that wrote the plan, and refuses to run once building has
+started. Its account lives in its commit message; there is no review report file to maintain.
+
 `pir-implement` and `pir-review` are never invoked directly — `pir-work` chooses the
-task, and that choice is what guarantees the alternation.
+task, and that choice is what guarantees the alternation. Both are marked
+`user-invocable: false`, so they do not appear in the `/` menu and cannot be typed as slash
+commands: the only way in is through `pir-work`. The model still reaches them via the Skill
+tool, which is the whole point.
 
 ## Install
 
@@ -80,9 +113,20 @@ finding. When a note wants a paragraph, the paragraph goes in the commit message
     → conversation: what it is for, the unhappy paths, what is deliberately not built
     → probes the machine for versions and the test command
     → checkpoint: requirements played back in plain English, you say yes
+    → searches the code for what already does part of this: finds the existing
+      usage log covers two thirds of T03, asks whether to extend it or start clean
     → checkpoint: phase table and task list, you say yes
     → writes plans/screen-time/, commits, stops
                                              commit: plan(screen-time): …
+
+/pir-review-plan screen-time
+    → fresh session, did not write the plan
+    → reads DESIGN, PLAN, every task, and re-measures the machine
+    → fixes 6 mechanical things: T07 depended on T09, two names for the same file
+    → puts 3 decisions to you, one at a time: what happens when the log is corrupt,
+      what the child sees at the daily limit, whether T04 covers the weekend rule
+    → applies your answers, marks the plan reviewed, stops
+                                             commit: plan-review(screen-time): 6 fixes, 3 decisions
 
 /pir-work screen-time
     → T00 is ⬜ and has no dependencies → implement
@@ -119,6 +163,8 @@ session. The ones that bite most often:
   branch, so there is nothing to merge, ever.
 - **Nothing unspecified gets invented.** A half-specified requirement is a question for you,
   not a gap for a session to close quietly.
+- **No plan gets built unread.** `/pir-work` stops on a plan that has never been through
+  `/pir-review-plan`, and says so.
 
 ## Layout of this repo
 
@@ -126,9 +172,10 @@ session. The ones that bite most often:
 CLAUDE.md        the shared working method, appended into each project
 install.sh       idempotent installer, per-project or --global
 skills/
-├── plan/        the seven-stage planning procedure
-│   └── templates/   DESIGN, PLAN, PROGRESS, FINDINGS, TASK
-├── work/        the dispatch — picks exactly one unit of work
-├── implement/   build one task, hand it over unreviewed
-└── review/      check someone else's task, fix what it finds, close it
+├── pir-plan/          the eight-stage planning procedure
+│   └── templates/     DESIGN, PLAN, PROGRESS, FINDINGS, TASK
+├── pir-review-plan/   read the plan back before anything is built
+├── pir-work/          the dispatch — picks exactly one unit of work
+├── pir-implement/     build one task, hand it over unreviewed
+└── pir-review/        check someone else's task, fix what it finds, close it
 ```

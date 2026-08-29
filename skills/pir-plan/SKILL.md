@@ -7,8 +7,8 @@ description: Turn an idea into a buildable plan — brainstorm the requirements,
 
 **This session writes documents, not code.** The one exception is a throwaway spike, and
 only to settle a question the plan would otherwise have to guess at — see *Stage 3*. When
-the plan is written, you stop. `/pir-work {slug}` builds it, one task at a time, starting with
-the next session.
+the plan is written, you stop. `/pir-review-plan {slug}` checks it in the next session, and
+`/pir-work {slug}` then builds it, one task at a time.
 
 The output is a folder:
 
@@ -61,8 +61,10 @@ lost the fresh-eyes pass on that half.
 2. **If `plans/{slug}/` already exists, stop and ask.** Re-planning over a plan with work
    already done against it is a decision about history and it is the user's. Offer: a new
    slug for a new plan, or an explicit amendment to the existing one.
-3. **Look at what is already there** — the repo, its README, its build files, any existing
-   code. A plan that ignores the codebase it lands in is a plan rewritten in week two.
+3. **Look at what is already there** — the repo, its README, its build files, its dependency
+   list, its tests, any existing code. A plan that ignores the codebase it lands in is a plan
+   rewritten in week two. This is the orientation pass; the real search happens in *Stage 4*,
+   once you know what is being asked for.
 4. Say in one line what you understood the goal to be, and let the user correct it before
    you spend anything on it.
 
@@ -130,7 +132,77 @@ You may write and run spike code yourself during this stage if a question is sma
 blocking — a version probe, a four-line API check. Anything larger, or anything that needs a
 seatbelt, is T00 and belongs to a later session.
 
-## Stage 4 — The architecture, and where the testability boundary runs
+## Stage 4 — What already exists that does part of this
+
+**The commonest defect in a plan is a task that rebuilds something the repo already has**, in
+a slightly different shape and under a different name. It costs nothing at plan time and
+everything afterwards: two implementations of one behaviour, every fix made twice, and neither
+one the obvious place to look. And nothing downstream catches it — `pir-review` checks a task
+against its doc, and a faithful implementation of a redundant task is a clean review.
+
+**This stage comes before the architecture on purpose.** An architecture settled first will
+produce tasks that have nowhere to extend into, and by then the cheap moment has gone.
+
+If the repo is genuinely empty, this stage is one sentence saying so. Say it rather than
+skipping it — the next session should know the ground was checked.
+
+### Go and look
+
+**Work from the requirements, one at a time.** For each thing the plan will have to do, search
+for something already doing it:
+
+- **Search by behaviour, not by the name you would give it.** The thing that already does the
+  job is never called what you would call it — that is exactly why it gets missed. Search for
+  what it *does*: the text it would produce, the field it would read, the error it would
+  raise, the call it would make, the file it would touch.
+- **The near-miss is the case that matters.** An exact match is rare and easy to spot.
+  Something covering most of the job — one condition different, one case missing — is what
+  gets rebuilt instead of extended.
+- **Read the tests.** A test asserting behaviour you were about to plan is proof that
+  behaviour already exists.
+- **Read the dependency list.** Something already installed may do the whole job.
+
+### Then place each hit
+
+| What you found | What it means for the plan |
+|---|---|
+| Already does the job | Do not plan it at all. Say what covers it instead |
+| Does most of it, and extends cleanly | Plan the extension, not the rebuild — usually a much smaller task |
+| Similar but genuinely different | Plan the new thing |
+| Does the job badly | Extending it, reshaping it and replacing it are all defensible — see below |
+
+**Bias to extending.** A second implementation of something the repo already has is the most
+expensive kind of progress, and it is invisible on the day it lands. Only plan the new thing
+when you can say concretely why the existing one cannot carry this.
+
+### The obvious ones are yours; the close calls are the user's
+
+An obvious extension, or something obviously unrelated, you decide and move on. **A genuine
+close call goes to the user** — the existing thing nearly fits, or fits but is poor, or
+extending it would bend it out of shape. Those are choices about what the product becomes, and
+they belong to the person who owns what gets built.
+
+Ask in the format `CLAUDE.md` sets — one at a time, and wait:
+
+- what already exists, in plain words, and how much of the job it covers
+- the routes: extend it, reshape it, or build alongside it — and what each costs
+- **your recommendation**
+- what you will do if they say nothing
+
+### Then report, before you design
+
+Before Stage 5, tell the user in plain English what the survey found: what already exists that
+covers part of this, what you propose to extend, and what genuinely has to be new. They do not
+need to approve it line by line — but designing on top of a survey they have not seen is how
+a plan ends up rebuilding their own project.
+
+**What gets written down.** Every decision made here — extend this, replace that, build the
+new one anyway — goes in `DESIGN.md § Decisions and rationale` with its reason, like every
+other decision. **Nothing goes in the task files.** A task says what it builds; it does not
+carry a justification for its own existence, and a task doc that argues with itself is a task
+doc nobody finishes reading.
+
+## Stage 5 — The architecture, and where the testability boundary runs
 
 One structural decision pays for itself in every task that follows: **separate the part that
 decides from the part that touches the world.** The deciding part takes inputs as parameters
@@ -151,7 +223,7 @@ Also settle here, and record with reasons: the module list, the data flow, where
 stored and in what format, what happens to it on a crash mid-write, and any concurrency the
 design implies.
 
-## Stage 5 — Split it into tasks
+## Stage 6 — Split it into tasks
 
 **A task is one session's work**, and it is not done until it is reviewable by somebody who
 was not there. Every task needs all five of:
@@ -190,7 +262,7 @@ a rough sense of where the weight is — heavy / medium / light, not hours.
 **Checkpoint.** Show the user the phase table and the one-line-per-task list, in plain
 English, and get an explicit yes. This is the last cheap moment to move something.
 
-## Stage 6 — Write the files
+## Stage 7 — Write the files
 
 From `templates/`, into `plans/{slug}/`:
 
@@ -200,8 +272,10 @@ From `templates/`, into `plans/{slug}/`:
   carries its reason**; that is the whole point of the file.
 - **PLAN.md** — phases, task table with dependencies, critical path, sizing, and any
   decision still open.
-- **PROGRESS.md** — every task ⬜, an empty review queue, and the `Next work will:` line
-  pointing at the first task.
+- **PROGRESS.md** — every task ⬜, an empty review queue, the `Next work will:` line
+  pointing at the first task, and the `Plan reviewed:` line left at **not yet**. That line is
+  what `pir-work` reads to decide whether the plan may be built; this session never fills it
+  in, because this session wrote the plan.
 - **FINDINGS.md** — header, legend, and any finding this planning session already produced.
   A probe from Stage 3 that contradicted the documentation is a finding: write it down now,
   while you still have it.
@@ -211,13 +285,24 @@ Then check the plan against itself before you show it: every dependency points a
 that exists and comes earlier; every "Done when" is checkable; every task that can only be
 verified by a person says so in its own doc; nothing in PLAN.md contradicts DESIGN.md.
 
+**That check is a courtesy, not the review.** `/pir-review-plan` does it properly in the next
+session, and it will find things you cannot — you have been holding this plan in your head for
+an hour and you will read your own reasoning and agree with it. Do not try to pre-empt it, and
+do not soften what you hand over: an honest list of what you are unsure about is worth more to
+that session than a plan polished into looking finished.
+
 Commit it — `plan({slug}): <what it is>`.
 
-## Stage 7 — Hand it over and stop
+## Stage 8 — Hand it over and stop
 
 Report in plain English: what is going to be built, in what order, where the risk is, what
 is deliberately not being built, and anything still open. Then say the next command is
-`/pir-work {slug}` and **stop**.
+`/pir-review-plan {slug}` — **not** `/pir-work` — put it on its own line, and **stop**.
+
+A fresh session reads the plan for gaps, contradictions and claims the machine does not
+support, settles them with the user, and marks the plan reviewed. `pir-work` refuses to build
+until it has: a defect in a plan is copied into every task built from it, and nothing later in
+the method catches it.
 
 **Do not implement T00.** The next session does that, and it is the first of the alternating
 pairs the whole method rests on.

@@ -1,6 +1,7 @@
 ---
 name: pir-implement
 description: Implement one task from a plan's tasks/ folder and hand it to the next session for review. Invoked by the `pir-work` skill after it picks a ⬜ or 🟡 task from plans/{slug}/PROGRESS.md — do not invoke it directly; run `pir-work` instead, so the queue chooses the task.
+user-invocable: false
 ---
 
 # implement

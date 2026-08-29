@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
-# Install the pir-plan / pir-work / pir-implement / pir-review skills into a project, and
-# append the shared working method to its CLAUDE.md.
+# Install the pir-plan / pir-review-plan / pir-work / pir-implement / pir-review skills into
+# a project, and append the shared working method to its CLAUDE.md.
 #
 #   ./install.sh /path/to/project          install into the project's .claude/skills/
 #   ./install.sh --global                  install into ~/.claude/skills/ (skills only)
@@ -12,7 +12,7 @@ set -euo pipefail
 
 SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MARKER="Appended by plan-implement-review"
-SKILLS=(pir-plan pir-work pir-implement pir-review)
+SKILLS=(pir-plan pir-review-plan pir-work pir-implement pir-review)
 
 if [[ "${1:-}" == "--global" ]]; then
     DEST="$HOME/.claude/skills"
@@ -74,7 +74,11 @@ Done. One thing left, by hand:
 
       /pir-plan
 
-  then, once the plan is written and you have agreed it:
+  then, in a NEW session, have the plan read back before any of it is built:
+
+      /pir-review-plan {slug}
+
+  then, one unit of work at a time:
 
       /pir-work {slug}
 MSG

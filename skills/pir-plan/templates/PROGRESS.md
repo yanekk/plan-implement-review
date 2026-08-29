@@ -8,6 +8,11 @@ that touch the task you are picking up, and append yours there. It is where "ver
 with the user" is written down. **Sixty words to a Notes cell here, forty to a finding
 there**; when a note wants a paragraph, the paragraph belongs in the commit message.
 
+**Plan reviewed:** not yet — run `/pir-review-plan` before the first `/pir-work`
+*(Replaced by that session with the date and its verdict. `pir-work` reads this line and
+refuses to build while it says "not yet": an unreviewed plan copies its defects into every
+task built from it, and no later review catches them.)*
+
 **Status:** *(two or three sentences: what is done, what is in flight, what is blocked.
 Rewritten each session, not appended to.)*
 **Last updated:** {date}

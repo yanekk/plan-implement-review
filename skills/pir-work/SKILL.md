@@ -9,6 +9,7 @@ description: Do exactly one unit of work on a plan — read plans/{slug}/PROGRES
 
 ```
 read plans/{slug}/PROGRESS.md
+  ├─ plan not reviewed ?   → STOP — /pir-review-plan runs first
   ├─ any task marked 🔍 ?  → REVIEW the lowest-numbered one
   ├─ else any task 🟡 ?    → FINISH it
   └─ else                  → IMPLEMENT the next ⬜ whose dependencies are ✅
@@ -36,18 +37,55 @@ so and point at `/pir-plan`.
    the task you are picking up. The `Next work will:` line is a summary written by the
    previous session, not the authority; the status table is. If the two disagree, trust the
    table and say so in your report.
-2. **Apply the tree above** to the status table. Lowest task number wins within a branch.
+2. **Check the plan has been reviewed** — see *Has the plan been reviewed?* below. If it has
+   not, stop there and build nothing.
+3. **Apply the tree above** to the status table. Lowest task number wins within a branch.
    The legend is: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review ·
    ✅ reviewed and done · ⛔ blocked, needs a human.
-3. **Announce the pick in one line** before doing anything — which task, which branch of the
+4. **Announce the pick in one line** before doing anything — which task, which branch of the
    tree, and why it and not another. If the pick is surprising, that line is where the user
    catches it.
-4. **Dispatch:**
+5. **Dispatch:**
    - 🔍 → invoke the **`pir-review`** skill
    - 🟡 → invoke the **`pir-implement`** skill; it handles a part-built task the same
      way as a fresh one, starting from what is already committed
    - ⬜ → invoke the **`pir-implement`** skill
-5. **Stop.** Do not pick up a second task because the first was small.
+6. **Stop.** Do not pick up a second task because the first was small.
+7. **End the report with the command that continues the work.** One plain sentence saying
+   what the next session will do, then the command on its own line, with the real slug
+   filled in, so the user can copy it straight back:
+
+   ```
+   /pir-work {slug}
+   ```
+
+## Has the plan been reviewed?
+
+`PROGRESS.md` carries a line near the top:
+
+```
+**Plan reviewed:** not yet — run `/pir-review-plan` before the first `/pir-work`
+**Plan reviewed:** 2026-08-28 — 6 fixed, 3 decided with the user
+```
+
+**While it says "not yet", this session builds nothing.** Say which plan it is, that it has
+never been reviewed, and give the user the command:
+
+```
+/pir-review-plan {slug}
+```
+
+The reason is that a defect in a plan is copied into every task built from it, and the
+build-review alternation does not catch it — `pir-review` checks a task against the plan, so
+a wrong plan passes review task after task. One session up front is cheaper than that, every
+time.
+
+**If the line is missing entirely**, the plan predates the check. Say so and ask the user
+whether to review it first or carry on — do not decide it for them, and do not write the line
+yourself.
+
+**The user can overrule this.** If they say build anyway, build — and say in your report that
+the plan is unreviewed, so the next session knows what it inherited.
 
 ## Blocked tasks
 

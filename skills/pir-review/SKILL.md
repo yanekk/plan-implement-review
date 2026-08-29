@@ -1,6 +1,7 @@
 ---
 name: pir-review
 description: Review one implemented (🔍) task with fresh eyes, fix what it finds, and mark it ✅. Invoked by the `pir-work` skill after it picks the lowest-numbered 🔍 task from plans/{slug}/PROGRESS.md — do not invoke it directly; run `pir-work` instead.
+user-invocable: false
 ---
 
 # review

@@ -5,12 +5,13 @@
 
 # How we work together
 
-Work on this project is planned once and then executed one task at a time, by sessions that
-alternate between building and reviewing. Two commands drive it:
+Work on this project is planned once, read back once, and then executed one task at a time,
+by sessions that alternate between building and reviewing. Three commands drive it:
 
 | Command | What it does |
 |---|---|
-| `/pir-plan` | Brainstorm, settle the requirements, get the tech right, split the work into tasks, and write it all down under `plans/{slug}/` |
+| `/pir-plan` | Brainstorm, settle the requirements, get the tech right, check what the code already does before planning to build it again, split the work into tasks, and write it all down under `plans/{slug}/` |
+| `/pir-review-plan {slug}` | Read that plan back with fresh eyes, before a line of it is built — the gaps, the contradictions, and anything the machine does not actually support. Runs once, and `/pir-work` will not start until it has |
 | `/pir-work {slug}` | Do exactly one unit of work on that plan — implement the next task, or review the last one — then stop |
 
 **Read `plans/{slug}/DESIGN.md` before changing behaviour.** Every rule in it was decided
@@ -99,6 +100,7 @@ you may need me to start it going again. That is cheaper than a task built on a 
 
 ```
 read plans/{slug}/PROGRESS.md
+  ├─ plan not reviewed ?   → STOP — /pir-review-plan runs first
   ├─ any task marked 🔍 ?  → REVIEW the lowest-numbered one
   ├─ else any task 🟡 ?    → FINISH it
   └─ else                  → IMPLEMENT the next ⬜ whose dependencies are ✅
@@ -110,14 +112,42 @@ That is the whole point: the session that reviews a task is never the session th
 it. A reviewer holding the implementation in context is not a reviewer, and the alternation
 is what buys the fresh eyes.
 
-The skills live in `.claude/skills/` and hold the procedures — the dispatch and the
-blocked-task rule in `pir-work`, the step-by-step in `pir-implement` and `pir-review`.
+The skills live in `.claude/skills/` and hold the procedures — the dispatch, the review gate
+and the blocked-task rule in `pir-work`, the step-by-step in `pir-implement` and `pir-review`.
 **Do not invoke `pir-implement` or `pir-review` directly**: `pir-work` chooses the task,
 and that choice is what guarantees the alternation. If you want a specific task built or
 reviewed out of order, say so to me first.
 
 The rest of this file holds the rules that bind **every** session — the ones that arrived
 through `pir-work` and the ones that did not.
+
+### A plan gets read back before it gets built
+
+`/pir-review-plan {slug}` runs once, in a session that did not write the plan, between
+`/pir-plan` and the first `/pir-work`. It reads the whole plan for four things: whether the
+documents agree with each other, whether the requirements are actually complete, whether the
+claims about this machine still hold, and **whether any of it is already built** — a task that
+rebuilds something the code already has, instead of extending it, passes every other check
+here and is still the wrong thing to build.
+
+**Why it is a separate session, and separate from everything else here:** a mistake in a plan
+is copied into every task built from it, and the build-review alternation cannot see it —
+`pir-review` checks a task *against* the plan, so a wrong plan passes review task after task.
+This is the only pass that questions the plan itself.
+
+**What it may change on its own, and what it must ask about.** Anything with exactly one right
+answer — a dependency pointing at a task that does not exist, the same file named two ways, a
+version the machine has just contradicted — it fixes and tells me afterwards. Anything that
+changes what gets built — a requirement nobody decided, two rules that contradict, a task that
+should be split — it brings to me, one at a time, and waits. It reads the whole plan before it
+asks me anything, so I see the size of the problem before I answer any part of it.
+
+It marks the plan reviewed in `PROGRESS.md`, and that line is what lets `/pir-work` start. It
+will not run on a plan already being built: rewriting the ground under finished work is worse
+than the gap it would close, and amending a live plan is my decision.
+
+**The account of that review lives in its commit message and nowhere else** — there is no
+review report file. A session that later wonders why a rule says what it says has `git log`.
 
 ### Scope is strict
 
@@ -171,10 +201,15 @@ session with the question still open.
 ### Commit messages
 
 ```
-T05: policy decision function          ← implementation
-T05 review: fix warning threshold      ← a fix found while reviewing
-T05 review: clean                      ← review found nothing; the PROGRESS update is the commit
+plan(screen-time): daily screen budget with a warning     ← the plan
+plan-review(screen-time): 6 fixes, 3 decisions            ← the plan read back, before any build
+T05: policy decision function                             ← implementation
+T05 review: fix warning threshold                         ← a fix found while reviewing
+T05 review: clean                                         ← review found nothing; the PROGRESS update is the commit
 ```
+
+The `plan-review` message is the *only* account of that session, so it is written long — every
+fix by name and every decision with its reason. All the others stay short.
 
 ### Where sessions run
 
