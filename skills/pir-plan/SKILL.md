@@ -112,31 +112,24 @@ Establish and write down:
   on its own. If the obvious command does not work here, find the one that does and record
   why — the next session will otherwise rediscover it.
 
-  **Require it to be quiet when it passes, and make quiet the default.** One summary line per
-  suite on a green run, the full detail on every failure unchanged. Its dominant caller is a
-  session that reads all of its output, and a passing run that prints a line per assertion is
-  thousands of lines of the word `ok` re-read by every review for the life of the project.
-  Reach for the framework's own quiet reporter rather than a bespoke wrapper — a dot reporter,
-  a `-q`, whatever this stack ships — and bake it and its flags into the command itself so a
-  plain run is already cheap and there is nothing to remember. Settle it in DESIGN.md now,
-  while it is one line in a document rather than a change to every test harness later, and say
-  there how a person turns the detail back on to debug.
+  **Require it to be quiet when it passes, and make quiet the default.** Its dominant caller
+  is a session that reads all of its output, and a passing run that prints a line per assertion
+  is thousands of lines of the word `ok` re-read by every review for the life of the project;
+  the exit code already carries the result. Settle three things in DESIGN.md now, baked into
+  the command itself so a plain run is already cheap and there is nothing to remember:
 
-  **Colour is the hidden half of this, and it is usually forced.** ANSI escapes tokenize badly
-  — a coloured line can cost several times its plain length — and `FORCE_COLOR`, `CI` and
-  `CLICOLOR_FORCE` switch colour on even when output is piped, overriding `NO_COLOR`. Check
-  whether it is forced here — `env | grep -i color`, the shell profile, the CI config — and if
-  it is, turn it off inside the test command itself with `FORCE_COLOR=0` or the framework's
-  `--no-color` / `--color=never`, never by trusting the caller's environment to be clean. This
-  is the change that has cost this method the most, so record in DESIGN.md what was forcing
-  colour, so no later session quietly reverts the fix.
-
-  **Two things the quiet command must not lose.** Failures print in full — message, file and
-  line, the diff, the stack the framework gives — and the exit code stays meaningful, 0 on
-  pass and non-zero on failure, because the cheap green path trusts the exit code to carry the
-  result. If CI parses a machine-readable format such as JUnit XML or TAP, keep that path and
-  quiet only the run a person or a session reads; if the two genuinely conflict, bring it to
-  the user rather than guessing.
+  - **Quiet.** The framework's own quiet reporter rather than a bespoke wrapper — a dot
+    reporter, a `-q`, whatever this stack ships — one summary line per suite on green, and say
+    in DESIGN.md how a person turns the detail back on to debug.
+  - **No colour.** ANSI escapes tokenize badly, and `FORCE_COLOR`, `CI` and `CLICOLOR_FORCE`
+    force colour even when output is piped, overriding `NO_COLOR`. Check whether it is forced
+    here (`env | grep -i color`, the shell profile, the CI config) and turn it off inside the
+    command itself (`FORCE_COLOR=0`, `--no-color`, `--color=never`), never by trusting the
+    caller's environment; record what was forcing it, since this is the change that has cost
+    this method the most.
+  - **Loud on failure.** Failures print in full — message, file and line, the diff, the stack
+    the framework gives — the exit code stays 0 on pass and non-zero on failure, and any
+    machine-readable CI path such as JUnit XML or TAP is left intact.
 - **The dependency policy.** What may be added, and what may not. Decide it now, with the
   user, rather than one library at a time under pressure.
 - **What the test command cannot reach.** The verification table: each row is a thing only a

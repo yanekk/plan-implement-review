@@ -105,22 +105,20 @@ What the layers are, what each proves, and what none of them can prove.
 **It is the only evidence a session may produce on its own.** If the obvious command does not
 work here, say which one does and why — the next session will otherwise rediscover it.
 
-**It must be quiet when it passes.** One summary line per suite (`agenda-test: 637 ok`), and
-the full detail on every failure, unchanged. The dominant caller is a session that reads all
-of its output, and a passing run that prints a line per assertion is thousands of lines of
-the word `ok` re-read on every review. Say here how verbose output is turned back on for a
-person debugging, and make quiet the default — a flag that has to be remembered saves nothing.
+**It must be cheap to read when it passes.** The dominant caller is a session that reads all
+of its output, and a passing run that prints a line per assertion is thousands of lines of the
+word `ok` re-read on every review; the exit code already carries the result. Make three things
+the default in the command itself — a flag that has to be remembered saves nothing:
 
-**And colour off, inside the command.** ANSI colour escapes tokenize badly, and `FORCE_COLOR`,
-`CI` and `CLICOLOR_FORCE` force colour even when output is piped, overriding `NO_COLOR`. The
-command turns colour off itself — `FORCE_COLOR=0`, `--no-color`, `--color=never` — rather than
-trusting the caller's environment. Record here what was forcing colour, so the fix is not
-silently reverted.
-
-**Loud on failure, though.** Failures print in full — message, file and line, diff, stack —
-and the exit code stays 0 on pass and non-zero on failure, because the quiet green path trusts
-the exit code. If CI reads a machine format (JUnit XML, TAP), that path stays; only the run a
-person or a session reads is quieted.
+- **Quiet.** One summary line per suite (`agenda-test: 637 ok`), full detail on every failure
+  unchanged. Say here how verbose output is turned back on for a person debugging.
+- **No colour.** ANSI escapes tokenize badly, and `FORCE_COLOR`, `CI` and `CLICOLOR_FORCE`
+  force colour even when output is piped, overriding `NO_COLOR`. Turn it off inside the command
+  (`FORCE_COLOR=0`, `--no-color`, `--color=never`) rather than trusting the caller's
+  environment, and record here what was forcing it.
+- **Loud on failure.** Failures print in full — message, file and line, diff, stack — the exit
+  code stays 0 on pass and non-zero on failure, and any machine-readable CI path (JUnit XML,
+  TAP) stays intact.
 
 **Dependencies.** What may be added and what may not, decided once rather than one library at
 a time under pressure.
