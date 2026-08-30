@@ -135,6 +135,14 @@ The plan was measured on a machine, possibly on a different day. Re-measure:
 - **The test command** named in `DESIGN.md § Environment` runs here. On a project with no
   code yet it may legitimately fail — check it fails the way an empty project fails, not the
   way a wrong command fails, and say which.
+- **The passing run is actually cheap.** Where there is a suite to run, run it and look at what
+  came back: a green run should be a summary line per suite, not a line per test, and it should
+  carry no ANSI colour escapes. Verbose or coloured output means the quiet, colourless default
+  `DESIGN.md` promised is not really baked into the command — usually a mechanical fix, the
+  framework's dot-or-`-q` reporter plus `FORCE_COLOR=0` or `--no-color`, and a note of what was
+  forcing colour (`FORCE_COLOR`, `CI`, `CLICOLOR_FORCE`). Confirm too that the command still
+  fails loudly — failures in full, non-zero exit — and that any machine-readable CI path the
+  plan names (JUnit XML, TAP) is left intact.
 - **The versions** `DESIGN.md` records are the versions this machine reports.
 - **Everything named as a dependency** exists, at that version, available here — and is
   allowed by the dependency policy the plan set.
@@ -206,8 +214,9 @@ A second implementation of something the repo already has is the most expensive 
 > a dependency pointing at a task that does not exist or comes later · a task numbered twice
 > · a task file with no row, or a row with no file · the same file or interface named two
 > ways · a missing test list, a missing dependency line · a broken cross-reference · a
-> version number the machine has just contradicted · a row or cell over its word budget · a
-> section padded with "n/a" instead of deleted · a rule stated twice in two files
+> version number the machine has just contradicted · a test command that prints a line per
+> passing test or forces colour when it should be quiet · a row or cell over its word budget ·
+> a section padded with "n/a" instead of deleted · a rule stated twice in two files
 
 **Fix these yourself.** Do not ask. List them afterwards, one line each.
 

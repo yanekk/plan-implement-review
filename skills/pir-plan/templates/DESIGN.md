@@ -111,6 +111,17 @@ of its output, and a passing run that prints a line per assertion is thousands o
 the word `ok` re-read on every review. Say here how verbose output is turned back on for a
 person debugging, and make quiet the default — a flag that has to be remembered saves nothing.
 
+**And colour off, inside the command.** ANSI colour escapes tokenize badly, and `FORCE_COLOR`,
+`CI` and `CLICOLOR_FORCE` force colour even when output is piped, overriding `NO_COLOR`. The
+command turns colour off itself — `FORCE_COLOR=0`, `--no-color`, `--color=never` — rather than
+trusting the caller's environment. Record here what was forcing colour, so the fix is not
+silently reverted.
+
+**Loud on failure, though.** Failures print in full — message, file and line, diff, stack —
+and the exit code stays 0 on pass and non-zero on failure, because the quiet green path trusts
+the exit code. If CI reads a machine format (JUnit XML, TAP), that path stays; only the run a
+person or a session reads is quieted.
+
 **Dependencies.** What may be added and what may not, decided once rather than one library at
 a time under pressure.
 
