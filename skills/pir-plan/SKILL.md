@@ -1,14 +1,15 @@
 ---
 name: pir-plan
-description: Turn an idea into a buildable plan — brainstorm the requirements, probe the tech, settle the architecture, split the work into tasks a session can each implement and a later session can review, and write it all to plans/{slug}/. Use when the user says "pir-plan" or "plan", describes something new to build, or asks to plan a feature. Produces DESIGN.md, PLAN.md, PROGRESS.md, FINDINGS.md and one file per task — and writes no product code.
+description: Turn an idea into a buildable plan — brainstorm the requirements, confirm the direction with a throwaway mock when the thing has a feel to it, probe the tech, settle the architecture, split the work into tasks a session can each implement and a later session can review, and write it all to plans/{slug}/. Use when the user says "pir-plan" or "plan", describes something new to build, or asks to plan a feature. Produces DESIGN.md, PLAN.md, PROGRESS.md, FINDINGS.md and one file per task — and writes no product code.
 ---
 
 # plan
 
-**This session writes documents, not code.** The one exception is a throwaway spike, and
-only to settle a question the plan would otherwise have to guess at — see *Stage 3*. When
-the plan is written, you stop. `/pir-review-plan {slug}` checks it in the next session, and
-`/pir-work {slug}` then builds it, one task at a time.
+**This session writes documents, not code.** The two exceptions are both throwaway: a spike
+that settles a technical question the plan would otherwise have to guess at (*Stage 3*), and
+a mock that lets the user confirm the product's direction before it is designed (*Stage 2*).
+When the plan is written, you stop. `/pir-review-plan {slug}` checks it in the next session,
+and `/pir-work {slug}` then builds it, one task at a time.
 
 The output is a folder:
 
@@ -19,6 +20,8 @@ plans/{slug}/
 ├── PLAN.md          the phases, the task table, the dependency graph, the critical path
 ├── PROGRESS.md      task states and the queue — the handoff between sessions
 ├── FINDINGS.md      what the build teaches, filled in from here on
+├── prototype/       a throwaway mock, only if the thing has a feel to it — kept as a
+│                    non-binding reference for the UI, not present in every plan
 └── tasks/
     ├── T00-*.md     one file per task: goal, files, interface, done-when, tests
     └── …
@@ -93,8 +96,39 @@ Cover, in roughly this order, stopping to ask whenever the answer is not already
   account, a device, a paid service or a real person. It becomes the verification table.
 
 **Checkpoint.** Play the requirements back in plain English — a short numbered list, no
-jargon — and get an explicit yes before Stage 3. Say what you are still unsure about rather
-than smoothing over it.
+jargon — and get an explicit yes before you prototype or design anything. Say what you are
+still unsure about rather than smoothing over it.
+
+### Then, if the thing has a feel to it, prototype it before you design
+
+Some products cannot be judged from a written spec. A screen, a flow, an interaction — the
+requirements can be right on paper and still describe the wrong thing, and the user owns
+*what* gets built, so they are the one who has to see it. **If this thing has a surface a
+person looks at or moves through, build a throwaway mock of it now, before Stage 5 designs
+anything.** A headless tool, a library or a background job has nothing to feel out — say in
+one line that a prototype was not needed and go on.
+
+This is the same throwaway exception the spike is: planning code, allowed here, and never
+product code. Build it as a clickable mock the user opens in a browser — an Artifact — so
+the person who does not read code can still click through it. Keep it rough: its only job is
+to answer one question, is this the right direction. Do not build the real thing, do not
+wire it to logic, and do not settle UI details that should stay open — a mock that pins down
+everything has stopped being cheap.
+
+Show it, and **wait.** This is a hand-verification of the kind `CLAUDE.md` reserves for the
+user: only their eyes settle it, and no test ever could.
+
+- **If the direction is right**, park the mock at `plans/{slug}/prototype/` and record the
+  approval with its date in `DESIGN.md § Decisions`. It stays as a non-binding reference for
+  the session that later builds the real UI — the vibe, not a spec — and that session still
+  designs the surface fresh, so the fresh-eyes pass on the UI is not lost.
+- **If it is wrong**, you have spent an afternoon, not a plan. Go back into the brainstorm
+  above and settle the direction again before anything downstream is paid for.
+
+**Why here and not as a task.** The mock's whole value is being the cheapest place for a
+wrong direction to surface. As task T00 it would come after the entire plan is written and
+reviewed, and a wrong direction would throw all of that away; here it costs only the
+requirements conversation, which a wrong direction makes you redo anyway.
 
 ## Stage 3 — Get the tech right, by measuring rather than reading
 

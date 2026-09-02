@@ -13,7 +13,7 @@ You act as product manager: you own *what* gets built and why. The sessions own 
 
 | Command | What it does |
 |---|---|
-| `/pir-plan` | Brainstorm the requirements, probe the tech on the actual machine, survey what the codebase already does so nothing gets built twice, settle the architecture, split the work into session-sized tasks, write it all to `plans/{slug}/`. Writes no product code. |
+| `/pir-plan` | Brainstorm the requirements, confirm the direction with a throwaway mock when the thing has a feel to it, probe the tech on the actual machine, survey what the codebase already does so nothing gets built twice, settle the architecture, split the work into session-sized tasks, write it all to `plans/{slug}/`. Writes no product code. |
 | `/pir-review-plan {slug}` | Read the finished plan back with fresh eyes, before a line of it is built. Fixes what has one right answer, brings everything else to you as a decision, applies what you decide, marks the plan reviewed. Runs once. |
 | `/pir-work {slug}` | Do exactly one unit of work — implement the next task, or review the last one — then stop. |
 
@@ -97,6 +97,8 @@ plans/{slug}/
 ├── PROGRESS.md      task states and the queue — the handoff between sessions
 ├── FINDINGS.md      what the build taught, newest first — and the only place a
 │                    hand-verification is ever recorded
+├── prototype/       a throwaway mock that confirmed the direction, kept as a
+│                    non-binding reference for the UI — only when the thing has a feel
 └── tasks/
     ├── T00-*.md     one file per task: goal, files, interface, done-when, test list
     └── …
@@ -121,6 +123,8 @@ session before it could start.
     → conversation: what it is for, the unhappy paths, what is deliberately not built
     → probes the machine for versions and the test command
     → checkpoint: requirements played back in plain English, you say yes
+    → the thing has a screen, so it builds a clickable mock and waits: you open it,
+      say the direction is right; the mock is parked at prototype/
     → searches the code for what already does part of this: finds the existing
       usage log covers two thirds of T03, asks whether to extend it or start clean
     → checkpoint: phase table and task list, you say yes

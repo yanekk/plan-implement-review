@@ -10,7 +10,7 @@ by sessions that alternate between building and reviewing. Three commands drive 
 
 | Command | What it does |
 |---|---|
-| `/pir-plan` | Brainstorm, settle the requirements, get the tech right, check what the code already does before planning to build it again, split the work into tasks, and write it all down under `plans/{slug}/` |
+| `/pir-plan` | Brainstorm, settle the requirements, show a throwaway mock to confirm the direction when the thing has a feel to it, get the tech right, check what the code already does before planning to build it again, split the work into tasks, and write it all down under `plans/{slug}/` |
 | `/pir-review-plan {slug}` | Read that plan back with fresh eyes, before a line of it is built — the gaps, the contradictions, and anything the machine does not actually support. Runs once, and `/pir-work` will not start until it has |
 | `/pir-work {slug}` | Do exactly one unit of work on that plan — implement the next task, or review the last one — then stop |
 
@@ -239,6 +239,10 @@ Each plan is a folder under `plans/`. `ls plans/` lists them.
 4. **`plans/{slug}/tasks/`** — one file per task: goal, files, interface, acceptance criteria.
 5. **`plans/{slug}/DESIGN.md`** — why everything is the way it is, plus the environment and
    the verification contract.
+
+A plan whose product has a feel to it also has **`plans/{slug}/prototype/`** — the throwaway
+mock that confirmed the direction before it was designed, kept as a non-binding reference for
+the session that later builds the real UI. It is not present in every plan.
 
 `PROGRESS.md` is the handoff and `FINDINGS.md` is the memory. A stale one of either costs
 the next session more than it saved this one.
