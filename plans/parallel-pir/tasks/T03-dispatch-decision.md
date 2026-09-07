@@ -1,4 +1,4 @@
-# T03 — `decideDispatch` — spawn / review / merge / close / surface
+# T03 — `decideDispatch` — spawn / review / merge / close
 
 **Phase:** 1 · **Depends on:** T02 · **Weight:** light · **Runs:** auto
 
@@ -6,16 +6,17 @@
 
 The one place the whole behaviour comes together: given the parsed task table, the current worker
 assignments, the worker ceiling and whether the kill switch is thrown, decide what to do this
-pass — which `auto` tasks to spawn a worker for, which ready `you` tasks to surface to the user
-instead of dispatching, which implemented task needs a fresh review session, which finished branch
-to merge, and which workers to close. A pure function of its arguments and nothing else, which is
-what lets the whole dispatch logic be proven before any agent exists.
+pass — which ready tasks to spawn a worker for (each tagged `auto` or `you`, so the loop knows to
+spawn a builder or a hands-on scribe), which implemented task needs a fresh review session, which
+finished branch to merge, and which workers to close. A pure function of its arguments and nothing
+else, which is what lets the whole dispatch logic be proven before any agent exists.
 
 ## Design sections this implements
 
 DESIGN §3.3 (the decision function), §2.1 (spawn ready, then fresh review), §2.3 (close), §2.4
-(the ceiling and halted), §2.5 (serialized merge, crash cleanup), §2.6 (surface `you` tasks), §2.8
-(the agent-name helpers), §2.9 (merge into the feature branch; `promoteToMain` at completion).
+(the ceiling and halted), §2.5 (serialized merge, crash cleanup), §2.6 (`auto` vs `you`: a `you`
+task spawns a hands-on worker and skips review), §2.8 (the agent-name helpers), §2.9 (merge into
+the feature branch; `promoteToMain` at completion).
 
 ## Files
 
@@ -27,7 +28,7 @@ DESIGN §3.3 (the decision function), §2.1 (spawn ready, then fresh review), §
 ## Interface
 
 ```
-decideDispatch({ tasks, assignments, maxWorkers, halted }) → { spawn, surface, review, merge, close, promoteToMain }
+decideDispatch({ tasks, assignments, maxWorkers, halted }) → { spawn, review, merge, close, promoteToMain }
 
   tasks       : [ { num, name, deps, runs, state } ]                 // from parseProgress; runs: auto|you
   assignments : [ { workerId, task, phase, live } ]
@@ -35,9 +36,11 @@ decideDispatch({ tasks, assignments, maxWorkers, halted }) → { spawn, surface,
   maxWorkers  : number     // the ceiling (4)
   halted      : boolean     // kill-switch flag present
 
-  spawn   : [ taskNum ]     // ready auto ⬜: deps ✅, not assigned, lowest first, live+spawn ≤ max
-  surface : [ taskNum ]     // ready you ⬜: deps ✅, not done — surfaced to the user, never spawned
-  review  : [ workerId ]    // workers in phase "review-ready" (implemented, need a fresh reviewer)
+  spawn   : [ { num, runs } ] // ready ⬜: deps ✅, not assigned, lowest first, live+spawn ≤ max.
+                            //   runs auto → autonomous builder; runs you → hands-on scribe (§2.6).
+                            //   BOTH count against maxWorkers.
+  review  : [ workerId ]    // workers in phase "review-ready" (implemented, need a fresh reviewer).
+                            //   Only auto workers reach this; a you worker skips review (§2.6)
   merge   : [ taskBranch ]  // workers in phase "done", AT MOST ONE per pass — merged into the
                             //   FEATURE branch, not main (DESIGN §2.9)
   close   : [ workerId ]    // workers whose task merged; the implement session when its task is
@@ -47,8 +50,9 @@ decideDispatch({ tasks, assignments, maxWorkers, halted }) → { spawn, surface,
                             //   feature branch to main (the one merge to main)
 ```
 
-A `you` task is never in `spawn`; it goes to `surface` and does not count against `maxWorkers`.
-`promoteToMain` is the single signal that the plan is complete. When `halted`: `spawn`, `surface`,
+`spawn` carries every ready task, `auto` and `you` alike, each with its `runs` marker so the loop
+spawns the right kind; both kinds count against `maxWorkers` and compete for slots lowest-number
+first. `promoteToMain` is the single signal that the plan is complete. When `halted`: `spawn`,
 `review`, `merge` are empty, `promoteToMain` is false, and `close` is every live worker. A task
 held by a live worker is never re-spawned. A dead worker (live=false or phase "dead") is always
 closed, so it stops holding a slot under the ceiling.
@@ -68,9 +72,15 @@ does not match the convention is reported (task null and a flag), not guessed.
 ## Tests
 
 - [ ] Spawns only ⬜ tasks whose deps are all ✅; a task with a 🔍 or ⬜ dependency is not spawned.
-- [ ] Never exceeds the ceiling: with 3 live and maxWorkers 4, at most 1 is spawned.
+- [ ] Each `spawn` entry carries its `runs` marker: an `auto` task yields `{num, runs:'auto'}`, a
+      `you` task `{num, runs:'you'}`.
+- [ ] A ready `you` task IS spawned (as a hands-on entry) and counts against the ceiling, competing
+      with `auto` tasks lowest-number first.
+- [ ] Never exceeds the ceiling: with 3 live and maxWorkers 4, at most 1 is spawned (auto or you).
 - [ ] Lowest task number first when more are ready than the ceiling allows.
 - [ ] A review-ready worker appears in `review`; it is not spawned again or merged yet.
+- [ ] A `you` worker (a hands-on task's assignment) that reports done is never put in `review`; it
+      goes straight to `merge`/`close`.
 - [ ] The implement session of a review-ready task is in `close` (closed as its reviewer spawns),
       so a task in review holds one worker slot, not two.
 - [ ] Merge is at most one task branch per pass even when two workers are done (into the feature branch).
@@ -85,7 +95,8 @@ does not match the convention is reported (task null and a flag), not guessed.
 
 ## Done when
 
-- [ ] `decideDispatch` returns correct spawn/surface/review/merge/close for the cases above.
+- [ ] `decideDispatch` returns correct spawn (tagged auto/you) / review / merge / close for the
+      cases above.
 - [ ] The naming helpers build and parse the §2.8 forms and report a non-matching name.
 - [ ] Both modules read no clock and no filesystem; `halted` and all state arrive as arguments.
 - [ ] `npm test` is green.

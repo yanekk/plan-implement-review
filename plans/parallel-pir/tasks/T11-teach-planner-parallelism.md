@@ -22,7 +22,8 @@ DESIGN §2.6 (the `Runs` marker), §2.7 (planning for parallelism: honest deps, 
 - `skills/pir-plan/templates/PROGRESS.md` — add the `Runs` column and its legend line.
 - `skills/pir-plan/templates/PLAN.md` — add `Runs` to the phase task tables and a width line.
 - `skills/pir-plan/templates/TASK.md` — add `Runs` to the header line.
-- `CLAUDE.md` — note the `Runs` marker and that the coordinator surfaces `you` tasks; AND add a
+- `CLAUDE.md` — note the `Runs` marker and that the coordinator spawns a hands-on worker for a
+  `you` task (the user runs the live steps, the worker records; §2.6); AND add a
   parallel-mode carve-out to § Where sessions run: the parallel-mode coordinator and its workers run
   on the feature and task branches in worktrees per DESIGN §2.9, so "main checkout, main branch,
   always; stop if in a worktree" binds the classic single-stream flow only. Without this a worker,

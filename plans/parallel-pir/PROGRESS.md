@@ -17,6 +17,9 @@ The `Runs` column marks each task `auto` (a worker builds it) or `you` (a person
 tasks, 5 phases. Review fixed the colourless test command, a signature and a param name, and
 gitignored the control dir; decided the main-branch carve-out (coordinator in its own worktree),
 closing the implement session at review, and how a `you` task is marked done.
+After review the user revised the `you`-task model (2026-09-07): the coordinator now spawns a
+hands-on worker (`pir-verify Txx`) the user drives, folded back without review, instead of surfacing
+the task bare. Touched DESIGN, T03, T05, T07, T09, T10, T11.
 **Last updated:** 2026-09-07
 **Next `pir-work` will:** implement T01 (scaffold, `npm test`, boundary test) — the lowest ⬜ with
 no dependencies. T00 is done: the platform spike ran and confirmed spawn/message/fresh-review/close,
@@ -26,15 +29,15 @@ slash-free). T07 (§2.8 naming) and T11 (planner templates) must fold those in.
 ## Tasks
 
 Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review · ✅ reviewed and
-done · ⛔ blocked, needs a human. **Runs:** `auto` a worker builds it · `you` a person runs it,
-surfaced by the coordinator, never dispatched (§2.6).
+done · ⛔ blocked, needs a human. **Runs:** `auto` a worker builds it · `you` a person runs the
+live steps with a hands-on worker the coordinator spawns, folded back without review (§2.6).
 
 | # | Task | Runs | Depends on | State | Notes |
 |---|---|---|---|---|---|
 | T00 | Platform primitives spike: spawn, message, fresh review, close | you | — | ✅ | Agent ran the seatbelted spike (user away, delegated), not user-watched. All 4 answered, artifacts deleted. Two corrections: `--bg` task is positional not `-p`; worker names must be slash-free (SendMessage rejects `/`). See FINDINGS. Gates T07/T08. |
 | T01 | Project scaffold, `npm test`, boundary test | auto | — | ⬜ | |
 | T02 | Parse `PROGRESS.md` (with `Runs` marker) and fold one row back | auto | T01 | ⬜ | |
-| T03 | `decideDispatch` — spawn / review / merge / close / surface | auto | T02 | ⬜ | |
+| T03 | `decideDispatch` — spawn / review / merge / close | auto | T02 | ⬜ | |
 | T04 | `analyzeParallelism` — critical path, width, auto/you counts | auto | T02 | ⬜ | |
 | T05 | Fake spawn/message/list/close + the coordinator loop | auto | T03 | ⬜ | |
 | T06 | Feature branch + task worktree create / integrate / merge / promote | auto | T05 | ⬜ | Hand-verified half. |

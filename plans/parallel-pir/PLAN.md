@@ -6,8 +6,9 @@ the interfaces it defines, and what "done" means.
 Track state in [PROGRESS.md](PROGRESS.md). Read [DESIGN.md](DESIGN.md) first — the architecture
 leans on Claude Code's own primitives (background sessions, per-session worktrees, cross-session
 messaging, stop/remove) and builds only the PIR-specific glue on top. Two later concerns are
-folded in: the coordinator surfaces human-required tasks instead of dispatching them (§2.6), and
-`/pir-plan` is taught to plan for parallelism (§2.7).
+folded in: a human-required (`you`) task runs on a hands-on worker the coordinator spawns and the
+user drives, folded back without review (§2.6), and `/pir-plan` is taught to plan for parallelism
+(§2.7).
 
 ---
 
@@ -59,7 +60,7 @@ live agent.
 |---|---|---|---|
 | [T01](tasks/T01-scaffold-and-test-command.md) | Project scaffold, `npm test`, the boundary test | auto | — |
 | [T02](tasks/T02-progress-core.md) | Parse `PROGRESS.md` (with the `Runs` marker) and fold one row back | auto | T01 |
-| [T03](tasks/T03-dispatch-decision.md) | `decideDispatch` — spawn / review / merge / close / surface | auto | T02 |
+| [T03](tasks/T03-dispatch-decision.md) | `decideDispatch` — spawn / review / merge / close | auto | T02 |
 | [T04](tasks/T04-analyze-parallelism.md) | `analyzeParallelism` — critical path, width, auto/you counts | auto | T02 |
 
 ## Phase 2 — A fake platform to rehearse in

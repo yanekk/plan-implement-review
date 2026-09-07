@@ -6,12 +6,23 @@
 
 The worker's rulebook, the thin wiring that lets it talk to the coordinator, and the small change
 that lets the coordinator name the task a worker runs. A worker does not choose its own task: the
-coordinator sends it `pir-implement Txx` to build or `pir-review Txx` to review, and the worker
-runs exactly that. Two more things differ from classic mode: when a skill would "ask the user and
-wait", the worker messages the coordinator and waits, because there is no interactive user at its
-terminal; and when its task is reviewed clean it integrates the feature branch and messages "done". The
-implement and review procedures are the stock ones — only their entry point changes so they accept
-an explicit task rather than being reached only through `pir-work`'s selection.
+coordinator sends it `pir-implement Txx` to build, `pir-review Txx` to review, or `pir-verify Txx`
+to run a hands-on `you` task, and the worker runs exactly that. Two more things differ from classic
+mode: when a skill would "ask the user and wait", the worker messages the coordinator and waits,
+because there is no interactive user at its terminal; and when its task is reviewed clean it
+integrates the feature branch and messages "done". The implement and review procedures are the
+stock ones — only their entry point changes so they accept an explicit task rather than being
+reached only through `pir-work`'s selection.
+
+**The hands-on mode (`pir-verify Txx`) is how a `you` task runs (§2.6).** Here the person, not the
+worker, runs the live/seatbelted commands — an agent must not spawn real paid agents against real
+branches on its own (§5.2), and only a person can watch. So the worker is the scribe: it presents
+the task's "Needs a person" block to the user, waits while the user runs it, records what the user
+reports into `FINDINGS.md` on the task branch, marks the task row done, and messages the
+coordinator `done`. Unlike `pir-implement`, it produces no code and gets no fresh-review session —
+the recorded observation is the deliverable, and the coordinator folds the branch back and marks
+`✅` (§2.6). The user talks to this worker directly, which is what keeps the exploration out of the
+coordinator's context.
 
 ## Design sections this implements
 
@@ -22,6 +33,9 @@ rule in §1.
 ## Files
 
 - `skills/pir-worker/SKILL.md` — the worker contract (new skill).
+- `skills/pir-verify/SKILL.md` — the hands-on procedure for a `you` task (new skill): present the
+  task's "Needs a person" block, let the user run it, record findings on the task branch, report
+  done. Produces no code and no review session (§2.6).
 - `skills/pir-implement/SKILL.md`, `skills/pir-review/SKILL.md` — a small additive change: accept
   an explicit `Txx` argument so the coordinator can name the task; their logic is unchanged.
 - `src/shell/platform.mjs` — the send/inbox half of the platform wrapper (spawn/list/close in T08).
@@ -31,8 +45,13 @@ rule in §1.
 
 ```
 pir-worker SKILL.md contract:
-  - the coordinator sends `pir-implement Txx` (build) or `pir-review Txx` (review); run exactly
-    that task and phase. Do NOT run `pir-work` and do NOT pick a task yourself.
+  - the coordinator sends `pir-implement Txx` (build), `pir-review Txx` (review), or
+    `pir-verify Txx` (run a hands-on `you` task); run exactly that task and phase. Do NOT run
+    `pir-work` and do NOT pick a task yourself.
+  - `pir-verify Txx` (hands-on, §2.6): the USER runs the live/seatbelted commands; you do not run
+    them and do not spawn real agents yourself (§5.2). Present the task's "Needs a person" block,
+    wait, record what the user reports into FINDINGS.md on your task branch, mark the task done, and
+    message the coordinator (kind: done). No code, no fresh-review session.
   - you run in your task's own worktree on branch `pir/{plan}/T{nn}`. The base rule in CLAUDE.md
     § Where sessions run — "main checkout, main branch, always; stop if you find yourself in a
     worktree" — does NOT bind a parallel-mode worker; DESIGN §2.9 replaces it with the branch
@@ -67,6 +86,8 @@ own name at spawn for clarity, but the scheme is what removes id-passing.
 
 - [ ] `pir-implement Txx` / `pir-review Txx` operate on the named task; with no arg, classic
       behaviour is unchanged (a regression test on the existing selection).
+- [ ] `pir-verify Txx` records the user's reported findings to FINDINGS.md on the task branch and
+      messages the coordinator `done`, producing no code and requesting no review session.
 - [ ] With an explicit `Txx` the "reached without pir-work → stop" guard does not fire; with no
       argument it still does.
 - [ ] A constructed message carries from/kind/task/body and parses back.
@@ -77,7 +98,9 @@ own name at spawn for clarity, but the scheme is what removes id-passing.
 ## Done when
 
 - [ ] `skills/pir-worker/SKILL.md` states the contract: run the coordinator's `pir-implement Txx` /
-      `pir-review Txx`, never `pir-work`; escalate via messages; report done.
+      `pir-review Txx` / `pir-verify Txx`, never `pir-work`; escalate via messages; report done.
+- [ ] `skills/pir-verify/SKILL.md` states the hands-on procedure: user runs the commands, worker
+      records findings on the task branch and reports done; no code, no review.
 - [ ] `pir-implement` / `pir-review` accept an explicit task and are unchanged with no argument.
 - [ ] The send/inbox half and same-repo resolution are unit-tested and green.
 - [ ] `npm test` is green.

@@ -9,15 +9,17 @@ reviewed, then runs the T05 loop over the real platform (T06 + T08). It is the d
 decides which task each worker builds and reviews, sending `pir-implement Txx` and `pir-review Txx`
 rather than letting a worker self-select. It surfaces every worker question and decision to the
 user in plain English, routes answers back down to the right worker, keeps every other task moving
-while one worker waits, surfaces `you` tasks to the user instead of dispatching them, honours the
-ceiling and the kill switch, serializes merges, and reports progress as tasks reach `✅`.
+while one worker waits, spawns a hands-on worker for each ready `you` task and points the user at
+it, honours the ceiling and the kill switch, serializes merges, and reports progress as tasks reach
+`✅`.
 
 ## Design sections this implements
 
 DESIGN §2.1 (the run, the reviewed-gate refusal, coordinator names task and phase), §2.2 (surfacing
 messages and sending answers down), §2.4 (supervision, ceiling, kill switch), §2.5 (a worker
-blocked on a decision, serialized merge, conflict escalation), §2.6 (surfacing `you` tasks), §2.8
-(agent naming and finding workers by prefix), §2.9 (feature branch, task branches, promotion).
+blocked on a decision, serialized merge, conflict escalation), §2.6 (`you` tasks spawn a hands-on
+worker, folded back without review), §2.8 (agent naming and finding workers by prefix), §2.9
+(feature branch, task branches, promotion).
 
 ## Files
 
@@ -45,9 +47,11 @@ pir-coordinate SKILL.md:
   - each pass, after executing actions, read the inbox and surface any question / decision /
     conflict to the user in plain English, one at a time — the user owns every decision.
   - take the user's answer and send it down to that worker (kind: answer), immediately.
-  - surface ready `you` tasks (the spike, hand-verified drills) to the user with their command,
-    rather than spawning a worker for them; when the user reports a surfaced `you` task done, mark
-    it ✅ on the feature branch (reconcileTaskRow) and continue, and mark a deferred one ⛔ (§2.6).
+  - for a ready `you` task (the spike, hand-verified drills), spawn a hands-on worker `pir-verify
+    Txx` on its own task branch and tell the user which worker to go and drive; the user runs the
+    live commands and the worker records the findings on that branch. When the worker reports done,
+    merge its branch and reconcile the row to ✅ (reconcileTaskRow) — reading the file, not the
+    worker's conversation, so the coordinator's context stays clean — and mark a deferred one ⛔ (§2.6).
   - keep dispatching and merging other ready tasks while a worker waits; a parked worker never
     blocks the rest. A decision the user defers indefinitely marks that task ⛔ in PROGRESS.md.
   - honour the ceiling (log when full) and the HALT flag (stop dispatch, stop all workers).
@@ -66,8 +70,8 @@ coordinate.mjs: startCoordinator({ slug, platform, worktree, maxWorkers }) → d
       `@{repo} / {plan} /` prefix, ignoring agents from other repos or plans.
 - [ ] A fake worker's question is surfaced and a user answer is routed down to that worker only.
 - [ ] Other ready tasks keep progressing while one fake worker is parked awaiting an answer.
-- [ ] A ready `you` task is surfaced to the user, not dispatched; when reported done it is marked
-      ✅ on the feature branch by the coordinator and its dependents unblock.
+- [ ] A ready `you` task spawns a hands-on `pir-verify` worker (not an autonomous builder); when it
+      reports done its branch is merged and the row reconciled to ✅, and its dependents unblock.
 - [ ] The implement session is closed when its fresh reviewer spawns (a task in review uses one slot).
 - [ ] A conflict message is surfaced as a decision; a deferred decision marks its task ⛔.
 - [ ] The ceiling-full case is logged; the HALT flag stops dispatch and closes workers.

@@ -75,6 +75,9 @@ already there.
    `pir/{plan}/T{nn}`, cut from the **feature branch** (not from `main`), so the worker starts from
    whatever sibling tasks have already merged. It tells that worker `pir-implement Txx` for the
    specific task it chose. The coordinator, not the worker, decides which task the worker builds.
+   A ready `you` task is spawned too, but as a **hands-on** worker (`pir-verify Txx`, §2.6): the
+   coordinator points the user at it, the user runs the live commands and the worker records the
+   findings, and it skips review — step 3 below is the `auto` path only.
 3. The worker runs `pir-implement Txx`, which implements that task and marks it `🔍` on its task
    branch. When the worker reports implemented, the coordinator **closes the implement session**
    and spawns a **fresh** session pointed at the same worktree and tells it `pir-review Txx`,
@@ -190,39 +193,45 @@ loop cheaply.
   `main` is the final promotion and the coordinator stops before it. Restart re-opens the same
   feature branch and re-dispatches whatever `PROGRESS.md` on it still shows unbuilt.
 
-### 2.6 Which tasks a worker can do, and which are yours
+### 2.6 Which tasks a worker builds, and which a person runs with a worker
 
 Not every task is work an autonomous worker can finish. A spike is a person running seatbelted
-commands and recording what they saw; a pure hand-verification drill is a person watching real
-agents. Dispatching a background worker to such a task is worse than useless — the worker has no
-code to produce and would immediately hand the task straight back, having spent a worktree and a
-paid session to do so.
+commands and recording what they saw; a hand-verification drill is a person watching real agents.
+A worker cannot safely stand in for the person here — it has no code to produce, and the design
+forbids an agent spawning real paid agents against real branches on its own (§5.2). But the
+coordinator should not carry that task's exploratory back-and-forth in its own context either — a
+spike is noisy, and the coordinator stays a clean dispatcher.
 
 So every task carries a marker, decided at plan time and recorded in `PROGRESS.md`:
 
-- **`auto`** — an autonomous worker can produce this task's deliverable (code and tests), even if
-  it also has a hand-verified half it escalates to the user through the normal question path
-  (§2.5). Most tasks are `auto`.
-- **`you`** — the task's completion is essentially a person's actions with no deliverable a worker
-  could produce: a spike, or an all-manual verification. The coordinator does not dispatch a
-  worker for these; it **surfaces** them to the user, with the task's command, as work for the
-  user to run — in classic single-stream mode or by hand.
+- **`auto`** — an autonomous worker produces this task's deliverable (code and tests), even if it
+  also has a hand-verified half it escalates to the user through the normal question path (§2.5).
+  Most tasks are `auto`.
+- **`you`** — the task's completion is a person's actions with no deliverable a worker could
+  produce: a spike, or a hand-verification drill. The coordinator still spawns a worker for it,
+  but a **hands-on** one: the person runs the live commands themselves and reports what they saw,
+  and the worker is the scribe that records it into `FINDINGS.md` on its task branch. The user
+  works with that worker directly, so the exploration lands in the worker's context, not the
+  coordinator's.
 
 The marker is a `Runs` column in the `PROGRESS.md` task table, `auto` or `you`, defaulting to
 `auto` when a plan predates the column so classic plans still parse. The coordinator reads it and
-routes ready `you` tasks to a surface list rather than the spawn list. This is what stops the
-coordinator dispatching a doomed worker for a spike, and it is the honest record of where a plan
-genuinely needs a person rather than an agent.
+spawns the matching kind of worker: an autonomous builder for `auto`, a hands-on scribe for `you`.
+A hands-on worker gets the same task worktree and branch off the feature branch as any worker
+(§2.9); its instruction is the worker contract's hands-on mode (`pir-verify Txx`, T07), not
+`pir-implement`, and the coordinator tells the user which worker to go and drive.
 
-**A surfaced `you` task completes on the user's say-so.** The coordinator cannot mark it done on
-its own — there is no deliverable it could check. When the user reports the task done (with its
-finding, the same channel as answering a question), the coordinator marks it `✅` on the feature
-branch's `PROGRESS.md` with `reconcileTaskRow`, so the coordinator stays the single writer of that
-file, and the task's dependents unblock on the next pass. A `you` task the user defers is marked
-`⛔` and its dependents wait; nothing downstream of an unrun spike is dispatched. This matters
-because a `you` task can sit on the critical path — the T00 spike gates T07 and T08 — so the run
-genuinely pauses at human speed until the user runs it, which is the correct behaviour, not a
-stall to design around.
+**A `you` worker has no fresh-review phase and folds back like any task.** There is no code for a
+second session to review; the person's recorded observation is the result, so a `you` worker goes
+straight from hands-on to done, skipping review. When the user finishes and the worker reports
+done, the coordinator merges its task branch into the feature branch and reconciles the row to
+`✅` with `reconcileTaskRow` (§3.3) — reading the file diff, never the conversation, so it stays
+the single writer of `PROGRESS.md` and its own context stays clean. A `you` worker counts against
+the worker ceiling and holds its slot while the user works, which correctly throttles the run to
+human speed. A `you` task the user defers is marked `⛔` and its dependents wait; nothing
+downstream of an unrun spike is dispatched. This matters because a `you` task can sit on the
+critical path — the T00 spike gates T07 and T08 — so the run genuinely pauses at human speed until
+the user runs it, which is the correct behaviour, not a stall to design around.
 
 ### 2.7 Planning for parallelism
 
@@ -355,10 +364,11 @@ Pure (`src/core/`):
 - `progress.mjs` — parse `PROGRESS.md` into a structured task table (including each task's `Runs`
   marker, §2.6) and the plan-reviewed gate, and fold one finished task's row back into a
   `PROGRESS.md` text. Depends on nothing.
-- `dispatch.mjs` — decide what to do this pass: which tasks to spawn a worker for, which worker to
-  move into review, which branch to merge, which workers to close, and which ready `you` tasks to
-  surface to the user. A function of the task table, the current worker assignments, the worker
-  ceiling and the halted flag. Depends on the `progress.mjs` shapes.
+- `dispatch.mjs` — decide what to do this pass: which tasks to spawn a worker for (each tagged
+  `auto` or `you`, so the loop spawns a builder or a hands-on scribe), which worker to move into
+  review, which branch to merge, and which workers to close. A function of the task table, the
+  current worker assignments, the worker ceiling and the halted flag. Depends on the `progress.mjs`
+  shapes.
 - `parallelism.mjs` — `analyzeParallelism` over the task graph: the longest dependency chain, the
   widest set of tasks that could run at once, and the `auto`/`you` counts (§2.7). Used by the
   planner's width report; a pure function of the task list. Depends on the `progress.mjs` shapes.
@@ -395,15 +405,17 @@ together, and it is a function of its arguments and nothing else.
 - `maxWorkers` — the ceiling (4).
 - `halted` — whether the kill-switch flag is present.
 
-It returns `{ spawn, surface, review, merge, close, promoteToMain }`:
+It returns `{ spawn, review, merge, close, promoteToMain }`:
 
-- If `halted`, `spawn`, `surface`, `review`, `merge` are empty, `promoteToMain` is false, and
-  `close` is every live worker.
-- `spawn` is the ready `auto` `⬜` tasks (all deps `✅`, not already assigned), capped so
-  live-plus-spawned never exceeds `maxWorkers`, lowest task number first.
-- `surface` is the ready `you` tasks (all deps `✅`, not yet done): human-required work the
-  coordinator presents to the user rather than dispatching (§2.6). A `you` task is never spawned.
-- `review` is the workers that reported implemented (`🔍`) and need a fresh review session.
+- If `halted`, `spawn`, `review`, `merge` are empty, `promoteToMain` is false, and `close` is
+  every live worker.
+- `spawn` is the ready `⬜` tasks (all deps `✅`, not already assigned), each as `{ num, runs }`
+  with its `auto`/`you` marker, capped so live-plus-spawned never exceeds `maxWorkers`, lowest task
+  number first. The loop spawns an autonomous builder for an `auto` entry and a hands-on scribe for
+  a `you` entry (§2.6); both kinds hold a worker slot.
+- `review` is the workers that reported implemented (`🔍`) and need a fresh review session. Only
+  `auto` workers ever reach this — a `you` worker has no code to review and goes straight to done
+  (§2.6).
 - `merge` is the task branches of workers reporting done, at most one per pass (serialized), merged
   into the feature branch (§2.9).
 - `close` is the workers whose task merged, plus the implement session of any task that has just
@@ -421,11 +433,11 @@ the feature branch's `PROGRESS.md` (§2.9).
 
 ```
 PROGRESS.md ────────parse──▶ tasks ─┐   (feature branch)
-claude agents --json ──────▶ live  ─┼─▶ decideDispatch ─▶ { spawn, surface, review, merge,
+claude agents --json ──────▶ live  ─┼─▶ decideDispatch ─▶ { spawn, review, merge,
 coordinator inbox (messages) ─────  ┤                         close, promoteToMain }
 control flag ──────────────▶ halt ──┘                         │
                                                               ▼  shell executes via platform.mjs
-                                     spawn / surface / send / spawn-review / merge→feature /
+                                     spawn builder|hands-on / send / spawn-review / merge→feature /
                                      close / promote feature→main (when all ✅)
                             reconcileTaskRow ◀── worker's task row ◀── (on merge into feature)
                                     │
@@ -594,10 +606,14 @@ minimum, kill switch wired.
 - **`PROGRESS.md` is coordinator-owned on `main`, folded row by row.** A shared file every
   branch edits would conflict on its single-line fields; folding one task row with a pure
   function avoids that and keeps the coordinator the single writer of the cross-cutting lines.
-- **Tasks are marked `auto` or `you`, and the coordinator surfaces `you` tasks instead of
-  dispatching them.** The user asked how the coordinator handles a task that needs a person, like
-  the spike (2026-09-07). Dispatching a worker for an all-manual task spends a worktree and a paid
-  session to hand the work straight back. The marker lets the coordinator route those to the user.
+- **Tasks are marked `auto` or `you`; the coordinator spawns an autonomous builder for `auto` and
+  a hands-on scribe worker for `you`.** The user asked how the coordinator handles a task that
+  needs a person, like the spike (2026-09-07). An autonomous worker cannot produce a spike's
+  deliverable and must not spawn real paid agents itself (§5.2), so the person is irreplaceable for
+  the doing. Revised the same day (2026-09-07): rather than the coordinator surfacing the task bare
+  for the user to run in classic mode, it spawns a **hands-on** worker the user drives — the user
+  runs the live commands, the worker records the findings — so the spike's noisy back-and-forth
+  lands in the worker's context, not the coordinator's, keeping the coordinator a clean dispatcher.
 - **The coordinator dispatches a specific task and phase; workers run `pir-implement Txx` /
   `pir-review Txx`, never `pir-work`.** The user pointed out that `pir-work` self-selects the next
   task, so parallel workers would all pick the same one (2026-09-07). Task selection moves to the
@@ -636,13 +652,16 @@ minimum, kill switch wired.
   four worker slots and halved effective concurrency. Closing the implementer as review starts frees
   the slot, and fresh eyes are strongest once the implementer is gone; the reviewer can still
   escalate a rework need through the normal question path. `decideDispatch.close` carries this (§3.3).
-- **A surfaced `you` task completes on the user's say-so; the coordinator then marks it `✅`.**
-  Decided at plan review (2026-09-07). Surfacing a `you` task had no completion path, so a
-  critical-path `you` task like the T00 spike (which gates T08) would stall the run with nothing to
-  advance it. The coordinator cannot judge a `you` task done itself, so the user reports it done —
-  the same channel as answering a question — and the coordinator records `✅` on the feature branch
-  with `reconcileTaskRow`, staying the single writer of that file (§2.6). Editing the feature branch
-  by hand was declined because it breaks that single-writer invariant.
+- **A `you` worker records to its task branch; the coordinator folds it back and marks `✅`.**
+  Decided at plan review, then revised with the user the same day (2026-09-07) when the surface-only
+  model was replaced by a hands-on worker (see the `auto`/`you` entry above). The hands-on worker
+  writes its findings to `FINDINGS.md` on its own task branch; when the user reports the task done
+  through it, the worker signals done, and the coordinator merges the branch and records `✅` on the
+  feature branch with `reconcileTaskRow` — reading the file diff, never the exploration, so it stays
+  the single writer of that file (§2.6) and its context stays clean. A `you` worker skips the
+  fresh-review phase: there is no code deliverable to review. A `you` task the user defers is `⛔`
+  and its dependents wait, so a critical-path spike like T00 (which gates T07/T08) pauses the run at
+  human speed rather than stalling it.
 
 ---
 

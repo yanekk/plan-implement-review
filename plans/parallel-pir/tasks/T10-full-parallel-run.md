@@ -17,12 +17,13 @@ real multi-task scratch plan; the task is the verification that the whole mode w
 
 DESIGN §2.1 (concurrent build and review, coordinator-named tasks), §2.4 (ceiling and kill switch
 under real load), §2.5 (a worker blocked on a decision, serialized merge, kill switch mid-task),
-§2.6 (a `you` task surfaced), §6 (recovery). This is the §5.1 hand-verified row for the full run.
+§2.6 (a `you` task run by a hands-on worker), §6 (recovery). This is the §5.1 hand-verified row for
+the full run.
 
 ## Files
 
 - A real small multi-task scratch plan under a scratch repo (throwaway), including at least one
-  `you` task so surfacing is exercised under load.
+  `you` task so the hands-on-worker path is exercised under load.
 - Any final glue only — if this task needs new product code, the split was wrong and it should be
   raised with the user rather than absorbed here.
 
@@ -40,8 +41,9 @@ surfaces a pure-logic gap, which would be a small addition to the relevant core 
 
 - [ ] A real small plan of several independent tasks ran to all-`✅` on one feature branch with
       multiple workers live at once, ceiling respected, task-branch merges into the feature branch
-      serialized, one decision surfaced and answered, one `you` task surfaced not dispatched, and a
-      single promotion to `main` at the end — verified with the user.
+      serialized, one decision surfaced and answered, one `you` task run by a hands-on worker the
+      user drove (folded back without review), and a single promotion to `main` at the end —
+      verified with the user.
 - [ ] The kill-switch drill was performed: HALT stopped every live worker, `main` stayed untouched
       (nothing promoted), and restart re-opened the feature branch and resumed from `PROGRESS.md`.
 - [ ] Both results recorded in FINDINGS.md with the date; no scratch worker or worktree left.
@@ -63,9 +65,9 @@ rm plans/scratch-multi/.parallel/control/HALT ; pir coordinate scratch-multi
 
 Expect: several workers building and reviewing concurrently under coordinator-named tasks on task
 branches off one feature branch; serial merges into the feature branch; a decision surfaced while
-the rest keep moving; the `you` task handed to you rather than a worker; on HALT, all workers
-stopped and the scratch `main` untouched; on restart, resume from `PROGRESS.md` to all-`✅` and a
-single promotion to `main`.
+the rest keep moving; the `you` task handed to a hands-on worker you drive rather than an autonomous
+builder; on HALT, all workers stopped and the scratch `main` untouched; on restart, resume from
+`PROGRESS.md` to all-`✅` and a single promotion to `main`.
 Tell me: did the ceiling hold, did merges stay one-at-a-time, was the decision surfaced without
-stalling others, was the `you` task surfaced, did HALT tear everything down cleanly, and did restart
-resume without redoing finished work or corrupting `main`.
+stalling others, was the `you` task run by a hands-on worker and folded back, did HALT tear
+everything down cleanly, and did restart resume without redoing finished work or corrupting `main`.
