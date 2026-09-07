@@ -46,11 +46,15 @@ pir-implement / pir-review: accept `Txx`. Given it, operate on that task instead
 pir-work would have selected. With no argument they behave exactly as today (classic mode).
 
 platform.mjs (send/inbox half):
-  send(workerId, { kind, task, body }) → ok      // coordinator → worker, via the T00 handshake
+  send(name, { kind, task, body }) → ok           // addressed by agent name (§2.8), via T00 handshake
   inbox() → [ { from, kind, task, body } ]        // messages workers sent the coordinator
   resolveSameRepo(agentsJson) → [workers in this repo]  // via git rev-parse --git-common-dir,
                                                         //   NOT --cwd (FINDINGS.md)
 ```
+
+The worker addresses the coordinator as `@{repo} / {plan}` (naming.mjs, from T03), which it can
+build itself from the repo and plan — it is not told an id. The coordinator passes the worker its
+own name at spawn for clarity, but the scheme is what removes id-passing.
 
 ## Tests
 

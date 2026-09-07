@@ -16,7 +16,8 @@ ceiling and the kill switch, serializes merges, and reports progress as tasks re
 
 DESIGN §2.1 (the run, the reviewed-gate refusal, coordinator names task and phase), §2.2 (surfacing
 messages and sending answers down), §2.4 (supervision, ceiling, kill switch), §2.5 (a worker
-blocked on a decision, serialized merge, conflict escalation), §2.6 (surfacing `you` tasks).
+blocked on a decision, serialized merge, conflict escalation), §2.6 (surfacing `you` tasks), §2.8
+(agent naming and finding workers by prefix).
 
 ## Files
 
@@ -30,6 +31,8 @@ blocked on a decision, serialized merge, conflict escalation), §2.6 (surfacing 
 ```
 pir-coordinate SKILL.md:
   - refuse if PROGRESS.md's plan-reviewed gate says "not yet" (same rule as pir-work).
+  - the coordinator names itself `@{repo} / {plan}` and each worker `@{repo} / {plan} / T{nn}`
+    (§2.8), and finds its own workers by that prefix in `claude agents --json`.
   - the coordinator chooses each worker's task (decideDispatch) and sends it `pir-implement Txx`,
     then a fresh session `pir-review Txx` — workers never run pir-work or choose their own task.
   - each pass, after executing actions, read the inbox and surface any question / decision /
@@ -51,6 +54,8 @@ coordinate.mjs: startCoordinator({ slug, platform, worktree, maxWorkers }) → d
 - [ ] Refuses to start when the plan-reviewed gate says "not yet".
 - [ ] A dispatched worker is told `pir-implement Txx` for the coordinator's chosen task; the review
       is a fresh worker told `pir-review Txx` (distinct id), not the implementer.
+- [ ] The coordinator names itself and its workers per §2.8 and finds its workers by the
+      `@{repo} / {plan} /` prefix, ignoring agents from other repos or plans.
 - [ ] A fake worker's question is surfaced and a user answer is routed down to that worker only.
 - [ ] Other ready tasks keep progressing while one fake worker is parked awaiting an answer.
 - [ ] A ready `you` task is surfaced to the user, not dispatched.

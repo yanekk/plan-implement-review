@@ -224,6 +224,37 @@ This is a change to the shared planning method and its templates, so it affects 
 too. The classic flow simply ignores the width report and the `Runs` marker; nothing it does
 changes, and a plan is now honest about its own shape whether or not it is ever run in parallel.
 
+### 2.8 Naming and addressing
+
+Every agent has a deterministic name, so agents address each other by a name anyone can predict
+rather than an opaque session id handed around out of band:
+
+- **Coordinator:** `@{repo} / {plan}` — e.g. `@plan-implement-review / parallel-pir`.
+- **Worker:** `@{repo} / {plan} / T{nn}` — e.g. `@plan-implement-review / parallel-pir / T05`.
+
+The name is set at spawn with `claude --bg -n "<name>"` (FINDINGS.md), and it is what
+`claude agents --json` shows and what a worker uses to message the coordinator. Three things fall
+out of it, which is why the convention is worth fixing rather than leaving names incidental:
+
+- **A worker addresses the coordinator by name without being told an id.** It knows the repo and
+  the plan, so it can construct `@{repo} / {plan}` itself. The coordinator still passes the worker
+  its own name at spawn for clarity, but the scheme means no id has to be discovered.
+- **The coordinator finds and identifies its workers from the name alone.** Its workers are the
+  agents whose name starts with `@{repo} / {plan} / T`, and the task each holds is the `T{nn}` at
+  the end. So the coordinator can rebuild "which worker is on which task" purely from
+  `claude agents --json`, without separate bookkeeping that could drift from reality.
+- **The user reads `claude agents` and sees exactly who is doing what**, across every repo and
+  plan on the machine, because the name carries the repo, the plan and the task.
+
+The name identifies the repo, plan and task, not the phase: the implement session and the fresh
+review session for one task carry the same `@{repo} / {plan} / T{nn}` name. The coordinator tells
+them apart by session id and the phase it is already tracking from the worker's own messages
+(implemented, done), so the name never has to carry the phase. The name gives identity and task;
+the lifecycle gives phase.
+
+The name format is pure string work (`naming.mjs`, §3.2) so it is tested directly; T00 confirms
+that `--name` sets the `agents --json` name and that messaging addresses by it on this version.
+
 ---
 
 ## 3. Architecture
@@ -264,14 +295,18 @@ Pure (`src/core/`):
 - `parallelism.mjs` — `analyzeParallelism` over the task graph: the longest dependency chain, the
   widest set of tasks that could run at once, and the `auto`/`you` counts (§2.7). Used by the
   planner's width report; a pure function of the task list. Depends on the `progress.mjs` shapes.
+- `naming.mjs` — build and parse the agent names of §2.8: `coordinatorName`, `workerName`, and
+  `parseAgentName` (a name back to its repo, plan and task). Pure string work. The loop uses
+  `parseAgentName` over `claude agents --json` to rebuild the `assignments` `decideDispatch`
+  consumes, so worker-to-task state comes from the names and cannot drift from separate bookkeeping.
 
 Shell (`src/shell/`):
 
-- `platform.mjs` — the thin wrapper over Claude Code: spawn a background worker in a worktree
-  cwd, send a worker a message and read the coordinator's inbox (cross-session messaging), list
-  live workers with their state (`claude agents --json`, same-repo resolution), and close a
-  worker (`claude stop` then remove its worktree). This is where the T00 spike's confirmed
-  mechanisms live.
+- `platform.mjs` — the thin wrapper over Claude Code: spawn a background worker in a worktree cwd
+  with its `--name` set by `naming.mjs` (§2.8), send a worker a message and read the coordinator's
+  inbox (cross-session messaging), list live workers with their state (`claude agents --json`,
+  same-repo resolution, names parsed by `naming.mjs`), and close a worker (`claude stop` then
+  remove its worktree). This is where the T00 spike's confirmed mechanisms live.
 - `worktree.mjs` — create a worktree and branch, integrate `main`, merge a branch to `main`
   serialized, and remove a worktree and branch.
 - `control.mjs` — read the kill-switch flag file and append to the log.
@@ -477,6 +512,11 @@ minimum, kill switch wired.
   task, so parallel workers would all pick the same one (2026-09-07). Task selection moves to the
   coordinator's `decideDispatch`, and the worker is told exactly which task and phase to run. This
   needs `pir-implement` / `pir-review` to accept an explicit task; their logic is unchanged.
+- **Agents are named `@{repo} / {plan}` and `@{repo} / {plan} / T{nn}`.** The user set this
+  convention (2026-09-07). Deterministic names mean a worker addresses the coordinator without
+  being handed an id, the coordinator identifies its workers and their tasks from the name alone
+  (so worker-to-task state cannot drift from separate bookkeeping), and the user reads
+  `claude agents` and sees who is doing what. Set with `claude --bg -n` (§2.8).
 - **The planning method is taught to plan for parallelism, in this plan.** The user chose to fold
   this in rather than defer it (2026-09-07). `/pir-plan` declares only real dependencies, marks
   each task `auto`/`you`, and reports a plan's parallel width so the user sees how much the

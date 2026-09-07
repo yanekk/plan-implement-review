@@ -14,12 +14,15 @@ what lets the whole dispatch logic be proven before any agent exists.
 ## Design sections this implements
 
 DESIGN §3.3 (the decision function), §2.1 (spawn ready, then fresh review), §2.3 (close), §2.4
-(the ceiling and halted), §2.5 (serialized merge, crash cleanup), §2.6 (surface `you` tasks).
+(the ceiling and halted), §2.5 (serialized merge, crash cleanup), §2.6 (surface `you` tasks), §2.8
+(the agent-name helpers).
 
 ## Files
 
 - `src/core/dispatch.mjs` — `decideDispatch`.
 - `src/core/dispatch.test.mjs`.
+- `src/core/naming.mjs` — the agent-name helpers of DESIGN §2.8 (pure string work).
+- `src/core/naming.test.mjs`.
 
 ## Interface
 
@@ -44,6 +47,18 @@ When `halted`: `spawn`, `surface`, `review` and `merge` are empty and `close` is
 worker. A task held by a live worker is never re-spawned. A dead worker (live=false or phase
 "dead") is always closed, so it stops holding a slot under the ceiling.
 
+The agent-name helpers (DESIGN §2.8), pure string work the loop uses to name workers at spawn and
+to rebuild `assignments` from `claude agents --json`:
+
+```
+coordinatorName({ repo, plan }) → "@{repo} / {plan}"
+workerName({ repo, plan, task }) → "@{repo} / {plan} / {task}"     // task e.g. "T05"
+parseAgentName(name) → { repo, plan, task } | { repo, plan, task: null }  // coordinator ⇒ task null
+```
+
+`parseAgentName` is the inverse of the builders and tolerates the surrounding spaces; a name that
+does not match the convention is reported (task null and a flag), not guessed.
+
 ## Tests
 
 - [ ] Spawns only ⬜ tasks whose deps are all ✅; a task with a 🔍 or ⬜ dependency is not spawned.
@@ -54,9 +69,13 @@ worker. A task held by a live worker is never re-spawned. A dead worker (live=fa
 - [ ] A dead worker is closed and its slot freed.
 - [ ] halted=true yields empty spawn/review/merge and closes every live worker.
 - [ ] A task already assigned to a live worker is not spawned again.
+- [ ] `workerName`/`coordinatorName` produce the `@{repo} / {plan}[ / T{nn}]` forms of §2.8.
+- [ ] `parseAgentName` round-trips both forms; a coordinator name yields `task: null`.
+- [ ] A name not matching the convention is reported, not silently parsed into a wrong task.
 
 ## Done when
 
-- [ ] `decideDispatch` returns correct spawn/review/merge/close for the cases above.
-- [ ] It reads no clock and no filesystem; `halted` and all state arrive as arguments.
+- [ ] `decideDispatch` returns correct spawn/surface/review/merge/close for the cases above.
+- [ ] The naming helpers build and parse the §2.8 forms and report a non-matching name.
+- [ ] Both modules read no clock and no filesystem; `halted` and all state arrive as arguments.
 - [ ] `npm test` is green.

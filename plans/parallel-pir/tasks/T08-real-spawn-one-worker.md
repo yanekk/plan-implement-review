@@ -28,9 +28,10 @@ row).
 ## Interface
 
 ```
-spawn(cwd, task, phase) → id   // claude --bg in the worktree; phase decides pir-implement Txx vs
-                               //   pir-review Txx in the worker's opening instruction; returns the id
-list() → [{ id, cwd, status, state, live }]   // claude agents --json, same-repo resolved
+spawn(cwd, task, phase) → id   // claude --bg -n "@{repo} / {plan} / T{nn}" in the worktree; phase
+                               //   decides pir-implement Txx vs pir-review Txx in the opening
+                               //   instruction; returns the id (name set per §2.8 / naming.mjs)
+list() → [{ id, name, cwd, status, state, live }]   // claude agents --json, same-repo resolved
 close(id) → { ok }             // claude stop <id> ; remove the worktree (force if dirty)
 ```
 
@@ -39,8 +40,9 @@ is hand-verified below.
 
 ## Tests
 
-- [ ] argv for spawn (implement and review phases) and close is built as the T00 findings specify.
-- [ ] Parsing a live-shaped `claude agents --json` yields id/cwd/status/state/live correctly.
+- [ ] argv for spawn (implement and review phases) and close is built as the T00 findings specify,
+      including `-n "@{repo} / {plan} / T{nn}"` from naming.mjs.
+- [ ] Parsing a live-shaped `claude agents --json` yields id/name/cwd/status/state/live correctly.
 - [ ] `list()` returns only same-repo workers (reuses the T07 resolution).
 
 ## Done when

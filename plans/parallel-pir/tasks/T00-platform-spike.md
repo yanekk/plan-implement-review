@@ -27,9 +27,12 @@ findings land in FINDINGS.md. Nothing under `src/` and nothing in the real plan.
 The four questions, each with the commands probed and the observation recorded:
 
 ```
-1. spawn-in-worktree: git worktree add <scratch> -b s ; (cwd=<scratch>) claude --bg -p "<task>"
-                      → returns a usable id; claude agents --json shows it with cwd=<scratch>?
-2. message both ways: from a coordinator session, SendMessage the worker a turn → worker acts?
+1. spawn-in-worktree: git worktree add <scratch> -b s ; (cwd=<scratch>) claude --bg
+                      -n "@{repo} / {plan} / T{nn}" -p "<task>"
+                      → returns a usable id; claude agents --json shows it with cwd=<scratch> and
+                      the name field equal to what -n set (or note if the repo is auto-prefixed)?
+2. message both ways: from a coordinator session, SendMessage the worker (addressed by that name)
+                      a turn → worker acts? confirm addressing by name works, not only by id.
                       worker SendMessage back to the coordinator → arrives in its inbox?
                       (confirm cross-session messaging is enabled headless; note any setting,
                        e.g. crossSessionInbound: accept, needed to receive.)
@@ -53,8 +56,9 @@ plan and scratch repo are the seatbelt; no real long-running paid agent against 
 
 ## Done when
 
-- [ ] All four questions answered on the machine, stated plainly enough that T07 and T08 can be
-      designed from them (especially the messaging handshake and any receive-side setting).
+- [ ] All questions answered on the machine, stated plainly enough that T07 and T08 can be
+      designed from them (especially the messaging handshake, any receive-side setting, and whether
+      `-n` sets the `agents --json` name and messaging can address by that name — §2.8).
 - [ ] The spike directory and every scratch artifact deleted; findings in FINDINGS.md.
 
 ## Needs a person
