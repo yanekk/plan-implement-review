@@ -1,0 +1,10 @@
+{
+  "name": "parallel-pir",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Coordinator for running PIR tasks in parallel across background workers. Pure core, thin shell.",
+  "scripts": {
+    "test": "FORCE_COLOR=0 NO_COLOR=1 node --test --test-reporter=dot 'src/**/*.test.mjs'"
+  }
+}

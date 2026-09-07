@@ -191,3 +191,24 @@ skills/
 ├── pir-implement/     build one task, hand it over unreviewed
 └── pir-review/        check someone else's task, fix what it finds, close it
 ```
+
+## Running the tests
+
+Plans that ship code (the first is `parallel-pir`) keep a pure core under `src/core/` and a
+thin platform shell under `src/shell/`. One command runs everything:
+
+```
+npm test
+```
+
+It runs Node's built-in test runner over `src/**/*.test.mjs` with the dot reporter, so a
+green run is a few lines and the exit code carries the result. Colour is forced off
+(`FORCE_COLOR=0`) because a green dot run should be plain text on any machine — including
+this one, where `FORCE_COLOR=3` is set in the environment.
+
+To see a full line per test while debugging, turn the reporter verbose:
+
+```
+node --test --test-reporter=spec 'src/**/*.test.mjs'
+```
+

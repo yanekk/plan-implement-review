@@ -1,1 +1,6 @@
 .DS_Store
+node_modules/
+
+# Per-run coordinator control state: the kill-switch flag (HALT) and the event log.
+# Never committed to a task branch or promoted to main with the feature branch (DESIGN §3.5).
+plans/*/.parallel/

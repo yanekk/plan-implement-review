@@ -21,10 +21,10 @@ After review the user revised the `you`-task model (2026-09-07): the coordinator
 hands-on worker (`pir-verify Txx`) the user drives, folded back without review, instead of surfacing
 the task bare. Touched DESIGN, T03, T05, T07, T09, T10, T11.
 **Last updated:** 2026-09-07
-**Next `pir-work` will:** implement T01 (scaffold, `npm test`, boundary test) — the lowest ⬜ with
-no dependencies. T00 is done: the platform spike ran and confirmed spawn/message/fresh-review/close,
-with two corrections now in FINDINGS (`--bg` prompt is positional, not `-p`; worker names must be
-slash-free). T07 (§2.8 naming) and T11 (planner templates) must fold those in.
+**Next `pir-work` will:** review T01 (scaffold, `npm test`, boundary test), now 🔍. Confirm the
+test command stays green, quiet and colourless, and that the boundary scanner still bites on a
+forbidden core import. After T01 is ✅, T02 (parse `PROGRESS.md`) is the next ⬜.
+T07 (§2.8 naming) and T11 (planner templates) must still fold in the T00 corrections.
 
 ## Tasks
 
@@ -35,7 +35,7 @@ live steps with a hands-on worker the coordinator spawns, folded back without re
 | # | Task | Runs | Depends on | State | Notes |
 |---|---|---|---|---|---|
 | T00 | Platform primitives spike: spawn, message, fresh review, close | you | — | ✅ | Agent ran the seatbelted spike (user away, delegated), not user-watched. All 4 answered, artifacts deleted. Two corrections: `--bg` task is positional not `-p`; worker names must be slash-free (SendMessage rejects `/`). See FINDINGS. Gates T07/T08. |
-| T01 | Project scaffold, `npm test`, boundary test | auto | — | ⬜ | |
+| T01 | Project scaffold, `npm test`, boundary test | auto | — | 🔍 | Built dependency-free `package.json` (type:module, `npm test`=dot reporter, `FORCE_COLOR=0`), `src/core`+`src/shell` with stubs, `boundary.test.mjs`, README test note. 2 tests. Verified: fail on `node:fs` import, colourless under `FORCE_COLOR=3`. Deviations: also gitignored `node_modules/`; README note is a new section in the method README. |
 | T02 | Parse `PROGRESS.md` (with `Runs` marker) and fold one row back | auto | T01 | ⬜ | |
 | T03 | `decideDispatch` — spawn / review / merge / close | auto | T02 | ⬜ | |
 | T04 | `analyzeParallelism` — critical path, width, auto/you counts | auto | T02 | ⬜ | |
@@ -52,7 +52,7 @@ deviation from the task doc.
 
 **A ✅ task's cell may be cut to one line** once the next task has been reviewed.
 
-**Review queue:** *(empty)*
+**Review queue:** T01
 
 ## Blocked on the user
 
