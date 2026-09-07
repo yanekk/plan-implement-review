@@ -100,15 +100,16 @@ function parseDeps(cell) {
   return cell.match(/T\d+/g) || [];
 }
 
-// Read the **Plan reviewed:** gate line. reviewed is false while the note begins "not yet"
-// and false when the line is absent (the conservative default: an unreviewed-looking gate
-// builds nothing, DESIGN §2.1). note carries whatever follows the label, for the report.
+// Read the **Plan reviewed:** gate line. reviewed is false while the note begins "not yet",
+// false when the note is empty, and false when the line is absent (the conservative default:
+// an unreviewed-looking gate builds nothing, DESIGN §2.1 — the coordinator refuses on anything
+// short of a positive verdict). note carries whatever follows the label, for the report.
 function parsePlanReviewed(lines) {
   for (const line of lines) {
     const m = line.match(/\*\*Plan reviewed:\*\*\s*(.*)$/);
     if (!m) continue;
     const note = m[1].trim();
-    return { reviewed: !/^not yet\b/i.test(note), note };
+    return { reviewed: note !== '' && !/^not yet\b/i.test(note), note };
   }
   return { reviewed: false, note: '' };
 }

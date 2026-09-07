@@ -76,6 +76,14 @@ test('reviewed gate: a missing line is treated as not reviewed', () => {
   assert.equal(planReviewed.note, '');
 });
 
+test('reviewed gate: a present-but-empty note is treated as not reviewed', () => {
+  // A blank gate is an unreviewed-looking gate; the coordinator must refuse (DESIGN §2.1),
+  // not read the absence of "not yet" as a positive verdict.
+  const { planReviewed } = parseProgress('# Progress\n\n**Plan reviewed:**\n');
+  assert.equal(planReviewed.reviewed, false);
+  assert.equal(planReviewed.note, '');
+});
+
 test('an unknown state glyph is surfaced as an error, not dropped', () => {
   const bad = SAMPLE.replace('| T02 | Parse PROGRESS.md | auto | T01 | ⬜ |', '| T02 | Parse PROGRESS.md | auto | T01 | ❓ |');
   const { tasks, errors } = parseProgress(bad);
