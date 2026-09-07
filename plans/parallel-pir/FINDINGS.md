@@ -12,6 +12,7 @@ Legend: 🐞 defect found · ✅ verified by hand with the user · 📌 worth kn
 
 | Date | | Finding |
 |---|---|---|
+| 2026-09-07 | 📌 | T03 review: two decideDispatch crash gaps for the loop (T05/T06). A review-ready worker dying before its reviewer spawns is closed, orphaning the 🔍 task. A done worker dying before merge is closed unmerged; promoteToMain ignores dead workers, promoting without it. |
 | 2026-09-07 | 📌 | T01 review: boundary scanner matches DESIGN §3.1's seven tokens exactly, but is text-based and non-recursive. It misses `node:http(s)`, `node:dns`, `performance.now`, `process.hrtime`; a future core clock or network leak via those passes. A decision if the core grows. |
 | 2026-09-07 | 🐞 | T00: `SendMessage` addresses by NAME only and rejects a name containing `/` (`to must be a bare teammate name`). Names must be slash-free. Resolved: separator is now `·` not `/` (§2.8, naming.mjs); T07 confirms `·` is accepted live. |
 | 2026-09-07 | 📌 | T00: coordinator→worker message reached the idle/blocked worker and it acted; reply arrived automatically, no receive-side setting needed. Worker replies to the `from=uds:/tmp/cc-socks/<n>.sock` socket address, so reply works despite the coordinator's own slashed name. |

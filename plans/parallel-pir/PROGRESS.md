@@ -21,9 +21,9 @@ After review the user revised the `you`-task model (2026-09-07): the coordinator
 hands-on worker (`pir-verify Txx`) the user drives, folded back without review, instead of surfacing
 the task bare. Touched DESIGN, T03, T05, T07, T09, T10, T11.
 **Last updated:** 2026-09-07
-**Next `pir-work` will:** review T03 (`decideDispatch` + naming). It is the only 🔍. After it,
-T04 is the next ⬜ (depends only on T02 ✅). T07 (§2.8 naming) and T11 (planner templates) must
-still fold in the T00 corrections.
+**Next `pir-work` will:** implement T04 (`analyzeParallelism`), the next ⬜, depends only on T02 ✅.
+No 🔍 remains after T03. T05 depends on T03 ✅. T07 (§2.8 naming) and T11 (planner templates)
+must still fold in the T00 corrections.
 
 ## Tasks
 
@@ -34,9 +34,9 @@ live steps with a hands-on worker the coordinator spawns, folded back without re
 | # | Task | Runs | Depends on | State | Notes |
 |---|---|---|---|---|---|
 | T00 | Platform primitives spike: spawn, message, fresh review, close | you | — | ✅ | Spike verified by agent 2026-09-07 (user away, delegated): spawn/message/fresh-review/close all confirmed, artifacts deleted. Corrections: `--bg` task positional not `-p`; worker names slash-free. See FINDINGS. Gates T07/T08. |
-| T01 | Project scaffold, `npm test`, boundary test | auto | — | ✅ | Reviewed clean. Verified the test command: green/failure exits, boundary bite, zero ANSI under `FORCE_COLOR`. Scanner matches §3.1's seven tokens, non-recursive. |
-| T02 | Parse `PROGRESS.md` (with `Runs` marker) and fold one row back | auto | T01 | ✅ | Reviewed. One defect found and fixed: an empty `**Plan reviewed:**` note read as reviewed=true, contradicting the §2.1 conservative default; now empty reads as not-reviewed, with a test (21 tests). Probed the parser adversarially on the real PROGRESS.md (12 tasks, 0 errors) and confirmed reconcile round-trips touching one line. Boundary holds, no shell import. |
-| T03 | `decideDispatch` — spawn / review / merge / close | auto | T02 | 🔍 | Built `dispatch.mjs` and `naming.mjs`, 28 tests (50 total, boundary clean). Deviation: `merge` returns the done worker's `workerId`, not a branch string; the pure fn has no plan slug, so the loop maps id to branch. Naming separator changed from `/` to `·` per the user (2026-09-07), since T00 found SendMessage rejects `/`; T07 confirms `·` live. |
+| T01 | Project scaffold, `npm test`, boundary test | auto | — | ✅ | Reviewed clean. Test command verified (exits, boundary bite, no ANSI under FORCE_COLOR); scanner matches §3.1's seven tokens, non-recursive. |
+| T02 | Parse `PROGRESS.md` (with `Runs` marker) and fold one row back | auto | T01 | ✅ | Reviewed. Fixed: empty `**Plan reviewed:**` note read as reviewed=true → now not-reviewed, with a test. Parser probed on real PROGRESS.md; reconcile round-trips one line. 21 tests. |
+| T03 | `decideDispatch` — spawn / review / merge / close | auto | T02 | ✅ | Reviewed clean, no fix. Pure fn matches its documented contract, boundary holds, 50 tests meaningful. Probed slot accounting, halted, dead-worker close, lowest-first spawn, naming parser edges. Two crash-window gaps (worker dying at review-ready or at merge) logged to FINDINGS for the loop (T05/T06). |
 | T04 | `analyzeParallelism` — critical path, width, auto/you counts | auto | T02 | ⬜ | |
 | T05 | Fake spawn/message/list/close + the coordinator loop | auto | T03 | ⬜ | |
 | T06 | Feature branch + task worktree create / integrate / merge / promote | auto | T05 | ⬜ | Hand-verified half. |
@@ -51,7 +51,7 @@ deviation from the task doc.
 
 **A ✅ task's cell may be cut to one line** once the next task has been reviewed.
 
-**Review queue:** T03
+**Review queue:** empty
 
 ## Blocked on the user
 
