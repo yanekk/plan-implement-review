@@ -21,8 +21,8 @@ After review the user revised the `you`-task model (2026-09-07): the coordinator
 hands-on worker (`pir-verify Txx`) the user drives, folded back without review, instead of surfacing
 the task bare. Touched DESIGN, T03, T05, T07, T09, T10, T11.
 **Last updated:** 2026-09-07
-**Next `pir-work` will:** review T02 (`parseProgress`/`reconcileTaskRow` over `PROGRESS.md`).
-It is the only 🔍. After it, T03 and T04 both open up (both depend only on T02). T07 (§2.8 naming)
+**Next `pir-work` will:** implement T03 (`decideDispatch`). T02 is reviewed and ✅, so no 🔍
+remains; T03 and T04 both open (both depend only on T02), T03 is lowest. T07 (§2.8 naming)
 and T11 (planner templates) must still fold in the T00 corrections.
 
 ## Tasks
@@ -34,8 +34,8 @@ live steps with a hands-on worker the coordinator spawns, folded back without re
 | # | Task | Runs | Depends on | State | Notes |
 |---|---|---|---|---|---|
 | T00 | Platform primitives spike: spawn, message, fresh review, close | you | — | ✅ | Spike verified by agent 2026-09-07 (user away, delegated): spawn/message/fresh-review/close all confirmed, artifacts deleted. Corrections: `--bg` task positional not `-p`; worker names slash-free. See FINDINGS. Gates T07/T08. |
-| T01 | Project scaffold, `npm test`, boundary test | auto | — | ✅ | Reviewed clean, no fix. Verified all five: green run two dots exit 0; failure exit 1 loud with file/line/diff; boundary bites on a `node:fs` stub then reverts; zero ANSI and no NO_COLOR warning under `FORCE_COLOR=3`. Probed: scanner is non-recursive and text-based, matching DESIGN's flat core and §3.1's token list exactly. |
-| T02 | Parse `PROGRESS.md` (with `Runs` marker) and fold one row back | auto | T01 | 🔍 | `parseProgress` + `reconcileTaskRow` in `src/core/progress.mjs`; 18 tests. Columns resolved by header name so a no-`Runs` table defaults to `auto`. Bad rows and unknown glyphs go to an `errors` array, not dropped. Verified against the real PROGRESS.md: 12 tasks, 0 errors, one-line reconcile. Deleted the T01 placeholder (a real core module now exists). No deviations. |
+| T01 | Project scaffold, `npm test`, boundary test | auto | — | ✅ | Reviewed clean. Verified the test command: green/failure exits, boundary bite, zero ANSI under `FORCE_COLOR`. Scanner matches §3.1's seven tokens, non-recursive. |
+| T02 | Parse `PROGRESS.md` (with `Runs` marker) and fold one row back | auto | T01 | ✅ | Reviewed. One defect found and fixed: an empty `**Plan reviewed:**` note read as reviewed=true, contradicting the §2.1 conservative default; now empty reads as not-reviewed, with a test (21 tests). Probed the parser adversarially on the real PROGRESS.md (12 tasks, 0 errors) and confirmed reconcile round-trips touching one line. Boundary holds, no shell import. |
 | T03 | `decideDispatch` — spawn / review / merge / close | auto | T02 | ⬜ | |
 | T04 | `analyzeParallelism` — critical path, width, auto/you counts | auto | T02 | ⬜ | |
 | T05 | Fake spawn/message/list/close + the coordinator loop | auto | T03 | ⬜ | |
@@ -51,7 +51,7 @@ deviation from the task doc.
 
 **A ✅ task's cell may be cut to one line** once the next task has been reviewed.
 
-**Review queue:** T02
+**Review queue:** empty
 
 ## Blocked on the user
 
