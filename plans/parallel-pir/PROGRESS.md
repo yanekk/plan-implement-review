@@ -21,10 +21,10 @@ After review the user revised the `you`-task model (2026-09-07): the coordinator
 hands-on worker (`pir-verify Txx`) the user drives, folded back without review, instead of surfacing
 the task bare. Touched DESIGN, T03, T05, T07, T09, T10, T11.
 **Last updated:** 2026-09-07
-**Next `pir-work` will:** review T01 (scaffold, `npm test`, boundary test), now 🔍. Confirm the
-test command stays green, quiet and colourless, and that the boundary scanner still bites on a
-forbidden core import. After T01 is ✅, T02 (parse `PROGRESS.md`) is the next ⬜.
-T07 (§2.8 naming) and T11 (planner templates) must still fold in the T00 corrections.
+**Next `pir-work` will:** implement T02 (parse `PROGRESS.md` into the task table, including each
+row's `Runs` marker and the plan-reviewed gate, and fold one finished row back). It is the next
+⬜ and its only dependency, T01, is now ✅. T07 (§2.8 naming) and T11 (planner templates) must
+still fold in the T00 corrections.
 
 ## Tasks
 
@@ -34,8 +34,8 @@ live steps with a hands-on worker the coordinator spawns, folded back without re
 
 | # | Task | Runs | Depends on | State | Notes |
 |---|---|---|---|---|---|
-| T00 | Platform primitives spike: spawn, message, fresh review, close | you | — | ✅ | Agent ran the seatbelted spike (user away, delegated), not user-watched. All 4 answered, artifacts deleted. Two corrections: `--bg` task is positional not `-p`; worker names must be slash-free (SendMessage rejects `/`). See FINDINGS. Gates T07/T08. |
-| T01 | Project scaffold, `npm test`, boundary test | auto | — | 🔍 | Built dependency-free `package.json` (type:module, `npm test`=dot reporter, `FORCE_COLOR=0`), `src/core`+`src/shell` with stubs, `boundary.test.mjs`, README test note. 2 tests. Verified: fail on `node:fs` import, colourless under `FORCE_COLOR=3`. Deviations: also gitignored `node_modules/`; README note is a new section in the method README. |
+| T00 | Platform primitives spike: spawn, message, fresh review, close | you | — | ✅ | Spike verified by agent 2026-09-07 (user away, delegated): spawn/message/fresh-review/close all confirmed, artifacts deleted. Corrections: `--bg` task positional not `-p`; worker names slash-free. See FINDINGS. Gates T07/T08. |
+| T01 | Project scaffold, `npm test`, boundary test | auto | — | ✅ | Reviewed clean, no fix. Verified all five: green run two dots exit 0; failure exit 1 loud with file/line/diff; boundary bites on a `node:fs` stub then reverts; zero ANSI and no NO_COLOR warning under `FORCE_COLOR=3`. Probed: scanner is non-recursive and text-based, matching DESIGN's flat core and §3.1's token list exactly. |
 | T02 | Parse `PROGRESS.md` (with `Runs` marker) and fold one row back | auto | T01 | ⬜ | |
 | T03 | `decideDispatch` — spawn / review / merge / close | auto | T02 | ⬜ | |
 | T04 | `analyzeParallelism` — critical path, width, auto/you counts | auto | T02 | ⬜ | |
@@ -52,7 +52,7 @@ deviation from the task doc.
 
 **A ✅ task's cell may be cut to one line** once the next task has been reviewed.
 
-**Review queue:** T01
+**Review queue:** empty
 
 ## Blocked on the user
 

@@ -12,6 +12,7 @@ Legend: 🐞 defect found · ✅ verified by hand with the user · 📌 worth kn
 
 | Date | | Finding |
 |---|---|---|
+| 2026-09-07 | 📌 | T01 review: boundary scanner matches DESIGN §3.1's seven tokens exactly, but is text-based and non-recursive. It misses `node:http(s)`, `node:dns`, `performance.now`, `process.hrtime`; a future core clock or network leak via those passes. A decision if the core grows. |
 | 2026-09-07 | 🐞 | T00: SendMessage addresses workers by NAME only, not id or sessionId. A name containing `/` (DESIGN §2.8 `@{repo} / {plan} / T{nn}`) is rejected: `to must be a bare teammate name`. Worker names must be slash-free. Reshapes §2.8 and T07. |
 | 2026-09-07 | 📌 | T00: coordinator→worker message reached the idle/blocked worker and it acted; reply arrived automatically, no receive-side setting needed. Worker replies to the `from=uds:/tmp/cc-socks/<n>.sock` socket address, so reply works despite the coordinator's own slashed name. |
 | 2026-09-07 | 🐞 | T00: `claude --bg` takes the task as POSITIONAL, not `-p` (`--bg`+`--print` conflict, exit 1). DESIGN §2.8 and task docs wrote `-p "<task>"`; wrong. `-n "<name>"` sets the `agents --json` name verbatim (no repo prefix) and cwd is the worktree. |
