@@ -4,24 +4,23 @@
 
 ## Goal
 
-Give the project the one thing the base method requires and it does not yet have: a test
-command that is the only evidence a session may produce on its own. Set up a dependency-free
-Node project, wire `npm test` to run `node --test` quietly, with no colour, and loud on
-failure, and write the boundary test that keeps the pure core pure. Everything after this task
-proves itself through this command, so it is built first.
+Give the project the one thing the base method requires and it does not yet have: a test command
+that is the only evidence a session may produce on its own. Set up a dependency-free Node
+project, wire `npm test` to run `node --test` quietly, with no colour, loud on failure, and
+write the boundary test that keeps the pure core pure. Everything after this task proves itself
+through this command, so it is built first.
 
 ## Design sections this implements
 
-DESIGN §3.1 (the boundary and the test that enforces it), §5 (the environment and the exact
-test command).
+DESIGN §3.1 (the boundary and the test that enforces it), §5 (the environment and the exact test
+command).
 
 ## Files
 
 - `package.json` — `"type": "module"`, the `test` script, no runtime dependencies.
-- `src/core/` and `src/shell/` — created, each with a `.gitkeep` or a first stub so the layout
-  is real.
+- `src/core/` and `src/shell/` — created, each with a first stub so the layout is real.
 - `src/core/boundary.test.mjs` — the boundary scanner test.
-- A short `README.md` note (or a `DESIGN.md` pointer) on how to turn verbose output back on.
+- A short `README.md` note on how to turn verbose output back on.
 
 ## Interface
 
@@ -38,18 +37,14 @@ boundary.test.mjs:
   message on failure names the file and the forbidden token, and says: move it to shell/.
 ```
 
-The boundary test reads the core files' text and asserts, so it needs to read files — it lives
-in `core/` by name but is itself a test, and the scanner reading source is allowed. Keep the
-read confined to the test.
-
 ## Tests
 
 - [ ] `npm test` exits 0 on an all-green run and prints only a short summary, not a line per test.
 - [ ] `npm test` exits non-zero and prints the failing test's file, line and diff when one fails.
 - [ ] The boundary test passes on the empty/stub core.
-- [ ] The boundary test fails when a core stub is given a `node:fs` import (prove it bites),
-      then that stub is reverted.
-- [ ] Colour is off in the command's output even when `FORCE_COLOR=1` is set in the environment.
+- [ ] The boundary test fails when a core stub is given a `node:fs` import (prove it bites), then
+      that stub is reverted.
+- [ ] Colour is off in the output even when `FORCE_COLOR=1` is set in the environment.
 
 ## Done when
 

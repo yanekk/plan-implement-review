@@ -12,13 +12,13 @@ cell also fixes the over-budget cell they walk past.**
 
 **Plan reviewed:** not yet — run `/pir-review-plan` before the first `/pir-work`
 
-**Status:** Plan written by `/pir-plan`, not yet reviewed. Requirements were confirmed with
-the user and three decisions settled: Node `node --test` as the test stack, caps at 5/min · 6
-hops · 4 workers, a hard-stop-only kill switch, worker-resolves-then-escalates on merge
-conflicts, and close as a first-class worker operation.
+**Status:** Plan written and then re-scoped after the user asked whether it reinvented the
+wheel. A platform survey found Claude Code already provides the orchestration (background
+workers, per-session worktrees, cross-session messaging, stop/remove), all working headless.
+The plan now builds only the PIR glue on top: 10 tasks, down from 14. Not yet reviewed.
 **Last updated:** 2026-09-07
 **Next `pir-work` will:** nothing yet — `/pir-review-plan parallel-pir` must run first. Once
-reviewed, the first work is T00 (the CLI driver spike) or T01 (scaffold), which have no
+reviewed, the first work is T00 (the platform spike) or T01 (scaffold), which have no
 dependencies.
 
 ## Tasks
@@ -28,20 +28,16 @@ done · ⛔ blocked, needs a human.
 
 | # | Task | Depends on | State | Notes |
 |---|---|---|---|---|
-| T00 | CLI driver spike: create, drive, close a worker | — | ⬜ | Throwaway. Hand-verified with the user; gates T10, T11. |
+| T00 | Platform primitives spike: spawn, message, fresh review, close | — | ⬜ | Throwaway. Hand-verified with the user; gates T06, T07. |
 | T01 | Project scaffold, `npm test`, boundary test | — | ⬜ | |
-| T02 | Parse `PROGRESS.md` into tasks and the gate line | T01 | ⬜ | |
-| T03 | `decideDispatch` — spawn / merge / close | T02 | ⬜ | |
-| T04 | Caps, hop depth, the halted check | T01 | ⬜ | |
-| T05 | Mailbox message format, parse, provenance | T01 | ⬜ | |
-| T06 | Fold one finished task row into `PROGRESS.md` | T02 | ⬜ | |
-| T07 | Fake agent registry + scratch-repo simulation | T03, T04, T05, T06 | ⬜ | |
-| T08 | The coordinator loop over the fake world | T07 | ⬜ | |
-| T09 | Real worktree create / integrate / merge / close | T08 | ⬜ | Hand-verified half. |
-| T10 | `pir-worker` contract skill + mailbox-post command | T05, T00 | ⬜ | |
-| T11 | One real worker, one trivial task, seatbelted | T09, T10 | ⬜ | Hand-verified. Dangerous: small first. |
-| T12 | The `pir-coordinate` skill the user talks to | T11 | ⬜ | |
-| T13 | Full multi-worker run + kill-switch drill | T12 | ⬜ | Hand-verified. Dangerous: full size, last. |
+| T02 | Parse `PROGRESS.md` and fold one finished task row back | T01 | ⬜ | |
+| T03 | `decideDispatch` — spawn / review / merge / close | T02 | ⬜ | |
+| T04 | Fake spawn/message/list/close + the coordinator loop | T03 | ⬜ | |
+| T05 | Real worktree create / integrate / merge / close | T04 | ⬜ | Hand-verified half. |
+| T06 | `pir-worker` contract skill + cross-session wiring | T00 | ⬜ | |
+| T07 | One real worker, one trivial task, seatbelted | T05, T06 | ⬜ | Hand-verified. Dangerous: small first. |
+| T08 | The `pir-coordinate` skill the user talks to | T07 | ⬜ | |
+| T09 | Full multi-worker run + kill-switch drill | T08 | ⬜ | Hand-verified. Dangerous: full size, last. |
 
 A Notes cell holds what was built or what the review found, the test count, and one line per
 deviation from the task doc.
@@ -52,7 +48,7 @@ deviation from the task doc.
 
 ## Blocked on the user
 
-Nothing right now. Several Phase 3 tasks (T09, T11, T13) have a half that only the user can
-verify — a real agent spawning, a real merge, the kill-switch drill — and each names its exact
-seatbelted command in its task doc. That is a good state; it is where those tasks pause for an
-answer, not a backlog.
+Nothing right now. Three Phase 3 tasks (T05, T07, T09) have a half that only the user can
+verify — a real agent spawning and messaging, a real merge, the kill-switch drill — and each
+names its exact seatbelted command in its task doc. That is a good state; it is where those
+tasks pause for an answer, not a backlog.

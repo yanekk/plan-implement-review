@@ -1,10 +1,10 @@
-# T09 — Real worktree create / integrate / merge / close
+# T05 — Real worktree create / integrate / merge / close
 
-**Phase:** 3 · **Depends on:** T08 · **Weight:** medium
+**Phase:** 3 · **Depends on:** T04 · **Weight:** medium
 
 ## Goal
 
-The real git plumbing behind the fake from T07, built before any live agent so a runaway or
+The real git plumbing behind the fake from T04, built before any live agent so a runaway or
 abandoned worker can always be torn down. Create a worktree and branch off `main`, integrate the
 latest `main` into a branch (surfacing a conflict rather than resolving it here), merge a clean
 branch to `main` one at a time, and remove a worktree and branch. This is the recovery half of
@@ -17,8 +17,8 @@ DESIGN §2.3 (create/close), §2.5 (serialized merge, conflict surfacing, crash 
 
 ## Files
 
-- `src/shell/worktree.mjs` — the real implementation of the T07 worktree interface.
-- `src/shell/worktree.test.mjs` — run against a scratch git repo created in the test's temp dir.
+- `src/shell/worktree.mjs` — the real implementation of the T04 worktree interface.
+- `src/shell/worktree.test.mjs` — run against a scratch git repo in the test's temp dir.
 
 ## Interface
 
@@ -26,22 +26,23 @@ DESIGN §2.3 (create/close), §2.5 (serialized merge, conflict surfacing, crash 
 create(task) → { path, branch }        // git worktree add <path> -b <branch> off main
 integrate(path) → { ok } | { conflict: [files] }   // merge main into the branch; report conflict
 merge(branch) → { ok } | { conflict: [files] }     // merge branch into main; serialized by caller
-remove({ path, branch }) → { ok }      // git worktree remove; git branch -d/-D
+remove({ path, branch }) → { ok }      // git worktree remove (force if needed) ; git branch -d/-D
 
-Branch names are derived from the task, e.g. "pir/T05". integrate and merge never auto-resolve;
-they report conflicts so the worker (integrate) or the coordinator (merge) decides.
+Branch names derive from the task, e.g. "pir/T05". integrate and merge never auto-resolve; they
+report conflicts so the worker (integrate) or the coordinator (merge) decides. remove force-drops
+the worktree when needed, because claude rm keeps a dirty worktree (FINDINGS.md).
 ```
 
 The tests operate on a throwaway repo under a temp dir — never the real project — which is the
-seatbelt for this task; no agent is spawned here.
+seatbelt; no agent is spawned here.
 
 ## Tests
 
 - [ ] `create` makes a worktree and branch off main in a scratch repo; `git worktree list` shows it.
 - [ ] `integrate` brings a diverged main into the branch cleanly when there is no conflict.
 - [ ] `integrate` reports the conflicting files when main and the branch touched the same lines.
-- [ ] `merge` fast-forwards/merges a clean branch to main and reports a conflict otherwise.
-- [ ] `remove` deletes the worktree and branch; `git worktree list` is clean afterwards.
+- [ ] `merge` merges a clean branch to main and reports a conflict otherwise.
+- [ ] `remove` deletes the worktree and branch, including a worktree with uncommitted changes.
 - [ ] Two `merge` calls run one after another (the caller serializes; prove a second waits).
 
 ## Done when
@@ -53,8 +54,8 @@ seatbelt for this task; no agent is spawned here.
 ## Needs a person
 
 The automated tests use a scratch repo, so they are self-contained. What a person confirms is
-that the same operations behave on the real project's git and `main` — but only once, lightly,
-and never as part of an agent run:
+that the same operations behave on the real project's git and `main` — once, lightly, never as
+part of an agent run:
 
 ```
 # in a scratch clone of THIS repo, not the working copy:

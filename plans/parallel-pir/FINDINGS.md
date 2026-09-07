@@ -12,7 +12,8 @@ Legend: 🐞 defect found · ✅ verified by hand with the user · 📌 worth kn
 
 | Date | | Finding |
 |---|---|---|
-| 2026-09-07 | 📌 | `claude agents --cwd <path>` matches the repo root, not the live worktree cwd, so filtering by a worktree path returns `[]`. Read the `cwd` field from `--json` and resolve via `git rev-parse --git-common-dir` instead. |
-| 2026-09-07 | 📌 | `claude --resume <id>` on an already-running session starts a copy rather than injecting a turn (per `--help`). So the immediate down-channel likely needs an idle worker or attach-injection; T00 settles which. |
-| 2026-09-07 | 📌 | Probed on the machine: `claude` 2.1.263 has `--bg`, `agents --json` (id/name/cwd, `--all`, `--cwd`), and first-class `attach` / `logs` / `stop\|kill` / `rm` / `respawn`. `rm` removes the session's worktree when safe. |
-| 2026-09-07 | 📌 | A carriage return submits an injected line; a newline does not. Only relevant if the attach-injection fallback is used instead of `--resume -p`. |
+| 2026-09-07 | 📌 | Fresh-eyes review needs no `/clear` trick: point a separate fresh session at the worker's worktree and it reviews the `🔍` task with no implementer context. Two sequential sessions on one worktree, which the platform supports. |
+| 2026-09-07 | 📌 | Claude Code's own primitives cover the orchestration and work headless in any project: `claude --bg` + auto per-session worktrees, `SendMessage`/`ListAgents` cross-session messaging (v2.1.248+, all providers), `claude stop`/`rm` as the kill switch. Lean on these; do not rebuild. |
+| 2026-09-07 | 🐞 | The brief's down-channel `claude --resume <id> -p "msg"` does NOT inject a turn into a running worker — it resumes a stopped session in a new terminal. The real primitive is `SendMessage` (bidirectional, headless). Corrected before build. |
+| 2026-09-07 | 📌 | `claude agents --json` reports `status` (idle/busy) and `state` (working/done) per session, and lists sessions across other repos. Same-repo filtering must resolve each `cwd` via `git rev-parse --git-common-dir`; `--cwd` matches the repo root and returns `[]` for a worktree. |
+| 2026-09-07 | 📌 | `claude rm <id>` removes the session's worktree only when it is clean (no uncommitted changes, no locks); otherwise it keeps both. Agent-view delete (Ctrl+X) always removes it. So close after a clean merge, or force-remove the worktree explicitly. |
