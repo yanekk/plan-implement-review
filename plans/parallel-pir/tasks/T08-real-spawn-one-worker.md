@@ -7,10 +7,11 @@
 The first time any of this touches a real agent, and it is deliberately the smallest possible
 version: the real spawn / list / close half of `platform.mjs` built on the T00 findings, wired
 into the T05 loop in place of the fake, driving exactly one worker through one trivial task on a
-scratch plan — the coordinator sends `pir-implement Txx`, then on implemented spawns a fresh
-session and sends `pir-review Txx`, then merges and closes — with the ceiling at 1 and the kill
-switch wired. This is the dangerous capability built small before full size, and its second half
-can only be verified by a person watching.
+scratch plan — the coordinator opens the feature branch, cuts a task branch off it, sends
+`pir-implement Txx`, then on implemented spawns a fresh session and sends `pir-review Txx`, merges
+the task branch into the feature branch, closes the worker, and promotes the feature branch to the
+scratch main — with the ceiling at 1 and the kill switch wired. This is the dangerous capability
+built small before full size, and its second half can only be verified by a person watching.
 
 ## Design sections this implements
 
@@ -63,10 +64,11 @@ PARALLEL_DRY_RUN=0 node src/shell/spawn-one-scratch.mjs   # spawns ONE worker on
 # to abort at any time:  touch plans/scratch/.parallel/control/HALT
 ```
 
-Expect: one worker spawns and is told `pir-implement Txx`, implements the trivial task (🔍); a
-fresh session is told `pir-review Txx` and reviews it (✅); the worker integrates and reports done;
-the coordinator merges the scratch branch and closes the worker; `claude agents --json` and
-`git worktree list` end clean.
+Expect: the coordinator opens the feature branch; one worker spawns on a task branch off it and is
+told `pir-implement Txx`, implements the trivial task (🔍); a fresh session is told `pir-review Txx`
+and reviews it (✅); the worker integrates the feature branch and reports done; the coordinator
+merges the task branch into the feature branch, closes the worker, and promotes the feature branch
+to the scratch main; `claude agents --json` and `git worktree list` end clean, main has the task.
 Tell me: did the worker act on the sent `pir-implement`/`pir-review` messages, did the fresh-session
 review read with genuinely fresh eyes, and did close leave nothing behind. Anything that differed
 from the T00 spike.

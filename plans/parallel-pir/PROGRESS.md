@@ -35,7 +35,7 @@ surfaced by the coordinator, never dispatched (§2.6).
 | T03 | `decideDispatch` — spawn / review / merge / close / surface | auto | T02 | ⬜ | |
 | T04 | `analyzeParallelism` — critical path, width, auto/you counts | auto | T02 | ⬜ | |
 | T05 | Fake spawn/message/list/close + the coordinator loop | auto | T03 | ⬜ | |
-| T06 | Real worktree create / integrate / merge / close | auto | T05 | ⬜ | Hand-verified half. |
+| T06 | Feature branch + task worktree create / integrate / merge / promote | auto | T05 | ⬜ | Hand-verified half. |
 | T07 | `pir-worker` contract skill + cross-session wiring | auto | T00 | ⬜ | |
 | T08 | One real worker, one trivial task, seatbelted | auto | T06, T07 | ⬜ | Hand-verified. Dangerous: small first. |
 | T09 | The `pir-coordinate` skill: dispatch, surface, supervise | auto | T08 | ⬜ | |

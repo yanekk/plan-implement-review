@@ -1,19 +1,21 @@
-# T06 — Real worktree create / integrate / merge / close
+# T06 — Feature branch + task worktree create / integrate / merge / promote
 
 **Phase:** 3 · **Depends on:** T05 · **Weight:** medium · **Runs:** auto
 
 ## Goal
 
 The real git plumbing behind the fake from T05, built before any live agent so a runaway or
-abandoned worker can always be torn down. Create a worktree and branch off `main`, integrate the
-latest `main` into a branch (surfacing a conflict rather than resolving it here), merge a clean
-branch to `main` one at a time, and remove a worktree and branch. This is the recovery half of the
-machine, and recovery is built before the thing that keeps agents alive.
+abandoned worker can always be torn down. It implements the branch model of DESIGN §2.9: open a
+feature branch for the plan off `main`; create a task worktree and branch off the feature branch;
+integrate the feature branch into a task branch (surfacing a conflict, not resolving it); merge a
+task branch into the feature branch one at a time; promote the feature branch to `main` once; and
+remove a worktree and branch. This is the recovery half of the machine, and recovery is built
+before the thing that keeps agents alive.
 
 ## Design sections this implements
 
-DESIGN §2.3 (create/close), §2.5 (serialized merge, conflict surfacing, crash cleanup), §3.2
-(`worktree.mjs`), §6 (recovery).
+DESIGN §2.9 (the branch model and promotion), §2.3 (create/close), §2.5 (serialized merge into the
+feature branch, conflict surfacing, crash cleanup), §3.2 (`worktree.mjs`), §6 (recovery).
 
 ## Files
 
@@ -23,14 +25,18 @@ DESIGN §2.3 (create/close), §2.5 (serialized merge, conflict surfacing, crash 
 ## Interface
 
 ```
-create(task) → { path, branch }        // git worktree add <path> -b <branch> off main
-integrate(path) → { ok } | { conflict: [files] }   // merge main into the branch; report conflict
-merge(branch) → { ok } | { conflict: [files] }     // merge branch into main; serialized by caller
-remove({ path, branch }) → { ok }      // git worktree remove (force if needed) ; git branch -d/-D
+openFeature(plan) → { branch }            // create pir/{plan} off main; reuse it if it already
+                                          //   exists (restart re-opens the same feature branch)
+createTask(plan, task) → { path, branch } // worktree on pir/{plan}/T{nn}, cut from the feature branch
+integrate(path) → { ok } | { conflict: [files] }   // merge the FEATURE branch into the task branch
+mergeTask(taskBranch) → { ok } | { conflict: [files] }  // merge task branch into the feature branch
+promote(plan) → { ok } | { conflict: [files] }     // merge pir/{plan} into main — the one merge to main
+remove({ path, branch }) → { ok }         // git worktree remove (force if needed) ; git branch -d/-D
 
-Branch names derive from the task, e.g. "pir/T06". integrate and merge never auto-resolve; they
-report conflicts so the worker (integrate) or the coordinator (merge) decides. remove force-drops
-the worktree when needed, because claude rm keeps a dirty worktree (FINDINGS.md).
+integrate and mergeTask never auto-resolve; they report conflicts so the worker (integrate) or the
+coordinator (mergeTask) decides. promote is called only when the plan is complete; the coordinator
+runs the tests before calling it. remove force-drops a dirty worktree, because claude rm keeps one
+(FINDINGS.md).
 ```
 
 The tests operate on a throwaway repo under a temp dir — never the real project — which is the
@@ -38,29 +44,32 @@ seatbelt; no agent is spawned here.
 
 ## Tests
 
-- [ ] `create` makes a worktree and branch off main in a scratch repo; `git worktree list` shows it.
-- [ ] `integrate` brings a diverged main into the branch cleanly when there is no conflict.
-- [ ] `integrate` reports the conflicting files when main and the branch touched the same lines.
-- [ ] `merge` merges a clean branch to main and reports a conflict otherwise.
+- [ ] `openFeature` creates `pir/{plan}` off main, and a second call reuses it, not a duplicate.
+- [ ] `createTask` makes a worktree and `pir/{plan}/T{nn}` off the FEATURE branch, not main.
+- [ ] `integrate` brings a diverged feature branch into the task branch cleanly, and reports the
+      conflicting files when both touched the same lines.
+- [ ] `mergeTask` merges a clean task branch into the feature branch and reports a conflict otherwise.
+- [ ] `promote` merges the feature branch to main, and main is unchanged until promote is called.
 - [ ] `remove` deletes the worktree and branch, including a worktree with uncommitted changes.
-- [ ] Two `merge` calls run one after another (the caller serializes; prove a second waits).
+- [ ] Two `mergeTask` calls run one after another (the caller serializes; prove a second waits).
 
 ## Done when
 
-- [ ] All four operations work against a scratch repo and conflicts are surfaced, not resolved.
-- [ ] A created worktree can always be removed, including after a simulated abandonment.
+- [ ] All operations work against a scratch repo; conflicts are surfaced, not resolved; and main is
+      untouched until `promote`.
+- [ ] A created task worktree can always be removed, including after a simulated abandonment.
 - [ ] `npm test` is green.
 
 ## Needs a person
 
 The automated tests use a scratch repo, so they are self-contained. What a person confirms is that
-the same operations behave on the real project's git and `main` — once, lightly, never as part of
-an agent run:
+the same operations behave on the real project's git — once, lightly, never as part of an agent run:
 
 ```
 # in a scratch clone of THIS repo, not the working copy:
-node -e "import('./src/shell/worktree.mjs').then(async m => { const w = await m.create('T99'); console.log(w); await m.remove(w); })"
+node -e "import('./src/shell/worktree.mjs').then(async m => { await m.openFeature('demo'); const w = await m.createTask('demo','T99'); console.log(w); await m.remove(w); })"
 ```
 
-Expect: a worktree and branch created and then cleanly removed, `git worktree list` clean.
-Tell me: whether create-then-remove left anything behind on the real git.
+Expect: a feature branch and a task worktree created off it, then the worktree cleanly removed,
+`git worktree list` clean, main untouched.
+Tell me: whether openFeature+createTask+remove left anything behind, and whether main stayed clean.

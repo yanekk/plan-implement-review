@@ -76,7 +76,7 @@ Each task here has a hand-verification half; the dangerous capability is built l
 
 | # | Task | Runs | Depends on |
 |---|---|---|---|
-| [T06](tasks/T06-worktree-lifecycle.md) | Real worktree create / integrate / merge / close | auto | T05 |
+| [T06](tasks/T06-worktree-lifecycle.md) | Feature branch + task worktree: create / integrate / merge / promote | auto | T05 |
 | [T07](tasks/T07-worker-contract.md) | `pir-worker` contract skill + cross-session wiring | auto | T00 |
 | [T08](tasks/T08-real-spawn-one-worker.md) | One real worker, one trivial task, seatbelted | auto | T06, T07 |
 | [T09](tasks/T09-pir-coordinate-skill.md) | The `pir-coordinate` skill: dispatch, surface, supervise | auto | T08 |

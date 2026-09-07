@@ -9,7 +9,7 @@ that lets the coordinator name the task a worker runs. A worker does not choose 
 coordinator sends it `pir-implement Txx` to build or `pir-review Txx` to review, and the worker
 runs exactly that. Two more things differ from classic mode: when a skill would "ask the user and
 wait", the worker messages the coordinator and waits, because there is no interactive user at its
-terminal; and when its task is reviewed clean it integrates `main` and messages "done". The
+terminal; and when its task is reviewed clean it integrates the feature branch and messages "done". The
 implement and review procedures are the stock ones — only their entry point changes so they accept
 an explicit task rather than being reached only through `pir-work`'s selection.
 
@@ -38,9 +38,9 @@ pir-worker SKILL.md contract:
     session).
   - whenever a stock skill would "ask the user and wait", instead message the coordinator
     (kind: question|decision) and wait for the answer, then continue.
-  - on a merge conflict while integrating main: attempt resolution; if unresolved, message the
-    coordinator (kind: conflict) and wait.
-  - when reviewed clean: integrate main, then message the coordinator (kind: done).
+  - on a merge conflict while integrating the feature branch: attempt resolution; if unresolved,
+    message the coordinator (kind: conflict) and wait.
+  - when reviewed clean: integrate the feature branch, then message the coordinator (kind: done).
 
 pir-implement / pir-review: accept `Txx`. Given it, operate on that task instead of the one
 pir-work would have selected. With no argument they behave exactly as today (classic mode).

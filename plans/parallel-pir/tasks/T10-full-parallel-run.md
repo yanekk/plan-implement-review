@@ -6,11 +6,12 @@
 
 The full-size version of the dangerous thing, last, with the user watching: several real workers at
 once — up to the ceiling — on a real small plan, the coordinator dispatching `pir-implement Txx`
-and `pir-review Txx` per worker, built and reviewed concurrently, merged serially to `main`, with a
-worker deliberately raising a decision to prove surfacing works under load, and a kill-switch drill
-partway through to prove the hard stop tears every worker down and restart-from-`PROGRESS.md`
-resumes cleanly. Nothing new is built beyond a real multi-task scratch plan; the task is the
-verification that the whole mode works for real.
+and `pir-review Txx` per worker on task branches off one feature branch, built and reviewed
+concurrently, merged serially into the feature branch, with a worker deliberately raising a decision
+to prove surfacing works under load, a kill-switch drill partway through to prove the hard stop
+tears every worker down while `main` stays untouched, restart-from-`PROGRESS.md` resumes cleanly,
+and a single promotion of the feature branch to `main` at the end. Nothing new is built beyond a
+real multi-task scratch plan; the task is the verification that the whole mode works for real.
 
 ## Design sections this implements
 
@@ -37,11 +38,12 @@ surfaces a pure-logic gap, which would be a small addition to the relevant core 
 
 ## Done when
 
-- [ ] A real small plan of several independent tasks ran to all-`✅` with multiple workers live at
-      once, ceiling respected, merges serialized, one decision surfaced and answered, one `you`
-      task surfaced not dispatched — verified with the user.
-- [ ] The kill-switch drill was performed: HALT stopped every live worker, nothing half-done
-      reached `main`, and restart resumed from `PROGRESS.md`.
+- [ ] A real small plan of several independent tasks ran to all-`✅` on one feature branch with
+      multiple workers live at once, ceiling respected, task-branch merges into the feature branch
+      serialized, one decision surfaced and answered, one `you` task surfaced not dispatched, and a
+      single promotion to `main` at the end — verified with the user.
+- [ ] The kill-switch drill was performed: HALT stopped every live worker, `main` stayed untouched
+      (nothing promoted), and restart re-opened the feature branch and resumed from `PROGRESS.md`.
 - [ ] Both results recorded in FINDINGS.md with the date; no scratch worker or worktree left.
 
 ## Needs a person
@@ -59,10 +61,11 @@ touch plans/scratch-multi/.parallel/control/HALT
 rm plans/scratch-multi/.parallel/control/HALT ; pir coordinate scratch-multi
 ```
 
-Expect: several workers building and reviewing concurrently under coordinator-named tasks; serial
-merges to the scratch main; a decision surfaced while the rest keep moving; the `you` task handed to
-you rather than a worker; on HALT, all workers stopped and nothing half-merged; on restart, resume
-from `PROGRESS.md` to all-`✅`.
+Expect: several workers building and reviewing concurrently under coordinator-named tasks on task
+branches off one feature branch; serial merges into the feature branch; a decision surfaced while
+the rest keep moving; the `you` task handed to you rather than a worker; on HALT, all workers
+stopped and the scratch `main` untouched; on restart, resume from `PROGRESS.md` to all-`✅` and a
+single promotion to `main`.
 Tell me: did the ceiling hold, did merges stay one-at-a-time, was the decision surfaced without
 stalling others, was the `you` task surfaced, did HALT tear everything down cleanly, and did restart
 resume without redoing finished work or corrupting `main`.

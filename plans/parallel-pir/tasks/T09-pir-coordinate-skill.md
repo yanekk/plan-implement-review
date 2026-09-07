@@ -17,7 +17,7 @@ ceiling and the kill switch, serializes merges, and reports progress as tasks re
 DESIGN §2.1 (the run, the reviewed-gate refusal, coordinator names task and phase), §2.2 (surfacing
 messages and sending answers down), §2.4 (supervision, ceiling, kill switch), §2.5 (a worker
 blocked on a decision, serialized merge, conflict escalation), §2.6 (surfacing `you` tasks), §2.8
-(agent naming and finding workers by prefix).
+(agent naming and finding workers by prefix), §2.9 (feature branch, task branches, promotion).
 
 ## Files
 
@@ -31,10 +31,16 @@ blocked on a decision, serialized merge, conflict escalation), §2.6 (surfacing 
 ```
 pir-coordinate SKILL.md:
   - refuse if PROGRESS.md's plan-reviewed gate says "not yet" (same rule as pir-work).
+  - at start, open the feature branch `pir/{plan}` off main and work on it; main is not touched
+    until promotion (§2.9).
   - the coordinator names itself `@{repo} / {plan}` and each worker `@{repo} / {plan} / T{nn}`
     (§2.8), and finds its own workers by that prefix in `claude agents --json`.
-  - the coordinator chooses each worker's task (decideDispatch) and sends it `pir-implement Txx`,
-    then a fresh session `pir-review Txx` — workers never run pir-work or choose their own task.
+  - the coordinator chooses each worker's task (decideDispatch) and sends it `pir-implement Txx` on
+    a task branch cut from the feature branch, then a fresh session `pir-review Txx` — workers never
+    run pir-work or choose their own task. Finished task branches merge into the feature branch.
+  - when every task is ✅ and no worker is live (decideDispatch `promoteToMain`), run the test
+    command on the feature branch and, if green, merge it to main and report completion. A red
+    feature branch is surfaced to the user, not promoted.
   - each pass, after executing actions, read the inbox and surface any question / decision /
     conflict to the user in plain English, one at a time — the user owns every decision.
   - take the user's answer and send it down to that worker (kind: answer), immediately.
@@ -61,7 +67,10 @@ coordinate.mjs: startCoordinator({ slug, platform, worktree, maxWorkers }) → d
 - [ ] A ready `you` task is surfaced to the user, not dispatched.
 - [ ] A conflict message is surfaced as a decision; a deferred decision marks its task ⛔.
 - [ ] The ceiling-full case is logged; the HALT flag stops dispatch and closes workers.
-- [ ] Reports each ✅ and terminates when the fake plan is fully ✅.
+- [ ] Task branches merge into the feature branch; main is untouched until a single promotion.
+- [ ] On all-✅ the coordinator promotes only when the feature-branch tests pass; a red feature
+      branch is surfaced, not promoted.
+- [ ] Reports each ✅ and terminates when the fake plan is fully ✅ and promoted.
 
 ## Done when
 

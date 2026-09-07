@@ -16,7 +16,7 @@ and the fakes are built before the real platform so the dangerous capability is 
 
 DESIGN §5.2 (the `PARALLEL_DRY_RUN` seatbelt), §3.2 (`loop.mjs` and the shell interface the fakes
 mirror), §3.3 (the decision function in its loop), §2.4 (ceiling, halted), §2.5 (serialized
-merge), §2.6 (surfacing `you` tasks).
+merge), §2.6 (surfacing `you` tasks), §2.9 (feature branch, task branches, promotion).
 
 ## Files
 
@@ -34,16 +34,18 @@ written once and run against either:
   platform: spawn(cwd, task, phase) → id     // phase: "implement"|"review"; spawn sets the worker's
             name to @{repo}/{plan}/T{nn} (naming.mjs). send(name|id, msg) ;
             list() → [{id,name,cwd,status,state,live}] ; close(id) ; inbox() → [message]
-  worktree: create(task) → {path,branch} ; integrate(path) → {ok|conflict} ;
-            merge(branch) → {ok|conflict} ; remove({path,branch})
+  worktree: openFeature(plan) → {branch} ; createTask(plan,task) → {path,branch} ;
+            integrate(path) → {ok|conflict} ; mergeTask(taskBranch) → {ok|conflict} ;
+            promote(plan) → {ok|conflict} ; remove({path,branch})   // DESIGN §2.9 branch model
 
 runPass({ platform, worktree, repo, slug, maxWorkers, now }) → { actions, log }
   // gather: parse PROGRESS; list workers and rebuild assignments via parseAgentName over their
   //   names (task identity) plus the phase tracked from inbox messages; read the control flag →
   //   decideDispatch →
-  // execute: spawn auto tasks (as pir-implement Txx), surface you tasks, spawn a fresh reviewer
-  // (pir-review Txx) for review-ready workers, merge one done branch, close finished/dead →
-  // reconcile merged rows → return actions + log.
+  // execute: openFeature once at start, spawn auto tasks (as pir-implement Txx) on task branches
+  // off the feature branch, surface you tasks, spawn a fresh reviewer (pir-review Txx) for
+  // review-ready workers, merge one done task branch into the feature branch, close finished/dead,
+  // and when all ✅ promote the feature branch to main → reconcile merged rows → actions + log.
 drain(...) → summary   // repeat runPass until no ready tasks and no live workers, or halted.
 
 A fake worker, when spawned for a phase and messaged, advances (implement → review-ready →
@@ -52,7 +54,9 @@ A fake worker, when spawned for a phase and messaged, advances (implement → re
 
 ## Tests
 
-- [ ] A fake plan of e.g. 5 tasks with a dependency chain drains to all-`✅`.
+- [ ] A fake plan of e.g. 5 tasks with a dependency chain drains to all-`✅` on the feature branch,
+      then promotes to the scratch main exactly once; main is untouched until that promotion.
+- [ ] Task branches are cut from the feature branch and merge back into it, not into main.
 - [ ] Two independent ready tasks are worked concurrently (two fake workers live at once).
 - [ ] Fake workers are named `@{repo} / {plan} / T{nn}`; the loop rebuilds which worker holds which
       task from those names, and identifies its own workers by the `@{repo} / {plan} /` prefix.
@@ -66,7 +70,8 @@ A fake worker, when spawned for a phase and messaged, advances (implement → re
 
 ## Done when
 
-- [ ] `drain` takes a fake plan to all-`✅` with dependencies, ceiling, serialized merges and
-      fresh review before merge all respected, and `you` tasks surfaced not spawned.
+- [ ] `drain` takes a fake plan to all-`✅` with dependencies, ceiling, serialized merges into the
+      feature branch and fresh review before merge all respected, `you` tasks surfaced not spawned,
+      and a single promotion to main at the end.
 - [ ] Questions, conflicts and the kill switch are handled in the loop and every event logged.
 - [ ] `npm test` is green.

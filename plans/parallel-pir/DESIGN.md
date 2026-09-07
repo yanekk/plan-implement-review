@@ -65,26 +65,34 @@ already there.
 1. The user starts a coordinator (`/pir-coordinate {slug}`) and points it at a plan whose
    `PROGRESS.md` says it has been reviewed. If the plan is not reviewed, the coordinator
    refuses, exactly as `pir-work` does — an unreviewed plan copies its defects into every task,
-   and running many at once multiplies that.
+   and running many at once multiplies that. The coordinator opens one **feature branch** for the
+   whole plan, `pir/{plan}`, off `main`, and works on it. `main` is not touched again until the
+   plan is done (§2.9).
 2. The coordinator reads the task table, finds every `auto` task whose dependencies are `✅` and
    which is not already assigned, and — up to the worker ceiling — spawns a worker for each: a
-   background `claude` session whose working directory is a fresh worktree and branch. It tells
-   that worker `pir-implement Txx` for the specific task it chose. `coordinator → worker` is direct
-   and immediate. The coordinator, not the worker, decides which task the worker builds.
-3. The worker runs `pir-implement Txx`, which implements that task and marks it `🔍` on its branch.
-   When the worker reports implemented, the coordinator spawns a **fresh** session pointed at the
-   same worktree and tells it `pir-review Txx`, which reviews the work and marks it `✅`. Fresh eyes
-   come from that being a different session with no implementer context, and the coordinator is what
-   guarantees the reviewer is never the implementer.
+   background `claude` session whose working directory is a fresh worktree on a **task branch**,
+   `pir/{plan}/T{nn}`, cut from the **feature branch** (not from `main`), so the worker starts from
+   whatever sibling tasks have already merged. It tells that worker `pir-implement Txx` for the
+   specific task it chose. The coordinator, not the worker, decides which task the worker builds.
+3. The worker runs `pir-implement Txx`, which implements that task and marks it `🔍` on its task
+   branch. When the worker reports implemented, the coordinator spawns a **fresh** session pointed
+   at the same worktree and tells it `pir-review Txx`, which reviews the work and marks it `✅`.
+   Fresh eyes come from that being a different session with no implementer context, and the
+   coordinator is what guarantees the reviewer is never the implementer.
 4. If a worker hits a question or decision at any phase, it sends the coordinator a message and
    waits. The coordinator surfaces it to the user; the user's answer is sent straight back down
    to that worker.
-5. When the task is reviewed and clean, the worker brings its branch up to date with `main` and
-   sends the coordinator a "done" message. `worker → coordinator` is indirect and async: the
-   coordinator reads its inbox when it reaches a natural break in its own loop, never by
+5. When the task is reviewed and clean, the worker brings its task branch up to date with the
+   **feature branch** and sends the coordinator a "done" message. `worker → coordinator` is
+   indirect and async: the coordinator reads its inbox at a natural break in its loop, never by
    interrupt, because an interrupt mid-merge is worse than a message read a few seconds late.
-6. The coordinator merges that branch into `main`, **closes the worker** (stops its session and
-   removes its worktree and branch), and dispatches the next ready task.
+6. The coordinator merges that task branch into the **feature branch** (serialized, one at a time),
+   **closes the worker** (stops its session and removes its worktree and task branch), and
+   dispatches the next ready task. Nothing has reached `main` yet.
+7. When every task is `✅` and no worker is live, the coordinator promotes the plan: it runs the
+   test command on the feature branch, and if green merges the **feature branch into `main`** — the
+   one and only merge to `main` — then reports completion. This is the plan landing atomically
+   (§2.9).
 
 ### 2.2 The two directions are asymmetric, and both use cross-session messaging
 
@@ -101,11 +109,12 @@ already there.
 
 The coordinator owns a worker's whole life, and it must be able to end it, not only start it.
 
-- **create** — spawn a background `claude` session whose cwd is a fresh worktree and branch off
-  current `main`, handed the one task and a short contract (§2.1, and the worker contract skill).
+- **create** — spawn a background `claude` session whose cwd is a fresh worktree on a task branch
+  `pir/{plan}/T{nn}` cut from the **feature branch** (§2.9), handed the one task and a short
+  contract (§2.1, and the worker contract skill).
 - **drive** — send the worker a message (an answer to its question, the instruction to hand off
   to review). The review session is a *separate* fresh spawn on the same worktree.
-- **close** — stop the worker's session and remove its worktree and branch.
+- **close** — stop the worker's session and remove its worktree and task branch.
 
 **Close exists for three reasons, and all three are why it is first-class rather than an
 afterthought.** Normal end-of-task teardown after a merge; the hard-stop kill switch, which
@@ -153,26 +162,29 @@ loop cheaply.
   the user never answers, the task stays parked; on a restart the coordinator sees it unfinished
   and can re-raise it, and a task deliberately left for a human is marked ⛔ in `PROGRESS.md` so
   the state survives the restart. Nothing is guessed or lost.
-- **Two workers finish at once.** Merges to `main` are serialized: the coordinator merges one
-  branch at a time. A worker brings its branch up to date with `main` before it signals done,
-  so at merge time its only change to shared files is its own task's work.
-- **A real merge conflict.** When a worker integrates `main` and hits a conflict in code, the
-  worker attempts the resolution, because it holds its task's context. If it cannot resolve
-  cleanly it sends the coordinator a decision message and waits for the user. The coordinator
-  never merges a dirty branch.
+- **Two workers finish at once.** Merges into the feature branch are serialized: the coordinator
+  merges one task branch at a time. A worker brings its task branch up to date with the feature
+  branch before it signals done, so at merge time its only change to shared files is its own task's
+  work.
+- **A real merge conflict.** When a worker integrates the feature branch and hits a conflict in
+  code, the worker attempts the resolution, because it holds its task's context. If it cannot
+  resolve cleanly it sends the coordinator a decision message and waits for the user. The
+  coordinator never merges a dirty branch into the feature branch.
 - **`PROGRESS.md` contention.** `PROGRESS.md` is the one file every session writes, so parallel
-  workers would collide on it. The coordinator owns `PROGRESS.md` on `main`. A worker edits only
-  its own task's row on its own branch (the stock skills do this). At merge time the coordinator
-  does not rely on git's line merge for `PROGRESS.md`: it reads the worker's task row from the
-  branch and folds just that row into `main`'s `PROGRESS.md` with a pure function (§3.3), leaving
-  the coordinator-managed lines — Status, `Next pir-work will:`, Review queue — alone. That
-  sidesteps the guaranteed conflict on those single-line fields, which several branches all edit.
-- **A worker crashes or is abandoned.** Its worktree and branch are left behind. The
+  workers would collide on it. The coordinator owns `PROGRESS.md` on the **feature branch**. A
+  worker edits only its own task's row on its own task branch (the stock skills do this). At merge
+  time the coordinator does not rely on git's line merge for `PROGRESS.md`: it reads the worker's
+  task row from the task branch and folds just that row into the feature branch's `PROGRESS.md`
+  with a pure function (§3.3), leaving the coordinator-managed lines — Status, `Next pir-work
+  will:`, Review queue — alone. That sidesteps the guaranteed conflict on those single-line fields.
+  The finished `PROGRESS.md`, all `✅`, reaches `main` with the feature branch at promotion.
+- **A worker crashes or is abandoned.** Its worktree and task branch are left behind. The
   coordinator's close removes them; cleanup runs on the next loop pass that notices the worker
   is gone (its `state` in `claude agents --json`), so a dead worker does not hold a slot forever.
-- **The kill switch fires mid-task.** In-flight workers are stopped. Their branches are left on
-  disk unmerged for inspection; nothing half-done reaches `main`, because only the coordinator
-  merges and it stops first. Restart re-dispatches whatever `PROGRESS.md` still shows unbuilt.
+- **The kill switch fires mid-task.** In-flight workers are stopped. Their task branches and the
+  feature branch are left on disk for inspection; `main` is untouched, because the only merge to
+  `main` is the final promotion and the coordinator stops before it. Restart re-opens the same
+  feature branch and re-dispatches whatever `PROGRESS.md` on it still shows unbuilt.
 
 ### 2.6 Which tasks a worker can do, and which are yours
 
@@ -255,6 +267,41 @@ the lifecycle gives phase.
 The name format is pure string work (`naming.mjs`, §3.2) so it is tested directly; T00 confirms
 that `--name` sets the `agents --json` name and that messaging addresses by it on this version.
 
+### 2.9 The branch model: a feature branch, task branches, one merge to main
+
+The whole plan runs on a single **feature branch**, `pir/{plan}`, cut from `main` when the
+coordinator starts. Workers cut **task branches**, `pir/{plan}/T{nn}`, from the feature branch, and
+their finished work merges back into the feature branch. `main` receives the plan exactly once, at
+the end, when the feature branch is promoted.
+
+```
+main ──●───────────────────────────────────────────────────●  (one merge, at the end)
+        \                                                  /
+         ● pir/{plan}  (feature branch) ──●────●────●─────●   task branches merge in, serialized
+            \            \            \
+             ● T01        ● T02        ● T05     (task branches, cut from the feature branch)
+```
+
+Why this and not merging each task straight to `main`:
+
+- **`main` never holds a half-finished plan.** A plan is atomic on `main`: either the whole
+  reviewed plan is there or none of it is. A run stopped by the kill switch, a crash, or the user
+  walking away leaves `main` exactly as it was.
+- **Workers integrate siblings' work, safely.** A task branch is cut from the feature branch and
+  integrates the feature branch before handoff, so a worker sees tasks that merged before it —
+  without that churn ever touching `main`.
+- **The promotion is one reviewable step.** When every task is `✅` and no worker is live, the
+  coordinator runs the test command on the feature branch and, if green, merges it to `main` and
+  reports. The test run before promotion is the last gate; a red feature branch is not promoted,
+  and the coordinator surfaces that to the user rather than merging.
+
+This is a further, deliberate departure from the base method's "main checkout, main branch, always"
+rule, on top of the worktrees parallel mode already uses. The classic single-stream flow keeps that
+rule; parallel mode replaces it with this feature-branch model, and the reason — an atomic,
+reviewable landing on `main` — is why. The final promotion is the single most consequential action
+the coordinator takes, so it is gated on the tests passing and announced to the user; making it a
+manual confirmation instead is a one-line change if the user prefers.
+
 ---
 
 ## 3. Architecture
@@ -307,8 +354,10 @@ Shell (`src/shell/`):
   inbox (cross-session messaging), list live workers with their state (`claude agents --json`,
   same-repo resolution, names parsed by `naming.mjs`), and close a worker (`claude stop` then
   remove its worktree). This is where the T00 spike's confirmed mechanisms live.
-- `worktree.mjs` — create a worktree and branch, integrate `main`, merge a branch to `main`
-  serialized, and remove a worktree and branch.
+- `worktree.mjs` — open the feature branch off `main`; create a task worktree and branch off the
+  feature branch; integrate the feature branch into a task branch; merge a task branch into the
+  feature branch, serialized; promote the feature branch to `main`; and remove a worktree and
+  branch (§2.9).
 - `control.mjs` — read the kill-switch flag file and append to the log.
 - `loop.mjs` — the coordinator's outer cycle: gather state, call `dispatch.mjs`, execute its
   actions, honour the ceiling and the kill switch, fold merged results back, log every event.
@@ -325,44 +374,52 @@ together, and it is a function of its arguments and nothing else.
 - `maxWorkers` — the ceiling (4).
 - `halted` — whether the kill-switch flag is present.
 
-It returns `{ spawn, review, merge, close, surface }`:
+It returns `{ spawn, surface, review, merge, close, promoteToMain }`:
 
-- If `halted`, `spawn`, `review`, `merge` and `surface` are empty and `close` is every live worker.
+- If `halted`, `spawn`, `surface`, `review`, `merge` are empty, `promoteToMain` is false, and
+  `close` is every live worker.
 - `spawn` is the ready `auto` `⬜` tasks (all deps `✅`, not already assigned), capped so
   live-plus-spawned never exceeds `maxWorkers`, lowest task number first.
 - `surface` is the ready `you` tasks (all deps `✅`, not yet done): human-required work the
   coordinator presents to the user rather than dispatching (§2.6). A `you` task is never spawned.
 - `review` is the workers that reported implemented (`🔍`) and need a fresh review session.
-- `merge` is the branches of workers reporting done, at most one per pass (serialized).
+- `merge` is the task branches of workers reporting done, at most one per pass (serialized), merged
+  into the feature branch (§2.9).
 - `close` is the workers whose task merged, plus any assignment the agent list shows is dead.
+- `promoteToMain` is true only when every task is `✅` and no worker is live: the signal to run the
+  tests on the feature branch and, if green, merge it to `main` (§2.9). It is the one path to `main`.
 
 Reconciling a finished task into shared progress is the other pure function:
-`reconcileTaskRow(mainProgressText, { num, state, notes })` returns a new `PROGRESS.md` text with
-only that task's row changed and the coordinator-managed lines left alone.
+`reconcileTaskRow(progressText, { num, state, notes })` returns a new `PROGRESS.md` text with only
+that task's row changed and the coordinator-managed lines left alone. The coordinator applies it to
+the feature branch's `PROGRESS.md` (§2.9).
 
 ### 3.4 Data flow
 
 ```
-PROGRESS.md ────────parse──▶ tasks ─┐
-claude agents --json ──────▶ live  ─┼─▶ decideDispatch ─▶ { spawn, review, merge, close }
-coordinator inbox (messages) ─────  ┤                         │
-control flag ──────────────▶ halt ──┘                         ▼  shell executes via platform.mjs
-                                                     spawn / send / spawn-review / merge / close
-                            reconcileTaskRow ◀── worker's task row ◀── (on merge)
+PROGRESS.md ────────parse──▶ tasks ─┐   (feature branch)
+claude agents --json ──────▶ live  ─┼─▶ decideDispatch ─▶ { spawn, surface, review, merge,
+coordinator inbox (messages) ─────  ┤                         close, promoteToMain }
+control flag ──────────────▶ halt ──┘                         │
+                                                              ▼  shell executes via platform.mjs
+                                     spawn / surface / send / spawn-review / merge→feature /
+                                     close / promote feature→main (when all ✅)
+                            reconcileTaskRow ◀── worker's task row ◀── (on merge into feature)
                                     │
                                     ▼
-                                PROGRESS.md (on main, coordinator-owned)
+                          PROGRESS.md on the feature branch (coordinator-owned) → main at promotion
 ```
 
 ### 3.5 Storage
 
 State lives on disk, plain text so a person can read it under pressure:
 
-- `PROGRESS.md` on `main` — the task states, owned by the coordinator.
+- `PROGRESS.md` on the **feature branch** — the task states, owned by the coordinator; it reaches
+  `main` with the feature branch at promotion.
 - `plans/{slug}/.parallel/control/` — the kill-switch flag file (`HALT`) and `log` for the
   ceiling-hit and lifecycle record.
-- Worker branches and worktrees — git's, under `.git/worktrees/`; `git worktree remove` is the
-  recovery for a leaked one.
+- The feature branch `pir/{plan}` and the task branches `pir/{plan}/T{nn}` and their worktrees —
+  git's, under `.git/worktrees/`; `git worktree remove` is the recovery for a leaked one.
 
 Cross-agent messages are carried by the platform's messaging, not a file store this project
 owns, so there is no custom mailbox format or locking to get wrong. The one place a torn file
@@ -432,7 +489,8 @@ the user, one at a time, never mid-task.
 | A message from coordinator to a running worker is received and acted on | Live cross-session messaging; T00 |
 | A fresh session reviewing a worker's `🔍` task on the same worktree | Live session behaviour; T00 |
 | Closing a worker: `claude stop` then worktree removed | Acts on a live session and real worktrees |
-| A real branch merging to `main`, serialized, worktree removed | Mutates real git history |
+| A task branch merging into the feature branch, serialized, worktree removed | Mutates real git history |
+| Promoting the feature branch to `main` at plan completion | The one merge to `main`; mutates it |
 | The kill switch stopping every live worker | Requires live workers to stop |
 
 ### 5.2 Seatbelts
@@ -459,11 +517,15 @@ minimum, kill switch wired.
   when clean; `git worktree remove` and `git branch -D` clean the rest. The coordinator does
   this on its next pass, but a person can do it by hand from those commands.
 - **The coordinator is confused or runaway:** create the `HALT` control flag file. All dispatch
-  and delivery stop and every worker is stopped. Remove the flag and restart the coordinator to
-  continue from `PROGRESS.md`.
-- **`main` is dirty or a merge went wrong:** only the coordinator merges, one branch at a time,
-  and only a branch a worker reported clean after integrating `main`. A bad merge is a normal
-  `git` recovery on `main`; the worker branches are still on disk until close removes them.
+  and delivery stop and every worker is stopped. `main` is untouched (nothing merges to it until
+  promotion). Remove the flag and restart the coordinator, which re-opens the feature branch
+  `pir/{plan}` and continues from its `PROGRESS.md`.
+- **A merge went wrong on the feature branch:** the coordinator merges one task branch at a time
+  into the feature branch, only a branch a worker reported clean after integrating the feature
+  branch. A bad merge is a normal `git` recovery on the feature branch; `main` is not involved.
+  The task branches are on disk until close removes them.
+- **Abandon the whole plan:** delete the feature branch `pir/{plan}` and its task branches. `main`
+  never received anything, so there is nothing to revert.
 
 ---
 
@@ -512,6 +574,14 @@ minimum, kill switch wired.
   task, so parallel workers would all pick the same one (2026-09-07). Task selection moves to the
   coordinator's `decideDispatch`, and the worker is told exactly which task and phase to run. This
   needs `pir-implement` / `pir-review` to accept an explicit task; their logic is unchanged.
+- **A feature branch per plan; task branches off it; one merge to `main` at the end.** The user
+  set this branch model (2026-09-07). The coordinator works on `pir/{plan}` off `main`; workers cut
+  `pir/{plan}/T{nn}` off the feature branch and merge back into it, serialized; the feature branch
+  is promoted to `main` once, when every task is `✅` and the tests pass on it. Chosen over merging
+  each task straight to `main` because it keeps `main` free of a half-finished plan, lets the plan
+  land atomically and reviewably, and makes the kill switch and a crash leave `main` untouched
+  (§2.9). It is a further deliberate departure from "main checkout, main branch, always"; the
+  classic flow keeps that rule.
 - **Agents are named `@{repo} / {plan}` and `@{repo} / {plan} / T{nn}`.** The user set this
   convention (2026-09-07). Deterministic names mean a worker addresses the coordinator without
   being handed an id, the coordinator identifies its workers and their tasks from the name alone

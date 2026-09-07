@@ -15,7 +15,7 @@ what lets the whole dispatch logic be proven before any agent exists.
 
 DESIGN §3.3 (the decision function), §2.1 (spawn ready, then fresh review), §2.3 (close), §2.4
 (the ceiling and halted), §2.5 (serialized merge, crash cleanup), §2.6 (surface `you` tasks), §2.8
-(the agent-name helpers).
+(the agent-name helpers), §2.9 (merge into the feature branch; `promoteToMain` at completion).
 
 ## Files
 
@@ -38,14 +38,18 @@ decideDispatch({ tasks, assignments, maxWorkers, halted }) → { spawn, surface,
   spawn   : [ taskNum ]     // ready auto ⬜: deps ✅, not assigned, lowest first, live+spawn ≤ max
   surface : [ taskNum ]     // ready you ⬜: deps ✅, not done — surfaced to the user, never spawned
   review  : [ workerId ]    // workers in phase "review-ready" (implemented, need a fresh reviewer)
-  merge   : [ branch ]      // workers in phase "done", AT MOST ONE per pass (serialized)
+  merge   : [ taskBranch ]  // workers in phase "done", AT MOST ONE per pass — merged into the
+                            //   FEATURE branch, not main (DESIGN §2.9)
   close   : [ workerId ]    // workers whose task merged, plus any assignment with live=false
+  promoteToMain : boolean   // true only when every task is ✅ and no worker is live: promote the
+                            //   feature branch to main (the one merge to main)
 ```
 
 A `you` task is never in `spawn`; it goes to `surface` and does not count against `maxWorkers`.
-When `halted`: `spawn`, `surface`, `review` and `merge` are empty and `close` is every live
-worker. A task held by a live worker is never re-spawned. A dead worker (live=false or phase
-"dead") is always closed, so it stops holding a slot under the ceiling.
+`promoteToMain` is the single signal that the plan is complete. When `halted`: `spawn`, `surface`,
+`review`, `merge` are empty, `promoteToMain` is false, and `close` is every live worker. A task
+held by a live worker is never re-spawned. A dead worker (live=false or phase "dead") is always
+closed, so it stops holding a slot under the ceiling.
 
 The agent-name helpers (DESIGN §2.8), pure string work the loop uses to name workers at spawn and
 to rebuild `assignments` from `claude agents --json`:
@@ -65,7 +69,9 @@ does not match the convention is reported (task null and a flag), not guessed.
 - [ ] Never exceeds the ceiling: with 3 live and maxWorkers 4, at most 1 is spawned.
 - [ ] Lowest task number first when more are ready than the ceiling allows.
 - [ ] A review-ready worker appears in `review`; it is not spawned again or merged yet.
-- [ ] Merge is at most one branch per pass even when two workers are done.
+- [ ] Merge is at most one task branch per pass even when two workers are done (into the feature branch).
+- [ ] `promoteToMain` is false while any task is not ✅ or any worker is live, and true only when
+      all ✅ and none live.
 - [ ] A dead worker is closed and its slot freed.
 - [ ] halted=true yields empty spawn/review/merge and closes every live worker.
 - [ ] A task already assigned to a live worker is not spawned again.
