@@ -18,9 +18,10 @@ tasks, 5 phases. Review fixed the colourless test command, a signature and a par
 gitignored the control dir; decided the main-branch carve-out (coordinator in its own worktree),
 closing the implement session at review, and how a `you` task is marked done.
 **Last updated:** 2026-09-07
-**Next `pir-work` will:** implement T00 — the lowest ⬜ with no dependencies. T00 is a `you` task
-(the platform spike), so `pir-implement` hands you its seatbelted commands rather than building it.
-T01 (scaffold) also has no dependencies if you would rather start the code there.
+**Next `pir-work` will:** implement T01 (scaffold, `npm test`, boundary test) — the lowest ⬜ with
+no dependencies. T00 is done: the platform spike ran and confirmed spawn/message/fresh-review/close,
+with two corrections now in FINDINGS (`--bg` prompt is positional, not `-p`; worker names must be
+slash-free). T07 (§2.8 naming) and T11 (planner templates) must fold those in.
 
 ## Tasks
 
@@ -30,7 +31,7 @@ surfaced by the coordinator, never dispatched (§2.6).
 
 | # | Task | Runs | Depends on | State | Notes |
 |---|---|---|---|---|---|
-| T00 | Platform primitives spike: spawn, message, fresh review, close | you | — | ⬜ | Throwaway. Hand-verified with the user; gates T07, T08. |
+| T00 | Platform primitives spike: spawn, message, fresh review, close | you | — | ✅ | Agent ran the seatbelted spike (user away, delegated), not user-watched. All 4 answered, artifacts deleted. Two corrections: `--bg` task is positional not `-p`; worker names must be slash-free (SendMessage rejects `/`). See FINDINGS. Gates T07/T08. |
 | T01 | Project scaffold, `npm test`, boundary test | auto | — | ⬜ | |
 | T02 | Parse `PROGRESS.md` (with `Runs` marker) and fold one row back | auto | T01 | ⬜ | |
 | T03 | `decideDispatch` — spawn / review / merge / close / surface | auto | T02 | ⬜ | |
@@ -52,6 +53,6 @@ deviation from the task doc.
 
 ## Blocked on the user
 
-Nothing right now. The two `you` tasks (T00 spike, T10 full run) and the hand-verified halves of
-T06 and T08 need a person; each names its exact seatbelted command in its task doc. That is a good
-state; it is where those tasks pause for an answer, not a backlog.
+Nothing right now. T00 (spike) is done. The remaining person-run work is T10 (full run) and the
+hand-verified halves of T06 and T08; each names its exact seatbelted command in its task doc. That
+is a good state; it is where those tasks pause for an answer, not a backlog.

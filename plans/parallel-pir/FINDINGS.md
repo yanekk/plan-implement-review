@@ -12,6 +12,10 @@ Legend: 🐞 defect found · ✅ verified by hand with the user · 📌 worth kn
 
 | Date | | Finding |
 |---|---|---|
+| 2026-09-07 | 🐞 | T00: SendMessage addresses workers by NAME only, not id or sessionId. A name containing `/` (DESIGN §2.8 `@{repo} / {plan} / T{nn}`) is rejected: `to must be a bare teammate name`. Worker names must be slash-free. Reshapes §2.8 and T07. |
+| 2026-09-07 | 📌 | T00: coordinator→worker message reached the idle/blocked worker and it acted; reply arrived automatically, no receive-side setting needed. Worker replies to the `from=uds:/tmp/cc-socks/<n>.sock` socket address, so reply works despite the coordinator's own slashed name. |
+| 2026-09-07 | 🐞 | T00: `claude --bg` takes the task as POSITIONAL, not `-p` (`--bg`+`--print` conflict, exit 1). DESIGN §2.8 and task docs wrote `-p "<task>"`; wrong. `-n "<name>"` sets the `agents --json` name verbatim (no repo prefix) and cwd is the worktree. |
+| 2026-09-07 | 📌 | T00: fresh review confirmed — a second `--bg` session in the same worktree (implementer stopped first) reviewed with no shared context. Close: `claude stop <id>` drops the session; `git worktree remove --force` clears the worktree. Run by the agent, user away and delegating; not user-watched. |
 | 2026-09-07 | 📌 | `FORCE_COLOR=3` is set in this environment. `NO_COLOR=1` alone is ignored by `node --test` (it warns and still emits ANSI). `FORCE_COLOR=0` inside the test command gives clean dot output. Command now sets `FORCE_COLOR=0` (DESIGN §5). |
 | 2026-09-07 | 📌 | `claude --bg -n/--name "<name>"` sets a session's display name (picker, terminal title, `agents --json` name field). Observed names are `{repo} / {label}`. Whether the repo is auto-prefixed to `--name` and whether `SendMessage` addresses by this name is for T00 to confirm. |
 | 2026-09-07 | 📌 | Fresh-eyes review needs no `/clear` trick: point a separate fresh session at the worker's worktree and it reviews the `🔍` task with no implementer context. Two sequential sessions on one worktree, which the platform supports. |
