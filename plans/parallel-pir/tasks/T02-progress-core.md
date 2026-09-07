@@ -1,6 +1,6 @@
 # T02 — Parse `PROGRESS.md` and fold one finished task row back
 
-**Phase:** 1 · **Depends on:** T01 · **Weight:** light
+**Phase:** 1 · **Depends on:** T01 · **Weight:** light · **Runs:** auto
 
 ## Goal
 
@@ -26,10 +26,13 @@ gate), §2.5 (`PROGRESS.md` contention).
 ```
 parseProgress(text) → {
   planReviewed: { reviewed: boolean, note: string },   // from the **Plan reviewed:** line
-  tasks: [ { num: "T00", name, deps: ["T01", …], state: "⬜"|"🟡"|"🔍"|"✅"|"⛔" } ]
+  tasks: [ { num: "T00", name, deps: ["T01", …], runs: "auto"|"you",
+            state: "⬜"|"🟡"|"🔍"|"✅"|"⛔" } ]
 }
-  // Depends on: comma/space list of task numbers or "—". Unknown state glyphs and malformed
-  // rows are reported, not dropped — a row the parser cannot read is a task silently never built.
+  // Depends on: comma/space list of task numbers or "—". Runs: from the "Runs" column, "auto" or
+  // "you", defaulting to "auto" when the column is absent so classic plans still parse (DESIGN §2.6).
+  // Unknown state glyphs and malformed rows are reported, not dropped — a row the parser cannot
+  // read is a task silently never built.
 
 reconcileTaskRow(mainText, { num, state, notes }) → newText
   // Replaces only the target row's State and Notes cells; every other line byte-for-byte identical,
@@ -40,6 +43,7 @@ reconcileTaskRow(mainText, { num, state, notes }) → newText
 ## Tests
 
 - [ ] `—` in Depends on yields an empty deps list; `T01, T02` yields two.
+- [ ] Reads the `Runs` column as `auto`/`you`; a row/table with no `Runs` column defaults to `auto`.
 - [ ] Reads the reviewed gate in both forms (not-yet and dated-verdict).
 - [ ] A row with an unknown state glyph is surfaced as a parse error, not dropped.
 - [ ] The legend row is not treated as a task; a file with no table yields an empty task list.

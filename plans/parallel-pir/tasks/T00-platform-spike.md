@@ -1,6 +1,6 @@
 # T00 — Platform primitives spike: spawn, message, fresh review, close
 
-**Phase:** 0 · **Depends on:** — · **Weight:** medium
+**Phase:** 0 · **Depends on:** — · **Weight:** medium · **Runs:** you
 
 ## Goal
 
@@ -15,7 +15,7 @@ once its findings are written.
 ## Design sections this implements
 
 Probes DESIGN §2.2 (cross-session messaging both ways), §2.3 (create / drive / close), and the
-survey claims in FINDINGS.md. Gates T06 and T07.
+survey claims in FINDINGS.md. Gates T07 and T08.
 
 ## Files
 
@@ -40,7 +40,7 @@ The four questions, each with the commands probed and the observation recorded:
 ```
 
 Each answer is a finding. If any differs from the survey — most likely the messaging handshake
-or a setting needed to receive inbound — that difference shapes T06 and T07.
+or a setting needed to receive inbound — that difference shapes T07 and T08.
 
 ## Tests
 
@@ -53,7 +53,7 @@ plan and scratch repo are the seatbelt; no real long-running paid agent against 
 
 ## Done when
 
-- [ ] All four questions answered on the machine, stated plainly enough that T06 and T07 can be
+- [ ] All four questions answered on the machine, stated plainly enough that T07 and T08 can be
       designed from them (especially the messaging handshake and any receive-side setting).
 - [ ] The spike directory and every scratch artifact deleted; findings in FINDINGS.md.
 

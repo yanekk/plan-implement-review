@@ -37,9 +37,19 @@ already there.
   in our own code would be a worse copy of a stable primitive, and the only thing that would
   justify it — portability — is already satisfied because those primitives run headless in any
   project. What is ours is the PIR state protocol and the coordinator's decision loop.
-- **The existing skills are reused unchanged.** Workers run the stock `pir-work` /
-  `pir-implement` / `pir-review`. Parallelism is wrapped around them via a worker contract, not
-  sewn into them, because forking those skills would split the method and double every fix.
+- **The coordinator dispatches; workers never self-select.** In classic mode `pir-work` reads
+  `PROGRESS.md` and picks the next task itself. In parallel mode that cannot work — every worker
+  would read the same file and grab the same lowest-ready task and collide. So the coordinator is
+  the dispatcher: it decides task and phase and tells each worker exactly what to do, sending it
+  `pir-implement Txx` to build or `pir-review Txx` to review. Workers run the stock implement and
+  review procedures unchanged in their logic; the change is only that those skills gain an explicit
+  task entry point so the coordinator can name the task, rather than being reached only through
+  `pir-work`'s own selection. `pir-work` itself is not used inside a worker.
+- **The base rule "only `pir-work` invokes implement/review, one task per invocation" is bent
+  deliberately, and its guarantee relocated.** That rule exists to keep the reviewer from being the
+  implementer. In parallel mode the coordinator keeps that guarantee a different way — it spawns a
+  fresh session for the review — so it is allowed to invoke the phases directly. Written down here
+  so a later session does not "fix" it back.
 - **Fresh eyes come from a separate session, not a memory wipe.** A worker implements its task
   on its worktree; a fresh session is then pointed at the same worktree to review it. A new
   session has no implementer context by construction, which is cleaner than driving a `/clear`.
@@ -56,14 +66,16 @@ already there.
    `PROGRESS.md` says it has been reviewed. If the plan is not reviewed, the coordinator
    refuses, exactly as `pir-work` does — an unreviewed plan copies its defects into every task,
    and running many at once multiplies that.
-2. The coordinator reads the task table, finds every task whose dependencies are `✅` and which
-   is not already assigned, and — up to the worker ceiling — spawns a worker for each: a
-   background `claude` session whose working directory is a fresh worktree and branch, handed
-   the one task. `coordinator → worker` is direct and immediate.
-3. The worker runs the stock `pir-work`, which implements the task and marks it `🔍` on its
-   branch. When it reports implemented, the coordinator spawns a **fresh** session pointed at
-   the same worktree, which runs `pir-work` again and reviews the work, marking it `✅`. Fresh
-   eyes come from that being a different session with no implementer context.
+2. The coordinator reads the task table, finds every `auto` task whose dependencies are `✅` and
+   which is not already assigned, and — up to the worker ceiling — spawns a worker for each: a
+   background `claude` session whose working directory is a fresh worktree and branch. It tells
+   that worker `pir-implement Txx` for the specific task it chose. `coordinator → worker` is direct
+   and immediate. The coordinator, not the worker, decides which task the worker builds.
+3. The worker runs `pir-implement Txx`, which implements that task and marks it `🔍` on its branch.
+   When the worker reports implemented, the coordinator spawns a **fresh** session pointed at the
+   same worktree and tells it `pir-review Txx`, which reviews the work and marks it `✅`. Fresh eyes
+   come from that being a different session with no implementer context, and the coordinator is what
+   guarantees the reviewer is never the implementer.
 4. If a worker hits a question or decision at any phase, it sends the coordinator a message and
    waits. The coordinator surfaces it to the user; the user's answer is sent straight back down
    to that worker.
@@ -162,6 +174,56 @@ loop cheaply.
   disk unmerged for inspection; nothing half-done reaches `main`, because only the coordinator
   merges and it stops first. Restart re-dispatches whatever `PROGRESS.md` still shows unbuilt.
 
+### 2.6 Which tasks a worker can do, and which are yours
+
+Not every task is work an autonomous worker can finish. A spike is a person running seatbelted
+commands and recording what they saw; a pure hand-verification drill is a person watching real
+agents. Dispatching a background worker to such a task is worse than useless — the worker has no
+code to produce and would immediately hand the task straight back, having spent a worktree and a
+paid session to do so.
+
+So every task carries a marker, decided at plan time and recorded in `PROGRESS.md`:
+
+- **`auto`** — an autonomous worker can produce this task's deliverable (code and tests), even if
+  it also has a hand-verified half it escalates to the user through the normal question path
+  (§2.5). Most tasks are `auto`.
+- **`you`** — the task's completion is essentially a person's actions with no deliverable a worker
+  could produce: a spike, or an all-manual verification. The coordinator does not dispatch a
+  worker for these; it **surfaces** them to the user, with the task's command, as work for the
+  user to run — in classic single-stream mode or by hand.
+
+The marker is a `Runs` column in the `PROGRESS.md` task table, `auto` or `you`, defaulting to
+`auto` when a plan predates the column so classic plans still parse. The coordinator reads it and
+routes ready `you` tasks to a surface list rather than the spawn list. This is what stops the
+coordinator dispatching a doomed worker for a spike, and it is the honest record of where a plan
+genuinely needs a person rather than an agent.
+
+### 2.7 Planning for parallelism
+
+A parallel coordinator is only as valuable as the width of the plan it is given. A plan that is a
+single long dependency chain drains no faster in parallel than one task at a time, because every
+task waits on the one before it. So the planning method (`/pir-plan`) is taught to produce plans
+that parallelise honestly, and to show the user how parallel a plan actually is.
+
+Two rules, and one report:
+
+- **Declare only real dependencies.** A dependency that is not genuinely required serializes work
+  that could run at once, and it is invisible cost — nothing downstream flags it. The planner
+  declares a dependency only when a task truly cannot start until another is done.
+- **Never fake width.** The incentive is honest independence, not the appearance of it. Cutting a
+  real dependency to make a plan look wide is worse than an honest chain: it produces workers that
+  collide or build on work that is not there. Reviewability and correct task boundaries win over
+  throughput every time; parallelism is a property to surface, never to force.
+- **Report the shape.** At the plan checkpoint the planner shows the user the plan's parallel
+  width — the longest dependency chain, the widest set of tasks that could run together, and how
+  many tasks are `you` rather than `auto` — computed by `analyzeParallelism` (§3.2). This is what
+  lets the user see, before a line is built, whether a plan will actually benefit from the
+  coordinator or is serial by nature.
+
+This is a change to the shared planning method and its templates, so it affects the classic flow
+too. The classic flow simply ignores the width report and the `Runs` marker; nothing it does
+changes, and a plan is now honest about its own shape whether or not it is ever run in parallel.
+
 ---
 
 ## 3. Architecture
@@ -192,12 +254,16 @@ the test.** The test is the rule; the code is what bends.
 
 Pure (`src/core/`):
 
-- `progress.mjs` — parse `PROGRESS.md` into a structured task table and the plan-reviewed gate,
-  and fold one finished task's row back into a `PROGRESS.md` text. Depends on nothing.
-- `dispatch.mjs` — decide what to do this pass: which tasks to spawn a worker for, which worker
-  to move into review, which branch to merge, which workers to close. A function of the task
-  table, the current worker assignments, the worker ceiling and the halted flag. Depends on the
-  `progress.mjs` shapes.
+- `progress.mjs` — parse `PROGRESS.md` into a structured task table (including each task's `Runs`
+  marker, §2.6) and the plan-reviewed gate, and fold one finished task's row back into a
+  `PROGRESS.md` text. Depends on nothing.
+- `dispatch.mjs` — decide what to do this pass: which tasks to spawn a worker for, which worker to
+  move into review, which branch to merge, which workers to close, and which ready `you` tasks to
+  surface to the user. A function of the task table, the current worker assignments, the worker
+  ceiling and the halted flag. Depends on the `progress.mjs` shapes.
+- `parallelism.mjs` — `analyzeParallelism` over the task graph: the longest dependency chain, the
+  widest set of tasks that could run at once, and the `auto`/`you` counts (§2.7). Used by the
+  planner's width report; a pure function of the task list. Depends on the `progress.mjs` shapes.
 
 Shell (`src/shell/`):
 
@@ -224,11 +290,13 @@ together, and it is a function of its arguments and nothing else.
 - `maxWorkers` — the ceiling (4).
 - `halted` — whether the kill-switch flag is present.
 
-It returns `{ spawn, review, merge, close }`:
+It returns `{ spawn, review, merge, close, surface }`:
 
-- If `halted`, `spawn`, `review` and `merge` are empty and `close` is every live worker.
-- `spawn` is the ready `⬜` tasks (all deps `✅`, not already assigned), capped so
+- If `halted`, `spawn`, `review`, `merge` and `surface` are empty and `close` is every live worker.
+- `spawn` is the ready `auto` `⬜` tasks (all deps `✅`, not already assigned), capped so
   live-plus-spawned never exceeds `maxWorkers`, lowest task number first.
+- `surface` is the ready `you` tasks (all deps `✅`, not yet done): human-required work the
+  coordinator presents to the user rather than dispatching (§2.6). A `you` task is never spawned.
 - `review` is the workers that reported implemented (`🔍`) and need a fresh review session.
 - `merge` is the branches of workers reporting done, at most one per pass (serialized).
 - `close` is the workers whose task merged, plus any assignment the agent list shows is dead.
@@ -337,13 +405,13 @@ the user, one at a time, never mid-task.
 | Flag / mechanism | Default | Effect |
 |---|---|---|
 | `PARALLEL_DRY_RUN=1` | on in all tests | Spawn / message / list / close / merge hit the fakes and a scratch repo, never a real agent or `main` |
-| Scratch plan + scratch repo | used for T00, T07, T09 | The dangerous operations run against a throwaway plan and repo, never the real project |
+| Scratch plan + scratch repo | used for T00, T08, T10 | The dangerous operations run against a throwaway plan and repo, never the real project |
 | Worker ceiling = 4 | always on | Bounds how many real agents can exist at once |
 | Kill-switch flag | always available | One file halts all dispatch and delivery and stops every worker |
 
 **Never ask the user to run the unbounded version to find something out, and never run it
 yourself.** No spike or task spawns real long-running paid agents against real branches. The
-first real spawn (T07) is one worker, one trivial task, on a scratch plan, ceiling at its
+first real spawn (T08) is one worker, one trivial task, on a scratch plan, ceiling at its
 minimum, kill switch wired.
 
 ---
@@ -400,6 +468,21 @@ minimum, kill switch wired.
 - **`PROGRESS.md` is coordinator-owned on `main`, folded row by row.** A shared file every
   branch edits would conflict on its single-line fields; folding one task row with a pure
   function avoids that and keeps the coordinator the single writer of the cross-cutting lines.
+- **Tasks are marked `auto` or `you`, and the coordinator surfaces `you` tasks instead of
+  dispatching them.** The user asked how the coordinator handles a task that needs a person, like
+  the spike (2026-09-07). Dispatching a worker for an all-manual task spends a worktree and a paid
+  session to hand the work straight back. The marker lets the coordinator route those to the user.
+- **The coordinator dispatches a specific task and phase; workers run `pir-implement Txx` /
+  `pir-review Txx`, never `pir-work`.** The user pointed out that `pir-work` self-selects the next
+  task, so parallel workers would all pick the same one (2026-09-07). Task selection moves to the
+  coordinator's `decideDispatch`, and the worker is told exactly which task and phase to run. This
+  needs `pir-implement` / `pir-review` to accept an explicit task; their logic is unchanged.
+- **The planning method is taught to plan for parallelism, in this plan.** The user chose to fold
+  this in rather than defer it (2026-09-07). `/pir-plan` declares only real dependencies, marks
+  each task `auto`/`you`, and reports a plan's parallel width so the user sees how much the
+  coordinator will help. The incentive rewards honest independence only; faking width by cutting a
+  real dependency is explicitly out (§2.7). It changes the shared method, which the classic flow
+  ignores harmlessly.
 
 ---
 

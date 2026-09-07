@@ -1,6 +1,6 @@
 # T01 — Project scaffold, `npm test`, the boundary test
 
-**Phase:** 1 · **Depends on:** — · **Weight:** light
+**Phase:** 1 · **Depends on:** — · **Weight:** light · **Runs:** auto
 
 ## Goal
 

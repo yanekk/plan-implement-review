@@ -1,19 +1,20 @@
-# T03 — `decideDispatch` — spawn / review / merge / close
+# T03 — `decideDispatch` — spawn / review / merge / close / surface
 
-**Phase:** 1 · **Depends on:** T02 · **Weight:** light
+**Phase:** 1 · **Depends on:** T02 · **Weight:** light · **Runs:** auto
 
 ## Goal
 
 The one place the whole behaviour comes together: given the parsed task table, the current worker
 assignments, the worker ceiling and whether the kill switch is thrown, decide what to do this
-pass — which tasks to spawn a worker for, which implemented task needs a fresh review session,
-which finished branch to merge, and which workers to close. A pure function of its arguments and
-nothing else, which is what lets the whole dispatch logic be proven before any agent exists.
+pass — which `auto` tasks to spawn a worker for, which ready `you` tasks to surface to the user
+instead of dispatching, which implemented task needs a fresh review session, which finished branch
+to merge, and which workers to close. A pure function of its arguments and nothing else, which is
+what lets the whole dispatch logic be proven before any agent exists.
 
 ## Design sections this implements
 
 DESIGN §3.3 (the decision function), §2.1 (spawn ready, then fresh review), §2.3 (close), §2.4
-(the ceiling and halted), §2.5 (serialized merge, crash cleanup).
+(the ceiling and halted), §2.5 (serialized merge, crash cleanup), §2.6 (surface `you` tasks).
 
 ## Files
 
@@ -23,23 +24,25 @@ DESIGN §3.3 (the decision function), §2.1 (spawn ready, then fresh review), §
 ## Interface
 
 ```
-decideDispatch({ tasks, assignments, maxWorkers, halted }) → { spawn, review, merge, close }
+decideDispatch({ tasks, assignments, maxWorkers, halted }) → { spawn, surface, review, merge, close }
 
-  tasks       : [ { num, name, deps, state } ]                       // from parseProgress
+  tasks       : [ { num, name, deps, runs, state } ]                 // from parseProgress; runs: auto|you
   assignments : [ { workerId, task, phase, live } ]
                 // phase: implementing | review-ready | reviewing | awaiting-answer | done | dead
   maxWorkers  : number     // the ceiling (4)
   halted      : boolean     // kill-switch flag present
 
-  spawn  : [ taskNum ]      // ready ⬜: all deps ✅, not assigned, lowest first, live+spawn ≤ max
-  review : [ workerId ]     // workers in phase "review-ready" (implemented, need a fresh reviewer)
-  merge  : [ branch ]       // workers in phase "done", AT MOST ONE per pass (serialized)
-  close  : [ workerId ]     // workers whose task merged, plus any assignment with live=false
+  spawn   : [ taskNum ]     // ready auto ⬜: deps ✅, not assigned, lowest first, live+spawn ≤ max
+  surface : [ taskNum ]     // ready you ⬜: deps ✅, not done — surfaced to the user, never spawned
+  review  : [ workerId ]    // workers in phase "review-ready" (implemented, need a fresh reviewer)
+  merge   : [ branch ]      // workers in phase "done", AT MOST ONE per pass (serialized)
+  close   : [ workerId ]    // workers whose task merged, plus any assignment with live=false
 ```
 
-When `halted`: `spawn`, `review` and `merge` are empty and `close` is every live worker. A task
-held by a live worker is never re-spawned. A dead worker (live=false or phase "dead") is always
-closed, so it stops holding a slot under the ceiling.
+A `you` task is never in `spawn`; it goes to `surface` and does not count against `maxWorkers`.
+When `halted`: `spawn`, `surface`, `review` and `merge` are empty and `close` is every live
+worker. A task held by a live worker is never re-spawned. A dead worker (live=false or phase
+"dead") is always closed, so it stops holding a slot under the ceiling.
 
 ## Tests
 

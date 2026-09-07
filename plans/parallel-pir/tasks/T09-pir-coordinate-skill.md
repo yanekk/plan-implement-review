@@ -1,0 +1,84 @@
+# T09 — The `pir-coordinate` skill: dispatch, surface, supervise
+
+**Phase:** 3 · **Depends on:** T08 · **Weight:** heavy · **Runs:** auto
+
+## Goal
+
+The face of the whole mode: the skill the user starts and then talks to. It checks the plan is
+reviewed, then runs the T05 loop over the real platform (T06 + T08). It is the dispatcher — it
+decides which task each worker builds and reviews, sending `pir-implement Txx` and `pir-review Txx`
+rather than letting a worker self-select. It surfaces every worker question and decision to the
+user in plain English, routes answers back down to the right worker, keeps every other task moving
+while one worker waits, surfaces `you` tasks to the user instead of dispatching them, honours the
+ceiling and the kill switch, serializes merges, and reports progress as tasks reach `✅`.
+
+## Design sections this implements
+
+DESIGN §2.1 (the run, the reviewed-gate refusal, coordinator names task and phase), §2.2 (surfacing
+messages and sending answers down), §2.4 (supervision, ceiling, kill switch), §2.5 (a worker
+blocked on a decision, serialized merge, conflict escalation), §2.6 (surfacing `you` tasks).
+
+## Files
+
+- `skills/pir-coordinate/SKILL.md` — the coordinator procedure (new skill).
+- `src/shell/coordinate.mjs` — the entry the skill drives (wires loop.mjs to the real platform, the
+  inbox and the control flag), plus a thin `pir coordinate {slug}` bin entry.
+- `src/shell/coordinate.test.mjs` — against the fakes, proving dispatch, surfacing and routing.
+
+## Interface
+
+```
+pir-coordinate SKILL.md:
+  - refuse if PROGRESS.md's plan-reviewed gate says "not yet" (same rule as pir-work).
+  - the coordinator chooses each worker's task (decideDispatch) and sends it `pir-implement Txx`,
+    then a fresh session `pir-review Txx` — workers never run pir-work or choose their own task.
+  - each pass, after executing actions, read the inbox and surface any question / decision /
+    conflict to the user in plain English, one at a time — the user owns every decision.
+  - take the user's answer and send it down to that worker (kind: answer), immediately.
+  - surface ready `you` tasks (the spike, hand-verified drills) to the user with their command,
+    rather than spawning a worker for them.
+  - keep dispatching and merging other ready tasks while a worker waits; a parked worker never
+    blocks the rest. A decision the user defers indefinitely marks that task ⛔ in PROGRESS.md.
+  - honour the ceiling (log when full) and the HALT flag (stop dispatch, stop all workers).
+  - report each task reaching ✅, and stop when the plan is fully ✅ or halted.
+
+coordinate.mjs: startCoordinator({ slug, platform, worktree, maxWorkers }) → drives loop.mjs and
+  exposes the dispatch, surfacing and answer-routing the skill calls.
+```
+
+## Tests
+
+- [ ] Refuses to start when the plan-reviewed gate says "not yet".
+- [ ] A dispatched worker is told `pir-implement Txx` for the coordinator's chosen task; the review
+      is a fresh worker told `pir-review Txx` (distinct id), not the implementer.
+- [ ] A fake worker's question is surfaced and a user answer is routed down to that worker only.
+- [ ] Other ready tasks keep progressing while one fake worker is parked awaiting an answer.
+- [ ] A ready `you` task is surfaced to the user, not dispatched.
+- [ ] A conflict message is surfaced as a decision; a deferred decision marks its task ⛔.
+- [ ] The ceiling-full case is logged; the HALT flag stops dispatch and closes workers.
+- [ ] Reports each ✅ and terminates when the fake plan is fully ✅.
+
+## Done when
+
+- [ ] `pir-coordinate` refuses an unreviewed plan and otherwise drives the loop end to end,
+      dispatching specific `pir-implement Txx` / `pir-review Txx` and surfacing `you` tasks.
+- [ ] Worker questions and decisions are surfaced and answers routed to the right worker, without
+      one parked worker stalling the others.
+- [ ] `npm test` is green (dispatch, surfacing and routing proven against fakes).
+
+## Needs a person
+
+The full conversational drive over real agents is verified in T10; here a person confirms the
+skill starts, refuses an unreviewed plan, dispatches a named task, and surfaces a question.
+Seatbelt: the scratch plan from T08, ceiling 1.
+
+```
+pir coordinate scratch          # point it at an UNREVIEWED scratch plan first
+# expect: refusal, names the reviewed gate
+# then at a reviewed scratch plan with one task that asks a question mid-way
+```
+
+Expect: refusal on the unreviewed plan; on the reviewed one, a worker told `pir-implement Txx` and
+its question surfaced to you, your answer sent down.
+Tell me: whether the refusal fired, whether the worker built the task the coordinator named, and
+whether a worker's question reached you readably and your answer got back to it.

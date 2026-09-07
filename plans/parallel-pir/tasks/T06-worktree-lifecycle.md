@@ -1,14 +1,14 @@
-# T05 — Real worktree create / integrate / merge / close
+# T06 — Real worktree create / integrate / merge / close
 
-**Phase:** 3 · **Depends on:** T04 · **Weight:** medium
+**Phase:** 3 · **Depends on:** T05 · **Weight:** medium · **Runs:** auto
 
 ## Goal
 
-The real git plumbing behind the fake from T04, built before any live agent so a runaway or
+The real git plumbing behind the fake from T05, built before any live agent so a runaway or
 abandoned worker can always be torn down. Create a worktree and branch off `main`, integrate the
 latest `main` into a branch (surfacing a conflict rather than resolving it here), merge a clean
-branch to `main` one at a time, and remove a worktree and branch. This is the recovery half of
-the machine, and recovery is built before the thing that keeps agents alive.
+branch to `main` one at a time, and remove a worktree and branch. This is the recovery half of the
+machine, and recovery is built before the thing that keeps agents alive.
 
 ## Design sections this implements
 
@@ -17,7 +17,7 @@ DESIGN §2.3 (create/close), §2.5 (serialized merge, conflict surfacing, crash 
 
 ## Files
 
-- `src/shell/worktree.mjs` — the real implementation of the T04 worktree interface.
+- `src/shell/worktree.mjs` — the real implementation of the T05 worktree interface.
 - `src/shell/worktree.test.mjs` — run against a scratch git repo in the test's temp dir.
 
 ## Interface
@@ -28,7 +28,7 @@ integrate(path) → { ok } | { conflict: [files] }   // merge main into the bran
 merge(branch) → { ok } | { conflict: [files] }     // merge branch into main; serialized by caller
 remove({ path, branch }) → { ok }      // git worktree remove (force if needed) ; git branch -d/-D
 
-Branch names derive from the task, e.g. "pir/T05". integrate and merge never auto-resolve; they
+Branch names derive from the task, e.g. "pir/T06". integrate and merge never auto-resolve; they
 report conflicts so the worker (integrate) or the coordinator (merge) decides. remove force-drops
 the worktree when needed, because claude rm keeps a dirty worktree (FINDINGS.md).
 ```
@@ -53,9 +53,9 @@ seatbelt; no agent is spawned here.
 
 ## Needs a person
 
-The automated tests use a scratch repo, so they are self-contained. What a person confirms is
-that the same operations behave on the real project's git and `main` — once, lightly, never as
-part of an agent run:
+The automated tests use a scratch repo, so they are self-contained. What a person confirms is that
+the same operations behave on the real project's git and `main` — once, lightly, never as part of
+an agent run:
 
 ```
 # in a scratch clone of THIS repo, not the working copy:
