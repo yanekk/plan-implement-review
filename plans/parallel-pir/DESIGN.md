@@ -66,8 +66,9 @@ already there.
    `PROGRESS.md` says it has been reviewed. If the plan is not reviewed, the coordinator
    refuses, exactly as `pir-work` does — an unreviewed plan copies its defects into every task,
    and running many at once multiplies that. The coordinator opens one **feature branch** for the
-   whole plan, `pir/{plan}`, off `main`, and works on it. `main` is not touched again until the
-   plan is done (§2.9).
+   whole plan, `pir/{plan}`, off `main`, **in its own worktree**, and works there — so the user's
+   main checkout is left on `main`, undisturbed. `main` is not touched again until the plan is
+   done (§2.9).
 2. The coordinator reads the task table, finds every `auto` task whose dependencies are `✅` and
    which is not already assigned, and — up to the worker ceiling — spawns a worker for each: a
    background `claude` session whose working directory is a fresh worktree on a **task branch**,
@@ -75,8 +76,10 @@ already there.
    whatever sibling tasks have already merged. It tells that worker `pir-implement Txx` for the
    specific task it chose. The coordinator, not the worker, decides which task the worker builds.
 3. The worker runs `pir-implement Txx`, which implements that task and marks it `🔍` on its task
-   branch. When the worker reports implemented, the coordinator spawns a **fresh** session pointed
-   at the same worktree and tells it `pir-review Txx`, which reviews the work and marks it `✅`.
+   branch. When the worker reports implemented, the coordinator **closes the implement session**
+   and spawns a **fresh** session pointed at the same worktree and tells it `pir-review Txx`,
+   which reviews the work and marks it `✅`. Closing the implementer as the reviewer starts means
+   a task in review holds one worker slot, not two, and no two live sessions ever share a name.
    Fresh eyes come from that being a different session with no implementer context, and the
    coordinator is what guarantees the reviewer is never the implementer.
 4. If a worker hits a question or decision at any phase, it sends the coordinator a message and
@@ -113,7 +116,8 @@ The coordinator owns a worker's whole life, and it must be able to end it, not o
   `pir/{plan}/T{nn}` cut from the **feature branch** (§2.9), handed the one task and a short
   contract (§2.1, and the worker contract skill).
 - **drive** — send the worker a message (an answer to its question, the instruction to hand off
-  to review). The review session is a *separate* fresh spawn on the same worktree.
+  to review). The review session is a *separate* fresh spawn on the same worktree, and the
+  implement session is closed as that reviewer starts (§2.1), so one task in review holds one slot.
 - **close** — stop the worker's session and remove its worktree and task branch.
 
 **Close exists for three reasons, and all three are why it is first-class rather than an
@@ -210,6 +214,16 @@ routes ready `you` tasks to a surface list rather than the spawn list. This is w
 coordinator dispatching a doomed worker for a spike, and it is the honest record of where a plan
 genuinely needs a person rather than an agent.
 
+**A surfaced `you` task completes on the user's say-so.** The coordinator cannot mark it done on
+its own — there is no deliverable it could check. When the user reports the task done (with its
+finding, the same channel as answering a question), the coordinator marks it `✅` on the feature
+branch's `PROGRESS.md` with `reconcileTaskRow`, so the coordinator stays the single writer of that
+file, and the task's dependents unblock on the next pass. A `you` task the user defers is marked
+`⛔` and its dependents wait; nothing downstream of an unrun spike is dispatched. This matters
+because a `you` task can sit on the critical path — the T00 spike gates T07 and T08 — so the run
+genuinely pauses at human speed until the user runs it, which is the correct behaviour, not a
+stall to design around.
+
 ### 2.7 Planning for parallelism
 
 A parallel coordinator is only as valuable as the width of the plan it is given. A plan that is a
@@ -259,10 +273,11 @@ out of it, which is why the convention is worth fixing rather than leaving names
   plan on the machine, because the name carries the repo, the plan and the task.
 
 The name identifies the repo, plan and task, not the phase: the implement session and the fresh
-review session for one task carry the same `@{repo} / {plan} / T{nn}` name. The coordinator tells
-them apart by session id and the phase it is already tracking from the worker's own messages
-(implemented, done), so the name never has to carry the phase. The name gives identity and task;
-the lifecycle gives phase.
+review session for one task carry the same `@{repo} / {plan} / T{nn}` name, but they do not run at
+once — the implement session is closed as the review session spawns (§2.1), so at most one live
+session ever holds a given task name. The coordinator tracks the phase from the worker's own
+messages (implemented, done) and the task state in `PROGRESS.md`, so the name never has to carry
+the phase. The name gives identity and task; the lifecycle gives phase.
 
 The name format is pure string work (`naming.mjs`, §3.2) so it is tested directly; T00 confirms
 that `--name` sets the `agents --json` name and that messaging addresses by it on this version.
@@ -298,9 +313,14 @@ Why this and not merging each task straight to `main`:
 This is a further, deliberate departure from the base method's "main checkout, main branch, always"
 rule, on top of the worktrees parallel mode already uses. The classic single-stream flow keeps that
 rule; parallel mode replaces it with this feature-branch model, and the reason — an atomic,
-reviewable landing on `main` — is why. The final promotion is the single most consequential action
-the coordinator takes, so it is gated on the tests passing and announced to the user; making it a
-manual confirmation instead is a one-line change if the user prefers.
+reviewable landing on `main` — is why. Because `pir-implement` tells every session that base rule
+"applies in full", the exemption is written where those sessions read it: a parallel-mode carve-out
+in `CLAUDE.md § Where sessions run` (T11) and in the `pir-worker` contract (T07), so a worker in a
+task-branch worktree does not follow the base rule and halt on contact with its own worktree. The
+coordinator itself runs `pir/{plan}` in its own worktree, so the user's main checkout is never
+switched off `main`. The final promotion is the single most consequential action the coordinator
+takes, so it is gated on the tests passing and announced to the user; making it a manual
+confirmation instead is a one-line change if the user prefers.
 
 ---
 
@@ -354,7 +374,8 @@ Shell (`src/shell/`):
   inbox (cross-session messaging), list live workers with their state (`claude agents --json`,
   same-repo resolution, names parsed by `naming.mjs`), and close a worker (`claude stop` then
   remove its worktree). This is where the T00 spike's confirmed mechanisms live.
-- `worktree.mjs` — open the feature branch off `main`; create a task worktree and branch off the
+- `worktree.mjs` — open the feature branch off `main` in its own worktree (the coordinator works
+  there, leaving the user's main checkout on `main`); create a task worktree and branch off the
   feature branch; integrate the feature branch into a task branch; merge a task branch into the
   feature branch, serialized; promote the feature branch to `main`; and remove a worktree and
   branch (§2.9).
@@ -385,7 +406,9 @@ It returns `{ spawn, surface, review, merge, close, promoteToMain }`:
 - `review` is the workers that reported implemented (`🔍`) and need a fresh review session.
 - `merge` is the task branches of workers reporting done, at most one per pass (serialized), merged
   into the feature branch (§2.9).
-- `close` is the workers whose task merged, plus any assignment the agent list shows is dead.
+- `close` is the workers whose task merged, plus the implement session of any task that has just
+  been handed a fresh reviewer (the implementer is closed as review starts, §2.1), plus any
+  assignment the agent list shows is dead.
 - `promoteToMain` is true only when every task is `✅` and no worker is live: the signal to run the
   tests on the feature branch and, if green, merge it to `main` (§2.9). It is the one path to `main`.
 
@@ -417,7 +440,9 @@ State lives on disk, plain text so a person can read it under pressure:
 - `PROGRESS.md` on the **feature branch** — the task states, owned by the coordinator; it reaches
   `main` with the feature branch at promotion.
 - `plans/{slug}/.parallel/control/` — the kill-switch flag file (`HALT`) and `log` for the
-  ceiling-hit and lifecycle record.
+  ceiling-hit and lifecycle record. Gitignored (`plans/*/.parallel/`, added by T01): it is
+  per-run control state, so it must never be committed to a task branch or ride the feature
+  branch to `main` at promotion.
 - The feature branch `pir/{plan}` and the task branches `pir/{plan}/T{nn}` and their worktrees —
   git's, under `.git/worktrees/`; `git worktree remove` is the recovery for a leaked one.
 
@@ -460,18 +485,22 @@ Three layers, and what each can and cannot prove:
 npm test
 ```
 
-which runs `NO_COLOR=1 node --test --test-reporter=dot` over `src/**/*.test.mjs` (exact
-invocation settled by T01 on the machine). **It is the only evidence a session may produce on
-its own.**
+which runs `FORCE_COLOR=0 NO_COLOR=1 node --test --test-reporter=dot` over `src/**/*.test.mjs`
+(exact invocation settled by T01 on the machine). **It is the only evidence a session may
+produce on its own.**
 
 **It is cheap to read when it passes.** The dot reporter prints one character per test and a
 short summary, not a line per assertion, so a green run is a few lines, and the exit code
 carries the result. To see full detail while debugging, a person runs
 `node --test --test-reporter=spec src/**/*.test.mjs`.
 
-**No colour.** `NO_COLOR=1` is set inside the command rather than trusted from the environment,
-because `FORCE_COLOR` / `CI` / `CLICOLOR_FORCE` force colour even down a pipe and override
-`NO_COLOR`. T01 checks `env | grep -i color` on this machine and records anything forcing it.
+**No colour.** `FORCE_COLOR=0` is set inside the command, not just `NO_COLOR=1`, because a set
+`FORCE_COLOR` overrides `NO_COLOR`: Node's test runner then ignores `NO_COLOR` (it prints a
+warning and colours anyway). Measured on this machine 2026-09-07 — `FORCE_COLOR=3` is present in
+the environment, so `NO_COLOR=1` alone still produced ANSI escapes; `FORCE_COLOR=0` inside the
+command produces clean dot output (FINDINGS.md). `NO_COLOR=1` is kept as the fallback for an
+environment with neither set. T01 checks `env | grep -i color` on this machine and records
+anything forcing it.
 
 **Loud on failure.** A failing test prints its name, file, line and the assertion diff in full,
 and the exit code is non-zero. T01 must not suppress it.
@@ -593,6 +622,27 @@ minimum, kill switch wired.
   coordinator will help. The incentive rewards honest independence only; faking width by cutting a
   real dependency is explicitly out (§2.7). It changes the shared method, which the classic flow
   ignores harmlessly.
+- **The main-checkout rule is carved out for parallel mode, and the coordinator runs in its own
+  worktree.** Decided at plan review (2026-09-07). `pir-implement` tells every session that
+  CLAUDE.md's "main checkout, main branch, always; stop if in a worktree" rule applies in full, so
+  a parallel-mode worker — which lives in a task-branch worktree by design — would halt on contact
+  with its own worktree. No task wrote the exemption. The fix: a parallel-mode carve-out in
+  `CLAUDE.md § Where sessions run` (T11) and in the `pir-worker` contract (T07), and the coordinator
+  runs `pir/{plan}` in its own worktree so the user's main checkout is never switched off `main`
+  (§2.9). The alternative — switching the user's checkout to the feature branch — was declined
+  because it disturbs the working copy and fights the classic flow that shares the checkout.
+- **The implement session is closed when its fresh reviewer spawns.** Decided at plan review
+  (2026-09-07). The design otherwise left both sessions live, so one task in review held two of the
+  four worker slots and halved effective concurrency. Closing the implementer as review starts frees
+  the slot, and fresh eyes are strongest once the implementer is gone; the reviewer can still
+  escalate a rework need through the normal question path. `decideDispatch.close` carries this (§3.3).
+- **A surfaced `you` task completes on the user's say-so; the coordinator then marks it `✅`.**
+  Decided at plan review (2026-09-07). Surfacing a `you` task had no completion path, so a
+  critical-path `you` task like the T00 spike (which gates T08) would stall the run with nothing to
+  advance it. The coordinator cannot judge a `you` task done itself, so the user reports it done —
+  the same channel as answering a question — and the coordinator records `✅` on the feature branch
+  with `reconcileTaskRow`, staying the single writer of that file (§2.6). Editing the feature branch
+  by hand was declined because it breaks that single-writer invariant.
 
 ---
 

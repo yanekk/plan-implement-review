@@ -31,13 +31,14 @@ blocked on a decision, serialized merge, conflict escalation), §2.6 (surfacing 
 ```
 pir-coordinate SKILL.md:
   - refuse if PROGRESS.md's plan-reviewed gate says "not yet" (same rule as pir-work).
-  - at start, open the feature branch `pir/{plan}` off main and work on it; main is not touched
-    until promotion (§2.9).
+  - at start, open the feature branch `pir/{plan}` off main in its own worktree and work there; the
+    user's main checkout stays on main and is not touched until promotion (§2.9).
   - the coordinator names itself `@{repo} / {plan}` and each worker `@{repo} / {plan} / T{nn}`
     (§2.8), and finds its own workers by that prefix in `claude agents --json`.
   - the coordinator chooses each worker's task (decideDispatch) and sends it `pir-implement Txx` on
-    a task branch cut from the feature branch, then a fresh session `pir-review Txx` — workers never
-    run pir-work or choose their own task. Finished task branches merge into the feature branch.
+    a task branch cut from the feature branch, then closes that implement session and spawns a fresh
+    session `pir-review Txx` on the same worktree (§2.1) — workers never run pir-work or choose their
+    own task. Finished task branches merge into the feature branch.
   - when every task is ✅ and no worker is live (decideDispatch `promoteToMain`), run the test
     command on the feature branch and, if green, merge it to main and report completion. A red
     feature branch is surfaced to the user, not promoted.
@@ -45,7 +46,8 @@ pir-coordinate SKILL.md:
     conflict to the user in plain English, one at a time — the user owns every decision.
   - take the user's answer and send it down to that worker (kind: answer), immediately.
   - surface ready `you` tasks (the spike, hand-verified drills) to the user with their command,
-    rather than spawning a worker for them.
+    rather than spawning a worker for them; when the user reports a surfaced `you` task done, mark
+    it ✅ on the feature branch (reconcileTaskRow) and continue, and mark a deferred one ⛔ (§2.6).
   - keep dispatching and merging other ready tasks while a worker waits; a parked worker never
     blocks the rest. A decision the user defers indefinitely marks that task ⛔ in PROGRESS.md.
   - honour the ceiling (log when full) and the HALT flag (stop dispatch, stop all workers).
@@ -64,7 +66,9 @@ coordinate.mjs: startCoordinator({ slug, platform, worktree, maxWorkers }) → d
       `@{repo} / {plan} /` prefix, ignoring agents from other repos or plans.
 - [ ] A fake worker's question is surfaced and a user answer is routed down to that worker only.
 - [ ] Other ready tasks keep progressing while one fake worker is parked awaiting an answer.
-- [ ] A ready `you` task is surfaced to the user, not dispatched.
+- [ ] A ready `you` task is surfaced to the user, not dispatched; when reported done it is marked
+      ✅ on the feature branch by the coordinator and its dependents unblock.
+- [ ] The implement session is closed when its fresh reviewer spawns (a task in review uses one slot).
 - [ ] A conflict message is surfaced as a decision; a deferred decision marks its task ⛔.
 - [ ] The ceiling-full case is logged; the HALT flag stops dispatch and closes workers.
 - [ ] Task branches merge into the feature branch; main is untouched until a single promotion.

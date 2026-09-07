@@ -33,6 +33,10 @@ rule in §1.
 pir-worker SKILL.md contract:
   - the coordinator sends `pir-implement Txx` (build) or `pir-review Txx` (review); run exactly
     that task and phase. Do NOT run `pir-work` and do NOT pick a task yourself.
+  - you run in your task's own worktree on branch `pir/{plan}/T{nn}`. The base rule in CLAUDE.md
+    § Where sessions run — "main checkout, main branch, always; stop if you find yourself in a
+    worktree" — does NOT bind a parallel-mode worker; DESIGN §2.9 replaces it with the branch
+    model. Do not stop and do not fold the worktree back; commit on your task branch as normal.
   - after implementing (task marked 🔍), message the coordinator that Txx is implemented; the
     coordinator spawns a FRESH session to review it (you do not review your own work in the same
     session).
@@ -43,7 +47,10 @@ pir-worker SKILL.md contract:
   - when reviewed clean: integrate the feature branch, then message the coordinator (kind: done).
 
 pir-implement / pir-review: accept `Txx`. Given it, operate on that task instead of the one
-pir-work would have selected. With no argument they behave exactly as today (classic mode).
+pir-work would have selected, skip the "reached without pir-work → stop" guard (the coordinator is
+the deliberate caller), and do not apply the base "work on main / stop in a worktree" expectation,
+because a worker runs them in its task worktree (§2.9). With no argument the guard and the base rule
+both stand, and they behave exactly as today (classic mode).
 
 platform.mjs (send/inbox half):
   send(name, { kind, task, body }) → ok           // addressed by agent name (§2.8), via T00 handshake
@@ -60,6 +67,8 @@ own name at spawn for clarity, but the scheme is what removes id-passing.
 
 - [ ] `pir-implement Txx` / `pir-review Txx` operate on the named task; with no arg, classic
       behaviour is unchanged (a regression test on the existing selection).
+- [ ] With an explicit `Txx` the "reached without pir-work → stop" guard does not fire; with no
+      argument it still does.
 - [ ] A constructed message carries from/kind/task/body and parses back.
 - [ ] Same-repo resolution: two worktrees of one repo resolve equal; a different repo does not.
 - [ ] `--cwd` is not used for same-repo filtering (guard against the known gotcha).

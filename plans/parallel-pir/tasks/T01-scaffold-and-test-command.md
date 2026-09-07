@@ -20,13 +20,17 @@ command).
 - `package.json` — `"type": "module"`, the `test` script, no runtime dependencies.
 - `src/core/` and `src/shell/` — created, each with a first stub so the layout is real.
 - `src/core/boundary.test.mjs` — the boundary scanner test.
+- `.gitignore` — add `plans/*/.parallel/` so per-run control state (the `HALT` flag, the log)
+  is never committed or promoted to `main` (DESIGN §3.5).
 - A short `README.md` note on how to turn verbose output back on.
 
 ## Interface
 
 ```
 package.json:
-  "scripts": { "test": "NO_COLOR=1 node --test --test-reporter=dot 'src/**/*.test.mjs'" }
+  "scripts": { "test": "FORCE_COLOR=0 NO_COLOR=1 node --test --test-reporter=dot 'src/**/*.test.mjs'" }
+  # FORCE_COLOR=0 is required, not just NO_COLOR=1: a set FORCE_COLOR overrides NO_COLOR and this
+  # machine has FORCE_COLOR=3 in the environment (DESIGN §5, FINDINGS.md).
   # exact glob/reporter confirmed on the machine; a passing run is a few lines, exit code carries it.
   # verbose for debugging: node --test --test-reporter=spec 'src/**/*.test.mjs'
 
@@ -44,7 +48,8 @@ boundary.test.mjs:
 - [ ] The boundary test passes on the empty/stub core.
 - [ ] The boundary test fails when a core stub is given a `node:fs` import (prove it bites), then
       that stub is reverted.
-- [ ] Colour is off in the output even when `FORCE_COLOR=1` is set in the environment.
+- [ ] Colour is off in the output even when `FORCE_COLOR=3` is set in the environment (as it is
+      on this machine); the run prints no ANSI escapes and no NO_COLOR-ignored warning.
 
 ## Done when
 

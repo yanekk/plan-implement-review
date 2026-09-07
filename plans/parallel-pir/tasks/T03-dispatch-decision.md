@@ -27,7 +27,7 @@ DESIGN §3.3 (the decision function), §2.1 (spawn ready, then fresh review), §
 ## Interface
 
 ```
-decideDispatch({ tasks, assignments, maxWorkers, halted }) → { spawn, surface, review, merge, close }
+decideDispatch({ tasks, assignments, maxWorkers, halted }) → { spawn, surface, review, merge, close, promoteToMain }
 
   tasks       : [ { num, name, deps, runs, state } ]                 // from parseProgress; runs: auto|you
   assignments : [ { workerId, task, phase, live } ]
@@ -40,7 +40,9 @@ decideDispatch({ tasks, assignments, maxWorkers, halted }) → { spawn, surface,
   review  : [ workerId ]    // workers in phase "review-ready" (implemented, need a fresh reviewer)
   merge   : [ taskBranch ]  // workers in phase "done", AT MOST ONE per pass — merged into the
                             //   FEATURE branch, not main (DESIGN §2.9)
-  close   : [ workerId ]    // workers whose task merged, plus any assignment with live=false
+  close   : [ workerId ]    // workers whose task merged; the implement session when its task is
+                            //   handed a fresh reviewer (closed as review starts, §2.1); plus any
+                            //   assignment with live=false
   promoteToMain : boolean   // true only when every task is ✅ and no worker is live: promote the
                             //   feature branch to main (the one merge to main)
 ```
@@ -69,6 +71,8 @@ does not match the convention is reported (task null and a flag), not guessed.
 - [ ] Never exceeds the ceiling: with 3 live and maxWorkers 4, at most 1 is spawned.
 - [ ] Lowest task number first when more are ready than the ceiling allows.
 - [ ] A review-ready worker appears in `review`; it is not spawned again or merged yet.
+- [ ] The implement session of a review-ready task is in `close` (closed as its reviewer spawns),
+      so a task in review holds one worker slot, not two.
 - [ ] Merge is at most one task branch per pass even when two workers are done (into the feature branch).
 - [ ] `promoteToMain` is false while any task is not ✅ or any worker is live, and true only when
       all ✅ and none live.

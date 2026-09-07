@@ -25,8 +25,10 @@ feature branch, conflict surfacing, crash cleanup), §3.2 (`worktree.mjs`), §6 
 ## Interface
 
 ```
-openFeature(plan) → { branch }            // create pir/{plan} off main; reuse it if it already
-                                          //   exists (restart re-opens the same feature branch)
+openFeature(plan) → { path, branch }      // create pir/{plan} off main IN ITS OWN WORKTREE (the
+                                          //   coordinator works there; the user's main checkout
+                                          //   stays on main, §2.9); reuse both if they already
+                                          //   exist (restart re-opens the same feature worktree)
 createTask(plan, task) → { path, branch } // worktree on pir/{plan}/T{nn}, cut from the feature branch
 integrate(path) → { ok } | { conflict: [files] }   // merge the FEATURE branch into the task branch
 mergeTask(taskBranch) → { ok } | { conflict: [files] }  // merge task branch into the feature branch
@@ -44,7 +46,8 @@ seatbelt; no agent is spawned here.
 
 ## Tests
 
-- [ ] `openFeature` creates `pir/{plan}` off main, and a second call reuses it, not a duplicate.
+- [ ] `openFeature` creates `pir/{plan}` off main in its own worktree, leaves the current checkout
+      on main, and a second call reuses that worktree, not a duplicate.
 - [ ] `createTask` makes a worktree and `pir/{plan}/T{nn}` off the FEATURE branch, not main.
 - [ ] `integrate` brings a diverged feature branch into the task branch cleanly, and reports the
       conflicting files when both touched the same lines.
@@ -67,9 +70,10 @@ the same operations behave on the real project's git — once, lightly, never as
 
 ```
 # in a scratch clone of THIS repo, not the working copy:
-node -e "import('./src/shell/worktree.mjs').then(async m => { await m.openFeature('demo'); const w = await m.createTask('demo','T99'); console.log(w); await m.remove(w); })"
+node -e "import('./src/shell/worktree.mjs').then(async m => { const f = await m.openFeature('demo'); const w = await m.createTask('demo','T99'); console.log({f,w}); await m.remove(w); await m.remove(f); })"
 ```
 
-Expect: a feature branch and a task worktree created off it, then the worktree cleanly removed,
-`git worktree list` clean, main untouched.
-Tell me: whether openFeature+createTask+remove left anything behind, and whether main stayed clean.
+Expect: a feature-branch worktree and a task worktree created off it, both cleanly removed,
+`git worktree list` clean, and the current checkout still on main throughout.
+Tell me: whether openFeature+createTask+remove left anything behind, whether the checkout stayed on
+main (openFeature did not switch it), and whether main stayed clean.

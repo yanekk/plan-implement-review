@@ -34,7 +34,7 @@ written once and run against either:
   platform: spawn(cwd, task, phase) → id     // phase: "implement"|"review"; spawn sets the worker's
             name to @{repo}/{plan}/T{nn} (naming.mjs). send(name|id, msg) ;
             list() → [{id,name,cwd,status,state,live}] ; close(id) ; inbox() → [message]
-  worktree: openFeature(plan) → {branch} ; createTask(plan,task) → {path,branch} ;
+  worktree: openFeature(plan) → {path,branch} ; createTask(plan,task) → {path,branch} ;
             integrate(path) → {ok|conflict} ; mergeTask(taskBranch) → {ok|conflict} ;
             promote(plan) → {ok|conflict} ; remove({path,branch})   // DESIGN §2.9 branch model
 
@@ -42,10 +42,13 @@ runPass({ platform, worktree, repo, slug, maxWorkers, now }) → { actions, log 
   // gather: parse PROGRESS; list workers and rebuild assignments via parseAgentName over their
   //   names (task identity) plus the phase tracked from inbox messages; read the control flag →
   //   decideDispatch →
-  // execute: openFeature once at start, spawn auto tasks (as pir-implement Txx) on task branches
-  // off the feature branch, surface you tasks, spawn a fresh reviewer (pir-review Txx) for
-  // review-ready workers, merge one done task branch into the feature branch, close finished/dead,
-  // and when all ✅ promote the feature branch to main → reconcile merged rows → actions + log.
+  // execute: openFeature once at start (in the coordinator's own worktree), spawn auto tasks (as
+  // pir-implement Txx) on task branches off the feature branch, surface you tasks, spawn a fresh
+  // reviewer (pir-review Txx) for review-ready workers AND close their implement session, merge one
+  // done task branch into the feature branch, close finished/dead, and when all ✅ promote the
+  // feature branch to main → reconcile merged rows → actions + log.
+  // a surfaced you task the user reports done is marked ✅ on the feature branch via
+  // reconcileTaskRow (coordinator stays the single writer), unblocking its dependents next pass.
 drain(...) → summary   // repeat runPass until no ready tasks and no live workers, or halted.
 
 A fake worker, when spawned for a phase and messaged, advances (implement → review-ready →
@@ -61,7 +64,10 @@ A fake worker, when spawned for a phase and messaged, advances (implement → re
 - [ ] Fake workers are named `@{repo} / {plan} / T{nn}`; the loop rebuilds which worker holds which
       task from those names, and identifies its own workers by the `@{repo} / {plan} /` prefix.
 - [ ] Each implemented task gets a fresh reviewer worker (a distinct id, same task name) before merge.
+- [ ] The implement session is closed when its reviewer spawns, so a task in review holds one slot.
 - [ ] A `you` task with deps met is surfaced, never spawned, and does not consume a slot.
+- [ ] A surfaced `you` task reported done is marked `✅` on the feature branch and unblocks the tasks
+      that depend on it (a `you` task on the critical path gates its dependents until then).
 - [ ] The ceiling is respected; merges are serialized (two done ≠ two merges per pass).
 - [ ] A scripted worker question surfaces via the inbox and a sent answer resumes that worker.
 - [ ] A scripted merge conflict surfaces as a decision, not a merge onto scratch main.

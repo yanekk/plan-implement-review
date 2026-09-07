@@ -10,16 +10,17 @@ touching the task you pick up, and append yours there.
 cell is an index for the next session; the account is the commit message. **Whoever writes a
 cell also fixes the over-budget cell they walk past.**
 
-**Plan reviewed:** not yet — run `/pir-review-plan` before the first `/pir-work`
+**Plan reviewed:** 2026-09-07 — 4 fixed, 3 decided with the user
 
-**Status:** Plan written, re-scoped to lean on Claude Code's own primitives, then extended so the
-coordinator surfaces human-required tasks instead of dispatching them and so `/pir-plan` is taught
-to plan for parallelism. The `Runs` column marks each task `auto` (a worker builds it) or `you` (a
-person runs it). 12 tasks, 5 phases. Not yet reviewed.
+**Status:** Plan written, re-scoped onto Claude Code's own primitives, and reviewed before build.
+The `Runs` column marks each task `auto` (a worker builds it) or `you` (a person runs it). 12
+tasks, 5 phases. Review fixed the colourless test command, a signature and a param name, and
+gitignored the control dir; decided the main-branch carve-out (coordinator in its own worktree),
+closing the implement session at review, and how a `you` task is marked done.
 **Last updated:** 2026-09-07
-**Next `pir-work` will:** nothing yet — `/pir-review-plan parallel-pir` must run first. Once
-reviewed, the first work is T00 (the platform spike) or T01 (scaffold), which have no
-dependencies.
+**Next `pir-work` will:** implement T00 — the lowest ⬜ with no dependencies. T00 is a `you` task
+(the platform spike), so `pir-implement` hands you its seatbelted commands rather than building it.
+T01 (scaffold) also has no dependencies if you would rather start the code there.
 
 ## Tasks
 

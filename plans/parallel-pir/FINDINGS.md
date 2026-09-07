@@ -12,6 +12,7 @@ Legend: 🐞 defect found · ✅ verified by hand with the user · 📌 worth kn
 
 | Date | | Finding |
 |---|---|---|
+| 2026-09-07 | 📌 | `FORCE_COLOR=3` is set in this environment. `NO_COLOR=1` alone is ignored by `node --test` (it warns and still emits ANSI). `FORCE_COLOR=0` inside the test command gives clean dot output. Command now sets `FORCE_COLOR=0` (DESIGN §5). |
 | 2026-09-07 | 📌 | `claude --bg -n/--name "<name>"` sets a session's display name (picker, terminal title, `agents --json` name field). Observed names are `{repo} / {label}`. Whether the repo is auto-prefixed to `--name` and whether `SendMessage` addresses by this name is for T00 to confirm. |
 | 2026-09-07 | 📌 | Fresh-eyes review needs no `/clear` trick: point a separate fresh session at the worker's worktree and it reviews the `🔍` task with no implementer context. Two sequential sessions on one worktree, which the platform supports. |
 | 2026-09-07 | 📌 | Claude Code's own primitives cover the orchestration and work headless in any project: `claude --bg` + auto per-session worktrees, `SendMessage`/`ListAgents` cross-session messaging (v2.1.248+, all providers), `claude stop`/`rm` as the kill switch. Lean on these; do not rebuild. |

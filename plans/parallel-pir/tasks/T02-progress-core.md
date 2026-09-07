@@ -34,7 +34,7 @@ parseProgress(text) → {
   // Unknown state glyphs and malformed rows are reported, not dropped — a row the parser cannot
   // read is a task silently never built.
 
-reconcileTaskRow(mainText, { num, state, notes }) → newText
+reconcileTaskRow(progressText, { num, state, notes }) → newText
   // Replaces only the target row's State and Notes cells; every other line byte-for-byte identical,
   // including the Status / Next-pir-work-will / Review queue lines. Unknown num is an error;
   // notes over the 60-word budget is an error, not a silent truncation.

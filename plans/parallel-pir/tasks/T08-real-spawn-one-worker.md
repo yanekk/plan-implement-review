@@ -7,10 +7,11 @@
 The first time any of this touches a real agent, and it is deliberately the smallest possible
 version: the real spawn / list / close half of `platform.mjs` built on the T00 findings, wired
 into the T05 loop in place of the fake, driving exactly one worker through one trivial task on a
-scratch plan — the coordinator opens the feature branch, cuts a task branch off it, sends
-`pir-implement Txx`, then on implemented spawns a fresh session and sends `pir-review Txx`, merges
-the task branch into the feature branch, closes the worker, and promotes the feature branch to the
-scratch main — with the ceiling at 1 and the kill switch wired. This is the dangerous capability
+scratch plan — the coordinator opens the feature branch in its own worktree, cuts a task branch off
+it, sends `pir-implement Txx`, then on implemented closes the implement session and spawns a fresh
+session and sends `pir-review Txx` (closing first is also what lets the reviewer spawn under a
+ceiling of 1), merges the task branch into the feature branch, closes the worker, and promotes the
+feature branch to the scratch main — with the ceiling at 1 and the kill switch wired. This is the dangerous capability
 built small before full size, and its second half can only be verified by a person watching.
 
 ## Design sections this implements
@@ -65,8 +66,8 @@ PARALLEL_DRY_RUN=0 node src/shell/spawn-one-scratch.mjs   # spawns ONE worker on
 ```
 
 Expect: the coordinator opens the feature branch; one worker spawns on a task branch off it and is
-told `pir-implement Txx`, implements the trivial task (🔍); a fresh session is told `pir-review Txx`
-and reviews it (✅); the worker integrates the feature branch and reports done; the coordinator
+told `pir-implement Txx`, implements the trivial task (🔍); the implement session is closed and a
+fresh session is told `pir-review Txx` and reviews it (✅); the worker integrates the feature branch and reports done; the coordinator
 merges the task branch into the feature branch, closes the worker, and promotes the feature branch
 to the scratch main; `claude agents --json` and `git worktree list` end clean, main has the task.
 Tell me: did the worker act on the sent `pir-implement`/`pir-review` messages, did the fresh-session

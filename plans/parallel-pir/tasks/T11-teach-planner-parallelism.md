@@ -22,7 +22,11 @@ DESIGN §2.6 (the `Runs` marker), §2.7 (planning for parallelism: honest deps, 
 - `skills/pir-plan/templates/PROGRESS.md` — add the `Runs` column and its legend line.
 - `skills/pir-plan/templates/PLAN.md` — add `Runs` to the phase task tables and a width line.
 - `skills/pir-plan/templates/TASK.md` — add `Runs` to the header line.
-- `CLAUDE.md` — one line noting the `Runs` marker and that the coordinator surfaces `you` tasks.
+- `CLAUDE.md` — note the `Runs` marker and that the coordinator surfaces `you` tasks; AND add a
+  parallel-mode carve-out to § Where sessions run: the parallel-mode coordinator and its workers run
+  on the feature and task branches in worktrees per DESIGN §2.9, so "main checkout, main branch,
+  always; stop if in a worktree" binds the classic single-stream flow only. Without this a worker,
+  which `pir-implement` tells to apply that rule in full, would halt on contact with its own worktree.
 
 ## Interface
 
@@ -50,6 +54,6 @@ the marker and the report.
 
 - [ ] `/pir-plan` marks each task `auto`/`you`, declares only real dependencies with the reason,
       and reports the plan's parallel width at the checkpoint.
-- [ ] The three templates and `CLAUDE.md` carry the marker and the report, and the classic flow is
-      unaffected.
+- [ ] The three templates and `CLAUDE.md` carry the marker and the report, `CLAUDE.md § Where
+      sessions run` carries the parallel-mode carve-out (§2.9), and the classic flow is unaffected.
 - [ ] `npm test` is green.
