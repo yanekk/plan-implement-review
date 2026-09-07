@@ -5,23 +5,25 @@
 // separate bookkeeping.
 //
 // The convention (DESIGN §2.8):
-//   coordinator  @{repo} / {plan}
-//   worker       @{repo} / {plan} / T{nn}
+//   coordinator  @{repo} · {plan}
+//   worker       @{repo} · {plan} · T{nn}
 //
-// NOTE (T00, FINDINGS 2026-09-07): `SendMessage` addresses a teammate by NAME and rejects a
-// name containing "/". The §2.8 form above therefore cannot be the literal name a worker is
-// addressed by; reconciling that (a slash-free address vs. this display/parse form) is T07's
-// job, flagged there. These helpers build and parse the §2.8 form the design specifies; they
-// do not decide the addressing scheme.
+// Why "·" (U+00B7) and not "/": T00 (FINDINGS 2026-09-07) found `SendMessage` rejects a name
+// containing "/" ("to must be a bare teammate name") — the addressing layer reads "/" as
+// structure. The user chose "·" as the separator (2026-09-07); it is decoration, so any char
+// with no special meaning to the address parser will do. That "·" is actually accepted is live
+// cross-session behaviour the tests cannot prove — it is confirmed the same way T00 confirmed
+// the "/" rejection, and that check belongs to T07 (the cross-session wiring).
 
-const SEP = ' / ';
+const SEP = ' · ';
+const SEP_CHAR = '·';
 
-// coordinatorName({ repo, plan }) → "@{repo} / {plan}".
+// coordinatorName({ repo, plan }) → "@{repo} · {plan}".
 export function coordinatorName({ repo, plan }) {
   return `@${repo}${SEP}${plan}`;
 }
 
-// workerName({ repo, plan, task }) → "@{repo} / {plan} / {task}". task is a full id, e.g. "T05".
+// workerName({ repo, plan, task }) → "@{repo} · {plan} · {task}". task is a full id, e.g. "T05".
 export function workerName({ repo, plan, task }) {
   return `@${repo}${SEP}${plan}${SEP}${task}`;
 }
@@ -31,13 +33,13 @@ export function workerName({ repo, plan, task }) {
 //   a worker name       → { repo, plan, task: "T05", matches: true }
 //   anything else       → { repo: null, plan: null, task: null, matches: false }
 // It is the inverse of the builders and tolerates surrounding spaces and spaces around the
-// "/" separators. A name that does not fit the convention is reported (matches: false), never
+// "·" separators. A name that does not fit the convention is reported (matches: false), never
 // guessed into a wrong task (DESIGN §2.8: identity must not drift from a mis-read name).
 export function parseAgentName(name) {
   const nomatch = { repo: null, plan: null, task: null, matches: false };
   if (typeof name !== 'string') return nomatch;
 
-  const parts = name.trim().split('/').map((p) => p.trim());
+  const parts = name.trim().split(SEP_CHAR).map((p) => p.trim());
 
   // The first segment is "@{repo}": it must start with "@" and have a repo after it.
   const first = parts[0] ?? '';

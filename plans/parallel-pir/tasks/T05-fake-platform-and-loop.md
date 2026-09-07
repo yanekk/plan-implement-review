@@ -66,8 +66,8 @@ review-ready phase.
       then promotes to the scratch main exactly once; main is untouched until that promotion.
 - [ ] Task branches are cut from the feature branch and merge back into it, not into main.
 - [ ] Two independent ready tasks are worked concurrently (two fake workers live at once).
-- [ ] Fake workers are named `@{repo} / {plan} / T{nn}`; the loop rebuilds which worker holds which
-      task from those names, and identifies its own workers by the `@{repo} / {plan} /` prefix.
+- [ ] Fake workers are named `@{repo} · {plan} · T{nn}`; the loop rebuilds which worker holds which
+      task from those names, and identifies its own workers by the `@{repo} · {plan} ·` prefix.
 - [ ] Each implemented task gets a fresh reviewer worker (a distinct id, same task name) before merge.
 - [ ] The implement session is closed when its reviewer spawns, so a task in review holds one slot.
 - [ ] A `you` task with deps met is spawned as a hands-on worker (`pir-verify`), consumes a slot,

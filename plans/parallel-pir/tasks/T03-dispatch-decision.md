@@ -61,8 +61,8 @@ The agent-name helpers (DESIGN §2.8), pure string work the loop uses to name wo
 to rebuild `assignments` from `claude agents --json`:
 
 ```
-coordinatorName({ repo, plan }) → "@{repo} / {plan}"
-workerName({ repo, plan, task }) → "@{repo} / {plan} / {task}"     // task e.g. "T05"
+coordinatorName({ repo, plan }) → "@{repo} · {plan}"
+workerName({ repo, plan, task }) → "@{repo} · {plan} · {task}"     // task e.g. "T05"
 parseAgentName(name) → { repo, plan, task } | { repo, plan, task: null }  // coordinator ⇒ task null
 ```
 
@@ -89,7 +89,7 @@ does not match the convention is reported (task null and a flag), not guessed.
 - [ ] A dead worker is closed and its slot freed.
 - [ ] halted=true yields empty spawn/review/merge and closes every live worker.
 - [ ] A task already assigned to a live worker is not spawned again.
-- [ ] `workerName`/`coordinatorName` produce the `@{repo} / {plan}[ / T{nn}]` forms of §2.8.
+- [ ] `workerName`/`coordinatorName` produce the `@{repo} · {plan}[ · T{nn}]` forms of §2.8.
 - [ ] `parseAgentName` round-trips both forms; a coordinator name yields `task: null`.
 - [ ] A name not matching the convention is reported, not silently parsed into a wrong task.
 

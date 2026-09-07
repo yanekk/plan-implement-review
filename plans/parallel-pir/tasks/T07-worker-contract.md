@@ -78,9 +78,12 @@ platform.mjs (send/inbox half):
                                                         //   NOT --cwd (FINDINGS.md)
 ```
 
-The worker addresses the coordinator as `@{repo} / {plan}` (naming.mjs, from T03), which it can
+The worker addresses the coordinator as `@{repo} · {plan}` (naming.mjs, from T03), which it can
 build itself from the repo and plan — it is not told an id. The coordinator passes the worker its
-own name at spawn for clarity, but the scheme is what removes id-passing.
+own name at spawn for clarity, but the scheme is what removes id-passing. The separator is `·`,
+not `/`: T00 found `SendMessage` rejects a name containing `/` (§2.8). This task confirms live
+that `·` is accepted when it exercises the real send/inbox handshake — the tests in T03 only
+prove the names are built with `·`, not that the address parser takes them.
 
 ## Tests
 
