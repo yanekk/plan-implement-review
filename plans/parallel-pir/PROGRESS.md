@@ -21,10 +21,10 @@ After review the user revised the `you`-task model (2026-09-07): the coordinator
 hands-on worker (`pir-verify Txx`) the user drives, folded back without review, instead of surfacing
 the task bare. Touched DESIGN, T03, T05, T07, T09, T10, T11.
 **Last updated:** 2026-09-08
-**Next `pir-work` will:** implement T08 — one real worker on one trivial task, seatbelted (deps T06, T07
-both ✅ now). It is the first LIVE spawn: dangerous, kept small first. Read the T00 FINDINGS rows on real
-`--bg` spawn/close and the T06 rows on worktree teardown before running anything live. T11 (planner, deps
-T04) is also ready if picked out of order.
+**Next `pir-work` will:** review T08's code half — real spawn/list/close in platform.mjs and the
+spawn-one-scratch.mjs harness. Separately, T08's LIVE one-worker run is a person-run hand-verification,
+still pending (command under "Blocked on the user"); its result goes to FINDINGS when done. T11 (planner,
+deps T04) is also ready if picked out of order.
 
 ## Tasks
 
@@ -41,8 +41,8 @@ live steps with a hands-on worker the coordinator spawns, folded back without re
 | T04 | `analyzeParallelism` — critical path, width, auto/you counts | auto | T02 | ✅ | Reviewed clean. Critical path, width and auto/you counts correct; layer-width proxy honest (a dep edge strictly raises depth); `errors` reports unknown deps and cycles. Purity proven. |
 | T05 | Fake spawn/message/list/close + the coordinator loop | auto | T03 | ✅ | Reviewed clean after one fix (loop called a method outside T06's interface). Findings logged for T06/parser. 86 tests. |
 | T06 | Feature branch + task worktree create / integrate / merge / promote | auto | T05 | ✅ | Reviewed clean after one fix: `remove` now `--force --force` (git refuses single `--force` on a locked worktree), confirmed on real git. 100 tests. |
-| T07 | `pir-worker` contract skill + cross-session wiring | auto | T00 | ✅ | Reviewed clean, no fix. Walked the wire format (header read on line 1 only, so a body cannot spoof it), the same-repo `--cwd` guard, parseAgents. Confirmed `text`-not-`body` matches loop.mjs, boundary holds (platform is shell). Probed: resolveSameRepo keeps the coordinator's own session — inert (loop is spawn-driven); logged for T09. 111 tests. |
-| T08 | One real worker, one trivial task, seatbelted | auto | T06, T07 | ⬜ | Hand-verified. Dangerous: small first. |
+| T07 | `pir-worker` contract skill + cross-session wiring | auto | T00 | ✅ | Reviewed clean. Wire format (header on line 1 only, body cannot spoof), same-repo `--cwd` guard, parseAgents, `text` matches loop. resolveSameRepo keeps the coordinator itself — inert, logged for T09. 111 tests. |
+| T08 | One real worker, one trivial task, seatbelted | auto | T06, T07 | 🔍 | Built real spawn/list/close in platform.mjs (createPlatform, injected claude runner); argv, openingInstruction, json parse, same-repo filter unit-tested. 119 tests. spawn-one-scratch.mjs drives the loop, ceiling 1, HALT wired. Deviations: close=session-only, spawn({cwd,name,phase}) per built loop not the T08 sketch; scratch transport observes files (SendMessage bus is T09). LIVE run PENDING. |
 | T09 | The `pir-coordinate` skill: dispatch, surface, supervise | auto | T08 | ⬜ | |
 | T10 | Full multi-worker run + kill-switch drill | you | T09 | ⬜ | Hand-verified. Dangerous: full size, last. |
 | T11 | `/pir-plan` + templates: `Runs` marker, honest deps, width report | auto | T04 | ⬜ | Changes the shared method. |
@@ -52,10 +52,26 @@ deviation from the task doc.
 
 **A ✅ task's cell may be cut to one line** once the next task has been reviewed.
 
-**Review queue:** empty — nothing awaiting review.
+**Review queue:** T08 (code half) — real spawn/list/close in platform.mjs plus spawn-one-scratch.mjs.
 
 ## Blocked on the user
 
-Nothing right now. T00 (spike) is done. The remaining person-run work is T10 (full run) and the
-hand-verified halves of T06 and T08; each names its exact seatbelted command in its task doc. That
-is a good state; it is where those tasks pause for an answer, not a backlog.
+**T08 LIVE one-worker run — pending, needs a person.** The code half is built and green; the live
+half (a real `claude` worker spawns, acts on the sent instruction, a fresh session reviews, close
+leaves nothing behind) can only be seen by a person (DESIGN §5.1). Run it in a THROWAWAY CLONE, not
+the real repo (the harness refuses the real repo):
+
+```
+git clone . ../pir-scratch && cd ../pir-scratch     # a throwaway clone; never the real project
+PARALLEL_DRY_RUN=0 node src/shell/spawn-one-scratch.mjs   # spawns ONE worker on plans/scratch, ceiling 1
+# watch:  claude agents --json        (the worker appears; its cwd is the task worktree)
+# abort:  touch plans/scratch/.parallel/control/HALT
+```
+
+Expect: open feature → spawn worker (told `pir-implement T01`) → 🔍 → fresh session reviews (`pir-review
+T01`) → ✅ → merge → close → promote to the clone's main; `claude agents --json` and `git worktree
+list` end clean, main carries `scratch-ok.txt`. Tell me: did the worker act on the sent instruction,
+did the fresh review read with genuinely fresh eyes, did close leave nothing behind, and anything that
+differed from the T00 spike. Result goes to FINDINGS with the date.
+
+Other person-run work still ahead: T10 (full multi-worker run + kill-switch drill).

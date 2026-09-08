@@ -1,8 +1,10 @@
-// T07 — the send/inbox half of platform.mjs, proven without a live agent (DESIGN §4, §5.1). The
-// wire format round-trips; same-repo resolution is exercised against a real scratch repo and its
-// linked worktree; the `--cwd` gotcha is guarded with a spy; `claude agents --json` parses. The one
-// thing here the tests cannot reach — a `·` name actually accepted by the live messaging layer — is
-// confirmed by hand and recorded in FINDINGS (DESIGN §2.8).
+// platform.mjs, proven without a live agent (DESIGN §4, §5.1). T07's send/inbox half: the wire format
+// round-trips; same-repo resolution is exercised against a real scratch repo and its linked worktree;
+// the `--cwd` gotcha is guarded with a spy; `claude agents --json` parses. T08's spawn/list/close half:
+// the opening instruction and argv are asserted directly, and spawn/list/close are driven through a
+// spy `claude` runner to the edge of the real process. The two things the tests cannot reach — a `·`
+// name accepted by the live messaging layer, and a real agent spawning — are hand-verified and recorded
+// in FINDINGS (DESIGN §2.8, §5.1).
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -16,6 +18,11 @@ import {
   resolveSameRepo,
   parseAgents,
   createMessaging,
+  openingInstruction,
+  spawnArgv,
+  listArgv,
+  closeArgv,
+  createPlatform,
 } from './platform.mjs';
 
 const git = (dir, args) => execFileSync('git', args, { cwd: dir, encoding: 'utf8' });
@@ -201,4 +208,115 @@ test('createMessaging.inbox parses each drained message; a failed deliver report
   assert.equal(got[0].kind, 'implemented');
   assert.equal(got[0].task, 'T01');
   assert.equal(got[1].kind, 'done');
+});
+
+// --- the opening instruction and argv (T08, DESIGN §5.1: everything short of a live process) ----
+
+test('openingInstruction names the right skill per phase, with the task, and engages the contract', () => {
+  const impl = openingInstruction('implement', 'T08');
+  assert.match(impl, /pir-implement T08/);
+  assert.match(impl, /pir-worker/); // it engages the worker contract
+  assert.match(impl, /not .*pick your own task|do not pick your own task/i);
+
+  assert.match(openingInstruction('review', 'T08'), /pir-review T08/);
+  assert.match(openingInstruction('verify', 'T08'), /pir-verify T08/);
+});
+
+test('openingInstruction refuses an unknown phase or a missing task', () => {
+  assert.throws(() => openingInstruction('deploy', 'T08'), /unknown phase/);
+  assert.throws(() => openingInstruction('implement', null), /no task/);
+});
+
+test('spawnArgv is claude --bg -n <name> <instruction> (task POSITIONAL, T00), close/list argv fixed', () => {
+  // T00 found `claude --bg` takes the opening turn positionally, not with -p (--bg+--print conflict).
+  const argv = spawnArgv({ name: 'repo · plan · T08', instruction: 'do the thing' });
+  assert.deepEqual(argv, ['--bg', '-n', 'repo · plan · T08', 'do the thing']);
+  assert.equal(argv.includes('-p'), false, '--bg must not be given -p');
+  assert.equal(argv.includes('--print'), false);
+
+  assert.deepEqual(closeArgv('abc123'), ['stop', 'abc123']);
+  assert.deepEqual(listArgv(), ['agents', '--json']);
+});
+
+// --- createPlatform: spawn / list / close over an injected claude runner ------------------------
+
+// A spy `claude` runner: records every call and answers a scripted result, so spawn/list/close are
+// exercised to the edge of the real process without one. The name in spawn carries the `·` separator
+// so the argv assertion also proves execFile-style args need no shell quoting.
+function claudeSpy(results = {}) {
+  const calls = [];
+  const run = (args, opts = {}) => {
+    calls.push({ args, opts });
+    if (args[0] === '--bg') return results.spawn ?? { ok: true, stdout: 'sess-1\n' };
+    if (args[0] === 'agents') return results.list ?? { ok: true, stdout: '[]' };
+    if (args[0] === 'stop') return results.close ?? { ok: true, stdout: '' };
+    return { ok: false, stdout: '', stderr: 'unexpected' };
+  };
+  return { run, calls };
+}
+
+test('spawn builds the argv from the name+phase, runs in the worktree cwd, returns the printed id', () => {
+  const spy = claudeSpy({ spawn: { ok: true, stdout: '  28e9678c\n' } });
+  const p = createPlatform({ runClaude: spy.run });
+  const id = p.spawn({ cwd: '/wt/T08', name: 'repo · plan · T08', phase: 'implement' });
+  assert.equal(id, '28e9678c'); // trimmed
+  const call = spy.calls[0];
+  assert.equal(call.args[0], '--bg');
+  assert.deepEqual(call.args.slice(0, 3), ['--bg', '-n', 'repo · plan · T08']);
+  assert.match(call.args[3], /pir-implement T08/); // the opening instruction is the positional turn
+  assert.equal(call.opts.cwd, '/wt/T08'); // spawned in the worker's worktree
+});
+
+test('spawn on the review phase names pir-review; a spawn that returns no id or fails throws', () => {
+  const spy = claudeSpy();
+  const p = createPlatform({ runClaude: spy.run });
+  p.spawn({ cwd: '/wt/T08', name: 'repo · plan · T08', phase: 'review' });
+  assert.match(spy.calls[0].args[3], /pir-review T08/);
+
+  const empty = createPlatform({ runClaude: () => ({ ok: true, stdout: '  \n' }) });
+  assert.throws(() => empty.spawn({ cwd: '/x', name: 'repo · plan · T08', phase: 'implement' }), /no id/);
+  const failed = createPlatform({ runClaude: () => ({ ok: false, stderr: 'boom' }) });
+  assert.throws(() => failed.spawn({ cwd: '/x', name: 'repo · plan · T08', phase: 'implement' }), /boom/);
+});
+
+test('close runs `claude stop <id>` and reports ok', () => {
+  const spy = claudeSpy();
+  const p = createPlatform({ runClaude: spy.run });
+  assert.deepEqual(p.close('sess-1'), { ok: true });
+  assert.deepEqual(spy.calls[0].args, ['stop', 'sess-1']);
+
+  const failed = createPlatform({ runClaude: () => ({ ok: false }) });
+  assert.deepEqual(failed.close('gone'), { ok: false });
+});
+
+test('list parses a live-shaped `claude agents --json` into id/name/cwd/status/state/live', () => {
+  // Two agents in this repo, one in another; same-repo filtering is done by the injected git spy so
+  // the test is hermetic (the resolveSameRepo path itself is exercised against real git elsewhere).
+  const sample = JSON.stringify([
+    { pid: 1, id: 'a', cwd: '/repo/wt-T01', name: 'repo · plan · T01', status: 'busy', state: 'working' },
+    { pid: 2, id: 'b', cwd: '/repo/wt-T02', name: 'repo · plan · T02', status: 'idle', state: 'blocked' },
+    { pid: 3, id: 'c', cwd: '/other', name: 'other · thing', status: 'idle', state: 'working' },
+  ]);
+  const commons = { '/repo': '/repo/.git', '/repo/wt-T01': '/repo/.git', '/repo/wt-T02': '/repo/.git', '/other': '/other/.git' };
+  const gitSpy = (dir) => ({ ok: dir in commons, stdout: `${commons[dir] ?? ''}\n` });
+  const p = createPlatform({
+    root: '/repo',
+    runClaude: (args) => (args[0] === 'agents' ? { ok: true, stdout: sample } : { ok: false }),
+    sameRepoRun: gitSpy,
+  });
+  const live = p.list();
+  assert.deepEqual(live.map((w) => w.id).sort(), ['a', 'b']); // /other dropped
+  assert.deepEqual(live[0], {
+    id: 'a',
+    name: 'repo · plan · T01',
+    cwd: '/repo/wt-T01',
+    status: 'busy',
+    state: 'working',
+    live: true,
+  });
+});
+
+test('list returns [] when `claude agents --json` fails, rather than throwing', () => {
+  const p = createPlatform({ runClaude: () => ({ ok: false, stdout: '' }) });
+  assert.deepEqual(p.list(), []);
 });
