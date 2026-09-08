@@ -29,7 +29,7 @@ openFeature(plan) → { path, branch }      // create pir/{plan} off main IN ITS
                                           //   coordinator works there; the user's main checkout
                                           //   stays on main, §2.9); reuse both if they already
                                           //   exist (restart re-opens the same feature worktree)
-createTask(plan, task) → { path, branch } // worktree on pir/{plan}/T{nn}, cut from the feature branch
+createTask(plan, task) → { path, branch } // worktree on pir/{plan}-T{nn}, cut from the feature branch
 integrate(path) → { ok } | { conflict: [files] }   // merge the FEATURE branch into the task branch
 mergeTask(taskBranch) → { ok } | { conflict: [files] }  // merge task branch into the feature branch
 promote(plan) → { ok } | { conflict: [files] }     // merge pir/{plan} into main — the one merge to main
@@ -48,7 +48,7 @@ seatbelt; no agent is spawned here.
 
 - [ ] `openFeature` creates `pir/{plan}` off main in its own worktree, leaves the current checkout
       on main, and a second call reuses that worktree, not a duplicate.
-- [ ] `createTask` makes a worktree and `pir/{plan}/T{nn}` off the FEATURE branch, not main.
+- [ ] `createTask` makes a worktree and `pir/{plan}-T{nn}` off the FEATURE branch, not main.
 - [ ] `integrate` brings a diverged feature branch into the task branch cleanly, and reports the
       conflicting files when both touched the same lines.
 - [ ] `mergeTask` merges a clean task branch into the feature branch and reports a conflict otherwise.

@@ -52,7 +52,7 @@ pir-worker SKILL.md contract:
     them and do not spawn real agents yourself (§5.2). Present the task's "Needs a person" block,
     wait, record what the user reports into FINDINGS.md on your task branch, mark the task done, and
     message the coordinator (kind: done). No code, no fresh-review session.
-  - you run in your task's own worktree on branch `pir/{plan}/T{nn}`. The base rule in CLAUDE.md
+  - you run in your task's own worktree on branch `pir/{plan}-T{nn}`. The base rule in CLAUDE.md
     § Where sessions run — "main checkout, main branch, always; stop if you find yourself in a
     worktree" — does NOT bind a parallel-mode worker; DESIGN §2.9 replaces it with the branch
     model. Do not stop and do not fold the worktree back; commit on your task branch as normal.

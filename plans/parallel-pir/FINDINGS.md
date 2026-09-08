@@ -12,6 +12,9 @@ Legend: 🐞 defect found · ✅ verified by hand with the user · 📌 worth kn
 
 | Date | | Finding |
 |---|---|---|
+| 2026-09-08 | 🐞 | T05: git refuses a branch `pir/{plan}` and `pir/{plan}/T{nn}` at once (directory/file ref clash). Task branches are now `pir/{plan}-T{nn}`, beside the feature branch. User chose the dash. DESIGN §2.9, T06/T07 docs, worktree.mjs updated. |
+| 2026-09-08 | 📌 | T05 loop contracts for T06/T08: platform.close stops the session only; worktree.remove owns worktree/branch teardown, so an implementer closes while its reviewer keeps the shared worktree. A merge conflict surfaces as a worker decision message, not a mergeTask return. |
+| 2026-09-08 | 📌 | T05 loop: a crashed worker (gone from `agents --json`) is cleaned up before the spawn step, and decideDispatch re-spawns its still-⬜ task the same pass. So a crash is retried, not dropped; a task that always crashes would respawn each pass. |
 | 2026-09-07 | 📌 | T03 review: two decideDispatch crash gaps for the loop (T05/T06). A review-ready worker dying before its reviewer spawns is closed, orphaning the 🔍 task. A done worker dying before merge is closed unmerged; promoteToMain ignores dead workers, promoting without it. |
 | 2026-09-07 | 📌 | T01 review: boundary scanner matches DESIGN §3.1's seven tokens exactly, but is text-based and non-recursive. It misses `node:http(s)`, `node:dns`, `performance.now`, `process.hrtime`; a future core clock or network leak via those passes. A decision if the core grows. |
 | 2026-09-07 | 🐞 | T00: `SendMessage` addresses by NAME only and rejects a name containing `/` (`to must be a bare teammate name`). Names must be slash-free. Resolved: separator is now `·` not `/` (§2.8, naming.mjs); T07 confirms `·` is accepted live. |

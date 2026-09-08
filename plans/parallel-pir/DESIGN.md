@@ -72,7 +72,7 @@ already there.
 2. The coordinator reads the task table, finds every `auto` task whose dependencies are `✅` and
    which is not already assigned, and — up to the worker ceiling — spawns a worker for each: a
    background `claude` session whose working directory is a fresh worktree on a **task branch**,
-   `pir/{plan}/T{nn}`, cut from the **feature branch** (not from `main`), so the worker starts from
+   `pir/{plan}-T{nn}`, cut from the **feature branch** (not from `main`), so the worker starts from
    whatever sibling tasks have already merged. It tells that worker `pir-implement Txx` for the
    specific task it chose. The coordinator, not the worker, decides which task the worker builds.
    A ready `you` task is spawned too, but as a **hands-on** worker (`pir-verify Txx`, §2.6): the
@@ -116,7 +116,7 @@ already there.
 The coordinator owns a worker's whole life, and it must be able to end it, not only start it.
 
 - **create** — spawn a background `claude` session whose cwd is a fresh worktree on a task branch
-  `pir/{plan}/T{nn}` cut from the **feature branch** (§2.9), handed the one task and a short
+  `pir/{plan}-T{nn}` cut from the **feature branch** (§2.9), handed the one task and a short
   contract (§2.1, and the worker contract skill).
 - **drive** — send the worker a message (an answer to its question, the instruction to hand off
   to review). The review session is a *separate* fresh spawn on the same worktree, and the
@@ -300,9 +300,14 @@ that `--name` sets the `agents --json` name and that messaging addresses by it o
 ### 2.9 The branch model: a feature branch, task branches, one merge to main
 
 The whole plan runs on a single **feature branch**, `pir/{plan}`, cut from `main` when the
-coordinator starts. Workers cut **task branches**, `pir/{plan}/T{nn}`, from the feature branch, and
+coordinator starts. Workers cut **task branches**, `pir/{plan}-T{nn}`, from the feature branch, and
 their finished work merges back into the feature branch. `main` receives the plan exactly once, at
 the end, when the feature branch is promoted.
+
+The task-branch separator is `-`, not `/`: git will not hold a branch `pir/{plan}` and a branch
+`pir/{plan}/T{nn}` at the same time — the first is a ref file, the second needs a directory of the
+same name, a directory/file clash git rejects ("cannot lock ref ... exists"). So task branches sit
+beside the feature branch, not under it. Found building T05; the user chose the dash (2026-09-08).
 
 ```
 main ──●───────────────────────────────────────────────────●  (one merge, at the end)
@@ -461,7 +466,7 @@ State lives on disk, plain text so a person can read it under pressure:
   ceiling-hit and lifecycle record. Gitignored (`plans/*/.parallel/`, added by T01): it is
   per-run control state, so it must never be committed to a task branch or ride the feature
   branch to `main` at promotion.
-- The feature branch `pir/{plan}` and the task branches `pir/{plan}/T{nn}` and their worktrees —
+- The feature branch `pir/{plan}` and the task branches `pir/{plan}-T{nn}` and their worktrees —
   git's, under `.git/worktrees/`; `git worktree remove` is the recovery for a leaked one.
 
 Cross-agent messages are carried by the platform's messaging, not a file store this project
@@ -627,7 +632,7 @@ minimum, kill switch wired.
   needs `pir-implement` / `pir-review` to accept an explicit task; their logic is unchanged.
 - **A feature branch per plan; task branches off it; one merge to `main` at the end.** The user
   set this branch model (2026-09-07). The coordinator works on `pir/{plan}` off `main`; workers cut
-  `pir/{plan}/T{nn}` off the feature branch and merge back into it, serialized; the feature branch
+  `pir/{plan}-T{nn}` off the feature branch and merge back into it, serialized; the feature branch
   is promoted to `main` once, when every task is `✅` and the tests pass on it. Chosen over merging
   each task straight to `main` because it keeps `main` free of a half-finished plan, lets the plan
   land atomically and reviewably, and makes the kill switch and a crash leave `main` untouched
