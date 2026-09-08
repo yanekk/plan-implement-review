@@ -210,11 +210,14 @@ export function promote(plan, { root = process.cwd() } = {}) {
   return { ok: true };
 }
 
-// Tear down a worktree and its branch (DESIGN §2.3 close, §2.9, §6). Force-remove because a task
-// worktree may hold committed-and-merged work or uncommitted changes, and `claude rm` keeps a dirty
-// one (FINDINGS.md); the branch is deleted with -D for the same reason.
+// Tear down a worktree and its branch (DESIGN §2.3 close, §2.9, §6). `--force` twice, not once: a
+// single `--force` removes a dirty worktree but git refuses a LOCKED one ("cannot remove a locked
+// working tree; use 'remove -f -f'"), and a lock is exactly the abandoned-worker state this must
+// recover from — `claude rm` keeps a worktree with a lock (FINDINGS.md), which is why remove exists.
+// Doubling the flag is a superset: it still removes the dirty and clean cases. The branch is deleted
+// with -D for the same recover-anyway reason.
 export function remove({ path, branch } = {}, { root = process.cwd() } = {}) {
-  if (path) git(root, ['worktree', 'remove', '--force', path]);
+  if (path) git(root, ['worktree', 'remove', '--force', '--force', path]);
   if (branch) git(root, ['branch', '-D', branch]);
   return { ok: true };
 }

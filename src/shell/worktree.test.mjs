@@ -221,6 +221,20 @@ test('remove: deletes the worktree and branch, including one with uncommitted ch
   assert.ok(!branchExists(s.repo, 'pir/demo-T01'), 'the task branch is gone');
 });
 
+test('remove: tears down a LOCKED worktree, the state claude rm cannot clear (FINDINGS)', (t) => {
+  const s = scratchRepo();
+  t.after(s.cleanup);
+  openFeature('demo', { root: s.repo });
+  const w = createTask('demo', 'T01', { root: s.repo });
+  // A locked worktree is the abandoned-worker case remove must recover from; git refuses a single
+  // --force on it ("cannot remove a locked working tree"). This test fails if remove drops to one.
+  git(s.repo, ['worktree', 'lock', w.path]);
+
+  remove(w, { root: s.repo });
+  assert.ok(!existsSync(w.path), 'the locked worktree directory is gone');
+  assert.ok(!branchExists(s.repo, 'pir/demo-T01'), 'the task branch is gone');
+});
+
 test('createWorktree factory: drives the loop path open → create → merge → commitFeature → promote', (t) => {
   const s = scratchRepo();
   t.after(s.cleanup);
