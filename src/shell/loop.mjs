@@ -187,7 +187,6 @@ export function runPass({ platform, worktree, repo, slug, maxWorkers, state, con
     const found = taskByWorkerId(state, workerId);
     if (!found) continue;
     const { num, t } = found;
-    const row = readTaskRow(worktree, t.worktree.branch, num);
     const res = worktree.mergeTask(t.worktree.branch);
     if (res.conflict) {
       t.phase = AWAITING;
@@ -195,10 +194,14 @@ export function runPass({ platform, worktree, repo, slug, maxWorkers, state, con
       record('surface', { task: num, kind: 'conflict', text: t.decision.text });
       continue;
     }
+    // The row folds back as ✅ (an auto task is reviewed, a you task is done — both ✅ at merge).
+    // notes is empty for now: parseProgress does not surface the Notes column, so the worker's own
+    // row account cannot be folded back yet (FINDINGS 2026-09-08). Restore it when the parser exposes
+    // notes or the real coordinator (T09) writes its own summary.
     const reconciled = reconcileTaskRow(readFileSync(featureProgressPath, 'utf8'), {
       num,
       state: '✅',
-      notes: row.notes,
+      notes: '',
     });
     writeFileSync(featureProgressPath, reconciled);
     worktree.commitFeature(`reconcile ${num} → ✅`);
@@ -254,15 +257,6 @@ export function runPass({ platform, worktree, repo, slug, maxWorkers, state, con
   const liveAfter =
     [...liveIds].filter((id) => !closedThisPass.has(id)).length + spawnedThisPass.length;
   return { actions, log, halted: false, promoted, liveAfter, tasks: parsed.tasks };
-}
-
-// Read one task's row (state + notes) from a branch's PROGRESS.md, so the coordinator folds the
-// worker's own recorded result back rather than the conversation (DESIGN §2.5). Returns a default
-// row if the branch or task is somehow absent, so a merge never crashes the loop.
-function readTaskRow(worktree, branch, num) {
-  const shown = worktree.progressOn(branch);
-  const found = parseProgress(shown).tasks.find((t) => t.num === num);
-  return found ? { state: found.state, notes: '' } : { state: '✅', notes: '' };
 }
 
 // drain — run passes until the plan promotes, the kill switch has closed everything, or the run goes
