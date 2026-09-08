@@ -12,6 +12,7 @@ Legend: 🐞 defect found · ✅ verified by hand with the user · 📌 worth kn
 
 | Date | | Finding |
 |---|---|---|
+| 2026-09-08 | 🐞 | T06 review: `remove` used single `git worktree remove --force`, which git refuses on a locked worktree; it reported ok anyway. Fixed to `--force --force`, confirmed on real git, with a test. A lock is the state `claude rm` also keeps. |
 | 2026-09-08 | ✅ | T06 hand-verified with the user on a scratch clone (`src/pir-2`): `openFeature`/`createTask` made `.claude/worktrees/pir-demo` (`pir/demo`) and `pir-demo-T99` (`pir/demo-T99`) at the expected paths; `remove` of both ran without error. Real git matches the scratch-repo tests. |
 | 2026-09-08 | 📌 | T06: real coordinator worktrees live at `<main>/.claude/worktrees/pir-{plan}[-T{nn}]`. In a scratch repo the empty `.claude/` container shows `?? .claude/`; the real repo stays clean (tracked siblings, and git excludes registered worktrees). `mergeTask`/`promote`/`commitFeature` force `commit.gpgsign=false` per-call so an automated run never blocks on signing. |
 | 2026-09-08 | 🐞 | T05 review: loop calls `worktree.commitFeature` (the reconcile commit); not in T06's interface (openFeature/createTask/integrate/mergeTask/promote/remove, §3.2, T06.md). Added in T06 as a factory-only method (message-only; stateful over the remembered feature worktree). |

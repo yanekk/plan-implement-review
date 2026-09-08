@@ -21,10 +21,10 @@ After review the user revised the `you`-task model (2026-09-07): the coordinator
 hands-on worker (`pir-verify Txx`) the user drives, folded back without review, instead of surfacing
 the task bare. Touched DESIGN, T03, T05, T07, T09, T10, T11.
 **Last updated:** 2026-09-08
-**Next `pir-work` will:** review T06 (real `worktree.mjs`). Check the two surfaces match the contract
-the loop depends on (factory `createWorktree` = the loop's drop-in; `commitFeature` stateful over the
-remembered feature worktree), the PROGRESS.md single-writer protection in `mergeTask`, and that the
-real-git hand-verify (the T06.md snippet on a scratch clone) still needs the user before ✅.
+**Next `pir-work` will:** implement T07 — the `pir-worker` contract skill and cross-session wiring, the
+first task off the gated T00 spike (T00 ✅). T00's FINDINGS bind it: `claude --bg` takes the task
+positional not `-p`; worker names are slash-free with `·` as the separator (confirm `·` accepted live);
+`agents --json` needs per-cwd repo filtering. T11 (planner, deps T04) is also ready if picked out of order.
 
 ## Tasks
 
@@ -38,9 +38,9 @@ live steps with a hands-on worker the coordinator spawns, folded back without re
 | T01 | Project scaffold, `npm test`, boundary test | auto | — | ✅ | Reviewed clean. Test command verified (exits, boundary bite, no ANSI under FORCE_COLOR); scanner matches §3.1's seven tokens, non-recursive. |
 | T02 | Parse `PROGRESS.md` (with `Runs` marker) and fold one row back | auto | T01 | ✅ | Reviewed. Fixed: empty `**Plan reviewed:**` note read as reviewed=true → now not-reviewed, with a test. Parser probed on real PROGRESS.md; reconcile round-trips one line. 21 tests. |
 | T03 | `decideDispatch` — spawn / review / merge / close | auto | T02 | ✅ | Reviewed clean, no fix. Crash-window gaps at review-ready and merge logged to FINDINGS for T05/T06. |
-| T04 | `analyzeParallelism` — critical path, width, auto/you counts | auto | T02 | ✅ | Reviewed clean, no fix. Five numbers correct for chain, fan-out, diamond; layer-width proxy is honest — a dependency edge strictly raises depth, so same-depth tasks are provably independent. `errors` deviation (unknown deps, cycles) approved: the doc's own tests require reporting them. Boundary test auto-scans the module; purity proven. Probed cycles, partial-unknown deps, empty. |
+| T04 | `analyzeParallelism` — critical path, width, auto/you counts | auto | T02 | ✅ | Reviewed clean. Critical path, width and auto/you counts correct; layer-width proxy honest (a dep edge strictly raises depth); `errors` reports unknown deps and cycles. Purity proven. |
 | T05 | Fake spawn/message/list/close + the coordinator loop | auto | T03 | ✅ | Reviewed. Fixed: loop called `worktree.progressOn`/`commitFeature` outside T06's interface — removed inert readTaskRow and progressOn; commitFeature logged for T06 (FINDINGS). Findings: merged rows fold with empty Notes (parser drops them); phase in-memory, not live names (§2.8). Probed crash-retry, review-swap, serialized merge, conflict/question/kill. 86 tests. |
-| T06 | Feature branch + task worktree create / integrate / merge / promote | auto | T05 | 🔍 | Real `worktree.mjs` — the six ops plus a `createWorktree` factory (loop's drop-in, stateful `commitFeature`). 13 tests, scratch repo, green. Deviations: two surfaces (stateless fns + factory); conflict returns `{conflict,files}` (matches fake, not T06.md shorthand); worktrees under `.claude/worktrees/`; gpgsign forced off. Real-git half hand-verified on a scratch clone 2026-09-08 (FINDINGS). |
+| T06 | Feature branch + task worktree create / integrate / merge / promote | auto | T05 | ✅ | Reviewed. Fixed: `remove` used single `--force`, which git refuses on a locked worktree (the abandoned-worker state `claude rm` also keeps); now `--force --force`, with a locked-worktree test, confirmed on real git. Probed the loop↔factory contract, PROGRESS single-writer, conflict shape, promote-not-before-main. 100 tests. Deviations (two surfaces, `{conflict,files}` shape, worktrees under `.claude/worktrees/`, gpgsign off) all sound. |
 | T07 | `pir-worker` contract skill + cross-session wiring | auto | T00 | ⬜ | |
 | T08 | One real worker, one trivial task, seatbelted | auto | T06, T07 | ⬜ | Hand-verified. Dangerous: small first. |
 | T09 | The `pir-coordinate` skill: dispatch, surface, supervise | auto | T08 | ⬜ | |
@@ -52,7 +52,7 @@ deviation from the task doc.
 
 **A ✅ task's cell may be cut to one line** once the next task has been reviewed.
 
-**Review queue:** T06 — implemented, awaiting review
+**Review queue:** empty — T06 reviewed and ✅.
 
 ## Blocked on the user
 
