@@ -12,6 +12,7 @@ Legend: 🐞 defect found · ✅ verified by hand with the user · 📌 worth kn
 
 | Date | | Finding |
 |---|---|---|
+| 2026-09-08 | ✅ | T06 hand-verified with the user on a scratch clone (`src/pir-2`): `openFeature`/`createTask` made `.claude/worktrees/pir-demo` (`pir/demo`) and `pir-demo-T99` (`pir/demo-T99`) at the expected paths; `remove` of both ran without error. Real git matches the scratch-repo tests. |
 | 2026-09-08 | 📌 | T06: real coordinator worktrees live at `<main>/.claude/worktrees/pir-{plan}[-T{nn}]`. In a scratch repo the empty `.claude/` container shows `?? .claude/`; the real repo stays clean (tracked siblings, and git excludes registered worktrees). `mergeTask`/`promote`/`commitFeature` force `commit.gpgsign=false` per-call so an automated run never blocks on signing. |
 | 2026-09-08 | 🐞 | T05 review: loop calls `worktree.commitFeature` (the reconcile commit); not in T06's interface (openFeature/createTask/integrate/mergeTask/promote/remove, §3.2, T06.md). Added in T06 as a factory-only method (message-only; stateful over the remembered feature worktree). |
 | 2026-09-08 | 🐞 | T05 review: the coordinator folds each merged row as `✅` with empty Notes — `parseProgress` drops the Notes column, so the worker's own row account is lost at promotion. Restore when the parser surfaces notes (T02) or T09 writes them. |
