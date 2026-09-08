@@ -20,10 +20,10 @@ closing the implement session at review, and how a `you` task is marked done.
 After review the user revised the `you`-task model (2026-09-07): the coordinator now spawns a
 hands-on worker (`pir-verify Txx`) the user drives, folded back without review, instead of surfacing
 the task bare. Touched DESIGN, T03, T05, T07, T09, T10, T11.
-**Last updated:** 2026-09-07
-**Next `pir-work` will:** review T04 (`analyzeParallelism`), now 🔍. After it, T05 (depends on
-T03 ✅) is the next ⬜ to implement. T07 (§2.8 naming) and T11 (planner templates) must still
-fold in the T00 corrections.
+**Last updated:** 2026-09-08
+**Next `pir-work` will:** implement T05 (fake spawn/message/list/close + the coordinator loop,
+depends on T03 ✅), the next ⬜ whose deps are met. T07 (§2.8 naming) and T11 (planner templates)
+must still fold in the T00 corrections. Nothing awaits review.
 
 ## Tasks
 
@@ -36,8 +36,8 @@ live steps with a hands-on worker the coordinator spawns, folded back without re
 | T00 | Platform primitives spike: spawn, message, fresh review, close | you | — | ✅ | Spike verified by agent 2026-09-07 (user away, delegated): spawn/message/fresh-review/close all confirmed, artifacts deleted. Corrections: `--bg` task positional not `-p`; worker names slash-free. See FINDINGS. Gates T07/T08. |
 | T01 | Project scaffold, `npm test`, boundary test | auto | — | ✅ | Reviewed clean. Test command verified (exits, boundary bite, no ANSI under FORCE_COLOR); scanner matches §3.1's seven tokens, non-recursive. |
 | T02 | Parse `PROGRESS.md` (with `Runs` marker) and fold one row back | auto | T01 | ✅ | Reviewed. Fixed: empty `**Plan reviewed:**` note read as reviewed=true → now not-reviewed, with a test. Parser probed on real PROGRESS.md; reconcile round-trips one line. 21 tests. |
-| T03 | `decideDispatch` — spawn / review / merge / close | auto | T02 | ✅ | Reviewed clean, no fix. Pure fn matches its documented contract, boundary holds, 50 tests meaningful. Probed slot accounting, halted, dead-worker close, lowest-first spawn, naming parser edges. Two crash-window gaps (worker dying at review-ready or at merge) logged to FINDINGS for the loop (T05/T06). |
-| T04 | `analyzeParallelism` — critical path, width, auto/you counts | auto | T02 | 🔍 | Built `parallelism.mjs`: longest-path depth memoised, maxWidth = largest depth layer, auto/you counts. 10 tests (chain, fan-out, diamond, counts, empty). Deviation: return adds an `errors` field beyond the 5 documented, reporting unknown deps and cycles (test requires reporting). Cycle guard added. 60 tests total green; boundary proves it pure. |
+| T03 | `decideDispatch` — spawn / review / merge / close | auto | T02 | ✅ | Reviewed clean, no fix. Crash-window gaps at review-ready and merge logged to FINDINGS for T05/T06. |
+| T04 | `analyzeParallelism` — critical path, width, auto/you counts | auto | T02 | ✅ | Reviewed clean, no fix. Five numbers correct for chain, fan-out, diamond; layer-width proxy is honest — a dependency edge strictly raises depth, so same-depth tasks are provably independent. `errors` deviation (unknown deps, cycles) approved: the doc's own tests require reporting them. Boundary test auto-scans the module; purity proven. Probed cycles, partial-unknown deps, empty. |
 | T05 | Fake spawn/message/list/close + the coordinator loop | auto | T03 | ⬜ | |
 | T06 | Feature branch + task worktree create / integrate / merge / promote | auto | T05 | ⬜ | Hand-verified half. |
 | T07 | `pir-worker` contract skill + cross-session wiring | auto | T00 | ⬜ | |
@@ -51,7 +51,7 @@ deviation from the task doc.
 
 **A ✅ task's cell may be cut to one line** once the next task has been reviewed.
 
-**Review queue:** T04
+**Review queue:** empty
 
 ## Blocked on the user
 
