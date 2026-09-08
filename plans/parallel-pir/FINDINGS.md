@@ -12,7 +12,8 @@ Legend: 🐞 defect found · ✅ verified by hand with the user · 📌 worth kn
 
 | Date | | Finding |
 |---|---|---|
-| 2026-09-08 | 🐞 | T05 review: loop calls `worktree.commitFeature` (the reconcile commit); not in T06's interface (openFeature/createTask/integrate/mergeTask/promote/remove, §3.2, T06.md). T06 must add it or the shared loop crashes at merge. The inert `progressOn` call was removed. |
+| 2026-09-08 | 📌 | T06: real coordinator worktrees live at `<main>/.claude/worktrees/pir-{plan}[-T{nn}]`. In a scratch repo the empty `.claude/` container shows `?? .claude/`; the real repo stays clean (tracked siblings, and git excludes registered worktrees). `mergeTask`/`promote`/`commitFeature` force `commit.gpgsign=false` per-call so an automated run never blocks on signing. |
+| 2026-09-08 | 🐞 | T05 review: loop calls `worktree.commitFeature` (the reconcile commit); not in T06's interface (openFeature/createTask/integrate/mergeTask/promote/remove, §3.2, T06.md). Added in T06 as a factory-only method (message-only; stateful over the remembered feature worktree). |
 | 2026-09-08 | 🐞 | T05 review: the coordinator folds each merged row as `✅` with empty Notes — `parseProgress` drops the Notes column, so the worker's own row account is lost at promotion. Restore when the parser surfaces notes (T02) or T09 writes them. |
 | 2026-09-08 | 📌 | T05 review: the loop tracks worker→task/phase in in-memory `state.tasks`, not via `parseAgentName` over live names (§2.8, T05 sketch). A coordinator crash without the kill switch leaves live workers a restart won't re-adopt; it re-spawns their tasks. T09 decides. |
 | 2026-09-08 | 🐞 | T05: git refuses a branch `pir/{plan}` and `pir/{plan}/T{nn}` at once (directory/file ref clash). Task branches are now `pir/{plan}-T{nn}`, beside the feature branch. User chose the dash. DESIGN §2.9, T06/T07 docs, worktree.mjs updated. |

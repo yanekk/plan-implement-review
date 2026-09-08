@@ -21,10 +21,10 @@ After review the user revised the `you`-task model (2026-09-07): the coordinator
 hands-on worker (`pir-verify Txx`) the user drives, folded back without review, instead of surfacing
 the task bare. Touched DESIGN, T03, T05, T07, T09, T10, T11.
 **Last updated:** 2026-09-08
-**Next `pir-work` will:** implement T06 (real `worktree.mjs`) — its dep T05 is now ✅. Build it to the
-T05 loop's actual calls, not only T06.md's interface list: the loop needs `commitFeature` (the
-reconcile commit) in addition to openFeature/createTask/integrate/mergeTask/promote/remove, or the
-shared loop crashes at merge (FINDINGS 2026-09-08). Task branches are `pir/{plan}-T{nn}` (dash, §2.9).
+**Next `pir-work` will:** review T06 (real `worktree.mjs`). Check the two surfaces match the contract
+the loop depends on (factory `createWorktree` = the loop's drop-in; `commitFeature` stateful over the
+remembered feature worktree), the PROGRESS.md single-writer protection in `mergeTask`, and that the
+real-git hand-verify (the T06.md snippet on a scratch clone) still needs the user before ✅.
 
 ## Tasks
 
@@ -39,8 +39,8 @@ live steps with a hands-on worker the coordinator spawns, folded back without re
 | T02 | Parse `PROGRESS.md` (with `Runs` marker) and fold one row back | auto | T01 | ✅ | Reviewed. Fixed: empty `**Plan reviewed:**` note read as reviewed=true → now not-reviewed, with a test. Parser probed on real PROGRESS.md; reconcile round-trips one line. 21 tests. |
 | T03 | `decideDispatch` — spawn / review / merge / close | auto | T02 | ✅ | Reviewed clean, no fix. Crash-window gaps at review-ready and merge logged to FINDINGS for T05/T06. |
 | T04 | `analyzeParallelism` — critical path, width, auto/you counts | auto | T02 | ✅ | Reviewed clean, no fix. Five numbers correct for chain, fan-out, diamond; layer-width proxy is honest — a dependency edge strictly raises depth, so same-depth tasks are provably independent. `errors` deviation (unknown deps, cycles) approved: the doc's own tests require reporting them. Boundary test auto-scans the module; purity proven. Probed cycles, partial-unknown deps, empty. |
-| T05 | Fake spawn/message/list/close + the coordinator loop | auto | T03 | ✅ | Reviewed. Fixed: loop called `worktree.progressOn`/`commitFeature` outside T06's interface — removed the inert readTaskRow (and progressOn); commitFeature logged for T06 to add (FINDINGS). Left as findings: merged rows fold with empty Notes (parser drops them); phase tracked in-memory, not from live names (§2.8). Probed crash-retry, review-swap slots, serialized merge, conflict/question/kill paths. 86 tests. |
-| T06 | Feature branch + task worktree create / integrate / merge / promote | auto | T05 | ⬜ | Hand-verified half. |
+| T05 | Fake spawn/message/list/close + the coordinator loop | auto | T03 | ✅ | Reviewed. Fixed: loop called `worktree.progressOn`/`commitFeature` outside T06's interface — removed inert readTaskRow and progressOn; commitFeature logged for T06 (FINDINGS). Findings: merged rows fold with empty Notes (parser drops them); phase in-memory, not live names (§2.8). Probed crash-retry, review-swap, serialized merge, conflict/question/kill. 86 tests. |
+| T06 | Feature branch + task worktree create / integrate / merge / promote | auto | T05 | 🔍 | Real `worktree.mjs` — the six ops plus a `createWorktree` factory (loop's drop-in, stateful `commitFeature`). 13 tests, scratch repo, green. Deviations: two surfaces (stateless fns + factory); conflict returns `{conflict,files}` (matches fake, not T06.md shorthand); worktrees under `.claude/worktrees/`; gpgsign forced off. Real-git half (T06.md snippet) unverified — command in report. |
 | T07 | `pir-worker` contract skill + cross-session wiring | auto | T00 | ⬜ | |
 | T08 | One real worker, one trivial task, seatbelted | auto | T06, T07 | ⬜ | Hand-verified. Dangerous: small first. |
 | T09 | The `pir-coordinate` skill: dispatch, surface, supervise | auto | T08 | ⬜ | |
@@ -52,7 +52,7 @@ deviation from the task doc.
 
 **A ✅ task's cell may be cut to one line** once the next task has been reviewed.
 
-**Review queue:** empty — T06 is the next task to implement
+**Review queue:** T06 — implemented, awaiting review
 
 ## Blocked on the user
 
