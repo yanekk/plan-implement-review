@@ -12,6 +12,8 @@ Legend: 🐞 defect found · ✅ verified by hand with the user · 📌 worth kn
 
 | Date | | Finding |
 |---|---|---|
+| 2026-09-08 | 🐞 | T07 probe: SendMessage rejects a `to` starting with `@` ("to must be a bare teammate name"). Naming (DESIGN §2.8, naming.mjs) prefixes `@{repo}`, so a worker addressing the coordinator fails. `·` and spaces are accepted. Drop the `@`; user decides. |
+| 2026-09-08 | 📌 | T07: `·` (U+00B7) separator confirmed accepted live by SendMessage — a nonexistent `·`-name fails at delivery ("No agent named … reachable"), not validation. Closes the §2.8 `·` live check. Agent probe, user away; no live agent spawned. |
 | 2026-09-08 | 🐞 | T06 review: `remove` used single `git worktree remove --force`, which git refuses on a locked worktree; it reported ok anyway. Fixed to `--force --force`, confirmed on real git, with a test. A lock is the state `claude rm` also keeps. |
 | 2026-09-08 | ✅ | T06 hand-verified with the user on a scratch clone (`src/pir-2`): `openFeature`/`createTask` made `.claude/worktrees/pir-demo` (`pir/demo`) and `pir-demo-T99` (`pir/demo-T99`) at the expected paths; `remove` of both ran without error. Real git matches the scratch-repo tests. |
 | 2026-09-08 | 📌 | T06: real coordinator worktrees live at `<main>/.claude/worktrees/pir-{plan}[-T{nn}]`. In a scratch repo the empty `.claude/` container shows `?? .claude/`; the real repo stays clean (tracked siblings, and git excludes registered worktrees). `mergeTask`/`promote`/`commitFeature` force `commit.gpgsign=false` per-call so an automated run never blocks on signing. |

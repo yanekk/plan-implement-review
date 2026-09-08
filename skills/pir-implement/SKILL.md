@@ -10,9 +10,32 @@ user-invocable: false
 without a task chosen by `pir-work`, stop and run `pir-work` — the queue decides what
 gets built, and picking out of order is how a task gets built ahead of its dependencies.
 
+## Called with an explicit task `Txx` (parallel mode)
+
+**If you were invoked with a task id — `pir-implement T05` — that argument IS the deliberate
+choice, so the guard above does not apply: build that task, do not run `pir-work`, do not
+re-select.** This is how a parallel-mode coordinator dispatches: it has already decided the task
+and phase (its `decideDispatch`), and it names the task rather than letting a worker self-select
+(DESIGN §1, §2.1). Your logic below is otherwise unchanged — you implement the named task exactly
+as you would the one `pir-work` would have handed you.
+
+Two base rules bend in this mode, and only in it:
+
+- **The "reached without `pir-work` → stop" guard does not fire.** The coordinator is the
+  deliberate caller; the explicit task is its instruction.
+- **`CLAUDE.md § Where sessions run` — "main checkout, main branch, always; stop if you find
+  yourself in a worktree" — does NOT bind you.** A parallel-mode worker runs in its own
+  task-branch worktree by design (DESIGN §2.9); do not stop on contact with it and do not switch
+  to `main`. The `pir-worker` contract skill is your standing rulebook here — chiefly: when the
+  procedure below says "ask the user and wait", you message the coordinator and wait instead,
+  because there is no user at your terminal.
+
+**With no argument, everything below is classic mode, unchanged**: the guard stands and the
+"main checkout, main branch" rule stands in full.
+
 The shared rules in `CLAUDE.md` apply in full and are not repeated here — scope, commit
-messages, where sessions run, and above all **anything the tests cannot establish is
-verified with the user, not asserted.** The project's own rules and traps are in
+messages, where sessions run (as carved out just above for parallel mode), and above all
+**anything the tests cannot establish is verified with the user, not asserted.** The project's own rules and traps are in
 `plans/{slug}/DESIGN.md` and in whatever the project's `CLAUDE.md` calls its list of things
 that are true because somebody measured them. Find that list by what it holds, not by its
 title — projects name it differently. Every entry on it has already cost somebody a day.

@@ -21,10 +21,11 @@ After review the user revised the `you`-task model (2026-09-07): the coordinator
 hands-on worker (`pir-verify Txx`) the user drives, folded back without review, instead of surfacing
 the task bare. Touched DESIGN, T03, T05, T07, T09, T10, T11.
 **Last updated:** 2026-09-08
-**Next `pir-work` will:** implement T07 — the `pir-worker` contract skill and cross-session wiring, the
-first task off the gated T00 spike (T00 ✅). T00's FINDINGS bind it: `claude --bg` takes the task
-positional not `-p`; worker names are slash-free with `·` as the separator (confirm `·` accepted live);
-`agents --json` needs per-cwd repo filtering. T11 (planner, deps T04) is also ready if picked out of order.
+**Next `pir-work` will:** review T07 — the `pir-worker`/`pir-verify` skills, the pir-implement/pir-review
+explicit-task edits, and platform.mjs's send/inbox half (111 tests). Read the two T07 FINDINGS rows first:
+`·` is confirmed accepted live, but the `@` prefix in the naming scheme is REJECTED by SendMessage — a
+design contradiction (naming.mjs, DESIGN §2.8) awaiting a user decision, out of T07's scope. T11 (planner,
+deps T04) is also ready if picked out of order.
 
 ## Tasks
 
@@ -39,9 +40,9 @@ live steps with a hands-on worker the coordinator spawns, folded back without re
 | T02 | Parse `PROGRESS.md` (with `Runs` marker) and fold one row back | auto | T01 | ✅ | Reviewed. Fixed: empty `**Plan reviewed:**` note read as reviewed=true → now not-reviewed, with a test. Parser probed on real PROGRESS.md; reconcile round-trips one line. 21 tests. |
 | T03 | `decideDispatch` — spawn / review / merge / close | auto | T02 | ✅ | Reviewed clean, no fix. Crash-window gaps at review-ready and merge logged to FINDINGS for T05/T06. |
 | T04 | `analyzeParallelism` — critical path, width, auto/you counts | auto | T02 | ✅ | Reviewed clean. Critical path, width and auto/you counts correct; layer-width proxy honest (a dep edge strictly raises depth); `errors` reports unknown deps and cycles. Purity proven. |
-| T05 | Fake spawn/message/list/close + the coordinator loop | auto | T03 | ✅ | Reviewed. Fixed: loop called `worktree.progressOn`/`commitFeature` outside T06's interface — removed inert readTaskRow and progressOn; commitFeature logged for T06 (FINDINGS). Findings: merged rows fold with empty Notes (parser drops them); phase in-memory, not live names (§2.8). Probed crash-retry, review-swap, serialized merge, conflict/question/kill. 86 tests. |
+| T05 | Fake spawn/message/list/close + the coordinator loop | auto | T03 | ✅ | Reviewed clean after one fix (loop called a method outside T06's interface). Findings logged for T06/parser. 86 tests. |
 | T06 | Feature branch + task worktree create / integrate / merge / promote | auto | T05 | ✅ | Reviewed. Fixed: `remove` used single `--force`, which git refuses on a locked worktree (the abandoned-worker state `claude rm` also keeps); now `--force --force`, with a locked-worktree test, confirmed on real git. Probed the loop↔factory contract, PROGRESS single-writer, conflict shape, promote-not-before-main. 100 tests. Deviations (two surfaces, `{conflict,files}` shape, worktrees under `.claude/worktrees/`, gpgsign off) all sound. |
-| T07 | `pir-worker` contract skill + cross-session wiring | auto | T00 | ⬜ | |
+| T07 | `pir-worker` contract skill + cross-session wiring | auto | T00 | 🔍 | Built pir-worker + pir-verify skills; pir-implement/pir-review accept explicit Txx (guard + main-branch rule bend only then; no-arg unchanged). platform.mjs send/inbox half: wire format, resolveSameRepo (git-common-dir not --cwd), parseAgents. 111 tests. Deviations: payload `text` not `body` (drop-in for loop.mjs); no msg CLI, transport injected (T09). Live: `·` accepted; `@` prefix REJECTED by SendMessage — naming.mjs/§2.8 must drop it, user decision (FINDINGS). |
 | T08 | One real worker, one trivial task, seatbelted | auto | T06, T07 | ⬜ | Hand-verified. Dangerous: small first. |
 | T09 | The `pir-coordinate` skill: dispatch, surface, supervise | auto | T08 | ⬜ | |
 | T10 | Full multi-worker run + kill-switch drill | you | T09 | ⬜ | Hand-verified. Dangerous: full size, last. |
@@ -52,7 +53,7 @@ deviation from the task doc.
 
 **A ✅ task's cell may be cut to one line** once the next task has been reviewed.
 
-**Review queue:** empty — T06 reviewed and ✅.
+**Review queue:** T07 — awaiting fresh-eyes review.
 
 ## Blocked on the user
 
