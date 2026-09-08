@@ -35,7 +35,7 @@ pir-coordinate SKILL.md:
   - refuse if PROGRESS.md's plan-reviewed gate says "not yet" (same rule as pir-work).
   - at start, open the feature branch `pir/{plan}` off main in its own worktree and work there; the
     user's main checkout stays on main and is not touched until promotion (§2.9).
-  - the coordinator names itself `@{repo} · {plan}` and each worker `@{repo} · {plan} · T{nn}`
+  - the coordinator names itself `{repo} · {plan}` and each worker `{repo} · {plan} · T{nn}`
     (§2.8), and finds its own workers by that prefix in `claude agents --json`.
   - the coordinator chooses each worker's task (decideDispatch) and sends it `pir-implement Txx` on
     a task branch cut from the feature branch, then closes that implement session and spawns a fresh
@@ -67,7 +67,7 @@ coordinate.mjs: startCoordinator({ slug, platform, worktree, maxWorkers }) → d
 - [ ] A dispatched worker is told `pir-implement Txx` for the coordinator's chosen task; the review
       is a fresh worker told `pir-review Txx` (distinct id), not the implementer.
 - [ ] The coordinator names itself and its workers per §2.8 and finds its workers by the
-      `@{repo} · {plan} ·` prefix, ignoring agents from other repos or plans.
+      `{repo} · {plan} ·` prefix, ignoring agents from other repos or plans.
 - [ ] A fake worker's question is surfaced and a user answer is routed down to that worker only.
 - [ ] Other ready tasks keep progressing while one fake worker is parked awaiting an answer.
 - [ ] A ready `you` task spawns a hands-on `pir-verify` worker (not an autonomous builder); when it

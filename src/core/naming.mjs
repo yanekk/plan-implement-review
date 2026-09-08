@@ -5,27 +5,28 @@
 // separate bookkeeping.
 //
 // The convention (DESIGN §2.8):
-//   coordinator  @{repo} · {plan}
-//   worker       @{repo} · {plan} · T{nn}
+//   coordinator  {repo} · {plan}
+//   worker       {repo} · {plan} · T{nn}
 //
 // Why "·" (U+00B7) and not "/": T00 (FINDINGS 2026-09-07) found `SendMessage` rejects a name
 // containing "/" ("to must be a bare teammate name") — the addressing layer reads "/" as
 // structure. The user chose "·" as the separator (2026-09-07); it is decoration, so any char
-// with no special meaning to the address parser will do. That "·" is actually accepted is live
-// cross-session behaviour the tests cannot prove — it is confirmed the same way T00 confirmed
-// the "/" rejection, and that check belongs to T07 (the cross-session wiring).
+// with no special meaning to the address parser will do. T07 confirmed live (2026-09-08) that
+// "·" IS accepted — and, at the same time, that a leading "@" is NOT: SendMessage gives that same
+// "bare teammate name" rejection for a "to" that starts with "@". So the name carries no "@"
+// prefix; the user chose to drop it (2026-09-08). A name is the bare "{repo} · {plan}[ · T{nn}]".
 
 const SEP = ' · ';
 const SEP_CHAR = '·';
 
-// coordinatorName({ repo, plan }) → "@{repo} · {plan}".
+// coordinatorName({ repo, plan }) → "{repo} · {plan}".
 export function coordinatorName({ repo, plan }) {
-  return `@${repo}${SEP}${plan}`;
+  return `${repo}${SEP}${plan}`;
 }
 
-// workerName({ repo, plan, task }) → "@{repo} · {plan} · {task}". task is a full id, e.g. "T05".
+// workerName({ repo, plan, task }) → "{repo} · {plan} · {task}". task is a full id, e.g. "T05".
 export function workerName({ repo, plan, task }) {
-  return `@${repo}${SEP}${plan}${SEP}${task}`;
+  return `${repo}${SEP}${plan}${SEP}${task}`;
 }
 
 // parseAgentName(name) → { repo, plan, task, matches }.
@@ -41,10 +42,10 @@ export function parseAgentName(name) {
 
   const parts = name.trim().split(SEP_CHAR).map((p) => p.trim());
 
-  // The first segment is "@{repo}": it must start with "@" and have a repo after it.
+  // The first segment is the repo, with no "@" prefix (SendMessage rejects a leading "@").
   const first = parts[0] ?? '';
-  if (!first.startsWith('@') || first.length === 1) return nomatch;
-  const repo = first.slice(1);
+  if (first === '') return nomatch;
+  const repo = first;
 
   if (parts.length === 2) {
     const plan = parts[1];

@@ -23,9 +23,9 @@ the task bare. Touched DESIGN, T03, T05, T07, T09, T10, T11.
 **Last updated:** 2026-09-08
 **Next `pir-work` will:** review T07 — the `pir-worker`/`pir-verify` skills, the pir-implement/pir-review
 explicit-task edits, and platform.mjs's send/inbox half (111 tests). Read the two T07 FINDINGS rows first:
-`·` is confirmed accepted live, but the `@` prefix in the naming scheme is REJECTED by SendMessage — a
-design contradiction (naming.mjs, DESIGN §2.8) awaiting a user decision, out of T07's scope. T11 (planner,
-deps T04) is also ready if picked out of order.
+`·` is confirmed accepted live; the `@` name prefix was found rejected by SendMessage and the user chose to
+drop it, applied across naming.mjs (+tests), DESIGN §2.8, the skills, and the T08/T09 docs — review covers
+that follow-up commit too. T11 (planner, deps T04) is also ready if picked out of order.
 
 ## Tasks
 
@@ -42,7 +42,7 @@ live steps with a hands-on worker the coordinator spawns, folded back without re
 | T04 | `analyzeParallelism` — critical path, width, auto/you counts | auto | T02 | ✅ | Reviewed clean. Critical path, width and auto/you counts correct; layer-width proxy honest (a dep edge strictly raises depth); `errors` reports unknown deps and cycles. Purity proven. |
 | T05 | Fake spawn/message/list/close + the coordinator loop | auto | T03 | ✅ | Reviewed clean after one fix (loop called a method outside T06's interface). Findings logged for T06/parser. 86 tests. |
 | T06 | Feature branch + task worktree create / integrate / merge / promote | auto | T05 | ✅ | Reviewed. Fixed: `remove` used single `--force`, which git refuses on a locked worktree (the abandoned-worker state `claude rm` also keeps); now `--force --force`, with a locked-worktree test, confirmed on real git. Probed the loop↔factory contract, PROGRESS single-writer, conflict shape, promote-not-before-main. 100 tests. Deviations (two surfaces, `{conflict,files}` shape, worktrees under `.claude/worktrees/`, gpgsign off) all sound. |
-| T07 | `pir-worker` contract skill + cross-session wiring | auto | T00 | 🔍 | Built pir-worker + pir-verify skills; pir-implement/pir-review accept explicit Txx (guard + main-branch rule bend only then; no-arg unchanged). platform.mjs send/inbox half: wire format, resolveSameRepo (git-common-dir not --cwd), parseAgents. 111 tests. Deviations: payload `text` not `body` (drop-in for loop.mjs); no msg CLI, transport injected (T09). Live: `·` accepted; `@` prefix REJECTED by SendMessage — naming.mjs/§2.8 must drop it, user decision (FINDINGS). |
+| T07 | `pir-worker` contract skill + cross-session wiring | auto | T00 | 🔍 | Built pir-worker + pir-verify skills; pir-implement/pir-review accept explicit Txx (guard + main-branch rule bend only then; no-arg unchanged). platform.mjs send/inbox half: wire format, resolveSameRepo (git-common-dir not --cwd), parseAgents. 111 tests. Deviations: payload `text` not `body` (drop-in for loop.mjs); no msg CLI, transport injected (T09). Live: `·` accepted; `@` prefix rejected by SendMessage, so the user dropped it — naming.mjs, §2.8, skills, T08/T09 docs updated (FINDINGS). |
 | T08 | One real worker, one trivial task, seatbelted | auto | T06, T07 | ⬜ | Hand-verified. Dangerous: small first. |
 | T09 | The `pir-coordinate` skill: dispatch, surface, supervise | auto | T08 | ⬜ | |
 | T10 | Full multi-worker run + kill-switch drill | you | T09 | ⬜ | Hand-verified. Dangerous: full size, last. |

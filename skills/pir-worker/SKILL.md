@@ -87,9 +87,11 @@ the `pir-verify` skill; invoke it.
 
 ## Addressing the coordinator
 
-The coordinator's name is `@{repo} · {plan}` (DESIGN §2.8) — e.g. `@plan-implement-review ·
+The coordinator's name is `{repo} · {plan}` (DESIGN §2.8) — e.g. `plan-implement-review ·
 parallel-pir`. You can build it yourself from the repo and the plan; you are not handed an id. The
 coordinator passes you its name at spawn for clarity, but the scheme is what removes id-passing.
 
 The separator is `·` (U+00B7), a middle dot, **not** `/`: the messaging layer rejects a name
-containing `/` (DESIGN §2.8, FINDINGS). When you address the coordinator, use `·`.
+containing `/` (DESIGN §2.8, FINDINGS). There is **no `@` prefix** either — the same layer rejects a
+name that starts with `@` (T07 found this live, 2026-09-08). When you address the coordinator, use the
+bare `{repo} · {plan}`.

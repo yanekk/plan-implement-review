@@ -79,12 +79,12 @@ test('two independent ready tasks are spawned in the same pass (worked concurren
   assert.equal(r.liveAfter, 2, 'two workers are live after the first pass');
 });
 
-test('fake workers are named @{repo} · {plan} · T{nn}; the task is recoverable from the name', (t) => {
+test('fake workers are named {repo} · {plan} · T{nn}; the task is recoverable from the name', (t) => {
   const { platform, base } = setup(t, [{ num: 'T01' }]);
   runPass({ ...base, state: createRunState() });
   const spawn = platform.spawns[0];
   assert.equal(spawn.name, workerName({ repo: REPO, plan: SLUG, task: 'T01' }));
-  assert.equal(spawn.name, `@${REPO} · ${SLUG} · T01`);
+  assert.equal(spawn.name, `${REPO} · ${SLUG} · T01`);
   assert.equal(spawn.task, 'T01', 'the loop rebuilds the task from the worker name');
 });
 

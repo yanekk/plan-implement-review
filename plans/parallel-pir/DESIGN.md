@@ -264,31 +264,34 @@ changes, and a plan is now honest about its own shape whether or not it is ever 
 Every agent has a deterministic name, so agents address each other by a name anyone can predict
 rather than an opaque session id handed around out of band:
 
-- **Coordinator:** `@{repo} · {plan}` — e.g. `@plan-implement-review · parallel-pir`.
-- **Worker:** `@{repo} · {plan} · T{nn}` — e.g. `@plan-implement-review · parallel-pir · T05`.
+- **Coordinator:** `{repo} · {plan}` — e.g. `plan-implement-review · parallel-pir`.
+- **Worker:** `{repo} · {plan} · T{nn}` — e.g. `plan-implement-review · parallel-pir · T05`.
 
 The separator is `·` (U+00B7), not `/`: T00 found `SendMessage` rejects a name containing `/`
 ("to must be a bare teammate name"), because the addressing layer reads `/` as structure. The
 separator is decoration, so any character with no special meaning to that parser serves; `·` was
-chosen (2026-09-07). That `·` is actually accepted is live behaviour the tests cannot prove — it
-is confirmed the way T00 confirmed the `/` rejection, and that check is T07's.
+chosen (2026-09-07). There is **no `@` prefix**: T07 confirmed live (2026-09-08) that `·` is
+accepted by `SendMessage` — and, at the same time, that a name beginning with `@` draws the very
+same "bare teammate name" rejection as `/`. The `@` was decorative, so the user dropped it
+(2026-09-08); the name is the bare `{repo} · {plan}[ · T{nn}]`, which is also the shape
+`claude agents --json` already shows (no `@`).
 
 The name is set at spawn with `claude --bg -n "<name>"` (FINDINGS.md), and it is what
 `claude agents --json` shows and what a worker uses to message the coordinator. Three things fall
 out of it, which is why the convention is worth fixing rather than leaving names incidental:
 
 - **A worker addresses the coordinator by name without being told an id.** It knows the repo and
-  the plan, so it can construct `@{repo} · {plan}` itself. The coordinator still passes the worker
+  the plan, so it can construct `{repo} · {plan}` itself. The coordinator still passes the worker
   its own name at spawn for clarity, but the scheme means no id has to be discovered.
 - **The coordinator finds and identifies its workers from the name alone.** Its workers are the
-  agents whose name starts with `@{repo} · {plan} · T`, and the task each holds is the `T{nn}` at
+  agents whose name starts with `{repo} · {plan} · T`, and the task each holds is the `T{nn}` at
   the end. So the coordinator can rebuild "which worker is on which task" purely from
   `claude agents --json`, without separate bookkeeping that could drift from reality.
 - **The user reads `claude agents` and sees exactly who is doing what**, across every repo and
   plan on the machine, because the name carries the repo, the plan and the task.
 
 The name identifies the repo, plan and task, not the phase: the implement session and the fresh
-review session for one task carry the same `@{repo} · {plan} · T{nn}` name, but they do not run at
+review session for one task carry the same `{repo} · {plan} · T{nn}` name, but they do not run at
 once — the implement session is closed as the review session spawns (§2.1), so at most one live
 session ever holds a given task name. The coordinator tracks the phase from the worker's own
 messages (implemented, done) and the task state in `PROGRESS.md`, so the name never has to carry
@@ -638,14 +641,16 @@ minimum, kill switch wired.
   land atomically and reviewably, and makes the kill switch and a crash leave `main` untouched
   (§2.9). It is a further deliberate departure from "main checkout, main branch, always"; the
   classic flow keeps that rule.
-- **Agents are named `@{repo} · {plan}` and `@{repo} · {plan} · T{nn}`.** The user set this
+- **Agents are named `{repo} · {plan}` and `{repo} · {plan} · T{nn}`.** The user set this
   convention (2026-09-07). Deterministic names mean a worker addresses the coordinator without
   being handed an id, the coordinator identifies its workers and their tasks from the name alone
   (so worker-to-task state cannot drift from separate bookkeeping), and the user reads
   `claude agents` and sees who is doing what. Set with `claude --bg -n` (§2.8). The separator was
   `/` at plan time; changed to `·` (2026-09-07) after T00 found `SendMessage` rejects a `/` in a
-  name and the user picked `·` as a plain, non-structural replacement. It is decoration; T07
-  confirms `·` is accepted live.
+  name and the user picked `·` as a plain, non-structural replacement. The name also carried a
+  leading `@` at plan time; T07 confirmed live (2026-09-08) that `·` is accepted but that a name
+  starting with `@` draws the same rejection as `/`, so the user dropped the `@` — the name is now
+  the bare `{repo} · {plan}`, matching what `claude agents --json` already shows.
 - **The planning method is taught to plan for parallelism, in this plan.** The user chose to fold
   this in rather than defer it (2026-09-07). `/pir-plan` declares only real dependencies, marks
   each task `auto`/`you`, and reports a plan's parallel width so the user sees how much the

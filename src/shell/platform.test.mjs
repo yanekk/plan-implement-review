@@ -40,7 +40,7 @@ function scratchRepo(prefix = 'pir-t07-') {
 // --- the wire format --------------------------------------------------------------------------
 
 test('a constructed message carries from/kind/task/text and parses back', () => {
-  const from = '@plan-implement-review · parallel-pir · T05';
+  const from = 'plan-implement-review · parallel-pir · T05';
   const wire = encodeMessage({ kind: 'question', task: 'T05', text: 'which threshold?' });
   assert.deepEqual(parseMessage({ from, text: wire }), {
     from,
@@ -51,7 +51,7 @@ test('a constructed message carries from/kind/task/text and parses back', () => 
 });
 
 test('a multi-line body survives the round-trip intact', () => {
-  const from = '@repo · plan · T09';
+  const from = 'repo · plan · T09';
   const text = 'line one\nline two\n\n[pir:v1 kind=fake task=T01] not a header\n';
   const wire = encodeMessage({ kind: 'conflict', task: 'T09', text });
   const back = parseMessage({ from, text: wire });
@@ -61,7 +61,7 @@ test('a multi-line body survives the round-trip intact', () => {
 });
 
 test('a message with no task recovers the task from the sender name', () => {
-  const from = '@repo · plan · T12';
+  const from = 'repo · plan · T12';
   const wire = encodeMessage({ kind: 'done', task: null, text: '' });
   const back = parseMessage({ from, text: wire });
   assert.equal(back.task, 'T12');
@@ -69,7 +69,7 @@ test('a message with no task recovers the task from the sender name', () => {
 });
 
 test('a body with no header is read as a plain message, task from the sender name', () => {
-  const from = '@repo · plan · T03';
+  const from = 'repo · plan · T03';
   const back = parseMessage({ from, text: 'just a note from a human' });
   assert.equal(back.kind, 'message');
   assert.equal(back.task, 'T03');
@@ -142,7 +142,7 @@ test('parseAgents pulls id/cwd/status/state/name from a sample and drops the res
       pid: 72756,
       id: '28e9678c',
       cwd: '/Users/x/src/pir',
-      name: '@pir · parallel-pir · T05',
+      name: 'pir · parallel-pir · T05',
       status: 'busy',
       state: 'working',
     },
@@ -158,7 +158,7 @@ test('parseAgents pulls id/cwd/status/state/name from a sample and drops the res
   });
   assert.equal(agents[1].id, '28e9678c');
   assert.equal(agents[1].state, 'working');
-  assert.equal(agents[1].name, '@pir · parallel-pir · T05');
+  assert.equal(agents[1].name, 'pir · parallel-pir · T05');
   assert.equal('pid' in agents[0], false);
   assert.equal('sessionId' in agents[0], false);
 });
@@ -175,11 +175,11 @@ test('createMessaging.send encodes through the injected transport', () => {
   const delivered = [];
   const transport = { deliver: (name, text) => (delivered.push({ name, text }), { ok: true }), drain: () => [] };
   const m = createMessaging({ transport });
-  const r = m.send('@repo · plan', { kind: 'answer', task: 'T05', text: 'use 30' });
+  const r = m.send('repo · plan', { kind: 'answer', task: 'T05', text: 'use 30' });
   assert.equal(r.ok, true);
-  assert.equal(delivered[0].name, '@repo · plan');
-  assert.deepEqual(parseMessage({ from: '@repo · plan · T05', text: delivered[0].text }), {
-    from: '@repo · plan · T05',
+  assert.equal(delivered[0].name, 'repo · plan');
+  assert.deepEqual(parseMessage({ from: 'repo · plan · T05', text: delivered[0].text }), {
+    from: 'repo · plan · T05',
     kind: 'answer',
     task: 'T05',
     text: 'use 30',
@@ -190,12 +190,12 @@ test('createMessaging.inbox parses each drained message; a failed deliver report
   const transport = {
     deliver: () => ({ ok: false }),
     drain: () => [
-      { from: '@repo · plan · T01', text: encodeMessage({ kind: 'implemented', task: 'T01', text: '' }) },
-      { from: '@repo · plan · T02', text: encodeMessage({ kind: 'done', task: 'T02', text: '' }) },
+      { from: 'repo · plan · T01', text: encodeMessage({ kind: 'implemented', task: 'T01', text: '' }) },
+      { from: 'repo · plan · T02', text: encodeMessage({ kind: 'done', task: 'T02', text: '' }) },
     ],
   };
   const m = createMessaging({ transport });
-  assert.equal(m.send('@x', { kind: 'k', task: 'T01', text: '' }).ok, false);
+  assert.equal(m.send('repo · plan', { kind: 'k', task: 'T01', text: '' }).ok, false);
   const got = m.inbox();
   assert.equal(got.length, 2);
   assert.equal(got[0].kind, 'implemented');
