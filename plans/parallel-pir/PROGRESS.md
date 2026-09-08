@@ -21,11 +21,10 @@ After review the user revised the `you`-task model (2026-09-07): the coordinator
 hands-on worker (`pir-verify Txx`) the user drives, folded back without review, instead of surfacing
 the task bare. Touched DESIGN, T03, T05, T07, T09, T10, T11.
 **Last updated:** 2026-09-08
-**Next `pir-work` will:** review T07 — the `pir-worker`/`pir-verify` skills, the pir-implement/pir-review
-explicit-task edits, and platform.mjs's send/inbox half (111 tests). Read the two T07 FINDINGS rows first:
-`·` is confirmed accepted live; the `@` name prefix was found rejected by SendMessage and the user chose to
-drop it, applied across naming.mjs (+tests), DESIGN §2.8, the skills, and the T08/T09 docs — review covers
-that follow-up commit too. T11 (planner, deps T04) is also ready if picked out of order.
+**Next `pir-work` will:** implement T08 — one real worker on one trivial task, seatbelted (deps T06, T07
+both ✅ now). It is the first LIVE spawn: dangerous, kept small first. Read the T00 FINDINGS rows on real
+`--bg` spawn/close and the T06 rows on worktree teardown before running anything live. T11 (planner, deps
+T04) is also ready if picked out of order.
 
 ## Tasks
 
@@ -41,8 +40,8 @@ live steps with a hands-on worker the coordinator spawns, folded back without re
 | T03 | `decideDispatch` — spawn / review / merge / close | auto | T02 | ✅ | Reviewed clean, no fix. Crash-window gaps at review-ready and merge logged to FINDINGS for T05/T06. |
 | T04 | `analyzeParallelism` — critical path, width, auto/you counts | auto | T02 | ✅ | Reviewed clean. Critical path, width and auto/you counts correct; layer-width proxy honest (a dep edge strictly raises depth); `errors` reports unknown deps and cycles. Purity proven. |
 | T05 | Fake spawn/message/list/close + the coordinator loop | auto | T03 | ✅ | Reviewed clean after one fix (loop called a method outside T06's interface). Findings logged for T06/parser. 86 tests. |
-| T06 | Feature branch + task worktree create / integrate / merge / promote | auto | T05 | ✅ | Reviewed. Fixed: `remove` used single `--force`, which git refuses on a locked worktree (the abandoned-worker state `claude rm` also keeps); now `--force --force`, with a locked-worktree test, confirmed on real git. Probed the loop↔factory contract, PROGRESS single-writer, conflict shape, promote-not-before-main. 100 tests. Deviations (two surfaces, `{conflict,files}` shape, worktrees under `.claude/worktrees/`, gpgsign off) all sound. |
-| T07 | `pir-worker` contract skill + cross-session wiring | auto | T00 | 🔍 | Built pir-worker + pir-verify skills; pir-implement/pir-review accept explicit Txx (guard + main-branch rule bend only then; no-arg unchanged). platform.mjs send/inbox half: wire format, resolveSameRepo (git-common-dir not --cwd), parseAgents. 111 tests. Deviations: payload `text` not `body` (drop-in for loop.mjs); no msg CLI, transport injected (T09). Live: `·` accepted; `@` prefix rejected by SendMessage, so the user dropped it — naming.mjs, §2.8, skills, T08/T09 docs updated (FINDINGS). |
+| T06 | Feature branch + task worktree create / integrate / merge / promote | auto | T05 | ✅ | Reviewed clean after one fix: `remove` now `--force --force` (git refuses single `--force` on a locked worktree), confirmed on real git. 100 tests. |
+| T07 | `pir-worker` contract skill + cross-session wiring | auto | T00 | ✅ | Reviewed clean, no fix. Walked the wire format (header read on line 1 only, so a body cannot spoof it), the same-repo `--cwd` guard, parseAgents. Confirmed `text`-not-`body` matches loop.mjs, boundary holds (platform is shell). Probed: resolveSameRepo keeps the coordinator's own session — inert (loop is spawn-driven); logged for T09. 111 tests. |
 | T08 | One real worker, one trivial task, seatbelted | auto | T06, T07 | ⬜ | Hand-verified. Dangerous: small first. |
 | T09 | The `pir-coordinate` skill: dispatch, surface, supervise | auto | T08 | ⬜ | |
 | T10 | Full multi-worker run + kill-switch drill | you | T09 | ⬜ | Hand-verified. Dangerous: full size, last. |
@@ -53,7 +52,7 @@ deviation from the task doc.
 
 **A ✅ task's cell may be cut to one line** once the next task has been reviewed.
 
-**Review queue:** T07 — awaiting fresh-eyes review.
+**Review queue:** empty — nothing awaiting review.
 
 ## Blocked on the user
 
