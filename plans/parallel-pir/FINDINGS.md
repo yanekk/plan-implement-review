@@ -12,6 +12,9 @@ Legend: 🐞 defect found · ✅ verified by hand with the user · 📌 worth kn
 
 | Date | | Finding |
 |---|---|---|
+| 2026-09-08 | 🐞 | T05 review: loop calls `worktree.commitFeature` (the reconcile commit); not in T06's interface (openFeature/createTask/integrate/mergeTask/promote/remove, §3.2, T06.md). T06 must add it or the shared loop crashes at merge. The inert `progressOn` call was removed. |
+| 2026-09-08 | 🐞 | T05 review: the coordinator folds each merged row as `✅` with empty Notes — `parseProgress` drops the Notes column, so the worker's own row account is lost at promotion. Restore when the parser surfaces notes (T02) or T09 writes them. |
+| 2026-09-08 | 📌 | T05 review: the loop tracks worker→task/phase in in-memory `state.tasks`, not via `parseAgentName` over live names (§2.8, T05 sketch). A coordinator crash without the kill switch leaves live workers a restart won't re-adopt; it re-spawns their tasks. T09 decides. |
 | 2026-09-08 | 🐞 | T05: git refuses a branch `pir/{plan}` and `pir/{plan}/T{nn}` at once (directory/file ref clash). Task branches are now `pir/{plan}-T{nn}`, beside the feature branch. User chose the dash. DESIGN §2.9, T06/T07 docs, worktree.mjs updated. |
 | 2026-09-08 | 📌 | T05 loop contracts for T06/T08: platform.close stops the session only; worktree.remove owns worktree/branch teardown, so an implementer closes while its reviewer keeps the shared worktree. A merge conflict surfaces as a worker decision message, not a mergeTask return. |
 | 2026-09-08 | 📌 | T05 loop: a crashed worker (gone from `agents --json`) is cleaned up before the spawn step, and decideDispatch re-spawns its still-⬜ task the same pass. So a crash is retried, not dropped; a task that always crashes would respawn each pass. |

@@ -21,10 +21,10 @@ After review the user revised the `you`-task model (2026-09-07): the coordinator
 hands-on worker (`pir-verify Txx`) the user drives, folded back without review, instead of surfacing
 the task bare. Touched DESIGN, T03, T05, T07, T09, T10, T11.
 **Last updated:** 2026-09-08
-**Next `pir-work` will:** review T05 (implemented, awaiting review). Note the branch-model change
-decided while building it: task branches are `pir/{plan}-T{nn}` (dash), because git rejects
-`pir/{plan}` and `pir/{plan}/T{nn}` together (FINDINGS, DESIGN §2.9). T06 builds the real worktree
-against T05's fake interface; T07 (§2.8 naming) and T11 (planner templates) still fold in T00.
+**Next `pir-work` will:** implement T06 (real `worktree.mjs`) — its dep T05 is now ✅. Build it to the
+T05 loop's actual calls, not only T06.md's interface list: the loop needs `commitFeature` (the
+reconcile commit) in addition to openFeature/createTask/integrate/mergeTask/promote/remove, or the
+shared loop crashes at merge (FINDINGS 2026-09-08). Task branches are `pir/{plan}-T{nn}` (dash, §2.9).
 
 ## Tasks
 
@@ -39,7 +39,7 @@ live steps with a hands-on worker the coordinator spawns, folded back without re
 | T02 | Parse `PROGRESS.md` (with `Runs` marker) and fold one row back | auto | T01 | ✅ | Reviewed. Fixed: empty `**Plan reviewed:**` note read as reviewed=true → now not-reviewed, with a test. Parser probed on real PROGRESS.md; reconcile round-trips one line. 21 tests. |
 | T03 | `decideDispatch` — spawn / review / merge / close | auto | T02 | ✅ | Reviewed clean, no fix. Crash-window gaps at review-ready and merge logged to FINDINGS for T05/T06. |
 | T04 | `analyzeParallelism` — critical path, width, auto/you counts | auto | T02 | ✅ | Reviewed clean, no fix. Five numbers correct for chain, fan-out, diamond; layer-width proxy is honest — a dependency edge strictly raises depth, so same-depth tasks are provably independent. `errors` deviation (unknown deps, cycles) approved: the doc's own tests require reporting them. Boundary test auto-scans the module; purity proven. Probed cycles, partial-unknown deps, empty. |
-| T05 | Fake spawn/message/list/close + the coordinator loop | auto | T03 | 🔍 | Built: fake platform (in-memory agents, real commits in cwd), fake worktree (real scratch git repo), loop.mjs runPass/drain. 26 tests. Found git rejects `pir/{plan}/T{nn}`; user chose `pir/{plan}-T{nn}`. Contracts for T06/T08 in FINDINGS: close = session only, worktree.remove owns git teardown, conflicts as worker messages, list() = tick. |
+| T05 | Fake spawn/message/list/close + the coordinator loop | auto | T03 | ✅ | Reviewed. Fixed: loop called `worktree.progressOn`/`commitFeature` outside T06's interface — removed the inert readTaskRow (and progressOn); commitFeature logged for T06 to add (FINDINGS). Left as findings: merged rows fold with empty Notes (parser drops them); phase tracked in-memory, not from live names (§2.8). Probed crash-retry, review-swap slots, serialized merge, conflict/question/kill paths. 86 tests. |
 | T06 | Feature branch + task worktree create / integrate / merge / promote | auto | T05 | ⬜ | Hand-verified half. |
 | T07 | `pir-worker` contract skill + cross-session wiring | auto | T00 | ⬜ | |
 | T08 | One real worker, one trivial task, seatbelted | auto | T06, T07 | ⬜ | Hand-verified. Dangerous: small first. |
@@ -52,7 +52,7 @@ deviation from the task doc.
 
 **A ✅ task's cell may be cut to one line** once the next task has been reviewed.
 
-**Review queue:** T05
+**Review queue:** empty — T06 is the next task to implement
 
 ## Blocked on the user
 
