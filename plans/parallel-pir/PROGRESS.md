@@ -71,6 +71,12 @@ if live workers ever exceed the ceiling. Regression test added (bogus spawn id v
 touched T05's loop and overlaps T09's deferred worker-identity decision, so the changed loop should get
 a fresh review. 120 tests green.
 
+**Skills-distribution gap (found in the live run, decision for T09/T10).** Sessions discover skills from
+`~/.claude/skills/`, which holds only the classic set; the parallel skills (`pir-worker`, `pir-verify`,
+repo `skills/`) were never installed there, so a worker cannot invoke `pir-worker` and falls back to
+`pir-implement`. Harmless for the scratch demo (the harness watches the file, not messages) but a real
+multi-worker run needs them installed or synced (FINDINGS 2026-09-09).
+
 **T08 LIVE one-worker run — pending, needs a person.** The code half and both live-run fixes are in and
 green; the live half (a real worker spawns, acts on the sent instruction, a fresh session reviews, close
 leaves nothing behind) can only be seen by a person (DESIGN §5.1). Run it in a FRESH THROWAWAY CLONE
