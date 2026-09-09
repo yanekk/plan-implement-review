@@ -121,14 +121,19 @@ The coordinator owns a worker's whole life, and it must be able to end it, not o
 - **drive** — send the worker a message (an answer to its question, the instruction to hand off
   to review). The review session is a *separate* fresh spawn on the same worktree, and the
   implement session is closed as that reviewer starts (§2.1), so one task in review holds one slot.
-- **close** — stop the worker's session and remove its worktree and task branch.
+- **close** — end the worker's session and remove its worktree and task branch. `claude stop`
+  alone does NOT end a session: it interrupts the current turn and the session stays alive and
+  listed (T08 live run, FINDINGS 2026-09-09). So close sends the worker's process SIGTERM — its
+  pid comes from `claude agents --json` — which is what actually ends it. The leftover `stopped`
+  record is cleared with `claude rm`; the worktree and branch come down separately (below).
 
 **Close exists for three reasons, and all three are why it is first-class rather than an
 afterthought.** Normal end-of-task teardown after a merge; the hard-stop kill switch, which
 tears every worker down at once; and cleaning up a worker that crashed or was abandoned so its
-worktree does not leak. A design that can spawn but not reliably close leaks worktrees and
-cannot honour its own kill switch. Note that `claude rm` removes a worktree only when it is
-clean, so close after a clean merge or remove the worktree explicitly (FINDINGS.md).
+worktree does not leak. A design that can spawn but not reliably close leaks workers and worktrees
+and cannot honour its own kill switch. The worktree and branch come down with
+`git worktree remove --force` and `git branch -D` (worktree.mjs), not `claude rm`, which keeps a
+worktree that is not clean (FINDINGS.md).
 
 ### 2.4 The rails
 
@@ -143,7 +148,8 @@ clean, so close after a clean merge or remove the worktree explicitly (FINDINGS.
   coordinator spawns its own workers and that is the real runaway vector; it also bounds paid
   agents and merge complexity. Hitting the ceiling is logged, and a task simply waits for a slot.
 - **Kill switch: hard stop only.** A control flag file. While it is present the coordinator
-  dispatches nothing and delivers nothing, and it closes every live worker with `claude stop`.
+  dispatches nothing and delivers nothing, and it ends every live worker — SIGTERM to each
+  worker's pid, since `claude stop` only interrupts (§2.3, FINDINGS 2026-09-09).
   There is no pause or resume: to continue, the user removes the flag and restarts the
   coordinator, which reads `PROGRESS.md` and picks up from the recorded task states.
   Hard-stop-only was chosen because restart-from-`PROGRESS.md` already gives a clean resume.
@@ -188,7 +194,7 @@ loop cheaply.
 - **A worker crashes or is abandoned.** Its worktree and task branch are left behind. The
   coordinator's close removes them; cleanup runs on the next loop pass that notices the worker
   is gone (its `state` in `claude agents --json`), so a dead worker does not hold a slot forever.
-- **The kill switch fires mid-task.** In-flight workers are stopped. Their task branches and the
+- **The kill switch fires mid-task.** In-flight workers are ended (SIGTERM). Their task branches and the
   feature branch are left on disk for inspection; `main` is untouched, because the only merge to
   `main` is the final promotion and the coordinator stops before it. Restart re-opens the same
   feature branch and re-dispatches whatever `PROGRESS.md` on it still shows unbuilt.
@@ -396,8 +402,9 @@ Shell (`src/shell/`):
 - `platform.mjs` — the thin wrapper over Claude Code: spawn a background worker in a worktree cwd
   with its `--name` set by `naming.mjs` (§2.8), send a worker a message and read the coordinator's
   inbox (cross-session messaging), list live workers with their state (`claude agents --json`,
-  same-repo resolution, names parsed by `naming.mjs`), and close a worker (`claude stop` then
-  remove its worktree). This is where the T00 spike's confirmed mechanisms live.
+  same-repo resolution, names parsed by `naming.mjs`), and close a worker (`claude stop` to
+  interrupt, then SIGTERM its pid to actually end it — stop alone does not; the worktree comes
+  down separately via worktree.mjs). This is where the platform's real, live-verified mechanisms live.
 - `worktree.mjs` — open the feature branch off `main` in its own worktree (the coordinator works
   there, leaving the user's main checkout on `main`); create a task worktree and branch off the
   feature branch; integrate the feature branch into a task branch; merge a task branch into the
@@ -543,7 +550,7 @@ the user, one at a time, never mid-task.
 | A real `claude --bg` worker spawns in a worktree and returns a usable id | Spawns a live, paid agent process |
 | A message from coordinator to a running worker is received and acted on | Live cross-session messaging; T00 |
 | A fresh session reviewing a worker's `🔍` task on the same worktree | Live session behaviour; T00 |
-| Closing a worker: `claude stop` then worktree removed | Acts on a live session and real worktrees |
+| Closing a worker: `claude stop` interrupts, SIGTERM its pid ends it, then worktree removed | Acts on a live session and real worktrees |
 | A task branch merging into the feature branch, serialized, worktree removed | Mutates real git history |
 | Promoting the feature branch to `main` at plan completion | The one merge to `main`; mutates it |
 | The kill switch stopping every live worker | Requires live workers to stop |
@@ -555,7 +562,7 @@ the user, one at a time, never mid-task.
 | `PARALLEL_DRY_RUN=1` | on in all tests | Spawn / message / list / close / merge hit the fakes and a scratch repo, never a real agent or `main` |
 | Scratch plan + scratch repo | used for T00, T08, T10 | The dangerous operations run against a throwaway plan and repo, never the real project |
 | Worker ceiling = 4 | always on | Bounds how many real agents can exist at once |
-| Kill-switch flag | always available | One file halts all dispatch and delivery and stops every worker |
+| Kill-switch flag | always available | One file halts all dispatch and delivery and ends every worker (SIGTERM) |
 
 **Never ask the user to run the unbounded version to find something out, and never run it
 yourself.** No spike or task spawns real long-running paid agents against real branches. The
@@ -568,11 +575,12 @@ minimum, kill switch wired.
 
 - **A leaked worktree or branch** (worker crashed, coordinator killed mid-loop):
   `claude agents --json` lists live sessions with their state; `git worktree list` lists
-  worktrees. `claude stop <id>` stops a session and `claude rm <id>` removes it and its worktree
-  when clean; `git worktree remove` and `git branch -D` clean the rest. The coordinator does
-  this on its next pass, but a person can do it by hand from those commands.
+  worktrees. `claude stop <id>` only interrupts a session's turn; `kill <pid>` (pid from
+  `claude agents --json`) ends the process, and `claude rm <id>` clears the leftover `stopped`
+  record; `git worktree remove --force` and `git branch -D` clean the worktree and branch. The
+  coordinator does this on its next pass, but a person can do it by hand from those commands.
 - **The coordinator is confused or runaway:** create the `HALT` control flag file. All dispatch
-  and delivery stop and every worker is stopped. `main` is untouched (nothing merges to it until
+  and delivery stop and every worker is ended (SIGTERM). `main` is untouched (nothing merges to it until
   promotion). Remove the flag and restart the coordinator, which re-opens the feature branch
   `pir/{plan}` and continues from its `PROGRESS.md`.
 - **A merge went wrong on the feature branch:** the coordinator merges one task branch at a time
