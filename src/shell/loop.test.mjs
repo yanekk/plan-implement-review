@@ -209,10 +209,54 @@ test('a crashed worker is closed as dead and its worktree reclaimed, freeing its
   const state = createRunState();
   runPass({ ...base, state }); // spawn T01
   const implId = platform.spawns[0].id;
-  const r2 = runPass({ ...base, state }); // it crashes → gone from list → dead → closed
+  // The worker crashes before it ever appears in the live list. buildAssignments matches workers by
+  // name and gives a just-spawned worker a one-pass grace to appear (so a slow worker is not respawned
+  // into a duplicate — FINDINGS 2026-09-09), so a never-appearing crash is recognised a pass or two
+  // later, not instantly. Drive passes until the dead-close lands.
+  let dead;
+  for (let i = 0; i < 5 && !dead; i++) {
+    const r = runPass({ ...base, state });
+    dead = r.actions.find((a) => a.type === 'close' && a.reason === 'dead');
+  }
+  assert.ok(dead, 'the crashed worker is eventually closed as dead');
   assert.ok(platform.closed.includes(implId));
-  assert.ok(r2.actions.some((a) => a.type === 'close' && a.reason === 'dead'));
   assert.ok(worktree.events.some((e) => e.op === 'remove'), 'its worktree is removed');
+});
+
+test('a worker whose spawn id differs from its listed id is tracked by name, not respawned, and closed by the listed id (FINDINGS 2026-09-09)', (t) => {
+  // The live runaway: `claude --bg` returns an id that does not match the `id` in `claude agents
+  // --json`. A platform that reproduces exactly that — spawn returns BOGUS, list reports REAL under
+  // the same name — must not make the loop respawn (it should recognise the worker by name), and a
+  // close must use the listed id, the only one that can actually stop the session.
+  const worktree = createFakeWorktree({ progress: progressDoc([{ num: 'T01' }]), slug: SLUG });
+  t.after(() => worktree.cleanup());
+  const NAME = workerName({ repo: REPO, plan: SLUG, task: 'T01' });
+  const spawns = [];
+  const closed = [];
+  let listed = [];
+  const platform = {
+    spawn({ name }) {
+      spawns.push(name);
+      listed = [{ id: 'REAL-1', name, cwd: '/x', status: 'busy', state: 'working', live: true }];
+      return 'BOGUS-1'; // the mismatch: the returned id is not the one list()/close use
+    },
+    list: () => listed,
+    close: (id) => (closed.push(id), (listed = listed.filter((w) => w.id !== id)), { ok: true }),
+    inbox: () => [],
+  };
+  const base = { platform, worktree, repo: REPO, slug: SLUG, maxWorkers: 1 };
+  const state = createRunState();
+
+  runPass({ ...base, state }); // pass 1: spawn (returns BOGUS-1; list now reports REAL-1)
+  assert.equal(spawns.length, 1, 'spawned once');
+  const r2 = runPass({ ...base, state }); // pass 2: recognised live BY NAME, not respawned
+  assert.equal(spawns.length, 1, 'not respawned despite the id mismatch — the name matched');
+  assert.equal(r2.liveAfter, 1, 'still exactly one worker, not a runaway');
+
+  const halted = { isHalted: () => true, log() {} };
+  runPass({ ...base, state, control: halted }); // halt closes it
+  assert.ok(closed.includes('REAL-1'), 'closed by the listed id, the only one close can act on');
+  assert.ok(!closed.includes('BOGUS-1'), 'the bogus spawn id was never used to close');
 });
 
 test('dry run stays isolated: the scratch repo is a temp dir, never the real project', (t) => {

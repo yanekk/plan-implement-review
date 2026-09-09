@@ -68,16 +68,36 @@ function applyMessages(state, messages, actions) {
   }
 }
 
-// Rebuild the assignments decideDispatch consumes from the tracked tasks, checked against the live
-// list: a task whose tracked worker is no longer listed is dead (DESIGN §2.5 — a crashed or
-// abandoned worker), so its slot can be reclaimed and its worktree cleaned.
-function buildAssignments(state, liveList) {
-  const liveIds = new Set(liveList.map((w) => w.id));
+// How many passes a just-spawned worker may be absent from the live list before it is declared dead.
+// A worker takes a moment to appear in `claude agents --json`; without this grace a worker not yet
+// listed would be called dead and respawned into a duplicate — the runaway the name-based match below
+// otherwise prevents (FINDINGS 2026-09-09).
+const APPEAR_GRACE = 1;
+
+// Rebuild the assignments decideDispatch consumes, matching each tracked task to a live worker BY
+// NAME, not by the id spawn returned. The name the coordinator assigns is deterministic (§2.8:
+// "the coordinator finds and identifies its workers from the name alone"); the id `claude --bg`
+// prints does NOT reliably equal the `id` in `claude agents --json` (T08 live run, FINDINGS
+// 2026-09-09), so trusting it made the loop declare every worker dead and respawn — a runaway that
+// breached the ceiling. So the name is the key, and the live id comes from the list: it is written
+// back onto the task as the authoritative id that close acts on. A task whose worker is absent from
+// the list past its grace is dead (DESIGN §2.5 — a crashed or abandoned worker); one still within
+// grace is treated as live-pending, not respawned.
+function buildAssignments(state, liveList, repo, slug) {
+  const byName = new Map(liveList.map((w) => [w.name, w]));
   const assignments = [];
   for (const [num, t] of Object.entries(state.tasks)) {
-    if (!t.workerId) continue;
-    const live = liveIds.has(t.workerId);
-    assignments.push({ workerId: t.workerId, task: num, phase: live ? t.phase : 'dead', live });
+    const w = byName.get(workerName({ repo, plan: slug, task: num }));
+    if (w) {
+      t.workerId = w.id; // authoritative id from the list, what close can actually stop
+      t.grace = 0;
+      assignments.push({ workerId: w.id, task: num, phase: t.phase, live: true });
+    } else if ((t.grace ?? 0) > 0) {
+      t.grace -= 1; // spawned but not yet listed — wait rather than respawn into a duplicate
+      assignments.push({ workerId: t.workerId ?? null, task: num, phase: t.phase, live: true });
+    } else if (t.workerId) {
+      assignments.push({ workerId: t.workerId, task: num, phase: 'dead', live: false });
+    }
   }
   return assignments;
 }
@@ -112,7 +132,7 @@ export function runPass({ platform, worktree, repo, slug, maxWorkers, state, con
 
   const progressText = readFileSync(featureProgressPath, 'utf8');
   const parsed = parseProgress(progressText);
-  const assignments = buildAssignments(state, liveList);
+  const assignments = buildAssignments(state, liveList, repo, slug);
 
   // 2. Decide.
   const decision = decideDispatch({ tasks: parsed.tasks, assignments, maxWorkers, halted });
@@ -160,7 +180,10 @@ export function runPass({ platform, worktree, repo, slug, maxWorkers, state, con
     const name = workerName({ repo, plan: slug, task: num });
     const role = runs === 'you' ? 'verify' : 'implement';
     const id = platform.spawn({ cwd: wt.path, name, phase: role });
-    state.tasks[num] = { worktree: wt, workerId: id, role, phase: role === 'verify' ? VERIFYING : IMPLEMENTING };
+    // workerId here is spawn's best-effort return, not trusted for liveness: buildAssignments resolves
+    // the authoritative id by name next pass. grace lets the worker appear in the list before it could
+    // be called dead (FINDINGS 2026-09-09).
+    state.tasks[num] = { worktree: wt, workerId: id, role, phase: role === 'verify' ? VERIFYING : IMPLEMENTING, grace: APPEAR_GRACE };
     spawnedThisPass.push(id);
     record('spawn', { task: num, runs, role, workerId: id });
   }
@@ -219,7 +242,8 @@ export function runPass({ platform, worktree, repo, slug, maxWorkers, state, con
       platform.close(workerId);
       closedThisPass.add(workerId);
       const t = state.tasks[num];
-      t.workerId = reviewerId;
+      t.workerId = reviewerId; // best-effort; resolved to the real id by name next pass
+      t.grace = APPEAR_GRACE; // the fresh reviewer needs time to appear in the list
       t.role = 'review';
       t.phase = REVIEWING;
       continue;
