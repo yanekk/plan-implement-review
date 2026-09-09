@@ -175,6 +175,20 @@ function mainWorktree(cwd) {
   return first ? first.slice('worktree '.length).trim() : '';
 }
 
+// Ensure the scratch repo has a `main` branch checked out (DESIGN §2.9: the feature branch is cut from
+// main and promoted back to it, and worktree.mjs hardcodes `main` as the real project always has one).
+// A clone taken off a side branch has NO local main — only origin/main — so `git branch pir/scratch
+// main` fails with "not a valid object name: 'main'". Here we point main at the CURRENT HEAD (which
+// carries the code and the pir skills the worker needs) and check it out. Safe because this runs only
+// on the live path, which the guard has already confined to a throwaway non-real clone.
+function ensureMainCheckedOut(repo) {
+  const cur = git(repo, ['rev-parse', '--abbrev-ref', 'HEAD']).stdout.trim();
+  if (cur === 'main') return;
+  const r = git(repo, ['checkout', '-B', 'main']);
+  if (!r.ok) throw new Error(`could not set up a main branch in the scratch clone: ${r.stderr}`);
+  console.log(`prepared main at the current commit (clone was on "${cur}", which has no local main)`);
+}
+
 async function main() {
   const inRepo = git(process.cwd(), ['rev-parse', '--is-inside-work-tree']).ok;
   const repo = mainWorktree(process.cwd());
@@ -217,6 +231,7 @@ async function main() {
     worktree = createFakeWorktree({ progress: SCRATCH_FILES['plans/scratch/PROGRESS.md'] });
     platform = createFakePlatform({ behaviors: {} });
   } else {
+    ensureMainCheckedOut(repo);
     scaffoldScratchPlan(repo);
     worktree = createWorktree({ root: repo });
     platform = createPlatform({ root: repo, transport: fileTransport(state, repoName, control) });
