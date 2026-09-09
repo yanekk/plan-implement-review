@@ -56,6 +56,13 @@ deviation from the task doc.
 
 ## Blocked on the user
 
+**T08 LIVE run surfaced a loop bug — a decision is needed before it can pass.** The first real run
+got through setup and opened the feature worktree, then failed: loop.mjs reads PROGRESS.md at the
+feature-worktree root, but the real plan keeps it at `plans/{slug}/PROGRESS.md` (the T05 fake wrote it
+at root, so tests missed it). This blocks every real run. Fixing it touches T05's reviewed loop + fake
++ the T08 harness transport, so it is out of T08's scope — the user is deciding whether to fix now or
+as a follow-up task (see FINDINGS 2026-09-09).
+
 **T08 LIVE one-worker run — pending, needs a person.** The code half is built and green; the live
 half (a real `claude` worker spawns, acts on the sent instruction, a fresh session reviews, close
 leaves nothing behind) can only be seen by a person (DESIGN §5.1). Run it in a THROWAWAY CLONE, not
