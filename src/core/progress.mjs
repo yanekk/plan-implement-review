@@ -10,6 +10,17 @@
 // row and folds just that row in with reconcileTaskRow, staying the single writer of the
 // cross-cutting lines (DESIGN §2.5, §2.9).
 
+// Where a plan keeps its PROGRESS.md, relative to a repo/worktree root: `plans/{slug}/PROGRESS.md`
+// (CLAUDE.md §The files, DESIGN §3.5). Every reader and writer of the coordinator's PROGRESS.md —
+// the loop, the real and fake worktrees, the fake worker's commit, the scratch harness — derives the
+// path from here, so the location lives in exactly one place. It returns a forward-slash path, which
+// is both a valid fs path and the form `git add` wants. Pure string work: no I/O, so it belongs in
+// core. Fixed 2026-09-09: the first live run found the loop and fakes hardcoding a root PROGRESS.md,
+// which the fake hid because it wrote there too (FINDINGS).
+export function progressPathFor(slug) {
+  return `plans/${slug}/PROGRESS.md`;
+}
+
 // The five state glyphs a task row may carry (PROGRESS.md legend). A row whose state cell
 // is none of these is surfaced as a parse error rather than dropped: a row the parser
 // cannot read is a task silently never built, which is the exact failure this guards.

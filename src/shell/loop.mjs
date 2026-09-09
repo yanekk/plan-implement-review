@@ -13,7 +13,7 @@
 
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { parseProgress, reconcileTaskRow } from '../core/progress.mjs';
+import { parseProgress, reconcileTaskRow, progressPathFor } from '../core/progress.mjs';
 import { decideDispatch } from '../core/dispatch.mjs';
 import { workerName, parseAgentName } from '../core/naming.mjs';
 
@@ -102,7 +102,7 @@ export function runPass({ platform, worktree, repo, slug, maxWorkers, state, con
     state.feature = worktree.openFeature(slug);
     record('open-feature', { branch: state.feature.branch });
   }
-  const featureProgressPath = join(state.feature.path, 'PROGRESS.md');
+  const featureProgressPath = join(state.feature.path, progressPathFor(slug));
 
   // 1. Gather. list() is the fake's tick, so it is called exactly once and its result reused.
   const halted = control.isHalted();

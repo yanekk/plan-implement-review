@@ -4,9 +4,9 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, writeFileSync, existsSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
 import {
   git,
   openFeature,
@@ -18,6 +18,11 @@ import {
   remove,
   createWorktree,
 } from './worktree.mjs';
+import { progressPathFor } from '../core/progress.mjs';
+
+// Every test here uses the plan 'demo', so PROGRESS.md lives at plans/demo/PROGRESS.md.
+const SLUG = 'demo';
+const PROGRESS_REL = progressPathFor(SLUG);
 
 // A scratch repo with one commit on `main`, plus any extra files that later force merge conflicts.
 function scratchRepo(files = {}) {
@@ -27,7 +32,8 @@ function scratchRepo(files = {}) {
   git(repo, ['config', 'user.email', 't06@test.local']);
   git(repo, ['config', 'user.name', 'T06 Test']);
   git(repo, ['config', 'commit.gpgsign', 'false']);
-  writeFileSync(join(repo, 'PROGRESS.md'), '# Progress\n\n| T01 | one | auto | — | ⬜ | |\n');
+  mkdirSync(join(repo, dirname(PROGRESS_REL)), { recursive: true });
+  writeFileSync(join(repo, PROGRESS_REL), '# Progress\n\n| T01 | one | auto | — | ⬜ | |\n');
   for (const [p, content] of Object.entries(files)) writeFileSync(join(repo, p), content);
   git(repo, ['add', '-A']);
   git(repo, ['commit', '-m', 'init', '--no-edit']);
@@ -138,13 +144,13 @@ test("mergeTask: keeps the feature's PROGRESS.md and drops the task branch's row
   t.after(s.cleanup);
   const f = openFeature('demo', { root: s.repo });
   const w = createTask('demo', 'T01', { root: s.repo });
-  writeFileSync(join(w.path, 'PROGRESS.md'), '# Progress\n\n| T01 | one | auto | — | ✅ | worker wrote this |\n');
+  writeFileSync(join(w.path, PROGRESS_REL), '# Progress\n\n| T01 | one | auto | — | ✅ | worker wrote this |\n');
   writeFileSync(join(w.path, 'work-T01.txt'), 'work\n');
   git(w.path, ['add', '-A']);
   git(w.path, ['commit', '-m', 'T01 sets its own row', '--no-edit']);
 
   mergeTask(w.branch, { root: s.repo });
-  const featureProgress = git(s.repo, ['show', 'pir/demo:PROGRESS.md']).stdout;
+  const featureProgress = git(s.repo, ['show', `pir/demo:${PROGRESS_REL}`]).stdout;
   assert.ok(featureProgress.includes('⬜'), "the feature's PROGRESS.md is unchanged; only reconcile edits it");
   assert.ok(!featureProgress.includes('worker wrote this'), "the task branch's row edit did not win");
 });
@@ -247,9 +253,9 @@ test('createWorktree factory: drives the loop path open → create → merge →
 
   assert.ok(wt.mergeTask(w.branch).ok);
   // commitFeature takes only a message (the loop's call); the factory remembers f.path.
-  writeFileSync(join(f.path, 'PROGRESS.md'), '# Progress\n\n| T01 | one | auto | — | ✅ | reconciled |\n');
+  writeFileSync(join(f.path, PROGRESS_REL), '# Progress\n\n| T01 | one | auto | — | ✅ | reconciled |\n');
   assert.ok(wt.commitFeature('reconcile T01 → ✅').ok);
-  assert.ok(git(s.repo, ['show', 'pir/demo:PROGRESS.md']).stdout.includes('reconciled'), 'the reconcile commit is on the feature branch');
+  assert.ok(git(s.repo, ['show', `pir/demo:${PROGRESS_REL}`]).stdout.includes('reconciled'), 'the reconcile commit is on the feature branch');
 
   assert.ok(wt.promote('demo').ok);
   assert.ok(git(s.repo, ['show', 'main:work-T01.txt']).ok, 'the whole plan reached main in one promotion');

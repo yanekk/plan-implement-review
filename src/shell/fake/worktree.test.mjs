@@ -3,7 +3,9 @@ import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createFakeWorktree, git } from './worktree.mjs';
-import { reconcileTaskRow } from '../../core/progress.mjs';
+import { reconcileTaskRow, progressPathFor } from '../../core/progress.mjs';
+
+const SLUG = 'demo';
 
 const PROGRESS = [
   '# Progress',
@@ -20,7 +22,7 @@ const PROGRESS = [
 // Commit a code file and a PROGRESS row edit on a task worktree, the way a worker does.
 function workerCommit(path, num, state) {
   writeFileSync(join(path, `work-${num}.txt`), `work ${num}\n`);
-  const p = join(path, 'PROGRESS.md');
+  const p = join(path, progressPathFor(SLUG));
   writeFileSync(p, reconcileTaskRow(readFileSync(p, 'utf8'), { num, state, notes: 'done' }));
   git(path, ['add', '-A']);
   git(path, ['commit', '-m', `${num}: work`, '--no-edit']);
@@ -61,7 +63,7 @@ test("mergeTask keeps the feature's PROGRESS.md and drops the task branch's row 
   workerCommit(task.path, 'T01', '✅'); // the worker set its row ✅ on the task branch
 
   wt.mergeTask(task.branch);
-  const featureProgress = readFileSync(join(feature.path, 'PROGRESS.md'), 'utf8');
+  const featureProgress = readFileSync(join(feature.path, progressPathFor(SLUG)), 'utf8');
   assert.ok(featureProgress.includes('| T01 | one | auto | — | ⬜ |'), 'the feature row is still ⬜; only reconcile changes it');
 });
 

@@ -28,7 +28,7 @@ function progressDoc(rows) {
 
 // Stand up a fake platform + scratch worktree for a plan; register cleanup.
 function setup(t, rows, { behaviors = {}, files = {} } = {}) {
-  const worktree = createFakeWorktree({ progress: progressDoc(rows), files });
+  const worktree = createFakeWorktree({ progress: progressDoc(rows), files, slug: SLUG });
   const platform = createFakePlatform({ behaviors });
   t.after(() => worktree.cleanup());
   const base = { platform, worktree, repo: REPO, slug: SLUG, maxWorkers: 4 };

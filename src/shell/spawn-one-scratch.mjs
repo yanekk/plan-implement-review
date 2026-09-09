@@ -32,7 +32,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 
-import { parseProgress } from '../core/progress.mjs';
+import { parseProgress, progressPathFor } from '../core/progress.mjs';
 import { workerName } from '../core/naming.mjs';
 import { createPlatform, encodeMessage } from './platform.mjs';
 import { createWorktree } from './worktree.mjs';
@@ -150,7 +150,7 @@ function fileTransport(state, repoName, control) {
         if (!path) continue;
         let text;
         try {
-          text = readFileSync(join(path, 'PROGRESS.md'), 'utf8');
+          text = readFileSync(join(path, progressPathFor(SLUG)), 'utf8');
         } catch {
           continue; // worktree not ready yet
         }
@@ -228,7 +228,7 @@ async function main() {
   let platform, worktree;
   if (DRY) {
     // Fully in-memory / scratch-repo, no live agent. The fake emits its own inbox, so no transport.
-    worktree = createFakeWorktree({ progress: SCRATCH_FILES['plans/scratch/PROGRESS.md'] });
+    worktree = createFakeWorktree({ progress: SCRATCH_FILES['plans/scratch/PROGRESS.md'], slug: SLUG });
     platform = createFakePlatform({ behaviors: {} });
   } else {
     ensureMainCheckedOut(repo);

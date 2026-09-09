@@ -22,9 +22,10 @@
 // or not.
 
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
+import { progressPathFor } from '../../core/progress.mjs';
 
 // Run one git command in cwd. Returns { ok, stdout, stderr, status } rather than throwing, so a
 // non-zero exit (a merge conflict, a missing ref) is a value the caller inspects, not an
@@ -47,19 +48,23 @@ function configure(repo) {
   git(repo, ['config', 'commit.gpgsign', 'false']);
 }
 
-// createFakeWorktree({ progress, files }) → a worktree object plus test introspection.
+// createFakeWorktree({ progress, files, slug }) → a worktree object plus test introspection.
 //   progress — the initial PROGRESS.md text committed on `main` (the fake plan the loop drains).
 //   files    — optional extra { path: content } committed on `main`, e.g. a shared file two tasks
 //              both touch to force a real merge conflict in a test.
+//   slug     — the plan slug, so PROGRESS.md is placed at plans/{slug}/PROGRESS.md exactly where the
+//              loop and worker read it (progressPathFor). Must match the plan passed to openFeature.
 // The repo is created under a fresh temp dir; call cleanup() to remove it.
-export function createFakeWorktree({ progress, files = {} } = {}) {
+export function createFakeWorktree({ progress, files = {}, slug = 'demo' } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'pir-fake-'));
   const repo = join(dir, 'repo');
+  const progressRel = progressPathFor(slug);
   const events = [];
 
   git(dir, ['init', '-b', 'main', 'repo']);
   configure(repo);
-  writeFileSync(join(repo, 'PROGRESS.md'), progress ?? '');
+  mkdirSync(join(repo, dirname(progressRel)), { recursive: true });
+  writeFileSync(join(repo, progressRel), progress ?? '');
   for (const [p, content] of Object.entries(files)) writeFileSync(join(repo, p), content);
   git(repo, ['add', '-A']);
   git(repo, ['commit', '-m', 'initial: fake plan', '--no-edit']);
@@ -109,7 +114,7 @@ export function createFakeWorktree({ progress, files = {} } = {}) {
   // aborts and returns { conflict } — the loop then surfaces it and never leaves a dirty feature branch.
   function mergeTask(taskBranch) {
     if (!feature) throw new Error('mergeTask before openFeature');
-    const progressPath = join(feature.path, 'PROGRESS.md');
+    const progressPath = join(feature.path, progressRel);
     const savedProgress = existsSync(progressPath) ? readFileSync(progressPath, 'utf8') : '';
 
     const res = git(feature.path, ['merge', '--no-commit', '--no-ff', taskBranch]);
@@ -118,7 +123,7 @@ export function createFakeWorktree({ progress, files = {} } = {}) {
         .split('\n')
         .map((s) => s.trim())
         .filter(Boolean);
-      const other = unmerged.filter((f) => f !== 'PROGRESS.md');
+      const other = unmerged.filter((f) => f !== progressRel);
       if (other.length > 0) {
         git(feature.path, ['merge', '--abort']);
         events.push({ op: 'mergeTask', branch: taskBranch, into: feature.branch, conflict: true });
@@ -129,7 +134,7 @@ export function createFakeWorktree({ progress, files = {} } = {}) {
 
     // Drop the task branch's PROGRESS.md, keep the feature's, whether it merged cleanly or conflicted.
     writeFileSync(progressPath, savedProgress);
-    git(feature.path, ['add', 'PROGRESS.md']);
+    git(feature.path, ['add', progressRel]);
 
     const merging = git(feature.path, ['rev-parse', '-q', '--verify', 'MERGE_HEAD']).ok;
     if (merging) git(feature.path, ['commit', '--no-edit', '-m', `merge ${taskBranch}`]);
@@ -173,7 +178,7 @@ export function createFakeWorktree({ progress, files = {} } = {}) {
   const commitCount = (ref) => Number((git(repo, ['rev-list', '--count', ref]).stdout || '0').trim());
   const mainCommitCount = () => commitCount('main');
   const branchExists = (branch) => git(repo, ['rev-parse', '--verify', branch]).ok;
-  const progressOn = (ref) => git(repo, ['show', `${ref}:PROGRESS.md`]).stdout;
+  const progressOn = (ref) => git(repo, ['show', `${ref}:${progressRel}`]).stdout;
   const fileOn = (ref, path) => git(repo, ['show', `${ref}:${path}`]);
   const worktrees = () => git(repo, ['worktree', 'list']).stdout;
   const cleanup = () => rmSync(dir, { recursive: true, force: true });

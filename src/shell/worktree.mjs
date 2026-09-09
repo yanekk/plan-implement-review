@@ -28,6 +28,7 @@
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { progressPathFor } from '../core/progress.mjs';
 
 // gpgsign is forced off on every commit-creating call (merge, commit, promote). An automated
 // coordinator has no one to type a passphrase, and a repo with commit.gpgsign=true set globally
@@ -162,12 +163,16 @@ export function mergeTask(taskBranch, { root = process.cwd(), featurePath } = {}
   const path = featurePath ?? worktreeForBranch(root, feature);
   if (!path) throw new Error(`mergeTask: no worktree for ${feature}`);
 
-  const progressPath = join(path, 'PROGRESS.md');
+  // PROGRESS.md lives at plans/{plan}/PROGRESS.md, not the repo root (progressPathFor). The plan is
+  // the feature branch with its `pir/` prefix stripped. `git`-reported unmerged paths and `git add`
+  // are both repo-relative, so this same forward-slash string serves for the filter and the add.
+  const progressRel = progressPathFor(feature.slice('pir/'.length));
+  const progressPath = join(path, progressRel);
   const saved = existsSync(progressPath) ? readFileSync(progressPath, 'utf8') : null;
 
   const res = git(path, [...NOSIGN, 'merge', '--no-commit', '--no-ff', taskBranch]);
   if (!res.ok) {
-    const other = unmergedFiles(path).filter((f) => f !== 'PROGRESS.md');
+    const other = unmergedFiles(path).filter((f) => f !== progressRel);
     if (other.length > 0) {
       git(path, ['merge', '--abort']);
       return { conflict: true, files: other };
@@ -176,7 +181,7 @@ export function mergeTask(taskBranch, { root = process.cwd(), featurePath } = {}
   }
   if (saved !== null) {
     writeFileSync(progressPath, saved);
-    git(path, ['add', 'PROGRESS.md']);
+    git(path, ['add', progressRel]);
   }
   const merging = git(path, ['rev-parse', '-q', '--verify', 'MERGE_HEAD']).ok;
   if (merging) git(path, [...NOSIGN, 'commit', '--no-edit', '-m', `merge ${taskBranch}`]);

@@ -20,15 +20,17 @@
 import { writeFileSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { parseAgentName } from '../../core/naming.mjs';
-import { reconcileTaskRow } from '../../core/progress.mjs';
+import { reconcileTaskRow, progressPathFor } from '../../core/progress.mjs';
 import { git } from './worktree.mjs';
 
 // Commit a worker's work on its task-branch worktree (its cwd). `state`/`note` set that task's own
-// row in the task branch's PROGRESS.md; a distinct file per phase gives the merge real content.
-function commit(cwd, task, { file, content, rowState, note, message }) {
+// row in the task branch's PROGRESS.md, which lives at plans/{plan}/PROGRESS.md (progressPathFor), the
+// same file the loop and the worker's real skills use; a distinct file per phase gives the merge real
+// content. `plan` comes from the worker's name (parseAgentName), set at spawn.
+function commit(cwd, task, plan, { file, content, rowState, note, message }) {
   if (file) writeFileSync(join(cwd, file), content ?? '');
   if (rowState) {
-    const p = join(cwd, 'PROGRESS.md');
+    const p = join(cwd, progressPathFor(plan));
     const updated = reconcileTaskRow(readFileSync(p, 'utf8'), { num: task, state: rowState, notes: note ?? '' });
     writeFileSync(p, updated);
   }
@@ -80,13 +82,13 @@ export function createFakePlatform({ behaviors = {} } = {}) {
           w.stage = 'parked'; // stays parked; the loop surfaces it and must not merge
           return;
         }
-        commit(w.cwd, w.task, { file: `work-${w.task}.txt`, content: `work ${w.task}\n`, rowState: '🔍', note: 'implemented', message: `${w.task}: implement` });
+        commit(w.cwd, w.task, w.plan, { file: `work-${w.task}.txt`, content: `work ${w.task}\n`, rowState: '🔍', note: 'implemented', message: `${w.task}: implement` });
         emit(w, 'implemented');
         w.stage = 'implemented';
         return;
       }
       if (w.stage === 'awaiting' && w.answered) {
-        commit(w.cwd, w.task, { file: `work-${w.task}.txt`, content: `work ${w.task}\n`, rowState: '🔍', note: 'implemented', message: `${w.task}: implement` });
+        commit(w.cwd, w.task, w.plan, { file: `work-${w.task}.txt`, content: `work ${w.task}\n`, rowState: '🔍', note: 'implemented', message: `${w.task}: implement` });
         emit(w, 'implemented');
         w.stage = 'implemented';
         return;
@@ -96,7 +98,7 @@ export function createFakePlatform({ behaviors = {} } = {}) {
 
     if (w.role === 'review') {
       if (w.stage === 'fresh') {
-        commit(w.cwd, w.task, { rowState: '✅', note: 'reviewed clean', message: `${w.task} review: clean` });
+        commit(w.cwd, w.task, w.plan, { rowState: '✅', note: 'reviewed clean', message: `${w.task} review: clean` });
         emit(w, 'done');
         w.stage = 'done';
       }
@@ -107,7 +109,7 @@ export function createFakePlatform({ behaviors = {} } = {}) {
       if (w.stage === 'fresh') {
         // A hands-on worker: the person ran the live steps; the worker records the finding and marks
         // the row ✅ directly. No 🔍, no review (DESIGN §2.6).
-        commit(w.cwd, w.task, { file: `finding-${w.task}.txt`, content: `verified ${w.task}\n`, rowState: '✅', note: 'verified by hand', message: `${w.task}: verified` });
+        commit(w.cwd, w.task, w.plan, { file: `finding-${w.task}.txt`, content: `verified ${w.task}\n`, rowState: '✅', note: 'verified by hand', message: `${w.task}: verified` });
         emit(w, 'done');
         w.stage = 'done';
       }
@@ -132,6 +134,7 @@ export function createFakePlatform({ behaviors = {} } = {}) {
         id,
         name,
         task: parsed.task,
+        plan: parsed.plan,
         cwd,
         role: phase,
         stage: 'fresh',
