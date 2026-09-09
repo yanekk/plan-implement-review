@@ -77,7 +77,15 @@ repo `skills/`) were never installed there, so a worker cannot invoke `pir-worke
 `pir-implement`. Harmless for the scratch demo (the harness watches the file, not messages) but a real
 multi-worker run needs them installed or synced (FINDINGS 2026-09-09).
 
-**T08 LIVE one-worker run — pending, needs a person.** The code half and both live-run fixes are in and
+**Live-run close fix (925a5c9).** The live transcripts showed `claude stop` only interrupts a session,
+leaving it listed and running, so the coordinator never freed a slot and the breaker aborted. Fixed:
+close now `claude stop`s then SIGTERMs the worker's pid (the real terminator); parseAgents/list carry
+the pid. Also the scratch watcher now reads the committed PROGRESS row (`git show HEAD:...`) so a
+kill-based close cannot terminate a worker mid-commit. Corrects DESIGN §2.3/§2.4 (close/kill were
+specified as `claude stop`) — flagged for the user. The pir-worker/pir-verify skills still are not
+installed, so the worker runs classic pir-implement/pir-review (fine for the scratch demo).
+
+**T08 LIVE one-worker run — pending, needs a person.** The code half and the live-run fixes are in and
 green; the live half (a real worker spawns, acts on the sent instruction, a fresh session reviews, close
 leaves nothing behind) can only be seen by a person (DESIGN §5.1). Run it in a FRESH THROWAWAY CLONE
 (the harness self-prepares its main and refuses the real repo):
