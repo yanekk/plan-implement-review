@@ -12,7 +12,7 @@ Legend: 🐞 defect found · ✅ verified by hand with the user · 📌 worth kn
 
 | Date | | Finding |
 |---|---|---|
-| 2026-09-09 | 🐞 | T08 first live run: loop.mjs reads PROGRESS.md at the feature-worktree root (`join(feature.path,'PROGRESS.md')`), but the real plan keeps it at `plans/{slug}/PROGRESS.md`. The T05 fake writes it at root, hiding this. Blocks every real run; fix spans loop, fake, harness transport. |
+| 2026-09-09 | 🐞 | T08 first live run: loop + both worktrees + fake worker hardcoded PROGRESS.md at the worktree root; the real plan keeps it at `plans/{slug}/PROGRESS.md`. The T05 fake hid it. Fixed via `progressPathFor` threaded through all readers/writers (8d76a73). |
 | 2026-09-08 | 📌 | T08: a plain Node coordinator has no SendMessage inbox (it is an agent tool), so spawn-one-scratch.mjs observes the worker's task-branch PROGRESS row (🔍→implemented, ✅→done) instead. The real SendMessage-backed transport is T09's coordinate.mjs. |
 | 2026-09-08 | 📌 | T07 review: `resolveSameRepo` scopes by repo only, so it also keeps the coordinator's own session, not just workers. Inert for the loop (spawn-driven, tracks workers by id). T09 must drop self (task=null) if it enumerates the list. |
 | 2026-09-08 | 🐞 | T07 probe: SendMessage rejects a `to` starting with `@` ("to must be a bare teammate name"). Naming prefixed `@{repo}`, so a worker addressing the coordinator would fail. `·` and spaces are accepted. User dropped the `@` (2026-09-08); naming.mjs, §2.8, skills updated. |

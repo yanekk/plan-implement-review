@@ -56,21 +56,21 @@ deviation from the task doc.
 
 ## Blocked on the user
 
-**T08 LIVE run surfaced a loop bug — a decision is needed before it can pass.** The first real run
-got through setup and opened the feature worktree, then failed: loop.mjs reads PROGRESS.md at the
-feature-worktree root, but the real plan keeps it at `plans/{slug}/PROGRESS.md` (the T05 fake wrote it
-at root, so tests missed it). This blocks every real run. Fixing it touches T05's reviewed loop + fake
-+ the T08 harness transport, so it is out of T08's scope — the user is deciding whether to fix now or
-as a follow-up task (see FINDINGS 2026-09-09).
+**Progress-path bug fixed (user-authorised scope exception).** The first live run failed reading
+PROGRESS.md at the feature-worktree root; the real plan keeps it at `plans/{slug}/PROGRESS.md`.
+Fixed via `progressPathFor` threaded through loop.mjs, both worktrees, the fake worker's commit and
+the harness (8d76a73), plus a HEAD-pinned main-prep in the harness (598d7c2). This touched T05's loop
++ fakes and T06's worktree — both reviewed — so the changed code should get a fresh review alongside T08.
 
 **T08 LIVE one-worker run — pending, needs a person.** The code half is built and green; the live
 half (a real `claude` worker spawns, acts on the sent instruction, a fresh session reviews, close
-leaves nothing behind) can only be seen by a person (DESIGN §5.1). Run it in a THROWAWAY CLONE, not
-the real repo (the harness refuses the real repo):
+leaves nothing behind) can only be seen by a person (DESIGN §5.1). Run it in a FRESH THROWAWAY CLONE
+(a fresh clone lands on the branch with the fix and the harness self-prepares its main); the harness
+refuses the real repo:
 
 ```
-git clone . ../pir-scratch && cd ../pir-scratch     # a throwaway clone; never the real project
-PARALLEL_DRY_RUN=0 node src/shell/spawn-one-scratch.mjs   # spawns ONE worker on plans/scratch, ceiling 1
+git clone <this-repo-path> ../pir-scratch && cd ../pir-scratch   # fresh throwaway clone
+PARALLEL_DRY_RUN=0 node src/shell/spawn-one-scratch.mjs          # spawns ONE worker on plans/scratch, ceiling 1
 # watch:  claude agents --json        (the worker appears; its cwd is the task worktree)
 # abort:  touch plans/scratch/.parallel/control/HALT
 ```
