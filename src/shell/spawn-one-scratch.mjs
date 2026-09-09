@@ -184,7 +184,11 @@ function mainWorktree(cwd) {
 function ensureMainCheckedOut(repo) {
   const cur = git(repo, ['rev-parse', '--abbrev-ref', 'HEAD']).stdout.trim();
   if (cur === 'main') return;
-  const r = git(repo, ['checkout', '-B', 'main']);
+  // Pin main to the exact current commit — `checkout -B main HEAD`, not a bare `checkout -B main`.
+  // The bare form guesses a start point and, when a same-named remote branch exists, silently points
+  // main at origin/main (the old code) instead of HEAD (observed with the user, 2026-09-09). The
+  // explicit HEAD removes that ambiguity, so main always carries the code we are running.
+  const r = git(repo, ['checkout', '-B', 'main', 'HEAD']);
   if (!r.ok) throw new Error(`could not set up a main branch in the scratch clone: ${r.stderr}`);
   console.log(`prepared main at the current commit (clone was on "${cur}", which has no local main)`);
 }
