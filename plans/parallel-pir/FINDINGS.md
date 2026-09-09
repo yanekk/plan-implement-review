@@ -12,6 +12,7 @@ Legend: 🐞 defect found · ✅ verified by hand with the user · 📌 worth kn
 
 | Date | | Finding |
 |---|---|---|
+| 2026-09-09 | 📌 | T09: `coordinate.mjs` bin gates the live spawn behind `PARALLEL_LIVE=1` (§5.2 seatbelt; T10 verifies). Worker↔coordinator messages bridged via inbox/outbox files (SendMessage is agent-only). Crash-without-HALT worker re-adoption deferred to T10. |
 | 2026-09-09 | 📌 | T08: after close (stop + SIGTERM pid) a finished worker lingers in `claude agents` as `stopped` — process gone, session record stays, not enterable. Removing the record likely needs `claude rm <id>`. T09/T10 cleanup; not urgent (user flagged). |
 | 2026-09-09 | ✅ | T08 hand-verified with the user on scratch clone pir-run: one real worker start to finish, ceiling held; main history shows implement → fresh-session review (separate commit) → merge → promote; scratch-ok.txt=ok on main, T01 ✅. |
 | 2026-09-09 | 📌 | T08 hand-verify notes: after promote the feature worktree (`.claude/worktrees/pir-{plan}`) lingers — minor cleanup gap for T09/T10. Workers are killed at close, so their live transcripts cannot be inspected; the git history is the record. |
