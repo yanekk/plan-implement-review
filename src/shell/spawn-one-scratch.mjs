@@ -241,9 +241,15 @@ async function main() {
     platform = createPlatform({ root: repo, transport: fileTransport(state, repoName, control) });
   }
 
+  // Circuit-breaker (T08, added 2026-09-09 after the first live run ran away). If the number of live
+  // same-repo workers ever exceeds the ceiling, the coordinator has lost track of its workers — the
+  // exact runaway the ceiling exists to prevent — so stop every live worker BY ITS LISTED id (the
+  // authoritative id, not the one spawn returned) and abort. This bounds the blast radius even when
+  // worker tracking is broken, which on a live path spawning real paid agents is not optional.
+  const CEILING = 1;
   let result = 'ran out of passes';
   for (let p = 1; p <= MAX_PASSES; p++) {
-    const r = runPass({ platform, worktree, repo: repoName, slug: SLUG, maxWorkers: 1, state, control });
+    const r = runPass({ platform, worktree, repo: repoName, slug: SLUG, maxWorkers: CEILING, state, control });
     for (const a of r.actions) console.log(`  pass ${p}: ${a.type} ${a.task ?? a.branch ?? a.workerId ?? ''}`.trimEnd());
     if (r.halted) {
       result = 'HALTED by the kill switch — workers stopped, nothing promoted';
@@ -251,6 +257,16 @@ async function main() {
     }
     if (r.promoted) {
       result = 'PROMOTED — the scratch plan reached main';
+      break;
+    }
+    const live = DRY ? [] : platform.list();
+    if (live.length > CEILING) {
+      console.error(
+        `\nABORT: ${live.length} live workers but the ceiling is ${CEILING} — the coordinator lost ` +
+          `track of its workers (see FINDINGS 2026-09-09). Stopping every live worker now.`,
+      );
+      for (const w of live) platform.close(w.id);
+      result = `ABORTED — runaway detected (${live.length} > ${CEILING}); every live worker stopped`;
       break;
     }
     if (POLL_MS) await sleep(POLL_MS);

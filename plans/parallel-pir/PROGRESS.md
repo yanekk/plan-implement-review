@@ -62,18 +62,14 @@ Fixed via `progressPathFor` threaded through loop.mjs, both worktrees, the fake 
 the harness (8d76a73), plus a HEAD-pinned main-prep in the harness (598d7c2). This touched T05's loop
 + fakes and T06's worktree — both reviewed — so the changed code should get a fresh review alongside T08.
 
-**T08 LIVE one-worker run — pending, needs a person.** The code half is built and green; the live
-half (a real `claude` worker spawns, acts on the sent instruction, a fresh session reviews, close
-leaves nothing behind) can only be seen by a person (DESIGN §5.1). Run it in a FRESH THROWAWAY CLONE
-(a fresh clone lands on the branch with the fix and the harness self-prepares its main); the harness
-refuses the real repo:
-
-```
-git clone <this-repo-path> ../pir-scratch && cd ../pir-scratch   # fresh throwaway clone
-PARALLEL_DRY_RUN=0 node src/shell/spawn-one-scratch.mjs          # spawns ONE worker on plans/scratch, ceiling 1
-# watch:  claude agents --json        (the worker appears; its cwd is the task worktree)
-# abort:  touch plans/scratch/.parallel/control/HALT
-```
+**T08 LIVE run found a RUNAWAY — worker tracking is broken, live run blocked until fixed.** The second
+live attempt spawned ~12 real workers at ceiling 1: the id `claude --bg` returns does not match the
+`id` in `claude agents --json`, so the loop treats every worker as dead, respawns, and its close misses
+too, leaking real agents. Same-repo filter is fine (verified). A circuit-breaker now aborts the harness
+if live workers exceed the ceiling. The real fix — track workers by their predictable name (§2.8),
+resolving the live id from `claude agents --json` — touches T05's loop and overlaps T09's deferred
+worker-identity decision, so it awaits the user (see FINDINGS 2026-09-09). Do NOT re-run the live path
+until then.
 
 Expect: open feature → spawn worker (told `pir-implement T01`) → 🔍 → fresh session reviews (`pir-review
 T01`) → ✅ → merge → close → promote to the clone's main; `claude agents --json` and `git worktree

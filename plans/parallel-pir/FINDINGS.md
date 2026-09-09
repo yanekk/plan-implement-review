@@ -12,6 +12,7 @@ Legend: 🐞 defect found · ✅ verified by hand with the user · 📌 worth kn
 
 | Date | | Finding |
 |---|---|---|
+| 2026-09-09 | 🐞 | T08 live run RAN AWAY: ~12 workers at ceiling 1. The id `claude --bg` prints ≠ the `id` in `claude agents --json`, so the loop calls each worker dead and respawns; close misses. Fix: track by name (§2.8). Circuit-breaker added to the harness. |
 | 2026-09-09 | 🐞 | T08 first live run: loop + both worktrees + fake worker hardcoded PROGRESS.md at the worktree root; the real plan keeps it at `plans/{slug}/PROGRESS.md`. The T05 fake hid it. Fixed via `progressPathFor` threaded through all readers/writers (8d76a73). |
 | 2026-09-08 | 📌 | T08: a plain Node coordinator has no SendMessage inbox (it is an agent tool), so spawn-one-scratch.mjs observes the worker's task-branch PROGRESS row (🔍→implemented, ✅→done) instead. The real SendMessage-backed transport is T09's coordinate.mjs. |
 | 2026-09-08 | 📌 | T07 review: `resolveSameRepo` scopes by repo only, so it also keeps the coordinator's own session, not just workers. Inert for the loop (spawn-driven, tracks workers by id). T09 must drop self (task=null) if it enumerates the list. |
