@@ -12,6 +12,7 @@ Legend: 🐞 defect found · ✅ verified by hand with the user · 📌 worth kn
 
 | Date | | Finding |
 |---|---|---|
+| 2026-09-09 | 📌 | T08 live run reached review; breaker false-fired at 2. A review handoff briefly holds implementer+reviewer (CEILING+1) because `claude stop` is async. Breaker now tolerates CEILING+1 transiently (aborts on >CEILING+1 or if it persists). T09/T10 must expect this. |
 | 2026-09-09 | 🐞 | T08 live run: worker can't invoke pir-worker/pir-verify. Sessions discover skills from `~/.claude/skills/` (only the classic set, installed Sep 5); the parallel skills live only in the repo's `skills/`, never installed there. Worker fell back to pir-implement. Distribution gap for T09/T11. |
 | 2026-09-09 | 🐞 | T08 live run RAN AWAY: ~12 workers at ceiling 1. The id `claude --bg` prints ≠ the `id` in `claude agents --json`, so the loop called each worker dead and respawned; close missed. Fixed: loop matches workers by name (§2.8), takes the live id from the list, one-pass appear-grace; harness circuit-breaker backstops. |
 | 2026-09-09 | 🐞 | T08 first live run: loop + both worktrees + fake worker hardcoded PROGRESS.md at the worktree root; the real plan keeps it at `plans/{slug}/PROGRESS.md`. The T05 fake hid it. Fixed via `progressPathFor` threaded through all readers/writers (8d76a73). |

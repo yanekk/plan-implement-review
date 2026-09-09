@@ -241,12 +241,19 @@ async function main() {
     platform = createPlatform({ root: repo, transport: fileTransport(state, repoName, control) });
   }
 
-  // Circuit-breaker (T08, added 2026-09-09 after the first live run ran away). If the number of live
-  // same-repo workers ever exceeds the ceiling, the coordinator has lost track of its workers — the
-  // exact runaway the ceiling exists to prevent — so stop every live worker BY ITS LISTED id (the
-  // authoritative id, not the one spawn returned) and abort. This bounds the blast radius even when
-  // worker tracking is broken, which on a live path spawning real paid agents is not optional.
+  // Circuit-breaker (T08, added 2026-09-09 after the first live run ran away). It bounds the blast
+  // radius if the coordinator ever loses track of its workers, stopping every live worker BY ITS
+  // LISTED id (the authoritative id, not the one spawn returned).
+  //
+  // But it must not fire on the benign review handoff. When an implemented task moves to review, the
+  // loop spawns the reviewer and stops the implementer; `claude stop` is async, so for a moment BOTH
+  // are live — CEILING+1. That is a session being torn down, not real concurrent work, and it settles
+  // within a poll (FINDINGS 2026-09-09). So tolerate a single over-ceiling worker briefly: abort only
+  // on a clear runaway (more than one over the ceiling) or an overage that will not settle (persists
+  // several passes). A real runaway climbs fast (the first bug hit ~12), so this still trips quickly.
   const CEILING = 1;
+  const OVER_GRACE = 3; // consecutive passes at exactly CEILING+1 tolerated before it counts as stuck
+  let over = 0;
   let result = 'ran out of passes';
   for (let p = 1; p <= MAX_PASSES; p++) {
     const r = runPass({ platform, worktree, repo: repoName, slug: SLUG, maxWorkers: CEILING, state, control });
@@ -261,13 +268,20 @@ async function main() {
     }
     const live = DRY ? [] : platform.list();
     if (live.length > CEILING) {
-      console.error(
-        `\nABORT: ${live.length} live workers but the ceiling is ${CEILING} — the coordinator lost ` +
-          `track of its workers (see FINDINGS 2026-09-09). Stopping every live worker now.`,
-      );
-      for (const w of live) platform.close(w.id);
-      result = `ABORTED — runaway detected (${live.length} > ${CEILING}); every live worker stopped`;
-      break;
+      over += 1;
+      const runaway = live.length > CEILING + 1 || over >= OVER_GRACE;
+      if (runaway) {
+        console.error(
+          `\nABORT: ${live.length} live workers, ceiling ${CEILING}, for ${over} pass(es) — a real ` +
+            `runaway, not a review handoff (see FINDINGS 2026-09-09). Stopping every live worker now.`,
+        );
+        for (const w of live) platform.close(w.id);
+        result = `ABORTED — runaway (${live.length} > ${CEILING} for ${over} passes); every live worker stopped`;
+        break;
+      }
+      console.warn(`  (transient: ${live.length} live > ceiling ${CEILING} — a review handoff overlaps while the old session stops; tolerating)`);
+    } else {
+      over = 0;
     }
     if (POLL_MS) await sleep(POLL_MS);
   }
