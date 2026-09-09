@@ -12,6 +12,9 @@ Legend: 🐞 defect found · ✅ verified by hand with the user · 📌 worth kn
 
 | Date | | Finding |
 |---|---|---|
+| 2026-09-09 | 📌 | T08: after close (stop + SIGTERM pid) a finished worker lingers in `claude agents` as `stopped` — process gone, session record stays, not enterable. Removing the record likely needs `claude rm <id>`. T09/T10 cleanup; not urgent (user flagged). |
+| 2026-09-09 | ✅ | T08 hand-verified with the user on scratch clone pir-run: one real worker start to finish, ceiling held; main history shows implement → fresh-session review (separate commit) → merge → promote; scratch-ok.txt=ok on main, T01 ✅. |
+| 2026-09-09 | 📌 | T08 hand-verify notes: after promote the feature worktree (`.claude/worktrees/pir-{plan}`) lingers — minor cleanup gap for T09/T10. Workers are killed at close, so their live transcripts cannot be inspected; the git history is the record. |
 | 2026-09-09 | 🐞 | T08 harness: the file-watcher read the working-tree PROGRESS row, which the worker writes before committing, so it could close the worker mid-commit (work lost). Fixed: watch the committed row via `git show HEAD:...` instead. |
 | 2026-09-09 | 🐞 | T08 live run: `claude stop` only INTERRUPTS a session (transcript 'Interrupted'); it stays listed state:working, so close over-counted and never freed a slot. Fixed: close now stops then SIGTERMs the pid (kept in parseAgents). kill <pid> is the real terminator. |
 | 2026-09-09 | 📌 | T08 live run reached review; breaker false-fired at 2. A review handoff briefly holds implementer+reviewer (CEILING+1) because `claude stop` is async. Breaker now tolerates CEILING+1 transiently (aborts on >CEILING+1 or if it persists). T09/T10 must expect this. |
