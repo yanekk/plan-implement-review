@@ -28,7 +28,7 @@
 // no-op and ✅ safely stands in for "done". This shim is T08-scratch-only; it does not ship.
 
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 
@@ -148,13 +148,14 @@ function fileTransport(state, repoName, control) {
       for (const [num, t] of Object.entries(state.tasks)) {
         const path = t.worktree?.path;
         if (!path) continue;
-        let text;
-        try {
-          text = readFileSync(join(path, progressPathFor(SLUG)), 'utf8');
-        } catch {
-          continue; // worktree not ready yet
-        }
-        const row = parseProgress(text).tasks.find((x) => x.num === num);
+        // Read the COMMITTED row (git show HEAD), not the working tree. The worker writes 🔍/✅ before
+        // it commits, so reacting to the working-tree change could close the worker mid-commit and lose
+        // its work (its task branch would merge empty). git show HEAD reflects only committed state, so
+        // the coordinator acts only once the worker's turn has actually landed a commit (FINDINGS
+        // 2026-09-09 — the implementer was interrupted right at its commit).
+        const r = git(path, ['show', `HEAD:${progressPathFor(SLUG)}`]);
+        if (!r.ok) continue; // no commit yet on the task branch
+        const row = parseProgress(r.stdout).tasks.find((x) => x.num === num);
         if (!row || seen[num] === row.state) continue;
         seen[num] = row.state;
         const from = workerName({ repo: repoName, plan: SLUG, task: num });

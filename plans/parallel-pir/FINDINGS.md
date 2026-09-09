@@ -12,7 +12,8 @@ Legend: 🐞 defect found · ✅ verified by hand with the user · 📌 worth kn
 
 | Date | | Finding |
 |---|---|---|
-| 2026-09-09 | 🐞 | T08 live run: `claude stop <agents id>` did NOT remove the workers (both still `state:working` after close). Agents carry a short `id` AND a full `sessionId`; `--bg`'s output and the stop-accepting id are unconfirmed. Two same-name implement/review sessions also break name matching. Probe pending to pin the ids. |
+| 2026-09-09 | 🐞 | T08 harness: the file-watcher read the working-tree PROGRESS row, which the worker writes before committing, so it could close the worker mid-commit (work lost). Fixed: watch the committed row via `git show HEAD:...` instead. |
+| 2026-09-09 | 🐞 | T08 live run: `claude stop` only INTERRUPTS a session (transcript 'Interrupted'); it stays listed state:working, so close over-counted and never freed a slot. Fixed: close now stops then SIGTERMs the pid (kept in parseAgents). kill <pid> is the real terminator. |
 | 2026-09-09 | 📌 | T08 live run reached review; breaker false-fired at 2. A review handoff briefly holds implementer+reviewer (CEILING+1) because `claude stop` is async. Breaker now tolerates CEILING+1 transiently (aborts on >CEILING+1 or if it persists). T09/T10 must expect this. |
 | 2026-09-09 | 🐞 | T08 live run: worker can't invoke pir-worker/pir-verify. Sessions discover skills from `~/.claude/skills/` (only the classic set, installed Sep 5); the parallel skills live only in the repo's `skills/`, never installed there. Worker fell back to pir-implement. Distribution gap for T09/T11. |
 | 2026-09-09 | 🐞 | T08 live run RAN AWAY: ~12 workers at ceiling 1. The id `claude --bg` prints ≠ the `id` in `claude agents --json`, so the loop called each worker dead and respawned; close missed. Fixed: loop matches workers by name (§2.8), takes the live id from the list, one-pass appear-grace; harness circuit-breaker backstops. |

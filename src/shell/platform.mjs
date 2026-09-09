@@ -107,11 +107,15 @@ export function resolveSameRepo(agents, { root = process.cwd(), run = defaultRun
 // already-parsed array. Keeps only the fields the loop needs (id, cwd, status, state) plus name,
 // which naming.mjs parses back into repo/plan/task. Extra fields (pid, sessionId, startedAt) are
 // dropped: they are not part of any decision and carrying them would invite a decision to grow one.
+// pid is kept because `claude stop` only interrupts a session's turn — it does NOT remove it (T08
+// live run 2026-09-09: a stopped session stays listed as `state:working`) — so close terminates the
+// worker by sending its process SIGTERM, and that needs the pid.
 export function parseAgents(json) {
   const arr = typeof json === 'string' ? JSON.parse(json) : json;
   if (!Array.isArray(arr)) return [];
   return arr.map((a) => ({
     id: a.id ?? null,
+    pid: a.pid ?? null,
     cwd: a.cwd ?? null,
     status: a.status ?? null,
     state: a.state ?? null,
@@ -222,6 +226,7 @@ export function createPlatform({
   transport,
   runClaude = defaultRunClaude,
   sameRepoRun,
+  kill = (pid, signal) => process.kill(pid, signal),
 } = {}) {
   const messaging = createMessaging({ transport });
   return {
@@ -249,6 +254,7 @@ export function createPlatform({
       const agents = parseAgents(r.stdout);
       return resolveSameRepo(agents, { root, run: sameRepoRun }).map((a) => ({
         id: a.id,
+        pid: a.pid,
         name: a.name,
         cwd: a.cwd,
         status: a.status,
@@ -257,12 +263,26 @@ export function createPlatform({
       }));
     },
 
-    // close(id) → { ok }. Stops the session only; the worktree and branch are torn down by
-    // worktree.remove (T06), which the loop calls separately when a worktree is truly finished. Safe
-    // to call on an already-gone id (`claude stop` on a missing session is a no-op failure we swallow).
+    // close(id) → { ok }. Terminates the session; the worktree and branch are torn down separately by
+    // worktree.remove (T06). Two steps, because `claude stop` alone does NOT remove a session — it only
+    // interrupts the current turn and the session stays alive and listed (T08 live run 2026-09-09,
+    // FINDINGS; both stopped workers stayed `state:working`, which made the loop over-count and never
+    // free a slot). So: `claude stop <id>` to interrupt any in-flight work, then look the session up in
+    // the live list to get its pid and send that process SIGTERM, which is what actually removes it.
+    // Identity is the `id` field (unique per session), the same one list() reports. Safe on an
+    // already-gone id: the stop is a swallowed no-op and the pid lookup simply finds nothing.
     close(id) {
-      const r = runClaude(closeArgv(id));
-      return { ok: r.ok !== false };
+      runClaude(closeArgv(id));
+      const listing = runClaude(listArgv());
+      const agent = listing.ok ? parseAgents(listing.stdout).find((a) => a.id === id) : null;
+      if (agent?.pid) {
+        try {
+          kill(agent.pid, 'SIGTERM');
+        } catch {
+          // the process is already gone — nothing to terminate
+        }
+      }
+      return { ok: true };
     },
 
     send: messaging.send,

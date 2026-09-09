@@ -158,15 +158,16 @@ test('parseAgents pulls id/cwd/status/state/name from a sample and drops the res
   assert.equal(agents.length, 2);
   assert.deepEqual(agents[0], {
     id: 'ea11998b',
+    pid: 24990, // kept: close needs it to SIGTERM the session (claude stop only interrupts)
     cwd: '/Users/x/src/skaut',
     status: 'idle',
     state: 'blocked',
     name: 'skaut / cd-speech',
   });
   assert.equal(agents[1].id, '28e9678c');
+  assert.equal(agents[1].pid, 72756);
   assert.equal(agents[1].state, 'working');
   assert.equal(agents[1].name, 'pir · parallel-pir · T05');
-  assert.equal('pid' in agents[0], false);
   assert.equal('sessionId' in agents[0], false);
 });
 
@@ -279,14 +280,33 @@ test('spawn on the review phase names pir-review; a spawn that returns no id or 
   assert.throws(() => failed.spawn({ cwd: '/x', name: 'repo · plan · T08', phase: 'implement' }), /boom/);
 });
 
-test('close runs `claude stop <id>` and reports ok', () => {
-  const spy = claudeSpy();
-  const p = createPlatform({ runClaude: spy.run });
+test('close interrupts with `claude stop <id>` then SIGTERMs the pid (stop alone does not remove it)', () => {
+  // T08 live run: `claude stop` only interrupts a session's turn; it stays listed and running. So close
+  // must also terminate the process. It looks the session up by id to get its pid, then sends SIGTERM.
+  const killed = [];
+  const listing = JSON.stringify([
+    { id: 'sess-1', pid: 4242, cwd: '/repo', name: 'r · p · T01', status: 'idle', state: 'working' },
+  ]);
+  const calls = [];
+  const run = (args) => {
+    calls.push(args);
+    if (args[0] === 'stop') return { ok: true, stdout: '' };
+    if (args[0] === 'agents') return { ok: true, stdout: listing };
+    return { ok: false };
+  };
+  const p = createPlatform({ runClaude: run, kill: (pid, sig) => killed.push([pid, sig]) });
   assert.deepEqual(p.close('sess-1'), { ok: true });
-  assert.deepEqual(spy.calls[0].args, ['stop', 'sess-1']);
+  assert.deepEqual(calls[0], ['stop', 'sess-1'], 'first interrupts the turn');
+  assert.ok(calls.some((c) => c[0] === 'agents'), 'then looks the session up for its pid');
+  assert.deepEqual(killed, [[4242, 'SIGTERM']], 'then terminates the process');
+});
 
-  const failed = createPlatform({ runClaude: () => ({ ok: false }) });
-  assert.deepEqual(failed.close('gone'), { ok: false });
+test('close of an already-gone id is a safe no-op — nothing to terminate', () => {
+  const killed = [];
+  const run = (args) => (args[0] === 'agents' ? { ok: true, stdout: '[]' } : { ok: true, stdout: '' });
+  const p = createPlatform({ runClaude: run, kill: (pid) => killed.push(pid) });
+  assert.deepEqual(p.close('ghost'), { ok: true });
+  assert.deepEqual(killed, [], 'no pid found, nothing killed');
 });
 
 test('list parses a live-shaped `claude agents --json` into id/name/cwd/status/state/live', () => {
@@ -308,6 +328,7 @@ test('list parses a live-shaped `claude agents --json` into id/name/cwd/status/s
   assert.deepEqual(live.map((w) => w.id).sort(), ['a', 'b']); // /other dropped
   assert.deepEqual(live[0], {
     id: 'a',
+    pid: 1,
     name: 'repo · plan · T01',
     cwd: '/repo/wt-T01',
     status: 'busy',
