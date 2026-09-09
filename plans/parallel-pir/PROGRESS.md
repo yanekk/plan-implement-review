@@ -21,10 +21,9 @@ After review the user revised the `you`-task model (2026-09-07): the coordinator
 hands-on worker (`pir-verify Txx`) the user drives, folded back without review, instead of surfacing
 the task bare. Touched DESIGN, T03, T05, T07, T09, T10, T11.
 **Last updated:** 2026-09-09
-**Next `pir-work` will:** review T08 — its code half AND the live-run fixes it forced across
-loop.mjs, worktree.mjs, the fakes, platform.mjs and spawn-one-scratch.mjs (progress-path,
-name-based worker identity, close-SIGTERMs-pid, circuit-breaker, main-prep). Big review; read the
-2026-09-09 FINDINGS rows first. T08's LIVE run is hand-verified ✅ (done). T11 (deps T04) is also ready.
+**Next `pir-work` will:** implement T09 — the `pir-coordinate` skill (dispatch, surface,
+supervise), now unblocked by T08 ✅. T11 (deps T04 ✅) is the other ready ⬜. T08 was reviewed
+clean; its LIVE one-worker run stays hand-verified ✅.
 
 ## Tasks
 
@@ -41,8 +40,8 @@ live steps with a hands-on worker the coordinator spawns, folded back without re
 | T04 | `analyzeParallelism` — critical path, width, auto/you counts | auto | T02 | ✅ | Reviewed clean. Critical path, width and auto/you counts correct; layer-width proxy honest (a dep edge strictly raises depth); `errors` reports unknown deps and cycles. Purity proven. |
 | T05 | Fake spawn/message/list/close + the coordinator loop | auto | T03 | ✅ | Reviewed clean after one fix (loop called a method outside T06's interface). Findings logged for T06/parser. 86 tests. |
 | T06 | Feature branch + task worktree create / integrate / merge / promote | auto | T05 | ✅ | Reviewed clean after one fix: `remove` now `--force --force` (git refuses single `--force` on a locked worktree), confirmed on real git. 100 tests. |
-| T07 | `pir-worker` contract skill + cross-session wiring | auto | T00 | ✅ | Reviewed clean. Wire format (header on line 1 only, body cannot spoof), same-repo `--cwd` guard, parseAgents, `text` matches loop. resolveSameRepo keeps the coordinator itself — inert, logged for T09. 111 tests. |
-| T08 | One real worker, one trivial task, seatbelted | auto | T06, T07 | 🔍 | Built real spawn/list/close (createPlatform, injected runner) + spawn-one-scratch.mjs harness. LIVE hand-verified ✅ 2026-09-09 (pir-run: implement→fresh review→merge→promote, one worker at a time). The live run forced fixes across loop/worktree/fakes/platform: PROGRESS at plans/{slug}/, name-based worker identity, close SIGTERMs the pid (claude stop only interrupts), circuit-breaker. Code half awaiting fresh review. 121 tests. |
+| T07 | `pir-worker` contract skill + cross-session wiring | auto | T00 | ✅ | Reviewed clean. Wire format, same-repo `--cwd` guard, parseAgents, `text` field. resolveSameRepo also keeps the coordinator (inert; T09 drops self). 111 tests. |
+| T08 | One real worker, one trivial task, seatbelted | auto | T06, T07 | ✅ | Reviewed clean, no fix. Code half solid: argv/json/close(stop+SIGTERM pid)/list all unit-tested; the runaway (spawn-id≠listed-id) has a reproducing name-tracking test; progress-path threaded consistently. LIVE hand-verified ✅ 2026-09-09. Probed the review-handoff overlap and stopped-tombstone: dispatch counts by assignment not raw list, so the ceiling holds. Feature-worktree teardown on promote deferred to T09/T10 (logged). 121 tests. |
 | T09 | The `pir-coordinate` skill: dispatch, surface, supervise | auto | T08 | ⬜ | |
 | T10 | Full multi-worker run + kill-switch drill | you | T09 | ⬜ | Hand-verified. Dangerous: full size, last. |
 | T11 | `/pir-plan` + templates: `Runs` marker, honest deps, width report | auto | T04 | ⬜ | Changes the shared method. |
@@ -52,21 +51,15 @@ deviation from the task doc.
 
 **A ✅ task's cell may be cut to one line** once the next task has been reviewed.
 
-**Review queue:** T08 — spawn/list/close + harness, plus the live-run fixes to loop.mjs, worktree.mjs, the fakes and platform.mjs (see the 2026-09-09 FINDINGS rows).
+**Review queue:** empty — T08 reviewed clean 2026-09-09.
 
 ## Blocked on the user
 
-**Nothing blocked.** T08's live one-worker run is hand-verified ✅ (2026-09-09, FINDINGS). The live
-run forced a run of fixes, all committed and green (progress-path → plans/{slug}/, name-based worker
-identity, close SIGTERMs the pid since `claude stop` only interrupts, circuit-breaker, HEAD-pinned
-main-prep, committed-state watcher). They reach into T05's loop + fakes and T06's worktree, so the
-next session reviews T08 **and** those changes together; the 2026-09-09 FINDINGS rows are the map.
+**Nothing blocked.** T08 is reviewed clean (2026-09-09); its live one-worker run stays
+hand-verified ✅ (FINDINGS). The `claude stop` / SIGTERM contradiction is resolved — DESIGN §2.3,
+§2.4, §3.2 and §5 were amended to the stop-interrupts-only reality (commit b5a1a38).
 
-Carry into T09/T10 (not blocking now): install/sync the parallel skills (`pir-worker`, `pir-verify`)
+Carry into T09/T10 (not blocking): install/sync the parallel skills (`pir-worker`, `pir-verify`)
 into `~/.claude/skills/` so a real worker runs the contract, not classic `pir-implement`; after close a
 worker lingers in `claude agents` as `stopped` (needs `claude rm` to clear); the feature worktree is
 not removed after promote. Remaining person-run work: T10 (full multi-worker run + kill-switch drill).
-
-**For the user:** `claude stop` turned out only to interrupt a session, not end it, so close/kill now
-SIGTERM the pid — which contradicts DESIGN §2.3/§2.4 ("closes … with `claude stop`"). Amending DESIGN is
-your call; say the word and a session will correct those two sections.
