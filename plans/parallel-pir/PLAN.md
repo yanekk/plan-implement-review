@@ -1,7 +1,7 @@
 # Implementation plan
 
-12 tasks in 5 phases. Each has a file in [tasks/](tasks/) with its goal, the files it touches,
-the interfaces it defines, and what "done" means.
+14 tasks in 5 phases (T12 and T13 added 2026-09-10). Each has a file in [tasks/](tasks/) with its
+goal, the files it touches, the interfaces it defines, and what "done" means.
 
 Track state in [PROGRESS.md](PROGRESS.md). Read [DESIGN.md](DESIGN.md) first — the architecture
 leans on Claude Code's own primitives (background sessions, per-session worktrees, cross-session
@@ -82,11 +82,18 @@ Each task here has a hand-verification half; the dangerous capability is built l
 | [T08](tasks/T08-real-spawn-one-worker.md) | One real worker, one trivial task, seatbelted | auto | T06, T07 |
 | [T09](tasks/T09-pir-coordinate-skill.md) | The `pir-coordinate` skill: dispatch, surface, supervise | auto | T08 |
 | [T12](tasks/T12-coordinator-live-drivable.md) | Make the coordinator drivable live: six drill fixes | auto | T09 |
-| [T10](tasks/T10-full-parallel-run.md) | Full multi-worker run + kill-switch drill | you | T09, T12 |
+| [T13](tasks/T13-comms-protocol-proven.md) | Prove the comms protocol: by-name addressing, idle-gated close | auto | T12 |
+| [T10](tasks/T10-full-parallel-run.md) | Full multi-worker run + kill-switch drill | you | T09, T12, T13 |
 
 T12 was added after the T10 drill (2026-09-10) was stopped: the partial live run proved spawn and
 first-message delivery but surfaced six shell-driver gaps that block a full run. It sits on the
 critical path between T09 and T10; the drill account is in `FINDINGS.md` and the task doc.
+
+T13 was added the same day (2026-09-10), after comparing the coordinator against the gastown
+multi-agent system: the user chose to prove the worker↔coordinator communication protocol in its own
+seatbelted task before the full drill. It settles two things T12 deferred — a worker reaching the
+coordinator by name (not by return-socket luck), and the coordinator waiting for a worker to be idle
+before closing it — and lands the DESIGN §2.2/§2.3/§2.8 changes those need.
 
 ## Phase 4 — Teach the planner to plan for parallelism
 
@@ -103,12 +110,13 @@ machine is still changing.
 ## Critical path
 
 ```
-T01 → T02 → T03 → T05 → T06 → T08 → T09 → T12 → T10
+T01 → T02 → T03 → T05 → T06 → T08 → T09 → T12 → T13 → T10
 ```
 
 T00 is off this line but gates T07 and T08. T04 (the width metric) is a side branch off T02 and can
 slot in wherever convenient. T11 (teaching the planner) is off T04 but now also waits on T12, so it
-lands after the coordinator contract is fixed. T07 (worker contract) depends only on the spike.
+lands after the coordinator contract is fixed. T07 (worker contract) depends only on the spike. T13
+sits between T12 and T10: it proves the comms protocol the full drill relies on.
 
 ## Rough sizing
 
@@ -117,7 +125,7 @@ Not hours — a relative sense of where the weight is.
 | Weight | Tasks |
 |---|---|
 | **Heavy** | T08 (first real spawn + messaging + review), T09 (coordinator skill), T10 (full run + drill) |
-| **Medium** | T00 (spike), T05 (fake platform + loop), T06 (worktree plumbing), T11 (teach the shared planner) |
+| **Medium** | T00 (spike), T05 (fake platform + loop), T06 (worktree plumbing), T11 (teach the shared planner), T12 (six drill fixes), T13 (prove the comms protocol) |
 | **Light** | T01 (scaffold), T02 (progress core), T03 (dispatch), T04 (parallelism metric), T07 (worker contract) |
 
 Where this will overrun: T08, because live CLI and messaging behaviour rarely matches the docs on
