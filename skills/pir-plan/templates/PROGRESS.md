@@ -25,12 +25,14 @@ below is the authority; if the two disagree, trust the table.)*
 ## Tasks
 
 Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review · ✅ reviewed and
-done · ⛔ blocked, needs a human.
+done · ⛔ blocked, needs a human. **Runs:** `auto` a background worker can build it · `you` a
+person runs it — a spike or a hand-verification drill, no deliverable a worker could produce.
+Default `auto`; most tasks are `auto`, and a plan written before this column still parses.
 
-| # | Task | Depends on | State | Notes |
-|---|---|---|---|---|
-| T00 | {name} | — | ⬜ | |
-| T01 | {name} | T00 | ⬜ | |
+| # | Task | Runs | Depends on | State | Notes |
+|---|---|---|---|---|---|
+| T00 | {name} | you | — | ⬜ | |
+| T01 | {name} | auto | T00 | ⬜ | |
 
 A Notes cell holds what was built or what the review found, the test count, and one line per
 deviation from the task doc. A deviation needing a paragraph needs the commit message: name

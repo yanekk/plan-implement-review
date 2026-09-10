@@ -288,7 +288,17 @@ was not there. Every task needs all five of:
 3. **A "Done when"** somebody else can check without asking the author.
 4. **A test list** — the cases the implementing session must cover, including the edge cases
    the goal implies. This is what stops a green suite that tests nothing.
-5. **Its dependencies**, by task number, and only on tasks before it.
+5. **Its dependencies**, by task number, and only on tasks before it — and only the *real*
+   ones. Declare a dependency only when the task genuinely cannot start until another is done.
+   A dependency that is not truly required serializes work that could otherwise run at once,
+   and it is invisible cost: nothing downstream flags it. Never cut a real dependency to make
+   a plan look wider either — a worker built on work that is not there collides or fails.
+   Correct task boundaries and reviewability beat throughput; parallelism is surfaced, never
+   forced.
+6. **Its `Runs` marker** — `auto` if a background worker can produce the deliverable (the code
+   and its tests), `you` if the task's completion is a person's actions with no deliverable a
+   worker could produce: a spike, or a hand-verification drill. Most tasks are `auto`; the
+   marker defaults to `auto` when omitted.
 
 Sizing: **if you cannot write its "Done when" in three lines, it is two tasks.** If it has
 no test list, it is either not a task or the testability boundary is in the wrong place.
@@ -314,6 +324,16 @@ a rough sense of where the weight is — heavy / medium / light, not hours.
 
 **Checkpoint.** Show the user the phase table and the one-line-per-task list, in plain
 English, and get an explicit yes. This is the last cheap moment to move something.
+
+**Report the plan's parallel width too**, in plain English, so the user sees before a line is
+built whether the plan is wide enough to be worth running many tasks at once or is serial by
+nature. Three numbers over the task graph: the longest dependency chain, the widest set of
+tasks that could run together (the largest group that depends on nothing else in the group),
+and how many tasks are `you` rather than `auto`. Say it as one sentence — "N tasks, longest
+chain M, up to W can run at once, K need you." In this project `analyzeParallelism`
+(`src/core/parallelism.mjs`) computes exactly these numbers from the parsed task table, so
+the report never drifts from the metric. Do not quote a width you inflated by cutting a real
+dependency; the number is only worth showing if the dependencies are honest.
 
 ## Stage 7 — Write the files
 

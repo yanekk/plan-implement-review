@@ -32,18 +32,18 @@ Phase 2  ▸  …
 
 Nothing is designed on top of an assumption that has not been checked on this machine.
 
-| # | Task | Depends on |
-|---|---|---|
-| [T00](tasks/T00-{slug}.md) | {the spike} | — |
+| # | Task | Runs | Depends on |
+|---|---|---|---|
+| [T00](tasks/T00-{slug}.md) | {the spike} | you | — |
 
 **T00 gates {what}.** Say which design decisions ride on it and what each possible answer
 would mean. It is throwaway code and it is deleted afterwards.
 
 ## Phase 1 — {name}
 
-| # | Task | Depends on |
-|---|---|---|
-| [T01](tasks/T01-{slug}.md) | | T00 |
+| # | Task | Runs | Depends on |
+|---|---|---|---|
+| [T01](tasks/T01-{slug}.md) | | auto | T00 |
 
 *(one section per phase, each with a line saying what is true at the end of it)*
 
@@ -56,6 +56,13 @@ T00 → T01 → … → T{n}
 ```
 
 Which tasks are off it and can slot in wherever convenient.
+
+## Parallel width
+
+{N} tasks · longest dependency chain {M} · up to {W} could run at once · {K} need a person
+(`you`). A plan that is one long chain (width 1) drains no faster run in parallel than one
+task at a time; a wide plan is where a coordinator helps. These are the numbers the planner
+reported at the checkpoint; declare only real dependencies, so the width is honest.
 
 ## Rough sizing
 

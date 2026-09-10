@@ -1,6 +1,6 @@
 # T{NN} — {name}
 
-**Phase:** {n} · **Depends on:** {T…} · **Weight:** light / medium / heavy
+**Phase:** {n} · **Runs:** auto / you · **Depends on:** {T…} · **Weight:** light / medium / heavy
 
 > *(If this task doc is later superseded by a decision, say so here in a blockquote with the
 > date, rather than editing the body silently — the implementing session needs to see both
