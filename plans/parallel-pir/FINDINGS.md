@@ -12,6 +12,7 @@ Legend: 🐞 defect found · ✅ verified by hand with the user · 📌 worth kn
 
 | Date | | Finding |
 |---|---|---|
+| 2026-09-10 | 📌 | T09 review: two live-gate flags disagree — T08 `spawn-one-scratch` goes live on `PARALLEL_DRY_RUN=0`, T09 `coordinate.mjs` on `PARALLEL_LIVE=1`; both default dry (safe). DESIGN §5.2 names neither. `coordinate.test.mjs` sets `PARALLEL_DRY_RUN=1` but nothing reads it. Harmonise in T10/T11. |
 | 2026-09-09 | 📌 | T09: `coordinate.mjs` bin gates the live spawn behind `PARALLEL_LIVE=1` (§5.2 seatbelt; T10 verifies). Worker↔coordinator messages bridged via inbox/outbox files (SendMessage is agent-only). Crash-without-HALT worker re-adoption deferred to T10. |
 | 2026-09-09 | 📌 | T08: after close (stop + SIGTERM pid) a finished worker lingers in `claude agents` as `stopped` — process gone, session record stays, not enterable. Removing the record likely needs `claude rm <id>`. T09/T10 cleanup; not urgent (user flagged). |
 | 2026-09-09 | ✅ | T08 hand-verified with the user on scratch clone pir-run: one real worker start to finish, ceiling held; main history shows implement → fresh-session review (separate commit) → merge → promote; scratch-ok.txt=ok on main, T01 ✅. |

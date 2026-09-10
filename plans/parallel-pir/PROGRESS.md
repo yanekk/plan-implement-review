@@ -20,9 +20,10 @@ closing the implement session at review, and how a `you` task is marked done.
 After review the user revised the `you`-task model (2026-09-07): the coordinator now spawns a
 hands-on worker (`pir-verify Txx`) the user drives, folded back without review, instead of surfacing
 the task bare. Touched DESIGN, T03, T05, T07, T09, T10, T11.
-**Last updated:** 2026-09-09
-**Next `pir-work` will:** review T09 — the `pir-coordinate` skill, now 🔍 and the only task in
-review. After it, T11 (deps T04 ✅) is the ready auto ⬜; T10 (you, deps T09) unblocks once T09 is ✅.
+**Last updated:** 2026-09-10
+**Next `pir-work` will:** T09 is ✅. Two ⬜ tasks are now ready: T10 (you — full multi-worker run +
+kill-switch drill, deps T09 ✅) and T11 (auto — teach the planner parallelism, deps T04 ✅). T10 is
+lowest by number but is person-run and needs the user; T11 is the one a worker can build unattended.
 
 ## Tasks
 
@@ -40,8 +41,8 @@ live steps with a hands-on worker the coordinator spawns, folded back without re
 | T05 | Fake spawn/message/list/close + the coordinator loop | auto | T03 | ✅ | Reviewed clean after one fix (loop called a method outside T06's interface). Findings logged for T06/parser. 86 tests. |
 | T06 | Feature branch + task worktree create / integrate / merge / promote | auto | T05 | ✅ | Reviewed clean after one fix: `remove` now `--force --force` (git refuses single `--force` on a locked worktree), confirmed on real git. 100 tests. |
 | T07 | `pir-worker` contract skill + cross-session wiring | auto | T00 | ✅ | Reviewed clean. Wire format, same-repo `--cwd` guard, parseAgents, `text` field. resolveSameRepo also keeps the coordinator (inert; T09 drops self). 111 tests. |
-| T08 | One real worker, one trivial task, seatbelted | auto | T06, T07 | ✅ | Reviewed clean, no fix. Code half solid: argv/json/close(stop+SIGTERM pid)/list all unit-tested; the runaway (spawn-id≠listed-id) has a reproducing name-tracking test; progress-path threaded consistently. LIVE hand-verified ✅ 2026-09-09. Probed the review-handoff overlap and stopped-tombstone: dispatch counts by assignment not raw list, so the ceiling holds. Feature-worktree teardown on promote deferred to T09/T10 (logged). 121 tests. |
-| T09 | The `pir-coordinate` skill: dispatch, surface, supervise | auto | T08 | 🔍 | Coordinator: `startCoordinator` drives loop.mjs over injected platform/worktree — pass/answer/defer/drive, plain-English surfacing, ceiling+HALT, promote gate. `pir-coordinate` SKILL.md; bin refuses unreviewed plans. Deviations: bin live drive gated behind `PARALLEL_LIVE=1` (§5.2, T10 verifies); crash re-adoption deferred to T10. Agent SendMessage/inbox bridged via files. 13 tests (134 total). |
+| T08 | One real worker, one trivial task, seatbelted | auto | T06, T07 | ✅ | Reviewed clean. LIVE hand-verified ✅ 2026-09-09 (one real worker, ceiling held). Feature-worktree teardown deferred to T09/T10. 121 tests. |
+| T09 | The `pir-coordinate` skill: dispatch, surface, supervise | auto | T08 | ✅ | Reviewed clean, no fix commit. 134 tests green; fakes make real git commits, so merge/reconcile/dispatch are genuinely exercised, not stubbed. Bin refusal fired live. Probed answer/defer state between passes, ceiling accounting, you-task fold-back, and the platform/worktree/bridge seams the tests miss (bridge round-trips to the loop's message shape). Live drive over real agents deferred to T10 (unverified half). |
 | T10 | Full multi-worker run + kill-switch drill | you | T09 | ⬜ | Hand-verified. Dangerous: full size, last. |
 | T11 | `/pir-plan` + templates: `Runs` marker, honest deps, width report | auto | T04 | ⬜ | Changes the shared method. |
 
@@ -50,7 +51,7 @@ deviation from the task doc.
 
 **A ✅ task's cell may be cut to one line** once the next task has been reviewed.
 
-**Review queue:** T09 awaiting review (implemented 2026-09-09).
+**Review queue:** empty — T09 reviewed clean 2026-09-10. No task awaiting review.
 
 ## Blocked on the user
 
