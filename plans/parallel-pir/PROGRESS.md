@@ -19,8 +19,8 @@ The `Runs` column marks each task `auto` (a worker builds it) or `you` (a person
 capture, folding in T10 and T13's live half. Phase 5 was not in the 2026-09-07 plan review (it postdates
 it); it is validated per task during build, since `/pir-review-plan` does not re-run on a building plan.
 **Last updated:** 2026-09-10
-**Next `pir-work` will:** review T14 (harness capture layer, now `🔍`). Once it is `✅`, the next ready
-`⬜` is T15 (harness assertions, dep T14). Phase 5 continues T15 → T16 → T17.
+**Next `pir-work` will:** implement T15 (harness assertions + scenario spec, dep T14 now `✅`). Phase 5
+continues T15 → T16 → T17.
 
 ## Tasks
 
@@ -42,8 +42,8 @@ live steps with a hands-on worker the coordinator spawns, folded back without re
 | T09 | The `pir-coordinate` skill: dispatch, surface, supervise | auto | T08 | ✅ | Reviewed clean. The coordinator skill (dispatch, surface, supervise); fakes make real git commits so merge/dispatch are genuinely exercised; live drive over real agents deferred to T10. 134 tests. |
 | T12 | Make the coordinator drivable live: six drill fixes | auto | T09 | ✅ | Reviewed clean. Six drill fixes (self-filter through `liveAfter`, runaway grace, `canPromoteHere`, `ensureMain`, `teardownRun`, `decision` parked + prose `kind:` fallback), all tested. 145 tests. Live drive is T10's. |
 | T13 | Prove comms protocol: by-name addressing, idle-gated close | auto | T12 | ✅ | Reviewed clean, no fix. Hello wired through the real bridge (encodeMessage→outbox); idle gate reads `status` and only defers; kill switch and dead worker bypass it. 150 tests. LIVE half (by-name delivery, idle timing) folded into T17's single-task scenario 2026-09-10 — no longer a manual check. |
-| T11 | `/pir-plan` + templates: `Runs` marker, honest deps, width report | auto | T04, T12 | ✅ | Reviewed clean, no fix. SKILL.md Stage 6 (honest deps with reason, Runs marker, width report tied to analyzeParallelism), three templates and both CLAUDE.md spots carry the marker and carve-out; matches DESIGN §2.6/§2.7/§2.9. Golden tests read the real templates through parseProgress/analyzeParallelism, back-compat strips the column. Probed: classic flow unaffected, dropColumn locks the task table. Deviation (width over PROGRESS not PLAN) sound. 153 tests. |
-| T14 | Harness capture layer: flow, agent-status timeline, transcript bundle | auto | T09 | 🔍 | `src/shell/harness/capture.mjs` (+test), read-only, no reviewed file touched. `createCapture` polls `agents --json`, tags by name, snapshots transcripts, seals a dated bundle; `loadBundle` reads it. Own parse keeps `sessionId` (platform's drops it). 10 tests, 163 total. Deviations: `escapeProjectPath` exported from capture, not its own file (T17 imports it); manifest keyed by name, a name recurring across sessions disambiguated by sessionId; `runGit`/`now`/`timers` injected like platform's `runClaude`. |
+| T11 | `/pir-plan` + templates: `Runs` marker, honest deps, width report | auto | T04, T12 | ✅ | Reviewed clean. Planner Stage 6, three templates and both CLAUDE.md spots carry the Runs marker, honest deps and width report; golden tests read real templates through the parser. 153 tests. |
+| T14 | Harness capture layer: flow, agent-status timeline, transcript bundle | auto | T09 | ✅ | Reviewed clean; one test added. Read-only confirmed (diff touches only capture.mjs + its test). Integration checked: seal reads the coordinator's real control/log path and flow format. Deviations sound. Added a test for the recurring-name manifest disambiguation (implementer vs later reviewer, §2.8), the one load-bearing branch T15 relies on that had none. 164 tests. |
 | T15 | Harness assertions + scenario spec: declared facts over a bundle | auto | T14 | ⬜ | Phase 5. Pure predicates over a bundle (hello-per-spawn, no-close-before-idle, by-name, question round-trip, one-merge-to-main, kill-switch). Each fact tested with a passing and a failing canned bundle. |
 | T16 | Harness fixtures: scratch plans that force each path with real workers | auto | T15 | ⬜ | Phase 5. Six fixtures (single, parallel+kill-switch, review-queue, clean-merge, merge-conflict, human-decision), each a scratch plan + scenario spec. This task proves fixture setup only; running is T17. |
 | T17 | Harness live runner + first real scenario runs | you | T14, T15, T16 | ⬜ | Phase 5. Build half `auto`/tested against fakes; live runs spawn real paid agents, so `you`, seatbelted (scratch, low ceiling, kill switch, timeout auto-HALT). Folds in T10 (parallel scenario) and T13's live half (single scenario). |
@@ -54,7 +54,7 @@ deviation from the task doc.
 
 **A ✅ task's cell may be cut to one line** once the next task has been reviewed.
 
-**Review queue:** T14 (harness capture layer) awaits a fresh-eyes review.
+**Review queue:** empty. T14 reviewed ✅; the next task is an implement (T15).
 
 ## Blocked on the user
 
