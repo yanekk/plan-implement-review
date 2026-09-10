@@ -81,6 +81,14 @@ If you ever forget it, at least write the words `kind: <kind>` explicitly in the
 still be recognised. The coordinator addresses you back by your worker name; you do not poll for a
 reply — it arrives as a message.
 
+## You may receive a `hello` from the coordinator at spawn — ignore it (or reply once)
+
+Right after it spawns you, the coordinator sends you a one-line `[pir:v1 kind=hello task=Txx]` message
+carrying its own name (DESIGN §2.2). Its only purpose is to confirm the channel between you is open
+before you rely on it — it asks nothing of you. **You do not have to act on a hello.** If you like, you
+may reply once to confirm you are alive, but doing nothing is equally fine; either way, get straight on
+with the task the coordinator dispatched. A hello is never a task, a question, or an instruction.
+
 ## After you implement, you hand off — you do not review your own work
 
 When `pir-implement Txx` finishes and the task is marked `🔍`, **message the coordinator that Txx is

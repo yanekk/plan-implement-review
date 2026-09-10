@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { runPass, drain, createRunState } from './loop.mjs';
 import { createFakePlatform } from './fake/platform.mjs';
 import { createFakeWorktree } from './fake/worktree.mjs';
-import { workerName } from '../core/naming.mjs';
+import { workerName, coordinatorName } from '../core/naming.mjs';
 
 // The dry-run seatbelt is on in the tests (DESIGN §5.2): the loop is handed fakes and a scratch
 // repo, so nothing here reaches a real agent or the real project.
@@ -279,6 +279,105 @@ test('the coordinator does not count its OWN session (or a foreign agent) toward
   assert.equal(r.liveAfter, 1, 'one real worker live; the coordinator and the foreign agent are not counted');
   assert.equal(r.actions.filter((a) => a.type === 'spawn').length, 1, 'the free slot was used (not eaten by the self-count)');
   assert.ok(!fake.closed.includes('COORD') && !fake.closed.includes('FOREIGN'), 'neither non-worker was closed');
+});
+
+// --- T13 Problem A: a hello opens each freshly-spawned worker's channel ----------------------------
+
+test('every freshly spawned worker (implement and review) is sent a hello carrying the coordinator name (T13)', (t) => {
+  const { platform, base } = setup(t, [{ num: 'T01' }]);
+  const state = createRunState();
+  const NAME = workerName({ repo: REPO, plan: SLUG, task: 'T01' });
+  const COORD = coordinatorName({ repo: REPO, plan: SLUG });
+
+  runPass({ ...base, state }); // pass 1: spawn implementer → hello
+  let hellos = platform.sent.filter((s) => s.msg.kind === 'hello');
+  assert.equal(hellos.length, 1, 'the implement spawn was sent one hello');
+  assert.equal(hellos[0].to, NAME, 'the hello is addressed by the worker name');
+  assert.equal(hellos[0].msg.text, COORD, 'the hello carries the coordinator’s own addressable name');
+
+  runPass({ ...base, state }); // pass 2: implemented → fresh reviewer spawns → hello
+  hellos = platform.sent.filter((s) => s.msg.kind === 'hello');
+  assert.equal(hellos.length, 2, 'the fresh reviewer was sent a hello too');
+  assert.ok(hellos.every((h) => h.to === NAME), 'both hellos address the same worker name (DESIGN §2.8)');
+});
+
+test('the loop still runs against a platform with no send half (no hello, no crash) (T13)', (t) => {
+  // The id-mismatch platform below has no `send` method. The hello must be optional, or the loop would
+  // throw on the first spawn. It simply spawns, is recognised by name, and drains — no hello sent.
+  const worktree = createFakeWorktree({ progress: progressDoc([{ num: 'T01' }]), slug: SLUG });
+  t.after(() => worktree.cleanup());
+  const NAME = workerName({ repo: REPO, plan: SLUG, task: 'T01' });
+  let listed = [];
+  const platform = {
+    spawn({ name }) {
+      listed = [{ id: 'R1', name, cwd: '/x', status: 'busy', state: 'working', live: true }];
+      return 'R1';
+    },
+    list: () => listed,
+    close: () => ({ ok: true }),
+    inbox: () => [],
+  };
+  const state = createRunState();
+  assert.doesNotThrow(() => runPass({ platform, worktree, repo: REPO, slug: SLUG, maxWorkers: 1, state }));
+  assert.ok(NAME); // referenced
+});
+
+// --- T13 Problem B: a finished worker is not closed until it is idle -------------------------------
+
+test('a review handoff waits until the implementer is idle before closing it (T13)', (t) => {
+  // T01 lingers busy for one tick after it reports implemented. The loop must NOT spawn the reviewer or
+  // close the implementer while it is busy; it does both once the next pass shows it idle.
+  const { platform, base } = setup(t, [{ num: 'T01' }], { behaviors: { T01: { lingerBusy: 1 } } });
+  const state = createRunState();
+  runPass({ ...base, state }); // pass 1: spawn implementer
+  const implId = platform.spawns[0].id;
+
+  const busy = runPass({ ...base, state }); // pass 2: implemented but still busy → held
+  assert.ok(!busy.actions.some((a) => a.type === 'review'), 'no reviewer spawns while the implementer is busy');
+  assert.ok(!platform.closed.includes(implId), 'the busy implementer is not closed (no mid-turn SIGTERM)');
+  assert.ok(busy.actions.some((a) => a.type === 'await-idle' && a.task === 'T01'), 'the pass records it is waiting for idle');
+  assert.equal(busy.liveAfter, 1, 'it keeps its slot while held');
+
+  const idle = runPass({ ...base, state }); // pass 3: now idle → hand off
+  assert.ok(idle.actions.some((a) => a.type === 'review' && a.closes === implId), 'the reviewer spawns once the implementer is idle');
+  assert.ok(platform.closed.includes(implId), 'the idle implementer is now closed');
+});
+
+test('a merge (and close) waits until the done worker is idle before firing (T13)', (t) => {
+  // A `you` task goes straight to done with no review phase, isolating the merge gate. It lingers busy
+  // one tick after done; the loop must not merge its branch or close it until it is idle.
+  const { platform, worktree, base } = setup(t, [{ num: 'T01', runs: 'you' }], { behaviors: { T01: { lingerBusy: 1 } } });
+  const state = createRunState();
+  runPass({ ...base, state }); // pass 1: spawn the hands-on worker
+  const workerId = platform.spawns[0].id;
+
+  const busy = runPass({ ...base, state }); // pass 2: done but still busy → held
+  assert.ok(!busy.actions.some((a) => a.type === 'merge'), 'no merge while the done worker is busy');
+  assert.ok(!platform.closed.includes(workerId), 'the busy worker is not closed mid-turn');
+  assert.ok(busy.actions.some((a) => a.type === 'await-idle' && a.task === 'T01'));
+  assert.ok(!worktree.events.some((e) => e.op === 'mergeTask'), 'its branch is not merged while it is busy');
+
+  const idle = runPass({ ...base, state }); // pass 3: idle → merge and close
+  assert.ok(idle.actions.some((a) => a.type === 'merge' && a.task === 'T01'), 'the merge fires once it is idle');
+  assert.ok(platform.closed.includes(workerId), 'the idle worker is closed and its branch merged');
+});
+
+test('the kill switch closes a busy, finished worker immediately — the idle gate does not apply under halt (T13)', (t) => {
+  // The idle gate protects a normal close from interrupting a mid-turn worker. The kill switch is a hard
+  // stop (DESIGN §2.4) and must override it: a busy review-ready worker is closed at once under HALT.
+  const { platform, base } = setup(t, [{ num: 'T01' }], { behaviors: { T01: { lingerBusy: 9 } } });
+  let halted = false;
+  const control = { isHalted: () => halted, log: () => {} };
+  const state = createRunState();
+  runPass({ ...base, control, state }); // spawn
+  const workerId = platform.spawns[0].id;
+  runPass({ ...base, control, state }); // implemented, but lingers busy → normal close would be held
+
+  halted = true;
+  const r = runPass({ ...base, control, state }); // HALT closes it regardless of busy
+  assert.equal(r.halted, true);
+  assert.ok(platform.closed.includes(workerId), 'the kill switch closed the busy worker without waiting for idle');
+  assert.equal(r.liveAfter, 0, 'no worker is left live after the halt');
 });
 
 test('dry run stays isolated: the scratch repo is a temp dir, never the real project', (t) => {

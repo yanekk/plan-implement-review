@@ -110,6 +110,14 @@ already there.
 - **worker → coordinator: indirect, async.** The worker sends a message to the coordinator's
   inbox; the coordinator reads it at a natural break in its loop. Same transport, opposite
   discipline: the coordinator never lets an inbound message interrupt an action in flight.
+- **A hello opens the channel at spawn.** The moment the coordinator spawns a worker — an
+  implementer, and the fresh reviewer that replaces it — it sends that worker a one-line
+  `[pir:v1 kind=hello task=Txx]` message carrying its own addressable name, before anything relies on
+  inbound. This confirms the worker→coordinator channel is open, and because a worker's reply rides
+  the sender's return socket reliably (FINDINGS 2026-09-07), the hello turns every later inbound
+  message into a reply on an already-open channel — a belt-and-suspenders on top of by-name addressing
+  (§2.8), not a replacement for it. The worker ignores a hello (it asks nothing); it may reply once.
+  Decided with the user 2026-09-10 (T13).
 
 ### 2.3 The worker lifecycle: create, drive, close
 
@@ -126,6 +134,15 @@ The coordinator owns a worker's whole life, and it must be able to end it, not o
   listed (T08 live run, FINDINGS 2026-09-09). So close sends the worker's process SIGTERM — its
   pid comes from `claude agents --json` — which is what actually ends it. The leftover `stopped`
   record is cleared with `claude rm`; the worktree and branch come down separately (below).
+  **A close that follows a worker finishing its task waits for the worker to go idle first.** A
+  worker that has just signalled `implemented` (about to be handed to a fresh reviewer) or `done`
+  (about to be merged and closed) may still be finishing its turn; the agent list reports each
+  session `idle` or `busy` (FINDINGS 2026-09-07), and the coordinator holds the close — keeping the
+  slot — until the list shows the worker idle, so SIGTERM never cuts off work in flight. This is the
+  session-idle analogue of the mid-*commit* close FINDINGS 2026-09-09 caught. Two closes do NOT wait:
+  a **dead** worker (already gone from the list) is cleaned up at once — that is not a mid-work kill —
+  and the **kill switch** ends every worker regardless of idleness (§2.4), because a hard stop is a
+  hard stop. Decided with the user 2026-09-10 (T13).
 
 **Close exists for three reasons, and all three are why it is first-class rather than an
 afterthought.** Normal end-of-task teardown after a merge; the hard-stop kill switch, which
@@ -295,6 +312,19 @@ out of it, which is why the convention is worth fixing rather than leaving names
   `claude agents --json`, without separate bookkeeping that could drift from reality.
 - **The user reads `claude agents` and sees exactly who is doing what**, across every repo and
   plan on the machine, because the name carries the repo, the plan and the task.
+
+**How the coordinator session comes to carry `{repo} · {plan}` (T13, 2026-09-10).** For a worker's
+by-name message to resolve, the coordinator *session* — the `pir-coordinate` skill agent that holds the
+SendMessage inbox, not the `coordinate.mjs` bin it runs, which is an ordinary child process and no
+addressable session — must appear under that name in `claude agents --json`. Nothing makes that happen
+on its own: the T10 drill's coordinator was named `pir-t10 / pir-coordinate scratch` by the harness, a
+shape that even contains `/`, which `SendMessage` rejects (FINDINGS 2026-09-07). So the coordinator
+session is **launched under the deterministic name** with the same `-n` flag workers use —
+`claude -n "{repo} · {plan}"`, then `/pir-coordinate {slug}` inside it (skills/pir-coordinate). The bin
+computes the name with `coordinatorName` and prints it, and each worker also gets it in its hello (§2.2)
+so the return channel is open regardless. Whether a correctly-named coordinator receives a worker's
+by-name message is the live half T13 proves; if a coordinator session genuinely cannot be made to carry
+the name, that is a decision for the user, not a rule to invent around.
 
 The name identifies the repo, plan and task, not the phase: the implement session and the fresh
 review session for one task carry the same `{repo} · {plan} · T{nn}` name, but they do not run at
@@ -689,6 +719,21 @@ minimum, kill switch wired.
   fresh-review phase: there is no code deliverable to review. A `you` task the user defers is `⛔`
   and its dependents wait, so a critical-path spike like T00 (which gates T07/T08) pauses the run at
   human speed rather than stalling it.
+
+- **The comms protocol: a hello at spawn, a coordinator launched under its own name, and an
+  idle-gated close.** Decided with the user 2026-09-10 (T13), to prove the two worker↔coordinator
+  behaviours the earlier work could only build and defer, before the full T10 drill. (1) The
+  coordinator sends every freshly-spawned worker a one-line hello carrying its name (§2.2), so the
+  return channel is open before anything relies on inbound — belt-and-suspenders over by-name
+  addressing, chosen because a worker's reply rides the sender's socket reliably (FINDINGS
+  2026-09-07). (2) The coordinator session is launched under `{repo} · {plan}` with `claude -n`
+  (§2.8), because nothing otherwise makes the skill agent carry the addressable name and the
+  harness-given name may be `SendMessage`-invalid (the drill's contained `/`). (3) A close that
+  follows a worker finishing waits for the agent list to show it idle before SIGTERM (§2.3), so a
+  finished worker is never cut off mid-turn — the session-idle analogue of the mid-commit close
+  FINDINGS 2026-09-09 caught; a dead worker and the kill switch still close at once. The automated
+  halves are proven against the fakes; the by-name delivery and the idle timing are the live half
+  T13 hands to the user, de-risking T10.
 
 ---
 

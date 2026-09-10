@@ -541,7 +541,14 @@ async function main(argv) {
 
   console.log(`ceiling: ${maxWorkers}   control: ${control.dir}`);
   console.log(`ABORT:   touch ${control.flag}`);
-  console.log(`inbox:   ${bridge.inboxPath}   outbox: ${bridge.outboxPath}   answers: ${bridge.answersPath}\n`);
+  console.log(`inbox:   ${bridge.inboxPath}   outbox: ${bridge.outboxPath}   answers: ${bridge.answersPath}`);
+  // Workers address the coordinator BY NAME (DESIGN §2.8, T13 Problem A), so the coordinator SESSION —
+  // the pir-coordinate skill agent that runs this bin and carries the SendMessage inbox — must be
+  // reachable under this exact name. Launch that session with `claude -n "<name>"` (the same -n workers
+  // use). Belt-and-suspenders: the loop sends every freshly-spawned worker a hello carrying this name,
+  // so a worker's reply rides an already-open channel even if by-name first-contact is unreliable.
+  console.log(`\nWorkers address the coordinator as:  ${coordinatorName({ repo, plan: slug })}`);
+  console.log(`The coordinator session must be reachable under that name (launch it with claude -n).\n`);
 
   // Tear down every live worker of this run on any exit that is not a clean promotion or a kill-switch
   // halt (both of which the loop already handled). This is the P6 orphan-guard: a safety cap, a stall,

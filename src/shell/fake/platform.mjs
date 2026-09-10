@@ -49,6 +49,10 @@ function commit(cwd, task, plan, { file, content, rowState, note, message }) {
 //                            decision; it stays parked (the loop must not merge, DESIGN §2.5).
 //     { crash: true }        the worker dies after one step (vanishes from list()); the loop must
 //                            close it as dead and free its slot (DESIGN §2.5, §3.3).
+//     { lingerBusy: N }      after the worker reaches a resting stage (implemented / done / awaiting),
+//                            list() reports it `busy` for N more ticks before `idle`. Models a real
+//                            session still mid-turn after it committed, so a test can prove the loop
+//                            gates a finished worker's close on it going idle (T13 Problem B).
 export function createFakePlatform({ behaviors = {} } = {}) {
   const workers = new Map(); // id → worker record
   const inboxQueue = []; // messages from workers to the coordinator, drained by inbox()
@@ -128,6 +132,29 @@ export function createFakePlatform({ behaviors = {} } = {}) {
     }
   }
 
+  // A worker is `busy` (mid-turn) until it reaches a resting stage, then `idle` — the coordinator's
+  // close of a finished worker is gated on this (T13 Problem B). `lingerBusy` holds it `busy` for a few
+  // extra ticks after it rests, so a test can watch the loop DEFER a close while busy and only close
+  // once idle. Mirrors `claude agents --json`'s status/state (idle/busy, working/done, FINDINGS
+  // 2026-09-07). Called once per tick in list(), after advance, so a stage change is reflected the same
+  // observation the coordinator reads it on.
+  const RESTING = new Set(['implemented', 'done', 'awaiting', 'parked', 'dead']);
+  function updateStatus(w) {
+    if (!RESTING.has(w.stage)) {
+      w.status = 'busy';
+      w.state = 'working';
+      return;
+    }
+    if (w.busyHold > 0) {
+      w.busyHold -= 1;
+      w.status = 'busy';
+      w.state = 'working';
+      return;
+    }
+    w.status = 'idle';
+    w.state = 'done';
+  }
+
   function findByIdOrName(idOrName) {
     if (workers.has(idOrName)) return workers.get(idOrName);
     for (const w of workers.values()) if (w.name === idOrName) return w;
@@ -140,6 +167,7 @@ export function createFakePlatform({ behaviors = {} } = {}) {
     // reports it and the loop can rebuild assignments from names alone (DESIGN §2.8).
     spawn({ cwd, name, phase }) {
       const parsed = parseAgentName(name);
+      const b = behaviors[parsed.task] ?? {};
       const id = `w${++nextId}`;
       const w = {
         id,
@@ -153,6 +181,7 @@ export function createFakePlatform({ behaviors = {} } = {}) {
         answered: false,
         status: 'busy',
         state: 'working',
+        busyHold: b.lingerBusy ?? 0,
       };
       workers.set(id, w);
       spawns.push({ id, name, task: parsed.task, role: phase, cwd });
@@ -170,7 +199,12 @@ export function createFakePlatform({ behaviors = {} } = {}) {
 
     // list() → live workers with their state. Advances every live worker one tick first (see header).
     list() {
-      for (const w of workers.values()) if (w.live) advance(w);
+      for (const w of workers.values()) {
+        if (w.live) {
+          advance(w);
+          updateStatus(w); // reflect the new stage's busy/idle in this same observation (T13 Problem B)
+        }
+      }
       return [...workers.values()]
         .filter((w) => w.live)
         .map((w) => ({ id: w.id, name: w.name, cwd: w.cwd, status: w.status, state: w.state, live: true }));

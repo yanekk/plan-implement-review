@@ -15,7 +15,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { parseProgress, reconcileTaskRow, progressPathFor } from '../core/progress.mjs';
 import { decideDispatch } from '../core/dispatch.mjs';
-import { workerName, parseAgentName, isWorkerOf } from '../core/naming.mjs';
+import { workerName, coordinatorName, parseAgentName, isWorkerOf } from '../core/naming.mjs';
 
 // The phases the loop tracks per task from a worker's own messages plus the lifecycle step it
 // drives (DESIGN §2.8: the name carries identity, the lifecycle carries phase). Only three of these
@@ -120,6 +120,20 @@ export function runPass({ platform, worktree, repo, slug, maxWorkers, state, con
     return a;
   };
 
+  // The coordinator's own addressable name (DESIGN §2.8) — what a worker builds to message home, and
+  // what the hello below carries so the return channel is open before anything relies on inbound
+  // (T13 Problem A). A freshly-spawned worker (an implement/verify builder in 3b, a fresh reviewer in
+  // 3c) is sent one `[pir:v1 kind=hello]` message addressed by its own name; the worker ignores it
+  // (pir-worker) but its reply now rides an already-open channel (FINDINGS 2026-09-07: a worker's reply
+  // is delivered on the sender's return socket reliably). platform.send is optional so an ad-hoc test
+  // platform without a send half (loop.test's id-mismatch case) is unaffected — no send, no hello.
+  const coordName = coordinatorName({ repo, plan: slug });
+  const sendHello = (name, task) => {
+    if (typeof platform.send !== 'function') return;
+    platform.send(name, { kind: 'hello', task, text: coordName });
+    record('hello', { task, to: name });
+  };
+
   // 0. Open the feature branch once, in the coordinator's own worktree (DESIGN §2.9).
   if (!state.feature) {
     state.feature = worktree.openFeature(slug);
@@ -136,6 +150,13 @@ export function runPass({ platform, worktree, repo, slug, maxWorkers, state, con
   // (T12 Problem 5). Everything downstream — the ceiling count, buildAssignments, close — operates on
   // this run's workers only, so a foreign session can never be counted, adopted or closed.
   const liveList = listed.filter((w) => isWorkerOf(w.name, { repo, plan: slug }));
+  // The live worker record by its authoritative id, so a close of a FINISHED worker can be gated on it
+  // being idle (T13 Problem B). `claude agents --json` reports each session's `status` (idle/busy);
+  // parseAgents carries it through (platform.mjs). A worker is "busy" only when the list explicitly
+  // says so, so an ad-hoc platform that omits `status` (some loop.test fakes) reads as not-busy and the
+  // gate is inert — this only ever DEFERS a close, never forces one.
+  const liveById = new Map(liveList.map((w) => [w.id, w]));
+  const isBusy = (id) => liveById.get(id)?.status === 'busy';
   const messages = platform.inbox();
   applyMessages(state, messages, actions);
 
@@ -195,7 +216,14 @@ export function runPass({ platform, worktree, repo, slug, maxWorkers, state, con
     state.tasks[num] = { worktree: wt, workerId: id, role, phase: role === 'verify' ? VERIFYING : IMPLEMENTING, grace: APPEAR_GRACE };
     spawnedThisPass.push(id);
     record('spawn', { task: num, runs, role, workerId: id });
+    sendHello(name, num); // open the worker→coordinator channel at spawn (T13 Problem A)
   }
+
+  // Finished workers whose close is held this pass because the agent list still shows them busy (T13
+  // Problem B). They stay live and hold their slot; the close (and its paired review handoff or merge)
+  // retries on a later pass once the worker is idle. A dead worker and the kill switch are exempt —
+  // both close regardless of idleness (3a).
+  const deferredClose = new Set();
 
   // 3c. Hand each review-ready task to a fresh reviewer on the same worktree, then close the
   // implementer's session (DESIGN §2.1, §2.3 — one task in review holds one slot). The reviewer
@@ -205,10 +233,21 @@ export function runPass({ platform, worktree, repo, slug, maxWorkers, state, con
     const found = taskByWorkerId(state, workerId);
     if (!found) continue;
     const { num, t } = found;
-    const reviewerId = platform.spawn({ cwd: t.worktree.path, name: workerName({ repo, plan: slug, task: num }), phase: 'review' });
+    // Hand off to a fresh reviewer only once the implementer is idle (T13 Problem B). Closing it while
+    // it is still mid-turn (SIGTERM) can interrupt or lose work — the session-idle analogue of the
+    // mid-commit close FINDINGS 2026-09-09 already caught. If it is busy, hold: no reviewer spawns and
+    // the implementer keeps its slot until a later pass finds it idle.
+    if (isBusy(workerId)) {
+      deferredClose.add(workerId);
+      record('await-idle', { task: num, workerId, reason: 'review-ready worker still busy' });
+      continue;
+    }
+    const revName = workerName({ repo, plan: slug, task: num });
+    const reviewerId = platform.spawn({ cwd: t.worktree.path, name: revName, phase: 'review' });
     reviewSwaps.set(workerId, { num, reviewerId });
     spawnedThisPass.push(reviewerId);
     record('review', { task: num, workerId: reviewerId, closes: workerId });
+    sendHello(revName, num); // open the fresh reviewer's channel too (T13 Problem A)
   }
 
   // 3d. Merge one done task branch into the feature branch, reconcile its row to ✅ (DESIGN §2.5,
@@ -219,6 +258,15 @@ export function runPass({ platform, worktree, repo, slug, maxWorkers, state, con
     const found = taskByWorkerId(state, workerId);
     if (!found) continue;
     const { num, t } = found;
+    // Merge (and then close) a done worker only once it is idle (T13 Problem B). A worker that has just
+    // signalled done may still be finishing its turn; waiting for idle both avoids SIGTERMing it
+    // mid-work and guarantees its final commit has landed before its branch is merged. If busy, hold:
+    // no merge, no close, the slot stays held, and the merge retries next pass.
+    if (isBusy(workerId)) {
+      deferredClose.add(workerId);
+      record('await-idle', { task: num, workerId, reason: 'done worker still busy' });
+      continue;
+    }
     const res = worktree.mergeTask(t.worktree.branch);
     if (res.conflict) {
       t.phase = AWAITING;
@@ -246,6 +294,7 @@ export function runPass({ platform, worktree, repo, slug, maxWorkers, state, con
   //   - a merged worker: session stop and worktree/branch removed, task done.
   for (const workerId of decision.close) {
     if (deadIds.has(workerId)) continue; // already cleaned up in 3a
+    if (deferredClose.has(workerId)) continue; // busy finished worker — held for a later pass (3c/3d)
     if (reviewSwaps.has(workerId)) {
       const { num, reviewerId } = reviewSwaps.get(workerId);
       platform.close(workerId);

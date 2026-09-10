@@ -155,9 +155,11 @@ test('a worker question is surfaced in plain English and the answer is sent down
 
   const res = coordinator.answer({ task: 'T01', text: 'use json' });
   assert.equal(res.worker, workerName({ repo: REPO, plan: SLUG, task: 'T01' }));
-  const sentTo = platform.sent.map((s) => s.to);
-  assert.deepEqual(sentTo, [workerName({ repo: REPO, plan: SLUG, task: 'T01' })], 'answered T01 and only T01');
-  assert.equal(platform.sent[0].msg.kind, 'answer');
+  // The loop also sends each freshly-spawned worker a `hello` (T13 Problem A), so `sent` carries those
+  // too. The answer is the only `answer`-kind message, and it went to T01 alone.
+  const answers = platform.sent.filter((s) => s.msg.kind === 'answer');
+  assert.deepEqual(answers.map((s) => s.to), [workerName({ repo: REPO, plan: SLUG, task: 'T01' })], 'answered T01 and only T01');
+  assert.equal(answers[0].msg.kind, 'answer');
 
   const { result } = driveCollecting(coordinator);
   assert.equal(result.promoted, true, 'the answered worker resumes and the plan promotes');

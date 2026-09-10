@@ -41,7 +41,9 @@ an unreviewed plan even if asked to "just try it" — say what the risk is and l
 - You start a **worker** for each task that is ready (its prerequisites are done). Each worker is a
   separate session with its own copy of the project. You tell it exactly which task to build.
 - When a worker finishes building, you **close it and start a fresh one to review** the same work —
-  the reviewer is never the one who wrote it. That fresh pair of eyes is the whole point.
+  the reviewer is never the one who wrote it. That fresh pair of eyes is the whole point. A finished
+  worker is closed only once it has actually gone quiet (idle), never mid-turn, so no work is cut off
+  in the middle; if it is still busy the close simply waits for the next check.
 - At most **4 workers** run at once. More ready tasks simply wait for a free slot.
 - If a worker hits a question or a decision, it stops and asks you. **You bring it to the user in
   plain words and wait for the answer**, then send the answer back to that worker. Meanwhile every
@@ -90,12 +92,22 @@ This bridge is why the live drive is verified with the user (T10): the message w
 real sessions are talking. Against the fakes in the tests, the platform is its own bus and no bridge
 is needed.
 
-**One thing the drill taught about addressing (T10, 2026-09-10):** a worker's first message reached the
-coordinator even though this skill session's own name (set by the harness) is not the
-`{repo} · {plan}` name workers address — the message rode the worker's return channel. So inbound has
-worked in practice, but its reliability across many workers is a live behaviour only T10's fuller run
-confirms. If inbound ever proves flaky, the ready remedy is to SendMessage each freshly spawned worker
-a one-line hello first, which turns every inbound message into a reply on an already-open channel.
+**Your session must be reachable under the name `{repo} · {plan}` (DESIGN §2.8, §2.2).** Workers address
+you by that name, so the coordinator session — this skill agent, which holds the SendMessage inbox —
+has to appear under it in `claude agents --json`. It is not enough for the bin to print the name; the
+session itself must carry it. **Launch the coordinator session with that name**: start it as
+`claude -n "{repo} · {plan}"` and then run `/pir-coordinate {slug}` inside it. If the session the user
+is already in cannot take that name, say so to the user and have them restart the coordinator under it —
+do not proceed assuming a mis-named session is addressable.
+
+**Belt-and-suspenders — the hello (T13):** the bin's loop sends every freshly-spawned worker (an
+implementer, and the fresh reviewer) a one-line `[pir:v1 kind=hello task=Txx]` message carrying your
+name, the moment it spawns. This opens the return channel before anything relies on inbound — a worker's
+reply rides the sender's already-open socket reliably (FINDINGS 2026-09-07) — so even if by-name
+first-contact were flaky, every worker has a proven channel home. When you see a hello in the outbox,
+perform the SendMessage like any other outbound message. The drill (T10, 2026-09-10) saw a worker's
+first message reach a *mis-named* coordinator over the return channel; T13 makes a *correctly-named*
+coordinator plus the hello the protocol, rather than leaning on that fallback by accident.
 
 ## Naming and finding your workers (DESIGN §2.8)
 
