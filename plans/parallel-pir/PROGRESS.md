@@ -19,8 +19,8 @@ The `Runs` column marks each task `auto` (a worker builds it) or `you` (a person
 capture, folding in T10 and T13's live half. Phase 5 was not in the 2026-09-07 plan review (it postdates
 it); it is validated per task during build, since `/pir-review-plan` does not re-run on a building plan.
 **Last updated:** 2026-09-10
-**Next `pir-work` will:** review T11 (now `🔍`) — a `🔍` task outranks any `⬜`. Nothing depends on
-T11, so after it is `✅` the ready `⬜` tasks are T14 (harness capture layer) and, on it, Phase 5.
+**Next `pir-work` will:** implement T14 (harness capture layer) — no `🔍` or `🟡` tasks remain, and
+T14 is the lowest ready `⬜` (its dep T09 is `✅`). T14 then unblocks the rest of Phase 5 (T15–T17).
 
 ## Tasks
 
@@ -42,7 +42,7 @@ live steps with a hands-on worker the coordinator spawns, folded back without re
 | T09 | The `pir-coordinate` skill: dispatch, surface, supervise | auto | T08 | ✅ | Reviewed clean. The coordinator skill (dispatch, surface, supervise); fakes make real git commits so merge/dispatch are genuinely exercised; live drive over real agents deferred to T10. 134 tests. |
 | T12 | Make the coordinator drivable live: six drill fixes | auto | T09 | ✅ | Reviewed clean. Six drill fixes (self-filter through `liveAfter`, runaway grace, `canPromoteHere`, `ensureMain`, `teardownRun`, `decision` parked + prose `kind:` fallback), all tested. 145 tests. Live drive is T10's. |
 | T13 | Prove comms protocol: by-name addressing, idle-gated close | auto | T12 | ✅ | Reviewed clean, no fix. Hello wired through the real bridge (encodeMessage→outbox); idle gate reads `status` and only defers; kill switch and dead worker bypass it. 150 tests. LIVE half (by-name delivery, idle timing) folded into T17's single-task scenario 2026-09-10 — no longer a manual check. |
-| T11 | `/pir-plan` + templates: `Runs` marker, honest deps, width report | auto | T04, T12 | 🔍 | Taught /pir-plan Stage 6: mark Runs, declare only real deps with reason, report width at checkpoint. Runs column + legend in PROGRESS/PLAN/TASK templates; parallel-mode carve-out and Runs note in CLAUDE.md. Golden test over templates: parse, width, Runs-stripped back-compat. 153 tests. Deviation: width test runs over PROGRESS template (authoritative table), not PLAN's per-phase tables. |
+| T11 | `/pir-plan` + templates: `Runs` marker, honest deps, width report | auto | T04, T12 | ✅ | Reviewed clean, no fix. SKILL.md Stage 6 (honest deps with reason, Runs marker, width report tied to analyzeParallelism), three templates and both CLAUDE.md spots carry the marker and carve-out; matches DESIGN §2.6/§2.7/§2.9. Golden tests read the real templates through parseProgress/analyzeParallelism, back-compat strips the column. Probed: classic flow unaffected, dropColumn locks the task table. Deviation (width over PROGRESS not PLAN) sound. 153 tests. |
 | T14 | Harness capture layer: flow, agent-status timeline, transcript bundle | auto | T09 | ⬜ | Phase 5. Read-only observer; must not touch the reviewed coordinator. Three sources in DESIGN §4.1: control log, sampled `agents --json` timeline (status is live-only), transcripts at `~/.claude/projects/…/<sessionId>.jsonl`. Provable against canned data. Ready now. |
 | T15 | Harness assertions + scenario spec: declared facts over a bundle | auto | T14 | ⬜ | Phase 5. Pure predicates over a bundle (hello-per-spawn, no-close-before-idle, by-name, question round-trip, one-merge-to-main, kill-switch). Each fact tested with a passing and a failing canned bundle. |
 | T16 | Harness fixtures: scratch plans that force each path with real workers | auto | T15 | ⬜ | Phase 5. Six fixtures (single, parallel+kill-switch, review-queue, clean-merge, merge-conflict, human-decision), each a scratch plan + scenario spec. This task proves fixture setup only; running is T17. |
@@ -54,7 +54,7 @@ deviation from the task doc.
 
 **A ✅ task's cell may be cut to one line** once the next task has been reviewed.
 
-**Review queue:** T11 awaits review (implemented 2026-09-10).
+**Review queue:** empty — T11 reviewed clean 2026-09-10.
 
 ## Blocked on the user
 
