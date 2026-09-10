@@ -12,6 +12,8 @@ Legend: 🐞 defect found · ✅ verified by hand with the user · 📌 worth kn
 
 | Date | | Finding |
 |---|---|---|
+| 2026-09-10 | ✅ | T10 drill (live, ceiling 1, user-driven): a real `claude --bg` worker spawned as `pir-t10 · scratch · T01` with the §2.9 branch model, ceiling held T02, and the worker's first message reached the coordinator. Stopped after the round-trip; the big unknown resolved positively. |
+| 2026-09-10 | 🐞 | T10 drill surfaced 6 shell-driver gaps blocking a full live run (→ T12): no answer-injection channel, workers emit prose not `[pir:v1]`, `openFeature` hardcodes `main`, coordinator self-counted in the ceiling, bin `MAX_PASSES` orphans workers, session name ≠ §2.8. Pure core held. |
 | 2026-09-10 | 📌 | T09 review: two live-gate flags disagree — T08 `spawn-one-scratch` goes live on `PARALLEL_DRY_RUN=0`, T09 `coordinate.mjs` on `PARALLEL_LIVE=1`; both default dry (safe). DESIGN §5.2 names neither. `coordinate.test.mjs` sets `PARALLEL_DRY_RUN=1` but nothing reads it. Harmonise in T10/T11. |
 | 2026-09-09 | 📌 | T09: `coordinate.mjs` bin gates the live spawn behind `PARALLEL_LIVE=1` (§5.2 seatbelt; T10 verifies). Worker↔coordinator messages bridged via inbox/outbox files (SendMessage is agent-only). Crash-without-HALT worker re-adoption deferred to T10. |
 | 2026-09-09 | 📌 | T08: after close (stop + SIGTERM pid) a finished worker lingers in `claude agents` as `stopped` — process gone, session record stays, not enterable. Removing the record likely needs `claude rm <id>`. T09/T10 cleanup; not urgent (user flagged). |

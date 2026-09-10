@@ -81,25 +81,34 @@ Each task here has a hand-verification half; the dangerous capability is built l
 | [T07](tasks/T07-worker-contract.md) | `pir-worker` contract skill + cross-session wiring | auto | T00 |
 | [T08](tasks/T08-real-spawn-one-worker.md) | One real worker, one trivial task, seatbelted | auto | T06, T07 |
 | [T09](tasks/T09-pir-coordinate-skill.md) | The `pir-coordinate` skill: dispatch, surface, supervise | auto | T08 |
-| [T10](tasks/T10-full-parallel-run.md) | Full multi-worker run + kill-switch drill | you | T09 |
+| [T12](tasks/T12-coordinator-live-drivable.md) | Make the coordinator drivable live: six drill fixes | auto | T09 |
+| [T10](tasks/T10-full-parallel-run.md) | Full multi-worker run + kill-switch drill | you | T09, T12 |
+
+T12 was added after the T10 drill (2026-09-10) was stopped: the partial live run proved spawn and
+first-message delivery but surfaced six shell-driver gaps that block a full run. It sits on the
+critical path between T09 and T10; the drill account is in `FINDINGS.md` and the task doc.
 
 ## Phase 4 — Teach the planner to plan for parallelism
 
 | # | Task | Runs | Depends on |
 |---|---|---|---|
-| [T11](tasks/T11-teach-planner-parallelism.md) | `/pir-plan` + templates: the `Runs` marker, honest deps, width report | auto | T04 |
+| [T11](tasks/T11-teach-planner-parallelism.md) | `/pir-plan` + templates: the `Runs` marker, honest deps, width report | auto | T04, T12 |
+
+T11 now also depends on T12: it teaches `/pir-plan` to emit parallel-ready plans, and that guidance
+must reflect the worker/message contract T12 settles — do not teach the planner conventions the
+machine is still changing.
 
 ---
 
 ## Critical path
 
 ```
-T01 → T02 → T03 → T05 → T06 → T08 → T09 → T10
+T01 → T02 → T03 → T05 → T06 → T08 → T09 → T12 → T10
 ```
 
-T00 is off this line but gates T07 and T08. T04 (the width metric) and T11 (teaching the planner)
-are a side branch off T02 and can slot in wherever convenient. T07 (worker contract) depends only
-on the spike.
+T00 is off this line but gates T07 and T08. T04 (the width metric) is a side branch off T02 and can
+slot in wherever convenient. T11 (teaching the planner) is off T04 but now also waits on T12, so it
+lands after the coordinator contract is fixed. T07 (worker contract) depends only on the spike.
 
 ## Rough sizing
 
