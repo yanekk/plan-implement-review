@@ -21,10 +21,10 @@ After review the user revised the `you`-task model (2026-09-07): the coordinator
 hands-on worker (`pir-verify Txx`) the user drives, folded back without review, instead of surfacing
 the task bare. Touched DESIGN, T03, T05, T07, T09, T10, T11.
 **Last updated:** 2026-09-10
-**Next `pir-work` will:** review T13 (🔍) — the comms-protocol build: hello-on-spawn, coordinator
-launched under `{repo} · {plan}`, and idle-gated close. Its LIVE half (by-name delivery + idle timing
-on the scratch harness, ceiling 1) is still unverified and folds into FINDINGS when the user runs it.
-After T13 is reviewed, T10 (the full live drill) unblocks (deps T09, T12, T13).
+**Next `pir-work` will:** with T13 reviewed clean, no task awaits review. T13's LIVE half (by-name
+delivery + idle timing) is handed to the user — the command is under "Blocked on the user". Once it
+folds into FINDINGS, T10 (the full live drill, `you`) and T11 (teach the planner, `auto`) are both
+unblocked; T10 is next by number.
 
 ## Tasks
 
@@ -44,8 +44,8 @@ live steps with a hands-on worker the coordinator spawns, folded back without re
 | T07 | `pir-worker` contract skill + cross-session wiring | auto | T00 | ✅ | Reviewed clean. Wire format, same-repo `--cwd` guard, parseAgents, `text` field. resolveSameRepo also keeps the coordinator (inert; T09 drops self). 111 tests. |
 | T08 | One real worker, one trivial task, seatbelted | auto | T06, T07 | ✅ | Reviewed clean. LIVE hand-verified ✅ 2026-09-09 (one real worker, ceiling held). Feature-worktree teardown deferred to T09/T10. 121 tests. |
 | T09 | The `pir-coordinate` skill: dispatch, surface, supervise | auto | T08 | ✅ | Reviewed clean. The coordinator skill (dispatch, surface, supervise); fakes make real git commits so merge/dispatch are genuinely exercised; live drive over real agents deferred to T10. 134 tests. |
-| T12 | Make the coordinator drivable live: six drill fixes | auto | T09 | ✅ | Reviewed clean, no fix. All six fixes provable against fakes and tested: `isWorkerOf` self-filter flows through `liveAfter` so ceiling and breaker count workers only, `runawayVerdict` grace, `canPromoteHere`, `ensureMain`, `teardownRun` on every non-clean exit, `decision` kind now parked, prose `kind:` fallback. Probed stall-vs-parked, productive-action-type match, signal teardown. 145 tests. Live drive is T10's. |
-| T13 | Prove comms protocol: by-name addressing, idle-gated close | auto | T12 | 🔍 | Built: hello to every freshly-spawned worker (implement+review) carrying the coordinator name; finished-worker close gated on idle (dead worker and kill switch exempt); fake `lingerBusy` drives the gate. 150 tests. DESIGN §2.2/§2.3/§2.8/§7 and both skills updated; coordinator launched under `{repo} · {plan}` via `claude -n`. LIVE half (by-name delivery, idle timing) UNVERIFIED — scratch drive below. |
+| T12 | Make the coordinator drivable live: six drill fixes | auto | T09 | ✅ | Reviewed clean. Six drill fixes (self-filter through `liveAfter`, runaway grace, `canPromoteHere`, `ensureMain`, `teardownRun`, `decision` parked + prose `kind:` fallback), all tested. 145 tests. Live drive is T10's. |
+| T13 | Prove comms protocol: by-name addressing, idle-gated close | auto | T12 | ✅ | Reviewed clean, no fix. Traced all three idle-gate tests against the fake. Hello wired through the real bridge (encodeMessage→outbox); idle gate reads `status` from the live list and only defers, never forces; kill switch and dead worker bypass it structurally (dead closes in 3a before the gate). 150 tests. LIVE half (by-name delivery, idle timing) UNVERIFIED — command under "Blocked on the user". |
 | T10 | Full multi-worker run + kill-switch drill | you | T09, T12, T13 | ⬜ | Hand-verified. Dangerous: full size, last. Partial drill 2026-09-10 proved spawn + first message; stopped, gaps split to T12, comms protocol to T13. Scratch harness: `src/pir-t10`. |
 | T11 | `/pir-plan` + templates: `Runs` marker, honest deps, width report | auto | T04, T12 | ⬜ | Changes the shared method. Now waits on T12: do not teach the planner parallel-plan conventions before the worker/message contract T12 settles. |
 
@@ -54,7 +54,7 @@ deviation from the task doc.
 
 **A ✅ task's cell may be cut to one line** once the next task has been reviewed.
 
-**Review queue:** T13 (🔍), implemented 2026-09-10. Next `pir-work` reviews it.
+**Review queue:** empty — T13 reviewed clean 2026-09-10. No task awaits review.
 
 ## Blocked on the user
 
@@ -63,9 +63,10 @@ deliberately after the first worker round-trip: spawn and the first worker→coo
 worked. Six shell-driver gaps were split to T12; the comms-protocol proof (by-name addressing,
 idle-gated close) was split to T13. Order: review T12, build/review T13, then the full T10 drill.
 
-**T13 LIVE half (person-run, not blocking the review).** The build and its fakes are green; the by-name
-delivery and the idle-close timing need real agents. On the scratch harness `src/pir-t10`, launch the
-coordinator SESSION under its name so a worker can address it, ceiling 1, kill switch wired:
+**T13 LIVE half (person-run — the code review is done, this is the outstanding hands-on proof).** The
+build and its fakes are green and the code reviewed clean; the by-name delivery and the idle-close
+timing need real agents. On the scratch harness `src/pir-t10`, launch the coordinator SESSION under its
+name so a worker can address it, ceiling 1, kill switch wired:
 
 ```
 cd /Users/jan.krolikowski/src/pir-t10

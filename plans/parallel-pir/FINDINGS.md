@@ -12,6 +12,7 @@ Legend: 🐞 defect found · ✅ verified by hand with the user · 📌 worth kn
 
 | Date | | Finding |
 |---|---|---|
+| 2026-09-10 | 📌 | T13 review: clean. Idle gate only defers a finished worker's close, never forces. Live caveat: the hello is sent the same pass as spawn, so it may reach a worker not yet listed; the by-name path stands alone. |
 | 2026-09-10 | 🐞 | T12: the loop dropped `kind: decision` (parked only question/conflict), so a worker decision per the pir-worker contract was silently ignored. Fixed to park question\|decision\|conflict. `parseMessage` now also reads a `kind:` marker in prose, since a real worker sends prose, not the `[pir:v1]` header. |
 | 2026-09-10 | 📌 | T12 closed the six drill gaps vs fakes: the `[pir:v1 …]` header is the worker wire contract; the bin is the sole driver and the skill routes user answers via a control `answers` file; ported the runaway breaker, `PARALLEL_ALLOW_HERE` guard, and `ensureMain` (local main at HEAD). Live halves fold into T10. |
 | 2026-09-10 | 📌 | T12 P5: the coordinator self-count was a reporting/breaker bug, not under-dispatch — `decideDispatch` caps from tracked assignments, never the raw list. Loop now filters live counting by `isWorkerOf`, so the ceiling report and the breaker count this run's workers only. |
