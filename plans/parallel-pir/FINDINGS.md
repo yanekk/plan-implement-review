@@ -12,6 +12,7 @@ Legend: 🐞 defect found · ✅ verified by hand with the user · 📌 worth kn
 
 | Date | | Finding |
 |---|---|---|
+| 2026-09-10 | 📌 | T14 capture: bundle manifest is keyed by agent name (T15 assertions can look a session up by name). An implementer and its later reviewer share one worker name (§2.8) but run at different times; the second is keyed `name (sessionId)` so neither transcript is lost. |
 | 2026-09-10 | 📌 | Phase 5 capture sources: flow = `control/log`; agent status via `claude agents --json` (status/pid live-only; `--all` keeps finished sessions, no status); transcripts at `~/.claude/projects/<cwd, / and . → dash>/<sessionId>.jsonl`, surviving kill and worktree removal; `claude logs <id>` is recent output only. |
 | 2026-09-10 | 📌 | T13 review: clean. Idle gate only defers a finished worker's close, never forces. Live caveat: the hello is sent the same pass as spawn, so it may reach a worker not yet listed; the by-name path stands alone. |
 | 2026-09-10 | 🐞 | T12: the loop dropped `kind: decision` (parked only question/conflict), so a worker decision per the pir-worker contract was silently ignored. Fixed to park question\|decision\|conflict. `parseMessage` now also reads a `kind:` marker in prose, since a real worker sends prose, not the `[pir:v1]` header. |
