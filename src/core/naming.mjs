@@ -64,3 +64,15 @@ export function parseAgentName(name) {
 
   return nomatch;
 }
+
+// isWorkerOf(name, { repo, plan }) → true if `name` is a worker of THIS coordinator's run: it parses
+// to a worker name (§2.8 says a worker's name carries a task) with the given repo and plan. The
+// coordinator identifies its workers from the name alone (DESIGN §2.8), so this is how it counts only
+// its own workers against the ceiling. The coordinator's OWN session (`{repo} · {plan}`, no task) and
+// any foreign agent share the repo git-dir and so appear in `claude agents --json`; without this
+// filter they inflate the live count and the coordinator under-dispatches by one (T12 Problem 5, from
+// the drill's `ceiling full: 2/1 busy` with a single real worker).
+export function isWorkerOf(name, { repo, plan } = {}) {
+  const p = parseAgentName(name);
+  return p.matches && p.task != null && p.repo === repo && p.plan === plan;
+}

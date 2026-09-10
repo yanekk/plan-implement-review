@@ -38,6 +38,21 @@ import { parseAgentName } from '../core/naming.mjs';
 
 const HEADER = /^\[pir:v1 kind=(\S+) task=(\S+)\]$/;
 
+// The message kinds the coordinator loop's state machine acts on (loop.mjs applyMessages): a worker
+// signals `implemented` / `done` to advance a task, or `question` / `decision` / `conflict` to park it
+// and surface it to the user (DESIGN §2.5). `pir-worker` is taught to send exactly these as the
+// [pir:v1 …] header; PROSE_KIND below is the safety net for a worker that forgets the header.
+const KINDS = ['question', 'decision', 'implemented', 'done', 'conflict'];
+
+// The header is the contract (pir-worker emits it), but a real `claude` worker is a language model and
+// may still send natural language — the T10 drill's worker wrote "T01 question (kind: question) — …"
+// instead of the header, and parseMessage read it as a plain `message` the loop then ignored (T12
+// Problem 3). So when there is no valid header, look for an EXPLICIT kind marker (`kind: question`,
+// `kind=question`) anywhere in the text. Only an explicit `kind` token counts — a bare word like
+// "done" in prose must not be mistaken for a state signal — so a plain human note still parses as
+// `message`, never guessed into a wrong kind.
+const PROSE_KIND = new RegExp(`\\bkind\\s*[:=]\\s*["']?(${KINDS.join('|')})\\b`, 'i');
+
 // encodeMessage({ kind, task, text }) → the wire string. task is a full id ("T05") or absent; a
 // missing task is written "-" and recovered from the sender's name at parse time.
 export function encodeMessage({ kind, task, text = '' } = {}) {
@@ -56,6 +71,15 @@ export function parseMessage({ from = null, text = '' } = {}) {
   if (m) {
     const task = m[2] === '-' ? parseAgentName(from).task : m[2];
     return { from, kind: m[1], task, text: body };
+  }
+  // No header: the safety net (T12 Problem 3). An explicit `kind:` / `kind=` marker in the prose is
+  // honoured; the task falls back to any T-id in the text, then to the sender's parsed name. The
+  // whole text is kept as the body since there was no header line to strip.
+  const prose = text.match(PROSE_KIND);
+  if (prose) {
+    const idInText = text.match(/\bT\d+\b/);
+    const task = idInText ? idInText[0] : parseAgentName(from).task;
+    return { from, kind: prose[1].toLowerCase(), task, text };
   }
   return { from, kind: 'message', task: parseAgentName(from).task, text };
 }

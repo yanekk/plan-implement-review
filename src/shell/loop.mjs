@@ -15,7 +15,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { parseProgress, reconcileTaskRow, progressPathFor } from '../core/progress.mjs';
 import { decideDispatch } from '../core/dispatch.mjs';
-import { workerName, parseAgentName } from '../core/naming.mjs';
+import { workerName, parseAgentName, isWorkerOf } from '../core/naming.mjs';
 
 // The phases the loop tracks per task from a worker's own messages plus the lifecycle step it
 // drives (DESIGN §2.8: the name carries identity, the lifecycle carries phase). Only three of these
@@ -60,7 +60,10 @@ function applyMessages(state, messages, actions) {
       t.phase = REVIEW_READY;
     } else if (m.kind === 'done') {
       t.phase = DONE;
-    } else if (m.kind === 'question' || m.kind === 'conflict') {
+    } else if (m.kind === 'question' || m.kind === 'decision' || m.kind === 'conflict') {
+      // `decision` is a worker's "genuine choice, either answer defensible" (pir-worker skill, DESIGN
+      // §2.5); it parks and surfaces exactly like a `question`. It was previously unhandled here, so a
+      // real worker's decision message was silently dropped (found closing the T12 wire contract).
       t.phase = AWAITING;
       t.decision = { kind: m.kind, text: m.text };
       actions.push({ type: 'surface', task: m.task, kind: m.kind, text: m.text });
@@ -126,7 +129,13 @@ export function runPass({ platform, worktree, repo, slug, maxWorkers, state, con
 
   // 1. Gather. list() is the fake's tick, so it is called exactly once and its result reused.
   const halted = control.isHalted();
-  const liveList = platform.list();
+  const listed = platform.list();
+  // Keep only THIS run's workers ({repo} · {slug} · T…). `claude agents --json` lists every session
+  // sharing the repo git-dir, which includes the coordinator's OWN session and any foreign agent; the
+  // drill counted the coordinator itself and reported `ceiling full: 2/1 busy` with one real worker
+  // (T12 Problem 5). Everything downstream — the ceiling count, buildAssignments, close — operates on
+  // this run's workers only, so a foreign session can never be counted, adopted or closed.
+  const liveList = listed.filter((w) => isWorkerOf(w.name, { repo, plan: slug }));
   const messages = platform.inbox();
   applyMessages(state, messages, actions);
 

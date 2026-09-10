@@ -43,6 +43,8 @@ function commit(cwd, task, plan, { file, content, rowState, note, message }) {
 //     {}                     clean: implement → implemented; review → done; verify → done.
 //     { question: "text" }   the implementer parks with a question until an answer arrives, then
 //                            proceeds to implemented (DESIGN §2.5).
+//     { decision: "text" }   the same as question but the worker sends kind `decision` (a genuine
+//                            choice, DESIGN §2.5); it parks and resumes identically (T12 P3).
 //     { conflict: "text" }   the implementer cannot resolve a code conflict and parks with a
 //                            decision; it stays parked (the loop must not merge, DESIGN §2.5).
 //     { crash: true }        the worker dies after one step (vanishes from list()); the loop must
@@ -73,6 +75,15 @@ export function createFakePlatform({ behaviors = {} } = {}) {
         }
         if (b.question) {
           emit(w, 'question', b.question);
+          w.stage = 'awaiting';
+          w.resume = 'implemented';
+          return;
+        }
+        if (b.decision) {
+          // A `decision` (a genuine choice, DESIGN §2.5) parks exactly like a question — the loop
+          // must surface both and resume on an answer. Added for T12 P3, which taught the loop to
+          // handle `decision`, previously dropped.
+          emit(w, 'decision', b.decision);
           w.stage = 'awaiting';
           w.resume = 'implemented';
           return;

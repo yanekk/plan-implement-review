@@ -24,7 +24,7 @@ import { basename, join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 
 import { parseProgress, reconcileTaskRow, progressPathFor } from '../core/progress.mjs';
-import { workerName, coordinatorName } from '../core/naming.mjs';
+import { workerName, coordinatorName, isWorkerOf, parseAgentName } from '../core/naming.mjs';
 import { runPass, createRunState } from './loop.mjs';
 import { createPlatform } from './platform.mjs';
 import { createWorktree } from './worktree.mjs';
@@ -64,6 +64,9 @@ function renderSurface(a) {
   let message;
   switch (a.kind) {
     case 'question':
+    case 'decision':
+      // A worker sends `question` (something unspecified) or `decision` (a genuine choice); both are
+      // the user's to answer and read the same in plain English (DESIGN §2.5, pir-worker skill).
       message = `${who} needs a decision from you: ${a.text}`;
       break;
     case 'conflict':
@@ -251,15 +254,30 @@ export function createAgentBridge({ dir } = {}) {
   mkdirSync(dir, { recursive: true });
   const inboxPath = join(dir, 'inbox');
   const outboxPath = join(dir, 'outbox');
+  // The DOWN-channel for the user's decisions (T12 Problem 2). The drill's bin only ran pass() and
+  // printed surfaces — it never called answer()/defer() and read no input, so a task that raised a
+  // question was surfaced and then stuck: the decision had no way down. This file is symmetric to the
+  // inbox — the skill APPENDS one JSON line per user decision, `{ "task": "T05", "text": "…" }` to
+  // answer or `{ "task": "T05", "defer": true, "note": "…" }` to defer — and the bin drains it each
+  // pass and routes it to answer()/defer(). That makes the two drive models one: the bin is the
+  // long-running driver, and every up/down message crosses through a control file the skill owns.
+  const answersPath = join(dir, 'answers');
 
   const readLines = (path) =>
     existsSync(path)
       ? readFileSync(path, 'utf8').split('\n').map((l) => l.trim()).filter(Boolean)
       : [];
 
+  const drainJsonLines = (path) => {
+    const lines = readLines(path);
+    if (existsSync(path)) writeFileSync(path, ''); // consumed
+    return lines;
+  };
+
   return {
     inboxPath,
     outboxPath,
+    answersPath,
     // The transport platform.mjs's createMessaging binds to: deliver one message, drain the received.
     transport: {
       deliver(name, text) {
@@ -267,9 +285,7 @@ export function createAgentBridge({ dir } = {}) {
         return { ok: true };
       },
       drain() {
-        const lines = readLines(inboxPath);
-        if (existsSync(inboxPath)) writeFileSync(inboxPath, ''); // consumed
-        return lines.map((l) => {
+        return drainJsonLines(inboxPath).map((l) => {
           try {
             const { from, text } = JSON.parse(l);
             return { from, text };
@@ -279,7 +295,98 @@ export function createAgentBridge({ dir } = {}) {
         });
       },
     },
+    // drainAnswers() → the user decisions the skill has written since the last drain, each an
+    // { task, text } to answer or { task, defer: true, note? } to defer (DESIGN §2.5). The bin feeds
+    // each to answer()/defer(). A malformed line is dropped, never guessed into a decision.
+    drainAnswers() {
+      return drainJsonLines(answersPath)
+        .map((l) => {
+          try {
+            return JSON.parse(l);
+          } catch {
+            return null;
+          }
+        })
+        .filter((d) => d && d.task);
+    },
   };
+}
+
+// --- Tearing down a run's workers, so no exit path orphans one (DESIGN §2.3, §2.4; T12 P6) ----
+//
+// The drill's bin ran out its pass budget and printed "ran out of passes" while a worker was still
+// live and parked, leaving a paid session orphaned that had to be stopped by hand. So EVERY exit path
+// that is not a clean promotion/halt (a safety cap, a stall, a signal, an error) must close this run's
+// live workers. `platform.close` is stop + SIGTERM — `claude stop` alone only interrupts (FINDINGS
+// 2026-09-09), so this is what actually ends the session. Closing an already-gone id is a safe no-op.
+export function teardownRun({ platform, worktree, state, repo, slug, control } = {}) {
+  const closed = new Set();
+  const removeWorktree = (num) => {
+    const t = num ? state?.tasks?.[num] : null;
+    if (t?.worktree && worktree) {
+      try {
+        worktree.remove(t.worktree);
+      } catch {
+        /* best-effort cleanup; the session close is what matters for orphan-avoidance */
+      }
+    }
+  };
+  const closeId = (id, name) => {
+    if (!id || closed.has(id)) return;
+    try {
+      platform.close(id);
+    } catch {
+      /* already gone */
+    }
+    closed.add(id);
+    control?.log?.(`teardown: closed ${name ?? ''} (${id})`.trim());
+  };
+
+  // Every worker of THIS run the platform still lists — the authoritative live sessions.
+  let live = [];
+  try {
+    live = platform.list().filter((w) => isWorkerOf(w.name, { repo, plan: slug }));
+  } catch {
+    live = [];
+  }
+  for (const w of live) {
+    closeId(w.id, w.name);
+    removeWorktree(parseAgentName(w.name).task);
+  }
+  // Plus any worker this run spawned that we still track — covers the appear-grace window in which a
+  // just-spawned session is not listed yet, so a spawn is never left behind on an early exit.
+  for (const [num, t] of Object.entries(state?.tasks ?? {})) {
+    if (t.workerId) {
+      closeId(t.workerId, workerName({ repo, plan: slug, task: num }));
+      removeWorktree(num);
+    }
+  }
+  return { closed: [...closed] };
+}
+
+// --- The runaway circuit-breaker verdict (DESIGN §5.2; ported from spawn-one-scratch.mjs, T12 P5) --
+//
+// The first live spawn-one-scratch run "ran away" to ~12 workers before a breaker existed; coordinate
+// .mjs had none. A review handoff briefly holds CEILING+1 (the implementer is stopped async as the
+// reviewer spawns — FINDINGS 2026-09-09), so a single over-ceiling worker is tolerated for `overGrace`
+// consecutive passes; more than one over, or an overage that persists, is a real runaway. Pure so the
+// bin's safety net is tested without a live process. `liveCount` is THIS run's workers only (the
+// caller filters with isWorkerOf), so the coordinator's own session never trips it.
+export function runawayVerdict({ liveCount, ceiling, overPasses = 0, overGrace = 3 }) {
+  if (liveCount <= ceiling) return { abort: false, over: 0 };
+  const over = overPasses + 1;
+  return { abort: liveCount > ceiling + 1 || over >= overGrace, over };
+}
+
+// --- The scratch-repo promotion guard (DESIGN §5.2; ported from spawn-one-scratch.mjs, T12 P5) ----
+//
+// The LIVE bin opens the feature branch off THIS checkout's main and, on success, merges it back into
+// main. Never let that happen inside the canonical project by accident: refuse when the main
+// worktree's basename is the canonical repo unless PARALLEL_ALLOW_HERE=1 (a same-named scratch clone).
+// Pure predicate so it is tested directly.
+const CANONICAL_REPO = 'plan-implement-review';
+export function canPromoteHere(repoName, { allowHere = false } = {}) {
+  return repoName !== CANONICAL_REPO || allowHere;
 }
 
 // --- The `pir coordinate {slug}` bin entry ----------------------------------------------------
@@ -298,6 +405,36 @@ function gitStdout(cwd, args) {
   } catch {
     return '';
   }
+}
+
+// A git runner that reports success/failure (unlike gitStdout, which swallows it), so ensureMain can
+// tell "no local main" from "the checkout is broken". Injected into ensureMain so a test drives it
+// against a scratch repo.
+export function gitRun(cwd, args) {
+  try {
+    const stdout = execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] });
+    return { ok: true, stdout, stderr: '' };
+  } catch (e) {
+    return { ok: false, stdout: e.stdout ?? '', stderr: e.stderr ?? String(e) };
+  }
+}
+
+// Ensure a checkout has a local `main` (DESIGN §2.9; T12 Problem 4). worktree.mjs cuts the feature
+// branch with `git branch pir/{plan} main` and promotes back into main — `main` hardcoded, as the real
+// project always has one. A scratch clone taken off a side branch has only origin/main and no local
+// `main`, so pass 1 throws "not a valid object name: 'main'" (the drill created one by hand). When
+// there is no local main, create it at the current HEAD and check it out; a checkout that already has
+// main is left exactly as it is. Runs only on the LIVE path, which the canonical-repo guard confines
+// to a scratch checkout, so pointing main at HEAD is safe (mirrors ensureMainCheckedOut, verified with
+// the user 2026-09-09). `-B main HEAD` pins main to the exact commit, never a same-named origin/main.
+export function ensureMain(root, { git = gitRun } = {}) {
+  if (git(root, ['rev-parse', '--verify', '--quiet', 'refs/heads/main']).ok) {
+    return { created: false };
+  }
+  const from = git(root, ['rev-parse', '--abbrev-ref', 'HEAD']).stdout.trim();
+  const r = git(root, ['checkout', '-B', 'main', 'HEAD']);
+  if (!r.ok) throw new Error(`ensureMain: could not create a local main at HEAD: ${r.stderr}`);
+  return { created: true, from };
 }
 
 // The main (primary) worktree of the repo, whose basename is the repo name the agent names are built
@@ -378,6 +515,24 @@ async function main(argv) {
 
   console.log('LIVE: spawning real workers (PARALLEL_LIVE=1).');
 
+  // Promotion guard (DESIGN §5.2; T12 Problem 5): never open+merge the feature branch inside the
+  // canonical project by accident. A scratch clone is named anything else; PARALLEL_ALLOW_HERE=1
+  // overrides for a same-named clone.
+  if (!canPromoteHere(repo, { allowHere: process.env.PARALLEL_ALLOW_HERE === '1' })) {
+    console.error(
+      `Refusing the LIVE run inside "${repo}" — this opens pir/${slug} off THIS repo's main and, on\n` +
+        `success, merges it back into THIS main. Run it in a throwaway clone instead (e.g.\n` +
+        `\`git clone . ../pir-scratch && cd ../pir-scratch\`). If this really is a scratch clone that\n` +
+        `happens to share the name, set PARALLEL_ALLOW_HERE=1.`,
+    );
+    process.exit(1);
+  }
+
+  // Ensure a local `main` exists (DESIGN §2.9; T12 Problem 4): a scratch clone off a side branch has
+  // only origin/main, and openFeature would throw on pass 1 without this.
+  const mained = ensureMain(root);
+  if (mained.created) console.log(`prepared a local main at HEAD (checkout was on "${mained.from}", which had none).`);
+
   const control = fileControl(root, slug);
   const bridge = createAgentBridge({ dir: control.dir });
   const platform = createPlatform({ root, transport: bridge.transport });
@@ -386,28 +541,100 @@ async function main(argv) {
 
   console.log(`ceiling: ${maxWorkers}   control: ${control.dir}`);
   console.log(`ABORT:   touch ${control.flag}`);
-  console.log(`inbox:   ${bridge.inboxPath}   outbox: ${bridge.outboxPath}\n`);
+  console.log(`inbox:   ${bridge.inboxPath}   outbox: ${bridge.outboxPath}   answers: ${bridge.answersPath}\n`);
+
+  // Tear down every live worker of this run on any exit that is not a clean promotion or a kill-switch
+  // halt (both of which the loop already handled). This is the P6 orphan-guard: a safety cap, a stall,
+  // a Ctrl-C or an error must not leave a paid session running. Idempotent (close is safe twice).
+  const teardown = () => teardownRun({ platform, worktree, state: coordinator.state, repo, slug, control });
+  let tornDown = false;
+  const teardownOnce = (why) => {
+    if (tornDown) return;
+    tornDown = true;
+    const { closed } = teardown();
+    if (closed.length) console.log(`\n=== ${why}: closed ${closed.length} live worker(s) so none is orphaned ===`);
+  };
+  // A signal (Ctrl-C, or the OS asking us to stop) must close workers before we go. Register once.
+  for (const sig of ['SIGINT', 'SIGTERM']) {
+    process.on(sig, () => {
+      teardownOnce(`${sig} received`);
+      process.exit(130);
+    });
+  }
 
   const POLL_MS = Number(process.env.PARALLEL_POLL_MS ?? 5000);
-  const MAX_PASSES = Number(process.env.PARALLEL_MAX_PASSES ?? 480);
+  // A safety cap only — the run's real end is promotion, halt, or a stall, not a fixed pass budget
+  // (the drill exited on its budget and orphaned a worker; T12 Problem 6). At the cap we tear down.
+  const MAX_PASSES = Number(process.env.PARALLEL_MAX_PASSES ?? 5000);
+  const CEILING = maxWorkers;
+  const OVER_GRACE = Number(process.env.PARALLEL_OVER_GRACE ?? 3);
+  const STALL_GRACE = 3; // consecutive quiet passes with nothing live before the run is declared done
 
-  for (let p = 1; p <= MAX_PASSES; p++) {
-    const r = coordinator.pass();
-    for (const c of r.completed) console.log(`  ✅ ${c} reached done and merged into the feature branch`);
-    for (const y of r.youToDrive) console.log(`  hands-on: go drive worker "${y.worker}" for ${y.task}`);
-    for (const s of r.surfaces) console.log(`  DECISION NEEDED (${s.task ?? '-'}): ${s.message}`);
-    if (r.ceilingFull) console.log(`  (ceiling full; waiting: ${r.waiting.join(', ')})`);
-    if (r.halted) {
-      console.log('\n=== HALTED by the kill switch — workers stopped, nothing promoted ===');
-      return;
+  let over = 0;
+  let idle = 0;
+  try {
+    for (let p = 1; p <= MAX_PASSES; p++) {
+      // Route any user decisions the skill has written to the answers file DOWN to their workers
+      // before this pass runs (DESIGN §2.5; T12 Problem 2). answer() sends to the parked worker;
+      // defer() marks ⛔ and frees the slot. Guarded so a bad line never breaks the loop.
+      for (const d of bridge.drainAnswers()) {
+        try {
+          if (d.defer) {
+            coordinator.defer({ task: d.task, note: d.note });
+            console.log(`  routed: deferred ${d.task} (⛔)`);
+          } else {
+            coordinator.answer({ task: d.task, text: d.text ?? '' });
+            console.log(`  routed: answer → ${d.task}`);
+          }
+        } catch (e) {
+          console.error(`  could not route a decision for ${d.task}: ${e.message}`);
+        }
+      }
+
+      const r = coordinator.pass();
+      for (const c of r.completed) console.log(`  ✅ ${c} reached done and merged into the feature branch`);
+      for (const y of r.youToDrive) console.log(`  hands-on: go drive worker "${y.worker}" for ${y.task}`);
+      for (const s of r.surfaces) console.log(`  DECISION NEEDED (${s.task ?? '-'}): ${s.message}`);
+      if (r.ceilingFull) console.log(`  (ceiling full; waiting: ${r.waiting.join(', ')})`);
+      if (r.halted) {
+        console.log('\n=== HALTED by the kill switch — workers stopped, nothing promoted ===');
+        return; // the halt pass already closed every worker
+      }
+      if (r.promoted) {
+        console.log('\n=== PROMOTED — the whole plan reached main ===');
+        return; // the promotion pass already closed every worker
+      }
+
+      // Runaway breaker (DESIGN §5.2; T12 Problem 5). Count THIS run's workers only — the coordinator's
+      // own session shares the git-dir and must not trip it. r.live is already that count (loop.mjs
+      // filters), so reuse it rather than re-listing.
+      const verdict = runawayVerdict({ liveCount: r.live, ceiling: CEILING, overPasses: over, overGrace: OVER_GRACE });
+      over = verdict.over;
+      if (verdict.abort) {
+        console.error(`\nABORT: ${r.live} live workers over ceiling ${CEILING} for ${over} pass(es) — a runaway.`);
+        teardownOnce('runaway');
+        return;
+      }
+
+      // Stall detection: a pass that did nothing AND has nothing live is the run genuinely finished
+      // (all tasks ✅ but nothing to promote, or everything deferred). A parked worker (live > 0) is
+      // NOT a stall — it waits for the user's answer, so the loop keeps polling for it.
+      const productive = r.actions.some((a) => ['spawn', 'review', 'merge', 'close', 'promote'].includes(a.type));
+      idle = !productive && r.live === 0 ? idle + 1 : 0;
+      if (idle >= STALL_GRACE) {
+        console.log('\n=== nothing left to do (no live workers, nothing to dispatch or promote) ===');
+        teardownOnce('stalled'); // a no-op when nothing is live; still safe
+        return;
+      }
+
+      await sleep(POLL_MS);
     }
-    if (r.promoted) {
-      console.log('\n=== PROMOTED — the whole plan reached main ===');
-      return;
-    }
-    await sleep(POLL_MS);
+    console.log('\n=== safety cap reached ===');
+    teardownOnce('safety cap');
+  } catch (e) {
+    teardownOnce('error');
+    throw e;
   }
-  console.log('\n=== ran out of passes ===');
 }
 
 // Only run the bin when invoked directly, never on import (the tests import the functions above).

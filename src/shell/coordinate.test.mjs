@@ -4,7 +4,16 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { startCoordinator, readReviewGate } from './coordinate.mjs';
+import {
+  startCoordinator,
+  readReviewGate,
+  createAgentBridge,
+  teardownRun,
+  ensureMain,
+  canPromoteHere,
+  runawayVerdict,
+  gitRun,
+} from './coordinate.mjs';
 import { createFakePlatform } from './fake/platform.mjs';
 import { createFakeWorktree } from './fake/worktree.mjs';
 import { workerName, coordinatorName } from '../core/naming.mjs';
@@ -297,4 +306,111 @@ test('the coordinator reports each task reaching ✅ and terminates on a fully p
   assert.deepEqual([...completed].sort(), ['T01', 'T02', 'T03'], 'each task was reported reaching ✅ as it merged');
   const finalMain = worktree.progressOn('main');
   assert.ok(!finalMain.includes('⬜'), 'no ⬜ task remains on main after promotion');
+});
+
+// --- 13. P2: the answer channel — a user decision routes down to the parked worker -----------------
+
+test('a decision written to the answers file drains once, then routes down to the parked worker (P2, T12)', (t) => {
+  // The bridge's answers file is the down-channel the drill lacked (the bin surfaced a question and
+  // then had no way to route the answer). The skill APPENDS a decision; the bin drains and routes it.
+  const dir = mkdtempSync(join(tmpdir(), 'pir-answers-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const bridge = createAgentBridge({ dir });
+
+  writeFileSync(bridge.answersPath, JSON.stringify({ task: 'T01', text: 'use json' }) + '\n', { flag: 'a' });
+  writeFileSync(bridge.answersPath, JSON.stringify({ task: 'T02', defer: true, note: 'later' }) + '\n', { flag: 'a' });
+  writeFileSync(bridge.answersPath, 'not json\n', { flag: 'a' }); // a malformed line is dropped, not guessed
+  const drained = bridge.drainAnswers();
+  assert.deepEqual(drained, [
+    { task: 'T01', text: 'use json' },
+    { task: 'T02', defer: true, note: 'later' },
+  ]);
+  assert.equal(bridge.drainAnswers().length, 0, 'draining consumes the file — a decision is routed once');
+
+  // End to end against the fakes: park T01 on a question, then drain→answer and watch it resume.
+  const { coordinator, platform } = setup(t, [{ num: 'T01' }, { num: 'T02' }], {
+    behaviors: { T01: { question: 'which output format?' } },
+  });
+  coordinator.pass(); // spawn
+  const r2 = coordinator.pass(); // T01 asks
+  assert.ok(r2.surfaces.some((s) => s.task === 'T01'), 'T01 parked with a question');
+
+  writeFileSync(bridge.answersPath, JSON.stringify({ task: 'T01', text: 'use json' }) + '\n', { flag: 'a' });
+  for (const d of bridge.drainAnswers()) coordinator.answer({ task: d.task, text: d.text });
+  assert.ok(
+    platform.sent.some((s) => s.to === workerName({ repo: REPO, plan: SLUG, task: 'T01' }) && s.msg.kind === 'answer'),
+    'the drained decision was sent down to the parked worker as an answer',
+  );
+  assert.equal(driveCollecting(coordinator).result.promoted, true, 'the answered worker resumes and the plan promotes');
+});
+
+// --- 14. P3: a `decision` message parks and surfaces, same as a question ---------------------------
+
+test('a worker `decision` message parks and surfaces like a question, and the answer resumes it (P3, T12)', (t) => {
+  // The pir-worker contract tells a worker to send `kind: question` OR `kind: decision`; the loop
+  // previously handled only question/conflict, so a real decision message was dropped. It must park.
+  const { coordinator } = setup(t, [{ num: 'T01' }, { num: 'T02' }], {
+    behaviors: { T01: { decision: 'two defensible layouts — which?' } },
+  });
+  coordinator.pass(); // spawn
+  const r2 = coordinator.pass(); // T01 raises a decision
+  const surfaced = r2.surfaces.find((s) => s.task === 'T01');
+  assert.ok(surfaced, 'the decision surfaced to the user (not silently dropped)');
+  assert.equal(surfaced.kind, 'decision');
+  assert.match(surfaced.message, /needs a decision from you/i);
+
+  coordinator.answer({ task: 'T01', text: 'layout A' });
+  assert.equal(driveCollecting(coordinator).result.promoted, true, 'the answered decision resumes and the plan promotes');
+});
+
+// --- 15. P6: no exit path orphans a spawned worker ------------------------------------------------
+
+test('teardownRun closes every live worker of the run (stop + SIGTERM), so no exit orphans one (P6, T12)', (t) => {
+  const { coordinator, platform, worktree } = setup(t, [{ num: 'T01' }, { num: 'T02' }], {
+    behaviors: { T01: { question: 'blocked on you' } },
+  });
+  const { result } = driveCollecting(coordinator); // T02 completes; T01 parks unanswered and stays live
+  assert.equal(result.reason, 'parked');
+  const parkedId = coordinator.state.tasks.T01.workerId;
+  assert.ok(platform._workers.has(parkedId), 'the parked worker is still a live session before teardown');
+
+  const { closed } = teardownRun({ platform, worktree, state: coordinator.state, repo: REPO, slug: SLUG });
+  assert.ok(closed.includes(parkedId), 'teardown reported the parked worker closed');
+  assert.ok(platform.closed.includes(parkedId), 'it was closed through the platform (stop + SIGTERM live)');
+  assert.ok(!platform._workers.has(parkedId), 'no live session of this run remains after teardown');
+});
+
+// --- 16. P4/P5: the ported bin guards (ensureMain, promotion guard, runaway breaker) ---------------
+
+test('ensureMain creates a local main at HEAD when a checkout has none, and is a no-op otherwise (P4, T12)', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'pir-nomain-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const g = (args) => gitRun(dir, args);
+  g(['init', '-b', 'side']);
+  g(['config', 'user.email', 'x@test.local']);
+  g(['config', 'user.name', 'PIR Test']);
+  g(['config', 'commit.gpgsign', 'false']);
+  writeFileSync(join(dir, 'f.txt'), 'hi');
+  g(['add', '-A']);
+  g(['commit', '-m', 'init', '--no-edit']);
+
+  assert.equal(g(['rev-parse', '--verify', '--quiet', 'refs/heads/main']).ok, false, 'a side-branch clone has no local main');
+  const res = ensureMain(dir);
+  assert.equal(res.created, true);
+  assert.equal(res.from, 'side');
+  assert.equal(g(['rev-parse', '--verify', '--quiet', 'refs/heads/main']).ok, true, 'main now exists at HEAD');
+  assert.equal(ensureMain(dir).created, false, 'a second call is a no-op — main already exists');
+});
+
+test('canPromoteHere refuses the canonical repo unless PARALLEL_ALLOW_HERE overrides (P5, T12)', () => {
+  assert.equal(canPromoteHere('plan-implement-review', {}), false, 'the canonical repo is refused by default');
+  assert.equal(canPromoteHere('plan-implement-review', { allowHere: true }), true, 'the override permits it');
+  assert.equal(canPromoteHere('pir-scratch', {}), true, 'a differently-named scratch clone is fine');
+});
+
+test('runawayVerdict tolerates a transient CEILING+1 handoff but aborts a real runaway (P5, T12)', () => {
+  assert.deepEqual(runawayVerdict({ liveCount: 2, ceiling: 2, overPasses: 5 }), { abort: false, over: 0 }, 'at/under ceiling never aborts and resets the counter');
+  assert.deepEqual(runawayVerdict({ liveCount: 3, ceiling: 2, overPasses: 0 }), { abort: false, over: 1 }, 'one over on its first pass is a review handoff, tolerated');
+  assert.equal(runawayVerdict({ liveCount: 3, ceiling: 2, overPasses: 2, overGrace: 3 }).abort, true, 'one over that persists to the grace limit aborts');
+  assert.equal(runawayVerdict({ liveCount: 5, ceiling: 2, overPasses: 0 }).abort, true, 'more than one over the ceiling aborts at once — a real runaway');
 });

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { coordinatorName, workerName, parseAgentName } from './naming.mjs';
+import { coordinatorName, workerName, parseAgentName, isWorkerOf } from './naming.mjs';
 
 test('coordinatorName builds the {repo} · {plan} form, no @ prefix (§2.8)', () => {
   assert.equal(
@@ -73,4 +73,19 @@ test('a name with too many segments is reported', () => {
 test('an empty first segment, and a non-string, are reported', () => {
   assert.equal(parseAgentName(' · plan').matches, false);
   assert.equal(parseAgentName(undefined).matches, false);
+});
+
+test('isWorkerOf keeps only this run\'s workers, dropping the coordinator and foreign agents (§2.8, T12 P5)', () => {
+  const repo = 'plan-implement-review';
+  const plan = 'parallel-pir';
+  // A worker of this run.
+  assert.equal(isWorkerOf(workerName({ repo, plan, task: 'T05' }), { repo, plan }), true);
+  // The coordinator's own session: {repo} · {plan}, no task — this is the off-by-one from the drill.
+  assert.equal(isWorkerOf(coordinatorName({ repo, plan }), { repo, plan }), false);
+  // A worker of a SIBLING plan in the same repo (shares the git-dir, so it is in the list).
+  assert.equal(isWorkerOf(workerName({ repo, plan: 'other-plan', task: 'T01' }), { repo, plan }), false);
+  // A worker of a foreign repo.
+  assert.equal(isWorkerOf(workerName({ repo: 'other-repo', plan, task: 'T01' }), { repo, plan }), false);
+  // A name that does not parse at all (e.g. a harness default like "repo / thing").
+  assert.equal(isWorkerOf('repo / thing', { repo, plan }), false);
 });

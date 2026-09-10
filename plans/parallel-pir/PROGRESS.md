@@ -21,9 +21,9 @@ After review the user revised the `you`-task model (2026-09-07): the coordinator
 hands-on worker (`pir-verify Txx`) the user drives, folded back without review, instead of surfacing
 the task bare. Touched DESIGN, T03, T05, T07, T09, T10, T11.
 **Last updated:** 2026-09-10
-**Next `pir-work` will:** implement T12 — the six coordinator fixes from the stopped T10 live drill,
-the only ready ⬜ (deps T09 ✅). T10 and T11 both now depend on T12, so it is next by construction. It
-is `auto`: a worker builds it, and the next session reviews it.
+**Next `pir-work` will:** review T12 — the six drill fixes, implemented 🔍 against the fakes. A fresh
+session checks them and marks it ✅. After that T10 and T11 both unblock (deps T09 ✅, T12 ✅); T10 is
+`you` (the live re-run), T11 is `auto`.
 
 ## Tasks
 
@@ -43,7 +43,7 @@ live steps with a hands-on worker the coordinator spawns, folded back without re
 | T07 | `pir-worker` contract skill + cross-session wiring | auto | T00 | ✅ | Reviewed clean. Wire format, same-repo `--cwd` guard, parseAgents, `text` field. resolveSameRepo also keeps the coordinator (inert; T09 drops self). 111 tests. |
 | T08 | One real worker, one trivial task, seatbelted | auto | T06, T07 | ✅ | Reviewed clean. LIVE hand-verified ✅ 2026-09-09 (one real worker, ceiling held). Feature-worktree teardown deferred to T09/T10. 121 tests. |
 | T09 | The `pir-coordinate` skill: dispatch, surface, supervise | auto | T08 | ✅ | Reviewed clean, no fix commit. 134 tests green; fakes make real git commits, so merge/reconcile/dispatch are genuinely exercised, not stubbed. Bin refusal fired live. Probed answer/defer state between passes, ceiling accounting, you-task fold-back, and the platform/worktree/bridge seams the tests miss (bridge round-trips to the loop's message shape). Live drive over real agents deferred to T10 (unverified half). |
-| T12 | Make the coordinator drivable live: six drill fixes | auto | T09 | ⬜ | From the stopped T10 drill (2026-09-10). Six shell-driver gaps: answer-injection channel, prose vs `[pir:v1]` wire format, hardcoded `main`, coordinator self-counted in ceiling, MAX_PASSES orphans workers, session name vs §2.8. Pure core held. Next in queue. |
+| T12 | Make the coordinator drivable live: six drill fixes | auto | T09 | 🔍 | Six drill fixes vs fakes, 145 tests. P2 bin sole driver; answers via a control `answers` file. P3 `[pir:v1]` header contract + prose `kind:` fallback; loop now parks `decision`. P4 `ensureMain` guard, not base-branch threading. P5 `isWorkerOf` self-filter + ported breaker/`PARALLEL_ALLOW_HERE`; self-count was reporting, not under-dispatch. P6 `teardownRun` on every exit. P1 no hello; live→T10. |
 | T10 | Full multi-worker run + kill-switch drill | you | T09, T12 | ⬜ | Hand-verified. Dangerous: full size, last. Partial drill 2026-09-10 proved spawn + first message; stopped, gaps split to T12. Scratch harness: `src/pir-t10`. |
 | T11 | `/pir-plan` + templates: `Runs` marker, honest deps, width report | auto | T04, T12 | ⬜ | Changes the shared method. Now waits on T12: do not teach the planner parallel-plan conventions before the worker/message contract T12 settles. |
 
@@ -52,8 +52,8 @@ deviation from the task doc.
 
 **A ✅ task's cell may be cut to one line** once the next task has been reviewed.
 
-**Review queue:** empty — T09 reviewed clean 2026-09-10. No task awaiting review. T12 added
-2026-09-10 from the stopped T10 drill.
+**Review queue:** T12 — implemented 🔍 2026-09-10, the six drill fixes against the fakes; awaiting a
+fresh-eyes review.
 
 ## Blocked on the user
 

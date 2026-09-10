@@ -10,9 +10,14 @@ worker builds or reviews one task in its own worktree, and you are the only one 
 each worker does. This is the parallel mode of DESIGN §2; read `plans/{slug}/DESIGN.md §2.1–§2.9`
 for the why. Your job is dispatch, supervision, and keeping the user in every decision.
 
-The deterministic machine lives in `src/shell/coordinate.mjs` (`startCoordinator`, driven by
-`loop.mjs`). You run it; you do the two things it cannot — **talk to the user in plain English**, and
-**send/receive cross-session messages** (SendMessage is your tool, not a Node call).
+The deterministic machine lives in `src/shell/coordinate.mjs`. **You run it as a long-running
+program** — `PARALLEL_LIVE=1 node src/shell/coordinate.mjs {slug}` — and it drives the passes on a
+timer: spawning workers, handing finished work to fresh reviewers, merging one task at a time,
+promoting at the end, and closing every worker on any exit so none is orphaned. Your job is the three
+things a Node process cannot do: **talk to the user in plain English**, **carry cross-session messages
+across a file bridge** (SendMessage is your tool, not a Node call), and **hand the user's decisions
+back down** to the bin. You do not drive `pass()` yourself turn by turn — the bin does; you feed and
+read its control files (below).
 
 ## First: the plan must be reviewed
 
@@ -45,46 +50,52 @@ an unreviewed plan even if asked to "just try it" — say what the risk is and l
 
 ## The loop you run
 
-Each turn:
+Start the bin once and leave it running. Then, while it runs, on every turn:
 
-1. **Run one pass.** The controller (`startCoordinator(...).pass()`) gathers the state, decides, and
-   executes: it spawns ready workers, hands finished work to fresh reviewers (closing the builder),
-   merges one finished task at a time into the plan branch, closes finished and dead workers, and —
-   when every task is done — runs the tests and promotes the plan to the user's main copy.
-2. **Report progress to the user.** For each task that reached ✅ this pass, tell the user in one plain
-   line. If the ceiling is full with work waiting, say so — the run is throttled, not stuck.
-3. **Surface every decision, one at a time.** For each surfaced question / conflict / red build, put it
-   to the user in plain English (the controller already phrases it; keep it plain). The user owns the
-   decision. Ask one thing at a time.
-4. **Route each answer straight down.** When the user answers, call `answer({ task, text })` — it sends
-   the answer to that one worker immediately, and the worker resumes on the next pass. If the user
-   defers a decision indefinitely, call `defer({ task })`: it marks that task blocked (⛔) so its state
-   survives a restart and its dependents wait, and frees the slot.
-5. **Point the user at hands-on (`you`) tasks.** A `you` task (a spike or a hand-verification drill) is
-   spawned as a hands-on worker, not an autonomous builder. Tell the user which worker to go and drive
-   (`youToDrive` gives its name). The user runs the live steps with that worker; when it reports done,
-   the controller merges it and marks it ✅ — there is no review phase for a `you` task.
+1. **Report progress to the user.** For each task the bin prints as reaching ✅, tell the user in one
+   plain line. If it prints "ceiling full", say so — the run is throttled, not stuck.
+2. **Surface every decision, one at a time.** For each `DECISION NEEDED` line the bin prints (a
+   question, a decision, a conflict, a red build), put it to the user in plain English (the bin
+   already phrases it; keep it plain). The user owns the decision. Ask one thing at a time.
+3. **Route each answer back down.** When the user answers, **append one JSON line to the answers file**
+   `plans/{slug}/.parallel/control/answers`: `{"task":"T05","text":"<the decision, in the worker's
+   terms>"}`. The bin drains it on its next pass and sends it to that one worker. If the user defers a
+   decision indefinitely, append `{"task":"T05","defer":true}` instead — the bin marks that task
+   blocked (⛔) so its state survives a restart and its dependents wait, and frees the slot.
+4. **Point the user at hands-on (`you`) tasks.** A `you` task (a spike or a hand-verification drill) is
+   spawned as a hands-on worker, not an autonomous builder. The bin prints which worker to go and
+   drive; relay its name to the user. The user runs the live steps with that worker; when it reports
+   done, the bin merges it and marks it ✅ — there is no review phase for a `you` task.
 
-Keep going until the plan is fully ✅ and promoted, or the kill switch has stopped everything. Then
-report the outcome and stop.
+The bin ends the run itself: it promotes when the plan is fully ✅, stops on the kill switch, stops
+when there is nothing left to do, and — on any of those, a crash, or a Ctrl-C — closes every worker it
+spawned so none is left running. When it exits, report the outcome to the user and stop.
 
-## Sending and receiving worker messages is YOUR job
+## Carrying messages across the file bridge is YOUR job
 
 A worker talks to you with SendMessage; you talk back with SendMessage. A Node process cannot do
-either (there is no `claude` subcommand that sends a cross-session message — it is an agent tool). So:
+either (there is no `claude` subcommand that sends a cross-session message — it is an agent tool). So
+the bin exchanges messages with you through three control files under `plans/{slug}/.parallel/control/`:
 
-- **When a worker messages you** (a question, a conflict, "implemented", "done"), hand it to the
-  controller so the next pass sees it. The bin bridges this through an **inbox file**
-  (`plans/{slug}/.parallel/control/inbox`): append the worker's message there as one JSON line
-  `{"from":"<worker name>","text":"<the message it sent>"}`.
-- **When you answer a worker**, the controller writes the outgoing message to an **outbox file**
-  (`…/control/outbox`). Read it and perform the actual SendMessage to that worker, addressed by its
-  name. (Equivalently, SendMessage the answer yourself — the controller's `answer` only formats and
-  addresses it.)
+- **A worker messages you** (a question, a decision, a conflict, "implemented", "done"). Append it to
+  the **inbox** file as one JSON line `{"from":"<worker name>","text":"<the exact message it sent>"}`.
+  The bin reads the inbox each pass. Workers are taught to prefix every message with a
+  `[pir:v1 kind=… task=…]` header (the `pir-worker` contract) so the bin routes it correctly; pass the
+  worker's message through verbatim — do not rewrite it.
+- **The bin answers a worker.** It writes the outgoing message to the **outbox** file. Read it and
+  perform the actual SendMessage to that worker, addressed by its name.
+- **The user decides.** You write to the **answers** file (step 3 above); the bin routes it down.
 
 This bridge is why the live drive is verified with the user (T10): the message wiring only exists once
 real sessions are talking. Against the fakes in the tests, the platform is its own bus and no bridge
 is needed.
+
+**One thing the drill taught about addressing (T10, 2026-09-10):** a worker's first message reached the
+coordinator even though this skill session's own name (set by the harness) is not the
+`{repo} · {plan}` name workers address — the message rode the worker's return channel. So inbound has
+worked in practice, but its reliability across many workers is a live behaviour only T10's fuller run
+confirms. If inbound ever proves flaky, the ready remedy is to SendMessage each freshly spawned worker
+a one-line hello first, which turns every inbound message into a reply on an already-open channel.
 
 ## Naming and finding your workers (DESIGN §2.8)
 
@@ -113,6 +124,10 @@ other plans are not yours — ignore them.
   seatbelted to the scratch plan at ceiling 1 (`PARALLEL_MAX_WORKERS=1`), and the full multi-worker
   drive is hand-verified with the user in T10. Never raise the ceiling or drop the seatbelt to go
   faster before then.
+- **The live bin refuses to run inside the canonical `plan-implement-review` checkout** (it would open
+  and merge the feature branch into that real main), unless `PARALLEL_ALLOW_HERE=1` marks a same-named
+  scratch clone. In a scratch clone with no local `main`, it creates one at HEAD so the feature branch
+  has a base. A real runaway (workers over the ceiling) trips a breaker that closes every worker.
 
 ## Restart
 

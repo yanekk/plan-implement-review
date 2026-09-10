@@ -259,6 +259,28 @@ test('a worker whose spawn id differs from its listed id is tracked by name, not
   assert.ok(!closed.includes('BOGUS-1'), 'the bogus spawn id was never used to close');
 });
 
+test('the coordinator does not count its OWN session (or a foreign agent) toward the ceiling (T12 P5)', (t) => {
+  // The drill logged `ceiling full: 2/1 busy` with a single real worker, because the coordinator's own
+  // `claude` session shares the repo git-dir and appeared in the list. Here the list carries the
+  // coordinator ({repo} · {slug}, no task) and a foreign agent alongside one real worker; liveAfter
+  // must be 1, and neither non-worker may be adopted or closed.
+  const worktree = createFakeWorktree({ progress: progressDoc([{ num: 'T01' }, { num: 'T02' }]), slug: SLUG });
+  t.after(() => worktree.cleanup());
+  const fake = createFakePlatform({});
+  const nonWorkers = [
+    { id: 'COORD', name: `${REPO} · ${SLUG}`, cwd: '/c', status: 'busy', state: 'working', live: true },
+    { id: 'FOREIGN', name: 'other-repo · other-plan · T09', cwd: '/f', status: 'busy', state: 'working', live: true },
+  ];
+  const platform = { ...fake, list: () => [...fake.list(), ...nonWorkers] };
+  const base = { platform, worktree, repo: REPO, slug: SLUG, maxWorkers: 1 };
+  const state = createRunState();
+
+  const r = runPass({ ...base, state }); // ceiling 1: exactly one worker should spawn, coordinator uncounted
+  assert.equal(r.liveAfter, 1, 'one real worker live; the coordinator and the foreign agent are not counted');
+  assert.equal(r.actions.filter((a) => a.type === 'spawn').length, 1, 'the free slot was used (not eaten by the self-count)');
+  assert.ok(!fake.closed.includes('COORD') && !fake.closed.includes('FOREIGN'), 'neither non-worker was closed');
+});
+
 test('dry run stays isolated: the scratch repo is a temp dir, never the real project', (t) => {
   const { worktree, base } = setup(t, chain(2));
   assert.ok(worktree.dir.startsWith(tmpdir()), 'the scratch repo lives under the temp dir');

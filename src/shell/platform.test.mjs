@@ -83,6 +83,44 @@ test('a body with no header is read as a plain message, task from the sender nam
   assert.equal(back.text, 'just a note from a human');
 });
 
+// --- P3: a REAL worker's message drives the state machine (T12) --------------------------------
+//
+// The T10 live drill's worker did NOT send the wire header — it wrote natural language with an
+// explicit "(kind: question)" marker, which the old parseMessage read as kind `message` and the loop
+// then dropped. These assert the two shapes a worker following the updated pir-worker contract sends:
+// the header (the contract) and the prose safety net (a worker that forgets it).
+
+test('the exact header shape pir-worker is taught to emit parses to the right kind and task', () => {
+  const from = 'plan-implement-review · parallel-pir · T01';
+  // The literal string the worker sends: the [pir:v1 …] line, then a multi-line question body.
+  const sent =
+    '[pir:v1 kind=question task=T01]\n' +
+    'The greeting wording is unspecified. Options: (a) "Hello", (b) "Hi there".\n' +
+    'Recommend (a). If you say nothing I will use (a).';
+  const back = parseMessage({ from, text: sent });
+  assert.equal(back.kind, 'question');
+  assert.equal(back.task, 'T01');
+  assert.match(back.text, /greeting wording is unspecified/);
+});
+
+test('a worker that forgets the header but names its kind in prose still parses (the drill shape)', () => {
+  const from = 'pir-t10 · scratch · T01';
+  // Verbatim-shape from the drill handoff: prose with an explicit "(kind: question)" marker.
+  const drillShape = 'T01 question (kind: question) — the greeting wording is unspecified. I recommend "Hello".';
+  const back = parseMessage({ from, text: drillShape });
+  assert.equal(back.kind, 'question', 'the explicit kind marker is honoured');
+  assert.equal(back.task, 'T01', 'the T-id in the text (or the sender name) gives the task');
+  assert.equal(back.text, drillShape, 'the whole prose is kept as the body');
+});
+
+test('a "kind: done" prose signal parses to done; a bare word "done" in a note does not', () => {
+  const from = 'repo · plan · T02';
+  assert.equal(parseMessage({ from, text: 'kind=done task=T02 all integrated' }).kind, 'done');
+  // A human note that merely contains the word "done" must stay a plain message, not fire a state change.
+  const note = parseMessage({ from, text: 'I think this one is basically done, nice work' });
+  assert.equal(note.kind, 'message', 'no explicit kind marker → plain message, never guessed');
+});
+
 // --- same-repo resolution ---------------------------------------------------------------------
 
 test('two worktrees of one repo resolve same-repo; a different repo does not', (t) => {
