@@ -530,6 +530,83 @@ Three layers, and what each can and cannot prove:
   worker spawns, receives a message and acts on it, a fresh session reviews, a worker is closed
   cleanly, and a real branch merges to `main`. None of the automated layers can reach this, so
   it is in the table at §5.1 and verified by hand, small first.
+- **The live-scenario harness (Phase 5, §4.1)** turns that hand verification into repeatable,
+  data-driven runs: it drives a real coordinator over real workers through a named scenario and
+  captures the flow, the agent-status timeline and every transcript, then checks the run against
+  declared facts. It still needs a person to launch (real paid agents), but the verdict is data,
+  not recollection.
+
+### 4.1 The live-scenario test harness (Phase 5)
+
+The Phase 3 hand-verifications each proved a real behaviour once, by a person watching and
+reporting. That is not repeatable and not data-driven: the record is a sentence in `FINDINGS.md`,
+not the run itself. The harness fixes both — it runs a real coordinator over **real Claude
+workers** through a scenario, captures everything the run produced, and checks it against the
+facts that scenario must show. Decided with the user 2026-09-10 (Phase 5). It **folds in T10 and
+T13's live half**: the drill and the comms proof become two of its scenarios, run with data
+rather than by eye.
+
+**All workers are real (PM decision 2026-09-10).** A scenario proves nothing about the
+`pir-worker` contract unless a real model is the one following it, so the harness spawns real
+`claude --bg` workers and drives them through hand-crafted fixture task docs designed to force
+each path. The accepted cost: a live run is slower and a real model may occasionally not do
+exactly what a fixture needs, so a scenario may need a re-run. Fixtures are engineered to be as
+deterministic as a real worker allows (a merge conflict comes from two tasks that edit the same
+line; a human decision comes from a task doc that deliberately leaves one thing unspecified, the
+way the stopped drill's T01 greeting-wording question arose on its own).
+
+**The capture layer — three durable sources, all confirmed on this machine 2026-09-10.**
+
+- **Execution flow** is already written by the coordinator: `plans/{slug}/.parallel/control/log`,
+  one ISO-timestamped line per `record()` action (`open-feature`, `spawn`, `hello`, `await-idle`,
+  `review`, `merge`, `close`, `surface`, `promote`, `teardown`, `ceiling full`). Nothing new is
+  built to get it; the harness reads it.
+- **The agent-status timeline** must be **sampled during the run** — this is the one thing that is
+  not otherwise recorded. `claude agents --json` reports each session's `id, name, status`
+  (`idle`/`busy`), `state` (`working`/`done`/`blocked`/`stopped`), `pid`, `sessionId`, `startedAt`,
+  `cwd`, `kind`. `status` and `pid` are present **only while the session is live**: once it ends,
+  `--all` still lists it but with only its final `state`, no `status`. So proving the idle-gated
+  close (a worker was `busy`, went `idle`, and only then was closed) needs periodic snapshots taken
+  while the workers live; a poller appends `{ts, agents:[…]}` to the bundle every couple of seconds.
+- **The transcripts** are already on disk and **survive both the worker's kill and its worktree's
+  removal**, because they live under `~/.claude`, not in the worktree:
+  `~/.claude/projects/<cwd-with-every-'/'-and-'.'-replaced-by-'-'>/<sessionId>.jsonl`. The
+  `sessionId` from `claude agents --json` is the exact filename, so the agent-status timeline maps
+  each session to its transcript. Each line is a JSON event; a `SendMessage` appears as an assistant
+  `tool_use` carrying `{to, summary, message}` and an inbound message as a `user`-role entry, so the
+  by-name addressing and the hello are readable verbatim. (`claude logs <id>` prints only recent
+  terminal output, not the whole conversation — the JSONL is the record.) This resolves the
+  FINDINGS 2026-09-09 worry that a killed worker's transcript could not be inspected: the prior
+  drill's worker transcript was read back in full 2026-09-10, and it already shows the worker
+  addressing the coordinator at both the convention name and the harness name.
+
+A **bundle** is one run's capture: the flow log, the agent-status timeline, a snapshot of every
+session's transcript, and the scratch repo's `git log`. It is self-contained and dated, so a run
+can be re-examined long after its workers and worktrees are gone.
+
+**The assertion layer.** A scenario declares the facts it must show as pure predicates over a
+bundle, and the harness reports each pass/fail against the captured data. Examples: "exactly one
+`hello` per spawn, addressed by the worker name"; "no `close` of a finished worker precedes an
+`idle` observation of it in the timeline"; "a `question` was surfaced and the answer reached the
+worker before it resumed"; "`main` gained exactly one commit — the promotion — and no task branch
+merged to it directly". The predicates are unit-testable against canned bundles with no live agent;
+only running the scenario needs real workers.
+
+**The scenarios (fixtures).** Single task (spawn → hello → implement → fresh review → merge →
+promote → idle-gated close); N parallel tasks (concurrency, the ceiling, per-worker naming);
+implement→review-queue handoff (a task reaches `🔍` and a fresh reviewer takes over while others
+build); a clean merge (two tasks on different files, serialized into the feature branch); a merge
+conflict (two tasks edit the same line — the second merge conflicts, the coordinator surfaces it
+and parks, no bad merge lands); and a human decision (an underspecified task doc makes a real
+worker ask, the coordinator surfaces it, the user answers, the answer is delivered down and the
+worker resumes). The kill switch is drilled inside the N-parallel scenario: `HALT` mid-run, then
+assert every worker was SIGTERMed, nothing was promoted, and `main` is untouched.
+
+**Seatbelts (§5.2 carries the row).** Every scenario runs on a scratch plan in a scratch repo, at
+the lowest ceiling the scenario needs, with the kill switch wired and a per-scenario wall-clock
+timeout that auto-touches `HALT` so a hung real worker cannot run — or cost — unboundedly. Because
+the runs spawn real paid agents, the harness's live runner is a `you` task launched by the user,
+never started unattended by a session (§5.2, the standing rule).
 
 ---
 
@@ -593,6 +670,7 @@ the user, one at a time, never mid-task.
 | Scratch plan + scratch repo | used for T00, T08, T10 | The dangerous operations run against a throwaway plan and repo, never the real project |
 | Worker ceiling = 4 | always on | Bounds how many real agents can exist at once |
 | Kill-switch flag | always available | One file halts all dispatch and delivery and ends every worker (SIGTERM) |
+| Harness per-scenario timeout | on for every live-harness run (§4.1) | A wall-clock cap that auto-touches `HALT`, so a hung real worker in a scenario cannot run or cost unboundedly. Each scenario also fixes its own low ceiling. |
 
 **Never ask the user to run the unbounded version to find something out, and never run it
 yourself.** No spike or task spawns real long-running paid agents against real branches. The
@@ -734,6 +812,22 @@ minimum, kill switch wired.
   FINDINGS 2026-09-09 caught; a dead worker and the kill switch still close at once. The automated
   halves are proven against the fakes; the by-name delivery and the idle timing are the live half
   T13 hands to the user, de-risking T10.
+
+- **A reusable, data-driven live-scenario test harness, over real workers (Phase 5).** Decided with
+  the user 2026-09-10, in place of the one-off manual drills. The design is §4.1. Two choices were
+  the user's. (1) **All workers are real** — a scenario proves nothing about the `pir-worker`
+  contract unless a real model follows it, so the harness spawns real `claude --bg` workers on
+  fixture task docs engineered to force each path; the accepted cost is a slower run that may need a
+  re-run. Scripted stubs were declined for that reason. (2) **The harness folds in T10 and T13's
+  live half** rather than running alongside them: the full multi-worker + kill-switch drill (T10)
+  becomes its N-parallel scenario, and T13's live comms proof becomes its single-task scenario, so
+  there is one data-driven path, not two manual ones and a duplicate. The capture rests on three
+  sources confirmed on this machine 2026-09-10 — the coordinator's existing flow log, a sampled
+  `claude agents --json` status timeline (status is live-only, so it must be sampled during the
+  run), and the on-disk session transcripts under `~/.claude/projects/…/<sessionId>.jsonl` (which
+  survive a worker's kill and its worktree's removal). The runner is a `you` task because it spawns
+  real paid agents; the capture, assertion and fixture layers are `auto` and unit-tested with no
+  live agent.
 
 ---
 

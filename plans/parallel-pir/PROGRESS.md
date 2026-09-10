@@ -13,18 +13,16 @@ cell also fixes the over-budget cell they walk past.**
 **Plan reviewed:** 2026-09-07 — 4 fixed, 3 decided with the user
 
 **Status:** Plan written, re-scoped onto Claude Code's own primitives, and reviewed before build.
-The `Runs` column marks each task `auto` (a worker builds it) or `you` (a person runs it). 14
-tasks, 5 phases (T12 added 2026-09-10 from the stopped T10 drill; T13 added 2026-09-10 from the gastown comparison to prove the comms protocol before T10). Review fixed the colourless test command, a signature and a param name, and
-gitignored the control dir; decided the main-branch carve-out (coordinator in its own worktree),
-closing the implement session at review, and how a `you` task is marked done.
-After review the user revised the `you`-task model (2026-09-07): the coordinator now spawns a
-hands-on worker (`pir-verify Txx`) the user drives, folded back without review, instead of surfacing
-the task bare. Touched DESIGN, T03, T05, T07, T09, T10, T11.
+The `Runs` column marks each task `auto` (a worker builds it) or `you` (a person runs it). 18 tasks,
+6 phases (0–5). T12/T13 added 2026-09-10 from the stopped T10 drill and the gastown comparison. Phase
+5 (T14–T17, the live-scenario test harness) added 2026-09-10 by PM decision: real workers, data-driven
+capture, folding in T10 and T13's live half. Phase 5 was not in the 2026-09-07 plan review (it postdates
+it); it is validated per task during build, since `/pir-review-plan` does not re-run on a building plan.
 **Last updated:** 2026-09-10
-**Next `pir-work` will:** with T13 reviewed clean, no task awaits review. T13's LIVE half (by-name
-delivery + idle timing) is handed to the user — the command is under "Blocked on the user". Once it
-folds into FINDINGS, T10 (the full live drill, `you`) and T11 (teach the planner, `auto`) are both
-unblocked; T10 is next by number.
+**Next `pir-work` will:** two `⬜` tasks are ready (deps met): T11 (teach the planner) and T14 (harness
+capture layer). By number, `pir-work` takes T11 next. If you want the harness first, say so and it
+takes T14 (they are independent — DESIGN §4.1; Phase 4 and Phase 5 can go in either order). T10 is no
+longer next — it is folded into T17.
 
 ## Tasks
 
@@ -45,9 +43,13 @@ live steps with a hands-on worker the coordinator spawns, folded back without re
 | T08 | One real worker, one trivial task, seatbelted | auto | T06, T07 | ✅ | Reviewed clean. LIVE hand-verified ✅ 2026-09-09 (one real worker, ceiling held). Feature-worktree teardown deferred to T09/T10. 121 tests. |
 | T09 | The `pir-coordinate` skill: dispatch, surface, supervise | auto | T08 | ✅ | Reviewed clean. The coordinator skill (dispatch, surface, supervise); fakes make real git commits so merge/dispatch are genuinely exercised; live drive over real agents deferred to T10. 134 tests. |
 | T12 | Make the coordinator drivable live: six drill fixes | auto | T09 | ✅ | Reviewed clean. Six drill fixes (self-filter through `liveAfter`, runaway grace, `canPromoteHere`, `ensureMain`, `teardownRun`, `decision` parked + prose `kind:` fallback), all tested. 145 tests. Live drive is T10's. |
-| T13 | Prove comms protocol: by-name addressing, idle-gated close | auto | T12 | ✅ | Reviewed clean, no fix. Traced all three idle-gate tests against the fake. Hello wired through the real bridge (encodeMessage→outbox); idle gate reads `status` from the live list and only defers, never forces; kill switch and dead worker bypass it structurally (dead closes in 3a before the gate). 150 tests. LIVE half (by-name delivery, idle timing) UNVERIFIED — command under "Blocked on the user". |
-| T10 | Full multi-worker run + kill-switch drill | you | T09, T12, T13 | ⬜ | Hand-verified. Dangerous: full size, last. Partial drill 2026-09-10 proved spawn + first message; stopped, gaps split to T12, comms protocol to T13. Scratch harness: `src/pir-t10`. |
-| T11 | `/pir-plan` + templates: `Runs` marker, honest deps, width report | auto | T04, T12 | ⬜ | Changes the shared method. Now waits on T12: do not teach the planner parallel-plan conventions before the worker/message contract T12 settles. |
+| T13 | Prove comms protocol: by-name addressing, idle-gated close | auto | T12 | ✅ | Reviewed clean, no fix. Hello wired through the real bridge (encodeMessage→outbox); idle gate reads `status` and only defers; kill switch and dead worker bypass it. 150 tests. LIVE half (by-name delivery, idle timing) folded into T17's single-task scenario 2026-09-10 — no longer a manual check. |
+| T11 | `/pir-plan` + templates: `Runs` marker, honest deps, width report | auto | T04, T12 | ⬜ | Changes the shared method. Waits on T12: do not teach the planner parallel-plan conventions before the worker/message contract T12 settles. Ready now (deps ✅). |
+| T14 | Harness capture layer: flow, agent-status timeline, transcript bundle | auto | T09 | ⬜ | Phase 5. Read-only observer; must not touch the reviewed coordinator. Three sources in DESIGN §4.1: control log, sampled `agents --json` timeline (status is live-only), transcripts at `~/.claude/projects/…/<sessionId>.jsonl`. Provable against canned data. Ready now. |
+| T15 | Harness assertions + scenario spec: declared facts over a bundle | auto | T14 | ⬜ | Phase 5. Pure predicates over a bundle (hello-per-spawn, no-close-before-idle, by-name, question round-trip, one-merge-to-main, kill-switch). Each fact tested with a passing and a failing canned bundle. |
+| T16 | Harness fixtures: scratch plans that force each path with real workers | auto | T15 | ⬜ | Phase 5. Six fixtures (single, parallel+kill-switch, review-queue, clean-merge, merge-conflict, human-decision), each a scratch plan + scenario spec. This task proves fixture setup only; running is T17. |
+| T17 | Harness live runner + first real scenario runs | you | T14, T15, T16 | ⬜ | Phase 5. Build half `auto`/tested against fakes; live runs spawn real paid agents, so `you`, seatbelted (scratch, low ceiling, kill switch, timeout auto-HALT). Folds in T10 (parallel scenario) and T13's live half (single scenario). |
+| T10 | Full multi-worker run + kill-switch drill — folded into T17 | you | T17 | ⬜ | Folded into T17 (2026-09-10): the full drill is now T17's parallel + kill-switch scenario, run with captured data. Do not run standalone. Closes ✅ when T17's parallel scenario passes. Partial drill 2026-09-10 proved spawn + first message. Scratch: `src/pir-t10`. |
 
 A Notes cell holds what was built or what the review found, the test count, and one line per
 deviation from the task doc.
@@ -58,29 +60,14 @@ deviation from the task doc.
 
 ## Blocked on the user
 
-**Nothing blocked.** The T10 live drill ran 2026-09-10 (ceiling 1, user-driven) and was stopped
-deliberately after the first worker round-trip: spawn and the first worker→coordinator message both
-worked. Six shell-driver gaps were split to T12; the comms-protocol proof (by-name addressing,
-idle-gated close) was split to T13. Order: review T12, build/review T13, then the full T10 drill.
+**Nothing blocked.** The next live work is the Phase 5 harness, and its live half is T17 — after the
+`auto` build of T14–T16. The T13 manual command that stood here 2026-09-10 is **withdrawn**: the
+comms proof is now T17's single-task scenario, run with captured data instead of by eye. T13's
+automated half stays reviewed and ✅.
 
-**T13 LIVE half (person-run — the code review is done, this is the outstanding hands-on proof).** The
-build and its fakes are green and the code reviewed clean; the by-name delivery and the idle-close
-timing need real agents. On the scratch harness `src/pir-t10`, launch the coordinator SESSION under its
-name so a worker can address it, ceiling 1, kill switch wired:
-
-```
-cd /Users/jan.krolikowski/src/pir-t10
-claude -n "pir-t10 · scratch"          # the coordinator session must carry this exact name (§2.8)
-  # then inside it:  /pir-coordinate scratch
-  # the skill runs:  PARALLEL_LIVE=1 PARALLEL_MAX_WORKERS=1 PARALLEL_ALLOW_HERE=1 node src/shell/coordinate.mjs scratch
-```
-
-Expect: a real worker's message reaches the coordinator addressed as `pir-t10 · scratch`; the
-coordinator's hello reaches the worker; a worker reporting done is closed only after the agent list
-shows it idle. Tell me: did the by-name message arrive, and was any worker SIGTERMed mid-turn. Record in
-FINDINGS with the date. Kill switch: `touch plans/scratch/.parallel/control/HALT`.
-
-Carry (not blocking): the parallel skills are NOT installed in `~/.claude/skills/` (only the classic set
-is), so a fresh coordinator session needs them local — `src/pir-t10` has all skills in its
-`.claude/skills/`; after close a worker lingers as `stopped` (needs `claude rm`); the feature worktree
-is not removed after promote. Person-run live halves: T13 (comms proof) and T10 (full drill).
+**Carry into the harness (T16/T17), from the stopped drill.** The parallel skills are NOT installed in
+`~/.claude/skills/` (only the classic set is), so a spawned worker needs them local — a fixture must
+carry them (`src/pir-t10` has all skills in its `.claude/skills/`). After close a worker lingers as
+`stopped` (needs `claude rm`). The feature worktree is not removed after promote. When T17 runs live,
+its scenarios are seatbelted: scratch plan, per-scenario low ceiling, kill switch
+(`touch plans/{scratch}/.parallel/control/HALT`), and a wall-clock timeout that auto-touches HALT.

@@ -12,6 +12,7 @@ Legend: 🐞 defect found · ✅ verified by hand with the user · 📌 worth kn
 
 | Date | | Finding |
 |---|---|---|
+| 2026-09-10 | 📌 | Phase 5 capture sources: flow = `control/log`; agent status via `claude agents --json` (status/pid live-only; `--all` keeps finished sessions, no status); transcripts at `~/.claude/projects/<cwd, / and . → dash>/<sessionId>.jsonl`, surviving kill and worktree removal; `claude logs <id>` is recent output only. |
 | 2026-09-10 | 📌 | T13 review: clean. Idle gate only defers a finished worker's close, never forces. Live caveat: the hello is sent the same pass as spawn, so it may reach a worker not yet listed; the by-name path stands alone. |
 | 2026-09-10 | 🐞 | T12: the loop dropped `kind: decision` (parked only question/conflict), so a worker decision per the pir-worker contract was silently ignored. Fixed to park question\|decision\|conflict. `parseMessage` now also reads a `kind:` marker in prose, since a real worker sends prose, not the `[pir:v1]` header. |
 | 2026-09-10 | 📌 | T12 closed the six drill gaps vs fakes: the `[pir:v1 …]` header is the worker wire contract; the bin is the sole driver and the skill routes user answers via a control `answers` file; ported the runaway breaker, `PARALLEL_ALLOW_HERE` guard, and `ensureMain` (local main at HEAD). Live halves fold into T10. |
