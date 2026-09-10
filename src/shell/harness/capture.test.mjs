@@ -222,6 +222,54 @@ test('snapshots each session’s transcript; a present one is copied, a missing 
   }
 });
 
+// --- a worker name that recurs across sessions (implementer then its fresh reviewer, §2.8) -------
+
+test('one worker name across two sessions keeps both transcripts — key and file disambiguated', () => {
+  const ws = workspace();
+  try {
+    // An implementer and its later fresh reviewer share the worker name (§2.8) but run at different
+    // times with different sessionIds. Both transcripts exist on disk under the same escaped cwd.
+    const escaped = escapeProjectPath(ws.repo);
+    mkdirSync(join(ws.projects, escaped), { recursive: true });
+    writeFileSync(join(ws.projects, escaped, 's1.jsonl'), '{"impl":true}\n');
+    writeFileSync(join(ws.projects, escaped, 's2.jsonl'), '{"review":true}\n');
+
+    // Two ticks: the implementer session, then (after it ends) the reviewer session, same name.
+    const runClaude = claudeSpy({
+      ticks: [
+        [agent({ name: W1, sessionId: 's1', cwd: ws.repo })],
+        [agent({ name: W1, sessionId: 's2', cwd: ws.repo })],
+      ],
+    });
+    const cap = createCapture({
+      repo: REPO,
+      slug: SLUG,
+      dir: ws.bundle,
+      controlDir: ws.control,
+      runClaude,
+      runGit: () => ({ ok: true, stdout: '' }),
+      projectsDir: ws.projects,
+    });
+    cap.tick();
+    cap.tick();
+    const bundle = cap.seal();
+
+    // Both sessions are in the manifest: the first keyed by name, the second disambiguated by session.
+    const first = bundle.manifest[W1];
+    const second = bundle.manifest[`${W1} (s2)`];
+    assert.ok(first, 'the first session is keyed by the bare worker name');
+    assert.ok(second, 'the second session under the same name is keyed name (sessionId), not lost');
+    assert.equal(first.sessionId, 's1');
+    assert.equal(second.sessionId, 's2');
+    // Neither transcript file overwrote the other — distinct copiedTo paths, distinct contents.
+    assert.notEqual(first.copiedTo, second.copiedTo);
+    assert.equal(readFileSync(join(ws.bundle, first.copiedTo), 'utf8'), '{"impl":true}\n');
+    assert.equal(readFileSync(join(ws.bundle, second.copiedTo), 'utf8'), '{"review":true}\n');
+  } finally {
+    ws.cleanup();
+  }
+});
+
 // --- the whole sealed bundle reads back, all fields present (DESIGN §4.1 "Done when") ------------
 
 test('loadBundle reads a sealed bundle back with every field present', () => {
