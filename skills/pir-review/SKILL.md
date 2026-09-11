@@ -42,6 +42,22 @@ summary), then check all four:
 Check the deviations the implementing session recorded in `PROGRESS.md` — each one is a
 decision that has not been reviewed yet. And check for deviations it did *not* record.
 
+## A suspected defect is a hypothesis until something outside the code agrees
+
+Reading the diff is how you find a defect; it is not how you confirm one. The diff is the
+same evidence that produced the code — reason from it alone and a wrong-but-plausible reading
+confirms itself. Before you fix, get one fact the diff did not give you: run it and watch it
+fail, write the failing test first and see it go red, reproduce the condition with a real
+input, check the actual state on disk. That out-of-band fact is the fourth check's teeth.
+
+If the only channel that could settle it is one this session cannot reach — a screen, a
+device, a real account — that is not licence to decide from the code anyway. It is the
+hands-on-the-machine handover: ask, and wait. See `CLAUDE.md`.
+
+**A fix that went in on a reproduction says so in the cell** — "reproduced by <the channel>,
+fixed, test locks it." A defect confirmed by a channel that did not raise it is a review that
+found something real; one confirmed only by re-reading is a guess with a commit behind it.
+
 ## Fix what you find
 
 **In a separate commit from the review verdict.** A defect recorded and left is a defect
