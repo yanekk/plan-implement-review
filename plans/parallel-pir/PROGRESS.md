@@ -19,9 +19,10 @@ The `Runs` column marks each task `auto` (a worker builds it) or `you` (a person
 capture, folding in T10 and T13's live half. Phase 5 was not in the 2026-09-07 plan review (it postdates
 it); it is validated per task during build, since `/pir-review-plan` does not re-run on a building plan.
 **Last updated:** 2026-09-11
-**Next `pir-work` will:** review T17 (harness live runner). Its build half (`auto`) is implemented and
-tested against fakes — 242 tests. The live scenario runs (`you`, real paid agents) are still unverified;
-they run after this wiring is reviewed, seatbelted (scratch, low ceiling, kill switch, timeout auto-HALT).
+**Next `pir-work` will:** report that T17 is blocked on the user and stop. The build half is reviewed
+clean (243 tests). What remains is the `you` live scenario runs — real paid agents, launched by the user,
+seatbelted (scratch, low ceiling, kill switch, timeout auto-HALT). They close T17 and T10 and retire
+T13's live half. `/pir-work` cannot advance until the user runs them (T10 depends on T17).
 
 ## Tasks
 
@@ -46,8 +47,8 @@ live steps with a hands-on worker the coordinator spawns, folded back without re
 | T11 | `/pir-plan` + templates: `Runs` marker, honest deps, width report | auto | T04, T12 | ✅ | Reviewed clean. Planner Stage 6, three templates and both CLAUDE.md spots carry the Runs marker, honest deps and width report; golden tests read real templates through the parser. 153 tests. |
 | T14 | Harness capture layer: flow, agent-status timeline, transcript bundle | auto | T09 | ✅ | Reviewed clean; read-only capture, seal reads the real control/log and flow format. 164 tests. |
 | T15 | Harness assertions + scenario spec: declared facts over a bundle | auto | T14 | ✅ | Reviewed clean. 8 facts pure; loadTranscripts the only I/O (src/shell, outside the core boundary scan). Git-log needles verified against worktree.mjs. 195 tests. |
-| T16 | Harness fixtures: scratch plans that force each path with real workers | auto | T15 | ✅ | Reviewed. merge-conflict forced at ceiling 2 (both tasks cut from base) + task-agnostic conflictSurfacedAndParked; loop now records worker-raised surfaces to the flow log so the conflict/question facts can see them. 230 tests. |
-| T17 | Harness live runner + first real scenario runs | you | T14, T15, T16 | 🔍 | Build half done: `src/shell/harness/run.mjs` + tests. install→launch coordinator (`{repo} · {plan}`, `--bg -n`)→capture→wait (promote/halt/stall)→seal→checkScenario, all injected/tested with no agent; timeout auto-HALTs; teardown reuses teardownRun + closes coordinator. 242 tests. LIVE scenario runs (`you`, real paid agents) unverified — run after review. |
+| T16 | Harness fixtures: scratch plans that force each path with real workers | auto | T15 | ✅ | Reviewed. Six fixtures; merge-conflict forced at ceiling 2; loop records worker-raised surfaces to the flow log. 230 tests. |
+| T17 | Harness live runner + first real scenario runs | you | T14, T15, T16 | ⛔ | Build half reviewed clean this session (243 tests). Fixed one defect: the wait loop counted stall from poll 1, false-stalling every live run during the coordinator boot; a `startupGrace` now governs the pre-first-worker window (FINDINGS, regression test). Wiring all injected and tested with no agent. LIVE runs are the `you` half — needs the user to launch; they close T17 + T10. |
 | T10 | Full multi-worker run + kill-switch drill — folded into T17 | you | T17 | ⬜ | Folded into T17 (2026-09-10): the full drill is now T17's parallel + kill-switch scenario, run with captured data. Do not run standalone. Closes ✅ when T17's parallel scenario passes. Partial drill 2026-09-10 proved spawn + first message. Scratch: `src/pir-t10`. |
 
 A Notes cell holds what was built or what the review found, the test count, and one line per
@@ -55,15 +56,14 @@ deviation from the task doc.
 
 **A ✅ task's cell may be cut to one line** once the next task has been reviewed.
 
-**Review queue:** T17 (🔍) — review the harness live runner (`src/shell/harness/run.mjs`), the build
-half only. The live scenario runs are a separate `you` step that follows the review.
+**Review queue:** empty. T17's build half is reviewed clean. What remains is the `you` live scenario
+runs, which are a person's step, not a review.
 
 ## Blocked on the user
 
-**Waiting on the T17 review, then the user.** The T17 build half is 🔍 and reviewed next. Once it is ✅,
-the live scenario runs are the user's to launch — real paid agents, so they never start unattended. The
-bin refuses to run inside the canonical repo; it installs a throwaway scratch repo per scenario. Small
-first:
+**Waiting on the user to launch the T17 live scenario runs.** The T17 build half is reviewed clean. The
+live scenario runs are the user's to launch — real paid agents, so they never start unattended. The bin
+refuses to run inside the canonical repo; it installs a throwaway scratch repo per scenario. Small first:
 
 ```
 node src/shell/harness/run.mjs single       # single-task happy path (folds T13's comms proof)

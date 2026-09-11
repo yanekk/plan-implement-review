@@ -12,6 +12,8 @@ Legend: 🐞 defect found · ✅ verified by hand with the user · 📌 worth kn
 
 | Date | | Finding |
 |---|---|---|
+| 2026-09-11 | 🐞 | T17 review: the wait loop counted stall from poll 1, so the 6s default would false-stall every live run during the coordinator's boot. Fixed: a `startupGrace` governs the pre-first-worker window; `stallGrace` applies only after a worker is seen. |
+| 2026-09-11 | 📌 | T17: run.mjs passes the control dir to `bundleDirFor`, so a bundle lands under `.parallel/control/capture/` not `.parallel/capture/`. Harmless (the dir is threaded consistently through write and read); tidy when convenient. |
 | 2026-09-11 | 🐞 | T16 review: merge-conflict at ceiling 1 forces NO conflict — the 2nd task branches off the feature branch after the 1st merges, so its merge is clean (proved on real git). Fixed with PM: ceiling 2 (both cut from base) + task-agnostic `conflictSurfacedAndParked`. |
 | 2026-09-11 | 🐞 | T16 review: worker-raised surfaces (question/decision/conflict caught at the worker's integrate) reached the loop's `actions` but not the flow log (control/log), so the capture harness — and questionRoundTrip / the conflict fact — could not see them. Fixed: `applyMessages` records them. |
 | 2026-09-10 | 📌 | T15: the flow log line is `type task-or-branch` only — a `surface`'s kind (conflict/question/decision) is NOT written to disk (loop.mjs record()). So `questionRoundTrip`/`mergeConflictParked` key on the task a scenario names, not a kind; T16 fixtures must say which task asks vs conflicts. |
