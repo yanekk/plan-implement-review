@@ -30,7 +30,7 @@ import {
   readdirSync,
   cpSync,
 } from 'node:fs';
-import { join, dirname } from 'node:path';
+import { join, dirname, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
 
@@ -48,6 +48,12 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 // skills a worker needs (pir-worker, pir-implement, pir-review, pir-verify) and the coordinator skill
 // live here and nowhere in ~/.claude/skills, so a fixture must carry them (FINDINGS 2026-09-09).
 export const DEFAULT_SKILLS_DIR = join(HERE, '..', '..', '..', 'skills');
+
+// The repo's own src/ tree (src/shell/harness → src/shell → src). Carried into every scratch repo so the
+// coordinator skill's `node src/shell/coordinate.mjs` resolves: the skill runs the framework code from the
+// repo it lives in, and a scratch repo that carries only the skills but not the code they invoke stalls
+// with the coordinator unable to find its bin (T17 live run 2026-09-11).
+export const DEFAULT_SRC_DIR = join(HERE, '..', '..');
 
 // A fixed seed date keeps the git state deterministic (see the header).
 const FIXED_DATE = '2026-01-01T00:00:00Z';
@@ -124,6 +130,24 @@ function carrySkills(srcDir, destDir) {
   return names;
 }
 
+// carrySource(srcDir, destDir) → true if the framework code was copied. `pir-coordinate` shells out to
+// `node src/shell/coordinate.mjs`, so the scratch repo must carry the src/ tree, exactly as it carries the
+// skills — without it the coordinator cannot find its bin and the run stalls with an empty flow log (T17
+// live run 2026-09-11). Two things are deliberately left out: every `*.test.mjs` (else the scratch's
+// `npm test` would run the framework's own suite instead of the fixture's task test) and the harness/
+// subtree (the coordinator needs core + shell, not the live-scenario harness — nothing under shell imports
+// it). cpSync's filter rejects a directory whole, so rejecting harness/ skips its entire subtree. A
+// missing source dir copies nothing rather than throwing, so a test can point at a stub.
+function carrySource(srcDir, destDir) {
+  if (!srcDir || !existsSync(srcDir)) return false;
+  const harness = join(srcDir, 'shell', 'harness');
+  cpSync(srcDir, destDir, {
+    recursive: true,
+    filter: (from) => !from.endsWith('.test.mjs') && from !== harness && !from.startsWith(harness + sep),
+  });
+  return true;
+}
+
 // seedGit(dir, runGit, date) → init on `main`, stage everything, one commit. Deterministic: fixed
 // identity, fixed author/committer date, gpgsign forced off (an automated seed has no one to sign or
 // type a passphrase, and a global commit.gpgsign=true would otherwise hang it). `-c` overrides are
@@ -145,16 +169,22 @@ function seedGit(dir, runGit, date) {
   if (!commit.ok) throw new Error(`fixture seed: git commit failed: ${commit.stderr}`);
 }
 
-// installFixture(id, opts) → { id, slug, dir, files, skills }. Lay the fixture down as a self-contained
-// scratch repo at `into` and seed its git state. The T17 live runner calls this, then opens the feature
-// branch off the seeded `main` and drives real workers; a test calls it against a temp dir with real git.
+// installFixture(id, opts) → { id, slug, dir, files, skills, source }. Lay the fixture down as a
+// self-contained scratch repo at `into` and seed its git state. The T17 live runner calls this, then opens
+// the feature branch off the seeded `main` and drives real workers; a test calls it against a temp dir
+// with real git.
 //
 //   into       — the scratch repo root to create (required). Must not be the real project (a T17
 //                seatbelt, enforced there, not here — this installer will lay a fixture anywhere).
 //   skillsDir  — where to carry the parallel skills from (default: the repo's skills/).
+//   srcDir     — where to carry the framework code from (default: the repo's src/); the coordinator skill
+//                runs `node src/shell/coordinate.mjs` inside the scratch repo, so it must be present.
 //   runGit     — injected git runner, so a test can drive real git or a fake.
 //   date       — the fixed commit date, for a reproducible seed.
-export function installFixture(id, { into, skillsDir = DEFAULT_SKILLS_DIR, runGit = defaultRunGit, date = FIXED_DATE } = {}) {
+export function installFixture(
+  id,
+  { into, skillsDir = DEFAULT_SKILLS_DIR, srcDir = DEFAULT_SRC_DIR, runGit = defaultRunGit, date = FIXED_DATE } = {},
+) {
   if (!into) throw new Error('installFixture: no target dir (into)');
   const fixture = getFixture(id);
   const files = fixtureFiles(fixture);
@@ -169,7 +199,8 @@ export function installFixture(id, { into, skillsDir = DEFAULT_SKILLS_DIR, runGi
   }
 
   const skills = carrySkills(skillsDir, join(into, '.claude', 'skills'));
+  const source = carrySource(srcDir, join(into, 'src'));
   seedGit(into, runGit, date);
 
-  return { id, slug: fixture.slug, dir: into, files: written, skills };
+  return { id, slug: fixture.slug, dir: into, files: written, skills, source };
 }

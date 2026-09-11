@@ -188,6 +188,16 @@ test('installFixture writes the tree, carries the parallel skills, and seeds a c
     assert.ok(existsSync(join(dir, '.claude/skills/pir-coordinate/SKILL.md')), 'pir-coordinate carried');
     assert.ok(res.skills.includes('pir-worker') && res.skills.includes('pir-implement'));
 
+    // The framework code the coordinator runs is carried too (T17 live run 2026-09-11): the coordinator
+    // skill shells out to `node src/shell/coordinate.mjs`, so the bin and its imports must be present.
+    assert.equal(res.source, true);
+    assert.ok(existsSync(join(dir, 'src/shell/coordinate.mjs')), 'the coordinator bin is carried');
+    assert.ok(existsSync(join(dir, 'src/core/naming.mjs')), 'the core it imports is carried');
+    // But NOT the framework's own tests (else the scratch `npm test` runs them, not the fixture task test)
+    // and NOT the harness subtree (the coordinator needs core + shell, not the live-scenario harness).
+    assert.ok(!existsSync(join(dir, 'src/shell/coordinate.test.mjs')), 'framework *.test.mjs are not carried');
+    assert.ok(!existsSync(join(dir, 'src/shell/harness')), 'the harness subtree is not carried');
+
     // Git: one commit on main, a clean tree, the plan and skills tracked, control state ignored.
     assert.equal(git(dir, ['rev-parse', '--abbrev-ref', 'HEAD']).trim(), 'main');
     assert.equal(git(dir, ['status', '--porcelain']).trim(), '', 'the seeded tree is clean');
