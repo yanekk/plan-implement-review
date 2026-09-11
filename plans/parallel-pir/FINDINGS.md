@@ -12,6 +12,8 @@ Legend: 🐞 defect found · ✅ verified by hand with the user · 📌 worth kn
 
 | Date | | Finding |
 |---|---|---|
+| 2026-09-11 | 🐞 | T16 review: merge-conflict at ceiling 1 forces NO conflict — the 2nd task branches off the feature branch after the 1st merges, so its merge is clean (proved on real git). Fixed with PM: ceiling 2 (both cut from base) + task-agnostic `conflictSurfacedAndParked`. |
+| 2026-09-11 | 🐞 | T16 review: worker-raised surfaces (question/decision/conflict caught at the worker's integrate) reached the loop's `actions` but not the flow log (control/log), so the capture harness — and questionRoundTrip / the conflict fact — could not see them. Fixed: `applyMessages` records them. |
 | 2026-09-10 | 📌 | T15: the flow log line is `type task-or-branch` only — a `surface`'s kind (conflict/question/decision) is NOT written to disk (loop.mjs record()). So `questionRoundTrip`/`mergeConflictParked` key on the task a scenario names, not a kind; T16 fixtures must say which task asks vs conflicts. |
 | 2026-09-10 | 📌 | T14 capture: bundle manifest is keyed by agent name (T15 assertions can look a session up by name). An implementer and its later reviewer share one worker name (§2.8) but run at different times; the second is keyed `name (sessionId)` so neither transcript is lost. |
 | 2026-09-10 | 📌 | Phase 5 capture sources: flow = `control/log`; agent status via `claude agents --json` (status/pid live-only; `--all` keeps finished sessions, no status); transcripts at `~/.claude/projects/<cwd, / and . → dash>/<sessionId>.jsonl`, surviving kill and worktree removal; `claude logs <id>` is recent output only. |

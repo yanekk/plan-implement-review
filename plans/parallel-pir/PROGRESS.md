@@ -18,9 +18,10 @@ The `Runs` column marks each task `auto` (a worker builds it) or `you` (a person
 5 (T14–T17, the live-scenario test harness) added 2026-09-10 by PM decision: real workers, data-driven
 capture, folding in T10 and T13's live half. Phase 5 was not in the 2026-09-07 plan review (it postdates
 it); it is validated per task during build, since `/pir-review-plan` does not re-run on a building plan.
-**Last updated:** 2026-09-10
-**Next `pir-work` will:** review T16 (harness fixtures — six scratch plans + loader). Then implement
-T17 (the live runner), the last Phase 5 task.
+**Last updated:** 2026-09-11
+**Next `pir-work` will:** implement T17 (harness live runner), the last task. Its build half is `auto`
+and tested against fakes; the live scenario runs spawn real paid agents, so they need the user,
+seatbelted (scratch plan, low ceiling, kill switch, timeout auto-HALT).
 
 ## Tasks
 
@@ -44,8 +45,8 @@ live steps with a hands-on worker the coordinator spawns, folded back without re
 | T13 | Prove comms protocol: by-name addressing, idle-gated close | auto | T12 | ✅ | Reviewed clean, no fix. Hello wired through the real bridge (encodeMessage→outbox); idle gate reads `status` and only defers; kill switch and dead worker bypass it. 150 tests. LIVE half (by-name delivery, idle timing) folded into T17's single-task scenario 2026-09-10 — no longer a manual check. |
 | T11 | `/pir-plan` + templates: `Runs` marker, honest deps, width report | auto | T04, T12 | ✅ | Reviewed clean. Planner Stage 6, three templates and both CLAUDE.md spots carry the Runs marker, honest deps and width report; golden tests read real templates through the parser. 153 tests. |
 | T14 | Harness capture layer: flow, agent-status timeline, transcript bundle | auto | T09 | ✅ | Reviewed clean; read-only capture, seal reads the real control/log and flow format. 164 tests. |
-| T15 | Harness assertions + scenario spec: declared facts over a bundle | auto | T14 | ✅ | Reviewed clean, no fix. All 8 facts pure; loadTranscripts the only I/O, in src/shell (outside the core boundary scan). Verified the git-log needles against real worktree.mjs: task merges `merge pir/{plan}-{task}`, promote `Merge branch 'pir/{plan}'` (closing quote disambiguates). Each fact has a passing and failing bundle. Task-arg deviation for question/conflict (no surface kind in the log) accepted. 195 tests. |
-| T16 | Harness fixtures: scratch plans that force each path with real workers | auto | T15 | 🔍 | Six fixtures as JS descriptor modules (fixtures/<name>.mjs: inline plan text + T15 scenario); loader fixtures.mjs installs and seeds git deterministically, carries parallel skills. 30 tests. Deviation: JS descriptors, not on-disk plan trees the doc imagined (spawn-one-scratch idiom). Added a `probe` + real-git replay proving merge-conflict conflicts and clean-merge does not. |
+| T15 | Harness assertions + scenario spec: declared facts over a bundle | auto | T14 | ✅ | Reviewed clean. 8 facts pure; loadTranscripts the only I/O (src/shell, outside the core boundary scan). Git-log needles verified against worktree.mjs. 195 tests. |
+| T16 | Harness fixtures: scratch plans that force each path with real workers | auto | T15 | ✅ | Reviewed. merge-conflict could not force a conflict at ceiling 1 (2nd task cut after the 1st merges → clean; proved on real git); fixed with PM to ceiling 2 + task-agnostic conflictSurfacedAndParked. Also fixed the loop so worker-raised surfaces reach the flow log, else questionRoundTrip and the conflict fact were blind. Probed all six fixtures' declared facts. 230 tests. |
 | T17 | Harness live runner + first real scenario runs | you | T14, T15, T16 | ⬜ | Phase 5. Build half `auto`/tested against fakes; live runs spawn real paid agents, so `you`, seatbelted (scratch, low ceiling, kill switch, timeout auto-HALT). Folds in T10 (parallel scenario) and T13's live half (single scenario). |
 | T10 | Full multi-worker run + kill-switch drill — folded into T17 | you | T17 | ⬜ | Folded into T17 (2026-09-10): the full drill is now T17's parallel + kill-switch scenario, run with captured data. Do not run standalone. Closes ✅ when T17's parallel scenario passes. Partial drill 2026-09-10 proved spawn + first message. Scratch: `src/pir-t10`. |
 
@@ -54,7 +55,7 @@ deviation from the task doc.
 
 **A ✅ task's cell may be cut to one line** once the next task has been reviewed.
 
-**Review queue:** T16 awaiting review (🔍). Reviewed next, then T17 is the last task.
+**Review queue:** empty. T16 reviewed ✅. T17 is the last task (its live half is user-driven).
 
 ## Blocked on the user
 
