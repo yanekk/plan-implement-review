@@ -267,6 +267,9 @@ test('runScenario declares a stall when no worker is ever live and nothing promo
       return { ok: true, stdout: '[]' }; // never any live worker, no promote line
     };
 
+    // The coordinator opened the feature branch but never spawned a worker: after the startup budget
+    // with nothing ever live, that is a genuine "nothing to do" stall (§4.1). startupGrace governs the
+    // pre-first-worker window, so it is what ends this run, not stallGrace.
     const result = await runScenario({
       fixtureId: 'single',
       scratchDir: into,
@@ -277,10 +280,60 @@ test('runScenario declares a stall when no worker is ever live and nothing promo
       worktree: fakeWorktree,
       projectsDir: projects,
       pollMs: 1,
-      stallGrace: 2,
+      startupGrace: 2,
     });
 
     assert.equal(result.reason, 'stalled');
+  } finally {
+    ws.cleanup();
+  }
+});
+
+// The regression this review fixed (T17 review): quiet polls BEFORE the first worker appears must NOT be
+// counted toward the (short) stall grace — a real coordinator takes many seconds to boot and spawn, so
+// counting stall from poll 1 would tear every live run down before it began. Here two empty polls precede
+// the worker; with the old logic and stallGrace 2 the run would already be 'stalled' at poll 2. With the
+// startup grace in place the run survives to see the worker and then the promote line.
+test('runScenario does not stall while the coordinator is still booting (before the first worker)', async () => {
+  const ws = workspace();
+  try {
+    const into = join(ws.dir, 'scratch-repo');
+    const projects = join(ws.dir, 'projects');
+    mkdirSync(projects, { recursive: true });
+    const flowPath = join(controlDirFor(into, 'single'), 'log');
+
+    const worker = { id: 'w1', sessionId: 's1', name: 'scratch-repo · single · T01', cwd: into, status: 'busy', state: 'working', pid: 1 };
+    let agentsCalls = 0;
+    const claudeRun = (args) => {
+      if (args[0] === '--bg') return { ok: true, stdout: 'coord\n' };
+      if (args.includes('--all')) return { ok: true, stdout: '[]' };
+      if (args[0] === 'agents') {
+        agentsCalls += 1;
+        if (agentsCalls <= 2) return { ok: true, stdout: '[]' }; // still booting — no worker yet
+        // The worker has spawned; write the promote line so this same poll's flow read terminates the run.
+        writeFileSync(flowPath, '2026-01-01T00:00:00Z open-feature pir/single\n2026-01-01T00:01:00Z promote pir/single\n');
+        return { ok: true, stdout: JSON.stringify([worker]) };
+      }
+      return { ok: true, stdout: '' };
+    };
+
+    const result = await runScenario({
+      fixtureId: 'single',
+      scratchDir: into,
+      install: installFake({ into, controlLog: '2026-01-01T00:00:00Z open-feature pir/single\n' }),
+      claudeRun,
+      gitRun: () => ({ ok: true, stdout: '' }),
+      platform: fakePlatform({ agents: [] }),
+      worktree: fakeWorktree,
+      projectsDir: projects,
+      pollMs: 1,
+      stallGrace: 2, // short: the OLD code would have false-stalled at poll 2, before the worker at poll 3
+      startupGrace: 100, // ample startup budget — the fix under test
+    });
+
+    // It survived the boot window, saw the worker, and reached the real terminal — never a premature stall.
+    assert.equal(result.reason, 'promoted');
+    assert.ok(agentsCalls >= 3, 'the run polled past the two empty boot samples to the worker');
   } finally {
     ws.cleanup();
   }

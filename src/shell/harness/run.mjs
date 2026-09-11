@@ -180,7 +180,12 @@ export function teardownScenario({ platform, worktree, repo, slug, controlDir, c
 //                  a seatbelt, DESIGN §5.2). Defaults to a fresh mkdtemp dir.
 //   allowHere    — pass PARALLEL_ALLOW_HERE=1 to the coordinator (a same-named scratch clone). Default off.
 //   pollMs       — the wait-loop cadence; each poll samples agents (capture.tick) and reads the flow log.
-//   stallGrace   — consecutive quiet polls (no live worker, coordinator idle) before a stall is declared.
+//   stallGrace   — consecutive quiet polls AFTER the run went active (a worker was seen, then none is
+//                  live and nothing promoted) before a stall is declared (DESIGN §4.1 "every worker parked").
+//   startupGrace — consecutive quiet polls BEFORE the first worker is ever seen, i.e. while the coordinator
+//                  is still booting and opening the feature branch. Much larger than stallGrace: a real
+//                  `claude --bg` cold start takes many seconds to spawn its first worker, far past the
+//                  default 6s stall window, so counting stall from poll 1 would false-stall every live run.
 //   timeoutMs    — the wall-clock cap; on expiry the runner auto-touches HALT (§5.2). Defaults to the
 //                  scenario's own seatbelt timeout.
 //   claudeRun    — (args,{cwd,env}) => { ok, stdout } for the launch, the capture ticks and teardown.
@@ -196,6 +201,7 @@ export async function runScenario({
   allowHere = false,
   pollMs = 2000,
   stallGrace = 3,
+  startupGrace = 45, // ~90s at the default cadence: ample for a real coordinator to boot and spawn
   timeoutMs,
   claudeRun = defaultRunClaude,
   gitRun = defaultRunGit,
@@ -280,6 +286,7 @@ export async function runScenario({
       slug,
       pollMs,
       stallGrace,
+      startupGrace,
       timers,
       isTimedOut: () => timedOut,
     });
@@ -314,13 +321,18 @@ export async function runScenario({
 
 // waitForCompletion(...) → the terminal reason ('promoted' | 'halted' | 'stalled' | 'timeout'). Polls on
 // the injected timers: each tick samples the agent list into the capture bundle and reads the flow log,
-// then asks runOutcome for a hard terminal (promote / HALT). A stall — no live worker of this run and no
-// hard terminal — is counted; after stallGrace consecutive quiet polls the run is declared stalled (the
-// coordinator is idle with nothing to do or everything parked, DESIGN §4.1 "promotion / halt / stall").
-async function waitForCompletion({ cap, controlDir, repo, slug, pollMs, stallGrace, timers, isTimedOut }) {
+// then asks runOutcome for a hard terminal (promote / HALT). A stall is a run of quiet polls with no live
+// worker and no hard terminal — but only AFTER the run has gone active. Before the first worker is ever
+// seen the coordinator is still booting (a real `claude --bg` cold start takes many seconds to open the
+// feature branch and spawn), so a separate, generous startupGrace governs that window; counting the
+// stallGrace from poll 1 would false-stall every live run before it began (T17 review). If no worker ever
+// appears, startupGrace still resolves to a genuine stall — the coordinator had nothing to do (§4.1).
+async function waitForCompletion({ cap, controlDir, repo, slug, pollMs, stallGrace, startupGrace, timers, isTimedOut }) {
   const flagPath = join(controlDir, 'HALT');
   const flowPath = join(controlDir, 'log');
-  let quiet = 0;
+  let sawWorker = false; // has any worker of this run ever been live? gates which grace applies.
+  let quiet = 0; // consecutive quiet polls AFTER the run went active (a stall, §4.1)
+  let startupQuiet = 0; // consecutive quiet polls BEFORE the first worker ever appeared (still booting)
   for (;;) {
     const snap = cap.tick(); // one sampled `agents --json`, recorded into the bundle
     const flowText = existsSync(flowPath) ? safeRead(flowPath) : '';
@@ -330,11 +342,20 @@ async function waitForCompletion({ cap, controlDir, repo, slug, pollMs, stallGra
     if (outcome.over) return outcome.reason;
     if (isTimedOut()) return 'timeout';
 
-    // A quiet poll: none of this run's workers is live. Persisted quiet is a stall (§4.1). A live
-    // worker (busy or idle, e.g. parked on a decision) resets the counter — the run is still going.
+    // A live worker (busy or idle, e.g. parked on a decision) means the run is going: mark it active and
+    // clear both counters. Otherwise the quiet is a startup wait (before any worker) or a stall (after).
     const liveWorkers = (snap.agents ?? []).filter((a) => isWorkerOf(a.name, { repo, plan: slug }));
-    quiet = liveWorkers.length === 0 ? quiet + 1 : 0;
-    if (quiet >= stallGrace) return 'stalled';
+    if (liveWorkers.length > 0) {
+      sawWorker = true;
+      quiet = 0;
+      startupQuiet = 0;
+    } else if (sawWorker) {
+      quiet += 1;
+      if (quiet >= stallGrace) return 'stalled';
+    } else {
+      startupQuiet += 1;
+      if (startupQuiet >= startupGrace) return 'stalled';
+    }
 
     await delay(timers, pollMs);
   }
