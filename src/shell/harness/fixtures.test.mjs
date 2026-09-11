@@ -45,8 +45,8 @@ const EXPECT = {
   'merge-conflict': {
     taskCount: 2,
     deps: { T01: [], T02: [] },
-    ceiling: 1,
-    factIds: ['merge-conflict-parked:T02'],
+    ceiling: 2,
+    factIds: ['conflict-surfaced-and-parked'],
   },
   'human-decision': {
     taskCount: 1,

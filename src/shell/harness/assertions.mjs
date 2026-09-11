@@ -355,6 +355,57 @@ export function mergeConflictParked(task) {
   });
 }
 
+// A conflict was surfaced and PARKED, without naming which task lost (DESIGN §2.5). This is the
+// task-AGNOSTIC form for the merge-conflict fixture, which now runs at ceiling 2 (T16 review
+// 2026-09-11): both tasks edit the same line from a common base, and whichever worker merges SECOND
+// conflicts — but which of the two that is is a timing race, so the fact cannot name it the way
+// mergeConflictParked(task) does. It keys on the OUTCOME, all of it reliably in the flow log or git
+// log: at least one surfaced task, NO surfaced task merged (in the flow or git log), and NO
+// promotion — the safety property "a conflict was caught and nothing bad reached main". A
+// worker-caught conflict now reaches the flow as a `surface` too (loop.mjs applyMessages, same
+// review), so this holds wherever the conflict is caught — the worker's integrate or the
+// coordinator's mergeTask.
+export function conflictSurfacedAndParked() {
+  return fact('conflict-surfaced-and-parked', 'A conflict was surfaced and parked; no bad merge or promotion landed', (bundle) => {
+    const evidence = [];
+    const surfaces = flowOf(bundle, 'surface').filter((e) => /^T\d+$/.test(e.rest));
+    if (surfaces.length === 0) {
+      return { pass: false, evidence, detail: 'no surface of a task — a conflict was expected to be surfaced and parked' };
+    }
+    for (const s of surfaces) evidence.push(flowLine(s));
+    const { plan } = runIdentity(bundle);
+    const gitLog = bundle.gitLog ?? '';
+
+    // No surfaced task may have merged — a merge of a surfaced task means a conflicting branch reached
+    // the feature branch. Checked in the flow (a `merge` of it) and the git log (its branch-merge).
+    for (const s of surfaces) {
+      const task = s.rest;
+      const mergedInFlow = flowOf(bundle, 'merge').find((e) => e.rest === task);
+      if (mergedInFlow) {
+        evidence.push(flowLine(mergedInFlow));
+        return { pass: false, evidence, detail: `${task} was surfaced but merged anyway — a conflicting branch reached the feature branch` };
+      }
+      if (plan && gitLog.includes(`merge pir/${plan}-${task}`)) {
+        evidence.push(`git log contains "merge pir/${plan}-${task}"`);
+        return { pass: false, evidence, detail: `git log shows ${task}'s branch merged despite the conflict` };
+      }
+    }
+
+    // And main must be untouched: a parked task never reaches ✅, so the plan cannot promote.
+    const promotes = flowOf(bundle, 'promote');
+    if (promotes.length > 0) {
+      for (const p of promotes) evidence.push(flowLine(p));
+      return { pass: false, evidence, detail: 'a promotion happened despite a parked conflict — main did not stay clean' };
+    }
+    if (plan && gitLog.includes(`Merge branch 'pir/${plan}'`)) {
+      evidence.push(`git log contains "Merge branch 'pir/${plan}'"`);
+      return { pass: false, evidence, detail: 'git log shows a promotion to main despite a parked conflict' };
+    }
+
+    return { pass: true, evidence, detail: `${surfaces.length} surfaced task(s), none merged, and nothing promoted — the conflict was parked` };
+  });
+}
+
 // main gained exactly one commit — the promotion — and no task branch reached main directly (DESIGN
 // §2.9). The authoritative signal is the flow's single `promote` (the coordinator's only main-touching
 // action); the git log corroborates with exactly one promotion merge `Merge branch 'pir/{plan}'`.

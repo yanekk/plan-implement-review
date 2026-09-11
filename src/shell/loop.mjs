@@ -51,8 +51,15 @@ function taskByWorkerId(state, workerId) {
 
 // Fold each drained worker→coordinator message into the tracked phase (DESIGN §2.5, §3.4). A
 // question or an unresolved conflict parks the task and is surfaced to the user; implemented and
-// done move it along.
-function applyMessages(state, messages, actions) {
+// done move it along. `record` (not a raw actions array) is passed so a worker-raised surface is
+// written to the FLOW LOG, not only the in-memory actions: the capture harness reads the flow log
+// (control/log, T14), and a worker's question or a conflict the worker caught at its own integrate
+// step used to live only in `actions` — invisible in the flow, so questionRoundTrip and the
+// conflict facts could not see it happened (T16 review 2026-09-11). A conflict the COORDINATOR hits
+// at mergeTask is logged by its own record('surface') in 3d; this closes the worker-raised path so
+// both an operator and the harness see every escalation. The log line stays `surface {task}` (no
+// kind on disk), so the facts still key on the task, not a kind (see this file's header note).
+function applyMessages(state, messages, record) {
   for (const m of messages) {
     const t = state.tasks[m.task];
     if (!t) continue;
@@ -66,7 +73,7 @@ function applyMessages(state, messages, actions) {
       // real worker's decision message was silently dropped (found closing the T12 wire contract).
       t.phase = AWAITING;
       t.decision = { kind: m.kind, text: m.text };
-      actions.push({ type: 'surface', task: m.task, kind: m.kind, text: m.text });
+      record('surface', { task: m.task, kind: m.kind, text: m.text });
     }
   }
 }
@@ -158,7 +165,7 @@ export function runPass({ platform, worktree, repo, slug, maxWorkers, state, con
   const liveById = new Map(liveList.map((w) => [w.id, w]));
   const isBusy = (id) => liveById.get(id)?.status === 'busy';
   const messages = platform.inbox();
-  applyMessages(state, messages, actions);
+  applyMessages(state, messages, record);
 
   const progressText = readFileSync(featureProgressPath, 'utf8');
   const parsed = parseProgress(progressText);

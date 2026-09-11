@@ -166,6 +166,19 @@ test('a worker question surfaces via the inbox and a sent answer resumes that wo
   assert.equal(result.promoted, true, 'the answered worker resumes and the plan promotes');
 });
 
+test('a worker-raised surface is written to the flow log, not just the in-memory actions', (t) => {
+  // The capture harness (T14) reads the flow log (control/log); a worker question or a conflict the
+  // worker caught at its own integrate step used to reach `actions` but never the log, so the T15
+  // facts could not see it (T16 review 2026-09-11). Assert the surface line reaches the log.
+  const { base } = setup(t, [{ num: 'T01' }], { behaviors: { T01: { question: 'which format?' } } });
+  const logLines = [];
+  const control = { isHalted: () => false, log: (l) => logLines.push(l) };
+  const state = createRunState();
+  runPass({ ...base, control, state }); // spawn
+  runPass({ ...base, control, state }); // worker asks → surface
+  assert.ok(logLines.includes('surface T01'), `flow log must carry the surface; got: ${logLines.join(' | ')}`);
+});
+
 test('a merge conflict a worker cannot resolve surfaces as a decision, and nothing merges to main', (t) => {
   const { worktree, base } = setup(t, [{ num: 'T01' }], { behaviors: { T01: { conflict: 'cannot merge cleanly' } } });
   const result = drain(base);

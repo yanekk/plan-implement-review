@@ -20,6 +20,7 @@ import {
   byNameAddressing,
   questionRoundTrip,
   mergeConflictParked,
+  conflictSurfacedAndParked,
   oneMergeToMain,
   killSwitchStoppedAll,
   ceilingHeld,
@@ -233,6 +234,42 @@ test('mergeConflictParked fails when the conflicting task was merged anyway', ()
 test('mergeConflictParked fails when the git log shows the task branch merged', () => {
   const b = bundle({ flow: [fl('t2', 'surface', 'T05')], gitLog: 'merge pir/scratch-T05\n', timeline: [tick('t1', [cagent()])] });
   assert.equal(mergeConflictParked('T05').check(b).pass, false);
+});
+
+// --- conflictSurfacedAndParked (task-agnostic) ---------------------------------------------------
+
+test('conflictSurfacedAndParked passes when the winner merged, the surfaced loser did not, and nothing promoted', () => {
+  // Ceiling-2 shape: T01 (winner) merged clean; T02 (loser) surfaced and was parked; no promotion.
+  const b = bundle({
+    flow: [fl('t3', 'merge', 'T01'), fl('t4', 'surface', 'T02')],
+    gitLog: "* abc (pir/scratch) merge pir/scratch-T01\n",
+    timeline: [tick('t1', [cagent()])],
+  });
+  assert.equal(conflictSurfacedAndParked().check(b).pass, true);
+});
+
+test('conflictSurfacedAndParked fails when no task was surfaced', () => {
+  const r = conflictSurfacedAndParked().check(bundle({ flow: [fl('t3', 'merge', 'T01')] }));
+  assert.equal(r.pass, false);
+  assert.match(r.detail, /no surface/);
+});
+
+test('conflictSurfacedAndParked fails when a surfaced task merged anyway', () => {
+  const b = bundle({ flow: [fl('t4', 'surface', 'T02'), fl('t5', 'merge', 'T02')], timeline: [tick('t1', [cagent()])] });
+  const r = conflictSurfacedAndParked().check(b);
+  assert.equal(r.pass, false);
+  assert.match(r.detail, /merged anyway/);
+});
+
+test('conflictSurfacedAndParked fails when a promotion happened despite a parked conflict', () => {
+  const b = bundle({
+    flow: [fl('t4', 'surface', 'T02'), fl('t9', 'promote', 'pir/scratch')],
+    gitLog: "Merge branch 'pir/scratch'\n",
+    timeline: [tick('t1', [cagent()])],
+  });
+  const r = conflictSurfacedAndParked().check(b);
+  assert.equal(r.pass, false);
+  assert.match(r.detail, /main did not stay clean/);
 });
 
 // --- oneMergeToMain ------------------------------------------------------------------------------
