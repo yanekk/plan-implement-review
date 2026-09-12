@@ -28,10 +28,11 @@ The coordinator sends you one of three instructions. Run that task, that phase, 
 grab the same task and collide — so selection is the coordinator's job alone (DESIGN §1, §2.1). You
 are told the task; you do not choose it.
 
-The coordinator names your task (`pir-implement T05`) but may not name the plan slug. **Do not guess it
-from the only folder under `plans/`** — derive it from your branch name `pir/{plan}-T{nn}`, read with
-`git branch --show-current`. (A T18 worker inferred `single` from `ls plans/`, which only worked
-because a single plan happened to be present.)
+The coordinator names your task (`pir-implement T05`) but may not name the plan slug. **Derive the slug
+from your branch name `pir/{plan}-T{nn}` (`git branch --show-current`) — and do not run `ls plans/` to
+find it at all.** The branch is the only source; a folder listing is a guess that happens to work only
+while one plan is present. (A T18 worker inferred `single` from `ls plans/`; on the first green live run
+the reviewer still ran `ls plans/` alongside the branch — harmless there, but the wrong habit.)
 
 ## Where you run: your task branch, not main
 

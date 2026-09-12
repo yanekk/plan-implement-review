@@ -23,13 +23,14 @@ T18 transcripts and gates T19–T23. The operator's guide is [TEST-HARNESS.md](T
 `/pir-review-plan` does not re-run on a building plan.
 **Last updated:** 2026-09-12
 **Next `pir-work` will:** find no `auto` work left — T24 is ✅ and every remaining task (T19–T23, T10) is
-a `you` live run gated on the user. First live `single` re-run (2026-09-12, after T24) stalled with no
-promote: the runaway breaker miscounted a just-closed implementer still listed alongside its fresh reviewer.
-Fixed in loop.mjs (`closedIds`). Then (PM decision 2026-09-12) worker names were given a role suffix
-`… · T{nn} · {role}` (implement/review/verify) so the coordinator addresses implementer vs reviewer
-directly, not by age — DESIGN §2.8 and pir-coordinate updated. 249 tests green; live re-run owed to
-confirm the promote. Then the fixture queue T19 (review-queue) → clean-merge → human-decision →
-merge-conflict → T23 (parallel) resumes. Procedure in [TEST-HARNESS.md](TEST-HARNESS.md).
+a `you` live run gated on the user. Live `single` now PASSES on real agents (2026-09-12): three fixes
+landed and are confirmed live — the `closedIds` count fix (runaway breaker no longer miscounts a
+just-closed worker), role-suffixed worker names `… · T{nn} · {role}` (PM decision; coordinator addresses
+implementer vs reviewer directly, not by age), and prompt-hardening from the passing-run transcript
+(coordinator completion-watch is the flow log not the outbox; SendMessage two-field rule; canned relay
+recipe; reviewer slug-from-branch). 249 tests green. Next: the fixture queue T19 (review-queue) →
+clean-merge → human-decision → merge-conflict → T23 (parallel), each a gated `you` live run. Procedure in
+[TEST-HARNESS.md](TEST-HARNESS.md).
 
 ## Tasks
 

@@ -33,6 +33,10 @@ The reason, in one line for the user: a mistake in an unreviewed plan gets copie
 running many workers at once multiplies it. One review up front is cheaper than that. Do not coordinate
 an unreviewed plan even if asked to "just try it" — say what the risk is and let the user decide.
 
+Confirm the gate and that your session carries the coordinator name (below), then start the bin and
+spawn. You do **not** need to read the bin's source, read `naming.mjs`, or dry-run `coordinate.mjs`
+first — the conventions here are settled; that warm-up only spends turns before the first worker.
+
 ## How the run works, in plain English
 
 - You open **one branch for the whole plan** and work on a private copy of the project, so the user's
@@ -64,9 +68,20 @@ the bin to echo the decision text, because you wrote the worker's own message in
 arrived — read it there, keyed by task, rather than waiting on stdout. Pair the log with the control
 files (inbox, outbox, answers) below; between them you never need the banner.
 
-**Run the bin in the background and poll — never block one tool call on it.** Re-read the flow log on
-a short cadence (≈15s); prefer the Monitor tool with an until-condition on the log growing over a
-hand-rolled `sleep` of guessed length.
+**Run the bin in the background and poll — never block one tool call on it.** You watch two different
+files for two different reasons; do not conflate them:
+
+- the **flow log** `plans/{slug}/.parallel/control/log` — for progress **and for the end of the run**;
+- the **outbox** `plans/{slug}/.parallel/control/outbox` — only for messages to deliver (below).
+
+Re-read the flow log on a short cadence (≈15s); prefer the Monitor tool with an until-condition on the
+log growing over a hand-rolled `sleep` of guessed length. **Your completion watch must be on the flow
+log, never on the outbox.** The outbox stops growing once you relay the last message — several seconds
+*before* the bin writes the terminal `promote` line — so a Monitor that waits only on the outbox goes
+deaf exactly at the finish, and you will sit idle while the run is already done (observed on the first
+green `single` live run: the coordinator watched only `tail -F outbox` and had no way to see `promote`).
+Keep a watch on the LOG armed through the final relay, and end the run only on its `promote` (or
+`halt-close` / nothing-left) line — see below.
 
 Start the bin once and leave it running. Then, while it runs, on every turn:
 
@@ -107,17 +122,26 @@ the bin exchanges messages with you through three control files under `plans/{sl
   the **inbox** file as one JSON line `{"from":"<worker name>","text":"<the exact message it sent>"}`.
   The bin reads the inbox each pass. Workers are taught to prefix every message with a
   `[pir:v1 kind=… task=…]` header (the `pir-worker` contract) so the bin routes it correctly; pass the
-  worker's message through verbatim — do not rewrite it. **Append it safely: write the JSON object to a
-  temp file and `cat` that file onto the inbox** — never inline the message text into a shell command,
-  because worker messages carry backticks, newlines and emoji that break `node -e` and `echo`.
+  worker's message through verbatim — do not rewrite it. **Use this one recipe every time; do not
+  improvise the JSON or hand-escape it** (worker messages carry backticks, newlines and emoji that
+  break an inlined `node -e` or `echo`): (1) write the worker's exact message text to a scratch file
+  with the Write tool; (2) append one relay line by letting `node` read that file and encode it, so
+  nothing is retyped or shell-quoted, passing the worker name as an argument rather than interpolating
+  it:
+
+  ```
+  node -e 'const fs=require("fs");fs.appendFileSync(process.argv[1],JSON.stringify({from:process.argv[2],text:fs.readFileSync(process.argv[3],"utf8")})+"\n")' plans/{slug}/.parallel/control/inbox "<worker name>" msg.txt
+  ```
 - **The bin answers a worker.** It writes the outgoing message to the **outbox** file. The outbox is
   **append-only and owned by the bin — never truncate or edit it.** Track how many lines you have
   already delivered (a cursor) and perform the actual SendMessage only for the new ones, each addressed
   to that worker by its name.
 - **The user decides.** You write to the **answers** file (step 3 above); the bin routes it down.
 
-The send is exactly `SendMessage({to: "<name>", message: "<text>"})` — those two fields and no others.
-Do not fill `recipient`, `content`, or any other field name; the tool takes `to` and `message` only.
+The send is exactly `SendMessage({to: "<name>", message: "<text>"})` — **those two fields and no
+others.** Do not add `recipient`, `content`, `type` or `summary` — every live agent so far has
+reflexively padded the call with exactly these. The tool takes `to` and `message` only; it silently
+drops the rest, so the extras buy nothing and only give a false sense of structure. Two fields.
 
 This bridge is why the live drive is verified with the user (T10): the message wiring only exists once
 real sessions are talking. Against the fakes in the tests, the platform is its own bus and no bridge
