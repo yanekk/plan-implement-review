@@ -94,12 +94,13 @@ function tagAgent(agent, { repo, plan, coordName }) {
 }
 
 // The filename label for a session's transcript copy (DESIGN §4.1 "<worker-name-or-role>.jsonl"):
-// a worker by its task id (T05.jsonl), the coordinator by role (coordinator.jsonl), anything else by
-// a filesystem-safe version of its name or, failing that, its sessionId.
+// a worker by its task id and role (T05-implement.jsonl, T05-review.jsonl), the coordinator by role
+// (coordinator.jsonl), anything else by a filesystem-safe version of its name or, failing that, its
+// sessionId. The role keeps the implementer's and reviewer's transcripts of one task from colliding.
 function transcriptLabel(agent) {
   if (agent.isCoordinator) return 'coordinator';
   const parsed = parseAgentName(agent.name);
-  if (agent.isWorkerOf && parsed.task) return parsed.task;
+  if (agent.isWorkerOf && parsed.task) return parsed.role ? `${parsed.task}-${parsed.role}` : parsed.task;
   const raw = agent.name || agent.sessionId || 'unknown';
   return String(raw).replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '') || 'unknown';
 }

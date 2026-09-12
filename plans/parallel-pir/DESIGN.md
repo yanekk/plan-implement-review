@@ -288,7 +288,7 @@ Every agent has a deterministic name, so agents address each other by a name any
 rather than an opaque session id handed around out of band:
 
 - **Coordinator:** `{repo} · {plan}` — e.g. `plan-implement-review · parallel-pir`.
-- **Worker:** `{repo} · {plan} · T{nn}` — e.g. `plan-implement-review · parallel-pir · T05`.
+- **Worker:** `{repo} · {plan} · T{nn} · {role}` — e.g. `plan-implement-review · parallel-pir · T05 · review`. `{role}` is one of `implement`, `review`, `verify`.
 
 The separator is `·` (U+00B7), not `/`: T00 found `SendMessage` rejects a name containing `/`
 ("to must be a bare teammate name"), because the addressing layer reads `/` as structure. The
@@ -296,7 +296,7 @@ separator is decoration, so any character with no special meaning to that parser
 chosen (2026-09-07). There is **no `@` prefix**: T07 confirmed live (2026-09-08) that `·` is
 accepted by `SendMessage` — and, at the same time, that a name beginning with `@` draws the very
 same "bare teammate name" rejection as `/`. The `@` was decorative, so the user dropped it
-(2026-09-08); the name is the bare `{repo} · {plan}[ · T{nn}]`, which is also the shape
+(2026-09-08); the name is the bare `{repo} · {plan}[ · T{nn} · {role}]`, which is also the shape
 `claude agents --json` already shows (no `@`).
 
 The name is set at spawn with `claude --bg -n "<name>"` (FINDINGS.md), and it is what
@@ -307,9 +307,9 @@ out of it, which is why the convention is worth fixing rather than leaving names
   the plan, so it can construct `{repo} · {plan}` itself. The coordinator still passes the worker
   its own name at spawn for clarity, but the scheme means no id has to be discovered.
 - **The coordinator finds and identifies its workers from the name alone.** Its workers are the
-  agents whose name starts with `{repo} · {plan} · T`, and the task each holds is the `T{nn}` at
-  the end. So the coordinator can rebuild "which worker is on which task" purely from
-  `claude agents --json`, without separate bookkeeping that could drift from reality.
+  agents whose name starts with `{repo} · {plan} · T`; the task each holds is the `T{nn}` and its
+  phase the `{role}` after it. So the coordinator can rebuild "which worker is on which task, in which
+  role" purely from `claude agents --json`, without separate bookkeeping that could drift from reality.
 - **The user reads `claude agents` and sees exactly who is doing what**, across every repo and
   plan on the machine, because the name carries the repo, the plan and the task.
 
@@ -326,12 +326,18 @@ so the return channel is open regardless. Whether a correctly-named coordinator 
 by-name message is the live half T13 proves; if a coordinator session genuinely cannot be made to carry
 the name, that is a decision for the user, not a rule to invent around.
 
-The name identifies the repo, plan and task, not the phase: the implement session and the fresh
-review session for one task carry the same `{repo} · {plan} · T{nn}` name, but they do not run at
-once — the implement session is closed as the review session spawns (§2.1), so at most one live
-session ever holds a given task name. The coordinator tracks the phase from the worker's own
-messages (implemented, done) and the task state in `PROGRESS.md`, so the name never has to carry
-the phase. The name gives identity and task; the lifecycle gives phase.
+The name identifies the repo, plan, task **and role**: the implement session and the fresh review
+session for one task are two distinct names (`… · T{nn} · implement` and `… · T{nn} · review`), so
+the coordinator addresses each on its own, never by guessing which session was spawned most recently.
+The implement session is still closed as the review session spawns (§2.1), so at most one live
+session holds a task at a time; but in the brief hand-off overlap — and while a just-closed session
+lingers in `claude agents --json` before it drops off — the two are told apart by name, not by age.
+Putting the role in the name replaced an earlier scheme where the two shared one name and were
+distinguished by recency: brittle, and it produced a real SendMessage ambiguity ("2 agents named …")
+when the closed implementer still lingered beside its reviewer (single live run 2026-09-12; user
+decision to rename). The coordinator still tracks lifecycle phase within a role from the worker's own
+messages (implemented, done) and the task state in `PROGRESS.md`. The name gives identity, task and
+role; the lifecycle gives progress within the role.
 
 The name format is pure string work (`naming.mjs`, §3.2) so it is tested directly; T00 confirms
 that `--name` sets the `agents --json` name and that messaging addresses by it on this version.

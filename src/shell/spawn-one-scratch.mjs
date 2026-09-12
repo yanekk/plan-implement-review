@@ -158,7 +158,7 @@ function fileTransport(state, repoName, control) {
         const row = parseProgress(r.stdout).tasks.find((x) => x.num === num);
         if (!row || seen[num] === row.state) continue;
         seen[num] = row.state;
-        const from = workerName({ repo: repoName, plan: SLUG, task: num });
+        const from = workerName({ repo: repoName, plan: SLUG, task: num, role: 'implement' });
         if (row.state === '🔍') out.push({ from, text: encodeMessage({ kind: 'implemented', task: num }) });
         else if (row.state === '✅') out.push({ from, text: encodeMessage({ kind: 'done', task: num }) });
       }

@@ -97,7 +97,7 @@ function buildAssignments(state, liveList, repo, slug) {
   const byName = new Map(liveList.map((w) => [w.name, w]));
   const assignments = [];
   for (const [num, t] of Object.entries(state.tasks)) {
-    const w = byName.get(workerName({ repo, plan: slug, task: num }));
+    const w = byName.get(workerName({ repo, plan: slug, task: num, role: t.role }));
     if (w) {
       t.workerId = w.id; // authoritative id from the list, what close can actually stop
       t.grace = 0;
@@ -228,8 +228,8 @@ export function runPass({ platform, worktree, repo, slug, maxWorkers, state, con
   // branch (DESIGN §2.6, §2.9). decideDispatch has already capped this to the ceiling.
   for (const { num, runs } of decision.spawn) {
     const wt = worktree.createTask(slug, num);
-    const name = workerName({ repo, plan: slug, task: num });
     const role = runs === 'you' ? 'verify' : 'implement';
+    const name = workerName({ repo, plan: slug, task: num, role });
     const id = platform.spawn({ cwd: wt.path, name, phase: role });
     // workerId here is spawn's best-effort return, not trusted for liveness: buildAssignments resolves
     // the authoritative id by name next pass. grace lets the worker appear in the list before it could
@@ -263,7 +263,7 @@ export function runPass({ platform, worktree, repo, slug, maxWorkers, state, con
       record('await-idle', { task: num, workerId, reason: 'review-ready worker still busy' });
       continue;
     }
-    const revName = workerName({ repo, plan: slug, task: num });
+    const revName = workerName({ repo, plan: slug, task: num, role: 'review' });
     const reviewerId = platform.spawn({ cwd: t.worktree.path, name: revName, phase: 'review' });
     reviewSwaps.set(workerId, { num, reviewerId });
     spawnedThisPass.push(reviewerId);

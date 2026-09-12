@@ -12,6 +12,7 @@ Legend: 🐞 defect found · ✅ verified by hand with the user · 📌 worth kn
 
 | Date | | Finding |
 |---|---|---|
+| 2026-09-12 | 🔄 | Worker names now carry the role: `{repo} · {plan} · T{nn} · {role}` (implement/review/verify). Implementer and reviewer are distinct names addressed directly — no more age/`[ref]` disambiguation, ending the SendMessage ambiguity. naming.mjs/loop/harness/DESIGN §2.8/pir-coordinate updated. The closedIds count fix is still needed. |
 | 2026-09-12 | 🐞 | Live `single` re-run stalled, no promote: a closed implementer lingered in `claude agents --json` beside its fresh reviewer, so the loop counted 2 over ceiling 1 and the runaway breaker killed it mid-review. Fix: loop `closedIds` stops recounting closed sessions; fake gains `lingerClosed` + regression test. |
 | 2026-09-12 | ✅ | T18 (single) PASS live: real coordinator + worker + fresh reviewer drove build→review→merge→promote; all 4 facts green (hello, by-name, idle-gated close, one promote to main). Retires T13's live half. Bundle `pir-t17-single-IbhBgo/…/2026-09-12T05-45-43-231Z`. |
 | 2026-09-12 | 🐞 | T17 live runs surfaced two harness bugs, both fixed and regression-tested: the scratch fixture didn't carry the framework `src/` (coordinator couldn't find its bin); and the runner HALTed the coordinator ~5s after the last worker closed, before its promote pass. |

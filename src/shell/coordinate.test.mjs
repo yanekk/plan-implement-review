@@ -94,7 +94,7 @@ test('readReviewGate refuses a plan whose gate says "not yet", and passes a revi
 
 // --- 2. Dispatch is coordinator-chosen; review is a fresh, distinct session ------------------------
 
-test('a task is dispatched pir-implement, then reviewed by a fresh distinct session with the same name', (t) => {
+test('a task is dispatched pir-implement, then reviewed by a fresh distinct session with a distinct role name', (t) => {
   const { coordinator, platform } = setup(t, [{ num: 'T01' }]);
   driveCollecting(coordinator);
 
@@ -102,8 +102,10 @@ test('a task is dispatched pir-implement, then reviewed by a fresh distinct sess
   const review = platform.spawns.find((s) => s.role === 'review' && s.task === 'T01');
   assert.ok(impl && review, 'both an implement and a fresh review session were spawned for T01');
   assert.notEqual(impl.id, review.id, 'the reviewer is a distinct session, never the implementer');
-  assert.equal(impl.name, review.name, 'same worker name, different session (DESIGN §2.8)');
-  assert.equal(impl.name, workerName({ repo: REPO, plan: SLUG, task: 'T01' }));
+  // Implementer and reviewer now carry distinct names by role (DESIGN §2.8), addressed directly.
+  assert.notEqual(impl.name, review.name, 'distinct names, one per role');
+  assert.equal(impl.name, workerName({ repo: REPO, plan: SLUG, task: 'T01', role: 'implement' }));
+  assert.equal(review.name, workerName({ repo: REPO, plan: SLUG, task: 'T01', role: 'review' }));
   assert.ok(
     platform.spawns.indexOf(impl) < platform.spawns.indexOf(review),
     'the coordinator dispatched implement before it dispatched review',
@@ -121,8 +123,8 @@ test('the coordinator names itself and its workers per §2.8 and ignores agents 
   // Neither is one of THIS coordinator's workers (its workers are `${REPO} · ${SLUG} · T…`), so the
   // coordinator must never adopt, review or close them (DESIGN §2.8).
   const foreigners = [
-    { id: 'F1', name: 'other-repo · other-plan · T01', cwd: '/x', status: 'busy', state: 'working', live: true },
-    { id: 'F2', name: `${REPO} · another-plan · T01`, cwd: '/y', status: 'busy', state: 'working', live: true },
+    { id: 'F1', name: 'other-repo · other-plan · T01 · implement', cwd: '/x', status: 'busy', state: 'working', live: true },
+    { id: 'F2', name: `${REPO} · another-plan · T01 · implement`, cwd: '/y', status: 'busy', state: 'working', live: true },
   ];
   const platform = { ...fake, list: () => [...fake.list(), ...foreigners] };
 
@@ -154,11 +156,11 @@ test('a worker question is surfaced in plain English and the answer is sent down
   assert.match(surfaced.message, /worker on T01/i, 'the plain-English surface names the task');
 
   const res = coordinator.answer({ task: 'T01', text: 'use json' });
-  assert.equal(res.worker, workerName({ repo: REPO, plan: SLUG, task: 'T01' }));
+  assert.equal(res.worker, workerName({ repo: REPO, plan: SLUG, task: 'T01', role: 'implement' }));
   // The loop also sends each freshly-spawned worker a `hello` (T13 Problem A), so `sent` carries those
   // too. The answer is the only `answer`-kind message, and it went to T01 alone.
   const answers = platform.sent.filter((s) => s.msg.kind === 'answer');
-  assert.deepEqual(answers.map((s) => s.to), [workerName({ repo: REPO, plan: SLUG, task: 'T01' })], 'answered T01 and only T01');
+  assert.deepEqual(answers.map((s) => s.to), [workerName({ repo: REPO, plan: SLUG, task: 'T01', role: 'implement' })], 'answered T01 and only T01');
   assert.equal(answers[0].msg.kind, 'answer');
 
   const { result } = driveCollecting(coordinator);
@@ -196,7 +198,7 @@ test('a ready you task spawns a hands-on pir-verify worker, is never reviewed, a
 
   const you = passes.flatMap((p) => p.youToDrive).find((y) => y.task === 'T01');
   assert.ok(you, 'the coordinator surfaced a hands-on worker for the you task');
-  assert.equal(you.worker, workerName({ repo: REPO, plan: SLUG, task: 'T01' }));
+  assert.equal(you.worker, workerName({ repo: REPO, plan: SLUG, task: 'T01', role: 'verify' }));
 
   assert.ok(platform.spawns.some((s) => s.role === 'verify' && s.task === 'T01'), 'T01 spawned as a verify worker');
   assert.ok(!platform.spawns.some((s) => s.role === 'review' && s.task === 'T01'), 'a you task is never reviewed');
@@ -340,7 +342,7 @@ test('a decision written to the answers file drains once, then routes down to th
   writeFileSync(bridge.answersPath, JSON.stringify({ task: 'T01', text: 'use json' }) + '\n', { flag: 'a' });
   for (const d of bridge.drainAnswers()) coordinator.answer({ task: d.task, text: d.text });
   assert.ok(
-    platform.sent.some((s) => s.to === workerName({ repo: REPO, plan: SLUG, task: 'T01' }) && s.msg.kind === 'answer'),
+    platform.sent.some((s) => s.to === workerName({ repo: REPO, plan: SLUG, task: 'T01', role: 'implement' }) && s.msg.kind === 'answer'),
     'the drained decision was sent down to the parked worker as an answer',
   );
   assert.equal(driveCollecting(coordinator).result.promoted, true, 'the answered worker resumes and the plan promotes');

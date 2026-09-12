@@ -23,7 +23,7 @@ function taskWorktree(t) {
   return { wt, task: wt.createTask('demo', 'T01') };
 }
 
-const NAME = workerName({ repo: 'demo-repo', plan: 'demo', task: 'T01' });
+const NAME = workerName({ repo: 'demo-repo', plan: 'demo', task: 'T01', role: 'implement' });
 
 test('an implement worker commits its work, then reports implemented; list() is its clock', (t) => {
   const { wt, task } = taskWorktree(t);

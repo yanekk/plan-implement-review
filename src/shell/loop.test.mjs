@@ -79,23 +79,27 @@ test('two independent ready tasks are spawned in the same pass (worked concurren
   assert.equal(r.liveAfter, 2, 'two workers are live after the first pass');
 });
 
-test('fake workers are named {repo} · {plan} · T{nn}; the task is recoverable from the name', (t) => {
+test('fake workers are named {repo} · {plan} · T{nn} · {role}; the task is recoverable from the name', (t) => {
   const { platform, base } = setup(t, [{ num: 'T01' }]);
   runPass({ ...base, state: createRunState() });
   const spawn = platform.spawns[0];
-  assert.equal(spawn.name, workerName({ repo: REPO, plan: SLUG, task: 'T01' }));
-  assert.equal(spawn.name, `${REPO} · ${SLUG} · T01`);
+  assert.equal(spawn.name, workerName({ repo: REPO, plan: SLUG, task: 'T01', role: 'implement' }));
+  assert.equal(spawn.name, `${REPO} · ${SLUG} · T01 · implement`);
   assert.equal(spawn.task, 'T01', 'the loop rebuilds the task from the worker name');
 });
 
-test('each implemented auto task gets a fresh reviewer: a distinct id, the same name, after implement', (t) => {
+test('each implemented auto task gets a fresh reviewer: a distinct id and a distinct role-suffixed name, after implement', (t) => {
   const { platform, base } = setup(t, [{ num: 'T01' }]);
   drain(base);
   const impl = platform.spawns.find((s) => s.role === 'implement' && s.task === 'T01');
   const review = platform.spawns.find((s) => s.role === 'review' && s.task === 'T01');
   assert.ok(impl && review, 'both an implement and a review session were spawned');
   assert.notEqual(impl.id, review.id, 'the reviewer is a distinct session');
-  assert.equal(impl.name, review.name, 'same worker name, different session (DESIGN §2.8)');
+  // The implementer and reviewer of one task now carry distinct names by role (DESIGN §2.8), so the
+  // coordinator addresses each directly instead of telling them apart by which spawned most recently.
+  assert.notEqual(impl.name, review.name, 'distinct names, one per role');
+  assert.equal(impl.name, `${REPO} · ${SLUG} · T01 · implement`);
+  assert.equal(review.name, `${REPO} · ${SLUG} · T01 · review`);
   assert.ok(platform.spawns.indexOf(impl) < platform.spawns.indexOf(review), 'review comes after implement');
 });
 
@@ -161,7 +165,7 @@ test('a worker question surfaces via the inbox and a sent answer resumes that wo
   assert.equal(surfaced.text, 'which format?');
 
   // The user answers; the worker resumes and the plan finishes.
-  platform.send(workerName({ repo: REPO, plan: SLUG, task: 'T01' }), 'use json');
+  platform.send(workerName({ repo: REPO, plan: SLUG, task: 'T01', role: 'implement' }), 'use json');
   const result = drain({ ...base, state });
   assert.equal(result.promoted, true, 'the answered worker resumes and the plan promotes');
 });
@@ -243,7 +247,7 @@ test('a worker whose spawn id differs from its listed id is tracked by name, not
   // close must use the listed id, the only one that can actually stop the session.
   const worktree = createFakeWorktree({ progress: progressDoc([{ num: 'T01' }]), slug: SLUG });
   t.after(() => worktree.cleanup());
-  const NAME = workerName({ repo: REPO, plan: SLUG, task: 'T01' });
+  const NAME = workerName({ repo: REPO, plan: SLUG, task: 'T01', role: 'implement' });
   const spawns = [];
   const closed = [];
   let listed = [];
@@ -282,7 +286,7 @@ test('the coordinator does not count its OWN session (or a foreign agent) toward
   const fake = createFakePlatform({});
   const nonWorkers = [
     { id: 'COORD', name: `${REPO} · ${SLUG}`, cwd: '/c', status: 'busy', state: 'working', live: true },
-    { id: 'FOREIGN', name: 'other-repo · other-plan · T09', cwd: '/f', status: 'busy', state: 'working', live: true },
+    { id: 'FOREIGN', name: 'other-repo · other-plan · T09 · implement', cwd: '/f', status: 'busy', state: 'working', live: true },
   ];
   const platform = { ...fake, list: () => [...fake.list(), ...nonWorkers] };
   const base = { platform, worktree, repo: REPO, slug: SLUG, maxWorkers: 1 };
@@ -320,7 +324,7 @@ test('a closed session lingering in the agent list is not recounted — the fals
 test('every freshly spawned worker (implement and review) is sent a hello carrying the coordinator name (T13)', (t) => {
   const { platform, base } = setup(t, [{ num: 'T01' }]);
   const state = createRunState();
-  const NAME = workerName({ repo: REPO, plan: SLUG, task: 'T01' });
+  const NAME = workerName({ repo: REPO, plan: SLUG, task: 'T01', role: 'implement' });
   const COORD = coordinatorName({ repo: REPO, plan: SLUG });
 
   runPass({ ...base, state }); // pass 1: spawn implementer → hello
@@ -332,7 +336,13 @@ test('every freshly spawned worker (implement and review) is sent a hello carryi
   runPass({ ...base, state }); // pass 2: implemented → fresh reviewer spawns → hello
   hellos = platform.sent.filter((s) => s.msg.kind === 'hello');
   assert.equal(hellos.length, 2, 'the fresh reviewer was sent a hello too');
-  assert.ok(hellos.every((h) => h.to === NAME), 'both hellos address the same worker name (DESIGN §2.8)');
+  const REVIEW_NAME = workerName({ repo: REPO, plan: SLUG, task: 'T01', role: 'review' });
+  assert.deepEqual(
+    hellos.map((h) => h.to).sort(),
+    [NAME, REVIEW_NAME].sort(),
+    'the two hellos address the implementer and reviewer by their distinct role-suffixed names (DESIGN §2.8)',
+  );
+  assert.ok(hellos.every((h) => h.msg.text === COORD), 'each hello carries the coordinator name');
 });
 
 test('the loop still runs against a platform with no send half (no hello, no crash) (T13)', (t) => {
@@ -340,7 +350,7 @@ test('the loop still runs against a platform with no send half (no hello, no cra
   // throw on the first spawn. It simply spawns, is recognised by name, and drains — no hello sent.
   const worktree = createFakeWorktree({ progress: progressDoc([{ num: 'T01' }]), slug: SLUG });
   t.after(() => worktree.cleanup());
-  const NAME = workerName({ repo: REPO, plan: SLUG, task: 'T01' });
+  const NAME = workerName({ repo: REPO, plan: SLUG, task: 'T01', role: 'implement' });
   let listed = [];
   const platform = {
     spawn({ name }) {

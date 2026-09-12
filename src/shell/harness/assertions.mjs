@@ -34,7 +34,7 @@
 
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { coordinatorName, workerName, parseAgentName } from '../../core/naming.mjs';
+import { coordinatorName, parseAgentName } from '../../core/naming.mjs';
 
 // --- Small pure helpers over a bundle ------------------------------------------------------------
 
@@ -203,26 +203,29 @@ export function helloPerSpawn() {
       return { pass: false, evidence, detail: `hello count (${hellos.length}) does not match spawn+review (${spawns.length})` };
     }
 
-    // Transcript half: the coordinator addressed each spawned worker by its name.
-    const { repo, plan } = runIdentity(bundle);
+    // Transcript half: the coordinator addressed each spawned worker by its (role-suffixed) name. The
+    // implementer, reviewer and verify sessions of a task are now distinct names (DESIGN §2.8), so the
+    // ground truth for which sessions existed is the captured timeline, not a name rebuilt from the task
+    // alone. Every worker name the run produced must have received a hello SendMessage.
     const coord = coordinatorTranscript(bundle);
     if (!coord) {
       return { pass: false, evidence, detail: 'no coordinator transcript captured — cannot confirm the hello was addressed by name' };
     }
-    if (!repo || !plan) {
-      return { pass: false, evidence, detail: 'could not resolve the run repo/plan from the bundle to check hello addressing' };
-    }
     const sent = sendMessagesOf(coord);
-    const tasksSpawned = [...new Set(spawns.map((e) => e.rest))];
+    const workerNames = new Set();
+    for (const tick of bundle.timeline ?? [])
+      for (const a of tick.agents ?? []) if (a.isWorkerOf && a.name) workerNames.add(a.name);
+    if (workerNames.size === 0) {
+      return { pass: false, evidence, detail: 'no worker sessions in the timeline — cannot confirm the hello was addressed by name' };
+    }
     const missing = [];
-    for (const task of tasksSpawned) {
-      const wName = workerName({ repo, plan, task });
+    for (const wName of workerNames) {
       const hit = sent.find((s) => sameName(s.to, wName));
       if (hit) evidence.push(`coordinator → ${wName}: ${hit.summary}`);
       else missing.push(wName);
     }
     if (missing.length > 0) {
-      return { pass: false, evidence, detail: `coordinator transcript has no SendMessage to: ${missing.join(', ')}` };
+      return { pass: false, evidence, detail: `coordinator transcript has no hello SendMessage to: ${missing.join(', ')}` };
     }
     return { pass: true, evidence, detail: `${spawns.length} spawn/review each got a hello addressed by name` };
   });
@@ -317,9 +320,13 @@ export function questionRoundTrip(task) {
     const { repo, plan } = runIdentity(bundle);
     const coord = coordinatorTranscript(bundle);
     if (coord && repo && plan) {
-      const wName = workerName({ repo, plan, task });
-      const answer = sendMessagesOf(coord).find((s) => sameName(s.to, wName));
-      if (answer) evidence.push(`coordinator → ${wName} (answer): ${answer.summary}`);
+      // The answer went to whichever session parked (implement or review role), so match by task, not a
+      // rebuilt role-suffixed name.
+      const answer = sendMessagesOf(coord).find((s) => {
+        const p = parseAgentName(stripRef(s.to));
+        return p.matches && p.task === task && p.repo === repo && p.plan === plan;
+      });
+      if (answer) evidence.push(`coordinator → ${stripRef(answer.to)} (answer): ${answer.summary}`);
     }
     return { pass: true, evidence, detail: `${task} was surfaced and then resumed to a merge` };
   });

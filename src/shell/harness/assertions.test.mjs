@@ -31,15 +31,15 @@ import {
 const REPO = 'pir-h';
 const PLAN = 'scratch';
 const COORD = `${REPO} · ${PLAN}`;
-const wname = (t) => `${REPO} · ${PLAN} · ${t}`;
+const wname = (t, role = 'implement') => `${REPO} · ${PLAN} · ${t} · ${role}`;
 
 // --- canned-bundle builders ----------------------------------------------------------------------
 
 const fl = (ts, type, rest = '') => ({ ts, type, rest });
 const tick = (ts, agents) => ({ ts, agents });
 
-function wagent(task, status, { sessionId = 's' + task, state = 'working' } = {}) {
-  return { name: wname(task), sessionId, cwd: '/wt/' + task, status, state, isWorkerOf: true, isCoordinator: false };
+function wagent(task, status, { sessionId, state = 'working', role = 'implement' } = {}) {
+  return { name: wname(task, role), sessionId: sessionId ?? 's' + task + role, cwd: '/wt/' + task, status, state, isWorkerOf: true, isCoordinator: false };
 }
 function cagent({ status = 'busy' } = {}) {
   return { name: COORD, sessionId: 'sc', cwd: '/c', status, state: 'working', isWorkerOf: false, isCoordinator: true };
@@ -119,8 +119,14 @@ test('loadTranscripts reads a real bundle written by capture.loadBundle (the T14
 test('helloPerSpawn passes when every spawn/review has a hello and the coordinator addressed by name', () => {
   const b = bundle({
     flow: [fl('t1', 'spawn', 'T01'), fl('t1', 'hello', 'T01'), fl('t5', 'review', 'T01'), fl('t5', 'hello', 'T01')],
-    timeline: [tick('t1', [cagent()])],
-    transcripts: [transcript(COORD, 'coordinator', null, [sendEvent(wname('T01') + ' [ab12]', 'hello')])],
+    timeline: [
+      tick('t1', [cagent(), wagent('T01', 'busy')]),
+      tick('t5', [cagent(), wagent('T01', 'busy', { role: 'review' })]),
+    ],
+    transcripts: [transcript(COORD, 'coordinator', null, [
+      sendEvent(wname('T01', 'implement') + ' [ab12]', 'hello'),
+      sendEvent(wname('T01', 'review'), 'hello'),
+    ])],
   });
   const r = helloPerSpawn().check(b);
   assert.equal(r.pass, true, r.detail);
@@ -140,12 +146,12 @@ test('helloPerSpawn fails a spawn with no hello, evidence naming the task', () =
 test('helloPerSpawn fails when the coordinator never addressed the worker by name', () => {
   const b = bundle({
     flow: [fl('t1', 'spawn', 'T01'), fl('t1', 'hello', 'T01')],
-    timeline: [tick('t1', [cagent()])],
+    timeline: [tick('t1', [cagent(), wagent('T01', 'busy')])],
     transcripts: [transcript(COORD, 'coordinator', null, [sendEvent('someone-else', 'hi')])],
   });
   const r = helloPerSpawn().check(b);
   assert.equal(r.pass, false);
-  assert.match(r.detail, /no SendMessage to/);
+  assert.match(r.detail, /SendMessage to/);
 });
 
 // --- noCloseBeforeIdle (the T13 Problem B gate) --------------------------------------------------
@@ -329,7 +335,7 @@ test('ceilingHeld(2) fails when three workers are live in one tick', () => {
 // --- checkScenario + formatReport ----------------------------------------------------------------
 
 test('checkScenario fails the scenario when a single fact fails, and formatReport shows the evidence', () => {
-  const b = bundle({ flow: [fl('t1', 'spawn', 'T01'), fl('t1', 'hello', 'T01')], transcripts: [transcript(COORD, 'coordinator', null, [sendEvent(wname('T01'), 'hello')])], timeline: [tick('t1', [cagent()])] });
+  const b = bundle({ flow: [fl('t1', 'spawn', 'T01'), fl('t1', 'hello', 'T01')], transcripts: [transcript(COORD, 'coordinator', null, [sendEvent(wname('T01'), 'hello')])], timeline: [tick('t1', [cagent(), wagent('T01', 'busy')])] });
   const spec = { id: 'demo', facts: [helloPerSpawn(), questionRoundTrip('T09')] };
   const report = checkScenario(spec, b);
   assert.equal(report.pass, false, 'one failing fact fails the scenario');

@@ -118,10 +118,10 @@ test('teardownScenario touches HALT, closes every worker (via teardownRun) and t
     const slug = 'single';
     const control = controlDirFor(ws.dir, slug);
     const agents = [
-      { id: 'w1', name: `${repo} · ${slug} · T01` },
-      { id: 'w2', name: `${repo} · ${slug} · T02` },
+      { id: 'w1', name: `${repo} · ${slug} · T01 · implement` },
+      { id: 'w2', name: `${repo} · ${slug} · T02 · review` },
       { id: 'coord', name: `${repo} · ${slug}` },
-      { id: 'foreign', name: 'someone-else · other · T09' },
+      { id: 'foreign', name: 'someone-else · other · T09 · implement' },
     ];
     const platform = fakePlatform({ agents });
     const r = teardownScenario({ platform, worktree: fakeWorktree, repo, slug, controlDir: control });
@@ -221,7 +221,7 @@ test('runScenario auto-touches HALT on the wall-clock timeout and reports timeou
 
     // A worker that stays live forever and a flow log with no terminal marker → the run never finishes
     // on its own, so only the wall-clock timeout can end it.
-    const liveWorker = { id: 'w1', sessionId: 's1', name: 'scratch-repo · single · T01', cwd: into, status: 'busy', state: 'working', pid: 1 };
+    const liveWorker = { id: 'w1', sessionId: 's1', name: 'scratch-repo · single · T01 · implement', cwd: into, status: 'busy', state: 'working', pid: 1 };
     const claudeRun = (args) => {
       if (args[0] === '--bg') return { ok: true, stdout: 'coord\n' };
       if (args.includes('--all')) return { ok: true, stdout: '[]' };
@@ -302,7 +302,7 @@ test('runScenario does not stall while the coordinator is still booting (before 
     mkdirSync(projects, { recursive: true });
     const flowPath = join(controlDirFor(into, 'single'), 'log');
 
-    const worker = { id: 'w1', sessionId: 's1', name: 'scratch-repo · single · T01', cwd: into, status: 'busy', state: 'working', pid: 1 };
+    const worker = { id: 'w1', sessionId: 's1', name: 'scratch-repo · single · T01 · implement', cwd: into, status: 'busy', state: 'working', pid: 1 };
     let agentsCalls = 0;
     const claudeRun = (args) => {
       if (args[0] === '--bg') return { ok: true, stdout: 'coord\n' };
@@ -352,7 +352,7 @@ test('runScenario does not stall after the last worker closes while the coordina
     const flowPath = join(controlDirFor(into, 'single'), 'log');
 
     const coord = { id: 'c', sessionId: 'sc', name: 'scratch-repo · single', cwd: into, status: 'busy', state: 'working', pid: 2 };
-    const worker = { id: 'w1', sessionId: 's1', name: 'scratch-repo · single · T01', cwd: into, status: 'busy', state: 'working', pid: 1 };
+    const worker = { id: 'w1', sessionId: 's1', name: 'scratch-repo · single · T01 · implement', cwd: into, status: 'busy', state: 'working', pid: 1 };
     let n = 0;
     const claudeRun = (args) => {
       if (args[0] === '--bg') return { ok: true, stdout: 'coord\n' };

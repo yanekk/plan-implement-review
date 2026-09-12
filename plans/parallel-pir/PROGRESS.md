@@ -25,9 +25,11 @@ T18 transcripts and gates T19–T23. The operator's guide is [TEST-HARNESS.md](T
 **Next `pir-work` will:** find no `auto` work left — T24 is ✅ and every remaining task (T19–T23, T10) is
 a `you` live run gated on the user. First live `single` re-run (2026-09-12, after T24) stalled with no
 promote: the runaway breaker miscounted a just-closed implementer still listed alongside its fresh reviewer.
-Fixed in loop.mjs (`closedIds`); 245 tests green; re-run owed to confirm the promote. Then the fixture queue
-T19 (review-queue) → clean-merge → human-decision → merge-conflict → T23 (parallel) resumes. Procedure in
-[TEST-HARNESS.md](TEST-HARNESS.md).
+Fixed in loop.mjs (`closedIds`). Then (PM decision 2026-09-12) worker names were given a role suffix
+`… · T{nn} · {role}` (implement/review/verify) so the coordinator addresses implementer vs reviewer
+directly, not by age — DESIGN §2.8 and pir-coordinate updated. 249 tests green; live re-run owed to
+confirm the promote. Then the fixture queue T19 (review-queue) → clean-merge → human-decision →
+merge-conflict → T23 (parallel) resumes. Procedure in [TEST-HARNESS.md](TEST-HARNESS.md).
 
 ## Tasks
 

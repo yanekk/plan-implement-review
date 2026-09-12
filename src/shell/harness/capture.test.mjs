@@ -22,7 +22,7 @@ import {
 const REPO = 'pir-t14';
 const SLUG = 'scratch';
 const COORD = `${REPO} · ${SLUG}`;
-const W1 = `${REPO} · ${SLUG} · T01`;
+const W1 = `${REPO} · ${SLUG} · T01 · implement`;
 
 // A temp workspace holding a bundle dir, a control dir (the flow log), a projects/ transcript store and
 // a scratch repo dir. Never the real project — a throwaway temp dir, no agent spawned (the seatbelt).
@@ -143,7 +143,7 @@ test('tags this run’s worker and coordinator by name; a foreign agent is tagge
         [
           agent({ name: W1, sessionId: 's1', cwd: ws.repo }),
           agent({ name: COORD, sessionId: 's2', cwd: ws.repo }),
-          agent({ name: 'someone-else · other · T99', sessionId: 's3', cwd: '/elsewhere' }),
+          agent({ name: 'someone-else · other · T99 · implement', sessionId: 's3', cwd: '/elsewhere' }),
         ],
       ],
     });
@@ -163,8 +163,8 @@ test('tags this run’s worker and coordinator by name; a foreign agent is tagge
     assert.equal(byName[W1].isCoordinator, false);
     assert.equal(byName[COORD].isCoordinator, true);
     assert.equal(byName[COORD].isWorkerOf, false);
-    assert.equal(byName['someone-else · other · T99'].isWorkerOf, false, 'foreign worker not ours');
-    assert.equal(byName['someone-else · other · T99'].isCoordinator, false, 'foreign, not our coordinator');
+    assert.equal(byName['someone-else · other · T99 · implement'].isWorkerOf, false, 'foreign worker not ours');
+    assert.equal(byName['someone-else · other · T99 · implement'].isCoordinator, false, 'foreign, not our coordinator');
     // Every agent is kept per tick, not just this run's (DESIGN §4.1).
     assert.equal(entry.agents.length, 3);
   } finally {
@@ -227,14 +227,15 @@ test('snapshots each session’s transcript; a present one is copied, a missing 
 test('one worker name across two sessions keeps both transcripts — key and file disambiguated', () => {
   const ws = workspace();
   try {
-    // An implementer and its later fresh reviewer share the worker name (§2.8) but run at different
-    // times with different sessionIds. Both transcripts exist on disk under the same escaped cwd.
+    // Two sessions can carry the same worker name at different times — e.g. a crashed implementer
+    // respawned as `implement` again (§2.8; role-suffixed names make the implement→review pair distinct,
+    // but a same-role respawn still recurs). Both transcripts exist on disk under the same escaped cwd.
     const escaped = escapeProjectPath(ws.repo);
     mkdirSync(join(ws.projects, escaped), { recursive: true });
     writeFileSync(join(ws.projects, escaped, 's1.jsonl'), '{"impl":true}\n');
     writeFileSync(join(ws.projects, escaped, 's2.jsonl'), '{"review":true}\n');
 
-    // Two ticks: the implementer session, then (after it ends) the reviewer session, same name.
+    // Two ticks: the first session, then (after it ends) a second session under the same name.
     const runClaude = claudeSpy({
       ticks: [
         [agent({ name: W1, sessionId: 's1', cwd: ws.repo })],

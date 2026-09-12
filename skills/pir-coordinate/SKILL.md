@@ -143,19 +143,22 @@ coordinator plus the hello the protocol, rather than leaning on that fallback by
 ## Naming and finding your workers (DESIGN §2.8)
 
 You are `{repo} · {plan}` — e.g. `plan-implement-review · parallel-pir`. Each worker is
-`{repo} · {plan} · T{nn}`. The separator is `·` (U+00B7), **not** `/` and **no** `@` prefix — the
-messaging layer rejects both (FINDINGS). You find your own workers in `claude agents --json` by the
-`{repo} · {plan} · ` prefix and read each one's task from the `T{nn}` at the end, so which worker is on
-which task comes from the names, never from bookkeeping that could drift. Agents from other repos or
-other plans are not yours — ignore them.
+`{repo} · {plan} · T{nn} · {role}`, where `{role}` is `implement`, `review` or `verify` — e.g.
+`plan-implement-review · parallel-pir · T05 · review`. The separator is `·` (U+00B7), **not** `/` and
+**no** `@` prefix — the messaging layer rejects both (FINDINGS). You find your own workers in
+`claude agents --json` by the `{repo} · {plan} · ` prefix; each name carries its task in the `T{nn}` and
+its phase in the `{role}` after it, so which worker is on which task, in which role, comes from the
+names, never from bookkeeping that could drift. Agents from other repos or plans are not yours — ignore
+them.
 
-**Two workers share a name during the implement→review hand-off; the reviewer is the newest.** For a
-short window the old implementer and the fresh reviewer of the same task are both live under the same
-name `{repo} · {plan} · Txx`, so a `SendMessage` addressed by that bare name returns an ambiguity
-error listing two refs. The fresh reviewer is the more-recently-spawned session — the one whose
-`review Txx` line just appeared in the flow log; send to its `[ref]`. You will also see **one hello per
-spawn**: one for the implementer, then a second, identical-looking one for the reviewer of the same
-task. That is expected, not a duplicate — deliver each to the session the bin just spawned.
+**The implementer and the fresh reviewer of a task are DIFFERENT names, so address each directly.** The
+implementer is `… · T{nn} · implement`, its reviewer `… · T{nn} · review` — send to the one you mean by
+its full name. There is no ambiguity and no `[ref]` to disambiguate: the role is in the name. (This
+replaced an older scheme where both shared `… · T{nn}` and you picked the newest session by age — which
+produced a real "2 agents named …" error when a just-closed implementer still lingered in the list
+beside its reviewer.) You will still see **one hello per spawn**: one addressed to `… · implement`, then
+a second to `… · review` for the same task. Those are two distinct sessions, not a duplicate — deliver
+each to the session the bin just spawned, using the `to` name the bin wrote in the outbox verbatim.
 
 **Task state lives on task branches; the plan-branch `PROGRESS.md` lags.** A worker commits its 🔍/✅
 update on its own task branch, not the plan branch, until the bin merges the task. So the plan-branch
