@@ -1,6 +1,11 @@
 # T10 — Full multi-worker run + kill-switch drill
 
-**Phase:** 3 · **Depends on:** T09 · **Weight:** heavy · **Runs:** you
+**Phase:** 3 · **Depends on:** T23 · **Weight:** heavy · **Runs:** you
+
+> **Absorbed by T23 (2026-09-12).** This drill is now the Phase 6 `parallel` fixture run
+> (`tasks/T23-fixture-parallel-killswitch.md`), executed on captured data via the harness rather than
+> by eye. Do not run T10 standalone; it closes ✅ when T23's fact report is all-green. The goal and
+> success criteria below are what T23 must show; the procedure is in `TEST-HARNESS.md`.
 
 ## Goal
 

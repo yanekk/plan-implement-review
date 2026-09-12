@@ -1,6 +1,10 @@
 # T13 — Prove the worker↔coordinator comms protocol: by-name addressing, idle-gated close
 
-**Phase:** 3 · **Depends on:** T12 · **Weight:** medium · **Runs:** auto (with a hands-on live half)
+**Phase:** 3 · **Depends on:** T12 · **Weight:** medium · **Runs:** auto (live half retired by T18)
+
+> **Live half retired by T18 (2026-09-12).** The automated half is reviewed and ✅. The live
+> confirmation (by-name delivery, idle-gated close over real agents) is now proven by the Phase 6
+> `single` fixture run (`tasks/T18-fixture-single.md`), on captured data — no separate manual check.
 
 ## Goal
 

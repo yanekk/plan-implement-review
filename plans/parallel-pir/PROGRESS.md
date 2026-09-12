@@ -13,16 +13,18 @@ cell also fixes the over-budget cell they walk past.**
 **Plan reviewed:** 2026-09-07 — 4 fixed, 3 decided with the user
 
 **Status:** Plan written, re-scoped onto Claude Code's own primitives, and reviewed before build.
-The `Runs` column marks each task `auto` (a worker builds it) or `you` (a person runs it). 18 tasks,
-6 phases (0–5). T12/T13 added 2026-09-10 from the stopped T10 drill and the gastown comparison. Phase
-5 (T14–T17, the live-scenario test harness) added 2026-09-10 by PM decision: real workers, data-driven
-capture, folding in T10 and T13's live half. Phase 5 was not in the 2026-09-07 plan review (it postdates
-it); it is validated per task during build, since `/pir-review-plan` does not re-run on a building plan.
-**Last updated:** 2026-09-11
-**Next `pir-work` will:** report that T17 is blocked on the user and stop. The build half is reviewed
-clean (243 tests). What remains is the `you` live scenario runs — real paid agents, launched by the user,
-seatbelted (scratch, low ceiling, kill switch, timeout auto-HALT). They close T17 and T10 and retire
-T13's live half. `/pir-work` cannot advance until the user runs them (T10 depends on T17).
+The `Runs` column marks each task `auto` (a worker builds it) or `you` (a person runs it). 24 tasks,
+7 phases (0–6). T12/T13 added 2026-09-10. Phase 5 (T14–T17, the harness) added 2026-09-10. Phase 6
+(T18–T23, one live-run task per fixture) added 2026-09-12 by PM decision: T17 stays the `auto` runner,
+each fixture is its own `you` task, done when its fact report is all-green. T10 is absorbed by T23,
+T13's live half by T18. The operator's guide is [TEST-HARNESS.md](TEST-HARNESS.md). Phases 5–6 postdate
+the 2026-09-07 plan review; they are validated per task during build, since `/pir-review-plan` does not
+re-run on a building plan.
+**Last updated:** 2026-09-12
+**Next `pir-work` will:** report that Phase 6 is blocked on the user and stop. The whole harness
+(T14–T17) is built and reviewed; T17's runner has both live-surfaced fixes folded in (244 tests). What
+remains is the six `you` fixture runs (T18–T23) — real paid agents, launched by the user, seatbelted.
+Run order and full procedure are in [TEST-HARNESS.md](TEST-HARNESS.md); start with `single` (T18).
 
 ## Tasks
 
@@ -48,8 +50,14 @@ live steps with a hands-on worker the coordinator spawns, folded back without re
 | T14 | Harness capture layer: flow, agent-status timeline, transcript bundle | auto | T09 | ✅ | Reviewed clean; read-only capture, seal reads the real control/log and flow format. 164 tests. |
 | T15 | Harness assertions + scenario spec: declared facts over a bundle | auto | T14 | ✅ | Reviewed clean. 8 facts pure; loadTranscripts the only I/O (src/shell, outside the core boundary scan). Git-log needles verified against worktree.mjs. 195 tests. |
 | T16 | Harness fixtures: scratch plans that force each path with real workers | auto | T15 | ✅ | Reviewed. Six fixtures; merge-conflict forced at ceiling 2; loop records worker-raised surfaces to the flow log. 230 tests. |
-| T17 | Harness live runner + first real scenario runs | you | T14, T15, T16 | ⛔ | Build half reviewed clean this session (243 tests). Fixed one defect: the wait loop counted stall from poll 1, false-stalling every live run during the coordinator boot; a `startupGrace` now governs the pre-first-worker window (FINDINGS, regression test). Wiring all injected and tested with no agent. LIVE runs are the `you` half — needs the user to launch; they close T17 + T10. |
-| T10 | Full multi-worker run + kill-switch drill — folded into T17 | you | T17 | ⬜ | Folded into T17 (2026-09-10): the full drill is now T17's parallel + kill-switch scenario, run with captured data. Do not run standalone. Closes ✅ when T17's parallel scenario passes. Partial drill 2026-09-10 proved spawn + first message. Scratch: `src/pir-t10`. |
+| T17 | Harness live runner (install→launch→capture→wait→seal→check) | auto | T14, T15, T16 | ✅ | Reviewed clean; the runner build half. Two fixes folded in from the first live runs: `startupGrace` (was false-stalling during coordinator boot) and treat a live coordinator as active (was HALTing before the promote pass). 244 tests. Live runs are now the Phase 6 tasks T18–T23. |
+| T18 | Live fixture: single (happy path; retires T13 live half) | you | T17 | ⬜ | Run `node src/shell/harness/run.mjs single`; done when its 4 facts pass. First live runs got here: build/review/merge worked, promote fix landed. Re-run pending. See TEST-HARNESS.md. |
+| T19 | Live fixture: review-queue | you | T17 | ⬜ | Run `run.mjs review-queue`; hands-off; done when its 3 facts pass. See TEST-HARNESS.md. |
+| T20 | Live fixture: clean-merge | you | T17 | ⬜ | Run `run.mjs clean-merge`; hands-off; done when its 3 facts pass. See TEST-HARNESS.md. |
+| T21 | Live fixture: human-decision | you | T17 | ⬜ | Run `run.mjs human-decision`; answer the surfaced question via the control `answers` file; done when the 2 facts pass. See TEST-HARNESS.md. |
+| T22 | Live fixture: merge-conflict | you | T17 | ⬜ | Run `run.mjs merge-conflict`; hands-off; done when the conflict-parked fact passes. See TEST-HARNESS.md. |
+| T23 | Live fixture: parallel + kill-switch drill (absorbs T10) | you | T17 | ⬜ | Run `run.mjs parallel --into <dir>`; `touch <dir>/plans/parallel/.parallel/control/HALT` mid-run; done when its 3 facts pass. Closes T10. See TEST-HARNESS.md. |
+| T10 | Full multi-worker run + kill-switch drill — absorbed by T23 | you | T23 | ⬜ | Absorbed by T23 (2026-09-12). Do not run standalone; closes ✅ when T23's parallel + kill-switch fact report is all-green. Partial drill 2026-09-10 proved spawn + first message. |
 
 A Notes cell holds what was built or what the review found, the test count, and one line per
 deviation from the task doc.
@@ -61,21 +69,19 @@ runs, which are a person's step, not a review.
 
 ## Blocked on the user
 
-**Waiting on the user to launch the T17 live scenario runs.** The T17 build half is reviewed clean. The
-live scenario runs are the user's to launch — real paid agents, so they never start unattended. The bin
-refuses to run inside the canonical repo; it installs a throwaway scratch repo per scenario. Small first:
+**Waiting on the user to launch the Phase 6 fixture runs (T18–T23).** The harness is built and
+reviewed; the runner carries the skills and `src/` into each scratch repo and both live-surfaced fixes
+are in. What remains is the six live runs — real paid agents, launched attended, one at a time, never
+unattended. The full procedure (run command per fixture, seatbelts, where the logs are, the two runs
+that need a mid-run action, recording, cleanup) is in [TEST-HARNESS.md](TEST-HARNESS.md). Order, small
+first:
 
 ```
-node src/shell/harness/run.mjs single       # single-task happy path (folds T13's comms proof)
+node src/shell/harness/run.mjs single        # T18, then T19…T22, then:
+node src/shell/harness/run.mjs parallel --into <dir>   # T23, kill-switch drill, last
 ```
 
-then review-queue, clean-merge, human-decision, merge-conflict, and parallel (kill-switch drill) last.
 Each prints a fact-by-fact report and exits non-zero on any failed fact; record each run's verdict and
-bundle path in FINDINGS with the date (that is where T10 closes ✅ and T13's live half is retired).
-
-**Carry into the harness (T16/T17), from the stopped drill.** The parallel skills are NOT installed in
-`~/.claude/skills/` (only the classic set is), so a spawned worker needs them local — a fixture must
-carry them (`src/pir-t10` has all skills in its `.claude/skills/`). After close a worker lingers as
-`stopped` (needs `claude rm`). The feature worktree is not removed after promote. When T17 runs live,
-its scenarios are seatbelted: scratch plan, per-scenario low ceiling, kill switch
-(`touch plans/{scratch}/.parallel/control/HALT`), and a wall-clock timeout that auto-touches HALT.
+bundle path in FINDINGS with the date. A failed fact is a real finding — diagnose from the bundle, fix,
+re-run. Housekeeping: a closed worker can linger as `stopped` (`claude rm <id>`); scratch repos sit in
+a temp dir.

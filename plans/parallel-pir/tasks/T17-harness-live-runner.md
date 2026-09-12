@@ -1,6 +1,13 @@
-# T17 — Live runner and the first real scenario runs (folds T10 and T13's live half)
+# T17 — Live runner (the harness build half)
 
-**Phase:** 6 · **Depends on:** T14, T15, T16 · **Weight:** heavy · **Runs:** you
+**Phase:** 5 · **Depends on:** T14, T15, T16 · **Weight:** heavy · **Runs:** auto
+
+> **Re-scoped 2026-09-12:** the live scenario runs this doc's "Live, with the user" section described
+> are now **Phase 6, one `you` task per fixture** (T18–T23; T23 absorbs T10, T18 retires T13's live
+> half). T17 is just the runner — the `auto` build half, reviewed clean, with two fixes folded in from
+> the first live runs (startup-grace and treating a live coordinator as active). The operator's guide
+> to the Phase 6 runs is `TEST-HARNESS.md`. The "Build / fakes" acceptance below is T17's; the
+> "Live, with the user" acceptance moved to the Phase 6 task docs.
 
 ## Goal
 
