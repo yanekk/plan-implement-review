@@ -12,8 +12,8 @@ Legend: 🐞 defect found · ✅ verified by hand with the user · 📌 worth kn
 
 | Date | | Finding |
 |---|---|---|
-| 2026-09-12 | 🐞 | T17 live run #2: build/review/merge worked live, but the harness HALTed the coordinator ~5s after the last worker closed — its stall rule watched only workers, missing the promote pass, so nothing reached main. Fixed: `waitForCompletion` treats a live coordinator session as active. |
-| 2026-09-11 | 🐞 | T17 live run #1 (single): the scratch fixture carried the skills but not the `src/` the coordinator skill runs, so the coordinator could not find its bin and wrote no flow. Fixed: `installFixture` now carries `src/` too, minus `*.test.mjs` and the `harness/` subtree. |
+| 2026-09-12 | ✅ | T18 (single) PASS live: real coordinator + worker + fresh reviewer drove build→review→merge→promote; all 4 facts green (hello, by-name, idle-gated close, one promote to main). Retires T13's live half. Bundle `pir-t17-single-IbhBgo/…/2026-09-12T05-45-43-231Z`. |
+| 2026-09-12 | 🐞 | T17 live runs surfaced two harness bugs, both fixed and regression-tested: the scratch fixture didn't carry the framework `src/` (coordinator couldn't find its bin); and the runner HALTed the coordinator ~5s after the last worker closed, before its promote pass. |
 | 2026-09-11 | 🐞 | T17 review: the wait loop counted stall from poll 1, so the 6s default would false-stall every live run during the coordinator's boot. Fixed: a `startupGrace` governs the pre-first-worker window; `stallGrace` applies only after a worker is seen. |
 | 2026-09-11 | 📌 | T17: run.mjs passes the control dir to `bundleDirFor`, so a bundle lands under `.parallel/control/capture/` not `.parallel/capture/`. Harmless (the dir is threaded consistently through write and read); tidy when convenient. |
 | 2026-09-11 | 🐞 | T16 review: merge-conflict at ceiling 1 forces NO conflict — the 2nd task branches off the feature branch after the 1st merges, so its merge is clean (proved on real git). Fixed with PM: ceiling 2 (both cut from base) + task-agnostic `conflictSurfacedAndParked`. |
