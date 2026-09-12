@@ -31,7 +31,7 @@ const DONE = 'done';
 // loop knows about the worker holding it: its worktree, its live session id, its role and phase,
 // and any parked decision. This is the phase memory §2.8 says the coordinator keeps.
 export function createRunState() {
-  return { feature: null, tasks: {} };
+  return { feature: null, tasks: {}, closedIds: new Set() };
 }
 
 // The default kill switch and log for a dry run: never halted, log discarded. The real control.mjs
@@ -151,12 +151,25 @@ export function runPass({ platform, worktree, repo, slug, maxWorkers, state, con
   // 1. Gather. list() is the fake's tick, so it is called exactly once and its result reused.
   const halted = control.isHalted();
   const listed = platform.list();
-  // Keep only THIS run's workers ({repo} · {slug} · T…). `claude agents --json` lists every session
-  // sharing the repo git-dir, which includes the coordinator's OWN session and any foreign agent; the
-  // drill counted the coordinator itself and reported `ceiling full: 2/1 busy` with one real worker
-  // (T12 Problem 5). Everything downstream — the ceiling count, buildAssignments, close — operates on
-  // this run's workers only, so a foreign session can never be counted, adopted or closed.
-  const liveList = listed.filter((w) => isWorkerOf(w.name, { repo, plan: slug }));
+  // A session this loop has already closed can linger in `claude agents --json` for several passes:
+  // `close` SIGTERMs the process, but that is asynchronous and a stale Remote Control registry entry
+  // can outlive the process itself (single live run 2026-09-12: a just-closed implementer stayed listed
+  // alongside its fresh reviewer, so at ceiling 1 the loop counted 2 workers for 3 passes and the
+  // runaway breaker tore the run down mid-review, before any promote). So the loop remembers every id it
+  // closed and never recounts it as live; the memory is pruned once the id truly drops off the list, so
+  // it stays bounded and cannot suppress a genuinely new id (ids are unique per session).
+  state.closedIds ??= new Set();
+  const listedIds = new Set(listed.map((w) => w.id));
+  for (const id of state.closedIds) if (!listedIds.has(id)) state.closedIds.delete(id);
+  // Keep only THIS run's workers ({repo} · {slug} · T…), and drop any we have already closed. `claude
+  // agents --json` lists every session sharing the repo git-dir, which includes the coordinator's OWN
+  // session and any foreign agent; the drill counted the coordinator itself and reported `ceiling full:
+  // 2/1 busy` with one real worker (T12 Problem 5). Everything downstream — the ceiling count,
+  // buildAssignments, close — operates on this run's not-yet-closed workers only, so a foreign session
+  // can never be counted, adopted or closed, and neither can a closed session lingering in the list.
+  const liveList = listed.filter(
+    (w) => isWorkerOf(w.name, { repo, plan: slug }) && !state.closedIds.has(w.id),
+  );
   // The live worker record by its authoritative id, so a close of a FINISHED worker can be gated on it
   // being idle (T13 Problem B). `claude agents --json` reports each session's `status` (idle/busy);
   // parseAgents carries it through (platform.mjs). A worker is "busy" only when the list explicitly
@@ -187,6 +200,7 @@ export function runPass({ platform, worktree, repo, slug, maxWorkers, state, con
       closedThisPass.add(id);
       record('halt-close', { workerId: id });
     }
+    for (const id of closedThisPass) state.closedIds.add(id);
     const liveAfter = [...liveIds].filter((id) => !closedThisPass.has(id)).length;
     return { actions, log, halted: true, promoted: false, liveAfter, tasks: parsed.tasks };
   }
@@ -343,6 +357,9 @@ export function runPass({ platform, worktree, repo, slug, maxWorkers, state, con
     }
   }
 
+  // Remember what we closed this pass so a lingering (still-listed) closed session is not recounted as
+  // live next pass — the over-count that fired the runaway breaker on the first live single run.
+  for (const id of closedThisPass) state.closedIds.add(id);
   const liveAfter =
     [...liveIds].filter((id) => !closedThisPass.has(id)).length + spawnedThisPass.length;
   return { actions, log, halted: false, promoted, liveAfter, tasks: parsed.tasks };

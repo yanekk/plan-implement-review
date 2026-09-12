@@ -294,6 +294,27 @@ test('the coordinator does not count its OWN session (or a foreign agent) toward
   assert.ok(!fake.closed.includes('COORD') && !fake.closed.includes('FOREIGN'), 'neither non-worker was closed');
 });
 
+test('a closed session lingering in the agent list is not recounted — the false runaway the first live single run hit (2026-09-12)', (t) => {
+  // Real `claude close` is async and a stale registry entry can outlive the process, so a just-closed
+  // implementer keeps showing up in `claude agents --json` for a few passes alongside its fresh
+  // reviewer. At ceiling 1 the loop must count one live worker across the hand-off, not two — else the
+  // runaway breaker (coordinate.mjs, reading r.live) fires "2 over ceiling 1 for 3 passes" and tears the
+  // run down mid-review before it can promote, which is exactly what killed the first live single run.
+  // lingerClosed keeps the closed implementer listed; lingerBusy keeps the reviewer working while it
+  // lingers, so pre-fix the two would be counted together (liveAfter 2).
+  const { base } = setup(t, [{ num: 'T01' }], { behaviors: { T01: { lingerClosed: 3, lingerBusy: 2 } } });
+  const state = createRunState();
+  let promoted = false;
+  let maxLive = 0;
+  for (let i = 0; i < 20 && !promoted; i++) {
+    const r = runPass({ ...base, maxWorkers: 1, state });
+    maxLive = Math.max(maxLive, r.liveAfter);
+    promoted = r.promoted;
+  }
+  assert.ok(promoted, 'the plan promotes despite the closed implementer lingering in the list');
+  assert.ok(maxLive <= 1, `never more than the ceiling of 1 counted live (saw ${maxLive}) — no false runaway`);
+});
+
 // --- T13 Problem A: a hello opens each freshly-spawned worker's channel ----------------------------
 
 test('every freshly spawned worker (implement and review) is sent a hello carrying the coordinator name (T13)', (t) => {

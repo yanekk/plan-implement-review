@@ -53,6 +53,12 @@ function commit(cwd, task, plan, { file, content, rowState, note, message }) {
 //                            list() reports it `busy` for N more ticks before `idle`. Models a real
 //                            session still mid-turn after it committed, so a test can prove the loop
 //                            gates a finished worker's close on it going idle (T13 Problem B).
+//     { lingerClosed: N }    after close(), the session stays in list() for N more ticks (still
+//                            `state:working`) before it drops off. Models the real `claude close`:
+//                            SIGTERM is async and a stale Remote Control registry entry can outlive the
+//                            process, so a just-closed worker lingers in `claude agents --json` for a
+//                            few passes (single live run 2026-09-12). Lets a test prove the loop does
+//                            not recount a closed-but-still-listed worker (loop.mjs closedIds).
 export function createFakePlatform({ behaviors = {} } = {}) {
   const workers = new Map(); // id → worker record
   const inboxQueue = []; // messages from workers to the coordinator, drained by inbox()
@@ -200,10 +206,16 @@ export function createFakePlatform({ behaviors = {} } = {}) {
     // list() → live workers with their state. Advances every live worker one tick first (see header).
     list() {
       for (const w of workers.values()) {
-        if (w.live) {
-          advance(w);
-          updateStatus(w); // reflect the new stage's busy/idle in this same observation (T13 Problem B)
+        if (!w.live) continue;
+        if (w.stage === 'closed') {
+          // a closed session lingers a few ticks before it drops off the list (see close()); while it
+          // lingers it stays a stale `working` entry and does not advance.
+          if (w.lingerClosed <= 0) w.live = false;
+          else w.lingerClosed -= 1;
+          continue;
         }
+        advance(w);
+        updateStatus(w); // reflect the new stage's busy/idle in this same observation (T13 Problem B)
       }
       return [...workers.values()]
         .filter((w) => w.live)
@@ -212,10 +224,21 @@ export function createFakePlatform({ behaviors = {} } = {}) {
 
     // close(id) → stop the session. Session teardown only; removing the worktree and branch is the
     // worktree's job (worktree.remove), so an implementer can be closed while its reviewer keeps the
-    // shared worktree (DESIGN §2.3). Safe on an already-gone id.
+    // shared worktree (DESIGN §2.3). Safe on an already-gone id. With `lingerClosed: N` the session is
+    // stopped but stays listed for N more ticks (a stale `working` entry), modelling the real close's
+    // async teardown so a test can prove the loop does not recount it (loop.mjs closedIds).
     close(id) {
       closed.push(id);
-      workers.delete(id);
+      const w = workers.get(id);
+      const linger = w ? behaviors[w.task]?.lingerClosed ?? 0 : 0;
+      if (w && linger > 0) {
+        w.stage = 'closed'; // no further advance; list() ages it out over `linger` ticks
+        w.lingerClosed = linger;
+        w.status = 'busy';
+        w.state = 'working';
+      } else {
+        workers.delete(id);
+      }
     },
 
     // inbox() → drain the messages workers have sent the coordinator since the last call.
