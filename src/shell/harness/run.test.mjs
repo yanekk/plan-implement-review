@@ -338,3 +338,53 @@ test('runScenario does not stall while the coordinator is still booting (before 
     ws.cleanup();
   }
 });
+
+// The regression from the first real single run (T17 live run 2026-09-12): after the last worker closes,
+// the coordinator runs one more pass to promote to main. The old logic counted a stall on worker-absence
+// alone and HALTed the coordinator ~5s later, before it promoted, so nothing reached main. The coordinator
+// session is still live and working through that window, so the run must NOT be called stalled while it is.
+test('runScenario does not stall after the last worker closes while the coordinator is still promoting', async () => {
+  const ws = workspace();
+  try {
+    const into = join(ws.dir, 'scratch-repo');
+    const projects = join(ws.dir, 'projects');
+    mkdirSync(projects, { recursive: true });
+    const flowPath = join(controlDirFor(into, 'single'), 'log');
+
+    const coord = { id: 'c', sessionId: 'sc', name: 'scratch-repo · single', cwd: into, status: 'busy', state: 'working', pid: 2 };
+    const worker = { id: 'w1', sessionId: 's1', name: 'scratch-repo · single · T01', cwd: into, status: 'busy', state: 'working', pid: 1 };
+    let n = 0;
+    const claudeRun = (args) => {
+      if (args[0] === '--bg') return { ok: true, stdout: 'coord\n' };
+      if (args.includes('--all')) return { ok: true, stdout: '[]' };
+      if (args[0] === 'agents') {
+        n += 1;
+        // poll 1: worker + coordinator live. polls 2+: worker gone, coordinator still working (promoting).
+        const live = n === 1 ? [coord, worker] : [coord];
+        // The promote lands only on poll 4 — well after the old worker-absence stallGrace of 2 would have
+        // (wrongly) declared a stall at poll 3.
+        if (n >= 4) writeFileSync(flowPath, '2026-01-01T00:00:00Z open-feature pir/single\n2026-01-01T00:04:00Z promote pir/single\n');
+        return { ok: true, stdout: JSON.stringify(live) };
+      }
+      return { ok: true, stdout: '' };
+    };
+
+    const result = await runScenario({
+      fixtureId: 'single',
+      scratchDir: into,
+      install: installFake({ into, controlLog: '2026-01-01T00:00:00Z open-feature pir/single\n' }),
+      claudeRun,
+      gitRun: () => ({ ok: true, stdout: '' }),
+      platform: fakePlatform({ agents: [] }),
+      worktree: fakeWorktree,
+      projectsDir: projects,
+      pollMs: 1,
+      stallGrace: 2, // short: worker-absence alone would have stalled at poll 3, before the poll-4 promote
+    });
+
+    assert.equal(result.reason, 'promoted');
+    assert.ok(n >= 4, 'the run kept polling past the last worker while the coordinator was still live');
+  } finally {
+    ws.cleanup();
+  }
+});
