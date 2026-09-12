@@ -56,8 +56,10 @@ an unreviewed plan even if asked to "just try it" — say what the risk is and l
 run it in the background, so its printed progress and `DECISION NEEDED` lines can lag by minutes or
 not appear until it exits — never drive off the banner. Read the flow log
 `plans/{slug}/.parallel/control/log` every turn instead. It carries one line per action, written the
-moment it happens: `open-feature`, `spawn`, `hello`, `review`, `merge`, `surface`, `close`, `promote`,
-`teardown`. A new `surface Txx` line is your cue that a decision for `Txx` is waiting; you do not need
+moment it happens — an ISO timestamp, then the action tag and its task or branch, so match on the tag,
+not the first token. The tags: `open-feature`, `spawn`, `hello`, `review`, `await-idle` (a hand-off
+waiting for a busy slot to free — not a stall), `merge`, `surface`, `close`, `halt-close`, `promote`,
+`teardown`, and `ceiling full`. A new `surface Txx` line is your cue that a decision for `Txx` is waiting; you do not need
 the bin to echo the decision text, because you wrote the worker's own message into the inbox when it
 arrived — read it there, keyed by task, rather than waiting on stdout. Pair the log with the control
 files (inbox, outbox, answers) below; between them you never need the banner.

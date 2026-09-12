@@ -38,10 +38,11 @@ because a single plan happened to be present.)
 You are in a fresh worktree on branch `pir/{plan}-T{nn}`, cut from the feature branch `pir/{plan}`
 (DESIGN §2.9). Commit your work there as normal.
 
-Your worktree root is `{repo}/.claude/worktrees/{branch}/`, on branch `pir/{plan}-T{nn}`. The
-`Read`, `Edit` and `Write` tools need absolute paths, and every one must sit under *that* root — get
-it from `git rev-parse --show-toplevel`, never by assuming the repo's own top-level layout, or you will
-read and edit the wrong checkout. (A T18 reviewer `Read` the plan-branch `PROGRESS.md` instead of its
+Your worktree root is `{repo}/.claude/worktrees/pir-{plan}-T{nn}/` — the directory flattens the
+branch's `/` to a `-`, so the folder is `pir-{plan}-T{nn}` even though the branch is `pir/{plan}-T{nn}`.
+The `Read`, `Edit` and `Write` tools need absolute paths, and every one must sit under *that* root — get
+it from `git rev-parse --show-toplevel`, never by assuming the repo's own top-level layout or
+hand-building the path, or you will read and edit the wrong checkout. (A T18 reviewer `Read` the plan-branch `PROGRESS.md` instead of its
 worktree copy for exactly this reason and had to self-correct.)
 
 **`CLAUDE.md § Where sessions run` — "main checkout, main branch, always; stop if you find yourself
