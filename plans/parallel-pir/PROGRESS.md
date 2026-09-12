@@ -22,11 +22,10 @@ T18 transcripts and gates T19–T23. The operator's guide is [TEST-HARNESS.md](T
 5–6 postdate the 2026-09-07 plan review; they are validated per task during build, since
 `/pir-review-plan` does not re-run on a building plan.
 **Last updated:** 2026-09-12
-**Next `pir-work` will:** implement T24 — fold the T18-transcript fixes into the `pir-coordinate` and
-`pir-worker` prompts (edits C1–C6, W1–W4 in the task doc). It is `auto`, so `/pir-work` builds it, the
-next session reviews it. After it is ✅ the user and implementer run `single` together and iterate,
-then the fixture queue (T19 review-queue → … → T23 parallel) resumes. Procedure for the fixtures in
-[TEST-HARNESS.md](TEST-HARNESS.md).
+**Next `pir-work` will:** review T24 (🔍) — check the C1–C6/W1–W4 edits against the task doc and the
+T18 frictions, that no edit contradicts DESIGN or the other skill, and that npm test stays green. After
+it is ✅ the user and implementer run `single` together and iterate, then the fixture queue (T19
+review-queue → … → T23 parallel) resumes. Procedure for the fixtures in [TEST-HARNESS.md](TEST-HARNESS.md).
 
 ## Tasks
 
@@ -54,7 +53,7 @@ live steps with a hands-on worker the coordinator spawns, folded back without re
 | T16 | Harness fixtures: scratch plans that force each path with real workers | auto | T15 | ✅ | Reviewed. Six fixtures; merge-conflict forced at ceiling 2; loop records worker-raised surfaces to the flow log. 230 tests. |
 | T17 | Harness live runner (install→launch→capture→wait→seal→check) | auto | T14, T15, T16 | ✅ | Reviewed clean; the runner build half. Two fixes folded in from the first live runs: `startupGrace` (was false-stalling during coordinator boot) and treat a live coordinator as active (was HALTing before the promote pass). 244 tests. Live runs are now the Phase 6 tasks T18–T23. |
 | T18 | Live fixture: single (happy path; retires T13 live half) | you | T17 | ✅ | PASS live 2026-09-12: all 4 facts green (hello, by-name, idle-gated close, one promote to main); build→review→merge→promote on real agents. Retires T13's live half. Bundle `pir-t17-single-IbhBgo/…/2026-09-12T05-45-43-231Z`. |
-| T24 | Harden coordinator/worker prompts from the T18 transcripts | auto | T18 | ⬜ | Prose edits C1–C6 (pir-coordinate) + W1–W4 (pir-worker) closing the T18 improvisation gaps: drive off the flow log not stdout, outbox cursor, shared-name hand-off, worktree paths, slug from branch, no hello reply, exact SendMessage call. Gates T19–T23. Then run `single` with the user and iterate. |
+| T24 | Harden coordinator/worker prompts from the T18 transcripts | auto | T18 | 🔍 | All 10 edits applied: C1–C6 + W4 (pir-coordinate), W1–W4 (pir-worker). Prose only, no src/; npm test green (248). Deviation: C1 also rewrote loop steps 1–2 to read the flow log instead of bin stdout, else they'd contradict C1. Not self-verifying — live `single` re-run confirms it (task § After this task). |
 | T19 | Live fixture: review-queue | you | T17, T24 | ⬜ | Run `run.mjs review-queue`; hands-off; done when its 3 facts pass. See TEST-HARNESS.md. |
 | T20 | Live fixture: clean-merge | you | T17, T24 | ⬜ | Run `run.mjs clean-merge`; hands-off; done when its 3 facts pass. See TEST-HARNESS.md. |
 | T21 | Live fixture: human-decision | you | T17, T24 | ⬜ | Run `run.mjs human-decision`; answer the surfaced question via the control `answers` file; done when the 2 facts pass. See TEST-HARNESS.md. |
@@ -67,15 +66,15 @@ deviation from the task doc.
 
 **A ✅ task's cell may be cut to one line** once the next task has been reviewed.
 
-**Review queue:** empty. T17's build half is reviewed clean. Next `/pir-work` implements T24 (`auto`);
-the session after reviews it. The `you` fixture runs resume once T24 is ✅ and the live iteration is done.
+**Review queue:** T24 (🔍) — the coordinator/worker prompt hardening, awaiting a fresh-eyes review.
+The `you` fixture runs resume once T24 is ✅ and the live iteration is done.
 
 ## Next up: T24, then the gated fixtures
 
-**T24 is buildable now** (`auto`, deps ✅) — it hardens the coordinator/worker prompts from the T18
-transcripts (edits C1–C6, W1–W4 in its task doc). `/pir-work` builds it, the next session reviews it.
-Then the user and implementer run `single` together and iterate on the prompts live (T24 § *After this
-task*) before the fixtures resume.
+**T24 is built and awaiting review** (🔍) — it hardens the coordinator/worker prompts from the T18
+transcripts (edits C1–C6, W1–W4 in its task doc). The next `/pir-work` reviews it. Once it is ✅ the
+user and implementer run `single` together and iterate on the prompts live (T24 § *After this task*)
+before the fixtures resume.
 
 **The remaining Phase 6 fixture runs (T19–T23) are gated on T24** and stay blocked on the user after
 it: real paid agents, launched attended, one at a time, never unattended. The full procedure (run

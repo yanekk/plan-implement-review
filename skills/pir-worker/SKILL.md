@@ -28,10 +28,21 @@ The coordinator sends you one of three instructions. Run that task, that phase, 
 grab the same task and collide — so selection is the coordinator's job alone (DESIGN §1, §2.1). You
 are told the task; you do not choose it.
 
+The coordinator names your task (`pir-implement T05`) but may not name the plan slug. **Do not guess it
+from the only folder under `plans/`** — derive it from your branch name `pir/{plan}-T{nn}`, read with
+`git branch --show-current`. (A T18 worker inferred `single` from `ls plans/`, which only worked
+because a single plan happened to be present.)
+
 ## Where you run: your task branch, not main
 
 You are in a fresh worktree on branch `pir/{plan}-T{nn}`, cut from the feature branch `pir/{plan}`
 (DESIGN §2.9). Commit your work there as normal.
+
+Your worktree root is `{repo}/.claude/worktrees/{branch}/`, on branch `pir/{plan}-T{nn}`. The
+`Read`, `Edit` and `Write` tools need absolute paths, and every one must sit under *that* root — get
+it from `git rev-parse --show-toplevel`, never by assuming the repo's own top-level layout, or you will
+read and edit the wrong checkout. (A T18 reviewer `Read` the plan-branch `PROGRESS.md` instead of its
+worktree copy for exactly this reason and had to self-correct.)
 
 **`CLAUDE.md § Where sessions run` — "main checkout, main branch, always; stop if you find yourself
 in a worktree" — does NOT bind you.** That rule is for the classic single-stream flow. Parallel mode
@@ -81,13 +92,15 @@ If you ever forget it, at least write the words `kind: <kind>` explicitly in the
 still be recognised. The coordinator addresses you back by your worker name; you do not poll for a
 reply — it arrives as a message.
 
-## You may receive a `hello` from the coordinator at spawn — ignore it (or reply once)
+## You may receive a `hello` from the coordinator at spawn — do not reply to it
 
 Right after it spawns you, the coordinator sends you a one-line `[pir:v1 kind=hello task=Txx]` message
 carrying its own name (DESIGN §2.2). Its only purpose is to confirm the channel between you is open
-before you rely on it — it asks nothing of you. **You do not have to act on a hello.** If you like, you
-may reply once to confirm you are alive, but doing nothing is equally fine; either way, get straight on
-with the task the coordinator dispatched. A hello is never a task, a question, or an instruction.
+before you rely on it — it asks nothing of you. **Do not reply to a hello.** It has no valid reply kind
+(the kinds are `question`, `decision`, `implemented`, `done`, `conflict`), and it may arrive *after*
+you have already reported done — a reply then sends a spurious second signal the coordinator has to
+untangle. Ignore it and get straight on with, or finish, your task. A hello is never a task, a
+question, or an instruction. (A T18 reviewer replied to a late hello with a second `kind=done`.)
 
 ## After you implement, you hand off — you do not review your own work
 
@@ -131,3 +144,6 @@ The separator is `·` (U+00B7), a middle dot, **not** `/`: the messaging layer r
 containing `/` (DESIGN §2.8, FINDINGS). There is **no `@` prefix** either — the same layer rejects a
 name that starts with `@` (T07 found this live, 2026-09-08). When you address the coordinator, use the
 bare `{repo} · {plan}`.
+
+The send is exactly `SendMessage({to: "<name>", message: "<text>"})` — those two fields and no others.
+Do not fill `recipient`, `content`, or any other field name; the tool takes `to` and `message` only.

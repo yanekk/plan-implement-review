@@ -52,13 +52,29 @@ an unreviewed plan even if asked to "just try it" — say what the risk is and l
 
 ## The loop you run
 
+**Ground truth is the flow log, not the bin's stdout.** The bin's stdout is block-buffered when you
+run it in the background, so its printed progress and `DECISION NEEDED` lines can lag by minutes or
+not appear until it exits — never drive off the banner. Read the flow log
+`plans/{slug}/.parallel/control/log` every turn instead. It carries one line per action, written the
+moment it happens: `open-feature`, `spawn`, `hello`, `review`, `merge`, `surface`, `close`, `promote`,
+`teardown`. A new `surface Txx` line is your cue that a decision for `Txx` is waiting; you do not need
+the bin to echo the decision text, because you wrote the worker's own message into the inbox when it
+arrived — read it there, keyed by task, rather than waiting on stdout. Pair the log with the control
+files (inbox, outbox, answers) below; between them you never need the banner.
+
+**Run the bin in the background and poll — never block one tool call on it.** Re-read the flow log on
+a short cadence (≈15s); prefer the Monitor tool with an until-condition on the log growing over a
+hand-rolled `sleep` of guessed length.
+
 Start the bin once and leave it running. Then, while it runs, on every turn:
 
-1. **Report progress to the user.** For each task the bin prints as reaching ✅, tell the user in one
-   plain line. If it prints "ceiling full", say so — the run is throttled, not stuck.
-2. **Surface every decision, one at a time.** For each `DECISION NEEDED` line the bin prints (a
-   question, a decision, a conflict, a red build), put it to the user in plain English (the bin
-   already phrases it; keep it plain). The user owns the decision. Ask one thing at a time.
+1. **Report progress to the user.** For each `merge Txx` line in the flow log, tell the user in one
+   plain line that the task has landed on the plan branch. A `ceiling full` line means the run is
+   throttled, not stuck — say so.
+2. **Surface every decision, one at a time.** Each `surface Txx` line in the flow log means a worker
+   on `Txx` hit a question, a decision, a conflict or a red build and the bin has parked it. Put the
+   worker's message — the one you already relayed into the inbox — to the user in plain English. The
+   user owns the decision. Ask one thing at a time.
 3. **Route each answer back down.** When the user answers, **append one JSON line to the answers file**
    `plans/{slug}/.parallel/control/answers`: `{"task":"T05","text":"<the decision, in the worker's
    terms>"}`. The bin drains it on its next pass and sends it to that one worker. If the user defers a
@@ -73,6 +89,12 @@ The bin ends the run itself: it promotes when the plan is fully ✅, stops on th
 when there is nothing left to do, and — on any of those, a crash, or a Ctrl-C — closes every worker it
 spawned so none is left running. When it exits, report the outcome to the user and stop.
 
+**The run is finished when the flow log shows `promote` (or a HALT / nothing-left banner) — not when
+the last worker's `done` arrives.** A reviewer's `done` hands its task back for merging; several more
+merges and the promote pass may still follow. Do not end your turn at that `done` assuming the bin
+promoted silently. Wait for the `promote` line in the log, then report the outcome to the user and
+stop.
+
 ## Carrying messages across the file bridge is YOUR job
 
 A worker talks to you with SendMessage; you talk back with SendMessage. A Node process cannot do
@@ -83,10 +105,17 @@ the bin exchanges messages with you through three control files under `plans/{sl
   the **inbox** file as one JSON line `{"from":"<worker name>","text":"<the exact message it sent>"}`.
   The bin reads the inbox each pass. Workers are taught to prefix every message with a
   `[pir:v1 kind=… task=…]` header (the `pir-worker` contract) so the bin routes it correctly; pass the
-  worker's message through verbatim — do not rewrite it.
-- **The bin answers a worker.** It writes the outgoing message to the **outbox** file. Read it and
-  perform the actual SendMessage to that worker, addressed by its name.
+  worker's message through verbatim — do not rewrite it. **Append it safely: write the JSON object to a
+  temp file and `cat` that file onto the inbox** — never inline the message text into a shell command,
+  because worker messages carry backticks, newlines and emoji that break `node -e` and `echo`.
+- **The bin answers a worker.** It writes the outgoing message to the **outbox** file. The outbox is
+  **append-only and owned by the bin — never truncate or edit it.** Track how many lines you have
+  already delivered (a cursor) and perform the actual SendMessage only for the new ones, each addressed
+  to that worker by its name.
 - **The user decides.** You write to the **answers** file (step 3 above); the bin routes it down.
+
+The send is exactly `SendMessage({to: "<name>", message: "<text>"})` — those two fields and no others.
+Do not fill `recipient`, `content`, or any other field name; the tool takes `to` and `message` only.
 
 This bridge is why the live drive is verified with the user (T10): the message wiring only exists once
 real sessions are talking. Against the fakes in the tests, the platform is its own bus and no bridge
@@ -117,6 +146,20 @@ messaging layer rejects both (FINDINGS). You find your own workers in `claude ag
 `{repo} · {plan} · ` prefix and read each one's task from the `T{nn}` at the end, so which worker is on
 which task comes from the names, never from bookkeeping that could drift. Agents from other repos or
 other plans are not yours — ignore them.
+
+**Two workers share a name during the implement→review hand-off; the reviewer is the newest.** For a
+short window the old implementer and the fresh reviewer of the same task are both live under the same
+name `{repo} · {plan} · Txx`, so a `SendMessage` addressed by that bare name returns an ambiguity
+error listing two refs. The fresh reviewer is the more-recently-spawned session — the one whose
+`review Txx` line just appeared in the flow log; send to its `[ref]`. You will also see **one hello per
+spawn**: one for the implementer, then a second, identical-looking one for the reviewer of the same
+task. That is expected, not a duplicate — deliver each to the session the bin just spawned.
+
+**Task state lives on task branches; the plan-branch `PROGRESS.md` lags.** A worker commits its 🔍/✅
+update on its own task branch, not the plan branch, until the bin merges the task. So the plan-branch
+`PROGRESS.md` still shows a task as ⬜ while a worker is actively building it — that is expected, not a
+stall. Read worker status from `claude agents --json` and the flow log, never from plan-branch
+`PROGRESS.md`.
 
 ## The rails you must honour
 
