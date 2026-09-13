@@ -7,9 +7,9 @@
 // stopped every worker while promoting nothing. There is no oneMergeToMain here on purpose — the run
 // is HALTed before promotion, so main must stay untouched (killSwitchStoppedAll checks exactly that).
 //
-// Ceiling caveat (T08 FINDINGS 2026-09-09): a review handoff can transiently list implementer+reviewer
-// = ceiling+1. This scenario HALTs mid-build, before reviews, so ceilingHeld(2) is the honest bound; a
-// later scenario that samples through a handoff would use ceilingHeld(3) per the assertions.mjs note.
+// Ceiling: ceilingHeld now counts worker SLOTS by task, so a review handoff (implementer+reviewer of
+// one task) is one slot and a scenario asserts the bare true ceiling — ceilingHeld(2) here — with no
+// ceiling+1 fudge (assertions.mjs; the 2026-09-13 clean-merge false-FAIL is what drove the change).
 
 import { defineScenario } from '../scenario.mjs';
 import { helloPerSpawn, ceilingHeld, killSwitchStoppedAll } from '../assertions.mjs';

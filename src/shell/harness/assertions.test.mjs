@@ -341,9 +341,35 @@ test('ceilingHeld(2) passes when at most two workers are live at once', () => {
   assert.equal(ceilingHeld(2).check(b).pass, true);
 });
 
-test('ceilingHeld(2) fails when three workers are live in one tick', () => {
+test('ceilingHeld(2) fails when three distinct tasks are in flight in one tick', () => {
   const b = bundle({ timeline: [tick('t1', [wagent('T01', 'busy'), wagent('T02', 'busy'), wagent('T03', 'busy')])] });
   const r = ceilingHeld(2).check(b);
+  assert.equal(r.pass, false);
+  assert.match(r.detail, /exceeds the ceiling/);
+});
+
+// The clean-merge false-FAIL (2026-09-13): a review handoff lists the just-stopped implementer beside
+// its fresh reviewer, and with two parallel tasks the raw session count peaks at 3. Grouping by task,
+// T02's implement+review overlap is one slot, so the true ceiling of 2 held.
+test('ceilingHeld(2) passes across a review handoff — implementer+reviewer of a task is one slot', () => {
+  const b = bundle({ timeline: [tick('peak', [
+    wagent('T01', 'busy', { role: 'review' }),
+    wagent('T02', 'idle', { role: 'implement' }), // stopped, still listed (async claude stop)
+    wagent('T02', 'busy', { role: 'review' }),
+  ])] });
+  const r = ceilingHeld(2).check(b);
+  assert.equal(r.pass, true, r.detail);
+  assert.match(r.detail, /peak of 2 worker slot/);
+});
+
+// A respawn runaway (the 2026-09-09 shape): duplicate SAME-role sessions for one task. That is a real
+// second paid agent, not a handoff, so the extra session adds a slot and trips even a single-slot ceiling.
+test('ceilingHeld(1) fails on a duplicate same-role session for one task (respawn runaway)', () => {
+  const b = bundle({ timeline: [tick('t1', [
+    wagent('T01', 'busy', { role: 'implement', sessionId: 'a' }),
+    wagent('T01', 'busy', { role: 'implement', sessionId: 'b' }),
+  ])] });
+  const r = ceilingHeld(1).check(b);
   assert.equal(r.pass, false);
   assert.match(r.detail, /exceeds the ceiling/);
 });

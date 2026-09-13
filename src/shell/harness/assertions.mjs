@@ -475,29 +475,53 @@ export function killSwitchStoppedAll() {
   });
 }
 
-// The timeline never shows more than n of this run's workers live at once (DESIGN §2.4, the ceiling).
-// Caveat (T08 FINDINGS 2026-09-09): a review handoff can transiently list implementer+reviewer =
-// ceiling+1 because `claude stop` is async, so a scenario that samples through a handoff passes
-// ceilingHeld(ceiling+1) rather than the bare ceiling if it wants to tolerate that transient.
+// The timeline never shows more than n worker SLOTS in flight at once (DESIGN §2.4 the ceiling; §2.1
+// a task in review holds one slot, not two). Counting raw worker sessions over-counts a review
+// handoff: the loop closes the implementer AS the fresh reviewer spawns (loop.mjs 3c/3e), but
+// `claude stop` is async so the stopped implementer lingers in `claude agents --json` for a ~2s
+// sample beside its reviewer (T08 FINDINGS 2026-09-09). A single handoff then reads ceiling+1 and two
+// overlapping handoffs ceiling+2 — a FALSE fail, not a real breach: the loop's own `closedIds` count
+// (loop.mjs) never recounted the stopped session, so the true ceiling held (clean-merge 2026-09-13).
+//
+// So count by task, not by session: a task's implement+review overlap is ONE slot. Grouping also keeps
+// the runaway honest — the 2026-09-09 runaway spawned DUPLICATE same-role sessions for one task, so an
+// extra session of a role already present on a task adds a slot, and N over-provisioned real workers
+// still exceed n. (A duplicate is a genuine second paid agent; a stopped-but-listed implementer is not,
+// and it never shares its reviewer's role.) Fixtures assert the bare true ceiling, no ceiling+1 fudge.
 export function ceilingHeld(n) {
-  return fact(`ceiling-held:${n}`, `At most ${n} workers live at once`, (bundle) => {
+  return fact(`ceiling-held:${n}`, `At most ${n} worker slots in flight at once`, (bundle) => {
     const evidence = [];
     let max = 0;
     let worstTick = null;
     for (const tick of bundle.timeline ?? []) {
-      const live = (tick.agents ?? []).filter((a) => a.isWorkerOf).length;
-      if (live > max) {
-        max = live;
+      const live = (tick.agents ?? []).filter((a) => a.isWorkerOf);
+      // Group live workers by task. A worker that does not parse to a task (should not happen once
+      // isWorkerOf is true) is its own slot, keyed by name so it is never silently merged away.
+      const byTask = new Map();
+      for (const a of live) {
+        const key = parseAgentName(a.name).task ?? `?${a.name}`;
+        if (!byTask.has(key)) byTask.set(key, []);
+        byTask.get(key).push(a);
+      }
+      // One slot per task in flight, plus one for every EXTRA same-role session on a task — a duplicate
+      // implementer or reviewer is a respawn runaway, not the legit implement→review handoff pair.
+      let slots = 0;
+      for (const group of byTask.values()) {
+        const roles = new Set(group.map((a) => parseAgentName(a.name).role ?? '?'));
+        slots += 1 + Math.max(0, group.length - roles.size);
+      }
+      if (slots > max) {
+        max = slots;
         worstTick = tick;
       }
     }
     if (worstTick) {
-      evidence.push(`peak ${max} live worker(s) at ${worstTick.ts}: ${worstTick.agents.filter((a) => a.isWorkerOf).map((a) => a.name).join(', ')}`);
+      evidence.push(`peak ${max} slot(s) at ${worstTick.ts}: ${worstTick.agents.filter((a) => a.isWorkerOf).map((a) => a.name).join(', ')}`);
     }
     if (max > n) {
-      return { pass: false, evidence, detail: `peak of ${max} live workers exceeds the ceiling of ${n}` };
+      return { pass: false, evidence, detail: `peak of ${max} worker slots exceeds the ceiling of ${n}` };
     }
-    return { pass: true, evidence, detail: `peak of ${max} live worker(s), within the ceiling of ${n}` };
+    return { pass: true, evidence, detail: `peak of ${max} worker slot(s) in flight, within the ceiling of ${n}` };
   });
 }
 

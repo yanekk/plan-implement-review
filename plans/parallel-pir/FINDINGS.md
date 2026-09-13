@@ -12,7 +12,7 @@ Legend: 🐞 defect found · ✅ verified by hand with the user · 📌 worth kn
 
 | Date | | Finding |
 |---|---|---|
-| 2026-09-13 | 🐞 | clean-merge FAIL: `ceilingHeld` counts the OS roster; a just-stopped implementer lingers ~2s beside its reviewer (async `claude stop`), two parallel handoffs → peak 3. Not a real breach (loop `closedIds` held). Fix pending PM. Bundle `pir-t17-clean-merge-eEmjmx/…2026-09-13T08-51-00-401Z`. |
+| 2026-09-13 | 🐞 | clean-merge false-FAIL, fixed: `ceilingHeld` counted the OS roster where a stopped implementer lingers ~2s beside its reviewer (async `claude stop`), parallel handoffs → peak 3, no breach. Fix (A): count slots by task, impl+review=1, same-role dupe trips it; live re-run owed. Bundle `pir-t17-clean-merge-eEmjmx/…2026-09-13T08-51-00-401Z`. |
 | 2026-09-13 | 🐞 | `oneMergeToMain` false-FAIL fixed (85add67): needle `Merge branch 'pir/{plan}'` matched a worker integration merge `… into pir/{plan}-T{nn}`; now excludes ` into ` lines. Confirmed ✓ on the clean-merge run. |
 | 2026-09-13 | 📌 | T25+T26 relay saving confirmed via `harness/tokens.mjs`. Before (T19) → after re-run: coordinator 77→59 turns, 5.06M→3.64M tokens (−28%, share 38%→29%); run 239→229, 13.38M→12.60M (−6%); workers flat (noise). n=1 each side. |
 | 2026-09-13 | 📌 | T25 moved the worker→coordinator up-channel to a file drop (`control/reports/`); workers no longer SendMessage it. So `byNameAddressing` (single fixture) is obsolete and the coordinator-name + hello return-socket rationale are redundant — T26/PM to prune. |
