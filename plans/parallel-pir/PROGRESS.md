@@ -21,16 +21,13 @@ T13's live half by T18. T24 (`auto`, added 2026-09-12) hardens the coordinator/w
 T18 transcripts and gates T19–T23. The operator's guide is [TEST-HARNESS.md](TEST-HARNESS.md). Phases
 5–6 postdate the 2026-09-07 plan review; they are validated per task during build, since
 `/pir-review-plan` does not re-run on a building plan.
-**Last updated:** 2026-09-12
-**Next `pir-work` will:** find no `auto` work left — T24 is ✅ and every remaining task (T19–T23, T10) is
-a `you` live run gated on the user. Live `single` now PASSES on real agents (2026-09-12): three fixes
-landed and are confirmed live — the `closedIds` count fix (runaway breaker no longer miscounts a
-just-closed worker), role-suffixed worker names `… · T{nn} · {role}` (PM decision; coordinator addresses
-implementer vs reviewer directly, not by age), and prompt-hardening from the passing-run transcript
-(coordinator completion-watch is the flow log not the outbox; SendMessage two-field rule; canned relay
-recipe; reviewer slug-from-branch). 249 tests green. Next: the fixture queue T19 (review-queue) →
-clean-merge → human-decision → merge-conflict → T23 (parallel), each a gated `you` live run. Procedure in
-[TEST-HARNESS.md](TEST-HARNESS.md).
+**Last updated:** 2026-09-13
+**Next `pir-work` will:** find no `auto` work left — every remaining task (T20–T23, T10) is a `you` live
+run gated on the user. T18 (single) and T19 (review-queue) both PASS live on real agents. Next in the
+queue is T20 (clean-merge), then human-decision, merge-conflict, T23 (parallel), each a gated `you` live
+run; procedure in [TEST-HARNESS.md](TEST-HARNESS.md). One analysis note from the T19 bundle: capture
+copies unrelated `role:foreign` sessions' full transcripts into the run bundle (~4MB) — logged in
+FINDINGS, a fix candidate, not yet a task.
 
 ## Tasks
 
@@ -59,7 +56,7 @@ live steps with a hands-on worker the coordinator spawns, folded back without re
 | T17 | Harness live runner (install→launch→capture→wait→seal→check) | auto | T14, T15, T16 | ✅ | Reviewed clean; runner build half, two live-run fixes folded in (`startupGrace`, live coordinator treated as active). 244 tests. See FINDINGS 2026-09-11/12. |
 | T18 | Live fixture: single (happy path; retires T13 live half) | you | T17 | ✅ | PASS live 2026-09-12: all 4 facts green (hello, by-name, idle-gated close, one promote to main); build→review→merge→promote on real agents. Retires T13's live half. Bundle `pir-t17-single-IbhBgo/…/2026-09-12T05-45-43-231Z`. |
 | T24 | Harden coordinator/worker prompts from the T18 transcripts | auto | T18 | ✅ | Reviewed. Prose-only, no src/; npm test green (244, not the 248 noted). Two fixes vs the code: W1 gave the worktree dir as the slashed `{branch}`, actual is dashed `pir-{plan}-T{nn}` (worktree.mjs:134); C1's tag list omitted `await-idle`/`halt-close`/`ceiling full` and the ISO-timestamp prefix. Verified C4 append-only, C2 promote-cue, log path. Live `single` re-run still owed. |
-| T19 | Live fixture: review-queue | you | T17, T24 | ⬜ | Run `run.mjs review-queue`; hands-off; done when its 3 facts pass. See TEST-HARNESS.md. |
+| T19 | Live fixture: review-queue | you | T17, T24 | ✅ | PASS live 2026-09-13: all 3 facts green (hello-per-spawn, no-close-before-idle, one-merge-to-main). 3 tasks, ceiling 2, ~6 min, flow textbook. Bundle `pir-t17-review-queue-AqCRsF/…/2026-09-13T05-53-06-393Z`. See FINDINGS. |
 | T20 | Live fixture: clean-merge | you | T17, T24 | ⬜ | Run `run.mjs clean-merge`; hands-off; done when its 3 facts pass. See TEST-HARNESS.md. |
 | T21 | Live fixture: human-decision | you | T17, T24 | ⬜ | Run `run.mjs human-decision`; answer the surfaced question via the control `answers` file; done when the 2 facts pass. See TEST-HARNESS.md. |
 | T22 | Live fixture: merge-conflict | you | T17, T24 | ⬜ | Run `run.mjs merge-conflict`; hands-off; done when the conflict-parked fact passes. See TEST-HARNESS.md. |
@@ -71,22 +68,18 @@ deviation from the task doc.
 
 **A ✅ task's cell may be cut to one line** once the next task has been reviewed.
 
-**Review queue:** empty. T24 reviewed ✅ 2026-09-12; the `you` fixture runs resume once the live
-`single` iteration is done.
+**Review queue:** empty. `you` fixtures are `pir-work`-selected but human-gated; T18 (single) and
+T19 (review-queue) both PASS live. Next is T20 (clean-merge).
 
-## Next up: the live `single` iteration, then the gated fixtures
+## Next up: the gated fixtures
 
-**T24 is reviewed ✅** — the coordinator/worker prompt hardening (edits C1–C6, W1–W4), plus two review
-fixes (worktree-path shape in W1, flow-log tag list in C1). Now the user and implementer run `single`
-together and iterate on the prompts live (T24 § *After this task*) before the fixtures resume.
-
-**The remaining Phase 6 fixture runs (T19–T23) are gated on T24** and stay blocked on the user after
-it: real paid agents, launched attended, one at a time, never unattended. The full procedure (run
+**T18 (single) and T19 (review-queue) PASS live.** The remaining Phase 6 fixture runs (T20–T23)
+stay blocked on the user: real paid agents, launched attended, one at a time, never unattended. The full procedure (run
 command per fixture, seatbelts, where the logs are, the two runs that need a mid-run action, recording,
 cleanup) is in [TEST-HARNESS.md](TEST-HARNESS.md). Order once unblocked, small first:
 
 ```
-node src/shell/harness/run.mjs review-queue   # T19, then clean-merge, human-decision, merge-conflict, then:
+node src/shell/harness/run.mjs clean-merge   # T20, then human-decision, merge-conflict, then:
 node src/shell/harness/run.mjs parallel --into <dir>   # T23, kill-switch drill, last
 ```
 
