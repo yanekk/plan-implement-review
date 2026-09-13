@@ -16,20 +16,21 @@ cell also fixes the over-budget cell they walk past.**
 column marks each task `auto` (a worker builds it) or `you` (a person runs the live steps). 27 tasks, 7
 phases (0–6). Phases 0–5 are ✅. The three `auto` hardening tasks (T24, T25, T26) are ✅. Phase 6 is the
 live fixtures: each is a `you` task, done when its fact report is all-green; T18 (single), T19
-(review-queue) and T20 (clean-merge) PASS live, T21–T23 remain, gated on the user. T10 is absorbed by
-T23. Order now: T21 → T22 → T23. The operator's guide is [TEST-HARNESS.md](TEST-HARNESS.md). Phases 5–6 postdate the
+(review-queue), T20 (clean-merge) and T21 (human-decision) PASS live, T22–T23 remain, gated on the user.
+T10 is absorbed by T23. Order now: T22 → T23. The operator's guide is [TEST-HARNESS.md](TEST-HARNESS.md). Phases 5–6 postdate the
 2026-09-07 plan review and are validated per task during build, since `/pir-review-plan` does not re-run
 on a building plan.
 **Last updated:** 2026-09-13
-**Next `pir-work` will:** hand over T21 (`you`) for a RE-RUN — the `human-decision` live fixture. Its
-first live run (2026-09-13) proved the decision cycle (worker asks, PM answers via AskUserQuestion,
-answer routed down, worker builds), then the runaway breaker killed it mid-review on a miscount. Fixed
-this session: loop `closedIds` is never pruned within a run, so a SIGTERM'd worker that reappears under
-the same id (stale RC registry entry) is not recounted (fake `resurrectClosed`, loop test; 259 tests).
-Re-run: `run.mjs human-decision`, answer the surfaced question via the control `answers` file (or reply
-through the coordinator session); done when its 2 facts pass, per [TEST-HARNESS.md](TEST-HARNESS.md).
-T18/T19/T20 PASS live; T24–T26 ✅. Open notes: capture copies `role:foreign` transcripts into the bundle
-(~4MB), not yet a task; the coordinator-name/hello rationale prune is still owed (FINDINGS 2026-09-13).
+**Next `pir-work` will:** hand over T22 (`you`) — the `merge-conflict` live fixture. Hands-off: `run.mjs
+merge-conflict`; done when the conflict-parked fact passes, per [TEST-HARNESS.md](TEST-HARNESS.md).
+T18/T19/T20/T21 PASS live; T24–T26 ✅. T21 note: its first run false-FAILed on a runaway-breaker miscount
+(a closed worker reappeared under the same id and was recounted); fixed this session — loop `closedIds`
+is never pruned within a run (fake `resurrectClosed`, loop test; 259 tests), held live on the re-run.
+T21 reflection surfaced 5 hardening candidates to the PM (await-idle noise woke the coordinator ~4 no-op
+turns; free-text vs `AskUserQuestion` for surfaced decisions; `SendMessage` still padded past the
+two-field rule; no flow event on outbox drain; coordinator re-paraphrases a clean worker question) —
+PM to decide if a hardening task follows. Open notes: capture copies `role:foreign` transcripts into the
+bundle (~4MB), not yet a task; the coordinator-name/hello rationale prune is still owed (FINDINGS 2026-09-13).
 
 ## Tasks
 
@@ -62,7 +63,7 @@ live steps with a hands-on worker the coordinator spawns, folded back without re
 | T25 | Cut the coordinator's relay overhead (worker→bin path) | auto | T19 | ✅ | Reviewed clean. Worker→coordinator up-channel is a file drop into `control/reports/`, drained temp-then-rename; surfaces one-shot. Live proof folds into the post-T25+T26 fixture run. 255 tests. |
 | T26 | Harden coordinator/worker prompts from the T19 transcripts | auto | T25 | ✅ | Reviewed clean, no fix. C7–C10 (pir-coordinate) and W5 (pir-worker) land next to their rules, flat prose. S1-drop verified sound: T25's up-channel is an address-free file drop and the answer routes to the worker's own name, so finding 4's hello race is gone. Probed C7 pgrep string, C8 vs the ≈15s cadence, C10's dropped per-merge narration. 255 tests. |
 | T20 | Live fixture: clean-merge | you | T17, T26 | ✅ | PASS live 2026-09-13: 3 facts green (one promote to main, ceiling held, no close before idle). First run false-FAILed `ceilingHeld`; fixed to count worker slots by task (PM chose A). Reflection clean — two genuine fresh reviews, correct conflict resolution, T25 up-channel spent 0 coordinator relay turns under 2 tasks. One hardening candidate logged (worker report-drop). Bundle in FINDINGS. |
-| T21 | Live fixture: human-decision | you | T17, T26 | ⬜ | First live run 2026-09-13: the ask→answer→resume cycle PASSED (PM answered via AskUserQuestion, routed down, worker built), then the runaway breaker killed it mid-review — a closed implementer reappeared under the same id and was recounted. Fixed loop `closedIds` (never prune in a run; fake `resurrectClosed`, test). Re-run owed. See FINDINGS 2026-09-13. |
+| T21 | Live fixture: human-decision | you | T17, T26 | ✅ | PASS live 2026-09-13 (re-run): 2 facts green (question surfaced+answered, one promote to main). Ambiguity-ask path proven — worker asked and waited, coordinator held, ~12s human decision. First run false-FAILed on a runaway-breaker miscount (closed worker reappeared under same id); fixed loop `closedIds` no-prune (fake `resurrectClosed`, test), held live. Reflection logged; 5 hardening candidates surfaced to PM. Bundle `pir-t17-human-decision-RVQcax/…/2026-09-13T15-24-34-685Z`. |
 | T22 | Live fixture: merge-conflict | you | T17, T26 | ⬜ | Run `run.mjs merge-conflict`; hands-off; done when the conflict-parked fact passes. See TEST-HARNESS.md. |
 | T23 | Live fixture: parallel + kill-switch drill (absorbs T10) | you | T17, T26 | ⬜ | Run `run.mjs parallel --into <dir>`; `touch <dir>/plans/parallel/.parallel/control/HALT` mid-run; done when its 3 facts pass. Closes T10. See TEST-HARNESS.md. |
 | T10 | Full multi-worker run + kill-switch drill — absorbed by T23 | you | T23 | ⬜ | Absorbed by T23 (2026-09-12). Do not run standalone; closes ✅ when T23's parallel + kill-switch fact report is all-green. Partial drill 2026-09-10 proved spawn + first message. |
@@ -72,18 +73,18 @@ deviation from the task doc.
 
 **A ✅ task's cell may be cut to one line** once the next task has been reviewed.
 
-**Review queue:** empty. T18 (single), T19 (review-queue) and T20 (clean-merge) PASS live; T24–T26 (the
-prompt + relay hardening) are ✅.
+**Review queue:** empty. T18 (single), T19 (review-queue), T20 (clean-merge) and T21 (human-decision)
+PASS live; T24–T26 (the prompt + relay hardening) are ✅.
 
-## Next up: the gated live fixtures (T21–T23)
+## Next up: the gated live fixtures (T22–T23)
 
-**The remaining Phase 6 fixture runs (T21–T23)** stay blocked on the user: real paid agents,
+**The remaining Phase 6 fixture runs (T22–T23)** stay blocked on the user: real paid agents,
 launched attended, one at a time, never unattended. Each now ends with a reflection pass on its bundle
 (DESIGN §4.1) — analyse flow log + transcripts for friction and waste, log findings, surface hardening
 to the PM — logged before ✅. Full procedure in [TEST-HARNESS.md](TEST-HARNESS.md). Order, small first:
 
 ```
-node src/shell/harness/run.mjs human-decision   # T21 (answer the surfaced question), then merge-conflict (T22), then:
+node src/shell/harness/run.mjs merge-conflict          # T22 (hands-off; conflict-parked fact), then:
 node src/shell/harness/run.mjs parallel --into <dir>   # T23, kill-switch drill, last
 ```
 
