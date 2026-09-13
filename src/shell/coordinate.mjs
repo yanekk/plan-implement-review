@@ -185,6 +185,12 @@ export function startCoordinator({
     const name = workerName({ repo, plan: slug, task, role: t?.role ?? 'implement' });
     const res = platform.send(name, { kind: 'answer', task, text: text ?? '' });
     if (t && t.phase === AWAITING) t.decision = null;
+    // Log an `answer {task}` flow line, symmetric with the loop's `hello`. In the live bin the down-send
+    // is the coordinator's SendMessage, not the bin's: platform.send only QUEUES the answer to the outbox
+    // and the coordinator delivers it. The coordinator watches the flow log, so without this line a
+    // queued answer has nothing to wake it and it hand-polls the outbox to notice the drain (T21
+    // reflection, 2026-09-13). This line is its cue to deliver the new outbox message, like a hello.
+    if (control) control.log(`answer ${task}`);
     return { ok: res?.ok !== false, worker: name };
   }
 

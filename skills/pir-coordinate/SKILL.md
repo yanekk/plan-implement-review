@@ -62,9 +62,12 @@ run it in the background, so its printed progress and `DECISION NEEDED` lines ca
 not appear until it exits — never drive off the banner. Read the flow log
 `plans/{slug}/.parallel/control/log` every turn instead. It carries one line per action, written the
 moment it happens — an ISO timestamp, then the action tag and its task or branch, so match on the tag,
-not the first token. The tags: `open-feature`, `spawn`, `hello`, `review`, `await-idle` (a hand-off
-waiting for a busy slot to free — not a stall), `merge`, `surface`, `close`, `halt-close`, `promote`,
-`teardown`, and `ceiling full`. A new `surface Txx` line is your cue that a decision for `Txx` is waiting; you do not need
+not the first token. The tags: `open-feature`, `spawn`, `hello`, `answer` (the bin has queued the user's
+answer for `Txx` to the outbox — deliver it, step 3), `review`, `await-idle`, `merge`, `surface`, `close`,
+`halt-close`, `promote`, `teardown`, and `ceiling full`. **`await-idle` is internal bin bookkeeping**, not
+an event for you: the bin is holding a hand-off until a worker finishes its current turn (never a stall).
+Do not react to it, narrate it, or spend a turn on it — if the only new flow lines since your last read
+are `await-idle`, keep waiting silently. A new `surface Txx` line is your cue that a decision for `Txx` is waiting; you do not need
 the bin to echo the decision text, because the bin writes each parked worker's message — already
 rendered in plain English — to the **surfaced** feed `plans/{slug}/.parallel/control/surfaced`, one
 JSON line `{"task":"Txx","kind":"…","text":"…","message":"…"}`. Read the `message` there, keyed by task,
@@ -77,8 +80,12 @@ files for two different reasons; do not conflate them:
 - the **flow log** `plans/{slug}/.parallel/control/log` — for progress **and for the end of the run**;
 - the **outbox** `plans/{slug}/.parallel/control/outbox` — only for messages to deliver (below).
 
-Re-read the flow log on a short cadence (≈15s); prefer the Monitor tool with an until-condition on the
-log growing over a hand-rolled `sleep` of guessed length. **Once that Monitor is armed, act on its
+Re-read the flow log on a short cadence (≈15s); prefer the Monitor tool over a hand-rolled `sleep` of
+guessed length. **Arm the Monitor to wake on a MILESTONE line appearing** — a new `spawn`, `answer`,
+`review`, `merge`, `surface`, `close`, `halt-close` or `promote` line — **not on the log merely growing**,
+so an `await-idle` line (internal bookkeeping, above) never wakes you into a no-op turn. On the
+human-decision live run an until-condition on bare growth woke the coordinator four times just to say
+"still holding" while the bin waited out two hand-offs. **Once that Monitor is armed, act on its
 events — do not also `sleep`-poll the log or the outbox.** React to each Monitor event, and to each
 answer you owe a worker, reading the log once per event to pick up the new line — never on a timer of
 your own. A blocking `sleep` loop beside an armed Monitor only duplicates what the Monitor already
@@ -108,20 +115,28 @@ Start the bin once and leave it running. Then, while it runs, on every turn:
    back. Track each `merge Txx` from the log for your own state, and surface a `ceiling full` stretch
    only if the user wonders why the run is slow. (On the review-queue live run the coordinator posted a
    status paragraph after nearly every event.)
-2. **Surface every decision, one at a time.** Each `surface Txx` line in the flow log means a worker
-   on `Txx` hit a question, a decision, a conflict or a red build and the bin has parked it. Read that
-   task's line from the **surfaced** feed (`plans/{slug}/.parallel/control/surfaced`) and put its
-   `message` to the user in plain English. The user owns the decision. Ask one thing at a time. A
-   `kind=question` or `kind=decision` is the user's to answer, never yours — the bin has already parked
-   that task, so the run proceeds on no guess in the worker's place, but it also never un-parks until
-   you route an answer back (step 3). Surface it and wait, however small it looks. (On the review-queue
-   live run a worker resolved an ambiguous spec by guessing because nothing put the question to the
-   user — the path T21 exercises.)
+2. **Surface every decision with `AskUserQuestion`, one at a time.** Each `surface Txx` line in the flow
+   log means a worker on `Txx` hit a question, a decision, a conflict or a red build and the bin has
+   parked it. Read that task's line from the **surfaced** feed (`plans/{slug}/.parallel/control/surfaced`)
+   and put it to the user with the **`AskUserQuestion` tool** — a blocking prompt, so the decision is
+   explicit and holds even if the user is not watching the terminal. **Do not** just end your turn with a
+   free-text question and hope the user notices. **Forward the surfaced `message` text with minimal
+   framing** — the bin already rendered the worker's question in plain English; pass it through, do not
+   re-paraphrase it from scratch (on the human-decision live run the coordinator rewrote an already-clear
+   question, ~18s wasted). The user owns the decision. Ask one thing at a time. A `kind=question` or
+   `kind=decision` is the user's to answer, never yours — the bin has already parked that task, so the
+   run proceeds on no guess in the worker's place, but it also never un-parks until you route an answer
+   back (step 3). Surface it and wait, however small it looks. (On the review-queue live run a worker
+   resolved an ambiguous spec by guessing because nothing put the question to the user — the path T21
+   exercises.)
 3. **Route each answer back down.** When the user answers, **append one JSON line to the answers file**
    `plans/{slug}/.parallel/control/answers`: `{"task":"T05","text":"<the decision, in the worker's
-   terms>"}`. The bin drains it on its next pass and sends it to that one worker. If the user defers a
-   decision indefinitely, append `{"task":"T05","defer":true}` instead — the bin marks that task
-   blocked (⛔) so its state survives a restart and its dependents wait, and frees the slot.
+   terms>"}`. The bin drains it on its next pass, queues the down-message to the outbox, and writes an
+   `answer T05` line to the flow log. **Wait for that `answer T05` line, then deliver the new outbox
+   message like a hello** (below) — do not hand-poll the outbox or the answers file to notice the drain
+   (on the human-decision live run the coordinator hand-polled because no event signalled it). If the
+   user defers a decision indefinitely, append `{"task":"T05","defer":true}` instead — the bin marks that
+   task blocked (⛔) so its state survives a restart and its dependents wait, and frees the slot.
 4. **Point the user at hands-on (`you`) tasks.** A `you` task (a spike or a hand-verification drill) is
    spawned as a hands-on worker, not an autonomous builder. The bin prints which worker to go and
    drive; relay its name to the user. The user runs the live steps with that worker; when it reports

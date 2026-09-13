@@ -169,6 +169,7 @@ surfaces any hardening to the PM. The operator's guide is [TEST-HARNESS.md](TEST
 | [T23](tasks/T23-fixture-parallel-killswitch.md) | Live fixture: parallel + kill-switch drill (absorbs T10) | you | T17, T26 |
 | [T25](tasks/T25-relay-transport-redesign.md) | Cut the coordinator's relay overhead in the worker→bin path | auto | T19 |
 | [T26](tasks/T26-harden-from-review-queue-transcripts.md) | Harden the coordinator/worker prompts from the T19 transcripts | auto | T25 |
+| [T27](tasks/T27-harden-from-human-decision-transcripts.md) | Harden the coordinator from the T21 transcripts (await-idle noise, AskUserQuestion, answer flow event, forward surfaced text) | auto | T21 |
 
 **Three tasks harden the machinery before the remaining fixtures, and run in order.** T18's transcripts
 drove T24 (`auto`, prose) before T19. T19's transcripts drive two more: **T25** cuts the coordinator's
@@ -177,6 +178,13 @@ rule change decided with the PM), and **T26** then updates `pir-coordinate`/`pir
 the transport T25 lands. So the order is T19 → T25 → T26 → {T20–T23}: redesign first, prose second,
 fixtures last on the final machinery (2026-09-13 PM decision, from the T19 analysis). They are listed
 after T23 to keep numbering append-only; the dependencies, not the row order, set the sequence.
+
+**T27 is a fourth hardening task, from the T21 transcripts** (2026-09-13 PM decision, candidates 1/2/4/5
+of the T21 reflection): an `await-idle` Monitor filter so internal hand-off waits no longer wake the
+coordinator into no-op turns; `AskUserQuestion` for a surfaced decision instead of a free-text turn;
+an `answer {task}` flow-log event so the coordinator wakes to deliver a queued answer rather than
+hand-polling; and forwarding the surfaced text rather than re-paraphrasing it. Prose in `pir-coordinate`
+plus one `src/shell/coordinate.mjs` change (the flow event). It gates the remaining fixtures T22–T23.
 
 They are launched attended, one at a time, never unattended — real paid agents (§5.2). A real model
 may occasionally not hit a fixture's path on a given run, so a scenario may need a re-run; a failed

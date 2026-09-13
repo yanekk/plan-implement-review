@@ -349,6 +349,27 @@ test('a decision written to the answers file drains once, then routes down to th
   assert.equal(driveCollecting(coordinator).result.promoted, true, 'the answered worker resumes and the plan promotes');
 });
 
+test('routing an answer logs an `answer {task}` flow line so the coordinator wakes to deliver it (T27, T21 reflection)', (t) => {
+  // In the live bin platform.send only QUEUES the answer to the outbox; the coordinator delivers it via
+  // SendMessage. The coordinator watches the flow log, so answer() must log an `answer {task}` line
+  // (symmetric with the loop's `hello`) or a queued answer has nothing to wake it and it hand-polls the
+  // outbox (T21 reflection, 2026-09-13). Assert the line is written when a decision routes down.
+  const logs = [];
+  const control = { isHalted: () => false, log: (l) => logs.push(l) };
+  const { coordinator } = setup(t, [{ num: 'T01' }, { num: 'T02' }], {
+    behaviors: { T01: { question: 'which output format?' } },
+    control,
+  });
+  coordinator.pass(); // spawn
+  coordinator.pass(); // T01 asks and parks
+  const before = logs.length;
+  coordinator.answer({ task: 'T01', text: 'use json' });
+  assert.ok(
+    logs.slice(before).includes('answer T01'),
+    `answer() must log "answer T01" so the coordinator wakes to deliver; got: ${logs.slice(before).join(' | ')}`,
+  );
+});
+
 // --- 14. P3: a `decision` message parks and surfaces, same as a question ---------------------------
 
 test('a worker `decision` message parks and surfaces like a question, and the answer resumes it (P3, T12)', (t) => {
