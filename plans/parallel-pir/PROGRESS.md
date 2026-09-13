@@ -87,9 +87,9 @@ spawn-message address), its wording matched to whatever transport T25 lands. Bui
 any more paid runs.
 
 **Then the remaining Phase 6 fixture runs (T20–T23)** stay blocked on the user: real paid agents,
-launched attended, one at a time, never unattended. The full procedure (run command per fixture,
-seatbelts, where the logs are, the two runs that need a mid-run action, recording, cleanup) is in
-[TEST-HARNESS.md](TEST-HARNESS.md). Order once unblocked, small first:
+launched attended, one at a time, never unattended. Each now ends with a reflection pass on its bundle
+(DESIGN §4.1) — analyse flow log + transcripts for friction and waste, log findings, surface hardening
+to the PM — logged before ✅. Full procedure in [TEST-HARNESS.md](TEST-HARNESS.md). Order, small first:
 
 ```
 node src/shell/harness/run.mjs clean-merge   # T20, then human-decision, merge-conflict, then:

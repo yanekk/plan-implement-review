@@ -32,8 +32,19 @@ See `TEST-HARNESS.md § parallel`.
 - `kill-switch-stopped-all` — after `HALT`, every worker was stopped, nothing was promoted, `main` is
   untouched.
 
+## Reflection (after PASS, before ✅)
+
+Run the reflection pass — `TEST-HARNESS.md § The reflection pass` (DESIGN §4.1): read the flow log,
+git log, timeline, and this run's own transcripts (coordinator + workers, ignore `role:foreign`) for
+how it flowed, where anyone got lost, and where time or tokens were wasted. **For this path,
+scrutinise:** how the relay and coordinator scaled with several concurrent workers — this is the worst
+case for the relay overhead T25 targets, so measure it here; the ceiling behaviour under load; and the
+kill-switch — how fast every worker was SIGTERMed after `HALT`, and whether any worker lingered, ran
+away, or was miscounted (the runaway-breaker history). Confirm the shutdown was orderly, not just that
+nothing promoted. Log the findings; surface any hardening to the PM.
+
 ## Done when
 
-The fact report is `PASS`. **This is where T10 closes ✅.** Record the verdict and bundle path in
-`FINDINGS.md` with the date. A failed fact is a finding — diagnose from the bundle, fix, re-run
-(`TEST-HARNESS.md § When it fails`).
+The fact report is `PASS` **and** the reflection pass is logged. **This is where T10 closes ✅.** Record
+the verdict, bundle path, and the reflection's findings in `FINDINGS.md` with the date. A failed fact
+is a finding — diagnose from the bundle, fix, re-run (`TEST-HARNESS.md § When it fails`).

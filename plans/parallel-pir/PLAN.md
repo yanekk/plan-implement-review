@@ -9,7 +9,9 @@ prompt hardening from the T19 transcripts, added 2026-09-13 by PM decision). Eac
 **Phase 6 (T18–T23) splits the harness's live runs into one `you` task per fixture (2026-09-12).**
 T17 stays the harness *runner* (the build half, reviewed clean); each fixture — single, review-queue,
 clean-merge, human-decision, merge-conflict, parallel — is now its own task, done ✅ when its captured
-fact report is all-green. The old T10 (full multi-worker + kill-switch drill) is **absorbed by T23**
+fact report is all-green **and its reflection pass is logged** (DESIGN §4.1: every fixture ends by
+analysing its bundle for friction and waste, feeding the next hardening task). The old T10 (full
+multi-worker + kill-switch drill) is **absorbed by T23**
 (the parallel fixture); T13's live half is **retired by T18** (the single fixture). The operator's
 guide to running them is [TEST-HARNESS.md](TEST-HARNESS.md).
 
@@ -150,9 +152,11 @@ can proceed in either order.
 ## Phase 6 — Run the live scenarios (one `you` task per fixture)
 
 Each fixture is run for real on paid `claude --bg` workers and is **done ✅ when its captured fact
-report is all-green** (DESIGN §4.1, §5.2). All depend only on the runner (T17); the operator works
-through them in the order below — small first, the kill-switch drill last — and records each verdict
-and bundle path in `FINDINGS.md`. The operator's guide is [TEST-HARNESS.md](TEST-HARNESS.md).
+report is all-green and its reflection pass is logged** (DESIGN §4.1, §5.2). All depend only on the
+runner (T17); the operator works through them in the order below — small first, the kill-switch drill
+last — and records each verdict, bundle path, and the reflection's findings in `FINDINGS.md`. After a
+green report the session reflects on the bundle (flow log + transcripts) for friction and waste and
+surfaces any hardening to the PM. The operator's guide is [TEST-HARNESS.md](TEST-HARNESS.md).
 
 | # | Task | Runs | Depends on |
 |---|---|---|---|

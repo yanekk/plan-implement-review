@@ -614,6 +614,21 @@ timeout that auto-touches `HALT` so a hung real worker cannot run — or cost �
 the runs spawn real paid agents, the harness's live runner is a `you` task launched by the user,
 never started unattended by a session (§5.2, the standing rule).
 
+**The reflection pass (part of every fixture, PM decision 2026-09-13).** A green fact report proves
+the scenario's declared facts held — not that the run was clean or cheap. A run can pass while the
+coordinator improvises around a gap, guesses at an ambiguity, sleep-polls, or spends a fifth of its
+wall-clock relaying messages. So a fixture is not done at the green report: the session then reads the
+bundle it just captured — the flow log, the scratch repo's `git log`, the agent-status timeline, and
+the transcripts of **this run's own sessions** (the coordinator and its workers; ignore any
+`role:foreign` sessions swept in) — for three things: how the run actually flowed; where the
+coordinator or a worker got lost, hesitated, retried, guessed, or addressed the wrong session (with
+quoted evidence, session and timestamp); and where wall-clock or tokens were spent for no gain. The
+findings go in `FINDINGS.md` with the date, and any hardening or efficiency change they imply is
+surfaced to the PM, who decides whether it becomes a task — the fixture session does not implement the
+fix itself (scope), it feeds the next hardening task the way T18's reflection produced T24 and T19's
+produced T25 and T26. A fixture is done ✅ only when its facts are green **and** its reflection is
+logged. The how-to is [TEST-HARNESS.md](TEST-HARNESS.md) § The reflection pass.
+
 ---
 
 ## 5. Environment — read this before running anything

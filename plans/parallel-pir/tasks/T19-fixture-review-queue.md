@@ -26,3 +26,9 @@ Hands-off — no mid-run action. See `TEST-HARNESS.md`.
 
 The fact report is `PASS`. Record the verdict and bundle path in `FINDINGS.md` with the date. A failed
 fact is a finding — diagnose from the bundle, fix, re-run (`TEST-HARNESS.md § When it fails`).
+
+## Reflection
+
+Done 2026-09-13. This fixture's transcript analysis produced **T25** (cut the relay overhead) and
+**T26** (prompt hardening), and surfaced the `role:foreign` capture-bloat finding (FINDINGS). It is the
+run the standard reflection pass was drawn from — `TEST-HARNESS.md § The reflection pass`, DESIGN §4.1.

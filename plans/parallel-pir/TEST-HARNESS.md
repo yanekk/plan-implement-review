@@ -7,7 +7,9 @@ run. Because every run spawns real paid `claude --bg` agents, you launch each on
 time — no session starts it unattended.
 
 Each fixture is its own task (T18–T23); a fixture is **done ✅ when its captured fact report is
-all-green** and you have recorded the verdict + bundle path in `FINDINGS.md`.
+all-green, you have run the reflection pass (below), and you have recorded the verdict + bundle path +
+the reflection's findings in `FINDINGS.md`.** A green report is necessary, not sufficient — the
+reflection is where the run actually hardens the workflow (DESIGN §4.1).
 
 ## Running a scenario
 
@@ -82,6 +84,37 @@ path. Read the flow log and the coordinator transcript in the bundle (that is ho
 failures were diagnosed: a missing `src/` in the scratch, then the runner HALTing the coordinator
 before it could promote). Log it, fix it, and re-run. A real model may occasionally not hit a
 fixture's path on a given run; a re-run is expected, not a failure of the harness.
+
+## The reflection pass
+
+A green report says the declared facts held; it does not say the run was clean or cheap. After a PASS,
+and before you mark the fixture ✅, reflect on the bundle — this is where a passing run still hardens
+the workflow (DESIGN §4.1). It is part of the fixture task, not extra.
+
+**Read, from the bundle:** `flow.log` (how the run flowed), `git-log.txt`, `agents-timeline.jsonl`
+(when each session was busy/idle), and `transcripts/` — but **only this run's own sessions**:
+`coordinator.jsonl` and the `T*-implement.jsonl` / `T*-review.jsonl` workers. **Ignore any
+`role:foreign` transcripts** (unrelated Claude sessions the capture currently sweeps in — the manifest
+tags them `foreign`; a known bloat, logged in FINDINGS).
+
+**The transcripts are large** (hundreds of KB each). Delegate the trawl to a subagent so the raw JSONL
+stays out of your context and only the findings come back; have it parse each line for text and
+`tool_use` calls with `python3` rather than dumping raw JSON.
+
+**Look for three things, with quoted evidence + session + timestamp for each claim:**
+1. **Flow** — what each session actually did: did each worker build the right thing and hand off, did
+   each reviewer do a genuine fresh review, did the coordinator dispatch/merge/close/promote correctly.
+2. **Getting lost** — where the coordinator or a worker hesitated, retried, guessed at an ambiguity,
+   sent a malformed message, addressed the wrong session, waited too long, or did redundant work. Even
+   on a pass, capture the near-misses.
+3. **Waste** — wall-clock or tokens spent for no gain (relay overhead, sleep-polls, redundant
+   messaging, avoidable serial work). Quantify with timestamps.
+
+**Then:** record the verdict, bundle path, and the key findings in `FINDINGS.md` with the date (newest
+first, forty words a row; compact the file first if it is over ceiling). Surface any hardening or
+efficiency change to the PM, one decision at a time, with a recommendation. **Do not implement the fix
+in the fixture session** — that is scope creep; it becomes its own hardening task, the way T19's
+reflection produced T25 and T26. Each fixture's own doc names what to scrutinise for its path.
 
 ## Cleanup
 

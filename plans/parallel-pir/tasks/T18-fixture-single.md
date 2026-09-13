@@ -30,3 +30,9 @@ to read the report.
 The fact report is `PASS` (all four ✓). Record the verdict and bundle path in `FINDINGS.md` with the
 date; that is where T13's live half is retired. A failed fact is a finding — diagnose from the bundle,
 fix, re-run (`TEST-HARNESS.md § When it fails`).
+
+## Reflection
+
+Done (predating the standard). This fixture's transcript analysis produced the prompt hardening in
+**T24**. The reflection pass is now a standard part of every fixture — `TEST-HARNESS.md § The reflection
+pass`, DESIGN §4.1.
