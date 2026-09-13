@@ -14,24 +14,22 @@ cell also fixes the over-budget cell they walk past.**
 
 **Status:** Plan written, re-scoped onto Claude Code's own primitives, reviewed before build. The `Runs`
 column marks each task `auto` (a worker builds it) or `you` (a person runs the live steps). 27 tasks, 7
-phases (0–6). Phases 0–5 are ✅. The `auto` hardening tasks T24, T25, T26 are ✅; T27 (from T21) is 🔍,
-awaiting review. Phase 6 is the live fixtures: each is a `you` task, done when its fact report is
+phases (0–6). Phases 0–5 are ✅. The `auto` hardening tasks T24, T25, T26, T27 are all ✅. Phase 6 is
+the live fixtures: each is a `you` task, done when its fact report is
 all-green; T18 (single), T19 (review-queue), T20 (clean-merge) and T21 (human-decision) PASS live,
-T22–T23 remain, gated on the user. T10 is absorbed by T23. Order now: review T27, then T22 → T23. The
+T22–T23 remain, gated on the user. T10 is absorbed by T23. Order now: T22 → T23. The
 operator's guide is [TEST-HARNESS.md](TEST-HARNESS.md). Phases 5–6 postdate the
 2026-09-07 plan review and are validated per task during build, since `/pir-review-plan` does not re-run
 on a building plan.
 **Last updated:** 2026-09-13
-**Next `pir-work` will:** REVIEW T27 (`auto`, 🔍) — the coordinator hardening from the T21 transcripts
-(PM chose candidates 1/2/4/5). It is prose in `pir-coordinate` plus one `coordinate.mjs` change (the
-`answer {task}` flow event, tested); check the prose against the flow-log contract and DESIGN §2.2/§2.5.
-Its live proof folds into T22/T23. After T27 is ✅, T22 (`you`, `merge-conflict`, hands-off `run.mjs
-merge-conflict`) is next. T18/T19/T20/T21 PASS live. T21 note: its first run false-FAILed on a
-runaway-breaker miscount (a closed worker reappeared under the same id and was recounted); fixed — loop
-`closedIds` is never pruned within a run (fake `resurrectClosed`, loop test), held live on the re-run.
-260 tests. Open notes: candidate 3 (SendMessage padding) was left unfixed by PM choice; capture copies
-`role:foreign` transcripts into the bundle (~4MB), not yet a task; the coordinator-name/hello rationale
-prune is still owed (FINDINGS 2026-09-13).
+**Next `pir-work` will:** run T22 (`you`, `merge-conflict`) — the next gated live fixture, hands-off
+`node src/shell/harness/run.mjs merge-conflict`, done when the conflict-parked fact passes. It exercises
+the surfaced→`AskUserQuestion` path and the `await-idle` filter that T27 just added, so it doubles as
+T27's live proof. This is a `you` task: real paid agents, launched attended. See TEST-HARNESS.md. All
+`auto` tasks (through T27) are ✅; T18/T19/T20/T21 PASS live. 264 tests green. Open notes: candidate 3
+(SendMessage padding) was left unfixed by PM choice; capture copies `role:foreign` transcripts into the
+bundle (~4MB), not yet a task; the coordinator-name/hello rationale prune is still owed (FINDINGS
+2026-09-13).
 
 ## Tasks
 
@@ -61,9 +59,9 @@ live steps with a hands-on worker the coordinator spawns, folded back without re
 | T18 | Live fixture: single (happy path; retires T13 live half) | you | T17 | ✅ | PASS live 2026-09-12: all 4 facts green (hello, by-name, idle-gated close, one promote to main); build→review→merge→promote on real agents. Retires T13's live half. Bundle `pir-t17-single-IbhBgo/…/2026-09-12T05-45-43-231Z`. |
 | T24 | Harden coordinator/worker prompts from the T18 transcripts | auto | T18 | ✅ | Reviewed clean. Prose-only; two prompt fixes vs the code (dashed worktree dir `pir-{plan}-T{nn}`; C1 tag list + ISO prefix). Live re-run owed (folds into the combined post-T25+T26 run). |
 | T19 | Live fixture: review-queue | you | T17, T24 | ✅ | PASS live 2026-09-13: all 3 facts green (hello-per-spawn, no-close-before-idle, one-merge-to-main). 3 tasks, ceiling 2, ~6 min, flow textbook. Bundle `pir-t17-review-queue-AqCRsF/…/2026-09-13T05-53-06-393Z`. See FINDINGS. |
-| T25 | Cut the coordinator's relay overhead (worker→bin path) | auto | T19 | ✅ | Reviewed clean. Worker→coordinator up-channel is a file drop into `control/reports/`, drained temp-then-rename; surfaces one-shot. Live proof folds into the post-T25+T26 fixture run. 255 tests. |
+| T25 | Cut the coordinator's relay overhead (worker→bin path) | auto | T19 | ✅ | Reviewed clean. Worker→coordinator up-channel is a file drop into `control/reports/` (drained temp-then-rename). Live proof folded into T20's run. |
 | T26 | Harden coordinator/worker prompts from the T19 transcripts | auto | T25 | ✅ | Reviewed clean, no fix. C7–C10 (pir-coordinate) and W5 (pir-worker) land next to their rules, flat prose. S1-drop verified sound: T25's up-channel is an address-free file drop and the answer routes to the worker's own name, so finding 4's hello race is gone. Probed C7 pgrep string, C8 vs the ≈15s cadence, C10's dropped per-merge narration. 255 tests. |
-| T27 | Harden coordinator from the T21 transcripts | auto | T21 | 🔍 | Implemented, awaiting review. PM chose candidates 1/2/4/5 of the T21 reflection (3 dropped — SendMessage padding, already forbidden in prose). pir-coordinate: `await-idle` marked internal + Monitor wakes on milestone tags only (1); `AskUserQuestion` for a surfaced decision, forwarding the surfaced text not re-paraphrasing (2, 5); wait for the new `answer {task}` flow line then deliver, no hand-poll (4). coordinate.mjs: `answer()` logs `answer {task}` (symmetric with `hello`), test in coordinate.test.mjs. 260 tests. Prose not self-verifying — live proof folds into T22/T23. |
+| T27 | Harden coordinator from the T21 transcripts | auto | T21 | ✅ | Reviewed clean, no fix. `answer()` logs `answer {task}`; mutation-confirmed the test bites (delete the line, suite reds). New tag is additive — every fact filters the flow log by exact tag, none reads `answer`; parses like any line. coordinate.mjs is src/shell, outside the boundary scan. Prose half not self-verifying; live proof folds into T22/T23. 264 tests green. |
 | T20 | Live fixture: clean-merge | you | T17, T26 | ✅ | PASS live 2026-09-13: 3 facts green (one promote to main, ceiling held, no close before idle). First run false-FAILed `ceilingHeld`; fixed to count worker slots by task (PM chose A). Reflection clean — two genuine fresh reviews, correct conflict resolution, T25 up-channel spent 0 coordinator relay turns under 2 tasks. One hardening candidate logged (worker report-drop). Bundle in FINDINGS. |
 | T21 | Live fixture: human-decision | you | T17, T26 | ✅ | PASS live 2026-09-13 (re-run): 2 facts green (question surfaced+answered, one promote to main). Ambiguity-ask path proven — worker asked and waited, coordinator held, ~12s human decision. First run false-FAILed on a runaway-breaker miscount (closed worker reappeared under same id); fixed loop `closedIds` no-prune (fake `resurrectClosed`, test), held live. Reflection logged; 5 hardening candidates surfaced to PM. Bundle `pir-t17-human-decision-RVQcax/…/2026-09-13T15-24-34-685Z`. |
 | T22 | Live fixture: merge-conflict | you | T17, T26 | ⬜ | Run `run.mjs merge-conflict`; hands-off; done when the conflict-parked fact passes. See TEST-HARNESS.md. |
@@ -75,9 +73,8 @@ deviation from the task doc.
 
 **A ✅ task's cell may be cut to one line** once the next task has been reviewed.
 
-**Review queue:** T27 (coordinator hardening from the T21 transcripts) awaits review. T18 (single), T19
-(review-queue), T20 (clean-merge) and T21 (human-decision) PASS live; T24–T26 (the prompt + relay
-hardening) are ✅.
+**Review queue:** empty — every `auto` task through T27 is ✅. T18 (single), T19 (review-queue), T20
+(clean-merge) and T21 (human-decision) PASS live; T22–T23 remain, gated on the user.
 
 ## Next up: the gated live fixtures (T22–T23)
 
