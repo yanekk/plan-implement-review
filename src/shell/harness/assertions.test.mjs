@@ -296,6 +296,22 @@ test('oneMergeToMain fails when the git log shows two promotion merges', () => {
   assert.equal(oneMergeToMain().check(b).pass, false);
 });
 
+// A dependent-task worker brings the feature branch into its own task branch before signalling done;
+// git labels that `Merge branch 'pir/scratch' into pir/scratch-T03`. That merge shares the promotion
+// prefix but never touches main, so it must NOT be counted as a second promotion (review-queue
+// after-run false-FAIL, 2026-09-13).
+test('oneMergeToMain passes when a worker integration merge shares the promotion prefix', () => {
+  const gitLog =
+    "*   Merge branch 'pir/scratch'\n" +
+    "| * reconcile T03\n" +
+    "| |   a8717af Merge branch 'pir/scratch' into pir/scratch-T03\n" +
+    '| * T01\n';
+  const b = bundle({ flow: [fl('t9', 'promote', 'pir/scratch')], gitLog, timeline: [tick('t1', [cagent()])] });
+  const r = oneMergeToMain().check(b);
+  assert.equal(r.pass, true, r.detail);
+  assert.ok(r.evidence.includes('git log promotion merges: 1'));
+});
+
 // --- killSwitchStoppedAll ------------------------------------------------------------------------
 
 test('killSwitchStoppedAll passes when halt-close fired, no promote, and no worker survives the last tick', () => {

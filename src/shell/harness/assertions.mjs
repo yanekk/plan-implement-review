@@ -404,13 +404,24 @@ export function conflictSurfacedAndParked() {
       for (const p of promotes) evidence.push(flowLine(p));
       return { pass: false, evidence, detail: 'a promotion happened despite a parked conflict — main did not stay clean' };
     }
-    if (plan && gitLog.includes(`Merge branch 'pir/${plan}'`)) {
+    if (plan && promotionMergeLines(gitLog, plan).length > 0) {
       evidence.push(`git log contains "Merge branch 'pir/${plan}'"`);
       return { pass: false, evidence, detail: 'git log shows a promotion to main despite a parked conflict' };
     }
 
     return { pass: true, evidence, detail: `${surfaces.length} surfaced task(s), none merged, and nothing promoted — the conflict was parked` };
   });
+}
+
+// The git-log lines that are a PROMOTION of the feature branch into main. Git's default message for
+// merging `pir/{plan}` into main is exactly `Merge branch 'pir/{plan}'`. But a dependent-task worker
+// brings the feature branch INTO its own task branch before signalling done (pir-worker "bring your
+// branch up to date"), and git labels THAT merge `Merge branch 'pir/{plan}' into pir/{plan}-T{nn}` —
+// same prefix, never touches main. So match the needle but drop the ` into ` integration merges, or a
+// correct one-promotion run false-reads as two (observed on the review-queue after-run, 2026-09-13).
+function promotionMergeLines(gitLog, plan) {
+  const needle = `Merge branch 'pir/${plan}'`;
+  return (gitLog ?? '').split('\n').filter((l) => l.includes(needle) && !l.includes(`${needle} into `));
 }
 
 // main gained exactly one commit — the promotion — and no task branch reached main directly (DESIGN
@@ -426,8 +437,7 @@ export function oneMergeToMain() {
     }
     const { plan } = runIdentity(bundle);
     if (plan) {
-      const needle = `Merge branch 'pir/${plan}'`;
-      const count = (bundle.gitLog ?? '').split('\n').filter((l) => l.includes(needle)).length;
+      const count = promotionMergeLines(bundle.gitLog, plan).length;
       evidence.push(`git log promotion merges: ${count}`);
       if (count !== 1) {
         return { pass: false, evidence, detail: `git log shows ${count} promotion merge(s) into main, expected 1` };
