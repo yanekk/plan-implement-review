@@ -21,14 +21,15 @@ T21 → T22 → T23. The operator's guide is [TEST-HARNESS.md](TEST-HARNESS.md).
 2026-09-07 plan review and are validated per task during build, since `/pir-review-plan` does not re-run
 on a building plan.
 **Last updated:** 2026-09-13
-**Next `pir-work` will:** run T20 (`you`) — the `clean-merge` live fixture, first of the remaining Phase
-6 runs. It is a paid attended run needing the user (real agents, one at a time): the session hands over
-the `run.mjs clean-merge` command and the 3 facts to watch, per [TEST-HARNESS.md](TEST-HARNESS.md). T26
-is now reviewed ✅ (relay-transport prompt hardening); T18 and T19 PASS live. Open notes: capture copies
-`role:foreign` transcripts into the bundle (~4MB) — a FINDINGS fix candidate, not yet a task; the
-coordinator-name/hello rationale prune is still owed, gated on a live run confirming the down-send needs
-no named sender (FINDINGS 2026-09-13). The relay saving is measured by one combined review-queue re-run
-after T25+T26.
+**Next `pir-work` will:** resolve the T20 false-FAIL, then hand the clean-merge re-run back to the user.
+T20 ran 2026-09-13 and false-FAILed `ceilingHeld(2)`: it counts the OS roster, where a just-stopped
+implementer lingers ~2s beside its fresh reviewer, and clean-merge is the first parallel scenario so two
+handoffs overlapped to peak 3 — the loop's own `closedIds` count held, no real breach. A PM decision is
+pending on the fix (harden `ceilingHeld` to count real concurrent workers, vs tolerate ceiling+1); it
+touches a shared fact the passed fixtures use, so it is likely its own hardening task before the re-run.
+T18/T19 PASS live; T24–T26 ✅. Open notes: capture copies `role:foreign` transcripts into the bundle
+(~4MB), a FINDINGS fix candidate not yet a task; the coordinator-name/hello rationale prune is still owed
+(FINDINGS 2026-09-13). T20–T23 remain, still gated on the user for paid attended runs.
 
 ## Tasks
 
@@ -60,7 +61,7 @@ live steps with a hands-on worker the coordinator spawns, folded back without re
 | T19 | Live fixture: review-queue | you | T17, T24 | ✅ | PASS live 2026-09-13: all 3 facts green (hello-per-spawn, no-close-before-idle, one-merge-to-main). 3 tasks, ceiling 2, ~6 min, flow textbook. Bundle `pir-t17-review-queue-AqCRsF/…/2026-09-13T05-53-06-393Z`. See FINDINGS. |
 | T25 | Cut the coordinator's relay overhead (worker→bin path) | auto | T19 | ✅ | Reviewed clean. Worker→coordinator up-channel is a file drop into `control/reports/`, drained temp-then-rename; surfaces one-shot. Live proof folds into the post-T25+T26 fixture run. 255 tests. |
 | T26 | Harden coordinator/worker prompts from the T19 transcripts | auto | T25 | ✅ | Reviewed clean, no fix. C7–C10 (pir-coordinate) and W5 (pir-worker) land next to their rules, flat prose. S1-drop verified sound: T25's up-channel is an address-free file drop and the answer routes to the worker's own name, so finding 4's hello race is gone. Probed C7 pgrep string, C8 vs the ≈15s cadence, C10's dropped per-merge narration. 255 tests. |
-| T20 | Live fixture: clean-merge | you | T17, T26 | ⬜ | Run `run.mjs clean-merge`; hands-off; done when its 3 facts pass. See TEST-HARNESS.md. |
+| T20 | Live fixture: clean-merge | you | T17, T26 | ⬜ | Ran 2026-09-13: 2/3 green. `ceilingHeld(2)` false-FAILed — the ~2s roster overlap of a stopped implementer and its fresh reviewer, two parallel handoffs → peak 3; loop `closedIds` held the real ceiling, no breach. Fix pending PM (harden the fact vs tolerate ceiling+1), then re-run. See FINDINGS. |
 | T21 | Live fixture: human-decision | you | T17, T26 | ⬜ | Run `run.mjs human-decision`; answer the surfaced question via the control `answers` file; done when the 2 facts pass. See TEST-HARNESS.md. |
 | T22 | Live fixture: merge-conflict | you | T17, T26 | ⬜ | Run `run.mjs merge-conflict`; hands-off; done when the conflict-parked fact passes. See TEST-HARNESS.md. |
 | T23 | Live fixture: parallel + kill-switch drill (absorbs T10) | you | T17, T26 | ⬜ | Run `run.mjs parallel --into <dir>`; `touch <dir>/plans/parallel/.parallel/control/HALT` mid-run; done when its 3 facts pass. Closes T10. See TEST-HARNESS.md. |
