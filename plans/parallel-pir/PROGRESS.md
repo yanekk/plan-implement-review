@@ -12,27 +12,23 @@ cell also fixes the over-budget cell they walk past.**
 
 **Plan reviewed:** 2026-09-07 — 4 fixed, 3 decided with the user
 
-**Status:** Plan written, re-scoped onto Claude Code's own primitives, and reviewed before build.
-The `Runs` column marks each task `auto` (a worker builds it) or `you` (a person runs it). 27 tasks,
-7 phases (0–6). T12/T13 added 2026-09-10. Phase 5 (T14–T17, the harness) added 2026-09-10. Phase 6
-(T18–T23, one live-run task per fixture) added 2026-09-12 by PM decision: T17 stays the `auto` runner,
-each fixture is its own `you` task, done when its fact report is all-green. T10 is absorbed by T23,
-T13's live half by T18. Three `auto` tasks harden the machinery before the remaining fixtures, in order:
-T24 (added 2026-09-12) from the T18 transcripts; then, from the T19 transcripts (added 2026-09-13 by PM
-decision), T25 (cut the coordinator's relay overhead) and T26 (prompt hardening matched to T25's
-transport). Order: T19 → T25 → T26 → T20–T23. The operator's guide is
-[TEST-HARNESS.md](TEST-HARNESS.md). Phases
-5–6 postdate the 2026-09-07 plan review; they are validated per task during build, since
-`/pir-review-plan` does not re-run on a building plan.
+**Status:** Plan written, re-scoped onto Claude Code's own primitives, reviewed before build. The `Runs`
+column marks each task `auto` (a worker builds it) or `you` (a person runs the live steps). 27 tasks, 7
+phases (0–6). Phases 0–5 are ✅. The three `auto` hardening tasks (T24, T25, T26) are ✅. Phase 6 is the
+live fixtures: each is a `you` task, done when its fact report is all-green; T18 (single) and T19
+(review-queue) PASS live, T20–T23 remain, gated on the user. T10 is absorbed by T23. Order now: T20 →
+T21 → T22 → T23. The operator's guide is [TEST-HARNESS.md](TEST-HARNESS.md). Phases 5–6 postdate the
+2026-09-07 plan review and are validated per task during build, since `/pir-review-plan` does not re-run
+on a building plan.
 **Last updated:** 2026-09-13
-**Next `pir-work` will:** REVIEW T26 (`auto`) — prompt hardening from the T19 transcripts, now
-implemented (🔍). It applied C7–C10 (pir-coordinate) and W5 (pir-worker) as prose and dropped S1 as
-subsumed by T25's file-drop up-channel. Prose-only, no new tests, npm test green. Once T26 is reviewed,
-the gated fixtures (T20–T23) resume; procedure in [TEST-HARNESS.md](TEST-HARNESS.md). Open notes:
-capture copies `role:foreign` transcripts into the bundle (~4MB) — FINDINGS, a fix candidate, not yet a
-task; pruning the coordinator-name/hello rationale is still owed, gated on a live run confirming the
-down-send needs no named sender (FINDINGS 2026-09-13). The relay saving is measured by one combined
-review-queue re-run after T25+T26.
+**Next `pir-work` will:** run T20 (`you`) — the `clean-merge` live fixture, first of the remaining Phase
+6 runs. It is a paid attended run needing the user (real agents, one at a time): the session hands over
+the `run.mjs clean-merge` command and the 3 facts to watch, per [TEST-HARNESS.md](TEST-HARNESS.md). T26
+is now reviewed ✅ (relay-transport prompt hardening); T18 and T19 PASS live. Open notes: capture copies
+`role:foreign` transcripts into the bundle (~4MB) — a FINDINGS fix candidate, not yet a task; the
+coordinator-name/hello rationale prune is still owed, gated on a live run confirming the down-send needs
+no named sender (FINDINGS 2026-09-13). The relay saving is measured by one combined review-queue re-run
+after T25+T26.
 
 ## Tasks
 
@@ -62,8 +58,8 @@ live steps with a hands-on worker the coordinator spawns, folded back without re
 | T18 | Live fixture: single (happy path; retires T13 live half) | you | T17 | ✅ | PASS live 2026-09-12: all 4 facts green (hello, by-name, idle-gated close, one promote to main); build→review→merge→promote on real agents. Retires T13's live half. Bundle `pir-t17-single-IbhBgo/…/2026-09-12T05-45-43-231Z`. |
 | T24 | Harden coordinator/worker prompts from the T18 transcripts | auto | T18 | ✅ | Reviewed clean. Prose-only; two prompt fixes vs the code (dashed worktree dir `pir-{plan}-T{nn}`; C1 tag list + ISO prefix). Live re-run owed (folds into the combined post-T25+T26 run). |
 | T19 | Live fixture: review-queue | you | T17, T24 | ✅ | PASS live 2026-09-13: all 3 facts green (hello-per-spawn, no-close-before-idle, one-merge-to-main). 3 tasks, ceiling 2, ~6 min, flow textbook. Bundle `pir-t17-review-queue-AqCRsF/…/2026-09-13T05-53-06-393Z`. See FINDINGS. |
-| T25 | Cut the coordinator's relay overhead (worker→bin path) | auto | T19 | ✅ | Reviewed clean, no fix. Up-channel is a file drop; drain unlinks each report once, malformed dropped, temp `.json.tmp` excluded till renamed. Surfaces one-shot (conflict parks to AWAITING), so the surfaced feed cannot flood. Reproduced the worker git-common-dir recipe in a real worktree: resolves to main checkout. Boundary green. Live proof deferred to T26+fixtures. 255 tests. |
-| T26 | Harden coordinator/worker prompts from the T19 transcripts | auto | T25 | 🔍 | Prose only. C7–C10 in pir-coordinate: launch-once/exit-0 normal; act on the armed Monitor, no sleep-polls; a question/decision is the PM's — surface and wait; milestone-only reporting. W5 in pir-worker: ask on ambiguity, esp. exact file contents. S1 dropped, subsumed by T25's file-drop up-channel (worker needs no coordinator address); commit notes it. npm test green, no new tests. |
+| T25 | Cut the coordinator's relay overhead (worker→bin path) | auto | T19 | ✅ | Reviewed clean. Worker→coordinator up-channel is a file drop into `control/reports/`, drained temp-then-rename; surfaces one-shot. Live proof folds into the post-T25+T26 fixture run. 255 tests. |
+| T26 | Harden coordinator/worker prompts from the T19 transcripts | auto | T25 | ✅ | Reviewed clean, no fix. C7–C10 (pir-coordinate) and W5 (pir-worker) land next to their rules, flat prose. S1-drop verified sound: T25's up-channel is an address-free file drop and the answer routes to the worker's own name, so finding 4's hello race is gone. Probed C7 pgrep string, C8 vs the ≈15s cadence, C10's dropped per-merge narration. 255 tests. |
 | T20 | Live fixture: clean-merge | you | T17, T26 | ⬜ | Run `run.mjs clean-merge`; hands-off; done when its 3 facts pass. See TEST-HARNESS.md. |
 | T21 | Live fixture: human-decision | you | T17, T26 | ⬜ | Run `run.mjs human-decision`; answer the surfaced question via the control `answers` file; done when the 2 facts pass. See TEST-HARNESS.md. |
 | T22 | Live fixture: merge-conflict | you | T17, T26 | ⬜ | Run `run.mjs merge-conflict`; hands-off; done when the conflict-parked fact passes. See TEST-HARNESS.md. |
@@ -75,21 +71,16 @@ deviation from the task doc.
 
 **A ✅ task's cell may be cut to one line** once the next task has been reviewed.
 
-**Review queue:** T26 🔍 — implemented 2026-09-13, awaiting a fresh-eyes review. Next `pir-work`
-reviews it. T18 (single) and T19 (review-queue) both PASS live.
+**Review queue:** empty — T26 was reviewed clean 2026-09-13. T18 (single) and T19 (review-queue) PASS
+live; T25 and T26 (the relay hardening) are ✅.
 
-## Next up: review T26, then the gated fixtures
+## Next up: the gated live fixtures (T20–T23)
 
-**T25 (`auto`) is reviewed clean** — the relay redesign (Option A, PM-decided 2026-09-13): the
-worker→coordinator up-channel is now a file drop the bin drains directly, no agent turn on the routine
-path. **T26 (`auto`) is now implemented (🔍)** — the prompt hardening from the T19 transcripts: C7–C10
-in pir-coordinate (launch-once/exit-0 normal, act on the armed Monitor not sleep-polls, a worker
-question/decision is the PM's to answer, milestone-only reporting) and W5 in pir-worker
-(ask-on-ambiguity). S1 (spawn-message address) was dropped as subsumed by T25 — a worker reports by
-file drop and needs no coordinator address. **Next `pir-work` reviews T26.** Review it before any more
-paid runs.
+**The relay hardening is done and reviewed.** T25 moved the worker→coordinator up-channel to a file drop
+the bin drains directly (no agent turn on the routine path); T26 taught the two skills to match that
+transport (C7–C10, W5) and dropped S1 as subsumed. Both are ✅.
 
-**Then the remaining Phase 6 fixture runs (T20–T23)** stay blocked on the user: real paid agents,
+**The remaining Phase 6 fixture runs (T20–T23)** stay blocked on the user: real paid agents,
 launched attended, one at a time, never unattended. Each now ends with a reflection pass on its bundle
 (DESIGN §4.1) — analyse flow log + transcripts for friction and waste, log findings, surface hardening
 to the PM — logged before ✅. Full procedure in [TEST-HARNESS.md](TEST-HARNESS.md). Order, small first:
