@@ -26,9 +26,9 @@ attended run needing the user: `run.mjs human-decision`, then answer the surface
 one JSON line to the control `answers` file (or reply through the coordinator session), per
 [TEST-HARNESS.md](TEST-HARNESS.md). T18/T19/T20 PASS live; T24–T26 ✅. `ceilingHeld` now counts worker
 SLOTS by task (impl+review=1, duplicate same-role trips it — assertions.mjs, 258 tests), so fixtures
-assert the bare true ceiling. Open notes / hardening candidates: worker report-drop should standardise
-on a Bash heredoc into `$CLAUDE_JOB_DIR/tmp` (Write tool + `.git/` paths fail in a worktree — clean-merge
-reflection); capture copies `role:foreign` transcripts into the bundle (~4MB), not yet a task; the
+assert the bare true ceiling. Worker report-drop hardened (skills/pir-worker drops via one `node`+heredoc,
+no scratch file; Write tool + `.git/` paths fail in a worktree), live-confirmed on the next fixture run.
+Open notes: capture copies `role:foreign` transcripts into the bundle (~4MB), not yet a task; the
 coordinator-name/hello rationale prune is still owed (FINDINGS 2026-09-13).
 
 ## Tasks

@@ -13,7 +13,7 @@ Legend: 🐞 defect found · ✅ verified by hand with the user · 📌 worth kn
 | Date | | Finding |
 |---|---|---|
 | 2026-09-13 | ✅ | T20 clean-merge PASS live (3 facts green). Earlier false-FAIL: `ceilingHeld` counted the OS roster, where a stopped implementer lingers ~2s beside its reviewer → peak 3, no breach; fixed to count slots by task (impl+review=1, dupe trips it). Bundle `pir-t17-clean-merge-Bzgx6A/…2026-09-13T10-36-28-449Z`. |
-| 2026-09-13 | 📌 | clean-merge reflection: T25 up-channel clean under 2 concurrent tasks (0 coordinator relay turns). Worker report-drop fumbled ~40s — Write tool hit the sandbox path redirect, then a `.git/` scratch path (a file in a worktree) failed; use a Bash heredoc into `$CLAUDE_JOB_DIR/tmp`. Hardening candidate. |
+| 2026-09-13 | 🐞 | clean-merge reflection: T25 up-channel clean under 2 concurrent tasks (0 coordinator relay turns). Worker report-drop fumbled ~40s — Write tool hits the sandbox path redirect, `.git/` scratch is a file in a worktree. Fixed (skills/pir-worker): drop via one `node`+heredoc, no scratch file. |
 | 2026-09-13 | 🐞 | `oneMergeToMain` fixed (85add67): needle `Merge branch 'pir/{plan}'` matched a worker integration merge `… into pir/{plan}-T{nn}`; now excludes ` into ` lines. |
 | 2026-09-13 | 📌 | T25+T26 relay saving confirmed via `harness/tokens.mjs`. Before (T19) → after re-run: coordinator 77→59 turns, 5.06M→3.64M tokens (−28%, share 38%→29%); run 239→229, 13.38M→12.60M (−6%); workers flat (noise). n=1 each side. |
 | 2026-09-13 | 📌 | T25 moved the worker→coordinator up-channel to a file drop (`control/reports/`); workers no longer SendMessage it. So `byNameAddressing` (single fixture) is obsolete and the coordinator-name + hello return-socket rationale are redundant — T26/PM to prune. |

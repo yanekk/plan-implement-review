@@ -92,23 +92,28 @@ the loop routes on the *kind*, not the prose:
 - `<kind>` is one of: `question`, `decision`, `implemented`, `done`, `conflict`.
 - `<Txx>` is your task id, e.g. `T05`.
 
-**How to drop the report** — write the message body to a scratch file, then drop it into the shared
-reports folder written temp-then-rename, so the loop never reads a half-written file:
+**How to drop the report** — do it entirely in **Bash**, in one command, with no intermediate file:
+pipe your message straight into `node` over a heredoc; `node` JSON-encodes it and writes the report
+temp-then-rename, so the loop never reads a half-written file. Do **not** stage the body with the Write
+tool, and do **not** put a scratch file under `.git/`. (Why: the Write tool's path is sandbox-redirected,
+so a file it creates is not where a follow-up Bash or `node` read looks — the read fails with `ENOENT`;
+and inside a worktree `.git` is a *file*, not a directory, so a `.git/…` scratch path fails with "not a
+directory". A worker hit both on the clean-merge live run 2026-09-13 and burned ~40s retrying; feeding
+the body over a heredoc, with no intermediate file, cannot hit either.)
 
-1. Find the shared reports folder. It lives in the user's main checkout, which every worktree can
-   reach through the shared git dir:
+Find the shared reports folder — it lives in the user's main checkout, which every worktree reaches
+through the shared git dir — then drop the report with one quoted heredoc, so backticks, newlines and
+emoji in your prose are taken literally and never shell-expanded. The heredoc terminator `PIR_EOF` must
+sit at the start of its line:
 
-   ```
-   MAIN=$(cd "$(git rev-parse --git-common-dir)/.." && pwd)
-   REPORTS="$MAIN/plans/{slug}/.parallel/control/reports"      # {slug} is your plan, from your branch
-   ```
-2. Write the `[pir:v1 …]` header + your prose to a scratch file with the Write tool, say `msg.txt`.
-3. Drop it as one report file, encoding it with `node` so backticks, newlines and emoji in your
-   message are never shell-quoted or retyped (pass the worker name and paths as arguments):
-
-   ```
-   node -e 'const fs=require("fs"),p=require("path");const d=process.argv[1];fs.mkdirSync(d,{recursive:true});const f=p.join(d,Date.now()+"-"+process.argv[2]+"-"+Math.random().toString(36).slice(2)+".json");const t=f+".tmp";fs.writeFileSync(t,JSON.stringify({from:process.argv[3],text:fs.readFileSync(process.argv[4],"utf8")}));fs.renameSync(t,f)' "$REPORTS" "<Txx>" "<your worker name>" msg.txt
-   ```
+```
+MAIN=$(cd "$(git rev-parse --git-common-dir)/.." && pwd)
+REPORTS="$MAIN/plans/{slug}/.parallel/control/reports"      # {slug} is your plan, from your branch
+node -e 'const fs=require("fs"),p=require("path");const d=process.argv[1];fs.mkdirSync(d,{recursive:true});const f=p.join(d,Date.now()+"-"+process.argv[2]+"-"+Math.random().toString(36).slice(2)+".json");const t=f+".tmp";fs.writeFileSync(t,JSON.stringify({from:process.argv[3],text:fs.readFileSync(0,"utf8")}));fs.renameSync(t,f)' "$REPORTS" "<Txx>" "<your worker name>" <<'PIR_EOF'
+[pir:v1 kind=<kind> task=<Txx>]
+<your message, in plain words, as many lines as you need>
+PIR_EOF
+```
 
 `<your worker name>` is your own name, `{repo} · {plan} · T{nn} · {role}` (§ Addressing below) — it is
 recorded as `from` for the operator's benefit; the loop routes on the header's `task`, so the report is
