@@ -15,22 +15,21 @@ cell also fixes the over-budget cell they walk past.**
 **Status:** Plan written, re-scoped onto Claude Code's own primitives, reviewed before build. The `Runs`
 column marks each task `auto` (a worker builds it) or `you` (a person runs the live steps). 27 tasks, 7
 phases (0–6). Phases 0–5 are ✅. The three `auto` hardening tasks (T24, T25, T26) are ✅. Phase 6 is the
-live fixtures: each is a `you` task, done when its fact report is all-green; T18 (single) and T19
-(review-queue) PASS live, T20–T23 remain, gated on the user. T10 is absorbed by T23. Order now: T20 →
-T21 → T22 → T23. The operator's guide is [TEST-HARNESS.md](TEST-HARNESS.md). Phases 5–6 postdate the
+live fixtures: each is a `you` task, done when its fact report is all-green; T18 (single), T19
+(review-queue) and T20 (clean-merge) PASS live, T21–T23 remain, gated on the user. T10 is absorbed by
+T23. Order now: T21 → T22 → T23. The operator's guide is [TEST-HARNESS.md](TEST-HARNESS.md). Phases 5–6 postdate the
 2026-09-07 plan review and are validated per task during build, since `/pir-review-plan` does not re-run
 on a building plan.
 **Last updated:** 2026-09-13
-**Next `pir-work` will:** wait on the user to re-run `run.mjs clean-merge` (paid, attended) now the
-T20 false-FAIL is fixed. That FAIL was `ceilingHeld(2)` counting the OS roster, where a just-stopped
-implementer lingers ~2s beside its fresh reviewer; clean-merge is the first parallel scenario so two
-handoffs overlapped to peak 3 — no real breach (the loop's `closedIds` count held). PM chose A:
-`ceilingHeld` now counts worker SLOTS by task (a task's implement+review overlap is one slot; a
-duplicate same-role session still trips it), assertions.mjs, 258 tests. On a green re-run: run the
-reflection pass, log it, mark T20 ✅. T18/T19 PASS live; T24–T26 ✅. Open notes: capture copies
-`role:foreign` transcripts into the bundle (~4MB), a FINDINGS fix candidate not yet a task; the
-coordinator-name/hello rationale prune is still owed (FINDINGS 2026-09-13). T20–T23 remain, gated on the
-user for paid attended runs.
+**Next `pir-work` will:** hand over T21 (`you`) — the `human-decision` live fixture. It is a paid
+attended run needing the user: `run.mjs human-decision`, then answer the surfaced question by appending
+one JSON line to the control `answers` file (or reply through the coordinator session), per
+[TEST-HARNESS.md](TEST-HARNESS.md). T18/T19/T20 PASS live; T24–T26 ✅. `ceilingHeld` now counts worker
+SLOTS by task (impl+review=1, duplicate same-role trips it — assertions.mjs, 258 tests), so fixtures
+assert the bare true ceiling. Open notes / hardening candidates: worker report-drop should standardise
+on a Bash heredoc into `$CLAUDE_JOB_DIR/tmp` (Write tool + `.git/` paths fail in a worktree — clean-merge
+reflection); capture copies `role:foreign` transcripts into the bundle (~4MB), not yet a task; the
+coordinator-name/hello rationale prune is still owed (FINDINGS 2026-09-13).
 
 ## Tasks
 
@@ -62,7 +61,7 @@ live steps with a hands-on worker the coordinator spawns, folded back without re
 | T19 | Live fixture: review-queue | you | T17, T24 | ✅ | PASS live 2026-09-13: all 3 facts green (hello-per-spawn, no-close-before-idle, one-merge-to-main). 3 tasks, ceiling 2, ~6 min, flow textbook. Bundle `pir-t17-review-queue-AqCRsF/…/2026-09-13T05-53-06-393Z`. See FINDINGS. |
 | T25 | Cut the coordinator's relay overhead (worker→bin path) | auto | T19 | ✅ | Reviewed clean. Worker→coordinator up-channel is a file drop into `control/reports/`, drained temp-then-rename; surfaces one-shot. Live proof folds into the post-T25+T26 fixture run. 255 tests. |
 | T26 | Harden coordinator/worker prompts from the T19 transcripts | auto | T25 | ✅ | Reviewed clean, no fix. C7–C10 (pir-coordinate) and W5 (pir-worker) land next to their rules, flat prose. S1-drop verified sound: T25's up-channel is an address-free file drop and the answer routes to the worker's own name, so finding 4's hello race is gone. Probed C7 pgrep string, C8 vs the ≈15s cadence, C10's dropped per-merge narration. 255 tests. |
-| T20 | Live fixture: clean-merge | you | T17, T26 | ⬜ | Ran 2026-09-13: 2/3 green. `ceilingHeld(2)` false-FAILed on the ~2s roster overlap of a stopped implementer and its fresh reviewer (two parallel handoffs → peak 3); no real breach. Fixed (PM chose A): `ceilingHeld` now counts worker slots by task (impl+review=1, same-role dupe trips it), 258 tests. Live re-run owed — needs the user. See FINDINGS. |
+| T20 | Live fixture: clean-merge | you | T17, T26 | ✅ | PASS live 2026-09-13: 3 facts green (one promote to main, ceiling held, no close before idle). First run false-FAILed `ceilingHeld`; fixed to count worker slots by task (PM chose A). Reflection clean — two genuine fresh reviews, correct conflict resolution, T25 up-channel spent 0 coordinator relay turns under 2 tasks. One hardening candidate logged (worker report-drop). Bundle in FINDINGS. |
 | T21 | Live fixture: human-decision | you | T17, T26 | ⬜ | Run `run.mjs human-decision`; answer the surfaced question via the control `answers` file; done when the 2 facts pass. See TEST-HARNESS.md. |
 | T22 | Live fixture: merge-conflict | you | T17, T26 | ⬜ | Run `run.mjs merge-conflict`; hands-off; done when the conflict-parked fact passes. See TEST-HARNESS.md. |
 | T23 | Live fixture: parallel + kill-switch drill (absorbs T10) | you | T17, T26 | ⬜ | Run `run.mjs parallel --into <dir>`; `touch <dir>/plans/parallel/.parallel/control/HALT` mid-run; done when its 3 facts pass. Closes T10. See TEST-HARNESS.md. |
@@ -73,22 +72,18 @@ deviation from the task doc.
 
 **A ✅ task's cell may be cut to one line** once the next task has been reviewed.
 
-**Review queue:** empty — T26 was reviewed clean 2026-09-13. T18 (single) and T19 (review-queue) PASS
-live; T25 and T26 (the relay hardening) are ✅.
+**Review queue:** empty. T18 (single), T19 (review-queue) and T20 (clean-merge) PASS live; T24–T26 (the
+prompt + relay hardening) are ✅.
 
-## Next up: the gated live fixtures (T20–T23)
+## Next up: the gated live fixtures (T21–T23)
 
-**The relay hardening is done and reviewed.** T25 moved the worker→coordinator up-channel to a file drop
-the bin drains directly (no agent turn on the routine path); T26 taught the two skills to match that
-transport (C7–C10, W5) and dropped S1 as subsumed. Both are ✅.
-
-**The remaining Phase 6 fixture runs (T20–T23)** stay blocked on the user: real paid agents,
+**The remaining Phase 6 fixture runs (T21–T23)** stay blocked on the user: real paid agents,
 launched attended, one at a time, never unattended. Each now ends with a reflection pass on its bundle
 (DESIGN §4.1) — analyse flow log + transcripts for friction and waste, log findings, surface hardening
 to the PM — logged before ✅. Full procedure in [TEST-HARNESS.md](TEST-HARNESS.md). Order, small first:
 
 ```
-node src/shell/harness/run.mjs clean-merge   # T20, then human-decision, merge-conflict, then:
+node src/shell/harness/run.mjs human-decision   # T21 (answer the surfaced question), then merge-conflict (T22), then:
 node src/shell/harness/run.mjs parallel --into <dir>   # T23, kill-switch drill, last
 ```
 
