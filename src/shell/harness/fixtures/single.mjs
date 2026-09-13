@@ -22,9 +22,9 @@ const tasks = {
   'T01-marker.md': taskDoc({
     num: 'T01',
     title: 'Write the single-task marker file',
-    goal: 'Create a file `single-ok.txt` at the repo root whose only contents are the text `ok`. That is all.',
+    goal: 'Create a file `single-ok.txt` at the repo root whose entire contents are the two letters `ok` followed by a single trailing newline, and nothing else. That is all — do not ask; the newline is specified.',
     files: ['`single-ok.txt` — new.'],
-    doneWhen: ['`single-ok.txt` exists and contains `ok`.', '`npm test` is still green.'],
+    doneWhen: ['`single-ok.txt` exists and its entire contents are `ok` plus one trailing newline.', '`npm test` is still green.'],
   }),
 };
 
