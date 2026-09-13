@@ -25,13 +25,12 @@ transport). Order: T19 → T25 → T26 → T20–T23. The operator's guide is
 5–6 postdate the 2026-09-07 plan review; they are validated per task during build, since
 `/pir-review-plan` does not re-run on a building plan.
 **Last updated:** 2026-09-13
-**Next `pir-work` will:** REVIEW T25 (`auto`, now 🔍) — the relay redesign. PM decided (2026-09-13) to
-build Option A: the worker→coordinator up-channel moved from SendMessage to a file drop the bin drains
-directly (`control/reports/`), down-channel unchanged, loop event-driven; DESIGN §2.2 updated; plus
-`harness/tokens.mjs` and a token baseline (the PM wants the relay saving measured — one combined
-review-queue re-run after T25+T26). After T25 is reviewed, IMPLEMENT T26 (prompt hardening), then the
-gated fixtures (T20–T23) resume; procedure in [TEST-HARNESS.md](TEST-HARNESS.md). Open note: capture
-copies `role:foreign` transcripts into the bundle (~4MB) — FINDINGS, a fix candidate, not yet a task.
+**Next `pir-work` will:** IMPLEMENT T26 (`auto`) — prompt hardening from the T19 transcripts, its
+wording matched to the transport T25 landed (up-channel = a file drop workers write to; down-channel =
+message). C7–C10, W5, S1 per the T26 row. T25 (relay redesign) reviewed clean 2026-09-13. After T26 is
+built and reviewed, the gated fixtures (T20–T23) resume; procedure in [TEST-HARNESS.md](TEST-HARNESS.md).
+Open note: capture copies `role:foreign` transcripts into the bundle (~4MB) — FINDINGS, a fix candidate,
+not yet a task. The relay saving is measured by one combined review-queue re-run after T25+T26.
 
 ## Tasks
 
@@ -59,9 +58,9 @@ live steps with a hands-on worker the coordinator spawns, folded back without re
 | T16 | Harness fixtures: scratch plans that force each path with real workers | auto | T15 | ✅ | Reviewed. Six fixtures; merge-conflict forced at ceiling 2; loop records worker-raised surfaces to the flow log. 230 tests. |
 | T17 | Harness live runner (install→launch→capture→wait→seal→check) | auto | T14, T15, T16 | ✅ | Reviewed clean; runner build half, two live-run fixes folded in (`startupGrace`, live coordinator treated as active). 244 tests. See FINDINGS 2026-09-11/12. |
 | T18 | Live fixture: single (happy path; retires T13 live half) | you | T17 | ✅ | PASS live 2026-09-12: all 4 facts green (hello, by-name, idle-gated close, one promote to main); build→review→merge→promote on real agents. Retires T13's live half. Bundle `pir-t17-single-IbhBgo/…/2026-09-12T05-45-43-231Z`. |
-| T24 | Harden coordinator/worker prompts from the T18 transcripts | auto | T18 | ✅ | Reviewed. Prose-only, no src/; npm test green (244, not the 248 noted). Two fixes vs the code: W1 gave the worktree dir as the slashed `{branch}`, actual is dashed `pir-{plan}-T{nn}` (worktree.mjs:134); C1's tag list omitted `await-idle`/`halt-close`/`ceiling full` and the ISO-timestamp prefix. Verified C4 append-only, C2 promote-cue, log path. Live `single` re-run still owed. |
+| T24 | Harden coordinator/worker prompts from the T18 transcripts | auto | T18 | ✅ | Reviewed clean. Prose-only; two prompt fixes vs the code (dashed worktree dir `pir-{plan}-T{nn}`; C1 tag list + ISO prefix). Live re-run owed (folds into the combined post-T25+T26 run). |
 | T19 | Live fixture: review-queue | you | T17, T24 | ✅ | PASS live 2026-09-13: all 3 facts green (hello-per-spawn, no-close-before-idle, one-merge-to-main). 3 tasks, ceiling 2, ~6 min, flow textbook. Bundle `pir-t17-review-queue-AqCRsF/…/2026-09-13T05-53-06-393Z`. See FINDINGS. |
-| T25 | Cut the coordinator's relay overhead (worker→bin path) | auto | T19 | 🔍 | Built. Up-channel now a file drop: workers write to `control/reports/`, the bin drains it directly — no agent turn (~20–25% gone). Down-channel/hello unchanged; bin writes `surfaced`; loop event-driven (fs.watch). PM-decided transport change (DESIGN §2.2). Added `harness/tokens.mjs` + token baseline (FINDINGS). Deviation: `byNameAddressing` obsolete (single fixture), coordinator-name/hello redundant — logged for T26. 259 tests. |
+| T25 | Cut the coordinator's relay overhead (worker→bin path) | auto | T19 | ✅ | Reviewed clean, no fix. Up-channel is a file drop; drain unlinks each report once, malformed dropped, temp `.json.tmp` excluded till renamed. Surfaces one-shot (conflict parks to AWAITING), so the surfaced feed cannot flood. Reproduced the worker git-common-dir recipe in a real worktree: resolves to main checkout. Boundary green. Live proof deferred to T26+fixtures. 255 tests. |
 | T26 | Harden coordinator/worker prompts from the T19 transcripts | auto | T25 | ⬜ | From the T19 bundle: C7–C10 (pir-coordinate: launch-once/exit-0 is normal, act on Monitor not sleep-polls, relay worker questions to PM, milestone-only reporting), W5 (pir-worker: ask on ambiguity), S1 (spawn message names coordinator address, unless T25 did it). Prose describes the transport T25 lands. Gates T20–T23. |
 | T20 | Live fixture: clean-merge | you | T17, T26 | ⬜ | Run `run.mjs clean-merge`; hands-off; done when its 3 facts pass. See TEST-HARNESS.md. |
 | T21 | Live fixture: human-decision | you | T17, T26 | ⬜ | Run `run.mjs human-decision`; answer the surfaced question via the control `answers` file; done when the 2 facts pass. See TEST-HARNESS.md. |
@@ -74,16 +73,16 @@ deviation from the task doc.
 
 **A ✅ task's cell may be cut to one line** once the next task has been reviewed.
 
-**Review queue:** T25 (`auto`) is now 🔍 — the next `pir-work` reviews it. T18 (single) and T19
-(review-queue) both PASS live.
+**Review queue:** empty — T25 reviewed ✅ 2026-09-13. Next `pir-work` implements T26. T18 (single) and
+T19 (review-queue) both PASS live.
 
-## Next up: review T25, build T26, then the gated fixtures
+## Next up: build T26, then the gated fixtures
 
-**T25 (`auto`) is built and awaiting review** — the relay redesign (Option A, PM-decided 2026-09-13):
-the worker→coordinator up-channel is now a file drop the bin drains directly, no agent turn on the
-routine path. Review it first. **Then T26 (`auto`)** — the prompt hardening from the T19 transcripts (launch-once, act on Monitor
+**T25 (`auto`) is reviewed clean** — the relay redesign (Option A, PM-decided 2026-09-13): the
+worker→coordinator up-channel is now a file drop the bin drains directly, no agent turn on the routine
+path. **Next is T26 (`auto`)** — the prompt hardening from the T19 transcripts (launch-once, act on Monitor
 not sleep-polls, relay worker questions to the PM, milestone-only reporting, worker-asks-on-ambiguity,
-spawn-message address), its wording matched to whatever transport T25 lands. Build and review both before
+spawn-message address), its wording matched to the transport T25 landed. Build and review it before
 any more paid runs.
 
 **Then the remaining Phase 6 fixture runs (T20–T23)** stay blocked on the user: real paid agents,
