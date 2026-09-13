@@ -1,6 +1,6 @@
-# T25 — Harden the coordinator and worker prompts from the T19 transcripts
+# T26 — Harden the coordinator and worker prompts from the T19 transcripts
 
-**Phase:** 6 · **Depends on:** T19 · **Weight:** medium · **Runs:** auto
+**Phase:** 6 · **Depends on:** T25 · **Weight:** medium · **Runs:** auto
 
 ## Goal
 
@@ -11,6 +11,12 @@ edits to the two skills (the same kind of work as T24); one (S1) is a small `src
 message the bin emits, because a worker cannot be told whom to report to by prose alone. It changes no
 design rule. Like T24 it is **not self-verifying**: prose and message wording that govern live behaviour
 are proven only by a live run, which is the gated fixture queue that follows it (see *After this task*).
+
+**This task runs after T25** (the coordinator↔bin transport redesign), so its coordinator edits must
+describe the transport as T25 leaves it, not the hand-relay this task was first written against. Where
+T25 has already resolved a finding, drop that edit rather than restating it — in particular, if T25's
+redesign already gives a worker its reply address without depending on the hello, **S1 is subsumed and
+is dropped** (say so in the commit). Read T25's task doc and its landed changes before applying these.
 
 ## Design sections this implements
 
@@ -40,8 +46,8 @@ edits make the skills and the spawn message teach what these sections already re
    worker done with nowhere to report.
 
 The dominant *cost* the bundle showed — the coordinator hand-relaying every worker message into the
-bin's inbox (≈20–25% of the run) — is a **design question about the wire protocol, not prose**, and is
-explicitly out of scope here. It is logged in FINDINGS as a fix candidate for a later decision.
+bin's inbox (≈20–25% of the run) — is **not** addressed here; it is its own task, **T25** (the transport
+redesign), which runs first. This task only makes the prompts describe whatever transport T25 lands.
 
 ## Files
 
@@ -71,9 +77,9 @@ events and inbound worker messages, and read the log once per event to get the n
 timer. (T19 finding 2: six `sleep` polls that duplicated the Monitor.)
 
 **C9 — Relay a worker's question or decision to the PM and wait.** State: when a worker sends
-`kind=question` or `kind=decision`, surface it to the PM and hold that task until an answer arrives via
-the control `answers` file or the PM's reply; do not let the run proceed on a guess in the worker's
-place. (T19 finding 3, coordinator half; the path T21 exercises.)
+`kind=question` or `kind=decision` (over whatever transport T25 lands), surface it to the PM and hold
+that task until an answer arrives via the control `answers` file or the PM's reply; do not let the run
+proceed on a guess in the worker's place. (T19 finding 3, coordinator half; the path T21 exercises.)
 
 **C10 — Report at the milestones, not after every event.** State: report to the PM at run start, at
 completion (the `promote`/HALT line, per C2), and whenever a decision or failure needs them — not a
@@ -88,13 +94,14 @@ exact file contents — send the coordinator `kind=question` with the choices an
 before committing; do not guess and move on. The coordinator relays it to the PM (C9). (T19 finding 3:
 the trailing-newline flip-flop that converged only by luck.)
 
-### Spawn message — `src/shell` (S1)
+### Spawn message — `src/shell` (S1, only if T25 did not already do it)
 
 **S1 — Name the coordinator's reply address in the spawn message.** The bin already knows its own
 session name; include it in the prompt each worker is spawned with, so the worker knows whom to report
 to without waiting for the hello. Keep the hello as the channel-open cue, not the sole carrier of the
 address. Add or extend a test that the generated spawn message contains the coordinator name. (T19
-finding 4: the hello-timing race.)
+finding 4: the hello-timing race.) **Check T25 first:** if the transport redesign already carries the
+reply address into the spawn, this edit is done — drop it and note that in the commit.
 
 ## Tests
 
@@ -106,17 +113,17 @@ finding 4: the hello-timing race.)
 
 - [ ] C7–C10 and W5 are applied to the two skill files, flat prose, each landing next to the rule it
       clarifies rather than as an appendix.
-- [ ] S1 is applied to the spawn-message source with a test, and the exact file is recorded in the
-      commit.
-- [ ] No edit contradicts `DESIGN.md`, T24's edits, or the other skill.
+- [ ] S1 is applied to the spawn-message source with a test (or dropped as subsumed by T25, noted in
+      the commit), and the exact file is recorded in the commit.
+- [ ] No edit contradicts `DESIGN.md`, T24's or T25's edits, or the other skill.
 - [ ] `npm test` green.
 
 ## After this task
 
-Not self-verifying. Once T25 is reviewed ✅, the remaining live fixtures (T20–T23) are its proof: they
-are gated on T25 and run attended, one at a time. Watch that the coordinator never fears an orphaned bin
+Not self-verifying. Once T26 is reviewed ✅, the remaining live fixtures (T20–T23) are its proof: they
+are gated on T26 and run attended, one at a time. Watch that the coordinator never fears an orphaned bin
 (C7), stops sleep-polling once the Monitor is armed (C8), and reports only at milestones (C10); that
 **T21 (human-decision) sees the worker actually raise `kind=question`** and the coordinator relay it
-(C9/W5); and that no worker is left without a reply address on a fast task (S1). The remaining fixtures
-(T20–T23) are gated on T25 so none runs until this hardening is in. The relay-middleman cost is a
-separate design question, logged in FINDINGS, not resolved here.
+(C9/W5); and that no worker is left without a reply address on a fast task (S1, unless T25 handled it).
+The remaining fixtures (T20–T23) are gated on T26 so none runs until this hardening is in. The
+relay-middleman cost is handled by T25 (built first), not here.

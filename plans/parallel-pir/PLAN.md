@@ -1,10 +1,10 @@
 # Implementation plan
 
-26 tasks in 7 phases (T12, T13 added 2026-09-10; T14–T17, the live-scenario test harness, added
+27 tasks in 7 phases (T12, T13 added 2026-09-10; T14–T17, the live-scenario test harness, added
 2026-09-10; T18–T23, one live-run task per fixture, added 2026-09-12 by PM decision; T24, prompt
-hardening from the T18 transcripts, added 2026-09-12; T25, prompt + spawn-message hardening from the
-T19 transcripts, added 2026-09-13 by PM decision). Each has a file in [tasks/](tasks/) with its goal,
-the files it touches, the interfaces it defines, and what "done" means.
+hardening from the T18 transcripts, added 2026-09-12; T25, the relay-transport redesign, and T26,
+prompt hardening from the T19 transcripts, added 2026-09-13 by PM decision). Each has a file in
+[tasks/](tasks/) with its goal, the files it touches, the interfaces it defines, and what "done" means.
 
 **Phase 6 (T18–T23) splits the harness's live runs into one `you` task per fixture (2026-09-12).**
 T17 stays the harness *runner* (the build half, reviewed clean); each fixture — single, review-queue,
@@ -159,18 +159,20 @@ and bundle path in `FINDINGS.md`. The operator's guide is [TEST-HARNESS.md](TEST
 | [T18](tasks/T18-fixture-single.md) | Live fixture: single (happy path; retires T13's live half) | you | T17 |
 | [T24](tasks/T24-harden-coordinator-worker-prompts.md) | Harden the coordinator/worker prompts from the T18 transcripts | auto | T18 |
 | [T19](tasks/T19-fixture-review-queue.md) | Live fixture: review-queue (implement→review handoff) | you | T17, T24 |
-| [T20](tasks/T20-fixture-clean-merge.md) | Live fixture: clean-merge (two files, serialized) | you | T17, T25 |
-| [T21](tasks/T21-fixture-human-decision.md) | Live fixture: human-decision (question round-trips) | you | T17, T25 |
-| [T22](tasks/T22-fixture-merge-conflict.md) | Live fixture: merge-conflict (surfaced and parked) | you | T17, T25 |
-| [T23](tasks/T23-fixture-parallel-killswitch.md) | Live fixture: parallel + kill-switch drill (absorbs T10) | you | T17, T25 |
-| [T25](tasks/T25-harden-from-review-queue-transcripts.md) | Harden the coordinator/worker prompts from the T19 transcripts | auto | T19 |
+| [T20](tasks/T20-fixture-clean-merge.md) | Live fixture: clean-merge (two files, serialized) | you | T17, T26 |
+| [T21](tasks/T21-fixture-human-decision.md) | Live fixture: human-decision (question round-trips) | you | T17, T26 |
+| [T22](tasks/T22-fixture-merge-conflict.md) | Live fixture: merge-conflict (surfaced and parked) | you | T17, T26 |
+| [T23](tasks/T23-fixture-parallel-killswitch.md) | Live fixture: parallel + kill-switch drill (absorbs T10) | you | T17, T26 |
+| [T25](tasks/T25-relay-transport-redesign.md) | Cut the coordinator's relay overhead in the worker→bin path | auto | T19 |
+| [T26](tasks/T26-harden-from-review-queue-transcripts.md) | Harden the coordinator/worker prompts from the T19 transcripts | auto | T25 |
 
-**Two prompt-hardening tasks gate the fixtures.** T18's transcripts drove T24 (`auto`, built and
-reviewed) before T19; T19's transcripts drive **T25** before the rest. Each folds a live run's residual
-friction into `pir-coordinate`/`pir-worker` prose — and T25 also makes one small `src/shell` change (S1:
-the spawn message names the coordinator's reply address). Both are listed after T23 to keep numbering
-append-only, but the fixtures depend on them, so `/pir-work` builds and reviews the hardening task first.
-T24 is ✅ and T18/T19 passed; T25 gates T20–T23 (2026-09-13 PM decision, from the T19 analysis).
+**Three tasks harden the machinery before the remaining fixtures, and run in order.** T18's transcripts
+drove T24 (`auto`, prose) before T19. T19's transcripts drive two more: **T25** cuts the coordinator's
+manual relay overhead (~20–25% of the run; a real `src/shell` change, possibly a DESIGN §2.2 transport
+rule change decided with the PM), and **T26** then updates `pir-coordinate`/`pir-worker` prose to match
+the transport T25 lands. So the order is T19 → T25 → T26 → {T20–T23}: redesign first, prose second,
+fixtures last on the final machinery (2026-09-13 PM decision, from the T19 analysis). They are listed
+after T23 to keep numbering append-only; the dependencies, not the row order, set the sequence.
 
 They are launched attended, one at a time, never unattended — real paid agents (§5.2). A real model
 may occasionally not hit a fixture's path on a given run, so a scenario may need a re-run; a failed
@@ -182,7 +184,7 @@ fact is a real finding (a framework bug or a fixture that does not force its pat
 
 ```
 T01 → T02 → T03 → T05 → T06 → T08 → T09 → T12 → T13
-                                        └─→ T14 → T15 → T16 → T17 → T18 → T24 → T19 → T25 → {T20 … T23}  (T23 closes T10, T18 retires T13 live; T24/T25 harden the prompts and gate the fixtures)
+                                        └─→ T14 → T15 → T16 → T17 → T18 → T24 → T19 → T25 → T26 → {T20 … T23}  (T23 closes T10, T18 retires T13 live; T24 prompts, T25 relay redesign, T26 prompts — all gate the fixtures)
 ```
 
 T00 is off this line but gates T07 and T08. T04 (the width metric) is a side branch off T02 and can
@@ -199,8 +201,8 @@ Not hours — a relative sense of where the weight is.
 
 | Weight | Tasks |
 |---|---|
-| **Heavy** | T08 (first real spawn + messaging + review), T09 (coordinator skill), T23 (parallel + kill-switch drill, absorbs T10) |
-| **Medium** | T00 (spike), T05 (fake platform + loop), T06 (worktree plumbing), T11 (teach the shared planner), T12 (six drill fixes), T13 (prove the comms protocol), T14 (capture layer), T15 (assertion library), T16 (scenario fixtures), T17 (live runner), T21 (human-decision run), T24 (prompt hardening from the T18 transcripts), T25 (prompt + spawn-message hardening from the T19 transcripts) |
+| **Heavy** | T08 (first real spawn + messaging + review), T09 (coordinator skill), T23 (parallel + kill-switch drill, absorbs T10), T25 (relay transport redesign) |
+| **Medium** | T00 (spike), T05 (fake platform + loop), T06 (worktree plumbing), T11 (teach the shared planner), T12 (six drill fixes), T13 (prove the comms protocol), T14 (capture layer), T15 (assertion library), T16 (scenario fixtures), T17 (live runner), T21 (human-decision run), T24 (prompt hardening from the T18 transcripts), T26 (prompt hardening from the T19 transcripts) |
 | **Light** | T01 (scaffold), T02 (progress core), T03 (dispatch), T04 (parallelism metric), T07 (worker contract), T18–T20, T22 (single, review-queue, clean-merge, merge-conflict runs) |
 
 Where this will overrun: T08, because live CLI and messaging behaviour rarely matches the docs on
