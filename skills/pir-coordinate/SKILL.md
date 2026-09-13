@@ -13,11 +13,12 @@ for the why. Your job is dispatch, supervision, and keeping the user in every de
 The deterministic machine lives in `src/shell/coordinate.mjs`. **You run it as a long-running
 program** — `PARALLEL_LIVE=1 node src/shell/coordinate.mjs {slug}` — and it drives the passes on a
 timer: spawning workers, handing finished work to fresh reviewers, merging one task at a time,
-promoting at the end, and closing every worker on any exit so none is orphaned. Your job is the three
-things a Node process cannot do: **talk to the user in plain English**, **carry cross-session messages
-across a file bridge** (SendMessage is your tool, not a Node call), and **hand the user's decisions
-back down** to the bin. You do not drive `pass()` yourself turn by turn — the bin does; you feed and
-read its control files (below).
+promoting at the end, and closing every worker on any exit so none is orphaned. Your job is the things
+a Node process cannot do: **talk to the user in plain English**, **deliver the bin's outgoing messages
+down to workers** (a hello, an answer — SendMessage is your tool, not a Node call), and **hand the
+user's decisions back down** to the bin. You do **not** relay worker messages *up* any more — workers
+now drop their reports into a folder the bin reads directly, with no turn from you (DESIGN §2.2, T25).
+You do not drive `pass()` yourself turn by turn — the bin does; you feed and read its control files (below).
 
 ## First: the plan must be reviewed
 
@@ -64,9 +65,11 @@ moment it happens — an ISO timestamp, then the action tag and its task or bran
 not the first token. The tags: `open-feature`, `spawn`, `hello`, `review`, `await-idle` (a hand-off
 waiting for a busy slot to free — not a stall), `merge`, `surface`, `close`, `halt-close`, `promote`,
 `teardown`, and `ceiling full`. A new `surface Txx` line is your cue that a decision for `Txx` is waiting; you do not need
-the bin to echo the decision text, because you wrote the worker's own message into the inbox when it
-arrived — read it there, keyed by task, rather than waiting on stdout. Pair the log with the control
-files (inbox, outbox, answers) below; between them you never need the banner.
+the bin to echo the decision text, because the bin writes each parked worker's message — already
+rendered in plain English — to the **surfaced** feed `plans/{slug}/.parallel/control/surfaced`, one
+JSON line `{"task":"Txx","kind":"…","text":"…","message":"…"}`. Read the `message` there, keyed by task,
+rather than waiting on stdout. Pair the log with the control files (outbox, answers, surfaced) below;
+between them you never need the banner.
 
 **Run the bin in the background and poll — never block one tool call on it.** You watch two different
 files for two different reasons; do not conflate them:
@@ -89,9 +92,9 @@ Start the bin once and leave it running. Then, while it runs, on every turn:
    plain line that the task has landed on the plan branch. A `ceiling full` line means the run is
    throttled, not stuck — say so.
 2. **Surface every decision, one at a time.** Each `surface Txx` line in the flow log means a worker
-   on `Txx` hit a question, a decision, a conflict or a red build and the bin has parked it. Put the
-   worker's message — the one you already relayed into the inbox — to the user in plain English. The
-   user owns the decision. Ask one thing at a time.
+   on `Txx` hit a question, a decision, a conflict or a red build and the bin has parked it. Read that
+   task's line from the **surfaced** feed (`plans/{slug}/.parallel/control/surfaced`) and put its
+   `message` to the user in plain English. The user owns the decision. Ask one thing at a time.
 3. **Route each answer back down.** When the user answers, **append one JSON line to the answers file**
    `plans/{slug}/.parallel/control/answers`: `{"task":"T05","text":"<the decision, in the worker's
    terms>"}`. The bin drains it on its next pass and sends it to that one worker. If the user defers a
@@ -112,31 +115,21 @@ merges and the promote pass may still follow. Do not end your turn at that `done
 promoted silently. Wait for the `promote` line in the log, then report the outcome to the user and
 stop.
 
-## Carrying messages across the file bridge is YOUR job
+## Carrying messages DOWN to workers is YOUR job (up is the bin's now)
 
-A worker talks to you with SendMessage; you talk back with SendMessage. A Node process cannot do
-either (there is no `claude` subcommand that sends a cross-session message — it is an agent tool). So
-the bin exchanges messages with you through three control files under `plans/{slug}/.parallel/control/`:
+The two directions are asymmetric (DESIGN §2.2, T25):
 
-- **A worker messages you** (a question, a decision, a conflict, "implemented", "done"). Append it to
-  the **inbox** file as one JSON line `{"from":"<worker name>","text":"<the exact message it sent>"}`.
-  The bin reads the inbox each pass. Workers are taught to prefix every message with a
-  `[pir:v1 kind=… task=…]` header (the `pir-worker` contract) so the bin routes it correctly; pass the
-  worker's message through verbatim — do not rewrite it. **Use this one recipe every time; do not
-  improvise the JSON or hand-escape it** (worker messages carry backticks, newlines and emoji that
-  break an inlined `node -e` or `echo`): (1) write the worker's exact message text to a scratch file
-  with the Write tool; (2) append one relay line by letting `node` read that file and encode it, so
-  nothing is retyped or shell-quoted, passing the worker name as an argument rather than interpolating
-  it:
-
-  ```
-  node -e 'const fs=require("fs");fs.appendFileSync(process.argv[1],JSON.stringify({from:process.argv[2],text:fs.readFileSync(process.argv[3],"utf8")})+"\n")' plans/{slug}/.parallel/control/inbox "<worker name>" msg.txt
-  ```
-- **The bin answers a worker.** It writes the outgoing message to the **outbox** file. The outbox is
-  **append-only and owned by the bin — never truncate or edit it.** Track how many lines you have
-  already delivered (a cursor) and perform the actual SendMessage only for the new ones, each addressed
-  to that worker by its name.
-- **The user decides.** You write to the **answers** file (step 3 above); the bin routes it down.
+- **UP (worker → you) is NOT your job any more.** A worker no longer talks to you with SendMessage — it
+  **drops its report as a file** into `plans/{slug}/.parallel/control/reports/`, which the bin reads
+  directly. You never receive it, never re-encode it, never touch the reports folder. That is the relay
+  that used to cost a turn per message, and it is gone. All you see of an up-message is the flow log's
+  `surface Txx` line and the plain-English text the bin left on the **surfaced** feed (loop step 2).
+- **DOWN (you → worker) IS your job**, because a Node process cannot send a cross-session message (it is
+  an agent tool). The bin writes each outgoing message — a hello at spawn, an answer to a parked worker —
+  to the **outbox** file `plans/{slug}/.parallel/control/outbox`. The outbox is **append-only and owned
+  by the bin — never truncate or edit it.** Track how many lines you have already delivered (a cursor)
+  and perform the actual SendMessage only for the new ones, each addressed to that worker by its name.
+- **The user decides.** You write to the **answers** file (loop step 3); the bin routes it down.
 
 The send is exactly `SendMessage({to: "<name>", message: "<text>"})` — **those two fields and no
 others.** Do not add `recipient`, `content`, `type` or `summary` — every live agent so far has
@@ -147,22 +140,18 @@ This bridge is why the live drive is verified with the user (T10): the message w
 real sessions are talking. Against the fakes in the tests, the platform is its own bus and no bridge
 is needed.
 
-**Your session must be reachable under the name `{repo} · {plan}` (DESIGN §2.8, §2.2).** Workers address
-you by that name, so the coordinator session — this skill agent, which holds the SendMessage inbox —
-has to appear under it in `claude agents --json`. It is not enough for the bin to print the name; the
-session itself must carry it. **Launch the coordinator session with that name**: start it as
-`claude -n "{repo} · {plan}"` and then run `/pir-coordinate {slug}` inside it. If the session the user
-is already in cannot take that name, say so to the user and have them restart the coordinator under it —
-do not proceed assuming a mis-named session is addressable.
+**Launch the coordinator session under the name `{repo} · {plan}` (DESIGN §2.8, §2.2).** It is the
+identity the user sees in `claude agents --json`, and the hello passes it to each worker. Start it as
+`claude -n "{repo} · {plan}"` and then run `/pir-coordinate {slug}` inside it. (Under T25 a worker no
+longer messages you *up* — it drops a report file the bin reads — so nothing now depends on a worker
+resolving your name; keep launching under it anyway until a live run confirms the down-send needs no
+named sender. Fuller cleanup of the naming rationale is T26's.)
 
-**Belt-and-suspenders — the hello (T13):** the bin's loop sends every freshly-spawned worker (an
-implementer, and the fresh reviewer) a one-line `[pir:v1 kind=hello task=Txx]` message carrying your
-name, the moment it spawns. This opens the return channel before anything relies on inbound — a worker's
-reply rides the sender's already-open socket reliably (FINDINGS 2026-09-07) — so even if by-name
-first-contact were flaky, every worker has a proven channel home. When you see a hello in the outbox,
-perform the SendMessage like any other outbound message. The drill (T10, 2026-09-10) saw a worker's
-first message reach a *mis-named* coordinator over the return channel; T13 makes a *correctly-named*
-coordinator plus the hello the protocol, rather than leaning on that fallback by accident.
+**The hello (T13):** the bin's loop sends every freshly-spawned worker (an implementer, and the fresh
+reviewer) a one-line `[pir:v1 kind=hello task=Txx]` message the moment it spawns; it confirms the
+**down** channel to that worker is open before you rely on it to deliver an answer. When you see a hello
+in the outbox, perform the SendMessage like any other outbound message. The worker ignores it and does
+not reply (its own reports go up by file now, not by message).
 
 ## Naming and finding your workers (DESIGN §2.8)
 

@@ -52,25 +52,29 @@ replaces it with the feature-branch model (DESIGN §2.9), and you are *supposed*
 worktree. Do not stop on contact with it, do not try to switch to `main`, and do not fold your
 worktree back — the coordinator owns that. Just work on your task branch and commit there.
 
-## When a stock skill would "ask the user and wait", you message the coordinator and wait
+## When a stock skill would "ask the user and wait", you report to the coordinator and wait
 
 There is no user at your terminal. So wherever `pir-implement` or `pir-review` (or `CLAUDE.md`) tells
 you to stop and ask a person — an underspecified requirement, a genuine choice with two defensible
-answers, a design rule that looks wrong — you **message the coordinator instead, and wait for the
+answers, a design rule that looks wrong — you **report to the coordinator instead, and wait for the
 answer** (DESIGN §2.5). Never guess to get unblocked; an underspecified requirement is exactly what
 the user is for, reached through the coordinator.
 
-Send a message of `kind: question` (something is unspecified or ambiguous) or `kind: decision` (a real
-choice either way). Say what you are trying to do, the options and their costs, and your
-recommendation — the same shape `CLAUDE.md` asks for, because the coordinator relays it to the user
-in plain English. Then wait. Do any independent work that does not depend on the answer while you
-wait; stop dead only on what the answer blocks.
+Drop a report (§ You report by dropping a file, below) of `kind: question` (something is unspecified or
+ambiguous) or `kind: decision` (a real choice either way). Say what you are trying to do, the options
+and their costs, and your recommendation — the same shape `CLAUDE.md` asks for, because the coordinator
+relays it to the user in plain English. Then wait. Do any independent work that does not depend on the
+answer while you wait; stop dead only on what the answer blocks.
 
-## Every message to the coordinator starts with the machine-readable header
+## You report to the coordinator by DROPPING A FILE, not by messaging it
 
-The coordinator is a program reading your messages, not a person — it routes on the message *kind*,
-not on the prose. So **begin every message to the coordinator with this exact header line**, then
-write your plain-English body on the lines below it:
+The coordinator's decision loop is a program, not an agent, and a program has no message inbox
+(SendMessage is an agent-only tool). So you report **up** to it by writing a small file into a shared
+folder the loop watches — never with SendMessage. This is the whole point of the change: a routine
+`implemented`/`done` report costs no coordinator turn at all, it is just read off disk.
+
+**Every report starts with this exact machine-readable header**, then your plain-English body below it —
+the loop routes on the *kind*, not the prose:
 
 ```
 [pir:v1 kind=<kind> task=<Txx>]
@@ -80,19 +84,33 @@ write your plain-English body on the lines below it:
 - `<kind>` is one of: `question`, `decision`, `implemented`, `done`, `conflict`.
 - `<Txx>` is your task id, e.g. `T05`.
 
-For example, raising a question on T05:
+**How to drop the report** — write the message body to a scratch file, then drop it into the shared
+reports folder written temp-then-rename, so the loop never reads a half-written file:
 
-```
-[pir:v1 kind=question task=T05]
-The greeting wording is unspecified. Options: (a) "Hello", (b) "Hi there" — (a) is more neutral.
-I recommend (a). If you say nothing I will use (a).
-```
+1. Find the shared reports folder. It lives in the user's main checkout, which every worktree can
+   reach through the shared git dir:
 
-Without the header the coordinator can only read your message as a plain note and will not act on it
-(a real worker once sent a bare-prose question and it was dropped — that is what this header prevents).
-If you ever forget it, at least write the words `kind: <kind>` explicitly in the message so it can
-still be recognised. The coordinator addresses you back by your worker name; you do not poll for a
-reply — it arrives as a message.
+   ```
+   MAIN=$(cd "$(git rev-parse --git-common-dir)/.." && pwd)
+   REPORTS="$MAIN/plans/{slug}/.parallel/control/reports"      # {slug} is your plan, from your branch
+   ```
+2. Write the `[pir:v1 …]` header + your prose to a scratch file with the Write tool, say `msg.txt`.
+3. Drop it as one report file, encoding it with `node` so backticks, newlines and emoji in your
+   message are never shell-quoted or retyped (pass the worker name and paths as arguments):
+
+   ```
+   node -e 'const fs=require("fs"),p=require("path");const d=process.argv[1];fs.mkdirSync(d,{recursive:true});const f=p.join(d,Date.now()+"-"+process.argv[2]+"-"+Math.random().toString(36).slice(2)+".json");const t=f+".tmp";fs.writeFileSync(t,JSON.stringify({from:process.argv[3],text:fs.readFileSync(process.argv[4],"utf8")}));fs.renameSync(t,f)' "$REPORTS" "<Txx>" "<your worker name>" msg.txt
+   ```
+
+`<your worker name>` is your own name, `{repo} · {plan} · T{nn} · {role}` (§ Addressing below) — it is
+recorded as `from` for the operator's benefit; the loop routes on the header's `task`, so the report is
+acted on even if the name is imperfect. If you forget the header entirely, at least write the words
+`kind: <kind>` in the body so the loop can still recognise the kind (a bare word like "done" in prose is
+NOT enough — it must be an explicit `kind:` marker).
+
+You do NOT poll for a reply. The coordinator answers you **down** the other channel — it addresses you
+by your worker name and its answer arrives as a normal message you receive. Report up by file; receive
+down by message.
 
 ## You may receive a `hello` from the coordinator at spawn — do not reply to it
 
@@ -106,7 +124,7 @@ question, or an instruction. (A T18 reviewer replied to a late hello with a seco
 
 ## After you implement, you hand off — you do not review your own work
 
-When `pir-implement Txx` finishes and the task is marked `🔍`, **message the coordinator that Txx is
+When `pir-implement Txx` finishes and the task is marked `🔍`, **drop a report that Txx is
 implemented** — `[pir:v1 kind=implemented task=Txx]` — and stop. The coordinator closes your implement session and spawns
 a **fresh** session on your worktree to review it. You never review what you just built — that fresh
 separate session is the entire fresh-eyes guarantee (DESIGN §2.1, §2.8).
@@ -118,9 +136,9 @@ before you signal done (DESIGN §2.5, §2.9):
 
 - Integrate the feature branch into your task branch.
 - **On a merge conflict in code:** attempt the resolution yourself — you hold this task's context. If
-  you cannot resolve it cleanly, message the coordinator — `[pir:v1 kind=conflict task=Txx]` — with the
+  you cannot resolve it cleanly, drop a report — `[pir:v1 kind=conflict task=Txx]` — with the
   conflicting files, and wait. Never hand back a dirty branch.
-- When it integrates cleanly, message the coordinator — `[pir:v1 kind=done task=Txx]`.
+- When it integrates cleanly, drop a report — `[pir:v1 kind=done task=Txx]`.
 
 The coordinator merges your task branch into the feature branch, closes you, and dispatches the next
 task. Nothing you do reaches `main`; the coordinator promotes the whole feature branch once, at the
@@ -132,20 +150,24 @@ For a `you` task the coordinator sends `pir-verify Txx`. Here the **user** runs 
 commands and **you do not** — an agent must never spawn real paid agents against real branches on its
 own (DESIGN §5.2), and only a person can watch. You are the scribe: present the task's "Needs a
 person" block, wait while the user runs it, record what they report into `FINDINGS.md` on your task
-branch, mark the task done, and message the coordinator — `[pir:v1 kind=done task=Txx]`. You produce no code and get no
+branch, mark the task done, and drop a report — `[pir:v1 kind=done task=Txx]`. You produce no code and get no
 review session — the recorded observation is the deliverable (DESIGN §2.6). The full procedure is in
 the `pir-verify` skill; invoke it.
 
-## Addressing the coordinator
+## Addressing: your name, and the coordinator's
 
-The coordinator's name is `{repo} · {plan}` (DESIGN §2.8) — e.g. `plan-implement-review ·
-parallel-pir`. You can build it yourself from the repo and the plan; you are not handed an id. The
-coordinator passes you its name at spawn for clarity, but the scheme is what removes id-passing.
+You do NOT SendMessage the coordinator — you report up by dropping a file (above). The names still
+matter for two things: the `from` you write in your report, and recognising a message from the
+coordinator when it answers you.
 
-The separator is `·` (U+00B7), a middle dot, **not** `/`: the messaging layer rejects a name
-containing `/` (DESIGN §2.8, FINDINGS). There is **no `@` prefix** either — the same layer rejects a
-name that starts with `@` (T07 found this live, 2026-09-08). When you address the coordinator, use the
-bare `{repo} · {plan}`.
+Names follow §2.8: the coordinator is `{repo} · {plan}` (e.g. `plan-implement-review · parallel-pir`),
+and you are `{repo} · {plan} · T{nn} · {role}`, where `{role}` is `implement`, `review` or `verify`
+(e.g. `plan-implement-review · parallel-pir · T05 · review`). You can build either yourself from the
+repo, the plan and your task; you are not handed an id.
 
-The send is exactly `SendMessage({to: "<name>", message: "<text>"})` — those two fields and no others.
-Do not fill `recipient`, `content`, or any other field name; the tool takes `to` and `message` only.
+The separator is `·` (U+00B7), a middle dot, **not** `/`, and there is **no `@` prefix** — the
+messaging layer rejects a name containing `/` or starting with `@` (DESIGN §2.8, FINDINGS; T07 confirmed
+live 2026-09-08). Write your own name in that exact form as the `from` of your report.
+
+The coordinator's answer to a parked report arrives as a normal message addressed to your name; you do
+not poll for it and you do not send anything back to acknowledge it — you just act on it.

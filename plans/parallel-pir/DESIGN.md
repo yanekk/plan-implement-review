@@ -100,24 +100,35 @@ already there.
    one and only merge to `main` — then reports completion. This is the plan landing atomically
    (§2.9).
 
-### 2.2 The two directions are asymmetric, and both use cross-session messaging
+### 2.2 The two directions are asymmetric, and they use different transports (T25)
 
-- **coordinator → worker: direct, immediate.** The coordinator sends the worker a message and
-  the worker acts on it. The transport is Claude Code's cross-session messaging (`SendMessage`),
-  which is bidirectional and works headless on this machine. Not `claude --resume -p`: that
-  resumes a stopped session in a new terminal and does not inject a turn into a running one
-  (FINDINGS.md, 2026-09-07).
-- **worker → coordinator: indirect, async.** The worker sends a message to the coordinator's
-  inbox; the coordinator reads it at a natural break in its loop. Same transport, opposite
-  discipline: the coordinator never lets an inbound message interrupt an action in flight.
-- **A hello opens the channel at spawn.** The moment the coordinator spawns a worker — an
+- **coordinator → worker: direct, immediate, over cross-session messaging.** The coordinator sends the
+  worker a message and the worker acts on it. The transport is Claude Code's cross-session messaging
+  (`SendMessage`), which works headless on this machine. It has to be messaging, because the receiver is
+  a live agent session and only an agent can be messaged; a Node process cannot deliver one, so the bin
+  writes the message to its outbox and the coordinator *skill agent* performs the SendMessage. Not
+  `claude --resume -p`: that resumes a stopped session in a new terminal and does not inject a turn into
+  a running one (FINDINGS.md, 2026-09-07).
+- **worker → coordinator: indirect, async, over a shared file drop (T25).** The worker does NOT message
+  the coordinator. It **writes its report as a file** into a shared drop-dir the coordinator's loop
+  reads — `plans/{slug}/.parallel/control/reports/`, one `{from, text}` JSON file per report, written
+  temp-then-rename so the loop never reads a half-written one. The loop is an ordinary Node process with
+  no message inbox (SendMessage is agent-only), so the *old* design parked the coordinator agent in the
+  path purely to catch each worker message and re-encode it into a file the loop read — a full agent
+  turn per report, `implemented`/`done` included, measured at ~20–25% of the T19 run. Moving the report
+  to a file the loop reads directly removes that agent turn entirely. The worker reaches the drop-dir
+  through the shared git dir (`git rev-parse --git-common-dir`), which every worktree resolves to the
+  same main checkout, so its own worktree not carrying the gitignored control dir is no obstacle. The
+  loop still reads reports only at a natural break in its pass, never by interrupt. Changed with the PM
+  2026-09-13 (T25), replacing the SendMessage up-channel; the measured before/after is recorded in
+  FINDINGS.
+- **A hello opens the DOWN channel at spawn.** The moment the coordinator spawns a worker — an
   implementer, and the fresh reviewer that replaces it — it sends that worker a one-line
-  `[pir:v1 kind=hello task=Txx]` message carrying its own addressable name, before anything relies on
-  inbound. This confirms the worker→coordinator channel is open, and because a worker's reply rides
-  the sender's return socket reliably (FINDINGS 2026-09-07), the hello turns every later inbound
-  message into a reply on an already-open channel — a belt-and-suspenders on top of by-name addressing
-  (§2.8), not a replacement for it. The worker ignores a hello (it asks nothing); it may reply once.
-  Decided with the user 2026-09-10 (T13).
+  `[pir:v1 kind=hello task=Txx]` message, before it relies on being able to deliver an answer down. This
+  confirms the coordinator→worker channel is open. The worker ignores a hello (it asks nothing) and does
+  not reply — its own reports go up by file now (T25), so the earlier "the reply rides the return socket"
+  rationale (T13) no longer applies; the hello is now purely a down-channel open-check. Decided with the
+  user 2026-09-10 (T13); its rationale narrowed by T25.
 
 ### 2.3 The worker lifecycle: create, drive, close
 
@@ -436,8 +447,10 @@ Pure (`src/core/`):
 Shell (`src/shell/`):
 
 - `platform.mjs` — the thin wrapper over Claude Code: spawn a background worker in a worktree cwd
-  with its `--name` set by `naming.mjs` (§2.8), send a worker a message and read the coordinator's
-  inbox (cross-session messaging), list live workers with their state (`claude agents --json`,
+  with its `--name` set by `naming.mjs` (§2.8), send a worker a message DOWN (cross-session messaging)
+  and drain the worker reports the loop reads UP (the reports drop-dir, T25 — via the injected
+  transport, so the module still owns only the wire format), list live workers with their state
+  (`claude agents --json`,
   same-repo resolution, names parsed by `naming.mjs`), and close a worker (`claude stop` to
   interrupt, then SIGTERM its pid to actually end it — stop alone does not; the worktree comes
   down separately via worktree.mjs). This is where the platform's real, live-verified mechanisms live.
@@ -491,7 +504,7 @@ the feature branch's `PROGRESS.md` (§2.9).
 ```
 PROGRESS.md ────────parse──▶ tasks ─┐   (feature branch)
 claude agents --json ──────▶ live  ─┼─▶ decideDispatch ─▶ { spawn, review, merge,
-coordinator inbox (messages) ─────  ┤                         close, promoteToMain }
+worker reports (drop-dir) ────────  ┤                         close, promoteToMain }
 control flag ──────────────▶ halt ──┘                         │
                                                               ▼  shell executes via platform.mjs
                                      spawn builder|hands-on / send / spawn-review / merge→feature /
@@ -508,16 +521,22 @@ State lives on disk, plain text so a person can read it under pressure:
 
 - `PROGRESS.md` on the **feature branch** — the task states, owned by the coordinator; it reaches
   `main` with the feature branch at promotion.
-- `plans/{slug}/.parallel/control/` — the kill-switch flag file (`HALT`) and `log` for the
-  ceiling-hit and lifecycle record. Gitignored (`plans/*/.parallel/`, added by T01): it is
-  per-run control state, so it must never be committed to a task branch or ride the feature
-  branch to `main` at promotion.
+- `plans/{slug}/.parallel/control/` — the per-run control state: the kill-switch flag file (`HALT`),
+  the `log` (the ceiling-hit and lifecycle record), and the file bridge between the loop and the
+  coordinator agent (T25) — `reports/` (the worker→coordinator up-channel drop-dir, one file per
+  report), `outbox` (coordinator→worker messages the agent delivers), `answers` (the user's decisions),
+  and `surfaced` (each parked worker's message, rendered in plain English for the agent to relay).
+  Gitignored (`plans/*/.parallel/`, added by T01): it is per-run control state, so it must never be
+  committed to a task branch or ride the feature branch to `main` at promotion.
 - The feature branch `pir/{plan}` and the task branches `pir/{plan}-T{nn}` and their worktrees —
   git's, under `.git/worktrees/`; `git worktree remove` is the recovery for a leaked one.
 
-Cross-agent messages are carried by the platform's messaging, not a file store this project
-owns, so there is no custom mailbox format or locking to get wrong. The one place a torn file
-would matter is `PROGRESS.md`, and the coordinator is its single writer.
+Messaging is asymmetric (§2.2, T25). DOWN (coordinator → worker) rides the platform's cross-session
+messaging, not a file store — no custom mailbox to get wrong. UP (worker → coordinator) is a file store
+this project does own, the `reports/` drop-dir, but it needs no locking: one file per report, written
+temp-then-rename, so a reader never sees a half-written report and two workers writing at once produce
+two distinct files, never a torn shared one. The other place a torn file would matter is `PROGRESS.md`,
+and the coordinator is its single writer.
 
 ---
 
@@ -849,6 +868,21 @@ minimum, kill switch wired.
   survive a worker's kill and its worktree's removal). The runner is a `you` task because it spawns
   real paid agents; the capture, assertion and fixture layers are `auto` and unit-tested with no
   live agent.
+
+- **The worker→coordinator up-channel is a shared file drop, not cross-session messaging (T25).**
+  Decided with the PM 2026-09-13, after the T19 reflection measured the old relay at ~20–25% of the run.
+  The coordinator's decision loop is an ordinary Node process with no message inbox (SendMessage is
+  agent-only), so the old design parked the coordinator *agent* in the path of every worker message —
+  even routine `implemented`/`done` — purely to re-encode it into a file the loop read, a full agent
+  turn each. Now a worker writes its report as a file into `plans/{slug}/.parallel/control/reports/` and
+  the loop reads it directly; no agent turn on the up-channel. The down-channel stays SendMessage,
+  because there its receiver is a live agent (§2.2). The PM weighed this against keeping SendMessage and
+  making the relay one cheap step (rejected: the cost is the agent *turn*, not the encoding, so it would
+  recover little) and against moving the whole loop into the agent (rejected: it discards the tested,
+  live-agent-free decision core, §3.1, §4). Reachability was verified first: every worktree resolves the
+  shared git dir to the one main checkout, so a worker can always reach the control dir. The measurement
+  is folded in: the T19 review-queue bundle is the token baseline (FINDINGS 2026-09-13; `harness/tokens.mjs`
+  computes it), and one combined review-queue re-run after T25+T26 is the after-measurement (PM decision).
 
 ---
 

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, renameSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -14,6 +14,7 @@ import {
   runawayVerdict,
   gitRun,
 } from './coordinate.mjs';
+import { createMessaging } from './platform.mjs';
 import { createFakePlatform } from './fake/platform.mjs';
 import { createFakeWorktree } from './fake/worktree.mjs';
 import { workerName, coordinatorName } from '../core/naming.mjs';
@@ -417,4 +418,63 @@ test('runawayVerdict tolerates a transient CEILING+1 handoff but aborts a real r
   assert.deepEqual(runawayVerdict({ liveCount: 3, ceiling: 2, overPasses: 0 }), { abort: false, over: 1 }, 'one over on its first pass is a review handoff, tolerated');
   assert.equal(runawayVerdict({ liveCount: 3, ceiling: 2, overPasses: 2, overGrace: 3 }).abort, true, 'one over that persists to the grace limit aborts');
   assert.equal(runawayVerdict({ liveCount: 5, ceiling: 2, overPasses: 0 }).abort, true, 'more than one over the ceiling aborts at once — a real runaway');
+});
+
+// --- 16. T25: the up-channel is a file drop the bin drains directly, with no agent relay -----------
+
+test('a worker report dropped as a file reaches the loop-facing inbox with no agent relay (T25)', (t) => {
+  // The relay this replaces made the coordinator agent re-encode every worker message into an inbox
+  // file. Now a worker WRITES its own report; the bin ingests it through the same platform.inbox() the
+  // loop already calls. No SendMessage, no coordinator turn — that is the ~20–25% relay cost removed.
+  const dir = mkdtempSync(join(tmpdir(), 'pir-reports-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const bridge = createAgentBridge({ dir });
+
+  // A worker reports the way the pir-worker contract does: write a temp file, then rename it into
+  // reports/, so the bin never reads a half-written file. The payload is its own [pir:v1 …] message.
+  const drop = (name, text, from) => {
+    const tmp = join(bridge.reportsDir, `${name}.tmp`);
+    writeFileSync(tmp, JSON.stringify({ from, text }));
+    renameSync(tmp, join(bridge.reportsDir, `${name}.json`));
+  };
+  const wname = workerName({ repo: REPO, plan: SLUG, task: 'T01', role: 'implement' });
+  drop('1-T01', '[pir:v1 kind=implemented task=T01]\ndone building', wname);
+
+  // Binding the bridge's transport to the real messaging is exactly what the bin does (createPlatform).
+  const messaging = createMessaging({ transport: bridge.transport });
+  assert.deepEqual(messaging.inbox(), [
+    { from: wname, kind: 'implemented', task: 'T01', text: 'done building' },
+  ]);
+  assert.equal(messaging.inbox().length, 0, 'a report is ingested exactly once — the file was consumed');
+});
+
+test('reports drain in name order and a torn/malformed report is dropped, never guessed (T25)', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'pir-reports-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const bridge = createAgentBridge({ dir });
+  const put = (name, body) => writeFileSync(join(bridge.reportsDir, name), body);
+  put('2-T02.json', JSON.stringify({ from: 'w2', text: 'b' }));
+  put('1-T01.json', JSON.stringify({ from: 'w1', text: 'a' }));
+  put('3-torn.json', '{not valid json'); // a half-written / malformed report
+  put('4-note.txt', 'not a report'); // a non-.json file is left alone
+
+  assert.deepEqual(bridge.transport.drain(), [
+    { from: 'w1', text: 'a' },
+    { from: 'w2', text: 'b' },
+  ]);
+  // The consumed reports and the malformed .json are gone; a non-report file is untouched.
+  assert.deepEqual(readdirSync(bridge.reportsDir), ['4-note.txt']);
+  assert.equal(bridge.transport.drain().length, 0, 'nothing left to drain');
+});
+
+test('recordSurface appends the rendered surface as a JSON line for the skill to relay (T25)', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'pir-surfaced-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const bridge = createAgentBridge({ dir });
+  bridge.recordSurface({ task: 'T01', kind: 'question', text: 'which format?', message: 'The worker on T01 needs a decision from you: which format?' });
+  bridge.recordSurface({ task: 'T02', kind: 'conflict', text: 'clash in x', message: 'The worker on T02 hit a merge conflict…' });
+  const lines = readFileSync(bridge.surfacedPath, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+  assert.equal(lines.length, 2);
+  assert.deepEqual(lines.map((l) => l.task), ['T01', 'T02']);
+  assert.match(lines[0].message, /needs a decision from you/);
 });

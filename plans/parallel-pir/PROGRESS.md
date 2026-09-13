@@ -25,13 +25,13 @@ transport). Order: T19 → T25 → T26 → T20–T23. The operator's guide is
 5–6 postdate the 2026-09-07 plan review; they are validated per task during build, since
 `/pir-review-plan` does not re-run on a building plan.
 **Last updated:** 2026-09-13
-**Next `pir-work` will:** IMPLEMENT T25 (`auto`) — cut the coordinator's relay overhead in the
-worker→bin path. Its dep (T19) is ✅ and it is the ready `auto` task (T26 depends on T25). It may surface
-a transport-design choice to the PM. After T25 then T26 are built and reviewed, the fixture queue
-resumes: T20 (clean-merge), human-decision, merge-conflict, T23 (parallel), each a gated `you` live run;
-procedure in [TEST-HARNESS.md](TEST-HARNESS.md). One analysis note from the T19 bundle: capture copies
-unrelated `role:foreign` sessions' full transcripts into the run bundle (~4MB) — logged in FINDINGS, a
-fix candidate, not yet a task.
+**Next `pir-work` will:** REVIEW T25 (`auto`, now 🔍) — the relay redesign. PM decided (2026-09-13) to
+build Option A: the worker→coordinator up-channel moved from SendMessage to a file drop the bin drains
+directly (`control/reports/`), down-channel unchanged, loop event-driven; DESIGN §2.2 updated; plus
+`harness/tokens.mjs` and a token baseline (the PM wants the relay saving measured — one combined
+review-queue re-run after T25+T26). After T25 is reviewed, IMPLEMENT T26 (prompt hardening), then the
+gated fixtures (T20–T23) resume; procedure in [TEST-HARNESS.md](TEST-HARNESS.md). Open note: capture
+copies `role:foreign` transcripts into the bundle (~4MB) — FINDINGS, a fix candidate, not yet a task.
 
 ## Tasks
 
@@ -52,7 +52,7 @@ live steps with a hands-on worker the coordinator spawns, folded back without re
 | T08 | One real worker, one trivial task, seatbelted | auto | T06, T07 | ✅ | Reviewed clean. LIVE hand-verified ✅ 2026-09-09 (one real worker, ceiling held). Feature-worktree teardown deferred to T09/T10. 121 tests. |
 | T09 | The `pir-coordinate` skill: dispatch, surface, supervise | auto | T08 | ✅ | Reviewed clean. The coordinator skill (dispatch, surface, supervise); fakes make real git commits so merge/dispatch are genuinely exercised; live drive over real agents deferred to T10. 134 tests. |
 | T12 | Make the coordinator drivable live: six drill fixes | auto | T09 | ✅ | Reviewed clean. Six drill fixes (self-filter through `liveAfter`, runaway grace, `canPromoteHere`, `ensureMain`, `teardownRun`, `decision` parked + prose `kind:` fallback), all tested. 145 tests. Live drive is T10's. |
-| T13 | Prove comms protocol: by-name addressing, idle-gated close | auto | T12 | ✅ | Reviewed clean, no fix. Hello wired through the real bridge (encodeMessage→outbox); idle gate reads `status` and only defers; kill switch and dead worker bypass it. 150 tests. Live half retired by T18 (PASS live 2026-09-12) — no longer a manual check. |
+| T13 | Prove comms protocol: by-name addressing, idle-gated close | auto | T12 | ✅ | Reviewed clean. Hello wired through the real bridge; idle gate reads `status` and only defers; kill switch and dead worker bypass it. 150 tests. Live half retired by T18. |
 | T11 | `/pir-plan` + templates: `Runs` marker, honest deps, width report | auto | T04, T12 | ✅ | Reviewed clean. Planner Stage 6, three templates and both CLAUDE.md spots carry the Runs marker, honest deps and width report; golden tests read real templates through the parser. 153 tests. |
 | T14 | Harness capture layer: flow, agent-status timeline, transcript bundle | auto | T09 | ✅ | Reviewed clean; read-only capture, seal reads the real control/log and flow format. 164 tests. |
 | T15 | Harness assertions + scenario spec: declared facts over a bundle | auto | T14 | ✅ | Reviewed clean. 8 facts pure; loadTranscripts the only I/O (src/shell, outside the core boundary scan). Git-log needles verified against worktree.mjs. 195 tests. |
@@ -61,7 +61,7 @@ live steps with a hands-on worker the coordinator spawns, folded back without re
 | T18 | Live fixture: single (happy path; retires T13 live half) | you | T17 | ✅ | PASS live 2026-09-12: all 4 facts green (hello, by-name, idle-gated close, one promote to main); build→review→merge→promote on real agents. Retires T13's live half. Bundle `pir-t17-single-IbhBgo/…/2026-09-12T05-45-43-231Z`. |
 | T24 | Harden coordinator/worker prompts from the T18 transcripts | auto | T18 | ✅ | Reviewed. Prose-only, no src/; npm test green (244, not the 248 noted). Two fixes vs the code: W1 gave the worktree dir as the slashed `{branch}`, actual is dashed `pir-{plan}-T{nn}` (worktree.mjs:134); C1's tag list omitted `await-idle`/`halt-close`/`ceiling full` and the ISO-timestamp prefix. Verified C4 append-only, C2 promote-cue, log path. Live `single` re-run still owed. |
 | T19 | Live fixture: review-queue | you | T17, T24 | ✅ | PASS live 2026-09-13: all 3 facts green (hello-per-spawn, no-close-before-idle, one-merge-to-main). 3 tasks, ceiling 2, ~6 min, flow textbook. Bundle `pir-t17-review-queue-AqCRsF/…/2026-09-13T05-53-06-393Z`. See FINDINGS. |
-| T25 | Cut the coordinator's relay overhead (worker→bin path) | auto | T19 | ⬜ | The ~20–25% relay cost from the T19 bundle. Coordinator agent hand-relays every worker message into the bin (which has no SendMessage inbox). Remove/shrink the agent from the routine path; respect SendMessage-is-agent-only. Directions in task doc; a transport-rule change is a PM decision. Runs before T26. |
+| T25 | Cut the coordinator's relay overhead (worker→bin path) | auto | T19 | 🔍 | Built. Up-channel now a file drop: workers write to `control/reports/`, the bin drains it directly — no agent turn (~20–25% gone). Down-channel/hello unchanged; bin writes `surfaced`; loop event-driven (fs.watch). PM-decided transport change (DESIGN §2.2). Added `harness/tokens.mjs` + token baseline (FINDINGS). Deviation: `byNameAddressing` obsolete (single fixture), coordinator-name/hello redundant — logged for T26. 259 tests. |
 | T26 | Harden coordinator/worker prompts from the T19 transcripts | auto | T25 | ⬜ | From the T19 bundle: C7–C10 (pir-coordinate: launch-once/exit-0 is normal, act on Monitor not sleep-polls, relay worker questions to PM, milestone-only reporting), W5 (pir-worker: ask on ambiguity), S1 (spawn message names coordinator address, unless T25 did it). Prose describes the transport T25 lands. Gates T20–T23. |
 | T20 | Live fixture: clean-merge | you | T17, T26 | ⬜ | Run `run.mjs clean-merge`; hands-off; done when its 3 facts pass. See TEST-HARNESS.md. |
 | T21 | Live fixture: human-decision | you | T17, T26 | ⬜ | Run `run.mjs human-decision`; answer the surfaced question via the control `answers` file; done when the 2 facts pass. See TEST-HARNESS.md. |
@@ -74,14 +74,14 @@ deviation from the task doc.
 
 **A ✅ task's cell may be cut to one line** once the next task has been reviewed.
 
-**Review queue:** empty now, but T25 (`auto`) is next to be implemented; when built it becomes 🔍 and
-the following `pir-work` reviews it. T18 (single) and T19 (review-queue) both PASS live.
+**Review queue:** T25 (`auto`) is now 🔍 — the next `pir-work` reviews it. T18 (single) and T19
+(review-queue) both PASS live.
 
-## Next up: build T25 and T26, then the gated fixtures
+## Next up: review T25, build T26, then the gated fixtures
 
-**T25 (`auto`) comes first** — cut the coordinator's relay overhead in the worker→bin path (the
-~20–25% cost the T19 bundle showed). Real `src/shell` work; may surface a transport-design choice to the
-PM. **Then T26 (`auto`)** — the prompt hardening from the T19 transcripts (launch-once, act on Monitor
+**T25 (`auto`) is built and awaiting review** — the relay redesign (Option A, PM-decided 2026-09-13):
+the worker→coordinator up-channel is now a file drop the bin drains directly, no agent turn on the
+routine path. Review it first. **Then T26 (`auto`)** — the prompt hardening from the T19 transcripts (launch-once, act on Monitor
 not sleep-polls, relay worker questions to the PM, milestone-only reporting, worker-asks-on-ambiguity,
 spawn-message address), its wording matched to whatever transport T25 lands. Build and review both before
 any more paid runs.

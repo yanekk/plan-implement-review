@@ -10,18 +10,20 @@
 // dispatch/surfacing/routing is proven against the fakes in coordinate.test.mjs (DESIGN §4) and the
 // same code runs the live CLI + git in the bin below.
 //
-// The one thing this module does NOT do itself is move message bytes. There is no `claude` subcommand
-// that sends a cross-session message — SendMessage is an agent tool (platform.mjs header, FINDINGS
-// 2026-09-08) — so a Node process cannot deliver an answer to a worker or receive a worker's question.
-// The wire format and addressing live here (via platform.send / platform.inbox, which own the wire);
-// the actual send/receive is bridged to the coordinator AGENT through files (createAgentBridge), and
-// the skill is what performs SendMessage and hands received messages back. In the tests the fake
-// platform IS the bus, so the bridge is not exercised there — its live behaviour is T10's hand-verify.
+// The two directions are asymmetric (DESIGN §2.2, T25). DOWN (coordinator → worker) still rides
+// SendMessage: there is no `claude` subcommand that sends a cross-session message — it is an agent tool
+// (platform.mjs header, FINDINGS 2026-09-08) — so the bin cannot deliver a hello or an answer itself; it
+// writes the message to the outbox and the coordinator SKILL performs the SendMessage. UP (worker →
+// coordinator) no longer rides the agent at all: a worker WRITES its report into a shared reports
+// drop-dir the bin drains directly (createAgentBridge below), so a routine `implemented`/`done` handoff
+// costs no coordinator LLM turn — the relay that ate ~20–25% of the T19 run is gone. The skill's only
+// up-channel job left is plain-English SURFACING: the bin appends a parked worker's message to a
+// `surfaced` file, and the skill relays it. In the tests the fake platform IS the bus, so the bridge is
+// not exercised there — its live behaviour is hand-verified (the gated fixtures).
 
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, unlinkSync, watch, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
-import { setTimeout as sleep } from 'node:timers/promises';
 
 import { parseProgress, reconcileTaskRow, progressPathFor } from '../core/progress.mjs';
 import { workerName, coordinatorName, isWorkerOf, parseAgentName } from '../core/naming.mjs';
@@ -240,61 +242,99 @@ export function startCoordinator({
   return { state, pass, answer, defer, drive };
 }
 
-// --- The agent bridge: SendMessage and the inbox, done by the coordinator AGENT (DESIGN §2.2) --
+// --- The file bridge between the bin and the coordinator agent (DESIGN §2.2, T25) -------------
 //
-// A Node process cannot call SendMessage or hold a cross-session inbox — both are agent tools. So the
-// live coordinator is the SKILL agent, and this bridge is how the deterministic driver and the agent
-// hand messages across a filesystem boundary the way spawn-one-scratch (T08) proved a file bridge can:
-//   - inbox  — the agent APPENDS each worker message it receives ({from, text}, one JSON per line);
-//              transport.drain() reads and clears it, so the next pass sees the worker's question/done.
-//   - outbox — platform.send writes each coordinator→worker message here (the answer to a parked
-//              worker); the agent reads it and performs the actual SendMessage.
+// A Node process cannot call SendMessage or hold a cross-session inbox — both are agent tools. The
+// bridge is how the deterministic driver (the bin) and the agent (the skill) hand messages across a
+// filesystem boundary. It is now asymmetric, because only the DOWN direction needs the agent:
+//
+//   - reports/ — the UP-channel (worker → coordinator, T25). A worker WRITES one JSON file per report
+//                here — `{ from, text }`, `text` being its `[pir:v1 …]` message — and transport.drain()
+//                reads and removes each. No agent turn: the bin ingests a worker's implemented/done/
+//                question directly. The relay that made the coordinator re-encode every message (the
+//                ~20–25% cost of the T19 run) is gone. A worker writes temp-then-rename so the bin never
+//                reads a half-written file; a file that still will not parse is dropped, not guessed,
+//                exactly as a malformed inbox line was.
+//   - outbox   — the DOWN-channel (coordinator → worker). platform.send writes each message here (the
+//                hello at spawn, the answer to a parked worker); the agent reads it and performs the
+//                actual SendMessage, because a Node process cannot send one. Append-only, owned by the bin.
+//   - answers  — the user's decisions (T12 Problem 2). The skill APPENDS one JSON line per decision,
+//                `{ "task": "T05", "text": "…" }` to answer or `{ "task": "T05", "defer": true }` to defer;
+//                the bin drains it each pass and routes it to answer()/defer(). Without it a surfaced
+//                question had no way down (the drill's bin only printed surfaces).
+//   - surfaced — the plain-English relay feed (T25). When the bin parks a worker on a question/decision/
+//                conflict it appends the rendered surface here; the skill reads it, keyed by task, and
+//                relays it to the user. This replaces the agent having the text because it received the
+//                worker's SendMessage — it no longer does, so the bin hands it the text instead.
+//
 // The wire format and addressing stay in platform.mjs (it owns encodeMessage/parseMessage); this only
-// moves the already-encoded strings across the boundary. Live behaviour is T10's hand-verify; the unit
-// tests use the fake platform, which is its own bus and needs no bridge.
+// moves the encoded strings across the boundary. The unit tests use the fake platform (its own bus, no
+// bridge); the live bridge is hand-verified by the gated fixtures.
 export function createAgentBridge({ dir } = {}) {
   mkdirSync(dir, { recursive: true });
-  const inboxPath = join(dir, 'inbox');
   const outboxPath = join(dir, 'outbox');
-  // The DOWN-channel for the user's decisions (T12 Problem 2). The drill's bin only ran pass() and
-  // printed surfaces — it never called answer()/defer() and read no input, so a task that raised a
-  // question was surfaced and then stuck: the decision had no way down. This file is symmetric to the
-  // inbox — the skill APPENDS one JSON line per user decision, `{ "task": "T05", "text": "…" }` to
-  // answer or `{ "task": "T05", "defer": true, "note": "…" }` to defer — and the bin drains it each
-  // pass and routes it to answer()/defer(). That makes the two drive models one: the bin is the
-  // long-running driver, and every up/down message crosses through a control file the skill owns.
   const answersPath = join(dir, 'answers');
-
-  const readLines = (path) =>
-    existsSync(path)
-      ? readFileSync(path, 'utf8').split('\n').map((l) => l.trim()).filter(Boolean)
-      : [];
+  const reportsDir = join(dir, 'reports');
+  const surfacedPath = join(dir, 'surfaced');
+  mkdirSync(reportsDir, { recursive: true });
 
   const drainJsonLines = (path) => {
-    const lines = readLines(path);
+    const lines = existsSync(path)
+      ? readFileSync(path, 'utf8').split('\n').map((l) => l.trim()).filter(Boolean)
+      : [];
     if (existsSync(path)) writeFileSync(path, ''); // consumed
     return lines;
   };
 
+  // Drain the reports drop-dir: each *.json file is one worker report, read exactly once and removed.
+  // Files are processed in name order (workers name them with a leading timestamp, so reports are
+  // ingested roughly in the order they were sent). A file that does not parse is unlinked and dropped —
+  // never re-read, never guessed into a message — the drop-dir analogue of a malformed inbox line.
+  const drainReports = () => {
+    let names;
+    try {
+      names = readdirSync(reportsDir).filter((n) => n.endsWith('.json')).sort();
+    } catch {
+      return [];
+    }
+    const out = [];
+    for (const n of names) {
+      const p = join(reportsDir, n);
+      let raw;
+      try {
+        raw = readFileSync(p, 'utf8');
+      } catch {
+        continue; // vanished under us (a concurrent drain); skip
+      }
+      try {
+        unlinkSync(p); // consume it, so a report is ingested exactly once
+      } catch {
+        /* already gone */
+      }
+      try {
+        const { from = null, text = '' } = JSON.parse(raw);
+        out.push({ from, text });
+      } catch {
+        /* a torn or malformed report — dropped, not guessed into a wrong message */
+      }
+    }
+    return out;
+  };
+
   return {
-    inboxPath,
     outboxPath,
     answersPath,
-    // The transport platform.mjs's createMessaging binds to: deliver one message, drain the received.
+    reportsDir,
+    surfacedPath,
+    // The transport platform.mjs's createMessaging binds to: deliver one message down (outbox), drain
+    // the reports the workers dropped up.
     transport: {
       deliver(name, text) {
         writeFileSync(outboxPath, JSON.stringify({ to: name, text }) + '\n', { flag: 'a' });
         return { ok: true };
       },
       drain() {
-        return drainJsonLines(inboxPath).map((l) => {
-          try {
-            const { from, text } = JSON.parse(l);
-            return { from, text };
-          } catch {
-            return { from: null, text: l };
-          }
-        });
+        return drainReports();
       },
     },
     // drainAnswers() → the user decisions the skill has written since the last drain, each an
@@ -310,6 +350,16 @@ export function createAgentBridge({ dir } = {}) {
           }
         })
         .filter((d) => d && d.task);
+    },
+    // recordSurface(s) → append one rendered surface (renderSurface's { task, kind, text, message }) to
+    // the surfaced feed, so the skill can relay a parked worker's message in plain English without ever
+    // having received it (T25). Best-effort: a surfaced write must never break the loop.
+    recordSurface(s) {
+      try {
+        writeFileSync(surfacedPath, JSON.stringify(s) + '\n', { flag: 'a' });
+      } catch {
+        /* surfacing to the feed is best-effort; the flow log's `surface {task}` line still fired */
+      }
     },
   };
 }
@@ -468,6 +518,37 @@ function fileControl(repo, slug) {
   };
 }
 
+// waitForReport(reportsDir, timeoutMs) → resolve as soon as anything changes in the reports drop-dir,
+// or after timeoutMs, whichever comes first (DESIGN §2.2, T25). This is the "react, don't poll" half:
+// a worker dropping a report file wakes the loop immediately, and the timeout is only a backstop so a
+// missed filesystem event (or a human answer written to the answers file) is still picked up within a
+// poll interval. fs.watch may be unavailable on some filesystems — then this degrades to a plain
+// timeout, which is exactly the old polling behaviour, so correctness never depends on the watch firing.
+function waitForReport(reportsDir, timeoutMs) {
+  return new Promise((resolve) => {
+    let done = false;
+    let watcher = null;
+    let timer = null;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      try {
+        watcher?.close();
+      } catch {
+        /* already closed */
+      }
+      clearTimeout(timer);
+      resolve();
+    };
+    try {
+      watcher = watch(reportsDir, () => finish());
+    } catch {
+      /* no fs.watch here — fall back to the pure timeout (old polling behaviour) */
+    }
+    timer = setTimeout(finish, timeoutMs);
+  });
+}
+
 async function main(argv) {
   const slug = argv[0];
   if (!slug) {
@@ -543,14 +624,15 @@ async function main(argv) {
 
   console.log(`ceiling: ${maxWorkers}   control: ${control.dir}`);
   console.log(`ABORT:   touch ${control.flag}`);
-  console.log(`inbox:   ${bridge.inboxPath}   outbox: ${bridge.outboxPath}   answers: ${bridge.answersPath}`);
-  // Workers address the coordinator BY NAME (DESIGN §2.8, T13 Problem A), so the coordinator SESSION —
-  // the pir-coordinate skill agent that runs this bin and carries the SendMessage inbox — must be
-  // reachable under this exact name. Launch that session with `claude -n "<name>"` (the same -n workers
-  // use). Belt-and-suspenders: the loop sends every freshly-spawned worker a hello carrying this name,
-  // so a worker's reply rides an already-open channel even if by-name first-contact is unreliable.
-  console.log(`\nWorkers address the coordinator as:  ${coordinatorName({ repo, plan: slug })}`);
-  console.log(`The coordinator session must be reachable under that name (launch it with claude -n).\n`);
+  console.log(`reports: ${bridge.reportsDir}   outbox: ${bridge.outboxPath}   answers: ${bridge.answersPath}`);
+  console.log(`surfaced:${bridge.surfacedPath}`);
+  // The coordinator SESSION — the pir-coordinate skill agent that runs this bin — is launched under this
+  // name (DESIGN §2.8): it is the identity the user sees in `claude agents --json`, and the hello passes
+  // it to each worker. Under T25 a worker reports UP by dropping a file (no SendMessage to the
+  // coordinator), so nothing now depends on a worker resolving this name; the DOWN sends (hello, answers)
+  // and the operator's `claude agents` view still want it, so it is kept and printed. Launch with
+  // `claude -n "<name>"` (the same -n workers use).
+  console.log(`\nCoordinator name (launch the session under it with claude -n):  ${coordinatorName({ repo, plan: slug })}\n`);
 
   // Tear down every live worker of this run on any exit that is not a clean promotion or a kill-switch
   // halt (both of which the loop already handled). This is the P6 orphan-guard: a safety cap, a stall,
@@ -603,7 +685,12 @@ async function main(argv) {
       const r = coordinator.pass();
       for (const c of r.completed) console.log(`  ✅ ${c} reached done and merged into the feature branch`);
       for (const y of r.youToDrive) console.log(`  hands-on: go drive worker "${y.worker}" for ${y.task}`);
-      for (const s of r.surfaces) console.log(`  DECISION NEEDED (${s.task ?? '-'}): ${s.message}`);
+      // A surfaced decision is written to the `surfaced` feed (the reliable channel the skill reads,
+      // keyed by task) as well as printed (block-buffered stdout is not reliable — DESIGN, T25).
+      for (const s of r.surfaces) {
+        bridge.recordSurface(s);
+        console.log(`  DECISION NEEDED (${s.task ?? '-'}): ${s.message}`);
+      }
       if (r.ceilingFull) console.log(`  (ceiling full; waiting: ${r.waiting.join(', ')})`);
       if (r.halted) {
         console.log('\n=== HALTED by the kill switch — workers stopped, nothing promoted ===');
@@ -636,7 +723,12 @@ async function main(argv) {
         return;
       }
 
-      await sleep(POLL_MS);
+      // React to a worker's report instead of only polling for it (DESIGN §2.2, T25). A worker drops
+      // its report into reports/, so watch that dir and wake the moment a file lands; POLL_MS is only a
+      // backstop (a missed fs.watch event, or an answer the skill wrote — answers are human-paced, so a
+      // poll-latency pickup is fine). Only reports/ is watched, never the control dir at large, so the
+      // bin's OWN writes this pass (the flow log, outbox, surfaced) cannot wake it into a busy spin.
+      await waitForReport(bridge.reportsDir, POLL_MS);
     }
     console.log('\n=== safety cap reached ===');
     teardownOnce('safety cap');
