@@ -78,23 +78,45 @@ files for two different reasons; do not conflate them:
 - the **outbox** `plans/{slug}/.parallel/control/outbox` — only for messages to deliver (below).
 
 Re-read the flow log on a short cadence (≈15s); prefer the Monitor tool with an until-condition on the
-log growing over a hand-rolled `sleep` of guessed length. **Your completion watch must be on the flow
-log, never on the outbox.** The outbox stops growing once you relay the last message — several seconds
+log growing over a hand-rolled `sleep` of guessed length. **Once that Monitor is armed, act on its
+events — do not also `sleep`-poll the log or the outbox.** React to each Monitor event, and to each
+answer you owe a worker, reading the log once per event to pick up the new line — never on a timer of
+your own. A blocking `sleep` loop beside an armed Monitor only duplicates what the Monitor already
+delivers and slows every reaction (on the review-queue live run the coordinator armed a Monitor that
+said "do not poll or sleep" and then ran six `sleep` polls anyway, ≈45s of dead time). **Your
+completion watch must be on the flow log, never on the outbox.** The outbox stops growing once you relay the last message — several seconds
 *before* the bin writes the terminal `promote` line — so a Monitor that waits only on the outbox goes
 deaf exactly at the finish, and you will sit idle while the run is already done (observed on the first
 green `single` live run: the coordinator watched only `tail -F outbox` and had no way to see `promote`).
 Keep a watch on the LOG armed through the final relay, and end the run only on its `promote` (or
 `halt-close` / nothing-left) line — see below.
 
+**Launch the bin exactly once, and expect the wrapper to return `exit 0` at once.** Run it in the
+background with *either* the tool's `run_in_background` *or* a trailing `&` — never both. The wrapper
+shell exits `0` the instant it has backgrounded the detached `node` process; that is the normal result
+and does **not** mean the bin died — the bin is that `node` process, still running. If you are unsure it
+is alive, confirm once with `pgrep -fl "coordinate.mjs {slug}"`, and never launch a second bin on the
+same plan. (On the review-queue live run a doubly-backgrounded launch read as a death and cost a
+reassurance step; a jumpier coordinator could have started a second bin.)
+
 Start the bin once and leave it running. Then, while it runs, on every turn:
 
-1. **Report progress to the user.** For each `merge Txx` line in the flow log, tell the user in one
-   plain line that the task has landed on the plan branch. A `ceiling full` line means the run is
-   throttled, not stuck — say so.
+1. **Report at the milestones, not after every event.** Report to the user at run start (what you are
+   about to dispatch), at completion (the `promote` / `halt-close` / nothing-left line that ends the
+   run), and whenever a decision or a failure needs them (steps 2–4). Do **not** narrate a line after
+   each spawn, merge and close — the flow log is the running record and the user does not need it read
+   back. Track each `merge Txx` from the log for your own state, and surface a `ceiling full` stretch
+   only if the user wonders why the run is slow. (On the review-queue live run the coordinator posted a
+   status paragraph after nearly every event.)
 2. **Surface every decision, one at a time.** Each `surface Txx` line in the flow log means a worker
    on `Txx` hit a question, a decision, a conflict or a red build and the bin has parked it. Read that
    task's line from the **surfaced** feed (`plans/{slug}/.parallel/control/surfaced`) and put its
-   `message` to the user in plain English. The user owns the decision. Ask one thing at a time.
+   `message` to the user in plain English. The user owns the decision. Ask one thing at a time. A
+   `kind=question` or `kind=decision` is the user's to answer, never yours — the bin has already parked
+   that task, so the run proceeds on no guess in the worker's place, but it also never un-parks until
+   you route an answer back (step 3). Surface it and wait, however small it looks. (On the review-queue
+   live run a worker resolved an ambiguous spec by guessing because nothing put the question to the
+   user — the path T21 exercises.)
 3. **Route each answer back down.** When the user answers, **append one JSON line to the answers file**
    `plans/{slug}/.parallel/control/answers`: `{"task":"T05","text":"<the decision, in the worker's
    terms>"}`. The bin drains it on its next pass and sends it to that one worker. If the user defers a

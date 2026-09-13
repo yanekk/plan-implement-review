@@ -66,6 +66,14 @@ and their costs, and your recommendation — the same shape `CLAUDE.md` asks for
 relays it to the user in plain English. Then wait. Do any independent work that does not depend on the
 answer while you wait; stop dead only on what the answer blocks.
 
+**A genuine ambiguity is asked about, never silently resolved — above all anything a user would see.**
+Exact file contents are the trap: a spec saying a file's "only contents are the text `ok`" has not said
+whether a trailing newline belongs, and either reading is defensible, so choosing one yourself bakes a
+guess into what the user receives. On a case like that, send `kind=question` with the choices and your
+recommendation and wait for the answer before you commit it — do not quietly pick whichever is easier to
+write. (On the review-queue run three workers each guessed the newline and converged only by who wrote
+first; the coordinator relays such a question to the user.)
+
 ## You report to the coordinator by DROPPING A FILE, not by messaging it
 
 The coordinator's decision loop is a program, not an agent, and a program has no message inbox
