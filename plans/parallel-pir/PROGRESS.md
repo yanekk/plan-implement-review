@@ -18,18 +18,18 @@ phases (0–6). Phases 0–5 are ✅. The `auto` hardening tasks T24, T25, T26, 
 the live fixtures: each is a `you` task, done when its fact report is all-green. T18–T21 PASS live.
 **T22 (merge-conflict) FAILED live 2026-09-13 — a real framework bug in the conflict path** (T02 merged
 and promoted despite the conflict; main got the wrong greeting, opposite the human decision; see
-FINDINGS). T22 and T23 are blocked pending a PM-approved fix task. T10 is absorbed by T23. The
+FINDINGS). The PM approved the Option-2 fix, scoped as **T28** (`auto`, next up); T22 (then T23) wait on
+it. T10 is absorbed by T23. The
 operator's guide is [TEST-HARNESS.md](TEST-HARNESS.md). Phases 5–6 postdate the
 2026-09-07 plan review and are validated per task during build, since `/pir-review-plan` does not re-run
 on a building plan.
 **Last updated:** 2026-09-13
-**Next `pir-work` will:** nothing until the PM decides on the conflict-path fix. T22 ran and FAILED:
-loop.mjs parks a coordinator-hit merge conflict (`AWAITING`) but the same pass still closes the
-done+merged worker and deletes its task, so next pass a fresh build is respawned that clobbers the
-already-merged task and promotes the wrong content; the human answer 409'd because its worker was gone.
-The fix touches core coordinator logic (loop.mjs conflict-park vs close/respawn) and possibly the
-fixture fact vs DESIGN §2.5, so it is its own hardening task, surfaced to the PM (not built in this
-fixture session). Do not re-run T22 until it lands. 264 tests green. Open notes: candidate 3
+**Next `pir-work` will:** implement T28 (`auto`) — the conflict-path fix the PM approved (Option 2,
+2026-09-13). On a coordinator-hit merge conflict the worker must stay parked+alive, receive the
+decision, resolve on its own branch, and then merge clean — no close+respawn, no clobber, no
+unverified-success report; plus a new worker conflict-resolution path and the redefined merge-conflict
+fact + scripted decision so the T22 re-run is deterministic. See tasks/T28. It gates the T22 re-run;
+T23 follows. 264 tests green. Open notes: candidate 3
 (SendMessage padding) left unfixed by PM choice; capture copies `role:foreign` transcripts into the
 bundle (~4MB), not yet a task; the coordinator-name/hello rationale prune is still owed (FINDINGS
 2026-09-13).
@@ -54,20 +54,21 @@ live steps with a hands-on worker the coordinator spawns, folded back without re
 | T09 | The `pir-coordinate` skill: dispatch, surface, supervise | auto | T08 | ✅ | Reviewed clean. Coordinator skill (dispatch/surface/supervise); fakes make real git commits. 134 tests. |
 | T12 | Make the coordinator drivable live: six drill fixes | auto | T09 | ✅ | Reviewed clean. Six drill fixes (`liveAfter` self-filter, runaway grace, `canPromoteHere`, `ensureMain`, `teardownRun`, prose `kind:`). 145 tests. |
 | T13 | Prove comms protocol: by-name addressing, idle-gated close | auto | T12 | ✅ | Reviewed clean. Hello via the real bridge; idle gate reads `status`, only defers. 150 tests. Live half retired by T18. |
-| T11 | `/pir-plan` + templates: `Runs` marker, honest deps, width report | auto | T04, T12 | ✅ | Reviewed clean. Planner Stage 6, three templates and both CLAUDE.md spots carry the Runs marker, honest deps and width report; golden tests read real templates through the parser. 153 tests. |
+| T11 | `/pir-plan` + templates: `Runs` marker, honest deps, width report | auto | T04, T12 | ✅ | Reviewed clean. Planner Stage 6 + templates carry the Runs marker, honest deps, width report; golden tests. 153 tests. |
 | T14 | Harness capture layer: flow, agent-status timeline, transcript bundle | auto | T09 | ✅ | Reviewed clean; read-only capture, seal reads the real control/log and flow format. 164 tests. |
-| T15 | Harness assertions + scenario spec: declared facts over a bundle | auto | T14 | ✅ | Reviewed clean. 8 facts pure; loadTranscripts the only I/O (src/shell, outside the core boundary scan). Git-log needles verified against worktree.mjs. 195 tests. |
+| T15 | Harness assertions + scenario spec: declared facts over a bundle | auto | T14 | ✅ | Reviewed clean. 8 facts pure; loadTranscripts the only I/O. 195 tests. |
 | T16 | Harness fixtures: scratch plans that force each path with real workers | auto | T15 | ✅ | Reviewed. Six fixtures; merge-conflict forced at ceiling 2; loop records worker-raised surfaces to the flow log. 230 tests. |
-| T17 | Harness live runner (install→launch→capture→wait→seal→check) | auto | T14, T15, T16 | ✅ | Reviewed clean; runner build half, two live-run fixes folded in (`startupGrace`, live coordinator treated as active). 244 tests. See FINDINGS 2026-09-11/12. |
-| T18 | Live fixture: single (happy path; retires T13 live half) | you | T17 | ✅ | PASS live 2026-09-12: all 4 facts green (hello, by-name, idle-gated close, one promote to main); build→review→merge→promote on real agents. Retires T13's live half. Bundle `pir-t17-single-IbhBgo/…/2026-09-12T05-45-43-231Z`. |
+| T17 | Harness live runner (install→launch→capture→wait→seal→check) | auto | T14, T15, T16 | ✅ | Reviewed clean; runner build half + two live fixes (`startupGrace`, live coordinator active). 244 tests. |
+| T18 | Live fixture: single (happy path; retires T13 live half) | you | T17 | ✅ | PASS live 2026-09-12: all 4 facts green (hello, by-name, idle-gated close, one promote). Retires T13's live half. Bundle `pir-t17-single-IbhBgo/…/2026-09-12T05-45-43-231Z`. |
 | T24 | Harden coordinator/worker prompts from the T18 transcripts | auto | T18 | ✅ | Reviewed clean. Prose-only; two prompt fixes (dashed worktree dir `pir-{plan}-T{nn}`; C1 tag list + ISO prefix). |
 | T19 | Live fixture: review-queue | you | T17, T24 | ✅ | PASS live 2026-09-13: all 3 facts green (hello-per-spawn, no-close-before-idle, one-merge-to-main). 3 tasks, ceiling 2, ~6 min, flow textbook. Bundle `pir-t17-review-queue-AqCRsF/…/2026-09-13T05-53-06-393Z`. See FINDINGS. |
 | T25 | Cut the coordinator's relay overhead (worker→bin path) | auto | T19 | ✅ | Reviewed clean. Worker→coordinator up-channel is a file drop into `control/reports/` (drained temp-then-rename). Live proof folded into T20's run. |
 | T26 | Harden coordinator/worker prompts from the T19 transcripts | auto | T25 | ✅ | Reviewed clean, no fix. C7–C10 (pir-coordinate) + W5 (pir-worker) added; S1-drop verified sound (address-free file drop). 255 tests. |
 | T27 | Harden coordinator from the T21 transcripts | auto | T21 | ✅ | Reviewed clean, no fix. `answer()` logs `answer {task}`; additive tag, no fact reads it. Live proof folds into T22/T23. 264 tests. |
 | T20 | Live fixture: clean-merge | you | T17, T26 | ✅ | PASS live 2026-09-13: 3 facts green (one promote to main, ceiling held, no close before idle). First run false-FAILed `ceilingHeld`; fixed to count worker slots by task (PM chose A). Reflection clean — two genuine fresh reviews, correct conflict resolution, T25 up-channel spent 0 coordinator relay turns under 2 tasks. One hardening candidate logged (worker report-drop). Bundle in FINDINGS. |
-| T21 | Live fixture: human-decision | you | T17, T26 | ✅ | PASS live 2026-09-13 (re-run): 2 facts green (question surfaced+answered, one promote to main). Ambiguity-ask path proven — worker asked and waited, coordinator held, ~12s human decision. First run false-FAILed on a runaway-breaker miscount (closed worker reappeared under same id); fixed loop `closedIds` no-prune (fake `resurrectClosed`, test), held live. Reflection logged; 5 hardening candidates surfaced to PM. Bundle `pir-t17-human-decision-RVQcax/…/2026-09-13T15-24-34-685Z`. |
-| T22 | Live fixture: merge-conflict | you | T17, T26 | ⛔ | FAILED live 2026-09-13: conflict surfaced but T02 merged+promoted; `hi world` reached main, opposite the `keep T01` decision. loop.mjs parks the conflict but 3e still closes the done worker and deletes the task, then respawns a clobbering build (FINDINGS). Framework bug — blocked on a PM-approved fix task, then re-run. Bundle `…/2026-09-13T18-50-25-872Z`. |
+| T21 | Live fixture: human-decision | you | T17, T26 | ✅ | PASS live 2026-09-13 (re-run): 2 facts green (question surfaced+answered, one promote). Ambiguity-ask path proven. First run false-FAILed on a runaway miscount; fixed `closedIds` no-prune (test), held live. 5 hardening candidates → PM. Bundle `pir-t17-human-decision-RVQcax/…/2026-09-13T15-24-34-685Z`. |
+| T28 | Fix the merge-conflict path: keep the worker alive, deliver the decision, worker resolves and merges clean (Option 2) | auto | T27 | ⬜ | Fix for the T22 failure (PM chose Option 2, 2026-09-13). On a coordinator-hit conflict keep the worker parked+alive (dispatch.mjs excludes AWAITING from merge/close/respawn; loop.mjs no close/remove/delete), deliver the decision, worker resolves on its branch, then merge clean; no unverified-success report; new worker conflict-resolution path; redefined merge-conflict fact + scripted decision. Gates T22 re-run. |
+| T22 | Live fixture: merge-conflict | you | T17, T26, T28 | ⛔ | FAILED live 2026-09-13 (conflict merged the wrong side to main). Root cause + Option-2 fix scoped as T28. Blocked on T28, then re-run (now interactive). Bundle `…/2026-09-13T18-50-25-872Z`. |
 | T23 | Live fixture: parallel + kill-switch drill (absorbs T10) | you | T17, T26 | ⬜ | Run `run.mjs parallel --into <dir>`; `touch <dir>/plans/parallel/.parallel/control/HALT` mid-run; done when its 3 facts pass. Closes T10. See TEST-HARNESS.md. |
 | T10 | Full multi-worker run + kill-switch drill — absorbed by T23 | you | T23 | ⬜ | Absorbed by T23 (2026-09-12). Do not run standalone; closes ✅ when T23's parallel + kill-switch fact report is all-green. Partial drill 2026-09-10 proved spawn + first message. |
 
@@ -77,18 +78,20 @@ deviation from the task doc.
 **A ✅ task's cell may be cut to one line** once the next task has been reviewed.
 
 **Review queue:** empty — every `auto` task through T27 is ✅. T18–T21 PASS live. T22 (merge-conflict)
-FAILED live and is ⛔ (framework bug in the conflict path, FINDINGS); T22 and T23 are blocked on a
-PM-approved fix task.
+FAILED live and is ⛔ (framework bug in the conflict path, FINDINGS); T22 and T23 wait on T28. **T28
+(⬜, `auto`) is the next work** — the approved conflict-path fix.
 
-## Next up: fix the conflict path, then the gated live fixtures (T22–T23)
+## Next up: T28 (fix the conflict path), then the gated live fixtures (T22–T23)
 
-**T22 caught a real framework bug (2026-09-13).** On a coordinator-hit merge conflict, loop.mjs parks
-the task (`AWAITING`) but the same pass still closes the done+merged worker and deletes its task; the
-next pass respawns a fresh build that clobbers the already-merged task and promotes the wrong content,
-and the human answer cannot be delivered (its worker is gone). The conflict path of DESIGN §2.5 does
-not work end-to-end. **This needs its own hardening task** (touching loop.mjs conflict-park vs
-close/respawn, and possibly the merge-conflict fact vs §2.5) — surfaced to the PM, not built in a
-fixture session. T22 re-runs after the fix; T23 (parallel + kill-switch, absorbs T10) follows.
+**T22 caught a real framework bug (2026-09-13), now scoped as T28.** On a coordinator-hit merge
+conflict, loop.mjs parks the task (`AWAITING`) but the same pass still closes the done+merged worker and
+deletes its task; the next pass respawns a fresh build that clobbers the already-merged task and
+promotes the wrong content, and the human answer cannot be delivered (its worker is gone). The PM chose
+**Option 2** (2026-09-13): keep the worker alive, deliver the decision, worker resolves on its own
+branch and merges clean. T28 is the `auto` fix (dispatch.mjs, loop.mjs, coordinate.mjs, a worker
+conflict-resolution path, the no-unverified-success rule, and the redefined merge-conflict fact +
+scripted decision). See tasks/T28. T22 re-runs after it; T23 (parallel + kill-switch, absorbs T10)
+follows.
 
 Each fixture run needs real paid agents, launched attended, one at a time, never unattended, and ends
 with a reflection pass on its bundle (DESIGN §4.1). Full procedure in

@@ -1,9 +1,10 @@
 # Implementation plan
 
-27 tasks in 7 phases (T12, T13 added 2026-09-10; T14–T17, the live-scenario test harness, added
+28 tasks in 7 phases (T12, T13 added 2026-09-10; T14–T17, the live-scenario test harness, added
 2026-09-10; T18–T23, one live-run task per fixture, added 2026-09-12 by PM decision; T24, prompt
 hardening from the T18 transcripts, added 2026-09-12; T25, the relay-transport redesign, and T26,
-prompt hardening from the T19 transcripts, added 2026-09-13 by PM decision). Each has a file in
+prompt hardening from the T19 transcripts, added 2026-09-13 by PM decision; T28, the merge-conflict
+path fix, added 2026-09-13 by PM decision after the T22 run failed). Each has a file in
 [tasks/](tasks/) with its goal, the files it touches, the interfaces it defines, and what "done" means.
 
 **Phase 6 (T18–T23) splits the harness's live runs into one `you` task per fixture (2026-09-12).**
@@ -165,11 +166,12 @@ surfaces any hardening to the PM. The operator's guide is [TEST-HARNESS.md](TEST
 | [T19](tasks/T19-fixture-review-queue.md) | Live fixture: review-queue (implement→review handoff) | you | T17, T24 |
 | [T20](tasks/T20-fixture-clean-merge.md) | Live fixture: clean-merge (two files, serialized) | you | T17, T26 |
 | [T21](tasks/T21-fixture-human-decision.md) | Live fixture: human-decision (question round-trips) | you | T17, T26 |
-| [T22](tasks/T22-fixture-merge-conflict.md) | Live fixture: merge-conflict (surfaced and parked) | you | T17, T26 |
+| [T22](tasks/T22-fixture-merge-conflict.md) | Live fixture: merge-conflict (surfaced, decided, resolved) | you | T17, T26, T28 |
 | [T23](tasks/T23-fixture-parallel-killswitch.md) | Live fixture: parallel + kill-switch drill (absorbs T10) | you | T17, T26 |
 | [T25](tasks/T25-relay-transport-redesign.md) | Cut the coordinator's relay overhead in the worker→bin path | auto | T19 |
 | [T26](tasks/T26-harden-from-review-queue-transcripts.md) | Harden the coordinator/worker prompts from the T19 transcripts | auto | T25 |
 | [T27](tasks/T27-harden-from-human-decision-transcripts.md) | Harden the coordinator from the T21 transcripts (await-idle noise, AskUserQuestion, answer flow event, forward surfaced text) | auto | T21 |
+| [T28](tasks/T28-fix-conflict-keep-worker.md) | Fix the merge-conflict path: keep the worker alive, deliver the decision, worker resolves and merges clean (Option 2) | auto | T27 |
 
 **Three tasks harden the machinery before the remaining fixtures, and run in order.** T18's transcripts
 drove T24 (`auto`, prose) before T19. T19's transcripts drive two more: **T25** cuts the coordinator's
@@ -186,6 +188,16 @@ an `answer {task}` flow-log event so the coordinator wakes to deliver a queued a
 hand-polling; and forwarding the surfaced text rather than re-paraphrasing it. Prose in `pir-coordinate`
 plus one `src/shell/coordinate.mjs` change (the flow event). It gates the remaining fixtures T22–T23.
 
+**T28 is a fifth hardening task, and the first from a *failed* fixture** (2026-09-13 PM decision, after
+the T22 merge-conflict run failed). The T22 run showed the coordinator-hit conflict path broken
+end-to-end: it discarded the waiting worker, respawned a fresh one that ignored the human decision,
+merged the wrong content, promoted it, and reported unverified success. The PM chose Option 2 — on a
+conflict the coordinator **keeps the worker alive, delivers the decision, and the worker resolves on its
+own branch and merges clean**, so the run still finishes hands-off. T28 is a real `src/` change
+(dispatch.mjs, loop.mjs, coordinate.mjs), a new worker conflict-resolution path (`pir-worker`), the
+no-unverified-success rule, and the redefined merge-conflict fact + scripted-decision fixture (the fact
+now proves the decided side won, not that nothing merged). It **gates the T22 re-run**; T23 follows.
+
 They are launched attended, one at a time, never unattended — real paid agents (§5.2). A real model
 may occasionally not hit a fixture's path on a given run, so a scenario may need a re-run; a failed
 fact is a real finding (a framework bug or a fixture that does not force its path).
@@ -196,7 +208,7 @@ fact is a real finding (a framework bug or a fixture that does not force its pat
 
 ```
 T01 → T02 → T03 → T05 → T06 → T08 → T09 → T12 → T13
-                                        └─→ T14 → T15 → T16 → T17 → T18 → T24 → T19 → T25 → T26 → {T20 … T23}  (T23 closes T10, T18 retires T13 live; T24 prompts, T25 relay redesign, T26 prompts — all gate the fixtures)
+                                        └─→ T14 → T15 → T16 → T17 → T18 → T24 → T19 → T25 → T26 → T27 → T28 → {T22 re-run, T23}  (T20/T21 done off T26; T18 retires T13 live, T23 closes T10; T24/T26/T27 harden prompts, T25 relay redesign, T28 fixes the conflict path and gates the T22 re-run)
 ```
 
 T00 is off this line but gates T07 and T08. T04 (the width metric) is a side branch off T02 and can
@@ -213,7 +225,7 @@ Not hours — a relative sense of where the weight is.
 
 | Weight | Tasks |
 |---|---|
-| **Heavy** | T08 (first real spawn + messaging + review), T09 (coordinator skill), T23 (parallel + kill-switch drill, absorbs T10), T25 (relay transport redesign) |
+| **Heavy** | T08 (first real spawn + messaging + review), T09 (coordinator skill), T23 (parallel + kill-switch drill, absorbs T10), T25 (relay transport redesign), T28 (conflict path fix: loop + dispatch + worker resolution + fixture) |
 | **Medium** | T00 (spike), T05 (fake platform + loop), T06 (worktree plumbing), T11 (teach the shared planner), T12 (six drill fixes), T13 (prove the comms protocol), T14 (capture layer), T15 (assertion library), T16 (scenario fixtures), T17 (live runner), T21 (human-decision run), T24 (prompt hardening from the T18 transcripts), T26 (prompt hardening from the T19 transcripts) |
 | **Light** | T01 (scaffold), T02 (progress core), T03 (dispatch), T04 (parallelism metric), T07 (worker contract), T18–T20, T22 (single, review-queue, clean-merge, merge-conflict runs) |
 
