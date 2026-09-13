@@ -319,6 +319,32 @@ test('a closed session lingering in the agent list is not recounted — the fals
   assert.ok(maxLive <= 1, `never more than the ceiling of 1 counted live (saw ${maxLive}) — no false runaway`);
 });
 
+test('a closed session that VANISHES then reappears under the same id is still not recounted — the human-decision live false runaway (2026-09-13)', (t) => {
+  // The harder shape lingerClosed does not cover: `claude close` SIGTERMs the implementer and it drops
+  // off `claude agents --json` at once — but a stale Remote Control registry entry brings it back a few
+  // passes later under the SAME id, `idle`, beside its fresh reviewer. The earlier fix pruned closedIds
+  // the moment an id fell off the list, so the reappearance was no longer suppressed: at ceiling 1 the
+  // loop counted 2 live for 3 passes and the runaway breaker (coordinate.mjs, reading r.live) tore the
+  // run down mid-review — which is what killed the human-decision live run after its decision cycle had
+  // already completed correctly. closedIds must survive the absence, so the resurrected id stays
+  // suppressed and the run promotes.
+  // resurrectClosed: the implementer vanishes on close then reappears one pass later; lingerBusy holds
+  // the fresh reviewer busy for a few passes (its merge deferred until idle), so it is still live when
+  // the implementer comes back — the overlap that made the live run count 2 at ceiling 1. Without both,
+  // a lone fast reviewer promotes before the resurrection and the overlap never happens.
+  const { base } = setup(t, [{ num: 'T01' }], { behaviors: { T01: { resurrectClosed: 1, lingerBusy: 3 } } });
+  const state = createRunState();
+  let promoted = false;
+  let maxLive = 0;
+  for (let i = 0; i < 30 && !promoted; i++) {
+    const r = runPass({ ...base, maxWorkers: 1, state });
+    maxLive = Math.max(maxLive, r.liveAfter);
+    promoted = r.promoted;
+  }
+  assert.ok(promoted, 'the plan promotes despite the closed implementer reappearing in the list');
+  assert.ok(maxLive <= 1, `never more than the ceiling of 1 counted live (saw ${maxLive}) — the resurrected id was suppressed`);
+});
+
 // --- T13 Problem A: a hello opens each freshly-spawned worker's channel ----------------------------
 
 test('every freshly spawned worker (implement and review) is sent a hello carrying the coordinator name (T13)', (t) => {

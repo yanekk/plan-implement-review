@@ -156,11 +156,18 @@ export function runPass({ platform, worktree, repo, slug, maxWorkers, state, con
   // can outlive the process itself (single live run 2026-09-12: a just-closed implementer stayed listed
   // alongside its fresh reviewer, so at ceiling 1 the loop counted 2 workers for 3 passes and the
   // runaway breaker tore the run down mid-review, before any promote). So the loop remembers every id it
-  // closed and never recounts it as live; the memory is pruned once the id truly drops off the list, so
-  // it stays bounded and cannot suppress a genuinely new id (ids are unique per session).
+  // closed and never recounts it as live.
+  //
+  // The memory is NEVER pruned within a run. An earlier version pruned an id the moment it fell off the
+  // list — but a SIGTERM'd session does not just linger, it can VANISH for a pass or two and then
+  // REAPPEAR under the SAME id as a stale registry entry (human-decision live run 2026-09-13: a closed
+  // implementer dropped off `claude agents --json` for ~10s, came back `idle` beside its reviewer, and
+  // was recounted → 2 over ceiling 1 for 3 passes → the runaway breaker tore the run down mid-review,
+  // the exact failure the 2026-09-12 fix meant to close). Pruning on a single-pass absence un-suppressed
+  // exactly that resurrection. Session ids are unique per session, so a remembered closed id can never
+  // collide with a genuinely new worker; retaining every closed id for the life of the run is safe, and
+  // the set stays small (at most one implement + one review id per task).
   state.closedIds ??= new Set();
-  const listedIds = new Set(listed.map((w) => w.id));
-  for (const id of state.closedIds) if (!listedIds.has(id)) state.closedIds.delete(id);
   // Keep only THIS run's workers ({repo} · {slug} · T…), and drop any we have already closed. `claude
   // agents --json` lists every session sharing the repo git-dir, which includes the coordinator's OWN
   // session and any foreign agent; the drill counted the coordinator itself and reported `ceiling full:

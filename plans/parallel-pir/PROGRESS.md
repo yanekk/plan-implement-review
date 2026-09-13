@@ -21,15 +21,15 @@ T23. Order now: T21 → T22 → T23. The operator's guide is [TEST-HARNESS.md](T
 2026-09-07 plan review and are validated per task during build, since `/pir-review-plan` does not re-run
 on a building plan.
 **Last updated:** 2026-09-13
-**Next `pir-work` will:** hand over T21 (`you`) — the `human-decision` live fixture. It is a paid
-attended run needing the user: `run.mjs human-decision`, then answer the surfaced question by appending
-one JSON line to the control `answers` file (or reply through the coordinator session), per
-[TEST-HARNESS.md](TEST-HARNESS.md). T18/T19/T20 PASS live; T24–T26 ✅. `ceilingHeld` now counts worker
-SLOTS by task (impl+review=1, duplicate same-role trips it — assertions.mjs, 258 tests), so fixtures
-assert the bare true ceiling. Worker report-drop hardened (skills/pir-worker drops via one `node`+heredoc,
-no scratch file; Write tool + `.git/` paths fail in a worktree), live-confirmed on the next fixture run.
-Open notes: capture copies `role:foreign` transcripts into the bundle (~4MB), not yet a task; the
-coordinator-name/hello rationale prune is still owed (FINDINGS 2026-09-13).
+**Next `pir-work` will:** hand over T21 (`you`) for a RE-RUN — the `human-decision` live fixture. Its
+first live run (2026-09-13) proved the decision cycle (worker asks, PM answers via AskUserQuestion,
+answer routed down, worker builds), then the runaway breaker killed it mid-review on a miscount. Fixed
+this session: loop `closedIds` is never pruned within a run, so a SIGTERM'd worker that reappears under
+the same id (stale RC registry entry) is not recounted (fake `resurrectClosed`, loop test; 259 tests).
+Re-run: `run.mjs human-decision`, answer the surfaced question via the control `answers` file (or reply
+through the coordinator session); done when its 2 facts pass, per [TEST-HARNESS.md](TEST-HARNESS.md).
+T18/T19/T20 PASS live; T24–T26 ✅. Open notes: capture copies `role:foreign` transcripts into the bundle
+(~4MB), not yet a task; the coordinator-name/hello rationale prune is still owed (FINDINGS 2026-09-13).
 
 ## Tasks
 
@@ -62,7 +62,7 @@ live steps with a hands-on worker the coordinator spawns, folded back without re
 | T25 | Cut the coordinator's relay overhead (worker→bin path) | auto | T19 | ✅ | Reviewed clean. Worker→coordinator up-channel is a file drop into `control/reports/`, drained temp-then-rename; surfaces one-shot. Live proof folds into the post-T25+T26 fixture run. 255 tests. |
 | T26 | Harden coordinator/worker prompts from the T19 transcripts | auto | T25 | ✅ | Reviewed clean, no fix. C7–C10 (pir-coordinate) and W5 (pir-worker) land next to their rules, flat prose. S1-drop verified sound: T25's up-channel is an address-free file drop and the answer routes to the worker's own name, so finding 4's hello race is gone. Probed C7 pgrep string, C8 vs the ≈15s cadence, C10's dropped per-merge narration. 255 tests. |
 | T20 | Live fixture: clean-merge | you | T17, T26 | ✅ | PASS live 2026-09-13: 3 facts green (one promote to main, ceiling held, no close before idle). First run false-FAILed `ceilingHeld`; fixed to count worker slots by task (PM chose A). Reflection clean — two genuine fresh reviews, correct conflict resolution, T25 up-channel spent 0 coordinator relay turns under 2 tasks. One hardening candidate logged (worker report-drop). Bundle in FINDINGS. |
-| T21 | Live fixture: human-decision | you | T17, T26 | ⬜ | Run `run.mjs human-decision`; answer the surfaced question via the control `answers` file; done when the 2 facts pass. See TEST-HARNESS.md. |
+| T21 | Live fixture: human-decision | you | T17, T26 | ⬜ | First live run 2026-09-13: the ask→answer→resume cycle PASSED (PM answered via AskUserQuestion, routed down, worker built), then the runaway breaker killed it mid-review — a closed implementer reappeared under the same id and was recounted. Fixed loop `closedIds` (never prune in a run; fake `resurrectClosed`, test). Re-run owed. See FINDINGS 2026-09-13. |
 | T22 | Live fixture: merge-conflict | you | T17, T26 | ⬜ | Run `run.mjs merge-conflict`; hands-off; done when the conflict-parked fact passes. See TEST-HARNESS.md. |
 | T23 | Live fixture: parallel + kill-switch drill (absorbs T10) | you | T17, T26 | ⬜ | Run `run.mjs parallel --into <dir>`; `touch <dir>/plans/parallel/.parallel/control/HALT` mid-run; done when its 3 facts pass. Closes T10. See TEST-HARNESS.md. |
 | T10 | Full multi-worker run + kill-switch drill — absorbed by T23 | you | T23 | ⬜ | Absorbed by T23 (2026-09-12). Do not run standalone; closes ✅ when T23's parallel + kill-switch fact report is all-green. Partial drill 2026-09-10 proved spawn + first message. |

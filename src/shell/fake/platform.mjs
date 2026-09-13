@@ -59,6 +59,12 @@ function commit(cwd, task, plan, { file, content, rowState, note, message }) {
 //                            process, so a just-closed worker lingers in `claude agents --json` for a
 //                            few passes (single live run 2026-09-12). Lets a test prove the loop does
 //                            not recount a closed-but-still-listed worker (loop.mjs closedIds).
+//     { resurrectClosed: N } after close(), the session drops off list() at once, then REAPPEARS under
+//                            the SAME id N ticks later (idle/done) and stays listed. Models the harder
+//                            real failure lingerClosed does not: a SIGTERM'd session that vanishes and
+//                            then comes back as a stale registry entry (human-decision live run
+//                            2026-09-13). Lets a test prove closedIds is not pruned on a transient
+//                            absence, so the resurrected id is still suppressed (loop.mjs closedIds).
 export function createFakePlatform({ behaviors = {} } = {}) {
   const workers = new Map(); // id → worker record
   const inboxQueue = []; // messages from workers to the coordinator, drained by inbox()
@@ -206,6 +212,23 @@ export function createFakePlatform({ behaviors = {} } = {}) {
     // list() → live workers with their state. Advances every live worker one tick first (see header).
     list() {
       for (const w of workers.values()) {
+        if (w.resurrectIn != null) {
+          // A closed session that vanished from the list and then comes back under the SAME id as a
+          // stale Remote Control registry entry (human-decision live run 2026-09-13). It is absent for
+          // `resurrectIn` ticks, then reappears `idle`/`done` and stays listed. The loop must not
+          // recount it — which it will only get right if closedIds is not pruned on the absence.
+          if (w.resurrectIn > 0) {
+            w.resurrectIn -= 1;
+            w.live = false;
+            continue;
+          }
+          w.live = true;
+          w.status = 'idle';
+          w.state = 'done';
+          w.lingerClosed = Infinity; // stays listed as a stale entry; never advances
+          w.resurrectIn = null;
+          continue;
+        }
         if (!w.live) continue;
         if (w.stage === 'closed') {
           // a closed session lingers a few ticks before it drops off the list (see close()); while it
@@ -230,6 +253,15 @@ export function createFakePlatform({ behaviors = {} } = {}) {
     close(id) {
       closed.push(id);
       const w = workers.get(id);
+      const resurrect = w ? behaviors[w.task]?.resurrectClosed : undefined;
+      if (w && resurrect != null) {
+        // vanish now, reappear under the same id `resurrect` ticks later (see list()) — the harder
+        // 2026-09-13 failure lingerClosed does not model.
+        w.live = false;
+        w.stage = 'closed';
+        w.resurrectIn = resurrect;
+        return;
+      }
       const linger = w ? behaviors[w.task]?.lingerClosed ?? 0 : 0;
       if (w && linger > 0) {
         w.stage = 'closed'; // no further advance; list() ages it out over `linger` ticks
