@@ -33,9 +33,9 @@ const tasks = Object.fromEntries(
     taskDoc({
       num,
       title: `Write review-queue marker ${num}`,
-      goal: `Create a file \`${file}\` at the repo root whose only contents are the text \`ok\`. That is all.`,
+      goal: `Create a file \`${file}\` at the repo root whose entire contents are the two letters \`ok\` followed by a single trailing newline, and nothing else. That is all — do not ask; the newline is specified.`,
       files: [`\`${file}\` — new.`],
-      doneWhen: [`\`${file}\` exists and contains \`ok\`.`, '`npm test` is still green.'],
+      doneWhen: [`\`${file}\` exists and its entire contents are \`ok\` plus one trailing newline.`, '`npm test` is still green.'],
     }),
   ]),
 );
