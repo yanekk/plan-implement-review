@@ -223,8 +223,23 @@ export function helloPerSpawn() {
     // implementer, reviewer and verify sessions of a task are now distinct names (DESIGN §2.8), so the
     // ground truth for which sessions existed is the captured timeline, not a name rebuilt from the task
     // alone. Every worker name the run produced must have received a hello SendMessage.
+    //
+    // KILL-SWITCH SCOPING (T29, PM decision 2026-09-14, approach ii). In live mode a spawn's hello is
+    // QUEUED to the coordinator session's outbox at spawn time — the `hello Txx` flow line (checked in
+    // the flow half above) records the queue — and the coordinator SESSION drains the outbox and issues
+    // the SendMessage a moment later. The kill switch legitimately fires in that gap: in the T23 drill
+    // the coordinator was HALTed 11s in, before it drained a single hello, so its transcript held zero
+    // SendMessage calls though every worker had a queued `hello` flow line. So in a HALT-terminated run
+    // (a halt-close in the flow) the transcript half is relaxed: a worker whose queued hello had not
+    // been sent when the kill switch fired is EXEMPT — the flow half still proves the hello was queued
+    // for it. The transcript half stays STRICT for promote-terminated fixtures (single, review-queue),
+    // where a missing or misaddressed hello is a real bug.
+    const haltTerminated = flowOf(bundle, 'halt-close').length > 0;
     const coord = coordinatorTranscript(bundle);
     if (!coord) {
+      if (haltTerminated) {
+        return { pass: true, evidence, detail: `${spawns.length} spawn/review each queued a hello; the kill switch fired before the coordinator sent them (transcript half exempt)` };
+      }
       return { pass: false, evidence, detail: 'no coordinator transcript captured — cannot confirm the hello was addressed by name' };
     }
     const sent = sendMessagesOf(coord);
@@ -232,6 +247,9 @@ export function helloPerSpawn() {
     for (const tick of bundle.timeline ?? [])
       for (const a of tick.agents ?? []) if (a.isWorkerOf && a.name) workerNames.add(a.name);
     if (workerNames.size === 0) {
+      if (haltTerminated) {
+        return { pass: true, evidence, detail: `${spawns.length} spawn/review each queued a hello; the kill switch fired before any worker channel opened (transcript half exempt)` };
+      }
       return { pass: false, evidence, detail: 'no worker sessions in the timeline — cannot confirm the hello was addressed by name' };
     }
     const missing = [];
@@ -241,6 +259,16 @@ export function helloPerSpawn() {
       else missing.push(wName);
     }
     if (missing.length > 0) {
+      if (haltTerminated) {
+        // The kill switch interrupted the queued send to these workers before their channel opened;
+        // exempt (approach ii). The flow half proved each had its hello queued.
+        evidence.push(`kill switch fired before the hello was sent to: ${missing.join(', ')} (queued, exempt)`);
+        return {
+          pass: true,
+          evidence,
+          detail: `${workerNames.size - missing.length} hello(s) sent by name; ${missing.length} queued but interrupted by the kill switch (exempt)`,
+        };
+      }
       return { pass: false, evidence, detail: `coordinator transcript has no hello SendMessage to: ${missing.join(', ')}` };
     }
     return { pass: true, evidence, detail: `${spawns.length} spawn/review each got a hello addressed by name` };

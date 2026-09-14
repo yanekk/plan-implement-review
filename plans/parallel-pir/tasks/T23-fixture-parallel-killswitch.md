@@ -27,10 +27,14 @@ See `TEST-HARNESS.md § parallel`.
 
 ## Facts it must show (all green)
 
-- `hello-per-spawn` — one hello per spawned session, addressed by name.
+- `hello-per-spawn` — one hello queued per spawned session, addressed by name. Kill-switch scoped
+  (T29): a spawn whose queued hello had not been sent when `HALT` fired is exempt from the transcript
+  half — the `hello` flow line proves it was queued, and the kill switch legitimately interrupts the
+  send. The flow half (a queued hello per spawn) stays strict.
 - `ceiling-held:2` — at most two workers live at once (the scenario's ceiling).
 - `kill-switch-stopped-all` — after `HALT`, every worker was stopped, nothing was promoted, `main` is
-  untouched.
+  untouched. The runner seals only after the coordinator's own `halt-close` line (plus a short grace),
+  not on the bare HALT flag, so `flow.log` actually contains `halt-close` (T29).
 
 ## Reflection (after PASS, before ✅)
 

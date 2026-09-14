@@ -21,14 +21,14 @@ PM added **T29** (`auto`) to fix the capture (seal on `halt-close`, honest `hell
 **T23** re-run, the last live fixture (closes T10). Operator's guide: [TEST-HARNESS.md](TEST-HARNESS.md).
 Phases 5–6 postdate the 2026-09-07 review, so each is validated per task during build.
 **Last updated:** 2026-09-14
-**Next `pir-work` will:** IMPLEMENT T29 (auto) — the kill-switch capture fix the PM added 2026-09-14 after
-T23 FAILed on capture timing (not behaviour: the kill switch worked). T29 seals a HALT run on the
-coordinator's `halt-close` instead of the bare HALT flag (timeout stays the backstop) and closes the
-`hello` queue-vs-send gap; its task doc holds a builder sub-decision on the hello approach (recommend (ii),
-scope the fact to what the kill switch allows). T29 gates the T23 re-run, which then closes T10 — the last
-live fixture. Open notes: candidate 3 (SendMessage padding) unfixed by PM choice; capture copies
-`role:foreign` transcripts (~4MB), not yet a task; the coordinator-name/hello rationale prune is still owed
-(FINDINGS 2026-09-13).
+**Next `pir-work` will:** REVIEW T29 (🔍) — the kill-switch capture fix, built this session. Problem A:
+`runOutcome` no longer treats the bare HALT flag as terminal; a HALT run ends on the coordinator's
+`halt-close` plus a `haltGrace`, the wall-clock timeout still the backstop. Problem B (PM chose approach
+ii): `helloPerSpawn` exempts a queued-but-unsent hello in a HALT-terminated run, strict for the
+promote-terminated fixtures. Touched `run.mjs`, `assertions.mjs`, `fixtures/parallel.mjs`, `TEST-HARNESS.md`,
+T23 doc. 271 tests, boundary green. After review, re-run T23, which closes T10 — the last live fixture.
+Open notes: candidate 3 (SendMessage padding) unfixed by PM choice; capture copies `role:foreign`
+transcripts (~4MB), not yet a task; the coordinator-name/hello rationale prune is still owed (FINDINGS 2026-09-13).
 
 ## Tasks
 
@@ -63,9 +63,9 @@ live steps with a hands-on worker the coordinator spawns, folded back without re
 | T27 | Harden coordinator from the T21 transcripts | auto | T21 | ✅ | Reviewed clean. `answer()` logs `answer {task}`; additive tag. 264 tests. |
 | T20 | Live fixture: clean-merge | you | T17, T26 | ✅ | PASS live 2026-09-13: 3 facts green. First run false-FAILed `ceilingHeld` (counted OS roster); fixed to count slots by task. Bundle in FINDINGS. |
 | T21 | Live fixture: human-decision | you | T17, T26 | ✅ | PASS live 2026-09-13 (re-run): 2 facts green (question surfaced+answered, one promote). Ambiguity-ask path proven. First run false-FAILed on a runaway miscount; fixed `closedIds` no-prune (test), held live. 5 hardening candidates → PM. Bundle `pir-t17-human-decision-RVQcax/…/2026-09-13T15-24-34-685Z`. |
-| T28 | Fix the merge-conflict path: keep the worker alive, deliver the decision, worker resolves and merges clean (Option 2) | auto | T27 | ✅ | Reviewed clean; one trivial fix (stale comment → `mergeConflictResolved`). Option 2 proven end-to-end in loop.test on real git: a conflict parks the worker (not closed/removed/deleted), the decision is delivered, the worker resolves, the decided side reaches main, one promote, no respawn. Fact fails on losing-side/respawn/unanswered bundles. 267 tests, boundary green. Live proof owed by T22. |
+| T28 | Fix the merge-conflict path: keep the worker alive, deliver the decision, worker resolves and merges clean (Option 2) | auto | T27 | ✅ | Reviewed clean. Option 2 (worker kept alive, decision delivered, worker resolves, decided side reaches main, one promote, no respawn) proven in loop.test on real git; live-proven by T22 (✅). |
 | T22 | Live fixture: merge-conflict | you | T17, T26, T28 | ✅ | PASS live 2026-09-14: conflict surfaced, decision delivered to the live worker, resolved on its branch, decided `hello there` reached main, one promote. Proves T28 (Option 2) + the coordinator wake-up fix. Two earlier failures fixed en route: wrong-side ship (T28) and a buffering-Monitor hang (pir-coordinate). Bundle `pir-t17-merge-conflict-sQzl0k/…/2026-09-14T06-16-26-887Z`. |
-| T29 | Fix the kill-switch capture: seal on `halt-close`, make the `hello` flow line honest | auto | T28 | ⬜ | Added 2026-09-14 by PM decision after T23 FAILed on capture timing. Seal a HALT run on the coordinator's `halt-close` (not the bare HALT flag), timeout still the backstop; close the `hello` queue-vs-send gap (approach is a builder sub-decision, see task doc). Harness change (`run.mjs`, assertion/fixture). Gates the T23 re-run. |
+| T29 | Fix the kill-switch capture: seal on `halt-close`, make the `hello` flow line honest | auto | T28 | 🔍 | Implemented. Problem A: `runOutcome` no longer treats the bare HALT flag as terminal — a HALT run ends on the coordinator's `halt-close` plus a grace; timeout stays the backstop. Problem B: PM chose (ii) — `helloPerSpawn` exempts a queued-but-unsent hello in a HALT run, strict for promote fixtures. Kept `haltPresent` arg (unused) for the mutation test. 271 tests, boundary green. |
 | T23 | Live fixture: parallel + kill-switch drill (absorbs T10) | you | T17, T26, T29 | ⬜ | Ran live 2026-09-14: FAIL on capture timing, not behaviour. Kill switch worked — 2 workers at ceiling 2 (T03 waited), HALT→all closed, main untouched, nothing promoted. Runner seals on the HALT flag, ~4s before `halt-close`, so the bundle omits it (FINDINGS). T29 fixes it; then re-run. Bundle `…/2026-09-14T06-31-20-985Z`. |
 | T10 | Full multi-worker run + kill-switch drill — absorbed by T23 | you | T23 | ⬜ | Absorbed by T23 (2026-09-12). Do not run standalone; closes ✅ when T23's parallel + kill-switch fact report is all-green. Partial drill 2026-09-10 proved spawn + first message. |
 
@@ -74,16 +74,14 @@ deviation from the task doc.
 
 **A ✅ task's cell may be cut to one line** once the next task has been reviewed.
 
-**Review queue:** empty. Next `pir-work` IMPLEMENTS **T29** (auto), then a later session reviews it.
+**Review queue:** **T29** (🔍). Next `pir-work` REVIEWS it (a session that did not build it).
 
-## Next up: build T29, then re-run T23
+## Next up: review T29, then re-run T23
 
-T23 (parallel + kill-switch) RAN live 2026-09-14 and FAILed on capture timing, not behaviour — the kill
-switch worked (2 workers at ceiling 2, T03 waited, HALT→all closed, main untouched, nothing promoted). The
-PM added **T29** (auto): seal a HALT run on the coordinator's `halt-close` instead of the bare HALT flag
-(timeout stays the backstop), and close the `hello` queue-vs-send gap (a builder sub-decision in the task
-doc; recommend scoping the fact to what the kill switch allows). T29 is the next auto build (its dep T28 is
-✅). Once T29 is built and reviewed, re-run T23, which closes T10 — the last live fixture.
+T29 (the kill-switch capture fix) is built and 🔍. Next `pir-work` reviews it. After review, re-run T23
+(parallel + kill-switch), which closes T10 — the last live fixture. T23 last ran 2026-09-14 and FAILed on
+capture timing, not behaviour (the kill switch worked); T29 fixes the two capture races (seal on
+`halt-close`, and the `hello` queue-vs-send gap, PM approach ii).
 
 The T23 re-run needs real paid agents, launched attended, one at a time, never unattended, and ends with a
 reflection pass on its bundle (DESIGN §4.1). Full procedure in [TEST-HARNESS.md](TEST-HARNESS.md):

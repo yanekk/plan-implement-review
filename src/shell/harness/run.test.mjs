@@ -115,10 +115,27 @@ test('runOutcome reports promoted on a flow `promote` line', () => {
   assert.deepEqual(runOutcome({ flowText: flow }), { over: true, reason: 'promoted' });
 });
 
-test('runOutcome reports halted on the HALT flag or a halt-close line', () => {
-  assert.deepEqual(runOutcome({ flowText: '', haltPresent: true }), { over: true, reason: 'halted' });
+test('runOutcome reports halted on a halt-close line', () => {
   assert.deepEqual(
     runOutcome({ flowText: '2026-01-01T00:00:00Z halt-close T01\n' }),
+    { over: true, reason: 'halted' },
+  );
+});
+
+// T29: the HALT flag's mere presence is NOT terminal — only the coordinator's own halt-close is. The
+// flag precedes the coordinator's reaction, so sealing on its presence beat the coordinator to its own
+// evidence (T23 2026-09-14). Mutation check: reverting to `if (haltPresent) return halted` reds the
+// first assertion here.
+test('runOutcome is still active on the HALT flag alone, before the coordinator confirms halt-close', () => {
+  assert.deepEqual(runOutcome({ flowText: '', haltPresent: true }), { over: false, reason: 'active' });
+  // Even a busy flow with the flag present but no halt-close yet stays active.
+  assert.deepEqual(
+    runOutcome({ flowText: '2026-01-01T00:00:00Z ceiling full\n', haltPresent: true }),
+    { over: false, reason: 'active' },
+  );
+  // Once the coordinator writes halt-close, it is terminal regardless of the flag argument.
+  assert.deepEqual(
+    runOutcome({ flowText: '2026-01-01T00:00:00Z halt-close T01\n', haltPresent: true }),
     { over: true, reason: 'halted' },
   );
 });
@@ -183,10 +200,10 @@ test('teardownScenario touches HALT, closes every worker (via teardownRun) and t
 // `claude` runner answers the launch and the capture's `agents --json`; a fake git runner answers the
 // capture's git log. No real agent, no real git — the run is proven end to end offline.
 
-function installFake({ into, controlLog }) {
+function installFake({ into, controlLog, slug = 'single' }) {
   return () => {
     mkdirSync(into, { recursive: true });
-    const control = controlDirFor(into, 'single');
+    const control = controlDirFor(into, slug);
     mkdirSync(control, { recursive: true });
     writeFileSync(join(control, 'log'), controlLog);
   };
@@ -282,6 +299,9 @@ test('runScenario auto-touches HALT on the wall-clock timeout and reports timeou
       stallGrace: 1000, // never let a stall pre-empt the timeout in this test
     });
 
+    // The backstop half of T29: the timeout auto-touches HALT, but the fake coordinator never writes a
+    // halt-close, so the flag is present with no confirmation. The run must still END (via the wall-clock
+    // timeout) rather than poll forever waiting for a halt-close that never comes.
     assert.equal(result.reason, 'timeout');
     assert.equal(result.ok, false, 'a timed-out run never passes');
     assert.ok(existsSync(join(control, 'HALT')), 'the timeout auto-touched HALT (seatbelt §5.2)');
@@ -421,6 +441,74 @@ test('runScenario does not stall after the last worker closes while the coordina
 
     assert.equal(result.reason, 'promoted');
     assert.ok(n >= 4, 'the run kept polling past the last worker while the coordinator was still live');
+  } finally {
+    ws.cleanup();
+  }
+});
+
+// T29: the kill-switch capture race. The operator (or the timeout) creates the HALT flag BEFORE the
+// coordinator reacts, so the run must NOT seal on the flag's presence — it waits for the coordinator's
+// own `halt-close` line and a short grace, so the sealed flow.log actually contains halt-close. In the
+// T23 live run (2026-09-14) the old code sealed ~4s before halt-close, omitting it, and
+// killSwitchStoppedAll failed on a run whose kill switch had worked. Here the flag appears at poll 2 but
+// halt-close only at poll 4; with the old `haltPresent`-is-terminal logic the run would have sealed at
+// poll 2, before halt-close.
+test('runScenario seals a HALT run only after halt-close (not on the bare flag), and captures it', async () => {
+  const ws = workspace();
+  try {
+    const into = join(ws.dir, 'scratch-repo');
+    const projects = join(ws.dir, 'projects');
+    mkdirSync(projects, { recursive: true });
+    const control = controlDirFor(into, 'parallel');
+    const flowPath = join(control, 'log');
+    const haltPath = join(control, 'HALT');
+
+    const coord = { id: 'c', sessionId: 'sc', name: 'scratch-repo · parallel', cwd: into, status: 'busy', state: 'working', pid: 2 };
+    const worker = { id: 'w1', sessionId: 's1', name: 'scratch-repo · parallel · T01 · implement', cwd: into, status: 'busy', state: 'working', pid: 1 };
+    let n = 0;
+    const claudeRun = (args) => {
+      if (args[0] === '--bg') return { ok: true, stdout: 'coord\n' };
+      if (args.includes('--all')) return { ok: true, stdout: '[]' };
+      if (args[0] === 'agents') {
+        n += 1;
+        if (n === 2) {
+          // The operator touches HALT mid-run: the flag is present, but the coordinator has NOT yet
+          // written halt-close. The run must NOT seal here (the T23 bug).
+          writeFileSync(haltPath, 'operator HALT\n');
+        }
+        if (n >= 4) {
+          // The coordinator reacts and confirms the kill switch. Only now is the run terminal.
+          writeFileSync(
+            flowPath,
+            '2026-01-01T00:00:00Z open-feature pir/parallel\n2026-01-01T00:04:00Z halt-close T01\n2026-01-01T00:04:01Z halt-close T02\n',
+          );
+          return { ok: true, stdout: '[]' }; // workers torn down
+        }
+        return { ok: true, stdout: JSON.stringify([coord, worker]) };
+      }
+      return { ok: true, stdout: '' };
+    };
+
+    const result = await runScenario({
+      fixtureId: 'parallel',
+      scratchDir: into,
+      install: installFake({ into, controlLog: '2026-01-01T00:00:00Z open-feature pir/parallel\n', slug: 'parallel' }),
+      claudeRun,
+      gitRun: () => ({ ok: true, stdout: '' }),
+      platform: fakePlatform({ agents: [] }),
+      worktree: fakeWorktree,
+      projectsDir: projects,
+      pollMs: 1,
+      haltGrace: 2,
+      stallGrace: 1000, // never let a stall pre-empt this test
+      startupGrace: 1000,
+    });
+
+    assert.equal(result.reason, 'halted');
+    assert.ok(n >= 4, 'the run kept polling past the bare HALT flag until halt-close appeared');
+    // The captured flow.log contains halt-close — the whole point of T29 (the old seal omitted it).
+    const capturedFlow = readFileSync(join(result.bundleDir, 'flow.log'), 'utf8');
+    assert.ok(capturedFlow.includes('halt-close'), 'the sealed bundle captured the coordinator halt-close');
   } finally {
     ws.cleanup();
   }

@@ -82,7 +82,13 @@ prints the evidence that broke it underneath. Exit 0 means every fact passed.
 - **parallel** — this is the old T10 full drill. Multiple workers run within the ceiling. **To drill
   the kill switch,** mid-run create the HALT flag: `touch $S/plans/parallel/.parallel/control/HALT`.
   Every worker should stop, nothing should promote, and `main` should be untouched. Launch this one
-  with `--into <dir>` so you know `$S` ahead of time.
+  with `--into <dir>` so you know `$S` ahead of time. The runner seals a HALT run only AFTER the
+  coordinator writes its own `halt-close` line (plus a short grace), not on the bare HALT flag, so the
+  captured `flow.log` actually contains `halt-close` (T29; before, the seal beat it by ~4s and
+  `killSwitchStoppedAll` false-failed). The wall-clock timeout still ends a run whose coordinator never
+  confirms. `helloPerSpawn` here is scoped to the kill switch: a spawn whose queued hello had not been
+  sent when HALT fired is exempt from the transcript half (the `hello` flow line proves it was queued);
+  it stays strict for the promote-terminated fixtures.
 
 ## When it fails
 

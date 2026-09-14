@@ -154,6 +154,43 @@ test('helloPerSpawn fails when the coordinator never addressed the worker by nam
   assert.match(r.detail, /SendMessage to/);
 });
 
+// T29 (approach ii): in a HALT-terminated run, a spawn whose queued hello was not sent before the kill
+// switch fired is EXEMPT from the transcript half — the `hello` flow line proves it was queued, and the
+// kill switch legitimately interrupts the send (the T23 drill: coordinator HALTed before draining any
+// hello, transcript held zero SendMessage calls). The flow half stays strict.
+test('helloPerSpawn passes a HALT-terminated run whose queued hello was interrupted before it was sent', () => {
+  const b = bundle({
+    flow: [
+      fl('t1', 'spawn', 'T01'),
+      fl('t1', 'hello', 'T01'), // queued (flow half satisfied)
+      fl('t2', 'spawn', 'T02'),
+      fl('t2', 'hello', 'T02'), // queued
+      fl('t3', 'halt-close', 'T01'), // the kill switch fired
+      fl('t3', 'halt-close', 'T02'),
+    ],
+    timeline: [tick('t1', [cagent(), wagent('T01', 'busy'), wagent('T02', 'busy')])],
+    // The coordinator transcript exists but holds NO hello SendMessage — HALTed before it drained.
+    transcripts: [transcript(COORD, 'coordinator', null, [])],
+  });
+  const r = helloPerSpawn().check(b);
+  assert.equal(r.pass, true, r.detail);
+  assert.match(r.detail, /kill switch|exempt/);
+});
+
+// T29 (approach ii): the exemption is scoped to HALT-terminated runs. A promote-terminated run (no
+// halt-close) whose spawn has a queued hello flow line but no SendMessage STILL fails — a missing hello
+// there is a real bug (single, review-queue). This proves the scoping did not weaken those fixtures.
+test('helloPerSpawn still fails a promote-terminated run whose queued hello was never sent', () => {
+  const b = bundle({
+    flow: [fl('t1', 'spawn', 'T01'), fl('t1', 'hello', 'T01')], // queued but, below, never sent
+    timeline: [tick('t1', [cagent(), wagent('T01', 'busy')])],
+    transcripts: [transcript(COORD, 'coordinator', null, [])], // no hello SendMessage, and no halt-close
+  });
+  const r = helloPerSpawn().check(b);
+  assert.equal(r.pass, false, r.detail);
+  assert.match(r.detail, /SendMessage to/);
+});
+
 // --- noCloseBeforeIdle (the T13 Problem B gate) --------------------------------------------------
 
 test('noCloseBeforeIdle passes when an idle observation comes before the close', () => {

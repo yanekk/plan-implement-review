@@ -7,6 +7,12 @@
 // stopped every worker while promoting nothing. There is no oneMergeToMain here on purpose — the run
 // is HALTed before promotion, so main must stay untouched (killSwitchStoppedAll checks exactly that).
 //
+// helloPerSpawn is KILL-SWITCH SCOPED here (T29, PM approach ii): in a HALT-terminated run a spawn
+// whose queued hello had not been sent when the kill switch fired is exempt from the transcript half —
+// the `hello` flow line proves the queue, and the kill switch legitimately interrupts the send (the
+// down-channel is a queue-then-send, and this drill pulls the plug in that gap). The flow half stays
+// strict, and the fact stays fully strict for the promote-terminated fixtures (assertions.mjs).
+//
 // Ceiling: ceilingHeld now counts worker SLOTS by task, so a review handoff (implementer+reviewer of
 // one task) is one slot and a scenario asserts the bare true ceiling — ceilingHeld(2) here — with no
 // ceiling+1 fudge (assertions.mjs; the 2026-09-13 clean-merge false-FAIL is what drove the change).

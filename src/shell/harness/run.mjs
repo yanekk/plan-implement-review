@@ -83,13 +83,28 @@ export function touchHalt(controlDir, { fs = { mkdirSync, writeFileSync } } = {}
   return flag;
 }
 
-// runOutcome({ flowText, haltPresent }) → { over, reason }. Reads the two DURABLE terminal markers the
+// runOutcome({ flowText, haltPresent }) → { over, reason }. Reads the DURABLE terminal markers the
 // coordinator writes (DESIGN §4.1: the flow log is the coordinator's own record): a `promote` line is a
-// clean landing on main (§2.9), and the HALT flag (its own `halt-close` line follows) is the kill
-// switch. A stall — every worker parked or nothing left to do — leaves no terminal flow marker and the
-// coordinator session stays idle, so the wait loop detects that separately by counting quiet polls; this
-// predicate only reports the two hard terminals. Pure, so it is tested against canned flow text.
+// clean landing on main (§2.9), and a `halt-close` line is the coordinator confirming it processed the
+// kill switch (§2.4). A stall — every worker parked or nothing left to do — leaves no terminal flow
+// marker and the coordinator session stays idle, so the wait loop detects that separately by counting
+// quiet polls; this predicate only reports the hard terminals. Pure, so it is tested against canned
+// flow text.
+//
+// WHY THE HALT FLAG'S PRESENCE IS NOT ITSELF TERMINAL (T29, 2026-09-14). The HALT flag is created by
+// the operator — or the wall-clock timeout — BEFORE the coordinator reacts to it, so `haltPresent` goes
+// true immediately and, if it terminated the wait, the bundle sealed ~4s before the coordinator wrote
+// its own `halt-close` and finished closing its workers. In the T23 kill-switch run the captured
+// flow.log then stopped at the last `ceiling full` line and omitted both `halt-close` lines, so
+// killSwitchStoppedAll failed "no halt-close in the flow" on a run whose kill switch had worked. Unlike
+// a promote-terminated run, where the coordinator writes the terminal marker only once it is done, the
+// HALT flag precedes the coordinator's reaction — so a HALT run is over on the coordinator's own
+// confirmation (`halt-close`), never on the bare flag. The wall-clock timeout stays the hard backstop
+// for a coordinator that never confirms (waitForCompletion's isTimedOut → 'timeout', DESIGN §5.2).
+// `haltPresent` is kept in the signature so this deliberate non-terminality is visible at the call site
+// and the mutation test (flag present, no halt-close, still active) is direct; it no longer decides.
 export function runOutcome({ flowText = '', haltPresent = false } = {}) {
+  void haltPresent; // deliberately not terminal on its own — see the comment above (T29)
   const hasType = (type) =>
     flowText
       .split('\n')
@@ -98,7 +113,7 @@ export function runOutcome({ flowText = '', haltPresent = false } = {}) {
         return body === type || body.startsWith(`${type} `);
       });
   if (hasType('promote')) return { over: true, reason: 'promoted' };
-  if (haltPresent || hasType('halt-close')) return { over: true, reason: 'halted' };
+  if (hasType('halt-close')) return { over: true, reason: 'halted' };
   return { over: false, reason: 'active' };
 }
 
@@ -246,6 +261,7 @@ export async function runScenario({
   pollMs = 2000,
   stallGrace = 3,
   startupGrace = 45, // ~90s at the default cadence: ample for a real coordinator to boot and spawn
+  haltGrace = 3, // extra polls AFTER halt-close before sealing, so the flushed teardown lands (T29)
   timeoutMs,
   claudeRun = defaultRunClaude,
   gitRun = defaultRunGit,
@@ -331,6 +347,7 @@ export async function runScenario({
       pollMs,
       stallGrace,
       startupGrace,
+      haltGrace,
       timers,
       isTimedOut: () => timedOut,
       scriptedAnswer: fixture.scriptedAnswer ?? null,
@@ -390,7 +407,14 @@ export async function runScenario({
 // poll 1 would false-stall every live run before it began (T17 review). A genuine stall is then: the run
 // went active, and now neither a worker nor the coordinator is live and nothing promoted. The wall-clock
 // timeout is the ultimate backstop for a coordinator that stays alive but hangs without promoting.
-async function waitForCompletion({ cap, controlDir, repo, slug, pollMs, stallGrace, startupGrace, timers, isTimedOut, scriptedAnswer = null, log = () => {} }) {
+//
+// A HALT run is terminal on the coordinator's `halt-close`, NOT on the bare HALT flag (runOutcome, T29):
+// the flag precedes the coordinator's reaction, so sealing on its presence beat the coordinator to its
+// own evidence (T23 2026-09-14). Once halt-close is seen, a short haltGrace of extra ticks runs before
+// returning, so the final teardown tick and the coordinator's flushed transcript land in the bundle
+// before the seal. isTimedOut stays checked every poll, so a coordinator that never confirms still ends
+// on the wall-clock backstop (§5.2) rather than waiting for a halt-close that will never come.
+async function waitForCompletion({ cap, controlDir, repo, slug, pollMs, stallGrace, startupGrace, haltGrace = 3, timers, isTimedOut, scriptedAnswer = null, log = () => {} }) {
   const flagPath = join(controlDir, 'HALT');
   const flowPath = join(controlDir, 'log');
   const answersPath = join(controlDir, 'answers');
@@ -422,7 +446,20 @@ async function waitForCompletion({ cap, controlDir, repo, slug, pollMs, stallGra
     }
 
     const outcome = runOutcome({ flowText, haltPresent });
-    if (outcome.over) return outcome.reason;
+    if (outcome.over) {
+      // A HALT-terminated run (halt-close seen) waits a short grace of extra ticks before sealing, so
+      // the coordinator's final teardown tick and its flushed transcript are captured — the seal must
+      // not race the flush the way sealing on the bare HALT flag raced halt-close (T29). A promote is
+      // already written only once the coordinator is done, so it needs no grace.
+      if (outcome.reason === 'halted' && haltGrace > 0) {
+        log(`halt-close seen — holding ${haltGrace} grace poll(s) so the teardown flush is captured`);
+        for (let g = 0; g < haltGrace; g += 1) {
+          await delay(timers, pollMs);
+          cap.tick();
+        }
+      }
+      return outcome.reason;
+    }
     if (isTimedOut()) return 'timeout';
 
     // The run is going while a worker is live (busy or idle, e.g. parked on a decision) OR the coordinator
