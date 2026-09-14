@@ -13,20 +13,19 @@ cell also fixes the over-budget cell they walk past.**
 **Plan reviewed:** 2026-09-07 — 4 fixed, 3 decided with the user
 
 **Status:** Plan reviewed before build; re-scoped onto Claude Code's own primitives. `Runs` marks each
-task `auto` (a worker builds) or `you` (a person runs the live steps). 29 tasks, phases 0–6. Phases 0–5
-✅; `auto` hardening T24–T29 ✅. Phase 6 is the live fixtures (`you`, done at all-green). **T18–T22 PASS
-live.** T23 (parallel + kill-switch) RAN 2026-09-14 and FAILed on capture timing, not behaviour — the kill
-switch worked (2 workers at ceiling 2, T03 waited, HALT→all closed, main untouched, nothing promoted). **T29
-(`auto`) reviewed clean 2026-09-14** — it fixed the capture (seal on `halt-close`, kill-switch-scoped
-`hello`), so the **T23** re-run is now unblocked, the last live fixture (closes T10). Operator's guide:
-[TEST-HARNESS.md](TEST-HARNESS.md). Phases 5–6 postdate the 2026-09-07 review, so each is validated per task.
+task `auto` (a worker builds) or `you` (a person runs the live steps). 29 tasks, phases 0–6. **All 29 ✅ —
+the plan is fully built and every live fixture has PASSed live.** Phases 0–5 ✅; `auto` hardening T24–T29 ✅;
+Phase 6 live fixtures T18–T23 all PASS live. T23 (parallel + kill-switch) PASSed on its re-run 2026-09-14,
+closing T10 — the last unit of work. Operator's guide: [TEST-HARNESS.md](TEST-HARNESS.md). Phases 5–6
+postdate the 2026-09-07 review, so each was validated per task.
 **Last updated:** 2026-09-14
-**Next `pir-work` will:** RE-RUN T23 (parallel + kill-switch), the last live fixture — a `you` task needing
-real paid agents, launched attended, one at a time. `node src/shell/harness/run.mjs parallel --into <dir>`,
-then `touch <dir>/…/control/HALT` mid-run; three facts (`helloPerSpawn` as redefined, `ceilingHeld(2)`,
-`killSwitchStoppedAll`) must go green, then a reflection pass (DESIGN §4.1). T23 all-green closes T10.
-Open notes: candidate 3 (SendMessage padding) unfixed by PM choice; capture copies `role:foreign`
-transcripts (~4MB), not yet a task; the coordinator-name/hello rationale prune is still owed (FINDINGS 2026-09-13).
+**Next `pir-work` will:** find every task ✅ and stop — the plan is complete, nothing left to build or review.
+What remains is not `pir-work`: hardening candidates from the live reflections, which are the PM's to decide
+(they become new tasks if chosen). Open items surfaced to the PM: relay latency / the hello return-address
+(the hello proved non-load-bearing — workers run from the spawn prompt), the SendMessage 5-key contract,
+undelivered-message detection, mid-write SIGTERM vs graceful drain, and HALT-file integrity. Standing notes:
+capture copies `role:foreign` transcripts (~4MB), not yet a task; the coordinator-name/hello rationale prune
+is still owed (FINDINGS 2026-09-13, reinforced by T23).
 
 ## Tasks
 
@@ -64,32 +63,27 @@ live steps with a hands-on worker the coordinator spawns, folded back without re
 | T28 | Fix the merge-conflict path (Option 2): worker kept alive, decision delivered, worker resolves and merges clean | auto | T27 | ✅ | Reviewed clean; proven in loop.test on real git and live by T22. |
 | T22 | Live fixture: merge-conflict | you | T17, T26, T28 | ✅ | PASS live 2026-09-14: conflict surfaced, decision delivered to the live worker, resolved on its branch, decided `hello there` reached main, one promote. Proves T28 (Option 2) + the coordinator wake-up fix. Two earlier failures fixed en route: wrong-side ship (T28) and a buffering-Monitor hang (pir-coordinate). Bundle `pir-t17-merge-conflict-sQzl0k/…/2026-09-14T06-16-26-887Z`. |
 | T29 | Fix the kill-switch capture: seal on `halt-close`, make the `hello` flow line honest | auto | T28 | ✅ | Reviewed clean, no fix. Problem A: `runOutcome` stays active on the bare HALT flag, terminal only on `halt-close` plus a grace; timeout still forces the end if halt-close never comes (line 394 override + line 463). Problem B: `helloPerSpawn` flow-half strict, transcript-half exempt only under a halt-close, strict for promote fixtures. Probed the mutation and backstop tests are real; no clock/net added. 271 tests. |
-| T23 | Live fixture: parallel + kill-switch drill (absorbs T10) | you | T17, T26, T29 | ⬜ | Ran live 2026-09-14: FAIL on capture timing, not behaviour. Kill switch worked — 2 workers at ceiling 2 (T03 waited), HALT→all closed, main untouched, nothing promoted. Runner seals on the HALT flag, ~4s before `halt-close`, so the bundle omits it (FINDINGS). T29 fixes it; then re-run. Bundle `…/2026-09-14T06-31-20-985Z`. |
-| T10 | Full multi-worker run + kill-switch drill — absorbed by T23 | you | T23 | ⬜ | Absorbed by T23 (2026-09-12). Do not run standalone; closes ✅ when T23's parallel + kill-switch fact report is all-green. Partial drill 2026-09-10 proved spawn + first message. |
+| T23 | Live fixture: parallel + kill-switch drill (absorbs T10) | you | T17, T26, T29 | ✅ | PASS live 2026-09-14 (re-run): 3 facts green. Ceiling held 2/2 (T03 waited), HALT→both workers SIGTERMed ~5s later, nothing promoted, main untouched. T29 seal-on-`halt-close` held. Reflection logged; 5 hardening candidates → PM. Bundle `…/2026-09-14T07-45-27-010Z`. |
+| T10 | Full multi-worker run + kill-switch drill — absorbed by T23 | you | T23 | ✅ | Closed with T23's PASS (2026-09-14): the full multi-worker + kill-switch drill is green. |
 
 A Notes cell holds what was built or what the review found, the test count, and one line per
 deviation from the task doc.
 
 **A ✅ task's cell may be cut to one line** once the next task has been reviewed.
 
-**Review queue:** empty. Every `auto` task is ✅. What remains is the T23 re-run (a `you` live fixture).
+**Review queue:** empty. Every task is ✅ — nothing to build or review.
 
-## Next up: re-run T23 (the last live fixture)
+## Plan complete
 
-T29 is reviewed clean, so the two capture races that failed the 2026-09-14 T23 run are fixed (seal on
-`halt-close`; `hello` transcript-half kill-switch-scoped, PM approach ii). Re-run T23 (parallel +
-kill-switch) — the kill switch itself already worked live; this run must now also capture its evidence.
-T23 all-green closes T10, the last live fixture.
+All 29 tasks are ✅ and every live fixture (T18–T23) PASSed live. The final unit, T23 (parallel +
+kill-switch), PASSed on its re-run 2026-09-14 and closed T10. There is no next `pir-work`.
 
-The T23 re-run needs real paid agents, launched attended, one at a time, never unattended, and ends with a
-reflection pass on its bundle (DESIGN §4.1). Full procedure in [TEST-HARNESS.md](TEST-HARNESS.md):
+What is left is not build work — it is the PM's to decide. The live reflections surfaced hardening
+candidates (relay latency and the hello return-address; the SendMessage 5-key contract; undelivered-message
+detection; mid-write SIGTERM vs graceful worker drain; HALT-file integrity). Each would be its own task if
+chosen; none blocks the built framework, which works end to end. Standing gaps also noted: capture copies
+`role:foreign` transcripts (~4MB); the coordinator-name/hello return-socket rationale prune is still owed.
 
-```
-node src/shell/harness/run.mjs parallel --into <dir>   # T23, kill-switch drill, last (after T29)
-touch <dir>/plans/parallel/.parallel/control/HALT      # mid-run; done when its 3 facts pass
-```
-
-Each prints a fact-by-fact report and exits non-zero on any failed fact; record each run's verdict and
-bundle path in FINDINGS with the date. A failed fact is a real finding — diagnose from the bundle, fix,
-re-run. Housekeeping: a closed worker can linger as `stopped` (`claude rm <id>`); scratch repos sit in
-a temp dir.
+To re-run any fixture for a demo (needs real paid agents, launched attended), the procedure is in
+[TEST-HARNESS.md](TEST-HARNESS.md). Housekeeping: a closed worker can linger as `stopped`
+(`claude rm <id>`); scratch repos sit in a temp dir.
