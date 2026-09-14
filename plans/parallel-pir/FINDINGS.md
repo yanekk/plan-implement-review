@@ -12,6 +12,8 @@ Legend: 🐞 defect found · ✅ verified by hand with the user · 📌 worth kn
 
 | Date | | Finding |
 |---|---|---|
+| 2026-09-14 | 🐞 | T23 kill-switch FAILed live on a seal race, not behaviour: the runner seals the bundle on the HALT flag's presence (`haltPresent`), ~4s before the coordinator's `halt-close` line, so the captured flow omits it and `killSwitchStoppedAll` FAILs. Fix (own task): seal on `halt-close`, not `haltPresent`. Bundle `…/2026-09-14T06-31-20-985Z`. |
+| 2026-09-14 | 📌 | T23 live: kill-switch behaviour correct — 2 workers at ceiling 2 (T03 waited), HALT→both closed, coordinator torn down, main untouched, nothing promoted. `helloPerSpawn` also FAILed: coordinator (bin daemon) HALTed 11s in, before relaying any hello SendMessage; workers got only the spawn prompt. |
 | 2026-09-14 | ✅ | T22 merge-conflict PASS live: conflict surfaced, decision delivered to the live worker, resolved on its branch, decided `hello there` reached main, one promote. Proves both T28 (Option 2) and the coordinator wake-up fix. Coordinator used a re-reading `grep -cE` watch + outbox fallback, delivered 5s after surface. Bundle `pir-t17-merge-conflict-sQzl0k/…/2026-09-14T06-16-26-887Z`. |
 | 2026-09-14 | 🐞 | T22 first re-run HUNG: a `tail -f\|awk` Monitor block-buffers to the pipe and never fires, so the coordinator slept and never delivered the queued answer. Fixed pir-coordinate: re-reading watch + ≈60s outbox fallback (proven by the PASS above). |
 | 2026-09-13 | 🐞 | T22 FAILED live (pre-T28): `hi world` shipped to main, opposite the decision — the done+merged worker was closed and respawned, clobbering the win. Fixed by T28. Bundle `pir-t17-merge-conflict-GwSUrZ/…/2026-09-13T18-50-25-872Z`. |
