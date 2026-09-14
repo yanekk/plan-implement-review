@@ -15,17 +15,17 @@ cell also fixes the over-budget cell they walk past.**
 **Status:** Phases 0–7 are all ✅ (30 tasks, every live fixture PASSed). **Phase 8 (coverage) reopened the
 plan 2026-09-14** on a PM request: three tasks close the `you`/hands-on path — never exercised by a live
 fixture — and a planning gap (the method never taught the build→verify split). **T31 ✅** (split taught).
-**T32 🔍** (the `hands-on` fixture, built, awaiting review). **T33 is the ⬜ attended live run** gated on
-T31+T32. `Runs` marks each task `auto` (a worker builds) or `you` (a person runs the live steps). Phases
-5–8 postdate the 2026-09-07 review, so each is validated per task. Operator's guide: [TEST-HARNESS.md](TEST-HARNESS.md).
+**T32 ✅** (the `hands-on` fixture, reviewed clean). **T33 is the ⬜ attended live run**, now unblocked
+(T31+T32 both ✅). `Runs` marks each task `auto` (a worker builds) or `you` (a person runs the live steps).
+Phases 5–8 postdate the 2026-09-07 review, so each is validated per task. Operator's guide: [TEST-HARNESS.md](TEST-HARNESS.md).
 **Last updated:** 2026-09-14
-**Next `pir-work` will:** REVIEW T32 (🔍) — the `hands-on` fixture build (fixture + 3 facts + durable drive
-signal + roomier seatbelt); a fresh session checks it, then T33 is the attended live drive. Standing notes:
-the T31 finding (`pir-verify`/`pir-coordinate` prose still narrow; FINDINGS 2026-09-14) is a candidate
-follow-up; three T30-reflection hardening candidates still with the PM (reviewer run the test once + capture
-exit; workers avoid `cat -A`/GNU-only flags on macOS → `xxd`/`Read`; coordinator emit a final `promote
-confirmed`/teardown line); capture copies `role:foreign` transcripts (~4MB), not yet a task; candidate D
-(graceful mid-write drain) left out by the PM.
+**Next `pir-work` will:** dispatch **T33** — the last task, a `you`/attended live run of the `hands-on`
+fixture (not `auto`: it needs the PM to drive the scribe worker; `pir-work` will announce it needs a person
+and hand over the command). Standing notes: the T31 finding (`pir-verify`/`pir-coordinate` prose still
+narrow; FINDINGS 2026-09-14) is a candidate follow-up; three T30-reflection hardening candidates still with
+the PM (reviewer run the test once + capture exit; workers avoid `cat -A`/GNU-only flags on macOS →
+`xxd`/`Read`; coordinator emit a final `promote confirmed`/teardown line); capture copies `role:foreign`
+transcripts (~4MB), not yet a task; candidate D (graceful mid-write drain) left out by the PM.
 
 ## Tasks
 
@@ -66,8 +66,8 @@ live steps with a hands-on worker the coordinator spawns, folded back without re
 | T23 | Live fixture: parallel + kill-switch drill (absorbs T10) | you | T17, T26, T29 | ✅ | PASS live 2026-09-14 (re-run): 3 facts green. Ceiling held 2/2 (T03 waited), HALT→both workers SIGTERMed ~5s later, nothing promoted, main untouched. Bundle `…/2026-09-14T07-45-27-010Z`. |
 | T10 | Full multi-worker run + kill-switch drill — absorbed by T23 | you | T23 | ✅ | Closed with T23's PASS (2026-09-14): the full multi-worker + kill-switch drill is green. |
 | T30 | Retire the `hello`; notice failed down-sends; pin the send contract | auto | T23 | ✅ | Reviewed clean; live review-queue re-run PASS 2026-09-14 (`noHelloEver` green, one promote). Bundle `…/2026-09-14T09-07-45-091Z`. |
-| T31 | Teach the planner the build→verify split | auto | T30 | ✅ | Reviewed clean. Split taught in DESIGN §2.6/pir-plan/templates/goldens; fold mutation reddens 4/5 goldens (defended, not asserted). Finding: executor prose still carries the narrow `you` def (FINDINGS 2026-09-14, out of scope). |
-| T32 | The hands-on fixture: an agent builds a program, a person runs it | auto | T17, T30 | 🔍 | Built. New `hands-on` fixture (auto-build greet.mjs T01 + you-verify T02, "Needs a person" block) + facts `verifyWorkerSpawned`/`youNeverReviewed`/`scribeWroteFinding` (reuse `oneMergeToMain`/`ceilingHeld` 1). Durable drive signal = a `hands-on {task}` flow line (loop.mjs) the runner announces; 25-min seatbelt. 293 tests. End-to-end drive is T33. |
+| T31 | Teach the planner the build→verify split | auto | T30 | ✅ | Reviewed clean. Build→verify split taught in DESIGN §2.6/pir-plan/templates/goldens; fold mutation reddens 4/5 goldens. Executor-prose `you`-def gap logged (FINDINGS 2026-09-14, out of scope). |
+| T32 | The hands-on fixture: an agent builds a program, a person runs it | auto | T17, T30 | ✅ | Reviewed clean, no fix. New tests bite (verifyWorkerSpawned/youNeverReviewed/scribeWroteFinding, pass+fail). Probed the cross-module wiring: runner reads `seatbelts.timeoutMs` (25-min live), flow line ISO-prefixed so `parseHandsOnTask` fires, `merge T02` recorded so youNeverReviewed sees it, `finalContent` captured, scratch `node --test` finds greet.test.mjs. End-to-end is T33. 293 tests. |
 | T33 | Live: drive the hands-on fixture and find its bottlenecks | you | T31, T32 | ⬜ | Phase 8. Attended `hands-on` run: PM drives the scribe worker, three facts green + one promote, T02 never reviewed. Reflection captures hands-on bottlenecks → PM as candidate tasks. A `you` task itself; folds back without review. |
 
 A Notes cell holds what was built or what the review found, the test count, and one line per
@@ -75,21 +75,19 @@ deviation from the task doc.
 
 **A ✅ task's cell may be cut to one line** once the next task has been reviewed.
 
-**Review queue:** T32.
+**Review queue:** empty.
 
-## Next up: review T32, then the T33 attended run
+## Next up: the T33 attended run — the last task
 
 Phases 0–7 are done. Phase 8 (added 2026-09-14) closes the `you`/hands-on path and the build→verify planning
-gap. Current state:
-- **T31** — ✅ reviewed clean: the build→verify split taught in DESIGN §2.6, `pir-plan`, templates, goldens.
-- **T32** — 🔍 built, awaiting review: the `hands-on` fixture (auto-build greet.mjs + you-verify), facts
-  `verifyWorkerSpawned`/`youNeverReviewed`/`scribeWroteFinding` (+ reused `oneMergeToMain`/`ceilingHeld`), a
-  durable `hands-on {task}` flow-log drive signal the runner announces, and a 25-min seatbelt. 293 tests.
+gap. **T31 ✅** and **T32 ✅** are both reviewed clean; **T33 is the only task left** and its deps are met.
 
-Then **T33** (a `you` task) is the attended live drive: the PM runs `node src/shell/harness/run.mjs hands-on
---into <dir>` and drives the scribe worker; three facts green + one promote, and the reflection captures the
-hands-on bottlenecks. Full specs in [tasks/T32](tasks/T32-hands-on-fixture.md),
-[tasks/T33](tasks/T33-hands-on-fixture-live.md). Fixture re-run procedure is in [TEST-HARNESS.md](TEST-HARNESS.md).
+**T33** is a `you` task (attended, not auto): the PM runs `node src/shell/harness/run.mjs hands-on --into
+<dir>` and drives the scribe verify worker the run announces (`=== HANDS-ON: go drive worker … for T02 ===`)
+— present its "Needs a person" block, run `node greet.mjs`, report the line. Target: three facts green + one
+promote, T02 never reviewed; the reflection captures the hands-on bottlenecks as candidate tasks for the PM.
+Full specs in [tasks/T33](tasks/T33-hands-on-fixture-live.md); the drive procedure is in
+[TEST-HARNESS.md](TEST-HARNESS.md) under the `hands-on` note.
 
 To re-run any fixture (needs real paid agents, launched attended), the procedure is in
 [TEST-HARNESS.md](TEST-HARNESS.md). Housekeeping: a closed worker can linger as `stopped`
