@@ -14,19 +14,17 @@ cell also fixes the over-budget cell they walk past.**
 
 **Status:** Plan reviewed before build; re-scoped onto Claude Code's own primitives. `Runs` marks each
 task `auto` (a worker builds) or `you` (a person runs the live steps). The original 29 tasks (phases 0–6)
-are **all ✅ and every live fixture PASSed live** — T23 (parallel + kill-switch) PASSed on its re-run
-2026-09-14, closing T10. **Phase 7 reopened the plan for one hardening task, T30** (PM 2026-09-14, from the
-T23 reflection): retire the `hello`, notice failed down-sends, pin the send contract. T30 is the only open
-task. Operator's guide: [TEST-HARNESS.md](TEST-HARNESS.md). Phases 5–7 postdate the 2026-09-07 review, so
-each is validated per task.
+are **all ✅ and every live fixture PASSed live**; T23 closed T10 on its re-run 2026-09-14. **Phase 7's one
+hardening task, T30** (retire the `hello`, notice failed down-sends, pin the send contract) is built and
+**🔍 awaiting review**; its attended live re-run follows the review. Operator's guide:
+[TEST-HARNESS.md](TEST-HARNESS.md). Phases 5–7 postdate the 2026-09-07 review, so each is validated per task.
 **Last updated:** 2026-09-14
-**Next `pir-work` will:** IMPLEMENT T30 (⬜, deps T23 ✅) — the Phase 7 hardening task. Retire the spawn
-`hello` (remove `sendHello` + its two call sites in loop.mjs, the `hello` flow tag, both skills' hello
-sections, DESIGN §2.2); make the answer down-send surface a failure (`send-failed`) instead of dropping it;
-pin the coordinator's SendMessage to `{to, message}`. Retire `helloPerSpawn` → `noHelloEver` across the
-fixtures. `auto` build, fresh-reviewed; then closed by an attended review-queue live re-run. Standing notes:
-capture copies `role:foreign` transcripts (~4MB), not yet a task; candidate D (graceful mid-write drain) was
-left out by the PM.
+**Next `pir-work` will:** REVIEW T30 (🔍) — the Phase 7 hardening build. Check: the spawn hello is gone
+everywhere (loop.mjs, both skills, DESIGN §2.2, the `hello` flow tag); the answer down-send still delivers
+and a failed send records `send-failed` and keeps the answer queued (C); the two-field send contract is
+pinned in pir-coordinate (E); `helloPerSpawn`→`noHelloEver` across the fixtures. After review, the attended
+review-queue live re-run closes T30. Standing notes: capture copies `role:foreign` transcripts (~4MB), not
+yet a task; candidate D (graceful mid-write drain) left out by the PM.
 
 ## Tasks
 
@@ -66,28 +64,22 @@ live steps with a hands-on worker the coordinator spawns, folded back without re
 | T29 | Fix the kill-switch capture: seal on `halt-close`, make the `hello` flow line honest | auto | T28 | ✅ | Reviewed clean, no fix. Problem A: `runOutcome` stays active on the bare HALT flag, terminal only on `halt-close` plus a grace; timeout still forces the end if halt-close never comes (line 394 override + line 463). Problem B: `helloPerSpawn` flow-half strict, transcript-half exempt only under a halt-close, strict for promote fixtures. Probed the mutation and backstop tests are real; no clock/net added. 271 tests. |
 | T23 | Live fixture: parallel + kill-switch drill (absorbs T10) | you | T17, T26, T29 | ✅ | PASS live 2026-09-14 (re-run): 3 facts green. Ceiling held 2/2 (T03 waited), HALT→both workers SIGTERMed ~5s later, nothing promoted, main untouched. T29 seal-on-`halt-close` held. Reflection logged; 5 hardening candidates → PM. Bundle `…/2026-09-14T07-45-27-010Z`. |
 | T10 | Full multi-worker run + kill-switch drill — absorbed by T23 | you | T23 | ✅ | Closed with T23's PASS (2026-09-14): the full multi-worker + kill-switch drill is green. |
-| T30 | Retire the `hello`; notice failed down-sends; pin the send contract | auto | T23 | ⬜ | Phase 7 hardening (PM 2026-09-14, T23 reflection candidates A+C+E). Retire the spawn hello (proven non-load-bearing), surface a failed answer down-send (`send-failed`), pin SendMessage to `{to, message}`. Retires `helloPerSpawn` → `noHelloEver`. Closed by an attended review-queue live re-run. |
+| T30 | Retire the `hello`; notice failed down-sends; pin the send contract | auto | T23 | 🔍 | Built. Retired the spawn hello: no `sendHello`, no `hello` flow tag, loop makes no down-send. C: `answer()` logs `send-failed Txx` and keeps the answer queued on a failed send; `sendFailureSurfaced` fact added. E: two-field send contract pinned in pir-coordinate. `helloPerSpawn`→`noHelloEver` across fixtures. DESIGN/TEST-HARNESS/skills updated. 274 tests. Live re-run pending (attended, after review). |
 
 A Notes cell holds what was built or what the review found, the test count, and one line per
 deviation from the task doc.
 
 **A ✅ task's cell may be cut to one line** once the next task has been reviewed.
 
-**Review queue:** empty. One task is open to build: T30 (Phase 7 hardening).
+**Review queue:** T30 (🔍) — the Phase 7 hardening build, awaiting a fresh review.
 
-## Next up: T30 (Phase 7 hardening)
+## Next up: review T30, then its attended live re-run
 
-The original 29 tasks are all ✅ and every live fixture (T18–T23) PASSed live; T23 closed T10 on its re-run
-2026-09-14. The PM then reopened the plan for **one** hardening task from the T23 reflection.
-
-**T30 — retire the `hello`, notice failed down-sends, pin the send contract** (candidates A+C+E). The
-spawn hello is proven non-load-bearing (T23: both hellos failed to send, workers built from the spawn
-prompt anyway) and its T13 return-channel rationale was already gone after T25. T30 removes it, makes the
-remaining answer down-send surface a failure instead of dropping it, and pins SendMessage to `{to,
-message}`. Full spec in [tasks/T30](tasks/T30-retire-hello-harden-down-channel.md). Built `auto` and
-fresh-reviewed, then closed by an attended review-queue live re-run (`noHelloEver` green, still promotes,
-clean two-field sends). Candidate D (graceful mid-write drain) was left out by the PM; the other reflection
-gaps (`role:foreign` transcript bloat, HALT-file integrity) remain unscheduled notes.
+T30 is built (auto) and 🔍. A fresh session reviews the code against the task doc, then the attended live
+re-run closes it: `node src/shell/harness/run.mjs review-queue --into <dir>` — expect `noHelloEver` green,
+one promote, and the coordinator transcript showing clean two-field sends (E); record the verdict + bundle
+in FINDINGS. Full spec in [tasks/T30](tasks/T30-retire-hello-harden-down-channel.md). C (the `send-failed`
+path) is confirmed by its deterministic test, not the live run — a live send failure cannot be forced.
 
 To re-run any fixture (needs real paid agents, launched attended), the procedure is in
 [TEST-HARNESS.md](TEST-HARNESS.md). Housekeeping: a closed worker can linger as `stopped`

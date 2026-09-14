@@ -12,7 +12,7 @@
 //
 // The two directions are asymmetric (DESIGN §2.2, T25). DOWN (coordinator → worker) still rides
 // SendMessage: there is no `claude` subcommand that sends a cross-session message — it is an agent tool
-// (platform.mjs header, FINDINGS 2026-09-08) — so the bin cannot deliver a hello or an answer itself; it
+// (platform.mjs header, FINDINGS 2026-09-08) — so the bin cannot deliver an answer itself; it
 // writes the message to the outbox and the coordinator SKILL performs the SendMessage. UP (worker →
 // coordinator) no longer rides the agent at all: a worker WRITES its report into a shared reports
 // drop-dir the bin drains directly (createAgentBridge below), so a routine `implemented`/`done` handoff
@@ -184,14 +184,30 @@ export function startCoordinator({
     // question/decision, or a reviewer's worker that hit a conflict on integrate). t.role tracks it.
     const name = workerName({ repo, plan: slug, task, role: t?.role ?? 'implement' });
     const res = platform.send(name, { kind: 'answer', task, text: text ?? '' });
+    const ok = res?.ok !== false;
+
+    // C (T30): a failed down-send must not be silent. In the live bin platform.send only QUEUES the
+    // answer to the outbox (always ok there) and the coordinator SESSION performs the actual
+    // SendMessage; a genuinely unreachable worker is something only the coordinator can see (its
+    // SendMessage returns an error), so it re-reads the outbox to retry the delivery and, if the worker
+    // is truly gone, surfaces the failure to the user in plain English (skills/pir-coordinate). Against
+    // the fake platform, send reports { ok: false } when the worker is gone — the deterministic
+    // stand-in for that failure, since a live send failure cannot be forced on demand. Either way, when
+    // the send reports failure: record a `send-failed {task}` flow line (a new tag the harness keys on)
+    // and KEEP the parked decision so the answer stays queued for a retry — it is never dropped. Only a
+    // successful send clears the parked decision and logs `answer {task}`.
+    if (!ok) {
+      if (control) control.log(`send-failed ${task}`);
+      return { ok: false, worker: name };
+    }
     if (t && t.phase === AWAITING) t.decision = null;
-    // Log an `answer {task}` flow line, symmetric with the loop's `hello`. In the live bin the down-send
-    // is the coordinator's SendMessage, not the bin's: platform.send only QUEUES the answer to the outbox
-    // and the coordinator delivers it. The coordinator watches the flow log, so without this line a
-    // queued answer has nothing to wake it and it hand-polls the outbox to notice the drain (T21
-    // reflection, 2026-09-13). This line is its cue to deliver the new outbox message, like a hello.
+    // Log an `answer {task}` flow line. In the live bin the down-send is the coordinator's SendMessage,
+    // not the bin's: platform.send only QUEUES the answer to the outbox and the coordinator delivers it.
+    // The coordinator watches the flow log, so without this line a queued answer has nothing to wake it
+    // and it hand-polls the outbox to notice the drain (T21 reflection, 2026-09-13). This line is its
+    // cue to deliver the new outbox message.
     if (control) control.log(`answer ${task}`);
-    return { ok: res?.ok !== false, worker: name };
+    return { ok: true, worker: name };
   }
 
   // defer({ task }) → the user has decided not to answer this task's question for now (DESIGN §2.5,
@@ -261,9 +277,12 @@ export function startCoordinator({
 //                ~20–25% cost of the T19 run) is gone. A worker writes temp-then-rename so the bin never
 //                reads a half-written file; a file that still will not parse is dropped, not guessed,
 //                exactly as a malformed inbox line was.
-//   - outbox   — the DOWN-channel (coordinator → worker). platform.send writes each message here (the
-//                hello at spawn, the answer to a parked worker); the agent reads it and performs the
-//                actual SendMessage, because a Node process cannot send one. Append-only, owned by the bin.
+//   - outbox   — the DOWN-channel (coordinator → worker). platform.send writes each message here (since
+//                T30 the only down-send is the answer to a parked worker; the spawn hello is retired);
+//                the agent reads it and performs the actual SendMessage, because a Node process cannot
+//                send one. Append-only, owned by the bin. A send the agent cannot deliver (the worker is
+//                gone) is re-read from here and retried, and surfaced as `send-failed` if truly
+//                unreachable (C, T30) — the answer is never silently dropped.
 //   - answers  — the user's decisions (T12 Problem 2). The skill APPENDS one JSON line per decision,
 //                `{ "task": "T05", "text": "…" }` to answer or `{ "task": "T05", "defer": true }` to defer;
 //                the bin drains it each pass and routes it to answer()/defer(). Without it a surfaced
@@ -633,11 +652,11 @@ async function main(argv) {
   console.log(`reports: ${bridge.reportsDir}   outbox: ${bridge.outboxPath}   answers: ${bridge.answersPath}`);
   console.log(`surfaced:${bridge.surfacedPath}`);
   // The coordinator SESSION — the pir-coordinate skill agent that runs this bin — is launched under this
-  // name (DESIGN §2.8): it is the identity the user sees in `claude agents --json`, and the hello passes
-  // it to each worker. Under T25 a worker reports UP by dropping a file (no SendMessage to the
-  // coordinator), so nothing now depends on a worker resolving this name; the DOWN sends (hello, answers)
-  // and the operator's `claude agents` view still want it, so it is kept and printed. Launch with
-  // `claude -n "<name>"` (the same -n workers use).
+  // name (DESIGN §2.8): it is the identity the user sees in `claude agents --json` and the address its
+  // answer down-sends go out FROM. Under T25 a worker reports UP by dropping a file (no SendMessage to
+  // the coordinator) and under T30 there is no spawn hello, so nothing now depends on a worker resolving
+  // this name at spawn; the DOWN answer sends and the operator's `claude agents` view still want it, so
+  // it is kept and printed. Launch with `claude -n "<name>"` (the same -n workers use).
   console.log(`\nCoordinator name (launch the session under it with claude -n):  ${coordinatorName({ repo, plan: slug })}\n`);
 
   // Tear down every live worker of this run on any exit that is not a clean promotion or a kill-switch
@@ -680,8 +699,12 @@ async function main(argv) {
             coordinator.defer({ task: d.task, note: d.note });
             console.log(`  routed: deferred ${d.task} (⛔)`);
           } else {
-            coordinator.answer({ task: d.task, text: d.text ?? '' });
-            console.log(`  routed: answer → ${d.task}`);
+            const res = coordinator.answer({ task: d.task, text: d.text ?? '' });
+            // res.ok is false only when the queue itself refused (the live outbox always accepts, so a
+            // genuine live delivery failure is caught by the coordinator SESSION's SendMessage instead,
+            // C/T30). Either way, never print "routed" for a send that did not queue — answer() has
+            // already logged `send-failed {task}` for it.
+            console.log(res.ok ? `  routed: answer → ${d.task}` : `  send-failed → ${d.task} (queued answer not delivered)`);
           }
         } catch (e) {
           console.error(`  could not route a decision for ${d.task}: ${e.message}`);

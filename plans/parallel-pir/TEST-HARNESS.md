@@ -45,8 +45,9 @@ list them — that is expected, not a failure.
 Call the scratch dir the runner printed `$S`. For fixture `<fx>`:
 
 - **Flow log** (the coordinator's own action record): `$S/plans/<fx>/.parallel/control/log` —
-  one ISO-stamped line per action: `open-feature`, `spawn`, `hello`, `review`, `merge`, `close`,
-  `surface`, `promote`, `teardown`.
+  one ISO-stamped line per action: `open-feature`, `spawn`, `review`, `merge`, `answer`, `send-failed`,
+  `close`, `halt-close`, `surface`, `promote`, `teardown`. (No `hello` — the spawn ping was retired in
+  T30; `send-failed Txx` marks an answer down-send the coordinator could not deliver.)
 - **The capture bundle** (dated, self-contained): the runner prints its exact path; it lives under
   `$S/plans/<fx>/.parallel/control/capture/<ISO>/` and holds `flow.log`, `agents-timeline.jsonl`
   (the sampled status timeline), `agents-final.json`, `git-log.txt`, `manifest.json`, and
@@ -86,9 +87,9 @@ prints the evidence that broke it underneath. Exit 0 means every fact passed.
   coordinator writes its own `halt-close` line (plus a short grace), not on the bare HALT flag, so the
   captured `flow.log` actually contains `halt-close` (T29; before, the seal beat it by ~4s and
   `killSwitchStoppedAll` false-failed). The wall-clock timeout still ends a run whose coordinator never
-  confirms. `helloPerSpawn` here is scoped to the kill switch: a spawn whose queued hello had not been
-  sent when HALT fired is exempt from the transcript half (the `hello` flow line proves it was queued);
-  it stays strict for the promote-terminated fixtures.
+  confirms. Its `noHelloEver` fact (T30, replacing the old `helloPerSpawn`) asserts the flow log holds
+  zero `hello` lines over a run that did spawn workers — the spawn ping is retired, so there is nothing
+  for the kill switch to interrupt, which is one moving part fewer that could fail silently.
 
 ## When it fails
 

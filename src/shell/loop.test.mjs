@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { runPass, drain, createRunState } from './loop.mjs';
 import { createFakePlatform } from './fake/platform.mjs';
 import { createFakeWorktree } from './fake/worktree.mjs';
-import { workerName, coordinatorName } from '../core/naming.mjs';
+import { workerName } from '../core/naming.mjs';
 
 // The dry-run seatbelt is on in the tests (DESIGN §5.2): the loop is handed fakes and a scratch
 // repo, so nothing here reaches a real agent or the real project.
@@ -400,35 +400,26 @@ test('a closed session that VANISHES then reappears under the same id is still n
   assert.ok(maxLive <= 1, `never more than the ceiling of 1 counted live (saw ${maxLive}) — the resurrected id was suppressed`);
 });
 
-// --- T13 Problem A: a hello opens each freshly-spawned worker's channel ----------------------------
+// --- T30: no hello is sent at spawn (the spawn ping is retired) ------------------------------------
 
-test('every freshly spawned worker (implement and review) is sent a hello carrying the coordinator name (T13)', (t) => {
+test('no hello is sent or logged at any spawn — the loop makes no down-send of its own (T30)', (t) => {
   const { platform, base } = setup(t, [{ num: 'T01' }]);
   const state = createRunState();
-  const NAME = workerName({ repo: REPO, plan: SLUG, task: 'T01', role: 'implement' });
-  const COORD = coordinatorName({ repo: REPO, plan: SLUG });
 
-  runPass({ ...base, state }); // pass 1: spawn implementer → hello
-  let hellos = platform.sent.filter((s) => s.msg.kind === 'hello');
-  assert.equal(hellos.length, 1, 'the implement spawn was sent one hello');
-  assert.equal(hellos[0].to, NAME, 'the hello is addressed by the worker name');
-  assert.equal(hellos[0].msg.text, COORD, 'the hello carries the coordinator’s own addressable name');
+  runPass({ ...base, state }); // pass 1: spawn implementer — no hello
+  runPass({ ...base, state }); // pass 2: implemented → fresh reviewer spawns — still no hello
+  runPass({ ...base, state }); // pass 3: reviewer resolves, merge/close
 
-  runPass({ ...base, state }); // pass 2: implemented → fresh reviewer spawns → hello
-  hellos = platform.sent.filter((s) => s.msg.kind === 'hello');
-  assert.equal(hellos.length, 2, 'the fresh reviewer was sent a hello too');
-  const REVIEW_NAME = workerName({ repo: REPO, plan: SLUG, task: 'T01', role: 'review' });
-  assert.deepEqual(
-    hellos.map((h) => h.to).sort(),
-    [NAME, REVIEW_NAME].sort(),
-    'the two hellos address the implementer and reviewer by their distinct role-suffixed names (DESIGN §2.8)',
-  );
-  assert.ok(hellos.every((h) => h.msg.text === COORD), 'each hello carries the coordinator name');
+  const hellos = platform.sent.filter((s) => s.msg.kind === 'hello');
+  assert.equal(hellos.length, 0, 'no hello message was ever sent at spawn');
+  // The loop no longer calls platform.send at all; the only down-send is coordinate.answer()'s answer.
+  assert.equal(platform.sent.length, 0, 'the loop sent nothing — it opens no channel at spawn');
 });
 
-test('the loop still runs against a platform with no send half (no hello, no crash) (T13)', (t) => {
-  // The id-mismatch platform below has no `send` method. The hello must be optional, or the loop would
-  // throw on the first spawn. It simply spawns, is recognised by name, and drains — no hello sent.
+test('the loop still runs against a platform with no send half (no crash) (T13/T30)', (t) => {
+  // The id-mismatch platform below has no `send` method. The loop must not require one — it makes no
+  // down-send of its own since the hello was retired (T30) — so it simply spawns, is recognised by
+  // name, and drains without touching platform.send.
   const worktree = createFakeWorktree({ progress: progressDoc([{ num: 'T01' }]), slug: SLUG });
   t.after(() => worktree.cleanup());
   const NAME = workerName({ repo: REPO, plan: SLUG, task: 'T01', role: 'implement' });

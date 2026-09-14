@@ -12,9 +12,10 @@
 //
 // WHAT A BUNDLE CARRIES (T14 loadBundle + loadTranscripts here):
 //   flow      — [{ ts, type, rest }] parsed from the coordinator's control/log. Each line is
-//               `${ISO} ${type} ${task-or-branch}` (loop.mjs record()): the type is the action
-//               (open-feature, spawn, hello, await-idle, review, merge, close, halt-close, surface,
-//               promote, teardown, ceiling), the rest is a task id (T05), a branch, or free text.
+//               `${ISO} ${type} ${task-or-branch}` (loop.mjs record(), coordinate.mjs answer()): the
+//               type is the action (open-feature, spawn, await-idle, review, merge, answer, send-failed,
+//               close, halt-close, surface, promote, teardown, ceiling), the rest is a task id (T05), a
+//               branch, or free text. The spawn `hello` was retired in T30 (there is no spawn ping).
 //               The line does NOT carry a surface's KIND (conflict/question/decision) — loop.mjs
 //               writes only type+task — so the question/conflict facts key on the TASK id a scenario
 //               names, not on a kind read from the log (see questionRoundTrip / mergeConflictResolved).
@@ -28,9 +29,9 @@
 //   transcripts (added here) — [{ key, name, role, task, sessionId, events }] parsed from the copied
 //               .jsonl files. A worker→coordinator SendMessage is an assistant tool_use carrying
 //               { to, summary, message } (confirmed against the real T10 worker transcript 2026-09-10);
-//               the coordinator's hello and its answers ride the coordinator agent's own transcript the
-//               same way, because platform.send hands the string to the agent to actually send (T09
-//               bridge), not a child process.
+//               the coordinator's answers ride the coordinator agent's own transcript the same way,
+//               because platform.send hands the string to the agent to actually send (T09 bridge), not a
+//               child process.
 
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -178,100 +179,53 @@ function fact(id, label, check) {
   return { id, label, check };
 }
 
-// Every freshly-spawned session — an implementer/verify worker (flow `spawn`) and each fresh reviewer
-// (flow `review`) — must get exactly one hello, and the coordinator's transcript must show a
-// SendMessage addressed by that worker's name (DESIGN §2.2, T13 Problem A). The flow half matches each
-// spawn/review to a hello for the same task (order-tolerant); the transcript half checks the coordinator
-// actually addressed each spawned worker by name.
-export function helloPerSpawn() {
-  return fact('hello-per-spawn', 'A hello opens every worker channel at spawn', (bundle) => {
+// The run opened no spawn hello at all (DESIGN §2.2, T30). The spawn ping was retired — it was proven
+// non-load-bearing (T23: both hellos failed to send yet both workers built from the spawn prompt) and
+// its down-channel-open rationale was already gone after T25 — so a correct run's flow log contains ZERO
+// `hello` lines. This asserts the retirement POSITIVELY (rather than dropping the old check): a `hello`
+// line present is a regression. It also requires the run to have actually done something (a spawn or a
+// review), so the pass is never vacuous — "no hello" over an empty flow proves nothing.
+export function noHelloEver() {
+  return fact('no-hello-ever', 'The flow log contains no hello line (the spawn hello is retired)', (bundle) => {
     const evidence = [];
     const spawns = (bundle.flow ?? []).filter((e) => e.type === 'spawn' || e.type === 'review');
     const hellos = flowOf(bundle, 'hello');
-
-    // Flow half: one hello per spawn/review, matched by task. A queue so a task spawned then reviewed
-    // (two sessions, two hellos) matches correctly.
-    const pending = [];
-    for (const e of bundle.flow ?? []) {
-      if (e.type === 'spawn' || e.type === 'review') pending.push(e);
-      else if (e.type === 'hello') {
-        const i = pending.findIndex((p) => p.rest === e.rest);
-        if (i !== -1) pending.splice(i, 1);
-      }
-    }
-    const unmatchedSpawns = pending; // spawns/reviews with no hello
-    const extraHellos = hellos.length - (spawns.length - unmatchedSpawns.length);
-
     for (const e of spawns) evidence.push(flowLine(e));
-    for (const e of hellos) evidence.push(flowLine(e));
+    for (const h of hellos) evidence.push(flowLine(h));
 
     if (spawns.length === 0) {
-      return { pass: false, evidence, detail: 'no spawn/review actions in the flow — nothing to open a channel for' };
+      return { pass: false, evidence, detail: 'no spawn/review actions in the flow — nothing ran, so "no hello" is vacuous' };
     }
-    if (unmatchedSpawns.length > 0) {
+    if (hellos.length > 0) {
+      return { pass: false, evidence, detail: `${hellos.length} hello line(s) in the flow — the spawn hello was not retired` };
+    }
+    return { pass: true, evidence, detail: `${spawns.length} spawn/review action(s) and zero hello lines — the spawn hello is retired` };
+  });
+}
+
+// A failed answer down-send was recorded, not dropped (C, DESIGN §2.2, T30). When the coordinator's
+// answer to a parked worker cannot be delivered (SendMessage errors, or the worker is gone), the bin
+// records a `send-failed {task}` flow line so the failure is visible and capturable — the answer is
+// never silently lost. This fact keys on that tag: with a task it checks that task's send-failed line,
+// without one it checks any send-failed is present. It is exercised by the deterministic C test rather
+// than a live fixture, because a live send failure cannot be forced on demand (T30 done-when).
+export function sendFailureSurfaced(task) {
+  const id = task ? `send-failure-surfaced:${task}` : 'send-failure-surfaced';
+  const label = task ? `A failed down-send to ${task} was recorded` : 'A failed down-send was recorded';
+  return fact(id, label, (bundle) => {
+    const evidence = [];
+    const fails = flowOf(bundle, 'send-failed').filter((e) => !task || e.rest === task);
+    for (const f of fails) evidence.push(flowLine(f));
+    if (fails.length === 0) {
       return {
         pass: false,
         evidence,
-        detail: `spawn/review with no hello: ${unmatchedSpawns.map((e) => e.rest).join(', ')}`,
+        detail: task
+          ? `no send-failed line for ${task} — a failed down-send went unrecorded`
+          : 'no send-failed line in the flow — a failed down-send would have gone unrecorded',
       };
     }
-    if (extraHellos !== 0) {
-      return { pass: false, evidence, detail: `hello count (${hellos.length}) does not match spawn+review (${spawns.length})` };
-    }
-
-    // Transcript half: the coordinator addressed each spawned worker by its (role-suffixed) name. The
-    // implementer, reviewer and verify sessions of a task are now distinct names (DESIGN §2.8), so the
-    // ground truth for which sessions existed is the captured timeline, not a name rebuilt from the task
-    // alone. Every worker name the run produced must have received a hello SendMessage.
-    //
-    // KILL-SWITCH SCOPING (T29, PM decision 2026-09-14, approach ii). In live mode a spawn's hello is
-    // QUEUED to the coordinator session's outbox at spawn time — the `hello Txx` flow line (checked in
-    // the flow half above) records the queue — and the coordinator SESSION drains the outbox and issues
-    // the SendMessage a moment later. The kill switch legitimately fires in that gap: in the T23 drill
-    // the coordinator was HALTed 11s in, before it drained a single hello, so its transcript held zero
-    // SendMessage calls though every worker had a queued `hello` flow line. So in a HALT-terminated run
-    // (a halt-close in the flow) the transcript half is relaxed: a worker whose queued hello had not
-    // been sent when the kill switch fired is EXEMPT — the flow half still proves the hello was queued
-    // for it. The transcript half stays STRICT for promote-terminated fixtures (single, review-queue),
-    // where a missing or misaddressed hello is a real bug.
-    const haltTerminated = flowOf(bundle, 'halt-close').length > 0;
-    const coord = coordinatorTranscript(bundle);
-    if (!coord) {
-      if (haltTerminated) {
-        return { pass: true, evidence, detail: `${spawns.length} spawn/review each queued a hello; the kill switch fired before the coordinator sent them (transcript half exempt)` };
-      }
-      return { pass: false, evidence, detail: 'no coordinator transcript captured — cannot confirm the hello was addressed by name' };
-    }
-    const sent = sendMessagesOf(coord);
-    const workerNames = new Set();
-    for (const tick of bundle.timeline ?? [])
-      for (const a of tick.agents ?? []) if (a.isWorkerOf && a.name) workerNames.add(a.name);
-    if (workerNames.size === 0) {
-      if (haltTerminated) {
-        return { pass: true, evidence, detail: `${spawns.length} spawn/review each queued a hello; the kill switch fired before any worker channel opened (transcript half exempt)` };
-      }
-      return { pass: false, evidence, detail: 'no worker sessions in the timeline — cannot confirm the hello was addressed by name' };
-    }
-    const missing = [];
-    for (const wName of workerNames) {
-      const hit = sent.find((s) => sameName(s.to, wName));
-      if (hit) evidence.push(`coordinator → ${wName}: ${hit.summary}`);
-      else missing.push(wName);
-    }
-    if (missing.length > 0) {
-      if (haltTerminated) {
-        // The kill switch interrupted the queued send to these workers before their channel opened;
-        // exempt (approach ii). The flow half proved each had its hello queued.
-        evidence.push(`kill switch fired before the hello was sent to: ${missing.join(', ')} (queued, exempt)`);
-        return {
-          pass: true,
-          evidence,
-          detail: `${workerNames.size - missing.length} hello(s) sent by name; ${missing.length} queued but interrupted by the kill switch (exempt)`,
-        };
-      }
-      return { pass: false, evidence, detail: `coordinator transcript has no hello SendMessage to: ${missing.join(', ')}` };
-    }
-    return { pass: true, evidence, detail: `${spawns.length} spawn/review each got a hello addressed by name` };
+    return { pass: true, evidence, detail: `${fails.length} send-failed line(s) recorded${task ? ` for ${task}` : ''}` };
   });
 }
 

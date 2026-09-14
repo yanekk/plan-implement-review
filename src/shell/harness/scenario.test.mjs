@@ -5,10 +5,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { defineScenario, DEFAULT_SEATBELTS } from './scenario.mjs';
-import { helloPerSpawn, ceilingHeld } from './assertions.mjs';
+import { noHelloEver, ceilingHeld } from './assertions.mjs';
 
 test('defineScenario fills the seatbelt defaults and passes the facts through', () => {
-  const s = defineScenario({ id: 'single', fixture: 'fixtures/single', facts: [helloPerSpawn()] });
+  const s = defineScenario({ id: 'single', fixture: 'fixtures/single', facts: [noHelloEver()] });
   assert.equal(s.id, 'single');
   assert.equal(s.title, 'single', 'title defaults to the id');
   assert.deepEqual(s.seatbelts, DEFAULT_SEATBELTS);
@@ -24,8 +24,8 @@ test('defineScenario lets a scenario raise its ceiling while keeping the other s
 });
 
 test('defineScenario rejects a spec with no id, no fixture, or no facts', () => {
-  assert.throws(() => defineScenario({ fixture: 'f', facts: [helloPerSpawn()] }), /needs a string id/);
-  assert.throws(() => defineScenario({ id: 's', facts: [helloPerSpawn()] }), /needs a fixture/);
+  assert.throws(() => defineScenario({ fixture: 'f', facts: [noHelloEver()] }), /needs a string id/);
+  assert.throws(() => defineScenario({ id: 's', facts: [noHelloEver()] }), /needs a fixture/);
   assert.throws(() => defineScenario({ id: 's', fixture: 'f', facts: [] }), /at least one fact/);
 });
 

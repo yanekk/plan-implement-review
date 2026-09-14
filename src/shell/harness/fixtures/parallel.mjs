@@ -3,22 +3,23 @@
 // (DESIGN §4.1): the T17 runner touches HALT mid-run, and the scenario asserts every worker was ended
 // and nothing was promoted. Subsumes T10's full multi-worker + kill-switch drill.
 //
-// Facts (T15): a hello per spawn (per-worker naming), the ceiling held at 2, and the kill switch
-// stopped every worker while promoting nothing. There is no oneMergeToMain here on purpose — the run
-// is HALTed before promotion, so main must stay untouched (killSwitchStoppedAll checks exactly that).
+// Facts (T15): no spawn hello was sent at all (retired in T30, noHelloEver), the ceiling held at 2, and
+// the kill switch stopped every worker while promoting nothing. There is no oneMergeToMain here on
+// purpose — the run is HALTed before promotion, so main must stay untouched (killSwitchStoppedAll checks
+// exactly that).
 //
-// helloPerSpawn is KILL-SWITCH SCOPED here (T29, PM approach ii): in a HALT-terminated run a spawn
-// whose queued hello had not been sent when the kill switch fired is exempt from the transcript half —
-// the `hello` flow line proves the queue, and the kill switch legitimately interrupts the send (the
-// down-channel is a queue-then-send, and this drill pulls the plug in that gap). The flow half stays
-// strict, and the fact stays fully strict for the promote-terminated fixtures (assertions.mjs).
+// noHelloEver REPLACES the old helloPerSpawn here (T30). The T29 kill-switch scoping helloPerSpawn
+// needed — a HALT firing before a queued hello was sent — is now moot: with no hello at all, there is
+// nothing for the kill switch to interrupt, so the assertion is the plain "zero hello lines" over a run
+// that did spawn workers before HALT. That is what makes retiring the hello also retire a moving part
+// that could fail silently (T23: both hellos failed to send and it went unnoticed).
 //
 // Ceiling: ceilingHeld now counts worker SLOTS by task, so a review handoff (implementer+reviewer of
 // one task) is one slot and a scenario asserts the bare true ceiling — ceilingHeld(2) here — with no
 // ceiling+1 fudge (assertions.mjs; the 2026-09-13 clean-merge false-FAIL is what drove the change).
 
 import { defineScenario } from '../scenario.mjs';
-import { helloPerSpawn, ceilingHeld, killSwitchStoppedAll } from '../assertions.mjs';
+import { noHelloEver, ceilingHeld, killSwitchStoppedAll } from '../assertions.mjs';
 import { progressDoc, taskDoc } from './common.mjs';
 
 const slug = 'parallel';
@@ -55,7 +56,7 @@ const scenario = defineScenario({
   title: 'N parallel tasks — concurrency, ceiling, kill switch',
   fixture: slug,
   seatbelts: { ceiling: 2 },
-  facts: [helloPerSpawn(), ceilingHeld(2), killSwitchStoppedAll()],
+  facts: [noHelloEver(), ceilingHeld(2), killSwitchStoppedAll()],
 });
 
 export default {

@@ -122,13 +122,22 @@ already there.
   loop still reads reports only at a natural break in its pass, never by interrupt. Changed with the PM
   2026-09-13 (T25), replacing the SendMessage up-channel; the measured before/after is recorded in
   FINDINGS.
-- **A hello opens the DOWN channel at spawn.** The moment the coordinator spawns a worker — an
-  implementer, and the fresh reviewer that replaces it — it sends that worker a one-line
-  `[pir:v1 kind=hello task=Txx]` message, before it relies on being able to deliver an answer down. This
-  confirms the coordinator→worker channel is open. The worker ignores a hello (it asks nothing) and does
-  not reply — its own reports go up by file now (T25), so the earlier "the reply rides the return socket"
-  rationale (T13) no longer applies; the hello is now purely a down-channel open-check. Decided with the
-  user 2026-09-10 (T13); its rationale narrowed by T25.
+- **The DOWN channel is opened lazily by the first real answer — there is no spawn hello (T30).** The
+  coordinator sends a worker nothing at spawn; the worker builds from its opening prompt. The only
+  down-send that ever happens is the answer to a worker that has parked on a question, decision or merge
+  conflict, addressed by the worker's name. The spawn `hello` that once opened the channel eagerly was
+  retired: it was a start-up ping nothing depended on (the T23 drill proved both hellos failed to send
+  yet both workers still built the right thing from their spawn prompt), and its T13 "the reply rides
+  the return channel" rationale was already gone once workers began reporting UP by file (T25). A moving
+  part that could fail silently is removed; a genuinely undeliverable answer is now surfaced, not
+  dropped (see the send-failure handling below). Decided with the user 2026-09-14 (T30); this narrows
+  the T13 decision the §2.8 comms-protocol note records.
+- **A failed answer down-send is surfaced, never silent (T30).** When the coordinator cannot deliver an
+  answer to a parked worker — its `SendMessage` errors, or the worker is gone — it does not drop the
+  message. It re-reads the outbox and retries the delivery, and if the worker is genuinely unreachable
+  it tells the user in plain English and the bin records a `send-failed Txx` flow line so the failure is
+  visible and capturable. The answer is the one message that genuinely matters — the user's decision
+  reaching a blocked worker — so its loss must never pass unnoticed.
 
 ### 2.3 The worker lifecycle: create, drive, close
 
@@ -348,10 +357,10 @@ on its own: the T10 drill's coordinator was named `pir-t10 / pir-coordinate scra
 shape that even contains `/`, which `SendMessage` rejects (FINDINGS 2026-09-07). So the coordinator
 session is **launched under the deterministic name** with the same `-n` flag workers use —
 `claude -n "{repo} · {plan}"`, then `/pir-coordinate {slug}` inside it (skills/pir-coordinate). The bin
-computes the name with `coordinatorName` and prints it, and each worker also gets it in its hello (§2.2)
-so the return channel is open regardless. Whether a correctly-named coordinator receives a worker's
-by-name message is the live half T13 proves; if a coordinator session genuinely cannot be made to carry
-the name, that is a decision for the user, not a rule to invent around.
+computes the name with `coordinatorName` and prints it; the name is the address the coordinator sends
+its answers FROM (there is no spawn hello carrying it any more, T30, and workers report UP by file not
+by message, T25, so nothing depends on a worker resolving it at spawn). If a coordinator session
+genuinely cannot be made to carry the name, that is a decision for the user, not a rule to invent around.
 
 The name identifies the repo, plan, task **and role**: the implement session and the fresh review
 session for one task are two distinct names (`… · T{nn} · implement` and `… · T{nn} · review`), so
@@ -599,9 +608,10 @@ way the stopped drill's T01 greeting-wording question arose on its own).
 **The capture layer — three durable sources, all confirmed on this machine 2026-09-10.**
 
 - **Execution flow** is already written by the coordinator: `plans/{slug}/.parallel/control/log`,
-  one ISO-timestamped line per `record()` action (`open-feature`, `spawn`, `hello`, `await-idle`,
-  `review`, `merge`, `close`, `surface`, `promote`, `teardown`, `ceiling full`). Nothing new is
-  built to get it; the harness reads it.
+  one ISO-timestamped line per `record()` action (`open-feature`, `spawn`, `await-idle`, `review`,
+  `merge`, `answer`, `send-failed`, `close`, `halt-close`, `surface`, `promote`, `teardown`,
+  `ceiling full`). Nothing new is built to get it; the harness reads it. (There is no `hello` tag any
+  more — the spawn hello was retired in T30.)
 - **The agent-status timeline** must be **sampled during the run** — this is the one thing that is
   not otherwise recorded. `claude agents --json` reports each session's `id, name, status`
   (`idle`/`busy`), `state` (`working`/`done`/`blocked`/`stopped`), `pid`, `sessionId`, `startedAt`,
@@ -615,7 +625,7 @@ way the stopped drill's T01 greeting-wording question arose on its own).
   `sessionId` from `claude agents --json` is the exact filename, so the agent-status timeline maps
   each session to its transcript. Each line is a JSON event; a `SendMessage` appears as an assistant
   `tool_use` carrying `{to, summary, message}` and an inbound message as a `user`-role entry, so the
-  by-name addressing and the hello are readable verbatim. (`claude logs <id>` prints only recent
+  by-name addressing and the coordinator's answers are readable verbatim. (`claude logs <id>` prints only recent
   terminal output, not the whole conversation — the JSONL is the record.) This resolves the
   FINDINGS 2026-09-09 worry that a killed worker's transcript could not be inspected: the prior
   drill's worker transcript was read back in full 2026-09-10, and it already shows the worker
@@ -626,14 +636,15 @@ session's transcript, and the scratch repo's `git log`. It is self-contained and
 can be re-examined long after its workers and worktrees are gone.
 
 **The assertion layer.** A scenario declares the facts it must show as pure predicates over a
-bundle, and the harness reports each pass/fail against the captured data. Examples: "exactly one
-`hello` per spawn, addressed by the worker name"; "no `close` of a finished worker precedes an
+bundle, and the harness reports each pass/fail against the captured data. Examples: "no `hello` line
+in the flow at all (the spawn ping is retired)"; "no `close` of a finished worker precedes an
 `idle` observation of it in the timeline"; "a `question` was surfaced and the answer reached the
-worker before it resumed"; "`main` gained exactly one commit — the promotion — and no task branch
-merged to it directly". The predicates are unit-testable against canned bundles with no live agent;
-only running the scenario needs real workers.
+worker before it resumed"; "a failed answer down-send is recorded as `send-failed`, not dropped";
+"`main` gained exactly one commit — the promotion — and no task branch merged to it directly". The
+predicates are unit-testable against canned bundles with no live agent; only running the scenario needs
+real workers.
 
-**The scenarios (fixtures).** Single task (spawn → hello → implement → fresh review → merge →
+**The scenarios (fixtures).** Single task (spawn → implement → fresh review → merge →
 promote → idle-gated close); N parallel tasks (concurrency, the ceiling, per-worker naming);
 implement→review-queue handoff (a task reaches `🔍` and a fresh reviewer takes over while others
 build); a clean merge (two tasks on different files, serialized into the feature branch); a merge
@@ -854,20 +865,25 @@ minimum, kill switch wired.
   and its dependents wait, so a critical-path spike like T00 (which gates T07/T08) pauses the run at
   human speed rather than stalling it.
 
-- **The comms protocol: a hello at spawn, a coordinator launched under its own name, and an
-  idle-gated close.** Decided with the user 2026-09-10 (T13), to prove the two worker↔coordinator
-  behaviours the earlier work could only build and defer, before the full T10 drill. (1) The
-  coordinator sends every freshly-spawned worker a one-line hello carrying its name (§2.2), so the
-  return channel is open before anything relies on inbound — belt-and-suspenders over by-name
-  addressing, chosen because a worker's reply rides the sender's socket reliably (FINDINGS
-  2026-09-07). (2) The coordinator session is launched under `{repo} · {plan}` with `claude -n`
-  (§2.8), because nothing otherwise makes the skill agent carry the addressable name and the
-  harness-given name may be `SendMessage`-invalid (the drill's contained `/`). (3) A close that
-  follows a worker finishing waits for the agent list to show it idle before SIGTERM (§2.3), so a
-  finished worker is never cut off mid-turn — the session-idle analogue of the mid-commit close
-  FINDINGS 2026-09-09 caught; a dead worker and the kill switch still close at once. The automated
-  halves are proven against the fakes; the by-name delivery and the idle timing are the live half
-  T13 hands to the user, de-risking T10.
+- **The comms protocol: a lazily-opened down-channel, a coordinator launched under its own name, and an
+  idle-gated close.** Decided with the user 2026-09-10 (T13), narrowed by T25 (up-channel by file) and
+  T30 (the hello retired), to settle the two worker↔coordinator behaviours the earlier work could only
+  build and defer. (1) **The down-channel (coordinator → worker) is opened lazily by the first real
+  answer, addressed by name — there is no spawn hello (§2.2).** T13 opened it eagerly with a hello at
+  spawn as belt-and-suspenders over by-name addressing; T30 retired that. The hello was proven
+  non-load-bearing (T23: both hellos failed to send yet both workers built the right thing from their
+  spawn prompt), and its "the reply rides the return channel" rationale was already gone once workers
+  reported UP by file (T25). So the only down-send is the answer to a parked worker, and a failed
+  down-send is surfaced to the user (with a `send-failed` flow line), never silently dropped — the
+  message that carries the user's decision must never be lost unnoticed. (2) The coordinator session is
+  launched under `{repo} · {plan}` with `claude -n` (§2.8), because nothing otherwise makes the skill
+  agent carry the addressable name it sends answers from, and the harness-given name may be
+  `SendMessage`-invalid (the drill's contained `/`). (3) A close that follows a worker finishing waits
+  for the agent list to show it idle before SIGTERM (§2.3), so a finished worker is never cut off
+  mid-turn — the session-idle analogue of the mid-commit close FINDINGS 2026-09-09 caught; a dead worker
+  and the kill switch still close at once. The automated halves are proven against the fakes; the
+  by-name delivery, the idle timing, and the no-hello retirement are the live halves the user confirms
+  (T13/T18–T23, and the T30 review-queue re-run).
 
 - **A reusable, data-driven live-scenario test harness, over real workers (Phase 5).** Decided with
   the user 2026-09-10, in place of the one-off manual drills. The design is §4.1. Two choices were

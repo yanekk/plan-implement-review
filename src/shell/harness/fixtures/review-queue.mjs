@@ -4,12 +4,12 @@
 // build at once; T03 depends on T01, so it only becomes ready once T01 is reviewed and merged — the
 // dependency edge is what makes the review handoff sit on the critical path rather than being incidental.
 //
-// Facts (T15): a hello opened every spawn AND every fresh reviewer's channel (helloPerSpawn counts
-// spawn+review); no finished worker was closed before it went idle (the implementer's idle-gated close,
-// DESIGN §2.3); and main gained exactly one commit — the plan drains to promotion.
+// Facts (T15): no spawn hello was sent at all (retired in T30, noHelloEver); no finished worker was
+// closed before it went idle (the implementer's idle-gated close, DESIGN §2.3); and main gained exactly
+// one commit — the plan drains to promotion. This is the fixture the T30 live re-run confirms.
 
 import { defineScenario } from '../scenario.mjs';
-import { helloPerSpawn, noCloseBeforeIdle, oneMergeToMain } from '../assertions.mjs';
+import { noHelloEver, noCloseBeforeIdle, oneMergeToMain } from '../assertions.mjs';
 import { progressDoc, taskDoc } from './common.mjs';
 
 const slug = 'review-queue';
@@ -45,7 +45,7 @@ const scenario = defineScenario({
   title: 'Review queue — the implement→review handoff',
   fixture: slug,
   seatbelts: { ceiling: 2 },
-  facts: [helloPerSpawn(), noCloseBeforeIdle(), oneMergeToMain()],
+  facts: [noHelloEver(), noCloseBeforeIdle(), oneMergeToMain()],
 });
 
 export default {

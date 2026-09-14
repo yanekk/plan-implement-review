@@ -15,8 +15,8 @@ program** — `PARALLEL_LIVE=1 node src/shell/coordinate.mjs {slug}` — and it 
 timer: spawning workers, handing finished work to fresh reviewers, merging one task at a time,
 promoting at the end, and closing every worker on any exit so none is orphaned. Your job is the things
 a Node process cannot do: **talk to the user in plain English**, **deliver the bin's outgoing messages
-down to workers** (a hello, an answer — SendMessage is your tool, not a Node call), and **hand the
-user's decisions back down** to the bin. You do **not** relay worker messages *up* any more — workers
+down to workers** (an answer to a parked worker — SendMessage is your tool, not a Node call), and
+**hand the user's decisions back down** to the bin. You do **not** relay worker messages *up* any more — workers
 now drop their reports into a folder the bin reads directly, with no turn from you (DESIGN §2.2, T25).
 You do not drive `pass()` yourself turn by turn — the bin does; you feed and read its control files (below).
 
@@ -62,9 +62,12 @@ run it in the background, so its printed progress and `DECISION NEEDED` lines ca
 not appear until it exits — never drive off the banner. Read the flow log
 `plans/{slug}/.parallel/control/log` every turn instead. It carries one line per action, written the
 moment it happens — an ISO timestamp, then the action tag and its task or branch, so match on the tag,
-not the first token. The tags: `open-feature`, `spawn`, `hello`, `answer` (the bin has queued the user's
-answer for `Txx` to the outbox — deliver it, step 3), `review`, `await-idle`, `merge`, `surface`, `close`,
-`halt-close`, `promote`, `teardown`, and `ceiling full`. **`await-idle` is internal bin bookkeeping**, not
+not the first token. The tags: `open-feature`, `spawn`, `answer` (the bin has queued the user's
+answer for `Txx` to the outbox — deliver it, step 3), `send-failed` (a down-send to `Txx` could not be
+delivered — step 3), `review`, `await-idle`, `merge`, `surface`, `close`, `halt-close`, `promote`,
+`teardown`, and `ceiling full`. There is **no `hello`** — the spawn ping was retired (T30); a worker
+builds from its spawn prompt, and the first message you ever send it is its answer, only if it parks.
+**`await-idle` is internal bin bookkeeping**, not
 an event for you: the bin is holding a hand-off until a worker finishes its current turn (never a stall).
 Do not react to it, narrate it, or spend a turn on it — if the only new flow lines since your last read
 are `await-idle`, keep waiting silently. A new `surface Txx` line is your cue that a decision for `Txx` is waiting; you do not need
@@ -82,7 +85,7 @@ files for two different reasons; do not conflate them:
 
 Re-read the flow log on a short cadence (≈15s); prefer the Monitor tool over a hand-rolled `sleep` of
 guessed length. **Arm the Monitor to wake on a MILESTONE line appearing** — a new `spawn`, `answer`,
-`review`, `merge`, `surface`, `close`, `halt-close` or `promote` line — **not on the log merely growing**,
+`send-failed`, `review`, `merge`, `surface`, `close`, `halt-close` or `promote` line — **not on the log merely growing**,
 so an `await-idle` line (internal bookkeeping, above) never wakes you into a no-op turn. On the
 human-decision live run an until-condition on bare growth woke the coordinator four times just to say
 "still holding" while the bin waited out two hand-offs.
@@ -152,13 +155,22 @@ Start the bin once and leave it running. Then, while it runs, on every turn:
    `plans/{slug}/.parallel/control/answers`: `{"task":"T05","text":"<the decision, in the worker's
    terms>"}`. The bin drains it on its next pass, queues the down-message to the outbox, and writes an
    `answer T05` line to the flow log. **Wait for that `answer T05` line, then deliver the new outbox
-   message like a hello** (below). The Monitor's `answer` event is your fast cue and the ≈60s fallback
+   message** (below). The Monitor's `answer` event is your fast cue and the ≈60s fallback
    re-read of the outbox is the backstop if it does not fire — do not tight-poll on a few-second timer to
    notice the drain (on the human-decision live run the coordinator hand-polled every few seconds because
    no event signalled it), but never leave a queued `answer Txx` undelivered because the one Monitor went
    silent (the merge-conflict run hung exactly there — T22, 2026-09-14). If the
    user defers a decision indefinitely, append `{"task":"T05","defer":true}` instead — the bin marks that
    task blocked (⛔) so its state survives a restart and its dependents wait, and frees the slot.
+
+   **A failed down-send is never silent (C, T30).** The answer to a parked worker is the one message
+   that genuinely matters — your decision reaching a blocked worker — so if your `SendMessage` for a
+   queued answer returns an error, or the worker is no longer in `claude agents --json`, do **not** drop
+   it. Re-read the outbox and try the delivery again (the same ≈60s fallback above; the outbox line stays
+   queued, so a retry costs nothing). If the worker is genuinely gone after a retry, tell the user in
+   plain English — "I couldn't reach worker T05 to deliver your decision; it looks like that worker has
+   stopped" — rather than moving on as though it landed. The bin records a `send-failed Txx` flow line
+   for a failure it can see; a failure only your `SendMessage` can see is yours to surface this way.
 4. **Point the user at hands-on (`you`) tasks.** A `you` task (a spike or a hand-verification drill) is
    spawned as a hands-on worker, not an autonomous builder. The bin prints which worker to go and
    drive; relay its name to the user. The user runs the live steps with that worker; when it reports
@@ -206,33 +218,38 @@ The two directions are asymmetric (DESIGN §2.2, T25):
   that used to cost a turn per message, and it is gone. All you see of an up-message is the flow log's
   `surface Txx` line and the plain-English text the bin left on the **surfaced** feed (loop step 2).
 - **DOWN (you → worker) IS your job**, because a Node process cannot send a cross-session message (it is
-  an agent tool). The bin writes each outgoing message — a hello at spawn, an answer to a parked worker —
-  to the **outbox** file `plans/{slug}/.parallel/control/outbox`. The outbox is **append-only and owned
-  by the bin — never truncate or edit it.** Track how many lines you have already delivered (a cursor)
-  and perform the actual SendMessage only for the new ones, each addressed to that worker by its name.
+  an agent tool). The bin writes each outgoing message — since T30 the only one is an answer to a parked
+  worker — to the **outbox** file `plans/{slug}/.parallel/control/outbox`. The outbox is **append-only
+  and owned by the bin — never truncate or edit it.** Track how many lines you have already delivered (a
+  cursor) and perform the actual SendMessage only for the new ones, each addressed to that worker by its
+  name. There is no spawn hello to deliver any more (T30) — a spawned worker builds straight from its
+  prompt, so the outbox stays empty until a worker parks and the user answers it.
 - **The user decides.** You write to the **answers** file (loop step 3); the bin routes it down.
 
-The send is exactly `SendMessage({to: "<name>", message: "<text>"})` — **those two fields and no
-others.** Do not add `recipient`, `content`, `type` or `summary` — every live agent so far has
-reflexively padded the call with exactly these. The tool takes `to` and `message` only; it silently
-drops the rest, so the extras buy nothing and only give a false sense of structure. Two fields.
+### The send contract: exactly two fields (E, T30)
+
+A down-send is **exactly** this, and nothing more:
+
+```
+SendMessage({ to: "<worker name>", message: "<the text>" })
+```
+
+**Two fields — `to` and `message` — and no others. Do not add `recipient`, `content`, `type`, `summary`
+or any other key.** Every live coordinator so far has reflexively padded the call with exactly those
+extra keys; the tool reads only `to` and `message` and silently drops the rest, so the extras buy
+nothing and only give a false sense of structure. When you send an answer, send those two fields, then
+stop. Do not add fields.
 
 This bridge is why the live drive is verified with the user (T10): the message wiring only exists once
 real sessions are talking. Against the fakes in the tests, the platform is its own bus and no bridge
 is needed.
 
 **Launch the coordinator session under the name `{repo} · {plan}` (DESIGN §2.8, §2.2).** It is the
-identity the user sees in `claude agents --json`, and the hello passes it to each worker. Start it as
-`claude -n "{repo} · {plan}"` and then run `/pir-coordinate {slug}` inside it. (Under T25 a worker no
-longer messages you *up* — it drops a report file the bin reads — so nothing now depends on a worker
-resolving your name; keep launching under it anyway until a live run confirms the down-send needs no
-named sender. Fuller cleanup of the naming rationale is T26's.)
-
-**The hello (T13):** the bin's loop sends every freshly-spawned worker (an implementer, and the fresh
-reviewer) a one-line `[pir:v1 kind=hello task=Txx]` message the moment it spawns; it confirms the
-**down** channel to that worker is open before you rely on it to deliver an answer. When you see a hello
-in the outbox, perform the SendMessage like any other outbound message. The worker ignores it and does
-not reply (its own reports go up by file now, not by message).
+identity the user sees in `claude agents --json` and the address your answer down-sends go out from.
+Start it as `claude -n "{repo} · {plan}"` and then run `/pir-coordinate {slug}` inside it. (A worker no
+longer messages you *up* — it drops a report file the bin reads — and since T30 there is no spawn hello,
+so nothing depends on a worker resolving your name at spawn; the answer down-sends and the operator's
+`claude agents` view still want it, so keep launching under it.)
 
 ## Naming and finding your workers (DESIGN §2.8)
 
@@ -250,9 +267,9 @@ implementer is `… · T{nn} · implement`, its reviewer `… · T{nn} · review
 its full name. There is no ambiguity and no `[ref]` to disambiguate: the role is in the name. (This
 replaced an older scheme where both shared `… · T{nn}` and you picked the newest session by age — which
 produced a real "2 agents named …" error when a just-closed implementer still lingered in the list
-beside its reviewer.) You will still see **one hello per spawn**: one addressed to `… · implement`, then
-a second to `… · review` for the same task. Those are two distinct sessions, not a duplicate — deliver
-each to the session the bin just spawned, using the `to` name the bin wrote in the outbox verbatim.
+beside its reviewer.) When you do have a down-send to make — an answer to a parked worker — address it
+to the parked session by its full role-suffixed name, using the `to` name the bin wrote in the outbox
+verbatim.
 
 **Task state lives on task branches; the plan-branch `PROGRESS.md` lags.** A worker commits its 🔍/✅
 update on its own task branch, not the plan branch, until the bin merges the task. So the plan-branch

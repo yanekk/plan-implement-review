@@ -16,7 +16,8 @@ import {
   parseTranscript,
   sendMessagesOf,
   runIdentity,
-  helloPerSpawn,
+  noHelloEver,
+  sendFailureSurfaced,
   noCloseBeforeIdle,
   byNameAddressing,
   questionRoundTrip,
@@ -114,81 +115,50 @@ test('loadTranscripts reads a real bundle written by capture.loadBundle (the T14
   }
 });
 
-// --- helloPerSpawn -------------------------------------------------------------------------------
+// --- noHelloEver (T30: the spawn hello is retired) -----------------------------------------------
 
-test('helloPerSpawn passes when every spawn/review has a hello and the coordinator addressed by name', () => {
+test('noHelloEver passes a run that spawned workers and logged zero hello lines', () => {
   const b = bundle({
-    flow: [fl('t1', 'spawn', 'T01'), fl('t1', 'hello', 'T01'), fl('t5', 'review', 'T01'), fl('t5', 'hello', 'T01')],
-    timeline: [
-      tick('t1', [cagent(), wagent('T01', 'busy')]),
-      tick('t5', [cagent(), wagent('T01', 'busy', { role: 'review' })]),
-    ],
-    transcripts: [transcript(COORD, 'coordinator', null, [
-      sendEvent(wname('T01', 'implement') + ' [ab12]', 'hello'),
-      sendEvent(wname('T01', 'review'), 'hello'),
-    ])],
+    flow: [fl('t1', 'spawn', 'T01'), fl('t5', 'review', 'T01'), fl('t9', 'merge', 'T01'), fl('t9', 'promote', 'pir/scratch')],
   });
-  const r = helloPerSpawn().check(b);
+  const r = noHelloEver().check(b);
   assert.equal(r.pass, true, r.detail);
 });
 
-test('helloPerSpawn fails a spawn with no hello, evidence naming the task', () => {
-  const b = bundle({
-    flow: [fl('t1', 'spawn', 'T01')], // no hello
-    timeline: [tick('t1', [cagent()])],
-    transcripts: [transcript(COORD, 'coordinator', null, [sendEvent(wname('T01'), 'hello')])],
-  });
-  const r = helloPerSpawn().check(b);
-  assert.equal(r.pass, false);
-  assert.match(r.detail, /T01/);
-});
-
-test('helloPerSpawn fails when the coordinator never addressed the worker by name', () => {
+test('noHelloEver fails when any hello line is present in the flow', () => {
   const b = bundle({
     flow: [fl('t1', 'spawn', 'T01'), fl('t1', 'hello', 'T01')],
-    timeline: [tick('t1', [cagent(), wagent('T01', 'busy')])],
-    transcripts: [transcript(COORD, 'coordinator', null, [sendEvent('someone-else', 'hi')])],
   });
-  const r = helloPerSpawn().check(b);
-  assert.equal(r.pass, false);
-  assert.match(r.detail, /SendMessage to/);
-});
-
-// T29 (approach ii): in a HALT-terminated run, a spawn whose queued hello was not sent before the kill
-// switch fired is EXEMPT from the transcript half — the `hello` flow line proves it was queued, and the
-// kill switch legitimately interrupts the send (the T23 drill: coordinator HALTed before draining any
-// hello, transcript held zero SendMessage calls). The flow half stays strict.
-test('helloPerSpawn passes a HALT-terminated run whose queued hello was interrupted before it was sent', () => {
-  const b = bundle({
-    flow: [
-      fl('t1', 'spawn', 'T01'),
-      fl('t1', 'hello', 'T01'), // queued (flow half satisfied)
-      fl('t2', 'spawn', 'T02'),
-      fl('t2', 'hello', 'T02'), // queued
-      fl('t3', 'halt-close', 'T01'), // the kill switch fired
-      fl('t3', 'halt-close', 'T02'),
-    ],
-    timeline: [tick('t1', [cagent(), wagent('T01', 'busy'), wagent('T02', 'busy')])],
-    // The coordinator transcript exists but holds NO hello SendMessage — HALTed before it drained.
-    transcripts: [transcript(COORD, 'coordinator', null, [])],
-  });
-  const r = helloPerSpawn().check(b);
-  assert.equal(r.pass, true, r.detail);
-  assert.match(r.detail, /kill switch|exempt/);
-});
-
-// T29 (approach ii): the exemption is scoped to HALT-terminated runs. A promote-terminated run (no
-// halt-close) whose spawn has a queued hello flow line but no SendMessage STILL fails — a missing hello
-// there is a real bug (single, review-queue). This proves the scoping did not weaken those fixtures.
-test('helloPerSpawn still fails a promote-terminated run whose queued hello was never sent', () => {
-  const b = bundle({
-    flow: [fl('t1', 'spawn', 'T01'), fl('t1', 'hello', 'T01')], // queued but, below, never sent
-    timeline: [tick('t1', [cagent(), wagent('T01', 'busy')])],
-    transcripts: [transcript(COORD, 'coordinator', null, [])], // no hello SendMessage, and no halt-close
-  });
-  const r = helloPerSpawn().check(b);
+  const r = noHelloEver().check(b);
   assert.equal(r.pass, false, r.detail);
-  assert.match(r.detail, /SendMessage to/);
+  assert.match(r.detail, /hello/);
+});
+
+test('noHelloEver does not pass vacuously over an empty flow (nothing ran)', () => {
+  const r = noHelloEver().check(bundle({ flow: [] }));
+  assert.equal(r.pass, false, r.detail);
+  assert.match(r.detail, /vacuous|nothing ran/);
+});
+
+// --- sendFailureSurfaced (C, T30: a failed down-send is recorded) --------------------------------
+
+test('sendFailureSurfaced passes when a send-failed line is present for the named task', () => {
+  const b = bundle({ flow: [fl('t1', 'surface', 'T01'), fl('t2', 'send-failed', 'T01')] });
+  const r = sendFailureSurfaced('T01').check(b);
+  assert.equal(r.pass, true, r.detail);
+});
+
+test('sendFailureSurfaced fails when there is no send-failed line for the task', () => {
+  const b = bundle({ flow: [fl('t1', 'surface', 'T01'), fl('t2', 'answer', 'T01')] });
+  const r = sendFailureSurfaced('T01').check(b);
+  assert.equal(r.pass, false, r.detail);
+  assert.match(r.detail, /send-failed|unrecorded/);
+});
+
+test('sendFailureSurfaced with no task passes on any send-failed line', () => {
+  const b = bundle({ flow: [fl('t2', 'send-failed', 'T07')] });
+  const r = sendFailureSurfaced().check(b);
+  assert.equal(r.pass, true, r.detail);
 });
 
 // --- noCloseBeforeIdle (the T13 Problem B gate) --------------------------------------------------
@@ -434,14 +404,14 @@ test('ceilingHeld(1) fails on a duplicate same-role session for one task (respaw
 // --- checkScenario + formatReport ----------------------------------------------------------------
 
 test('checkScenario fails the scenario when a single fact fails, and formatReport shows the evidence', () => {
-  const b = bundle({ flow: [fl('t1', 'spawn', 'T01'), fl('t1', 'hello', 'T01')], transcripts: [transcript(COORD, 'coordinator', null, [sendEvent(wname('T01'), 'hello')])], timeline: [tick('t1', [cagent(), wagent('T01', 'busy')])] });
-  const spec = { id: 'demo', facts: [helloPerSpawn(), questionRoundTrip('T09')] };
+  const b = bundle({ flow: [fl('t1', 'spawn', 'T01')], transcripts: [transcript(COORD, 'coordinator', null, [])], timeline: [tick('t1', [cagent(), wagent('T01', 'busy')])] });
+  const spec = { id: 'demo', facts: [noHelloEver(), questionRoundTrip('T09')] };
   const report = checkScenario(spec, b);
   assert.equal(report.pass, false, 'one failing fact fails the scenario');
-  assert.equal(report.facts.find((f) => f.id === 'hello-per-spawn').pass, true);
+  assert.equal(report.facts.find((f) => f.id === 'no-hello-ever').pass, true);
   const printed = formatReport(report);
   assert.match(printed, /\[FAIL\] scenario: demo/);
-  assert.match(printed, /✓ A hello opens every worker channel/);
+  assert.match(printed, /✓ The flow log contains no hello line/);
   assert.match(printed, /✗ A question on T09/);
 });
 

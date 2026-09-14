@@ -22,19 +22,19 @@ const EXPECT = {
     taskCount: 1,
     deps: { T01: [] },
     ceiling: 1,
-    factIds: ['hello-per-spawn', 'by-name-addressing', 'no-close-before-idle', 'one-merge-to-main'],
+    factIds: ['no-hello-ever', 'by-name-addressing', 'no-close-before-idle', 'one-merge-to-main'],
   },
   parallel: {
     taskCount: 3,
     deps: { T01: [], T02: [], T03: [] },
     ceiling: 2,
-    factIds: ['hello-per-spawn', 'ceiling-held:2', 'kill-switch-stopped-all'],
+    factIds: ['no-hello-ever', 'ceiling-held:2', 'kill-switch-stopped-all'],
   },
   'review-queue': {
     taskCount: 3,
     deps: { T01: [], T02: [], T03: ['T01'] },
     ceiling: 2,
-    factIds: ['hello-per-spawn', 'no-close-before-idle', 'one-merge-to-main'],
+    factIds: ['no-hello-ever', 'no-close-before-idle', 'one-merge-to-main'],
   },
   'clean-merge': {
     taskCount: 2,

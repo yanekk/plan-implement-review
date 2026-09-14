@@ -158,8 +158,8 @@ test('a worker question is surfaced in plain English and the answer is sent down
 
   const res = coordinator.answer({ task: 'T01', text: 'use json' });
   assert.equal(res.worker, workerName({ repo: REPO, plan: SLUG, task: 'T01', role: 'implement' }));
-  // The loop also sends each freshly-spawned worker a `hello` (T13 Problem A), so `sent` carries those
-  // too. The answer is the only `answer`-kind message, and it went to T01 alone.
+  // Since T30 there is no spawn hello, so the answer is the ONLY message the coordinator sends; it is
+  // the only `answer`-kind message and it went to T01 alone.
   const answers = platform.sent.filter((s) => s.msg.kind === 'answer');
   assert.deepEqual(answers.map((s) => s.to), [workerName({ repo: REPO, plan: SLUG, task: 'T01', role: 'implement' })], 'answered T01 and only T01');
   assert.equal(answers[0].msg.kind, 'answer');
@@ -368,6 +368,69 @@ test('routing an answer logs an `answer {task}` flow line so the coordinator wak
     logs.slice(before).includes('answer T01'),
     `answer() must log "answer T01" so the coordinator wakes to deliver; got: ${logs.slice(before).join(' | ')}`,
   );
+});
+
+// --- 13b. C (T30): a failed answer down-send is recorded and retried, never dropped ---------------
+
+test('a dropped answer down-send is recorded as send-failed and the outbox fallback retry delivers it (C, T30)', (t) => {
+  const worktree = createFakeWorktree({ progress: progressDoc([{ num: 'T01' }, { num: 'T02' }]), slug: SLUG });
+  t.after(() => worktree.cleanup());
+  const fake = createFakePlatform({ behaviors: { T01: { question: 'which output format?' } } });
+  const logs = [];
+  const control = { isHalted: () => false, log: (l) => logs.push(l) };
+
+  // Wrap send so the FIRST answer send is DROPPED (ok:false, delivers nothing) — the deterministic
+  // stand-in for a SendMessage the live coordinator could not deliver — and every later send goes
+  // through to the worker (the outbox fallback re-reading and re-sending the still-queued answer).
+  let sends = 0;
+  const platform = {
+    ...fake,
+    send(name, msg) {
+      sends += 1;
+      if (sends === 1) return { ok: false };
+      return fake.send(name, msg);
+    },
+  };
+  const coordinator = startCoordinator({ slug: SLUG, repo: REPO, platform, worktree, maxWorkers: 4, control });
+
+  coordinator.pass(); // spawn T01, T02
+  coordinator.pass(); // T01 asks and parks
+
+  // First attempt is dropped: the failure is RECORDED (send-failed), not silent, and the parked
+  // decision is KEPT so the answer can be retried — it is never lost.
+  const r1 = coordinator.answer({ task: 'T01', text: 'use json' });
+  assert.equal(r1.ok, false, 'the dropped send is reported as a failure');
+  assert.ok(logs.includes('send-failed T01'), 'the failed down-send was recorded as `send-failed T01`');
+  assert.ok(!logs.includes('answer T01'), 'a dropped send does not log a successful `answer` line');
+  assert.ok(coordinator.state.tasks.T01.decision, 'the parked decision is kept for a retry, not dropped');
+
+  // The retry delivers: the worker unblocks, the successful send logs `answer T01`, and the plan drains.
+  const r2 = coordinator.answer({ task: 'T01', text: 'use json' });
+  assert.equal(r2.ok, true, 'the retry delivers');
+  assert.ok(logs.includes('answer T01'), 'the successful retry logs `answer T01`');
+  assert.equal(coordinator.state.tasks.T01.decision, null, 'the delivered answer clears the parked decision');
+  assert.equal(driveCollecting(coordinator).result.promoted, true, 'the answered worker resumes and the plan promotes');
+});
+
+test('an answer to a genuinely unreachable worker is recorded as send-failed, not silently dropped (C, T30)', (t) => {
+  const logs = [];
+  const control = { isHalted: () => false, log: (l) => logs.push(l) };
+  const { coordinator, platform } = setup(t, [{ num: 'T01' }, { num: 'T02' }], {
+    behaviors: { T01: { question: 'which output format?' } },
+    control,
+  });
+  coordinator.pass(); // spawn
+  coordinator.pass(); // T01 asks and parks
+
+  // The parked worker is gone (crashed / closed): the fake's send reports ok:false for an unknown name,
+  // the deterministic stand-in for a genuinely unreachable worker.
+  const workerId = coordinator.state.tasks.T01.workerId;
+  platform.close(workerId);
+
+  const r = coordinator.answer({ task: 'T01', text: 'use json' });
+  assert.equal(r.ok, false, 'the send to a gone worker is reported as a failure');
+  assert.ok(logs.includes('send-failed T01'), 'the undeliverable answer was recorded as `send-failed T01`');
+  assert.ok(!logs.includes('answer T01'), 'an undeliverable answer does not log a successful `answer` line');
 });
 
 // --- 14. P3: a `decision` message parks and surfaces, same as a question ---------------------------

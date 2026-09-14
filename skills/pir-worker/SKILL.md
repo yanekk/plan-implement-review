@@ -123,17 +123,9 @@ NOT enough — it must be an explicit `kind:` marker).
 
 You do NOT poll for a reply. The coordinator answers you **down** the other channel — it addresses you
 by your worker name and its answer arrives as a normal message you receive. Report up by file; receive
-down by message.
-
-## You may receive a `hello` from the coordinator at spawn — do not reply to it
-
-Right after it spawns you, the coordinator sends you a one-line `[pir:v1 kind=hello task=Txx]` message
-carrying its own name (DESIGN §2.2). Its only purpose is to confirm the channel between you is open
-before you rely on it — it asks nothing of you. **Do not reply to a hello.** It has no valid reply kind
-(the kinds are `question`, `decision`, `implemented`, `done`, `conflict`), and it may arrive *after*
-you have already reported done — a reply then sends a spurious second signal the coordinator has to
-untangle. Ignore it and get straight on with, or finish, your task. A hello is never a task, a
-question, or an instruction. (A T18 reviewer replied to a late hello with a second `kind=done`.)
+down by message. There is no start-up "hello" from the coordinator (it was retired) — the first and
+only message you will ever receive from it is the answer to a question or decision you parked on, so if
+you never park, you never hear from it. Just build from your spawn prompt.
 
 ## After you implement, you hand off — you do not review your own work
 

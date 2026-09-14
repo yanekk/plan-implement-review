@@ -15,7 +15,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { parseProgress, reconcileTaskRow, progressPathFor } from '../core/progress.mjs';
 import { decideDispatch } from '../core/dispatch.mjs';
-import { workerName, coordinatorName, parseAgentName, isWorkerOf } from '../core/naming.mjs';
+import { workerName, isWorkerOf } from '../core/naming.mjs';
 
 // The phases the loop tracks per task from a worker's own messages plus the lifecycle step it
 // drives (DESIGN §2.8: the name carries identity, the lifecycle carries phase). Only three of these
@@ -127,19 +127,13 @@ export function runPass({ platform, worktree, repo, slug, maxWorkers, state, con
     return a;
   };
 
-  // The coordinator's own addressable name (DESIGN §2.8) — what a worker builds to message home, and
-  // what the hello below carries so the return channel is open before anything relies on inbound
-  // (T13 Problem A). A freshly-spawned worker (an implement/verify builder in 3b, a fresh reviewer in
-  // 3c) is sent one `[pir:v1 kind=hello]` message addressed by its own name; the worker ignores it
-  // (pir-worker) but its reply now rides an already-open channel (FINDINGS 2026-09-07: a worker's reply
-  // is delivered on the sender's return socket reliably). platform.send is optional so an ad-hoc test
-  // platform without a send half (loop.test's id-mismatch case) is unaffected — no send, no hello.
-  const coordName = coordinatorName({ repo, plan: slug });
-  const sendHello = (name, task) => {
-    if (typeof platform.send !== 'function') return;
-    platform.send(name, { kind: 'hello', task, text: coordName });
-    record('hello', { task, to: name });
-  };
+  // There is no spawn-time hello (retired in T30). The coordinator opened the DOWN channel to a worker
+  // lazily, with the first real message it actually needs to send — the answer to a parked worker — so
+  // no message is sent at spawn. The old hello was a start-up ping nothing depended on: the T23 drill
+  // proved both hellos failed to send yet both workers still built from their spawn prompt, and since
+  // T25 a worker reports UP by dropping a file (never up a socket the hello had to pre-open), so the
+  // T13 "the reply rides the return channel" rationale was already gone. loop.mjs no longer calls
+  // platform.send at all; the answer down-send lives in coordinate.mjs's answer().
 
   // 0. Open the feature branch once, in the coordinator's own worktree (DESIGN §2.9).
   if (!state.feature) {
@@ -244,7 +238,6 @@ export function runPass({ platform, worktree, repo, slug, maxWorkers, state, con
     state.tasks[num] = { worktree: wt, workerId: id, role, phase: role === 'verify' ? VERIFYING : IMPLEMENTING, grace: APPEAR_GRACE };
     spawnedThisPass.push(id);
     record('spawn', { task: num, runs, role, workerId: id });
-    sendHello(name, num); // open the worker→coordinator channel at spawn (T13 Problem A)
   }
 
   // Finished workers whose close is held this pass because the agent list still shows them busy (T13
@@ -275,7 +268,6 @@ export function runPass({ platform, worktree, repo, slug, maxWorkers, state, con
     reviewSwaps.set(workerId, { num, reviewerId });
     spawnedThisPass.push(reviewerId);
     record('review', { task: num, workerId: reviewerId, closes: workerId });
-    sendHello(revName, num); // open the fresh reviewer's channel too (T13 Problem A)
   }
 
   // 3d. Merge one done task branch into the feature branch, reconcile its row to ✅, and — only once
