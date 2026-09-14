@@ -14,20 +14,21 @@ cell also fixes the over-budget cell they walk past.**
 
 **Status:** Plan reviewed before build; re-scoped onto Claude Code's own primitives. `Runs` marks each
 task `auto` (a worker builds) or `you` (a person runs the live steps). 28 tasks, phases 0–6. Phases 0–5
-✅; `auto` hardening T24–T27 ✅. Phase 6 is the live fixtures (`you`, done at all-green). T18–T21 PASS
-live. T22 (merge-conflict) FAILED live 2026-09-13 (conflict-path bug: wrong side shipped to main). The
-PM chose Option 2; **T28 (`auto`) is that fix and is now 🔍, awaiting review** — dispatch/loop keep the
+✅; `auto` hardening T24–T28 ✅. Phase 6 is the live fixtures (`you`, done at all-green). T18–T21 PASS
+live. T22 (merge-conflict) FAILED live 2026-09-13 (conflict-path bug: wrong side shipped to main); the
+PM chose Option 2 and **T28 (`auto`) built that fix and is now reviewed ✅** — dispatch/loop keep the
 worker alive on a coordinator-hit conflict and merge only after it resolves; redefined fact +
-scripted-decision fixture. T22 (then T23, which absorbs T10) wait on T28's review, then re-run.
+scripted-decision fixture. **T22 is now unblocked** and re-runs interactively (the runner scripts the
+decision), then T23 (absorbs T10). Both are `you` live fixtures a person runs with real paid agents.
 Operator's guide: [TEST-HARNESS.md](TEST-HARNESS.md). Phases 5–6 postdate the 2026-09-07 review, so each
 is validated per task during build.
 **Last updated:** 2026-09-14
-**Next `pir-work` will:** review T28 (`auto`) — the fresh-eyes pass on the Option-2 conflict-path fix.
-Check dispatch's merge/close decoupling and the loop's park-and-protect (no close/remove/delete on a
-conflict; close only after a clean merge), the worker resolve/re-signal path, the `merge-conflict-resolved`
-fact, and the runner's scripted-decision injection + final-content capture. 267 tests green. Open notes:
-candidate 3 (SendMessage padding) unfixed by PM choice; capture copies `role:foreign` transcripts (~4MB),
-not yet a task; the coordinator-name/hello rationale prune is still owed (FINDINGS 2026-09-13).
+**Next `pir-work` will:** nothing to auto-build or review — every `auto` task through T28 is ✅. The
+remaining work is the live fixtures T22 then T23, which a person runs with real paid agents (not
+`/pir-work`). Run `node src/shell/harness/run.mjs merge-conflict` for the T22 re-run; record its verdict
+and bundle in FINDINGS, then run a reflection pass (DESIGN §4.1). Open notes: candidate 3 (SendMessage
+padding) unfixed by PM choice; capture copies `role:foreign` transcripts (~4MB), not yet a task; the
+coordinator-name/hello rationale prune is still owed (FINDINGS 2026-09-13).
 
 ## Tasks
 
@@ -59,11 +60,11 @@ live steps with a hands-on worker the coordinator spawns, folded back without re
 | T19 | Live fixture: review-queue | you | T17, T24 | ✅ | PASS live 2026-09-13: all 3 facts green (hello-per-spawn, no-close-before-idle, one-merge-to-main). 3 tasks, ceiling 2, ~6 min, flow textbook. Bundle `pir-t17-review-queue-AqCRsF/…/2026-09-13T05-53-06-393Z`. See FINDINGS. |
 | T25 | Cut the coordinator's relay overhead (worker→bin path) | auto | T19 | ✅ | Reviewed clean. Worker→coordinator up-channel is a file drop into `control/reports/` (drained temp-then-rename). Live proof folded into T20's run. |
 | T26 | Harden coordinator/worker prompts from the T19 transcripts | auto | T25 | ✅ | Reviewed clean, no fix. C7–C10 (pir-coordinate) + W5 (pir-worker) added; S1-drop verified sound (address-free file drop). 255 tests. |
-| T27 | Harden coordinator from the T21 transcripts | auto | T21 | ✅ | Reviewed clean, no fix. `answer()` logs `answer {task}`; additive tag, no fact reads it. Live proof folds into T22/T23. 264 tests. |
-| T20 | Live fixture: clean-merge | you | T17, T26 | ✅ | PASS live 2026-09-13: 3 facts green (one promote to main, ceiling held, no close before idle). First run false-FAILed `ceilingHeld`; fixed to count worker slots by task (PM chose A). Reflection clean — two genuine fresh reviews, correct conflict resolution, T25 up-channel spent 0 coordinator relay turns under 2 tasks. One hardening candidate logged (worker report-drop). Bundle in FINDINGS. |
+| T27 | Harden coordinator from the T21 transcripts | auto | T21 | ✅ | Reviewed clean. `answer()` logs `answer {task}`; additive tag. 264 tests. |
+| T20 | Live fixture: clean-merge | you | T17, T26 | ✅ | PASS live 2026-09-13: 3 facts green. First run false-FAILed `ceilingHeld` (counted OS roster); fixed to count slots by task. Bundle in FINDINGS. |
 | T21 | Live fixture: human-decision | you | T17, T26 | ✅ | PASS live 2026-09-13 (re-run): 2 facts green (question surfaced+answered, one promote). Ambiguity-ask path proven. First run false-FAILed on a runaway miscount; fixed `closedIds` no-prune (test), held live. 5 hardening candidates → PM. Bundle `pir-t17-human-decision-RVQcax/…/2026-09-13T15-24-34-685Z`. |
-| T28 | Fix the merge-conflict path: keep the worker alive, deliver the decision, worker resolves and merges clean (Option 2) | auto | T27 | 🔍 | Option 2 built: dispatch decouples merge/close; loop parks+protects the worker on conflict, closes only after a clean merge; worker resolve/re-signal path; new fact `merge-conflict-resolved` (both parked facts removed, now wrong); runner scripts the decision on any surface + captures main content (`final-files.json`; capture.mjs untouched), which also auto-answers human-decision. PM: flag fully-overruled task = yes. 267 tests. |
-| T22 | Live fixture: merge-conflict | you | T17, T26, T28 | ⛔ | FAILED live 2026-09-13 (conflict merged the wrong side to main). Root cause + Option-2 fix scoped as T28. Blocked on T28, then re-run (now interactive). Bundle `…/2026-09-13T18-50-25-872Z`. |
+| T28 | Fix the merge-conflict path: keep the worker alive, deliver the decision, worker resolves and merges clean (Option 2) | auto | T27 | ✅ | Reviewed clean; one trivial fix (stale comment → `mergeConflictResolved`). Option 2 proven end-to-end in loop.test on real git: a conflict parks the worker (not closed/removed/deleted), the decision is delivered, the worker resolves, the decided side reaches main, one promote, no respawn. Fact fails on losing-side/respawn/unanswered bundles. 267 tests, boundary green. Live proof owed by T22. |
+| T22 | Live fixture: merge-conflict | you | T17, T26, T28 | ⬜ | Unblocked: T28 ✅ 2026-09-14. Re-run interactively — the runner scripts the decision. Prior run FAILED live 2026-09-13 (wrong side to main); Option-2 fix is T28. Fact `merge-conflict-resolved`. Bundle `…/2026-09-13T18-50-25-872Z`. |
 | T23 | Live fixture: parallel + kill-switch drill (absorbs T10) | you | T17, T26 | ⬜ | Run `run.mjs parallel --into <dir>`; `touch <dir>/plans/parallel/.parallel/control/HALT` mid-run; done when its 3 facts pass. Closes T10. See TEST-HARNESS.md. |
 | T10 | Full multi-worker run + kill-switch drill — absorbed by T23 | you | T23 | ⬜ | Absorbed by T23 (2026-09-12). Do not run standalone; closes ✅ when T23's parallel + kill-switch fact report is all-green. Partial drill 2026-09-10 proved spawn + first message. |
 
@@ -72,17 +73,16 @@ deviation from the task doc.
 
 **A ✅ task's cell may be cut to one line** once the next task has been reviewed.
 
-**Review queue:** **T28 (🔍, `auto`)** — the Option-2 conflict-path fix, awaiting its fresh-eyes review.
-Everything else through T27 is ✅; T18–T21 PASS live. T22 (merge-conflict) is ⛔ pending T28; T23 waits
-on T28 too.
+**Review queue:** empty. Every `auto` task through T28 is ✅; T18–T21 PASS live. T22 (merge-conflict) is
+now ⬜ and unblocked (T28 ✅); T23 (parallel + kill-switch, absorbs T10) is ⬜. Both are `you` live fixtures.
 
-## Next up: review T28, then the gated live fixtures (T22–T23)
+## Next up: the gated live fixtures (T22–T23)
 
-T28 (🔍) is the fix for the T22 failure (Option 2, PM 2026-09-13): on a coordinator-hit merge conflict
-the coordinator keeps the worker alive and parked, delivers the decision, and the worker resolves on its
+T28 (the Option-2 conflict-path fix) is reviewed ✅ 2026-09-14. On a coordinator-hit merge conflict the
+coordinator now keeps the worker alive and parked, delivers the decision, and the worker resolves on its
 own branch before the branch merges clean — no close+respawn, no clobber, no unverified-success report.
-Once T28 is reviewed ✅, T22 re-runs (now interactive — the runner scripts the decision), then T23
-(parallel + kill-switch, absorbs T10).
+This is verified only under the fakes + real-git-in-test; the real-agent proof is the **T22 re-run**,
+which is unblocked now. T22 re-runs interactively (the runner scripts the decision), then T23.
 
 Each fixture run needs real paid agents, launched attended, one at a time, never unattended, and ends
 with a reflection pass on its bundle (DESIGN §4.1). Full procedure in
