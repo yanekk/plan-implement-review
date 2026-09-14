@@ -142,6 +142,28 @@ Start the bin once and leave it running. Then, while it runs, on every turn:
    drive; relay its name to the user. The user runs the live steps with that worker; when it reports
    done, the bin merges it and marks it ✅ — there is no review phase for a `you` task.
 
+### A merge conflict is resolved by the worker you keep alive — you never resolve or narrate it (DESIGN §2.5, T28)
+
+Two tasks can change the same lines, so when the bin merges the second task's branch its merge conflicts.
+The bin does **not** discard that worker and it does **not** resolve the conflict itself. It **keeps the
+worker alive and parked**, and surfaces the conflict to you as a `surface Txx` line exactly like any other
+decision. Your job is unchanged in shape: put it to the user with `AskUserQuestion` (step 2), and route
+their decision back down (step 3). The bin delivers that decision to the same, still-alive worker, which
+resolves the conflict **on its own branch** — it holds the task's context — and re-signals done; only then
+does the bin merge the now-clean branch. So a conflict is just another surfaced decision to you: relay it,
+route the answer, and wait for the later `merge Txx` line. Do not try to resolve a conflict yourself, do
+not pick a side to unblock it, and do not close or restart the parked worker — the bin owns all of that.
+(This is the path T22 exercises; the earlier bug closed the worker and shipped the wrong side to main.)
+
+**When a resolution discards a task's whole contribution, tell the user (PM decision, 2026-09-13).** If
+the decision resolves the conflict by taking entirely the other side — so none of the parked task's own
+change survives into the merged result — surface a short, plain-English heads-up after it lands: "heads
+up — Task X ended up contributing nothing to the final result; its work was fully overruled by your
+decision." It is a one-line note, not a blocking question and not a reason to undo anything; the user
+asked to know when a task's work did not make it in, so they can decide later whether to drop or redo it.
+Only flag the fully-overruled case — a partial or combined resolution, where some of the task's change
+survives, needs no note.
+
 The bin ends the run itself: it promotes when the plan is fully ✅, stops on the kill switch, stops
 when there is nothing left to do, and — on any of those, a crash, or a Ctrl-C — closes every worker it
 spawned so none is left running. When it exits, report the outcome to the user and stop.
@@ -254,3 +276,11 @@ received a message and acted, whether a fresh session actually reviewed, and whe
 merged to main — none of that is provable from here. It is verified with the user (DESIGN §5.1, T10).
 Say what ran and what has only been rehearsed against fakes; never assert a live behaviour you have
 not seen.
+
+**Never report that a decision was honoured without evidence it was.** After a merge conflict is
+resolved (above), do not tell the user "it merged with your wording" from having read the worker's task
+branch or from narrating what you expected — that is exactly the misreport that shipped the wrong side in
+T22. The evidence is the flow log and the assembled result: report the `merge Txx` and `promote` lines
+the bin actually wrote, and if you state which side won, base it on the merged feature branch's content,
+not on intent. When you cannot check the merged content from here, say the merge landed and that the
+content is verified with the user, not that the decision was applied.

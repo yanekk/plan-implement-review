@@ -81,6 +81,13 @@ export function createFakePlatform({ behaviors = {} } = {}) {
   // behaviour map bends the implement path into a question/conflict/crash.
   function advance(w) {
     const b = behaviors[w.task] ?? {};
+    // A conflictResolve task edits a SHARED file (`mine`) instead of its own work-{task}.txt, so two
+    // such tasks cut from the same base collide when the coordinator merges the second — the real
+    // T22 coordinator-hit conflict. On the decision it re-integrates and rewrites the file to
+    // `resolved` (§ send below), re-signalling done (DESIGN §2.5 Option 2, T28).
+    const cr = b.conflictResolve;
+    const implFile = cr ? cr.file : `work-${w.task}.txt`;
+    const implContent = cr ? cr.mine : `work ${w.task}\n`;
 
     if (w.role === 'implement') {
       if (w.stage === 'fresh') {
@@ -109,13 +116,13 @@ export function createFakePlatform({ behaviors = {} } = {}) {
           w.stage = 'parked'; // stays parked; the loop surfaces it and must not merge
           return;
         }
-        commit(w.cwd, w.task, w.plan, { file: `work-${w.task}.txt`, content: `work ${w.task}\n`, rowState: '🔍', note: 'implemented', message: `${w.task}: implement` });
+        commit(w.cwd, w.task, w.plan, { file: implFile, content: implContent, rowState: '🔍', note: 'implemented', message: `${w.task}: implement` });
         emit(w, 'implemented');
         w.stage = 'implemented';
         return;
       }
       if (w.stage === 'awaiting' && w.answered) {
-        commit(w.cwd, w.task, w.plan, { file: `work-${w.task}.txt`, content: `work ${w.task}\n`, rowState: '🔍', note: 'implemented', message: `${w.task}: implement` });
+        commit(w.cwd, w.task, w.plan, { file: implFile, content: implContent, rowState: '🔍', note: 'implemented', message: `${w.task}: implement` });
         emit(w, 'implemented');
         w.stage = 'implemented';
         return;
@@ -126,6 +133,19 @@ export function createFakePlatform({ behaviors = {} } = {}) {
     if (w.role === 'review') {
       if (w.stage === 'fresh') {
         commit(w.cwd, w.task, w.plan, { rowState: '✅', note: 'reviewed clean', message: `${w.task} review: clean` });
+        emit(w, 'done');
+        w.stage = 'done';
+        return;
+      }
+      if (w.stage === 'resolving') {
+        // The coordinator hit a merge conflict on this branch, kept this worker alive, and delivered
+        // the user's decision (send → stage 'resolving'). Resolve it on this branch as Option 2 says:
+        // bring the current feature branch in, rewrite the shared file to the decided content, commit,
+        // and re-signal done (DESIGN §2.5, T28). The coordinator's next merge then lands cleanly.
+        git(w.cwd, ['merge', '--no-commit', '--no-ff', `pir/${w.plan}`]); // may leave the file conflicted
+        if (cr) writeFileSync(join(w.cwd, cr.file), cr.resolved);
+        git(w.cwd, ['add', '-A']);
+        git(w.cwd, ['commit', '--no-edit', '-m', `${w.task}: resolve conflict per decision`]);
         emit(w, 'done');
         w.stage = 'done';
       }
@@ -206,6 +226,14 @@ export function createFakePlatform({ behaviors = {} } = {}) {
       const w = findByIdOrName(idOrName);
       sent.push({ to: idOrName, msg });
       if (w && w.stage === 'awaiting') w.answered = true;
+      // A worker parked on a coordinator-hit merge conflict (it had already reported done, so it is a
+      // review-role session at stage 'done') receives the user's decision and moves to resolve it on
+      // its own branch, re-signalling done (DESIGN §2.5 Option 2, T28). Only conflictResolve tasks have
+      // a resolution to run; any other done worker ignores a late message, as a real one would.
+      if (w && w.role === 'review' && w.stage === 'done' && behaviors[w.task]?.conflictResolve) {
+        w.stage = 'resolving';
+        w.busyHold = 0;
+      }
       return { ok: !!w };
     },
 

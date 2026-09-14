@@ -46,7 +46,7 @@ const EXPECT = {
     taskCount: 2,
     deps: { T01: [], T02: [] },
     ceiling: 2,
-    factIds: ['conflict-surfaced-and-parked'],
+    factIds: ['merge-conflict-resolved'],
   },
   'human-decision': {
     taskCount: 1,
@@ -121,6 +121,15 @@ test('merge-conflict: both task docs edit the same file, and the probe expects a
   const targets = fx.probe.edits.map((e) => e.file);
   assert.deepEqual(new Set(targets), new Set(['greeting.txt']), 'both edits target the one file');
   assert.equal(fx.seedFiles['greeting.txt'], 'hello world\n');
+});
+
+test('merge-conflict: carries a task-agnostic scripted decision and the decided final content (T28)', () => {
+  const fx = getFixture('merge-conflict');
+  // The decision names no task — which of the two same-line tasks conflicts is a timing race, so the
+  // runner routes the fixed decision to whatever task surfaces (run.mjs scriptedAnswerFor).
+  assert.equal(fx.scriptedAnswer.task, undefined, 'the scripted decision names no task (the loser is a race)');
+  assert.ok(/hello there/.test(fx.scriptedAnswer.text), 'the decision keeps the "hello there" side');
+  assert.deepEqual(fx.finalContent, { file: 'greeting.txt', content: 'hello there' }, 'main must end with the decided side');
 });
 
 test('clean-merge: the two task docs edit different files, and the probe expects a clean merge', () => {

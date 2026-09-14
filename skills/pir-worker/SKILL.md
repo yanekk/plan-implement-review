@@ -157,6 +157,28 @@ The coordinator merges your task branch into the feature branch, closes you, and
 task. Nothing you do reaches `main`; the coordinator promotes the whole feature branch once, at the
 end.
 
+## If the coordinator hits a conflict merging your branch, it sends you the decision — resolve and re-signal
+
+Your integrate can be clean when you signal done and still conflict later: while your `done` was in
+flight, another task changed the same lines, so the **coordinator's** merge of your branch into the
+feature branch conflicts. The coordinator does **not** resolve it — you hold this task's context, so it
+is yours (DESIGN §2.5). It keeps you alive and parked (it does not close you or respawn your task), puts
+the conflict to the user, and sends you the user's decision as a normal message addressed to your name.
+
+**When you receive a decision (an answer) after you have already reported done, treat it as: "your
+branch conflicts with the feature branch — resolve it this way, then re-signal done."** Do exactly that:
+
+- Integrate the current feature branch into your task branch again (`git merge pir/{plan}` in your
+  worktree — get the slug from your branch name, the worktree root from `git rev-parse --show-toplevel`).
+- Resolve the conflicting file(s) **exactly as the decision says** — take the side it names, or combine
+  them as it instructs. Never guess the resolution; the decision text is your instruction, and the wording
+  a user sees is theirs to decide, not yours.
+- Commit the resolution, then drop a fresh `[pir:v1 kind=done task=Txx]`.
+
+The coordinator then merges your now-clean branch. If, while resolving, you find the decision itself is
+ambiguous or cannot be applied, drop a `[pir:v1 kind=question task=Txx]` with the specifics and wait —
+never hand back a dirty or guessed-at branch.
+
 ## `pir-verify Txx` is the hands-on path (a `you` task) — the user runs it, you scribe
 
 For a `you` task the coordinator sends `pir-verify Txx`. Here the **user** runs the live/seatbelted

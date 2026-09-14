@@ -74,13 +74,15 @@ test('the implement session of a review-ready task is closed as its reviewer spa
   assert.deepEqual(close, ['w1']); // one slot, not two
 });
 
-test('a you worker that reports done goes to merge/close, never to review', () => {
+test('a you worker that reports done goes to merge, not review, and dispatch does not close it', () => {
   const tasks = [task('T01', '✅', { runs: 'you' })];
   const assignments = [asg('w1', 'T01', 'done')];
   const { review, merge, close } = call({ tasks, assignments });
   assert.deepEqual(review, []);
   assert.deepEqual(merge, ['w1']);
-  assert.deepEqual(close, ['w1']);
+  // Merge and close are paired in the loop, not decideDispatch: a done worker is NOT listed in close,
+  // so a merge that conflicts cannot close it (T28). The loop closes it only after a clean merge.
+  assert.deepEqual(close, []);
 });
 
 test('merge is at most one task branch per pass even when two workers are done', () => {
@@ -89,8 +91,21 @@ test('merge is at most one task branch per pass even when two workers are done',
   const { merge, close } = call({ tasks, assignments });
   assert.equal(merge.length, 1);
   assert.deepEqual(merge, ['w1']); // lowest task number merges first
-  assert.ok(close.includes('w1')); // the merged worker is closed
-  assert.ok(!close.includes('w2')); // the other done worker waits, not closed
+  // Neither done worker is closed by dispatch; the loop closes w1 after its merge lands (T28).
+  assert.deepEqual(close, []);
+});
+
+test('a worker parked AWAITING a decision is never merged, closed or respawned', () => {
+  // The T22 conflict-path guarantee at the decision level: an AWAITING worker holds its slot and its
+  // task, and decideDispatch touches none of it — no merge (its phase is not done), no close (it is
+  // neither dead nor review-ready), no respawn (its task is taken by a live worker).
+  const tasks = [task('T01', '⬜'), task('T02', '⬜')];
+  const assignments = [asg('w1', 'T02', 'awaiting-answer')];
+  const { merge, close, spawn } = call({ tasks, assignments });
+  assert.deepEqual(merge, []);
+  assert.deepEqual(close, []);
+  // T02 is taken by the parked worker, so only T01 is spawned — T02 is never rebuilt over the park.
+  assert.deepEqual(spawn.map((s) => s.num), ['T01']);
 });
 
 test('promoteToMain is false while any task is not ✅', () => {

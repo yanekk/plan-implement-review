@@ -211,6 +211,22 @@ loop cheaply.
   code, the worker attempts the resolution, because it holds its task's context. If it cannot
   resolve cleanly it sends the coordinator a decision message and waits for the user. The
   coordinator never merges a dirty branch into the feature branch.
+
+  A conflict can also surface **later, at the coordinator's own merge**: a worker's integrate was clean
+  when it signalled done, but another task changed the same lines before the coordinator merged this
+  one, so `mergeTask` conflicts. The backstop here is **Option 2** (chosen 2026-09-13, built in T28):
+  the coordinator **keeps that worker alive and parked** — it does not close it, remove its worktree,
+  delete its task, or respawn it (a parked worker holds its slot; several stacking up throttle the run
+  to human speed, which is correct). It surfaces the conflict to the user, routes the user's decision
+  **down to that same worker**, and the worker resolves on its own branch — integrating the current
+  feature branch, resolving the clashing file(s) as the decision says, committing, and re-signalling
+  done. Only then does the coordinator merge the now-clean branch, the normal clean-merge path. The
+  alternative (park it for a human and stop the whole plan) was rejected: one clash would strand the
+  entire shipment until a person returned. The merge and the worker's close are **paired** — a worker
+  is closed only after its branch has actually merged, so a conflict can never destroy the worker that
+  must resolve it. And the coordinator never reports the decision as honoured without checking the
+  merged result (the T22 live run closed the worker, respawned its task, and shipped the opposite side
+  to `main` while reporting success; that whole failure is what Option 2 and this pairing close).
 - **`PROGRESS.md` contention.** `PROGRESS.md` is the one file every session writes, so parallel
   workers would collide on it. The coordinator owns `PROGRESS.md` on the **feature branch**. A
   worker edits only its own task's row on its own task branch (the stock skills do this). At merge

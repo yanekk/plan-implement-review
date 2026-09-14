@@ -66,12 +66,19 @@ prints the evidence that broke it underneath. Exit 0 means every fact passed.
 - **single** — hands-off. Also proves by-name addressing and the idle-gated close (the old T13 live
   half).
 - **review-queue / clean-merge** — hands-off.
-- **merge-conflict** — hands-off; the point is that the second merge conflicts, the coordinator
-  **surfaces and parks it**, and no bad merge lands.
+- **merge-conflict** — **interactive** (like human-decision), not hands-off. The second merge conflicts;
+  the coordinator keeps that worker alive and parks it, surfaces the conflict, and needs a **decision** to
+  finish (DESIGN §2.5 Option 2, T28). The runner **feeds a scripted decision automatically** the moment
+  the conflict surfaces — the fixture's `scriptedAnswer`, written to the control `answers` file for
+  whichever task conflicted (which of the two is a timing race). So it still runs to a verdict without you
+  typing, but if you are attended you may also answer through the coordinator. The decided side
+  (`hello there`) must resolve, merge, and reach `main` — the fact checks the final `greeting.txt`, exactly
+  one implementer per task (no respawn), and one promotion.
 - **human-decision** — the worker deliberately asks an underspecified question and the coordinator
-  surfaces it. **You answer it:** append one JSON line to
-  `$S/plans/human-decision/.parallel/control/answers` — `{"task":"T01","text":"<the decision>"}` — or
-  reply through the coordinator session. The worker then resumes and the plan promotes.
+  surfaces it. The runner also feeds the fixture's scripted answer when it surfaces; **or you answer it**
+  by appending one JSON line to `$S/plans/human-decision/.parallel/control/answers` —
+  `{"task":"T01","text":"<the decision>"}` — or replying through the coordinator session. The worker then
+  resumes and the plan promotes.
 - **parallel** — this is the old T10 full drill. Multiple workers run within the ceiling. **To drill
   the kill switch,** mid-run create the HALT flag: `touch $S/plans/parallel/.parallel/control/HALT`.
   Every worker should stop, nothing should promote, and `main` should be untouched. Launch this one

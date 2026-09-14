@@ -19,6 +19,9 @@ import {
   runOutcome,
   teardownScenario,
   runScenario,
+  parseSurfaceTask,
+  scriptedAnswerFor,
+  captureFinalFiles,
 } from './run.mjs';
 
 function workspace() {
@@ -69,6 +72,40 @@ test('touchHalt wires the kill switch: it creates the HALT flag, mkdiring the co
   } finally {
     ws.cleanup();
   }
+});
+
+// --- scripted decision injection (DESIGN §4.1, T28) ----------------------------------------------
+
+test('parseSurfaceTask reads the task of a `surface Txx` flow line, else null', () => {
+  assert.equal(parseSurfaceTask('2026-01-01T00:00:00Z surface T02'), 'T02');
+  assert.equal(parseSurfaceTask('2026-01-01T00:00:00Z merge T02'), null);
+  assert.equal(parseSurfaceTask('2026-01-01T00:00:00Z surface pir/scratch'), null);
+  assert.equal(parseSurfaceTask('surface'), null);
+});
+
+test('scriptedAnswerFor routes an un-tasked decision to whatever task surfaced, once', () => {
+  const scriptedAnswer = { text: 'keep hello there' };
+  const flowText = '2026-01-01T00:00:00Z surface T02\n';
+  const answered = new Set();
+  const a = scriptedAnswerFor({ flowText, scriptedAnswer, answered });
+  assert.deepEqual(a, { task: 'T02', text: 'keep hello there' });
+  answered.add('T02');
+  assert.equal(scriptedAnswerFor({ flowText, scriptedAnswer, answered }), null, 'not fed twice for the same task');
+});
+
+test('scriptedAnswerFor honours a decision that names a specific task, and is null without a surface', () => {
+  const scriptedAnswer = { task: 'T01', text: 'use Hello, world!' };
+  assert.equal(scriptedAnswerFor({ flowText: '2026-01-01T00:00:00Z surface T02\n', scriptedAnswer, answered: new Set() }), null);
+  assert.deepEqual(
+    scriptedAnswerFor({ flowText: '2026-01-01T00:00:00Z surface T01\n', scriptedAnswer, answered: new Set() }),
+    { task: 'T01', text: 'use Hello, world!' },
+  );
+  assert.equal(scriptedAnswerFor({ flowText: 'nothing surfaced\n', scriptedAnswer: { text: 'x' }, answered: new Set() }), null);
+});
+
+test('captureFinalFiles reads `git show main:<file>` and omits a file git cannot show', () => {
+  const gitRun = (args) => (args[1] === 'main:greeting.txt' ? { ok: true, stdout: 'hello there\n' } : { ok: false, stdout: '' });
+  assert.deepEqual(captureFinalFiles({ repoDir: '/x', gitRun, files: ['greeting.txt', 'gone.txt'] }), { 'greeting.txt': 'hello there\n' });
 });
 
 // --- runOutcome (DESIGN §4.1: the two durable terminal markers) ----------------------------------

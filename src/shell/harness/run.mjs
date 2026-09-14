@@ -27,7 +27,7 @@
 // unboundedly. The runner tears every worker down on any exit (reusing the coordinator's teardownRun
 // orphan-guard, T12 P6).
 
-import { existsSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync, appendFileSync, readFileSync } from 'node:fs';
 import { join, basename } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync } from 'node:fs';
@@ -36,7 +36,7 @@ import { tmpdir } from 'node:os';
 import { coordinatorName, isWorkerOf } from '../../core/naming.mjs';
 import { getFixture, installFixture } from './fixtures.mjs';
 import { createCapture, bundleDirFor } from './capture.mjs';
-import { checkScenario, loadTranscripts, formatReport } from './assertions.mjs';
+import { checkScenario, loadTranscripts, loadFinalFiles, formatReport } from './assertions.mjs';
 import { teardownRun } from '../coordinate.mjs';
 import { createPlatform } from '../platform.mjs';
 import { createWorktree } from '../worktree.mjs';
@@ -100,6 +100,50 @@ export function runOutcome({ flowText = '', haltPresent = false } = {}) {
   if (hasType('promote')) return { over: true, reason: 'promoted' };
   if (haltPresent || hasType('halt-close')) return { over: true, reason: 'halted' };
   return { over: false, reason: 'active' };
+}
+
+// parseSurfaceTask(flowLine) → the task id of a `surface Txx` flow line, or null. A surface line is
+// `${ISO} surface Txx`; the coordinator writes only type+task (no kind, FINDINGS 2026-09-10), so a
+// scenario keys on the task. Pure, tested against canned flow lines.
+export function parseSurfaceTask(line) {
+  const body = String(line ?? '').slice(String(line ?? '').indexOf(' ') + 1);
+  if (!body.startsWith('surface ')) return null;
+  const rest = body.slice('surface '.length).trim();
+  return /^T\d+$/.test(rest) ? rest : null;
+}
+
+// scriptedAnswerFor({ flowText, scriptedAnswer, answered }) → the { task, text } decision to write to
+// the control `answers` file for the next surfaced task not yet answered, or null (DESIGN §4.1, T28).
+// This is how an INTERACTIVE scenario (merge-conflict, human-decision) is made deterministic: when a
+// worker parks and the coordinator writes a `surface Txx` line, the runner feeds the fixture's fixed
+// decision down, standing in for the human WITHOUT removing the real parking / delivery / resume round
+// trip. The decision may name a task (human-decision) or not (merge-conflict, where which of the two
+// same-line tasks conflicts is a timing race) — an un-tasked decision is routed to whatever task
+// surfaced. Pure so the injection choice is unit-tested with no live run.
+export function scriptedAnswerFor({ flowText = '', scriptedAnswer = null, answered = new Set() } = {}) {
+  if (!scriptedAnswer) return null;
+  for (const line of String(flowText).split('\n')) {
+    const task = parseSurfaceTask(line);
+    if (!task) continue;
+    if (scriptedAnswer.task && scriptedAnswer.task !== task) continue;
+    if (answered.has(task)) continue;
+    return { task, text: scriptedAnswer.text ?? '' };
+  }
+  return null;
+}
+
+// captureFinalFiles({ repoDir, gitRun, files }) → { path: content } read from `git show main:path` on
+// the scratch repo after the run (DESIGN §4.1, T28). Run at seal, while main still exists (teardown
+// removes only worker worktrees, not the main checkout), so a fact can prove which side a resolved
+// merge-conflict shipped. A file git cannot show (absent, or main never promoted) is omitted, so the
+// fact reports "no captured final content" from data rather than throwing.
+export function captureFinalFiles({ repoDir, gitRun = defaultRunGit, files = [] } = {}) {
+  const out = {};
+  for (const f of files) {
+    const r = gitRun(['show', `main:${f}`], { cwd: repoDir });
+    if (r.ok) out[f] = r.stdout;
+  }
+  return out;
 }
 
 // --- The default injected effects (mirroring platform.mjs / capture.mjs) -------------------------
@@ -289,6 +333,8 @@ export async function runScenario({
       startupGrace,
       timers,
       isTimedOut: () => timedOut,
+      scriptedAnswer: fixture.scriptedAnswer ?? null,
+      log,
     });
     log(`run reached: ${reason}`);
   } finally {
@@ -311,10 +357,22 @@ export async function runScenario({
     }
   }
 
-  // Check the sealed bundle against the scenario's declared facts (T15). loadTranscripts is the one I/O
-  // the assertion layer does; every fact is then pure over the loaded bundle.
-  const withTranscripts = loadTranscripts(bundle);
-  const report = checkScenario(spec, withTranscripts);
+  // Capture the promoted content of any file the fixture declares a decided outcome for (T28), while the
+  // scratch repo's main still exists (teardown removed only worker worktrees). Persist it into the bundle
+  // as final-files.json so an offline re-check (loadFinalFiles) sees the same evidence, then attach it.
+  if (fixture.finalContent && bundle?.dir) {
+    try {
+      const finals = captureFinalFiles({ repoDir, gitRun, files: [fixture.finalContent.file] });
+      writeFileSync(join(bundle.dir, 'final-files.json'), `${JSON.stringify(finals, null, 2)}\n`);
+    } catch (e) {
+      log(`final-content capture failed: ${e.message}`);
+    }
+  }
+
+  // Check the sealed bundle against the scenario's declared facts (T15). loadTranscripts and
+  // loadFinalFiles are the assertion layer's loaders (its only I/O); every fact is then pure over the
+  // loaded bundle.
+  const report = checkScenario(spec, loadFinalFiles(loadTranscripts(bundle)));
   const ok = report.pass && !timedOut;
   return { scenario: spec.id, ok, reason: timedOut ? 'timeout' : reason, bundleDir: bundle?.dir ?? null, report };
 }
@@ -332,17 +390,36 @@ export async function runScenario({
 // poll 1 would false-stall every live run before it began (T17 review). A genuine stall is then: the run
 // went active, and now neither a worker nor the coordinator is live and nothing promoted. The wall-clock
 // timeout is the ultimate backstop for a coordinator that stays alive but hangs without promoting.
-async function waitForCompletion({ cap, controlDir, repo, slug, pollMs, stallGrace, startupGrace, timers, isTimedOut }) {
+async function waitForCompletion({ cap, controlDir, repo, slug, pollMs, stallGrace, startupGrace, timers, isTimedOut, scriptedAnswer = null, log = () => {} }) {
   const flagPath = join(controlDir, 'HALT');
   const flowPath = join(controlDir, 'log');
+  const answersPath = join(controlDir, 'answers');
   const coordName = coordinatorName({ repo, plan: slug });
   let sawActive = false; // has a worker OR the coordinator ever been live? gates which grace applies.
   let quiet = 0; // consecutive quiet polls AFTER the run went active (a stall, §4.1)
   let startupQuiet = 0; // consecutive quiet polls BEFORE anything was ever live (still booting)
+  const answered = new Set(); // tasks the runner has already fed a scripted decision, so each fires once
   for (;;) {
     const snap = cap.tick(); // one sampled `agents --json`, recorded into the bundle
     const flowText = existsSync(flowPath) ? safeRead(flowPath) : '';
     const haltPresent = existsSync(flagPath);
+
+    // Feed the fixture's scripted decision the moment a worker parks (an interactive scenario, T28): the
+    // coordinator's `surface Txx` line means a worker is waiting on the user, so write the decision to
+    // the control `answers` file the bin drains and routes down. Fires once per surfaced task. The
+    // parking, delivery and resume are all still real; only the human at the keyboard is scripted.
+    if (scriptedAnswer) {
+      const a = scriptedAnswerFor({ flowText, scriptedAnswer, answered });
+      if (a) {
+        try {
+          appendFileSync(answersPath, `${JSON.stringify(a)}\n`);
+          answered.add(a.task);
+          log(`scripted decision fed for ${a.task}`);
+        } catch (e) {
+          log(`could not write scripted decision for ${a.task}: ${e.message}`);
+        }
+      }
+    }
 
     const outcome = runOutcome({ flowText, haltPresent });
     if (outcome.over) return outcome.reason;

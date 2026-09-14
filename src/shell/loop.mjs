@@ -278,10 +278,14 @@ export function runPass({ platform, worktree, repo, slug, maxWorkers, state, con
     sendHello(revName, num); // open the fresh reviewer's channel too (T13 Problem A)
   }
 
-  // 3d. Merge one done task branch into the feature branch, reconcile its row to ✅ (DESIGN §2.5,
-  // §2.9). A conflict the coordinator hits is surfaced and the branch is left dirty-free: no merge,
-  // no row change, and the worker is parked awaiting the user rather than closed.
-  const mergedTasks = new Set();
+  // 3d. Merge one done task branch into the feature branch, reconcile its row to ✅, and — only once
+  // it merges cleanly — close the worker (DESIGN §2.5, §2.9). Merge and close are PAIRED here, not in
+  // decideDispatch: a done worker is no longer listed in `close`, so a merge that CONFLICTS cannot
+  // close the worker (the T22 conflict-path bug, where the same pass parked the conflict yet still
+  // closed the done+merged worker and deleted its task, letting the next pass respawn a clobbering
+  // fresh build). On a conflict the coordinator keeps the worker ALIVE and parked (AWAITING): its
+  // session, worktree and task all stay, it holds its slot, and the user's decision is routed down to
+  // that same worker, which resolves on its own branch and re-signals done (§2.5 Option 2, T28).
   for (const workerId of decision.merge) {
     const found = taskByWorkerId(state, workerId);
     if (!found) continue;
@@ -297,6 +301,9 @@ export function runPass({ platform, worktree, repo, slug, maxWorkers, state, con
     }
     const res = worktree.mergeTask(t.worktree.branch);
     if (res.conflict) {
+      // Keep the worker alive and parked — do NOT close it, remove its worktree, or delete its task.
+      // It waits for the user's decision (routed down by answer()), resolves on its own branch, and
+      // re-signals done, at which point this same merge step runs again and lands cleanly (§2.5, T28).
       t.phase = AWAITING;
       t.decision = { kind: 'conflict', text: `merge conflict in ${res.files?.join(', ') || 'the feature branch'}` };
       record('surface', { task: num, kind: 'conflict', text: t.decision.text });
@@ -313,13 +320,21 @@ export function runPass({ platform, worktree, repo, slug, maxWorkers, state, con
     });
     writeFileSync(featureProgressPath, reconciled);
     worktree.commitFeature(`reconcile ${num} → ✅`);
-    mergedTasks.add(num);
     record('merge', { task: num, branch: t.worktree.branch });
+    // The branch is safely in the feature branch, so end the worker now (session stop + worktree
+    // removal) and forget its task. This is the close decideDispatch used to schedule; pairing it with
+    // the successful merge is what makes a conflicted merge leave the worker untouched (T28).
+    platform.close(workerId);
+    closedThisPass.add(workerId);
+    worktree.remove(t.worktree);
+    record('close', { task: num, workerId, reason: 'merged' });
+    delete state.tasks[num];
   }
 
-  // 3e. Close the remaining workers decideDispatch names (dead ones were handled in 3a):
-  //   - a review-ready implementer being replaced: session stop, worktree kept, phase → reviewing;
-  //   - a merged worker: session stop and worktree/branch removed, task done.
+  // 3e. Close the remaining workers decideDispatch names. Dead ones were handled in 3a, and a merged
+  // worker is now closed in 3d paired with its merge (T28), so the only worker decideDispatch lists
+  // here is a review-ready implementer being replaced: session stop, worktree kept, phase → reviewing.
+  // The generic tail closes any other close-id defensively; it should not fire in normal flow.
   for (const workerId of decision.close) {
     if (deadIds.has(workerId)) continue; // already cleaned up in 3a
     if (deferredClose.has(workerId)) continue; // busy finished worker — held for a later pass (3c/3d)
@@ -339,7 +354,7 @@ export function runPass({ platform, worktree, repo, slug, maxWorkers, state, con
     closedThisPass.add(workerId);
     if (found) {
       worktree.remove(found.t.worktree);
-      record('close', { task: found.num, workerId, reason: mergedTasks.has(found.num) ? 'merged' : 'closed' });
+      record('close', { task: found.num, workerId, reason: 'closed' });
       delete state.tasks[found.num];
     } else {
       record('close', { workerId });

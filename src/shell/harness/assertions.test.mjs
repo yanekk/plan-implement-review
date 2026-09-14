@@ -12,6 +12,7 @@ import { join } from 'node:path';
 import { loadBundle } from './capture.mjs';
 import {
   loadTranscripts,
+  loadFinalFiles,
   parseTranscript,
   sendMessagesOf,
   runIdentity,
@@ -19,8 +20,7 @@ import {
   noCloseBeforeIdle,
   byNameAddressing,
   questionRoundTrip,
-  mergeConflictParked,
-  conflictSurfacedAndParked,
+  mergeConflictResolved,
   oneMergeToMain,
   killSwitchStoppedAll,
   ceilingHeld,
@@ -223,59 +223,79 @@ test('questionRoundTrip fails when a surfaced task never resumes to a merge', ()
   assert.match(r.detail, /never resumed/);
 });
 
-// --- mergeConflictParked -------------------------------------------------------------------------
+// --- mergeConflictResolved (task-agnostic, Option 2, T28) ----------------------------------------
 
-test('mergeConflictParked passes when a conflict is surfaced and no merge of the task landed', () => {
-  const b = bundle({ flow: [fl('t2', 'surface', 'T05')], gitLog: "* abc (pir/scratch) merge pir/scratch-T04\n", timeline: [tick('t1', [cagent()])] });
-  assert.equal(mergeConflictParked('T05').check(b).pass, true);
-});
-
-test('mergeConflictParked fails when the conflicting task was merged anyway', () => {
-  const b = bundle({ flow: [fl('t2', 'surface', 'T05'), fl('t5', 'merge', 'T05')], timeline: [tick('t1', [cagent()])] });
-  const r = mergeConflictParked('T05').check(b);
-  assert.equal(r.pass, false);
-  assert.match(r.detail, /merged despite/);
-});
-
-test('mergeConflictParked fails when the git log shows the task branch merged', () => {
-  const b = bundle({ flow: [fl('t2', 'surface', 'T05')], gitLog: 'merge pir/scratch-T05\n', timeline: [tick('t1', [cagent()])] });
-  assert.equal(mergeConflictParked('T05').check(b).pass, false);
-});
-
-// --- conflictSurfacedAndParked (task-agnostic) ---------------------------------------------------
-
-test('conflictSurfacedAndParked passes when the winner merged, the surfaced loser did not, and nothing promoted', () => {
-  // Ceiling-2 shape: T01 (winner) merged clean; T02 (loser) surfaced and was parked; no promotion.
-  const b = bundle({
-    flow: [fl('t3', 'merge', 'T01'), fl('t4', 'surface', 'T02')],
-    gitLog: "* abc (pir/scratch) merge pir/scratch-T01\n",
-    timeline: [tick('t1', [cagent()])],
+// A bundle in the Option-2 shape: T01 (winner) merged clean; T02 conflicted, was surfaced, the decision
+// was delivered (`answer T02`), and T02 resumed to a merge; one promotion; main carries the decided side.
+function resolvedBundle(over = {}) {
+  return bundle({
+    flow: [
+      fl('t3', 'merge', 'T01'),
+      fl('t4', 'surface', 'T02'),
+      fl('t5', 'answer', 'T02'),
+      fl('t6', 'merge', 'T02'),
+      fl('t9', 'promote', 'pir/scratch'),
+    ],
+    gitLog: "*   Merge branch 'pir/scratch'\n| * merge pir/scratch-T02\n| * merge pir/scratch-T01\n",
+    timeline: [tick('t1', [cagent(), wagent('T02', 'idle', { sessionId: 's2i', role: 'implement' })])],
+    finalFiles: { 'greeting.txt': 'hello there\n' },
+    ...over,
   });
-  assert.equal(conflictSurfacedAndParked().check(b).pass, true);
+}
+const decided = { file: 'greeting.txt', content: 'hello there' };
+
+test('mergeConflictResolved passes when the conflict was kept alive, decided, resumed, and the decided side reached main', () => {
+  assert.equal(mergeConflictResolved(decided).check(resolvedBundle()).pass, true);
 });
 
-test('conflictSurfacedAndParked fails when no task was surfaced', () => {
-  const r = conflictSurfacedAndParked().check(bundle({ flow: [fl('t3', 'merge', 'T01')] }));
+test('mergeConflictResolved fails when no task was surfaced', () => {
+  const r = mergeConflictResolved(decided).check(bundle({ flow: [fl('t3', 'merge', 'T01')] }));
   assert.equal(r.pass, false);
-  assert.match(r.detail, /no surface/);
+  assert.match(r.detail, /no task surface/);
 });
 
-test('conflictSurfacedAndParked fails when a surfaced task merged anyway', () => {
-  const b = bundle({ flow: [fl('t4', 'surface', 'T02'), fl('t5', 'merge', 'T02')], timeline: [tick('t1', [cagent()])] });
-  const r = conflictSurfacedAndParked().check(b);
+test('mergeConflictResolved fails when the surfaced task was never answered and merged (the T22 failure)', () => {
+  // Surfaced but no `answer` and no later merge — the worker was closed and the decision had no way down.
+  const r = mergeConflictResolved(decided).check(
+    bundle({ flow: [fl('t4', 'surface', 'T02')], timeline: [tick('t1', [cagent()])] }),
+  );
   assert.equal(r.pass, false);
-  assert.match(r.detail, /merged anyway/);
+  assert.match(r.detail, /not resolved through the live worker/);
 });
 
-test('conflictSurfacedAndParked fails when a promotion happened despite a parked conflict', () => {
-  const b = bundle({
-    flow: [fl('t4', 'surface', 'T02'), fl('t9', 'promote', 'pir/scratch')],
-    gitLog: "Merge branch 'pir/scratch'\n",
-    timeline: [tick('t1', [cagent()])],
-  });
-  const r = conflictSurfacedAndParked().check(b);
+test('mergeConflictResolved fails when the LOSING side shipped to main (the T22 regression)', () => {
+  const r = mergeConflictResolved(decided).check(resolvedBundle({ finalFiles: { 'greeting.txt': 'hi world\n' } }));
   assert.equal(r.pass, false);
-  assert.match(r.detail, /main did not stay clean/);
+  assert.match(r.detail, /losing side shipped/);
+});
+
+test('mergeConflictResolved fails when the task was respawned (a second implement session)', () => {
+  const r = mergeConflictResolved(decided).check(
+    resolvedBundle({
+      timeline: [
+        tick('t1', [cagent(), wagent('T02', 'idle', { sessionId: 's2i', role: 'implement' })]),
+        tick('t2', [cagent(), wagent('T02', 'busy', { sessionId: 's2i-again', role: 'implement' })]),
+      ],
+    }),
+  );
+  assert.equal(r.pass, false);
+  assert.match(r.detail, /respawned/);
+});
+
+test('mergeConflictResolved fails when the decided content was not captured', () => {
+  const r = mergeConflictResolved(decided).check(resolvedBundle({ finalFiles: {} }));
+  assert.equal(r.pass, false);
+  assert.match(r.detail, /no captured final content/);
+});
+
+// --- loadFinalFiles ------------------------------------------------------------------------------
+
+test('loadFinalFiles reads the bundle final-files.json into bundle.finalFiles; missing → {}', () => {
+  const files = { 'greeting.txt': 'hello there\n' };
+  const withFiles = loadFinalFiles(bundle({ dir: '/b' }), { readFile: () => JSON.stringify(files) });
+  assert.deepEqual(withFiles.finalFiles, files);
+  const missing = loadFinalFiles(bundle({ dir: '/b' }), { readFile: () => { throw new Error('ENOENT'); } });
+  assert.deepEqual(missing.finalFiles, {});
 });
 
 // --- oneMergeToMain ------------------------------------------------------------------------------

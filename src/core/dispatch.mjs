@@ -18,6 +18,12 @@ const READY = '⬜';
 const PHASE_REVIEW_READY = 'review-ready';
 const PHASE_DONE = 'done';
 const PHASE_DEAD = 'dead';
+// A worker parked on the user (a question, a decision, or a merge conflict the coordinator hit) sits in
+// the phase 'awaiting-answer' (loop.mjs AWAITING). It is a LIVE session holding a slot, but it is TAKEN
+// and must never be merged, closed or respawned while parked — merging or closing it is exactly the T22
+// conflict-path bug (the done+merged worker was closed and its task respawned into a clobbering fresh
+// build). It never reaches `merge` (its phase is not 'done'), `close` (it is neither dead nor
+// review-ready) or `spawn` (a live worker's task is taken). See §2.5 and the derivations below.
 
 // The numeric order of a task id ("T05" → 5), for "lowest task number first" everywhere.
 function order(id) {
@@ -63,20 +69,23 @@ export function decideDispatch({ tasks, assignments, maxWorkers, halted }) {
 
   // merge: at most one done worker's branch per pass, serialized into the feature branch
   // (§2.5, §2.9). Lowest task number first when several are done. A done worker whose session
-  // has died is not merged (its work cannot be trusted) — it falls to close as dead instead.
+  // has died is not merged (its work cannot be trusted) — it falls to close as dead instead. A
+  // worker parked AWAITING (phase !== done) is never here: it holds its slot until its decision
+  // arrives and it re-signals done (T28 §2.5).
   const doneLive = live.filter((a) => a.phase === PHASE_DONE);
   doneLive.sort((x, y) => order(x.task) - order(y.task));
   const merged = doneLive[0];
   const merge = merged ? [merged.workerId] : [];
 
-  // close, three sources (§3.3): every dead worker (frees its leaked slot); the implement
+  // close, two sources (§3.3): every dead worker (frees its leaked slot); and the implement
   // session of each review-ready task, closed as its fresh reviewer spawns so a task in review
-  // holds one slot not two (§2.1); and the single worker whose branch we merge this pass (§2.1
-  // step 6 merges then closes). Deduped and ordered by task number.
+  // holds one slot not two (§2.1). The merged worker is NOT closed here: merge and close are paired
+  // in the loop (loop.mjs 3d closes a worker only AFTER its branch merges cleanly), so a merge that
+  // conflicts parks the worker instead of closing it (T22 conflict-path bug; §2.5, T28). A parked
+  // AWAITING worker is in neither source, so it is never closed while it waits. Deduped, task order.
   const closeSet = new Map();
   for (const a of dead) closeSet.set(a.workerId, a);
   for (const a of reviewReady) closeSet.set(a.workerId, a);
-  if (merged) closeSet.set(merged.workerId, merged);
   const close = idsByTask([...closeSet.values()]);
 
   // spawn: the ready tasks (⬜, all deps ✅, not already held by a live worker), lowest number

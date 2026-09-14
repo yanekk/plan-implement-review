@@ -117,6 +117,22 @@ export function loadTranscripts(bundle, { readFile = (p) => readFileSync(p, 'utf
   return { ...bundle, transcripts };
 }
 
+// loadFinalFiles(bundle, { readFile }) → a new bundle with `finalFiles` attached, read from the bundle's
+// `final-files.json` (a { path: content } map the runner writes at seal by reading `git show main:path`
+// on the scratch repo). Like loadTranscripts, it is a one-shot loader done before the predicates run, so
+// a fact stays pure. A missing or malformed file yields {} rather than throwing — a fact then reports
+// "no captured final content" from data. Used by mergeConflictResolved to prove the decided side shipped.
+export function loadFinalFiles(bundle, { readFile = (p) => readFileSync(p, 'utf8') } = {}) {
+  let finalFiles = {};
+  try {
+    const parsed = JSON.parse(readFile(join(bundle.dir, 'final-files.json')));
+    if (parsed && typeof parsed === 'object') finalFiles = parsed;
+  } catch {
+    finalFiles = {};
+  }
+  return { ...bundle, finalFiles };
+}
+
 // parseTranscript(text) → the JSONL lines parsed to objects, malformed lines skipped (never a throw).
 export function parseTranscript(text) {
   return String(text ?? '')
@@ -332,84 +348,121 @@ export function questionRoundTrip(task) {
   });
 }
 
-// A merge conflict the worker could not resolve was surfaced and PARKED: no merge of that task landed,
-// so nothing bad reached the feature branch (DESIGN §2.5). The scenario names the conflicting task
-// (the flow log carries no surface kind). Checked from the flow (a surface, no merge of the task) and
-// the git log (the task's merge commit is absent).
-export function mergeConflictParked(task) {
-  return fact(`merge-conflict-parked:${task}`, `A conflict on ${task} was parked, no bad merge landed`, (bundle) => {
-    const evidence = [];
-    const surfaces = flowOf(bundle, 'surface').filter((e) => e.rest === task);
-    if (surfaces.length === 0) {
-      return { pass: false, evidence, detail: `no surface for ${task} — a conflict was expected to be surfaced` };
-    }
-    evidence.push(flowLine(surfaces[0]));
-    const merged = flowOf(bundle, 'merge').find((e) => e.rest === task);
-    if (merged) {
-      evidence.push(flowLine(merged));
-      return { pass: false, evidence, detail: `${task} was merged despite the conflict — a dirty branch reached the feature branch` };
-    }
-    const { plan } = runIdentity(bundle);
-    if (plan) {
-      const branchMerge = `merge pir/${plan}-${task}`;
-      if ((bundle.gitLog ?? '').includes(branchMerge)) {
-        evidence.push(`git log contains "${branchMerge}"`);
-        return { pass: false, evidence, detail: `git log shows ${task}'s branch merged despite the conflict` };
-      }
-    }
-    evidence.push(`no merge of ${task} in the flow or git log`);
-    return { pass: true, evidence, detail: `${task}'s conflict was surfaced and parked; no merge of it landed` };
-  });
-}
-
-// A conflict was surfaced and PARKED, without naming which task lost (DESIGN §2.5). This is the
-// task-AGNOSTIC form for the merge-conflict fixture, which now runs at ceiling 2 (T16 review
-// 2026-09-11): both tasks edit the same line from a common base, and whichever worker merges SECOND
-// conflicts — but which of the two that is is a timing race, so the fact cannot name it the way
-// mergeConflictParked(task) does. It keys on the OUTCOME, all of it reliably in the flow log or git
-// log: at least one surfaced task, NO surfaced task merged (in the flow or git log), and NO
-// promotion — the safety property "a conflict was caught and nothing bad reached main". A
-// worker-caught conflict now reaches the flow as a `surface` too (loop.mjs applyMessages, same
-// review), so this holds wherever the conflict is caught — the worker's integrate or the
-// coordinator's mergeTask.
-export function conflictSurfacedAndParked() {
-  return fact('conflict-surfaced-and-parked', 'A conflict was surfaced and parked; no bad merge or promotion landed', (bundle) => {
+// A coordinator-hit merge conflict was RESOLVED via Option 2 (DESIGN §2.5, T28): the coordinator kept
+// the worker alive and parked, delivered the user's decision, the worker resolved on its own branch and
+// re-signalled done, and the decided side merged and reached main. This REPLACES the old
+// `conflictSurfacedAndParked`/`mergeConflictParked` facts, which asserted the task NEVER merges — only
+// ever right for a terminal park, which Option 2 discarded (the terminal park stranded the whole plan's
+// shipment behind one clash; the T22 live run then shipped the WRONG side because the worker was closed
+// and its task respawned). The fact is task-AGNOSTIC: which of the two same-line tasks merges second —
+// and so conflicts — is a timing race (T16 2026-09-11), so it finds the task that took the Option-2
+// shape rather than naming it. It reads all of the following off the bundle:
+//   - a `surface` for that task, with NO `merge` of it BEFORE the surface (the conflict was caught,
+//     nothing bad merged first);
+//   - an `answer {task}` flow line (the decision was delivered DOWN to the live worker — the T22 bug
+//     was that no answer landed, the worker having been closed);
+//   - a `merge {task}` AFTER the surface (the same worker resumed and its now-clean branch merged);
+//   - exactly ONE implement session for the task in the timeline (no respawn — the T22 clobber spawned
+//     a second implementer);
+//   - exactly one `promote` to main, corroborated by one promotion merge in the git log;
+//   - and, when the caller passes { file, content }, the final promoted content of that file matches the
+//     DECIDED side (bundle.finalFiles, captured by the runner: loadFinalFiles). This is the crux of the
+//     T22 regression — main shipped the losing "hi world", opposite the "keep hello there" decision.
+export function mergeConflictResolved({ file, content } = {}) {
+  return fact('merge-conflict-resolved', 'A coordinator-hit conflict was kept alive, decided, resolved, and the decided side reached main', (bundle) => {
     const evidence = [];
     const surfaces = flowOf(bundle, 'surface').filter((e) => /^T\d+$/.test(e.rest));
     if (surfaces.length === 0) {
-      return { pass: false, evidence, detail: 'no surface of a task — a conflict was expected to be surfaced and parked' };
+      return { pass: false, evidence, detail: 'no task surface — a merge conflict was expected to be surfaced' };
     }
-    for (const s of surfaces) evidence.push(flowLine(s));
-    const { plan } = runIdentity(bundle);
-    const gitLog = bundle.gitLog ?? '';
+    const merges = flowOf(bundle, 'merge');
+    const answers = flowOf(bundle, 'answer');
 
-    // No surfaced task may have merged — a merge of a surfaced task means a conflicting branch reached
-    // the feature branch. Checked in the flow (a `merge` of it) and the git log (its branch-merge).
+    // Find the surfaced task that took the Option-2 path: surfaced, not merged before, answered, and
+    // then merged. Which task conflicts is a race, so the fact discovers it rather than naming it.
+    let resolved = null;
     for (const s of surfaces) {
       const task = s.rest;
-      const mergedInFlow = flowOf(bundle, 'merge').find((e) => e.rest === task);
-      if (mergedInFlow) {
-        evidence.push(flowLine(mergedInFlow));
-        return { pass: false, evidence, detail: `${task} was surfaced but merged anyway — a conflicting branch reached the feature branch` };
-      }
-      if (plan && gitLog.includes(`merge pir/${plan}-${task}`)) {
-        evidence.push(`git log contains "merge pir/${plan}-${task}"`);
-        return { pass: false, evidence, detail: `git log shows ${task}'s branch merged despite the conflict` };
+      const mergedBefore = merges.find((m) => m.rest === task && m.ts < s.ts);
+      const mergedAfter = merges.find((m) => m.rest === task && m.ts >= s.ts);
+      const answered = answers.find((a) => a.rest === task);
+      if (!mergedBefore && answered && mergedAfter) {
+        resolved = { task, surface: s, answered, mergedAfter };
+        break;
       }
     }
+    if (!resolved) {
+      for (const s of surfaces) evidence.push(flowLine(s));
+      for (const a of answers) evidence.push(flowLine(a));
+      for (const m of merges) evidence.push(flowLine(m));
+      return {
+        pass: false,
+        evidence,
+        detail: 'no surfaced task was answered and then merged — the conflict was not resolved through the live worker (the T22 failure)',
+      };
+    }
+    const { task } = resolved;
+    evidence.push(flowLine(resolved.surface));
+    evidence.push(flowLine(resolved.answered));
+    evidence.push(flowLine(resolved.mergedAfter));
 
-    // And main must be untouched: a parked task never reaches ✅, so the plan cannot promote.
+    // No respawn: exactly one implement-role session ran the conflicting task. The T22 clobber closed
+    // the done worker and spawned a SECOND implementer over the same task. Counted from distinct
+    // session ids in the timeline; 0 (the phase was never sampled) cannot prove a respawn, so only >1
+    // fails.
+    const implSids = new Set();
+    for (const tick of bundle.timeline ?? []) {
+      for (const a of tick.agents ?? []) {
+        const p = parseAgentName(a.name);
+        if (a.isWorkerOf && p.task === task && p.role === 'implement' && a.sessionId) implSids.add(a.sessionId);
+      }
+    }
+    if (implSids.size > 1) {
+      evidence.push(`implement sessions for ${task}: ${implSids.size}`);
+      return { pass: false, evidence, detail: `${task} was built by ${implSids.size} implement sessions — it was respawned (the T22 clobber)` };
+    }
+
+    // The decision was addressed to the task's worker (supporting, when the coordinator transcript is
+    // present): the answer SendMessage went to a name that parses to this task.
+    const { repo, plan } = runIdentity(bundle);
+    const coord = coordinatorTranscript(bundle);
+    if (coord && repo && plan) {
+      const ans = sendMessagesOf(coord).find((s) => {
+        const p = parseAgentName(stripRef(s.to));
+        return p.matches && p.task === task && p.repo === repo && p.plan === plan;
+      });
+      if (ans) evidence.push(`coordinator → ${stripRef(ans.to)} (answer): ${ans.summary}`);
+    }
+
+    // Exactly one promotion reached main (the resolved plan lands once, DESIGN §2.9).
     const promotes = flowOf(bundle, 'promote');
-    if (promotes.length > 0) {
-      for (const p of promotes) evidence.push(flowLine(p));
-      return { pass: false, evidence, detail: 'a promotion happened despite a parked conflict — main did not stay clean' };
+    for (const p of promotes) evidence.push(flowLine(p));
+    if (promotes.length !== 1) {
+      return { pass: false, evidence, detail: `expected exactly one promote after the resolution, found ${promotes.length}` };
     }
-    if (plan && promotionMergeLines(gitLog, plan).length > 0) {
-      evidence.push(`git log contains "Merge branch 'pir/${plan}'"`);
-      return { pass: false, evidence, detail: 'git log shows a promotion to main despite a parked conflict' };
+    if (plan) {
+      const count = promotionMergeLines(bundle.gitLog, plan).length;
+      evidence.push(`git log promotion merges: ${count}`);
+      if (count !== 1) {
+        return { pass: false, evidence, detail: `git log shows ${count} promotion merge(s) into main, expected 1` };
+      }
     }
 
-    return { pass: true, evidence, detail: `${surfaces.length} surfaced task(s), none merged, and nothing promoted — the conflict was parked` };
+    // The DECIDED side won: the final promoted content of the contested file matches the decision, not
+    // the losing side. This is the T22 regression, so it is the fact's sharpest assertion.
+    if (file) {
+      const got = (bundle.finalFiles ?? {})[file];
+      if (got == null) {
+        return { pass: false, evidence, detail: `no captured final content for ${file} — cannot confirm the decided side won (runner did not capture it)` };
+      }
+      if (String(got).trim() !== String(content).trim()) {
+        evidence.push(`main:${file} = ${JSON.stringify(String(got).trim())}`);
+        return { pass: false, evidence, detail: `final ${file} is ${JSON.stringify(String(got).trim())}, not the decided ${JSON.stringify(String(content).trim())} — the losing side shipped` };
+      }
+      evidence.push(`main:${file} = ${JSON.stringify(String(got).trim())} (the decided side)`);
+    }
+
+    return { pass: true, evidence, detail: `${task}'s conflict was surfaced, decided, resolved by the live worker, and the decided side merged and promoted once` };
   });
 }
 
