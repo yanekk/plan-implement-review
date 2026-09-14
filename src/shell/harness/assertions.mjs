@@ -17,7 +17,7 @@
 //               promote, teardown, ceiling), the rest is a task id (T05), a branch, or free text.
 //               The line does NOT carry a surface's KIND (conflict/question/decision) — loop.mjs
 //               writes only type+task — so the question/conflict facts key on the TASK id a scenario
-//               names, not on a kind read from the log (see questionRoundTrip / mergeConflictParked).
+//               names, not on a kind read from the log (see questionRoundTrip / mergeConflictResolved).
 //   timeline  — [{ ts, agents:[{ name, sessionId, cwd, status, state, isWorkerOf, isCoordinator }] }]
 //               one sampled `agents --json` per tick. status is live-only, so a busy→idle transition
 //               proves the idle-gated close (DESIGN §2.3); a session absent from a tick has ended.
