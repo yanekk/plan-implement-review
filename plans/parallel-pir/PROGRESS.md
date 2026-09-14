@@ -12,20 +12,18 @@ cell also fixes the over-budget cell they walk past.**
 
 **Plan reviewed:** 2026-09-07 — 4 fixed, 3 decided with the user
 
-**Status:** Plan reviewed before build; re-scoped onto Claude Code's own primitives. `Runs` marks each
-task `auto` (a worker builds) or `you` (a person runs the live steps). The original 29 tasks (phases 0–6)
-are **all ✅ and every live fixture PASSed live**; T23 closed T10 on its re-run 2026-09-14. **Phase 7's one
-hardening task, T30** (retire the `hello`, notice failed down-sends, pin the send contract) is **code reviewed
-clean** and now **⛔ — its live half is unverified**: it needs the PM's attended review-queue re-run to close.
-Operator's guide: [TEST-HARNESS.md](TEST-HARNESS.md). Phases 5–7 postdate the 2026-09-07 review, so each is
-validated per task.
+**Status:** **PLAN COMPLETE.** Plan reviewed before build; re-scoped onto Claude Code's own primitives.
+`Runs` marks each task `auto` (a worker builds) or `you` (a person runs the live steps). All 30 tasks are ✅
+and every live fixture PASSed live. Phase 7's hardening task **T30** (retire the `hello`, notice failed
+down-sends, pin the send contract) closed 2026-09-14: code reviewed clean, then its live review-queue re-run
+PASSed (`noHelloEver` green, zero coordinator down-messages, one promote). Operator's guide:
+[TEST-HARNESS.md](TEST-HARNESS.md).
 **Last updated:** 2026-09-14
-**Next `pir-work` will:** report T30 is ⛔ and stop — the only step left is the PM's attended live re-run of
-the review-queue fixture (`node src/shell/harness/run.mjs review-queue --into <dir>`; needs real paid agents,
-launched attended). Expect `noHelloEver` green, one promote, the coordinator transcript showing clean
-two-field sends (E). Record the verdict + bundle in FINDINGS, then flip T30 to ✅ — that closes the plan.
-Standing notes: capture copies `role:foreign` transcripts (~4MB), not yet a task; candidate D (graceful
-mid-write drain) left out by the PM.
+**Next `pir-work` will:** report the plan is complete — nothing left to build or review. Three hardening
+candidates from the T30 reflection are with the PM (reviewer runs the test once + captures exit; workers use
+`cat -A`/GNU-only flags that fail on macOS → standardize on `xxd`/`Read`; coordinator emit an explicit final
+`promote confirmed`/teardown narration line). None decided yet. Standing notes: capture copies `role:foreign`
+transcripts (~4MB), not yet a task; candidate D (graceful mid-write drain) left out by the PM.
 
 ## Tasks
 
@@ -65,28 +63,22 @@ live steps with a hands-on worker the coordinator spawns, folded back without re
 | T29 | Fix the kill-switch capture: seal on `halt-close`, make the `hello` flow line honest | auto | T28 | ✅ | Reviewed clean. Seal on `halt-close`+grace (timeout backstop); `helloPerSpawn` flow-half strict, transcript-half exempt only under halt-close. 271 tests. (Fact retired by T30.) |
 | T23 | Live fixture: parallel + kill-switch drill (absorbs T10) | you | T17, T26, T29 | ✅ | PASS live 2026-09-14 (re-run): 3 facts green. Ceiling held 2/2 (T03 waited), HALT→both workers SIGTERMed ~5s later, nothing promoted, main untouched. T29 seal-on-`halt-close` held. Reflection logged; 5 hardening candidates → PM. Bundle `…/2026-09-14T07-45-27-010Z`. |
 | T10 | Full multi-worker run + kill-switch drill — absorbed by T23 | you | T23 | ✅ | Closed with T23's PASS (2026-09-14): the full multi-worker + kill-switch drill is green. |
-| T30 | Retire the `hello`; notice failed down-sends; pin the send contract | auto | T23 | ⛔ | Code reviewed clean, no fix. No hello anywhere (grep; loop.test asserts the loop sends nothing); `noHelloEver` fails on a hello line and on an empty flow; C's two tests real (dropped→retry delivers; gone worker→`send-failed`; decision kept). E pinned in pir-coordinate. 274 tests. **Live half UNVERIFIED** — needs the PM's attended review-queue re-run to close. |
+| T30 | Retire the `hello`; notice failed down-sends; pin the send contract | auto | T23 | ✅ | Code reviewed clean; C's two tests real (dropped→retry; gone worker→`send-failed`; decision kept); E pinned; 274 tests. Live review-queue re-run PASS 2026-09-14: `noHelloEver` green, coordinator sent zero down-messages across 7 transcripts, one promote. No question arose so E's send unexercised live. Bundle `…/2026-09-14T09-07-45-091Z`. |
 
 A Notes cell holds what was built or what the review found, the test count, and one line per
 deviation from the task doc.
 
 **A ✅ task's cell may be cut to one line** once the next task has been reviewed.
 
-**Review queue:** empty. T30 is code reviewed clean; its live half is the only work left (⛔, PM-run).
+**Review queue:** empty. All 30 tasks are ✅; the plan is complete.
 
-## Next up: the PM's attended live re-run of the review-queue fixture (closes T30 and the plan)
+## Nothing left to build or review — the plan is complete
 
-T30's code is built and reviewed clean. The one step left is the attended live re-run, which only the PM can
-run (real paid agents, launched attended):
-
-```
-node src/shell/harness/run.mjs review-queue --into <dir>
-```
-
-Expect `noHelloEver` green, the run still promotes once, and the coordinator's transcript shows clean
-two-field sends (E). Record the verdict + bundle in FINDINGS with the date, then flip T30 to ✅ — that closes
-the plan. Full spec in [tasks/T30](tasks/T30-retire-hello-harden-down-channel.md). C (the `send-failed` path)
-is already confirmed by its deterministic test, not the live run — a live send failure cannot be forced.
+Every task through T30 is ✅ and every live fixture PASSed live. What remains is optional follow-up, not this
+plan: three hardening candidates from the T30 reflection sit with the PM (see the `Next pir-work` line and
+FINDINGS), and the standing `role:foreign` capture bloat is still unfiled. Any of these, if the PM wants them,
+becomes its own new task — the way T19's reflection produced T25/T26. Re-run procedure for any fixture is in
+[TEST-HARNESS.md](TEST-HARNESS.md).
 
 To re-run any fixture (needs real paid agents, launched attended), the procedure is in
 [TEST-HARNESS.md](TEST-HARNESS.md). Housekeeping: a closed worker can linger as `stopped`
