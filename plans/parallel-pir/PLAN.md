@@ -53,6 +53,7 @@ Phase 3  ▸  T06 … T09,T12,T13 real orchestration, small first    hand-verifi
 Phase 4  ▸  T11              teach /pir-plan to plan parallel     shared method
 Phase 5  ▸  T14 … T17        the live-scenario test harness       data-driven, build half
 Phase 6  ▸  T18 … T23        run the live scenarios, one per fixture   you-run, real agents
+Phase 7  ▸  T30              post-completion hardening (retire hello)  from the live reflections
 ```
 
 T10's full drill is absorbed by Phase 6 (T23, the parallel fixture), so Phase 3 now ends at T13.
@@ -215,6 +216,25 @@ down-channel), and it **gates the T23 re-run**, which is the last live fixture.
 They are launched attended, one at a time, never unattended — real paid agents (§5.2). A real model
 may occasionally not hit a fixture's path on a given run, so a scenario may need a re-run; a failed
 fact is a real finding (a framework bug or a fixture that does not force its path).
+
+## Phase 7 — Post-completion hardening (from the live reflections)
+
+Added after the plan's build was complete (all 29 tasks ✅), from the T23 reflection and the PM's
+decision (2026-09-14). Not on the original critical path; it reopens the plan for one hardening task.
+
+| # | Task | Runs | Depends on |
+|---|---|---|---|
+| [T30](tasks/T30-retire-hello-harden-down-channel.md) | Retire the `hello`; notice failed down-sends; pin the send contract | auto (+ a `you` live confirmation) | T23 |
+
+**T30 bundles three T23-reflection findings the PM chose to fix together** (candidates A, C, E). It
+retires the spawn `hello` — proven non-load-bearing by T23 (both hellos failed to send, yet the workers
+built the right thing from the spawn prompt) and already stripped of its T13 return-channel rationale by
+T25; makes the remaining answer down-send notice and surface a failed send instead of dropping it; and
+pins the coordinator's SendMessage contract to `{to, message}`. It is a real `src/shell` + skills +
+DESIGN change, fresh-reviewed as an `auto` task, then closed by an attended live re-run of the
+review-queue fixture (`noHelloEver` green, still promotes, clean two-field sends). Candidate D (graceful
+mid-write drain) was left out by the PM; candidate C's failed-send half is proven by a deterministic test,
+since a live send failure cannot be forced on demand.
 
 ---
 
