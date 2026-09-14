@@ -43,7 +43,13 @@ would mean. It is throwaway code and it is deleted afterwards.
 
 | # | Task | Runs | Depends on |
 |---|---|---|---|
-| [T01](tasks/T01-{slug}.md) | | auto | T00 |
+| [T01](tasks/T01-{slug}.md) | {the build} | auto | T00 |
+| [T02](tasks/T02-{slug}.md) | {verify T01 by hand} | you | T01 |
+
+T01 and T02 are a build→verify split (DESIGN §2.6): an `auto` task builds the thing and a
+dependent `you` task has a person run it. Delete the verify row if nothing this plan builds needs
+a person to confirm it — most plans do not — or fold the check into the builder when it is a quick
+yes/no rather than a first-class step.
 
 *(one section per phase, each with a line saying what is true at the end of it)*
 

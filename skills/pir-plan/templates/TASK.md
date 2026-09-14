@@ -56,10 +56,19 @@ three, this is two tasks.
 
 ## Needs a person
 
-*(Delete if it does not. Otherwise: exactly what cannot be established by the test command,
-the command that would establish it — with its seatbelt — what to expect, and what to report
-back. The implementing session raises this the moment it needs it and waits for the answer;
-it is not homework left at the end.)*
+*(Delete if nothing here needs a person. Otherwise: exactly what cannot be established by the
+test command, the command that would establish it — with its seatbelt — what to expect, and what
+to report back.)*
+
+**This block is carried two ways (DESIGN §2.6):**
+
+- **A folded `auto` task** raises it the moment it needs it and waits for the answer — the check
+  is a quick escalation the builder presents inline, not homework left at the end.
+- **A `you` verify task in a build→verify split** *is* this block: it is a `you` task depending
+  on the `auto` task that built the thing, and the hands-on worker (`pir-verify`) puts this block
+  in front of the user, who runs it and reports what they saw. Use the split when the check is
+  first-class — heavy, or on real agents, real branches or a real device — rather than a quick
+  yes/no.
 
 ```
 {the exact command, with its seatbelt}

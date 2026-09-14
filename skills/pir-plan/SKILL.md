@@ -296,12 +296,35 @@ was not there. Every task needs all five of:
    Correct task boundaries and reviewability beat throughput; parallelism is surfaced, never
    forced.
 6. **Its `Runs` marker** — `auto` if a background worker can produce the deliverable (the code
-   and its tests), `you` if the task's completion is a person's actions with no deliverable a
-   worker could produce: a spike, or a hand-verification drill. Most tasks are `auto`; the
-   marker defaults to `auto` when omitted.
+   and its tests), `you` if the task's completion is a person's actions whose result is an
+   observation: a spike, a hand-verification drill, or running a program a sibling `auto` task
+   built to confirm it works. Most tasks are `auto`; the marker defaults to `auto` when omitted.
 
 Sizing: **if you cannot write its "Done when" in three lines, it is two tasks.** If it has
 no test list, it is either not a task or the testability boundary is in the wrong place.
+
+### When a deliverable can only be verified by a person: fold, or split
+
+Some `auto` tasks build something whose only real proof is a person running it — a program that
+has to be launched, a change visible only on a real device or against real agents, anything the
+test command cannot reach. There are two ways to plan that check, and the choice is yours to make
+per task (DESIGN §2.6 carries the rule):
+
+- **Fold** it into the builder when the check is a quick escalation — the builder builds, then
+  parks and asks the user through the normal question path, handing over the exact seatbelted
+  command and recording the answer. One `auto` task, one row.
+- **Split** it when the check is first-class — heavy, or on real agents, real branches or a real
+  device, or worth planning as its own step. Then plan a **pair**: an `auto` task that builds the
+  thing, and a separate `you` verify task that **depends on the builder** and has a person run it.
+  Give the `you` verify task a **"Needs a person" block** — the exact seatbelted command, what to
+  expect, and what only a person can answer — so the hands-on worker (`pir-verify`) has something
+  concrete to put in front of the user.
+
+Declare the split's dependency honestly: the verify task truly cannot start until the builder is
+done, so the dependency is real, not padding. Do not fold a heavy check back into the builder to
+save a row (it holds the builder's slot at human speed), and do not split a light yes/no into its
+own task for the appearance of it. The `you` verify task counts in the width report's `you` total
+like any other `you` task.
 
 ### The ordering principles
 

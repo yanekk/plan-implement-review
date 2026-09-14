@@ -266,12 +266,15 @@ So every task carries a marker, decided at plan time and recorded in `PROGRESS.m
 - **`auto`** — an autonomous worker produces this task's deliverable (code and tests), even if it
   also has a hand-verified half it escalates to the user through the normal question path (§2.5).
   Most tasks are `auto`.
-- **`you`** — the task's completion is a person's actions with no deliverable a worker could
-  produce: a spike, or a hand-verification drill. The coordinator still spawns a worker for it,
-  but a **hands-on** one: the person runs the live commands themselves and reports what they saw,
-  and the worker is the scribe that records it into `FINDINGS.md` on its task branch. The user
-  works with that worker directly, so the exploration lands in the worker's context, not the
-  coordinator's.
+- **`you`** — the task's completion is a person's actions whose result is an observation: a
+  spike, a hand-verification drill, or running a program a sibling `auto` task just built to
+  confirm it does what it should. What makes a task `you` is that its result is something only a
+  person can observe, not whether a worker produced the thing being observed — so a `you` task
+  may verify a sibling `auto` task's deliverable (the build→verify split below). The coordinator
+  still spawns a worker for it, but a **hands-on** one: the person runs the live commands
+  themselves and reports what they saw, and the worker is the scribe that records it into
+  `FINDINGS.md` on its task branch. The user works with that worker directly, so the exploration
+  lands in the worker's context, not the coordinator's.
 
 The marker is a `Runs` column in the `PROGRESS.md` task table, `auto` or `you`, defaulting to
 `auto` when a plan predates the column so classic plans still parse. The coordinator reads it and
@@ -291,6 +294,32 @@ human speed. A `you` task the user defers is marked `⛔` and its dependents wai
 downstream of an unrun spike is dispatched. This matters because a `you` task can sit on the
 critical path — the T00 spike gates T07 and T08 — so the run genuinely pauses at human speed until
 the user runs it, which is the correct behaviour, not a stall to design around.
+
+**Verifying an `auto` task's deliverable: fold, or split.** Some `auto` tasks build something
+whose real proof can only be a person running it — a program that has to be launched, a change
+visible only on a real device or against real agents, anything the test command cannot reach.
+There are two first-class ways to plan that check, and both coexist:
+
+- **Fold** — the §2.5 question path. The builder does the check inside its own task: it builds,
+  then parks and escalates through the normal question path, handing the user the exact
+  seatbelted command and waiting for the answer, which it records. Use this when the check is a
+  quick escalation the builder can present inline; the task stays one unit of work, one `auto`
+  row.
+- **Split** — the build is one `auto` task and the human check is a **separate `you` verify
+  task that depends on it**. The builder is reviewed and merged on its own; the verify task is
+  its own planned unit, a hands-on worker (`pir-verify`, §2.6) the user drives, and it folds
+  back without review like any `you` task. Use this when the check is a first-class step whose
+  result is an observation worth planning on its own — especially on real agents, real branches,
+  or a real device — heavy enough that folding it would hold the builder's slot at human speed
+  for too long, or valuable enough to earn its own row and dependency in the plan.
+
+Neither replaces the other: the fold keeps a light check inside the builder, the split lifts a
+heavy or first-class check into its own `you` task. A split verify task carries a **"Needs a
+person" block** — the exact seatbelted command, what to expect, and what only a person can
+answer — so the hands-on worker has something concrete to put in front of the user. The
+dependency of the verify task on the builder is a real one (the verify cannot start until the
+thing exists), so it is declared honestly and `analyzeParallelism` counts the verify task in the
+`you` total like any other `you` task (§2.7).
 
 ### 2.7 Planning for parallelism
 
