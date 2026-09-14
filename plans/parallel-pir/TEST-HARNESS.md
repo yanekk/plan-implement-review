@@ -20,12 +20,13 @@ node src/shell/harness/run.mjs <fixture> [--into <dir>]
 Fixtures, in the order to work through them (small first, the kill-switch drill last):
 
 ```
-single → review-queue → clean-merge → human-decision → merge-conflict → parallel
+single → review-queue → clean-merge → human-decision → merge-conflict → parallel → hands-on
 ```
 
 **Seatbelts, all automatic (§5.2):** the runner builds a throwaway scratch repo (a fresh temp dir
 unless you pass `--into`), sets `PARALLEL_LIVE=1` and the scenario's own low ceiling, and arms a
-wall-clock timeout (10 min) that auto-creates the `HALT` flag so a hung run cannot cost unboundedly.
+wall-clock timeout (10 min, or the scenario's own — `hands-on` takes 25 min because a person drives it)
+that auto-creates the `HALT` flag so a hung run cannot cost unboundedly.
 It refuses to run inside the canonical repo unless you pass `--into <dir>` or set
 `PARALLEL_ALLOW_HERE=1`. It tears every worker (and the coordinator) down on exit.
 
@@ -90,6 +91,20 @@ prints the evidence that broke it underneath. Exit 0 means every fact passed.
   confirms. Its `noHelloEver` fact (T30, replacing the old `helloPerSpawn`) asserts the flow log holds
   zero `hello` lines over a run that did spawn workers — the spawn ping is retired, so there is nothing
   for the kill switch to interrupt, which is one moving part fewer that could fail silently.
+- **hands-on** — **attended**, and the only fixture that needs you to *do* something outside the
+  coordinator, not just answer a question. Its plan is one `auto` build (T01: `greet.mjs`, which prints
+  `hello from the agent`) then one `you` verify (T02) depending on it. The `auto` half runs itself:
+  build → fresh review → merge. Then the coordinator spawns a **hands-on verify worker** for T02 and the
+  runner prints `=== HANDS-ON: go drive worker "<repo> · hands-on · T02 · verify" for T02 ===`. That
+  worker is a `claude` session — talk to it (it presents T02's "Needs a person" block, i.e. run `node
+  greet.mjs` in the T02 worktree and confirm the line); it records a `✅` row into `FINDINGS.md`, marks
+  the row `✅`, and reports `done`. There is **no review** — it folds straight to merge and the plan
+  promotes. The manual channel is driving that named verify worker; there is **no auto-drive channel by
+  design** (a `you` task emits no `surface` line, so the scripted-answer injector the interactive
+  fixtures use cannot drive it — PM decision 2026-09-14). The wall-clock budget is a roomier 25 min so a
+  human-speed drive is not guillotined; the kill switch and teardown-on-exit still hold. The facts: T02's
+  worker was a verify session (not an implementer), T02 merged with no `review` line, one promotion, the
+  ceiling held, and the `✅` row reached `main`.
 
 ## When it fails
 

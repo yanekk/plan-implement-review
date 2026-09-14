@@ -124,6 +124,20 @@ test('a you task is spawned as a hands-on worker, consumes a slot, and is never 
   assert.ok(!platform.spawns.some((s) => s.role === 'review'), 'a you task is never put through review');
 });
 
+test('spawning a you worker emits a durable `hands-on {task}` flow line beside the spawn (T32)', (t) => {
+  const control = { log: (line) => control.lines.push(line), lines: [], isHalted: () => false };
+  const { base } = setup(t, [{ num: 'T01', runs: 'you' }]);
+  const r = runPass({ ...base, control, state: createRunState() });
+  assert.ok(r.actions.some((a) => a.type === 'hands-on' && a.task === 'T01'), 'a hands-on action is recorded');
+  assert.ok(control.lines.includes('hands-on T01'), 'and written to the flow log where the runner/capture read it');
+});
+
+test('an auto worker does NOT emit a hands-on line (only you tasks need a person)', (t) => {
+  const { base } = setup(t, [{ num: 'T01' }]);
+  const r = runPass({ ...base, state: createRunState() });
+  assert.ok(!r.actions.some((a) => a.type === 'hands-on'), 'no hands-on action for an auto task');
+});
+
 test('a hands-on you worker reported done is merged and reconciled to ✅, unblocking its dependents', (t) => {
   // T01 is a you task on the critical path; T02 (auto) waits on it.
   const { worktree, base } = setup(t, [{ num: 'T01', runs: 'you' }, { num: 'T02', deps: ['T01'] }]);

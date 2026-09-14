@@ -1,7 +1,8 @@
-// The fixture loader/installer of the live-scenario harness (DESIGN §4.1, T16). The six fixtures are
-// scratch plans engineered so a REAL claude worker reliably hits one coordinator path (PM decision:
-// all-real workers). This module is the registry over them and the installer the T17 live runner uses
-// to lay one down as a self-contained scratch repo and seed its git state.
+// The fixture loader/installer of the live-scenario harness (DESIGN §4.1, T16). The fixtures are scratch
+// plans engineered so a REAL claude worker reliably hits one coordinator path (PM decision: all-real
+// workers). This module is the registry over them and the installer the T17 live runner uses to lay one
+// down as a self-contained scratch repo and seed its git state. Six were built in T16; the `hands-on`
+// build→verify fixture (T32) was added later, the first to exercise a `you`/hands-on task.
 //
 // A fixture is a JS descriptor (fixtures/<name>.mjs), not an on-disk plan tree: its plan text and task
 // docs are inline strings and its scenario spec is a defineScenario(...) value (T15), the same
@@ -41,6 +42,7 @@ import reviewQueue from './fixtures/review-queue.mjs';
 import cleanMerge from './fixtures/clean-merge.mjs';
 import mergeConflict from './fixtures/merge-conflict.mjs';
 import humanDecision from './fixtures/human-decision.mjs';
+import handsOn from './fixtures/hands-on.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -66,6 +68,7 @@ const FIXTURES = Object.freeze({
   [cleanMerge.id]: cleanMerge,
   [mergeConflict.id]: mergeConflict,
   [humanDecision.id]: humanDecision,
+  [handsOn.id]: handsOn,
 });
 
 // listFixtures() → the fixture ids, in registry order.

@@ -33,7 +33,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 
-import { coordinatorName, isWorkerOf } from '../../core/naming.mjs';
+import { coordinatorName, workerName, isWorkerOf } from '../../core/naming.mjs';
 import { getFixture, installFixture } from './fixtures.mjs';
 import { createCapture, bundleDirFor } from './capture.mjs';
 import { checkScenario, loadTranscripts, loadFinalFiles, formatReport } from './assertions.mjs';
@@ -143,6 +143,30 @@ export function scriptedAnswerFor({ flowText = '', scriptedAnswer = null, answer
     if (scriptedAnswer.task && scriptedAnswer.task !== task) continue;
     if (answered.has(task)) continue;
     return { task, text: scriptedAnswer.text ?? '' };
+  }
+  return null;
+}
+
+// parseHandsOnTask(line) → the task id of a `hands-on Txx` flow line, or null. The coordinator writes a
+// durable `hands-on {task}` line when it spawns a hands-on scribe for a `you` task (loop.mjs, §2.6): the
+// flow log's `spawn` line drops the role, so this is the disk-visible marker that a task now needs a
+// person. Same ISO-prefix shape as parseSurfaceTask. Pure, tested against canned flow lines.
+export function parseHandsOnTask(line) {
+  const body = String(line ?? '').slice(String(line ?? '').indexOf(' ') + 1);
+  if (!body.startsWith('hands-on ')) return null;
+  const rest = body.slice('hands-on '.length).trim();
+  return /^T\d+$/.test(rest) ? rest : null;
+}
+
+// handsOnToAnnounce({ flowText, announced }) → the task id of the next `hands-on Txx` line the runner has
+// not yet surfaced to the person, or null (DESIGN §4.1, §2.6, T32). This is the ATTENDED drive signal:
+// an unattended run has no person to drive a `you` task (PM decision 2026-09-14, attended-only), so it
+// only tells the watching person which worker to go and drive — it is NOT an auto-driver, the person
+// runs the live steps (§5.2). Pure, so the choice is unit-tested with no live run.
+export function handsOnToAnnounce({ flowText = '', announced = new Set() } = {}) {
+  for (const line of String(flowText).split('\n')) {
+    const task = parseHandsOnTask(line);
+    if (task && !announced.has(task)) return task;
   }
   return null;
 }
@@ -423,10 +447,22 @@ async function waitForCompletion({ cap, controlDir, repo, slug, pollMs, stallGra
   let quiet = 0; // consecutive quiet polls AFTER the run went active (a stall, §4.1)
   let startupQuiet = 0; // consecutive quiet polls BEFORE anything was ever live (still booting)
   const answered = new Set(); // tasks the runner has already fed a scripted decision, so each fires once
+  const announced = new Set(); // you-tasks the runner has already surfaced the hands-on drive signal for
   for (;;) {
     const snap = cap.tick(); // one sampled `agents --json`, recorded into the bundle
     const flowText = existsSync(flowPath) ? safeRead(flowPath) : '';
     const haltPresent = existsSync(flagPath);
+
+    // Surface the attended drive signal (T32): when the coordinator logs `hands-on Txx` (a `you` task
+    // spawned a hands-on scribe, §2.6), tell the watching person which worker to go and drive. Once per
+    // task. This is the whole of the attended support — no auto-driver; the person runs the live steps
+    // and reports to the scribe worker directly (§5.2, pir-verify).
+    const driveTask = handsOnToAnnounce({ flowText, announced });
+    if (driveTask) {
+      announced.add(driveTask);
+      const worker = workerName({ repo, plan: slug, task: driveTask, role: 'verify' });
+      log(`\n=== HANDS-ON: go drive worker "${worker}" for ${driveTask} — run its "Needs a person" steps and report back ===`);
+    }
 
     // Feed the fixture's scripted decision the moment a worker parks (an interactive scenario, T28): the
     // coordinator's `surface Txx` line means a worker is waiting on the user, so write the decision to

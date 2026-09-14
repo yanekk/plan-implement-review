@@ -238,6 +238,13 @@ export function runPass({ platform, worktree, repo, slug, maxWorkers, state, con
     state.tasks[num] = { worktree: wt, workerId: id, role, phase: role === 'verify' ? VERIFYING : IMPLEMENTING, grace: APPEAR_GRACE };
     spawnedThisPass.push(id);
     record('spawn', { task: num, runs, role, workerId: id });
+    // A `you` task is spawned as a hands-on scribe (§2.6): its completion is a person running the task's
+    // "Needs a person" steps, not code the worker produces. The `spawn` line drops role on disk (`spawn
+    // Txx` only, this file's header note), so it cannot tell an operator that a task now needs a person.
+    // Emit a distinct, durable `hands-on {task}` flow line beside it: the harness runner and the capture
+    // bundle both read the flow log (T14/T17), so this is the drive signal the attended runner surfaces
+    // and that the hands-on fixture asserts (T32) — the minimal signal, never an auto-driver (§5.2).
+    if (role === 'verify') record('hands-on', { task: num });
   }
 
   // Finished workers whose close is held this pass because the agent list still shows them busy (T13

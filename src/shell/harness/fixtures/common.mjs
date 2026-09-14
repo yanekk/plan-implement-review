@@ -43,12 +43,16 @@ ${rows}
 `;
 }
 
-// taskDoc({ num, title, runs, goal, files, tests, doneWhen }) → one task file's text, the shape a real
-// worker's pir-implement reads (goal, files, tests, acceptance). Kept small on purpose: a fixture task
-// is trivial deliverable-wise; its job is to force a coordinator path, not to be real work.
-export function taskDoc({ num, title, runs = 'auto', goal, files = [], tests, doneWhen = [] }) {
+// taskDoc({ num, title, runs, goal, files, tests, doneWhen, needsPerson }) → one task file's text, the
+// shape a real worker's pir-implement (or, for a `you` task, pir-verify) reads. Kept small on purpose: a
+// fixture task is trivial deliverable-wise; its job is to force a coordinator path, not to be real work.
+// `needsPerson` (a `you` task's hands-on step) adds the "Needs a person" block pir-verify step 1 looks
+// for — the exact command, what to expect, and what only a person can answer (DESIGN §2.6, CLAUDE.md
+// handover shape). Omit it for an `auto` task.
+export function taskDoc({ num, title, runs = 'auto', goal, files = [], tests, doneWhen = [], needsPerson = null }) {
   const filesList = files.length ? files.map((f) => `- ${f}`).join('\n') : '- (none)';
   const dw = doneWhen.map((d) => `- [ ] ${d}`).join('\n');
+  const needs = needsPerson ? `\n## Needs a person\n\n${needsPersonBlock(needsPerson)}\n` : '';
   return `# ${num} — ${title}
 
 **Runs:** ${runs}
@@ -64,7 +68,20 @@ ${tests ?? 'None. This is a scratch fixture task; write no new tests and leave `
 
 ## Done when
 ${dw}
-`;
+${needs}`;
+}
+
+// needsPersonBlock({ command, expect, tell }) → the hands-on handover a `you` task carries, in the exact
+// shape pir-verify step 2 presents to the user (CLAUDE.md § Anything the tests cannot establish). The
+// command carries its own seatbelt when it needs one (DESIGN §5.2); a fixture's greet.mjs run is safe, so
+// the command is bare.
+export function needsPersonBlock({ command, expect, tell }) {
+  return `Needs you — I cannot see this from here:
+
+    ${command}
+
+Expect: ${expect}
+Tell me: ${tell}`;
 }
 
 // commonPlanFiles(slug, { title }) → the DESIGN/PLAN/FINDINGS a complete, runnable scratch plan carries.

@@ -23,6 +23,9 @@ import {
   questionRoundTrip,
   mergeConflictResolved,
   oneMergeToMain,
+  verifyWorkerSpawned,
+  youNeverReviewed,
+  scribeWroteFinding,
   killSwitchStoppedAll,
   ceilingHeld,
   checkScenario,
@@ -337,6 +340,70 @@ test('oneMergeToMain passes when a worker integration merge shares the promotion
   const r = oneMergeToMain().check(b);
   assert.equal(r.pass, true, r.detail);
   assert.ok(r.evidence.includes('git log promotion merges: 1'));
+});
+
+// --- verifyWorkerSpawned (the you-task's worker is a hands-on verify session, T32) ----------------
+
+test('verifyWorkerSpawned passes when the task was sampled with role verify', () => {
+  const b = bundle({ timeline: [tick('t1', [cagent(), wagent('T02', 'idle', { role: 'verify' })])] });
+  assert.equal(verifyWorkerSpawned('T02').check(b).pass, true);
+});
+
+test('verifyWorkerSpawned fails when the task ran as an implementer, not a verify session', () => {
+  const b = bundle({ timeline: [tick('t1', [cagent(), wagent('T02', 'busy', { role: 'implement' })])] });
+  const r = verifyWorkerSpawned('T02').check(b);
+  assert.equal(r.pass, false);
+  assert.match(r.detail, /not a hands-on verify session/);
+});
+
+test('verifyWorkerSpawned fails when the task was never sampled in the timeline', () => {
+  const b = bundle({ timeline: [tick('t1', [cagent()])] });
+  const r = verifyWorkerSpawned('T02').check(b);
+  assert.equal(r.pass, false);
+  assert.match(r.detail, /never sampled|cannot be read/);
+});
+
+// --- youNeverReviewed (a you task folds hands-on straight to merge, no review, §2.6) --------------
+
+test('youNeverReviewed passes on a merge with no review of the task', () => {
+  const b = bundle({ flow: [fl('t1', 'spawn', 'T02'), fl('t5', 'merge', 'T02'), fl('t9', 'promote', 'pir/scratch')] });
+  assert.equal(youNeverReviewed('T02').check(b).pass, true);
+});
+
+test('youNeverReviewed fails when a review line is present for the task', () => {
+  const b = bundle({ flow: [fl('t2', 'review', 'T02'), fl('t5', 'merge', 'T02')] });
+  const r = youNeverReviewed('T02').check(b);
+  assert.equal(r.pass, false);
+  assert.match(r.detail, /must skip the fresh-review phase/);
+});
+
+test('youNeverReviewed fails when the task never merged (skip is unproven)', () => {
+  const b = bundle({ flow: [fl('t1', 'spawn', 'T02')] });
+  const r = youNeverReviewed('T02').check(b);
+  assert.equal(r.pass, false);
+  assert.match(r.detail, /never folded back/);
+});
+
+// --- scribeWroteFinding (the hand-verified row reached main, contains check, T32) -----------------
+
+test('scribeWroteFinding passes when the promoted FINDINGS.md contains the needle', () => {
+  const file = 'plans/hands-on/FINDINGS.md';
+  const b = bundle({ finalFiles: { [file]: '# Findings\n| 2026-09-14 | ✅ | ran greet.mjs, saw the line |\n' } });
+  assert.equal(scribeWroteFinding({ file, needle: '✅' }).check(b).pass, true);
+});
+
+test('scribeWroteFinding fails when the file was captured but has no hand-verified row', () => {
+  const file = 'plans/hands-on/FINDINGS.md';
+  const b = bundle({ finalFiles: { [file]: '# Findings\n| Date | | Finding |\n|---|---|---|\n' } });
+  const r = scribeWroteFinding({ file, needle: '✅' }).check(b);
+  assert.equal(r.pass, false);
+  assert.match(r.detail, /does not contain/);
+});
+
+test('scribeWroteFinding fails when no final content was captured for the file', () => {
+  const r = scribeWroteFinding({ file: 'plans/hands-on/FINDINGS.md', needle: '✅' }).check(bundle({ finalFiles: {} }));
+  assert.equal(r.pass, false);
+  assert.match(r.detail, /no captured final content/);
 });
 
 // --- killSwitchStoppedAll ------------------------------------------------------------------------

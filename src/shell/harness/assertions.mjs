@@ -482,6 +482,75 @@ export function oneMergeToMain() {
   });
 }
 
+// The `you` task's worker is a HANDS-ON verify session, not an autonomous implementer (DESIGN §2.6,
+// T32). The role is encoded in the worker NAME (`{repo} · {plan} · Txx · verify`, §2.8); the flow log
+// drops the role (it writes `spawn Txx` only, this file's header), so ONLY the capture timeline — which
+// samples full agent names — can prove it. Pass when a worker of `task` is seen with role `verify`; fail
+// when it was only ever an implementer, or was never sampled (so no role can be read from data).
+export function verifyWorkerSpawned(task) {
+  return fact(`verify-worker-spawned:${task}`, `${task}'s worker is a hands-on verify session`, (bundle) => {
+    const evidence = [];
+    const roles = new Set();
+    for (const tick of bundle.timeline ?? []) {
+      for (const a of tick.agents ?? []) {
+        const p = parseAgentName(a.name);
+        if (a.isWorkerOf && p.task === task && p.role) roles.add(p.role);
+      }
+    }
+    for (const r of roles) evidence.push(`${task} worker role seen: ${r}`);
+    if (roles.size === 0) {
+      return { pass: false, evidence, detail: `no worker of ${task} was sampled in the timeline — its role cannot be read` };
+    }
+    if (!roles.has('verify')) {
+      return { pass: false, evidence, detail: `${task}'s worker(s) were ${[...roles].join(', ')}, not a hands-on verify session` };
+    }
+    return { pass: true, evidence, detail: `${task} ran as a hands-on verify session` };
+  });
+}
+
+// A `you` task goes straight from hands-on to merge with NO fresh-review phase (DESIGN §2.6): the
+// person's recorded observation is the result, so there is no code for a second session to review. Proven
+// from the flow log: a `merge {task}` line (it completed and folded back) and NO `review {task}` line. A
+// task that never merged cannot prove it SKIPPED review — it might merely be unfinished — so a missing
+// merge fails rather than passing vacuously.
+export function youNeverReviewed(task) {
+  return fact(`you-never-reviewed:${task}`, `${task} folded back without a fresh-review phase`, (bundle) => {
+    const evidence = [];
+    const merges = flowOf(bundle, 'merge').filter((e) => e.rest === task);
+    const reviews = flowOf(bundle, 'review').filter((e) => e.rest === task);
+    for (const m of merges) evidence.push(flowLine(m));
+    for (const r of reviews) evidence.push(flowLine(r));
+    if (merges.length === 0) {
+      return { pass: false, evidence, detail: `no merge of ${task} — it never folded back, so "skipped review" is unproven` };
+    }
+    if (reviews.length > 0) {
+      return { pass: false, evidence, detail: `${task} has ${reviews.length} review line(s) — a you task must skip the fresh-review phase` };
+    }
+    return { pass: true, evidence, detail: `${task} merged with no review line — it folded back hands-on to merge` };
+  });
+}
+
+// The hands-on scribe's verification reached main: the plan's FINDINGS.md, promoted, contains the
+// hand-verified row (DESIGN §2.6 — the person's recorded observation IS a `you` task's deliverable). A
+// CONTAINS check over the final promoted content (bundle.finalFiles, loadFinalFiles), because the merged
+// file grows a `✅` row on top of the seed template, so the exact-trim match mergeConflictResolved uses
+// won't do. The runner captures `file` because the fixture declares it in `finalContent`. Optional
+// corroboration (T32): the load-bearing set is verifyWorkerSpawned + youNeverReviewed + oneMergeToMain.
+export function scribeWroteFinding({ file, needle = '✅' } = {}) {
+  return fact('scribe-wrote-finding', `the scribe's hand-verified row reached main in ${file}`, (bundle) => {
+    const evidence = [];
+    const got = (bundle.finalFiles ?? {})[file];
+    if (got == null) {
+      return { pass: false, evidence, detail: `no captured final content for ${file} — cannot confirm the scribe's row reached main` };
+    }
+    if (!String(got).includes(needle)) {
+      return { pass: false, evidence, detail: `final ${file} does not contain ${JSON.stringify(needle)} — no hand-verified row was written` };
+    }
+    evidence.push(`main:${file} contains ${JSON.stringify(needle)}`);
+    return { pass: true, evidence, detail: `${file} on main carries the scribe's hand-verified row` };
+  });
+}
+
 // After the kill switch fires (flow `halt-close`), every this-run worker leaves the timeline and
 // nothing is promoted (DESIGN §2.4). Checked from the flow (halt-close present, no promote) and the
 // timeline (the last tick shows no live worker of this run).

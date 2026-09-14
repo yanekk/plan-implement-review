@@ -637,10 +637,11 @@ way the stopped drill's T01 greeting-wording question arose on its own).
 **The capture layer — three durable sources, all confirmed on this machine 2026-09-10.**
 
 - **Execution flow** is already written by the coordinator: `plans/{slug}/.parallel/control/log`,
-  one ISO-timestamped line per `record()` action (`open-feature`, `spawn`, `await-idle`, `review`,
-  `merge`, `answer`, `send-failed`, `close`, `halt-close`, `surface`, `promote`, `teardown`,
+  one ISO-timestamped line per `record()` action (`open-feature`, `spawn`, `hands-on`, `await-idle`,
+  `review`, `merge`, `answer`, `send-failed`, `close`, `halt-close`, `surface`, `promote`, `teardown`,
   `ceiling full`). Nothing new is built to get it; the harness reads it. (There is no `hello` tag any
-  more — the spawn hello was retired in T30.)
+  more — the spawn hello was retired in T30. The `hands-on {task}` line marks a `you` task spawning a
+  hands-on scribe — the disk-visible drive signal, since `spawn` drops the role; added in T32.)
 - **The agent-status timeline** must be **sampled during the run** — this is the one thing that is
   not otherwise recorded. `claude agents --json` reports each session's `id, name, status`
   (`idle`/`busy`), `state` (`working`/`done`/`blocked`/`stopped`), `pid`, `sessionId`, `startedAt`,
@@ -682,6 +683,22 @@ and parks, no bad merge lands); and a human decision (an underspecified task doc
 worker ask, the coordinator surfaces it, the user answers, the answer is delivered down and the
 worker resumes). The kill switch is drilled inside the N-parallel scenario: `HALT` mid-run, then
 assert every worker was SIGTERMed, nothing was promoted, and `main` is untouched.
+
+A seventh fixture, **hands-on** (T32), was added later to exercise the one path the first six never
+did: a `you` task run end to end with a person. Its scratch plan is the build→verify split (§2.6) made
+concrete — an `auto` task builds a tiny runnable program (`greet.mjs`, prints a known line) with its
+own test, fresh-reviewed and merged like any `auto` task; then a `you` task depending on it carries a
+"Needs a person" block asking the person to run the program and confirm its output. The coordinator
+spawns a `pir-verify` scribe the person drives; the scribe records a `✅` row into `FINDINGS.md`, and
+the task folds back with **no review** (§2.6). Its facts: the `you` task's worker is a hands-on verify
+session (read from the timeline agent name, since the flow log drops role); it merged with no `review`
+line; the plan promoted once; the ceiling held; and the hand-verified row reached `main`. It is
+**attended-only** (PM decision 2026-09-14) — a `you` task emits no `surface` line, so the runner's
+scripted-answer injector cannot drive it; the person drives the verify worker by hand. The runner
+surfaces a durable `hands-on {task}` drive signal (the coordinator writes the flow line, the runner
+announces which worker to drive) and the fixture takes a roomier wall-clock budget so a human-speed
+run is not guillotined; the auto-drive channel is deliberately out of scope. The end-to-end path
+cannot be forced without a person, so it is confirmed by its own attended live run (T33).
 
 **Seatbelts (§5.2 carries the row).** Every scenario runs on a scratch plan in a scratch repo, at
 the lowest ceiling the scenario needs, with the kill switch wired and a per-scenario wall-clock

@@ -21,6 +21,8 @@ import {
   runScenario,
   parseSurfaceTask,
   scriptedAnswerFor,
+  parseHandsOnTask,
+  handsOnToAnnounce,
   captureFinalFiles,
 } from './run.mjs';
 
@@ -101,6 +103,22 @@ test('scriptedAnswerFor honours a decision that names a specific task, and is nu
     { task: 'T01', text: 'use Hello, world!' },
   );
   assert.equal(scriptedAnswerFor({ flowText: 'nothing surfaced\n', scriptedAnswer: { text: 'x' }, answered: new Set() }), null);
+});
+
+test('parseHandsOnTask reads the task of a `hands-on Txx` flow line, else null', () => {
+  assert.equal(parseHandsOnTask('2026-01-01T00:00:00Z hands-on T02'), 'T02');
+  assert.equal(parseHandsOnTask('2026-01-01T00:00:00Z spawn T02'), null);
+  assert.equal(parseHandsOnTask('2026-01-01T00:00:00Z hands-on pir/scratch'), null);
+  assert.equal(parseHandsOnTask('hands-on'), null);
+});
+
+test('handsOnToAnnounce surfaces each you-task drive signal once', () => {
+  const flowText = '2026-01-01T00:00:00Z spawn T01\n2026-01-01T00:00:01Z hands-on T02\n';
+  const announced = new Set();
+  assert.equal(handsOnToAnnounce({ flowText, announced }), 'T02');
+  announced.add('T02');
+  assert.equal(handsOnToAnnounce({ flowText, announced }), null, 'not announced twice for the same task');
+  assert.equal(handsOnToAnnounce({ flowText: '2026-01-01T00:00:00Z spawn T01\n', announced: new Set() }), null, 'no hands-on line, nothing to announce');
 });
 
 test('captureFinalFiles reads `git show main:<file>` and omits a file git cannot show', () => {

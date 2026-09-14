@@ -54,13 +54,19 @@ const EXPECT = {
     ceiling: 1,
     factIds: ['question-round-trip:T01', 'one-merge-to-main'],
   },
+  'hands-on': {
+    taskCount: 2,
+    deps: { T01: [], T02: ['T01'] },
+    ceiling: 1,
+    factIds: ['verify-worker-spawned:T02', 'you-never-reviewed:T02', 'one-merge-to-main', 'ceiling-held:1', 'scribe-wrote-finding'],
+  },
 };
 
 // --- The registry ---------------------------------------------------------------------------------
 
-test('listFixtures returns exactly the six DESIGN §4.1 fixtures', () => {
+test('listFixtures returns exactly the DESIGN §4.1 fixtures', () => {
   assert.deepEqual(new Set(listFixtures()), new Set(Object.keys(EXPECT)));
-  assert.equal(listFixtures().length, 6);
+  assert.equal(listFixtures().length, Object.keys(EXPECT).length);
 });
 
 test('getFixture throws on an unknown id, naming the known ones', () => {
@@ -147,6 +153,30 @@ test('human-decision: the task doc is deliberately underspecified and a scripted
   assert.match(doc, /ask the coordinator/i, 'the worker is told to ask, not guess');
   assert.equal(fx.scriptedAnswer.task, 'T01');
   assert.ok(fx.scriptedAnswer.text.length > 0, 'a scripted answer line is present');
+});
+
+test('hands-on: T01 is an auto build and T02 is a you-verify depending on it, with a Needs-a-person block', () => {
+  const fx = getFixture('hands-on');
+  const { tasks } = parseProgress(fx.progress);
+  const t01 = tasks.find((t) => t.num === 'T01');
+  const t02 = tasks.find((t) => t.num === 'T02');
+  assert.equal(t01.runs, 'auto', 'T01 is an autonomous build');
+  assert.equal(t02.runs, 'you', 'T02 is a hands-on verify task');
+  assert.deepEqual(t02.deps, ['T01'], 'the verify depends on the build (§2.6)');
+
+  // The auto build's doc asks for a runnable program with its own test; the verify doc carries the
+  // "Needs a person" block pir-verify step 1 reads (the command and what to report).
+  const buildDoc = Object.entries(fx.tasks).find(([n]) => n.startsWith('T01-'))[1];
+  const verifyDoc = Object.entries(fx.tasks).find(([n]) => n.startsWith('T02-'))[1];
+  assert.match(buildDoc, /greet\.mjs/, 'T01 builds greet.mjs');
+  assert.match(buildDoc, /greet\.test\.mjs/, 'T01 has its own test');
+  assert.match(verifyDoc, /## Needs a person/, 'T02 carries a Needs-a-person block');
+  assert.match(verifyDoc, /Needs you — I cannot see this from here/, 'in the pir-verify handover shape');
+  assert.match(verifyDoc, /node greet\.mjs/, 'the block names the command to run');
+  assert.match(verifyDoc, /^\*\*Runs:\*\* you$/m, 'the verify doc declares Runs: you');
+
+  // The fixture wires the runner to capture FINDINGS.md so scribeWroteFinding can read it back.
+  assert.equal(fx.finalContent.file, 'plans/hands-on/FINDINGS.md');
 });
 
 test('parallel: at least two independent tasks so workers run concurrently', () => {
