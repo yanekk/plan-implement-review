@@ -13,22 +13,22 @@ cell also fixes the over-budget cell they walk past.**
 **Plan reviewed:** 2026-09-07 — 4 fixed, 3 decided with the user
 
 **Status:** Plan reviewed before build; re-scoped onto Claude Code's own primitives. `Runs` marks each
-task `auto` (a worker builds) or `you` (a person runs the live steps). 28 tasks, phases 0–6. Phases 0–5
+task `auto` (a worker builds) or `you` (a person runs the live steps). 29 tasks, phases 0–6. Phases 0–5
 ✅; `auto` hardening T24–T28 ✅. Phase 6 is the live fixtures (`you`, done at all-green). **T18–T22 PASS
-live.** T22 (merge-conflict) PASSED 2026-09-14 after two fixes: T28 (Option 2, the wrong-side ship) and a
-pir-coordinate wake-up fix (a buffering Monitor left the decision undelivered). Only **T23** (parallel +
-kill-switch, absorbs T10) remains — a `you` live fixture a person runs with real paid agents.
-Operator's guide: [TEST-HARNESS.md](TEST-HARNESS.md). Phases 5–6 postdate the 2026-09-07 review, so each
-is validated per task during build.
+live.** T23 (parallel + kill-switch) RAN 2026-09-14 and FAILed on capture timing, not behaviour — the kill
+switch worked (2 workers at ceiling 2, T03 waited, HALT→all closed, main untouched, nothing promoted). The
+PM added **T29** (`auto`) to fix the capture (seal on `halt-close`, honest `hello` line); T29 then gates the
+**T23** re-run, the last live fixture (closes T10). Operator's guide: [TEST-HARNESS.md](TEST-HARNESS.md).
+Phases 5–6 postdate the 2026-09-07 review, so each is validated per task during build.
 **Last updated:** 2026-09-14
-**Next `pir-work` will:** blocked on a PM decision. T23 (parallel + kill-switch) was RUN live 2026-09-14 and
-FAILed — but on a harness seal race, not on behaviour: the kill switch worked (2 workers at ceiling 2, T03
-waited, HALT→all closed, main untouched, nothing promoted). The runner seals the bundle the instant the HALT
-flag appears, ~4s before the coordinator's `halt-close`, so the captured flow omits it and two facts fail
-(FINDINGS 2026-09-14). A naive re-run FAILs identically; the seal must wait for `halt-close` first. That fix
-is a new `auto` hardening task for the PM to add. Open notes: candidate 3 (SendMessage padding) unfixed by PM
-choice; capture copies `role:foreign` transcripts (~4MB), not yet a task; the coordinator-name/hello
-rationale prune is still owed (FINDINGS 2026-09-13).
+**Next `pir-work` will:** IMPLEMENT T29 (auto) — the kill-switch capture fix the PM added 2026-09-14 after
+T23 FAILed on capture timing (not behaviour: the kill switch worked). T29 seals a HALT run on the
+coordinator's `halt-close` instead of the bare HALT flag (timeout stays the backstop) and closes the
+`hello` queue-vs-send gap; its task doc holds a builder sub-decision on the hello approach (recommend (ii),
+scope the fact to what the kill switch allows). T29 gates the T23 re-run, which then closes T10 — the last
+live fixture. Open notes: candidate 3 (SendMessage padding) unfixed by PM choice; capture copies
+`role:foreign` transcripts (~4MB), not yet a task; the coordinator-name/hello rationale prune is still owed
+(FINDINGS 2026-09-13).
 
 ## Tasks
 
@@ -65,7 +65,8 @@ live steps with a hands-on worker the coordinator spawns, folded back without re
 | T21 | Live fixture: human-decision | you | T17, T26 | ✅ | PASS live 2026-09-13 (re-run): 2 facts green (question surfaced+answered, one promote). Ambiguity-ask path proven. First run false-FAILed on a runaway miscount; fixed `closedIds` no-prune (test), held live. 5 hardening candidates → PM. Bundle `pir-t17-human-decision-RVQcax/…/2026-09-13T15-24-34-685Z`. |
 | T28 | Fix the merge-conflict path: keep the worker alive, deliver the decision, worker resolves and merges clean (Option 2) | auto | T27 | ✅ | Reviewed clean; one trivial fix (stale comment → `mergeConflictResolved`). Option 2 proven end-to-end in loop.test on real git: a conflict parks the worker (not closed/removed/deleted), the decision is delivered, the worker resolves, the decided side reaches main, one promote, no respawn. Fact fails on losing-side/respawn/unanswered bundles. 267 tests, boundary green. Live proof owed by T22. |
 | T22 | Live fixture: merge-conflict | you | T17, T26, T28 | ✅ | PASS live 2026-09-14: conflict surfaced, decision delivered to the live worker, resolved on its branch, decided `hello there` reached main, one promote. Proves T28 (Option 2) + the coordinator wake-up fix. Two earlier failures fixed en route: wrong-side ship (T28) and a buffering-Monitor hang (pir-coordinate). Bundle `pir-t17-merge-conflict-sQzl0k/…/2026-09-14T06-16-26-887Z`. |
-| T23 | Live fixture: parallel + kill-switch drill (absorbs T10) | you | T17, T26 | ⬜ | Ran live 2026-09-14: FAIL on a harness seal race, not behaviour. Kill switch worked — 2 workers at ceiling 2 (T03 waited), HALT→all closed, main untouched, nothing promoted. Runner seals on the HALT flag, ~4s before `halt-close`, so the bundle omits it (see FINDINGS). Needs the seal fixed (own task), then re-run. Bundle `…/2026-09-14T06-31-20-985Z`. |
+| T29 | Fix the kill-switch capture: seal on `halt-close`, make the `hello` flow line honest | auto | T28 | ⬜ | Added 2026-09-14 by PM decision after T23 FAILed on capture timing. Seal a HALT run on the coordinator's `halt-close` (not the bare HALT flag), timeout still the backstop; close the `hello` queue-vs-send gap (approach is a builder sub-decision, see task doc). Harness change (`run.mjs`, assertion/fixture). Gates the T23 re-run. |
+| T23 | Live fixture: parallel + kill-switch drill (absorbs T10) | you | T17, T26, T29 | ⬜ | Ran live 2026-09-14: FAIL on capture timing, not behaviour. Kill switch worked — 2 workers at ceiling 2 (T03 waited), HALT→all closed, main untouched, nothing promoted. Runner seals on the HALT flag, ~4s before `halt-close`, so the bundle omits it (FINDINGS). T29 fixes it; then re-run. Bundle `…/2026-09-14T06-31-20-985Z`. |
 | T10 | Full multi-worker run + kill-switch drill — absorbed by T23 | you | T23 | ⬜ | Absorbed by T23 (2026-09-12). Do not run standalone; closes ✅ when T23's parallel + kill-switch fact report is all-green. Partial drill 2026-09-10 proved spawn + first message. |
 
 A Notes cell holds what was built or what the review found, the test count, and one line per
@@ -73,22 +74,22 @@ deviation from the task doc.
 
 **A ✅ task's cell may be cut to one line** once the next task has been reviewed.
 
-**Review queue:** empty. Every `auto` task is ✅ and T18–T22 PASS live. Only **T23** (parallel +
-kill-switch, absorbs T10) remains — a `you` live fixture.
+**Review queue:** empty. Next `pir-work` IMPLEMENTS **T29** (auto), then a later session reviews it.
 
-## Next up: the last live fixture (T23)
+## Next up: build T29, then re-run T23
 
-T22 (merge-conflict) PASSED live 2026-09-14, so the whole conflict path — surface, deliver the decision to
-the still-alive worker, worker resolves on its own branch, merge clean, promote the decided side — is now
-proven under real agents. T18–T22 are all green. Only T23 (parallel + kill-switch) is left, and it closes
-T10.
+T23 (parallel + kill-switch) RAN live 2026-09-14 and FAILed on capture timing, not behaviour — the kill
+switch worked (2 workers at ceiling 2, T03 waited, HALT→all closed, main untouched, nothing promoted). The
+PM added **T29** (auto): seal a HALT run on the coordinator's `halt-close` instead of the bare HALT flag
+(timeout stays the backstop), and close the `hello` queue-vs-send gap (a builder sub-decision in the task
+doc; recommend scoping the fact to what the kill switch allows). T29 is the next auto build (its dep T28 is
+✅). Once T29 is built and reviewed, re-run T23, which closes T10 — the last live fixture.
 
-Each fixture run needs real paid agents, launched attended, one at a time, never unattended, and ends
-with a reflection pass on its bundle (DESIGN §4.1). Full procedure in
-[TEST-HARNESS.md](TEST-HARNESS.md):
+The T23 re-run needs real paid agents, launched attended, one at a time, never unattended, and ends with a
+reflection pass on its bundle (DESIGN §4.1). Full procedure in [TEST-HARNESS.md](TEST-HARNESS.md):
 
 ```
-node src/shell/harness/run.mjs parallel --into <dir>   # T23, kill-switch drill, last
+node src/shell/harness/run.mjs parallel --into <dir>   # T23, kill-switch drill, last (after T29)
 touch <dir>/plans/parallel/.parallel/control/HALT      # mid-run; done when its 3 facts pass
 ```
 
