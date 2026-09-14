@@ -24,9 +24,11 @@ Operator's guide: [TEST-HARNESS.md](TEST-HARNESS.md). Phases 5–6 postdate the 
 is validated per task during build.
 **Last updated:** 2026-09-14
 **Next `pir-work` will:** nothing to auto-build or review — every `auto` task through T28 is ✅. The
-remaining work is the live fixtures T22 then T23, which a person runs with real paid agents (not
-`/pir-work`). Run `node src/shell/harness/run.mjs merge-conflict` for the T22 re-run; record its verdict
-and bundle in FINDINGS, then run a reflection pass (DESIGN §4.1). Open notes: candidate 3 (SendMessage
+remaining work is the live fixtures T22 then T23, run by a person with real paid agents (not `/pir-work`).
+The T22 re-run 2026-09-14 HUNG on a coordinator wake-up bug (buffering Monitor, undelivered `answer T02`),
+now fixed in pir-coordinate (skill-only patch, PM-approved). Re-run `node src/shell/harness/run.mjs
+merge-conflict`; the coordinator must now deliver the decision even if the Monitor is silent. Record the
+verdict + bundle in FINDINGS, then the reflection pass (DESIGN §4.1). Open notes: candidate 3 (SendMessage
 padding) unfixed by PM choice; capture copies `role:foreign` transcripts (~4MB), not yet a task; the
 coordinator-name/hello rationale prune is still owed (FINDINGS 2026-09-13).
 
@@ -64,7 +66,7 @@ live steps with a hands-on worker the coordinator spawns, folded back without re
 | T20 | Live fixture: clean-merge | you | T17, T26 | ✅ | PASS live 2026-09-13: 3 facts green. First run false-FAILed `ceilingHeld` (counted OS roster); fixed to count slots by task. Bundle in FINDINGS. |
 | T21 | Live fixture: human-decision | you | T17, T26 | ✅ | PASS live 2026-09-13 (re-run): 2 facts green (question surfaced+answered, one promote). Ambiguity-ask path proven. First run false-FAILed on a runaway miscount; fixed `closedIds` no-prune (test), held live. 5 hardening candidates → PM. Bundle `pir-t17-human-decision-RVQcax/…/2026-09-13T15-24-34-685Z`. |
 | T28 | Fix the merge-conflict path: keep the worker alive, deliver the decision, worker resolves and merges clean (Option 2) | auto | T27 | ✅ | Reviewed clean; one trivial fix (stale comment → `mergeConflictResolved`). Option 2 proven end-to-end in loop.test on real git: a conflict parks the worker (not closed/removed/deleted), the decision is delivered, the worker resolves, the decided side reaches main, one promote, no respawn. Fact fails on losing-side/respawn/unanswered bundles. 267 tests, boundary green. Live proof owed by T22. |
-| T22 | Live fixture: merge-conflict | you | T17, T26, T28 | ⬜ | Unblocked: T28 ✅ 2026-09-14. Re-run interactively — the runner scripts the decision. Prior run FAILED live 2026-09-13 (wrong side to main); Option-2 fix is T28. Fact `merge-conflict-resolved`. Bundle `…/2026-09-13T18-50-25-872Z`. |
+| T22 | Live fixture: merge-conflict | you | T17, T26, T28 | ⬜ | Re-run 2026-09-14 HUNG (not T28's bug): coordinator slept on a buffering `tail -f\|awk` Monitor and never delivered `answer T02`. Fixed pir-coordinate (re-reading/line-buffered watch + ≈60s outbox fallback). Re-run again interactively. Fact `merge-conflict-resolved`. Pre-T28 09-13 failure was the wrong-side ship, fixed by T28. |
 | T23 | Live fixture: parallel + kill-switch drill (absorbs T10) | you | T17, T26 | ⬜ | Run `run.mjs parallel --into <dir>`; `touch <dir>/plans/parallel/.parallel/control/HALT` mid-run; done when its 3 facts pass. Closes T10. See TEST-HARNESS.md. |
 | T10 | Full multi-worker run + kill-switch drill — absorbed by T23 | you | T23 | ⬜ | Absorbed by T23 (2026-09-12). Do not run standalone; closes ✅ when T23's parallel + kill-switch fact report is all-green. Partial drill 2026-09-10 proved spawn + first message. |
 

@@ -85,18 +85,37 @@ guessed length. **Arm the Monitor to wake on a MILESTONE line appearing** — a 
 `review`, `merge`, `surface`, `close`, `halt-close` or `promote` line — **not on the log merely growing**,
 so an `await-idle` line (internal bookkeeping, above) never wakes you into a no-op turn. On the
 human-decision live run an until-condition on bare growth woke the coordinator four times just to say
-"still holding" while the bin waited out two hand-offs. **Once that Monitor is armed, act on its
-events — do not also `sleep`-poll the log or the outbox.** React to each Monitor event, and to each
-answer you owe a worker, reading the log once per event to pick up the new line — never on a timer of
-your own. A blocking `sleep` loop beside an armed Monitor only duplicates what the Monitor already
-delivers and slows every reaction (on the review-queue live run the coordinator armed a Monitor that
-said "do not poll or sleep" and then ran six `sleep` polls anyway, ≈45s of dead time). **Your
-completion watch must be on the flow log, never on the outbox.** The outbox stops growing once you relay the last message — several seconds
-*before* the bin writes the terminal `promote` line — so a Monitor that waits only on the outbox goes
-deaf exactly at the finish, and you will sit idle while the run is already done (observed on the first
-green `single` live run: the coordinator watched only `tail -F outbox` and had no way to see `promote`).
-Keep a watch on the LOG armed through the final relay, and end the run only on its `promote` (or
-`halt-close` / nothing-left) line — see below.
+"still holding" while the bin waited out two hand-offs.
+
+**Build the watch so it actually fires — re-read the file, do not stream through a buffering pipe.** The
+flow log grows one short line at a time, and a persistent `tail -f … | awk`/`grep` pipeline
+**block-buffers its output to the Monitor's pipe**: the matched lines sit unflushed in a ~4 KB buffer, the
+Monitor is handed nothing, and no event ever arrives — so you sleep through the entire run. The
+merge-conflict live run hung this exact way: the coordinator armed `awk '…' <(tail -f log)`, went idle,
+and never woke for `merge`, `surface` or its own `answer` line — the user's decision sat queued in the
+outbox, undelivered, until the run timed out (T22, 2026-09-14). So do **not** pipe a persistent `tail -f`
+into `awk`/`grep`. Use a Monitor until-condition that **re-reads the file each tick** — e.g. a condition
+like `grep -qE '<tags>' <log>`, which the Monitor re-runs from scratch so buffering cannot hide a line —
+or, if you must stream, force line buffering (`stdbuf -oL grep --line-buffered -E …`, or awk with
+`fflush()` after each matched line).
+
+**The Monitor is your fast path, not your only one — keep a slow fallback so a silent watch can never
+strand the run.** React to each Monitor event, and to each answer you owe a worker, reading the log once
+per event to pick up the new line. But also re-read the flow log **and the outbox** on a slow fallback
+cadence (≈60s), independent of the Monitor. This is long enough not to bring back the dead-time the
+review-queue run showed (a Monitor that "said do not poll or sleep" and then ran six tight `sleep` polls
+anyway, ≈45s wasted), yet frequent enough that a Monitor gone deaf — buffering, or a watch that crashed —
+cannot freeze the run with a decision undelivered. Deliver on whichever notices first, deduped by your
+outbox cursor so a line seen twice is still sent once. The failure to avoid is not a wasted poll; it is a
+run that hangs forever because the single watch went silent (T22, above). A queued `answer Txx` you never
+deliver leaves a live worker parked on a decision it will never receive.
+
+**Your completion watch must be on the flow log, never on the outbox.** The outbox stops growing once you
+relay the last message — several seconds *before* the bin writes the terminal `promote` line — so a Monitor
+that waits only on the outbox goes deaf exactly at the finish, and you will sit idle while the run is
+already done (observed on the first green `single` live run: the coordinator watched only `tail -F outbox`
+and had no way to see `promote`). Keep a watch on the LOG armed through the final relay, and end the run
+only on its `promote` (or `halt-close` / nothing-left) line — see below.
 
 **Launch the bin exactly once, and expect the wrapper to return `exit 0` at once.** Run it in the
 background with *either* the tool's `run_in_background` *or* a trailing `&` — never both. The wrapper
@@ -133,8 +152,11 @@ Start the bin once and leave it running. Then, while it runs, on every turn:
    `plans/{slug}/.parallel/control/answers`: `{"task":"T05","text":"<the decision, in the worker's
    terms>"}`. The bin drains it on its next pass, queues the down-message to the outbox, and writes an
    `answer T05` line to the flow log. **Wait for that `answer T05` line, then deliver the new outbox
-   message like a hello** (below) — do not hand-poll the outbox or the answers file to notice the drain
-   (on the human-decision live run the coordinator hand-polled because no event signalled it). If the
+   message like a hello** (below). The Monitor's `answer` event is your fast cue and the ≈60s fallback
+   re-read of the outbox is the backstop if it does not fire — do not tight-poll on a few-second timer to
+   notice the drain (on the human-decision live run the coordinator hand-polled every few seconds because
+   no event signalled it), but never leave a queued `answer Txx` undelivered because the one Monitor went
+   silent (the merge-conflict run hung exactly there — T22, 2026-09-14). If the
    user defers a decision indefinitely, append `{"task":"T05","defer":true}` instead — the bin marks that
    task blocked (⛔) so its state survives a restart and its dependents wait, and frees the slot.
 4. **Point the user at hands-on (`you`) tasks.** A `you` task (a spike or a hand-verification drill) is
