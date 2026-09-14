@@ -112,7 +112,7 @@ That is the whole point: the session that reviews a task is never the session th
 it. A reviewer holding the implementation in context is not a reviewer, and the alternation
 is what buys the fresh eyes.
 
-The skills live in `.claude/skills/` and hold the procedures — the dispatch, the review gate
+The skills are installed for your account under `~/.claude/skills/` and hold the procedures — the dispatch, the review gate
 and the blocked-task rule in `pir-work`, the step-by-step in `pir-implement` and `pir-review`.
 **Do not invoke `pir-implement` or `pir-review` directly**: `pir-work` chooses the task,
 and that choice is what guarantees the alternation. If you want a specific task built or

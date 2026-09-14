@@ -65,26 +65,31 @@ tool, which is the whole point.
 
 ## Install
 
-Into one project — copies the skills to `.claude/skills/` **and** appends the working method
-to that project's `CLAUDE.md`:
+The skills install **user-scoped** — once for your account, under `~/.claude/skills/`, where
+every project sees the same copy. There is no per-project skill install: a per-project copy is
+a copy that goes stale.
 
-```sh
-./install.sh /path/to/project
-```
-
-Globally — skills only, available in every project:
+For your account — the skills, nothing else:
 
 ```sh
 ./install.sh --global
 ```
 
-`CLAUDE.md` is per-project by design, so a global install still needs it appended per project:
+Into a project — the skills for your account **and** the working method appended to that
+project's `CLAUDE.md`, plus its `plans/` directory:
 
 ```sh
-cat /path/to/plan-implement-review/CLAUDE.md >> /path/to/project/CLAUDE.md
+./install.sh /path/to/project
 ```
 
-Both forms are idempotent: re-running upgrades the skills in place and never appends
+Or, from inside a project already open in Claude Code, run the installer skill — it checks the
+account skills are present and amends this project's `CLAUDE.md`:
+
+```
+/pir-install
+```
+
+Every form is idempotent: re-running refreshes the skills in place and never appends
 `CLAUDE.md` twice. Skills are read at session start — install, then start a **new** session.
 
 ## What `/pir-plan` produces
@@ -182,12 +187,13 @@ session. The ones that bite most often:
 
 ```
 CLAUDE.md        the shared working method, appended into each project
-install.sh       idempotent installer, per-project or --global
+install.sh       idempotent installer — skills user-scoped, method into a project
 skills/
 ├── pir-plan/          the eight-stage planning procedure
 │   └── templates/     DESIGN, PLAN, PROGRESS, FINDINGS, TASK
 ├── pir-review-plan/   read the plan back before anything is built
 ├── pir-work/          the dispatch — picks exactly one unit of work
 ├── pir-implement/     build one task, hand it over unreviewed
-└── pir-review/        check someone else's task, fix what it finds, close it
+├── pir-review/        check someone else's task, fix what it finds, close it
+└── pir-install/       set up the method in a repo — check skills, amend CLAUDE.md
 ```
