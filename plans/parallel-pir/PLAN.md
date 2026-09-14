@@ -236,6 +236,30 @@ review-queue fixture (`noHelloEver` green, still promotes, clean two-field sends
 mid-write drain) was left out by the PM; candidate C's failed-send half is proven by a deterministic test,
 since a live send failure cannot be forced on demand.
 
+## Phase 8 — Coverage: hands-on verification (the `you` path)
+
+Added after Phase 7 closed the plan, from a PM request (2026-09-14): no live fixture had ever exercised
+a `you` task — the hands-on path where the coordinator spawns a `pir-verify` scribe worker the person
+drives, which skips review and folds back (§2.6). It also surfaced a planning gap: the method folds
+hand-verification into an `auto` task (the §2.5 question path) and never teaches the planner to **split**
+a build and its hand-verification into a paired `auto`+`you` task. The PM chose to close both, attended.
+
+| # | Task | Runs | Depends on |
+|---|---|---|---|
+| [T31](tasks/T31-teach-build-verify-split.md) | Teach the planner the build→verify split | auto | T30 |
+| [T32](tasks/T32-hands-on-fixture.md) | The hands-on fixture: an agent builds a program, a person runs it | auto | T17, T30 |
+| [T33](tasks/T33-hands-on-fixture-live.md) | Live: drive the hands-on fixture and find its bottlenecks | you | T31, T32 |
+
+**T31 teaches the pattern; T32 builds the rehearsal; T33 proves it live and finds the bottlenecks.** T31
+adds the split to DESIGN §2.6 and `pir-plan` (an `auto` builder plus a dependent `you` verify task with a
+"Needs a person" block, when a deliverable's check can only be a person running it), widens the `you`
+definition, and locks it with golden planner tests. T32 adds the `hands-on` fixture (auto-build T01 + you-
+verify T02) plus two new facts (`verifyWorkerSpawned`, `youNeverReviewed`), reuses `oneMergeToMain`/
+`ceilingHeld`, and adds the attended runner support the `you` path needs (a durable "drive worker X"
+signal and a roomier timeout) — because today the runner cannot drive a `you` task and would time out.
+The unattended auto-drive channel is deliberately out of scope (attended-only, PM decision). T31 and T32
+are siblings off T30 and can run at once; T33 (a `you` task itself) is the attended capstone.
+
 ---
 
 ## Critical path
