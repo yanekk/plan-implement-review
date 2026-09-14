@@ -15,15 +15,16 @@ cell also fixes the over-budget cell they walk past.**
 **Status:** Phases 0–7 are all ✅ (30 tasks, every live fixture PASSed). **Phase 8 (coverage) reopened the
 plan 2026-09-14** on a PM request: three new tasks close the `you`/hands-on path — never exercised by a live
 fixture — and a planning gap (the method folds hand-verification into `auto` tasks and never teaches the
-build→verify split). **T31 is 🔍** (the split now taught in DESIGN §2.6 + `pir-plan` + templates + goldens),
-awaiting review; **T32 is ⬜ ready** (the `hands-on` fixture); **T33 is the ⬜ attended live run** gated on
-T31+T32. `Runs` marks each task `auto` (a worker builds) or
+build→verify split). **T31 is ✅** (split taught in DESIGN §2.6 + `pir-plan` + templates + goldens; reviewed
+clean, fold mutation confirms the goldens defend it); **T32 is ⬜ ready** (the `hands-on` fixture); **T33 is the
+⬜ attended live run** gated on T31+T32. `Runs` marks each task `auto` (a worker builds) or
 `you` (a person runs the live steps). Phases 5–8 postdate the 2026-09-07 review, so each is validated per
 task. Operator's guide: [TEST-HARNESS.md](TEST-HARNESS.md).
 **Last updated:** 2026-09-14
-**Next `pir-work` will:** REVIEW T31 (🔍) — the build→verify split taught in DESIGN §2.6, `pir-plan` Stage 6,
-the PROGRESS/PLAN/TASK templates, and the golden tests. After T31 is ✅, T32 (the `hands-on` fixture) is the
-next ⬜ ready task, then T33 the attended live drive. Standing notes: three T30-reflection hardening candidates still with the PM
+**Next `pir-work` will:** IMPLEMENT T32 (⬜ ready, deps T17+T30 ✅) — the `hands-on` fixture (auto-build
+T01 + you-verify T02) plus facts `verifyWorkerSpawned`/`youNeverReviewed` and attended runner support. Then
+T33 is the attended live drive. Standing notes: the T31 finding (`pir-verify`/`pir-coordinate` prose still
+narrow; FINDINGS 2026-09-14) is a candidate follow-up; three T30-reflection hardening candidates still with the PM
 (reviewer run the test once + capture exit; workers avoid `cat -A`/GNU-only flags on macOS → `xxd`/`Read`;
 coordinator emit a final `promote confirmed`/teardown line); capture copies `role:foreign` transcripts
 (~4MB), not yet a task; candidate D (graceful mid-write drain) left out by the PM.
@@ -60,14 +61,14 @@ live steps with a hands-on worker the coordinator spawns, folded back without re
 | T26 | Harden coordinator/worker prompts from the T19 transcripts | auto | T25 | ✅ | Reviewed clean, no fix. C7–C10 (pir-coordinate) + W5 (pir-worker) added; S1-drop verified sound (address-free file drop). 255 tests. |
 | T27 | Harden coordinator from the T21 transcripts | auto | T21 | ✅ | Reviewed clean. `answer()` logs `answer {task}`; additive tag. 264 tests. |
 | T20 | Live fixture: clean-merge | you | T17, T26 | ✅ | PASS live 2026-09-13: 3 facts green. First run false-FAILed `ceilingHeld` (counted OS roster); fixed to count slots by task. Bundle in FINDINGS. |
-| T21 | Live fixture: human-decision | you | T17, T26 | ✅ | PASS live 2026-09-13 (re-run): 2 facts green (question surfaced+answered, one promote). Ambiguity-ask path proven; `closedIds` no-prune fix held live. Bundle `pir-t17-human-decision-RVQcax/…/2026-09-13T15-24-34-685Z`. |
+| T21 | Live fixture: human-decision | you | T17, T26 | ✅ | PASS live 2026-09-13 (re-run): 2 facts green (question surfaced+answered, one promote). Bundle `pir-t17-human-decision-RVQcax/…/2026-09-13T15-24-34-685Z`. |
 | T28 | Fix the merge-conflict path (Option 2): worker kept alive, decision delivered, worker resolves and merges clean | auto | T27 | ✅ | Reviewed clean; proven in loop.test on real git and live by T22. |
-| T22 | Live fixture: merge-conflict | you | T17, T26, T28 | ✅ | PASS live 2026-09-14: conflict surfaced, decision delivered to the live worker, resolved on its branch, decided `hello there` reached main, one promote. Proves T28 (Option 2) + the coordinator wake-up fix. Two earlier failures fixed en route: wrong-side ship (T28) and a buffering-Monitor hang (pir-coordinate). Bundle `pir-t17-merge-conflict-sQzl0k/…/2026-09-14T06-16-26-887Z`. |
+| T22 | Live fixture: merge-conflict | you | T17, T26, T28 | ✅ | PASS live 2026-09-14: conflict surfaced, decision delivered to the live worker, resolved on its branch, decided `hello there` reached main, one promote. Proves T28 (Option 2) + coordinator wake-up fix. Bundle `pir-t17-merge-conflict-sQzl0k/…/2026-09-14T06-16-26-887Z`. |
 | T29 | Fix the kill-switch capture: seal on `halt-close`, make the `hello` flow line honest | auto | T28 | ✅ | Reviewed clean. Seal on `halt-close`+grace (timeout backstop); `helloPerSpawn` flow-half strict, transcript-half exempt only under halt-close. 271 tests. (Fact retired by T30.) |
-| T23 | Live fixture: parallel + kill-switch drill (absorbs T10) | you | T17, T26, T29 | ✅ | PASS live 2026-09-14 (re-run): 3 facts green. Ceiling held 2/2 (T03 waited), HALT→both workers SIGTERMed ~5s later, nothing promoted, main untouched. T29 seal-on-`halt-close` held. Reflection logged; 5 hardening candidates → PM. Bundle `…/2026-09-14T07-45-27-010Z`. |
+| T23 | Live fixture: parallel + kill-switch drill (absorbs T10) | you | T17, T26, T29 | ✅ | PASS live 2026-09-14 (re-run): 3 facts green. Ceiling held 2/2 (T03 waited), HALT→both workers SIGTERMed ~5s later, nothing promoted, main untouched. Bundle `…/2026-09-14T07-45-27-010Z`. |
 | T10 | Full multi-worker run + kill-switch drill — absorbed by T23 | you | T23 | ✅ | Closed with T23's PASS (2026-09-14): the full multi-worker + kill-switch drill is green. |
-| T30 | Retire the `hello`; notice failed down-sends; pin the send contract | auto | T23 | ✅ | Live review-queue re-run PASS 2026-09-14: `noHelloEver` green, zero coordinator down-messages, one promote. Code reviewed clean; C's two tests real; E pinned; 274 tests. Bundle `…/2026-09-14T09-07-45-091Z`. |
-| T31 | Teach the planner the build→verify split | auto | T30 | 🔍 | Implemented. DESIGN §2.6 gains the fold-vs-split rule and widens the `you` definition to cover verifying a sibling `auto` task's deliverable; `pir-plan` Stage 6 teaches the pair; PROGRESS/PLAN/TASK templates carry the example (auto build + dependent `you` verify + "Needs a person" block). Golden tests lock the split, mutation-caught. 280 tests, boundary green. |
+| T30 | Retire the `hello`; notice failed down-sends; pin the send contract | auto | T23 | ✅ | Reviewed clean; live review-queue re-run PASS 2026-09-14 (`noHelloEver` green, one promote). Bundle `…/2026-09-14T09-07-45-091Z`. |
+| T31 | Teach the planner the build→verify split | auto | T30 | ✅ | Reviewed clean. All criteria met; DESIGN §2.6/pir-plan/templates/goldens present. I ran the fold mutation out-of-band: folding T01+T02 into one `auto` row reddens 4 of 5 golden tests, so the split is defended not asserted. Dispatch/review-skip/parallelism key on the marker generically, so no code contradiction. Finding: executor prose (`pir-verify`, `pir-coordinate`) still carries the pre-T31 narrow `you` def — logged, out of scope. |
 | T32 | The hands-on fixture: an agent builds a program, a person runs it | auto | T17, T30 | ⬜ | Phase 8. New `hands-on` fixture (auto-build T01 + you-verify T02) + facts `verifyWorkerSpawned`, `youNeverReviewed` (reuse `oneMergeToMain`/`ceilingHeld`) + attended runner support (durable drive signal, roomier timeout) — the runner cannot drive a `you` task today. Attended-only. Sibling of T31. |
 | T33 | Live: drive the hands-on fixture and find its bottlenecks | you | T31, T32 | ⬜ | Phase 8. Attended `hands-on` run: PM drives the scribe worker, three facts green + one promote, T02 never reviewed. Reflection captures hands-on bottlenecks → PM as candidate tasks. A `you` task itself; folds back without review. |
 
@@ -76,22 +77,21 @@ deviation from the task doc.
 
 **A ✅ task's cell may be cut to one line** once the next task has been reviewed.
 
-**Review queue:** T31 (🔍) — the build→verify split (DESIGN §2.6 + `pir-plan` + templates + goldens).
+**Review queue:** empty.
 
-## Next up: review T31, then build T32, then the T33 attended run
+## Next up: build T32, then the T33 attended run
 
 Phases 0–7 are done. Phase 8 (added 2026-09-14) closes the `you`/hands-on path and the build→verify planning
 gap. Current state:
-- **T31** — 🔍 implemented, awaiting review: the build→verify split taught in DESIGN §2.6, `pir-plan` Stage 6,
-  the PROGRESS/PLAN/TASK templates, and the golden tests.
-- **T32** — ⬜ ready (next build after T31 is ✅): the `hands-on` fixture (auto-build + you-verify) + two facts
+- **T31** — ✅ reviewed clean: the build→verify split taught in DESIGN §2.6, `pir-plan` Stage 6, the
+  templates, and the golden tests. Finding logged (FINDINGS 2026-09-14), out of scope.
+- **T32** — ⬜ ready (next build): the `hands-on` fixture (auto-build + you-verify) + two facts
   + attended runner support.
 
 Then **T33** (a `you` task) is the attended live drive: the PM runs `node src/shell/harness/run.mjs hands-on
 --into <dir>` and drives the scribe worker; three facts green + one promote, and the reflection captures the
-hands-on bottlenecks. Full specs in [tasks/T31](tasks/T31-teach-build-verify-split.md),
-[tasks/T32](tasks/T32-hands-on-fixture.md), [tasks/T33](tasks/T33-hands-on-fixture-live.md). Fixture re-run
-procedure is in [TEST-HARNESS.md](TEST-HARNESS.md).
+hands-on bottlenecks. Full specs in [tasks/T32](tasks/T32-hands-on-fixture.md),
+[tasks/T33](tasks/T33-hands-on-fixture-live.md). Fixture re-run procedure is in [TEST-HARNESS.md](TEST-HARNESS.md).
 
 To re-run any fixture (needs real paid agents, launched attended), the procedure is in
 [TEST-HARNESS.md](TEST-HARNESS.md). Housekeeping: a closed worker can linger as `stopped`
