@@ -64,13 +64,16 @@ not appear until it exits — never drive off the banner. Read the flow log
 moment it happens — an ISO timestamp, then the action tag and its task or branch, so match on the tag,
 not the first token. The tags: `open-feature`, `spawn`, `answer` (the bin has queued the user's
 answer for `Txx` to the outbox — deliver it, step 3), `send-failed` (a down-send to `Txx` could not be
-delivered — step 3), `review`, `await-idle`, `merge`, `surface`, `close`, `halt-close`, `promote`,
+delivered — step 3), `hands-on` (the bin has spawned a `you`/hands-on worker for `Txx` that needs a
+person — act on it, step 4), `review`, `await-idle`, `merge`, `surface`, `close`, `halt-close`, `promote`,
 `teardown`, and `ceiling full`. There is **no `hello`** — the spawn ping was retired (T30); a worker
 builds from its spawn prompt, and the first message you ever send it is its answer, only if it parks.
 **`await-idle` is internal bin bookkeeping**, not
 an event for you: the bin is holding a hand-off until a worker finishes its current turn (never a stall).
 Do not react to it, narrate it, or spend a turn on it — if the only new flow lines since your last read
-are `await-idle`, keep waiting silently. A new `surface Txx` line is your cue that a decision for `Txx` is waiting; you do not need
+are `await-idle`, keep waiting silently. A new `surface Txx` line is your cue that a decision for `Txx` is waiting. (A `you`/hands-on task is the
+one thing that needs the user but never emits a `surface` — its cue is the `hands-on Txx` line instead,
+step 4; do not sit waiting for a `surface` that a `you` task will never send.) You do not need
 the bin to echo the decision text, because the bin writes each parked worker's message — already
 rendered in plain English — to the **surfaced** feed `plans/{slug}/.parallel/control/surfaced`, one
 JSON line `{"task":"Txx","kind":"…","text":"…","message":"…"}`. Read the `message` there, keyed by task,
@@ -85,7 +88,7 @@ files for two different reasons; do not conflate them:
 
 Re-read the flow log on a short cadence (≈15s); prefer the Monitor tool over a hand-rolled `sleep` of
 guessed length. **Arm the Monitor to wake on a MILESTONE line appearing** — a new `spawn`, `answer`,
-`send-failed`, `review`, `merge`, `surface`, `close`, `halt-close` or `promote` line — **not on the log merely growing**,
+`send-failed`, `hands-on`, `review`, `merge`, `surface`, `close`, `halt-close` or `promote` line — **not on the log merely growing**,
 so an `await-idle` line (internal bookkeeping, above) never wakes you into a no-op turn. On the
 human-decision live run an until-condition on bare growth woke the coordinator four times just to say
 "still holding" while the bin waited out two hand-offs.
@@ -171,10 +174,21 @@ Start the bin once and leave it running. Then, while it runs, on every turn:
    plain English — "I couldn't reach worker T05 to deliver your decision; it looks like that worker has
    stopped" — rather than moving on as though it landed. The bin records a `send-failed Txx` flow line
    for a failure it can see; a failure only your `SendMessage` can see is yours to surface this way.
-4. **Point the user at hands-on (`you`) tasks.** A `you` task (a spike or a hand-verification drill) is
-   spawned as a hands-on worker, not an autonomous builder. The bin prints which worker to go and
-   drive; relay its name to the user. The user runs the live steps with that worker; when it reports
-   done, the bin merges it and marks it ✅ — there is no review phase for a `you` task.
+4. **Point the user at hands-on (`you`) tasks — the moment the `hands-on Txx` flow line appears.** A
+   `you` task (a spike or a hand-verification drill) is spawned as a hands-on worker, not an autonomous
+   builder, and its completion is a person running the live steps in that worker's own session. The bin
+   marks this with a durable **`hands-on Txx`** line in the flow log the instant it spawns the worker —
+   that line, not the bin's stdout, is your cue (the stdout banner is block-buffered and unreliable, as
+   above; and a `you` task emits no `surface`, so nothing else will prompt you). **When you see
+   `hands-on Txx`, tell the user right away, in plain English, that `Txx` needs them**: name the worker to
+   open — it is `{repo} · {plan} · T{nn} · verify` by the naming convention below (§2.8), which the user
+   finds in `claude agents --json` — and say to run its steps (the worker itself presents its "Needs a
+   person" block, so you need only point them at it, not relay the steps). Say it plainly and prominently
+   so a user who is not watching the terminal still sees a person is required; do not bury it or wait for a
+   signal that never comes. Then keep the run alive and resume on the task's **`merge Txx`** line, exactly
+   as for any other task: the user runs the live steps with that worker, it records its result and reports
+   done, the bin merges it and marks it ✅ — there is **no review phase** for a `you` task. Do not spawn a
+   reviewer, do not drive the worker yourself, and do not treat the quiet spawn→merge stretch as a stall.
 
 ### A merge conflict is resolved by the worker you keep alive — you never resolve or narrate it (DESIGN §2.5, T28)
 

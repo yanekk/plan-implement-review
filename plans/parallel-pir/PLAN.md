@@ -249,6 +249,7 @@ a build and its hand-verification into a paired `auto`+`you` task. The PM chose 
 | [T31](tasks/T31-teach-build-verify-split.md) | Teach the planner the build→verify split | auto | T30 |
 | [T32](tasks/T32-hands-on-fixture.md) | The hands-on fixture: an agent builds a program, a person runs it | auto | T17, T30 |
 | [T33](tasks/T33-hands-on-fixture-live.md) | Live: drive the hands-on fixture and find its bottlenecks | you | T31, T32 |
+| [T34](tasks/T34-coordinator-announces-hands-on-worker.md) | Coordinator announces the hands-on worker on dispatch | auto | T33 |
 
 **T31 teaches the pattern; T32 builds the rehearsal; T33 proves it live and finds the bottlenecks.** T31
 adds the split to DESIGN §2.6 and `pir-plan` (an `auto` builder plus a dependent `you` verify task with a
@@ -259,6 +260,12 @@ verify T02) plus two new facts (`verifyWorkerSpawned`, `youNeverReviewed`), reus
 signal and a roomier timeout) — because today the runner cannot drive a `you` task and would time out.
 The unattended auto-drive channel is deliberately out of scope (attended-only, PM decision). T31 and T32
 are siblings off T30 and can run at once; T33 (a `you` task itself) is the attended capstone.
+
+**T34 fixes the bottleneck T33 found** (PM chose to fix it, 2026-09-15): the coordinator never told the
+user a `you` task needed a person — it waited for a `surface` a `you` task never sends and ignored the
+`hands-on Txx` flow line the bin already writes. T34 is a prose-only fix to `pir-coordinate` (act on
+`hands-on Txx`, announce the derived worker name, stop relying on stdout). Confirmed by re-running T33's
+attended fixture with the fix in place, in lieu of a fresh-eyes review (PM direction).
 
 ---
 
