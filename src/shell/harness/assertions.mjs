@@ -629,6 +629,51 @@ export function ceilingHeld(n) {
   });
 }
 
+// The timeline DID show at least n task IMPLEMENTERS building at the same time (DESIGN §2.4, §4.1, T36).
+// This is the LOWER bound ceilingHeld never proves: ceilingHeld(n) proves the run never exceeded n slots,
+// but a plan built one task at a time passes it trivially — nothing before this proved work actually ran
+// in parallel, which is the whole point of the coordinator. reachedWidth(n) is that proof: PASS iff some
+// single timeline tick shows at least n DISTINCT tasks whose implement-role worker is busy at once.
+//
+// It counts by task, mirroring ceilingHeld's grouping: two roster rows for one task (a respawn, or a
+// stopped session lingering beside its successor) are one task, not two, so a duplicate can never inflate
+// the width. It counts implementers only — a reviewer or a hands-on verify scribe is a follow-on session,
+// not a build running in parallel, so their roles are excluded. Keyed on the worker→task mapping already
+// in the timeline agent name (§2.8), so it cannot drift from bookkeeping.
+//
+// STRICT on purpose: a PASS must mean the builds genuinely overlapped, so an implementer counts only while
+// its live `status` is `busy` (working this tick). An idle-but-listed implementer — one that has gone
+// quiet or is a stopped session still in the roster — is not a build in flight and does not count toward
+// the width, the opposite bias to ceilingHeld (which counts it, to catch a runaway from above).
+export function reachedWidth(n) {
+  return fact(`reached-width:${n}`, `At least ${n} task implementers built at once`, (bundle) => {
+    const evidence = [];
+    let max = 0;
+    let best = null;
+    for (const tick of bundle.timeline ?? []) {
+      const tasks = new Set();
+      for (const a of tick.agents ?? []) {
+        if (!a.isWorkerOf) continue;
+        const p = parseAgentName(a.name);
+        if (p.role !== 'implement') continue; // reviewers and verify scribes are not builds in flight
+        if (a.status !== 'busy') continue; // only a session working this tick counts (§4.1, strict lower bound)
+        if (p.task) tasks.add(p.task);
+      }
+      if (tasks.size > max) {
+        max = tasks.size;
+        best = { ts: tick.ts, tasks: [...tasks] };
+      }
+    }
+    if (best) {
+      evidence.push(`peak ${max} implementer(s) building at ${best.ts}: ${best.tasks.join(', ')}`);
+    }
+    if (max < n) {
+      return { pass: false, evidence, detail: `peak of ${max} implementer(s) built at once, below the required width of ${n}` };
+    }
+    return { pass: true, evidence, detail: `${max} task implementer(s) built concurrently, meeting the width of ${n}` };
+  });
+}
+
 // --- Running a scenario's facts and rendering the verdict ----------------------------------------
 
 // checkScenario(spec, bundle) → { scenario, pass, facts:[{ id, label, pass, evidence, detail }] }. Runs

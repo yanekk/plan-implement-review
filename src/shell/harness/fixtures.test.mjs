@@ -60,6 +60,21 @@ const EXPECT = {
     ceiling: 1,
     factIds: ['verify-worker-spawned:T02', 'you-never-reviewed:T02', 'one-merge-to-main', 'ceiling-held:1', 'scribe-wrote-finding'],
   },
+  'blog-app': {
+    taskCount: 7,
+    deps: { T01: [], T02: ['T01'], T03: ['T01'], T04: ['T01'], T05: ['T02', 'T03', 'T04'], T06: ['T05'], T07: ['T06'] },
+    ceiling: 3,
+    factIds: [
+      'reached-width:2',
+      'ceiling-held:3',
+      'one-merge-to-main',
+      'verify-worker-spawned:T05',
+      'you-never-reviewed:T05',
+      'verify-worker-spawned:T07',
+      'you-never-reviewed:T07',
+      'scribe-wrote-finding',
+    ],
+  },
 };
 
 // --- The registry ---------------------------------------------------------------------------------
@@ -177,6 +192,59 @@ test('hands-on: T01 is an auto build and T02 is a you-verify depending on it, wi
 
   // The fixture wires the runner to capture FINDINGS.md so scribeWroteFinding can read it back.
   assert.equal(fx.finalContent.file, 'plans/hands-on/FINDINGS.md');
+});
+
+test('blog-app: T02/T03/T04 are a concurrent auto trio off T01, with two you check-ins', () => {
+  const fx = getFixture('blog-app');
+  const { tasks } = parseProgress(fx.progress);
+  // The trio depends ONLY on T01, so all three can build at once (the fixture's whole point).
+  for (const num of ['T02', 'T03', 'T04']) {
+    const t = tasks.find((x) => x.num === num);
+    assert.equal(t.runs, 'auto', `${num} is an autonomous build`);
+    assert.deepEqual(t.deps, ['T01'], `${num} depends only on T01 so the trio runs concurrently`);
+  }
+  // Both check-ins are you-tasks that fold back without review (§2.6).
+  for (const num of ['T05', 'T07']) {
+    assert.equal(tasks.find((x) => x.num === num).runs, 'you', `${num} is a hands-on check-in`);
+  }
+  assert.equal(fx.finalContent.file, 'plans/blog-app/FINDINGS.md');
+});
+
+test('blog-app: T01 pins the contract and the pure core; the trio doc scope-fences package.json to T03', () => {
+  const fx = getFixture('blog-app');
+  const doc = (num) => Object.entries(fx.tasks).find(([n]) => n.startsWith(`${num}-`))[1];
+  // T01 pins the shared contract and the stdlib pure core the parallel workers build against.
+  assert.match(doc('T01'), /CONTRACT\.md/, 'T01 pins the REST contract');
+  assert.match(doc('T01'), /GET\s+\/api\/posts/, 'the contract names the posts endpoint');
+  assert.match(doc('T01'), /src\/core\//, 'T01 pins the stdlib pure core');
+  // The file partition that lets three branches merge clean: only T03 edits package.json.
+  assert.match(doc('T03'), /only trio member that edits `package\.json`/i, 'T03 owns the pg dependency');
+  assert.match(doc('T02'), /do NOT edit `package\.json`/i, 'T02 does not touch package.json');
+  assert.match(doc('T04'), /add no dependency/i, 'T04 adds no dependency');
+  // npm test stays install-free: the e2e test is a separate script, never wired into `test`.
+  assert.match(doc('T06'), /npm run e2e/, 'the e2e test is its own script');
+  assert.match(doc('T06'), /do NOT.*`test` script|`test` script.*unchanged|not.*part of `npm test`/is, 'e2e is kept out of npm test');
+});
+
+test('blog-app: each you check-in names the Docker precondition and ends its runbook with `docker compose down`', () => {
+  const fx = getFixture('blog-app');
+  for (const num of ['T05', 'T07']) {
+    const doc = Object.entries(fx.tasks).find(([n]) => n.startsWith(`${num}-`))[1];
+    assert.match(doc, /## Needs a person/, `${num} carries a Needs-a-person block`);
+    assert.match(doc, /Needs you — I cannot see this from here/, `${num} uses the pir-verify handover shape`);
+    assert.match(doc, /Docker Desktop/, `${num} states the Docker Desktop precondition`);
+    // The runbook's final command is the teardown — the harness stops Claude sessions, not containers.
+    const block = doc.slice(doc.indexOf('Needs you'));
+    const commands = block
+      .split('\n')
+      .map((l) => l.trim())
+      .filter((l) => l && !l.startsWith('#') && !l.startsWith('Expect:') && !l.startsWith('Tell me:'));
+    assert.equal(commands[commands.length - 1], 'docker compose down', `${num} runbook ends with docker compose down`);
+    assert.match(doc, /^\*\*Runs:\*\* you$/m, `${num} declares Runs: you`);
+  }
+  // The browser driver installs at check-in #2, by the person, not a worker under the clock.
+  const t07 = Object.entries(fx.tasks).find(([n]) => n.startsWith('T07-'))[1];
+  assert.match(t07, /npx playwright install/, 'check-in #2 installs the browser driver');
 });
 
 test('parallel: at least two independent tasks so workers run concurrently', () => {

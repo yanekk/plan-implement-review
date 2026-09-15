@@ -121,6 +121,24 @@ test('handsOnToAnnounce surfaces each you-task drive signal once', () => {
   assert.equal(handsOnToAnnounce({ flowText: '2026-01-01T00:00:00Z spawn T01\n', announced: new Set() }), null, 'no hands-on line, nothing to announce');
 });
 
+// The blog-app fixture (T36) has TWO you check-ins (T05, T07) in one run. The runner already loops —
+// the run loop calls handsOnToAnnounce every poll against the tracked `announced` set — so it announces
+// the next un-announced hands-on task each time. This locks that both check-ins get announced, in flow
+// order, with no change to run.mjs.
+test('handsOnToAnnounce announces two you check-ins in sequence (blog-app T05 then T07)', () => {
+  const announced = new Set();
+  // T05's hands-on line appears first (its trio finished); the runner announces it and records it.
+  const afterT05 = '2026-01-01T00:00:10Z hands-on T05\n';
+  assert.equal(handsOnToAnnounce({ flowText: afterT05, announced }), 'T05');
+  announced.add('T05');
+  assert.equal(handsOnToAnnounce({ flowText: afterT05, announced }), null, 'T05 not announced again');
+  // Later T07's line lands too; the runner announces the second, un-announced one.
+  const afterT07 = afterT05 + '2026-01-01T00:05:00Z hands-on T07\n';
+  assert.equal(handsOnToAnnounce({ flowText: afterT07, announced }), 'T07', 'the second check-in is announced');
+  announced.add('T07');
+  assert.equal(handsOnToAnnounce({ flowText: afterT07, announced }), null, 'both check-ins announced, nothing left');
+});
+
 test('captureFinalFiles reads `git show main:<file>` and omits a file git cannot show', () => {
   const gitRun = (args) => (args[1] === 'main:greeting.txt' ? { ok: true, stdout: 'hello there\n' } : { ok: false, stdout: '' });
   assert.deepEqual(captureFinalFiles({ repoDir: '/x', gitRun, files: ['greeting.txt', 'gone.txt'] }), { 'greeting.txt': 'hello there\n' });

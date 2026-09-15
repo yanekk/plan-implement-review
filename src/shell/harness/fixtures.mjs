@@ -2,7 +2,8 @@
 // plans engineered so a REAL claude worker reliably hits one coordinator path (PM decision: all-real
 // workers). This module is the registry over them and the installer the T17 live runner uses to lay one
 // down as a self-contained scratch repo and seed its git state. Six were built in T16; the `hands-on`
-// build→verify fixture (T32) was added later, the first to exercise a `you`/hands-on task.
+// build→verify fixture (T32) was added later, the first to exercise a `you`/hands-on task; then `blog-app`
+// (T36), the capstone — a real DB-backed blog built by a concurrent worker trio with two `you` check-ins.
 //
 // A fixture is a JS descriptor (fixtures/<name>.mjs), not an on-disk plan tree: its plan text and task
 // docs are inline strings and its scenario spec is a defineScenario(...) value (T15), the same
@@ -43,6 +44,7 @@ import cleanMerge from './fixtures/clean-merge.mjs';
 import mergeConflict from './fixtures/merge-conflict.mjs';
 import humanDecision from './fixtures/human-decision.mjs';
 import handsOn from './fixtures/hands-on.mjs';
+import blogApp from './fixtures/blog-app.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -69,6 +71,7 @@ const FIXTURES = Object.freeze({
   [mergeConflict.id]: mergeConflict,
   [humanDecision.id]: humanDecision,
   [handsOn.id]: handsOn,
+  [blogApp.id]: blogApp,
 });
 
 // listFixtures() → the fixture ids, in registry order.

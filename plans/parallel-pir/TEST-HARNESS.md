@@ -20,12 +20,15 @@ node src/shell/harness/run.mjs <fixture> [--into <dir>]
 Fixtures, in the order to work through them (small first, the kill-switch drill last):
 
 ```
-single → review-queue → clean-merge → human-decision → merge-conflict → parallel → hands-on
+single → review-queue → clean-merge → human-decision → merge-conflict → parallel → hands-on → blog-app
 ```
+
+`blog-app` is the capstone and goes last: it needs Docker Desktop, runs to ~90 min, and has two
+hands-on check-ins.
 
 **Seatbelts, all automatic (§5.2):** the runner builds a throwaway scratch repo (a fresh temp dir
 unless you pass `--into`), sets `PARALLEL_LIVE=1` and the scenario's own low ceiling, and arms a
-wall-clock timeout (10 min, or the scenario's own — `hands-on` takes 25 min because a person drives it)
+wall-clock timeout (10 min, or the scenario's own — `hands-on` takes 25 min and `blog-app` 90 min because a person drives them)
 that auto-creates the `HALT` flag so a hung run cannot cost unboundedly.
 It refuses to run inside the canonical repo unless you pass `--into <dir>` or set
 `PARALLEL_ALLOW_HERE=1`. It tears every worker (and the coordinator) down on exit.
@@ -105,6 +108,25 @@ prints the evidence that broke it underneath. Exit 0 means every fact passed.
   human-speed drive is not guillotined; the kill switch and teardown-on-exit still hold. The facts: T02's
   worker was a verify session (not an implementer), T02 merged with no `review` line, one promotion, the
   ceiling held, and the `✅` row reached `main`.
+- **blog-app** — the **capstone**, **attended**, and the only fixture that needs **Docker Desktop
+  running** before you launch. Its plan is a real database-backed blog (one seeded author, CRUD over
+  posts), built as a walking skeleton: T01 pins the REST contract + the stdlib pure core + the schema/seed
+  + runnable stubs; then **T02/T03/T04 build concurrently** off T01 (docker glue, the Postgres backend, the
+  vanilla-JS front end), partitioned by file so the three branches merge without conflict. Ceiling is **3**
+  so the whole trio can run at once, and the run takes up to **90 min**. There are **two `you`
+  check-ins**: after the trio merges the runner prints `=== HANDS-ON: go drive worker "… · T05 · verify"
+  ===` — talk to that worker; it presents T05's "Needs a person" block (bring the stack up with `docker
+  compose up --build`, create a post at http://localhost:8080, reload, confirm it persisted, then `docker
+  compose down`). T06 then adds the e2e browser test (`npm run e2e`, a **separate** script from `npm test`,
+  which stays install-free), and the runner announces the **second** check-in, T07 — the full
+  create/edit/delete click-through, `npx playwright install` (you install the driver, not a worker under
+  the clock), then `npm run e2e`, then `docker compose down`. **Always `docker compose down` at each
+  check-in:** the harness tears down Claude sessions and worktrees on exit, **not Docker containers**, so a
+  stack left up leaks. The new load-bearing fact is **`reachedWidth(2)`** — at least two of the trio's
+  implementers were busy in the same sampled tick, i.e. work truly ran in parallel (`ceilingHeld(3)` only
+  bounds it from above). The rest reuse the hands-on facts, once per check-in: each `you` worker was a
+  verify session, each folded back with no `review` line, one promotion, and the `✅` row reached `main`.
+  Whether all **three** overlapped (not just two) is for the reflection pass to note.
 
 ## When it fails
 

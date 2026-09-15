@@ -28,6 +28,7 @@ import {
   scribeWroteFinding,
   killSwitchStoppedAll,
   ceilingHeld,
+  reachedWidth,
   checkScenario,
   formatReport,
 } from './assertions.mjs';
@@ -466,6 +467,62 @@ test('ceilingHeld(1) fails on a duplicate same-role session for one task (respaw
   const r = ceilingHeld(1).check(b);
   assert.equal(r.pass, false);
   assert.match(r.detail, /exceeds the ceiling/);
+});
+
+// --- reachedWidth --------------------------------------------------------------------------------
+
+test('reachedWidth(2) passes when two task implementers are busy in one tick', () => {
+  const b = bundle({ timeline: [tick('t1', [wagent('T02', 'busy'), wagent('T03', 'busy')])] });
+  const r = reachedWidth(2).check(b);
+  assert.equal(r.pass, true, r.detail);
+  assert.match(r.detail, /2 task implementer/);
+});
+
+// The one-at-a-time failure: the same two tasks build, but never in the SAME tick. ceilingHeld would
+// pass (never more than one at once); reachedWidth is exactly the fact that catches serial work.
+test('reachedWidth(2) fails when the tasks only ever build in separate ticks (one at a time)', () => {
+  const b = bundle({ timeline: [tick('t1', [wagent('T02', 'busy')]), tick('t2', [wagent('T03', 'busy')])] });
+  const r = reachedWidth(2).check(b);
+  assert.equal(r.pass, false);
+  assert.match(r.detail, /below the required width/);
+});
+
+// Counts by task, not by roster row: two listed sessions for ONE task (a respawn / a stopped session
+// lingering beside its successor) are width 1, so a duplicate cannot fake concurrency.
+test('reachedWidth(2) counts by task — two sessions of one task are width 1, not 2', () => {
+  const b = bundle({ timeline: [tick('t1', [
+    wagent('T02', 'busy', { sessionId: 'a' }),
+    wagent('T02', 'busy', { sessionId: 'b' }),
+  ])] });
+  assert.equal(reachedWidth(2).check(b).pass, false);
+});
+
+// A reviewer and a hands-on verify scribe are follow-on sessions, not builds in flight: one busy
+// implementer beside a busy reviewer and a busy verify scribe is width 1.
+test('reachedWidth(2) does not count a reviewer or a verify scribe as an implementer slot', () => {
+  const b = bundle({ timeline: [tick('t1', [
+    wagent('T02', 'busy', { role: 'implement' }),
+    wagent('T03', 'busy', { role: 'review' }),
+    wagent('T04', 'busy', { role: 'verify' }),
+  ])] });
+  assert.equal(reachedWidth(2).check(b).pass, false);
+});
+
+// Strict on `busy`: an idle-but-listed implementer (gone quiet, or a stopped session still in the
+// roster) is not a build running right now, so it does not count toward the width.
+test('reachedWidth(2) counts only busy implementers, not an idle-but-listed one', () => {
+  const b = bundle({ timeline: [tick('t1', [
+    wagent('T02', 'busy', { role: 'implement' }),
+    wagent('T03', 'idle', { role: 'implement' }),
+  ])] });
+  const r = reachedWidth(2).check(b);
+  assert.equal(r.pass, false);
+  // ...but once both are genuinely busy in some tick, the fact passes.
+  const b2 = bundle({ timeline: [
+    tick('t1', [wagent('T02', 'busy'), wagent('T03', 'idle')]),
+    tick('t2', [wagent('T02', 'busy'), wagent('T03', 'busy')]),
+  ] });
+  assert.equal(reachedWidth(2).check(b2).pass, true);
 });
 
 // --- checkScenario + formatReport ----------------------------------------------------------------
