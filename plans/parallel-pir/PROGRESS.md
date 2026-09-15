@@ -12,21 +12,18 @@ cell also fixes the over-budget cell they walk past.**
 
 **Plan reviewed:** 2026-09-07 — 4 fixed, 3 decided with the user
 
-**Status:** Tasks T00–T33 ✅ (phases 0–8, every live fixture PASSed incl the `you`/hands-on path, T33
-attended 2026-09-15). **T34 + T35 added 2026-09-15**, both fixes implemented and `npm test` green, both 🔍
-awaiting one shared confirmation rerun. T34 (prose): coordinator announces the hands-on worker on dispatch.
-T35 (harness): the first T34 rerun false-stalled in the worker gap because the runner read an idle
-coordinator (state `done`) as gone; fixed in `run.mjs`. `Runs` marks each task `auto` or `you`. Phases 5–8
-postdate the 2026-09-07 plan review, validated per task. Operator's guide: [TEST-HARNESS.md](TEST-HARNESS.md).
+**Status:** ALL 36 TASKS ✅ (T00–T35, phases 0–8). Every live fixture PASSed incl the `you`/hands-on path
+(T33 attended 2026-09-15). T34 (coordinator announces the hands-on worker) + T35 (harness no longer
+false-stalls in the worker gap) both confirmed live 2026-09-15 on one shared rerun: PASS, promote, and the
+coordinator itself announced the worker. `Runs` marks each task `auto` or `you`. Phases 5–8 postdate the
+2026-09-07 plan review, validated per task. Operator's guide: [TEST-HARNESS.md](TEST-HARNESS.md).
 **Last updated:** 2026-09-15
-**Next `pir-work` will:** wait on the PM's attended `hands-on` rerun that confirms **T34 and T35** together
-(both 🔍). With T35 in, the rerun should reach the handoff instead of stalling; on it the coordinator's OWN
-output must point the operator at the worker, five T33 facts green, one promote. When the PM reports back,
-fold T34 and T35 → ✅ and log the result in FINDINGS. Standing candidates, each its own future task, none
-blocking: the T33 build→verify handoff timing (bin cold-start vs runner grace — now addressed by T35 but
-watch it); T31 prose gap; three T30-reflection candidates (reviewer run the test once + capture exit;
-workers avoid `cat -A`/GNU-only flags on macOS → `xxd`/`Read`; coordinator emit a final `promote
-confirmed`/teardown line); `role:foreign` capture bloat (~4MB); candidate D (graceful mid-write drain).
+**Next `pir-work` will:** nothing — the plan is complete, no ⬜/🟡/🔍 tasks remain. Open hardening
+candidates, each its own future task, none blocking: T31 prose gap (`pir-verify`/`pir-coordinate` still
+narrow); three T30-reflection candidates (reviewer run the test once + capture exit; workers avoid
+`cat -A`/GNU-only flags on macOS → `xxd`/`Read`; coordinator emit a final `promote confirmed`/teardown
+line); a promote-flush capture gap (the coordinator's final completion message can seal out of the bundle
+— seen T35 rerun); `role:foreign` capture bloat (~4MB); candidate D (graceful mid-write drain).
 
 ## Tasks
 
@@ -70,32 +67,28 @@ live steps with a hands-on worker the coordinator spawns, folded back without re
 | T31 | Teach the planner the build→verify split | auto | T30 | ✅ | Reviewed clean. Build→verify split taught in DESIGN §2.6/pir-plan/templates/goldens; fold mutation reddens 4/5 goldens. Executor-prose `you`-def gap logged (FINDINGS 2026-09-14, out of scope). |
 | T32 | The hands-on fixture: an agent builds a program, a person runs it | auto | T17, T30 | ✅ | Reviewed clean. hands-on fixture; verifyWorkerSpawned/youNeverReviewed/scribeWroteFinding tests bite. 293 tests. Proven live by T33. |
 | T33 | Live: drive the hands-on fixture and find its bottlenecks | you | T31, T32 | ✅ | PASS live 2026-09-15 (attended): 5 facts green, one promote, T02 verify-not-implement folded to merge with no review, scribe's ✅ row on main. Person drove the T02 worker directly (ran `node greet.mjs`, worker waited, did not self-run). Reflection finding: coordinator never pointed the PM at the hands-on worker (no `surface` for a `you` task) → fixed by T34. Bundle `pir-t17-hands-on-3nyF3G/…/2026-09-15T07-48-23-485Z`. Folds back without review. |
-| T34 | Coordinator announces the hands-on worker on dispatch | auto | T33 | 🔍 | Fix implemented (prose-only, `pir-coordinate`): coordinator acts on the `hands-on Txx` flow line, announces worker `{repo}·{plan}·T{nn}·verify`, drops stdout reliance, knows a `you` task never `surface`s; `hands-on` added to tag list + Monitor set. `npm test` green. Confirmation = attended rerun. First rerun 2026-09-15 stalled before the handoff on the T35 bug, not T34. |
-| T35 | Harness: stop false-stalling in the worker gap while the coordinator is idle | auto | T33 | 🔍 | Fix in `run.mjs` waitForCompletion: a present, non-`stopped` coordinator counts as active, so no false stall in the gap between one worker closing and the next cold-starting. Old guard `state!=='done'` read an idle coordinator as gone → stall ~6s after close, HALTing the T34 rerun before T02. Regression test reproduces the timeline (298 tests). Wall-clock timeout still backstops a hang. Confirmation = the shared T34 rerun. |
+| T34 | Coordinator announces the hands-on worker on dispatch | auto | T33 | ✅ | Prose-only `pir-coordinate`: coordinator acts on the `hands-on Txx` flow line, announces worker `{repo}·{plan}·T{nn}·verify`, no stdout/`surface` wait. Confirmed live 2026-09-15: coordinator ITSELF announced (chat + PushNotification) naming the exact worker off the `hands-on T02` line. Bundle `pir-t35-rerun/…/2026-09-15T16-37-06-520Z`. |
+| T35 | Harness: stop false-stalling in the worker gap while the coordinator is idle | auto | T33 | ✅ | `run.mjs` waitForCompletion: a present, non-`stopped` coordinator counts active (old `state!=='done'` read an idle watching coordinator as gone → false stall in the worker gap). Regression test. Confirmed live 2026-09-15: the rerun reached the hands-on handoff with no stall, PASS + promote. |
 
 A Notes cell holds what was built or what the review found, the test count, and one line per
 deviation from the task doc.
 
 **A ✅ task's cell may be cut to one line** once the next task has been reviewed.
 
-**Review queue:** T34 + T35 (🔍) — their review is the shared attended `hands-on` rerun below, not a code-read (PM direction).
+**Review queue:** empty.
 
-## Next up: confirm T34 + T35 with the attended rerun
+## The plan is complete — all 36 tasks ✅
 
-Tasks T00–T33 are ✅ (phases 0–8, the `you`/hands-on path proven live 2026-09-15). T33's reflection found
-one real bottleneck (coordinator never pointed the PM at the hands-on worker → **T34**), and the T34
-confirmation rerun then exposed a harness stall (→ **T35**). Both fixes are implemented, `npm test` green,
-both 🔍 awaiting one shared attended rerun.
+Phases 0–8 are done. The `you`/hands-on path is proven live end-to-end (T33), and the two fixes its reruns
+produced are confirmed: T34 (the coordinator itself announces the hands-on worker) and T35 (the harness no
+longer false-stalls in the gap between one worker closing and the next spawning). One shared attended rerun
+2026-09-15 PASSed — five facts green, one promote, coordinator announced the worker — proving both. No
+⬜/🟡/🔍 tasks remain, so `/pir-work` has nothing to dispatch.
 
-**Confirmation is one attended `hands-on` rerun** (it replaces the fresh-eyes review of both, PM direction):
-`node src/shell/harness/run.mjs hands-on --into <dir>` from this worktree. With T35 in, it should reach the
-handoff instead of stalling; drive the T02 verify worker as in T33; the **coordinator's own output** must
-tell you which worker to open before you go looking (T34), not the runner's stdout cue. Five T33 facts green
-+ one promote. When it passes, fold T34 and T35 → ✅ and record it in FINDINGS.
-
-**Other open hardening candidates** (each its own future task, none blocking, all with the PM): the T31
-prose gap; three T30-reflection candidates; the `role:foreign` capture bloat. See the `Next pir-work will`
-note above and FINDINGS.md.
+**Open hardening candidates** (each its own future task, none blocking, all with the PM): the T31 prose gap;
+three T30-reflection candidates; a promote-flush capture gap (the coordinator's final completion message can
+seal out of the bundle — seen on the T35 rerun); the `role:foreign` capture bloat. See the `Next pir-work
+will` note above and FINDINGS.md.
 
 To re-run any fixture (needs real paid agents, launched attended), the procedure is in
 [TEST-HARNESS.md](TEST-HARNESS.md). Housekeeping: a closed worker can linger as `stopped`
