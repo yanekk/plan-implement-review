@@ -464,6 +464,62 @@ test('runScenario does not stall after the last worker closes while the coordina
   }
 });
 
+// T35 (hands-on rerun 2026-09-15): the same post-close gap, but with the coordinator reporting state:'done'
+// — its REAL state for essentially the whole run, because after launching the bin it ends its opening turn
+// and just watches the flow log. The old guard (coordActive = state!=='done') read that as gone, so in the
+// gap between one worker closing and the next worker's cold-start appearing — no worker live, coordinator
+// 'done' — the run false-stalled and HALTed before the next task could spawn. The hands-on fixture's strict
+// build(T01)→verify(T02) handoff makes that gap unavoidable, so it stalled there every long cold-start. The
+// fix counts a present, non-'stopped' coordinator as active, so the gap is bridged and the run reaches the
+// verify worker and then promote. With stallGrace 2 and the old logic this would have stalled at poll 3.
+test('runScenario does not stall in the worker gap while an idle coordinator (state:done) still drives', async () => {
+  const ws = workspace();
+  try {
+    const into = join(ws.dir, 'scratch-repo');
+    const projects = join(ws.dir, 'projects');
+    mkdirSync(projects, { recursive: true });
+    const flowPath = join(controlDirFor(into, 'single'), 'log');
+
+    // The coordinator is DONE with its turn but alive and watching (status busy) — exactly the timeline the
+    // hands-on rerun captured. state:'done' the whole run.
+    const coord = { id: 'c', sessionId: 'sc', name: 'scratch-repo · single', cwd: into, status: 'busy', state: 'done', pid: 2 };
+    const build = { id: 'w1', sessionId: 's1', name: 'scratch-repo · single · T01 · implement', cwd: into, status: 'busy', state: 'working', pid: 1 };
+    const verify = { id: 'w2', sessionId: 's2', name: 'scratch-repo · single · T02 · verify', cwd: into, status: 'busy', state: 'working', pid: 3 };
+    let n = 0;
+    const claudeRun = (args) => {
+      if (args[0] === '--bg') return { ok: true, stdout: 'coord\n' };
+      if (args.includes('--all')) return { ok: true, stdout: '[]' };
+      if (args[0] === 'agents') {
+        n += 1;
+        // poll 1: build worker + coordinator. polls 2-3: build worker gone, only the idle 'done' coordinator
+        // (the cold-start gap). poll 4: the verify worker has appeared, and the plan promotes.
+        const live = n === 1 ? [coord, build] : n <= 3 ? [coord] : [coord, verify];
+        if (n >= 4) writeFileSync(flowPath, '2026-01-01T00:00:00Z open-feature pir/single\n2026-01-01T00:04:00Z promote pir/single\n');
+        return { ok: true, stdout: JSON.stringify(live) };
+      }
+      return { ok: true, stdout: '' };
+    };
+
+    const result = await runScenario({
+      fixtureId: 'single',
+      scratchDir: into,
+      install: installFake({ into, controlLog: '2026-01-01T00:00:00Z open-feature pir/single\n' }),
+      claudeRun,
+      gitRun: () => ({ ok: true, stdout: '' }),
+      platform: fakePlatform({ agents: [] }),
+      worktree: fakeWorktree,
+      projectsDir: projects,
+      pollMs: 1,
+      stallGrace: 2, // short: the OLD state!=='done' guard would have false-stalled in the gap at poll 3
+    });
+
+    assert.equal(result.reason, 'promoted');
+    assert.ok(n >= 4, 'the run bridged the worker gap on the idle coordinator and saw the verify worker');
+  } finally {
+    ws.cleanup();
+  }
+});
+
 // T29: the kill-switch capture race. The operator (or the timeout) creates the HALT flag BEFORE the
 // coordinator reacts, so the run must NOT seal on the flag's presence — it waits for the coordinator's
 // own `halt-close` line and a short grace, so the sealed flow.log actually contains halt-close. In the

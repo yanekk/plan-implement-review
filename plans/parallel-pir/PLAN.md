@@ -250,6 +250,7 @@ a build and its hand-verification into a paired `auto`+`you` task. The PM chose 
 | [T32](tasks/T32-hands-on-fixture.md) | The hands-on fixture: an agent builds a program, a person runs it | auto | T17, T30 |
 | [T33](tasks/T33-hands-on-fixture-live.md) | Live: drive the hands-on fixture and find its bottlenecks | you | T31, T32 |
 | [T34](tasks/T34-coordinator-announces-hands-on-worker.md) | Coordinator announces the hands-on worker on dispatch | auto | T33 |
+| [T35](tasks/T35-runner-stall-idle-coordinator.md) | Harness: stop false-stalling in the worker gap while the coordinator is idle | auto | T33 |
 
 **T31 teaches the pattern; T32 builds the rehearsal; T33 proves it live and finds the bottlenecks.** T31
 adds the split to DESIGN §2.6 and `pir-plan` (an `auto` builder plus a dependent `you` verify task with a
@@ -266,6 +267,13 @@ user a `you` task needed a person — it waited for a `surface` a `you` task nev
 `hands-on Txx` flow line the bin already writes. T34 is a prose-only fix to `pir-coordinate` (act on
 `hands-on Txx`, announce the derived worker name, stop relying on stdout). Confirmed by re-running T33's
 attended fixture with the fix in place, in lieu of a fresh-eyes review (PM direction).
+
+**T35 fixes a harness stall the T34 rerun exposed** (PM chose to fix it, 2026-09-15): the live runner's
+stall detector counted the coordinator active only while `state !== 'done'`, but an idle coordinator
+watching the flow log reports `state:'done'` for the whole run — so it false-stalled in the gap between a
+worker closing and the next (slow cold-start) worker spawning, HALTing the hands-on rerun before T02. Fix
+in `run.mjs`: treat a present, non-`stopped` coordinator as active; the wall-clock timeout still backstops a
+true hang. Unit-proven; end-to-end confirmed by the same T34 rerun reaching the handoff. Product unaffected.
 
 ---
 

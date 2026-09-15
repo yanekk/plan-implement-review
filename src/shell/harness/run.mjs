@@ -499,12 +499,24 @@ async function waitForCompletion({ cap, controlDir, repo, slug, pollMs, stallGra
     if (isTimedOut()) return 'timeout';
 
     // The run is going while a worker is live (busy or idle, e.g. parked on a decision) OR the coordinator
-    // session is still alive and not finished — the coordinator runs the promote pass after the last
-    // worker closes. A `done`/`stopped` coordinator has left its loop; anything else counts as driving.
+    // session is still alive — it drives the run between its own turns, not only during them.
     const agents = snap.agents ?? [];
     const liveWorkers = agents.filter((a) => isWorkerOf(a.name, { repo, plan: slug }));
     const coord = agents.find((a) => a.name === coordName);
-    const coordActive = !!coord && coord.state !== 'done' && coord.state !== 'stopped';
+    // A coordinator counts as active whenever it is present and not `stopped`. It is NOT enough to require
+    // state!=='done' (the original T17 guard): after launching the bin the coordinator ends its opening
+    // turn and watches the flow log via a Monitor, so `claude agents --json` reports it state:'done' (turn
+    // finished, status still 'busy'/'idle') for essentially the whole run though it is emphatically still
+    // driving. Reading a `done` coordinator as gone false-stalled the run in the gap between one worker
+    // closing and the next worker's slow `claude --bg` cold-start appearing — no worker live AND the
+    // coordinator 'done' — so after stallGrace (~6s) the runner HALTed before the next task could spawn.
+    // The hands-on fixture's strict build→verify handoff makes that gap unavoidable, so it stalled there
+    // every time the cold-start ran long; a subsequent worker's cold-start is not covered by startupGrace,
+    // which guards only the FIRST spawn (T35, 2026-09-15). A coordinator that is alive but genuinely hung
+    // is still caught by the wall-clock timeout (isTimedOut, checked every poll), and a run that truly
+    // finished has already returned above on its promote / halt-close hard terminal — so treating a live
+    // `done` coordinator as active never masks a real end, it only stops the false stall.
+    const coordActive = !!coord && coord.state !== 'stopped';
     if (liveWorkers.length > 0 || coordActive) {
       sawActive = true;
       quiet = 0;
