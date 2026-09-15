@@ -12,18 +12,21 @@ cell also fixes the over-budget cell they walk past.**
 
 **Plan reviewed:** 2026-09-07 — 4 fixed, 3 decided with the user
 
-**Status:** ALL 36 TASKS ✅ (T00–T35, phases 0–8). Every live fixture PASSed incl the `you`/hands-on path
-(T33 attended 2026-09-15). T34 (coordinator announces the hands-on worker) + T35 (harness no longer
-false-stalls in the worker gap) both confirmed live 2026-09-15 on one shared rerun: PASS, promote, and the
-coordinator itself announced the worker. `Runs` marks each task `auto` or `you`. Phases 5–8 postdate the
-2026-09-07 plan review, validated per task. Operator's guide: [TEST-HARNESS.md](TEST-HARNESS.md).
+**Status:** T00–T35 ✅ (phases 0–8). **Phase 9 added 2026-09-15 (PM amendment):** T36+T37, a
+capstone end-to-end fixture — a real database-backed blog built in parallel, two hands-on check-ins.
+Both ⬜. Like phases 5–8 they postdate the 2026-09-07 plan review and are validated per task through the
+normal implement→review alternation, not a fresh full plan-review (CLAUDE.md: amending a live plan is the
+PM's decision, and re-reviewing a built plan is out). Every prior live fixture PASSed incl the hands-on
+path (T33 attended). `Runs` marks each task `auto` or `you`. Operator's guide: [TEST-HARNESS.md](TEST-HARNESS.md).
 **Last updated:** 2026-09-15
-**Next `pir-work` will:** nothing — the plan is complete, no ⬜/🟡/🔍 tasks remain. Open hardening
-candidates, each its own future task, none blocking: T31 prose gap (`pir-verify`/`pir-coordinate` still
-narrow); three T30-reflection candidates (reviewer run the test once + capture exit; workers avoid
-`cat -A`/GNU-only flags on macOS → `xxd`/`Read`; coordinator emit a final `promote confirmed`/teardown
-line); a promote-flush capture gap (the coordinator's final completion message can seal out of the bundle
-— seen T35 rerun); `role:foreign` capture bloat (~4MB); candidate D (graceful mid-write drain).
+**Next `pir-work` will:** IMPLEMENT **T36** (blog-app fixture) — deps T32/T34/T35 all ✅. Then a fresh
+session reviews it, then T37 is the attended live run.
+**Open hardening candidates** (each its own future task, none blocking): T31 prose gap
+(`pir-verify`/`pir-coordinate` still narrow); three T30-reflection candidates (reviewer run the test once +
+capture exit; workers avoid `cat -A`/GNU-only flags on macOS → `xxd`/`Read`; coordinator emit a final
+`promote confirmed`/teardown line); a promote-flush capture gap (the coordinator's final completion message
+can seal out of the bundle — seen T35 rerun); `role:foreign` capture bloat (~4MB); candidate D (graceful
+mid-write drain).
 
 ## Tasks
 
@@ -69,6 +72,8 @@ live steps with a hands-on worker the coordinator spawns, folded back without re
 | T33 | Live: drive the hands-on fixture and find its bottlenecks | you | T31, T32 | ✅ | PASS live 2026-09-15 (attended): 5 facts green, one promote, T02 verify-not-implement folded to merge with no review, scribe's ✅ row on main. Person drove the T02 worker directly (ran `node greet.mjs`, worker waited, did not self-run). Reflection finding: coordinator never pointed the PM at the hands-on worker (no `surface` for a `you` task) → fixed by T34. Bundle `pir-t17-hands-on-3nyF3G/…/2026-09-15T07-48-23-485Z`. Folds back without review. |
 | T34 | Coordinator announces the hands-on worker on dispatch | auto | T33 | ✅ | Prose-only `pir-coordinate`: coordinator acts on the `hands-on Txx` flow line, announces worker `{repo}·{plan}·T{nn}·verify`, no stdout/`surface` wait. Confirmed live 2026-09-15: coordinator ITSELF announced (chat + PushNotification) naming the exact worker off the `hands-on T02` line. Bundle `pir-t35-rerun/…/2026-09-15T16-37-06-520Z`. |
 | T35 | Harness: stop false-stalling in the worker gap while the coordinator is idle | auto | T33 | ✅ | `run.mjs` waitForCompletion: a present, non-`stopped` coordinator counts active (old `state!=='done'` read an idle watching coordinator as gone → false stall in the worker gap). Regression test. Confirmed live 2026-09-15: the rerun reached the hands-on handoff with no stall, PASS + promote. |
+| T36 | The blog-app fixture: a realistic multi-component app built in parallel | auto | T32, T34, T35 | ⬜ | Capstone fixture: lean DB-backed blog (seeded author + posts CRUD), walking skeleton so T02/T03/T04 build concurrently off T01's contract; two `you` check-ins; e2e. New fact `reachedWidth(n)`. `npm test` install-free (pure core only; `pg`/browser hand-verified). |
+| T37 | Live: build the blog end-to-end, attended, and prove it runs | you | T36 | ⬜ | Attended live run of blog-app. Docker Desktop up first; drive both check-ins; `docker compose down` after. PASS + reflection pass. Folds back without review. |
 
 A Notes cell holds what was built or what the review found, the test count, and one line per
 deviation from the task doc.
@@ -77,18 +82,13 @@ deviation from the task doc.
 
 **Review queue:** empty.
 
-## The plan is complete — all 36 tasks ✅
+## Phases 0–8 done; Phase 9 (T36+T37) is the capstone in progress
 
-Phases 0–8 are done. The `you`/hands-on path is proven live end-to-end (T33), and the two fixes its reruns
-produced are confirmed: T34 (the coordinator itself announces the hands-on worker) and T35 (the harness no
-longer false-stalls in the gap between one worker closing and the next spawning). One shared attended rerun
-2026-09-15 PASSed — five facts green, one promote, coordinator announced the worker — proving both. No
-⬜/🟡/🔍 tasks remain, so `/pir-work` has nothing to dispatch.
-
-**Open hardening candidates** (each its own future task, none blocking, all with the PM): the T31 prose gap;
-three T30-reflection candidates; a promote-flush capture gap (the coordinator's final completion message can
-seal out of the bundle — seen on the T35 rerun); the `role:foreign` capture bloat. See the `Next pir-work
-will` note above and FINDINGS.md.
+Phases 0–8 are complete: the `you`/hands-on path is proven live end-to-end (T33), and its two follow-on
+fixes are confirmed — T34 (the coordinator announces the hands-on worker) and T35 (the harness no longer
+false-stalls in the worker gap), both proven on one attended rerun 2026-09-15. Phase 9 then adds the one
+kind of proof the plan never had: a realistic multi-component app (a DB-backed blog) built by parallel
+workers with hands-on check-ins. `/pir-work` builds T36 next; T37 is its attended live run.
 
 To re-run any fixture (needs real paid agents, launched attended), the procedure is in
 [TEST-HARNESS.md](TEST-HARNESS.md). Housekeeping: a closed worker can linger as `stopped`

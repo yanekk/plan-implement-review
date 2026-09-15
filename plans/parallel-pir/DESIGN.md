@@ -700,6 +700,27 @@ announces which worker to drive) and the fixture takes a roomier wall-clock budg
 run is not guillotined; the auto-drive channel is deliberately out of scope. The end-to-end path
 cannot be forced without a person, so it is confirmed by its own attended live run (T33).
 
+An eighth fixture, **blog-app** (T36, PM request 2026-09-15), is the capstone: the first whose
+deliverable is a real multi-component program rather than a marker file, so it proves the method end
+to end — several workers built at once off one contract, a person's verification folded in at the
+right moments, and a genuine app out the far end. Its scratch plan is a lean database-backed blog (a
+single seeded author, CRUD over posts) built as a walking skeleton: T01 pins a shared REST contract
+plus the stdlib pure core, the schema/seed and runnable stubs; then T02 (docker-compose glue), T03
+(the real Postgres-backed backend) and T04 (the real front end) build **concurrently** off T01,
+partitioned by file so their three branches merge without conflict (T02 owns the docker files, T03 the
+backend and the one `pg` dependency, T04 the front end). A `you` check-in confirms the stack runs and a
+post persists; T06 adds a browser end-to-end test; a second `you` check-in is the final click-through
+plus that test. It carries one new fact, **`reachedWidth(n)`** — PASS iff some timeline tick shows at
+least n task-implementer slots busy at once — asserted at `reachedWidth(2)`: `ceilingHeld` only bounds
+concurrency from above, and nothing before this proved work actually ran in parallel, which is the whole
+point of the plan. It reuses `ceilingHeld(3)`, `oneMergeToMain`, and `verifyWorkerSpawned`/
+`youNeverReviewed` for both check-ins. `npm test` stays install-free throughout because only the pure
+core is tested; the `pg` shell, the browser and the running stack are hand-verified, so the app can
+declare runtime deps (`pg`, `@playwright/test`) without breaking the green baseline — not a §5 breach,
+since §5 governs the coordinator's own portability, not the throwaway app a fixture builds. Its Docker
+precondition and container cleanup (teardown stops Claude sessions, not containers) live in its
+TEST-HARNESS note. It is attended (two `you` check-ins) and confirmed live by T37.
+
 **Seatbelts (§5.2 carries the row).** Every scenario runs on a scratch plan in a scratch repo, at
 the lowest ceiling the scenario needs, with the kill switch wired and a per-scenario wall-clock
 timeout that auto-touches `HALT` so a hung real worker cannot run — or cost — unboundedly. Because

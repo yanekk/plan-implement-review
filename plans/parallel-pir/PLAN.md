@@ -277,6 +277,39 @@ true hang. Unit-proven; end-to-end confirmed by the same T34 rerun reaching the 
 
 ---
 
+## Phase 9 — Coverage: a realistic multi-component fixture (the capstone)
+
+Added after Phase 8 closed the plan, from a PM request (2026-09-15): every fixture so far forces one
+narrow coordinator path with a trivial deliverable, so nothing yet proves the thing the plan exists to do
+— build a real, multi-component program by fanning several workers out at once and folding a person's
+verification in at the right moments. This phase is that end-to-end proof. The PM settled its shape:
+a lean-but-real database-backed blog (a single seeded author, CRUD over posts), built as a walking
+skeleton so three workers run concurrently, with two hands-on check-ins. Throwaway, like every fixture.
+
+| # | Task | Runs | Depends on |
+|---|---|---|---|
+| [T36](tasks/T36-blog-app-fixture.md) | The blog-app fixture: a realistic multi-component app built in parallel | auto | T32, T34, T35 |
+| [T37](tasks/T37-blog-app-fixture-live.md) | Live: build the blog end-to-end, attended, and prove it runs | you | T36 |
+
+**T36 builds the fixture; T37 runs it live.** T36's scratch plan is seven units: T01 pins a shared
+contract plus the pure core, schema/seed and runnable stubs; then T02 (docker glue), T03 (real backend)
+and T04 (real frontend) build **concurrently** off T01, cleanly partitioned so their branches merge
+without conflict; a `you` check-in confirms the app works; T06 adds the browser e2e; a second `you`
+check-in is the final click-through. T36 also adds one new fact, `reachedWidth(n)`, because the existing
+`ceilingHeld` only proves an upper bound on concurrency and nothing proved work actually ran in parallel
+— the whole point of the plan. T36 is `auto` and fresh-reviewed; the app-actually-works half needs a
+person and paid workers, so it is confirmed by T37. It depends on T32/T34/T35 because it reuses and
+leans on the hands-on machinery (the verify scribe, the coordinator's hands-on announce, and the
+runner that no longer stalls in the worker gap), and it needs both check-ins announced in one run.
+
+**T37 is the attended capstone.** Docker Desktop up as a precondition, the two check-ins driven by hand,
+the fact report green, and the mandatory reflection pass logged. `npm test` stays install-free throughout
+(only the stdlib pure core is tested; the `pg` shell, the browser and the running stack are hand-verified),
+so the app can carry runtime deps without breaking a green baseline — this is not a §5 violation, since §5
+governs the coordinator's own portability, not the throwaway apps a fixture builds.
+
+---
+
 ## Critical path
 
 ```
