@@ -12,17 +12,19 @@ walk past.
 
 **Status:** T00–T41 ✅ — every planned task built and reviewed. Phase 10: T38 retrospective — method works, one
 blemish (T07 scribe over-claim), 9 candidates (RETRO out of git at `~/pir-retro/blog-app-2026-09-16/`).
-Phase 11: T39 + T40 narrowed the hands-on check to judgement — worker owns setup/teardown AND runs the
-automated checks, person only judges. Phase 12 (PM, 2026-09-16): T41 — the coordinator runs `claude rm` on a
-worker as soon as it finishes, so its `stopped` record leaves the "Claude agents" view; HALT is the exception
-(record kept for forensics). Phases 5–12 postdate the 2026-09-07 plan review, validated through
-implement→review alternation. `Runs` marks `auto`/`you`. Operator's guide: [TEST-HARNESS.md](TEST-HARNESS.md).
+Phase 11 (T39+T40): worker owns hands-on setup/teardown and runs the automated checks, person only judges.
+Phase 12 (T41): coordinator `claude rm`s a finished worker so its record leaves the "Claude agents" view;
+HALT excepted (record kept for forensics). Phases 5–12 postdate the 2026-09-07 plan review, validated by
+implement→review alternation. `Runs` marks `auto`/`you`. Guide: [TEST-HARNESS.md](TEST-HARNESS.md).
 **Last updated:** 2026-09-16
-**Next `pir-work` will:** nothing — no auto task remains, T00–T41 are all ✅. The only outstanding work is an
-attended `you` re-run (real paid agents, §5.2, [TEST-HARNESS.md](TEST-HARNESS.md)) proving T39/T40/T41 live:
-the `claude rm` spike (does it delete the `.jsonl`, so is T41's eager-copy even needed?), the finished-worker
-view-clearing, and that a HALT-killed worker's record stays. Record all three in FINDINGS.md with the date.
-**Open hardening candidates** (each its own future task, none blocking): T31 prose gap
+**Next `pir-work` will:** nothing — no auto task remains, T00–T41 are all ✅. T41's finished-worker
+view-clearing is confirmed live (2026-09-16 `single` re-run: 0 leftover records) and the spike is answered —
+`claude rm` does NOT delete the `.jsonl`, so T41's eager-copy is harmless insurance that never fires. Still
+outstanding, attended (§5.2, [TEST-HARNESS.md](TEST-HARNESS.md)): the T39/T40 hands-on re-run, and the
+HALT-keeps-a-record case (`single` has no HALT — the `parallel` fixture drills it).
+**Open hardening candidates** (each its own future task, none blocking): the `single` fixture's
+`byNameAddressing` fact is now a false-FAIL — T25 moved the worker up-channel to a file drop, so workers no
+longer message the coordinator by name (FINDINGS 2026-09-13); retire or replace that fact. T31 prose gap
 (`pir-verify`/`pir-coordinate` narrow); three T30-reflection candidates (reviewer run the test once + capture
 exit; workers avoid `cat -A`/GNU-only flags on macOS → `xxd`/`Read`; coordinator emit a final `promote
 confirmed`/teardown line); promote-flush capture gap (final message seals out of the bundle, RETRO cand. 8);
@@ -90,9 +92,10 @@ Phases 0–9 complete; the `you`/hands-on path is proven live (T33–T35). Phase
 2026-09-16 (DB-backed blog, parallel workers, 8 facts, width 3). Phase 10 (T38): retrospective, method
 working, one blemish (T07 scribe over-claim), 9 candidates; RETRO.md at `~/pir-retro/blog-app-2026-09-16/`.
 Phase 11 (T39, T40): the worker owns the hands-on environment and runs the automated checks, person judges.
-Phase 12 (T41): the coordinator clears a finished worker from the "Claude agents" view with `claude rm`,
-reviewed clean 2026-09-16. Outstanding: an attended `you` re-run proves T39/T40/T41 live.
+Phase 12 (T41): the coordinator clears a finished worker from the view with `claude rm`, reviewed clean and
+confirmed live 2026-09-16 (view-clearing + the spike: `claude rm` keeps the `.jsonl`). Outstanding: the
+T39/T40 hands-on re-run and the HALT-keeps-record case.
 
-Re-running a fixture (real paid agents, attended) is in [TEST-HARNESS.md](TEST-HARNESS.md). Housekeeping: the
-coordinator now clears a finished worker's `stopped` record itself (T41); only a HALT-killed worker or a
-killed coordinator leaves one to `claude rm <id>` by hand. Scratch repos sit in a temp dir.
+Re-running a fixture (real paid agents, attended) and cleanup — the coordinator clears a finished worker's
+`stopped` record itself (T41), only a HALT-killed or orphaned worker needs `claude rm <id>` by hand — are in
+[TEST-HARNESS.md](TEST-HARNESS.md).
