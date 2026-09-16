@@ -10,7 +10,7 @@ walk past.
 
 **Plan reviewed:** 2026-09-07 — 4 fixed, 3 decided with the user
 
-**Status:** T00–T40 ✅; T41 🔍 (Phase 12, awaiting review). Phase 10: T38 retrospective — method works, one
+**Status:** T00–T41 ✅ — every planned task built and reviewed. Phase 10: T38 retrospective — method works, one
 blemish (T07 scribe over-claim), 9 candidates (RETRO out of git at `~/pir-retro/blog-app-2026-09-16/`).
 Phase 11: T39 + T40 narrowed the hands-on check to judgement — worker owns setup/teardown AND runs the
 automated checks, person only judges. Phase 12 (PM, 2026-09-16): T41 — the coordinator runs `claude rm` on a
@@ -18,11 +18,10 @@ worker as soon as it finishes, so its `stopped` record leaves the "Claude agents
 (record kept for forensics). Phases 5–12 postdate the 2026-09-07 plan review, validated through
 implement→review alternation. `Runs` marks `auto`/`you`. Operator's guide: [TEST-HARNESS.md](TEST-HARNESS.md).
 **Last updated:** 2026-09-16
-**Next `pir-work` will:** review **T41** (🔍, `auto`) — the coordinator now runs `claude rm` after close on
-every normal finish (merged, dead, review hand-off, teardownRun), not on `halt-close`; capture eager-copies
-each worker transcript per tick so a mid-run-removed worker still seals into the bundle. Still open (not a
-`pir-work` task): the attended `you` re-run proving T39/T40 live, now T41's view-clearing + the
-`claude rm`/transcript spike (does `claude rm` delete the `.jsonl`?).
+**Next `pir-work` will:** nothing — no auto task remains, T00–T41 are all ✅. The only outstanding work is an
+attended `you` re-run (real paid agents, §5.2, [TEST-HARNESS.md](TEST-HARNESS.md)) proving T39/T40/T41 live:
+the `claude rm` spike (does it delete the `.jsonl`, so is T41's eager-copy even needed?), the finished-worker
+view-clearing, and that a HALT-killed worker's record stays. Record all three in FINDINGS.md with the date.
 **Open hardening candidates** (each its own future task, none blocking): T31 prose gap
 (`pir-verify`/`pir-coordinate` narrow); three T30-reflection candidates (reviewer run the test once + capture
 exit; workers avoid `cat -A`/GNU-only flags on macOS → `xxd`/`Read`; coordinator emit a final `promote
@@ -77,22 +76,22 @@ live steps with a hands-on worker the coordinator spawns, folded back without re
 | T37 | Live: build the blog end-to-end, attended, and prove it runs | you | T36 | ✅ | PASS live 2026-09-16 (attended): 8 facts, DB-backed blog promoted, width hit 3. Bundle `pir-t17-blog-app-1YmLMq/…/2026-09-16T13-12-09-697Z`. |
 | T38 | Full retrospective on the blog-app capstone run | auto | T37 | ✅ | Reviewed clean, no fix. RETRO's load-bearing claims spot-checked against the bundle and hold; T07 scribe over-claim confirmed. 9 candidates not fixed. |
 | T39 | The worker owns the hands-on environment: bring it up, hand off, tear it down | auto | T38 | ✅ | Reviewed, one fix (stale step reference in pir-verify). Worker owns bring-up/teardown, person judges; tests bite. Idle-gate clearing deferred to a `you` re-run. |
-| T40 | The worker runs the automated checks; the person only judges | auto | T39 | ✅ | Reviewed clean, no fix commit. Walked §2.6/pir-verify/fixture/templates against all three Done-when items; step renumbering (escalate now 8) consistent. Both new goldens bite (verified by mutation). 309 green. Live proof deferred to a `you` re-run. |
-| T41 | Clear a finished worker from the "Claude agents" view (`claude rm`) | auto | T14, T29 | 🔍 | `platform.remove(id)` runs `claude rm`; called right after close on the merged, dead and review-handoff finish paths and in teardownRun, never on halt-close (records kept for forensics). Capture eager-copies each worker transcript per tick and seal falls back to it if `claude rm` deleted the live file. 314 tests, 5 new. Live spike and view-clearing deferred to a `you` re-run. |
+| T40 | The worker runs the automated checks; the person only judges | auto | T39 | ✅ | Reviewed clean. Worker runs the automated checks, person only judges; both new goldens bite. Live proof deferred to a `you` re-run. |
+| T41 | Clear a finished worker from the "Claude agents" view (`claude rm`) | auto | T14, T29 | ✅ | Reviewed clean, no fix. All four Done-when hold: remove rides close on every normal finish (merged/dead/review-handoff/teardownRun) on the same id close uses, never on halt-close; eager-copy fallback keeps a mid-run-removed transcript. Probed the busy path (not removed until idle); mutation-confirmed the HALT test bites. Live spike/view-clearing stay a `you` re-run. |
 
 A Notes cell holds what was built or what the review found, the test count, and one line per deviation.
 **A ✅ task's cell may be cut to one line** once the next task has been reviewed.
 
-**Review queue:** T41 (🔍, Phase 12). Next work reviews it.
+**Review queue:** empty — every task reviewed.
 
-## Phases 0–11 done; Phase 12 (T41) in review
+## Phases 0–12 done
 
 Phases 0–9 complete; the `you`/hands-on path is proven live (T33–T35). Phase 9 capstone: T37 PASSed live
 2026-09-16 (DB-backed blog, parallel workers, 8 facts, width 3). Phase 10 (T38): retrospective, method
 working, one blemish (T07 scribe over-claim), 9 candidates; RETRO.md at `~/pir-retro/blog-app-2026-09-16/`.
 Phase 11 (T39, T40): the worker owns the hands-on environment and runs the automated checks, person judges.
-Phase 12 (T41): the coordinator clears a finished worker from the "Claude agents" view with `claude rm`.
-Outstanding: an attended `you` re-run proves T39/T40 live and now the T41 view-clearing.
+Phase 12 (T41): the coordinator clears a finished worker from the "Claude agents" view with `claude rm`,
+reviewed clean 2026-09-16. Outstanding: an attended `you` re-run proves T39/T40/T41 live.
 
 Re-running a fixture (real paid agents, attended) is in [TEST-HARNESS.md](TEST-HARNESS.md). Housekeeping: the
 coordinator now clears a finished worker's `stopped` record itself (T41); only a HALT-killed worker or a
