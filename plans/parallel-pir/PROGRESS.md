@@ -18,8 +18,10 @@ run — did the tasks deliver, did the e2e really run, plus eight more angles (P
 only, `auto`, fresh-reviewed. Like phases 5–9 it postdates the 2026-09-07 plan review and is validated
 through the normal implement→review alternation, not a fresh full plan-review (CLAUDE.md: amending a live
 plan is the PM's decision). The T37 evidence is preserved out of git at `~/pir-retro/blog-app-2026-09-16/`
-(curated capture + a git bundle of the scratch repo). `Runs` marks each task `auto` or `you`. Operator's
-guide: [TEST-HARNESS.md](TEST-HARNESS.md).
+(curated capture + a git bundle of the scratch repo). **Phase 11 added 2026-09-16 (PM request, from the
+RETRO):** T39 ⬜ + T40 ⬜ — narrow the hands-on check to judgement (worker owns setup/teardown and runs the
+automated checks; person only judges). Both `auto`, revise DESIGN §2.6, gated behind T38's review. `Runs`
+marks each task `auto` or `you`. Operator's guide: [TEST-HARNESS.md](TEST-HARNESS.md).
 **Last updated:** 2026-09-16
 **Next `pir-work` will:** review **T38** (🔍) — the blog-app retrospective. RETRO.md is written at
 `~/pir-retro/blog-app-2026-09-16/`; the reviewer checks it answers all 10 questions with honest,
@@ -79,6 +81,8 @@ live steps with a hands-on worker the coordinator spawns, folded back without re
 | T36 | The blog-app fixture: a realistic multi-component app built in parallel | auto | T32, T34, T35 | ✅ | Reviewed clean. `reachedWidth(2)` by-task, implement-role, strict `busy`; tests bite all four ways. 310 tests. Live width + app-works half was T37. |
 | T37 | Live: build the blog end-to-end, attended, and prove it runs | you | T36 | ✅ | PASS live 2026-09-16 (attended): 8 facts green, DB-backed blog promoted. Trio T02/T03/T04 overlapped, width hit full 3. Both check-ins folded without review. Reflection in FINDINGS. Bundle `pir-t17-blog-app-1YmLMq/…/2026-09-16T13-12-09-697Z`. |
 | T38 | Full retrospective on the blog-app capstone run | auto | T37 | 🔍 | Analysis only; RETRO.md written to `~/pir-retro/blog-app-2026-09-16/`, all 10 questions with cited evidence. Verdict: method works. One real gap — T07 scribe over-claimed a manual click-through (Q6). 9 candidate follow-ups surfaced (1,3,5 method; 4,6,7 fixture code; 2,8 overlap open candidates). No product code changed. |
+| T39 | The worker owns the hands-on environment: bring it up, hand off, tear it down | auto | T38 | ⬜ | Phase 11 (PM, 2026-09-16, from RETRO Q10/Q6). Worker does setup + seed + teardown-confirmed-down; person only judges. Teardown-before-done is the seatbelt; removes the T37 idle-gate stall. Coordinator surfaces what it waits for. Revises DESIGN §2.6. Live proof is a separate `you` re-run. |
+| T40 | The worker runs the automated checks; the person only judges | auto | T39 | ⬜ | Phase 11 (PM, 2026-09-16, from RETRO Q6/Q8). Worker runs the e2e itself; person does only the click-through judgement. Scribe records machine result and person's judgement as two separate confirmations, never rounds an ambiguous reply up. Revises DESIGN §2.6. Live proof is a separate `you` re-run. |
 
 A Notes cell holds what was built or what the review found, the test count, and one line per
 deviation from the task doc.
@@ -87,7 +91,7 @@ deviation from the task doc.
 
 **Review queue:** T38 (🔍) — the retrospective, awaiting fresh-eyes review.
 
-## Phases 0–9 done; Phase 10 (T38 retrospective) is next
+## Phases 0–9 done; Phase 10 (T38, 🔍) then Phase 11 (T39, T40) next
 
 Phases 0–9 are complete. The `you`/hands-on path is proven live (T33) with its follow-on fixes confirmed
 (T34, T35). Phase 9 delivered the capstone: a DB-backed blog built by parallel workers with two hands-on

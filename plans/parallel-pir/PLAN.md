@@ -333,6 +333,34 @@ path and at what token cost; and where the coordinator wasted turns. It writes t
 future task — it fixes nothing itself (scope). It is `auto` and fresh-reviewed like any analysis task;
 independently re-running the blog to test it by hand, if wanted, is a separate `you` follow-up.
 
+## Phase 11 — Narrow the hands-on check to judgement (from the PM, 2026-09-16)
+
+Added from a PM request after reading the T38 retrospective. The capstone worked, but the retro found the
+hands-on check asks the person to do mechanical chores that are not theirs — stand the stack up, install a
+browser driver, run an automated test, tear the stack down — and that mislabelling produced both the run's
+wasted ~4.5-minute wait (teardown was the person's job and went undone) and its one integrity blemish (an
+automated test the person was asked to run, then an ambiguous "full pass" recorded as a manual click-
+through). The PM's rule: the worker prepares and cleans up the environment and runs everything a machine
+can decide; the person is there only to judge. This phase encodes that.
+
+| # | Task | Runs | Depends on |
+|---|---|---|---|
+| [T39](tasks/T39-worker-owns-hands-on-environment.md) | The worker owns the hands-on environment: bring it up, hand off, tear it down | auto | T38 |
+| [T40](tasks/T40-worker-runs-automated-checks-person-judges.md) | The worker runs the automated checks; the person only judges | auto | T39 |
+
+**T39 moves setup/teardown onto the worker;** the person is handed a running thing to look at, and the
+worker tears it down and confirms it is down before finishing — that guaranteed cleanup is the seatbelt
+that lets a worker stand a live stack up, and it removes the T37 idle-gate stall at the root. **T40 moves
+the automated test onto the worker** and reserves the person for the subjective click-through, recording
+the machine result and the person's judgement as two separate confirmations and never rounding an
+ambiguous reply up to the bigger claim. Both **revise DESIGN §2.6**, which today calls the hands-on worker
+a pure scribe and has the person run the live commands; the sanction for that change lives in these task
+docs. Both are `auto` (prose, fixture task docs, templates/goldens, and T39's coordinator waiting-signal /
+idle-gate) and fresh-reviewed. That a real worker can actually stand up Docker, install the browser driver
+and run the e2e, then tear it all down, is a live-only fact these tasks do not assert — one attended
+re-run of the blog-app fixture under the new split proves both, and is a separate `you` follow-up the PM
+can schedule when ready.
+
 ---
 
 ## Critical path
