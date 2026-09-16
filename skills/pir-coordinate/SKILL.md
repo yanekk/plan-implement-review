@@ -10,8 +10,12 @@ worker builds or reviews one task in its own worktree, and you are the only one 
 each worker does. This is the parallel mode of DESIGN §2; read `plans/{slug}/DESIGN.md §2.1–§2.9`
 for the why. Your job is dispatch, supervision, and keeping the user in every decision.
 
-The deterministic machine lives in `src/shell/coordinate.mjs`. **You run it as a long-running
-program** — `PARALLEL_LIVE=1 node src/shell/coordinate.mjs {slug}` — and it drives the passes on a
+The deterministic machine is the installed engine at `~/.claude/pir-engine/src/shell/coordinate.mjs`.
+The installer places it there for your account, exactly as it does the skills, so `/pir-coordinate`
+works in **any** repo, not just this one: the engine reads its target repo from your working
+directory, so launched from a product repo's root it operates on that product repo. **Run it from
+the project's root** — `PARALLEL_LIVE=1 node ~/.claude/pir-engine/src/shell/coordinate.mjs {slug}` —
+and it drives the passes on a
 timer: spawning workers, handing finished work to fresh reviewers, merging one task at a time,
 promoting at the end, and closing every worker on any exit so none is orphaned. Your job is the things
 a Node process cannot do: **talk to the user in plain English**, **deliver the bin's outgoing messages
@@ -22,7 +26,11 @@ You do not drive `pass()` yourself turn by turn — the bin does; you feed and r
 
 ## First: the plan must be reviewed
 
-Run `node src/shell/coordinate.mjs {slug}` — or check `readReviewGate` — before anything. **If the
+If `~/.claude/pir-engine/src/shell/coordinate.mjs` is not there, the engine was never installed for
+this account — tell the user to run the PIR installer (`./install.sh` from the plan-implement-review
+checkout, or `/pir-install` here) and stop; do not fall back to a copy inside the repo.
+
+Run `node ~/.claude/pir-engine/src/shell/coordinate.mjs {slug}` — or check `readReviewGate` — before anything. **If the
 plan-reviewed gate in `PROGRESS.md` says "not yet", or is missing, refuse and stop**, exactly as
 `pir-work` does. Tell the user in plain words that the plan has not been read back yet, and give them:
 
@@ -319,14 +327,15 @@ stall. Read worker status from `claude agents --json` and the flow log, never fr
   behaviour to get a worker unblocked. Surface it and wait.
 - **Only one merge to the user's main copy, at the very end**, and only if the tests pass on the
   assembled plan. A failing assembled plan is surfaced to the user, never promoted.
-- **The live drive is opt-in.** `node src/shell/coordinate.mjs {slug}` only checks the gate and shows
+- **The live drive is opt-in.** `node ~/.claude/pir-engine/src/shell/coordinate.mjs {slug}` only checks the gate and shows
   what it would dispatch; it spawns real workers only with `PARALLEL_LIVE=1`. The first live run is
   seatbelted to the scratch plan at ceiling 1 (`PARALLEL_MAX_WORKERS=1`), and the full multi-worker
   drive is hand-verified with the user in T10. Never raise the ceiling or drop the seatbelt to go
   faster before then.
 - **The live bin refuses to run inside the canonical `plan-implement-review` checkout** (it would open
   and merge the feature branch into that real main), unless `PARALLEL_ALLOW_HERE=1` marks a same-named
-  scratch clone. In a scratch clone with no local `main`, it creates one at HEAD so the feature branch
+  scratch clone. This guards the engine's own dev repo only; launched from any other product repo (the
+  ordinary case now the engine is installed account-wide) the basename differs and it runs normally. In a scratch clone with no local `main`, it creates one at HEAD so the feature branch
   has a base. A real runaway (workers over the ceiling) trips a breaker that closes every worker.
 
 ## Restart

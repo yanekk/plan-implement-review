@@ -7,6 +7,12 @@
 # sees one copy and none can drift onto a stale one. A per-project copy was how they went
 # out of date; there is no per-project skill install any more.
 #
+# The parallel coordinator ENGINE (src/, driven by /pir-coordinate) is installed the same way,
+# under ~/.claude/pir-engine/, so parallel mode can run against ANY repo — the engine reads its
+# target from the coordinator session's working directory, so it operates on whatever project it
+# is launched in. Before this it was a source file living only in this repo, which is why parallel
+# mode was trapped here while a plan in a real product repo had nowhere to run.
+#
 #   ./install.sh                     refresh the skills for your account (skills only)
 #   ./install.sh --global            the same, named explicitly
 #   ./install.sh /path/to/project    refresh the skills AND append the method to that
@@ -19,6 +25,7 @@ set -euo pipefail
 SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MARKER="Appended by plan-implement-review"
 DEST="$HOME/.claude/skills"
+ENGINE_DEST="$HOME/.claude/pir-engine"
 SKILLS=(pir-plan pir-review-plan pir-parallelize-plan pir-work pir-implement pir-review pir-install)
 
 install_skills() {
@@ -32,6 +39,19 @@ install_skills() {
     # when run from a repo that is not this one. Drop a fresh copy beside it.
     cp "$SRC/CLAUDE.md" "$DEST/pir-install/PIR-CLAUDE.md"
     echo "  refreshed $DEST/pir-install/PIR-CLAUDE.md"
+    install_engine
+}
+
+install_engine() {
+    # The whole src/ tree is copied (core/ + shell/ and nothing else), preserving the sibling
+    # layout the engine's relative imports need. Copying the tree wholesale — rather than a
+    # curated file list — means a future dependency added to the engine cannot silently break the
+    # installed copy, a failure that would only surface in a live parallel run. The engine reads
+    # nothing relative to its own path, so it runs correctly from ~/.claude/pir-engine/.
+    rm -rf "${ENGINE_DEST:?}"
+    mkdir -p "$ENGINE_DEST"
+    cp -R "$SRC/src" "$ENGINE_DEST/src"
+    echo "  refreshed $ENGINE_DEST/src (parallel coordinator engine)"
 }
 
 append_claude_md() {
