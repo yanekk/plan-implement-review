@@ -12,6 +12,7 @@ Legend: 🐞 defect found · ✅ verified by hand with the user · 📌 worth kn
 
 | Date | | Finding |
 |---|---|---|
+| 2026-09-16 | 📌 | T38 retro on the blog-app capstone: method works — contract held, reviews real, clean merges, app runs (real e2e + hand-verified). One blemish: T07 scribe over-claimed a manual click-through from a two-word reply. RETRO.md + 9 candidate tasks at `~/pir-retro/blog-app-2026-09-16/`. |
 | 2026-09-16 | ✅ | T37 blog-app capstone PASS live (attended): 8 facts green, DB-backed blog promoted. Trio T02/T03/T04 spawned within 2s, overlapped 13:19–25 — no cold-start stagger, width hit the full 3. Both `you` check-ins folded without review. Bundle `pir-t17-blog-app-1YmLMq/…/2026-09-16T13-12-09-697Z`. |
 | 2026-09-16 | 📌 | T37 reflection: at check-in #2 the coordinator polled `await-idle` ~4.5min (13:45–49) looking hung — the verify worker had committed but stayed busy until the operator ran `docker compose down`. Candidate: surface "waiting for worker idle" on that gate. Own future task, not fixed here. |
 | 2026-09-15 | ✅ | T34+T35 confirmed live: hands-on rerun PASS (5 facts, one promote). Coordinator ITSELF announced worker `…·T02·verify` (chat + PushNotification) off the `hands-on T02` line — T34. Run reached the handoff, no worker-gap stall — T35. Bundle `pir-t35-rerun/…/2026-09-15T16-37-06-520Z`. |

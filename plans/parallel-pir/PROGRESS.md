@@ -13,7 +13,7 @@ cell also fixes the over-budget cell they walk past.**
 **Plan reviewed:** 2026-09-07 — 4 fixed, 3 decided with the user
 
 **Status:** T00–T37 ✅. Phase 9 capstone done: the blog (T36 reviewed clean, T37 PASSed live 2026-09-16,
-attended, 8 facts). **Phase 10 added 2026-09-16 (PM request):** T38 ⬜, a full retrospective on the T37
+attended, 8 facts). **Phase 10 added 2026-09-16 (PM request):** T38 🔍, a full retrospective on the T37
 run — did the tasks deliver, did the e2e really run, plus eight more angles (PLAN §Phase 10). Analysis
 only, `auto`, fresh-reviewed. Like phases 5–9 it postdates the 2026-09-07 plan review and is validated
 through the normal implement→review alternation, not a fresh full plan-review (CLAUDE.md: amending a live
@@ -21,9 +21,9 @@ plan is the PM's decision). The T37 evidence is preserved out of git at `~/pir-r
 (curated capture + a git bundle of the scratch repo). `Runs` marks each task `auto` or `you`. Operator's
 guide: [TEST-HARNESS.md](TEST-HARNESS.md).
 **Last updated:** 2026-09-16
-**Next `pir-work` will:** implement **T38** — the blog-app retrospective. It reads the preserved bundle
-and the restored scratch code and writes `~/pir-retro/blog-app-2026-09-16/RETRO.md`. `auto`, no live
-agents needed.
+**Next `pir-work` will:** review **T38** (🔍) — the blog-app retrospective. RETRO.md is written at
+`~/pir-retro/blog-app-2026-09-16/`; the reviewer checks it answers all 10 questions with honest,
+cited evidence and that no product code was touched (analysis-only task).
 **Open hardening candidates** (each its own future task, none blocking): T31 prose gap
 (`pir-verify`/`pir-coordinate` still narrow); three T30-reflection candidates (reviewer run the test once +
 capture exit; workers avoid `cat -A`/GNU-only flags on macOS → `xxd`/`Read`; coordinator emit a final
@@ -78,14 +78,14 @@ live steps with a hands-on worker the coordinator spawns, folded back without re
 | T35 | Harness: stop false-stalling in the worker gap while the coordinator is idle | auto | T33 | ✅ | `run.mjs` waitForCompletion counts a present non-`stopped` coordinator active. Regression test. Confirmed live 2026-09-15. |
 | T36 | The blog-app fixture: a realistic multi-component app built in parallel | auto | T32, T34, T35 | ✅ | Reviewed clean. `reachedWidth(2)` by-task, implement-role, strict `busy`; tests bite all four ways. 310 tests. Live width + app-works half was T37. |
 | T37 | Live: build the blog end-to-end, attended, and prove it runs | you | T36 | ✅ | PASS live 2026-09-16 (attended): 8 facts green, DB-backed blog promoted. Trio T02/T03/T04 overlapped, width hit full 3. Both check-ins folded without review. Reflection in FINDINGS. Bundle `pir-t17-blog-app-1YmLMq/…/2026-09-16T13-12-09-697Z`. |
-| T38 | Full retrospective on the blog-app capstone run | auto | T37 | ⬜ | Analysis only. Reads the preserved T37 evidence at `~/pir-retro/blog-app-2026-09-16/` (capture + restorable git bundle of the scratch repo); answers 10 questions (delivery, e2e-really-ran, contract, review, integration, `you`-path, quality, no-fabrication, parallel payoff/cost, coordinator). Writes RETRO.md; surfaces fixes as future tasks. |
+| T38 | Full retrospective on the blog-app capstone run | auto | T37 | 🔍 | Analysis only; RETRO.md written to `~/pir-retro/blog-app-2026-09-16/`, all 10 questions with cited evidence. Verdict: method works. One real gap — T07 scribe over-claimed a manual click-through (Q6). 9 candidate follow-ups surfaced (1,3,5 method; 4,6,7 fixture code; 2,8 overlap open candidates). No product code changed. |
 
 A Notes cell holds what was built or what the review found, the test count, and one line per
 deviation from the task doc.
 
 **A ✅ task's cell may be cut to one line** once the next task has been reviewed.
 
-**Review queue:** empty. Next work is T38 (⬜, `auto`) — the retrospective.
+**Review queue:** T38 (🔍) — the retrospective, awaiting fresh-eyes review.
 
 ## Phases 0–9 done; Phase 10 (T38 retrospective) is next
 
