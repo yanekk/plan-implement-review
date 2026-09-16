@@ -19,7 +19,7 @@ set -euo pipefail
 SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MARKER="Appended by plan-implement-review"
 DEST="$HOME/.claude/skills"
-SKILLS=(pir-plan pir-review-plan pir-work pir-implement pir-review pir-install)
+SKILLS=(pir-plan pir-review-plan pir-parallelize-plan pir-work pir-implement pir-review pir-install)
 
 install_skills() {
     mkdir -p "$DEST"
