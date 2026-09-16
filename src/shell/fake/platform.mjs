@@ -70,6 +70,7 @@ export function createFakePlatform({ behaviors = {} } = {}) {
   const inboxQueue = []; // messages from workers to the coordinator, drained by inbox()
   const spawns = []; // every spawn, for test introspection
   const closed = []; // every close, for test introspection
+  const removed = []; // every remove (claude rm), for test introspection
   const sent = []; // every send, for test introspection
   let nextId = 0;
 
@@ -301,6 +302,18 @@ export function createFakePlatform({ behaviors = {} } = {}) {
       }
     },
 
+    // remove(id) → { ok }. Clears a finished worker's leftover `stopped` record (real: `claude rm <id>`,
+    // DESIGN §2.3). RECORD-ONLY here, deliberately: it does NOT drop the session from list(). The loop
+    // must never depend on `claude rm` instantly clearing an async-lingering registry entry — closedIds
+    // is the real guarantee against a recount (loop.mjs), and modelling remove as an instant clear would
+    // silently weaken the lingerClosed/resurrectClosed tests. So the fake only logs the id, so a loop test
+    // can assert the coordinator removed on each normal finish path and NOT on `halt-close` (T41). Safe on
+    // any id — a non-live id is recorded and ignored, never an error.
+    remove(id) {
+      removed.push(id);
+      return { ok: true };
+    },
+
     // inbox() → drain the messages workers have sent the coordinator since the last call.
     inbox() {
       return inboxQueue.splice(0, inboxQueue.length);
@@ -309,6 +322,7 @@ export function createFakePlatform({ behaviors = {} } = {}) {
     // --- test introspection ---
     spawns,
     closed,
+    removed,
     sent,
     _workers: workers,
   };

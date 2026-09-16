@@ -281,6 +281,63 @@ test('the kill switch mid-drain stops dispatch and closes every fake worker; mai
   assert.equal(worktree.mainCommitCount(), 1, 'main untouched by the kill switch');
 });
 
+// --- T41: `claude rm` clears a finished worker's leftover record on every NORMAL finish path ----------
+
+test('every normal finish removes the worker record (claude rm) right after close; nothing is removed unclosed (T41)', (t) => {
+  const { platform, base } = setup(t, [{ num: 'T01' }]);
+  const state = createRunState();
+  drain({ ...base, state });
+  // A clean single-task run closes exactly two sessions — the implementer (at review hand-off) and the
+  // reviewer (at merge) — and both are NORMAL finishes, so each close is followed by a `claude rm` on the
+  // SAME id. Removal rides close: it never fires on an id that was not first closed.
+  assert.ok(platform.closed.length >= 2, 'the implementer and the reviewer were both closed');
+  for (const id of platform.closed) {
+    assert.ok(platform.removed.includes(id), `closed id ${id} also had its record removed (claude rm)`);
+  }
+  for (const id of platform.removed) {
+    assert.ok(platform.closed.includes(id), `removed id ${id} was closed first, never removed on its own`);
+  }
+});
+
+test('the review hand-off removes the implementer record with the authoritative listed id, and it stays in closedIds (T41)', (t) => {
+  const { platform, base } = setup(t, [{ num: 'T01' }]);
+  const state = createRunState();
+  runPass({ ...base, state }); // spawn implementer
+  const r2 = runPass({ ...base, state }); // implemented → spawn reviewer, close + remove implementer
+  const swap = r2.actions.find((a) => a.type === 'review');
+  const implId = swap.closes;
+  assert.ok(platform.closed.includes(implId), 'the implementer session is closed at hand-off');
+  assert.ok(platform.removed.includes(implId), 'and its leftover record is removed with the same listed id');
+  assert.ok(state.closedIds.has(implId), 'the removed id stays in closedIds, so it is never recounted as live');
+});
+
+test('a dead worker has its leftover record removed too (T41)', (t) => {
+  const { platform, base } = setup(t, [{ num: 'T01' }], { behaviors: { T01: { crash: true } } });
+  const state = createRunState();
+  runPass({ ...base, state }); // spawn T01
+  const implId = platform.spawns[0].id;
+  let dead;
+  for (let i = 0; i < 5 && !dead; i++) {
+    const r = runPass({ ...base, state });
+    dead = r.actions.find((a) => a.type === 'close' && a.reason === 'dead');
+  }
+  assert.ok(dead, 'the crashed worker is closed as dead');
+  assert.ok(platform.removed.includes(implId), 'the dead worker record is cleared with claude rm');
+});
+
+test('the kill switch closes workers but does NOT remove their records — a killed worker is kept for forensics (T41)', (t) => {
+  const { platform, base } = setup(t, [{ num: 'T01' }, { num: 'T02' }]);
+  let halted = false;
+  const control = { isHalted: () => halted, log: () => {} };
+  const state = createRunState();
+  runPass({ ...base, control, state }); // spawn T01, T02
+  const liveIds = [...platform._workers.keys()];
+  halted = true;
+  runPass({ ...base, control, state }); // halt: close everything, remove nothing
+  for (const id of liveIds) assert.ok(platform.closed.includes(id), `worker ${id} closed under HALT`);
+  assert.equal(platform.removed.length, 0, 'no record is removed under HALT — a killed worker stays in the view');
+});
+
 test('a red feature branch is not promoted; the failure is surfaced instead', (t) => {
   const { worktree, base } = setup(t, [{ num: 'T01' }]);
   const runTests = () => ({ ok: false });

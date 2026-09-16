@@ -153,7 +153,15 @@ The coordinator owns a worker's whole life, and it must be able to end it, not o
   alone does NOT end a session: it interrupts the current turn and the session stays alive and
   listed (T08 live run, FINDINGS 2026-09-09). So close sends the worker's process SIGTERM — its
   pid comes from `claude agents --json` — which is what actually ends it. The leftover `stopped`
-  record is cleared with `claude rm`; the worktree and branch come down separately (below).
+  record is then cleared with `claude rm <id>`, which the coordinator runs itself right after the
+  close on every **normal finish** — a merged worker, a dead one it tore down, and the implementer it
+  closes at a review hand-off — so a finished worker leaves the "Claude agents" view as it finishes
+  instead of piling up one record per implement/review/verify session (T41). `claude rm` is
+  best-effort (removing an id already gone is not an error) and acts on the same authoritative list id
+  the close uses. **The kill switch is the one exception:** a HALT-killed worker's record is left in
+  the view, exactly as its worktree and branch are left on disk, for forensics — removal is for
+  workers that finished, not ones a hard stop killed (§2.4). The worktree and branch come down
+  separately (below).
   **A close that follows a worker finishing its task waits for the worker to go idle first.** A
   worker that has just signalled `implemented` (about to be handed to a fresh reviewer) or `done`
   (about to be merged and closed) may still be finishing its turn; the agent list reports each

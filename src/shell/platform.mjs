@@ -223,6 +223,12 @@ export function listArgv() {
 export function closeArgv(id) {
   return ['stop', id];
 }
+// `claude rm <id>` clears a session's leftover record from `claude agents` (DESIGN §2.3). It is the
+// cleanup for the `stopped` entry a close leaves behind — `stop`+SIGTERM ends the process but the list
+// record lingers — so the coordinator runs it right after close on every normal finish path (T41).
+export function removeArgv(id) {
+  return ['rm', id];
+}
 
 // The default `claude` runner, mirroring defaultRun (git) above: a value on success or failure, never
 // a throw, so a failed spawn or a `claude` that is absent is something the caller inspects.
@@ -306,6 +312,19 @@ export function createPlatform({
           // the process is already gone — nothing to terminate
         }
       }
+      return { ok: true };
+    },
+
+    // remove(id) → { ok }. Clears a FINISHED worker's leftover `stopped` record from `claude agents`
+    // with `claude rm <id>` (DESIGN §2.3, T41). Run right after close on every normal finish path, so a
+    // finished worker leaves the "Claude agents" view instead of piling up; NEVER on `halt-close`, where
+    // a killed worker's record is left for forensics (loop.mjs). Best-effort: removing an id that is
+    // already gone is not an error and a `remove` never throws the loop off course (runClaude swallows a
+    // failed `claude rm` exactly as close's `claude stop` does). Acts on the authoritative list id — the
+    // same `id` close and list use — never the spawn-returned id.
+    remove(id) {
+      if (!id) return { ok: true };
+      runClaude(removeArgv(id));
       return { ok: true };
     },
 

@@ -48,7 +48,10 @@ first — the conventions here are settled; that warm-up only spends turns befor
 - When a worker finishes building, you **close it and start a fresh one to review** the same work —
   the reviewer is never the one who wrote it. That fresh pair of eyes is the whole point. A finished
   worker is closed only once it has actually gone quiet (idle), never mid-turn, so no work is cut off
-  in the middle; if it is still busy the close simply waits for the next check.
+  in the middle; if it is still busy the close simply waits for the next check. Closing a finished
+  worker also clears its leftover entry from the "Claude agents" view, so finished workers do not pile
+  up as the run goes; the one exception is a worker the kill switch stopped, whose entry is kept so you
+  can still open it.
 - At most **4 workers** run at once. More ready tasks simply wait for a free slot.
 - If a worker hits a question or a decision, it stops and asks you. **You bring it to the user in
   plain words and wait for the answer**, then send the answer back to that worker. Meanwhile every

@@ -467,6 +467,10 @@ test('teardownRun closes every live worker of the run (stop + SIGTERM), so no ex
   assert.ok(closed.includes(parkedId), 'teardown reported the parked worker closed');
   assert.ok(platform.closed.includes(parkedId), 'it was closed through the platform (stop + SIGTERM live)');
   assert.ok(!platform._workers.has(parkedId), 'no live session of this run remains after teardown');
+  // teardownRun is not the HALT forensics path (the loop handles that and never reaches here), so it also
+  // clears each closed worker's leftover record with `claude rm`, so a stalled/errored exit leaves nothing
+  // in the "Claude agents" view (T41).
+  assert.ok(platform.removed.includes(parkedId), 'teardown removes the leftover record too (claude rm)');
 });
 
 // --- 16. P4/P5: the ported bin guards (ensureMain, promotion guard, runaway breaker) ---------------

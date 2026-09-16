@@ -197,6 +197,10 @@ export function runPass({ platform, worktree, repo, slug, maxWorkers, state, con
   // disk for inspection; main is untouched (DESIGN §2.4, §2.5). No promotion, no merge, no spawn.
   if (halted) {
     for (const id of decision.close) {
+      // Close only — NO platform.remove here (T41, DESIGN §2.3): a HALT is an emergency stop, and a
+      // killed worker's session record is deliberately left in `claude agents` for forensics, exactly as
+      // its worktree and branch are left on disk. Removal is for workers that FINISHED, not ones a HALT
+      // killed; a mutation that removes on halt reddens the HALT-exception test.
       platform.close(id);
       closedThisPass.add(id);
       record('halt-close', { workerId: id });
@@ -215,6 +219,7 @@ export function runPass({ platform, worktree, repo, slug, maxWorkers, state, con
     if (!deadIds.has(workerId)) continue;
     const found = taskByWorkerId(state, workerId);
     platform.close(workerId);
+    platform.remove?.(workerId); // clear the leftover `stopped` record — a normal finish (T41, DESIGN §2.3)
     closedThisPass.add(workerId);
     if (found) {
       worktree.remove(found.t.worktree);
@@ -324,6 +329,7 @@ export function runPass({ platform, worktree, repo, slug, maxWorkers, state, con
     // removal) and forget its task. This is the close decideDispatch used to schedule; pairing it with
     // the successful merge is what makes a conflicted merge leave the worker untouched (T28).
     platform.close(workerId);
+    platform.remove?.(workerId); // clear the leftover `stopped` record — a normal finish (T41, DESIGN §2.3)
     closedThisPass.add(workerId);
     worktree.remove(t.worktree);
     record('close', { task: num, workerId, reason: 'merged' });
@@ -340,6 +346,9 @@ export function runPass({ platform, worktree, repo, slug, maxWorkers, state, con
     if (reviewSwaps.has(workerId)) {
       const { num, reviewerId } = reviewSwaps.get(workerId);
       platform.close(workerId);
+      // The implementer's worktree is KEPT for the reviewer, but the implementer SESSION has finished,
+      // so clear its leftover record — the "implementer lingered beside its reviewer" clutter (T41).
+      platform.remove?.(workerId);
       closedThisPass.add(workerId);
       const t = state.tasks[num];
       t.workerId = reviewerId; // best-effort; resolved to the real id by name next pass
@@ -350,6 +359,7 @@ export function runPass({ platform, worktree, repo, slug, maxWorkers, state, con
     }
     const found = taskByWorkerId(state, workerId);
     platform.close(workerId);
+    platform.remove?.(workerId); // a defensive finish close — clear its leftover record too (T41)
     closedThisPass.add(workerId);
     if (found) {
       worktree.remove(found.t.worktree);

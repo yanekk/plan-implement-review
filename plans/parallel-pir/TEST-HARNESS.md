@@ -169,5 +169,9 @@ reflection produced T25 and T26. Each fixture's own doc names what to scrutinise
 
 ## Cleanup
 
-Closed sessions can linger as `stopped` — `claude rm <id>` clears the record. Scratch repos sit in a
-temp dir; delete them when you are done. A leaked feature worktree: `git worktree remove --force`.
+The coordinator now clears a finished worker's `stopped` record itself with `claude rm <id>` on every
+normal finish (T41), so a completed run should leave the "Claude agents" view clean. Two cases still
+leave a `stopped` record for you to clear by hand: a HALT-killed worker (left on purpose, for
+forensics) and a run whose coordinator was itself killed before it could remove them — `claude rm <id>`
+clears either. Scratch repos sit in a temp dir; delete them when you are done. A leaked feature
+worktree: `git worktree remove --force`.

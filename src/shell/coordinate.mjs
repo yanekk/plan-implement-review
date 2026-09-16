@@ -415,6 +415,15 @@ export function teardownRun({ platform, worktree, state, repo, slug, control } =
     } catch {
       /* already gone */
     }
+    // Clear the leftover `stopped` record too (T41, DESIGN §2.3). teardownRun runs on every exit that is
+    // not a clean promotion or a kill-switch halt (a stall, a safety cap, a signal, an error) — none of
+    // them the HALT forensics case, which the loop handles and never reaches here — so these workers have
+    // finished and leave the view. Best-effort and optional: a platform without `remove` is fine.
+    try {
+      platform.remove?.(id);
+    } catch {
+      /* best-effort record cleanup; the session close is what matters for orphan-avoidance */
+    }
     closed.add(id);
     control?.log?.(`teardown: closed ${name ?? ''} (${id})`.trim());
   };

@@ -32,6 +32,7 @@ import {
   readFileSync,
   copyFileSync,
   existsSync,
+  rmSync,
 } from 'node:fs';
 import { join, basename } from 'node:path';
 import { execFileSync } from 'node:child_process';
@@ -176,6 +177,17 @@ export function createCapture({
   const timelinePath = join(dir, BUNDLE_FILES.timeline);
   mkdirSync(dir, { recursive: true });
 
+  // Eager transcript staging (DESIGN §4.1, T41). The coordinator now removes a finished worker's session
+  // with `claude rm` mid-run (loop.mjs), and it is undocumented whether that also deletes the on-disk
+  // `.jsonl` transcript seal() copies from. The build must not depend on the answer: on every tick, each
+  // of this run's worker transcripts is copied into a staging dir, overwriting so the latest pre-removal
+  // copy wins. If the live transcript is still on disk at seal, seal copies THAT (authoritative); only if
+  // it is gone — the worker was removed mid-run and `claude rm` did delete it — does seal fall back to the
+  // staged copy, so a sealed bundle still holds every worker's transcript either way. The staging dir is
+  // cleaned up at the end of seal so it does not double the bundle's transcript bytes.
+  const eagerDir = join(dir, '.eager-transcripts');
+  const eagerBySession = new Map(); // sessionId → staged .jsonl path
+
   // The timeline is held in memory as well as appended to disk: seal() gathers the sessions to snapshot
   // from it without re-reading, and a caller can inspect it live.
   const timeline = [];
@@ -203,7 +215,29 @@ export function createCapture({
     } catch {
       /* capture must never break the run it observes */
     }
+    // Stage each of this run's worker transcripts now, before the coordinator can `claude rm` the session
+    // out from under seal (T41). Every worker with a resolvable, on-disk transcript is copied (overwrite),
+    // so the freshest copy is always staged; the coordinator is never removed mid-run, so it is left to
+    // seal's live copy. Best-effort — a copy failure must never break the run capture observes.
+    for (const a of agents) eagerSnapshot(a);
     return entry;
+  }
+
+  // eagerSnapshot(agent) — copy one worker's live transcript into the staging dir if it exists (T41). No
+  // trigger on idle/busy: copying on every tick and overwriting keeps the latest, and covers a worker
+  // removed while still listed busy (a crashed/dead worker the loop removes) as well as a finished one.
+  function eagerSnapshot(agent) {
+    if (!agent?.isWorkerOf || !agent.sessionId) return;
+    const src = resolveTranscriptPath(projectsDir, agent.cwd, agent.sessionId);
+    if (!src || !existsSync(src)) return;
+    try {
+      mkdirSync(eagerDir, { recursive: true });
+      const staged = join(eagerDir, `${agent.sessionId}.jsonl`);
+      copyFileSync(src, staged); // overwrite: the latest copy before a possible `claude rm` wins
+      eagerBySession.set(agent.sessionId, staged);
+    } catch {
+      /* eager staging is best-effort; seal still tries the live source first */
+    }
   }
 
   function start() {
@@ -245,12 +279,26 @@ export function createCapture({
       usedLabels.add(label);
       const bundleFile = join(BUNDLE_FILES.transcripts, `${label}.jsonl`);
       let copied = false;
+      let fromEager = false;
       if (src && existsSync(src)) {
         try {
           copyFileSync(src, join(dir, bundleFile));
           copied = true;
         } catch {
           copied = false;
+        }
+      } else if (a.sessionId && eagerBySession.has(a.sessionId)) {
+        // The live transcript is gone — this worker was removed mid-run and `claude rm` deleted it. Fall
+        // back to the copy tick() staged before the removal (T41), so the bundle still holds it.
+        const staged = eagerBySession.get(a.sessionId);
+        if (existsSync(staged)) {
+          try {
+            copyFileSync(staged, join(dir, bundleFile));
+            copied = true;
+            fromEager = true;
+          } catch {
+            copied = false;
+          }
         }
       }
       const entry = {
@@ -260,6 +308,7 @@ export function createCapture({
         role,
         copied,
         copiedTo: copied ? bundleFile : null,
+        fromEager, // true when the live transcript was gone at seal and the staged copy was used (T41)
       };
       // Key by name; disambiguate a recurring name (implementer vs its later reviewer) by sessionId.
       let key = a.name || a.sessionId || 'unknown';
@@ -299,6 +348,15 @@ export function createCapture({
 
     const manifest = snapshotTranscripts();
     writeFileSync(join(dir, BUNDLE_FILES.manifest), `${JSON.stringify(manifest, null, 2)}\n`);
+
+    // The staged eager copies have done their job (they were the fallback source above); drop the staging
+    // dir so it does not double the bundle's transcript bytes (T41). Best-effort — a stale staging dir is
+    // harmless if this fails.
+    try {
+      rmSync(eagerDir, { recursive: true, force: true });
+    } catch {
+      /* leaving the staging dir behind is harmless */
+    }
 
     // git log of the scratch repo, so a merge/promotion is checkable after teardown (DESIGN §4.1).
     if (repoDir) {

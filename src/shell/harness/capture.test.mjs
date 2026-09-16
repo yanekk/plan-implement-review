@@ -222,6 +222,54 @@ test('snapshots each session’s transcript; a present one is copied, a missing 
   }
 });
 
+// --- T41: a worker removed mid-run still has its transcript in the sealed bundle -----------------
+
+test('a worker whose transcript is deleted mid-run (claude rm) is still in the bundle via the eager copy (T41)', () => {
+  const ws = workspace();
+  try {
+    // The coordinator now `claude rm`s a finished worker mid-run; if that also deletes the on-disk
+    // transcript, seal() would find nothing to copy. tick() eagerly stages each worker's transcript, so
+    // the bundle survives the removal. Drive exactly that: the transcript is present at tick, then deleted
+    // (the `claude rm`), and the worker leaves the list before seal.
+    const escaped = escapeProjectPath(ws.repo);
+    mkdirSync(join(ws.projects, escaped), { recursive: true });
+    const src = join(ws.projects, escaped, 's1.jsonl');
+    const body = '{"type":"assistant","turn":1}\n{"type":"user","turn":2}\n';
+    writeFileSync(src, body);
+
+    const runClaude = claudeSpy({
+      ticks: [
+        [agent({ name: W1, sessionId: 's1', cwd: ws.repo, status: 'idle', state: 'done' })], // present + finished
+        [], // the coordinator removed the worker: gone from the list
+      ],
+    });
+    const cap = createCapture({
+      repo: REPO,
+      slug: SLUG,
+      dir: ws.bundle,
+      controlDir: ws.control,
+      runClaude,
+      runGit: () => ({ ok: true, stdout: '' }),
+      projectsDir: ws.projects,
+    });
+    cap.tick(); // observes W1 present → eagerly stages its transcript
+    rmSync(src); // `claude rm` deleted the live transcript mid-run
+    cap.tick(); // W1 is gone from the list now
+    const bundle = cap.seal(); // the live source is gone; seal must fall back to the staged copy
+
+    const worker = bundle.manifest[W1];
+    assert.ok(worker, 'the removed worker is still in the manifest (it was seen in an earlier tick)');
+    assert.equal(worker.copied, true, 'its transcript is still copied into the bundle despite the mid-run removal');
+    assert.equal(worker.fromEager, true, 'the copy came from the eager pre-removal snapshot, not the deleted live file');
+    assert.equal(readFileSync(join(ws.bundle, worker.copiedTo), 'utf8'), body, 'the staged copy holds the full transcript');
+
+    // The staging dir is cleaned up at seal, so it does not double the bundle's transcript bytes.
+    assert.ok(!existsSync(join(ws.bundle, '.eager-transcripts')), 'the eager staging dir is removed at seal');
+  } finally {
+    ws.cleanup();
+  }
+});
+
 // --- a worker name that recurs across sessions (implementer then its fresh reviewer, §2.8) -------
 
 test('one worker name across two sessions keeps both transcripts — key and file disambiguated', () => {
