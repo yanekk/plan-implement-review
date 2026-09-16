@@ -26,7 +26,7 @@ SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MARKER="Appended by plan-implement-review"
 DEST="$HOME/.claude/skills"
 ENGINE_DEST="$HOME/.claude/pir-engine"
-SKILLS=(pir-plan pir-review-plan pir-parallelize-plan pir-work pir-implement pir-review pir-install)
+SKILLS=(pir-plan pir-review-plan pir-parallelize-plan pir-work pir-implement pir-review pir-install pir-coordinate pir-verify pir-worker)
 
 install_skills() {
     mkdir -p "$DEST"
