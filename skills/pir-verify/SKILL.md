@@ -44,7 +44,7 @@ the silent default.
 2. **Bring the environment up and seed it** — run the task's setup command(s) and confirm the stack is
    actually up before you hand off (the page loads, the service answers). Do this yourself; it is
    mechanical. If bring-up fails, do not present a broken thing for judgement — message the coordinator
-   (`kind: decision`) with the failure and wait (step 5). If the task has no environment section, skip
+   (`kind: decision`) with the failure and wait (step 7). If the task has no environment section, skip
    straight to step 3.
 
 3. **Present the judgement to the user and wait.** One block, in plain English, exactly as `CLAUDE.md`
