@@ -10,17 +10,18 @@ walk past.
 
 **Plan reviewed:** 2026-09-07 — 4 fixed, 3 decided with the user
 
-**Status:** T00–T39 ✅, T40 🔍 (awaiting review). Phase 9 capstone: the blog (T37 PASSed live 2026-09-16,
-attended, 8 facts). Phase 10: T38 retrospective — method works; one blemish (T07 scribe over-claim); 9
-candidates; RETRO + evidence out of git at `~/pir-retro/blog-app-2026-09-16/`. **Phase 11 (PM, 2026-09-16,
-from the RETRO):** T39 ✅ + T40 🔍 — narrow the hands-on check to judgement (worker owns setup/teardown and
-runs the automated checks; person only judges). Both `auto`, revise DESIGN §2.6. Phases 5–11 postdate the
-2026-09-07 plan review, validated through implement→review alternation. `Runs` marks `auto`/`you`.
-Operator's guide: [TEST-HARNESS.md](TEST-HARNESS.md).
+**Status:** T00–T40 ✅ — every task built and reviewed. Phase 9 capstone: the blog (T37 PASSed live
+2026-09-16, attended, 8 facts). Phase 10: T38 retrospective — method works; one blemish (T07 scribe
+over-claim); 9 candidates; RETRO + evidence out of git at `~/pir-retro/blog-app-2026-09-16/`. **Phase 11
+(from the RETRO):** T39 + T40 narrowed the hands-on check to judgement — worker owns setup/teardown AND runs
+the automated checks, person only judges; scribe records two separate confirmations. Both `auto`, DESIGN
+§2.6 revised. Phases 5–11 postdate the 2026-09-07 plan review, validated through implement→review
+alternation. `Runs` marks `auto`/`you`. Operator's guide: [TEST-HARNESS.md](TEST-HARNESS.md).
 **Last updated:** 2026-09-16
-**Next `pir-work` will:** review **T40** (🔍, `auto`) — the worker runs the e2e itself and records the
-machine result; the person judges the click-through only; two separate confirmations, no ambiguity
-rounded up. Live proof of T39/T40 is a separate `you` re-run of the blog-app fixture.
+**Next `pir-work` will:** nothing — all tasks are ✅. The one outstanding item is not a `pir-work` task:
+an attended `you` re-run of the blog-app fixture that proves T39+T40 live (a real worker brings the stack
+up, installs the driver, runs the e2e, tears down; the person judges the click-through). The PM drives it
+per [TEST-HARNESS.md](TEST-HARNESS.md); the ✅ row lands in FINDINGS.md.
 **Open hardening candidates** (each its own future task, none blocking): T31 prose gap
 (`pir-verify`/`pir-coordinate` still narrow); three T30-reflection candidates (reviewer run the test once +
 capture exit; workers avoid `cat -A`/GNU-only flags on macOS → `xxd`/`Read`; coordinator emit a final
@@ -76,23 +77,24 @@ live steps with a hands-on worker the coordinator spawns, folded back without re
 | T36 | The blog-app fixture: a realistic multi-component app built in parallel | auto | T32, T34, T35 | ✅ | Reviewed clean. `reachedWidth(2)` by-task, implement-role, strict `busy`; tests bite all four ways. 310 tests. |
 | T37 | Live: build the blog end-to-end, attended, and prove it runs | you | T36 | ✅ | PASS live 2026-09-16 (attended): 8 facts, DB-backed blog promoted, width hit 3. Bundle `pir-t17-blog-app-1YmLMq/…/2026-09-16T13-12-09-697Z`. |
 | T38 | Full retrospective on the blog-app capstone run | auto | T37 | ✅ | Reviewed clean, no fix commit. RETRO's load-bearing claims spot-checked against the bundle and hold; T07 scribe over-claim confirmed. 9 candidates not fixed. |
-| T39 | The worker owns the hands-on environment: bring it up, hand off, tear it down | auto | T38 | ✅ | Reviewed. One fix: pir-verify step 2 pointed a bring-up failure at step 5 (record findings) instead of step 7 (escalate) — stale from renumbering; corrected. Split verified: person blocks carry no compose up/down, worker Environment section does with seatbelt named, tests bite if reverted. Idle-gate clearing is live-only, honestly deferred to a `you` re-run. 307 green. |
-| T40 | The worker runs the automated checks; the person only judges | auto | T39 | 🔍 | DESIGN §2.6 + pir-verify + planner: worker runs automatable checks and records the machine result; person judges only; scribe records two separate confirmations, never inflates an ambiguous reply (re-asks). Blog T07: e2e moved to a worker "Automated checks" section, person block click-through only. Templates + goldens; 309 tests. Live proof deferred to a `you` re-run. |
+| T39 | The worker owns the hands-on environment: bring it up, hand off, tear it down | auto | T38 | ✅ | Reviewed, one fix (stale step reference in pir-verify). Worker owns bring-up/teardown, person judges; tests bite. Idle-gate clearing deferred to a `you` re-run. |
+| T40 | The worker runs the automated checks; the person only judges | auto | T39 | ✅ | Reviewed clean, no fix commit. Walked §2.6/pir-verify/fixture/templates against all three Done-when items; step renumbering (escalate now 8) traced consistent. Both new goldens bite: removing T07's checks reddens the fixture test, blunting the template's split-confirmation rule reddens the planner test. 309 green. Live proof (worker installs driver, runs e2e) deferred to a `you` re-run. |
 
 A Notes cell holds what was built or what the review found, the test count, and one line per
 deviation from the task doc.
 
 **A ✅ task's cell may be cut to one line** once the next task has been reviewed.
 
-**Review queue:** T40 (🔍). Next work reviews it — Phase 11.
+**Review queue:** empty — T00–T40 all reviewed.
 
-## Phases 0–10 done; Phase 11 (T39, T40) next
+## Phases 0–11 done — all tasks built and reviewed
 
 Phases 0–9 complete; the `you`/hands-on path is proven live (T33, T34, T35). Phase 9 capstone: a DB-backed
 blog built by parallel workers with two hands-on check-ins — T37 PASSed live 2026-09-16 (8 facts, width 3).
 Phase 10 (T38): retrospective found the method working, one blemish (T07 scribe over-claim), 9 candidates;
 RETRO.md by the evidence at `~/pir-retro/blog-app-2026-09-16/`. Phase 11 (T39, T40): the worker owns the
-hands-on environment and runs the automated checks, the person only judges.
+hands-on environment and runs the automated checks, the person only judges. Outstanding: an attended `you`
+re-run of the blog-app fixture to prove T39+T40 live.
 
 Re-running a fixture (real paid agents, attended) is in [TEST-HARNESS.md](TEST-HARNESS.md). Housekeeping: a
 closed worker can linger as `stopped` (`claude rm <id>`); scratch repos sit in a temp dir.
