@@ -361,6 +361,32 @@ and run the e2e, then tear it all down, is a live-only fact these tasks do not a
 re-run of the blog-app fixture under the new split proves both, and is a separate `you` follow-up the PM
 can schedule when ready.
 
+## Phase 12 — Clear a finished worker from the "Claude agents" view (from the PM, 2026-09-16)
+
+Added from a PM request after Phase 11: when a worker finishes, the coordinator ends its process and tears
+its worktree down but never runs `claude rm`, so the session's leftover `stopped` record lingers in the
+"Claude agents" view. Across a run's implement/review/verify workers those hollow records pile up and
+clutter the view. The gap is already documented (DESIGN §2.3, `TEST-HARNESS.md`, the `PROGRESS.md`
+housekeeping note all name `claude rm <id>` as the cleanup) but left to the operator by hand; this phase
+makes the coordinator do it, as soon as each worker finishes.
+
+| # | Task | Runs | Depends on |
+|---|---|---|---|
+| [T41](tasks/T41-clear-finished-worker-from-agents-view.md) | Clear a finished worker from the "Claude agents" view (`claude rm`) | auto (+ a `you` live confirmation) | T14, T29 |
+
+**T41 adds a `remove(id)` platform primitive (`claude rm`) and calls it on every normal finish path** —
+the merged worker, the dead/torn-down worker, the implementer closed at review hand-off, and
+`teardownRun`'s clean-exit close — right after the existing `close`, so a finished worker leaves the view
+at once. The one exception is the kill switch: a `halt-close` leaves the record for forensics, matching the
+worktrees/branches a HALT already leaves on disk (flagged to the PM, reversible). It depends on **T14**
+because the harness builds its bundle from on-disk transcripts and seals before teardown, and it is
+unconfirmed whether `claude rm` also deletes the transcript — so the build must keep a mid-run-removed
+worker's transcript in the sealed bundle (an eager capture snapshot, if the spike shows removal deletes
+it). It depends on **T29** as the last task to reshape the close/halt/seal paths it edits. `auto` and
+fresh-reviewed; that a finished worker actually disappears from the real view, and whether `claude rm`
+deletes the transcript, are live-only facts deferred to a `you` follow-up on the same attended re-run that
+proves T39/T40.
+
 ---
 
 ## Critical path

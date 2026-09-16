@@ -10,25 +10,24 @@ walk past.
 
 **Plan reviewed:** 2026-09-07 — 4 fixed, 3 decided with the user
 
-**Status:** T00–T40 ✅ — every task built and reviewed. Phase 9 capstone: the blog (T37 PASSed live
-2026-09-16, attended, 8 facts). Phase 10: T38 retrospective — method works; one blemish (T07 scribe
-over-claim); 9 candidates; RETRO + evidence out of git at `~/pir-retro/blog-app-2026-09-16/`. **Phase 11
-(from the RETRO):** T39 + T40 narrowed the hands-on check to judgement — worker owns setup/teardown AND runs
-the automated checks, person only judges; scribe records two separate confirmations. Both `auto`, DESIGN
-§2.6 revised. Phases 5–11 postdate the 2026-09-07 plan review, validated through implement→review
-alternation. `Runs` marks `auto`/`you`. Operator's guide: [TEST-HARNESS.md](TEST-HARNESS.md).
+**Status:** T00–T40 ✅; T41 ⬜ (Phase 12). Phase 10: T38 retrospective — method works, one blemish
+(T07 scribe over-claim), 9 candidates (RETRO out of git at `~/pir-retro/blog-app-2026-09-16/`).
+**Phase 11 (from the RETRO):** T39 + T40 narrowed the hands-on check to judgement — worker owns
+setup/teardown AND runs the automated checks, person only judges; scribe records two separate
+confirmations. **Phase 12 (PM, 2026-09-16):** T41 — the coordinator runs `claude rm` on a worker as soon
+as it finishes, so its `stopped` record leaves the "Claude agents" view instead of piling up; HALT is the
+exception (record kept for forensics). Phases 5–12 postdate the 2026-09-07 plan review, validated through
+implement→review alternation. `Runs` marks `auto`/`you`. Operator's guide: [TEST-HARNESS.md](TEST-HARNESS.md).
 **Last updated:** 2026-09-16
-**Next `pir-work` will:** nothing — all tasks are ✅. The one outstanding item is not a `pir-work` task:
-an attended `you` re-run of the blog-app fixture that proves T39+T40 live (a real worker brings the stack
-up, installs the driver, runs the e2e, tears down; the person judges the click-through). The PM drives it
-per [TEST-HARNESS.md](TEST-HARNESS.md); the ✅ row lands in FINDINGS.md.
+**Next `pir-work` will:** implement **T41** (⬜, `auto`) — add a `remove(id)` (`claude rm`) primitive and
+call it on every normal finish path (merged, dead, review hand-off, teardown), not on `halt-close`, keeping
+a mid-run-removed worker's transcript in the bundle. Still open (not a `pir-work` task): the attended `you`
+re-run proving T39/T40 live, now T41's view-clearing + the `claude rm`/transcript spike.
 **Open hardening candidates** (each its own future task, none blocking): T31 prose gap
 (`pir-verify`/`pir-coordinate` still narrow); three T30-reflection candidates (reviewer run the test once +
 capture exit; workers avoid `cat -A`/GNU-only flags on macOS → `xxd`/`Read`; coordinator emit a final
-`promote confirmed`/teardown line); a promote-flush capture gap (final completion message can seal out of
-the bundle — seen T35 rerun, RETRO candidate 8); `role:foreign` capture bloat (~4MB); candidate D (graceful
-mid-write drain). The idle-gate stall + "waiting for worker idle" signal (was RETRO candidate 2) is now
-folded into task T39.
+`promote confirmed`/teardown line); promote-flush capture gap (final message can seal out of the bundle,
+RETRO cand. 8); `role:foreign` capture bloat (~4MB); candidate D (graceful mid-write drain).
 
 ## Tasks
 
@@ -69,32 +68,34 @@ live steps with a hands-on worker the coordinator spawns, folded back without re
 | T23 | Live fixture: parallel + kill-switch drill (absorbs T10) | you | T17, T26, T29 | ✅ | PASS live 2026-09-14: 3 facts green. Ceiling 2, HALT→both SIGTERMed ~5s, nothing promoted, main untouched. Bundle `…/2026-09-14T07-45-27-010Z`. |
 | T10 | Full multi-worker run + kill-switch drill — absorbed by T23 | you | T23 | ✅ | Closed with T23's PASS (2026-09-14): the full multi-worker + kill-switch drill is green. |
 | T30 | Retire the `hello`; notice failed down-sends; pin the send contract | auto | T23 | ✅ | Reviewed clean; review-queue re-run PASS 2026-09-14 (`noHelloEver` green). |
-| T31 | Teach the planner the build→verify split | auto | T30 | ✅ | Reviewed clean. Build→verify split taught in DESIGN §2.6/pir-plan/templates/goldens; fold mutation reddens 4/5 goldens. |
-| T32 | The hands-on fixture: an agent builds a program, a person runs it | auto | T17, T30 | ✅ | Reviewed clean. hands-on fixture; verifyWorkerSpawned/youNeverReviewed/scribeWroteFinding tests bite. Proven live by T33. |
+| T31 | Teach the planner the build→verify split | auto | T30 | ✅ | Reviewed clean. Build→verify split taught in DESIGN §2.6/pir-plan/templates/goldens; fold mutation reddens goldens. |
+| T32 | The hands-on fixture: an agent builds a program, a person runs it | auto | T17, T30 | ✅ | Reviewed clean. hands-on fixture; verifyWorkerSpawned/youNeverReviewed/scribeWroteFinding tests bite. |
 | T33 | Live: drive the hands-on fixture and find its bottlenecks | you | T31, T32 | ✅ | PASS live 2026-09-15 (attended): 5 facts green. Bundle `pir-t17-hands-on-3nyF3G/…/2026-09-15T07-48-23-485Z`. |
 | T34 | Coordinator announces the hands-on worker on dispatch | auto | T33 | ✅ | Prose-only: coordinator announces the `{repo}·{plan}·T{nn}·verify` worker off the `hands-on Txx` line. Confirmed live 2026-09-15. |
 | T35 | Harness: stop false-stalling in the worker gap while the coordinator is idle | auto | T33 | ✅ | `run.mjs` waitForCompletion counts a present non-`stopped` coordinator active. Confirmed live 2026-09-15. |
 | T36 | The blog-app fixture: a realistic multi-component app built in parallel | auto | T32, T34, T35 | ✅ | Reviewed clean. `reachedWidth(2)` by-task, implement-role, strict `busy`; tests bite all four ways. 310 tests. |
 | T37 | Live: build the blog end-to-end, attended, and prove it runs | you | T36 | ✅ | PASS live 2026-09-16 (attended): 8 facts, DB-backed blog promoted, width hit 3. Bundle `pir-t17-blog-app-1YmLMq/…/2026-09-16T13-12-09-697Z`. |
-| T38 | Full retrospective on the blog-app capstone run | auto | T37 | ✅ | Reviewed clean, no fix commit. RETRO's load-bearing claims spot-checked against the bundle and hold; T07 scribe over-claim confirmed. 9 candidates not fixed. |
+| T38 | Full retrospective on the blog-app capstone run | auto | T37 | ✅ | Reviewed clean, no fix. RETRO's load-bearing claims spot-checked against the bundle and hold; T07 scribe over-claim confirmed. 9 candidates not fixed. |
 | T39 | The worker owns the hands-on environment: bring it up, hand off, tear it down | auto | T38 | ✅ | Reviewed, one fix (stale step reference in pir-verify). Worker owns bring-up/teardown, person judges; tests bite. Idle-gate clearing deferred to a `you` re-run. |
-| T40 | The worker runs the automated checks; the person only judges | auto | T39 | ✅ | Reviewed clean, no fix commit. Walked §2.6/pir-verify/fixture/templates against all three Done-when items; step renumbering (escalate now 8) traced consistent. Both new goldens bite: removing T07's checks reddens the fixture test, blunting the template's split-confirmation rule reddens the planner test. 309 green. Live proof (worker installs driver, runs e2e) deferred to a `you` re-run. |
+| T40 | The worker runs the automated checks; the person only judges | auto | T39 | ✅ | Reviewed clean, no fix commit. Walked §2.6/pir-verify/fixture/templates against all three Done-when items; step renumbering (escalate now 8) consistent. Both new goldens bite (verified by mutation). 309 green. Live proof deferred to a `you` re-run. |
+| T41 | Clear a finished worker from the "Claude agents" view (`claude rm`) | auto | T14, T29 | ⬜ | Coordinator runs `claude rm <id>` on every normal finish path (merged, dead, review hand-off, teardown), not on `halt-close`. Must keep a mid-run-removed worker's transcript in the bundle. Live view-clearing + `claude rm`/transcript spike deferred to a `you` re-run. |
 
 A Notes cell holds what was built or what the review found, the test count, and one line per
 deviation from the task doc.
 
 **A ✅ task's cell may be cut to one line** once the next task has been reviewed.
 
-**Review queue:** empty — T00–T40 all reviewed.
+**Review queue:** empty. Next work implements T41 (⬜, Phase 12).
 
-## Phases 0–11 done — all tasks built and reviewed
+## Phases 0–11 done; Phase 12 (T41) next
 
 Phases 0–9 complete; the `you`/hands-on path is proven live (T33, T34, T35). Phase 9 capstone: a DB-backed
 blog built by parallel workers with two hands-on check-ins — T37 PASSed live 2026-09-16 (8 facts, width 3).
 Phase 10 (T38): retrospective found the method working, one blemish (T07 scribe over-claim), 9 candidates;
 RETRO.md by the evidence at `~/pir-retro/blog-app-2026-09-16/`. Phase 11 (T39, T40): the worker owns the
-hands-on environment and runs the automated checks, the person only judges. Outstanding: an attended `you`
-re-run of the blog-app fixture to prove T39+T40 live.
+hands-on environment and runs the automated checks, the person only judges. Phase 12 (T41): the coordinator
+clears a finished worker from the "Claude agents" view with `claude rm`. Outstanding: an attended `you`
+re-run of the blog-app fixture proves T39/T40 live and now the T41 view-clearing.
 
 Re-running a fixture (real paid agents, attended) is in [TEST-HARNESS.md](TEST-HARNESS.md). Housekeeping: a
 closed worker can linger as `stopped` (`claude rm <id>`); scratch repos sit in a temp dir.
