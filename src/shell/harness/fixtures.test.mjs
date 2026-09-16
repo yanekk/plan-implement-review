@@ -247,10 +247,32 @@ test('blog-app: the worker owns bring-up/teardown; the person block is judgement
     assert.doesNotMatch(personBlock, /docker compose down/, `${num}: person block has no compose down`);
     assert.match(personBlock, /Docker Desktop/, `${num}: the person is still told the Docker Desktop precondition`);
   }
-  // The browser driver still installs at check-in #2 in the person's steps — moving the automated e2e
-  // run to the worker is T40, not T39.
+});
+
+test('blog-app: at check-in #2 the worker runs the e2e; the person block is the click-through only (T40)', () => {
+  const fx = getFixture('blog-app');
   const t07 = Object.entries(fx.tasks).find(([n]) => n.startsWith('T07-'))[1];
-  assert.match(t07, /npx playwright install/, 'check-in #2 installs the browser driver');
+  // DESIGN §2.6 (T40): a machine-decidable check is the worker's to run and record, not the person's.
+  // The e2e install + run move into a worker-owned "Automated checks" section; the person's block is the
+  // subjective click-through only. The mutation this guards is the pre-T40 shape — put the e2e run back
+  // into the person's steps and both halves of this fail.
+  assert.match(t07, /## Automated checks \(the worker runs these\)/, 'T07 carries a worker Automated-checks section');
+  const checksHead = t07.indexOf('## Automated checks');
+  const personHead = t07.indexOf('## Needs a person');
+  assert.ok(checksHead !== -1 && personHead !== -1 && checksHead < personHead, 'Automated checks precede Needs a person');
+  const checksBlock = t07.slice(checksHead, personHead);
+  const personBlock = t07.slice(personHead);
+  // The worker's section runs the e2e and says it records the machine result.
+  assert.match(checksBlock, /npx playwright install/, 'the worker installs the browser driver');
+  assert.match(checksBlock, /npm run e2e/, 'the worker runs the e2e test');
+  assert.match(checksBlock, /machine result|records/i, 'the worker records the machine result');
+  // The person's block never carries the automated test — it is the click-through judgement only.
+  assert.doesNotMatch(personBlock, /npm run e2e/, 'the person is not asked to run the e2e');
+  assert.doesNotMatch(personBlock, /playwright/i, 'the person is not asked to install the driver');
+  assert.match(personBlock, /click through|click-through/i, "the person's block is the click-through judgement");
+  // The task doc requires the two confirmations kept separate and no ambiguous reply rounded up.
+  assert.match(t07, /two separate confirmations|kept separate|separately/i, 'T07 requires two separate confirmations');
+  assert.match(t07, /never (merges|rounds|inflat)|ambiguous/i, 'T07 forbids merging or rounding an ambiguous reply up');
 });
 
 test('parallel: at least two independent tasks so workers run concurrently', () => {

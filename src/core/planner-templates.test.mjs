@@ -95,6 +95,26 @@ test('the task-doc template splits the worker-owned environment from the person\
   assert.match(personBlock, /judge/i, "the person's block is framed as judgement");
 });
 
+test('the task-doc template carries a worker-run "Automated checks" section and the two-confirmations rule (T40)', () => {
+  // DESIGN §2.6 (T40): a machine-decidable check — install a driver, run an e2e — is the hands-on
+  // worker's to run and record, not the person's. The template must carry a worker-owned "Automated
+  // checks" section between Environment and Needs a person, and the person's block must state the scribe
+  // records the machine result and the person's judgement as two separate confirmations, never inflating
+  // an ambiguous reply. Collapsing the check back into the person's steps, or dropping the split-record
+  // rule, fails this.
+  assert.match(taskTemplate, /^##\s+Automated checks \(the worker runs these\)\s*$/m, 'TASK.md carries a worker Automated-checks section');
+  const checksHead = taskTemplate.indexOf('## Automated checks');
+  const personHead = taskTemplate.indexOf('## Needs a person');
+  const envHead = taskTemplate.indexOf('## Environment');
+  assert.ok(envHead < checksHead && checksHead < personHead, 'Automated checks sits between Environment and Needs a person');
+  const checksBlock = taskTemplate.slice(checksHead, personHead);
+  assert.match(checksBlock, /worker/i, 'the automated-checks section names the worker as the runner');
+  assert.match(checksBlock, /machine result|records/i, 'the worker records the machine result');
+  const personBlock = taskTemplate.slice(personHead);
+  assert.match(personBlock, /two separate\s+confirmations/i, "the person's block states the two-separate-confirmations rule");
+  assert.match(personBlock, /never inflat|ambiguous/i, "the person's block forbids inflating an ambiguous reply");
+});
+
 // Drop one named column from every markdown table row in the text, to model a plan written
 // before that column existed — derived from the shipped template so the back-compat test
 // cannot quietly diverge from the real template's shape.

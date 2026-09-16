@@ -69,11 +69,26 @@ all; a worker that cannot confirm teardown escalates instead of marking done.)*
 {teardown — the worker runs this before marking done, and confirms it is down}
 ```
 
+## Automated checks (the worker runs these)
+
+*(Delete if there is nothing a machine can decide here. Otherwise: the commands the **worker**
+runs itself against the environment it brought up — install a driver, run an end-to-end test —
+and records the machine result of. A machine-decidable check is not a judgement, so it is the
+worker's to run and record, never the person's to run (DESIGN §2.6). The worker records the
+pass/fail it observed as a confirmation **separate** from the person's judgement, and never rounds
+an ambiguous reply up to it.)*
+
+```
+{the automated check(s) — the worker runs these and records the pass/fail + output it observed}
+```
+
 ## Needs a person
 
 *(Delete if nothing here needs a person. Otherwise: exactly what the person must **judge** —
-what only a person can look at and decide — never the environment setup or teardown, which is the
-worker's (above). State what to look at, what to expect, and what to report back.)*
+what only a person can look at and decide — never the environment setup or teardown, and never an
+automated test, which are the worker's (above). State what to look at, what to expect, and what to
+report back. The scribe records the machine result and the person's judgement as **two separate
+confirmations** and never inflates an ambiguous reply toward the bigger claim (DESIGN §2.6).)*
 
 **This block is carried two ways (DESIGN §2.6):**
 

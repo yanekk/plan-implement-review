@@ -13,7 +13,7 @@
 //                                                                           three branches merge clean
 //   T05 you  (deps T02,T03,T04)  CHECK-IN #1 — the stack runs and a post persists
 //   T06 auto (deps T05)          the end-to-end browser test
-//   T07 you  (deps T06)          CHECK-IN #2 — final click-through + run the e2e test
+//   T07 you  (deps T06)          CHECK-IN #2 — worker runs the e2e, person does the click-through judgement (T40)
 //
 // THE PURE-CORE / THIN-SHELL BOUNDARY, applied to the APP (this is the load-bearing design point, read it
 // before changing a task doc). The scratch scaffold's `npm test` is `node --test` with NO `npm install`
@@ -80,7 +80,7 @@ const progress = progressDoc({
     { num: 'T04', name: 'Real frontend: page + vanilla JS on the API', runs: 'auto', deps: ['T01'], state: '⬜' },
     { num: 'T05', name: 'CHECK-IN #1 — the app works (you)', runs: 'you', deps: ['T02', 'T03', 'T04'], state: '⬜' },
     { num: 'T06', name: 'End-to-end browser test', runs: 'auto', deps: ['T05'], state: '⬜' },
-    { num: 'T07', name: 'CHECK-IN #2 — final click-through + run e2e (you)', runs: 'you', deps: ['T06'], state: '⬜' },
+    { num: 'T07', name: 'CHECK-IN #2 — final click-through, worker runs e2e (you)', runs: 'you', deps: ['T06'], state: '⬜' },
   ],
 });
 
@@ -257,32 +257,40 @@ const tasks = {
   }),
   'T07-checkin-2.md': taskDoc({
     num: 'T07',
-    title: 'CHECK-IN #2 — final click-through + run e2e (you)',
+    title: 'CHECK-IN #2 — final click-through, worker runs e2e (you)',
     runs: 'you',
     goal:
-      `The final hands-on check-in (DESIGN §2.6): a person does the full click-through in the browser — ` +
-      `create, edit and delete a post, each surviving a reload — and then runs the end-to-end test T06 ` +
-      `built. This is a \`you\` task: no code, no review. Present the "Needs a person" block, wait for the ` +
-      `report, and record the result as a \`✅ verified by hand\` row in \`${FINDINGS_PATH}\` with the date.`,
-    files: [`\`${FINDINGS_PATH}\` — append the \`✅ verified by hand\` row the person's report earns.`],
-    tests: 'None — a you task has no code deliverable; the recorded observation is the evidence (§2.6).',
+      `The final hands-on check-in (DESIGN §2.6): the worker runs the end-to-end test T06 built against the ` +
+      `stack it brought up and records the machine result, and the person does the full click-through in the ` +
+      `browser — create, edit and delete a post, each surviving a reload — the one thing a test cannot judge. ` +
+      `This is a \`you\` task: no code, no review. The worker runs the e2e itself (it is a machine-decidable ` +
+      `check, not a person's job — T40), presents the "Needs a person" block for the click-through only, waits ` +
+      `for the report, and records TWO separate confirmations as a \`✅ verified by hand\` row in ` +
+      `\`${FINDINGS_PATH}\` with the date: the e2e machine result it observed, and the person's judgement in ` +
+      `their own terms. It never merges them and never rounds an ambiguous reply up.`,
+    files: [`\`${FINDINGS_PATH}\` — append the \`✅ verified by hand\` row: the e2e machine result and the person's judgement, kept separate.`],
+    tests: 'None — a you task has no code deliverable; the recorded observations are the evidence (§2.6).',
     doneWhen: [
-      'A person did the full create/edit/delete click-through and ran `npm run e2e`, and reported the result.',
-      `A \`✅ verified by hand\` row recording that observation is in \`${FINDINGS_PATH}\`.`,
+      'The worker ran `npm run e2e` against the stack and recorded the machine result it observed.',
+      'A person did the full create/edit/delete click-through and reported whether it worked and looked right.',
+      `A \`✅ verified by hand\` row recording both — the e2e result and the person's judgement, separately — is in \`${FINDINGS_PATH}\`.`,
     ],
     needsPerson: {
-      // The worker owns bring-up and teardown (DESIGN §2.6, T39); the person only judges. The e2e run
-      // still sits in the person's steps here — moving the automated checks to the worker is T40's job.
+      // The worker owns bring-up and teardown (DESIGN §2.6, T39) AND runs the automated e2e itself,
+      // recording the machine result (T40). The person's block is the click-through judgement only —
+      // the one thing a machine cannot decide. No `npm run e2e` / `playwright` appears here.
       setup: 'docker compose up --build',
       teardown: 'docker compose down',
+      checks: [
+        '# Install the browser driver and run the e2e test — the worker runs this, records pass/fail + output.',
+        'npx playwright install',
+        'npm run e2e',
+      ],
       command:
-        `# Docker Desktop must be running — the worker brings the stack up and tears it down for you.\n` +
-        `# 1. At ${APP_URL}: create a post, edit it, delete it — each change persists across a reload.\n` +
-        `# 2. Install the browser driver ONCE, then run the e2e test:\n` +
-        `npx playwright install\n` +
-        `npm run e2e`,
-      expect: `every browser action (create/edit/delete) persists across a reload, and \`npm run e2e\` passes.`,
-      tell: `whether the click-through worked and whether \`npm run e2e\` passed, with any failure output.`,
+        `# Docker Desktop must be running — the worker brings the stack up, runs the e2e test, and tears the stack down for you.\n` +
+        `# Click through it at ${APP_URL}: create a post, edit it, delete it — each change persists across a reload.`,
+      expect: `every browser action (create/edit/delete) persists across a reload and the page looks right.`,
+      tell: `whether the click-through worked and looked right (yes/no) — nothing about the e2e test, the worker ran that.`,
     },
   }),
 };

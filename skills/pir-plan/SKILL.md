@@ -322,7 +322,12 @@ per task (DESIGN §2.6 carries the rule):
   bring-up and teardown in a **worker-owned "Environment" section** beside it, not in the person's
   block: standing the stack up and tearing it down is the worker's job, and the person only judges
   the running thing (DESIGN §2.6). Guaranteed teardown is the seatbelt that lets the worker bring a
-  live environment up at all.
+  live environment up at all. When part of the check is a machine-decidable test — install a driver,
+  run an end-to-end suite — put that in a **worker-owned "Automated checks" section** too, not in the
+  person's block: a test the machine can decide is the worker's to run and record, and the person is
+  asked only what a machine cannot answer, the subjective look. The scribe records the machine result
+  and the person's judgement as **two separate confirmations** and never rounds an ambiguous reply up
+  to the bigger claim (DESIGN §2.6).
 
 Declare the split's dependency honestly: the verify task truly cannot start until the builder is
 done, so the dependency is real, not padding. Do not fold a heavy check back into the builder to

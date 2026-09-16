@@ -272,12 +272,14 @@ So every task carries a marker, decided at plan time and recorded in `PROGRESS.m
   person can observe, not whether a worker produced the thing being observed — so a `you` task
   may verify a sibling `auto` task's deliverable (the build→verify split below). The coordinator
   still spawns a worker for it, but a **hands-on** one. That worker owns everything mechanical
-  around the check: it brings the execution environment up and seeds it, hands the person a
-  running thing to look at, and after the person has judged it tears the environment down and
-  confirms it is down. The person's part is the judgement alone — looking at the running thing
-  and saying whether it is right — not standing the environment up or down. The worker records
-  that judgement into `FINDINGS.md` on its task branch and is its scribe. The user works with
-  that worker directly, so the exploration lands in the worker's context, not the coordinator's.
+  around the check: it brings the execution environment up and seeds it, runs whatever automated
+  checks the machine can decide against it, hands the person a running thing to look at, and after
+  the person has judged it tears the environment down and confirms it is down. The person's part is
+  the judgement alone — looking at the running thing and saying whether it is right — not standing
+  the environment up or down and not running a check a machine could run. The worker records the
+  machine result it observed and the person's judgement into `FINDINGS.md` on its task branch and is
+  its scribe. The user works with that worker directly, so the exploration lands in the worker's
+  context, not the coordinator's.
 
 **Setup and teardown are the worker's; judgement is the person's; guaranteed teardown is the
 seatbelt.** Standing an execution environment up, seeding it, and tearing it down is mechanical,
@@ -296,6 +298,25 @@ the person walked away from left the worker's session busy and the coordinator's
 cleared (the run sat idle ~4.5 min). With teardown on the worker, the worker goes idle the moment
 it finishes, the idle-gate clears normally, and the coordinator surfaces what it is waiting for
 instead of looking hung.
+
+**The worker runs the automatable checks; the person judges only what a person can.** An automated
+test is not a judgement — it is a mechanical, repeatable check with a machine-decidable answer, so
+it belongs to the worker, not the person, exactly as bring-up and teardown do. The hands-on worker
+installs whatever the check needs, runs it against the environment it brought up, and records the
+machine result it actually observed (pass or fail, and the output). The person is asked only what a
+machine cannot answer — the subjective look, whether the running thing is right. Pushing an
+automated run onto the person is what produced the T37 capstone's one integrity blemish: asked an
+ambiguous either/or, the person answered "full pass", and the scribe wrote down a specific manual
+click-through the person never reported.
+
+**The scribe records two separate confirmations and never rounds an ambiguous reply up.** The `✅`
+FINDINGS row holds the machine result the worker observed and the person's judgement in the
+person's own terms as two distinct facts; it never merges them into one claim, and it never
+resolves an ambiguous reply toward the larger reading. If the person's answer does not clearly
+cover the judgement that was asked, the worker re-asks and records only what the person explicitly
+confirmed. A terse "full pass" to a two-part question is an ambiguity to resolve by asking, not by
+choosing the bigger claim (`CLAUDE.md`: a genuine ambiguity is asked about, never silently
+resolved).
 
 The marker is a `Runs` column in the `PROGRESS.md` task table, `auto` or `you`, defaulting to
 `auto` when a plan predates the column so classic plans still parse. The coordinator reads it and
