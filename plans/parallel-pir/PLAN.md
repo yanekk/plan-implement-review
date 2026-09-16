@@ -308,6 +308,31 @@ the fact report green, and the mandatory reflection pass logged. `npm test` stay
 so the app can carry runtime deps without breaking a green baseline — this is not a §5 violation, since §5
 governs the coordinator's own portability, not the throwaway apps a fixture builds.
 
+## Phase 10 — Retrospective on the capstone run (from the PM, 2026-09-16)
+
+Added after T37 passed, from a PM request: the capstone proved the method reaches a green fact report,
+but a PASS only proves the checks the harness knows to make. This phase reads the run's own record — the
+transcripts, the flow log, and the actual code the workers built — and asks whether the method did what
+it was supposed to, beyond the facts. The evidence was preserved out of git at
+`~/pir-retro/blog-app-2026-09-16/` (curated capture + a git bundle of the whole scratch repo); the plan
+carries only the pointer, not the bytes.
+
+| # | Task | Runs | Depends on |
+|---|---|---|---|
+| [T38](tasks/T38-blog-app-retrospective.md) | Full retrospective on the blog-app capstone run | auto | T37 |
+
+**T38 is analysis, not building.** It restores the preserved scratch repo from the git bundle and reads
+the stored transcripts to answer, per task: did each unit deliver what its task doc asked; did the e2e
+unit write a test that genuinely drives the running app and did the check-in actually execute it; did the
+three parallel workers hold to T01's shared contract; did each review inspect rather than rubber-stamp;
+did the branches integrate without hidden fixups and does the app cohere; are the `you` check-ins' scribe
+rows a true record of what the operator did; is the blog itself correct or does it carry bugs the e2e
+missed; did any worker assert evidence it did not produce; did running three-wide actually beat the serial
+path and at what token cost; and where the coordinator wasted turns. It writes the verdict to
+`~/pir-retro/blog-app-2026-09-16/RETRO.md` and surfaces each concrete improvement to the PM as its own
+future task — it fixes nothing itself (scope). It is `auto` and fresh-reviewed like any analysis task;
+independently re-running the blog to test it by hand, if wanted, is a separate `you` follow-up.
+
 ---
 
 ## Critical path
