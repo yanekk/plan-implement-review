@@ -13,15 +13,15 @@ walk past.
 **Status:** T00–T38 ✅. Phase 9 capstone: the blog (T37 PASSed live 2026-09-16, attended, 8 facts).
 Phase 10: T38 retrospective on that run — verdict, method works; one blemish (T07 scribe over-claim);
 9 candidates. RETRO + evidence out of git at `~/pir-retro/blog-app-2026-09-16/`. **Phase 11 (PM,
-2026-09-16, from the RETRO):** T39 ⬜ + T40 ⬜ — narrow the hands-on check to judgement (worker owns
+2026-09-16, from the RETRO):** T39 🔍 + T40 ⬜ — narrow the hands-on check to judgement (worker owns
 setup/teardown and runs the automated checks; person only judges). Both `auto`, revise DESIGN §2.6.
 Phases 5–11 postdate the 2026-09-07 plan review, validated through implement→review alternation (amending
 a live plan is the PM's decision). `Runs` marks `auto`/`you`. Operator's guide:
 [TEST-HARNESS.md](TEST-HARNESS.md).
 **Last updated:** 2026-09-16
-**Next `pir-work` will:** implement **T39** (⬜, `auto`) — the worker owns the hands-on environment
-(setup + seed + teardown-confirmed-down; person only judges). Revises DESIGN §2.6; removes the T37
-idle-gate stall. Its dependency T38 is now ✅.
+**Next `pir-work` will:** review **T39** (🔍) — the worker owns the hands-on environment (setup + seed +
+teardown-confirmed-down; person only judges). Then implement **T40** (⬜, `auto`, deps T39). Live proof of
+T39/T40 is a separate `you` re-run of the blog-app fixture.
 **Open hardening candidates** (each its own future task, none blocking): T31 prose gap
 (`pir-verify`/`pir-coordinate` still narrow); three T30-reflection candidates (reviewer run the test once +
 capture exit; workers avoid `cat -A`/GNU-only flags on macOS → `xxd`/`Read`; coordinator emit a final
@@ -77,7 +77,7 @@ live steps with a hands-on worker the coordinator spawns, folded back without re
 | T36 | The blog-app fixture: a realistic multi-component app built in parallel | auto | T32, T34, T35 | ✅ | Reviewed clean. `reachedWidth(2)` by-task, implement-role, strict `busy`; tests bite all four ways. 310 tests. |
 | T37 | Live: build the blog end-to-end, attended, and prove it runs | you | T36 | ✅ | PASS live 2026-09-16 (attended): 8 facts, DB-backed blog promoted, width hit 3. Bundle `pir-t17-blog-app-1YmLMq/…/2026-09-16T13-12-09-697Z`. |
 | T38 | Full retrospective on the blog-app capstone run | auto | T37 | ✅ | Reviewed clean, no fix commit. Spot-checked the RETRO's load-bearing claims against the bundle: e2e spec genuine, only T01 touched CONTRACT.md, disjoint file sets/no fixups, flow.log timestamps match, T07 over-claim confirmed verbatim (operator ran only e2e, said "full pass"; scribe recorded a manual click-through). No product code touched; 9 candidates not fixed. |
-| T39 | The worker owns the hands-on environment: bring it up, hand off, tear it down | auto | T38 | ⬜ | Phase 11 (PM, 2026-09-16, from RETRO Q10/Q6). Worker does setup + seed + teardown-confirmed-down; person only judges. Teardown-before-done is the seatbelt; removes the T37 idle-gate stall. Coordinator surfaces what it waits for. Revises DESIGN §2.6. Live proof is a separate `you` re-run. |
+| T39 | The worker owns the hands-on environment: bring it up, hand off, tear it down | auto | T38 | 🔍 | Worker owns setup+teardown (§2.6/T39): pir-verify brings the stack up+seeds before handoff, tears down+confirms-down before done, escalates if it cannot; person block is judgement only. DESIGN §2.6 revised; pir-coordinate surfaces which half it waits for; TASK.md template + goldens split; blog-app T05/T07 rewritten. T07 person block still runs e2e (that is T40). Live proof is a separate `you` re-run. 307 tests green. |
 | T40 | The worker runs the automated checks; the person only judges | auto | T39 | ⬜ | Phase 11 (PM, 2026-09-16, from RETRO Q6/Q8). Worker runs the e2e itself; person does only the click-through judgement. Scribe records machine result and person's judgement as two separate confirmations, never rounds an ambiguous reply up. Revises DESIGN §2.6. Live proof is a separate `you` re-run. |
 
 A Notes cell holds what was built or what the review found, the test count, and one line per
@@ -85,20 +85,15 @@ deviation from the task doc.
 
 **A ✅ task's cell may be cut to one line** once the next task has been reviewed.
 
-**Review queue:** empty. Next work is T39 (⬜, `auto`) — Phase 11.
+**Review queue:** T39 (🔍). Next work reviews it, then T40 (⬜, `auto`) — Phase 11.
 
 ## Phases 0–10 done; Phase 11 (T39, T40) next
 
-Phases 0–9 are complete. The `you`/hands-on path is proven live (T33) with its follow-on fixes confirmed
-(T34, T35). Phase 9 delivered the capstone: a DB-backed blog built by parallel workers with two hands-on
-check-ins — T37 PASSed live 2026-09-16 (8 facts, trio overlapped at full width 3, promoted to main).
+Phases 0–9 complete; the `you`/hands-on path is proven live (T33, T34, T35). Phase 9 capstone: a DB-backed
+blog built by parallel workers with two hands-on check-ins — T37 PASSed live 2026-09-16 (8 facts, width 3).
+Phase 10 (T38): retrospective found the method working, one blemish (T07 scribe over-claim), 9 candidates;
+RETRO.md by the evidence at `~/pir-retro/blog-app-2026-09-16/`. Phase 11 (T39, T40): the worker owns the
+hands-on environment and runs the automated checks, the person only judges.
 
-Phase 10 (T38) is done: the retrospective read the transcripts, flow log and built code and found the
-method working, with one integrity blemish (the T07 scribe over-claim) and 9 candidate follow-ups. RETRO.md
-sits beside the preserved evidence (`~/pir-retro/blog-app-2026-09-16/`). Phase 11 (T39, T40) encodes the
-highest-value fixes: the worker owns the hands-on environment and runs the automated checks, the person only
-judges.
-
-To re-run any fixture (needs real paid agents, launched attended), the procedure is in
-[TEST-HARNESS.md](TEST-HARNESS.md). Housekeeping: a closed worker can linger as `stopped`
-(`claude rm <id>`); scratch repos sit in a temp dir.
+Re-running a fixture (real paid agents, attended) is in [TEST-HARNESS.md](TEST-HARNESS.md). Housekeeping: a
+closed worker can linger as `stopped` (`claude rm <id>`); scratch repos sit in a temp dir.

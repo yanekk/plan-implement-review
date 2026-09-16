@@ -271,10 +271,31 @@ So every task carries a marker, decided at plan time and recorded in `PROGRESS.m
   confirm it does what it should. What makes a task `you` is that its result is something only a
   person can observe, not whether a worker produced the thing being observed — so a `you` task
   may verify a sibling `auto` task's deliverable (the build→verify split below). The coordinator
-  still spawns a worker for it, but a **hands-on** one: the person runs the live commands
-  themselves and reports what they saw, and the worker is the scribe that records it into
-  `FINDINGS.md` on its task branch. The user works with that worker directly, so the exploration
-  lands in the worker's context, not the coordinator's.
+  still spawns a worker for it, but a **hands-on** one. That worker owns everything mechanical
+  around the check: it brings the execution environment up and seeds it, hands the person a
+  running thing to look at, and after the person has judged it tears the environment down and
+  confirms it is down. The person's part is the judgement alone — looking at the running thing
+  and saying whether it is right — not standing the environment up or down. The worker records
+  that judgement into `FINDINGS.md` on its task branch and is its scribe. The user works with
+  that worker directly, so the exploration lands in the worker's context, not the coordinator's.
+
+**Setup and teardown are the worker's; judgement is the person's; guaranteed teardown is the
+seatbelt.** Standing an execution environment up, seeding it, and tearing it down is mechanical,
+not a judgement, so it belongs to the hands-on worker, not to the person who is there to look at
+the result. The worker brings the stack up and seeds it before the hand-off, and tears it down and
+confirms it is down before it marks the task done. That confirmed cleanup is what makes it safe for
+a worker to bring a live environment up at all: it is the seatbelt (§5.2) that bounds the worker,
+the way a dry-run flag or a scratch repo bounds any other dangerous operation. A worker that cannot
+confirm teardown does not mark the task done — it escalates and says so out loud; leaving the
+environment up for the person is the last resort, never the silent default. This does not loosen
+§5.2's harder line: a worker still must not spawn real paid agents against real branches, and only
+a person can watch a real agent run. What moves to the worker is the mechanical environment around
+the check, not the judgement and not the forbidden spawn. Making teardown the worker's job also
+removes a stall the T37 capstone hit: when the person owned `docker compose down`, a check-in that
+the person walked away from left the worker's session busy and the coordinator's idle-gate never
+cleared (the run sat idle ~4.5 min). With teardown on the worker, the worker goes idle the moment
+it finishes, the idle-gate clears normally, and the coordinator surfaces what it is waiting for
+instead of looking hung.
 
 The marker is a `Runs` column in the `PROGRESS.md` task table, `auto` or `you`, defaulting to
 `auto` when a plan predates the column so classic plans still parse. The coordinator reads it and
@@ -315,8 +336,10 @@ There are two first-class ways to plan that check, and both coexist:
 
 Neither replaces the other: the fold keeps a light check inside the builder, the split lifts a
 heavy or first-class check into its own `you` task. A split verify task carries a **"Needs a
-person" block** — the exact seatbelted command, what to expect, and what only a person can
-answer — so the hands-on worker has something concrete to put in front of the user. The
+person" block** — what the person must judge, what to expect, and what only a person can answer —
+so the hands-on worker has something concrete to put in front of the user, and, when the check
+needs an environment stood up, a worker-owned setup/teardown pair beside it (the worker brings the
+stack up before that block and tears it down after — the block itself is judgement only). The
 dependency of the verify task on the builder is a real one (the verify cannot start until the
 thing exists), so it is declared honestly and `analyzeParallelism` counts the verify task in the
 `you` total like any other `you` task (§2.7).

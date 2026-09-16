@@ -77,6 +77,24 @@ test('the task-doc template carries a "Needs a person" block for a split verify 
   assert.match(taskTemplate, /Tell me:/, 'the block should say what only a person can answer');
 });
 
+test('the task-doc template splits the worker-owned environment from the person\'s judgement (T39)', () => {
+  // DESIGN §2.6 (T39): standing an environment up and tearing it down is the hands-on worker's
+  // job, not the person's; teardown-before-done is the seatbelt (§5.2). The template must carry a
+  // worker-owned "Environment" section separate from "Needs a person", and name the teardown
+  // seatbelt. Collapsing the two — putting up/down back into the person's block — fails this.
+  assert.match(taskTemplate, /^##\s+Environment \(the worker owns this\)\s*$/m, 'TASK.md carries a worker Environment section');
+  const envHead = taskTemplate.indexOf('## Environment');
+  const personHead = taskTemplate.indexOf('## Needs a person');
+  assert.ok(envHead !== -1 && personHead !== -1 && envHead < personHead, 'Environment precedes Needs a person');
+  const envBlock = taskTemplate.slice(envHead, personHead);
+  assert.match(envBlock, /worker/i, 'the environment section names the worker as the owner');
+  assert.match(envBlock, /teardown/i, 'the environment section covers teardown');
+  assert.match(envBlock, /seatbelt/i, 'teardown is named as the seatbelt (§5.2)');
+  // The person's block is judgement — it says so and does not claim the environment chores.
+  const personBlock = taskTemplate.slice(personHead);
+  assert.match(personBlock, /judge/i, "the person's block is framed as judgement");
+});
+
 // Drop one named column from every markdown table row in the text, to model a plan written
 // before that column existed — derived from the shipped template so the back-compat test
 // cannot quietly diverge from the real template's shape.

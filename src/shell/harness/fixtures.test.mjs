@@ -226,23 +226,29 @@ test('blog-app: T01 pins the contract and the pure core; the trio doc scope-fenc
   assert.match(doc('T06'), /do NOT.*`test` script|`test` script.*unchanged|not.*part of `npm test`/is, 'e2e is kept out of npm test');
 });
 
-test('blog-app: each you check-in names the Docker precondition and ends its runbook with `docker compose down`', () => {
+test('blog-app: the worker owns bring-up/teardown; the person block is judgement only, no compose up/down (T39)', () => {
   const fx = getFixture('blog-app');
   for (const num of ['T05', 'T07']) {
     const doc = Object.entries(fx.tasks).find(([n]) => n.startsWith(`${num}-`))[1];
     assert.match(doc, /## Needs a person/, `${num} carries a Needs-a-person block`);
     assert.match(doc, /Needs you — I cannot see this from here/, `${num} uses the pir-verify handover shape`);
-    assert.match(doc, /Docker Desktop/, `${num} states the Docker Desktop precondition`);
-    // The runbook's final command is the teardown — the harness stops Claude sessions, not containers.
-    const block = doc.slice(doc.indexOf('Needs you'));
-    const commands = block
-      .split('\n')
-      .map((l) => l.trim())
-      .filter((l) => l && !l.startsWith('#') && !l.startsWith('Expect:') && !l.startsWith('Tell me:'));
-    assert.equal(commands[commands.length - 1], 'docker compose down', `${num} runbook ends with docker compose down`);
     assert.match(doc, /^\*\*Runs:\*\* you$/m, `${num} declares Runs: you`);
+    // The worker owns the environment: bring-up + teardown live in the Environment section (DESIGN §2.6).
+    assert.match(doc, /## Environment \(the worker owns this\)/, `${num} carries a worker Environment section`);
+    const envHead = doc.indexOf('## Environment');
+    const personHead = doc.indexOf('## Needs a person');
+    const envBlock = doc.slice(envHead, personHead);
+    const personBlock = doc.slice(personHead);
+    assert.match(envBlock, /docker compose up --build/, `${num}: the worker brings the stack up`);
+    assert.match(envBlock, /docker compose down/, `${num}: the worker tears the stack down`);
+    assert.match(envBlock, /seatbelt/, `${num}: teardown named as the seatbelt`);
+    // The person block is judgement only — no environment up/down chore ever appears in it (T39).
+    assert.doesNotMatch(personBlock, /docker compose up/, `${num}: person block has no compose up`);
+    assert.doesNotMatch(personBlock, /docker compose down/, `${num}: person block has no compose down`);
+    assert.match(personBlock, /Docker Desktop/, `${num}: the person is still told the Docker Desktop precondition`);
   }
-  // The browser driver installs at check-in #2, by the person, not a worker under the clock.
+  // The browser driver still installs at check-in #2 in the person's steps — moving the automated e2e
+  // run to the worker is T40, not T39.
   const t07 = Object.entries(fx.tasks).find(([n]) => n.startsWith('T07-'))[1];
   assert.match(t07, /npx playwright install/, 'check-in #2 installs the browser driver');
 });

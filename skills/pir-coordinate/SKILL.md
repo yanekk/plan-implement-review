@@ -182,13 +182,25 @@ Start the bin once and leave it running. Then, while it runs, on every turn:
    above; and a `you` task emits no `surface`, so nothing else will prompt you). **When you see
    `hands-on Txx`, tell the user right away, in plain English, that `Txx` needs them**: name the worker to
    open — it is `{repo} · {plan} · T{nn} · verify` by the naming convention below (§2.8), which the user
-   finds in `claude agents --json` — and say to run its steps (the worker itself presents its "Needs a
-   person" block, so you need only point them at it, not relay the steps). Say it plainly and prominently
-   so a user who is not watching the terminal still sees a person is required; do not bury it or wait for a
+   finds in `claude agents --json` — and say to open it (the worker stands the environment up itself and
+   presents its judgement-only "Needs a person" block, so you point them at it and need not relay the
+   steps; the worker owns bring-up and teardown, DESIGN §2.6/T39). Say it plainly and prominently so a
+   user who is not watching the terminal still sees a person is required; do not bury it or wait for a
    signal that never comes. Then keep the run alive and resume on the task's **`merge Txx`** line, exactly
-   as for any other task: the user runs the live steps with that worker, it records its result and reports
-   done, the bin merges it and marks it ✅ — there is **no review phase** for a `you` task. Do not spawn a
-   reviewer, do not drive the worker yourself, and do not treat the quiet spawn→merge stretch as a stall.
+   as for any other task: the worker brings the environment up, the user judges the running thing, the
+   worker tears the environment down and goes idle, records its result and reports done, the bin merges
+   it and marks it ✅ — there is **no review phase** for a `you` task. Do not spawn a reviewer, do not
+   drive the worker yourself, and do not treat the quiet spawn→merge stretch as a stall.
+
+   **During that window, say what you are waiting for — do not go silent.** The internal `await-idle`
+   lines carry no user-facing meaning, so between the `hands-on Txx` and `merge Txx` lines tell the user,
+   in plain English, which of two things you are holding for: the person to judge and approve the worker
+   (`waiting for you to look at worker … and say whether it is right`), or, once they have, the worker to
+   finish tearing its environment down and go idle (`waiting for the worker to tear the stack down`). This
+   is what a hung-looking run needs — the T37 capstone sat idle ~4.5 min here because the person owned
+   `docker compose down` and never ran it, so the worker stayed busy and the idle-gate never cleared. With
+   teardown now the worker's job the worker goes idle the moment it finishes and the idle-gate clears
+   normally; your part is to keep the user told which half you are on, not to intervene.
 
 ### A merge conflict is resolved by the worker you keep alive — you never resolve or narrate it (DESIGN §2.5, T28)
 

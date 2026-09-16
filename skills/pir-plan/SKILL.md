@@ -315,10 +315,14 @@ per task (DESIGN §2.6 carries the rule):
   command and recording the answer. One `auto` task, one row.
 - **Split** it when the check is first-class — heavy, or on real agents, real branches or a real
   device, or worth planning as its own step. Then plan a **pair**: an `auto` task that builds the
-  thing, and a separate `you` verify task that **depends on the builder** and has a person run it.
-  Give the `you` verify task a **"Needs a person" block** — the exact seatbelted command, what to
+  thing, and a separate `you` verify task that **depends on the builder** and has a person judge it.
+  Give the `you` verify task a **"Needs a person" block** — what the person must judge, what to
   expect, and what only a person can answer — so the hands-on worker (`pir-verify`) has something
-  concrete to put in front of the user.
+  concrete to put in front of the user. When that check needs an environment stood up, put the
+  bring-up and teardown in a **worker-owned "Environment" section** beside it, not in the person's
+  block: standing the stack up and tearing it down is the worker's job, and the person only judges
+  the running thing (DESIGN §2.6). Guaranteed teardown is the seatbelt that lets the worker bring a
+  live environment up at all.
 
 Declare the split's dependency honestly: the verify task truly cannot start until the builder is
 done, so the dependency is real, not padding. Do not fold a heavy check back into the builder to

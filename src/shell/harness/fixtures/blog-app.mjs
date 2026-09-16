@@ -222,14 +222,14 @@ const tasks = {
       `A \`✅ verified by hand\` row recording that observation is in \`${FINDINGS_PATH}\`.`,
     ],
     needsPerson: {
+      // The worker owns bring-up and teardown (DESIGN §2.6, T39); the person only judges.
+      setup: 'docker compose up --build',
+      teardown: 'docker compose down',
       command:
-        `# 1. Make sure Docker Desktop is running, then bring the whole stack up:\n` +
-        `docker compose up --build\n` +
-        `# 2. Open ${APP_URL}, create a post (title + body), then RELOAD the page.\n` +
-        `# 3. Always free the containers when done (the harness tears down Claude sessions, not Docker):\n` +
-        `docker compose down`,
-      expect: `the stack builds and starts; the post you created is still listed after the reload — proof the backend persists to Postgres.`,
-      tell: `whether the created post survived the reload (yes/no), and any error from \`docker compose up\` if it did not come up.`,
+        `# Docker Desktop must be running — the worker brings the stack up and tears it down for you.\n` +
+        `# Open ${APP_URL}, create a post (title + body), then RELOAD the page.`,
+      expect: `the post you created is still listed after the reload — proof the backend persists to Postgres.`,
+      tell: `whether the created post survived the reload (yes/no), and — if the page never loaded — say so.`,
     },
   }),
   'T06-e2e-test.md': taskDoc({
@@ -271,15 +271,16 @@ const tasks = {
       `A \`✅ verified by hand\` row recording that observation is in \`${FINDINGS_PATH}\`.`,
     ],
     needsPerson: {
+      // The worker owns bring-up and teardown (DESIGN §2.6, T39); the person only judges. The e2e run
+      // still sits in the person's steps here — moving the automated checks to the worker is T40's job.
+      setup: 'docker compose up --build',
+      teardown: 'docker compose down',
       command:
-        `# 1. Docker Desktop running, then bring the stack up:\n` +
-        `docker compose up --build\n` +
-        `# 2. At ${APP_URL}: create a post, edit it, delete it — each change persists across a reload.\n` +
-        `# 3. Install the browser driver ONCE (you, not a worker under the clock), then run the e2e test:\n` +
+        `# Docker Desktop must be running — the worker brings the stack up and tears it down for you.\n` +
+        `# 1. At ${APP_URL}: create a post, edit it, delete it — each change persists across a reload.\n` +
+        `# 2. Install the browser driver ONCE, then run the e2e test:\n` +
         `npx playwright install\n` +
-        `npm run e2e\n` +
-        `# 4. Always tear the stack down when done:\n` +
-        `docker compose down`,
+        `npm run e2e`,
       expect: `every browser action (create/edit/delete) persists across a reload, and \`npm run e2e\` passes.`,
       tell: `whether the click-through worked and whether \`npm run e2e\` passed, with any failure output.`,
     },

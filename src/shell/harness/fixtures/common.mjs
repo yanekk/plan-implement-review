@@ -46,12 +46,18 @@ ${rows}
 // taskDoc({ num, title, runs, goal, files, tests, doneWhen, needsPerson }) → one task file's text, the
 // shape a real worker's pir-implement (or, for a `you` task, pir-verify) reads. Kept small on purpose: a
 // fixture task is trivial deliverable-wise; its job is to force a coordinator path, not to be real work.
-// `needsPerson` (a `you` task's hands-on step) adds the "Needs a person" block pir-verify step 1 looks
-// for — the exact command, what to expect, and what only a person can answer (DESIGN §2.6, CLAUDE.md
-// handover shape). Omit it for an `auto` task.
+// `needsPerson` (a `you` task's hands-on step) adds the "Needs a person" block pir-verify step 2 looks
+// for — the exact judgement steps, what to expect, and what only a person can answer (DESIGN §2.6,
+// CLAUDE.md handover shape). If it also carries `setup`/`teardown`, those are the environment the WORKER
+// stands up and tears down (DESIGN §2.6, T39) — they render as a separate "Environment" section and never
+// appear in the person's block, because standing an environment up and down is mechanical, not judgement.
+// Omit `needsPerson` entirely for an `auto` task.
 export function taskDoc({ num, title, runs = 'auto', goal, files = [], tests, doneWhen = [], needsPerson = null }) {
   const filesList = files.length ? files.map((f) => `- ${f}`).join('\n') : '- (none)';
   const dw = doneWhen.map((d) => `- [ ] ${d}`).join('\n');
+  const env = needsPerson && (needsPerson.setup || needsPerson.teardown)
+    ? `\n## Environment (the worker owns this)\n\n${environmentBlock(needsPerson)}\n`
+    : '';
   const needs = needsPerson ? `\n## Needs a person\n\n${needsPersonBlock(needsPerson)}\n` : '';
   return `# ${num} — ${title}
 
@@ -68,13 +74,30 @@ ${tests ?? 'None. This is a scratch fixture task; write no new tests and leave `
 
 ## Done when
 ${dw}
-${needs}`;
+${env}${needs}`;
+}
+
+// environmentBlock({ setup, teardown }) → the mechanical environment a hands-on WORKER stands up and tears
+// down for a `you` task (DESIGN §2.6, T39). The worker runs `setup` and seeds before the hand-off, and
+// runs `teardown` and confirms it is down before it marks the task done. Guaranteed teardown is the
+// seatbelt (§5.2) that lets a worker bring a live environment up at all; a worker that cannot confirm
+// teardown escalates rather than marking done. These commands are the worker's, never the person's, so
+// they are kept out of the "Needs a person" block below.
+export function environmentBlock({ setup, teardown }) {
+  const up = setup ? `Bring up + seed (worker runs, before the hand-off):\n\n    ${setup}\n\n` : '';
+  const down = teardown
+    ? `Tear down + confirm down (worker runs, before marking done — if it cannot confirm, escalate):\n\n    ${teardown}\n`
+    : '';
+  return `The worker runs these, not the person (DESIGN §2.6). Guaranteed teardown is the seatbelt (§5.2).
+
+${up}${down}`;
 }
 
 // needsPersonBlock({ command, expect, tell }) → the hands-on handover a `you` task carries, in the exact
-// shape pir-verify step 2 presents to the user (CLAUDE.md § Anything the tests cannot establish). The
-// command carries its own seatbelt when it needs one (DESIGN §5.2); a fixture's greet.mjs run is safe, so
-// the command is bare.
+// shape pir-verify step 2 presents to the user (CLAUDE.md § Anything the tests cannot establish). It is
+// judgement only: what the person looks at and decides, never the environment setup/teardown, which is
+// the worker's (environmentBlock, above). The command carries its own seatbelt when it needs one (DESIGN
+// §5.2); a fixture's greet.mjs run is safe, so the command is bare.
 export function needsPersonBlock({ command, expect, tell }) {
   return `Needs you — I cannot see this from here:
 
