@@ -13,6 +13,27 @@ without a task chosen by `pir-work`, stop and run `pir-work`.
 stop — a reviewer holding the implementation in context is not a reviewer. That the task is
 🔍 and this is a fresh session is the entire mechanism.
 
+## Called with an explicit task `Txx` (parallel mode)
+
+**If you were invoked with a task id — `pir-review T05` — that argument IS the deliberate choice:
+review that task, do not run `pir-work`, do not re-select.** A parallel-mode coordinator dispatches
+this way; it has already chosen the task and spawned you as a **fresh** session on the worker's
+worktree, so the fresh-eyes guarantee holds by construction (DESIGN §2.1, §2.8). Two base rules bend
+in this mode, and only in it:
+
+- **The "reached without `pir-work` → stop" guard does not fire** — the coordinator is the
+  deliberate caller.
+- **`CLAUDE.md § Where sessions run` does NOT bind you** — you review in the task-branch worktree
+  the implementer used (DESIGN §2.9); do not stop on contact with it.
+
+**The "you must not have written the code" rule still binds, always.** In parallel mode the
+coordinator keeps it a different way — it spawns *you*, a fresh session with no implementer context,
+never the session that built the task. If by any chance you did implement this task, stop.
+
+When the procedure below says "ask the user and wait", you message the coordinator and wait instead,
+because there is no user at your terminal (`pir-worker` contract). **With no argument, everything
+below is classic mode, unchanged**: both guards and the "main checkout, main branch" rule stand.
+
 ## The procedure
 
 Read the task doc and the implementing commit (`git show`, and the full diff — not just the

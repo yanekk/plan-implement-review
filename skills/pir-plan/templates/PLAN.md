@@ -32,18 +32,24 @@ Phase 2  ▸  …
 
 Nothing is designed on top of an assumption that has not been checked on this machine.
 
-| # | Task | Depends on |
-|---|---|---|
-| [T00](tasks/T00-{slug}.md) | {the spike} | — |
+| # | Task | Runs | Depends on |
+|---|---|---|---|
+| [T00](tasks/T00-{slug}.md) | {the spike} | you | — |
 
 **T00 gates {what}.** Say which design decisions ride on it and what each possible answer
 would mean. It is throwaway code and it is deleted afterwards.
 
 ## Phase 1 — {name}
 
-| # | Task | Depends on |
-|---|---|---|
-| [T01](tasks/T01-{slug}.md) | | T00 |
+| # | Task | Runs | Depends on |
+|---|---|---|---|
+| [T01](tasks/T01-{slug}.md) | {the build} | auto | T00 |
+| [T02](tasks/T02-{slug}.md) | {verify T01 by hand} | you | T01 |
+
+T01 and T02 are a build→verify split (DESIGN §2.6): an `auto` task builds the thing and a
+dependent `you` task has a person run it. Delete the verify row if nothing this plan builds needs
+a person to confirm it — most plans do not — or fold the check into the builder when it is a quick
+yes/no rather than a first-class step.
 
 *(one section per phase, each with a line saying what is true at the end of it)*
 
@@ -56,6 +62,13 @@ T00 → T01 → … → T{n}
 ```
 
 Which tasks are off it and can slot in wherever convenient.
+
+## Parallel width
+
+{N} tasks · longest dependency chain {M} · up to {W} could run at once · {K} need a person
+(`you`). A plan that is one long chain (width 1) drains no faster run in parallel than one
+task at a time; a wide plan is where a coordinator helps. These are the numbers the planner
+reported at the checkpoint; declare only real dependencies, so the width is honest.
 
 ## Rough sizing
 
