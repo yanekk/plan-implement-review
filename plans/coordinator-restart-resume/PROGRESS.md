@@ -10,12 +10,10 @@ account is the commit message. Whoever writes a cell also fixes the over-budget 
 
 **Plan reviewed:** 2026-09-17 — 2 fixed, 2 decided with the user
 
-**Status:** Plan reviewed, ready to build. No product code exists yet. The fix reconciles each task
-from its own task branch on restart (merge `✅`, review `🔍`, rebuild half-built), first reaping the
-dead run's leftover sessions, then narrating the resume, and clears the stale transient control feeds.
+**Status:** Building. T01 (`decideResume` pure classifier) is built and awaiting review. T02 (the
+git read) is still ready and independent of it.
 **Last updated:** 2026-09-17
-**Next `pir-work` will:** implement T01 (the pure classifier) or T02 (the git read); both are ready
-and independent.
+**Next `pir-work` will:** review T01, the pure classifier.
 
 ## Tasks
 
@@ -24,7 +22,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 
 | # | Task | Runs | Depends on | State | Notes |
 |---|---|---|---|---|---|
-| T01 | `decideResume` pure classifier | auto | — | ⬜ | |
+| T01 | `decideResume` pure classifier | auto | — | 🔍 | Built `src/core/resume.mjs` + 13 tests. Pure four-way classifier: feature ⬜ + branch ✅→merge, 🔍→review, other present→rebuild, absent→no entry; non-⬜ feature rows skip. Boundary scan green. Mutation guard pins branch glyph as decider. |
 | T02 | Read a task branch's committed state | auto | — | ⬜ | |
 | T03 | Reconciliation pass in `runPass` | auto | T01, T02 | ⬜ | |
 | T04 | Clear transient control feeds; HALT/log policy | auto | — | ⬜ | |
@@ -35,7 +33,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 A Notes cell holds what was built or what the review found, the test count, and one line per deviation
 from the task doc. A ✅ task's cell may be cut to one line once the next task has been reviewed.
 
-**Review queue:** *(empty)*
+**Review queue:** T01
 
 ## Blocked on the user
 
