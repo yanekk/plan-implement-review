@@ -1,6 +1,6 @@
 # T08 — Coordinator delivery heartbeat
 
-**Phase:** 2 · **Runs:** auto · **Depends on:** T02, T05, T06 · **Weight:** medium
+**Phase:** 2 · **Runs:** auto · **Depends on:** T02, T05, T06, T09 · **Weight:** medium
 
 ## Goal
 
@@ -24,9 +24,11 @@ cursor and the overdue signal).
   queued answers are overdue, and emit the `deliver-overdue Txx` flow-log line (once per line). The
   overdue computation is a small pure predicate and may sit in `src/core/` if that reads cleaner;
   the flow-log emission and file I/O are shell.
-- `skills/pir-coordinate/SKILL.md` — arm the heartbeat wake alongside the event watch, and on every
-  wake deliver every outbox line not yet acknowledged, recording each. Replaces the current manual
-  "≈60s fallback re-read", which itself needed the session to keep taking turns.
+- `skills/pir-coordinate/SKILL.md` — arm the heartbeat wake alongside the event watch, using the
+  self-wake mechanism T09 proved (a harness scheduled wake, NOT a poll that needs the session to
+  keep taking turns — that is the approach that failed). On every wake, deliver every outbox line
+  not yet acknowledged, recording each, and re-read the flow log too so a woken coordinator resumes
+  its full read cycle, not delivery alone. Replaces the current manual "≈60s fallback re-read".
 - `docs/control-folder.md`, `docs/human-flow.md` — the `delivered` feed as a transient control file,
   the `deliver-overdue` flow-log tag, and one line that the down-channel delivery is guaranteed by
   the heartbeat, not the coordinator's own watch. Deps on T06 so these land after its doc pass and
@@ -52,6 +54,15 @@ The coordinator's per-wake delivery is: read `outbox` and `delivered`; SendMessa
 key is not in `delivered`; append each sent key to `delivered`. The key is stable per outbox line
 (its index is enough within a run); the exact key format, the `delivered` filename and the grace
 window are the implementing session's to finalise against the existing control-folder conventions.
+
+Reconciliation with §2.5 (do not reopen the freeze). A key counts as delivered only when the send
+is confirmed landed under §2.5's receipt loop, not merely when `SendMessage` returned — otherwise a
+send that queued but never reached the worker before the coordinator idled would sit in `delivered`
+and the heartbeat would never retry it, reopening the very freeze this task closes. Where T00 finds
+no observable receipt, the heartbeat still re-sends any past-grace outbox line and a duplicate
+decision is accepted as harmless (a parked worker acts on it once); a possible duplicate is the safe
+side, a stranded worker is not. This is the one interface where T08 and T05 meet: build T08 against
+T05's receipt loop, not beside it.
 
 ## Cross-plan note
 

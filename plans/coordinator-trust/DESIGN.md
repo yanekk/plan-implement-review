@@ -24,9 +24,9 @@ silence, and it filled the silence with fraud.
 This plan makes the coordinator's view of its workers trustworthy and its reactions safe. It
 gives a hand-driven task a real completion signal the coordinator can see, forbids the
 coordinator from policing the engine's merges or reaching for the kill switch on suspicion,
-closes the loop on messages sent down to workers, and enforces the coordinator's own naming
-convention so an off-convention launch is caught at the start rather than becoming a latent
-trap.
+closes the loop on messages sent down to workers, guarantees a queued decision is delivered even
+after the coordinator has gone idle, and enforces the coordinator's own naming convention so an
+off-convention launch is caught at the start rather than becoming a latent trap.
 
 ### Success criteria
 
@@ -36,6 +36,9 @@ trap.
   engine merge as fraud. The kill switch is the user's.
 - A decision sent down to a worker is confirmed received, retried if not, and surfaced to the
   user if the worker is genuinely unreachable — no silent loss.
+- A queued decision is delivered even when the coordinator has gone idle: a self-driven wake
+  re-reads the outbox and delivers what is still outstanding, so delivery never waits on the
+  coordinator happening to take another turn.
 - A spawned worker accepts a cross-session message without a person approving it.
 - A coordinator launched with an off-convention name (a `/`, the wrong shape) is caught at
   startup with the correct name to use, before it dispatches anything.
@@ -243,8 +246,14 @@ Placing this plan's changes on the boundary:
   may sit in core if that reads cleaner; the emission is shell.
 - **The spawn permission flag (T01)** is argv construction in `src/shell/platform.mjs`
   (`spawnArgv`), already unit-tested there.
-- **The guardrails, the receipt loop and the name-check procedure (T05)** are prose in the
-  `pir-coordinate` skill; the attestation the worker writes (T04) is prose in `pir-verify`.
+- **The guardrails and the receipt loop (T05)** are prose in the `pir-coordinate` skill; the
+  attestation the worker writes (T04) is prose in `pir-verify`.
+- **The startup name gate (T05)** is machine-enforced in the bin (`src/shell/coordinate.mjs`),
+  not skill prose (§2.7): at startup it reads the coordinator's own name — `$CLAUDE_CODE_SESSION_ID`
+  matched in `claude agents --json` — and refuses to launch under an off-convention name, delegating
+  the string judgement to the pure validator (T03). It is shell because it reads the live session
+  list and the environment; only the judgement is pure. The skill documents the enforced behaviour
+  and how to relaunch.
 
 ### 3.2 Modules touched
 
@@ -253,8 +262,10 @@ Placing this plan's changes on the boundary:
 - `src/shell/loop.mjs` / `src/shell/coordinate.mjs` — parse the verify report's attestation, emit
   the `verified Txx` completion signal and write the attestation to the surfaced feed. (T02)
 - `skills/pir-verify/SKILL.md` — write the attestation into the `done` report. (T04)
-- `skills/pir-coordinate/SKILL.md` — the guardrails (§2.3, §2.4), the receipt loop (§2.5), the
-  startup name check (§2.7), and reading the `verified` signal (§2.1). (T05)
+- `skills/pir-coordinate/SKILL.md` — the guardrails (§2.3, §2.4), the receipt loop (§2.5), and
+  reading the `verified` signal (§2.1); it also documents the enforced startup name gate (§2.7). (T05)
+- `src/shell/coordinate.mjs` — the startup name gate: read the coordinator's own name, validate it
+  with T03's validator, and refuse to launch under an off-convention name (§2.7). (T05)
 - `src/shell/coordinate.mjs` — record the coordinator's delivery acknowledgements, compute which
   queued answers are overdue, and emit the overdue flow-log line. (T08)
 - `skills/pir-coordinate/SKILL.md` — arm the heartbeat wake and deliver every outbox line not yet
@@ -312,7 +323,8 @@ tracks. The engine reads it to compute the overdue set — outbox lines the bin 
 silence. What is machine-testable is that overdue computation: a pure function over the queued
 answers and the acknowledgements returns exactly the lines still outstanding, and returns nothing
 once every queued line is acknowledged. What only a person can see is the heartbeat actually waking
-an idle coordinator and the send landing (§5.1, T07).
+an idle coordinator and the send landing (§5.1): the wake mechanism itself is proved early by the
+T09 spike, before T08 is built on it, and the whole flow end to end by T07.
 
 The cursor is transient state, cleared on restart with the other control feeds. The
 `coordinator-restart-resume` plan clears the outbox on startup (its DESIGN §2.7); this cursor must
@@ -339,12 +351,15 @@ Three layers, and what each proves:
   process: `spawnArgv` carries the permission flag; a crafted verify `done` report is parsed into
   the two confirmations and produces the `verified Txx` line and the feed text; a report with no
   attestation still completes and marks the signal absent; the overdue-answer computation returns
-  exactly the queued answers still unacknowledged and returns none once every one is acknowledged.
+  exactly the queued answers still unacknowledged and returns none once every one is acknowledged;
+  the startup name gate refuses an off-convention self-name and lets the correct one through, given
+  a fake session list and environment (the gate's judgement is T03's pure validator).
 - **A person, with live sessions**, proves what no test can reach: that a worker in the chosen
   permission mode actually accepts a message with no approval prompt (T00, T07); that a
   hand-driven task's completion signal reaches the coordinator and it does not halt (T07); that a
-  down-send's receipt is observable (T00, T07); that a slashed coordinator name is caught at
-  startup (T07). These are §5.1 rows, verified with the user and written into `FINDINGS.md`.
+  down-send's receipt is observable (T00, T07); that the gate reads the *real* running session's
+  own name and catches a slashed one at startup (T07). These are §5.1 rows, verified with the user
+  and written into `FINDINGS.md`.
 
 None of the layers can prove the live cross-session behaviour; that is exactly why T00 and T07
 exist and are `you` tasks.
@@ -392,7 +407,8 @@ emission and prose. Do not add a library for any of it.
 | The sender observes a delivery/receipt notice it can key on | Only visible in a live cross-session exchange (T00). |
 | A hand-driven task's `verified` signal reaches the coordinator and it does not halt | Needs a live coordinator + a live verify worker + the person driving the task (T07). |
 | A slashed coordinator name is caught at startup | The name check reads the live session's own name, which only exists in a real session (T07). |
-| A queued decision reaches a parked worker with no person pinging the coordinator, even after it has gone quiet | Only a live coordinator that has actually gone idle can show the heartbeat waking it and delivering; a passing test cannot make a real session oversleep (T07). |
+| A fully idle `--bg` coordinator wakes itself on a cadence and acts | Only a live session left genuinely idle can show the harness wake re-animating it; no test can make a real session oversleep. Proved early, before T08 is built on it (T09). |
+| A queued decision reaches a parked worker with no person pinging the coordinator, even after it has gone quiet | The whole flow — the heartbeat waking an idle coordinator and the send landing on a parked worker — is proved end to end only in a live drill (T07). |
 
 ### 5.2 Seatbelts
 
@@ -443,6 +459,14 @@ drill.
   also auto-accepts cross-session message *delivery* (a separate gate from tool permissions) is
   not in the help text. Guessing wrong changes the spawn argv and the receipt-loop wording, so it
   is load-bearing enough to be T00.
+- **The startup name check is machine-enforced, not instruction-only (user, 2026-09-17).** The
+  other two coordinator fixes are backed by machinery (§2.1 the signal, §2.3/§2.4 the guardrails);
+  leaving the name check as prose the coordinator might skip contradicts this plan's own principle
+  (decision 1). So the bin performs the check at startup and refuses to launch under a bad name
+  (§2.7), reading its own name via `$CLAUDE_CODE_SESSION_ID` in `claude agents --json` (FINDINGS
+  2026-09-17) and judging it with the pure validator (T03), and it is unit-tested rather than
+  proven only by the live drill. The harm of a skipped check is low (§2.7: the bad name "did no
+  harm" in the failed run), so this is consistency and testability, not a fix for an active hazard.
 - **The delivery-liveness fix folds in here, not into a new plan (user, 2026-09-17).** After this
   plan was written, the same run froze a second time from a distinct fault: the coordinator went
   idle and never woke to deliver a queued answer (§2.8). It is the same theme — the coordinator's
@@ -458,6 +482,13 @@ drill.
   idle gate that treats a done worker as one with nothing running. So the coordinator stays the
   deliverer and the fix makes its wake bulletproof — the smaller change that removes the fault at
   its root (§2.8, §8).
+- **The self-wake is spiked, not assumed (user, 2026-09-17, T09).** The heartbeat rests entirely on
+  a fully idle `--bg` coordinator waking *itself* on a cadence, and the earlier fix failed on almost
+  exactly this — it assumed an idle session would keep checking, and it did not. The wake mechanism
+  exists in the harness, but whether it reliably re-animates a dead-quiet coordinator, and how a
+  `pir-coordinate` session arms it, is a live unknown no test can settle. So it is proved by an early
+  spike (T09) before T08 is built on it, the same treatment the messaging flag gets (T00), rather
+  than discovered only in the final drill. Recommended by the plan reviewer, chosen by the user.
 
 ## 8. Explicitly out of scope
 

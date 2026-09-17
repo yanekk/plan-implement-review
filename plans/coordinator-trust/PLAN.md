@@ -9,10 +9,12 @@ Track state in [PROGRESS.md](PROGRESS.md). Read [DESIGN.md](DESIGN.md) first.
 
 ## Shape of the build
 
-- **The live unknown goes first, as a spike.** The exact `claude` flag that makes a worker
-  auto-accept a cross-session message is not in the CLI's help text and changes both the spawn
-  argv and the coordinator's receipt wording, so it is settled against real sessions (T00) before
-  anything is built on it.
+- **The live unknowns go first, as spikes.** Two things no automated test can settle are checked
+  against real sessions before anything is built on them: the exact `claude` flag that makes a
+  worker auto-accept a cross-session message (T00, not in the CLI's help text — it changes the
+  spawn argv and the receipt wording), and whether an idle `--bg` coordinator can wake *itself* on
+  a cadence to deliver (T09 — the heartbeat T08 arms rests on it, and the earlier fix failed on
+  exactly this point).
 - **Everything the test command can prove is built and proven before the live drill.** The three
   engine/skill changes (T01–T03) and the two skill/doc changes (T04–T06) are all done and green
   before the capstone. The capstone only confirms the live behaviour the tests cannot reach.
@@ -24,7 +26,7 @@ Track state in [PROGRESS.md](PROGRESS.md). Read [DESIGN.md](DESIGN.md) first.
   on T05's receipt-loop wording and T02's flow-log machinery, so it comes after both.
 
 ```
-Phase 0  ▸  T00              prove the messaging mode        throwaway, you
+Phase 0  ▸  T00 T09          prove the messaging mode + the self-wake     throwaway, you
 Phase 1  ▸  T01 T02 T03      engine: spawn flag, signal, name validator   headless, auto
 Phase 2  ▸  T04 T05 T06 T08  skills + docs + delivery heartbeat            auto
 Phase 3  ▸  T07              live drill with the user        you
@@ -32,17 +34,20 @@ Phase 3  ▸  T07              live drill with the user        you
 
 ---
 
-## Phase 0 — Prove the messaging mode
+## Phase 0 — Prove the live unknowns
 
 Nothing about the down-channel is built on an assumption not checked on this machine.
 
 | # | Task | Runs | Depends on |
 |---|---|---|---|
 | [T00](tasks/T00-messaging-mode-spike.md) | Messaging-mode spike | you | — |
+| [T09](tasks/T09-self-wake-spike.md) | Self-wake spike | you | — |
 
 **T00 gates T01 and T05.** It fixes the exact `claude` flag the worker spawn adds (T01) and what
-the coordinator's receipt loop keys on (T05, whether a delivery notice is observable). Throwaway;
-the scratch sessions are torn down and the finding is written to `FINDINGS.md`.
+the coordinator's receipt loop keys on (T05, whether a delivery notice is observable). **T09 gates
+T08.** It fixes the mechanism the delivery heartbeat arms — whether an idle `--bg` coordinator wakes
+itself on a cadence — before T08 is built on it. Both throwaway; the scratch sessions are torn down
+and the findings written to `FINDINGS.md`.
 
 ## Phase 1 — Engine
 
@@ -67,7 +72,7 @@ The prose that reads and feeds the engine, and the spec that records it.
 | [T04](tasks/T04-verify-writes-attestation.md) | pir-verify writes the attestation | auto | T02 |
 | [T05](tasks/T05-coordinator-guardrails.md) | pir-coordinate guardrails, receipt loop, name check | auto | T00, T02, T03 |
 | [T06](tasks/T06-docs-update.md) | Update /docs to the new behaviour | auto | T01, T02, T03 |
-| [T08](tasks/T08-delivery-heartbeat.md) | Coordinator delivery heartbeat | auto | T02, T05, T06 |
+| [T08](tasks/T08-delivery-heartbeat.md) | Coordinator delivery heartbeat | auto | T02, T05, T06, T09 |
 
 At the end of Phase 2 the worker feeds the attestation, the coordinator reads the signal and can
 no longer halt on suspicion or lose a down-send, delivery of a queued answer no longer depends on
@@ -92,19 +97,20 @@ startup.
 T00 → T01 → T06 → T08 → T07
 ```
 
-T02 and T03 are off the critical path and can run as soon as the plan starts (they depend on
-nothing). T04 slots in after T02; T05 after T00/T02/T03; T08 after T02/T05/T06, so it joins the
-tail just before the capstone.
+T02, T03 and the T09 self-wake spike are off the critical path and can run as soon as the plan
+starts (they depend on nothing). T04 slots in after T02; T05 after T00/T02/T03; T08 after
+T02/T05/T06/T09, so it joins the tail just before the capstone.
 
 ## Parallel width
 
-9 tasks · longest dependency chain 5 · up to 3 could run at once · 2 need a person (`you`). These
+10 tasks · longest dependency chain 5 · up to 4 could run at once · 3 need a person (`you`). These
 are the numbers `analyzeParallelism` computed from the task table, with no dependency errors. The
-plan is modestly wide, not a chain: T02 and T03 run alongside T00 from the start, and T01/T04/T05
-open up together once their roots are done — so a coordinator run drains it in noticeably fewer
-rounds than one task at a time, though the two `you` tasks (T00, T07) pace the ends. Folding in T08
-added one link to the tail (it needs T05 and T06 before it, and the capstone needs it), which is
-why the longest chain is now 5; the width is unchanged.
+plan is modestly wide, not a chain: T02, T03 and the two spikes (T00, T09) all sit in the first
+wave, and T01/T04/T05 open up together once their roots are done — so a coordinator run drains it in
+noticeably fewer rounds than one task at a time, though the three `you` tasks (T00, T09, T07) pace
+the ends. Folding in T08 added one link to the tail (it needs T05 and T06 before it, and the
+capstone needs it), which is why the longest chain is 5; adding the T09 spike to the first wave
+widened it to 4.
 
 ## Rough sizing
 
@@ -112,7 +118,7 @@ why the longest chain is now 5; the width is unchanged.
 |---|---|
 | **Heavy** | — |
 | **Medium** | T02 (parse + emit + tests), T05 (four rule areas), T06 (five docs), T07 (live drill), T08 (pure predicate + bin emission + skill heartbeat) |
-| **Light** | T00 (spike), T01 (argv), T03 (validator), T04 (report step) |
+| **Light** | T00 (spike), T09 (spike), T01 (argv), T03 (validator), T04 (report step) |
 
 Where it may overrun: T02, because the attestation shape has to be finalised jointly with T04 and
 the "no attestation still completes" path needs care; and T07, because a live drill waits on the

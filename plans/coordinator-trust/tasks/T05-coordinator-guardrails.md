@@ -19,7 +19,12 @@ retry, or surface a down-send), §2.7 (startup name check).
 ## Files
 
 - `skills/pir-coordinate/SKILL.md` — the loop steps, the "What you may not claim" area, the
-  down-send contract, and the first-run gate.
+  down-send contract, and documenting the enforced first-run name gate.
+- `src/shell/coordinate.mjs` — the startup name gate itself (machine-enforced, §2.7): read the
+  coordinator's own name (`$CLAUDE_CODE_SESSION_ID` matched in `claude agents --json`, FINDINGS
+  2026-09-17), validate it with T03's `validateCoordinatorName`, and refuse to launch under an
+  off-convention name, printing `expected`.
+- `src/shell/coordinate.test.mjs` — the gate's unit test, over a fake session list and environment.
 
 ## Interface
 
@@ -41,9 +46,11 @@ Prose changes, each pinned to a DESIGN rule:
   delivery notice T00 documented; if none arrives in the fallback window, re-read the outbox line
   and send again; if the worker is gone after a retry, surface the failure to the user in plain
   English. Never report a decision delivered without evidence it was. (§2.5)
-- First-run gate: validate your own session name (validateCoordinatorName from T03) against this
-  repo/plan before spawning anything. On a `/` or an off-convention name, stop and tell the user
-  the exact name to relaunch under (the validator's `expected`). (§2.7)
+- First-run gate (machine-enforced in the bin, §2.7): at startup the bin reads its own session name
+  (`$CLAUDE_CODE_SESSION_ID` matched in `claude agents --json`), validates it with
+  validateCoordinatorName from T03, and refuses to launch under a `/` or off-convention name,
+  printing the validator's `expected`. The skill documents this and how to relaunch; it does not
+  perform the check by hand.
 ```
 
 Where T00 found no observable receipt notice, the §2.5 wording keys on its absence instead —
@@ -51,7 +58,8 @@ follow what T00 recorded in `FINDINGS.md`, not this sketch.
 
 ## Tests
 
-Prose; acceptance is a read-through plus the live drill (T07):
+Mostly prose (read-through plus the live drill, T07); the startup name gate is code and is
+unit-tested under `npm test`:
 
 - [ ] The skill tells the coordinator to read `verified Txx` as the trusted completion of a you-task.
 - [ ] The skill forbids creating the HALT file and forbids branding a merge as fraud, in those words.
@@ -59,14 +67,17 @@ Prose; acceptance is a read-through plus the live drill (T07):
       `answer` is not evidence the task did not happen.
 - [ ] The receipt loop (confirm / retry / surface) is spelled out and matches what T00 found about
       the delivery notice.
-- [ ] The first-run name check calls T03's validator and prints the correct name on failure.
+- [ ] The bin's first-run name gate refuses an off-convention self-name and prints `expected`, and
+      lets the correct name through — unit-tested over a fake session list and environment (`npm test`).
+      The skill documents the enforced gate; it does not perform the check itself.
 - [ ] No other coordinator behaviour is loosened — the existing ceiling, serialized-merge, and
       "user owns every decision" rules stay intact.
 
 ## Done when
 
 - The coordinator can no longer, by its instructions, create the kill switch or treat a merge as
-  fraud; it reads `verified Txx` as trusted; it confirms a down-send; it checks its own name at start.
+  fraud; it reads `verified Txx` as trusted; it confirms a down-send. The bin refuses to launch
+  under an off-convention name at startup (machine-enforced, unit-tested), and the skill documents it.
 - Every changed rule cites its DESIGN section.
 - The receipt-loop and spawn-flag wording match T00's findings and T02's signal — check them
   against each other before marking done.

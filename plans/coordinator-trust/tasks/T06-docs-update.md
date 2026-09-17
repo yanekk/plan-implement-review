@@ -6,9 +6,10 @@
 
 Bring the behavioural spec in `/docs` up to what the code now does, because `/docs` is the single
 source of truth for how parallel mode behaves (CLAUDE.md) and a spec that lags the code is worse
-than none. This plan changed four behaviours — the hands-on completion signal, the coordinator not
-policing merges, the worker permission mode and receipt loop, and the coordinator-name check — and
-each must read in `/docs` as current behaviour, not as a plan.
+than none. This task documents four of this plan's behaviours — the hands-on completion signal, the
+coordinator not policing merges, the worker permission mode and receipt loop, and the
+coordinator-name check — and each must read in `/docs` as current behaviour, not as a plan. (The
+fifth, the delivery heartbeat, is documented by T08, which depends on this task's doc pass.)
 
 ## Design sections this implements
 
@@ -27,8 +28,11 @@ code does; this plan's DESIGN keeps the why.
 - `docs/control-folder.md` — the `verified`-kind entry on the surfaced feed; the flow-log
   `verified` tag.
 - `docs/README.md` — the coordinator-name convention is checked at startup; the kill switch is the
-  user's and the coordinator does not create it; refresh Known limitations (drop what this plan
-  fixed, keep what it did not — e.g. the live behaviours only a person verifies).
+  user's and the coordinator does not create it. Note on Known limitations: `README.md` holds only
+  the *policy* ("a known gap is called out under a Known limitations heading") plus a pointer; the
+  actual limitation lists live in `restart-recovery.md` and `human-flow.md`. This plan removes
+  nothing currently listed in either. If the four new behaviours' live-only proof warrants a
+  limitation note, it goes where those lists are, not in `README.md`.
 
 ## Interface
 
@@ -43,8 +47,9 @@ Documentation; acceptance is a read-through against the merged code:
 - [ ] Each of the four changed behaviours appears in the right doc as current behaviour.
 - [ ] The `verified Txx` tag and the `verified`-kind feed entry are documented where the flow log
       and the surfaced feed are described.
-- [ ] Known limitations no longer lists anything this plan fixed, and still lists what it did not
-      (the live-only checks).
+- [ ] The Known-limitations lists (`restart-recovery.md`, `human-flow.md`) are accurate against the
+      merged code: this plan removed nothing that was listed, and any live-only-proof note it adds is
+      in one of those files, not `README.md` (which carries only the policy and a pointer).
 - [ ] No doc still describes the old fire-and-forget down-send or the silent hands-on completion.
 - [ ] `plans/parallel-pir/DESIGN.md` is NOT edited (it is sealed history, CLAUDE.md).
 
