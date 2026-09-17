@@ -53,9 +53,11 @@ over from the dead run are still there and can be read by the fresh run:
 - **`HALT`** — if a run was stopped by the kill switch and the flag was not removed, a restart reads
   it as halted and immediately closes everything again. Removing the flag before restarting is the
   intended step (it is documented), but a forgotten flag silently prevents the run from proceeding.
-- **`reports/`** — any leftover report JSON files are drained and folded in by the fresh run's first
-  pass, so a stale `implemented`/`done`/`question` from the dead run can be applied to the new run's
-  state.
+- **`reports/`** — leftover report JSON files are drained on the fresh run's first pass, but the
+  restarted coordinator is tracking no worker yet (its in-memory run state is empty, and the drain
+  runs before the pass spawns anything), so a stale `implemented`/`done`/`question` matches no task and
+  is dropped, not applied. `reports/` therefore self-clears on the first drain rather than contaminating
+  the new run's state — the only cost is that a report the dead run still needed is gone.
 - **`answers`, `outbox`, `surfaced`** — leftover lines from the dead run are drained/relayed on
   restart: a stale answer routed to a task, a stale down-message delivered, a stale surface relayed
   to the person.
