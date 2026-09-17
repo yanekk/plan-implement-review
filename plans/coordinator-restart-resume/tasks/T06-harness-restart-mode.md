@@ -36,13 +36,22 @@ runScenario(restart):
   2. launch the coordinator (claude --bg -n <name> "/pir-coordinate {slug}"), seatbelted as today.
   3. wait until the target state is reached — a task branch has committed 🔍 (detectable from the
      flow log / a task-branch state read), the deterministic "mid-review" crash point.
-  4. kill the coordinator session (SIGTERM its pid), leaving branches/worktrees on disk — a real crash.
+  4. crash the coordinator with an uncatchable SIGKILL (`kill -9` its OS pid), leaving branches and
+     worktrees on disk — a real crash. It MUST be SIGKILL, not SIGTERM and not `claude stop`:
+     coordinate.mjs's main() installs a SIGTERM/SIGINT handler that runs teardownRun, which closes the
+     workers AND removes their task worktrees and branches (`worktree.remove` → git worktree remove +
+     `branch -D`). A graceful SIGTERM would therefore erase the very in-flight state the restart must
+     reconcile. Do NOT route the crash through the harness's own teardown either: that path touches
+     HALT (run.mjs), and a leftover HALT makes the relaunched coordinator refuse to start under T04's
+     new HALT gate. SIGKILL leaves both the git state and HALT untouched — a true crash.
   5. relaunch the coordinator on the SAME scratch (no installFixture), so it reconciles from git.
   6. capture spans both launches; seal the bundle; checkScenario.
 
 // restart.mjs fixture: a plan with (at least) one auto task that reaches 🔍 before the kill, so
 // the restart must adopt it. A two-task shape (T01 reaches ✅+merged, T02 is 🔍 at the kill) also
-// exercises "do not rebuild the already-done task".
+// exercises "do not rebuild the already-done task". Because the SIGKILL skips the coordinator's
+// teardown, the dead run's worker sessions are still alive at the relaunch, so the fixture also
+// exercises the restart's session reap (DESIGN §2.5).
 
 // facts (assertions.mjs), each a predicate over the captured bundle:
 resumedNotRebuilt : after restart, the 🔍 task's original implement commit is preserved (same SHA)
@@ -51,6 +60,9 @@ resumedNotRebuilt : after restart, the 🔍 task's original implement commit is 
 feedsCleared      : the restart cleared the transient control feeds (no stale answer/outbox/surface
                     from before the kill is acted on after it).
 noRebuildFromT01  : a task already ✅+merged before the kill is not rebuilt after it.
+leftoverSessionsReaped : the dead run's worker sessions, still alive after the SIGKILL, are stopped by
+                    the restart before it adopts — none lingers past the first resumed pass, and the
+                    live-worker count stays within the ceiling across the restart.
 ```
 
 Non-obvious points, each with its reason:
@@ -61,8 +73,12 @@ Non-obvious points, each with its reason:
 - **The kill point is deterministic — a committed `🔍`.** Killing before a build is committed would
   test rebuild-clean, not adoption; waiting for `🔍` on a task branch is the state the resume must
   adopt. Detect it from the flow log or a `taskBranchState` read (T02), not a timer.
-- **Kill the coordinator, not the workers.** A crash is the coordinator dying; leaving worker
-  branches/worktrees on disk is exactly the state reconciliation must handle.
+- **Crash with SIGKILL, and kill only the coordinator.** A crash is the coordinator dying and leaving
+  worker branches/worktrees on disk — exactly the state reconciliation must handle. It has to be
+  SIGKILL, not SIGTERM/`claude stop`: the coordinator catches SIGTERM and tears its workers and their
+  branches down cleanly (step 4 above), which erases the state the drill exists to exercise. Killing
+  the coordinator with SIGKILL leaves its worker sessions running as leftovers of the dead run; how the
+  restart treats those leftover sessions is DESIGN §2.5's concern, not the harness's.
 - **The orchestration is what's tested here, headless.** The wait/kill/relaunch sequencing and the
   fact predicates are exercised against the fake platform/worktree so the mechanism is proven without
   spending a live agent; the live run is T07.
@@ -76,6 +92,8 @@ Non-obvious points, each with its reason:
 - [ ] `noRebuildFromT01` is true when a pre-kill `✅`+merged task is left alone and false if it is
       rebuilt.
 - [ ] `feedsCleared` is true when the transient feeds were empty of pre-kill entries after restart.
+- [ ] `leftoverSessionsReaped` is true when the dead run's still-alive sessions are stopped on restart
+      and false when one is left running past the first resumed pass.
 - [ ] the restart fixture is registered and loads through the normal fixture registry.
 - [ ] `npm test` is green.
 
@@ -83,7 +101,7 @@ Non-obvious points, each with its reason:
 
 - [ ] the harness can install once, launch, kill at a committed `🔍`, and relaunch on the same scratch,
       with capture spanning the restart.
-- [ ] the `restart.mjs` fixture and its facts (`resumedNotRebuilt`, `noRebuildFromT01`, `feedsCleared`)
-      exist and are exercised against the fakes.
+- [ ] the `restart.mjs` fixture and its facts (`resumedNotRebuilt`, `noRebuildFromT01`, `feedsCleared`,
+      `leftoverSessionsReaped`) exist and are exercised against the fakes.
 - [ ] `npm test` is green; no live agent is spawned by this task (that is T07).
 </content>

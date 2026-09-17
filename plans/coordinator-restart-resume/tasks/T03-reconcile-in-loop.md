@@ -19,11 +19,15 @@ ceiling invariant), §2.6 (the unhappy paths).
 
 ## Files
 
-- `src/shell/loop.mjs` — add the first-pass reconciliation step to `runPass`; a small helper is fine.
+- `src/shell/loop.mjs` — add the first-pass reconciliation step (reap → adopt → narrate) to `runPass`;
+  a small helper is fine.
 - `src/shell/loop.test.mjs` — the reconciliation tests, against `createFakeWorktree` (real git) and
   the fake platform.
+- `src/shell/coordinate.mjs` — print the reconciliation's plain-English restart summary in the bin so
+  the skill relays it (DESIGN §2.8). ONLY the restart-summary print here; T04 owns the control-folder
+  clear, the HALT refusal and the restart marker in this same file.
 
-Do not touch `coordinate.mjs` here (T04 owns the control-folder side) or the docs (T05).
+Do not touch the docs (T05).
 
 ## Interface
 
@@ -34,11 +38,16 @@ gated on a fresh-state flag, after `openFeature` and before the gather/`decideDi
 runPass(...):
   0.  openFeature (existing)
   0.5 if (!state.reconciled) {           // pass 0, folded into the first pass (DESIGN §2.4)
+        reap the dead run's leftover sessions FIRST (DESIGN §2.5):
+          for each platform.list() worker isWorkerOf(slug):
+            platform.close(id); platform.remove?.(id); state.closedIds.add(id)
+          // session-only — NEVER worktree.remove here; the branches are what we adopt below
         featureTasks = parseProgress(feature PROGRESS.md).tasks
         branchStates = { for each task: worktree.taskBranchState(slug, num) }
         { merge, review, rebuild } = decideResume({ featureTasks, branchStates })
         execute merge / review / rebuild (below)
         cleanup leftover branches for feature-✅ tasks (DESIGN §2.6)
+        compose a plain-English summary of what was adopted and record it (DESIGN §2.8)
         state.reconciled = true
       }
   1.  gather (existing) …  2. decide …  3. execute …
@@ -75,9 +84,18 @@ Non-obvious constraints, each with its reason:
 - **The ceiling spans reconciliation and dispatch.** Seeded reviewers count as live via their
   appear-grace assignment, so `decideDispatch`'s slot maths already subtracts them and cannot
   over-spawn implementers for rebuilt/never-started tasks.
-- **First-start is a no-op.** With no task branches, `branchStates` is all null, `decideResume`
-  returns empty lists, and step 0.5 does nothing but set the flag — so every existing loop test that
-  starts from an empty scratch repo is unaffected.
+- **Reap leftover sessions session-only, before adopting.** The dead run's worker sessions may still be
+  alive (a real crash skips the SIGTERM teardown — DESIGN §2.5). Stop every listed worker of this slug
+  first, with `platform.close`/`platform.remove` only — **never** `worktree.remove` here, or the
+  branches reconciliation is about to adopt are destroyed. Add the reaped ids to `state.closedIds` so a
+  lingering listing is not recounted against the ceiling.
+- **Narrate the restart (DESIGN §2.8).** Compose one plain-English line naming what was merged, sent to
+  review, rebuilt and started, and record/surface it so the bin (this task's `coordinate.mjs` print)
+  relays it to the user. A first start adopts nothing, so the line is empty/absent.
+- **First-start is a no-op.** With no task branches and no leftover sessions, the reap does nothing,
+  `branchStates` is all null, `decideResume` returns empty lists, the summary is empty, and step 0.5
+  does nothing but set the flag — so every existing loop test that starts from an empty scratch repo is
+  unaffected.
 
 ## Tests
 
@@ -94,6 +112,11 @@ Non-obvious constraints, each with its reason:
 - [ ] mixed restart: T01 `✅`-merge, T02 `🔍`-review, T03 half-built rebuild, T04 never-started
       implement — all handled in one first pass, and the ceiling is not exceeded across reconciliation
       plus dispatch.
+- [ ] restart with a leftover worker session of this slug still listed: it is stopped session-only on
+      the first pass — its task branch/worktree is NOT removed — and it is not counted against the
+      ceiling on the next pass. (A `✅`/`🔍` branch whose session is reaped is still merged/reviewed.)
+- [ ] the reconciliation pass records a plain-English summary naming what it merged/reviewed/rebuilt/
+      implemented; a first start (no task branches) records no summary (or an empty one).
 - [ ] first start (no task branches): reconciliation is a no-op; behaviour is identical to today
       (an existing happy-path loop test still passes unchanged).
 - [ ] the mutation guard: reverting to "dispatch every `⬜` feature row as a fresh implement" reddens
@@ -105,6 +128,8 @@ Non-obvious constraints, each with its reason:
       against real scratch git in `loop.test.mjs`.
 - [ ] no adopted branch is ever discarded by the dead-worker path (the `buildAssignments` hazard is
       covered by a test).
+- [ ] leftover worker sessions of the slug are reaped session-only on restart (branches kept), so the
+      ceiling starts clean; the restart records a plain-English summary of what it adopted.
 - [ ] first-start behaviour is unchanged and all pre-existing loop tests still pass; `npm test` and the
       boundary scan are green.
 </content>

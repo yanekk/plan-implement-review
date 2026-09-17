@@ -114,6 +114,20 @@ it. A second entry point is a second thing to forget, and forgetting it is the b
 
 ### 2.5 Executing each case, and the ceiling invariant
 
+**Reap the dead run's worker sessions first.** The only crash that leaves task branches to reconcile
+is one that skips the coordinator's own shutdown: `coordinate.mjs`'s SIGTERM/SIGINT handler runs
+`teardownRun`, which closes the workers **and removes their task worktrees and branches**, so a clean
+signal would erase the very state the restart needs. A real crash (a SIGKILL or a power loss) skips
+that handler — and that same abruptness leaves the dead run's worker sessions still running. Those
+sessions are orphans: the fresh coordinator tracks none of them, so nothing would ever close them, and
+each one still listed in `claude agents --json` both inflates the live-worker count (tripping the
+runaway breaker) and stays invisible to `decideDispatch`'s slot maths (so it would over-spawn). So the
+first thing reconciliation does, before adopting anything, is stop every worker session of this slug
+the platform still lists — **session-only** (`platform.close` + `platform.remove`), never
+`worktree.remove`, because the task branches and worktrees are exactly what the adoption below needs.
+The reaped ids go into `state.closedIds` so a lingering listing is not recounted. This makes the
+ceiling genuinely free before any reviewer spawns, rather than assuming the crash freed it.
+
 - **merge**: `worktree.mergeTask(branch)`; on a clean merge, reconcile the feature row to `✅`,
   commit the feature branch, and remove the task worktree and branch — exactly the loop's existing
   merge-and-close (loop.mjs 3d), reused. No worker session is involved: the branch is already `✅`,
@@ -131,7 +145,8 @@ it. A second entry point is a second thing to forget, and forgetting it is the b
 **The ceiling invariant.** A `review` spawn counts against the worker ceiling like any other. The
 number of task branches needing a fresh review session on restart is bounded by the number that
 were in flight at the crash, which the ceiling already bounds — a `🔍` branch corresponded to a live
-slot. So spawning a reviewer for every `🔍` branch stays within the ceiling in every reachable state.
+slot at the crash, and the reap above has stopped that slot's leftover session before any reviewer
+spawns. So spawning a reviewer for every `🔍` branch stays within the ceiling in every reachable state.
 `✅`-unmerged branches merge without a session and do not consume the ceiling. Reconciliation caps
 its review spawns at the ceiling defensively and surfaces a warning if it is ever exceeded, which the
 invariant says cannot happen; the cap is there so a wrong assumption fails loud, not silently over
@@ -179,6 +194,18 @@ coordinator clears the **transient feeds** and preserves the **durable records**
   an explicit instruction. This is the one HALT-policy choice the brief flagged; it resolves to "never
   auto-clear" because auto-clearing is unsafe, and the refuse-with-a-message refinement is chosen over
   the current start-then-halt because it tells the person exactly what to do (§7).
+
+### 2.8 Narrating the restart to the user
+
+A restart that silently merges, reviews and rebuilds looks, in the coordinator's ordinary progress
+output, almost exactly like a fresh run: the user sees tasks reaching `✅` and tasks going to review
+with no sign that the work was picked up rather than built just now. But whether a restart *resumed* or
+*started over* is precisely what the live drill (T07) asks a person to judge, and CLAUDE.md requires the
+coordinator to keep the user in plain English. So reconciliation composes one plain-English line naming
+what it adopted — what it merged because it was already finished, what it sent to review because it was
+already built, what it is rebuilding because it was only half-done, and what it is starting normally —
+and the coordinator relays that line to the user as the run resumes. A genuine first start adopts
+nothing, so it emits no summary (or an empty one), leaving a first run's output unchanged.
 
 ---
 
@@ -359,6 +386,15 @@ reconciliation itself misbehaves, the task branches are all on disk and inspecta
   reinstalls the fixture on each launch, so a restart needs a launch→kill→relaunch-on-the-same-scratch
   mode; that mechanism is testable against the fakes, but the live paid crash-and-resume is judged by a
   person, matching every other live-harness run. Engineering decision.
+- **Reap the dead run's worker sessions on restart, session-only.** The only crash that leaves task
+  branches to reconcile also leaves the worker sessions running (the SIGTERM handler that would reap
+  them is exactly what a real crash skips), and an un-reaped orphan session miscounts the ceiling in
+  both directions (§2.5). So reconciliation stops every listed worker of the slug first, keeping their
+  branches and worktrees for adoption. User decision (2026-09-17).
+- **Narrate the restart in one plain-English line.** A resumed run is otherwise indistinguishable from
+  a fresh one in the coordinator's output, yet resume-not-rebuild is exactly what T07 has a person
+  confirm. So reconciliation emits a one-line summary of what it adopted (§2.8). User decision
+  (2026-09-17).
 
 ---
 

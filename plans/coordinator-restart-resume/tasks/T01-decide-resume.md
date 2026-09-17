@@ -28,9 +28,12 @@ decideResume({ featureTasks, branchStates }) → { merge: string[], review: stri
 
   featureTasks : Array<{ num: 'T01', state: '⬜'|'🟡'|'🔍'|'✅'|'⛔', deps: string[], runs: 'auto'|'you' }>
                  (exactly the shape parseProgress(...).tasks returns)
-  branchStates : Record<taskNum, '⬜'|'🟡'|'🔍'|'✅'|null>
-                 the committed glyph on task branch pir/{slug}-{num}, or null when the branch is
-                 absent or has no readable row. The shell reads these; this function never touches git.
+  branchStates : Record<taskNum, '⬜'|'🟡'|'🔍'|'✅'|'⛔'|null>
+                 the committed glyph on task branch pir/{slug}-{num} (exactly what T02's
+                 taskBranchState returns), or null when the branch is absent or has no readable row.
+                 A worker never writes ⛔ on its own branch, so ⛔ is not expected here; if it ever
+                 appears it is a present glyph that is neither ✅ nor 🔍, so it classifies as rebuild
+                 by the rule below. The shell reads these; this function never touches git.
 
   returns the task numbers to merge (feature ⬜, branch ✅), to review (feature ⬜, branch 🔍), and to
   rebuild (feature ⬜, branch exists but is neither ✅ nor 🔍). Each list is sorted by task number.

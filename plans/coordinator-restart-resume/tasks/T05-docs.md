@@ -32,8 +32,12 @@ files.
   in-flight task work is adopted from each task branch: a `✅`-but-unmerged branch is merged, a `🔍`
   branch gets a fresh review, a half-built branch is rebuilt clean, a `⛔` task stays blocked, a
   never-started task is implemented normally.
+- **The restart first stops any leftover worker sessions from the dead run** (session-only — their task
+  branches and worktrees are kept for adoption), then narrates in one plain-English line what it
+  adopted (DESIGN §2.5, §2.8). Say why: a real crash leaves the old sessions running, and an un-reaped
+  one miscounts the ceiling.
 - **Remove the "in-flight task work is not adopted" limitation** — it is fixed. Replace it with the
-  reconciliation description (DESIGN §2.1–§2.6), including that git is the ground truth and the
+  reconciliation description (DESIGN §2.1–§2.8), including that git is the ground truth and the
   committed task-branch glyph is the signal.
 - **Correct the control-folder limitation** to the cleanup: the transient feeds are cleared on startup;
   `log` and `HALT` are preserved; a `HALT` present at startup refuses the run with an instruction to

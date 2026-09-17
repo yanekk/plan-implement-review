@@ -8,14 +8,14 @@ task you pick up, and append yours there.
 **Sixty words to a Notes cell, counted.** Flat prose. The cell is an index for the next session; the
 account is the commit message. Whoever writes a cell also fixes the over-budget cell they walk past.
 
-**Plan reviewed:** not yet — run `/pir-review-plan coordinator-restart-resume` before the first `/pir-work`
+**Plan reviewed:** 2026-09-17 — 2 fixed, 2 decided with the user
 
-**Status:** Plan written, not yet reviewed. No product code exists yet. The fix reconciles each task
-from its own task branch on restart (merge `✅`, review `🔍`, rebuild half-built) and clears the stale
-transient control-folder feeds.
+**Status:** Plan reviewed, ready to build. No product code exists yet. The fix reconciles each task
+from its own task branch on restart (merge `✅`, review `🔍`, rebuild half-built), first reaping the
+dead run's leftover sessions, then narrating the resume, and clears the stale transient control feeds.
 **Last updated:** 2026-09-17
-**Next `pir-work` will:** nothing yet — `/pir-review-plan` must run first. After that, implement T01
-(the pure classifier) or T02 (the git read); both are ready and independent.
+**Next `pir-work` will:** implement T01 (the pure classifier) or T02 (the git read); both are ready
+and independent.
 
 ## Tasks
 

@@ -48,6 +48,8 @@ separately from the person's judgement, and never rounds an ambiguous result up.
 #                        not re-implemented after the restart.
 #   noRebuildFromT01   — a task already ✅+merged before the kill was not rebuilt.
 #   feedsCleared       — no stale pre-kill control-feed entry was acted on after the restart.
+#   leftoverSessionsReaped — the dead run's still-alive sessions were stopped on restart; the live
+#                        worker count stayed within the ceiling across the relaunch.
 # the runner exits non-zero if any fact fails; the worker records the fact report verbatim.
 ```
 
@@ -88,8 +90,9 @@ automated facts it runs are built and tested in T06.
 
 - [ ] the live restart drill has been run over real agents on the scratch plan, with the harness
       seatbelts on.
-- [ ] the automated fact report (`resumedNotRebuilt`, `noRebuildFromT01`, `feedsCleared`) is recorded,
-      and the person has judged that the run resumed rather than rebuilt.
+- [ ] the automated fact report (`resumedNotRebuilt`, `noRebuildFromT01`, `feedsCleared`,
+      `leftoverSessionsReaped`) is recorded, and the person has judged that the run resumed rather than
+      rebuilt.
 - [ ] both confirmations — the fact report and the person's yes/no, with the date — are written to
       `FINDINGS.md`; the scratch environment is confirmed torn down.
 </content>
