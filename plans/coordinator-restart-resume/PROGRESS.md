@@ -10,10 +10,10 @@ account is the commit message. Whoever writes a cell also fixes the over-budget 
 
 **Plan reviewed:** 2026-09-17 — 2 fixed, 2 decided with the user
 
-**Status:** Building. T01 (`decideResume` pure classifier) is built and awaiting review. T02 (the
-git read) is still ready and independent of it.
+**Status:** Building. T01 (`decideResume` pure classifier) is reviewed and done. T02 (the git read)
+is ready and independent; T03 depends on T01 + T02.
 **Last updated:** 2026-09-17
-**Next `pir-work` will:** review T01, the pure classifier.
+**Next `pir-work` will:** implement T02, the task-branch state read.
 
 ## Tasks
 
@@ -22,7 +22,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 
 | # | Task | Runs | Depends on | State | Notes |
 |---|---|---|---|---|---|
-| T01 | `decideResume` pure classifier | auto | — | 🔍 | Built `src/core/resume.mjs` + 13 tests. Pure four-way classifier: feature ⬜ + branch ✅→merge, 🔍→review, other present→rebuild, absent→no entry; non-⬜ feature rows skip. Boundary scan green. Mutation guard pins branch glyph as decider. |
+| T01 | `decideResume` pure classifier | auto | — | ✅ | Clean, no fix commit. 13 tests cover all four-way cases + mutation guard; boundary green. Probed: null/absent/missing-key all → no entry; unexpected glyph → rebuild (safe); feature ✅/⛔ gate skips; shape matches T03. Numeric sort correct, though tests do not distinguish it from lexicographic for zero-padded ids. |
 | T02 | Read a task branch's committed state | auto | — | ⬜ | |
 | T03 | Reconciliation pass in `runPass` | auto | T01, T02 | ⬜ | |
 | T04 | Clear transient control feeds; HALT/log policy | auto | — | ⬜ | |
@@ -33,7 +33,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 A Notes cell holds what was built or what the review found, the test count, and one line per deviation
 from the task doc. A ✅ task's cell may be cut to one line once the next task has been reviewed.
 
-**Review queue:** T01
+**Review queue:** empty
 
 ## Blocked on the user
 
