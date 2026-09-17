@@ -4,7 +4,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync, existsSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync, existsSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import {
@@ -16,6 +16,8 @@ import {
   commitFeature,
   promote,
   remove,
+  taskBranchState,
+  taskWorktreeHandle,
   createWorktree,
 } from './worktree.mjs';
 import { progressPathFor } from '../core/progress.mjs';
@@ -265,4 +267,89 @@ test('createWorktree factory: drives the loop path open → create → merge →
 
 test('commitFeature: without a feature worktree it refuses rather than guessing', () => {
   assert.throws(() => commitFeature({ root: process.cwd(), message: 'x' }), /no feature worktree/);
+});
+
+// --- T02: reading a task branch's committed state (DESIGN §2.2) ---
+
+// A full task-table PROGRESS.md carrying one row at a given glyph. The scratchRepo seed above has no
+// header/separator, so a taskBranchState test writes a real table onto the branch first.
+function progressWith(num, state) {
+  return [
+    '# Progress',
+    '',
+    '| # | Task | Runs | Depends on | State | Notes |',
+    '|---|---|---|---|---|---|',
+    `| ${num} | one | auto | — | ${state} | |`,
+    '',
+  ].join('\n');
+}
+
+// Commit a full-table PROGRESS.md onto an existing task worktree, the row set to `state`.
+function commitRow(path, num, state) {
+  writeFileSync(join(path, PROGRESS_REL), progressWith(num, state));
+  git(path, ['add', '-A']);
+  git(path, ['commit', '-m', `${num} row ${state}`, '--no-edit']);
+}
+
+test('taskBranchState returns the committed glyph for 🔍/✅/🟡/⬜ branches', (t) => {
+  const s = scratchRepo();
+  t.after(s.cleanup);
+  openFeature('demo', { root: s.repo });
+  const cases = [['T01', '🔍'], ['T02', '✅'], ['T03', '🟡'], ['T04', '⬜']];
+  for (const [num, glyph] of cases) commitRow(createTask('demo', num, { root: s.repo }).path, num, glyph);
+  for (const [num, glyph] of cases) {
+    assert.equal(taskBranchState('demo', num, { root: s.repo }), glyph, `${num} reads back ${glyph}`);
+  }
+});
+
+test('taskBranchState: a task number with no branch at all → null, no throw', (t) => {
+  const s = scratchRepo();
+  t.after(s.cleanup);
+  openFeature('demo', { root: s.repo });
+  assert.equal(taskBranchState('demo', 'T99', { root: s.repo }), null);
+});
+
+test('taskBranchState: a branch that exists but has no PROGRESS.md on it → null', (t) => {
+  const s = scratchRepo();
+  t.after(s.cleanup);
+  openFeature('demo', { root: s.repo });
+  const w = createTask('demo', 'T01', { root: s.repo });
+  rmSync(join(w.path, PROGRESS_REL));
+  git(w.path, ['add', '-A']);
+  git(w.path, ['commit', '-m', 'drop progress', '--no-edit']);
+  assert.equal(taskBranchState('demo', 'T01', { root: s.repo }), null);
+});
+
+test('taskBranchState: a table with no row for that task number → null', (t) => {
+  const s = scratchRepo();
+  t.after(s.cleanup);
+  openFeature('demo', { root: s.repo });
+  const w = createTask('demo', 'T01', { root: s.repo });
+  commitRow(w.path, 'T02', '🔍'); // the table lists T02, we ask about T01
+  assert.equal(taskBranchState('demo', 'T01', { root: s.repo }), null);
+});
+
+test('taskWorktreeHandle returns { path, branch } for a checked-out task, null when none is registered', (t) => {
+  const s = scratchRepo();
+  t.after(s.cleanup);
+  openFeature('demo', { root: s.repo });
+  assert.equal(taskWorktreeHandle('demo', 'T01', { root: s.repo }), null);
+  const w = createTask('demo', 'T01', { root: s.repo });
+  const h = taskWorktreeHandle('demo', 'T01', { root: s.repo });
+  assert.equal(h.branch, 'pir/demo-T01');
+  assert.equal(realpathSync(h.path), realpathSync(w.path));
+});
+
+test('taskBranchState reads without modifying the branch tip or the worktree', (t) => {
+  const s = scratchRepo();
+  t.after(s.cleanup);
+  openFeature('demo', { root: s.repo });
+  const w = createTask('demo', 'T01', { root: s.repo });
+  commitRow(w.path, 'T01', '🔍');
+  const tipBefore = git(s.repo, ['rev-parse', 'pir/demo-T01']).stdout.trim();
+  const statusBefore = git(w.path, ['status', '--porcelain']).stdout;
+
+  taskBranchState('demo', 'T01', { root: s.repo });
+  assert.equal(git(s.repo, ['rev-parse', 'pir/demo-T01']).stdout.trim(), tipBefore, 'branch tip unchanged');
+  assert.equal(git(w.path, ['status', '--porcelain']).stdout, statusBefore, 'worktree unchanged');
 });

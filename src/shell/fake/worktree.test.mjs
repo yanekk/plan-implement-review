@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
 import { createFakeWorktree, git } from './worktree.mjs';
 import { reconcileTaskRow, progressPathFor } from '../../core/progress.mjs';
@@ -110,4 +110,40 @@ test('remove tears down a worktree and its branch', (t) => {
   assert.ok(wt.branchExists('pir/demo-T01'));
   wt.remove(task);
   assert.ok(!wt.branchExists('pir/demo-T01'), 'the task branch is gone');
+});
+
+// --- T02: reading a task branch's committed state (DESIGN §2.2) ---
+
+test('taskBranchState reads the glyphs a worker committed on its branch: 🔍 from implement, ✅ from review', (t) => {
+  const wt = createFakeWorktree({ progress: PROGRESS });
+  t.after(() => wt.cleanup());
+  wt.openFeature('demo');
+  const task = wt.createTask('demo', 'T01');
+  workerCommit(task.path, 'T01', '🔍'); // an auto implement hands off at 🔍
+  assert.equal(wt.taskBranchState('demo', 'T01'), '🔍');
+
+  // review advances the same branch to ✅, the way pir-review commits it
+  const p = join(task.path, progressPathFor(SLUG));
+  writeFileSync(p, reconcileTaskRow(readFileSync(p, 'utf8'), { num: 'T01', state: '✅', notes: 'reviewed' }));
+  git(task.path, ['add', '-A']);
+  git(task.path, ['commit', '-m', 'T01 review: clean', '--no-edit']);
+  assert.equal(wt.taskBranchState('demo', 'T01'), '✅');
+});
+
+test('taskBranchState returns null for a branch that does not exist', (t) => {
+  const wt = createFakeWorktree({ progress: PROGRESS });
+  t.after(() => wt.cleanup());
+  wt.openFeature('demo');
+  assert.equal(wt.taskBranchState('demo', 'T99'), null);
+});
+
+test('taskWorktreeHandle returns the handle for a checked-out task, null before it is created', (t) => {
+  const wt = createFakeWorktree({ progress: PROGRESS });
+  t.after(() => wt.cleanup());
+  wt.openFeature('demo');
+  assert.equal(wt.taskWorktreeHandle('demo', 'T01'), null);
+  const task = wt.createTask('demo', 'T01');
+  const h = wt.taskWorktreeHandle('demo', 'T01');
+  assert.equal(h.branch, 'pir/demo-T01');
+  assert.equal(realpathSync(h.path), realpathSync(task.path));
 });

@@ -28,7 +28,7 @@
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { progressPathFor } from '../core/progress.mjs';
+import { progressPathFor, parseProgress } from '../core/progress.mjs';
 
 // gpgsign is forced off on every commit-creating call (merge, commit, promote). An automated
 // coordinator has no one to type a passphrase, and a repo with commit.gpgsign=true set globally
@@ -227,6 +227,29 @@ export function remove({ path, branch } = {}, { root = process.cwd() } = {}) {
   return { ok: true };
 }
 
+// Read how far a task got straight from its own task branch, without checking it out: the committed
+// glyph in pir/{plan}-T{nn}:plans/{plan}/PROGRESS.md, which reconciliation reads at restart (DESIGN
+// §2.2). `git show <branch>:<path>` reads the committed file with no worktree touched, so this stays
+// cheap and never disturbs a worktree that review may still need. Parse rather than grep, so a
+// reordered or reformatted table still reads correctly — the same parser the rest of the system
+// trusts. Null, not throw, on a missing branch, a missing file, or no row for the task: a restart
+// routinely asks about tasks whose branch never existed, and that is the classifier's "not started"
+// answer (DESIGN §2.3), not an error. git() already returns { ok:false } rather than throwing.
+export function taskBranchState(plan, task, { root = process.cwd() } = {}) {
+  const res = git(root, ['show', `${taskBranchOf(plan, task)}:${progressPathFor(plan)}`]);
+  if (!res.ok) return null; // branch or file absent — a normal answer, not an error.
+  const row = parseProgress(res.stdout).tasks.find((t) => t.num === task);
+  return row ? row.state : null;
+}
+
+// The registered worktree path and branch for pir/{plan}-T{nn}, or null if none is checked out. Lets
+// reconciliation (T03) hand an existing task worktree to remove()/spawn without re-deriving the path.
+export function taskWorktreeHandle(plan, task, { root = process.cwd() } = {}) {
+  const branch = taskBranchOf(plan, task);
+  const path = worktreeForBranch(root, branch);
+  return path ? { path, branch } : null;
+}
+
 // The stateful drop-in the coordinator loop injects in T08, mirroring the fake's createFakeWorktree.
 // It binds every operation to one repo root and remembers the feature worktree opened this run, so
 // commitFeature (message-only, as the loop calls it) knows where to commit.
@@ -240,6 +263,8 @@ export function createWorktree({ root = process.cwd() } = {}) {
     commitFeature: (message) => commitFeature({ root, featurePath: feature?.path, message }),
     promote: (plan) => promote(plan, { root }),
     remove: (target) => remove(target, { root }),
+    taskBranchState: (plan, task) => taskBranchState(plan, task, { root }),
+    taskWorktreeHandle: (plan, task) => taskWorktreeHandle(plan, task, { root }),
     get feature() {
       return feature;
     },

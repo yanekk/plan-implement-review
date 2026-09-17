@@ -25,7 +25,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
-import { progressPathFor } from '../../core/progress.mjs';
+import { progressPathFor, parseProgress } from '../../core/progress.mjs';
 
 // Run one git command in cwd. Returns { ok, stdout, stderr, status } rather than throwing, so a
 // non-zero exit (a merge conflict, a missing ref) is a value the caller inspects, not an
@@ -174,6 +174,31 @@ export function createFakeWorktree({ progress, files = {}, slug = 'demo' } = {})
     events.push({ op: 'remove', path, branch });
   }
 
+  // Read a task branch's committed glyph without checking it out (DESIGN §2.2), the same signal the
+  // real worktree.mjs reads, so T03's reconciliation and its loop tests ask git the same question the
+  // same way over this scratch repo. `git show` is read-only; null on an absent branch/file or a
+  // missing row is the classifier's "not started" answer (DESIGN §2.3), never a throw.
+  function taskBranchState(plan, task) {
+    const res = git(repo, ['show', `pir/${plan}-${task}:${progressPathFor(plan)}`]);
+    if (!res.ok) return null;
+    const row = parseProgress(res.stdout).tasks.find((t) => t.num === task);
+    return row ? row.state : null;
+  }
+
+  // The registered worktree path and branch for pir/{plan}-T{nn}, or null if none is checked out —
+  // read from git, not the events log, so it matches the real module's answer.
+  function taskWorktreeHandle(plan, task) {
+    const branch = `pir/${plan}-${task}`;
+    for (const rec of git(repo, ['worktree', 'list', '--porcelain']).stdout.split('\n\n')) {
+      const lines = rec.split('\n');
+      const wt = lines.find((l) => l.startsWith('worktree '));
+      if (wt && lines.some((l) => l === `branch refs/heads/${branch}`)) {
+        return { path: wt.slice('worktree '.length).trim(), branch };
+      }
+    }
+    return null;
+  }
+
   // --- test introspection (not part of the shell interface the loop uses) ---
   const commitCount = (ref) => Number((git(repo, ['rev-list', '--count', ref]).stdout || '0').trim());
   const mainCommitCount = () => commitCount('main');
@@ -192,6 +217,8 @@ export function createFakeWorktree({ progress, files = {}, slug = 'demo' } = {})
     commitFeature,
     promote,
     remove,
+    taskBranchState,
+    taskWorktreeHandle,
     // introspection
     dir,
     repo,
