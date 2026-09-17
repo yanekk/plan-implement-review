@@ -127,6 +127,36 @@ down by message. There is no start-up "hello" from the coordinator (it was retir
 only message you will ever receive from it is the answer to a question or decision you parked on, so if
 you never park, you never hear from it. Just build from your spawn prompt.
 
+## Leave a clean, idle session — that is how the coordinator knows you are done
+
+The coordinator is a program, not an agent, and it cannot read your mind or your commits directly. It
+decides your task has finished its current step by watching your session go **idle** in `claude agents`
+— it hands your task to the reviewer, and it merges your branch, only once you are idle (DESIGN §2.5,
+the T13 idle gate). That gate is what stops it cutting you off mid-commit. The flip side: **a session
+that stays busy blocks the whole run**, even after your work is committed and your report is dropped —
+the coordinator keeps waiting on you and no other task moves.
+
+So two rules bind every worker — implement, review and verify alike:
+
+- **Run your commands, above all the test suite, in the FOREGROUND and let them finish.** Do **not**
+  launch the tests as a background job (the Bash tool's `run_in_background`, or a trailing `&`) and then
+  poll a file with an `until … sleep` loop. Many suites start a helper process — a daemon, a watcher —
+  and only shut it down when the script itself **exits normally**; background the script and move on and
+  that helper is stranded, and your session stays busy on it. (The sandbox already blocks foreground
+  `sleep`-polling and points you at Monitor — take the hint: run the command and wait for it, do not
+  fire-and-forget. If you genuinely must background something, use Monitor, never a naked `sleep` loop.)
+
+- **Before you drop your `implemented`/`done` report and stop, leave nothing running.** No background
+  Bash jobs, no watchers, no daemons, no poll loops that you started. If you did start something in the
+  background, wait for it to finish or kill it and its children first. Going idle with a live process
+  behind you reads to the coordinator as "still working."
+
+This is not optional politeness. The coordinator now **force-closes** a worker that stays busy too long
+past its report — it SIGTERMs the session (which reaps your leaked process group with it) rather than
+waiting for hours. A backgrounded test suite whose daemon outlived it is exactly what stalled the
+usage-limits run for hours on both its implementer and its reviewer; a clean, idle hand-off is what
+prevents it.
+
 ## After you implement, you hand off — you do not review your own work
 
 When `pir-implement Txx` finishes and the task is marked `🔍`, **drop a report that Txx is
