@@ -76,13 +76,22 @@ moment it happens — an ISO timestamp, then the action tag and its task or bran
 not the first token. The tags: `open-feature`, `spawn`, `answer` (the bin has queued the user's
 answer for `Txx` to the outbox — deliver it, step 3), `send-failed` (a down-send to `Txx` could not be
 delivered — step 3), `hands-on` (the bin has spawned a `you`/hands-on worker for `Txx` that needs a
-person — act on it, step 4), `review`, `await-idle`, `merge`, `surface`, `close`, `halt-close`, `promote`,
+person — act on it, step 4), `review`, `await-idle`, `force-idle`, `merge`, `surface`, `close`, `halt-close`, `promote`,
 `teardown`, and `ceiling full`. There is **no `hello`** — the spawn ping was retired (T30); a worker
 builds from its spawn prompt, and the first message you ever send it is its answer, only if it parks.
-**`await-idle` is internal bin bookkeeping**, not
-an event for you: the bin is holding a hand-off until a worker finishes its current turn (never a stall).
-Do not react to it, narrate it, or spend a turn on it — if the only new flow lines since your last read
-are `await-idle`, keep waiting silently. A new `surface Txx` line is your cue that a decision for `Txx` is waiting. (A `you`/hands-on task is the
+**A short run of `await-idle` is internal bin bookkeeping**, not an event for you: the bin is briefly
+holding a hand-off until a worker finishes its current turn. Do not react to it, narrate it, or spend a
+turn on it — if the only new flow lines since your last read are `await-idle`, keep waiting. But
+**`await-idle` repeating for the same task long after that task reported implemented or done is not a
+normal hold**: the worker has finished its work yet its session will not go idle, almost always because
+it left a background process running (a test suite's daemon, a file-watcher, an `until … sleep` poll
+loop). It is **not** a permission prompt — workers run in an auto-approve mode and do not stop to ask, so
+do not tell the user to go click something. The bin caps this itself: after a few minutes it emits a
+**`force-idle Txx`** line and forces the hand-off, SIGTERMing the stuck session (which reaps the leaked
+process with it). Unlike `await-idle`, **`force-idle` IS an event for you** — tell the user in plain
+English that Txx's worker was force-ended because it had left something running in the background, so
+they know why that session was killed and can look at the leftover process if it recurs. This applies to
+review sessions exactly as to implement sessions. A new `surface Txx` line is your cue that a decision for `Txx` is waiting. (A `you`/hands-on task is the
 one thing that needs the user but never emits a `surface` — its cue is the `hands-on Txx` line instead,
 step 4; do not sit waiting for a `surface` that a `you` task will never send.) You do not need
 the bin to echo the decision text, because the bin writes each parked worker's message — already
@@ -99,7 +108,7 @@ files for two different reasons; do not conflate them:
 
 Re-read the flow log on a short cadence (≈15s); prefer the Monitor tool over a hand-rolled `sleep` of
 guessed length. **Arm the Monitor to wake on a MILESTONE line appearing** — a new `spawn`, `answer`,
-`send-failed`, `hands-on`, `review`, `merge`, `surface`, `close`, `halt-close` or `promote` line — **not on the log merely growing**,
+`send-failed`, `hands-on`, `review`, `force-idle`, `merge`, `surface`, `close`, `halt-close` or `promote` line — **not on the log merely growing**,
 so an `await-idle` line (internal bookkeeping, above) never wakes you into a no-op turn. On the
 human-decision live run an until-condition on bare growth woke the coordinator four times just to say
 "still holding" while the bin waited out two hand-offs.
