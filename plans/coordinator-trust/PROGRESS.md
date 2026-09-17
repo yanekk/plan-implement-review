@@ -10,11 +10,12 @@ past.
 **Plan reviewed:** not yet — run `/pir-review-plan coordinator-trust` before the first `/pir-work`.
 
 **Status:** Plan written 2026-09-17, no code yet. It fixes the parallel coordinator's blind spot
-for hand-driven tasks (the fault that killed the `my-ender/print-vision` run) plus two related
-faults: a fire-and-forget down-send and an off-convention coordinator name. Scope settled with the
-user: real completion signal plus guardrails, full hardening pass. Modifies the parallel-pir
-engine, the coordinator/verify skills, and `/docs`.
-**Last updated:** 2026-09-17
+for hand-driven tasks (the fault that killed the `my-ender/print-vision` run) plus three related
+faults: a fire-and-forget down-send, an off-convention coordinator name, and a coordinator that
+goes idle and never delivers a queued answer (T08, §2.8, folded in 2026-09-17 after the same run
+froze a second time). Scope settled with the user: real completion signal plus guardrails, full
+hardening pass. Modifies the parallel-pir engine, the coordinator/verify skills, and `/docs`.
+**Last updated:** 2026-09-17 (T08 delivery-heartbeat folded in)
 **Next `pir-work` will:** refuse — the plan is not reviewed. Run `/pir-review-plan coordinator-trust`
 first. After review, the first buildable work is T02 or T03 (no dependencies) or the T00 spike (a
 `you` task the user drives).
@@ -36,12 +37,14 @@ observation is the result.
 | T04 | pir-verify writes the attestation | auto | T02 | ⬜ | The `done` report carries `machine:`/`person:`, matching T02's parser. `machine: none` for a pure look-check. |
 | T05 | pir-coordinate guardrails, receipt loop, name check | auto | T00, T02, T03 | ⬜ | Read `verified` as trusted; never create HALT or brand a merge fraud; confirm/retry/surface a down-send; startup name check via T03. |
 | T06 | Update /docs | auto | T01, T02, T03 | ⬜ | The four changed behaviours as current behaviour across human-flow, run-lifecycle, task-state, control-folder, README. parallel-pir DESIGN sealed, untouched. |
-| T07 | Capstone live drill | you | T01, T04, T05, T06 | ⬜ | User + live sessions: hands-on task completes without a halt; down-send received with no prompt and confirmed; slashed name caught at startup. ✅ FINDINGS row. |
+| T08 | Coordinator delivery heartbeat | auto | T02, T05, T06 | ⬜ | Harness-driven heartbeat delivers a queued answer even when the event watch is deaf or the coordinator idle. `delivered` feed + `deliver-overdue` tag; idempotent send. §2.8. |
+| T07 | Capstone live drill | you | T01, T04, T05, T06, T08 | ⬜ | User + live sessions: hands-on task completes without a halt; down-send received with no prompt and confirmed; answer reaches parked worker with no manual ping on the heartbeat; slashed name caught at startup. ✅ FINDINGS row. |
 
 **Coordinator queues (dependencies drive dispatch, not phase order):**
 - First wave (no dependencies): T02 (auto), T03 (auto), T00 (you). T01 unblocks when T00 is ✅.
 - T04 unblocks on T02; T05 on T00+T02+T03; T06 on T01+T02+T03.
-- T07 (you) unblocks when T01, T04, T05 and T06 are all ✅ — the live proof, last.
+- T08 unblocks on T02+T05+T06 — the delivery heartbeat, built on the receipt loop and after the doc pass.
+- T07 (you) unblocks when T01, T04, T05, T06 and T08 are all ✅ — the live proof, last.
 
 ## Blocked on the user
 

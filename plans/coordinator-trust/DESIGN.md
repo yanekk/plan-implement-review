@@ -166,12 +166,47 @@ its malformed name was never a message target. It is a latent trap: the exact ch
 breaks addressing, sitting in the identity the operator sees and any future down-addressing would
 use.
 
-The fix is a startup check. When `/pir-coordinate` starts, it validates its own session name
-against the convention for this repo and plan; a name with a `/`, or one that does not parse to a
-coordinator name for this slug, is caught then and there, with the correct name to relaunch
-under, before any worker is spawned. Reason: an off-convention name is cheap to catch at the
-start and expensive to discover later; catching it at launch turns a latent trap into a
-one-line correction.
+The fix is a startup check enforced by the engine, not left to the coordinator to remember. When
+`/pir-coordinate` starts, the bin reads its own session name — it matches `$CLAUDE_CODE_SESSION_ID`
+against the `sessionId` field in `claude agents --json`, which carries the `name` (FINDINGS
+2026-09-17) — and validates it against the convention for this repo and plan (the pure validator,
+T03). A name with a `/`, or one that does not parse to a coordinator name for this slug, makes the
+bin refuse to launch, printing the correct name to relaunch under, before any worker is spawned.
+Reason: an off-convention name is cheap to catch at the start and expensive to discover later;
+catching it at launch turns a latent trap into a one-line correction. It is machine-enforced
+rather than a skill instruction for the same reason the completion signal is machinery and not
+more prose (§7, decision 1): a safety check the coordinator can skip is one it will skip, and the
+harm here is low but the cost of enforcing it is a few lines and a unit test (user, 2026-09-17).
+
+### 2.8 The coordinator's delivery of a decision does not depend on it staying awake
+
+§2.5 hardens the down-send once the coordinator makes it: confirmed, retried, or surfaced. But
+that loop only runs if the coordinator first notices there is an answer to send. Today it notices
+by watching the flow log for the `answer Txx` line the bin writes when it queues a decision
+(`/docs`, the down-channel). That watch is the coordinator's own, kept alive turn to turn, and it
+fails silently: a watch armed as a buffering pipe never fires, a watch hits its time cap and is
+not re-armed, or the session simply goes idle between turns with nothing to wake it. When it
+fails, the queued decision sits in the outbox undelivered and the parked worker waits forever —
+until a person messages the coordinator by hand, which wakes it and it delivers on the next read.
+This is the freeze that stranded the `my-ender/print-vision` run a second time, after the restart:
+the answer was queued, the coordinator was asleep, and nothing woke it.
+
+The rule: delivery is guaranteed by a clock the coordinator cannot forget to wind, not by a watch
+it must keep alive. The coordinator arms a heartbeat — a wake on a fixed cadence the harness
+drives, not a filter over a growing file — and on every wake, event-driven or heartbeat, it
+delivers every outbox line it has not yet delivered. A single event watch going deaf then costs at
+most one heartbeat interval, never the whole run, because the heartbeat re-reads the outbox
+regardless of whether any event fired. Reason: an idle model session is not a reliable watcher,
+and two earlier fixes that told it to watch more carefully both regressed; the fix that holds is
+to stop depending on the watch and add a wake that fires on its own.
+
+For this to be safe the coordinator must send only what is still outstanding, so a heartbeat that
+fires when everything is already delivered sends nothing and no decision is delivered twice. The
+coordinator records which outbox lines it has delivered (§3.6), keeping the send idempotent across
+its own re-wakes, and the engine can see an answer queued but not yet acknowledged and mark it
+overdue in the flow log, so a stuck delivery is visible rather than silent. This does not replace
+the event watch or the receipt loop (§2.5); it is the floor under both — the fast path still
+delivers in seconds, the heartbeat only catches what the fast path missed.
 
 ---
 
@@ -220,7 +255,12 @@ Placing this plan's changes on the boundary:
 - `skills/pir-verify/SKILL.md` — write the attestation into the `done` report. (T04)
 - `skills/pir-coordinate/SKILL.md` — the guardrails (§2.3, §2.4), the receipt loop (§2.5), the
   startup name check (§2.7), and reading the `verified` signal (§2.1). (T05)
-- `docs/*.md` — reflect all of the above as current behaviour. (T06)
+- `src/shell/coordinate.mjs` — record the coordinator's delivery acknowledgements, compute which
+  queued answers are overdue, and emit the overdue flow-log line. (T08)
+- `skills/pir-coordinate/SKILL.md` — arm the heartbeat wake and deliver every outbox line not yet
+  acknowledged on each wake, idempotently. (T08)
+- `docs/*.md` — reflect all of the above as current behaviour (T06); the `delivered` feed, the
+  `deliver-overdue` tag and the down-channel liveness line land after it (T08).
 
 ### 3.3 The attestation shape
 
@@ -261,6 +301,31 @@ flow log (`plans/{slug}/.parallel/control/log`) and the surfaced feed
 coordinator's read surface (`/docs/control-folder.md`). Nothing here rides the feature branch to
 `main`.
 
+### 3.6 The delivery cursor and the overdue signal (§2.8)
+
+The heartbeat needs one small piece of state: which outbox lines the coordinator has already
+delivered, so a wake with nothing new to send sends nothing. This is a transient control-folder
+file the coordinator appends to after each successful `SendMessage`, sitting beside the outbox it
+tracks. The engine reads it to compute the overdue set — outbox lines the bin has queued
+(`answer Txx` logged) that carry no matching acknowledgement after a grace window — and writes a
+`deliver-overdue Txx` line to the flow log for each, so a stuck delivery is a visible event, not a
+silence. What is machine-testable is that overdue computation: a pure function over the queued
+answers and the acknowledgements returns exactly the lines still outstanding, and returns nothing
+once every queued line is acknowledged. What only a person can see is the heartbeat actually waking
+an idle coordinator and the send landing (§5.1, T07).
+
+The cursor is transient state, cleared on restart with the other control feeds. The
+`coordinator-restart-resume` plan clears the outbox on startup (its DESIGN §2.7); this cursor must
+be cleared with it, or a fresh outbox read against a stale cursor would skip the first answers of
+the new run. That is a cross-plan touch-point, called out in T08 and to be recorded in FINDINGS
+when built, not a hidden coupling: the two plans share the control folder and the clearing list is
+the seam.
+
+The exact filename, line format and grace window are the implementing session's to finalise
+against the existing control-folder conventions; what DESIGN fixes is that delivery is
+acknowledged, the acknowledgement makes the send idempotent, and an unacknowledged queued answer
+becomes an overdue flow-log line rather than nothing.
+
 ---
 
 ## 4. Testing
@@ -273,7 +338,8 @@ Three layers, and what each proves:
 - **The shell** (`src/shell/*.test.mjs`) proves argv and signal construction without a live
   process: `spawnArgv` carries the permission flag; a crafted verify `done` report is parsed into
   the two confirmations and produces the `verified Txx` line and the feed text; a report with no
-  attestation still completes and marks the signal absent.
+  attestation still completes and marks the signal absent; the overdue-answer computation returns
+  exactly the queued answers still unacknowledged and returns none once every one is acknowledged.
 - **A person, with live sessions**, proves what no test can reach: that a worker in the chosen
   permission mode actually accepts a message with no approval prompt (T00, T07); that a
   hand-driven task's completion signal reaches the coordinator and it does not halt (T07); that a
@@ -326,6 +392,7 @@ emission and prose. Do not add a library for any of it.
 | The sender observes a delivery/receipt notice it can key on | Only visible in a live cross-session exchange (T00). |
 | A hand-driven task's `verified` signal reaches the coordinator and it does not halt | Needs a live coordinator + a live verify worker + the person driving the task (T07). |
 | A slashed coordinator name is caught at startup | The name check reads the live session's own name, which only exists in a real session (T07). |
+| A queued decision reaches a parked worker with no person pinging the coordinator, even after it has gone quiet | Only a live coordinator that has actually gone idle can show the heartbeat waking it and delivering; a passing test cannot make a real session oversleep (T07). |
 
 ### 5.2 Seatbelts
 
@@ -376,6 +443,21 @@ drill.
   also auto-accepts cross-session message *delivery* (a separate gate from tool permissions) is
   not in the help text. Guessing wrong changes the spawn argv and the receipt-loop wording, so it
   is load-bearing enough to be T00.
+- **The delivery-liveness fix folds in here, not into a new plan (user, 2026-09-17).** After this
+  plan was written, the same run froze a second time from a distinct fault: the coordinator went
+  idle and never woke to deliver a queued answer (§2.8). It is the same theme — the coordinator's
+  view of and reach to its workers — and its natural home is §2.5's down-channel, so it is added
+  here (T08) rather than started as a third overlapping coordinator plan while this one is still
+  unreviewed.
+- **A reliable clock, not a symmetric mailbox (user, 2026-09-17).** The obvious "remove the two
+  mechanisms" fix is to make the down-channel a mailbox the worker watches, mirroring the
+  file-drop up-channel. It was considered and rejected: the up-channel is reliable because an
+  always-running program — the bin — watches it, and a parked worker is an idle session with no
+  such watcher. A worker watching its own mailbox would have to keep a watch alive exactly like
+  the coordinator's failing one, spreading the fragility to every worker and clashing with the
+  idle gate that treats a done worker as one with nothing running. So the coordinator stays the
+  deliverer and the fix makes its wake bulletproof — the smaller change that removes the fault at
+  its root (§2.8, §8).
 
 ## 8. Explicitly out of scope
 
