@@ -87,10 +87,13 @@ normal hold**: the worker has finished its work yet its session will not go idle
 it left a background process running (a test suite's daemon, a file-watcher, an `until … sleep` poll
 loop). It is **not** a permission prompt — workers run in an auto-approve mode and do not stop to ask, so
 do not tell the user to go click something. The bin caps this itself: after a few minutes it emits a
-**`force-idle Txx`** line and forces the hand-off, SIGTERMing the stuck session (which reaps the leaked
-process with it). Unlike `await-idle`, **`force-idle` IS an event for you** — tell the user in plain
-English that Txx's worker was force-ended because it had left something running in the background, so
-they know why that session was killed and can look at the leftover process if it recurs. This applies to
+**`force-idle Txx`** line and forces the hand-off, closing the stuck session. That unblocks the run but
+does **not** clean up: a background process the worker left — a daemon especially — can detach and
+survive the session's death, orphaned to init (the usage-limits `cockpitd` daemons outlived their
+sessions by 8+ hours). Unlike `await-idle`, **`force-idle` IS an event for you** — tell the user in plain
+English that Txx's worker was force-ended because it had left something running in the background, that
+the leftover process **may still be running** and can be checked with `pgrep`/`ps` and killed if so, and
+that it will recur until the worker-side fix (run the suite in the foreground) lands. This applies to
 review sessions exactly as to implement sessions. A new `surface Txx` line is your cue that a decision for `Txx` is waiting. (A `you`/hands-on task is the
 one thing that needs the user but never emits a `surface` — its cue is the `hands-on Txx` line instead,
 step 4; do not sit waiting for a `surface` that a `you` task will never send.) You do not need
@@ -150,6 +153,24 @@ and does **not** mean the bin died — the bin is that `node` process, still run
 is alive, confirm once with `pgrep -fl "coordinate.mjs {slug}"`, and never launch a second bin on the
 same plan. (On the review-queue live run a doubly-backgrounded launch read as a death and cost a
 reassurance step; a jumpier coordinator could have started a second bin.)
+
+**Keep exactly one flow-log watch armed — replace it, never stack it, and stop it when you stop.** A
+Monitor watch expires at its 30-minute cap and must be re-armed to keep watching overnight or across a
+long user block; re-arming is fine, **stacking is the leak**. Hold the task id of your current watch, and
+before you arm a new one — for any reason — `TaskStop` the old one; never arm a second watch of the same
+thing while the first is live. When the run ends (`promote`/`halt-close`), or you stop for any reason,
+`TaskStop` every watch you armed. A coordinator that re-armed a fresh never-exiting watch on each expiry
+without stopping the prior one left **16 background watch tasks still running** when its session ended —
+the usage-limits overnight hold stacked 14 generations of the same log-watcher plus two worker-status
+pollers — which greeted the next session as "background shell command tasks that didn't finish." One
+watch, replaced not stacked, torn down at the end.
+
+**Run any test suite you run yourself in the FOREGROUND, never as a background task.** When you verify
+the merged tree or the feature branch before promote, run the suite and wait for it — do not background
+it. A suite that starts a daemon only tears it down when it exits normally; background it and the daemon
+is orphaned to init and outlives your session, exactly as a worker's does (the usage-limits `cockpitd`
+daemons ran 8+ hours past their sessions). This is the same rule the `pir-worker` skill puts on workers;
+it binds the coordinator too.
 
 Start the bin once and leave it running. Then, while it runs, on every turn:
 

@@ -147,15 +147,21 @@ So two rules bind every worker — implement, review and verify alike:
   fire-and-forget. If you genuinely must background something, use Monitor, never a naked `sleep` loop.)
 
 - **Before you drop your `implemented`/`done` report and stop, leave nothing running.** No background
-  Bash jobs, no watchers, no daemons, no poll loops that you started. If you did start something in the
-  background, wait for it to finish or kill it and its children first. Going idle with a live process
-  behind you reads to the coordinator as "still working."
+  Bash jobs, no watchers, no daemons, no poll loops that you started. Going idle with a live process
+  behind you reads to the coordinator as "still working." The reliable way to leave nothing running is
+  the rule above: run the suite in the FOREGROUND and let it exit, so its own `trap … EXIT` cleanup fires.
+  If you must kill something, **do not `pkill -9` the wrapper script** — SIGKILL cannot be trapped, so the
+  script dies without running its cleanup and its daemons are orphaned to init, where they outlive your
+  session entirely. Kill the actual daemon it started, or send a catchable signal, or just let the script
+  finish.
 
-This is not optional politeness. The coordinator now **force-closes** a worker that stays busy too long
-past its report — it SIGTERMs the session (which reaps your leaked process group with it) rather than
-waiting for hours. A backgrounded test suite whose daemon outlived it is exactly what stalled the
-usage-limits run for hours on both its implementer and its reviewer; a clean, idle hand-off is what
-prevents it.
+This is not optional politeness, and the coordinator cannot clean up after you. It now **force-closes** a
+worker that stays busy too long past its report — but that only ends your session and unblocks the run;
+it does **not** reliably kill what you left running. A daemon that detached from your session survives its
+death (the usage-limits `cockpitd` daemons ran 8+ hours past their sessions, as orphans of init, until
+killed by hand). A backgrounded test suite whose daemon outlived it is exactly what stalled that run for
+hours on both its implementer and its reviewer, and left the daemons behind afterwards. A foreground run
+that exits cleanly, leaving nothing behind, is the only thing that prevents both.
 
 ## After you implement, you hand off — you do not review your own work
 
