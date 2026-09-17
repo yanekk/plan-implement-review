@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, renameSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, renameSync, rmSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -13,6 +13,9 @@ import {
   canPromoteHere,
   runawayVerdict,
   gitRun,
+  clearTransientFeeds,
+  startupControlHygiene,
+  fileControl,
 } from './coordinate.mjs';
 import { createMessaging } from './platform.mjs';
 import { createFakePlatform } from './fake/platform.mjs';
@@ -601,4 +604,111 @@ test('recordSurface appends the rendered surface as a JSON line for the skill to
   assert.equal(lines.length, 2);
   assert.deepEqual(lines.map((l) => l.task), ['T01', 'T02']);
   assert.match(lines[0].message, /needs a decision from you/);
+});
+
+// --- T04: control-folder cleanup on restart (DESIGN §2.7, §7) ---------------------------------
+
+// Seed a control folder that already holds a dead run's leftovers: a reports/ drop-dir with two report
+// files, and the three append-only feeds carrying a stale line each. Returns the dir.
+function seedControl() {
+  const dir = mkdtempSync(join(tmpdir(), 'pir-control-'));
+  const reportsDir = join(dir, 'reports');
+  mkdirSync(reportsDir, { recursive: true });
+  writeFileSync(join(reportsDir, '001.json'), JSON.stringify({ from: 'w', text: 'stale report' }));
+  writeFileSync(join(reportsDir, '002.json'), JSON.stringify({ from: 'w', text: 'stale report 2' }));
+  writeFileSync(join(dir, 'answers'), JSON.stringify({ task: 'T01', text: 'stale answer' }) + '\n');
+  writeFileSync(join(dir, 'outbox'), JSON.stringify({ to: 'w', text: 'stale down' }) + '\n');
+  writeFileSync(join(dir, 'surfaced'), JSON.stringify({ task: 'T01', message: 'stale surface' }) + '\n');
+  return dir;
+}
+
+test('clearTransientFeeds empties reports/ and truncates answers/outbox/surfaced, reporting what it cleared (T04)', (t) => {
+  const dir = seedControl();
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+
+  const { cleared } = clearTransientFeeds(dir);
+
+  assert.deepEqual(
+    readdirSync(join(dir, 'reports')).filter((n) => n.endsWith('.json')),
+    [],
+    'every leftover report *.json is removed',
+  );
+  for (const f of ['answers', 'outbox', 'surfaced']) {
+    assert.equal(readFileSync(join(dir, f), 'utf8'), '', `${f} is truncated to empty`);
+    assert.ok(existsSync(join(dir, f)), `${f} still exists (truncated, not deleted, so this run can append)`);
+  }
+  assert.deepEqual(cleared.sort(), ['answers', 'outbox', 'reports/', 'surfaced'], 'it reports the four feeds it cleared');
+});
+
+test('clearTransientFeeds never touches log or HALT (T04)', (t) => {
+  const dir = seedControl();
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  writeFileSync(join(dir, 'log'), '2026-09-17T00:00:00.000Z start\n');
+  writeFileSync(join(dir, 'HALT'), '');
+
+  const { cleared } = clearTransientFeeds(dir);
+
+  assert.equal(readFileSync(join(dir, 'log'), 'utf8'), '2026-09-17T00:00:00.000Z start\n', 'the audit log is preserved');
+  assert.ok(existsSync(join(dir, 'HALT')), 'the kill switch is preserved');
+  assert.ok(!cleared.includes('log') && !cleared.includes('HALT'), 'neither durable record is reported as cleared');
+});
+
+test('clearTransientFeeds is a no-op that does not throw on a fresh control dir (T04)', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'pir-control-fresh-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+
+  let res;
+  assert.doesNotThrow(() => {
+    res = clearTransientFeeds(dir);
+  });
+  assert.deepEqual(res.cleared, [], 'nothing to clear when every feed is absent');
+});
+
+test('a stale answers line is gone after the clear, so it cannot route to a fresh worker (T04)', (t) => {
+  const dir = seedControl();
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  assert.match(readFileSync(join(dir, 'answers'), 'utf8'), /stale answer/, 'precondition: a stale answer is queued');
+
+  clearTransientFeeds(dir);
+
+  assert.equal(readFileSync(join(dir, 'answers'), 'utf8').trim(), '', 'the stale answer is gone');
+});
+
+test('startupControlHygiene refuses a still-HALTed run without clearing HALT or the feeds (T04)', (t) => {
+  const repo = mkdtempSync(join(tmpdir(), 'pir-halt-'));
+  t.after(() => rmSync(repo, { recursive: true, force: true }));
+  const control = fileControl(repo, SLUG);
+  writeFileSync(join(control.dir, 'HALT'), '');
+  writeFileSync(join(control.dir, 'answers'), JSON.stringify({ task: 'T01', text: 'stale' }) + '\n');
+
+  const r = startupControlHygiene(control);
+
+  assert.equal(r.halted, true, 'a present HALT refuses the run');
+  assert.equal(r.flag, control.flag, 'the refusal names the flag path so the person knows what to remove');
+  assert.ok(existsSync(control.flag), 'HALT is left in place — never auto-cleared (§2.7)');
+  assert.match(readFileSync(join(control.dir, 'answers'), 'utf8'), /stale/, 'the feeds are not cleared on a refusal');
+  assert.ok(!existsSync(control.logPath), 'no restart marker is written when the run is refused');
+});
+
+test('startupControlHygiene clears the feeds and appends a restart marker, preserving prior log lines (T04)', (t) => {
+  const repo = mkdtempSync(join(tmpdir(), 'pir-restart-'));
+  t.after(() => rmSync(repo, { recursive: true, force: true }));
+  const control = fileControl(repo, SLUG);
+  mkdirSync(join(control.dir, 'reports'), { recursive: true });
+  writeFileSync(join(control.dir, 'reports', '001.json'), '{"from":"w","text":"stale"}');
+  writeFileSync(join(control.dir, 'answers'), JSON.stringify({ task: 'T01', text: 'stale' }) + '\n');
+  writeFileSync(control.logPath, '2026-09-17T00:00:00.000Z spawn T01\n');
+
+  const r = startupControlHygiene(control);
+
+  assert.equal(r.halted, false, 'no HALT, so the run proceeds');
+  assert.deepEqual(
+    readdirSync(join(control.dir, 'reports')).filter((n) => n.endsWith('.json')),
+    [],
+    'the stale report is cleared',
+  );
+  assert.equal(readFileSync(join(control.dir, 'answers'), 'utf8'), '', 'the stale answer is cleared');
+  const log = readFileSync(control.logPath, 'utf8');
+  assert.match(log, /spawn T01/, 'the prior log line is preserved');
+  assert.match(log, /restart\n$/, 'a restart marker is appended to the log');
 });

@@ -10,10 +10,9 @@ account is the commit message. Whoever writes a cell also fixes the over-budget 
 
 **Plan reviewed:** 2026-09-17 — 2 fixed, 2 decided with the user
 
-**Status:** Building. T01–T03 reviewed and done. T03 review found and fixed one defect (a restart
-re-dispatched a conflicted ✅ branch); next up is T04.
+**Status:** Building. T01–T03 reviewed and done. T04 implemented, awaiting review.
 **Last updated:** 2026-09-17
-**Next `pir-work` will:** implement T04, clearing the transient control feeds and the HALT/log policy.
+**Next `pir-work` will:** review T04 (transient-feed clearing and the HALT refusal at startup).
 
 ## Tasks
 
@@ -25,7 +24,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T01 | `decideResume` pure classifier | auto | — | ✅ | Clean. Four-way classifier, 13 tests, boundary green. |
 | T02 | Read a task branch's committed state | auto | — | ✅ | Clean. Committed-glyph read by ref, null on absence, 9 tests. |
 | T03 | Reconciliation pass in `runPass` | auto | T01, T02 | ✅ | Fixed one defect: a restart re-dispatched a conflicted ✅ branch, clobbering reviewed work (§2.6 violated); now flags it ⛔ and leaves it for a person (user decision). Reproduced against scratch git before fixing; test locks it over 6 passes. Happy paths (merge/review/rebuild/cleanup/reap/summary/first-start/mutation-guard) sound. Accepted deviation: a branch whose worktree is gone is skipped (abnormal). 353 green. |
-| T04 | Clear transient control feeds; HALT/log policy | auto | — | ⬜ | |
+| T04 | Clear transient control feeds; HALT/log policy | auto | — | 🔍 | `clearTransientFeeds` + `startupControlHygiene` (both exported), wired into the live bin after `fileControl`. Refuses a HALTed run naming the flag, never auto-clears it; truncates answers/outbox/surfaced, empties reports/, appends `restart` to log. 6 tests. Deviation: refusal fires on the LIVE path only (dry run makes no control). |
 | T05 | Update `/docs` to the corrected behaviour | auto | T03, T04 | ⬜ | |
 | T06 | Harness restart mode + fixture + facts | auto | T03, T04 | ⬜ | |
 | T07 | Live restart drill, judged by a person | you | T06 | ⬜ | |
@@ -33,7 +32,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 A Notes cell holds what was built or what the review found, the test count, and one line per deviation
 from the task doc. A ✅ task's cell may be cut to one line once the next task has been reviewed.
 
-**Review queue:** empty
+**Review queue:** T04
 
 ## Blocked on the user
 

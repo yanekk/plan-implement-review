@@ -538,7 +538,9 @@ function mainWorktree(cwd) {
   return first ? first.slice('worktree '.length).trim() : '';
 }
 
-function fileControl(repo, slug) {
+// Exported for the T04 startup-hygiene tests, which drive startupControlHygiene against the SAME control
+// object the bin builds live (a temp repo dir stands in for the checkout).
+export function fileControl(repo, slug) {
   const dir = join(repo, 'plans', slug, '.parallel', 'control');
   mkdirSync(dir, { recursive: true });
   const flag = join(dir, 'HALT');
@@ -556,6 +558,73 @@ function fileControl(repo, slug) {
       }
     },
   };
+}
+
+// --- Restart hygiene for the control folder (DESIGN §2.7, §7) ---------------------------------
+//
+// The control folder is reused across a restart. clearTransientFeeds empties the live-run conversation
+// buffers so a dead run's leftovers never route into a fresh run:
+//   reports/ (worker→coordinator up-channel), answers (the person's queued decisions), outbox
+//   (coordinator→worker down-channel), surfaced (the plain-English relay feed).
+// A leftover in any one of them would deliver a stale answer to a fresh worker, replay a stale
+// down-message, or re-relay a stale surface. The two DURABLE records are never touched here — `log` is
+// the audit trail and the harness signal, and `HALT` is the deliberate stop whose whole value is
+// surviving a restart until a person removes it (auto-clearing it would defeat the kill switch, §2.7).
+//
+// Clearing runs on every startup, not only a detected restart: a genuine first start has these feeds
+// empty, so an unconditional clear is safe and needs no restart detection (matches the reconciliation
+// approach in §2.1). The append-only feeds are truncated, not deleted, so their paths still exist for
+// this run to append to; reports/ is a dir of one-file-per-report, so emptying its *.json is the clear.
+// Best-effort per feed: a missing feed is nothing to clear, and no feed's clear may throw the run down.
+// Returns which feeds it actually touched, for the startup log line.
+export function clearTransientFeeds(controlDir) {
+  const cleared = [];
+
+  const reportsDir = join(controlDir, 'reports');
+  try {
+    if (existsSync(reportsDir)) {
+      for (const n of readdirSync(reportsDir)) {
+        if (!n.endsWith('.json')) continue;
+        try {
+          unlinkSync(join(reportsDir, n));
+        } catch {
+          /* vanished under us; nothing to clear for this one */
+        }
+      }
+      cleared.push('reports/');
+    }
+  } catch {
+    /* cannot read the dir — best-effort, leave it */
+  }
+
+  for (const name of ['answers', 'outbox', 'surfaced']) {
+    const p = join(controlDir, name);
+    try {
+      if (existsSync(p)) {
+        writeFileSync(p, '');
+        cleared.push(name);
+      }
+    } catch {
+      /* best-effort; a feed we cannot truncate must not break startup */
+    }
+  }
+
+  return { cleared };
+}
+
+// startupControlHygiene(control) → the restart-hygiene step the bin runs once, before it stands up the
+// loop (DESIGN §2.7, §7). If HALT is still present it is a deliberate stop the person must lift, so this
+// refuses ({ halted:true }) and NEVER clears the flag — auto-clearing would blow a restarted run
+// straight past the kill switch. Otherwise it clears the transient feeds and appends a `restart` marker
+// to the preserved log (the audit-trail boundary between runs), returning what it cleared. Exported so
+// both halves — the refusal and the clear+marker — are unit-tested without the live bin.
+export function startupControlHygiene(control) {
+  if (control.isHalted()) {
+    return { halted: true, flag: control.flag };
+  }
+  const { cleared } = clearTransientFeeds(control.dir);
+  control.log('restart');
+  return { halted: false, cleared };
 }
 
 // waitForReport(reportsDir, timeoutMs) → resolve as soon as anything changes in the reports drop-dir,
@@ -657,6 +726,23 @@ async function main(argv) {
   if (mained.created) console.log(`prepared a local main at HEAD (checkout was on "${mained.from}", which had none).`);
 
   const control = fileControl(root, slug);
+
+  // Restart hygiene (DESIGN §2.7): before this run writes anything, refuse a still-HALTed run (naming
+  // the flag, never clearing it) and clear the dead run's transient feeds so none of its leftovers route
+  // into a fresh worker. Runs before createAgentBridge and the loop, so neither side has written a feed
+  // yet this run. The log and HALT are preserved; a `restart` marker records the boundary.
+  const hygiene = startupControlHygiene(control);
+  if (hygiene.halted) {
+    console.error(
+      `HALT flag present at ${hygiene.flag} — remove it to restart.\n` +
+        `The kill switch is a deliberate stop and is never cleared automatically; a run started past it\n` +
+        `would blow straight through the stop. Delete the flag to let the run start again:\n\n` +
+        `  rm ${hygiene.flag}\n`,
+    );
+    process.exit(1);
+  }
+  if (hygiene.cleared.length) console.log(`cleared stale control feeds from a prior run: ${hygiene.cleared.join(', ')}`);
+
   const bridge = createAgentBridge({ dir: control.dir });
   const platform = createPlatform({ root, transport: bridge.transport });
   const worktree = createWorktree({ root });
