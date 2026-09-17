@@ -94,11 +94,15 @@ const APPEAR_GRACE = 1;
 // live run held T05 ~1h on its implementer and ~4h on its reviewer, both from a backgrounded test suite
 // whose `cockpitd` daemon outlived it, until the run was torn down by hand — and the coordinator's own
 // guess ("paused on a permission prompt?") was wrong, sending the post-mortem the wrong way. Past this
-// cap the loop forces the close, which SIGTERMs the session and so reaps the leaked process group too,
-// and logs a distinct `force-idle` line naming the likely cause. Generous on purpose: a real final
-// commit lands in seconds, so this only ever fires on a genuinely stuck session. The worker-side fix
-// (run the suite in the foreground; leave nothing running before going idle — pir-worker skill) is what
-// stops it happening; this cap only bounds the damage when a worker misbehaves anyway.
+// cap the loop forces the close and logs a distinct `force-idle` line naming the likely cause. This
+// UNBLOCKS THE COORDINATOR — it stops one stuck session holding up the whole run — but it is NOT a
+// cleanup: SIGTERMing the session does NOT reliably kill the leaked process. A daemon that double-forks
+// detaches from the session's process group and reparents to init, so it survives the session's death
+// entirely (the usage-limits `cockpitd` daemons were still running 8+ hours later as pid-1 orphans). The
+// only reliable cleanup is the worker's: run the suite in the FOREGROUND so the test script's own
+// `trap … EXIT` fires and kills its daemons, and leave nothing running before going idle (pir-worker
+// skill). This cap only bounds the coordinator-side stall; it cannot undo a leak the worker left behind.
+// Generous on purpose: a real final commit lands in seconds, so it only ever fires on a stuck session.
 const AWAIT_IDLE_TIMEOUT_MS = 5 * 60 * 1000;
 
 // Rebuild the assignments decideDispatch consumes, matching each tracked task to a live worker BY
@@ -332,7 +336,8 @@ export function runPass({ platform, worktree, repo, slug, maxWorkers, state, con
       }
       // Busy past AWAIT_IDLE_TIMEOUT_MS: a done worker has integrated and committed, so its final commit
       // has long since landed; a session still busy this long past its `done` report is a leftover
-      // background process, not work. Force the merge and close (which SIGTERMs and reaps the leak).
+      // background process, not work. Force the merge and close so the run is not held up. (Closing the
+      // session does not reliably kill a detached daemon — see AWAIT_IDLE_TIMEOUT_MS — it only unblocks.)
       record('force-idle', { task: num, workerId, reason: 'done worker busy past cap — likely a leftover background process; forcing merge and close' });
     }
     t.busySince = undefined;

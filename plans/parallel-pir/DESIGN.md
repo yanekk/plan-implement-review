@@ -175,13 +175,19 @@ The coordinator owns a worker's whole life, and it must be able to end it, not o
   its deliverable, so a session that stays `busy` for more than a few minutes past that signal is almost
   always a leftover background process, not work in flight — a test suite's daemon, a file-watcher, an
   `until … sleep` poll loop the worker left running. Past `AWAIT_IDLE_TIMEOUT_MS` (loop.mjs) the loop
-  stops trusting the flag, forces the hand-off (or the merge-and-close), and logs a `force-idle` line;
-  the SIGTERM reaps the leaked process group with the session. This keeps the rule above — SIGTERM never
-  cuts off work *in flight* — while stopping one stuck session from stalling the whole run: the
-  usage-limits run held T05 ~1h on its implementer and ~4h on its reviewer, both from a backgrounded test
-  suite whose daemon outlived it, until the run was torn down by hand. The worker-side prevention (run
-  the suite in the foreground, leave nothing running before going idle) is in the `pir-worker` skill.
-  Added with the user's go-ahead after the usage-limits post-mortem.
+  stops trusting the flag, forces the hand-off (or the merge-and-close), and logs a `force-idle` line.
+  This UNBLOCKS the coordinator — it keeps the rule above (SIGTERM never cuts off work *in flight*, since
+  a completion-reported worker's deliverable is already committed) while stopping one stuck session from
+  stalling the whole run: the usage-limits run held T05 ~1h on its implementer and ~4h on its reviewer.
+  **But force-idle is not cleanup.** Closing the session does NOT reliably kill the leaked process: a
+  daemon that double-forks detaches from the session's process group and reparents to init, surviving the
+  session's death — the usage-limits `cockpitd` daemons were still running 8+ hours later as pid-1
+  orphans, and a `pkill -9` on the test *script* (rather than letting it exit) had skipped its own
+  `trap … EXIT` and orphaned them in the first place. The reliable cleanup is the worker's: run the suite
+  in the foreground so the script's `trap … EXIT` fires, and leave nothing running before going idle
+  (`pir-worker` skill). The same rule binds the coordinator, which runs the pre-promotion suite itself —
+  in the foreground, never as a background task that would leave a daemon behind when it ends. Added with
+  the user's go-ahead after the usage-limits post-mortem.
 
 **Close exists for three reasons, and all three are why it is first-class rather than an
 afterthought.** Normal end-of-task teardown after a merge; the hard-stop kill switch, which
