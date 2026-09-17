@@ -10,10 +10,10 @@ account is the commit message. Whoever writes a cell also fixes the over-budget 
 
 **Plan reviewed:** 2026-09-17 — 2 fixed, 2 decided with the user
 
-**Status:** Building. T01 reviewed and done. T02 (the task-branch state read) is implemented,
-awaiting review. T03 depends on T01 + T02, so it waits on T02's review.
+**Status:** Building. T01 and T02 reviewed and done. T03 (reconciliation pass in `runPass`)
+is unblocked — its dependencies T01 + T02 are both ✅.
 **Last updated:** 2026-09-17
-**Next `pir-work` will:** review T02, the task-branch state read.
+**Next `pir-work` will:** implement T03, the reconciliation pass in `runPass`.
 
 ## Tasks
 
@@ -22,8 +22,8 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 
 | # | Task | Runs | Depends on | State | Notes |
 |---|---|---|---|---|---|
-| T01 | `decideResume` pure classifier | auto | — | ✅ | Clean, no fix commit. 13 tests cover all four-way cases + mutation guard; boundary green. Probed: null/absent/missing-key all → no entry; unexpected glyph → rebuild (safe); feature ✅/⛔ gate skips; shape matches T03. Numeric sort correct, though tests do not distinguish it from lexicographic for zero-padded ids. |
-| T02 | Read a task branch's committed state | auto | — | 🔍 | `taskBranchState` + `taskWorktreeHandle` on real and fake worktree, wired into both factories. Reads `git show <task-branch>:PROGRESS` via `parseProgress`; null on absent branch, file or row, never throws. 9 tests (5 real-git, 4 fake): four glyphs, absent branch, absent file, no-row, handle present/absent, read-only. No deviations from the task doc. |
+| T01 | `decideResume` pure classifier | auto | — | ✅ | Clean, no fix commit. 13 tests cover the four-way cases and the mutation guard; boundary green. |
+| T02 | Read a task branch's committed state | auto | — | ✅ | Clean, no fix commit. Interface, DESIGN §2.2 read-by-ref, and null-on-absence all hold; 9 tests genuinely assert (read-only test checks the branch tip hash and status). Probed: corrupt/unknown glyph on branch → null → classifier rebuilds (safe); path repo-relative; ⛔ in KNOWN_STATES. No deviations. |
 | T03 | Reconciliation pass in `runPass` | auto | T01, T02 | ⬜ | |
 | T04 | Clear transient control feeds; HALT/log policy | auto | — | ⬜ | |
 | T05 | Update `/docs` to the corrected behaviour | auto | T03, T04 | ⬜ | |
@@ -33,7 +33,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 A Notes cell holds what was built or what the review found, the test count, and one line per deviation
 from the task doc. A ✅ task's cell may be cut to one line once the next task has been reviewed.
 
-**Review queue:** T02
+**Review queue:** empty
 
 ## Blocked on the user
 
