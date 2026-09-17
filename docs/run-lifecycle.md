@@ -16,6 +16,10 @@ mechanics below run without per-task typing.
 2. On the first pass the coordinator opens the **feature branch** `pir/{plan}` off `main`, in its
    own worktree, and works there — the person's main checkout stays on `main` (`openFeature` in
    `worktree.mjs`). See [branch-model.md](branch-model.md).
+3. Still on the first pass, before dispatching, the coordinator **reconciles each task from its own
+   task branch** — a restart adopts in-flight work (merges a finished task, reviews a built one,
+   rebuilds a half-built one) rather than starting over; a genuine first start finds no task
+   branches and reconciles nothing. See [restart-recovery.md](restart-recovery.md).
 
 ## Each pass
 

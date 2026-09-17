@@ -20,6 +20,22 @@ all sessions can address.
 | `answers` | the person's decisions, written by the coordinator skill for the loop to route. |
 | `surfaced` | each parked worker's message, rendered in plain English for the skill to relay. |
 
+## On restart, the transient feeds are cleared
+
+The folder is reused across a restart, so before a fresh run writes anything the coordinator runs
+`startupControlHygiene` (`coordinate.mjs`), which separates the transient feeds from the durable
+records (DESIGN of the restart-resume plan, §2.7):
+
+- **Cleared** — `reports/`, `answers`, `outbox` and `surfaced`. Each is a live-run conversation
+  buffer, and a leftover entry from the dead run would route a stale answer to a fresh worker,
+  replay a stale down-message, or re-relay a stale surface. The clear runs on every startup, not
+  only a detected restart, because a genuine first start has them empty anyway.
+- **Preserved — `log`** (the audit trail and the harness signal): never cleared; a `restart` marker
+  line is appended to mark the boundary between runs.
+- **Preserved — `HALT`** (a deliberate stop): never cleared. A `HALT` present at startup makes the
+  coordinator refuse to start, naming the flag and the `rm` that clears it — see the kill switch
+  below and [restart-recovery.md](restart-recovery.md).
+
 ## Why the two directions differ
 
 Messaging is asymmetric (this was a deliberate change; DESIGN §2.2):
@@ -49,7 +65,9 @@ Every coordinator action appends one line to `log`, tagged by kind: `open-featur
 `hands-on`, `await-idle`, `force-idle`, `review`, `merge`, `answer`, `send-failed`, `close`,
 `halt-close`, `surface`, `promote`, `teardown`, and `ceiling full`. This is the human-readable
 record of what a run did, and the durable signal the test harness reads. A `hands-on {task}` line
-marks a `you` task spawning a hands-on scribe (the `spawn` line drops the role).
+marks a `you` task spawning a hands-on scribe (the `spawn` line drops the role). A restart adds two
+more: a `restart` marker at startup (the boundary between runs) and a `restart-summary` line naming
+what reconciliation adopted — see [restart-recovery.md](restart-recovery.md).
 
 ## The kill switch
 
@@ -60,6 +78,11 @@ resume. A HALT-killed worker's session record, worktree, and branch are delibera
 forensics — removal is reserved for workers that finished normally. `main` is untouched, because
 the only merge to `main` is the promotion and a halt stops before it. To continue, the person
 removes the flag and restarts the coordinator (see [restart-recovery.md](restart-recovery.md)).
+
+The flag is never cleared automatically, and a restart with it still present does not start: at
+startup the coordinator refuses the run, prints the flag path and the `rm` that clears it, and
+exits. Auto-clearing would defeat the interlock — a run started past a live `HALT` would blow
+straight through the stop.
 
 The idle-gate mentioned in [run-lifecycle.md](run-lifecycle.md) is bounded by
 `AWAIT_IDLE_TIMEOUT_MS` (5 minutes, in `loop.mjs`): a finished worker whose session stays `busy`
