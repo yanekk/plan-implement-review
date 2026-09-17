@@ -141,6 +141,11 @@ export function startCoordinator({
     // A merge this pass is a task reaching ✅ on the feature branch (DESIGN §2.9) — what the skill
     // reports to the user as progress.
     const completed = of('merge').map((a) => a.task);
+    // The restart reconciliation's one-line plain-English summary (DESIGN §2.8), emitted only on the
+    // first pass of a run that actually adopted work from git; a genuine first start records none, so
+    // this is null. The skill relays it so the user knows the run resumed rather than started over.
+    const restart = of('restart-summary')[0];
+    const restartSummary = restart ? restart.text : null;
     const closed = of('close').map((a) => ({ task: a.task ?? null, reason: a.reason ?? 'closed' }));
 
     // Ceiling accounting (DESIGN §2.4): if the plan has ready work it could not start because every
@@ -162,6 +167,7 @@ export function startCoordinator({
       youToDrive,
       reviewing,
       completed,
+      restartSummary,
       closed,
       ceilingFull,
       waiting,
@@ -721,6 +727,10 @@ async function main(argv) {
       }
 
       const r = coordinator.pass();
+      // Announce a resume before the pass's own progress (DESIGN §2.8): on a restart the first pass
+      // reconciled from git, and the summary names what it adopted so the run does not look like a fresh
+      // start. Only ever set on the first pass of a run that adopted work.
+      if (r.restartSummary) console.log(`  ↻ ${r.restartSummary}`);
       for (const c of r.completed) console.log(`  ✅ ${c} reached done and merged into the feature branch`);
       for (const y of r.youToDrive) console.log(`  hands-on: go drive worker "${y.worker}" for ${y.task}`);
       // A surfaced decision is written to the `surfaced` feed (the reliable channel the skill reads,

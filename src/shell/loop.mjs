@@ -15,6 +15,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { parseProgress, reconcileTaskRow, progressPathFor } from '../core/progress.mjs';
 import { decideDispatch } from '../core/dispatch.mjs';
+import { decideResume } from '../core/resume.mjs';
 import { workerName, isWorkerOf } from '../core/naming.mjs';
 
 // The phases the loop tracks per task from a worker's own messages plus the lifecycle step it
@@ -31,7 +32,7 @@ const DONE = 'done';
 // loop knows about the worker holding it: its worktree, its live session id, its role and phase,
 // and any parked decision. This is the phase memory §2.8 says the coordinator keeps.
 export function createRunState() {
-  return { feature: null, tasks: {}, closedIds: new Set() };
+  return { feature: null, tasks: {}, closedIds: new Set(), reconciled: false };
 }
 
 // The default kill switch and log for a dry run: never halted, log discarded. The real control.mjs
@@ -133,6 +134,135 @@ function buildAssignments(state, liveList, repo, slug) {
   return assignments;
 }
 
+// reconcile — pass 0, folded into the first pass (DESIGN §2.1, §2.4, §2.5). A restart's in-memory
+// state is empty and the feature-branch PROGRESS.md lags (it only advances a row past ⬜ at merge), so
+// a task built (🔍) or built-and-reviewed (✅) on its own task branch but not merged still reads ⬜ on
+// the feature branch and would be rebuilt from scratch. Git is the ground truth: this reads each task
+// branch's committed glyph (T02), asks the pure classifier (T01) for one action per task, and executes
+// it against the real platform and worktree. It runs once per run, gated on state.reconciled, and is a
+// no-op on a genuine first start because a first start has no task branches to adopt — which is why
+// there is no "am I restarting?" flag anywhere (a flag is a second source of truth that can disagree
+// with git; the presence of task branches cannot). `record` is the runPass logger, so every action
+// reconciliation takes also reaches the flow log the harness reads.
+function reconcile({ platform, worktree, repo, slug, maxWorkers, state, featureProgressPath, record }) {
+  // Reap the dead run's leftover worker sessions FIRST, session-only (DESIGN §2.5). The only crash that
+  // leaves task branches to reconcile is one that skips coordinate.mjs's SIGTERM teardown (which would
+  // have removed the worktrees and branches) — and that same abruptness leaves the dead run's worker
+  // sessions still running. An un-reaped orphan both inflates the live-worker count (tripping the runaway
+  // breaker) and hides from decideDispatch's slot maths (so it would over-spawn). So stop every listed
+  // worker of this slug before adopting anything — close + remove the session record ONLY, NEVER
+  // worktree.remove, because the task branches and worktrees are exactly what the adoption below needs.
+  // Reaped ids go into closedIds so a lingering listing is not recounted against the ceiling.
+  for (const w of platform.list()) {
+    if (!isWorkerOf(w.name, { repo, plan: slug })) continue;
+    platform.close(w.id);
+    platform.remove?.(w.id);
+    state.closedIds.add(w.id);
+  }
+
+  // Read the task list and terminal states from the feature branch, each task's in-flight state from
+  // its own task branch's committed glyph (DESIGN §2.2), and classify (pure, DESIGN §2.3).
+  const featureTasks = parseProgress(readFileSync(featureProgressPath, 'utf8')).tasks;
+  const branchStates = {};
+  for (const t of featureTasks) branchStates[t.num] = worktree.taskBranchState(slug, t.num);
+  const { merge, review, rebuild } = decideResume({ featureTasks, branchStates });
+
+  // merge: fold each built-and-reviewed (✅) branch into the feature branch directly — no worker
+  // session, because the branch is already reviewed (DESIGN §2.5). This mirrors the loop's own
+  // merge-and-reconcile (3d) minus the close, applied in task order. Merges are performed HERE rather
+  // than by seeding a tracked task, because buildAssignments treats a sessionless tracked task as dead
+  // and removes its branch — which would discard exactly the work being adopted (FINDINGS 2026-09-17).
+  // A conflict is surfaced and the branch left untouched — never rebuilt: the work is good, it only
+  // needs a hand to land (DESIGN §2.6).
+  for (const num of merge) {
+    const handle = worktree.taskWorktreeHandle(slug, num);
+    if (!handle) continue; // branch vanished under us; nothing to fold in.
+    const res = worktree.mergeTask(handle.branch);
+    if (res.conflict) {
+      record('surface', { task: num, kind: 'conflict', text: `merge conflict in ${res.files?.join(', ') || 'the feature branch'}` });
+      continue;
+    }
+    const reconciled = reconcileTaskRow(readFileSync(featureProgressPath, 'utf8'), { num, state: '✅', notes: '' });
+    writeFileSync(featureProgressPath, reconciled);
+    worktree.commitFeature(`reconcile ${num} → ✅`);
+    worktree.remove(handle);
+    record('merge', { task: num, branch: handle.branch });
+  }
+
+  // review: hand each built-but-unreviewed (🔍) branch to a FRESH reviewer on its existing worktree and
+  // seed it into run state as a normal reviewing task (worktree, the reviewer's id, role review, phase
+  // reviewing, appear grace), so from the next pass the live loop owns it and reviews and merges it like
+  // any other (DESIGN §2.5). The seeded task has a real, freshly spawned session — never a sessionless
+  // one, or buildAssignments would call it dead and discard the adopted branch. Cap review spawns at the
+  // ceiling: the in-flight bound makes exceeding it unreachable (a 🔍 branch held a live slot at the
+  // crash, and the reap freed it), so the cap fails loud rather than over-spawning (DESIGN §2.5).
+  let reviewSpawns = 0;
+  for (const num of review) {
+    const handle = worktree.taskWorktreeHandle(slug, num);
+    if (!handle) continue;
+    if (reviewSpawns >= maxWorkers) {
+      record('surface', { task: num, kind: 'over-ceiling', text: `reconciliation would spawn more than ${maxWorkers} reviewers — the in-flight bound says this cannot happen` });
+      continue;
+    }
+    const name = workerName({ repo, plan: slug, task: num, role: 'review' });
+    const reviewerId = platform.spawn({ cwd: handle.path, name, phase: 'review' });
+    state.tasks[num] = { worktree: handle, workerId: reviewerId, role: 'review', phase: REVIEWING, grace: APPEAR_GRACE };
+    reviewSpawns += 1;
+    record('review', { task: num, workerId: reviewerId, adopted: true });
+  }
+
+  // rebuild: discard each half-built branch (worktree + branch). The feature row stays ⬜, so the same
+  // pass's normal spawn step re-dispatches a fresh implementer and createTask re-cuts a clean branch off
+  // the feature branch (DESIGN §2.5). Discarding FIRST is what guarantees the retry starts clean rather
+  // than on the leaked half-built branch. Rebuild-clean over salvage is the user's decision (§2.3, §7):
+  // a re-implement from the task doc is correct by construction; adopting a possibly-half-finished branch
+  // risks landing it as done.
+  for (const num of rebuild) {
+    const handle = worktree.taskWorktreeHandle(slug, num);
+    if (handle) worktree.remove(handle);
+    record('rebuild', { task: num });
+  }
+
+  // cleanup: a task already merged (feature ✅) whose task branch was never removed — the merge landed
+  // but close did not run before the crash. Remove the leftover worktree/branch so restarts do not leave
+  // orphaned branches accumulating (DESIGN §2.6). decideResume skips feature-✅ tasks, so this is a
+  // separate sweep over the ORIGINAL feature states (a task merged just above was ⬜ at restart, so it is
+  // not swept, and its branch was already removed by its merge).
+  for (const t of featureTasks) {
+    if (t.state !== '✅') continue;
+    const handle = worktree.taskWorktreeHandle(slug, t.num);
+    if (handle) {
+      worktree.remove(handle);
+      record('cleanup', { task: t.num, branch: handle.branch });
+    }
+  }
+
+  // Narrate the restart in one plain-English line (DESIGN §2.8). A resumed run is otherwise
+  // indistinguishable from a fresh one in the coordinator's output, yet resume-not-rebuild is exactly
+  // what the live drill (T07) has a person judge. Only an ADOPTION counts as a resume: a first start
+  // adopts nothing (every branch absent), so it emits no summary and a first run's output is unchanged.
+  // The never-started tasks are named as "starting fresh" only when something was adopted alongside them.
+  const started = featureTasks
+    .filter((t) => t.state === '⬜' && branchStates[t.num] == null)
+    .map((t) => t.num);
+  if (merge.length + review.length + rebuild.length > 0) {
+    const parts = [];
+    if (merge.length) parts.push(`merged ${merge.join(', ')} (already finished)`);
+    if (review.length) parts.push(`sent ${review.join(', ')} to review (already built)`);
+    if (rebuild.length) parts.push(`rebuilding ${rebuild.join(', ')} (only half-built)`);
+    if (started.length) parts.push(`starting ${started.join(', ')} fresh`);
+    record('restart-summary', {
+      text: `Restarted and reconciled from git: ${parts.join('; ')}.`,
+      merged: merge,
+      reviewed: review,
+      rebuilt: rebuild,
+      started,
+    });
+  }
+
+  state.reconciled = true;
+}
+
 // runPass — one turn of the loop. Gathers, decides, executes, and returns the structured actions it
 // took plus a human log and the counts drain needs to know when to stop. `state` carries the phase
 // memory across passes; the platform, worktree, control and runTests are injected.
@@ -162,6 +292,16 @@ export function runPass({ platform, worktree, repo, slug, maxWorkers, state, con
     record('open-feature', { branch: state.feature.branch });
   }
   const featureProgressPath = join(state.feature.path, progressPathFor(slug));
+
+  // 0.5 Reconcile from git once, before the first dispatch (DESIGN §2.1, §2.4). A no-op on a genuine
+  // first start (no task branches to adopt); on a restart it reaps the dead run's leftover sessions,
+  // merges ✅ branches, hands 🔍 branches to fresh reviewers, and discards half-built ones — so the loop
+  // below runs over a state that matches git. closedIds may be absent on a hand-built state; ensure it
+  // before the reap writes to it.
+  state.closedIds ??= new Set();
+  if (!state.reconciled) {
+    reconcile({ platform, worktree, repo, slug, maxWorkers, state, featureProgressPath, record });
+  }
 
   // 1. Gather. list() is the fake's tick, so it is called exactly once and its result reused.
   const halted = control.isHalted();

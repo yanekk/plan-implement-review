@@ -16,9 +16,9 @@ import {
 } from './coordinate.mjs';
 import { createMessaging } from './platform.mjs';
 import { createFakePlatform } from './fake/platform.mjs';
-import { createFakeWorktree } from './fake/worktree.mjs';
+import { createFakeWorktree, git } from './fake/worktree.mjs';
 import { workerName, coordinatorName } from '../core/naming.mjs';
-import { progressPathFor } from '../core/progress.mjs';
+import { progressPathFor, reconcileTaskRow } from '../core/progress.mjs';
 
 // The dry-run seatbelt (DESIGN §5.2): the coordinator is handed fakes and a scratch repo, so nothing
 // here reaches a real agent or the real project. Every test below drives the SAME startCoordinator the
@@ -553,6 +553,42 @@ test('reports drain in name order and a torn/malformed report is dropped, never 
   // The consumed reports and the malformed .json are gone; a non-report file is untouched.
   assert.deepEqual(readdirSync(bridge.reportsDir), ['4-note.txt']);
   assert.equal(bridge.transport.drain().length, 0, 'nothing left to drain');
+});
+
+// --- 17. T03: the restart reconciliation summary is exposed for the bin to relay (DESIGN §2.8) -----
+
+// Seed a task branch at a committed glyph, as a crashed run would have left it (mirrors loop.test's
+// helper): cut the branch+worktree off the feature branch and commit its own PROGRESS.md row at glyph.
+function seedBranch(worktree, slug, num, glyph, { file } = {}) {
+  const wt = worktree.createTask(slug, num);
+  const p = join(wt.path, progressPathFor(slug));
+  writeFileSync(p, reconcileTaskRow(readFileSync(p, 'utf8'), { num, state: glyph, notes: '' }));
+  if (file) writeFileSync(join(wt.path, file), `work ${num}\n`);
+  git(wt.path, ['add', '-A']);
+  git(wt.path, ['commit', '-m', `${num}: seed ${glyph}`, '--no-edit']);
+  return wt;
+}
+
+test('a restart run exposes a plain-English reconciliation summary from pass(), for the bin to relay (T03)', (t) => {
+  const worktree = createFakeWorktree({ progress: progressDoc([{ num: 'T01' }, { num: 'T02' }, { num: 'T03' }]), slug: SLUG });
+  t.after(() => worktree.cleanup());
+  worktree.openFeature(SLUG);
+  seedBranch(worktree, SLUG, 'T01', '✅', { file: 'work-T01.txt' });
+  seedBranch(worktree, SLUG, 'T02', '🔍', { file: 'work-T02.txt' });
+  seedBranch(worktree, SLUG, 'T03', '🟡', { file: 'work-T03.txt' });
+  const platform = createFakePlatform({});
+  const coordinator = startCoordinator({ slug: SLUG, repo: REPO, platform, worktree, maxWorkers: 3 });
+
+  const r = coordinator.pass();
+  assert.ok(r.restartSummary, 'the first pass of a restart returns a plain-English summary the bin prints');
+  assert.match(r.restartSummary, /merged T01/);
+  assert.match(r.restartSummary, /T02 to review/);
+  assert.match(r.restartSummary, /rebuilding T03/);
+});
+
+test('a genuine first start exposes no reconciliation summary from pass() (T03)', (t) => {
+  const { coordinator } = setup(t, [{ num: 'T01' }]);
+  assert.equal(coordinator.pass().restartSummary, null, 'a first start adopts nothing, so it has no summary');
 });
 
 test('recordSurface appends the rendered surface as a JSON line for the skill to relay (T25)', (t) => {
