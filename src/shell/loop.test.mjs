@@ -704,6 +704,25 @@ test('restart with a ✅ branch whose merge conflicts: the conflict is surfaced 
   assert.ok(worktree.branchExists(`pir/${SLUG}-T01`), 'the branch is left untouched for a person to land');
 });
 
+test('restart with a ✅ branch whose merge conflicts: it is flagged ⛔ and NEVER re-dispatched over later passes; its dependent waits (user decision 2026-09-17)', (t) => {
+  // Reverting the ⛔ mark reddens this: without it the ⬜ row is seen as ready and a fresh implementer
+  // clobbers the reviewed work on the very same pass (reproduced 2026-09-17). T02 depends on T01, so it
+  // must not start while T01 is unresolved.
+  const { platform, worktree, base } = setup(t, [{ num: 'T01' }, { num: 'T02', deps: ['T01'] }], { files: { 'greeting.txt': 'base\n' } });
+  worktree.openFeature(SLUG);
+  seedBranch(worktree, SLUG, 'T01', '✅', { file: 'greeting.txt', content: 'T01 version\n' });
+  writeFileSync(join(worktree.feature.path, 'greeting.txt'), 'feature version\n');
+  worktree.commitFeature('sibling change on the feature branch');
+
+  const state = createRunState();
+  for (let i = 0; i < 6; i++) runPass({ ...base, state });
+
+  assert.match(worktree.progressOn(`pir/${SLUG}`), /\|\s*T01\s*\|.*⛔/, 'T01 is flagged ⛔ on the feature branch, not left ⬜');
+  assert.equal(platform.spawns.filter((s) => s.task === 'T01').length, 0, 'no implementer or reviewer is ever spawned for the conflicted branch');
+  assert.ok(worktree.branchExists(`pir/${SLUG}-T01`), 'the reviewed branch is still there for a person to land');
+  assert.equal(platform.spawns.filter((s) => s.task === 'T02').length, 0, 'the dependent T02 waits behind the blocked T01');
+});
+
 test('restart cleans up a leftover task branch whose task is already ✅ on the feature branch', (t) => {
   const { platform, worktree, base } = setup(t, [{ num: 'T01', state: '✅' }]);
   worktree.openFeature(SLUG);

@@ -173,19 +173,32 @@ function reconcile({ platform, worktree, repo, slug, maxWorkers, state, featureP
   // than by seeding a tracked task, because buildAssignments treats a sessionless tracked task as dead
   // and removes its branch — which would discard exactly the work being adopted (FINDINGS 2026-09-17).
   // A conflict is surfaced and the branch left untouched — never rebuilt: the work is good, it only
-  // needs a hand to land (DESIGN §2.6).
+  // needs a hand to land (DESIGN §2.6). It is ALSO marked ⛔ on the feature row so the coordinator does
+  // not re-grab it: unlike the loop's own 3d conflict path, reconciliation has no live worker to park
+  // (the session died in the crash), so a ⬜ row left behind would be seen as ready by decideDispatch
+  // and re-implemented on the very same pass — clobbering the reviewed work the design says to preserve
+  // (reproduced 2026-09-17). ⛔ is skipped by both decideDispatch (not ⬜) and decideResume (feature
+  // ✅/⛔), so the branch is left untouched for a person to land and its dependents wait (§2.7). The run
+  // cannot promote until the person resolves it. User decision 2026-09-17 (flag needs-a-person, continue).
+  const merged = [];
+  const conflicted = [];
   for (const num of merge) {
     const handle = worktree.taskWorktreeHandle(slug, num);
     if (!handle) continue; // branch vanished under us; nothing to fold in.
     const res = worktree.mergeTask(handle.branch);
     if (res.conflict) {
       record('surface', { task: num, kind: 'conflict', text: `merge conflict in ${res.files?.join(', ') || 'the feature branch'}` });
+      const blocked = reconcileTaskRow(readFileSync(featureProgressPath, 'utf8'), { num, state: '⛔', notes: '' });
+      writeFileSync(featureProgressPath, blocked);
+      worktree.commitFeature(`reconcile ${num} → ⛔ (merge conflict, needs a hand)`);
+      conflicted.push(num);
       continue;
     }
     const reconciled = reconcileTaskRow(readFileSync(featureProgressPath, 'utf8'), { num, state: '✅', notes: '' });
     writeFileSync(featureProgressPath, reconciled);
     worktree.commitFeature(`reconcile ${num} → ✅`);
     worktree.remove(handle);
+    merged.push(num);
     record('merge', { task: num, branch: handle.branch });
   }
 
@@ -245,17 +258,21 @@ function reconcile({ platform, worktree, repo, slug, maxWorkers, state, featureP
   const started = featureTasks
     .filter((t) => t.state === '⬜' && branchStates[t.num] == null)
     .map((t) => t.num);
-  if (merge.length + review.length + rebuild.length > 0) {
+  // `merged` is what actually folded in, not decideResume's merge list — a ✅ branch that hit a conflict
+  // was blocked (⛔), not merged, and is narrated as needing a hand rather than falsely as merged.
+  if (merged.length + review.length + rebuild.length + conflicted.length > 0) {
     const parts = [];
-    if (merge.length) parts.push(`merged ${merge.join(', ')} (already finished)`);
+    if (merged.length) parts.push(`merged ${merged.join(', ')} (already finished)`);
     if (review.length) parts.push(`sent ${review.join(', ')} to review (already built)`);
     if (rebuild.length) parts.push(`rebuilding ${rebuild.join(', ')} (only half-built)`);
+    if (conflicted.length) parts.push(`${conflicted.join(', ')} need a hand to land (finished but clash with a neighbour)`);
     if (started.length) parts.push(`starting ${started.join(', ')} fresh`);
     record('restart-summary', {
       text: `Restarted and reconciled from git: ${parts.join('; ')}.`,
-      merged: merge,
+      merged,
       reviewed: review,
       rebuilt: rebuild,
+      blocked: conflicted,
       started,
     });
   }
