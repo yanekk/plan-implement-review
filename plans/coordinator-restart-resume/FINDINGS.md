@@ -11,6 +11,7 @@ user changed.
 
 | Date | | Finding |
 |---|---|---|
+| 2026-09-17 | 🐞 | reconcile left a conflicted ✅ branch at feature-⬜ with no live worker to park it, so decideDispatch re-implemented it the same pass, clobbering reviewed work (§2.6). Now marked ⛔ (skipped by dispatch and resume), branch kept for a person. User decision. |
 | 2026-09-17 | 📌 | coordinate.mjs's SIGTERM handler runs teardownRun, which removes task worktrees and branches. So the restart crash must be SIGKILL, not SIGTERM/`claude stop`, or the state to reconcile is gone — and SIGKILL leaves worker sessions alive for reconciliation to reap (DESIGN §2.5). |
 | 2026-09-17 | 📌 | The implementer marks `🔍` in the same commit as the code (pir-implement steps 6–7); the reviewer marks `✅` in its own commit. So a committed task-branch glyph is atomic with the work — the basis for reading it as ground truth on restart (DESIGN §2.2). |
 | 2026-09-17 | 📌 | `buildAssignments` (loop.mjs) treats a tracked task whose session is not in the live list as dead and removes its branch. So reconciliation must merge `✅` branches directly and give a `🔍` review a real fresh session, never seed a sessionless tracked task (DESIGN §2.5). |
