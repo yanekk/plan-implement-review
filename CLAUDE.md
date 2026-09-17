@@ -18,6 +18,15 @@ by sessions that alternate between building and reviewing. Three commands drive 
 deliberately and most carry a rationale. If you disagree with one, say so — do not quietly
 implement something else.
 
+**How the parallel workflow behaves is canonical in `/docs`.** For how parallel mode actually
+works — its components, the run lifecycle, task state, the branch/worktree model, the control
+folder, restart and recovery, and the known limitations — read `/docs`, not a plan's `DESIGN.md`.
+`DESIGN.md` files are build-time rationale and history; they record why a decision was made, not
+what the code does today, and a finished plan's `DESIGN.md` is sealed. A new plan that changes how
+parallel mode behaves updates `/docs` rather than re-opening a finished plan's `DESIGN.md`. (The
+per-plan files under `plans/{slug}/` remain the source of truth for that plan's own tasks and
+progress.)
+
 ---
 
 ## Who you are talking to

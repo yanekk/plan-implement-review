@@ -1,5 +1,9 @@
 # Parallel PIR — Design
 
+> **The current behaviour of parallel mode is canonical in `/docs`.** This file is retained as
+> build-time rationale and history; where it and `/docs` disagree on what the code does today,
+> `/docs` wins. Do not re-open this finished plan to document behaviour — update `/docs` instead.
+
 ## 1. Purpose
 
 The framework today runs one session at a time: the user types `/pir-work {slug}`, one task
