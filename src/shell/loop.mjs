@@ -84,6 +84,23 @@ function applyMessages(state, messages, record) {
 // otherwise prevents (FINDINGS 2026-09-09).
 const APPEAR_GRACE = 1;
 
+// How long the loop keeps DEFERRING a finished worker (review-ready or done) that `claude agents
+// --json` still reports `busy`, before it stops trusting that flag and forces the hand-off (3c) or the
+// merge-and-close (3d). The idle gate (T13 Problem B) exists to avoid SIGTERMing a worker mid-turn and
+// to let its final commit land — but a worker that has already dropped its `implemented`/`done` report
+// has finished its deliverable, so a session that stays busy long past that report is almost always a
+// LEFTOVER BACKGROUND PROCESS holding the session open (a test suite's daemon, a file-watcher, an
+// `until … sleep` poll loop), not real work. Left unbounded it stalls the whole run: the usage-limits
+// live run held T05 ~1h on its implementer and ~4h on its reviewer, both from a backgrounded test suite
+// whose `cockpitd` daemon outlived it, until the run was torn down by hand — and the coordinator's own
+// guess ("paused on a permission prompt?") was wrong, sending the post-mortem the wrong way. Past this
+// cap the loop forces the close, which SIGTERMs the session and so reaps the leaked process group too,
+// and logs a distinct `force-idle` line naming the likely cause. Generous on purpose: a real final
+// commit lands in seconds, so this only ever fires on a genuinely stuck session. The worker-side fix
+// (run the suite in the foreground; leave nothing running before going idle — pir-worker skill) is what
+// stops it happening; this cap only bounds the damage when a worker misbehaves anyway.
+const AWAIT_IDLE_TIMEOUT_MS = 5 * 60 * 1000;
+
 // Rebuild the assignments decideDispatch consumes, matching each tracked task to a live worker BY
 // NAME, not by the id spawn returned. The name the coordinator assigns is deterministic (§2.8:
 // "the coordinator finds and identifies its workers from the name alone"); the id `claude --bg`
@@ -115,7 +132,7 @@ function buildAssignments(state, liveList, repo, slug) {
 // runPass — one turn of the loop. Gathers, decides, executes, and returns the structured actions it
 // took plus a human log and the counts drain needs to know when to stop. `state` carries the phase
 // memory across passes; the platform, worktree, control and runTests are injected.
-export function runPass({ platform, worktree, repo, slug, maxWorkers, state, control = NO_CONTROL, runTests = GREEN }) {
+export function runPass({ platform, worktree, repo, slug, maxWorkers, state, control = NO_CONTROL, runTests = GREEN, now = () => Date.now() }) {
   const actions = [];
   const log = [];
   const record = (type, extra = {}) => {
@@ -271,10 +288,18 @@ export function runPass({ platform, worktree, repo, slug, maxWorkers, state, con
     // mid-commit close FINDINGS 2026-09-09 already caught. If it is busy, hold: no reviewer spawns and
     // the implementer keeps its slot until a later pass finds it idle.
     if (isBusy(workerId)) {
-      deferredClose.add(workerId);
-      record('await-idle', { task: num, workerId, reason: 'review-ready worker still busy' });
-      continue;
+      t.busySince ??= now();
+      if (now() - t.busySince < AWAIT_IDLE_TIMEOUT_MS) {
+        deferredClose.add(workerId);
+        record('await-idle', { task: num, workerId, reason: 'review-ready worker still busy' });
+        continue;
+      }
+      // Busy past AWAIT_IDLE_TIMEOUT_MS: stop trusting the flag and force the hand-off. A review-ready
+      // worker has dropped its `implemented` report, so its deliverable is committed; a session still
+      // busy this long past that is almost always a leftover background process, not work in flight.
+      record('force-idle', { task: num, workerId, reason: 'review-ready worker busy past cap — likely a leftover background process; forcing hand-off' });
     }
+    t.busySince = undefined;
     const revName = workerName({ repo, plan: slug, task: num, role: 'review' });
     const reviewerId = platform.spawn({ cwd: t.worktree.path, name: revName, phase: 'review' });
     reviewSwaps.set(workerId, { num, reviewerId });
@@ -299,10 +324,18 @@ export function runPass({ platform, worktree, repo, slug, maxWorkers, state, con
     // mid-work and guarantees its final commit has landed before its branch is merged. If busy, hold:
     // no merge, no close, the slot stays held, and the merge retries next pass.
     if (isBusy(workerId)) {
-      deferredClose.add(workerId);
-      record('await-idle', { task: num, workerId, reason: 'done worker still busy' });
-      continue;
+      t.busySince ??= now();
+      if (now() - t.busySince < AWAIT_IDLE_TIMEOUT_MS) {
+        deferredClose.add(workerId);
+        record('await-idle', { task: num, workerId, reason: 'done worker still busy' });
+        continue;
+      }
+      // Busy past AWAIT_IDLE_TIMEOUT_MS: a done worker has integrated and committed, so its final commit
+      // has long since landed; a session still busy this long past its `done` report is a leftover
+      // background process, not work. Force the merge and close (which SIGTERMs and reaps the leak).
+      record('force-idle', { task: num, workerId, reason: 'done worker busy past cap — likely a leftover background process; forcing merge and close' });
     }
+    t.busySince = undefined;
     const res = worktree.mergeTask(t.worktree.branch);
     if (res.conflict) {
       // Keep the worker alive and parked — do NOT close it, remove its worktree, or delete its task.

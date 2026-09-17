@@ -171,6 +171,17 @@ The coordinator owns a worker's whole life, and it must be able to end it, not o
   a **dead** worker (already gone from the list) is cleaned up at once — that is not a mid-work kill —
   and the **kill switch** ends every worker regardless of idleness (§2.4), because a hard stop is a
   hard stop. Decided with the user 2026-09-10 (T13).
+  **The idle wait is bounded.** A worker that has already signalled `implemented`/`done` has committed
+  its deliverable, so a session that stays `busy` for more than a few minutes past that signal is almost
+  always a leftover background process, not work in flight — a test suite's daemon, a file-watcher, an
+  `until … sleep` poll loop the worker left running. Past `AWAIT_IDLE_TIMEOUT_MS` (loop.mjs) the loop
+  stops trusting the flag, forces the hand-off (or the merge-and-close), and logs a `force-idle` line;
+  the SIGTERM reaps the leaked process group with the session. This keeps the rule above — SIGTERM never
+  cuts off work *in flight* — while stopping one stuck session from stalling the whole run: the
+  usage-limits run held T05 ~1h on its implementer and ~4h on its reviewer, both from a backgrounded test
+  suite whose daemon outlived it, until the run was torn down by hand. The worker-side prevention (run
+  the suite in the foreground, leave nothing running before going idle) is in the `pir-worker` skill.
+  Added with the user's go-ahead after the usage-limits post-mortem.
 
 **Close exists for three reasons, and all three are why it is first-class rather than an
 afterthought.** Normal end-of-task teardown after a merge; the hard-stop kill switch, which
@@ -690,8 +701,8 @@ way the stopped drill's T01 greeting-wording question arose on its own).
 
 - **Execution flow** is already written by the coordinator: `plans/{slug}/.parallel/control/log`,
   one ISO-timestamped line per `record()` action (`open-feature`, `spawn`, `hands-on`, `await-idle`,
-  `review`, `merge`, `answer`, `send-failed`, `close`, `halt-close`, `surface`, `promote`, `teardown`,
-  `ceiling full`). Nothing new is built to get it; the harness reads it. (There is no `hello` tag any
+  `force-idle`, `review`, `merge`, `answer`, `send-failed`, `close`, `halt-close`, `surface`, `promote`,
+  `teardown`, `ceiling full`). Nothing new is built to get it; the harness reads it. (There is no `hello` tag any
   more — the spawn hello was retired in T30. The `hands-on {task}` line marks a `you` task spawning a
   hands-on scribe — the disk-visible drive signal, since `spawn` drops the role; added in T32.)
 - **The agent-status timeline** must be **sampled during the run** — this is the one thing that is

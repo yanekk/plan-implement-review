@@ -567,6 +567,50 @@ test('the kill switch closes a busy, finished worker immediately — the idle ga
   assert.equal(r.liveAfter, 0, 'no worker is left live after the halt');
 });
 
+// --- the await-idle cap: a finished worker that never goes idle is forced through, not held forever --
+
+test('a review handoff is FORCED once the implementer stays busy past the await-idle cap', (t) => {
+  // The usage-limits failure: an implementer dropped `implemented` and committed, but a backgrounded
+  // test suite left a daemon alive so the session never went idle, and the loop deferred for hours. Past
+  // the cap the loop must stop trusting `busy`, force the hand-off, and log why (force-idle).
+  const { platform, base } = setup(t, [{ num: 'T01' }], { behaviors: { T01: { lingerBusy: 999 } } });
+  const state = createRunState();
+  let clock = 0;
+  const now = () => clock;
+  runPass({ ...base, state, now }); // pass 1: spawn implementer
+  const implId = platform.spawns[0].id;
+
+  const held = runPass({ ...base, state, now }); // pass 2: implemented but busy, within the cap → held
+  assert.ok(held.actions.some((a) => a.type === 'await-idle' && a.task === 'T01'), 'still held while within the cap');
+  assert.ok(!held.actions.some((a) => a.type === 'force-idle'), 'not forced yet');
+  assert.ok(!platform.closed.includes(implId), 'the still-recently-busy implementer is not closed');
+
+  clock += 10 * 60 * 1000; // advance past the 5-minute AWAIT_IDLE_TIMEOUT_MS
+  const forced = runPass({ ...base, state, now }); // pass 3: still busy, past the cap → forced
+  assert.ok(forced.actions.some((a) => a.type === 'force-idle' && a.task === 'T01'), 'the pass records it forced past the cap');
+  assert.ok(forced.actions.some((a) => a.type === 'review' && a.closes === implId), 'the reviewer is spawned despite the busy flag');
+  assert.ok(platform.closed.includes(implId), 'the stuck implementer is closed (SIGTERM reaps its leaked process group)');
+});
+
+test('a merge (and close) is FORCED once the done worker stays busy past the await-idle cap', (t) => {
+  const { platform, worktree, base } = setup(t, [{ num: 'T01', runs: 'you' }], { behaviors: { T01: { lingerBusy: 999 } } });
+  const state = createRunState();
+  let clock = 0;
+  const now = () => clock;
+  runPass({ ...base, state, now }); // pass 1: spawn the hands-on worker
+  const workerId = platform.spawns[0].id;
+
+  const held = runPass({ ...base, state, now }); // pass 2: done but busy, within the cap → held
+  assert.ok(held.actions.some((a) => a.type === 'await-idle' && a.task === 'T01'), 'held while within the cap');
+  assert.ok(!worktree.events.some((e) => e.op === 'mergeTask'), 'not merged while within the cap');
+
+  clock += 10 * 60 * 1000; // past AWAIT_IDLE_TIMEOUT_MS
+  const forced = runPass({ ...base, state, now }); // pass 3: still busy, past the cap → forced
+  assert.ok(forced.actions.some((a) => a.type === 'force-idle' && a.task === 'T01'), 'the pass records it forced past the cap');
+  assert.ok(forced.actions.some((a) => a.type === 'merge' && a.task === 'T01'), 'the branch is merged despite the busy flag');
+  assert.ok(platform.closed.includes(workerId), 'the stuck worker is closed');
+});
+
 test('dry run stays isolated: the scratch repo is a temp dir, never the real project', (t) => {
   const { worktree, base } = setup(t, chain(2));
   assert.ok(worktree.dir.startsWith(tmpdir()), 'the scratch repo lives under the temp dir');
