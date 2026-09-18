@@ -10,6 +10,12 @@ the kill switch on suspicion, confirm a decision it sent down was actually recei
 own session name at startup. This is the coordinator half of DESIGN §2.1, §2.3, §2.4, §2.5 and
 §2.7.
 
+**Note (added 2026-09-18, commit 2ed7ff9):** the §2.4 guardrail — the coordinator never creates the
+HALT file — was already added to `skills/pir-coordinate/SKILL.md` (its "rails you must honour"
+kill-switch bullet) and deployed, ahead of this plan, so the plan could be run safely by a coordinator.
+**Verify it is present and extend it; do not re-add it.** The rest of T05 (the `verified` signal, the
+no-merge-policing rule, the receipt loop, the name gate) is untouched by that early change.
+
 ## Design sections this implements
 
 DESIGN §2.1 (read the `verified` signal), §2.3 (do not police merges; absence of an `answer` for a
@@ -63,6 +69,7 @@ unit-tested under `npm test`:
 
 - [ ] The skill tells the coordinator to read `verified Txx` as the trusted completion of a you-task.
 - [ ] The skill forbids creating the HALT file and forbids branding a merge as fraud, in those words.
+      (The HALT-forbid half is already present from 2026-09-18 — verify it, add the merge-fraud half.)
 - [ ] The skill states that a you-task has no `answer` and no `surface`, and that the absence of an
       `answer` is not evidence the task did not happen.
 - [ ] The receipt loop (confirm / retry / surface) is spelled out and matches what T00 found about
