@@ -26,7 +26,6 @@ import {
   captureFinalFiles,
   restartTargetReached,
   coordinatorPidFrom,
-  supervisorPidOf,
   seedStaleFeeds,
   snapshotControlFeeds,
   runRestartScenario,
@@ -638,19 +637,6 @@ test('coordinatorPidFrom reads the coordinator session pid, else null', () => {
   assert.equal(coordinatorPidFrom([], coordName), null);
 });
 
-test('supervisorPidOf resolves the pty-host and only verifies a real bg-pty-host parent', () => {
-  const ppidOf = (pid) => (pid === 4242 ? 7777 : pid === 9000 ? 9001 : null);
-  const cmdOf = (pid) => (pid === 7777 ? 'claude bg-pty-host --bg-pty-host /tmp/x.pty.sock 200 50' : 'some other process');
-  // Happy path: the spare's parent is a bg-pty-host, so it is a verified crash target.
-  assert.deepEqual(supervisorPidOf({ pid: 4242, ppidOf, cmdOf }), { supervisor: 7777, spare: 4242, verified: true });
-  // A parent that is NOT a bg-pty-host is resolved but NOT verified — the caller must fall back to the spare.
-  assert.deepEqual(supervisorPidOf({ pid: 9000, ppidOf, cmdOf }), { supervisor: 9001, spare: 9000, verified: false });
-  // No parent at all (a released/absent pid) → nothing to verify, spare carried through for the fallback.
-  assert.deepEqual(supervisorPidOf({ pid: 5, ppidOf, cmdOf }), { supervisor: null, spare: 5, verified: false });
-  // No pid → nothing.
-  assert.deepEqual(supervisorPidOf({ pid: null, ppidOf, cmdOf }), { supervisor: null, spare: null, verified: false });
-});
-
 test('seedStaleFeeds writes a leftover into every transient feed; snapshotControlFeeds reads it back, and a clear', () => {
   const ws = workspace();
   try {
@@ -727,11 +713,6 @@ test('runRestartScenario installs once, launches, kills at 🔍, relaunches on t
 
     const kills = [];
     const kill = (pid, signal) => kills.push({ pid, signal });
-    // The crash resolves the coordinator's stable pty-host from its (ephemeral) spare pid and kills THAT.
-    // Fakes stand in for the real `ps` reads: the spare 4242's parent is pty-host 7777, whose command is a
-    // real `bg-pty-host` so the guard passes. Injected so the test needs no live process tree.
-    const ppidOf = (pid) => (pid === 4242 ? 7777 : null);
-    const cmdOf = (pid) => (pid === 7777 ? 'claude bg-pty-host --bg-pty-host /tmp/cc-daemon/x.pty.sock 200 50 -- v --bg-spare /tmp/cc-daemon/x.claim.sock' : '');
 
     const result = await runRestartScenario({
       fixtureId: 'restart',
@@ -740,8 +721,6 @@ test('runRestartScenario installs once, launches, kills at 🔍, relaunches on t
       claudeRun,
       gitRun: () => ({ ok: true, stdout: '' }),
       kill,
-      ppidOf,
-      cmdOf,
       platform: fakePlatform({ agents: [] }),
       worktree,
       projectsDir: projects,
@@ -759,12 +738,8 @@ test('runRestartScenario installs once, launches, kills at 🔍, relaunches on t
       assert.deepEqual(c.args, ['--bg', '-n', 'scratch-repo · restart', '/pir-coordinate restart']);
       assert.equal(c.env.PARALLEL_MAX_WORKERS, '1');
     }
-    // The crash SIGKILLed the coordinator's pty-host SUPERVISOR (7777, stable across the spare rotation),
-    // then the current spare (4242) belt-and-suspenders — never the reported spare pid alone (T07 fix).
-    assert.deepEqual(kills, [
-      { pid: 7777, signal: 'SIGKILL' },
-      { pid: 4242, signal: 'SIGKILL' },
-    ]);
+    // The crash was a SIGKILL of the coordinator pid only.
+    assert.deepEqual(kills, [{ pid: 4242, signal: 'SIGKILL' }]);
     // The resumed run promoted.
     assert.equal(result.reason, 'promoted');
     // The bundle spans both launches: its flow.log carries the first run's merge AND the resumed promote.
@@ -815,9 +790,6 @@ test('runRestartScenario reaches the crash point via the review-line flow fallba
       claudeRun,
       gitRun: () => ({ ok: true, stdout: '' }),
       kill: (pid, signal) => kills.push({ pid, signal }),
-      // pty-host unresolved (no `ps`): the crash falls back to SIGKILLing the spare pid, hermetically.
-      ppidOf: () => null,
-      cmdOf: () => '',
       platform: fakePlatform({ agents: [] }),
       // No taskBranchState → the runner must fall back to the `review T02` flow line to detect the target.
       worktree: { remove: () => {} },
@@ -827,9 +799,7 @@ test('runRestartScenario reaches the crash point via the review-line flow fallba
       stallGrace: 100,
     });
 
-    // Fallback path: pty-host unresolved, so the crash SIGKILLs the spare pid alone (still fired off the
-    // flow-line target).
-    assert.deepEqual(kills, [{ pid: 4242, signal: 'SIGKILL' }], 'the crash fell back to the spare pid');
+    assert.deepEqual(kills, [{ pid: 4242, signal: 'SIGKILL' }], 'the crash still fired off the flow-line target');
     assert.equal(result.reason, 'promoted');
   } finally {
     ws.cleanup();
