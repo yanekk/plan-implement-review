@@ -10,10 +10,10 @@ account is the commit message. Whoever writes a cell also fixes the over-budget 
 
 **Plan reviewed:** 2026-09-17 — 2 fixed, 2 decided with the user
 
-**Status:** Building. T01–T06 done. T07 is the live restart drill (a person, `you`) and the last task.
+**Status:** Building. T01–T06 done. T07, the live restart drill (a person, `you`), is handed to the user.
 **Last updated:** 2026-09-18
-**Next `pir-work` will:** reach T07 — the live restart drill, judged by a person. It needs the user (a
-real crash-and-restart over paid agents in a scratch repo); `pir-work` will stop and hand it over.
+**Next `pir-work` will:** re-offer T07 — the live restart drill. It is handed over and awaiting the
+user's live run and judgement; nothing else is buildable until it is done.
 
 ## Tasks
 
@@ -37,6 +37,9 @@ from the task doc. A ✅ task's cell may be cut to one line once the next task h
 
 ## Blocked on the user
 
-*(Nothing yet. T07 is the one task that needs a person — a live restart drill over real agents — and
-it is the last task; it will land here when it is reached.)*
+**T07 — live restart drill (handed over 2026-09-18).** Needs a live crash-and-restart over real paid
+`claude` agents in a scratch repo, watched and judged by the user. Seatbelt: `node
+src/shell/harness/run.mjs restart --into <scratch-dir>` (scratch only, low ceiling, HALT armed by the
+timeout). The user runs it; the machine facts and the user's yes/no both go to `FINDINGS.md`. Until
+that is done, nothing else is buildable — it is the last task.
 </content>
