@@ -10,9 +10,9 @@ account is the commit message. Whoever writes a cell also fixes the over-budget 
 
 **Plan reviewed:** 2026-09-17 — 2 fixed, 2 decided with the user
 
-**Status:** Building. T01–T04 done, T05 implemented and awaiting review. Next is T05 review.
-**Last updated:** 2026-09-17
-**Next `pir-work` will:** review T05 — the `/docs` rewrite for the corrected restart/reconcile behaviour.
+**Status:** Building. T01–T05 done. Next is T06 — the harness restart mode, fixture and facts.
+**Last updated:** 2026-09-18
+**Next `pir-work` will:** implement T06 — restart mode in the harness, its fixture, and the restart facts.
 
 ## Tasks
 
@@ -24,15 +24,15 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T01 | `decideResume` pure classifier | auto | — | ✅ | Clean. Four-way classifier, 13 tests, boundary green. |
 | T02 | Read a task branch's committed state | auto | — | ✅ | Clean. Committed-glyph read by ref, null on absence, 9 tests. |
 | T03 | Reconciliation pass in `runPass` | auto | T01, T02 | ✅ | Fixed one defect: a restart re-dispatched a conflicted ✅ branch; now flagged ⛔ for a person (§2.6, FINDINGS 🐞). 353 green. |
-| T04 | Clear transient control feeds; HALT/log policy | auto | — | ✅ | Clean, no fix. Verified the feed names (reports/answers/outbox/surfaced) match the live bridge's paths exactly — the silent-no-op trap — and hygiene runs before the bridge writes. Probed orphaned-worker races, torn stale lines, non-.json leftovers, dropped un-relayed surface: all safe per §2.7. LIVE-only deviation accepted — a dry preview spawns nothing. 359 green. |
-| T05 | Update `/docs` to the corrected behaviour | auto | T03, T04 | 🔍 | Rewrote restart-recovery.md (reconciliation: reap, glyph read, merge/review/rebuild/skip table, conflict→⛔, narration, control hygiene), corrected control-folder.md (startup clear, `restart`/`restart-summary` log tags, HALT refusal), added a reconcile line to run-lifecycle Start. Traced every claim to T03/T04 code, not DESIGN §2.6's superseded "branch untouched" — used the shipped conflict→⛔ fix. Noted a dry preview skips hygiene. Docs only, 359 green. |
+| T04 | Clear transient control feeds; HALT/log policy | auto | — | ✅ | Clean. Feed names (reports/answers/outbox/surfaced) match the live bridge; hygiene runs before the bridge writes; HALT refusal + clear are LIVE-only. 359 green. |
+| T05 | Update `/docs` to the corrected behaviour | auto | T03, T04 | ✅ | Clean, no fix. Traced every claim to shipped code: reconcile in loop.mjs, decideResume, startupControlHygiene, taskBranchState's exact `git show pir/{slug}-T{nn}:…PROGRESS.md`. Conflict→⛔-and-branch-kept, session-only reap, restart/restart-summary log tags, HALT refusal all match. Docs predict the code. 359 green, docs-only diff. |
 | T06 | Harness restart mode + fixture + facts | auto | T03, T04 | ⬜ | |
 | T07 | Live restart drill, judged by a person | you | T06 | ⬜ | |
 
 A Notes cell holds what was built or what the review found, the test count, and one line per deviation
 from the task doc. A ✅ task's cell may be cut to one line once the next task has been reviewed.
 
-**Review queue:** T05 — the `/docs` rewrite (restart-recovery.md, control-folder.md, run-lifecycle.md)
+**Review queue:** empty — T06 is next to implement.
 
 ## Blocked on the user
 
