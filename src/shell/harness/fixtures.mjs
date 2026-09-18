@@ -45,6 +45,7 @@ import mergeConflict from './fixtures/merge-conflict.mjs';
 import humanDecision from './fixtures/human-decision.mjs';
 import handsOn from './fixtures/hands-on.mjs';
 import blogApp from './fixtures/blog-app.mjs';
+import restart from './fixtures/restart.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -72,6 +73,7 @@ const FIXTURES = Object.freeze({
   [humanDecision.id]: humanDecision,
   [handsOn.id]: handsOn,
   [blogApp.id]: blogApp,
+  [restart.id]: restart,
 });
 
 // listFixtures() → the fixture ids, in registry order.

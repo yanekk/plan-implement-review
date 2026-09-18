@@ -27,7 +27,7 @@
 // unboundedly. The runner tears every worker down on any exit (reusing the coordinator's teardownRun
 // orphan-guard, T12 P6).
 
-import { existsSync, mkdirSync, writeFileSync, appendFileSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync, appendFileSync, readFileSync, readdirSync } from 'node:fs';
 import { join, basename } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync } from 'node:fs';
@@ -36,7 +36,7 @@ import { tmpdir } from 'node:os';
 import { coordinatorName, workerName, isWorkerOf } from '../../core/naming.mjs';
 import { getFixture, installFixture } from './fixtures.mjs';
 import { createCapture, bundleDirFor } from './capture.mjs';
-import { checkScenario, loadTranscripts, loadFinalFiles, formatReport } from './assertions.mjs';
+import { checkScenario, loadTranscripts, loadFinalFiles, loadControlFeeds, formatReport } from './assertions.mjs';
 import { teardownRun } from '../coordinate.mjs';
 import { createPlatform } from '../platform.mjs';
 import { createWorktree } from '../worktree.mjs';
@@ -183,6 +183,87 @@ export function captureFinalFiles({ repoDir, gitRun = defaultRunGit, files = [] 
     if (r.ok) out[f] = r.stdout;
   }
   return out;
+}
+
+// --- Restart-mode pure wiring (DESIGN §2, §4, T06) -----------------------------------------------
+
+// restartTargetReached({ flowText, branchState, waitFor }) → has the deterministic crash point been
+// reached? The point is a task branch having COMMITTED the target glyph (waitFor = { task, glyph }), the
+// mid-review state a restart must adopt (§2.2) — never a timer. The primary signal is a taskBranchState
+// read (T02): the committed glyph on the task's own branch, passed in as branchState. The fallback, for a
+// 🔍 target, is a `review {task}` flow line — the coordinator wrote it the moment it saw the committed 🔍
+// and handed the branch to a reviewer (loop.mjs review handoff), the same mid-review window. Pure, so the
+// wait loop's stop condition is unit-tested against canned inputs with no live coordinator.
+export function restartTargetReached({ flowText = '', branchState = null, waitFor } = {}) {
+  if (!waitFor || !waitFor.task || !waitFor.glyph) return false;
+  const { task, glyph } = waitFor;
+  if (branchState != null && branchState === glyph) return true;
+  if (glyph === '🔍') {
+    return String(flowText)
+      .split('\n')
+      .some((l) => {
+        const body = l.slice(l.indexOf(' ') + 1);
+        return body === `review ${task}` || body.startsWith(`review ${task} `);
+      });
+  }
+  return false;
+}
+
+// coordinatorPidFrom(agents, coordName) → the OS pid of this run's coordinator session in a sampled agent
+// list, or null. The crash is a SIGKILL of that pid and nothing else (leaving the workers and the git
+// state — a real crash, §2.5), so the runner reads the pid from the same `agents --json` sample capture
+// takes. `agents --json` carries `pid` only while a session is live (capture.mjs), which is exactly when
+// the runner kills it. Pure so the pid pick is tested against a canned agent list.
+export function coordinatorPidFrom(agents = [], coordName) {
+  const coord = (agents ?? []).find((a) => a && a.name === coordName);
+  return coord && coord.pid != null ? coord.pid : null;
+}
+
+// seedStaleFeeds(controlDir, sentinel) → write a stale sentinel into every transient control feed
+// (answers, outbox, surfaced, and a reports/*.json), the exact leftover a crashed run strands (§2.7). The
+// runner seeds these in the gap AFTER the SIGKILL and BEFORE the relaunch, so nothing drains them and the
+// relaunched coordinator's startupControlHygiene is what must clear them; feedsCleared then proves it did.
+// Best-effort per feed, fs injected so the write is testable.
+export function seedStaleFeeds(controlDir, sentinel, { fs = { mkdirSync, writeFileSync } } = {}) {
+  fs.mkdirSync(controlDir, { recursive: true });
+  const line = `${JSON.stringify({ stale: sentinel })}\n`;
+  for (const name of ['answers', 'outbox', 'surfaced']) {
+    fs.writeFileSync(join(controlDir, name), line);
+  }
+  const reportsDir = join(controlDir, 'reports');
+  fs.mkdirSync(reportsDir, { recursive: true });
+  fs.writeFileSync(join(reportsDir, `${sentinel}.json`), line);
+  return { seeded: ['answers', 'outbox', 'surfaced', 'reports/'] };
+}
+
+// snapshotControlFeeds(controlDir) → the transient feeds' contents at seal, for the bundle's
+// control-feeds.json (T06). The append-only feeds are read as text; reports/ is read as its list of
+// *.json names. feedsCleared checks the seeded sentinel is absent from all of them. A missing feed reads
+// as empty rather than throwing, fs injected for the test.
+export function snapshotControlFeeds(controlDir, { fs = { existsSync, readFileSync, readdirSync } } = {}) {
+  const feeds = {};
+  for (const name of ['answers', 'outbox', 'surfaced']) {
+    const p = join(controlDir, name);
+    try {
+      feeds[name] = fs.existsSync(p) ? fs.readFileSync(p, 'utf8') : '';
+    } catch {
+      feeds[name] = '';
+    }
+  }
+  const reportsDir = join(controlDir, 'reports');
+  try {
+    feeds.reports = fs.existsSync(reportsDir) ? fs.readdirSync(reportsDir).filter((n) => n.endsWith('.json')) : [];
+  } catch {
+    feeds.reports = [];
+  }
+  return feeds;
+}
+
+// The crash effect: SIGKILL a pid. It MUST be SIGKILL — the coordinator catches SIGTERM and tears its
+// workers and their branches down cleanly (coordinate.mjs main), erasing the very in-flight state the
+// drill exists to reconcile (FINDINGS 2026-09-17). Injected so a test drives it without a real process.
+function defaultKill(pid, signal = 'SIGKILL') {
+  process.kill(pid, signal);
 }
 
 // --- The default injected effects (mirroring platform.mjs / capture.mjs) -------------------------
@@ -418,6 +499,268 @@ export async function runScenario({
   return { scenario: spec.id, ok, reason: timedOut ? 'timeout' : reason, bundleDir: bundle?.dir ?? null, report };
 }
 
+// --- The restart runner (DESIGN §2, §4, §5.2, T06) -----------------------------------------------
+
+// runRestartScenario(opts) → the same shape as runScenario, but it drives the coordinator through a crash
+// and a restart on ONE scratch repo so the resume can be checked (the live half is T07). The sequence
+// (fixture.restart declares the crash point): install ONCE → launch → wait until the target task branch
+// has committed the crash-point glyph → SIGKILL the coordinator only (leaving its workers and the git
+// state) → seed a stale control-feed leftover → relaunch on the SAME scratch WITHOUT reinstalling, so it
+// reconciles from git → wait for the resumed terminal → seal, snapshot the feeds, check. ONE capture
+// instance spans both launches, so the bundle's flow log and timeline cover the whole run. Everything
+// platform-shaped is injected exactly as runScenario injects it, plus `kill` for the crash, so the whole
+// orchestration is proven against the fakes with no live agent (§5.2). Only the fixture declaring a
+// `restart` spec runs this; the bin dispatches on it.
+export async function runRestartScenario({
+  fixtureId,
+  scratchDir,
+  allowHere = false,
+  pollMs = 2000,
+  stallGrace = 3,
+  startupGrace = 45,
+  haltGrace = 3,
+  timeoutMs,
+  claudeRun = defaultRunClaude,
+  gitRun = defaultRunGit,
+  kill = defaultKill,
+  platform,
+  worktree,
+  install = installFixture,
+  capture,
+  projectsDir,
+  timers = { setTimeout, clearTimeout },
+  now = () => new Date(),
+  log = () => {},
+} = {}) {
+  const fixture = getFixture(fixtureId);
+  const spec = fixture.scenario;
+  const slug = fixture.slug;
+  const restartSpec = fixture.restart;
+  if (!restartSpec || !restartSpec.waitFor) {
+    throw new Error(`runRestartScenario: fixture "${fixtureId}" declares no restart.waitFor crash point`);
+  }
+  const waitFor = restartSpec.waitFor;
+  const seatbelts = spec.seatbelts ?? {};
+  const ceiling = seatbelts.ceiling;
+  const timeout = timeoutMs ?? seatbelts.timeoutMs;
+
+  const repoDir = scratchDir ?? mkdtempSync(join(tmpdir(), `pir-t06-${fixtureId}-`));
+  const repo = basename(repoDir);
+  const controlDir = controlDirFor(repoDir, slug);
+
+  const teardownPlatform = platform ?? createPlatform({ root: repoDir, runClaude: claudeRun });
+  const teardownWorktree = worktree ?? createWorktree({ root: repoDir });
+
+  log(`installing fixture "${fixtureId}" into ${repoDir} (once — the relaunch must not reinstall)`);
+  install(fixtureId, { into: repoDir, runGit: gitRun });
+
+  const cap =
+    capture ??
+    createCapture({
+      repo,
+      slug,
+      dir: bundleDirFor(controlDir, now()),
+      controlDir,
+      repoDir,
+      runClaude: claudeRun,
+      runGit: gitRun,
+      projectsDir,
+      now,
+    });
+
+  // One wall-clock timeout over the WHOLE restart run (both launches), auto-HALT on expiry (§5.2).
+  let timedOut = false;
+  const timeoutHandle =
+    timeout != null
+      ? timers.setTimeout(() => {
+          timedOut = true;
+          try {
+            touchHalt(controlDir);
+            log(`\n=== timeout after ${timeout}ms — auto-touched HALT (seatbelt §5.2) ===`);
+          } catch {
+            /* the teardown in `finally` still SIGTERMs every session */
+          }
+        }, timeout)
+      : null;
+  if (timeoutHandle && typeof timeoutHandle.unref === 'function') timeoutHandle.unref();
+
+  // A stale sentinel the crash leaves in the transient feeds, seeded between the kill and the relaunch so
+  // only the resumed coordinator's hygiene can clear it (feedsCleared reads it back from the bundle).
+  const sentinel = `STALE-${now().toISOString().replace(/[:.]/g, '-')}-restart`;
+  let seededFeeds = false;
+
+  const name = coordinatorName({ repo, plan: slug });
+  const argv = coordinatorLaunchArgv({ name, slug });
+  const env = seatbeltEnv({ ceiling, allowHere });
+
+  let reason = 'error';
+  let bundle = null;
+  try {
+    // Launch 1: the run that will crash. Seatbelted exactly as a normal live run (§2.8, §5.2).
+    log(`launching coordinator "${name}"  (ceiling ${ceiling}, timeout ${timeout}ms)`);
+    const launched = claudeRun(argv, { cwd: repoDir, env });
+    if (!launched.ok) throw new Error(`could not launch coordinator: ${launched.stderr || launched.stdout}`);
+
+    // Wait for the deterministic crash point: the target task branch has committed the crash-point glyph.
+    const target = await waitForTarget({
+      cap,
+      controlDir,
+      repo,
+      slug,
+      waitFor,
+      worktree: teardownWorktree,
+      pollMs,
+      startupGrace,
+      timers,
+      isTimedOut: () => timedOut,
+      log,
+    });
+
+    if (target.reason !== 'target') {
+      // The run never reached the crash point (timed out or stalled). Seal what there is — the facts will
+      // fail (no restart), which is the honest verdict — rather than crash-and-restart from a bad state.
+      reason = target.reason;
+      log(`did not reach the ${waitFor.glyph} crash point: ${reason}`);
+    } else {
+      log(`reached the ${waitFor.glyph} crash point on ${waitFor.task}`);
+      // Crash: SIGKILL the coordinator ONLY, from the pid in the sample that saw the target. Its workers
+      // and the git state are left on disk — the real crash reconciliation must handle (§2.5).
+      const pid = coordinatorPidFrom(target.agents, name);
+      if (pid != null) {
+        try {
+          kill(pid, 'SIGKILL');
+          log(`crashed the coordinator (pid ${pid}, SIGKILL) — workers and git state left on disk`);
+        } catch (e) {
+          log(`could not SIGKILL the coordinator (pid ${pid}): ${e.message}`);
+        }
+      } else {
+        log('no coordinator pid in the sample — cannot crash; relaunching anyway');
+      }
+
+      // Seed the stale control-feed leftover now, while nothing is draining it (the coordinator is dead).
+      try {
+        seedStaleFeeds(controlDir, sentinel);
+        seededFeeds = true;
+        log('seeded a stale control-feed leftover (answers/outbox/surfaced/reports)');
+      } catch (e) {
+        log(`could not seed stale feeds: ${e.message}`);
+      }
+
+      // Relaunch on the SAME scratch — NO installFixture. Git already holds the in-flight branches, so the
+      // resumed coordinator reconciles from them; reinstalling would wipe exactly what it must resume.
+      log('relaunching the coordinator on the same scratch (no reinstall)');
+      const relaunched = claudeRun(argv, { cwd: repoDir, env });
+      if (!relaunched.ok) throw new Error(`could not relaunch coordinator: ${relaunched.stderr || relaunched.stdout}`);
+
+      // Wait for the resumed run to reach a terminal, still capturing into the same bundle.
+      reason = await waitForCompletion({
+        cap,
+        controlDir,
+        repo,
+        slug,
+        pollMs,
+        stallGrace,
+        startupGrace,
+        haltGrace,
+        timers,
+        isTimedOut: () => timedOut,
+        scriptedAnswer: null,
+        log,
+      });
+      log(`resumed run reached: ${reason}`);
+    }
+  } finally {
+    if (timeoutHandle) timers.clearTimeout(timeoutHandle);
+    try {
+      bundle = cap.seal();
+    } catch (e) {
+      log(`capture seal failed: ${e.message}`);
+    }
+    try {
+      const t = teardownScenario({ platform: teardownPlatform, worktree: teardownWorktree, repo, slug, controlDir });
+      if (t.closed.length || t.coordinatorClosed) {
+        log(`teardown: closed ${t.closed.length} worker(s)${t.coordinatorClosed ? ' + the coordinator' : ''}`);
+      }
+    } catch (e) {
+      log(`teardown failed: ${e.message}`);
+    }
+  }
+
+  // Snapshot the transient control feeds into the bundle so feedsCleared can prove the seeded leftover was
+  // cleared by the restart hygiene (§2.7). Written after seal, then read back by loadControlFeeds — the
+  // same after-seal pattern final-files.json uses.
+  if (bundle?.dir) {
+    try {
+      const feeds = snapshotControlFeeds(controlDir);
+      writeFileSync(
+        join(bundle.dir, 'control-feeds.json'),
+        `${JSON.stringify({ seeded: seededFeeds, sentinel, feeds }, null, 2)}\n`,
+      );
+    } catch (e) {
+      log(`control-feeds capture failed: ${e.message}`);
+    }
+  }
+
+  // Capture any decided final content the fixture declares (parity with runScenario; the restart fixture
+  // declares none, so this is a no-op there).
+  if (fixture.finalContent && bundle?.dir) {
+    try {
+      const finals = captureFinalFiles({ repoDir, gitRun, files: [fixture.finalContent.file] });
+      writeFileSync(join(bundle.dir, 'final-files.json'), `${JSON.stringify(finals, null, 2)}\n`);
+    } catch (e) {
+      log(`final-content capture failed: ${e.message}`);
+    }
+  }
+
+  const report = checkScenario(spec, loadControlFeeds(loadFinalFiles(loadTranscripts(bundle))));
+  const ok = report.pass && !timedOut;
+  return { scenario: spec.id, ok, reason: timedOut ? 'timeout' : reason, bundleDir: bundle?.dir ?? null, report };
+}
+
+// waitForTarget(...) → { reason, agents }. Polls the same injected timers as waitForCompletion, ticking
+// the capture each poll, until the restart crash point is reached ('target'), the wall-clock timeout fires
+// ('timeout'), or the coordinator never appears / dies before the target ('stalled'). The crash point is a
+// taskBranchState read (T02) of the target task returning the crash-point glyph, or the flow fallback
+// (restartTargetReached); it is NOT a timer (§2.2). `agents` is the last sample, from which the caller
+// reads the coordinator's pid to SIGKILL. startupGrace bounds a coordinator that never boots, so a broken
+// launch stalls rather than polling to the wall-clock cap.
+async function waitForTarget({ cap, controlDir, repo, slug, waitFor, worktree, pollMs, startupGrace, timers, isTimedOut, log = () => {} }) {
+  const flowPath = join(controlDir, 'log');
+  const coordName = coordinatorName({ repo, plan: slug });
+  let quiet = 0;
+  for (;;) {
+    const snap = cap.tick();
+    const flowText = existsSync(flowPath) ? safeRead(flowPath) : '';
+    let branchState = null;
+    try {
+      branchState = worktree?.taskBranchState ? worktree.taskBranchState(slug, waitFor.task) : null;
+    } catch {
+      branchState = null; // a read failure is not the target; keep polling
+    }
+    if (restartTargetReached({ flowText, branchState, waitFor })) {
+      return { reason: 'target', agents: snap.agents ?? [] };
+    }
+    if (isTimedOut()) return { reason: 'timeout', agents: snap.agents ?? [] };
+
+    // Bound a coordinator that never boots or dies before the target: count quiet polls with nothing of
+    // this run live and stall past the startup budget (the same generous window a live boot needs).
+    const agents = snap.agents ?? [];
+    const anyLive =
+      agents.some((a) => a.name === coordName && a.state !== 'stopped') ||
+      agents.some((a) => isWorkerOf(a.name, { repo, plan: slug }));
+    if (anyLive) {
+      quiet = 0;
+    } else {
+      quiet += 1;
+      if (quiet >= startupGrace) {
+        log('coordinator never reached the crash point before the startup budget ran out — stalled');
+        return { reason: 'stalled', agents };
+      }
+    }
+    await delay(timers, pollMs);
+  }
+}
+
 // waitForCompletion(...) → the terminal reason ('promoted' | 'halted' | 'stalled' | 'timeout'). Polls on
 // the injected timers: each tick samples the agent list into the capture bundle and reads the flow log,
 // then asks runOutcome for a hard terminal (promote / HALT). A stall is a run of quiet polls with no hard
@@ -578,8 +921,14 @@ async function main(argv) {
     process.exit(1);
   }
 
-  console.log(`=== live scenario: ${fixtureId} (real paid workers; seatbelted §5.2) ===`);
-  const result = await runScenario({ fixtureId, scratchDir, allowHere, log: (m) => console.log(m) });
+  // A fixture that declares a `restart` crash point runs the crash-and-restart drill (T06); every other
+  // fixture runs the straight-through scenario. Both take the same options and return the same shape.
+  const isRestart = !!getFixture(fixtureId).restart;
+  console.log(
+    `=== live ${isRestart ? 'restart ' : ''}scenario: ${fixtureId} (real paid workers; seatbelted §5.2) ===`,
+  );
+  const runner = isRestart ? runRestartScenario : runScenario;
+  const result = await runner({ fixtureId, scratchDir, allowHere, log: (m) => console.log(m) });
 
   console.log(`\nbundle: ${result.bundleDir}`);
   console.log(formatReport(result.report));

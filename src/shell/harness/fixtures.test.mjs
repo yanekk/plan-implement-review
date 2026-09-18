@@ -75,6 +75,12 @@ const EXPECT = {
       'scribe-wrote-finding',
     ],
   },
+  restart: {
+    taskCount: 2,
+    deps: { T01: [], T02: ['T01'] },
+    ceiling: 1,
+    factIds: ['resumed-not-rebuilt:T02', 'no-rebuild-from:T01', 'feeds-cleared', 'leftover-sessions-reaped:1', 'one-merge-to-main'],
+  },
 };
 
 // --- The registry ---------------------------------------------------------------------------------
@@ -279,6 +285,18 @@ test('parallel: at least two independent tasks so workers run concurrently', () 
   const { tasks } = parseProgress(getFixture('parallel').progress);
   const independent = tasks.filter((t) => t.deps.length === 0);
   assert.ok(independent.length >= 2, 'two or more tasks with no dependency');
+});
+
+test('restart: registered, declares the 🔍 crash point on the dependent task (T06)', () => {
+  const fx = getFixture('restart');
+  // It resolves through the normal registry (the same path installFixture and the runner use).
+  assert.equal(fx.id, 'restart');
+  assert.ok(listFixtures().includes('restart'), 'restart is in the fixture registry');
+  // The crash point is the deterministic mid-review state: the dependent task committing 🔍. T02 depends
+  // on T01, so the kill lands with T01 already done and T02 mid-review every run (§2.2).
+  assert.deepEqual(fx.restart.waitFor, { task: 'T02', glyph: '🔍' });
+  const { tasks } = parseProgress(fx.progress);
+  assert.deepEqual(tasks.find((t) => t.num === 'T02').deps, ['T01'], 'T02 depends on T01 so the ordering is fixed');
 });
 
 // --- The loader: install, carry skills, seed git -------------------------------------------------

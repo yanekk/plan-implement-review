@@ -134,6 +134,26 @@ export function loadFinalFiles(bundle, { readFile = (p) => readFileSync(p, 'utf8
   return { ...bundle, finalFiles };
 }
 
+// loadControlFeeds(bundle, { readFile }) → a new bundle with `controlFeeds` attached, read from the
+// bundle's `control-feeds.json` (written by the restart runner, T06). It records a stale sentinel the
+// runner seeded into every transient control feed in the gap between the SIGKILL and the relaunch — the
+// exact leftover a dead run would strand — and the feeds' contents AFTER the resumed run, so feedsCleared
+// can prove the restart hygiene (DESIGN §2.7) truncated them. Shape:
+//   { seeded: bool, sentinel: string, feeds: { answers, outbox, surfaced: string, reports: [names] } }
+// Like the other loaders it is one-shot, done before the pure predicates run; a missing or malformed file
+// yields { seeded:false } so feedsCleared reports "clearing unproven" from data rather than throwing. Only
+// the restart scenario writes this file; every other scenario simply has no controlFeeds.
+export function loadControlFeeds(bundle, { readFile = (p) => readFileSync(p, 'utf8') } = {}) {
+  let controlFeeds = { seeded: false };
+  try {
+    const parsed = JSON.parse(readFile(join(bundle.dir, 'control-feeds.json')));
+    if (parsed && typeof parsed === 'object') controlFeeds = parsed;
+  } catch {
+    controlFeeds = { seeded: false };
+  }
+  return { ...bundle, controlFeeds };
+}
+
 // parseTranscript(text) → the JSONL lines parsed to objects, malformed lines skipped (never a throw).
 export function parseTranscript(text) {
   return String(text ?? '')
@@ -579,6 +599,30 @@ export function killSwitchStoppedAll() {
   });
 }
 
+// slotsInTick(agents) → the number of worker SLOTS live in one timeline tick (DESIGN §2.4 the ceiling;
+// §2.1 a task in review holds one slot, not two). Group this run's live workers by task: a task's
+// implement+review overlap is ONE slot (the loop closes the implementer as its reviewer spawns, but the
+// stopped session lingers in `claude agents --json` for a sample — T08 FINDINGS 2026-09-09 — so counting
+// raw sessions would read ceiling+1 on a legit handoff). An EXTRA same-role session on a task is a
+// respawn runaway and adds a slot; a worker that does not parse to a task is its own slot, keyed by name
+// so it is never silently merged away. Shared by ceilingHeld and leftoverSessionsReaped so both count the
+// ceiling the one way.
+function slotsInTick(agents) {
+  const live = (agents ?? []).filter((a) => a.isWorkerOf);
+  const byTask = new Map();
+  for (const a of live) {
+    const key = parseAgentName(a.name).task ?? `?${a.name}`;
+    if (!byTask.has(key)) byTask.set(key, []);
+    byTask.get(key).push(a);
+  }
+  let slots = 0;
+  for (const group of byTask.values()) {
+    const roles = new Set(group.map((a) => parseAgentName(a.name).role ?? '?'));
+    slots += 1 + Math.max(0, group.length - roles.size);
+  }
+  return slots;
+}
+
 // The timeline never shows more than n worker SLOTS in flight at once (DESIGN §2.4 the ceiling; §2.1
 // a task in review holds one slot, not two). Counting raw worker sessions over-counts a review
 // handoff: the loop closes the implementer AS the fresh reviewer spawns (loop.mjs 3c/3e), but
@@ -598,22 +642,7 @@ export function ceilingHeld(n) {
     let max = 0;
     let worstTick = null;
     for (const tick of bundle.timeline ?? []) {
-      const live = (tick.agents ?? []).filter((a) => a.isWorkerOf);
-      // Group live workers by task. A worker that does not parse to a task (should not happen once
-      // isWorkerOf is true) is its own slot, keyed by name so it is never silently merged away.
-      const byTask = new Map();
-      for (const a of live) {
-        const key = parseAgentName(a.name).task ?? `?${a.name}`;
-        if (!byTask.has(key)) byTask.set(key, []);
-        byTask.get(key).push(a);
-      }
-      // One slot per task in flight, plus one for every EXTRA same-role session on a task — a duplicate
-      // implementer or reviewer is a respawn runaway, not the legit implement→review handoff pair.
-      let slots = 0;
-      for (const group of byTask.values()) {
-        const roles = new Set(group.map((a) => parseAgentName(a.name).role ?? '?'));
-        slots += 1 + Math.max(0, group.length - roles.size);
-      }
+      const slots = slotsInTick(tick.agents);
       if (slots > max) {
         max = slots;
         worstTick = tick;
@@ -671,6 +700,205 @@ export function reachedWidth(n) {
       return { pass: false, evidence, detail: `peak of ${max} implementer(s) built at once, below the required width of ${n}` };
     }
     return { pass: true, evidence, detail: `${max} task implementer(s) built concurrently, meeting the width of ${n}` };
+  });
+}
+
+// --- Restart facts (DESIGN §2, §4, T06) ----------------------------------------------------------
+//
+// A restart run's captured bundle spans BOTH coordinator launches: one flow log the coordinator appends
+// to across the crash (the harness never truncates it), and one timeline the capture keeps sampling
+// through the kill and the relaunch. startupControlHygiene appends a `restart` marker to the flow on every
+// startup (coordinate.mjs §2.7), so a crash-and-restart run carries TWO `restart` markers — the second is
+// the boundary between the dead run and the resumed one, and the restart facts read the flow on each side
+// of it. Fewer than two markers means the run never actually restarted, so each fact fails rather than
+// passing vacuously.
+
+// restartBoundary(bundle) → the ISO ts of the LAST `restart` marker (the resumed run's hygiene), or null
+// if the run did not restart (fewer than two markers). Timestamps are the coordinator's own ISO strings,
+// so comparing them lexicographically orders the flow correctly.
+function restartBoundary(bundle) {
+  const restarts = flowOf(bundle, 'restart');
+  return restarts.length >= 2 ? restarts[restarts.length - 1].ts : null;
+}
+
+// implementSessionIds(bundle, task) → the distinct session ids that ran `task` as an IMPLEMENTER across
+// the whole run. More than one means the task was re-implemented (a second build spawned over it), the
+// signature of a rebuild where a resume was expected. Read from the timeline agent names (§2.8), which
+// carry the role, so it cannot drift from bookkeeping.
+function implementSessionIds(bundle, task) {
+  const ids = new Set();
+  for (const tick of bundle.timeline ?? []) {
+    for (const a of tick.agents ?? []) {
+      const p = parseAgentName(a.name);
+      if (a.isWorkerOf && p.task === task && p.role === 'implement' && a.sessionId) ids.add(a.sessionId);
+    }
+  }
+  return ids;
+}
+
+// The 🔍 task the crash caught was RESUMED, not rebuilt (DESIGN §2.5, T06). After the restart the resumed
+// coordinator adopts the committed-🔍 task branch to a fresh reviewer and merges it — it never re-runs the
+// implementer from the task doc. Proven from the bundle: the run actually restarted (two `restart`
+// markers); no `rebuild {task}` line anywhere; exactly one implement-role session for the task in the
+// whole timeline (a second build would be a re-implement); and a `merge {task}` after the boundary (the
+// resume landed it). A rebuild run — a `rebuild {task}` line and a second implementer — reddens this,
+// which is what makes the fact distinguish resume from rebuild (T06 done-when).
+export function resumedNotRebuilt(task) {
+  return fact(`resumed-not-rebuilt:${task}`, `${task}'s 🔍 branch was adopted and merged, not rebuilt`, (bundle) => {
+    const evidence = [];
+    const boundary = restartBoundary(bundle);
+    for (const r of flowOf(bundle, 'restart')) evidence.push(flowLine(r));
+    if (!boundary) {
+      return { pass: false, evidence, detail: 'the run did not restart (fewer than two restart markers) — resume is unproven' };
+    }
+    const rebuilds = flowOf(bundle, 'rebuild').filter((e) => e.rest === task);
+    if (rebuilds.length > 0) {
+      for (const r of rebuilds) evidence.push(flowLine(r));
+      return { pass: false, evidence, detail: `${task} was rebuilt (a rebuild line) — the resume re-implemented it instead of adopting` };
+    }
+    const impl = implementSessionIds(bundle, task);
+    if (impl.size > 1) {
+      evidence.push(`implement sessions for ${task}: ${impl.size}`);
+      return { pass: false, evidence, detail: `${task} was built by ${impl.size} implement sessions — it was re-implemented, not resumed` };
+    }
+    const reviewed = flowOf(bundle, 'review').find((e) => e.rest === task && e.ts >= boundary);
+    if (reviewed) evidence.push(flowLine(reviewed));
+    const mergedAfter = flowOf(bundle, 'merge').find((e) => e.rest === task && e.ts >= boundary);
+    if (!mergedAfter) {
+      return { pass: false, evidence, detail: `${task} never merged after the restart — the resume did not land the adopted branch` };
+    }
+    evidence.push(flowLine(mergedAfter));
+    return { pass: true, evidence, detail: `${task} was adopted after the restart and merged, with one implement session — resumed, not rebuilt` };
+  });
+}
+
+// A task already ✅+merged before the crash is LEFT ALONE by the restart (DESIGN §2.5, T06). decideResume
+// skips a feature-✅ task, so the resumed coordinator neither rebuilds nor re-reviews nor re-merges it.
+// Proven from the bundle: the run restarted (two markers); the task merged BEFORE the boundary (it was
+// finished pre-crash — else "not rebuilt after" is unprovable); and after the boundary there is no
+// `rebuild`, `spawn`, `review` or `merge` of it, and no more than one implement session for it across the
+// whole run. A resume that wrongly re-dispatched the done task — a `spawn {task}` or a second implementer
+// after the boundary — reddens it.
+export function noRebuildFrom(task) {
+  return fact(`no-rebuild-from:${task}`, `the already-done ${task} was not rebuilt after the restart`, (bundle) => {
+    const evidence = [];
+    const boundary = restartBoundary(bundle);
+    for (const r of flowOf(bundle, 'restart')) evidence.push(flowLine(r));
+    if (!boundary) {
+      return { pass: false, evidence, detail: 'the run did not restart (fewer than two restart markers) — nothing to prove' };
+    }
+    const mergedBefore = flowOf(bundle, 'merge').find((e) => e.rest === task && e.ts < boundary);
+    if (!mergedBefore) {
+      return { pass: false, evidence, detail: `${task} was not merged before the restart — cannot prove it was left alone (it was never finished)` };
+    }
+    evidence.push(flowLine(mergedBefore));
+    for (const type of ['rebuild', 'spawn', 'review', 'merge']) {
+      const after = flowOf(bundle, type).find((e) => e.rest === task && e.ts >= boundary);
+      if (after) {
+        evidence.push(flowLine(after));
+        return { pass: false, evidence, detail: `${task} was ${type}d after the restart — the done task was not left alone` };
+      }
+    }
+    const impl = implementSessionIds(bundle, task);
+    if (impl.size > 1) {
+      evidence.push(`implement sessions for ${task}: ${impl.size}`);
+      return { pass: false, evidence, detail: `${task} was built by ${impl.size} implement sessions — the done task was re-implemented` };
+    }
+    return { pass: true, evidence, detail: `${task} merged before the restart and was untouched after it — not rebuilt` };
+  });
+}
+
+// The restart cleared the transient control feeds, so a dead run's leftover never routes into the fresh
+// run (DESIGN §2.7, T06). The runner seeds a sentinel into every transient feed (answers, outbox,
+// surfaced, and a reports/*.json) in the gap between the SIGKILL and the relaunch — the exact stale state a
+// crash strands — and captures the feeds' contents after the resumed run (bundle.controlFeeds,
+// loadControlFeeds). This fact passes iff the run restarted, a sentinel was actually seeded (else clearing
+// is unproven), and NO feed still holds the sentinel — startupControlHygiene truncated them all. A feed
+// that kept its sentinel reddens it, naming the feed.
+export function feedsCleared() {
+  return fact('feeds-cleared', 'the restart cleared the transient control feeds of a prior run', (bundle) => {
+    const evidence = [];
+    const cf = bundle.controlFeeds ?? {};
+    for (const r of flowOf(bundle, 'restart')) evidence.push(flowLine(r));
+    if (flowOf(bundle, 'restart').length < 2) {
+      return { pass: false, evidence, detail: 'the run did not restart (fewer than two restart markers) — clearing is unproven' };
+    }
+    if (!cf.seeded || !cf.sentinel) {
+      return { pass: false, evidence, detail: 'no stale feed was seeded before the relaunch — clearing is unproven' };
+    }
+    const survivors = [];
+    for (const [feed, content] of Object.entries(cf.feeds ?? {})) {
+      if (feed === 'reports') {
+        if ((content ?? []).some((n) => String(n).includes(cf.sentinel))) survivors.push('reports/');
+      } else if (String(content ?? '').includes(cf.sentinel)) {
+        survivors.push(feed);
+      }
+    }
+    if (survivors.length > 0) {
+      for (const s of survivors) evidence.push(`stale sentinel survived in ${s}`);
+      return { pass: false, evidence, detail: `a stale entry survived the restart hygiene in: ${survivors.join(', ')}` };
+    }
+    evidence.push(`seeded sentinel "${cf.sentinel}" cleared from every transient feed`);
+    return { pass: true, evidence, detail: 'the seeded stale feed entries were all cleared on restart' };
+  });
+}
+
+// The dead run's leftover worker sessions were reaped by the restart (DESIGN §2.5, T06). A SIGKILL of the
+// coordinator leaves its workers alive; reconciliation stops every listed worker of the slug before it
+// adopts anything, session-only, so an orphan neither inflates the live count nor hides from the slot
+// maths. Proven from the timeline, which spans the crash: at least one worker session was sampled BEFORE
+// the boundary (there was a leftover to reap), none of those pre-crash sessions is still live in the final
+// tick (they were reaped, not left lingering past the resumed run), and the worker-slot peak across the
+// WHOLE run stayed within the ceiling (an un-reaped orphan beside the resumed workers would exceed it). A
+// leftover still live at the end, or a slot peak over the ceiling, reddens it.
+export function leftoverSessionsReaped({ ceiling } = {}) {
+  const id = ceiling != null ? `leftover-sessions-reaped:${ceiling}` : 'leftover-sessions-reaped';
+  return fact(id, 'the dead run\'s leftover sessions were reaped on restart', (bundle) => {
+    const evidence = [];
+    const boundary = restartBoundary(bundle);
+    for (const r of flowOf(bundle, 'restart')) evidence.push(flowLine(r));
+    if (!boundary) {
+      return { pass: false, evidence, detail: 'the run did not restart (fewer than two restart markers) — nothing to reap' };
+    }
+    const ticks = bundle.timeline ?? [];
+    // The pre-crash worker sessions: any worker sampled in a tick before the boundary.
+    const preCrash = new Map(); // sessionId → name
+    for (const tick of ticks) {
+      if (tick.ts >= boundary) continue;
+      for (const a of tick.agents ?? []) {
+        if (a.isWorkerOf && a.sessionId) preCrash.set(a.sessionId, a.name);
+      }
+    }
+    if (preCrash.size === 0) {
+      return { pass: false, evidence, detail: 'no worker session was sampled before the crash — there was no leftover to reap' };
+    }
+    // None of them may still be live in the final tick — the restart reaped them, they did not linger.
+    const last = ticks[ticks.length - 1];
+    const survivors = (last?.agents ?? []).filter((a) => a.isWorkerOf && a.sessionId && preCrash.has(a.sessionId));
+    if (survivors.length > 0) {
+      for (const s of survivors) evidence.push(`leftover still live at ${last.ts}: ${s.name} (${s.sessionId})`);
+      return { pass: false, evidence, detail: `${survivors.length} leftover session(s) still live after the restart — not reaped` };
+    }
+    // The ceiling held across the whole run, reap plus resume included.
+    if (ceiling != null) {
+      let max = 0;
+      let worstTick = null;
+      for (const tick of ticks) {
+        const slots = slotsInTick(tick.agents);
+        if (slots > max) {
+          max = slots;
+          worstTick = tick;
+        }
+      }
+      if (worstTick) {
+        evidence.push(`peak ${max} slot(s) at ${worstTick.ts}: ${worstTick.agents.filter((a) => a.isWorkerOf).map((a) => a.name).join(', ')}`);
+      }
+      if (max > ceiling) {
+        return { pass: false, evidence, detail: `peak of ${max} worker slots across the restart exceeds the ceiling of ${ceiling} — a leftover was counted alongside the resumed workers` };
+      }
+    }
+    evidence.push(`${preCrash.size} pre-crash session(s) reaped; none live at ${last?.ts}`);
+    return { pass: true, evidence, detail: `${preCrash.size} leftover session(s) reaped on restart, ceiling held` };
   });
 }
 

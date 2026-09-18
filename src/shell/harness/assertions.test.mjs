@@ -13,6 +13,7 @@ import { loadBundle } from './capture.mjs';
 import {
   loadTranscripts,
   loadFinalFiles,
+  loadControlFeeds,
   parseTranscript,
   sendMessagesOf,
   runIdentity,
@@ -29,6 +30,10 @@ import {
   killSwitchStoppedAll,
   ceilingHeld,
   reachedWidth,
+  resumedNotRebuilt,
+  noRebuildFrom,
+  feedsCleared,
+  leftoverSessionsReaped,
   checkScenario,
   formatReport,
 } from './assertions.mjs';
@@ -523,6 +528,157 @@ test('reachedWidth(2) counts only busy implementers, not an idle-but-listed one'
     tick('t2', [wagent('T02', 'busy'), wagent('T03', 'busy')]),
   ] });
   assert.equal(reachedWidth(2).check(b2).pass, true);
+});
+
+// --- restart facts (T06) -------------------------------------------------------------------------
+//
+// A restart bundle carries TWO `restart` flow markers (startupControlHygiene runs on every launch); the
+// second is the boundary between the dead run and the resumed one. These are hand-built in that shape.
+
+// A resumed run: T02 built (one implement session) before the crash, then adopted to a reviewer and merged
+// after the boundary; no rebuild.
+const resumedBundle = () =>
+  bundle({
+    flow: [
+      fl('2026-01-01T00:00:00Z', 'restart'),
+      fl('2026-01-01T00:00:05Z', 'merge', 'T01'),
+      fl('2026-01-01T00:00:10Z', 'restart'), // ← the boundary (resumed run's hygiene)
+      fl('2026-01-01T00:00:11Z', 'review', 'T02'),
+      fl('2026-01-01T00:00:12Z', 'merge', 'T02'),
+    ],
+    timeline: [
+      tick('2026-01-01T00:00:03Z', [cagent(), wagent('T02', 'busy', { sessionId: 'i2', role: 'implement' })]),
+      tick('2026-01-01T00:00:11Z', [cagent(), wagent('T02', 'busy', { sessionId: 'r2', role: 'review' })]),
+    ],
+  });
+
+test('resumedNotRebuilt passes when the 🔍 task was adopted and merged with one implement session', () => {
+  const r = resumedNotRebuilt('T02').check(resumedBundle());
+  assert.equal(r.pass, true, r.detail);
+});
+
+test('resumedNotRebuilt fails when the task was rebuilt (a rebuild line + a second implementer)', () => {
+  const b = resumedBundle();
+  b.flow.splice(3, 0, fl('2026-01-01T00:00:10Z', 'rebuild', 'T02'), fl('2026-01-01T00:00:11Z', 'spawn', 'T02'));
+  b.timeline[1].agents.push(wagent('T02', 'busy', { sessionId: 'i2b', role: 'implement' })); // a second build
+  const r = resumedNotRebuilt('T02').check(b);
+  assert.equal(r.pass, false);
+  assert.match(r.detail, /rebuilt/);
+});
+
+test('resumedNotRebuilt fails vacuously-safe when the run never restarted (one marker)', () => {
+  const b = resumedBundle();
+  b.flow = b.flow.filter((e) => e.type !== 'restart').concat([fl('2026-01-01T00:00:00Z', 'restart')]);
+  const r = resumedNotRebuilt('T02').check(b);
+  assert.equal(r.pass, false);
+  assert.match(r.detail, /did not restart/);
+});
+
+// A left-alone run: T01 merged before the crash and untouched after it.
+const leftAloneBundle = () =>
+  bundle({
+    flow: [
+      fl('2026-01-01T00:00:00Z', 'restart'),
+      fl('2026-01-01T00:00:05Z', 'merge', 'T01'),
+      fl('2026-01-01T00:00:10Z', 'restart'),
+      fl('2026-01-01T00:00:12Z', 'merge', 'T02'),
+    ],
+    timeline: [tick('2026-01-01T00:00:03Z', [cagent(), wagent('T01', 'busy', { sessionId: 'i1', role: 'implement' })])],
+  });
+
+test('noRebuildFrom passes when the ✅+merged task is untouched after the restart', () => {
+  const r = noRebuildFrom('T01').check(leftAloneBundle());
+  assert.equal(r.pass, true, r.detail);
+});
+
+test('noRebuildFrom fails when the done task is re-dispatched after the restart', () => {
+  const b = leftAloneBundle();
+  b.flow.push(fl('2026-01-01T00:00:11Z', 'spawn', 'T01')); // re-dispatched after the boundary
+  const r = noRebuildFrom('T01').check(b);
+  assert.equal(r.pass, false);
+  assert.match(r.detail, /after the restart/);
+});
+
+test('noRebuildFrom fails when the task was never finished before the restart (unprovable)', () => {
+  const b = leftAloneBundle();
+  b.flow = b.flow.filter((e) => !(e.type === 'merge' && e.rest === 'T01')); // no pre-crash merge of T01
+  const r = noRebuildFrom('T01').check(b);
+  assert.equal(r.pass, false);
+  assert.match(r.detail, /not merged before/);
+});
+
+// feedsCleared reads bundle.controlFeeds (loadControlFeeds).
+const twoRestarts = [fl('2026-01-01T00:00:00Z', 'restart'), fl('2026-01-01T00:00:10Z', 'restart')];
+
+test('feedsCleared passes when a seeded sentinel is gone from every transient feed after restart', () => {
+  const b = bundle({
+    flow: twoRestarts,
+    controlFeeds: { seeded: true, sentinel: 'STALE-X', feeds: { answers: '', outbox: '', surfaced: '', reports: [] } },
+  });
+  assert.equal(feedsCleared().check(b).pass, true);
+});
+
+test('feedsCleared fails naming the feed that kept the stale sentinel', () => {
+  const b = bundle({
+    flow: twoRestarts,
+    controlFeeds: { seeded: true, sentinel: 'STALE-X', feeds: { answers: '{"stale":"STALE-X"}\n', outbox: '', surfaced: '', reports: ['STALE-X.json'] } },
+  });
+  const r = feedsCleared().check(b);
+  assert.equal(r.pass, false);
+  assert.match(r.detail, /answers/);
+  assert.match(r.detail, /reports\//);
+});
+
+test('feedsCleared fails vacuously-safe when nothing was seeded (clearing unproven)', () => {
+  const b = bundle({ flow: twoRestarts, controlFeeds: { seeded: false } });
+  const r = feedsCleared().check(b);
+  assert.equal(r.pass, false);
+  assert.match(r.detail, /no stale feed was seeded/);
+});
+
+test('loadControlFeeds attaches control-feeds.json and defaults to unseeded on a missing file', () => {
+  const seeded = loadControlFeeds(bundle(), { readFile: () => JSON.stringify({ seeded: true, sentinel: 'S', feeds: {} }) });
+  assert.equal(seeded.controlFeeds.seeded, true);
+  const missing = loadControlFeeds(bundle(), { readFile: () => { throw new Error('no file'); } });
+  assert.deepEqual(missing.controlFeeds, { seeded: false });
+});
+
+// leftoverSessionsReaped: a pre-crash worker session must be gone by the final tick, ceiling held.
+const reapedBundle = () =>
+  bundle({
+    flow: twoRestarts,
+    timeline: [
+      tick('2026-01-01T00:00:03Z', [cagent(), wagent('T02', 'busy', { sessionId: 'w2', role: 'implement' })]), // pre-crash
+      tick('2026-01-01T00:00:11Z', [cagent(), wagent('T02', 'busy', { sessionId: 'r2', role: 'review' })]), // w2 reaped
+    ],
+  });
+
+test('leftoverSessionsReaped passes when the pre-crash session is gone by the final tick and the ceiling held', () => {
+  const r = leftoverSessionsReaped({ ceiling: 1 }).check(reapedBundle());
+  assert.equal(r.pass, true, r.detail);
+});
+
+test('leftoverSessionsReaped fails when a pre-crash leftover is still live at the end', () => {
+  const b = reapedBundle();
+  b.timeline[1].agents.push(wagent('T02', 'idle', { sessionId: 'w2', role: 'implement' })); // the leftover lingers
+  const r = leftoverSessionsReaped({ ceiling: 1 }).check(b);
+  assert.equal(r.pass, false);
+  assert.match(r.detail, /still live/);
+});
+
+test('leftoverSessionsReaped fails when the slot peak exceeds the ceiling across the restart', () => {
+  const b = reapedBundle();
+  // A post-boundary tick with two distinct tasks live (an un-reaped orphan counted beside a resumed worker).
+  b.timeline.splice(1, 0, tick('2026-01-01T00:00:10Z', [cagent(), wagent('T02', 'busy', { sessionId: 'r2', role: 'review' }), wagent('T03', 'busy', { sessionId: 'w3', role: 'implement' })]));
+  const r = leftoverSessionsReaped({ ceiling: 1 }).check(b);
+  assert.equal(r.pass, false);
+  assert.match(r.detail, /exceeds the ceiling/);
+});
+
+test('leftoverSessionsReaped fails vacuously-safe when the run never restarted', () => {
+  const b = reapedBundle();
+  b.flow = [fl('2026-01-01T00:00:00Z', 'restart')];
+  assert.equal(leftoverSessionsReaped({ ceiling: 1 }).check(b).pass, false);
 });
 
 // --- checkScenario + formatReport ----------------------------------------------------------------

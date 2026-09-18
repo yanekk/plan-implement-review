@@ -24,6 +24,11 @@ import {
   parseHandsOnTask,
   handsOnToAnnounce,
   captureFinalFiles,
+  restartTargetReached,
+  coordinatorPidFrom,
+  seedStaleFeeds,
+  snapshotControlFeeds,
+  runRestartScenario,
 } from './run.mjs';
 
 function workspace() {
@@ -601,6 +606,201 @@ test('runScenario seals a HALT run only after halt-close (not on the bare flag),
     // The captured flow.log contains halt-close — the whole point of T29 (the old seal omitted it).
     const capturedFlow = readFileSync(join(result.bundleDir, 'flow.log'), 'utf8');
     assert.ok(capturedFlow.includes('halt-close'), 'the sealed bundle captured the coordinator halt-close');
+  } finally {
+    ws.cleanup();
+  }
+});
+
+// --- restart-mode pure wiring (T06) --------------------------------------------------------------
+
+test('restartTargetReached is true on the branch-glyph read, and on the review-line fallback for 🔍', () => {
+  const waitFor = { task: 'T02', glyph: '🔍' };
+  // Primary: the task branch has committed the crash-point glyph.
+  assert.equal(restartTargetReached({ branchState: '🔍', waitFor }), true);
+  assert.equal(restartTargetReached({ branchState: '🟡', waitFor }), false);
+  // Fallback: a `review T02` flow line means the coordinator saw the committed 🔍 and handed it to review.
+  assert.equal(restartTargetReached({ flowText: '2026-01-01T00:00:08Z review T02\n', waitFor }), true);
+  assert.equal(restartTargetReached({ flowText: '2026-01-01T00:00:08Z review T03\n', waitFor }), false);
+  // No signal, and no waitFor, are both false.
+  assert.equal(restartTargetReached({ flowText: '2026-01-01T00:00:00Z spawn T02\n', waitFor }), false);
+  assert.equal(restartTargetReached({ branchState: '🔍' }), false);
+});
+
+test('coordinatorPidFrom reads the coordinator session pid, else null', () => {
+  const coordName = 'scratch-repo · restart';
+  const agents = [
+    { name: 'scratch-repo · restart · T02 · implement', pid: 5001 },
+    { name: coordName, pid: 4242 },
+  ];
+  assert.equal(coordinatorPidFrom(agents, coordName), 4242);
+  assert.equal(coordinatorPidFrom([{ name: coordName, pid: null }], coordName), null);
+  assert.equal(coordinatorPidFrom([], coordName), null);
+});
+
+test('seedStaleFeeds writes a leftover into every transient feed; snapshotControlFeeds reads it back, and a clear', () => {
+  const ws = workspace();
+  try {
+    const control = controlDirFor(ws.dir, 'restart');
+    seedStaleFeeds(control, 'STALE-1');
+    const feeds = snapshotControlFeeds(control);
+    assert.match(feeds.answers, /STALE-1/);
+    assert.match(feeds.outbox, /STALE-1/);
+    assert.match(feeds.surfaced, /STALE-1/);
+    assert.deepEqual(feeds.reports, ['STALE-1.json']);
+    // After the hygiene truncates them (what the real coordinator does), the snapshot is empty of the sentinel.
+    for (const n of ['answers', 'outbox', 'surfaced']) writeFileSync(join(control, n), '');
+    rmSync(join(control, 'reports', 'STALE-1.json'));
+    const cleared = snapshotControlFeeds(control);
+    assert.equal(cleared.answers, '');
+    assert.deepEqual(cleared.reports, []);
+  } finally {
+    ws.cleanup();
+  }
+});
+
+// --- runRestartScenario end to end, with fakes (the whole crash-and-restart orchestration) --------
+//
+// A fake install lays the scratch and pre-writes the first run's flow. A fake `claude` answers both
+// launches and the capture ticks; a fake worktree's taskBranchState reports 🔍 after two polls (the crash
+// point); an injected `kill` records the SIGKILL instead of touching a real process; and once the SECOND
+// launch is live the agents handler writes the resumed run's promote line so the wait terminates. So
+// install-once, launch/kill/relaunch, the stale-feed seeding and the two-launch-spanning bundle are all
+// proven with no live agent — the live crash-and-restart over real agents is T07.
+test('runRestartScenario installs once, launches, kills at 🔍, relaunches on the same scratch, and spans both', async () => {
+  const ws = workspace();
+  try {
+    const into = join(ws.dir, 'scratch-repo');
+    const projects = join(ws.dir, 'projects');
+    mkdirSync(projects, { recursive: true });
+    const control = controlDirFor(into, 'restart');
+    const flowPath = join(control, 'log');
+
+    const coord = { id: 'c', sessionId: 'sc', name: 'scratch-repo · restart', cwd: into, status: 'busy', state: 'working', pid: 4242 };
+    const w2 = { id: 'w2', sessionId: 'i2', name: 'scratch-repo · restart · T02 · implement', cwd: into, status: 'busy', state: 'working', pid: 5001 };
+
+    const firstFlow = '2026-01-01T00:00:00Z restart\n2026-01-01T00:00:05Z merge T01\n2026-01-01T00:00:08Z review T02\n';
+    const resumedFlow = firstFlow + '2026-01-01T00:00:10Z restart\n2026-01-01T00:00:12Z merge T02\n2026-01-01T00:00:13Z promote pir/restart\n';
+
+    let launches = 0;
+    const claudeCalls = [];
+    const claudeRun = (args, opts = {}) => {
+      claudeCalls.push({ args, env: opts.env });
+      if (args[0] === '--bg') {
+        launches += 1;
+        return { ok: true, stdout: `coord-${launches}\n` };
+      }
+      if (args.includes('--all')) return { ok: true, stdout: '[]' };
+      if (args[0] === 'agents') {
+        if (launches >= 2) {
+          // The resumed run: write its promote line so this same poll's flow read terminates the wait.
+          writeFileSync(flowPath, resumedFlow);
+          return { ok: true, stdout: JSON.stringify([coord]) };
+        }
+        return { ok: true, stdout: JSON.stringify([coord, w2]) };
+      }
+      return { ok: true, stdout: '' };
+    };
+
+    let installs = 0;
+    const install = (id, opts) => {
+      installs += 1;
+      mkdirSync(control, { recursive: true });
+      writeFileSync(flowPath, firstFlow);
+    };
+
+    let tbsCalls = 0;
+    const worktree = { remove: () => {}, taskBranchState: () => (++tbsCalls >= 2 ? '🔍' : null) };
+
+    const kills = [];
+    const kill = (pid, signal) => kills.push({ pid, signal });
+
+    const result = await runRestartScenario({
+      fixtureId: 'restart',
+      scratchDir: into,
+      install,
+      claudeRun,
+      gitRun: () => ({ ok: true, stdout: '' }),
+      kill,
+      platform: fakePlatform({ agents: [] }),
+      worktree,
+      projectsDir: projects,
+      pollMs: 1,
+      startupGrace: 100,
+      stallGrace: 100,
+    });
+
+    // Installed exactly once — the relaunch must NOT reinstall (git holds the branches to resume).
+    assert.equal(installs, 1, 'the fixture was installed exactly once');
+    // Two coordinator launches, both under the convention name with the seatbelt env (ceiling 1).
+    const bg = claudeCalls.filter((c) => c.args[0] === '--bg');
+    assert.equal(bg.length, 2, 'the coordinator was launched twice (crash then restart)');
+    for (const c of bg) {
+      assert.deepEqual(c.args, ['--bg', '-n', 'scratch-repo · restart', '/pir-coordinate restart']);
+      assert.equal(c.env.PARALLEL_MAX_WORKERS, '1');
+    }
+    // The crash was a SIGKILL of the coordinator pid only.
+    assert.deepEqual(kills, [{ pid: 4242, signal: 'SIGKILL' }]);
+    // The resumed run promoted.
+    assert.equal(result.reason, 'promoted');
+    // The bundle spans both launches: its flow.log carries the first run's merge AND the resumed promote.
+    const capturedFlow = readFileSync(join(result.bundleDir, 'flow.log'), 'utf8');
+    assert.ok(capturedFlow.includes('merge T01') && capturedFlow.includes('promote'), 'the sealed flow spans both launches');
+    // The stale-feed leftover was seeded and captured for feedsCleared (control-feeds.json).
+    const cf = JSON.parse(readFileSync(join(result.bundleDir, 'control-feeds.json'), 'utf8'));
+    assert.equal(cf.seeded, true);
+    assert.ok(cf.sentinel && cf.feeds, 'the control-feeds snapshot records the sentinel and the feeds');
+    // The report ran the restart scenario's declared facts (the wiring produced a verdict).
+    const ids = result.report.facts.map((f) => f.id);
+    assert.deepEqual(ids, ['resumed-not-rebuilt:T02', 'no-rebuild-from:T01', 'feeds-cleared', 'leftover-sessions-reaped:1', 'one-merge-to-main']);
+  } finally {
+    ws.cleanup();
+  }
+});
+
+test('runRestartScenario reaches the crash point via the review-line flow fallback when no branch read is available', async () => {
+  const ws = workspace();
+  try {
+    const into = join(ws.dir, 'scratch-repo');
+    const projects = join(ws.dir, 'projects');
+    mkdirSync(projects, { recursive: true });
+    const control = controlDirFor(into, 'restart');
+    const flowPath = join(control, 'log');
+
+    const coord = { id: 'c', sessionId: 'sc', name: 'scratch-repo · restart', cwd: into, status: 'busy', state: 'working', pid: 4242 };
+    const w2 = { id: 'w2', sessionId: 'i2', name: 'scratch-repo · restart · T02 · implement', cwd: into, status: 'busy', state: 'working', pid: 5001 };
+    const firstFlow = '2026-01-01T00:00:00Z restart\n2026-01-01T00:00:08Z review T02\n'; // the review line IS the target
+    const resumedFlow = firstFlow + '2026-01-01T00:00:10Z restart\n2026-01-01T00:00:13Z promote pir/restart\n';
+
+    let launches = 0;
+    const claudeRun = (args) => {
+      if (args[0] === '--bg') { launches += 1; return { ok: true, stdout: 'coord\n' }; }
+      if (args.includes('--all')) return { ok: true, stdout: '[]' };
+      if (args[0] === 'agents') {
+        if (launches >= 2) { writeFileSync(flowPath, resumedFlow); return { ok: true, stdout: JSON.stringify([coord]) }; }
+        return { ok: true, stdout: JSON.stringify([coord, w2]) };
+      }
+      return { ok: true, stdout: '' };
+    };
+
+    const kills = [];
+    const result = await runRestartScenario({
+      fixtureId: 'restart',
+      scratchDir: into,
+      install: () => { mkdirSync(control, { recursive: true }); writeFileSync(flowPath, firstFlow); },
+      claudeRun,
+      gitRun: () => ({ ok: true, stdout: '' }),
+      kill: (pid, signal) => kills.push({ pid, signal }),
+      platform: fakePlatform({ agents: [] }),
+      // No taskBranchState → the runner must fall back to the `review T02` flow line to detect the target.
+      worktree: { remove: () => {} },
+      projectsDir: projects,
+      pollMs: 1,
+      startupGrace: 100,
+      stallGrace: 100,
+    });
+
+    assert.deepEqual(kills, [{ pid: 4242, signal: 'SIGKILL' }], 'the crash still fired off the flow-line target');
+    assert.equal(result.reason, 'promoted');
   } finally {
     ws.cleanup();
   }
