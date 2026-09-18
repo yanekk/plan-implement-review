@@ -11,6 +11,7 @@ user changed.
 
 | Date | | Finding |
 |---|---|---|
+| 2026-09-18 | 🔄 | PM: ship with T07's live resume UNPROVEN. A live crash is infeasible here (rotation — row below); the supervisor-kill attempt was reverted (151df8e). Resume is covered only by the fast reconcile tests, never seen over real agents. |
 | 2026-09-18 | 🐞 | T07 live drill FAILED twice. A bg session is served turn-by-turn from a daemon pool, rotating pty-host+spare each turn (coordinator pid 36748→81689 mid-run) — no stable process to SIGKILL. Only `claude stop`/`rm` target one session, both destroy the state. A live crash of a running coordinator is infeasible here. |
 | 2026-09-17 | 📌 | T04's HALT refusal + transient-feed clear live in `main`'s LIVE path (after `fileControl`), so they fire only under `PARALLEL_LIVE=1`. A dry preview builds no control and does not refuse a HALTed plan; harmless — no workers, no feeds. T05 docs note this. |
 | 2026-09-17 | 🐞 | reconcile left a conflicted ✅ branch at feature-⬜ with no live worker to park it, so decideDispatch re-implemented it the same pass, clobbering reviewed work (§2.6). Now marked ⛔ (skipped by dispatch and resume), branch kept for a person. User decision. |
