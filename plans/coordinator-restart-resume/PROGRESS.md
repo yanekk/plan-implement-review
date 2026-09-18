@@ -10,10 +10,11 @@ account is the commit message. Whoever writes a cell also fixes the over-budget 
 
 **Plan reviewed:** 2026-09-17 — 2 fixed, 2 decided with the user
 
-**Status:** Building. T01–T06 done. T07, the live restart drill (a person, `you`), is handed to the user.
+**Status:** T01–T06 done. T07's live restart drill was RUN and FAILED — the simulated crash did not kill
+the real coordinator, so no genuine crash→resume happened. Blocked on a fix decision.
 **Last updated:** 2026-09-18
-**Next `pir-work` will:** re-offer T07 — the live restart drill. It is handed over and awaiting the
-user's live run and judgement; nothing else is buildable until it is done.
+**Next `pir-work` will:** stop on T07 — it is blocked. The live drill exposed a real defect in T06's crash
+mechanism (SIGKILL misses the working `claude --bg` process). Needs the user to decide the fix.
 
 ## Tasks
 
@@ -28,7 +29,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T04 | Clear transient control feeds; HALT/log policy | auto | — | ✅ | Clean. Feed names (reports/answers/outbox/surfaced) match the live bridge; hygiene runs before the bridge writes; HALT refusal + clear are LIVE-only. 359 green. |
 | T05 | Update `/docs` to the corrected behaviour | auto | T03, T04 | ✅ | Clean, no fix. Docs-only diff; every claim traced to shipped code (reconcile, decideResume, startupControlHygiene, taskBranchState). 359 green. |
 | T06 | Harness restart mode + fixture + facts | auto | T03, T04 | ✅ | Clean, no fix. Checked install-once, SIGKILL-coord-only at 🔍, no-reinstall relaunch, two-launch bundle; all 4 facts non-vacuous (pass/fail/never-restarted). Probed the live-drill hinge: capture keeps agent `pid` so the SIGKILL fires; flow fallback catches the 🔍→merged race; boundary is the 2nd restart marker. slotsInTick refactor behaviour-preserving. 386 green. |
-| T07 | Live restart drill, judged by a person | you | T06 | ⬜ | |
+| T07 | Live restart drill, judged by a person | you | T06 | ⛔ | Drill RAN live 2026-09-18, FAILED 4/5 facts. SIGKILL missed the real coordinator (alive ~1min past crash); 2nd coordinator ran concurrently — no true crash→resume. One `restart` marker, stale `outbox`/`surfaced`. Defect is in T06's crash mechanism. Blocked on fix decision. |
 
 A Notes cell holds what was built or what the review found, the test count, and one line per deviation
 from the task doc. A ✅ task's cell may be cut to one line once the next task has been reviewed.
@@ -37,9 +38,13 @@ from the task doc. A ✅ task's cell may be cut to one line once the next task h
 
 ## Blocked on the user
 
-**T07 — live restart drill (handed over 2026-09-18).** Needs a live crash-and-restart over real paid
-`claude` agents in a scratch repo, watched and judged by the user. Seatbelt: `node
-src/shell/harness/run.mjs restart --into <scratch-dir>` (scratch only, low ceiling, HALT armed by the
-timeout). The user runs it; the machine facts and the user's yes/no both go to `FINDINGS.md`. Until
-that is done, nothing else is buildable — it is the last task.
+**T07 — live restart drill RAN and FAILED (2026-09-18).** Driven live over real paid agents at the
+user's direction (`node src/shell/harness/run.mjs restart --into <scratch>`); teardown clean, no orphaned
+agents. Fact report FAILED 4/5. Root cause: the `SIGKILL` of the pid from `claude agents --json` did not
+kill the working coordinator (it lived ~1 min past the crash point), and the relaunch ran a second
+coordinator concurrently — so no real crash→resume was exercised. `resumedNotRebuilt`, `noRebuildFromT01`,
+`feedsCleared`, `leftoverSessionsReaped` all red on "fewer than two `restart` markers"; only
+`one-merge-to-main` passed. **Blocked on the user:** decide the fix (it lives in T06's crash mechanism —
+kill the real process, not the reported pid — or in how the drill detects/forces the crash). Not a T07
+edit; T07 is the drill, and it cannot pass until the crash is real.
 </content>
