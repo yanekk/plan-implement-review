@@ -71,9 +71,15 @@ confirms itself. Before you fix, get one fact the diff did not give you: run it 
 fail, write the failing test first and see it go red, reproduce the condition with a real
 input, check the actual state on disk. That out-of-band fact is the fourth check's teeth.
 
-If the only channel that could settle it is one this session cannot reach — a screen, a
-device, a real account — that is not licence to decide from the code anyway. It is the
-hands-on-the-machine handover: ask, and wait. See `CLAUDE.md`.
+Before a channel is "one this session cannot reach," you make it one you *can* — you build the
+tool. Drive the program from a script, render the surface headless and diff the snapshot,
+assert on what it would draw, reproduce the input, read the state off disk. This is the
+print-vision trap: a reviewer who sees "look at the popover" and hands it straight to the user
+has skipped the step where a scripted render settles it with no person at all. Only when no
+tool you could write would settle it — a real screen to be *judged*, a device, a real account,
+a paid call, a run only a person may watch — is it the hands-on-the-machine handover: ask, and
+wait, with the seatbelt. See `CLAUDE.md`. **"I did not build the reproduction" is not "only a
+person can see it."**
 
 **A fix that went in on a reproduction says so in the cell** — "reproduced by <the channel>,
 fixed, test locks it." A defect confirmed by a channel that did not raise it is a review that
@@ -123,6 +129,11 @@ A task whose automated half is green and whose hands-on half has never been seen
 the strength of the tests alone. Say which half is which — in `PROGRESS.md` and in the report
 — and give the user the exact command with its seatbelt. Never run the unbounded dangerous
 version to find out for yourself.
+
+A hands-on half is one no tool you could write would have closed — a real screen to be judged,
+a device, a real account, a paid or unwatchable run. A check you left to the user because you
+did not build the harness is not an unverified half; it is an unfinished review. Reduce it to
+a machine check first (above), and hand over only what stays genuinely person-only.
 
 **Ask the moment you need it and wait for the answer.** The user is the hands on the real
 machine and has asked to be stopped for, not handed homework at the end — see `CLAUDE.md`.

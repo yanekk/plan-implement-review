@@ -207,15 +207,20 @@ The coordinator then merges your now-clean branch. If, while resolving, you find
 ambiguous or cannot be applied, drop a `[pir:v1 kind=question task=Txx]` with the specifics and wait —
 never hand back a dirty or guessed-at branch.
 
-## `pir-verify Txx` is the hands-on path (a `you` task) — the user runs it, you scribe
+## `pir-verify Txx` is the hands-on path (a `you` task) — you own the mechanical, the user judges
 
-For a `you` task the coordinator sends `pir-verify Txx`. Here the **user** runs the live/seatbelted
-commands and **you do not** — an agent must never spawn real paid agents against real branches on its
-own (DESIGN §5.2), and only a person can watch. You are the scribe: present the task's "Needs a
-person" block, wait while the user runs it, record what they report into `FINDINGS.md` on your task
-branch, mark the task done, and drop a report — `[pir:v1 kind=done task=Txx]`. You produce no code and get no
-review session — the recorded observation is the deliverable (DESIGN §2.6). The full procedure is in
-the `pir-verify` skill; invoke it.
+For a `you` task the coordinator sends `pir-verify Txx`. The line between you and the user is
+**judgement, not "any command."** Everything mechanical is yours: you stand the environment up
+and seed it, run every check a machine can decide, and afterward tear it down and confirm it is
+down. You do **not** ask the user to configure, set up or run what you could run yourself — that
+is the exact dodge this path is not for. The user's part is only the judgement a person must
+make, and the one hard line an agent may never cross on its own: **spawning real paid agents
+against real branches, or watching a real run** (DESIGN §5.2). Present the task's "Needs a
+person" block for that, record the machine result and the person's judgement as two separate
+confirmations into `FINDINGS.md` on your task branch — never rounding an ambiguous reply up —
+tear the environment down, mark the task done, and drop a report — `[pir:v1 kind=done task=Txx]`.
+You produce no code and get no review session; the recorded observation is the deliverable
+(DESIGN §2.6). The full procedure is in the `pir-verify` skill; invoke it.
 
 ## Addressing: your name, and the coordinator's
 

@@ -97,13 +97,28 @@ The one thing you may fix outside the task is an over-budget row in `PROGRESS.md
 `FINDINGS.md` that you read on the way in. That is not scope creep and it needs no finding
 logged; it is the maintenance those two files get instead of a session of their own.
 
-## What you may not claim
+## Automate first — your hands are the first resort, the user's the last
 
-The test command is the only evidence this session can produce on its own. If a "Done when"
-item can only be established by taking the screen, logging in as somebody else, rebooting,
-pointing a camera at something, calling a paid service or watching a real person, then **this
-session cannot establish it** — mark that half unverified in `PROGRESS.md` and in the report,
-and give the user the exact command with its seatbelt, **the moment you need it, then wait
-for the answer**, rather than leaving it as homework at the end. Never run the unbounded
-dangerous version to find out for yourself. See `CLAUDE.md` for the handover format and
-`DESIGN.md § Environment` for this project's table and seatbelts.
+You are an `auto` worker, and an `auto` task is yours to finish. Before you hand *anything* to
+the user, you build whatever tool makes the machine decide it — that is the job, not a favour
+you ask the user for. A program that has to be launched, you drive from a script. A surface
+that has to be looked at, you render headless and snapshot, or assert on what it would draw. A
+state that has to be inspected, you seed and read back. A log that would say it worked, you
+scrape. Standing up the environment to do any of this — a server, a fixture, a seeded database
+— is yours too. **"I did not build the tool" is not "the tests cannot establish it."** The bar
+for handing work to the user is that no tool you could write would close the gap — not that
+writing one is inconvenient.
+
+## What you genuinely may not claim
+
+Some things no tool reaches: a real screen a person has to *judge* — not render, judge: "does
+this look right" — a login only they hold, a second account, a reboot, a physical device, a
+camera, a paid call, a run only a person may watch. Those, and only those, are handed over —
+with the exact command and its seatbelt, **the moment you need it, then wait for the answer**,
+rather than left as homework at the end. Mark that half unverified in `PROGRESS.md` and in the
+report. Never run the unbounded dangerous version to find out for yourself. See `CLAUDE.md`
+for the handover format and `DESIGN.md § Environment` for this project's table and seatbelts.
+
+The test command stays the only evidence this session asserts on its own, and a handover stays
+the *last* resort, not the first — reached when the tools are written and the gap that is left
+is genuinely one only a person can close.

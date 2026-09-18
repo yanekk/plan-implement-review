@@ -99,6 +99,21 @@ The whole of `plans/{slug}/` has to describe one buildable thing. Check:
   last, with a seatbelt.
 - **The verification table is wired up.** Every task that can only be checked by a person
   says so in its own doc, and every row of the table belongs to some task.
+- **`auto` really is `auto`, and `you` really needs a person.** This is the check nothing else
+  in the method makes. Walk every task's `Runs` marker against the rule in `pir-plan`: `you` is
+  only for a person's *judgement* no tool could stand in for. Hunt two failures, and both are
+  decisions, not mechanical fixes — they change what gets built and who does it:
+  - **A `you` task a worker could do.** "A program has to be run," "a file has to be checked,"
+    "an environment has to be set up" — none is person-only; a worker runs programs, reads
+    files and stands environments up. If the only thing the person adds is pressing enter, it
+    is a mis-marked `auto` task, and leaving it `you` seats the user at a keyboard for work the
+    machine should own.
+  - **An `auto` task that secretly leans on the user.** Read its "Done when" and its steps for
+    any point where the worker would have to hand the user a thing to run, configure or set up
+    that the task never gave the worker the means to automate. That hidden handover is the exact
+    leak this method is closing: either the task must carry the tool that closes it (still
+    `auto`), or the genuinely person-only remainder must be split into its own `you` verify
+    task whose mechanical setup lives in a worker-owned section, not in the user's lap.
 - **Nothing out of scope is being built.** Cross the task list against what `DESIGN.md` says
   is deliberately not being built.
 - **`FINDINGS.md` does not contradict the plan.** The planning session's own probes are in
@@ -224,8 +239,9 @@ A second implementation of something the repo already has is the most expensive 
 
 > everything from Pass 2 · everything from Pass 4 — a task that builds what the repo already
 > has, or that should become an extension of it · two rules that contradict, where which one
-> wins is a judgement · a task that should be split, added, dropped or reordered · a design
-> rule the machine has just proved impossible · anything where either answer is defensible
+> wins is a judgement · a task that should be split, added, dropped or reordered · a task
+> mis-marked `auto`/`you`, or an `auto` task that hides a handover a worker could automate · a
+> design rule the machine has just proved impossible · anything where either answer is defensible
 
 **Ask. Never guess, and never invent a rule to avoid asking.**
 

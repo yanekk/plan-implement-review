@@ -295,20 +295,29 @@ was not there. Every task needs all five of:
    a plan look wider either — a worker built on work that is not there collides or fails.
    Correct task boundaries and reviewability beat throughput; parallelism is surfaced, never
    forced.
-6. **Its `Runs` marker** — `auto` if a background worker can produce the deliverable (the code
-   and its tests), `you` if the task's completion is a person's actions whose result is an
-   observation: a spike, a hand-verification drill, or running a program a sibling `auto` task
-   built to confirm it works. Most tasks are `auto`; the marker defaults to `auto` when omitted.
+6. **Its `Runs` marker** — `auto` unless the deliverable's completion is a *person's judgement
+   no machine can stand in for*. `auto` covers far more than the code and its tests: it covers
+   everything a worker can drive itself — running the program, rendering the surface,
+   snapshotting it, seeding a state and reading it back, standing an environment up to do so.
+   `you` is the narrow rest: a spike whose result is a human decision, a hand-verification
+   drill where a person must look and judge, a run only a person may watch (real agents, real
+   money, a real device). **The test is "could a worker build a tool that decides this?" If
+   yes, it is `auto`, however inconvenient the tool. "A program has to be run" is not by itself
+   `you` — a worker runs programs.** Most tasks are `auto`; the marker defaults to `auto` when
+   omitted.
 
 Sizing: **if you cannot write its "Done when" in three lines, it is two tasks.** If it has
 no test list, it is either not a task or the testability boundary is in the wrong place.
 
 ### When a deliverable can only be verified by a person: fold, or split
 
-Some `auto` tasks build something whose only real proof is a person running it — a program that
-has to be launched, a change visible only on a real device or against real agents, anything the
-test command cannot reach. There are two ways to plan that check, and the choice is yours to make
-per task (DESIGN §2.6 carries the rule):
+Some `auto` tasks build something whose only real proof is a person's *judgement* — a change on
+a real device, a run against real agents, a surface a person must look at and call right or
+wrong. Note what does *not* belong here: "a program has to be launched" is not a person-only
+check, because a worker launches programs and reads what they print; only the part no tool could
+ever decide is the person's. Reduce the check to a machine one as far as it goes, and plan a
+person for the irreducible remainder alone. There are two ways to plan that remainder, and the
+choice is yours to make per task (DESIGN §2.6 carries the rule):
 
 - **Fold** it into the builder when the check is a quick escalation — the builder builds, then
   parks and asks the user through the normal question path, handing over the exact seatbelted
