@@ -11,7 +11,7 @@ user changed.
 
 | Date | | Finding |
 |---|---|---|
-| 2026-09-18 | 🐞 | T07 live drill FAILED. SIGKILL of the `agents --json` pid did not kill the working coordinator (alive ~1 min past the crash point); a 2nd ran concurrently — not a real crash→resume. Facts red: one `restart` marker, `outbox`/`surfaced` left stale. T06 crash mechanism unproven live. |
+| 2026-09-18 | 🐞 | T07 live drill FAILED. `claude agents --json` `pid` is a daemon-supervised `bg-spare`; SIGKILLing it respawns, not crashes. The SIGKILL-the-pid crash model (DESIGN §2.5) can't crash a live coordinator on real `claude`; it survived, a 2nd ran concurrently. Design decision needed on how to simulate a crash. |
 | 2026-09-17 | 📌 | T04's HALT refusal + transient-feed clear live in `main`'s LIVE path (after `fileControl`), so they fire only under `PARALLEL_LIVE=1`. A dry preview builds no control and does not refuse a HALTed plan; harmless — no workers, no feeds. T05 docs note this. |
 | 2026-09-17 | 🐞 | reconcile left a conflicted ✅ branch at feature-⬜ with no live worker to park it, so decideDispatch re-implemented it the same pass, clobbering reviewed work (§2.6). Now marked ⛔ (skipped by dispatch and resume), branch kept for a person. User decision. |
 | 2026-09-17 | 📌 | coordinate.mjs's SIGTERM handler runs teardownRun, which removes task worktrees and branches. So the restart crash must be SIGKILL, not SIGTERM/`claude stop`, or the state to reconcile is gone — and SIGKILL leaves worker sessions alive for reconciliation to reap (DESIGN §2.5). |

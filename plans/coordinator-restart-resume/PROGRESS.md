@@ -44,7 +44,11 @@ agents. Fact report FAILED 4/5. Root cause: the `SIGKILL` of the pid from `claud
 kill the working coordinator (it lived ~1 min past the crash point), and the relaunch ran a second
 coordinator concurrently — so no real crash→resume was exercised. `resumedNotRebuilt`, `noRebuildFromT01`,
 `feedsCleared`, `leftoverSessionsReaped` all red on "fewer than two `restart` markers"; only
-`one-merge-to-main` passed. **Blocked on the user:** decide the fix (it lives in T06's crash mechanism —
-kill the real process, not the reported pid — or in how the drill detects/forces the crash). Not a T07
-edit; T07 is the drill, and it cannot pass until the crash is real.
+`one-merge-to-main` passed. Root cause found: the pid `claude agents --json` reports is a
+daemon-supervised `bg-spare`, and SIGKILLing it just makes the pty-host respawn it — so the crash model
+in DESIGN §2.5 cannot crash a live session on real `claude`. `claude stop` is graceful (coordinator
+catches it), `claude rm` deletes the worktree the resume needs. Killing the pty-host/daemon would hit
+every bg session on the machine. **Blocked on the user:** this contradicts DESIGN §2.5; the crash model
+needs rethinking (likely: build the post-crash on-disk state and launch a fresh coordinator to reconcile,
+rather than crashing a running one). A design decision, then a task, then re-run.
 </content>
