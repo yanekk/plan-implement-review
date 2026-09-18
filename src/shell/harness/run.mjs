@@ -209,14 +209,32 @@ export function restartTargetReached({ flowText = '', branchState = null, waitFo
   return false;
 }
 
-// coordinatorPidFrom(agents, coordName) → the OS pid of this run's coordinator session in a sampled agent
-// list, or null. The crash is a SIGKILL of that pid and nothing else (leaving the workers and the git
-// state — a real crash, §2.5), so the runner reads the pid from the same `agents --json` sample capture
-// takes. `agents --json` carries `pid` only while a session is live (capture.mjs), which is exactly when
-// the runner kills it. Pure so the pid pick is tested against a canned agent list.
+// coordinatorPidFrom(agents, coordName) → the OS pid `claude agents --json` reports for this run's
+// coordinator session, or null. IMPORTANT: that pid is the session's CURRENT `bg-spare` worker — one of a
+// daemon-managed pool a session claims a fresh spare from PER TURN (T07, 2026-09-18). So it is ephemeral:
+// the pid sampled at one tick is a released spare a moment later, and SIGKILLing it does NOT crash an
+// actively cycling coordinator (the live T07 drill proved a coordinator sailed a full minute past a
+// SIGKILL of this pid). The crash therefore targets the session's `bg-pty-host` SUPERVISOR
+// (supervisorPidOf), which is stable for the whole session; this function stays the way to find the
+// current spare the supervisor is resolved from. Pure so the pid pick is tested against a canned list.
 export function coordinatorPidFrom(agents = [], coordName) {
   const coord = (agents ?? []).find((a) => a && a.name === coordName);
   return coord && coord.pid != null ? coord.pid : null;
+}
+
+// supervisorPidOf({ pid, ppidOf, cmdOf }) → { supervisor, spare, verified }. Resolves the `bg-pty-host`
+// that supervises the session whose current spare is `pid`, so the crash can SIGKILL something STABLE
+// across the per-turn spare rotation (see coordinatorPidFrom). The pty-host is the spare's OS parent —
+// probed live (T07, 2026-09-18): killing it takes the spare with it and the daemon does NOT respawn the
+// session (a genuine, unrevived crash), while every OTHER session is untouched. `verified` is true only
+// when the parent's command line really is a `bg-pty-host`: a guard so a stale or reused parent pid is
+// never blindly killed — the caller falls back to the spare when it is false. Effects injected for tests.
+export function supervisorPidOf({ pid, ppidOf = defaultPpidOf, cmdOf = defaultCmdOf } = {}) {
+  if (pid == null) return { supervisor: null, spare: null, verified: false };
+  const parent = ppidOf(pid);
+  if (parent == null) return { supervisor: null, spare: pid, verified: false };
+  const cmd = cmdOf(parent) ?? '';
+  return { supervisor: parent, spare: pid, verified: cmd.includes('bg-pty-host') };
 }
 
 // seedStaleFeeds(controlDir, sentinel) → write a stale sentinel into every transient control feed
@@ -264,6 +282,29 @@ export function snapshotControlFeeds(controlDir, { fs = { existsSync, readFileSy
 // drill exists to reconcile (FINDINGS 2026-09-17). Injected so a test drives it without a real process.
 function defaultKill(pid, signal = 'SIGKILL') {
   process.kill(pid, signal);
+}
+
+// defaultPpidOf(pid) → the OS parent pid of `pid` (the spare's `bg-pty-host` supervisor), or null. Reads
+// `ps`; guards against returning pid 1 (init) so a bad read can never escalate into killing the world.
+// Injected into runRestartScenario so a test drives it without a real process tree.
+function defaultPpidOf(pid) {
+  try {
+    const out = execFileSync('ps', ['-o', 'ppid=', '-p', String(pid)], { encoding: 'utf8' });
+    const n = parseInt(out.trim(), 10);
+    return Number.isFinite(n) && n > 1 ? n : null;
+  } catch {
+    return null;
+  }
+}
+
+// defaultCmdOf(pid) → the command line of `pid`, or ''. Used to VERIFY a resolved parent really is a
+// `bg-pty-host` before it is SIGKILLed, so the crash can never fell an unrelated process. Injected too.
+function defaultCmdOf(pid) {
+  try {
+    return execFileSync('ps', ['-o', 'command=', '-p', String(pid)], { encoding: 'utf8' }).trim();
+  } catch {
+    return '';
+  }
 }
 
 // --- The default injected effects (mirroring platform.mjs / capture.mjs) -------------------------
@@ -523,6 +564,8 @@ export async function runRestartScenario({
   claudeRun = defaultRunClaude,
   gitRun = defaultRunGit,
   kill = defaultKill,
+  ppidOf = defaultPpidOf,
+  cmdOf = defaultCmdOf,
   platform,
   worktree,
   install = installFixture,
@@ -623,15 +666,35 @@ export async function runRestartScenario({
       log(`did not reach the ${waitFor.glyph} crash point: ${reason}`);
     } else {
       log(`reached the ${waitFor.glyph} crash point on ${waitFor.task}`);
-      // Crash: SIGKILL the coordinator ONLY, from the pid in the sample that saw the target. Its workers
-      // and the git state are left on disk — the real crash reconciliation must handle (§2.5).
-      const pid = coordinatorPidFrom(target.agents, name);
-      if (pid != null) {
+      // Crash: SIGKILL the coordinator's SUPERVISOR (its `bg-pty-host`), not the reported pid. The reported
+      // pid is an ephemeral pooled `bg-spare` that rotates per turn, so killing it misses an actively
+      // cycling coordinator (T07 live drill, 2026-09-18) — the very failure this replaces. The pty-host is
+      // stable for the session's life; killing it is a genuine crash with no daemon respawn, and it takes
+      // the current spare with it. Workers and the git state are left on disk for reconciliation (§2.5).
+      // Falls back to the spare pid if the pty-host cannot be resolved and verified — better than not
+      // crashing at all, and the facts will still red a run that failed to crash.
+      const spare = coordinatorPidFrom(target.agents, name);
+      const { supervisor, verified } = supervisorPidOf({ pid: spare, ppidOf, cmdOf });
+      if (supervisor != null && verified) {
         try {
-          kill(pid, 'SIGKILL');
-          log(`crashed the coordinator (pid ${pid}, SIGKILL) — workers and git state left on disk`);
+          kill(supervisor, 'SIGKILL'); // the pty-host: stable across the spare rotation; fells the spare too
+          if (spare != null) {
+            try {
+              kill(spare, 'SIGKILL'); // belt-and-suspenders; the pty-host kill usually already took it
+            } catch {
+              /* already gone with its supervisor */
+            }
+          }
+          log(`crashed the coordinator (SIGKILL pty-host ${supervisor} + spare ${spare}) — workers and git state left on disk`);
         } catch (e) {
-          log(`could not SIGKILL the coordinator (pid ${pid}): ${e.message}`);
+          log(`could not SIGKILL the coordinator pty-host ${supervisor}: ${e.message}`);
+        }
+      } else if (spare != null) {
+        try {
+          kill(spare, 'SIGKILL');
+          log(`crashed the coordinator (SIGKILL spare ${spare} only — pty-host unresolved; may not crash a busy coordinator)`);
+        } catch (e) {
+          log(`could not SIGKILL the coordinator spare ${spare}: ${e.message}`);
         }
       } else {
         log('no coordinator pid in the sample — cannot crash; relaunching anyway');
