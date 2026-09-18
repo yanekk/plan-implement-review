@@ -1,6 +1,6 @@
 # Implementation plan
 
-9 tasks in 4 phases. Each has a file in [tasks/](tasks/) with its goal, the files it touches,
+10 tasks in 4 phases. Each has a file in [tasks/](tasks/) with its goal, the files it touches,
 the interfaces it defines, and what "done" means.
 
 Track state in [PROGRESS.md](PROGRESS.md). Read [DESIGN.md](DESIGN.md) first.

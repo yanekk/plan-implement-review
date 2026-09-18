@@ -7,7 +7,7 @@ Sixty words to a Notes cell, counted. Flat prose, no aphorism. The cell is the i
 account is the commit message. Whoever writes a cell also fixes the over-budget cell they walk
 past.
 
-**Plan reviewed:** 2026-09-17 — 6 fixes, 2 decisions with the user (machine-enforced name gate; T09 self-wake spike added).
+**Plan reviewed:** 2026-09-17 — 6 fixes, 2 decisions with the user (machine-enforced name gate; T09 self-wake spike added). Re-reviewed 2026-09-18 against the autonomy-raised skills: clean, one fix (PLAN.md task count 9→10). The `you` spikes having the worker spawn throwaway probe sessions matches pir-verify; the hard line bans only real task agents against real branches, and standing a probe up is worker-owned setup. Do not re-raise it.
 
 **Status:** Plan written 2026-09-17, no code yet. It fixes the parallel coordinator's blind spot
 for hand-driven tasks (the fault that killed the `my-ender/print-vision` run) plus three related
@@ -15,7 +15,7 @@ faults: a fire-and-forget down-send, an off-convention coordinator name, and a c
 goes idle and never delivers a queued answer (T08, §2.8, folded in 2026-09-17 after the same run
 froze a second time). Scope settled with the user: real completion signal plus guardrails, full
 hardening pass. Modifies the parallel-pir engine, the coordinator/verify skills, and `/docs`.
-**Last updated:** 2026-09-17 (plan reviewed)
+**Last updated:** 2026-09-18 (re-reviewed vs autonomy skills)
 **Next `pir-work` will:** implement the next ready ⬜ — T02 or T03 (no dependencies, auto) — or the
 user drives a T00 / T09 spike (`you`). Nothing is blocked.
 
