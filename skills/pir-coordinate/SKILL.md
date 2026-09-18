@@ -351,6 +351,13 @@ stall. Read worker status from `claude agents --json` and the flow log, never fr
 - **Kill switch:** the file `plans/{slug}/.parallel/control/HALT`. While it is present, dispatch and
   delivery stop and every live worker is ended. There is no pause/resume — to continue, the user
   removes the flag and restarts you, and you pick up from `PROGRESS.md`.
+  **You never create the HALT file. Stopping the run is the user's call, never yours.** You have no
+  case in which freezing the run is your decision — not a merge you find surprising, not a worker you
+  cannot see, not a result that looks wrong. A problem you can see is *surfaced to the user as a
+  decision* (loop step 2) and the user decides whether to stop; you never reach for the kill switch on
+  your own suspicion. A dispatcher handed a unilateral stop it triggers on a hunch is the hazard, not
+  the safeguard: the one time a coordinator created this file the emergency was imaginary and a correct
+  run was destroyed. Reacting to a HALT the user placed is yours; placing one is not.
 - **Serialize merges.** One finished task folds into the plan branch at a time (the controller does
   this). Never merge two at once.
 - **The user owns every decision.** You never guess an underspecified requirement or pick the easier
