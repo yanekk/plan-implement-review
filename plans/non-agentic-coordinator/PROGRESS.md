@@ -18,10 +18,12 @@ file and its worker's agent name.
 removals so every task stays green + cover `capture.mjs`; `install.sh` applies the per-user `autoMode`
 rule). Account in the `plan-review` commit.
 
-**Status:** T08 implemented (🔍), awaiting review. All 7 /docs files plus the CLAUDE.md carve-out rewritten
-to the plain-command coordinator. Docs-only; 382 tests green. Next is reviewing T08, then the T09 capstone.
+**Status:** T08 reviewed (✅), clean. Every /docs + CLAUDE.md claim checked against shipped code and it
+holds; docs-only, 382 green. Only the T09 capstone remains — the live end-to-end hand-verification,
+which needs the person's hands.
 **Last updated:** 2026-09-19
-**Next `pir-work` will:** review T08 (`docs`, `🔍`).
+**Next `pir-work` will:** pick up T09 (`capstone`, `⬜`) — the live hand-verification drill, which needs
+the person to run it.
 
 ## Tasks
 
@@ -38,14 +40,14 @@ read — the parser tolerates and ignores it; T05 finishes the surrounding clean
 | T04 | remove-you-auto | auto | T03 | ✅ | Reviewed clean. auto/you and the verify path gone from dispatch/loop/platform; parseProgress tolerates+ignores a Runs column. 398 green. |
 | T05 | harness-and-restart | auto | T04 | ✅ | Reviewed clean. Foreground-process harness; `coordinatorName`/`verify` gone. Live crash/restart is T09. |
 | T06 | worker-permissions | auto | — | ✅ | Reviewed clean. Ships worker `permissions.allow`; `install.sh` merges it into a target and the `autoMode` rule into `~/.claude/settings.json`. Merge pure in `core/settings.mjs`. `bgIsolation: none` does not travel to targets (FINDINGS). Live classifier proof T09. |
-| T07 | skills | auto | T04 | ✅ | Reviewed clean, no fix commit. Deletions and de-agenting faithful to DESIGN §2.2/§2.5/§2.9; grep-confirmed no live refs to the three deleted skills or down-channel (leftovers are comments + T08-scope docs/). planner-templates.test rewritten as a real guard (parses on-disk templates). 382 green, ran. |
-| T08 | docs | auto | T05, T07 | 🔍 | Rewrote all 7 /docs files + the CLAUDE.md carve-out and Runs text to the plain-command coordinator: no agentic session, no down-channel, no promotion (hand off `git merge`), one worker kind, `/`-slug names. Deviation: task doc said kill switch is Ctrl-C; shipped code kept the HALT flag + Ctrl-C teardown (FINDINGS). Docs-only, 382 green. |
+| T07 | skills | auto | T04 | ✅ | Reviewed clean. Dead skills deleted, survivors de-agented, slug-as-name templates; grep-confirmed no live refs; planner-templates.test parses the on-disk templates. 382 green. |
+| T08 | docs | auto | T05, T07 | ✅ | Reviewed clean, no fix commit. Checked every /docs + CLAUDE.md claim against shipped code: named symbols/files exist, buildDisplay shape + row kinds, full log-tag set, clearTransientFeeds clears reports/ only, report kinds, 5-min timeout, ceiling 4, name format/roles, gpgsign per-call, decideResume table. Forbidden vocab appears only as "now gone". HALT-vs-Ctrl-C deviation logged; docs match code. 382 green. |
 | T09 | capstone | you | T06, T08 | ⬜ | Live end-to-end hand-verification with the person. |
 
 A Notes cell holds what was built or what the review found, the test count, and one line per
 deviation from the task doc. A ✅ task's cell may be cut to one line once the next task is reviewed.
 
-**Review queue:** T08 (`docs`), awaiting review.
+**Review queue:** empty. All implemented tasks reviewed; T09 is the remaining ⬜ (a `you` hand-verification).
 
 ## Blocked on the user
 
