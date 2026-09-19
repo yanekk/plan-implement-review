@@ -1,6 +1,10 @@
 .DS_Store
 node_modules/
 
+# Per-user local Claude Code settings. The shared .claude/settings.json IS committed (it
+# ships the worker permissions, T06); the .local.json variant is each person's own.
+.claude/settings.local.json
+
 # Per-run coordinator control state: the kill-switch flag (HALT) and the event log.
 # Never committed to a task branch or promoted to main with the feature branch (DESIGN §3.5).
 plans/*/.parallel/

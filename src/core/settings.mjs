@@ -1,0 +1,77 @@
+// Pure settings-merge logic (DESIGN §3.1, §7; T06).
+//
+// A worker is still an agentic session, so the auto-mode safety classifier can second-guess
+// its ordinary git/npm commands. Two settings changes clear that: a narrow project-level
+// `permissions.allow` of bare, prefix-matching commands (which resolve BEFORE the classifier
+// runs), shipped with the framework; and a user-global `autoMode.allow` exception naming the
+// worker's git on the run's own branches as trusted (the classifier ignores `autoMode` in a
+// project file, by design, so it must live in ~/.claude/settings.json).
+//
+// These functions are the JSON-in/JSON-out core of both merges. They take the parsed settings
+// as a parameter and return a new object; all file I/O lives in src/shell/settings-merge.mjs,
+// which install.sh drives. Both merges are order-preserving, non-clobbering and idempotent:
+// running them twice is a no-op, and neither drops a rule the target already had.
+
+// The narrow worker permissions the framework ships in a project's .claude/settings.json.
+// Bare and prefix-matched so a clean worker command resolves before the classifier at all.
+// Deliberately NOT here: `SendMessage` (the coordinator down-channel is gone, §2.2) and
+// `Bash(git merge:*)` (the engine does merges via child-process git, which is not
+// classifier-gated; a worker never merges a peer branch — task interface).
+export const WORKER_PERMISSIONS = [
+  'Bash(npm test:*)',
+  'Bash(node --test:*)',
+  'Bash(git status:*)',
+  'Bash(git log:*)',
+  'Bash(git show:*)',
+  'Bash(git diff:*)',
+  'Bash(git branch:*)',
+  'Bash(git rev-parse:*)',
+  'Bash(git merge-base:*)',
+  'Bash(git add:*)',
+  'Bash(git commit:*)',
+];
+
+// The sentinel that stands for the built-in default auto-mode rules. Kept (or restored to the
+// front if a target's list somehow lacks it) so merging pir's exception never disables the
+// defaults — dropping it would silently widen what auto mode permits.
+export const AUTO_MODE_DEFAULTS = '$defaults';
+
+// The pir-specific auto-mode exception. Natural language, because auto-mode rules are judged by
+// an LLM classifier (validate wording with `claude auto-mode critique`). It names only the
+// worker's own git on the run's own branches; `merge` is absent for the same reason it is absent
+// from WORKER_PERMISSIONS. That `permissions.allow` alone may already clear these, making this
+// rule belt-and-suspenders, is confirmed live in T09.
+export const PIR_AUTOMODE_RULE =
+  'A pir worker running git (add/commit/status/log/show/diff/rev-parse/merge-base/branch) ' +
+  "against the run's own branches pir/{slug} and pir/{slug}-T{nn} inside the session's " +
+  'repository is trusted work on the session’s own branches, not Modify Shared Resources.';
+
+function asObject(value) {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+}
+
+// Merge the shipped worker permissions into a project's settings. Existing allow rules keep
+// their order and position; only rules not already present are appended.
+export function mergeProjectPermissions(existing, ship = WORKER_PERMISSIONS) {
+  const base = asObject(existing);
+  const permissions = asObject(base.permissions);
+  const current = Array.isArray(permissions.allow) ? permissions.allow : [];
+  const allow = [...current];
+  for (const rule of ship) {
+    if (!allow.includes(rule)) allow.push(rule);
+  }
+  return { ...base, permissions: { ...permissions, allow } };
+}
+
+// Merge pir's auto-mode exception into the user-global settings. `$defaults` is preserved (or
+// restored to the front if absent), the rule is appended once, and every other setting the file
+// holds is left untouched.
+export function mergeUserAutoMode(existing, rule = PIR_AUTOMODE_RULE) {
+  const base = asObject(existing);
+  const autoMode = asObject(base.autoMode);
+  const current = Array.isArray(autoMode.allow) ? autoMode.allow : [];
+  const allow = [...current];
+  if (!allow.includes(AUTO_MODE_DEFAULTS)) allow.unshift(AUTO_MODE_DEFAULTS);
+  if (!allow.includes(rule)) allow.push(rule);
+  return { ...base, autoMode: { ...autoMode, allow } };
+}

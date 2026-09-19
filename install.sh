@@ -54,6 +54,57 @@ install_engine() {
     echo "  refreshed $ENGINE_DEST/src (parallel coordinator engine)"
 }
 
+MERGE="$SRC/src/shell/settings-merge.mjs"
+
+# Carry the framework's narrow worker permissions.allow into a target project's
+# .claude/settings.json, merging rather than clobbering an existing list. So a worker's own
+# bare git/npm commands resolve before the auto-mode classifier runs (T06, DESIGN §7). The
+# ship list is read from THIS repo's own .claude/settings.json, so there is one source of truth.
+merge_project_permissions() {
+    local target="$1"
+    if node "$MERGE" project "$target/.claude/settings.json" "$SRC/.claude/settings.json"; then
+        echo "  merged the worker permissions into $target/.claude/settings.json"
+    else
+        echo "  could not write $target/.claude/settings.json — add its permissions.allow by hand" >&2
+    fi
+}
+
+# Merge pir's auto-mode exception into the USER-global ~/.claude/settings.json (the classifier
+# ignores autoMode in a project file, by design). This is the one-time per-user setup parallel
+# mode needs; a person running install.sh in their own terminal clears it here. A Claude session
+# running the installer may be blocked from writing auto-mode config (self-modification), so on
+# any failure we print the exact manual step and never silently skip it (T06, DESIGN §7).
+apply_automode_rule() {
+    local user_settings="$HOME/.claude/settings.json"
+    if node "$MERGE" automode "$user_settings"; then
+        echo "  applied pir's auto-mode exception to $user_settings"
+        echo "  confirm it took with:  claude auto-mode config"
+        return 0
+    fi
+    print_automode_manual_step
+    return 0
+}
+
+# The fallback the installer prints when it cannot write the auto-mode rule itself. It quotes
+# the exact rule text from the merge tool, so there is no second copy to drift.
+print_automode_manual_step() {
+    local rule
+    rule="$(node "$MERGE" automode-rule 2>/dev/null || echo '<the pir worker git rule>')"
+    cat >&2 <<STEP
+
+  Parallel mode needs one per-user setting the installer could not write:
+  add pir's auto-mode exception to ~/.claude/settings.json under "autoMode.allow".
+  Do it by hand, either way:
+
+    * In Claude Code:  /permissions  ->  Auto mode tab, add the rule
+    * Or edit ~/.claude/settings.json and append to autoMode.allow (keep "\$defaults"):
+
+        $rule
+
+  Then confirm:  claude auto-mode config
+STEP
+}
+
 append_claude_md() {
     local target="$1" claude="$1/CLAUDE.md"
     if [[ -f "$claude" ]] && grep -qF "$MARKER" "$claude"; then
@@ -75,6 +126,7 @@ TARGET="${1:-}"
 
 if [[ -z "$TARGET" || "$TARGET" == "--global" ]]; then
     install_skills
+    apply_automode_rule
     echo
     echo "Skills installed for your account. To set up a project, run from inside it:"
     echo "    /pir-install"
@@ -90,6 +142,8 @@ fi
 TARGET="$(cd "$TARGET" && pwd)"
 
 install_skills
+merge_project_permissions "$TARGET"
+apply_automode_rule
 append_claude_md "$TARGET"
 
 cat <<MSG

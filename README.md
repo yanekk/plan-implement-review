@@ -94,6 +94,15 @@ account skills are present and amends this project's `CLAUDE.md`:
 Every form is idempotent: re-running refreshes the skills in place and never appends
 `CLAUDE.md` twice. Skills are read at session start — install, then start a **new** session.
 
+Parallel mode needs one per-user setting so a worker's own `git`/`npm test` clear the
+auto-mode safety classifier: a `permissions.allow` list (shipped in a project's
+`.claude/settings.json` and merged in by the installer) and an `autoMode.allow` exception in
+your global `~/.claude/settings.json`. **The installer applies the `autoMode` rule when a
+person runs it** in their own terminal. If it cannot write it — a Claude session running the
+installer can be blocked from editing auto-mode config — it prints the exact manual step:
+`/permissions` → Auto mode tab, or a hand-edit of `~/.claude/settings.json`. Confirm either
+way with `claude auto-mode config`.
+
 ## What `/pir-plan` produces
 
 ```

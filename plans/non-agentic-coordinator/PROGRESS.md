@@ -18,14 +18,16 @@ file and its worker's agent name.
 removals so every task stays green + cover `capture.mjs`; `install.sh` applies the per-user `autoMode`
 rule). Account in the `plan-review` commit.
 
-**Status:** T05 reviewed clean, no fix commit. The foreground-process harness is verified against the
-fakes: run.mjs spawns the coordinator as a process, seals on its exit, SIGKILLs its pid to crash; naming
-is the strict 5-field form with `coordinatorName`/`verify` gone; the reworked facts are non-vacuous.
-361 tests green. The remaining verify/you references are out-of-scope test framing and the permitted fake
-shape (FINDINGS, swept in T07); production dispatch is verify-free. The live crash/restart drill is T09.
-Next ready: T06 (`worker-permissions`, no deps) or T07 (`skills`, T04 met).
+**Status:** T06 implemented, awaiting review. Ships the worker `permissions.allow` in a committed
+`.claude/settings.json` and has `install.sh` merge it into a target plus merge the per-user
+`autoMode.allow` rule into `~/.claude/settings.json`, with the manual `/permissions` step printed on
+failure. Merge logic is a pure `src/core/settings.mjs` driven by a thin `src/shell/settings-merge.mjs`
+CLI. Verified end-to-end by running the real installer in a sandbox HOME/target: no-clobber, idempotent,
+`$defaults` restored to the front, and the fallback prints without overwriting an unparseable file.
+384 tests green. Whether `permissions.allow` alone clears a live worker's git — making the `autoMode`
+rule belt-and-suspenders — is confirmed live in T09.
 **Last updated:** 2026-09-19
-**Next `pir-work` will:** implement T06 (`worker-permissions`, `⬜`) — the lowest-numbered ready task.
+**Next `pir-work` will:** review T06 (`worker-permissions`, `🔍`).
 
 ## Tasks
 
@@ -41,7 +43,7 @@ read — the parser tolerates and ignores it; T05 finishes the surrounding clean
 | T03 | live-display | auto | T01, T02 | ✅ | Reviewed clean. Pure model + renderer faithful to the prototype; loop/display seam checked. In-place paint + a doubled hand-off line stay for T09 (FINDINGS). 401 green. |
 | T04 | remove-you-auto | auto | T03 | ✅ | Reviewed clean. auto/you and the verify path gone from dispatch/loop/platform; parseProgress tolerates+ignores a Runs column. 398 green. |
 | T05 | harness-and-restart | auto | T04 | ✅ | Reviewed clean, no fix commit. Foreground-process model verified: run.mjs spawns `node coordinate.mjs`, seals on exit, SIGKILLs to crash; naming strict 5-field, `coordinatorName`/`verify` gone; capture `isCoordinator` always false. Facts non-vacuous (parkedWorkerHoldsSlot, restart set); 361 green. Probed the grep item: production dispatch is verify-free; leftover verify/you refs are out-of-scope test framing + the permitted fake shape (FINDINGS, T07). Live crash/restart is T09. |
-| T06 | worker-permissions | auto | — | ⬜ | Ship worker `permissions.allow`; `install.sh` also applies the per-user `autoMode` rule, with the manual step as a printed fallback. |
+| T06 | worker-permissions | auto | — | 🔍 | Ships worker `permissions.allow` (no SendMessage/git merge) in committed `.claude/settings.json`; `install.sh` merges it into a target and the user `autoMode.allow` rule into `~/.claude/settings.json`, printing the manual `/permissions` step on failure. Merge logic pure in `core/settings.mjs`, driven by `shell/settings-merge.mjs` CLI — deviation: 2 files past the list, for boundary+tests. README note not /docs. 384 green. Live proof T09. |
 | T07 | skills | auto | T04 | ⬜ | Delete dead skills; de-agent worker skills; slug-as-name templates. |
 | T08 | docs | auto | T05, T07 | ⬜ | Rewrite /docs and the CLAUDE.md carve-out. |
 | T09 | capstone | you | T06, T08 | ⬜ | Live end-to-end hand-verification with the person. |
@@ -49,7 +51,7 @@ read — the parser tolerates and ignores it; T05 finishes the surrounding clean
 A Notes cell holds what was built or what the review found, the test count, and one line per
 deviation from the task doc. A ✅ task's cell may be cut to one line once the next task is reviewed.
 
-**Review queue:** empty — nothing awaiting review.
+**Review queue:** T06 (`worker-permissions`) — implemented, awaiting a fresh-eyes review.
 
 ## Blocked on the user
 
