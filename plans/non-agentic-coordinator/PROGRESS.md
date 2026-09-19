@@ -18,12 +18,14 @@ file and its worker's agent name.
 removals so every task stays green + cover `capture.mjs`; `install.sh` applies the per-user `autoMode`
 rule). Account in the `plan-review` commit.
 
-**Status:** T08 reviewed (✅), clean. Every /docs + CLAUDE.md claim checked against shipped code and it
-holds; docs-only, 382 green. Only the T09 capstone remains — the live end-to-end hand-verification,
-which needs the person's hands.
+**Status:** T09 live capstone in progress. Scratch world built and green at `../pir-scratch` (4 trivial
+tasks, T03 parks asking). The live drive spawns real paid workers and only a person may watch it
+(DESIGN §5.2), so it is handed to the person; the session holds for their judgement. Prerequisite
+found: account `~/.claude/skills/` is pre-T07 stale — a live worker reads it, so it must be refreshed
+before the drive (FINDINGS).
 **Last updated:** 2026-09-19
-**Next `pir-work` will:** pick up T09 (`capstone`, `⬜`) — the live hand-verification drill, which needs
-the person to run it.
+**Next `pir-work` will:** nothing new until the person runs the live drive and reports back — then this
+same track records the two confirmations (machine + person) and marks T09 ✅. See "Blocked on the user".
 
 ## Tasks
 
@@ -42,7 +44,7 @@ read — the parser tolerates and ignores it; T05 finishes the surrounding clean
 | T06 | worker-permissions | auto | — | ✅ | Reviewed clean. Ships worker `permissions.allow`; `install.sh` merges it into a target and the `autoMode` rule into `~/.claude/settings.json`. Merge pure in `core/settings.mjs`. `bgIsolation: none` does not travel to targets (FINDINGS). Live classifier proof T09. |
 | T07 | skills | auto | T04 | ✅ | Reviewed clean. Dead skills deleted, survivors de-agented, slug-as-name templates; grep-confirmed no live refs; planner-templates.test parses the on-disk templates. 382 green. |
 | T08 | docs | auto | T05, T07 | ✅ | Reviewed clean, no fix commit. Checked every /docs + CLAUDE.md claim against shipped code: named symbols/files exist, buildDisplay shape + row kinds, full log-tag set, clearTransientFeeds clears reports/ only, report kinds, 5-min timeout, ceiling 4, name format/roles, gpgsign per-call, decideResume table. Forbidden vocab appears only as "now gone". HALT-vs-Ctrl-C deviation logged; docs match code. 382 green. |
-| T09 | capstone | you | T06, T08 | ⬜ | Live end-to-end hand-verification with the person. |
+| T09 | capstone | you | T06, T08 | 🟡 | Scratch world built + green at `../pir-scratch` (4 trivial tasks; T03 parks asking a genuine choice). Drive spawns real paid workers, person-only (§5.2) — handed over, awaiting judgement. Prereq: refresh pre-T07 stale account skills first (FINDINGS). |
 
 A Notes cell holds what was built or what the review found, the test count, and one line per
 deviation from the task doc. A ✅ task's cell may be cut to one line once the next task is reviewed.
@@ -51,5 +53,8 @@ deviation from the task doc. A ✅ task's cell may be cut to one line once the n
 
 ## Blocked on the user
 
-Nothing blocked. T09 needs the person's hands (a live drill) but only after T06 and T08 are done; it
-is not blocked yet.
+T09 is now waiting on the person. The scratch world is set up and green at `../pir-scratch`; the live
+drive spawns real paid `claude` workers and only a person may watch it (DESIGN §5.2), so it cannot be
+run from here. The person: (1) refreshes the account skills (`./install.sh`) so live workers read the
+current contract, (2) runs the seatbelted drive (ceiling 1, then 4), (3) reports the four judgements.
+The session then records the two confirmations and marks T09 ✅.
