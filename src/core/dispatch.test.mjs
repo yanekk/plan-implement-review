@@ -108,24 +108,24 @@ test('a worker parked AWAITING a decision is never merged, closed or respawned',
   assert.deepEqual(spawn.map((s) => s.num), ['T01']);
 });
 
-test('promoteToMain is false while any task is not ✅', () => {
+test('complete is false while any task is not ✅', () => {
   const tasks = [task('T01', '✅'), task('T02', '⬜')];
-  assert.equal(call({ tasks }).promoteToMain, false);
+  assert.equal(call({ tasks }).complete, false);
 });
 
-test('promoteToMain is false while any worker is live, even with all ✅', () => {
+test('complete is false while any worker is live, even with all ✅', () => {
   const tasks = [task('T01', '✅')];
   const assignments = [asg('w1', 'T01', 'done')];
-  assert.equal(call({ tasks, assignments }).promoteToMain, false);
+  assert.equal(call({ tasks, assignments }).complete, false);
 });
 
-test('promoteToMain is true only when all ✅ and none live', () => {
+test('complete is true only when all ✅ and none live', () => {
   const tasks = [task('T01', '✅'), task('T02', '✅')];
-  assert.equal(call({ tasks, assignments: [] }).promoteToMain, true);
+  assert.equal(call({ tasks, assignments: [] }).complete, true);
 });
 
-test('an empty plan never promotes', () => {
-  assert.equal(call({ tasks: [] }).promoteToMain, false);
+test('an empty plan is never complete', () => {
+  assert.equal(call({ tasks: [] }).complete, false);
 });
 
 test('a dead worker is closed and its slot freed for a spawn this pass', () => {
@@ -155,8 +155,14 @@ test('halted=true empties spawn/review/merge and closes every worker', () => {
   assert.deepEqual(r.spawn, []);
   assert.deepEqual(r.review, []);
   assert.deepEqual(r.merge, []);
-  assert.equal(r.promoteToMain, false);
+  assert.equal(r.complete, false);
   assert.deepEqual(r.close, ['w1', 'w2']);
+});
+
+test('a halted decision never reports complete, even with all ✅ and none live', () => {
+  const tasks = [task('T01', '✅'), task('T02', '✅')];
+  const r = decideDispatch({ tasks, assignments: [], maxWorkers: MAX, halted: true });
+  assert.equal(r.complete, false);
 });
 
 test('a task already assigned to a live worker is not spawned again', () => {

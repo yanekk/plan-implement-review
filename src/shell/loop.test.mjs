@@ -41,28 +41,30 @@ function setup(t, rows, { behaviors = {}, files = {} } = {}) {
 const chain = (n) =>
   Array.from({ length: n }, (_, i) => ({ num: `T0${i + 1}`, deps: i === 0 ? [] : [`T0${i}`] }));
 
-test('a dependency chain drains to all ✅ on the feature branch and promotes to main exactly once', (t) => {
+test('a dependency chain drains to all ✅ on the feature branch and hands it off, never touching main (DESIGN §2.4)', (t) => {
   const { worktree, base } = setup(t, chain(5));
   assert.equal(worktree.mainCommitCount(), 1, 'main starts at the initial commit only');
 
   const result = drain(base);
 
-  assert.equal(result.reason, 'promoted');
-  assert.equal(result.promoted, true);
+  assert.equal(result.reason, 'complete');
+  assert.equal(result.complete, true);
+  assert.equal(result.testsPassed, true, 'the feature-branch tests passed');
+  assert.deepEqual(result.readyToMerge, { branch: `pir/${SLUG}` }, 'it hands off the green feature branch');
 
-  // main moved exactly once, at promotion; every earlier merge went into the feature branch.
-  const promotes = worktree.events.filter((e) => e.op === 'promote');
-  assert.equal(promotes.length, 1, 'promoted to main exactly once');
+  // The run never merges to main; every merge went into the feature branch.
+  assert.equal(worktree.events.filter((e) => e.op === 'promote').length, 0, 'nothing was ever promoted to main');
   const merges = worktree.events.filter((e) => e.op === 'mergeTask');
   assert.equal(merges.length, 5, 'five task branches merged');
   assert.ok(
     merges.every((e) => e.into === `pir/${SLUG}`),
     'task branches merge into the feature branch, never main',
   );
+  assert.equal(worktree.mainCommitCount(), 1, 'main is untouched — the person merges pir/demo by hand');
 
-  const finalMain = worktree.progressOn('main');
-  assert.ok(!finalMain.includes('⬜'), 'main has no ⬜ task after promotion');
-  assert.equal((finalMain.match(/✅/g) || []).length, 5, 'all five tasks are ✅ on main');
+  const finalFeature = worktree.progressOn(`pir/${SLUG}`);
+  assert.ok(!finalFeature.includes('⬜'), 'the feature branch has no ⬜ task at hand-off');
+  assert.equal((finalFeature.match(/✅/g) || []).length, 5, 'all five tasks are ✅ on the feature branch');
 });
 
 test('task branches are cut from the feature branch, not from main', (t) => {
@@ -145,16 +147,16 @@ test('a hands-on you worker reported done is merged and reconciled to ✅, unblo
   // T01 is a you task on the critical path; T02 (auto) waits on it.
   const { worktree, base } = setup(t, [{ num: 'T01', runs: 'you' }, { num: 'T02', deps: ['T01'] }]);
   const result = drain(base);
-  assert.equal(result.promoted, true);
+  assert.equal(result.complete, true);
+  assert.deepEqual(result.readyToMerge, { branch: `pir/${SLUG}` });
 
-  const spawnActions = result.actions.filter((a) => a.type === 'spawn');
   const mergeT01 = result.actions.findIndex((a) => a.type === 'merge' && a.task === 'T01');
   const spawnT02 = result.actions.findIndex((a) => a.type === 'spawn' && a.task === 'T02');
   assert.ok(mergeT01 >= 0 && spawnT02 >= 0);
   assert.ok(mergeT01 < spawnT02, 'T02 is not spawned until the you task T01 has merged (deps gated)');
 
-  const finalMain = worktree.progressOn('main');
-  assert.equal((finalMain.match(/✅/g) || []).length, 2);
+  const finalFeature = worktree.progressOn(`pir/${SLUG}`);
+  assert.equal((finalFeature.match(/✅/g) || []).length, 2);
 });
 
 test('the ceiling is respected: five ready tasks with maxWorkers 2 spawn at most two in a pass', (t) => {
@@ -184,7 +186,7 @@ test('a worker question surfaces via the inbox and a sent answer resumes that wo
   // The user answers; the worker resumes and the plan finishes.
   platform.send(workerName({ repo: REPO, plan: SLUG, task: 'T01', role: 'implement' }), 'use json');
   const result = drain({ ...base, state });
-  assert.equal(result.promoted, true, 'the answered worker resumes and the plan promotes');
+  assert.equal(result.complete, true, 'the answered worker resumes and the plan completes, ready to hand off');
 });
 
 test('a worker-raised surface is written to the flow log, not just the in-memory actions', (t) => {
@@ -251,18 +253,21 @@ test('a coordinator-hit merge conflict keeps the worker alive; its decision is d
   platform.send(name, { kind: 'answer', task: parkedTask, text: 'keep hello there' });
 
   // Second drain: the worker resolves on its branch, re-signals done, the loop merges the clean branch
-  // and the plan promotes.
+  // and the plan completes, ready to hand off.
   const second = drain({ ...base, state });
-  assert.equal(second.promoted, true, 'the resolved branch merges cleanly and the plan promotes');
+  assert.equal(second.complete, true, 'the resolved branch merges cleanly and the plan completes');
+  assert.deepEqual(second.readyToMerge, { branch: `pir/${SLUG}` });
 
   const cleanMergesOfParked = worktree.events.filter(
     (e) => e.op === 'mergeTask' && e.branch === `pir/${SLUG}-${parkedTask}` && !e.conflict,
   );
   assert.equal(cleanMergesOfParked.length, 1, 'the parked task merged cleanly exactly once, after resolution');
 
-  // The DECIDED side won: main carries the decision, not the losing content (the T22 regression).
-  assert.equal(worktree.fileOn('main', 'greeting.txt').stdout, 'hello there\n', 'main carries the decided content, not "hi world"');
-  assert.equal(worktree.events.filter((e) => e.op === 'promote' && !e.conflict).length, 1, 'promoted to main exactly once');
+  // The DECIDED side won: the feature branch carries the decision, not the losing content (the T22
+  // regression). main is never touched — the person merges pir/demo by hand (DESIGN §2.4).
+  assert.equal(worktree.fileOn(`pir/${SLUG}`, 'greeting.txt').stdout, 'hello there\n', 'the feature branch carries the decided content, not "hi world"');
+  assert.equal(worktree.events.filter((e) => e.op === 'promote').length, 0, 'nothing was ever promoted to main');
+  assert.equal(worktree.mainCommitCount(), 1, 'main is untouched');
 });
 
 test('the kill switch mid-drain stops dispatch and closes every fake worker; main untouched', (t) => {
@@ -341,11 +346,13 @@ test('the kill switch closes workers but does NOT remove their records — a kil
   assert.equal(platform.removed.length, 0, 'no record is removed under HALT — a killed worker stays in the view');
 });
 
-test('a red feature branch is not promoted; the failure is surfaced instead', (t) => {
+test('a red feature branch is completed but not handed off: no readyToMerge, the failure is surfaced', (t) => {
   const { worktree, base } = setup(t, [{ num: 'T01' }]);
   const runTests = () => ({ ok: false });
   const result = drain({ ...base, runTests });
-  assert.notEqual(result.reason, 'promoted');
+  assert.equal(result.reason, 'complete', 'the plan is done — every task ✅ — but the branch is red');
+  assert.equal(result.testsPassed, false, 'the feature-branch tests failed');
+  assert.ok(!result.readyToMerge, 'a red branch is never offered for merge (DESIGN §2.8)');
   assert.ok(result.actions.some((a) => a.type === 'surface' && a.kind === 'red-feature'));
   assert.equal(worktree.mainCommitCount(), 1, 'a red feature branch never reaches main');
 });
@@ -437,14 +444,14 @@ test('a closed session lingering in the agent list is not recounted — the fals
   // lingers, so pre-fix the two would be counted together (liveAfter 2).
   const { base } = setup(t, [{ num: 'T01' }], { behaviors: { T01: { lingerClosed: 3, lingerBusy: 2 } } });
   const state = createRunState();
-  let promoted = false;
+  let complete = false;
   let maxLive = 0;
-  for (let i = 0; i < 20 && !promoted; i++) {
+  for (let i = 0; i < 20 && !complete; i++) {
     const r = runPass({ ...base, maxWorkers: 1, state });
     maxLive = Math.max(maxLive, r.liveAfter);
-    promoted = r.promoted;
+    complete = r.complete;
   }
-  assert.ok(promoted, 'the plan promotes despite the closed implementer lingering in the list');
+  assert.ok(complete, 'the plan completes despite the closed implementer lingering in the list');
   assert.ok(maxLive <= 1, `never more than the ceiling of 1 counted live (saw ${maxLive}) — no false runaway`);
 });
 
@@ -463,14 +470,14 @@ test('a closed session that VANISHES then reappears under the same id is still n
   // a lone fast reviewer promotes before the resurrection and the overlap never happens.
   const { base } = setup(t, [{ num: 'T01' }], { behaviors: { T01: { resurrectClosed: 1, lingerBusy: 3 } } });
   const state = createRunState();
-  let promoted = false;
+  let complete = false;
   let maxLive = 0;
-  for (let i = 0; i < 30 && !promoted; i++) {
+  for (let i = 0; i < 30 && !complete; i++) {
     const r = runPass({ ...base, maxWorkers: 1, state });
     maxLive = Math.max(maxLive, r.liveAfter);
-    promoted = r.promoted;
+    complete = r.complete;
   }
-  assert.ok(promoted, 'the plan promotes despite the closed implementer reappearing in the list');
+  assert.ok(complete, 'the plan completes despite the closed implementer reappearing in the list');
   assert.ok(maxLive <= 1, `never more than the ceiling of 1 counted live (saw ${maxLive}) — the resurrected id was suppressed`);
 });
 
@@ -619,7 +626,7 @@ test('dry run stays isolated: the scratch repo is a temp dir, never the real pro
   assert.ok(worktree.dir.startsWith(tmpdir()), 'the scratch repo lives under the temp dir');
   assert.notEqual(worktree.dir, process.cwd());
   const result = drain(base);
-  assert.equal(result.promoted, true, 'a full run completes against fakes alone');
+  assert.equal(result.complete, true, 'a full run completes against fakes alone');
 });
 
 // --- T03: restart reconciliation — a restart resumes from git, it does not rebuild ------------------
@@ -647,12 +654,12 @@ test('restart with a ✅ task branch: it is merged, not rebuilt; its work lands 
   seedBranch(worktree, SLUG, 'T01', '✅', { file: 'work-T01.txt' });
 
   const result = drain(base); // fresh state inside drain = a restart
-  assert.equal(result.promoted, true);
+  assert.equal(result.complete, true);
   assert.ok(result.actions.some((a) => a.type === 'merge' && a.task === 'T01'), 'the reviewed branch is merged by reconciliation');
   assert.ok(worktree.fileOn(`pir/${SLUG}`, 'work-T01.txt').ok, 'its committed work landed on the feature branch');
   assert.ok(worktree.events.some((e) => e.op === 'remove' && e.branch === `pir/${SLUG}-T01`), 'its worktree/branch is removed after merge');
   assert.equal(platform.spawns.filter((s) => s.task === 'T01').length, 0, 'no session is spawned for an already-reviewed task');
-  assert.equal((worktree.progressOn('main').match(/✅/g) || []).length, 1, 'T01 is ✅ on main');
+  assert.equal((worktree.progressOn(`pir/${SLUG}`).match(/✅/g) || []).length, 1, 'T01 is ✅ on the feature branch');
 });
 
 test('restart with a 🔍 task branch: a fresh reviewer runs on its existing worktree; no implementer is ever spawned', (t) => {
@@ -671,7 +678,7 @@ test('restart with a 🔍 task branch: a fresh reviewer runs on its existing wor
   assert.ok(reviewSpawn.cwd.endsWith('/wt-T01'), 'the reviewer runs on the existing task worktree, not a fresh one');
 
   const result = drain({ ...base, state });
-  assert.equal(result.promoted, true);
+  assert.equal(result.complete, true);
   assert.equal(platform.spawns.filter((s) => s.task === 'T01' && s.role === 'implement').length, 0, 'no implementer is ever spawned for a built branch');
 });
 
@@ -681,7 +688,7 @@ test('restart with a half-built (🟡) branch: the leaked branch is removed and 
   seedBranch(worktree, SLUG, 'T01', '🟡', { file: 'work-T01.txt' });
 
   const result = drain(base);
-  assert.equal(result.promoted, true);
+  assert.equal(result.complete, true);
   assert.ok(result.actions.some((a) => a.type === 'rebuild' && a.task === 'T01'), 'the half-built branch is rebuilt');
   const removeIdx = worktree.events.findIndex((e) => e.op === 'remove' && e.branch === `pir/${SLUG}-T01`);
   const recutIdx = worktree.events.findIndex((e, i) => i > removeIdx && e.op === 'createTask' && e.branch === `pir/${SLUG}-T01`);
@@ -740,10 +747,10 @@ test('restart with a you task branch at ✅: it folds to ✅ by merge, with no r
   seedBranch(worktree, SLUG, 'T01', '✅', { file: 'finding-T01.txt' });
 
   const result = drain(base);
-  assert.equal(result.promoted, true);
+  assert.equal(result.complete, true);
   assert.ok(result.actions.some((a) => a.type === 'merge' && a.task === 'T01'), 'the you branch is merged');
   assert.ok(!platform.spawns.some((s) => s.task === 'T01'), 'no review or verify session is spawned for an already-✅ you task');
-  assert.equal((worktree.progressOn('main').match(/✅/g) || []).length, 1);
+  assert.equal((worktree.progressOn(`pir/${SLUG}`).match(/✅/g) || []).length, 1);
 });
 
 test('mixed restart: T01 ✅-merge, T02 🔍-review, T03 half-built rebuild, T04 never-started — all in one first pass, ceiling never exceeded', (t) => {
@@ -755,14 +762,14 @@ test('mixed restart: T01 ✅-merge, T02 🔍-review, T03 half-built rebuild, T04
   // T04 has no branch — never started.
 
   const state = createRunState();
-  let promoted = false;
+  let complete = false;
   let maxLive = 0;
-  for (let i = 0; i < 40 && !promoted; i++) {
+  for (let i = 0; i < 40 && !complete; i++) {
     const r = runPass({ ...base, maxWorkers: 2, state });
     maxLive = Math.max(maxLive, r.liveAfter);
-    promoted = r.promoted;
+    complete = r.complete;
   }
-  assert.ok(promoted, 'the mixed restart drains to promotion');
+  assert.ok(complete, 'the mixed restart drains to completion, ready to hand off');
   assert.ok(maxLive <= 2, `the ceiling holds across reconciliation plus dispatch (saw ${maxLive})`);
 
   assert.equal(platform.spawns.filter((s) => s.task === 'T01').length, 0, 'T01 was merged, never re-run');
@@ -770,7 +777,7 @@ test('mixed restart: T01 ✅-merge, T02 🔍-review, T03 half-built rebuild, T04
   assert.equal(platform.spawns.filter((s) => s.task === 'T02' && s.role === 'implement').length, 0, 'T02 was never re-implemented');
   assert.ok(platform.spawns.some((s) => s.task === 'T03' && s.role === 'implement'), 'T03 was rebuilt by a fresh implementer');
   assert.ok(platform.spawns.some((s) => s.task === 'T04' && s.role === 'implement'), 'T04 was started normally');
-  assert.equal((worktree.progressOn('main').match(/✅/g) || []).length, 4, 'all four tasks are ✅ on main');
+  assert.equal((worktree.progressOn(`pir/${SLUG}`).match(/✅/g) || []).length, 4, 'all four tasks are ✅ on the feature branch');
 });
 
 test('a leftover worker session of this slug is reaped session-only on restart; its ✅ branch is still merged and it is never counted against the ceiling', (t) => {
@@ -787,14 +794,14 @@ test('a leftover worker session of this slug is reaped session-only on restart; 
   const base = { platform, worktree, repo: REPO, slug: SLUG, maxWorkers: 2 };
 
   const state = createRunState();
-  let promoted = false;
+  let complete = false;
   let maxLive = 0;
-  for (let i = 0; i < 10 && !promoted; i++) {
+  for (let i = 0; i < 10 && !complete; i++) {
     const r = runPass({ ...base, state });
     maxLive = Math.max(maxLive, r.liveAfter);
-    promoted = r.promoted;
+    complete = r.complete;
   }
-  assert.ok(promoted, 'the plan promotes despite the orphaned session lingering in the list');
+  assert.ok(complete, 'the plan completes despite the orphaned session lingering in the list');
   assert.ok(fake.closed.includes('LEFTOVER'), 'the leftover session was stopped, session-only');
   assert.ok(fake.removed.includes('LEFTOVER'), 'its session record was removed too');
   assert.ok(worktree.fileOn(`pir/${SLUG}`, 'work-T01.txt').ok, 'the ✅ branch survived the reap and was merged (never worktree.remove in the reap)');
@@ -808,7 +815,7 @@ test('mutation guard: a ✅ branch and a 🔍 branch are never dispatched as fre
   seedBranch(worktree, SLUG, 'T02', '🔍', { file: 'work-T02.txt' });
 
   const result = drain(base);
-  assert.equal(result.promoted, true);
+  assert.equal(result.complete, true);
   assert.equal(platform.spawns.filter((s) => s.task === 'T01' && s.role === 'implement').length, 0, 'the reviewed branch was merged, never re-implemented');
   assert.equal(platform.spawns.filter((s) => s.task === 'T02' && s.role === 'implement').length, 0, 'the built branch was reviewed, never re-implemented');
   assert.ok(platform.spawns.some((s) => s.task === 'T02' && s.role === 'review'), 'T02 got a fresh reviewer');
@@ -837,7 +844,7 @@ test('reconciliation records a plain-English restart summary naming what it merg
 test('a genuine first start records no restart summary and takes no reconciliation action — behaviour identical to today', (t) => {
   const { base } = setup(t, chain(3));
   const result = drain(base);
-  assert.equal(result.promoted, true);
+  assert.equal(result.complete, true);
   assert.ok(!result.actions.some((a) => ['rebuild', 'cleanup', 'restart-summary'].includes(a.type)), 'no reconciliation action on a first start');
   const merges = result.actions.filter((a) => a.type === 'merge');
   assert.equal(merges.length, 3, 'the three merges are the normal loop merges, not adoptions');

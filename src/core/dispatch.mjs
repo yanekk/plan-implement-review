@@ -8,8 +8,9 @@
 // It answers, for this one pass: which ready tasks to spawn a worker for (each tagged auto or
 // you so the loop spawns a builder or a hands-on scribe, §2.6), which implemented task needs a
 // fresh review session (§2.1), which finished branch to merge into the feature branch (§2.9,
-// serialized one at a time), which workers to close (§2.3), and whether the whole plan is done
-// and the feature branch should be promoted to main (§2.9 — the one merge to main).
+// serialized one at a time), which workers to close (§2.3), and whether the whole plan is done —
+// the `complete` flag the shell reads to run the tests and hand off the green feature branch
+// (§2.4). The run never merges to main; there is no promotion decision (§2.4).
 
 // The done state glyph and the phases we key on. Kept as named constants so the intent reads
 // at the call site rather than a bare emoji or string literal.
@@ -49,10 +50,10 @@ function idsByTask(assignments) {
 }
 
 export function decideDispatch({ tasks, assignments, maxWorkers, halted }) {
-  // Kill switch: dispatch nothing, deliver nothing, merge nothing, promote nothing, and close
+  // Kill switch: dispatch nothing, deliver nothing, merge nothing, complete nothing, and close
   // every worker there is (§2.4). Dead ones are closed too — that is cleanup, not a slot game.
   if (halted) {
-    return { spawn: [], review: [], merge: [], close: idsByTask(assignments), promoteToMain: false };
+    return { spawn: [], review: [], merge: [], close: idsByTask(assignments), complete: false };
   }
 
   const live = assignments.filter(isLive);
@@ -102,11 +103,12 @@ export function decideDispatch({ tasks, assignments, maxWorkers, halted }) {
   const slots = Math.max(0, maxWorkers - live.length);
   const spawn = ready.slice(0, slots).map((t) => ({ num: t.num, runs: t.runs }));
 
-  // promoteToMain: the single signal the plan is complete — every task ✅ and no live worker
-  // (§2.9). A plan with no tasks never promotes. Dead workers pending close do not block it,
-  // matching "all ✅ and none live"; the loop closes them and promotes on the same clean state.
-  const promoteToMain =
+  // complete: the single signal the plan is done — every task ✅ and no live worker (§2.4). A plan
+  // with no tasks is never complete. Dead workers pending close do not block it, matching "all ✅
+  // and none live"; the loop closes them and, on the same clean state, runs the feature-branch tests
+  // and hands off. It never merges to main — the person does that by hand (§2.4).
+  const complete =
     tasks.length > 0 && tasks.every((t) => t.state === DONE) && live.length === 0;
 
-  return { spawn, review, merge, close, promoteToMain };
+  return { spawn, review, merge, close, complete };
 }

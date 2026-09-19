@@ -11,6 +11,7 @@ import {
   teardownRun,
   ensureMain,
   canPromoteHere,
+  renderHandoff,
   runawayVerdict,
   gitRun,
   clearTransientFeeds,
@@ -136,7 +137,7 @@ test('the coordinator names itself and its workers per §2.8 and ignores agents 
   assert.equal(coordinatorName({ repo: REPO, plan: SLUG }), `${REPO} · ${SLUG}`);
 
   const { result } = driveCollecting(coordinator);
-  assert.equal(result.promoted, true, 'the plan still drains to promotion alongside the foreign agents');
+  assert.equal(result.complete, true, 'the plan still drains to completion alongside the foreign agents');
   assert.ok(!fake.closed.includes('F1') && !fake.closed.includes('F2'), 'no foreign agent was ever closed');
   const spawnedNames = fake.spawns.map((s) => s.name);
   assert.ok(
@@ -168,7 +169,7 @@ test('a worker question is surfaced in plain English and the answer is sent down
   assert.equal(answers[0].msg.kind, 'answer');
 
   const { result } = driveCollecting(coordinator);
-  assert.equal(result.promoted, true, 'the answered worker resumes and the plan promotes');
+  assert.equal(result.complete, true, 'the answered worker resumes and the plan completes, ready to hand off');
 });
 
 // --- 5. A parked worker does not stall the others -------------------------------------------------
@@ -198,7 +199,7 @@ test('a ready you task spawns a hands-on pir-verify worker, is never reviewed, a
   ]);
 
   const { result, passes } = driveCollecting(coordinator);
-  assert.equal(result.promoted, true);
+  assert.equal(result.complete, true);
 
   const you = passes.flatMap((p) => p.youToDrive).find((y) => y.task === 'T01');
   assert.ok(you, 'the coordinator surfaced a hands-on worker for the you task');
@@ -207,8 +208,8 @@ test('a ready you task spawns a hands-on pir-verify worker, is never reviewed, a
   assert.ok(platform.spawns.some((s) => s.role === 'verify' && s.task === 'T01'), 'T01 spawned as a verify worker');
   assert.ok(!platform.spawns.some((s) => s.role === 'review' && s.task === 'T01'), 'a you task is never reviewed');
 
-  const finalMain = worktree.progressOn('main');
-  assert.equal((finalMain.match(/✅/g) || []).length, 2, 'both tasks are ✅ on main');
+  const finalFeature = worktree.progressOn(`pir/${SLUG}`);
+  assert.equal((finalFeature.match(/✅/g) || []).length, 2, 'both tasks are ✅ on the feature branch');
 });
 
 // --- 7. The implementer is closed as its reviewer spawns ------------------------------------------
@@ -274,46 +275,53 @@ test('the HALT flag stops all dispatch and closes every worker; main is untouche
   assert.equal(worktree.mainCommitCount(), 1, 'main untouched by the kill switch');
 });
 
-// --- 10. Task branches merge into the feature branch; main touched once ---------------------------
+// --- 10. Task branches merge into the feature branch; main is never touched -----------------------
 
-test('task branches merge into the feature branch and main is touched exactly once, at promotion', (t) => {
+test('task branches merge into the feature branch and main is never touched — the run hands off, it does not promote (DESIGN §2.4)', (t) => {
   const { coordinator, worktree } = setup(t, chain(4));
   assert.equal(worktree.mainCommitCount(), 1, 'main starts at the initial commit only');
 
   const { result } = driveCollecting(coordinator);
-  assert.equal(result.promoted, true);
+  assert.equal(result.complete, true);
+  assert.deepEqual(result.readyToMerge, { branch: `pir/${SLUG}` }, 'it hands off the green feature branch');
 
   const merges = worktree.events.filter((e) => e.op === 'mergeTask');
   assert.equal(merges.length, 4, 'four task branches merged');
   assert.ok(merges.every((e) => e.into === `pir/${SLUG}`), 'every merge went into the feature branch, never main');
-  assert.equal(worktree.events.filter((e) => e.op === 'promote').length, 1, 'promoted to main exactly once');
-  const finalMain = worktree.progressOn('main');
-  assert.equal((finalMain.match(/✅/g) || []).length, 4, 'all four tasks are ✅ on main');
+  assert.equal(worktree.events.filter((e) => e.op === 'promote').length, 0, 'nothing was ever promoted to main');
+  assert.equal(worktree.mainCommitCount(), 1, 'main is untouched — the person merges pir/demo by hand');
+  const finalFeature = worktree.progressOn(`pir/${SLUG}`);
+  assert.equal((finalFeature.match(/✅/g) || []).length, 4, 'all four tasks are ✅ on the feature branch');
 });
 
-// --- 11. Promote only on a green feature branch --------------------------------------------------
+// --- 11. Hand off only a green feature branch ----------------------------------------------------
 
-test('a red feature branch is surfaced, not promoted; a green one promotes', (t) => {
+test('a red feature branch is surfaced with no hand-off; a green one is handed off to merge by hand', (t) => {
   const red = setup(t, [{ num: 'T01' }], { runTests: () => ({ ok: false }) });
   const { result: redResult, surfaces: redSurfaces } = driveCollecting(red.coordinator);
-  assert.notEqual(redResult.reason, 'promoted', 'a red feature branch is not promoted');
+  assert.equal(redResult.reason, 'complete', 'the plan is done, but the branch is red');
+  assert.equal(redResult.testsPassed, false, 'the feature-branch tests failed');
+  assert.ok(!redResult.readyToMerge, 'a red branch is never offered for merge (DESIGN §2.8)');
   assert.ok(redSurfaces.some((s) => s.kind === 'red-feature'), 'the red feature branch is surfaced to the user');
   assert.equal(red.worktree.mainCommitCount(), 1, 'nothing red reached main');
 
   const green = setup(t, [{ num: 'T01' }], { runTests: () => ({ ok: true }) });
-  assert.equal(driveCollecting(green.coordinator).result.promoted, true, 'a green feature branch promotes');
+  const greenResult = driveCollecting(green.coordinator).result;
+  assert.equal(greenResult.complete, true, 'a green feature branch completes');
+  assert.deepEqual(greenResult.readyToMerge, { branch: `pir/${SLUG}` }, 'and is handed off for the person to merge');
 });
 
-// --- 12. Reports each ✅ and terminates when the plan is fully ✅ and promoted ----------------------
+// --- 12. Reports each ✅ and terminates when the plan is fully ✅ and handed off --------------------
 
-test('the coordinator reports each task reaching ✅ and terminates on a fully promoted plan', (t) => {
+test('the coordinator reports each task reaching ✅ and terminates on a completed, handed-off plan', (t) => {
   const { coordinator, worktree } = setup(t, chain(3));
   const { result, completed } = driveCollecting(coordinator);
-  assert.equal(result.reason, 'promoted');
-  assert.equal(result.promoted, true);
+  assert.equal(result.reason, 'complete');
+  assert.equal(result.complete, true);
+  assert.deepEqual(result.readyToMerge, { branch: `pir/${SLUG}` });
   assert.deepEqual([...completed].sort(), ['T01', 'T02', 'T03'], 'each task was reported reaching ✅ as it merged');
-  const finalMain = worktree.progressOn('main');
-  assert.ok(!finalMain.includes('⬜'), 'no ⬜ task remains on main after promotion');
+  const finalFeature = worktree.progressOn(`pir/${SLUG}`);
+  assert.ok(!finalFeature.includes('⬜'), 'no ⬜ task remains on the feature branch at hand-off');
 });
 
 // --- 13. P2: the answer channel — a user decision routes down to the parked worker -----------------
@@ -349,7 +357,7 @@ test('a decision written to the answers file drains once, then routes down to th
     platform.sent.some((s) => s.to === workerName({ repo: REPO, plan: SLUG, task: 'T01', role: 'implement' }) && s.msg.kind === 'answer'),
     'the drained decision was sent down to the parked worker as an answer',
   );
-  assert.equal(driveCollecting(coordinator).result.promoted, true, 'the answered worker resumes and the plan promotes');
+  assert.equal(driveCollecting(coordinator).result.complete, true, 'the answered worker resumes and the plan completes');
 });
 
 test('routing an answer logs an `answer {task}` flow line so the coordinator wakes to deliver it (T27, T21 reflection)', (t) => {
@@ -412,7 +420,7 @@ test('a dropped answer down-send is recorded as send-failed and the outbox fallb
   assert.equal(r2.ok, true, 'the retry delivers');
   assert.ok(logs.includes('answer T01'), 'the successful retry logs `answer T01`');
   assert.equal(coordinator.state.tasks.T01.decision, null, 'the delivered answer clears the parked decision');
-  assert.equal(driveCollecting(coordinator).result.promoted, true, 'the answered worker resumes and the plan promotes');
+  assert.equal(driveCollecting(coordinator).result.complete, true, 'the answered worker resumes and the plan completes');
 });
 
 test('an answer to a genuinely unreachable worker is recorded as send-failed, not silently dropped (C, T30)', (t) => {
@@ -452,7 +460,7 @@ test('a worker `decision` message parks and surfaces like a question, and the an
   assert.match(surfaced.message, /needs a decision from you/i);
 
   coordinator.answer({ task: 'T01', text: 'layout A' });
-  assert.equal(driveCollecting(coordinator).result.promoted, true, 'the answered decision resumes and the plan promotes');
+  assert.equal(driveCollecting(coordinator).result.complete, true, 'the answered decision resumes and the plan completes');
 });
 
 // --- 15. P6: no exit path orphans a spawned worker ------------------------------------------------
@@ -496,6 +504,18 @@ test('ensureMain creates a local main at HEAD when a checkout has none, and is a
   assert.equal(res.from, 'side');
   assert.equal(g(['rev-parse', '--verify', '--quiet', 'refs/heads/main']).ok, true, 'main now exists at HEAD');
   assert.equal(ensureMain(dir).created, false, 'a second call is a no-op — main already exists');
+});
+
+test('renderHandoff: a green plan hands off `git merge pir/{slug}`; a red one prints the failure with no merge line (DESIGN §2.4, §2.8)', () => {
+  const green = renderHandoff({ readyToMerge: { branch: 'pir/demo' }, taskCount: 5, slug: 'demo' });
+  assert.match(green, /git merge pir\/demo/, 'the green hand-off gives the person the exact merge command');
+  assert.match(green, /5 task/, 'it names how many tasks are green');
+  assert.match(green, /tests pass/i);
+
+  const red = renderHandoff({ readyToMerge: null, taskCount: 5, slug: 'demo' });
+  assert.ok(!/git merge/.test(red), 'a red branch is NEVER handed a merge line (§2.8)');
+  assert.match(red, /tests fail/i, 'the red output names the failure');
+  assert.match(red, /pir\/demo/, 'and still names the branch so the person can go fix it');
 });
 
 test('canPromoteHere refuses the canonical repo unless PARALLEL_ALLOW_HERE overrides (P5, T12)', () => {

@@ -22,7 +22,7 @@ rule). Account in the `plan-review` commit.
 debris swept into a labeled `git stash`, 2026-09-19) and green. The live display shape was confirmed
 with the person against `prototype/cli-display.html`.
 **Last updated:** 2026-09-19
-**Next `pir-work` will:** implement T01 (`stop-promoting`, the first `⬜` whose dependencies are met).
+**Next `pir-work` will:** review T01 (`stop-promoting`, now `🔍`), by a session that did not build it.
 
 ## Tasks
 
@@ -33,7 +33,7 @@ still reads it while the plan is being built.
 
 | # | Task | Runs | Depends on | State | Notes |
 |---|---|---|---|---|---|
-| T01 | stop-promoting | auto | — | ⬜ | Run ends at a green feature branch handed off; no merge to main. |
+| T01 | stop-promoting | auto | — | 🔍 | Replaced `promoteToMain` with `complete`; loop runs feature-branch tests on complete, carries `readyToMerge`/`testsPassed`; removed the promote step and `worktree.promote()` (fake keeps its unused one). Added pure `renderHandoff` + live `runFeatureTests`; `main()` prints the `git merge` hand-off or red failure. 384 green. Deviation: added `runFeatureTests` to run real tests on the live bin (DESIGN §2.4); the live hand-off itself is not test-covered (T09). |
 | T02 | slugs-and-names | auto | — | ⬜ | `/` separator, worker name gains a slug field. Additive and backward-tolerant; keeps `coordinatorName` and the `verify` role, which T05 removes. |
 | T03 | live-display | auto | T01, T02 | ⬜ | Strip the agent bridge; the docker-compose-style live display. |
 | T04 | remove-you-auto | auto | T03 | ⬜ | Remove the auto/you distinction and the verify path (code). |
@@ -46,7 +46,7 @@ still reads it while the plan is being built.
 A Notes cell holds what was built or what the review found, the test count, and one line per
 deviation from the task doc. A ✅ task's cell may be cut to one line once the next task is reviewed.
 
-**Review queue:** empty.
+**Review queue:** T01.
 
 ## Blocked on the user
 

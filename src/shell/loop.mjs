@@ -4,7 +4,9 @@
 // switch), asks core what to do, and executes it: open the feature branch once, spawn auto builders
 // and hands-on `you` scribes, hand a review-ready task to a fresh reviewer while closing its
 // implementer, merge one done task branch into the feature branch and reconcile its row, close
-// finished and dead workers, and promote the feature branch to main when the whole plan is ✅.
+// finished and dead workers, and — when the whole plan is ✅ — run the feature-branch tests and
+// carry a ready-to-merge (or red) result out for the shell to hand off. It never merges to main
+// (DESIGN §2.4): the one irreversible act, the merge to main, is the person's to run by hand.
 //
 // It lives in src/shell/ and so may touch fs and drive the platform; every decision it makes comes
 // from src/core/ (decideDispatch, reconcileTaskRow, parseProgress, the naming helpers), which stay
@@ -39,10 +41,10 @@ export function createRunState() {
 // (flag file + log file) is injected in its place by the live coordinator.
 const NO_CONTROL = { isHalted: () => false, log: () => {} };
 
-// The default pre-promotion test gate (DESIGN §2.9: the feature branch's tests are the last gate).
-// A real run injects a function that runs the test command on the feature branch; the dry run has
-// no suite on the scratch repo, so green is the default and a test injects a red result to prove the
-// loop refuses to promote a red branch.
+// The default pre-hand-off test gate (DESIGN §2.4: the feature branch's tests are the last gate
+// before the run hands the branch to the person to merge). A real run injects a function that runs
+// the test command on the feature branch; the dry run has no suite on the scratch repo, so green is
+// the default and a test injects a red result to prove the loop refuses to hand off a red branch.
 const GREEN = () => ({ ok: true });
 
 function taskByWorkerId(state, workerId) {
@@ -179,7 +181,7 @@ function reconcile({ platform, worktree, repo, slug, maxWorkers, state, featureP
   // and re-implemented on the very same pass — clobbering the reviewed work the design says to preserve
   // (reproduced 2026-09-17). ⛔ is skipped by both decideDispatch (not ⬜) and decideResume (feature
   // ✅/⛔), so the branch is left untouched for a person to land and its dependents wait (§2.7). The run
-  // cannot promote until the person resolves it. User decision 2026-09-17 (flag needs-a-person, continue).
+  // cannot complete until the person resolves it. User decision 2026-09-17 (flag needs-a-person, continue).
   const merged = [];
   const conflicted = [];
   for (const num of merge) {
@@ -385,7 +387,7 @@ export function runPass({ platform, worktree, repo, slug, maxWorkers, state, con
     }
     for (const id of closedThisPass) state.closedIds.add(id);
     const liveAfter = [...liveIds].filter((id) => !closedThisPass.has(id)).length;
-    return { actions, log, halted: true, promoted: false, liveAfter, tasks: parsed.tasks };
+    return { actions, log, halted: true, complete: false, liveAfter, tasks: parsed.tasks };
   }
 
   // 3a. Clean up dead workers first (DESIGN §2.5 — a crashed or abandoned worker). Their session is
@@ -565,21 +567,24 @@ export function runPass({ platform, worktree, repo, slug, maxWorkers, state, con
     }
   }
 
-  // 3f. Promote the feature branch to main — the one merge to main — only when the tests pass on it
-  // (DESIGN §2.9). A red feature branch is surfaced, not promoted.
-  let promoted = false;
-  if (decision.promoteToMain) {
+  // 3f. The plan is done — run the feature-branch tests and carry the result out for the shell to hand
+  // off (DESIGN §2.4). The run NEVER merges to main: merging the finished plan is the one irreversible
+  // act in the system and it is the person's `what`, done by hand with `git merge`. A green branch
+  // carries a readyToMerge; a red one carries testsPassed=false and no readyToMerge, and is surfaced so
+  // the shell prints the failure and offers no merge line (DESIGN §2.8). worktree.promote is never
+  // called and main is never touched.
+  let complete = false;
+  let testsPassed;
+  let readyToMerge = null;
+  if (decision.complete) {
+    complete = true;
     const test = runTests(state.feature.path);
-    if (!test.ok) {
-      record('surface', { kind: 'red-feature', text: 'feature branch tests failed; not promoting' });
+    if (test.ok) {
+      testsPassed = true;
+      readyToMerge = { branch: state.feature.branch };
     } else {
-      const res = worktree.promote(slug);
-      if (res.conflict) {
-        record('surface', { kind: 'promote-conflict', text: 'feature branch will not merge to main cleanly' });
-      } else {
-        promoted = true;
-        record('promote', { branch: state.feature.branch });
-      }
+      testsPassed = false;
+      record('surface', { kind: 'red-feature', text: 'feature branch tests failed; not ready to merge' });
     }
   }
 
@@ -588,12 +593,13 @@ export function runPass({ platform, worktree, repo, slug, maxWorkers, state, con
   for (const id of closedThisPass) state.closedIds.add(id);
   const liveAfter =
     [...liveIds].filter((id) => !closedThisPass.has(id)).length + spawnedThisPass.length;
-  return { actions, log, halted: false, promoted, liveAfter, tasks: parsed.tasks };
+  return { actions, log, halted: false, complete, testsPassed, readyToMerge, liveAfter, tasks: parsed.tasks };
 }
 
-// drain — run passes until the plan promotes, the kill switch has closed everything, or the run goes
-// quiet (all remaining workers parked on the user, or nothing left to do). Returns why it stopped,
-// how many passes it took, and the flattened actions, plus the run state for inspection.
+// drain — run passes until the plan is complete (every task ✅, tests run on the feature branch), the
+// kill switch has closed everything, or the run goes quiet (all remaining workers parked on the user,
+// or nothing left to do). Returns why it stopped, how many passes it took, the flattened actions, and
+// the hand-off result (readyToMerge/testsPassed) when complete, plus the run state for inspection.
 export function drain(opts) {
   const state = opts.state ?? createRunState();
   const maxPasses = opts.maxPasses ?? 200;
@@ -604,15 +610,16 @@ export function drain(opts) {
     const r = runPass({ ...opts, state });
     allActions.push(...r.actions);
 
-    if (r.promoted) return { reason: 'promoted', passes: p, promoted: true, actions: allActions, state };
-    if (r.halted) return { reason: 'halted', passes: p, promoted: false, actions: allActions, state };
+    if (r.complete)
+      return { reason: 'complete', passes: p, complete: true, readyToMerge: r.readyToMerge, testsPassed: r.testsPassed, actions: allActions, state };
+    if (r.halted) return { reason: 'halted', passes: p, complete: false, actions: allActions, state };
 
-    const productive = r.actions.some((a) => ['spawn', 'review', 'merge', 'close', 'promote'].includes(a.type));
+    const productive = r.actions.some((a) => ['spawn', 'review', 'merge', 'close'].includes(a.type));
     idle = productive ? 0 : idle + 1;
     if (idle >= 2) {
       const reason = r.liveAfter > 0 ? 'parked' : 'stalled';
-      return { reason, passes: p, promoted: false, actions: allActions, state };
+      return { reason, passes: p, complete: false, actions: allActions, state };
     }
   }
-  return { reason: 'maxPasses', passes: maxPasses, promoted: false, actions: allActions, state };
+  return { reason: 'maxPasses', passes: maxPasses, complete: false, actions: allActions, state };
 }

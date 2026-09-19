@@ -3,8 +3,9 @@
 // (spawn/list/close + messaging, T08) and the REAL worktree (feature/task branches, T06), and gives
 // the skill the three verbs the skill cannot get from the loop alone — run one pass, route a user's
 // answer down to a parked worker, and defer a task to ⛔. loop.mjs already turns decideDispatch into
-// spawns, reviews, merges, closes and the one promotion; this module is the thin conversational
-// wrapper around it plus the plan-reviewed refusal and the `pir coordinate {slug}` bin.
+// spawns, reviews, merges and closes, and signals when the plan is complete (all ✅, tests run on the
+// feature branch); this module is the thin conversational wrapper around it plus the plan-reviewed
+// refusal, the end-of-run hand-off (§2.4), and the `pir coordinate {slug}` bin.
 //
 // The controller is injected with its platform and worktree, exactly as runPass is, so the whole of
 // dispatch/surfacing/routing is proven against the fakes in coordinate.test.mjs (DESIGN §4) and the
@@ -76,11 +77,8 @@ function renderSurface(a) {
       break;
     case 'red-feature':
       message =
-        'Every task is built, but the tests fail on the assembled plan, so it is NOT being merged to main. ' +
-        'The failure needs fixing before the plan can land.';
-      break;
-    case 'promote-conflict':
-      message = 'The finished plan will not merge cleanly into main. It needs a hand before it can land.';
+        'Every task is built, but the tests fail on the assembled feature branch, so it is NOT ready to ' +
+        'merge. The failure needs fixing before you merge the branch by hand.';
       break;
     default:
       message = `${who}: ${a.text ?? a.kind}`;
@@ -158,8 +156,6 @@ export function startCoordinator({
       control.log(`ceiling full: ${r.liveAfter}/${maxWorkers} busy, waiting: ${waiting.join(', ')}`);
     }
 
-    const allDone = r.tasks.length > 0 && r.tasks.every((t) => t.state === DONE_GLYPH);
-
     return {
       actions: r.actions,
       surfaces,
@@ -173,8 +169,14 @@ export function startCoordinator({
       waiting,
       live: r.liveAfter,
       halted: r.halted,
-      promoted: r.promoted,
-      done: r.promoted || (allDone && r.liveAfter === 0),
+      // The plan is done — all ✅, none live, tests run on the feature branch (loop.mjs 3f). readyToMerge
+      // is set on green, null on red; testsPassed carries the verdict. There is no promotion (§2.4): the
+      // shell hands the person the branch to merge by hand. `done` is just `complete`, kept as the name
+      // drive()/the bin loop stop on.
+      complete: r.complete,
+      readyToMerge: r.readyToMerge ?? null,
+      testsPassed: r.testsPassed,
+      done: r.complete,
       tasks: r.tasks,
     };
   }
@@ -244,27 +246,27 @@ export function startCoordinator({
     return { ok: true, task };
   }
 
-  // drive({ maxPasses, onPass }) → run passes until the plan promotes, the kill switch has closed
-  // everything, or the run goes quiet (every remaining worker parked on the user, or nothing left to
-  // do). It mirrors loop.drain's stop conditions but runs through pass(), so onPass sees the surfaced
-  // decisions and the completions — which is how the skill loop and the dry-run harness both step it.
-  // A live conversational run does not use this: it steps pass() itself between the user's turns.
+  // drive({ maxPasses, onPass }) → run passes until the plan is complete (all ✅, tests run on the
+  // feature branch), the kill switch has closed everything, or the run goes quiet (every remaining
+  // worker parked on the user, or nothing left to do). It mirrors loop.drain's stop conditions but runs
+  // through pass(), so onPass sees the surfaced decisions and the completions — which is how the skill
+  // loop and the dry-run harness both step it. A live conversational run does not use this: it steps
+  // pass() itself between the user's turns. On completion it carries the hand-off result out.
   function drive({ maxPasses = 200, onPass } = {}) {
     let idle = 0;
     for (let p = 1; p <= maxPasses; p++) {
       const r = pass();
       if (onPass) onPass(r, p);
-      if (r.promoted) return { reason: 'promoted', passes: p, promoted: true };
-      if (r.halted) return { reason: 'halted', passes: p, promoted: false };
-      const productive = r.actions.some((a) =>
-        ['spawn', 'review', 'merge', 'close', 'promote'].includes(a.type),
-      );
+      if (r.complete)
+        return { reason: 'complete', passes: p, complete: true, readyToMerge: r.readyToMerge, testsPassed: r.testsPassed };
+      if (r.halted) return { reason: 'halted', passes: p, complete: false };
+      const productive = r.actions.some((a) => ['spawn', 'review', 'merge', 'close'].includes(a.type));
       idle = productive ? 0 : idle + 1;
       if (idle >= 2) {
-        return { reason: r.live > 0 ? 'parked' : 'stalled', passes: p, promoted: false };
+        return { reason: r.live > 0 ? 'parked' : 'stalled', passes: p, complete: false };
       }
     }
-    return { reason: 'maxPasses', passes: maxPasses, promoted: false };
+    return { reason: 'maxPasses', passes: maxPasses, complete: false };
   }
 
   return { state, pass, answer, defer, drive };
@@ -470,15 +472,39 @@ export function runawayVerdict({ liveCount, ceiling, overPasses = 0, overGrace =
   return { abort: liveCount > ceiling + 1 || over >= overGrace, over };
 }
 
-// --- The scratch-repo promotion guard (DESIGN §5.2; ported from spawn-one-scratch.mjs, T12 P5) ----
+// --- The scratch-repo branch-safety guard (DESIGN §2.4, §5.2; ported from spawn-one-scratch.mjs, T12 P5) --
 //
-// The LIVE bin opens the feature branch off THIS checkout's main and, on success, merges it back into
-// main. Never let that happen inside the canonical project by accident: refuse when the main
-// worktree's basename is the canonical repo unless PARALLEL_ALLOW_HERE=1 (a same-named scratch clone).
-// Pure predicate so it is tested directly.
+// The LIVE bin opens the feature branch off THIS checkout's main and writes task branches and
+// worktrees against it. The run never merges to main (§2.4), but it still cuts and mangles pir/{slug}
+// branches inside whatever repo it runs in — so never let a live run open them inside the canonical
+// project by accident: refuse when the main worktree's basename is the canonical repo unless
+// PARALLEL_ALLOW_HERE=1 (a same-named scratch clone). Pure predicate so it is tested directly. The
+// name is historical; it now guards the feature branch, not a promotion.
 const CANONICAL_REPO = 'plan-implement-review';
 export function canPromoteHere(repoName, { allowHere = false } = {}) {
   return repoName !== CANONICAL_REPO || allowHere;
+}
+
+// --- The end-of-run hand-off (DESIGN §2.4, §2.8) ----------------------------------------------
+//
+// When the plan is complete, the run stops at the feature branch and hands it to the person to merge
+// by hand — the one irreversible act, the merge to main, is the person's `what`, not the program's
+// (CLAUDE.md, §2.4). renderHandoff builds the line(s) main() prints from the loop's complete result.
+// Pure, so the green/red wording is asserted without running the bin (DESIGN §2.3's pure-display
+// stance). On green it hands over `git merge pir/{slug}`; on red it names the failure and offers NO
+// merge line, because telling the person a red branch is ready would be a lie the tests caught (§2.8).
+export function renderHandoff({ readyToMerge, taskCount, slug } = {}) {
+  const branch = `pir/${slug}`;
+  if (readyToMerge) {
+    return (
+      `✔ all ${taskCount} task(s) green on ${branch} · tests pass. Yours to merge:\n\n` +
+      `  git merge ${branch}\n`
+    );
+  }
+  return (
+    `✗ all ${taskCount} task(s) built on ${branch}, but its tests fail — not ready to merge.\n` +
+    `Fix the feature branch, then merge it yourself. No merge is offered on a red branch.`
+  );
 }
 
 // --- The `pir coordinate {slug}` bin entry ----------------------------------------------------
@@ -512,13 +538,15 @@ export function gitRun(cwd, args) {
 }
 
 // Ensure a checkout has a local `main` (DESIGN §2.9; T12 Problem 4). worktree.mjs cuts the feature
-// branch with `git branch pir/{plan} main` and promotes back into main — `main` hardcoded, as the real
-// project always has one. A scratch clone taken off a side branch has only origin/main and no local
-// `main`, so pass 1 throws "not a valid object name: 'main'" (the drill created one by hand). When
-// there is no local main, create it at the current HEAD and check it out; a checkout that already has
-// main is left exactly as it is. Runs only on the LIVE path, which the canonical-repo guard confines
-// to a scratch checkout, so pointing main at HEAD is safe (mirrors ensureMainCheckedOut, verified with
-// the user 2026-09-09). `-B main HEAD` pins main to the exact commit, never a same-named origin/main.
+// branch with `git branch pir/{plan} main` — `main` hardcoded, as the real project always has one — so
+// a local main must exist for openFeature to branch off it (the run never merges back to main, §2.4;
+// main is only the base the feature branch is cut from). A scratch clone taken off a side branch has
+// only origin/main and no local `main`, so pass 1 throws "not a valid object name: 'main'" (the drill
+// created one by hand). When there is no local main, create it at the current HEAD and check it out; a
+// checkout that already has main is left exactly as it is. Runs only on the LIVE path, which the
+// branch-safety guard confines to a scratch checkout, so pointing main at HEAD is safe (mirrors
+// ensureMainCheckedOut, verified with the user 2026-09-09). `-B main HEAD` pins main to the exact
+// commit, never a same-named origin/main.
 export function ensureMain(root, { git = gitRun } = {}) {
   if (git(root, ['rev-parse', '--verify', '--quiet', 'refs/heads/main']).ok) {
     return { created: false };
@@ -658,6 +686,20 @@ function waitForReport(reportsDir, timeoutMs) {
   });
 }
 
+// Run the project's test command on the feature worktree (DESIGN §2.4, §5): the last gate before the
+// run hands the branch off. Returns { ok } from the command's exit code. Anything that stops the
+// command from launching, or a non-zero exit, counts as red — a hand-off must never claim a green it
+// did not observe (§2.8). Injected into the loop as runTests on the LIVE path; the dry-run tests inject
+// their own so this never runs against the fakes.
+export function runFeatureTests(featurePath) {
+  try {
+    execFileSync('npm', ['test'], { cwd: featurePath, stdio: 'ignore' });
+    return { ok: true };
+  } catch {
+    return { ok: false };
+  }
+}
+
 async function main(argv) {
   const slug = argv[0];
   if (!slug) {
@@ -712,10 +754,10 @@ async function main(argv) {
   // overrides for a same-named clone.
   if (!canPromoteHere(repo, { allowHere: process.env.PARALLEL_ALLOW_HERE === '1' })) {
     console.error(
-      `Refusing the LIVE run inside "${repo}" — this opens pir/${slug} off THIS repo's main and, on\n` +
-        `success, merges it back into THIS main. Run it in a throwaway clone instead (e.g.\n` +
-        `\`git clone . ../pir-scratch && cd ../pir-scratch\`). If this really is a scratch clone that\n` +
-        `happens to share the name, set PARALLEL_ALLOW_HERE=1.`,
+      `Refusing the LIVE run inside "${repo}" — this opens pir/${slug} off THIS repo's main and cuts\n` +
+        `task branches and worktrees against it. (It never merges to main; you do that by hand.) Still,\n` +
+        `run it in a throwaway clone instead (e.g. \`git clone . ../pir-scratch && cd ../pir-scratch\`).\n` +
+        `If this really is a scratch clone that happens to share the name, set PARALLEL_ALLOW_HERE=1.`,
     );
     process.exit(1);
   }
@@ -746,7 +788,7 @@ async function main(argv) {
   const bridge = createAgentBridge({ dir: control.dir });
   const platform = createPlatform({ root, transport: bridge.transport });
   const worktree = createWorktree({ root });
-  const coordinator = startCoordinator({ slug, repo, platform, worktree, maxWorkers, control });
+  const coordinator = startCoordinator({ slug, repo, platform, worktree, maxWorkers, control, runTests: runFeatureTests });
 
   console.log(`ceiling: ${maxWorkers}   control: ${control.dir}`);
   console.log(`ABORT:   touch ${control.flag}`);
@@ -827,12 +869,16 @@ async function main(argv) {
       }
       if (r.ceilingFull) console.log(`  (ceiling full; waiting: ${r.waiting.join(', ')})`);
       if (r.halted) {
-        console.log('\n=== HALTED by the kill switch — workers stopped, nothing promoted ===');
+        console.log('\n=== HALTED by the kill switch — workers stopped, nothing merged ===');
         return; // the halt pass already closed every worker
       }
-      if (r.promoted) {
-        console.log('\n=== PROMOTED — the whole plan reached main ===');
-        return; // the promotion pass already closed every worker
+      if (r.complete) {
+        // The plan is done and the loop has run the feature-branch tests (§2.4). Hand the branch off:
+        // on green, print the `git merge` command for the person to run; on red, print the failure and
+        // offer no merge (§2.8). The run never merges to main itself. The complete pass has no live
+        // workers, so nothing is orphaned by returning here.
+        console.log('\n' + renderHandoff({ readyToMerge: r.readyToMerge, taskCount: r.tasks.length, slug }));
+        return;
       }
 
       // Runaway breaker (DESIGN §5.2; T12 Problem 5). Count THIS run's workers only — the coordinator's
@@ -847,12 +893,12 @@ async function main(argv) {
       }
 
       // Stall detection: a pass that did nothing AND has nothing live is the run genuinely finished
-      // (all tasks ✅ but nothing to promote, or everything deferred). A parked worker (live > 0) is
+      // (all tasks ✅ and handed off, or everything deferred). A parked worker (live > 0) is
       // NOT a stall — it waits for the user's answer, so the loop keeps polling for it.
-      const productive = r.actions.some((a) => ['spawn', 'review', 'merge', 'close', 'promote'].includes(a.type));
+      const productive = r.actions.some((a) => ['spawn', 'review', 'merge', 'close'].includes(a.type));
       idle = !productive && r.live === 0 ? idle + 1 : 0;
       if (idle >= STALL_GRACE) {
-        console.log('\n=== nothing left to do (no live workers, nothing to dispatch or promote) ===');
+        console.log('\n=== nothing left to do (no live workers, nothing to dispatch or hand off) ===');
         teardownOnce('stalled'); // a no-op when nothing is live; still safe
         return;
       }

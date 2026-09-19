@@ -14,7 +14,6 @@ import {
   integrate,
   mergeTask,
   commitFeature,
-  promote,
   remove,
   taskBranchState,
   taskWorktreeHandle,
@@ -197,7 +196,7 @@ test('two mergeTask calls run one after another, both landing on the feature bra
   assert.ok(git(s.repo, ['show', 'pir/demo:b.txt']).ok, "T02's work is on the feature branch");
 });
 
-test('promote: merges the feature branch to main exactly once, and not before', (t) => {
+test('the plan assembles on the feature branch and main is never touched — there is no promote (DESIGN §2.4)', (t) => {
   const s = scratchRepo();
   t.after(s.cleanup);
   openFeature('demo', { root: s.repo });
@@ -206,14 +205,11 @@ test('promote: merges the feature branch to main exactly once, and not before', 
   git(w.path, ['add', '-A']);
   git(w.path, ['commit', '-m', 'T01', '--no-edit']);
   mergeTask(w.branch, { root: s.repo });
-  assert.equal(mainCommits(s.repo), 1, 'main is untouched until promote');
-  assert.ok(!git(s.repo, ['show', 'main:work-T01.txt']).ok, 'the work is not on main yet');
 
-  const res = promote('demo', { root: s.repo });
-  assert.ok(res.ok);
-  assert.ok(mainCommits(s.repo) > 1, 'main moved at promotion');
-  assert.ok(git(s.repo, ['show', 'main:work-T01.txt']).ok, 'promoted work is on main');
-  assert.equal(headOf(s.repo), 'main', 'the checkout is still on main after promotion');
+  assert.ok(git(s.repo, ['show', 'pir/demo:work-T01.txt']).ok, 'the work is assembled on the feature branch');
+  assert.equal(mainCommits(s.repo), 1, 'main is untouched — the run never merges to main');
+  assert.ok(!git(s.repo, ['show', 'main:work-T01.txt']).ok, 'the work never reaches main; the person merges pir/demo by hand');
+  assert.equal(headOf(s.repo), 'main', 'the checkout stays on main throughout');
 });
 
 test('remove: deletes the worktree and branch, including one with uncommitted changes', (t) => {
@@ -243,7 +239,7 @@ test('remove: tears down a LOCKED worktree, the state claude rm cannot clear (FI
   assert.ok(!branchExists(s.repo, 'pir/demo-T01'), 'the task branch is gone');
 });
 
-test('createWorktree factory: drives the loop path open → create → merge → commitFeature → promote', (t) => {
+test('createWorktree factory: drives the loop path open → create → merge → commitFeature → remove; main untouched', (t) => {
   const s = scratchRepo();
   t.after(s.cleanup);
   const wt = createWorktree({ root: s.repo });
@@ -259,8 +255,11 @@ test('createWorktree factory: drives the loop path open → create → merge →
   assert.ok(wt.commitFeature('reconcile T01 → ✅').ok);
   assert.ok(git(s.repo, ['show', `pir/demo:${PROGRESS_REL}`]).stdout.includes('reconciled'), 'the reconcile commit is on the feature branch');
 
-  assert.ok(wt.promote('demo').ok);
-  assert.ok(git(s.repo, ['show', 'main:work-T01.txt']).ok, 'the whole plan reached main in one promotion');
+  // The whole plan is assembled on the feature branch; the run hands it off there (DESIGN §2.4). There is
+  // no promote() — main is never touched, and the factory exposes no promote method.
+  assert.ok(git(s.repo, ['show', 'pir/demo:work-T01.txt']).ok, 'the whole plan is assembled on the feature branch');
+  assert.equal(mainCommits(s.repo), 1, 'main is untouched — the person merges pir/demo by hand');
+  assert.equal(wt.promote, undefined, 'the factory no longer exposes promote()');
   wt.remove(w);
   assert.ok(!branchExists(s.repo, 'pir/demo-T01'));
 });

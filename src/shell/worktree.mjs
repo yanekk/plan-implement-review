@@ -2,12 +2,13 @@
 // project's git instead of a scratch repo. It implements the branch model of DESIGN §2.9: one
 // feature branch `pir/{plan}` cut from `main` in its own worktree (the coordinator works there, so
 // the user's main checkout stays on `main`); task branches `pir/{plan}-T{nn}` cut from the feature
-// branch and merged back into it, serialized; and `main` touched exactly once, at promotion. It is
-// the recovery half of the machine (DESIGN §6) and is built before any live agent, so a runaway or
-// abandoned worker can always be torn down.
+// branch and merged back into it, serialized; and `main` never touched — the finished feature branch
+// is handed to the person to merge by hand (DESIGN §2.4). It is the recovery half of the machine
+// (DESIGN §6) and is built before any live agent, so a runaway or abandoned worker can always be
+// torn down.
 //
 // Two surfaces, one behaviour:
-//   - Module-level functions (openFeature/createTask/integrate/mergeTask/promote/remove) are the
+//   - Module-level functions (openFeature/createTask/integrate/mergeTask/remove) are the
 //     T06.md interface, stateless — each derives every path it needs from git, so they can be
 //     called directly. The hand-verify snippet in T06.md does exactly this: `m.openFeature('demo')`.
 //   - createWorktree({ root }) returns the same methods bound to one repo root, plus a stateful
@@ -30,7 +31,7 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { progressPathFor, parseProgress } from '../core/progress.mjs';
 
-// gpgsign is forced off on every commit-creating call (merge, commit, promote). An automated
+// gpgsign is forced off on every commit-creating call (merge, commit). An automated
 // coordinator has no one to type a passphrase, and a repo with commit.gpgsign=true set globally
 // would otherwise hang the run. `-c` is a per-invocation override; it does not mutate repo config,
 // so the user's own signing setting is untouched for their own commits.
@@ -49,8 +50,8 @@ export function git(cwd, args) {
 }
 
 // The primary (main) worktree of the repo: `git worktree list --porcelain` names it first, wherever
-// it is called from. Feature and task worktrees are created relative to it, and promotion runs there
-// because that is the checkout sitting on `main`.
+// it is called from. Feature and task worktrees are created relative to it; it is the checkout sitting
+// on `main`, which the run leaves untouched (the person merges the feature branch by hand, DESIGN §2.4).
 function mainWorktree(root) {
   const out = git(root, ['worktree', 'list', '--porcelain']).stdout;
   const first = out.split('\n').find((l) => l.startsWith('worktree '));
@@ -200,21 +201,6 @@ export function commitFeature({ root = process.cwd(), featurePath, plan, message
   return { ok: res.ok };
 }
 
-// Promote the feature branch to main: the one and only merge to main (DESIGN §2.9). Runs in the main
-// worktree, which has stayed on main throughout (the feature and task branches live in linked
-// worktrees), so this is the first time main moves. Never auto-resolves.
-export function promote(plan, { root = process.cwd() } = {}) {
-  const branch = featureBranchOf(plan);
-  const main = mainWorktree(root);
-  const res = git(main, [...NOSIGN, 'merge', '--no-edit', '--no-ff', branch]);
-  if (!res.ok) {
-    const files = unmergedFiles(main);
-    git(main, ['merge', '--abort']);
-    return { conflict: true, files };
-  }
-  return { ok: true };
-}
-
 // Tear down a worktree and its branch (DESIGN §2.3 close, §2.9, §6). `--force` twice, not once: a
 // single `--force` removes a dirty worktree but git refuses a LOCKED one ("cannot remove a locked
 // working tree; use 'remove -f -f'"), and a lock is exactly the abandoned-worker state this must
@@ -261,7 +247,6 @@ export function createWorktree({ root = process.cwd() } = {}) {
     integrate: (path) => integrate(path),
     mergeTask: (taskBranch) => mergeTask(taskBranch, { root, featurePath: feature?.path }),
     commitFeature: (message) => commitFeature({ root, featurePath: feature?.path, message }),
-    promote: (plan) => promote(plan, { root }),
     remove: (target) => remove(target, { root }),
     taskBranchState: (plan, task) => taskBranchState(plan, task, { root }),
     taskWorktreeHandle: (plan, task) => taskWorktreeHandle(plan, task, { root }),

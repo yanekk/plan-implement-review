@@ -12,6 +12,7 @@ user changed.
 
 | Date | | Finding |
 |---|---|---|
+| 2026-09-19 | 📌 | T01: the run no longer merges to `main` — it stops at a green `pir/{slug}` and prints `git merge` for the person. `worktree.promote()` removed. The system's one irreversible act is gone, so a bad run leaves `main` untouched (DESIGN §2.4). |
 | 2026-09-19 | 📌 | `claude agents --json` (v2.1.277) reports only `state` (working/done) and `status` (busy) — it cannot distinguish a worker waiting on the person from one mid-build. The worker's own `reports/` signal is what tells the program a task is parked (DESIGN §2.2). |
 | 2026-09-19 | 📌 | The foreground CLI already exists: `coordinate.mjs` `main()` loops `runPass` in the foreground, seatbelted by `PARALLEL_LIVE=1`. The "agentic" half was only the message bridge (`createAgentBridge`, outbox/answers/surfaced + SendMessage). This plan is mostly deletion. |
 | 2026-09-19 | 📌 | Ctrl-C teardown is already installed: `coordinate.mjs` catches SIGINT/SIGTERM and closes every worker before exit. Kill-and-rebuild (DESIGN §2.6) reuses it; no re-adopt-live-workers code is needed. |
