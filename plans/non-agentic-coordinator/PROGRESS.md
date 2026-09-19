@@ -18,12 +18,10 @@ file and its worker's agent name.
 removals so every task stays green + cover `capture.mjs`; `install.sh` applies the per-user `autoMode`
 rule). Account in the `plan-review` commit.
 
-**Status:** T07 implemented, awaiting review. Deleted the three dead skills and de-agented the survivors:
-the down-channel is gone, a parked worker is answered by the person in its own session, and pir-worker
-carries the prepare-and-ask bar. Templates drop Runs/you/split and show slug Task cells; planner test
-rewritten. 382 green (baseline was 380, not the 384 T06 noted).
+**Status:** T07 reviewed clean. Dead skills gone, survivors de-agented, templates slug-celled. Ready for
+T08 (docs) — the last code/skill task before the T09 live capstone.
 **Last updated:** 2026-09-19
-**Next `pir-work` will:** review T07 (`skills`, `🔍`).
+**Next `pir-work` will:** implement T08 (`docs`, `⬜`); its deps T05 and T07 are both ✅.
 
 ## Tasks
 
@@ -38,16 +36,16 @@ read — the parser tolerates and ignores it; T05 finishes the surrounding clean
 | T02 | slugs-and-names | auto | — | ✅ | Reviewed clean. 5-field worker names round-trip incl slug; match by number+role. `/`-at-launch is a T09 live check. 387 green. |
 | T03 | live-display | auto | T01, T02 | ✅ | Reviewed clean. Pure model + renderer faithful to the prototype; loop/display seam checked. In-place paint + a doubled hand-off line stay for T09 (FINDINGS). 401 green. |
 | T04 | remove-you-auto | auto | T03 | ✅ | Reviewed clean. auto/you and the verify path gone from dispatch/loop/platform; parseProgress tolerates+ignores a Runs column. 398 green. |
-| T05 | harness-and-restart | auto | T04 | ✅ | Reviewed clean. Foreground-process harness: run.mjs spawns `node coordinate.mjs`, seals on exit, SIGKILLs to crash; naming strict 5-field; `coordinatorName`/`verify` gone. Live crash/restart is T09. |
+| T05 | harness-and-restart | auto | T04 | ✅ | Reviewed clean. Foreground-process harness; `coordinatorName`/`verify` gone. Live crash/restart is T09. |
 | T06 | worker-permissions | auto | — | ✅ | Reviewed clean. Ships worker `permissions.allow`; `install.sh` merges it into a target and the `autoMode` rule into `~/.claude/settings.json`. Merge pure in `core/settings.mjs`. `bgIsolation: none` does not travel to targets (FINDINGS). Live classifier proof T09. |
-| T07 | skills | auto | T04 | 🔍 | Deleted pir-coordinate/pir-verify/pir-parallelize-plan; dropped from install.sh + README. De-agented implement/review/worker: no down-channel, person answers the parked worker in-session; prepare-and-ask bar added; 5-field `/` names. Templates drop Runs/you/split, show slug cells. Planner test rewritten. Fixed one fixtures.test assertion my deletion broke. 382 green. |
+| T07 | skills | auto | T04 | ✅ | Reviewed clean, no fix commit. Deletions and de-agenting faithful to DESIGN §2.2/§2.5/§2.9; grep-confirmed no live refs to the three deleted skills or down-channel (leftovers are comments + T08-scope docs/). planner-templates.test rewritten as a real guard (parses on-disk templates). 382 green, ran. |
 | T08 | docs | auto | T05, T07 | ⬜ | Rewrite /docs and the CLAUDE.md carve-out. |
 | T09 | capstone | you | T06, T08 | ⬜ | Live end-to-end hand-verification with the person. |
 
 A Notes cell holds what was built or what the review found, the test count, and one line per
 deviation from the task doc. A ✅ task's cell may be cut to one line once the next task is reviewed.
 
-**Review queue:** T07 — implemented, awaiting a fresh-eyes review.
+**Review queue:** empty. Next is implementing T08 (`docs`).
 
 ## Blocked on the user
 
