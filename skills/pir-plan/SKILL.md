@@ -295,54 +295,35 @@ was not there. Every task needs all five of:
    a plan look wider either — a worker built on work that is not there collides or fails.
    Correct task boundaries and reviewability beat throughput; parallelism is surfaced, never
    forced.
-6. **Its `Runs` marker** — `auto` unless the deliverable's completion is a *person's judgement
-   no machine can stand in for*. `auto` covers far more than the code and its tests: it covers
-   everything a worker can drive itself — running the program, rendering the surface,
-   snapshotting it, seeding a state and reading it back, standing an environment up to do so.
-   `you` is the narrow rest: a spike whose result is a human decision, a hand-verification
-   drill where a person must look and judge, a run only a person may watch (real agents, real
-   money, a real device). **The test is "could a worker build a tool that decides this?" If
-   yes, it is `auto`, however inconvenient the tool. "A program has to be run" is not by itself
-   `you` — a worker runs programs.** Most tasks are `auto`; the marker defaults to `auto` when
-   omitted.
 
 Sizing: **if you cannot write its "Done when" in three lines, it is two tasks.** If it has
 no test list, it is either not a task or the testability boundary is in the wrong place.
 
-### When a deliverable can only be verified by a person: fold, or split
+### When a deliverable can only be verified by a person
 
-Some `auto` tasks build something whose only real proof is a person's *judgement* — a change on
-a real device, a run against real agents, a surface a person must look at and call right or
-wrong. Note what does *not* belong here: "a program has to be launched" is not a person-only
-check, because a worker launches programs and reads what they print; only the part no tool could
-ever decide is the person's. Reduce the check to a machine one as far as it goes, and plan a
-person for the irreducible remainder alone. There are two ways to plan that remainder, and the
-choice is yours to make per task (DESIGN §2.6 carries the rule):
+Some tasks build something whose only real proof is a person's *judgement* — a change on a real
+device, a run against real agents, a surface a person must look at and call right or wrong. This is
+not a separate kind of task and not a separate worker: every task is built by an autonomous worker,
+and one whose real proof is a person's judgement is handled the way the classic flow always handled
+it — the worker builds and prepares up to the point where the only missing thing is the person's
+eyes, then asks (DESIGN §2.5).
 
-- **Fold** it into the builder when the check is a quick escalation — the builder builds, then
-  parks and asks the user through the normal question path, handing over the exact seatbelted
-  command and recording the answer. One `auto` task, one row.
-- **Split** it when the check is first-class — heavy, or on real agents, real branches or a real
-  device, or worth planning as its own step. Then plan a **pair**: an `auto` task that builds the
-  thing, and a separate `you` verify task that **depends on the builder** and has a person judge it.
-  Give the `you` verify task a **"Needs a person" block** — what the person must judge, what to
-  expect, and what only a person can answer — so the hands-on worker (`pir-verify`) has something
-  concrete to put in front of the user. When that check needs an environment stood up, put the
-  bring-up and teardown in a **worker-owned "Environment" section** beside it, not in the person's
-  block: standing the stack up and tearing it down is the worker's job, and the person only judges
-  the running thing (DESIGN §2.6). Guaranteed teardown is the seatbelt that lets the worker bring a
-  live environment up at all. When part of the check is a machine-decidable test — install a driver,
-  run an end-to-end suite — put that in a **worker-owned "Automated checks" section** too, not in the
-  person's block: a test the machine can decide is the worker's to run and record, and the person is
-  asked only what a machine cannot answer, the subjective look. The scribe records the machine result
-  and the person's judgement as **two separate confirmations** and never rounds an ambiguous reply up
-  to the bigger claim (DESIGN §2.6).
+Note what does *not* belong to the person: "a program has to be launched" is not a person-only check,
+because a worker launches programs and reads what they print; only the part no tool could ever decide
+is the person's. Reduce the check to a machine one as far as it goes, and plan a person for the
+irreducible remainder alone. So the task doc gives that remainder a **"Needs a person" block** — what
+the person must judge, what to expect, and what only a person can answer — so the worker has something
+concrete to put in front of them. When the check needs an environment stood up, put the bring-up and
+teardown in a **worker-owned "Environment" section** beside it, not in the person's block: standing
+the stack up and tearing it down is the worker's job, and the person only judges the running thing.
+Guaranteed teardown is the seatbelt that lets the worker bring a live environment up at all. When part
+of the check is a machine-decidable test — install a driver, run an end-to-end suite — put that in a
+**worker-owned "Automated checks" section** too: a test the machine can decide is the worker's to run
+and record, and the person is asked only what a machine cannot answer, the subjective look.
 
-Declare the split's dependency honestly: the verify task truly cannot start until the builder is
-done, so the dependency is real, not padding. Do not fold a heavy check back into the builder to
-save a row (it holds the builder's slot at human speed), and do not split a light yes/no into its
-own task for the appearance of it. The `you` verify task counts in the width report's `you` total
-like any other `you` task.
+Do not water a genuine hands-on check down to a checkbox, and do not invent a person-only step for a
+thing a tool could decide. The bar for what a worker may hand to the person, rather than settle
+itself, is written into the `pir-worker` contract (DESIGN §2.5), not left to an adjective.
 
 ### The ordering principles
 
@@ -368,13 +349,12 @@ English, and get an explicit yes. This is the last cheap moment to move somethin
 
 **Report the plan's parallel width too**, in plain English, so the user sees before a line is
 built whether the plan is wide enough to be worth running many tasks at once or is serial by
-nature. Three numbers over the task graph: the longest dependency chain, the widest set of
-tasks that could run together (the largest group that depends on nothing else in the group),
-and how many tasks are `you` rather than `auto`. Say it as one sentence — "N tasks, longest
-chain M, up to W can run at once, K need you." In this project `analyzeParallelism`
-(`src/core/parallelism.mjs`) computes exactly these numbers from the parsed task table, so
-the report never drifts from the metric. Do not quote a width you inflated by cutting a real
-dependency; the number is only worth showing if the dependencies are honest.
+nature. Three numbers over the task graph: the total tasks, the longest dependency chain, and the
+widest set of tasks that could run together (the largest group that depends on nothing else in the
+group). Say it as one sentence — "N tasks, longest chain M, up to W can run at once." In this
+project `analyzeParallelism` (`src/core/parallelism.mjs`) computes exactly these numbers from the
+parsed task table, so the report never drifts from the metric. Do not quote a width you inflated by
+cutting a real dependency; the number is only worth showing if the dependencies are honest.
 
 ## Stage 7 — Write the files
 

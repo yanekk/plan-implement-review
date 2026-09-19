@@ -18,15 +18,12 @@ file and its worker's agent name.
 removals so every task stays green + cover `capture.mjs`; `install.sh` applies the per-user `autoMode`
 rule). Account in the `plan-review` commit.
 
-**Status:** T06 reviewed clean, no fix commit. Re-ran the merges in a sandbox HOME/target: target keeps
-its own `allow`+`deny` and gains the 11 worker rules (no `SendMessage`, no `git merge`); user settings
-restores `$defaults` to the front, keeps a pre-existing rule and other keys, appends the pir rule,
-second run idempotent; a corrupt file exits non-zero untouched so the manual step prints. Boundary held
-(`core/settings.mjs` pure, zero imports). 384 green. Found `worktree.bgIsolation: none` ships here but
-`install.sh` does not carry it to a target (FINDINGS) — out of scope, a T08/T09 call. Live classifier
-proof is T09.
+**Status:** T07 implemented, awaiting review. Deleted the three dead skills and de-agented the survivors:
+the down-channel is gone, a parked worker is answered by the person in its own session, and pir-worker
+carries the prepare-and-ask bar. Templates drop Runs/you/split and show slug Task cells; planner test
+rewritten. 382 green (baseline was 380, not the 384 T06 noted).
 **Last updated:** 2026-09-19
-**Next `pir-work` will:** implement T07 (`skills`, `⬜`, deps T04 ✅) — or T09 is still blocked on T08.
+**Next `pir-work` will:** review T07 (`skills`, `🔍`).
 
 ## Tasks
 
@@ -42,15 +39,15 @@ read — the parser tolerates and ignores it; T05 finishes the surrounding clean
 | T03 | live-display | auto | T01, T02 | ✅ | Reviewed clean. Pure model + renderer faithful to the prototype; loop/display seam checked. In-place paint + a doubled hand-off line stay for T09 (FINDINGS). 401 green. |
 | T04 | remove-you-auto | auto | T03 | ✅ | Reviewed clean. auto/you and the verify path gone from dispatch/loop/platform; parseProgress tolerates+ignores a Runs column. 398 green. |
 | T05 | harness-and-restart | auto | T04 | ✅ | Reviewed clean. Foreground-process harness: run.mjs spawns `node coordinate.mjs`, seals on exit, SIGKILLs to crash; naming strict 5-field; `coordinatorName`/`verify` gone. Live crash/restart is T09. |
-| T06 | worker-permissions | auto | — | ✅ | Reviewed clean, no fix commit. Ships worker `permissions.allow` (no SendMessage/git merge) + `install.sh` merges it into a target and the `autoMode` rule into `~/.claude/settings.json`, manual step on failure. Merge pure in `core/settings.mjs`. Probed by re-running the real merges in a sandbox: no-clobber, idempotent, `$defaults` front, corrupt file untouched. `bgIsolation: none` ships but does not travel to targets (FINDINGS, T08/T09). 384 green. Live classifier proof T09. |
-| T07 | skills | auto | T04 | ⬜ | Delete dead skills; de-agent worker skills; slug-as-name templates. |
+| T06 | worker-permissions | auto | — | ✅ | Reviewed clean. Ships worker `permissions.allow`; `install.sh` merges it into a target and the `autoMode` rule into `~/.claude/settings.json`. Merge pure in `core/settings.mjs`. `bgIsolation: none` does not travel to targets (FINDINGS). Live classifier proof T09. |
+| T07 | skills | auto | T04 | 🔍 | Deleted pir-coordinate/pir-verify/pir-parallelize-plan; dropped from install.sh + README. De-agented implement/review/worker: no down-channel, person answers the parked worker in-session; prepare-and-ask bar added; 5-field `/` names. Templates drop Runs/you/split, show slug cells. Planner test rewritten. Fixed one fixtures.test assertion my deletion broke. 382 green. |
 | T08 | docs | auto | T05, T07 | ⬜ | Rewrite /docs and the CLAUDE.md carve-out. |
 | T09 | capstone | you | T06, T08 | ⬜ | Live end-to-end hand-verification with the person. |
 
 A Notes cell holds what was built or what the review found, the test count, and one line per
 deviation from the task doc. A ✅ task's cell may be cut to one line once the next task is reviewed.
 
-**Review queue:** empty — nothing awaiting review.
+**Review queue:** T07 — implemented, awaiting a fresh-eyes review.
 
 ## Blocked on the user
 

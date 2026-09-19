@@ -68,8 +68,8 @@ tool, which is the whole point.
 The skills install **user-scoped** — once for your account, under `~/.claude/skills/`, where
 every project sees the same copy. There is no per-project skill install: a per-project copy is
 a copy that goes stale. The parallel coordinator engine installs the same way, under
-`~/.claude/pir-engine/`, so `/pir-coordinate` runs a plan in **any** repo — it reads its target
-from the session's working directory. Re-running the installer refreshes both in place.
+`~/.claude/pir-engine/`, so it runs a plan in **any** repo — it reads its target from the
+coordinator's working directory. Re-running the installer refreshes both in place.
 
 For your account — the skills, nothing else:
 
@@ -207,10 +207,7 @@ skills/
 ├── pir-implement/     build one task, hand it over unreviewed
 ├── pir-review/        check someone else's task, fix what it finds, close it
 ├── pir-install/       set up the method in a repo — check skills, amend CLAUDE.md
-├── pir-parallelize-plan/ convert a pre-parallel plan for the coordinator
-├── pir-coordinate/    parallel mode — drive many workers at once (uses the engine)
-├── pir-worker/        the contract a parallel-mode worker session runs under
-└── pir-verify/        a worker's hands-on procedure for a `you` task
+└── pir-worker/        the contract a parallel-mode worker session runs under
 pir-engine/ (installed) src/ copied to ~/.claude/pir-engine/ by install.sh
 ```
 

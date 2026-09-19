@@ -7,11 +7,11 @@
 # sees one copy and none can drift onto a stale one. A per-project copy was how they went
 # out of date; there is no per-project skill install any more.
 #
-# The parallel coordinator ENGINE (src/, driven by /pir-coordinate) is installed the same way,
-# under ~/.claude/pir-engine/, so parallel mode can run against ANY repo — the engine reads its
-# target from the coordinator session's working directory, so it operates on whatever project it
-# is launched in. Before this it was a source file living only in this repo, which is why parallel
-# mode was trapped here while a plan in a real product repo had nowhere to run.
+# The parallel coordinator ENGINE (src/) is installed the same way, under ~/.claude/pir-engine/,
+# so parallel mode can run against ANY repo — the engine reads its target from the coordinator's
+# working directory, so it operates on whatever project it is launched in. Before this it was a
+# source file living only in this repo, which is why parallel mode was trapped here while a plan
+# in a real product repo had nowhere to run.
 #
 #   ./install.sh                     refresh the skills for your account (skills only)
 #   ./install.sh --global            the same, named explicitly
@@ -26,7 +26,7 @@ SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MARKER="Appended by plan-implement-review"
 DEST="$HOME/.claude/skills"
 ENGINE_DEST="$HOME/.claude/pir-engine"
-SKILLS=(pir-plan pir-review-plan pir-parallelize-plan pir-work pir-implement pir-review pir-install pir-coordinate pir-verify pir-worker)
+SKILLS=(pir-plan pir-review-plan pir-work pir-implement pir-review pir-install pir-worker)
 
 install_skills() {
     mkdir -p "$DEST"

@@ -32,24 +32,24 @@ Phase 2  ▸  …
 
 Nothing is designed on top of an assumption that has not been checked on this machine.
 
-| # | Task | Runs | Depends on |
-|---|---|---|---|
-| [T00](tasks/T00-{slug}.md) | {the spike} | you | — |
+| # | Task | Depends on |
+|---|---|---|
+| [T00](tasks/T00-prove-the-ground.md) | prove-the-ground | — |
 
 **T00 gates {what}.** Say which design decisions ride on it and what each possible answer
 would mean. It is throwaway code and it is deleted afterwards.
 
 ## Phase 1 — {name}
 
-| # | Task | Runs | Depends on |
-|---|---|---|---|
-| [T01](tasks/T01-{slug}.md) | {the build} | auto | T00 |
-| [T02](tasks/T02-{slug}.md) | {verify T01 by hand} | you | T01 |
+| # | Task | Depends on |
+|---|---|---|
+| [T01](tasks/T01-the-core.md) | the-core | T00 |
+| [T02](tasks/T02-the-surface.md) | the-surface | T01 |
 
-T01 and T02 are a build→verify split (DESIGN §2.6): an `auto` task builds the thing and a
-dependent `you` task has a person run it. Delete the verify row if nothing this plan builds needs
-a person to confirm it — most plans do not — or fold the check into the builder when it is a quick
-yes/no rather than a first-class step.
+The Task cell is the task's kebab slug, matching its `tasks/T{nn}-{slug}.md` filename (DESIGN §2.9).
+Every task is built by an autonomous worker; a task whose real proof is a person's judgement is not a
+separate kind of task — the worker builds, prepares, and asks the person for that judgement through the
+normal question path (DESIGN §2.5).
 
 *(one section per phase, each with a line saying what is true at the end of it)*
 
@@ -65,10 +65,10 @@ Which tasks are off it and can slot in wherever convenient.
 
 ## Parallel width
 
-{N} tasks · longest dependency chain {M} · up to {W} could run at once · {K} need a person
-(`you`). A plan that is one long chain (width 1) drains no faster run in parallel than one
-task at a time; a wide plan is where a coordinator helps. These are the numbers the planner
-reported at the checkpoint; declare only real dependencies, so the width is honest.
+{N} tasks · longest dependency chain {M} · up to {W} could run at once. A plan that is one long
+chain (width 1) drains no faster run in parallel than one task at a time; a wide plan is where a
+coordinator helps. These are the numbers the planner reported at the checkpoint; declare only real
+dependencies, so the width is honest.
 
 ## Rough sizing
 

@@ -30,9 +30,10 @@ in this mode, and only in it:
 coordinator keeps it a different way — it spawns *you*, a fresh session with no implementer context,
 never the session that built the task. If by any chance you did implement this task, stop.
 
-When the procedure below says "ask the user and wait", you message the coordinator and wait instead,
-because there is no user at your terminal (`pir-worker` contract). **With no argument, everything
-below is classic mode, unchanged**: both guards and the "main checkout, main branch" rule stand.
+When the procedure below says "ask the user and wait", you drop a report file so the run sees you
+are asking, then ask the person in this session and wait for them to answer it here (DESIGN §2.2,
+`pir-worker` contract). **With no argument, everything below is classic mode, unchanged**: both
+guards and the "main checkout, main branch" rule stand.
 
 ## The procedure
 

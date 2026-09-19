@@ -216,9 +216,10 @@ test('installFixture writes the tree, carries the parallel skills, and seeds a c
     assert.ok(existsSync(progressPath));
     assert.equal(parseProgress(readFileSync(progressPath, 'utf8')).planReviewed.reviewed, true);
 
-    // The parallel skills a worker needs are carried locally (FINDINGS 2026-09-09).
+    // The parallel skills a worker needs are carried locally (FINDINGS 2026-09-09). The agentic
+    // coordinator skill (pir-coordinate) was deleted in T07 — the coordinator is a plain program now.
     assert.ok(existsSync(join(dir, '.claude/skills/pir-worker/SKILL.md')), 'pir-worker carried');
-    assert.ok(existsSync(join(dir, '.claude/skills/pir-coordinate/SKILL.md')), 'pir-coordinate carried');
+    assert.ok(existsSync(join(dir, '.claude/skills/pir-implement/SKILL.md')), 'pir-implement carried');
     assert.ok(res.skills.includes('pir-worker') && res.skills.includes('pir-implement'));
 
     // The framework code the coordinator runs is carried too (T17 live run 2026-09-11): the coordinator

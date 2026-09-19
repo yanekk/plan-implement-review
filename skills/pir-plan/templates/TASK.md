@@ -1,6 +1,6 @@
 # T{NN} — {name}
 
-**Phase:** {n} · **Runs:** auto / you · **Depends on:** {T…} · **Weight:** light / medium / heavy
+**Phase:** {n} · **Depends on:** {T…} · **Weight:** light / medium / heavy
 
 > *(If this task doc is later superseded by a decision, say so here in a blockquote with the
 > date, rather than editing the body silently — the implementing session needs to see both
@@ -59,13 +59,13 @@ three, this is two tasks.
 *(Delete if the check needs no environment stood up. Otherwise: the commands that bring the
 execution environment up and seed it, and the commands that tear it down. These are the
 **worker's**, not the person's — standing an environment up and down is mechanical, not a
-judgement (DESIGN §2.6). The hands-on worker runs the bring-up before the hand-off and the
-teardown before it marks the task done, and it confirms the environment is actually down.
-**Guaranteed teardown is the seatbelt (§5.2)** that lets a worker bring a live environment up at
-all; a worker that cannot confirm teardown escalates instead of marking done.)*
+judgement. The worker runs the bring-up before it asks the person and the teardown before it marks
+the task done, and it confirms the environment is actually down. **Guaranteed teardown is the
+seatbelt** that lets a worker bring a live environment up at all; a worker that cannot confirm
+teardown escalates instead of marking done.)*
 
 ```
-{bring-up + seed — the worker runs this before the hand-off}
+{bring-up + seed — the worker runs this before it asks the person}
 {teardown — the worker runs this before marking done, and confirms it is down}
 ```
 
@@ -74,9 +74,8 @@ all; a worker that cannot confirm teardown escalates instead of marking done.)*
 *(Delete if there is nothing a machine can decide here. Otherwise: the commands the **worker**
 runs itself against the environment it brought up — install a driver, run an end-to-end test —
 and records the machine result of. A machine-decidable check is not a judgement, so it is the
-worker's to run and record, never the person's to run (DESIGN §2.6). The worker records the
-pass/fail it observed as a confirmation **separate** from the person's judgement, and never rounds
-an ambiguous reply up to it.)*
+worker's to run and record, never the person's. The worker records the pass/fail it observed and
+never rounds an ambiguous result up to the person's later judgement of it.)*
 
 ```
 {the automated check(s) — the worker runs these and records the pass/fail + output it observed}
@@ -87,18 +86,13 @@ an ambiguous reply up to it.)*
 *(Delete if nothing here needs a person. Otherwise: exactly what the person must **judge** —
 what only a person can look at and decide — never the environment setup or teardown, and never an
 automated test, which are the worker's (above). State what to look at, what to expect, and what to
-report back. The scribe records the machine result and the person's judgement as **two separate
-confirmations** and never inflates an ambiguous reply toward the bigger claim (DESIGN §2.6).)*
+report back. The worker records the machine result and the person's judgement separately and never
+inflates an ambiguous reply toward the bigger claim.)*
 
-**This block is carried two ways (DESIGN §2.6):**
-
-- **A folded `auto` task** raises it the moment it needs it and waits for the answer — the check
-  is a quick escalation the builder presents inline, not homework left at the end.
-- **A `you` verify task in a build→verify split** *is* this block: it is a `you` task depending
-  on the `auto` task that built the thing, and the hands-on worker (`pir-verify`) stands the
-  environment up, puts this block in front of the user, who judges it and reports what they saw,
-  and then the worker tears the environment down. Use the split when the check is first-class —
-  heavy, or on real agents, real branches or a real device — rather than a quick yes/no.
+The worker builds and prepares up to the point where the only missing thing is the person's eyes,
+then raises this block through the normal question path — the moment it needs it, waiting for the
+answer, not homework left at the end (DESIGN §2.5). It is a running thing and a list of what to look
+at, with the seatbelted command, not "can you check this."
 
 ```
 {what the person looks at — the judgement, with its seatbelt if it carries one}

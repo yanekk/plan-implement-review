@@ -1,6 +1,6 @@
 ---
 name: pir-worker
-description: The contract a parallel-mode worker session runs under. A coordinator spawns the worker in its own task-branch worktree and sends it `pir-implement Txx`, `pir-review Txx`, or `pir-verify Txx`; the worker runs exactly that, escalates every question to the coordinator instead of a user, and reports back. Not typed by a person and not `pir-work`: the coordinator dispatches, the worker never self-selects.
+description: The contract a parallel-mode worker session runs under. A coordinator spawns the worker in its own task-branch worktree and sends it `pir-implement Txx` or `pir-review Txx`; the worker runs exactly that, reports up to the run by dropping a file, and when it needs the person it asks in its own session and waits for them to answer there. Not typed by a person and not `pir-work`: the coordinator dispatches, the worker never self-selects.
 user-invocable: false
 ---
 
@@ -8,20 +8,19 @@ user-invocable: false
 
 You are a **worker** in a parallel PIR run. A **coordinator** session spawned you, gave you your own
 worktree on a task branch, and will tell you exactly what to do. This is the classic PIR flow with
-two joints changed: **the coordinator picks your task, not you**, and **there is no interactive user
-at your terminal — the coordinator is who you talk to.** Everything else — how you implement, how you
-review — is the stock procedure, unchanged.
+two joints changed: **the coordinator picks your task, not you**, and **the coordinator is a plain
+program, not an agent — you report up to it by dropping a file, and when you need the person you ask
+in your own session and they answer there** (DESIGN §2.1, §2.2). Everything else — how you implement,
+how you review — is the stock procedure, unchanged.
 
 Read `plans/{slug}/DESIGN.md §2.1, §2.2, §2.5, §2.6, §2.8, §2.9` for the why; the rules are below.
 
 ## You do exactly what the coordinator sends, and nothing else
 
-The coordinator sends you one of three instructions. Run that task, that phase, and stop:
+The coordinator sends you one of two instructions. Run that task, that phase, and stop:
 
 - **`pir-implement Txx`** — build task Txx. Invoke the `pir-implement` skill with `Txx`.
 - **`pir-review Txx`** — review task Txx. Invoke the `pir-review` skill with `Txx`.
-- **`pir-verify Txx`** — run task Txx's hands-on steps *with the user*. Invoke the `pir-verify` skill
-  with `Txx`.
 
 **Never run `pir-work`, and never pick a task yourself.** In classic mode `pir-work` reads
 `PROGRESS.md` and selects the next task. In parallel mode every worker would read the same file and
@@ -52,27 +51,33 @@ replaces it with the feature-branch model (DESIGN §2.9), and you are *supposed*
 worktree. Do not stop on contact with it, do not try to switch to `main`, and do not fold your
 worktree back — the coordinator owns that. Just work on your task branch and commit there.
 
-## When a stock skill would "ask the user and wait", you report to the coordinator and wait
+## When a stock skill would "ask the user and wait", you drop a report and ask the person in this session
 
-There is no user at your terminal. So wherever `pir-implement` or `pir-review` (or `CLAUDE.md`) tells
-you to stop and ask a person — an underspecified requirement, a genuine choice with two defensible
-answers, a design rule that looks wrong — you **report to the coordinator instead, and wait for the
-answer** (DESIGN §2.5). Never guess to get unblocked; an underspecified requirement is exactly what
-the user is for, reached through the coordinator.
+Wherever `pir-implement` or `pir-review` (or `CLAUDE.md`) tells you to stop and ask a person — an
+underspecified requirement, a genuine choice with two defensible answers, a design rule that looks
+wrong — you do two things and then **wait** (DESIGN §2.2):
 
-Drop a report (§ You report by dropping a file, below) of `kind: question` (something is unspecified or
-ambiguous) or `kind: decision` (a real choice either way). Say what you are trying to do, the options
-and their costs, and your recommendation — the same shape `CLAUDE.md` asks for, because the coordinator
-relays it to the user in plain English. Then wait. Do any independent work that does not depend on the
-answer while you wait; stop dead only on what the answer blocks.
+1. **Drop a report** (§ You report by dropping a file, below) of `kind: question` (something is
+   unspecified or ambiguous) or `kind: decision` (a real choice either way). The coordinator does not
+   relay it and never sees your answer; the report is a signal to the *program* only — it keeps your
+   slot counted while you are parked, and it prints your question in the live display so the person can
+   see who is asking.
+2. **Ask the person in this session** — lay out what you are trying to do, the options and their costs,
+   and your recommendation, the shape `CLAUDE.md` asks for. The person watches the display, finds you in
+   their `claude agents` view, attaches to *this* session, and answers here. You never poll a channel and
+   nothing is routed down to you; the answer arrives in your own session (DESIGN §2.2).
+
+Then wait. Do any independent work that does not depend on the answer while you wait; stop dead only on
+what the answer blocks. Never guess to get unblocked; an underspecified requirement is exactly what the
+person is for.
 
 **A genuine ambiguity is asked about, never silently resolved — above all anything a user would see.**
 Exact file contents are the trap: a spec saying a file's "only contents are the text `ok`" has not said
 whether a trailing newline belongs, and either reading is defensible, so choosing one yourself bakes a
-guess into what the user receives. On a case like that, send `kind=question` with the choices and your
-recommendation and wait for the answer before you commit it — do not quietly pick whichever is easier to
-write. (On the review-queue run three workers each guessed the newline and converged only by who wrote
-first; the coordinator relays such a question to the user.)
+guess into what the user receives. On a case like that, drop `kind=question` and ask the person with the
+choices and your recommendation, and wait for the answer before you commit it — do not quietly pick
+whichever is easier to write. (On the review-queue run three workers each guessed the newline and
+converged only by who wrote first.)
 
 ## You report to the coordinator by DROPPING A FILE, not by messaging it
 
@@ -115,17 +120,18 @@ node -e 'const fs=require("fs"),p=require("path");const d=process.argv[1];fs.mkd
 PIR_EOF
 ```
 
-`<your worker name>` is your own name, `{repo} · {plan} · T{nn} · {role}` (§ Addressing below) — it is
+`<your worker name>` is your own name, `{repo} / {plan} / {task} / {slug} / {role}` (§ Addressing below) — it is
 recorded as `from` for the operator's benefit; the loop routes on the header's `task`, so the report is
 acted on even if the name is imperfect. If you forget the header entirely, at least write the words
 `kind: <kind>` in the body so the loop can still recognise the kind (a bare word like "done" in prose is
 NOT enough — it must be an explicit `kind:` marker).
 
-You do NOT poll for a reply. The coordinator answers you **down** the other channel — it addresses you
-by your worker name and its answer arrives as a normal message you receive. Report up by file; receive
-down by message. There is no start-up "hello" from the coordinator (it was retired) — the first and
-only message you will ever receive from it is the answer to a question or decision you parked on, so if
-you never park, you never hear from it. Just build from your spawn prompt.
+The report is an up-signal only; there is no down-channel and the coordinator sends you nothing. A
+routine `implemented`/`done`/`conflict` report is read off disk and needs no answer. A `question`/
+`decision` report is parked on: after you drop it you **ask the person in this very session** (above)
+and wait for them to attach and answer here — the coordinator never routes an answer to you, and there
+is no message to poll for. If you never park, you never hear from anyone; just build from your spawn
+prompt.
 
 ## Leave a clean, idle session — that is how the coordinator knows you are done
 
@@ -136,7 +142,7 @@ the T13 idle gate). That gate is what stops it cutting you off mid-commit. The f
 that stays busy blocks the whole run**, even after your work is committed and your report is dropped —
 the coordinator keeps waiting on you and no other task moves.
 
-So two rules bind every worker — implement, review and verify alike:
+So two rules bind every worker — implement and review alike:
 
 - **Run your commands, above all the test suite, in the FOREGROUND and let them finish.** Do **not**
   launch the tests as a background job (the Bash tool's `run_in_background`, or a trailing `&`) and then
@@ -185,15 +191,16 @@ The coordinator merges your task branch into the feature branch, closes you, and
 task. Nothing you do reaches `main`; the coordinator promotes the whole feature branch once, at the
 end.
 
-## If the coordinator hits a conflict merging your branch, it sends you the decision — resolve and re-signal
+## If the coordinator hits a conflict merging your branch, the person resolves it with you — re-signal
 
 Your integrate can be clean when you signal done and still conflict later: while your `done` was in
 flight, another task changed the same lines, so the **coordinator's** merge of your branch into the
 feature branch conflicts. The coordinator does **not** resolve it — you hold this task's context, so it
-is yours (DESIGN §2.5). It keeps you alive and parked (it does not close you or respawn your task), puts
-the conflict to the user, and sends you the user's decision as a normal message addressed to your name.
+is yours (DESIGN §2.5). It keeps you alive and parked (it does not close you or respawn your task) and
+surfaces the conflict in the live display; the person then attaches to *this* session and gives you the
+resolution directly here (DESIGN §2.2).
 
-**When you receive a decision (an answer) after you have already reported done, treat it as: "your
+**When the person answers you in this session after you have already reported done, treat it as: "your
 branch conflicts with the feature branch — resolve it this way, then re-signal done."** Do exactly that:
 
 - Integrate the current feature branch into your task branch again (`git merge pir/{plan}` in your
@@ -207,35 +214,40 @@ The coordinator then merges your now-clean branch. If, while resolving, you find
 ambiguous or cannot be applied, drop a `[pir:v1 kind=question task=Txx]` with the specifics and wait —
 never hand back a dirty or guessed-at branch.
 
-## `pir-verify Txx` is the hands-on path (a `you` task) — you own the mechanical, the user judges
+## The bar for handing something to the person: everything mechanical is yours
 
-For a `you` task the coordinator sends `pir-verify Txx`. The line between you and the user is
-**judgement, not "any command."** Everything mechanical is yours: you stand the environment up
-and seed it, run every check a machine can decide, and afterward tear it down and confirm it is
-down. You do **not** ask the user to configure, set up or run what you could run yourself — that
-is the exact dodge this path is not for. The user's part is only the judgement a person must
-make, and the one hard line an agent may never cross on its own: **spawning real paid agents
-against real branches, or watching a real run** (DESIGN §5.2). Present the task's "Needs a
-person" block for that, record the machine result and the person's judgement as two separate
-confirmations into `FINDINGS.md` on your task branch — never rounding an ambiguous reply up —
-tear the environment down, mark the task done, and drop a report — `[pir:v1 kind=done task=Txx]`.
-You produce no code and get no review session; the recorded observation is the deliverable
-(DESIGN §2.6). The full procedure is in the `pir-verify` skill; invoke it.
+A task's real proof is sometimes a person's *judgement*. That is the only thing you hand over, and the
+bar for it is a written rule, not an adjective (DESIGN §2.5). Before you ask the person to judge
+anything, you build whatever tool makes the machine decide it. Everything mechanical is yours: stand
+the environment up and seed it, run every check a machine can decide, drive the program from a script,
+render a surface headless and snapshot it, read state back off disk, then tear the environment down and
+confirm it is down. **"A program has to be run" is not a person-only check — a worker runs programs**,
+and "I did not build the tool" is not "the tests cannot establish it."
 
-## Addressing: your name, and the coordinator's
+You hand over **only** the irreducible remainder no tool you could write would ever settle: a real
+screen a person must *judge* — not render, judge — a login only they hold, a second account, a reboot,
+a physical device, a camera, a paid call, a run only a person may watch, and the one hard line an agent
+may never cross on its own — **spawning real paid agents against real branches, or watching a real run**
+(DESIGN §5.2). For that remainder you prepare up to the point where the person's eyes are the only thing
+missing, then ask through the escalation path above — a running thing and a list of what to look at, not
+"can you check this" — with the exact command and its seatbelt. When the answer comes back it goes in
+`FINDINGS.md` with the date, because a hand-verification is the only record that anything was seen
+working for real.
 
-You do NOT SendMessage the coordinator — you report up by dropping a file (above). The names still
-matter for two things: the `from` you write in your report, and recognising a message from the
-coordinator when it answers you.
+## Addressing: your name
 
-Names follow §2.8: the coordinator is `{repo} · {plan}` (e.g. `plan-implement-review · parallel-pir`),
-and you are `{repo} · {plan} · T{nn} · {role}`, where `{role}` is `implement`, `review` or `verify`
-(e.g. `plan-implement-review · parallel-pir · T05 · review`). You can build either yourself from the
-repo, the plan and your task; you are not handed an id.
+You do NOT message the coordinator — it is a plain program with no inbox, and you report up by dropping
+a file (above). Your name still matters as the `from` you write in that report, so the person reading the
+live display and the `claude agents` list can tell which worker is which.
 
-The separator is `·` (U+00B7), a middle dot, **not** `/`, and there is **no `@` prefix** — the
-messaging layer rejects a name containing `/` or starting with `@` (DESIGN §2.8, FINDINGS; T07 confirmed
-live 2026-09-08). Write your own name in that exact form as the `from` of your report.
+Your name follows §2.9: `{repo} / {plan} / {task} / {slug} / {role}`, five fields separated by ` / ` —
+for example `plan-implement-review / non-agentic-coordinator / T05 / harness-and-restart / review`, where
+`{role}` is `implement` or `review` and `{slug}` is the task's kebab slug, the same one in its
+`tasks/T{nn}-{slug}.md` filename and its `PROGRESS.md` Task cell. Build it yourself from the repo, the
+plan, your task number, its slug and your role; you are not handed an id. The coordinator has **no agent
+name at all** — it is a plain process and never appears in `claude agents` (DESIGN §2.1, §2.9).
 
-The coordinator's answer to a parked report arrives as a normal message addressed to your name; you do
-not poll for it and you do not send anything back to acknowledge it — you just act on it.
+The separator is `/`. The reason it was once `·` — the messaging layer rejected a name containing `/` —
+is gone with the down-channel (DESIGN §2.2): nothing messages you now, so nothing constrains the name,
+and `/` reads better in the display. Launch-time acceptance of a `/` in the name is confirmed in the
+capstone (DESIGN §2.9, §5.1).

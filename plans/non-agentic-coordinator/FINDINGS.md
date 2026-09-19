@@ -12,6 +12,7 @@ user changed.
 
 | Date | | Finding |
 |---|---|---|
+| 2026-09-19 | 📌 | T07: `src/shell/harness/fixtures.mjs:138` comment still says `pir-coordinate` shells out to `coordinate.mjs`, but that skill is deleted and the coordinator is a plain program. Stale wording only; `carrySource` behaviour unchanged. Reword at T08. |
 | 2026-09-19 | 📌 | T06 review: `worktree.bgIsolation: none` ships in this repo's `.claude/settings.json` but `install.sh` carries only `permissions.allow` to a target, not `bgIsolation`. Brief §4a wanted it in each worker worktree; DESIGN §7 names neither. Decide at T08/T09. |
 | 2026-09-19 | 📌 | T06: `.claude/settings.json` is now a committed shared file (ships worker `permissions.allow`); per-user prefs go in `.claude/settings.local.json`, now gitignored. Do not commit the `.local.json`. |
 | 2026-09-19 | 📌 | T05 review: verify/you still referenced outside T05's files, none a system path — the fake platform `verify` branch + its self-test (fake/platform.test.mjs), and coordinate.test/resume.test framing inputs as verify/you. Production dispatch is verify-free. T07 sweeps the fake and the test framing. |

@@ -27,8 +27,8 @@ Two base rules bend in this mode, and only in it:
   yourself in a worktree" — does NOT bind you.** A parallel-mode worker runs in its own
   task-branch worktree by design (DESIGN §2.9); do not stop on contact with it and do not switch
   to `main`. The `pir-worker` contract skill is your standing rulebook here — chiefly: when the
-  procedure below says "ask the user and wait", you message the coordinator and wait instead,
-  because there is no user at your terminal.
+  procedure below says "ask the user and wait", you drop a report file so the run sees you are
+  asking, then ask the person in this session and wait for them to answer it here (DESIGN §2.2).
 
 **With no argument, everything below is classic mode, unchanged**: the guard stands and the
 "main checkout, main branch" rule stands in full.
@@ -99,7 +99,7 @@ logged; it is the maintenance those two files get instead of a session of their 
 
 ## Automate first — your hands are the first resort, the user's the last
 
-You are an `auto` worker, and an `auto` task is yours to finish. Before you hand *anything* to
+This task is yours to finish. Before you hand *anything* to
 the user, you build whatever tool makes the machine decide it — that is the job, not a favour
 you ask the user for. A program that has to be launched, you drive from a script. A surface
 that has to be looked at, you render headless and snapshot, or assert on what it would draw. A
