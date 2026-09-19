@@ -129,12 +129,13 @@ export function startCoordinator({
     const of = (type) => r.actions.filter((a) => a.type === type);
 
     const surfaces = of('surface').map(renderSurface);
-    const spawned = of('spawn').map((a) => ({ task: a.task, runs: a.runs, role: a.role }));
+    const spawned = of('spawn').map((a) => ({ task: a.task, runs: a.runs, role: a.role, slug: a.slug }));
     // A `you` task is spawned as a hands-on worker the USER drives (DESIGN §2.6); the skill points the
-    // user at it by name. The worker name is deterministic, so it is rebuilt, never looked up.
+    // user at it by name. The worker name is deterministic, so it is rebuilt, never looked up — carrying
+    // the task's slug (§2.9) so the rebuilt name matches the session the loop actually spawned.
     const youToDrive = spawned
       .filter((a) => a.role === 'verify')
-      .map((a) => ({ task: a.task, worker: workerName({ repo, plan: slug, task: a.task, role: 'verify' }) }));
+      .map((a) => ({ task: a.task, worker: workerName({ repo, plan: slug, task: a.task, slug: a.slug, role: 'verify' }) }));
     const reviewing = of('review').map((a) => ({ task: a.task }));
     // A merge this pass is a task reaching ✅ on the feature branch (DESIGN §2.9) — what the skill
     // reports to the user as progress.
@@ -189,8 +190,9 @@ export function startCoordinator({
     if (!task) throw new Error('answer: no task');
     const t = state.tasks[task];
     // Address the session that actually parked — the role it is in now (an implementer with a
-    // question/decision, or a reviewer's worker that hit a conflict on integrate). t.role tracks it.
-    const name = workerName({ repo, plan: slug, task, role: t?.role ?? 'implement' });
+    // question/decision, or a reviewer's worker that hit a conflict on integrate). t.role tracks it, and
+    // t.slug (stored at spawn) makes the rebuilt name match the exact session the loop spawned (§2.9).
+    const name = workerName({ repo, plan: slug, task, slug: t?.slug, role: t?.role ?? 'implement' });
     const res = platform.send(name, { kind: 'answer', task, text: text ?? '' });
     const ok = res?.ok !== false;
 
@@ -451,7 +453,7 @@ export function teardownRun({ platform, worktree, state, repo, slug, control } =
   // just-spawned session is not listed yet, so a spawn is never left behind on an early exit.
   for (const [num, t] of Object.entries(state?.tasks ?? {})) {
     if (t.workerId) {
-      closeId(t.workerId, workerName({ repo, plan: slug, task: num, role: t.role ?? 'implement' }));
+      closeId(t.workerId, workerName({ repo, plan: slug, task: num, slug: t.slug, role: t.role ?? 'implement' }));
       removeWorktree(num);
     }
   }

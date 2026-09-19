@@ -18,7 +18,7 @@ import { join } from 'node:path';
 import { parseProgress, reconcileTaskRow, progressPathFor } from '../core/progress.mjs';
 import { decideDispatch } from '../core/dispatch.mjs';
 import { decideResume } from '../core/resume.mjs';
-import { workerName, isWorkerOf } from '../core/naming.mjs';
+import { workerName, isWorkerOf, parseAgentName } from '../core/naming.mjs';
 
 // The phases the loop tracks per task from a worker's own messages plus the lifecycle step it
 // drives (DESIGN §2.8: the name carries identity, the lifecycle carries phase). Only three of these
@@ -109,19 +109,28 @@ const APPEAR_GRACE = 1;
 const AWAIT_IDLE_TIMEOUT_MS = 5 * 60 * 1000;
 
 // Rebuild the assignments decideDispatch consumes, matching each tracked task to a live worker BY
-// NAME, not by the id spawn returned. The name the coordinator assigns is deterministic (§2.8:
-// "the coordinator finds and identifies its workers from the name alone"); the id `claude --bg`
-// prints does NOT reliably equal the `id` in `claude agents --json` (T08 live run, FINDINGS
-// 2026-09-09), so trusting it made the loop declare every worker dead and respawn — a runaway that
-// breached the ceiling. So the name is the key, and the live id comes from the list: it is written
-// back onto the task as the authoritative id that close acts on. A task whose worker is absent from
-// the list past its grace is dead (DESIGN §2.5 — a crashed or abandoned worker); one still within
-// grace is treated as live-pending, not respawned.
-function buildAssignments(state, liveList, repo, slug) {
-  const byName = new Map(liveList.map((w) => [w.name, w]));
+// the task NUMBER and role parsed out of the worker's NAME, not by the id spawn returned. The id
+// `claude --bg` prints does NOT reliably equal the `id` in `claude agents --json` (T08 live run,
+// FINDINGS 2026-09-09), so trusting it made the loop declare every worker dead and respawn — a runaway
+// that breached the ceiling. The name is the key, and the live id comes from the list: it is written
+// back onto the task as the authoritative id that close acts on.
+//
+// The match is on the NUMBER (and role), never a reconstruction of the full name: a worker name now
+// carries a readable slug (DESIGN §2.9) that is a label, not the identity, so matching on the number
+// keeps a worker resolving to its task regardless of its slug — and regardless of the legacy "·" vs new
+// "/" separator during the T02→T05 transition, since parseAgentName reads both. liveList is already
+// this run's workers only (the caller filters with isWorkerOf), so a foreign or coordinator name never
+// enters the map. A task whose worker is absent from the list past its grace is dead (DESIGN §2.5); one
+// still within grace is treated as live-pending, not respawned.
+function buildAssignments(state, liveList) {
+  const byNumRole = new Map();
+  for (const w of liveList) {
+    const p = parseAgentName(w.name);
+    if (p.task) byNumRole.set(`${p.task}/${p.role}`, w);
+  }
   const assignments = [];
   for (const [num, t] of Object.entries(state.tasks)) {
-    const w = byName.get(workerName({ repo, plan: slug, task: num, role: t.role }));
+    const w = byNumRole.get(`${num}/${t.role}`);
     if (w) {
       t.workerId = w.id; // authoritative id from the list, what close can actually stop
       t.grace = 0;
@@ -165,6 +174,7 @@ function reconcile({ platform, worktree, repo, slug, maxWorkers, state, featureP
   // Read the task list and terminal states from the feature branch, each task's in-flight state from
   // its own task branch's committed glyph (DESIGN §2.2), and classify (pure, DESIGN §2.3).
   const featureTasks = parseProgress(readFileSync(featureProgressPath, 'utf8')).tasks;
+  const slugByNum = new Map(featureTasks.map((t) => [t.num, t.name])); // Task-column slug per task (§2.9)
   const branchStates = {};
   for (const t of featureTasks) branchStates[t.num] = worktree.taskBranchState(slug, t.num);
   const { merge, review, rebuild } = decideResume({ featureTasks, branchStates });
@@ -219,9 +229,10 @@ function reconcile({ platform, worktree, repo, slug, maxWorkers, state, featureP
       record('surface', { task: num, kind: 'over-ceiling', text: `reconciliation would spawn more than ${maxWorkers} reviewers — the in-flight bound says this cannot happen` });
       continue;
     }
-    const name = workerName({ repo, plan: slug, task: num, role: 'review' });
+    const taskSlug = slugByNum.get(num);
+    const name = workerName({ repo, plan: slug, task: num, slug: taskSlug, role: 'review' });
     const reviewerId = platform.spawn({ cwd: handle.path, name, phase: 'review' });
-    state.tasks[num] = { worktree: handle, workerId: reviewerId, role: 'review', phase: REVIEWING, grace: APPEAR_GRACE };
+    state.tasks[num] = { worktree: handle, workerId: reviewerId, role: 'review', slug: taskSlug, phase: REVIEWING, grace: APPEAR_GRACE };
     reviewSpawns += 1;
     record('review', { task: num, workerId: reviewerId, adopted: true });
   }
@@ -363,7 +374,11 @@ export function runPass({ platform, worktree, repo, slug, maxWorkers, state, con
 
   const progressText = readFileSync(featureProgressPath, 'utf8');
   const parsed = parseProgress(progressText);
-  const assignments = buildAssignments(state, liveList, repo, slug);
+  // Each task's slug is its Task-column value (DESIGN §2.9), carried into the worker name at spawn as a
+  // readable label. Keyed by number so a spawn can look it up; the number stays the identity everything
+  // matches on (buildAssignments).
+  const slugByNum = new Map(parsed.tasks.map((t) => [t.num, t.name]));
+  const assignments = buildAssignments(state, liveList);
 
   // 2. Decide.
   const decision = decideDispatch({ tasks: parsed.tasks, assignments, maxWorkers, halted });
@@ -415,14 +430,16 @@ export function runPass({ platform, worktree, repo, slug, maxWorkers, state, con
   for (const { num, runs } of decision.spawn) {
     const wt = worktree.createTask(slug, num);
     const role = runs === 'you' ? 'verify' : 'implement';
-    const name = workerName({ repo, plan: slug, task: num, role });
+    const taskSlug = slugByNum.get(num);
+    const name = workerName({ repo, plan: slug, task: num, slug: taskSlug, role });
     const id = platform.spawn({ cwd: wt.path, name, phase: role });
     // workerId here is spawn's best-effort return, not trusted for liveness: buildAssignments resolves
     // the authoritative id by name next pass. grace lets the worker appear in the list before it could
-    // be called dead (FINDINGS 2026-09-09).
-    state.tasks[num] = { worktree: wt, workerId: id, role, phase: role === 'verify' ? VERIFYING : IMPLEMENTING, grace: APPEAR_GRACE };
+    // be called dead (FINDINGS 2026-09-09). The task slug is stored so a later rebuild of this worker's
+    // name (the down-channel answer, teardown) addresses the exact session that was spawned (§2.9).
+    state.tasks[num] = { worktree: wt, workerId: id, role, slug: taskSlug, phase: role === 'verify' ? VERIFYING : IMPLEMENTING, grace: APPEAR_GRACE };
     spawnedThisPass.push(id);
-    record('spawn', { task: num, runs, role, workerId: id });
+    record('spawn', { task: num, runs, role, workerId: id, slug: taskSlug });
     // A `you` task is spawned as a hands-on scribe (§2.6): its completion is a person running the task's
     // "Needs a person" steps, not code the worker produces. The `spawn` line drops role on disk (`spawn
     // Txx` only, this file's header note), so it cannot tell an operator that a task now needs a person.
@@ -463,7 +480,7 @@ export function runPass({ platform, worktree, repo, slug, maxWorkers, state, con
       record('force-idle', { task: num, workerId, reason: 'review-ready worker busy past cap — likely a leftover background process; forcing hand-off' });
     }
     t.busySince = undefined;
-    const revName = workerName({ repo, plan: slug, task: num, role: 'review' });
+    const revName = workerName({ repo, plan: slug, task: num, slug: t.slug, role: 'review' });
     const reviewerId = platform.spawn({ cwd: t.worktree.path, name: revName, phase: 'review' });
     reviewSwaps.set(workerId, { num, reviewerId });
     spawnedThisPass.push(reviewerId);

@@ -18,11 +18,10 @@ file and its worker's agent name.
 removals so every task stays green + cover `capture.mjs`; `install.sh` applies the per-user `autoMode`
 rule). Account in the `plan-review` commit.
 
-**Status:** Reviewed, not started. Base is clean at the last commit (abandoned `coordinator-trust`
-debris swept into a labeled `git stash`, 2026-09-19) and green. The live display shape was confirmed
-with the person against `prototype/cli-display.html`.
+**Status:** T02 implemented, awaiting review. Base green at 387 tests. The live display shape was
+confirmed with the person against `prototype/cli-display.html`.
 **Last updated:** 2026-09-19
-**Next `pir-work` will:** implement T02 (`slugs-and-names`, `⬜`, no deps) — the lowest-numbered ready task.
+**Next `pir-work` will:** review T02 (`slugs-and-names`, `🔍`).
 
 ## Tasks
 
@@ -33,8 +32,8 @@ still reads it while the plan is being built.
 
 | # | Task | Runs | Depends on | State | Notes |
 |---|---|---|---|---|---|
-| T01 | stop-promoting | auto | — | ✅ | Reviewed clean. The promote→complete rename is faithful: dispatch `complete` truth-table (incl. halted-never-complete), loop green/red hand-off, `worktree.promote` gone from the factory, and `renderHandoff` wording are all asserted by real tests. Probed: nothing live calls `worktree.promote`; a ⛔ task correctly blocks complete. `runFeatureTests` deviation is sound. Stray `r.promoted` reads in the drills → FINDINGS (T05). 384 green. |
-| T02 | slugs-and-names | auto | — | ⬜ | `/` separator, worker name gains a slug field. Additive and backward-tolerant; keeps `coordinatorName` and the `verify` role, which T05 removes. |
+| T01 | stop-promoting | auto | — | ✅ | Reviewed clean. The promote→complete rename is faithful: dispatch `complete` truth-table (incl. halted-never-complete), loop green/red hand-off, `worktree.promote` gone, and `renderHandoff` wording all tested. Probed: nothing live calls `worktree.promote`; a ⛔ task blocks complete. `runFeatureTests` deviation is sound. Stray `r.promoted` reads → FINDINGS (T05). 384 green. |
+| T02 | slugs-and-names | auto | — | 🔍 | Worker names now `{repo}/{plan}/{task}/{slug}/{role}`; slug stored on the tracked task, threaded to answer/teardown/reviewer. `buildAssignments` matches by parsed number+role, so the slug never changes matching. `parseAgentName` reads both `/` and legacy `·`. Deviation: `coordinatorName` kept on `·` and `workerName` tolerates an omitted slug — the harness matches `·` by string-equality until T05. 387 green. |
 | T03 | live-display | auto | T01, T02 | ⬜ | Strip the agent bridge; the docker-compose-style live display. |
 | T04 | remove-you-auto | auto | T03 | ⬜ | Remove the auto/you distinction and the verify path (code). |
 | T05 | harness-and-restart | auto | T04 | ⬜ | Rework harness to the new model; prove kill-and-rebuild. Also deletes the `verify` role and `coordinatorName` from naming and fixes `capture.mjs` (re-slotted from T02). |
@@ -46,7 +45,7 @@ still reads it while the plan is being built.
 A Notes cell holds what was built or what the review found, the test count, and one line per
 deviation from the task doc. A ✅ task's cell may be cut to one line once the next task is reviewed.
 
-**Review queue:** empty.
+**Review queue:** T02 (`slugs-and-names`).
 
 ## Blocked on the user
 

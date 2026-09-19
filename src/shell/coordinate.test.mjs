@@ -32,13 +32,19 @@ process.env.PARALLEL_DRY_RUN = '1';
 const REPO = 'demo-repo';
 const SLUG = 'demo';
 
+// A task's slug is its Task-column value (DESIGN §2.9); the worker name carries it. Give each task a
+// distinct slug so the coordinator's rebuilt names (the answer down-send, the you-worker to drive) can
+// be asserted to match the sessions the loop spawned.
+const slugOf = (num) => `${num}-thing`;
+const wname = (task, role) => workerName({ repo: REPO, plan: SLUG, task, slug: slugOf(task), role });
+
 function progressDoc(rows) {
   const header = '| # | Task | Runs | Depends on | State | Notes |';
   const sep = '|---|---|---|---|---|---|';
   const body = rows
     .map((r) => {
       const deps = r.deps && r.deps.length ? r.deps.join(', ') : '—';
-      return `| ${r.num} | ${r.num} thing | ${r.runs ?? 'auto'} | ${deps} | ${r.state ?? '⬜'} | |`;
+      return `| ${r.num} | ${slugOf(r.num)} | ${r.runs ?? 'auto'} | ${deps} | ${r.state ?? '⬜'} | |`;
     })
     .join('\n');
   return `# Progress\n\n**Plan reviewed:** 2026-09-08 — reviewed\n\n${header}\n${sep}\n${body}\n`;
@@ -109,8 +115,8 @@ test('a task is dispatched pir-implement, then reviewed by a fresh distinct sess
   assert.notEqual(impl.id, review.id, 'the reviewer is a distinct session, never the implementer');
   // Implementer and reviewer now carry distinct names by role (DESIGN §2.8), addressed directly.
   assert.notEqual(impl.name, review.name, 'distinct names, one per role');
-  assert.equal(impl.name, workerName({ repo: REPO, plan: SLUG, task: 'T01', role: 'implement' }));
-  assert.equal(review.name, workerName({ repo: REPO, plan: SLUG, task: 'T01', role: 'review' }));
+  assert.equal(impl.name, wname('T01', 'implement'));
+  assert.equal(review.name, wname('T01', 'review'));
   assert.ok(
     platform.spawns.indexOf(impl) < platform.spawns.indexOf(review),
     'the coordinator dispatched implement before it dispatched review',
@@ -125,8 +131,9 @@ test('the coordinator names itself and its workers per §2.8 and ignores agents 
   const fake = createFakePlatform({});
 
   // A live agent from a different repo AND a sibling plan in this repo are both in the machine's list.
-  // Neither is one of THIS coordinator's workers (its workers are `${REPO} · ${SLUG} · T…`), so the
-  // coordinator must never adopt, review or close them (DESIGN §2.8).
+  // Neither is one of THIS coordinator's workers (its workers are `${REPO} / ${SLUG} / T… / {slug} /
+  // {role}`, §2.9), so the coordinator must never adopt, review or close them. They use the legacy `·`
+  // form the harness still emits, which parseAgentName still reads during the transition (DESIGN §3.2).
   const foreigners = [
     { id: 'F1', name: 'other-repo · other-plan · T01 · implement', cwd: '/x', status: 'busy', state: 'working', live: true },
     { id: 'F2', name: `${REPO} · another-plan · T01 · implement`, cwd: '/y', status: 'busy', state: 'working', live: true },
@@ -141,8 +148,8 @@ test('the coordinator names itself and its workers per §2.8 and ignores agents 
   assert.ok(!fake.closed.includes('F1') && !fake.closed.includes('F2'), 'no foreign agent was ever closed');
   const spawnedNames = fake.spawns.map((s) => s.name);
   assert.ok(
-    spawnedNames.every((n) => n.startsWith(`${REPO} · ${SLUG} · `)),
-    'every worker it spawned carries its own repo·plan prefix',
+    spawnedNames.every((n) => n.startsWith(`${REPO} / ${SLUG} / `)),
+    'every worker it spawned carries its own repo/plan prefix (§2.9)',
   );
 });
 
@@ -161,11 +168,12 @@ test('a worker question is surfaced in plain English and the answer is sent down
   assert.match(surfaced.message, /worker on T01/i, 'the plain-English surface names the task');
 
   const res = coordinator.answer({ task: 'T01', text: 'use json' });
-  assert.equal(res.worker, workerName({ repo: REPO, plan: SLUG, task: 'T01', role: 'implement' }));
+  assert.equal(res.worker, wname('T01', 'implement'));
   // Since T30 there is no spawn hello, so the answer is the ONLY message the coordinator sends; it is
-  // the only `answer`-kind message and it went to T01 alone.
+  // the only `answer`-kind message and it went to T01 alone — addressed by the exact name (slug and all)
+  // the loop spawned, so the fake platform routes it and the worker resumes (§2.9).
   const answers = platform.sent.filter((s) => s.msg.kind === 'answer');
-  assert.deepEqual(answers.map((s) => s.to), [workerName({ repo: REPO, plan: SLUG, task: 'T01', role: 'implement' })], 'answered T01 and only T01');
+  assert.deepEqual(answers.map((s) => s.to), [wname('T01', 'implement')], 'answered T01 and only T01');
   assert.equal(answers[0].msg.kind, 'answer');
 
   const { result } = driveCollecting(coordinator);
@@ -203,7 +211,7 @@ test('a ready you task spawns a hands-on pir-verify worker, is never reviewed, a
 
   const you = passes.flatMap((p) => p.youToDrive).find((y) => y.task === 'T01');
   assert.ok(you, 'the coordinator surfaced a hands-on worker for the you task');
-  assert.equal(you.worker, workerName({ repo: REPO, plan: SLUG, task: 'T01', role: 'verify' }));
+  assert.equal(you.worker, wname('T01', 'verify'));
 
   assert.ok(platform.spawns.some((s) => s.role === 'verify' && s.task === 'T01'), 'T01 spawned as a verify worker');
   assert.ok(!platform.spawns.some((s) => s.role === 'review' && s.task === 'T01'), 'a you task is never reviewed');
@@ -354,7 +362,7 @@ test('a decision written to the answers file drains once, then routes down to th
   writeFileSync(bridge.answersPath, JSON.stringify({ task: 'T01', text: 'use json' }) + '\n', { flag: 'a' });
   for (const d of bridge.drainAnswers()) coordinator.answer({ task: d.task, text: d.text });
   assert.ok(
-    platform.sent.some((s) => s.to === workerName({ repo: REPO, plan: SLUG, task: 'T01', role: 'implement' }) && s.msg.kind === 'answer'),
+    platform.sent.some((s) => s.to === wname('T01', 'implement') && s.msg.kind === 'answer'),
     'the drained decision was sent down to the parked worker as an answer',
   );
   assert.equal(driveCollecting(coordinator).result.complete, true, 'the answered worker resumes and the plan completes');
@@ -548,13 +556,13 @@ test('a worker report dropped as a file reaches the loop-facing inbox with no ag
     writeFileSync(tmp, JSON.stringify({ from, text }));
     renameSync(tmp, join(bridge.reportsDir, `${name}.json`));
   };
-  const wname = workerName({ repo: REPO, plan: SLUG, task: 'T01', role: 'implement' });
-  drop('1-T01', '[pir:v1 kind=implemented task=T01]\ndone building', wname);
+  const implName = wname('T01', 'implement');
+  drop('1-T01', '[pir:v1 kind=implemented task=T01]\ndone building', implName);
 
   // Binding the bridge's transport to the real messaging is exactly what the bin does (createPlatform).
   const messaging = createMessaging({ transport: bridge.transport });
   assert.deepEqual(messaging.inbox(), [
-    { from: wname, kind: 'implemented', task: 'T01', text: 'done building' },
+    { from: implName, kind: 'implemented', task: 'T01', text: 'done building' },
   ]);
   assert.equal(messaging.inbox().length, 0, 'a report is ingested exactly once — the file was consumed');
 });

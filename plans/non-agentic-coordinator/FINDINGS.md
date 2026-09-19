@@ -12,6 +12,7 @@ user changed.
 
 | Date | | Finding |
 |---|---|---|
+| 2026-09-19 | 📌 | T02: worker names are now `/`+slug but `coordinatorName` stays `·` and `parseAgentName` reads both. Forced: `run.mjs` matches the coordinator by exact `·` string and the harness still emits `·`. T05 removes `coordinatorName`, the `verify` role, and the dual-separator tolerance. |
 | 2026-09-19 | 🐞 | T01 review: `r.promoted` is now undefined but two standalone drills still read it — `spawn-one-scratch.mjs:266` and `src/shell/harness/run.mjs`. Neither runs in the test suite; a live drill never reports done. Out of T01 scope; sweep in T05's harness rework. |
 | 2026-09-19 | 📌 | T01: the run no longer merges to `main` — it stops at a green `pir/{slug}` and prints `git merge` for the person. `worktree.promote()` removed. The system's one irreversible act is gone, so a bad run leaves `main` untouched (DESIGN §2.4). |
 | 2026-09-19 | 📌 | `claude agents --json` (v2.1.277) reports only `state` (working/done) and `status` (busy) — it cannot distinguish a worker waiting on the person from one mid-build. The worker's own `reports/` signal is what tells the program a task is parked (DESIGN §2.2). |

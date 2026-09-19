@@ -16,6 +16,11 @@ process.env.PARALLEL_DRY_RUN = '1';
 const REPO = 'demo-repo';
 const SLUG = 'demo';
 
+// A task's slug is its Task-column value (DESIGN §2.9); the worker name carries it. The fixture gives
+// each task a distinct slug so a test can prove the slug rides the name and does not affect matching.
+const slugOf = (num) => `${num}-thing`;
+const wname = (task, role, slug = slugOf(task)) => workerName({ repo: REPO, plan: SLUG, task, slug, role });
+
 // Build a valid PROGRESS.md the parser reads: a reviewed gate and a task table with the Runs column.
 function progressDoc(rows) {
   const header = '| # | Task | Runs | Depends on | State | Notes |';
@@ -23,7 +28,7 @@ function progressDoc(rows) {
   const body = rows
     .map((r) => {
       const deps = r.deps && r.deps.length ? r.deps.join(', ') : '—';
-      return `| ${r.num} | ${r.num} thing | ${r.runs ?? 'auto'} | ${deps} | ${r.state ?? '⬜'} | |`;
+      return `| ${r.num} | ${slugOf(r.num)} | ${r.runs ?? 'auto'} | ${deps} | ${r.state ?? '⬜'} | |`;
     })
     .join('\n');
   return `# Progress\n\n**Plan reviewed:** 2026-09-08 — reviewed\n\n${header}\n${sep}\n${body}\n`;
@@ -84,13 +89,13 @@ test('two independent ready tasks are spawned in the same pass (worked concurren
   assert.equal(r.liveAfter, 2, 'two workers are live after the first pass');
 });
 
-test('fake workers are named {repo} · {plan} · T{nn} · {role}; the task is recoverable from the name', (t) => {
+test('fake workers are named {repo} / {plan} / {task} / {slug} / {role}; the task is recoverable from the name', (t) => {
   const { platform, base } = setup(t, [{ num: 'T01' }]);
   runPass({ ...base, state: createRunState() });
   const spawn = platform.spawns[0];
-  assert.equal(spawn.name, workerName({ repo: REPO, plan: SLUG, task: 'T01', role: 'implement' }));
-  assert.equal(spawn.name, `${REPO} · ${SLUG} · T01 · implement`);
-  assert.equal(spawn.task, 'T01', 'the loop rebuilds the task from the worker name');
+  assert.equal(spawn.name, wname('T01', 'implement'));
+  assert.equal(spawn.name, `${REPO} / ${SLUG} / T01 / T01-thing / implement`);
+  assert.equal(spawn.task, 'T01', 'the loop rebuilds the task NUMBER from the worker name, slug and all');
 });
 
 test('each implemented auto task gets a fresh reviewer: a distinct id and a distinct role-suffixed name, after implement', (t) => {
@@ -103,8 +108,8 @@ test('each implemented auto task gets a fresh reviewer: a distinct id and a dist
   // The implementer and reviewer of one task now carry distinct names by role (DESIGN §2.8), so the
   // coordinator addresses each directly instead of telling them apart by which spawned most recently.
   assert.notEqual(impl.name, review.name, 'distinct names, one per role');
-  assert.equal(impl.name, `${REPO} · ${SLUG} · T01 · implement`);
-  assert.equal(review.name, `${REPO} · ${SLUG} · T01 · review`);
+  assert.equal(impl.name, `${REPO} / ${SLUG} / T01 / T01-thing / implement`);
+  assert.equal(review.name, `${REPO} / ${SLUG} / T01 / T01-thing / review`);
   assert.ok(platform.spawns.indexOf(impl) < platform.spawns.indexOf(review), 'review comes after implement');
 });
 
@@ -184,7 +189,7 @@ test('a worker question surfaces via the inbox and a sent answer resumes that wo
   assert.equal(surfaced.text, 'which format?');
 
   // The user answers; the worker resumes and the plan finishes.
-  platform.send(workerName({ repo: REPO, plan: SLUG, task: 'T01', role: 'implement' }), 'use json');
+  platform.send(wname('T01', 'implement'), 'use json');
   const result = drain({ ...base, state });
   assert.equal(result.complete, true, 'the answered worker resumes and the plan completes, ready to hand off');
 });
@@ -249,7 +254,7 @@ test('a coordinator-hit merge conflict keeps the worker alive; its decision is d
   assert.equal(implSpawns.length, 1, 'the parked task was built by exactly one implementer — no respawn');
 
   // Deliver the user's decision to the SAME, still-alive parked worker (addressed by its current role).
-  const name = workerName({ repo: REPO, plan: SLUG, task: parkedTask, role: parked.role });
+  const name = wname(parkedTask, parked.role);
   platform.send(name, { kind: 'answer', task: parkedTask, text: 'keep hello there' });
 
   // Second drain: the worker resolves on its branch, re-signals done, the loop merges the clean branch
@@ -383,7 +388,7 @@ test('a worker whose spawn id differs from its listed id is tracked by name, not
   // close must use the listed id, the only one that can actually stop the session.
   const worktree = createFakeWorktree({ progress: progressDoc([{ num: 'T01' }]), slug: SLUG });
   t.after(() => worktree.cleanup());
-  const NAME = workerName({ repo: REPO, plan: SLUG, task: 'T01', role: 'implement' });
+  const NAME = wname('T01', 'implement');
   const spawns = [];
   const closed = [];
   let listed = [];
@@ -503,7 +508,7 @@ test('the loop still runs against a platform with no send half (no crash) (T13/T
   // name, and drains without touching platform.send.
   const worktree = createFakeWorktree({ progress: progressDoc([{ num: 'T01' }]), slug: SLUG });
   t.after(() => worktree.cleanup());
-  const NAME = workerName({ repo: REPO, plan: SLUG, task: 'T01', role: 'implement' });
+  const NAME = wname('T01', 'implement');
   let listed = [];
   const platform = {
     spawn({ name }) {
@@ -789,7 +794,7 @@ test('a leftover worker session of this slug is reaped session-only on restart; 
   // The dead run's worker session, still listed after a crash that skipped teardown. A plain listing
   // entry (not a real fake worker), so enumerating it in the reap does not advance/commit over the
   // seeded branch — the same non-advancing-agent trick the "own session" test uses.
-  const leftover = { id: 'LEFTOVER', name: workerName({ repo: REPO, plan: SLUG, task: 'T01', role: 'implement' }), cwd: '/x', status: 'idle', state: 'done', live: true };
+  const leftover = { id: 'LEFTOVER', name: wname('T01', 'implement'), cwd: '/x', status: 'idle', state: 'done', live: true };
   const platform = { ...fake, list: () => [...fake.list(), leftover] };
   const base = { platform, worktree, repo: REPO, slug: SLUG, maxWorkers: 2 };
 
