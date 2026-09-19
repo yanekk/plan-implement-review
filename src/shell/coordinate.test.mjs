@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import {
   startCoordinator,
   readReviewGate,
-  createAgentBridge,
+  createReportInbox,
   teardownRun,
   ensureMain,
   canPromoteHere,
@@ -17,11 +17,13 @@ import {
   clearTransientFeeds,
   startupControlHygiene,
   fileControl,
+  buildRunState,
+  displayPhaseFor,
 } from './coordinate.mjs';
 import { createMessaging } from './platform.mjs';
 import { createFakePlatform } from './fake/platform.mjs';
 import { createFakeWorktree, git } from './fake/worktree.mjs';
-import { workerName, coordinatorName } from '../core/naming.mjs';
+import { workerName } from '../core/naming.mjs';
 import { progressPathFor, reconcileTaskRow } from '../core/progress.mjs';
 
 // The dry-run seatbelt (DESIGN §5.2): the coordinator is handed fakes and a scratch repo, so nothing
@@ -141,7 +143,6 @@ test('the coordinator names itself and its workers per §2.8 and ignores agents 
   const platform = { ...fake, list: () => [...fake.list(), ...foreigners] };
 
   const coordinator = startCoordinator({ slug: SLUG, repo: REPO, platform, worktree, maxWorkers: 4 });
-  assert.equal(coordinatorName({ repo: REPO, plan: SLUG }), `${REPO} · ${SLUG}`);
 
   const { result } = driveCollecting(coordinator);
   assert.equal(result.complete, true, 'the plan still drains to completion alongside the foreign agents');
@@ -153,9 +154,9 @@ test('the coordinator names itself and its workers per §2.8 and ignores agents 
   );
 });
 
-// --- 4. A question is surfaced; the answer is routed down to that worker only ----------------------
+// --- 4. A question is surfaced for the display; the person answers the worker directly, nothing routed
 
-test('a worker question is surfaced in plain English and the answer is sent down to that worker only', (t) => {
+test('a worker question is surfaced for the display and the parked worker holds its slot; nothing is routed (DESIGN §2.2)', (t) => {
   const { coordinator, platform } = setup(t, [{ num: 'T01' }, { num: 'T02' }], {
     behaviors: { T01: { question: 'which output format?' } },
   });
@@ -163,21 +164,15 @@ test('a worker question is surfaced in plain English and the answer is sent down
   coordinator.pass(); // spawn T01, T02
   const r2 = coordinator.pass(); // T01 asks
   const surfaced = r2.surfaces.find((s) => s.kind === 'question' && s.task === 'T01');
-  assert.ok(surfaced, 'the question surfaced');
+  assert.ok(surfaced, 'the question surfaced for the display');
   assert.match(surfaced.message, /which output format\?/);
   assert.match(surfaced.message, /worker on T01/i, 'the plain-English surface names the task');
 
-  const res = coordinator.answer({ task: 'T01', text: 'use json' });
-  assert.equal(res.worker, wname('T01', 'implement'));
-  // Since T30 there is no spawn hello, so the answer is the ONLY message the coordinator sends; it is
-  // the only `answer`-kind message and it went to T01 alone — addressed by the exact name (slug and all)
-  // the loop spawned, so the fake platform routes it and the worker resumes (§2.9).
-  const answers = platform.sent.filter((s) => s.msg.kind === 'answer');
-  assert.deepEqual(answers.map((s) => s.to), [wname('T01', 'implement')], 'answered T01 and only T01');
-  assert.equal(answers[0].msg.kind, 'answer');
-
-  const { result } = driveCollecting(coordinator);
-  assert.equal(result.complete, true, 'the answered worker resumes and the plan completes, ready to hand off');
+  // There is no down-channel (DESIGN §2.2, T03): the coordinator has no answer() to route with, and the
+  // person answers the parked worker DIRECTLY in its own session. The worker holds its slot meanwhile.
+  assert.equal(coordinator.answer, undefined, 'no down-channel answer() — the person answers the worker directly');
+  assert.ok(coordinator.state.tasks.T01, 'the parked worker is still tracked, holding its slot');
+  assert.equal(platform.sent.length, 0, 'the coordinator routed nothing down — there is no down-channel');
 });
 
 // --- 5. A parked worker does not stall the others -------------------------------------------------
@@ -332,143 +327,37 @@ test('the coordinator reports each task reaching ✅ and terminates on a complet
   assert.ok(!finalFeature.includes('⬜'), 'no ⬜ task remains on the feature branch at hand-off');
 });
 
-// --- 13. P2: the answer channel — a user decision routes down to the parked worker -----------------
+// --- 13. There is no down-channel: the coordinator never routes an answer (DESIGN §2.2, T03) --------
 
-test('a decision written to the answers file drains once, then routes down to the parked worker (P2, T12)', (t) => {
-  // The bridge's answers file is the down-channel the drill lacked (the bin surfaced a question and
-  // then had no way to route the answer). The skill APPENDS a decision; the bin drains and routes it.
-  const dir = mkdtempSync(join(tmpdir(), 'pir-answers-'));
-  t.after(() => rmSync(dir, { recursive: true, force: true }));
-  const bridge = createAgentBridge({ dir });
-
-  writeFileSync(bridge.answersPath, JSON.stringify({ task: 'T01', text: 'use json' }) + '\n', { flag: 'a' });
-  writeFileSync(bridge.answersPath, JSON.stringify({ task: 'T02', defer: true, note: 'later' }) + '\n', { flag: 'a' });
-  writeFileSync(bridge.answersPath, 'not json\n', { flag: 'a' }); // a malformed line is dropped, not guessed
-  const drained = bridge.drainAnswers();
-  assert.deepEqual(drained, [
-    { task: 'T01', text: 'use json' },
-    { task: 'T02', defer: true, note: 'later' },
-  ]);
-  assert.equal(bridge.drainAnswers().length, 0, 'draining consumes the file — a decision is routed once');
-
-  // End to end against the fakes: park T01 on a question, then drain→answer and watch it resume.
+test('the coordinator exposes no answer() and never sends anything down — the person answers directly', (t) => {
+  // The whole down-channel is gone (DESIGN §2.2): a blocked worker is answered by the person directly in
+  // its own session. So there is no answer() to route with, and even a parked worker drives nothing down.
   const { coordinator, platform } = setup(t, [{ num: 'T01' }, { num: 'T02' }], {
     behaviors: { T01: { question: 'which output format?' } },
   });
-  coordinator.pass(); // spawn
-  const r2 = coordinator.pass(); // T01 asks
-  assert.ok(r2.surfaces.some((s) => s.task === 'T01'), 'T01 parked with a question');
+  assert.equal(coordinator.answer, undefined, 'there is no answer() on the controller');
 
-  writeFileSync(bridge.answersPath, JSON.stringify({ task: 'T01', text: 'use json' }) + '\n', { flag: 'a' });
-  for (const d of bridge.drainAnswers()) coordinator.answer({ task: d.task, text: d.text });
-  assert.ok(
-    platform.sent.some((s) => s.to === wname('T01', 'implement') && s.msg.kind === 'answer'),
-    'the drained decision was sent down to the parked worker as an answer',
-  );
-  assert.equal(driveCollecting(coordinator).result.complete, true, 'the answered worker resumes and the plan completes');
-});
-
-test('routing an answer logs an `answer {task}` flow line so the coordinator wakes to deliver it (T27, T21 reflection)', (t) => {
-  // In the live bin platform.send only QUEUES the answer to the outbox; the coordinator delivers it via
-  // SendMessage. The coordinator watches the flow log, so answer() must log an `answer {task}` line
-  // (symmetric with the loop's `hello`) or a queued answer has nothing to wake it and it hand-polls the
-  // outbox (T21 reflection, 2026-09-13). Assert the line is written when a decision routes down.
-  const logs = [];
-  const control = { isHalted: () => false, log: (l) => logs.push(l) };
-  const { coordinator } = setup(t, [{ num: 'T01' }, { num: 'T02' }], {
-    behaviors: { T01: { question: 'which output format?' } },
-    control,
-  });
   coordinator.pass(); // spawn
   coordinator.pass(); // T01 asks and parks
-  const before = logs.length;
-  coordinator.answer({ task: 'T01', text: 'use json' });
-  assert.ok(
-    logs.slice(before).includes('answer T01'),
-    `answer() must log "answer T01" so the coordinator wakes to deliver; got: ${logs.slice(before).join(' | ')}`,
-  );
-});
-
-// --- 13b. C (T30): a failed answer down-send is recorded and retried, never dropped ---------------
-
-test('a dropped answer down-send is recorded as send-failed and the outbox fallback retry delivers it (C, T30)', (t) => {
-  const worktree = createFakeWorktree({ progress: progressDoc([{ num: 'T01' }, { num: 'T02' }]), slug: SLUG });
-  t.after(() => worktree.cleanup());
-  const fake = createFakePlatform({ behaviors: { T01: { question: 'which output format?' } } });
-  const logs = [];
-  const control = { isHalted: () => false, log: (l) => logs.push(l) };
-
-  // Wrap send so the FIRST answer send is DROPPED (ok:false, delivers nothing) — the deterministic
-  // stand-in for a SendMessage the live coordinator could not deliver — and every later send goes
-  // through to the worker (the outbox fallback re-reading and re-sending the still-queued answer).
-  let sends = 0;
-  const platform = {
-    ...fake,
-    send(name, msg) {
-      sends += 1;
-      if (sends === 1) return { ok: false };
-      return fake.send(name, msg);
-    },
-  };
-  const coordinator = startCoordinator({ slug: SLUG, repo: REPO, platform, worktree, maxWorkers: 4, control });
-
-  coordinator.pass(); // spawn T01, T02
-  coordinator.pass(); // T01 asks and parks
-
-  // First attempt is dropped: the failure is RECORDED (send-failed), not silent, and the parked
-  // decision is KEPT so the answer can be retried — it is never lost.
-  const r1 = coordinator.answer({ task: 'T01', text: 'use json' });
-  assert.equal(r1.ok, false, 'the dropped send is reported as a failure');
-  assert.ok(logs.includes('send-failed T01'), 'the failed down-send was recorded as `send-failed T01`');
-  assert.ok(!logs.includes('answer T01'), 'a dropped send does not log a successful `answer` line');
-  assert.ok(coordinator.state.tasks.T01.decision, 'the parked decision is kept for a retry, not dropped');
-
-  // The retry delivers: the worker unblocks, the successful send logs `answer T01`, and the plan drains.
-  const r2 = coordinator.answer({ task: 'T01', text: 'use json' });
-  assert.equal(r2.ok, true, 'the retry delivers');
-  assert.ok(logs.includes('answer T01'), 'the successful retry logs `answer T01`');
-  assert.equal(coordinator.state.tasks.T01.decision, null, 'the delivered answer clears the parked decision');
-  assert.equal(driveCollecting(coordinator).result.complete, true, 'the answered worker resumes and the plan completes');
-});
-
-test('an answer to a genuinely unreachable worker is recorded as send-failed, not silently dropped (C, T30)', (t) => {
-  const logs = [];
-  const control = { isHalted: () => false, log: (l) => logs.push(l) };
-  const { coordinator, platform } = setup(t, [{ num: 'T01' }, { num: 'T02' }], {
-    behaviors: { T01: { question: 'which output format?' } },
-    control,
-  });
-  coordinator.pass(); // spawn
-  coordinator.pass(); // T01 asks and parks
-
-  // The parked worker is gone (crashed / closed): the fake's send reports ok:false for an unknown name,
-  // the deterministic stand-in for a genuinely unreachable worker.
-  const workerId = coordinator.state.tasks.T01.workerId;
-  platform.close(workerId);
-
-  const r = coordinator.answer({ task: 'T01', text: 'use json' });
-  assert.equal(r.ok, false, 'the send to a gone worker is reported as a failure');
-  assert.ok(logs.includes('send-failed T01'), 'the undeliverable answer was recorded as `send-failed T01`');
-  assert.ok(!logs.includes('answer T01'), 'an undeliverable answer does not log a successful `answer` line');
+  driveCollecting(coordinator); // drive on; T01 stays parked, unanswered
+  assert.equal(platform.sent.length, 0, 'nothing was ever sent down — there is no down-channel to route on');
 });
 
 // --- 14. P3: a `decision` message parks and surfaces, same as a question ---------------------------
 
-test('a worker `decision` message parks and surfaces like a question, and the answer resumes it (P3, T12)', (t) => {
-  // The pir-worker contract tells a worker to send `kind: question` OR `kind: decision`; the loop
-  // previously handled only question/conflict, so a real decision message was dropped. It must park.
+test('a worker `decision` message parks and surfaces like a question; the worker is answered directly (P3, DESIGN §2.2)', (t) => {
+  // The pir-worker contract tells a worker to send `kind: question` OR `kind: decision`; both park the
+  // task and surface it for the display. The answer is not routed — the person replies to the worker.
   const { coordinator } = setup(t, [{ num: 'T01' }, { num: 'T02' }], {
     behaviors: { T01: { decision: 'two defensible layouts — which?' } },
   });
   coordinator.pass(); // spawn
   const r2 = coordinator.pass(); // T01 raises a decision
   const surfaced = r2.surfaces.find((s) => s.task === 'T01');
-  assert.ok(surfaced, 'the decision surfaced to the user (not silently dropped)');
+  assert.ok(surfaced, 'the decision surfaced (not silently dropped)');
   assert.equal(surfaced.kind, 'decision');
   assert.match(surfaced.message, /needs a decision from you/i);
-
-  coordinator.answer({ task: 'T01', text: 'layout A' });
-  assert.equal(driveCollecting(coordinator).result.complete, true, 'the answered decision resumes and the plan completes');
+  assert.ok(coordinator.state.tasks.T01, 'the worker parks and holds its slot, awaiting the person');
 });
 
 // --- 15. P6: no exit path orphans a spawned worker ------------------------------------------------
@@ -539,51 +428,50 @@ test('runawayVerdict tolerates a transient CEILING+1 handoff but aborts a real r
   assert.equal(runawayVerdict({ liveCount: 5, ceiling: 2, overPasses: 0 }).abort, true, 'more than one over the ceiling aborts at once — a real runaway');
 });
 
-// --- 16. T25: the up-channel is a file drop the bin drains directly, with no agent relay -----------
+// --- 16. The up-channel is a file drop the bin drains directly, no agent (DESIGN §2.2) -------------
 
-test('a worker report dropped as a file reaches the loop-facing inbox with no agent relay (T25)', (t) => {
-  // The relay this replaces made the coordinator agent re-encode every worker message into an inbox
-  // file. Now a worker WRITES its own report; the bin ingests it through the same platform.inbox() the
-  // loop already calls. No SendMessage, no coordinator turn — that is the ~20–25% relay cost removed.
+test('a worker report dropped as a file reaches the loop-facing inbox with no agent relay (DESIGN §2.2)', (t) => {
+  // A worker reports UP by writing its own report file; the bin ingests it through the same
+  // platform.inbox() the loop already calls. No SendMessage, no coordinator turn — a plain file drop.
   const dir = mkdtempSync(join(tmpdir(), 'pir-reports-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
-  const bridge = createAgentBridge({ dir });
+  const inbox = createReportInbox({ dir });
 
   // A worker reports the way the pir-worker contract does: write a temp file, then rename it into
   // reports/, so the bin never reads a half-written file. The payload is its own [pir:v1 …] message.
   const drop = (name, text, from) => {
-    const tmp = join(bridge.reportsDir, `${name}.tmp`);
+    const tmp = join(inbox.reportsDir, `${name}.tmp`);
     writeFileSync(tmp, JSON.stringify({ from, text }));
-    renameSync(tmp, join(bridge.reportsDir, `${name}.json`));
+    renameSync(tmp, join(inbox.reportsDir, `${name}.json`));
   };
   const implName = wname('T01', 'implement');
   drop('1-T01', '[pir:v1 kind=implemented task=T01]\ndone building', implName);
 
-  // Binding the bridge's transport to the real messaging is exactly what the bin does (createPlatform).
-  const messaging = createMessaging({ transport: bridge.transport });
+  // Binding the report inbox's transport to the real messaging is exactly what the bin does (createPlatform).
+  const messaging = createMessaging({ transport: inbox.transport });
   assert.deepEqual(messaging.inbox(), [
     { from: implName, kind: 'implemented', task: 'T01', text: 'done building' },
   ]);
   assert.equal(messaging.inbox().length, 0, 'a report is ingested exactly once — the file was consumed');
 });
 
-test('reports drain in name order and a torn/malformed report is dropped, never guessed (T25)', (t) => {
+test('reports drain in name order and a torn/malformed report is dropped, never guessed (DESIGN §2.2)', (t) => {
   const dir = mkdtempSync(join(tmpdir(), 'pir-reports-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
-  const bridge = createAgentBridge({ dir });
-  const put = (name, body) => writeFileSync(join(bridge.reportsDir, name), body);
+  const inbox = createReportInbox({ dir });
+  const put = (name, body) => writeFileSync(join(inbox.reportsDir, name), body);
   put('2-T02.json', JSON.stringify({ from: 'w2', text: 'b' }));
   put('1-T01.json', JSON.stringify({ from: 'w1', text: 'a' }));
   put('3-torn.json', '{not valid json'); // a half-written / malformed report
   put('4-note.txt', 'not a report'); // a non-.json file is left alone
 
-  assert.deepEqual(bridge.transport.drain(), [
+  assert.deepEqual(inbox.transport.drain(), [
     { from: 'w1', text: 'a' },
     { from: 'w2', text: 'b' },
   ]);
   // The consumed reports and the malformed .json are gone; a non-report file is untouched.
-  assert.deepEqual(readdirSync(bridge.reportsDir), ['4-note.txt']);
-  assert.equal(bridge.transport.drain().length, 0, 'nothing left to drain');
+  assert.deepEqual(readdirSync(inbox.reportsDir), ['4-note.txt']);
+  assert.equal(inbox.transport.drain().length, 0, 'nothing left to drain');
 });
 
 // --- 17. T03: the restart reconciliation summary is exposed for the bin to relay (DESIGN §2.8) -----
@@ -622,35 +510,67 @@ test('a genuine first start exposes no reconciliation summary from pass() (T03)'
   assert.equal(coordinator.pass().restartSummary, null, 'a first start adopts nothing, so it has no summary');
 });
 
-test('recordSurface appends the rendered surface as a JSON line for the skill to relay (T25)', (t) => {
-  const dir = mkdtempSync(join(tmpdir(), 'pir-surfaced-'));
-  t.after(() => rmSync(dir, { recursive: true, force: true }));
-  const bridge = createAgentBridge({ dir });
-  bridge.recordSurface({ task: 'T01', kind: 'question', text: 'which format?', message: 'The worker on T01 needs a decision from you: which format?' });
-  bridge.recordSurface({ task: 'T02', kind: 'conflict', text: 'clash in x', message: 'The worker on T02 hit a merge conflict…' });
-  const lines = readFileSync(bridge.surfacedPath, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
-  assert.equal(lines.length, 2);
-  assert.deepEqual(lines.map((l) => l.task), ['T01', 'T02']);
-  assert.match(lines[0].message, /needs a decision from you/);
+// --- 18. Feeding the live display: the loop→display mapping (DESIGN §2.3) --------------------------
+
+test('displayPhaseFor maps a tracked worker role/phase to the display phase (DESIGN §2.3)', () => {
+  assert.equal(displayPhaseFor(null), null, 'no worker → no phase');
+  assert.equal(displayPhaseFor({ role: 'implement', phase: 'implementing' }), 'building');
+  assert.equal(displayPhaseFor({ role: 'verify', phase: 'verifying' }), 'building', 'a you/verify scribe reads as building');
+  assert.equal(displayPhaseFor({ role: 'review', phase: 'reviewing' }), 'reviewing');
+  assert.equal(displayPhaseFor({ role: 'implement', phase: 'awaiting-answer' }), 'asking', 'a parked worker is asking, whatever its role');
 });
 
-// --- T04: control-folder cleanup on restart (DESIGN §2.7, §7) ---------------------------------
+test('buildRunState assembles the display model input from a pass result and the tracked workers (DESIGN §2.3)', () => {
+  const passTasks = [
+    { num: 'T01', name: 'done-one', deps: [], state: '✅' },
+    { num: 'T02', name: 'build-one', deps: [], state: '⬜' },
+    { num: 'T03', name: 'ask-one', deps: ['T02'], state: '⬜' },
+    { num: 'T04', name: 'wait-one', deps: ['T03'], state: '⬜' },
+  ];
+  const stateTasks = {
+    T02: { role: 'implement', phase: 'implementing' },
+    T03: { role: 'implement', phase: 'awaiting-answer', decision: { text: 'which layout?' } },
+  };
+  const rs = buildRunState({
+    passTasks,
+    stateTasks,
+    branch: 'pir/demo',
+    ceiling: 4,
+    sinceByTask: { T02: 100, T03: 50 },
+    doneMsByTask: { T01: 6400 },
+    complete: false,
+    readyToMerge: false,
+  });
+  assert.equal(rs.branch, 'pir/demo');
+  assert.equal(rs.ceiling, 4);
+  const by = Object.fromEntries(rs.tasks.map((t) => [t.id, t]));
+  assert.deepEqual(by.T01, { id: 'T01', slug: 'done-one', deps: [], done: true, phase: null, since: null, doneMs: 6400, question: null });
+  assert.equal(by.T02.phase, 'building');
+  assert.equal(by.T02.since, 100);
+  assert.equal(by.T03.phase, 'asking');
+  assert.equal(by.T03.question, 'which layout?');
+  // T04 has no worker and its dep is not ✅: the pure model will read it as waiting; buildRunState just
+  // reports no phase and passes the deps through.
+  assert.equal(by.T04.phase, null);
+  assert.deepEqual(by.T04.deps, ['T03']);
+});
 
-// Seed a control folder that already holds a dead run's leftovers: a reports/ drop-dir with two report
-// files, and the three append-only feeds carrying a stale line each. Returns the dir.
+// --- 19. Control-folder cleanup on restart (DESIGN §2.7, §3.5) -------------------------------------
+//
+// The only transient feed left is reports/ (the up-channel); the down-channel feeds were removed with
+// the relay (DESIGN §2.2, T03), so a restart clears reports/ and nothing else.
+
+// Seed a control folder that already holds a dead run's leftover reports. Returns the dir.
 function seedControl() {
   const dir = mkdtempSync(join(tmpdir(), 'pir-control-'));
   const reportsDir = join(dir, 'reports');
   mkdirSync(reportsDir, { recursive: true });
   writeFileSync(join(reportsDir, '001.json'), JSON.stringify({ from: 'w', text: 'stale report' }));
   writeFileSync(join(reportsDir, '002.json'), JSON.stringify({ from: 'w', text: 'stale report 2' }));
-  writeFileSync(join(dir, 'answers'), JSON.stringify({ task: 'T01', text: 'stale answer' }) + '\n');
-  writeFileSync(join(dir, 'outbox'), JSON.stringify({ to: 'w', text: 'stale down' }) + '\n');
-  writeFileSync(join(dir, 'surfaced'), JSON.stringify({ task: 'T01', message: 'stale surface' }) + '\n');
   return dir;
 }
 
-test('clearTransientFeeds empties reports/ and truncates answers/outbox/surfaced, reporting what it cleared (T04)', (t) => {
+test('clearTransientFeeds empties the reports drop-dir and reports what it cleared (T03)', (t) => {
   const dir = seedControl();
   t.after(() => rmSync(dir, { recursive: true, force: true }));
 
@@ -661,14 +581,10 @@ test('clearTransientFeeds empties reports/ and truncates answers/outbox/surfaced
     [],
     'every leftover report *.json is removed',
   );
-  for (const f of ['answers', 'outbox', 'surfaced']) {
-    assert.equal(readFileSync(join(dir, f), 'utf8'), '', `${f} is truncated to empty`);
-    assert.ok(existsSync(join(dir, f)), `${f} still exists (truncated, not deleted, so this run can append)`);
-  }
-  assert.deepEqual(cleared.sort(), ['answers', 'outbox', 'reports/', 'surfaced'], 'it reports the four feeds it cleared');
+  assert.deepEqual(cleared, ['reports/'], 'it reports the one feed it cleared — reports/ is all that is left');
 });
 
-test('clearTransientFeeds never touches log or HALT (T04)', (t) => {
+test('clearTransientFeeds never touches log or HALT (T03)', (t) => {
   const dir = seedControl();
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   writeFileSync(join(dir, 'log'), '2026-09-17T00:00:00.000Z start\n');
@@ -681,7 +597,7 @@ test('clearTransientFeeds never touches log or HALT (T04)', (t) => {
   assert.ok(!cleared.includes('log') && !cleared.includes('HALT'), 'neither durable record is reported as cleared');
 });
 
-test('clearTransientFeeds is a no-op that does not throw on a fresh control dir (T04)', (t) => {
+test('clearTransientFeeds is a no-op that does not throw on a fresh control dir (T03)', (t) => {
   const dir = mkdtempSync(join(tmpdir(), 'pir-control-fresh-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
 
@@ -689,42 +605,42 @@ test('clearTransientFeeds is a no-op that does not throw on a fresh control dir 
   assert.doesNotThrow(() => {
     res = clearTransientFeeds(dir);
   });
-  assert.deepEqual(res.cleared, [], 'nothing to clear when every feed is absent');
+  assert.deepEqual(res.cleared, [], 'nothing to clear when reports/ is absent');
 });
 
-test('a stale answers line is gone after the clear, so it cannot route to a fresh worker (T04)', (t) => {
+test('a stale report is gone after the clear, so it cannot route to a fresh worker (T03)', (t) => {
   const dir = seedControl();
   t.after(() => rmSync(dir, { recursive: true, force: true }));
-  assert.match(readFileSync(join(dir, 'answers'), 'utf8'), /stale answer/, 'precondition: a stale answer is queued');
+  assert.equal(readdirSync(join(dir, 'reports')).length, 2, 'precondition: two stale reports are queued');
 
   clearTransientFeeds(dir);
 
-  assert.equal(readFileSync(join(dir, 'answers'), 'utf8').trim(), '', 'the stale answer is gone');
+  assert.equal(readdirSync(join(dir, 'reports')).filter((n) => n.endsWith('.json')).length, 0, 'the stale reports are gone');
 });
 
-test('startupControlHygiene refuses a still-HALTed run without clearing HALT or the feeds (T04)', (t) => {
+test('startupControlHygiene refuses a still-HALTed run without clearing HALT or the reports (T03)', (t) => {
   const repo = mkdtempSync(join(tmpdir(), 'pir-halt-'));
   t.after(() => rmSync(repo, { recursive: true, force: true }));
   const control = fileControl(repo, SLUG);
   writeFileSync(join(control.dir, 'HALT'), '');
-  writeFileSync(join(control.dir, 'answers'), JSON.stringify({ task: 'T01', text: 'stale' }) + '\n');
+  mkdirSync(join(control.dir, 'reports'), { recursive: true });
+  writeFileSync(join(control.dir, 'reports', '001.json'), '{"from":"w","text":"stale"}');
 
   const r = startupControlHygiene(control);
 
   assert.equal(r.halted, true, 'a present HALT refuses the run');
   assert.equal(r.flag, control.flag, 'the refusal names the flag path so the person knows what to remove');
   assert.ok(existsSync(control.flag), 'HALT is left in place — never auto-cleared (§2.7)');
-  assert.match(readFileSync(join(control.dir, 'answers'), 'utf8'), /stale/, 'the feeds are not cleared on a refusal');
+  assert.equal(readdirSync(join(control.dir, 'reports')).length, 1, 'the reports are not cleared on a refusal');
   assert.ok(!existsSync(control.logPath), 'no restart marker is written when the run is refused');
 });
 
-test('startupControlHygiene clears the feeds and appends a restart marker, preserving prior log lines (T04)', (t) => {
+test('startupControlHygiene clears the reports and appends a restart marker, preserving prior log lines (T03)', (t) => {
   const repo = mkdtempSync(join(tmpdir(), 'pir-restart-'));
   t.after(() => rmSync(repo, { recursive: true, force: true }));
   const control = fileControl(repo, SLUG);
   mkdirSync(join(control.dir, 'reports'), { recursive: true });
   writeFileSync(join(control.dir, 'reports', '001.json'), '{"from":"w","text":"stale"}');
-  writeFileSync(join(control.dir, 'answers'), JSON.stringify({ task: 'T01', text: 'stale' }) + '\n');
   writeFileSync(control.logPath, '2026-09-17T00:00:00.000Z spawn T01\n');
 
   const r = startupControlHygiene(control);
@@ -735,7 +651,6 @@ test('startupControlHygiene clears the feeds and appends a restart marker, prese
     [],
     'the stale report is cleared',
   );
-  assert.equal(readFileSync(join(control.dir, 'answers'), 'utf8'), '', 'the stale answer is cleared');
   const log = readFileSync(control.logPath, 'utf8');
   assert.match(log, /spawn T01/, 'the prior log line is preserved');
   assert.match(log, /restart\n$/, 'a restart marker is appended to the log');

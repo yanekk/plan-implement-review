@@ -52,9 +52,10 @@ function taskByWorkerId(state, workerId) {
   return null;
 }
 
-// Fold each drained worker→coordinator message into the tracked phase (DESIGN §2.5, §3.4). A
-// question or an unresolved conflict parks the task and is surfaced to the user; implemented and
-// done move it along. `record` (not a raw actions array) is passed so a worker-raised surface is
+// Fold each drained worker→coordinator report into the tracked phase (DESIGN §2.2, §3.4). A question
+// or an unresolved conflict parks the task and is recorded for the live display — the program shows who
+// is asking and the person answers that worker directly (DESIGN §2.2), nothing is routed. `implemented`
+// and `done` move the task along. `record` (not a raw actions array) is passed so a worker-raised surface is
 // written to the FLOW LOG, not only the in-memory actions: the capture harness reads the flow log
 // (control/log, T14), and a worker's question or a conflict the worker caught at its own integrate
 // step used to live only in `actions` — invisible in the flow, so questionRoundTrip and the
@@ -308,13 +309,12 @@ export function runPass({ platform, worktree, repo, slug, maxWorkers, state, con
     return a;
   };
 
-  // There is no spawn-time hello (retired in T30). The coordinator opened the DOWN channel to a worker
-  // lazily, with the first real message it actually needs to send — the answer to a parked worker — so
-  // no message is sent at spawn. The old hello was a start-up ping nothing depended on: the T23 drill
-  // proved both hellos failed to send yet both workers still built from their spawn prompt, and since
-  // T25 a worker reports UP by dropping a file (never up a socket the hello had to pre-open), so the
-  // T13 "the reply rides the return channel" rationale was already gone. loop.mjs no longer calls
-  // platform.send at all; the answer down-send lives in coordinate.mjs's answer().
+  // The loop makes no down-send, and there is no down-channel to make one on (DESIGN §2.2, T03). A
+  // worker that cannot continue drops a question/decision report UP (applyMessages below parks it and
+  // records the escalation for the live display); the person then answers that worker DIRECTLY in its
+  // own session, and the worker un-parks and re-signals on its own. Nothing is routed back down — the
+  // program never sees the answer. The spawn-time hello was retired in T30 and the whole down-channel,
+  // with the answer relay, in T03, so this loop never calls a platform send.
 
   // 0. Open the feature branch once, in the coordinator's own worktree (DESIGN §2.9).
   if (!state.feature) {

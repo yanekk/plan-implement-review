@@ -12,6 +12,8 @@ user changed.
 
 | Date | | Finding |
 |---|---|---|
+| 2026-09-19 | 📌 | T03: `buildDisplay` returns `{ branch, summary, rows, footer }` — a top-level `branch` past the task's `{summary,rows,footer}` sketch. The renderer shows the run branch on every paint, but the footer carries a branch only in handoff/red states, so the summary line cannot source it there. |
+| 2026-09-19 | 📌 | T03: `coordinator.defer()` is now caller-less — the answers feed that drove it went with the down-channel (§2.2). Kept (not on §2.2's removal list); the conflict/extend paths are handled by the person directly now (§2.8), so a later task may drop it. |
 | 2026-09-19 | 📌 | T02: worker names are now `/`+slug but `coordinatorName` stays `·` and `parseAgentName` reads both. Forced: `run.mjs` matches the coordinator by exact `·` string and the harness still emits `·`. T05 removes `coordinatorName`, the `verify` role, and the dual-separator tolerance. |
 | 2026-09-19 | 🐞 | T01 review: `r.promoted` is now undefined but two standalone drills still read it — `spawn-one-scratch.mjs:266` and `src/shell/harness/run.mjs`. Neither runs in the test suite; a live drill never reports done. Out of T01 scope; sweep in T05's harness rework. |
 | 2026-09-19 | 📌 | T01: the run no longer merges to `main` — it stops at a green `pir/{slug}` and prints `git merge` for the person. `worktree.promote()` removed. The system's one irreversible act is gone, so a bad run leaves `main` untouched (DESIGN §2.4). |

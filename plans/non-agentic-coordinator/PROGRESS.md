@@ -18,10 +18,10 @@ file and its worker's agent name.
 removals so every task stays green + cover `capture.mjs`; `install.sh` applies the per-user `autoMode`
 rule). Account in the `plan-review` commit.
 
-**Status:** T02 reviewed clean. Base green at 387 tests. The live display shape was confirmed with
-the person against `prototype/cli-display.html`.
+**Status:** T03 implemented (`🔍`), awaiting review. 401 tests green. The pure display model and the
+TTY/plain renderer are tested; the in-place painting itself is left for T09 to confirm by eye.
 **Last updated:** 2026-09-19
-**Next `pir-work` will:** implement T03 (`live-display`, `⬜`) — deps T01, T02 both `✅`.
+**Next `pir-work` will:** review T03 (`live-display`, `🔍`).
 
 ## Tasks
 
@@ -33,8 +33,8 @@ still reads it while the plan is being built.
 | # | Task | Runs | Depends on | State | Notes |
 |---|---|---|---|---|---|
 | T01 | stop-promoting | auto | — | ✅ | Reviewed clean. promote→complete rename faithful; `worktree.promote` gone; a ⛔ task blocks complete. Stray `r.promoted` reads → FINDINGS (T05). 384 green. |
-| T02 | slugs-and-names | auto | — | ✅ | Reviewed clean, no fix commit. 5-field names round-trip incl slug; matching is by task-number+role so slug and `·`/`/` never move a worker (restart test uses a slugged listed name). naming stays pure. Probed: separator auto-detect safe; restart reaps and respawns with the feature-column slug so answer/teardown names match. `/` at launch is a live T09 check. 387 green. |
-| T03 | live-display | auto | T01, T02 | ⬜ | Strip the agent bridge; the docker-compose-style live display. |
+| T02 | slugs-and-names | auto | — | ✅ | Reviewed clean. 5-field names round-trip incl slug; matching by task-number+role, so slug and `·`/`/` never move a worker. naming stays pure. `/` at launch is a live T09 check. 387 green. |
+| T03 | live-display | auto | T01, T02 | 🔍 | Added `src/core/display.mjs` (pure model) + `src/shell/render.mjs` (TTY/plain renderer); `main()` paints via them. Bridge gone: no createAgentBridge/answer/outbox/answers/surfaced/send-failed, no down-channel send; `reports/` up-channel kept (`createReportInbox`). 401 green. Deviation: `buildDisplay` adds top-level `branch` past the `{summary,rows,footer}` sketch (renderer needs it each paint). `defer()` now caller-less → FINDINGS. In-place painting is T09. |
 | T04 | remove-you-auto | auto | T03 | ⬜ | Remove the auto/you distinction and the verify path (code). |
 | T05 | harness-and-restart | auto | T04 | ⬜ | Rework harness to the new model; prove kill-and-rebuild. Also deletes the `verify` role and `coordinatorName` from naming and fixes `capture.mjs` (re-slotted from T02). |
 | T06 | worker-permissions | auto | — | ⬜ | Ship worker `permissions.allow`; `install.sh` also applies the per-user `autoMode` rule, with the manual step as a printed fallback. |
@@ -45,7 +45,7 @@ still reads it while the plan is being built.
 A Notes cell holds what was built or what the review found, the test count, and one line per
 deviation from the task doc. A ✅ task's cell may be cut to one line once the next task is reviewed.
 
-**Review queue:** empty — no task awaiting review.
+**Review queue:** T03 (`live-display`) — implemented, awaiting a fresh-eyes review.
 
 ## Blocked on the user
 

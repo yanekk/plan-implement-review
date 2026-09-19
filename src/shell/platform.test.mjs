@@ -217,31 +217,22 @@ test('parseAgents accepts an already-parsed array and tolerates non-arrays', () 
 
 // --- the messaging surface --------------------------------------------------------------------
 
-test('createMessaging.send encodes through the injected transport', () => {
-  const delivered = [];
-  const transport = { deliver: (name, text) => (delivered.push({ name, text }), { ok: true }), drain: () => [] };
-  const m = createMessaging({ transport });
-  const r = m.send('repo · plan', { kind: 'answer', task: 'T05', text: 'use 30' });
-  assert.equal(r.ok, true);
-  assert.equal(delivered[0].name, 'repo · plan');
-  assert.deepEqual(parseMessage({ from: 'repo · plan · T05 · implement', text: delivered[0].text }), {
-    from: 'repo · plan · T05 · implement',
-    kind: 'answer',
-    task: 'T05',
-    text: 'use 30',
-  });
+// createMessaging is now the up-channel only — { inbox } — because the down-channel is gone (DESIGN
+// §2.2, T03): a blocked worker is answered by the person directly, not routed. So there is no `send`.
+test('createMessaging exposes inbox and no send (the down-channel is gone, DESIGN §2.2)', () => {
+  const m = createMessaging({ transport: { drain: () => [] } });
+  assert.equal(typeof m.inbox, 'function');
+  assert.equal(m.send, undefined, 'no down-channel send remains on the messaging surface');
 });
 
-test('createMessaging.inbox parses each drained message; a failed deliver reports not ok', () => {
+test('createMessaging.inbox parses each report drained from the up-channel transport', () => {
   const transport = {
-    deliver: () => ({ ok: false }),
     drain: () => [
       { from: 'repo · plan · T01 · implement', text: encodeMessage({ kind: 'implemented', task: 'T01', text: '' }) },
       { from: 'repo · plan · T02 · implement', text: encodeMessage({ kind: 'done', task: 'T02', text: '' }) },
     ],
   };
   const m = createMessaging({ transport });
-  assert.equal(m.send('repo · plan', { kind: 'k', task: 'T01', text: '' }).ok, false);
   const got = m.inbox();
   assert.equal(got.length, 2);
   assert.equal(got[0].kind, 'implemented');

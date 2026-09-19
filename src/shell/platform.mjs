@@ -1,25 +1,21 @@
-// The platform wrapper's send/inbox half (DESIGN §3.2 platform.mjs, §2.2, §2.4). This is the
-// PIR-specific glue over Claude Code's cross-session messaging: the wire format a worker and the
-// coordinator pack their structured messages into, the same-repo rail that keeps a coordinator
-// talking only to its own workers, and the parse of `claude agents --json`. Spawn / list / close —
-// the live-session half — landed in T08 at the foot of this file. Every part of them short of the
-// process actually starting is unit-tested (argv, json parsing, same-repo filtering); the live
-// spawn / message / review / close is hand-verified (DESIGN §5.1, spawn-one-scratch.mjs).
+// The platform wrapper's inbox half (DESIGN §3.2 platform.mjs, §2.2). This is the PIR-specific glue
+// over the worker up-channel: the wire format a worker packs its structured report into, the same-repo
+// rail that keeps a coordinator counting only its own workers, and the parse of `claude agents --json`.
+// Spawn / list / close — the live-session half — landed in T08 at the foot of this file. Every part of
+// them short of the process actually starting is unit-tested (argv, json parsing, same-repo filtering);
+// the live spawn / list / close is hand-verified (DESIGN §5.1, spawn-one-scratch.mjs).
 //
-// Why the transport is injected, not called here. There is NO `claude` subcommand that sends a
-// cross-session message: `claude` exposes agents / attach / logs / stop / rm, and the messaging is
-// the `SendMessage` tool, which only an agent session invokes (confirmed against `claude --help`,
-// 2.1.263). So a Node module cannot itself deliver a message. The transport — deliver one message,
-// drain the received ones — is handed in: in production the coordinator skill (T09) backs it with
-// the agent's SendMessage tool and its own inbox; in the dry run a fake backs it. This module owns
-// the format and the addressing; the transport owns the wire. That `·` in a name is actually
-// accepted by that wire is live behaviour the tests cannot reach — it is confirmed by hand the way
-// T00 confirmed the `/` rejection (DESIGN §2.8, FINDINGS), and that check is T07's.
+// There is no down-channel any more (DESIGN §2.2, T03). The coordinator used to relay a worker's
+// question up to the person and the person's answer back down; the person now talks to a blocked
+// worker directly in its own session, so nothing is routed. Only the UP-channel remains: a worker
+// drops a one-line report into the control folder's `reports/` drop-dir, and the injected transport
+// drains it — no `claude` subcommand can send a cross-session message (that is the `SendMessage`
+// agent tool), and none is needed to read a plain file drop. This module owns the format and the
+// addressing; the transport owns the file-moving (a fake in the dry run, the reports drain in the bin).
 //
-// The payload field is `text`, not the `body` the T07 interface sketch named. loop.mjs (T05,
-// reviewed) and the fake platform both carry it as `text` (`m.text`), so the real inbox() must
-// return `text` to be the drop-in the loop already consumes. The four logical fields — from, kind,
-// task, text — are all present; only the name of the free-text one changed, to match built code.
+// The payload field is `text`, not the `body` the T07 interface sketch named. loop.mjs and the fake
+// platform both carry it as `text` (`m.text`), so inbox() returns `text` to be the drop-in the loop
+// already consumes. The four logical fields — from, kind, task, text — are all present.
 
 import { execFileSync } from 'node:child_process';
 import { realpathSync } from 'node:fs';
@@ -28,13 +24,13 @@ import { parseAgentName } from '../core/naming.mjs';
 
 // --- The wire format --------------------------------------------------------------------------
 //
-// SendMessage carries a single free-text field, so a structured { kind, task, text } is packed into
+// A worker's report is a single free-text field, so a structured { kind, task, text } is packed into
 // one string with a header line and unpacked on receipt. The sender's identity (`from`) is supplied
-// by the transport, not the header, because the messaging layer stamps it and it must not be
-// forgeable from inside the body. The header version tag lets the format change later without a
-// silent mis-parse. A message with no recognisable header is not dropped: it is read as a plain
-// message (kind `message`) whose task is inferred from the sender's name, so a human note typed into
-// a worker still arrives structured.
+// by the transport (the drop-dir filename / stamp), not the header, because it must not be forgeable
+// from inside the body. The header version tag lets the format change later without a silent
+// mis-parse. A report with no recognisable header is not dropped: it is read as a plain message (kind
+// `message`) whose task is inferred from the sender's name, so a human note still arrives structured.
+// encodeMessage is the canonical spec of what a worker writes into a report; inbox() is the reader.
 
 const HEADER = /^\[pir:v1 kind=(\S+) task=(\S+)\]$/;
 
@@ -147,24 +143,17 @@ export function parseAgents(json) {
   }));
 }
 
-// --- The messaging surface the loop and skill call --------------------------------------------
+// --- The inbox surface the loop calls ---------------------------------------------------------
 //
-// createMessaging({ transport }) → { send, inbox }, the send/inbox half of the platform object the
-// loop injects. It binds the wire format to a transport:
-//   transport.deliver(name, text) → { ok }   // hand one message to the messaging layer
-//   transport.drain() → [{ from, text }]     // the messages received since the last drain
-// so the byte-moving stays outside this module (the agent's SendMessage tool in production, a fake
-// in the dry run) while the format and addressing stay in it. T08 composes this with spawn/list/close
-// into the full platform object.
+// createMessaging({ transport }) → { inbox }, the up-channel half of the platform object the loop
+// injects (DESIGN §2.2, §3.4). It binds the wire format to a transport that only reads:
+//   transport.drain() → [{ from, text }]     // the worker reports received since the last drain
+// so the file-moving stays outside this module (the reports drop-dir drain in the bin, a fake in the
+// dry run) while the format and addressing stay in it. There is no `send` — the down-channel is gone
+// (DESIGN §2.2, T03); a blocked worker is answered by the person directly, not routed.
 export function createMessaging({ transport } = {}) {
   return {
-    // send(name, { kind, task, text }) → { ok }. Addressed by agent name (DESIGN §2.8); the worker
-    // builds the coordinator's name itself and is never handed an id.
-    send(name, msg = {}) {
-      const r = transport.deliver(name, encodeMessage(msg));
-      return { ok: r?.ok !== false };
-    },
-    // inbox() → the received messages, each parsed from the wire. Drop-in for the loop's
+    // inbox() → the received reports, each parsed from the wire. Drop-in for the loop's
     // platform.inbox() (DESIGN §3.4): same { from, kind, task, text } shape as the fake.
     inbox() {
       const raw = transport.drain?.() ?? [];
@@ -246,11 +235,11 @@ function defaultRunClaude(args, { cwd } = {}) {
 }
 
 // createPlatform({ root, transport, runClaude, sameRepoRun }) → the full platform object the loop
-// injects (DESIGN §3.2, §3.4): spawn / list / close over real `claude`, and send / inbox over the
-// T07 messaging bound to `transport`. The two runners (claude, git-for-same-repo) are injected so the
-// whole surface is testable and a scratch entry can drive it. In production T09's coordinate.mjs backs
-// `transport` with the agent's own SendMessage tool and inbox; there is no `claude` subcommand that
-// sends a cross-session message, so a Node module cannot deliver one itself (see the header).
+// injects (DESIGN §3.2, §3.4): spawn / list / close over real `claude`, and inbox over the messaging
+// bound to `transport`. The two runners (claude, git-for-same-repo) are injected so the whole surface
+// is testable and a scratch entry can drive it. In the bin `transport` is backed by the `reports/`
+// drop-dir drain (coordinate.mjs); there is no down-channel to back, because the person answers a
+// blocked worker directly (DESIGN §2.2).
 export function createPlatform({
   root = process.cwd(),
   transport,
@@ -328,7 +317,6 @@ export function createPlatform({
       return { ok: true };
     },
 
-    send: messaging.send,
     inbox: messaging.inbox,
   };
 }

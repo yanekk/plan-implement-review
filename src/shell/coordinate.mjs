@@ -1,44 +1,41 @@
-// coordinate.mjs — the entry the `pir-coordinate` skill drives (DESIGN §2.1–§2.9, §3.2 loop.mjs).
-// It is the production coordinator: it wires the reviewed loop (loop.mjs, T05) to the REAL platform
-// (spawn/list/close + messaging, T08) and the REAL worktree (feature/task branches, T06), and gives
-// the skill the three verbs the skill cannot get from the loop alone — run one pass, route a user's
-// answer down to a parked worker, and defer a task to ⛔. loop.mjs already turns decideDispatch into
-// spawns, reviews, merges and closes, and signals when the plan is complete (all ✅, tests run on the
-// feature branch); this module is the thin conversational wrapper around it plus the plan-reviewed
-// refusal, the end-of-run hand-off (§2.4), and the `pir coordinate {slug}` bin.
+// coordinate.mjs — the plain foreground command that runs a reviewed plan in parallel (DESIGN §2.1–§2.9,
+// §3.2 loop.mjs). There is no coordinator session and no `pir-coordinate` skill any more (DESIGN §2.1,
+// T03): this is a program with a stable process, a real Ctrl-C, and its whole state on disk in git. It
+// wires the reviewed loop (loop.mjs) to the REAL platform (spawn/list/close + the reports up-channel)
+// and the REAL worktree (feature/task branches), steps `runPass` once per iteration, and paints a live,
+// in-place status display (src/core/display.mjs + src/shell/render.mjs, §2.3). loop.mjs already turns
+// decideDispatch into spawns, reviews, merges and closes, and signals when the plan is complete (all ✅,
+// tests run on the feature branch); this module adds the plan-reviewed refusal, the end-of-run hand-off
+// (§2.4), the live display, and the `node src/shell/coordinate.mjs {slug}` bin.
 //
 // The controller is injected with its platform and worktree, exactly as runPass is, so the whole of
-// dispatch/surfacing/routing is proven against the fakes in coordinate.test.mjs (DESIGN §4) and the
-// same code runs the live CLI + git in the bin below.
+// dispatch is proven against the fakes in coordinate.test.mjs (DESIGN §4) and the same code runs the
+// live CLI + git in the bin below.
 //
-// The two directions are asymmetric (DESIGN §2.2, T25). DOWN (coordinator → worker) still rides
-// SendMessage: there is no `claude` subcommand that sends a cross-session message — it is an agent tool
-// (platform.mjs header, FINDINGS 2026-09-08) — so the bin cannot deliver an answer itself; it
-// writes the message to the outbox and the coordinator SKILL performs the SendMessage. UP (worker →
-// coordinator) no longer rides the agent at all: a worker WRITES its report into a shared reports
-// drop-dir the bin drains directly (createAgentBridge below), so a routine `implemented`/`done` handoff
-// costs no coordinator LLM turn — the relay that ate ~20–25% of the T19 run is gone. The skill's only
-// up-channel job left is plain-English SURFACING: the bin appends a parked worker's message to a
-// `surfaced` file, and the skill relays it. In the tests the fake platform IS the bus, so the bridge is
-// not exercised there — its live behaviour is hand-verified (the gated fixtures).
+// There is no down-channel (DESIGN §2.2, T03). The coordinator used to relay a worker's question up to
+// the person and the answer back down; the person now finds the asking worker in their own `claude
+// agents` view, attaches, and answers there — nothing is routed. Only the UP-channel remains: a worker
+// drops a one-line report into the control folder's `reports/` drop-dir (createReportInbox below), which
+// a Node process reads directly — no agent needed. The program uses that signal for two things only: to
+// keep a parked worker's slot under the ceiling, and to show its question in the live display so the
+// person can see who is asking. In the tests the fake platform IS the bus, so the report inbox is not
+// exercised there — its live behaviour is hand-verified (T09).
 
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readdirSync, readFileSync, unlinkSync, watch, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 
 import { parseProgress, reconcileTaskRow, progressPathFor } from '../core/progress.mjs';
-import { workerName, coordinatorName, isWorkerOf, parseAgentName } from '../core/naming.mjs';
+import { workerName, isWorkerOf, parseAgentName } from '../core/naming.mjs';
+import { buildDisplay } from '../core/display.mjs';
 import { runPass, createRunState } from './loop.mjs';
 import { createPlatform } from './platform.mjs';
+import { createRenderer } from './render.mjs';
 import { createWorktree } from './worktree.mjs';
 
 const DONE_GLYPH = '✅';
 const READY_GLYPH = '⬜';
 const BLOCKED_GLYPH = '⛔';
-
-// The phase the loop parks a worker in when it is waiting on the user (loop.mjs AWAITING). Kept here
-// so answer() can clear the parked decision it resolves.
-const AWAITING = 'awaiting-answer';
 
 // --- The plan-reviewed gate (DESIGN §2.1) -----------------------------------------------------
 //
@@ -56,12 +53,13 @@ export function readReviewGate(slug, { root = process.cwd() } = {}) {
   return { reviewed: planReviewed.reviewed, note: planReviewed.note, missing: false };
 }
 
-// --- Plain-English surfacing (DESIGN §2.2, §2.5) ----------------------------------------------
+// --- Plain-English surfacing (DESIGN §2.2, §2.3) ----------------------------------------------
 //
 // The loop emits `surface` actions — a worker's question, an unresolved merge conflict, a red feature
-// branch, a promotion that will not merge. The user owns every one of these decisions, and CLAUDE.md
-// requires the coordinator to put them to the user in ordinary words. renderSurface turns one action
-// into a message the skill relays verbatim; the skill presents them one at a time (DESIGN §2.5).
+// branch. renderSurface turns one action into a plain-English message. It is what the live display and
+// the audit log show so the person can read who is asking and why (DESIGN §2.2: the program shows the
+// question, the person answers that worker directly). Nothing is relayed; this is display text, not a
+// route.
 function renderSurface(a) {
   const who = a.task ? `The worker on ${a.task}` : 'The coordinator';
   let message;
@@ -182,43 +180,10 @@ export function startCoordinator({
     };
   }
 
-  // answer({ task, text }) → route the user's decision straight down to the parked worker, immediately
-  // (DESIGN §2.2, §2.5 — the down-channel is direct). Addressed by the worker's deterministic name; the
-  // worker un-parks and resumes on the next pass. The parked decision is cleared so a later pass does
-  // not treat the task as still waiting.
-  function answer({ task, text }) {
-    if (!task) throw new Error('answer: no task');
-    const t = state.tasks[task];
-    // Address the session that actually parked — the role it is in now (an implementer with a
-    // question/decision, or a reviewer's worker that hit a conflict on integrate). t.role tracks it, and
-    // t.slug (stored at spawn) makes the rebuilt name match the exact session the loop spawned (§2.9).
-    const name = workerName({ repo, plan: slug, task, slug: t?.slug, role: t?.role ?? 'implement' });
-    const res = platform.send(name, { kind: 'answer', task, text: text ?? '' });
-    const ok = res?.ok !== false;
-
-    // C (T30): a failed down-send must not be silent. In the live bin platform.send only QUEUES the
-    // answer to the outbox (always ok there) and the coordinator SESSION performs the actual
-    // SendMessage; a genuinely unreachable worker is something only the coordinator can see (its
-    // SendMessage returns an error), so it re-reads the outbox to retry the delivery and, if the worker
-    // is truly gone, surfaces the failure to the user in plain English (skills/pir-coordinate). Against
-    // the fake platform, send reports { ok: false } when the worker is gone — the deterministic
-    // stand-in for that failure, since a live send failure cannot be forced on demand. Either way, when
-    // the send reports failure: record a `send-failed {task}` flow line (a new tag the harness keys on)
-    // and KEEP the parked decision so the answer stays queued for a retry — it is never dropped. Only a
-    // successful send clears the parked decision and logs `answer {task}`.
-    if (!ok) {
-      if (control) control.log(`send-failed ${task}`);
-      return { ok: false, worker: name };
-    }
-    if (t && t.phase === AWAITING) t.decision = null;
-    // Log an `answer {task}` flow line. In the live bin the down-send is the coordinator's SendMessage,
-    // not the bin's: platform.send only QUEUES the answer to the outbox and the coordinator delivers it.
-    // The coordinator watches the flow log, so without this line a queued answer has nothing to wake it
-    // and it hand-polls the outbox to notice the drain (T21 reflection, 2026-09-13). This line is its
-    // cue to deliver the new outbox message.
-    if (control) control.log(`answer ${task}`);
-    return { ok: true, worker: name };
-  }
+  // There is no answer() any more (DESIGN §2.2, T03). The coordinator used to route the person's
+  // decision down to a parked worker; the person now answers that worker directly in its own session and
+  // the worker un-parks itself, so the program routes nothing and never sees the answer. A parked
+  // worker's slot is held (loop.mjs keeps it AWAITING and live) and its question is shown in the display.
 
   // defer({ task }) → the user has decided not to answer this task's question for now (DESIGN §2.5,
   // §2.6). Its row is marked ⛔ on the feature branch so the state survives a restart and its dependents
@@ -250,10 +215,10 @@ export function startCoordinator({
 
   // drive({ maxPasses, onPass }) → run passes until the plan is complete (all ✅, tests run on the
   // feature branch), the kill switch has closed everything, or the run goes quiet (every remaining
-  // worker parked on the user, or nothing left to do). It mirrors loop.drain's stop conditions but runs
-  // through pass(), so onPass sees the surfaced decisions and the completions — which is how the skill
-  // loop and the dry-run harness both step it. A live conversational run does not use this: it steps
-  // pass() itself between the user's turns. On completion it carries the hand-off result out.
+  // worker parked on the person, or nothing left to do). It mirrors loop.drain's stop conditions but runs
+  // through pass(), so onPass sees each pass's surfaces and completions — which is how the dry-run tests
+  // and harness step it. The live bin (main) steps pass() itself so it can paint between passes. On
+  // completion it carries the hand-off result out.
   function drive({ maxPasses = 200, onPass } = {}) {
     let idle = 0;
     for (let p = 1; p <= maxPasses; p++) {
@@ -271,55 +236,23 @@ export function startCoordinator({
     return { reason: 'maxPasses', passes: maxPasses, complete: false };
   }
 
-  return { state, pass, answer, defer, drive };
+  return { state, pass, defer, drive };
 }
 
-// --- The file bridge between the bin and the coordinator agent (DESIGN §2.2, T25) -------------
+// --- The worker up-channel: the reports drop-dir the bin drains directly (DESIGN §2.2, §3.5) --
 //
-// A Node process cannot call SendMessage or hold a cross-session inbox — both are agent tools. The
-// bridge is how the deterministic driver (the bin) and the agent (the skill) hand messages across a
-// filesystem boundary. It is now asymmetric, because only the DOWN direction needs the agent:
-//
-//   - reports/ — the UP-channel (worker → coordinator, T25). A worker WRITES one JSON file per report
-//                here — `{ from, text }`, `text` being its `[pir:v1 …]` message — and transport.drain()
-//                reads and removes each. No agent turn: the bin ingests a worker's implemented/done/
-//                question directly. The relay that made the coordinator re-encode every message (the
-//                ~20–25% cost of the T19 run) is gone. A worker writes temp-then-rename so the bin never
-//                reads a half-written file; a file that still will not parse is dropped, not guessed,
-//                exactly as a malformed inbox line was.
-//   - outbox   — the DOWN-channel (coordinator → worker). platform.send writes each message here (since
-//                T30 the only down-send is the answer to a parked worker; the spawn hello is retired);
-//                the agent reads it and performs the actual SendMessage, because a Node process cannot
-//                send one. Append-only, owned by the bin. A send the agent cannot deliver (the worker is
-//                gone) is re-read from here and retried, and surfaced as `send-failed` if truly
-//                unreachable (C, T30) — the answer is never silently dropped.
-//   - answers  — the user's decisions (T12 Problem 2). The skill APPENDS one JSON line per decision,
-//                `{ "task": "T05", "text": "…" }` to answer or `{ "task": "T05", "defer": true }` to defer;
-//                the bin drains it each pass and routes it to answer()/defer(). Without it a surfaced
-//                question had no way down (the drill's bin only printed surfaces).
-//   - surfaced — the plain-English relay feed (T25). When the bin parks a worker on a question/decision/
-//                conflict it appends the rendered surface here; the skill reads it, keyed by task, and
-//                relays it to the user. This replaces the agent having the text because it received the
-//                worker's SendMessage — it no longer does, so the bin hands it the text instead.
-//
-// The wire format and addressing stay in platform.mjs (it owns encodeMessage/parseMessage); this only
-// moves the encoded strings across the boundary. The unit tests use the fake platform (its own bus, no
-// bridge); the live bridge is hand-verified by the gated fixtures.
-export function createAgentBridge({ dir } = {}) {
+// A worker reports UP by dropping one JSON file per report into `reports/` — `{ from, text }`, `text`
+// being its `[pir:v1 …]` message — and the bin reads and removes each. No agent turn: a Node process
+// reads a plain file drop directly. There is no DOWN-channel any more (DESIGN §2.2, T03): the person
+// replies to a blocked worker directly in its own session, so the bin routes nothing and the down-channel
+// feeds are gone with the relay. A worker writes temp-then-rename so the bin never
+// reads a half-written file; a file that still will not parse is dropped, not guessed. The transport
+// this returns is exactly what platform.mjs's createMessaging binds inbox() to (createPlatform). The
+// unit tests use the fake platform (its own bus, no drop-dir); the live drop-dir is hand-verified (T09).
+export function createReportInbox({ dir } = {}) {
   mkdirSync(dir, { recursive: true });
-  const outboxPath = join(dir, 'outbox');
-  const answersPath = join(dir, 'answers');
   const reportsDir = join(dir, 'reports');
-  const surfacedPath = join(dir, 'surfaced');
   mkdirSync(reportsDir, { recursive: true });
-
-  const drainJsonLines = (path) => {
-    const lines = existsSync(path)
-      ? readFileSync(path, 'utf8').split('\n').map((l) => l.trim()).filter(Boolean)
-      : [];
-    if (existsSync(path)) writeFileSync(path, ''); // consumed
-    return lines;
-  };
 
   // Drain the reports drop-dir: each *.json file is one worker report, read exactly once and removed.
   // Files are processed in name order (workers name them with a leading timestamp, so reports are
@@ -357,44 +290,13 @@ export function createAgentBridge({ dir } = {}) {
   };
 
   return {
-    outboxPath,
-    answersPath,
     reportsDir,
-    surfacedPath,
-    // The transport platform.mjs's createMessaging binds to: deliver one message down (outbox), drain
-    // the reports the workers dropped up.
+    // The transport platform.mjs's createMessaging binds inbox() to: drain the reports workers dropped
+    // up. There is no `deliver` — the down-channel is gone (DESIGN §2.2).
     transport: {
-      deliver(name, text) {
-        writeFileSync(outboxPath, JSON.stringify({ to: name, text }) + '\n', { flag: 'a' });
-        return { ok: true };
-      },
       drain() {
         return drainReports();
       },
-    },
-    // drainAnswers() → the user decisions the skill has written since the last drain, each an
-    // { task, text } to answer or { task, defer: true, note? } to defer (DESIGN §2.5). The bin feeds
-    // each to answer()/defer(). A malformed line is dropped, never guessed into a decision.
-    drainAnswers() {
-      return drainJsonLines(answersPath)
-        .map((l) => {
-          try {
-            return JSON.parse(l);
-          } catch {
-            return null;
-          }
-        })
-        .filter((d) => d && d.task);
-    },
-    // recordSurface(s) → append one rendered surface (renderSurface's { task, kind, text, message }) to
-    // the surfaced feed, so the skill can relay a parked worker's message in plain English without ever
-    // having received it (T25). Best-effort: a surfaced write must never break the loop.
-    recordSurface(s) {
-      try {
-        writeFileSync(surfacedPath, JSON.stringify(s) + '\n', { flag: 'a' });
-      } catch {
-        /* surfacing to the feed is best-effort; the flow log's `surface {task}` line still fired */
-      }
     },
   };
 }
@@ -509,15 +411,14 @@ export function renderHandoff({ readyToMerge, taskCount, slug } = {}) {
   );
 }
 
-// --- The `pir coordinate {slug}` bin entry ----------------------------------------------------
+// --- The `node src/shell/coordinate.mjs {slug}` bin entry --------------------------------------
 //
-// A thin front door: refuse an unreviewed plan (the same gate the skill checks), otherwise stand up the
-// real platform + worktree + control and drive the loop, printing each pass's surfaces and completions
-// for the skill to relay. The live message bytes are bridged to the agent through createAgentBridge (an
-// answer the agent SendMessages, a worker message the agent appends to the inbox). This bin is the
-// deterministic half of the coordinator; the conversational half — relaying to the user, taking answers
-// — is the skill (skills/pir-coordinate). The full live drive over real agents is verified in T10; run
-// here it will spawn real paid workers, so it is guarded to a bounded ceiling.
+// The whole coordinator: refuse an unreviewed plan (DESIGN §2.1), otherwise stand up the real platform
+// + worktree + control, step the loop once per iteration, and paint the live status display (§2.3). It
+// drains a worker's UP-report through the reports drop-dir (createReportInbox); it routes nothing down,
+// because the person answers a blocked worker directly (§2.2). There is no coordinator session and no
+// skill — this is a plain foreground process (§2.1). The full live drive over real agents is
+// hand-verified in T09; run here it spawns real paid workers, so it is guarded to a bounded ceiling.
 
 function gitStdout(cwd, args) {
   try {
@@ -592,21 +493,19 @@ export function fileControl(repo, slug) {
 
 // --- Restart hygiene for the control folder (DESIGN §2.7, §7) ---------------------------------
 //
-// The control folder is reused across a restart. clearTransientFeeds empties the live-run conversation
-// buffers so a dead run's leftovers never route into a fresh run:
-//   reports/ (worker→coordinator up-channel), answers (the person's queued decisions), outbox
-//   (coordinator→worker down-channel), surfaced (the plain-English relay feed).
-// A leftover in any one of them would deliver a stale answer to a fresh worker, replay a stale
-// down-message, or re-relay a stale surface. The two DURABLE records are never touched here — `log` is
-// the audit trail and the harness signal, and `HALT` is the deliberate stop whose whole value is
-// surviving a restart until a person removes it (auto-clearing it would defeat the kill switch, §2.7).
+// The control folder is reused across a restart. clearTransientFeeds empties the one transient feed —
+// `reports/`, the worker up-channel (DESIGN §3.5) — so a dead run's leftover reports never route into a
+// fresh run. The down-channel feeds are gone (removed with the relay, DESIGN §2.2, T03), so reports/ is
+// all that is left to clear. The two DURABLE records are never touched
+// here — `log` is the audit trail and the harness signal, and `HALT` is the deliberate stop whose whole
+// value is surviving a restart until a person removes it (auto-clearing it would defeat the kill switch,
+// §2.7).
 //
-// Clearing runs on every startup, not only a detected restart: a genuine first start has these feeds
-// empty, so an unconditional clear is safe and needs no restart detection (matches the reconciliation
-// approach in §2.1). The append-only feeds are truncated, not deleted, so their paths still exist for
-// this run to append to; reports/ is a dir of one-file-per-report, so emptying its *.json is the clear.
-// Best-effort per feed: a missing feed is nothing to clear, and no feed's clear may throw the run down.
-// Returns which feeds it actually touched, for the startup log line.
+// Clearing runs on every startup, not only a detected restart: a genuine first start has reports/ empty,
+// so an unconditional clear is safe and needs no restart detection (matches the reconciliation approach
+// in §2.1). reports/ is a dir of one-file-per-report, so emptying its *.json is the clear. Best-effort:
+// a missing feed is nothing to clear, and its clear may never throw the run down. Returns what it
+// touched, for the startup log line.
 export function clearTransientFeeds(controlDir) {
   const cleared = [];
 
@@ -625,18 +524,6 @@ export function clearTransientFeeds(controlDir) {
     }
   } catch {
     /* cannot read the dir — best-effort, leave it */
-  }
-
-  for (const name of ['answers', 'outbox', 'surfaced']) {
-    const p = join(controlDir, name);
-    try {
-      if (existsSync(p)) {
-        writeFileSync(p, '');
-        cleared.push(name);
-      }
-    } catch {
-      /* best-effort; a feed we cannot truncate must not break startup */
-    }
   }
 
   return { cleared };
@@ -658,11 +545,11 @@ export function startupControlHygiene(control) {
 }
 
 // waitForReport(reportsDir, timeoutMs) → resolve as soon as anything changes in the reports drop-dir,
-// or after timeoutMs, whichever comes first (DESIGN §2.2, T25). This is the "react, don't poll" half:
-// a worker dropping a report file wakes the loop immediately, and the timeout is only a backstop so a
-// missed filesystem event (or a human answer written to the answers file) is still picked up within a
-// poll interval. fs.watch may be unavailable on some filesystems — then this degrades to a plain
-// timeout, which is exactly the old polling behaviour, so correctness never depends on the watch firing.
+// or after timeoutMs, whichever comes first (DESIGN §2.2). This is the "react, don't poll" half: a
+// worker dropping a report file wakes the loop immediately, and the timeout is only a backstop so a
+// missed filesystem event is still picked up within a poll interval. fs.watch may be unavailable on
+// some filesystems — then this degrades to a plain timeout, which is exactly the old polling behaviour,
+// so correctness never depends on the watch firing.
 function waitForReport(reportsDir, timeoutMs) {
   return new Promise((resolve) => {
     let done = false;
@@ -702,6 +589,58 @@ export function runFeatureTests(featurePath) {
   }
 }
 
+// --- Feeding the live display (DESIGN §2.3, §3.4) ---------------------------------------------
+//
+// The pure display model (src/core/display.mjs) takes the run state a pass produces and returns the
+// rows/summary/footer as data. These two helpers assemble that run state from a pass result and the
+// tracked worker state, mapping the loop's internal phase names onto the display's vocabulary. They are
+// shell glue but read no clock or fs — `now`, `since` and `doneMs` arrive as arguments — so the mapping
+// is unit-tested; only the painting itself is judged by eye (T09).
+
+// displayPhaseFor(t) → the display phase for a tracked worker, or null when no worker holds the task. A
+// worker parked on the person (AWAITING, §2.2) is `asking` whatever its role; otherwise the role names
+// it — an implementer (or a `you` scribe) is `building`, a fresh reviewer is `reviewing`.
+export function displayPhaseFor(t) {
+  if (!t) return null;
+  if (t.phase === 'awaiting-answer') return 'asking';
+  if (t.role === 'review') return 'reviewing';
+  return 'building';
+}
+
+// buildRunState({ passTasks, stateTasks, branch, ceiling, sinceByTask, doneMsByTask, complete,
+// readyToMerge, interrupted }) → the runState buildDisplay consumes (DESIGN §2.3). passTasks are the
+// parsed PROGRESS rows the pass returned ({ num, name, deps, state }); stateTasks is
+// coordinator.state.tasks (the live workers). A ✅ row is done; otherwise a tracked worker's phase names
+// the row. sinceByTask/doneMsByTask carry the phase-start and final-duration times the shell tracks.
+export function buildRunState({
+  passTasks,
+  stateTasks = {},
+  branch,
+  ceiling,
+  sinceByTask = {},
+  doneMsByTask = {},
+  complete = false,
+  readyToMerge = false,
+  interrupted = false,
+} = {}) {
+  const tasks = passTasks.map((t) => {
+    const done = t.state === DONE_GLYPH;
+    const st = done ? null : stateTasks[t.num];
+    const phase = st ? displayPhaseFor(st) : null;
+    return {
+      id: t.num,
+      slug: t.name,
+      deps: t.deps,
+      done,
+      phase,
+      since: phase ? sinceByTask[t.num] ?? null : null,
+      doneMs: done ? doneMsByTask[t.num] ?? null : null,
+      question: phase === 'asking' ? st.decision?.text ?? null : null,
+    };
+  });
+  return { branch, ceiling, complete, readyToMerge: !!readyToMerge, interrupted: !!interrupted, tasks };
+}
+
 async function main(argv) {
   const slug = argv[0];
   if (!slug) {
@@ -728,22 +667,23 @@ async function main(argv) {
     process.exit(1);
   }
 
-  console.log(`Coordinator ${coordinatorName({ repo, plan: slug })} — plan reviewed (${gate.note}).`);
+  console.log(`pir ${slug} — plan reviewed (${gate.note}). This is a plain command; there is no coordinator session.`);
 
   const maxWorkers = Number(process.env.PARALLEL_MAX_WORKERS ?? 4);
 
-  // Live seatbelt (DESIGN §5.2). This bin spawns REAL, paid `claude` workers and, on success, merges to
-  // the user's main. A full multi-worker live drive is not hand-verified until T10, and the rule is
-  // never to run the unbounded version to find something out. So the loop only runs with an explicit
-  // opt-in; without it the bin does the safe half — confirm the gate, show what it WOULD dispatch — and
-  // stops. The T09 person-check runs the live path deliberately on the scratch plan, ceiling 1:
+  // Live seatbelt (DESIGN §5.2). This bin spawns REAL, paid `claude` workers and cuts pir/{slug}
+  // branches. A full multi-worker live drive is hand-verified in T09, and the rule is never to run the
+  // unbounded version to find something out. So the loop only runs with an explicit opt-in; without it
+  // the bin does the safe half — confirm the gate, show what it WOULD dispatch — and stops. The run
+  // never merges to main (§2.4); the person does that by hand. The T09 person-check runs the live path
+  // deliberately on the scratch plan, ceiling 1:
   //   PARALLEL_LIVE=1 PARALLEL_MAX_WORKERS=1 node src/shell/coordinate.mjs scratch
   if (process.env.PARALLEL_LIVE !== '1') {
     const { tasks } = parseProgress(readFileSync(join(root, progressPathFor(slug)), 'utf8'));
     const ready = readyWaiting(tasks, new Set());
     console.log(
-      `\nDRY: not spawning real workers (set PARALLEL_LIVE=1 to actually drive — the multi-worker\n` +
-        `live drive is hand-verified in T10, and the first live run is seatbelted: scratch plan, ceiling 1).\n` +
+      `\nDRY: not spawning real workers (set PARALLEL_LIVE=1 to actually drive — the live drive is\n` +
+        `hand-verified in T09, and the first live run is seatbelted: scratch plan, ceiling 1).\n` +
         `Ready to dispatch now: ${ready.length ? ready.join(', ') : '(none)'}.`,
     );
     return;
@@ -772,9 +712,9 @@ async function main(argv) {
   const control = fileControl(root, slug);
 
   // Restart hygiene (DESIGN §2.7): before this run writes anything, refuse a still-HALTed run (naming
-  // the flag, never clearing it) and clear the dead run's transient feeds so none of its leftovers route
-  // into a fresh worker. Runs before createAgentBridge and the loop, so neither side has written a feed
-  // yet this run. The log and HALT are preserved; a `restart` marker records the boundary.
+  // the flag, never clearing it) and clear the dead run's transient reports so none of its leftovers
+  // route into a fresh worker. Runs before the report inbox and the loop, so neither side has written a
+  // report yet this run. The log and HALT are preserved; a `restart` marker records the boundary.
   const hygiene = startupControlHygiene(control);
   if (hygiene.halted) {
     console.error(
@@ -787,35 +727,33 @@ async function main(argv) {
   }
   if (hygiene.cleared.length) console.log(`cleared stale control feeds from a prior run: ${hygiene.cleared.join(', ')}`);
 
-  const bridge = createAgentBridge({ dir: control.dir });
-  const platform = createPlatform({ root, transport: bridge.transport });
+  const inbox = createReportInbox({ dir: control.dir });
+  const platform = createPlatform({ root, transport: inbox.transport });
   const worktree = createWorktree({ root });
   const coordinator = startCoordinator({ slug, repo, platform, worktree, maxWorkers, control, runTests: runFeatureTests });
+  const renderer = createRenderer({ stream: process.stdout });
 
   console.log(`ceiling: ${maxWorkers}   control: ${control.dir}`);
   console.log(`ABORT:   touch ${control.flag}`);
-  console.log(`reports: ${bridge.reportsDir}   outbox: ${bridge.outboxPath}   answers: ${bridge.answersPath}`);
-  console.log(`surfaced:${bridge.surfacedPath}`);
-  // The coordinator SESSION — the pir-coordinate skill agent that runs this bin — is launched under this
-  // name (DESIGN §2.8): it is the identity the user sees in `claude agents --json` and the address its
-  // answer down-sends go out FROM. Under T25 a worker reports UP by dropping a file (no SendMessage to
-  // the coordinator) and under T30 there is no spawn hello, so nothing now depends on a worker resolving
-  // this name at spawn; the DOWN answer sends and the operator's `claude agents` view still want it, so
-  // it is kept and printed. Launch with `claude -n "<name>"` (the same -n workers use).
-  console.log(`\nCoordinator name (launch the session under it with claude -n):  ${coordinatorName({ repo, plan: slug })}\n`);
+  console.log(`reports: ${inbox.reportsDir}`);
+  // A blocked worker is answered by the person DIRECTLY (DESIGN §2.2): find it in `claude agents`,
+  // attach, and reply there. Nothing is routed through this command, so there is no coordinator session
+  // and no answers file to write to.
+  console.log(`\nA worker that asks you shows in the display below; answer it directly with \`claude agents\`.\n`);
 
-  // Tear down every live worker of this run on any exit that is not a clean promotion or a kill-switch
-  // halt (both of which the loop already handled). This is the P6 orphan-guard: a safety cap, a stall,
-  // a Ctrl-C or an error must not leave a paid session running. Idempotent (close is safe twice).
+  // Tear down every live worker of this run on any exit that is not a clean hand-off or a kill-switch
+  // halt (both of which the loop already handled). This is the orphan-guard: a safety cap, a stall, a
+  // Ctrl-C or an error must not leave a paid session running (DESIGN §2.6). Idempotent (close is safe
+  // twice). A re-run reaps whatever a second Ctrl-C during teardown left behind (§2.6, §2.8).
   const teardown = () => teardownRun({ platform, worktree, state: coordinator.state, repo, slug, control });
   let tornDown = false;
   const teardownOnce = (why) => {
     if (tornDown) return;
     tornDown = true;
     const { closed } = teardown();
-    if (closed.length) console.log(`\n=== ${why}: closed ${closed.length} live worker(s) so none is orphaned ===`);
+    if (closed.length) renderer.line(`\n=== ${why}: closed ${closed.length} live worker(s) so none is orphaned ===`);
   };
-  // A signal (Ctrl-C, or the OS asking us to stop) must close workers before we go. Register once.
+  // A signal (Ctrl-C, or the OS asking us to stop) must close workers before we go (DESIGN §2.6). Register once.
   for (const sig of ['SIGINT', 'SIGTERM']) {
     process.on(sig, () => {
       teardownOnce(`${sig} received`);
@@ -823,96 +761,108 @@ async function main(argv) {
     });
   }
 
+  // Per-task timing for the display's elapsed clocks (DESIGN §2.3): when each task's current phase began
+  // (for `now − since`) and, once merged, how long it took. Tracked here in the shell, never in the pure
+  // model. A completed task is dropped from state.tasks at merge, so its start is remembered separately.
+  const startByTask = {};
+  const phaseByTask = {};
+  const sinceByTask = {};
+  const doneMsByTask = {};
+  const trackTiming = (stateTasks, completed) => {
+    const t = Date.now();
+    for (const [num, st] of Object.entries(stateTasks)) {
+      if (startByTask[num] == null) startByTask[num] = t;
+      const ph = displayPhaseFor(st);
+      if (phaseByTask[num] !== ph) {
+        phaseByTask[num] = ph;
+        sinceByTask[num] = t;
+      }
+    }
+    for (const num of completed) {
+      if (doneMsByTask[num] == null) doneMsByTask[num] = t - (startByTask[num] ?? t);
+    }
+  };
+
   const POLL_MS = Number(process.env.PARALLEL_POLL_MS ?? 5000);
-  // A safety cap only — the run's real end is promotion, halt, or a stall, not a fixed pass budget
-  // (the drill exited on its budget and orphaned a worker; T12 Problem 6). At the cap we tear down.
+  // A safety cap only — the run's real end is the hand-off, a halt, or a stall, not a fixed pass budget
+  // (the drill exited on its budget and orphaned a worker; DESIGN §2.6). At the cap we tear down.
   const MAX_PASSES = Number(process.env.PARALLEL_MAX_PASSES ?? 5000);
   const CEILING = maxWorkers;
   const OVER_GRACE = Number(process.env.PARALLEL_OVER_GRACE ?? 3);
   const STALL_GRACE = 3; // consecutive quiet passes with nothing live before the run is declared done
+  const branch = `pir/${slug}`;
 
   let over = 0;
   let idle = 0;
   try {
     for (let p = 1; p <= MAX_PASSES; p++) {
-      // Route any user decisions the skill has written to the answers file DOWN to their workers
-      // before this pass runs (DESIGN §2.5; T12 Problem 2). answer() sends to the parked worker;
-      // defer() marks ⛔ and frees the slot. Guarded so a bad line never breaks the loop.
-      for (const d of bridge.drainAnswers()) {
-        try {
-          if (d.defer) {
-            coordinator.defer({ task: d.task, note: d.note });
-            console.log(`  routed: deferred ${d.task} (⛔)`);
-          } else {
-            const res = coordinator.answer({ task: d.task, text: d.text ?? '' });
-            // res.ok is false only when the queue itself refused (the live outbox always accepts, so a
-            // genuine live delivery failure is caught by the coordinator SESSION's SendMessage instead,
-            // C/T30). Either way, never print "routed" for a send that did not queue — answer() has
-            // already logged `send-failed {task}` for it.
-            console.log(res.ok ? `  routed: answer → ${d.task}` : `  send-failed → ${d.task} (queued answer not delivered)`);
-          }
-        } catch (e) {
-          console.error(`  could not route a decision for ${d.task}: ${e.message}`);
-        }
-      }
-
       const r = coordinator.pass();
-      // Announce a resume before the pass's own progress (DESIGN §2.8): on a restart the first pass
-      // reconciled from git, and the summary names what it adopted so the run does not look like a fresh
-      // start. Only ever set on the first pass of a run that adopted work.
-      if (r.restartSummary) console.log(`  ↻ ${r.restartSummary}`);
-      for (const c of r.completed) console.log(`  ✅ ${c} reached done and merged into the feature branch`);
-      for (const y of r.youToDrive) console.log(`  hands-on: go drive worker "${y.worker}" for ${y.task}`);
-      // A surfaced decision is written to the `surfaced` feed (the reliable channel the skill reads,
-      // keyed by task) as well as printed (block-buffered stdout is not reliable — DESIGN, T25).
-      for (const s of r.surfaces) {
-        bridge.recordSurface(s);
-        console.log(`  DECISION NEEDED (${s.task ?? '-'}): ${s.message}`);
-      }
-      if (r.ceilingFull) console.log(`  (ceiling full; waiting: ${r.waiting.join(', ')})`);
+      trackTiming(coordinator.state.tasks, r.completed);
+
+      // A restart's one-line reconciliation summary scrolls above the live block, so the run does not
+      // look like a fresh start (DESIGN §2.8). Only ever set on the first pass of a run that adopted work.
+      if (r.restartSummary) renderer.line(`  ↻ ${r.restartSummary}`);
+      // A `you`/verify task needs the person to run its live steps (still present until T04 removes the
+      // path). Point them at the worker; the display shows it as a running row.
+      for (const y of r.youToDrive) renderer.line(`  hands-on: drive worker "${y.worker}" for ${y.task}`);
+
       if (r.halted) {
-        console.log('\n=== HALTED by the kill switch — workers stopped, nothing merged ===');
+        renderer.line('\n=== HALTED by the kill switch — workers stopped, nothing merged ===');
         return; // the halt pass already closed every worker
       }
+
+      // Paint the live display: the pass's tasks and worker phases, the ceiling, the asking-you footer,
+      // and — when complete — the hand-off (DESIGN §2.3). The model is pure; the renderer paints it in
+      // place on a TTY and as plain lines otherwise.
+      const runState = buildRunState({
+        passTasks: r.tasks,
+        stateTasks: coordinator.state.tasks,
+        branch,
+        ceiling: CEILING,
+        sinceByTask,
+        doneMsByTask,
+        complete: r.complete,
+        readyToMerge: !!r.readyToMerge,
+      });
+      renderer.paint(buildDisplay(runState, { now: Date.now() }));
+
       if (r.complete) {
-        // The plan is done and the loop has run the feature-branch tests (§2.4). Hand the branch off:
-        // on green, print the `git merge` command for the person to run; on red, print the failure and
-        // offer no merge (§2.8). The run never merges to main itself. The complete pass has no live
-        // workers, so nothing is orphaned by returning here.
-        console.log('\n' + renderHandoff({ readyToMerge: r.readyToMerge, taskCount: r.tasks.length, slug }));
+        // The plan is done and the loop has run the feature-branch tests (§2.4). Hand the branch off: on
+        // green, print the `git merge` command for the person to run; on red, print the failure and offer
+        // no merge (§2.8). The run never merges to main itself. The complete pass has no live workers, so
+        // nothing is orphaned by returning here.
+        renderer.line('\n' + renderHandoff({ readyToMerge: r.readyToMerge, taskCount: r.tasks.length, slug }));
         return;
       }
 
-      // Runaway breaker (DESIGN §5.2; T12 Problem 5). Count THIS run's workers only — the coordinator's
-      // own session shares the git-dir and must not trip it. r.live is already that count (loop.mjs
-      // filters), so reuse it rather than re-listing.
+      // Runaway breaker (DESIGN §5.2). Count THIS run's workers only — a foreign session sharing the
+      // git-dir must not trip it. r.live is already that count (loop.mjs filters), so reuse it.
       const verdict = runawayVerdict({ liveCount: r.live, ceiling: CEILING, overPasses: over, overGrace: OVER_GRACE });
       over = verdict.over;
       if (verdict.abort) {
-        console.error(`\nABORT: ${r.live} live workers over ceiling ${CEILING} for ${over} pass(es) — a runaway.`);
+        renderer.line(`\nABORT: ${r.live} live workers over ceiling ${CEILING} for ${over} pass(es) — a runaway.`);
         teardownOnce('runaway');
         return;
       }
 
-      // Stall detection: a pass that did nothing AND has nothing live is the run genuinely finished
-      // (all tasks ✅ and handed off, or everything deferred). A parked worker (live > 0) is
-      // NOT a stall — it waits for the user's answer, so the loop keeps polling for it.
+      // Stall detection: a pass that did nothing AND has nothing live is the run genuinely finished (all
+      // tasks ✅ and handed off, or everything deferred). A parked worker (live > 0) is NOT a stall — it
+      // waits for the person's answer, so the loop keeps polling for it.
       const productive = r.actions.some((a) => ['spawn', 'review', 'merge', 'close'].includes(a.type));
       idle = !productive && r.live === 0 ? idle + 1 : 0;
       if (idle >= STALL_GRACE) {
-        console.log('\n=== nothing left to do (no live workers, nothing to dispatch or hand off) ===');
+        renderer.line('\n=== nothing left to do (no live workers, nothing to dispatch or hand off) ===');
         teardownOnce('stalled'); // a no-op when nothing is live; still safe
         return;
       }
 
-      // React to a worker's report instead of only polling for it (DESIGN §2.2, T25). A worker drops
-      // its report into reports/, so watch that dir and wake the moment a file lands; POLL_MS is only a
-      // backstop (a missed fs.watch event, or an answer the skill wrote — answers are human-paced, so a
-      // poll-latency pickup is fine). Only reports/ is watched, never the control dir at large, so the
-      // bin's OWN writes this pass (the flow log, outbox, surfaced) cannot wake it into a busy spin.
-      await waitForReport(bridge.reportsDir, POLL_MS);
+      // React to a worker's report instead of only polling for it (DESIGN §2.2). A worker drops its
+      // report into reports/, so watch that dir and wake the moment a file lands; POLL_MS is only a
+      // backstop for a missed fs.watch event. Only reports/ is watched, never the control dir at large,
+      // so the bin's OWN writes this pass (the flow log) cannot wake it into a busy spin.
+      await waitForReport(inbox.reportsDir, POLL_MS);
     }
-    console.log('\n=== safety cap reached ===');
+    renderer.line('\n=== safety cap reached ===');
     teardownOnce('safety cap');
   } catch (e) {
     teardownOnce('error');

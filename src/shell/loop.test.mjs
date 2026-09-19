@@ -498,8 +498,28 @@ test('no hello is sent or logged at any spawn — the loop makes no down-send of
 
   const hellos = platform.sent.filter((s) => s.msg.kind === 'hello');
   assert.equal(hellos.length, 0, 'no hello message was ever sent at spawn');
-  // The loop no longer calls platform.send at all; the only down-send is coordinate.answer()'s answer.
-  assert.equal(platform.sent.length, 0, 'the loop sent nothing — it opens no channel at spawn');
+  // The loop never calls platform.send — there is no down-channel (DESIGN §2.2, T03): a blocked worker
+  // is answered by the person directly, nothing is routed. So the loop opens and uses no send path.
+  assert.equal(platform.sent.length, 0, 'the loop sent nothing — there is no down-channel');
+});
+
+test('a question report keeps the worker slot and is recorded, and the loop routes no answer (DESIGN §2.2, T03)', (t) => {
+  const { platform, base } = setup(t, [{ num: 'T01' }, { num: 'T02' }], { behaviors: { T01: { question: 'which format?' } } });
+  const state = createRunState();
+  runPass({ ...base, state }); // spawn T01, T02
+  const r2 = runPass({ ...base, state }); // T01 asks
+
+  // The report is RECORDED for the display, not relayed: a `surface` action names the parked task.
+  const surfaced = r2.actions.find((a) => a.type === 'surface' && a.task === 'T01');
+  assert.ok(surfaced, 'the question is recorded as a surface action for the live display');
+
+  // The worker KEEPS its slot: it is still tracked, parked AWAITING, and counts as live (so the ceiling
+  // holds it) — a parked worker is alive, not dead (DESIGN §2.2).
+  assert.equal(state.tasks.T01.phase, 'awaiting-answer', 'the parked worker holds its slot, AWAITING');
+  assert.ok(r2.liveAfter >= 1, 'the parked worker still counts as live');
+
+  // No answer is routed: the loop never calls a platform send — the person answers the worker directly.
+  assert.equal(platform.sent.length, 0, 'the loop routed no answer down — there is no down-channel');
 });
 
 test('the loop still runs against a platform with no send half (no crash) (T13/T30)', (t) => {
