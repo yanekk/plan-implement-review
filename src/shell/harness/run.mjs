@@ -1,39 +1,39 @@
-// The live-scenario harness's runner + bin (DESIGN §4.1, §5.2, T17). It ties the other three harness
-// layers together and drives one scenario for real: install a fixture into a fresh scratch repo (T16),
-// launch a REAL coordinator session under its convention name (DESIGN §2.8), capture the run (T14), let
-// the coordinator drive to promotion / halt / stall, then seal the bundle and check it against the
-// scenario's declared facts (T15). It prints a fact-by-fact report and exits non-zero on any failed
-// fact — the verdict is data, not a person's recollection.
+// The live-scenario harness's runner + bin (DESIGN §4.1, §5.2, §2.1, T17/T05). It ties the other three
+// harness layers together and drives one scenario for real: install a fixture into a fresh scratch repo
+// (T16), launch the REAL coordinator (§2.1), capture the run (T14), let the coordinator drive to its
+// hand-off / a Ctrl-C / a stall, then seal the bundle and check it against the scenario's declared facts
+// (T15). It prints a fact-by-fact report and exits non-zero on any failed fact — the verdict is data.
 //
-// It folds in T10 (the full multi-worker + kill-switch drill) and T13's live half (the comms proof):
-// each is one scenario here, run with captured data.
+// WHY THE COORDINATOR IS A PLAIN CHILD PROCESS, NOT A SESSION (DESIGN §2.1, §2.6, §2.9). The coordinator
+// is `node src/shell/coordinate.mjs {slug}`, a foreground process — no `claude` session, no agent name,
+// so it never appears in `claude agents`. The runner SPAWNS that process, holds its pid, and detects the
+// run finishing by the process EXITING (it prints the hand-off and returns). This is the property the
+// whole design rests on: a plain process has a stable pid, so the runner can crash it with a real signal
+// and prove kill-and-rebuild (§2.6) — which an agentic coordinator, whose background session rotates its
+// process pool each turn, never could (coordinator-restart-resume T07). The message relay, the
+// down-channel `answers` file, and the `you`/hands-on driving are all gone with the agentic half (§2.2,
+// §2.5); the person answers a blocked worker directly and the runner routes nothing.
 //
-// WHY THE COORDINATOR IS A SEPARATE SESSION, NOT IN-PROCESS. The coordinator must hold a SendMessage
-// inbox and address workers by name (DESIGN §2.2, §2.8), and a Node process cannot — SendMessage is an
-// agent tool (coordinate.mjs header). So the runner LAUNCHES the coordinator as a real `claude -n`
-// session whose opening turn is `/pir-coordinate {slug}` (DESIGN §2.8), and orchestrates AROUND it:
-// install, capture, wait, seal, check — and, on every exit, teardown so no paid worker is orphaned.
-//
-// THE BUILD HALF IS `auto` AND FULLY TESTABLE (T17 acceptance). Everything platform-shaped is injected
-// exactly as the coordinator's own tests inject it: the `claude` runner (launch + capture ticks + the
-// teardown platform), the git runner (fixture seed + capture git log), the timers and the clock. So
-// fixture install, launch-argv/env construction, capture start/seal, the timeout→HALT path,
-// teardown-on-exit and the checkScenario wiring are all proven with NO live agent (DESIGN §5.2 dry-run
-// seatbelt). Only actually spawning a real coordinator + real workers needs a person — the `you` half.
+// THE ORCHESTRATION IS FULLY TESTABLE (T17 acceptance). Everything platform-shaped is injected: the
+// process `spawn` (launch + crash), the `claude` runner (capture ticks + worker teardown), the git
+// runner (fixture seed + capture git log), the timers and the clock. So the launch, the exit-detection,
+// the timeout→HALT path, the crash-and-relaunch, teardown-on-exit and the checkScenario wiring are all
+// proven with NO live agent (DESIGN §5.2 dry-run seatbelt). Only actually spawning a real coordinator +
+// real workers needs a person — the live half (T09).
 //
 // SEATBELTS ON EVERY LIVE RUN (DESIGN §5.2): a scratch plan in a scratch repo; the scenario's own low
 // ceiling (passed as PARALLEL_MAX_WORKERS); the kill switch wired (the coordinator's HALT flag); and a
 // per-scenario wall-clock timeout that auto-touches HALT so a hung real worker cannot run — or cost —
 // unboundedly. The runner tears every worker down on any exit (reusing the coordinator's teardownRun
-// orphan-guard, T12 P6).
+// orphan-guard, T12 P6) and kills the coordinator process too.
 
-import { existsSync, mkdirSync, writeFileSync, appendFileSync, readFileSync, readdirSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync } from 'node:fs';
 import { join, basename } from 'node:path';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawn as nodeSpawn } from 'node:child_process';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 
-import { coordinatorName, workerName, isWorkerOf } from '../../core/naming.mjs';
+import { isWorkerOf } from '../../core/naming.mjs';
 import { getFixture, installFixture } from './fixtures.mjs';
 import { createCapture, bundleDirFor } from './capture.mjs';
 import { checkScenario, loadTranscripts, loadFinalFiles, loadControlFeeds, formatReport } from './assertions.mjs';
@@ -43,21 +43,18 @@ import { createWorktree } from '../worktree.mjs';
 
 // --- Pure wiring pieces (each unit-tested with no live agent, T17 acceptance) --------------------
 
-// coordinatorLaunchArgv({ name, slug }) → the `claude` argv that starts the coordinator SESSION under
-// its convention name (DESIGN §2.8). It mirrors platform.spawnArgv for a worker: `--bg` runs it
-// headless and prints the new session id, `-n <name>` sets the addressable name workers message
-// (§2.8), and the opening turn — passed POSITIONALLY, never `-p` (`--bg`+`--print` conflict, FINDINGS
-// 2026-09-07) — is `/pir-coordinate {slug}`, which drives the loop and holds the inbox. execFile passes
-// each element as one argument, so the spaces in the name and the `·` separator never need quoting.
-export function coordinatorLaunchArgv({ name, slug }) {
-  if (!name) throw new Error('coordinatorLaunchArgv: no coordinator name');
+// coordinatorLaunchArgv({ slug }) → the argv passed to `node` to run the coordinator as a plain
+// foreground process (DESIGN §2.1): `node src/shell/coordinate.mjs {slug}`. The script path is relative
+// to the scratch repo cwd, which carries src/ (fixtures.carrySource), so it resolves there. There is no
+// name and no `claude` — the coordinator is a process, not a session (§2.9).
+export function coordinatorLaunchArgv({ slug }) {
   if (!slug) throw new Error('coordinatorLaunchArgv: no slug');
-  return ['--bg', '-n', name, `/pir-coordinate ${slug}`];
+  return ['src/shell/coordinate.mjs', slug];
 }
 
 // seatbeltEnv({ ceiling, allowHere }) → the env the launched coordinator inherits (DESIGN §5.2). The
 // live path only runs with PARALLEL_LIVE=1; the ceiling is the scenario's own low cap; PARALLEL_ALLOW
-// _HERE lets a same-named scratch clone through the canonical-repo promotion guard (coordinate.mjs
+// _HERE lets a same-named scratch clone through the canonical-repo branch-safety guard (coordinate.mjs
 // canPromoteHere) — a scratch repo built by installFixture is named for its temp dir, not the canonical
 // repo, so it is normally not needed, but a scenario may opt in. Values are strings (an env is strings).
 export function seatbeltEnv({ ceiling, allowHere = false } = {}) {
@@ -67,9 +64,35 @@ export function seatbeltEnv({ ceiling, allowHere = false } = {}) {
   return env;
 }
 
+// spawnCoordinator({ argv, cwd, env, spawn }) → a handle over the launched child process:
+//   { pid, kill(signal), exited }  where `exited` is a Promise resolving { code, signal } once the
+// process ends. spawn is injected (default node:child_process spawn) so a test drives a fake child with
+// no real process. The child inherits the parent env plus the seatbelt env (so PATH etc. resolve), and
+// its stdio is ignored — the runner reads the run from the flow log and `claude agents`, never the
+// coordinator's stdout.
+export function spawnCoordinator({ argv, cwd, env = {}, spawn = nodeSpawn } = {}) {
+  const child = spawn('node', argv, { cwd, env: { ...process.env, ...env }, stdio: 'ignore' });
+  let resolveExit;
+  const exited = new Promise((resolve) => {
+    resolveExit = resolve;
+  });
+  child.on('exit', (code, signal) => resolveExit({ code, signal }));
+  return {
+    pid: child.pid ?? null,
+    kill: (signal = 'SIGTERM') => {
+      try {
+        child.kill(signal);
+      } catch {
+        /* the process may already be gone; the caller's teardown still sweeps workers */
+      }
+    },
+    exited,
+  };
+}
+
 // controlDirFor(scratchDir, slug) → where the coordinator writes its flow log and the HALT flag lives
 // (coordinate.mjs fileControl, DESIGN §3.5). The runner touches HALT here on timeout and reads the flow
-// log here to know when the run is over.
+// log here to know what the run did.
 export function controlDirFor(scratchDir, slug) {
   return join(scratchDir, 'plans', slug, '.parallel', 'control');
 }
@@ -83,113 +106,44 @@ export function touchHalt(controlDir, { fs = { mkdirSync, writeFileSync } } = {}
   return flag;
 }
 
-// runOutcome({ flowText, haltPresent }) → { over, reason }. Reads the DURABLE terminal markers the
-// coordinator writes (DESIGN §4.1: the flow log is the coordinator's own record): a `promote` line is a
-// clean landing on main (§2.9), and a `halt-close` line is the coordinator confirming it processed the
-// kill switch (§2.4). A stall — every worker parked or nothing left to do — leaves no terminal flow
-// marker and the coordinator session stays idle, so the wait loop detects that separately by counting
-// quiet polls; this predicate only reports the hard terminals. Pure, so it is tested against canned
-// flow text.
-//
-// WHY THE HALT FLAG'S PRESENCE IS NOT ITSELF TERMINAL (T29, 2026-09-14). The HALT flag is created by
-// the operator — or the wall-clock timeout — BEFORE the coordinator reacts to it, so `haltPresent` goes
-// true immediately and, if it terminated the wait, the bundle sealed ~4s before the coordinator wrote
-// its own `halt-close` and finished closing its workers. In the T23 kill-switch run the captured
-// flow.log then stopped at the last `ceiling full` line and omitted both `halt-close` lines, so
-// killSwitchStoppedAll failed "no halt-close in the flow" on a run whose kill switch had worked. Unlike
-// a promote-terminated run, where the coordinator writes the terminal marker only once it is done, the
-// HALT flag precedes the coordinator's reaction — so a HALT run is over on the coordinator's own
-// confirmation (`halt-close`), never on the bare flag. The wall-clock timeout stays the hard backstop
-// for a coordinator that never confirms (waitForCompletion's isTimedOut → 'timeout', DESIGN §5.2).
-// `haltPresent` is kept in the signature so this deliberate non-terminality is visible at the call site
-// and the mutation test (flag present, no halt-close, still active) is direct; it no longer decides.
-export function runOutcome({ flowText = '', haltPresent = false } = {}) {
-  void haltPresent; // deliberately not terminal on its own — see the comment above (T29)
-  const hasType = (type) =>
-    flowText
-      .split('\n')
-      .some((l) => {
-        const body = l.slice(l.indexOf(' ') + 1);
-        return body === type || body.startsWith(`${type} `);
-      });
-  if (hasType('promote')) return { over: true, reason: 'promoted' };
-  if (hasType('halt-close')) return { over: true, reason: 'halted' };
-  return { over: false, reason: 'active' };
+// runOutcome({ flowText, exited }) → { over, reason }. In the foreground-process model the run is over
+// when the coordinator PROCESS EXITS — it prints the hand-off and returns (DESIGN §2.1); there is no
+// `promote` flow marker any more (§2.4, T01). So `over` is driven by the process exit, not the flow log.
+// While the process is alive the run is `active`. Once it has exited, the flow log says WHICH terminal
+// it was: a `halt-close` line means the kill switch fired (§2.4), so the run `halted`; otherwise it ran
+// to its hand-off (or a stall) and `completed`. The FACTS decide pass/fail; `reason` is the human label.
+// Pure, so it is tested against canned flow text and an exit flag.
+export function runOutcome({ flowText = '', exited = false } = {}) {
+  if (!exited) return { over: false, reason: 'active' };
+  const hasHaltClose = String(flowText)
+    .split('\n')
+    .some((l) => {
+      const body = l.slice(l.indexOf(' ') + 1);
+      return body === 'halt-close' || body.startsWith('halt-close ');
+    });
+  return { over: true, reason: hasHaltClose ? 'halted' : 'completed' };
 }
 
-// parseSurfaceTask(flowLine) → the task id of a `surface Txx` flow line, or null. A surface line is
-// `${ISO} surface Txx`; the coordinator writes only type+task (no kind, FINDINGS 2026-09-10), so a
-// scenario keys on the task. Pure, tested against canned flow lines.
-export function parseSurfaceTask(line) {
-  const body = String(line ?? '').slice(String(line ?? '').indexOf(' ') + 1);
-  if (!body.startsWith('surface ')) return null;
-  const rest = body.slice('surface '.length).trim();
-  return /^T\d+$/.test(rest) ? rest : null;
-}
-
-// scriptedAnswerFor({ flowText, scriptedAnswer, answered }) → the { task, text } decision to write to
-// the control `answers` file for the next surfaced task not yet answered, or null (DESIGN §4.1, T28).
-// This is how an INTERACTIVE scenario (merge-conflict, human-decision) is made deterministic: when a
-// worker parks and the coordinator writes a `surface Txx` line, the runner feeds the fixture's fixed
-// decision down, standing in for the human WITHOUT removing the real parking / delivery / resume round
-// trip. The decision may name a task (human-decision) or not (merge-conflict, where which of the two
-// same-line tasks conflicts is a timing race) — an un-tasked decision is routed to whatever task
-// surfaced. Pure so the injection choice is unit-tested with no live run.
-export function scriptedAnswerFor({ flowText = '', scriptedAnswer = null, answered = new Set() } = {}) {
-  if (!scriptedAnswer) return null;
-  for (const line of String(flowText).split('\n')) {
-    const task = parseSurfaceTask(line);
-    if (!task) continue;
-    if (scriptedAnswer.task && scriptedAnswer.task !== task) continue;
-    if (answered.has(task)) continue;
-    return { task, text: scriptedAnswer.text ?? '' };
-  }
-  return null;
-}
-
-// parseHandsOnTask(line) → the task id of a `hands-on Txx` flow line, or null. The coordinator writes a
-// durable `hands-on {task}` line when it spawns a hands-on scribe for a `you` task (loop.mjs, §2.6): the
-// flow log's `spawn` line drops the role, so this is the disk-visible marker that a task now needs a
-// person. Same ISO-prefix shape as parseSurfaceTask. Pure, tested against canned flow lines.
-export function parseHandsOnTask(line) {
-  const body = String(line ?? '').slice(String(line ?? '').indexOf(' ') + 1);
-  if (!body.startsWith('hands-on ')) return null;
-  const rest = body.slice('hands-on '.length).trim();
-  return /^T\d+$/.test(rest) ? rest : null;
-}
-
-// handsOnToAnnounce({ flowText, announced }) → the task id of the next `hands-on Txx` line the runner has
-// not yet surfaced to the person, or null (DESIGN §4.1, §2.6, T32). This is the ATTENDED drive signal:
-// an unattended run has no person to drive a `you` task (PM decision 2026-09-14, attended-only), so it
-// only tells the watching person which worker to go and drive — it is NOT an auto-driver, the person
-// runs the live steps (§5.2). Pure, so the choice is unit-tested with no live run.
-export function handsOnToAnnounce({ flowText = '', announced = new Set() } = {}) {
-  for (const line of String(flowText).split('\n')) {
-    const task = parseHandsOnTask(line);
-    if (task && !announced.has(task)) return task;
-  }
-  return null;
-}
-
-// captureFinalFiles({ repoDir, gitRun, files }) → { path: content } read from `git show main:path` on
-// the scratch repo after the run (DESIGN §4.1, T28). Run at seal, while main still exists (teardown
-// removes only worker worktrees, not the main checkout), so a fact can prove which side a resolved
-// merge-conflict shipped. A file git cannot show (absent, or main never promoted) is omitted, so the
-// fact reports "no captured final content" from data rather than throwing.
-export function captureFinalFiles({ repoDir, gitRun = defaultRunGit, files = [] } = {}) {
+// captureFinalFiles({ repoDir, gitRun, files }) → { path: content } read from `git show pir/{slug}:path`
+// (the feature branch the run hands off, DESIGN §2.4 — the run never merges to main, so the decided
+// content lives on the feature branch). Run at seal, while the feature branch still exists (teardown
+// removes only worker worktrees), so a fact can prove which side a resolved merge-conflict shipped. A
+// file git cannot show is omitted, so the fact reports "no captured final content" from data rather than
+// throwing. `ref` is the branch to read from (the caller passes `pir/{slug}`).
+export function captureFinalFiles({ repoDir, gitRun = defaultRunGit, files = [], ref = 'main' } = {}) {
   const out = {};
   for (const f of files) {
-    const r = gitRun(['show', `main:${f}`], { cwd: repoDir });
+    const r = gitRun(['show', `${ref}:${f}`], { cwd: repoDir });
     if (r.ok) out[f] = r.stdout;
   }
   return out;
 }
 
-// --- Restart-mode pure wiring (DESIGN §2, §4, T06) -----------------------------------------------
+// --- Restart-mode pure wiring (DESIGN §2.6, §4, T05) ---------------------------------------------
 
 // restartTargetReached({ flowText, branchState, waitFor }) → has the deterministic crash point been
 // reached? The point is a task branch having COMMITTED the target glyph (waitFor = { task, glyph }), the
-// mid-review state a restart must adopt (§2.2) — never a timer. The primary signal is a taskBranchState
+// mid-review state a restart must adopt (§2.6) — never a timer. The primary signal is a taskBranchState
 // read (T02): the committed glyph on the task's own branch, passed in as branchState. The fallback, for a
 // 🔍 target, is a `review {task}` flow line — the coordinator wrote it the moment it saw the committed 🔍
 // and handed the branch to a reviewer (loop.mjs review handoff), the same mid-review window. Pure, so the
@@ -209,47 +163,24 @@ export function restartTargetReached({ flowText = '', branchState = null, waitFo
   return false;
 }
 
-// coordinatorPidFrom(agents, coordName) → the OS pid of this run's coordinator session in a sampled agent
-// list, or null. The crash is a SIGKILL of that pid and nothing else (leaving the workers and the git
-// state — a real crash, §2.5), so the runner reads the pid from the same `agents --json` sample capture
-// takes. `agents --json` carries `pid` only while a session is live (capture.mjs), which is exactly when
-// the runner kills it. Pure so the pid pick is tested against a canned agent list.
-export function coordinatorPidFrom(agents = [], coordName) {
-  const coord = (agents ?? []).find((a) => a && a.name === coordName);
-  return coord && coord.pid != null ? coord.pid : null;
-}
-
-// seedStaleFeeds(controlDir, sentinel) → write a stale sentinel into every transient control feed
-// (answers, outbox, surfaced, and a reports/*.json), the exact leftover a crashed run strands (§2.7). The
-// runner seeds these in the gap AFTER the SIGKILL and BEFORE the relaunch, so nothing drains them and the
-// relaunched coordinator's startupControlHygiene is what must clear them; feedsCleared then proves it did.
-// Best-effort per feed, fs injected so the write is testable.
+// seedStaleFeeds(controlDir, sentinel) → write a stale sentinel into the one transient control feed that
+// survives across a run: `reports/`, the worker up-channel (DESIGN §3.5). The down-channel feeds
+// (answers/outbox/surfaced) were removed with the relay (§2.2), so reports/ is all a crashed run can
+// strand. The runner seeds it in the gap AFTER the crash and BEFORE the relaunch, so nothing drains it
+// and the relaunched coordinator's startup hygiene is what must clear it; feedsCleared then proves it
+// did. Best-effort, fs injected so the write is testable.
 export function seedStaleFeeds(controlDir, sentinel, { fs = { mkdirSync, writeFileSync } } = {}) {
-  fs.mkdirSync(controlDir, { recursive: true });
-  const line = `${JSON.stringify({ stale: sentinel })}\n`;
-  for (const name of ['answers', 'outbox', 'surfaced']) {
-    fs.writeFileSync(join(controlDir, name), line);
-  }
   const reportsDir = join(controlDir, 'reports');
   fs.mkdirSync(reportsDir, { recursive: true });
-  fs.writeFileSync(join(reportsDir, `${sentinel}.json`), line);
-  return { seeded: ['answers', 'outbox', 'surfaced', 'reports/'] };
+  fs.writeFileSync(join(reportsDir, `${sentinel}.json`), `${JSON.stringify({ stale: sentinel })}\n`);
+  return { seeded: ['reports/'] };
 }
 
-// snapshotControlFeeds(controlDir) → the transient feeds' contents at seal, for the bundle's
-// control-feeds.json (T06). The append-only feeds are read as text; reports/ is read as its list of
-// *.json names. feedsCleared checks the seeded sentinel is absent from all of them. A missing feed reads
-// as empty rather than throwing, fs injected for the test.
-export function snapshotControlFeeds(controlDir, { fs = { existsSync, readFileSync, readdirSync } } = {}) {
+// snapshotControlFeeds(controlDir) → the transient feed's contents at seal, for the bundle's
+// control-feeds.json (T05). reports/ is read as its list of *.json names. feedsCleared checks the seeded
+// sentinel is absent from it. A missing feed reads as empty rather than throwing, fs injected for the test.
+export function snapshotControlFeeds(controlDir, { fs = { existsSync, readdirSync } } = {}) {
   const feeds = {};
-  for (const name of ['answers', 'outbox', 'surfaced']) {
-    const p = join(controlDir, name);
-    try {
-      feeds[name] = fs.existsSync(p) ? fs.readFileSync(p, 'utf8') : '';
-    } catch {
-      feeds[name] = '';
-    }
-  }
   const reportsDir = join(controlDir, 'reports');
   try {
     feeds.reports = fs.existsSync(reportsDir) ? fs.readdirSync(reportsDir).filter((n) => n.endsWith('.json')) : [];
@@ -257,13 +188,6 @@ export function snapshotControlFeeds(controlDir, { fs = { existsSync, readFileSy
     feeds.reports = [];
   }
   return feeds;
-}
-
-// The crash effect: SIGKILL a pid. It MUST be SIGKILL — the coordinator catches SIGTERM and tears its
-// workers and their branches down cleanly (coordinate.mjs main), erasing the very in-flight state the
-// drill exists to reconcile (FINDINGS 2026-09-17). Injected so a test drives it without a real process.
-function defaultKill(pid, signal = 'SIGKILL') {
-  process.kill(pid, signal);
 }
 
 // --- The default injected effects (mirroring platform.mjs / capture.mjs) -------------------------
@@ -296,14 +220,13 @@ function defaultRunGit(args, { cwd, env } = {}) {
   }
 }
 
-// --- Teardown-on-exit: no paid worker (or coordinator) is ever orphaned (DESIGN §2.3, §5.2) -------
+// --- Teardown-on-exit: no paid worker is ever orphaned (DESIGN §2.3, §2.6, §5.2) -----------------
 //
 // Reuses the coordinator's own teardownRun orphan-guard (T12 P6) for the workers — SIGTERM each, since
-// `claude stop` alone only interrupts (FINDINGS 2026-09-09) — and then closes the coordinator SESSION
-// too, which teardownRun deliberately skips (it filters to isWorkerOf, so the coordinator's own session
-// survives its worker-teardown). Touching HALT first tells a still-running coordinator to stop
-// dispatching and close its own workers, so this races nothing. Everything is injected, so the whole
-// path is provable with a fake platform in the tests.
+// `claude stop` alone only interrupts (FINDINGS 2026-09-09). There is no coordinator session to close:
+// the coordinator is a plain process the runner kills by its pid (runScenario's finally). Touching HALT
+// first tells a still-running coordinator to stop dispatching and close its own workers, so this races
+// nothing. Everything is injected, so the whole path is provable with a fake platform in the tests.
 export function teardownScenario({ platform, worktree, repo, slug, controlDir, control } = {}) {
   // Wire the kill switch first: a live coordinator sees HALT and halts its own dispatch (§2.4).
   if (controlDir) {
@@ -315,44 +238,27 @@ export function teardownScenario({ platform, worktree, repo, slug, controlDir, c
   }
   // Close this run's workers with the coordinator's own guard (empty state → it lists them by name).
   const { closed } = teardownRun({ platform, worktree, state: { tasks: {} }, repo, slug, control });
-  // Then the coordinator session itself, found by its convention name (§2.8).
-  const coordName = coordinatorName({ repo, plan: slug });
-  let coordinatorClosed = false;
-  try {
-    const live = platform.list();
-    const coord = live.find((a) => a.name === coordName);
-    if (coord?.id) {
-      platform.close(coord.id);
-      coordinatorClosed = true;
-      control?.log?.(`teardown: closed coordinator ${coordName} (${coord.id})`);
-    }
-  } catch {
-    /* the list or close failing must not stop the run from exiting */
-  }
-  return { closed, coordinatorClosed };
+  return { closed };
 }
 
 // --- The runner ----------------------------------------------------------------------------------
 
 // runScenario(opts) → { scenario, ok, reason, bundleDir, report }. Install → launch → capture → wait →
 // seal → check, with teardown guaranteed on every exit. Async because the wait loop and the timeout use
-// timers. The build half is exercised end-to-end with fakes (no live agent); the live half is a person
-// launching this bin on a scratch harness (T17 "Needs a person").
+// timers. The whole orchestration is exercised end-to-end with fakes (no live agent); the live half is a
+// person launching this bin on a scratch harness (T09 "Needs a person").
 //
-//   fixtureId    — which of the six fixtures to run (fixtures.mjs). Its scenario spec carries the facts.
+//   fixtureId    — which fixture to run (fixtures.mjs). Its scenario spec carries the facts.
 //   scratchDir   — the scratch repo root to install into (a throwaway temp dir, NEVER the real project;
 //                  a seatbelt, DESIGN §5.2). Defaults to a fresh mkdtemp dir.
 //   allowHere    — pass PARALLEL_ALLOW_HERE=1 to the coordinator (a same-named scratch clone). Default off.
-//   pollMs       — the wait-loop cadence; each poll samples agents (capture.tick) and reads the flow log.
-//   stallGrace   — consecutive quiet polls AFTER the run went active (a worker was seen, then none is
-//                  live and nothing promoted) before a stall is declared (DESIGN §4.1 "every worker parked").
-//   startupGrace — consecutive quiet polls BEFORE the first worker is ever seen, i.e. while the coordinator
-//                  is still booting and opening the feature branch. Much larger than stallGrace: a real
-//                  `claude --bg` cold start takes many seconds to spawn its first worker, far past the
-//                  default 6s stall window, so counting stall from poll 1 would false-stall every live run.
+//   pollMs       — the wait-loop cadence; each poll samples agents (capture.tick) and checks the process.
+//   haltGrace    — after the wall-clock timeout auto-HALTs, how many extra polls to wait for the
+//                  coordinator to react and exit before giving up and reporting 'timeout' (§5.2).
 //   timeoutMs    — the wall-clock cap; on expiry the runner auto-touches HALT (§5.2). Defaults to the
 //                  scenario's own seatbelt timeout.
-//   claudeRun    — (args,{cwd,env}) => { ok, stdout } for the launch, the capture ticks and teardown.
+//   spawn        — node:child_process spawn, injected so a test drives a fake child (no real process).
+//   claudeRun    — (args,{cwd,env}) => { ok, stdout } for the capture ticks and worker teardown.
 //   gitRun       — (args,{cwd}) => { ok, stdout } for the fixture seed and the capture git log.
 //   platform / worktree — injected for teardown; defaults build the real ones over claudeRun/gitRun.
 //   install      — installFixture (injectable so a test need not re-seed real git every case).
@@ -364,10 +270,9 @@ export async function runScenario({
   scratchDir,
   allowHere = false,
   pollMs = 2000,
-  stallGrace = 3,
-  startupGrace = 45, // ~90s at the default cadence: ample for a real coordinator to boot and spawn
-  haltGrace = 3, // extra polls AFTER halt-close before sealing, so the flushed teardown lands (T29)
+  haltGrace = 5,
   timeoutMs,
+  spawn = nodeSpawn,
   claudeRun = defaultRunClaude,
   gitRun = defaultRunGit,
   platform,
@@ -424,7 +329,7 @@ export async function runScenario({
             touchHalt(controlDir);
             log(`\n=== timeout after ${timeout}ms — auto-touched HALT (seatbelt §5.2) ===`);
           } catch {
-            /* the teardown in `finally` still SIGTERMs every session */
+            /* the teardown in `finally` still kills the process and its workers */
           }
         }, timeout)
       : null;
@@ -432,59 +337,52 @@ export async function runScenario({
 
   let reason = 'error';
   let bundle = null;
+  let child = null;
   try {
-    // Launch the coordinator SESSION under its convention name with the seatbelt env (§2.8, §5.2).
-    const name = coordinatorName({ repo, plan: slug });
-    const argv = coordinatorLaunchArgv({ name, slug });
+    // Launch the coordinator as a plain child process with the seatbelt env (§2.1, §5.2).
+    const argv = coordinatorLaunchArgv({ slug });
     const env = seatbeltEnv({ ceiling, allowHere });
-    log(`launching coordinator "${name}"  (ceiling ${ceiling}, timeout ${timeout}ms)`);
-    const launched = claudeRun(argv, { cwd: repoDir, env });
-    if (!launched.ok) throw new Error(`could not launch coordinator: ${launched.stderr || launched.stdout}`);
+    log(`launching coordinator process: node ${argv.join(' ')}  (ceiling ${ceiling}, timeout ${timeout}ms)`);
+    child = spawnCoordinator({ argv, cwd: repoDir, env, spawn });
 
-    // Wait for the run to reach a terminal: a `promote` line, the HALT flag, or a stall (quiet polls
-    // with nothing live). Each poll samples the agent list into the bundle (capture.tick) and reads the
-    // coordinator's flow log. The wall-clock timeout is the hard backstop; timers are injected.
+    // Wait for the run to reach a terminal: the coordinator process exits (hand-off or stall or halt), or
+    // the wall-clock timeout fires. Each poll samples the agent list into the bundle (capture.tick).
     reason = await waitForCompletion({
       cap,
       controlDir,
-      repo,
-      slug,
+      child,
       pollMs,
-      stallGrace,
-      startupGrace,
       haltGrace,
       timers,
       isTimedOut: () => timedOut,
-      scriptedAnswer: fixture.scriptedAnswer ?? null,
       log,
     });
     log(`run reached: ${reason}`);
   } finally {
     if (timeoutHandle) timers.clearTimeout(timeoutHandle);
-    // Seal the bundle whatever happened — a failed or halted run is still evidence (DESIGN §4.1).
+    // Kill the coordinator process (its own SIGTERM handler closes its workers); then seal and sweep any
+    // worker it did not, so no paid session is orphaned (DESIGN §2.3, §2.6). Idempotent and best-effort.
+    if (child) child.kill('SIGTERM');
     try {
       bundle = cap.seal();
     } catch (e) {
       log(`capture seal failed: ${e.message}`);
     }
-    // Teardown last: HALT + SIGTERM every worker and the coordinator, so no paid session is orphaned
-    // (DESIGN §2.3, §5.2; the T12 P6 orphan-guard). Idempotent and best-effort.
     try {
       const t = teardownScenario({ platform: teardownPlatform, worktree: teardownWorktree, repo, slug, controlDir });
-      if (t.closed.length || t.coordinatorClosed) {
-        log(`teardown: closed ${t.closed.length} worker(s)${t.coordinatorClosed ? ' + the coordinator' : ''}`);
-      }
+      if (t.closed.length) log(`teardown: closed ${t.closed.length} worker(s)`);
     } catch (e) {
       log(`teardown failed: ${e.message}`);
     }
   }
 
-  // Capture the promoted content of any file the fixture declares a decided outcome for (T28), while the
-  // scratch repo's main still exists (teardown removed only worker worktrees). Persist it into the bundle
-  // as final-files.json so an offline re-check (loadFinalFiles) sees the same evidence, then attach it.
+  // Capture the handed-off content of any file the fixture declares a decided outcome for, from the
+  // feature branch pir/{slug} (the run never merges to main, §2.4), while it still exists (teardown
+  // removed only worker worktrees). Persist it into the bundle as final-files.json so an offline re-check
+  // (loadFinalFiles) sees the same evidence.
   if (fixture.finalContent && bundle?.dir) {
     try {
-      const finals = captureFinalFiles({ repoDir, gitRun, files: [fixture.finalContent.file] });
+      const finals = captureFinalFiles({ repoDir, gitRun, files: [fixture.finalContent.file], ref: `pir/${slug}` });
       writeFileSync(join(bundle.dir, 'final-files.json'), `${JSON.stringify(finals, null, 2)}\n`);
     } catch (e) {
       log(`final-content capture failed: ${e.message}`);
@@ -492,37 +390,35 @@ export async function runScenario({
   }
 
   // Check the sealed bundle against the scenario's declared facts (T15). loadTranscripts and
-  // loadFinalFiles are the assertion layer's loaders (its only I/O); every fact is then pure over the
-  // loaded bundle.
+  // loadFinalFiles are the assertion layer's loaders (its only I/O); every fact is then pure.
   const report = checkScenario(spec, loadFinalFiles(loadTranscripts(bundle)));
   const ok = report.pass && !timedOut;
   return { scenario: spec.id, ok, reason: timedOut ? 'timeout' : reason, bundleDir: bundle?.dir ?? null, report };
 }
 
-// --- The restart runner (DESIGN §2, §4, §5.2, T06) -----------------------------------------------
+// --- The restart runner (DESIGN §2.6, §4, §5.2, T05) ---------------------------------------------
 
 // runRestartScenario(opts) → the same shape as runScenario, but it drives the coordinator through a crash
-// and a restart on ONE scratch repo so the resume can be checked (the live half is T07). The sequence
-// (fixture.restart declares the crash point): install ONCE → launch → wait until the target task branch
-// has committed the crash-point glyph → SIGKILL the coordinator only (leaving its workers and the git
-// state) → seed a stale control-feed leftover → relaunch on the SAME scratch WITHOUT reinstalling, so it
-// reconciles from git → wait for the resumed terminal → seal, snapshot the feeds, check. ONE capture
-// instance spans both launches, so the bundle's flow log and timeline cover the whole run. Everything
-// platform-shaped is injected exactly as runScenario injects it, plus `kill` for the crash, so the whole
-// orchestration is proven against the fakes with no live agent (§5.2). Only the fixture declaring a
-// `restart` spec runs this; the bin dispatches on it.
+// and a restart on ONE scratch repo so kill-and-rebuild can be checked (the live half is T09). The
+// sequence (fixture.restart declares the crash point): install ONCE → launch → wait until the target task
+// branch has committed the crash-point glyph → SIGKILL the coordinator PROCESS (leaving its workers and
+// the git state — a real crash, no clean teardown) → seed a stale control-feed leftover → relaunch on the
+// SAME scratch WITHOUT reinstalling, so it reconciles from git → wait for the resumed process to exit →
+// seal, snapshot the feed, check. ONE capture instance spans both launches, so the bundle's flow log and
+// timeline cover the whole run. Everything platform-shaped is injected exactly as runScenario injects it,
+// so the whole orchestration is proven against the fakes with no live agent (§5.2). Only the fixture
+// declaring a `restart` spec runs this; the bin dispatches on it.
 export async function runRestartScenario({
   fixtureId,
   scratchDir,
   allowHere = false,
   pollMs = 2000,
-  stallGrace = 3,
+  haltGrace = 5,
   startupGrace = 45,
-  haltGrace = 3,
   timeoutMs,
+  spawn = nodeSpawn,
   claudeRun = defaultRunClaude,
   gitRun = defaultRunGit,
-  kill = defaultKill,
   platform,
   worktree,
   install = installFixture,
@@ -544,7 +440,7 @@ export async function runRestartScenario({
   const ceiling = seatbelts.ceiling;
   const timeout = timeoutMs ?? seatbelts.timeoutMs;
 
-  const repoDir = scratchDir ?? mkdtempSync(join(tmpdir(), `pir-t06-${fixtureId}-`));
+  const repoDir = scratchDir ?? mkdtempSync(join(tmpdir(), `pir-t05-${fixtureId}-`));
   const repo = basename(repoDir);
   const controlDir = controlDirFor(repoDir, slug);
 
@@ -578,28 +474,28 @@ export async function runRestartScenario({
             touchHalt(controlDir);
             log(`\n=== timeout after ${timeout}ms — auto-touched HALT (seatbelt §5.2) ===`);
           } catch {
-            /* the teardown in `finally` still SIGTERMs every session */
+            /* the teardown in `finally` still kills the process and its workers */
           }
         }, timeout)
       : null;
   if (timeoutHandle && typeof timeoutHandle.unref === 'function') timeoutHandle.unref();
 
-  // A stale sentinel the crash leaves in the transient feeds, seeded between the kill and the relaunch so
-  // only the resumed coordinator's hygiene can clear it (feedsCleared reads it back from the bundle).
+  // A stale sentinel the crash leaves in the transient reports feed, seeded between the kill and the
+  // relaunch so only the resumed coordinator's hygiene can clear it (feedsCleared reads it back).
   const sentinel = `STALE-${now().toISOString().replace(/[:.]/g, '-')}-restart`;
   let seededFeeds = false;
 
-  const name = coordinatorName({ repo, plan: slug });
-  const argv = coordinatorLaunchArgv({ name, slug });
+  const argv = coordinatorLaunchArgv({ slug });
   const env = seatbeltEnv({ ceiling, allowHere });
 
   let reason = 'error';
   let bundle = null;
+  let child1 = null;
+  let child2 = null;
   try {
-    // Launch 1: the run that will crash. Seatbelted exactly as a normal live run (§2.8, §5.2).
-    log(`launching coordinator "${name}"  (ceiling ${ceiling}, timeout ${timeout}ms)`);
-    const launched = claudeRun(argv, { cwd: repoDir, env });
-    if (!launched.ok) throw new Error(`could not launch coordinator: ${launched.stderr || launched.stdout}`);
+    // Launch 1: the run that will crash. Seatbelted exactly as a normal live run (§2.1, §5.2).
+    log(`launching coordinator process: node ${argv.join(' ')}  (ceiling ${ceiling}, timeout ${timeout}ms)`);
+    child1 = spawnCoordinator({ argv, cwd: repoDir, env, spawn });
 
     // Wait for the deterministic crash point: the target task branch has committed the crash-point glyph.
     const target = await waitForTarget({
@@ -609,6 +505,7 @@ export async function runRestartScenario({
       slug,
       waitFor,
       worktree: teardownWorktree,
+      child: child1,
       pollMs,
       startupGrace,
       timers,
@@ -617,31 +514,28 @@ export async function runRestartScenario({
     });
 
     if (target.reason !== 'target') {
-      // The run never reached the crash point (timed out or stalled). Seal what there is — the facts will
-      // fail (no restart), which is the honest verdict — rather than crash-and-restart from a bad state.
+      // The run never reached the crash point (timed out, or the process exited early). Seal what there
+      // is — the facts will fail (no restart), which is the honest verdict.
       reason = target.reason;
       log(`did not reach the ${waitFor.glyph} crash point: ${reason}`);
     } else {
       log(`reached the ${waitFor.glyph} crash point on ${waitFor.task}`);
-      // Crash: SIGKILL the coordinator ONLY, from the pid in the sample that saw the target. Its workers
-      // and the git state are left on disk — the real crash reconciliation must handle (§2.5).
-      const pid = coordinatorPidFrom(target.agents, name);
-      if (pid != null) {
-        try {
-          kill(pid, 'SIGKILL');
-          log(`crashed the coordinator (pid ${pid}, SIGKILL) — workers and git state left on disk`);
-        } catch (e) {
-          log(`could not SIGKILL the coordinator (pid ${pid}): ${e.message}`);
-        }
+      // Crash: SIGKILL the coordinator PROCESS. Its workers and the git state are left on disk — the real
+      // crash reconciliation must handle them (§2.6). SIGKILL, not SIGTERM: the coordinator catches
+      // SIGTERM and tears its workers down cleanly, which would erase the in-flight state the drill exists
+      // to reconcile (FINDINGS 2026-09-17).
+      if (child1.pid != null) {
+        child1.kill('SIGKILL');
+        log(`crashed the coordinator (pid ${child1.pid}, SIGKILL) — workers and git state left on disk`);
       } else {
-        log('no coordinator pid in the sample — cannot crash; relaunching anyway');
+        log('no coordinator pid — cannot crash; relaunching anyway');
       }
 
       // Seed the stale control-feed leftover now, while nothing is draining it (the coordinator is dead).
       try {
         seedStaleFeeds(controlDir, sentinel);
         seededFeeds = true;
-        log('seeded a stale control-feed leftover (answers/outbox/surfaced/reports)');
+        log('seeded a stale control-feed leftover (reports/)');
       } catch (e) {
         log(`could not seed stale feeds: ${e.message}`);
       }
@@ -649,28 +543,26 @@ export async function runRestartScenario({
       // Relaunch on the SAME scratch — NO installFixture. Git already holds the in-flight branches, so the
       // resumed coordinator reconciles from them; reinstalling would wipe exactly what it must resume.
       log('relaunching the coordinator on the same scratch (no reinstall)');
-      const relaunched = claudeRun(argv, { cwd: repoDir, env });
-      if (!relaunched.ok) throw new Error(`could not relaunch coordinator: ${relaunched.stderr || relaunched.stdout}`);
+      child2 = spawnCoordinator({ argv, cwd: repoDir, env, spawn });
 
-      // Wait for the resumed run to reach a terminal, still capturing into the same bundle.
+      // Wait for the resumed process to exit, still capturing into the same bundle.
       reason = await waitForCompletion({
         cap,
         controlDir,
-        repo,
-        slug,
+        child: child2,
         pollMs,
-        stallGrace,
-        startupGrace,
         haltGrace,
         timers,
         isTimedOut: () => timedOut,
-        scriptedAnswer: null,
         log,
       });
       log(`resumed run reached: ${reason}`);
     }
   } finally {
     if (timeoutHandle) timers.clearTimeout(timeoutHandle);
+    // Make sure neither coordinator process is left alive, then seal and sweep workers.
+    if (child1) child1.kill('SIGKILL');
+    if (child2) child2.kill('SIGTERM');
     try {
       bundle = cap.seal();
     } catch (e) {
@@ -678,15 +570,13 @@ export async function runRestartScenario({
     }
     try {
       const t = teardownScenario({ platform: teardownPlatform, worktree: teardownWorktree, repo, slug, controlDir });
-      if (t.closed.length || t.coordinatorClosed) {
-        log(`teardown: closed ${t.closed.length} worker(s)${t.coordinatorClosed ? ' + the coordinator' : ''}`);
-      }
+      if (t.closed.length) log(`teardown: closed ${t.closed.length} worker(s)`);
     } catch (e) {
       log(`teardown failed: ${e.message}`);
     }
   }
 
-  // Snapshot the transient control feeds into the bundle so feedsCleared can prove the seeded leftover was
+  // Snapshot the transient control feed into the bundle so feedsCleared can prove the seeded leftover was
   // cleared by the restart hygiene (§2.7). Written after seal, then read back by loadControlFeeds — the
   // same after-seal pattern final-files.json uses.
   if (bundle?.dir) {
@@ -705,7 +595,7 @@ export async function runRestartScenario({
   // declares none, so this is a no-op there).
   if (fixture.finalContent && bundle?.dir) {
     try {
-      const finals = captureFinalFiles({ repoDir, gitRun, files: [fixture.finalContent.file] });
+      const finals = captureFinalFiles({ repoDir, gitRun, files: [fixture.finalContent.file], ref: `pir/${slug}` });
       writeFileSync(join(bundle.dir, 'final-files.json'), `${JSON.stringify(finals, null, 2)}\n`);
     } catch (e) {
       log(`final-content capture failed: ${e.message}`);
@@ -717,16 +607,19 @@ export async function runRestartScenario({
   return { scenario: spec.id, ok, reason: timedOut ? 'timeout' : reason, bundleDir: bundle?.dir ?? null, report };
 }
 
-// waitForTarget(...) → { reason, agents }. Polls the same injected timers as waitForCompletion, ticking
-// the capture each poll, until the restart crash point is reached ('target'), the wall-clock timeout fires
-// ('timeout'), or the coordinator never appears / dies before the target ('stalled'). The crash point is a
-// taskBranchState read (T02) of the target task returning the crash-point glyph, or the flow fallback
-// (restartTargetReached); it is NOT a timer (§2.2). `agents` is the last sample, from which the caller
-// reads the coordinator's pid to SIGKILL. startupGrace bounds a coordinator that never boots, so a broken
-// launch stalls rather than polling to the wall-clock cap.
-async function waitForTarget({ cap, controlDir, repo, slug, waitFor, worktree, pollMs, startupGrace, timers, isTimedOut, log = () => {} }) {
+// waitForTarget(...) → { reason }. Polls the injected timers, ticking the capture each poll, until the
+// restart crash point is reached ('target'), the wall-clock timeout fires ('timeout'), or the coordinator
+// process exits before the target ('exited'). The crash point is a taskBranchState read (T02) of the
+// target task returning the crash-point glyph, or the flow fallback (restartTargetReached); it is NOT a
+// timer (§2.6). The runner already holds the coordinator's pid (child), so it kills it directly — no need
+// to find it in the agent list. startupGrace bounds a coordinator that dies before ever reaching the
+// target: if the process has exited and quiet polls accumulate, the run stalled.
+async function waitForTarget({ cap, controlDir, repo, slug, waitFor, worktree, child, pollMs, startupGrace, timers, isTimedOut, log = () => {} }) {
   const flowPath = join(controlDir, 'log');
-  const coordName = coordinatorName({ repo, plan: slug });
+  let exited = false;
+  child.exited.then(() => {
+    exited = true;
+  });
   let quiet = 0;
   for (;;) {
     const snap = cap.tick();
@@ -738,138 +631,55 @@ async function waitForTarget({ cap, controlDir, repo, slug, waitFor, worktree, p
       branchState = null; // a read failure is not the target; keep polling
     }
     if (restartTargetReached({ flowText, branchState, waitFor })) {
-      return { reason: 'target', agents: snap.agents ?? [] };
+      return { reason: 'target' };
     }
-    if (isTimedOut()) return { reason: 'timeout', agents: snap.agents ?? [] };
+    if (isTimedOut()) return { reason: 'timeout' };
 
-    // Bound a coordinator that never boots or dies before the target: count quiet polls with nothing of
-    // this run live and stall past the startup budget (the same generous window a live boot needs).
+    // Bound a coordinator that dies before the target: once its process has exited and no worker of this
+    // run is live, count quiet polls and stall past the startup budget.
     const agents = snap.agents ?? [];
-    const anyLive =
-      agents.some((a) => a.name === coordName && a.state !== 'stopped') ||
-      agents.some((a) => isWorkerOf(a.name, { repo, plan: slug }));
-    if (anyLive) {
+    const anyWorkerLive = agents.some((a) => isWorkerOf(a.name, { repo, plan: slug }));
+    if (!exited || anyWorkerLive) {
       quiet = 0;
     } else {
       quiet += 1;
       if (quiet >= startupGrace) {
-        log('coordinator never reached the crash point before the startup budget ran out — stalled');
-        return { reason: 'stalled', agents };
+        log('the coordinator exited before reaching the crash point — stalled');
+        return { reason: 'exited' };
       }
     }
     await delay(timers, pollMs);
   }
 }
 
-// waitForCompletion(...) → the terminal reason ('promoted' | 'halted' | 'stalled' | 'timeout'). Polls on
-// the injected timers: each tick samples the agent list into the capture bundle and reads the flow log,
-// then asks runOutcome for a hard terminal (promote / HALT). A stall is a run of quiet polls with no hard
-// terminal AND nothing driving the run — but "driving" is not just a live worker. The coordinator drives
-// the run, INCLUDING the promote pass that runs AFTER the last worker closes; while its session is alive
-// and not finished the run is still going even with zero workers live. Counting a stall on worker-absence
-// alone HALTed the coordinator ~5s after the last close, before it could promote, so nothing reached main
-// (T17 live run 2026-09-12). So the run is "active" while a worker is live OR the coordinator session is.
-// Before anything is ever seen live the coordinator is still booting (a real `claude --bg` cold start
-// takes many seconds), so a separate, generous startupGrace governs that window; counting stallGrace from
-// poll 1 would false-stall every live run before it began (T17 review). A genuine stall is then: the run
-// went active, and now neither a worker nor the coordinator is live and nothing promoted. The wall-clock
-// timeout is the ultimate backstop for a coordinator that stays alive but hangs without promoting.
-//
-// A HALT run is terminal on the coordinator's `halt-close`, NOT on the bare HALT flag (runOutcome, T29):
-// the flag precedes the coordinator's reaction, so sealing on its presence beat the coordinator to its
-// own evidence (T23 2026-09-14). Once halt-close is seen, a short haltGrace of extra ticks runs before
-// returning, so the final teardown tick and the coordinator's flushed transcript land in the bundle
-// before the seal. isTimedOut stays checked every poll, so a coordinator that never confirms still ends
-// on the wall-clock backstop (§5.2) rather than waiting for a halt-close that will never come.
-async function waitForCompletion({ cap, controlDir, repo, slug, pollMs, stallGrace, startupGrace, haltGrace = 3, timers, isTimedOut, scriptedAnswer = null, log = () => {} }) {
-  const flagPath = join(controlDir, 'HALT');
+// waitForCompletion(...) → the terminal reason ('completed' | 'halted' | 'timeout'). Polls on the injected
+// timers: each tick samples the agent list into the capture bundle and watches the coordinator process.
+// The run is over when the process EXITS — it prints the hand-off and returns (§2.1); the flow log then
+// says whether it was a clean hand-off ('completed') or the kill switch ('halted', a `halt-close` line).
+// There is no `promote` marker any more (§2.4), and no stall detection here: the coordinator detects its
+// own stall and exits, so the process exit is the single terminal. The wall-clock timeout is the backstop
+// for a coordinator that hangs without exiting: it auto-touches HALT, and after a bounded haltGrace of
+// further polls with no exit, the run ends 'timeout' and the finally kills the process.
+async function waitForCompletion({ cap, controlDir, child, pollMs, haltGrace = 5, timers, isTimedOut, log = () => {} }) {
   const flowPath = join(controlDir, 'log');
-  const answersPath = join(controlDir, 'answers');
-  const coordName = coordinatorName({ repo, plan: slug });
-  let sawActive = false; // has a worker OR the coordinator ever been live? gates which grace applies.
-  let quiet = 0; // consecutive quiet polls AFTER the run went active (a stall, §4.1)
-  let startupQuiet = 0; // consecutive quiet polls BEFORE anything was ever live (still booting)
-  const answered = new Set(); // tasks the runner has already fed a scripted decision, so each fires once
-  const announced = new Set(); // you-tasks the runner has already surfaced the hands-on drive signal for
+  let exited = false;
+  child.exited.then(() => {
+    exited = true;
+  });
+  let graceAfterTimeout = 0;
   for (;;) {
-    const snap = cap.tick(); // one sampled `agents --json`, recorded into the bundle
+    cap.tick(); // one sampled `agents --json`, recorded into the bundle
     const flowText = existsSync(flowPath) ? safeRead(flowPath) : '';
-    const haltPresent = existsSync(flagPath);
 
-    // Surface the attended drive signal (T32): when the coordinator logs `hands-on Txx` (a `you` task
-    // spawned a hands-on scribe, §2.6), tell the watching person which worker to go and drive. Once per
-    // task. This is the whole of the attended support — no auto-driver; the person runs the live steps
-    // and reports to the scribe worker directly (§5.2, pir-verify).
-    const driveTask = handsOnToAnnounce({ flowText, announced });
-    if (driveTask) {
-      announced.add(driveTask);
-      const worker = workerName({ repo, plan: slug, task: driveTask, role: 'verify' });
-      log(`\n=== HANDS-ON: go drive worker "${worker}" for ${driveTask} — run its "Needs a person" steps and report back ===`);
-    }
+    const outcome = runOutcome({ flowText, exited });
+    if (outcome.over) return outcome.reason;
 
-    // Feed the fixture's scripted decision the moment a worker parks (an interactive scenario, T28): the
-    // coordinator's `surface Txx` line means a worker is waiting on the user, so write the decision to
-    // the control `answers` file the bin drains and routes down. Fires once per surfaced task. The
-    // parking, delivery and resume are all still real; only the human at the keyboard is scripted.
-    if (scriptedAnswer) {
-      const a = scriptedAnswerFor({ flowText, scriptedAnswer, answered });
-      if (a) {
-        try {
-          appendFileSync(answersPath, `${JSON.stringify(a)}\n`);
-          answered.add(a.task);
-          log(`scripted decision fed for ${a.task}`);
-        } catch (e) {
-          log(`could not write scripted decision for ${a.task}: ${e.message}`);
-        }
-      }
-    }
-
-    const outcome = runOutcome({ flowText, haltPresent });
-    if (outcome.over) {
-      // A HALT-terminated run (halt-close seen) waits a short grace of extra ticks before sealing, so
-      // the coordinator's final teardown tick and its flushed transcript are captured — the seal must
-      // not race the flush the way sealing on the bare HALT flag raced halt-close (T29). A promote is
-      // already written only once the coordinator is done, so it needs no grace.
-      if (outcome.reason === 'halted' && haltGrace > 0) {
-        log(`halt-close seen — holding ${haltGrace} grace poll(s) so the teardown flush is captured`);
-        for (let g = 0; g < haltGrace; g += 1) {
-          await delay(timers, pollMs);
-          cap.tick();
-        }
-      }
-      return outcome.reason;
-    }
-    if (isTimedOut()) return 'timeout';
-
-    // The run is going while a worker is live (busy or idle, e.g. parked on a decision) OR the coordinator
-    // session is still alive — it drives the run between its own turns, not only during them.
-    const agents = snap.agents ?? [];
-    const liveWorkers = agents.filter((a) => isWorkerOf(a.name, { repo, plan: slug }));
-    const coord = agents.find((a) => a.name === coordName);
-    // A coordinator counts as active whenever it is present and not `stopped`. It is NOT enough to require
-    // state!=='done' (the original T17 guard): after launching the bin the coordinator ends its opening
-    // turn and watches the flow log via a Monitor, so `claude agents --json` reports it state:'done' (turn
-    // finished, status still 'busy'/'idle') for essentially the whole run though it is emphatically still
-    // driving. Reading a `done` coordinator as gone false-stalled the run in the gap between one worker
-    // closing and the next worker's slow `claude --bg` cold-start appearing — no worker live AND the
-    // coordinator 'done' — so after stallGrace (~6s) the runner HALTed before the next task could spawn.
-    // The hands-on fixture's strict build→verify handoff makes that gap unavoidable, so it stalled there
-    // every time the cold-start ran long; a subsequent worker's cold-start is not covered by startupGrace,
-    // which guards only the FIRST spawn (T35, 2026-09-15). A coordinator that is alive but genuinely hung
-    // is still caught by the wall-clock timeout (isTimedOut, checked every poll), and a run that truly
-    // finished has already returned above on its promote / halt-close hard terminal — so treating a live
-    // `done` coordinator as active never masks a real end, it only stops the false stall.
-    const coordActive = !!coord && coord.state !== 'stopped';
-    if (liveWorkers.length > 0 || coordActive) {
-      sawActive = true;
-      quiet = 0;
-      startupQuiet = 0;
-    } else if (sawActive) {
-      quiet += 1;
-      if (quiet >= stallGrace) return 'stalled';
-    } else {
-      startupQuiet += 1;
-      if (startupQuiet >= startupGrace) return 'stalled';
+    if (isTimedOut()) {
+      // The wall-clock timeout auto-touched HALT; give the coordinator a bounded grace to react and exit
+      // (so a `halt-close` is captured), then give up rather than polling forever on a hung process.
+      graceAfterTimeout += 1;
+      if (graceAfterTimeout === 1) log(`timeout — waiting up to ${haltGrace} grace poll(s) for the coordinator to react`);
+      if (graceAfterTimeout > haltGrace) return 'timeout';
     }
 
     await delay(timers, pollMs);
@@ -884,18 +694,18 @@ function safeRead(path) {
   }
 }
 
-// A promise that resolves after ms on the INJECTED timers (never the global clock), so a test drives
-// the wait loop deterministically with a fake setTimeout.
+// A promise that resolves after ms on the INJECTED timers (never the global clock), so a test drives the
+// wait loop deterministically with a fake setTimeout.
 function delay(timers, ms) {
   return new Promise((resolve) => timers.setTimeout(resolve, ms));
 }
 
 // --- The `run {fixtureId}` bin entry -------------------------------------------------------------
 //
-// The `you` launcher (T17 "Needs a person"): the user starts this on the scratch harness, it spawns a
-// real coordinator + real workers under the seatbelts, and prints the fact report. It refuses to run
+// The live launcher (T09 "Needs a person"): the user starts this on the scratch harness, it spawns a real
+// coordinator process + real workers under the seatbelts, and prints the fact report. It refuses to run
 // inside the canonical project unless PARALLEL_ALLOW_HERE=1 — the same guard coordinate.mjs applies —
-// because a scenario spawns real paid agents and mutates a real main.
+// because a scenario spawns real paid agents and cuts real branches.
 const CANONICAL_REPO = 'plan-implement-review';
 
 async function main(argv) {
@@ -914,14 +724,14 @@ async function main(argv) {
   if (basename(process.cwd()) === CANONICAL_REPO && !scratchDir && !allowHere) {
     console.error(
       `Refusing to run a live scenario inside "${CANONICAL_REPO}" — it spawns real paid workers and\n` +
-        `mutates a real main. It installs into a throwaway temp scratch repo by default, so this guard\n` +
+        `cuts real branches. It installs into a throwaway temp scratch repo by default, so this guard\n` +
         `only trips if you meant to. Pass --into <dir> to name a scratch repo, or set\n` +
         `PARALLEL_ALLOW_HERE=1 if you know what you are doing.`,
     );
     process.exit(1);
   }
 
-  // A fixture that declares a `restart` crash point runs the crash-and-restart drill (T06); every other
+  // A fixture that declares a `restart` crash point runs the crash-and-restart drill (T05); every other
   // fixture runs the straight-through scenario. Both take the same options and return the same shape.
   const isRestart = !!getFixture(fixtureId).restart;
   console.log(

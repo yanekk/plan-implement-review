@@ -43,28 +43,15 @@ ${rows}
 `;
 }
 
-// taskDoc({ num, title, runs, goal, files, tests, doneWhen, needsPerson }) → one task file's text, the
-// shape a real worker's pir-implement (or, for a `you` task, pir-verify) reads. Kept small on purpose: a
-// fixture task is trivial deliverable-wise; its job is to force a coordinator path, not to be real work.
-// `needsPerson` (a `you` task's hands-on step) adds the "Needs a person" block pir-verify step 1 looks
-// for — the exact judgement steps, what to expect, and what only a person can answer (DESIGN §2.6,
-// CLAUDE.md handover shape). If it also carries `setup`/`teardown`, those are the environment the WORKER
-// stands up and tears down (DESIGN §2.6, T39) — they render as a separate "Environment" section and never
-// appear in the person's block, because standing an environment up and down is mechanical, not judgement.
-// If it carries `checks`, those are the automated commands the WORKER runs itself and records the machine
-// result of (DESIGN §2.6, T40) — they render as their own "Automated checks" section and, like the
-// environment, never appear in the person's block, because a machine-decidable check is not a judgement.
-// Omit `needsPerson` entirely for an `auto` task.
-export function taskDoc({ num, title, runs = 'auto', goal, files = [], tests, doneWhen = [], needsPerson = null }) {
+// taskDoc({ num, title, runs, goal, files, tests, doneWhen }) → one task file's text, the shape a real
+// worker's pir-implement reads. Kept small on purpose: a fixture task is trivial deliverable-wise; its
+// job is to force a coordinator path, not to be real work. There is no `you`/hands-on task any more
+// (DESIGN §2.5): a task needing the person is an ordinary worker that prepares and asks through the same
+// escalation path as any other, so the "Needs a person"/environment/automated-checks blocks were removed
+// with the verify path (T05). `runs` still renders because the parser tolerates the column; it is ignored.
+export function taskDoc({ num, title, runs = 'auto', goal, files = [], tests, doneWhen = [] }) {
   const filesList = files.length ? files.map((f) => `- ${f}`).join('\n') : '- (none)';
   const dw = doneWhen.map((d) => `- [ ] ${d}`).join('\n');
-  const env = needsPerson && (needsPerson.setup || needsPerson.teardown)
-    ? `\n## Environment (the worker owns this)\n\n${environmentBlock(needsPerson)}\n`
-    : '';
-  const checks = needsPerson && needsPerson.checks && needsPerson.checks.length
-    ? `\n## Automated checks (the worker runs these)\n\n${checksBlock(needsPerson)}\n`
-    : '';
-  const needs = needsPerson ? `\n## Needs a person\n\n${needsPersonBlock(needsPerson)}\n` : '';
   return `# ${num} — ${title}
 
 **Runs:** ${runs}
@@ -80,54 +67,7 @@ ${tests ?? 'None. This is a scratch fixture task; write no new tests and leave `
 
 ## Done when
 ${dw}
-${env}${checks}${needs}`;
-}
-
-// environmentBlock({ setup, teardown }) → the mechanical environment a hands-on WORKER stands up and tears
-// down for a `you` task (DESIGN §2.6, T39). The worker runs `setup` and seeds before the hand-off, and
-// runs `teardown` and confirms it is down before it marks the task done. Guaranteed teardown is the
-// seatbelt (§5.2) that lets a worker bring a live environment up at all; a worker that cannot confirm
-// teardown escalates rather than marking done. These commands are the worker's, never the person's, so
-// they are kept out of the "Needs a person" block below.
-export function environmentBlock({ setup, teardown }) {
-  const up = setup ? `Bring up + seed (worker runs, before the hand-off):\n\n    ${setup}\n\n` : '';
-  const down = teardown
-    ? `Tear down + confirm down (worker runs, before marking done — if it cannot confirm, escalate):\n\n    ${teardown}\n`
-    : '';
-  return `The worker runs these, not the person (DESIGN §2.6). Guaranteed teardown is the seatbelt (§5.2).
-
-${up}${down}`;
-}
-
-// checksBlock({ checks }) → the automated checks a hands-on WORKER runs itself against the environment it
-// brought up, and records the machine result of (DESIGN §2.6, T40). A machine-decidable check — install a
-// browser driver, run an end-to-end test — is mechanical, not a judgement, so it is the worker's to run
-// and never handed to the person. The worker records the pass/fail it observed as a confirmation separate
-// from the person's judgement, and never rounds an ambiguous reply up to it. These commands are the
-// worker's, so like the environment they are kept out of the "Needs a person" block below.
-export function checksBlock({ checks }) {
-  const list = checks.map((c) => `    ${c}`).join('\n');
-  return `The worker runs these itself against the stack it brought up, and records the machine result it
-observed (pass/fail + output) as a confirmation separate from the person's judgement (DESIGN §2.6). A
-machine-decidable check is the worker's, never the person's.
-
-${list}
 `;
-}
-
-// needsPersonBlock({ command, expect, tell }) → the hands-on handover a `you` task carries, in the exact
-// shape pir-verify step 4 presents to the user (CLAUDE.md § Anything the tests cannot establish). It is
-// judgement only: what the person looks at and decides, never the environment setup/teardown or an
-// automated test, which are the worker's (environmentBlock and checksBlock, above). The command carries
-// its own seatbelt when it needs one (DESIGN
-// §5.2); a fixture's greet.mjs run is safe, so the command is bare.
-export function needsPersonBlock({ command, expect, tell }) {
-  return `Needs you — I cannot see this from here:
-
-    ${command}
-
-Expect: ${expect}
-Tell me: ${tell}`;
 }
 
 // commonPlanFiles(slug, { title }) → the DESIGN/PLAN/FINDINGS a complete, runnable scratch plan carries.

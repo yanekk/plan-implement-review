@@ -37,7 +37,7 @@ import {
 import { join, basename } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { homedir } from 'node:os';
-import { coordinatorName, isWorkerOf, parseAgentName } from '../../core/naming.mjs';
+import { isWorkerOf, parseAgentName } from '../../core/naming.mjs';
 
 // --- The transcript path convention (DESIGN §4.1, confirmed on this machine 2026-09-10) -----------
 //
@@ -82,16 +82,17 @@ export function parseAgentsForCapture(json) {
   }));
 }
 
-// tagAgent(agent, { repo, plan, coordName }) → the agent with two ownership tags added (DESIGN §4.1:
-// tag which are this run's workers/coordinator by name). isWorkerOf is true for a worker of THIS run
-// (name parses to {repo}·{plan}·T{nn}); isCoordinator is true for this run's coordinator session
-// ({repo}·{plan}, no task). A foreign agent gets both false — tagged not-ours. Ownership is read from
-// the name alone, the same way the coordinator identifies its workers (DESIGN §2.8), so it cannot
-// drift from separate bookkeeping.
-function tagAgent(agent, { repo, plan, coordName }) {
+// tagAgent(agent, { repo, plan }) → the agent with two ownership tags added (DESIGN §4.1: tag which
+// are this run's workers by name). isWorkerOf is true for a worker of THIS run (name parses to
+// {repo}/{plan}/T{nn}/…); a foreign agent gets it false — tagged not-ours. Ownership is read from the
+// name alone, the same way the coordinator identifies its workers (DESIGN §2.9), so it cannot drift
+// from separate bookkeeping. isCoordinator is always false: the coordinator is a plain foreground
+// process (`node src/shell/coordinate.mjs`), never a session, so it never appears in `claude agents`
+// (DESIGN §2.1, §2.9). The tag is kept on the record — always false — so the bundle shape the assertion
+// layer reads is stable.
+function tagAgent(agent, { repo, plan }) {
   const worker = isWorkerOf(agent.name, { repo, plan });
-  const coordinator = !worker && agent.name === coordName;
-  return { ...agent, isWorkerOf: worker, isCoordinator: coordinator };
+  return { ...agent, isWorkerOf: worker, isCoordinator: false };
 }
 
 // The filename label for a session's transcript copy (DESIGN §4.1 "<worker-name-or-role>.jsonl"):
@@ -173,7 +174,6 @@ export function createCapture({
   timers = { setInterval, clearInterval },
 } = {}) {
   if (!dir) throw new Error('createCapture: no bundle dir');
-  const coordName = coordinatorName({ repo, plan: slug });
   const timelinePath = join(dir, BUNDLE_FILES.timeline);
   mkdirSync(dir, { recursive: true });
 
@@ -203,7 +203,7 @@ export function createCapture({
     let agents = [];
     if (r.ok) {
       try {
-        agents = parseAgentsForCapture(r.stdout).map((a) => tagAgent(a, { repo, plan: slug, coordName }));
+        agents = parseAgentsForCapture(r.stdout).map((a) => tagAgent(a, { repo, plan: slug }));
       } catch {
         agents = [];
       }
@@ -340,7 +340,7 @@ export function createCapture({
     // Resting states: `--all` still lists ended sessions (with only their final `state`, DESIGN §4.1).
     const all = runClaude(['agents', '--json', '--all']);
     try {
-      const parsed = all.ok ? parseAgentsForCapture(all.stdout).map((a) => tagAgent(a, { repo, plan: slug, coordName })) : [];
+      const parsed = all.ok ? parseAgentsForCapture(all.stdout).map((a) => tagAgent(a, { repo, plan: slug })) : [];
       writeFileSync(join(dir, BUNDLE_FILES.final), `${JSON.stringify(parsed, null, 2)}\n`);
     } catch {
       writeFileSync(join(dir, BUNDLE_FILES.final), '[]\n');

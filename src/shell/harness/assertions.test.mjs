@@ -18,15 +18,10 @@ import {
   sendMessagesOf,
   runIdentity,
   noHelloEver,
-  sendFailureSurfaced,
   noCloseBeforeIdle,
-  byNameAddressing,
-  questionRoundTrip,
+  parkedWorkerHoldsSlot,
   mergeConflictResolved,
   oneMergeToMain,
-  verifyWorkerSpawned,
-  youNeverReviewed,
-  scribeWroteFinding,
   killSwitchStoppedAll,
   ceilingHeld,
   reachedWidth,
@@ -40,8 +35,11 @@ import {
 
 const REPO = 'pir-h';
 const PLAN = 'scratch';
-const COORD = `${REPO} · ${PLAN}`;
-const wname = (t, role = 'implement') => `${REPO} · ${PLAN} · ${t} · ${role}`;
+// A coordinator-shaped name for the transcript-loader mechanics tests (the loader tags role from the
+// manifest, not the name). There is no coordinator SESSION any more (DESIGN §2.9), so this is a plain
+// two-field label that parseAgentName reports as not-a-worker.
+const COORD = `${REPO} / ${PLAN}`;
+const wname = (t, role = 'implement') => `${REPO} / ${PLAN} / ${t} / work / ${role}`;
 
 // --- canned-bundle builders ----------------------------------------------------------------------
 
@@ -68,9 +66,9 @@ function bundle(over = {}) {
 
 // --- runIdentity ---------------------------------------------------------------------------------
 
-test('runIdentity reads repo/plan/coordName from the timeline coordinator tag', () => {
-  const b = bundle({ timeline: [tick('t1', [cagent(), wagent('T01', 'busy')])] });
-  assert.deepEqual(runIdentity(b), { repo: REPO, plan: PLAN, coordName: COORD });
+test('runIdentity reads repo/plan from a worker; there is no coordinator name (DESIGN §2.9)', () => {
+  const b = bundle({ timeline: [tick('t1', [wagent('T01', 'busy')])] });
+  assert.deepEqual(runIdentity(b), { repo: REPO, plan: PLAN, coordName: null });
 });
 
 // --- transcripts: parse and the SendMessage accessor ---------------------------------------------
@@ -149,27 +147,6 @@ test('noHelloEver does not pass vacuously over an empty flow (nothing ran)', () 
   assert.match(r.detail, /vacuous|nothing ran/);
 });
 
-// --- sendFailureSurfaced (C, T30: a failed down-send is recorded) --------------------------------
-
-test('sendFailureSurfaced passes when a send-failed line is present for the named task', () => {
-  const b = bundle({ flow: [fl('t1', 'surface', 'T01'), fl('t2', 'send-failed', 'T01')] });
-  const r = sendFailureSurfaced('T01').check(b);
-  assert.equal(r.pass, true, r.detail);
-});
-
-test('sendFailureSurfaced fails when there is no send-failed line for the task', () => {
-  const b = bundle({ flow: [fl('t1', 'surface', 'T01'), fl('t2', 'answer', 'T01')] });
-  const r = sendFailureSurfaced('T01').check(b);
-  assert.equal(r.pass, false, r.detail);
-  assert.match(r.detail, /send-failed|unrecorded/);
-});
-
-test('sendFailureSurfaced with no task passes on any send-failed line', () => {
-  const b = bundle({ flow: [fl('t2', 'send-failed', 'T07')] });
-  const r = sendFailureSurfaced().check(b);
-  assert.equal(r.pass, true, r.detail);
-});
-
 // --- noCloseBeforeIdle (the T13 Problem B gate) --------------------------------------------------
 
 test('noCloseBeforeIdle passes when an idle observation comes before the close', () => {
@@ -201,42 +178,44 @@ test('noCloseBeforeIdle exempts a worker never seen busy (a dead/crashed one, §
   assert.equal(noCloseBeforeIdle().check(b).pass, true);
 });
 
-// --- byNameAddressing ----------------------------------------------------------------------------
+// --- parkedWorkerHoldsSlot (DESIGN §2.2, §2.8: a park costs only its own task, nothing routed) ----
 
-test('byNameAddressing passes when a worker addresses the coordinator by the convention name (even with a [ref])', () => {
+test('parkedWorkerHoldsSlot passes when the task surfaced, held its slot, nothing was routed, and another task merged', () => {
   const b = bundle({
-    timeline: [tick('t1', [cagent()])],
-    transcripts: [transcript(wname('T01'), 'worker', 'T01', [sendEvent(`${COORD} [ab12]`, 'question'), sendEvent('pir-h / coord scratch [ab12]', 'question')])],
+    flow: [fl('t2', 'surface', 'T01'), fl('t5', 'merge', 'T02')],
+    timeline: [tick('t1', [wagent('T01', 'busy'), wagent('T02', 'busy')]), tick('t3', [wagent('T01', 'idle')])],
   });
-  assert.equal(byNameAddressing().check(b).pass, true);
+  assert.equal(parkedWorkerHoldsSlot('T01').check(b).pass, true);
 });
 
-test('byNameAddressing fails when a worker only messages a non-convention name', () => {
+test('parkedWorkerHoldsSlot fails when a decision was routed down (an answer line — the old relay)', () => {
   const b = bundle({
-    timeline: [tick('t1', [cagent()])],
-    transcripts: [transcript(wname('T01'), 'worker', 'T01', [sendEvent('pir-h / coord scratch [ab12]', 'question')])],
+    flow: [fl('t2', 'surface', 'T01'), fl('t3', 'answer', 'T01'), fl('t5', 'merge', 'T02')],
+    timeline: [tick('t3', [wagent('T01', 'idle')])],
   });
-  const r = byNameAddressing().check(b);
+  const r = parkedWorkerHoldsSlot('T01').check(b);
   assert.equal(r.pass, false);
-  assert.match(r.detail, /never by/);
+  assert.match(r.detail, /routed a decision down/);
 });
 
-// --- questionRoundTrip ---------------------------------------------------------------------------
-
-test('questionRoundTrip passes when a task is surfaced and later merged', () => {
+test('parkedWorkerHoldsSlot fails when the park stalled the run (no other task merged)', () => {
   const b = bundle({
-    flow: [fl('t2', 'surface', 'T03'), fl('t5', 'merge', 'T03')],
-    timeline: [tick('t1', [cagent()])],
-    transcripts: [transcript(COORD, 'coordinator', null, [sendEvent(wname('T03'), 'answer: option 1')])],
+    flow: [fl('t2', 'surface', 'T01')],
+    timeline: [tick('t3', [wagent('T01', 'idle')])],
   });
-  assert.equal(questionRoundTrip('T03').check(b).pass, true);
+  const r = parkedWorkerHoldsSlot('T01').check(b);
+  assert.equal(r.pass, false);
+  assert.match(r.detail, /no other task merged/);
 });
 
-test('questionRoundTrip fails when a surfaced task never resumes to a merge', () => {
-  const b = bundle({ flow: [fl('t2', 'surface', 'T03')] });
-  const r = questionRoundTrip('T03').check(b);
+test('parkedWorkerHoldsSlot fails when the parked worker was not held (never sampled live after it surfaced)', () => {
+  const b = bundle({
+    flow: [fl('t2', 'surface', 'T01'), fl('t5', 'merge', 'T02')],
+    timeline: [tick('t1', [wagent('T01', 'busy')])], // only BEFORE the surface
+  });
+  const r = parkedWorkerHoldsSlot('T01').check(b);
   assert.equal(r.pass, false);
-  assert.match(r.detail, /never resumed/);
+  assert.match(r.detail, /slot was not held/);
 });
 
 // --- mergeConflictResolved (task-agnostic, Option 2, T28) ----------------------------------------
@@ -273,7 +252,7 @@ test('mergeConflictResolved fails when no task was surfaced', () => {
 test('mergeConflictResolved fails when the surfaced task was never answered and merged (the T22 failure)', () => {
   // Surfaced but no `answer` and no later merge — the worker was closed and the decision had no way down.
   const r = mergeConflictResolved(decided).check(
-    bundle({ flow: [fl('t4', 'surface', 'T02')], timeline: [tick('t1', [cagent()])] }),
+    bundle({ flow: [fl('t4', 'surface', 'T02')], timeline: [tick('t1', [cagent(), wagent('T01', 'busy')])] }),
   );
   assert.equal(r.pass, false);
   assert.match(r.detail, /not resolved through the live worker/);
@@ -317,7 +296,7 @@ test('loadFinalFiles reads the bundle final-files.json into bundle.finalFiles; m
 // --- oneMergeToMain ------------------------------------------------------------------------------
 
 test('oneMergeToMain passes on exactly one promote and one promotion merge in the git log', () => {
-  const b = bundle({ flow: [fl('t9', 'promote', 'pir/scratch')], gitLog: "*   Merge branch 'pir/scratch'\n| * T01\n", timeline: [tick('t1', [cagent()])] });
+  const b = bundle({ flow: [fl('t9', 'promote', 'pir/scratch')], gitLog: "*   Merge branch 'pir/scratch'\n| * T01\n", timeline: [tick('t1', [cagent(), wagent('T01', 'busy')])] });
   assert.equal(oneMergeToMain().check(b).pass, true);
 });
 
@@ -328,7 +307,7 @@ test('oneMergeToMain fails when nothing was promoted', () => {
 });
 
 test('oneMergeToMain fails when the git log shows two promotion merges', () => {
-  const b = bundle({ flow: [fl('t9', 'promote', 'pir/scratch')], gitLog: "Merge branch 'pir/scratch'\nMerge branch 'pir/scratch'\n", timeline: [tick('t1', [cagent()])] });
+  const b = bundle({ flow: [fl('t9', 'promote', 'pir/scratch')], gitLog: "Merge branch 'pir/scratch'\nMerge branch 'pir/scratch'\n", timeline: [tick('t1', [cagent(), wagent('T01', 'busy')])] });
   assert.equal(oneMergeToMain().check(b).pass, false);
 });
 
@@ -342,74 +321,10 @@ test('oneMergeToMain passes when a worker integration merge shares the promotion
     "| * reconcile T03\n" +
     "| |   a8717af Merge branch 'pir/scratch' into pir/scratch-T03\n" +
     '| * T01\n';
-  const b = bundle({ flow: [fl('t9', 'promote', 'pir/scratch')], gitLog, timeline: [tick('t1', [cagent()])] });
+  const b = bundle({ flow: [fl('t9', 'promote', 'pir/scratch')], gitLog, timeline: [tick('t1', [cagent(), wagent('T01', 'busy')])] });
   const r = oneMergeToMain().check(b);
   assert.equal(r.pass, true, r.detail);
   assert.ok(r.evidence.includes('git log promotion merges: 1'));
-});
-
-// --- verifyWorkerSpawned (the you-task's worker is a hands-on verify session, T32) ----------------
-
-test('verifyWorkerSpawned passes when the task was sampled with role verify', () => {
-  const b = bundle({ timeline: [tick('t1', [cagent(), wagent('T02', 'idle', { role: 'verify' })])] });
-  assert.equal(verifyWorkerSpawned('T02').check(b).pass, true);
-});
-
-test('verifyWorkerSpawned fails when the task ran as an implementer, not a verify session', () => {
-  const b = bundle({ timeline: [tick('t1', [cagent(), wagent('T02', 'busy', { role: 'implement' })])] });
-  const r = verifyWorkerSpawned('T02').check(b);
-  assert.equal(r.pass, false);
-  assert.match(r.detail, /not a hands-on verify session/);
-});
-
-test('verifyWorkerSpawned fails when the task was never sampled in the timeline', () => {
-  const b = bundle({ timeline: [tick('t1', [cagent()])] });
-  const r = verifyWorkerSpawned('T02').check(b);
-  assert.equal(r.pass, false);
-  assert.match(r.detail, /never sampled|cannot be read/);
-});
-
-// --- youNeverReviewed (a you task folds hands-on straight to merge, no review, §2.6) --------------
-
-test('youNeverReviewed passes on a merge with no review of the task', () => {
-  const b = bundle({ flow: [fl('t1', 'spawn', 'T02'), fl('t5', 'merge', 'T02'), fl('t9', 'promote', 'pir/scratch')] });
-  assert.equal(youNeverReviewed('T02').check(b).pass, true);
-});
-
-test('youNeverReviewed fails when a review line is present for the task', () => {
-  const b = bundle({ flow: [fl('t2', 'review', 'T02'), fl('t5', 'merge', 'T02')] });
-  const r = youNeverReviewed('T02').check(b);
-  assert.equal(r.pass, false);
-  assert.match(r.detail, /must skip the fresh-review phase/);
-});
-
-test('youNeverReviewed fails when the task never merged (skip is unproven)', () => {
-  const b = bundle({ flow: [fl('t1', 'spawn', 'T02')] });
-  const r = youNeverReviewed('T02').check(b);
-  assert.equal(r.pass, false);
-  assert.match(r.detail, /never folded back/);
-});
-
-// --- scribeWroteFinding (the hand-verified row reached main, contains check, T32) -----------------
-
-test('scribeWroteFinding passes when the promoted FINDINGS.md contains the needle', () => {
-  const file = 'plans/hands-on/FINDINGS.md';
-  const b = bundle({ finalFiles: { [file]: '# Findings\n| 2026-09-14 | ✅ | ran greet.mjs, saw the line |\n' } });
-  assert.equal(scribeWroteFinding({ file, needle: '✅' }).check(b).pass, true);
-});
-
-test('scribeWroteFinding fails when the file was captured but has no hand-verified row', () => {
-  const file = 'plans/hands-on/FINDINGS.md';
-  const b = bundle({ finalFiles: { [file]: '# Findings\n| Date | | Finding |\n|---|---|---|\n' } });
-  const r = scribeWroteFinding({ file, needle: '✅' }).check(b);
-  assert.equal(r.pass, false);
-  assert.match(r.detail, /does not contain/);
-});
-
-test('scribeWroteFinding fails when no final content was captured for the file', () => {
-  const r = scribeWroteFinding({ file: 'plans/hands-on/FINDINGS.md', needle: '✅' }).check(bundle({ finalFiles: {} }));
-  assert.equal(r.pass, false);
-  assert.match(r.detail, /no captured final content/);
 });
 
 // --- killSwitchStoppedAll ------------------------------------------------------------------------
@@ -502,13 +417,12 @@ test('reachedWidth(2) counts by task — two sessions of one task are width 1, n
   assert.equal(reachedWidth(2).check(b).pass, false);
 });
 
-// A reviewer and a hands-on verify scribe are follow-on sessions, not builds in flight: one busy
-// implementer beside a busy reviewer and a busy verify scribe is width 1.
-test('reachedWidth(2) does not count a reviewer or a verify scribe as an implementer slot', () => {
+// A reviewer is a follow-on session, not a build in flight: one busy implementer beside a busy
+// reviewer is width 1.
+test('reachedWidth(2) does not count a reviewer as an implementer slot', () => {
   const b = bundle({ timeline: [tick('t1', [
     wagent('T02', 'busy', { role: 'implement' }),
     wagent('T03', 'busy', { role: 'review' }),
-    wagent('T04', 'busy', { role: 'verify' }),
   ])] });
   assert.equal(reachedWidth(2).check(b).pass, false);
 });
@@ -684,15 +598,15 @@ test('leftoverSessionsReaped fails vacuously-safe when the run never restarted',
 // --- checkScenario + formatReport ----------------------------------------------------------------
 
 test('checkScenario fails the scenario when a single fact fails, and formatReport shows the evidence', () => {
-  const b = bundle({ flow: [fl('t1', 'spawn', 'T01')], transcripts: [transcript(COORD, 'coordinator', null, [])], timeline: [tick('t1', [cagent(), wagent('T01', 'busy')])] });
-  const spec = { id: 'demo', facts: [noHelloEver(), questionRoundTrip('T09')] };
+  const b = bundle({ flow: [fl('t1', 'spawn', 'T01')], timeline: [tick('t1', [wagent('T01', 'busy')])] });
+  const spec = { id: 'demo', facts: [noHelloEver(), parkedWorkerHoldsSlot('T09')] };
   const report = checkScenario(spec, b);
   assert.equal(report.pass, false, 'one failing fact fails the scenario');
   assert.equal(report.facts.find((f) => f.id === 'no-hello-ever').pass, true);
   const printed = formatReport(report);
   assert.match(printed, /\[FAIL\] scenario: demo/);
   assert.match(printed, /✓ The flow log contains no hello line/);
-  assert.match(printed, /✗ A question on T09/);
+  assert.match(printed, /✗ T09 parked on the person/);
 });
 
 test('checkScenario reports a throwing fact as failed rather than aborting', () => {

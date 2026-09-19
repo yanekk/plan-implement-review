@@ -21,8 +21,11 @@ import {
 
 const REPO = 'pir-t14';
 const SLUG = 'scratch';
-const COORD = `${REPO} · ${SLUG}`;
-const W1 = `${REPO} · ${SLUG} · T01 · implement`;
+const W1 = `${REPO} / ${SLUG} / T01 / work / implement`;
+const W2 = `${REPO} / ${SLUG} / T02 / work / implement`;
+// A name shaped like the old coordinator name ({repo} / {plan}, no task) — there is no coordinator
+// session any more (DESIGN §2.9), so this must be tagged neither a worker nor a coordinator.
+const COORD_SHAPED = `${REPO} / ${SLUG}`;
 
 // A temp workspace holding a bundle dir, a control dir (the flow log), a projects/ transcript store and
 // a scratch repo dir. Never the real project — a throwaway temp dir, no agent spawned (the seatbelt).
@@ -86,7 +89,7 @@ test('parseAgentsForCapture keeps sessionId and accepts raw text or an array', (
   const [a] = parseAgentsForCapture(raw);
   assert.equal(a.sessionId, 's1');
   assert.equal(a.status, 'idle');
-  const [b] = parseAgentsForCapture([{ id: 'b', sessionId: 's2', name: COORD, cwd: '/c' }]);
+  const [b] = parseAgentsForCapture([{ id: 'b', sessionId: 's2', name: W2, cwd: '/c' }]);
   assert.equal(b.sessionId, 's2');
   assert.deepEqual(parseAgentsForCapture('not-an-array-json' && '{}'), []);
 });
@@ -135,15 +138,16 @@ test('the timeline shows a worker busy, then idle, then absent, and reads back v
 
 // --- ownership tagging by name (DESIGN §2.8, §4.1) -----------------------------------------------
 
-test('tags this run’s worker and coordinator by name; a foreign agent is tagged not-ours', () => {
+test('tags this run’s worker by name; a foreign agent and a coordinator-shaped name are not-ours', () => {
   const ws = workspace();
+  const FOREIGN = 'someone-else / other / T99 / work / implement';
   try {
     const runClaude = claudeSpy({
       ticks: [
         [
           agent({ name: W1, sessionId: 's1', cwd: ws.repo }),
-          agent({ name: COORD, sessionId: 's2', cwd: ws.repo }),
-          agent({ name: 'someone-else · other · T99 · implement', sessionId: 's3', cwd: '/elsewhere' }),
+          agent({ name: COORD_SHAPED, sessionId: 's2', cwd: ws.repo }),
+          agent({ name: FOREIGN, sessionId: 's3', cwd: '/elsewhere' }),
         ],
       ],
     });
@@ -161,10 +165,11 @@ test('tags this run’s worker and coordinator by name; a foreign agent is tagge
 
     assert.equal(byName[W1].isWorkerOf, true);
     assert.equal(byName[W1].isCoordinator, false);
-    assert.equal(byName[COORD].isCoordinator, true);
-    assert.equal(byName[COORD].isWorkerOf, false);
-    assert.equal(byName['someone-else · other · T99 · implement'].isWorkerOf, false, 'foreign worker not ours');
-    assert.equal(byName['someone-else · other · T99 · implement'].isCoordinator, false, 'foreign, not our coordinator');
+    // isCoordinator is always false: the coordinator is a plain process, never in `claude agents` (§2.9).
+    assert.equal(byName[COORD_SHAPED].isCoordinator, false);
+    assert.equal(byName[COORD_SHAPED].isWorkerOf, false, 'a coordinator-shaped name is not a worker');
+    assert.equal(byName[FOREIGN].isWorkerOf, false, 'foreign worker not ours');
+    assert.equal(byName[FOREIGN].isCoordinator, false);
     // Every agent is kept per tick, not just this run's (DESIGN §4.1).
     assert.equal(entry.agents.length, 3);
   } finally {
@@ -187,7 +192,7 @@ test('snapshots each session’s transcript; a present one is copied, a missing 
       ticks: [
         [
           agent({ name: W1, sessionId: 's1', cwd: ws.repo }), // transcript present
-          agent({ name: COORD, sessionId: 's2', cwd: ws.repo }), // no transcript file on disk
+          agent({ name: W2, sessionId: 's2', cwd: ws.repo }), // no transcript file on disk
         ],
       ],
     });
@@ -212,11 +217,11 @@ test('snapshots each session’s transcript; a present one is copied, a missing 
     assert.equal(worker.transcriptPath, join(ws.projects, escaped, 's1.jsonl'));
     assert.equal(readFileSync(join(ws.bundle, worker.copiedTo), 'utf8'), transcriptBody);
 
-    // The coordinator's transcript is missing → recorded, not thrown; role is coordinator.
-    const coord = bundle.manifest[COORD];
-    assert.equal(coord.copied, false);
-    assert.equal(coord.role, 'coordinator');
-    assert.equal(coord.copiedTo, null);
+    // The second worker's transcript is missing → recorded, not thrown; role is worker.
+    const w2 = bundle.manifest[W2];
+    assert.equal(w2.copied, false);
+    assert.equal(w2.role, 'worker');
+    assert.equal(w2.copiedTo, null);
   } finally {
     ws.cleanup();
   }

@@ -12,7 +12,10 @@ user changed.
 
 | Date | | Finding |
 |---|---|---|
-| 2026-09-19 | 📌 | T04: dropping the `runs` field from parseProgress and the verify path broke tests in coordinate.mjs/test, fixtures.test, planner-templates.test — no task owned them. User decided to fold those green-keeping fixes into T04. |
+| 2026-09-19 | 🔄 | T05: PM chose option A — rebuild the harness runner now, not defer to T09. `run.mjs` launches `node coordinate.mjs` as a child process, seals on its exit (no `promote` marker), and SIGKILLs its pid to crash for kill-and-rebuild. |
+| 2026-09-19 | 📌 | T05 scope beyond the task's file list, forced by removing the vocabulary: deleted `blog-app`/`spawn-one-scratch` (you-model, dead `r.promoted`), removed `byNameAddressing` (worker→coordinator SendMessage is gone, §2.2), fixed platform.test/fake-platform.test names to the strict 5-field `/` form. |
+| 2026-09-19 | 📌 | T05 left stale for a later task: the `merge-conflict` fixture + `mergeConflictResolved` + `oneMergeToMain` still read `promote`/`answer`/`main:` the new loop never writes. Tolerated legacy doubles (green on canned data); rework when merge-conflict's live run is revisited. |
+| 2026-09-19 | 📌 | T05: `captureFinalFiles` now reads `git show pir/{slug}:file` (the handed-off feature branch), not `main:` — the run never merges to main (§2.4). |
 | 2026-09-19 | 📌 | T03 review: on a complete run the hand-off prints twice — once in the painted display footer, once as the trailing `renderHandoff` line. Harmless; which to keep is a by-eye call for T09's render pass. |
 | 2026-09-19 | 📌 | T03: `buildDisplay` returns `{ branch, summary, rows, footer }` — a top-level `branch` past the task's `{summary,rows,footer}` sketch. The renderer shows the run branch on every paint, but the footer carries a branch only in handoff/red states, so the summary line cannot source it there. |
 | 2026-09-19 | 📌 | T03: `coordinator.defer()` is now caller-less — the answers feed that drove it went with the down-channel (§2.2). Kept (not on §2.2's removal list); the conflict/extend paths are handled by the person directly now (§2.8), so a later task may drop it. |

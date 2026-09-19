@@ -1,9 +1,10 @@
 // The fixture loader/installer of the live-scenario harness (DESIGN §4.1, T16). The fixtures are scratch
 // plans engineered so a REAL claude worker reliably hits one coordinator path (PM decision: all-real
 // workers). This module is the registry over them and the installer the T17 live runner uses to lay one
-// down as a self-contained scratch repo and seed its git state. Six were built in T16; the `hands-on`
-// build→verify fixture (T32) was added later, the first to exercise a `you`/hands-on task; then `blog-app`
-// (T36), the capstone — a real DB-backed blog built by a concurrent worker trio with two `you` check-ins.
+// down as a self-contained scratch repo and seed its git state. The set covers the coordinator paths:
+// a single task, a concurrent pair, a review queue, a clean merge, a merge conflict, a worker that parks
+// on the person, and a crash-and-restart. The old `hands-on` and `blog-app` fixtures exercised the
+// `you`/hands-on model, which was removed with the down-channel (DESIGN §2.5, T05); they went with it.
 //
 // A fixture is a JS descriptor (fixtures/<name>.mjs), not an on-disk plan tree: its plan text and task
 // docs are inline strings and its scenario spec is a defineScenario(...) value (T15), the same
@@ -43,15 +44,13 @@ import reviewQueue from './fixtures/review-queue.mjs';
 import cleanMerge from './fixtures/clean-merge.mjs';
 import mergeConflict from './fixtures/merge-conflict.mjs';
 import humanDecision from './fixtures/human-decision.mjs';
-import handsOn from './fixtures/hands-on.mjs';
-import blogApp from './fixtures/blog-app.mjs';
 import restart from './fixtures/restart.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
 // The repo's own skills/ dir (src/shell/harness → src/shell → src → repo root → skills). The parallel
-// skills a worker needs (pir-worker, pir-implement, pir-review, pir-verify) and the coordinator skill
-// live here and nowhere in ~/.claude/skills, so a fixture must carry them (FINDINGS 2026-09-09).
+// skills a worker needs (pir-worker, pir-implement, pir-review) live here and nowhere in ~/.claude/skills,
+// so a fixture must carry them (FINDINGS 2026-09-09).
 export const DEFAULT_SKILLS_DIR = join(HERE, '..', '..', '..', 'skills');
 
 // The repo's own src/ tree (src/shell/harness → src/shell → src). Carried into every scratch repo so the
@@ -71,8 +70,6 @@ const FIXTURES = Object.freeze({
   [cleanMerge.id]: cleanMerge,
   [mergeConflict.id]: mergeConflict,
   [humanDecision.id]: humanDecision,
-  [handsOn.id]: handsOn,
-  [blogApp.id]: blogApp,
   [restart.id]: restart,
 });
 

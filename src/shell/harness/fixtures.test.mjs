@@ -1,9 +1,10 @@
-// The six live-scenario fixtures and their loader, proven at BUILD time — no agent spawned (DESIGN
-// §4.1, T16). What is proven here: every fixture's scratch plan parses and is marked reviewed with the
-// task graph its scenario needs; every fixture ships a valid scenario spec (T15) declaring the named
-// facts; and installFixture lays a fixture down deterministically, carries the parallel skills the
-// workers need, and the seeded shape genuinely forces (or avoids) a merge conflict — replayed over real
-// git. Running a fixture against real workers is T17; this file never does.
+// The live-scenario fixtures and their loader, proven at BUILD time — no agent spawned (DESIGN §4.1,
+// T16). What is proven here: every fixture's scratch plan parses and is marked reviewed with the task
+// graph its scenario needs; every fixture ships a valid scenario spec (T15) declaring the named facts;
+// and installFixture lays a fixture down deterministically, carries the parallel skills the workers need,
+// and the seeded shape genuinely forces (or avoids) a merge conflict — replayed over real git. The old
+// `hands-on` and `blog-app` fixtures went with the `you` model (DESIGN §2.5, T05). Running a fixture
+// against real workers is the live half (T09); this file never does.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -22,7 +23,7 @@ const EXPECT = {
     taskCount: 1,
     deps: { T01: [] },
     ceiling: 1,
-    factIds: ['no-hello-ever', 'by-name-addressing', 'no-close-before-idle', 'one-merge-to-main'],
+    factIds: ['no-hello-ever', 'no-close-before-idle', 'one-merge-to-main'],
   },
   parallel: {
     taskCount: 3,
@@ -49,37 +50,16 @@ const EXPECT = {
     factIds: ['merge-conflict-resolved'],
   },
   'human-decision': {
-    taskCount: 1,
-    deps: { T01: [] },
-    ceiling: 1,
-    factIds: ['question-round-trip:T01', 'one-merge-to-main'],
-  },
-  'hands-on': {
     taskCount: 2,
-    deps: { T01: [], T02: ['T01'] },
-    ceiling: 1,
-    factIds: ['verify-worker-spawned:T02', 'you-never-reviewed:T02', 'one-merge-to-main', 'ceiling-held:1', 'scribe-wrote-finding'],
-  },
-  'blog-app': {
-    taskCount: 7,
-    deps: { T01: [], T02: ['T01'], T03: ['T01'], T04: ['T01'], T05: ['T02', 'T03', 'T04'], T06: ['T05'], T07: ['T06'] },
-    ceiling: 3,
-    factIds: [
-      'reached-width:2',
-      'ceiling-held:3',
-      'one-merge-to-main',
-      'verify-worker-spawned:T05',
-      'you-never-reviewed:T05',
-      'verify-worker-spawned:T07',
-      'you-never-reviewed:T07',
-      'scribe-wrote-finding',
-    ],
+    deps: { T01: [], T02: [] },
+    ceiling: 2,
+    factIds: ['parked-worker-holds-slot:T01'],
   },
   restart: {
     taskCount: 2,
     deps: { T01: [], T02: ['T01'] },
     ceiling: 1,
-    factIds: ['resumed-not-rebuilt:T02', 'no-rebuild-from:T01', 'feeds-cleared', 'leftover-sessions-reaped:1', 'one-merge-to-main'],
+    factIds: ['resumed-not-rebuilt:T02', 'no-rebuild-from:T01', 'feeds-cleared', 'leftover-sessions-reaped:1'],
   },
 };
 
@@ -152,8 +132,9 @@ test('merge-conflict: both task docs edit the same file, and the probe expects a
 
 test('merge-conflict: carries a task-agnostic scripted decision and the decided final content (T28)', () => {
   const fx = getFixture('merge-conflict');
-  // The decision names no task — which of the two same-line tasks conflicts is a timing race, so the
-  // runner routes the fixed decision to whatever task surfaces (run.mjs scriptedAnswerFor).
+  // The decision names no task — which of the two same-line tasks conflicts is a timing race. NOTE: the
+  // merge-conflict fixture still carries the old down-channel `scriptedAnswer`/promotion shape; it is a
+  // tolerated legacy double (nothing routes it now, §2.2) pending its own rework (FINDINGS 2026-09-19).
   assert.equal(fx.scriptedAnswer.task, undefined, 'the scripted decision names no task (the loser is a race)');
   assert.ok(/hello there/.test(fx.scriptedAnswer.text), 'the decision keeps the "hello there" side');
   assert.deepEqual(fx.finalContent, { file: 'greeting.txt', content: 'hello there' }, 'main must end with the decided side');
@@ -167,115 +148,17 @@ test('clean-merge: the two task docs edit different files, and the probe expects
   assert.deepEqual(new Set(Object.keys(fx.seedFiles)), new Set(['a.txt', 'b.txt']));
 });
 
-test('human-decision: the task doc is deliberately underspecified and a scripted answer is carried', () => {
+test('human-decision: T01 is deliberately underspecified and told to park; T02 is independent, no answer routed', () => {
   const fx = getFixture('human-decision');
-  const doc = Object.values(fx.tasks)[0];
-  assert.match(doc, /NOT SPECIFIED/, 'the wording is explicitly left unspecified');
-  assert.match(doc, /ask the coordinator/i, 'the worker is told to ask, not guess');
-  assert.equal(fx.scriptedAnswer.task, 'T01');
-  assert.ok(fx.scriptedAnswer.text.length > 0, 'a scripted answer line is present');
-});
-
-test('hands-on: T01 is an auto build and T02 is a you-verify depending on it, with a Needs-a-person block', () => {
-  const fx = getFixture('hands-on');
   const { tasks } = parseProgress(fx.progress);
-  const t02 = tasks.find((t) => t.num === 'T02');
-  // The auto/you distinction was removed from the parser (§2.5), so the Runs marker is no longer a
-  // parsed field; the fixture's task docs still declare the roles (checked below). The dependency edge
-  // between the build and its hand-verification is still what parseProgress carries.
-  assert.deepEqual(t02.deps, ['T01'], 'the verify depends on the build');
-
-  // The auto build's doc asks for a runnable program with its own test; the verify doc carries the
-  // "Needs a person" block pir-verify step 1 reads (the command and what to report).
-  const buildDoc = Object.entries(fx.tasks).find(([n]) => n.startsWith('T01-'))[1];
-  const verifyDoc = Object.entries(fx.tasks).find(([n]) => n.startsWith('T02-'))[1];
-  assert.match(buildDoc, /greet\.mjs/, 'T01 builds greet.mjs');
-  assert.match(buildDoc, /greet\.test\.mjs/, 'T01 has its own test');
-  assert.match(verifyDoc, /## Needs a person/, 'T02 carries a Needs-a-person block');
-  assert.match(verifyDoc, /Needs you — I cannot see this from here/, 'in the pir-verify handover shape');
-  assert.match(verifyDoc, /node greet\.mjs/, 'the block names the command to run');
-  assert.match(verifyDoc, /^\*\*Runs:\*\* you$/m, 'the verify doc declares Runs: you');
-
-  // The fixture wires the runner to capture FINDINGS.md so scribeWroteFinding can read it back.
-  assert.equal(fx.finalContent.file, 'plans/hands-on/FINDINGS.md');
-});
-
-test('blog-app: T02/T03/T04 are a concurrent auto trio off T01, with two you check-ins', () => {
-  const fx = getFixture('blog-app');
-  const { tasks } = parseProgress(fx.progress);
-  // The trio depends ONLY on T01, so all three can build at once (the fixture's whole point).
-  for (const num of ['T02', 'T03', 'T04']) {
-    const t = tasks.find((x) => x.num === num);
-    assert.deepEqual(t.deps, ['T01'], `${num} depends only on T01 so the trio runs concurrently`);
-  }
-  // The Runs marker is no longer a parsed field (§2.5); the check-ins' hands-on nature lives in their
-  // task docs now, not in a parsed column.
-  assert.equal(fx.finalContent.file, 'plans/blog-app/FINDINGS.md');
-});
-
-test('blog-app: T01 pins the contract and the pure core; the trio doc scope-fences package.json to T03', () => {
-  const fx = getFixture('blog-app');
-  const doc = (num) => Object.entries(fx.tasks).find(([n]) => n.startsWith(`${num}-`))[1];
-  // T01 pins the shared contract and the stdlib pure core the parallel workers build against.
-  assert.match(doc('T01'), /CONTRACT\.md/, 'T01 pins the REST contract');
-  assert.match(doc('T01'), /GET\s+\/api\/posts/, 'the contract names the posts endpoint');
-  assert.match(doc('T01'), /src\/core\//, 'T01 pins the stdlib pure core');
-  // The file partition that lets three branches merge clean: only T03 edits package.json.
-  assert.match(doc('T03'), /only trio member that edits `package\.json`/i, 'T03 owns the pg dependency');
-  assert.match(doc('T02'), /do NOT edit `package\.json`/i, 'T02 does not touch package.json');
-  assert.match(doc('T04'), /add no dependency/i, 'T04 adds no dependency');
-  // npm test stays install-free: the e2e test is a separate script, never wired into `test`.
-  assert.match(doc('T06'), /npm run e2e/, 'the e2e test is its own script');
-  assert.match(doc('T06'), /do NOT.*`test` script|`test` script.*unchanged|not.*part of `npm test`/is, 'e2e is kept out of npm test');
-});
-
-test('blog-app: the worker owns bring-up/teardown; the person block is judgement only, no compose up/down (T39)', () => {
-  const fx = getFixture('blog-app');
-  for (const num of ['T05', 'T07']) {
-    const doc = Object.entries(fx.tasks).find(([n]) => n.startsWith(`${num}-`))[1];
-    assert.match(doc, /## Needs a person/, `${num} carries a Needs-a-person block`);
-    assert.match(doc, /Needs you — I cannot see this from here/, `${num} uses the pir-verify handover shape`);
-    assert.match(doc, /^\*\*Runs:\*\* you$/m, `${num} declares Runs: you`);
-    // The worker owns the environment: bring-up + teardown live in the Environment section (DESIGN §2.6).
-    assert.match(doc, /## Environment \(the worker owns this\)/, `${num} carries a worker Environment section`);
-    const envHead = doc.indexOf('## Environment');
-    const personHead = doc.indexOf('## Needs a person');
-    const envBlock = doc.slice(envHead, personHead);
-    const personBlock = doc.slice(personHead);
-    assert.match(envBlock, /docker compose up --build/, `${num}: the worker brings the stack up`);
-    assert.match(envBlock, /docker compose down/, `${num}: the worker tears the stack down`);
-    assert.match(envBlock, /seatbelt/, `${num}: teardown named as the seatbelt`);
-    // The person block is judgement only — no environment up/down chore ever appears in it (T39).
-    assert.doesNotMatch(personBlock, /docker compose up/, `${num}: person block has no compose up`);
-    assert.doesNotMatch(personBlock, /docker compose down/, `${num}: person block has no compose down`);
-    assert.match(personBlock, /Docker Desktop/, `${num}: the person is still told the Docker Desktop precondition`);
-  }
-});
-
-test('blog-app: at check-in #2 the worker runs the e2e; the person block is the click-through only (T40)', () => {
-  const fx = getFixture('blog-app');
-  const t07 = Object.entries(fx.tasks).find(([n]) => n.startsWith('T07-'))[1];
-  // DESIGN §2.6 (T40): a machine-decidable check is the worker's to run and record, not the person's.
-  // The e2e install + run move into a worker-owned "Automated checks" section; the person's block is the
-  // subjective click-through only. The mutation this guards is the pre-T40 shape — put the e2e run back
-  // into the person's steps and both halves of this fail.
-  assert.match(t07, /## Automated checks \(the worker runs these\)/, 'T07 carries a worker Automated-checks section');
-  const checksHead = t07.indexOf('## Automated checks');
-  const personHead = t07.indexOf('## Needs a person');
-  assert.ok(checksHead !== -1 && personHead !== -1 && checksHead < personHead, 'Automated checks precede Needs a person');
-  const checksBlock = t07.slice(checksHead, personHead);
-  const personBlock = t07.slice(personHead);
-  // The worker's section runs the e2e and says it records the machine result.
-  assert.match(checksBlock, /npx playwright install/, 'the worker installs the browser driver');
-  assert.match(checksBlock, /npm run e2e/, 'the worker runs the e2e test');
-  assert.match(checksBlock, /machine result|records/i, 'the worker records the machine result');
-  // The person's block never carries the automated test — it is the click-through judgement only.
-  assert.doesNotMatch(personBlock, /npm run e2e/, 'the person is not asked to run the e2e');
-  assert.doesNotMatch(personBlock, /playwright/i, 'the person is not asked to install the driver');
-  assert.match(personBlock, /click through|click-through/i, "the person's block is the click-through judgement");
-  // The task doc requires the two confirmations kept separate and no ambiguous reply rounded up.
-  assert.match(t07, /two separate confirmations|kept separate|separately/i, 'T07 requires two separate confirmations');
-  assert.match(t07, /never (merges|rounds|inflat)|ambiguous/i, 'T07 forbids merging or rounding an ambiguous reply up');
+  // Two INDEPENDENT tasks so the parked T01 does not block T02 (the whole point, at ceiling 2).
+  assert.deepEqual(tasks.find((t) => t.num === 'T01').deps, [], 'T01 is independent');
+  assert.deepEqual(tasks.find((t) => t.num === 'T02').deps, [], 'T02 is independent');
+  const t01 = Object.entries(fx.tasks).find(([n]) => n.startsWith('T01-'))[1];
+  assert.match(t01, /NOT SPECIFIED/, 'the wording is explicitly left unspecified');
+  assert.match(t01, /ask the person|drop a `question` report and park/i, 'the worker is told to ask and park, not guess');
+  // The down-channel is gone (§2.2, T05): no scripted answer is carried; the program routes nothing.
+  assert.equal(fx.scriptedAnswer, undefined, 'no scripted answer — the person answers the worker directly');
 });
 
 test('parallel: at least two independent tasks so workers run concurrently', () => {

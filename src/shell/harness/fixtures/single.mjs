@@ -1,13 +1,14 @@
 // single — one trivial ⬜ auto task. Forces the whole happy path with a real worker: spawn → implement
-// → 🔍 → fresh review → merge → promote → idle-gated close (DESIGN §4.1). Subsumes T13's live comms
-// proof, so its facts include by-name addressing (DESIGN §2.2, §2.8).
+// → 🔍 → fresh review → merge → idle-gated close, then the run hands off the green feature branch
+// (DESIGN §4.1). The old by-name-addressing fact went with the down-channel: a worker no longer messages
+// a coordinator session by name, it drops a `reports/` file (DESIGN §2.2, T05).
 //
-// Facts declared over the captured bundle (T15): no spawn hello was sent at all (retired in T30), the
-// worker addressed the coordinator by its convention name, no finished worker was closed before it went
-// idle, and main gained exactly one commit — the promotion.
+// Facts declared over the captured bundle (T15): no spawn hello was sent at all (retired in T30), no
+// finished worker was closed before it went idle, and exactly one merge landed (kept as a tolerated
+// legacy fact — the run hands off rather than promoting, DESIGN §2.4).
 
 import { defineScenario } from '../scenario.mjs';
-import { noHelloEver, byNameAddressing, noCloseBeforeIdle, oneMergeToMain } from '../assertions.mjs';
+import { noHelloEver, noCloseBeforeIdle, oneMergeToMain } from '../assertions.mjs';
 import { progressDoc, taskDoc } from './common.mjs';
 
 const slug = 'single';
@@ -33,7 +34,7 @@ const scenario = defineScenario({
   title: 'Single task — the full happy path',
   fixture: slug,
   seatbelts: { ceiling: 1 },
-  facts: [noHelloEver(), byNameAddressing(), noCloseBeforeIdle(), oneMergeToMain()],
+  facts: [noHelloEver(), noCloseBeforeIdle(), oneMergeToMain()],
 });
 
 export default { id: slug, slug, title: 'Single task — the full happy path', progress, tasks, scenario };

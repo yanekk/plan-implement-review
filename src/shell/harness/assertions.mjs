@@ -12,30 +12,31 @@
 //
 // WHAT A BUNDLE CARRIES (T14 loadBundle + loadTranscripts here):
 //   flow      — [{ ts, type, rest }] parsed from the coordinator's control/log. Each line is
-//               `${ISO} ${type} ${task-or-branch}` (loop.mjs record(), coordinate.mjs answer()): the
-//               type is the action (open-feature, spawn, await-idle, review, merge, answer, send-failed,
-//               close, halt-close, surface, promote, teardown, ceiling), the rest is a task id (T05), a
-//               branch, or free text. The spawn `hello` was retired in T30 (there is no spawn ping).
-//               The line does NOT carry a surface's KIND (conflict/question/decision) — loop.mjs
-//               writes only type+task — so the question/conflict facts key on the TASK id a scenario
-//               names, not on a kind read from the log (see questionRoundTrip / mergeConflictResolved).
+//               `${ISO} ${type} ${task-or-branch}` (loop.mjs record()): the type is the action
+//               (open-feature, spawn, await-idle, review, merge, close, halt-close, surface, rebuild,
+//               cleanup, restart), the rest is a task id (T05), a branch, or free text. The down-channel
+//               types (answer, send-failed) and the promote type went with the relay and the promotion
+//               (DESIGN §2.2, §2.4, T05). The spawn `hello` was retired in T30. The line does NOT carry a
+//               surface's KIND (conflict/question/decision) — loop.mjs writes only type+task — so the
+//               parked/conflict facts key on the TASK id a scenario names (see parkedWorkerHoldsSlot /
+//               mergeConflictResolved).
 //   timeline  — [{ ts, agents:[{ name, sessionId, cwd, status, state, isWorkerOf, isCoordinator }] }]
 //               one sampled `agents --json` per tick. status is live-only, so a busy→idle transition
 //               proves the idle-gated close (DESIGN §2.3); a session absent from a tick has ended.
+//               isCoordinator is always false: the coordinator is a plain process, never in the list (§2.9).
 //   final     — the resting-state `agents --json --all` snapshot.
 //   manifest  — { <agent name>: { sessionId, cwd, role, copied, copiedTo } }, keyed by name; a name
 //               that recurs (implementer then its fresh reviewer) is keyed `name (sessionId)` (T14).
 //   gitLog    — `git log --oneline --graph --all` text of the scratch repo.
 //   transcripts (added here) — [{ key, name, role, task, sessionId, events }] parsed from the copied
-//               .jsonl files. A worker→coordinator SendMessage is an assistant tool_use carrying
-//               { to, summary, message } (confirmed against the real T10 worker transcript 2026-09-10);
-//               the coordinator's answers ride the coordinator agent's own transcript the same way,
-//               because platform.send hands the string to the agent to actually send (T09 bridge), not a
-//               child process.
+//               .jsonl files. A worker's SendMessage is an assistant tool_use carrying { to, summary,
+//               message } (confirmed against the real T10 worker transcript 2026-09-10). mergeConflictResolved
+//               still reads a coordinator transcript for supporting evidence; it is a tolerated legacy fact
+//               (the down-channel it describes is gone, §2.2, T05).
 
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { coordinatorName, parseAgentName } from '../../core/naming.mjs';
+import { parseAgentName } from '../../core/naming.mjs';
 
 // --- Small pure helpers over a bundle ------------------------------------------------------------
 
@@ -46,10 +47,6 @@ function stripRef(name) {
   return String(name ?? '').replace(/\s*\[[0-9a-fA-F]+\]\s*$/, '').trim();
 }
 
-function sameName(a, b) {
-  return a != null && b != null && stripRef(a) === stripRef(b);
-}
-
 // Reconstruct a flow line for evidence, in the on-disk shape a person would grep.
 function flowLine(e) {
   return [e.ts, e.type, e.rest].filter((s) => s != null && s !== '').join(' ');
@@ -57,10 +54,14 @@ function flowLine(e) {
 
 const flowOf = (bundle, type) => (bundle.flow ?? []).filter((e) => e.type === type);
 
-// runIdentity(bundle) → { repo, plan, coordName }. Read from the data the same way the coordinator
-// identifies its own run — the coordinator's name (DESIGN §2.8) — so it cannot drift from bookkeeping.
-// Prefer the timeline's coordinator-tagged agent, then the transcripts, then the manifest.
+// runIdentity(bundle) → { repo, plan, coordName }. The repo and plan the run belongs to, read from the
+// agent names (DESIGN §2.9) so they cannot drift from bookkeeping. There is no coordinator session any
+// more (§2.1, §2.9), so the identity is read from a WORKER's name — every worker of the run carries the
+// repo and plan. coordName is kept in the shape (as null when no coordinator is present) for the older
+// canned-bundle facts that still look for one; a legacy bundle that tagged a coordinator is still read
+// first, so those facts keep working. A live bundle (workers only) falls through to the worker read.
 export function runIdentity(bundle) {
+  // Legacy: a bundle that still carries a tagged coordinator (canned test data) — read it first.
   for (const tick of bundle.timeline ?? []) {
     for (const a of tick.agents ?? []) {
       if (a.isCoordinator && a.name) {
@@ -75,11 +76,19 @@ export function runIdentity(bundle) {
       if (p.matches) return { repo: p.repo, plan: p.plan, coordName: stripRef(t.name) };
     }
   }
-  for (const [key, e] of Object.entries(bundle.manifest ?? {})) {
-    if (e && e.role === 'coordinator') {
-      const name = manifestName(key, e.sessionId);
-      const p = parseAgentName(name);
-      if (p.matches) return { repo: p.repo, plan: p.plan, coordName: name };
+  // The live path: derive repo/plan from any worker of the run. There is no coordinator name to resolve.
+  for (const tick of bundle.timeline ?? []) {
+    for (const a of tick.agents ?? []) {
+      if (a.isWorkerOf && a.name) {
+        const p = parseAgentName(a.name);
+        if (p.matches) return { repo: p.repo, plan: p.plan, coordName: null };
+      }
+    }
+  }
+  for (const t of bundle.transcripts ?? []) {
+    if (t.role === 'worker' && t.name) {
+      const p = parseAgentName(t.name);
+      if (p.matches) return { repo: p.repo, plan: p.plan, coordName: null };
     }
   }
   return { repo: null, plan: null, coordName: null };
@@ -187,7 +196,6 @@ export function sendMessagesOf(transcript) {
 
 const transcriptsByRole = (bundle, role) => (bundle.transcripts ?? []).filter((t) => t.role === role);
 const coordinatorTranscript = (bundle) => transcriptsByRole(bundle, 'coordinator')[0] ?? null;
-const workerTranscripts = (bundle) => transcriptsByRole(bundle, 'worker');
 
 // --- Fact construction ---------------------------------------------------------------------------
 //
@@ -220,32 +228,6 @@ export function noHelloEver() {
       return { pass: false, evidence, detail: `${hellos.length} hello line(s) in the flow — the spawn hello was not retired` };
     }
     return { pass: true, evidence, detail: `${spawns.length} spawn/review action(s) and zero hello lines — the spawn hello is retired` };
-  });
-}
-
-// A failed answer down-send was recorded, not dropped (C, DESIGN §2.2, T30). When the coordinator's
-// answer to a parked worker cannot be delivered (SendMessage errors, or the worker is gone), the bin
-// records a `send-failed {task}` flow line so the failure is visible and capturable — the answer is
-// never silently lost. This fact keys on that tag: with a task it checks that task's send-failed line,
-// without one it checks any send-failed is present. It is exercised by the deterministic C test rather
-// than a live fixture, because a live send failure cannot be forced on demand (T30 done-when).
-export function sendFailureSurfaced(task) {
-  const id = task ? `send-failure-surfaced:${task}` : 'send-failure-surfaced';
-  const label = task ? `A failed down-send to ${task} was recorded` : 'A failed down-send was recorded';
-  return fact(id, label, (bundle) => {
-    const evidence = [];
-    const fails = flowOf(bundle, 'send-failed').filter((e) => !task || e.rest === task);
-    for (const f of fails) evidence.push(flowLine(f));
-    if (fails.length === 0) {
-      return {
-        pass: false,
-        evidence,
-        detail: task
-          ? `no send-failed line for ${task} — a failed down-send went unrecorded`
-          : 'no send-failed line in the flow — a failed down-send would have gone unrecorded',
-      };
-    }
-    return { pass: true, evidence, detail: `${fails.length} send-failed line(s) recorded${task ? ` for ${task}` : ''}` };
   });
 }
 
@@ -285,68 +267,55 @@ export function noCloseBeforeIdle() {
   });
 }
 
-// When a worker messages the coordinator, it addresses it by the convention name {repo} · {plan}
-// (DESIGN §2.8), not only by a return-socket reply. So every worker whose transcript sends anything
-// must send at least one message addressed to that name.
-export function byNameAddressing() {
-  return fact('by-name-addressing', 'Workers address the coordinator by its convention name', (bundle) => {
-    const evidence = [];
-    const { coordName } = runIdentity(bundle);
-    if (!coordName) {
-      return { pass: false, evidence, detail: 'could not resolve the coordinator name from the bundle' };
-    }
-    const workers = workerTranscripts(bundle);
-    let checked = 0;
-    for (const w of workers) {
-      const sends = sendMessagesOf(w);
-      if (sends.length === 0) continue; // a silent worker asks nothing; nothing to prove
-      checked += 1;
-      const hit = sends.find((s) => sameName(s.to, coordName));
-      if (hit) {
-        evidence.push(`${w.name || w.task} → ${stripRef(hit.to)}: ${hit.summary}`);
-      } else {
-        for (const s of sends) evidence.push(`${w.name || w.task} → ${s.to} (not the convention name)`);
-        return { pass: false, evidence, detail: `${w.name || w.task} messaged the coordinator but never by "${coordName}"` };
-      }
-    }
-    if (checked === 0) {
-      return { pass: false, evidence, detail: 'no worker sent any message — nothing to prove by-name addressing' };
-    }
-    return { pass: true, evidence, detail: `${checked} worker(s) addressed the coordinator by name` };
-  });
-}
 
-// A worker that raised a question was surfaced to the user and, after the answer, resumed to done and
-// merged (DESIGN §2.5). Because the flow log does not carry a surface's kind, the scenario names the
-// task it engineered to ask, and this fact checks that task: a `surface` for it, then a later `merge`
-// of it (the worker resumed). The coordinator's answer SendMessage to the worker is supporting
-// evidence when the coordinator transcript is present.
-export function questionRoundTrip(task) {
-  return fact(`question-round-trip:${task}`, `A question on ${task} was surfaced and answered`, (bundle) => {
+// A worker that asked the person PARKED and held its slot, and the program routed nothing down while
+// every independent task kept moving (DESIGN §2.2, §2.8). This REPLACES the old questionRoundTrip fact,
+// which asserted the coordinator relayed an answer DOWN to the worker (surface → answer → resume). That
+// down-channel is gone: the person answers a blocked worker directly in its own session, and the program
+// routes nothing (§2.2). So the load-bearing property is no longer "the answer came back" but "the park
+// costs only that one task": it reads off the bundle
+//   - a `surface {task}` line (the worker asked — a question or a decision, the loop records both);
+//   - the parked worker of `task` still sampled LIVE in the timeline at/after it surfaced (it held its
+//     slot — a parked worker is alive, not closed, DESIGN §2.8);
+//   - NO `answer` flow line anywhere (the program delivered no decision down — the whole down-channel is
+//     removed, §2.2; an `answer` line would be the old relay resurfacing);
+//   - at least one OTHER task reaching `merge` while this one is parked (the park throttles only its own
+//     decision, every independent task keeps moving, §2.8).
+// A run where the parked worker was closed, or an answer was routed, or the park stalled the others,
+// reddens it — which is what makes the fact distinguish the non-agentic park from the old relay.
+export function parkedWorkerHoldsSlot(task) {
+  return fact(`parked-worker-holds-slot:${task}`, `${task} parked on the person, held its slot, and the program routed nothing`, (bundle) => {
     const evidence = [];
     const surfaces = flowOf(bundle, 'surface').filter((e) => e.rest === task);
     if (surfaces.length === 0) {
-      return { pass: false, evidence, detail: `no surface for ${task} — the question was never put to the user` };
+      return { pass: false, evidence, detail: `no surface for ${task} — it never asked the person` };
     }
     const surfaceTs = surfaces[0].ts;
     evidence.push(flowLine(surfaces[0]));
-    const merge = flowOf(bundle, 'merge').find((e) => e.rest === task && e.ts >= surfaceTs);
-    if (!merge) {
-      return { pass: false, evidence, detail: `${task} was surfaced but never resumed to a merge — the decision had no way down` };
+
+    // The program routes nothing down: an `answer` flow line would be the old relay (§2.2). None may exist.
+    const answers = flowOf(bundle, 'answer');
+    for (const a of answers) evidence.push(flowLine(a));
+    if (answers.length > 0) {
+      return { pass: false, evidence, detail: `${answers.length} answer line(s) — the program routed a decision down, which the non-agentic model never does (§2.2)` };
     }
-    evidence.push(flowLine(merge));
-    const { repo, plan } = runIdentity(bundle);
-    const coord = coordinatorTranscript(bundle);
-    if (coord && repo && plan) {
-      // The answer went to whichever session parked (implement or review role), so match by task, not a
-      // rebuilt role-suffixed name.
-      const answer = sendMessagesOf(coord).find((s) => {
-        const p = parseAgentName(stripRef(s.to));
-        return p.matches && p.task === task && p.repo === repo && p.plan === plan;
-      });
-      if (answer) evidence.push(`coordinator → ${stripRef(answer.to)} (answer): ${answer.summary}`);
+
+    // The parked worker held its slot: still sampled live at or after it surfaced (not closed while parked).
+    const seenAfter = (bundle.timeline ?? []).some(
+      (tick) => tick.ts >= surfaceTs && (tick.agents ?? []).some((a) => a.isWorkerOf && parseAgentName(a.name).task === task),
+    );
+    if (!seenAfter) {
+      return { pass: false, evidence, detail: `${task}'s worker was not sampled live after it surfaced — its slot was not held` };
     }
-    return { pass: true, evidence, detail: `${task} was surfaced and then resumed to a merge` };
+    evidence.push(`${task}'s worker still live after it surfaced (slot held)`);
+
+    // Every independent task kept moving: at least one OTHER task merged while this one parked.
+    const otherMerges = flowOf(bundle, 'merge').filter((e) => /^T\d+$/.test(e.rest) && e.rest !== task);
+    for (const m of otherMerges) evidence.push(flowLine(m));
+    if (otherMerges.length === 0) {
+      return { pass: false, evidence, detail: `no other task merged while ${task} was parked — the park stalled the run instead of costing only ${task}` };
+    }
+    return { pass: true, evidence, detail: `${task} parked and held its slot; no answer was routed and ${otherMerges.length} other task(s) still merged` };
   });
 }
 
@@ -502,75 +471,6 @@ export function oneMergeToMain() {
   });
 }
 
-// The `you` task's worker is a HANDS-ON verify session, not an autonomous implementer (DESIGN §2.6,
-// T32). The role is encoded in the worker NAME (`{repo} · {plan} · Txx · verify`, §2.8); the flow log
-// drops the role (it writes `spawn Txx` only, this file's header), so ONLY the capture timeline — which
-// samples full agent names — can prove it. Pass when a worker of `task` is seen with role `verify`; fail
-// when it was only ever an implementer, or was never sampled (so no role can be read from data).
-export function verifyWorkerSpawned(task) {
-  return fact(`verify-worker-spawned:${task}`, `${task}'s worker is a hands-on verify session`, (bundle) => {
-    const evidence = [];
-    const roles = new Set();
-    for (const tick of bundle.timeline ?? []) {
-      for (const a of tick.agents ?? []) {
-        const p = parseAgentName(a.name);
-        if (a.isWorkerOf && p.task === task && p.role) roles.add(p.role);
-      }
-    }
-    for (const r of roles) evidence.push(`${task} worker role seen: ${r}`);
-    if (roles.size === 0) {
-      return { pass: false, evidence, detail: `no worker of ${task} was sampled in the timeline — its role cannot be read` };
-    }
-    if (!roles.has('verify')) {
-      return { pass: false, evidence, detail: `${task}'s worker(s) were ${[...roles].join(', ')}, not a hands-on verify session` };
-    }
-    return { pass: true, evidence, detail: `${task} ran as a hands-on verify session` };
-  });
-}
-
-// A `you` task goes straight from hands-on to merge with NO fresh-review phase (DESIGN §2.6): the
-// person's recorded observation is the result, so there is no code for a second session to review. Proven
-// from the flow log: a `merge {task}` line (it completed and folded back) and NO `review {task}` line. A
-// task that never merged cannot prove it SKIPPED review — it might merely be unfinished — so a missing
-// merge fails rather than passing vacuously.
-export function youNeverReviewed(task) {
-  return fact(`you-never-reviewed:${task}`, `${task} folded back without a fresh-review phase`, (bundle) => {
-    const evidence = [];
-    const merges = flowOf(bundle, 'merge').filter((e) => e.rest === task);
-    const reviews = flowOf(bundle, 'review').filter((e) => e.rest === task);
-    for (const m of merges) evidence.push(flowLine(m));
-    for (const r of reviews) evidence.push(flowLine(r));
-    if (merges.length === 0) {
-      return { pass: false, evidence, detail: `no merge of ${task} — it never folded back, so "skipped review" is unproven` };
-    }
-    if (reviews.length > 0) {
-      return { pass: false, evidence, detail: `${task} has ${reviews.length} review line(s) — a you task must skip the fresh-review phase` };
-    }
-    return { pass: true, evidence, detail: `${task} merged with no review line — it folded back hands-on to merge` };
-  });
-}
-
-// The hands-on scribe's verification reached main: the plan's FINDINGS.md, promoted, contains the
-// hand-verified row (DESIGN §2.6 — the person's recorded observation IS a `you` task's deliverable). A
-// CONTAINS check over the final promoted content (bundle.finalFiles, loadFinalFiles), because the merged
-// file grows a `✅` row on top of the seed template, so the exact-trim match mergeConflictResolved uses
-// won't do. The runner captures `file` because the fixture declares it in `finalContent`. Optional
-// corroboration (T32): the load-bearing set is verifyWorkerSpawned + youNeverReviewed + oneMergeToMain.
-export function scribeWroteFinding({ file, needle = '✅' } = {}) {
-  return fact('scribe-wrote-finding', `the scribe's hand-verified row reached main in ${file}`, (bundle) => {
-    const evidence = [];
-    const got = (bundle.finalFiles ?? {})[file];
-    if (got == null) {
-      return { pass: false, evidence, detail: `no captured final content for ${file} — cannot confirm the scribe's row reached main` };
-    }
-    if (!String(got).includes(needle)) {
-      return { pass: false, evidence, detail: `final ${file} does not contain ${JSON.stringify(needle)} — no hand-verified row was written` };
-    }
-    evidence.push(`main:${file} contains ${JSON.stringify(needle)}`);
-    return { pass: true, evidence, detail: `${file} on main carries the scribe's hand-verified row` };
-  });
-}
-
 // After the kill switch fires (flow `halt-close`), every this-run worker leaves the timeline and
 // nothing is promoted (DESIGN §2.4). Checked from the flow (halt-close present, no promote) and the
 // timeline (the last tick shows no live worker of this run).
@@ -666,7 +566,7 @@ export function ceilingHeld(n) {
 //
 // It counts by task, mirroring ceilingHeld's grouping: two roster rows for one task (a respawn, or a
 // stopped session lingering beside its successor) are one task, not two, so a duplicate can never inflate
-// the width. It counts implementers only — a reviewer or a hands-on verify scribe is a follow-on session,
+// the width. It counts implementers only — a reviewer is a follow-on session,
 // not a build running in parallel, so their roles are excluded. Keyed on the worker→task mapping already
 // in the timeline agent name (§2.8), so it cannot drift from bookkeeping.
 //
@@ -684,7 +584,7 @@ export function reachedWidth(n) {
       for (const a of tick.agents ?? []) {
         if (!a.isWorkerOf) continue;
         const p = parseAgentName(a.name);
-        if (p.role !== 'implement') continue; // reviewers and verify scribes are not builds in flight
+        if (p.role !== 'implement') continue; // a reviewer is not a build in flight
         if (a.status !== 'busy') continue; // only a session working this tick counts (§4.1, strict lower bound)
         if (p.task) tasks.add(p.task);
       }
