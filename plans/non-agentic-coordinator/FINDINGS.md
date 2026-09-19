@@ -12,6 +12,7 @@ user changed.
 
 | Date | | Finding |
 |---|---|---|
+| 2026-09-19 | 📌 | T05 review: verify/you still referenced outside T05's files, none a system path — the fake platform `verify` branch + its self-test (fake/platform.test.mjs), and coordinate.test/resume.test framing inputs as verify/you. Production dispatch is verify-free. T07 sweeps the fake and the test framing. |
 | 2026-09-19 | 🔄 | T05: PM chose option A — rebuild the harness runner now, not defer to T09. `run.mjs` launches `node coordinate.mjs` as a child process, seals on its exit (no `promote` marker), and SIGKILLs its pid to crash for kill-and-rebuild. |
 | 2026-09-19 | 📌 | T05 scope beyond the task's file list, forced by removing the vocabulary: deleted `blog-app`/`spawn-one-scratch` (you-model, dead `r.promoted`), removed `byNameAddressing` (worker→coordinator SendMessage is gone, §2.2), fixed platform.test/fake-platform.test names to the strict 5-field `/` form. |
 | 2026-09-19 | 📌 | T05 left stale for a later task: the `merge-conflict` fixture + `mergeConflictResolved` + `oneMergeToMain` still read `promote`/`answer`/`main:` the new loop never writes. Tolerated legacy doubles (green on canned data); rework when merge-conflict's live run is revisited. |

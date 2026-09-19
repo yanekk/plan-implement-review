@@ -18,13 +18,14 @@ file and its worker's agent name.
 removals so every task stays green + cover `capture.mjs`; `install.sh` applies the per-user `autoMode`
 rule). Account in the `plan-review` commit.
 
-**Status:** T05 implemented (`🔍`), awaiting review. PM chose option A: the live-scenario harness runner
-now launches the coordinator as a plain `node coordinate.mjs` process, detects the run finishing by that
-process exiting, and SIGKILLs its pid to crash it (kill-and-rebuild). `coordinatorName` and the `verify`
-role are gone from naming; the removed assertions/fixtures are gone. 361 tests green (was 398; the drop is
-removed dead fixtures/assertions). The live painting and the real Ctrl-C/attach remain for T09 by eye.
+**Status:** T05 reviewed clean, no fix commit. The foreground-process harness is verified against the
+fakes: run.mjs spawns the coordinator as a process, seals on its exit, SIGKILLs its pid to crash; naming
+is the strict 5-field form with `coordinatorName`/`verify` gone; the reworked facts are non-vacuous.
+361 tests green. The remaining verify/you references are out-of-scope test framing and the permitted fake
+shape (FINDINGS, swept in T07); production dispatch is verify-free. The live crash/restart drill is T09.
+Next ready: T06 (`worker-permissions`, no deps) or T07 (`skills`, T04 met).
 **Last updated:** 2026-09-19
-**Next `pir-work` will:** review T05 (`harness-and-restart`, `🔍`).
+**Next `pir-work` will:** implement T06 (`worker-permissions`, `⬜`) — the lowest-numbered ready task.
 
 ## Tasks
 
@@ -38,8 +39,8 @@ read — the parser tolerates and ignores it; T05 finishes the surrounding clean
 | T01 | stop-promoting | auto | — | ✅ | Reviewed clean. promote→complete rename faithful; `worktree.promote` gone; a ⛔ task blocks complete. Stray `r.promoted` reads → FINDINGS (T05). 384 green. |
 | T02 | slugs-and-names | auto | — | ✅ | Reviewed clean. 5-field worker names round-trip incl slug; match by number+role. `/`-at-launch is a T09 live check. 387 green. |
 | T03 | live-display | auto | T01, T02 | ✅ | Reviewed clean. Pure model + renderer faithful to the prototype; loop/display seam checked. In-place paint + a doubled hand-off line stay for T09 (FINDINGS). 401 green. |
-| T04 | remove-you-auto | auto | T03 | ✅ | Reviewed clean, no fix commit. auto/you and the verify path gone from progress/dispatch/parallelism/loop/platform; parseProgress tolerates a Runs column, ignoring even a `you` value end to end (spawns implement, still reviewed, never verify). openingInstruction throws on verify. Folded coordinate/fixtures/planner-templates fixes and the idle/merge-gate rework checked. 398 green. |
-| T05 | harness-and-restart | auto | T04 | 🔍 | Built. PM chose **option A**: `run.mjs` launches `node coordinate.mjs` as a process, seals on its exit, SIGKILLs its pid to crash. Removed `coordinatorName` + `verify` role (strict 5-field names), `questionRoundTrip`→`parkedWorkerHoldsSlot`, the verify/you/scribe/send-failed/by-name assertions. Deleted hands-on, blog-app, spawn-one-scratch. merge-conflict left stale (FINDINGS). 361 green. |
+| T04 | remove-you-auto | auto | T03 | ✅ | Reviewed clean. auto/you and the verify path gone from dispatch/loop/platform; parseProgress tolerates+ignores a Runs column. 398 green. |
+| T05 | harness-and-restart | auto | T04 | ✅ | Reviewed clean, no fix commit. Foreground-process model verified: run.mjs spawns `node coordinate.mjs`, seals on exit, SIGKILLs to crash; naming strict 5-field, `coordinatorName`/`verify` gone; capture `isCoordinator` always false. Facts non-vacuous (parkedWorkerHoldsSlot, restart set); 361 green. Probed the grep item: production dispatch is verify-free; leftover verify/you refs are out-of-scope test framing + the permitted fake shape (FINDINGS, T07). Live crash/restart is T09. |
 | T06 | worker-permissions | auto | — | ⬜ | Ship worker `permissions.allow`; `install.sh` also applies the per-user `autoMode` rule, with the manual step as a printed fallback. |
 | T07 | skills | auto | T04 | ⬜ | Delete dead skills; de-agent worker skills; slug-as-name templates. |
 | T08 | docs | auto | T05, T07 | ⬜ | Rewrite /docs and the CLAUDE.md carve-out. |
@@ -48,7 +49,7 @@ read — the parser tolerates and ignores it; T05 finishes the surrounding clean
 A Notes cell holds what was built or what the review found, the test count, and one line per
 deviation from the task doc. A ✅ task's cell may be cut to one line once the next task is reviewed.
 
-**Review queue:** T05 (`harness-and-restart`) awaiting review.
+**Review queue:** empty — nothing awaiting review.
 
 ## Blocked on the user
 
