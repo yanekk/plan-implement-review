@@ -18,11 +18,11 @@ file and its worker's agent name.
 removals so every task stays green + cover `capture.mjs`; `install.sh` applies the per-user `autoMode`
 rule). Account in the `plan-review` commit.
 
-**Status:** T04 implemented (`🔍`), awaiting review. auto/you and the verify/hands-on path are gone
-from the core and loop. 398 tests green. The live in-place painting and the Ctrl-C/attach interaction
-remain for T09 to confirm by eye.
+**Status:** T04 reviewed clean (`✅`). auto/you and the verify path are gone from the core and loop;
+parseProgress tolerates a Runs column. 398 tests green. T05 (harness rework, kill-and-rebuild) is next.
+The live in-place painting and the Ctrl-C/attach interaction remain for T09 to confirm by eye.
 **Last updated:** 2026-09-19
-**Next `pir-work` will:** review T04 (`remove-you-auto`, `🔍`).
+**Next `pir-work` will:** implement T05 (`harness-and-restart`, `⬜`) — its dep T04 is now `✅`.
 
 ## Tasks
 
@@ -35,8 +35,8 @@ read — the parser tolerates and ignores it; T05 finishes the surrounding clean
 |---|---|---|---|---|---|
 | T01 | stop-promoting | auto | — | ✅ | Reviewed clean. promote→complete rename faithful; `worktree.promote` gone; a ⛔ task blocks complete. Stray `r.promoted` reads → FINDINGS (T05). 384 green. |
 | T02 | slugs-and-names | auto | — | ✅ | Reviewed clean. 5-field worker names round-trip incl slug; match by number+role. `/`-at-launch is a T09 live check. 387 green. |
-| T03 | live-display | auto | T01, T02 | ✅ | Reviewed clean, no fix commit. Pure model + renderer faithful to the approved prototype (running counts asking; `waiting=total−done−running`); down-channel scan real; loop/display seam (awaiting-answer→asking, decision.text→question) checked. Probed null since, empty tasks, done-wins ordering, the out-of-band answer path. In-place painting + a doubled hand-off line stay for T09 (FINDINGS). 401 green. |
-| T04 | remove-you-auto | auto | T03 | 🔍 | Removed auto/you + verify/hands-on from progress/dispatch/parallelism/loop/platform. parseProgress drops the `runs` field but tolerates a Runs column. That drop broke tests in coordinate, fixtures, planner-templates; per user 2026-09-19 folded those green-keeping fixes into T04 (commit, FINDINGS). 398 green. |
+| T03 | live-display | auto | T01, T02 | ✅ | Reviewed clean. Pure model + renderer faithful to the prototype; loop/display seam checked. In-place paint + a doubled hand-off line stay for T09 (FINDINGS). 401 green. |
+| T04 | remove-you-auto | auto | T03 | ✅ | Reviewed clean, no fix commit. auto/you and the verify path gone from progress/dispatch/parallelism/loop/platform; parseProgress tolerates a Runs column, ignoring even a `you` value end to end (spawns implement, still reviewed, never verify). openingInstruction throws on verify. Folded coordinate/fixtures/planner-templates fixes and the idle/merge-gate rework checked. 398 green. |
 | T05 | harness-and-restart | auto | T04 | ⬜ | Rework harness to the new model; prove kill-and-rebuild. Also deletes the `verify` role and `coordinatorName` from naming and fixes `capture.mjs` (re-slotted from T02). |
 | T06 | worker-permissions | auto | — | ⬜ | Ship worker `permissions.allow`; `install.sh` also applies the per-user `autoMode` rule, with the manual step as a printed fallback. |
 | T07 | skills | auto | T04 | ⬜ | Delete dead skills; de-agent worker skills; slug-as-name templates. |
@@ -46,7 +46,7 @@ read — the parser tolerates and ignores it; T05 finishes the surrounding clean
 A Notes cell holds what was built or what the review found, the test count, and one line per
 deviation from the task doc. A ✅ task's cell may be cut to one line once the next task is reviewed.
 
-**Review queue:** T04 (`remove-you-auto`) — implemented, awaiting a fresh-eyes review.
+**Review queue:** empty — T04 reviewed. Next is implementing T05 (`harness-and-restart`).
 
 ## Blocked on the user
 
