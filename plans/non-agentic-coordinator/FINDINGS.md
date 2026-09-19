@@ -12,6 +12,7 @@ user changed.
 
 | Date | | Finding |
 |---|---|---|
+| 2026-09-19 | 📌 | T03 review: on a complete run the hand-off prints twice — once in the painted display footer, once as the trailing `renderHandoff` line. Harmless; which to keep is a by-eye call for T09's render pass. |
 | 2026-09-19 | 📌 | T03: `buildDisplay` returns `{ branch, summary, rows, footer }` — a top-level `branch` past the task's `{summary,rows,footer}` sketch. The renderer shows the run branch on every paint, but the footer carries a branch only in handoff/red states, so the summary line cannot source it there. |
 | 2026-09-19 | 📌 | T03: `coordinator.defer()` is now caller-less — the answers feed that drove it went with the down-channel (§2.2). Kept (not on §2.2's removal list); the conflict/extend paths are handled by the person directly now (§2.8), so a later task may drop it. |
 | 2026-09-19 | 📌 | T02: worker names are now `/`+slug but `coordinatorName` stays `·` and `parseAgentName` reads both. Forced: `run.mjs` matches the coordinator by exact `·` string and the harness still emits `·`. T05 removes `coordinatorName`, the `verify` role, and the dual-separator tolerance. |
