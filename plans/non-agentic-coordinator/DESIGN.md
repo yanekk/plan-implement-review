@@ -268,7 +268,11 @@ Pure (`src/core/`):
 - `parallelism.mjs` — remove the `you`/human count from the width report (§2.5).
 - `naming.mjs` — revert the separator to ` / `, add the task slug as a name field, and drop both the
   coordinator name and the `verify` role; a worker name is `{repo} / {plan} / {task} / {slug} / {role}`
-  and roles become `implement` and `review` (§2.9, §2.5).
+  and roles become `implement` and `review` (§2.9, §2.5). Sequenced across two tasks so the suite stays
+  green at each: the separator and the slug field land in T02 (kept backward-tolerant); the
+  `coordinatorName` and `verify`-role deletions land in T05, once their last callers — in the harness,
+  and `capture.mjs` for `coordinatorName` — are gone. T04 removes the verify *code path* in the loop and
+  platform in between.
 - `display.mjs` (new) — the pure display model (§2.3).
 
 Shell (`src/shell/`):
@@ -428,8 +432,12 @@ All decided with the person on 2026-09-19 unless noted.
   to it.
 - **The classifier headache is folded in, not a separate plan.** Removing the coordinator session
   removes the hard part (an agent keeping itself awake was refused). What remains is small: ship a
-  narrow `permissions.allow` so a worker's own `git`/`npm test` clears, and document the one-time
-  per-user `autoMode` prerequisite (T06).
+  narrow `permissions.allow` so a worker's own `git`/`npm test` clears, and have `install.sh` apply the
+  per-user `autoMode.allow` rule when a person runs it, with the manual `/permissions` step as a printed
+  fallback (T06; PM chose the installer over a documented manual prerequisite, 2026-09-19). The
+  `autoMode` rule lives in user-global `~/.claude/settings.json` because the classifier ignores
+  `autoMode` in a project file; whether `permissions.allow` alone already clears a worker's own commands
+  is confirmed live (T09).
 - **The live display shape was approved against `prototype/cli-display.html`** (2026-09-19): the
   `docker compose up`-style in-place task list, the status vocabulary, the ceiling pill, the
   asking-you footer, and the `git merge` hand-off. Parked as a non-binding reference for the session

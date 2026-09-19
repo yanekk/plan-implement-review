@@ -57,7 +57,9 @@ runPass(...) → { ..., complete, testsPassed?, readyToMerge? }
 
 ## Done when
 
-- [ ] No code path merges the feature branch into `main` (`worktree.promote` is gone; grep for it).
+- [ ] No code path merges the feature branch into `main`: `worktree.mjs` no longer exports `promote()`
+      and `loop.mjs` no longer calls it. (The fake worktree double may keep an unused `promote()`; what
+      matters is that nothing calls it — grep for call sites, not the bare word.)
 - [ ] A finished green run prints the branch and `git merge` and exits; a finished red run prints the
       failure and no merge line.
 - [ ] `npm test` is green.

@@ -23,7 +23,10 @@ model and its renderer, the non-TTY fallback), and §2.9 (each row shows `T01 st
 - `src/shell/render.mjs` (new) + `render.test.mjs` (new) — the terminal renderer.
 - `src/shell/coordinate.mjs` (+ `coordinate.test.mjs`) — remove `createAgentBridge`, `answer`, the
   `outbox`/`answers`/`surfaced` handling and `send-failed`; `main()` builds run state, feeds the
-  display model, and paints via the renderer.
+  display model, and paints via the renderer. Also drop the coordinator-session log lines (the
+  `coordinatorName(...)` "launch the session under it" output) — the plain command has no session to
+  launch. The `coordinatorName` symbol itself is deleted from `naming.mjs` in T05, once the harness
+  stops calling it.
 - `src/shell/loop.mjs` (+ `loop.test.mjs`) — remove the down-routing; a `question`/`decision` report
   becomes log-only (record it, keep the worker's slot) with no answer routed.
 - `src/shell/platform.mjs` (+ `platform.test.mjs`) — remove the down-channel `send`; keep `inbox()`
@@ -64,7 +67,9 @@ createRenderer({ stream = process.stdout }) → { paint(display), line(text) }
 - [ ] `createRenderer` on a stream with `isTTY=true` emits cursor-up/clear escapes and redraws one
       block rather than appending.
 - [ ] No `createAgentBridge`, `outbox`, `answers`, `surfaced`, `send-failed`, or down-channel `send`
-      remains (grep).
+      remains in the files this task owns (`coordinate.mjs`, `loop.mjs`, `platform.mjs`). The harness
+      and fake-platform copies of this vocabulary are removed with the harness rework in T05, so scope
+      the grep to these files, not all of `src/`.
 - [ ] A `question`/`decision` report keeps the worker's slot and is recorded, and no answer is routed.
 
 ## Done when

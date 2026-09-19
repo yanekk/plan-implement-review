@@ -9,8 +9,10 @@ implement→review worker; a task that needs the person's judgement is an ordina
 the ground and asks (the worker-contract half of this is T07). This deletes the `Runs` marker from
 parsing and dispatch, the `you` count from the width report, and the rest of the `verify`/hands-on
 path in the loop and platform. The parser must still tolerate a `Runs` column when one is present,
-because older plans (and this plan's own `PROGRESS.md`) still carry it. The `verify` role was already
-removed from `naming.mjs` in T02.
+because older plans (and this plan's own `PROGRESS.md`) still carry it. This task removes the verify
+**code path** (the loop spawn branch, the `platform` mapping, the attestation); the `verify` **role**
+stays defined in `naming.mjs` until T05, because the harness still references it and is only reworked
+then. Removing the role here would break the harness suite.
 
 ## Design sections this implements
 
@@ -49,7 +51,10 @@ analyzeParallelism(tasks) → { criticalPathLength, maxWidth, totalTasks, errors
 - [ ] `loop` spawns an `implement` worker for every ready task; no `verify`/`hands-on` action or
       attestation is emitted.
 - [ ] `openingInstruction` maps only implement and review.
-- [ ] No `runs`, `verify`, `hands-on`, or attestation reference remains in `src/` (grep).
+- [ ] No `runs`, `verify`, `hands-on`, or attestation reference remains in the files this task owns
+      (`progress.mjs`, `dispatch.mjs`, `parallelism.mjs`, `loop.mjs`, `platform.mjs`). The `verify` role
+      in `naming.mjs`, the harness fixtures/assertions, and the fake platform still carry the vocabulary
+      until T05 — scope the grep to this task's files, not all of `src/`.
 
 ## Done when
 

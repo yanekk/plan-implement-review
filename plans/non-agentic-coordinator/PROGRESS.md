@@ -14,15 +14,15 @@ rebuilds the parallel coordinator, so the coordinator must not drive it.
 **The Task column is each task's slug** (DESIGN §2.9) — the same kebab name as its `tasks/T{nn}-*.md`
 file and its worker's agent name.
 
-**Plan reviewed:** not yet — run `/pir-review-plan non-agentic-coordinator` before the first `/pir-work`
+**Plan reviewed:** 2026-09-19 — 1 fixed, 2 decided with the user (re-slot the shared-name-helper
+removals so every task stays green + cover `capture.mjs`; `install.sh` applies the per-user `autoMode`
+rule). Account in the `plan-review` commit.
 
-**Status:** Planned, not reviewed, not started. Base is clean at the last commit (abandoned
-`coordinator-trust` debris swept into a labeled `git stash`, 2026-09-19) and green. The live display
-shape was confirmed with the person against `prototype/cli-display.html`. Amended 2026-09-19 to add
-task slugs and `/`-separated agent names (T02).
+**Status:** Reviewed, not started. Base is clean at the last commit (abandoned `coordinator-trust`
+debris swept into a labeled `git stash`, 2026-09-19) and green. The live display shape was confirmed
+with the person against `prototype/cli-display.html`.
 **Last updated:** 2026-09-19
-**Next `pir-work` will:** nothing yet — `/pir-review-plan` must run first. After that, implement T01
-(`stop-promoting`, the first `⬜` whose dependencies are met).
+**Next `pir-work` will:** implement T01 (`stop-promoting`, the first `⬜` whose dependencies are met).
 
 ## Tasks
 
@@ -34,11 +34,11 @@ still reads it while the plan is being built.
 | # | Task | Runs | Depends on | State | Notes |
 |---|---|---|---|---|---|
 | T01 | stop-promoting | auto | — | ⬜ | Run ends at a green feature branch handed off; no merge to main. |
-| T02 | slugs-and-names | auto | — | ⬜ | `/` separator, worker name gains a slug field; slug is identity. |
+| T02 | slugs-and-names | auto | — | ⬜ | `/` separator, worker name gains a slug field. Additive and backward-tolerant; keeps `coordinatorName` and the `verify` role, which T05 removes. |
 | T03 | live-display | auto | T01, T02 | ⬜ | Strip the agent bridge; the docker-compose-style live display. |
 | T04 | remove-you-auto | auto | T03 | ⬜ | Remove the auto/you distinction and the verify path (code). |
-| T05 | harness-and-restart | auto | T04 | ⬜ | Rework harness to the new model; prove kill-and-rebuild. |
-| T06 | worker-permissions | auto | — | ⬜ | Ship the worker classifier pre-approval + prereq note. |
+| T05 | harness-and-restart | auto | T04 | ⬜ | Rework harness to the new model; prove kill-and-rebuild. Also deletes the `verify` role and `coordinatorName` from naming and fixes `capture.mjs` (re-slotted from T02). |
+| T06 | worker-permissions | auto | — | ⬜ | Ship worker `permissions.allow`; `install.sh` also applies the per-user `autoMode` rule, with the manual step as a printed fallback. |
 | T07 | skills | auto | T04 | ⬜ | Delete dead skills; de-agent worker skills; slug-as-name templates. |
 | T08 | docs | auto | T05, T07 | ⬜ | Rewrite /docs and the CLAUDE.md carve-out. |
 | T09 | capstone | you | T06, T08 | ⬜ | Live end-to-end hand-verification with the person. |

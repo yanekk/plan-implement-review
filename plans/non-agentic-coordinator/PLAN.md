@@ -57,9 +57,10 @@ independent and could run together; T03 refactors the same shell files both touc
 |---|---|---|---|
 | [T04](tasks/T04-remove-you-auto.md) | remove-you-auto | auto | T03 |
 
-At the end of Phase 2 there is no `Runs` marker, no `verify` role, no hands-on path in the code; a
-task needing the person is an ordinary worker that prepares and asks. (The `verify` role's removal
-from `naming.mjs` happens in T02, which already reworks that file.)
+At the end of Phase 2 there is no `Runs` marker and no hands-on/`verify` code path in the loop and
+platform; a task needing the person is an ordinary worker that prepares and asks. (The `verify` role's
+removal from `naming.mjs` itself happens in T05, alongside the harness that still references it — see
+the re-slot note in DESIGN §3.2; T04 removes only the code path.)
 
 ## Phase 3 — Prove it, tidy, document
 
@@ -112,7 +113,7 @@ width numbers come from `analyzeParallelism` over the task table.
 
 | Weight | Tasks |
 |---|---|
-| **Heavy** | T03 (the display model plus a TTY renderer with a non-TTY fallback), T08 (six `/docs` files plus `CLAUDE.md`) |
+| **Heavy** | T03 (the display model plus a TTY renderer with a non-TTY fallback), T08 (seven `/docs` files plus `CLAUDE.md`) |
 | **Medium** | T01, T02, T04, T05, T07 |
 | **Light** | T06, T09 (T09 is short but gated on the person) |
 
