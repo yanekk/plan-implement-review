@@ -12,8 +12,9 @@ user changed.
 
 | Date | | Finding |
 |---|---|---|
-| 2026-09-19 | 📌 | T07: `src/shell/harness/fixtures.mjs:138` comment still says `pir-coordinate` shells out to `coordinate.mjs`, but that skill is deleted and the coordinator is a plain program. Stale wording only; `carrySource` behaviour unchanged. Reword at T08. |
-| 2026-09-19 | 📌 | T06 review: `worktree.bgIsolation: none` ships in this repo's `.claude/settings.json` but `install.sh` carries only `permissions.allow` to a target, not `bgIsolation`. Brief §4a wanted it in each worker worktree; DESIGN §7 names neither. Decide at T08/T09. |
+| 2026-09-19 | 📌 | T08: task doc said the kill switch is Ctrl-C, not a HALT flag. Shipped code (T05) kept the HALT flag as the deliberate abort (`touch .../HALT`) and made Ctrl-C the orphan-guard teardown. Docs describe shipped reality. |
+| 2026-09-19 | 📌 | T08 is docs-only, so stale code comments stay for a code touch: `fixtures.mjs:138` names deleted `pir-coordinate`, `coordinate.mjs:328` says "not a clean promotion", `platform.mjs:206` says the name carries `·`. Wording only. |
+| 2026-09-19 | 📌 | T06 review: `worktree.bgIsolation: none` ships in this repo's `.claude/settings.json` but `install.sh` carries only `permissions.allow` to a target, not `bgIsolation`. Brief §4a wanted it in each worker worktree; DESIGN §7 names neither. Decide at T09 (install.sh, not docs). |
 | 2026-09-19 | 📌 | T06: `.claude/settings.json` is now a committed shared file (ships worker `permissions.allow`); per-user prefs go in `.claude/settings.local.json`, now gitignored. Do not commit the `.local.json`. |
 | 2026-09-19 | 📌 | T05 review: verify/you still referenced outside T05's files, none a system path — the fake platform `verify` branch + its self-test (fake/platform.test.mjs), and coordinate.test/resume.test framing inputs as verify/you. Production dispatch is verify-free. T07 sweeps the fake and the test framing. |
 | 2026-09-19 | 🔄 | T05: PM chose option A — rebuild the harness runner now, not defer to T09. `run.mjs` launches `node coordinate.mjs` as a child process, seals on its exit (no `promote` marker), and SIGKILLs its pid to crash for kill-and-rebuild. |

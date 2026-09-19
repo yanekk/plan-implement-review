@@ -255,13 +255,15 @@ it back is a decision about history and it is mine to make — never reach for a
 rebase or a reset on your own initiative.
 
 **Parallel mode is the exception, and only parallel mode.** A plan can also be run by a
-*coordinator* session that spawns many *worker* sessions to build the same plan at once, each
-worker in its own worktree. That mode runs by design on a feature branch and one branch per
+*coordinator command* — a plain foreground program (`node src/shell/coordinate.mjs {slug}`),
+not a session you talk to — that spawns many *worker* sessions to build the same plan at once,
+each worker in its own worktree. That mode runs by design on a feature branch and one branch per
 task, in worktrees — so the rule above ("main checkout, main branch, always; stop if you find
 yourself in a worktree") binds the **classic single-stream flow only**. A worker driven by
 `pir-implement` in its own task-branch worktree is where it is meant to be and does not halt;
-the coordinator merges each task into the feature branch and promotes the whole plan to `main`
-exactly once, at the end. If you are a classic session, the base rule still binds you in full.
+the command merges each task into the feature branch and, when the plan is green, hands you
+`git merge pir/{slug}` to run by hand — it never merges to `main` itself. If you are a classic
+session, the base rule still binds you in full.
 
 ---
 
@@ -271,11 +273,8 @@ Each plan is a folder under `plans/`. `ls plans/` lists them.
 
 1. **`plans/{slug}/PROGRESS.md`** — task states and the queue. Always current.
    **Sixty words to a Notes cell**: it is the index, and the account is the commit message.
-   Its task table also carries a **`Runs`** marker per task — `auto` (a worker builds it) or
-   `you` (a person runs it, a spike or a hand-verification drill), default `auto`. The classic
-   flow ignores it. In parallel mode the coordinator spawns a matching worker: an autonomous
-   builder for `auto`, and for `you` a hands-on worker the person drives — they run the live
-   steps, the worker records the findings — which skips review and folds back like any task.
+   Its `Task` cell is the task's slug — the same kebab name as its `tasks/T{nn}-{slug}.md`
+   file and, in parallel mode, its worker's agent name.
 2. **`plans/{slug}/FINDINGS.md`** — what the build taught, newest first, **forty words a
    row**. **Where "verified by hand with the user" is written down**, and therefore the only
    record that anything was ever seen working for real.

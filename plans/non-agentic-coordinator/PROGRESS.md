@@ -18,10 +18,10 @@ file and its worker's agent name.
 removals so every task stays green + cover `capture.mjs`; `install.sh` applies the per-user `autoMode`
 rule). Account in the `plan-review` commit.
 
-**Status:** T07 reviewed clean. Dead skills gone, survivors de-agented, templates slug-celled. Ready for
-T08 (docs) — the last code/skill task before the T09 live capstone.
+**Status:** T08 implemented (🔍), awaiting review. All 7 /docs files plus the CLAUDE.md carve-out rewritten
+to the plain-command coordinator. Docs-only; 382 tests green. Next is reviewing T08, then the T09 capstone.
 **Last updated:** 2026-09-19
-**Next `pir-work` will:** implement T08 (`docs`, `⬜`); its deps T05 and T07 are both ✅.
+**Next `pir-work` will:** review T08 (`docs`, `🔍`).
 
 ## Tasks
 
@@ -39,13 +39,13 @@ read — the parser tolerates and ignores it; T05 finishes the surrounding clean
 | T05 | harness-and-restart | auto | T04 | ✅ | Reviewed clean. Foreground-process harness; `coordinatorName`/`verify` gone. Live crash/restart is T09. |
 | T06 | worker-permissions | auto | — | ✅ | Reviewed clean. Ships worker `permissions.allow`; `install.sh` merges it into a target and the `autoMode` rule into `~/.claude/settings.json`. Merge pure in `core/settings.mjs`. `bgIsolation: none` does not travel to targets (FINDINGS). Live classifier proof T09. |
 | T07 | skills | auto | T04 | ✅ | Reviewed clean, no fix commit. Deletions and de-agenting faithful to DESIGN §2.2/§2.5/§2.9; grep-confirmed no live refs to the three deleted skills or down-channel (leftovers are comments + T08-scope docs/). planner-templates.test rewritten as a real guard (parses on-disk templates). 382 green, ran. |
-| T08 | docs | auto | T05, T07 | ⬜ | Rewrite /docs and the CLAUDE.md carve-out. |
+| T08 | docs | auto | T05, T07 | 🔍 | Rewrote all 7 /docs files + the CLAUDE.md carve-out and Runs text to the plain-command coordinator: no agentic session, no down-channel, no promotion (hand off `git merge`), one worker kind, `/`-slug names. Deviation: task doc said kill switch is Ctrl-C; shipped code kept the HALT flag + Ctrl-C teardown (FINDINGS). Docs-only, 382 green. |
 | T09 | capstone | you | T06, T08 | ⬜ | Live end-to-end hand-verification with the person. |
 
 A Notes cell holds what was built or what the review found, the test count, and one line per
 deviation from the task doc. A ✅ task's cell may be cut to one line once the next task is reviewed.
 
-**Review queue:** empty. Next is implementing T08 (`docs`).
+**Review queue:** T08 (`docs`), awaiting review.
 
 ## Blocked on the user
 

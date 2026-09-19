@@ -1,24 +1,24 @@
 # Restart and recovery
 
-A parallel run can end abruptly: the kill switch fires, the coordinator crashes, the machine is
-rebooted, or the person walks away. There is no separate resume command — recovery is to **restart
-the coordinator on the same slug**. A restart reconciles every task from git and resumes it at the
-stage it had actually reached, rather than rebuilding from the start. This page describes what that
-restart picks up and how it decides.
+A parallel run can end abruptly: the kill switch fires, the command crashes or is killed, the
+machine is rebooted, or the person walks away. There is no separate resume command — recovery is to
+**re-run the command on the same slug**. A re-run reconciles every task from git and resumes it at
+the stage it had actually reached, rather than rebuilding from the start. This page describes what
+that re-run picks up and how it decides.
 
-## What a restart reliably picks up
+## What a re-run reliably picks up
 
 - **The feature branch and its worktree.** `pir/{plan}` and `.claude/worktrees/pir-{slug}` are
   deterministic and reused idempotently: `openFeature` checks whether the branch and worktree
-  already exist and returns them rather than recreating. So a restart lands on the same feature
+  already exist and returns them rather than recreating. So a re-run lands on the same feature
   worktree, not a duplicate.
 - **Per-task branches and worktrees.** `pir/{plan}-T{nn}` and `.claude/worktrees/pir-{slug}-T{nn}`
   are deterministic and reused the same way (`createTask`). Reconciliation adopts the work already
   committed on each task branch (below); a task it rebuilds or starts fresh is spawned into the
   existing branch and worktree if one is present.
 - **Completed work.** Any task already merged into the feature branch reads `✅` in the feature
-  branch's `PROGRESS.md`, so a restart does not rebuild it — the feature branch is the durable
-  record of what has actually landed. `main` is untouched until the single promotion, so an
+  branch's `PROGRESS.md`, so a re-run does not rebuild it — the feature branch is the durable record
+  of what has actually landed. `main` is untouched (nothing ever merges to `main`), so an
   interrupted run leaves `main` exactly as it was.
 - **In-flight task work, adopted from each task branch.** A task built (`🔍`) or built and reviewed
   (`✅`) on its own task branch but not yet merged is picked up at that stage, not re-dispatched from
@@ -26,12 +26,12 @@ restart picks up and how it decides.
 
 ## Reconciliation — git is the ground truth
 
-On restart the coordinator's in-memory run state is empty: it tracks no worker and remembers no
-phase. Rather than trust the feature-branch `PROGRESS.md` — which advances a task past `⬜` only at
-merge, and so still reads `⬜` for a task finished on its own branch but not yet merged — the
-coordinator reconstructs each task's state from git, the one place a crash cannot lie about what
-landed. It does this **once, at startup, before the first dispatch**, inside the first pass
-(`reconcile`, pass 0 folded into `runPass` in `src/shell/loop.mjs`).
+On a re-run the command's in-memory run state is empty: it tracks no worker and remembers no phase.
+Rather than trust the feature-branch `PROGRESS.md` — which advances a task past `⬜` only at merge,
+and so still reads `⬜` for a task finished on its own branch but not yet merged — the command
+reconstructs each task's state from git, the one place a crash cannot lie about what landed. It does
+this **once, at startup, before the first dispatch**, inside the first pass (`reconcile`, pass 0
+folded into `runPass` in `src/shell/loop.mjs`).
 
 There is no "am I restarting?" flag. Reconciliation runs at every startup and is a no-op on a
 genuine first start, because a first start has no task branches to adopt. The presence of task
@@ -43,20 +43,20 @@ disagree with git.
 The stage a task reached lives in its own task branch's `plans/{slug}/PROGRESS.md` row, read with
 `git show pir/{slug}-T{nn}:plans/{slug}/PROGRESS.md`. The glyph in that row is trustworthy because
 it is committed **atomically with the work it describes**: the implementer marks `🔍` in the same
-commit as the code, the reviewer marks `✅` in its own commit, and a `you` worker marks `✅`
-directly. So committed code never carries a stale `⬜`/`🟡` — either the build commit landed with its
-`🔍`, or it did not land at all. Uncommitted working-tree state is ignored on purpose: a crash
-cannot be trusted to have finished what it left uncommitted.
+commit as the code, and the reviewer marks `✅` in its own commit. So committed code never carries a
+stale `⬜`/`🟡` — either the build commit landed with its `🔍`, or it did not land at all. Uncommitted
+working-tree state is ignored on purpose: a crash cannot be trusted to have finished what it left
+uncommitted.
 
 ### Reap the dead run's workers first
 
-The only crash that leaves task branches to reconcile is one that skips the coordinator's own
-shutdown — a `SIGKILL` or a power loss, not a `claude stop`, because the SIGTERM/SIGINT handler runs
-`teardownRun`, which removes the task worktrees and branches the restart needs. That same abruptness
-leaves the dead run's worker sessions still running. Each orphaned session both inflates the
-live-worker count (tripping the runaway breaker) and stays invisible to the slot maths (so the run
-would over-spawn). So the first thing reconciliation does, before adopting anything, is stop every
-worker session of this slug the platform still lists — **session-only** (close the session and
+The only crash that leaves task branches to reconcile is one that skips the command's own shutdown —
+a `SIGKILL` or a power loss, not a Ctrl-C, because the SIGINT/SIGTERM handler runs `teardownRun`,
+which removes the task worktrees and branches the reconcile would otherwise adopt. That same
+abruptness leaves the dead run's worker sessions still running. Each orphaned session both inflates
+the live-worker count (tripping the runaway breaker) and stays invisible to the slot maths (so the
+run would over-spawn). So the first thing reconciliation does, before adopting anything, is stop
+every worker session of this slug the platform still lists — **session-only** (close the session and
 remove its record, never `worktree.remove`), because the task branches and worktrees are exactly
 what the adoption needs. This makes the ceiling genuinely free before any reviewer spawns.
 
@@ -71,7 +71,7 @@ decides one action from the feature-row state and the committed task-branch glyp
 | `⛔` | (any / absent) | **skip** | a person deferred it; its dependents wait |
 | `⬜` | `✅` | **merge** | built and reviewed — folded into the feature branch directly, no worker |
 | `⬜` | `🔍` | **review** | built, not reviewed — a fresh reviewer session is spawned on its worktree |
-| `⬜` | `⬜`/`🟡`/other, branch present | **rebuild** | half-built — the branch is discarded and re-implemented clean |
+| `⬜` | present, neither `✅` nor `🔍` | **rebuild** | half-built — the branch is discarded and re-implemented clean |
 | `⬜` | absent | **implement** | never started — the pass's normal dispatch handles it |
 
 - **merge** reuses the loop's own merge-and-reconcile: `worktree.mergeTask` folds the branch in,
@@ -90,53 +90,47 @@ decides one action from the feature-row state and the committed task-branch glyp
   construction, whereas adopting possibly-half-finished code risks landing it as done. Anything
   short of `🔍`/`✅` is treated as not built.
 
-A `you`/verify task branch never shows `🔍` — it goes straight to `✅` — so a partially-driven verify
-branch classifies as rebuild (re-run the person drill), which the same table gives for free. The
-classifier needs no special-casing of `Runs`.
-
 ### When a `✅` branch will not merge
 
 A reviewed branch can fail to merge cleanly if a sibling changed a shared file after it was built.
 Reconciliation cannot auto-resolve and has no worker on that branch to resolve it. It marks the
-task `⛔` on the feature branch (so the block survives the next restart and the task's dependents
-keep waiting), leaves the reviewed branch in place for a person to land by hand, and surfaces the
+task `⛔` on the feature branch (so the block survives the next re-run and the task's dependents keep
+waiting), leaves the reviewed branch in place for a person to land by hand, and surfaces the
 conflict in plain English. It does not rebuild — the work is reviewed and good, it only needs a hand
 to land. A `🔍` branch that re-hits a conflict on review resurfaces through the normal review path
 once its fresh reviewer runs; nothing special is needed.
 
 A leftover branch for a task already `✅` on the feature branch (the merge landed but close did not
-run before the crash) is removed as cleanup, so restarts do not accumulate orphaned branches.
+run before the crash) is removed as cleanup, so re-runs do not accumulate orphaned branches.
 
 ### The restart is narrated in one line
 
-A restart that silently merges, reviews and rebuilds looks, in ordinary progress output, almost
+A re-run that silently merges, reviews and rebuilds looks, in ordinary progress output, almost
 exactly like a fresh run. So reconciliation composes one plain-English line naming what it adopted —
 what it merged because it was already finished, what it sent to review because it was already built,
 what it is rebuilding because it was only half-done, what needs a hand to land, and what it is
-starting fresh — and the coordinator relays it as the run resumes (DESIGN of the restart-resume plan,
-§2.8). A genuine first start adopts nothing, so it emits no summary, and a first run's output is
-unchanged.
+starting fresh — logged as `restart-summary` and printed as the run resumes. A genuine first start
+adopts nothing, so it emits no summary, and a first run's output is unchanged.
 
 ## Control-folder hygiene on restart
 
-The control folder (`plans/{slug}/.parallel/control/`) is reused across a restart. Before the run
-writes anything, `startupControlHygiene` separates the transient feeds from the durable records
-(DESIGN §2.7):
+The control folder (`plans/{slug}/.parallel/control/`) is reused across a re-run. Before the run
+writes anything, `startupControlHygiene` separates the transient feed from the durable records:
 
-- **Cleared** — `reports/`, `answers`, `outbox` and `surfaced` are the live-run conversation
-  buffers. A leftover entry from the dead run would route a stale answer to a fresh worker, replay a
-  stale down-message, or re-relay a stale surface, so all four are emptied at startup. Clearing runs
-  on every startup, not only a detected restart, because a genuine first start has them empty anyway.
+- **Cleared — `reports/`.** The worker up-channel is a live-run buffer; a leftover report from the
+  dead run would be read as a fresh worker's signal, so it is emptied at startup. Clearing runs on
+  every startup, not only a detected restart, because a genuine first start has it empty anyway.
+  `reports/` is now the only feed there is to clear — the down-channel feeds (`outbox`, `answers`,
+  `surfaced`) it used to clear alongside are gone (see [control-folder.md](control-folder.md)).
 - **Preserved — `log`.** The append-only event log is the audit trail and the durable signal the
   test harness reads. It is never cleared; a restart appends a `restart` marker line so the log
   shows the boundary between runs.
-- **Preserved — `HALT`.** The kill switch is a deliberate stop, and the documented way to restart is
+- **Preserved — `HALT`.** The kill switch is a deliberate stop, and the documented way to continue is
   for the person to remove it. Auto-clearing it would defeat the interlock — a HALTed run that is
-  restarted would blow straight past the stop. So a `HALT` present at startup makes the coordinator
-  **refuse to start**, naming the flag and the `rm` command that clears it, rather than the old
-  silent start-then-halt.
+  re-run would blow straight past the stop. So a `HALT` present at startup makes the command **refuse
+  to start**, naming the flag and the `rm` command that clears it.
 
-(This hygiene and the reconciliation pass run when the coordinator actually drives workers. A dry
+(This hygiene and the reconciliation pass run when the command actually drives workers. A dry
 preview — the run without `PARALLEL_LIVE=1` — spawns nothing, builds no control folder, and exits
 before either step, which is harmless because it changes no state.)
 
@@ -149,17 +143,18 @@ the ground truth.
 
 ## Manual recovery
 
-When a restart is not what is wanted, the pieces are all inspectable and removable by hand:
+When a re-run is not what is wanted, the pieces are all inspectable and removable by hand:
 
 - **A leaked worker, worktree, or branch:** `claude agents --json` lists live sessions with their
   pid; `git worktree list` lists worktrees. End a session with `kill <pid>` (`claude stop` only
   interrupts), clear its record with `claude rm <id>`, and remove the worktree and branch with
   `git worktree remove --force` and `git branch -D`.
-- **A confused or runaway coordinator:** create the `HALT` flag. All dispatch and delivery stop and
-  every worker is ended; `main` is untouched. Remove the flag and restart to continue.
+- **A confused or runaway run:** create the `HALT` flag (`touch
+  plans/{slug}/.parallel/control/HALT`). All dispatch and delivery stop and every worker is ended;
+  `main` is untouched. Remove the flag and re-run to continue.
 - **Inspecting what reconciliation will see:** `git show pir/{slug}-T{nn}:plans/{slug}/PROGRESS.md`
   is the exact read it makes — the committed glyph in that row is the action it will pick.
 - **A bad merge on the feature branch:** it is a normal `git` recovery on `pir/{plan}`; `main` is not
-  involved, since nothing merges to `main` until promotion.
+  involved, since nothing merges to `main`.
 - **Abandon the whole plan:** delete the feature branch `pir/{plan}` and its task branches. `main`
   never received anything, so there is nothing to revert.
