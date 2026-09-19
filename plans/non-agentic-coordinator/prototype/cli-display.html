@@ -1,0 +1,281 @@
+<title>pir up</title>
+<style>
+  :root{
+    --bg:#0b0e14; --panel:#11161f; --panel-2:#0e131b; --bar:#1a212c;
+    --ink:#c9d3df; --dim:#5c6773; --faint:#3a434f;
+    --line:#1e2733;
+    --build:#5aa2ff; --review:#c08cff; --ok:#4ec97a; --ask:#ecc14a; --kill:#ff6b64; --merge:#4ec97a;
+    --accent:#ecc14a;
+    --mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+    --sans:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
+  }
+  *{box-sizing:border-box}
+  body{background:var(--bg);color:var(--ink);font-family:var(--sans);margin:0}
+  .wrap{max-width:860px;margin:0 auto;padding-block:28px;padding-left:16px;padding-right:16px}
+  .caption{color:var(--dim);font-size:13px;line-height:1.55;margin:0 0 16px}
+  .caption b{color:var(--ink);font-weight:600}
+  .caption code{font-family:var(--mono);color:#9fb2c8;background:var(--panel);padding:1px 5px;border-radius:4px;font-size:12px}
+
+  /* terminal window */
+  .term{background:var(--panel);border:1px solid var(--line);border-radius:10px;overflow:hidden;box-shadow:0 12px 40px rgba(0,0,0,.45)}
+  .titlebar{display:flex;align-items:center;gap:10px;background:var(--bar);padding:9px 14px;border-bottom:1px solid var(--line)}
+  .dots{display:flex;gap:7px}
+  .dots i{width:11px;height:11px;border-radius:50%;display:block}
+  .dots i:nth-child(1){background:#ff5f57}.dots i:nth-child(2){background:#febc2e}.dots i:nth-child(3){background:#28c840}
+  .cmd{font-family:var(--mono);font-size:12.5px;color:var(--dim)}
+  .cmd b{color:#9fb2c8;font-weight:500}
+
+  .screen{font-family:var(--mono);font-size:13.5px;line-height:1.5;padding:16px 16px 14px;background:var(--panel);min-height:420px}
+  .sumline{display:flex;align-items:center;gap:10px;color:var(--ink);margin-bottom:12px;flex-wrap:wrap}
+  .sumline .spin{color:var(--build)}
+  .sumline .run-name{color:#9fb2c8}
+  .sumline .meta{color:var(--dim);font-size:12.5px}
+  .sumline .pill{font-size:11px;letter-spacing:.03em;color:var(--dim);border:1px solid var(--line);border-radius:20px;padding:1px 9px}
+  .sumline .pill.full{color:var(--ask);border-color:#3a3320}
+
+  .rows{display:flex;flex-direction:column}
+  .row{display:grid;grid-template-columns:18px 42px 1fr auto;align-items:baseline;gap:10px;padding:3px 6px;border-radius:6px}
+  .row .g{text-align:center}
+  .row .id{color:var(--dim)}
+  .row .nm{color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .row .st{justify-self:end;display:flex;gap:12px;align-items:baseline;color:var(--dim);font-size:12.5px;font-variant-numeric:tabular-nums}
+  .row .st .lbl{min-width:112px;text-align:right}
+  .row .st .el{color:var(--faint);min-width:44px;text-align:right}
+
+  .row.waiting .nm,.row.queued .nm{color:var(--dim)}
+  .row.waiting,.row.queued{opacity:.72}
+  .row.building .g{color:var(--build)} .row.building .st .lbl{color:var(--build)}
+  .row.reviewing .g{color:var(--review)} .row.reviewing .st .lbl{color:var(--review)}
+  .row.merging .g{color:var(--merge)} .row.merging .st .lbl{color:var(--merge)}
+  .row.done .g{color:var(--ok)} .row.done .st .lbl{color:var(--ok)} .row.done .el{color:var(--dim)}
+  .row.asking{background:#171408} .row.asking .g{color:var(--ask)} .row.asking .nm{color:#f2dd9a} .row.asking .st .lbl{color:var(--ask)}
+  .row.handson{background:#171408} .row.handson .g{color:var(--ask)} .row.handson .nm{color:#f2dd9a} .row.handson .st .lbl{color:var(--ask)}
+  .row.killed .g{color:var(--kill)} .row.killed .nm{color:var(--dim)} .row.killed .st .lbl{color:var(--kill)}
+  .row .runs{color:var(--faint);font-size:11px}
+
+  .footer{margin-top:14px;padding-top:12px;border-top:1px dashed var(--line);font-family:var(--mono);font-size:13px;white-space:pre-wrap;line-height:1.6;min-height:52px}
+  .footer .ask{color:var(--ask)} .footer .ok{color:var(--ok)} .footer .kill{color:var(--kill)} .footer .d{color:var(--dim)}
+  .footer code{color:#cfe0f2}
+  .cursor{display:inline-block;width:8px;height:15px;background:var(--dim);vertical-align:-2px;animation:blink 1.05s step-end infinite}
+  @keyframes blink{50%{opacity:0}}
+
+  /* controls */
+  .controls{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:16px}
+  .scenarios{display:flex;gap:6px;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:4px}
+  .scenarios button{font-family:var(--sans);font-size:12.5px;color:var(--dim);background:transparent;border:0;padding:6px 11px;border-radius:6px;cursor:pointer}
+  .scenarios button.on{background:var(--bar);color:var(--ink)}
+  .spacer{flex:1}
+  .btn{font-family:var(--sans);font-size:12.5px;color:var(--ink);background:var(--panel);border:1px solid var(--line);padding:7px 13px;border-radius:8px;cursor:pointer}
+  .btn:hover{border-color:#2b3644}
+  .legend{display:flex;flex-wrap:wrap;gap:14px;margin-top:16px;font-family:var(--mono);font-size:11.5px;color:var(--dim)}
+  .legend span i{font-style:normal;margin-right:5px}
+  .legend .b{color:var(--build)}.legend .r{color:var(--review)}.legend .o{color:var(--ok)}.legend .a{color:var(--ask)}.legend .k{color:var(--kill)}
+</style>
+
+<div class="wrap">
+  <p class="caption">
+    Throwaway mock for <b>/pir-plan</b> — the live display of the parallel run command
+    (<code>node src/shell/coordinate.mjs {plan}</code>), styled after <b>docker compose up</b>:
+    one line per task, statuses updating in place. Not wired to anything. Watch a run, or switch scenario.
+  </p>
+
+  <div class="term">
+    <div class="titlebar">
+      <div class="dots"><i></i><i></i><i></i></div>
+      <div class="cmd">$ <b>node src/shell/coordinate.mjs screen-time</b></div>
+    </div>
+    <div class="screen">
+      <div class="sumline" id="sumline"></div>
+      <div class="rows" id="rows"></div>
+      <div class="footer" id="footer"></div>
+    </div>
+  </div>
+
+  <div class="controls">
+    <div class="scenarios" id="scenarios">
+      <button data-s="normal" class="on">Clean run</button>
+      <button data-s="question">Stops to ask you</button>
+      <button data-s="ctrlc">Ctrl-C</button>
+    </div>
+    <div class="spacer"></div>
+    <button class="btn" id="playBtn">Pause</button>
+    <button class="btn" id="restartBtn">Restart</button>
+  </div>
+
+  <div class="legend">
+    <span class="b"><i>⠋</i>building</span>
+    <span class="r"><i>⠋</i>reviewing (fresh session)</span>
+    <span class="o"><i>✔</i>merged</span>
+    <span class="a"><i>●</i>asking you / hands-on</span>
+    <span class="k"><i>✗</i>killed on Ctrl-C</span>
+    <span class="d"><i>·</i>waiting / queued</span>
+  </div>
+</div>
+
+<script>
+const CEIL = 4;
+const SPIN = ['⠋','⠙','⠹','⠸','⠼','⠴','⠦','⠧','⠇','⠏'];
+const reduced = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+// Each task: id, name, runs, deps (for the waiting reason). Phases are per-scenario.
+const NAMES = {
+  T01:'budget ledger', T02:'policy decisions', T03:'usage tracker', T04:'warning thresholds',
+  T05:'daily rollover', T06:'settings screen', T07:'notifications', T08:'live device check'
+};
+const RUNS = {T01:'auto',T02:'auto',T03:'auto',T04:'auto',T05:'auto',T06:'auto',T07:'auto',T08:'you'};
+const DEPS = {T01:[],T02:[],T03:[],T04:[],T05:[],T06:['T04'],T07:['T04'],T08:['T06','T07']};
+const ORDER = ['T01','T02','T03','T04','T05','T06','T07','T08'];
+
+// A schedule maps id -> {start, queuedFrom?, phases:[{p,end}...]} in sim seconds.
+// phases run in order; last boundary is when it becomes 'done'. p in build|review|merge|asking|handson.
+function normalSchedule(){
+  return {
+    T01:{start:0, phases:[{p:'build',end:4},{p:'review',end:6},{p:'merge',end:6.4},{p:'done',end:6.4}]},
+    T02:{start:0, phases:[{p:'build',end:3.5},{p:'review',end:5.8},{p:'merge',end:6.1},{p:'done',end:6.1}]},
+    T03:{start:0, phases:[{p:'build',end:5},{p:'review',end:7.4},{p:'merge',end:7.8},{p:'done',end:7.8}]},
+    T04:{start:0, phases:[{p:'build',end:4.5},{p:'review',end:7},{p:'merge',end:7.4},{p:'done',end:7.4}]},
+    // T05 is ready at t0 but the ceiling is full (4 building), so it is queued until a slot frees (~6.1).
+    T05:{start:6.1, queuedFrom:0, phases:[{p:'build',end:10},{p:'review',end:12.4},{p:'merge',end:12.8},{p:'done',end:12.8}]},
+    T06:{start:7.4, phases:[{p:'build',end:11},{p:'review',end:13.4},{p:'merge',end:13.8},{p:'done',end:13.8}]},
+    T07:{start:7.4, phases:[{p:'build',end:11.6},{p:'review',end:14},{p:'merge',end:14.4},{p:'done',end:14.4}]},
+    T08:{start:14.4, phases:[{p:'handson',end:18.4},{p:'done',end:18.4}]},
+    _end:18.4
+  };
+}
+function questionSchedule(){
+  const s = normalSchedule();
+  // T04 stops mid-build to ask you; it holds its slot and the run waits at human speed.
+  s.T04 = {start:0, phases:[{p:'build',end:3},{p:'asking',end:12,q:'"warning at 80% or 90% of the budget?"'},{p:'build',end:13.5},{p:'review',end:16},{p:'merge',end:16.4},{p:'done',end:16.4}]};
+  // downstream shifts to after T04 lands
+  s.T06 = {start:16.4, phases:[{p:'build',end:20},{p:'review',end:22.4},{p:'merge',end:22.8},{p:'done',end:22.8}]};
+  s.T07 = {start:16.4, phases:[{p:'build',end:20.6},{p:'review',end:23},{p:'merge',end:23.4},{p:'done',end:23.4}]};
+  s.T08 = {start:23.4, phases:[{p:'handson',end:27.4},{p:'done',end:27.4}]};
+  s._end = 27.4;
+  s._ask = {task:'T04', from:3, to:12};
+  return s;
+}
+function ctrlcSchedule(){
+  const s = normalSchedule();
+  s._cut = 9; // ^C at t=9
+  s._end = 9;
+  return s;
+}
+const SCHEDULES = {normal:normalSchedule, question:questionSchedule, ctrlc:ctrlcSchedule};
+
+let scenario='normal', sched=SCHEDULES.normal(), clock=0, playing=true, last=null, spinIdx=0, spinAcc=0;
+
+function stateAt(id,t){
+  const d=sched[id]; const dep=DEPS[id];
+  if(t < d.start){
+    if(d.queuedFrom!=null && t>=d.queuedFrom) return {state:'queued'};
+    const missing = dep.filter(x=>stateAt(x, t).state!=='done');
+    return {state:'waiting', why: missing.length? 'needs '+missing.join(', ') : 'waiting'};
+  }
+  let prevEnd=d.start;
+  for(const seg of d.phases){
+    if(t < seg.end || seg.p==='done'){
+      if(seg.p==='done') break;
+      return {state:seg.p, since:d.start, phaseStart:prevEnd, q:seg.q};
+    }
+    prevEnd=seg.end;
+  }
+  const total = d.phases[d.phases.length-1].end - d.start;
+  return {state:'done', total};
+}
+
+function fmt(sec){ sec=Math.max(0,sec); const m=Math.floor(sec/60), s=Math.floor(sec%60); return m>0? m+':'+String(s).padStart(2,'0') : '0:'+String(s).padStart(2,'0'); }
+function spinCh(){ return reduced? '⠿' : SPIN[spinIdx%SPIN.length]; }
+
+const LABELS={building:'building',reviewing:'reviewing',merging:'merging',asking:'asking you',handson:'hands-on (you)',queued:'queued · ceiling full',done:'merged'};
+
+function render(){
+  const cut = sched._cut!=null && clock>=sched._cut;
+  const t = cut ? sched._cut : clock;
+  let running=0, asking=0;
+  const rowsEl=document.getElementById('rows'); let html='';
+  for(const id of ORDER){
+    let st=stateAt(id,t); let cls=st.state, glyph='·', label=LABELS[st.state]||st.state, el='';
+    let killed=false;
+    if(cut && (st.state==='building'||st.state==='reviewing'||st.state==='merging'||st.state==='asking'||st.state==='handson')){
+      killed=true; cls='killed'; glyph='✗'; label='killed'; el=fmt(t-st.since);
+    } else {
+      if(st.state==='building'||st.state==='reviewing'||st.state==='merging'){ glyph=spinCh(); el=fmt(t-st.since); running++; }
+      else if(st.state==='asking'||st.state==='handson'){ glyph='●'; el=fmt(t-st.since); running++; asking++; }
+      else if(st.state==='done'){ glyph='✔'; el=fmt(st.total); }
+      else if(st.state==='queued'){ glyph='·'; label='queued · ceiling full'; }
+      else if(st.state==='waiting'){ glyph='·'; label=st.why; }
+    }
+    const runsTag = RUNS[id]==='you' ? '<span class="runs"> you</span>':'';
+    html+=`<div class="row ${cls}">
+      <span class="g">${glyph}</span>
+      <span class="id">${id}</span>
+      <span class="nm">${NAMES[id]}${runsTag}</span>
+      <span class="st"><span class="lbl">${label}</span><span class="el">${el}</span></span>
+    </div>`;
+  }
+  rowsEl.innerHTML=html;
+
+  // summary line
+  const total=ORDER.length;
+  let doneCount=ORDER.filter(id=>stateAt(id,t).state==='done').length;
+  const finished = clock>=sched._end;
+  const sum=document.getElementById('sumline');
+  if(cut){
+    sum.innerHTML=`<span class="spin" style="color:var(--kill)">✗</span><span class="run-name">pir · screen-time</span><span class="meta">interrupted</span>`;
+  } else if(finished && scenario!=='ctrlc'){
+    sum.innerHTML=`<span style="color:var(--ok)">✓</span><span class="run-name">pir · screen-time</span><span class="meta">${doneCount}/${total} done</span>`;
+  } else {
+    const waiting=total-doneCount-running;
+    sum.innerHTML=`<span class="spin">${spinCh()}</span><span class="run-name">pir · screen-time</span>`+
+      `<span class="meta">${doneCount}/${total} done · ${running} running${asking?` · <span style="color:var(--ask)">${asking} asking you</span>`:''} · ${waiting} waiting</span>`+
+      `<span class="pill ${running>=CEIL?'full':''}">ceiling ${CEIL}</span>`;
+  }
+
+  // footer
+  const f=document.getElementById('footer');
+  if(cut){
+    f.innerHTML=`<span class="kill">^C</span> <span class="d">caught — closing 3 workers…</span> done.\n`+
+      `<span class="d">main is untouched. 3 tasks already merged on</span> <code>pir/screen-time</code><span class="d">.</span>\n`+
+      `<span class="d">Re-run to resume — the killed tasks rebuild from committed work:</span>\n  <code>node src/shell/coordinate.mjs screen-time</code>`;
+  } else if(asking>0){
+    const askId = ORDER.find(id=>{const s=stateAt(id,t); return s.state==='asking'||s.state==='handson';});
+    const s=stateAt(askId,t);
+    const qtxt = s.q ? '  '+s.q : '';
+    f.innerHTML=`<span class="ask">● ${askId} is asking you${qtxt}</span>\n`+
+      `<span class="d">answer it directly — find it in</span> <code>claude agents</code><span class="d">, attach, and reply there.</span>`+
+      `<span class="cursor"></span>`;
+  } else if(finished && scenario!=='ctrlc'){
+    f.innerHTML=`<span class="ok">✔ all ${total} tasks green on</span> <code>pir/screen-time</code><span class="ok"> · tests pass.</span>\n`+
+      `<span class="d">nothing merged to main — yours to promote when ready:</span>\n  <code>git merge pir/screen-time</code>`;
+  } else {
+    f.innerHTML=`<span class="d">running…</span><span class="cursor"></span>`;
+  }
+}
+
+function tick(ts){
+  if(last==null) last=ts;
+  const dt=(ts-last)/1000; last=ts;
+  if(playing){
+    clock+=dt;
+    if(clock>sched._end+1.2) clock=sched._end+1.2; // settle at end
+    spinAcc+=dt; if(spinAcc>0.08){spinIdx++;spinAcc=0;}
+  }
+  render();
+  requestAnimationFrame(tick);
+}
+
+function reset(){ clock=0; last=null; playing=true; document.getElementById('playBtn').textContent='Pause'; }
+document.getElementById('scenarios').addEventListener('click',e=>{
+  const b=e.target.closest('button'); if(!b) return;
+  scenario=b.dataset.s; sched=SCHEDULES[scenario]();
+  [...document.querySelectorAll('#scenarios button')].forEach(x=>x.classList.toggle('on',x===b));
+  reset();
+});
+document.getElementById('playBtn').addEventListener('click',()=>{
+  playing=!playing; document.getElementById('playBtn').textContent=playing?'Pause':'Play'; last=null;
+});
+document.getElementById('restartBtn').addEventListener('click',reset);
+
+render();
+requestAnimationFrame(tick);
+</script>
