@@ -181,9 +181,10 @@ export function createMessaging({ transport } = {}) {
 // thing the tests cannot reach (a real agent spawning) is hand-verified (DESIGN §5.1, spawn-one-scratch).
 
 // Which stock skill the coordinator's opening instruction names, per the phase the loop hands spawn.
-// The loop passes 'implement' | 'review' | 'verify' (loop.mjs); the worker runs exactly that under
-// the pir-worker contract (§2.6, skills/pir-worker).
-const SKILL_FOR = { implement: 'pir-implement', review: 'pir-review', verify: 'pir-verify' };
+// The loop passes 'implement' | 'review' (loop.mjs); the worker runs exactly that under the
+// pir-worker contract (skills/pir-worker). These two phases are the whole set now (§2.5); any other
+// phase is rejected by openingInstruction below rather than mapped.
+const SKILL_FOR = { implement: 'pir-implement', review: 'pir-review' };
 
 // openingInstruction(phase, task) → the first-turn prompt a freshly spawned worker reads. It engages
 // the pir-worker contract (so the fresh session knows it is coordinator-driven, never runs pir-work

@@ -44,18 +44,32 @@ test('depends-on: — yields no deps, a comma list yields each task', () => {
   assert.deepEqual(byNum.T06.deps, ['T03', 'T05']);
 });
 
-test('Runs column is read as auto/you', () => {
-  const { tasks } = parseProgress(SAMPLE);
-  const byNum = Object.fromEntries(tasks.map((t) => [t.num, t]));
-  assert.equal(byNum.T00.runs, 'you');
-  assert.equal(byNum.T01.runs, 'auto');
+test('a Runs column present in the table is ignored, not read into a field or an error', () => {
+  // The auto/you distinction is gone (DESIGN §2.5); SAMPLE still carries a Runs column (older plans and
+  // this plan's own PROGRESS.md do). The column must be tolerated: no `runs` field, no parse error.
+  const { tasks, errors } = parseProgress(SAMPLE);
+  assert.deepEqual(errors, []);
+  assert.ok(
+    tasks.every((t) => !('runs' in t)),
+    'no task carries a runs field',
+  );
 });
 
-test('a table with no Runs column defaults every task to auto', () => {
-  const { tasks, errors } = parseProgress(CLASSIC);
-  assert.equal(errors.length, 0);
-  assert.equal(tasks.length, 2);
-  assert.ok(tasks.every((t) => t.runs === 'auto'));
+test('a table with and without a Runs column yield the same task list', () => {
+  // WITHOUT (CLASSIC): no Runs column. WITH: the same two tasks plus a Runs column carrying a `you` row.
+  const withRuns = `# Progress
+
+| # | Task | Runs | Depends on | State | Notes |
+|---|---|---|---|---|---|
+| T01 | First task | you | — | ✅ | done |
+| T02 | Second task | auto | T01 | ⬜ | |
+`;
+  const a = parseProgress(CLASSIC);
+  const b = parseProgress(withRuns);
+  assert.deepEqual(a.errors, []);
+  assert.deepEqual(b.errors, []);
+  // The Runs column (and the `you` value in it) changes nothing: identical num/name/deps/state.
+  assert.deepEqual(a.tasks, b.tasks);
 });
 
 test('reviewed gate: dated verdict reads as reviewed', () => {

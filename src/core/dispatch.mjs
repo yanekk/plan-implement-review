@@ -5,8 +5,8 @@
 // loop in src/shell/ gathers the state (parse PROGRESS.md, `claude agents --json`, the control
 // flag) and executes the actions this returns.
 //
-// It answers, for this one pass: which ready tasks to spawn a worker for (each tagged auto or
-// you so the loop spawns a builder or a hands-on scribe, §2.6), which implemented task needs a
+// It answers, for this one pass: which ready tasks to spawn a worker for (every task builds the
+// same way now, §2.5), which implemented task needs a
 // fresh review session (§2.1), which finished branch to merge into the feature branch (§2.9,
 // serialized one at a time), which workers to close (§2.3), and whether the whole plan is done —
 // the `complete` flag the shell reads to run the tests and hand off the green feature branch
@@ -63,8 +63,7 @@ export function decideDispatch({ tasks, assignments, maxWorkers, halted }) {
   const takenByLive = new Set(live.map((a) => a.task));
 
   // review: every worker that reported implemented and now needs a FRESH review session
-  // (§2.1). Keyed on the phase, so a done worker — auto or you — never lands here; a you
-  // worker has no code to review and goes straight to merge/close (§2.6).
+  // (§2.1). Keyed on the phase, so a done worker never lands here.
   const reviewReady = live.filter((a) => a.phase === PHASE_REVIEW_READY);
   const review = idsByTask(reviewReady);
 
@@ -91,8 +90,8 @@ export function decideDispatch({ tasks, assignments, maxWorkers, halted }) {
 
   // spawn: the ready tasks (⬜, all deps ✅, not already held by a live worker), lowest number
   // first, capped so the live count plus what we spawn never exceeds the ceiling (§2.4). Each
-  // entry carries its auto/you marker so the loop spawns a builder or a hands-on scribe (§2.6);
-  // both kinds count against the ceiling and compete for slots by task number.
+  // entry is just the task number — every task is built by an ordinary implement worker now, so
+  // there is no per-task marker to carry (§2.5). They compete for slots by task number.
   const doneNums = new Set(tasks.filter((t) => t.state === DONE).map((t) => t.num));
   const ready = tasks
     .filter((t) => t.state === READY)
@@ -101,7 +100,7 @@ export function decideDispatch({ tasks, assignments, maxWorkers, halted }) {
     .sort((x, y) => order(x.num) - order(y.num));
 
   const slots = Math.max(0, maxWorkers - live.length);
-  const spawn = ready.slice(0, slots).map((t) => ({ num: t.num, runs: t.runs }));
+  const spawn = ready.slice(0, slots).map((t) => t.num);
 
   // complete: the single signal the plan is done — every task ✅ and no live worker (§2.4). A plan
   // with no tasks is never complete. Dead workers pending close do not block it, matching "all ✅

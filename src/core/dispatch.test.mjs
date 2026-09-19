@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { decideDispatch } from './dispatch.mjs';
 
 // Compact builders so each test reads as its case, not its scaffolding.
-const task = (num, state, { deps = [], runs = 'auto' } = {}) => ({ num, name: num, deps, runs, state });
+const task = (num, state, { deps = [] } = {}) => ({ num, name: num, deps, state });
 const asg = (workerId, taskId, phase, live = true) => ({ workerId, task: taskId, phase, live });
 
 const MAX = 4;
@@ -18,27 +18,21 @@ test('spawns only ⬜ tasks whose deps are all ✅; a 🔍 or ⬜ dependency blo
     task('T05', '⬜', { deps: ['T03'] }), // dep ⬜ → blocked
   ];
   const { spawn } = call({ tasks });
-  assert.deepEqual(
-    spawn.map((s) => s.num),
-    ['T03'],
-  );
+  assert.deepEqual(spawn, ['T03']);
 });
 
-test('each spawn entry carries its runs marker', () => {
-  const tasks = [task('T01', '⬜', { runs: 'auto' }), task('T02', '⬜', { runs: 'you' })];
+test('spawn carries task numbers only — no per-task marker (§2.5)', () => {
+  const tasks = [task('T01', '⬜'), task('T02', '⬜')];
   const { spawn } = call({ tasks });
-  assert.deepEqual(spawn, [
-    { num: 'T01', runs: 'auto' },
-    { num: 'T02', runs: 'you' },
-  ]);
+  assert.deepEqual(spawn, ['T01', 'T02']);
 });
 
-test('a ready you task is spawned and competes for slots by task number', () => {
-  // One free slot; the you task is lower-numbered, so it wins the slot over the auto task.
-  const tasks = [task('T01', '⬜', { runs: 'you' }), task('T02', '⬜', { runs: 'auto' })];
+test('the lowest-numbered ready task wins the last free slot', () => {
+  // One free slot; the lower-numbered task wins it.
+  const tasks = [task('T01', '⬜'), task('T02', '⬜')];
   const assignments = [asg('w-a', 'T09', 'implementing'), asg('w-b', 'T10', 'implementing'), asg('w-c', 'T11', 'implementing')];
   const { spawn } = call({ tasks, assignments }); // 3 live, max 4 → 1 slot
-  assert.deepEqual(spawn, [{ num: 'T01', runs: 'you' }]);
+  assert.deepEqual(spawn, ['T01']);
 });
 
 test('never exceeds the ceiling: 3 live, max 4 → at most 1 spawned', () => {
@@ -51,10 +45,7 @@ test('never exceeds the ceiling: 3 live, max 4 → at most 1 spawned', () => {
 test('lowest task number first when more are ready than the ceiling allows', () => {
   const tasks = [task('T01', '⬜'), task('T02', '⬜'), task('T03', '⬜'), task('T04', '⬜'), task('T05', '⬜')];
   const { spawn } = call({ tasks }); // 0 live, max 4 → 4 spawned, lowest four
-  assert.deepEqual(
-    spawn.map((s) => s.num),
-    ['T01', 'T02', 'T03', 'T04'],
-  );
+  assert.deepEqual(spawn, ['T01', 'T02', 'T03', 'T04']);
 });
 
 test('a review-ready worker appears in review; not spawned again or merged', () => {
@@ -74,8 +65,8 @@ test('the implement session of a review-ready task is closed as its reviewer spa
   assert.deepEqual(close, ['w1']); // one slot, not two
 });
 
-test('a you worker that reports done goes to merge, not review, and dispatch does not close it', () => {
-  const tasks = [task('T01', '✅', { runs: 'you' })];
+test('a worker that reports done goes to merge, not review, and dispatch does not close it', () => {
+  const tasks = [task('T01', '✅')];
   const assignments = [asg('w1', 'T01', 'done')];
   const { review, merge, close } = call({ tasks, assignments });
   assert.deepEqual(review, []);
@@ -105,7 +96,7 @@ test('a worker parked AWAITING a decision is never merged, closed or respawned',
   assert.deepEqual(merge, []);
   assert.deepEqual(close, []);
   // T02 is taken by the parked worker, so only T01 is spawned — T02 is never rebuilt over the park.
-  assert.deepEqual(spawn.map((s) => s.num), ['T01']);
+  assert.deepEqual(spawn, ['T01']);
 });
 
 test('complete is false while any task is not ✅', () => {
@@ -139,7 +130,7 @@ test('a dead worker is closed and its slot freed for a spawn this pass', () => {
   ];
   const { close, spawn } = call({ tasks, assignments });
   assert.deepEqual(close, ['w-dead']);
-  assert.deepEqual(spawn, [{ num: 'T02', runs: 'auto' }]); // the dead worker's slot is free
+  assert.deepEqual(spawn, ['T02']); // the dead worker's slot is free
 });
 
 test('a phase "dead" worker is also treated as dead and closed', () => {

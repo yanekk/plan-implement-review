@@ -2,9 +2,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { analyzeParallelism } from './parallelism.mjs';
 
-// Compact builder: a task is its number, its deps and its runs marker — the three fields
-// analyzeParallelism reads. Everything else parseProgress carries is irrelevant here.
-const task = (num, { deps = [], runs = 'auto' } = {}) => ({ num, deps, runs });
+// Compact builder: a task is its number and its deps — the two fields analyzeParallelism
+// reads. Everything else parseProgress carries is irrelevant here.
+const task = (num, { deps = [] } = {}) => ({ num, deps });
 
 test('a single chain T00→T01→T02 gives criticalPathLength 3, maxWidth 1', () => {
   const tasks = [task('T00'), task('T01', { deps: ['T00'] }), task('T02', { deps: ['T01'] })];
@@ -32,18 +32,12 @@ test('a diamond (A; B,C on A; D on B,C) gives criticalPathLength 3, maxWidth 2',
   assert.equal(r.maxWidth, 2);
 });
 
-test('auto/you counts match the markers; totalTasks is the list length', () => {
-  const tasks = [
-    task('T00', { runs: 'auto' }),
-    task('T01', { runs: 'you' }),
-    task('T02', { runs: 'auto' }),
-    task('T03', { runs: 'you' }),
-    task('T04', { runs: 'you' }),
-  ];
+test('totalTasks is the list length; there is no per-kind count (§2.5)', () => {
+  const tasks = [task('T00'), task('T01'), task('T02'), task('T03'), task('T04')];
   const r = analyzeParallelism(tasks);
-  assert.equal(r.autonomousCount, 2);
-  assert.equal(r.humanCount, 3);
   assert.equal(r.totalTasks, 5);
+  assert.ok(!('autonomousCount' in r), 'no autonomousCount field');
+  assert.ok(!('humanCount' in r), 'no humanCount field');
 });
 
 test('a task with an unknown dependency is reported, not silently treated as a root', () => {
@@ -64,8 +58,6 @@ test('an empty task list yields zeroes without throwing', () => {
   assert.deepEqual(r, {
     criticalPathLength: 0,
     maxWidth: 0,
-    autonomousCount: 0,
-    humanCount: 0,
     totalTasks: 0,
     errors: [],
   });

@@ -1,8 +1,8 @@
 // The coordinator loop (DESIGN §3.2 loop.mjs, §3.3, §3.4). It is the thin driver that turns the
 // pure decision of decideDispatch into real actions against a platform and a worktree. It gathers
 // state (parse the feature branch's PROGRESS.md, list workers, drain the inbox, read the kill
-// switch), asks core what to do, and executes it: open the feature branch once, spawn auto builders
-// and hands-on `you` scribes, hand a review-ready task to a fresh reviewer while closing its
+// switch), asks core what to do, and executes it: open the feature branch once, spawn an
+// implement worker per ready task, hand a review-ready task to a fresh reviewer while closing its
 // implementer, merge one done task branch into the feature branch and reconcile its row, close
 // finished and dead workers, and — when the whole plan is ✅ — run the feature-branch tests and
 // carry a ready-to-merge (or red) result out for the shell to hand off. It never merges to main
@@ -24,7 +24,6 @@ import { workerName, isWorkerOf, parseAgentName } from '../core/naming.mjs';
 // drives (DESIGN §2.8: the name carries identity, the lifecycle carries phase). Only three of these
 // are actionable to decideDispatch — review-ready, done, dead — the rest are "live, wait".
 const IMPLEMENTING = 'implementing';
-const VERIFYING = 'verifying';
 const REVIEW_READY = 'review-ready';
 const REVIEWING = 'reviewing';
 const AWAITING = 'awaiting-answer';
@@ -425,28 +424,23 @@ export function runPass({ platform, worktree, repo, slug, maxWorkers, state, con
     }
   }
 
-  // 3b. Spawn ready tasks (auto builders and you scribes), each on a task branch off the feature
-  // branch (DESIGN §2.6, §2.9). decideDispatch has already capped this to the ceiling.
-  for (const { num, runs } of decision.spawn) {
+  // 3b. Spawn ready tasks, each an implement worker on a task branch off the feature branch (DESIGN
+  // §2.5, §2.9). Every task is built the same way now: an implement worker, then a review; a task that
+  // needs the person's judgement is an ordinary worker that prepares the ground and asks (§2.5, the
+  // worker-contract half in T07). decideDispatch has already capped this to the ceiling.
+  for (const num of decision.spawn) {
     const wt = worktree.createTask(slug, num);
-    const role = runs === 'you' ? 'verify' : 'implement';
+    const role = 'implement';
     const taskSlug = slugByNum.get(num);
     const name = workerName({ repo, plan: slug, task: num, slug: taskSlug, role });
     const id = platform.spawn({ cwd: wt.path, name, phase: role });
     // workerId here is spawn's best-effort return, not trusted for liveness: buildAssignments resolves
     // the authoritative id by name next pass. grace lets the worker appear in the list before it could
     // be called dead (FINDINGS 2026-09-09). The task slug is stored so a later rebuild of this worker's
-    // name (the down-channel answer, teardown) addresses the exact session that was spawned (§2.9).
-    state.tasks[num] = { worktree: wt, workerId: id, role, slug: taskSlug, phase: role === 'verify' ? VERIFYING : IMPLEMENTING, grace: APPEAR_GRACE };
+    // name (teardown) addresses the exact session that was spawned (§2.9).
+    state.tasks[num] = { worktree: wt, workerId: id, role, slug: taskSlug, phase: IMPLEMENTING, grace: APPEAR_GRACE };
     spawnedThisPass.push(id);
-    record('spawn', { task: num, runs, role, workerId: id, slug: taskSlug });
-    // A `you` task is spawned as a hands-on scribe (§2.6): its completion is a person running the task's
-    // "Needs a person" steps, not code the worker produces. The `spawn` line drops role on disk (`spawn
-    // Txx` only, this file's header note), so it cannot tell an operator that a task now needs a person.
-    // Emit a distinct, durable `hands-on {task}` flow line beside it: the harness runner and the capture
-    // bundle both read the flow log (T14/T17), so this is the drive signal the attended runner surfaces
-    // and that the hands-on fixture asserts (T32) — the minimal signal, never an auto-driver (§5.2).
-    if (role === 'verify') record('hands-on', { task: num });
+    record('spawn', { task: num, role, workerId: id, slug: taskSlug });
   }
 
   // Finished workers whose close is held this pass because the agent list still shows them busy (T13
@@ -527,7 +521,7 @@ export function runPass({ platform, worktree, repo, slug, maxWorkers, state, con
       record('surface', { task: num, kind: 'conflict', text: t.decision.text });
       continue;
     }
-    // The row folds back as ✅ (an auto task is reviewed, a you task is done — both ✅ at merge).
+    // The row folds back as ✅ (the task has been implemented and reviewed).
     // notes is empty for now: parseProgress does not surface the Notes column, so the worker's own
     // row account cannot be folded back yet (FINDINGS 2026-09-08). Restore it when the parser exposes
     // notes or the real coordinator (T09) writes its own summary.

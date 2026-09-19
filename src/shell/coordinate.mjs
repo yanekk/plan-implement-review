@@ -120,20 +120,16 @@ export function startCoordinator({
   if (runTests) passOpts.runTests = runTests;
 
   // The account of what one pass did, in the shape the skill acts on. It re-expresses the loop's raw
-  // actions as the four things the skill has to do something about: surface a decision, tell the user
-  // to go drive a `you` worker, report a task reaching ✅, and know when the run is done or blocked.
+  // actions as the things the skill has to do something about: surface a decision, report a task
+  // reaching ✅, and know when the run is done or blocked. There is no auto/you distinction any more,
+  // so nothing is a hands-on worker the user must go drive (§2.5) — a task that needs the person is an
+  // ordinary worker that parks and asks, which surfaces like any other question.
   function pass() {
     const r = runPass(passOpts);
     const of = (type) => r.actions.filter((a) => a.type === type);
 
     const surfaces = of('surface').map(renderSurface);
-    const spawned = of('spawn').map((a) => ({ task: a.task, runs: a.runs, role: a.role, slug: a.slug }));
-    // A `you` task is spawned as a hands-on worker the USER drives (DESIGN §2.6); the skill points the
-    // user at it by name. The worker name is deterministic, so it is rebuilt, never looked up — carrying
-    // the task's slug (§2.9) so the rebuilt name matches the session the loop actually spawned.
-    const youToDrive = spawned
-      .filter((a) => a.role === 'verify')
-      .map((a) => ({ task: a.task, worker: workerName({ repo, plan: slug, task: a.task, slug: a.slug, role: 'verify' }) }));
+    const spawned = of('spawn').map((a) => ({ task: a.task, role: a.role, slug: a.slug }));
     const reviewing = of('review').map((a) => ({ task: a.task }));
     // A merge this pass is a task reaching ✅ on the feature branch (DESIGN §2.9) — what the skill
     // reports to the user as progress.
@@ -159,7 +155,6 @@ export function startCoordinator({
       actions: r.actions,
       surfaces,
       spawned,
-      youToDrive,
       reviewing,
       completed,
       restartSummary,
@@ -802,9 +797,6 @@ async function main(argv) {
       // A restart's one-line reconciliation summary scrolls above the live block, so the run does not
       // look like a fresh start (DESIGN §2.8). Only ever set on the first pass of a run that adopted work.
       if (r.restartSummary) renderer.line(`  ↻ ${r.restartSummary}`);
-      // A `you`/verify task needs the person to run its live steps (still present until T04 removes the
-      // path). Point them at the worker; the display shows it as a running row.
-      for (const y of r.youToDrive) renderer.line(`  hands-on: drive worker "${y.worker}" for ${y.task}`);
 
       if (r.halted) {
         renderer.line('\n=== HALTED by the kill switch — workers stopped, nothing merged ===');

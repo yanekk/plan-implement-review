@@ -193,23 +193,19 @@ test('other ready tasks keep progressing while one worker is parked awaiting an 
   assert.ok(coordinator.state.tasks.T01, 'T01 is still tracked, parked, not dropped');
 });
 
-// --- 6. A `you` task is a hands-on worker, never reviewed, folded back to ✅ ------------------------
+// --- 6. A row marked `you` is built like any other — the auto/you distinction is gone (§2.5) -------
 
-test('a ready you task spawns a hands-on pir-verify worker, is never reviewed, and unblocks its dependents', (t) => {
+test('a row still marked `you` in the Runs column is built and reviewed like any other task, unblocking its dependents', (t) => {
   const { coordinator, platform, worktree } = setup(t, [
     { num: 'T01', runs: 'you' },
     { num: 'T02', deps: ['T01'] },
   ]);
 
-  const { result, passes } = driveCollecting(coordinator);
+  const { result } = driveCollecting(coordinator);
   assert.equal(result.complete, true);
 
-  const you = passes.flatMap((p) => p.youToDrive).find((y) => y.task === 'T01');
-  assert.ok(you, 'the coordinator surfaced a hands-on worker for the you task');
-  assert.equal(you.worker, wname('T01', 'verify'));
-
-  assert.ok(platform.spawns.some((s) => s.role === 'verify' && s.task === 'T01'), 'T01 spawned as a verify worker');
-  assert.ok(!platform.spawns.some((s) => s.role === 'review' && s.task === 'T01'), 'a you task is never reviewed');
+  assert.ok(platform.spawns.some((s) => s.role === 'implement' && s.task === 'T01'), 'T01 built by an implement worker');
+  assert.ok(!platform.spawns.some((s) => s.role === 'verify'), 'no verify worker is ever spawned');
 
   const finalFeature = worktree.progressOn(`pir/${SLUG}`);
   assert.equal((finalFeature.match(/✅/g) || []).length, 2, 'both tasks are ✅ on the feature branch');

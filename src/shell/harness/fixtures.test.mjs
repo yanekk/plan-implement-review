@@ -179,11 +179,11 @@ test('human-decision: the task doc is deliberately underspecified and a scripted
 test('hands-on: T01 is an auto build and T02 is a you-verify depending on it, with a Needs-a-person block', () => {
   const fx = getFixture('hands-on');
   const { tasks } = parseProgress(fx.progress);
-  const t01 = tasks.find((t) => t.num === 'T01');
   const t02 = tasks.find((t) => t.num === 'T02');
-  assert.equal(t01.runs, 'auto', 'T01 is an autonomous build');
-  assert.equal(t02.runs, 'you', 'T02 is a hands-on verify task');
-  assert.deepEqual(t02.deps, ['T01'], 'the verify depends on the build (§2.6)');
+  // The auto/you distinction was removed from the parser (§2.5), so the Runs marker is no longer a
+  // parsed field; the fixture's task docs still declare the roles (checked below). The dependency edge
+  // between the build and its hand-verification is still what parseProgress carries.
+  assert.deepEqual(t02.deps, ['T01'], 'the verify depends on the build');
 
   // The auto build's doc asks for a runnable program with its own test; the verify doc carries the
   // "Needs a person" block pir-verify step 1 reads (the command and what to report).
@@ -206,13 +206,10 @@ test('blog-app: T02/T03/T04 are a concurrent auto trio off T01, with two you che
   // The trio depends ONLY on T01, so all three can build at once (the fixture's whole point).
   for (const num of ['T02', 'T03', 'T04']) {
     const t = tasks.find((x) => x.num === num);
-    assert.equal(t.runs, 'auto', `${num} is an autonomous build`);
     assert.deepEqual(t.deps, ['T01'], `${num} depends only on T01 so the trio runs concurrently`);
   }
-  // Both check-ins are you-tasks that fold back without review (§2.6).
-  for (const num of ['T05', 'T07']) {
-    assert.equal(tasks.find((x) => x.num === num).runs, 'you', `${num} is a hands-on check-in`);
-  }
+  // The Runs marker is no longer a parsed field (§2.5); the check-ins' hands-on nature lives in their
+  // task docs now, not in a parsed column.
   assert.equal(fx.finalContent.file, 'plans/blog-app/FINDINGS.md');
 });
 

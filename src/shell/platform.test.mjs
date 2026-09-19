@@ -249,11 +249,12 @@ test('openingInstruction names the right skill per phase, with the task, and eng
   assert.match(impl, /not .*pick your own task|do not pick your own task/i);
 
   assert.match(openingInstruction('review', 'T08'), /pir-review T08/);
-  assert.match(openingInstruction('verify', 'T08'), /pir-verify T08/);
 });
 
 test('openingInstruction refuses an unknown phase or a missing task', () => {
   assert.throws(() => openingInstruction('deploy', 'T08'), /unknown phase/);
+  // `verify` is no longer a phase — the auto/you distinction and pir-verify path were removed (§2.5).
+  assert.throws(() => openingInstruction('verify', 'T08'), /unknown phase/);
   assert.throws(() => openingInstruction('implement', null), /no task/);
 });
 

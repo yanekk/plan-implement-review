@@ -124,32 +124,25 @@ test('the implement session is closed as its reviewer spawns, so one task in rev
   assert.equal(r2.liveAfter, 1, 'implementer closed + reviewer spawned = one live session');
 });
 
-test('a you task is spawned as a hands-on worker, consumes a slot, and is never reviewed', (t) => {
+test('a row marked `you` in the Runs column is spawned as an ordinary implement worker and reviewed — the marker is ignored (§2.5)', (t) => {
   const { platform, base } = setup(t, [{ num: 'T01', runs: 'you' }]);
   const state = createRunState();
   const r1 = runPass({ ...base, state });
-  assert.ok(r1.actions.some((a) => a.type === 'spawn' && a.role === 'verify'), 'spawned a verify worker');
-  assert.equal(r1.liveAfter, 1, 'it holds a worker slot');
+  assert.ok(r1.actions.some((a) => a.type === 'spawn' && a.role === 'implement'), 'spawned an implement worker');
+  assert.ok(!platform.spawns.some((s) => s.role === 'verify'), 'never a verify worker — the auto/you distinction is gone');
   drain({ ...base, state });
-  assert.ok(!platform.spawns.some((s) => s.role === 'review'), 'a you task is never put through review');
+  assert.ok(platform.spawns.some((s) => s.role === 'review' && s.task === 'T01'), 'the task is put through review like any other');
 });
 
-test('spawning a you worker emits a durable `hands-on {task}` flow line beside the spawn (T32)', (t) => {
-  const control = { log: (line) => control.lines.push(line), lines: [], isHalted: () => false };
-  const { base } = setup(t, [{ num: 'T01', runs: 'you' }]);
-  const r = runPass({ ...base, control, state: createRunState() });
-  assert.ok(r.actions.some((a) => a.type === 'hands-on' && a.task === 'T01'), 'a hands-on action is recorded');
-  assert.ok(control.lines.includes('hands-on T01'), 'and written to the flow log where the runner/capture read it');
+test('no `hands-on` or `verify` action is ever recorded, even for a row still marked `you`', (t) => {
+  const { base } = setup(t, [{ num: 'T01', runs: 'you' }, { num: 'T02' }]);
+  const result = drain(base);
+  assert.ok(!result.actions.some((a) => a.type === 'hands-on'), 'no hands-on action');
+  assert.ok(!result.actions.some((a) => a.type === 'spawn' && a.role === 'verify'), 'no verify spawn');
 });
 
-test('an auto worker does NOT emit a hands-on line (only you tasks need a person)', (t) => {
-  const { base } = setup(t, [{ num: 'T01' }]);
-  const r = runPass({ ...base, state: createRunState() });
-  assert.ok(!r.actions.some((a) => a.type === 'hands-on'), 'no hands-on action for an auto task');
-});
-
-test('a hands-on you worker reported done is merged and reconciled to ✅, unblocking its dependents', (t) => {
-  // T01 is a you task on the critical path; T02 (auto) waits on it.
+test('a row marked `you` still builds, reviews and merges, unblocking its dependents (Runs ignored end to end)', (t) => {
+  // T01 carries a stale `you` marker; T02 waits on it. Both build the ordinary implement→review way.
   const { worktree, base } = setup(t, [{ num: 'T01', runs: 'you' }, { num: 'T02', deps: ['T01'] }]);
   const result = drain(base);
   assert.equal(result.complete, true);
@@ -158,7 +151,7 @@ test('a hands-on you worker reported done is merged and reconciled to ✅, unblo
   const mergeT01 = result.actions.findIndex((a) => a.type === 'merge' && a.task === 'T01');
   const spawnT02 = result.actions.findIndex((a) => a.type === 'spawn' && a.task === 'T02');
   assert.ok(mergeT01 >= 0 && spawnT02 >= 0);
-  assert.ok(mergeT01 < spawnT02, 'T02 is not spawned until the you task T01 has merged (deps gated)');
+  assert.ok(mergeT01 < spawnT02, 'T02 is not spawned until T01 has merged (deps gated)');
 
   const finalFeature = worktree.progressOn(`pir/${SLUG}`);
   assert.equal((finalFeature.match(/✅/g) || []).length, 2);
@@ -566,22 +559,29 @@ test('a review handoff waits until the implementer is idle before closing it (T1
 });
 
 test('a merge (and close) waits until the done worker is idle before firing (T13)', (t) => {
-  // A `you` task goes straight to done with no review phase, isolating the merge gate. It lingers busy
-  // one tick after done; the loop must not merge its branch or close it until it is idle.
-  const { platform, worktree, base } = setup(t, [{ num: 'T01', runs: 'you' }], { behaviors: { T01: { lingerBusy: 1 } } });
+  // The reviewer lingers busy after it reports done; the loop must not merge its branch or close it
+  // until it goes idle. (Before §2.5 this used a straight-to-done `you` task to isolate the merge gate;
+  // now every task is implement→review, so the gate is exercised on the reviewer that reaches `done`.)
+  const { platform, worktree, base } = setup(t, [{ num: 'T01' }], { behaviors: { T01: { lingerBusy: 1 } } });
   const state = createRunState();
-  runPass({ ...base, state }); // pass 1: spawn the hands-on worker
-  const workerId = platform.spawns[0].id;
 
-  const busy = runPass({ ...base, state }); // pass 2: done but still busy → held
-  assert.ok(!busy.actions.some((a) => a.type === 'merge'), 'no merge while the done worker is busy');
-  assert.ok(!platform.closed.includes(workerId), 'the busy worker is not closed mid-turn');
-  assert.ok(busy.actions.some((a) => a.type === 'await-idle' && a.task === 'T01'));
-  assert.ok(!worktree.events.some((e) => e.op === 'mergeTask'), 'its branch is not merged while it is busy');
-
-  const idle = runPass({ ...base, state }); // pass 3: idle → merge and close
-  assert.ok(idle.actions.some((a) => a.type === 'merge' && a.task === 'T01'), 'the merge fires once it is idle');
-  assert.ok(platform.closed.includes(workerId), 'the idle worker is closed and its branch merged');
+  let sawMergeGate = false;
+  let mergeFired = false;
+  for (let p = 0; p < 10 && !mergeFired; p++) {
+    const mergedBefore = worktree.events.some((e) => e.op === 'mergeTask');
+    const r = runPass({ ...base, state });
+    const mergedNow = worktree.events.some((e) => e.op === 'mergeTask');
+    // The merge deferral is a `done worker still busy` await-idle (3d); a review handoff deferral is a
+    // `review-ready worker still busy` one (3c) and does not match.
+    if (r.actions.some((a) => a.type === 'await-idle' && /done worker/.test(a.reason ?? ''))) {
+      sawMergeGate = true;
+      assert.ok(!mergedNow, 'no merge while the done worker is busy');
+    }
+    if (sawMergeGate && !mergedBefore && mergedNow) mergeFired = true;
+  }
+  assert.ok(sawMergeGate, 'the loop deferred the merge while the done worker was busy');
+  assert.ok(mergeFired, 'the merge fires once the done worker goes idle');
+  assert.ok(platform.closed.length > 0, 'the merged worker is closed');
 });
 
 test('the kill switch closes a busy, finished worker immediately — the idle gate does not apply under halt (T13)', (t) => {
@@ -628,22 +628,27 @@ test('a review handoff is FORCED once the implementer stays busy past the await-
 });
 
 test('a merge (and close) is FORCED once the done worker stays busy past the await-idle cap', (t) => {
-  const { platform, worktree, base } = setup(t, [{ num: 'T01', runs: 'you' }], { behaviors: { T01: { lingerBusy: 999 } } });
+  // The worker lingers busy forever. Each time the loop defers on a busy worker within the cap, jump the
+  // clock past the cap so the deferral is forced: the implementer's review handoff is forced first, then
+  // the reviewer reaches `done` (busy forever) and its merge is forced — the deferral this test asserts.
+  const { worktree, base } = setup(t, [{ num: 'T01' }], { behaviors: { T01: { lingerBusy: 999 } } });
   const state = createRunState();
   let clock = 0;
   const now = () => clock;
-  runPass({ ...base, state, now }); // pass 1: spawn the hands-on worker
-  const workerId = platform.spawns[0].id;
 
-  const held = runPass({ ...base, state, now }); // pass 2: done but busy, within the cap → held
-  assert.ok(held.actions.some((a) => a.type === 'await-idle' && a.task === 'T01'), 'held while within the cap');
-  assert.ok(!worktree.events.some((e) => e.op === 'mergeTask'), 'not merged while within the cap');
-
-  clock += 10 * 60 * 1000; // past AWAIT_IDLE_TIMEOUT_MS
-  const forced = runPass({ ...base, state, now }); // pass 3: still busy, past the cap → forced
-  assert.ok(forced.actions.some((a) => a.type === 'force-idle' && a.task === 'T01'), 'the pass records it forced past the cap');
-  assert.ok(forced.actions.some((a) => a.type === 'merge' && a.task === 'T01'), 'the branch is merged despite the busy flag');
-  assert.ok(platform.closed.includes(workerId), 'the stuck worker is closed');
+  let forcedMerge = null;
+  for (let p = 0; p < 20 && !forcedMerge; p++) {
+    const r = runPass({ ...base, state, now });
+    // The merge force-idle reason names 'merge'; the review-handoff force-idle names 'hand-off'.
+    if (r.actions.some((a) => a.type === 'force-idle' && /merge/.test(a.reason ?? ''))) {
+      forcedMerge = r;
+      break;
+    }
+    if (r.actions.some((a) => a.type === 'await-idle')) clock += 10 * 60 * 1000; // past AWAIT_IDLE_TIMEOUT_MS
+  }
+  assert.ok(forcedMerge, 'the merge is forced once the done worker is busy past the cap');
+  assert.ok(forcedMerge.actions.some((a) => a.type === 'merge' && a.task === 'T01'), 'the branch is merged despite the busy flag');
+  assert.ok(worktree.events.some((e) => e.op === 'mergeTask'), 'the stuck worker\'s branch is merged');
 });
 
 test('dry run stays isolated: the scratch repo is a temp dir, never the real project', (t) => {
@@ -764,18 +769,6 @@ test('restart cleans up a leftover task branch whose task is already ✅ on the 
   assert.ok(r.actions.some((a) => a.type === 'cleanup' && a.task === 'T01'), 'the leftover branch is cleaned up');
   assert.ok(worktree.events.some((e) => e.op === 'remove' && e.branch === `pir/${SLUG}-T01`), 'the leftover worktree/branch is removed');
   assert.equal(platform.spawns.length, 0, 'nothing is spawned for an already-merged task');
-});
-
-test('restart with a you task branch at ✅: it folds to ✅ by merge, with no review spawned', (t) => {
-  const { platform, worktree, base } = setup(t, [{ num: 'T01', runs: 'you' }]);
-  worktree.openFeature(SLUG);
-  seedBranch(worktree, SLUG, 'T01', '✅', { file: 'finding-T01.txt' });
-
-  const result = drain(base);
-  assert.equal(result.complete, true);
-  assert.ok(result.actions.some((a) => a.type === 'merge' && a.task === 'T01'), 'the you branch is merged');
-  assert.ok(!platform.spawns.some((s) => s.task === 'T01'), 'no review or verify session is spawned for an already-✅ you task');
-  assert.equal((worktree.progressOn(`pir/${SLUG}`).match(/✅/g) || []).length, 1);
 });
 
 test('mixed restart: T01 ✅-merge, T02 🔍-review, T03 half-built rebuild, T04 never-started — all in one first pass, ceiling never exceeded', (t) => {

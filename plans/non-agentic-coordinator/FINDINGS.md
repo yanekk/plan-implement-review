@@ -12,6 +12,7 @@ user changed.
 
 | Date | | Finding |
 |---|---|---|
+| 2026-09-19 | 📌 | T04: dropping the `runs` field from parseProgress and the verify path broke tests in coordinate.mjs/test, fixtures.test, planner-templates.test — no task owned them. User decided to fold those green-keeping fixes into T04. |
 | 2026-09-19 | 📌 | T03 review: on a complete run the hand-off prints twice — once in the painted display footer, once as the trailing `renderHandoff` line. Harmless; which to keep is a by-eye call for T09's render pass. |
 | 2026-09-19 | 📌 | T03: `buildDisplay` returns `{ branch, summary, rows, footer }` — a top-level `branch` past the task's `{summary,rows,footer}` sketch. The renderer shows the run branch on every paint, but the footer carries a branch only in handoff/red states, so the summary line cannot source it there. |
 | 2026-09-19 | 📌 | T03: `coordinator.defer()` is now caller-less — the answers feed that drove it went with the down-channel (§2.2). Kept (not on §2.2's removal list); the conflict/extend paths are handled by the person directly now (§2.8), so a later task may drop it. |

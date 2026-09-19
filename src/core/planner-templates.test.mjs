@@ -20,17 +20,13 @@ const TEMPLATES = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'ski
 const progressTemplate = readFileSync(join(TEMPLATES, 'PROGRESS.md'), 'utf8');
 const taskTemplate = readFileSync(join(TEMPLATES, 'TASK.md'), 'utf8');
 
-test('the PROGRESS template parses and every task exposes its Runs marker', () => {
+test('the PROGRESS template parses without errors', () => {
   const { tasks, errors } = parseProgress(progressTemplate);
   assert.deepEqual(errors, [], `template PROGRESS.md should parse without errors, got: ${errors.join('; ')}`);
-  const byNum = Object.fromEntries(tasks.map((t) => [t.num, t]));
-  // The template illustrates every marker the method uses: T00 a spike (you, no deliverable),
-  // T01 a build (auto), and T02 a hand-verification of T01's deliverable (you, the build→verify
-  // split, DESIGN §2.6). If the column header ever stops matching what the parser reads, these
-  // read back as the auto default and the assertion catches it.
-  assert.equal(byNum.T00.runs, 'you');
-  assert.equal(byNum.T01.runs, 'auto');
-  assert.equal(byNum.T02.runs, 'you');
+  // The auto/you Runs marker is no longer a parsed field (§2.5). The template still carries a Runs
+  // column (T07 rewrites the templates), so the parser must tolerate it without error. That the column
+  // is ignored rather than read into a field is covered in progress.test.mjs.
+  assert.equal(tasks.length, 3, 'the template has its three illustrative tasks');
 });
 
 test('analyzeParallelism over the PROGRESS template yields the width the method quotes', () => {
@@ -44,29 +40,14 @@ test('analyzeParallelism over the PROGRESS template yields the width the method 
     totalTasks: 3,
     criticalPathLength: 3, // T00 → T01 → T02 is a chain of 3
     maxWidth: 1, // one long chain: at most one task per layer
-    autonomousCount: 1, // T01
-    humanCount: 2, // T00 (spike) + T02 (build→verify split)
     errors: [],
   });
 });
 
-test('the PROGRESS template carries a build→verify split: an auto builder and a dependent you verify task', () => {
-  // DESIGN §2.6: when a deliverable can only be verified by a person, the method plans a pair —
-  // an `auto` task builds it and a separate `you` task depending on the builder has a person run
-  // it — rather than folding the check into a single `auto` task. This asserts the pair exists in
-  // the template: a `you` task whose dependency is an `auto` task. The mutation this guards is
-  // exactly the fold — collapse T01+T02 into one `auto` row and no `you`-depends-on-`auto` pair
-  // remains, so this fails.
-  const { tasks } = parseProgress(progressTemplate);
-  const byNum = Object.fromEntries(tasks.map((t) => [t.num, t]));
-  const verify = tasks.find((t) => t.runs === 'you' && t.deps.some((d) => byNum[d]?.runs === 'auto'));
-  assert.ok(verify, 'expected a you verify task depending on an auto builder (the build→verify split)');
-  const builder = verify.deps.map((d) => byNum[d]).find((t) => t?.runs === 'auto');
-  assert.equal(builder.runs, 'auto', 'the verify task depends on the auto builder');
-  // The paired you verify task is counted in the you total, like any other you task.
-  const width = analyzeParallelism(tasks);
-  assert.ok(width.humanCount >= 2, 'the you verify task is counted in the you (humanCount) total');
-});
+// The build→verify split (an `auto` builder plus a dependent `you` verifier) was removed with the
+// auto/you distinction (§2.5); T07 rewrites these templates to drop the Runs column and the split
+// machinery, and will re-express whatever template coverage remains. The former split assertion is
+// gone because there is no parsed `runs` field to test it against.
 
 test('the task-doc template carries a "Needs a person" block for a split verify task', () => {
   // The `you` verify half of a build→verify split IS a "Needs a person" block — the seatbelted
@@ -143,5 +124,4 @@ test('the template still parses with the Runs column removed, defaulting every t
   const { tasks, errors } = parseProgress(classic);
   assert.deepEqual(errors, []);
   assert.equal(tasks.length, 3);
-  assert.ok(tasks.every((t) => t.runs === 'auto'), 'a plan with no Runs column defaults to auto');
 });

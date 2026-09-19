@@ -26,10 +26,6 @@ export function progressPathFor(slug) {
 // cannot read is a task silently never built, which is the exact failure this guards.
 const KNOWN_STATES = new Set(['⬜', '🟡', '🔍', '✅', '⛔']);
 
-// The two Runs markers (DESIGN §2.6). `auto` is the default when a plan predates the
-// column, so classic plans still parse.
-const KNOWN_RUNS = new Set(['auto', 'you']);
-
 const NOTES_WORD_BUDGET = 60;
 
 // Split one table line into its interior cells, trimmed. A markdown row `| a | b |`
@@ -54,15 +50,15 @@ function wordCount(s) {
 
 // Map a header cell's text to the field it names. Returns null for a column we do not
 // consume (so an unrecognised column is harmless, not an error). Matching is by name, not
-// position, which is what lets a table with no Runs column parse (DESIGN §2.6).
+// position, which is what lets a table with or without a `Runs` column parse: the column is
+// no longer read (DESIGN §2.5), so a `Runs` header maps to null and its cell is ignored
+// rather than erroring — older plans and this plan's own PROGRESS.md still carry it.
 function headerField(cellText) {
   switch (cellText.trim().toLowerCase()) {
     case '#':
       return 'num';
     case 'task':
       return 'name';
-    case 'runs':
-      return 'runs';
     case 'depends on':
       return 'deps';
     case 'state':
@@ -126,9 +122,9 @@ function parsePlanReviewed(lines) {
 }
 
 // parseProgress(text) → { planReviewed, tasks, errors }.
-// tasks is well-formed: every entry has a known state and a known Runs marker. A row the
-// parser cannot read cleanly is described in errors, naming the task or the offending line,
-// rather than being dropped or silently mis-read.
+// tasks is well-formed: every entry has a known state. A row the parser cannot read cleanly
+// is described in errors, naming the task or the offending line, rather than being dropped or
+// silently mis-read. A `Runs` column present in the table is ignored, not an error (DESIGN §2.5).
 export function parseProgress(text) {
   const lines = text.split('\n');
   const planReviewed = parsePlanReviewed(lines);
@@ -163,22 +159,10 @@ export function parseProgress(text) {
       continue;
     }
 
-    let runs = 'auto';
-    if (col.runs !== undefined) {
-      const raw = cells[col.runs].toLowerCase();
-      if (KNOWN_RUNS.has(raw)) {
-        runs = raw;
-      } else {
-        // Report and default to auto rather than silently spawning an autonomous worker on
-        // a person-only ("you") task because of a typo in the marker.
-        errors.push(`task ${num}: unknown Runs marker "${cells[col.runs]}", defaulting to auto`);
-      }
-    }
-
     const deps = col.deps !== undefined ? parseDeps(cells[col.deps]) : [];
     const name = cells[col.name];
 
-    tasks.push({ num, name, deps, runs, state });
+    tasks.push({ num, name, deps, state });
   }
 
   return { planReviewed, tasks, errors };

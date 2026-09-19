@@ -1,8 +1,8 @@
 // analyzeParallelism — the width report the planner shows at the plan checkpoint (DESIGN
-// §2.7, §3.2). Given the parsed task list with its dependencies and Runs markers, it says
-// how parallel a plan actually is: the longest dependency chain, the widest set of tasks
-// that could run at once, and how many tasks are auto versus you. A pure function of the
-// task list — no clock, no filesystem — so the report is proven in the test run (§3.1).
+// §2.7, §3.2). Given the parsed task list with its dependencies, it says how parallel a plan
+// actually is: the longest dependency chain and the widest set of tasks that could run at
+// once. A pure function of the task list — no clock, no filesystem — so the report is proven
+// in the test run (§3.1). It carries no per-kind count: every task is dispatched alike (§2.5).
 //
 // maxWidth is the largest topological layer, not the true maximum antichain. Layer width is
 // cheap, deterministic, and good enough to tell a wide plan from a chain (a long thin chain
@@ -41,19 +41,16 @@ function computeDepths(tasks, byNum, errors) {
   return depth;
 }
 
-// analyzeParallelism(tasks) → { criticalPathLength, maxWidth, autonomousCount, humanCount,
-//   totalTasks, errors }.
-// tasks: [ { num, deps, runs } ] as parseProgress yields them. errors names any dependency
+// analyzeParallelism(tasks) → { criticalPathLength, maxWidth, totalTasks, errors }.
+// tasks: [ { num, deps } ] as parseProgress yields them. errors names any dependency
 // that points at no task in the list and any cycle, so the width numbers are never quietly
 // computed over a broken graph. An empty list yields zeroes and no error.
 export function analyzeParallelism(tasks) {
   const totalTasks = tasks.length;
-  const autonomousCount = tasks.filter((t) => t.runs === 'auto').length;
-  const humanCount = tasks.filter((t) => t.runs === 'you').length;
   const errors = [];
 
   if (totalTasks === 0) {
-    return { criticalPathLength: 0, maxWidth: 0, autonomousCount, humanCount, totalTasks, errors };
+    return { criticalPathLength: 0, maxWidth: 0, totalTasks, errors };
   }
 
   const byNum = new Map(tasks.map((t) => [t.num, t]));
@@ -84,5 +81,5 @@ export function analyzeParallelism(tasks) {
   let maxWidth = 0;
   for (const size of layerSize.values()) maxWidth = Math.max(maxWidth, size);
 
-  return { criticalPathLength, maxWidth, autonomousCount, humanCount, totalTasks, errors };
+  return { criticalPathLength, maxWidth, totalTasks, errors };
 }
