@@ -1,4 +1,4 @@
-# T05 — Ship the worker classifier pre-approval + prereq note
+# T06 — worker-permissions
 
 **Phase:** 3 · **Runs:** auto · **Depends on:** — · **Weight:** light
 
@@ -20,7 +20,7 @@ DESIGN §7 (the classifier fix folded in) and §5.2 (worker seatbelts). Backgrou
 
 - `.claude/settings.json` (project) — add a narrow `permissions.allow` for worker commands.
 - `install.sh` — ship/merge that `permissions.allow` into a target project's `.claude/settings.json`
-  when the framework is installed.
+  when the framework is installed (merge, do not clobber an existing list).
 - A short prereq note in `/docs` (or README) — the one-time `autoMode.allow` step is a per-user
   setting the project cannot ship (an agent writing its own settings is refused as self-modification),
   applied via `/permissions` → Auto mode, and confirmed with `claude auto-mode config`.
@@ -47,12 +47,12 @@ DESIGN §7 (the classifier fix folded in) and §5.2 (worker seatbelts). Backgrou
       or `Bash(git merge:*)`.
 - [ ] `install.sh` merges (does not clobber) an existing `permissions.allow` in a target — cover with
       a small shell-level or fixture check if install logic is testable; otherwise assert the intended
-      merge behaviour is documented and leave the live proof to T08.
+      merge behaviour is documented and leave the live proof to T09.
 
 ## Done when
 
 - [ ] The project ships the narrow worker `permissions.allow` (no `SendMessage`, no `git merge`), and
-      `install.sh` carries it into a target project.
+      `install.sh` carries it into a target project by merging.
 - [ ] The one-time per-user `autoMode` step is documented as a prerequisite.
 - [ ] `npm test` is green. (That a real worker command clears the classifier live is confirmed in
-      T08.)
+      T09.)

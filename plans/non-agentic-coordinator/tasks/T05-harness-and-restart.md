@@ -1,6 +1,6 @@
-# T04 — Rework the harness to the new model; prove kill-and-rebuild
+# T05 — harness-and-restart
 
-**Phase:** 3 · **Runs:** auto · **Depends on:** T03 · **Weight:** medium
+**Phase:** 3 · **Runs:** auto · **Depends on:** T04 · **Weight:** medium
 
 ## Goal
 

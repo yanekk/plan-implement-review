@@ -1,7 +1,7 @@
 # Non-agentic coordinator — Design
 
 > This plan changes how parallel mode behaves. The canonical account of parallel mode lives in
-> `/docs`, and this plan updates `/docs` (task T07) rather than re-opening the sealed
+> `/docs`, and this plan updates `/docs` (task T08) rather than re-opening the sealed
 > `plans/parallel-pir/DESIGN.md`. This file is the build-time rationale for the change: what is
 > removed, what replaces it, and why. Section numbers here are cited from `tasks/` and commits.
 
@@ -37,7 +37,7 @@ restart-and-resume this whole design rests on becomes real and checkable for the
 - The run never merges to `main`: it stops at a green feature branch and hands the person the
   branch to merge by hand.
 - There is no `auto`/`you` task distinction; every task is dispatched to an autonomous worker.
-- `npm test` is green; the live end-to-end behaviour is hand-verified with the person (T08).
+- `npm test` is green; the live end-to-end behaviour is hand-verified with the person (T09).
 
 ### Stance
 
@@ -99,8 +99,8 @@ report is what tells it. The person, by contrast, spots a waiting worker in the 
 
 The command's output is a `docker compose up`-style display: one line per task, updating in place,
 with a summary line and a footer. The shape was confirmed with the person against
-`prototype/cli-display.html` (2026-09-19). Per line: a state glyph, the task id and name, a status
-label, and elapsed time. Summary: tasks done / total, how many are running, how many are asking the
+`prototype/cli-display.html` (2026-09-19). Per line: a state glyph, the task id and its slug (§2.9,
+shown as `T01 stop-promoting`), a status label, and elapsed time. Summary: tasks done / total, how many are running, how many are asking the
 person, how many waiting, and the worker ceiling (marked when full). Footer: the current asking
 worker and how to reach it (`claude agents`, attach, answer there), or, at the end, the green
 feature branch and the `git merge` hand-off (§2.4).
@@ -115,7 +115,7 @@ This splits across the boundary (§3.1). The **display model is pure**: a functi
 a pass produces (tasks, their phases, the counts, the ceiling) returning the rows, summary and
 footer as data, with no I/O and no clock — the current time and the spinner frame arrive as
 arguments. It is tested exhaustively. The **renderer is shell**: it paints the model in place on a
-TTY using cursor control and ticks the spinner, and it is hand-verified (T08).
+TTY using cursor control and ticks the spinner, and it is hand-verified (T09).
 
 Reason for the split: in-place terminal painting can only be judged by a person watching a real
 terminal, but the status a person reads off each line is a rule, and a rule only a person can check
@@ -164,7 +164,7 @@ clean (a spike's noisy back-and-forth on a separate hands-on worker, commit cd8c
 that is moot once there is no coordinator session to protect. The risk this removes an adjective
 for is real: "genuinely cannot verify it itself" is judgement living in a prompt, too eager and a
 worker parks on something it could have checked, too reluctant and it ships unverified. So the bar
-is written explicitly into the worker contract (`pir-worker`), not left to an adjective (T06).
+is written explicitly into the worker contract (`pir-worker`), not left to an adjective (T07).
 
 ### 2.6 State is reconstructed, never carried; Ctrl-C kills, re-run rebuilds
 
@@ -219,6 +219,28 @@ between passes is not a test of the new design, it is a way to corrupt a run.
   rests on. A `hold` flag that drains live work while blocking new spawns is a fallback if
   stop-and-restart proves too heavy; it is not built now.
 
+### 2.9 Task slugs and agent names
+
+Every task has a kebab-case slug that is its name everywhere: the Task column in `PROGRESS.md`, the
+filename `tasks/T{nn}-{slug}.md`, the row in the live display (shown as `T01 stop-promoting`), and the
+worker's session name. The worker name is `{repo} / {plan} / {task} / {slug} / {role}`, five fields
+separated by ` / ` — for example `plan-implement-review / non-agentic-coordinator / T01 /
+stop-promoting / implement`. The coordinator has no agent name at all, because it is a plain process
+and never appears in `claude agents`.
+
+The task number stays the identity the program uses: dependencies reference it, and `parseAgentName`
+extracts it from the name so a restart still matches a live worker to its task by number
+(`buildAssignments`) regardless of the slug. The slug is a readable label carried alongside.
+
+Reason: today a worker's name carries only its number, so `claude agents` cannot tell you what `T01`
+is doing — the whole point of the name convention (§2.8 of the sealed parallel-pir design: state
+reconstruction and picking a worker out of the list) is served better when the name says what the
+task is. The separator is `/` because the only reason it was ever `·` — SendMessage rejecting `/` —
+is removed with the down-channel (§2.2); reverting is worth the small churn for readability, and the
+launch-time acceptance of a `/` in a name is confirmed in the capstone (§5.1). The slug lives in the
+filename already, so making it the `PROGRESS.md` Task value keeps one source, not two to sync; the
+match between the filename and the Task cell is a plan-authoring discipline the plan review checks.
+
 ---
 
 ## 3. Architecture
@@ -244,7 +266,9 @@ Pure (`src/core/`):
 - `dispatch.mjs` — remove `runs` from the spawn decision and remove `promoteToMain`; the "plan
   complete" signal becomes a `complete` flag the shell reads to run the tests and hand off (§2.4).
 - `parallelism.mjs` — remove the `you`/human count from the width report (§2.5).
-- `naming.mjs` — remove the `verify` worker role; roles become `implement` and `review` (§2.5).
+- `naming.mjs` — revert the separator to ` / `, add the task slug as a name field, and drop both the
+  coordinator name and the `verify` role; a worker name is `{repo} / {plan} / {task} / {slug} / {role}`
+  and roles become `implement` and `review` (§2.9, §2.5).
 - `display.mjs` (new) — the pure display model (§2.3).
 
 Shell (`src/shell/`):
@@ -252,15 +276,16 @@ Shell (`src/shell/`):
   handling and `send-failed`; `main()` renders the live display (§2.3) and prints the hand-off
   (§2.4); the `canPromoteHere` guard is reworded to branch-safety (§2.4).
 - `loop.mjs` — remove the down-routing, the promote step, and the `verify`/`hands-on`/attestation
-  branches; keep the `question`/`decision` up-signal as log-only (§2.2, §2.5).
+  branches; keep the `question`/`decision` up-signal as log-only (§2.2, §2.5); pass the task slug into
+  the worker name at spawn (§2.9).
 - `platform.mjs` — remove the down-channel `send` and the `verify` opening instruction; keep the
   `reports/` inbox up-channel (§2.2).
 - a new terminal renderer for the display model (§2.3), TTY-aware with a plain fallback.
 
 Skills and docs:
 - delete `pir-coordinate`, `pir-verify`, `pir-parallelize-plan`; rewrite `pir-implement`,
-  `pir-review`, `pir-worker` to drop every assumption that the coordinator is an agent (T06).
-- rewrite `/docs` and the `CLAUDE.md` parallel-mode carve-out (T07).
+  `pir-review`, `pir-worker` to drop every assumption that the coordinator is an agent (T07).
+- rewrite `/docs` and the `CLAUDE.md` parallel-mode carve-out (T08).
 
 ### 3.3 The decision function
 
@@ -294,13 +319,13 @@ Three layers, same as parallel-pir. The **pure core** (`decideDispatch`, `progre
 **loop over the fake platform** (`loop.test.mjs`, `coordinate.test.mjs`) drives whole runs against
 `src/shell/fake/` with `PARALLEL_DRY_RUN=1`, proving dispatch, review hand-off, serialized merge,
 the parked-worker-holds-a-slot behaviour, and kill-and-rebuild. The **live-scenario harness**
-(`src/shell/harness/`) runs the fixtures; this plan reworks them to the new model (T04) — the
+(`src/shell/harness/`) runs the fixtures; this plan reworks them to the new model (T05) — the
 message-relay round-trip and the hands-on fixture go, and a parked-worker-holds-slot fixture and a
 restart-after-Ctrl-C fixture stay or arrive.
 
 What none of them can prove: that the in-place terminal painting looks right, and that a real
 person can find and answer a blocked worker in `claude agents` and re-run after a Ctrl-C. That is
-T08, hand-verified with the person on a scratch plan.
+T09, hand-verified with the person on a scratch plan.
 
 ---
 
@@ -336,7 +361,7 @@ decision.
 | The live in-place terminal display | Only a person watching a real terminal can say the painting reads right (§2.3) |
 | Finding and answering a blocked worker in `claude agents` | The attach-and-answer interaction is interactive and depends on the person's terminal (§2.2) |
 | Ctrl-C killing real workers, then a real re-run resuming | A real SIGINT against real paid `claude` sessions, then a real restart (§2.6) |
-| `claude --bg -n "name/…"` accepting a name, and the picker rendering it | Launch-time and interactive-UI behaviour; not reachable headless (naming is kept as `·`, so this is a low risk, but the capstone confirms names render) |
+| `claude --bg -n "name/…"` accepting a `/` at launch, and the picker rendering it | Launch-time and interactive-UI behaviour; not reachable headless. Now load-bearing since names use `/` (§2.9); low risk (names with `/` already appear in `claude agents` here), confirmed live in T09 |
 
 ### 5.2 Seatbelts
 
@@ -346,10 +371,10 @@ decision.
 | `PARALLEL_DRY_RUN=1` | on in all tests | Spawn / message / list / close hit the fakes and a scratch repo, never a real agent |
 | `PARALLEL_MAX_WORKERS` | 4 | The worker ceiling; the capstone's first live run sets it to 1 |
 | `canPromoteHere` guard | on | Refuses a live run inside the canonical repo unless `PARALLEL_ALLOW_HERE=1`, so a run cannot open and mangle the real repo's branches by accident (§2.4) |
-| Scratch plan + scratch repo | used for T08 | The live drill runs on a throwaway plan in a throwaway clone, never the real project |
+| Scratch plan + scratch repo | used for T09 | The live drill runs on a throwaway plan in a throwaway clone, never the real project |
 
 Never ask the person to run the unbounded version to find something out, and never run it yourself.
-The first live run (T08) is one worker, one trivial task, on a scratch plan, ceiling 1.
+The first live run (T09) is one worker, one trivial task, on a scratch plan, ceiling 1.
 
 ---
 
@@ -388,17 +413,27 @@ All decided with the person on 2026-09-19 unless noted.
 - **Quiet workers: the program does nothing; the person watches.**
 - **The old `pir-coordinate` skill is deleted**; a "think through the plan" session is just a normal
   session with the files open.
-- **Worker names keep the `·` separator, not `/`.** The reason for `·` (SendMessage rejecting `/`)
-  is gone with the down-channel, but reverting is churn plus an unverified launch path, and `·`
-  works.
+- **Worker names revert to the `/` separator and gain a task slug (§2.9).** The `·` separator
+  existed only because SendMessage rejected `/`; with the down-channel gone, names go back to
+  `/`-separated, and a worker's name becomes `{repo} / {plan} / {task} / {slug} / {role}`. The one
+  unverified point — whether `claude --bg -n` accepts a `/` at launch — is low risk (names with `/`
+  already appear in `claude agents` on this machine) and is confirmed live in the capstone. Superseded
+  the earlier "keep `·`" position after the person asked for `/` (2026-09-19).
+- **A task's slug is its identity.** Every task already carries a kebab slug in its doc filename
+  (`T01-stop-promoting.md`); this makes it first-class. The slug is the task's name in `PROGRESS.md`'s
+  Task column, in the live display, and in the worker's agent name — one name everywhere, the full
+  description living in the task doc's Goal. This is a method-wide convention (all plans, classic and
+  parallel), so the templates and `pir-plan` guidance change with it (T07). The task number stays the
+  dependency key and the thing the program matches a worker on; the slug is a readable label attached
+  to it.
 - **The classifier headache is folded in, not a separate plan.** Removing the coordinator session
   removes the hard part (an agent keeping itself awake was refused). What remains is small: ship a
   narrow `permissions.allow` so a worker's own `git`/`npm test` clears, and document the one-time
-  per-user `autoMode` prerequisite (T05).
+  per-user `autoMode` prerequisite (T06).
 - **The live display shape was approved against `prototype/cli-display.html`** (2026-09-19): the
   `docker compose up`-style in-place task list, the status vocabulary, the ceiling pill, the
   asking-you footer, and the `git merge` hand-off. Parked as a non-binding reference for the session
-  that builds the renderer (T02).
+  that builds the renderer (T03).
 - **This plan is built in classic flow** (§2.7).
 - **The abandoned `coordinator-trust` debris was swept into a labeled stash** for a clean base.
 
@@ -413,6 +448,6 @@ All decided with the person on 2026-09-19 unless noted.
 - **A second `status` command or a web/MCP surface.** The foreground display is the status; a second
   reader from another terminal is not wanted (§1).
 - **Reworking the separate `classifier-survival` brief in full.** Only the small worker-side piece
-  is folded in (T05); the rest was made moot by removing the coordinator session.
+  is folded in (T06); the rest was made moot by removing the coordinator session.
 - **Any change to the classic single-stream flow.** This plan changes parallel mode only; the
   classic `/pir-work` routine is untouched.
