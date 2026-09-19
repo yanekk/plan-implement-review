@@ -12,7 +12,7 @@ user changed.
 
 | Date | | Finding |
 |---|---|---|
-| 2026-09-19 | 📌 | T09 setup: account `~/.claude/skills/` is pre-T07 stale — `pir-worker` off by 159 lines, deleted `pir-coordinate`/`pir-parallelize-plan`/`pir-verify` linger. A live worker reads account skills (repo ships no `.claude/skills/`), so refresh via `./install.sh` before the drive. |
+| 2026-09-19 | 📌 | T09 setup: account `~/.claude/skills/` is pre-T07 stale. Harness fix (2026-09-09) is to carry current skills into the scratch repo's tracked `.claude/skills/` — reaches every worktree, no account change. Replicated in the clone. Open: does project-local win over the stale same-named account copy? Ceiling-1 run confirms. |
 | 2026-09-19 | 📌 | T09 setup: scratch clone carries the project `permissions.allow` (committed) but not the per-user `autoMode.allow` (absent from `~/.claude/settings.json`). Run the first drive without autoMode to see if `permissions.allow` alone clears a worker's commands (T06's open question). |
 | 2026-09-19 | 📌 | T08: task doc said the kill switch is Ctrl-C, not a HALT flag. Shipped code (T05) kept the HALT flag as the deliberate abort (`touch .../HALT`) and made Ctrl-C the orphan-guard teardown. Docs describe shipped reality. |
 | 2026-09-19 | 📌 | T08 is docs-only, so stale code comments stay for a code touch: `fixtures.mjs:138` names deleted `pir-coordinate`, `coordinate.mjs:328` says "not a clean promotion", `platform.mjs:206` says the name carries `·`. Wording only. |

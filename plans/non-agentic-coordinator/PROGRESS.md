@@ -44,7 +44,7 @@ read — the parser tolerates and ignores it; T05 finishes the surrounding clean
 | T06 | worker-permissions | auto | — | ✅ | Reviewed clean. Ships worker `permissions.allow`; `install.sh` merges it into a target and the `autoMode` rule into `~/.claude/settings.json`. Merge pure in `core/settings.mjs`. `bgIsolation: none` does not travel to targets (FINDINGS). Live classifier proof T09. |
 | T07 | skills | auto | T04 | ✅ | Reviewed clean. Dead skills deleted, survivors de-agented, slug-as-name templates; grep-confirmed no live refs; planner-templates.test parses the on-disk templates. 382 green. |
 | T08 | docs | auto | T05, T07 | ✅ | Reviewed clean, no fix commit. Checked every /docs + CLAUDE.md claim against shipped code: named symbols/files exist, buildDisplay shape + row kinds, full log-tag set, clearTransientFeeds clears reports/ only, report kinds, 5-min timeout, ceiling 4, name format/roles, gpgsign per-call, decideResume table. Forbidden vocab appears only as "now gone". HALT-vs-Ctrl-C deviation logged; docs match code. 382 green. |
-| T09 | capstone | you | T06, T08 | 🟡 | Scratch world built + green at `../pir-scratch` (4 trivial tasks; T03 parks asking a genuine choice). Drive spawns real paid workers, person-only (§5.2) — handed over, awaiting judgement. Prereq: refresh pre-T07 stale account skills first (FINDINGS). |
+| T09 | capstone | you | T06, T08 | 🟡 | Scratch world built + green at `../pir-scratch` (4 trivial tasks; T03 parks asking a genuine choice). Current skills carried into the clone's tracked `.claude/skills/` (harness method, no account change). Drive spawns real paid workers, person-only (§5.2) — handed over, awaiting judgement. |
 
 A Notes cell holds what was built or what the review found, the test count, and one line per
 deviation from the task doc. A ✅ task's cell may be cut to one line once the next task is reviewed.
@@ -55,6 +55,8 @@ deviation from the task doc. A ✅ task's cell may be cut to one line once the n
 
 T09 is now waiting on the person. The scratch world is set up and green at `../pir-scratch`; the live
 drive spawns real paid `claude` workers and only a person may watch it (DESIGN §5.2), so it cannot be
-run from here. The person: (1) refreshes the account skills (`./install.sh`) so live workers read the
-current contract, (2) runs the seatbelted drive (ceiling 1, then 4), (3) reports the four judgements.
-The session then records the two confirmations and marks T09 ✅.
+run from here. Skills are handled the harness way — current skills committed into the clone's tracked
+`.claude/skills/`, reaching every worktree, so no account change is needed. The person: (1) runs the
+seatbelted drive (ceiling 1, then 4), (2) reports the four judgements. The ceiling-1 run also confirms
+whether the project-local skills win over the stale same-named account copies (FINDINGS). The session
+then records the two confirmations and marks T09 ✅.
