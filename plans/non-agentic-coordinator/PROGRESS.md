@@ -18,12 +18,12 @@ file and its worker's agent name.
 removals so every task stays green + cover `capture.mjs`; `install.sh` applies the per-user `autoMode`
 rule). Account in the `plan-review` commit.
 
-**Status:** T09 live capstone in progress. Scratch world built and green at `../pir-scratch` (4 trivial
-tasks, T03 parks asking). The live drive spawns real paid workers and only a person may watch it
-(DESIGN §5.2), so it is handed to the person; the session holds for their judgement. Prerequisite
-found: account `~/.claude/skills/` is pre-T07 stale — a live worker reads it, so it must be refreshed
-before the drive (FINDINGS).
-**Last updated:** 2026-09-19
+**Status:** T09 live capstone in progress, rewritten (PM decision) to reuse the existing harness and its
+fixtures instead of a hand-seeded scratch plan. The harness builds each throwaway repo, carries the
+current skills, arms the seatbelts, captures a bundle, and fact-checks; the hand-rolled `../pir-scratch`
+and the probe config were removed. The runs and the by-eye/interactive judgments spawn real paid workers
+that only a person may watch (§5.2), so they are handed to the person; the session holds for their report.
+**Last updated:** 2026-09-20
 **Next `pir-work` will:** nothing new until the person runs the live drive and reports back — then this
 same track records the two confirmations (machine + person) and marks T09 ✅. See "Blocked on the user".
 
@@ -44,7 +44,7 @@ read — the parser tolerates and ignores it; T05 finishes the surrounding clean
 | T06 | worker-permissions | auto | — | ✅ | Reviewed clean. Ships worker `permissions.allow`; `install.sh` merges it into a target and the `autoMode` rule into `~/.claude/settings.json`. Merge pure in `core/settings.mjs`. `bgIsolation: none` does not travel to targets (FINDINGS). Live classifier proof T09. |
 | T07 | skills | auto | T04 | ✅ | Reviewed clean. Dead skills deleted, survivors de-agented, slug-as-name templates; grep-confirmed no live refs; planner-templates.test parses the on-disk templates. 382 green. |
 | T08 | docs | auto | T05, T07 | ✅ | Reviewed clean, no fix commit. Checked every /docs + CLAUDE.md claim against shipped code: named symbols/files exist, buildDisplay shape + row kinds, full log-tag set, clearTransientFeeds clears reports/ only, report kinds, 5-min timeout, ceiling 4, name format/roles, gpgsign per-call, decideResume table. Forbidden vocab appears only as "now gone". HALT-vs-Ctrl-C deviation logged; docs match code. 382 green. |
-| T09 | capstone | you | T06, T08 | 🟡 | Scratch world built + green at `../pir-scratch` (4 trivial tasks; T03 parks asking a genuine choice). Current skills carried into the clone's tracked `.claude/skills/` (harness method, no account change). Drive spawns real paid workers, person-only (§5.2) — handed over, awaiting judgement. |
+| T09 | capstone | you | T06, T08 | 🟡 | Rewritten (PM decision) to reuse the existing harness + its fixtures — `installFixture` carries current skills, no account change. Run single/parallel/review-queue/clean-merge/human-decision/restart; skip stale merge-conflict (FINDINGS). Display + attach-answer + hand Ctrl-C are a direct TTY run the harness can't show. Hand-rolled scratch removed. Handed over; awaiting judgement. |
 
 A Notes cell holds what was built or what the review found, the test count, and one line per
 deviation from the task doc. A ✅ task's cell may be cut to one line once the next task is reviewed.
@@ -53,10 +53,10 @@ deviation from the task doc. A ✅ task's cell may be cut to one line once the n
 
 ## Blocked on the user
 
-T09 is now waiting on the person. The scratch world is set up and green at `../pir-scratch`; the live
-drive spawns real paid `claude` workers and only a person may watch it (DESIGN §5.2), so it cannot be
-run from here. Skills are handled the harness way — current skills committed into the clone's tracked
-`.claude/skills/`, reaching every worktree, so no account change is needed. The person: (1) runs the
-seatbelted drive (ceiling 1, then 4), (2) reports the four judgements. The ceiling-1 run also confirms
-whether the project-local skills win over the stale same-named account copies (FINDINGS). The session
-then records the two confirmations and marks T09 ✅.
+T09 is waiting on the person. It is verified by the existing harness (`node src/shell/harness/run.mjs
+<fixture>`) over its fixtures — single, parallel, review-queue, clean-merge, human-decision, restart
+(NOT merge-conflict, which is stale — FINDINGS) — plus one direct `coordinate.mjs` run in a real
+terminal for the display + attach-answer + hand Ctrl-C the harness can't show (recipe in
+`tasks/T09-capstone.md`). Every run spawns real paid workers that only a person may watch (§5.2). The
+person runs them and reports the four judgements; the session then records the machine PASS reports and
+the person's judgement in FINDINGS and marks T09 ✅.
