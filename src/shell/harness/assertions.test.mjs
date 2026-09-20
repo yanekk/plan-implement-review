@@ -21,7 +21,7 @@ import {
   noCloseBeforeIdle,
   parkedWorkerHoldsSlot,
   mergeConflictResolved,
-  oneMergeToMain,
+  handedOffGreenBranch,
   killSwitchStoppedAll,
   ceilingHeld,
   reachedWidth,
@@ -293,38 +293,77 @@ test('loadFinalFiles reads the bundle final-files.json into bundle.finalFiles; m
   assert.deepEqual(missing.finalFiles, {});
 });
 
-// --- oneMergeToMain ------------------------------------------------------------------------------
+// --- handedOffGreenBranch (T10: no promotion; the run hands off a green feature branch, §2.4) --------
 
-test('oneMergeToMain passes on exactly one promote and one promotion merge in the git log', () => {
-  const b = bundle({ flow: [fl('t9', 'promote', 'pir/scratch')], gitLog: "*   Merge branch 'pir/scratch'\n| * T01\n", timeline: [tick('t1', [cagent(), wagent('T01', 'busy')])] });
-  assert.equal(oneMergeToMain().check(b).pass, true);
+// A clean hand-off bundle: a task merged onto the feature branch, no `promote` line, and main carries no
+// promotion merge (git log has only the task work, not `Merge branch 'pir/scratch'`). A worker in the
+// timeline lets runIdentity resolve the plan so the git-log check runs.
+test('handedOffGreenBranch passes when a task merged, nothing was promoted, and main gained no merge', () => {
+  const b = bundle({
+    flow: [fl('t5', 'merge', 'T01')],
+    gitLog: '* T01 marker (pir/scratch)\n* seed\n',
+    timeline: [tick('t1', [wagent('T01', 'busy')])],
+  });
+  const r = handedOffGreenBranch().check(b);
+  assert.equal(r.pass, true, r.detail);
+  assert.ok(r.evidence.includes('git log: no promotion merge into main'));
 });
 
-test('oneMergeToMain fails when nothing was promoted', () => {
-  const r = oneMergeToMain().check(bundle({ flow: [fl('t5', 'merge', 'T01')] }));
+// The regression guard the task asks for: a bundle carrying a `promote` line — the removed model — now
+// FAILS, so the promotion cannot silently return through this fact.
+test('handedOffGreenBranch fails on a bundle that carries a promote line (the removed model)', () => {
+  const b = bundle({
+    flow: [fl('t5', 'merge', 'T01'), fl('t9', 'promote', 'pir/scratch')],
+    gitLog: "*   Merge branch 'pir/scratch'\n| * T01\n",
+    timeline: [tick('t1', [wagent('T01', 'busy')])],
+  });
+  const r = handedOffGreenBranch().check(b);
   assert.equal(r.pass, false);
-  assert.match(r.detail, /exactly one promote/);
+  assert.match(r.detail, /merged to main/);
 });
 
-test('oneMergeToMain fails when the git log shows two promotion merges', () => {
-  const b = bundle({ flow: [fl('t9', 'promote', 'pir/scratch')], gitLog: "Merge branch 'pir/scratch'\nMerge branch 'pir/scratch'\n", timeline: [tick('t1', [cagent(), wagent('T01', 'busy')])] });
-  assert.equal(oneMergeToMain().check(b).pass, false);
+// The other half of the regression guard: no `promote` line, but the git log shows a promotion merge of
+// the feature branch into main — main was not left untouched, so it FAILS.
+test('handedOffGreenBranch fails when the git log shows a promotion merge into main', () => {
+  const b = bundle({
+    flow: [fl('t5', 'merge', 'T01')],
+    gitLog: "Merge branch 'pir/scratch'\n* T01\n",
+    timeline: [tick('t1', [wagent('T01', 'busy')])],
+  });
+  const r = handedOffGreenBranch().check(b);
+  assert.equal(r.pass, false);
+  assert.match(r.detail, /promotion merge/);
 });
 
 // A dependent-task worker brings the feature branch into its own task branch before signalling done;
 // git labels that `Merge branch 'pir/scratch' into pir/scratch-T03`. That merge shares the promotion
-// prefix but never touches main, so it must NOT be counted as a second promotion (review-queue
-// after-run false-FAIL, 2026-09-13).
-test('oneMergeToMain passes when a worker integration merge shares the promotion prefix', () => {
+// prefix but never touches main, so it must NOT be read as a promotion — a clean hand-off still passes
+// (the same ` into ` exclusion that saved oneMergeToMain from the review-queue false-FAIL, 2026-09-13).
+test('handedOffGreenBranch passes when a worker integration merge shares the promotion prefix', () => {
   const gitLog =
-    "*   Merge branch 'pir/scratch'\n" +
-    "| * reconcile T03\n" +
+    '* T01 (pir/scratch)\n' +
     "| |   a8717af Merge branch 'pir/scratch' into pir/scratch-T03\n" +
-    '| * T01\n';
-  const b = bundle({ flow: [fl('t9', 'promote', 'pir/scratch')], gitLog, timeline: [tick('t1', [cagent(), wagent('T01', 'busy')])] });
-  const r = oneMergeToMain().check(b);
+    '| * reconcile T03\n';
+  const b = bundle({
+    flow: [fl('t5', 'merge', 'T01'), fl('t7', 'merge', 'T03')],
+    gitLog,
+    timeline: [tick('t1', [wagent('T01', 'busy')])],
+  });
+  const r = handedOffGreenBranch().check(b);
   assert.equal(r.pass, true, r.detail);
-  assert.ok(r.evidence.includes('git log promotion merges: 1'));
+});
+
+// Non-vacuous: a run that promoted nothing AND merged no task assembled nothing, so the hand-off is
+// vacuous and must FAIL — otherwise an empty run would pass trivially.
+test('handedOffGreenBranch fails vacuously-safe when no task merged onto the feature branch', () => {
+  const b = bundle({
+    flow: [fl('t1', 'spawn', 'T01')],
+    gitLog: '* seed\n',
+    timeline: [tick('t1', [wagent('T01', 'busy')])],
+  });
+  const r = handedOffGreenBranch().check(b);
+  assert.equal(r.pass, false);
+  assert.match(r.detail, /vacuous/);
 });
 
 // --- killSwitchStoppedAll ------------------------------------------------------------------------

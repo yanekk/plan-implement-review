@@ -257,7 +257,7 @@ test('runScenario installs, launches the coordinator process, captures, seals on
 
     // checkScenario ran the single fixture's declared facts (a report with those fact ids came back).
     const ids = result.report.facts.map((f) => f.id);
-    assert.deepEqual(ids, ['no-hello-ever', 'no-close-before-idle', 'one-merge-to-main']);
+    assert.deepEqual(ids, ['no-hello-ever', 'no-close-before-idle', 'handed-off-green-branch']);
     assert.equal(typeof result.ok, 'boolean');
   } finally {
     ws.cleanup();

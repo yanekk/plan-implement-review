@@ -1,16 +1,16 @@
 // clean-merge — two independent tasks that touch DIFFERENT files, at ceiling 2. Forces two serialized,
-// clean merges into the feature branch and one promotion (DESIGN §4.1). The seeded files a.txt and b.txt
-// exist on main; each task rewrites its own, so no merge ever conflicts.
+// clean merges into the feature branch and a green hand-off (DESIGN §4.1). The seeded files a.txt and
+// b.txt exist on main; each task rewrites its own, so no merge ever conflicts.
 //
 // The `probe` records the exact single-file edit each task's doc instructs, so the build test can replay
 // them on two branches and prove the second merge really is clean (expect: 'clean') — a git-level proof
 // of the seeded shape with no worker spawned (T16 acceptance).
 //
-// Facts (T15): main gained exactly one commit — the promotion, no task branch reaching main directly;
+// Facts (T15): the run handed off a green feature branch with main untouched (no promotion, DESIGN §2.4);
 // the ceiling held at 2; no finished worker was closed before it went idle.
 
 import { defineScenario } from '../scenario.mjs';
-import { oneMergeToMain, ceilingHeld, noCloseBeforeIdle } from '../assertions.mjs';
+import { handedOffGreenBranch, ceilingHeld, noCloseBeforeIdle } from '../assertions.mjs';
 import { progressDoc, taskDoc } from './common.mjs';
 
 const slug = 'clean-merge';
@@ -19,7 +19,7 @@ const seedFiles = { 'a.txt': 'A\n', 'b.txt': 'B\n' };
 
 const progress = progressDoc({
   slug,
-  summary: 'Two independent tasks on different files, ceiling 2: two clean merges and one promotion (DESIGN §4.1).',
+  summary: 'Two independent tasks on different files, ceiling 2: two clean merges onto the feature branch, then a green hand-off (DESIGN §4.1).',
   tasks: [
     { num: 'T01', name: 'Rewrite a.txt', runs: 'auto', deps: [], state: '⬜' },
     { num: 'T02', name: 'Rewrite b.txt', runs: 'auto', deps: [], state: '⬜' },
@@ -54,16 +54,16 @@ const probe = {
 
 const scenario = defineScenario({
   id: slug,
-  title: 'Clean merge — two serialized merges, one promotion',
+  title: 'Clean merge — two serialized merges, a green hand-off',
   fixture: slug,
   seatbelts: { ceiling: 2 },
-  facts: [oneMergeToMain(), ceilingHeld(2), noCloseBeforeIdle()],
+  facts: [handedOffGreenBranch(), ceilingHeld(2), noCloseBeforeIdle()],
 });
 
 export default {
   id: slug,
   slug,
-  title: 'Clean merge — two serialized merges, one promotion',
+  title: 'Clean merge — two serialized merges, a green hand-off',
   progress,
   tasks,
   seedFiles,

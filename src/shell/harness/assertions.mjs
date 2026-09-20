@@ -448,26 +448,47 @@ function promotionMergeLines(gitLog, plan) {
   return (gitLog ?? '').split('\n').filter((l) => l.includes(needle) && !l.includes(`${needle} into `));
 }
 
-// main gained exactly one commit — the promotion — and no task branch reached main directly (DESIGN
-// §2.9). The authoritative signal is the flow's single `promote` (the coordinator's only main-touching
-// action); the git log corroborates with exactly one promotion merge `Merge branch 'pir/{plan}'`.
-export function oneMergeToMain() {
-  return fact('one-merge-to-main', 'main gained exactly one commit — the promotion', (bundle) => {
+// The run ended by handing off a green feature branch, main untouched (DESIGN §2.4). This plan removed
+// promotion: the command never merges to main — it stops at a green `pir/{plan}` and prints
+// `git merge pir/{slug}` for the person. This REPLACES oneMergeToMain, which asserted the removed
+// promotion (one `promote` flow line + one `Merge branch 'pir/{plan}'` into main). Under the new model
+// both signals are wrong: a correct run logs ZERO promotes and leaves main at the fixture seed. So the
+// fact inverts the old one — it reads off the bundle:
+//   - ZERO `promote` flow lines (a promote is the coordinator touching main, the removed model);
+//   - NO promotion merge `Merge branch 'pir/{plan}'` into main in the git log (promotionMergeLines: the
+//     same needle the promotion used, minus the ` into ` integration merges a dependent worker makes on
+//     its own task branch — so a correct hand-off reads zero, not a false positive from an integration);
+//   - at least one `merge {task}` flow line — the plan WAS assembled on the feature branch, so the pass
+//     is never vacuous over a run that merged nothing.
+// The printed `git merge` hand-off line is NOT checkable here: run.mjs launches the coordinator with
+// stdio ignored, so the bundle never captures the coordinator's stdout (FINDINGS). Assert from the flow
+// log and git only.
+export function handedOffGreenBranch() {
+  return fact('handed-off-green-branch', 'The run handed off a green feature branch and left main untouched (§2.4)', (bundle) => {
     const evidence = [];
+    // No promotion: a `promote` flow line would be the coordinator merging to main (the removed model).
     const promotes = flowOf(bundle, 'promote');
     for (const p of promotes) evidence.push(flowLine(p));
-    if (promotes.length !== 1) {
-      return { pass: false, evidence, detail: `expected exactly one promote in the flow, found ${promotes.length}` };
+    if (promotes.length > 0) {
+      return { pass: false, evidence, detail: `${promotes.length} promote line(s) in the flow — the run merged to main, which §2.4 removed` };
     }
+    // main gained nothing beyond the seed: no promotion merge of the feature branch into main.
     const { plan } = runIdentity(bundle);
     if (plan) {
-      const count = promotionMergeLines(bundle.gitLog, plan).length;
-      evidence.push(`git log promotion merges: ${count}`);
-      if (count !== 1) {
-        return { pass: false, evidence, detail: `git log shows ${count} promotion merge(s) into main, expected 1` };
+      const promoMerges = promotionMergeLines(bundle.gitLog, plan);
+      for (const l of promoMerges) evidence.push(l.trim());
+      if (promoMerges.length > 0) {
+        return { pass: false, evidence, detail: `git log shows ${promoMerges.length} promotion merge(s) of pir/${plan} into main — main was not left untouched` };
       }
+      evidence.push('git log: no promotion merge into main');
     }
-    return { pass: true, evidence, detail: 'exactly one promotion reached main' };
+    // The plan was assembled on the feature branch: at least one task merged there (a non-vacuous pass).
+    const taskMerges = flowOf(bundle, 'merge').filter((e) => /^T\d+$/.test(e.rest));
+    for (const m of taskMerges) evidence.push(flowLine(m));
+    if (taskMerges.length === 0) {
+      return { pass: false, evidence, detail: 'no task merged into the feature branch — nothing was assembled, so the hand-off is vacuous' };
+    }
+    return { pass: true, evidence, detail: `${taskMerges.length} task merge(s) on the feature branch, zero promotes, main untouched — a clean hand-off` };
   });
 }
 

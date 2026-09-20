@@ -4,11 +4,11 @@
 // a coordinator session by name, it drops a `reports/` file (DESIGN §2.2, T05).
 //
 // Facts declared over the captured bundle (T15): no spawn hello was sent at all (retired in T30), no
-// finished worker was closed before it went idle, and exactly one merge landed (kept as a tolerated
-// legacy fact — the run hands off rather than promoting, DESIGN §2.4).
+// finished worker was closed before it went idle, and the run handed off a green feature branch with
+// main untouched (no promotion — DESIGN §2.4).
 
 import { defineScenario } from '../scenario.mjs';
-import { noHelloEver, noCloseBeforeIdle, oneMergeToMain } from '../assertions.mjs';
+import { noHelloEver, noCloseBeforeIdle, handedOffGreenBranch } from '../assertions.mjs';
 import { progressDoc, taskDoc } from './common.mjs';
 
 const slug = 'single';
@@ -34,7 +34,7 @@ const scenario = defineScenario({
   title: 'Single task — the full happy path',
   fixture: slug,
   seatbelts: { ceiling: 1 },
-  facts: [noHelloEver(), noCloseBeforeIdle(), oneMergeToMain()],
+  facts: [noHelloEver(), noCloseBeforeIdle(), handedOffGreenBranch()],
 });
 
 export default { id: slug, slug, title: 'Single task — the full happy path', progress, tasks, scenario };

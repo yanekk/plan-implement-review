@@ -28,8 +28,8 @@ was incomplete. parallel/human-decision/restart don't check promotion and should
 fix the stale facts — added T10 (harness-handoff-facts) to convert `oneMergeToMain` to the §2.4 hand-off
 model. T09 now depends on T10 and is back to ⬜ until T10 is ✅.
 **Last updated:** 2026-09-20
-**Next `pir-work` will:** IMPLEMENT T10 (harness-handoff-facts, ⬜, dep T05 ✅) — convert the stale
-promotion assertion to the hand-off model. T09 resumes once T10 is reviewed ✅.
+**Next `pir-work` will:** REVIEW T10 (harness-handoff-facts, 🔍) — the stale `oneMergeToMain` promotion
+assertion is now `handedOffGreenBranch`. Once T10 is ✅, T09 resumes (its last dep clears).
 
 ## Tasks
 
@@ -49,12 +49,12 @@ read — the parser tolerates and ignores it; T05 finishes the surrounding clean
 | T07 | skills | auto | T04 | ✅ | Reviewed clean. Dead skills deleted, survivors de-agented, slug-as-name templates; grep-confirmed no live refs; planner-templates.test parses the on-disk templates. 382 green. |
 | T08 | docs | auto | T05, T07 | ✅ | Reviewed clean, no fix commit. Checked every /docs + CLAUDE.md claim against shipped code: named symbols/files exist, buildDisplay shape + row kinds, full log-tag set, clearTransientFeeds clears reports/ only, report kinds, 5-min timeout, ceiling 4, name format/roles, gpgsign per-call, decideResume table. Forbidden vocab appears only as "now gone". HALT-vs-Ctrl-C deviation logged; docs match code. 382 green. |
 | T09 | capstone | you | T06, T08, T10 | ⬜ | Rewritten to reuse the harness + fixtures. Live `single` run (2026-09-20) proved the coordinator correct — main untouched, green branch handed off, fresh review, `/`-slug name — but the harness FAILED it on the stale `oneMergeToMain` fact. Now blocked on T10 (which converts that fact). Resume the fixture runs + the by-eye run once T10 is ✅. |
-| T10 | harness-handoff-facts | auto | T05 | ⬜ | Convert the stale `oneMergeToMain` promotion assertion to the §2.4 hand-off model; update single/review-queue/clean-merge + assertions.test. Unblocks T09's fixtures. merge-conflict is a separate decision (FINDINGS). |
+| T10 | harness-handoff-facts | auto | T05 | 🔍 | `oneMergeToMain` replaced by `handedOffGreenBranch` — zero promotes, no `Merge branch 'pir/{plan}'` into main, ≥1 task merge (non-vacuous). single/review-queue/clean-merge use it; assertions/fixtures/run tests updated incl a promote-line regression FAIL. merge-conflict untouched (separate decision). 387 green. |
 
 A Notes cell holds what was built or what the review found, the test count, and one line per
 deviation from the task doc. A ✅ task's cell may be cut to one line once the next task is reviewed.
 
-**Review queue:** empty. Next work is implementing T10 (⬜); T09 (⬜) waits on it, then on the person.
+**Review queue:** T10 (🔍). Next work reviews it; T09 (⬜) waits on T10 ✅, then on the person.
 
 ## Blocked on the user
 

@@ -23,7 +23,7 @@ const EXPECT = {
     taskCount: 1,
     deps: { T01: [] },
     ceiling: 1,
-    factIds: ['no-hello-ever', 'no-close-before-idle', 'one-merge-to-main'],
+    factIds: ['no-hello-ever', 'no-close-before-idle', 'handed-off-green-branch'],
   },
   parallel: {
     taskCount: 3,
@@ -35,13 +35,13 @@ const EXPECT = {
     taskCount: 3,
     deps: { T01: [], T02: [], T03: ['T01'] },
     ceiling: 2,
-    factIds: ['no-hello-ever', 'no-close-before-idle', 'one-merge-to-main'],
+    factIds: ['no-hello-ever', 'no-close-before-idle', 'handed-off-green-branch'],
   },
   'clean-merge': {
     taskCount: 2,
     deps: { T01: [], T02: [] },
     ceiling: 2,
-    factIds: ['one-merge-to-main', 'ceiling-held:2', 'no-close-before-idle'],
+    factIds: ['handed-off-green-branch', 'ceiling-held:2', 'no-close-before-idle'],
   },
   'merge-conflict': {
     taskCount: 2,
