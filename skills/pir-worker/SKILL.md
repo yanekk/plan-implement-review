@@ -62,10 +62,18 @@ wrong — you do two things and then **wait** (DESIGN §2.2):
    relay it and never sees your answer; the report is a signal to the *program* only — it keeps your
    slot counted while you are parked, and it prints your question in the live display so the person can
    see who is asking.
-2. **Ask the person in this session** — lay out what you are trying to do, the options and their costs,
-   and your recommendation, the shape `CLAUDE.md` asks for. The person watches the display, finds you in
-   their `claude agents` view, attaches to *this* session, and answers here. You never poll a channel and
-   nothing is routed down to you; the answer arrives in your own session (DESIGN §2.2).
+2. **Ask the person, in this session, as your last turn before you park** — lay out what you are trying
+   to do, the options and their costs, and your recommendation, the shape `CLAUDE.md` asks for. End the
+   turn with the question put *to the person* and nothing running, so your session goes idle on a clear
+   ask. The person watches the display, finds you in their `claude agents` view, attaches to *this*
+   session, and answers here; the answer arrives in your own session and you continue from it (DESIGN §2.2).
+
+   **Address the person, never the coordinator.** The coordinator is a program with no inbox and no way
+   to answer you, so do not say — to the person, or in your own session — that you are "waiting for the
+   coordinator" or that "the coordinator will reply". It will not. The report you dropped in step 1 is
+   only an up-signal that you are stuck; it is not a question the coordinator answers. The words a
+   watching person reads name *them* as the one who answers, here, in this session. Do not poll a channel
+   and do not expect a routed answer (DESIGN §2.2).
 
 Then wait. Do any independent work that does not depend on the answer while you wait; stop dead only on
 what the answer blocks. Never guess to get unblocked; an underspecified requirement is exactly what the

@@ -1,6 +1,6 @@
 # Implementation plan
 
-10 tasks in 4 phases (T10 added mid-build — see Phase 3). Each has a file in [tasks/](tasks/) with its goal, the files it touches, the
+11 tasks in 4 phases (T10, T11 added mid-build — see Phase 3). Each has a file in [tasks/](tasks/) with its goal, the files it touches, the
 interfaces it defines, and what "done" means. Track state in [PROGRESS.md](PROGRESS.md). Read
 [DESIGN.md](DESIGN.md) first.
 
@@ -71,6 +71,7 @@ the re-slot note in DESIGN §3.2; T04 removes only the code path.)
 | [T07](tasks/T07-skills.md) | skills | auto | T04 |
 | [T08](tasks/T08-docs.md) | docs | auto | T05, T07 |
 | [T10](tasks/T10-harness-handoff-facts.md) | harness-handoff-facts | auto | T05 |
+| [T11](tasks/T11-harness-drill-wiring.md) | harness-drill-wiring | auto | T05, T10 |
 
 At the end of Phase 3 the suite is green on the new model, a worker's own git/test clears the
 classifier, the dead commands are gone, the surviving worker skills no longer assume an agentic
@@ -79,6 +80,11 @@ coordinator, the templates carry the slug-as-name convention, and the reference 
 T10 was added after the T09 live `single` run (PM decision, 2026-09-20): it finishes T05's fixture
 rework by converting the stale `oneMergeToMain` promotion assertion to the §2.4 hand-off model, so the
 `single`/`review-queue`/`clean-merge` fixtures pass under the shipped coordinator. T09 depends on it.
+
+T11 was added after the T09 live fixture runs (PM decision, 2026-09-20): those runs proved the
+coordinator correct but exposed two test-rig bugs — `parallel`'s kill-switch drill never fires mid-run,
+and `human-decision`'s designed park is scored a timeout-FAIL. T11 fixes both in the harness without
+re-adding the down-channel. T09's six-fixture confirmation of those two depends on it.
 
 ## Phase 4 — See it for real
 

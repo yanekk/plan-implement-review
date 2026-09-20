@@ -18,14 +18,16 @@ file and its worker's agent name.
 removals so every task stays green + cover `capture.mjs`; `install.sh` applies the per-user `autoMode`
 rule). Account in the `plan-review` commit.
 
-**Status:** All code tasks are ✅. T10 reviewed clean — the stale `oneMergeToMain` promotion assertion
-is now `handedOffGreenBranch` (§2.4 hand-off), so a correct live run no longer red-reports. T09 (the
-live capstone) is now unblocked: its last dependency (T10) has cleared. T09 is the only remaining task
-and it needs the person — every run spawns real paid workers only a person may watch (§5.2).
+**Status:** T09 live fixture runs done (2026-09-20, with the PM watching). Four of six PASS over real
+workers — `single`, `review-queue`, `clean-merge`, `restart` — proving the coordinator: green-branch
+handoff, main untouched, ceiling held, SIGKILL resume adopts committed work. The other two FAIL on
+test-rig bugs, not coordinator bugs: `parallel`'s kill-switch drill never fires mid-run, and
+`human-decision`'s correct park is scored a timeout-FAIL. PM opened **T11** to fix both in the harness.
+A worker parked but narrated "waiting for the coordinator" (stale); PM had `pir-worker` tightened here.
 **Last updated:** 2026-09-20
-**Next `pir-work` will:** IMPLEMENT T09 (capstone, ⬜) — its deps T06, T08, T10 are all ✅. T09 is a
-hands-on task: the session drives the harness fixture runs + one by-eye `coordinate.mjs` run and hands
-the person the exact commands, then records their judgements in FINDINGS. It stops for the person.
+**Next `pir-work` will:** IMPLEMENT T11 (harness-drill-wiring, ⬜) — deps T05, T10 both ✅. T09 stays
+open: it now depends on T11 for the two deferred fixtures, and its by-eye display/attach/Ctrl-C half
+still needs the person.
 
 ## Tasks
 
@@ -44,25 +46,24 @@ read — the parser tolerates and ignores it; T05 finishes the surrounding clean
 | T06 | worker-permissions | auto | — | ✅ | Reviewed clean. Ships worker `permissions.allow`; `install.sh` merges it into a target and the `autoMode` rule into `~/.claude/settings.json`. Merge pure in `core/settings.mjs`. `bgIsolation: none` does not travel to targets (FINDINGS). Live classifier proof T09. |
 | T07 | skills | auto | T04 | ✅ | Reviewed clean. Dead skills deleted, survivors de-agented, slug-as-name templates; grep-confirmed no live refs; planner-templates.test parses the on-disk templates. 382 green. |
 | T08 | docs | auto | T05, T07 | ✅ | Reviewed clean, no fix commit. Checked every /docs + CLAUDE.md claim against shipped code: named symbols/files exist, buildDisplay shape + row kinds, full log-tag set, clearTransientFeeds clears reports/ only, report kinds, 5-min timeout, ceiling 4, name format/roles, gpgsign per-call, decideResume table. Forbidden vocab appears only as "now gone". HALT-vs-Ctrl-C deviation logged; docs match code. 382 green. |
-| T09 | capstone | you | T06, T08, T10 | ⬜ | Deps all ✅ (T10 cleared the stale fact). Rewritten to reuse the harness + fixtures. Live `single` run (2026-09-20) proved the coordinator correct — main untouched, green branch handed off, fresh review, `/`-slug name. Resume: the fixture runs + the by-eye run, then record the person's judgements. Blocked on the person (§5.2). |
-| T10 | harness-handoff-facts | auto | T05 | ✅ | Reviewed clean, no fix commit. `handedOffGreenBranch` faithfully inverts the fact: zero promotes, no `Merge branch 'pir/{plan}'` into main, ≥1 `merge T{nn}` so a pass is non-vacuous. Probed that the real loop emits `merge T{nn}` (num validated `T\d+`, progress.mjs:151), so it matches live output not just canned data; regression FAILs on a promote line and on a promotion merge. merge-conflict untouched (separate decision). 387 green. |
+| T09 | capstone | you | T06, T08, T10, T11 | ⬜ | Partial. 2026-09-20 live: `single`/`review-queue`/`clean-merge`/`restart` PASS over real workers (bundles in `/tmp/pir-*`, transient); worker `/`-slug names + launch-`/` seen. `parallel`/`human-decision` deferred to T11 (rig bugs, not coordinator). Fixed `pir-worker` parked-question wording here (PM). Still owes the person: by-eye display, attach-answer, Ctrl-C, re-run. |
+| T10 | harness-handoff-facts | auto | T05 | ✅ | Reviewed clean. `handedOffGreenBranch` inverts the fact: zero promotes, no merge into main, ≥1 `merge T{nn}`. Regression FAILs on a promote line. 387 green. |
+| T11 | harness-drill-wiring | auto | T05, T10 | ⬜ | Fix two rig bugs found in T09 live runs. `parallel`: `run.mjs` must touch HALT mid-run (after first spawn) so the kill switch fires and writes `halt-close`; today it only fires on the 10-min timeout or at teardown. `human-decision`: score a declared park/halt terminal as PASS, not `ok = pass && !timedOut`. No down-channel. Not `merge-conflict`. |
 
 A Notes cell holds what was built or what the review found, the test count, and one line per
 deviation from the task doc. A ✅ task's cell may be cut to one line once the next task is reviewed.
 
-**Review queue:** empty. Next work implements T09 (⬜) — the last task; its deps are all ✅. T09 is
-hands-on and stops for the person.
+**Review queue:** empty. Next work implements T11 (⬜) — deps T05, T10 both ✅. T09 is not picked: it
+now depends on T11 (not ✅) and on the person.
 
 ## Blocked on the user
 
-T09 now waits only on the person (T10 is ✅ — the stale harness promotion fact is converted).
-T09 is verified by the existing harness (`node src/shell/harness/run.mjs <fixture>`)
-over its fixtures — single, parallel, review-queue, clean-merge, human-decision, restart (NOT
-merge-conflict, which is stale — FINDINGS) — plus one direct `coordinate.mjs` run in a real terminal
-for the display + attach-answer + hand Ctrl-C the harness can't show (recipe in `tasks/T09-capstone.md`).
-Every run spawns real paid workers that only a person may watch (§5.2). The person runs them and reports
-the four judgements; the session then records the machine PASS reports and the person's judgement in
-FINDINGS and marks T09 ✅.
+T09's remaining half needs the person and cannot be a machine assertion (§5.1): one direct
+`coordinate.mjs` run in a real terminal for the live display, finding and answering a parked worker in
+`claude agents`, and hand Ctrl-C then re-run to see it resume (recipe in `tasks/T09-capstone.md`). Every
+run spawns real paid workers only a person may watch (§5.2).
 
-The `single` live run already gave strong positive evidence (the coordinator is correct); T10 (✅) made
-the fixture reports green so that evidence is not masked by a stale assertion.
+Sequence: build T11 first (it makes `parallel` and `human-decision` verifiable unattended), then the
+person does the by-eye run and re-runs those two, and the session records the machine PASS reports and
+the person's judgement in FINDINGS and marks T09 ✅. The four clean fixtures already PASS (2026-09-20,
+FINDINGS).
