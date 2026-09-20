@@ -20,6 +20,12 @@
 // `columns`, the whole frame capped at `rows` — so nothing can wrap or scroll and the frame height is
 // always exactly what was drawn. On teardown it leaves the alternate screen, which restores the normal
 // screen the startup notes were printed to; the one-off hand-off line is printed there.
+//
+// Colour (T16). On a colour TTY the renderer tints each line by the model's `kind` — active work cyan,
+// done green, a parked worker amber and bold (the standout), idle dim, failure/Ctrl-C red — layered on
+// the glyphs so colour is never the only signal. Like the cursor control it is a paint-time layer applied
+// after clipping: `formatLines` and the non-TTY path stay escape-free, and NO_COLOR (or a non-TTY) turns
+// it off, keeping the harness/pipe output plain text.
 
 // The spinner frames, ticked one per paint (a real run paints once per pass / poll). A reduced-motion
 // terminal is a person's setting the renderer cannot read here; the frames are plain Braille dots.
@@ -49,6 +55,28 @@ const SHOW_CURSOR = '\x1b[?25h';
 const HOME = '\x1b[H';
 const CLEAR = '\x1b[2J';
 
+// The colour codes (SGR), applied at paint time on a TTY only — never inside the content `formatLines`
+// produces (a test guards that block escape-free) and never on a non-TTY stream (the harness and any
+// pipe read stdout as text, DESIGN §2.3). Colour is layered on top of the glyphs the model already
+// carries, so it is never the only signal — a colour-blind reader or a NO_COLOR terminal loses nothing.
+// The map is by the model's row/footer `kind`, resolved to one of these styles (T16, PM 2026-09-20):
+//   active (building/reviewing/merging) cyan · done green · asking amber+bold (the standout) · idle dim ·
+//   red/interrupted red. RESET closes every coloured span.
+const SGR = {
+  done: '\x1b[32m', // green
+  active: '\x1b[36m', // cyan
+  asking: '\x1b[1;33m', // bold amber — the parked pointer and its row stand out
+  idle: '\x1b[2m', // dim grey
+  red: '\x1b[31m', // failure / interrupted
+};
+const RESET = '\x1b[0m';
+
+// Wrap already-clipped text in its colour when colour is on and the style resolves to a real code;
+// otherwise return the text untouched, so the no-colour path is byte-identical to what T15 drew.
+function colourize(text, style, on) {
+  return on && style && SGR[style] ? `${SGR[style]}${text}${RESET}` : text;
+}
+
 // Sensible sizes when a TTY does not report its dimensions (rare, but `stream.columns`/`rows` can be
 // undefined on some terminals). Clipping still applies so the frame is bounded either way.
 const DEFAULT_COLS = 80;
@@ -71,29 +99,54 @@ function clip(line, cols) {
   return chars.length <= cols ? line : chars.slice(0, cols).join('');
 }
 
-// The block of plain-text lines for a display, given the current spinner character. No escapes here —
-// this is the same content whether it is painted in place (TTY) or appended (non-TTY); only the cursor
-// control around it differs. Exported so a test can assert the content without the escapes.
-export function formatLines(display, { spinnerChar = SPINNER[0] } = {}) {
+// The style per row/footer `kind`, mapping the model's kinds onto the SGR colours (T16). Active phases
+// share cyan; a parked worker is the amber-bold standout; done is green; an idle task is dim. A kind with
+// no entry (or a null style) paints plain. This is the renderer's, like GLYPH — the model carries `kind`.
+const ROW_STYLE = {
+  building: 'active',
+  reviewing: 'active',
+  merging: 'active',
+  asking: 'asking',
+  done: 'done',
+  waiting: 'idle',
+  queued: 'idle',
+};
+
+// The single source of truth for the display's line ordering AND each line's colour style: the summary
+// line, then one line per row, then the footer lines. Each entry is `{ text, style }` where `style` is a
+// key into SGR or null for plain. `formatLines` is its text projection (escape-free) and `paint` uses the
+// styles to colour on a TTY — deriving both from this one helper is what stops the styles ever drifting
+// out of step with the lines they colour.
+export function styledLines(display, { spinnerChar = SPINNER[0] } = {}) {
   const { summary, rows, footer, branch } = display;
-  const lines = [summaryLine(summary, footer, branch, spinnerChar)];
-  for (const r of rows) lines.push(rowLine(r, spinnerChar));
-  for (const f of footerLines(footer, summary)) lines.push(f);
-  return lines;
+  const out = [summaryLine(summary, footer, branch, spinnerChar)];
+  for (const r of rows) out.push(rowLine(r, spinnerChar));
+  for (const f of footerLines(footer, summary)) out.push(f);
+  return out;
+}
+
+// The block of plain-text lines for a display, given the current spinner character. No escapes here —
+// this is the same content whether it is painted in place (TTY) or appended (non-TTY); the cursor control
+// and the colour around it are added by paint, TTY-only. Exported so a test can assert the content
+// without any escapes. It is the text projection of styledLines, so the ordering can never diverge.
+export function formatLines(display, opts) {
+  return styledLines(display, opts).map((l) => l.text);
 }
 
 function summaryLine(summary, footer, branch, spinnerChar) {
+  // The header takes a colour only when the run has ended: green when finished, red when interrupted.
+  // A run in progress keeps a neutral header — the status colour lives on the rows.
   if (footer?.kind === 'interrupted') {
-    return `✗ ${branch || 'run'} interrupted`;
+    return { text: `✗ ${branch || 'run'} interrupted`, style: 'red' };
   }
   if (summary.finished) {
-    return `✓ ${branch || 'run'} · ${summary.done}/${summary.total} done`;
+    return { text: `✓ ${branch || 'run'} · ${summary.done}/${summary.total} done`, style: 'done' };
   }
   const parts = [`${summary.done}/${summary.total} done`, `${summary.running} running`];
   if (summary.asking > 0) parts.push(`${summary.asking} asking you`);
   parts.push(`${summary.waiting} waiting`);
   const ceiling = summary.ceiling != null ? ` · ceiling ${summary.ceiling}${summary.ceilingFull ? ' (full)' : ''}` : '';
-  return `${spinnerChar} ${branch || 'run'} · ${parts.join(' · ')}${ceiling}`;
+  return { text: `${spinnerChar} ${branch || 'run'} · ${parts.join(' · ')}${ceiling}`, style: null };
 }
 
 function rowLine(r, spinnerChar) {
@@ -104,7 +157,8 @@ function rowLine(r, spinnerChar) {
   const slug = (r.slug ?? '').padEnd(22);
   const label = r.label.padEnd(24);
   const el = fmtElapsed(r.elapsedMs);
-  return `  ${g} ${id} ${slug} ${label} ${el}`.replace(/\s+$/, '');
+  const text = `  ${g} ${id} ${slug} ${label} ${el}`.replace(/\s+$/, '');
+  return { text, style: ROW_STYLE[r.kind] ?? null };
 }
 
 // The footer, in the model's kinds. The parked-worker footer is a COMPACT single line (DESIGN §2.2,
@@ -114,19 +168,26 @@ function rowLine(r, spinnerChar) {
 // worst while a worker was parked. The model still carries `question` for anything that wants it; the
 // live display does not draw it.
 function footerLines(footer, summary) {
+  const blank = { text: '', style: null };
   switch (footer?.kind) {
     case 'asking': {
       const who = [footer.task, footer.slug].filter(Boolean).join(' ');
-      return ['', `● ${who} — asking you; attach in \`claude agents\` to answer`];
+      // Amber-bold so the one thing needing the person cannot be missed (T16). The full question is still
+      // not drawn here — the person reads and answers it in the worker's own session (§2.2, T15).
+      return [blank, { text: `● ${who} — asking you; attach in \`claude agents\` to answer`, style: 'asking' }];
     }
     case 'handoff':
-      return ['', `✔ all ${summary.total} task(s) green on ${footer.branch} · tests pass. Yours to merge:`, `    git merge ${footer.branch}`];
+      return [
+        blank,
+        { text: `✔ all ${summary.total} task(s) green on ${footer.branch} · tests pass. Yours to merge:`, style: 'done' },
+        { text: `    git merge ${footer.branch}`, style: 'done' },
+      ];
     case 'red':
-      return ['', `✗ ${summary.total} task(s) built on ${footer.branch}, but its tests fail — not ready to merge.`];
+      return [blank, { text: `✗ ${summary.total} task(s) built on ${footer.branch}, but its tests fail — not ready to merge.`, style: 'red' }];
     case 'interrupted':
-      return ['', '^C — closing workers… main is untouched. Re-run to resume from committed work.'];
+      return [blank, { text: '^C — closing workers… main is untouched. Re-run to resume from committed work.', style: 'red' }];
     default:
-      return [''];
+      return [blank];
   }
 }
 
@@ -141,8 +202,12 @@ function footerLines(footer, summary) {
 //   close()        — teardown: leave the alternate screen and show the cursor, once. The caller MUST
 //                    call it on every exit path (coordinate.mjs), so the terminal is never left in the
 //                    alternate screen with the cursor hidden — including on Ctrl-C.
-export function createRenderer({ stream = process.stdout } = {}) {
+export function createRenderer({ stream = process.stdout, colour } = {}) {
   const isTTY = !!stream.isTTY;
+  // Colour only on a TTY, and honour NO_COLOR (any value disables it, the de-facto standard). Injectable
+  // via `colour` for tests; a non-TTY stream is never coloured even if `colour: true` is passed, so the
+  // harness/pipe invariant — zero escapes reach a non-terminal (DESIGN §2.3) — holds absolutely.
+  const useColour = isTTY && (colour ?? !('NO_COLOR' in process.env));
   let spinIdx = 0;
   let inAlt = false; // currently showing the alternate-screen live frame
   let closed = false; // teardown done — no more in-place painting
@@ -164,12 +229,12 @@ export function createRenderer({ stream = process.stdout } = {}) {
     paint(display) {
       const spinnerChar = SPINNER[spinIdx % SPINNER.length];
       spinIdx += 1;
-      const lines = formatLines(display, { spinnerChar });
+      const styled = styledLines(display, { spinnerChar });
 
       if (!isTTY) {
-        // Not a terminal: append plain lines, never a cursor escape (they garble a pipe and the harness
-        // reads this as text, DESIGN §2.3). No in-place redraw, so nothing to remember or clip.
-        write(lines.join('\n') + '\n');
+        // Not a terminal: append plain lines, never a cursor or colour escape (they garble a pipe and the
+        // harness reads this as text, DESIGN §2.3). No in-place redraw, so nothing to remember or clip.
+        write(styled.map((l) => l.text).join('\n') + '\n');
         return;
       }
 
@@ -188,7 +253,14 @@ export function createRenderer({ stream = process.stdout } = {}) {
       // shorter frame leaves nothing behind — no cursor-math over wrapped lines (the T15 bug).
       const cols = Math.max(1, stream.columns || DEFAULT_COLS);
       const maxRows = Math.max(1, stream.rows || DEFAULT_ROWS);
-      const drawn = lines.slice(0, maxRows).map((l) => clip(l, cols)).join('\n');
+      // Clip the visible text first (T15's no-wrap guarantee), then wrap the already-clipped text in its
+      // colour. The SGR codes add bytes but no visible width, so the per-line clip and the row budget are
+      // exactly as T15 left them; colour is off unless this is a colour TTY, so the frame is byte-identical
+      // to before when it is not.
+      const drawn = styled
+        .slice(0, maxRows)
+        .map(({ text, style }) => colourize(clip(text, cols), style, useColour))
+        .join('\n');
       write(HOME + CLEAR + drawn);
     },
 

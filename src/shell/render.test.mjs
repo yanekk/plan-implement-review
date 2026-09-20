@@ -52,6 +52,36 @@ const LEAVE_ALT = '\x1b[?1049l';
 const HIDE_CURSOR = '\x1b[?25l';
 const SHOW_CURSOR = '\x1b[?25h';
 const ANY_ESCAPE = /\x1b\[/;
+// A colour (SGR) escape ends in `m`; the cursor-control escapes this renderer uses end in H/J/h/l, so
+// this pattern isolates colour from cursor control (T16).
+const SGR_ESCAPE = /\x1b\[[0-9;]*m/;
+const GREEN = '\x1b[32m';
+const CYAN = '\x1b[36m';
+const AMBER_BOLD = '\x1b[1;33m';
+const DIM = '\x1b[2m';
+const RED = '\x1b[31m';
+
+// A display with one parked worker, for the asking-standout and question-absence checks.
+const askingSample = () =>
+  buildDisplay(
+    {
+      branch: 'pir/demo',
+      ceiling: 2,
+      tasks: [
+        {
+          id: 'T01',
+          slug: 'stop-promoting',
+          deps: [],
+          done: false,
+          phase: 'asking',
+          since: NOW,
+          doneMs: null,
+          question: 'Should the warning fire at 80% or 90%? [a very long multi-paragraph question]',
+        },
+      ],
+    },
+    { now: NOW },
+  );
 
 // Strip every CSI escape, leaving only the drawn content — so a paint's content lines can be measured.
 const stripAnsi = (s) => s.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '');
@@ -189,6 +219,83 @@ test('formatLines renders the row content the renderer paints, with no escapes o
   assert.match(joined, /✔ T01 {2}stop-promoting/, 'a merged task shows the check glyph, id and slug');
   assert.match(joined, /⠋ T02 {2}live-display/, 'a building task shows the spinner frame it was handed');
   assert.match(joined, /needs T02/, 'the waiting row names its unmet dependency');
+});
+
+test('on a colour TTY each row is tinted by status: active cyan, done green, idle dim (T16)', () => {
+  const stream = fakeStream();
+  const r = createRenderer({ stream, colour: true });
+  const out = paintDelta(r, stream, sample());
+  assert.match(out, /\x1b\[32m[^\x1b]*stop-promoting/, 'the merged row is green');
+  assert.match(out, /\x1b\[36m[^\x1b]*live-display/, 'the building row is cyan');
+  assert.match(out, /\x1b\[2m[^\x1b]*waits/, 'the idle/waiting row is dim');
+  assert.ok(out.includes(GREEN) && out.includes(CYAN) && out.includes(DIM));
+});
+
+test('on a colour TTY the parked pointer and its row stand out in amber bold, question still absent (T16)', () => {
+  const stream = fakeStream();
+  const r = createRenderer({ stream, colour: true });
+  const out = paintDelta(r, stream, askingSample());
+  // The asking row itself is amber-bold.
+  assert.match(out, /\x1b\[1;33m[^\x1b]*stop-promoting/, 'the parked row is amber bold');
+  // The footer pointer line is amber-bold too.
+  assert.match(out, /\x1b\[1;33m[^\x1b]*asking you; attach in/, 'the asking footer pointer is amber bold');
+  assert.ok(!stripAnsi(out).includes('multi-paragraph question'), 'the full question is still not drawn in the frame');
+});
+
+test('the summary header is green when finished and red when interrupted, neutral while running (T16)', () => {
+  const finished = buildDisplay(
+    { branch: 'pir/demo', ceiling: 2, complete: true, readyToMerge: true, tasks: [{ id: 'T01', slug: 'a', deps: [], done: true, phase: null, since: null, doneMs: 100, question: null }] },
+    { now: NOW },
+  );
+  const interrupted = buildDisplay(
+    { branch: 'pir/demo', ceiling: 2, interrupted: true, tasks: [{ id: 'T01', slug: 'a', deps: [], done: false, phase: 'building', since: NOW, doneMs: null, question: null }] },
+    { now: NOW },
+  );
+  const running = sample();
+
+  const s = fakeStream();
+  let r = createRenderer({ stream: s, colour: true });
+  assert.match(paintDelta(r, s, finished), /\x1b\[32m✓ pir\/demo/, 'a finished header is green');
+
+  const s2 = fakeStream();
+  r = createRenderer({ stream: s2, colour: true });
+  assert.match(paintDelta(r, s2, interrupted), /\x1b\[31m✗ pir\/demo interrupted/, 'an interrupted header is red');
+
+  const s3 = fakeStream();
+  r = createRenderer({ stream: s3, colour: true });
+  const runOut = paintDelta(r, s3, running);
+  // The running header (the spinner line) carries no colour of its own — status lives on the rows.
+  assert.ok(!/\x1b\[[0-9;]*m[^\n]*running/.test(runOut), 'the running header is neutral');
+});
+
+test('colour is off when colour:false — cursor control still present, no SGR escape (T16)', () => {
+  const stream = fakeStream();
+  const r = createRenderer({ stream, colour: false });
+  const out = paintDelta(r, stream, askingSample());
+  assert.ok(out.includes('\x1b[H'), 'still homes the cursor (in-place paint is unaffected)');
+  assert.ok(!SGR_ESCAPE.test(out), `no colour escape when colour is off, got: ${JSON.stringify(out)}`);
+  // The frame is byte-identical to what T15 drew: plain clipped text between HOME+CLEAR.
+  assert.match(stripAnsi(out), /asking you; attach in/, 'the pointer content is unchanged, just uncoloured');
+});
+
+test('colour never reaches a non-TTY stream even when colour:true is passed (T16)', () => {
+  const stream = fakeStream({ isTTY: false });
+  const r = createRenderer({ stream, colour: true });
+  r.paint(sample());
+  const out = stream.text();
+  assert.ok(!ANY_ESCAPE.test(out), 'a non-terminal gets no escape at all, colour or cursor');
+});
+
+test('clipping still holds with colour on: visible width within columns, height constant (T16 keeps T15)', () => {
+  const stream = fakeStream({ columns: 24, rows: 6 });
+  const r = createRenderer({ stream, colour: true });
+  r.paint(askingSample());
+  const body2 = stripAnsi(paintDelta(r, stream, askingSample()));
+  const body3 = stripAnsi(paintDelta(r, stream, askingSample()));
+  for (const ln of body2.split('\n')) {
+    assert.ok([...ln].length <= 24, `visible text clipped despite colour: ${JSON.stringify(ln)}`);
+  }
+  assert.equal(body2.split('\n').length, body3.split('\n').length, 'height constant paint to paint');
 });
 
 test('the parked-worker footer is a compact single line and never the full question (T15, §2.2)', () => {

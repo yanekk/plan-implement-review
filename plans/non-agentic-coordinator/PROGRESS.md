@@ -18,14 +18,13 @@ file and its worker's agent name.
 removals so every task stays green + cover `capture.mjs`; `install.sh` applies the per-user `autoMode`
 rule). Account in the `plan-review` commit.
 
-**Status:** 2026-09-20: T09 closed ✅ — PM confirmed the live display repaints in place after T15. Every
-original task is now ✅. PM raised new display polish (colour + parked-question visibility) → added as
-**T16** (⬜). T13 (attended merge-conflict run) remains ⬜, deps all ✅, needs the person at a terminal.
-407 green.
+**Status:** 2026-09-20: T16 built (🔍) — PM signed off its shape (full status colours + stand-out parked
+pointer, no question text), task file written, colour added to render.mjs as a TTY-only paint layer, 6
+new tests, 413 green. Awaits a fresh-session review, plus a by-eye colour check the PM owns. T13 (attended
+merge-conflict run) remains ⬜, deps all ✅, needs the person at a terminal.
 **Last updated:** 2026-09-20
-**Next `pir-work` will:** pick **T16** (⬜, display colour + question visibility) once the PM confirms its
-shape — deps T15 ✅. T13 (⬜, attended merge-conflict run) is also ready (deps T05/T10/T11/T14 ✅) but
-needs the person at a real terminal.
+**Next `pir-work` will:** REVIEW **T16** (🔍) — the lowest 🔍 wins. After it is ✅, T13 (⬜, attended
+merge-conflict run, deps T05/T10/T11/T14 ✅) is the only work left and needs the person at a real terminal.
 
 ## Tasks
 
@@ -50,19 +49,19 @@ read — the parser tolerates and ignores it; T05 finishes the surrounding clean
 | T12 | worker-knows-no-coordinator | auto | T07 | ✅ | Reviewed clean, no fix commit. Grep contract holds: only the `non-agentic-coordinator` example name in the three skill dirs; `openingInstruction` string has no `coordinator`. Swept worker files for residual relay language ("reports up to", "will reply") — only the negations remain. openingInstruction test still asserts skill+task+pir-worker. 392 green. Live word-proof is T09. |
 | T15 | display-in-place-render | auto | T03 | ✅ | Reviewed clean. Bounded alt-screen region replaces the wrap-broken cursor-up math; `close()` leaves the alt screen on every exit incl SIGINT. By-eye repaint stays T09. 395 green. |
 | T14 | conflict-resolve-prompt | auto | T05 | ✅ | Reviewed. Fixed one stale "routed down" comment the implementer missed (§2.2 down-channel gone) — acceptance crit 3 now met. Probed the reprint risk: a parked worker stays AWAITING, never re-enters `merge` (dispatch.mjs + buildAssignments), so the bulky prompt scrolls exactly once. Reconcile path (no worker) names the branch. 407 green. Live paint by-eye stays T13. |
-| T16 | display-colour-and-question | auto | T15 | ⬜ | Added 2026-09-20 (PM), after T09's by-eye pass. Colour the in-place display by status and make the parked "asking you" question stand out. Shape awaiting PM sign-off (palette + how the question is surfaced). Pure renderer work on T15's alt-screen region. |
+| T16 | display-colour-and-question | auto | T15 | 🔍 | Built. Shape signed off by PM: full status colours (done green, asking amber+bold, active cyan, idle dim, fail/interrupt red) + stand-out pointer, no question text. Colour is a paint-time layer in render.mjs, TTY-only, NO_COLOR-aware; `formatLines` stays escape-free. 6 new fake-stream tests. By-eye colour check is the PM's. 413 green. |
 | T13 | attended-merge-conflict | you | T05, T10, T11, T14 | ⬜ | Added 2026-09-20 (PM). Rework the stale `merge-conflict` fixture (drops the down-channel `scriptedAnswer` + the `answer`-line fact) into an attended run: coordinator parks the conflict and offers T14's prompt, the person copies it keeping `hello there` and pastes it, the worker resolves, the run completes. Independent of T09. |
 
 A Notes cell holds what was built or what the review found, the test count, and one line per
 deviation from the task doc. A ✅ task's cell may be cut to one line once the next task is reviewed.
 
-**Review queue:** empty — every task is ✅ except the new T16 (⬜, awaiting PM sign-off on its shape) and
-T13 (⬜, attended merge-conflict run, needs the person at a terminal).
+**Review queue:** T16 (🔍) awaits a fresh-session review. T13 (⬜, attended merge-conflict run) needs the
+person at a terminal and is the only work after that.
 
 ## Blocked on the user
 
-T16 (display colour + parked-question visibility) awaits the PM confirming its shape — the palette
-direction and how the parked question should stand out — before it is built.
+T16's shape is decided and it is built (🔍); its only person-owned part left is a by-eye check that the
+actual colours read well on a real terminal, after review.
 
 T13's run needs the person and cannot be a machine assertion (§5.1): one direct `coordinate.mjs` run in
 a real terminal that hits the merge conflict, offers T14's copy-paste prompt, the person resolves it, the
