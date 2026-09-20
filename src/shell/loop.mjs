@@ -499,8 +499,9 @@ export function runPass({ platform, worktree, repo, slug, maxWorkers, state, con
   // close the worker (the T22 conflict-path bug, where the same pass parked the conflict yet still
   // closed the done+merged worker and deleted its task, letting the next pass respawn a clobbering
   // fresh build). On a conflict the coordinator keeps the worker ALIVE and parked (AWAITING): its
-  // session, worktree and task all stay, it holds its slot, and the user's decision is routed down to
-  // that same worker, which resolves on its own branch and re-signals done (§2.5 Option 2, T28).
+  // session, worktree and task all stay, it holds its slot, and the person attaches to that same worker
+  // directly to drive the resolution — nothing is routed down (§2.2, the down-channel is gone). It
+  // resolves on its own branch and re-signals done (§2.5 Option 2, T28).
   for (const workerId of decision.merge) {
     const found = taskByWorkerId(state, workerId);
     if (!found) continue;
