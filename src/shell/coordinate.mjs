@@ -745,6 +745,10 @@ async function main(argv) {
   const teardownOnce = (why) => {
     if (tornDown) return;
     tornDown = true;
+    // Leave the alternate screen first (T15): so any teardown message lands on the normal screen, and so
+    // even a teardown that closes nothing (a Ctrl-C before any worker spawned) still restores the
+    // terminal — the alt screen must always be left on exit.
+    renderer.close();
     const { closed } = teardown();
     if (closed.length) renderer.line(`\n=== ${why}: closed ${closed.length} live worker(s) so none is orphaned ===`);
   };
@@ -799,6 +803,7 @@ async function main(argv) {
       if (r.restartSummary) renderer.line(`  ↻ ${r.restartSummary}`);
 
       if (r.halted) {
+        renderer.close(); // leave the alt screen so the notice lands on the normal screen (T15)
         renderer.line('\n=== HALTED by the kill switch — workers stopped, nothing merged ===');
         return; // the halt pass already closed every worker
       }
@@ -823,6 +828,7 @@ async function main(argv) {
         // green, print the `git merge` command for the person to run; on red, print the failure and offer
         // no merge (§2.8). The run never merges to main itself. The complete pass has no live workers, so
         // nothing is orphaned by returning here.
+        renderer.close(); // leave the alt screen; the hand-off prints on the normal screen (T15, DESIGN §2.3)
         renderer.line('\n' + renderHandoff({ readyToMerge: r.readyToMerge, taskCount: r.tasks.length, slug }));
         return;
       }
