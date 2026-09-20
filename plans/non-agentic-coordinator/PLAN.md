@@ -1,6 +1,6 @@
 # Implementation plan
 
-12 tasks in 4 phases (T10, T11, T12 added mid-build — see Phase 3). Each has a file in [tasks/](tasks/) with its goal, the files it touches, the
+13 tasks in 4 phases (T10, T11, T12 added mid-build — see Phase 3; T13 added in Phase 4). Each has a file in [tasks/](tasks/) with its goal, the files it touches, the
 interfaces it defines, and what "done" means. Track state in [PROGRESS.md](PROGRESS.md). Read
 [DESIGN.md](DESIGN.md) first.
 
@@ -92,12 +92,20 @@ re-adding the down-channel. T09's six-fixture confirmation of those two depends 
 | # | Task | Runs | Depends on |
 |---|---|---|---|
 | [T09](tasks/T09-capstone.md) | capstone | you | T06, T08, T10 |
+| [T13](tasks/T13-attended-merge-conflict.md) | attended-merge-conflict | you | T05, T10, T11 |
 
 T09 is the hand-verification the tests cannot reach (DESIGN §5.1): on a scratch plan in a scratch
 repo, the person runs the real command, answers a blocked worker directly, Ctrl-C's mid-run and
 re-runs to see it resume, checks a worker's slug name and its committing without a prompt, and merges
 the green branch by hand. It is marked `you`; the classic flow ignores the marker, and this plan runs
 classic.
+
+T13 was added after T09's fixture work (PM decision, 2026-09-20): the `merge-conflict` fixture still
+assumes the removed down-channel (a `scriptedAnswer` injected to the worker, a `mergeConflictResolved`
+fact that needs an `answer` flow line), so it cannot pass under the shipped coordinator. The PM chose to
+keep the scenario and make it an **attended** fixture: the coordinator parks the conflicting worker (no
+coordinator change — `loop.mjs:514-523` already does this), a person attaches and resolves the conflict
+by hand keeping the fixed wording, and the run completes. Independent of T09; both are `you`.
 
 ---
 

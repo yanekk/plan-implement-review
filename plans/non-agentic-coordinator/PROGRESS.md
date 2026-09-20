@@ -49,11 +49,13 @@ read — the parser tolerates and ignores it; T05 finishes the surrounding clean
 | T10 | harness-handoff-facts | auto | T05 | ✅ | Reviewed clean. `handedOffGreenBranch`: zero promotes, no merge to main, ≥1 `merge T{nn}`; regression FAILs on a promote line. 387 green. |
 | T11 | harness-drill-wiring | auto | T05, T10 | ✅ | Reviewed clean, no fix commit. Confirmed `spawn`/`halt-close` are real loop.mjs flow tags and `flowHasTag` cannot false-positive on the surface `text` (never in the flow line). Drill touches HALT once on first `spawn`; `parked` scores a timed-out park PASS; no drill → no mid-run HALT. Restart runner default `completed`, unchanged. No down-channel. 392 green. |
 | T12 | worker-knows-no-coordinator | auto | T07 | ✅ | Reviewed clean, no fix commit. Grep contract holds: only the `non-agentic-coordinator` example name in the three skill dirs; `openingInstruction` string has no `coordinator`. Swept worker files for residual relay language ("reports up to", "will reply") — only the negations remain. openingInstruction test still asserts skill+task+pir-worker. 392 green. Live word-proof is T09. |
+| T13 | attended-merge-conflict | you | T05, T10, T11 | ⬜ | Added 2026-09-20 (PM). Rework the stale `merge-conflict` fixture (drops the down-channel `scriptedAnswer` + the `answer`-line fact) into an attended run: coordinator parks the conflict (no coordinator change, loop.mjs:514-523), a person resolves it keeping `hello there`, the run completes. Independent of T09. |
 
 A Notes cell holds what was built or what the review found, the test count, and one line per
 deviation from the task doc. A ✅ task's cell may be cut to one line once the next task is reviewed.
 
-**Review queue:** empty. Next is T09 (⬜), the person's hands-on capstone (§5.1).
+**Review queue:** empty. Next is T09 (⬜), the person's hands-on capstone (§5.1); T13 (⬜, attended
+merge-conflict rework) is queued after it and is independent of it.
 
 ## Blocked on the user
 
