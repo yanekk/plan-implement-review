@@ -18,11 +18,14 @@ file and its worker's agent name.
 removals so every task stays green + cover `capture.mjs`; `install.sh` applies the per-user `autoMode`
 rule). Account in the `plan-review` commit.
 
-**Status:** T09 live capstone in progress, rewritten (PM decision) to reuse the existing harness and its
-fixtures instead of a hand-seeded scratch plan. The harness builds each throwaway repo, carries the
-current skills, arms the seatbelts, captures a bundle, and fact-checks; the hand-rolled `../pir-scratch`
-and the probe config were removed. The runs and the by-eye/interactive judgments spawn real paid workers
-that only a person may watch (§5.2), so they are handed to the person; the session holds for their report.
+**Status:** T09 live capstone in progress, rewritten (PM decision) to reuse the existing harness + its
+fixtures. First live run done (`single`, PM-authorized): the coordinator behaved CORRECTLY — real worker
+spawned with the `/`-slug name (launch took the `/`), built T01, a fresh session reviewed clean,
+idle-gated close, merged task→feature, `main` untouched, ended green for hand-off, clean teardown. But
+the harness FAILED it on the stale `oneMergeToMain` fact, which still asserts the removed promotion
+(§2.4). That stale fact is in single/review-queue/clean-merge (+merge-conflict) — T05's fixture rework
+was incomplete. parallel/human-decision/restart don't check promotion and should pass. DECISION PENDING:
+convert the promotion facts to the hand-off model (a code task) before the fixtures can PASS.
 **Last updated:** 2026-09-20
 **Next `pir-work` will:** nothing new until the person runs the live drive and reports back — then this
 same track records the two confirmations (machine + person) and marks T09 ✅. See "Blocked on the user".

@@ -12,6 +12,7 @@ user changed.
 
 | Date | | Finding |
 |---|---|---|
+| 2026-09-20 | ✅🐞 | T09 live `single` ran CORRECTLY — main untouched, green `pir/single` handed off, fresh review, `/`-slug name, launch took the `/`, clean teardown — but the harness FAILED it on `oneMergeToMain`, which still asserts the removed promotion (§2.4). Same stale fact in review-queue/clean-merge/merge-conflict; T05's fixture rework was incomplete. |
 | 2026-09-20 | 🐞 | Harness `merge-conflict` fixture is stale: still ships `scriptedAnswer` and its `mergeConflictResolved` fact needs an `answer` flow line the loop no longer emits (down-channel gone, loop.mjs:316). Cannot pass under the non-agentic model. Needs conversion — a separate task, skipped by T09. |
 | 2026-09-20 | 📌 | T09 verified via the existing harness + fixtures (PM decision). Structural gaps: `run.mjs` spawns the coordinator with `stdio:'ignore'` (no live display shown), and `restart` is auto-SIGKILL, not hand Ctrl-C. So display + attach-answer + Ctrl-C stay a direct TTY `coordinate.mjs` run on a fixture scratch. |
 | 2026-09-20 | 📌 | Parallel skills live only in the repo's `skills/`, not `~/.claude/skills` (account is pre-T07 stale). The harness's `installFixture` carries current skills into each scratch repo's `.claude/skills/`, so workers read the current contract with no account change (fixtures.mjs). This is why T09 reuses the harness. |
