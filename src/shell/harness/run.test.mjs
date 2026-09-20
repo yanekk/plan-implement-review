@@ -19,6 +19,7 @@ import {
   controlDirFor,
   touchHalt,
   runOutcome,
+  reachedExpectedTerminal,
   teardownScenario,
   runScenario,
   captureFinalFiles,
@@ -138,6 +139,22 @@ test('runOutcome reports completed once the process exits with no halt-close in 
 
 test('runOutcome reports halted when the exited process left a halt-close line', () => {
   assert.deepEqual(runOutcome({ flowText: '2026-01-01T00:00:00Z halt-close T01\n', exited: true }), { over: true, reason: 'halted' });
+});
+
+// --- reachedExpectedTerminal (T11: a `parked` fixture's timed-out park is its correct end, not a FAIL) --
+
+test('reachedExpectedTerminal: completed passes only when the run did not time out', () => {
+  assert.equal(reachedExpectedTerminal({ expectedTerminal: 'completed', timedOut: false }), true);
+  assert.equal(reachedExpectedTerminal({ expectedTerminal: 'completed', timedOut: true }), false);
+  // Default terminal is completed, so the blanket timeout guard is unchanged for every non-declaring fixture.
+  assert.equal(reachedExpectedTerminal({ timedOut: false }), true);
+  assert.equal(reachedExpectedTerminal({ timedOut: true }), false);
+});
+
+test('reachedExpectedTerminal: parked passes exactly when the run timed out (the park never resolved)', () => {
+  assert.equal(reachedExpectedTerminal({ expectedTerminal: 'parked', timedOut: true }), true);
+  // A `parked` run that somehow ended without the wall-clock firing did NOT hold its park — not the terminal.
+  assert.equal(reachedExpectedTerminal({ expectedTerminal: 'parked', timedOut: false }), false);
 });
 
 // --- captureFinalFiles reads the feature branch (DESIGN §2.4: the run hands off, never merges to main)
@@ -304,6 +321,162 @@ test('runScenario auto-touches HALT on the wall-clock timeout and reports timeou
     // The exit path SIGTERMs the coordinator process and sweeps the still-live worker — no orphan.
     assert.deepEqual(spawn.children[0].kills, ['SIGTERM'], 'the coordinator process was SIGTERMed on exit');
     assert.ok(platform.closed.includes('w1'), 'the live worker was closed on exit');
+  } finally {
+    ws.cleanup();
+  }
+});
+
+// --- the kill-switch drill: HALT is touched mid-run, after the first spawn (T11, DESIGN §4.1) -----
+//
+// The `parallel` fixture declares `killSwitchDrill: true`. The fake coordinator reacts to HALT exactly as
+// the real one does — it writes `halt-close` ONLY once it sees the flag — so scoring the run `halted`
+// proves runScenario touched HALT mid-run (before any timeout; the 10-min wall-clock is never reached).
+
+test('runScenario fires the kill-switch drill: after the first spawn it touches HALT, and the run is scored on halt-close', async () => {
+  const ws = workspace();
+  try {
+    const into = join(ws.dir, 'scratch-repo');
+    const projects = join(ws.dir, 'projects');
+    mkdirSync(projects, { recursive: true });
+    const control = controlDirFor(into, 'parallel');
+    const flowPath = join(control, 'log');
+
+    const worker = { id: 'w1', sessionId: 's1', name: 'scratch-repo / parallel / T01 / work / implement', cwd: into, status: 'busy', state: 'working', pid: 1 };
+    const spawn = fakeSpawner();
+    let polls = 0;
+    const claudeRun = (args) => {
+      if (args.includes('--all')) return { ok: true, stdout: '[]' };
+      if (args[0] === 'agents') {
+        polls += 1;
+        if (polls === 1) return { ok: true, stdout: JSON.stringify([worker]) }; // first spawn is up
+        // The coordinator reacts to HALT like the real one: it only writes halt-close if it saw the flag.
+        // So halt-close (→ reason 'halted') can only appear if the drill touched HALT mid-run.
+        if (existsSync(join(control, 'HALT'))) {
+          writeFileSync(flowPath, '2026-01-01T00:00:00Z spawn T01\n2026-01-01T00:01:00Z halt-close T01\n');
+        }
+        spawn.children[0].exit(0);
+        return { ok: true, stdout: '[]' };
+      }
+      return { ok: true, stdout: '' };
+    };
+
+    const result = await runScenario({
+      fixtureId: 'parallel',
+      scratchDir: into,
+      install: installFake({ into, controlLog: '2026-01-01T00:00:00Z spawn T01\n', slug: 'parallel' }),
+      spawn,
+      claudeRun,
+      gitRun: () => ({ ok: true, stdout: '' }),
+      platform: fakePlatform({ agents: [] }),
+      worktree: fakeWorktree,
+      projectsDir: projects,
+      pollMs: 1,
+    });
+
+    assert.ok(existsSync(join(control, 'HALT')), 'the drill touched HALT');
+    // Scored on the halt-close the drill provoked — not the 10-min timeout (never reached), so not a runaway.
+    assert.equal(result.reason, 'halted', 'the kill switch fired mid-run and the run was scored on halt-close');
+  } finally {
+    ws.cleanup();
+  }
+});
+
+test('a fixture with no drill flag is not touched mid-run — the timeout guard is the only HALT path', async () => {
+  const ws = workspace();
+  try {
+    const into = join(ws.dir, 'scratch-repo');
+    const projects = join(ws.dir, 'projects');
+    mkdirSync(projects, { recursive: true });
+    const control = controlDirFor(into, 'single');
+    const flowPath = join(control, 'log');
+
+    const worker = { id: 'w1', sessionId: 's1', name: 'scratch-repo / single / T01 / work / implement', cwd: into, status: 'busy', state: 'working', pid: 1 };
+    const spawn = fakeSpawner();
+    let polls = 0;
+    // The same HALT-reacting coordinator. `single` declares no drill, so HALT is never touched mid-run,
+    // so no halt-close is ever written and the run hands off `completed`.
+    const claudeRun = (args) => {
+      if (args.includes('--all')) return { ok: true, stdout: '[]' };
+      if (args[0] === 'agents') {
+        polls += 1;
+        if (polls === 1) return { ok: true, stdout: JSON.stringify([worker]) };
+        if (existsSync(join(control, 'HALT'))) {
+          writeFileSync(flowPath, '2026-01-01T00:00:00Z spawn T01\n2026-01-01T00:01:00Z halt-close T01\n');
+        }
+        spawn.children[0].exit(0);
+        return { ok: true, stdout: '[]' };
+      }
+      return { ok: true, stdout: '' };
+    };
+
+    const result = await runScenario({
+      fixtureId: 'single',
+      scratchDir: into,
+      install: installFake({ into, controlLog: '2026-01-01T00:00:00Z spawn T01\n', slug: 'single' }),
+      spawn,
+      claudeRun,
+      gitRun: () => ({ ok: true, stdout: '' }),
+      platform: fakePlatform({ agents: [] }),
+      worktree: fakeWorktree,
+      projectsDir: projects,
+      pollMs: 1,
+    });
+
+    assert.equal(result.reason, 'completed', 'no drill → HALT untouched mid-run → no halt-close → a clean hand-off');
+  } finally {
+    ws.cleanup();
+  }
+});
+
+// --- the `parked` terminal: a designed park times out, yet passes on its facts (T11) --------------
+//
+// The `human-decision` fixture declares `expectedTerminal: 'parked'`. Its worker parks forever (§2.2 routes
+// nothing down), so the coordinator never exits and the wall-clock must HALT it. The fact
+// parkedWorkerHoldsSlot passes; the old `ok = pass && !timedOut` would still FAIL it. The declared terminal
+// is what lets a timed-out park score ok:true.
+
+test('runScenario: a parked fixture whose facts pass and which times out scores ok:true', async () => {
+  const ws = workspace();
+  try {
+    const into = join(ws.dir, 'scratch-repo');
+    const projects = join(ws.dir, 'projects');
+    mkdirSync(projects, { recursive: true });
+
+    // The parked worker of T01 stays live every poll; the coordinator process never exits (the park never
+    // resolves), so only the wall-clock timeout can end the run.
+    const spawn = fakeSpawner();
+    const parked = { id: 'w1', sessionId: 's1', name: 'scratch-repo / human-decision / T01 / work / implement', cwd: into, status: 'busy', state: 'working', pid: 1 };
+    const claudeRun = (args) => {
+      if (args.includes('--all')) return { ok: true, stdout: '[]' };
+      if (args[0] === 'agents') return { ok: true, stdout: JSON.stringify([parked]) };
+      return { ok: true, stdout: '' };
+    };
+    // The flow the coordinator would have written: T01 surfaced a question and parked; the independent T02
+    // merged past it. Early timestamps so the live capture ticks (real `now`) sort at/after the surface.
+    const controlLog = '2026-01-01T00:00:00Z surface T01\n2026-01-01T00:00:30Z merge T02\n';
+
+    const result = await runScenario({
+      fixtureId: 'human-decision',
+      scratchDir: into,
+      install: installFake({ into, controlLog, slug: 'human-decision' }),
+      spawn,
+      claudeRun,
+      gitRun: () => ({ ok: true, stdout: '' }),
+      platform: fakePlatform({ agents: [parked] }),
+      worktree: fakeWorktree,
+      projectsDir: projects,
+      pollMs: 2,
+      timeoutMs: 5, // fire the wall-clock cap almost immediately — the park cannot resolve
+      haltGrace: 2,
+    });
+
+    // The one fact (parkedWorkerHoldsSlot T01) passed on the captured park, and the declared `parked`
+    // terminal turns the (correct, designed) timeout into a PASS rather than the blanket timeout-FAIL.
+    assert.equal(result.report.facts.length, 1);
+    assert.equal(result.report.facts[0].id, 'parked-worker-holds-slot:T01');
+    assert.equal(result.report.facts[0].pass, true, 'the park fact passed');
+    assert.equal(result.ok, true, 'a passing park that timed out is a PASS under the parked terminal');
+    assert.equal(result.reason, 'parked', 'the report labels the terminal a park, not a bare timeout');
   } finally {
     ws.cleanup();
   }

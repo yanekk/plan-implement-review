@@ -18,12 +18,24 @@ export const DEFAULT_SEATBELTS = Object.freeze({
   killSwitch: true, // the HALT control flag is always available
 });
 
+// The terminals a scenario may declare as its correct end (T11). `completed` — the default — is a clean
+// hand-off; a run that hit the wall-clock timeout instead is a runaway and fails. `parked` is for a
+// fixture whose designed correct end is a worker parking on the person and never being answered (the
+// non-agentic model routes nothing down, §2.2): the park never resolves, so the wall-clock MUST fire and
+// HALT it — that is success, carried by the fixture's own facts, not a timeout-failure. run.mjs reads this.
+const EXPECTED_TERMINALS = Object.freeze(['completed', 'parked']);
+
 // defineScenario(spec) → a normalized, validated scenario spec. Throws on the mistakes that would make
 // a scenario meaningless: no id, no fixture, or no facts (a scenario that asserts nothing proves
 // nothing). facts are Fact objects from assertions.mjs — each `{ id, label, check }`; this module does
 // not run them, so it only checks they are shaped like a fact (a callable `check`).
+//
+// Two declarative drill flags the T17 runner reads (T11), kept here so a scenario stays a pure data
+// declaration of how it is driven and judged: `killSwitchDrill` — touch HALT once mid-run (after the
+// first spawn) so the kill switch is actually exercised on a fast run that would otherwise hand off
+// before it fired; `expectedTerminal` — the run's correct end (see EXPECTED_TERMINALS).
 export function defineScenario(spec = {}) {
-  const { id, title, fixture, seatbelts = {}, facts = [] } = spec;
+  const { id, title, fixture, seatbelts = {}, facts = [], killSwitchDrill = false, expectedTerminal = 'completed' } = spec;
 
   if (!id || typeof id !== 'string') {
     throw new Error('defineScenario: a scenario needs a string id');
@@ -39,6 +51,9 @@ export function defineScenario(spec = {}) {
       throw new Error(`defineScenario(${id}): every fact must be a { id, label, check } from assertions.mjs`);
     }
   }
+  if (!EXPECTED_TERMINALS.includes(expectedTerminal)) {
+    throw new Error(`defineScenario(${id}): expectedTerminal must be one of ${EXPECTED_TERMINALS.join(', ')}`);
+  }
 
   return {
     id,
@@ -47,5 +62,7 @@ export function defineScenario(spec = {}) {
     // Explicit override wins per field; the rest fall back to the low defaults.
     seatbelts: { ...DEFAULT_SEATBELTS, ...seatbelts },
     facts,
+    killSwitchDrill: !!killSwitchDrill,
+    expectedTerminal,
   };
 }

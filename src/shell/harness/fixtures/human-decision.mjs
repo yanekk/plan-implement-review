@@ -69,6 +69,10 @@ const scenario = defineScenario({
   // costs only its own task, which a ceiling of 1 could not show (the parked T01 would block T02's slot).
   seatbelts: { ceiling: 2 },
   facts: [parkedWorkerHoldsSlot('T01')],
+  // The designed correct end is a park that never resolves (§2.2 routes nothing down), so the wall-clock
+  // MUST fire to HALT it (T11). Declaring the terminal `parked` stops the runner scoring that timeout a
+  // blanket FAIL — the pass is carried by parkedWorkerHoldsSlot, not by a clean hand-off.
+  expectedTerminal: 'parked',
 });
 
 export default {

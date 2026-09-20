@@ -57,6 +57,10 @@ const scenario = defineScenario({
   fixture: slug,
   seatbelts: { ceiling: 2 },
   facts: [noHelloEver(), ceilingHeld(2), killSwitchStoppedAll()],
+  // Drive the kill switch (T11): the runner touches HALT once, mid-run, the moment the first worker
+  // spawns, so the live coordinator writes `halt-close` while still dispatching — killSwitchStoppedAll
+  // asserts against it. Without this a fast run hands off before the switch ever fires (§4.1).
+  killSwitchDrill: true,
 });
 
 export default {

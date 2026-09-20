@@ -115,13 +115,34 @@ export function touchHalt(controlDir, { fs = { mkdirSync, writeFileSync } } = {}
 // Pure, so it is tested against canned flow text and an exit flag.
 export function runOutcome({ flowText = '', exited = false } = {}) {
   if (!exited) return { over: false, reason: 'active' };
-  const hasHaltClose = String(flowText)
+  return { over: true, reason: flowHasTag(flowText, 'halt-close') ? 'halted' : 'completed' };
+}
+
+// flowHasTag(flowText, tag) → does the flow log carry a line whose action type is `tag`? A flow line is
+// `${ISO} ${type} ${rest}` (loop.mjs record), so strip the timestamp and read the first word of the body.
+// Used to spot `halt-close` (the kill switch fired) and the first `spawn` (workers are up — the moment the
+// kill-switch drill fires HALT, T11). Pure, so both callers are unit-tested against canned flow text.
+function flowHasTag(flowText, tag) {
+  return String(flowText)
     .split('\n')
     .some((l) => {
       const body = l.slice(l.indexOf(' ') + 1);
-      return body === 'halt-close' || body.startsWith('halt-close ');
+      return body === tag || body.startsWith(`${tag} `);
     });
-  return { over: true, reason: hasHaltClose ? 'halted' : 'completed' };
+}
+
+// reachedExpectedTerminal({ expectedTerminal, reason, timedOut }) → did the run end where the scenario
+// said it should (T11)? Pure, so the ok-scoring is checkable without a live run (DESIGN §3.1).
+//   'completed' (default) — a clean hand-off: the run must NOT have hit the wall-clock timeout (a timeout
+//                           is a runaway, never a success — the original `!timedOut` guard, kept).
+//   'parked'              — the designed correct end is a worker parked on the person that never gets an
+//                           answer (§2.2), so the park cannot resolve and the wall-clock MUST fire to HALT
+//                           it: `timedOut` true IS the expected terminal here, not a failure. The fixture's
+//                           own facts (parkedWorkerHoldsSlot) carry the real pass; this only stops the
+//                           blanket timeout-FAIL from rejecting a correct park.
+export function reachedExpectedTerminal({ expectedTerminal = 'completed', timedOut = false } = {}) {
+  if (expectedTerminal === 'parked') return timedOut === true;
+  return timedOut !== true;
 }
 
 // captureFinalFiles({ repoDir, gitRun, files }) → { path: content } read from `git show pir/{slug}:path`
@@ -290,6 +311,8 @@ export async function runScenario({
   const seatbelts = spec.seatbelts ?? {};
   const ceiling = seatbelts.ceiling;
   const timeout = timeoutMs ?? seatbelts.timeoutMs;
+  const killSwitchDrill = !!spec.killSwitchDrill; // touch HALT once mid-run to exercise the kill switch (T11)
+  const expectedTerminal = spec.expectedTerminal ?? 'completed';
 
   // A fresh scratch repo, never the real project (the seatbelt). mkdtemp when the caller gives none.
   const repoDir = scratchDir ?? mkdtempSync(join(tmpdir(), `pir-t17-${fixtureId}-`));
@@ -353,6 +376,7 @@ export async function runScenario({
       child,
       pollMs,
       haltGrace,
+      killSwitchDrill,
       timers,
       isTimedOut: () => timedOut,
       log,
@@ -392,8 +416,11 @@ export async function runScenario({
   // Check the sealed bundle against the scenario's declared facts (T15). loadTranscripts and
   // loadFinalFiles are the assertion layer's loaders (its only I/O); every fact is then pure.
   const report = checkScenario(spec, loadFinalFiles(loadTranscripts(bundle)));
-  const ok = report.pass && !timedOut;
-  return { scenario: spec.id, ok, reason: timedOut ? 'timeout' : reason, bundleDir: bundle?.dir ?? null, report };
+  // The run passes when its facts pass AND it ended where the scenario declared it should (T11): a clean
+  // hand-off by default, or a park→HALT for a `parked` fixture whose designed end is a timed-out park.
+  const ok = report.pass && reachedExpectedTerminal({ expectedTerminal, timedOut });
+  const label = timedOut ? (expectedTerminal === 'parked' ? 'parked' : 'timeout') : reason;
+  return { scenario: spec.id, ok, reason: label, bundleDir: bundle?.dir ?? null, report };
 }
 
 // --- The restart runner (DESIGN §2.6, §4, §5.2, T05) ---------------------------------------------
@@ -436,6 +463,7 @@ export async function runRestartScenario({
     throw new Error(`runRestartScenario: fixture "${fixtureId}" declares no restart.waitFor crash point`);
   }
   const waitFor = restartSpec.waitFor;
+  const expectedTerminal = spec.expectedTerminal ?? 'completed';
   const seatbelts = spec.seatbelts ?? {};
   const ceiling = seatbelts.ceiling;
   const timeout = timeoutMs ?? seatbelts.timeoutMs;
@@ -603,8 +631,9 @@ export async function runRestartScenario({
   }
 
   const report = checkScenario(spec, loadControlFeeds(loadFinalFiles(loadTranscripts(bundle))));
-  const ok = report.pass && !timedOut;
-  return { scenario: spec.id, ok, reason: timedOut ? 'timeout' : reason, bundleDir: bundle?.dir ?? null, report };
+  const ok = report.pass && reachedExpectedTerminal({ expectedTerminal, timedOut });
+  const label = timedOut ? (expectedTerminal === 'parked' ? 'parked' : 'timeout') : reason;
+  return { scenario: spec.id, ok, reason: label, bundleDir: bundle?.dir ?? null, report };
 }
 
 // waitForTarget(...) → { reason }. Polls the injected timers, ticking the capture each poll, until the
@@ -660,16 +689,32 @@ async function waitForTarget({ cap, controlDir, repo, slug, waitFor, worktree, c
 // own stall and exits, so the process exit is the single terminal. The wall-clock timeout is the backstop
 // for a coordinator that hangs without exiting: it auto-touches HALT, and after a bounded haltGrace of
 // further polls with no exit, the run ends 'timeout' and the finally kills the process.
-async function waitForCompletion({ cap, controlDir, child, pollMs, haltGrace = 5, timers, isTimedOut, log = () => {} }) {
+async function waitForCompletion({ cap, controlDir, child, pollMs, haltGrace = 5, killSwitchDrill = false, timers, isTimedOut, log = () => {} }) {
   const flowPath = join(controlDir, 'log');
   let exited = false;
   child.exited.then(() => {
     exited = true;
   });
   let graceAfterTimeout = 0;
+  let drillFired = false;
   for (;;) {
     cap.tick(); // one sampled `agents --json`, recorded into the bundle
     const flowText = existsSync(flowPath) ? safeRead(flowPath) : '';
+
+    // Kill-switch drill (DESIGN §4.1, T11): the moment the first worker is up (a `spawn` in the flow),
+    // touch HALT ONCE so the live coordinator sees it WHILE it is still dispatching and writes `halt-close`.
+    // Without this a fast run (three trivial tasks) hands off before the switch ever fires, and
+    // killSwitchStoppedAll cannot pass live. Fired at most once; the wall-clock timeout→HALT below stays as
+    // the runaway guard for a run with no drill.
+    if (killSwitchDrill && !drillFired && !exited && flowHasTag(flowText, 'spawn')) {
+      try {
+        touchHalt(controlDir);
+        drillFired = true;
+        log('kill-switch drill: first spawn seen — touched HALT mid-run (§4.1)');
+      } catch {
+        /* best-effort; the timeout HALT and the teardown still stop the run */
+      }
+    }
 
     const outcome = runOutcome({ flowText, exited });
     if (outcome.over) return outcome.reason;
