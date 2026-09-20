@@ -18,16 +18,14 @@ file and its worker's agent name.
 removals so every task stays green + cover `capture.mjs`; `install.sh` applies the per-user `autoMode`
 rule). Account in the `plan-review` commit.
 
-**Status:** 2026-09-20: T14 implemented (🔍, awaiting review). On a coordinator-side merge conflict the
-run now composes a pure copy-paste resolution prompt (`buildConflictPrompt`) — names the worker, the
-`git merge`, the files, a blank KEEP choice — carried on the parked worker's decision + the display
-footer, and printed on the normal screen (not the clipped live frame — T15). Reconcile-conflict path
-covered too (no worker → names the branch to check out). 403 green. T09 (capstone) still open: only its
-by-eye display re-check remains, waiting on the person.
+**Status:** 2026-09-20: T14 reviewed ✅ (one fix: a stale "routed down" comment the implementer missed).
+On a coordinator-side merge conflict the run composes a pure copy-paste resolution prompt
+(`buildConflictPrompt`) and scrolls it once on the normal screen. Every code task is now ✅. What remains
+is person-only: T09's by-eye display re-check and T13's attended merge-conflict run. 407 green.
 **Last updated:** 2026-09-20
-**Next `pir-work` will:** REVIEW **T14** (🔍) — it is the only task awaiting review, so it wins the tree.
-After T14 is ✅, T13 (⬜, attended merge-conflict rework) unblocks (deps T05, T10, T11, T14). T09's
-display item is ready for the person's by-eye re-check now that T15 is ✅.
+**Next `pir-work` will:** pick **T09** (⬜, lowest with deps ✅) — its one remaining half is the person's
+by-eye display re-check, unblocked now T15 is ✅. T13 (⬜, attended merge-conflict run) is also ready,
+deps T05/T10/T11/T14 all ✅. Both need the person at a real terminal; neither is a machine assertion.
 
 ## Tasks
 
@@ -50,16 +48,15 @@ read — the parser tolerates and ignores it; T05 finishes the surrounding clean
 | T10 | harness-handoff-facts | auto | T05 | ✅ | Reviewed clean. `handedOffGreenBranch`: zero promotes, no merge to main, ≥1 `merge T{nn}`; regression FAILs on a promote line. 387 green. |
 | T11 | harness-drill-wiring | auto | T05, T10 | ✅ | Reviewed clean, no fix commit. Confirmed `spawn`/`halt-close` are real loop.mjs flow tags and `flowHasTag` cannot false-positive on the surface `text` (never in the flow line). Drill touches HALT once on first `spawn`; `parked` scores a timed-out park PASS; no drill → no mid-run HALT. Restart runner default `completed`, unchanged. No down-channel. 392 green. |
 | T12 | worker-knows-no-coordinator | auto | T07 | ✅ | Reviewed clean, no fix commit. Grep contract holds: only the `non-agentic-coordinator` example name in the three skill dirs; `openingInstruction` string has no `coordinator`. Swept worker files for residual relay language ("reports up to", "will reply") — only the negations remain. openingInstruction test still asserts skill+task+pir-worker. 392 green. Live word-proof is T09. |
-| T15 | display-in-place-render | auto | T03 | ✅ | Reviewed clean, no fix commit. Bounded alt-screen region replaces the wrap-broken cursor-up math; `close()` leaves the alt screen on every exit path incl SIGINT (checked in coordinate.mjs). Tests meaningfully assert home+clear order, clip width, row cap, no-accumulation, idempotent teardown, non-TTY plain, wrap regression. No dep. Model stays pure. By-eye repaint stays T09. 395 green. |
-| T14 | conflict-resolve-prompt | auto | T05 | 🔍 | Implemented. Pure `buildConflictPrompt` (core/conflict.mjs): names worker, `git merge` feature branch, files, KEEP blank, no side baked. Wired 3d + reconcile onto decision/surface + display footer; bin prints the block. Deviations: block on the normal screen, not the clipped live frame (T15); signature adds `taskBranch` + nullable `workerName`. Live paint by-eye is T13. 403 green. |
+| T15 | display-in-place-render | auto | T03 | ✅ | Reviewed clean. Bounded alt-screen region replaces the wrap-broken cursor-up math; `close()` leaves the alt screen on every exit incl SIGINT. By-eye repaint stays T09. 395 green. |
+| T14 | conflict-resolve-prompt | auto | T05 | ✅ | Reviewed. Fixed one stale "routed down" comment the implementer missed (§2.2 down-channel gone) — acceptance crit 3 now met. Probed the reprint risk: a parked worker stays AWAITING, never re-enters `merge` (dispatch.mjs + buildAssignments), so the bulky prompt scrolls exactly once. Reconcile path (no worker) names the branch. 407 green. Live paint by-eye stays T13. |
 | T13 | attended-merge-conflict | you | T05, T10, T11, T14 | ⬜ | Added 2026-09-20 (PM). Rework the stale `merge-conflict` fixture (drops the down-channel `scriptedAnswer` + the `answer`-line fact) into an attended run: coordinator parks the conflict and offers T14's prompt, the person copies it keeping `hello there` and pastes it, the worker resolves, the run completes. Independent of T09. |
 
 A Notes cell holds what was built or what the review found, the test count, and one line per
 deviation from the task doc. A ✅ task's cell may be cut to one line once the next task is reviewed.
 
-**Review queue:** T14 (🔍, coordinator copy-paste conflict prompt) — review it next. After T14 is ✅,
-T13 (⬜, attended merge-conflict rework, depends on T14) is the next code task. T09 closes after the
-person re-checks the display by eye (now unblocked — T15 ✅).
+**Review queue:** empty — every code task is ✅. What is left is person-only: T09's by-eye display
+re-check and T13's attended merge-conflict run. Both need the person at a real terminal.
 
 ## Blocked on the user
 
