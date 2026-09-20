@@ -18,16 +18,15 @@ file and its worker's agent name.
 removals so every task stays green + cover `capture.mjs`; `install.sh` applies the per-user `autoMode`
 rule). Account in the `plan-review` commit.
 
-**Status:** 2026-09-20 (PM watching): all six harness fixtures now PASS over real workers — the four
-earlier ones plus `parallel` (kill switch fires mid-run, ceiling 2 held, nothing promoted) and
-`human-decision` (T01 parks and holds its slot, T02 merges past), the last two after T11 fixed the rig.
-The live `human-decision` run exposed a worker narrating "I'll act on the coordinator's reply" — the
-§2.2 misdirection. PM decided the worker must not know a coordinator exists at all; **T12** does that
-(🔍) and now owes a fresh review.
+**Status:** 2026-09-20 (PM watching): all six harness fixtures PASS over real workers. T12 reviewed
+clean — the worker's world no longer names a coordinator (grep contract holds, 392 green); the live
+re-proof that a parked worker's own words name the person rides on T09. Only T09, the person's
+hands-on capstone, is left.
 **Last updated:** 2026-09-20
-**Next `pir-work` will:** review **T12** (🔍, worker-knows-no-coordinator) — the tree reviews a 🔍 before
-any ⬜. After T12 is ✅, T09 (⬜, capstone) is the person's by-eye run (display/attach/Ctrl-C) plus a
-re-run of `human-decision` to re-prove the worker's own words name the person, recorded in FINDINGS.
+**Next `pir-work` will:** dispatch **T09** (⬜, capstone) — the last task and the only one open. It is
+the person's hands-on run (§5.1): one direct `coordinate.mjs` run for the by-eye display, attach-and-
+answer a parked worker, Ctrl-C then re-run, plus a re-run of `human-decision` to prove the worker's own
+words name the person — all recorded in FINDINGS. Needs the person (see Blocked on the user).
 
 ## Tasks
 
@@ -45,16 +44,16 @@ read — the parser tolerates and ignores it; T05 finishes the surrounding clean
 | T05 | harness-and-restart | auto | T04 | ✅ | Reviewed clean. Foreground-process harness; `coordinatorName`/`verify` gone. Live crash/restart is T09. |
 | T06 | worker-permissions | auto | — | ✅ | Reviewed clean. Ships worker `permissions.allow`; `install.sh` merges it into a target and the `autoMode` rule into `~/.claude/settings.json`. Merge pure in `core/settings.mjs`. `bgIsolation: none` does not travel to targets (FINDINGS). Live classifier proof T09. |
 | T07 | skills | auto | T04 | ✅ | Reviewed clean. Dead skills deleted, survivors de-agented, slug-as-name templates; grep-confirmed no live refs; planner-templates.test parses the on-disk templates. 382 green. |
-| T08 | docs | auto | T05, T07 | ✅ | Reviewed clean, no fix commit. Checked every /docs + CLAUDE.md claim against shipped code: named symbols/files exist, buildDisplay shape + row kinds, full log-tag set, clearTransientFeeds clears reports/ only, report kinds, 5-min timeout, ceiling 4, name format/roles, gpgsign per-call, decideResume table. Forbidden vocab appears only as "now gone". HALT-vs-Ctrl-C deviation logged; docs match code. 382 green. |
+| T08 | docs | auto | T05, T07 | ✅ | Reviewed clean, no fix commit. Every /docs + CLAUDE.md claim checked against shipped code; forbidden vocab only as "now gone"; HALT-vs-Ctrl-C deviation logged. 382 green. |
 | T09 | capstone | you | T06, T08, T10, T11 | ⬜ | Partial. 2026-09-20 live: `single`/`review-queue`/`clean-merge`/`restart` PASS over real workers (bundles in `/tmp/pir-*`, transient); worker `/`-slug names + launch-`/` seen. `parallel`/`human-decision` deferred to T11 (rig bugs, not coordinator). Fixed `pir-worker` parked-question wording here (PM). Still owes the person: by-eye display, attach-answer, Ctrl-C, re-run. |
 | T10 | harness-handoff-facts | auto | T05 | ✅ | Reviewed clean. `handedOffGreenBranch`: zero promotes, no merge to main, ≥1 `merge T{nn}`; regression FAILs on a promote line. 387 green. |
 | T11 | harness-drill-wiring | auto | T05, T10 | ✅ | Reviewed clean, no fix commit. Confirmed `spawn`/`halt-close` are real loop.mjs flow tags and `flowHasTag` cannot false-positive on the surface `text` (never in the flow line). Drill touches HALT once on first `spawn`; `parked` scores a timed-out park PASS; no drill → no mid-run HALT. Restart runner default `completed`, unchanged. No down-channel. 392 green. |
-| T12 | worker-knows-no-coordinator | auto | T07 | 🔍 | Worker no longer knows a coordinator exists: the spawn prompt (`openingInstruction`) plus `pir-worker`/`-implement`/`-review` reframed to "you're given a task; the person answers you." Opened from T09 live (parked worker said "act on the coordinator's reply"). Grep-clean bar in task doc. 392 green. Live re-proof is T09. |
+| T12 | worker-knows-no-coordinator | auto | T07 | ✅ | Reviewed clean, no fix commit. Grep contract holds: only the `non-agentic-coordinator` example name in the three skill dirs; `openingInstruction` string has no `coordinator`. Swept worker files for residual relay language ("reports up to", "will reply") — only the negations remain. openingInstruction test still asserts skill+task+pir-worker. 392 green. Live word-proof is T09. |
 
 A Notes cell holds what was built or what the review found, the test count, and one line per
 deviation from the task doc. A ✅ task's cell may be cut to one line once the next task is reviewed.
 
-**Review queue:** T12 (🔍) — review it next. Then T09 (⬜), the person's hands-on capstone (§5.1).
+**Review queue:** empty. Next is T09 (⬜), the person's hands-on capstone (§5.1).
 
 ## Blocked on the user
 
