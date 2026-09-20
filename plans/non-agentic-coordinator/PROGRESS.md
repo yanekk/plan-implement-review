@@ -25,8 +25,10 @@ test-rig bugs, not coordinator bugs: `parallel`'s kill-switch drill never fires 
 `human-decision`'s correct park is scored a timeout-FAIL. PM opened **T11** to fix both in the harness.
 A worker parked but narrated "waiting for the coordinator" (stale); PM had `pir-worker` tightened here.
 **Last updated:** 2026-09-20
-**Next `pir-work` will:** REVIEW T11 (harness-drill-wiring, 🔍). Then T09 unblocks (its last dep): the
-person re-runs `parallel` and `human-decision` live and does the by-eye display/attach/Ctrl-C half.
+**Next `pir-work` will:** pick up T09 (capstone, ⬜) — its last code dep T11 is now ✅. T09 is a person's
+job (§5.1): the by-eye display/attach/Ctrl-C run, plus a live re-run of `parallel` and `human-decision`
+now that the rig scores them. The session records the machine PASS reports and the person's judgement in
+FINDINGS and marks T09 ✅.
 
 ## Tasks
 
@@ -46,14 +48,13 @@ read — the parser tolerates and ignores it; T05 finishes the surrounding clean
 | T07 | skills | auto | T04 | ✅ | Reviewed clean. Dead skills deleted, survivors de-agented, slug-as-name templates; grep-confirmed no live refs; planner-templates.test parses the on-disk templates. 382 green. |
 | T08 | docs | auto | T05, T07 | ✅ | Reviewed clean, no fix commit. Checked every /docs + CLAUDE.md claim against shipped code: named symbols/files exist, buildDisplay shape + row kinds, full log-tag set, clearTransientFeeds clears reports/ only, report kinds, 5-min timeout, ceiling 4, name format/roles, gpgsign per-call, decideResume table. Forbidden vocab appears only as "now gone". HALT-vs-Ctrl-C deviation logged; docs match code. 382 green. |
 | T09 | capstone | you | T06, T08, T10, T11 | ⬜ | Partial. 2026-09-20 live: `single`/`review-queue`/`clean-merge`/`restart` PASS over real workers (bundles in `/tmp/pir-*`, transient); worker `/`-slug names + launch-`/` seen. `parallel`/`human-decision` deferred to T11 (rig bugs, not coordinator). Fixed `pir-worker` parked-question wording here (PM). Still owes the person: by-eye display, attach-answer, Ctrl-C, re-run. |
-| T10 | harness-handoff-facts | auto | T05 | ✅ | Reviewed clean. `handedOffGreenBranch` inverts the fact: zero promotes, no merge into main, ≥1 `merge T{nn}`. Regression FAILs on a promote line. 387 green. |
-| T11 | harness-drill-wiring | auto | T05, T10 | 🔍 | Implemented, awaiting review. `defineScenario` now threads `killSwitchDrill`/`expectedTerminal`; `run.mjs` touches HALT once after the first spawn (parallel) and scores a `parked` timeout PASS via pure `reachedExpectedTerminal`. No down-channel. Flags chosen on the scenario spec not fixture top-level; drill lives in `waitForCompletion`; helper also on the restart runner (default `completed`). 392 green (+5). |
+| T10 | harness-handoff-facts | auto | T05 | ✅ | Reviewed clean. `handedOffGreenBranch`: zero promotes, no merge to main, ≥1 `merge T{nn}`; regression FAILs on a promote line. 387 green. |
+| T11 | harness-drill-wiring | auto | T05, T10 | ✅ | Reviewed clean, no fix commit. Confirmed `spawn`/`halt-close` are real loop.mjs flow tags and `flowHasTag` cannot false-positive on the surface `text` (never in the flow line). Drill touches HALT once on first `spawn`; `parked` scores a timed-out park PASS; no drill → no mid-run HALT. Restart runner default `completed`, unchanged. No down-channel. 392 green. |
 
 A Notes cell holds what was built or what the review found, the test count, and one line per
 deviation from the task doc. A ✅ task's cell may be cut to one line once the next task is reviewed.
 
-**Review queue:** T11 (🔍) — implemented this session, awaiting a fresh-eyes review. T09 is not picked:
-it depends on T11 (not yet ✅) and on the person.
+**Review queue:** empty. Every ✅ except T09, which is ⬜ and is a person's hands-on capstone (§5.1).
 
 ## Blocked on the user
 
