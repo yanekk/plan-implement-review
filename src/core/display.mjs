@@ -34,11 +34,17 @@ const PHASE_LABEL = {
 // runState (a pass's output, assembled by the shell):
 //   { branch, ceiling, complete?, readyToMerge?, interrupted?, tasks: [task…] }
 //   task: { id, slug, deps:[id…], done:bool, phase:null|'building'|'reviewing'|'merging'|'asking',
-//           since:ms|null, doneMs:ms|null, question:string|null }
+//           since:ms|null, doneMs:ms|null, question:string|null, prompt:string|null }
 //     phase   — set when a live worker holds the task; null when no worker does.
 //     since   — when the current phase began, for the elapsed clock (now − since).
 //     doneMs  — the final duration to show on a ✅ row, or null if the run never timed it.
 //     question— the parked worker's rendered question, shown on the asking row's footer.
+//     prompt  — the copy-paste resolution prompt for a merge conflict the run hit at its own merge
+//               (buildConflictPrompt, T14). Carried on the asking footer as DATA when present. The live
+//               renderer keeps its frame compact and does NOT paint this multi-line block (it would clip
+//               to useless and re-open the T15 wrap bug); the shell prints it once on the normal screen
+//               (coordinate.mjs). It rides in the model so the vocabulary stays testable without a
+//               terminal, and null for an ordinary question (only a coordinator-side conflict has one).
 //
 // opts.now is the current time in ms (the clock, injected — never read here, §3.1). opts.spinnerFrame
 // is accepted for signature symmetry with the renderer but not used by the model: the spinner glyph is
@@ -112,7 +118,11 @@ function footerFor({ tasks, complete, readyToMerge, interrupted, branch }) {
 
   const asking = tasks.find((t) => !t.done && t.phase === 'asking');
   if (asking) {
-    return { kind: 'asking', task: asking.id, slug: asking.slug, question: asking.question ?? '' };
+    const f = { kind: 'asking', task: asking.id, slug: asking.slug, question: asking.question ?? '' };
+    // A merge conflict the run hit at its own merge carries a copy-paste resolution prompt (T14); an
+    // ordinary question does not. Added only when present so the plain-question footer shape is unchanged.
+    if (asking.prompt) f.prompt = asking.prompt;
+    return f;
   }
 
   if (complete) {

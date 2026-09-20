@@ -147,3 +147,26 @@ test('the asking footer names the first parked worker when several are asking at
   assert.equal(footer.kind, 'asking');
   assert.equal(footer.task, 'T02', 'the first asking worker is the one the footer names; the person correlates the rest');
 });
+
+// --- footer: a coordinator-side merge conflict carries the copy-paste resolution prompt (T14) --------
+
+test('an asking task that hit a merge conflict carries its copy-paste prompt on the footer; a plain question does not (T14, §2.8)', () => {
+  // A conflict is modelled as an asking task with a `prompt` (buildConflictPrompt's output, carried by
+  // the shell from the parked worker's decision). The model carries it as DATA so the vocabulary is
+  // testable without a terminal; the live renderer keeps its frame compact and the shell prints the block
+  // on the normal screen (T15, §2.3).
+  const PROMPT = 'Merge conflict on T05 ask-one …\n  git merge pir/demo\n  KEEP: ____';
+  const conflicted = buildDisplay(
+    { branch: 'pir/demo', ceiling: 4, tasks: [task({ id: 'T05', slug: 'ask-one', phase: 'asking', since: NOW, question: 'merge conflict in greeting.txt', prompt: PROMPT })] },
+    { now: NOW },
+  ).footer;
+  assert.equal(conflicted.kind, 'asking');
+  assert.equal(conflicted.prompt, PROMPT, 'the conflicted footer carries the ready-to-paste prompt block');
+
+  // A plain question (no prompt) keeps the unchanged footer shape — no `prompt` key at all.
+  const plain = buildDisplay(
+    { branch: 'pir/demo', ceiling: 4, tasks: [task({ id: 'T05', slug: 'ask-one', phase: 'asking', since: NOW, question: 'which format?' })] },
+    { now: NOW },
+  ).footer;
+  assert.deepEqual(plain, { kind: 'asking', task: 'T05', slug: 'ask-one', question: 'which format?' }, 'a plain question footer is unchanged — no prompt key');
+});

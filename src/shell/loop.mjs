@@ -19,6 +19,7 @@ import { parseProgress, reconcileTaskRow, progressPathFor } from '../core/progre
 import { decideDispatch } from '../core/dispatch.mjs';
 import { decideResume } from '../core/resume.mjs';
 import { workerName, isWorkerOf, parseAgentName } from '../core/naming.mjs';
+import { buildConflictPrompt } from '../core/conflict.mjs';
 
 // The phases the loop tracks per task from a worker's own messages plus the lifecycle step it
 // drives (DESIGN §2.8: the name carries identity, the lifecycle carries phase). Only three of these
@@ -199,7 +200,18 @@ function reconcile({ platform, worktree, repo, slug, maxWorkers, state, featureP
     if (!handle) continue; // branch vanished under us; nothing to fold in.
     const res = worktree.mergeTask(handle.branch);
     if (res.conflict) {
-      record('surface', { task: num, kind: 'conflict', text: `merge conflict in ${res.files?.join(', ') || 'the feature branch'}` });
+      // No live worker to attach to — the crashed run's session died with it (DESIGN §2.6) — so the
+      // prompt names the branch for the person to check out and land by hand (T14, buildConflictPrompt).
+      const text = `merge conflict in ${res.files?.join(', ') || 'the feature branch'}`;
+      const prompt = buildConflictPrompt({
+        task: num,
+        slug: slugByNum.get(num),
+        workerName: null,
+        taskBranch: handle.branch,
+        featureBranch: state.feature.branch,
+        files: res.files,
+      });
+      record('surface', { task: num, kind: 'conflict', text, prompt });
       const blocked = reconcileTaskRow(readFileSync(featureProgressPath, 'utf8'), { num, state: '⛔', notes: '' });
       writeFileSync(featureProgressPath, blocked);
       worktree.commitFeature(`reconcile ${num} → ⛔ (merge conflict, needs a hand)`);
@@ -514,11 +526,25 @@ export function runPass({ platform, worktree, repo, slug, maxWorkers, state, con
     const res = worktree.mergeTask(t.worktree.branch);
     if (res.conflict) {
       // Keep the worker alive and parked — do NOT close it, remove its worktree, or delete its task.
-      // It waits for the user's decision (routed down by answer()), resolves on its own branch, and
-      // re-signals done, at which point this same merge step runs again and lands cleanly (§2.5, T28).
+      // There is no down-channel and no answer() any more (DESIGN §2.2, T03): the PERSON drives the
+      // resolution. The run parks the worker and hands the person a ready-to-paste resolution prompt
+      // (buildConflictPrompt, T14) naming this worker, the branch to merge in, and the conflicting files
+      // — with the keep-which-side choice left blank. The person attaches to this same worker, resolves
+      // on its branch and re-signals done, at which point this merge step runs again and lands cleanly
+      // (§2.5, §2.8, T28). The run routes nothing down.
+      const text = `merge conflict in ${res.files?.join(', ') || 'the feature branch'}`;
+      const name = workerName({ repo, plan: slug, task: num, slug: t.slug, role: t.role });
+      const prompt = buildConflictPrompt({
+        task: num,
+        slug: t.slug,
+        workerName: name,
+        taskBranch: t.worktree.branch,
+        featureBranch: state.feature.branch,
+        files: res.files,
+      });
       t.phase = AWAITING;
-      t.decision = { kind: 'conflict', text: `merge conflict in ${res.files?.join(', ') || 'the feature branch'}` };
-      record('surface', { task: num, kind: 'conflict', text: t.decision.text });
+      t.decision = { kind: 'conflict', text, prompt };
+      record('surface', { task: num, kind: 'conflict', text, prompt });
       continue;
     }
     // The row folds back as ✅ (the task has been implemented and reviewed).

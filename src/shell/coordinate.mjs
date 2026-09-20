@@ -73,6 +73,7 @@ function renderSurface(a) {
     case 'conflict':
       message = `${who} hit a merge conflict it could not resolve on its own: ${a.text}. It is waiting for you.`;
       break;
+    // (a.prompt, when the surface is a coordinator-side conflict, rides through below — T14.)
     case 'red-feature':
       message =
         'Every task is built, but the tests fail on the assembled feature branch, so it is NOT ready to ' +
@@ -81,7 +82,10 @@ function renderSurface(a) {
     default:
       message = `${who}: ${a.text ?? a.kind}`;
   }
-  return { task: a.task ?? null, kind: a.kind, text: a.text ?? '', message };
+  // prompt is the copy-paste conflict-resolution block (T14, buildConflictPrompt), present only on a
+  // coordinator-side merge conflict; null otherwise. The live bin prints it once on the normal screen so
+  // the person can select and copy it (the compact live frame does not carry it — T15, §2.3).
+  return { task: a.task ?? null, kind: a.kind, text: a.text ?? '', prompt: a.prompt ?? null, message };
 }
 
 // The ready-but-unstarted tasks whose dependencies are all ✅ and which no worker holds — the tasks
@@ -631,6 +635,9 @@ export function buildRunState({
       since: phase ? sinceByTask[t.num] ?? null : null,
       doneMs: done ? doneMsByTask[t.num] ?? null : null,
       question: phase === 'asking' ? st.decision?.text ?? null : null,
+      // A coordinator-side merge conflict carries a copy-paste resolution prompt (T14); an ordinary
+      // question does not, so this is null for a plain ask.
+      prompt: phase === 'asking' ? st.decision?.prompt ?? null : null,
     };
   });
   return { branch, ceiling, complete, readyToMerge: !!readyToMerge, interrupted: !!interrupted, tasks };
@@ -801,6 +808,15 @@ async function main(argv) {
       // A restart's one-line reconciliation summary scrolls above the live block, so the run does not
       // look like a fresh start (DESIGN §2.8). Only ever set on the first pass of a run that adopted work.
       if (r.restartSummary) renderer.line(`  ↻ ${r.restartSummary}`);
+
+      // A coordinator-side merge conflict scrolls its copy-paste resolution prompt above the live block
+      // (T14, §2.8). The block is bulky and must be selectable to copy, so it lands on the NORMAL screen
+      // via line() — never inside the compact, clipped live frame, which would truncate it to useless and
+      // re-open the T15 wrap bug. A conflict is surfaced exactly once, on the pass it happens, so each
+      // prompt prints exactly once; the compact live footer keeps naming the parked worker to attach to.
+      for (const s of r.surfaces) {
+        if (s.kind === 'conflict' && s.prompt) renderer.line(`\n${s.prompt}`);
+      }
 
       if (r.halted) {
         renderer.close(); // leave the alt screen so the notice lands on the normal screen (T15)

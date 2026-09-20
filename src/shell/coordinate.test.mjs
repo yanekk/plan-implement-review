@@ -235,6 +235,11 @@ test('a merge conflict a worker cannot resolve surfaces as a decision, and defer
   const conflict = r2.surfaces.find((s) => s.kind === 'conflict' && s.task === 'T01');
   assert.ok(conflict, 'the conflict surfaced as a decision for the user');
   assert.match(conflict.message, /merge conflict/i);
+  // This is a WORKER-raised integrate conflict (§2.8 first bullet): the worker holds the context and
+  // escalates a decision, so it carries no copy-paste prompt. The copy-paste resolution prompt (T14) is
+  // only for the COORDINATOR's own merge conflict (loop.mjs 3d / reconcile), where the worker finished
+  // clean and has no idea a clash happened. renderSurface passes the field through either way.
+  assert.equal(conflict.prompt, null, 'a worker-raised conflict carries no coordinator prompt (T14 is the coordinator-hit path)');
 
   const workerId = coordinator.state.tasks.T01.workerId;
   coordinator.defer({ task: 'T01' });
@@ -540,11 +545,12 @@ test('buildRunState assembles the display model input from a pass result and the
   assert.equal(rs.branch, 'pir/demo');
   assert.equal(rs.ceiling, 4);
   const by = Object.fromEntries(rs.tasks.map((t) => [t.id, t]));
-  assert.deepEqual(by.T01, { id: 'T01', slug: 'done-one', deps: [], done: true, phase: null, since: null, doneMs: 6400, question: null });
+  assert.deepEqual(by.T01, { id: 'T01', slug: 'done-one', deps: [], done: true, phase: null, since: null, doneMs: 6400, question: null, prompt: null });
   assert.equal(by.T02.phase, 'building');
   assert.equal(by.T02.since, 100);
   assert.equal(by.T03.phase, 'asking');
   assert.equal(by.T03.question, 'which layout?');
+  assert.equal(by.T03.prompt, null, 'a plain question carries no copy-paste prompt (only a conflict does — T14)');
   // T04 has no worker and its dep is not ✅: the pure model will read it as waiting; buildRunState just
   // reports no phase and passes the deps through.
   assert.equal(by.T04.phase, null);

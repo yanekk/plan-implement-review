@@ -248,6 +248,15 @@ test('a coordinator-hit merge conflict keeps the worker alive; its decision is d
 
   // Deliver the user's decision to the SAME, still-alive parked worker (addressed by its current role).
   const name = wname(parkedTask, parked.role);
+  // The conflict surface carries a ready-to-paste resolution prompt (T14) naming that same worker, the
+  // feature branch to merge in and the conflicting file, with the keep-which-side choice left blank. It
+  // is also on the parked task's decision so the display can show who is asking.
+  assert.ok(conflict.prompt, 'the conflict surface carries a copy-paste resolution prompt (T14)');
+  assert.ok(conflict.prompt.includes(name), 'the prompt names the worker to attach to (§2.9)');
+  assert.match(conflict.prompt, new RegExp(`git merge pir/${SLUG}\\b`), 'the prompt names the feature branch to merge in');
+  assert.ok(conflict.prompt.includes('greeting.txt'), 'the prompt lists the conflicting file');
+  assert.match(conflict.prompt, /KEEP:\s+_+/, 'the prompt leaves the keep-which-side choice blank');
+  assert.equal(state.tasks[parkedTask].decision.prompt, conflict.prompt, 'the same prompt rides on the parked task for the display');
   platform.send(name, { kind: 'answer', task: parkedTask, text: 'keep hello there' });
 
   // Second drain: the worker resolves on its branch, re-signals done, the loop merges the clean branch

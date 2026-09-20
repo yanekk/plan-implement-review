@@ -54,10 +54,19 @@ There are two places a conflict can arise:
 - **At the coordinator's own merge.** A worker's integrate was clean when it signalled done, but
   another task changed the same lines before the command merged this one, so `mergeTask` conflicts.
   The command **keeps that worker alive and parked** — it does not close it, remove its worktree,
-  delete its task, or respawn it. It surfaces the conflict in the display; the person attaches to
-  that same worker and resolves it, the worker re-signals done, and only then does the command merge
-  the now-clean branch. The merge and the worker's close are paired — a worker is closed only after
-  its branch has actually merged — so a conflict can never destroy the worker that must resolve it.
+  delete its task, or respawn it. Because that worker finished clean and has no idea a clash happened,
+  the command **composes a ready-to-paste resolution prompt** and prints it: which worker to attach
+  to, the `git merge` that folds the feature branch into the task branch, the conflicting files, and
+  the finish steps (commit, `npm test`, re-signal done). It leaves the keep-which-side choice a marked
+  blank, because that judgement is the person's — it is exactly what made the conflict stop for a
+  person. The command **sends nothing**: the person copies the prompt, attaches to that same worker,
+  fills in which side to keep, and pastes it. The worker resolves on its branch and re-signals done,
+  and only then does the command merge the now-clean branch. The merge and the worker's close are
+  paired — a worker is closed only after its branch has actually merged — so a conflict can never
+  destroy the worker that must resolve it. The prompt is bulky and must be selectable to copy, so it
+  prints on the normal screen above the live display; the in-place frame itself stays a compact line
+  naming the parked worker. (On a restart, a finished branch can clash with no live worker to attach
+  to; the prompt then names the task branch to check out and land by hand.)
 
 The command never merges a dirty branch into the feature branch. At the end it runs the tests on the
 feature branch first and, if they fail, prints the failure and does not offer the `git merge`

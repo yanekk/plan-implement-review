@@ -206,9 +206,19 @@ between passes is not a test of the new design, it is a way to corrupt a run.
   and a hung worker look alike to it (§2.2, measured), and the person is already watching the
   `claude agents` view and the live display. Chosen over an activity-timeout that would risk killing
   a worker doing slow-but-real work.
-- **A merge conflict at the coordinator's own merge.** Unchanged from today: the worker is kept
-  alive and parked, the person resolves it by attaching to that worker (now directly, §2.2), and the
-  branch merges only once clean. The merge and the worker's close stay paired.
+- **A merge conflict at the coordinator's own merge.** The worker is kept alive and parked, the
+  person resolves it by attaching to that worker (directly, §2.2), and the branch merges only once
+  clean. The merge and the worker's close stay paired. The worker that built the losing branch has no
+  idea a conflict happened — it integrated cleanly, signalled done and went idle; the clash is on the
+  coordinator's side — so the run composes a ready-to-paste resolution prompt (T14, pure
+  `buildConflictPrompt`) and shows it: which worker to attach to, `git merge pir/{slug}` to fold the
+  feature branch into the task branch, the conflicting files, and the finish steps (commit, `npm test`,
+  re-signal done). It leaves the keep-which-side choice a marked blank, because that judgement is the
+  reason the conflict stopped for a person. The run sends nothing — the person copies the prompt and
+  pastes it (§2.2). The prompt is bulky and must be selectable, so the live bin prints it on the normal
+  screen; the compact in-place frame stays a single line naming the parked worker (§2.3, T15). The
+  restart-reconcile conflict (a ✅ branch whose merge clashes on a restart, §2.6) has no live worker, so
+  its prompt names the task branch to check out instead of a worker to attach to.
 - **The feature branch is red at the end.** The command prints the failure and the branch, and does
   not hand off a `git merge` line — it never tells the person a red branch is ready.
 - **Ctrl-C during cleanup.** A second Ctrl-C while teardown is running forces immediate exit; some
