@@ -14,15 +14,15 @@ gets built, and picking out of order is how a task gets built ahead of its depen
 
 **If you were invoked with a task id — `pir-implement T05` — that argument IS the deliberate
 choice, so the guard above does not apply: build that task, do not run `pir-work`, do not
-re-select.** This is how a parallel-mode coordinator dispatches: it has already decided the task
-and phase (its `decideDispatch`), and it names the task rather than letting a worker self-select
+re-select.** This is how a parallel-mode run dispatches: the task and phase are already decided
+(`decideDispatch`), and the task is named for you rather than letting a worker self-select
 (DESIGN §1, §2.1). Your logic below is otherwise unchanged — you implement the named task exactly
 as you would the one `pir-work` would have handed you.
 
 Two base rules bend in this mode, and only in it:
 
-- **The "reached without `pir-work` → stop" guard does not fire.** The coordinator is the
-  deliberate caller; the explicit task is its instruction.
+- **The "reached without `pir-work` → stop" guard does not fire.** The named task IS the
+  deliberate choice; it is your instruction.
 - **`CLAUDE.md § Where sessions run` — "main checkout, main branch, always; stop if you find
   yourself in a worktree" — does NOT bind you.** A parallel-mode worker runs in its own
   task-branch worktree by design (DESIGN §2.9); do not stop on contact with it and do not switch

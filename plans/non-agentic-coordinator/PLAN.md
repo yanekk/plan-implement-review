@@ -1,6 +1,6 @@
 # Implementation plan
 
-11 tasks in 4 phases (T10, T11 added mid-build — see Phase 3). Each has a file in [tasks/](tasks/) with its goal, the files it touches, the
+12 tasks in 4 phases (T10, T11, T12 added mid-build — see Phase 3). Each has a file in [tasks/](tasks/) with its goal, the files it touches, the
 interfaces it defines, and what "done" means. Track state in [PROGRESS.md](PROGRESS.md). Read
 [DESIGN.md](DESIGN.md) first.
 
@@ -72,6 +72,7 @@ the re-slot note in DESIGN §3.2; T04 removes only the code path.)
 | [T08](tasks/T08-docs.md) | docs | auto | T05, T07 |
 | [T10](tasks/T10-harness-handoff-facts.md) | harness-handoff-facts | auto | T05 |
 | [T11](tasks/T11-harness-drill-wiring.md) | harness-drill-wiring | auto | T05, T10 |
+| [T12](tasks/T12-worker-knows-no-coordinator.md) | worker-knows-no-coordinator | auto | T07 |
 
 At the end of Phase 3 the suite is green on the new model, a worker's own git/test clears the
 classifier, the dead commands are gone, the surviving worker skills no longer assume an agentic

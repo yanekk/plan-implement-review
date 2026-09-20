@@ -187,17 +187,20 @@ export function createMessaging({ transport } = {}) {
 const SKILL_FOR = { implement: 'pir-implement', review: 'pir-review' };
 
 // openingInstruction(phase, task) → the first-turn prompt a freshly spawned worker reads. It engages
-// the pir-worker contract (so the fresh session knows it is coordinator-driven, never runs pir-work
-// and never self-selects a task, §2.1) and names the single phase+task it must carry out. This exact
-// string is what T08's hand-verified run tests: whether a live worker acts on it (DESIGN §5.1).
+// the pir-worker contract (so the fresh session knows it was given its task, never runs pir-work and
+// never self-selects one, §2.1) and names the single phase+task it must carry out. It deliberately
+// does not tell the worker how the run is orchestrated — the worker's world is its one task and the
+// person it asks when stuck (§2.2); "coordinator" is a word the worker never needs. This exact string
+// is what T08's hand-verified run tests: whether a live worker acts on it (DESIGN §5.1).
 export function openingInstruction(phase, task) {
   const skill = SKILL_FOR[phase];
   if (!skill) throw new Error(`openingInstruction: unknown phase "${phase}"`);
   if (!task) throw new Error('openingInstruction: no task (the name did not parse to a task id)');
   return (
-    'You are a worker session in a parallel PIR run, spawned and driven by a coordinator — not by a ' +
-    'person. Do not run pir-work and do not pick your own task. Invoke the pir-worker skill and follow ' +
-    `its contract, then carry out exactly this instruction and nothing else: ${skill} ${task}`
+    'You are a worker session in a parallel PIR run. You have been given one task and one phase to ' +
+    'carry out — you did not choose it, so do not run pir-work and do not pick your own task. Invoke ' +
+    'the pir-worker skill and follow its contract, then carry out exactly this instruction and nothing ' +
+    `else: ${skill} ${task}`
   );
 }
 

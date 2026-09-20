@@ -16,19 +16,19 @@ stop — a reviewer holding the implementation in context is not a reviewer. Tha
 ## Called with an explicit task `Txx` (parallel mode)
 
 **If you were invoked with a task id — `pir-review T05` — that argument IS the deliberate choice:
-review that task, do not run `pir-work`, do not re-select.** A parallel-mode coordinator dispatches
-this way; it has already chosen the task and spawned you as a **fresh** session on the worker's
+review that task, do not run `pir-work`, do not re-select.** A parallel-mode run dispatches
+this way: the task is already chosen and you were spawned as a **fresh** session on the worker's
 worktree, so the fresh-eyes guarantee holds by construction (DESIGN §2.1, §2.8). Two base rules bend
 in this mode, and only in it:
 
-- **The "reached without `pir-work` → stop" guard does not fire** — the coordinator is the
-  deliberate caller.
+- **The "reached without `pir-work` → stop" guard does not fire** — the named task IS the
+  deliberate choice.
 - **`CLAUDE.md § Where sessions run` does NOT bind you** — you review in the task-branch worktree
   the implementer used (DESIGN §2.9); do not stop on contact with it.
 
-**The "you must not have written the code" rule still binds, always.** In parallel mode the
-coordinator keeps it a different way — it spawns *you*, a fresh session with no implementer context,
-never the session that built the task. If by any chance you did implement this task, stop.
+**The "you must not have written the code" rule still binds, always.** In parallel mode it is kept
+a different way — *you* are a fresh session with no implementer context, never the session that
+built the task. If by any chance you did implement this task, stop.
 
 When the procedure below says "ask the user and wait", you drop a report file so the run sees you
 are asking, then ask the person in this session and wait for them to answer it here (DESIGN §2.2,
