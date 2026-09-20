@@ -24,11 +24,12 @@ spawned with the `/`-slug name (launch took the `/`), built T01, a fresh session
 idle-gated close, merged task→feature, `main` untouched, ended green for hand-off, clean teardown. But
 the harness FAILED it on the stale `oneMergeToMain` fact, which still asserts the removed promotion
 (§2.4). That stale fact is in single/review-queue/clean-merge (+merge-conflict) — T05's fixture rework
-was incomplete. parallel/human-decision/restart don't check promotion and should pass. DECISION PENDING:
-convert the promotion facts to the hand-off model (a code task) before the fixtures can PASS.
+was incomplete. parallel/human-decision/restart don't check promotion and should pass. PM chose Option A:
+fix the stale facts — added T10 (harness-handoff-facts) to convert `oneMergeToMain` to the §2.4 hand-off
+model. T09 now depends on T10 and is back to ⬜ until T10 is ✅.
 **Last updated:** 2026-09-20
-**Next `pir-work` will:** nothing new until the person runs the live drive and reports back — then this
-same track records the two confirmations (machine + person) and marks T09 ✅. See "Blocked on the user".
+**Next `pir-work` will:** IMPLEMENT T10 (harness-handoff-facts, ⬜, dep T05 ✅) — convert the stale
+promotion assertion to the hand-off model. T09 resumes once T10 is reviewed ✅.
 
 ## Tasks
 
@@ -47,19 +48,24 @@ read — the parser tolerates and ignores it; T05 finishes the surrounding clean
 | T06 | worker-permissions | auto | — | ✅ | Reviewed clean. Ships worker `permissions.allow`; `install.sh` merges it into a target and the `autoMode` rule into `~/.claude/settings.json`. Merge pure in `core/settings.mjs`. `bgIsolation: none` does not travel to targets (FINDINGS). Live classifier proof T09. |
 | T07 | skills | auto | T04 | ✅ | Reviewed clean. Dead skills deleted, survivors de-agented, slug-as-name templates; grep-confirmed no live refs; planner-templates.test parses the on-disk templates. 382 green. |
 | T08 | docs | auto | T05, T07 | ✅ | Reviewed clean, no fix commit. Checked every /docs + CLAUDE.md claim against shipped code: named symbols/files exist, buildDisplay shape + row kinds, full log-tag set, clearTransientFeeds clears reports/ only, report kinds, 5-min timeout, ceiling 4, name format/roles, gpgsign per-call, decideResume table. Forbidden vocab appears only as "now gone". HALT-vs-Ctrl-C deviation logged; docs match code. 382 green. |
-| T09 | capstone | you | T06, T08 | 🟡 | Rewritten (PM decision) to reuse the existing harness + its fixtures — `installFixture` carries current skills, no account change. Run single/parallel/review-queue/clean-merge/human-decision/restart; skip stale merge-conflict (FINDINGS). Display + attach-answer + hand Ctrl-C are a direct TTY run the harness can't show. Hand-rolled scratch removed. Handed over; awaiting judgement. |
+| T09 | capstone | you | T06, T08, T10 | ⬜ | Rewritten to reuse the harness + fixtures. Live `single` run (2026-09-20) proved the coordinator correct — main untouched, green branch handed off, fresh review, `/`-slug name — but the harness FAILED it on the stale `oneMergeToMain` fact. Now blocked on T10 (which converts that fact). Resume the fixture runs + the by-eye run once T10 is ✅. |
+| T10 | harness-handoff-facts | auto | T05 | ⬜ | Convert the stale `oneMergeToMain` promotion assertion to the §2.4 hand-off model; update single/review-queue/clean-merge + assertions.test. Unblocks T09's fixtures. merge-conflict is a separate decision (FINDINGS). |
 
 A Notes cell holds what was built or what the review found, the test count, and one line per
 deviation from the task doc. A ✅ task's cell may be cut to one line once the next task is reviewed.
 
-**Review queue:** empty. All implemented tasks reviewed; T09 is the remaining ⬜ (a `you` hand-verification).
+**Review queue:** empty. Next work is implementing T10 (⬜); T09 (⬜) waits on it, then on the person.
 
 ## Blocked on the user
 
-T09 is waiting on the person. It is verified by the existing harness (`node src/shell/harness/run.mjs
-<fixture>`) over its fixtures — single, parallel, review-queue, clean-merge, human-decision, restart
-(NOT merge-conflict, which is stale — FINDINGS) — plus one direct `coordinate.mjs` run in a real
-terminal for the display + attach-answer + hand Ctrl-C the harness can't show (recipe in
-`tasks/T09-capstone.md`). Every run spawns real paid workers that only a person may watch (§5.2). The
-person runs them and reports the four judgements; the session then records the machine PASS reports and
-the person's judgement in FINDINGS and marks T09 ✅.
+T09 waits first on T10 (a code task — convert the stale harness promotion fact), then on the person.
+Once T10 is ✅, T09 is verified by the existing harness (`node src/shell/harness/run.mjs <fixture>`)
+over its fixtures — single, parallel, review-queue, clean-merge, human-decision, restart (NOT
+merge-conflict, which is stale — FINDINGS) — plus one direct `coordinate.mjs` run in a real terminal
+for the display + attach-answer + hand Ctrl-C the harness can't show (recipe in `tasks/T09-capstone.md`).
+Every run spawns real paid workers that only a person may watch (§5.2). The person runs them and reports
+the four judgements; the session then records the machine PASS reports and the person's judgement in
+FINDINGS and marks T09 ✅.
+
+The `single` live run already gave strong positive evidence (the coordinator is correct); T10 makes the
+fixture reports green so that evidence is not masked by a stale assertion.

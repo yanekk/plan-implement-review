@@ -1,6 +1,6 @@
 # T09 — capstone
 
-**Phase:** 4 · **Runs:** you · **Depends on:** T06, T08 · **Weight:** light (gated on the person)
+**Phase:** 4 · **Runs:** you · **Depends on:** T06, T08, T10 · **Weight:** light (gated on the person)
 
 ## Goal
 

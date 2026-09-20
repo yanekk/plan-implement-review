@@ -1,6 +1,6 @@
 # Implementation plan
 
-9 tasks in 4 phases. Each has a file in [tasks/](tasks/) with its goal, the files it touches, the
+10 tasks in 4 phases (T10 added mid-build — see Phase 3). Each has a file in [tasks/](tasks/) with its goal, the files it touches, the
 interfaces it defines, and what "done" means. Track state in [PROGRESS.md](PROGRESS.md). Read
 [DESIGN.md](DESIGN.md) first.
 
@@ -70,16 +70,21 @@ the re-slot note in DESIGN §3.2; T04 removes only the code path.)
 | [T06](tasks/T06-worker-permissions.md) | worker-permissions | auto | — |
 | [T07](tasks/T07-skills.md) | skills | auto | T04 |
 | [T08](tasks/T08-docs.md) | docs | auto | T05, T07 |
+| [T10](tasks/T10-harness-handoff-facts.md) | harness-handoff-facts | auto | T05 |
 
 At the end of Phase 3 the suite is green on the new model, a worker's own git/test clears the
 classifier, the dead commands are gone, the surviving worker skills no longer assume an agentic
 coordinator, the templates carry the slug-as-name convention, and the reference docs match the code.
 
+T10 was added after the T09 live `single` run (PM decision, 2026-09-20): it finishes T05's fixture
+rework by converting the stale `oneMergeToMain` promotion assertion to the §2.4 hand-off model, so the
+`single`/`review-queue`/`clean-merge` fixtures pass under the shipped coordinator. T09 depends on it.
+
 ## Phase 4 — See it for real
 
 | # | Task | Runs | Depends on |
 |---|---|---|---|
-| [T09](tasks/T09-capstone.md) | capstone | you | T06, T08 |
+| [T09](tasks/T09-capstone.md) | capstone | you | T06, T08, T10 |
 
 T09 is the hand-verification the tests cannot reach (DESIGN §5.1): on a scratch plan in a scratch
 repo, the person runs the real command, answers a blocked worker directly, Ctrl-C's mid-run and
@@ -93,17 +98,19 @@ classic.
 
 ```
 T01 ┐
-    ├→ T03 → T04 → T05 ┐
-T02 ┘            └ T07 ┴→ T08 → T09
+    ├→ T03 → T04 → T05 ┬→ T08 ┐
+T02 ┘            │  └ T07 ┘     ├→ T09
+                 └→ T10 ────────┤
 T06 ──────────────────────────↗
 ```
 
-Longest chain: T01/T02 → T03 → T04 → T05/T07 → T08 → T09 (length 6). Off the path: T06
-(worker-permissions) depends on nothing and can be done any time before T09.
+Longest chain: T01/T02 → T03 → T04 → T05 → T08 → T09 (length 6). Off the path: T06
+(worker-permissions) depends on nothing; T10 (harness-handoff-facts, added 2026-09-20) hangs off T05
+and feeds T09. Both can be done any time before T09.
 
 ## Parallel width
 
-9 tasks · longest dependency chain 6 · up to 3 could run at once · 1 needs a person (`you`). This is
+10 tasks · longest dependency chain 6 · up to 3 could run at once · 1 needs a person (`you`). This is
 a narrow, mostly-serial plan: the core work is a focused refactor of the two central shell files
 (`coordinate.mjs`, `loop.mjs`) that several tasks touch in turn, so the chain is long by nature. That
 is honest, not padding — and it is why the plan is built in classic flow anyway (DESIGN §2.7). The
