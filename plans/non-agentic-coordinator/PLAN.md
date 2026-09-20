@@ -1,6 +1,6 @@
 # Implementation plan
 
-13 tasks in 4 phases (T10, T11, T12 added mid-build — see Phase 3; T13 added in Phase 4). Each has a file in [tasks/](tasks/) with its goal, the files it touches, the
+14 tasks in 4 phases (T10, T11, T12 added mid-build — see Phase 3; T13, T14 added in Phase 4). Each has a file in [tasks/](tasks/) with its goal, the files it touches, the
 interfaces it defines, and what "done" means. Track state in [PROGRESS.md](PROGRESS.md). Read
 [DESIGN.md](DESIGN.md) first.
 
@@ -92,7 +92,8 @@ re-adding the down-channel. T09's six-fixture confirmation of those two depends 
 | # | Task | Runs | Depends on |
 |---|---|---|---|
 | [T09](tasks/T09-capstone.md) | capstone | you | T06, T08, T10 |
-| [T13](tasks/T13-attended-merge-conflict.md) | attended-merge-conflict | you | T05, T10, T11 |
+| [T14](tasks/T14-conflict-resolve-prompt.md) | conflict-resolve-prompt | auto | T05 |
+| [T13](tasks/T13-attended-merge-conflict.md) | attended-merge-conflict | you | T05, T10, T11, T14 |
 
 T09 is the hand-verification the tests cannot reach (DESIGN §5.1): on a scratch plan in a scratch
 repo, the person runs the real command, answers a blocked worker directly, Ctrl-C's mid-run and
@@ -100,12 +101,20 @@ re-runs to see it resume, checks a worker's slug name and its committing without
 the green branch by hand. It is marked `you`; the classic flow ignores the marker, and this plan runs
 classic.
 
-T13 was added after T09's fixture work (PM decision, 2026-09-20): the `merge-conflict` fixture still
-assumes the removed down-channel (a `scriptedAnswer` injected to the worker, a `mergeConflictResolved`
-fact that needs an `answer` flow line), so it cannot pass under the shipped coordinator. The PM chose to
-keep the scenario and make it an **attended** fixture: the coordinator parks the conflicting worker (no
-coordinator change — `loop.mjs:514-523` already does this), a person attaches and resolves the conflict
-by hand keeping the fixed wording, and the run completes. Independent of T09; both are `you`.
+T13 and T14 were added after T09's fixture work (PM decisions, 2026-09-20). The `merge-conflict` fixture
+still assumes the removed down-channel (a `scriptedAnswer` injected to the worker, a
+`mergeConflictResolved` fact that needs an `answer` flow line), so it cannot pass under the shipped
+coordinator. The PM chose to keep the scenario as an **attended** fixture rather than drop it, and — the
+middle ground for how the losing worker learns it has a merge to do, since it finished cleanly and the
+down-channel is gone — to have the coordinator hand the **person** a ready-to-paste resolution prompt.
+
+- **T14 (conflict-resolve-prompt, `auto`)** is the coordinator change: on a merge conflict it composes a
+  copy-paste prompt for the parked worker (which branch to merge in, the conflicting files, commit /
+  re-test / re-signal done), leaving the keep-which-side judgement blank for the person. It sends nothing
+  to the worker — the person is still the transport (§2.2). Headless-testable; lands first.
+- **T13 (attended-merge-conflict, `you`)** reworks the fixture off the down-channel and proves the whole
+  loop live: the person copies T14's prompt, keeps `hello there`, pastes it, the worker resolves, the run
+  completes. Depends on T14. Independent of T09.
 
 ---
 

@@ -1,6 +1,6 @@
 # T13 — attended-merge-conflict
 
-**Phase:** 4 · **Runs:** you (attended) · **Depends on:** T05, T10, T11 · **Weight:** medium (gated on the person)
+**Phase:** 4 · **Runs:** you (attended) · **Depends on:** T05, T10, T11, T14 · **Weight:** medium (gated on the person)
 
 ## Goal
 
@@ -29,9 +29,10 @@ never a merge to main).
    the second to merge conflicts at the coordinator's own merge step.
 2. The coordinator hits the conflict, parks that worker (`AWAITING`), keeps its session/worktree/task,
    and records a `surface … kind: conflict` line. It does **not** close the worker or merge past it.
-3. The **person** finds that parked worker in `claude agents`, attaches, and tells it to resolve the
-   conflict on its own branch keeping the wording **`hello there`** (the fixed decided side, so the run
-   is deterministic), then re-signal done.
+3. The coordinator shows a ready-to-paste resolution prompt for that worker (T14). The **person** copies
+   it, fills the keep-which-side blank with **`hello there`** (the fixed decided side, so the run is
+   deterministic), attaches to that worker in `claude agents`, and pastes it. The worker merges the
+   feature branch into its own branch, resolves, commits, and re-signals done.
 4. The coordinator's next pass retries the merge for that now-done worker, it lands clean, the branch
    folds in, and the run **completes** (`expectedTerminal: 'completed'`) and hands off `pir/merge-conflict`.
 
@@ -70,8 +71,9 @@ never a merge to main).
 - [ ] The reworked `mergeConflictResolved` passes on the live attended run and, on canned data, FAILs
       when the feature branch's final `greeting.txt` reads the losing `hi world` or when the conflicted
       task was respawned rather than resumed.
-- [ ] A live `run.mjs merge-conflict --into <dir>`, resolved by hand keeping `hello there`, ends
-      `completed` (not a timeout) with an all-green report; its bundle path is recorded.
+- [ ] A live `run.mjs merge-conflict --into <dir>`, resolved by copying the coordinator's prompt (T14)
+      and keeping `hello there`, ends `completed` (not a timeout) with an all-green report; its bundle
+      path is recorded.
 - [ ] `npm test` is green.
 - [ ] Because it is attended, the live half is a person-verified `✅` row in `FINDINGS.md` with the date
       (the machine facts alone do not close it), and the scratch/`--into` dir is torn down.
