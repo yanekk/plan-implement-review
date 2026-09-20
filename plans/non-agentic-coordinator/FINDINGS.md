@@ -12,6 +12,7 @@ user changed.
 
 | Date | | Finding |
 |---|---|---|
+| 2026-09-20 | ✅ | By-eye (PM): the live display now repaints in place after T15 (bounded alt-screen), including while the long parked "asking you" block is on screen. Closes T09's last open item; T09 ✅. PM wants colour + better question visibility → new task T16. |
 | 2026-09-20 | 📌 | T14: the coordinator-side conflict prompt (`buildConflictPrompt`) prints on the NORMAL screen, not the compact live frame — a clipped copy-paste block is useless and re-opens the T15 wrap bug. Worker-raised integrate conflicts carry no prompt (§2.8 first bullet). |
 | 2026-09-20 | 🐞 | By-eye (PM): the live display does not repaint in place once a line wraps. `render.mjs:119` moves the cursor up `lines.length` terminal rows, but a long wrapped logical line spans more rows, so frames stream instead of overwriting. The long parked "asking you" question block triggers it. |
 | 2026-09-20 | ✅ | By-eye (PM): Ctrl-C closed the workers and left the scratch `main` untouched; the re-run resumed from committed work with no rebuild; a worker's own `git commit`/`npm test` ran with no permission prompt (T06 live). |
