@@ -1,6 +1,11 @@
 # T09 — capstone
 
-**Phase:** 4 · **Runs:** you · **Depends on:** T06, T08, T10 · **Weight:** light (gated on the person)
+**Phase:** 4 · **Runs:** you · **Depends on:** T06, T08, T10, T15 · **Weight:** light (gated on the person)
+
+> Status 2026-09-20: three of four by-eye items confirmed live (attach-and-answer, Ctrl-C + main
+> untouched, re-run resume, no classifier prompt, plus the T12 word-proof). The remaining item — the
+> live display reading right — FAILED (it streams, not in place); fixing it is T15, hence the added
+> dependency. Once T15 lands, the person re-checks only the display and T09 closes.
 
 ## Goal
 

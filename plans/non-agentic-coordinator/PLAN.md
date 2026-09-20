@@ -1,6 +1,6 @@
 # Implementation plan
 
-14 tasks in 4 phases (T10, T11, T12 added mid-build — see Phase 3; T13, T14 added in Phase 4). Each has a file in [tasks/](tasks/) with its goal, the files it touches, the
+15 tasks in 4 phases (T10, T11, T12 added mid-build — see Phase 3; T13, T14, T15 added in Phase 4). Each has a file in [tasks/](tasks/) with its goal, the files it touches, the
 interfaces it defines, and what "done" means. Track state in [PROGRESS.md](PROGRESS.md). Read
 [DESIGN.md](DESIGN.md) first.
 
@@ -91,7 +91,8 @@ re-adding the down-channel. T09's six-fixture confirmation of those two depends 
 
 | # | Task | Runs | Depends on |
 |---|---|---|---|
-| [T09](tasks/T09-capstone.md) | capstone | you | T06, T08, T10 |
+| [T09](tasks/T09-capstone.md) | capstone | you | T06, T08, T10, T15 |
+| [T15](tasks/T15-display-in-place-render.md) | display-in-place-render | auto | T03 |
 | [T14](tasks/T14-conflict-resolve-prompt.md) | conflict-resolve-prompt | auto | T05 |
 | [T13](tasks/T13-attended-merge-conflict.md) | attended-merge-conflict | you | T05, T10, T11, T14 |
 
@@ -115,6 +116,14 @@ down-channel is gone — to have the coordinator hand the **person** a ready-to-
 - **T13 (attended-merge-conflict, `you`)** reworks the fixture off the down-channel and proves the whole
   loop live: the person copies T14's prompt, keeps `hello there`, pastes it, the worker resolves, the run
   completes. Depends on T14. Independent of T09.
+
+T15 (display-in-place-render, `auto`) was added after T09's first by-eye run (PM finding, 2026-09-20):
+the live display does not repaint in place — `render.mjs` counts logical lines, but any wrapped line
+(the summary line wraps on a normal terminal) throws the cursor math off and frames stream down the
+screen. T15 rewrites the renderer to own a bounded region (alternate screen, per-frame clear, clip to
+terminal size) and makes the in-place behaviour testable with a fake stream — no TUI dependency, to keep
+the tool install-free. It blocks T09's display judgement: the other three by-eye items (Ctrl-C, resume,
+no classifier prompt) are already confirmed, so once T15 lands the person re-checks only the display.
 
 ---
 
