@@ -12,10 +12,10 @@ account is the commit message; writing it twice turns a tracker into a history n
 
 **Plan reviewed:** 2026-09-21 — 2 fixed, 1 decided with the user
 
-**Status:** Plan just written. Nothing built. The mechanism (T00–T02) is fully headless and
-auto-testable; the worker contract and docs (T03–T04) follow; a live drill (T05) closes it.
+**Status:** T00 implemented, awaiting review. The rest of the mechanism (T01–T02) unblocks
+once T00 is reviewed; the worker contract and docs (T03–T04) follow; a live drill (T05) closes it.
 **Last updated:** 2026-09-21
-**Next `pir-work` will:** implement T00 — it has no dependencies and gates the whole chain.
+**Next `pir-work` will:** review T00.
 
 ## Tasks
 
@@ -27,14 +27,14 @@ and, in parallel mode, its worker's agent name.
 
 | # | Task | Depends on | State | Notes |
 |---|---|---|---|---|
-| T00 | adopt-rule | — | ⬜ | `adoptNewTaskRows` pure function in core/progress.mjs |
+| T00 | adopt-rule | — | 🔍 | `adoptNewTaskRows` in core/progress.mjs: pure add-only merge. Compares slug+deps not state, forces ⬜, validates deps against feature+new rows, atomic reject on any error, preserves column layout. 14 tests (all task cases + Runs-column). Deps compared order-independent. |
 | T01 | merge-adopts | T00 | ⬜ | mergeTask adopts new rows (real + fake worktree) |
 | T02 | dispatch-adopted | T01 | ⬜ | loop surfaces errors, narrates adopted, both scenarios end to end |
 | T03 | worker-add-task | T02 | ⬜ | worker skills: propose, approve, add; reviewer validates |
 | T04 | docs-and-rules | T02 | ⬜ | /docs + CLAUDE.md document worker-introduced tasks |
 | T05 | live-drill | T02, T03, T04 | ⬜ | harness fixture + hands-on live run with the person |
 
-**Review queue:** *(empty)*
+**Review queue:** T00
 
 ## Blocked on the user
 
