@@ -106,16 +106,27 @@ export function touchHalt(controlDir, { fs = { mkdirSync, writeFileSync } } = {}
   return flag;
 }
 
-// runOutcome({ flowText, exited }) → { over, reason }. In the foreground-process model the run is over
-// when the coordinator PROCESS EXITS — it prints the hand-off and returns (DESIGN §2.1); there is no
-// `promote` flow marker any more (§2.4, T01). So `over` is driven by the process exit, not the flow log.
-// While the process is alive the run is `active`. Once it has exited, the flow log says WHICH terminal
-// it was: a `halt-close` line means the kill switch fired (§2.4), so the run `halted`; otherwise it ran
-// to its hand-off (or a stall) and `completed`. The FACTS decide pass/fail; `reason` is the human label.
-// Pure, so it is tested against canned flow text and an exit flag.
-export function runOutcome({ flowText = '', exited = false } = {}) {
+// runOutcome({ flowText, exited, exitCode, signal }) → { over, reason }. In the foreground-process model
+// the run is over when the coordinator PROCESS EXITS — it prints the hand-off and returns (DESIGN §2.1);
+// there is no `promote` flow marker any more (§2.4, T01). So `over` is driven by the process exit, not the
+// flow log. While the process is alive the run is `active`. Once it has exited, the terminal is read from
+// the flow log AND the exit status:
+//   `halt-close` line          → `halted` — the kill switch fired (§2.4), whatever the exit code.
+//   non-zero / signalled exit  → `crashed` — the coordinator DIED (e.g. an unhandled fs.watch `error`
+//                                event under fd pressure, T17) rather than printing its hand-off and
+//                                returning 0. Scoring this `completed` hid exactly that failure on the
+//                                live merge-conflict run (FINDINGS 2026-09-21), so it gets its own terminal
+//                                and reachedExpectedTerminal rejects it.
+//   clean exit (code 0)        → `completed` — it ran to its hand-off (or a stall) and returned cleanly.
+// The FACTS still decide pass/fail; `reason` is the human label. Pure, so it is tested against canned flow
+// text and an exit descriptor. exitCode/signal default to null (an exit with no captured status reads as a
+// clean 0 — the pre-T17 behaviour), so a caller that passes only { flowText, exited } is unchanged.
+export function runOutcome({ flowText = '', exited = false, exitCode = null, signal = null } = {}) {
   if (!exited) return { over: false, reason: 'active' };
-  return { over: true, reason: flowHasTag(flowText, 'halt-close') ? 'halted' : 'completed' };
+  if (flowHasTag(flowText, 'halt-close')) return { over: true, reason: 'halted' };
+  const crashed = (exitCode != null && exitCode !== 0) || signal != null;
+  if (crashed) return { over: true, reason: 'crashed' };
+  return { over: true, reason: 'completed' };
 }
 
 // flowHasTag(flowText, tag) → does the flow log carry a line whose action type is `tag`? A flow line is
@@ -140,7 +151,11 @@ function flowHasTag(flowText, tag) {
 //                           it: `timedOut` true IS the expected terminal here, not a failure. The fixture's
 //                           own facts (parkedWorkerHoldsSlot) carry the real pass; this only stops the
 //                           blanket timeout-FAIL from rejecting a correct park.
-export function reachedExpectedTerminal({ expectedTerminal = 'completed', timedOut = false } = {}) {
+// A `crashed` run (runOutcome above) is NEVER an expected terminal, whatever the scenario expected: the
+// coordinator died before its hand-off, so it FAILs loudly with a crash label instead of a green-shaped
+// `completed` (T17). `reason` is the terminal waitForCompletion returned.
+export function reachedExpectedTerminal({ expectedTerminal = 'completed', timedOut = false, reason } = {}) {
+  if (reason === 'crashed') return false;
   if (expectedTerminal === 'parked') return timedOut === true;
   return timedOut !== true;
 }
@@ -418,7 +433,7 @@ export async function runScenario({
   const report = checkScenario(spec, loadFinalFiles(loadTranscripts(bundle)));
   // The run passes when its facts pass AND it ended where the scenario declared it should (T11): a clean
   // hand-off by default, or a park→HALT for a `parked` fixture whose designed end is a timed-out park.
-  const ok = report.pass && reachedExpectedTerminal({ expectedTerminal, timedOut });
+  const ok = report.pass && reachedExpectedTerminal({ expectedTerminal, timedOut, reason });
   const label = timedOut ? (expectedTerminal === 'parked' ? 'parked' : 'timeout') : reason;
   return { scenario: spec.id, ok, reason: label, bundleDir: bundle?.dir ?? null, report };
 }
@@ -631,7 +646,7 @@ export async function runRestartScenario({
   }
 
   const report = checkScenario(spec, loadControlFeeds(loadFinalFiles(loadTranscripts(bundle))));
-  const ok = report.pass && reachedExpectedTerminal({ expectedTerminal, timedOut });
+  const ok = report.pass && reachedExpectedTerminal({ expectedTerminal, timedOut, reason });
   const label = timedOut ? (expectedTerminal === 'parked' ? 'parked' : 'timeout') : reason;
   return { scenario: spec.id, ok, reason: label, bundleDir: bundle?.dir ?? null, report };
 }
@@ -692,8 +707,10 @@ async function waitForTarget({ cap, controlDir, repo, slug, waitFor, worktree, c
 async function waitForCompletion({ cap, controlDir, child, pollMs, haltGrace = 5, killSwitchDrill = false, timers, isTimedOut, log = () => {} }) {
   const flowPath = join(controlDir, 'log');
   let exited = false;
-  child.exited.then(() => {
+  let exitResult = {};
+  child.exited.then((r) => {
     exited = true;
+    exitResult = r ?? {};
   });
   let graceAfterTimeout = 0;
   let drillFired = false;
@@ -716,7 +733,7 @@ async function waitForCompletion({ cap, controlDir, child, pollMs, haltGrace = 5
       }
     }
 
-    const outcome = runOutcome({ flowText, exited });
+    const outcome = runOutcome({ flowText, exited, exitCode: exitResult.code, signal: exitResult.signal });
     if (outcome.over) return outcome.reason;
 
     if (isTimedOut()) {

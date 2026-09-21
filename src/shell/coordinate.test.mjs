@@ -19,7 +19,9 @@ import {
   fileControl,
   buildRunState,
   displayPhaseFor,
+  waitForReport,
 } from './coordinate.mjs';
+import { EventEmitter } from 'node:events';
 import { createMessaging } from './platform.mjs';
 import { createFakePlatform } from './fake/platform.mjs';
 import { createFakeWorktree, git } from './fake/worktree.mjs';
@@ -656,4 +658,50 @@ test('startupControlHygiene clears the reports and appends a restart marker, pre
   const log = readFileSync(control.logPath, 'utf8');
   assert.match(log, /spawn T01/, 'the prior log line is preserved');
   assert.match(log, /restart\n$/, 'a restart marker is appended to the log');
+});
+
+// --- waitForReport survives a runtime watch failure (T17) ---------------------------------------
+// fs.watch reports a runtime failure (EMFILE under fd pressure, a watch that dies later) by emitting an
+// 'error' event on the FSWatcher, not by throwing from watch(). Without an 'error' listener Node re-throws
+// it as an unhandled event and the whole coordinator process exits — which is exactly what crashed the
+// live merge-conflict run ~2.4s in (FINDINGS 2026-09-21). The fix absorbs the error and lets the POLL_MS
+// timeout backstop take over, so the run keeps going on paced polling.
+test('waitForReport absorbs an FSWatcher error event and resolves via the timeout, never crashing (T17)', async () => {
+  const watcher = new EventEmitter();
+  let closed = false;
+  watcher.close = () => {
+    closed = true;
+  };
+  const fakeWatch = () => watcher; // stands in for fs.watch under fd pressure
+
+  let resolved = false;
+  const p = waitForReport('/nowhere', 30, { watch: fakeWatch }).then(() => {
+    resolved = true;
+  });
+
+  // The runtime watch failure. Without the T17 'error' listener this call throws synchronously (an
+  // EventEmitter with no 'error' listener re-throws) — proving the listener is attached.
+  assert.doesNotThrow(() => watcher.emit('error', new Error('EMFILE: too many open files, watch')));
+
+  // The error must NOT finish the wait early (that would busy-spin the pass loop into re-watching every
+  // pass). setImmediate fires before the 30ms timeout, so the wait is still pending here.
+  await new Promise((r) => setImmediate(r));
+  assert.equal(resolved, false, 'the watch error did not resolve the wait — it falls back to the timeout');
+
+  await p; // resolves via the timeout backstop, not by crashing
+  assert.equal(resolved, true);
+  assert.equal(closed, true, 'the dead watcher is closed on the error');
+});
+
+test('waitForReport still falls back to the timeout when fs.watch cannot start at all (sync throw) (T17)', async () => {
+  const fakeWatch = () => {
+    throw new Error('ENOSYS: fs.watch not supported on this filesystem');
+  };
+  let resolved = false;
+  const p = waitForReport('/nowhere', 20, { watch: fakeWatch }).then(() => {
+    resolved = true;
+  });
+  assert.equal(resolved, false, 'the sync-catch fallback still waits for the timeout, it does not throw');
+  await p;
+  assert.equal(resolved, true);
 });

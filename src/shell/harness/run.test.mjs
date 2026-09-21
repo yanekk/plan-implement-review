@@ -141,6 +141,36 @@ test('runOutcome reports halted when the exited process left a halt-close line',
   assert.deepEqual(runOutcome({ flowText: '2026-01-01T00:00:00Z halt-close T01\n', exited: true }), { over: true, reason: 'halted' });
 });
 
+// T17: a coordinator that DIED (non-zero or signalled exit) with no halt-close is a crash, not a clean
+// completed. On the live merge-conflict run an unhandled fs.watch `error` killed the process ~2.4s in and
+// the harness scored it `completed`, hiding the failure (FINDINGS 2026-09-21).
+test('runOutcome reports crashed for a non-zero exit with no halt-close (was silently `completed`)', () => {
+  assert.deepEqual(
+    runOutcome({ flowText: '2026-01-01T00:00:00Z spawn T01\n', exited: true, exitCode: 1 }),
+    { over: true, reason: 'crashed' },
+  );
+});
+
+test('runOutcome reports crashed for a signalled exit (e.g. SIGSEGV) with no halt-close', () => {
+  assert.deepEqual(
+    runOutcome({ flowText: '2026-01-01T00:00:00Z spawn T01\n', exited: true, exitCode: null, signal: 'SIGSEGV' }),
+    { over: true, reason: 'crashed' },
+  );
+});
+
+test('runOutcome: a crash under HALT is still `halted` — the kill switch wins over the exit code', () => {
+  assert.deepEqual(
+    runOutcome({ flowText: '2026-01-01T00:00:00Z halt-close T01\n', exited: true, exitCode: 1 }),
+    { over: true, reason: 'halted' },
+  );
+});
+
+test('runOutcome: a clean exit (code 0, or no captured status) is completed as before', () => {
+  assert.deepEqual(runOutcome({ flowText: '2026-01-01T00:00:00Z merge T01\n', exited: true, exitCode: 0 }), { over: true, reason: 'completed' });
+  // No exit descriptor passed → reads as a clean exit, the pre-T17 behaviour every existing caller relied on.
+  assert.deepEqual(runOutcome({ flowText: '2026-01-01T00:00:00Z merge T01\n', exited: true }), { over: true, reason: 'completed' });
+});
+
 // --- reachedExpectedTerminal (T11: a `parked` fixture's timed-out park is its correct end, not a FAIL) --
 
 test('reachedExpectedTerminal: completed passes only when the run did not time out', () => {
@@ -155,6 +185,15 @@ test('reachedExpectedTerminal: parked passes exactly when the run timed out (the
   assert.equal(reachedExpectedTerminal({ expectedTerminal: 'parked', timedOut: true }), true);
   // A `parked` run that somehow ended without the wall-clock firing did NOT hold its park — not the terminal.
   assert.equal(reachedExpectedTerminal({ expectedTerminal: 'parked', timedOut: false }), false);
+});
+
+test('reachedExpectedTerminal: a crashed run is never the expected terminal, whatever was expected (T17)', () => {
+  // A crash with no timeout would otherwise sail through the completed branch — this is what made the live
+  // failure read as a green-shaped `completed`. It must FAIL under every expectedTerminal.
+  assert.equal(reachedExpectedTerminal({ expectedTerminal: 'completed', timedOut: false, reason: 'crashed' }), false);
+  assert.equal(reachedExpectedTerminal({ expectedTerminal: 'parked', timedOut: true, reason: 'crashed' }), false);
+  // A non-crash reason still follows the timeout rules unchanged.
+  assert.equal(reachedExpectedTerminal({ expectedTerminal: 'completed', timedOut: false, reason: 'completed' }), true);
 });
 
 // --- captureFinalFiles reads the feature branch (DESIGN §2.4: the run hands off, never merges to main)

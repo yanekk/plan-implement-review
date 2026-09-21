@@ -29,10 +29,15 @@ Also 2026-09-21: driving T13's live run crashed the coordinator (EMFILE in the r
 (resilient-report-watch, ⬜) was added: make `waitForReport` fall back to its 5s poll on a watch error,
 and make the harness call a crash a crash not `completed`. T13's live run is blocked on T17 (a crashed
 coordinator never parks a conflict). FINDINGS 2026-09-21.
+Also 2026-09-21: T17 implemented (🔍). `waitForReport` no longer dies on an async `fs.watch` `error` — it
+attaches an `error` listener, closes the dead watcher, and lets the 5s poll backstop carry the pass; `watch`
+is injectable for the test. The harness stops laundering a crash into `completed`: `runOutcome` scores a
+non-zero/signalled exit `crashed` and `reachedExpectedTerminal` rejects it, so a crashed live run FAILs
+loudly. +7 tests, all mutation-checked to bite, 417 green. FINDINGS 2026-09-21.
 **Last updated:** 2026-09-21
-**Next `pir-work` will:** IMPLEMENT **T17** (⬜, deps T05 ✅) — the only ⬜, no 🔍/🟡. Make the coordinator
-survive a report-watch error and the harness report a crash honestly. Then a fresh session reviews it,
-then the PM re-runs T13's live check.
+**Next `pir-work` will:** REVIEW **T17** (🔍) — a fresh session checks the report-watch resilience and the
+crash-honesty edits against the task doc, then marks it ✅. After that, the PM re-runs T13's live check
+(now unblocked by T17).
 
 ## Tasks
 
@@ -59,14 +64,14 @@ read — the parser tolerates and ignores it; T05 finishes the surrounding clean
 | T14 | conflict-resolve-prompt | auto | T05 | ✅ | Reviewed. Fixed a stale "routed down" comment (§2.2); probed reprint risk — a parked worker stays AWAITING, never re-enters `merge`, so the prompt scrolls once. Live paint by-eye stays T13. 407 green. |
 | T16 | display-colour-and-question | auto | T15 | ✅ | Reviewed clean, no fix. Colour is a TTY+NO_COLOR-gated paint layer; formatLines escape-free; T15 clip/height held; tests bite (17). Live end-state colours wiped by close(); by-eye focus is RUNNING (FINDINGS). 409 green. |
 | T13 | attended-merge-conflict | you | T05, T10, T11, T14 | ⛔ | Code reviewed clean, no fix. Probed by mutation: the promote-guard, losing-side and respawn tests all bite; `handedOffGreenBranch` composition and case-sensitive `promotionMergeLines` hold; no-surface-kind deviation matches loop.mjs. 410 green. Live run blocked on T17 (coordinator crashed on a watch error before reaching the conflict, 2026-09-21) then the PM (§5.2). |
-| T17 | resilient-report-watch | auto | T05 | ⬜ | Added 2026-09-21. `waitForReport` must survive an `fs.watch` `error` event (EMFILE from fd pressure) by falling back to its 5s poll, not crashing the run; and run.mjs `runOutcome` must report a crash exit as `crashed`, not `completed`. Two shell edits + tests. Blocks T13's live run. |
+| T17 | resilient-report-watch | auto | T05 | 🔍 | `waitForReport` attaches an FSWatcher `error` listener and falls back to the 5s poll (no `finish()` on error); `watch` injectable. `runOutcome` scores a non-zero/signalled exit `crashed`, `reachedExpectedTerminal` rejects it. Both mutation-checked to bite. 417 green. Live proof is T13's. |
 
 A Notes cell holds what was built or what the review found, the test count, and one line per
 deviation from the task doc. A ✅ task's cell may be cut to one line once the next task is reviewed.
 
-**Review queue:** empty — no 🔍 task. Next work is to IMPLEMENT T17 (the coordinator-crash fix that
-blocks T13's live run). T13's own code review passed clean; its remaining live attended run is the PM's
-hand-verification (below), now gated on T17 landing first.
+**Review queue:** T17 (🔍) — the coordinator-crash fix that blocks T13's live run. Next work reviews it.
+T13's own code review passed clean; its remaining live attended run is the PM's hand-verification (below),
+gated on T17 being reviewed ✅ first.
 
 ## Blocked on the user
 

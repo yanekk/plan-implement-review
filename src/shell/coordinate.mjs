@@ -543,13 +543,24 @@ export function startupControlHygiene(control) {
   return { halted: false, cleared };
 }
 
-// waitForReport(reportsDir, timeoutMs) → resolve as soon as anything changes in the reports drop-dir,
-// or after timeoutMs, whichever comes first (DESIGN §2.2). This is the "react, don't poll" half: a
-// worker dropping a report file wakes the loop immediately, and the timeout is only a backstop so a
-// missed filesystem event is still picked up within a poll interval. fs.watch may be unavailable on
+// waitForReport(reportsDir, timeoutMs, { watch }) → resolve as soon as anything changes in the reports
+// drop-dir, or after timeoutMs, whichever comes first (DESIGN §2.2). This is the "react, don't poll"
+// half: a worker dropping a report file wakes the loop immediately, and the timeout is only a backstop
+// so a missed filesystem event is still picked up within a poll interval. fs.watch may be unavailable on
 // some filesystems — then this degrades to a plain timeout, which is exactly the old polling behaviour,
 // so correctness never depends on the watch firing.
-function waitForReport(reportsDir, timeoutMs) {
+//
+// fs.watch signals a RUNTIME failure (EMFILE under fd pressure, ENOSPC, a watch that dies later) by
+// emitting an 'error' event on the FSWatcher, NOT by throwing from watch() — the sync try/catch below
+// only covers a watch that cannot start at all. Without an 'error' listener Node re-throws that event as
+// an unhandled 'error' and the whole coordinator process exits, defeating the very timeout backstop this
+// function exists to provide (a live run can always meet fd pressure — several sessions push fs.watch
+// past the OS limit). So on an 'error' we close the dead watcher and do NOTHING else: we do not finish()
+// (resolving immediately would busy-spin the pass loop into re-watching every pass), letting the pending
+// setTimeout(finish) fire so this pass degrades to paced POLL_MS polling. Each later pass re-attempts a
+// fresh watch(); if the OS is still refusing, it keeps falling back, which is correct. `watch` is
+// injectable so a test can emit 'error' without a real EMFILE.
+export function waitForReport(reportsDir, timeoutMs, { watch: watchFn = watch } = {}) {
   return new Promise((resolve) => {
     let done = false;
     let watcher = null;
@@ -566,7 +577,17 @@ function waitForReport(reportsDir, timeoutMs) {
       resolve();
     };
     try {
-      watcher = watch(reportsDir, () => finish());
+      watcher = watchFn(reportsDir, () => finish());
+      watcher.on('error', () => {
+        // Runtime watch failure: drop the dead watcher and let the timeout backstop take over. Do not
+        // finish() here — that would re-watch every pass in a tight loop. Paced POLL_MS polling is correct.
+        try {
+          watcher?.close();
+        } catch {
+          /* already gone */
+        }
+        watcher = null;
+      });
     } catch {
       /* no fs.watch here — fall back to the pure timeout (old polling behaviour) */
     }
