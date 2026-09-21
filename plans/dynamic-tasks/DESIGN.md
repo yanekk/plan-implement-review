@@ -55,8 +55,10 @@ The lifecycle of a worker-introduced task, end to end:
    `PROGRESS.md`, a row in `PLAN.md`'s task table, and a full `tasks/T{nn}-{slug}.md` doc. It logs
    the addition in `FINDINGS.md`. Then it finishes T{x} normally.
 4. T{x} is reviewed and merged like any task. **At the merge**, the coordinator adopts the new
-   task's row into the feature branch's `PROGRESS.md` (§2.2). `PLAN.md` and the new task doc merge
-   through git as ordinary files.
+   task's row into the feature branch's `PROGRESS.md` (§2.2). `PLAN.md`, `FINDINGS.md` and the new
+   task doc merge through git as ordinary files — only `PROGRESS.md` is fold-protected, so two
+   additions landing close together can conflict on `PLAN.md` or `FINDINGS.md` and park the
+   introducing worker on the existing conflict path (§2.5, known limitation §8).
 5. On a later pass the coordinator re-parses `PROGRESS.md` (it already does this every pass), sees
    the new task, and dispatches it once its dependencies are `✅` — with no change to the dispatch
    logic (§3.3).
@@ -154,6 +156,15 @@ is a lighter check than a full plan review, which is the deliberate trade for no
   reconcile path call.
 - **Adoption is atomic per branch.** If any row in a branch's change is an error, nothing from that
   branch is adopted (§3.3), so a bad change never half-lands. All the errors are surfaced together.
+- **Two additions collide on `PLAN.md` or `FINDINGS.md`.** `PROGRESS.md` is fold-protected (§2.2), but
+  the addition also writes `PLAN.md` and `FINDINGS.md`, which merge through git. If two workers add a
+  task close together (or one adds a task while another appends a finding), git cannot combine the two
+  edits to the same file and the merge conflicts. This is not special-cased: it takes the existing
+  merge-conflict path — the introducing worker is parked with `buildConflictPrompt`, the person fills
+  the `KEEP:` blank to order the two additions, the worker re-signals done and the run merges it next
+  pass (§6). Nothing is lost or corrupted; the run pauses one worker, not the whole run. This is a
+  known limitation, accepted rather than engineered away (§7, §8): the two scenarios above each add a
+  single task and never hit it, and the conflict path already exists and is safe.
 
 ---
 
@@ -331,6 +342,14 @@ rather than the only route. `main` is never touched by the run.
 - **The reviewer validates the addition** — the fresh reviewer of the introducing task already sees
   the new doc and rows in the diff, giving a worker-introduced task a fresh-eyes check without a
   full plan review.
+- **`PLAN.md`/`FINDINGS.md` conflicts on concurrent additions are accepted, not prevented** (user
+  decision, 2026-09-21, at plan review). Only `PROGRESS.md` is fold-protected; the addition also
+  writes `PLAN.md` and `FINDINGS.md`, so two additions close together can conflict there and park one
+  worker on the existing conflict path (§2.5). The alternatives — fold-protecting those two files the
+  way `PROGRESS.md` is (their richer structure makes that one or two extra tasks), or having the worker
+  write only the two files dispatch needs and leaving `PLAN.md`/`FINDINGS.md` out of sync until a
+  person catches up — were both weighed and declined: the two target scenarios add a single task and
+  never hit it, the pause is safe and reuses machinery that already exists, and the collision is rare.
 
 ---
 
@@ -344,6 +363,10 @@ rather than the only route. `main` is never touched by the run.
   future plan can revisit this; it needs a way to keep an in-flight worker from being reshaped
   under it, which this plan deliberately does not build.
 - **Auto-renumbering a colliding task.** Surfaced to the person instead (§2.5, §7).
+- **Fold-protecting `PLAN.md` and `FINDINGS.md` against concurrent-addition conflicts.** Only
+  `PROGRESS.md` is fold-protected; a concurrent addition that conflicts on `PLAN.md` or `FINDINGS.md`
+  takes the existing merge-conflict path and parks one worker (§2.5, §7 — user decision to accept it).
+  Extending the fold to those files, or dropping them from the atomic addition, is a future plan's call.
 - **Re-running `/pir-review-plan` on an added task.** The person's in-session approval plus the
   introducing task's reviewer are the gate (§2.4); a full plan review would mean stopping the run,
   which is the thing this plan avoids.

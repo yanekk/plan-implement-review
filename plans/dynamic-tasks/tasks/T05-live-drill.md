@@ -27,10 +27,14 @@ DESIGN §4 (what no automated layer proves), §5.1 (the person-only check), §5.
 ```
 // fixture descriptor (fixtures/dynamic-task.mjs), same idiom as the existing fixtures:
 export default {
-  slug, planText, taskDocs, seedFiles?,
+  id, slug, title, progress, tasks, seedFiles?,
   scenario: defineScenario({ id, title, fixture, seatbelts, facts, expectedTerminal }),
 }
-// facts assert the run adopted and dispatched the introduced task (over the log/bundle).
+// - id: the registry key; add an import + a `[fixture.id]:` entry to the FIXTURES map in fixtures.mjs.
+// - progress: the initial PROGRESS.md text (plan-reviewed marked, the seed task table).
+// - tasks: a map `T{nn}-{slug}.md` → body. PLAN.md/DESIGN.md/FINDINGS.md are NOT carried here —
+//   commonPlanFiles(slug, …) generates them (fixtures.mjs, common.mjs).
+// - facts assert the run adopted and dispatched the introduced task (over the log/bundle).
 ```
 
 Because approval is person-in-the-loop, a fully-hands-off live scenario cannot complete on its own;

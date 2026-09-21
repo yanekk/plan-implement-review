@@ -10,13 +10,12 @@ touching the task you pick up, and append yours there.
 account is the commit message; writing it twice turns a tracker into a history nobody reads.
 **Whoever writes a cell also fixes the over-budget cell they walk past.**
 
-**Plan reviewed:** not yet — run `/pir-review-plan dynamic-tasks` before the first `/pir-work`
+**Plan reviewed:** 2026-09-21 — 2 fixed, 1 decided with the user
 
 **Status:** Plan just written. Nothing built. The mechanism (T00–T02) is fully headless and
 auto-testable; the worker contract and docs (T03–T04) follow; a live drill (T05) closes it.
 **Last updated:** 2026-09-21
-**Next `pir-work` will:** review the plan (`/pir-review-plan dynamic-tasks`). After that, T00 —
-it has no dependencies and gates the whole chain.
+**Next `pir-work` will:** implement T00 — it has no dependencies and gates the whole chain.
 
 ## Tasks
 

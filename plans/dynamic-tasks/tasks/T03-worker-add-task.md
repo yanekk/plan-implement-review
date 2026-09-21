@@ -54,7 +54,14 @@ Non-obvious points to state in the prose:
   an existing task — so the worker gains nothing by pre-marking state or editing a neighbour, and a
   collision on the number is surfaced to the person, not auto-fixed (DESIGN §2.5).
 - This is the only sanctioned break from the strict scope rule, and only in parallel mode, and only
-  with the person's yes — analogous to the worktree carve-out already in the contract.
+  with the person's yes — analogous to the worktree carve-out already in the contract. (That carve-out
+  is an exception to "where sessions run", not to strict scope; this is a genuinely new scope
+  exception, so state it as its own rule rather than folding it under the existing one.)
+- Only `PROGRESS.md` is fold-protected at merge. The `PLAN.md` row and the `FINDINGS.md` line you add
+  merge through git as ordinary files, so if another worker adds a task (or appends a finding) close to
+  you, the merge can conflict on those files and the run parks you with the ordinary conflict prompt
+  (DESIGN §2.5, §6). Resolve it the same way as any merge conflict — order the two additions and
+  re-signal done. Say this in the contract so the pause is expected, not alarming.
 
 ## Tests
 
