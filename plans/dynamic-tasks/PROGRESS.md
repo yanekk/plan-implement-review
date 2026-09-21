@@ -15,7 +15,7 @@ account is the commit message; writing it twice turns a tracker into a history n
 **Status:** Plan just written. Nothing built. The mechanism (T00–T02) is fully headless and
 auto-testable; the worker contract and docs (T03–T04) follow; a live drill (T05) closes it.
 **Last updated:** 2026-09-21
-**Next `pir-work` will:** implement T00 — it has no dependencies and gates the whole chain.
+**Next `pir-work` will:** review T04 — it is implemented and awaiting fresh eyes.
 
 ## Tasks
 
@@ -31,10 +31,10 @@ and, in parallel mode, its worker's agent name.
 | T01 | merge-adopts | T00 | ✅ | |
 | T02 | dispatch-adopted | T01 | ✅ | |
 | T03 | worker-add-task | T02 | ⬜ | worker skills: propose, approve, add; reviewer validates |
-| T04 | docs-and-rules | T02 | ⬜ | /docs + CLAUDE.md document worker-introduced tasks |
+| T04 | docs-and-rules | T02 | 🔍 | Updated 4 /docs files (branch-model, task-state, run-lifecycle, control-folder) and CLAUDE.md governance/scope for worker-introduced tasks: add-only adoption at merge, forced ⬜, the adopt log kind and bad-plan-change surface (parks no one), the PLAN/FINDINGS conflict limit. Checked vs T01/T02 code. No deviations. Prose only; tests green. |
 | T05 | live-drill | T02, T03, T04 | ⬜ | harness fixture + hands-on live run with the person |
 
-**Review queue:** *(empty)*
+**Review queue:** T04
 
 ## Blocked on the user
 

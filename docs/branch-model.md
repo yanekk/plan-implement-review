@@ -52,9 +52,14 @@ the agent-name separator is a different `/`, below.)
 ## Merges
 
 - **Task branch → feature branch** (`mergeTask`): serialized, one per pass. `PROGRESS.md` is
-  protected — the command is its single writer on the feature branch, so whatever the task branch
-  did to `PROGRESS.md` is discarded and the feature's version kept, whether the merge was clean or
-  conflicted only on `PROGRESS.md`. A code conflict anywhere else aborts cleanly and returns the
+  protected — the command is its single writer on the feature branch. It is no longer discarded
+  wholesale: the merge keeps the feature's version of everything that already exists (every
+  pre-existing task row and every cross-cutting single-line field), and **adopts only genuinely new
+  task rows** the branch added — a worker-introduced task (`adoptNewTaskRows`, see
+  [task-state.md](task-state.md)). Each adopted row lands with its state forced to `⬜`; a row that
+  would edit an existing task, or names a dependency that does not exist, is rejected and surfaced,
+  never applied (see [control-folder.md](control-folder.md)). This holds whether the merge was clean
+  or conflicted only on `PROGRESS.md`. A code conflict anywhere else aborts cleanly and returns the
   conflicting files, and the worker is parked to resolve it (see [human-flow.md](human-flow.md)).
 - **Worker integrates the feature branch** (`integrate`): before it signals done, a worker merges
   the current feature branch into its task branch, so at merge time its only change to shared files
@@ -70,6 +75,18 @@ the person's own signing setting is untouched for their own commits.
 
 Tearing a worktree down uses `git worktree remove --force --force` and `git branch -D`: the doubled
 force removes a locked worktree, which is exactly the abandoned-worker state recovery must handle.
+
+### Known limitation: only `PROGRESS.md` is fold-protected
+
+The fold above protects `PROGRESS.md` alone. A worker-introduced task also writes a row into
+`PLAN.md` and a line into `FINDINGS.md`, and those two files merge through git's ordinary line
+merge, not the fold. So if two additions land close together — two workers each add a task, or one
+adds a task while another appends a finding — git cannot combine the two edits to the same file and
+the merge conflicts on `PLAN.md` or `FINDINGS.md`. This is not special-cased: it takes the existing
+merge-conflict path, parking the introducing worker to resolve it (see [human-flow.md](human-flow.md)).
+Nothing is lost and the run pauses one worker, not the whole run. It is an accepted limitation, not a
+bug — the common case adds a single task and never hits it (see
+`plans/dynamic-tasks/DESIGN.md § 2.5, § 8`).
 
 ## Agent names
 

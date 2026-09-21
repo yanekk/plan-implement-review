@@ -66,6 +66,28 @@ branch; on the feature branch the row still reads `⬜`. This is central to rest
 `reconcileTaskRow` and commits the feature branch), so a deferred decision survives a restart and
 nothing downstream of it is dispatched.
 
+## The task set can grow mid-run
+
+The task table is not fixed for the life of a run. A worker building one task can discover that
+another task is needed; it asks the person, and once the person approves in the worker's own
+session, it writes the new task down on its own task branch — a `⬜` row in `PROGRESS.md`, a row in
+`PLAN.md`, and a full `tasks/T{nn}-{slug}.md` doc. The new row reaches the feature branch's
+`PROGRESS.md` **at the merge of the task that introduced it**, not the moment it is proposed: at
+merge the command adopts genuinely new task rows from the branch onto the feature copy
+(`adoptNewTaskRows` in `progress.mjs`; see [branch-model.md](branch-model.md)). Every adopted row is
+**forced to `⬜`** — the command owns task state, so a worker cannot land a task pre-marked built or
+done, which would skip its build.
+
+This refines the single-writer rule, it does not break it: the command is still the only writer of
+the feature branch's `PROGRESS.md`. A worker still never edits the feature copy; it commits the new
+row on its own branch, and the command decides at merge whether that row is a clean addition to
+adopt or a change to reject. A branch row that would edit an existing task's slug or dependencies,
+or that names a dependency no task has, is rejected and surfaced, never applied (see
+[control-folder.md](control-folder.md)). A worker can only **add** a task, never reshape one that
+already exists. Once the adopted row is on the feature branch, it is an ordinary `⬜` task: a later
+pass dispatches it the moment its dependencies are `✅`, through the unchanged dispatch logic (see
+[run-lifecycle.md](run-lifecycle.md)).
+
 ## One kind of worker
 
 There is no per-task `Runs` marker driving dispatch any more, and no `auto`/`you` distinction. Every

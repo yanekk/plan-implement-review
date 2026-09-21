@@ -70,6 +70,16 @@ Never invent a rule to get unblocked, and never quietly pick whichever is easier
 An underspecified requirement is not a gap for you to fill in silently — it is the exact
 thing I am here for.
 
+**Adding a task while a parallel run is going is the one thing a worker may change about the
+plan — and only by asking me first.** In parallel mode (and only there), a worker that finds
+the plan is missing a task raises it with me in its own session like any other decision, and
+only once I approve does it write the new task down on its branch; the coordinator then adopts
+it at merge and dispatches it by its dependencies. A worker may **add** a task this way, never
+edit, split, re-order or re-depend one that already exists — editing a task another worker may
+be building right now is the dangerous case, so it is barred at the machine boundary. This is
+the only break in "the plan is mine": the addition still passes through me before it lands. How
+the adoption works is in `/docs` (`task-state.md`, `branch-model.md`).
+
 ### How to ask me
 
 One decision at a time, laid out like this:
@@ -166,6 +176,13 @@ task, a stale doc, a better way to do something — goes in the **findings log**
 
 This keeps commits matched to tasks, keeps the review boundary meaningful, and stops a
 session sprawling into a rewrite. The findings log exists for exactly this.
+
+**The one sanctioned break from strict scope** is a parallel-mode worker adding a task with my
+in-session approval (see `Who decides what`) — it commits the new task's row and doc on its own
+branch, and the coordinator adopts it at merge. That is a deliberate addition to the plan, not
+scope creep, and it stands alongside the worktree carve-out under `Where sessions run` as a rule
+that binds parallel mode only. Everything else you merely notice still goes in the findings log
+and is left alone; a forbidden edit of an existing task is rejected at merge, never applied.
 
 ### Anything the tests cannot establish is verified with me, not asserted
 
