@@ -12,10 +12,10 @@ account is the commit message; writing it twice turns a tracker into a history n
 
 **Plan reviewed:** 2026-09-21 — 2 fixed, 1 decided with the user
 
-**Status:** Plan just written. Nothing built. The mechanism (T00–T02) is fully headless and
-auto-testable; the worker contract and docs (T03–T04) follow; a live drill (T05) closes it.
+**Status:** T00, T01 done. T02 implemented (🔍): the loop now acts on adoption. Worker contract and
+docs (T03–T04) follow; a live drill (T05) closes it.
 **Last updated:** 2026-09-21
-**Next `pir-work` will:** implement T00 — it has no dependencies and gates the whole chain.
+**Next `pir-work` will:** review T02.
 
 ## Tasks
 
@@ -29,12 +29,12 @@ and, in parallel mode, its worker's agent name.
 |---|---|---|---|---|
 | T00 | adopt-rule | — | ✅ | |
 | T01 | merge-adopts | T00 | ✅ | |
-| T02 | dispatch-adopted | T01 | ⬜ | loop surfaces errors, narrates adopted, both scenarios end to end |
+| T02 | dispatch-adopted | T01 | 🔍 | Loop consumes mergeTask added/errors at both merge sites: adopt per task, bad-plan-change per error. 5 loop tests (scenarios 1,2, bad-dep, no-change regression, reconcile adoption). Deviation: added `addRows` to fake/platform.mjs (not in Files) so a fake worker can introduce a task. dispatch.mjs untouched. |
 | T03 | worker-add-task | T02 | ⬜ | worker skills: propose, approve, add; reviewer validates |
 | T04 | docs-and-rules | T02 | ⬜ | /docs + CLAUDE.md document worker-introduced tasks |
 | T05 | live-drill | T02, T03, T04 | ⬜ | harness fixture + hands-on live run with the person |
 
-**Review queue:** *(empty)*
+**Review queue:** T02
 
 ## Blocked on the user
 

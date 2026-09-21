@@ -52,6 +52,30 @@ function taskByWorkerId(state, workerId) {
   return null;
 }
 
+// Record the adoption of any worker-introduced tasks a merge carried, and surface any rejected rows
+// (DESIGN §2.2, §2.3, §2.5, §3.2). Both merge sites — the live merge in runPass (3d) and the
+// restart-reconcile merge — read `added`/`errors` off mergeTask's return: an `adopt` action per task
+// number the coordinator folded into the feature table (so the run tells the person what it picked
+// up, dispatched on a later pass by the unchanged brain), and a `bad-plan-change` surface per error
+// (a forbidden edit, a dep on an unknown task, a duplicate number, a malformed row). Unlike a merge
+// conflict a bad-plan-change does not park anyone: the introducing task's reviewed code has landed,
+// so the surface is informational and the run continues — the person adds the task by hand if they
+// still want it (DESIGN §2.5, §6). A merge with nothing to adopt and no error records neither, so a
+// run with no plan change is byte-for-byte the old behaviour.
+function recordAdoption(record, res) {
+  for (const task of res.added ?? []) record('adopt', { task });
+  for (const text of res.errors ?? []) record('surface', { kind: 'bad-plan-change', task: taskInAdoptError(text), text });
+}
+
+// An adoptNewTaskRows error string names the offending task first when it has one ("T03: …"); a
+// parse or no-table error may name none. Pull the first T-number so the surface (and the flow log
+// line, which keys on `task`) points at the rejected task where the error identifies one, and leave
+// it undefined otherwise rather than inventing a task id.
+function taskInAdoptError(text) {
+  const m = /T\d+/.exec(text);
+  return m ? m[0] : undefined;
+}
+
 // Fold each drained worker→coordinator report into the tracked phase (DESIGN §2.2, §3.4). A question
 // or an unresolved conflict parks the task and is recorded for the live display — the program shows who
 // is asking and the person answers that worker directly (DESIGN §2.2), nothing is routed. `implemented`
@@ -224,6 +248,9 @@ function reconcile({ platform, worktree, repo, slug, maxWorkers, state, featureP
     worktree.remove(handle);
     merged.push(num);
     record('merge', { task: num, branch: handle.branch });
+    // A restart merge adopts a worker-introduced task exactly as a live merge does (DESIGN §2.5,
+    // §3.2): the row rode the branch and lands on this same merge, ready to dispatch next pass.
+    recordAdoption(record, res);
   }
 
   // review: hand each built-but-unreviewed (🔍) branch to a FRESH reviewer on its existing worktree and
@@ -560,6 +587,10 @@ export function runPass({ platform, worktree, repo, slug, maxWorkers, state, con
     writeFileSync(featureProgressPath, reconciled);
     worktree.commitFeature(`reconcile ${num} → ✅`);
     record('merge', { task: num, branch: t.worktree.branch });
+    // Narrate any worker-introduced task this branch carried and surface any rejected row (DESIGN
+    // §2.2, §2.3, §2.5). Adoption already happened inside mergeTask; this only tells the person about
+    // it. The adopted row dispatches on a later pass through the unchanged decideDispatch.
+    recordAdoption(record, res);
     // The branch is safely in the feature branch, so end the worker now (session stop + worktree
     // removal) and forget its task. This is the close decideDispatch used to schedule; pairing it with
     // the successful merge is what makes a conflicted merge leave the worker untouched (T28).

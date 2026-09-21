@@ -38,6 +38,25 @@ function commit(cwd, task, plan, { file, content, rowState, note, message }) {
   git(cwd, ['commit', '-m', message, '--no-edit']);
 }
 
+// A worker introducing a new task writes its ⬜ row into its OWN task branch's PROGRESS.md (DESIGN
+// §2.1 step 3), which the coordinator then adopts at merge (adoptNewTaskRows). Models the durable
+// half of the proposal: the row rides the branch and lands when the branch merges. `rows` are full
+// markdown table lines the test supplies (so a test can introduce a valid row or a malformed/bad-dep
+// one to prove the reject-and-surface path); they are inserted right after the worker's own row so
+// the table stays well-formed, then committed. Kept a separate commit from the worker's own 🔍 so the
+// branch tip carries both, exactly as a real worker's two edits would. The test owns the row format
+// because it owns progressDoc; the fake only splices lines, staying column-layout agnostic.
+function addTaskRows(cwd, task, plan, rows) {
+  const p = join(cwd, progressPathFor(plan));
+  const lines = readFileSync(p, 'utf8').split('\n');
+  const own = lines.findIndex((l) => new RegExp(`^\\|\\s*${task}\\s*\\|`).test(l.trim()));
+  const at = own >= 0 ? own + 1 : lines.length;
+  lines.splice(at, 0, ...rows);
+  writeFileSync(p, lines.join('\n'));
+  git(cwd, ['add', '-A']);
+  git(cwd, ['commit', '-m', `${task}: propose ${rows.length} new task row(s)`, '--no-edit']);
+}
+
 // createFakePlatform({ behaviors }) → the platform object.
 //   behaviors — a map from task id ("T05") to how that task's worker behaves:
 //     {}                     clean: implement → implemented; review → done; verify → done.
@@ -49,6 +68,11 @@ function commit(cwd, task, plan, { file, content, rowState, note, message }) {
 //                            decision; it stays parked (the loop must not merge, DESIGN §2.5).
 //     { crash: true }        the worker dies after one step (vanishes from list()); the loop must
 //                            close it as dead and free its slot (DESIGN §2.5, §3.3).
+//     { addRows: [line…] }   a worker introducing a new task (DESIGN §2.1): when the implementer
+//                            commits its 🔍, it also commits these full PROGRESS.md table rows onto
+//                            its OWN task branch, which the coordinator adopts at merge. The test
+//                            supplies the row text, so it can introduce a valid new task or a
+//                            malformed/bad-dep one to drive the reject-and-surface path (§2.5).
 //     { lingerBusy: N }      after the worker reaches a resting stage (implemented / done / awaiting),
 //                            list() reports it `busy` for N more ticks before `idle`. Models a real
 //                            session still mid-turn after it committed, so a test can prove the loop
@@ -118,12 +142,14 @@ export function createFakePlatform({ behaviors = {} } = {}) {
           return;
         }
         commit(w.cwd, w.task, w.plan, { file: implFile, content: implContent, rowState: '🔍', note: 'implemented', message: `${w.task}: implement` });
+        if (b.addRows) addTaskRows(w.cwd, w.task, w.plan, b.addRows);
         emit(w, 'implemented');
         w.stage = 'implemented';
         return;
       }
       if (w.stage === 'awaiting' && w.answered) {
         commit(w.cwd, w.task, w.plan, { file: implFile, content: implContent, rowState: '🔍', note: 'implemented', message: `${w.task}: implement` });
+        if (b.addRows) addTaskRows(w.cwd, w.task, w.plan, b.addRows);
         emit(w, 'implemented');
         w.stage = 'implemented';
         return;
