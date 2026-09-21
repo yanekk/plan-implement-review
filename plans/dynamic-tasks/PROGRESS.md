@@ -12,10 +12,11 @@ account is the commit message; writing it twice turns a tracker into a history n
 
 **Plan reviewed:** 2026-09-21 — 2 fixed, 1 decided with the user
 
-**Status:** T00 implemented, awaiting review. The rest of the mechanism (T01–T02) unblocks
-once T00 is reviewed; the worker contract and docs (T03–T04) follow; a live drill (T05) closes it.
+**Status:** T00 reviewed ✅ — the add-only merge rule, pure and exhaustively tested. T01–T02
+wire it into mergeTask and the loop; the worker contract and docs (T03–T04) follow; a live
+drill (T05) closes it.
 **Last updated:** 2026-09-21
-**Next `pir-work` will:** review T00.
+**Next `pir-work` will:** implement T01 — its only dependency, T00, is ✅.
 
 ## Tasks
 
@@ -27,14 +28,14 @@ and, in parallel mode, its worker's agent name.
 
 | # | Task | Depends on | State | Notes |
 |---|---|---|---|---|
-| T00 | adopt-rule | — | 🔍 | `adoptNewTaskRows` in core/progress.mjs: pure add-only merge. Compares slug+deps not state, forces ⬜, validates deps against feature+new rows, atomic reject on any error, preserves column layout. 14 tests (all task cases + Runs-column). Deps compared order-independent. |
+| T00 | adopt-rule | — | ✅ | Reviewed clean, no fix commit. All 11 doc cases covered by 14 real tests; boundary.test asserts purity; 436 green. Probed past the doc: append with no trailing newline, deps compared as sets, and the loop-relevant edges — a duplicate new number within one branch, or a self/cyclic new-dep, is adopted as-is (see FINDINGS). |
 | T01 | merge-adopts | T00 | ⬜ | mergeTask adopts new rows (real + fake worktree) |
 | T02 | dispatch-adopted | T01 | ⬜ | loop surfaces errors, narrates adopted, both scenarios end to end |
 | T03 | worker-add-task | T02 | ⬜ | worker skills: propose, approve, add; reviewer validates |
 | T04 | docs-and-rules | T02 | ⬜ | /docs + CLAUDE.md document worker-introduced tasks |
 | T05 | live-drill | T02, T03, T04 | ⬜ | harness fixture + hands-on live run with the person |
 
-**Review queue:** T00
+**Review queue:** *(empty)*
 
 ## Blocked on the user
 
