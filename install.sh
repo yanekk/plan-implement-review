@@ -27,6 +27,13 @@ MARKER="Appended by plan-implement-review"
 DEST="$HOME/.claude/skills"
 ENGINE_DEST="$HOME/.claude/pir-engine"
 SKILLS=(pir-plan pir-review-plan pir-work pir-implement pir-review pir-install pir-worker)
+LAUNCHER_SRC="$SRC/bin/pir-coordinate"
+
+# Skills deleted from the repo when parallel mode stopped being agentic (T07): the coordinator is
+# now a plain command, not a skill, and the verify/parallelize helpers went with the you/auto split.
+# install.sh only refreshes the SKILLS array, so it never removed these; they linger in accounts that
+# installed an earlier version, advertising the old agentic coordinator. Removed idempotently (T18).
+ORPHAN_SKILLS=(pir-coordinate pir-verify pir-parallelize-plan)
 
 install_skills() {
     mkdir -p "$DEST"
@@ -39,7 +46,57 @@ install_skills() {
     # when run from a repo that is not this one. Drop a fresh copy beside it.
     cp "$SRC/CLAUDE.md" "$DEST/pir-install/PIR-CLAUDE.md"
     echo "  refreshed $DEST/pir-install/PIR-CLAUDE.md"
+    remove_orphan_skills
     install_engine
+    install_launcher
+}
+
+# True when $1 is a directory on the current PATH.
+on_path() {
+    case ":$PATH:" in
+        *":$1:"*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+# Delete the orphan skills (see ORPHAN_SKILLS) idempotently. rm -rf is a no-op if already gone.
+remove_orphan_skills() {
+    for s in "${ORPHAN_SKILLS[@]}"; do
+        if [[ -e "$DEST/$s" ]]; then
+            rm -rf "${DEST:?}/$s"
+            echo "  removed the stale orphan skill $DEST/$s"
+        fi
+    done
+}
+
+# Install the pir-coordinate launcher onto a PATH directory (T18). Parallel mode's coordinator is a
+# plain program (DESIGN §2.1); this is the user-facing shortcut for it, replacing the deleted
+# pir-coordinate skill as the entry point. The installed engine path is baked in HERE, at install
+# time — sed substitutes __PIR_ENGINE__ with ENGINE_DEST — so the command runs from any repo, not
+# just this one. Prefer ~/.local/bin (already on this user's PATH; `claude` lives there); if it is
+# absent or off PATH, fall back to ~/.claude/bin and print the exact export PATH step, never silently
+# installing a command the user cannot invoke (the apply_automode_rule pattern).
+install_launcher() {
+    local bindir
+    if [[ -d "$HOME/.local/bin" ]] && on_path "$HOME/.local/bin"; then
+        bindir="$HOME/.local/bin"
+    else
+        bindir="$HOME/.claude/bin"
+    fi
+    mkdir -p "$bindir"
+    # '@' delimiter so the '/'-heavy engine path needs no escaping.
+    sed "s@__PIR_ENGINE__@$ENGINE_DEST@" "$LAUNCHER_SRC" > "$bindir/pir-coordinate"
+    chmod +x "$bindir/pir-coordinate"
+    echo "  installed the launcher $bindir/pir-coordinate"
+    if ! on_path "$bindir"; then
+        cat <<STEP
+  $bindir is not on your PATH — add it so \`pir-coordinate\` resolves:
+
+      export PATH="$bindir:\$PATH"
+
+  (put that line in your shell profile to make it stick.)
+STEP
+    fi
 }
 
 install_engine() {
@@ -132,6 +189,9 @@ if [[ -z "$TARGET" || "$TARGET" == "--global" ]]; then
     echo "    /pir-install"
     echo "or append the method by hand:"
     echo "    ./install.sh /path/to/project"
+    echo
+    echo "To run a reviewed plan in parallel, from inside a set-up repo (dry by default):"
+    echo "    pir-coordinate {slug}"
     exit 0
 fi
 
@@ -161,4 +221,8 @@ Done. One thing left, by hand:
   then, one unit of work at a time:
 
       /pir-work {slug}
+
+  or, to run a reviewed plan in parallel instead (from inside the repo, dry by default):
+
+      pir-coordinate {slug}
 MSG
