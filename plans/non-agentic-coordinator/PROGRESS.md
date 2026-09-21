@@ -27,8 +27,9 @@ and docs (T08) work and update `/docs`, not the sealed DESIGN; added post-review
 `/pir-review-plan` but each still gets a build→review pass. (T13's scratch dir `/tmp/mc-scratch` was torn
 down 2026-09-21.)
 **Last updated:** 2026-09-21
-**Next `pir-work` will:** REVIEW **T18** (🔍) — the `pir-coordinate` launcher and the `install.sh`
-changes. T19 (docs) follows once T18 is ✅.
+**Next `pir-work` will:** IMPLEMENT **T19** (⬜, docs gap-fill) — its dep T18 is now ✅ (code reviewed
+clean). T18's one remaining half, the PM's dry `pir-coordinate` hand-check, is outstanding (Blocked on
+the user); it does not gate T19's docs.
 
 ## Tasks
 
@@ -55,22 +56,26 @@ read — the parser tolerates and ignores it; T05 finishes the surrounding clean
 | T14 | conflict-resolve-prompt | auto | T05 | ✅ | Reviewed. Fixed a stale "routed down" comment (§2.2); probed reprint risk — a parked worker stays AWAITING, never re-enters `merge`, so the prompt scrolls once. Live paint by-eye stays T13. 407 green. |
 | T16 | display-colour-and-question | auto | T15 | ✅ | Reviewed clean, no fix. Colour is a TTY+NO_COLOR-gated paint layer; formatLines escape-free; T15 clip/height held; tests bite (17). Live end-state colours wiped by close(); by-eye focus is RUNNING (FINDINGS). 409 green. |
 | T13 | attended-merge-conflict | you | T05, T10, T11, T14 | ✅ | Code reviewed clean. Live attended run PASS 2026-09-21 (bundle `2026-09-21T06-20-15-434Z`): T02 merged first, T01 parked, resolved on the live worker keeping `hello there`; feature branch handed off that side, main untouched, ceiling 2. Verified on disk. Coordinator reached `completed` not `crashed` — T17's live proof. FINDINGS ✅. |
-| T17 | resilient-report-watch | auto | T05 | ✅ | Reviewed clean, no fix. Both edits mutation-checked live to bite. Probed: `error` handler null-safe on double/late close; a crash returns before the timeout check so it never reads `timeout`; rejecting `crashed` under any expected terminal is safe (a real park exits `halted`/`timeout`). 417 green. Live EMFILE proof is T13's. |
-| T18 | coordinator-launcher | auto | — | 🔍 | Shipped `bin/pir-coordinate` (thin wrapper; `__PIR_ENGINE__` sed-substituted at install to the installed engine path). install.sh removes the three orphan skills, installs the launcher to `~/.local/bin` (fallback `~/.claude/bin` + export step), names it in both closing messages. 6 file-read tests. Fake-HOME install + dry launch proven here; real-PATH resolve is the hand-check. 423 green. |
+| T17 | resilient-report-watch | auto | T05 | ✅ | Reviewed clean, no fix. Report-watch degrades to the 5s poll on an FSWatcher error; a crash scores `crashed` and is rejected as a terminal. Live EMFILE proof is T13's. 417 green. |
+| T18 | coordinator-launcher | auto | — | ✅ | Reviewed clean, no fix. Reproduced out-of-band on a fake HOME: install removes the three orphans, writes the launcher executable with `__PIR_ENGINE__` substituted, prints the off-PATH fallback+export; the installed launcher drives a dry run and forwards `"$@"`. Tests bite (6). Real-PATH resolve after a real install is the PM's dry hand-check (Blocked). 423 green. |
 | T19 | docs-colour-and-launch | auto | T18 | ⬜ | Added 2026-09-21 (PM). Fill the two `/docs` gaps: the live-display colours (T16) in run-lifecycle.md, and the `pir-coordinate` launch command (T18) in README/human-flow. Docs otherwise current (checked 2026-09-21) — targeted gap-fill, not a re-audit. T17 crash-scoring deliberately out of scope. |
 
 A Notes cell holds what was built or what the review found, the test count, and one line per
 deviation from the task doc. A ✅ task's cell may be cut to one line once the next task is reviewed.
 
-**Review queue:** T18 (🔍) awaits review. T01–T17 are all ✅; T19 (⬜, deps T18) opens once T18 is ✅.
-Next `pir-work` reviews T18.
+**Review queue:** empty — T01–T18 all ✅. T19 (⬜, dep T18 ✅) is next to implement. T18's dry
+hand-check is with the PM (Blocked on the user).
 
 ## Blocked on the user
 
-T16 is built and reviewed (✅). Its only remaining part is the PM's by-eye check that the colours read well
-on a real terminal — handed over: `node run-t16-colour-check.mjs` (no paid workers). Focus on the RUNNING
-state and whether the amber-bold "asking you" row jumps out; the end-of-run colours are painted then wiped
-in a real run, so judge them here only as colours (FINDINGS 2026-09-20).
+T18: code reviewed clean and every mechanical part reproduced here, but the last half needs a real shell.
+Run `install.sh` for your account, then from a set-up repo run `pir-coordinate {slug}` with `PARALLEL_LIVE`
+unset (dry — no paid workers) and confirm the bare command resolves on your PATH and prints the coordinator
+banner. Reversible: re-running `install.sh` from this repo restores anything. When seen, it goes in FINDINGS
+with the date.
 
-T13's live attended `merge-conflict` run is DONE — PASS on 2026-09-21, verified on disk (FINDINGS ✅). The
-scratch dir `/tmp/mc-scratch` and its run bundle were torn down 2026-09-21 at the PM's word; nothing left.
+T16 is built and reviewed (✅). Remaining part is the PM's by-eye check that the colours read well:
+`node run-t16-colour-check.mjs` (no paid workers). Focus on RUNNING and whether the amber-bold "asking you"
+row jumps out; end-of-run colours are painted then wiped in a real run (FINDINGS 2026-09-20).
+
+T13's live attended run is DONE — PASS 2026-09-21, verified on disk (FINDINGS ✅); scratch torn down.
