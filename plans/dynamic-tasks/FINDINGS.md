@@ -12,6 +12,8 @@ user changed.
 
 | Date | | Finding |
 |---|---|---|
+| 2026-09-21 | 🐞 | `bad-plan-change` surface sets `task` to the rejected new task (e.g. T03), so renderSurface prints "The worker on T03" though T03 has no worker — the introducer does. Full reason still shown. coordinate.mjs, out of T02 scope, not fixed. |
+| 2026-09-21 | 📌 | Fake worker gained `addRows` (fake/platform.mjs): an implementer also commits given PROGRESS.md rows onto its branch at 🔍, so a loop test drives a worker-introduced task, valid or malformed. Loop records `adopt`/`bad-plan-change` from mergeTask. |
 | 2026-09-21 | 📌 | adoptNewTaskRows trusts a branch's own new rows are unique and acyclic: a duplicate new number, or a new task with a self/cyclic dep, is adopted as-is (doubled row or undispatchable task). Needs a malformed branch; human-gated; not fixed. |
 | 2026-09-21 | 📌 | Dispatch needs no change: `decideDispatch` is already pure over the parsed table and the loop re-parses `PROGRESS.md` every pass. The whole feature is adoption at merge; a larger table dispatches for free. |
 | 2026-09-21 | 📌 | `mergeTask` protects `PROGRESS.md` by restoring the feature's copy verbatim (worktree.mjs, fake mirror). Adoption replaces that verbatim restore, so both live and restart merge paths get it — both call `mergeTask`. |
