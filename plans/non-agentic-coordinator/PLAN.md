@@ -1,6 +1,6 @@
 # Implementation plan
 
-15 tasks in 4 phases (T10, T11, T12 added mid-build — see Phase 3; T13, T14, T15 added in Phase 4). Each has a file in [tasks/](tasks/) with its goal, the files it touches, the
+17 tasks in 4 phases (T10, T11, T12 added mid-build — see Phase 3; T13, T14, T15, T16, T17 added in Phase 4). Each has a file in [tasks/](tasks/) with its goal, the files it touches, the
 interfaces it defines, and what "done" means. Track state in [PROGRESS.md](PROGRESS.md). Read
 [DESIGN.md](DESIGN.md) first.
 
@@ -95,6 +95,8 @@ re-adding the down-channel. T09's six-fixture confirmation of those two depends 
 | [T15](tasks/T15-display-in-place-render.md) | display-in-place-render | auto | T03 |
 | [T14](tasks/T14-conflict-resolve-prompt.md) | conflict-resolve-prompt | auto | T05 |
 | [T13](tasks/T13-attended-merge-conflict.md) | attended-merge-conflict | you | T05, T10, T11, T14 |
+| [T16](tasks/T16-display-colour-and-question.md) | display-colour-and-question | auto | T15 |
+| [T17](tasks/T17-resilient-report-watch.md) | resilient-report-watch | auto | T05 |
 
 T09 is the hand-verification the tests cannot reach (DESIGN §5.1): on a scratch plan in a scratch
 repo, the person runs the real command, answers a blocked worker directly, Ctrl-C's mid-run and
@@ -124,6 +126,18 @@ screen. T15 rewrites the renderer to own a bounded region (alternate screen, per
 terminal size) and makes the in-place behaviour testable with a fake stream — no TUI dependency, to keep
 the tool install-free. It blocks T09's display judgement: the other three by-eye items (Ctrl-C, resume,
 no classifier prompt) are already confirmed, so once T15 lands the person re-checks only the display.
+
+T16 (display-colour-and-question, `auto`) was added after T09's live pass (PM decision, 2026-09-20):
+colour the live board by status and make the parked "asking you" pointer stand out. Depends on T15.
+
+T17 (resilient-report-watch, `auto`) was added 2026-09-21, when the live `merge-conflict` attended run
+kept crashing before it could reach the conflict. The coordinator's report-watcher (`waitForReport`)
+died on an unhandled `fs.watch` error event (EMFILE, from file-descriptor pressure when several Claude
+sessions run at once) instead of falling back to its own 5s polling backstop; and the harness scored
+the crash as `completed`. T17 makes the watcher survive a watch error and makes the harness call a
+crash a crash. It blocks T13's live verification (a crashed coordinator never parks a conflict), so it
+lands before the person re-runs T13. Small, two focused shell edits. Depends on T05 (PM decision,
+2026-09-21).
 
 ---
 

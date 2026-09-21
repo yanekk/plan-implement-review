@@ -12,6 +12,7 @@ user changed.
 
 | Date | | Finding |
 |---|---|---|
+| 2026-09-21 | 🐞 | Live merge-conflict run crashed the coordinator ~2.4s in: `waitForReport`'s `fs.watch` emits an unhandled `error` event (EMFILE, fd pressure) and kills the run before any conflict; run.mjs then scores the crash `completed`. Fix is T17; blocks T13's live run. |
 | 2026-09-21 | 📌 | T13: merge-conflict reworked attended (§2.8) — no scripted answer; a person resolves on the live worker. mergeConflictResolved drops the `answer` line, composes handedOffGreenBranch, asserts the feature branch (not main) reads `hello there`. run.mjs already captured pir/{slug}; no runner change. |
 | 2026-09-21 | 📌 | T13: the flow log carries no surface KIND (loop.mjs writes type+task), so mergeConflictResolved keys on the task id, not `kind: conflict` as the task doc worded it — same pattern as parkedWorkerHoldsSlot. |
 | 2026-09-20 | 📌 | T16 review: end-state colours (finished-green, red footer, interrupted-red) are barely seen — a complete run paints then close() wipes the alt frame (post-T15) and plain renderHandoff persists; Ctrl-C never paints interrupted. Per-pass row tints + amber-bold parked pointer are the visible payoff. |

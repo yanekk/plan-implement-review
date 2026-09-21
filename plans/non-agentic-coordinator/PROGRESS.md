@@ -24,9 +24,15 @@ tests all bite (mutation-checked live), `handedOffGreenBranch` composes correctl
 is case-sensitive so task-branch merges never false-positive as a promotion, and the no-surface-kind
 deviation matches loop.mjs. 410 green. T13 now ⛔ — its only remaining half is the PM's live attended
 run (§5.2, real paid workers a person must watch), handed over below. Every buildable task is now done.
+Also 2026-09-21: driving T13's live run crashed the coordinator (EMFILE in the report-watcher, unhandled
+`fs.watch` error → whole run dies ~2.4s in, before any conflict). PM chose to fix it first, so T17
+(resilient-report-watch, ⬜) was added: make `waitForReport` fall back to its 5s poll on a watch error,
+and make the harness call a crash a crash not `completed`. T13's live run is blocked on T17 (a crashed
+coordinator never parks a conflict). FINDINGS 2026-09-21.
 **Last updated:** 2026-09-21
-**Next `pir-work` will:** find no 🔍 and no ready ⬜ — every task is built and reviewed. The one thing
-left is the PM's live attended run of T13 (below); it is not a `pir-work` unit.
+**Next `pir-work` will:** IMPLEMENT **T17** (⬜, deps T05 ✅) — the only ⬜, no 🔍/🟡. Make the coordinator
+survive a report-watch error and the harness report a crash honestly. Then a fresh session reviews it,
+then the PM re-runs T13's live check.
 
 ## Tasks
 
@@ -52,13 +58,15 @@ read — the parser tolerates and ignores it; T05 finishes the surrounding clean
 | T15 | display-in-place-render | auto | T03 | ✅ | Reviewed clean. Bounded alt-screen region replaces the wrap-broken cursor-up math; `close()` leaves the alt screen on every exit incl SIGINT. By-eye repaint stays T09. 395 green. |
 | T14 | conflict-resolve-prompt | auto | T05 | ✅ | Reviewed. Fixed a stale "routed down" comment (§2.2); probed reprint risk — a parked worker stays AWAITING, never re-enters `merge`, so the prompt scrolls once. Live paint by-eye stays T13. 407 green. |
 | T16 | display-colour-and-question | auto | T15 | ✅ | Reviewed clean, no fix. Colour is a TTY+NO_COLOR-gated paint layer; formatLines escape-free; T15 clip/height held; tests bite (17). Live end-state colours wiped by close(); by-eye focus is RUNNING (FINDINGS). 409 green. |
-| T13 | attended-merge-conflict | you | T05, T10, T11, T14 | ⛔ | Code reviewed clean, no fix. Probed by mutation: the promote-guard, losing-side and respawn tests all bite; `handedOffGreenBranch` composition and case-sensitive `promotionMergeLines` hold; no-surface-kind deviation matches loop.mjs. 410 green. Remaining half is the PM's live attended run (§5.2) — blocked on the user (below). |
+| T13 | attended-merge-conflict | you | T05, T10, T11, T14 | ⛔ | Code reviewed clean, no fix. Probed by mutation: the promote-guard, losing-side and respawn tests all bite; `handedOffGreenBranch` composition and case-sensitive `promotionMergeLines` hold; no-surface-kind deviation matches loop.mjs. 410 green. Live run blocked on T17 (coordinator crashed on a watch error before reaching the conflict, 2026-09-21) then the PM (§5.2). |
+| T17 | resilient-report-watch | auto | T05 | ⬜ | Added 2026-09-21. `waitForReport` must survive an `fs.watch` `error` event (EMFILE from fd pressure) by falling back to its 5s poll, not crashing the run; and run.mjs `runOutcome` must report a crash exit as `crashed`, not `completed`. Two shell edits + tests. Blocks T13's live run. |
 
 A Notes cell holds what was built or what the review found, the test count, and one line per
 deviation from the task doc. A ✅ task's cell may be cut to one line once the next task is reviewed.
 
-**Review queue:** empty — no 🔍 task. Every buildable task is reviewed and done. T13's code review
-passed clean; its remaining live attended run is the PM's hand-verification (below), not a review.
+**Review queue:** empty — no 🔍 task. Next work is to IMPLEMENT T17 (the coordinator-crash fix that
+blocks T13's live run). T13's own code review passed clean; its remaining live attended run is the PM's
+hand-verification (below), now gated on T17 landing first.
 
 ## Blocked on the user
 
@@ -67,9 +75,11 @@ on a real terminal — handed over: `node run-t16-colour-check.mjs` (no paid wor
 state and whether the amber-bold "asking you" row jumps out; the end-of-run colours are painted then wiped
 in a real run, so judge them here only as colours (FINDINGS 2026-09-20).
 
-T13's code is reworked, green, and now reviewed clean (⛔ — only the live run remains). Its live attended
-run cannot be a machine assertion (§5.1, §5.2 — real paid workers only a person may watch). Run it in a
-real terminal from a scratch dir:
+T13's code is reworked, green, and reviewed clean (⛔). Its live attended run is now gated on **T17**:
+on 2026-09-21 the run crashed the coordinator (EMFILE in the report-watcher) ~2.4s in, before any
+conflict, so it never reached the parked prompt. Once T17 lands and is reviewed, run it in a real
+terminal from a scratch dir — ideally with other Claude sessions closed, to keep fd pressure down
+(§5.2). It cannot be a machine assertion (§5.1, §5.2 — real paid workers only a person may watch):
 
   PARALLEL_ALLOW_HERE is NOT needed; run from anywhere but this repo, or pass --into a scratch dir:
   node src/shell/harness/run.mjs merge-conflict --into /tmp/mc-scratch
