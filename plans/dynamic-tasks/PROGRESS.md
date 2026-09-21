@@ -27,7 +27,7 @@ and, in parallel mode, its worker's agent name.
 
 | # | Task | Depends on | State | Notes |
 |---|---|---|---|---|
-| T00 | adopt-rule | — | ⬜ | `adoptNewTaskRows` pure function in core/progress.mjs |
+| T00 | adopt-rule | — | ✅ | |
 | T01 | merge-adopts | T00 | ⬜ | mergeTask adopts new rows (real + fake worktree) |
 | T02 | dispatch-adopted | T01 | ⬜ | loop surfaces errors, narrates adopted, both scenarios end to end |
 | T03 | worker-add-task | T02 | ⬜ | worker skills: propose, approve, add; reviewer validates |
