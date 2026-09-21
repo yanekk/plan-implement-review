@@ -24,8 +24,8 @@ Then the PM added two Phase-5 tasks (see PLAN.md), so the plan is no longer comp
 orphan skills; T19 (docs-colour-and-launch) fills the two remaining `/docs` gaps — the display colours
 (T16) and the new launch command. Both `auto`, T19 depends on T18. They extend this plan's install (T06)
 and docs (T08) work and update `/docs`, not the sealed DESIGN; added post-review, so they skip
-`/pir-review-plan` but each still gets a build→review pass. Scratch dir `/tmp/mc-scratch` still holds
-T13's run bundle (teardown pending the PM's OK).
+`/pir-review-plan` but each still gets a build→review pass. (T13's scratch dir `/tmp/mc-scratch` was torn
+down 2026-09-21.)
 **Last updated:** 2026-09-21
 **Next `pir-work` will:** IMPLEMENT **T18** (⬜, no deps) — the `pir-coordinate` launcher and the
 `install.sh` changes. T19 (docs) follows once T18 is reviewed.
@@ -72,8 +72,5 @@ on a real terminal — handed over: `node run-t16-colour-check.mjs` (no paid wor
 state and whether the amber-bold "asking you" row jumps out; the end-of-run colours are painted then wiped
 in a real run, so judge them here only as colours (FINDINGS 2026-09-20).
 
-T13's live attended `merge-conflict` run is DONE — PASS on 2026-09-21, verified on disk (FINDINGS ✅). One
-loose end: the scratch dir `/tmp/mc-scratch` still holds the run bundle
-(`plans/merge-conflict/.parallel/control/capture/2026-09-21T06-20-15-434Z`). Tear it down with
-`rm -rf /tmp/mc-scratch` once the PM no longer wants the bundle — held back from doing it automatically
-so the evidence is not destroyed without a nod.
+T13's live attended `merge-conflict` run is DONE — PASS on 2026-09-21, verified on disk (FINDINGS ✅). The
+scratch dir `/tmp/mc-scratch` and its run bundle were torn down 2026-09-21 at the PM's word; nothing left.
