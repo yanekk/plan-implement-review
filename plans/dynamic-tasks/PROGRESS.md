@@ -28,7 +28,7 @@ and, in parallel mode, its worker's agent name.
 | # | Task | Depends on | State | Notes |
 |---|---|---|---|---|
 | T00 | adopt-rule | — | ✅ | |
-| T01 | merge-adopts | T00 | ⬜ | mergeTask adopts new rows (real + fake worktree) |
+| T01 | merge-adopts | T00 | ✅ | |
 | T02 | dispatch-adopted | T01 | ⬜ | loop surfaces errors, narrates adopted, both scenarios end to end |
 | T03 | worker-add-task | T02 | ⬜ | worker skills: propose, approve, add; reviewer validates |
 | T04 | docs-and-rules | T02 | ⬜ | /docs + CLAUDE.md document worker-introduced tasks |
