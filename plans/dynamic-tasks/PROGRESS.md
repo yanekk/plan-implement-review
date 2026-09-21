@@ -29,7 +29,7 @@ and, in parallel mode, its worker's agent name.
 |---|---|---|---|---|
 | T00 | adopt-rule | — | ✅ | |
 | T01 | merge-adopts | T00 | ✅ | |
-| T02 | dispatch-adopted | T01 | ⬜ | loop surfaces errors, narrates adopted, both scenarios end to end |
+| T02 | dispatch-adopted | T01 | ✅ | |
 | T03 | worker-add-task | T02 | ⬜ | worker skills: propose, approve, add; reviewer validates |
 | T04 | docs-and-rules | T02 | ⬜ | /docs + CLAUDE.md document worker-introduced tasks |
 | T05 | live-drill | T02, T03, T04 | ⬜ | harness fixture + hands-on live run with the person |
