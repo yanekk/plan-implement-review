@@ -12,6 +12,7 @@ user changed.
 
 | Date | | Finding |
 |---|---|---|
+| 2026-09-21 | ✅ | T13 live merge-conflict run PASS (bundle `2026-09-21T06-20-15-434Z`). T02 merged first; T01 parked, resolved on the live worker keeping `hello there`; feature branch handed off that side, main untouched, ceiling 2. Coordinator reached `completed` not `crashed` — T17's live proof too. |
 | 2026-09-21 | 📌 | T17: `waitForReport` now attaches an `error` listener to the FSWatcher (an EMFILE emits, not throws) and degrades to the 5s poll — no `finish()` on error, or it busy-spins re-watching. `runOutcome` scores a non-zero/signalled exit `crashed`; `reachedExpectedTerminal` rejects it. `watch` injectable. Live proof is T13's. |
 | 2026-09-21 | 🐞 | Live merge-conflict run crashed the coordinator ~2.4s in: `waitForReport`'s `fs.watch` emits an unhandled `error` event (EMFILE, fd pressure) and kills the run before any conflict; run.mjs then scores the crash `completed`. Fix is T17; blocks T13's live run. |
 | 2026-09-21 | 📌 | T13: merge-conflict reworked attended (§2.8) — no scripted answer; a person resolves on the live worker. mergeConflictResolved drops the `answer` line, composes handedOffGreenBranch, asserts the feature branch (not main) reads `hello there`. run.mjs already captured pir/{slug}; no runner change. |

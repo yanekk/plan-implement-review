@@ -18,16 +18,15 @@ file and its worker's agent name.
 removals so every task stays green + cover `capture.mjs`; `install.sh` applies the per-user `autoMode`
 rule). Account in the `plan-review` commit.
 
-**Status:** 2026-09-21: T17 reviewed clean, no fix commit. The two shell edits — `waitForReport` surviving
-an `fs.watch` `error` event and `runOutcome` scoring a crash `crashed` not `completed` — are both
-mutation-checked live to bite, null-safe on double/late watcher close, and a crash returns before the
-timeout check so it is never mislabeled. 417 green. Every buildable task is now done and reviewed. The one
-thing left is T13's live attended `merge-conflict` run — the PM's hand-verification (§5.2, real paid
-workers a person must watch), now unblocked by T17. Handover under "Blocked on the user".
+**Status:** 2026-09-21: PLAN COMPLETE — every task ✅. T13's live attended `merge-conflict` run PASSed:
+two workers clashed on greeting.txt, T02 merged first, T01 parked, a person resolved it on the live worker
+keeping `hello there`, and the feature branch handed off that side (main untouched, ceiling held 2).
+Verified on disk, not just the harness report. The run reached `completed`, not `crashed` — so it also
+proved T17's fix live (the coordinator survived a real run under fd pressure without dying). Bundle
+`2026-09-21T06-20-15-434Z`; FINDINGS ✅ row. Earlier this session T17 was reviewed clean (no fix commit).
 **Last updated:** 2026-09-21
-**Next `pir-work` will:** nothing to build — no ⬜/🟡/🔍 task remains, and T13 (⛔) is the PM's live run,
-not a machine task. The PM runs T13's live `merge-conflict` check (handover below); on success a ✅
-FINDINGS row closes it and the plan is complete.
+**Next `pir-work` will:** nothing — the plan is done. No ⬜/🟡/🔍/⛔ task remains. Scratch dir
+`/tmp/mc-scratch` is the only loose end (teardown pending the PM's OK, since it holds the run bundle).
 
 ## Tasks
 
@@ -53,14 +52,14 @@ read — the parser tolerates and ignores it; T05 finishes the surrounding clean
 | T15 | display-in-place-render | auto | T03 | ✅ | Reviewed clean. Bounded alt-screen region replaces the wrap-broken cursor-up math; `close()` leaves the alt screen on every exit incl SIGINT. By-eye repaint stays T09. 395 green. |
 | T14 | conflict-resolve-prompt | auto | T05 | ✅ | Reviewed. Fixed a stale "routed down" comment (§2.2); probed reprint risk — a parked worker stays AWAITING, never re-enters `merge`, so the prompt scrolls once. Live paint by-eye stays T13. 407 green. |
 | T16 | display-colour-and-question | auto | T15 | ✅ | Reviewed clean, no fix. Colour is a TTY+NO_COLOR-gated paint layer; formatLines escape-free; T15 clip/height held; tests bite (17). Live end-state colours wiped by close(); by-eye focus is RUNNING (FINDINGS). 409 green. |
-| T13 | attended-merge-conflict | you | T05, T10, T11, T14 | ⛔ | Code reviewed clean, no fix. Probed by mutation: the promote-guard, losing-side and respawn tests all bite; `handedOffGreenBranch` composition and case-sensitive `promotionMergeLines` hold; no-surface-kind deviation matches loop.mjs. 410 green. Live run unblocked by T17 (reviewed ✅ 2026-09-21); now only the PM's live attended run (§5.2). |
+| T13 | attended-merge-conflict | you | T05, T10, T11, T14 | ✅ | Code reviewed clean. Live attended run PASS 2026-09-21 (bundle `2026-09-21T06-20-15-434Z`): T02 merged first, T01 parked, resolved on the live worker keeping `hello there`; feature branch handed off that side, main untouched, ceiling 2. Verified on disk. Coordinator reached `completed` not `crashed` — T17's live proof. FINDINGS ✅. |
 | T17 | resilient-report-watch | auto | T05 | ✅ | Reviewed clean, no fix. Both edits mutation-checked live to bite. Probed: `error` handler null-safe on double/late close; a crash returns before the timeout check so it never reads `timeout`; rejecting `crashed` under any expected terminal is safe (a real park exits `halted`/`timeout`). 417 green. Live EMFILE proof is T13's. |
 
 A Notes cell holds what was built or what the review found, the test count, and one line per
 deviation from the task doc. A ✅ task's cell may be cut to one line once the next task is reviewed.
 
-**Review queue:** empty — no 🔍 task. T17 is reviewed ✅, so nothing auto remains. T13's own code review
-passed clean; its remaining live attended run is the PM's hand-verification (below), now unblocked.
+**Review queue:** empty. The plan is complete — every task ✅, including T13's live attended run. Nothing
+left to build, review, or verify.
 
 ## Blocked on the user
 
@@ -69,17 +68,8 @@ on a real terminal — handed over: `node run-t16-colour-check.mjs` (no paid wor
 state and whether the amber-bold "asking you" row jumps out; the end-of-run colours are painted then wiped
 in a real run, so judge them here only as colours (FINDINGS 2026-09-20).
 
-T13's code is reworked, green, and reviewed clean (⛔). T17 (which fixed the coordinator crashing on a
-report-watch error under fd pressure) is now reviewed ✅, so the live run is unblocked. Run it in a real
-terminal from a scratch dir — ideally with other Claude sessions closed, to keep fd pressure down
-(§5.2). It cannot be a machine assertion (§5.1, §5.2 — real paid workers only a person may watch):
-
-  PARALLEL_ALLOW_HERE is NOT needed; run from anywhere but this repo, or pass --into a scratch dir:
-  node src/shell/harness/run.mjs merge-conflict --into /tmp/mc-scratch
-
-Expect: two workers edit the same line of greeting.txt; the second conflicts at the coordinator's merge;
-the coordinator parks that worker and shows a copy-paste resolution prompt (T14). Copy it, keep the
-`hello there` side, attach to that worker in `claude agents` and paste it; the worker resolves and
-re-signals done; the run ends `completed` with an all-green report and a bundle path. The fixture's
-`needsPerson` block names these steps. On success: record a ✅ FINDINGS row with the date and the bundle
-path, and tear down the scratch dir. A 25-min wall-clock auto-HALTs a hung run (§5.2).
+T13's live attended `merge-conflict` run is DONE — PASS on 2026-09-21, verified on disk (FINDINGS ✅). One
+loose end: the scratch dir `/tmp/mc-scratch` still holds the run bundle
+(`plans/merge-conflict/.parallel/control/capture/2026-09-21T06-20-15-434Z`). Tear it down with
+`rm -rf /tmp/mc-scratch` once the PM no longer wants the bundle — held back from doing it automatically
+so the evidence is not destroyed without a nod.
