@@ -147,3 +147,69 @@ test('taskWorktreeHandle returns the handle for a checked-out task, null before 
   assert.equal(h.branch, 'pir/demo-T01');
   assert.equal(realpathSync(h.path), realpathSync(task.path));
 });
+
+// --- T01: the fake mergeTask adopts new task rows, matching the real worktree.mjs (DESIGN §2.2) ---
+//
+// A full multi-row table with single-line fields, seeded on main so both feature and task branches
+// start from it. The PROGRESS constant above has no Depends-on column and a Runs column; this one
+// carries the columns adoptNewTaskRows reads, to prove adoption and that the fields survive a merge.
+// Kept byte-identical to ADOPT_TABLE in ../worktree.test.mjs so the real/fake cross-check compares
+// the same inputs.
+const ADOPT_TABLE = [
+  '# Progress',
+  '',
+  '**Status:** building',
+  '**Next pir-work will:** implement T02',
+  '',
+  '| # | Task | Depends on | State | Notes |',
+  '|---|---|---|---|---|',
+  '| T01 | one | — | ⬜ | |',
+  '| T02 | two | T01 | ⬜ | |',
+  '',
+  '**Review queue:** empty',
+  '',
+].join('\n');
+
+test('fake mergeTask adopts a branch-added new task row as ⬜ and keeps the feature fields', (t) => {
+  const wt = createFakeWorktree({ progress: ADOPT_TABLE });
+  t.after(() => wt.cleanup());
+  const feature = wt.openFeature('demo');
+  const task = wt.createTask('demo', 'T02');
+  // The worker marked its own row and added T03 (deps T01), plus code.
+  const branchProgress = ADOPT_TABLE.replace(
+    '| T02 | two | T01 | ⬜ | |\n',
+    '| T02 | two | T01 | 🔍 | building |\n| T03 | three | T01 | ⬜ | a new task |\n',
+  );
+  writeFileSync(join(task.path, progressPathFor(SLUG)), branchProgress);
+  writeFileSync(join(task.path, 'work.txt'), 'x\n');
+  git(task.path, ['add', '-A']);
+  git(task.path, ['commit', '-m', 'T02 work + adds T03', '--no-edit']);
+
+  const res = wt.mergeTask(task.branch);
+  assert.deepEqual(res.added, ['T03']);
+  assert.deepEqual(res.errors, []);
+  const featureProgress = readFileSync(join(feature.path, progressPathFor(SLUG)), 'utf8');
+  assert.match(featureProgress, /\| T03 \| three \| T01 \| ⬜ \|/, 'T03 landed as ⬜');
+  assert.ok(featureProgress.includes('| T02 | two | T01 | ⬜ | |'), "T02 kept the feature's ⬜, not the branch's 🔍");
+  assert.ok(featureProgress.includes('**Status:** building'), 'single-line fields kept');
+});
+
+test('fake mergeTask on a forbidden edit merges the code, returns errors, and leaves the feature table unchanged', (t) => {
+  const wt = createFakeWorktree({ progress: ADOPT_TABLE });
+  t.after(() => wt.cleanup());
+  const feature = wt.openFeature('demo');
+  const task = wt.createTask('demo', 'T02');
+  const before = readFileSync(join(feature.path, progressPathFor(SLUG)), 'utf8');
+  const branchProgress = ADOPT_TABLE.replace('| T01 | one | — | ⬜ | |', '| T01 | one | T02 | ⬜ | |');
+  writeFileSync(join(task.path, progressPathFor(SLUG)), branchProgress);
+  writeFileSync(join(task.path, 'work.txt'), 'x\n');
+  git(task.path, ['add', '-A']);
+  git(task.path, ['commit', '-m', 'edits T01 deps', '--no-edit']);
+
+  const res = wt.mergeTask(task.branch);
+  assert.ok(res.ok);
+  assert.deepEqual(res.added, []);
+  assert.ok(res.errors.length > 0, 'the forbidden edit is reported');
+  assert.equal(readFileSync(join(feature.path, progressPathFor(SLUG)), 'utf8'), before, 'feature table byte-identical');
+  assert.ok(wt.fileOn('pir/demo', 'work.txt').ok, 'the code still merged');
+});

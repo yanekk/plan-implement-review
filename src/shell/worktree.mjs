@@ -29,7 +29,7 @@
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { progressPathFor, parseProgress } from '../core/progress.mjs';
+import { progressPathFor, parseProgress, adoptNewTaskRows } from '../core/progress.mjs';
 
 // gpgsign is forced off on every commit-creating call (merge, commit). An automated
 // coordinator has no one to type a passphrase, and a repo with commit.gpgsign=true set globally
@@ -154,11 +154,14 @@ export function integrate(path) {
 }
 
 // Merge one task branch into the feature branch, serialized by the caller (the loop, one per pass).
-// PROGRESS.md is protected: the coordinator is its single writer on the feature branch (DESIGN §2.5),
-// so whatever the task branch did to it is discarded and the feature's version kept — whether the
-// merge was clean or conflicted only on PROGRESS.md. A code conflict anywhere else aborts and returns
-// { conflict, files }, leaving the feature branch clean. featurePath lets the factory pass the
-// remembered feature worktree; stateless callers derive it from the task branch.
+// PROGRESS.md is protected but no longer restored verbatim: the coordinator stays its single writer
+// on the feature branch (DESIGN §2.5), so every existing row and single-line field keeps the
+// feature's version, but a merging branch may have added genuinely new task rows — a worker-introduced
+// task — and those are adopted onto the feature's copy via adoptNewTaskRows (DESIGN §2.2, §3.1, §3.3).
+// This one path serves both the live merge and the restart-reconcile merge, since both call mergeTask.
+// A code conflict anywhere but PROGRESS.md aborts and returns { conflict, files }, leaving the feature
+// branch clean — adoption only happens on a merge that otherwise lands. featurePath lets the factory
+// pass the remembered feature worktree; stateless callers derive it from the task branch.
 export function mergeTask(taskBranch, { root = process.cwd(), featurePath } = {}) {
   const feature = featureOfTaskBranch(taskBranch);
   const path = featurePath ?? worktreeForBranch(root, feature);
@@ -171,6 +174,11 @@ export function mergeTask(taskBranch, { root = process.cwd(), featurePath } = {}
   const progressPath = join(path, progressRel);
   const saved = existsSync(progressPath) ? readFileSync(progressPath, 'utf8') : null;
 
+  // Read the merging branch's PROGRESS.md from its committed tip, not the post-merge working tree:
+  // the committed copy is clean and parses even when the merge conflicts on PROGRESS.md itself.
+  const shown = git(path, ['show', `${taskBranch}:${progressRel}`]);
+  const branchText = shown.ok ? shown.stdout : null;
+
   const res = git(path, [...NOSIGN, 'merge', '--no-commit', '--no-ff', taskBranch]);
   if (!res.ok) {
     const other = unmergedFiles(path).filter((f) => f !== progressRel);
@@ -178,15 +186,22 @@ export function mergeTask(taskBranch, { root = process.cwd(), featurePath } = {}
       git(path, ['merge', '--abort']);
       return { conflict: true, files: other };
     }
-    // A PROGRESS.md-only conflict is resolved below by keeping the feature's version.
+    // A PROGRESS.md-only conflict is resolved below by adopting onto the feature's version.
   }
+  let added = [];
+  let errors = [];
   if (saved !== null) {
-    writeFileSync(progressPath, saved);
+    // Adopt any new task rows onto the feature's copy; with no branch copy there is nothing to
+    // adopt, so the feature's version stands unchanged (the old verbatim-restore behaviour).
+    const adopt = branchText !== null ? adoptNewTaskRows(saved, branchText) : { text: saved, added: [], errors: [] };
+    added = adopt.added;
+    errors = adopt.errors;
+    writeFileSync(progressPath, adopt.text);
     git(path, ['add', progressRel]);
   }
   const merging = git(path, ['rev-parse', '-q', '--verify', 'MERGE_HEAD']).ok;
   if (merging) git(path, [...NOSIGN, 'commit', '--no-edit', '-m', `merge ${taskBranch}`]);
-  return { ok: true };
+  return { ok: true, added, errors };
 }
 
 // Commit whatever the coordinator has written into the feature worktree (a reconciled PROGRESS.md
