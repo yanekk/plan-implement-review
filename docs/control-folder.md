@@ -31,6 +31,11 @@ directly each pass (`platform.inbox`), with no agent turn per report. A report t
 is dropped, never guessed into a message. The reports it understands are `question`, `decision`,
 `implemented`, `done`, and `conflict`.
 
+A worker proposing a new task adds **no** new report kind: it reuses the existing `decision` report
+and is approved by the person in its own session (see [task-state.md](task-state.md)). The command
+never acts on the proposal report — a new task lands only when its branch merges and the row is
+adopted, so the report is just the worker's park signal, exactly as for any other decision.
+
 There is **no coordinator → worker channel at all**. A Node process cannot send a cross-session
 message, and nothing needs one: the only down-send the old design ever made was the answer to a
 parked worker, and that answer now goes straight from the person to the worker inside the worker's
@@ -55,11 +60,17 @@ records:
 ## The log
 
 Every coordinator action appends one line to `log`, tagged by kind: `open-feature`, `spawn`,
-`await-idle`, `force-idle`, `review`, `rebuild`, `cleanup`, `merge`, `surface`, `close`,
+`await-idle`, `force-idle`, `review`, `rebuild`, `cleanup`, `merge`, `adopt`, `surface`, `close`,
 `halt-close`, `teardown`, `ceiling full`, and, on a restart, a `restart` marker and a
 `restart-summary` line naming what reconciliation adopted (see [restart-recovery.md](restart-recovery.md)).
-A `surface` line marks a worker parking on a `question`, a `decision`, a merge `conflict`, or a red
-feature branch; it records the task, not the kind, so the harness keys on the task. This is the
+An `adopt` line marks the command taking a worker-introduced task's new row onto the feature branch
+at merge — one line per adopted task, naming the task (see [task-state.md](task-state.md)).
+A `surface` line marks a worker parking on a `question`, a `decision`, or a merge `conflict`, or the
+command flagging a red feature branch or a `bad-plan-change`; it records the task, not the kind, so
+the harness keys on the task. A `bad-plan-change` surface is the one exception to "surface means a
+worker is parked": it flags a new task row that could not be adopted — an edit of an existing task,
+or a dependency on a task that does not exist — and it parks no one, because the introducing task's
+reviewed code merged and the run continues (see [run-lifecycle.md](run-lifecycle.md)). This is the
 human-readable record of what a run did, and the durable signal the test harness reads.
 
 ## The kill switch
