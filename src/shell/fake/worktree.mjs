@@ -15,17 +15,18 @@
 // beside the feature branch, `pir/{plan}-T{nn}`, not under it. Found building T05; the user chose
 // the dash (2026-09-08). Do not "tidy" it back to a slash.
 //
-// PROGRESS.md is never taken from a task branch at merge time (DESIGN §2.5): the coordinator is
-// its single writer on the feature branch via reconcileTaskRow, so mergeTask deliberately drops
-// the task branch's PROGRESS.md and keeps the feature's. That is what lets many task branches fold
-// in without colliding on that one shared file, and it is exercised here on every merge, conflict
-// or not.
+// A task branch's edits to existing PROGRESS.md rows are never taken at merge time (DESIGN §2.5):
+// the coordinator is its single writer on the feature branch via reconcileTaskRow, so mergeTask
+// keeps the feature's version of every existing row and single-line field. The one thing it does
+// adopt is a genuinely new task row a branch added — a worker-introduced task — folded in with
+// adoptNewTaskRows (DESIGN §2.2). That is what lets many task branches fold in without colliding on
+// that one shared file, and it is exercised here on every merge, conflict or not.
 
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
-import { progressPathFor, parseProgress } from '../../core/progress.mjs';
+import { progressPathFor, parseProgress, adoptNewTaskRows } from '../../core/progress.mjs';
 
 // Run one git command in cwd. Returns { ok, stdout, stderr, status } rather than throwing, so a
 // non-zero exit (a merge conflict, a missing ref) is a value the caller inspects, not an
@@ -109,13 +110,20 @@ export function createFakeWorktree({ progress, files = {}, slug = 'demo' } = {})
   }
 
   // Merge one task branch into the feature branch, serialized by the loop (one per pass). PROGRESS.md
-  // is protected: whatever the task branch did to it is discarded and the feature's version kept, so
-  // the coordinator stays PROGRESS.md's single writer (DESIGN §2.5). A code conflict anywhere else
-  // aborts and returns { conflict } — the loop then surfaces it and never leaves a dirty feature branch.
+  // is protected: every existing row and single-line field keeps the feature's version, so the
+  // coordinator stays PROGRESS.md's single writer (DESIGN §2.5). New task rows a branch added are
+  // adopted onto the feature's copy via adoptNewTaskRows (DESIGN §2.2), so a worker-introduced task
+  // lands. A code conflict anywhere else aborts and returns { conflict } — the loop then surfaces it
+  // and never leaves a dirty feature branch. Mirrors the real worktree.mjs on the same inputs.
   function mergeTask(taskBranch) {
     if (!feature) throw new Error('mergeTask before openFeature');
     const progressPath = join(feature.path, progressRel);
     const savedProgress = existsSync(progressPath) ? readFileSync(progressPath, 'utf8') : '';
+
+    // The branch's committed PROGRESS.md, read clean off its tip (not the post-merge working tree),
+    // so it parses even on a PROGRESS.md-only conflict.
+    const shown = git(feature.path, ['show', `${taskBranch}:${progressRel}`]);
+    const branchText = shown.ok ? shown.stdout : null;
 
     const res = git(feature.path, ['merge', '--no-commit', '--no-ff', taskBranch]);
     if (!res.ok) {
@@ -129,17 +137,19 @@ export function createFakeWorktree({ progress, files = {}, slug = 'demo' } = {})
         events.push({ op: 'mergeTask', branch: taskBranch, into: feature.branch, conflict: true });
         return { conflict: true, files: other };
       }
-      // A PROGRESS.md-only conflict is resolved by keeping the feature's version (below).
+      // A PROGRESS.md-only conflict is resolved by adopting onto the feature's version (below).
     }
 
-    // Drop the task branch's PROGRESS.md, keep the feature's, whether it merged cleanly or conflicted.
-    writeFileSync(progressPath, savedProgress);
+    // Keep the feature's PROGRESS.md, adopting any new task rows from the branch, whether the merge
+    // was clean or conflicted only on PROGRESS.md.
+    const adopt = branchText !== null ? adoptNewTaskRows(savedProgress, branchText) : { text: savedProgress, added: [], errors: [] };
+    writeFileSync(progressPath, adopt.text);
     git(feature.path, ['add', progressRel]);
 
     const merging = git(feature.path, ['rev-parse', '-q', '--verify', 'MERGE_HEAD']).ok;
     if (merging) git(feature.path, ['commit', '--no-edit', '-m', `merge ${taskBranch}`]);
     events.push({ op: 'mergeTask', branch: taskBranch, into: feature.branch });
-    return { ok: true };
+    return { ok: true, added: adopt.added, errors: adopt.errors };
   }
 
   // Commit whatever the coordinator has written into the feature worktree (a reconciled PROGRESS.md
