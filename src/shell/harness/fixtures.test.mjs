@@ -47,7 +47,7 @@ const EXPECT = {
     taskCount: 2,
     deps: { T01: [], T02: [] },
     ceiling: 2,
-    factIds: ['merge-conflict-resolved'],
+    factIds: ['merge-conflict-resolved', 'ceiling-held:2'],
   },
   'human-decision': {
     taskCount: 2,
@@ -130,14 +130,23 @@ test('merge-conflict: both task docs edit the same file, and the probe expects a
   assert.equal(fx.seedFiles['greeting.txt'], 'hello world\n');
 });
 
-test('merge-conflict: carries a task-agnostic scripted decision and the decided final content (T28)', () => {
+test('merge-conflict: attended — no scripted answer, a Needs-a-person block, a human-speed budget, decided final content (T13)', () => {
   const fx = getFixture('merge-conflict');
-  // The decision names no task — which of the two same-line tasks conflicts is a timing race. NOTE: the
-  // merge-conflict fixture still carries the old down-channel `scriptedAnswer`/promotion shape; it is a
-  // tolerated legacy double (nothing routes it now, §2.2) pending its own rework (FINDINGS 2026-09-19).
-  assert.equal(fx.scriptedAnswer.task, undefined, 'the scripted decision names no task (the loser is a race)');
-  assert.ok(/hello there/.test(fx.scriptedAnswer.text), 'the decision keeps the "hello there" side');
-  assert.deepEqual(fx.finalContent, { file: 'greeting.txt', content: 'hello there' }, 'main must end with the decided side');
+  // The down-channel is gone (§2.2, T05): nothing is routed — a person resolves the conflict on the live
+  // worker directly, so the fixture carries no scripted answer any more.
+  assert.equal(fx.scriptedAnswer, undefined, 'no scripted answer — the person resolves the conflict directly (§2.2)');
+  // A "Needs a person" block names the manual step and pins the decided side so the run stays deterministic.
+  assert.match(fx.needsPerson, /attach/i, 'the block tells the person to attach to the parked worker');
+  assert.match(fx.needsPerson, /hello there/, 'the block pins "hello there" as the side to keep');
+  // A human-speed wall-clock budget (above the 10-min default) so a real person has time to attach and
+  // paste before the auto-HALT; the attended run FINISHES once resolved, so it declares no forever-park.
+  assert.ok(fx.scenario.seatbelts.timeoutMs >= 20 * 60 * 1000, 'a human-speed timeout budget is set');
+  assert.notEqual(fx.scenario.expectedTerminal, 'parked', 'the attended run completes; it is not a designed forever-park');
+  // The fact list is the conflict resolution plus the ceiling bound.
+  const factIds = fx.scenario.facts.map((f) => f.id);
+  assert.ok(factIds.includes('merge-conflict-resolved'), 'the conflict-resolution fact is declared');
+  assert.ok(factIds.includes('ceiling-held:2'), 'ceilingHeld(2) is kept in the fact list');
+  assert.deepEqual(fx.finalContent, { file: 'greeting.txt', content: 'hello there' }, 'the handed-off branch must read the decided side');
 });
 
 test('clean-merge: the two task docs edit different files, and the probe expects a clean merge', () => {

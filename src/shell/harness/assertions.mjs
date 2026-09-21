@@ -30,9 +30,9 @@
 //   gitLog    — `git log --oneline --graph --all` text of the scratch repo.
 //   transcripts (added here) — [{ key, name, role, task, sessionId, events }] parsed from the copied
 //               .jsonl files. A worker's SendMessage is an assistant tool_use carrying { to, summary,
-//               message } (confirmed against the real T10 worker transcript 2026-09-10). mergeConflictResolved
-//               still reads a coordinator transcript for supporting evidence; it is a tolerated legacy fact
-//               (the down-channel it describes is gone, §2.2, T05).
+//               message } (confirmed against the real T10 worker transcript 2026-09-10). No fact reads a
+//               coordinator transcript any more — mergeConflictResolved's supporting read of one went with
+//               the down-channel it described (§2.2, T05); the facts key on the flow log and the timeline.
 
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -194,9 +194,6 @@ export function sendMessagesOf(transcript) {
   return out;
 }
 
-const transcriptsByRole = (bundle, role) => (bundle.transcripts ?? []).filter((t) => t.role === role);
-const coordinatorTranscript = (bundle) => transcriptsByRole(bundle, 'coordinator')[0] ?? null;
-
 // --- Fact construction ---------------------------------------------------------------------------
 //
 // A fact-builder returns { id, label, check(bundle) → { pass, evidence, detail } }. `check` is the pure
@@ -319,68 +316,69 @@ export function parkedWorkerHoldsSlot(task) {
   });
 }
 
-// A coordinator-hit merge conflict was RESOLVED via Option 2 (DESIGN §2.5, T28): the coordinator kept
-// the worker alive and parked, delivered the user's decision, the worker resolved on its own branch and
-// re-signalled done, and the decided side merged and reached main. This REPLACES the old
-// `conflictSurfacedAndParked`/`mergeConflictParked` facts, which asserted the task NEVER merges — only
-// ever right for a terminal park, which Option 2 discarded (the terminal park stranded the whole plan's
-// shipment behind one clash; the T22 live run then shipped the WRONG side because the worker was closed
-// and its task respawned). The fact is task-AGNOSTIC: which of the two same-line tasks merges second —
-// and so conflicts — is a timing race (T16 2026-09-11), so it finds the task that took the Option-2
-// shape rather than naming it. It reads all of the following off the bundle:
+// A coordinator-hit merge conflict was RESOLVED in the non-agentic, ATTENDED model (DESIGN §2.8, §2.2):
+// the coordinator kept the conflicting worker alive and parked (it never closed it or merged past it) and
+// offered a ready-to-paste resolution prompt (T14). There is no down-channel and no `answer()` any more
+// (§2.2, T05), so no decision is routed — a PERSON attaches to that worker directly and pastes it. The
+// worker merges the feature branch into its own branch, resolves keeping the decided side, commits and
+// re-signals done; the coordinator's next pass merges its now-clean branch and the run HANDS OFF the green
+// feature branch (§2.4 — it never merges to main). This REPLACES the old down-channel shape, which
+// required an `answer {task}` flow line and a `promote` to main — both gone with the relay and the
+// promotion (T05), which is why the old fact could never go green again (FINDINGS 2026-09-20). The fact is
+// task-AGNOSTIC: which of the two same-line tasks merges second — and so conflicts — is a timing race (T16
+// 2026-09-11), so it finds the task that took the resolution shape rather than naming it. The flow line
+// does NOT carry a surface's kind (loop.mjs writes type+task only — see WHAT A BUNDLE CARRIES), so like
+// parkedWorkerHoldsSlot it keys on the task id, not on `kind: conflict`. It reads off the bundle:
 //   - a `surface` for that task, with NO `merge` of it BEFORE the surface (the conflict was caught,
 //     nothing bad merged first);
-//   - an `answer {task}` flow line (the decision was delivered DOWN to the live worker — the T22 bug
-//     was that no answer landed, the worker having been closed);
-//   - a `merge {task}` AFTER the surface (the same worker resumed and its now-clean branch merged);
-//   - exactly ONE implement session for the task in the timeline (no respawn — the T22 clobber spawned
-//     a second implementer);
-//   - exactly one `promote` to main, corroborated by one promotion merge in the git log;
-//   - and, when the caller passes { file, content }, the final promoted content of that file matches the
-//     DECIDED side (bundle.finalFiles, captured by the runner: loadFinalFiles). This is the crux of the
-//     T22 regression — main shipped the losing "hi world", opposite the "keep hello there" decision.
+//   - a `merge {task}` AFTER the surface (the same worker resumed and its now-clean branch merged), with
+//     NO `answer` line required — the person, not a routed answer, drove the resolution (§2.2);
+//   - exactly ONE implement session for the task in the timeline (no respawn — the T22 clobber spawned a
+//     second implementer; this mirrors resumedNotRebuilt's no-respawn check);
+//   - the run handed off a green feature branch (composed with handedOffGreenBranch: ZERO promote, NO merge
+//     of pir/{plan} into main, ≥1 `merge T{nn}` on the feature branch);
+//   - and, when the caller passes { file, content }, the handed-off feature branch's content of that file
+//     (bundle.finalFiles, captured by the runner from `pir/{slug}`: loadFinalFiles) matches the DECIDED
+//     side. This is the crux of the old T22 regression — the branch must read "hello there", not "hi world".
 export function mergeConflictResolved({ file, content } = {}) {
-  return fact('merge-conflict-resolved', 'A coordinator-hit conflict was kept alive, decided, resolved, and the decided side reached main', (bundle) => {
+  return fact('merge-conflict-resolved', 'A coordinator-hit conflict was kept alive, resolved by a person on the live worker, and the decided side was handed off', (bundle) => {
     const evidence = [];
     const surfaces = flowOf(bundle, 'surface').filter((e) => /^T\d+$/.test(e.rest));
     if (surfaces.length === 0) {
       return { pass: false, evidence, detail: 'no task surface — a merge conflict was expected to be surfaced' };
     }
     const merges = flowOf(bundle, 'merge');
-    const answers = flowOf(bundle, 'answer');
 
-    // Find the surfaced task that took the Option-2 path: surfaced, not merged before, answered, and
-    // then merged. Which task conflicts is a race, so the fact discovers it rather than naming it.
+    // Find the surfaced task that took the resolution path: surfaced, not merged before, and then merged.
+    // No `answer` line is required — the down-channel is gone (§2.2); the person, not a routed answer,
+    // drove the resolution. Which task conflicts is a race, so the fact discovers it rather than naming it.
     let resolved = null;
     for (const s of surfaces) {
       const task = s.rest;
       const mergedBefore = merges.find((m) => m.rest === task && m.ts < s.ts);
       const mergedAfter = merges.find((m) => m.rest === task && m.ts >= s.ts);
-      const answered = answers.find((a) => a.rest === task);
-      if (!mergedBefore && answered && mergedAfter) {
-        resolved = { task, surface: s, answered, mergedAfter };
+      if (!mergedBefore && mergedAfter) {
+        resolved = { task, surface: s, mergedAfter };
         break;
       }
     }
     if (!resolved) {
       for (const s of surfaces) evidence.push(flowLine(s));
-      for (const a of answers) evidence.push(flowLine(a));
       for (const m of merges) evidence.push(flowLine(m));
       return {
         pass: false,
         evidence,
-        detail: 'no surfaced task was answered and then merged — the conflict was not resolved through the live worker (the T22 failure)',
+        detail: 'no surfaced task was later merged — the conflict was not resolved on the live worker and the branch never landed',
       };
     }
     const { task } = resolved;
     evidence.push(flowLine(resolved.surface));
-    evidence.push(flowLine(resolved.answered));
     evidence.push(flowLine(resolved.mergedAfter));
 
-    // No respawn: exactly one implement-role session ran the conflicting task. The T22 clobber closed
-    // the done worker and spawned a SECOND implementer over the same task. Counted from distinct
-    // session ids in the timeline; 0 (the phase was never sampled) cannot prove a respawn, so only >1
-    // fails.
+    // No respawn: exactly one implement-role session ran the conflicting task (mirrors resumedNotRebuilt).
+    // The T22 clobber closed the done worker and spawned a SECOND implementer over the same task. Counted
+    // from distinct session ids in the timeline; 0 (the phase was never sampled) cannot prove a respawn, so
+    // only >1 fails.
     const implSids = new Set();
     for (const tick of bundle.timeline ?? []) {
       for (const a of tick.agents ?? []) {
@@ -393,47 +391,31 @@ export function mergeConflictResolved({ file, content } = {}) {
       return { pass: false, evidence, detail: `${task} was built by ${implSids.size} implement sessions — it was respawned (the T22 clobber)` };
     }
 
-    // The decision was addressed to the task's worker (supporting, when the coordinator transcript is
-    // present): the answer SendMessage went to a name that parses to this task.
-    const { repo, plan } = runIdentity(bundle);
-    const coord = coordinatorTranscript(bundle);
-    if (coord && repo && plan) {
-      const ans = sendMessagesOf(coord).find((s) => {
-        const p = parseAgentName(stripRef(s.to));
-        return p.matches && p.task === task && p.repo === repo && p.plan === plan;
-      });
-      if (ans) evidence.push(`coordinator → ${stripRef(ans.to)} (answer): ${ans.summary}`);
+    // The run handed off a green feature branch: zero promote, no merge to main, ≥1 task merge. Composed
+    // with handedOffGreenBranch so the two facts cannot drift — the resolution must END in a hand-off, not
+    // the removed promotion (§2.4). Its evidence lines are folded in without duplicating the merge already
+    // shown above.
+    const handoff = handedOffGreenBranch().check(bundle);
+    for (const e of handoff.evidence) if (!evidence.includes(e)) evidence.push(e);
+    if (!handoff.pass) {
+      return { pass: false, evidence, detail: `the run did not hand off a green feature branch: ${handoff.detail}` };
     }
 
-    // Exactly one promotion reached main (the resolved plan lands once, DESIGN §2.9).
-    const promotes = flowOf(bundle, 'promote');
-    for (const p of promotes) evidence.push(flowLine(p));
-    if (promotes.length !== 1) {
-      return { pass: false, evidence, detail: `expected exactly one promote after the resolution, found ${promotes.length}` };
-    }
-    if (plan) {
-      const count = promotionMergeLines(bundle.gitLog, plan).length;
-      evidence.push(`git log promotion merges: ${count}`);
-      if (count !== 1) {
-        return { pass: false, evidence, detail: `git log shows ${count} promotion merge(s) into main, expected 1` };
-      }
-    }
-
-    // The DECIDED side won: the final promoted content of the contested file matches the decision, not
-    // the losing side. This is the T22 regression, so it is the fact's sharpest assertion.
+    // The DECIDED side won: the handed-off feature branch's content of the contested file matches the
+    // decision, not the losing side. This is the old T22 regression, so it is the fact's sharpest assertion.
     if (file) {
       const got = (bundle.finalFiles ?? {})[file];
       if (got == null) {
         return { pass: false, evidence, detail: `no captured final content for ${file} — cannot confirm the decided side won (runner did not capture it)` };
       }
       if (String(got).trim() !== String(content).trim()) {
-        evidence.push(`main:${file} = ${JSON.stringify(String(got).trim())}`);
+        evidence.push(`feature-branch:${file} = ${JSON.stringify(String(got).trim())}`);
         return { pass: false, evidence, detail: `final ${file} is ${JSON.stringify(String(got).trim())}, not the decided ${JSON.stringify(String(content).trim())} — the losing side shipped` };
       }
-      evidence.push(`main:${file} = ${JSON.stringify(String(got).trim())} (the decided side)`);
+      evidence.push(`feature-branch:${file} = ${JSON.stringify(String(got).trim())} (the decided side)`);
     }
 
-    return { pass: true, evidence, detail: `${task}'s conflict was surfaced, decided, resolved by the live worker, and the decided side merged and promoted once` };
+    return { pass: true, evidence, detail: `${task}'s conflict was surfaced, resolved by the live worker without a routed answer, and the decided side merged and handed off` };
   });
 }
 

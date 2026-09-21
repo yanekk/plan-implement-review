@@ -218,28 +218,29 @@ test('parkedWorkerHoldsSlot fails when the parked worker was not held (never sam
   assert.match(r.detail, /slot was not held/);
 });
 
-// --- mergeConflictResolved (task-agnostic, Option 2, T28) ----------------------------------------
+// --- mergeConflictResolved (task-agnostic, attended non-agentic model, T13) -----------------------
 
-// A bundle in the Option-2 shape: T01 (winner) merged clean; T02 conflicted, was surfaced, the decision
-// was delivered (`answer T02`), and T02 resumed to a merge; one promotion; main carries the decided side.
+// A bundle in the attended-resolution shape (DESIGN §2.8): T01 (winner) merged clean; T02 conflicted, was
+// surfaced, and the SAME worker resumed to a merge — NO `answer` line (the person resolved it on the live
+// worker, nothing routed). The run HANDED OFF: no `promote`, no `Merge branch 'pir/scratch'` into main in
+// the git log (only task-branch integrations), and the feature branch carries the decided side. A worker in
+// the timeline lets runIdentity resolve the plan for the hand-off git-log check.
 function resolvedBundle(over = {}) {
   return bundle({
     flow: [
       fl('t3', 'merge', 'T01'),
       fl('t4', 'surface', 'T02'),
-      fl('t5', 'answer', 'T02'),
       fl('t6', 'merge', 'T02'),
-      fl('t9', 'promote', 'pir/scratch'),
     ],
-    gitLog: "*   Merge branch 'pir/scratch'\n| * merge pir/scratch-T02\n| * merge pir/scratch-T01\n",
-    timeline: [tick('t1', [cagent(), wagent('T02', 'idle', { sessionId: 's2i', role: 'implement' })])],
+    gitLog: '* merge pir/scratch-T02 (pir/scratch)\n* merge pir/scratch-T01\n* seed\n',
+    timeline: [tick('t1', [wagent('T02', 'idle', { sessionId: 's2i', role: 'implement' })])],
     finalFiles: { 'greeting.txt': 'hello there\n' },
     ...over,
   });
 }
 const decided = { file: 'greeting.txt', content: 'hello there' };
 
-test('mergeConflictResolved passes when the conflict was kept alive, decided, resumed, and the decided side reached main', () => {
+test('mergeConflictResolved passes when the conflict was kept alive, resumed without a routed answer, and the decided side was handed off', () => {
   assert.equal(mergeConflictResolved(decided).check(resolvedBundle()).pass, true);
 });
 
@@ -249,16 +250,26 @@ test('mergeConflictResolved fails when no task was surfaced', () => {
   assert.match(r.detail, /no task surface/);
 });
 
-test('mergeConflictResolved fails when the surfaced task was never answered and merged (the T22 failure)', () => {
-  // Surfaced but no `answer` and no later merge — the worker was closed and the decision had no way down.
+test('mergeConflictResolved fails when the surfaced task never merged (the conflict was never resolved on the live worker)', () => {
+  // Surfaced but no later merge — the worker was closed and its branch never landed.
   const r = mergeConflictResolved(decided).check(
-    bundle({ flow: [fl('t4', 'surface', 'T02')], timeline: [tick('t1', [cagent(), wagent('T01', 'busy')])] }),
+    bundle({ flow: [fl('t4', 'surface', 'T02')], timeline: [tick('t1', [wagent('T02', 'busy')])] }),
   );
   assert.equal(r.pass, false);
-  assert.match(r.detail, /not resolved through the live worker/);
+  assert.match(r.detail, /branch never landed/);
 });
 
-test('mergeConflictResolved fails when the LOSING side shipped to main (the T22 regression)', () => {
+test('mergeConflictResolved fails when the run promoted to main instead of handing off (§2.4)', () => {
+  // A resolved conflict that ended in the removed promotion is not a hand-off — the composed
+  // handedOffGreenBranch rejects the `promote` line.
+  const r = mergeConflictResolved(decided).check(resolvedBundle({
+    flow: [fl('t3', 'merge', 'T01'), fl('t4', 'surface', 'T02'), fl('t6', 'merge', 'T02'), fl('t9', 'promote', 'pir/scratch')],
+  }));
+  assert.equal(r.pass, false);
+  assert.match(r.detail, /did not hand off a green feature branch/);
+});
+
+test('mergeConflictResolved fails when the LOSING side shipped on the feature branch (the T22 regression)', () => {
   const r = mergeConflictResolved(decided).check(resolvedBundle({ finalFiles: { 'greeting.txt': 'hi world\n' } }));
   assert.equal(r.pass, false);
   assert.match(r.detail, /losing side shipped/);
@@ -268,8 +279,8 @@ test('mergeConflictResolved fails when the task was respawned (a second implemen
   const r = mergeConflictResolved(decided).check(
     resolvedBundle({
       timeline: [
-        tick('t1', [cagent(), wagent('T02', 'idle', { sessionId: 's2i', role: 'implement' })]),
-        tick('t2', [cagent(), wagent('T02', 'busy', { sessionId: 's2i-again', role: 'implement' })]),
+        tick('t1', [wagent('T02', 'idle', { sessionId: 's2i', role: 'implement' })]),
+        tick('t2', [wagent('T02', 'busy', { sessionId: 's2i-again', role: 'implement' })]),
       ],
     }),
   );
