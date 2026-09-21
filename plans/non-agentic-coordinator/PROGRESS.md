@@ -18,15 +18,15 @@ file and its worker's agent name.
 removals so every task stays green + cover `capture.mjs`; `install.sh` applies the per-user `autoMode`
 rule). Account in the `plan-review` commit.
 
-**Status:** 2026-09-21: T13 code reworked to the attended model (🔍, awaiting review). The `merge-conflict`
-fixture drops `scriptedAnswer`, gains a `needsPerson` block + 25-min timeout + `ceilingHeld(2)`;
-`mergeConflictResolved` no longer needs an `answer` flow line, composes `handedOffGreenBranch`, and asserts
-the handed-off feature branch reads `hello there`. 410 green. run.mjs needed no change (already captures
-pir/{slug} content and no longer feeds a scripted answer). The live attended run is the outstanding
-hand-verification — real paid workers a person must watch (§5.2), handed to the PM below.
+**Status:** 2026-09-21: T13 code reviewed — clean, no fix commit. The attended-model rework of the
+`merge-conflict` fixture and `mergeConflictResolved` holds: the promote-guard, losing-side and respawn
+tests all bite (mutation-checked live), `handedOffGreenBranch` composes correctly, `promotionMergeLines`
+is case-sensitive so task-branch merges never false-positive as a promotion, and the no-surface-kind
+deviation matches loop.mjs. 410 green. T13 now ⛔ — its only remaining half is the PM's live attended
+run (§5.2, real paid workers a person must watch), handed over below. Every buildable task is now done.
 **Last updated:** 2026-09-21
-**Next `pir-work` will:** REVIEW **T13** (🔍, the only 🔍) — a fresh session checks the fixture/assertion
-rework against the task doc. The live attended run is separate and needs the PM at a terminal (below).
+**Next `pir-work` will:** find no 🔍 and no ready ⬜ — every task is built and reviewed. The one thing
+left is the PM's live attended run of T13 (below); it is not a `pir-work` unit.
 
 ## Tasks
 
@@ -51,14 +51,14 @@ read — the parser tolerates and ignores it; T05 finishes the surrounding clean
 | T12 | worker-knows-no-coordinator | auto | T07 | ✅ | Reviewed clean, no fix commit. Grep contract holds: only the `non-agentic-coordinator` example name in the three skill dirs; `openingInstruction` string has no `coordinator`. Swept worker files for residual relay language ("reports up to", "will reply") — only the negations remain. openingInstruction test still asserts skill+task+pir-worker. 392 green. Live word-proof is T09. |
 | T15 | display-in-place-render | auto | T03 | ✅ | Reviewed clean. Bounded alt-screen region replaces the wrap-broken cursor-up math; `close()` leaves the alt screen on every exit incl SIGINT. By-eye repaint stays T09. 395 green. |
 | T14 | conflict-resolve-prompt | auto | T05 | ✅ | Reviewed. Fixed a stale "routed down" comment (§2.2); probed reprint risk — a parked worker stays AWAITING, never re-enters `merge`, so the prompt scrolls once. Live paint by-eye stays T13. 407 green. |
-| T16 | display-colour-and-question | auto | T15 | ✅ | Reviewed clean, no fix commit. `ROW_STYLE` covers every kind the model emits; colour gated on isTTY+NO_COLOR (injectable overrides env); formatLines escape-free; T15 clip/height held. Tests bite (17 in render.test). 409 green (commit claimed 413). Probed: end-state colours painted then wiped by close()/renderHandoff — by-eye focus is RUNNING (FINDINGS). |
-| T13 | attended-merge-conflict | you | T05, T10, T11, T14 | 🔍 | Code reworked to attended: fixture drops `scriptedAnswer`, adds a `needsPerson` block + 25-min timeout + `ceilingHeld(2)`; `mergeConflictResolved` drops the `answer` line, composes `handedOffGreenBranch`, asserts the feature branch reads `hello there`. Dev: keyed on task id (flow carries no surface kind); removed dead `coordinatorTranscript`. run.mjs unchanged (already captures pir/{slug}). 410 green. Live attended run outstanding — needs the PM (§5.2). |
+| T16 | display-colour-and-question | auto | T15 | ✅ | Reviewed clean, no fix. Colour is a TTY+NO_COLOR-gated paint layer; formatLines escape-free; T15 clip/height held; tests bite (17). Live end-state colours wiped by close(); by-eye focus is RUNNING (FINDINGS). 409 green. |
+| T13 | attended-merge-conflict | you | T05, T10, T11, T14 | ⛔ | Code reviewed clean, no fix. Probed by mutation: the promote-guard, losing-side and respawn tests all bite; `handedOffGreenBranch` composition and case-sensitive `promotionMergeLines` hold; no-surface-kind deviation matches loop.mjs. 410 green. Remaining half is the PM's live attended run (§5.2) — blocked on the user (below). |
 
 A Notes cell holds what was built or what the review found, the test count, and one line per
 deviation from the task doc. A ✅ task's cell may be cut to one line once the next task is reviewed.
 
-**Review queue:** T13 (🔍) — review the attended-model rework of the `merge-conflict` fixture and
-`mergeConflictResolved`. Its live attended run is a separate PM hand-verification (below), not a review.
+**Review queue:** empty — no 🔍 task. Every buildable task is reviewed and done. T13's code review
+passed clean; its remaining live attended run is the PM's hand-verification (below), not a review.
 
 ## Blocked on the user
 
@@ -67,8 +67,9 @@ on a real terminal — handed over: `node run-t16-colour-check.mjs` (no paid wor
 state and whether the amber-bold "asking you" row jumps out; the end-of-run colours are painted then wiped
 in a real run, so judge them here only as colours (FINDINGS 2026-09-20).
 
-T13's code is reworked and green (🔍). Its live attended run cannot be a machine assertion (§5.1, §5.2 —
-real paid workers only a person may watch). Run it in a real terminal from a scratch dir:
+T13's code is reworked, green, and now reviewed clean (⛔ — only the live run remains). Its live attended
+run cannot be a machine assertion (§5.1, §5.2 — real paid workers only a person may watch). Run it in a
+real terminal from a scratch dir:
 
   PARALLEL_ALLOW_HERE is NOT needed; run from anywhere but this repo, or pass --into a scratch dir:
   node src/shell/harness/run.mjs merge-conflict --into /tmp/mc-scratch
