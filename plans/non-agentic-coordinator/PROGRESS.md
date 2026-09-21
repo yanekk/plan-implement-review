@@ -18,15 +18,17 @@ file and its worker's agent name.
 removals so every task stays green + cover `capture.mjs`; `install.sh` applies the per-user `autoMode`
 rule). Account in the `plan-review` commit.
 
-**Status:** 2026-09-21: PLAN COMPLETE — every task ✅. T13's live attended `merge-conflict` run PASSed:
-two workers clashed on greeting.txt, T02 merged first, T01 parked, a person resolved it on the live worker
-keeping `hello there`, and the feature branch handed off that side (main untouched, ceiling held 2).
-Verified on disk, not just the harness report. The run reached `completed`, not `crashed` — so it also
-proved T17's fix live (the coordinator survived a real run under fd pressure without dying). Bundle
-`2026-09-21T06-20-15-434Z`; FINDINGS ✅ row. Earlier this session T17 was reviewed clean (no fix commit).
+**Status:** 2026-09-21: T01–T17 all ✅ (T13's live attended run PASSed, verified on disk; FINDINGS ✅).
+Then the PM added two Phase-5 tasks (see PLAN.md), so the plan is no longer complete: T18
+(coordinator-launcher) ships a global `pir-coordinate` command via `install.sh` and removes the stale
+orphan skills; T19 (docs-colour-and-launch) fills the two remaining `/docs` gaps — the display colours
+(T16) and the new launch command. Both `auto`, T19 depends on T18. They extend this plan's install (T06)
+and docs (T08) work and update `/docs`, not the sealed DESIGN; added post-review, so they skip
+`/pir-review-plan` but each still gets a build→review pass. Scratch dir `/tmp/mc-scratch` still holds
+T13's run bundle (teardown pending the PM's OK).
 **Last updated:** 2026-09-21
-**Next `pir-work` will:** nothing — the plan is done. No ⬜/🟡/🔍/⛔ task remains. Scratch dir
-`/tmp/mc-scratch` is the only loose end (teardown pending the PM's OK, since it holds the run bundle).
+**Next `pir-work` will:** IMPLEMENT **T18** (⬜, no deps) — the `pir-coordinate` launcher and the
+`install.sh` changes. T19 (docs) follows once T18 is reviewed.
 
 ## Tasks
 
@@ -54,12 +56,14 @@ read — the parser tolerates and ignores it; T05 finishes the surrounding clean
 | T16 | display-colour-and-question | auto | T15 | ✅ | Reviewed clean, no fix. Colour is a TTY+NO_COLOR-gated paint layer; formatLines escape-free; T15 clip/height held; tests bite (17). Live end-state colours wiped by close(); by-eye focus is RUNNING (FINDINGS). 409 green. |
 | T13 | attended-merge-conflict | you | T05, T10, T11, T14 | ✅ | Code reviewed clean. Live attended run PASS 2026-09-21 (bundle `2026-09-21T06-20-15-434Z`): T02 merged first, T01 parked, resolved on the live worker keeping `hello there`; feature branch handed off that side, main untouched, ceiling 2. Verified on disk. Coordinator reached `completed` not `crashed` — T17's live proof. FINDINGS ✅. |
 | T17 | resilient-report-watch | auto | T05 | ✅ | Reviewed clean, no fix. Both edits mutation-checked live to bite. Probed: `error` handler null-safe on double/late close; a crash returns before the timeout check so it never reads `timeout`; rejecting `crashed` under any expected terminal is safe (a real park exits `halted`/`timeout`). 417 green. Live EMFILE proof is T13's. |
+| T18 | coordinator-launcher | auto | — | ⬜ | Added 2026-09-21 (PM). Ship a thin `pir-coordinate` launcher `install.sh` puts on PATH (runs the installed engine against the current repo, dry by default); remove the stale orphan skills (`pir-coordinate`, `pir-verify`, `pir-parallelize-plan`); name parallel mode in the closing message. Wrapper only, no revived session (§2.1). On-PATH launch is a hand-check, no paid workers. |
+| T19 | docs-colour-and-launch | auto | T18 | ⬜ | Added 2026-09-21 (PM). Fill the two `/docs` gaps: the live-display colours (T16) in run-lifecycle.md, and the `pir-coordinate` launch command (T18) in README/human-flow. Docs otherwise current (checked 2026-09-21) — targeted gap-fill, not a re-audit. T17 crash-scoring deliberately out of scope. |
 
 A Notes cell holds what was built or what the review found, the test count, and one line per
 deviation from the task doc. A ✅ task's cell may be cut to one line once the next task is reviewed.
 
-**Review queue:** empty. The plan is complete — every task ✅, including T13's live attended run. Nothing
-left to build, review, or verify.
+**Review queue:** empty (no 🔍). T01–T17 are all ✅; the two open tasks are T18 (⬜) then T19 (⬜, deps
+T18). Next `pir-work` implements T18.
 
 ## Blocked on the user
 

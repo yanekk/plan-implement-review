@@ -1,6 +1,6 @@
 # Implementation plan
 
-17 tasks in 4 phases (T10, T11, T12 added mid-build — see Phase 3; T13, T14, T15, T16, T17 added in Phase 4). Each has a file in [tasks/](tasks/) with its goal, the files it touches, the
+19 tasks in 5 phases (T10, T11, T12 added mid-build — see Phase 3; T13, T14, T15, T16, T17 added in Phase 4; T18, T19 added in Phase 5 after the plan first completed). Each has a file in [tasks/](tasks/) with its goal, the files it touches, the
 interfaces it defines, and what "done" means. Track state in [PROGRESS.md](PROGRESS.md). Read
 [DESIGN.md](DESIGN.md) first.
 
@@ -138,6 +138,33 @@ the crash as `completed`. T17 makes the watcher survive a watch error and makes 
 crash a crash. It blocks T13's live verification (a crashed coordinator never parks a conflict), so it
 lands before the person re-runs T13. Small, two focused shell edits. Depends on T05 (PM decision,
 2026-09-21).
+
+## Phase 5 — Make it installable and launchable
+
+| # | Task | Runs | Depends on |
+|---|---|---|---|
+| [T18](tasks/T18-coordinator-launcher.md) | coordinator-launcher | auto | — |
+| [T19](tasks/T19-docs-colour-and-launch.md) | docs-colour-and-launch | auto | T18 |
+
+T18 and T19 were added 2026-09-21, after the plan first reached all-✅ (PM decision). They do not
+reopen the sealed DESIGN — they finish the *install and launch* story the plan left open. The plan made
+the coordinator a plain process and deleted the `pir-coordinate` skill (T07, §2.1), but nothing
+replaced the skill as an entry point: after `install.sh` there is no short command to start parallel
+mode, and the docs still describe the bare `node …/coordinate.mjs` invocation.
+
+- **T18 (coordinator-launcher, `auto`)** ships a thin `pir-coordinate` launcher that `install.sh`
+  installs on PATH, so `pir-coordinate {slug}` starts the engine against the current repo. It also has
+  `install.sh` remove the stale orphan skills (`pir-coordinate`, `pir-verify`, `pir-parallelize-plan`,
+  deleted from the repo but lingering in accounts) and name parallel mode in its closing message. A
+  wrapper only — no revived session (§2.1). Its live "does it resolve on PATH" half is a hand-check
+  needing no paid workers.
+- **T19 (docs-colour-and-launch, `auto`)** fills the two remaining `/docs` gaps — the live display's
+  colours (T16) and the new `pir-coordinate` launch command (T18). Depends on T18 so it documents the
+  real command. The docs are otherwise current (checked 2026-09-21), so this is a targeted gap-fill, not
+  a re-audit.
+
+These two were added to a completed, already-reviewed plan, so they did not pass through
+`/pir-review-plan`; each still gets the normal build→review alternation under `/pir-work`.
 
 ---
 
