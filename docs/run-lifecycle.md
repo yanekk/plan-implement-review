@@ -1,6 +1,7 @@
 # The lifecycle of a run
 
-A run is driven by the coordinator command, `node src/shell/coordinate.mjs {slug}`, foreground,
+A run is driven by the coordinator command — a person launches it with `pir-coordinate {slug}` (the
+installed shortcut; underneath it runs `node src/shell/coordinate.mjs {slug}`), foreground,
 printing as it goes until the plan is done or the person stops it. Each turn of its loop is one
 **pass** (`runPass` in `src/shell/loop.mjs`): it gathers state, asks the pure core what to do
 (`decideDispatch` in `src/core/dispatch.mjs`), and executes the result against the real platform
@@ -10,7 +11,7 @@ without per-task typing.
 
 ## Start
 
-1. The person runs the command on a plan (`node src/shell/coordinate.mjs {slug}`). It **refuses a
+1. The person runs the command on a plan (`pir-coordinate {slug}`). It **refuses a
    plan that is not reviewed** — it reads the `**Plan reviewed:**` line in `PROGRESS.md` and, on
    anything short of a positive verdict, stops and points the person at `/pir-review-plan`
    (`readReviewGate` in `coordinate.mjs`, `parsePlanReviewed` in `progress.mjs`). An unreviewed
@@ -83,6 +84,17 @@ line per task, a summary line, and a footer. This is the command's status — th
   redirected, or captured by the test harness — it **degrades to plain append-only lines**, because
   cursor-control escapes garble a non-terminal. The in-place painting is what only a person can
   judge (hand-verified, T09).
+- **Colour is a paint-time layer** (T16): on a colour TTY the renderer tints each line by the
+  model's `kind` — active work (building, reviewing, merging) cyan, a merged task green, a **parked
+  `asking` worker amber and bold** so the one thing needing the person stands out, idle tasks
+  (`waiting`, `queued`) dim, and a failed or interrupted run red. The summary header stays neutral
+  while the run is going and takes a colour only at the end — green when finished, red when Ctrl-C
+  interrupts it — so the live status colour otherwise lives on the rows and on the amber-bold
+  "asking you" footer pointer. Colour is layered on top of the glyphs, never instead of them, so a
+  colour-blind reader loses no information. It is applied after each line is clipped, so it changes
+  no widths, and the plain content (`formatLines`) carries no escapes. It is off unless stdout is a
+  colour TTY and `NO_COLOR` is unset (any value of `NO_COLOR` disables it); a non-TTY — a pipe or
+  the test harness — is never coloured, so that output stays plain, escape-free text.
 
 The footer names the current asking worker and how to reach it (find it in `claude agents`, attach,
 answer there), or, at the end, the green feature branch and the `git merge` hand-off.

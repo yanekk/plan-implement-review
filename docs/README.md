@@ -31,10 +31,18 @@ task. It never merges to `main`: the command stops at a green feature branch and
 `git merge` to run by hand. A project opts into parallel mode per run; nothing about the classic
 flow changes.
 
+A person launches parallel mode with `pir-coordinate {slug}`, run from inside the target repo (dry
+by default — real, paid workers spawn only under `PARALLEL_LIVE=1`; see
+[run-lifecycle.md](run-lifecycle.md)). The one-time setup is `./install.sh`, which puts the
+`pir-coordinate` command on the PATH and installs the coordinator engine where it can run against
+any set-up repo — so `pir-coordinate {slug}` is the way to launch, not a bare
+`node …/coordinate.mjs`.
+
 ## The components
 
-- **The coordinator command** — `node src/shell/coordinate.mjs {slug}`, a plain foreground
-  program, not a session and not an agent. It opens the feature branch in its own worktree, decides
+- **The coordinator command** — launched with `pir-coordinate {slug}` (the installed shortcut;
+  underneath it runs `node src/shell/coordinate.mjs {slug}`), a plain foreground program, not a
+  session and not an agent. It opens the feature branch in its own worktree, decides
   which task each worker builds, spawns and closes workers, prints a live status display, and hands
   the person the finished feature branch to merge. It has no agent name and never appears in
   `claude agents`. It never merges to `main` and never writes product code. Dry by default; it only

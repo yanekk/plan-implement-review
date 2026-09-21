@@ -27,9 +27,10 @@ and docs (T08) work and update `/docs`, not the sealed DESIGN; added post-review
 `/pir-review-plan` but each still gets a build→review pass. (T13's scratch dir `/tmp/mc-scratch` was torn
 down 2026-09-21.)
 **Last updated:** 2026-09-21
-**Next `pir-work` will:** IMPLEMENT **T19** (⬜, docs gap-fill) — its dep T18 is now ✅ (code reviewed
-clean). T18's one remaining half, the PM's dry `pir-coordinate` hand-check, is outstanding (Blocked on
-the user); it does not gate T19's docs.
+**Next `pir-work` will:** REVIEW **T19** (🔍, docs gap-fill) — the last task. A fresh session checks the
+colour prose against render.mjs (T16) and the launch prose against the shipped `pir-coordinate`/install.sh
+(T18). T18's dry `pir-coordinate` hand-check is still outstanding (Blocked on the user); it does not gate
+this review.
 
 ## Tasks
 
@@ -58,13 +59,13 @@ read — the parser tolerates and ignores it; T05 finishes the surrounding clean
 | T13 | attended-merge-conflict | you | T05, T10, T11, T14 | ✅ | Code reviewed clean. Live attended run PASS 2026-09-21 (bundle `2026-09-21T06-20-15-434Z`): T02 merged first, T01 parked, resolved on the live worker keeping `hello there`; feature branch handed off that side, main untouched, ceiling 2. Verified on disk. Coordinator reached `completed` not `crashed` — T17's live proof. FINDINGS ✅. |
 | T17 | resilient-report-watch | auto | T05 | ✅ | Reviewed clean, no fix. Report-watch degrades to the 5s poll on an FSWatcher error; a crash scores `crashed` and is rejected as a terminal. Live EMFILE proof is T13's. 417 green. |
 | T18 | coordinator-launcher | auto | — | ✅ | Reviewed clean, no fix. Reproduced out-of-band on a fake HOME: install removes the three orphans, writes the launcher executable with `__PIR_ENGINE__` substituted, prints the off-PATH fallback+export; the installed launcher drives a dry run and forwards `"$@"`. Tests bite (6). Real-PATH resolve after a real install is the PM's dry hand-check (Blocked). 423 green. |
-| T19 | docs-colour-and-launch | auto | T18 | ⬜ | Added 2026-09-21 (PM). Fill the two `/docs` gaps: the live-display colours (T16) in run-lifecycle.md, and the `pir-coordinate` launch command (T18) in README/human-flow. Docs otherwise current (checked 2026-09-21) — targeted gap-fill, not a re-audit. T17 crash-scoring deliberately out of scope. |
+| T19 | docs-colour-and-launch | auto | T18 | 🔍 | Filled both `/docs` gaps. run-lifecycle.md: colour paragraph matched to render.mjs (T16) — per-kind tint, amber-bold parked pointer, TTY+NO_COLOR-gated, plain off-TTY. README + run-lifecycle name `pir-coordinate {slug}` as primary launch (install.sh setup); bare-node kept as underlying mechanism. Put launch doc in README not human-flow (task's and/or). T17 crash-scoring excluded per doc. Docs-only, no code; suite green (0 fail). |
 
 A Notes cell holds what was built or what the review found, the test count, and one line per
 deviation from the task doc. A ✅ task's cell may be cut to one line once the next task is reviewed.
 
-**Review queue:** empty — T01–T18 all ✅. T19 (⬜, dep T18 ✅) is next to implement. T18's dry
-hand-check is with the PM (Blocked on the user).
+**Review queue:** T19 (🔍) awaits review — it is next. T01–T18 all ✅. T18's dry hand-check is with
+the PM (Blocked on the user).
 
 ## Blocked on the user
 
