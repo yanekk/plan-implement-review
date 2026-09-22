@@ -26,7 +26,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | # | Task | Depends on | State | Notes |
 |---|---|---|---|---|
 | T01 | run-state | — | ⬜ | |
-| T02 | index-record | — | ⬜ | |
+| T02 | index-record | — | 🔍 | Pure runrecord.mjs: serializeRecord/parseRecord, canonical field order, null on any malformed input, never throws (§2.10). 18 tests, boundary green. Deviations: pid required positive integer (doc said number); optional timestamps must be strings if present. |
 | T03 | snapshot-model | — | ⬜ | |
 | T04 | dashboard-model | T01 | ⬜ | |
 | T05 | process-identity | T01 | ⬜ | |
