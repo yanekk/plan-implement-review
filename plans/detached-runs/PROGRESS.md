@@ -11,11 +11,11 @@ the account is the commit message. Whoever writes a cell also fixes the over-bud
 
 **Plan reviewed:** 2026-09-22 — 4 fixed, 3 decided with the user
 
-**Status:** Plan just written. Prototype approved by the user (2026-09-22) and parked in
-`prototype/`. Detached-spawn and process-identity mechanisms verified on the machine (FINDINGS).
-Nothing implemented yet.
+**Status:** Model/store layer done (T01–T07 ✅) and T09 (stop/remove front-end) reviewed clean.
+Prototype approved by the user (2026-09-22), parked in `prototype/`. Detached-spawn and
+process-identity mechanisms verified on the machine (FINDINGS). T08 is the next build.
 **Last updated:** 2026-09-22
-**Next `pir-work` will:** review T09 (lowest-numbered 🔍).
+**Next `pir-work` will:** implement the next ⬜ whose deps are ✅ (T08).
 
 ## Tasks
 
@@ -32,13 +32,13 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T06 | index-store | T02 | ✅ | |
 | T07 | snapshot-store | T03 | ✅ | |
 | T08 | start-detached | T05, T06 | ⬜ | hands-on: survives terminal restart |
-| T09 | stop-and-remove | T05, T06 | 🔍 | control-run.mjs: stopRun (async; SIGTERM→grace poll→SIGKILL+reap own workers by name) and removeRun (index entry + status.json; plan files untouched). 9 tests. Deviations: dropped unused exec/fs from stopRun (needs only kill+platform); added optional dir to removeRun for scratch-index injection, per index-store pattern. |
+| T09 | stop-and-remove | T05, T06 | ✅ | Review clean, no fix. stopRun/removeRun in control-run.mjs; 9 tests green, assert exact signal order and the name-filtered reap. Both deviations sound: dropping exec/fs matches §2.6/§3.3 (identity is classifyRun's job upstream; stop is the actuator), dir mirrors index-store injection. Probed pid-reuse: stop trusts the classifier, no lstart re-check (FINDINGS). |
 | T10 | coordinator-reporting | T07 | ⬜ | edits coordinate.mjs behind PIR_RUN |
 | T11 | pir-command | T08 | ⬜ | |
 | T12 | dashboard-tui | T04, T07, T09, T10, T11 | ⬜ | hands-on: the live feel |
 | T13 | docs-and-install | T12 | ⬜ | updates /docs |
 
-**Review queue:** T09
+**Review queue:** empty
 
 ## Blocked on the user
 
