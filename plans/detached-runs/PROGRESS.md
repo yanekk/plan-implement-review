@@ -11,12 +11,11 @@ the account is the commit message. Whoever writes a cell also fixes the over-bud
 
 **Plan reviewed:** 2026-09-22 — 4 fixed, 3 decided with the user
 
-**Status:** Plan just written. Prototype approved by the user (2026-09-22) and parked in
-`prototype/`. Detached-spawn and process-identity mechanisms verified on the machine (FINDINGS).
-Nothing implemented yet.
+**Status:** T04 (dashboard-model) implemented, awaiting review. Prototype approved by the user
+(2026-09-22) and parked in `prototype/`. Detached-spawn and process-identity mechanisms verified
+on the machine (FINDINGS).
 **Last updated:** 2026-09-22
-**Next `pir-work` will:** nothing until the plan is reviewed. After review, implement T01
-(run-state) — a Phase 1 task with no dependencies, on the critical path.
+**Next `pir-work` will:** review T04 (dashboard-model) — the lowest-numbered 🔍 task.
 
 ## Tasks
 
@@ -28,7 +27,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T01 | run-state | — | ✅ | |
 | T02 | index-record | — | ⬜ | |
 | T03 | snapshot-model | — | ⬜ | |
-| T04 | dashboard-model | T01 | ⬜ | |
+| T04 | dashboard-model | T01 | 🔍 | buildDashboard (rows+counts) and dashboardReducer (list/watch nav, Esc, two-press stop/remove). 22 tests. Deviation: reducer takes `views` as a 3rd arg (sketch showed 2), which the task's own rule requires for clamp + slug/state lookup. |
 | T05 | process-identity | T01 | ⬜ | |
 | T06 | index-store | T02 | ⬜ | |
 | T07 | snapshot-store | T03 | ⬜ | |
@@ -39,7 +38,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T12 | dashboard-tui | T04, T07, T09, T10, T11 | ⬜ | hands-on: the live feel |
 | T13 | docs-and-install | T12 | ⬜ | updates /docs |
 
-**Review queue:** *(empty)*
+**Review queue:** T04
 
 ## Blocked on the user
 
