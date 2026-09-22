@@ -15,8 +15,8 @@ the account is the commit message. Whoever writes a cell also fixes the over-bud
 `prototype/`. Detached-spawn and process-identity mechanisms verified on the machine (FINDINGS).
 Nothing implemented yet.
 **Last updated:** 2026-09-22
-**Next `pir-work` will:** nothing until the plan is reviewed. After review, implement T01
-(run-state) — a Phase 1 task with no dependencies, on the critical path.
+**Next `pir-work` will:** finish T12 — after the user hand-verifies the live dashboard feel, mark it
+🔍 for review. Then T13 (docs-and-install), which depends on T12.
 
 ## Tasks
 
@@ -36,13 +36,15 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T09 | stop-and-remove | T05, T06 | ✅ | |
 | T10 | coordinator-reporting | T07 | ✅ | |
 | T11 | pir-command | T08 | ✅ | |
-| T12 | dashboard-tui | T04, T07, T09, T10, T11 | ⬜ | hands-on: the live feel |
+| T12 | dashboard-tui | T04, T07, T09, T10, T11 | 🟡 | TUI built in pir-tui.mjs (list frame, watch frame reusing render.mjs styledLines, key decode, raw-mode loop); pir.mjs wired. 12 tests, npm test green. Code half done; live-feel hand-check pending with user before 🔍. |
 | T13 | docs-and-install | T12 | ⬜ | updates /docs |
 
 **Review queue:** *(empty)*
 
 ## Blocked on the user
 
-Nothing right now. Two tasks will need a person when they are built: T08 (confirm a run survives
-closing WezTerm) and T12 (confirm the live dashboard reads right). The worker raises each through
-the normal question path when it reaches that point — not homework left for the end.
+T12: the live dashboard's feel (the in-place repaint, moving and opening, the confirm chords) can only
+be judged at a real terminal, and seeing it needs a real run — which means spawning paid agents, the
+one line a worker cannot cross alone. Handed to the user with the exact `pir` command; their answer
+goes in FINDINGS with the date, then T12 → 🔍. T08's survival check was folded into this same live run
+(FINDINGS 2026-09-22).

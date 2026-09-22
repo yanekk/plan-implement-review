@@ -2,27 +2,22 @@
 //   pir {slug}  → start a detached run (T08's startRun); if one is already running, open its live
 //                 view instead of starting a second — "start or open" (§2.5).
 //   pir         → open the cross-repo dashboard (§2.3).
-// This task (T11) owns only the argv handling and the hand-off; the TUI painting — openDashboard and
-// openWatch — is T12, which extends this file. Until then those two are placeholders that fail
-// loudly rather than pretend to paint.
+// This task owns the argv handling and the hand-off; the TUI painting — openDashboard and openWatch —
+// is the raw-mode loop in pir-tui.mjs (T12), re-exported here so the dispatch and the bin call it as the
+// default while the tests inject spies in its place.
 //
 // The dispatch is a pure function with its collaborators injected, so it is tested without spawning a
 // coordinator or entering raw mode. A refused start (no such plan, not reviewed) is a scriptable
 // failure — it prints to stderr and exits non-zero — not a dashboard state (§2.5).
 
 import { startRun as startRunDefault } from './launch.mjs';
+import { openDashboard as openDashboardTui, openWatch as openWatchTui } from './pir-tui.mjs';
 
-// The TUI hand-off points, filled in by T12 (which extends this file). They are the defaults the
-// dispatch calls, and injected spies replace them in the tests, so the placeholders below never run
-// under `npm test`. They throw rather than no-op so that running `bin/pir` before T12 lands fails
-// visibly instead of silently doing nothing.
-export function openDashboard() {
-  throw new Error('the dashboard is not built yet (T12)');
-}
-
-export function openWatch(slug) {
-  throw new Error(`the live view for '${slug}' is not built yet (T12)`);
-}
+// The TUI hand-off points (T12): the cross-repo dashboard and a single run's live view, both the raw-mode
+// loop in pir-tui.mjs. They are the defaults run() calls; injected spies replace them under `npm test`, so
+// the real raw-mode loop never runs in the harness.
+export const openDashboard = openDashboardTui;
+export const openWatch = openWatchTui;
 
 // run(argv, { startRun, openDashboard, openWatch, stderr }) → exitCode
 //

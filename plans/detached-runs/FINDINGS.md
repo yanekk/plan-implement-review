@@ -18,6 +18,7 @@ the user changed.
 
 | Date | | Finding |
 |---|---|---|
+| 2026-09-22 | 📌 | T12 ships keyboard nav only. The mock's mouse-click row-select (DESIGN §2.3 "arrow keys or a click") is deferred — arrows + Enter fully navigate. Mouse needs SGR-1006 tracking and parsing; ask the user if it is wanted before T13 docs. |
 | 2026-09-22 | 📌 | T10 self-reporting needs T06 `index-store` to stamp a run's final status, but T06 is not a T10 dependency and is unbuilt. `coordinate.mjs` loads `index-store` lazily (dynamic import); `updateIndexFinalState` logic tested via injection. Consider adding T06 to T10's deps. |
 | 2026-09-22 | 📌 | `stopRun` (control-run.mjs) signals `record.pid` on a bare `isAlive` check, no `lstart` re-verify (`exec` dropped). The pid-reuse guard is `classifyRun`'s (§3.3), upstream. Only call stop on a run classified `running`; stop is the actuator, not the identity guard. |
 | 2026-09-22 | 🔄 | T08 survival check (run outlives terminal restart) deferred to the T12 live run (user): `pir` (T11) does not exist at T08's point, and only a seatbelted real run exercises it. T08 handed off with that half unverified. |
