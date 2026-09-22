@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+#
+# pir — start a detached run, or open the dashboard. (detached-runs T11)
+#
+# A thin wrapper, exactly mirroring bin/pir-coordinate (DESIGN §2.1, §2.9). It carries NO logic of
+# its own — the two invocations (`pir {slug}` to start-or-open, bare `pir` for the dashboard) are
+# parsed and dispatched by the engine's pir.mjs, never here, so nothing in this script can drift
+# from that contract.
+#
+# The engine path is baked in at INSTALL time: install.sh substitutes __PIR_ENGINE__ with the
+# installed engine directory (ENGINE_DEST=~/.claude/pir-engine, wired in T13). It is deliberately
+# the installed path, not one resolved relative to this script or the current directory, so the
+# command runs against whatever repo it is invoked from — `pir` is the installed engine driving a
+# run in the current repo.
+
+exec node "__PIR_ENGINE__/src/shell/pir.mjs" "$@"
