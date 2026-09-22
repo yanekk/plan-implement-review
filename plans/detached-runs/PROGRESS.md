@@ -15,7 +15,7 @@ the account is the commit message. Whoever writes a cell also fixes the over-bud
 `prototype/`. Detached-spawn and process-identity mechanisms verified on the machine (FINDINGS).
 Nothing implemented yet.
 **Last updated:** 2026-09-22
-**Next `pir-work` will:** implement a ready ⬜ — T04, T05 or T07 (deps all ✅). No 🔍 waiting.
+**Next `pir-work` will:** implement a ready ⬜ — T07, T08 or T09 (deps all ✅). No 🔍 waiting.
 
 ## Tasks
 
@@ -27,8 +27,8 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T01 | run-state | — | ✅ | |
 | T02 | index-record | — | ✅ | |
 | T03 | snapshot-model | — | ✅ | |
-| T04 | dashboard-model | T01 | ⬜ | |
-| T05 | process-identity | T01 | ⬜ | |
+| T04 | dashboard-model | T01 | ✅ | |
+| T05 | process-identity | T01 | ✅ | |
 | T06 | index-store | T02 | ✅ | Reviewed clean, no fix commit. 13 tests green, interface matches spec. Probed: temp name ends `.tmp` not `.json` so `listRecords` skips it though it contains `.json`; `readFileSync` on a vanished/EISDIR file drops only itself; atomic overwrite keeps one entry. `{repo}__{slug}` aliasing is a plan-level naming choice, not this task. |
 | T07 | snapshot-store | T03 | ⬜ | |
 | T08 | start-detached | T05, T06 | ⬜ | hands-on: survives terminal restart |
