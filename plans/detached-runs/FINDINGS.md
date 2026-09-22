@@ -18,6 +18,7 @@ the user changed.
 
 | Date | | Finding |
 |---|---|---|
+| 2026-09-22 | 📌 | T10 self-reporting needs T06 `index-store` to stamp a run's final status, but T06 is not a T10 dependency and is unbuilt. `coordinate.mjs` loads `index-store` lazily (dynamic import); `updateIndexFinalState` logic tested via injection. Consider adding T06 to T10's deps. |
 | 2026-09-22 | 📌 | `stopRun` (control-run.mjs) signals `record.pid` on a bare `isAlive` check, no `lstart` re-verify (`exec` dropped). The pid-reuse guard is `classifyRun`'s (§3.3), upstream. Only call stop on a run classified `running`; stop is the actuator, not the identity guard. |
 | 2026-09-22 | 🔄 | T08 survival check (run outlives terminal restart) deferred to the T12 live run (user): `pir` (T11) does not exist at T08's point, and only a seatbelted real run exercises it. T08 handed off with that half unverified. |
 | 2026-09-22 | 📌 | `spawn(node, args, {detached:true, stdio:['ignore',fd,fd]})` + `child.unref()` outlives its parent on this Mac: the child reparented to pid 1 and kept running after the parent exited. This is the `pir start` mechanism (T08). |

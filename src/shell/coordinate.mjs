@@ -28,9 +28,11 @@ import { basename, join } from 'node:path';
 import { parseProgress, reconcileTaskRow, progressPathFor } from '../core/progress.mjs';
 import { workerName, isWorkerOf, parseAgentName } from '../core/naming.mjs';
 import { buildDisplay } from '../core/display.mjs';
+import { parseRecord } from '../core/runrecord.mjs';
 import { runPass, createRunState } from './loop.mjs';
 import { createPlatform } from './platform.mjs';
 import { createRenderer } from './render.mjs';
+import { writeSnapshot } from './snapshot-store.mjs';
 import { createWorktree } from './worktree.mjs';
 
 const DONE_GLYPH = '✅';
@@ -307,9 +309,14 @@ export function createReportInbox({ dir } = {}) {
 // that is not a clean promotion/halt (a safety cap, a stall, a signal, an error) must close this run's
 // live workers. `platform.close` is stop + SIGTERM — `claude stop` alone only interrupts (FINDINGS
 // 2026-09-09), so this is what actually ends the session. Closing an already-gone id is a safe no-op.
-export function teardownRun({ platform, worktree, state, repo, slug, control } = {}) {
+// `keepWorktrees` is the detached-stop case (DESIGN §2.6, T10): a `pir` stop closes this run's workers
+// but LEAVES the task worktrees, because the next `pir {slug}` reconciles them from the git branches
+// (the durable state) and an immediate stop must not wait on teardown. The classic Ctrl-C path keeps
+// removing them (the default), so foreground behaviour is unchanged.
+export function teardownRun({ platform, worktree, state, repo, slug, control, keepWorktrees = false } = {}) {
   const closed = new Set();
   const removeWorktree = (num) => {
+    if (keepWorktrees) return; // detached stop leaves worktrees for the next start to reconcile (§2.6)
     const t = num ? state?.tasks?.[num] : null;
     if (t?.worktree && worktree) {
       try {
@@ -359,6 +366,107 @@ export function teardownRun({ platform, worktree, state, repo, slug, control } =
     }
   }
   return { closed: [...closed] };
+}
+
+// --- Detached self-reporting: the snapshot each pass and the final status on exit (DESIGN §2.4, §2.6, §3.4, §3.5; T10) --
+//
+// When `pir` launches the coordinator detached (T08), nobody is attached to read the live display, so
+// the coordinator writes its state to disk instead: a live snapshot each pass (fed to the dashboard,
+// §2.4) and a final status on every exit path (§2.2, §2.6). This whole half is gated on the PIR_RUN
+// marker the launcher sets (§3.5), so a foreground `pir-coordinate` run — which never sets it — writes
+// no snapshot and touches no index entry, and the classic path is byte-for-byte unchanged.
+
+// shouldSelfReport(env) → whether this run reports on itself. True only when PIR_RUN is set, which only
+// the `pir` launcher (T08) does. The single gate the bin keys the whole self-reporting half on.
+export function shouldSelfReport(env = process.env) {
+  return !!env.PIR_RUN;
+}
+
+// finalStateForExit(reason) → the final status a given exit path records, or null for none (DESIGN §2.2,
+// §7; T10 interface). Only a CLEAN end records a status: a completed hand-off (green OR red branch) and a
+// stall ("nothing left to do") are `finished`; a stop is `stopped`. Every ABNORMAL exit — the HALT kill
+// switch, the runaway breaker, the safety cap, an uncaught error — records NOTHING, so its snapshot and
+// index entry both stay finalState:null and the front-end classifies the gone process crashed (red), not
+// dim `finished`. A red feature branch is a clean exit: the run finished, the code is red (§2.2).
+export function finalStateForExit(reason) {
+  switch (reason) {
+    case 'complete': // the plan is done and the feature-branch tests ran (green or red) — a clean end.
+    case 'stall': // nothing left to dispatch or hand off — a clean end.
+      return 'finished';
+    case 'stop': // the user stopped the run (SIGTERM under PIR_RUN, §2.6).
+      return 'stopped';
+    // 'halt' | 'runaway' | 'safety-cap' | 'error' (and anything unrecognised): abnormal, record nothing.
+    default:
+      return null;
+  }
+}
+
+// writeRunSnapshot({ controlDir, proc, runState }) → write the live snapshot for this pass (finalState
+// null, i.e. still running). Thin over the store's atomic writeSnapshot (T07). `writeSnapshotFn` is
+// injectable so a test asserts the shape without a real control folder path assumption.
+export function writeRunSnapshot({ controlDir, proc, runState, writeSnapshotFn = writeSnapshot } = {}) {
+  writeSnapshotFn(controlDir, { proc, finalState: null, runState });
+}
+
+// writeRunFinal({ controlDir, proc, runState, reason, writeSnapshotFn, updateIndex, log }) → record the
+// run's final status on an exit path (DESIGN §2.2, §2.6; T10 interface). On a status-bearing exit
+// (finished/stopped) it writes the snapshot with that finalState AND asks updateIndex to stamp the same
+// status on the index entry, so the dashboard reads one consistent verdict. On an abnormal exit
+// (finalState null) it writes NOTHING: the last live snapshot and the index entry both keep finalState
+// null, which is exactly what makes the gone process read as crashed (§2.2). The index update is
+// best-effort — a failure is logged, never thrown, because the process is on its way out and a red
+// display is a smaller harm than a crash during exit.
+export function writeRunFinal({
+  controlDir,
+  proc,
+  runState,
+  reason,
+  writeSnapshotFn = writeSnapshot,
+  updateIndex,
+  log,
+} = {}) {
+  const finalState = finalStateForExit(reason);
+  if (finalState === null) {
+    return { finalState: null, wrote: false }; // abnormal exit: leave both snapshot and index null.
+  }
+  writeSnapshotFn(controlDir, { proc, finalState, runState });
+  let indexResult = null;
+  if (updateIndex) {
+    try {
+      indexResult = updateIndex(finalState);
+    } catch (e) {
+      log?.(`index final-status update failed: ${e?.message ?? e}`);
+    }
+  }
+  return { finalState, wrote: true, indexResult };
+}
+
+// updateIndexFinalState({ repo, slug, finalState, indexStore, readFile, now }) → stamp a run's final
+// status onto its cross-repo index entry (DESIGN §2.8, §3.4; T10 interface). It reads the entry the
+// launcher wrote (T08), sets its finalState (and an updatedAt stamp), and writes it back through the
+// index store's atomic writeRecord — composing T02's parseRecord with T06's store rather than owning
+// either format or path, so there stays one owner per fact. `indexStore` is null when the store module
+// is not present (see the bin's lazy load), in which case this is a no-op; a missing or unparseable
+// entry is likewise a no-op, never a throw, because the exit path must not fail on bookkeeping.
+export function updateIndexFinalState({
+  repo,
+  slug,
+  finalState,
+  indexStore,
+  readFile = readFileSync,
+  now = () => new Date().toISOString(),
+} = {}) {
+  if (!indexStore) return { updated: false, reason: 'no-index-store' };
+  let existing;
+  try {
+    existing = parseRecord(readFile(indexStore.recordPath(repo, slug), 'utf8'));
+  } catch {
+    return { updated: false, reason: 'no-entry' }; // the launcher's entry is not there to update.
+  }
+  if (!existing) return { updated: false, reason: 'unparseable-entry' };
+  const record = { ...existing, finalState, updatedAt: now() };
+  indexStore.writeRecord(record);
+  return { updated: true, record };
 }
 
 // --- The runaway circuit-breaker verdict (DESIGN §5.2; ported from spawn-one-scratch.mjs, T12 P5) --
@@ -764,6 +872,66 @@ async function main(argv) {
   // and no answers file to write to.
   console.log(`\nA worker that asks you shows in the display below; answer it directly with \`claude agents\`.\n`);
 
+  const POLL_MS = Number(process.env.PARALLEL_POLL_MS ?? 5000);
+  // A safety cap only — the run's real end is the hand-off, a halt, or a stall, not a fixed pass budget
+  // (the drill exited on its budget and orphaned a worker; DESIGN §2.6). At the cap we tear down.
+  const MAX_PASSES = Number(process.env.PARALLEL_MAX_PASSES ?? 5000);
+  const CEILING = maxWorkers;
+  const OVER_GRACE = Number(process.env.PARALLEL_OVER_GRACE ?? 3);
+  const STALL_GRACE = 3; // consecutive quiet passes with nothing live before the run is declared done
+  const branch = `pir/${slug}`;
+
+  // Detached self-reporting (DESIGN §2.4, §2.6, §3.5; T10). PIR_RUN is set only by the `pir` launcher
+  // (T08); a foreground `pir-coordinate` run leaves it unset and skips everything below, so the classic
+  // path is unchanged.
+  const selfReport = shouldSelfReport(process.env);
+
+  // index-store (T06) is loaded LAZILY, not statically imported at the top of this file. T10 was
+  // dispatched before T06 was built (T10's declared dependencies name only T07, the snapshot store), so
+  // a static `import './index-store.mjs'` would break this branch's `npm test`. On the assembled feature
+  // branch T06 is always present and this resolves it; if it is somehow absent, snapshot self-reporting
+  // still works and only the index finalState is skipped. The index update's decision logic is unit
+  // tested via updateIndexFinalState with a fake store, so only this glue is untested here.
+  let indexStore = null;
+  if (selfReport) {
+    try {
+      indexStore = await import('./index-store.mjs');
+    } catch {
+      control.log('index-store (T06) not importable — writing snapshots only, index finalState skipped');
+    }
+  }
+
+  // The process facts every snapshot carries (DESIGN §3.4). startTime is the launch time the launcher
+  // recorded in the index entry (T08) — read back from the entry so the snapshot's identity matches the
+  // index's one recorded value rather than re-deriving it (T10 interface); fall back to a PIR_START_TIME
+  // env the launcher may pass, else null (the dashboard classifies liveness from the index entry, not
+  // this field, so a missing value only weakens the snapshot's self-description).
+  const readIndexStartTime = () => {
+    if (!indexStore) return null;
+    try {
+      return parseRecord(readFileSync(indexStore.recordPath(repo, slug), 'utf8'))?.startTime ?? null;
+    } catch {
+      return null;
+    }
+  };
+  const proc = selfReport
+    ? {
+        pid: process.pid,
+        startTime: readIndexStartTime() ?? process.env.PIR_START_TIME ?? null,
+        slug,
+        repo,
+        branch,
+        startedAt: new Date().toISOString(),
+      }
+    : null;
+  const updateIndex = selfReport
+    ? (finalState) => updateIndexFinalState({ repo, slug, finalState, indexStore, log: control.log })
+    : null;
+  // The last run state painted, so an exit path (a signal, a stall, completion) can write it as the final
+  // snapshot. Seeded with an empty-but-valid run state so a stop arriving before the first pass still
+  // writes a snapshot parseSnapshot accepts.
+  let lastRunState = buildRunState({ passTasks: [], branch, ceiling: CEILING, interrupted: true });
+
   // Tear down every live worker of this run on any exit that is not a clean hand-off or a kill-switch
   // halt (both of which the loop already handled). This is the orphan-guard: a safety cap, a stall, a
   // Ctrl-C or an error must not leave a paid session running (DESIGN §2.6). Idempotent (close is safe
@@ -780,10 +948,36 @@ async function main(argv) {
     const { closed } = teardown();
     if (closed.length) renderer.line(`\n=== ${why}: closed ${closed.length} live worker(s) so none is orphaned ===`);
   };
-  // A signal (Ctrl-C, or the OS asking us to stop) must close workers before we go (DESIGN §2.6). Register once.
+
+  // The detached stop (DESIGN §2.6, T10): a `pir` stop sends SIGTERM to a PIR_RUN coordinator. Unlike the
+  // classic Ctrl-C teardown, it LEAVES the task worktrees (the next start reconciles them from git) and
+  // records a `stopped` final status. It shares tornDown with teardownOnce so only one of the two runs.
+  const stopDetached = () => {
+    if (tornDown) return;
+    tornDown = true;
+    renderer.close();
+    const { closed } = teardownRun({ platform, worktree, state: coordinator.state, repo, slug, control, keepWorktrees: true });
+    writeRunFinal({ controlDir: control.dir, proc, runState: lastRunState, reason: 'stop', updateIndex, log: control.log });
+    renderer.line(
+      closed.length
+        ? `\n=== stopped: closed ${closed.length} live worker(s); worktrees left for the next start (§2.6) ===`
+        : '\n=== stopped: worktrees left for the next start (§2.6) ===',
+    );
+  };
+
+  // On every abnormal exit finishRun writes nothing (finalStateForExit → null), so the gone process reads
+  // as crashed; on a clean end it records the matching final status (DESIGN §2.2, T10).
+  const finishRun = (reason) => {
+    if (!selfReport) return;
+    writeRunFinal({ controlDir: control.dir, proc, runState: lastRunState, reason, updateIndex, log: control.log });
+  };
+
+  // A signal must close workers before we go (DESIGN §2.6). A detached stop is SIGTERM under PIR_RUN and
+  // takes the stop path (leave worktrees, record `stopped`); every other signal is the classic teardown.
   for (const sig of ['SIGINT', 'SIGTERM']) {
     process.on(sig, () => {
-      teardownOnce(`${sig} received`);
+      if (selfReport && sig === 'SIGTERM') stopDetached();
+      else teardownOnce(`${sig} received`);
       process.exit(130);
     });
   }
@@ -810,15 +1004,6 @@ async function main(argv) {
     }
   };
 
-  const POLL_MS = Number(process.env.PARALLEL_POLL_MS ?? 5000);
-  // A safety cap only — the run's real end is the hand-off, a halt, or a stall, not a fixed pass budget
-  // (the drill exited on its budget and orphaned a worker; DESIGN §2.6). At the cap we tear down.
-  const MAX_PASSES = Number(process.env.PARALLEL_MAX_PASSES ?? 5000);
-  const CEILING = maxWorkers;
-  const OVER_GRACE = Number(process.env.PARALLEL_OVER_GRACE ?? 3);
-  const STALL_GRACE = 3; // consecutive quiet passes with nothing live before the run is declared done
-  const branch = `pir/${slug}`;
-
   let over = 0;
   let idle = 0;
   try {
@@ -840,6 +1025,9 @@ async function main(argv) {
       }
 
       if (r.halted) {
+        // Abnormal exit (DESIGN §2.2, T10): the HALT kill switch records NO final status, so the gone
+        // process reads as crashed, not dim `finished`. Nothing to write — the last live snapshot and the
+        // index entry both keep finalState:null.
         renderer.close(); // leave the alt screen so the notice lands on the normal screen (T15)
         renderer.line('\n=== HALTED by the kill switch — workers stopped, nothing merged ===');
         return; // the halt pass already closed every worker
@@ -858,6 +1046,11 @@ async function main(argv) {
         complete: r.complete,
         readyToMerge: !!r.readyToMerge,
       });
+      lastRunState = runState;
+      // Feed the detached live view (DESIGN §2.4): write this pass's run state to the snapshot the
+      // dashboard reads, finalState null (still running). Same run state that is painted, so a watcher on
+      // another terminal sees exactly what a live pane would. No-op on the classic path (selfReport false).
+      if (selfReport) writeRunSnapshot({ controlDir: control.dir, proc, runState });
       renderer.paint(buildDisplay(runState, { now: Date.now() }));
 
       if (r.complete) {
@@ -865,6 +1058,7 @@ async function main(argv) {
         // green, print the `git merge` command for the person to run; on red, print the failure and offer
         // no merge (§2.8). The run never merges to main itself. The complete pass has no live workers, so
         // nothing is orphaned by returning here.
+        finishRun('complete'); // a clean end (green OR red branch) records `finished` (§2.2, T10).
         renderer.close(); // leave the alt screen; the hand-off prints on the normal screen (T15, DESIGN §2.3)
         renderer.line('\n' + renderHandoff({ readyToMerge: r.readyToMerge, taskCount: r.tasks.length, slug }));
         return;
@@ -875,6 +1069,7 @@ async function main(argv) {
       const verdict = runawayVerdict({ liveCount: r.live, ceiling: CEILING, overPasses: over, overGrace: OVER_GRACE });
       over = verdict.over;
       if (verdict.abort) {
+        // Abnormal exit (T10): the runaway breaker records NO final status → crashed, not `finished`.
         renderer.line(`\nABORT: ${r.live} live workers over ceiling ${CEILING} for ${over} pass(es) — a runaway.`);
         teardownOnce('runaway');
         return;
@@ -886,6 +1081,7 @@ async function main(argv) {
       const productive = r.actions.some((a) => ['spawn', 'review', 'merge', 'close'].includes(a.type));
       idle = !productive && r.live === 0 ? idle + 1 : 0;
       if (idle >= STALL_GRACE) {
+        finishRun('stall'); // nothing left to do is a clean end — records `finished` (§2.2, T10).
         renderer.line('\n=== nothing left to do (no live workers, nothing to dispatch or hand off) ===');
         teardownOnce('stalled'); // a no-op when nothing is live; still safe
         return;
@@ -897,6 +1093,7 @@ async function main(argv) {
       // so the bin's OWN writes this pass (the flow log) cannot wake it into a busy spin.
       await waitForReport(inbox.reportsDir, POLL_MS);
     }
+    // Abnormal exit (T10): the safety cap and an uncaught error both record NO final status → crashed.
     renderer.line('\n=== safety cap reached ===');
     teardownOnce('safety cap');
   } catch (e) {
