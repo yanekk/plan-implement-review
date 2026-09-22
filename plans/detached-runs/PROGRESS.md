@@ -11,12 +11,12 @@ the account is the commit message. Whoever writes a cell also fixes the over-bud
 
 **Plan reviewed:** 2026-09-22 — 4 fixed, 3 decided with the user
 
-**Status:** Plan just written. Prototype approved by the user (2026-09-22) and parked in
-`prototype/`. Detached-spawn and process-identity mechanisms verified on the machine (FINDINGS).
-Nothing implemented yet.
+**Status:** T01–T12 all ✅. T12 (the dashboard TUI) hand-verified live and reviewed clean. Only
+T13 (docs-and-install) remains. Prototype parked in `prototype/`.
 **Last updated:** 2026-09-22
-**Next `pir-work` will:** review T12 (a fresh session, not the one that built it). Then T13
-(docs-and-install), which depends on T12 and must carry the ← back / Esc quit key change into /docs.
+**Next `pir-work` will:** implement T13 (docs-and-install), the last task. Its dep T12 is ✅. T13
+must carry the ← back / Esc quit key change (FINDINGS 🔄) into /docs — DESIGN §2.4/§2.11 still
+describe the old Esc-back-then-quit model.
 
 ## Tasks
 
@@ -36,10 +36,10 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T09 | stop-and-remove | T05, T06 | ✅ | |
 | T10 | coordinator-reporting | T07 | ✅ | |
 | T11 | pir-command | T08 | ✅ | |
-| T12 | dashboard-tui | T04, T07, T09, T10, T11 | 🔍 | TUI in pir-tui.mjs + pir.mjs. 18 tests, npm test green (612). Hand-verified with user 2026-09-22 (FINDINGS ✅): live run reads right — list, ticking view, ←/Esc, chords. ← back / Esc quit is a user key change (FINDINGS 🔄). Awaiting fresh-eyes code review. |
+| T12 | dashboard-tui | T04, T07, T09, T10, T11 | ✅ | Reviewed clean, no fix commit. 18 tests green (616 total). Watch frame is render.mjs's own styledLines byte-for-byte; pure builders take now as an argument. Probed re-entrancy, error teardown (raw mode restored on throw), no-snapshot/crashed edges, slug-pinned selection. ← back / Esc quit is a user change (FINDINGS 🔄); T13 carries it to /docs. |
 | T13 | docs-and-install | T12 | ⬜ | updates /docs |
 
-**Review queue:** T12
+**Review queue:** (empty)
 
 ## Blocked on the user
 
