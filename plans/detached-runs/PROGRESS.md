@@ -15,8 +15,8 @@ the account is the commit message. Whoever writes a cell also fixes the over-bud
 `prototype/`. Detached-spawn and process-identity mechanisms verified on the machine (FINDINGS).
 Nothing implemented yet.
 **Last updated:** 2026-09-22
-**Next `pir-work` will:** nothing until the plan is reviewed. After review, implement T01
-(run-state) — a Phase 1 task with no dependencies, on the critical path.
+**Next `pir-work` will:** dispatch the ready ⬜ tasks by their dependencies — T01, T02 have none.
+T03 (snapshot-model) is now ✅; T07 (snapshot-store) unblocks once it merges to the feature branch.
 
 ## Tasks
 
@@ -27,7 +27,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 |---|---|---|---|---|
 | T01 | run-state | — | ⬜ | |
 | T02 | index-record | — | ⬜ | |
-| T03 | snapshot-model | — | 🔍 | New src/core/snapshot.mjs: pure serializeSnapshot/parseSnapshot for status.json. parseSnapshot returns null on non-JSON, wrong top-level type, wrong version, missing proc/runState, or out-of-set finalState; absent finalState → null. Carries runState verbatim for buildDisplay. 17 tests, suite green. No deviations. |
+| T03 | snapshot-model | — | ✅ | Reviewed clean, no fix commit. Every acceptance item met by real tests; the buildDisplay integration test exercises the parsed runState and the null-rejection tests fail if parse is gutted. Probed: finalState false/0/'' all reject, parse never throws on torn/emoji/null input, serialize degrades on undefined. Boundary green (pure). No deviations. |
 | T04 | dashboard-model | T01 | ⬜ | |
 | T05 | process-identity | T01 | ⬜ | |
 | T06 | index-store | T02 | ⬜ | |
@@ -39,7 +39,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T12 | dashboard-tui | T04, T07, T09, T10, T11 | ⬜ | hands-on: the live feel |
 | T13 | docs-and-install | T12 | ⬜ | updates /docs |
 
-**Review queue:** T03 (snapshot-model)
+**Review queue:** *(empty)*
 
 ## Blocked on the user
 
