@@ -17,8 +17,11 @@ DESIGN §2.5 (start), §2.9 (keep-awake), §3.4 (data flow), §5.2 (seatbelts).
 
 - `src/shell/launch.mjs` — new.
 - `src/shell/launch.test.mjs` — new.
-- Reuses `src/core/progress.mjs` (`parseProgress`) for the review gate, `src/shell/identity.mjs`
-  (T05) and `src/shell/index-store.mjs` (T06).
+- Reuses the coordinator's exported `readReviewGate(slug, { root })` from `src/shell/coordinate.mjs`
+  (which wraps `src/core/progress.mjs`'s `parseProgress`) for the review gate, so `pir` enforces the
+  exact same gate the coordinator does rather than a re-derived one. Also `src/shell/identity.mjs`
+  (T05) and `src/shell/index-store.mjs` (T06). (Importing `coordinate.mjs` only pulls in its
+  functions; its bin runs only under the `import.meta.url` guard.)
 
 ## Interface
 
@@ -30,21 +33,27 @@ reasons: 'no-plan' | 'not-reviewed' | 'already-running'
 ```
 
 Pre-flight, in order, before anything is spawned (§2.5):
-1. `plans/{slug}/` exists → else `{started:false, reason:'no-plan'}`.
-2. `parseProgress` shows the plan reviewed → else `'not-reviewed'` (same gate as the coordinator).
+1. `plans/{slug}/` exists → else `{started:false, reason:'no-plan'}` (`readReviewGate` reports this as `missing`).
+2. `readReviewGate` shows the plan reviewed → else `'not-reviewed'` (the same gate the coordinator enforces).
 3. no live run for the slug: read the index entry (T06), resolve liveness (T05), `classifyRun`
    (T01); if `running` → `{started:false, reason:'already-running', alreadyRunning:true}` so the
    caller opens the live view instead (§2.5).
 
 Then launch:
 ```
-child = spawn('node', ['src/shell/coordinate.mjs', slug], {
-  cwd: repoRoot, detached: true,
+const coordinatorPath =                        // the ENGINE's own coordinate.mjs, a sibling of
+  fileURLToPath(new URL('./coordinate.mjs', import.meta.url));  // launch.mjs — NOT relative to cwd
+child = spawn('node', [coordinatorPath, slug], {
+  cwd: repoRoot, detached: true,               // cwd = the target repo, so coordinate.mjs finds it
   stdio: ['ignore', fd, fd],                 // fd = control/run.log, opened append
   env: { ...process.env, PARALLEL_LIVE:'1', PIR_RUN:'1' },
 });
 child.unref();
 ```
+The coordinator path is resolved from `launch.mjs`'s own location, not spawned as the bare relative
+`src/shell/coordinate.mjs`: `pir` is the installed engine (`~/.claude/pir-engine`, like
+`bin/pir-coordinate`) driving a run in whatever repo it is invoked from, so `coordinate.mjs` lives
+next to `launch.mjs` in the engine, never under the target repo's `cwd`.
 - capture `startTime = startTimeOf(child.pid)` (T05) right after spawn, write the index entry (T06)
   with pid, startTime, repo, repoPath, controlDir, branch `pir/{slug}`, startedAt, finalState null.
 - start keep-awake: `spawn('caffeinate', ['-i','-w', String(child.pid)], { detached:true,

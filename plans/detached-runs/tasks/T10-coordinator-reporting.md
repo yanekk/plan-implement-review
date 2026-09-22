@@ -35,9 +35,15 @@ each pass, after the run state for the live display is built:
     runState,                       // the same object handed to buildDisplay this pass
   })
 
-on every exit path (hand-off green, red branch, stall/quiet, runaway, error):
-  writeSnapshot(... finalState:'finished' ...)   // the run ended on its own
+on a CLEAN exit (green hand-off, red branch, or "nothing left to do"/stall):
+  writeSnapshot(... finalState:'finished' ...)   // the run ended cleanly on its own
   update the index entry's finalState to 'finished'
+
+on an ABNORMAL exit (uncaught error, the runaway circuit-breaker, the safety-cap, the HALT kill switch):
+  write NO final status — leave finalState null in both the snapshot and the index entry.
+  The front-end then classifies the gone process as crashed (T01), so a badly-ended run shows red,
+  not dim 'finished' (§2.2, user decision §7). A red branch is a CLEAN exit, not an abnormal one:
+  the run finished, the code is red.
 
 on the stop signal (SIGTERM while PIR_RUN):
   close this run's in-flight workers (the existing teardown's worker-close, NOT the worktree removal)
@@ -59,12 +65,15 @@ on the stop signal (SIGTERM while PIR_RUN):
 - [ ] with `PIR_RUN` set, a pass writes a `status.json` that `parseSnapshot` accepts and whose
       `runState` matches what the display was given that pass.
 - [ ] without `PIR_RUN`, no snapshot is written and no index entry is touched (classic path intact).
-- [ ] a clean end writes `finalState:'finished'` to both the snapshot and the index entry.
+- [ ] a clean end (hand-off/red-branch/stall) writes `finalState:'finished'` to both the snapshot and the index entry.
+- [ ] an abnormal exit (error/runaway/safety-cap) writes **no** final status — `finalState` stays null
+      in both, so the front-end classifies it crashed (§2.2, §7).
 - [ ] the stop signal writes `finalState:'stopped'`, closes workers, and does **not** remove worktrees.
 - [ ] the classic SIGINT/Ctrl-C foreground path is unchanged (existing harness/tests still green).
 
 ## Done when
 
-- [ ] A detached run writes a valid live snapshot each pass and a correct final status on exit.
+- [ ] A detached run writes a valid live snapshot each pass, `finished` on a clean exit, and no
+      final status on an abnormal one (so it reads as crashed).
 - [ ] Stop leaves worktrees and marks `stopped`; the classic foreground path is untouched.
 - [ ] `npm test` passes, including the existing coordinator/harness tests.

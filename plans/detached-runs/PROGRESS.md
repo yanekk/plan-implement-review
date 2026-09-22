@@ -9,7 +9,7 @@ the task you pick up, and append yours there.
 **Sixty words to a Notes cell, counted.** Flat prose. The cell is an index for the next session;
 the account is the commit message. Whoever writes a cell also fixes the over-budget cell they walk past.
 
-**Plan reviewed:** not yet — run `/pir-review-plan detached-runs` before the first `/pir-work`
+**Plan reviewed:** 2026-09-22 — 4 fixed, 3 decided with the user
 
 **Status:** Plan just written. Prototype approved by the user (2026-09-22) and parked in
 `prototype/`. Detached-spawn and process-identity mechanisms verified on the machine (FINDINGS).

@@ -39,6 +39,8 @@ openWatch(slug, { ... } = {}) → Promise<void>
 loop each refresh:
   list view:  listRecords → resolveLiveness + classifyRun per run → read each snapshot for
               progress/workers → buildDashboard → paint rows + counts + key-hint/armed footer.
+              With no rows, paint the get-started line "No runs yet — start one with `pir {slug}`"
+              in place of the empty list (§2.3).
   watch view: readSnapshot(openSlug) → buildDisplay(runState,{now}) → render.mjs styledLines → paint;
               a stale/final run shows its last frame marked stale (§2.4).
   keys → dashboardReducer (T04) → apply intent: 'quit' leaves; 'stop' → stopRun (T09);
@@ -63,6 +65,7 @@ loop each refresh:
       snapshot — i.e. it is the coordinator's display, not a reimplementation.
 - [ ] a key-decode table maps the arrow/Enter/Esc/Ctrl-S/Ctrl-X bytes to the reducer events.
 - [ ] a stale/final run renders its last frame with the stale marker.
+- [ ] with no runs, the list frame shows the get-started line, not a blank list (§2.3).
 - [ ] the list frame applies the §2.11 colour mapping: running green, crashed red, finished/stopped
       dim; progress bar blue when running and red when crashed; the selected row marked; the armed
       confirmation amber and bold. Assert the styles the frame builder emits, the way `render.test.mjs`

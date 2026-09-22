@@ -66,9 +66,17 @@ A run is keyed by its slug within its repo. At most one run per slug is live at 
 in exactly one of four states:
 
 - **running** — its recorded process is alive and is the one we started.
-- **finished** — it exited cleanly and recorded a final status (green hand-off or red branch).
-- **stopped** — it was stopped by the user (§2.6).
-- **crashed** — its recorded process is gone and it recorded no final status.
+- **finished** — it ended cleanly and recorded a `finished` final status: a green hand-off, a red
+  branch (all tasks built but the feature tests fail), or nothing left to do (every remaining task
+  handed off or blocked on the user). A red branch is still `finished` — the run did its job and the
+  code is red, which is the person's to fix and merge (§2.4); the run itself ended cleanly.
+- **stopped** — it was stopped by the user (§2.6), which records a `stopped` final status.
+- **crashed** — its recorded process is gone and it recorded no final status. This covers a true
+  crash (SIGKILL, power loss, reboot) *and* a run that died abnormally on its own — an uncaught
+  error, the runaway circuit-breaker, the safety-cap, or the by-hand HALT kill switch. Those paths
+  deliberately record no `finished` status, so the dashboard shows them crashed (red), not dim
+  `finished` (user decision, §7). Reason: a run that errored out or tripped a safety-brake must not
+  look identical to a clean success; red is the signal that something went wrong and wants a look.
 
 State is decided by `classifyRun` (§3.3), a pure function of the recorded facts plus a liveness
 answer. A bare "is the process alive" check is not enough, because process numbers are reused: a
@@ -88,6 +96,11 @@ for task state drift, and the run already commits the authoritative one.
 or a click; the selected run opens with Enter or a click. There is no process-number column —
 the user does not act on it. Reason: the list is scanned and operated, so it carries what a
 person decides from and nothing they do not.
+
+With no runs to list — a fresh machine, or after every record has been removed — the dashboard
+shows a short get-started line in place of the empty list: "No runs yet — start one with
+`pir {slug}`" (user decision, §7). Reason: a blank screen reads as broken to someone opening the
+dashboard for the first time; one line tells them the list is genuinely empty and how to fill it.
 
 Esc from the list quits `pir` outright, with no confirm. Reason: quitting the dashboard stops
 nothing and loses nothing — every run keeps running — so a confirm would be friction guarding
@@ -205,6 +218,14 @@ not battery-aware.
   running run classifies as crashed (its launch time cannot match a process that no longer
   exists). Reason: this is correct — a reboot does end a run — and it needs no special handling.
 - **`pir {slug}` for a slug already running.** Opens the live view, starts nothing (§2.5).
+- **Two `pir {slug}` launched in the same instant.** The already-running check (§2.5) catches the
+  normal case, but two starts fired within the same moment can both read "no live run" and both
+  spawn a coordinator on the one plan. This is accepted, not locked out (user decision, §7): it is a
+  human-paced tool, and the coordinator's own feature-branch and worktree guards make the second
+  coordinator fail loudly on the branch it cannot cut cleanly rather than silently corrupt the run.
+  The recovery is the ordinary one — stop the misbehaving run from the dashboard and re-start the
+  slug. Reason: an on-disk start-lock is more machinery (and its own stale-lock cleanup) than a
+  split-second double-launch on a single-user tool is worth.
 - **`pir {slug}` for an unreviewed plan.** Refused at pre-flight, nothing spawned (§2.5).
 - **Two dashboards open at once.** Both are readers of the same files; either can stop or remove
   a run, and the other repaints from the changed state on its next read. Reason: the dashboard
@@ -432,6 +453,18 @@ By-hand recovery, if `pir` itself is unavailable, is unchanged from docs/restart
 - **Keep the Mac awake while running (user).** Unconditional `caffeinate -i -w {pid}`; released on
   any death via `-w`. Alternatives (let it sleep; awake only on AC) were rejected for unattended
   long runs.
+- **A run that dies badly shows crashed, not finished (user, plan-review 2026-09-22).** Only a
+  clean end records a `finished` status (green hand-off, red branch, nothing-left-to-do); an uncaught
+  error, the runaway breaker, the safety-cap and the by-hand HALT record no final status, so they
+  classify crashed (red) like a true crash (§2.2, T10). Alternative (file every self-exit as
+  `finished`) was rejected: an errored or runaway run would look identical to a clean success.
+- **The empty dashboard shows a get-started line (user, plan-review 2026-09-22).** With no runs,
+  "No runs yet — start one with `pir {slug}`" rather than a blank list (§2.3). Alternative (a bare
+  empty list) reads as broken on a first open.
+- **A split-second double-launch is accepted, not locked (user, plan-review 2026-09-22).** The
+  already-running check covers the normal case; a simultaneous double-start is left to fail loudly on
+  the coordinator's branch guards rather than defended with a start-lock (§2.10). Alternative (an
+  on-disk lock) was rejected as more machinery than the race is worth on a single-user tool.
 - **`pir` alongside `pir-coordinate`, not replacing it.** `pir` is a front-end that spawns the
   existing engine detached; the engine stays a runnable foreground program. Keeps the run's logic
   untouched by this plan and keeps a run debuggable in the foreground.

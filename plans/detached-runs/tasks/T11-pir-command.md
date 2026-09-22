@@ -15,8 +15,9 @@ DESIGN §2.1 (the two invocations), §2.5 (start-or-open), §2.9 (naming, `bin/p
 
 ## Files
 
-- `bin/pir` — new: logic-free wrapper, `exec node "$PIR_ENGINE/src/shell/pir.mjs" "$@"` (mirror
-  `bin/pir-coordinate`).
+- `bin/pir` — new: logic-free wrapper, `exec node "__PIR_ENGINE__/src/shell/pir.mjs" "$@"`, exactly
+  mirroring `bin/pir-coordinate`. The `__PIR_ENGINE__` token is a placeholder `install.sh` substitutes
+  with the installed engine dir at install time (T13); it is not a shell/env variable.
 - `src/shell/pir.mjs` — new: argv dispatch and the entry into the TUI.
 - `src/shell/pir.test.mjs` — new: the dispatch decision, TUI injected.
 
@@ -45,7 +46,7 @@ is a scriptable failure, not a dashboard state.
       `alreadyRunning` path), no error.
 - [ ] `no-plan` and `not-reviewed` each print the right message to stderr and exit 1, no watch opened.
 - [ ] two or more args → usage, exit 2.
-- [ ] `bin/pir` execs the engine (a smoke check that the wrapper points at `src/shell/pir.mjs`).
+- [ ] `bin/pir` execs the engine (a smoke check that the wrapper points at `__PIR_ENGINE__/src/shell/pir.mjs`).
 
 ## Done when
 
