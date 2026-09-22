@@ -26,8 +26,8 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | # | Task | Depends on | State | Notes |
 |---|---|---|---|---|
 | T01 | run-state | — | ✅ | |
-| T02 | index-record | — | ⬜ | |
-| T03 | snapshot-model | — | ⬜ | |
+| T02 | index-record | — | ✅ | |
+| T03 | snapshot-model | — | ✅ | |
 | T04 | dashboard-model | T01 | ⬜ | |
 | T05 | process-identity | T01 | ✅ | Reviewed clean, no fix. 12 tests pass incl. real-ps smoke; composition into classifyRun asserted both ways. Both deviations sound: unexpected-errno→false is the safe default, skip-ps-when-dead is free since classifyRun crashes on !alive. Probed pid domain (0/negative signal a group) — outside recorded-pid domain, not a defect. `{ok,stdout}` matches platform.mjs. |
 | T06 | index-store | T02 | ⬜ | |
