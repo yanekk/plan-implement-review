@@ -3,7 +3,8 @@
 // workers). This module is the registry over them and the installer the T17 live runner uses to lay one
 // down as a self-contained scratch repo and seed its git state. The set covers the coordinator paths:
 // a single task, a concurrent pair, a review queue, a clean merge, a merge conflict, a worker that parks
-// on the person, and a crash-and-restart. The old `hands-on` and `blog-app` fixtures exercised the
+// on the person, a crash-and-restart, and a worker introducing a task the coordinator adopts and
+// dispatches. The old `hands-on` and `blog-app` fixtures exercised the
 // `you`/hands-on model, which was removed with the down-channel (DESIGN §2.5, T05); they went with it.
 //
 // A fixture is a JS descriptor (fixtures/<name>.mjs), not an on-disk plan tree: its plan text and task
@@ -45,6 +46,7 @@ import cleanMerge from './fixtures/clean-merge.mjs';
 import mergeConflict from './fixtures/merge-conflict.mjs';
 import humanDecision from './fixtures/human-decision.mjs';
 import restart from './fixtures/restart.mjs';
+import dynamicTask from './fixtures/dynamic-task.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -71,6 +73,7 @@ const FIXTURES = Object.freeze({
   [mergeConflict.id]: mergeConflict,
   [humanDecision.id]: humanDecision,
   [restart.id]: restart,
+  [dynamicTask.id]: dynamicTask,
 });
 
 // listFixtures() → the fixture ids, in registry order.
