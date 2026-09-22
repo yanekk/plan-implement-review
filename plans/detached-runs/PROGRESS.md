@@ -11,12 +11,12 @@ the account is the commit message. Whoever writes a cell also fixes the over-bud
 
 **Plan reviewed:** 2026-09-22 — 4 fixed, 3 decided with the user
 
-**Status:** Plan reviewed and building in parallel mode. T02 (index-record) reviewed clean.
+**Status:** Plan reviewed and building in parallel mode. T01, T02, T03 reviewed clean.
 Prototype approved and parked in `prototype/`. Detached-spawn and process-identity mechanisms
 verified on the machine (FINDINGS).
 **Last updated:** 2026-09-22
 **Next `pir-work` will:** in parallel mode the coordinator dispatches by dependency, not
-`pir-work`. T01 and T03 (Phase 1, no deps) are ready; T06 unblocks once T02 merges.
+`pir-work`. T05 (needs T01) and T06 (needs T02) are now unblocked; T04 and T07 follow.
 
 ## Tasks
 
@@ -25,9 +25,9 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 
 | # | Task | Depends on | State | Notes |
 |---|---|---|---|---|
-| T01 | run-state | — | ⬜ | |
+| T01 | run-state | — | ✅ | |
 | T02 | index-record | — | ✅ | Clean, no fix commit. Walked all 7 test cases and Done-when; 18 tests real, suite+boundary green. Probed past doc by running parseRecord on junk: __proto__ (no pollution), float/huge/whitespace pid+slug, canonical order, never-throws on lone surrogate — all hold. Deviations (pid positive int; optional timestamps must be strings) reviewed, sound per §3.3. |
-| T03 | snapshot-model | — | ⬜ | |
+| T03 | snapshot-model | — | ✅ | |
 | T04 | dashboard-model | T01 | ⬜ | |
 | T05 | process-identity | T01 | ⬜ | |
 | T06 | index-store | T02 | ⬜ | |
