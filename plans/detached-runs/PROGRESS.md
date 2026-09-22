@@ -34,7 +34,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T07 | snapshot-store | T03 | ✅ | |
 | T08 | start-detached | T05, T06 | ✅ | |
 | T09 | stop-and-remove | T05, T06 | ✅ | |
-| T10 | coordinator-reporting | T07 | ⬜ | edits coordinate.mjs behind PIR_RUN |
+| T10 | coordinator-reporting | T07 | ✅ | |
 | T11 | pir-command | T08 | ✅ | Clean, no fix commit. 8 tests green, whole suite green. Verified startRun's return shape matches launch.mjs exactly and start-or-open fires on started\|\|alreadyRunning; stderr messages verbatim to spec. Deviation (throwing openDashboard/openWatch placeholders) confirmed against T12's doc, which extends this file. Main-guard is the repo idiom. |
 | T12 | dashboard-tui | T04, T07, T09, T10, T11 | ⬜ | hands-on: the live feel |
 | T13 | docs-and-install | T12 | ⬜ | updates /docs |
