@@ -1,0 +1,524 @@
+<title>pir CLI mock</title>
+<style>
+  :root {
+    --page-bg: #f3f1ec;
+    --page-fg: #2b2a27;
+    --page-muted: #6b675e;
+    --page-line: #ddd8cd;
+    --card-bg: #ffffff;
+    --accent: #2f7d5b;
+    --term-bg: #0b0e14;
+    --term-fg: #c9d1d9;
+    --term-dim: #6e7681;
+    --term-faint: #3b4048;
+    --sel-bg: #1b2330;
+    --ok: #3fb950;
+    --run: #58a6ff;
+    --cyan: #56d4dd;
+    --warn: #d29922;
+    --bad: #f85149;
+    --head: #79c0ff;
+    --path: #a5d6ff;
+    --mag: #d2a8ff;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --page-bg: #16181d; --page-fg: #e6e3db; --page-muted: #9a958a;
+      --page-line: #2a2d34; --card-bg: #1d2027; --accent: #4bb98a;
+    }
+  }
+  :root[data-theme="dark"] {
+    --page-bg: #16181d; --page-fg: #e6e3db; --page-muted: #9a958a;
+    --page-line: #2a2d34; --card-bg: #1d2027; --accent: #4bb98a;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    background: var(--page-bg); color: var(--page-fg);
+    font-family: "IBM Plex Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    line-height: 1.5;
+  }
+  .wrap { max-width: 940px; margin: 0 auto; padding-block: 28px 56px; padding-inline: 16px; }
+  header.intro { margin-bottom: 20px; }
+  .eyebrow {
+    font-size: 12px; letter-spacing: 0.14em; text-transform: uppercase;
+    color: var(--accent); font-weight: 600; margin: 0 0 6px;
+  }
+  h1 {
+    font-family: "JetBrains Mono", ui-monospace, monospace;
+    font-size: clamp(24px, 4vw, 34px); margin: 0 0 8px;
+    letter-spacing: -0.01em; text-wrap: balance;
+  }
+  .sub { color: var(--page-muted); margin: 0; max-width: 64ch; font-size: 15px; }
+  .note {
+    margin-top: 12px; font-size: 13px; color: var(--page-muted);
+    border-left: 2px solid var(--page-line); padding-left: 12px;
+  }
+  .note b { color: var(--page-fg); font-weight: 600; }
+  .note code, .sub code { font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 12px; }
+  kbd {
+    font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 11px;
+    background: var(--card-bg); border: 1px solid var(--page-line);
+    border-bottom-width: 2px; border-radius: 4px; padding: 1px 5px; color: var(--page-fg);
+  }
+
+  .term-window {
+    margin-top: 22px; border-radius: 12px; overflow: hidden;
+    box-shadow: 0 18px 40px -22px rgba(0,0,0,0.55), 0 0 0 1px rgba(0,0,0,0.06);
+    background: var(--term-bg);
+  }
+  .term-bar {
+    display: flex; align-items: center; gap: 8px; padding: 10px 14px;
+    background: #161b22; border-bottom: 1px solid #21262d;
+  }
+  .dot { width: 12px; height: 12px; border-radius: 50%; }
+  .dot.r { background: #ff5f56; } .dot.y { background: #ffbd2e; } .dot.g { background: #27c93f; }
+  .term-title {
+    margin-left: 8px; font-family: "JetBrains Mono", ui-monospace, monospace;
+    font-size: 12px; color: var(--term-dim);
+  }
+  .term-screen {
+    font-family: "JetBrains Mono", ui-monospace, monospace;
+    font-size: 13px; line-height: 1.6; color: var(--term-fg);
+    padding: 14px 14px 10px; height: 480px; overflow-y: auto;
+    font-variant-numeric: tabular-nums; outline: none;
+  }
+  @media (max-width: 560px) { .term-screen { font-size: 11px; } }
+  .term-screen::-webkit-scrollbar { width: 10px; }
+  .term-screen::-webkit-scrollbar-thumb { background: #21262d; border-radius: 5px; }
+
+  .line { display: block; white-space: pre; min-height: 1.6em; }
+
+  .ps1 { color: var(--ok); } .ps1 .cwd { color: var(--run); }
+  .cmd { color: #e6edf3; }
+  .dim { color: var(--term-dim); } .faint { color: var(--term-faint); }
+  .ok { color: var(--ok); } .run { color: var(--run); } .cyan { color: var(--cyan); }
+  .warn { color: var(--warn); } .bad { color: var(--bad); }
+  .head { color: var(--head); } .path { color: var(--path); } .mag { color: var(--mag); }
+  .b { font-weight: 600; }
+
+  .row {
+    display: block; white-space: pre; padding: 0 8px; border-radius: 4px;
+    cursor: pointer; border-left: 2px solid transparent;
+  }
+  .row:hover { background: rgba(255,255,255,0.03); }
+  .row.sel { background: var(--sel-bg); border-left-color: var(--run); }
+
+  .input-row {
+    display: flex; align-items: center; gap: 8px; padding: 8px 16px 14px;
+    background: var(--term-bg); font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 13px;
+  }
+  .input-row.hidden { display: none; }
+  .input-row .ps1 { flex: none; }
+  #cmdInput {
+    flex: 1; background: transparent; border: none; outline: none; color: #e6edf3;
+    font-family: inherit; font-size: 13px; caret-color: var(--ok);
+  }
+
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
+  .chip {
+    font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 12.5px;
+    background: var(--card-bg); color: var(--page-fg); border: 1px solid var(--page-line);
+    border-radius: 7px; padding: 6px 11px; cursor: pointer;
+    transition: border-color 0.15s, transform 0.05s;
+  }
+  .chip:hover { border-color: var(--accent); }
+  .chip:active { transform: translateY(1px); }
+  .chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .chip .k { color: var(--accent); }
+  .chips-label {
+    font-size: 12px; text-transform: uppercase; letter-spacing: 0.1em;
+    color: var(--page-muted); margin: 22px 0 0;
+  }
+
+  footer {
+    margin-top: 34px; padding-top: 16px; border-top: 1px solid var(--page-line);
+    font-size: 13px; color: var(--page-muted);
+  }
+  footer code {
+    font-family: "JetBrains Mono", ui-monospace, monospace; background: var(--card-bg);
+    border: 1px solid var(--page-line); border-radius: 4px; padding: 1px 5px; font-size: 12px; color: var(--page-fg);
+  }
+</style>
+
+<div class="wrap">
+  <header class="intro">
+    <p class="eyebrow">Throwaway mock · nothing real is spawned</p>
+    <h1>pir — run control</h1>
+    <p class="sub"><code>pir &lt;slug&gt;</code> starts a plan detached. <code>pir</code> on its own opens a dashboard of every run on the machine — pick one to watch its live task block, <kbd>Esc</kbd> to step back, <kbd>Esc</kbd> again to quit.</p>
+    <p class="note"><b>Try it:</b> type <code>pir</code> to open the dashboard, or <code>pir release-notes</code> to start a plan. Inside: <kbd>↑</kbd><kbd>↓</kbd> or click to pick, <kbd>↵</kbd> to open, <kbd>Esc</kbd> to go back. Stop and remove are chorded and double-confirmed like <code>claude agents</code> — <kbd>Ctrl+S</kbd> twice to stop, <kbd>Ctrl+X</kbd> twice to remove.</p>
+  </header>
+
+  <div class="term-window">
+    <div class="term-bar">
+      <span class="dot r"></span><span class="dot y"></span><span class="dot g"></span>
+      <span class="term-title">jan@studio — pir</span>
+    </div>
+    <div class="term-screen" id="screen" tabindex="0" aria-label="terminal"></div>
+    <div class="input-row" id="inputRow">
+      <span class="ps1">~/src/plan-implement-review <span class="run">❯</span></span>
+      <input id="cmdInput" autocomplete="off" autocapitalize="off" spellcheck="false" aria-label="type a command" placeholder="type pir, or pir <slug>" />
+    </div>
+  </div>
+
+  <p class="chips-label">Try</p>
+  <div class="chips" id="chips"></div>
+
+  <footer>
+    A mock for direction only. The real thing keeps each run's state in its repo control folder, indexed under <code>~/.pir/</code> so the dashboard sees every run on the machine; stopping a run is immediate; a run holds the Mac awake while it works.
+  </footer>
+</div>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+
+<script>
+(function () {
+  "use strict";
+  var screen = document.getElementById("screen");
+  var input = document.getElementById("cmdInput");
+  var inputRow = document.getElementById("inputRow");
+  var chipsEl = document.getElementById("chips");
+
+  var SPINNER = ["⠋","⠙","⠹","⠸","⠼","⠴","⠦","⠧","⠇","⠏"];
+
+  // ---- runs (mutable) ----------------------------------------------------
+  var RUNS = [
+    { slug:"dynamic-tasks", state:"running", repo:"plan-implement-review", pid:48213, alive:true, pass:7, workers:4, startedAgo:"14m", startedAt:"14:18", awake:"caffeinate 48219" },
+    { slug:"auth-rewrite",  state:"running", repo:"my-agentic-ide",        pid:51902, alive:true, pass:2, workers:1, startedAgo:"3m",  startedAt:"14:29", awake:"caffeinate 51908" },
+    { slug:"screen-time",   state:"finished",repo:"family-tools",          pid:44120, alive:false,pass:22,workers:0, startedAgo:"2h ago", startedAt:"12:31", awake:"released" },
+    { slug:"invoice-import",state:"crashed", repo:"billing",               pid:43980, alive:false,pass:4, workers:0, startedAgo:"40m ago",startedAt:"13:52", awake:"released" }
+  ];
+  function findRun(slug){ for(var i=0;i<RUNS.length;i++) if(RUNS[i].slug===slug) return RUNS[i]; return null; }
+
+  // ---- plan state (live display model) ----------------------------------
+  var STATES = {};
+  function stateFor(slug){ if(!STATES[slug]) STATES[slug]=mkState(slug); return STATES[slug]; }
+  function mkState(slug){
+    if(slug==="dynamic-tasks") return {
+      branch:"pir/dynamic-tasks", ceiling:4,
+      tasks:[
+        d("T01","spec-parse",161),d("T02","task-table",204),d("T03","dep-graph",98),
+        d("T04","worker-name",142),d("T05","branch-open",176),d("T06","merge-serialize",233),
+        d("T07","progress-reconcile",119),d("T08","resume-decide",188),d("T09","control-scan",151),
+        d("T10","run-registry",207),d("T11","status-snapshot",264),d("T12","policy-ledger",172),
+        d("T13","gap-classifier",143),d("T14","adopt-at-merge",198),
+        a("T15","gap-report",["T10"],"building",252),
+        a("T16","cli-surface",["T11"],"reviewing",32),
+        a("T17","ls-index",["T10"],"merging",8),
+        a("T18","watch-render",["T11"],"asking",100),
+        w("T19","docs-refresh",["T15"])
+      ],
+      script:[
+        function(s){setPhase(s,"T17","done",11);},
+        function(s){setPhase(s,"T15","reviewing",0);},
+        function(s){setPhase(s,"T18","merging",0);},
+        function(s){setPhase(s,"T16","done",41);},
+        function(s){setPhase(s,"T18","done",26);},
+        function(s){setPhase(s,"T15","done",270);startReady(s,"T19");},
+        function(s){setPhase(s,"T19","building",0);}
+      ]
+    };
+    if(slug==="auth-rewrite") return {
+      branch:"pir/auth-rewrite", ceiling:4,
+      tasks:[
+        d("T01","token-model",121),d("T02","session-store",143),d("T03","login-route",156),
+        a("T04","logout-route",["T02"],"building",92),
+        w("T05","refresh",["T04"]),w("T06","guards",["T04"]),w("T07","password-reset",["T02"]),
+        w("T08","oauth",["T03"]),w("T09","audit",["T06"]),w("T10","cli",["T05"]),w("T11","docs",["T09"])
+      ],
+      script:[ function(s){setPhase(s,"T04","reviewing",0);}, function(s){setPhase(s,"T04","done",118);startReady(s,"T05");} ]
+    };
+    if(slug==="screen-time") return {
+      branch:"pir/screen-time", ceiling:4,
+      tasks:[ d("T01","budget",99),d("T02","policy",132),d("T03","warn",88),d("T04","ledger",151),
+        d("T05","cli",120),d("T06","report",143),d("T07","persist",161),d("T08","reset",77),
+        d("T09","notify",90),d("T10","pair",134),d("T11","undo",112),d("T12","export",103),
+        d("T13","audit",98),d("T14","docs",76),d("T15","install",64) ]
+    };
+    if(slug==="invoice-import") return {
+      branch:"pir/invoice-import", ceiling:4, stale:true,
+      tasks:[
+        d("T01","csv-reader",121),d("T02","column-map",156),d("T03","field-types",99),
+        d("T04","amount-parse",143),d("T4b","header-skip",77),d("T4c","currency",88),
+        a("T05","dedupe-rules",["T04"],"reviewing",372),
+        w("T06","ledger-post",["T05"]),w("T07","summary",["T06"]),w("T08","reconcile",["T06"]),
+        w("T09","export",["T07"]),w("T10","audit-log",["T08"]),w("T11","cli",["T09"])
+      ]
+    };
+    return { branch:"pir/"+slug, ceiling:4, tasks:[ w("T01","(planning…)",[]) ] };
+  }
+  function d(id,slug,doneMs){return{id:id,slug:slug,deps:[],done:true,phase:null,elapsed:0,doneMs:doneMs};}
+  function a(id,slug,deps,phase,elapsed){return{id:id,slug:slug,deps:deps,done:false,phase:phase,elapsed:elapsed,doneMs:null};}
+  function w(id,slug,deps){return{id:id,slug:slug,deps:deps,done:false,phase:null,elapsed:0,doneMs:null};}
+  function taskById(s,id){return s.tasks.filter(function(t){return t.id===id;})[0];}
+  function setPhase(s,id,phase,doneMs){var t=taskById(s,id);if(!t)return;if(phase==="done"){t.done=true;t.phase=null;t.doneMs=doneMs;}else{t.phase=phase;t.elapsed=0;}}
+  function startReady(s,id){var t=taskById(s,id);if(t){t.phase="building";t.elapsed=0;}}
+
+  var ACTIVE={building:1,reviewing:1,merging:1,asking:1};
+  var GLYPH={asking:"●",done:"✔",waiting:"·",queued:"·"};
+  var PHASE_LABEL={building:"building",reviewing:"reviewing",merging:"merging",asking:"asking you"};
+  var ROW_CLS={building:"cyan",reviewing:"cyan",merging:"cyan",asking:"warn b",done:"ok",waiting:"dim",queued:"dim"};
+
+  function esc(s){return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");}
+  function pad(s,n){s=String(s);while(s.length<n)s+=" ";return s;}
+  function padl(n){n=String(n);return n.length<2?"0"+n:n;}
+  function mmss(sec){if(sec==null)return"";sec=Math.max(0,Math.floor(sec));return Math.floor(sec/60)+":"+padl(sec%60);}
+  function unmet(t,doneIds){return(t.deps||[]).filter(function(dp){return!doneIds[dp];});}
+
+  function buildFrame(s,spinChar){
+    var doneIds={};s.tasks.forEach(function(t){if(t.done)doneIds[t.id]=1;});
+    var running=s.tasks.filter(function(t){return!t.done&&ACTIVE[t.phase];}).length;
+    var asking=s.tasks.filter(function(t){return!t.done&&t.phase==="asking";}).length;
+    var done=Object.keys(doneIds).length,total=s.tasks.length,waiting=total-done-running;
+    var full=running>=s.ceiling,lines=[];
+    var parts=[done+"/"+total+" done",running+" running"];
+    if(asking>0)parts.push(asking+" asking you");
+    parts.push(waiting+" waiting");
+    lines.push({text:spinChar+" "+s.branch+" · "+parts.join(" · ")+" · ceiling "+s.ceiling+(full?" (full)":""),cls:""});
+    s.tasks.forEach(function(t){
+      var kind=t.done?"done":(ACTIVE[t.phase]?t.phase:(unmet(t,doneIds).length?"waiting":"queued"));
+      var glyph=(kind==="building"||kind==="reviewing"||kind==="merging")?spinChar:GLYPH[kind];
+      var label=t.done?"merged":ACTIVE[t.phase]?PHASE_LABEL[t.phase]:unmet(t,doneIds).length?"needs "+unmet(t,doneIds).join(", "):(full?"queued · ceiling full":"queued");
+      var el=t.done?mmss(t.doneMs):(ACTIVE[t.phase]?mmss(t.elapsed):"");
+      lines.push({text:("  "+glyph+" "+pad(t.id,4)+" "+pad(t.slug,20)+" "+pad(label,22)+" "+el).replace(/\s+$/,""),cls:ROW_CLS[kind]||""});
+    });
+    var ask=s.tasks.filter(function(t){return!t.done&&t.phase==="asking";})[0];
+    lines.push({text:"",cls:""});
+    if(ask)lines.push({text:"● "+ask.id+" "+ask.slug+" — asking you; attach in `claude agents` to answer",cls:"warn b"});
+    else if(done===total)lines.push({text:"✔ all "+total+" tasks green on "+s.branch+" · tests pass. Yours to merge: git merge "+s.branch,cls:"ok"});
+    return lines;
+  }
+  function frameHTML(s,spinChar){
+    return buildFrame(s,spinChar).map(function(l){return '<span class="'+l.cls+'">'+esc(l.text||" ")+"</span>";}).join("\n");
+  }
+
+  // ---- shell scrollback --------------------------------------------------
+  function out(html){var dv=document.createElement("div");dv.className="line";dv.innerHTML=html;screen.appendChild(dv);screen.scrollTop=screen.scrollHeight;return dv;}
+  function blank(){out("&nbsp;");}
+  function echo(cmd){out('<span class="ps1"><span class="cwd">~/src/plan-implement-review</span> <span class="run">❯</span></span> <span class="cmd">'+esc(cmd)+'</span>');}
+  function add(html){var dv=document.createElement("div");dv.className="line";dv.innerHTML=html;screen.appendChild(dv);return dv;}
+
+  // ---- mode + TUI --------------------------------------------------------
+  var mode="shell", view="list", sel=0, openSlug=null;
+  var timer=null, spin=0, ticks=0, step=0;
+  var armed=null;      // {action:'stop'|'remove', index}
+  var footerMsg=null;  // transient message shown in place of the key hint
+
+  function counts(){
+    var r=0,f=0,c=0,st=0;
+    RUNS.forEach(function(x){if(x.state==="running")r++;else if(x.state==="finished")f++;else if(x.state==="crashed")c++;else if(x.state==="stopped")st++;});
+    return {running:r,finished:f,crashed:c,stopped:st};
+  }
+  function progressOf(run){var s=stateFor(run.slug);return {done:s.tasks.filter(function(t){return t.done;}).length,total:s.tasks.length};}
+  function bar(done,total){var wd=8,fll=total?Math.round(done/total*wd):0,o="";for(var i=0;i<wd;i++)o+=i<fll?"▰":"▱";return o;}
+  function stTag(state){
+    if(state==="running")return{t:"● running",c:"ok"};
+    if(state==="finished")return{t:"◌ finished",c:"dim"};
+    if(state==="crashed")return{t:"✕ crashed",c:"bad"};
+    if(state==="stopped")return{t:"◼ stopped",c:"dim"};
+    return{t:state,c:""};
+  }
+
+  function clearTransient(){ armed=null; footerMsg=null; }
+
+  function footerLine(context){
+    // context: 'list' or 'watch'
+    if(armed){
+      var run=RUNS[armed.index];
+      if(run){
+        if(armed.action==="stop") return {t:"⚠ Ctrl+S again to stop "+run.slug+" now — this kills its in-flight workers", c:"warn b"};
+        return {t:"⚠ Ctrl+X again to remove "+run.slug+"'s record", c:"warn b"};
+      }
+    }
+    if(footerMsg) return footerMsg;
+    if(context==="watch") return {t:"esc back · Ctrl+S Ctrl+S stop this run", c:"faint"};
+    return {t:"↑↓ move · ↵ open · Ctrl+S stop · Ctrl+X remove · esc quit", c:"faint"};
+  }
+
+  function enterTui(){
+    mode="tui"; view="list"; clearTransient();
+    if(sel>=RUNS.length)sel=Math.max(0,RUNS.length-1);
+    inputRow.classList.add("hidden");
+    screen.innerHTML=""; screen.focus(); renderList();
+  }
+  function exitTui(){
+    stopTimer(); clearTransient(); mode="shell";
+    inputRow.classList.remove("hidden");
+    screen.innerHTML="";
+    out('<span class="dim"># left pir. type pir to open it again.</span>'); blank();
+    input.focus();
+  }
+
+  function renderList(){
+    stopTimer(); view="list";
+    screen.innerHTML="";
+    var c=counts();
+    add('<span class="head b">pir</span>  <span class="dim">runs on this machine</span>');
+    add("&nbsp;");
+    add('<span class="dim">'+esc(pad("  SLUG",18)+pad("STATE",12)+pad("REPO",22)+pad("PROGRESS",16)+"WK")+'</span>');
+    RUNS.forEach(function(run,i){
+      var s=stTag(run.state), pr=progressOf(run);
+      var progCls=run.state==="crashed"?"bad":(run.state==="running"?"run":"dim");
+      var row=document.createElement("div");
+      row.className="row"+(i===sel?" sel":"");
+      row.innerHTML=
+        '<span class="'+(run.alive?"":"dim")+'">'+esc(pad("  "+run.slug,18))+'</span>'+
+        '<span class="'+s.c+'">'+esc(pad(s.t,12))+'</span>'+
+        '<span class="dim">'+esc(pad(run.repo,22))+'</span>'+
+        '<span class="'+progCls+'">'+esc(pad(bar(pr.done,pr.total)+" "+pr.done+"/"+pr.total,16))+'</span>'+
+        '<span class="dim">'+esc(run.workers?String(run.workers):"·")+'</span>';
+      row.addEventListener("click",function(){ clearTransient(); sel=i; openSelected(); });
+      screen.appendChild(row);
+    });
+    add("&nbsp;");
+    add('<span class="dim">'+RUNS.length+' runs · </span><span class="ok">'+c.running+' running</span><span class="dim"> · '+c.finished+' finished · </span><span class="bad">'+c.crashed+' crashed</span>'+(c.stopped?'<span class="dim"> · '+c.stopped+' stopped</span>':''));
+    add("&nbsp;");
+    var fl=footerLine("list");
+    add('<span class="'+fl.c+'">'+esc(fl.t)+'</span>');
+  }
+
+  function openSelected(){
+    var run=RUNS[sel]; if(!run) return;
+    openSlug=run.slug; view="watch";
+    spin=0; ticks=0; step=0;
+    startWatch();
+  }
+
+  function paintWatch(){
+    var run=findRun(openSlug); if(!run){ renderList(); return; }
+    var s=stateFor(run.slug);
+    screen.innerHTML="";
+    var stag=stTag(run.state);
+    add('<span class="head b">'+run.slug+'</span>  <span class="'+stag.c+'">'+stag.t+'</span>  <span class="dim">· '+run.repo+(run.alive?' · pid '+run.pid+' · holding Mac awake':'')+'</span>');
+    add("&nbsp;");
+    var pre=document.createElement("div"); pre.className="line";
+    pre.innerHTML=frameHTML(s, run.alive?SPINNER[spin%SPINNER.length]:"·");
+    screen.appendChild(pre);
+    add("&nbsp;");
+    if(run.state==="crashed") add('<span class="bad">— process died mid-pass; frame is '+run.startedAgo.replace(" ago","")+' old. Esc, then pir '+run.slug+' resumes it.</span>');
+    else if(run.state==="finished") add('<span class="dim">— finished. hand-off: git merge '+s.branch+'</span>');
+    else if(run.state==="stopped") add('<span class="dim">— stopped. pir '+run.slug+' resumes from committed work.</span>');
+    add("&nbsp;");
+    var fl=footerLine("watch");
+    add('<span class="'+fl.c+'">'+esc(fl.t)+'</span>');
+  }
+
+  function startWatch(){
+    stopTimer();
+    var run=findRun(openSlug);
+    paintWatch();
+    if(run&&run.alive){
+      timer=setInterval(function(){
+        var s=stateFor(run.slug);
+        spin++; ticks++;
+        if(ticks%4===0)s.tasks.forEach(function(t){if(!t.done&&ACTIVE[t.phase])t.elapsed+=1;});
+        if(ticks%20===0&&s.script&&step<s.script.length){s.script[step](s);step++;}
+        paintWatch();
+      },250);
+    }
+  }
+  function stopTimer(){ if(timer){clearInterval(timer);timer=null;} }
+
+  // ---- actions -----------------------------------------------------------
+  function doStop(i){
+    var run=RUNS[i]; if(!run||run.state!=="running") return;
+    run.state="stopped"; run.alive=false; run.workers=0;
+    clearTransient();
+    if(view==="watch"&&openSlug===run.slug){ stopTimer(); paintWatch(); } else renderList();
+  }
+  function doRemove(i){
+    var run=RUNS[i]; if(!run||run.state==="running") return;
+    RUNS.splice(i,1);
+    if(sel>=RUNS.length)sel=Math.max(0,RUNS.length-1);
+    clearTransient();
+    if(view==="watch"){ view="list"; renderList(); } else renderList();
+  }
+  function tryAction(action,i,context){
+    var run=RUNS[i]; if(!run) return;
+    if(action==="stop"&&run.state!=="running"){ armed=null; footerMsg={t:run.slug+" is not running — nothing to stop", c:"dim"}; repaint(context); return; }
+    if(action==="remove"&&run.state==="running"){ armed=null; footerMsg={t:"stop "+run.slug+" before removing its record", c:"dim"}; repaint(context); return; }
+    if(armed&&armed.action===action&&armed.index===i){ // second press: do it
+      if(action==="stop") doStop(i); else doRemove(i);
+      return;
+    }
+    armed={action:action,index:i}; footerMsg=null; repaint(context);
+  }
+  function repaint(context){ if(context==="watch") paintWatch(); else renderList(); }
+
+  // ---- keyboard ----------------------------------------------------------
+  document.addEventListener("keydown",function(e){
+    if(mode!=="tui") return;
+    var ctrlS = (e.key==="s"||e.key==="S") && e.ctrlKey && !e.altKey && !e.metaKey;
+    var ctrlX = (e.key==="x"||e.key==="X") && e.ctrlKey && !e.altKey && !e.metaKey;
+
+    if(view==="list"){
+      if(ctrlS){ e.preventDefault(); tryAction("stop",sel,"list"); return; }
+      if(ctrlX){ e.preventDefault(); tryAction("remove",sel,"list"); return; }
+      // any other key cancels an armed confirm
+      if(armed||footerMsg) clearTransient();
+      if(e.key==="ArrowDown"||e.key==="j"){ e.preventDefault(); sel=Math.min(RUNS.length-1,sel+1); renderList(); }
+      else if(e.key==="ArrowUp"||e.key==="k"){ e.preventDefault(); sel=Math.max(0,sel-1); renderList(); }
+      else if(e.key==="Enter"){ e.preventDefault(); openSelected(); }
+      else if(e.key==="Escape"){ e.preventDefault(); exitTui(); }
+    } else if(view==="watch"){
+      if(ctrlS){ e.preventDefault(); var r=findRun(openSlug); if(r) tryAction("stop",RUNS.indexOf(r),"watch"); return; }
+      if(armed||footerMsg){ clearTransient(); paintWatch(); }
+      if(e.key==="Escape"){ e.preventDefault(); renderList(); }
+    }
+  });
+
+  // ---- shell -------------------------------------------------------------
+  function cmdStart(slug){
+    var r=findRun(slug);
+    if(r&&(r.state==="crashed"||r.state==="stopped")){ r.state="running";r.alive=true;r.pid=52471;r.workers=1;r.startedAgo="just now"; STATES[slug]=null; }
+    else if(!r){ RUNS.push({slug:slug,state:"running",repo:"plan-implement-review",pid:52471,alive:true,pass:1,workers:1,startedAgo:"just now",startedAt:"now",awake:"caffeinate 52477"}); }
+    // detached, then drop straight into its live view
+    mode="tui"; clearTransient();
+    inputRow.classList.add("hidden");
+    sel=RUNS.indexOf(findRun(slug));
+    openSlug=slug; view="watch"; spin=0; ticks=0; step=0;
+    screen.innerHTML=""; screen.focus();
+    startWatch();
+  }
+  function shellHelp(){
+    blank();
+    out('<span class="head">pir</span> <span class="dim">— detached coordinator runs</span>');
+    blank();
+    out('  <span class="ok">pir</span> <span class="mag">&lt;slug&gt;</span>   start a plan, detached from this terminal');
+    out('  <span class="ok">pir</span>           open the dashboard: every run, pick one to watch');
+    blank();
+    out('  <span class="dim">in the dashboard: ↑↓ move · ↵ open · Ctrl+S×2 stop · Ctrl+X×2 remove · esc back/quit</span>');
+    blank();
+  }
+  function runShell(raw){
+    var cmd=raw.trim(); if(!cmd) return;
+    echo(cmd);
+    var p=cmd.split(/\s+/);
+    if(p[0]==="clear"){ screen.innerHTML=""; return; }
+    if(p[0]==="help"){ shellHelp(); return; }
+    if(p[0]!=="pir"){ out('<span class="dim">this mock only knows </span><span class="ok">pir</span><span class="dim"> — try pir or pir &lt;slug&gt;.</span>'); blank(); return; }
+    if(p[1]===undefined){ enterTui(); return; }
+    cmdStart(p[1]);
+  }
+
+  input.addEventListener("keydown",function(e){
+    if(e.key==="Enter"){ var v=input.value; input.value=""; runShell(v); }
+  });
+  screen.addEventListener("click",function(){ if(mode==="shell") input.focus(); else screen.focus(); });
+
+  // ---- chips -------------------------------------------------------------
+  var CHIPS=["pir","pir release-notes","pir dynamic-tasks","help"];
+  CHIPS.forEach(function(c){
+    var b=document.createElement("button");b.className="chip";
+    var parts=c.split(" ");
+    b.innerHTML='<span class="k">'+esc(parts[0])+'</span>'+(parts.length>1?" "+esc(parts.slice(1).join(" ")):"");
+    b.addEventListener("click",function(){ if(mode==="tui") exitTui(); input.value=""; runShell(c); if(mode==="shell") input.focus(); });
+    chipsEl.appendChild(b);
+  });
+
+  out('<span class="dim"># pir — mock. fake data, nothing real runs. type pir to open the dashboard, or help.</span>');
+  blank();
+})();
+</script>
