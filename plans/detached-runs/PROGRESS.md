@@ -11,12 +11,12 @@ the account is the commit message. Whoever writes a cell also fixes the over-bud
 
 **Plan reviewed:** 2026-09-22 — 4 fixed, 3 decided with the user
 
-**Status:** T04 (dashboard-model) reviewed and done. Prototype approved by the user
+**Status:** T01–T05 reviewed and done. Prototype approved by the user
 (2026-09-22) and parked in `prototype/`. Detached-spawn and process-identity mechanisms verified
 on the machine (FINDINGS).
 **Last updated:** 2026-09-22
 **Next `pir-work` will:** review queue empty; implement the lowest-numbered ⬜ whose deps are met —
-T02 and T03 (no deps) and T05 (T01 ✅) are all implementable now.
+T06 (T02 ✅) and T07 (T03 ✅) are implementable now.
 
 ## Tasks
 
@@ -26,10 +26,10 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | # | Task | Depends on | State | Notes |
 |---|---|---|---|---|
 | T01 | run-state | — | ✅ | |
-| T02 | index-record | — | ⬜ | |
-| T03 | snapshot-model | — | ⬜ | |
+| T02 | index-record | — | ✅ | |
+| T03 | snapshot-model | — | ✅ | |
 | T04 | dashboard-model | T01 | ✅ | Clean bar one fix: malformed select (no index) set sel to NaN and stuck; clamp now pins non-finite to 0, test added. Probed open-on-empty, ctrlX-in-watch, state=total guard — all per-interface. 3rd-arg `views` deviation reviewed, required by the clamp/lookup rule. 23 tests, boundary green. |
-| T05 | process-identity | T01 | ⬜ | |
+| T05 | process-identity | T01 | ✅ | |
 | T06 | index-store | T02 | ⬜ | |
 | T07 | snapshot-store | T03 | ⬜ | |
 | T08 | start-detached | T05, T06 | ⬜ | hands-on: survives terminal restart |
