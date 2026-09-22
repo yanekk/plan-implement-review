@@ -11,12 +11,12 @@ the account is the commit message. Whoever writes a cell also fixes the over-bud
 
 **Plan reviewed:** 2026-09-22 — 4 fixed, 3 decided with the user
 
-**Status:** Plan just written. Prototype approved by the user (2026-09-22) and parked in
-`prototype/`. Detached-spawn and process-identity mechanisms verified on the machine (FINDINGS).
-Nothing implemented yet.
+**Status:** Plan reviewed and building in parallel mode. T02 (index-record) reviewed clean.
+Prototype approved and parked in `prototype/`. Detached-spawn and process-identity mechanisms
+verified on the machine (FINDINGS).
 **Last updated:** 2026-09-22
-**Next `pir-work` will:** nothing until the plan is reviewed. After review, implement T01
-(run-state) — a Phase 1 task with no dependencies, on the critical path.
+**Next `pir-work` will:** in parallel mode the coordinator dispatches by dependency, not
+`pir-work`. T01 and T03 (Phase 1, no deps) are ready; T06 unblocks once T02 merges.
 
 ## Tasks
 
@@ -26,7 +26,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | # | Task | Depends on | State | Notes |
 |---|---|---|---|---|
 | T01 | run-state | — | ⬜ | |
-| T02 | index-record | — | 🔍 | Pure runrecord.mjs: serializeRecord/parseRecord, canonical field order, null on any malformed input, never throws (§2.10). 18 tests, boundary green. Deviations: pid required positive integer (doc said number); optional timestamps must be strings if present. |
+| T02 | index-record | — | ✅ | Clean, no fix commit. Walked all 7 test cases and Done-when; 18 tests real, suite+boundary green. Probed past doc by running parseRecord on junk: __proto__ (no pollution), float/huge/whitespace pid+slug, canonical order, never-throws on lone surrogate — all hold. Deviations (pid positive int; optional timestamps must be strings) reviewed, sound per §3.3. |
 | T03 | snapshot-model | — | ⬜ | |
 | T04 | dashboard-model | T01 | ⬜ | |
 | T05 | process-identity | T01 | ⬜ | |
