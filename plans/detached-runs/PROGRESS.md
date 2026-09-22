@@ -27,7 +27,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 |---|---|---|---|---|
 | T01 | run-state | — | ✅ | |
 | T02 | index-record | — | ⬜ | |
-| T03 | snapshot-model | — | ⬜ | |
+| T03 | snapshot-model | — | ✅ | |
 | T04 | dashboard-model | T01 | ⬜ | |
 | T05 | process-identity | T01 | ⬜ | |
 | T06 | index-store | T02 | ⬜ | |
