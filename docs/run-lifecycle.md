@@ -48,8 +48,11 @@ A pass does, in order:
   a slot forever.
 - **Spawn ready tasks.** Every `⬜` task whose dependencies are all `✅` and which no live worker
   holds is a candidate, lowest number first, capped so live-plus-spawned never exceeds the ceiling.
-  Every task spawns an autonomous builder (`pir-implement Txx`); there is one kind of worker. See
-  [task-state.md](task-state.md).
+  Every task spawns an autonomous builder (`pir-implement Txx`); there is one kind of worker. The
+  candidate set is whatever the current feature-branch `PROGRESS.md` holds, so a task a merge adopted
+  on an earlier pass — a worker-introduced task (see [task-state.md](task-state.md)) — is a candidate
+  here on equal footing with a task the plan started with; nothing in the dispatch brain changed to
+  make that work. See [task-state.md](task-state.md).
 - **Hand off review.** When a worker reports `implemented` (its task is `🔍` on its branch), the
   command spawns a **fresh** session on the same worktree to review it (`pir-review Txx`) and
   closes the implementer. A task in review holds one slot, not two, and the reviewer has no
@@ -57,7 +60,14 @@ A pass does, in order:
 - **Merge one done task.** When a worker reports `done`, the command merges its task branch into the
   feature branch (**one per pass, serialized**), reconciles its row to `✅` on the feature branch,
   and closes the worker. A merge that conflicts instead parks the worker — see
-  [human-flow.md](human-flow.md).
+  [human-flow.md](human-flow.md). The merge may also **adopt new task rows** the branch carried — a
+  worker-introduced task: each adopted row is appended to the feature `PROGRESS.md` as `⬜` and logged
+  with an `adopt` line, and a later pass's spawn step dispatches it (above). A row that cannot be
+  adopted — an edit of an existing task, or a dependency on a task that does not exist — is left
+  unapplied and recorded as a `bad-plan-change` surface; unlike a `question` or a merge conflict this
+  surface parks no one, because the introducing task's own reviewed code merged cleanly and the run
+  continues (see [control-folder.md](control-folder.md) for the `adopt` log kind versus the
+  `bad-plan-change` surface, and [task-state.md](task-state.md) for the adoption rule).
 - **Complete.** When every task is `✅` and no worker is live, the pass reports a `complete` flag;
   the command runs the test command on the feature branch and reports the result. It never merges
   to `main` — see **End** below.

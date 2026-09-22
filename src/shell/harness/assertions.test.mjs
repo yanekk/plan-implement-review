@@ -20,6 +20,7 @@ import {
   noHelloEver,
   noCloseBeforeIdle,
   parkedWorkerHoldsSlot,
+  adoptedAndDispatched,
   mergeConflictResolved,
   handedOffGreenBranch,
   killSwitchStoppedAll,
@@ -216,6 +217,57 @@ test('parkedWorkerHoldsSlot fails when the parked worker was not held (never sam
   const r = parkedWorkerHoldsSlot('T01').check(b);
   assert.equal(r.pass, false);
   assert.match(r.detail, /slot was not held/);
+});
+
+// --- adoptedAndDispatched (dynamic-task tail: adopt→dispatch→merge, task-agnostic, T05) ------------
+
+// A bundle in the adopted-task shape (DESIGN §2.2, §2.4): T01 (the introducer) merged, the coordinator
+// adopted the worker-introduced T02, then dispatched it (spawn) and merged its branch. Task-agnostic: the
+// fact discovers T02 from the `adopt` line rather than being told it.
+function adoptedBundle(over = {}) {
+  return bundle({
+    flow: [
+      fl('t3', 'merge', 'T01'),
+      fl('t4', 'adopt', 'T02'),
+      fl('t5', 'spawn', 'T02'),
+      fl('t8', 'merge', 'T02'),
+    ],
+    ...over,
+  });
+}
+
+test('adoptedAndDispatched passes when an adopted task was dispatched and its branch merged', () => {
+  const r = adoptedAndDispatched().check(adoptedBundle());
+  assert.equal(r.pass, true, r.detail);
+  assert.ok(r.evidence.some((e) => e.includes('adopt T02')));
+  assert.ok(r.evidence.some((e) => e.includes('spawn T02')));
+});
+
+test('adoptedAndDispatched fails when nothing was adopted (no worker introduced a task)', () => {
+  const r = adoptedAndDispatched().check(bundle({ flow: [fl('t3', 'merge', 'T01'), fl('t5', 'spawn', 'T01')] }));
+  assert.equal(r.pass, false);
+  assert.match(r.detail, /no adopt line/);
+});
+
+test('adoptedAndDispatched fails when the adopted task was never dispatched (silently never built)', () => {
+  const r = adoptedAndDispatched().check(bundle({ flow: [fl('t4', 'adopt', 'T02')] }));
+  assert.equal(r.pass, false);
+  assert.match(r.detail, /never dispatched/);
+});
+
+test('adoptedAndDispatched fails when the adopted task dispatched but its branch never merged', () => {
+  const r = adoptedAndDispatched().check(bundle({ flow: [fl('t4', 'adopt', 'T02'), fl('t5', 'spawn', 'T02')] }));
+  assert.equal(r.pass, false);
+  assert.match(r.detail, /never merged/);
+});
+
+test('adoptedAndDispatched requires the dispatch to follow the adoption, not a stray earlier spawn', () => {
+  // A `spawn T02` before the adopt line cannot be the dispatch of the adopted row (the row did not exist yet).
+  const r = adoptedAndDispatched().check(
+    bundle({ flow: [fl('t1', 'spawn', 'T02'), fl('t4', 'adopt', 'T02'), fl('t8', 'merge', 'T02')] }),
+  );
+  assert.equal(r.pass, false);
+  assert.match(r.detail, /never dispatched/);
 });
 
 // --- mergeConflictResolved (task-agnostic, attended non-agentic model, T13) -----------------------

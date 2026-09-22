@@ -34,6 +34,15 @@ function progressDoc(rows) {
   return `# Progress\n\n**Plan reviewed:** 2026-09-08 — reviewed\n\n${header}\n${sep}\n${body}\n`;
 }
 
+// One PROGRESS.md table row in the same layout progressDoc writes (# | Task | Runs | Depends on |
+// State | Notes), so a test can hand the fake worker (addRows behaviour) or a seeded branch a
+// worker-introduced task row exactly as it would appear on a real branch — valid, or malformed for
+// the reject path. The coordinator's adoptNewTaskRows is what reads it back.
+function taskRow({ num, deps = [], runs = 'auto', state = '⬜' }) {
+  const d = deps.length ? deps.join(', ') : '—';
+  return `| ${num} | ${slugOf(num)} | ${runs} | ${d} | ${state} | |`;
+}
+
 // Stand up a fake platform + scratch worktree for a plan; register cleanup.
 function setup(t, rows, { behaviors = {}, files = {} } = {}) {
   const worktree = createFakeWorktree({ progress: progressDoc(rows), files, slug: SLUG });
@@ -875,4 +884,121 @@ test('a genuine first start records no restart summary and takes no reconciliati
   assert.ok(!result.actions.some((a) => ['rebuild', 'cleanup', 'restart-summary'].includes(a.type)), 'no reconciliation action on a first start');
   const merges = result.actions.filter((a) => a.type === 'merge');
   assert.equal(merges.length, 3, 'the three merges are the normal loop merges, not adoptions');
+});
+
+// --- T02: the loop acts on adoption — narrates adopted tasks, surfaces bad plan changes ------------
+//
+// After T01 the merge already writes new task rows into the feature PROGRESS.md and the unchanged
+// decideDispatch spawns them on a later pass. T02 makes the loop CONSUME mergeTask's added/errors: an
+// `adopt` action per adopted task (so the run tells the person what it picked up) and a
+// `bad-plan-change` surface per rejected row (so a malformed addition is seen, not silently dropped).
+// The two DESIGN scenarios are proven end to end against the fake worker (addRows) and scratch git.
+
+// A row inserted onto a SEEDED task branch (the restart tests' branches), after the given task's own
+// row, then committed — so a reconcile-time merge has a worker-introduced task to adopt. Mirrors what
+// the fake platform's addRows does for a live worker, for the branches seedBranch stands up directly.
+function addRowToSeedBranch(wt, afterTask, row) {
+  const p = join(wt.path, progressPathFor(SLUG));
+  const lines = readFileSync(p, 'utf8').split('\n');
+  const at = lines.findIndex((l) => new RegExp(`^\\|\\s*${afterTask}\\s*\\|`).test(l.trim()));
+  lines.splice(at >= 0 ? at + 1 : lines.length, 0, row);
+  writeFileSync(p, lines.join('\n'));
+  git(wt.path, ['add', '-A']);
+  git(wt.path, ['commit', '-m', `${afterTask}: propose a new task`, '--no-edit']);
+}
+
+test('scenario 1: a task introduced by T01 (dep T01) is adopted at T01\'s merge and dispatched only after it, then reviewed and merged like any task', (t) => {
+  // Plan T00, T01, T02 (T01, T02 depend on T00). T01's worker introduces T03 (dep T01) on its branch.
+  const { worktree, base } = setup(t, [{ num: 'T00' }, { num: 'T01', deps: ['T00'] }, { num: 'T02', deps: ['T00'] }], {
+    behaviors: { T01: { addRows: [taskRow({ num: 'T03', deps: ['T01'] })] } },
+  });
+  const result = drain(base);
+  assert.equal(result.complete, true, 'the run completes with the adopted task built');
+
+  const mergeT01 = result.actions.findIndex((a) => a.type === 'merge' && a.task === 'T01');
+  const adoptT03 = result.actions.findIndex((a) => a.type === 'adopt' && a.task === 'T03');
+  const spawnT03 = result.actions.findIndex((a) => a.type === 'spawn' && a.task === 'T03');
+  assert.ok(mergeT01 >= 0, 'T01 merged');
+  assert.ok(adoptT03 >= 0, 'an adopt action names T03 — the run says what it picked up');
+  assert.ok(adoptT03 >= mergeT01, 'T03 is adopted at T01\'s merge, not before');
+  assert.ok(spawnT03 > mergeT01, 'T03 is not spawned before T01 merges (its dep gates it, and it is unseen until then)');
+
+  const finalFeature = worktree.progressOn(`pir/${SLUG}`);
+  assert.match(finalFeature, /\|\s*T03\s*\|.*✅/, 'the adopted T03 is built, reviewed and ✅ — ordinary after adoption');
+  assert.equal((finalFeature.match(/✅/g) || []).length, 4, 'T00, T01, T02 and the adopted T03 are all ✅');
+});
+
+test('scenario 2: a task introduced by T00 (dep T00) starts together with T01 and T02 the pass after T00 merges', (t) => {
+  const { base } = setup(t, [{ num: 'T00' }, { num: 'T01', deps: ['T00'] }, { num: 'T02', deps: ['T00'] }], {
+    behaviors: { T00: { addRows: [taskRow({ num: 'T03', deps: ['T00'] })] } },
+  });
+  const state = createRunState();
+  const spawnPasses = []; // task nums spawned, per pass
+  let adoptedT03 = false;
+  let complete = false;
+  for (let i = 0; i < 40 && !complete; i++) {
+    const r = runPass({ ...base, state }); // maxWorkers 4 — all three fit
+    spawnPasses.push(r.actions.filter((a) => a.type === 'spawn').map((a) => a.task));
+    if (r.actions.some((a) => a.type === 'adopt' && a.task === 'T03')) adoptedT03 = true;
+    complete = r.complete;
+  }
+  assert.ok(complete, 'the run completes');
+  assert.ok(adoptedT03, 'T03 is adopted when T00 merges');
+
+  // T01 and T02 could not start before T00 merged (they depend on it), and T03 did not exist before
+  // then, so the first pass any of them can spawn is the one right after T00's merge — and all three
+  // are ready on it, so they start together (DESIGN §2.3 scenario 2).
+  const together = spawnPasses.find((p) => p.includes('T03'));
+  assert.ok(together, 'T03 is spawned');
+  assert.ok(together.includes('T01') && together.includes('T02'), 'T01, T02 and T03 all start together in one pass');
+});
+
+test('a bad plan change (a new task depending on an unknown task) is surfaced as bad-plan-change; the introducing task still lands ✅ and the run continues', (t) => {
+  const { worktree, base } = setup(t, [{ num: 'T00' }, { num: 'T01', deps: ['T00'] }, { num: 'T02', deps: ['T00'] }], {
+    behaviors: { T01: { addRows: [taskRow({ num: 'T03', deps: ['T99'] })] } },
+  });
+  const result = drain(base);
+  assert.equal(result.complete, true, 'a bad plan change does not park or stall the run — it continues to completion');
+
+  const bad = result.actions.find((a) => a.type === 'surface' && a.kind === 'bad-plan-change');
+  assert.ok(bad, 'the rejected row is surfaced as a bad-plan-change (not silently dropped)');
+  assert.equal(bad.task, 'T03', 'the surface names the rejected task');
+  assert.match(bad.text, /T99/, 'the surface says which dependency is unknown');
+
+  assert.ok(result.actions.some((a) => a.type === 'merge' && a.task === 'T01'), 'the introducing task still merged — its reviewed code is good');
+  assert.ok(!result.actions.some((a) => a.type === 'adopt'), 'nothing was adopted from the atomic-rejected change');
+  assert.ok(!result.actions.some((a) => a.type === 'spawn' && a.task === 'T03'), 'the rejected task is never dispatched');
+
+  const finalFeature = worktree.progressOn(`pir/${SLUG}`);
+  assert.match(finalFeature, /\|\s*T01\s*\|.*✅/, 'T01 is ✅ on the feature branch despite carrying a bad plan change');
+  assert.ok(!/\|\s*T03\s*\|/.test(finalFeature), 'the rejected T03 never reached the feature table');
+});
+
+test('a run with no plan change records no adopt and no bad-plan-change (regression guard)', (t) => {
+  const { base } = setup(t, chain(3));
+  const result = drain(base);
+  assert.equal(result.complete, true);
+  assert.ok(!result.actions.some((a) => a.type === 'adopt'), 'no adoption when nothing is introduced');
+  assert.ok(!result.actions.some((a) => a.type === 'surface' && a.kind === 'bad-plan-change'), 'no bad-plan-change surfaced');
+});
+
+test('restart: a ✅ branch that introduced a new task has it adopted at the reconcile merge, then dispatched and built', (t) => {
+  // The second merge site: adoption at the restart-reconcile merge, not only the live merge.
+  const { platform, worktree, base } = setup(t, [{ num: 'T01' }]);
+  worktree.openFeature(SLUG);
+  const wt = seedBranch(worktree, SLUG, 'T01', '✅', { file: 'work-T01.txt' });
+  addRowToSeedBranch(wt, 'T01', taskRow({ num: 'T03', deps: ['T01'] }));
+
+  const state = createRunState();
+  let adopted = false;
+  let complete = false;
+  for (let i = 0; i < 20 && !complete; i++) {
+    const r = runPass({ ...base, state });
+    if (r.actions.some((a) => a.type === 'adopt' && a.task === 'T03')) adopted = true;
+    complete = r.complete;
+  }
+  assert.ok(complete, 'the restart drains to completion');
+  assert.ok(adopted, 'the reconcile merge adopts the introduced task (both merge sites act on adoption)');
+  assert.ok(platform.spawns.some((s) => s.task === 'T03' && s.role === 'implement'), 'the adopted task is dispatched');
+  assert.match(worktree.progressOn(`pir/${SLUG}`), /\|\s*T03\s*\|.*✅/, 'T03 is built, reviewed and ✅ on the feature branch');
 });

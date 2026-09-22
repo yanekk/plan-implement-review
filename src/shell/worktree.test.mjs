@@ -4,7 +4,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync, existsSync, realpathSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, existsSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import {
@@ -20,6 +20,7 @@ import {
   createWorktree,
 } from './worktree.mjs';
 import { progressPathFor } from '../core/progress.mjs';
+import { createFakeWorktree } from './fake/worktree.mjs';
 
 // Every test here uses the plan 'demo', so PROGRESS.md lives at plans/demo/PROGRESS.md.
 const SLUG = 'demo';
@@ -351,4 +352,169 @@ test('taskBranchState reads without modifying the branch tip or the worktree', (
   taskBranchState('demo', 'T01', { root: s.repo });
   assert.equal(git(s.repo, ['rev-parse', 'pir/demo-T01']).stdout.trim(), tipBefore, 'branch tip unchanged');
   assert.equal(git(w.path, ['status', '--porcelain']).stdout, statusBefore, 'worktree unchanged');
+});
+
+// --- T01: mergeTask adopts a merging branch's new task rows (DESIGN §2.2, §3.1) ---
+//
+// A real multi-row table with single-line fields, so adoptNewTaskRows can locate it and so a test can
+// prove those fields survive a merge. The scratchRepo seed above is deliberately headerless (no table
+// to adopt into), which is why the pre-T01 mergeTask tests are a no-op for adoption and still pass.
+const ADOPT_TABLE = [
+  '# Progress',
+  '',
+  '**Status:** building',
+  '**Next pir-work will:** implement T02',
+  '',
+  '| # | Task | Depends on | State | Notes |',
+  '|---|---|---|---|---|',
+  '| T01 | one | — | ⬜ | |',
+  '| T02 | two | T01 | ⬜ | |',
+  '',
+  '**Review queue:** empty',
+  '',
+].join('\n');
+
+// Seed the feature branch with a full task table, then cut a task branch from it, so both start from
+// ADOPT_TABLE. Returns the created task worktree/branch. The task branch then commits whatever the
+// scenario needs before mergeTask folds it back.
+function featureWithTable(repo, task = 'T02') {
+  const f = openFeature('demo', { root: repo });
+  writeFileSync(join(f.path, PROGRESS_REL), ADOPT_TABLE);
+  git(f.path, ['add', '-A']);
+  git(f.path, ['commit', '-m', 'seed full table', '--no-edit']);
+  return { f, w: createTask('demo', task, { root: repo }) };
+}
+
+test('mergeTask adopts a branch-added new task row as ⬜; added names it (T01)', (t) => {
+  const s = scratchRepo();
+  t.after(s.cleanup);
+  const { w } = featureWithTable(s.repo);
+  // The worker added T03 (deps T01) to its own PROGRESS.md and did some code work.
+  const branchProgress = ADOPT_TABLE.replace(
+    '| T02 | two | T01 | ⬜ | |\n',
+    '| T02 | two | T01 | 🔍 | building |\n| T03 | three | T01 | ⬜ | a new task |\n',
+  );
+  writeFileSync(join(w.path, PROGRESS_REL), branchProgress);
+  writeFileSync(join(w.path, 'work.txt'), 'x\n');
+  git(w.path, ['add', '-A']);
+  git(w.path, ['commit', '-m', 'T02 work + adds T03', '--no-edit']);
+
+  const res = mergeTask(w.branch, { root: s.repo });
+  assert.deepEqual(res.added, ['T03'], 'T03 adopted');
+  assert.deepEqual(res.errors, []);
+  const featureProgress = git(s.repo, ['show', `pir/demo:${PROGRESS_REL}`]).stdout;
+  assert.match(featureProgress, /\| T03 \| three \| T01 \| ⬜ \|/, 'T03 landed on the feature branch as ⬜');
+  assert.ok(git(s.repo, ['show', 'pir/demo:work.txt']).ok, 'the code work reached the feature branch');
+});
+
+test("mergeTask leaves the feature's existing rows and single-line fields byte-identical when it adopts", (t) => {
+  const s = scratchRepo();
+  t.after(s.cleanup);
+  const { w } = featureWithTable(s.repo);
+  const branchProgress = ADOPT_TABLE.replace(
+    '| T02 | two | T01 | ⬜ | |\n',
+    '| T02 | two | T01 | ✅ | done |\n| T03 | three | — | ⬜ | |\n',
+  );
+  writeFileSync(join(w.path, PROGRESS_REL), branchProgress);
+  git(w.path, ['add', '-A']);
+  git(w.path, ['commit', '-m', 'adds T03, marks its own row', '--no-edit']);
+
+  mergeTask(w.branch, { root: s.repo });
+  const featureProgress = git(s.repo, ['show', `pir/demo:${PROGRESS_REL}`]).stdout;
+  assert.ok(featureProgress.includes('**Status:** building'), 'Status field kept');
+  assert.ok(featureProgress.includes('**Next pir-work will:** implement T02'), 'Next field kept');
+  assert.ok(featureProgress.includes('**Review queue:** empty'), 'Review queue kept');
+  assert.ok(featureProgress.includes('| T02 | two | T01 | ⬜ | |'), "T02 kept the feature's ⬜, not the branch's ✅");
+});
+
+test('mergeTask on a branch with no plan change adopts nothing (added empty), feature PROGRESS unchanged', (t) => {
+  const s = scratchRepo();
+  t.after(s.cleanup);
+  const { f, w } = featureWithTable(s.repo);
+  const before = git(s.repo, ['show', `pir/demo:${PROGRESS_REL}`]).stdout;
+  // Only code, PROGRESS untouched on the branch.
+  writeFileSync(join(w.path, 'work.txt'), 'x\n');
+  git(w.path, ['add', '-A']);
+  git(w.path, ['commit', '-m', 'T02 code only', '--no-edit']);
+
+  const res = mergeTask(w.branch, { root: s.repo });
+  assert.deepEqual(res.added, []);
+  assert.deepEqual(res.errors, []);
+  assert.equal(git(s.repo, ['show', `pir/demo:${PROGRESS_REL}`]).stdout, before, 'feature PROGRESS byte-identical');
+});
+
+test('mergeTask on a branch that edits an existing row still merges the code, returns errors, feature PROGRESS unchanged', (t) => {
+  const s = scratchRepo();
+  t.after(s.cleanup);
+  const { w } = featureWithTable(s.repo);
+  const before = git(s.repo, ['show', `pir/demo:${PROGRESS_REL}`]).stdout;
+  // Forbidden edit: change T01's deps (— → T02). Plus real code so the merge lands.
+  const branchProgress = ADOPT_TABLE.replace('| T01 | one | — | ⬜ | |', '| T01 | one | T02 | ⬜ | |');
+  writeFileSync(join(w.path, PROGRESS_REL), branchProgress);
+  writeFileSync(join(w.path, 'work.txt'), 'x\n');
+  git(w.path, ['add', '-A']);
+  git(w.path, ['commit', '-m', 'edits T01 deps', '--no-edit']);
+
+  const res = mergeTask(w.branch, { root: s.repo });
+  assert.ok(res.ok, 'the merge still lands');
+  assert.equal(res.added.length, 0, 'nothing adopted');
+  assert.ok(res.errors.length > 0, 'the forbidden edit is reported');
+  assert.ok(git(s.repo, ['show', 'pir/demo:work.txt']).ok, 'the code still merged');
+  assert.equal(git(s.repo, ['show', `pir/demo:${PROGRESS_REL}`]).stdout, before, 'feature PROGRESS byte-identical');
+});
+
+test('mergeTask: a non-PROGRESS.md code conflict still returns { conflict, files } and leaves the feature branch clean', (t) => {
+  const s = scratchRepo({ 'shared.txt': 'base\n' });
+  t.after(s.cleanup);
+  const f = openFeature('demo', { root: s.repo });
+  const t1 = createTask('demo', 'T01', { root: s.repo });
+  const t2 = createTask('demo', 'T02', { root: s.repo });
+  writeFileSync(join(t1.path, 'shared.txt'), 'from T01\n');
+  git(t1.path, ['commit', '-am', 'T01 edits shared', '--no-edit']);
+  writeFileSync(join(t2.path, 'shared.txt'), 'from T02\n');
+  git(t2.path, ['commit', '-am', 'T02 edits shared', '--no-edit']);
+
+  assert.ok(mergeTask(t1.branch, { root: s.repo }).ok);
+  const res = mergeTask(t2.branch, { root: s.repo });
+  assert.ok(res.conflict, 'the second merge conflicts on the shared file');
+  assert.ok(res.files.includes('shared.txt'));
+  assert.equal(git(f.path, ['rev-parse', '-q', '--verify', 'MERGE_HEAD']).ok, false, 'no merge left in progress');
+  assert.equal(git(f.path, ['status', '--porcelain']).stdout.trim(), '', 'the feature worktree is clean after abort');
+});
+
+test('the real worktree.mjs and the fake adopt identically on the same scratch inputs (T03)', (t) => {
+  // Same feature table, same branch-added T03 on both surfaces → same added/errors and same adopted
+  // PROGRESS.md, so the fake the loop is proven against matches the module the run actually uses.
+  const branchProgress = ADOPT_TABLE.replace(
+    '| T02 | two | T01 | ⬜ | |\n',
+    '| T02 | two | T01 | 🔍 | building |\n| T03 | three | T01 | ⬜ | a new task |\n',
+  );
+
+  // Real.
+  const s = scratchRepo();
+  t.after(s.cleanup);
+  const { w } = featureWithTable(s.repo);
+  writeFileSync(join(w.path, PROGRESS_REL), branchProgress);
+  writeFileSync(join(w.path, 'work.txt'), 'x\n');
+  git(w.path, ['add', '-A']);
+  git(w.path, ['commit', '-m', 'adds T03', '--no-edit']);
+  const realRes = mergeTask(w.branch, { root: s.repo });
+  const realProgress = git(s.repo, ['show', `pir/demo:${PROGRESS_REL}`]).stdout;
+
+  // Fake.
+  const wt = createFakeWorktree({ progress: ADOPT_TABLE });
+  t.after(() => wt.cleanup());
+  const feature = wt.openFeature('demo');
+  const task = wt.createTask('demo', 'T02');
+  writeFileSync(join(task.path, PROGRESS_REL), branchProgress);
+  writeFileSync(join(task.path, 'work.txt'), 'x\n');
+  git(task.path, ['add', '-A']);
+  git(task.path, ['commit', '-m', 'adds T03', '--no-edit']);
+  const fakeRes = wt.mergeTask(task.branch);
+  const fakeProgress = readFileSync(join(feature.path, PROGRESS_REL), 'utf8');
+
+  assert.deepEqual(realRes.added, fakeRes.added, 'same rows adopted');
+  assert.deepEqual(realRes.errors, fakeRes.errors, 'same errors');
+  assert.deepEqual(realRes.added, ['T03']);
+  assert.equal(realProgress, fakeProgress, 'the adopted feature PROGRESS.md is byte-identical');
 });

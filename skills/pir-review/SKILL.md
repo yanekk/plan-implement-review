@@ -64,6 +64,30 @@ summary), then check all four:
 Check the deviations the implementing session recorded in `PROGRESS.md` — each one is a
 decision that has not been reviewed yet. And check for deviations it did *not* record.
 
+## Validating a task the implementer added (parallel mode)
+
+A parallel-mode worker may, with the person's yes, add a *new* task while building its own — the one
+sanctioned break from strict scope (`pir-worker` § When you find a task the plan is missing; DESIGN
+§2.1, §2.4). A worker-introduced task does not go through `/pir-review-plan`; the person's in-session
+approval is its gate, and **you are the check on its shape.** If this task's diff adds a task — a new
+`⬜` row in `PROGRESS.md`, a `PLAN.md` row and a `tasks/T{nn}-{slug}.md` doc — validate the addition:
+
+- **Every dependency of the new task names a task that already exists** — on the feature branch, or
+  among tasks added in the same change. A dependency on an unknown task could never be dispatched.
+- **The new task doc has all five parts** — goal, files, interface, tests, done-when — **and its slug
+  matches both its filename and its `PROGRESS.md` row.**
+- **No existing task's row or doc was edited.** The carve-out is add-only: a changed slug, changed
+  dependencies or a reused number on an existing task is forbidden.
+
+These are the same conditions the coordinator enforces at merge (`adoptNewTaskRows`, DESIGN §2.2,
+§2.5): a bad dependency, a forbidden edit or a duplicate number makes it reject the whole change
+atomically and surface the error, and a number collision is left for the person to renumber, never
+auto-fixed. So a malformed addition would be caught at merge regardless — but you catch it here, with
+the task's context in front of you, and cheaper. A malformed addition is a review finding: fix it if
+the fix is unambiguous, or escalate to the person like any other decision. This is a lighter check
+than a full plan review, the deliberate trade for not stopping the run (DESIGN §2.4). It applies only
+in parallel mode; classic mode has no worker-introduced task to validate.
+
 ## A suspected defect is a hypothesis until something outside the code agrees
 
 Reading the diff is how you find a defect; it is not how you confirm one. The diff is the

@@ -61,6 +61,12 @@ const EXPECT = {
     ceiling: 1,
     factIds: ['resumed-not-rebuilt:T02', 'no-rebuild-from:T01', 'feeds-cleared', 'leftover-sessions-reaped:1'],
   },
+  'dynamic-task': {
+    taskCount: 1,
+    deps: { T01: [] },
+    ceiling: 1,
+    factIds: ['adopted-and-dispatched', 'handed-off-green-branch'],
+  },
 };
 
 // --- The registry ---------------------------------------------------------------------------------
@@ -168,6 +174,27 @@ test('human-decision: T01 is deliberately underspecified and told to park; T02 i
   assert.match(t01, /ask the person|drop a `question` report and park/i, 'the worker is told to ask and park, not guess');
   // The down-channel is gone (§2.2, T05): no scripted answer is carried; the program routes nothing.
   assert.equal(fx.scriptedAnswer, undefined, 'no scripted answer — the person answers the worker directly');
+});
+
+test('dynamic-task: T01 is told to propose-and-wait before adding the missing task; the fixture hands over the escalate-before-add judgement', () => {
+  const fx = getFixture('dynamic-task');
+  const { tasks } = parseProgress(fx.progress);
+  // A single seed task, so the next-free number the live worker adds is unambiguous (T02).
+  assert.equal(tasks.length, 1, 'one seed task so the introduced task has an unambiguous next-free number');
+  assert.deepEqual(tasks[0].deps, [], 'the seed task is independent');
+  const t01 = Object.entries(fx.tasks).find(([n]) => n.startsWith('T01-'))[1];
+  // The worker must escalate BEFORE adding and must not add on its own — the carve-out's whole discipline.
+  assert.match(t01, /decision/i, 'the worker is told to propose the missing task as a decision');
+  assert.match(t01, /Do NOT add the task on your own/, 'the worker is told not to add it on its own');
+  assert.match(t01, /addition only|never edit T01/i, 'the addition is add-only, never an edit of T01');
+  assert.match(t01, /Depends on` naming T01|depending on T01/i, 'the added task depends on the existing T01');
+  // The person-only judgement (DESIGN §5.1) is carried on the fixture for the live drill, and names the crux.
+  assert.match(fx.needsPerson, /escalate BEFORE adding/, 'the handover asks the person to judge escalate-before-add');
+  assert.match(fx.needsPerson, /well-formed/, 'the handover asks the person to judge the addition is well-formed');
+  assert.match(fx.needsPerson, /adopt/, 'the handover asks the person to confirm the coordinator adopted and dispatched');
+  // An attended, completing run: no scripted answer (the person approves directly), a human-speed budget.
+  assert.equal(fx.scenario.expectedTerminal, 'completed', 'the approved run completes; it is not a forever-park');
+  assert.ok(fx.scenario.seatbelts.timeoutMs >= 20 * 60 * 1000, 'a human-speed timeout budget is set');
 });
 
 test('parallel: at least two independent tasks so workers run concurrently', () => {

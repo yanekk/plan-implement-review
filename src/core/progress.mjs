@@ -219,3 +219,134 @@ export function reconcileTaskRow(progressText, { num, state, notes }) {
 
   throw new Error(`reconcileTaskRow: no task row for ${num}`);
 }
+
+// Two dependency lists name the same tasks, regardless of order. Compared as sorted sets so
+// a worker reordering `T01, T02` into `T02, T01` is not misread as an edit — the meaning is
+// what add-only protects, not the spelling (DESIGN §2.2).
+function sameDeps(a, b) {
+  const norm = (d) => [...new Set(d)].sort();
+  const x = norm(a);
+  const y = norm(b);
+  return x.length === y.length && x.every((v, i) => v === y[i]);
+}
+
+// Build one markdown table row for the feature table's layout. `values` maps a column index
+// to its cell text; any index not in it (a column the parser does not consume, e.g. a legacy
+// `Runs` column) renders as an empty cell. An empty value renders as ` ` (a single space
+// between pipes), the same canonical empty cell reconcileTaskRow writes, so a re-parse and a
+// later fold both find a well-formed row.
+function buildRow(headerCellCount, values) {
+  const inner = [];
+  for (let j = 0; j < headerCellCount; j++) {
+    const v = values[j] ?? '';
+    inner.push(v === '' ? ' ' : ` ${v} `);
+  }
+  return `|${inner.join('|')}|`;
+}
+
+// adoptNewTaskRows(featureText, branchText) → { text, added, errors }.
+// The add-only merge rule (DESIGN §2.2, §3.3). Given the authoritative feature-branch
+// PROGRESS.md and a merging task branch's PROGRESS.md, decide which of the branch's task rows
+// are genuinely new, append them to the feature table as ⬜, and reject anything that would
+// edit an existing task or that could never be dispatched. Pure text: no I/O, no clock. The
+// filesystem read of the branch copy and the write-back live in src/shell/ (DESIGN §3.1).
+//
+//   text    featureText with each new task row appended to the table, state forced to ⬜.
+//           Byte-identical to featureText when nothing is adopted, and — because adoption is
+//           atomic per branch — when errors is non-empty (a bad change lands nothing).
+//   added   adopted task numbers in the branch table's order, e.g. ['T03']. Empty on any error.
+//   errors  one human-readable message per rejected row; empty on success. Never
+//           empty-and-silent: a dropped row always names why (DESIGN §2.5).
+export function adoptNewTaskRows(featureText, branchText) {
+  const feature = parseProgress(featureText);
+  const branch = parseProgress(branchText);
+
+  // A parse error on the branch means a row the coordinator cannot read — a task that would be
+  // silently never built. Surface it and adopt nothing (DESIGN §2.5: never silently dropped).
+  // Feature parse errors are not this branch's fault and are left alone.
+  const errors = [...branch.errors];
+
+  const featureByNum = new Map(feature.tasks.map((t) => [t.num, t]));
+
+  // New = a branch row whose id is absent from the feature branch. Compute the full set first,
+  // so a new task may depend on another new task landing in the same change (DESIGN §2.2).
+  const newTasks = branch.tasks.filter((t) => !featureByNum.has(t.num));
+  const knownIds = new Set([...featureByNum.keys(), ...newTasks.map((t) => t.num)]);
+
+  const adopted = [];
+  for (const t of branch.tasks) {
+    const existing = featureByNum.get(t.num);
+    if (existing) {
+      // Id present on the feature branch. Compare slug and deps, NEVER state: the merging
+      // task's own row differs from the feature's only by its glyph (⬜ → ✅), and comparing
+      // state would misread every merge as an edit (DESIGN §2.2). A slug/deps difference is a
+      // forbidden edit of an existing task, or a duplicate number colliding with one.
+      if (existing.name !== t.name || !sameDeps(existing.deps, t.deps)) {
+        errors.push(
+          `${t.num}: branch would change an existing task ("${existing.name}" deps [${existing.deps.join(', ')}]` +
+            ` → "${t.name}" deps [${t.deps.join(', ')}]); tasks are add-only, an existing task cannot be edited` +
+            ` or its number reused (DESIGN §2.2)`,
+        );
+      }
+      // Otherwise a pre-existing row (or the merging task's own): ignore, the feature's stands.
+      continue;
+    }
+
+    // A genuinely new task. Every dependency must name a task that exists — on the feature
+    // branch or among this change's other new rows — or the task could never be dispatched
+    // (its dependency would never go ✅), so the whole change is rejected (DESIGN §2.5).
+    for (const d of t.deps) {
+      if (!knownIds.has(d)) {
+        errors.push(
+          `${t.num}: new task depends on ${d}, which is not a task on the feature branch or a new task` +
+            ` in this change; it could never be dispatched (DESIGN §2.5)`,
+        );
+      }
+    }
+    adopted.push(t);
+  }
+
+  // Atomic per branch: if any row is an error, nothing from this branch lands, so a bad change
+  // never half-applies and the person sees the whole problem at once (DESIGN §2.5, §3.3).
+  if (errors.length > 0) {
+    return { text: featureText, added: [], errors };
+  }
+
+  if (adopted.length === 0) {
+    return { text: featureText, added: [], errors: [] };
+  }
+
+  const lines = featureText.split('\n');
+  const table = locateTable(lines);
+  if (!table) {
+    // No table to append to. Cannot adopt without corrupting the file, so reject atomically.
+    return {
+      text: featureText,
+      added: [],
+      errors: [`cannot adopt ${adopted.map((t) => t.num).join(', ')}: the feature PROGRESS.md has no task table`],
+    };
+  }
+
+  const { col, headerCellCount, dataEnd } = table;
+  const newRows = adopted.map((t) => {
+    const values = {};
+    values[col.num] = t.num;
+    if (col.name !== undefined) values[col.name] = t.name;
+    // Reconstruct the Depends-on cell from the parsed deps; `—` for none, matching the table's
+    // own empty-deps convention so parseProgress reads [] back off it.
+    if (col.deps !== undefined) values[col.deps] = t.deps.length ? t.deps.join(', ') : '—';
+    // Force ⬜: the coordinator owns task state. A branch row marked 🔍/✅ must still be adopted
+    // as not-started or the new task would skip its build (DESIGN §2.2).
+    if (col.state !== undefined) values[col.state] = '⬜';
+    // Notes left empty; the task doc and PLAN.md row carry the detail. Any other column (a
+    // legacy Runs) renders empty via buildRow — parseProgress ignores it anyway.
+    return buildRow(headerCellCount, values);
+  });
+
+  // Insert the new rows just after the last existing data row, before whatever ends the table
+  // (a blank line or prose). Every other line, including the coordinator-managed single-line
+  // fields, stays byte-for-byte identical (DESIGN §2.5).
+  lines.splice(dataEnd, 0, ...newRows);
+
+  return { text: lines.join('\n'), added: adopted.map((t) => t.num), errors: [] };
+}
