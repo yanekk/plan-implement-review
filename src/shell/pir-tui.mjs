@@ -393,6 +393,7 @@ export function buildWatchFrame(view, { now, spinnerChar = SPINNER[0], ui = init
 //
 //   ↑ / ↓ arrows → 'up' / 'down'      (move the selection)
 //   ← arrow      → 'back'             (step back one level: a run's live view → the list; user 2026-09-22)
+//   → arrow      → 'open'             (open the selected run into its live view, same as Enter; user 2026-09-22)
 //   Enter        → 'open'             (open the selected run into its live view)
 //   Esc          → 'quit'             (leave `pir` — from the list or a run's view)
 //   Ctrl+S       → 'ctrlS'            (arm / confirm stop)
@@ -432,7 +433,8 @@ export function decodeKey(data) {
   if (s === '\x1b[A' || s === '\x1bOA') return 'up';
   if (s === '\x1b[B' || s === '\x1bOB') return 'down';
   if (s === '\x1b[D' || s === '\x1bOD') return 'back'; // ← steps back a level
-  return null; // right arrow and anything else are unbound
+  if (s === '\x1b[C' || s === '\x1bOC') return 'open'; // → opens the selected run, like Enter (user 2026-09-22)
+  return null; // anything else is unbound
 }
 
 // --- The impure edge: painting a frame on a real terminal, and the input loop -----------------------

@@ -205,7 +205,7 @@ test('a crashed run WITH a frozen frame names its run.log path alongside the sta
   assert.match(text, new RegExp(`${controlDir}/run\\.log`), 'and the run.log path is named for the reason');
 });
 
-test('decodeKey maps the arrow / Enter / ← / Esc / Ctrl-S / Ctrl-X bytes to their intents', () => {
+test('decodeKey maps the arrow / Enter / ← / → / Esc / Ctrl-S / Ctrl-X bytes to their intents', () => {
   assert.equal(decodeKey(Buffer.from('\x1b[A')), 'up', 'up arrow');
   assert.equal(decodeKey(Buffer.from('\x1b[B')), 'down', 'down arrow');
   assert.equal(decodeKey(Buffer.from('\x1bOA')), 'up', 'up arrow (application-cursor SS3)');
@@ -218,8 +218,9 @@ test('decodeKey maps the arrow / Enter / ← / Esc / Ctrl-S / Ctrl-X bytes to th
   assert.equal(decodeKey(Buffer.from([0x13])), 'ctrlS', 'Ctrl+S');
   assert.equal(decodeKey(Buffer.from([0x18])), 'ctrlX', 'Ctrl+X');
   assert.equal(decodeKey(Buffer.from([0x03])), 'quit', 'Ctrl+C leaves pir');
+  assert.equal(decodeKey(Buffer.from('\x1b[C')), 'open', 'right arrow opens the selected run, like Enter');
+  assert.equal(decodeKey(Buffer.from('\x1bOC')), 'open', 'right arrow (application-cursor SS3)');
   assert.equal(decodeKey(Buffer.from('x')), null, 'an unbound key decodes to null');
-  assert.equal(decodeKey(Buffer.from('\x1b[C')), null, 'right arrow is unbound');
 });
 
 test('createScreen on a non-TTY appends plain text with no escapes; on a colour TTY it tints by style', () => {
