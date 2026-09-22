@@ -15,8 +15,8 @@ the account is the commit message. Whoever writes a cell also fixes the over-bud
 `prototype/`. Detached-spawn and process-identity mechanisms verified on the machine (FINDINGS).
 Nothing implemented yet.
 **Last updated:** 2026-09-22 (T08 reviewed ✅)
-**Next `pir-work` will:** implement T09 (⬜; deps T05, T06 ✅). T10 and T11 are also unblocked now
-that T08 is ✅.
+**Next `pir-work` will:** implement T10 (⬜; dep T07 ✅). T11 (dep T08 ✅) is also unblocked now
+that T08 and T09 are ✅.
 
 ## Tasks
 
@@ -33,7 +33,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T06 | index-store | T02 | ✅ | |
 | T07 | snapshot-store | T03 | ✅ | |
 | T08 | start-detached | T05, T06 | ✅ | Reviewed clean, no fix. Pre-flight order, resume semantics, detached spawn shape, index entry, keep-awake -i -w all match DESIGN §2.5/§2.9; clock and process ops injected so the shell stays testable; coordinator path from engine URL not cwd. 7 tests defend each. Survival hand-check still UNVERIFIED, deferred to T12 live run (user). |
-| T09 | stop-and-remove | T05, T06 | ⬜ | |
+| T09 | stop-and-remove | T05, T06 | ✅ | |
 | T10 | coordinator-reporting | T07 | ⬜ | edits coordinate.mjs behind PIR_RUN |
 | T11 | pir-command | T08 | ⬜ | |
 | T12 | dashboard-tui | T04, T07, T09, T10, T11 | ⬜ | hands-on: the live feel |
