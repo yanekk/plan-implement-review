@@ -35,11 +35,11 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T08 | start-detached | T05, T06 | ✅ | |
 | T09 | stop-and-remove | T05, T06 | ✅ | |
 | T10 | coordinator-reporting | T07 | ⬜ | edits coordinate.mjs behind PIR_RUN |
-| T11 | pir-command | T08 | ⬜ | |
+| T11 | pir-command | T08 | 🔍 | run() argv dispatch + bin/pir wrapper, 8 tests. Deviation: openDashboard/openWatch left as throwing placeholders for T12 to fill (T12 doc extends this file); run defaults wire real startRun. Refusals print to stderr, exit 1; usage exit 2. |
 | T12 | dashboard-tui | T04, T07, T09, T10, T11 | ⬜ | hands-on: the live feel |
 | T13 | docs-and-install | T12 | ⬜ | updates /docs |
 
-**Review queue:** *(empty)*
+**Review queue:** T11
 
 ## Blocked on the user
 
