@@ -37,7 +37,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T10 | coordinator-reporting | T07 | ✅ | |
 | T11 | pir-command | T08 | ✅ | |
 | T12 | dashboard-tui | T04, T07, T09, T10, T11 | ✅ | |
-| T13 | docs-and-install | T12 | ⬜ | updates /docs |
+| T13 | docs-and-install | T12 | ✅ | |
 
 **Review queue:** *(empty)*
 
