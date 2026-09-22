@@ -316,6 +316,58 @@ export function parkedWorkerHoldsSlot(task) {
   });
 }
 
+// A worker-introduced task was ADOPTED at merge and then DISPATCHED and merged (DESIGN §2.2, §2.4). This
+// is the automated proof of the dynamic-task path's TAIL: a worker added a new task on its own branch, the
+// coordinator folded that row into the feature plan when the branch merged (record('adopt', {task}),
+// loop.mjs recordAdoption), and then dispatched the adopted task on a later pass (a `spawn`) and merged its
+// finished branch. The HEAD of the path — that a REAL worker escalated for approval BEFORE adding, and
+// wrote a well-formed addition — is the person-only judgement the drill hands over (DESIGN §5.1), not
+// anything the flow log carries; this fact proves only the mechanical tail the log does carry.
+//
+// It is task-AGNOSTIC: which T-number the live worker picks for the new task (the next free one) is decided
+// at run time, so the fact DISCOVERS the adopted task from the `adopt` line rather than naming it, the same
+// way mergeConflictResolved discovers the conflicting task. It reads off the bundle:
+//   - an `adopt {task}` flow line (the coordinator folded a worker-introduced row into the feature plan);
+//   - a `spawn {task}` line AT OR AFTER the adopt (the adopted task was dispatched to a real worker — the
+//     crux: an adopted row that never dispatches is a task silently never built, §2.5);
+//   - a `merge {task}` line at or after that spawn (the dispatched task built, was reviewed and its branch
+//     landed — so the pass is never vacuous over a run that adopted a row but never carried it through).
+// A run that adopted nothing, or adopted a row it never dispatched, or never merged the dispatched task,
+// reddens it — which is what makes the fact prove the whole adopt→dispatch→merge tail, not just the fold.
+export function adoptedAndDispatched() {
+  return fact('adopted-and-dispatched', 'A worker-introduced task was adopted at merge, then dispatched and merged', (bundle) => {
+    const evidence = [];
+    const adopts = flowOf(bundle, 'adopt').filter((e) => /^T\d+$/.test(e.rest));
+    if (adopts.length === 0) {
+      return { pass: false, evidence, detail: 'no adopt line — no worker-introduced task was folded into the plan' };
+    }
+    const spawns = flowOf(bundle, 'spawn');
+    const merges = flowOf(bundle, 'merge');
+    // A worker may add more than one task; the path passes if ANY adopted task completed adopt→dispatch→merge.
+    for (const adopt of adopts) {
+      const task = adopt.rest;
+      const spawnedAfter = spawns.find((s) => s.rest === task && s.ts >= adopt.ts);
+      const mergedAfter = spawnedAfter && merges.find((m) => m.rest === task && m.ts >= spawnedAfter.ts);
+      if (spawnedAfter && mergedAfter) {
+        evidence.push(flowLine(adopt), flowLine(spawnedAfter), flowLine(mergedAfter));
+        return { pass: true, evidence, detail: `${task} was adopted, dispatched and merged — the introduced task ran through` };
+      }
+    }
+    // None completed the tail: report the first adopted task with the step it did not reach.
+    const first = adopts[0];
+    const task = first.rest;
+    evidence.push(flowLine(first));
+    const spawnedAfter = spawns.find((s) => s.rest === task && s.ts >= first.ts);
+    if (!spawnedAfter) {
+      for (const s of spawns.filter((s) => s.rest === task)) evidence.push(flowLine(s));
+      return { pass: false, evidence, detail: `${task} was adopted but never dispatched after it — the adopted task was silently never built (§2.5)` };
+    }
+    evidence.push(flowLine(spawnedAfter));
+    for (const m of merges.filter((m) => m.rest === task)) evidence.push(flowLine(m));
+    return { pass: false, evidence, detail: `${task} was adopted and dispatched but its branch never merged — the introduced task did not land` };
+  });
+}
+
 // A coordinator-hit merge conflict was RESOLVED in the non-agentic, ATTENDED model (DESIGN §2.8, §2.2):
 // the coordinator kept the conflicting worker alive and parked (it never closed it or merged past it) and
 // offered a ready-to-paste resolution prompt (T14). There is no down-channel and no `answer()` any more

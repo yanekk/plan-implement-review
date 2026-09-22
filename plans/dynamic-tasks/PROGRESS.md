@@ -12,10 +12,11 @@ account is the commit message; writing it twice turns a tracker into a history n
 
 **Plan reviewed:** 2026-09-21 — 2 fixed, 1 decided with the user
 
-**Status:** Plan just written. Nothing built. The mechanism (T00–T02) is fully headless and
-auto-testable; the worker contract and docs (T03–T04) follow; a live drill (T05) closes it.
-**Last updated:** 2026-09-21
-**Next `pir-work` will:** implement T00 — it has no dependencies and gates the whole chain.
+**Status:** Mechanism (T00–T02), worker contract and docs (T03–T04) all ✅. T05's fixture is
+built and the suite is green; its live drill with the person is still unrun (person-only).
+**Last updated:** 2026-09-22
+**Next `pir-work` will:** review T05's fixture code. The live drill is a separate person-run
+verification (see Blocked on the user), not something a session can run for itself.
 
 ## Tasks
 
@@ -32,10 +33,14 @@ and, in parallel mode, its worker's agent name.
 | T02 | dispatch-adopted | T01 | ✅ | |
 | T03 | worker-add-task | T02 | ✅ | |
 | T04 | docs-and-rules | T02 | ✅ | |
-| T05 | live-drill | T02, T03, T04 | ⬜ | harness fixture + hands-on live run with the person |
+| T05 | live-drill | T02, T03, T04 | 🔍 | dynamic-task fixture built + registered; new fact adoptedAndDispatched (adopt→spawn→merge, task-agnostic); 5 fact tests + spec/determinism tests, 458 green. Automated half only — LIVE DRILL UNVERIFIED, needs the person. No deviations. |
 
-**Review queue:** *(empty)*
+**Review queue:** T05 (fixture code — the automated half).
 
 ## Blocked on the user
 
-*(Empty — a good state. T05 will need the person for its live drill when it is reached.)*
+T05 live drill (person-only, gates ✅). Run the seatbelted coordinator on the installed
+`dynamic-task` fixture; when the worker parks asking to add the farewell task, attach in
+`claude agents` and approve. Judge: did it escalate before adding, was the addition well-formed,
+did the coordinator adopt and dispatch. Record dated in FINDINGS.md as ✅. A worker cannot run
+this itself — it spawns real paid agents (DESIGN §5.2).
