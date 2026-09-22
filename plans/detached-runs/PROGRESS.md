@@ -29,7 +29,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T02 | index-record | — | ⬜ | |
 | T03 | snapshot-model | — | ⬜ | |
 | T04 | dashboard-model | T01 | ⬜ | |
-| T05 | process-identity | T01 | ⬜ | |
+| T05 | process-identity | T01 | 🔍 | `src/shell/identity.mjs`: isAlive/startTimeOf/resolveLiveness, kill+exec injected. 12 tests, incl. resolveLiveness→classifyRun both ways and a real-ps smoke on process.pid. Deviations: isAlive returns false on unexpected errno (spec named only ESRCH/EPERM); resolveLiveness skips ps when dead (classifyRun crashes on !alive regardless). |
 | T06 | index-store | T02 | ⬜ | |
 | T07 | snapshot-store | T03 | ⬜ | |
 | T08 | start-detached | T05, T06 | ⬜ | hands-on: survives terminal restart |
