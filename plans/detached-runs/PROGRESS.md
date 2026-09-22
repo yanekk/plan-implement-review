@@ -25,10 +25,10 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | # | Task | Depends on | State | Notes |
 |---|---|---|---|---|
 | T01 | run-state | — | ✅ | |
-| T02 | index-record | — | ⬜ | |
+| T02 | index-record | — | ✅ | |
 | T03 | snapshot-model | — | ✅ | |
 | T04 | dashboard-model | T01 | ⬜ | |
-| T05 | process-identity | T01 | ⬜ | |
+| T05 | process-identity | T01 | ✅ | |
 | T06 | index-store | T02 | ⬜ | |
 | T07 | snapshot-store | T03 | ✅ | Clean, no fix commit. 7 tests pass, full suite green. Probed: temp and target share controlDir so rename stays atomic; readSnapshot never throws on absent/torn/malformed/unreadable (parseSnapshot proven non-throwing), all collapse to null per §2.10. Both deviations sound: auto-mkdir defensive; fixed temp name safe under §3.5 single-writer. |
 | T08 | start-detached | T05, T06 | ⬜ | hands-on: survives terminal restart |
