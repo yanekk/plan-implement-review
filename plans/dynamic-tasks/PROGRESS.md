@@ -32,7 +32,7 @@ and, in parallel mode, its worker's agent name.
 | T02 | dispatch-adopted | T01 | ✅ | |
 | T03 | worker-add-task | T02 | ✅ | |
 | T04 | docs-and-rules | T02 | ✅ | |
-| T05 | live-drill | T02, T03, T04 | ⬜ | harness fixture + hands-on live run with the person |
+| T05 | live-drill | T02, T03, T04 | ✅ | |
 
 **Review queue:** *(empty)*
 
