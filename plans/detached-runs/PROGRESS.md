@@ -15,8 +15,7 @@ the account is the commit message. Whoever writes a cell also fixes the over-bud
 `prototype/`. Detached-spawn and process-identity mechanisms verified on the machine (FINDINGS).
 Nothing implemented yet.
 **Last updated:** 2026-09-22
-**Next `pir-work` will:** nothing until the plan is reviewed. After review, implement T01
-(run-state) — a Phase 1 task with no dependencies, on the critical path.
+**Next `pir-work` will:** review T07 (snapshot-store), the lowest-numbered task awaiting review.
 
 ## Tasks
 
@@ -31,7 +30,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T04 | dashboard-model | T01 | ⬜ | |
 | T05 | process-identity | T01 | ⬜ | |
 | T06 | index-store | T02 | ⬜ | |
-| T07 | snapshot-store | T03 | ⬜ | |
+| T07 | snapshot-store | T03 | 🔍 | snapshot-store.mjs: snapshotPath/writeSnapshot/readSnapshot, temp-then-rename via T03, read null on absent/malformed/unreadable. 7 tests. Deviations: writeSnapshot mkdirs the control folder if absent (defensive, extra test); fixed temp name .status.json.tmp, single-writer per §3.5. |
 | T08 | start-detached | T05, T06 | ⬜ | hands-on: survives terminal restart |
 | T09 | stop-and-remove | T05, T06 | ⬜ | |
 | T10 | coordinator-reporting | T07 | ⬜ | edits coordinate.mjs behind PIR_RUN |
@@ -39,7 +38,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T12 | dashboard-tui | T04, T07, T09, T10, T11 | ⬜ | hands-on: the live feel |
 | T13 | docs-and-install | T12 | ⬜ | updates /docs |
 
-**Review queue:** *(empty)*
+**Review queue:** T07
 
 ## Blocked on the user
 
