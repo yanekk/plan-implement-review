@@ -25,7 +25,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 
 | # | Task | Depends on | State | Notes |
 |---|---|---|---|---|
-| T01 | run-state | — | ⬜ | |
+| T01 | run-state | — | ✅ | |
 | T02 | index-record | — | ⬜ | |
 | T03 | snapshot-model | — | ✅ | Reviewed clean, no fix commit. Every acceptance item met by real tests; the buildDisplay integration test exercises the parsed runState and the null-rejection tests fail if parse is gutted. Probed: finalState false/0/'' all reject, parse never throws on torn/emoji/null input, serialize degrades on undefined. Boundary green (pure). No deviations. |
 | T04 | dashboard-model | T01 | ⬜ | |
