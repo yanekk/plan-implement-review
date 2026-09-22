@@ -97,6 +97,17 @@ The one thing you may fix outside the task is an over-budget row in `PROGRESS.md
 `FINDINGS.md` that you read on the way in. That is not scope creep and it needs no finding
 logged; it is the maintenance those two files get instead of a session of their own.
 
+**The one sanctioned exception to strict scope — parallel mode only, with the person's yes.** If,
+building this task, you find the plan is missing a task that has to exist, you may add it — but only
+after the person approves it in this session, and only as an addition: a new `⬜` row in `PROGRESS.md`,
+a `PLAN.md` row, a full `tasks/T{nn}-{slug}.md` doc and a dated `FINDINGS.md` line, with the new task
+depending only on tasks that already exist. You never edit an existing task, and you never add one
+without the person's yes. The coordinator forces the adopted row to `⬜` and rejects a dependency on an
+unknown task or any edit of an existing one, so a corner cut here does not land. The full contract —
+how to propose it, and what the coordinator adopts and refuses — is in the `pir-worker` skill (§ When
+you find a task the plan is missing). Outside parallel mode this exception does not exist: a classic
+session logs the missing task as a finding and leaves it.
+
 ## Automate first — your hands are the first resort, the user's the last
 
 This task is yours to finish. Before you hand *anything* to
