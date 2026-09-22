@@ -15,7 +15,7 @@ the account is the commit message. Whoever writes a cell also fixes the over-bud
 `prototype/`. Detached-spawn and process-identity mechanisms verified on the machine (FINDINGS).
 Nothing implemented yet.
 **Last updated:** 2026-09-22
-**Next `pir-work` will:** review T01 (run-state), now implemented. T04 and T05 depend on it.
+**Next `pir-work` will:** T01 reviewed clean. T02, T03, T04, T05 now dispatchable (T04/T05 depended on T01).
 
 ## Tasks
 
@@ -24,7 +24,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 
 | # | Task | Depends on | State | Notes |
 |---|---|---|---|---|
-| T01 | run-state | — | 🔍 | `classifyRun` pure fn (§3.3): clean final record wins, then aliveness, then reused-number test. 8 tests + boundary. No deviation. |
+| T01 | run-state | — | ✅ | Reviewed clean, no fix commit. `classifyRun` pure fn (§3.3) matches spec exactly; 8 tests cover every doc case incl. reuse and defensive null; boundary confirms purity; 467-test suite green. Probed: start-time string equality is core-correct; `ps -o lstart` normalization is T05 (identity.mjs) to uphold. |
 | T02 | index-record | — | ⬜ | |
 | T03 | snapshot-model | — | ⬜ | |
 | T04 | dashboard-model | T01 | ⬜ | |
@@ -38,7 +38,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T12 | dashboard-tui | T04, T07, T09, T10, T11 | ⬜ | hands-on: the live feel |
 | T13 | docs-and-install | T12 | ⬜ | updates /docs |
 
-**Review queue:** T01
+**Review queue:** *(empty)*
 
 ## Blocked on the user
 
