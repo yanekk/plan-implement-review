@@ -11,12 +11,12 @@ the account is the commit message. Whoever writes a cell also fixes the over-bud
 
 **Plan reviewed:** 2026-09-22 — 4 fixed, 3 decided with the user
 
-**Status:** Plan just written. Prototype approved by the user (2026-09-22) and parked in
-`prototype/`. Detached-spawn and process-identity mechanisms verified on the machine (FINDINGS).
-Nothing implemented yet.
+**Status:** T13 (docs + install) implemented, awaiting review — the last task. All others ✅.
+`docs/detached-runs.md` written and linked; `install.sh` installs `bin/pir` alongside
+`pir-coordinate`. Once T13 is reviewed the plan is done.
 **Last updated:** 2026-09-22
-**Next `pir-work` will:** nothing until the plan is reviewed. After review, implement T01
-(run-state) — a Phase 1 task with no dependencies, on the critical path.
+**Next `pir-work` will:** review T13 (the review queue's only entry). It is the last task, so a
+clean review completes the plan.
 
 ## Tasks
 
@@ -37,12 +37,12 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T10 | coordinator-reporting | T07 | ✅ | |
 | T11 | pir-command | T08 | ✅ | |
 | T12 | dashboard-tui | T04, T07, T09, T10, T11 | ✅ | |
-| T13 | docs-and-install | T12 | ⬜ | updates /docs |
+| T13 | docs-and-install | T12 | 🔍 | Wrote docs/detached-runs.md, linked from docs/README.md. install.sh installs bin/pir alongside pir-coordinate via a LAUNCHERS loop. .gitignore already covers status.json — unchanged. Doc carries the as-built keys (← back, esc quit), not DESIGN §2.3/§2.4/§2.11. Deviation: updated launcher.test.mjs to the loop and to cover pir (its literal grep broke). |
 
-**Review queue:** *(empty)*
+**Review queue:** T13
 
 ## Blocked on the user
 
-Nothing right now. Two tasks will need a person when they are built: T08 (confirm a run survives
-closing WezTerm) and T12 (confirm the live dashboard reads right). The worker raises each through
-the normal question path when it reaches that point — not homework left for the end.
+Nothing. T13 (docs + install) needs no hand-check — the doc is verified by reading, the install
+wiring by simulating its launcher substitution. T08 (run survives closing WezTerm) and T12 (the
+live dashboard reads right) were both hand-verified with the user (FINDINGS).
