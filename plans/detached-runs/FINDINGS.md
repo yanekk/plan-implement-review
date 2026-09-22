@@ -18,6 +18,7 @@ the user changed.
 
 | Date | | Finding |
 |---|---|---|
+| 2026-09-22 | 📌 | T10 self-reporting needs T06 `index-store` to stamp a run's final status, but T06 is not a T10 dependency and is unbuilt. `coordinate.mjs` loads `index-store` lazily (dynamic import); `updateIndexFinalState` logic tested via injection. Consider adding T06 to T10's deps. |
 | 2026-09-22 | 📌 | `spawn(node, args, {detached:true, stdio:['ignore',fd,fd]})` + `child.unref()` outlives its parent on this Mac: the child reparented to pid 1 and kept running after the parent exited. This is the `pir start` mechanism (T08). |
 | 2026-09-22 | 📌 | Process identity against number reuse: `ps -p {pid} -o lstart=` returns a stable launch time like `Tue Sep 22 08:27:37 2026`. Record it at start; a live process whose lstart differs is a reused number, so the run is crashed (DESIGN §3.3). |
 | 2026-09-22 | 📌 | `caffeinate` at `/usr/bin/caffeinate`, `claude` at `~/.local/bin/claude`, node v24.2.0 at `/opt/homebrew/bin/node`. Keep-awake is `caffeinate -i -w {pid}`: `-w` waits on the process and exits when it dies, so keep-awake self-releases on any run death (DESIGN §2.9). |

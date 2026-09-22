@@ -20,7 +20,14 @@ import {
   buildRunState,
   displayPhaseFor,
   waitForReport,
+  shouldSelfReport,
+  finalStateForExit,
+  writeRunSnapshot,
+  writeRunFinal,
+  updateIndexFinalState,
 } from './coordinate.mjs';
+import { readSnapshot } from './snapshot-store.mjs';
+import { serializeRecord } from '../core/runrecord.mjs';
 import { EventEmitter } from 'node:events';
 import { createMessaging } from './platform.mjs';
 import { createFakePlatform } from './fake/platform.mjs';
@@ -704,4 +711,156 @@ test('waitForReport still falls back to the timeout when fs.watch cannot start a
   assert.equal(resolved, false, 'the sync-catch fallback still waits for the timeout, it does not throw');
   await p;
   assert.equal(resolved, true);
+});
+
+// --- T10: the coordinator's detached self-reporting (DESIGN §2.4, §2.6, §3.4, §3.5) -----------------
+//
+// These drive the pure/injectable halves the bin wires: the PIR_RUN gate, the exit → final-status
+// mapping, the per-pass snapshot write, the final-status write on exit, and the index-entry stamp. The
+// bin glue itself (dynamic index-store load, process facts) is the untested integration seam, as in the
+// rest of this module; every decision it makes is proven here against fakes.
+
+const tmpControl = (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'pir-t10-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  return dir;
+};
+const sampleProc = { pid: 4242, startTime: 'Tue Sep 22 08:27:37 2026', slug: SLUG, repo: REPO, branch: `pir/${SLUG}`, startedAt: '2026-09-22T08:27:37.000Z' };
+const sampleRunState = () =>
+  buildRunState({ passTasks: [{ num: 'T01', name: '1-thing', deps: [], state: '⬜' }], branch: `pir/${SLUG}`, ceiling: 4 });
+
+test('shouldSelfReport is the PIR_RUN gate — only a `pir`-launched run reports on itself (DESIGN §3.5)', () => {
+  assert.equal(shouldSelfReport({}), false, 'no PIR_RUN → classic foreground path, no self-reporting');
+  assert.equal(shouldSelfReport({ PIR_RUN: '1' }), true, 'PIR_RUN set by the launcher → the run self-reports');
+});
+
+test('finalStateForExit: clean ends → finished/stopped; every abnormal exit → no status (DESIGN §2.2, §7)', () => {
+  assert.equal(finalStateForExit('complete'), 'finished', 'a completed hand-off (green or red) is a clean end');
+  assert.equal(finalStateForExit('stall'), 'finished', 'nothing-left-to-do is a clean end');
+  assert.equal(finalStateForExit('stop'), 'stopped', 'a user stop records stopped');
+  for (const abnormal of ['halt', 'runaway', 'safety-cap', 'error', 'anything-else']) {
+    assert.equal(finalStateForExit(abnormal), null, `${abnormal} records NO status → classified crashed`);
+  }
+});
+
+test('writeRunSnapshot writes a live status.json parseSnapshot accepts, whose runState matches the pass (DESIGN §2.4)', (t) => {
+  const controlDir = tmpControl(t);
+  const runState = sampleRunState();
+  writeRunSnapshot({ controlDir, proc: sampleProc, runState });
+
+  const snap = readSnapshot(controlDir);
+  assert.ok(snap, 'the snapshot round-trips through parseSnapshot (it is not malformed)');
+  assert.equal(snap.finalState, null, 'a per-pass snapshot is live — no final status yet');
+  assert.deepEqual(snap.runState, runState, 'the snapshot carries exactly the run state the display was given');
+  assert.deepEqual(snap.proc, sampleProc, 'and the process facts the dashboard classifies from');
+});
+
+test('writeRunFinal on a clean end writes `finished` to BOTH the snapshot and the index entry (DESIGN §2.2, T10)', (t) => {
+  for (const reason of ['complete', 'stall']) {
+    const controlDir = tmpControl(t);
+    const idxCalls = [];
+    const runState = sampleRunState();
+    const res = writeRunFinal({ controlDir, proc: sampleProc, runState, reason, updateIndex: (f) => idxCalls.push(f) });
+
+    assert.equal(res.finalState, 'finished', `${reason} is a clean end → finished`);
+    assert.equal(res.wrote, true);
+    assert.equal(readSnapshot(controlDir).finalState, 'finished', `${reason}: the snapshot records finished`);
+    assert.deepEqual(idxCalls, ['finished'], `${reason}: the index entry is stamped finished too`);
+  }
+});
+
+test('writeRunFinal on a stop writes `stopped` to both (DESIGN §2.6, T10)', (t) => {
+  const controlDir = tmpControl(t);
+  const idxCalls = [];
+  const res = writeRunFinal({ controlDir, proc: sampleProc, runState: sampleRunState(), reason: 'stop', updateIndex: (f) => idxCalls.push(f) });
+  assert.equal(res.finalState, 'stopped');
+  assert.equal(readSnapshot(controlDir).finalState, 'stopped', 'the snapshot records stopped');
+  assert.deepEqual(idxCalls, ['stopped'], 'the index entry is stamped stopped');
+});
+
+test('writeRunFinal on an abnormal exit writes NOTHING — snapshot and index both stay null → crashed (DESIGN §2.2, §7, T10)', (t) => {
+  for (const reason of ['halt', 'runaway', 'safety-cap', 'error']) {
+    const controlDir = tmpControl(t);
+    // A live snapshot from the last pass is already on disk (finalState null).
+    writeRunSnapshot({ controlDir, proc: sampleProc, runState: sampleRunState() });
+    const idxCalls = [];
+    const res = writeRunFinal({ controlDir, proc: sampleProc, runState: sampleRunState(), reason, updateIndex: (f) => idxCalls.push(f) });
+
+    assert.equal(res.wrote, false, `${reason}: no final status is written`);
+    assert.equal(res.finalState, null);
+    assert.equal(readSnapshot(controlDir).finalState, null, `${reason}: the last live snapshot is left untouched (still null)`);
+    assert.deepEqual(idxCalls, [], `${reason}: the index entry is not stamped, so it classifies crashed`);
+  }
+});
+
+test('teardownRun with keepWorktrees closes workers but leaves the worktrees (the detached stop, DESIGN §2.6)', (t) => {
+  const { coordinator, platform, worktree } = setup(t, [{ num: 'T01' }, { num: 'T02' }], {
+    behaviors: { T01: { question: 'blocked on you' } },
+  });
+  driveCollecting(coordinator); // T02 completes; T01 parks unanswered and stays live
+  const parkedId = coordinator.state.tasks.T01.workerId;
+  assert.ok(platform._workers.has(parkedId), 'the parked worker is live before the stop');
+
+  const removesBefore = worktree.events.filter((e) => e.op === 'remove').length;
+  const { closed } = teardownRun({ platform, worktree, state: coordinator.state, repo: REPO, slug: SLUG, keepWorktrees: true });
+
+  assert.ok(closed.includes(parkedId), 'the stop still closes the live worker (no orphaned paid session)');
+  assert.ok(!platform._workers.has(parkedId), 'the session is gone from the platform');
+  const removesAfter = worktree.events.filter((e) => e.op === 'remove').length;
+  assert.equal(removesAfter, removesBefore, 'but NO worktree was removed — the next start reconciles them (§2.6)');
+});
+
+test('teardownRun without keepWorktrees still removes the worktree (the classic Ctrl-C path is unchanged)', (t) => {
+  const { coordinator, platform, worktree } = setup(t, [{ num: 'T01' }, { num: 'T02' }], {
+    behaviors: { T01: { question: 'blocked on you' } },
+  });
+  driveCollecting(coordinator);
+  const parkedTaskBranch = `pir/${SLUG}-T01`;
+  const removedBefore = worktree.events.some((e) => e.op === 'remove' && e.branch === parkedTaskBranch);
+
+  teardownRun({ platform, worktree, state: coordinator.state, repo: REPO, slug: SLUG }); // default: remove worktrees
+  assert.ok(
+    !removedBefore && worktree.events.some((e) => e.op === 'remove' && e.branch === parkedTaskBranch),
+    'the parked task worktree is removed on a classic teardown',
+  );
+});
+
+test('updateIndexFinalState stamps the run`s index entry, composing runrecord + the store (DESIGN §2.8, T10)', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'pir-t10-idx-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const path = join(dir, `${REPO}__${SLUG}.json`);
+  // Seed the entry the launcher (T08) wrote: a live run, finalState null.
+  const entry = { version: 1, slug: SLUG, repo: REPO, repoPath: '/x', controlDir: dir, pid: 4242, startTime: 'Tue Sep 22 08:27:37 2026', startedAt: '2026-09-22T08:27:37.000Z', branch: `pir/${SLUG}`, finalState: null };
+  writeFileSync(path, serializeRecord(entry));
+
+  const written = [];
+  const fakeStore = { recordPath: (repo, slug) => join(dir, `${repo}__${slug}.json`), writeRecord: (rec) => written.push(rec) };
+
+  const res = updateIndexFinalState({ repo: REPO, slug: SLUG, finalState: 'finished', indexStore: fakeStore, now: () => '2026-09-22T09:00:00.000Z' });
+  assert.equal(res.updated, true);
+  assert.equal(written.length, 1, 'the entry was written back exactly once');
+  assert.equal(written[0].finalState, 'finished', 'with its final status set');
+  assert.equal(written[0].updatedAt, '2026-09-22T09:00:00.000Z', 'and an updatedAt stamp');
+  assert.equal(written[0].pid, 4242, 'the pointer fields (pid, startTime, repo…) are preserved');
+  assert.equal(written[0].startTime, 'Tue Sep 22 08:27:37 2026');
+});
+
+test('updateIndexFinalState is a safe no-op when the store is absent or the entry is missing (DESIGN §2.10, T10)', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'pir-t10-idx2-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+
+  // No store at all (T06 not loaded on this branch) → nothing done, no throw.
+  assert.deepEqual(updateIndexFinalState({ repo: REPO, slug: SLUG, finalState: 'finished', indexStore: null }), {
+    updated: false,
+    reason: 'no-index-store',
+  });
+
+  // Store present but the launcher's entry is not on disk → no-op, not a throw during exit.
+  const written = [];
+  const fakeStore = { recordPath: (repo, slug) => join(dir, `${repo}__${slug}.json`), writeRecord: (rec) => written.push(rec) };
+  assert.deepEqual(updateIndexFinalState({ repo: REPO, slug: SLUG, finalState: 'finished', indexStore: fakeStore }), {
+    updated: false,
+    reason: 'no-entry',
+  });
+  assert.equal(written.length, 0, 'a missing entry is never conjured into existence');
 });
