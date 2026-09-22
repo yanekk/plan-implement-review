@@ -12,11 +12,11 @@ account is the commit message; writing it twice turns a tracker into a history n
 
 **Plan reviewed:** 2026-09-21 — 2 fixed, 1 decided with the user
 
-**Status:** Mechanism (T00–T02), worker contract and docs (T03–T04) all ✅. T05's automated
-half is reviewed clean; only its person-only live drill is left, and it gates ✅.
+**Status:** All tasks ✅. T05's automated half reviewed clean and its live drill run with the
+person on 2026-09-22 — worker escalated before adding, addition well-formed, coordinator adopted
+and dispatched (FINDINGS.md). The plan is complete.
 **Last updated:** 2026-09-22
-**Next `pir-work` will:** nothing new — T05 is ⛔ on the person's live drill (see Blocked on
-the user). Once the person runs it and it is recorded in FINDINGS.md, flip T05 to ✅.
+**Next `pir-work` will:** nothing — every task is ✅. The plan is done.
 
 ## Tasks
 
@@ -33,15 +33,10 @@ and, in parallel mode, its worker's agent name.
 | T02 | dispatch-adopted | T01 | ✅ | |
 | T03 | worker-add-task | T02 | ✅ | |
 | T04 | docs-and-rules | T02 | ✅ | |
-| T05 | live-drill | T02, T03, T04 | ⛔ | Automated half reviewed clean: adoptedAndDispatched fact logic correct against the real flow shape (adopt→spawn→merge, ISO ts ordering), its 4 failure modes go red, fixture installs deterministically (verified by hand, SHA efab31f). No fixes. Now ⛔ on the person for the live drill, which gates ✅. |
+| T05 | live-drill | T02, T03, T04 | ✅ | Automated half clean (fact logic correct vs real flow shape, 4 failure modes red, fixture installs deterministically). Live drill run with the person 2026-09-22: worker escalated before adding, addition well-formed, coordinator adopted→dispatched→merged; both facts PASS, main untouched (FINDINGS.md). No fixes. |
 
-**Review queue:** *(empty — T05's automated half is reviewed; the live drill is person-only.)*
+**Review queue:** *(empty — every task is reviewed.)*
 
 ## Blocked on the user
 
-T05 live drill (person-only, gates ✅). Run `node src/shell/harness/run.mjs dynamic-task` — it
-installs the fixture into a throwaway scratch repo and launches the coordinator seatbelted
-(PARALLEL_LIVE=1, ceiling 1, a 30-min wall-clock auto-HALT). When the worker parks asking to add
-the farewell task, attach in `claude agents` and approve in its own session. Judge: did it
-escalate before adding, was the addition well-formed, did the coordinator adopt and dispatch.
-Record dated in FINDINGS.md as ✅. A worker cannot run this — it spawns real paid agents (§5.2).
+*(Empty — a good state. T05's live drill was run and verified with the person on 2026-09-22.)*
