@@ -15,7 +15,7 @@ the account is the commit message. Whoever writes a cell also fixes the over-bud
 `prototype/`. Detached-spawn and process-identity mechanisms verified on the machine (FINDINGS).
 Nothing implemented yet.
 **Last updated:** 2026-09-22
-**Next `pir-work` will:** review T06 (index-store) — the lowest-numbered 🔍.
+**Next `pir-work` will:** implement a ready ⬜ — T04, T05 or T07 (deps all ✅). No 🔍 waiting.
 
 ## Tasks
 
@@ -29,7 +29,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T03 | snapshot-model | — | ✅ | |
 | T04 | dashboard-model | T01 | ⬜ | |
 | T05 | process-identity | T01 | ⬜ | |
-| T06 | index-store | T02 | 🔍 | index-store.mjs: indexDir/recordPath/listRecords/writeRecord/removeRecord over `~/.pir/runs`, PIR_HOME override, temp-then-rename, malformed/absent tolerated. 13 tests. No deviations; extra tests for cross-repo names, mkdir, .tmp-leftover skip, fs injection. |
+| T06 | index-store | T02 | ✅ | Reviewed clean, no fix commit. 13 tests green, interface matches spec. Probed: temp name ends `.tmp` not `.json` so `listRecords` skips it though it contains `.json`; `readFileSync` on a vanished/EISDIR file drops only itself; atomic overwrite keeps one entry. `{repo}__{slug}` aliasing is a plan-level naming choice, not this task. |
 | T07 | snapshot-store | T03 | ⬜ | |
 | T08 | start-detached | T05, T06 | ⬜ | hands-on: survives terminal restart |
 | T09 | stop-and-remove | T05, T06 | ⬜ | |
@@ -38,7 +38,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T12 | dashboard-tui | T04, T07, T09, T10, T11 | ⬜ | hands-on: the live feel |
 | T13 | docs-and-install | T12 | ⬜ | updates /docs |
 
-**Review queue:** T06
+**Review queue:** empty
 
 ## Blocked on the user
 
