@@ -89,6 +89,58 @@ choices and your recommendation, and wait for the answer before you commit it �
 whichever is easier to write. (On the review-queue run three workers each guessed the newline and
 converged only by who wrote first.)
 
+## When you find a task the plan is missing: propose it, then add it — the one scope carve-out
+
+Strict scope binds you to your one task (`CLAUDE.md § Scope is strict`). There is exactly one
+sanctioned break from it, and only in parallel mode: **when, building T{x}, you discover the plan is
+missing a task that has to exist, you may add that new task — never editing an existing one, and never
+without the person's yes first** (DESIGN §2.1, §2.4). This is "the plan is mine" (`CLAUDE.md § Who
+decides what`) held intact under parallelism: you propose, the person decides in this session, and
+only then do you write it down. It is a genuinely new scope exception, not the worktree carve-out
+reworded — that one frees you from "where sessions run"; this frees you, once and with a yes, from
+"touch only your task."
+
+The flow:
+
+1. **Propose it as a decision, and wait.** Escalate through the path above (§ When a stock skill
+   would "ask the user and wait"): drop a `decision` report — the existing kind, no new one — lay the
+   case to the person in this session (what the task is, why the plan needs it, what it depends on),
+   and wait for their answer here. **Never add a task without a yes.** An unrequested task is the
+   "what" that is the person's, not yours.
+2. **On approval, on your own task branch, ADD ONLY** — four additions, and no edit to any existing
+   task's row or doc:
+   - `PROGRESS.md`: one new row — state `⬜`, the next free T-number, a kebab slug, and `Depends on`
+     naming **only tasks that already exist** (on the feature branch, or another task you are adding
+     in the same change).
+   - `PLAN.md`: the matching row in the task table.
+   - `tasks/T{nn}-{slug}.md`: a full task doc — goal, files, interface, tests, done-when — whose slug
+     matches both its filename and its `PROGRESS.md` row.
+   - `FINDINGS.md`: one dated line naming the new task and why it was added.
+3. **Finish T{x} normally, and signal nothing special.** The coordinator adopts the new row when
+   T{x} merges (DESIGN §2.3); there is no new report kind and no extra step. Your `implemented`
+   report is the same as always.
+
+What the machine does with what you wrote — so cutting a corner gains you nothing (DESIGN §2.2, §2.5):
+
+- It **forces your new row to `⬜`** on adoption. Pre-marking it `🔍` or `✅` buys nothing and would
+  skip the task's build; the coordinator owns task state and overwrites yours.
+- It **rejects a dependency on a task that does not exist** — such a task could never be dispatched.
+  Depend only on tasks already on the feature branch or added in the same change.
+- It **rejects any edit of an existing task** — a changed slug, changed dependencies, or a reused
+  number — and then adopts nothing from the whole branch (adoption is atomic per branch). Add-only is
+  enforced at the machine boundary, so an accidental edit is refused, never silently applied.
+- A **number collision** (two workers picked the same next-free T-number) is surfaced to the person,
+  **not auto-renumbered** — renumbering would rewrite a filename, a branch name and every dependency
+  that points at the task. The person renumbers and re-adds.
+
+**Expect a possible conflict on `PLAN.md` or `FINDINGS.md`, and treat it as an ordinary one.** Only
+`PROGRESS.md` is fold-protected at merge; the `PLAN.md` row and the `FINDINGS.md` line you added merge
+through git like any other file. If another worker adds a task (or appends a finding) close to you,
+git cannot combine the two edits and the merge conflicts on those files. This is not special-cased —
+it takes the existing conflict path (§ If a later merge of your branch conflicts): you are parked, the
+person gives you the resolution here, you order the two additions and re-signal done. The pause is
+expected, not a fault (DESIGN §2.5, §6).
+
 ## You record progress by DROPPING A FILE, not by messaging anyone
 
 There is no one to message: the run watches a shared folder, not an inbox (SendMessage would reach
