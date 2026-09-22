@@ -15,8 +15,8 @@ the account is the commit message. Whoever writes a cell also fixes the over-bud
 `prototype/`. Detached-spawn and process-identity mechanisms verified on the machine (FINDINGS).
 Nothing implemented yet.
 **Last updated:** 2026-09-22
-**Next `pir-work` will:** nothing until the plan is reviewed. After review, implement T01
-(run-state) — a Phase 1 task with no dependencies, on the critical path.
+**Next `pir-work` will:** in this parallel run the coordinator dispatches by dependency —
+next buildable is T06 (index-store, deps T02 ✅). Review queue empty.
 
 ## Tasks
 
@@ -34,12 +34,12 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T07 | snapshot-store | T03 | ✅ | |
 | T08 | start-detached | T05, T06 | ⬜ | hands-on: survives terminal restart |
 | T09 | stop-and-remove | T05, T06 | ⬜ | |
-| T10 | coordinator-reporting | T07 | 🔍 | Snapshot each pass + final status on exit, all behind PIR_RUN; classic path untouched. Stop (SIGTERM) closes workers, leaves worktrees, marks stopped. Deviation: index-store (T06) unbuilt and not a dep, so loaded lazily in the bin; index-update logic tested via injection. 10 tests. |
+| T10 | coordinator-reporting | T07 | ✅ | Reviewed clean, no fix. 10 tests read the snapshot/index back off disk, not vacuous; all 6 doc cases covered. Verified classic path fully gated (selfReport off → no writes, SIGTERM → classic teardown), abnormal exits write nothing → crashed, stop keeps worktrees. Probed signal races, stop-before-first-pass seed, best-effort index update. Lazy-T06-import deviation sound; PM dep question stands in FINDINGS. |
 | T11 | pir-command | T08 | ⬜ | |
 | T12 | dashboard-tui | T04, T07, T09, T10, T11 | ⬜ | hands-on: the live feel |
 | T13 | docs-and-install | T12 | ⬜ | updates /docs |
 
-**Review queue:** T10
+**Review queue:** empty
 
 ## Blocked on the user
 
