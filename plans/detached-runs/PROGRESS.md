@@ -15,8 +15,7 @@ the account is the commit message. Whoever writes a cell also fixes the over-bud
 `prototype/`. Detached-spawn and process-identity mechanisms verified on the machine (FINDINGS).
 Nothing implemented yet.
 **Last updated:** 2026-09-22
-**Next `pir-work` will:** nothing until the plan is reviewed. After review, implement T01
-(run-state) — a Phase 1 task with no dependencies, on the critical path.
+**Next `pir-work` will:** review T09 (lowest-numbered 🔍).
 
 ## Tasks
 
@@ -33,13 +32,13 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T06 | index-store | T02 | ✅ | |
 | T07 | snapshot-store | T03 | ✅ | |
 | T08 | start-detached | T05, T06 | ⬜ | hands-on: survives terminal restart |
-| T09 | stop-and-remove | T05, T06 | ⬜ | |
+| T09 | stop-and-remove | T05, T06 | 🔍 | control-run.mjs: stopRun (async; SIGTERM→grace poll→SIGKILL+reap own workers by name) and removeRun (index entry + status.json; plan files untouched). 9 tests. Deviations: dropped unused exec/fs from stopRun (needs only kill+platform); added optional dir to removeRun for scratch-index injection, per index-store pattern. |
 | T10 | coordinator-reporting | T07 | ⬜ | edits coordinate.mjs behind PIR_RUN |
 | T11 | pir-command | T08 | ⬜ | |
 | T12 | dashboard-tui | T04, T07, T09, T10, T11 | ⬜ | hands-on: the live feel |
 | T13 | docs-and-install | T12 | ⬜ | updates /docs |
 
-**Review queue:** *(empty)*
+**Review queue:** T09
 
 ## Blocked on the user
 
