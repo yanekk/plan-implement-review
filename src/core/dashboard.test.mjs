@@ -94,6 +94,15 @@ test('selection stays at 0 on an empty list', () => {
   assert.equal(dashboardReducer(ui, { type: 'select', index: 5 }, []).ui.sel, 0);
 });
 
+test('a malformed select (no index) pins sel to 0, and does not stick as NaN', () => {
+  // A select event whose index is missing/non-numeric must not corrupt sel: Math.min/Math.max let NaN
+  // through, and a NaN sel would then survive every later move. Selection stays a real slot instead.
+  const bad = dashboardReducer(initialUi(), { type: 'select' }, RUNS).ui;
+  assert.equal(bad.sel, 0, 'a missing index resets to the top row, not NaN');
+  const moved = dashboardReducer(bad, { type: 'down' }, RUNS).ui;
+  assert.equal(moved.sel, 1, 'a later move recovers rather than staying stuck');
+});
+
 test('open moves to watch with openSlug set; back returns to list', () => {
   let ui = dashboardReducer(initialUi(), { type: 'select', index: 2 }, RUNS).ui; // select run-crashed
   const opened = dashboardReducer(ui, { type: 'open' }, RUNS);

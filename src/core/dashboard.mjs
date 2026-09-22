@@ -98,8 +98,11 @@ export function dashboardReducer(ui, event, views = []) {
 }
 
 // Clamp an index into a list's valid row range; an empty list pins to 0 so `sel` is always a real slot.
+// A non-finite index (a malformed `select` with no `index`, or an already-corrupt `sel`) also pins to 0
+// rather than propagating NaN — Math.min/Math.max let NaN through and it would then stick across every
+// later move, silently breaking selection. Coercing here keeps the "always a real slot" invariant true.
 function clamp(i, len) {
-  if (len <= 0) return 0;
+  if (len <= 0 || !Number.isFinite(i)) return 0;
   return Math.max(0, Math.min(i, len - 1));
 }
 
