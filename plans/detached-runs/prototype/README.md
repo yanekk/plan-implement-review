@@ -1,7 +1,9 @@
 # prototype — pir run-control dashboard
 
-Throwaway mock of the `pir` CLI experience, confirmed with the user on 2026-09-22. Non-binding:
-the session that builds the real TUI designs it fresh. This records the direction, not a spec.
+Mock of the `pir` CLI experience, confirmed with the user on 2026-09-22. The user then made its
+semantic colours and interaction model **binding** on the build (DESIGN §2.11, §7): T12 implements
+this look and these keys rather than redesigning them. Exact terminal spacing stays the builder's —
+a real terminal is not this browser mock.
 
 `index.html` — open in a browser. Fake data, nothing real is spawned.
 

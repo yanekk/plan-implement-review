@@ -214,6 +214,33 @@ not battery-aware.
   handles. Reason: keep-awake blocks idle sleep, not a forced sleep, and a paused run is not a
   broken one.
 
+### 2.11 Appearance and key bindings (binding)
+
+The prototype's semantic colours and interaction model are binding on the front-end (user
+decision, §7): the T12 session implements them, it does not redesign them. What is not binding is
+exact terminal spacing and column widths, which a real terminal sets, not a browser mock.
+
+Colour carries state, and semantic colour is separate from any accent:
+
+- **List:** running green, finished dim, stopped dim, crashed red. The progress bar is blue for a
+  running run, red for a crashed one, dim otherwise. The selected row is highlighted with a blue
+  left edge. The counts line colours the running count green and the crashed count red. The
+  key-hint footer is faint; an armed stop/remove confirmation is amber and bold.
+- **Live view:** the colours are the coordinator's existing renderer (`src/shell/render.mjs`)
+  unchanged — active phases (building/reviewing/merging) cyan, done green, a parked "asking you"
+  worker amber and bold, idle (waiting/queued) dim, a failed or interrupted run red, the summary
+  line neutral. The view reuses that renderer, so this is consistency, not a second palette.
+- **Colour is never the only signal:** the glyphs (`render.mjs` owns them — the braille spinner for
+  active, ✔ done, ● asking, · idle) carry the same state, so a `NO_COLOR` terminal or a
+  colour-blind reader loses nothing.
+
+Behaviour is binding as specified in §2.1–2.7: start-or-open on `pir {slug}`, the cross-repo list,
+opening a run into the live block, Esc to step back then quit, finished and crashed runs openable,
+and the double-confirm Ctrl+S (stop) / Ctrl+X (remove) chords with a first-press armed line. Reason
+this is pinned rather than left to the builder: the user owns what the product looks like and does,
+played the mock until it was right, and wants that settled shape built, not reinterpreted — the
+usual fresh-eyes pass on the UI is deliberately traded away here at the user's direction.
+
 ---
 
 ## 3. Architecture
@@ -384,11 +411,15 @@ By-hand recovery, if `pir` itself is unavailable, is unchanged from docs/restart
 
 ## 7. Decisions and rationale
 
-- **Prototype approved 2026-09-22.** The `pir` dashboard direction was confirmed with the user
-  against `prototype/index.html`: `pir {slug}` starts and drops into the live view, `pir` opens a
-  cross-repo list, a run opens into the live task block, Esc steps back then quits, stop/remove are
-  double-confirmed chords, no process-number column. Non-binding; the T12 session designs the real
-  TUI fresh.
+- **Prototype approved 2026-09-22, and made binding for colours and behaviour (user).** The `pir`
+  dashboard direction was confirmed against `prototype/index.html`: `pir {slug}` starts and drops
+  into the live view, `pir` opens a cross-repo list, a run opens into the live task block, Esc steps
+  back then quits, stop/remove are double-confirmed chords, no process-number column. The user then
+  asked that the prototype's semantic colours and interaction model bind the build rather than serve
+  as a loose reference (§2.11); the T12 session follows them and does not redesign the look or the
+  keys. Exact terminal spacing stays the builder's. This trades away the method's default fresh-eyes
+  pass on the UI, at the user's direction, because the user owns what the product looks like and has
+  already settled it.
 - **Cross-repo index over repo-local (user).** The user chose to see runs from anywhere on the
   machine, so a `~/.pir/` pointer indexes runs across repos while the heavy state stays repo-local.
   Alternative (repo-local only) was simpler but could not list another repo's runs.

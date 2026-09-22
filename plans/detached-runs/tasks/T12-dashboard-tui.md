@@ -12,7 +12,13 @@ user's eyes can settle.
 
 ## Design sections this implements
 
-DESIGN §2.3 (the dashboard), §2.4 (the live view), §2.6/§2.7 (the chords), §5.1 (hand-verified).
+DESIGN §2.3 (the dashboard), §2.4 (the live view), §2.6/§2.7 (the chords), §2.11 (appearance and
+key bindings — **binding**), §5.1 (hand-verified).
+
+**The prototype binds this task's colours and behaviour** (§2.11, `prototype/index.html`). Build the
+semantic colour mapping and the interaction model as specified; do not redesign them. The live
+view's colours come from reusing `src/shell/render.mjs` unchanged; the list's colours follow §2.11.
+Exact terminal spacing and column widths are yours — a real terminal is not the browser mock.
 
 ## Files
 
@@ -57,7 +63,19 @@ loop each refresh:
       snapshot — i.e. it is the coordinator's display, not a reimplementation.
 - [ ] a key-decode table maps the arrow/Enter/Esc/Ctrl-S/Ctrl-X bytes to the reducer events.
 - [ ] a stale/final run renders its last frame with the stale marker.
+- [ ] the list frame applies the §2.11 colour mapping: running green, crashed red, finished/stopped
+      dim; progress bar blue when running and red when crashed; the selected row marked; the armed
+      confirmation amber and bold. Assert the styles the frame builder emits, the way `render.test.mjs`
+      asserts the coordinator's line styles.
 - [ ] raw mode and the alt-screen are restored on a thrown error (a close is always called).
+
+## Done when
+
+- [ ] The list uses the §2.11 semantic colours and the live view reuses `render.mjs`, so both
+      palettes match the prototype and the coordinator; a test asserts the list frame's styles.
+- [ ] The interaction model matches §2.1–2.7 and §2.11: start-or-open, open into the live block, Esc
+      back then quit, finished/crashed openable, Ctrl+S/Ctrl+X double-confirm with an armed line.
+- [ ] `npm test` passes and the terminal is never left in raw mode or the alt-screen on exit.
 
 ## Needs a person
 
