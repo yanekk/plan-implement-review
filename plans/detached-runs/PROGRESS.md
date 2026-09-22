@@ -15,8 +15,8 @@ the account is the commit message. Whoever writes a cell also fixes the over-bud
 `prototype/`. Detached-spawn and process-identity mechanisms verified on the machine (FINDINGS).
 Nothing implemented yet.
 **Last updated:** 2026-09-22
-**Next `pir-work` will:** finish T12 — after the user hand-verifies the live dashboard feel, mark it
-🔍 for review. Then T13 (docs-and-install), which depends on T12.
+**Next `pir-work` will:** review T12 (a fresh session, not the one that built it). Then T13
+(docs-and-install), which depends on T12 and must carry the ← back / Esc quit key change into /docs.
 
 ## Tasks
 
@@ -36,15 +36,12 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T09 | stop-and-remove | T05, T06 | ✅ | |
 | T10 | coordinator-reporting | T07 | ✅ | |
 | T11 | pir-command | T08 | ✅ | |
-| T12 | dashboard-tui | T04, T07, T09, T10, T11 | 🟡 | TUI in pir-tui.mjs (list, watch reusing render.mjs, keys, raw-mode loop); pir.mjs wired. 18 tests, npm test green (612). Live hand-check underway: fixed no-snapshot crashed message, run.log tail+path with wrapping, ← back / Esc quit (user), refresh flicker, slug-pinned selection. 🟡 pending user's live-feel sign-off. |
+| T12 | dashboard-tui | T04, T07, T09, T10, T11 | 🔍 | TUI in pir-tui.mjs + pir.mjs. 18 tests, npm test green (612). Hand-verified with user 2026-09-22 (FINDINGS ✅): live run reads right — list, ticking view, ←/Esc, chords. ← back / Esc quit is a user key change (FINDINGS 🔄). Awaiting fresh-eyes code review. |
 | T13 | docs-and-install | T12 | ⬜ | updates /docs |
 
-**Review queue:** *(empty)*
+**Review queue:** T12
 
 ## Blocked on the user
 
-T12: the live dashboard's feel (the in-place repaint, moving and opening, the confirm chords) can only
-be judged at a real terminal, and seeing it needs a real run — which means spawning paid agents, the
-one line a worker cannot cross alone. Handed to the user with the exact `pir` command; their answer
-goes in FINDINGS with the date, then T12 → 🔍. T08's survival check was folded into this same live run
-(FINDINGS 2026-09-22).
+Nothing right now. T12's live feel was hand-verified with the user 2026-09-22 (FINDINGS ✅). T08's
+run-survives-terminal-restart check is still unverified — fold it into a future live run.

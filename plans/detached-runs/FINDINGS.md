@@ -18,6 +18,7 @@ the user changed.
 
 | Date | | Finding |
 |---|---|---|
+| 2026-09-22 | ✅ | T12 dashboard hand-verified with the user: ran `pir single` in a scratch clone; the list, opening a run, the live ticking view, ← back / Esc quit, and the Ctrl+S/Ctrl+X chords all read and worked correctly. |
 | 2026-09-22 | 🐞 | T12 hand-check: a crashed run with no status.json wrongly showed "died mid-pass; frame stale". Now shows "no snapshot recorded — failed to start" with the run.log tail and full path. Surfaced by a PARALLEL_ALLOW_HERE refusal in the canonical checkout. |
 | 2026-09-22 | 🔄 | Key binding changed (user): ← steps back watch→list, Esc quits pir — replacing Esc-steps-back-then-quits (DESIGN §2.4, §2.11, prototype). /docs (T13) must carry the new keys; DESIGN §2.4/§2.11 now describe the old model. |
 | 2026-09-22 | 📌 | pir dashboard refresh flicker: full-screen `2J` each poll read as the selection dropping. Fixed: paint home+EL(`\e[K`)+ED(`\e[J`) overwrite in place (no blank), and pin the selection to the run's slug, not its row index. |
