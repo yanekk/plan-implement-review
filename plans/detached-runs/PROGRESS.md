@@ -11,12 +11,10 @@ the account is the commit message. Whoever writes a cell also fixes the over-bud
 
 **Plan reviewed:** 2026-09-22 — 4 fixed, 3 decided with the user
 
-**Status:** T13 (docs + install) implemented, awaiting review — the last task. All others ✅.
-`docs/detached-runs.md` written and linked; `install.sh` installs `bin/pir` alongside
-`pir-coordinate`. Once T13 is reviewed the plan is done.
+**Status:** Plan complete. All tasks ✅. T13 (docs + install) reviewed clean. `docs/detached-runs.md`
+written and linked; `install.sh` installs `bin/pir` alongside `pir-coordinate`. Nothing left to build.
 **Last updated:** 2026-09-22
-**Next `pir-work` will:** review T13 (the review queue's only entry). It is the last task, so a
-clean review completes the plan.
+**Next `pir-work` will:** nothing — the plan is done. The review queue is empty.
 
 ## Tasks
 
@@ -37,9 +35,9 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T10 | coordinator-reporting | T07 | ✅ | |
 | T11 | pir-command | T08 | ✅ | |
 | T12 | dashboard-tui | T04, T07, T09, T10, T11 | ✅ | |
-| T13 | docs-and-install | T12 | 🔍 | Wrote docs/detached-runs.md, linked from docs/README.md. install.sh installs bin/pir alongside pir-coordinate via a LAUNCHERS loop. .gitignore already covers status.json — unchanged. Doc carries the as-built keys (← back, esc quit), not DESIGN §2.3/§2.4/§2.11. Deviation: updated launcher.test.mjs to the loop and to cover pir (its literal grep broke). |
+| T13 | docs-and-install | T12 | ✅ | Clean, no fix commit. Checked the doc against as-built code: classifyRun's four states and exit→final-status paths, caffeinate -i -w {pid}, 4s grace, {repo}__{slug}.json index, PIR_RUN+PARALLEL_LIVE gating, footer keys, gitignore, all five cross-links, run.log-tail fallback. npm test green. The launcher.test.mjs deviation is sound: the sanctioned install.sh refactor broke its literal grep, and the rewrite covers both wrappers. |
 
-**Review queue:** T13
+**Review queue:** (empty)
 
 ## Blocked on the user
 
