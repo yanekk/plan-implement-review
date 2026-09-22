@@ -36,7 +36,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T09 | stop-and-remove | T05, T06 | ✅ | |
 | T10 | coordinator-reporting | T07 | ✅ | |
 | T11 | pir-command | T08 | ✅ | |
-| T12 | dashboard-tui | T04, T07, T09, T10, T11 | ⬜ | hands-on: the live feel |
+| T12 | dashboard-tui | T04, T07, T09, T10, T11 | ✅ | |
 | T13 | docs-and-install | T12 | ⬜ | updates /docs |
 
 **Review queue:** *(empty)*
