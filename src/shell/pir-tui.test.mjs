@@ -20,6 +20,8 @@ import {
   createScreen,
   loadDashboard,
   openDashboard,
+  wrapLine,
+  readLogTail,
 } from './pir-tui.mjs';
 import { buildDashboard, initialUi } from '../core/dashboard.mjs';
 import { buildDisplay } from '../core/display.mjs';
@@ -174,14 +176,45 @@ test('a running watch frame ticks the spinner and shows the pid/awake note; no s
   assert.match(frameText(noSnap), /waiting for the first snapshot/, 'a run with no snapshot yet shows a waiting line, not an empty block');
 });
 
-test('decodeKey maps the arrow / Enter / Esc / Ctrl-S / Ctrl-X bytes to reducer events', () => {
+test('a crashed run with NO snapshot says it never painted a frame, not that a frame is stale (regression)', () => {
+  // The live-run hand-check surfaced this: a coordinator that refused to start (PARALLEL_ALLOW_HERE)
+  // wrote only run.log — no status.json — so there is no frame at all. The watch view must not claim a
+  // stale frame; it must say the run recorded no snapshot and point at run.log.
+  const controlDir = '/repo/plans/beta/.parallel/control';
+  const frame = buildWatchFrame(
+    { slug: 'beta', state: 'crashed', repo: 'repoB', snap: null, record: { pid: 123, branch: 'pir/beta', controlDir } },
+    { now: NOW },
+  );
+  const text = frameText(frame);
+  assert.match(text, /no snapshot recorded — this run ended before it painted a frame/, 'the note says no frame was ever painted');
+  assert.match(text, new RegExp(`${controlDir}/run\\.log`), 'and names the FULL run.log path, not just "run.log"');
+  assert.ok(!text.includes('this frame is stale'), 'it does NOT claim a stale frame that does not exist');
+  assert.ok(!text.includes('died mid-pass'), 'nor that the process died mid-pass — it never reached a pass');
+});
+
+test('a crashed run WITH a frozen frame names its run.log path alongside the stale marker', () => {
+  const controlDir = '/repo/plans/beta/.parallel/control';
+  const runState = { branch: 'pir/beta', ceiling: 2, tasks: [{ id: 'T01', slug: 'a', deps: [], done: false, phase: 'building', since: NOW - 9000, doneMs: null, question: null }] };
+  const snap = { version: 1, proc: {}, finalState: null, runState };
+  const frame = buildWatchFrame(
+    { slug: 'beta', state: 'crashed', repo: 'repoB', snap, record: { pid: 123, branch: 'pir/beta', controlDir } },
+    { now: NOW },
+  );
+  const text = frameText(frame);
+  assert.match(text, /this frame is stale/, 'the stale marker is still shown for a real frozen frame');
+  assert.match(text, new RegExp(`${controlDir}/run\\.log`), 'and the run.log path is named for the reason');
+});
+
+test('decodeKey maps the arrow / Enter / ← / Esc / Ctrl-S / Ctrl-X bytes to their intents', () => {
   assert.equal(decodeKey(Buffer.from('\x1b[A')), 'up', 'up arrow');
   assert.equal(decodeKey(Buffer.from('\x1b[B')), 'down', 'down arrow');
   assert.equal(decodeKey(Buffer.from('\x1bOA')), 'up', 'up arrow (application-cursor SS3)');
   assert.equal(decodeKey(Buffer.from('\x1bOB')), 'down', 'down arrow (application-cursor SS3)');
+  assert.equal(decodeKey(Buffer.from('\x1b[D')), 'back', 'left arrow steps back a level');
+  assert.equal(decodeKey(Buffer.from('\x1bOD')), 'back', 'left arrow (application-cursor SS3)');
   assert.equal(decodeKey(Buffer.from('\r')), 'open', 'Enter (CR)');
   assert.equal(decodeKey(Buffer.from('\n')), 'open', 'Enter (LF)');
-  assert.equal(decodeKey(Buffer.from('\x1b')), 'back', 'a lone Esc steps back');
+  assert.equal(decodeKey(Buffer.from('\x1b')), 'quit', 'a lone Esc quits pir (back moved to ←)');
   assert.equal(decodeKey(Buffer.from([0x13])), 'ctrlS', 'Ctrl+S');
   assert.equal(decodeKey(Buffer.from([0x18])), 'ctrlX', 'Ctrl+X');
   assert.equal(decodeKey(Buffer.from([0x03])), 'quit', 'Ctrl+C leaves pir');
@@ -307,6 +340,65 @@ test('loadDashboard classifies each run and reads its snapshot for progress and 
 
   // Tidy the scratch index entry so a re-run does not accrete files (the control dirs are OS temp).
   writeFileSync(recordPath('my-repo', 'demo', { dir }), '', { flag: 'w' });
+});
+
+test('wrapLine breaks at spaces and hard-breaks a long token, keeping every segment within the width', () => {
+  assert.deepEqual(wrapLine('short', 20), ['short'], 'text within the width is one line');
+  const wrapped = wrapLine('the quick brown fox jumps', 10);
+  for (const seg of wrapped) assert.ok([...seg].length <= 10, `each segment fits: ${JSON.stringify(seg)}`);
+  assert.ok(wrapped.length > 1, 'a long sentence wraps to several lines');
+  assert.equal(wrapped.join(' '), 'the quick brown fox jumps', 'word-wrap loses no words');
+
+  // A path has no spaces, so it must HARD-break — the fix for "the run.log path doesn't fit".
+  const path = '/Users/x/very/deep/project/plans/some-slug/.parallel/control/run.log';
+  const segs = wrapLine(path, 24);
+  for (const seg of segs) assert.ok([...seg].length <= 24, `each path segment fits: ${JSON.stringify(seg)}`);
+  assert.equal(segs.join(''), path, 'the path is fully reconstructable from its wrapped segments');
+});
+
+test('the watch view wraps a long run.log path so it survives painting at a narrow width (regression)', () => {
+  const controlDir = '/Users/someone/very/deep/project/path/that/is/quite/long/plans/some-slug/.parallel/control';
+  const columns = 40;
+  const frame = buildWatchFrame(
+    { slug: 'some-slug', state: 'crashed', repo: 'repoZ', snap: null, record: { pid: 5, branch: 'pir/some-slug', controlDir } },
+    { now: NOW, columns },
+  );
+
+  // The path note lines are wrapped to the width; the fixed footer/header are clipped at paint instead.
+  // Paint the frame at 40 cols and confirm the FULL path is still there — if it had not wrapped, the paint
+  // would clip it to 40 and lose its tail. rows is generous so no path line is dropped for height.
+  const tty = fakeStream({ isTTY: true, columns, rows: 60 });
+  createScreen({ stream: tty, colour: false }).paint(frame);
+  const painted = tty
+    .text()
+    .replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '')
+    .replace(/[\n ]/g, '');
+  assert.ok(painted.includes(`${controlDir}/run.log`), 'the full path survives painting at 40 cols — it wrapped, not clipped');
+});
+
+test('a crashed run shows the tail of its run.log inline so the reason is visible without opening it', () => {
+  const logTail = [
+    'LIVE: spawning real workers (PARALLEL_LIVE=1).',
+    'Refusing the LIVE run inside "plan-implement-review" — set PARALLEL_ALLOW_HERE=1 for a scratch clone.',
+  ];
+  const frame = buildWatchFrame(
+    { slug: 'beta', state: 'crashed', repo: 'repoB', snap: null, record: { pid: 1, controlDir: '/r/plans/beta/.parallel/control' } },
+    { now: NOW, columns: 80, logTail },
+  );
+  const text = frameText(frame);
+  assert.match(text, /last lines of run\.log:/, 'the log tail is introduced');
+  assert.match(text, /spawning real workers/, 'the first tail line is shown');
+  assert.match(text, /Refusing the LIVE run/, 'and the reason it died');
+});
+
+test('readLogTail returns the last N lines of a log, and null when there is none', () => {
+  const d = mkdtempSync(join(tmpdir(), 'pir-log-'));
+  const p = join(d, 'run.log');
+  writeFileSync(p, 'line1\nline2\nline3\nline4\nline5\n');
+  assert.deepEqual(readLogTail(p, 3), ['line3', 'line4', 'line5'], 'the last three lines, trailing blank dropped');
+  assert.deepEqual(readLogTail(p, 10), ['line1', 'line2', 'line3', 'line4', 'line5'], 'asking for more than exist returns all');
+  assert.equal(readLogTail(join(d, 'nope.log'), 3), null, 'a missing log reads as null, never a throw');
+  assert.equal(readLogTail(null, 3), null, 'a null path is null');
 });
 
 // A fake stream that records everything written and declares its TTY-ness and size, standing in for

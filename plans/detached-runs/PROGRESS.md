@@ -36,7 +36,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T09 | stop-and-remove | T05, T06 | ✅ | |
 | T10 | coordinator-reporting | T07 | ✅ | |
 | T11 | pir-command | T08 | ✅ | |
-| T12 | dashboard-tui | T04, T07, T09, T10, T11 | 🟡 | TUI built in pir-tui.mjs (list frame, watch frame reusing render.mjs styledLines, key decode, raw-mode loop); pir.mjs wired. 12 tests, npm test green. Code half done; live-feel hand-check pending with user before 🔍. |
+| T12 | dashboard-tui | T04, T07, T09, T10, T11 | 🟡 | TUI in pir-tui.mjs (list, watch reusing render.mjs, keys, raw-mode loop); pir.mjs wired. 18 tests, npm test green (612). Live hand-check underway: fixed no-snapshot crashed message, run.log tail+path with wrapping, ← back / Esc quit (user), refresh flicker, slug-pinned selection. 🟡 pending user's live-feel sign-off. |
 | T13 | docs-and-install | T12 | ⬜ | updates /docs |
 
 **Review queue:** *(empty)*

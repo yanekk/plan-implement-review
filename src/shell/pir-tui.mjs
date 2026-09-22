@@ -17,6 +17,9 @@
 // are painted with render.mjs's exact style→colour mapping (the SGR block below carries render's keys
 // unchanged alongside the list's), which keeps the watch frame byte-for-byte the coordinator's display.
 
+import { join } from 'node:path';
+import { openSync, fstatSync, readSync, closeSync } from 'node:fs';
+
 import { buildDisplay } from '../core/display.mjs';
 import { buildDashboard, dashboardReducer, initialUi } from '../core/dashboard.mjs';
 import { styledLines } from './render.mjs';
@@ -32,15 +35,23 @@ import { createPlatform } from './platform.mjs';
 // not export them, so they are duplicated here rather than reaching across into its internals.
 const SPINNER = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 
-// The cursor-control escapes, identical to render.mjs's (a stable terminal protocol, not a choice): enter
-// and leave the alternate screen so the dashboard never scrolls the person's scrollback and vanishes
-// cleanly on exit; hide and show the cursor; home and clear each frame.
+// The cursor-control escapes (a stable terminal protocol, not a choice): enter and leave the alternate
+// screen so the dashboard never scrolls the person's scrollback and vanishes cleanly on exit; hide and
+// show the cursor; home to the top-left; erase-to-end-of-line and erase-to-end-of-screen.
+//
+// The dashboard repaints several times a second (unlike the coordinator's once-per-pass), so it must NOT
+// blank the whole screen each frame the way render.mjs does with `2J` — that blank-then-redraw is a
+// visible flicker and reads as the selection "dropping" on every refresh (user 2026-09-22). Instead it
+// homes, overwrites each line clearing that line's leftovers with EL, and clears anything below the last
+// line with ED. The screen is only ever overwritten in place, never blanked, so a refresh no longer
+// flashes.
 const ENTER_ALT = '\x1b[?1049h';
 const LEAVE_ALT = '\x1b[?1049l';
 const HIDE_CURSOR = '\x1b[?25l';
 const SHOW_CURSOR = '\x1b[?25h';
 const HOME = '\x1b[H';
-const CLEAR = '\x1b[2J';
+const ERASE_EOL = '\x1b[K'; // erase from the cursor to the end of the line
+const ERASE_EOS = '\x1b[J'; // erase from the cursor to the end of the screen
 const RESET = '\x1b[0m';
 
 // The style→colour (SGR) map. It carries TWO vocabularies. The first block is render.mjs's own row/footer
@@ -96,6 +107,68 @@ function pad(s, n) {
   return chars.join('') + ' '.repeat(n - chars.length);
 }
 
+// Wrap one logical line to at most `width` visible columns, breaking at a space when there is one and
+// hard-breaking a token longer than the width (a file path has no spaces, so it hard-breaks — which is
+// how a long run.log path is made to fit rather than being clipped off the right edge, user 2026-09-22).
+// Returns one-or-more strings, counted by code point. An empty string wraps to a single empty line.
+export function wrapLine(text, width) {
+  const w = Math.max(1, width | 0 || 1);
+  const chars = [...String(text ?? '')];
+  if (chars.length <= w) return [chars.join('')];
+  const out = [];
+  let start = 0;
+  while (start < chars.length) {
+    let end = Math.min(start + w, chars.length);
+    if (end < chars.length) {
+      // Prefer a break at the last space in the window; if there is none, hard-break at the width.
+      let brk = -1;
+      for (let i = end; i > start; i--) {
+        if (chars[i - 1] === ' ') {
+          brk = i;
+          break;
+        }
+      }
+      if (brk > start) end = brk;
+    }
+    out.push(chars.slice(start, end).join('').replace(/\s+$/, ''));
+    start = end;
+    while (start < chars.length && chars[start] === ' ') start += 1; // swallow the break's leading spaces
+  }
+  return out;
+}
+
+// readLogTail(logPath, n, { fs }) → the last `n` lines of a run's log, or null if it cannot be read.
+// A crashed run wrote why it died into run.log; showing the tail in the watch view saves the person
+// opening the file (user 2026-09-22). Only the last 16 KiB is read so a long run's huge log never loads
+// in full on every refresh; a partial first line from that cut is dropped so no half-line is shown.
+export function readLogTail(logPath, n = 5, { fs = { openSync, fstatSync, readSync, closeSync } } = {}) {
+  if (!logPath) return null;
+  const MAX = 16 * 1024;
+  let fd;
+  try {
+    fd = fs.openSync(logPath, 'r');
+    const size = fs.fstatSync(fd).size;
+    const len = Math.min(size, MAX);
+    const buf = Buffer.alloc(len);
+    if (len > 0) fs.readSync(fd, buf, 0, len, size - len);
+    let text = buf.toString('utf8');
+    if (len < size) text = text.slice(text.indexOf('\n') + 1); // drop the partial first line from the cut
+    const lines = text.split('\n');
+    while (lines.length && lines[lines.length - 1] === '') lines.pop();
+    return lines.length ? lines.slice(-n) : null;
+  } catch {
+    return null; // no log, or unreadable — the caller simply shows none
+  } finally {
+    if (fd !== undefined) {
+      try {
+        fs.closeSync(fd);
+      } catch {
+        // already closed / gone
+      }
+    }
+  }
+}
+
 // The state cell: the glyph+word and its §2.11 colour. running green (●), finished dim (◌), crashed red
 // (✕), stopped dim (◼). An unrecognised state (an unreachable/stale index entry, §2.8) shows its raw
 // value uncoloured rather than being forced into one of the four.
@@ -136,7 +209,7 @@ function footerLine(context, ui) {
     }
     return lineOf(`⚠ Ctrl+X again to remove ${ui.armed.slug}'s record`, 'armed');
   }
-  if (context === 'watch') return lineOf('esc back · Ctrl+S Ctrl+S stop this run', 'hint');
+  if (context === 'watch') return lineOf('← back · Ctrl+S Ctrl+S stop this run · esc quit', 'hint');
   return lineOf('↑↓ move · ↵ open · Ctrl+S stop · Ctrl+X remove · esc quit', 'hint');
 }
 
@@ -217,19 +290,47 @@ export function watchDisplayLines(snap, { now, spinnerChar = SPINNER[0] } = {}) 
   return styledLines(buildDisplay(snap.runState, { now }), { spinnerChar });
 }
 
-// buildWatchFrame(view, { now, spinnerChar, ui }) → frame (DESIGN §2.4, §2.11).
+// buildWatchFrame(view, { now, spinnerChar, ui, columns, logTail }) → frame (DESIGN §2.4, §2.11).
 //
-//   view = { slug, state, repo, snap, record } — one resolved run (the selected/open one). snap is its
-//          last-read snapshot, or null if it has not written one yet.
+//   view    = { slug, state, repo, snap, record } — one resolved run (the selected/open one). snap is its
+//             last-read snapshot, or null if it has not written one yet.
+//   columns = the terminal width, so the prose and path notes WRAP to fit rather than being clipped off
+//             the right edge (user 2026-09-22). The live block itself is not wrapped — it is the
+//             coordinator's frame and stays clipped like render.mjs.
+//   logTail = the last few lines of the run's run.log (readLogTail), shown inline for a crashed run so the
+//             person sees why it died without opening the file (user 2026-09-22); null for none.
 //
 // The frame is a thin header (slug, state, repo, and — while running — the pid and the awake note), the
-// live block, and, for a run that is NOT running, a stale note saying the frame is old and that `pir
-// {slug}` resumes it (§2.4: painting a stale snapshot plainly is more honest than a blank screen). A run
-// with no snapshot yet shows a waiting line rather than an empty block. The spinner ticks only while the
-// run is running; a stale frame's glyph is a static dot, so a stopped run does not look alive.
-export function buildWatchFrame(view, { now, spinnerChar = SPINNER[0], ui = initialUi() } = {}) {
+// live block, and, for a run that is NOT running, a stale note saying the frame is old and how `pir {slug}`
+// resumes it (§2.4: painting a stale snapshot plainly is more honest than a blank screen). A crashed run
+// also shows the tail of its log and the full log path. A run with no snapshot yet shows a waiting line.
+// The spinner ticks only while the run is running; a stale frame's glyph is a static dot.
+export function buildWatchFrame(view, { now, spinnerChar = SPINNER[0], ui = initialUi(), columns = DEFAULT_COLS, logTail = null } = {}) {
   const { slug, state, repo, snap, record } = view ?? {};
   const lines = [];
+  const cols = Math.max(20, columns | 0 || DEFAULT_COLS);
+
+  // The run's log lives beside its snapshot in the control folder; a crashed run wrote its reason there
+  // (a coordinator that refused to start writes ONLY run.log). Name the absolute path so a person can open
+  // it — most terminals linkify a bare absolute path — rather than leaving them to hunt for it.
+  const controlDir = record?.controlDir ?? view?.controlDir ?? null;
+  const logPath = controlDir ? join(controlDir, 'run.log') : null;
+
+  // Push a note WRAPPED to the terminal width, so a long path or sentence spills onto the next line
+  // instead of being cut off. The text is wrapped to the width MINUS the indent and every segment is then
+  // indented, so continuation lines line up under the first and a long unbreakable token (a path) never
+  // produces an empty leading line by breaking on the indent's own spaces.
+  const note = (text, style, indent = '  ') => {
+    const width = Math.max(1, cols - [...indent].length);
+    for (const seg of wrapLine(text, width)) lines.push(lineOf(indent + seg, style));
+  };
+  // The tail of run.log, each line wrapped, under a heading — the inline preview of why a run died.
+  const pushLogTail = () => {
+    if (!logTail || logTail.length === 0) return;
+    lines.push([]);
+    lines.push(lineOf('  last lines of run.log:', 'dim'));
+    for (const raw of logTail) note(raw.replace(/\s+$/, ''), 'dim', '    ');
+  };
 
   const st = stateCell(state);
   const alive = state === 'running';
@@ -238,22 +339,49 @@ export function buildWatchFrame(view, { now, spinnerChar = SPINNER[0], ui = init
   lines.push([]);
 
   if (snap == null) {
-    lines.push(lineOf('  waiting for the first snapshot…', 'dim'));
+    // No snapshot on disk, so there is NO frame to show — say that plainly rather than claim a stale frame
+    // that does not exist. A running run has not painted its first pass yet; an ENDED run with no snapshot
+    // never got that far, which in practice means it failed to start (the coordinator refused and wrote
+    // only run.log). The log tail and path turn "crashed" into a reason a person can act on.
+    if (alive) {
+      note('waiting for the first snapshot…', 'dim');
+    } else if (state === 'crashed') {
+      note('no snapshot recorded — this run ended before it painted a frame. It likely failed to start.', 'crashed');
+      pushLogTail();
+      lines.push([]);
+      note('full log:', 'dim');
+      note(logPath ?? "run.log in the run's control folder", 'dim', '    ');
+      note(`Esc quits pir; then \`pir ${slug}\` retries it.`, 'dim');
+    } else if (state === 'finished') {
+      note(`no snapshot recorded — finished. Hand-off: git merge ${record?.branch ?? `pir/${slug}`}`, 'ended');
+    } else if (state === 'stopped') {
+      note(`no snapshot recorded — stopped. \`pir ${slug}\` resumes from committed work.`, 'ended');
+    } else {
+      note('no snapshot recorded.', 'dim');
+    }
   } else {
     // A stale (non-running) frame freezes its spinner to a dot so it cannot read as still ticking.
     const spin = alive ? spinnerChar : '·';
     for (const l of watchDisplayLines(snap, { now, spinnerChar: spin })) lines.push([span(l.text, l.style)]);
-  }
-
-  lines.push([]);
-  // The stale marker for a run that has ended (§2.4). Red for crashed (something went wrong), dim for a
-  // clean finished/stopped end, each naming how re-starting resumes it.
-  if (state === 'crashed') {
-    lines.push(lineOf(`— process died mid-pass; this frame is stale. Esc, then \`pir ${slug}\` resumes it.`, 'crashed'));
-  } else if (state === 'finished') {
-    lines.push(lineOf(`— finished · this frame is stale. Hand-off: git merge ${record?.branch ?? `pir/${slug}`}`, 'ended'));
-  } else if (state === 'stopped') {
-    lines.push(lineOf(`— stopped · this frame is stale. \`pir ${slug}\` resumes from committed work.`, 'ended'));
+    // The stale marker for a run that has ended (§2.4) — shown ONLY when there is a real frozen frame
+    // above it. Red for crashed (something went wrong), dim for a clean finished/stopped end.
+    if (state !== 'running') {
+      lines.push([]);
+      if (state === 'crashed') {
+        note('— process died mid-pass; this frame is stale.', 'crashed', '');
+        pushLogTail();
+        if (logPath) {
+          lines.push([]);
+          note('full log:', 'dim');
+          note(logPath, 'dim', '    ');
+        }
+        note(`← back to the list; \`pir ${slug}\` resumes it.`, 'dim');
+      } else if (state === 'finished') {
+        note(`— finished · this frame is stale. Hand-off: git merge ${record?.branch ?? `pir/${slug}`}`, 'ended', '');
+      } else if (state === 'stopped') {
+        note(`— stopped · this frame is stale. \`pir ${slug}\` resumes from committed work.`, 'ended', '');
+      }
+    }
   }
 
   lines.push([]);
@@ -261,19 +389,25 @@ export function buildWatchFrame(view, { now, spinnerChar = SPINNER[0], ui = init
   return lines;
 }
 
-// decodeKey(data) → the reducer event name for a keypress, or null for a key the dashboard does not bind.
+// decodeKey(data) → the intent for a keypress, or null for a key the dashboard does not bind.
 //
 //   ↑ / ↓ arrows → 'up' / 'down'      (move the selection)
+//   ← arrow      → 'back'             (step back one level: a run's live view → the list; user 2026-09-22)
 //   Enter        → 'open'             (open the selected run into its live view)
-//   Esc          → 'back'             (watch → list, or list → quit)
+//   Esc          → 'quit'             (leave `pir` — from the list or a run's view)
 //   Ctrl+S       → 'ctrlS'            (arm / confirm stop)
 //   Ctrl+X       → 'ctrlX'            (arm / confirm remove)
-//   Ctrl+C       → 'quit'             (leave `pir` at once — a loop concern, not a reducer event)
+//   Ctrl+C       → 'quit'             (leave `pir` at once)
+//
+// Back and quit are split across two keys at the user's direction (2026-09-22): ← walks back a level, Esc
+// leaves outright — rather than the original Esc-steps-back-then-quits from the prototype (DESIGN §2.4,
+// §2.11). 'back' and 'quit' are the loop's own intents, not reducer events; the loop translates a ← in the
+// live view into the reducer's 'back' and ignores it in the list, where there is no level to step back to.
 //
 // It decodes a whole input chunk. In raw mode an arrow arrives as its full 3-byte escape sequence in one
 // chunk, while a lone Esc arrives as the single byte 0x1b — which is how the same 0x1b prefix reads as
-// 'back' on its own but as part of 'up'/'down' in a sequence. A human-paced TUI never splits an arrow
-// across chunks in practice; a stray fragment simply decodes to null and is ignored.
+// 'quit' on its own but as part of an arrow in a sequence. A human-paced TUI never splits an arrow across
+// chunks in practice; a stray fragment simply decodes to null and is ignored.
 export function decodeKey(data) {
   const b = Buffer.isBuffer(data) ? data : Buffer.from(String(data ?? ''), 'utf8');
   if (b.length === 1) {
@@ -282,7 +416,7 @@ export function decodeKey(data) {
       case 0x0a: // LF
         return 'open';
       case 0x1b: // lone Esc
-        return 'back';
+        return 'quit';
       case 0x13: // Ctrl+S (DC3)
         return 'ctrlS';
       case 0x18: // Ctrl+X (CAN)
@@ -297,7 +431,8 @@ export function decodeKey(data) {
   // The two arrow encodings terminals emit: CSI (`\x1b[A`) and the application-cursor SS3 (`\x1bOA`).
   if (s === '\x1b[A' || s === '\x1bOA') return 'up';
   if (s === '\x1b[B' || s === '\x1bOB') return 'down';
-  return null; // left/right and anything else are unbound
+  if (s === '\x1b[D' || s === '\x1bOD') return 'back'; // ← steps back a level
+  return null; // right arrow and anything else are unbound
 }
 
 // --- The impure edge: painting a frame on a real terminal, and the input loop -----------------------
@@ -364,11 +499,14 @@ export function createScreen({ stream = process.stdout, colour } = {}) {
 
       const cols = Math.max(1, stream.columns || DEFAULT_COLS);
       const maxRows = Math.max(1, stream.rows || DEFAULT_ROWS);
+      // Home, then each line's clipped/coloured content followed by EL (clear its leftovers), then ED
+      // after the last line (clear any rows a taller previous frame left below). No full-screen blank, so
+      // no flicker. `\n` returns to column 0 in the alternate screen exactly as render.mjs relies on.
       const drawn = frame
         .slice(0, maxRows)
-        .map((lineSpans) => clipLine(lineSpans, cols).map((s) => colourize(s.text, s.style)).join(''))
+        .map((lineSpans) => clipLine(lineSpans, cols).map((s) => colourize(s.text, s.style)).join('') + ERASE_EOL)
         .join('\n');
-      stream.write(HOME + CLEAR + drawn);
+      stream.write(HOME + drawn + ERASE_EOS);
     },
 
     close() {
@@ -417,8 +555,8 @@ function defaultPlatform(record) {
 
 // openDashboard(deps) / openWatch(slug, deps) — the two entry points pir.mjs (T11) dispatches to. The
 // dashboard opens on the list; the watch form opens straight into a run's live view (`pir {slug}` drops
-// into the run it just started/opened, §2.1), and Esc from there steps back to the list like any other
-// open run. Both run the one loop below.
+// into the run it just started/opened, §2.1), and ← from there steps back to the list like any other open
+// run (Esc quits pir; user 2026-09-22). Both run the one loop below.
 export function openDashboard(deps = {}) {
   return runTui({ ...deps, initial: initialUi() });
 }
@@ -455,19 +593,34 @@ async function runTui({
   const screen = makeScreen({ stream: stdout, colour });
   let ui = initial;
   let spin = 0;
+  // The selection is pinned to a RUN (its slug), not to a row index, so a refresh never moves the
+  // highlight even if the list changes underneath it (user 2026-09-22: "the selection keeps dropping
+  // because of the refresh"). onData writes the slug the user moved to; repaint re-derives the index from
+  // it each frame, and only falls back to clamping the old index if that run is no longer listed.
+  let selectedSlug = null;
 
   const read = () => load({ dir, now: now(), kill, exec, fs });
 
   function repaint(dashboard) {
     const dash = dashboard ?? read();
-    // Keep the selection on a real row as runs come and go (a remove can shrink the list under `sel`).
-    const clampedSel = Math.max(0, Math.min(ui.sel, Math.max(0, dash.rows.length - 1)));
-    ui = { ...ui, sel: clampedSel };
+    let sel = ui.sel;
+    if (selectedSlug != null) {
+      const idx = dash.rows.findIndex((r) => r.slug === selectedSlug);
+      if (idx >= 0) sel = idx;
+      else selectedSlug = null; // the pinned run is gone (removed) — fall back to the clamped index
+    }
+    sel = Math.max(0, Math.min(sel, Math.max(0, dash.rows.length - 1)));
+    ui = { ...ui, sel };
+    if (selectedSlug == null) selectedSlug = dash.rows[sel]?.slug ?? null; // seed / reseed the pin
+
     spin += 1;
     const spinnerChar = SPINNER[spin % SPINNER.length];
     if (ui.view === 'watch') {
       const view = dash.rows.find((r) => r.slug === ui.openSlug) ?? { slug: ui.openSlug, state: 'crashed', repo: '', snap: null };
-      screen.paint(buildWatchFrame(view, { now: now(), spinnerChar, ui }));
+      // A crashed run's log tail is shown inline; read it only for the open, crashed run (not every row).
+      const logTail = view.state === 'crashed' ? readLogTail(view.record?.controlDir ? join(view.record.controlDir, 'run.log') : null, 5, fs ? { fs } : {}) : null;
+      const columns = Math.max(20, stdout.columns || DEFAULT_COLS);
+      screen.paint(buildWatchFrame(view, { now: now(), spinnerChar, ui, columns, logTail }));
     } else {
       screen.paint(buildListFrame(dash, ui));
     }
@@ -497,12 +650,22 @@ async function runTui({
       async function onData(data) {
         try {
           const key = decodeKey(data);
-          if (key === 'quit') return finish();
+          if (key === 'quit') return finish(); // Esc or Ctrl+C: leave pir
           if (key == null) return;
           const dash = read();
+
+          if (key === 'back') {
+            // ← steps back a level: a run's live view → the list. In the list there is no level to step
+            // back to (Esc quits), so ← is inert there.
+            if (ui.view === 'watch') ui = dashboardReducer(ui, { type: 'back' }, dash.rows).ui;
+            selectedSlug = dash.rows[ui.sel]?.slug ?? selectedSlug;
+            return repaint(dash);
+          }
+
           const { ui: nextUi, intent } = dashboardReducer(ui, { type: key }, dash.rows);
           ui = nextUi;
-          if (intent?.type === 'quit') return finish();
+          // Pin the selection to whatever run the cursor is now on, so the next refresh keeps it there.
+          selectedSlug = dash.rows[ui.sel]?.slug ?? selectedSlug;
           if (intent?.type === 'stop') {
             const view = dash.rows.find((r) => r.slug === intent.slug);
             if (view) await stop(view.record, { platform: makePlatform(view.record), kill });
