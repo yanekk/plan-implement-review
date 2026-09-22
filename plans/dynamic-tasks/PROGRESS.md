@@ -12,10 +12,11 @@ account is the commit message; writing it twice turns a tracker into a history n
 
 **Plan reviewed:** 2026-09-21 — 2 fixed, 1 decided with the user
 
-**Status:** Mechanism (T00–T02) and docs (T04) done. T03 built the worker prose contract and
-awaits review; T05 (live drill) becomes dispatchable once T03 is ✅.
+**Status:** Mechanism (T00–T02), docs (T04) and the worker prose contract (T03) all done. Only
+T05 remains — the hands-on live drill with the person.
 **Last updated:** 2026-09-22
-**Next `pir-work` will:** review T03 — the lowest-numbered 🔍.
+**Next `pir-work` will:** implement T05 — its deps (T02, T03, T04) are all ✅; it needs the person
+for the live drill.
 
 ## Tasks
 
@@ -30,11 +31,11 @@ and, in parallel mode, its worker's agent name.
 | T00 | adopt-rule | — | ✅ | |
 | T01 | merge-adopts | T00 | ✅ | |
 | T02 | dispatch-adopted | T01 | ✅ | |
-| T03 | worker-add-task | T02 | 🔍 | Propose-and-add contract added to pir-worker (new section), pir-implement (scope exception), pir-review (validation section). Matches adoptNewTaskRows: add-only, deps on existing, forced ⬜, atomic, collision surfaced not renumbered. Suite green; install.sh refreshes cleanly (temp HOME). No deviations. |
+| T03 | worker-add-task | T02 | ✅ | Clean, no fix commit. Checked the three skills' prose line by line against adoptNewTaskRows and mergeTask: add-only, deps on existing (incl. same-change), forced ⬜, atomic reject, collision surfaced not renumbered, only PROGRESS.md fold-protected so PLAN/FINDINGS conflict on the ordinary path. Suite green; install.sh clean (temp HOME), seven skills installed. |
 | T04 | docs-and-rules | T02 | ✅ | |
 | T05 | live-drill | T02, T03, T04 | ⬜ | harness fixture + hands-on live run with the person |
 
-**Review queue:** T03
+**Review queue:** *(empty)*
 
 ## Blocked on the user
 
