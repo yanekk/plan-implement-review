@@ -11,12 +11,12 @@ the account is the commit message. Whoever writes a cell also fixes the over-bud
 
 **Plan reviewed:** 2026-09-22 — 4 fixed, 3 decided with the user
 
-**Status:** Plan just written. Prototype approved by the user (2026-09-22) and parked in
+**Status:** Building. Prototype approved by the user (2026-09-22) and parked in
 `prototype/`. Detached-spawn and process-identity mechanisms verified on the machine (FINDINGS).
-Nothing implemented yet.
+T01 (run-state) and T05 (process-identity) done.
 **Last updated:** 2026-09-22
-**Next `pir-work` will:** nothing until the plan is reviewed. After review, implement T01
-(run-state) — a Phase 1 task with no dependencies, on the critical path.
+**Next `pir-work` will:** implement the next ready ⬜ — T02, T03 and T04 (T01✅) all have
+their dependencies met; lowest-numbered is T02 (index-record).
 
 ## Tasks
 
@@ -29,7 +29,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T02 | index-record | — | ⬜ | |
 | T03 | snapshot-model | — | ⬜ | |
 | T04 | dashboard-model | T01 | ⬜ | |
-| T05 | process-identity | T01 | 🔍 | `src/shell/identity.mjs`: isAlive/startTimeOf/resolveLiveness, kill+exec injected. 12 tests, incl. resolveLiveness→classifyRun both ways and a real-ps smoke on process.pid. Deviations: isAlive returns false on unexpected errno (spec named only ESRCH/EPERM); resolveLiveness skips ps when dead (classifyRun crashes on !alive regardless). |
+| T05 | process-identity | T01 | ✅ | Reviewed clean, no fix. 12 tests pass incl. real-ps smoke; composition into classifyRun asserted both ways. Both deviations sound: unexpected-errno→false is the safe default, skip-ps-when-dead is free since classifyRun crashes on !alive. Probed pid domain (0/negative signal a group) — outside recorded-pid domain, not a defect. `{ok,stdout}` matches platform.mjs. |
 | T06 | index-store | T02 | ⬜ | |
 | T07 | snapshot-store | T03 | ⬜ | |
 | T08 | start-detached | T05, T06 | ⬜ | hands-on: survives terminal restart |
