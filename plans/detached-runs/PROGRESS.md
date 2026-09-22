@@ -15,8 +15,7 @@ the account is the commit message. Whoever writes a cell also fixes the over-bud
 `prototype/`. Detached-spawn and process-identity mechanisms verified on the machine (FINDINGS).
 Nothing implemented yet.
 **Last updated:** 2026-09-22
-**Next `pir-work` will:** nothing until the plan is reviewed. After review, implement T01
-(run-state) — a Phase 1 task with no dependencies, on the critical path.
+**Next `pir-work` will:** review T01 (run-state), now implemented. T04 and T05 depend on it.
 
 ## Tasks
 
@@ -25,7 +24,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 
 | # | Task | Depends on | State | Notes |
 |---|---|---|---|---|
-| T01 | run-state | — | ⬜ | |
+| T01 | run-state | — | 🔍 | `classifyRun` pure fn (§3.3): clean final record wins, then aliveness, then reused-number test. 8 tests + boundary. No deviation. |
 | T02 | index-record | — | ⬜ | |
 | T03 | snapshot-model | — | ⬜ | |
 | T04 | dashboard-model | T01 | ⬜ | |
@@ -39,7 +38,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T12 | dashboard-tui | T04, T07, T09, T10, T11 | ⬜ | hands-on: the live feel |
 | T13 | docs-and-install | T12 | ⬜ | updates /docs |
 
-**Review queue:** *(empty)*
+**Review queue:** T01
 
 ## Blocked on the user
 
