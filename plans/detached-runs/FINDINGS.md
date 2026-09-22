@@ -18,6 +18,12 @@ the user changed.
 
 | Date | | Finding |
 |---|---|---|
+| 2026-09-22 | ✅ | T12 dashboard hand-verified with the user: ran `pir single` in a scratch clone; the list, opening a run, the live ticking view, ← back / Esc quit, and the Ctrl+S/Ctrl+X chords all read and worked correctly. |
+| 2026-09-22 | 🐞 | T12 hand-check: a crashed run with no status.json wrongly showed "died mid-pass; frame stale". Now shows "no snapshot recorded — failed to start" with the run.log tail and full path. Surfaced by a PARALLEL_ALLOW_HERE refusal in the canonical checkout. |
+| 2026-09-22 | 🔄 | Key binding changed (user): ← steps back watch→list, Esc quits pir — replacing Esc-steps-back-then-quits (DESIGN §2.4, §2.11, prototype). /docs (T13) must carry the new keys; DESIGN §2.4/§2.11 now describe the old model. |
+| 2026-09-22 | 📌 | pir dashboard refresh flicker: full-screen `2J` each poll read as the selection dropping. Fixed: paint home+EL(`\e[K`)+ED(`\e[J`) overwrite in place (no blank), and pin the selection to the run's slug, not its row index. |
+| 2026-09-22 | 📌 | launch.mjs (T08) pre-flight gap: startRun spawns a coordinator that then refuses inside the canonical checkout (PARALLEL_ALLOW_HERE), leaving a crashed record — the "crashed instead of a clean error" DESIGN §2.5 says pre-flight should prevent. Consider adding the guard to startRun. |
+| 2026-09-22 | 📌 | T12 ships keyboard nav only. The mock's mouse-click row-select (DESIGN §2.3 "arrow keys or a click") is deferred — arrows + Enter fully navigate. Mouse needs SGR-1006 tracking and parsing; ask the user if it is wanted before T13 docs. |
 | 2026-09-22 | 📌 | T10 self-reporting needs T06 `index-store` to stamp a run's final status, but T06 is not a T10 dependency and is unbuilt. `coordinate.mjs` loads `index-store` lazily (dynamic import); `updateIndexFinalState` logic tested via injection. Consider adding T06 to T10's deps. |
 | 2026-09-22 | 📌 | `stopRun` (control-run.mjs) signals `record.pid` on a bare `isAlive` check, no `lstart` re-verify (`exec` dropped). The pid-reuse guard is `classifyRun`'s (§3.3), upstream. Only call stop on a run classified `running`; stop is the actuator, not the identity guard. |
 | 2026-09-22 | 🔄 | T08 survival check (run outlives terminal restart) deferred to the T12 live run (user): `pir` (T11) does not exist at T08's point, and only a seatbelted real run exercises it. T08 handed off with that half unverified. |
