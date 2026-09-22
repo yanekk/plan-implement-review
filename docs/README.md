@@ -3,8 +3,9 @@
 This folder is the single source of truth for how the **parallel** plan-implement-review
 workflow behaves: its components, the lifecycle of a run, where task state lives, the branch
 and worktree model, the control folder, the human decision flow, the kill switch, the worker
-ceiling, and restart and recovery. It is the behavioural spec — nouns, states, data flows, and
-guarantees.
+ceiling, restart and recovery, and the detached `pir` front-end that starts a run outliving its
+terminal and watches every run on the machine. It is the behavioural spec — nouns, states, data
+flows, and guarantees.
 
 It is not the step-by-step. The procedure a worker session follows lives in the skills
 (`skills/pir-worker`, `pir-implement`, `pir-review`), and that is where it stays. There is no
@@ -72,3 +73,5 @@ any set-up repo — so `pir-coordinate {slug}` is the way to launch, not a bare
 - [human-flow.md](human-flow.md) — decisions and questions answered directly in `claude agents`,
   merge conflicts, the kill switch, the worker ceiling.
 - [restart-recovery.md](restart-recovery.md) — what a restart picks up, and the known limitations.
+- [detached-runs.md](detached-runs.md) — the `pir` front-end: start a run detached, and the
+  cross-repo dashboard to watch, stop and clear runs.

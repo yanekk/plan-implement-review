@@ -27,7 +27,9 @@ MARKER="Appended by plan-implement-review"
 DEST="$HOME/.claude/skills"
 ENGINE_DEST="$HOME/.claude/pir-engine"
 SKILLS=(pir-plan pir-review-plan pir-work pir-implement pir-review pir-install pir-worker)
-LAUNCHER_SRC="$SRC/bin/pir-coordinate"
+# The user-facing launchers, both installed onto the PATH the same way (install_launcher): pir-coordinate
+# drives a foreground run, pir (T13) starts one detached and opens the cross-repo dashboard.
+LAUNCHERS=(pir-coordinate pir)
 
 # Skills deleted from the repo when parallel mode stopped being agentic (T07): the coordinator is
 # now a plain command, not a skill, and the verify/parallelize helpers went with the you/auto split.
@@ -69,28 +71,31 @@ remove_orphan_skills() {
     done
 }
 
-# Install the pir-coordinate launcher onto a PATH directory (T18). Parallel mode's coordinator is a
-# plain program (DESIGN §2.1); this is the user-facing shortcut for it, replacing the deleted
-# pir-coordinate skill as the entry point. The installed engine path is baked in HERE, at install
-# time — sed substitutes __PIR_ENGINE__ with ENGINE_DEST — so the command runs from any repo, not
-# just this one. Prefer ~/.local/bin (already on this user's PATH; `claude` lives there); if it is
-# absent or off PATH, fall back to ~/.claude/bin and print the exact export PATH step, never silently
-# installing a command the user cannot invoke (the apply_automode_rule pattern).
+# Install the launchers onto a PATH directory (pir-coordinate T18, pir T13). Both are logic-free
+# wrappers (DESIGN §2.1, §2.9) that exec the engine; the installed engine path is baked in HERE, at
+# install time — sed substitutes the same __PIR_ENGINE__ placeholder in each with ENGINE_DEST — so a
+# command runs from any repo, not just this one. Prefer ~/.local/bin (already on this user's PATH;
+# `claude` lives there); if it is absent or off PATH, fall back to ~/.claude/bin and print the exact
+# export PATH step once, never silently installing commands the user cannot invoke (the
+# apply_automode_rule pattern).
 install_launcher() {
-    local bindir
+    local bindir name
     if [[ -d "$HOME/.local/bin" ]] && on_path "$HOME/.local/bin"; then
         bindir="$HOME/.local/bin"
     else
         bindir="$HOME/.claude/bin"
     fi
     mkdir -p "$bindir"
-    # '@' delimiter so the '/'-heavy engine path needs no escaping.
-    sed "s@__PIR_ENGINE__@$ENGINE_DEST@" "$LAUNCHER_SRC" > "$bindir/pir-coordinate"
-    chmod +x "$bindir/pir-coordinate"
-    echo "  installed the launcher $bindir/pir-coordinate"
+    # '@' delimiter so the '/'-heavy engine path needs no escaping. Same substitution for both
+    # launchers: each carries the __PIR_ENGINE__ placeholder and its own engine entrypoint.
+    for name in "${LAUNCHERS[@]}"; do
+        sed "s@__PIR_ENGINE__@$ENGINE_DEST@" "$SRC/bin/$name" > "$bindir/$name"
+        chmod +x "$bindir/$name"
+        echo "  installed the launcher $bindir/$name"
+    done
     if ! on_path "$bindir"; then
         cat <<STEP
-  $bindir is not on your PATH — add it so \`pir-coordinate\` resolves:
+  $bindir is not on your PATH — add it so \`pir\` and \`pir-coordinate\` resolve:
 
       export PATH="$bindir:\$PATH"
 
@@ -192,6 +197,9 @@ if [[ -z "$TARGET" || "$TARGET" == "--global" ]]; then
     echo
     echo "To run a reviewed plan in parallel, from inside a set-up repo (dry by default):"
     echo "    pir-coordinate {slug}"
+    echo "or start it detached and watch every run on the machine from a dashboard:"
+    echo "    pir {slug}      # start detached, drop into its live view"
+    echo "    pir             # the cross-repo dashboard"
     exit 0
 fi
 
@@ -225,4 +233,9 @@ Done. One thing left, by hand:
   or, to run a reviewed plan in parallel instead (from inside the repo, dry by default):
 
       pir-coordinate {slug}
+
+  or start it detached from the terminal and watch it from a dashboard:
+
+      pir {slug}      # start detached, drop into its live view
+      pir             # the cross-repo dashboard
 MSG
