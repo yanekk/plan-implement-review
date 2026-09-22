@@ -14,9 +14,14 @@
 
 // The narrow worker permissions the framework ships in a project's .claude/settings.json.
 // Bare and prefix-matched so a clean worker command resolves before the classifier at all.
-// Deliberately NOT here: `SendMessage` (the coordinator down-channel is gone, §2.2) and
-// `Bash(git merge:*)` (the engine does merges via child-process git, which is not
-// classifier-gated; a worker never merges a peer branch — task interface).
+// `Bash(git merge:*)` IS here: a worker's integrate step runs `git merge pir/{slug}` to fold
+// the run's feature branch into its own task branch before it signals done (pir-worker SKILL.md,
+// branch-model.md § Merges). That merge writes only the worker's own task branch, never a peer's
+// and never main, so it is trusted like the worker's other git; without it the classifier gates
+// the integrate as "Modify Shared Resources" and parks the worker at its finish line. The engine's
+// own task→feature merge (worktree.mjs) is child-process git and never classifier-gated; that is a
+// separate path, not the reason merge is listed here. Deliberately NOT here: `SendMessage` (the
+// coordinator down-channel is gone, §2.2).
 export const WORKER_PERMISSIONS = [
   'Bash(npm test:*)',
   'Bash(node --test:*)',
@@ -27,6 +32,7 @@ export const WORKER_PERMISSIONS = [
   'Bash(git branch:*)',
   'Bash(git rev-parse:*)',
   'Bash(git merge-base:*)',
+  'Bash(git merge:*)',
   'Bash(git add:*)',
   'Bash(git commit:*)',
 ];
@@ -38,13 +44,18 @@ export const AUTO_MODE_DEFAULTS = '$defaults';
 
 // The pir-specific auto-mode exception. Natural language, because auto-mode rules are judged by
 // an LLM classifier (validate wording with `claude auto-mode critique`). It names only the
-// worker's own git on the run's own branches; `merge` is absent for the same reason it is absent
-// from WORKER_PERMISSIONS. That `permissions.allow` alone may already clear these, making this
-// rule belt-and-suspenders, is confirmed live in T09.
+// worker's own git on the run's own branches, `merge` included — the integrate step is spelled
+// out so the classifier reads the merge as touching only the worker's own task branch. This rule
+// mirrors WORKER_PERMISSIONS. That `permissions.allow` alone may already clear these, making this
+// rule belt-and-suspenders, is confirmed live in T09; the integrate merge is gated in practice, so
+// merge is carried in both.
 export const PIR_AUTOMODE_RULE =
-  'A pir worker running git (add/commit/status/log/show/diff/rev-parse/merge-base/branch) ' +
+  'A pir worker running git (add/commit/status/log/show/diff/rev-parse/merge-base/branch/merge) ' +
   "against the run's own branches pir/{slug} and pir/{slug}-T{nn} inside the session's " +
-  'repository is trusted work on the session’s own branches, not Modify Shared Resources.';
+  'repository is trusted work on the session’s own branches, not Modify Shared Resources. This ' +
+  'includes the integrate step, where the worker runs `git merge pir/{slug}` to fold the run’s ' +
+  'feature branch into its own checked-out task branch pir/{slug}-T{nn}: the merge only writes ' +
+  "the worker's own task branch, never main and never a branch another worker holds.";
 
 function asObject(value) {
   return value && typeof value === 'object' && !Array.isArray(value) ? value : {};

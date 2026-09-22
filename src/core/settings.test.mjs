@@ -12,17 +12,15 @@ import {
 } from './settings.mjs';
 
 test('project permissions: the ship list is what a worker needs and nothing shared', () => {
-  // The list is the source of truth the project .claude/settings.json and install.sh both use;
-  // the two exclusions are load-bearing (task interface, §2.2).
+  // The list is the source of truth the project .claude/settings.json and install.sh both use.
   assert.ok(WORKER_PERMISSIONS.includes('Bash(git add:*)'));
   assert.ok(WORKER_PERMISSIONS.includes('Bash(git commit:*)'));
   assert.ok(WORKER_PERMISSIONS.includes('Bash(npm test:*)'));
   assert.ok(!WORKER_PERMISSIONS.includes('SendMessage'), 'the down-channel is gone');
-  assert.ok(
-    !WORKER_PERMISSIONS.includes('Bash(git merge:*)'),
-    'the engine merges via child-process git; a worker never merges a peer branch',
-  );
-  // merge-base is a read, not a merge — it must survive the exclusion above.
+  // git merge is load-bearing: the worker's integrate step merges the feature branch into its own
+  // task branch, and without a bare allow the classifier gates it (pir-worker SKILL.md § integrate).
+  assert.ok(WORKER_PERMISSIONS.includes('Bash(git merge:*)'));
+  // merge-base is a read, not a merge — it must survive alongside merge.
   assert.ok(WORKER_PERMISSIONS.includes('Bash(git merge-base:*)'));
 });
 

@@ -29,8 +29,8 @@ test('project .claude/settings.json ships the worker permissions and nothing sha
   }
   assert.ok(!allow.includes('SendMessage'), 'the coordinator down-channel is gone (§2.2)');
   assert.ok(
-    !allow.includes('Bash(git merge:*)'),
-    'a worker never merges a peer branch; the engine does merges via child-process git',
+    allow.includes('Bash(git merge:*)'),
+    'the worker integrate merges the feature branch into its own task branch; a bare allow keeps the classifier off it',
   );
 });
 
