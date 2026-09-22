@@ -32,7 +32,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T05 | process-identity | T01 | ✅ | |
 | T06 | index-store | T02 | ✅ | |
 | T07 | snapshot-store | T03 | ✅ | |
-| T08 | start-detached | T05, T06 | ⬜ | hands-on: survives terminal restart |
+| T08 | start-detached | T05, T06 | ✅ | |
 | T09 | stop-and-remove | T05, T06 | ✅ | |
 | T10 | coordinator-reporting | T07 | ⬜ | edits coordinate.mjs behind PIR_RUN |
 | T11 | pir-command | T08 | ⬜ | |
