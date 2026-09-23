@@ -53,6 +53,28 @@ replaces it with the feature-branch model (DESIGN §2.9), and you are *supposed*
 worktree. Do not stop on contact with it, do not try to switch to `main`, and do not fold your
 worktree back — that is handled for you. Just work on your task branch and commit there.
 
+## Before you start, look for work an earlier worker left on this branch
+
+Your branch may not be fresh. When a run is stopped or crashes, its task branches and worktrees are
+kept, and the restart hands each one to a new worker — so you can be the second session on this
+task. The row in `PROGRESS.md` does not tell you: an implementer that died before it marked `🔍`
+leaves the row `⬜`, and `pir-implement`'s "if the task is 🟡" step never fires. So before you
+write anything, whichever instruction you were given, look:
+
+```
+git log --oneline pir/{plan}..HEAD     # commits already on this task branch
+git status --short                     # edits the last session made and never committed
+```
+
+- **`pir-implement` with commits or edits present:** a previous implementer of this same task was cut
+  off. Treat it as the 🟡 case — read its commits and its uncommitted diff, keep what is right, and
+  finish the task from there. Do not reset, stash away or re-cut the branch, and do not start over:
+  that throws away work the person paid for. Uncommitted edits may stop mid-change, so run the test
+  command before you trust them.
+- **`pir-review` with review commits or edits already present:** an earlier reviewer was cut off.
+  Review the whole task anyway — its commits are input to your review, not a verdict you inherit.
+- **Nothing there:** a fresh task; carry on as normal.
+
 ## When a stock skill would "ask the user and wait", you drop a report and ask the person in this session
 
 Wherever `pir-implement` or `pir-review` (or `CLAUDE.md`) tells you to stop and ask a person — an

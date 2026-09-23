@@ -4,7 +4,7 @@
 // merged still reads ⬜ there and would be rebuilt from scratch. Git is the ground truth. This
 // function takes the parsed feature task table and, for each task, the committed glyph on its
 // own task branch, and decides one action per task: merge the finished branch, review the built
-// one, or rebuild the half-done one. It touches no git and no filesystem — the shell (src/shell/,
+// one, or resume the half-done one where it stopped. It touches no git and no filesystem — the shell (src/shell/,
 // T03) reads the branch glyphs and executes these actions — which is what lets the whole four-way
 // classification be proven in milliseconds and lets the old "every ⬜ is a fresh implement" redden
 // a test (DESIGN §3.1, enforced by boundary.test.mjs).
@@ -23,22 +23,26 @@ function order(id) {
   return Number(String(id).slice(1));
 }
 
-// decideResume({ featureTasks, branchStates }) → { merge, review, rebuild }, each a list of task
-// numbers sorted by number. The four-way classification of DESIGN §2.3, for feature-⬜ tasks only:
+// decideResume({ featureTasks, branchStates }) → { merge, review, resume }, each a list of task
+// numbers sorted by number. The four-way classification, for feature-⬜ tasks only:
 //
-//   branch ✅            → merge   (built and reviewed; fold it in, do not rebuild or re-review)
-//   branch 🔍            → review  (built, not reviewed; a fresh review, not a re-implement)
-//   branch present, else → rebuild (⬜/🟡/anything but ✅/🔍; half-built, discard and re-implement)
+//   branch ✅            → merge  (built and reviewed; fold it in, do not rebuild or re-review)
+//   branch 🔍            → review (built, not reviewed; a fresh review, not a re-implement)
+//   branch present, else → resume (⬜/🟡/anything but ✅/🔍; half-built — keep the branch, and a fresh
+//                                  implementer continues from what is on it)
 //   branch absent (null) → no entry (never started; the normal dispatch implements it)
+//
+// resume used to be `rebuild` (discard the branch, re-implement from the task doc). The user reversed
+// that on 2026-09-23: hours of committed or uncommitted work were being thrown away on every restart,
+// and the implementer is told to inspect and continue what an earlier one left (skills/pir-worker).
 //
 // implement (absent branch) and skip (feature ✅/⛔) produce no entry: normal dispatch handles the
 // first and nothing is to be done for the second. A worker never writes ⛔ on its own branch, so a
-// ⛔ branch glyph is just "present and not ✅/🔍" → rebuild, which the else clause gives for free; no
-// Runs-specific branch is needed either, because a you/verify branch has no 🔍 stage (DESIGN §2.3).
+// ⛔ branch glyph is just "present and not ✅/🔍" → resume, which the else clause gives for free.
 export function decideResume({ featureTasks, branchStates }) {
   const merge = [];
   const review = [];
-  const rebuild = [];
+  const resume = [];
 
   for (const task of featureTasks) {
     // Only a feature ⬜ row is in flight and reconcilable; ✅/⛔ (and any state the feature branch
@@ -50,9 +54,9 @@ export function decideResume({ featureTasks, branchStates }) {
 
     if (branch === REVIEWED) merge.push(task.num);
     else if (branch === REVIEW_READY) review.push(task.num);
-    else rebuild.push(task.num); // present but neither ✅ nor 🔍 → half-built, rebuild clean.
+    else resume.push(task.num); // present but neither ✅ nor 🔍 → half-built, continue on the branch.
   }
 
   const byTask = (a, b) => order(a) - order(b);
-  return { merge: merge.sort(byTask), review: review.sort(byTask), rebuild: rebuild.sort(byTask) };
+  return { merge: merge.sort(byTask), review: review.sort(byTask), resume: resume.sort(byTask) };
 }

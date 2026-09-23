@@ -83,11 +83,20 @@ export function createFakeWorktree({ progress, files = {}, slug = 'demo' } = {})
     return { path, branch };
   }
 
+  // Reuses an existing branch and worktree exactly as the real createTask does, so a resumed task
+  // (restart reconciliation) is handed the work already on its branch rather than a fresh one.
   function createTask(plan, task) {
     if (!feature) throw new Error('createTask before openFeature');
     const branch = `pir/${plan}-${task}`;
+    const existing = taskWorktreeHandle(plan, task);
+    if (existing) {
+      events.push({ op: 'createTask', branch, path: existing.path, from: feature.branch, reused: true });
+      return existing;
+    }
     const path = join(dir, `wt-${task}`);
-    git(repo, ['branch', branch, feature.branch]);
+    if (!git(repo, ['rev-parse', '--verify', '--quiet', `refs/heads/${branch}`]).ok) {
+      git(repo, ['branch', branch, feature.branch]);
+    }
     git(repo, ['worktree', 'add', path, branch]);
     configure(path);
     events.push({ op: 'createTask', branch, path, from: feature.branch });

@@ -8,58 +8,58 @@ import { decideResume } from './resume.mjs';
 const task = (num, state, { deps = [], runs = 'auto' } = {}) => ({ num, name: num, deps, runs, state });
 const call = (featureTasks, branchStates = {}) => decideResume({ featureTasks, branchStates });
 
-test('feature ⬜ + branch ✅ → merge; not review, not rebuild', () => {
+test('feature ⬜ + branch ✅ → merge; not review, not resume', () => {
   const out = call([task('T01', '⬜')], { T01: '✅' });
-  assert.deepEqual(out, { merge: ['T01'], review: [], rebuild: [] });
+  assert.deepEqual(out, { merge: ['T01'], review: [], resume: [] });
 });
 
-test('feature ⬜ + branch 🔍 → review; not merge, not rebuild', () => {
+test('feature ⬜ + branch 🔍 → review; not merge, not resume', () => {
   const out = call([task('T01', '⬜')], { T01: '🔍' });
-  assert.deepEqual(out, { merge: [], review: ['T01'], rebuild: [] });
+  assert.deepEqual(out, { merge: [], review: ['T01'], resume: [] });
 });
 
-test('feature ⬜ + branch 🟡 → rebuild', () => {
+test('feature ⬜ + branch 🟡 → resume', () => {
   const out = call([task('T01', '⬜')], { T01: '🟡' });
-  assert.deepEqual(out, { merge: [], review: [], rebuild: ['T01'] });
+  assert.deepEqual(out, { merge: [], review: [], resume: ['T01'] });
 });
 
-test('feature ⬜ + branch ⬜ (branch exists, no build committed) → rebuild', () => {
+test('feature ⬜ + branch ⬜ (branch exists, no build committed) → resume', () => {
   const out = call([task('T01', '⬜')], { T01: '⬜' });
-  assert.deepEqual(out, { merge: [], review: [], rebuild: ['T01'] });
+  assert.deepEqual(out, { merge: [], review: [], resume: ['T01'] });
 });
 
 test('feature ⬜ + branch absent (null) → no entry anywhere', () => {
   const out = call([task('T01', '⬜')], { T01: null });
-  assert.deepEqual(out, { merge: [], review: [], rebuild: [] });
+  assert.deepEqual(out, { merge: [], review: [], resume: [] });
 });
 
 test('feature ⬜ + branch missing from the map → no entry anywhere', () => {
   // An absent key is the same signal as an explicit null: no branch to adopt.
   const out = call([task('T01', '⬜')], {});
-  assert.deepEqual(out, { merge: [], review: [], rebuild: [] });
+  assert.deepEqual(out, { merge: [], review: [], resume: [] });
 });
 
 test('feature ✅ (already merged) → no entry, whatever the branch glyph', () => {
   // A leftover branch for a merged task is cleaned up in the shell (T03), not decided here.
   const out = call([task('T01', '✅')], { T01: '✅' });
-  assert.deepEqual(out, { merge: [], review: [], rebuild: [] });
+  assert.deepEqual(out, { merge: [], review: [], resume: [] });
 });
 
 test('feature ⛔ (deferred) → no entry, whatever the branch glyph', () => {
   const out = call([task('T01', '⛔')], { T01: '🔍' });
-  assert.deepEqual(out, { merge: [], review: [], rebuild: [] });
+  assert.deepEqual(out, { merge: [], review: [], resume: [] });
 });
 
 test('a you task, feature ⬜ + branch ✅ → merge (verify folds to ✅ with no 🔍 stage)', () => {
   const out = call([task('T01', '⬜', { runs: 'you' })], { T01: '✅' });
-  assert.deepEqual(out, { merge: ['T01'], review: [], rebuild: [] });
+  assert.deepEqual(out, { merge: ['T01'], review: [], resume: [] });
 });
 
-test('a ⛔ glyph on a task branch classifies as rebuild (present, neither ✅ nor 🔍)', () => {
+test('a ⛔ glyph on a task branch classifies as resume (present, neither ✅ nor 🔍)', () => {
   // A worker never writes ⛔ on its own branch, but if one ever appeared it is not "built",
   // so it must not be adopted — the else clause treats it as half-built.
   const out = call([task('T01', '⬜')], { T01: '⛔' });
-  assert.deepEqual(out, { merge: [], review: [], rebuild: ['T01'] });
+  assert.deepEqual(out, { merge: [], review: [], resume: ['T01'] });
 });
 
 test('mixed table: each case classifies independently and every list is sorted by task number', () => {
@@ -71,9 +71,9 @@ test('mixed table: each case classifies independently and every list is sorted b
     task('T06', '✅'), // feature ✅ → skip
     task('T01', '⬜'), // branch ✅ → merge
     task('T04', '⬜'), // branch absent → implement (no entry)
-    task('T03', '⬜'), // branch 🟡 → rebuild
+    task('T03', '⬜'), // branch 🟡 → resume
     task('T07', '⛔'), // feature ⛔ → skip
-    task('T08', '⬜'), // branch ⬜ → rebuild
+    task('T08', '⬜'), // branch ⬜ → resume
   ];
   const branchStates = {
     T05: '🔍',
@@ -86,11 +86,11 @@ test('mixed table: each case classifies independently and every list is sorted b
     T08: '⬜',
   };
   const out = call(tasks, branchStates);
-  assert.deepEqual(out, { merge: ['T01', 'T02'], review: ['T05'], rebuild: ['T03', 'T08'] });
+  assert.deepEqual(out, { merge: ['T01', 'T02'], review: ['T05'], resume: ['T03', 'T08'] });
 });
 
 test('empty featureTasks → all three lists empty', () => {
-  assert.deepEqual(call([]), { merge: [], review: [], rebuild: [] });
+  assert.deepEqual(call([]), { merge: [], review: [], resume: [] });
 });
 
 // Mutation guard (DESIGN §3.3, §4): the old behaviour treats every ⬜ feature row as a fresh

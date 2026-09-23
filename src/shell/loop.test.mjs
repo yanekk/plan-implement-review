@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { tmpdir } from 'node:os';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { runPass, drain, createRunState } from './loop.mjs';
 import { createFakePlatform } from './fake/platform.mjs';
@@ -745,18 +745,47 @@ test('restart with a 🔍 task branch: a fresh reviewer runs on its existing wor
   assert.equal(platform.spawns.filter((s) => s.task === 'T01' && s.role === 'implement').length, 0, 'no implementer is ever spawned for a built branch');
 });
 
-test('restart with a half-built (🟡) branch: the leaked branch is removed and a clean branch is re-cut for a fresh implementer', (t) => {
+test('restart with a half-built (🟡) branch: the branch and its work are kept, and a fresh implementer is spawned onto them (user decision 2026-09-23)', (t) => {
   const { platform, worktree, base } = setup(t, [{ num: 'T01' }]);
   worktree.openFeature(SLUG);
-  seedBranch(worktree, SLUG, 'T01', '🟡', { file: 'work-T01.txt' });
+  const wt = seedBranch(worktree, SLUG, 'T01', '🟡', { file: 'work-T01.txt' });
+  // An edit the dead implementer never committed — the resumed one must find it too.
+  writeFileSync(join(wt.path, 'uncommitted-T01.txt'), 'mid-edit\n');
+
+  const r = runPass({ ...base, state: createRunState() });
+  assert.ok(r.actions.some((a) => a.type === 'resume' && a.task === 'T01'), 'the half-built branch is resumed');
+  assert.ok(!worktree.events.some((e) => e.op === 'remove' && e.branch === `pir/${SLUG}-T01`), 'the branch is never removed');
+  const spawn = platform.spawns.find((s) => s.task === 'T01' && s.role === 'implement');
+  assert.ok(spawn, 'an implementer is dispatched');
+  assert.ok(spawn.cwd.endsWith('/wt-T01'), 'on the existing task worktree, not a re-cut one');
+  assert.ok(worktree.fileOn(`pir/${SLUG}-T01`, 'work-T01.txt').ok, 'the committed work is still on the branch');
+  assert.ok(existsSync(join(wt.path, 'uncommitted-T01.txt')), 'the uncommitted edit is still in the worktree');
+});
+
+test('restart with a 🔍 branch whose worktree folder is gone: the worktree is re-attached and reviewed, never re-implemented', (t) => {
+  const { platform, worktree, base } = setup(t, [{ num: 'T01' }]);
+  worktree.openFeature(SLUG);
+  const wt = seedBranch(worktree, SLUG, 'T01', '🔍', { file: 'work-T01.txt' });
+  git(worktree.feature.path, ['worktree', 'remove', '--force', wt.path]); // branch survives, folder does not
 
   const result = drain(base);
   assert.equal(result.complete, true);
-  assert.ok(result.actions.some((a) => a.type === 'rebuild' && a.task === 'T01'), 'the half-built branch is rebuilt');
-  const removeIdx = worktree.events.findIndex((e) => e.op === 'remove' && e.branch === `pir/${SLUG}-T01`);
-  const recutIdx = worktree.events.findIndex((e, i) => i > removeIdx && e.op === 'createTask' && e.branch === `pir/${SLUG}-T01`);
-  assert.ok(removeIdx >= 0 && recutIdx > removeIdx, 'the branch is re-cut clean only after the leaked one is removed');
-  assert.ok(platform.spawns.some((s) => s.task === 'T01' && s.role === 'implement'), 'a fresh implementer is dispatched');
+  assert.ok(platform.spawns.some((s) => s.task === 'T01' && s.role === 'review'), 'a reviewer is spawned');
+  assert.equal(platform.spawns.filter((s) => s.task === 'T01' && s.role === 'implement').length, 0, 'the built task is never re-implemented');
+  assert.ok(worktree.fileOn(`pir/${SLUG}`, 'work-T01.txt').ok, 'its original work landed on the feature branch');
+});
+
+test('restart with a ✅ branch whose worktree folder is gone: it is still merged, not re-implemented', (t) => {
+  const { platform, worktree, base } = setup(t, [{ num: 'T01' }]);
+  worktree.openFeature(SLUG);
+  const wt = seedBranch(worktree, SLUG, 'T01', '✅', { file: 'work-T01.txt' });
+  git(worktree.feature.path, ['worktree', 'remove', '--force', wt.path]);
+
+  const result = drain(base);
+  assert.equal(result.complete, true);
+  assert.ok(result.actions.some((a) => a.type === 'merge' && a.task === 'T01'), 'the reviewed branch is merged');
+  assert.equal(platform.spawns.filter((s) => s.task === 'T01').length, 0, 'no session is spawned for it');
+  assert.ok(worktree.fileOn(`pir/${SLUG}`, 'work-T01.txt').ok, 'its work landed on the feature branch');
 });
 
 test('restart with a ✅ branch whose merge conflicts: the conflict is surfaced and the branch is left untouched, not rebuilt', (t) => {
@@ -804,7 +833,7 @@ test('restart cleans up a leftover task branch whose task is already ✅ on the 
   assert.equal(platform.spawns.length, 0, 'nothing is spawned for an already-merged task');
 });
 
-test('mixed restart: T01 ✅-merge, T02 🔍-review, T03 half-built rebuild, T04 never-started — all in one first pass, ceiling never exceeded', (t) => {
+test('mixed restart: T01 ✅-merge, T02 🔍-review, T03 half-built resume, T04 never-started — all in one first pass, ceiling never exceeded', (t) => {
   const { platform, worktree, base } = setup(t, [{ num: 'T01' }, { num: 'T02' }, { num: 'T03' }, { num: 'T04' }]);
   worktree.openFeature(SLUG);
   seedBranch(worktree, SLUG, 'T01', '✅', { file: 'work-T01.txt' });
@@ -826,7 +855,7 @@ test('mixed restart: T01 ✅-merge, T02 🔍-review, T03 half-built rebuild, T04
   assert.equal(platform.spawns.filter((s) => s.task === 'T01').length, 0, 'T01 was merged, never re-run');
   assert.ok(platform.spawns.some((s) => s.task === 'T02' && s.role === 'review'), 'T02 got a fresh reviewer');
   assert.equal(platform.spawns.filter((s) => s.task === 'T02' && s.role === 'implement').length, 0, 'T02 was never re-implemented');
-  assert.ok(platform.spawns.some((s) => s.task === 'T03' && s.role === 'implement'), 'T03 was rebuilt by a fresh implementer');
+  assert.ok(platform.spawns.some((s) => s.task === 'T03' && s.role === 'implement'), 'T03 was resumed by a fresh implementer');
   assert.ok(platform.spawns.some((s) => s.task === 'T04' && s.role === 'implement'), 'T04 was started normally');
   assert.equal((worktree.progressOn(`pir/${SLUG}`).match(/✅/g) || []).length, 4, 'all four tasks are ✅ on the feature branch');
 });
@@ -872,7 +901,7 @@ test('mutation guard: a ✅ branch and a 🔍 branch are never dispatched as fre
   assert.ok(platform.spawns.some((s) => s.task === 'T02' && s.role === 'review'), 'T02 got a fresh reviewer');
 });
 
-test('reconciliation records a plain-English restart summary naming what it merged/reviewed/rebuilt/started', (t) => {
+test('reconciliation records a plain-English restart summary naming what it merged/reviewed/resumed/started', (t) => {
   const { worktree, base } = setup(t, [{ num: 'T01' }, { num: 'T02' }, { num: 'T03' }, { num: 'T04' }]);
   worktree.openFeature(SLUG);
   seedBranch(worktree, SLUG, 'T01', '✅', { file: 'work-T01.txt' });
@@ -884,11 +913,11 @@ test('reconciliation records a plain-English restart summary naming what it merg
   assert.ok(summary, 'a restart summary is recorded');
   assert.deepEqual(summary.merged, ['T01']);
   assert.deepEqual(summary.reviewed, ['T02']);
-  assert.deepEqual(summary.rebuilt, ['T03']);
+  assert.deepEqual(summary.resumed, ['T03']);
   assert.deepEqual(summary.started, ['T04']);
   assert.match(summary.text, /merged T01/);
   assert.match(summary.text, /T02 to review/);
-  assert.match(summary.text, /rebuilding T03/);
+  assert.match(summary.text, /resuming T03/);
   assert.match(summary.text, /starting T04/);
 });
 
@@ -896,7 +925,7 @@ test('a genuine first start records no restart summary and takes no reconciliati
   const { base } = setup(t, chain(3));
   const result = drain(base);
   assert.equal(result.complete, true);
-  assert.ok(!result.actions.some((a) => ['rebuild', 'cleanup', 'restart-summary'].includes(a.type)), 'no reconciliation action on a first start');
+  assert.ok(!result.actions.some((a) => ['resume', 'cleanup', 'restart-summary'].includes(a.type)), 'no reconciliation action on a first start');
   const merges = result.actions.filter((a) => a.type === 'merge');
   assert.equal(merges.length, 3, 'the three merges are the normal loop merges, not adoptions');
 });

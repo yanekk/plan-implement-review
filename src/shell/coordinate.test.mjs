@@ -568,7 +568,7 @@ test('a restart run exposes a plain-English reconciliation summary from pass(), 
   assert.ok(r.restartSummary, 'the first pass of a restart returns a plain-English summary the bin prints');
   assert.match(r.restartSummary, /merged T01/);
   assert.match(r.restartSummary, /T02 to review/);
-  assert.match(r.restartSummary, /rebuilding T03/);
+  assert.match(r.restartSummary, /resuming T03/);
 });
 
 test('a genuine first start exposes no reconciliation summary from pass() (T03)', (t) => {
@@ -849,7 +849,7 @@ test('writeRunFinal on an abnormal exit writes NOTHING — snapshot and index bo
   }
 });
 
-test('teardownRun with keepWorktrees closes workers but leaves the worktrees (the detached stop, DESIGN §2.6)', (t) => {
+test('teardownRun closes workers but leaves the worktrees, so the next start can resume them', (t) => {
   const { coordinator, platform, worktree } = setup(t, [{ num: 'T01' }, { num: 'T02' }], {
     behaviors: { T01: { question: 'blocked on you' } },
   });
@@ -858,7 +858,7 @@ test('teardownRun with keepWorktrees closes workers but leaves the worktrees (th
   assert.ok(platform._workers.has(parkedId), 'the parked worker is live before the stop');
 
   const removesBefore = worktree.events.filter((e) => e.op === 'remove').length;
-  const { closed } = teardownRun({ platform, worktree, state: coordinator.state, repo: REPO, slug: SLUG, keepWorktrees: true });
+  const { closed } = teardownRun({ platform, state: coordinator.state, repo: REPO, slug: SLUG });
 
   assert.ok(closed.includes(parkedId), 'the stop still closes the live worker (no orphaned paid session)');
   assert.ok(!platform._workers.has(parkedId), 'the session is gone from the platform');
@@ -866,19 +866,17 @@ test('teardownRun with keepWorktrees closes workers but leaves the worktrees (th
   assert.equal(removesAfter, removesBefore, 'but NO worktree was removed — the next start reconciles them (§2.6)');
 });
 
-test('teardownRun without keepWorktrees still removes the worktree (the classic Ctrl-C path is unchanged)', (t) => {
+test('teardownRun keeps the task branch on an error/Ctrl-C exit too, even when handed a worktree (ENOSPC, 2026-09-22)', (t) => {
   const { coordinator, platform, worktree } = setup(t, [{ num: 'T01' }, { num: 'T02' }], {
     behaviors: { T01: { question: 'blocked on you' } },
   });
   driveCollecting(coordinator);
   const parkedTaskBranch = `pir/${SLUG}-T01`;
-  const removedBefore = worktree.events.some((e) => e.op === 'remove' && e.branch === parkedTaskBranch);
 
-  teardownRun({ platform, worktree, state: coordinator.state, repo: REPO, slug: SLUG }); // default: remove worktrees
-  assert.ok(
-    !removedBefore && worktree.events.some((e) => e.op === 'remove' && e.branch === parkedTaskBranch),
-    'the parked task worktree is removed on a classic teardown',
-  );
+  // `worktree` is passed on purpose: the old signature removed task worktrees whenever it had one.
+  teardownRun({ platform, worktree, state: coordinator.state, repo: REPO, slug: SLUG });
+  assert.ok(!worktree.events.some((e) => e.op === 'remove' && e.branch === parkedTaskBranch), 'no task worktree is removed');
+  assert.ok(worktree.branchExists(parkedTaskBranch), 'the parked task branch survives for the next start');
 });
 
 test('updateIndexFinalState stamps the run`s index entry, composing runrecord + the store (DESIGN §2.8, T10)', (t) => {

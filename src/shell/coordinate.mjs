@@ -26,7 +26,7 @@ import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, 
 import { basename, join } from 'node:path';
 
 import { parseProgress, reconcileTaskRow, progressPathFor } from '../core/progress.mjs';
-import { workerName, isWorkerOf, parseAgentName } from '../core/naming.mjs';
+import { workerName, isWorkerOf } from '../core/naming.mjs';
 import { buildDisplay } from '../core/display.mjs';
 import { parseRecord } from '../core/runrecord.mjs';
 import { testCommandFrom } from '../core/testcommand.mjs';
@@ -311,23 +311,16 @@ export function createReportInbox({ dir } = {}) {
 // that is not a clean promotion/halt (a safety cap, a stall, a signal, an error) must close this run's
 // live workers. `platform.close` is stop + SIGTERM — `claude stop` alone only interrupts (FINDINGS
 // 2026-09-09), so this is what actually ends the session. Closing an already-gone id is a safe no-op.
-// `keepWorktrees` is the detached-stop case (DESIGN §2.6, T10): a `pir` stop closes this run's workers
-// but LEAVES the task worktrees, because the next `pir {slug}` reconciles them from the git branches
-// (the durable state) and an immediate stop must not wait on teardown. The classic Ctrl-C path keeps
-// removing them (the default), so foreground behaviour is unchanged.
-export function teardownRun({ platform, worktree, state, repo, slug, control, keepWorktrees = false } = {}) {
+//
+// It closes sessions ONLY and never removes a task worktree or branch, on any exit. Those branches are
+// the durable record of in-flight work, and the next `pir {slug}` reconciles them from git: a 🔍 branch
+// goes to review, a half-built one is resumed. Removing them on exit is what made a restart rebuild
+// everything: on 2026-09-22 a full disk (ENOSPC) threw, the `error` teardown deleted a built T04, a
+// built T06 and a half-built T07 in real-screen-time, and the next start implemented all three again.
+// A run nobody restarts leaves its branches behind; docs/restart-recovery.md § Manual recovery covers
+// removing them by hand.
+export function teardownRun({ platform, state, repo, slug, control } = {}) {
   const closed = new Set();
-  const removeWorktree = (num) => {
-    if (keepWorktrees) return; // detached stop leaves worktrees for the next start to reconcile (§2.6)
-    const t = num ? state?.tasks?.[num] : null;
-    if (t?.worktree && worktree) {
-      try {
-        worktree.remove(t.worktree);
-      } catch {
-        /* best-effort cleanup; the session close is what matters for orphan-avoidance */
-      }
-    }
-  };
   const closeId = (id, name) => {
     if (!id || closed.has(id)) return;
     try {
@@ -355,17 +348,11 @@ export function teardownRun({ platform, worktree, state, repo, slug, control, ke
   } catch {
     live = [];
   }
-  for (const w of live) {
-    closeId(w.id, w.name);
-    removeWorktree(parseAgentName(w.name).task);
-  }
+  for (const w of live) closeId(w.id, w.name);
   // Plus any worker this run spawned that we still track — covers the appear-grace window in which a
   // just-spawned session is not listed yet, so a spawn is never left behind on an early exit.
   for (const [num, t] of Object.entries(state?.tasks ?? {})) {
-    if (t.workerId) {
-      closeId(t.workerId, workerName({ repo, plan: slug, task: num, slug: t.slug, role: t.role ?? 'implement' }));
-      removeWorktree(num);
-    }
+    if (t.workerId) closeId(t.workerId, workerName({ repo, plan: slug, task: num, slug: t.slug, role: t.role ?? 'implement' }));
   }
   return { closed: [...closed] };
 }
@@ -977,7 +964,7 @@ async function main(argv) {
   // halt (both of which the loop already handled). This is the orphan-guard: a safety cap, a stall, a
   // Ctrl-C or an error must not leave a paid session running (DESIGN §2.6). Idempotent (close is safe
   // twice). A re-run reaps whatever a second Ctrl-C during teardown left behind (§2.6, §2.8).
-  const teardown = () => teardownRun({ platform, worktree, state: coordinator.state, repo, slug, control });
+  const teardown = () => teardownRun({ platform, state: coordinator.state, repo, slug, control });
   let tornDown = false;
   const teardownOnce = (why) => {
     if (tornDown) return;
@@ -990,14 +977,14 @@ async function main(argv) {
     if (closed.length) renderer.line(`\n=== ${why}: closed ${closed.length} live worker(s) so none is orphaned ===`);
   };
 
-  // The detached stop (DESIGN §2.6, T10): a `pir` stop sends SIGTERM to a PIR_RUN coordinator. Unlike the
-  // classic Ctrl-C teardown, it LEAVES the task worktrees (the next start reconciles them from git) and
-  // records a `stopped` final status. It shares tornDown with teardownOnce so only one of the two runs.
+  // The detached stop (DESIGN §2.6, T10): a `pir` stop sends SIGTERM to a PIR_RUN coordinator. Like every
+  // teardown it leaves the task worktrees for the next start to reconcile; unlike the others it records a
+  // `stopped` final status. It shares tornDown with teardownOnce so only one of the two runs.
   const stopDetached = () => {
     if (tornDown) return;
     tornDown = true;
     renderer.close();
-    const { closed } = teardownRun({ platform, worktree, state: coordinator.state, repo, slug, control, keepWorktrees: true });
+    const { closed } = teardownRun({ platform, state: coordinator.state, repo, slug, control });
     writeRunFinal({ controlDir: control.dir, proc, runState: lastRunState, reason: 'stop', updateIndex, log: control.log });
     renderer.line(
       closed.length

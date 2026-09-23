@@ -31,7 +31,7 @@ without per-task typing.
    `worktree.mjs`). See [branch-model.md](branch-model.md).
 5. Still on the first pass, before dispatching, the command **reconciles each task from its own
    task branch** — a restart adopts in-flight work (merges a finished task, reviews a built one,
-   rebuilds a half-built one) rather than starting over; a genuine first start finds no task
+   resumes a half-built one on its branch) rather than starting over; a genuine first start finds no task
    branches and reconciles nothing. See [restart-recovery.md](restart-recovery.md).
 
 ## Each pass
@@ -135,4 +135,5 @@ A run ends in one of three ways:
 
 On any exit that is not a clean hand-off or a halt, the command tears down every live worker of the
 run, so no session is left running (`teardownRun` in `coordinate.mjs`). Ctrl-C (SIGINT/SIGTERM) runs
-the same teardown as an orphan-guard before it exits.
+the same teardown as an orphan-guard before it exits. The teardown closes sessions only: task
+branches and worktrees are always left for the next start to reconcile.

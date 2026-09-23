@@ -61,7 +61,7 @@ records:
 ## The log
 
 Every coordinator action appends one line to `log`, tagged by kind: `open-feature`, `spawn`,
-`await-idle`, `force-idle`, `review`, `rebuild`, `cleanup`, `merge`, `adopt`, `surface`, `close`,
+`await-idle`, `force-idle`, `review`, `resume`, `cleanup`, `merge`, `adopt`, `surface`, `close`,
 `halt-close`, `teardown`, `ceiling full`, and, on a restart, a `restart` marker and a
 `restart-summary` line naming what reconciliation adopted (see [restart-recovery.md](restart-recovery.md)).
 An `adopt` line marks the command taking a worker-introduced task's new row onto the feature branch

@@ -212,7 +212,14 @@ function reconcile({ platform, worktree, repo, slug, maxWorkers, state, featureP
   const slugByNum = new Map(featureTasks.map((t) => [t.num, t.name])); // Task-column slug per task (§2.9)
   const branchStates = {};
   for (const t of featureTasks) branchStates[t.num] = worktree.taskBranchState(slug, t.num);
-  const { merge, review, rebuild } = decideResume({ featureTasks, branchStates });
+  const { merge, review, resume } = decideResume({ featureTasks, branchStates });
+
+  // A task branch can outlive its worktree folder (pruned by hand, or a teardown that removed the
+  // folder but not the branch). The glyph above was read from the branch, so the work is there; re-attach
+  // a worktree to it rather than skip the task, which would leave its row ⬜ and have the normal
+  // dispatch below re-implement a task that was already built or reviewed. createTask reuses the
+  // branch as-is when it exists, and is a no-op when the worktree is still registered.
+  const handleFor = (num) => worktree.taskWorktreeHandle(slug, num) ?? worktree.createTask(slug, num);
 
   // merge: fold each built-and-reviewed (✅) branch into the feature branch directly — no worker
   // session, because the branch is already reviewed (DESIGN §2.5). This mirrors the loop's own
@@ -230,8 +237,7 @@ function reconcile({ platform, worktree, repo, slug, maxWorkers, state, featureP
   const merged = [];
   const conflicted = [];
   for (const num of merge) {
-    const handle = worktree.taskWorktreeHandle(slug, num);
-    if (!handle) continue; // branch vanished under us; nothing to fold in.
+    const handle = handleFor(num);
     const res = worktree.mergeTask(handle.branch);
     if (res.conflict) {
       // No live worker to attach to — the crashed run's session died with it (DESIGN §2.6) — so the
@@ -272,8 +278,7 @@ function reconcile({ platform, worktree, repo, slug, maxWorkers, state, featureP
   // crash, and the reap freed it), so the cap fails loud rather than over-spawning (DESIGN §2.5).
   let reviewSpawns = 0;
   for (const num of review) {
-    const handle = worktree.taskWorktreeHandle(slug, num);
-    if (!handle) continue;
+    const handle = handleFor(num);
     if (reviewSpawns >= maxWorkers) {
       record('surface', { task: num, kind: 'over-ceiling', text: `reconciliation would spawn more than ${maxWorkers} reviewers — the in-flight bound says this cannot happen` });
       continue;
@@ -286,17 +291,14 @@ function reconcile({ platform, worktree, repo, slug, maxWorkers, state, featureP
     record('review', { task: num, workerId: reviewerId, adopted: true });
   }
 
-  // rebuild: discard each half-built branch (worktree + branch). The feature row stays ⬜, so the same
-  // pass's normal spawn step re-dispatches a fresh implementer and createTask re-cuts a clean branch off
-  // the feature branch (DESIGN §2.5). Discarding FIRST is what guarantees the retry starts clean rather
-  // than on the leaked half-built branch. Rebuild-clean over salvage is the user's decision (§2.3, §7):
-  // a re-implement from the task doc is correct by construction; adopting a possibly-half-finished branch
-  // risks landing it as done.
-  for (const num of rebuild) {
-    const handle = worktree.taskWorktreeHandle(slug, num);
-    if (handle) worktree.remove(handle);
-    record('rebuild', { task: num });
-  }
+  // resume: leave each half-built branch — its commits AND any uncommitted edits in its worktree —
+  // exactly where it is. The feature row stays ⬜, so the same pass's normal spawn step dispatches a
+  // fresh implementer, and createTask hands it the existing branch and worktree instead of cutting a
+  // clean one. The implementer's contract (skills/pir-worker) has it inspect what is already there and
+  // continue it. This replaced discard-and-rebuild on 2026-09-23 (user decision): a rebuild threw away
+  // everything a crashed or stopped implementer had done. Landing unfinished work as done is still
+  // guarded — nothing reaches review until an implementer marks the branch 🔍.
+  for (const num of resume) record('resume', { task: num });
 
   // cleanup: a task already merged (feature ✅) whose task branch was never removed — the merge landed
   // but close did not run before the crash. Remove the leftover worktree/branch so restarts do not leave
@@ -322,18 +324,18 @@ function reconcile({ platform, worktree, repo, slug, maxWorkers, state, featureP
     .map((t) => t.num);
   // `merged` is what actually folded in, not decideResume's merge list — a ✅ branch that hit a conflict
   // was blocked (⛔), not merged, and is narrated as needing a hand rather than falsely as merged.
-  if (merged.length + review.length + rebuild.length + conflicted.length > 0) {
+  if (merged.length + review.length + resume.length + conflicted.length > 0) {
     const parts = [];
     if (merged.length) parts.push(`merged ${merged.join(', ')} (already finished)`);
     if (review.length) parts.push(`sent ${review.join(', ')} to review (already built)`);
-    if (rebuild.length) parts.push(`rebuilding ${rebuild.join(', ')} (only half-built)`);
+    if (resume.length) parts.push(`resuming ${resume.join(', ')} where the last builder stopped (only half-built)`);
     if (conflicted.length) parts.push(`${conflicted.join(', ')} need a hand to land (finished but clash with a neighbour)`);
     if (started.length) parts.push(`starting ${started.join(', ')} fresh`);
     record('restart-summary', {
       text: `Restarted and reconciled from git: ${parts.join('; ')}.`,
       merged,
       reviewed: review,
-      rebuilt: rebuild,
+      resumed: resume,
       blocked: conflicted,
       started,
     });
@@ -373,7 +375,7 @@ export function runPass({ platform, worktree, repo, slug, maxWorkers, state, con
 
   // 0.5 Reconcile from git once, before the first dispatch (DESIGN §2.1, §2.4). A no-op on a genuine
   // first start (no task branches to adopt); on a restart it reaps the dead run's leftover sessions,
-  // merges ✅ branches, hands 🔍 branches to fresh reviewers, and discards half-built ones — so the loop
+  // merges ✅ branches, hands 🔍 branches to fresh reviewers, and keeps half-built ones to resume — so the loop
   // below runs over a state that matches git. closedIds may be absent on a hand-built state; ensure it
   // before the reap writes to it.
   state.closedIds ??= new Set();

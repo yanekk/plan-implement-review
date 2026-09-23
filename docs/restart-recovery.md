@@ -3,7 +3,8 @@
 A parallel run can end abruptly: the kill switch fires, the command crashes or is killed, the
 machine is rebooted, or the person walks away. There is no separate resume command — recovery is to
 **re-run the command on the same slug**. A re-run reconciles every task from git and resumes it at
-the stage it had actually reached, rather than rebuilding from the start. This page describes what
+the stage it had actually reached, rather than rebuilding from the start. No exit path deletes a task
+branch, so there is always something to reconcile. This page describes what
 that re-run picks up and how it decides.
 
 ## What a re-run reliably picks up
@@ -14,15 +15,16 @@ that re-run picks up and how it decides.
   worktree, not a duplicate.
 - **Per-task branches and worktrees.** `pir/{plan}-T{nn}` and `.claude/worktrees/pir-{slug}-T{nn}`
   are deterministic and reused the same way (`createTask`). Reconciliation adopts the work already
-  committed on each task branch (below); a task it rebuilds or starts fresh is spawned into the
-  existing branch and worktree if one is present.
+  on each task branch (below); a task it resumes is spawned into the existing branch and worktree,
+  and a branch whose worktree folder is gone gets the folder re-attached rather than being skipped.
 - **Completed work.** Any task already merged into the feature branch reads `✅` in the feature
   branch's `PROGRESS.md`, so a re-run does not rebuild it — the feature branch is the durable record
   of what has actually landed. `main` is untouched (nothing ever merges to `main`), so an
   interrupted run leaves `main` exactly as it was.
 - **In-flight task work, adopted from each task branch.** A task built (`🔍`) or built and reviewed
   (`✅`) on its own task branch but not yet merged is picked up at that stage, not re-dispatched from
-  scratch. This is the reconciliation pass below.
+  scratch. A task only partly built is resumed on its branch, commits and uncommitted edits intact.
+  This is the reconciliation pass below.
 
 ## Reconciliation — git is the ground truth
 
@@ -45,15 +47,21 @@ The stage a task reached lives in its own task branch's `plans/{slug}/PROGRESS.m
 it is committed **atomically with the work it describes**: the implementer marks `🔍` in the same
 commit as the code, and the reviewer marks `✅` in its own commit. So committed code never carries a
 stale `⬜`/`🟡` — either the build commit landed with its `🔍`, or it did not land at all. Uncommitted
-working-tree state is ignored on purpose: a crash cannot be trusted to have finished what it left
-uncommitted.
+working-tree state never promotes a task: a crash cannot be trusted to have finished what it left
+uncommitted. It is kept, though, for the resumed implementer to inspect (below).
+
+### Every exit keeps the task branches
+
+`teardownRun` (`coordinate.mjs`) runs on every exit that is not a clean hand-off or a halt — a `pir`
+stop, Ctrl-C, an uncaught error, the safety cap, the runaway breaker, a stall. It closes this run's
+worker sessions and **never removes a task worktree or branch**. It used to remove them on every exit
+but the detached stop; on 2026-09-22 a full disk (`ENOSPC`) crashed a real run, that `error` teardown
+deleted two built tasks and one half-built one, and the restart implemented all three again.
 
 ### Reap the dead run's workers first
 
-The only crash that leaves task branches to reconcile is one that skips the command's own shutdown —
-a `SIGKILL` or a power loss, not a Ctrl-C, because the SIGINT/SIGTERM handler runs `teardownRun`,
-which removes the task worktrees and branches the reconcile would otherwise adopt. That same
-abruptness leaves the dead run's worker sessions still running. Each orphaned session both inflates
+A crash that skips the command's own shutdown — a `SIGKILL`, a power loss, a stop that outlasts its
+grace and is force-killed — leaves the dead run's worker sessions still running. Each orphaned session both inflates
 the live-worker count (tripping the runaway breaker) and stays invisible to the slot maths (so the
 run would over-spawn). So the first thing reconciliation does, before adopting anything, is stop
 every worker session of this slug the platform still lists — **session-only** (close the session and
@@ -71,7 +79,7 @@ decides one action from the feature-row state and the committed task-branch glyp
 | `⛔` | (any / absent) | **skip** | a person deferred it; its dependents wait |
 | `⬜` | `✅` | **merge** | built and reviewed — folded into the feature branch directly, no worker |
 | `⬜` | `🔍` | **review** | built, not reviewed — a fresh reviewer session is spawned on its worktree |
-| `⬜` | present, neither `✅` nor `🔍` | **rebuild** | half-built — the branch is discarded and re-implemented clean |
+| `⬜` | present, neither `✅` nor `🔍` | **resume** | half-built — a fresh implementer continues on the existing branch |
 | `⬜` | absent | **implement** | never started — the pass's normal dispatch handles it |
 
 - **merge** reuses the loop's own merge-and-reconcile: `worktree.mergeTask` folds the branch in,
@@ -84,11 +92,15 @@ decides one action from the feature-row state and the committed task-branch glyp
   way (a review always with a live session, a merge with none) because the loop's assignment
   machinery treats a tracked task with no live session as dead and would remove its branch,
   discarding the adopted work.
-- **rebuild** removes the task worktree and branch; the feature row stays `⬜`, so the same pass's
-  normal spawn step dispatches a fresh implementer onto a clean branch. Rebuilding clean rather than
-  salvaging a half-built branch is deliberate: a re-implement from the task doc is correct by
-  construction, whereas adopting possibly-half-finished code risks landing it as done. Anything
-  short of `🔍`/`✅` is treated as not built.
+- **resume** leaves the branch and worktree alone; the feature row stays `⬜`, so the same pass's
+  normal spawn step dispatches a fresh implementer, and `createTask` hands it the existing branch and
+  worktree. The worker contract (`skills/pir-worker` § Before you start) has every worker check
+  `git log pir/{plan}..HEAD` and `git status` first and continue what an earlier session left. This
+  replaced discard-and-rebuild on 2026-09-23 by the user's decision: a rebuild threw away hours of
+  work on every restart. Anything short of `🔍`/`✅` still counts as not built, so nothing half-done
+  reaches review until an implementer marks it `🔍`.
+- **merge** and **review** re-attach a worktree when the branch exists but its folder does not
+  (`createTask` reuses the branch), so a lost folder never demotes a built task to a re-implement.
 
 ### When a `✅` branch will not merge
 
@@ -105,10 +117,10 @@ run before the crash) is removed as cleanup, so re-runs do not accumulate orphan
 
 ### The restart is narrated in one line
 
-A re-run that silently merges, reviews and rebuilds looks, in ordinary progress output, almost
+A re-run that silently merges, reviews and resumes looks, in ordinary progress output, almost
 exactly like a fresh run. So reconciliation composes one plain-English line naming what it adopted —
 what it merged because it was already finished, what it sent to review because it was already built,
-what it is rebuilding because it was only half-done, what needs a hand to land, and what it is
+what it is resuming because it was only half-done, what needs a hand to land, and what it is
 starting fresh — logged as `restart-summary` and printed as the run resumes. A genuine first start
 adopts nothing, so it emits no summary, and a first run's output is unchanged.
 
@@ -138,13 +150,18 @@ before either step, which is harmless because it changes no state.)
 
 `plans/parallel-pir/DESIGN.md § 6 Recovery` describes restart as a clean resume that "re-opens the
 feature branch and continues from its `PROGRESS.md`". That was the build-time aspiration; the
-reconciliation above is what makes it true. The sealed plan is history — this page and the code are
+reconciliation above is what makes it true. `plans/coordinator-restart-resume/DESIGN.md` records
+rebuild-clean for a half-built branch and a teardown that removes worktrees; both were reversed on
+2026-09-23 as described above. The sealed plan is history — this page and the code are
 the ground truth.
 
 ## Manual recovery
 
 When a re-run is not what is wanted, the pieces are all inspectable and removable by hand:
 
+- **Leftover task branches from a run nobody will restart:** since no exit removes them, delete them
+  with `git worktree remove --force` and `git branch -D` (below), or re-run the command, which merges,
+  reviews or resumes each one.
 - **A leaked worker, worktree, or branch:** `claude agents --json` lists live sessions with their
   pid; `git worktree list` lists worktrees. End a session with `kill <pid>` (`claude stop` only
   interrupts), clear its record with `claude rm <id>`, and remove the worktree and branch with
