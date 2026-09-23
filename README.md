@@ -81,6 +81,30 @@ The full behaviour — the run lifecycle, task state, the branch and worktree mo
 recovery, known limitations — is in [`docs/`](docs/README.md), starting with
 [detached-runs.md](docs/detached-runs.md) for `pir` itself.
 
+## The plan can grow while it runs
+
+A run does not need a perfect plan up front. When a worker finds that the plan is missing a task
+— a piece of wiring nobody listed, a check a later task will need — it stops and asks you, the
+same way it asks any other question. Once you say yes, it writes the new task down: its row in
+`PROGRESS.md` and `PLAN.md`, and a full task file under `tasks/`.
+
+The run picks the new task up when that worker's own work is merged, and fits it into the order
+automatically:
+
+- **It waits for what it depends on.** The new task starts the moment the tasks it names are
+  done, like any other.
+- **It can hold back existing tasks.** The new task can name tasks that must wait for it — a new
+  T11 whose dependencies read `T04, T05; blocks T10` — and the run adds that wait to T10 without
+  anyone editing T10.
+  The live view then shows T10 as `needs T11`.
+- **It is checked before it lands.** A task that depends on something that does not exist, or a
+  wait that would go round in a circle, is refused and shown to you rather than applied.
+
+What cannot change mid-run: a task that already exists cannot be edited, split, reordered or
+given different dependencies — another worker may be building it at that moment. And a task that
+has already started cannot be held back; if a new task asks for that, it is still added, and the
+run tells you that the started task was built without the new work. The details are in [docs/task-state.md](docs/task-state.md).
+
 ## Why the plan gets reviewed too
 
 A defect in a plan is copied into every task built from it, and the build-review alternation
@@ -210,11 +234,14 @@ $ pir screen-time
     → T06 needs your eyes: its worker starts the limit screen and asks you to look
       → the view shows "T06 limit-screen — asking you"; you attach in `claude agents`,
         run the command it gives you, say what you saw; it records that and carries on
+    → T05's worker finds nothing in the plan wires the warning into the app; it asks
+      you, you say yes, it adds T09 "warning-wiring; blocks T08" — once T05 merges,
+      the view gains a T09 row, and T08 now needs T09 as well
     → you close the terminal to go to lunch; the run keeps going
 $ pir
-    → the dashboard shows screen-time running, 7/9 done; ↵ reopens its live view
+    → the dashboard shows screen-time running, 8/10 done; ↵ reopens its live view
     → last task merged, tests on pir/screen-time pass:
-        ✔ all 9 task(s) green on pir/screen-time · tests pass. Yours to merge:
+        ✔ all 10 task(s) green on pir/screen-time · tests pass. Yours to merge:
             git merge pir/screen-time
 ```
 
