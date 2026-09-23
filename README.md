@@ -88,6 +88,11 @@ it:
 - **A task is one session's work.** `/pir-plan` splits the plan until every task can be built,
   tested and handed over inside a single session, and writes each one down with its goal, the files
   it touches, its interface and what "done" means — everything a session needs to start cold.
+- **A task that turns out bigger than planned does not have to grow.** Its worker can propose
+  moving the extra work into a new task — asked and approved like any other question — and the
+  run schedules it with its own fresh builder and reviewer (see
+  [The plan can grow while it runs](#the-plan-can-grow-while-it-runs)). What the original task
+  promised in its "done" is still finished in its own session; only work beyond that moves out.
 - **Every worker is new, and is closed when its step is done.** A task's builder is closed when it
   hands the task over for review; the reviewer is closed once the task is merged. No session ever
   carries a second task, so none accumulates history from the last one.
