@@ -30,6 +30,9 @@ import {
   noRebuildFrom,
   feedsCleared,
   leftoverSessionsReaped,
+  stoppedGracefully,
+  resumedFromPartial,
+  loadRestartPoint,
   checkScenario,
   formatReport,
 } from './assertions.mjs';
@@ -588,6 +591,95 @@ test('resumedNotRebuilt fails vacuously-safe when the run never restarted (one m
   const r = resumedNotRebuilt('T02').check(b);
   assert.equal(r.pass, false);
   assert.match(r.detail, /did not restart/);
+});
+
+// --- stop-and-restart facts (restart-review / restart-implement fixtures) ------------------------
+
+// A stopped-then-resumed half-built run: T01 committed part 1 (abc1234) and was stopped with SIGTERM
+// (its teardown closed the implementer), then resumed on the same branch and merged.
+const partialBundle = () =>
+  bundle({
+    flow: [
+      fl('2026-01-01T00:00:00Z', 'restart'),
+      fl('2026-01-01T00:00:01Z', 'spawn', 'T01'),
+      fl('2026-01-01T00:00:08Z', 'teardown:', 'closed pir-h / scratch / T01 / work / implement (i1)'),
+      fl('2026-01-01T00:00:10Z', 'restart'),
+      fl('2026-01-01T00:00:10Z', 'resume', 'T01'),
+      fl('2026-01-01T00:00:11Z', 'spawn', 'T01'),
+      fl('2026-01-01T00:00:20Z', 'merge', 'T01'),
+    ],
+    gitLog: '* 9f9f9f9 reconcile T01 → ✅\n* def5678 T01: part 2\n* abc1234 T01: part 1\n* 0000000 seed\n',
+    restartPoint: { task: 'T01', head: 'abc1234deadbeef', glyph: '⬜', signal: 'SIGTERM' },
+  });
+
+test('stoppedGracefully passes when a SIGTERM stop logged a teardown before the restart', () => {
+  const r = stoppedGracefully().check(partialBundle());
+  assert.equal(r.pass, true, r.detail);
+});
+
+test('stoppedGracefully fails on a SIGKILL crash — no teardown ran', () => {
+  const b = partialBundle();
+  b.restartPoint.signal = 'SIGKILL';
+  assert.equal(stoppedGracefully().check(b).pass, false);
+});
+
+test('stoppedGracefully fails when the stop closed no worker (no teardown line before the boundary)', () => {
+  const b = partialBundle();
+  b.flow = b.flow.filter((e) => e.type !== 'teardown:');
+  const r = stoppedGracefully().check(b);
+  assert.equal(r.pass, false);
+  assert.match(r.detail, /no teardown/);
+});
+
+test('resumedFromPartial passes when the stopped branch was resumed, its part-1 commit kept once, and merged', () => {
+  const r = resumedFromPartial('T01', { commit: 'T01: part 1' }).check(partialBundle());
+  assert.equal(r.pass, true, r.detail);
+});
+
+test('resumedFromPartial fails when the branch was discarded (its stop-time commit is gone from history)', () => {
+  const b = partialBundle();
+  b.gitLog = '* 9f9f9f9 reconcile T01 → ✅\n* 7777777 T01: part 2\n* 6666666 T01: part 1\n';
+  const r = resumedFromPartial('T01', { commit: 'T01: part 1' }).check(b);
+  assert.equal(r.pass, false);
+  assert.match(r.detail, /thrown away/);
+});
+
+test('resumedFromPartial fails when the resumed implementer redid part 1', () => {
+  const b = partialBundle();
+  b.gitLog += '* 5555555 T01: part 1\n';
+  const r = resumedFromPartial('T01', { commit: 'T01: part 1' }).check(b);
+  assert.equal(r.pass, false);
+  assert.match(r.detail, /redid/);
+});
+
+test('resumedFromPartial fails when the stop caught the task already built (🔍), not half-built', () => {
+  const b = partialBundle();
+  b.restartPoint.glyph = '🔍';
+  const r = resumedFromPartial('T01', { commit: 'T01: part 1' }).check(b);
+  assert.equal(r.pass, false);
+  assert.match(r.detail, /half-built/);
+});
+
+test('resumedFromPartial fails on a rebuild line or with no resume line', () => {
+  const rebuilt = partialBundle();
+  rebuilt.flow = rebuilt.flow.map((e) => (e.type === 'resume' ? { ...e, type: 'rebuild' } : e));
+  assert.equal(resumedFromPartial('T01').check(rebuilt).pass, false);
+  const silent = partialBundle();
+  silent.flow = silent.flow.filter((e) => e.type !== 'resume');
+  assert.match(resumedFromPartial('T01').check(silent).detail, /no `resume T01` line/);
+});
+
+test('loadRestartPoint reads restart-point.json; missing or malformed → null', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'pir-rp-'));
+  try {
+    assert.equal(loadRestartPoint({ dir }).restartPoint, null);
+    writeFileSync(join(dir, 'restart-point.json'), JSON.stringify({ task: 'T01', head: 'abc', glyph: '⬜', signal: 'SIGTERM' }));
+    assert.deepEqual(loadRestartPoint({ dir }).restartPoint, { task: 'T01', head: 'abc', glyph: '⬜', signal: 'SIGTERM' });
+    writeFileSync(join(dir, 'restart-point.json'), '{nope');
+    assert.equal(loadRestartPoint({ dir }).restartPoint, null);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 // A left-alone run: T01 merged before the crash and untouched after it.

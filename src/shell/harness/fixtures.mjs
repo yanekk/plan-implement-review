@@ -3,9 +3,10 @@
 // workers). This module is the registry over them and the installer the T17 live runner uses to lay one
 // down as a self-contained scratch repo and seed its git state. The set covers the coordinator paths:
 // a single task, a concurrent pair, a review queue, a clean merge, a merge conflict, a worker that parks
-// on the person, a crash-and-restart, and a worker introducing a task the coordinator adopts and
-// dispatches. The old `hands-on` and `blog-app` fixtures exercised the
-// `you`/hands-on model, which was removed with the down-channel (DESIGN §2.5, T05); they went with it.
+// on the person, a crash-and-restart, a stop-and-restart mid-review and mid-implement, and a worker
+// introducing a task the coordinator adopts and dispatches. The old `hands-on` and `blog-app` fixtures
+// exercised the `you`/hands-on model, which was removed with the down-channel (DESIGN §2.5, T05); they
+// went with it.
 //
 // A fixture is a JS descriptor (fixtures/<name>.mjs), not an on-disk plan tree: its plan text and task
 // docs are inline strings and its scenario spec is a defineScenario(...) value (T15), the same
@@ -46,6 +47,8 @@ import cleanMerge from './fixtures/clean-merge.mjs';
 import mergeConflict from './fixtures/merge-conflict.mjs';
 import humanDecision from './fixtures/human-decision.mjs';
 import restart from './fixtures/restart.mjs';
+import restartReview from './fixtures/restart-review.mjs';
+import restartImplement from './fixtures/restart-implement.mjs';
 import dynamicTask from './fixtures/dynamic-task.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -73,6 +76,8 @@ const FIXTURES = Object.freeze({
   [mergeConflict.id]: mergeConflict,
   [humanDecision.id]: humanDecision,
   [restart.id]: restart,
+  [restartReview.id]: restartReview,
+  [restartImplement.id]: restartImplement,
   [dynamicTask.id]: dynamicTask,
 });
 

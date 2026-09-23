@@ -163,6 +163,21 @@ export function loadControlFeeds(bundle, { readFile = (p) => readFileSync(p, 'ut
   return { ...bundle, controlFeeds };
 }
 
+// loadRestartPoint(bundle, { readFile }) → a new bundle with `restartPoint` attached, read from the
+// bundle's `restart-point.json` (written by the restart runner between the two runs): the crash-point
+// task's branch head and committed glyph as the restart found them, and the signal that ended the first
+// run. `{ task, head, glyph, signal }`, or null when the run never reached its crash point.
+export function loadRestartPoint(bundle, { readFile = (p) => readFileSync(p, 'utf8') } = {}) {
+  let restartPoint = null;
+  try {
+    const parsed = JSON.parse(readFile(join(bundle.dir, 'restart-point.json')));
+    if (parsed && typeof parsed === 'object') restartPoint = parsed;
+  } catch {
+    restartPoint = null;
+  }
+  return { ...bundle, restartPoint };
+}
+
 // parseTranscript(text) → the JSONL lines parsed to objects, malformed lines skipped (never a throw).
 export function parseTranscript(text) {
   return String(text ?? '')
@@ -760,6 +775,87 @@ export function noRebuildFrom(task) {
       return { pass: false, evidence, detail: `${task} was built by ${impl.size} implement sessions — the done task was re-implemented` };
     }
     return { pass: true, evidence, detail: `${task} merged before the restart and was untouched after it — not rebuilt` };
+  });
+}
+
+// The first run was STOPPED, not crashed: its own teardown ran before the restart. That teardown is the
+// exit path that used to remove every task branch (the ENOSPC loss, 2026-09-22), so a resume fact over a
+// SIGKILL'd run never exercised it. Proven from the flow log: a `teardown:` line before the restart
+// boundary (teardownRun logs one per worker it closes), and the runner recorded a non-SIGKILL signal.
+export function stoppedGracefully() {
+  return fact('stopped-gracefully', 'the first run was stopped and its own teardown ran before the restart', (bundle) => {
+    const evidence = [];
+    const boundary = restartBoundary(bundle);
+    for (const r of flowOf(bundle, 'restart')) evidence.push(flowLine(r));
+    if (!boundary) {
+      return { pass: false, evidence, detail: 'the run did not restart (fewer than two restart markers)' };
+    }
+    const signal = bundle.restartPoint?.signal ?? null;
+    evidence.push(`stop signal: ${signal ?? '(unrecorded)'}`);
+    if (!signal || signal === 'SIGKILL') {
+      return { pass: false, evidence, detail: 'the first run was not ended by a stop signal — its teardown never ran' };
+    }
+    const teardowns = (bundle.flow ?? []).filter((e) => String(e.type).startsWith('teardown') && e.ts < boundary);
+    for (const t of teardowns) evidence.push(flowLine(t));
+    if (teardowns.length === 0) {
+      return { pass: false, evidence, detail: 'no teardown line before the restart — the stop closed no worker, so the teardown was not exercised' };
+    }
+    return { pass: true, evidence, detail: `stopped with ${signal}; its teardown closed ${teardowns.length} worker(s) before the restart` };
+  });
+}
+
+// A task caught HALF-BUILT was resumed on its branch, not rebuilt (user decision 2026-09-23). The runner
+// stops the first run once the implementer has committed a first part (`commit`, a subject substring)
+// and records the branch head then (bundle.restartPoint). Proven from the bundle: the run restarted; the
+// branch was really half-built at the stop (a head exists, glyph neither 🔍 nor ✅); the resumed coordinator
+// logged `resume {task}` and never `rebuild {task}`; that recorded head commit is still in the final git
+// log (a rebuild deletes the branch, orphaning it); exactly one commit carries the part's subject (a
+// rebuild would redo it); and the task merged after the restart.
+export function resumedFromPartial(task, { commit } = {}) {
+  return fact(`resumed-from-partial:${task}`, `${task}'s half-built branch was continued after the restart, not rebuilt`, (bundle) => {
+    const evidence = [];
+    const boundary = restartBoundary(bundle);
+    for (const r of flowOf(bundle, 'restart')) evidence.push(flowLine(r));
+    if (!boundary) {
+      return { pass: false, evidence, detail: 'the run did not restart (fewer than two restart markers) — resume is unproven' };
+    }
+    const point = bundle.restartPoint;
+    if (!point || point.task !== task || !point.head) {
+      return { pass: false, evidence, detail: `no ${task} branch head was recorded at the stop — nothing to resume from` };
+    }
+    evidence.push(`${task} at the stop: ${point.head} glyph ${point.glyph ?? '(none)'}`);
+    if (point.glyph === '🔍' || point.glyph === '✅') {
+      return { pass: false, evidence, detail: `${task} was already ${point.glyph} at the stop — the drill caught it built, not half-built` };
+    }
+    const rebuilds = flowOf(bundle, 'rebuild').filter((e) => e.rest === task);
+    if (rebuilds.length > 0) {
+      for (const r of rebuilds) evidence.push(flowLine(r));
+      return { pass: false, evidence, detail: `${task} was rebuilt — the restart discarded its branch` };
+    }
+    const resumed = flowOf(bundle, 'resume').find((e) => e.rest === task && e.ts >= boundary);
+    if (!resumed) {
+      return { pass: false, evidence, detail: `no \`resume ${task}\` line after the restart — the half-built branch was not adopted` };
+    }
+    evidence.push(flowLine(resumed));
+    const gitLog = String(bundle.gitLog ?? '');
+    const short = point.head.slice(0, 7);
+    if (!gitLog.includes(short)) {
+      return { pass: false, evidence, detail: `the commit ${short} ${task} had at the stop is gone from the final history — its work was thrown away` };
+    }
+    evidence.push(`${short} is still in the final history`);
+    if (commit) {
+      const redone = gitLog.split('\n').filter((l) => l.includes(commit));
+      for (const l of redone) evidence.push(l.trim());
+      if (redone.length !== 1) {
+        return { pass: false, evidence, detail: `${redone.length} commits carry "${commit}" — the resumed implementer redid the part already committed` };
+      }
+    }
+    const mergedAfter = flowOf(bundle, 'merge').find((e) => e.rest === task && e.ts >= boundary);
+    if (!mergedAfter) {
+      return { pass: false, evidence, detail: `${task} never merged after the restart` };
+    }
+    evidence.push(flowLine(mergedAfter));
+    return { pass: true, evidence, detail: `${task} was resumed from ${short} after the restart and merged — continued, not rebuilt` };
   });
 }
 

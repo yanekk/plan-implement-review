@@ -36,7 +36,7 @@ import { tmpdir } from 'node:os';
 import { isWorkerOf } from '../../core/naming.mjs';
 import { getFixture, installFixture } from './fixtures.mjs';
 import { createCapture, bundleDirFor } from './capture.mjs';
-import { checkScenario, loadTranscripts, loadFinalFiles, loadControlFeeds, formatReport } from './assertions.mjs';
+import { checkScenario, loadTranscripts, loadFinalFiles, loadControlFeeds, loadRestartPoint, formatReport } from './assertions.mjs';
 import { teardownRun } from '../coordinate.mjs';
 import { createPlatform } from '../platform.mjs';
 import { createWorktree } from '../worktree.mjs';
@@ -184,8 +184,15 @@ export function captureFinalFiles({ repoDir, gitRun = defaultRunGit, files = [],
 // 🔍 target, is a `review {task}` flow line — the coordinator wrote it the moment it saw the committed 🔍
 // and handed the branch to a reviewer (loop.mjs review handoff), the same mid-review window. Pure, so the
 // wait loop's stop condition is unit-tested against canned inputs with no live coordinator.
-export function restartTargetReached({ flowText = '', branchState = null, waitFor } = {}) {
-  if (!waitFor || !waitFor.task || !waitFor.glyph) return false;
+//
+// A mid-IMPLEMENT point is a commit instead of a glyph: waitFor = { task, commit } is reached once a commit
+// whose subject contains `commit` is on the task branch (branchCommits, the subjects of
+// pir/{slug}..pir/{slug}-{task}). The implementer is still building then — its row is still ⬜ — which is
+// the half-built state a restart must resume rather than rebuild.
+export function restartTargetReached({ flowText = '', branchState = null, branchCommits = [], waitFor } = {}) {
+  if (!waitFor || !waitFor.task) return false;
+  if (waitFor.commit) return branchCommits.some((subject) => String(subject).includes(waitFor.commit));
+  if (!waitFor.glyph) return false;
   const { task, glyph } = waitFor;
   if (branchState != null && branchState === glyph) return true;
   if (glyph === '🔍') {
@@ -478,6 +485,11 @@ export async function runRestartScenario({
     throw new Error(`runRestartScenario: fixture "${fixtureId}" declares no restart.waitFor crash point`);
   }
   const waitFor = restartSpec.waitFor;
+  // How the first run is ended at the crash point. SIGKILL (the default) is a real crash: no teardown runs
+  // and the workers are left alive for the restart to reap. SIGTERM is a stop — Ctrl-C, or `pir`'s own
+  // stop — so the coordinator's teardownRun runs first, which is the path that used to delete every task
+  // branch (the ENOSPC loss, 2026-09-22).
+  const stopSignal = restartSpec.signal ?? 'SIGKILL';
   const expectedTerminal = spec.expectedTerminal ?? 'completed';
   const seatbelts = spec.seatbelts ?? {};
   const ceiling = seatbelts.ceiling;
@@ -535,6 +547,7 @@ export async function runRestartScenario({
   let bundle = null;
   let child1 = null;
   let child2 = null;
+  let restartPoint = null;
   try {
     // Launch 1: the run that will crash. Seatbelted exactly as a normal live run (§2.1, §5.2).
     log(`launching coordinator process: node ${argv.join(' ')}  (ceiling ${ceiling}, timeout ${timeout}ms)`);
@@ -548,6 +561,8 @@ export async function runRestartScenario({
       slug,
       waitFor,
       worktree: teardownWorktree,
+      gitRun,
+      repoDir,
       child: child1,
       pollMs,
       startupGrace,
@@ -562,17 +577,29 @@ export async function runRestartScenario({
       reason = target.reason;
       log(`did not reach the ${waitFor.glyph} crash point: ${reason}`);
     } else {
-      log(`reached the ${waitFor.glyph} crash point on ${waitFor.task}`);
-      // Crash: SIGKILL the coordinator PROCESS. Its workers and the git state are left on disk — the real
-      // crash reconciliation must handle them (§2.6). SIGKILL, not SIGTERM: the coordinator catches
-      // SIGTERM and tears its workers down cleanly, which would erase the in-flight state the drill exists
-      // to reconcile (FINDINGS 2026-09-17).
+      log(`reached the ${waitFor.glyph ?? `"${waitFor.commit}" commit`} crash point on ${waitFor.task}`);
+      // End the first run. SIGKILL: its workers and the git state are left on disk for the restart to
+      // reap and reconcile (§2.6). SIGTERM: the coordinator tears its workers down itself first; the task
+      // branches must survive that teardown. Wait for a SIGTERM'd process to finish its teardown before
+      // relaunching, bounded, so two coordinators never overlap on one scratch.
       if (child1.pid != null) {
-        child1.kill('SIGKILL');
-        log(`crashed the coordinator (pid ${child1.pid}, SIGKILL) — workers and git state left on disk`);
+        child1.kill(stopSignal);
+        if (stopSignal !== 'SIGKILL') {
+          const exitedInTime = await Promise.race([child1.exited.then(() => true), delay(timers, 60_000).then(() => false)]);
+          if (!exitedInTime) {
+            child1.kill('SIGKILL');
+            log('the stopped coordinator did not exit within 60s — force-killed it');
+          }
+        }
+        log(`ended the coordinator (pid ${child1.pid}, ${stopSignal})`);
       } else {
         log('no coordinator pid — cannot crash; relaunching anyway');
       }
+
+      // Record what the restart inherits: the task branch's head commit and committed glyph now, between
+      // the two runs. A fact proves the resumed run built on exactly this commit (resumedFromPartial).
+      restartPoint = readRestartPoint({ gitRun, repoDir, slug, task: waitFor.task, worktree: teardownWorktree, signal: stopSignal });
+      log(`restart point: ${waitFor.task} at ${restartPoint.head ?? '(no branch)'} glyph ${restartPoint.glyph ?? '(none)'}`);
 
       // Seed the stale control-feed leftover now, while nothing is draining it (the coordinator is dead).
       try {
@@ -634,6 +661,14 @@ export async function runRestartScenario({
     }
   }
 
+  if (bundle?.dir && restartPoint) {
+    try {
+      writeFileSync(join(bundle.dir, 'restart-point.json'), `${JSON.stringify(restartPoint, null, 2)}\n`);
+    } catch (e) {
+      log(`restart-point capture failed: ${e.message}`);
+    }
+  }
+
   // Capture any decided final content the fixture declares (parity with runScenario; the restart fixture
   // declares none, so this is a no-op there).
   if (fixture.finalContent && bundle?.dir) {
@@ -645,10 +680,29 @@ export async function runRestartScenario({
     }
   }
 
-  const report = checkScenario(spec, loadControlFeeds(loadFinalFiles(loadTranscripts(bundle))));
+  const report = checkScenario(spec, loadRestartPoint(loadControlFeeds(loadFinalFiles(loadTranscripts(bundle)))));
   const ok = report.pass && reachedExpectedTerminal({ expectedTerminal, timedOut, reason });
   const label = timedOut ? (expectedTerminal === 'parked' ? 'parked' : 'timeout') : reason;
   return { scenario: spec.id, ok, reason: label, bundleDir: bundle?.dir ?? null, report };
+}
+
+// The subjects of the commits on a task branch that are not on the feature branch — what an implementer
+// has committed so far. Empty on a missing branch; a read failure is not a crash point.
+function taskBranchCommits({ gitRun, repoDir, slug, task }) {
+  const r = gitRun(['log', '--format=%s', `pir/${slug}..pir/${slug}-${task}`], { cwd: repoDir });
+  return r.ok ? r.stdout.split('\n').filter(Boolean) : [];
+}
+
+// readRestartPoint(...) → { task, head, glyph, signal } — the task branch as the restart finds it.
+function readRestartPoint({ gitRun, repoDir, slug, task, worktree, signal }) {
+  const r = gitRun(['rev-parse', '--verify', '--quiet', `refs/heads/pir/${slug}-${task}`], { cwd: repoDir });
+  let glyph = null;
+  try {
+    glyph = worktree?.taskBranchState ? worktree.taskBranchState(slug, task) : null;
+  } catch {
+    glyph = null;
+  }
+  return { task, head: r.ok ? r.stdout.trim() : null, glyph, signal };
 }
 
 // waitForTarget(...) → { reason }. Polls the injected timers, ticking the capture each poll, until the
@@ -658,7 +712,7 @@ export async function runRestartScenario({
 // timer (§2.6). The runner already holds the coordinator's pid (child), so it kills it directly — no need
 // to find it in the agent list. startupGrace bounds a coordinator that dies before ever reaching the
 // target: if the process has exited and quiet polls accumulate, the run stalled.
-async function waitForTarget({ cap, controlDir, repo, slug, waitFor, worktree, child, pollMs, startupGrace, timers, isTimedOut, log = () => {} }) {
+async function waitForTarget({ cap, controlDir, repo, slug, waitFor, worktree, gitRun, repoDir, child, pollMs, startupGrace, timers, isTimedOut, log = () => {} }) {
   const flowPath = join(controlDir, 'log');
   let exited = false;
   child.exited.then(() => {
@@ -674,7 +728,8 @@ async function waitForTarget({ cap, controlDir, repo, slug, waitFor, worktree, c
     } catch {
       branchState = null; // a read failure is not the target; keep polling
     }
-    if (restartTargetReached({ flowText, branchState, waitFor })) {
+    const branchCommits = waitFor.commit && gitRun ? taskBranchCommits({ gitRun, repoDir, slug, task: waitFor.task }) : [];
+    if (restartTargetReached({ flowText, branchState, branchCommits, waitFor })) {
       return { reason: 'target' };
     }
     if (isTimedOut()) return { reason: 'timeout' };

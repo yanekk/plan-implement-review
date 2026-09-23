@@ -533,6 +533,15 @@ test('restartTargetReached is true on the branch-glyph read, and on the review-l
   assert.equal(restartTargetReached({ branchState: '🔍' }), false);
 });
 
+test('restartTargetReached on a commit point: reached once a task-branch commit carries the subject', () => {
+  const waitFor = { task: 'T01', commit: 'T01: part 1' };
+  assert.equal(restartTargetReached({ branchCommits: [], waitFor }), false);
+  assert.equal(restartTargetReached({ branchCommits: ['T01: scaffolding'], waitFor }), false);
+  assert.equal(restartTargetReached({ branchCommits: ['T01: part 2', 'T01: part 1'], waitFor }), true);
+  // A commit point ignores the glyph and the review line — it is a mid-implement point.
+  assert.equal(restartTargetReached({ branchState: '🔍', flowText: '2026-01-01T00:00:08Z review T01\n', waitFor }), false);
+});
+
 test('seedStaleFeeds writes a leftover into the reports feed; snapshotControlFeeds reads it back, and a clear', () => {
   const ws = workspace();
   try {

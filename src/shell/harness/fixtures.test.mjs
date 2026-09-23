@@ -61,6 +61,18 @@ const EXPECT = {
     ceiling: 1,
     factIds: ['resumed-not-rebuilt:T02', 'no-rebuild-from:T01', 'feeds-cleared', 'leftover-sessions-reaped:1'],
   },
+  'restart-review': {
+    taskCount: 1,
+    deps: { T01: [] },
+    ceiling: 1,
+    factIds: ['stopped-gracefully', 'resumed-not-rebuilt:T01', 'feeds-cleared', 'ceiling-held:1'],
+  },
+  'restart-implement': {
+    taskCount: 1,
+    deps: { T01: [] },
+    ceiling: 1,
+    factIds: ['stopped-gracefully', 'resumed-from-partial:T01', 'ceiling-held:1'],
+  },
   'dynamic-task': {
     taskCount: 1,
     deps: { T01: [] },
@@ -213,6 +225,20 @@ test('restart: registered, declares the 🔍 crash point on the dependent task (
   assert.deepEqual(fx.restart.waitFor, { task: 'T02', glyph: '🔍' });
   const { tasks } = parseProgress(fx.progress);
   assert.deepEqual(tasks.find((t) => t.num === 'T02').deps, ['T01'], 'T02 depends on T01 so the ordering is fixed');
+});
+
+test('restart-review: stops with SIGTERM at the 🔍 point, so the teardown path is exercised', () => {
+  const fx = getFixture('restart-review');
+  assert.deepEqual(fx.restart, { waitFor: { task: 'T01', glyph: '🔍' }, signal: 'SIGTERM' });
+});
+
+test('restart-implement: stops with SIGTERM at the part-1 commit, and the task doc names that exact subject', () => {
+  const fx = getFixture('restart-implement');
+  assert.deepEqual(fx.restart, { waitFor: { task: 'T01', commit: 'T01: part 1' }, signal: 'SIGTERM' });
+  const doc = fx.tasks['T01-parts.md'];
+  assert.match(doc, /`T01: part 1`/, 'the implementer is told the exact subject the crash point waits for');
+  assert.match(doc, /sleep 60/, 'the pause that makes the stop land between the parts');
+  assert.match(doc, /already committed/, 'a resumed implementer is told not to redo part 1');
 });
 
 // --- The loader: install, carry skills, seed git -------------------------------------------------
