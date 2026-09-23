@@ -181,6 +181,21 @@ test('merges are serialized: two done workers merge one branch per pass, not two
   assert.equal(r3.actions.filter((a) => a.type === 'merge').length, 1, 'one merge this pass');
 });
 
+test('the pass that merges a task returns its row as ✅, so the display never shows it queued in between', (t) => {
+  const { base } = setup(t, [{ num: 'T01' }]);
+  const state = createRunState();
+  let r;
+  for (let p = 0; p < 10; p++) {
+    r = runPass({ ...base, state });
+    if (r.actions.some((a) => a.type === 'merge')) break;
+  }
+  assert.ok(r.actions.some((a) => a.type === 'merge' && a.task === 'T01'), 'T01 merged');
+  assert.equal(state.tasks.T01, undefined, 'the merged worker is forgotten this pass');
+  // The row the pass hands back must already read ✅: with no worker holding it and a pre-merge row, the
+  // display model reads "not done, not held" as `queued` for one pass.
+  assert.equal(r.tasks.find((x) => x.num === 'T01').state, '✅');
+});
+
 test('a worker question surfaces via the inbox and a sent answer resumes that worker', (t) => {
   const { platform, base } = setup(t, [{ num: 'T01' }], { behaviors: { T01: { question: 'which format?' } } });
   const state = createRunState();

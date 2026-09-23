@@ -672,7 +672,14 @@ export function runPass({ platform, worktree, repo, slug, maxWorkers, state, con
   for (const id of closedThisPass) state.closedIds.add(id);
   const liveAfter =
     [...liveIds].filter((id) => !closedThisPass.has(id)).length + spawnedThisPass.length;
-  return { actions, log, halted: false, complete, testsPassed, readyToMerge, liveAfter, tasks: parsed.tasks };
+  // Hand back the rows as they stand AFTER this pass's merge, not the ones read at the top. 3d folds the
+  // merged row to ✅ and deletes its task from state in the same pass; returning the pre-merge row paired
+  // with the post-merge state made the live display read "not done, no worker" — `queued` — for one pass
+  // between reviewing and merged. The re-read also carries any row the merge adopted.
+  const tasks = actions.some((a) => a.type === 'merge')
+    ? parseProgress(readFileSync(featureProgressPath, 'utf8')).tasks
+    : parsed.tasks;
+  return { actions, log, halted: false, complete, testsPassed, readyToMerge, liveAfter, tasks };
 }
 
 // drain — run passes until the plan is complete (every task ✅, tests run on the feature branch), the
