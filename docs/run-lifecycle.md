@@ -1,8 +1,9 @@
 # The lifecycle of a run
 
-A run is driven by the coordinator command — a person launches it with `pir-coordinate {slug}` (the
-installed shortcut; underneath it runs `node src/shell/coordinate.mjs {slug}`), foreground,
-printing as it goes until the plan is done or the person stops it. Each turn of its loop is one
+A run is driven by the coordinator command — a person launches it with `pir {slug}` (detached; see
+[detached-runs.md](detached-runs.md)) or the deprecated `pir-coordinate {slug}` (foreground, printing
+as it goes); underneath either runs `node src/shell/coordinate.mjs {slug}`, until the plan is done or
+the person stops it. Each turn of its loop is one
 **pass** (`runPass` in `src/shell/loop.mjs`): it gathers state, asks the pure core what to do
 (`decideDispatch` in `src/core/dispatch.mjs`), and executes the result against the real platform
 and git. The pass is the internal unit the tests and harness drive; it is not a verb the person
@@ -11,7 +12,7 @@ without per-task typing.
 
 ## Start
 
-1. The person runs the command on a plan (`pir-coordinate {slug}`). It **refuses a
+1. The person runs the command on a plan (`pir {slug}`, or the deprecated `pir-coordinate {slug}`). It **refuses a
    plan that is not reviewed** — it reads the `**Plan reviewed:**` line in `PROGRESS.md` and, on
    anything short of a positive verdict, stops and points the person at `/pir-review-plan`
    (`readReviewGate` in `coordinate.mjs`, `parsePlanReviewed` in `progress.mjs`). An unreviewed

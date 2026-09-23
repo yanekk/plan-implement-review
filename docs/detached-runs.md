@@ -1,15 +1,16 @@
 # Detached runs — `pir`
 
-`pir-coordinate {slug}` (see [run-lifecycle.md](run-lifecycle.md)) drives a parallel run in the
-foreground: it is a child of the terminal it was launched from, so closing or restarting that
-terminal — WezTerm, my-agentic-ide — kills the run mid-task. `pir` is a second front-end that
-removes that tie. `pir {slug}` starts the **same coordinator** detached from the terminal, so the
-run outlives the pane, and `pir` on its own opens a full-screen dashboard of every run on the
-machine, from which a run is watched, stopped, or cleared.
+`pir {slug}` is the recommended way to run parallel mode. It starts the **coordinator** detached
+from the terminal, so the run outlives the pane, and `pir` on its own opens a full-screen dashboard
+of every run on the machine, from which a run is watched, stopped, or cleared. The deprecated
+`pir-coordinate {slug}` (see [run-lifecycle.md](run-lifecycle.md)) drives the same run in the
+foreground instead — a child of the terminal it was launched from, so closing or restarting that
+terminal — WezTerm, my-agentic-ide — kills the run mid-task.
 
-`pir` does not replace `pir-coordinate` and it does not touch how a run works. The engine is
-unchanged: `pir {slug}` spawns `coordinate.mjs` exactly as `pir-coordinate` runs it, only detached
-and with two env flags set (below). Everything in [run-lifecycle.md](run-lifecycle.md),
+`pir-coordinate` is deprecated (user 2026-09-22) but still runs, and remains the only dry-by-default
+rehearsal; `pir` always runs live. Neither touches how a run works — the engine is unchanged:
+`pir {slug}` spawns `coordinate.mjs` exactly as `pir-coordinate` runs it, only detached and with two
+env flags set (below). Everything in [run-lifecycle.md](run-lifecycle.md),
 [branch-model.md](branch-model.md), [task-state.md](task-state.md) and
 [restart-recovery.md](restart-recovery.md) describes the run itself and is true whichever front-end
 started it. This page is only the lifecycle `pir` adds around it: detach, index, snapshot, watch,

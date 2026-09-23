@@ -386,3 +386,16 @@ decisions. The current time arrives as an argument, never from the system. That 
 is what makes a day of behaviour testable in milliseconds. `DESIGN.md § Architecture` names
 where the boundary runs here and how it is enforced.
 
+### A code change is not live until you install it
+
+The `pir` and `pir-coordinate` commands and the `pir-*` skills do not run from this checkout.
+`install.sh` copies the engine to `~/.claude/pir-engine/`, the skills to `~/.claude/skills/`
+and the launchers onto the PATH, and the installed `pir` execs
+`~/.claude/pir-engine/src/shell/pir.mjs` — the baked-in path, not this repo. So editing
+`src/` or `skills/` here changes nothing a user runs until the install is refreshed.
+
+**After changing engine code or a skill, run `./install.sh` to make it live**, then confirm
+the change reached the installed copy (e.g. grep the line in `~/.claude/pir-engine/src/...`).
+The script is idempotent — re-running only refreshes in place. `./install.sh /path/to/project`
+also appends the method to that project's CLAUDE.md; the bare form is skills-and-engine only.
+

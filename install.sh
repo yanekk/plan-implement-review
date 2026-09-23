@@ -195,11 +195,11 @@ if [[ -z "$TARGET" || "$TARGET" == "--global" ]]; then
     echo "or append the method by hand:"
     echo "    ./install.sh /path/to/project"
     echo
-    echo "To run a reviewed plan in parallel, from inside a set-up repo (dry by default):"
-    echo "    pir-coordinate {slug}"
-    echo "or start it detached and watch every run on the machine from a dashboard:"
+    echo "To run a reviewed plan in parallel, from inside a set-up repo:"
     echo "    pir {slug}      # start detached, drop into its live view"
     echo "    pir             # the cross-repo dashboard"
+    echo "The foreground launcher pir-coordinate {slug} is deprecated; prefer pir {slug}, which"
+    echo "runs live and detached. (pir-coordinate still runs, and is the only dry-by-default rehearsal.)"
     exit 0
 fi
 
@@ -230,12 +230,10 @@ Done. One thing left, by hand:
 
       /pir-work {slug}
 
-  or, to run a reviewed plan in parallel instead (from inside the repo, dry by default):
-
-      pir-coordinate {slug}
-
-  or start it detached from the terminal and watch it from a dashboard:
+  or, to run a reviewed plan in parallel instead (from inside the repo):
 
       pir {slug}      # start detached, drop into its live view
       pir             # the cross-repo dashboard
+
+  (the foreground launcher pir-coordinate {slug} is deprecated; prefer pir {slug}.)
 MSG

@@ -2,17 +2,26 @@
 #
 # pir-coordinate — launch parallel mode against the current repo. (non-agentic-coordinator T18)
 #
+# DEPRECATED (user 2026-09-22): use `pir {slug}` instead — see docs/detached-runs.md. This
+# command still runs, but `pir` is the recommended launcher. Note `pir` always runs live and
+# detached: the foreground display and the dry-run rehearsal below are unique to this command and
+# go away when you switch. The one runnable extra here is a one-line deprecation notice to stderr
+# before the exec; it sets no engine argument and no PARALLEL_LIVE, so the engine's contract is
+# untouched (launcher.test.mjs pins that).
+#
 # A thin wrapper, not a session and not a skill (DESIGN §2.1). The coordinator is a plain
 # foreground program with a stable pid; this launcher only finds the installed engine and hands
-# it every argument and the ambient environment unchanged. It carries NO logic of its own —
-# anything clever here would drift from the engine. So the engine's own contract is preserved
-# untouched: a dry run is the default, and real, paid workers spawn only under PARALLEL_LIVE=1
-# (coordinate.mjs `main`); PARALLEL_MAX_WORKERS, PARALLEL_ALLOW_HERE, PARALLEL_POLL_MS and the
-# rest pass straight through the environment.
+# it every argument and the ambient environment unchanged. It carries NO logic of its own beyond
+# the notice — anything clever here would drift from the engine. So the engine's own contract is
+# preserved untouched: a dry run is the default, and real, paid workers spawn only under
+# PARALLEL_LIVE=1 (coordinate.mjs `main`); PARALLEL_MAX_WORKERS, PARALLEL_ALLOW_HERE,
+# PARALLEL_POLL_MS and the rest pass straight through the environment.
 #
 # The engine path is baked in at INSTALL time: install.sh substitutes __PIR_ENGINE__ with the
 # installed engine directory (ENGINE_DEST=~/.claude/pir-engine). It is deliberately the installed
 # path, not one resolved relative to this script or the current directory, so the command runs
 # parallel mode against whatever repo it is invoked from.
+
+echo "pir-coordinate is deprecated; use \`pir {slug}\` instead (see docs/detached-runs.md). Running it anyway." >&2
 
 exec node "__PIR_ENGINE__/src/shell/coordinate.mjs" "$@"

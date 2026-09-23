@@ -32,18 +32,21 @@ task. It never merges to `main`: the command stops at a green feature branch and
 `git merge` to run by hand. A project opts into parallel mode per run; nothing about the classic
 flow changes.
 
-A person launches parallel mode with `pir-coordinate {slug}`, run from inside the target repo (dry
-by default — real, paid workers spawn only under `PARALLEL_LIVE=1`; see
-[run-lifecycle.md](run-lifecycle.md)). The one-time setup is `./install.sh`, which puts the
-`pir-coordinate` command on the PATH and installs the coordinator engine where it can run against
-any set-up repo — so `pir-coordinate {slug}` is the way to launch, not a bare
-`node …/coordinate.mjs`.
+A person launches parallel mode with `pir {slug}`, run from inside the target repo — it starts the
+coordinator detached and drops into its live view; a bare `pir` opens the cross-repo dashboard (see
+[detached-runs.md](detached-runs.md)). The one-time setup is `./install.sh`, which puts the `pir`
+command on the PATH and installs the coordinator engine where it can run against any set-up repo.
+
+**`pir-coordinate {slug}` is the deprecated foreground launcher** (user 2026-09-22). It still runs
+the same engine, in the foreground, and is dry by default — the only way to rehearse a plan with no
+paid workers (`PARALLEL_LIVE=1` to go live; see [run-lifecycle.md](run-lifecycle.md)). For a real
+run prefer `pir {slug}`, which always runs live and detached.
 
 ## The components
 
-- **The coordinator command** — launched with `pir-coordinate {slug}` (the installed shortcut;
-  underneath it runs `node src/shell/coordinate.mjs {slug}`), a plain foreground program, not a
-  session and not an agent. It opens the feature branch in its own worktree, decides
+- **The coordinator command** — launched with `pir {slug}` (detached) or the deprecated
+  `pir-coordinate {slug}` (foreground); underneath either runs `node src/shell/coordinate.mjs {slug}`,
+  a plain program, not a session and not an agent. It opens the feature branch in its own worktree, decides
   which task each worker builds, spawns and closes workers, prints a live status display, and hands
   the person the finished feature branch to merge. It has no agent name and never appears in
   `claude agents`. It never merges to `main` and never writes product code. Dry by default; it only
