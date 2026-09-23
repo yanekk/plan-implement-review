@@ -27,8 +27,48 @@ git merge pir/{slug}       →  main                      the one step you run b
 The first two are slash commands inside Claude Code. `pir` is a shell command, installed on your
 PATH by `./install.sh`.
 
+How far the agents may go on their own outside the code — deploys, paid calls, anything other
+people see — is yours to set, action by action, in the plan. See
+[You set how much the agents do on their own](#you-set-how-much-the-agents-do-on-their-own).
+
 (The same plan can also be built one task per session, by typing `/pir-work {slug}` repeatedly —
 the original single-stream flow, still supported.)
+
+## You set how much the agents do on their own
+
+Inside the repo the workers are fully autonomous: they write the code, run the tests, review each
+other's work and merge it onto the run's branch without stopping for you. Everything a task does
+**outside** the code — a deploy, a paid API call, a DNS change, a message somebody else receives,
+a change to a real device — has its level of autonomy set by you, one action at a time.
+
+`/pir-plan` lists every such action in `DESIGN.md §5.3` and puts each in one of three bins:
+
+| Bin | What happens | Typical use |
+|---|---|---|
+| `worker` | The agent runs it and tells you afterwards in one line | A redeploy of a preview build, a free read-only call |
+| `ask` | The agent explains it, runs it, and the permission prompt waits for your yes | A production deploy, a paid call, anything others will see |
+| `person` | Only you can do it — the agent prepares everything and asks | A login, a physical device, a judgement call |
+
+- **Risky actions start at `ask`.** Anything that cannot be undone, may cost more than its task
+  expects, is seen or received by other people, or changes the infrastructure itself is `ask` by
+  default. An action nobody listed is treated as `ask` too.
+- **You move the dial at plan review.** `/pir-review-plan` walks every action in both directions
+  and brings each question to you: a `person` step an agent could run after your yes (too little
+  autonomy — you should not be pasting commands), and a `worker` action that crosses one of the
+  lines above (too much). You can move an action down to `worker` there, and only there; the row
+  records the date and your reason.
+- **The machine enforces it, not the agent's good intentions.** The review turns the bins into
+  permission rules in the project's `.claude/settings.json`, which every worker inherits: `worker`
+  actions are allowed outright, `ask` actions stop on a permission prompt. In a parallel run that
+  prompt shows up as the worker needing input in `claude agents` — you attach, approve or refuse,
+  and it carries on.
+- **Every action states its way back.** Each row names the exact command, whether and how it can
+  be undone, what it is expected to cost, and a login check the agent runs first, so the decision
+  reaches you while it is still a decision, not as a report afterwards.
+
+The result is a run that is as hands-off as you decide it should be: a plan whose actions are all
+`worker` stops only for genuine questions about what to build, and one full of `ask` rows also
+stops exactly where you wanted to look before anything touches the live world.
 
 ## Watching a run — `pir {slug}` and `pir`
 
@@ -237,6 +277,9 @@ $ pir screen-time
     → T05's worker finds nothing in the plan wires the warning into the app; it asks
       you, you say yes, it adds T09 "warning-wiring; blocks T08" — once T05 merges,
       the view gains a T09 row, and T08 now needs T09 as well
+    → T07 reaches `npm run deploy:web`, an `ask` action in §5.3: its worker says what it
+      will deploy and how to roll it back, and waits on the permission prompt; you
+      attach in `claude agents`, approve, and it deploys and carries on
     → you close the terminal to go to lunch; the run keeps going
 $ pir
     → the dashboard shows screen-time running, 8/10 done; ↵ reopens its live view
@@ -263,6 +306,9 @@ session. The ones that bite most often:
 - **The test command is the only evidence a worker can produce on its own.** Anything needing
   a screen, a login, a second account, a reboot, a real device or a paid API is verified *with
   you* — the worker hands you the exact command with a seatbelt on it, and waits for the answer.
+- **Outside the code, the agents go only as far as you allowed.** Each live action sits in the
+  `worker`, `ask` or `person` bin you approved at plan review, enforced as a permission rule; an
+  action with no bin is `ask`.
 - **`main` is yours.** A run builds on its own feature branch, one branch and worktree per
   task, and hands you the final `git merge`. Nothing merges to `main` without you.
 
