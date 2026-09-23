@@ -3,9 +3,16 @@
 A working method for Claude Code, packaged so it can be dropped into any project.
 
 Work is planned once, read back once before anything is built, and then built by many Claude
-sessions at once — each task implemented by one session and reviewed by a different one, so every
-task gets a genuine fresh-eyes pass. You watch the whole run from one screen and answer only the
-questions that are genuinely yours.
+sessions at once. Four ideas carry the whole method:
+
+- **It runs in parallel.** `pir {slug}` builds every task whose dependencies are done at the same
+  time, and shows you the whole run on one screen.
+- **You set the autonomy.** Inside the code the agents work on their own; outside it they go only
+  as far as you allowed, action by action.
+- **Every step starts with a clean slate.** Each task is sized to fit one session, and each session
+  is closed when its step is done, so no agent ever works from a long, stale conversation.
+- **Nobody reviews their own work.** Every task is built by one session and reviewed by a
+  different, brand-new one that never saw it being written.
 
 You act as product manager: you own *what* gets built and why. The sessions own *how*.
 
@@ -69,6 +76,55 @@ a change to a real device — has its level of autonomy set by you, one action a
 The result is a run that is as hands-off as you decide it should be: a plan whose actions are all
 `worker` stops only for genuine questions about what to build, and one full of `ask` rows also
 stops exactly where you wanted to look before anything touches the live world.
+
+## Every step starts with a clean slate
+
+A long agent session degrades. The conversation fills with old attempts, abandoned ideas and
+detail from tasks long finished; the model starts to lose track of the rules it was given at the
+start, and eventually its history is summarised away and what it was told is gone. This is
+*context rot*, and the method is built so that no step of the work ever runs long enough to reach
+it:
+
+- **A task is one session's work.** `/pir-plan` splits the plan until every task can be built,
+  tested and handed over inside a single session, and writes each one down with its goal, the files
+  it touches, its interface and what "done" means — everything a session needs to start cold.
+- **Every worker is new, and is closed when its step is done.** A task's builder is closed when it
+  hands the task over for review; the reviewer is closed once the task is merged. No session ever
+  carries a second task, so none accumulates history from the last one.
+- **The coordinator has no conversation at all.** It is a plain program, not an AI session, so the
+  one piece that runs for the whole plan has nothing to go stale.
+- **Memory lives in files, and the files are kept short.** What one session must hand the next
+  goes into the plan's files, not into anyone's conversation: the design with its reasons, the
+  task file, `PROGRESS.md` (the handoff) and `FINDINGS.md` (the lessons learned). The last two are
+  read at the start of every session, so they have hard word limits and whoever adds to them trims
+  them first — see [What `/pir-plan` produces](#what-pir-plan-produces).
+- **The long story goes in git.** The reasoning behind a change is written in its commit message,
+  where it costs nothing until somebody goes looking for it, instead of in a file every session
+  must re-read.
+
+So the tenth task of a plan is built by an agent in the same fresh state as the first, working
+from the same written rules.
+
+## Nobody reviews their own work
+
+An agent that has just written a piece of code is the worst-placed reviewer of it: it remembers
+what it meant, so it reads what it meant, not what it wrote. So every task passes through two
+different sessions:
+
+1. **A builder** (`pir-implement`) implements the task, runs the tests, marks it `🔍` — built,
+   awaiting review — and is closed.
+2. **A reviewer** (`pir-review`) is started fresh on the same work. It has no memory of the build:
+   it knows only the task file, the plan's design rules and the change itself. It checks four
+   things — every acceptance criterion, one by one; whether the tests really test something (a
+   test that would still pass with the code gutted does not count); the traps the design and the
+   project's recorded lessons name; and the edge cases, error paths and boundaries the task file
+   did not anticipate. It fixes what it finds, marks the task `✅`, and only then is the task merged.
+
+The separation is enforced, not requested. In a parallel run the coordinator decides who reviews
+and always starts a new session to do it. In the single-stream flow `pir-work` picks the step, and
+the builder and reviewer skills cannot be run directly — they do not appear in the `/` menu. The
+plan itself gets the same treatment before any of it is built: `/pir-review-plan` must run in a
+session that did not write the plan (below).
 
 ## Watching a run — `pir {slug}` and `pir`
 
@@ -269,7 +325,9 @@ session before it could start.
 
 $ pir screen-time
     → checks the plan is reviewed, starts the run in the background, opens the live view
-    → T00 has no dependencies: a worker builds it, a second worker reviews it, it is merged
+    → T00 has no dependencies: a new worker builds it, marks it 🔍 and is closed;
+      a second, fresh worker reviews it — no memory of the build — fixes a missed
+      edge case, marks it ✅; it is merged and the reviewer is closed
     → T01, T02 and T03 all depended only on T00: three workers start at once
     → T06 needs your eyes: its worker starts the limit screen and asks you to look
       → the view shows "T06 limit-screen — asking you"; you attach in `claude agents`,
