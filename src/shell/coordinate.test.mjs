@@ -583,6 +583,7 @@ test('displayPhaseFor maps a tracked worker role/phase to the display phase (DES
   assert.equal(displayPhaseFor({ role: 'implement', phase: 'implementing' }), 'building');
   assert.equal(displayPhaseFor({ role: 'verify', phase: 'verifying' }), 'building', 'a you/verify scribe reads as building');
   assert.equal(displayPhaseFor({ role: 'review', phase: 'reviewing' }), 'reviewing');
+  assert.equal(displayPhaseFor({ role: 'review', phase: 'done' }), 'merging', 'a reviewed task waiting on its merge is merging');
   assert.equal(displayPhaseFor({ role: 'implement', phase: 'awaiting-answer' }), 'asking', 'a parked worker is asking, whatever its role');
 });
 

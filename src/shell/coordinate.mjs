@@ -752,11 +752,14 @@ export function runFeatureTests(featurePath, { slug, logPath } = {}) {
 // is unit-tested; only the painting itself is judged by eye (T09).
 
 // displayPhaseFor(t) → the display phase for a tracked worker, or null when no worker holds the task. A
-// worker parked on the person (AWAITING, §2.2) is `asking` whatever its role; otherwise the role names
-// it — an implementer (or a `you` scribe) is `building`, a fresh reviewer is `reviewing`.
+// worker parked on the person (AWAITING, §2.2) is `asking` whatever its role; a worker that has reported
+// `done` is `merging` — its review is finished and the loop is waiting for the session to go idle before
+// it merges (loop.mjs 3d), which can take up to AWAIT_IDLE_TIMEOUT_MS, so `reviewing` there would lie.
+// Otherwise the role names it — an implementer (or a `you` scribe) is `building`, a reviewer `reviewing`.
 export function displayPhaseFor(t) {
   if (!t) return null;
   if (t.phase === 'awaiting-answer') return 'asking';
+  if (t.phase === 'done') return 'merging';
   if (t.role === 'review') return 'reviewing';
   return 'building';
 }

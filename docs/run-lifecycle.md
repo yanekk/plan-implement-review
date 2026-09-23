@@ -92,8 +92,8 @@ line per task, a summary line, and a footer. This is the command's status — th
 
 - **The model is pure** (`buildDisplay` in `src/core/display.mjs`): a function of the run state a
   pass produces plus the current time and spinner frame, returning `{branch, summary, rows, footer}`
-  as data, with no I/O and no clock. Each row carries a `kind` — `building`, `reviewing`, `merging`,
-  `asking` (shown "asking you"), `waiting` (`needs T..`), `queued` (marked when the ceiling is full),
+  as data, with no I/O and no clock. Each row carries a `kind` — `building`, `reviewing`, `merging`
+  (the reviewer has reported done; the merge waits for its session to go idle), `asking` (shown "asking you"), `waiting` (`needs T..`), `queued` (marked when the ceiling is full),
   or `done` (shown "merged"). The summary carries done/total, how many are running, asking, and
   waiting, and the ceiling. This is tested exhaustively.
 - **The renderer is shell** (`createRenderer` in `src/shell/render.mjs`): on a TTY it paints the
