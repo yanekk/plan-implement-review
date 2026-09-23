@@ -79,7 +79,25 @@ you did not write down.
 The whole of `plans/{slug}/` has to describe one buildable thing. Check:
 
 - **The dependency graph.** Every `Depends on` points at a task that exists and comes
-  earlier. No cycles. No task number used twice.
+  earlier. No cycles. No task number used twice. That is only its shape; the next three checks
+  are whether it is *right*, and a graph can pass the shape and still dispatch a task before the
+  work it needs exists.
+- **The leaves.** List every task nothing depends on. Only the final deliverable — the end-to-end
+  check, the deploy, the last user-visible surface — should be one, unless `PLAN.md` says in a
+  line why another is terminal. Any other leaf is a part whose output nothing consumes: a missing
+  edge, or a missing task that should consume it. Never accept a leaf because it "never lengthens
+  the critical path"; that is how the real-screen-time remote-grant review signed off the poller,
+  the one part that drops the cover, as a leaf the deploy check did not wait for.
+- **The end-to-end task's reach.** For each task that exercises the whole thing — an end-to-end
+  check, a deploy-and-verify — walk its hands-on steps and list every task whose work they run
+  through. Each must be among its dependencies, directly or through others. A doc that says
+  "built by T01–T09" over dependencies that reach only some of them is this defect.
+- **Every step of the main path is wired, traced in the code.** Independently of the plan's own
+  account, find where the program starts in the repo, walk the main path from `DESIGN.md` through
+  it, and at each hop name the task whose Files list constructs, registers or switches on that
+  part. A hop no task owns — typically the entry point that builds the new component — means the
+  feature ships every part and runs none of them. In remote-grant no task's Files list constructed
+  the poller in `main.swift`, and a reviewer found it mid-build.
 - **The three lists match.** Every task in `PLAN.md` has a file in `tasks/` and a row in
   `PROGRESS.md`, and nothing appears in one that is missing from the others.
 - **Every task has all five** — goal, the files and the actual interfaces, a "Done when",
@@ -231,15 +249,20 @@ A second implementation of something the repo already has is the most expensive 
 > ways · a missing test list, a missing dependency line · a broken cross-reference · a
 > version number the machine has just contradicted · a test command that prints a line per
 > passing test or forces colour when it should be quiet · a row or cell over its word budget ·
-> a section padded with "n/a" instead of deleted · a rule stated twice in two files
+> a section padded with "n/a" instead of deleted · a rule stated twice in two files · a missing
+> dependency edge between two tasks that both exist, where one plainly uses the other's work (the
+> end-to-end task not reaching a part it exercises, a leaf whose one consumer is obvious)
 
-**Fix these yourself.** Do not ask. List them afterwards, one line each.
+**Fix these yourself.** Do not ask. List them afterwards, one line each. A missing edge changes the
+order work runs in, not what gets built, so it is yours; if closing it would need a task that does
+not exist yet, or a leaf has no obvious consumer, it is a decision.
 
 **Decisions** — anything that changes what gets built:
 
 > everything from Pass 2 · everything from Pass 4 — a task that builds what the repo already
 > has, or that should become an extension of it · two rules that contradict, where which one
-> wins is a judgement · a task that should be split, added, dropped or reordered · a task
+> wins is a judgement · a task that should be split, added, dropped or reordered — including a
+> step of the main path no task wires in · a task
 > mis-marked `auto`/`you`, or an `auto` task that hides a handover a worker could automate · a
 > design rule the machine has just proved impossible · anything where either answer is defensible
 

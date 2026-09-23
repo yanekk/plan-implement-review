@@ -408,3 +408,76 @@ test('adopt: a legacy Runs column in the feature table is preserved and the new 
   assert.deepEqual(t03.deps, ['T01']);
   assert.equal(t03.state, '⬜');
 });
+
+// --- blocks clause: a new task gating an existing one (docs/task-state.md) --------------------
+
+test('blocks: a `; blocks T02` clause adds the row to T02 deps, and keeps its own cell apart', () => {
+  const text = FEATURE.replace('| T02 | dispatch-adopted | T01 | ⬜ | |', '| T02 | dispatch-adopted | T01 | ⬜ | |\n| T03 | wiring | T00; blocks T02 | ⬜ | |');
+  const { tasks, errors } = parseProgress(text);
+  assert.deepEqual(errors, []);
+  const byNum = Object.fromEntries(tasks.map((t) => [t.num, t]));
+  assert.deepEqual(byNum.T03.deps, ['T00']);
+  assert.deepEqual(byNum.T03.blocks, ['T02']);
+  assert.deepEqual(byNum.T02.deps, ['T01', 'T03']);
+  assert.deepEqual(byNum.T02.ownDeps, ['T01']);
+});
+
+test('blocks: a target not in the table is a parse error, not ignored', () => {
+  const text = FEATURE.replace('| T02 | dispatch-adopted | T01 | ⬜ | |', '| T02 | dispatch-adopted | T01 | ⬜ | |\n| T03 | wiring | T00; blocks T09 | ⬜ | |');
+  const { errors } = parseProgress(text);
+  assert.equal(errors.length, 1);
+  assert.match(errors[0], /T03.*T09/);
+});
+
+test('adopt: a new row that blocks an unstarted task is adopted and gates it', () => {
+  const branch = branchWith('| T03 | wiring | T00; blocks T02 | ⬜ | |');
+  const { text, added, errors, blockEdges } = adoptNewTaskRows(FEATURE, branch);
+  assert.deepEqual(errors, []);
+  assert.deepEqual(blockEdges, [{ task: 'T03', target: 'T02', state: '⬜' }]);
+  assert.deepEqual(added, ['T03']);
+  assert.ok(text.includes('| T03 | wiring | T00; blocks T02 | ⬜ | |'));
+  assert.ok(text.includes('| T02 | dispatch-adopted | T01 | ⬜ | |'), 'the blocked row itself is untouched');
+  const t02 = parseProgress(text).tasks.find((t) => t.num === 'T02');
+  assert.deepEqual(t02.deps, ['T01', 'T03']);
+});
+
+test('adopt: a branch forked before a blocker landed is not an edit of the blocked task', () => {
+  const withBlocker = FEATURE.replace('| T02 | dispatch-adopted | T01 | ⬜ | |', '| T02 | dispatch-adopted | T01 | ⬜ | |\n| T03 | wiring | T00; blocks T02 | ⬜ | |');
+  // branchWith() has no T03 row, so its T02 reads deps [T01] while the feature's folds to [T01, T03].
+  const { errors, text } = adoptNewTaskRows(withBlocker, branchWith());
+  assert.deepEqual(errors, []);
+  assert.equal(text, withBlocker);
+});
+
+test('adopt: adding a blocks clause to an existing row is rejected (add-only)', () => {
+  const branch = branchWith().replace('| T01 | merge-adopts | T00 | ✅ |', '| T01 | merge-adopts | T00; blocks T02 | ✅ |');
+  const { added, errors } = adoptNewTaskRows(FEATURE, branch);
+  assert.deepEqual(added, []);
+  assert.equal(errors.length, 1);
+  assert.match(errors[0], /T01.*add-only/);
+});
+
+test('adopt: a new row blocking a task that exists nowhere is rejected, nothing adopted', () => {
+  const branch = branchWith('| T03 | wiring | T00; blocks T09 | ⬜ | |');
+  const { text, added, errors } = adoptNewTaskRows(FEATURE, branch);
+  assert.deepEqual(added, []);
+  assert.equal(text, FEATURE);
+  assert.ok(errors.some((e) => /T03/.test(e) && /T09/.test(e)));
+});
+
+test('adopt: a new row that blocks its own prerequisite closes a cycle and is rejected', () => {
+  const branch = branchWith('| T03 | wiring | T01; blocks T01 | ⬜ | |');
+  const { text, added, errors } = adoptNewTaskRows(FEATURE, branch);
+  assert.deepEqual(added, []);
+  assert.equal(text, FEATURE);
+  assert.ok(errors.some((e) => /T03.*cycle/.test(e)));
+});
+
+test('adopt: blocking a task already started adopts, and the edge carries its state', () => {
+  const started = FEATURE.replace('| T02 | dispatch-adopted | T01 | ⬜ | |', '| T02 | dispatch-adopted | T01 | 🟡 | |');
+  const branch = branchWith('| T03 | wiring | T00; blocks T02 | ⬜ | |').replace('| T02 | dispatch-adopted | T01 | ⬜ |', '| T02 | dispatch-adopted | T01 | 🟡 |');
+  const { added, errors, blockEdges } = adoptNewTaskRows(started, branch);
+  assert.deepEqual(errors, []);
+  assert.deepEqual(added, ['T03']);
+  assert.deepEqual(blockEdges, [{ task: 'T03', target: 'T02', state: '🟡' }]);
+});

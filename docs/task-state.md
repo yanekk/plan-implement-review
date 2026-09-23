@@ -88,6 +88,20 @@ already exists. Once the adopted row is on the feature branch, it is an ordinary
 pass dispatches it the moment its dependencies are `✅`, through the unchanged dispatch logic (see
 [run-lifecycle.md](run-lifecycle.md)).
 
+A new task can also hold back a task that already exists, without editing its row. Its
+`Depends on` cell takes a trailing `blocks` clause — `T04, T05, T06; blocks T10` — naming existing
+tasks that must wait for it. `parseProgress` folds each such edge into the target's dependencies, so
+T10 is dispatched only once T11 is `✅`, and dispatch, the display and the width numbers all see it
+with no change of their own. The target's row is never touched, so add-only still holds: an existing
+row whose own cell or `blocks` clause differs on a branch is still a rejected edit, and a branch forked
+before the blocker landed is not mistaken for one. A `blocks` target that does not exist, or an edge
+that closes a cycle, rejects the change like an unknown dependency. An edge onto a task already
+started — built, in review, or held by a live worker — cannot hold it back: the row is adopted anyway
+and the command raises a `late-block` surface telling the person that task was built without the new
+work. The clause exists because of the real-screen-time remote-grant run, where a reviewer added a
+wiring task the deploy check needed but could only record "T10 needs T11" in `FINDINGS.md`, and the
+deploy was dispatched without it.
+
 ## One kind of worker
 
 There is no per-task `Runs` marker driving dispatch any more, and no `auto`/`you` distinction. Every

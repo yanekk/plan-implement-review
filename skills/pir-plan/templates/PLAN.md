@@ -63,6 +63,9 @@ T00 → T01 → … → T{n}
 
 Which tasks are off it and can slot in wherever convenient.
 
+Leaves (tasks nothing depends on): only the final deliverable, or each other one with a line on why
+it is genuinely terminal.
+
 ## Parallel width
 
 {N} tasks · longest dependency chain {M} · up to {W} could run at once. A plan that is one long

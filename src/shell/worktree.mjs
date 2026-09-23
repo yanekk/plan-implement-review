@@ -190,18 +190,20 @@ export function mergeTask(taskBranch, { root = process.cwd(), featurePath } = {}
   }
   let added = [];
   let errors = [];
+  let blockEdges = [];
   if (saved !== null) {
     // Adopt any new task rows onto the feature's copy; with no branch copy there is nothing to
     // adopt, so the feature's version stands unchanged (the old verbatim-restore behaviour).
     const adopt = branchText !== null ? adoptNewTaskRows(saved, branchText) : { text: saved, added: [], errors: [] };
     added = adopt.added;
     errors = adopt.errors;
+    blockEdges = adopt.blockEdges ?? [];
     writeFileSync(progressPath, adopt.text);
     git(path, ['add', progressRel]);
   }
   const merging = git(path, ['rev-parse', '-q', '--verify', 'MERGE_HEAD']).ok;
   if (merging) git(path, [...NOSIGN, 'commit', '--no-edit', '-m', `merge ${taskBranch}`]);
-  return { ok: true, added, errors };
+  return { ok: true, added, errors, blockEdges };
 }
 
 // Commit whatever the coordinator has written into the feature worktree (a reconciled PROGRESS.md

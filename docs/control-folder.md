@@ -70,7 +70,10 @@ command flagging a red feature branch or a `bad-plan-change`; it records the tas
 the harness keys on the task. A `bad-plan-change` surface is the one exception to "surface means a
 worker is parked": it flags a new task row that could not be adopted — an edit of an existing task,
 or a dependency on a task that does not exist — and it parks no one, because the introducing task's
-reviewed code merged and the run continues (see [run-lifecycle.md](run-lifecycle.md)). This is the
+reviewed code merged and the run continues (see [run-lifecycle.md](run-lifecycle.md)). A `late-block` surface is informational
+the same way: an adopted task's `blocks` clause named a task that had already started, so the named
+task was built without the new work and the person decides whether it needs redoing (see
+[task-state.md](task-state.md)). This is the
 human-readable record of what a run did, and the durable signal the test harness reads.
 
 ## The kill switch

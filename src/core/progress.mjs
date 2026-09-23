@@ -101,10 +101,59 @@ function locateTable(lines) {
   return null;
 }
 
-// Depends-on cell → list of task numbers. `—` or empty yields []; otherwise every T-number
-// token in the cell, so both `T01` and `T01, T02` parse (DESIGN §3.2 interface).
+// Depends-on cell → { deps, blocks }. `—` or empty yields no deps; otherwise every T-number
+// token in the cell, so both `T01` and `T01, T02` parse (DESIGN §3.2 interface). A trailing
+// `; blocks T10` clause names existing tasks that must wait for this one: it is how a worker-added
+// task gates a task already in the table without editing that task's row, which add-only forbids
+// (docs/task-state.md). Found live on real-screen-time's remote-grant run, where a mid-run task
+// the deploy check needed could only be noted in FINDINGS and the deploy was dispatched without it.
 function parseDeps(cell) {
-  return cell.match(/T\d+/g) || [];
+  const [own, blocked = ''] = cell.split(/\bblocks\b/i);
+  return { deps: own.match(/T\d+/g) || [], blocks: blocked.match(/T\d+/g) || [] };
+}
+
+// The Depends-on cell text for a row, the inverse of parseDeps: `—` for no deps, matching the
+// table's own convention so parseDeps reads [] back off it.
+function depsCell(deps, blocks) {
+  const own = deps.length ? deps.join(', ') : '—';
+  return blocks.length ? `${own}; blocks ${blocks.join(', ')}` : own;
+}
+
+// Fold every `blocks` clause into its target's deps, so each task's `deps` is the full set it
+// waits on and every consumer (dispatch, display, parallelism) honours the edge with no change of
+// its own. `ownDeps` keeps what the row itself declares: that, not the folded set, is what
+// add-only compares, because a task branch forked before a blocker landed still carries the
+// target's row as it was and must not read as an edit. A blocks target that is not in the table
+// is an error, not ignored: an edge that gates nothing is a task dispatched too early.
+function foldBlocks(tasks, errors) {
+  const byNum = new Map(tasks.map((t) => [t.num, t]));
+  for (const t of tasks) {
+    for (const b of t.blocks) {
+      const target = byNum.get(b);
+      if (!target || b === t.num) {
+        errors.push(`task ${t.num}: blocks ${b}, which is not another task in this table`);
+        continue;
+      }
+      if (!target.deps.includes(t.num)) target.deps.push(t.num);
+    }
+  }
+}
+
+// Whether task `start` can reach itself through deps — a cycle through it, which would leave every
+// task on the cycle waiting for ever. Only the cycles through a given task are looked for, so a
+// merge is blamed for a cycle its own new rows close, never for one already on the feature branch.
+function cyclesThrough(tasks, start) {
+  const byNum = new Map(tasks.map((t) => [t.num, t]));
+  const seen = new Set();
+  const stack = [...(byNum.get(start)?.deps ?? [])];
+  while (stack.length) {
+    const n = stack.pop();
+    if (n === start) return true;
+    if (seen.has(n)) continue;
+    seen.add(n);
+    stack.push(...(byNum.get(n)?.deps ?? []));
+  }
+  return false;
 }
 
 // Read the **Plan reviewed:** gate line. reviewed is false while the note begins "not yet",
@@ -122,7 +171,9 @@ function parsePlanReviewed(lines) {
 }
 
 // parseProgress(text) → { planReviewed, tasks, errors }.
-// tasks is well-formed: every entry has a known state. A row the parser cannot read cleanly
+// tasks is well-formed: every entry has a known state. Each carries `deps` (everything it waits
+// on, including edges other rows' `blocks` clauses add), `ownDeps` and `blocks` (what its own
+// Depends-on cell says). A row the parser cannot read cleanly
 // is described in errors, naming the task or the offending line, rather than being dropped or
 // silently mis-read. A `Runs` column present in the table is ignored, not an error (DESIGN §2.5).
 export function parseProgress(text) {
@@ -159,12 +210,13 @@ export function parseProgress(text) {
       continue;
     }
 
-    const deps = col.deps !== undefined ? parseDeps(cells[col.deps]) : [];
+    const { deps, blocks } = col.deps !== undefined ? parseDeps(cells[col.deps]) : { deps: [], blocks: [] };
     const name = cells[col.name];
 
-    tasks.push({ num, name, deps, state });
+    tasks.push({ num, name, deps: [...deps], ownDeps: deps, blocks, state });
   }
 
+  foldBlocks(tasks, errors);
   return { planReviewed, tasks, errors };
 }
 
@@ -257,6 +309,8 @@ function buildRow(headerCellCount, values) {
 //   added   adopted task numbers in the branch table's order, e.g. ['T03']. Empty on any error.
 //   errors  one human-readable message per rejected row; empty on success. Never
 //           empty-and-silent: a dropped row always names why (DESIGN §2.5).
+//   blockEdges  { task, target, state } per adopted `blocks` edge, state being the target's glyph
+//           on the feature branch. Absent when nothing was adopted.
 export function adoptNewTaskRows(featureText, branchText) {
   const feature = parseProgress(featureText);
   const branch = parseProgress(branchText);
@@ -281,10 +335,12 @@ export function adoptNewTaskRows(featureText, branchText) {
       // task's own row differs from the feature's only by its glyph (⬜ → ✅), and comparing
       // state would misread every merge as an edit (DESIGN §2.2). A slug/deps difference is a
       // forbidden edit of an existing task, or a duplicate number colliding with one.
-      if (existing.name !== t.name || !sameDeps(existing.deps, t.deps)) {
+      // Compared on the row's own cell (ownDeps, blocks), never the folded deps: a branch forked
+      // before a blocker landed on the feature is not editing the blocked task.
+      if (existing.name !== t.name || !sameDeps(existing.ownDeps, t.ownDeps) || !sameDeps(existing.blocks, t.blocks)) {
         errors.push(
-          `${t.num}: branch would change an existing task ("${existing.name}" deps [${existing.deps.join(', ')}]` +
-            ` → "${t.name}" deps [${t.deps.join(', ')}]); tasks are add-only, an existing task cannot be edited` +
+          `${t.num}: branch would change an existing task ("${existing.name}" deps [${depsCell(existing.ownDeps, existing.blocks)}]` +
+            ` → "${t.name}" deps [${depsCell(t.ownDeps, t.blocks)}]); tasks are add-only, an existing task cannot be edited` +
             ` or its number reused (DESIGN §2.2)`,
         );
       }
@@ -295,7 +351,7 @@ export function adoptNewTaskRows(featureText, branchText) {
     // A genuinely new task. Every dependency must name a task that exists — on the feature
     // branch or among this change's other new rows — or the task could never be dispatched
     // (its dependency would never go ✅), so the whole change is rejected (DESIGN §2.5).
-    for (const d of t.deps) {
+    for (const d of t.ownDeps) {
       if (!knownIds.has(d)) {
         errors.push(
           `${t.num}: new task depends on ${d}, which is not a task on the feature branch or a new task` +
@@ -303,7 +359,28 @@ export function adoptNewTaskRows(featureText, branchText) {
         );
       }
     }
+    // A blocks target must exist too, or the edge gates nothing and the task it was meant to hold
+    // back is dispatched without the new work (docs/task-state.md).
+    for (const b of t.blocks) {
+      if (!knownIds.has(b) || b === t.num) {
+        errors.push(`${t.num}: new task blocks ${b}, which is not another task on the feature branch or in this change`);
+      }
+    }
     adopted.push(t);
+  }
+
+  // A new task that blocks one of its own prerequisites closes a cycle: every task on it would wait
+  // for ever. Checked over the graph as it would stand after adoption, so the edge is judged in full.
+  if (errors.length === 0) {
+    const after = parseProgress(
+      `| # | Task | Depends on | State |\n|---|---|---|---|\n` +
+        [...feature.tasks, ...adopted].map((t) => `| ${t.num} | ${t.name} | ${depsCell(t.ownDeps, t.blocks)} | ${t.state} |`).join('\n'),
+    );
+    for (const t of adopted) {
+      if (cyclesThrough(after.tasks, t.num)) {
+        errors.push(`${t.num}: its dependencies and blocks form a cycle; every task on it would wait for ever`);
+      }
+    }
   }
 
   // Atomic per branch: if any row is an error, nothing from this branch lands, so a bad change
@@ -332,9 +409,8 @@ export function adoptNewTaskRows(featureText, branchText) {
     const values = {};
     values[col.num] = t.num;
     if (col.name !== undefined) values[col.name] = t.name;
-    // Reconstruct the Depends-on cell from the parsed deps; `—` for none, matching the table's
-    // own empty-deps convention so parseProgress reads [] back off it.
-    if (col.deps !== undefined) values[col.deps] = t.deps.length ? t.deps.join(', ') : '—';
+    // Reconstruct the Depends-on cell from the row's own deps and blocks clause.
+    if (col.deps !== undefined) values[col.deps] = depsCell(t.ownDeps, t.blocks);
     // Force ⬜: the coordinator owns task state. A branch row marked 🔍/✅ must still be adopted
     // as not-started or the new task would skip its build (DESIGN §2.2).
     if (col.state !== undefined) values[col.state] = '⬜';
@@ -348,5 +424,12 @@ export function adoptNewTaskRows(featureText, branchText) {
   // fields, stays byte-for-byte identical (DESIGN §2.5).
   lines.splice(dataEnd, 0, ...newRows);
 
-  return { text: lines.join('\n'), added: adopted.map((t) => t.num), errors: [] };
+  // Every adopted blocks edge, with the target's glyph on the feature branch, so the shell can tell
+  // the person when an edge landed on a task already started: the coordinator cannot stop a running
+  // worker (no down-channel) and a finished task is not rebuilt. Only the shell knows which ⬜ rows a
+  // live worker already holds, so the judgement is made there (loop.mjs recordAdoption).
+  const featureState = new Map(feature.tasks.map((t) => [t.num, t.state]));
+  const blockEdges = adopted.flatMap((t) => t.blocks.map((b) => ({ task: t.num, target: b, state: featureState.get(b) ?? '⬜' })));
+
+  return { text: lines.join('\n'), added: adopted.map((t) => t.num), errors: [], blockEdges };
 }

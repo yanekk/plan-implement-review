@@ -101,7 +101,8 @@ logged; it is the maintenance those two files get instead of a session of their 
 building this task, you find the plan is missing a task that has to exist, you may add it — but only
 after the person approves it in this session, and only as an addition: a new `⬜` row in `PROGRESS.md`,
 a `PLAN.md` row, a full `tasks/T{nn}-{slug}.md` doc and a dated `FINDINGS.md` line, with the new task
-depending only on tasks that already exist. You never edit an existing task, and you never add one
+depending only on tasks that already exist, and a `blocks` clause in its own `Depends on` cell
+(`T04; blocks T10`) when an existing task must wait for it. You never edit an existing task, and you never add one
 without the person's yes. The coordinator forces the adopted row to `⬜` and rejects a dependency on an
 unknown task or any edit of an existing one, so a corner cut here does not land. The full contract —
 how to propose it, and what the coordinator adopts and refuses — is in the `pir-worker` skill (§ When

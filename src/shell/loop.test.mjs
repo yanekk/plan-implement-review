@@ -974,6 +974,34 @@ test('a bad plan change (a new task depending on an unknown task) is surfaced as
   assert.ok(!/\|\s*T03\s*\|/.test(finalFeature), 'the rejected T03 never reached the feature table');
 });
 
+// The remote-grant incident (real-screen-time, 2026-09-22): a reviewer added a wiring task the
+// deploy check needed, but could not edit the deploy task's row, so the deploy was dispatched
+// without it. A `blocks` clause on the new row now gates the existing task at adoption.
+test('a new task that blocks an unstarted task is adopted and the blocked task waits for it', (t) => {
+  const { base } = setup(t, [{ num: 'T00' }, { num: 'T01', deps: ['T00'] }, { num: 'T02', deps: ['T01'] }], {
+    behaviors: { T01: { addRows: [taskRow({ num: 'T03', deps: ['T00'] }).replace('| T00 |', '| T00; blocks T02 |')] } },
+  });
+  const result = drain(base);
+  assert.equal(result.complete, true);
+  const mergeT03 = result.actions.findIndex((a) => a.type === 'merge' && a.task === 'T03');
+  const spawnT02 = result.actions.findIndex((a) => a.type === 'spawn' && a.task === 'T02');
+  assert.ok(result.actions.some((a) => a.type === 'adopt' && a.task === 'T03'), 'T03 adopted');
+  assert.ok(mergeT03 >= 0 && spawnT02 > mergeT03, 'T02 is not dispatched until the blocking T03 has merged');
+  assert.ok(!result.actions.some((a) => a.type === 'surface' && a.kind === 'late-block'), 'no late-block: T02 had not started');
+});
+
+test('a new task that blocks an already-started task is adopted and surfaced as late-block', (t) => {
+  // T01 and T02 both depend only on T00, so T02 is running when T01's branch (with T03 blocking T02) merges.
+  const { base } = setup(t, [{ num: 'T00' }, { num: 'T01', deps: ['T00'] }, { num: 'T02', deps: ['T00'] }], {
+    behaviors: { T01: { addRows: [taskRow({ num: 'T03', deps: ['T00'] }).replace('| T00 |', '| T00; blocks T02 |')] } },
+  });
+  const result = drain(base);
+  assert.equal(result.complete, true, 'a late block does not stall the run');
+  const late = result.actions.find((a) => a.type === 'surface' && a.kind === 'late-block');
+  assert.ok(late, 'the person is told T02 started without T03');
+  assert.equal(late.task, 'T02');
+});
+
 test('a run with no plan change records no adopt and no bad-plan-change (regression guard)', (t) => {
   const { base } = setup(t, chain(3));
   const result = drain(base);

@@ -62,9 +62,19 @@ function taskByWorkerId(state, workerId) {
 // so the surface is informational and the run continues — the person adds the task by hand if they
 // still want it (DESIGN §2.5, §6). A merge with nothing to adopt and no error records neither, so a
 // run with no plan change is byte-for-byte the old behaviour.
-function recordAdoption(record, res) {
+// A `late-block` surface is an adopted task whose `blocks` edge landed on a task already started —
+// ✅/🔍/🟡 on the feature row, or ⬜ there but held by a live worker, which only the loop knows. It is
+// informational like bad-plan-change: nothing can stop that worker (no down-channel), but the person
+// must hear the task was built without the new work (docs/task-state.md). `held` is the set of task
+// numbers the run has a worker on.
+function recordAdoption(record, res, held = new Set()) {
   for (const task of res.added ?? []) record('adopt', { task });
   for (const text of res.errors ?? []) record('surface', { kind: 'bad-plan-change', task: taskInAdoptError(text), text });
+  for (const { task, target, state } of res.blockEdges ?? []) {
+    if (state === '⬜' && !held.has(target)) continue;
+    const text = `${task} blocks ${target}, but ${target} was already started without ${task}'s work; check whether ${target} needs redoing`;
+    record('surface', { kind: 'late-block', task: target, text });
+  }
 }
 
 // An adoptNewTaskRows error string names the offending task first when it has one ("T03: …"); a
@@ -590,7 +600,7 @@ export function runPass({ platform, worktree, repo, slug, maxWorkers, state, con
     // Narrate any worker-introduced task this branch carried and surface any rejected row (DESIGN
     // §2.2, §2.3, §2.5). Adoption already happened inside mergeTask; this only tells the person about
     // it. The adopted row dispatches on a later pass through the unchanged decideDispatch.
-    recordAdoption(record, res);
+    recordAdoption(record, res, new Set(Object.keys(state.tasks)));
     // The branch is safely in the feature branch, so end the worker now (session stop + worktree
     // removal) and forget its task. This is the close decideDispatch used to schedule; pairing it with
     // the successful merge is what makes a conflicted merge leave the worker untouched (T28).

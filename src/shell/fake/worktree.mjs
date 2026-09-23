@@ -149,7 +149,7 @@ export function createFakeWorktree({ progress, files = {}, slug = 'demo' } = {})
     const merging = git(feature.path, ['rev-parse', '-q', '--verify', 'MERGE_HEAD']).ok;
     if (merging) git(feature.path, ['commit', '--no-edit', '-m', `merge ${taskBranch}`]);
     events.push({ op: 'mergeTask', branch: taskBranch, into: feature.branch });
-    return { ok: true, added: adopt.added, errors: adopt.errors };
+    return { ok: true, added: adopt.added, errors: adopt.errors, blockEdges: adopt.blockEdges ?? [] };
   }
 
   // Commit whatever the coordinator has written into the feature worktree (a reconciled PROGRESS.md

@@ -76,7 +76,9 @@ the plan is missing a task raises it with me in its own session like any other d
 only once I approve does it write the new task down on its branch; the coordinator then adopts
 it at merge and dispatches it by its dependencies. A worker may **add** a task this way, never
 edit, split, re-order or re-depend one that already exists — editing a task another worker may
-be building right now is the dangerous case, so it is barred at the machine boundary. This is
+be building right now is the dangerous case, so it is barred at the machine boundary. With my
+yes, the new task may name existing tasks that must wait for it (a `blocks` clause on its own row):
+that adds a wait to them without editing them, and it is how the coordinator learns the order. This is
 the only break in "the plan is mine": the addition still passes through me before it lands. How
 the adoption works is in `/docs` (`task-state.md`, `branch-model.md`).
 

@@ -294,10 +294,32 @@ was not there. Every task needs all five of:
    and it is invisible cost: nothing downstream flags it. Never cut a real dependency to make
    a plan look wider either — a worker built on work that is not there collides or fails.
    Correct task boundaries and reviewability beat throughput; parallelism is surfaced, never
-   forced.
+   forced. **Derive a dependency from what the task uses, not from where a track ends.** A task
+   that exercises the whole thing — an end-to-end check, a deploy-and-verify — depends, directly or
+   through others, on every task whose work its check runs through; if its doc says "built by
+   T01–T09", its dependencies must reach all of T01–T09.
 
 Sizing: **if you cannot write its "Done when" in three lines, it is two tasks.** If it has
 no test list, it is either not a task or the testability boundary is in the wrong place.
+
+### Every step of the main path has a builder and a wirer
+
+A plan split by component builds every part and can still ship nothing, because connecting the
+parts into the running program is nobody's file. Before the phase table, walk the main path from
+Stage 2 one step at a time and name, for each step, **the task that builds it and the task that
+plugs it in** — the entry point that constructs it, the route or menu that reaches it, the config
+read that switches it on. The file where the program starts must appear in some task's Files list
+for every new part that has to run there. A step with no wirer is a missing task, or a missing file
+in a task that should own it: add it now. The real-screen-time remote-grant plan split the poller,
+the pairing and the Settings section into tasks and gave constructing the poller in `main.swift`
+to none of them, so as planned the feature shipped inert; it was found only mid-build.
+
+**Then look at the leaves.** A leaf is a task nothing depends on. Only the final deliverable — the
+end-to-end check, the deploy, the last user-visible surface — should be one. Any other leaf is a
+part whose output nothing consumes: either a dependency edge is missing (usually from the
+end-to-end task) or the task that consumes it is. Fix it, or write in `PLAN.md` in one line why
+that task is genuinely terminal. "It never lengthens the critical path" is not a reason; it is the
+symptom.
 
 ### When a deliverable can only be verified by a person
 
@@ -387,7 +409,8 @@ epigrams gets epigrams back for ever. See `CLAUDE.md § How to write in these fi
 - **`tasks/T00-…md`** onwards — one per task, from the task template.
 
 Then check the plan against itself before you show it: every dependency points at a task
-that exists and comes earlier; every "Done when" is checkable; every task that can only be
+that exists and comes earlier; every step of the main path has a wirer; every leaf other than the
+final deliverable is justified; every "Done when" is checkable; every task that can only be
 verified by a person says so in its own doc; nothing in PLAN.md contradicts DESIGN.md.
 
 **That check is a courtesy, not the review.** `/pir-review-plan` does it properly in the next

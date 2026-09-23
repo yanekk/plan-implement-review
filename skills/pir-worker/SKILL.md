@@ -111,8 +111,13 @@ The flow:
    task's row or doc:
    - `PROGRESS.md`: one new row — state `⬜`, the next free T-number, a kebab slug, and `Depends on`
      naming **only tasks that already exist** (on the feature branch, or another task you are adding
-     in the same change).
-   - `PLAN.md`: the matching row in the task table.
+     in the same change). **If an existing task that has not started yet needs the new one done
+     first, add a `blocks` clause to the new row's own `Depends on` cell** — `T04, T05; blocks T10`,
+     or `—; blocks T10` — and name it in the proposal so the person approves that edge too. Never
+     write the edge into the existing task's row: that is an edit, and it rejects the whole change.
+     The clause is what makes the coordinator hold T10 back; a note in `FINDINGS.md` does not, and
+     T10 would be dispatched without your task.
+   - `PLAN.md`: the matching row in the task table, with the same `blocks` clause.
    - `tasks/T{nn}-{slug}.md`: a full task doc — goal, files, interface, tests, done-when — whose slug
      matches both its filename and its `PROGRESS.md` row.
    - `FINDINGS.md`: one dated line naming the new task and why it was added.
@@ -126,6 +131,10 @@ What the machine does with what you wrote — so cutting a corner gains you noth
   skip the task's build; the coordinator owns task state and overwrites yours.
 - It **rejects a dependency on a task that does not exist** — such a task could never be dispatched.
   Depend only on tasks already on the feature branch or added in the same change.
+- It **folds a `blocks` clause into the named task's dependencies**, so that task waits for yours. It
+  rejects a `blocks` target that does not exist or an edge that closes a cycle. If the named task has
+  already started, the edge cannot stop it: your task is adopted and the person gets a `late-block`
+  surface saying that task was built without your work.
 - It **rejects any edit of an existing task** — a changed slug, changed dependencies, or a reused
   number — and then adopts nothing from the whole branch (adoption is atomic per branch). Add-only is
   enforced at the machine boundary, so an accidental edit is refused, never silently applied.

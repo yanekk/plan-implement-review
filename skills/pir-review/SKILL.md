@@ -76,6 +76,10 @@ approval is its gate, and **you are the check on its shape.** If this task's dif
   among tasks added in the same change. A dependency on an unknown task could never be dispatched.
 - **The new task doc has all five parts** — goal, files, interface, tests, done-when — **and its slug
   matches both its filename and its `PROGRESS.md` row.**
+- **Every existing task that needs the new one carries it through a `blocks` clause** on the new
+  row (`T04; blocks T10`), not through a note in `FINDINGS.md` and not through an edit of that
+  task's row. Ask which existing tasks exercise what the new task builds — an end-to-end or deploy
+  check almost always does. A missing clause means that task is dispatched without the new work.
 - **No existing task's row or doc was edited.** The carve-out is add-only: a changed slug, changed
   dependencies or a reused number on an existing task is forbidden.
 
