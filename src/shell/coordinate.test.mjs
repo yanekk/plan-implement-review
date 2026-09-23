@@ -12,6 +12,7 @@ import {
   ensureMain,
   canPromoteHere,
   renderHandoff,
+  runFeatureTests,
   runawayVerdict,
   gitRun,
   clearTransientFeeds,
@@ -423,6 +424,61 @@ test('renderHandoff: a green plan hands off `git merge pir/{slug}`; a red one pr
   assert.ok(!/git merge/.test(red), 'a red branch is NEVER handed a merge line (§2.8)');
   assert.match(red, /tests fail/i, 'the red output names the failure');
   assert.match(red, /pir\/demo/, 'and still names the branch so the person can go fix it');
+});
+
+test('renderHandoff: a red hand-off carries the gate\'s reason and log path when given one', () => {
+  const red = renderHandoff({ readyToMerge: null, taskCount: 2, slug: 'demo', why: '`make test` exited 2; output: /x/tests.log' });
+  assert.match(red, /`make test` exited 2/);
+  assert.match(red, /\/x\/tests\.log/);
+});
+
+// runFeatureTests runs the command the plan names, not a fixed `npm test` — the hard-coded one exited
+// 254 on every project without a package.json and failed runs whose tests pass. Real /bin/sh, scratch dirs.
+function featureWithDesign(t, designBody) {
+  const dir = mkdtempSync(join(tmpdir(), 'pir-feature-tests-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  mkdirSync(join(dir, 'plans', 'demo'), { recursive: true });
+  if (designBody != null) writeFileSync(join(dir, 'plans', 'demo', 'DESIGN.md'), designBody);
+  return { dir, logPath: join(dir, 'tests.log') };
+}
+
+test('runFeatureTests: runs the DESIGN.md test command in the feature worktree — green with no package.json', (t) => {
+  const { dir, logPath } = featureWithDesign(t, '**The test command.**\n\n```\nsh check.sh\n```\n');
+  writeFileSync(join(dir, 'check.sh'), 'echo suite-ran; test -f plans/demo/DESIGN.md\n');
+  const r = runFeatureTests(dir, { slug: 'demo', logPath });
+  assert.equal(r.ok, true);
+  assert.match(readFileSync(logPath, 'utf8'), /suite-ran/, 'the output lands in the log, not the terminal');
+});
+
+test('runFeatureTests: every line runs, and the first failure is red with the command named', (t) => {
+  const { dir, logPath } = featureWithDesign(t, '**The test commands.**\n```\ntrue\nexit 3   # second suite\necho never\n```\n');
+  const r = runFeatureTests(dir, { slug: 'demo', logPath });
+  assert.equal(r.ok, false);
+  assert.match(r.reason, /exit 3.*exited 3/);
+  assert.equal(r.logPath, logPath);
+  assert.doesNotMatch(readFileSync(logPath, 'utf8'), /\$ echo never/, 'it stops at the first failing line');
+});
+
+test('runFeatureTests: no DESIGN.md or no named command is red with that reason, never a guessed npm test', (t) => {
+  const none = featureWithDesign(t, null);
+  const r1 = runFeatureTests(none.dir, { slug: 'demo', logPath: none.logPath });
+  assert.equal(r1.ok, false);
+  assert.match(r1.reason, /no test command found in plans\/demo\/DESIGN\.md/);
+
+  const vague = featureWithDesign(t, '# Design\n\nNo command here.\n');
+  assert.match(runFeatureTests(vague.dir, { slug: 'demo' }).reason, /no test command found/);
+});
+
+test('runFeatureTests: the run\'s own switches do not reach the project\'s suite', (t) => {
+  const { dir, logPath } = featureWithDesign(t, '**The test command.**\n```\ntest -z "$PARALLEL_LIVE$PIR_RUN"\n```\n');
+  const saved = { live: process.env.PARALLEL_LIVE, run: process.env.PIR_RUN };
+  process.env.PARALLEL_LIVE = '1';
+  process.env.PIR_RUN = '1';
+  t.after(() => {
+    if (saved.live === undefined) delete process.env.PARALLEL_LIVE; else process.env.PARALLEL_LIVE = saved.live;
+    if (saved.run === undefined) delete process.env.PIR_RUN; else process.env.PIR_RUN = saved.run;
+  });
+  assert.equal(runFeatureTests(dir, { slug: 'demo', logPath }).ok, true);
 });
 
 test('canPromoteHere refuses the canonical repo unless PARALLEL_ALLOW_HERE overrides (P5, T12)', () => {

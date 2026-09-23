@@ -16,6 +16,7 @@ all sessions can address.
 | `HALT` | the kill-switch flag file. Its presence halts the run — see below. |
 | `log` | the event log: one ISO-timestamped line per coordinator action. |
 | `reports/` | the worker → coordinator up-channel: one JSON file per worker report. |
+| `tests.log` | the output of the feature-branch test command at the end of the run, rewritten each time it runs (see [run-lifecycle.md](run-lifecycle.md)). |
 
 There is no `outbox`, `answers`, or `surfaced`: those were the coordinator↔person↔worker relay of
 the old agentic coordinator, and they were removed with the down-channel (DESIGN of

@@ -69,7 +69,7 @@ There are two places a conflict can arise:
   delete its task, or respawn it. Because that worker finished clean and has no idea a clash happened,
   the command **composes a ready-to-paste resolution prompt** and prints it: which worker to attach
   to, the `git merge` that folds the feature branch into the task branch, the conflicting files, and
-  the finish steps (commit, `npm test`, re-signal done). It leaves the keep-which-side choice a marked
+  the finish steps (commit, the test command from the plan's `DESIGN.md`, re-signal done). It leaves the keep-which-side choice a marked
   blank, because that judgement is the person's — it is exactly what made the conflict stop for a
   person. The command **sends nothing**: the person copies the prompt, attaches to that same worker,
   fills in which side to keep, and pastes it. The worker resolves on its branch and re-signals done,

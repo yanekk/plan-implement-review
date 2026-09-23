@@ -663,7 +663,10 @@ export function runPass({ platform, worktree, repo, slug, maxWorkers, state, con
       readyToMerge = { branch: state.feature.branch };
     } else {
       testsPassed = false;
-      record('surface', { kind: 'red-feature', text: 'feature branch tests failed; not ready to merge' });
+      // The reason and log path ride on the surface so the person reads what failed and where the output
+      // is, instead of a bare "tests failed" (a hard-coded `npm test` once failed silently this way).
+      const why = [test.reason, test.logPath && `output: ${test.logPath}`].filter(Boolean).join('; ');
+      record('surface', { kind: 'red-feature', text: why || 'feature branch tests failed; not ready to merge' });
     }
   }
 

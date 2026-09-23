@@ -38,10 +38,11 @@ test('it leaves the keep-which-side choice a blank and bakes in NO resolution', 
   assert.ok(!/resolved:/i.test(p), 'no resolved content is baked in');
 });
 
-test('it ends with the finish steps: commit, npm test, then re-signal done (a live worker)', () => {
+test('it ends with the finish steps: commit, the plan\'s test command, then re-signal done (a live worker)', () => {
   const p = buildConflictPrompt(base);
   assert.match(p, /commit/i, 'it tells the worker to commit the resolution');
-  assert.match(p, /npm test/, 'it tells the worker to run the tests');
+  assert.match(p, /test command in plans\/[^/]+\/DESIGN\.md/, 'it tells the worker to run the plan\'s own tests');
+  assert.doesNotMatch(p, /npm test/, 'never a fixed npm test — the project may not be Node');
   assert.match(p, /[Ss]ignal done again/, 'it tells the worker to re-signal done so the run can merge it');
 });
 

@@ -22,13 +22,14 @@
 // exercised there — its live behaviour is hand-verified (T09).
 
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, readdirSync, readFileSync, unlinkSync, watch, writeFileSync } from 'node:fs';
+import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, unlinkSync, watch, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 
 import { parseProgress, reconcileTaskRow, progressPathFor } from '../core/progress.mjs';
 import { workerName, isWorkerOf, parseAgentName } from '../core/naming.mjs';
 import { buildDisplay } from '../core/display.mjs';
 import { parseRecord } from '../core/runrecord.mjs';
+import { testCommandFrom } from '../core/testcommand.mjs';
 import { runPass, createRunState } from './loop.mjs';
 import { createPlatform } from './platform.mjs';
 import { createRenderer } from './render.mjs';
@@ -79,7 +80,8 @@ function renderSurface(a) {
     case 'red-feature':
       message =
         'Every task is built, but the tests fail on the assembled feature branch, so it is NOT ready to ' +
-        'merge. The failure needs fixing before you merge the branch by hand.';
+        'merge. The failure needs fixing before you merge the branch by hand.' +
+        (a.text ? ` (${a.text})` : '');
       break;
     default:
       message = `${who}: ${a.text ?? a.kind}`;
@@ -504,7 +506,9 @@ export function canPromoteHere(repoName, { allowHere = false } = {}) {
 // Pure, so the green/red wording is asserted without running the bin (DESIGN §2.3's pure-display
 // stance). On green it hands over `git merge pir/{slug}`; on red it names the failure and offers NO
 // merge line, because telling the person a red branch is ready would be a lie the tests caught (§2.8).
-export function renderHandoff({ readyToMerge, taskCount, slug } = {}) {
+// `why` is the red gate's reason and log path (loop.mjs 3f), printed so the person can tell a failing
+// suite from a command that never ran.
+export function renderHandoff({ readyToMerge, taskCount, slug, why } = {}) {
   const branch = `pir/${slug}`;
   if (readyToMerge) {
     return (
@@ -514,6 +518,7 @@ export function renderHandoff({ readyToMerge, taskCount, slug } = {}) {
   }
   return (
     `✗ all ${taskCount} task(s) built on ${branch}, but its tests fail — not ready to merge.\n` +
+    (why ? `  ${why}\n` : '') +
     `Fix the feature branch, then merge it yourself. No merge is offered on a red branch.`
   );
 }
@@ -704,16 +709,50 @@ export function waitForReport(reportsDir, timeoutMs, { watch: watchFn = watch } 
 }
 
 // Run the project's test command on the feature worktree (DESIGN §2.4, §5): the last gate before the
-// run hands the branch off. Returns { ok } from the command's exit code. Anything that stops the
-// command from launching, or a non-zero exit, counts as red — a hand-off must never claim a green it
-// did not observe (§2.8). Injected into the loop as runTests on the LIVE path; the dry-run tests inject
-// their own so this never runs against the fakes.
-export function runFeatureTests(featurePath) {
+// run hands the branch off. The command is the one the plan names in its own DESIGN.md (§ Environment,
+// read from the feature branch's copy by testCommandFrom); it used to be a hard-coded `npm test`, which
+// exited 254 on every project without a package.json and so failed runs whose tests pass. Each line
+// runs through the shell in order, stopping at the first failure. Anything that stops a command from
+// launching, a non-zero exit, or no command found counts as red — a hand-off must never claim a green
+// it did not observe (§2.8). Output goes to logPath, not the terminal (the live display owns it), so a
+// red result can say where to look. The run's own switches (PARALLEL_*, PIR_RUN) are dropped from the
+// environment: they drive this coordinator, and a project's suite that spawns a coordinator of its own
+// (this repo's does) must not inherit PARALLEL_LIVE=1. Returns { ok, command, reason, logPath }; command names
+// the failing line and is null on green.
+export function runFeatureTests(featurePath, { slug, logPath } = {}) {
+  let design = '';
   try {
-    execFileSync('npm', ['test'], { cwd: featurePath, stdio: 'ignore' });
-    return { ok: true };
+    design = readFileSync(join(featurePath, 'plans', slug, 'DESIGN.md'), 'utf8');
   } catch {
-    return { ok: false };
+    /* no DESIGN.md — reported below as no command */
+  }
+  const commands = testCommandFrom(design);
+  if (!commands) {
+    return { ok: false, command: null, logPath: null, reason: `no test command found in plans/${slug}/DESIGN.md` };
+  }
+
+  const env = Object.fromEntries(
+    Object.entries(process.env).filter(([k]) => !k.startsWith('PARALLEL_') && k !== 'PIR_RUN'),
+  );
+  let fd = 'ignore';
+  try {
+    if (logPath) fd = openSync(logPath, 'w');
+  } catch {
+    /* an unwritable log must not turn a green suite red */
+  }
+  try {
+    for (const command of commands) {
+      if (typeof fd === 'number') writeFileSync(fd, `$ ${command}\n`);
+      try {
+        execFileSync('/bin/sh', ['-c', command], { cwd: featurePath, env, stdio: ['ignore', fd, fd] });
+      } catch (e) {
+        const how = e.status != null ? `exited ${e.status}` : `could not run (${e.code ?? e.signal ?? e.message})`;
+        return { ok: false, command, logPath: typeof fd === 'number' ? logPath : null, reason: `\`${command}\` ${how}` };
+      }
+    }
+    return { ok: true, command: null, logPath: typeof fd === 'number' ? logPath : null };
+  } finally {
+    if (typeof fd === 'number') closeSync(fd);
   }
 }
 
@@ -861,7 +900,9 @@ async function main(argv) {
   const inbox = createReportInbox({ dir: control.dir });
   const platform = createPlatform({ root, transport: inbox.transport });
   const worktree = createWorktree({ root });
-  const coordinator = startCoordinator({ slug, repo, platform, worktree, maxWorkers, control, runTests: runFeatureTests });
+  const coordinator = startCoordinator({ slug, repo, platform, worktree, maxWorkers, control,
+    runTests: (featurePath) => runFeatureTests(featurePath, { slug, logPath: join(control.dir, 'tests.log') }),
+  });
   const renderer = createRenderer({ stream: process.stdout });
 
   console.log(`ceiling: ${maxWorkers}   control: ${control.dir}`);
@@ -1060,7 +1101,12 @@ async function main(argv) {
         // nothing is orphaned by returning here.
         finishRun('complete'); // a clean end (green OR red branch) records `finished` (§2.2, T10).
         renderer.close(); // leave the alt screen; the hand-off prints on the normal screen (T15, DESIGN §2.3)
-        renderer.line('\n' + renderHandoff({ readyToMerge: r.readyToMerge, taskCount: r.tasks.length, slug }));
+        renderer.line('\n' + renderHandoff({
+          readyToMerge: r.readyToMerge,
+          taskCount: r.tasks.length,
+          slug,
+          why: r.surfaces.find((s) => s.kind === 'red-feature')?.text,
+        }));
         return;
       }
 

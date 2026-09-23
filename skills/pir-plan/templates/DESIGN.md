@@ -105,6 +105,11 @@ What the layers are, what each proves, and what none of them can prove.
 **It is the only evidence a session may produce on its own.** If the obvious command does not
 work here, say which one does and why — the next session will otherwise rediscover it.
 
+**A parallel run executes this block.** When every task is done, `pir {slug}` runs each line of
+the fenced block above, in order, on the finished branch, and hands the branch over only if all of
+them pass. So the block holds exactly the commands that make up the suite: one line per suite is
+fine, but a verbose or debugging variant goes in the prose, not in the block, or it runs too.
+
 **It must be cheap to read when it passes.** The dominant caller is a session that reads all
 of its output, and a passing run that prints a line per assertion is thousands of lines of the
 word `ok` re-read on every review; the exit code already carries the result. Make three things

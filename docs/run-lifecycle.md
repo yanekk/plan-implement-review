@@ -71,7 +71,13 @@ A pass does, in order:
   `bad-plan-change` surface, and [task-state.md](task-state.md) for the adoption rule).
 - **Complete.** When every task is `✅` and no worker is live, the pass reports a `complete` flag;
   the command runs the test command on the feature branch and reports the result. It never merges
-  to `main` — see **End** below.
+  to `main` — see **End** below. The test command is the fenced block under "The test command" in
+  the plan's own `DESIGN.md` (§ Environment, read from the feature branch; `testCommandFrom` in
+  `src/core/testcommand.mjs`). Every line in that block runs through `/bin/sh` in the feature
+  worktree, in order, stopping at the first failure; the run's own `PARALLEL_*` and `PIR_RUN`
+  variables are removed from its environment. Output goes to `tests.log` in the control folder. No
+  block found is red with the reason `no test command found in plans/{slug}/DESIGN.md` — the command
+  never falls back to a guessed default such as `npm test`.
 
 The idle-gate: a close that follows a worker finishing (a review hand-off, or a merge-and-close)
 waits for the agent list to show that worker `idle` before sending SIGTERM, so a final commit is
@@ -118,7 +124,9 @@ A run ends in one of three ways:
   branch and the one line `git merge pir/{slug}` for the person to run by hand (`renderHandoff` in
   `coordinate.mjs`). `main` is untouched; merging it is the person's step, not the command's (see
   [branch-model.md](branch-model.md)). A **red** feature branch prints the failure and the branch
-  and offers no `git merge` line — the command never tells the person a red branch is ready.
+  and offers no `git merge` line — the command never tells the person a red branch is ready. The red
+  line names the failing command and its exit code (or that no command was found) and the path to
+  `tests.log`.
 - **Halted** — the `HALT` flag closed every worker; nothing merged, `main` is untouched. To
   continue, the person removes `HALT` and re-runs the command (see
   [restart-recovery.md](restart-recovery.md)).

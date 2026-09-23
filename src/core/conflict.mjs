@@ -50,9 +50,12 @@ export function buildConflictPrompt({
   // The final step differs by whether a live worker is there to re-signal done: a live worker resolves
   // on its branch and re-signals, and the run merges it on its next pass; with no worker the run has
   // parked the row (⛔) and will not merge it on its own, so the person lands the branch.
+  // The tests are the plan's own test command (DESIGN.md § Environment), never a fixed `npm test`: the
+  // engine runs projects on any stack, and the gate at the end of the run reads the same line.
+  const testStep = `the test command in plans/${slug || '{slug}'}/DESIGN.md`;
   const finish = workerName
     ? `  4. Signal done again so the run can merge your branch.`
-    : `  4. Commit, run \`npm test\`, then land this branch yourself — the run has parked it and will not\n` +
+    : `  4. Commit, run ${testStep}, then land this branch yourself — the run has parked it and will not\n` +
       `     merge it on its own.`;
 
   const pasteable = [
@@ -71,7 +74,7 @@ export function buildConflictPrompt({
     `Then:`,
     `  1. Resolve the conflict in the file(s) above, keeping what you decided.`,
     `  2. git add the resolved file(s) and commit.`,
-    `  3. Run: npm test`,
+    `  3. Run ${testStep}.`,
     finish,
   ].join('\n');
 
