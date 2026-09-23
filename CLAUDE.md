@@ -399,3 +399,27 @@ the change reached the installed copy (e.g. grep the line in `~/.claude/pir-engi
 The script is idempotent — re-running only refreshes in place. `./install.sh /path/to/project`
 also appends the method to that project's CLAUDE.md; the bare form is skills-and-engine only.
 
+
+### The README follows every major feature
+
+`README.md` is how someone who has never opened this repo learns what the method does and why to
+use it. It leads with what a user gets — the parallel run, the autonomy they set, clean-slate
+sessions, no self-review — and a feature missing from it is, for a new reader, a feature that does
+not exist.
+
+**Update `README.md` in the same change whenever:**
+
+- **a major feature lands** — a new command or view, a new step in the workflow, a new thing the
+  person decides or sees, a change to what an agent may do on its own; or
+- **a page in `/docs` is added, or its behaviour changes** — every behaviour `/docs` describes has
+  at least a sentence and a link in the README, pitched at a user rather than restating the spec.
+
+Write for a user, not a maintainer: what it does for them and how they reach it, then a link to
+`/docs` for the detail. Say only what the code does today, and state a limit where a reader would
+otherwise assume more. `/docs` stays canonical; where the two disagree, `/docs` wins and the README
+is the one fixed.
+
+**Plan it, do not bolt it on.** `/pir-plan` puts the README update in the "Done when" of the task
+that completes the feature, so it passes review with the rest. That task touching `README.md` is
+part of its scope, not scope creep. A README gap noticed anywhere else goes in `FINDINGS.md` like
+any other.
