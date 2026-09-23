@@ -92,8 +92,13 @@ Cover, in roughly this order, stopping to ask whenever the answer is not already
   refused in writing.
 - **What must never happen.** The failure this thing exists to prevent, and any failure it
   must not be able to cause. This is what the seatbelts in Stage 3 are for.
-- **What the user will run themselves.** Anything needing a screen, a login, another
-  account, a device, a paid service or a real person. It becomes the verification table.
+- **What the user will judge themselves.** Anything whose proof is a person's eyes on a
+  screen, a device or a real person's reaction. It becomes the verification table.
+- **What it touches outside the code, and who acts on it.** Every cloud account, paid
+  service, domain, store listing, device or message somebody else receives. For each action on
+  it, settle its bin with the user (*Stage 3*, `DESIGN.md §5.3`): the worker alone, the worker
+  after the user's yes, or the user's own hands. The user's hands are for a login, a device or a
+  judgement, never for pasting a command a worker could run.
 
 **Checkpoint.** Play the requirements back in plain English — a short numbered list, no
 jargon — and get an explicit yes before you prototype or design anything. Say what you are
@@ -168,12 +173,30 @@ Establish and write down:
   user, rather than one library at a time under pressure.
 - **What the test command cannot reach.** The verification table: each row is a thing only a
   person can establish, and why. Screens, cameras, logins, second accounts, reboots, real
-  devices, paid APIs, anything with a human in the loop.
+  devices, a paid API no §5.3 row lets a worker call, anything with a human in the loop.
 - **The seatbelts.** For anything that could take the machine, the screen, the account or
   real money: the bound that makes it safe to run — a time limit, a dry-run flag, a spending
   cap, a scratch account, a fake data directory. **If a dangerous capability has no seatbelt,
   designing one is part of the plan**, and it belongs in an early task rather than being
   improvised the first time someone needs it.
+- **Who acts on the outside world** (`DESIGN.md §5.3`). One row per action, each in a bin:
+  `worker` (runs it, tells the user after), `ask` (explains it, runs it, and the machine's
+  permission prompt is the user's yes), `person` (a login, a device, a screen to judge). An
+  action that cannot be undone, may cost more than its task expects, is seen or received by other
+  people, or changes the infrastructure rather than the code on it goes in `ask`; only the user
+  can move one down, at plan review. Default everything else to `worker`: a worker is sent to
+  the outside world to act on it, and a plan that routes every live action through the user's
+  keyboard has only moved the work, not bounded it.
+
+  **Measure the credentials; do not assume them.** List what is configured here
+  (`aws configure list-profiles`, `gcloud auth list`, `gh auth status` — names, never secrets)
+  and run each login check once. A premise like "the credentials are not on this machine" is a
+  machine claim like any version number. The real-screen-time remote-grant plan wrote exactly
+  that without checking, the admin profile was there all along, and every deploy went to the
+  user's hands on the strength of one unmeasured sentence.
+
+  **Wrap each command in a project script** so a permission rule covers exactly one action, and
+  plan the scripts as an early task, before the first task that needs them.
 
 **When an assumption is load-bearing enough that being wrong about it changes the
 architecture, it becomes T00: a spike.** Throwaway code, one session, whose only job is to
@@ -394,7 +417,7 @@ epigrams gets epigrams back for ever. See `CLAUDE.md § How to write in these fi
 
 - **DESIGN.md** — purpose, success criteria, the behaviour specification with its reasons,
   the architecture and the boundary, the environment, the verification table and seatbelts,
-  the decisions-and-rationale section, and what is explicitly out of scope. **Every rule
+  who acts on the outside world (§5.3), the decisions-and-rationale section, and what is explicitly out of scope. **Every rule
   carries its reason, in a sentence**; that is the whole point of the file. A rule with three
   paragraphs under it does not get read, which costs exactly what a rule with no reason costs.
 - **PLAN.md** — phases, task table with dependencies, critical path, sizing, and any
@@ -411,7 +434,11 @@ epigrams gets epigrams back for ever. See `CLAUDE.md § How to write in these fi
 Then check the plan against itself before you show it: every dependency points at a task
 that exists and comes earlier; every step of the main path has a wirer; every leaf other than the
 final deliverable is justified; every "Done when" is checkable; every task that can only be
-verified by a person says so in its own doc; nothing in PLAN.md contradicts DESIGN.md.
+verified by a person says so in its own doc; every outside action a task runs has a §5.3 row
+and is listed in that task's doc; nothing in PLAN.md contradicts DESIGN.md.
+
+**Do not write the permission rules into `.claude/settings.json` yourself.** The bins are a
+proposal until the plan review has put them in front of the user; that session writes them.
 
 **That check is a courtesy, not the review.** `/pir-review-plan` does it properly in the next
 session, and it will find things you cannot — you have been holding this plan in your head for

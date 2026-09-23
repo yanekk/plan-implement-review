@@ -144,6 +144,41 @@ that makes it safe to run.
 **Never ask the user to run the unbounded version to find something out, and never run it
 yourself.** The seatbelt is what stands between a test and a power cycle.
 
+### 5.3 Outside the code — who acts
+
+*(Delete if the plan touches nothing outside this repo and this machine. Otherwise one row per
+action on the live world: a cloud account, a paid API, a domain, a store listing, a real device, a
+message someone else receives.)*
+
+Every action here sits in one of three bins. The bin is what a worker obeys, and
+`/pir-review-plan` turns it into the project's permission rules in `.claude/settings.json`, so the
+machine enforces it rather than a session's good intentions.
+
+| Bin | Who runs it | Permission rule |
+|---|---|---|
+| `worker` | The worker, then tells the person in one line | `allow` |
+| `ask` | The worker, after explaining it. The machine's permission prompt is the person's yes | `ask` |
+| `person` | The person. Only for what a person physically must do: a login, a device, a screen to judge | none |
+
+**The hard lines put an action in `ask`**: it cannot be undone, it costs more than the task
+expects, other people can see or receive it, or it changes the infrastructure itself rather than
+the code running on it. The person may move one action down to `worker` at plan review, and only
+there; the row then says so with the date and the reason. **A worker never hands the person a
+command to paste for anything outside the `person` bin.**
+
+| Action | Command (exact, wrapped) | Bin | Why this bin | Way back | Expected cost | Login check |
+|---|---|---|---|---|---|---|
+| | | | | | | |
+
+- **Command** is a project script (`npm run deploy:web`, `make teardown`), not the raw tool, so a
+  permission rule covers exactly this action and cannot be stretched by extra flags.
+- **Login check** is a read-only command that succeeds only while the credential is live
+  (`aws sts get-caller-identity --profile admin`). The worker runs it before any `worker` or `ask`
+  action; if it fails, the login is a `person` step and the worker waits, then carries on itself.
+- **Credentials present on this machine**, measured at plan time and re-measured at plan review:
+  which profiles or tokens exist, never their secrets. A plan that assumes a credential is absent
+  without checking hands the person work a worker could have done.
+
 ---
 
 ## 6. Recovery

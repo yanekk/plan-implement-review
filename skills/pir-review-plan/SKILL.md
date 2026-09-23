@@ -117,21 +117,32 @@ The whole of `plans/{slug}/` has to describe one buildable thing. Check:
   last, with a seatbelt.
 - **The verification table is wired up.** Every task that can only be checked by a person
   says so in its own doc, and every row of the table belongs to some task.
-- **`auto` really is `auto`, and `you` really needs a person.** This is the check nothing else
-  in the method makes. Walk every task's `Runs` marker against the rule in `pir-plan`: `you` is
+- **The person's share is only what needs a person.** This is the check nothing else in the
+  method makes. Walk every task's "Needs a person" block against the rule in `pir-plan`: it is
   only for a person's *judgement* no tool could stand in for. Hunt two failures, and both are
   decisions, not mechanical fixes — they change what gets built and who does it:
-  - **A `you` task a worker could do.** "A program has to be run," "a file has to be checked,"
+  - **A person step a worker could do.** "A program has to be run," "a file has to be checked,"
     "an environment has to be set up" — none is person-only; a worker runs programs, reads
     files and stands environments up. If the only thing the person adds is pressing enter, it
-    is a mis-marked `auto` task, and leaving it `you` seats the user at a keyboard for work the
-    machine should own.
-  - **An `auto` task that secretly leans on the user.** Read its "Done when" and its steps for
-    any point where the worker would have to hand the user a thing to run, configure or set up
-    that the task never gave the worker the means to automate. That hidden handover is the exact
-    leak this method is closing: either the task must carry the tool that closes it (still
-    `auto`), or the genuinely person-only remainder must be split into its own `you` verify
-    task whose mechanical setup lives in a worker-owned section, not in the user's lap.
+    belongs in the worker-owned sections, and leaving it with the person seats the user at a
+    keyboard for work the machine should own.
+  - **A task that secretly leans on the user.** Read its "Done when" and its steps for any point
+    where the worker would have to hand the user a thing to run, configure or set up that the
+    task never gave the worker the means to automate. Either the task carries the tool that
+    closes it, or the genuinely person-only remainder goes in its "Needs a person" block with
+    the mechanical setup in a worker-owned section.
+- **Every outside action has a row and the right bin** (`DESIGN.md §5.3`). Walk every task for
+  anything it does to the live world — a deploy, a paid call, a DNS record, a message sent — and
+  check each has a §5.3 row, is listed in the task's "Outside actions", and sits in the right
+  bin. Hunt both directions, and both are decisions:
+  - **Too little autonomy.** A `person` row that is not a login, a device or a judgement: the
+    worker could run it after the user's yes, so it belongs in `ask` or `worker`. A task that
+    hands the user a command to paste is this defect. The real-screen-time remote-grant plan put
+    every `sam deploy` in the user's hands on an unchecked premise, and this pass signed it off.
+  - **Too much autonomy.** A `worker` row that crosses a hard line (cannot be undone, may cost
+    more than its task expects, seen or received by others, changes the infrastructure) with no
+    dated exception from the user.
+  - **A row a worker cannot carry out**: no wrapped command, no login check, no way back.
 - **Nothing out of scope is being built.** Cross the task list against what `DESIGN.md` says
   is deliberately not being built.
 - **`FINDINGS.md` does not contradict the plan.** The planning session's own probes are in
@@ -182,6 +193,12 @@ The plan was measured on a machine, possibly on a different day. Re-measure:
 - **The seatbelts are real.** The flag, the limit, the dry-run switch actually exists on the
   command it is attached to. A seatbelt that does not exist is worse than none, because
   somebody will trust it.
+- **The credentials are what the plan says.** List the profiles, accounts and tokens configured
+  here (names only, never secrets) and run each §5.3 login check, which is read-only. A plan
+  that says a credential is absent when it is present has sent a worker's job to the user; one
+  that says it is present when it is not has a task that stalls on first contact. Either is a
+  finding, and the bins built on it are a decision. A login check that fails only because the
+  session has expired is not a contradiction: say so and move on.
 
 **Bounded probes only, and never the dangerous thing.** Anything needing a screen, a login,
 another account, a reboot, a device or a paid call is handed to the user with its seatbelt,
@@ -262,9 +279,16 @@ not exist yet, or a leaf has no obvious consumer, it is a decision.
 > everything from Pass 2 · everything from Pass 4 — a task that builds what the repo already
 > has, or that should become an extension of it · two rules that contradict, where which one
 > wins is a judgement · a task that should be split, added, dropped or reordered — including a
-> step of the main path no task wires in · a task
-> mis-marked `auto`/`you`, or an `auto` task that hides a handover a worker could automate · a
-> design rule the machine has just proved impossible · anything where either answer is defensible
+> step of the main path no task wires in · a person step a worker could do, or a task that
+> hides a handover a worker could automate · an outside action with no row, in the wrong bin,
+> or crossing a hard line from the `worker` bin · a design rule the machine has just proved
+> impossible · anything where either answer is defensible
+
+**The §5.3 table as a whole is always a decision, even when every row looks right.** It is the
+user's grant of what workers may do to the live world, and the plan proposed it without them.
+Show it in plain words — what workers will do alone, what they will do after a yes, what stays
+in the user's hands — and ask whether any `ask` action should move down to `worker`. That is the
+only place an exception is made: the row records it with the date and the user's reason.
 
 **Ask. Never guess, and never invent a rule to avoid asking.**
 
@@ -300,6 +324,13 @@ when it is what the user agreed to, and nothing has been built yet, so nothing b
 - **Change nothing that was not decided on.** A tidier plan the user did not ask for is scope
   creep, and it arrives without the fresh-eyes pass that everything else here gets.
 - **Write no product code.** Not one file. The first task belongs to the next session.
+- **Turn the agreed §5.3 table into permission rules** in the project's `.claude/settings.json`
+  (committed, so every worker's worktree has it): each `worker` command and every login check
+  under `permissions.allow`, each `ask` command under `permissions.ask`, as exact
+  `Bash(<command>)` rules. Merge into what is there, never replace it, and never widen a rule
+  to a wildcard the table did not name. An `ask` rule makes the machine stop for the user's
+  approval even in auto mode, and a narrow `allow` rule is what keeps the auto-mode classifier
+  from blocking a live action the user already granted; the written bins alone do neither.
 
 ## Stage 6 — Mark it reviewed, commit, stop
 

@@ -292,9 +292,17 @@ render a surface headless and snapshot it, read state back off disk, then tear t
 confirm it is down. **"A program has to be run" is not a person-only check — a worker runs programs**,
 and "I did not build the tool" is not "the tests cannot establish it."
 
+**Actions on the outside world follow their `DESIGN.md §5.3` bin**, exactly as `pir-implement § Acting
+on the outside world` says: `worker` you run and report; `ask` you explain and then run in the same
+turn, and the `ask` permission rule stops your session for the person's approval. Drop a
+`[pir:v1 kind=question task=Txx]` report first, so the live display shows who is waiting: the session
+parks on the permission prompt and shows as needing input in `claude agents`, and the person attaches
+and approves there. `person` is only a login, a device or a judgement. You never hand the person a
+command to paste that a `worker` or `ask` row covers.
+
 You hand over **only** the irreducible remainder no tool you could write would ever settle: a real
 screen a person must *judge* — not render, judge — a login only they hold, a second account, a reboot,
-a physical device, a camera, a paid call, a run only a person may watch, and the one hard line an agent
+a physical device, a camera, a run only a person may watch, and the one hard line an agent
 may never cross on its own — **spawning real paid agents against real branches, or watching a real run**
 (DESIGN §5.2). For that remainder you prepare up to the point where the person's eyes are the only thing
 missing, then ask through the escalation path above — a running thing and a list of what to look at, not

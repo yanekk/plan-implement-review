@@ -43,6 +43,18 @@ this." The worker records the answer in `FINDINGS.md` on its task branch under i
 The bar for "genuinely cannot verify this itself" is written into the `pir-worker` contract, not
 carried as a per-task marker.
 
+## Live actions: the bins the plan review granted
+
+A worker that deploys, calls a paid service or changes anything outside the repo follows the bin its
+plan's `DESIGN.md §5.3` gives that action. `/pir-review-plan` turned the bins the person approved into
+project permission rules in `.claude/settings.json`, which every worktree inherits because the file is
+committed. A `worker` action is `allow`ed and runs without stopping. An `ask` action is under an `ask`
+rule: the worker drops a `question` report, explains the action in its session and runs the command,
+and the platform parks the session on its permission prompt. It shows as needing input in
+`claude agents`, and the person attaches and approves or refuses there, so one approval is the whole
+exchange. A `person` action is only a login, a device or a judgement, raised like any other question.
+An action with no row is treated as `ask`.
+
 ## Merge conflicts
 
 There are two places a conflict can arise:

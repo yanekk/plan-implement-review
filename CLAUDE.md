@@ -96,9 +96,15 @@ guessing wrong would waste the work or be unsafe.
 
 ### I am your hands on the real machine
 
-Anything that needs a screen, a camera, a second account, a login, a reboot, a real device,
-a paid API or a browser I will run for you — that is not a gap in the project, it is my job
-in it. Give me the exact command and tell me what to look for. The full rule and the
+Anything that needs a screen, a camera, a second account, a login, a reboot, a real device
+or a browser I will do for you — that is not a gap in the project, it is my job in it. Give
+me the exact command and tell me what to look for.
+
+**A live action is not on that list: I give you the authority, not the keyboard.** A deploy, a
+paid call, a DNS change — you run it, within the bins the plan set and I approved
+(`DESIGN.md §5.3`). If it needs my login, ask me for exactly the login, then carry on yourself.
+If it needs my yes, explain it and let the permission prompt ask me. Do not hand me a command
+to paste that you could run. The full rule and the
 handover format are in [Anything the tests cannot establish](#anything-the-tests-cannot-establish-is-verified-with-me-not-asserted)
 below; it binds every session and this section does not soften it.
 
@@ -191,9 +197,9 @@ and is left alone; a forbidden edit of an existing task is rejected at merge, ne
 **The project's test command is the only evidence a session may produce on its own.** It is
 named in `DESIGN.md § Environment`, along with the table of what that command cannot reach.
 If a claim can only be established by taking the screen, logging in as somebody else,
-rebooting, pointing a camera at something, calling a paid service or watching a real user,
-then this session cannot establish it — and must not write it down as though it had. Say
-what you built, say what it has not been shown to do, and hand me the exact command.
+rebooting, pointing a camera at something, calling a paid service the plan gave you no bin
+for, or watching a real user, then this session cannot establish it — and must not write it
+down as though it had. Say what you built, say what it has not been shown to do, and hand me the exact command.
 
 **How to hand it over.** Raise it the moment you need it and **wait for the answer** — see
 [I am your hands on the real machine](#i-am-your-hands-on-the-real-machine); it is not
@@ -234,15 +240,18 @@ the tests cannot see. Before an action like that, say in one plain line whether 
 taken back and how: "reversible — the old build redeploys in one command", or "not reversible
 — the old token is dead the moment the new one is written."
 
-**The step past a point of no return is a `what`, and `what` is mine.** Stop and ask before
-it, even in auto mode, even when the plan implied it: a rotated credential, a deleted
-resource, a thing other people can now see, a change to a device I would have to be in the
-room to undo. Naming the way back is what turns "I ran the deploy" into "the next step cannot
-be undone — confirm": the decision reaching me while it is still a decision, not a report
-after it.
+**Which actions stop for me is decided once, in the plan, and I approve it at plan review.**
+`DESIGN.md §5.3` puts every live action in a bin: `worker` (you run it, tell me after in one
+line), `ask` (you explain it, run it, and the permission prompt is my yes), `person` (only a
+login, a device or a judgement). Anything that cannot be undone, may cost more than its task
+expects, other people can see or receive, or changes the infrastructure itself is `ask` unless
+I moved it down at plan review: a rotated credential, a deleted resource, a first public
+launch, a change to a device I would have to be in the room to undo. Naming the way back is
+what turns "I ran the deploy" into "the next step cannot be undone — approve it": the decision
+reaching me while it is still a decision, not a report after it.
 
-A reversible action you own like any other `how`: take it, tell me after in one line. It is
-only the irreversible edge that stops for me — a routine redeploy does not.
+**An action with no row is `ask`**, even in auto mode, even when the plan implied it, and the
+missing row goes in `FINDINGS.md`.
 
 **When the way back mattered, it goes in `FINDINGS.md` with the date** — the rollback that
 worked, or the step that turned out to have none. A reversibility written down once is one

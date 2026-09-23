@@ -121,11 +121,34 @@ scrape. Standing up the environment to do any of this — a server, a fixture, a
 for handing work to the user is that no tool you could write would close the gap — not that
 writing one is inconvenient.
 
+## Acting on the outside world — follow the bin
+
+A deploy, a paid call, a DNS change, a message somebody receives: look up the action's row in
+`DESIGN.md §5.3` and do what its bin says. Run the row's login check first; if it fails, ask the
+user for exactly that login (`aws sso login --profile admin`), wait, re-check, and carry on
+yourself.
+
+- **`worker`** — run the wrapped command, then tell the user in one line what changed and the
+  way back.
+- **`ask`** — say in plain words what you are about to do, what it costs, who will see it and
+  how it is undone, then run the wrapped command in the same turn. Its `ask` permission rule
+  stops the machine for the user's approval, so that prompt *is* the yes; do not ask twice. If
+  the rule is missing (the prompt did not appear last time, or the settings lack it), ask in
+  words and wait for a yes before running. A refusal is an answer: do not retry, record it, and
+  ask what they want instead.
+- **`person`** — only a login, a device or a judgement. Hand over that one step and wait.
+  **Never hand the user a command to paste that sits in the `worker` or `ask` bin.** Their yes
+  is the grant; running it is your job.
+
+An outside action with no row is treated as `ask`, and the missing row goes in `FINDINGS.md`.
+A permission prompt on a `worker` command, or a classifier block on one, means the rule is
+missing from `.claude/settings.json`: ask the user, do not work around it.
+
 ## What you genuinely may not claim
 
 Some things no tool reaches: a real screen a person has to *judge* — not render, judge: "does
 this look right" — a login only they hold, a second account, a reboot, a physical device, a
-camera, a paid call, a run only a person may watch. Those, and only those, are handed over —
+camera, a run only a person may watch. Those, and only those, are handed over —
 with the exact command and its seatbelt, **the moment you need it, then wait for the answer**,
 rather than left as homework at the end. Mark that half unverified in `PROGRESS.md` and in the
 report. Never run the unbounded dangerous version to find out for yourself. See `CLAUDE.md`

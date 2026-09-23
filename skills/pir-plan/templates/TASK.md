@@ -69,6 +69,15 @@ teardown escalates instead of marking done.)*
 {teardown — the worker runs this before marking done, and confirms it is down}
 ```
 
+## Outside actions
+
+*(Delete if this task touches nothing outside the repo. Otherwise: the rows of `DESIGN.md §5.3` this
+task runs, by action name, with their bin. Do not restate the command or the reason; §5.3 is the one
+place they live. An action this task needs that has no row is a missing row, and the worker treats it
+as `ask` until the person has placed it.)*
+
+- {action} — `worker` / `ask` / `person`
+
 ## Automated checks (the worker runs these)
 
 *(Delete if there is nothing a machine can decide here. Otherwise: the commands the **worker**
