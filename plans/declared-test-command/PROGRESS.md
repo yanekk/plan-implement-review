@@ -28,7 +28,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T04 | end-gate-from-block | T01, T02 | ✅ | |
 | T05 | red-reason-visible | — | ✅ | |
 | T06 | spawn-note | — | ✅ | |
-| T07 | worker-setup | T01, T02, T06 | ⬜ | |
+| T07 | worker-setup | T01, T02, T06 | ✅ | |
 | T08 | planner-writes-block | T01 | ✅ | |
 | T09 | review-verifies-block | T01 | ✅ | |
 | T10 | harness-fixture-block | T01 | ✅ | |
