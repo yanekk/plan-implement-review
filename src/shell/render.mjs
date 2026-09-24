@@ -182,8 +182,14 @@ function footerLines(footer, summary) {
         { text: `✔ all ${summary.total} task(s) green on ${footer.branch} · tests pass. Yours to merge:`, style: 'done' },
         { text: `    git merge ${footer.branch}`, style: 'done' },
       ];
-    case 'red':
-      return [blank, { text: `✗ ${summary.total} task(s) built on ${footer.branch}, but its tests fail — not ready to merge.`, style: 'red' }];
+    case 'red': {
+      const lines = [blank, { text: `✗ ${summary.total} task(s) built on ${footer.branch}, but its tests fail — not ready to merge.`, style: 'red' }];
+      // The second line is the gate's reason and log path (DESIGN §2.8), so the person watching knows what
+      // failed and where to read it. An old snapshot carries neither, and gets no second line.
+      const why = [footer.reason, footer.logPath && `output: ${footer.logPath}`].filter(Boolean).join(' · ');
+      if (why) lines.push({ text: `  ${why}`, style: 'red' });
+      return lines;
+    }
     case 'interrupted':
       return [blank, { text: '^C — closing workers… main is untouched. Re-run to resume from committed work.', style: 'red' }];
     default:
