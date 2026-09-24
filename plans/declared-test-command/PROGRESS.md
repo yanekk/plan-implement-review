@@ -26,11 +26,11 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T02 | command-runner | — | ✅ | |
 | T03 | start-refusal | T01 | ✅ | |
 | T04 | end-gate-from-block | T01, T02 | ✅ | |
-| T05 | red-reason-visible | — | ⬜ | |
+| T05 | red-reason-visible | — | ✅ | |
 | T06 | spawn-note | — | ✅ | |
 | T07 | worker-setup | T01, T02, T06 | ⬜ | |
 | T08 | planner-writes-block | T01 | ✅ | |
-| T09 | review-verifies-block | T01 | ⬜ | |
+| T09 | review-verifies-block | T01 | ✅ | |
 | T10 | harness-fixture-block | T01 | ✅ | Review fixed two defects, each reproduced by a failing test: a conflict prompt's `git merge` line read as green (now anchored on `Yours to merge:`), and the red reason quoted the status frame (now last red line). capture.mjs deviation accepted. Probed non-TTY output and gitignore. Live run is T12. |
 | T11 | docs | T03, T04, T05, T07, T08, T09 | ⬜ | |
 | T12 | prove-and-install | T03, T04, T05, T07, T08, T09, T10, T11 | ⬜ | |

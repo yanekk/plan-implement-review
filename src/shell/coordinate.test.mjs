@@ -415,6 +415,18 @@ test('a red feature branch is surfaced with no hand-off; a green one is handed o
   assert.deepEqual(greenResult.readyToMerge, { branch: `pir/${SLUG}` }, 'and is handed off for the person to merge');
 });
 
+test('the coordinator carries the red gate reason out of pass() and drive(); green carries null (DESIGN §2.8)', (t) => {
+  const why = { ok: false, reason: 'test `make test` exited 2', logPath: '/x/tests.log' };
+  const red = setup(t, [{ num: 'T01' }], { runTests: () => why });
+  let lastPass;
+  const redResult = red.coordinator.drive({ onPass: (r) => { lastPass = r; } });
+  assert.deepEqual(lastPass.testsReason, { reason: why.reason, logPath: why.logPath }, 'the completing pass carries it');
+  assert.deepEqual(redResult.testsReason, { reason: why.reason, logPath: why.logPath });
+
+  const green = setup(t, [{ num: 'T01' }], { runTests: () => ({ ok: true }) });
+  assert.equal(green.coordinator.drive().testsReason, null);
+});
+
 // --- 12. Reports each ✅ and terminates when the plan is fully ✅ and handed off --------------------
 
 test('the coordinator reports each task reaching ✅ and terminates on a completed, handed-off plan', (t) => {
@@ -966,6 +978,18 @@ test('writeRunSnapshot writes a live status.json parseSnapshot accepts, whose ru
   assert.equal(snap.finalState, null, 'a per-pass snapshot is live — no final status yet');
   assert.deepEqual(snap.runState, runState, 'the snapshot carries exactly the run state the display was given');
   assert.deepEqual(snap.proc, sampleProc, 'and the process facts the dashboard classifies from');
+});
+
+test('buildRunState carries testsReason into runState, and a snapshot written and read back keeps it (DESIGN §2.8)', (t) => {
+  const testsReason = { reason: 'test `make test` exited 2', logPath: '/x/tests.log' };
+  const passTasks = [{ num: 'T01', name: 'a', deps: [], state: '✅' }];
+  const rs = buildRunState({ passTasks, branch: 'pir/demo', ceiling: 2, complete: true, readyToMerge: false, testsReason });
+  assert.deepEqual(rs.testsReason, testsReason);
+  assert.equal(buildRunState({ passTasks, branch: 'pir/demo', ceiling: 2 }).testsReason, null, 'absent means null');
+
+  const controlDir = tmpControl(t);
+  writeRunSnapshot({ controlDir, proc: sampleProc, runState: rs });
+  assert.deepEqual(readSnapshot(controlDir).runState.testsReason, testsReason, 'status.json keeps the reason');
 });
 
 test('writeRunFinal on a clean end writes `finished` to BOTH the snapshot and the index entry (DESIGN §2.2, T10)', (t) => {
