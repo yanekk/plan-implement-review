@@ -75,6 +75,20 @@ git status --short                     # edits the last session made and never c
   Review the whole task anyway — its commits are input to your review, not a verdict you inherit.
 - **Nothing there:** a fresh task; carry on as normal.
 
+## The test command, and a setup that failed before you started
+
+Your test command is the `test` lines of the block `plans/{slug}/DESIGN.md` opens with, each run from
+your worktree root in its own shell. Before spawning an implementer the run already executed the
+block's `setup` lines in your worktree, so it is normally ready (DESIGN §2.4).
+
+If that setup failed, the run still spawned you, and your opening instruction ends with a note saying
+so: the failing line, its exit status, the last lines of its output and the log path. Read it, get this
+worktree ready yourself — usually by re-running the failing setup line, or fixing what it tripped on
+inside the worktree — and then carry on with your task. This is mechanical and yours; do not ask the
+person. Ask only when the fix lies outside the worktree (a tool missing from the machine, a login, a
+network the sandbox blocks), through the path in the next section. Whatever you run must leave the
+worktree clean: no tracked file changed and no new file git does not ignore.
+
 ## When a stock skill would "ask the user and wait", you drop a report and ask the person in this session
 
 Wherever `pir-implement` or `pir-review` (or `CLAUDE.md`) tells you to stop and ask a person — an

@@ -18,7 +18,7 @@
 // unchanged alongside the list's), which keeps the watch frame byte-for-byte the coordinator's display.
 
 import { join } from 'node:path';
-import { openSync, fstatSync, readSync, closeSync } from 'node:fs';
+import { readLogTail } from './commands.mjs';
 
 import { buildDisplay } from '../core/display.mjs';
 import { buildDashboard, dashboardReducer, initialUi } from '../core/dashboard.mjs';
@@ -137,37 +137,8 @@ export function wrapLine(text, width) {
   return out;
 }
 
-// readLogTail(logPath, n, { fs }) → the last `n` lines of a run's log, or null if it cannot be read.
-// A crashed run wrote why it died into run.log; showing the tail in the watch view saves the person
-// opening the file (user 2026-09-22). Only the last 16 KiB is read so a long run's huge log never loads
-// in full on every refresh; a partial first line from that cut is dropped so no half-line is shown.
-export function readLogTail(logPath, n = 5, { fs = { openSync, fstatSync, readSync, closeSync } } = {}) {
-  if (!logPath) return null;
-  const MAX = 16 * 1024;
-  let fd;
-  try {
-    fd = fs.openSync(logPath, 'r');
-    const size = fs.fstatSync(fd).size;
-    const len = Math.min(size, MAX);
-    const buf = Buffer.alloc(len);
-    if (len > 0) fs.readSync(fd, buf, 0, len, size - len);
-    let text = buf.toString('utf8');
-    if (len < size) text = text.slice(text.indexOf('\n') + 1); // drop the partial first line from the cut
-    const lines = text.split('\n');
-    while (lines.length && lines[lines.length - 1] === '') lines.pop();
-    return lines.length ? lines.slice(-n) : null;
-  } catch {
-    return null; // no log, or unreadable — the caller simply shows none
-  } finally {
-    if (fd !== undefined) {
-      try {
-        fs.closeSync(fd);
-      } catch {
-        // already closed / gone
-      }
-    }
-  }
-}
+// readLogTail lives in commands.mjs (the setup runner needs it too); re-exported for this file's callers.
+export { readLogTail };
 
 // The state cell: the glyph+word and its §2.11 colour. running green (●), finished dim (◌), crashed red
 // (✕), stopped dim (◼). An unrecognised state (an unreachable/stale index entry, §2.8) shows its raw

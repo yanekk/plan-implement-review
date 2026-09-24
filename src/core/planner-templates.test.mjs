@@ -15,11 +15,13 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { parseProgress } from './progress.mjs';
 import { analyzeParallelism } from './parallelism.mjs';
+import { parseTestBlock } from './testblock.mjs';
 
 // src/core/ → repo root → the templates that /pir-plan copies into a new plan.
 const TEMPLATES = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'skills', 'pir-plan', 'templates');
 const progressTemplate = readFileSync(join(TEMPLATES, 'PROGRESS.md'), 'utf8');
 const taskTemplate = readFileSync(join(TEMPLATES, 'TASK.md'), 'utf8');
+const designTemplate = readFileSync(join(TEMPLATES, 'DESIGN.md'), 'utf8');
 
 test('the PROGRESS template parses without errors', () => {
   const { tasks, errors } = parseProgress(progressTemplate);
@@ -106,4 +108,13 @@ test('the task-doc template names no removed skill or auto/you machinery (§2.5)
   // must not reintroduce any of them.
   assert.ok(!/pir-verify|build→verify|build-verify/i.test(taskTemplate), 'no verify skill or build→verify split');
   assert.ok(!/\bRuns:\s*(auto|you)/i.test(taskTemplate), 'no Runs: auto / you marker in the header');
+});
+
+test('the DESIGN template opens with a setup/test block parseTestBlock accepts (declared-test-command §2.1)', () => {
+  // The engine refuses a plan whose DESIGN.md lacks a valid block, so a template that drifted from the
+  // parser would make every new plan unrunnable. Read through the real parser, not a regex.
+  const block = parseTestBlock(designTemplate);
+  assert.equal(block.ok, true, `template DESIGN.md block should parse, got: ${block.reason}`);
+  assert.deepEqual(block.setup, [], 'the template defaults to setup: none');
+  assert.deepEqual(block.test, ['{the test command}'], 'the template carries one test placeholder line');
 });
