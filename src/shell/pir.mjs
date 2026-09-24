@@ -11,6 +11,7 @@
 // failure — it prints to stderr and exits non-zero — not a dashboard state (§2.5).
 
 import { startRun as startRunDefault } from './launch.mjs';
+import { testBlockRefusal } from './coordinate.mjs';
 import { openDashboard as openDashboardTui, openWatch as openWatchTui } from './pir-tui.mjs';
 
 // The TUI hand-off points (T12): the cross-repo dashboard and a single run's live view, both the raw-mode
@@ -60,6 +61,11 @@ export function run(
   }
   if (r.reason === 'not-reviewed') {
     stderr.write(`'${slug}' is not reviewed — run /pir-review-plan ${slug}\n`);
+    return 1;
+  }
+
+  if (r.reason === 'no-test-block') {
+    stderr.write(testBlockRefusal(slug, r.detail));
     return 1;
   }
 
