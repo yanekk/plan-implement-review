@@ -387,6 +387,32 @@ test('loadBundle over an empty bundle dir yields present-but-empty fields, never
     assert.deepEqual(b.final, []);
     assert.deepEqual(b.manifest, {});
     assert.equal(b.gitLog, '');
+    assert.equal(b.coordinatorOut, null, 'an absent coordinator.out reads as missing, not empty');
+  } finally {
+    ws.cleanup();
+  }
+});
+
+// declared-test-command T10: the coordinator's stdout (run.mjs writes it to control/coordinator.out)
+// is sealed into the bundle, so handedOffGreenBranch can read the end-of-run gate's verdict after teardown.
+test('seal copies the coordinator stdout into the bundle as coordinatorOut', () => {
+  const ws = workspace();
+  try {
+    mkdirSync(ws.control, { recursive: true });
+    writeFileSync(join(ws.control, 'coordinator.out'), '✔ all 1 task(s) green\n\n  git merge pir/scratch\n');
+    const cap = createCapture({
+      repo: REPO,
+      slug: SLUG,
+      dir: ws.bundle,
+      controlDir: ws.control,
+      repoDir: ws.repo,
+      runClaude: claudeSpy({ ticks: [], all: [] }),
+      runGit: () => ({ ok: true, stdout: '' }),
+      projectsDir: ws.projects,
+    });
+    const b = cap.seal();
+    assert.equal(b.coordinatorOut, '✔ all 1 task(s) green\n\n  git merge pir/scratch\n');
+    assert.ok(existsSync(join(ws.bundle, 'coordinator.out')));
   } finally {
     ws.cleanup();
   }
