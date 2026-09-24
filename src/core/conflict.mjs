@@ -50,13 +50,15 @@ export function buildConflictPrompt({
   // The final step differs by whether a live worker is there to re-signal done: a live worker resolves
   // on its branch and re-signals, and the run merges it on its next pass; with no worker the run has
   // parked the row (⛔) and will not merge it on its own, so the person lands the branch.
-  // The tests are the plan's own test command (DESIGN.md § Environment), never a fixed `npm test`: the
-  // engine runs projects on any stack, and the gate at the end of the run reads the same line.
-  const testStep = `the test command in plans/${slug || '{slug}'}/DESIGN.md`;
+  // The tests are the `test` lines of the plan's front-matter block, never a fixed `npm test`: the engine
+  // runs projects on any stack, and the gate at the end of the run runs the same lines (DESIGN §2.5).
+  const testStep =
+    `the \`test\` lines at the top of plans/${slug || '{slug}'}/DESIGN.md (run its \`setup\` lines\n` +
+    `     first if the worktree is not ready)`;
   const finish = workerName
     ? `  4. Signal done again so the run can merge your branch.`
-    : `  4. Commit, run ${testStep}, then land this branch yourself — the run has parked it and will not\n` +
-      `     merge it on its own.`;
+    : `  4. Commit, run the \`test\` lines again, then land this branch yourself — the run has parked it\n` +
+      `     and will not merge it on its own.`;
 
   const pasteable = [
     `The run hit a merge conflict folding your branch into ${featureBranch}. Resolve it on your own`,

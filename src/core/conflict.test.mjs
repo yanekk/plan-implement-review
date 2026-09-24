@@ -41,7 +41,8 @@ test('it leaves the keep-which-side choice a blank and bakes in NO resolution', 
 test('it ends with the finish steps: commit, the plan\'s test command, then re-signal done (a live worker)', () => {
   const p = buildConflictPrompt(base);
   assert.match(p, /commit/i, 'it tells the worker to commit the resolution');
-  assert.match(p, /test command in plans\/[^/]+\/DESIGN\.md/, 'it tells the worker to run the plan\'s own tests');
+  assert.match(p, /`test` lines at the top of plans\/[^/]+\/DESIGN\.md/, 'it tells the worker to run the plan\'s own tests');
+  assert.match(p, /its `setup` lines\s+first if the worktree is not ready/, 'and names setup for a worktree that is not ready');
   assert.doesNotMatch(p, /npm test/, 'never a fixed npm test — the project may not be Node');
   assert.match(p, /[Ss]ignal done again/, 'it tells the worker to re-signal done so the run can merge it');
 });
