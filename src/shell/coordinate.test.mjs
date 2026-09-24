@@ -3,10 +3,14 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, renameSync, rmSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { execFileSync, spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 
 import {
   startCoordinator,
   readReviewGate,
+  readTestBlockGate,
+  testBlockRefusal,
   createReportInbox,
   teardownRun,
   ensureMain,
@@ -112,6 +116,92 @@ test('readReviewGate refuses a plan whose gate says "not yet", and passes a revi
     assert.equal(readReviewGate('missing', { root: dir }).reviewed, false);
   } finally {
     rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// --- 1b. The setup/test block gate (declared-test-command DESIGN §2.3) ---------------------------
+
+test('readTestBlockGate: a valid block passes; a missing block, a malformed one and no DESIGN.md refuse', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'pir-block-'));
+  try {
+    const write = (slug, text) => {
+      mkdirSync(join(dir, 'plans', slug), { recursive: true });
+      writeFileSync(join(dir, 'plans', slug, 'DESIGN.md'), text);
+    };
+    write('valid', '---\nsetup:\n  - npm ci\ntest:\n  - npm test\n---\n# Design\n');
+    write('noblock', '# Design\n\nThe test command is `npm test`.\n');
+    write('malformed', '---\nsetup: none\ntest: none\n---\n');
+    mkdirSync(join(dir, 'plans', 'nodesign'), { recursive: true });
+
+    assert.deepEqual(readTestBlockGate('valid', { root: dir }), { ok: true, setup: ['npm ci'], test: ['npm test'] });
+    assert.deepEqual(readTestBlockGate('noblock', { root: dir }), { ok: false, reason: 'no front-matter block' });
+    const bad = readTestBlockGate('malformed', { root: dir });
+    assert.equal(bad.ok, false);
+    assert.ok(bad.reason, 'a malformed block carries the parser reason');
+    assert.deepEqual(readTestBlockGate('nodesign', { root: dir }), { ok: false, reason: 'no DESIGN.md' });
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('testBlockRefusal names the file, the reason and /pir-review-plan', () => {
+  assert.equal(
+    testBlockRefusal('demo', 'no test key'),
+    "cannot start 'demo': plans/demo/DESIGN.md has no valid setup/test block (no test key).\n" +
+      'A plan without one counts as not reviewed. Run /pir-review-plan demo to add it.\n',
+  );
+});
+
+// The bin itself, as a subprocess against a scratch git repo — DRY mode only. PARALLEL_LIVE is removed
+// from the child's env on purpose: a regression under PARALLEL_LIVE=1 would spawn paid workers.
+function runBinDry(root, slug) {
+  const env = { ...process.env };
+  delete env.PARALLEL_LIVE;
+  const bin = fileURLToPath(new URL('./coordinate.mjs', import.meta.url));
+  return spawnSync(process.execPath, [bin, slug], { cwd: root, env, encoding: 'utf8', timeout: 30000 });
+}
+
+function scratchGitPlan(design) {
+  const root = mkdtempSync(join(tmpdir(), 'pir-bin-'));
+  const g = (...a) => execFileSync('git', a, { cwd: root, stdio: 'pipe' });
+  g('init', '-q', '-b', 'main');
+  mkdirSync(join(root, 'plans', 'demo'), { recursive: true });
+  writeFileSync(
+    join(root, 'plans', 'demo', 'PROGRESS.md'),
+    '# Progress\n\n**Plan reviewed:** 2026-09-24 — clean\n\n| # | Task | Depends on | State | Notes |\n|---|---|---|---|---|\n| T01 | a | — | ⬜ | |\n',
+  );
+  if (design !== null) writeFileSync(join(root, 'plans', 'demo', 'DESIGN.md'), design);
+  g('add', '-A');
+  g('-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '-m', 'plan');
+  return { root, g };
+}
+
+test('the coordinator bin refuses a plan without a valid block, dry run, before any worktree or branch', () => {
+  const { root, g } = scratchGitPlan('# Design\n\nno block here\n');
+  try {
+    const r = runBinDry(root, 'demo');
+    assert.equal(r.status, 1, r.stdout + r.stderr);
+    assert.ok(
+      r.stderr.includes(testBlockRefusal('demo', 'no front-matter block')),
+      `stderr carries the refusal: ${r.stderr}`,
+    );
+    assert.doesNotMatch(r.stdout, /DRY:/, 'refused before the dry-run branch');
+    assert.equal(g('worktree', 'list', '--porcelain').toString().match(/^worktree /gm).length, 1, 'no worktree created');
+    assert.equal(g('branch', '--list', 'pir/*').toString().trim(), '', 'no pir branch cut');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('the coordinator bin starts a plan with a valid block exactly as before (dry run)', () => {
+  const { root } = scratchGitPlan('---\nsetup: none\ntest:\n  - true\n---\n# Design\n');
+  try {
+    const r = runBinDry(root, 'demo');
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    assert.match(r.stdout, /DRY: not spawning real workers/);
+    assert.match(r.stdout, /Ready to dispatch now: T01/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
   }
 });
 

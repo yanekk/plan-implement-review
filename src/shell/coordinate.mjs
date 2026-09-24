@@ -30,6 +30,7 @@ import { workerName, isWorkerOf } from '../core/naming.mjs';
 import { buildDisplay } from '../core/display.mjs';
 import { parseRecord } from '../core/runrecord.mjs';
 import { testCommandFrom } from '../core/testcommand.mjs';
+import { parseTestBlock } from '../core/testblock.mjs';
 import { runPass, createRunState } from './loop.mjs';
 import { createPlatform } from './platform.mjs';
 import { createRenderer } from './render.mjs';
@@ -54,6 +55,25 @@ export function readReviewGate(slug, { root = process.cwd() } = {}) {
   }
   const { planReviewed } = parseProgress(readFileSync(path, 'utf8'));
   return { reviewed: planReviewed.reviewed, note: planReviewed.note, missing: false };
+}
+
+// --- The setup/test block gate (declared-test-command DESIGN §2.2, §2.3) -----------------------
+//
+// A plan whose DESIGN.md has no valid setup/test block counts as not reviewed: the engine could not run
+// its tests at the end, so it is not ready to be built by it. Read from the main checkout's copy, the
+// same one readReviewGate reads, because that is the copy a narrow review pass fixes.
+export function readTestBlockGate(slug, { root = process.cwd() } = {}) {
+  const path = join(root, 'plans', slug, 'DESIGN.md');
+  if (!existsSync(path)) return { ok: false, reason: 'no DESIGN.md' };
+  return parseTestBlock(readFileSync(path, 'utf8'));
+}
+
+// The refusal both entry points print (the coordinator bin here, `pir` via launch.mjs's no-test-block).
+export function testBlockRefusal(slug, detail) {
+  return (
+    `cannot start '${slug}': plans/${slug}/DESIGN.md has no valid setup/test block (${detail}).\n` +
+    `A plan without one counts as not reviewed. Run /pir-review-plan ${slug} to add it.\n`
+  );
 }
 
 // --- Plain-English surfacing (DESIGN §2.2, §2.3) ----------------------------------------------
@@ -829,6 +849,13 @@ async function main(argv) {
         `A defect in an unreviewed plan is copied into every task, and running many workers at once\n` +
         `multiplies it. Review the plan first:\n\n  /pir-review-plan ${slug}\n`,
     );
+    process.exit(1);
+  }
+
+  // Before the PARALLEL_LIVE branch, so a dry run and a restart (a re-run of this command) refuse too.
+  const block = readTestBlockGate(slug, { root });
+  if (!block.ok) {
+    process.stderr.write(testBlockRefusal(slug, block.reason));
     process.exit(1);
   }
 
