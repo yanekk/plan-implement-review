@@ -30,6 +30,8 @@ import { workerName, isWorkerOf } from '../core/naming.mjs';
 import { buildDisplay } from '../core/display.mjs';
 import { parseRecord } from '../core/runrecord.mjs';
 import { testCommandFrom } from '../core/testcommand.mjs';
+import { parseTestBlock } from '../core/testblock.mjs';
+import { startLines } from './commands.mjs';
 import { runPass, createRunState } from './loop.mjs';
 import { createPlatform } from './platform.mjs';
 import { createRenderer } from './render.mjs';
@@ -117,6 +119,7 @@ export function startCoordinator({
   maxWorkers = 4,
   control,
   runTests,
+  prepare,
 } = {}) {
   if (!slug) throw new Error('startCoordinator: no slug');
   if (!repo) throw new Error('startCoordinator: no repo (worker names are built from it, DESIGN §2.8)');
@@ -126,6 +129,7 @@ export function startCoordinator({
   const passOpts = { platform, worktree, repo, slug, maxWorkers, state };
   if (control) passOpts.control = control;
   if (runTests) passOpts.runTests = runTests;
+  if (prepare) passOpts.prepare = prepare;
 
   // The account of what one pass did, in the shape the skill acts on. It re-expresses the loop's raw
   // actions as the things the skill has to do something about: surface a decision, report a task
@@ -170,6 +174,9 @@ export function startCoordinator({
       ceilingFull,
       waiting,
       live: r.liveAfter,
+      // Tasks whose setup is still running (DESIGN §2.4) — work in flight, so drive() and the bin never
+      // count such a pass as quiet.
+      preparing: r.preparing ?? 0,
       halted: r.halted,
       // The plan is done — all ✅, none live, tests run on the feature branch (loop.mjs 3f). readyToMerge
       // is set on green, null on red; testsPassed carries the verdict. There is no promotion (§2.4): the
@@ -230,7 +237,9 @@ export function startCoordinator({
       if (r.complete)
         return { reason: 'complete', passes: p, complete: true, readyToMerge: r.readyToMerge, testsPassed: r.testsPassed };
       if (r.halted) return { reason: 'halted', passes: p, complete: false };
-      const productive = r.actions.some((a) => ['spawn', 'review', 'merge', 'close'].includes(a.type));
+      // A running setup is work in flight, not a parked worker: without this a 60 s `npm ci` would end
+      // drive() as `parked` after two passes (DESIGN §2.4).
+      const productive = r.actions.some((a) => ['spawn', 'review', 'merge', 'close'].includes(a.type)) || r.preparing > 0;
       idle = productive ? 0 : idle + 1;
       if (idle >= 2) {
         return { reason: r.live > 0 ? 'parked' : 'stalled', passes: p, complete: false };
@@ -319,7 +328,21 @@ export function createReportInbox({ dir } = {}) {
 // built T06 and a half-built T07 in real-screen-time, and the next start implemented all three again.
 // A run nobody restarts leaves its branches behind; docs/restart-recovery.md § Manual recovery covers
 // removing them by hand.
+//
+// It also kills every running worker setup (DESIGN §2.4). Setup lines run detached, in their own process
+// group, so a coordinator that exits without killing them leaves an `npm ci` running in a worktree the
+// next start will set up again. teardownRun is on every exit path but a HALT (the loop kills those) and a
+// clean completion (which has no task left, so no setup either).
 export function teardownRun({ platform, state, repo, slug, control } = {}) {
+  for (const [num, t] of Object.entries(state?.tasks ?? {})) {
+    if (!t.setup) continue;
+    try {
+      t.setup.kill();
+    } catch {
+      /* already finished */
+    }
+    control?.log?.(`teardown: killed setup for ${num}`);
+  }
   const closed = new Set();
   const closeId = (id, name) => {
     if (!id || closed.has(id)) return;
@@ -743,6 +766,25 @@ export function runFeatureTests(featurePath, { slug, logPath } = {}) {
   }
 }
 
+// makePrepare({ design, setupDir, start }) → the loop's prepare(num, worktreePath) for this plan, or null
+// when there is nothing to run (DESIGN §2.4). `design` is the text of the main checkout's DESIGN.md
+// (§2.2). No setup lines — `setup: none`, or a block that does not parse (the start refusal, T03, keeps
+// such a plan from running at all) — gives null, so the loop spawns in the dispatching pass as before.
+// Otherwise each call starts the setup lines in the background in that worktree, logging to
+// `{setupDir}/T{nn}.log`, rewritten per attempt; the loop polls the handle once per pass.
+export function makePrepare({ design, setupDir, start = startLines } = {}) {
+  const block = parseTestBlock(design);
+  if (!block.ok || block.setup.length === 0) return null;
+  return (num, worktreePath) => {
+    try {
+      mkdirSync(setupDir, { recursive: true });
+    } catch {
+      /* startLines runs without a log when it cannot open one */
+    }
+    return start(block.setup, { cwd: worktreePath, logPath: join(setupDir, `${num}.log`) });
+  };
+}
+
 // --- Feeding the live display (DESIGN §2.3, §3.4) ---------------------------------------------
 //
 // The pure display model (src/core/display.mjs) takes the run state a pass produces and returns the
@@ -758,6 +800,7 @@ export function runFeatureTests(featurePath, { slug, logPath } = {}) {
 // Otherwise the role names it — an implementer (or a `you` scribe) is `building`, a reviewer `reviewing`.
 export function displayPhaseFor(t) {
   if (!t) return null;
+  if (t.phase === 'preparing') return 'preparing'; // setup running, no worker yet (DESIGN §2.4)
   if (t.phase === 'awaiting-answer') return 'asking';
   if (t.phase === 'done') return 'merging';
   if (t.role === 'review') return 'reviewing';
@@ -890,8 +933,16 @@ async function main(argv) {
   const inbox = createReportInbox({ dir: control.dir });
   const platform = createPlatform({ root, transport: inbox.transport });
   const worktree = createWorktree({ root });
+  let design = '';
+  try {
+    design = readFileSync(join(root, 'plans', slug, 'DESIGN.md'), 'utf8');
+  } catch {
+    /* no DESIGN.md: makePrepare sees no block and runs no setup */
+  }
+  const prepare = makePrepare({ design, setupDir: join(control.dir, 'setup') });
   const coordinator = startCoordinator({ slug, repo, platform, worktree, maxWorkers, control,
     runTests: (featurePath) => runFeatureTests(featurePath, { slug, logPath: join(control.dir, 'tests.log') }),
+    ...(prepare ? { prepare } : {}),
   });
   const renderer = createRenderer({ stream: process.stdout });
 

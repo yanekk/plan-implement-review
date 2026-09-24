@@ -26,6 +26,7 @@ import {
   writeRunSnapshot,
   writeRunFinal,
   updateIndexFinalState,
+  makePrepare,
 } from './coordinate.mjs';
 import { readSnapshot } from './snapshot-store.mjs';
 import { serializeRecord } from '../core/runrecord.mjs';
@@ -64,7 +65,7 @@ function progressDoc(rows) {
 
 // Stand up a coordinator over the fakes for a plan. Returns the coordinator plus the fake platform and
 // worktree so a test can inspect spawns/sends/closes and the branch events.
-function setup(t, rows, { behaviors = {}, files = {}, maxWorkers = 4, control, runTests } = {}) {
+function setup(t, rows, { behaviors = {}, files = {}, maxWorkers = 4, control, runTests, prepare } = {}) {
   const worktree = createFakeWorktree({ progress: progressDoc(rows), files, slug: SLUG });
   const platform = createFakePlatform({ behaviors });
   t.after(() => worktree.cleanup());
@@ -76,6 +77,7 @@ function setup(t, rows, { behaviors = {}, files = {}, maxWorkers = 4, control, r
     maxWorkers,
     control,
     runTests,
+    prepare,
   });
   return { coordinator, platform, worktree };
 }
@@ -918,4 +920,92 @@ test('updateIndexFinalState is a safe no-op when the store is absent or the entr
     reason: 'no-entry',
   });
   assert.equal(written.length, 0, 'a missing entry is never conjured into existence');
+});
+
+// --- T07: worker setup (DESIGN §2.4) -----------------------------------------------------------------
+
+// A setup handle that finishes ok on its Nth poll (never, with after = null), recording kills.
+function slowPrepare(after = null) {
+  const handles = {};
+  const prepare = (num) => {
+    let polls = 0;
+    let done = null;
+    const h = {
+      killed: false,
+      poll: () => {
+        polls += 1;
+        if (done === null && after !== null && polls >= after) done = { ok: true, logPath: null };
+        return done;
+      },
+      kill: () => {
+        h.killed = true;
+        done ??= { ok: false, reason: 'killed' };
+      },
+    };
+    handles[num] = h;
+    return h;
+  };
+  return { prepare, handles };
+}
+
+test('displayPhaseFor: a task whose setup is running reads `preparing` (T07)', () => {
+  assert.equal(displayPhaseFor({ role: 'implement', phase: 'preparing' }), 'preparing');
+});
+
+test('drive() does not end a run as parked or stalled while its only task is preparing (T07)', (t) => {
+  const { prepare } = slowPrepare(6); // longer than drive()'s 2 quiet passes
+  const { coordinator } = setup(t, [{ num: 'T01' }], { prepare });
+  const { result, passes } = driveCollecting(coordinator);
+  assert.equal(result.reason, 'complete');
+  assert.ok(passes[0].preparing === 1 && passes[0].live === 1, 'a preparing pass reports the task as live work');
+});
+
+test('a preparing task shows as a `preparing` row in the run state (T07)', (t) => {
+  const { prepare } = slowPrepare();
+  const { coordinator } = setup(t, [{ num: 'T01' }], { prepare });
+  const r = coordinator.pass();
+  const rs = buildRunState({ passTasks: r.tasks, stateTasks: coordinator.state.tasks, branch: 'pir/demo', ceiling: 4 });
+  assert.equal(rs.tasks[0].phase, 'preparing');
+});
+
+test('teardownRun (every non-HALT exit, the stop included) kills every running setup (T07)', (t) => {
+  const { prepare, handles } = slowPrepare();
+  const { coordinator, platform } = setup(t, [{ num: 'T01' }, { num: 'T02' }], { prepare });
+  coordinator.pass();
+  const logged = [];
+  teardownRun({ platform, state: coordinator.state, repo: REPO, slug: SLUG, control: { log: (l) => logged.push(l) } });
+  assert.ok(handles.T01.killed && handles.T02.killed);
+  assert.ok(logged.includes('teardown: killed setup for T01'));
+  assert.equal(platform.closed.length, 0, 'no session to close for a task still preparing');
+});
+
+test('makePrepare: no setup lines (setup: none, or no valid block) means no prepare step (T07)', () => {
+  assert.equal(makePrepare({ design: '---\nsetup: none\ntest:\n  - npm test\n---\n', setupDir: '/x' }), null);
+  assert.equal(makePrepare({ design: '# no block\n', setupDir: '/x' }), null);
+});
+
+test('makePrepare starts the setup lines in the worktree, logging to control/setup/T{nn}.log (T07)', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'pir-prepare-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const calls = [];
+  const prepare = makePrepare({
+    design: '---\nsetup:\n  - cd server && npm ci\ntest:\n  - npm test\n---\n',
+    setupDir: join(dir, 'setup'),
+    start: (lines, opts) => (calls.push({ lines, opts }), 'handle'),
+  });
+  assert.equal(prepare('T03', '/wt/T03'), 'handle');
+  assert.deepEqual(calls, [{ lines: ['cd server && npm ci'], opts: { cwd: '/wt/T03', logPath: join(dir, 'setup', 'T03.log') } }]);
+  assert.ok(existsSync(join(dir, 'setup')), 'the setup log folder is created');
+});
+
+test('makePrepare with the real runner runs the lines in the worktree and the handle reports it (T07)', async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'pir-prepare-real-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  mkdirSync(join(dir, 'wt'));
+  const prepare = makePrepare({ design: '---\nsetup:\n  - echo ready > marker\ntest:\n  - true\n---\n', setupDir: join(dir, 'setup') });
+  const h = prepare('T01', join(dir, 'wt'));
+  for (let i = 0; i < 200 && h.poll() === null; i++) await new Promise((res) => setTimeout(res, 10));
+  assert.deepEqual(h.poll(), { ok: true, logPath: join(dir, 'setup', 'T01.log') });
+  assert.equal(readFileSync(join(dir, 'wt', 'marker'), 'utf8'), 'ready\n');
+  assert.match(readFileSync(join(dir, 'setup', 'T01.log'), 'utf8'), /\$ echo ready > marker/);
 });

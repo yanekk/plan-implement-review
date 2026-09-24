@@ -17,12 +17,15 @@ const DONE_GLYPH = '✅';
 // The phases a live worker can be in, in display terms (the shell maps the loop's own phase names onto
 // these before handing them in). Each is one row `kind`; `asking` is the parked-on-the-person state
 // (DESIGN §2.2, §2.5 — a hands-on check is a worker asking you, not a separate state). These are the
-// "active" kinds: a task in any of them holds a slot under the ceiling.
-const ACTIVE_PHASES = new Set(['building', 'reviewing', 'merging', 'asking']);
+// "active" kinds: a task in any of them holds a slot under the ceiling. `preparing` is the plan's setup
+// lines running in a fresh task worktree before its implementer is spawned (DESIGN §2.4): it holds the
+// slot it is about to use, and shows as active so an `npm ci` does not read as a stalled screen.
+const ACTIVE_PHASES = new Set(['preparing', 'building', 'reviewing', 'merging', 'asking']);
 
 // The human label per active phase. `asking` reads "asking you" because the person is the one being
 // asked (§2.2). The other kinds read as their phase.
 const PHASE_LABEL = {
+  preparing: 'preparing',
   building: 'building',
   reviewing: 'reviewing',
   merging: 'merging',
@@ -33,7 +36,7 @@ const PHASE_LABEL = {
 //
 // runState (a pass's output, assembled by the shell):
 //   { branch, ceiling, complete?, readyToMerge?, interrupted?, tasks: [task…] }
-//   task: { id, slug, deps:[id…], done:bool, phase:null|'building'|'reviewing'|'merging'|'asking',
+//   task: { id, slug, deps:[id…], done:bool, phase:null|'preparing'|'building'|'reviewing'|'merging'|'asking',
 //           since:ms|null, doneMs:ms|null, question:string|null, prompt:string|null }
 //     phase   — set when a live worker holds the task; null when no worker does.
 //     since   — when the current phase began, for the elapsed clock (now − since).

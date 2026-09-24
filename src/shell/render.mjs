@@ -35,6 +35,7 @@ const SPINNER = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', 
 // merged task is a check; an idle task is a faint dot. The model carries the kind; these characters are
 // the renderer's alone (DESIGN §2.3).
 const GLYPH = {
+  preparing: null,
   building: null, // the spinner frame — filled in at paint time
   reviewing: null,
   merging: null,
@@ -60,7 +61,7 @@ const CLEAR = '\x1b[2J';
 // pipe read stdout as text, DESIGN §2.3). Colour is layered on top of the glyphs the model already
 // carries, so it is never the only signal — a colour-blind reader or a NO_COLOR terminal loses nothing.
 // The map is by the model's row/footer `kind`, resolved to one of these styles (T16, PM 2026-09-20):
-//   active (building/reviewing/merging) cyan · done green · asking amber+bold (the standout) · idle dim ·
+//   active (preparing/building/reviewing/merging) cyan · done green · asking amber+bold (the standout) · idle dim ·
 //   red/interrupted red. RESET closes every coloured span.
 const SGR = {
   done: '\x1b[32m', // green
@@ -103,6 +104,7 @@ function clip(line, cols) {
 // share cyan; a parked worker is the amber-bold standout; done is green; an idle task is dim. A kind with
 // no entry (or a null style) paints plain. This is the renderer's, like GLYPH — the model carries `kind`.
 const ROW_STYLE = {
+  preparing: 'active',
   building: 'active',
   reviewing: 'active',
   merging: 'active',
