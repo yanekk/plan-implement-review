@@ -3,10 +3,14 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, renameSync, rmSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { execFileSync, spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 
 import {
   startCoordinator,
   readReviewGate,
+  readTestBlockGate,
+  testBlockRefusal,
   createReportInbox,
   teardownRun,
   ensureMain,
@@ -114,6 +118,92 @@ test('readReviewGate refuses a plan whose gate says "not yet", and passes a revi
     assert.equal(readReviewGate('missing', { root: dir }).reviewed, false);
   } finally {
     rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// --- 1b. The setup/test block gate (declared-test-command DESIGN §2.3) ---------------------------
+
+test('readTestBlockGate: a valid block passes; a missing block, a malformed one and no DESIGN.md refuse', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'pir-block-'));
+  try {
+    const write = (slug, text) => {
+      mkdirSync(join(dir, 'plans', slug), { recursive: true });
+      writeFileSync(join(dir, 'plans', slug, 'DESIGN.md'), text);
+    };
+    write('valid', '---\nsetup:\n  - npm ci\ntest:\n  - npm test\n---\n# Design\n');
+    write('noblock', '# Design\n\nThe test command is `npm test`.\n');
+    write('malformed', '---\nsetup: none\ntest: none\n---\n');
+    mkdirSync(join(dir, 'plans', 'nodesign'), { recursive: true });
+
+    assert.deepEqual(readTestBlockGate('valid', { root: dir }), { ok: true, setup: ['npm ci'], test: ['npm test'] });
+    assert.deepEqual(readTestBlockGate('noblock', { root: dir }), { ok: false, reason: 'no front-matter block' });
+    const bad = readTestBlockGate('malformed', { root: dir });
+    assert.equal(bad.ok, false);
+    assert.ok(bad.reason, 'a malformed block carries the parser reason');
+    assert.deepEqual(readTestBlockGate('nodesign', { root: dir }), { ok: false, reason: 'no DESIGN.md' });
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('testBlockRefusal names the file, the reason and /pir-review-plan', () => {
+  assert.equal(
+    testBlockRefusal('demo', 'no test key'),
+    "cannot start 'demo': plans/demo/DESIGN.md has no valid setup/test block (no test key).\n" +
+      'A plan without one counts as not reviewed. Run /pir-review-plan demo to add it.\n',
+  );
+});
+
+// The bin itself, as a subprocess against a scratch git repo — DRY mode only. PARALLEL_LIVE is removed
+// from the child's env on purpose: a regression under PARALLEL_LIVE=1 would spawn paid workers.
+function runBinDry(root, slug) {
+  const env = { ...process.env };
+  delete env.PARALLEL_LIVE;
+  const bin = fileURLToPath(new URL('./coordinate.mjs', import.meta.url));
+  return spawnSync(process.execPath, [bin, slug], { cwd: root, env, encoding: 'utf8', timeout: 30000 });
+}
+
+function scratchGitPlan(design) {
+  const root = mkdtempSync(join(tmpdir(), 'pir-bin-'));
+  const g = (...a) => execFileSync('git', a, { cwd: root, stdio: 'pipe' });
+  g('init', '-q', '-b', 'main');
+  mkdirSync(join(root, 'plans', 'demo'), { recursive: true });
+  writeFileSync(
+    join(root, 'plans', 'demo', 'PROGRESS.md'),
+    '# Progress\n\n**Plan reviewed:** 2026-09-24 — clean\n\n| # | Task | Depends on | State | Notes |\n|---|---|---|---|---|\n| T01 | a | — | ⬜ | |\n',
+  );
+  if (design !== null) writeFileSync(join(root, 'plans', 'demo', 'DESIGN.md'), design);
+  g('add', '-A');
+  g('-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '-m', 'plan');
+  return { root, g };
+}
+
+test('the coordinator bin refuses a plan without a valid block, dry run, before any worktree or branch', () => {
+  const { root, g } = scratchGitPlan('# Design\n\nno block here\n');
+  try {
+    const r = runBinDry(root, 'demo');
+    assert.equal(r.status, 1, r.stdout + r.stderr);
+    assert.ok(
+      r.stderr.includes(testBlockRefusal('demo', 'no front-matter block')),
+      `stderr carries the refusal: ${r.stderr}`,
+    );
+    assert.doesNotMatch(r.stdout, /DRY:/, 'refused before the dry-run branch');
+    assert.equal(g('worktree', 'list', '--porcelain').toString().match(/^worktree /gm).length, 1, 'no worktree created');
+    assert.equal(g('branch', '--list', 'pir/*').toString().trim(), '', 'no pir branch cut');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('the coordinator bin starts a plan with a valid block exactly as before (dry run)', () => {
+  const { root } = scratchGitPlan('---\nsetup: none\ntest:\n  - true\n---\n# Design\n');
+  try {
+    const r = runBinDry(root, 'demo');
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    assert.match(r.stdout, /DRY: not spawning real workers/);
+    assert.match(r.stdout, /Ready to dispatch now: T01/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
   }
 });
 
@@ -327,6 +417,18 @@ test('a red feature branch is surfaced with no hand-off; a green one is handed o
   assert.deepEqual(greenResult.readyToMerge, { branch: `pir/${SLUG}` }, 'and is handed off for the person to merge');
 });
 
+test('the coordinator carries the red gate reason out of pass() and drive(); green carries null (DESIGN §2.8)', (t) => {
+  const why = { ok: false, reason: 'test `make test` exited 2', logPath: '/x/tests.log' };
+  const red = setup(t, [{ num: 'T01' }], { runTests: () => why });
+  let lastPass;
+  const redResult = red.coordinator.drive({ onPass: (r) => { lastPass = r; } });
+  assert.deepEqual(lastPass.testsReason, { reason: why.reason, logPath: why.logPath }, 'the completing pass carries it');
+  assert.deepEqual(redResult.testsReason, { reason: why.reason, logPath: why.logPath });
+
+  const green = setup(t, [{ num: 'T01' }], { runTests: () => ({ ok: true }) });
+  assert.equal(green.coordinator.drive().testsReason, null);
+});
+
 // --- 12. Reports each ✅ and terminates when the plan is fully ✅ and handed off --------------------
 
 test('the coordinator reports each task reaching ✅ and terminates on a completed, handed-off plan', (t) => {
@@ -434,45 +536,95 @@ test('renderHandoff: a red hand-off carries the gate\'s reason and log path when
   assert.match(red, /\/x\/tests\.log/);
 });
 
-// runFeatureTests runs the command the plan names, not a fixed `npm test` — the hard-coded one exited
-// 254 on every project without a package.json and failed runs whose tests pass. Real /bin/sh, scratch dirs.
-function featureWithDesign(t, designBody) {
-  const dir = mkdtempSync(join(tmpdir(), 'pir-feature-tests-'));
-  t.after(() => rmSync(dir, { recursive: true, force: true }));
-  mkdirSync(join(dir, 'plans', 'demo'), { recursive: true });
-  if (designBody != null) writeFileSync(join(dir, 'plans', 'demo', 'DESIGN.md'), designBody);
-  return { dir, logPath: join(dir, 'tests.log') };
+// runFeatureTests runs the setup then test lines of the front-matter block in the main checkout's
+// DESIGN.md (DESIGN §2.2, §2.5), in the feature worktree. Real /bin/sh, scratch dirs: `root` holds the
+// plan, `dir` is the feature worktree the lines run in.
+function gate(t, designBody) {
+  const root = mkdtempSync(join(tmpdir(), 'pir-gate-root-'));
+  const dir = mkdtempSync(join(tmpdir(), 'pir-gate-feature-'));
+  t.after(() => {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(dir, { recursive: true, force: true });
+  });
+  mkdirSync(join(root, 'plans', 'demo'), { recursive: true });
+  if (designBody != null) writeFileSync(join(root, 'plans', 'demo', 'DESIGN.md'), designBody);
+  const logPath = join(root, 'tests.log');
+  return { root, dir, logPath, run: () => runFeatureTests(dir, { slug: 'demo', root, logPath }) };
 }
 
-test('runFeatureTests: runs the DESIGN.md test command in the feature worktree — green with no package.json', (t) => {
-  const { dir, logPath } = featureWithDesign(t, '**The test command.**\n\n```\nsh check.sh\n```\n');
-  writeFileSync(join(dir, 'check.sh'), 'echo suite-ran; test -f plans/demo/DESIGN.md\n');
-  const r = runFeatureTests(dir, { slug: 'demo', logPath });
+const block = (setup, tests) =>
+  `---\nsetup:${setup.length ? '\n' + setup.map((l) => `  - ${l}`).join('\n') : ' none'}\ntest:\n` +
+  `${tests.map((l) => `  - ${l}`).join('\n')}\n---\n\n# Design\n`;
+
+test('runFeatureTests: green setup and test is ok, with every $ header in run order in one log', (t) => {
+  const g = gate(t, block(['echo prepared > ready'], ['test -f ready', 'echo suite-ran']));
+  const r = g.run();
   assert.equal(r.ok, true);
-  assert.match(readFileSync(logPath, 'utf8'), /suite-ran/, 'the output lands in the log, not the terminal');
+  assert.equal(r.half, null);
+  assert.equal(r.logPath, g.logPath);
+  const log = readFileSync(g.logPath, 'utf8');
+  assert.equal(
+    log.split('\n').filter((l) => l.startsWith('$ ')).join('|'),
+    '$ echo prepared > ready|$ test -f ready|$ echo suite-ran',
+  );
+  assert.match(log, /suite-ran/, 'the output lands in the log, not the terminal');
 });
 
-test('runFeatureTests: every line runs, and the first failure is red with the command named', (t) => {
-  const { dir, logPath } = featureWithDesign(t, '**The test commands.**\n```\ntrue\nexit 3   # second suite\necho never\n```\n');
-  const r = runFeatureTests(dir, { slug: 'demo', logPath });
+test('runFeatureTests: a failing setup line is red in the setup half and no test line runs', (t) => {
+  const g = gate(t, block(['exit 4'], ['touch tests-ran']));
+  const r = g.run();
   assert.equal(r.ok, false);
-  assert.match(r.reason, /exit 3.*exited 3/);
-  assert.equal(r.logPath, logPath);
-  assert.doesNotMatch(readFileSync(logPath, 'utf8'), /\$ echo never/, 'it stops at the first failing line');
+  assert.equal(r.half, 'setup');
+  assert.equal(r.command, 'exit 4');
+  assert.equal(r.reason, 'setup `exit 4` exited 4');
+  assert.equal(existsSync(join(g.dir, 'tests-ran')), false);
+  assert.doesNotMatch(readFileSync(g.logPath, 'utf8'), /\$ touch/);
 });
 
-test('runFeatureTests: no DESIGN.md or no named command is red with that reason, never a guessed npm test', (t) => {
-  const none = featureWithDesign(t, null);
-  const r1 = runFeatureTests(none.dir, { slug: 'demo', logPath: none.logPath });
-  assert.equal(r1.ok, false);
-  assert.match(r1.reason, /no test command found in plans\/demo\/DESIGN\.md/);
-
-  const vague = featureWithDesign(t, '# Design\n\nNo command here.\n');
-  assert.match(runFeatureTests(vague.dir, { slug: 'demo' }).reason, /no test command found/);
+test('runFeatureTests: a failing second test line is red in the test half and the reason names it', (t) => {
+  const g = gate(t, block([], ['true', 'exit 3   # second suite', 'echo never']));
+  const r = g.run();
+  assert.equal(r.ok, false);
+  assert.equal(r.half, 'test');
+  assert.equal(r.reason, 'test `exit 3   # second suite` exited 3');
+  assert.equal(r.logPath, g.logPath);
+  assert.doesNotMatch(readFileSync(g.logPath, 'utf8'), /\$ echo never/, 'it stops at the first failing line');
 });
 
-test('runFeatureTests: the run\'s own switches do not reach the project\'s suite', (t) => {
-  const { dir, logPath } = featureWithDesign(t, '**The test command.**\n```\ntest -z "$PARALLEL_LIVE$PIR_RUN"\n```\n');
+test('runFeatureTests: setup none runs only the test lines, and the log is rewritten per run', (t) => {
+  const g = gate(t, block([], ['echo only-test']));
+  writeFileSync(g.logPath, '$ stale from a previous run\n');
+  assert.equal(g.run().ok, true);
+  const headers = readFileSync(g.logPath, 'utf8').split('\n').filter((l) => l.startsWith('$ '));
+  assert.deepEqual(headers, ['$ echo only-test']);
+});
+
+test('runFeatureTests: DESIGN.md is read from root, even when the feature worktree\'s copy has no block', (t) => {
+  const g = gate(t, block([], ['touch from-root']));
+  // The restart case: a feature branch cut before the block was written carries the old prose copy.
+  mkdirSync(join(g.dir, 'plans', 'demo'), { recursive: true });
+  writeFileSync(join(g.dir, 'plans', 'demo', 'DESIGN.md'), '**The test command.**\n\n```\nexit 9\n```\n');
+  assert.equal(g.run().ok, true);
+  assert.equal(existsSync(join(g.dir, 'from-root')), true, 'the line ran in the feature worktree');
+});
+
+test('runFeatureTests: an invalid or missing block is red with the parser\'s reason and runs nothing', (t) => {
+  const prose = gate(t, '**The test command.**\n\n```\ntouch ran\n```\n');
+  const r = prose.run();
+  assert.equal(r.ok, false);
+  assert.equal(r.half, null);
+  assert.equal(r.reason, 'plans/demo/DESIGN.md: no front-matter block');
+  assert.equal(existsSync(join(prose.dir, 'ran')), false, 'no prose is guessed at');
+  assert.equal(existsSync(prose.logPath), false, 'no command ran, so no log');
+
+  const noTest = gate(t, '---\nsetup: none\n---\n');
+  assert.equal(noTest.run().reason, 'plans/demo/DESIGN.md: no test key');
+
+  assert.equal(gate(t, null).run().reason, 'plans/demo/DESIGN.md: no front-matter block');
+});
+
+test('runFeatureTests: the run\'s own switches do not reach the project\'s setup or suite', (t) => {
+  const g = gate(t, block(['test -z "$PARALLEL_LIVE$PIR_RUN"'], ['test -z "$PARALLEL_LIVE$PIR_RUN"']));
   const saved = { live: process.env.PARALLEL_LIVE, run: process.env.PIR_RUN };
   process.env.PARALLEL_LIVE = '1';
   process.env.PIR_RUN = '1';
@@ -480,7 +632,23 @@ test('runFeatureTests: the run\'s own switches do not reach the project\'s suite
     if (saved.live === undefined) delete process.env.PARALLEL_LIVE; else process.env.PARALLEL_LIVE = saved.live;
     if (saved.run === undefined) delete process.env.PIR_RUN; else process.env.PIR_RUN = saved.run;
   });
-  assert.equal(runFeatureTests(dir, { slug: 'demo', logPath }).ok, true);
+  assert.equal(g.run().ok, true);
+});
+
+// No module may still import the prose reader T04 deleted.
+test('nothing imports testcommand.mjs any more', () => {
+  const src = join(import.meta.dirname, '..');
+  const offenders = [];
+  const walk = (d) => {
+    for (const e of readdirSync(d, { withFileTypes: true })) {
+      const p = join(d, e.name);
+      if (e.isDirectory()) walk(p);
+      else if (e.name.endsWith('.mjs') && /from ['"][^'"]*testcommand\.mjs['"]/.test(readFileSync(p, 'utf8'))) offenders.push(p);
+    }
+  };
+  walk(src);
+  assert.deepEqual(offenders, []);
+  assert.equal(existsSync(join(src, 'core', 'testcommand.mjs')), false);
 });
 
 test('canPromoteHere refuses the canonical repo unless PARALLEL_ALLOW_HERE overrides (P5, T12)', () => {
@@ -812,6 +980,18 @@ test('writeRunSnapshot writes a live status.json parseSnapshot accepts, whose ru
   assert.equal(snap.finalState, null, 'a per-pass snapshot is live — no final status yet');
   assert.deepEqual(snap.runState, runState, 'the snapshot carries exactly the run state the display was given');
   assert.deepEqual(snap.proc, sampleProc, 'and the process facts the dashboard classifies from');
+});
+
+test('buildRunState carries testsReason into runState, and a snapshot written and read back keeps it (DESIGN §2.8)', (t) => {
+  const testsReason = { reason: 'test `make test` exited 2', logPath: '/x/tests.log' };
+  const passTasks = [{ num: 'T01', name: 'a', deps: [], state: '✅' }];
+  const rs = buildRunState({ passTasks, branch: 'pir/demo', ceiling: 2, complete: true, readyToMerge: false, testsReason });
+  assert.deepEqual(rs.testsReason, testsReason);
+  assert.equal(buildRunState({ passTasks, branch: 'pir/demo', ceiling: 2 }).testsReason, null, 'absent means null');
+
+  const controlDir = tmpControl(t);
+  writeRunSnapshot({ controlDir, proc: sampleProc, runState: rs });
+  assert.deepEqual(readSnapshot(controlDir).runState.testsReason, testsReason, 'status.json keeps the reason');
 });
 
 test('writeRunFinal on a clean end writes `finished` to BOTH the snapshot and the index entry (DESIGN §2.2, T10)', (t) => {

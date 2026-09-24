@@ -22,16 +22,15 @@
 // exercised there — its live behaviour is hand-verified (T09).
 
 import { execFileSync } from 'node:child_process';
-import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, unlinkSync, watch, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, unlinkSync, watch, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 
 import { parseProgress, reconcileTaskRow, progressPathFor } from '../core/progress.mjs';
 import { workerName, isWorkerOf } from '../core/naming.mjs';
 import { buildDisplay } from '../core/display.mjs';
 import { parseRecord } from '../core/runrecord.mjs';
-import { testCommandFrom } from '../core/testcommand.mjs';
 import { parseTestBlock } from '../core/testblock.mjs';
-import { startLines } from './commands.mjs';
+import { runLines, startLines } from './commands.mjs';
 import { runPass, createRunState } from './loop.mjs';
 import { createPlatform } from './platform.mjs';
 import { createRenderer } from './render.mjs';
@@ -56,6 +55,25 @@ export function readReviewGate(slug, { root = process.cwd() } = {}) {
   }
   const { planReviewed } = parseProgress(readFileSync(path, 'utf8'));
   return { reviewed: planReviewed.reviewed, note: planReviewed.note, missing: false };
+}
+
+// --- The setup/test block gate (declared-test-command DESIGN §2.2, §2.3) -----------------------
+//
+// A plan whose DESIGN.md has no valid setup/test block counts as not reviewed: the engine could not run
+// its tests at the end, so it is not ready to be built by it. Read from the main checkout's copy, the
+// same one readReviewGate reads, because that is the copy a narrow review pass fixes.
+export function readTestBlockGate(slug, { root = process.cwd() } = {}) {
+  const path = join(root, 'plans', slug, 'DESIGN.md');
+  if (!existsSync(path)) return { ok: false, reason: 'no DESIGN.md' };
+  return parseTestBlock(readFileSync(path, 'utf8'));
+}
+
+// The refusal both entry points print (the coordinator bin here, `pir` via launch.mjs's no-test-block).
+export function testBlockRefusal(slug, detail) {
+  return (
+    `cannot start '${slug}': plans/${slug}/DESIGN.md has no valid setup/test block (${detail}).\n` +
+    `A plan without one counts as not reviewed. Run /pir-review-plan ${slug} to add it.\n`
+  );
 }
 
 // --- Plain-English surfacing (DESIGN §2.2, §2.3) ----------------------------------------------
@@ -185,6 +203,8 @@ export function startCoordinator({
       complete: r.complete,
       readyToMerge: r.readyToMerge ?? null,
       testsPassed: r.testsPassed,
+      // The red gate's { reason, logPath }, null on green or before completion (DESIGN §2.8).
+      testsReason: r.testsReason ?? null,
       done: r.complete,
       tasks: r.tasks,
     };
@@ -235,7 +255,7 @@ export function startCoordinator({
       const r = pass();
       if (onPass) onPass(r, p);
       if (r.complete)
-        return { reason: 'complete', passes: p, complete: true, readyToMerge: r.readyToMerge, testsPassed: r.testsPassed };
+        return { reason: 'complete', passes: p, complete: true, readyToMerge: r.readyToMerge, testsPassed: r.testsPassed, testsReason: r.testsReason };
       if (r.halted) return { reason: 'halted', passes: p, complete: false };
       // A running setup is work in flight, not a parked worker: without this a 60 s `npm ci` would end
       // drive() as `parked` after two passes (DESIGN §2.4).
@@ -718,52 +738,36 @@ export function waitForReport(reportsDir, timeoutMs, { watch: watchFn = watch } 
   });
 }
 
-// Run the project's test command on the feature worktree (DESIGN §2.4, §5): the last gate before the
-// run hands the branch off. The command is the one the plan names in its own DESIGN.md (§ Environment,
-// read from the feature branch's copy by testCommandFrom); it used to be a hard-coded `npm test`, which
-// exited 254 on every project without a package.json and so failed runs whose tests pass. Each line
-// runs through the shell in order, stopping at the first failure. Anything that stops a command from
-// launching, a non-zero exit, or no command found counts as red — a hand-off must never claim a green
-// it did not observe (§2.8). Output goes to logPath, not the terminal (the live display owns it), so a
-// red result can say where to look. The run's own switches (PARALLEL_*, PIR_RUN) are dropped from the
-// environment: they drive this coordinator, and a project's suite that spawns a coordinator of its own
-// (this repo's does) must not inherit PARALLEL_LIVE=1. Returns { ok, command, reason, logPath }; command names
-// the failing line and is null on green.
-export function runFeatureTests(featurePath, { slug, logPath } = {}) {
+// Run the plan's declared setup and test lines on the feature worktree (DESIGN §2.5): the last gate
+// before the run hands the branch off. The lines come from the front-matter block of the main
+// checkout's plans/<slug>/DESIGN.md (`root`), never the feature worktree's copy: a feature branch cut
+// before a narrow review pass wrote the block would otherwise still lack it (§2.2). No prose is read and
+// nothing is guessed — an invalid block is red with the parser's reason and runs nothing. Setup runs
+// first because the feature worktree is fresh (remote-e2e's `make server-test` exited 127 until `npm ci`).
+// Both halves share one log: setup rewrites it, test appends, so the `$` headers read in run order. The
+// env scrub and log format live in commands.mjs. Returns { ok, half, command, logPath, reason }; half is
+// 'setup' or 'test' when a line failed, null otherwise; command names the failing line, null on green.
+export function runFeatureTests(featurePath, { slug, logPath = null, root } = {}) {
   let design = '';
   try {
-    design = readFileSync(join(featurePath, 'plans', slug, 'DESIGN.md'), 'utf8');
+    design = readFileSync(join(root, 'plans', slug, 'DESIGN.md'), 'utf8');
   } catch {
-    /* no DESIGN.md — reported below as no command */
+    /* no DESIGN.md — the parser reports it as no front-matter block */
   }
-  const commands = testCommandFrom(design);
-  if (!commands) {
-    return { ok: false, command: null, logPath: null, reason: `no test command found in plans/${slug}/DESIGN.md` };
+  const block = parseTestBlock(design);
+  if (!block.ok) {
+    return { ok: false, half: null, command: null, logPath: null, reason: `plans/${slug}/DESIGN.md: ${block.reason}` };
   }
 
-  const env = Object.fromEntries(
-    Object.entries(process.env).filter(([k]) => !k.startsWith('PARALLEL_') && k !== 'PIR_RUN'),
-  );
-  let fd = 'ignore';
-  try {
-    if (logPath) fd = openSync(logPath, 'w');
-  } catch {
-    /* an unwritable log must not turn a green suite red */
-  }
-  try {
-    for (const command of commands) {
-      if (typeof fd === 'number') writeFileSync(fd, `$ ${command}\n`);
-      try {
-        execFileSync('/bin/sh', ['-c', command], { cwd: featurePath, env, stdio: ['ignore', fd, fd] });
-      } catch (e) {
-        const how = e.status != null ? `exited ${e.status}` : `could not run (${e.code ?? e.signal ?? e.message})`;
-        return { ok: false, command, logPath: typeof fd === 'number' ? logPath : null, reason: `\`${command}\` ${how}` };
-      }
-    }
-    return { ok: true, command: null, logPath: typeof fd === 'number' ? logPath : null };
-  } finally {
-    if (typeof fd === 'number') closeSync(fd);
-  }
+  const setup = runLines(block.setup, { cwd: featurePath, logPath });
+  if (!setup.ok) return red('setup', setup);
+  const tests = runLines(block.test, { cwd: featurePath, logPath, append: true });
+  if (!tests.ok) return red('test', tests);
+  return { ok: true, half: null, command: null, logPath: tests.logPath, reason: null };
+}
+
+function red(half, r) {
+  return { ok: false, half, command: r.line, logPath: r.logPath, reason: `${half} ${r.reason}` };
 }
 
 // makePrepare({ design, setupDir, start }) → the loop's prepare(num, worktreePath) for this plan, or null
@@ -808,10 +812,12 @@ export function displayPhaseFor(t) {
 }
 
 // buildRunState({ passTasks, stateTasks, branch, ceiling, sinceByTask, doneMsByTask, complete,
-// readyToMerge, interrupted }) → the runState buildDisplay consumes (DESIGN §2.3). passTasks are the
+// readyToMerge, testsReason, interrupted }) → the runState buildDisplay consumes (DESIGN §2.3). passTasks are the
 // parsed PROGRESS rows the pass returned ({ num, name, deps, state }); stateTasks is
 // coordinator.state.tasks (the live workers). A ✅ row is done; otherwise a tracked worker's phase names
 // the row. sinceByTask/doneMsByTask carry the phase-start and final-duration times the shell tracks.
+// testsReason is the red gate's { reason, logPath } (null otherwise); it rides in runState so it lands in
+// status.json and a detached viewer can say why a finished run is red (DESIGN §2.8).
 export function buildRunState({
   passTasks,
   stateTasks = {},
@@ -821,6 +827,7 @@ export function buildRunState({
   doneMsByTask = {},
   complete = false,
   readyToMerge = false,
+  testsReason = null,
   interrupted = false,
 } = {}) {
   const tasks = passTasks.map((t) => {
@@ -841,7 +848,7 @@ export function buildRunState({
       prompt: phase === 'asking' ? st.decision?.prompt ?? null : null,
     };
   });
-  return { branch, ceiling, complete, readyToMerge: !!readyToMerge, interrupted: !!interrupted, tasks };
+  return { branch, ceiling, complete, readyToMerge: !!readyToMerge, testsReason: testsReason ?? null, interrupted: !!interrupted, tasks };
 }
 
 async function main(argv) {
@@ -867,6 +874,13 @@ async function main(argv) {
         `A defect in an unreviewed plan is copied into every task, and running many workers at once\n` +
         `multiplies it. Review the plan first:\n\n  /pir-review-plan ${slug}\n`,
     );
+    process.exit(1);
+  }
+
+  // Before the PARALLEL_LIVE branch, so a dry run and a restart (a re-run of this command) refuse too.
+  const block = readTestBlockGate(slug, { root });
+  if (!block.ok) {
+    process.stderr.write(testBlockRefusal(slug, block.reason));
     process.exit(1);
   }
 
@@ -941,7 +955,7 @@ async function main(argv) {
   }
   const prepare = makePrepare({ design, setupDir: join(control.dir, 'setup') });
   const coordinator = startCoordinator({ slug, repo, platform, worktree, maxWorkers, control,
-    runTests: (featurePath) => runFeatureTests(featurePath, { slug, logPath: join(control.dir, 'tests.log') }),
+    runTests: (featurePath) => runFeatureTests(featurePath, { slug, root, logPath: join(control.dir, 'tests.log') }),
     ...(prepare ? { prepare } : {}),
   });
   const renderer = createRenderer({ stream: process.stdout });
@@ -1127,6 +1141,7 @@ async function main(argv) {
         doneMsByTask,
         complete: r.complete,
         readyToMerge: !!r.readyToMerge,
+        testsReason: r.testsReason,
       });
       lastRunState = runState;
       // Feed the detached live view (DESIGN §2.4): write this pass's run state to the snapshot the

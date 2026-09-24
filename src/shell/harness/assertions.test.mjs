@@ -10,6 +10,8 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { loadBundle } from './capture.mjs';
+import { renderHandoff } from '../coordinate.mjs';
+import { buildConflictPrompt } from '../../core/conflict.mjs';
 import {
   loadTranscripts,
   loadFinalFiles,
@@ -273,6 +275,16 @@ test('adoptedAndDispatched requires the dispatch to follow the adoption, not a s
   assert.match(r.detail, /never dispatched/);
 });
 
+// The coordinator's captured stdout (bundle.coordinatorOut) at a green and a red finish, built from the
+// real renderHandoff so a change to its wording breaks these tests rather than the live fact.
+const GREEN_OUT = `pass 12\n${renderHandoff({ readyToMerge: true, taskCount: 2, slug: 'scratch' })}\n`;
+const RED_OUT = `pass 12\n${renderHandoff({
+  readyToMerge: false,
+  taskCount: 2,
+  slug: 'scratch',
+  why: 'test `npm test` exited 1 · log plans/scratch/.parallel/control/tests.log',
+})}\n`;
+
 // --- mergeConflictResolved (task-agnostic, attended non-agentic model, T13) -----------------------
 
 // A bundle in the attended-resolution shape (DESIGN §2.8): T01 (winner) merged clean; T02 conflicted, was
@@ -290,6 +302,7 @@ function resolvedBundle(over = {}) {
     gitLog: '* merge pir/scratch-T02 (pir/scratch)\n* merge pir/scratch-T01\n* seed\n',
     timeline: [tick('t1', [wagent('T02', 'idle', { sessionId: 's2i', role: 'implement' })])],
     finalFiles: { 'greeting.txt': 'hello there\n' },
+    coordinatorOut: GREEN_OUT,
     ...over,
   });
 }
@@ -369,10 +382,90 @@ test('handedOffGreenBranch passes when a task merged, nothing was promoted, and 
     flow: [fl('t5', 'merge', 'T01')],
     gitLog: '* T01 marker (pir/scratch)\n* seed\n',
     timeline: [tick('t1', [wagent('T01', 'busy')])],
+    coordinatorOut: GREEN_OUT,
   });
   const r = handedOffGreenBranch().check(b);
   assert.equal(r.pass, true, r.detail);
   assert.ok(r.evidence.includes('git log: no promotion merge into main'));
+  assert.ok(r.evidence.includes('coordinator.out: git merge pir/scratch'));
+});
+
+// declared-test-command T10: the flow and git look the same for a red finish as a green one, so a run
+// whose end-of-run gate went red must FAIL on the coordinator's own printed verdict, naming the reason.
+test('handedOffGreenBranch fails when the coordinator printed the red hand-off', () => {
+  const b = bundle({
+    flow: [fl('t5', 'merge', 'T01')],
+    gitLog: '* T01 marker (pir/scratch)\n* seed\n',
+    timeline: [tick('t1', [wagent('T01', 'busy')])],
+    coordinatorOut: RED_OUT,
+  });
+  const r = handedOffGreenBranch().check(b);
+  assert.equal(r.pass, false);
+  assert.match(r.detail, /went red: test `npm test` exited 1/);
+  assert.ok(r.evidence.some((e) => e.startsWith('coordinator.out: ✗')));
+});
+
+test('handedOffGreenBranch fails when the coordinator output was not captured', () => {
+  const b = bundle({
+    flow: [fl('t5', 'merge', 'T01')],
+    gitLog: '* T01 marker (pir/scratch)\n* seed\n',
+    timeline: [tick('t1', [wagent('T01', 'busy')])],
+    coordinatorOut: null,
+  });
+  const r = handedOffGreenBranch().check(b);
+  assert.equal(r.pass, false);
+  assert.match(r.detail, /no coordinator\.out/);
+});
+
+// A run that stalled or halted prints no hand-off at all: neither line, so no green verdict to accept.
+test('handedOffGreenBranch fails when the coordinator output lacks the green hand-off line', () => {
+  const b = bundle({
+    flow: [fl('t5', 'merge', 'T01')],
+    gitLog: '* T01 marker (pir/scratch)\n* seed\n',
+    timeline: [tick('t1', [wagent('T01', 'busy')])],
+    coordinatorOut: 'pass 3\nstalled: nothing left to do\n',
+  });
+  const r = handedOffGreenBranch().check(b);
+  assert.equal(r.pass, false);
+  assert.match(r.detail, /no `git merge pir\/scratch` hand-off line/);
+});
+
+// T10 review: the conflict-resolution prompt coordinate.mjs prints mid-run carries `  git merge pir/{plan}`
+// too. A run that merged T01, hit a conflict on T02 and then stalled or timed out never handed off, so the
+// bare merge line must not read as the green verdict.
+test('handedOffGreenBranch fails when the only `git merge` line is a conflict prompt, not the hand-off', () => {
+  const prompt = buildConflictPrompt({
+    task: 'T02',
+    slug: 'second',
+    workerName: null,
+    taskBranch: 'pir/scratch-T02',
+    featureBranch: 'pir/scratch',
+    files: ['greeting.txt'],
+  });
+  const b = bundle({
+    flow: [fl('t5', 'merge', 'T01')],
+    gitLog: '* T01 marker (pir/scratch)\n* seed\n',
+    timeline: [tick('t1', [wagent('T01', 'busy')])],
+    coordinatorOut: `pass 3\n\n${prompt}\npass 4\n`,
+  });
+  const r = handedOffGreenBranch().check(b);
+  assert.equal(r.pass, false, r.detail);
+  assert.match(r.detail, /no `git merge pir\/scratch` hand-off line/);
+});
+
+// T10 review: on a non-TTY the renderer appends the final red frame (its footer also says `not ready to
+// merge`, with no reason under it) before renderHandoff prints. The reason quoted must be the hand-off's.
+test('handedOffGreenBranch quotes the hand-off reason, not the red status frame printed before it', () => {
+  const frame = '  T01 ✅\n\n✗ 2 task(s) built on pir/scratch, but its tests fail — not ready to merge.\n';
+  const b = bundle({
+    flow: [fl('t5', 'merge', 'T01')],
+    gitLog: '* T01 marker (pir/scratch)\n* seed\n',
+    timeline: [tick('t1', [wagent('T01', 'busy')])],
+    coordinatorOut: frame + RED_OUT,
+  });
+  const r = handedOffGreenBranch().check(b);
+  assert.equal(r.pass, false);
+  assert.match(r.detail, /went red: test `npm test` exited 1/);
 });
 
 // The regression guard the task asks for: a bundle carrying a `promote` line — the removed model — now
@@ -414,6 +507,7 @@ test('handedOffGreenBranch passes when a worker integration merge shares the pro
     flow: [fl('t5', 'merge', 'T01'), fl('t7', 'merge', 'T03')],
     gitLog,
     timeline: [tick('t1', [wagent('T01', 'busy')])],
+    coordinatorOut: GREEN_OUT,
   });
   const r = handedOffGreenBranch().check(b);
   assert.equal(r.pass, true, r.detail);

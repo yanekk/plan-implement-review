@@ -122,6 +122,7 @@ const BUNDLE_FILES = {
   final: 'agents-final.json',
   manifest: 'manifest.json',
   gitLog: 'git-log.txt',
+  coordinatorOut: 'coordinator.out',
   transcripts: 'transcripts',
 };
 
@@ -337,6 +338,19 @@ export function createCapture({
       }
     }
 
+    // The coordinator's own stdout (run.mjs spawnCoordinator), which holds its printed hand-off: the one
+    // record of whether the end-of-run gate went green or red. Absent when the runner did not capture it.
+    if (controlDir) {
+      const outSrc = join(controlDir, 'coordinator.out');
+      if (existsSync(outSrc)) {
+        try {
+          copyFileSync(outSrc, join(dir, BUNDLE_FILES.coordinatorOut));
+        } catch {
+          /* unreadable: loadBundle records it as missing, and the hand-off fact fails on that */
+        }
+      }
+    }
+
     // Resting states: `--all` still lists ended sessions (with only their final `state`, DESIGN §4.1).
     const all = runClaude(['agents', '--json', '--all']);
     try {
@@ -444,5 +458,8 @@ export function loadBundle(dir) {
 
   const gitLog = readTextOr(join(dir, BUNDLE_FILES.gitLog));
 
-  return { dir, name: basename(dir), flow, flowText, timeline, final, manifest, gitLog };
+  // null, not '', when absent: a missing hand-off record must read differently from an empty one.
+  const coordinatorOut = readTextOr(join(dir, BUNDLE_FILES.coordinatorOut), null);
+
+  return { dir, name: basename(dir), flow, flowText, timeline, final, manifest, gitLog, coordinatorOut };
 }

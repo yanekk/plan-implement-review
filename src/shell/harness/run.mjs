@@ -27,8 +27,8 @@
 // unboundedly. The runner tears every worker down on any exit (reusing the coordinator's teardownRun
 // orphan-guard, T12 P6) and kills the coordinator process too.
 
-import { existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync } from 'node:fs';
-import { join, basename } from 'node:path';
+import { existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync, openSync, closeSync } from 'node:fs';
+import { join, basename, dirname } from 'node:path';
 import { execFileSync, spawn as nodeSpawn } from 'node:child_process';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -64,14 +64,29 @@ export function seatbeltEnv({ ceiling, allowHere = false } = {}) {
   return env;
 }
 
-// spawnCoordinator({ argv, cwd, env, spawn }) → a handle over the launched child process:
+// spawnCoordinator({ argv, cwd, env, spawn, stdoutPath }) → a handle over the launched child process:
 //   { pid, kill(signal), exited }  where `exited` is a Promise resolving { code, signal } once the
 // process ends. spawn is injected (default node:child_process spawn) so a test drives a fake child with
-// no real process. The child inherits the parent env plus the seatbelt env (so PATH etc. resolve), and
-// its stdio is ignored — the runner reads the run from the flow log and `claude agents`, never the
-// coordinator's stdout.
-export function spawnCoordinator({ argv, cwd, env = {}, spawn = nodeSpawn } = {}) {
-  const child = spawn('node', argv, { cwd, env: { ...process.env, ...env }, stdio: 'ignore' });
+// no real process. The child inherits the parent env plus the seatbelt env (so PATH etc. resolve).
+// With stdoutPath, the child's stdout and stderr are appended to that file: the coordinator's printed
+// hand-off (green `git merge` or the red `not ready to merge`) is the only place the gate's verdict
+// reaches, so handedOffGreenBranch reads it from there (declared-test-command T10). Append, so a
+// restart scenario's second coordinator keeps the first one's output. Without it, stdio is ignored.
+export function spawnCoordinator({ argv, cwd, env = {}, spawn = nodeSpawn, stdoutPath = null } = {}) {
+  let stdio = 'ignore';
+  let fd = null;
+  if (stdoutPath) {
+    mkdirSync(dirname(stdoutPath), { recursive: true });
+    fd = openSync(stdoutPath, 'a');
+    stdio = ['ignore', fd, fd];
+  }
+  let child;
+  try {
+    child = spawn('node', argv, { cwd, env: { ...process.env, ...env }, stdio });
+  } finally {
+    // The child holds its own copy of the descriptor once spawned; the parent's is no longer needed.
+    if (fd != null) closeSync(fd);
+  }
   let resolveExit;
   const exited = new Promise((resolve) => {
     resolveExit = resolve;
@@ -88,6 +103,12 @@ export function spawnCoordinator({ argv, cwd, env = {}, spawn = nodeSpawn } = {}
     },
     exited,
   };
+}
+
+// coordinatorOutPath(controlDir) → the file the launched coordinator's stdout is written to. Capture
+// seals it into the bundle as `coordinator.out` (capture.mjs).
+export function coordinatorOutPath(controlDir) {
+  return join(controlDir, 'coordinator.out');
 }
 
 // controlDirFor(scratchDir, slug) → where the coordinator writes its flow log and the HALT flag lives
@@ -388,7 +409,7 @@ export async function runScenario({
     const argv = coordinatorLaunchArgv({ slug });
     const env = seatbeltEnv({ ceiling, allowHere });
     log(`launching coordinator process: node ${argv.join(' ')}  (ceiling ${ceiling}, timeout ${timeout}ms)`);
-    child = spawnCoordinator({ argv, cwd: repoDir, env, spawn });
+    child = spawnCoordinator({ argv, cwd: repoDir, env, spawn, stdoutPath: coordinatorOutPath(controlDir) });
 
     // Wait for the run to reach a terminal: the coordinator process exits (hand-off or stall or halt), or
     // the wall-clock timeout fires. Each poll samples the agent list into the bundle (capture.tick).
@@ -551,7 +572,7 @@ export async function runRestartScenario({
   try {
     // Launch 1: the run that will crash. Seatbelted exactly as a normal live run (§2.1, §5.2).
     log(`launching coordinator process: node ${argv.join(' ')}  (ceiling ${ceiling}, timeout ${timeout}ms)`);
-    child1 = spawnCoordinator({ argv, cwd: repoDir, env, spawn });
+    child1 = spawnCoordinator({ argv, cwd: repoDir, env, spawn, stdoutPath: coordinatorOutPath(controlDir) });
 
     // Wait for the deterministic crash point: the target task branch has committed the crash-point glyph.
     const target = await waitForTarget({
@@ -613,7 +634,7 @@ export async function runRestartScenario({
       // Relaunch on the SAME scratch — NO installFixture. Git already holds the in-flight branches, so the
       // resumed coordinator reconciles from them; reinstalling would wipe exactly what it must resume.
       log('relaunching the coordinator on the same scratch (no reinstall)');
-      child2 = spawnCoordinator({ argv, cwd: repoDir, env, spawn });
+      child2 = spawnCoordinator({ argv, cwd: repoDir, env, spawn, stdoutPath: coordinatorOutPath(controlDir) });
 
       // Wait for the resumed process to exit, still capturing into the same bundle.
       reason = await waitForCompletion({

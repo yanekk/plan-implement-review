@@ -24,14 +24,14 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 |---|---|---|---|---|
 | T01 | parse-test-block | — | ✅ | |
 | T02 | command-runner | — | ✅ | |
-| T03 | start-refusal | T01 | ⬜ | |
-| T04 | end-gate-from-block | T01, T02 | ⬜ | |
-| T05 | red-reason-visible | — | ⬜ | |
+| T03 | start-refusal | T01 | ✅ | |
+| T04 | end-gate-from-block | T01, T02 | ✅ | |
+| T05 | red-reason-visible | — | ✅ | |
 | T06 | spawn-note | — | ✅ | |
 | T07 | worker-setup | T01, T02, T06 | ✅ | Review clean, no fix commit. Deviations accepted: teardownRun kills setups on every non-HALT exit; drain counts preparing as not idle; main's stall check relies on liveAfter. Probed: four mutations (liveAfter, drain idle, buildAssignments skip, HALT kill) each turn a test red; bin loop awaits between passes so setup exit events fire. |
 | T08 | planner-writes-block | T01 | ✅ | |
-| T09 | review-verifies-block | T01 | ⬜ | |
-| T10 | harness-fixture-block | T01 | ⬜ | |
+| T09 | review-verifies-block | T01 | ✅ | |
+| T10 | harness-fixture-block | T01 | ✅ | |
 | T11 | docs | T03, T04, T05, T07, T08, T09 | ⬜ | |
 | T12 | prove-and-install | T03, T04, T05, T07, T08, T09, T10, T11 | ⬜ | |
 

@@ -711,6 +711,7 @@ export function runPass({ platform, worktree, repo, slug, maxWorkers, state, con
   // called and main is never touched.
   let complete = false;
   let testsPassed;
+  let testsReason = null;
   let readyToMerge = null;
   if (decision.complete) {
     complete = true;
@@ -720,6 +721,9 @@ export function runPass({ platform, worktree, repo, slug, maxWorkers, state, con
       readyToMerge = { branch: state.feature.branch };
     } else {
       testsPassed = false;
+      // Carried out whole as well (DESIGN §2.8), so the shell can put it in runState and status.json and a
+      // detached `pir` viewer shows why the run went red, not just that it did.
+      testsReason = { reason: test.reason ?? null, logPath: test.logPath ?? null };
       // The reason and log path ride on the surface so the person reads what failed and where the output
       // is, instead of a bare "tests failed" (a hard-coded `npm test` once failed silently this way).
       const why = [test.reason, test.logPath && `output: ${test.logPath}`].filter(Boolean).join('; ');
@@ -742,7 +746,7 @@ export function runPass({ platform, worktree, repo, slug, maxWorkers, state, con
   const tasks = actions.some((a) => a.type === 'merge')
     ? parseProgress(readFileSync(featureProgressPath, 'utf8')).tasks
     : parsed.tasks;
-  return { actions, log, halted: false, complete, testsPassed, readyToMerge, liveAfter, preparing, tasks };
+  return { actions, log, halted: false, complete, testsPassed, testsReason, readyToMerge, liveAfter, preparing, tasks };
 }
 
 // drain — run passes until the plan is complete (every task ✅, tests run on the feature branch), the
@@ -760,7 +764,7 @@ export function drain(opts) {
     allActions.push(...r.actions);
 
     if (r.complete)
-      return { reason: 'complete', passes: p, complete: true, readyToMerge: r.readyToMerge, testsPassed: r.testsPassed, actions: allActions, state };
+      return { reason: 'complete', passes: p, complete: true, readyToMerge: r.readyToMerge, testsPassed: r.testsPassed, testsReason: r.testsReason, actions: allActions, state };
     if (r.halted) return { reason: 'halted', passes: p, complete: false, actions: allActions, state };
 
     // A pass that only waited on a running setup is not quiet: the setup is work in flight (DESIGN §2.4).
