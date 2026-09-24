@@ -23,7 +23,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | # | Task | Depends on | State | Notes |
 |---|---|---|---|---|
 | T01 | parse-test-block | — | ⬜ | |
-| T02 | command-runner | — | ⬜ | |
+| T02 | command-runner | — | 🔍 | `src/shell/commands.mjs`: scrubEnv, runLines, startLines; 16 tests on real /bin/sh. Deviations: `readLogTail` moved here, `pir-tui.mjs` re-exports it. Unwritable log returns `logPath: null` (as runFeatureTests did). Spawn error gives `could not run (<code>)`. Empty `startLines` returns `{ ok: true, logPath: null }`. |
 | T03 | start-refusal | T01 | ⬜ | |
 | T04 | end-gate-from-block | T01, T02 | ⬜ | |
 | T05 | red-reason-visible | — | ⬜ | |
@@ -35,7 +35,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T11 | docs | T03, T04, T05, T07, T08, T09 | ⬜ | |
 | T12 | prove-and-install | T03, T04, T05, T07, T08, T09, T10, T11 | ⬜ | |
 
-**Review queue:** *(empty)*
+**Review queue:** T02
 
 ## Blocked on the user
 
