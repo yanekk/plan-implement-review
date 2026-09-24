@@ -251,6 +251,23 @@ test('openingInstruction names the right skill per phase, with the task, and eng
   assert.match(openingInstruction('review', 'T08'), /pir-review T08/);
 });
 
+// The string a worker with no note reads, pinned byte for byte: a note must add to it, never change it.
+const PLAIN_IMPLEMENT_T08 =
+  'You are a worker session in a parallel PIR run. You have been given one task and one phase to ' +
+  'carry out — you did not choose it, so do not run pir-work and do not pick your own task. Invoke ' +
+  'the pir-worker skill and follow its contract, then carry out exactly this instruction and nothing ' +
+  'else: pir-implement T08';
+
+test('openingInstruction without a note is byte-identical to the plain instruction (DESIGN §2.4)', () => {
+  assert.equal(openingInstruction('implement', 'T08'), PLAIN_IMPLEMENT_T08);
+  assert.equal(openingInstruction('implement', 'T08', null), PLAIN_IMPLEMENT_T08);
+});
+
+test('openingInstruction appends a note after one blank line', () => {
+  const note = 'Setup failed.\nFull output: /x.log';
+  assert.equal(openingInstruction('implement', 'T08', note), `${PLAIN_IMPLEMENT_T08}\n\n${note}`);
+});
+
 test('openingInstruction refuses an unknown phase or a missing task', () => {
   assert.throws(() => openingInstruction('deploy', 'T08'), /unknown phase/);
   // `verify` is no longer a phase — the auto/you distinction and pir-verify path were removed (§2.5).
@@ -296,6 +313,19 @@ test('spawn builds the argv from the name+phase, runs in the worktree cwd, retur
   assert.deepEqual(call.args.slice(0, 3), ['--bg', '-n', 'repo / plan / T08 / work / implement']);
   assert.match(call.args[3], /pir-implement T08/); // the opening instruction is the positional turn
   assert.equal(call.opts.cwd, '/wt/T08'); // spawned in the worker's worktree
+});
+
+test('spawn with a note delivers it inside the one positional instruction; without one, no change', () => {
+  const spy = claudeSpy();
+  const p = createPlatform({ runClaude: spy.run });
+  const name = 'repo / plan / T08 / work / implement';
+  p.spawn({ cwd: '/wt/T08', name, phase: 'implement', note: 'Setup failed.\nline two' });
+  const args = spy.calls[0].args;
+  assert.equal(args.length, 4); // still exactly one positional turn after --bg -n <name>
+  assert.equal(args[3], `${PLAIN_IMPLEMENT_T08}\n\nSetup failed.\nline two`);
+
+  p.spawn({ cwd: '/wt/T08', name, phase: 'implement' });
+  assert.equal(spy.calls[1].args[3], PLAIN_IMPLEMENT_T08);
 });
 
 test('spawn on the review phase names pir-review; a spawn that returns no id or fails throws', () => {
