@@ -12,8 +12,7 @@ writes a cell also fixes the over-budget cell they walk past.
 
 **Status:** Planned 2026-09-24. Nothing built.
 **Last updated:** 2026-09-24
-**Next `pir-work` will:** T01; T02, T05 and T06 have no dependency and may
-follow in any order.
+**Next `pir-work` will:** T01; T05 and T06 have no dependency and may follow in any order.
 
 ## Tasks
 
@@ -23,7 +22,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | # | Task | Depends on | State | Notes |
 |---|---|---|---|---|
 | T01 | parse-test-block | — | ⬜ | |
-| T02 | command-runner | — | 🔍 | `src/shell/commands.mjs`: scrubEnv, runLines, startLines; 16 tests on real /bin/sh. Deviations: `readLogTail` moved here, `pir-tui.mjs` re-exports it. Unwritable log returns `logPath: null` (as runFeatureTests did). Spawn error gives `could not run (<code>)`. Empty `startLines` returns `{ ok: true, logPath: null }`. |
+| T02 | command-runner | — | ✅ | Review clean, no fix commit. `commands.mjs`: scrubEnv, runLines, startLines, `readLogTail` moved from `pir-tui.mjs` (re-exported). Probed beyond the doc: sync and background give identical results for a signal-killed line, a missing cwd and a line that backgrounds a child; a detached line outlives a SIGINT'd parent (FINDINGS). |
 | T03 | start-refusal | T01 | ⬜ | |
 | T04 | end-gate-from-block | T01, T02 | ⬜ | |
 | T05 | red-reason-visible | — | ⬜ | |
@@ -35,7 +34,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T11 | docs | T03, T04, T05, T07, T08, T09 | ⬜ | |
 | T12 | prove-and-install | T03, T04, T05, T07, T08, T09, T10, T11 | ⬜ | |
 
-**Review queue:** T02
+**Review queue:** empty
 
 ## Blocked on the user
 
