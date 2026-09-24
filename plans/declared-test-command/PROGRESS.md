@@ -25,7 +25,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T01 | parse-test-block | — | ✅ | |
 | T02 | command-runner | — | ✅ | |
 | T03 | start-refusal | T01 | ⬜ | |
-| T04 | end-gate-from-block | T01, T02 | 🔍 | `runFeatureTests` parses the block from `root`, runs setup then test via `runLines`, one log; testcommand deleted; conflict prompt names the block. 8 gate tests. Deviation: conflict step 4 (no worker) says "run the `test` lines again" instead of repeating the full step-3 wording. |
+| T04 | end-gate-from-block | T01, T02 | ✅ | Review clean, no fix commit. Gate reads root DESIGN.md, runs setup then test via `runLines`, one log; `testcommand.mjs` gone. Accepted the recorded step-4 wording deviation. Probed: tests fail if feature copy is read or log mode flips; no-worker conflict prompt rendered; signal-killed reason path. `docs/run-lifecycle.md` still names `testCommandFrom` (T11). |
 | T05 | red-reason-visible | — | ⬜ | |
 | T06 | spawn-note | — | ✅ | |
 | T07 | worker-setup | T01, T02, T06 | ⬜ | |
@@ -35,7 +35,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T11 | docs | T03, T04, T05, T07, T08, T09 | ⬜ | |
 | T12 | prove-and-install | T03, T04, T05, T07, T08, T09, T10, T11 | ⬜ | |
 
-**Review queue:** T04
+**Review queue:** —
 
 ## Blocked on the user
 
