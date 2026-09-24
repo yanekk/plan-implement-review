@@ -221,10 +221,11 @@ export function createFakePlatform({ behaviors = {} } = {}) {
   }
 
   return {
-    // spawn({ cwd, name, phase }) → id. phase is the worker's role: "implement" | "review" | "verify".
+    // spawn({ cwd, name, phase, note }) → id. phase is the worker's role: "implement" | "review" | "verify".
+    // `note` is the text appended to the opening instruction (DESIGN §2.4), recorded for tests.
     // The name is built by the loop with naming.mjs; the task is recovered from it here so list()
     // reports it and the loop can rebuild assignments from names alone (DESIGN §2.8).
-    spawn({ cwd, name, phase }) {
+    spawn({ cwd, name, phase, note = null }) {
       const parsed = parseAgentName(name);
       const b = behaviors[parsed.task] ?? {};
       const id = `w${++nextId}`;
@@ -243,7 +244,7 @@ export function createFakePlatform({ behaviors = {} } = {}) {
         busyHold: b.lingerBusy ?? 0,
       };
       workers.set(id, w);
-      spawns.push({ id, name, task: parsed.task, role: phase, cwd });
+      spawns.push({ id, name, task: parsed.task, role: phase, cwd, note });
       return id;
     },
 

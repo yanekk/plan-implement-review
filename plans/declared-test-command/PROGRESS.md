@@ -21,12 +21,12 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 
 | # | Task | Depends on | State | Notes |
 |---|---|---|---|---|
-| T01 | parse-test-block | — | ⬜ | |
+| T01 | parse-test-block | — | ✅ | |
 | T02 | command-runner | — | ⬜ | |
 | T03 | start-refusal | T01 | ⬜ | |
 | T04 | end-gate-from-block | T01, T02 | ⬜ | |
 | T05 | red-reason-visible | — | ✅ | Reviewed clean, no fix commit. testsReason reaches status.json, red footer second line, red viewer frame drops `git merge`; no-snapshot note points at run.log. Probed stall-finished frames: still offer merge (pre-existing, FINDINGS). |
-| T06 | spawn-note | — | ⬜ | |
+| T06 | spawn-note | — | ✅ | |
 | T07 | worker-setup | T01, T02, T06 | ⬜ | |
 | T08 | planner-writes-block | T01 | ⬜ | |
 | T09 | review-verifies-block | T01 | ⬜ | |

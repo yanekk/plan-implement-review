@@ -186,22 +186,24 @@ export function createMessaging({ transport } = {}) {
 // phase is rejected by openingInstruction below rather than mapped.
 const SKILL_FOR = { implement: 'pir-implement', review: 'pir-review' };
 
-// openingInstruction(phase, task) → the first-turn prompt a freshly spawned worker reads. It engages
+// openingInstruction(phase, task, note = null) → the first-turn prompt a freshly spawned worker reads. It engages
 // the pir-worker contract (so the fresh session knows it was given its task, never runs pir-work and
 // never self-selects one, §2.1) and names the single phase+task it must carry out. It deliberately
 // does not tell the worker how the run is orchestrated — the worker's world is its one task and the
 // person it asks when stuck (§2.2); "coordinator" is a word the worker never needs. This exact string
-// is what T08's hand-verified run tests: whether a live worker acts on it (DESIGN §5.1).
-export function openingInstruction(phase, task) {
+// is what T08's hand-verified run tests: whether a live worker acts on it (DESIGN §5.1). A `note` (the
+// setup-failure note, DESIGN §2.4) is appended after one blank line; without one the string is
+// unchanged, so a worker whose setup succeeded reads exactly what it always did.
+export function openingInstruction(phase, task, note = null) {
   const skill = SKILL_FOR[phase];
   if (!skill) throw new Error(`openingInstruction: unknown phase "${phase}"`);
   if (!task) throw new Error('openingInstruction: no task (the name did not parse to a task id)');
-  return (
+  const base =
     'You are a worker session in a parallel PIR run. You have been given one task and one phase to ' +
     'carry out — you did not choose it, so do not run pir-work and do not pick your own task. Invoke ' +
     'the pir-worker skill and follow its contract, then carry out exactly this instruction and nothing ' +
-    `else: ${skill} ${task}`
-  );
+    `else: ${skill} ${task}`;
+  return note ? `${base}\n\n${note}` : base;
 }
 
 // argv builders, exported so the tests assert them without a live process (DESIGN §5.1). The name
@@ -253,13 +255,13 @@ export function createPlatform({
 } = {}) {
   const messaging = createMessaging({ transport });
   return {
-    // spawn({ cwd, name, phase }) → id. Matches the loop's call and the fake's signature (NOT the
+    // spawn({ cwd, name, phase, note }) → id. Matches the loop's call and the fake's signature (NOT the
     // T08.md `spawn(cwd, task, phase)` sketch): the loop builds the name with naming.mjs and passes it
     // in, and the task is recovered from the name so list() can report it. The opening instruction is
     // the positional turn; `-n` sets the name. Returns the id `claude --bg` prints.
-    spawn({ cwd, name, phase }) {
+    spawn({ cwd, name, phase, note = null }) {
       const task = parseAgentName(name).task;
-      const instruction = openingInstruction(phase, task);
+      const instruction = openingInstruction(phase, task, note);
       const r = runClaude(spawnArgv({ name, instruction }), { cwd });
       if (!r.ok) throw new Error(`spawn failed for ${name}: ${r.stderr || r.stdout || 'unknown error'}`);
       const id = (r.stdout ?? '').trim();
