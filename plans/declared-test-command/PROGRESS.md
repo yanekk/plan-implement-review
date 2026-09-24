@@ -10,9 +10,9 @@ writes a cell also fixes the over-budget cell they walk past.
 
 **Plan reviewed:** 2026-09-24 — 8 fixed, 4 decided with the user
 
-**Status:** Planned 2026-09-24. Nothing built.
+**Status:** T01 built, awaiting review.
 **Last updated:** 2026-09-24
-**Next `pir-work` will:** T01; T02, T05 and T06 have no dependency and may
+**Next `pir-work` will:** review T01; T02, T05 and T06 have no dependency and may
 follow in any order.
 
 ## Tasks
@@ -22,7 +22,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 
 | # | Task | Depends on | State | Notes |
 |---|---|---|---|---|
-| T01 | parse-test-block | — | ⬜ | |
+| T01 | parse-test-block | — | 🔍 | `parseTestBlock` in `src/core/testblock.mjs`, 16 tests. Beyond the doc: indented lines under an unknown key are skipped (nested maps too); items accept any indent and spacing after `-`; a repeated key replaces the earlier one. `testcommand.mjs` left for T04. |
 | T02 | command-runner | — | ⬜ | |
 | T03 | start-refusal | T01 | ⬜ | |
 | T04 | end-gate-from-block | T01, T02 | ⬜ | |
@@ -35,7 +35,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T11 | docs | T03, T04, T05, T07, T08, T09 | ⬜ | |
 | T12 | prove-and-install | T03, T04, T05, T07, T08, T09, T10, T11 | ⬜ | |
 
-**Review queue:** *(empty)*
+**Review queue:** T01
 
 ## Blocked on the user
 
