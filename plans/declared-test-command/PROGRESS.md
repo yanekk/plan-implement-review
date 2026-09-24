@@ -32,10 +32,10 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T08 | planner-writes-block | T01 | ✅ | |
 | T09 | review-verifies-block | T01 | ✅ | |
 | T10 | harness-fixture-block | T01 | ✅ | |
-| T11 | docs | T03, T04, T05, T07, T08, T09 | ⬜ | |
+| T11 | docs | T03, T04, T05, T07, T08, T09 | 🔍 | Six docs updated as listed; no mention of the prose reader remains. Also documented: `prepare`/`setup-kill` log kinds, teardown killing setups, SIGKILL orphaning a setup, the viewer's no-snapshot finished note. Prose only, no tests; `npm test` green. |
 | T12 | prove-and-install | T03, T04, T05, T07, T08, T09, T10, T11 | ⬜ | |
 
-**Review queue:** *(empty)*
+**Review queue:** T11
 
 ## Blocked on the user
 
