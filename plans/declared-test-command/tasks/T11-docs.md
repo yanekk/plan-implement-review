@@ -1,6 +1,6 @@
 # T11 — docs
 
-**Phase:** 4 · **Depends on:** T03, T04, T05, T07 · **Weight:** light
+**Phase:** 4 · **Depends on:** T03, T04, T05, T07, T08, T09 · **Weight:** light
 
 ## Goal
 

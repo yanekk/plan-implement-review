@@ -15,9 +15,12 @@ DESIGN §2.4, §2.9.
 ## Files
 
 - `src/shell/loop.mjs` — `PREPARING` phase; step 3b; `buildAssignments` and liveness skip preparing
-  tasks; a preparing task counts against the ceiling; HALT kills setup handles
+  tasks; a preparing task counts against the ceiling and in `liveAfter`; HALT kills setup handles
 - `src/shell/coordinate.mjs` — builds `prepare` from the block and `startLines`, log at
-  `control/setup/T{nn}.log`; `displayPhaseFor` → `preparing`; the stop chord kills setup handles
+  `control/setup/T{nn}.log`; `displayPhaseFor` → `preparing`; the stop chord kills setup handles;
+  `main`'s stall detector and `startCoordinator().drive()` treat a pass with a preparing task as not
+  idle (today `idle` counts a pass with no productive action and `r.live === 0` as quiet, so a run
+  whose only work is a 60 s `npm ci` is declared "nothing left to do" and torn down after 3 passes)
 - `src/core/display.mjs` — `preparing` in `ACTIVE_PHASES`, `PHASE_LABEL`, the phase doc comment
 - `src/shell/render.mjs` — `GLYPH` (spinner) and `ROW_STYLE` (active) for it
 - matching tests
@@ -44,6 +47,8 @@ adopted worktree do not.
 - [ ] A PREPARING task is never declared dead, respawned or given a second setup.
 - [ ] Setup ok → spawn with no note; setup failed → spawn with the formatted note (fake platform).
 - [ ] HALT and the stop path call `kill()` on every live handle.
+- [ ] A run whose only task is preparing for more passes than `STALL_GRACE` (and than `drive()`'s idle
+      limit) is not declared stalled; `liveAfter` counts the preparing task.
 - [ ] The review hand-off spawns no setup.
 - [ ] Restart with a worktree and no worker (coordinator died mid-setup) prepares again.
 - [ ] Display: a preparing task renders a spinner row labelled `preparing`, counted in `running`.

@@ -42,6 +42,9 @@ export function runLines(lines, opts) {}
 export function startLines(lines, opts) {}
 ```
 
+`readLogTail` in `src/shell/pir-tui.mjs` already reads the last n lines of a log; reuse or move it
+rather than writing a second one.
+
 ## Tests
 
 - [ ] `runLines(['true', 'echo hi'])` → ok; the log holds both `$` headers and `hi`.

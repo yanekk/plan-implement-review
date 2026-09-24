@@ -25,7 +25,9 @@ Pass 3's verification, written into the skill as the commands to run:
 
 ```
 git worktree add --detach "$TMP/pir-verify-<slug>" HEAD
-( cd "$TMP/pir-verify-<slug>" && <each setup line> && <each test line> )   # each line its own sh -c
+( cd "$TMP/pir-verify-<slug>" && <each setup line> \
+    && test -z "$(git status --porcelain)" \
+    && <each test line> )                                                 # each line its own sh -c
 git worktree remove --force "$TMP/pir-verify-<slug>"                     # always, pass or fail
 ```
 
@@ -44,5 +46,6 @@ and T12 exercises the narrow pass once.
 
 ## Done when
 
-- [ ] pir-review-plan verifies in a fresh worktree, always removes it, and has the narrow pass.
+- [ ] pir-review-plan verifies in a fresh worktree, fails setup that leaves it unclean (DESIGN §2.1),
+      always removes it, and has the narrow pass.
 - [ ] pir-work stops on a missing or malformed block with the message above.

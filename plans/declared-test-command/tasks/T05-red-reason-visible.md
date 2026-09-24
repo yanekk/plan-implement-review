@@ -39,7 +39,9 @@ Rendered red footer:
 ```
 
 A finished red frame in the viewer ends `Not ready to merge — fix pir/<slug>, see the output above.`
-in place of `Hand-off: git merge …`. A green one is unchanged.
+in place of `Hand-off: git merge …`. A green one is unchanged. Red is `runState.complete &&
+!runState.readyToMerge`. The no-snapshot `finished` note (~line 356) has no runState to tell red from
+green, so it drops the merge offer and points at run.log instead of guessing green.
 
 ## Tests
 

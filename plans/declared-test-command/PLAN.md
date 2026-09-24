@@ -51,7 +51,7 @@ and gates on the declared lines.
 
 | # | Task | Depends on |
 |---|---|---|
-| [T11](tasks/T11-docs.md) | docs | T03, T04, T05, T07 |
+| [T11](tasks/T11-docs.md) | docs | T03, T04, T05, T07, T08, T09 |
 | [T12](tasks/T12-prove-and-install.md) | prove-and-install | T03, T04, T05, T07, T08, T09, T10, T11 |
 
 ## Main path: who builds, who wires

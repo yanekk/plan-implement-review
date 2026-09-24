@@ -41,8 +41,11 @@ A plan without one counts as not reviewed. Run /pir-review-plan <slug> to add it
 - [ ] `startRun` refuses with `no-test-block` and the detail after a passing review gate, and spawns
       nothing; an unreviewed plan still reports `not-reviewed` first.
 - [ ] `pir.mjs` prints the message above for `no-test-block`.
-- [ ] The coordinator's `main` refuses (exit 1, message on stderr) in live and dry-run modes, before
-      any worktree is created. Test through the existing main/gate test seam.
+- [ ] The coordinator's `main` refuses (exit 1, message on stderr) before any worktree is created, and
+      the check sits before the `PARALLEL_LIVE` branch so it covers live and dry runs alike. `main` has
+      no test seam today: test the message through an exported helper, and run the bin as a subprocess
+      against a scratch repo in dry mode only. Never with `PARALLEL_LIVE=1`: a regression there would
+      spawn paid workers.
 
 ## Done when
 

@@ -20,12 +20,13 @@ DESIGN §1 success criteria, §5.3, §6.
 #   setup:
 #     - sleep 8 && touch .setup-ran
 cd <scratch> && PARALLEL_MAX_WORKERS=1 node src/shell/pir.mjs single      # detached, the checkout's engine
+# limit: touch <scratch>/plans/single/.parallel/control/HALT if the run has not finished in 10 minutes
 # teardown: HALT if still running; `claude agents --json --all` shows no fixture session; delete scratch
 ```
 
 ## Outside actions
 
-- Watched live run — `ask`
+- Watched live run — `worker` (moved down from `ask` by the user, 2026-09-24; DESIGN §5.3)
 - `./install.sh` — `worker`
 
 ## Automated checks (the worker runs these)
@@ -34,8 +35,10 @@ cd <scratch> && PARALLEL_MAX_WORKERS=1 node src/shell/pir.mjs single      # deta
 - `control/setup/T01.log` exists and `.setup-ran` is in T01's worktree before its worker started.
 - In a second scratch whose DESIGN block is removed, `node src/shell/pir.mjs single` exits non-zero with
   the T03 message and spawns nothing.
-- Following this branch's `skills/pir-review-plan/SKILL.md` there, the narrow pass writes a block, verifies it in a fresh copy,
-  asks, commits `plan-review(single): setup/test block`; `pir single` then starts (stop it at once).
+- Following this branch's `skills/pir-review-plan/SKILL.md` there, the narrow pass writes a block,
+  verifies it in a fresh copy, reaches its ask, commits `plan-review(single): setup/test block`;
+  `pir single` then starts (stop it at once). The worker gives the yes itself: a scratch block has
+  nothing for the person to judge (plan review, user, 2026-09-24).
 - After install: `grep -n parseTestBlock ~/.claude/pir-engine/src/shell/coordinate.mjs` finds it, and
   `~/.claude/skills/pir-work/SKILL.md` has the block gate. In parallel mode, install only after
   `pir/declared-test-command` is merged to main.

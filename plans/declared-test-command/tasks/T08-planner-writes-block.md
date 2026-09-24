@@ -16,11 +16,15 @@ DESIGN §2.1, §2.7.
 - `skills/pir-plan/templates/DESIGN.md` — starts with the block; §5 "The test command" says the block
   is the command and drops the "A parallel run executes this block" paragraph about the fence
 - `skills/pir-plan/SKILL.md` — Stage 3 "The test command" measures setup as well (what a fresh clone
-  needs before its tests can run, `none` if nothing) and writes both into the block; Stage 7 lists it
+  needs before its tests can run, `none` if nothing; it must leave the copy clean, DESIGN §2.1) and
+  writes both into the block; Stage 7 lists it
 - `skills/pir-implement/SKILL.md`, `skills/pir-review/SKILL.md` — "the test command" is the block's
   `test` lines; if they cannot start for something missing, run the `setup` lines
 - `skills/pir-worker/SKILL.md` — a paragraph on the setup-failure note: read it, get the worktree ready,
   carry on; do not ask the person unless the fix is outside the worktree
+- `CLAUDE.md` — § "Anything the tests cannot establish" says the test command is "named in
+  `DESIGN.md § Environment`"; it becomes the block's `test` lines. `install.sh` ships this file as the
+  method every project gets (`pir-install/PIR-CLAUDE.md`), so it is part of the method text
 - `src/core/planner-templates.test.mjs`
 
 ## Interface
@@ -45,4 +49,4 @@ test:
 ## Done when
 
 - [ ] The template begins with a block `parseTestBlock` accepts, tested.
-- [ ] pir-plan, pir-implement, pir-review and pir-worker describe the block as in DESIGN §2.7.
+- [ ] pir-plan, pir-implement, pir-review, pir-worker and CLAUDE.md describe the block as in DESIGN §2.7.

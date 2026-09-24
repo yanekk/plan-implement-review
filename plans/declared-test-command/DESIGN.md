@@ -70,6 +70,10 @@ test:
   is how two plans end up disagreeing about which one works.
 - Each line runs in its own shell with the folder's root as its working directory. A `cd` does not
   carry to the next line, which is why the example writes `cd server && npm ci`.
+- Setup must leave the folder clean: no tracked file changed and no new file git does not ignore
+  (user, 2026-09-24). Setup runs unattended in every worktree, so `npm install` rewriting a lock file,
+  or an install folder missing from `.gitignore`, would reach task commits or dirty a reused worktree.
+  `npm ci` over `npm install` is the usual fix.
 
 A block that is missing or malformed is reported with the reason (`no front-matter block`, `no test
 key`, `setup: expected none or a list`, `line 4: expected "  - <command>"`), never as failing tests.
@@ -101,7 +105,8 @@ setup lines in that worktree as a background child process, then records the tas
 phase and spawns in the same pass, exactly as today.
 
 - A preparing task holds a ceiling slot, since it is about to become a worker; it is not subject to
-  the liveness or death checks, since it has no session yet.
+  the liveness or death checks, since it has no session yet. It counts as live work, so the run's
+  quiet-run end ("nothing left to do") never fires while setup is running.
 - Setup success spawns normally. Setup failure spawns anyway (user, 2026-09-24: best effort) with a
   note appended to the opening instruction: the failing line, its exit status, the last 20 lines of
   its output and the log path. The worker then gets its worktree ready itself. The tail goes inline
@@ -129,7 +134,8 @@ result names which half failed: ``setup `cd server && npm ci` exited 1`` or ``te
 
 `/pir-review-plan` Pass 3 runs the block in a fresh copy: `git worktree add --detach` of HEAD into the
 session's temp directory, the setup lines, then the test lines, then `git worktree remove --force`,
-always. A fresh copy is the point: the main checkout already has everything installed, which is exactly
+always. After setup, `git status --porcelain` must print nothing (§2.1); output there counts as a
+setup failure. A fresh copy is the point: the main checkout already has everything installed, which is exactly
 how remote-e2e's missing `npm ci` stayed hidden. On a project with no code yet the tests may fail the
 way an empty project fails (the existing Pass 3 rule); setup must succeed.
 
@@ -189,6 +195,7 @@ The parser (`src/core/testblock.mjs`) is pure; reading DESIGN.md and running its
 
 - `src/core/testblock.mjs` (new, T01) — `parseTestBlock(text)`. Replaces `src/core/testcommand.mjs`
   (deleted in T04).
+- `src/core/setupnote.mjs` (new, T06) — `formatSetupNote`, the text of the setup-failure note.
 - `src/shell/commands.mjs` (new, T02) — runs a list of lines in a folder, synchronously for the gate,
   in the background for worker setup. Owns the env scrub and log format moved out of `runFeatureTests`.
 - `src/shell/coordinate.mjs` — start refusal (T03), `runFeatureTests` on the block (T04),
@@ -251,13 +258,14 @@ override. For detail, run `node --test <file>`.
 | Harness scratch repo | Live runs touch only a throwaway repo under the job temp dir |
 | `PARALLEL_MAX_WORKERS=1` | One worker at a time in the live run |
 | `touch plans/{slug}/.parallel/control/HALT` | Stops the run and, after T07, its setup children |
+| 10-minute limit on the live run | T12's worker touches HALT if the run has not finished by then |
 
 ### 5.3 Outside the code — who acts
 
 | Action | Command | Bin | Why this bin | Way back | Cost |
 |---|---|---|---|---|---|
 | Fresh-copy verification | `git worktree add --detach <tmp> HEAD` … `git worktree remove --force` | `worker` | Local, temp dir, always removed | `git worktree prune` | none |
-| Watched live run | `PARALLEL_MAX_WORKERS=1 node src/shell/pir.mjs single` in a trusted fixture scratch | `ask` | Spends real model time | HALT; scratch deleted | a few dollars |
+| Watched live run | `PARALLEL_MAX_WORKERS=1 node src/shell/pir.mjs single` in a trusted fixture scratch | `worker` | Spends real model time; moved down from `ask` by the user at plan review, 2026-09-24, as for resume-dead-worker: bounded by ceiling 1, scratch only, HALT at 10 minutes | HALT; scratch deleted | a few dollars |
 | `./install.sh` | refresh the installed engine and skills | `worker` | Local copy, idempotent. Never while a parallel run of this plan is live: its workers use the installed engine | Re-run from the previous commit | none |
 
 ---
@@ -283,7 +291,11 @@ the whole change: `git worktree add --detach <tmp> <commit before this plan>`, r
 - **Narrow review pass for plans already reviewed or started** (user, 2026-09-24), so an in-flight plan
   can be unblocked without a full re-review that could rewrite ground under finished tasks.
 - **Worker setup is best effort** (user, 2026-09-24): a failure is handed to the worker in its opening
-  instruction rather than blocking the task.
+  instruction rather than blocking the task. The person sees nothing on screen for it (plan
+  review, user, 2026-09-24): the worker handles it, the log has it, and the screen stays for what needs
+  the person.
+- **Setup leaves the copy clean, checked at plan review** (user, 2026-09-24, §2.1). One extra command in
+  the fresh copy the review already makes, against stray files in task commits later.
 - **Read from the main checkout** (§2.2). A restart's feature branch may predate the block.
 - **The prose reader is deleted, not kept as a fallback.** Required means required; a second path
   would be the guess this plan removes.

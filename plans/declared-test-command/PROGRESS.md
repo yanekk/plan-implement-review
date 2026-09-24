@@ -8,11 +8,11 @@ task you pick up, and append yours there.
 **Sixty words to a Notes cell, counted.** Flat prose. The account is the commit message. Whoever
 writes a cell also fixes the over-budget cell they walk past.
 
-**Plan reviewed:** not yet — run `/pir-review-plan` before the first `/pir-work`
+**Plan reviewed:** 2026-09-24 — 8 fixed, 4 decided with the user
 
 **Status:** Planned 2026-09-24. Nothing built.
 **Last updated:** 2026-09-24
-**Next `pir-work` will:** T01, once the plan is reviewed; T02, T05 and T06 have no dependency and may
+**Next `pir-work` will:** T01; T02, T05 and T06 have no dependency and may
 follow in any order.
 
 ## Tasks
@@ -32,7 +32,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T08 | planner-writes-block | T01 | ⬜ | |
 | T09 | review-verifies-block | T01 | ⬜ | |
 | T10 | harness-fixture-block | T01 | ⬜ | |
-| T11 | docs | T03, T04, T05, T07 | ⬜ | |
+| T11 | docs | T03, T04, T05, T07, T08, T09 | ⬜ | |
 | T12 | prove-and-install | T03, T04, T05, T07, T08, T09, T10, T11 | ⬜ | |
 
 **Review queue:** *(empty)*
