@@ -8,6 +8,8 @@ changed.
 
 | Date | | Finding |
 |---|---|---|
+| 2026-09-24 | 🐞 | A stalled run ends `finished` with `complete` false, so the `pir-tui.mjs` stale note still offers `Hand-off: git merge` on an unfinished branch. Reproduced in T05 review; left open, wording for that state is undecided. |
+| 2026-09-24 | 📌 | A red finished run's header still reads `✓ pir/<slug> · n/n done`, styled green (`render.mjs` header rule: green when finished). Only the footer says red. Not in T05's scope. |
 | 2026-09-24 | 📌 | Since T03, harness fixture plans lack a block, so every harness run is refused at start until T10 adds it. Not in `npm test`; harness runs are live only. |
 | 2026-09-24 | 📌 | `launch.startRun` reads gates from `cwd`, not the main checkout (§2.2); `pir` run inside a worktree reads that worktree's DESIGN.md while the coordinator reads main's. Pre-existing for the review gate; left. |
 | 2026-09-24 | 📌 | `startLines` spawns detached, so a setup line survives a coordinator killed by SIGINT or a crash (reproduced: `sleep` outlived node exit 130). T07 kills handles on stop and HALT only; a signal or crash path needs `kill()` too. |

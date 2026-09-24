@@ -324,7 +324,10 @@ export function buildWatchFrame(view, { now, spinnerChar = SPINNER[0], ui = init
       note(logPath ?? "run.log in the run's control folder", 'dim', '    ');
       note(`Esc quits pir; then \`pir ${slug}\` retries it.`, 'dim');
     } else if (state === 'finished') {
-      note(`no snapshot recorded — finished. Hand-off: git merge ${record?.branch ?? `pir/${slug}`}`, 'ended');
+      // With no snapshot there is no runState to tell green from red, so never offer the merge on a guess
+      // (DESIGN §2.8): point at run.log, which records how the gate ended.
+      note('no snapshot recorded — finished. Whether its tests passed is in the log:', 'ended');
+      note(logPath ?? "run.log in the run's control folder", 'dim', '    ');
     } else if (state === 'stopped') {
       note(`no snapshot recorded — stopped. \`pir ${slug}\` resumes from committed work.`, 'ended');
     } else {
@@ -348,7 +351,12 @@ export function buildWatchFrame(view, { now, spinnerChar = SPINNER[0], ui = init
         }
         note(`← back to the list; \`pir ${slug}\` resumes it.`, 'dim');
       } else if (state === 'finished') {
-        note(`— finished · this frame is stale. Hand-off: git merge ${record?.branch ?? `pir/${slug}`}`, 'ended', '');
+        const branch = record?.branch ?? `pir/${slug}`;
+        // A complete run that is not ready to merge ended red (DESIGN §2.8): its footer above already shows
+        // the reason and log path, so the stale note must not offer the merge.
+        const red = !!snap.runState?.complete && !snap.runState?.readyToMerge;
+        const end = red ? `Not ready to merge — fix ${branch}, see the output above.` : `Hand-off: git merge ${branch}`;
+        note(`— finished · this frame is stale. ${end}`, 'ended', '');
       } else if (state === 'stopped') {
         note(`— stopped · this frame is stale. \`pir ${slug}\` resumes from committed work.`, 'ended', '');
       }

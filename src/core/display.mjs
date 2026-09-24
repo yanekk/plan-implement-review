@@ -32,7 +32,8 @@ const PHASE_LABEL = {
 // buildDisplay(runState, { now, spinnerFrame }) → { summary, rows, footer } (DESIGN §2.3).
 //
 // runState (a pass's output, assembled by the shell):
-//   { branch, ceiling, complete?, readyToMerge?, interrupted?, tasks: [task…] }
+//   { branch, ceiling, complete?, readyToMerge?, testsReason?, interrupted?, tasks: [task…] }
+//   testsReason: { reason, logPath } from the red end gate, or null (green, unfinished, an old snapshot).
 //   task: { id, slug, deps:[id…], done:bool, phase:null|'building'|'reviewing'|'merging'|'asking',
 //           since:ms|null, doneMs:ms|null, question:string|null, prompt:string|null }
 //     phase   — set when a live worker holds the task; null when no worker does.
@@ -50,7 +51,7 @@ const PHASE_LABEL = {
 // is accepted for signature symmetry with the renderer but not used by the model: the spinner glyph is
 // the renderer's, the model carries `kind` (DESIGN §2.3).
 export function buildDisplay(runState, { now, spinnerFrame } = {}) {
-  const { branch, ceiling, complete = false, readyToMerge = false, interrupted = false, tasks = [] } =
+  const { branch, ceiling, complete = false, readyToMerge = false, testsReason = null, interrupted = false, tasks = [] } =
     runState ?? {};
 
   const doneIds = new Set(tasks.filter((t) => t.done).map((t) => t.id));
@@ -77,7 +78,7 @@ export function buildDisplay(runState, { now, spinnerFrame } = {}) {
   // `branch` rides at the top level beside summary/rows/footer: the renderer shows the run's branch in
   // its header line on every paint, but the footer only carries a branch in some states (handoff, red),
   // so the summary line cannot source it from there. It is the one field added to the interface sketch.
-  return { branch: branch ?? null, summary, rows, footer: footerFor({ tasks, complete, readyToMerge, interrupted, branch }) };
+  return { branch: branch ?? null, summary, rows, footer: footerFor({ tasks, complete, readyToMerge, testsReason, interrupted, branch }) };
 }
 
 // One row for one task. The order of the checks is the priority: a ✅ task is done however it got there;
@@ -113,7 +114,7 @@ function rowFor(t, { now, doneIds, ceilingFull }) {
 // parked worker the person must answer, then the end-of-run hand-off (green) or failure (red), else the
 // plain running line. `asking` beats `handoff`/`red` because a complete run has nothing asking, so the
 // two never contend; the order only makes the intent explicit.
-function footerFor({ tasks, complete, readyToMerge, interrupted, branch }) {
+function footerFor({ tasks, complete, readyToMerge, testsReason, interrupted, branch }) {
   if (interrupted) return { kind: 'interrupted' };
 
   const asking = tasks.find((t) => !t.done && t.phase === 'asking');
@@ -126,7 +127,10 @@ function footerFor({ tasks, complete, readyToMerge, interrupted, branch }) {
   }
 
   if (complete) {
-    return readyToMerge ? { kind: 'handoff', branch } : { kind: 'red', branch };
+    if (readyToMerge) return { kind: 'handoff', branch };
+    // The red footer says why and where the output is (DESIGN §2.8); both null for a snapshot written
+    // before the gate carried them.
+    return { kind: 'red', branch, reason: testsReason?.reason ?? null, logPath: testsReason?.logPath ?? null };
   }
   return { kind: 'running' };
 }

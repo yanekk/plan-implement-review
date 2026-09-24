@@ -120,7 +120,16 @@ test('footer is handoff (green), red, asking, running or interrupted per the run
     { branch: 'pir/demo', ceiling: 4, complete: true, readyToMerge: false, tasks: [task({ done: true })] },
     { now: NOW },
   ).footer;
-  assert.deepEqual(red, { kind: 'red', branch: 'pir/demo' });
+  assert.deepEqual(red, { kind: 'red', branch: 'pir/demo', reason: null, logPath: null }, 'an old snapshot has no reason');
+
+  const redWhy = buildDisplay(
+    {
+      branch: 'pir/demo', ceiling: 4, complete: true, readyToMerge: false, tasks: [task({ done: true })],
+      testsReason: { reason: 'test `make test` exited 2', logPath: '/x/tests.log' },
+    },
+    { now: NOW },
+  ).footer;
+  assert.deepEqual(redWhy, { kind: 'red', branch: 'pir/demo', reason: 'test `make test` exited 2', logPath: '/x/tests.log' });
 
   const asking = buildDisplay(
     { branch: 'pir/demo', ceiling: 4, tasks: [task({ id: 'T05', slug: 'ask-one', phase: 'asking', since: NOW, question: 'which format?' })] },
