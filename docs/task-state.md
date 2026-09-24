@@ -114,5 +114,15 @@ The classic single-stream flow never read a `Runs` marker either.
 ## The plan-reviewed gate
 
 `PROGRESS.md` carries a `**Plan reviewed:**` line. The gate reads as **not reviewed** on anything
-short of a positive note — a missing line, an empty note, or one beginning "not yet." The command
-refuses to start until it reads as reviewed (see [run-lifecycle.md](run-lifecycle.md)).
+short of a positive note — a missing line, an empty note, or one beginning "not yet."
+
+The gate also includes the plan's **setup/test block**: the front-matter block `plans/{slug}/DESIGN.md`
+opens with, declaring the `setup` and `test` lines (see [run-lifecycle.md](run-lifecycle.md)). A plan
+whose block is missing or malformed counts as not reviewed, whatever its `Plan reviewed:` line says,
+because the engine could not run its tests at the end. `/pir-review-plan` writes the block and verifies
+it in a fresh copy of the repo; on a plan already reviewed or started it does only that, in a narrow
+pass that changes nothing else and leaves the `Plan reviewed:` line as it was.
+
+The command refuses to start until both read as reviewed, and `pir {slug}` refuses the same plan
+before detaching (see [run-lifecycle.md](run-lifecycle.md), [detached-runs.md](detached-runs.md)).
+`pir-work` applies the same gate in the classic flow.
