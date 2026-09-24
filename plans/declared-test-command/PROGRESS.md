@@ -12,8 +12,7 @@ writes a cell also fixes the over-budget cell they walk past.
 
 **Status:** Planned 2026-09-24. Nothing built.
 **Last updated:** 2026-09-24
-**Next `pir-work` will:** T01; T02, T05 and T06 have no dependency and may
-follow in any order.
+**Next `pir-work` will:** T01; T02 and T05 have no dependency and may follow in any order.
 
 ## Tasks
 
@@ -27,7 +26,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T03 | start-refusal | T01 | ⬜ | |
 | T04 | end-gate-from-block | T01, T02 | ⬜ | |
 | T05 | red-reason-visible | — | ⬜ | |
-| T06 | spawn-note | — | 🔍 | `openingInstruction(phase, task, note)` appends note after a blank line; `spawn` passes `note` on real and fake platforms (fake records it); `formatSetupNote` in `src/core/setupnote.mjs`. 6 new tests. Deviation: tail with only blank lines also omits "Last lines"; `line` unused since `reason` already names it. |
+| T06 | spawn-note | — | ✅ | Note appended after a blank line on real and fake spawn; `formatSetupNote` in `src/core/setupnote.mjs`. Review clean, no fix commit. Accepted deviations: whitespace-only tail omits "Last lines"; `line` unused as `reason` names it. Probed argv stays one positional, byte-identical no-note string, blank-line tails, `could not run` reasons, and that no caller passes a note yet. |
 | T07 | worker-setup | T01, T02, T06 | ⬜ | |
 | T08 | planner-writes-block | T01 | ⬜ | |
 | T09 | review-verifies-block | T01 | ⬜ | |
@@ -35,7 +34,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T11 | docs | T03, T04, T05, T07, T08, T09 | ⬜ | |
 | T12 | prove-and-install | T03, T04, T05, T07, T08, T09, T10, T11 | ⬜ | |
 
-**Review queue:** T06
+**Review queue:** —
 
 ## Blocked on the user
 
