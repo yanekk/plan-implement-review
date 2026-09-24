@@ -34,6 +34,35 @@ decision of the user's, through `/pir-plan`.
 *(If the only thing stopping you is a ⛔ task that was never actually started, say exactly
 that and let the user decide. Do not decide it yourself.)*
 
+**The one exception: a missing or malformed setup/test block.** If the plan is in flight — or
+already reviewed and not built — and its `DESIGN.md` has no valid block (see *Pass 3*), do not
+refuse and do not re-review. Run **the narrow pass** (below) and nothing else. With a valid
+block, this refusal stands as written.
+
+### The narrow pass
+
+The engine and `pir-work` both treat a plan without a valid block as not reviewed, so a plan
+reviewed or started before the block existed is stuck until one is written. This pass unsticks
+it without re-reading ground under finished work:
+
+1. **Measure** the setup and test lines on this machine, as `pir-plan` Stage 3 does: what the
+   tests are, and what a fresh copy needs before they run (`none` if nothing). The prose of
+   `DESIGN.md § Environment` is the starting point, not the answer.
+2. **Write** the block as the very first lines of `DESIGN.md`, in the shape *Pass 3* gives.
+   Touch nothing else in the file.
+3. **Verify** it in a fresh copy, exactly as *Pass 3* says. A failure there — setup failing,
+   setup leaving the copy unclean, a test line failing where the plan's code is built — means
+   the lines are wrong: measure again. Do not commit an unverified block.
+4. **Show the user the block and wait for their yes**, in plain words: what each line does and
+   what the fresh copy showed. The block is what the engine will run unattended in every worker's
+   folder, so it is theirs to approve.
+5. **Commit** `DESIGN.md` alone, as `plan-review({slug}): setup/test block`, the message saying
+   what was measured and what the verification showed.
+
+No other file changes. The `Plan reviewed:` line in `PROGRESS.md` stays as it was — this pass
+is not a review, and a plan that was never reviewed still needs the full one. Then report and
+stop.
+
 **3. Nothing to review.** No slug argument: list `plans/`. Exactly one plan — use it and say
 which in your first line. Several — show them and **ask**. None — say so and point at
 `/pir-plan`.
@@ -176,9 +205,60 @@ You are looking for what nobody has decided yet:
 
 The plan was measured on a machine, possibly on a different day. Re-measure:
 
-- **The test command** named in `DESIGN.md § Environment` runs here. On a project with no
-  code yet it may legitimately fail — check it fails the way an empty project fails, not the
-  way a wrong command fails, and say which.
+- **The setup/test block is valid.** `DESIGN.md` opens with it — the first line of the file is
+  `---`, and it ends at the next line that is exactly `---`:
+
+  ```
+  ---
+  setup:
+    - cd server && npm ci
+  test:
+    - make test
+  ---
+  ```
+
+  `setup` and `test` are both required; `setup: none` is the empty setup; `test` needs at least
+  one line and `test: none` is invalid; each item is `  - ` and one shell line, run from the repo
+  root in its own `/bin/sh -c`. Check it with the engine's own parser, so you accept exactly what
+  the engine will:
+
+  ```
+  node --input-type=module -e 'import {parseTestBlock} from "'"$HOME"'/.claude/pir-engine/src/core/testblock.mjs"; import {readFileSync} from "node:fs"; console.log(JSON.stringify(parseTestBlock(readFileSync(process.argv[1],"utf8"))))' plans/{slug}/DESIGN.md
+  ```
+
+  **A missing or malformed block is yours to write, not a decision.** Once measured it has one
+  right answer: measure the lines as `pir-plan` Stage 3 does, write the block as the file's
+  first lines, verify it as below, and list it afterwards with the other mechanical fixes. The
+  engine refuses to start a plan without one, and `pir-work` stops on it.
+- **The block runs in a fresh copy.** Your checkout already has everything installed, which is
+  exactly how a missing install stays hidden, so run it where nothing is:
+
+  ```
+  V="${TMPDIR%/}/pir-verify-{slug}"      # the session's temp directory
+  git worktree add --detach "$V" HEAD
+  ( cd "$V" \
+      && sh -c '<setup line 1>' && sh -c '<setup line 2>' \
+      && test -z "$(git status --porcelain)" \
+      && sh -c '<test line 1>' && sh -c '<test line 2>' )
+  git worktree remove --force "$V"      # always, pass or fail
+  ```
+
+  Each line runs in its own `sh -c` from the copy's root, so a `cd` does not carry over — the
+  way the engine runs them. With `setup: none`, skip straight to the clean check and the tests.
+  **Remove the worktree whatever happened**, in the same command or the next one; a stale one
+  blocks the next verification. It is local and needs no approval (`git worktree prune` clears
+  a leftover).
+
+  - **Setup must succeed and leave the copy clean.** Any output from `git status --porcelain`
+    after setup counts as a setup failure: setup runs unattended in every parallel worktree, so
+    a rewritten lock file or an install folder missing from `.gitignore` would land in task
+    commits. `npm ci`, not `npm install`, is the usual fix.
+  - **The test lines pass.** On a project with no code yet they may legitimately fail — check
+    they fail the way an empty project fails, not the way a wrong command fails, and say which.
+    Setup has no such allowance.
+
+  A wrong line with one right replacement you have just measured is a mechanical fix; a choice
+  between two defensible setups is a decision.
 - **The passing run is actually cheap.** Where there is a suite to run, run it and look at what
   came back: a green run should be a summary line per suite, not a line per test, and it should
   carry no ANSI colour escapes. Verbose or coloured output means the quiet, colourless default
@@ -266,7 +346,8 @@ A second implementation of something the repo already has is the most expensive 
 > ways · a missing test list, a missing dependency line · a broken cross-reference · a
 > version number the machine has just contradicted · a test command that prints a line per
 > passing test or forces colour when it should be quiet · a row or cell over its word budget ·
-> a section padded with "n/a" instead of deleted · a rule stated twice in two files · a missing
+> a section padded with "n/a" instead of deleted · a rule stated twice in two files · a
+> setup/test block missing or malformed, once measured and verified in a fresh copy (*Pass 3*) · a missing
 > dependency edge between two tasks that both exist, where one plainly uses the other's work (the
 > end-to-end task not reaching a part it exercises, a leaf whose one consumer is obvious)
 
