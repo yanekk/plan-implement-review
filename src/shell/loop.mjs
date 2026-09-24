@@ -246,6 +246,7 @@ function reconcile({ platform, worktree, repo, slug, maxWorkers, state, featureP
       const prompt = buildConflictPrompt({
         task: num,
         slug: slugByNum.get(num),
+        plan: slug,
         workerName: null,
         taskBranch: handle.branch,
         featureBranch: state.feature.branch,
@@ -569,7 +570,7 @@ export function runPass({ platform, worktree, repo, slug, maxWorkers, state, con
       // There is no down-channel and no answer() any more (DESIGN §2.2, T03): the PERSON drives the
       // resolution. The run parks the worker and hands the person a ready-to-paste resolution prompt
       // (buildConflictPrompt, T14) naming this worker, the branch to merge in, and the conflicting files
-      // — with the keep-which-side choice left blank. The person attaches to this same worker, resolves
+      // — the worker picks the side and asks if that is a judgement. The person attaches to this same worker, resolves
       // on its branch and re-signals done, at which point this merge step runs again and lands cleanly
       // (§2.5, §2.8, T28). The run routes nothing down.
       const text = `merge conflict in ${res.files?.join(', ') || 'the feature branch'}`;
@@ -577,6 +578,7 @@ export function runPass({ platform, worktree, repo, slug, maxWorkers, state, con
       const prompt = buildConflictPrompt({
         task: num,
         slug: t.slug,
+        plan: slug,
         workerName: name,
         taskBranch: t.worktree.branch,
         featureBranch: state.feature.branch,

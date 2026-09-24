@@ -69,15 +69,17 @@ There are two places a conflict can arise:
   delete its task, or respawn it. Because that worker finished clean and has no idea a clash happened,
   the command **composes a ready-to-paste resolution prompt** and prints it: which worker to attach
   to, the `git merge` that folds the feature branch into the task branch, the conflicting files, and
-  the finish steps (commit, the test command from the plan's `DESIGN.md`, re-signal done). It leaves the keep-which-side choice a marked
-  blank, because that judgement is the person's — it is exactly what made the conflict stop for a
-  person. The command **sends nothing**: the person copies the prompt, attaches to that same worker,
-  fills in which side to keep, and pastes it. The worker resolves on its branch and re-signals done,
+  the finish steps (commit, the test command from the plan's `DESIGN.md`, re-signal done). It names no side: the
+  worker resolves where both sides' work makes the result clear, and asks the person in its own
+  session when choosing a side is a judgement. The command **sends nothing**: the person copies the
+  prompt, attaches to that same worker, and pastes it. The worker resolves on its branch and re-signals done,
   and only then does the command merge the now-clean branch. The merge and the worker's close are
   paired — a worker is closed only after its branch has actually merged — so a conflict can never
-  destroy the worker that must resolve it. The prompt is bulky and must be selectable to copy, so it
-  prints on the normal screen above the live display; the in-place frame itself stays a compact line
-  naming the parked worker. (On a restart, a finished branch can clash with no live worker to attach
+  destroy the worker that must resolve it. The task's row reads `merge conflict` in orange, not
+  `asking you`, and the header counts it separately. The prompt is bulky, so the in-place frame stays a
+  compact line naming the parked worker; the prompt itself is drawn in full under the live view in
+  `pir` for as long as the conflict is open, and the coordinator also prints it once on its own normal
+  screen, which for a detached run is only `run.log`. (On a restart, a finished branch can clash with no live worker to attach
   to; the prompt then names the task branch to check out and land by hand.)
 
 The command never merges a dirty branch into the feature branch. At the end it runs the tests on the

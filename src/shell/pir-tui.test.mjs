@@ -417,3 +417,17 @@ function fakeStream({ isTTY = true, columns = 80, rows = 24 } = {}) {
     text: () => chunks.join(''),
   };
 }
+
+test('a running watch frame draws a merge conflict\'s paste-in prompt under the live block, orange head, exact lines (user 2026-09-24)', () => {
+  const PROMPT = 'Merge conflict on T05 clash — the run parked it for you (DESIGN §2.8).\n\n----- copy -----\n  git merge pir/alpha\n  1. Resolve\n----- end -----\n';
+  const runState = { branch: 'pir/alpha', ceiling: 2, tasks: [{ id: 'T05', slug: 'clash', deps: [], done: false, phase: 'asking', since: NOW, doneMs: null, question: 'merge conflict in FINDINGS.md', prompt: PROMPT }] };
+  const snap = { version: 1, proc: {}, finalState: null, runState };
+  const frame = buildWatchFrame({ slug: 'alpha', state: 'running', repo: 'repoA', snap, record: { pid: 1, branch: 'pir/alpha' } }, { now: NOW, columns: 120 });
+  const text = frameText(frame);
+  assert.ok(text.includes('----- copy -----\n  git merge pir/alpha\n  1. Resolve\n----- end -----'), 'the paste block is drawn verbatim, indentation kept');
+  assert.equal(findSpan(frame, 'Merge conflict on T05').style, 'conflict');
+  assert.equal(findSpan(frame, 'merge conflict   ').style, 'conflict', 'the task row is orange');
+
+  const stale = buildWatchFrame({ slug: 'alpha', state: 'stopped', repo: 'repoA', snap, record: { pid: 1, branch: 'pir/alpha' } }, { now: NOW, columns: 120 });
+  assert.ok(!frameText(stale).includes('git merge pir/alpha'), 'a run that is not running does not offer a stale prompt');
+});

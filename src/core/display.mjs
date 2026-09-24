@@ -29,21 +29,27 @@ const PHASE_LABEL = {
   asking: 'asking you',
 };
 
+// A coordinator-side merge conflict is the one asking state that carries a copy-paste prompt (T14).
+function isConflict(t) {
+  return t.phase === 'asking' && !!t.prompt;
+}
+
 // buildDisplay(runState, { now, spinnerFrame }) → { summary, rows, footer } (DESIGN §2.3).
 //
 // runState (a pass's output, assembled by the shell):
 //   { branch, ceiling, complete?, readyToMerge?, interrupted?, tasks: [task…] }
 //   task: { id, slug, deps:[id…], done:bool, phase:null|'building'|'reviewing'|'merging'|'asking',
 //           since:ms|null, doneMs:ms|null, question:string|null, prompt:string|null }
-//     phase   — set when a live worker holds the task; null when no worker does.
+//     phase   — set when a live worker holds the task; null when no worker does. An `asking` task that
+//               carries a `prompt` is a merge conflict and shows as row/footer kind `conflict`.
 //     since   — when the current phase began, for the elapsed clock (now − since).
 //     doneMs  — the final duration to show on a ✅ row, or null if the run never timed it.
 //     question— the parked worker's rendered question, shown on the asking row's footer.
 //     prompt  — the copy-paste resolution prompt for a merge conflict the run hit at its own merge
-//               (buildConflictPrompt, T14). Carried on the asking footer as DATA when present. The live
-//               renderer keeps its frame compact and does NOT paint this multi-line block (it would clip
-//               to useless and re-open the T15 wrap bug); the shell prints it once on the normal screen
-//               (coordinate.mjs). It rides in the model so the vocabulary stays testable without a
+//               (buildConflictPrompt, T14). Carried on the `conflict` footer as DATA. The bounded live
+//               block does not paint this multi-line block (it would clip and re-open the T15 wrap bug);
+//               `pir`'s watch view draws it under the block, and the coordinator prints it once on its
+//               normal screen (coordinate.mjs). It rides in the model so the vocabulary stays testable without a
 //               terminal, and null for an ordinary question (only a coordinator-side conflict has one).
 //
 // opts.now is the current time in ms (the clock, injected — never read here, §3.1). opts.spinnerFrame
@@ -61,13 +67,15 @@ export function buildDisplay(runState, { now, spinnerFrame } = {}) {
 
   const done = doneIds.size;
   const total = tasks.length;
-  const asking = tasks.filter((t) => !t.done && t.phase === 'asking').length;
+  const asking = tasks.filter((t) => !t.done && t.phase === 'asking' && !isConflict(t)).length;
+  const conflicts = tasks.filter((t) => !t.done && isConflict(t)).length;
   const finished = complete || (total > 0 && done === total);
   const summary = {
     done,
     total,
     running,
     asking,
+    conflicts,
     waiting: total - done - running,
     ceiling: ceiling ?? null,
     ceilingFull,
@@ -92,6 +100,10 @@ function rowFor(t, { now, doneIds, ceilingFull }) {
 
   if (ACTIVE_PHASES.has(t.phase)) {
     const elapsedMs = t.since != null && now != null ? now - t.since : null;
+    // A task parked on a merge conflict the run hit at its own merge is not a worker asking anything:
+    // its worker has stopped and does not know. It reads `merge conflict` (orange, user 2026-09-24) so the
+    // person looks for the paste-in prompt instead of attaching to wait for a question that never comes.
+    if (isConflict(t)) return { ...base, kind: 'conflict', label: 'merge conflict', elapsedMs };
     return { ...base, kind: t.phase, label: PHASE_LABEL[t.phase], elapsedMs };
   }
 
@@ -118,11 +130,12 @@ function footerFor({ tasks, complete, readyToMerge, interrupted, branch }) {
 
   const asking = tasks.find((t) => !t.done && t.phase === 'asking');
   if (asking) {
-    const f = { kind: 'asking', task: asking.id, slug: asking.slug, question: asking.question ?? '' };
-    // A merge conflict the run hit at its own merge carries a copy-paste resolution prompt (T14); an
-    // ordinary question does not. Added only when present so the plain-question footer shape is unchanged.
-    if (asking.prompt) f.prompt = asking.prompt;
-    return f;
+    // A merge conflict the run hit at its own merge carries a copy-paste resolution prompt (T14) and
+    // gets its own footer kind; an ordinary question keeps the unchanged `asking` shape with no prompt key.
+    if (isConflict(asking)) {
+      return { kind: 'conflict', task: asking.id, slug: asking.slug, question: asking.question ?? '', prompt: asking.prompt };
+    }
+    return { kind: 'asking', task: asking.id, slug: asking.slug, question: asking.question ?? '' };
   }
 
   if (complete) {

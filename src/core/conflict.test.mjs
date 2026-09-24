@@ -1,7 +1,7 @@
 // buildConflictPrompt, tested without a terminal (DESIGN §2.8, §4). The prompt is what the person copies
 // and pastes to a parked worker when the run's own merge conflicts, so what it does and does NOT say is a
 // rule a person relies on: it must name the worker, the branch to merge in and the files, and it must
-// leave the keep-which-side choice blank — never bake a resolution in.
+// leave the keep-which-side choice to the worker, who asks when it is a judgement — never bake a resolution in.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -29,9 +29,10 @@ test('the prompt names the worker to attach to, the feature branch to merge in, 
   assert.match(p, /T02 greet/, 'it labels the task by number and slug');
 });
 
-test('it leaves the keep-which-side choice a blank and bakes in NO resolution', () => {
+test('it leaves the side to the worker, who asks when it is a judgement, and bakes in NO resolution (user 2026-09-24)', () => {
   const p = buildConflictPrompt(base);
-  assert.match(p, /KEEP:\s+_+/, 'the keep-which-side choice is a marked, empty blank for the person');
+  assert.doesNotMatch(p, /KEEP:/, 'no blank for the person to fill in before pasting');
+  assert.match(p, /needs a\s+judgement, ask me/, 'the worker is told to ask when the side is a judgement');
   // The whole point of parking for a person: the prompt must not decide the merge. It may name a file
   // path, but it never states which side wins or supplies resolved content.
   assert.ok(!/keep the (feature|task|worker|mine|theirs) side/i.test(p), 'no side is chosen for the person');
@@ -51,7 +52,7 @@ test('with no live worker (restart-reconcile) it names the branch to check out i
   assert.doesNotMatch(p, /claude agents/, 'there is no live worker to attach to');
   assert.match(p, /git checkout pir\/demo-T02/, 'it tells the person to check the task branch out by hand');
   assert.match(p, /git merge pir\/demo/, 'the git scaffold to merge the feature branch is still there');
-  assert.match(p, /KEEP:\s+_+/, 'the keep-which-side blank is still left for the person');
+  assert.match(p, /ask me before you resolve it/, 'the ask-when-unsure line is still there');
   assert.match(p, /land this branch yourself/i, 'with no worker to re-signal, the person lands the branch');
 });
 
@@ -63,7 +64,7 @@ test('it is delimited so the person can select exactly what to paste, with plain
   assert.ok(start >= 0 && end > start, 'the pasteable block is bracketed by copy/end markers');
   const block = lines.slice(start + 1, end).join('\n');
   assert.match(block, /git merge pir\/demo/, 'the git steps are inside the pasteable block');
-  assert.match(block, /KEEP:/, 'the keep blank is inside the pasteable block');
+  assert.match(block, /ask me before you resolve it/, 'the ask-when-unsure line is inside the pasteable block');
   // The markers must be plain ASCII, or they would be copied into the worker as box-drawing noise.
   assert.ok(/^-+ .* -+$/.test(lines[start].trim()) || lines[start].startsWith('-----'), 'the markers are plain dashes');
 });
@@ -72,4 +73,10 @@ test('empty file list degrades to naming the feature branch rather than an empty
   const p = buildConflictPrompt({ ...base, files: [] });
   assert.match(p, /Conflicting file\(s\):/, 'it still has a files section');
   assert.match(p, /the feature branch/, 'with no file names it says the clash is on the feature branch');
+});
+
+test('the test step names the PLAN folder, never the task slug (declared-test-command T05, 2026-09-24)', () => {
+  const p = buildConflictPrompt({ ...base, plan: 'demo' });
+  assert.match(p, /test command in plans\/demo\/DESIGN\.md/);
+  assert.ok(!p.includes('plans/greet/'), 'the task slug is not a plan folder');
 });

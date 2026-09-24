@@ -10,11 +10,10 @@
 // (§2.8). This composes that briefing once, so the person copies it, attaches to the named worker, and
 // pastes it.
 //
-// The one thing it must NOT fill in. Which side of the conflict to keep is the human judgement that made
-// the conflict stop for a person in the first place, so the prompt carries only the mechanical scaffold
-// — which worker to attach to, which branch to merge in, which files clashed, and the finish steps — and
-// leaves the keep-which-side choice as a marked blank (`KEEP:`) for the person to complete before
-// pasting. It bakes in no resolution.
+// Who picks the side. The worker does: it holds the task's context, and most clashes (two tasks each
+// appending rows to FINDINGS.md) have one obvious resolution. The prompt used to carry a `KEEP:` blank for
+// the person to fill in before pasting; the person dropped it (user 2026-09-24) — the worker asks when
+// the right side is a judgement, like any other decision. The prompt still bakes in no resolution.
 //
 // The human is the transport (§2.2). This returns text the run prints on its OWN display; it sends
 // nothing to the worker and revives no down-channel.
@@ -31,6 +30,7 @@ const COPY_END = '----- end of the part to paste -----';
 export function buildConflictPrompt({
   task,
   slug,
+  plan = null,
   workerName = null,
   taskBranch,
   featureBranch,
@@ -52,7 +52,9 @@ export function buildConflictPrompt({
   // parked the row (⛔) and will not merge it on its own, so the person lands the branch.
   // The tests are the plan's own test command (DESIGN.md § Environment), never a fixed `npm test`: the
   // engine runs projects on any stack, and the gate at the end of the run reads the same line.
-  const testStep = `the test command in plans/${slug || '{slug}'}/DESIGN.md`;
+  // The folder is the PLAN's slug; `slug` is the task's and named a folder that does not exist
+  // (plans/red-reason-visible/, declared-test-command T05, 2026-09-24).
+  const testStep = `the test command in plans/${plan || '{plan}'}/DESIGN.md`;
   const finish = workerName
     ? `  4. Signal done again so the run can merge your branch.`
     : `  4. Commit, run ${testStep}, then land this branch yourself — the run has parked it and will not\n` +
@@ -67,12 +69,11 @@ export function buildConflictPrompt({
     `Conflicting file(s):`,
     fileList,
     ``,
-    `Decide which side to keep — I cannot decide this for you; fill in the blank:`,
-    ``,
-    `  KEEP: ____________________________________________`,
+    `Resolve it where both sides' work makes the right result clear. If choosing a side needs a`,
+    `judgement, ask me before you resolve it.`,
     ``,
     `Then:`,
-    `  1. Resolve the conflict in the file(s) above, keeping what you decided.`,
+    `  1. Resolve the conflict in the file(s) above.`,
     `  2. git add the resolved file(s) and commit.`,
     `  3. Run ${testStep}.`,
     finish,

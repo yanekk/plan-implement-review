@@ -155,12 +155,12 @@ test('an asking task that hit a merge conflict carries its copy-paste prompt on 
   // the shell from the parked worker's decision). The model carries it as DATA so the vocabulary is
   // testable without a terminal; the live renderer keeps its frame compact and the shell prints the block
   // on the normal screen (T15, §2.3).
-  const PROMPT = 'Merge conflict on T05 ask-one …\n  git merge pir/demo\n  KEEP: ____';
+  const PROMPT = 'Merge conflict on T05 ask-one …\n  git merge pir/demo\n  1. Resolve';
   const conflicted = buildDisplay(
     { branch: 'pir/demo', ceiling: 4, tasks: [task({ id: 'T05', slug: 'ask-one', phase: 'asking', since: NOW, question: 'merge conflict in greeting.txt', prompt: PROMPT })] },
     { now: NOW },
   ).footer;
-  assert.equal(conflicted.kind, 'asking');
+  assert.equal(conflicted.kind, 'conflict', 'a merge conflict has its own footer kind, not `asking`');
   assert.equal(conflicted.prompt, PROMPT, 'the conflicted footer carries the ready-to-paste prompt block');
 
   // A plain question (no prompt) keeps the unchanged footer shape — no `prompt` key at all.
@@ -169,4 +169,26 @@ test('an asking task that hit a merge conflict carries its copy-paste prompt on 
     { now: NOW },
   ).footer;
   assert.deepEqual(plain, { kind: 'asking', task: 'T05', slug: 'ask-one', question: 'which format?' }, 'a plain question footer is unchanged — no prompt key');
+});
+
+// --- a merge conflict reads `merge conflict`, not `asking you` (user 2026-09-24) -------------------
+
+test('a task parked on a merge conflict is row kind `conflict` labelled `merge conflict`, counted apart from asking', () => {
+  const d = buildDisplay(
+    {
+      branch: 'pir/demo',
+      ceiling: 4,
+      tasks: [
+        task({ id: 'T05', slug: 'clash', phase: 'asking', since: NOW - 5000, question: 'merge conflict in FINDINGS.md', prompt: 'Merge conflict on T05 clash' }),
+        task({ id: 'T06', slug: 'ask', phase: 'asking', since: NOW, question: 'which format?' }),
+      ],
+    },
+    { now: NOW },
+  );
+  const [clash, ask] = d.rows;
+  assert.deepEqual(clash, { id: 'T05', slug: 'clash', kind: 'conflict', label: 'merge conflict', elapsedMs: 5000 });
+  assert.equal(ask.kind, 'asking', 'a plain question stays `asking`');
+  assert.equal(d.summary.asking, 1, 'the conflict is not counted as asking you');
+  assert.equal(d.summary.conflicts, 1);
+  assert.equal(d.summary.running, 2, 'a parked conflict still holds its slot');
 });

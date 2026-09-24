@@ -327,3 +327,20 @@ test('the parked-worker footer is a compact single line and never the full quest
   const footerLines = lines.filter((l) => l.includes('claude agents'));
   assert.equal(footerLines.length, 1, 'a single compact asking footer line, not the old multi-line block');
 });
+
+test('a merge conflict row and footer paint orange and say `merge conflict`; the summary counts it apart (user 2026-09-24)', async () => {
+  const { styledLines } = await import('./render.mjs');
+  const d = buildDisplay(
+    { branch: 'pir/demo', ceiling: 4, tasks: [{ id: 'T05', slug: 'clash', deps: [], done: false, phase: 'asking', since: NOW, doneMs: null, question: 'merge conflict in FINDINGS.md', prompt: 'Merge conflict on T05 clash' }] },
+    { now: NOW },
+  );
+  const lines = styledLines(d);
+  assert.match(lines[0].text, /1 merge conflict\b/);
+  assert.ok(!/asking you/.test(lines[0].text), 'the summary does not call a conflict asking you');
+  const row = lines.find((l) => l.text.includes('T05'));
+  assert.match(row.text, /● T05\s+clash\s+merge conflict/);
+  assert.equal(row.style, 'conflict');
+  const foot = lines[lines.length - 1];
+  assert.match(foot.text, /T05 clash — merge conflict; paste the prompt shown in `pir`/);
+  assert.equal(foot.style, 'conflict');
+});

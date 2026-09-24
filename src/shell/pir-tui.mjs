@@ -67,6 +67,7 @@ const SGR = {
   asking: '\x1b[1;33m', // bold amber
   idle: '\x1b[2m', // dim
   red: '\x1b[31m', // failure / interrupted
+  conflict: '\x1b[1;38;5;208m', // bold orange, a merge conflict
   // the list's §2.11 keys.
   head: '\x1b[1m', // the `pir` title, bold
   running: '\x1b[32m', // a running run's state word, green
@@ -363,6 +364,20 @@ export function buildWatchFrame(view, { now, spinnerChar = SPINNER[0], ui = init
     // A stale (non-running) frame freezes its spinner to a dot so it cannot read as still ticking.
     const spin = alive ? spinnerChar : '·';
     for (const l of watchDisplayLines(snap, { now, spinnerChar: spin })) lines.push([span(l.text, l.style)]);
+    // A merge conflict the run hit at its own merge: draw its paste-in prompt (buildConflictPrompt, T14)
+    // here, right under the live block so a short terminal clips the key hints before it. The coordinator
+    // prints it once on its own screen, but a detached run's screen is only run.log, which nobody watches
+    // (T05 of declared-test-command sat parked 6 min unseen, 2026-09-24). Live runs only: a restarted run
+    // re-surfaces its own conflicts. Wrapped with no indent so the copy block pastes exactly.
+    if (alive) {
+      for (const t of snap.runState?.tasks ?? []) {
+        if (t.done || t.phase !== 'asking' || !t.prompt) continue;
+        lines.push([]);
+        const [head, ...rest] = String(t.prompt).replace(/\s+$/, '').split('\n');
+        note(head, 'conflict', '');
+        for (const raw of rest) note(raw, null, '');
+      }
+    }
     // The stale marker for a run that has ended (§2.4) — shown ONLY when there is a real frozen frame
     // above it. Red for crashed (something went wrong), dim for a clean finished/stopped end.
     if (state !== 'running') {

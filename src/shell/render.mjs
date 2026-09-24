@@ -39,6 +39,7 @@ const GLYPH = {
   reviewing: null,
   merging: null,
   asking: '●',
+  conflict: '●',
   done: '✔',
   waiting: '·',
   queued: '·',
@@ -61,13 +62,15 @@ const CLEAR = '\x1b[2J';
 // carries, so it is never the only signal — a colour-blind reader or a NO_COLOR terminal loses nothing.
 // The map is by the model's row/footer `kind`, resolved to one of these styles (T16, PM 2026-09-20):
 //   active (building/reviewing/merging) cyan · done green · asking amber+bold (the standout) · idle dim ·
-//   red/interrupted red. RESET closes every coloured span.
+//   red/interrupted red · a merge conflict orange+bold (256-colour 208; user 2026-09-24), so it reads
+//   apart from a question. RESET closes every coloured span.
 const SGR = {
   done: '\x1b[32m', // green
   active: '\x1b[36m', // cyan
   asking: '\x1b[1;33m', // bold amber — the parked pointer and its row stand out
   idle: '\x1b[2m', // dim grey
   red: '\x1b[31m', // failure / interrupted
+  conflict: '\x1b[1;38;5;208m', // bold orange — a merge conflict waiting for the paste-in prompt
 };
 const RESET = '\x1b[0m';
 
@@ -107,6 +110,7 @@ const ROW_STYLE = {
   reviewing: 'active',
   merging: 'active',
   asking: 'asking',
+  conflict: 'conflict',
   done: 'done',
   waiting: 'idle',
   queued: 'idle',
@@ -144,6 +148,7 @@ function summaryLine(summary, footer, branch, spinnerChar) {
   }
   const parts = [`${summary.done}/${summary.total} done`, `${summary.running} running`];
   if (summary.asking > 0) parts.push(`${summary.asking} asking you`);
+  if (summary.conflicts > 0) parts.push(`${summary.conflicts} merge conflict${summary.conflicts === 1 ? '' : 's'}`);
   parts.push(`${summary.waiting} waiting`);
   const ceiling = summary.ceiling != null ? ` · ceiling ${summary.ceiling}${summary.ceilingFull ? ' (full)' : ''}` : '';
   return { text: `${spinnerChar} ${branch || 'run'} · ${parts.join(' · ')}${ceiling}`, style: null };
@@ -175,6 +180,12 @@ function footerLines(footer, summary) {
       // Amber-bold so the one thing needing the person cannot be missed (T16). The full question is still
       // not drawn here — the person reads and answers it in the worker's own session (§2.2, T15).
       return [blank, { text: `● ${who} — asking you; attach in \`claude agents\` to answer`, style: 'asking' }];
+    }
+    case 'conflict': {
+      // The prompt itself is multi-line, so it is not drawn in this bounded block: `pir` shows it under the
+      // live view, and the coordinator's own screen prints it once when the conflict happens (T14).
+      const who = [footer.task, footer.slug].filter(Boolean).join(' ');
+      return [blank, { text: `● ${who} — merge conflict; paste the prompt shown in \`pir\` into its worker (\`claude agents\`)`, style: 'conflict' }];
     }
     case 'handoff':
       return [
