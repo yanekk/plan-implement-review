@@ -12,7 +12,7 @@ writes a cell also fixes the over-budget cell they walk past.
 
 **Status:** T01 done.
 **Last updated:** 2026-09-24
-**Next `pir-work` will:** implement any of T02, T03, T05, T06, T08, T09, T10; their dependencies are met.
+**Next `pir-work` will:** implement any of T02, T03, T05, T08, T09, T10; their dependencies are met.
 
 ## Tasks
 
