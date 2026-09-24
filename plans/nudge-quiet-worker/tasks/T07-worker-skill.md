@@ -23,8 +23,9 @@ DESIGN §2.5, Stance.
 
 The new section says, in the skill's own register:
 
-- A message starting `[pir:nudge` comes from the run's coordinator automatically, never from the
-  person. It is sent when the worker has shown no progress for a while.
+- A note starting `[pir:nudge` comes from the run's coordinator automatically, never from the person.
+  A hook shows it (after a tool call, or by waking the session), or it arrives as the message a stopped
+  session is resumed with. It is sent when the worker has shown no progress for a while.
 - Act on it; do not reply to it, and do not ask the person about it.
 - Check whether a background command, Monitor, watcher or wait-loop is holding you. Stop the ones you
   no longer need, following the existing rule about not `pkill -9`-ing a wrapper. Then continue the
@@ -36,7 +37,7 @@ The new section says, in the skill's own register:
 - Only the worker's own progress stops further nudges; a reply does not.
 
 The "nothing messages you" lines become accurate: the person may talk to you in your session, and the
-coordinator may send `[pir:nudge …]` and nothing else. Reports still go up by file drop only.
+coordinator may show you `[pir:nudge …]` and nothing else. Reports still go up by file drop only.
 
 ## Tests
 

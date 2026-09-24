@@ -29,7 +29,7 @@ DESIGN §2.2, §2.4 (observation starts at spawn; the person's reply un-parks), 
 parseOwnActions(text) → [{ at: number /* ms, Date.parse(timestamp) */, sig: string }]
 
 // JSONL text of complete lines → the times of messages the person typed into the session, oldest
-// first. Tool results, notifications, attachments and socket posts are not the person (T00 names the
+// first. Tool results, notifications, attachments and hook-shown nudges are not the person (T00 names the
 // field that tells them apart). The loop uses this to un-park an AWAITING worker (DESIGN §2.4).
 parsePersonReplies(text) → [{ at: number }]
 
@@ -67,7 +67,7 @@ and the loop already knows it from the inbox.
 - [ ] Fingerprint change → `output` true and `lastActivityAt = now`; `reported` alone → `output` true.
 - [ ] Fingerprint null → previous fingerprint kept, `output` false.
 - [ ] `transcriptFound` false → only the fingerprint and `reported` can move `lastActivityAt`.
-- [ ] `parsePersonReplies` on the T00 fixture returns exactly the person-typed line; the socket post,
+- [ ] `parsePersonReplies` on the T00 fixture returns exactly the person-typed line; the hook-shown nudge,
       notification and tool results in the same fixture return nothing.
 - [ ] `recent` is pruned to the window, so memory does not grow over a long run.
 

@@ -13,8 +13,8 @@ guard, `AWAIT_IDLE_TIMEOUT_MS` / `force-idle` (`src/shell/loop.mjs`), fires only
 already dropped `implemented`/`done`. A real run held T05 about 1h on its implementer and 4h on its
 reviewer on a leaked test-suite daemon (`docs/human-flow.md` "Known limitation").
 
-This plan has the coordinator notice a worker that has made no progress for about 15 minutes and send
-it one fixed, pre-written nudge through the worker's own inbox, so the worker can free itself. It is
+This plan has the coordinator notice a worker that has made no progress for about 15 minutes and show
+it one fixed, pre-written nudge through the worker's own hooks, so the worker can free itself. It is
 for the person running a plan in parallel, who does not want to babysit workers and does not want to
 be pulled in by this feature at all.
 
@@ -45,25 +45,42 @@ be pulled in by this feature at all.
 
 ## 2. Behaviour specification
 
-### 2.1 The premise this plan overturns
+### 2.1 The channel: a note the worker's own hooks show it
 
 The code and docs state there is no coordinator→worker channel: `docs/control-folder.md` says "There
 is no coordinator → worker channel at all. A Node process cannot send a cross-session message", the
 `src/shell/platform.mjs` header says "no `claude` subcommand can send a cross-session message", and
-`plans/parallel-pir/DESIGN.md §2.2` decided it. That is false on Claude
-Code 2.1.281: every session binds an inbox socket that a plain program can post to (docs:
-code.claude.com/docs/en/cross-session-messaging, "The session's inbox socket"). The binary's own
-help text gives the wire format: an optional `{"type":"auth","token":…}` line, then one JSON line
-`{"type":"user","message":{"role":"user","content":"…"}}`.
+`plans/parallel-pir/DESIGN.md §2.2` decided it. The official docs (code.claude.com/docs, 2026-09-24)
+agree that no supported way exists for an outside program to post into a running session.
+
+This plan adds one, entirely inside what Claude Code supports (user decision 2026-09-24):
+
+- **The coordinator writes a note file** for one worker, keyed by its `sessionId`, in a place every
+  worktree of the repo can reach and `git status` never lists (T00 fixes the location).
+- **Every worker is spawned with two hooks** passed by `claude --bg --settings <json>`, so they apply to
+  workers only, never to the person's own sessions. A tool hook (PreToolUse/PostToolUse) shows a waiting
+  note as `additionalContext` on the worker's next tool call, which covers a worker looping on tool calls.
+  An async watcher hook (`asyncRewake`) waits for a note while the worker is idle and wakes it with the
+  note, which covers a worker whose turn ended with a background job still running. Each hook deletes the
+  note once shown, so a note still on disk means it has not been delivered yet.
+- **Fallback for the idle case**: if T00 finds the wake does not work, a nudge to a worker whose note
+  stays undelivered is stop-and-resume instead: `claude stop`, then `claude --bg --resume <sessionId>
+  "<nudge>"`, the same conversation, name and folder (probed in `resume-dead-worker` FINDINGS 2026-09-24)
+  and built on that plan's `platform.revive` (its T02), never a second copy of it.
+
+Rejected: writing into the session's inbox socket (`/tmp/cc-socks/<pid>.sock`). It is an undocumented
+internal, and this machine's auto-mode classifier blocked both attempts (as "Auto-Mode Bypass" and
+"Credential Exploration"). Rejected as separate, larger work: workers the coordinator starts and holds on
+a stream-json pipe (cezar's model), because the person could no longer answer a worker directly in its
+own session; and moving workers to the pi agent, whose extensions offer this pattern natively.
 
 What stays true is the reason the down-channel was removed: the coordinator routes nothing from the
-person to a worker. The nudge is one fixed, one-way message; the person's answers still go to a
-worker only by the person typing them in that worker's session. The `no-down-channel` guard test is
-narrowed to say exactly that (§3.1), not deleted.
+person to a worker. The nudge is one fixed, one-way note; the person's answers still go to a worker only
+by the person typing them in that worker's session. The `no-down-channel` guard test is narrowed to say
+exactly that (§3.1), not deleted.
 
-The socket round trip into a real worker is unproven. A post from this planning session was blocked
-by the auto-mode classifier before it left, so nothing below is designed as settled until T00 proves
-it (§2.8).
+The hooks are unproven on a real worker; nothing below is designed as settled until T00 proves them
+(§2.8).
 
 ### 2.2 What counts as progress
 
@@ -152,8 +169,7 @@ Only a live worker (listed in `claude agents --json`, past its appear grace) who
 
 Fixed text, built only by `nudgeMessage({ n, max, quietMs })` in `src/core/nudge.mjs`. The minutes
 figure is derived from `quietMs` and `n`/`max` are the nudge number, so the text is deterministic
-given the settings. The numbering also keeps two nudges from being identical, which the receiving
-session's repeat filter could otherwise drop.
+given the settings. The numbering also tells the worker which nudge this is.
 
 ```
 [pir:nudge 1/2] Automatic check from the PIR coordinator, not from the person. Nobody is waiting on
@@ -165,7 +181,7 @@ report now as pir-worker says and keep waiting for them. Do not reply to this me
 the person about it.
 ```
 
-It is sent as one line (the real text has no line breaks; they are wrapped here for reading).
+It is written as one line (the real text has no line breaks; they are wrapped here for reading).
 
 The waiting-on-the-person sentence covers a worker that asked the person in its own session but
 forgot the question report: from outside it looks exactly like a stuck worker. Filing the report parks
@@ -201,15 +217,14 @@ Nothing is surfaced as a question and nothing asks the person to act. `stuck` is
 
 ### 2.7 The unhappy paths
 
-- **Socket missing, refused, or connect error**: log `nudge-failed T05` (the flow log line is kind and
-  task only, as `record()` writes it; the reason goes on the run.log line) and count it as a nudge. An unreachable worker still reaches `stuck` after two attempts instead of being retried
-  every pass.
-- **Message held or refused by the worker's inbound controls**: the sender cannot see this; the post
-  looks delivered. It counts as a nudge and the worker reaches `stuck` if nothing changes. Workers are
-  spawned without a permission-mode flag, so they are in the prompting class and a post that claims no
-  permission class should be delivered. T00 verifies it.
-- **Worker blocked inside one hung foreground command**: the message queues and is read when the
-  command returns or hits the Bash 10-minute cap. The coordinator does nothing special.
+- **Note write fails**: log `nudge-failed T05` (the flow log line is kind and task only, as `record()`
+  writes it; the reason goes on the run.log line) and count it as a nudge, so a worker that cannot be
+  reached still reaches `stuck` instead of being retried every pass.
+- **Note not delivered**: a note still on disk when the next decision falls due means no hook showed
+  it. It counts as a nudge; the next nudge replaces it, and the run.log line carries `error: not
+  delivered`. Under the stop-and-resume fallback (§2.1) that next nudge is the resume.
+- **Worker blocked inside one hung foreground command**: the tool hook shows the note when the command
+  returns or hits the Bash 10-minute cap. The coordinator does nothing special.
 - **Worker frozen on a permission prompt**: probably unreachable. It will reach `stuck`. Fixing that
   case is out of scope (§8).
 - **Transcript not found or unparseable** (session id missing, Claude Code changed the format): fall
@@ -219,9 +234,7 @@ Nothing is surfaced as a question and nothing asks the person to act. `stuck` is
   loop. A transient git error must not look like progress or reset anything.
 - **Coordinator restart**: nudge state is in memory only and starts fresh. A restart already reaps the
   old run's workers (reconcile), so there is nothing to carry over.
-- **Session pid changes**: the socket path is derived from the pid in `claude agents --json`, which is
-  re-read every pass, never cached. T00 checks whether a background session's pid changes between
-  turns; FINDINGS from coordinator-restart-resume suggests background sessions rotate processes.
+- **Session id**: the note is keyed by `sessionId` from `claude agents --json`, re-read every pass.
 - **A leftover process writing into the worktree**: a file it writes that git lists (not ignored) is
   real output, so that worker is never nudged. Accepted as a known limit (user decision 2026-09-24): most
   tools write to ignored paths or outside the worktree, and counting only tracked or committed changes
@@ -233,23 +246,21 @@ Nothing is surfaced as a question and nothing asks the person to act. `stuck` is
 
 ### 2.8 What T00 must settle before anything is built on it
 
-1. A raw post from a plain Node program that is not the worker's child, with no token, reaches a
-   `claude --bg` worker in the mode the coordinator spawns it in: delivered, held, or refused.
-2. How the message is labelled to the receiving model (as another session, or as a user turn), and
-   what it appends to the transcript.
-3. An idle worker whose turn ended with a background job still running starts a new turn on it.
-4. A worker cycling a tool-call wait-loop reads it between tool calls.
-5. The socket path for a session: `/tmp/cc-socks/<pid>.sock` (observed), the `/tmp/cc-socks-<uid>`
-   fallback the docs name, and whether a background session's pid changes between turns.
-6. How a message the person types into a background session appears in its transcript, and whether it
-   can be told apart from a socket post, a background-task notification and a tool result (§2.4).
+1. Hooks passed with `--settings` at `claude --bg` spawn load in the worker, with no permission-mode flag.
+2. The tool hook shows a note to a worker cycling a tool-call wait-loop, on its next tool call.
+3. How the shown note is labelled to the model, and what it appends to the transcript.
+4. The async watcher wakes an idle worker whose turn ended with a background job still running, and
+   shows it the note. If not, the idle case uses stop-and-resume (§2.1).
+5. How a message the person types into a background session appears in its transcript, and whether it
+   can be told apart from a hook-shown nudge, a background-task notification and a tool result (§2.4).
+6. Where the note lives: reachable from every worktree of the repo and never listed by `git status`;
+   the hook input field that carries the session id.
 7. The transcript line shapes this design parses (`type:"assistant"` entries with `message.content[]`
    `tool_use` blocks and an ISO `timestamp`), and where it lives (`~/.claude/projects/*/<sessionId>.jsonl`).
 
-If 1 fails (refused or always held), the plan stops and returns to the person: the fixed-message
-design has no channel. If 2 shows the message arrives as if the person typed it, the text already says
-it is not from the person, so the design stands but the finding is recorded. Answers to 5 and 7 feed
-T03 and T04 directly; 6 and 7 feed T01.
+If 1 or 2 fails, the plan stops and returns to the person: there is no supported channel for the
+looping case. If 4 fails, the fallback applies without a new decision. Answer 6 feeds T04; 5 and 7 feed
+T01.
 
 ---
 
@@ -259,15 +270,16 @@ T03 and T04 directly; 6 and 7 feed T01.
 
 ```
 src/core/   — pure. Takes inputs as parameters, returns decisions. No clock, no fs, no net.
-src/shell/  — reads git, the transcript file and `claude agents`; writes the socket.
+src/shell/  — reads git, the transcript file and `claude agents`; writes the note file; spawns workers with hooks.
 ```
 
 - `src/core/activity.mjs` (new, pure): transcript text → own actions and the person's replies, action signatures, the "new
   signature in the window" test, and folding one observation into the tracked activity state.
 - `src/core/nudge.mjs` (new, pure): `decideNudge` and `nudgeMessage`.
 - `src/shell/platform.mjs` (extended): `activity()` reads a worktree fingerprint and the new bytes of a
-  transcript; `nudge()` posts one line to a session's socket. `parseAgents` now keeps `sessionId`. The transcript path helpers move here from `harness/capture.mjs`,
+  transcript; `nudge()` writes a worker's note file; `spawn` passes the hook `--settings`. `parseAgents` now keeps `sessionId`. The transcript path helpers move here from `harness/capture.mjs`,
   which imports them back (user decision 2026-09-24: one lookup, not two).
+- `src/shell/nudge-hook.mjs` (new): the worker-side hook script, tool and wake modes (§2.1).
 - `src/shell/loop.mjs` (extended): per eligible task, observe, decide, send, record.
 
 `src/core/boundary.test.mjs` already forbids `node:fs`, `node:child_process`, `node:net`, `fetch(`,
@@ -275,7 +287,7 @@ src/shell/  — reads git, the transcript file and `claude agents`; writes the s
 the code, never to relax the test. `Date.parse` on a transcript timestamp is allowed; it reads no clock.
 
 `src/shell/no-down-channel.test.mjs` is narrowed, not removed. It keeps forbidding the relay machinery
-and any `.send(` (the method is named `nudge`, not `send`). It gains a check that the only
+and any `.send(` (the method is named `nudge`, not `send`), and forbids `node:net` and `cc-socks`. It gains a check that the only
 `platform.nudge(` call in `loop.mjs` passes a `nudgeMessage(` result, so no other text can be routed to
 a worker. The platform test `createMessaging exposes inbox and no send` stays true, because the nudge
 lives on the platform object, not on the messaging surface; its comment is corrected.
@@ -284,8 +296,9 @@ lives on the platform object, not on the messaging surface; its comment is corre
 
 - `core/activity.mjs`: owns what counts as activity (§2.2). Depends on nothing.
 - `core/nudge.mjs`: owns when to nudge or mark stuck (§2.3) and the text (§2.5). Depends on nothing.
-- `shell/platform.mjs`: owns reading the outside world and writing the socket. Depends on git, the
-  filesystem, `node:net`.
+- `shell/platform.mjs`: owns reading the outside world and writing the note. Depends on git and the
+  filesystem.
+- `shell/nudge-hook.mjs`: runs inside the worker; owns showing and consuming its note.
 - `shell/fake/platform.mjs`: gains scriptable `activity()` results and a recorded `nudge()`, so
   `loop.test.mjs` can drive a whole stuck stretch without a live agent.
 - `shell/loop.mjs`: wires them per pass. `shell/coordinate.mjs`: reads `PARALLEL_NUDGE_MS`, passes
@@ -310,8 +323,9 @@ whether the count resets; `decideNudge` only decides what to do about the time t
 3. `observeActivity(prev, obs, { now, windowMs })` (core, T01) returns the new tracked state and whether
    this observation was real output, varied work, or neither.
 4. `decideNudge(...)` (core) returns the action.
-5. On `nudge`: `platform.nudge({ pid }, nudgeMessage(...))` returns `{ ok, reason? }`, then
-   `record('nudge' | 'nudge-failed', …)`. On `stuck`: `record('stuck', …)`.
+5. On `nudge`: `platform.nudge({ sessionId }, nudgeMessage(...))` returns `{ ok, reason? }`, then
+   `record('nudge' | 'nudge-failed', …)`; a previous note still pending (`platform.nudgePending`) is
+   reported as not delivered (§2.7). On `stuck`: `record('stuck', …)`.
 
 ### 3.5 Storage
 
@@ -330,8 +344,9 @@ before decoding, so a half-written line is never parsed and the next pass reads 
   and text not counting, a partial trailing line.
 - `core/nudge.test.mjs`: every threshold edge (just under, exactly at, over), eligibility, two nudges
   then stuck, the clock restart at each nudge, count reset only on real output, the exact message text.
-- `shell/platform.test.mjs`: the socket line against a real Unix socket server in the test, connect
-  failure, the fingerprint against a scratch git repo, the incremental transcript read.
+- `shell/platform.test.mjs`: the note write and replace, write failure, the spawn `--settings` JSON, the
+  fingerprint against a scratch git repo, the incremental transcript read.
+- `shell/nudge-hook.test.mjs`: tool and wake modes against a temp notes dir, with no real waiting.
 - `shell/loop.test.mjs`: a whole stuck stretch against the fake platform with an injected clock:
   nudge, nudge, stuck, unstuck on output; no nudge while AWAITING, past a report, or under HALT.
 - `shell/no-down-channel.test.mjs`: the narrowed guard (§3.1).
@@ -347,8 +362,8 @@ Measured on 2026-09-24.
 |---|---|
 | OS | macOS (Darwin 25.5.0), aarch64 |
 | Language / runtime | Node v24.2.0 (built-in test runner), npm 11.4.2 |
-| Toolchain | git 2.50.1, `claude` 2.1.281 (inbox sockets, `claude agents --json` with `pid` and `sessionId`) |
-| **Deliberately absent** | No runtime dependencies. No `socat`/`nc` in the product path; the socket is written with `node:net`. |
+| Toolchain | git 2.50.1, `claude` 2.1.281 (`--settings` hooks, `claude agents --json` with `pid` and `sessionId`) |
+| **Deliberately absent** | No runtime dependencies. No write to any session inbox socket (§2.1). |
 
 **The test command.**
 
@@ -367,7 +382,7 @@ It was green on 2026-09-24 with 662 tests (re-measured at plan review).
 
 | Cannot be tested automatically | Why it needs a person or a live run |
 |---|---|
-| A post from a plain program reaches a real `claude --bg` worker (T00) | Needs a live session; the classifier blocks it by default |
+| A worker's hooks show it the note, looping and idle (T00) | Needs a live session |
 | A real worker, nudged out of a needless wait-loop, frees itself sensibly without asking the person (T10) | The machine checks can see the log lines and the report; whether the worker's reaction was sensible is a judgement on its transcript |
 | The transcript format stays parseable across Claude Code updates | Undocumented format; §2.7 degrades safely if it changes |
 
@@ -390,11 +405,13 @@ existing `claude` login are involved.
 
 | Action | Command (exact, wrapped) | Bin | Why this bin | Way back | Expected cost | Login check |
 |---|---|---|---|---|---|---|
-| inbox-probe | `node spike/nudge-probe.mjs <spawn\|post\|status\|teardown>` | ask | It posts into another live session, which is new ground and which the auto-mode classifier blocks by default | `teardown` stops and removes the scratch session; a delivered message cannot be recalled but reaches only the scratch session | a few cents of tokens | `claude agents --json` exits 0 |
+| hook-probe | `node spike/nudge-probe.mjs <spawn\|nudge\|status\|teardown>` | ask | Spawns a paid scratch session with new hooks, which is new ground | `teardown` stops and removes the scratch session and its note; a shown note cannot be recalled but reaches only the scratch session | a few cents of tokens | `claude agents --json` exits 0 |
 | live-nudge-drill | `PARALLEL_NUDGE_MS=120000 node src/shell/harness/run.mjs quiet-worker --into /tmp/pir-quiet-worker` | ask | Spawns a real coordinator and a paid worker | the harness tears workers down and HALTs on timeout; the scratch repo is disposable | one small task plus two nudges, under a dollar or two | `claude agents --json` exits 0 |
 | refresh-install | `./install.sh` | worker | Local copy of this repo's engine and skills; the same step every engine task ends with | re-run `./install.sh` from the previous commit | none | none |
 
-The user approved this table at plan review on 2026-09-24, keeping both `ask` rows as `ask`. Its rules are
+The user approved this table at plan review on 2026-09-24, keeping both `ask` rows as `ask` (the probe
+row renamed from `inbox-probe` when the channel changed). The coordinator's own stop-and-resume of a
+worker, under the fallback, is a run action like its existing `claude stop`, not a separate row. Its rules are
 in `.claude/settings.json`: `./install.sh` and the login check under `allow`, each probe subcommand and
 the exact drill command under `ask`.
 
@@ -435,8 +452,10 @@ anything it does next.
   drill needs it.
 - **A failed send counts as a nudge** (planner). An unreachable worker reaches `stuck` instead of being
   retried every five seconds.
-- **The nudge number is in the text** (planner). Deterministic, and it defeats the receiver's filter
-  that drops identical repeats.
+- **The nudge number is in the text** (planner). Deterministic, and it tells the worker which nudge it is.
+- **Channel: a note file shown by the worker's own hooks, stop-and-resume as the idle fallback** (user,
+  2026-09-24, after the socket post was blocked twice by the classifier and the user rejected it). Only
+  supported mechanisms; the person still answers workers in their own sessions (§2.1).
 - **Extend, do not rebuild** (survey). The per-task timers sit beside `busySince` in `runPass`; the
   label is a suffix in `display.mjs rowFor`; the log lines use `record()`; the env knob follows
   `PARALLEL_POLL_MS` in `coordinate.mjs`; the live check is a new harness fixture. `parseAgents`
@@ -454,7 +473,9 @@ anything it does next.
   follow-up; it costs a model call per nudge and a new kind of session to supervise.
 - **Killing or restarting a stuck worker.** Kill loses work and does not stop a detached daemon; a
   sibling brief ("resume a crashed worker") covers dead workers.
-- **Freeing a worker frozen on a permission prompt.** A message cannot answer a prompt, by design of
+- **A stream-json worker model or a move to the pi agent.** Either gives a native message channel but is
+  a rebuild of how workers run (§2.1).
+- **Freeing a worker frozen on a permission prompt.** A note cannot answer a prompt, by design of
   Claude Code; that worker is shown `stuck`.
 - **Persisting nudge state across a coordinator restart.** Restart reaps the workers anyway.
 - **Any reply from the worker to the coordinator about a nudge.** No new report kind (§2.5).

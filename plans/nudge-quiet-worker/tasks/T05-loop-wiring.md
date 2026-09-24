@@ -43,15 +43,19 @@ per pass, per task t with a live worker w:
   output → if (t.nudges > 0 || t.stuck) record('unstuck'); t.nudges = 0; t.stuck = false
   !obs.transcriptFound && !t.degradedLogged → record('activity-degraded'); t.degradedLogged = true
   d = decideNudge({ now, eligible, lastActivityAt, lastNudgeAt, nudges, stuck, quietMs: nudgeMs, maxNudges: MAX_NUDGES })
-  nudge → platform.nudge({ pid: w.pid }, nudgeMessage({ n: d.n, max: MAX_NUDGES, quietMs: nudgeMs }))
+  nudge → undelivered = t.nudges > 0 && platform.nudgePending({ sessionId: w.sessionId })
+          text = nudgeMessage({ n: d.n, max: MAX_NUDGES, quietMs: nudgeMs })
+          fallback idle path (T00 said the wake fails) && undelivered
+            ? platform.resumeWith({ id: w.id, sessionId: w.sessionId, cwd: t.worktree.path }, text)
+            : platform.nudge({ sessionId: w.sessionId }, text)
           t.nudges = d.n; t.lastNudgeAt = now; record(ok ? 'nudge' : 'nudge-failed', { task, n, reason })
+          undelivered → the previous nudge's run.log line reason is `not delivered` (DESIGN §2.7)
   stuck → t.stuck = true; record('stuck', { task })
 ```
 
-`platform.nudge` is async (T04) and `runPass` is not. Settle it one way and say why in a comment:
-either await the send inside an async step the bin already awaits, or fire it and record the result
-from a promise the next pass collects. Either way the count and `lastNudgeAt` move on the pass the
-send is made, so a slow socket cannot cause a double nudge.
+`platform.nudge` is a synchronous file write and `resumeWith` is synchronous like `close`, so `runPass`
+stays synchronous. The count and `lastNudgeAt` move on the pass the nudge is made. A resumed worker keeps
+its id and must not enter `closedIds` (as for the sibling plan's revive).
 
 `nudge`, `nudge-failed`, `stuck`, `unstuck`, `unpark` and `activity-degraded` must not be added to the
 productive-action lists (`['spawn','review','merge','close']` in coordinate.mjs and loop.mjs). A nudge
@@ -72,7 +76,9 @@ is not progress and must not hide a stall.
 - [ ] `review-ready` and `done` workers are never nudged.
 - [ ] HALT present: no `platform.activity` and no `platform.nudge` call at all.
 - [ ] A new reviewer on the same worktree starts a fresh stretch.
-- [ ] A failed send logs `nudge-failed` and still counts.
+- [ ] A failed write logs `nudge-failed` and still counts.
+- [ ] A note still pending at the next nudge is reported `not delivered`, and still counts.
+- [ ] Fallback only: an undelivered note to a worker leads to `resumeWith`, never a spawn.
 - [ ] Missing transcript logs `activity-degraded` once, and folder changes still count.
 - [ ] Within the appear grace, no nudge.
 - [ ] Stall detection is not reset by a pass whose only actions are nudges.

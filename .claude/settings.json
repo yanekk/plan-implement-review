@@ -30,7 +30,7 @@
     "ask": [
       "Bash(node spike/nudge-probe.mjs spawn)",
       "Bash(node spike/nudge-probe.mjs status)",
-      "Bash(node spike/nudge-probe.mjs post:*)",
+      "Bash(node spike/nudge-probe.mjs nudge:*)",
       "Bash(node spike/nudge-probe.mjs teardown)",
       "Bash(PARALLEL_NUDGE_MS=120000 node src/shell/harness/run.mjs quiet-worker --into /tmp/pir-quiet-worker)"
     ]

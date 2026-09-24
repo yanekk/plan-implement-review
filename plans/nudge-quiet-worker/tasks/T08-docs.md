@@ -18,7 +18,8 @@ divergence in FINDINGS.
 
 - `docs/control-folder.md`: rewrite "Messaging is one direction only" (the "no coordinator → worker
   channel at all" paragraph): reports go up by file drop, and the only thing sent down is the fixed
-  nudge through the worker's inbox socket. Add `nudge`, `nudge-failed`, `stuck`, `unstuck`,
+  nudge, as a note file the worker's own hooks show it (and, under the idle fallback, a stop-and-resume
+  with the same text; DESIGN §2.1). Add `nudge`, `nudge-failed`, `stuck`, `unstuck`,
   `unpark`, `activity-degraded` to the log-kinds list, and say a parked worker returns to work when the
   person replies in its session. Mention `PARALLEL_NUDGE_MS` beside `AWAIT_IDLE_TIMEOUT_MS`.
 - `docs/run-lifecycle.md`: the nudge step in "Each pass"; the `nudged N×` / `stuck` labels in "The live

@@ -5,9 +5,8 @@
 ## Goal
 
 See the whole feature work on real agents once: a real coordinator nudges a real worker out of a
-needless wait-loop through its real inbox, the worker frees itself and finishes, and the person
-judges from the worker's transcript that it reacted sensibly. This is the only place the socket round
-trip, the transcript-based activity signal and the skill's instructions are exercised together.
+needless wait-loop through its real hooks, the worker frees itself and finishes, and the person
+judges from the worker's transcript that it reacted sensibly. This is the only place the hook channel, the transcript-based activity signal and the skill's instructions are exercised together.
 
 ## Design sections this implements
 
