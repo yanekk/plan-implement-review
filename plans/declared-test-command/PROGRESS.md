@@ -22,7 +22,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | # | Task | Depends on | State | Notes |
 |---|---|---|---|---|
 | T01 | parse-test-block | — | ✅ | |
-| T02 | command-runner | — | ⬜ | |
+| T02 | command-runner | — | ✅ | |
 | T03 | start-refusal | T01 | ⬜ | |
 | T04 | end-gate-from-block | T01, T02 | ⬜ | |
 | T05 | red-reason-visible | — | ⬜ | |
