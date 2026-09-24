@@ -37,6 +37,13 @@ T00's finding. 3a: `platform.close` only (no `platform.remove`, no `worktree.rem
 death entry, execute via `adoptTask`, pass `state.givenUp` to `decideDispatch`. `state.tasks[num].sessionId`
 is refreshed from the list in `buildAssignments`.
 
+Today `decideDispatch` runs before 3a, so its `spawn` list already holds the dead task (not live, row
+⬜) and may have handed the dead worker's slot to another ready task. The dead path must not let 3b
+spawn a second session for a task it adopted as `review` or `merge` or gave up, and its own reviewer
+spawn must stay under the ceiling. A `resume` still reaches the fresh implementer through 3b's
+`createTask` on the kept branch, as reconcile's does. Handling deaths before `decideDispatch`, as
+reconcile does, is one way; the tests below are the contract.
+
 ## Tests
 
 - [ ] Fake `crashAfterCommit`: the branch and its commit survive the death, and the respawned implementer is spawned into the same worktree.
@@ -47,6 +54,8 @@ is refreshed from the list in `buildAssignments`.
 - [ ] `HALT` pass: no death handling runs.
 - [ ] Reconcile tests still pass unchanged through `adoptTask`.
 - [ ] Never more live workers than the ceiling across a crash-heavy fake run.
+- [ ] A death adopted as `review`, `merge` or `give-up` is not also spawned as an implementer that pass.
+- [ ] Ceiling 2, one live worker, a dead task and another ready task: at most 2 live after the pass.
 
 ## Done when
 

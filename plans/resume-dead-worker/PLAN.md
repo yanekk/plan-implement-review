@@ -3,10 +3,12 @@
 10 tasks in 6 phases. Each has a file in [tasks/](tasks/). Track state in [PROGRESS.md](PROGRESS.md).
 Read [DESIGN.md](DESIGN.md) first.
 
-**Build route: classic single-stream (`/pir-work`) recommended.** The coordinator being fixed is the
-one that deletes a dead worker's branch; building its own fix in parallel risks losing exactly the
-work this plan protects. The sibling brief "nudge a quiet worker" also edits `src/shell/loop.mjs`:
-build the two plans one after the other, never at the same time.
+**Build route: parallel mode (user decision at plan review, 2026-09-24).** Classic was recommended:
+the installed coordinator building this plan is the one that deletes a dead worker's branch, so a
+worker death during the build loses that task's work and it restarts from scratch. The sibling brief
+"nudge a quiet worker" also edits `src/shell/loop.mjs`: build the two plans one after the other,
+never at the same time. Do not run `./install.sh` during the run; run it once `pir/resume-dead-worker`
+is merged to main (DESIGN §5.3).
 
 ## Shape of the build
 
@@ -85,8 +87,7 @@ which is terminal because docs are consumed by readers, not by a later task.
 
 ## Parallel width
 
-10 tasks · longest dependency chain 6 · up to 3 could run at once (T00, T01, T02). Mostly a chain;
-the classic route costs little.
+10 tasks · longest dependency chain 6 · up to 3 could run at once (T00, T01, T02). Mostly a chain.
 
 ## Rough sizing
 
@@ -100,9 +101,7 @@ T03 may overrun: it lifts reconcile's execution into a shared helper while chang
 live-worker accounting in `buildAssignments` is where earlier runaways came from. T06 may overrun if
 T00 finds removed sessions cannot be revived by name, because teardown then has to keep records.
 
-## Decisions still open
+## Before the run
 
-- The build route (classic recommended above) is the person's to confirm at plan review.
-- `src/shell/coordinate.mjs` had uncommitted edits at plan time (pass-cap removal, not this plan's).
-  They must be committed or dropped by their owner before T05 or T06.
-- §5.3 bins are a proposal until plan review writes them into permissions.
+- `src/shell/coordinate.mjs` and three `docs/` files had uncommitted edits at plan review (pass-cap
+  removal, not this plan's). Their owner commits or drops them before the run starts.

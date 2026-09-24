@@ -55,7 +55,7 @@ Deaths are counted per task, in memory, for the life of one run. They are not wr
 |---|---|---|
 | 1st | Revive the same conversation (§2.3), if the task has a recorded session id and its role matches the branch's next step (§2.4). Otherwise as for the 2nd. | The worker remembers what it was doing and any question it had parked on the person. |
 | 2nd, or a failed revive | Keep the branch; `decideResume` picks merge, fresh review, or a fresh implementer on the kept branch. | Same code as restart, so the two paths cannot disagree again. |
-| 3rd | Give up on the task for this run (§2.5). | A task or a machine fault that kills every worker would otherwise respawn forever, silently, at real cost. The runaway breaker does not catch it, because the live count never exceeds the ceiling. |
+| 3rd | Give up on the task for this run (§2.5), unless its branch is ✅: that merges (§2.4). | A task or a machine fault that kills every worker would otherwise respawn forever, silently, at real cost. The runaway breaker does not catch it, because the live count never exceeds the ceiling. |
 
 User decisions 2026-09-24: build the revive (level 2) and cap it at one per task per run; stop at 3
 deaths, this run only; a restart gets fresh tries.
@@ -117,7 +117,8 @@ same evidence restart already trusts (restart-recovery.md).
 
 At the third death the task is given up for this run. It is not marked ⛔ in `PROGRESS.md`; it is
 held out of dispatch in memory (`decideDispatch` gets the set), so its dependants wait and the run
-eventually goes quiet and ends as a stall. The branch is kept. A restart forgets the count and tries
+eventually goes quiet and ends as a stall. The branch is kept. A ✅ branch is merged instead, even at
+the cap: a merge needs no worker, so there is nothing for the brake to stop (user decision 2026-09-24). A restart forgets the count and tries
 again, because a restart is the person's deliberate act (user decision 2026-09-24). Holding it in
 memory and not filtering it from the task list matters: a filtered ⬜ task would make `complete` true
 on a plan that is not finished.
@@ -135,7 +136,10 @@ User-approved 2026-09-24. One line per event, printed by the coordinator:
 
 The fallback line names what `decideResume` chose: "started a new worker", "sent it to a fresh
 reviewer", or "merged its finished branch". A given-up task's row reads `gave up · worker died 3×`
-instead of `queued`. On a restart, the existing `restart-summary` line also names what it woke
+instead of `queued`. A task that has had a death this run and is still live shows its phase label
+followed by `· worker restarted N×` (N = its deaths), e.g. `implementing · worker restarted 1×`. The row
+is the only place a `pir` user sees a death: under `pir` the coordinator's lines go to `run.log`, and
+the `pir` view paints only the task rows (user decision 2026-09-24). On a restart, the existing `restart-summary` line also names what it woke
 ("woke T03, T05 where they left off"). Today a death prints nothing and a ⛔ or held task reads
 `queued`, which is why these are specified.
 
@@ -194,7 +198,8 @@ that leaks into the shell can only be proven by a live run.
   `reconcile` and the dead path, the revive.
 - `src/shell/coordinate.mjs`, `src/core/display.mjs` — the lines and the row label of §2.6; the
   teardown record change of §2.7.
-- `src/shell/harness/` — a `worker-death` fixture that SIGKILLs one worker and lets the run continue.
+- `src/shell/harness/` — `worker-death` fixtures that SIGKILL one worker and let the run continue; capture
+  reads the list through `parseAgents` instead of its own copy.
 
 ### 3.3 The decision function
 
@@ -206,8 +211,8 @@ deaths[num] = { count, role, sessionId, revived }    // absent: no death this ru
 ```
 
 With `deaths` empty it returns exactly what it returns today (no `revive`, no `giveUp`), so restart
-behaviour is unchanged until T06 passes revive candidates. Rules, in order: `count >= maxDeaths` →
-`giveUp`; branch absent → no entry; ✅ → `merge`; revive eligible per §2.4 and `!revived` and
+behaviour is unchanged until T06 passes revive candidates. Rules, in order: ✅ → `merge`;
+`count >= maxDeaths` → `giveUp`; branch absent → no entry; revive eligible per §2.4 and `!revived` and
 `sessionId` → `revive`; 🔍 → `review`; else `resume`.
 
 ### 3.4 State
@@ -255,7 +260,7 @@ green, colour off inside the command, loud on failure. To debug one file verbose
 |---|---|
 | How a real session looks in `claude agents --json` after each kind of death | Only a real daemon produces it (T00) |
 | A real revive continuing real work on its branch | Needs paid live agents (T08 harness, T09) |
-| The on-screen lines reading right in a live display | A person judges the wording on a real TTY (T09) |
+| The task rows reading right in the `pir` view | A person judges the wording on a real TTY (T09) |
 
 ### 5.2 Seatbelts
 
@@ -276,8 +281,9 @@ Scratch paths must already be trusted by Claude Code (`hasTrustDialogAccepted` i
 |---|---|---|---|---|---|
 | Probe sessions | `claude --bg` on a scratch repo, one-word prompts | `worker` | Seconds of model time, cleaned up | `claude stop` + `claude rm` + delete scratch | cents |
 | Kill a scratch worker | `kill -9 <pid>` of a listed `pirprobe`/fixture worker | `worker` | Only this plan's scratch sessions | Revive or re-run | none |
-| Live harness run | `node src/shell/harness/run.mjs worker-death --into <scratch>` | `ask` | Spends real agent time, several minutes | HALT; scratch deleted | a few dollars |
-| `./install.sh` | refresh the installed engine | `worker` | Local copy, idempotent | Re-run from the previous commit | none |
+| Live harness run | `node src/shell/harness/run.mjs worker-death --into <scratch>` (and `worker-death-twice`) | `worker` | Exception, user 2026-09-24: runs may go without a yes, told after; bounded by ceiling 1, 10-min timeout, scratch only | HALT; scratch deleted | a few dollars |
+| Watched live run | `PARALLEL_MAX_WORKERS=1 node src/shell/pir.mjs worker-death` in a fixture scratch | `worker` | Same exception; the person only watches it | `touch` HALT; scratch deleted | a few dollars |
+| `./install.sh` | refresh the installed engine, after `pir/resume-dead-worker` is merged to main | `worker` | Local copy, idempotent; never during the build run, whose workers use the installed engine and skills | Re-run from the previous commit | none |
 
 ---
 
@@ -297,6 +303,12 @@ deletes a task branch, so a re-run continues every task. A stray copy session is
   restart, and a ⛔ would add a hand-clear chore next to the merge-conflict one.
 - 2026-09-24, user: restart revives by the same rule, built last, so the mid-run fix is proven first.
 - 2026-09-24, user: the §2.6 lines and row label, as proposed.
+- 2026-09-24, user (plan review): build in parallel mode, not the classic route recommended at plan time.
+- 2026-09-24, user: a ✅ branch merges even on the 3rd death; the brake only stops work that needs a worker.
+- 2026-09-24, user: a live task row carries `· worker restarted N×`, because under `pir` the lines are unseen.
+- 2026-09-24, user: the worker starts the watched live run; the person only watches and judges.
+- 2026-09-24, user: live harness and watched runs move from `ask` to `worker`, told after.
+- 2026-09-24, user: one `claude agents --json` reader; the harness capture switches to `parseAgents`.
 - Extend `decideResume` and reuse `reconcile`'s merge/review/resume execution as one helper, not a
   second decision: two resume decisions are how the two paths came to disagree.
 - The cezar per-task handoff file is not copied: the kept branch and the conversation already carry

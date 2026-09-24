@@ -26,12 +26,16 @@ const r = platform.revive({ id, sessionId, cwd: t.worktree.path, plan: slug });
 //        adoptTask with decideResume's fallback for the same death, this pass
 ```
 
+A revived task holds its slot and is never also in this pass's 3b spawn (see T03 on `decideDispatch`
+running before 3a).
+
 ## Tests
 
 - [ ] First death with a session id → exactly one `revive` call, with the task worktree as cwd; the worker is matched again next pass by name and is not declared dead.
 - [ ] The revived id is not in `closedIds` after the pass.
 - [ ] Second death of the same task → no revive; fallback per §2.4.
 - [ ] Revive `failed` or `copy` → fallback spawn in the same pass; never two live sessions for the task.
+- [ ] A successful revive is not also spawned fresh by 3b in the same pass, and the ceiling holds.
 - [ ] A task parked AWAITING that dies is revived with its phase and decision kept.
 - [ ] `HALT` → no revive.
 

@@ -8,12 +8,12 @@ task you pick up, and append yours there.
 **Sixty words to a Notes cell, counted.** Flat prose. The account is the commit message. Whoever
 writes a cell also fixes the over-budget cell they walk past.
 
-**Plan reviewed:** not yet — run `/pir-review-plan` before the first `/pir-work`
+**Plan reviewed:** 2026-09-24 — 5 fixed, 6 decided with the user
 
 **Status:** Planned 2026-09-24. Nothing built.
 **Last updated:** 2026-09-24
-**Next `pir-work` will:** T00, the spike, once the plan is reviewed; T01 and T02 have no dependency
-and may follow in any order.
+**Build route:** parallel (`pir resume-dead-worker`), user decision at plan review.
+**Next:** T00, T01 and T02 have no dependency and dispatch first.
 
 ## Tasks
 

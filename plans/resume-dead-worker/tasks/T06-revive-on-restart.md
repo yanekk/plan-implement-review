@@ -3,7 +3,7 @@
 **Phase:** 3 · **Depends on:** T04 · **Weight:** medium
 
 > The working tree had uncommitted edits to `src/shell/coordinate.mjs` (pass-cap removal) at plan
-> time. They must be committed or dropped by their owner before this task starts.
+> time. They must be committed or dropped by their owner before the run starts (PLAN.md).
 
 ## Goal
 
@@ -26,6 +26,8 @@ DESIGN §2.7, and §2.3 for the revive itself.
 const past = platform.history();          // newest per (task, role) whose name parses to this plan
 deaths[num] = { count: 0, role, sessionId, revived: false }   // only for tasks with a kept branch
 // decideResume → revive list → platform.revive; fallback as T04
+// ok → state.closedIds.delete(id) (the reap just added it; DESIGN §2.3), seed state.tasks[num]
+//      { worktree, workerId: id, role, slug, phase, grace: APPEAR_GRACE } so dispatch sees it held
 // restart-summary gains `woke ${list} where they left off`
 ```
 
@@ -36,6 +38,7 @@ workers of unfinished tasks and the finish paths still remove.
 ## Tests
 
 - [ ] Restart with a half-built branch and a matching past session → one revive in the worktree, no fresh spawn.
+- [ ] A worker the reap closed and the revive woke is not in `closedIds` and is not declared dead next pass.
 - [ ] Same with no past session, or revive fails → a fresh implementer, as today.
 - [ ] 🔍 branch with a past reviewer → reviewer revived; with only a past implementer → fresh reviewer.
 - [ ] The restart-summary names the woken tasks; a first start prints no summary.

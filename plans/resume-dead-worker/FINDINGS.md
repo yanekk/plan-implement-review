@@ -8,6 +8,7 @@ user changed.
 
 | Date | | Finding |
 |---|---|---|
+| 2026-09-24 | 📌 | Plan review: every live session in `claude agents --json` had a `pid`, one idle and started 3.4 h earlier; `id` (8 chars) ≠ `sessionId`. `npm test` stays colourless with `FORCE_COLOR=3` in the shell. |
 | 2026-09-24 | 📌 | Probe, Claude Code 2.1.281: SIGKILL of an idle bg session's listed pid removes it from `claude agents --json`; `--all` keeps it as `state:done`, no pid. |
 | 2026-09-24 | 🐞 | Probe: SIGKILL while a `run_in_background` job ran left the session listed with no pid for ~1 min, then the daemon woke it with a new pid. Today's loop would count it alive. Its `sleep 90` child outlived it. |
 | 2026-09-24 | 📌 | Probe: `claude --bg --resume <sessionId> "<msg>"` on a stopped session continues the same id and name, in its original cwd whatever the caller's cwd, memory intact. |

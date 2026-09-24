@@ -29,6 +29,8 @@ None kept. A scratch repo plus one git worktree on paths Claude Code already tru
 3. `claude rm <id>` a stopped session, then `claude --bg --resume <sessionId> -n "<name>" "<msg>"`
    with cwd = worktree. Same id? Name honoured? cwd the worktree?
 4. `claude stop` on a session the daemon has just woken, then resume: continues, or a copy?
+5. A live session left idle for 30 min: does it keep its `pid`? If not, the §2.1 rule would call a
+   worker parked on the person dead. Plan review saw a 3.4 h-old idle session still with a pid.
 
 ## Done when
 

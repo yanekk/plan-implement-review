@@ -23,7 +23,7 @@ DESIGN §2.2, §2.4, §2.5, §3.3.
 decideResume({ featureTasks, branchStates, deaths = {}, maxDeaths = 3 })
   → { merge, review, resume, revive, giveUp }   // sorted task numbers
 // deaths[num] = { count, role: 'implement'|'review', sessionId: string|null, revived: bool }
-// order: count >= maxDeaths → giveUp; branch null → none; ✅ → merge;
+// order: ✅ → merge; count >= maxDeaths → giveUp; branch null → none;
 //        revive-eligible (§2.4) && !revived && sessionId → revive; 🔍 → review; else resume
 
 decideDispatch({ tasks, assignments, maxWorkers, halted, givenUp = new Set() })
@@ -35,7 +35,7 @@ decideDispatch({ tasks, assignments, maxWorkers, halted, givenUp = new Set() })
 - [ ] `deaths` omitted: output identical to today for every existing case (merge/review/resume), plus empty `revive`/`giveUp`.
 - [ ] Each row of the §2.4 table, first death: implement+⬜/🟡 → revive; implement+🔍 → review; review+🔍 → revive; any+✅ → merge.
 - [ ] Same rows with `revived: true` → the fallback column; with `sessionId: null` → the fallback column.
-- [ ] `count: 3` → giveUp regardless of glyph, including ✅; `count: 2` → not giveUp; `maxDeaths` override honoured.
+- [ ] `count: 3` → giveUp for ⬜/🟡/🔍 and an absent branch, but merge for ✅; `count: 2` → not giveUp; `maxDeaths` override honoured.
 - [ ] A feature row ✅/⛔ with a death entry → no entry at all.
 - [ ] `decideDispatch`: a ready task in `givenUp` is not spawned; a plan whose only unfinished task is given up is not `complete`; halted ignores `givenUp`.
 - [ ] Boundary test still green.
