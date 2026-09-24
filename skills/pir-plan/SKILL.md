@@ -146,10 +146,33 @@ Establish and write down:
 - **What is actually installed.** Language and toolchain versions, from the machine, not from
   memory. What is deliberately *absent* matters as much — a missing IDE or SDK rules out
   whole workflows, and a later session will otherwise propose one every time.
-- **The test command.** One command that produces this project's automated evidence. Name
-  it in DESIGN.md and mean it: from here on it is the *only* evidence a session may produce
-  on its own. If the obvious command does not work here, find the one that does and record
-  why — the next session will otherwise rediscover it.
+- **The test command.** The command that produces this project's automated evidence, one
+  line per suite. It goes in the `test` list of the block DESIGN.md opens with, and from here
+  on it is the *only* evidence a session may produce on its own. If the obvious command does
+  not work here, find the one that does and record why in § Environment — the next session
+  will otherwise rediscover it.
+
+  **Measure setup as well**: what a fresh clone needs before those tests can run (`cd server
+  && npm ci`), or `none` if nothing. Your checkout already has everything installed, which is
+  exactly how a missing install stays hidden, so find it by running the tests in a fresh copy
+  (`git worktree add --detach` into a temp directory, then remove it). Setup runs unattended
+  in every parallel worktree, so it must leave the copy clean: `git status --porcelain` prints
+  nothing after it (`npm ci`, not `npm install`; an install folder must be in `.gitignore`).
+  Write both into the block, one `  - ` line each, every line run from the repo root in its
+  own shell so a `cd` does not carry over:
+
+  ```
+  ---
+  setup:
+    - cd server && npm ci
+  test:
+    - make test
+    - make server-test
+  ---
+  ```
+
+  `setup: none` is the empty setup; `test` needs at least one line. The engine refuses to run
+  a plan whose block is missing or malformed.
 
   **Require it to be quiet when it passes, and make quiet the default.** Its dominant caller
   is a session that reads all of its output, and a passing run that prints a line per assertion
@@ -415,7 +438,8 @@ no aphorisms. This matters more than it sounds: the register you write these fil
 register every later session appends to them in, and a plan that starts out written in
 epigrams gets epigrams back for ever. See `CLAUDE.md § How to write in these files`.
 
-- **DESIGN.md** — purpose, success criteria, the behaviour specification with its reasons,
+- **DESIGN.md** — opening with the setup/test block from Stage 3 as its very first line
+  (`---` on line 1, nothing before it), then purpose, success criteria, the behaviour specification with its reasons,
   the architecture and the boundary, the environment, the verification table and seatbelts,
   who acts on the outside world (§5.3), the decisions-and-rationale section, and what is explicitly out of scope. **Every rule
   carries its reason, in a sentence**; that is the whole point of the file. A rule with three
