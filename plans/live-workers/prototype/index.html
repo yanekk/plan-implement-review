@@ -1,0 +1,499 @@
+<title>pir live workers</title>
+<style>
+  :root {
+    --page-bg: #f3f1ec;
+    --page-fg: #2b2a27;
+    --page-muted: #6b675e;
+    --page-line: #ddd8cd;
+    --card-bg: #ffffff;
+    --accent: #2f7d5b;
+    --term-bg: #0b0e14;
+    --term-fg: #c9d1d9;
+    --term-dim: #6e7681;
+    --term-faint: #3b4048;
+    --sel-bg: #1b2330;
+    --ok: #3fb950;
+    --run: #58a6ff;
+    --cyan: #56d4dd;
+    --warn: #d29922;
+    --bad: #f85149;
+    --head: #79c0ff;
+    --mag: #d2a8ff;
+    --pir: #f0883e;
+    --you: #7ee787;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --page-bg: #16181d; --page-fg: #e6e3db; --page-muted: #9a958a;
+      --page-line: #2a2d34; --card-bg: #1d2027; --accent: #4bb98a;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --page-bg: #16181d; --page-fg: #e6e3db; --page-muted: #9a958a;
+    --page-line: #2a2d34; --card-bg: #1d2027; --accent: #4bb98a;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    background: var(--page-bg); color: var(--page-fg);
+    font-family: "IBM Plex Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    line-height: 1.5;
+  }
+  .wrap { max-width: 980px; margin: 0 auto; padding-block: 28px 56px; padding-inline: 16px; }
+  .eyebrow {
+    font-size: 12px; letter-spacing: 0.14em; text-transform: uppercase;
+    color: var(--accent); font-weight: 600; margin: 0 0 6px;
+  }
+  h1 {
+    font-family: "JetBrains Mono", ui-monospace, monospace;
+    font-size: clamp(24px, 4vw, 34px); margin: 0 0 8px; letter-spacing: -0.01em; text-wrap: balance;
+  }
+  .sub { color: var(--page-muted); margin: 0; max-width: 68ch; font-size: 15px; }
+  .note {
+    margin-top: 12px; font-size: 13px; color: var(--page-muted); max-width: 80ch;
+    border-left: 2px solid var(--page-line); padding-left: 12px;
+  }
+  .note b { color: var(--page-fg); font-weight: 600; }
+  kbd {
+    font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 11px;
+    background: var(--card-bg); border: 1px solid var(--page-line);
+    border-bottom-width: 2px; border-radius: 4px; padding: 1px 5px; color: var(--page-fg);
+  }
+
+  .term-window {
+    margin-top: 22px; border-radius: 12px; overflow: hidden;
+    box-shadow: 0 18px 40px -22px rgba(0,0,0,0.55), 0 0 0 1px rgba(0,0,0,0.06);
+    background: var(--term-bg);
+  }
+  .term-bar {
+    display: flex; align-items: center; gap: 8px; padding: 10px 14px;
+    background: #161b22; border-bottom: 1px solid #21262d;
+  }
+  .dot { width: 12px; height: 12px; border-radius: 50%; }
+  .dot.r { background: #ff5f56; } .dot.y { background: #ffbd2e; } .dot.g { background: #27c93f; }
+  .term-title { margin-left: 8px; font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 12px; color: var(--term-dim); }
+  .term-screen {
+    font-family: "JetBrains Mono", ui-monospace, monospace;
+    font-size: 13px; line-height: 1.6; color: var(--term-fg);
+    padding: 14px 14px 10px; height: 500px; overflow: auto;
+    font-variant-numeric: tabular-nums; outline: none;
+  }
+  .term-screen:focus-visible { box-shadow: inset 0 0 0 1px #30363d; }
+  @media (max-width: 560px) { .term-screen { font-size: 11px; } }
+  .term-screen::-webkit-scrollbar { width: 10px; height: 10px; }
+  .term-screen::-webkit-scrollbar-thumb { background: #21262d; border-radius: 5px; }
+
+  .line { display: block; white-space: pre; min-height: 1.6em; }
+  .wrapline { display: block; white-space: pre-wrap; min-height: 1.6em; max-width: 96ch; }
+  .dim { color: var(--term-dim); } .faint { color: var(--term-faint); }
+  .ok { color: var(--ok); } .run { color: var(--run); } .cyan { color: var(--cyan); }
+  .warn { color: var(--warn); } .bad { color: var(--bad); }
+  .head { color: var(--head); } .mag { color: var(--mag); }
+  .pir { color: var(--pir); } .you { color: var(--you); }
+  .b { font-weight: 600; }
+
+  .row { display: block; white-space: pre; padding: 0 8px; border-radius: 4px; cursor: pointer; border-left: 2px solid transparent; }
+  .row:hover { background: rgba(255,255,255,0.03); }
+  .row.sel { background: var(--sel-bg); border-left-color: var(--run); }
+
+  .gate { display: block; white-space: pre-wrap; border-left: 2px solid var(--warn); padding: 2px 10px; margin: 4px 0; background: rgba(210,153,34,0.08); max-width: 96ch; }
+  .clash { border-left-color: var(--pir); background: rgba(240,136,62,0.07); }
+  .out { display: block; white-space: pre; color: var(--term-dim); padding-left: 4ch; }
+
+  .input-row {
+    display: flex; align-items: center; gap: 8px; padding: 8px 16px 12px;
+    background: var(--term-bg); border-top: 1px solid #21262d;
+    font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 13px;
+  }
+  .input-row .you { flex: none; }
+  #msgInput {
+    flex: 1; min-width: 0; background: transparent; border: none; outline: none; color: #e6edf3;
+    font-family: inherit; font-size: 13px; caret-color: var(--you);
+  }
+  #msgInput:disabled { color: var(--term-dim); }
+  .keys { padding: 0 16px 12px; font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 12px; color: var(--term-dim); background: var(--term-bg); white-space: pre-wrap; }
+
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
+  .chip {
+    font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 12.5px;
+    background: var(--card-bg); color: var(--page-fg); border: 1px solid var(--page-line);
+    border-radius: 7px; padding: 6px 11px; cursor: pointer;
+  }
+  .chip:hover { border-color: var(--accent); }
+  .chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .chips-label { font-size: 12px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--page-muted); margin: 22px 0 0; }
+  .qs { margin-top: 26px; font-size: 14px; max-width: 80ch; }
+  .qs h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--page-muted); margin: 0 0 6px; font-weight: 600; }
+  .qs ol { margin: 0; padding-left: 20px; display: grid; gap: 4px; }
+  footer { margin-top: 30px; padding-top: 16px; border-top: 1px solid var(--page-line); font-size: 13px; color: var(--page-muted); }
+</style>
+
+<div class="wrap">
+  <header>
+    <p class="eyebrow">Throwaway mock · live-workers · nothing real runs</p>
+    <h1>pir — talk to a worker</h1>
+    <p class="sub">A run's live view, where you can now pick a task and open its worker's conversation. pir holds a live line to every worker, so what you type, and what pir itself sends, reaches the worker straight away.</p>
+    <p class="note"><b>Try it:</b> <kbd>↑</kbd><kbd>↓</kbd> or click to pick a task, <kbd>→</kbd> to open its conversation, <kbd>←</kbd> to come back. Inside a conversation, just type and press <kbd>↵</kbd> to send. <kbd>y</kbd>/<kbd>n</kbd> answer a permission request. A question set is answered like Claude's own: <kbd>↑</kbd><kbd>↓</kbd> move, <kbd>space</kbd> pick, <kbd>↵</kbd> next. <kbd>Tab</kbd> switches between one line per step and full detail.</p>
+  </header>
+
+  <div class="term-window">
+    <div class="term-bar">
+      <span class="dot r"></span><span class="dot y"></span><span class="dot g"></span>
+      <span class="term-title" id="termTitle">jan@studio — pir dynamic-tasks</span>
+    </div>
+    <div class="term-screen" id="screen" tabindex="0" aria-label="pir screen"></div>
+    <div class="input-row" id="inputRow" hidden>
+      <span class="you">you ❯</span>
+      <input id="msgInput" autocomplete="off" autocapitalize="off" spellcheck="false" aria-label="message to this worker" placeholder="type a message to this worker" />
+    </div>
+    <div class="keys" id="keys"></div>
+  </div>
+
+  <p class="chips-label">Jump to</p>
+  <div class="chips" id="chips"></div>
+
+  <section class="qs">
+    <h2>What this mock is asking you</h2>
+    <ol>
+      <li>Is opening a worker from the task row, with <kbd>→</kbd> and <kbd>←</kbd>, the right way in and out?</li>
+      <li>How much of a worker's activity should show by default: one line per step, or the full detail (<kbd>Tab</kbd>)?</li>
+      <li>Do messages from pir stand out enough from yours and the worker's?</li>
+      <li>Does a permission request read clearly enough to answer with one key?</li>
+      <li>Does a worker's question set (T18: pick one, pick any, or type your own) feel close enough to Claude's own?</li>
+    </ol>
+  </section>
+
+  <footer>A mock for direction only: fake data, canned replies. The real screen lives in the <code>pir</code> terminal dashboard and reads each worker's saved conversation from the run's folder.</footer>
+</div>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=IBM+Plex+Sans:wght@400;600&display=swap">
+
+<script>
+(function () {
+  "use strict";
+  var screen = document.getElementById("screen");
+  var inputRow = document.getElementById("inputRow");
+  var input = document.getElementById("msgInput");
+  var keysEl = document.getElementById("keys");
+  var chipsEl = document.getElementById("chips");
+  var SPINNER = ["⠋","⠙","⠹","⠸","⠼","⠴","⠦","⠧","⠇","⠏"];
+
+  var OPENING = "You are a worker session in a parallel PIR run. You have been given one task and one phase to carry out. Invoke the pir-worker skill and follow its contract, then carry out exactly this instruction and nothing else: ";
+
+  // Conversation entries: {who:'pir'|'you'|'worker'|'step'|'gate'|'note', text, out:[lines], detail}
+  function pir(t){return{who:"pir",text:t};}
+  function you(t){return{who:"you",text:t};}
+  function wk(t){return{who:"worker",text:t};}
+  function st(t,out){return{who:"step",text:t,out:out||[]};}
+  function note(t){return{who:"note",text:t};}
+
+  var TASKS = [
+    d("T11","status-snapshot",264), d("T12","policy-ledger",172), d("T13","gap-classifier",143), d("T14","adopt-at-merge",198),
+    { id:"T15", slug:"gap-report", phase:"building", elapsed:252, convo:[
+      pir(OPENING+"pir-implement T15"),
+      st("Skill pir-worker"), st("Skill pir-implement"),
+      wk("Reading the task doc and the run registry it builds on."),
+      st("Read plans/dynamic-tasks/tasks/T15-gap-report.md", ["62 lines"]),
+      st("Read src/core/registry.mjs", ["188 lines"]),
+      st("Grep \"gap\" in src/", ["src/core/gap-classifier.mjs:14  export function classifyGap(", "src/core/registry.mjs:77      gaps: classifyGap(entry),", "… 10 more matches"]),
+      wk("The registry already classifies gaps, so the report reads that instead of classifying again."),
+      st("Edit src/core/gap-report.mjs  +84 −0"),
+      st("Edit src/core/gap-report.test.mjs  +121 −0")
+    ], live:[
+      st("Bash npm test", ["……………………………………", "✖ gap-report.test.mjs › groups gaps by day", "  expected 3 groups, got 2", "211 passed · 1 failed"]),
+      wk("One failure: a gap that crosses midnight lands in the wrong day. Fixing the day boundary."),
+      st("Edit src/core/gap-report.mjs  +6 −2"),
+      st("Bash npm test", ["………………………………………", "212 passed"]),
+      wk("All green. Updating PROGRESS.md to 🔍 and committing.")
+    ]},
+    { id:"T16", slug:"cli-surface", phase:"asking", ask:"permission", elapsed:74, convo:[
+      pir(OPENING+"pir-review T16"),
+      st("Skill pir-worker"), st("Skill pir-review"),
+      wk("Reviewing T16 against its task doc. Starting with the tests it added."),
+      st("Read src/shell/cli.test.mjs", ["214 lines"]),
+      st("Bash npm test", ["…………………………………", "209 passed"]),
+      wk("The tests leave fixture folders behind in .parallel/tmp-fixtures. I want to delete them before re-running from clean."),
+      { who:"gate", tool:"Bash", cmd:"rm -rf .parallel/tmp-fixtures", why:"delete leftover test fixtures" }
+    ]},
+    { id:"T17", slug:"ls-index", phase:"merging", elapsed:48, convo:[
+      pir(OPENING+"pir-implement T17"),
+      note("… 38 earlier steps · built, reviewed ✅, signalled done …"),
+      { who:"pir", clash:true, text:"Your branch pir/dynamic-tasks-T17 conflicts with pir/dynamic-tasks and could not be merged.\nConflicting file: src/shell/index-store.mjs (lines 40–58).\nMerge pir/dynamic-tasks into your branch, resolve the conflict, run npm test, commit, and signal done again. If choosing which side to keep needs a judgement, ask the person and wait." },
+      st("Bash git merge pir/dynamic-tasks", ["CONFLICT (content): Merge conflict in src/shell/index-store.mjs"]),
+      st("Read src/shell/index-store.mjs  lines 30–70"),
+      wk("Both sides add one field to the index record: mine adds `repo`, T10's adds `startedAt`. They don't compete, so I'm keeping both. No judgement needed."),
+      st("Edit src/shell/index-store.mjs  +2 −6"),
+      st("Bash npm test", ["………………………………………", "214 passed"]),
+      st("Bash git commit -m \"T17: merge feature branch, keep repo and startedAt\""),
+      wk("Resolved and signalled done again.")
+    ]},
+    { id:"T18", slug:"watch-render", phase:"asking", ask:"question", elapsed:100, convo:[
+      pir(OPENING+"pir-implement T18"),
+      st("Skill pir-worker"), st("Skill pir-implement"),
+      st("Read plans/dynamic-tasks/tasks/T18-watch-render.md", ["48 lines"]),
+      st("Read plans/dynamic-tasks/DESIGN.md", ["412 lines"]),
+      wk("The task doc and DESIGN disagree about refresh speed, and it is something you would see."),
+      { who:"form", cursor:0, q:0, questions:[
+        { header:"Refresh", question:"How often should the watch view repaint?", multi:false, options:[
+          { label:"Every 250 ms", description:"what the task doc says; smoother, more CPU while you watch" },
+          { label:"Once a second", description:"what DESIGN §2.4 says; matches every other pir screen" } ], picks:[], other:"" },
+        { header:"Scope", question:"Which screens should use that speed?", multi:true, options:[
+          { label:"Run live view", description:"the task rows" },
+          { label:"Conversation view", description:"a worker's conversation" },
+          { label:"Run list", description:"all runs on the machine" } ], picks:[], other:"" } ] }
+    ]},
+    { id:"T19", slug:"docs-refresh", phase:null, needs:"T15" }
+  ];
+  function d(id,slug,doneMs){ return { id:id, slug:slug, done:true, doneMs:doneMs, convo:[
+    pir(OPENING+"pir-review "+id),
+    note("… 27 earlier steps …"),
+    st("Bash npm test", ["………………………………………", "208 passed"]),
+    wk("Reviewed against the task doc: nothing to fix. Marked ✅ and committed.")
+  ]}; }
+
+  var view = "watch", sel = 4, open = null, full = false, spin = 0, ticks = 0, timer = null, footerMsg = null;
+
+  function esc(s){ return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
+  function pad(s,n){ s=String(s); while(s.length<n) s+=" "; return s; }
+  function mmss(sec){ sec=Math.max(0,Math.floor(sec)); var m=Math.floor(sec/60), s=sec%60; return m+":"+(s<10?"0":"")+s; }
+  function add(html, cls){ var dv=document.createElement("div"); dv.className=cls||"line"; dv.innerHTML=html; screen.appendChild(dv); return dv; }
+  function live(t){ return !t.done && !!t.phase; }
+
+  // ---- the run's live view, now with a selectable task row ---------------
+  function label(t){
+    if(t.done) return {t:"merged", c:"ok", g:"✔"};
+    if(t.phase==="asking") return {t: t.ask==="permission" ? "asking you · allow a command?" : "asking you · a question", c:"warn b", g:"●"};
+    if(t.phase) return {t:t.phase, c:"cyan", g:SPINNER[spin%10]};
+    return {t:"needs "+t.needs, c:"dim", g:"·"};
+  }
+  function paintWatch(){
+    screen.innerHTML = "";
+    var done = TASKS.filter(function(t){return t.done;}).length;
+    var running = TASKS.filter(live).length;
+    var asking = TASKS.filter(function(t){return !t.done && t.phase==="asking";}).length;
+    add('<span class="head b">dynamic-tasks</span>  <span class="ok">● running</span>  <span class="dim">· plan-implement-review · pid 48213</span>');
+    add("&nbsp;");
+    add(esc(SPINNER[spin%10]+" pir/dynamic-tasks · "+(done+10)+"/19 done · "+running+" running")+(asking?' · <span class="warn b">'+asking+' asking you</span>':'')+esc(" · ceiling 4"));
+    add('<span class="dim">  ✔ T01–T10  merged (10 tasks)</span>');
+    TASKS.forEach(function(t,i){
+      var l = label(t);
+      var el = t.done ? mmss(t.doneMs) : (t.phase ? mmss(t.elapsed) : "");
+      var row = document.createElement("div");
+      row.className = "row" + (i===sel ? " sel" : "");
+      row.innerHTML = '<span class="'+l.c+'">'+esc(pad(l.g+" "+pad(t.id,4)+" "+pad(t.slug,18)+" "+pad(l.t,32),60)+el)+'</span>';
+      row.addEventListener("click", function(){ sel=i; footerMsg=null; openConvo(); });
+      screen.appendChild(row);
+    });
+    add("&nbsp;");
+    var ask = TASKS.filter(function(t){return !t.done && t.phase==="asking";});
+    ask.forEach(function(t){ add('<span class="warn b">'+esc("● "+t.id+" "+t.slug+" is asking you: select it and press → to answer")+'</span>'); });
+    if(footerMsg) add('<span class="dim">'+esc(footerMsg)+'</span>');
+    keysEl.textContent = "↑↓ pick a task · → open its conversation · Ctrl+S Ctrl+S stop this run · esc back to all runs";
+    inputRow.hidden = true;
+  }
+
+  // ---- a worker's conversation ------------------------------------------
+  function header(t){
+    var l = label(t);
+    add('<span class="head b">'+esc(t.id+" "+t.slug)+'</span>  <span class="'+l.c+'">'+esc(t.done?"✔ finished · read only":(l.g+" "+l.t))+'</span>  <span class="dim">'+esc("· dynamic-tasks · "+(t.done?"":mmss(t.elapsed)))+'</span>');
+    add('<span class="faint">'+esc("─".repeat(78))+'</span>');
+  }
+  function paintConvo(){
+    var t = TASKS[open];
+    screen.innerHTML = "";
+    header(t);
+    t.convo.forEach(function(e){ paintEntry(e,t); });
+    if(live(t) && t.phase!=="asking") add('<span class="cyan">'+esc(SPINNER[spin%10]+" working…")+'</span>');
+    screen.scrollTop = screen.scrollHeight;
+    inputRow.hidden = !!t.done;
+    input.disabled = !!t.done;
+    var pending = pendingGate(t), form = pendingForm(t);
+    var k = t.done ? "← back · this worker has finished, its conversation is read only · Tab "+(full?"one line per step":"full detail")
+      : form ? "answer the questions above, or type a reply and ↵ · ← back (with an empty box) · Tab "+(full?"one line per step":"full detail")
+      : pending ? "y allow · n refuse · or type a reply and ↵ · ← back (with an empty box) · Tab "+(full?"one line per step":"full detail")
+      : "type and ↵ to send to this worker · ← back (with an empty box) · Tab "+(full?"one line per step":"full detail");
+    keysEl.textContent = k;
+  }
+  function pendingGate(t){ var last=t.convo[t.convo.length-1]; return last && last.who==="gate" && !last.answer ? last : null; }
+  function pendingForm(t){ var last=t.convo[t.convo.length-1]; return last && last.who==="form" && !last.done ? last : null; }
+  // A question set: one question at a time, like Claude's own picker. The last option of every
+  // question is "Other", which takes whatever is typed in the box as the answer.
+  function paintForm(f,t){
+    var h = '<span class="warn b">? '+esc(t.id)+' asks you '+f.questions.length+' questions</span>  ';
+    h += f.questions.map(function(q,i){ var a=answerOf(q); return '<span class="'+(i===f.q&&!f.done?"warn b":a?"ok":"dim")+'">['+esc(q.header)+(a?" ✔":"")+']</span>'; }).join(" ");
+    if(f.done && f.declined){ add(h+'\n  <span class="dim">→ you replied in text instead</span>', "gate"); return; }
+    if(f.done){
+      f.questions.forEach(function(q){ h += '\n  '+esc(q.question)+' <span class="ok">→ '+esc(answerOf(q))+'</span>'; });
+      add(h, "gate"); return;
+    }
+    var q = f.questions[f.q];
+    h += '\n\n  <span class="b">'+esc(q.question)+'</span>'+(q.multi?' <span class="dim">(pick any)</span>':' <span class="dim">(pick one)</span>');
+    var opts = q.options.concat([{label:"Other", description:"type your own answer in the box below"}]);
+    opts.forEach(function(o,i){
+      var isOther = i===q.options.length;
+      var on = isOther ? !!q.other : q.picks.indexOf(i)>=0;
+      var box = q.multi ? (on?"[x]":"[ ]") : (on?"(•)":"( )");
+      var cur = i===f.cursor ? '<span class="warn b">❯ </span>' : "  ";
+      h += '\n  '+cur+'<span class="'+(on?"ok":"")+'">'+box+" "+esc(o.label)+'</span>'+(isOther&&q.other?' <span class="ok">"'+esc(q.other)+'"</span>':'')+'  <span class="dim">'+esc(o.description)+'</span>';
+    });
+    h += '\n\n  <span class="warn">'+esc("↑↓ move · space "+(q.multi?"tick":"choose")+" · ↵ "+(f.q<f.questions.length-1?"next question":"send answers")+" · or type a reply to explain instead")+'</span>';
+    add(h, "gate");
+  }
+  function answerOf(q){
+    var a = q.picks.slice().sort().map(function(i){return q.options[i].label;});
+    if(q.other) a.push(q.other);
+    return a.join(", ");
+  }
+  function formKey(t,f,key){
+    var q = f.questions[f.q], n = q.options.length+1;
+    if(key==="ArrowUp"){ f.cursor=(f.cursor+n-1)%n; }
+    else if(key==="ArrowDown"){ f.cursor=(f.cursor+1)%n; }
+    else if(key===" "){
+      if(f.cursor===q.options.length){ input.placeholder="type your own answer, then ↵"; input.focus(); f.typingOther=true; }
+      else if(q.multi){ var at=q.picks.indexOf(f.cursor); if(at>=0) q.picks.splice(at,1); else q.picks.push(f.cursor); }
+      else { q.picks=[f.cursor]; q.other=""; }
+    }
+    else if(key==="Enter"){
+      if(!answerOf(q)) return;
+      if(f.q<f.questions.length-1){ f.q++; f.cursor=0; }
+      else { f.done=true; t.phase="building"; t.ask=null; t.elapsed=0; setTimeout(function(){
+        t.convo.push(wk("Thanks. Going with "+answerOf(f.questions[0])+" for "+answerOf(f.questions[1]).toLowerCase()+", and noting the task doc and DESIGN disagreed."));
+        t.convo.push(st("Edit src/shell/pir-tui.mjs  +3 −3"));
+        if(view==="convo" && open===TASKS.indexOf(t)) paintConvo();
+      }, 900); }
+    }
+    paintConvo();
+  }
+  function paintEntry(e,t){
+    if(e.who==="pir"){
+      var txt = e.text;
+      if(!full && !e.clash && txt.length>110) txt = txt.slice(0,108)+"…";
+      add('<span class="pir b">pir ▸ '+(e.clash?"merge clash":"")+'</span>'+(e.clash?"":' <span class="pir">'+esc(txt)+'</span>'), "wrapline"+(e.clash?"":""));
+      if(e.clash) add('<span class="pir">'+esc(e.text)+'</span>', "gate clash");
+      return;
+    }
+    if(e.who==="you"){ add('<span class="you b">you ▸</span> '+esc(e.text), "wrapline"); return; }
+    if(e.who==="worker"){ add('<span class="b">'+esc(t.id)+' ▸</span> '+esc(e.text), "wrapline"); return; }
+    if(e.who==="note"){ add('<span class="faint">'+esc(e.text)+'</span>'); return; }
+    if(e.who==="step"){
+      var summary = e.out.length ? '  <span class="faint">'+esc(e.out[e.out.length-1])+'</span>' : "";
+      var bad = e.out.some(function(o){return /✖|failed|CONFLICT/.test(o);});
+      add('<span class="dim">  ⎿ </span><span class="'+(bad?"bad":"mag")+'">'+esc(e.text)+'</span>'+(full?"":summary));
+      if(full) e.out.forEach(function(o){ add(esc(o), "out"); });
+      return;
+    }
+    if(e.who==="form"){ paintForm(e,t); return; }
+    if(e.who==="gate"){
+      var body = '<span class="warn b">⚑ '+esc(t.id)+' wants to run a command</span>\n  '+esc(e.tool)+': <span class="b">'+esc(e.cmd)+'</span>\n  <span class="dim">'+esc("("+e.why+")")+'</span>';
+      if(e.answer) body += '\n  <span class="'+(e.answer==="allowed"?"ok":"bad")+'">'+esc("→ you "+e.answer+" it")+'</span>';
+      else body += '\n  <span class="warn">y allow · n refuse</span>';
+      add(body, "gate");
+    }
+  }
+
+  function openConvo(){
+    var t = TASKS[sel];
+    if(!t.done && !t.phase){ footerMsg = t.id+" has no worker yet — it starts when "+t.needs+" is merged."; paintWatch(); return; }
+    open = sel; view = "convo"; footerMsg = null;
+    document.getElementById("termTitle").textContent = "jan@studio — pir dynamic-tasks › "+t.id;
+    paintConvo();
+    if(!t.done) input.focus(); else screen.focus();
+  }
+  function back(){
+    view = "watch"; open = null; input.value = "";
+    document.getElementById("termTitle").textContent = "jan@studio — pir dynamic-tasks";
+    paintWatch(); screen.focus();
+  }
+
+  // Canned worker replies, so the mock feels like a live line.
+  function reply(t, text){
+    var q = false;
+    setTimeout(function(){
+      if(q){
+        t.phase = "building"; t.ask = null; t.elapsed = 0;
+        t.convo.push(wk("Thanks — going with that. Updating the task to match and carrying on."));
+        t.convo.push(st("Edit src/shell/pir-tui.mjs  +3 −3"));
+      } else if(/^\s*(stop|wait|pause)/i.test(text)){
+        t.convo.push(wk("Stopping here. Tell me when to continue."));
+      } else {
+        t.convo.push(wk("Got it — I'll take that into account."));
+      }
+      if(view==="convo" && open===TASKS.indexOf(t)) paintConvo();
+    }, 900);
+  }
+  function answerGate(t, allow){
+    var g = pendingGate(t); if(!g) return;
+    g.answer = allow ? "allowed" : "refused";
+    t.phase = "reviewing"; t.ask = null;
+    paintConvo();
+    setTimeout(function(){
+      if(allow){ t.convo.push(st("Bash rm -rf .parallel/tmp-fixtures")); t.convo.push(st("Bash npm test", ["…………………………………", "209 passed"])); t.convo.push(wk("Clean run passes. Checking the edge cases the task doc lists next.")); }
+      else t.convo.push(wk("Understood, leaving the fixtures in place. Re-running the tests as they are."));
+      if(view==="convo" && open===TASKS.indexOf(t)) paintConvo();
+    }, 800);
+  }
+
+  // ---- keys --------------------------------------------------------------
+  screen.addEventListener("keydown", function(e){
+    if(view==="watch"){
+      if(e.key==="ArrowDown"||e.key==="j"){ e.preventDefault(); sel=Math.min(TASKS.length-1,sel+1); footerMsg=null; paintWatch(); }
+      else if(e.key==="ArrowUp"||e.key==="k"){ e.preventDefault(); sel=Math.max(0,sel-1); footerMsg=null; paintWatch(); }
+      else if(e.key==="ArrowRight"||e.key==="Enter"){ e.preventDefault(); openConvo(); }
+      else if(e.key==="Escape"||e.key==="ArrowLeft"){ e.preventDefault(); footerMsg="(the list of all runs is not part of this mock)"; paintWatch(); }
+    } else if(view==="convo"){
+      if(e.key==="ArrowLeft"||e.key==="Escape"){ e.preventDefault(); back(); }
+      else if(e.key==="Tab"){ e.preventDefault(); full=!full; paintConvo(); }
+    }
+  });
+  input.addEventListener("keydown", function(e){
+    var t = TASKS[open]; if(!t) return;
+    if(e.key==="Tab"){ e.preventDefault(); full=!full; paintConvo(); return; }
+    if((e.key==="ArrowLeft"||e.key==="Escape") && !input.value){ e.preventDefault(); back(); return; }
+    if(e.key==="Escape"){ input.value=""; return; }
+    if(!input.value && pendingGate(t) && (e.key==="y"||e.key==="n")){ e.preventDefault(); answerGate(t, e.key==="y"); return; }
+    var f = pendingForm(t);
+    if(f && f.typingOther && e.key==="Enter" && input.value.trim()){
+      e.preventDefault(); var q=f.questions[f.q]; q.other=input.value.trim(); if(!q.multi) q.picks=[];
+      input.value=""; f.typingOther=false; input.placeholder="type a message to this worker"; paintConvo(); return;
+    }
+    if(f && !input.value && ["ArrowUp","ArrowDown"," ","Enter"].indexOf(e.key)>=0){ e.preventDefault(); formKey(t,f,e.key); return; }
+    if(e.key==="ArrowUp"){ e.preventDefault(); screen.scrollTop-=40; return; }
+    if(e.key==="ArrowDown"){ e.preventDefault(); screen.scrollTop+=40; return; }
+    if(e.key==="Enter"){
+      var v = input.value.trim(); if(!v) return;
+      input.value = "";
+      var g = pendingGate(t); if(g){ g.answer = "refused"; t.phase = "reviewing"; t.ask = null; }
+      var pf = pendingForm(t); if(pf){ pf.done = true; pf.declined = true; t.phase = "building"; t.ask = null; }
+      t.convo.push(you(v)); paintConvo(); reply(t, v);
+    }
+  });
+
+  // Live ticking: spinners, clocks, and T15 streaming its next steps.
+  timer = setInterval(function(){
+    spin++; ticks++;
+    if(ticks%4===0) TASKS.forEach(function(t){ if(live(t)) t.elapsed++; });
+    var t15 = TASKS[4];
+    if(ticks%14===0 && t15.live && t15.live.length) t15.convo.push(t15.live.shift());
+    if(view==="watch") paintWatch();
+    else if(view==="convo"){ var keep = screen.scrollHeight - screen.scrollTop - screen.clientHeight < 30; var top=screen.scrollTop; paintConvo(); if(!keep) screen.scrollTop=top; }
+  }, 250);
+
+  // ---- chips -------------------------------------------------------------
+  [["T15 building","T15"],["T16 asks: allow a command?","T16"],["T17 fixing a merge clash from pir","T17"],["T18 asks you a question set","T18"],["T12 finished (read only)","T12"],["back to the run","back"]].forEach(function(c){
+    var b = document.createElement("button"); b.className="chip"; b.textContent=c[0];
+    b.addEventListener("click", function(){
+      if(c[1]==="back"){ back(); return; }
+      for(var i=0;i<TASKS.length;i++) if(TASKS[i].id===c[1]) sel=i;
+      if(view==="convo") back();
+      openConvo();
+    });
+    chipsEl.appendChild(b);
+  });
+
+  paintWatch(); screen.focus();
+})();
+</script>
