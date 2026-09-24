@@ -43,10 +43,12 @@ summary), then check all four:
 1. **Acceptance criteria** — walk the task's "Done when" and its checklist line by line.
    Each item is either verified, or verifiable only by hand and therefore *unverified* —
    there is no third state and no benefit of the doubt.
-2. **Tests** — the test command passes, *and* the tests cover the cases the task doc lists. A
-   green suite that tests nothing is the failure mode here. Read the tests for what they
-   actually assert: a test that would still pass with the implementation gutted is not a
-   test. And a number that moved because the behaviour changed is not the same as a number
+2. **Tests** — the test command passes, *and* the tests cover the cases the task doc lists.
+   The test command is the `test` lines of the block `DESIGN.md` opens with, run in order from
+   the repo root; if they cannot start because something is not installed, run the block's
+   `setup` lines first. A green suite that tests nothing is the failure mode here. Read the
+   tests for what they actually assert: a test that would still pass with the implementation
+   gutted is not a test. And a number that moved because the behaviour changed is not the same as a number
    the test will defend — when a change makes something take longer or cost more, check that
    the assertion moved with it in both directions.
 3. **The traps** — the testability boundary held, no reaching for a clock or the network

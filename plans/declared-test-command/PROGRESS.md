@@ -29,13 +29,13 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T05 | red-reason-visible | — | ⬜ | |
 | T06 | spawn-note | — | ✅ | |
 | T07 | worker-setup | T01, T02, T06 | ⬜ | |
-| T08 | planner-writes-block | T01 | ⬜ | |
+| T08 | planner-writes-block | T01 | 🔍 | Template opens with the block; pir-plan Stage 3 measures setup in a fresh worktree, Stage 7 lists it; implement, review, worker and CLAUDE.md name the block. 1 test. Kept the "no verbose variant in the block" rule, reworded off the fence. pir-review-plan wording left for T09. |
 | T09 | review-verifies-block | T01 | ⬜ | |
 | T10 | harness-fixture-block | T01 | ⬜ | |
 | T11 | docs | T03, T04, T05, T07, T08, T09 | ⬜ | |
 | T12 | prove-and-install | T03, T04, T05, T07, T08, T09, T10, T11 | ⬜ | |
 
-**Review queue:** *(empty)*
+**Review queue:** T08
 
 ## Blocked on the user
 
