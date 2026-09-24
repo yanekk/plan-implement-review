@@ -11,6 +11,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { loadBundle } from './capture.mjs';
 import { renderHandoff } from '../coordinate.mjs';
+import { buildConflictPrompt } from '../../core/conflict.mjs';
 import {
   loadTranscripts,
   loadFinalFiles,
@@ -427,6 +428,44 @@ test('handedOffGreenBranch fails when the coordinator output lacks the green han
   const r = handedOffGreenBranch().check(b);
   assert.equal(r.pass, false);
   assert.match(r.detail, /no `git merge pir\/scratch` hand-off line/);
+});
+
+// T10 review: the conflict-resolution prompt coordinate.mjs prints mid-run carries `  git merge pir/{plan}`
+// too. A run that merged T01, hit a conflict on T02 and then stalled or timed out never handed off, so the
+// bare merge line must not read as the green verdict.
+test('handedOffGreenBranch fails when the only `git merge` line is a conflict prompt, not the hand-off', () => {
+  const prompt = buildConflictPrompt({
+    task: 'T02',
+    slug: 'second',
+    workerName: null,
+    taskBranch: 'pir/scratch-T02',
+    featureBranch: 'pir/scratch',
+    files: ['greeting.txt'],
+  });
+  const b = bundle({
+    flow: [fl('t5', 'merge', 'T01')],
+    gitLog: '* T01 marker (pir/scratch)\n* seed\n',
+    timeline: [tick('t1', [wagent('T01', 'busy')])],
+    coordinatorOut: `pass 3\n\n${prompt}\npass 4\n`,
+  });
+  const r = handedOffGreenBranch().check(b);
+  assert.equal(r.pass, false, r.detail);
+  assert.match(r.detail, /no `git merge pir\/scratch` hand-off line/);
+});
+
+// T10 review: on a non-TTY the renderer appends the final red frame (its footer also says `not ready to
+// merge`, with no reason under it) before renderHandoff prints. The reason quoted must be the hand-off's.
+test('handedOffGreenBranch quotes the hand-off reason, not the red status frame printed before it', () => {
+  const frame = '  T01 ✅\n\n✗ 2 task(s) built on pir/scratch, but its tests fail — not ready to merge.\n';
+  const b = bundle({
+    flow: [fl('t5', 'merge', 'T01')],
+    gitLog: '* T01 marker (pir/scratch)\n* seed\n',
+    timeline: [tick('t1', [wagent('T01', 'busy')])],
+    coordinatorOut: frame + RED_OUT,
+  });
+  const r = handedOffGreenBranch().check(b);
+  assert.equal(r.pass, false);
+  assert.match(r.detail, /went red: test `npm test` exited 1/);
 });
 
 // The regression guard the task asks for: a bundle carrying a `promote` line — the removed model — now

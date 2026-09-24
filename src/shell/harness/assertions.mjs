@@ -544,15 +544,22 @@ export function handedOffGreenBranch() {
       return { pass: false, evidence, detail: 'no coordinator.out in the bundle — the end-of-run gate verdict was not captured' };
     }
     const outLines = out.split('\n');
-    const redAt = outLines.findIndex((l) => l.includes('not ready to merge'));
+    // The LAST red line: on a non-TTY the renderer appends the final red frame, whose footer says `not
+    // ready to merge` with no reason under it, before renderHandoff prints its own red line and reason.
+    const redAt = outLines.findLastIndex((l) => l.includes('not ready to merge'));
     if (redAt !== -1) {
       evidence.push(`coordinator.out: ${outLines[redAt].trim()}`);
       // renderHandoff prints the gate's reason on the line after the red one.
       const why = outLines[redAt + 1]?.trim();
       return { pass: false, evidence, detail: `the feature-branch tests went red${why ? `: ${why}` : ''}` };
     }
+    // The merge line must follow `Yours to merge:` (renderHandoff, blank line between). A bare
+    // `git merge pir/{plan}` also appears in the conflict-resolution prompt printed mid-run, so a run that
+    // conflicted and then stalled would otherwise read as green.
     const mergeLine = `git merge pir/${plan ?? ''}`;
-    const green = outLines.find((l) => l.includes(mergeLine));
+    const nextNonBlank = (i) => outLines.slice(i + 1).find((l) => l.trim() !== '');
+    const offerAt = outLines.findLastIndex((l, i) => l.includes('Yours to merge:') && nextNonBlank(i)?.trim() === mergeLine.trim());
+    const green = offerAt === -1 ? null : nextNonBlank(offerAt);
     if (!green) {
       return { pass: false, evidence, detail: `coordinator.out has no \`${mergeLine.trim()}\` hand-off line — the run did not hand off a green branch` };
     }
