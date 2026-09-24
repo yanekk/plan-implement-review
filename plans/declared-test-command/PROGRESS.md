@@ -29,7 +29,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T05 | red-reason-visible | — | ⬜ | |
 | T06 | spawn-note | — | ✅ | |
 | T07 | worker-setup | T01, T02, T06 | ⬜ | |
-| T08 | planner-writes-block | T01 | ⬜ | |
+| T08 | planner-writes-block | T01 | ✅ | |
 | T09 | review-verifies-block | T01 | ⬜ | |
 | T10 | harness-fixture-block | T01 | ⬜ | |
 | T11 | docs | T03, T04, T05, T07, T08, T09 | ⬜ | |
