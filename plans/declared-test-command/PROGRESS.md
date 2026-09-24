@@ -24,12 +24,12 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 |---|---|---|---|---|
 | T01 | parse-test-block | — | ✅ | |
 | T02 | command-runner | — | ✅ | |
-| T03 | start-refusal | T01 | ⬜ | |
+| T03 | start-refusal | T01 | ✅ | |
 | T04 | end-gate-from-block | T01, T02 | ✅ | Review clean, no fix commit. Gate reads root DESIGN.md, runs setup then test via `runLines`, one log; `testcommand.mjs` gone. Accepted the recorded step-4 wording deviation. Probed: tests fail if feature copy is read or log mode flips; no-worker conflict prompt rendered; signal-killed reason path. `docs/run-lifecycle.md` still names `testCommandFrom` (T11). |
 | T05 | red-reason-visible | — | ⬜ | |
 | T06 | spawn-note | — | ✅ | |
 | T07 | worker-setup | T01, T02, T06 | ⬜ | |
-| T08 | planner-writes-block | T01 | ⬜ | |
+| T08 | planner-writes-block | T01 | ✅ | |
 | T09 | review-verifies-block | T01 | ⬜ | |
 | T10 | harness-fixture-block | T01 | ⬜ | |
 | T11 | docs | T03, T04, T05, T07, T08, T09 | ⬜ | |

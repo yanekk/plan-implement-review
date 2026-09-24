@@ -54,8 +54,10 @@ title — projects name it differently. Every entry on it has already cost someb
 4. **Write the tests the task doc lists**, plus the ones its edge cases imply. A green suite
    that tests nothing is the failure mode here — the whole point of the testability boundary
    is that a full run of behaviour is checkable in milliseconds.
-5. **Leave the test command green.** It is named in `DESIGN.md § Environment`, and it is the
-   only evidence this session can produce on its own. If it is not green, the task is 🟡, not
+5. **Leave the test command green.** It is the `test` lines of the block `DESIGN.md` opens
+   with, run in order from the repo root, and it is the only evidence this session can produce
+   on its own. If they cannot start because something is not installed (a `command not found`,
+   a missing module), run the block's `setup` lines first, then the tests. If it is not green, the task is 🟡, not
    🔍 — hand over a half-built task honestly rather than a finished-looking one.
 6. **Update `PROGRESS.md`:** mark the task **🔍**, and write in its Notes cell what you
    built, how many tests, and — the part that earns its keep — **every deviation from the

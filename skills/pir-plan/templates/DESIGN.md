@@ -1,3 +1,10 @@
+---
+# setup: none, or a list of "  - <command>" lines a fresh clone needs before its tests can run
+setup: none
+test:
+  - {the test command}
+---
+
 # {Project} — Design
 
 > **Template.** Written by `/pir-plan`, read by every session that touches the behaviour it
@@ -96,19 +103,18 @@ What the layers are, what each proves, and what none of them can prove.
 | Toolchain | |
 | **Deliberately absent** | *(what is not installed, so nobody proposes a workflow that needs it)* |
 
-**The test command.**
-
-```
-{the one command}
-```
+**The test command.** The `test` lines of the block at the top of this file. Each line runs in
+its own `/bin/sh -c` from the repo root, so a `cd` does not carry to the next line. The block holds
+exactly the commands that make up the suite: a verbose or debugging variant goes in the prose here,
+not in the block, or a parallel run's end-of-run gate runs it too.
 
 **It is the only evidence a session may produce on its own.** If the obvious command does not
 work here, say which one does and why — the next session will otherwise rediscover it.
 
-**A parallel run executes this block.** When every task is done, `pir {slug}` runs each line of
-the fenced block above, in order, on the finished branch, and hands the branch over only if all of
-them pass. So the block holds exactly the commands that make up the suite: one line per suite is
-fine, but a verbose or debugging variant goes in the prose, not in the block, or it runs too.
+**Setup.** The block's `setup` lines are what a fresh clone needs before its tests can run
+(`cd server && npm ci`), or `none`. A parallel run runs them in every new worktree, so they must
+leave the copy clean: no tracked file changed, no new file git does not ignore (`npm ci`, not
+`npm install`).
 
 **It must be cheap to read when it passes.** The dominant caller is a session that reads all
 of its output, and a passing run that prints a line per assertion is thousands of lines of the

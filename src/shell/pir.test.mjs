@@ -81,6 +81,17 @@ test('not-reviewed → clean message on stderr, exit 1, no watch', () => {
   assert.match(errs[0], /'screen-time' is not reviewed — run \/pir-review-plan screen-time/);
 });
 
+test('no-test-block → the refusal naming the parser reason and /pir-review-plan, exit 1, no watch', () => {
+  const { calls, errs, deps } = harness({ started: false, reason: 'no-test-block', detail: 'no test key' });
+  const code = run(['screen-time'], deps);
+  assert.equal(code, 1);
+  assert.deepEqual(calls.watch, [], 'no view opens on a refused start');
+  assert.deepEqual(errs, [
+    "cannot start 'screen-time': plans/screen-time/DESIGN.md has no valid setup/test block (no test key).\n" +
+      'A plan without one counts as not reviewed. Run /pir-review-plan screen-time to add it.\n',
+  ]);
+});
+
 test('two or more args → usage on stderr, exit 2', () => {
   const { calls, errs, deps } = harness();
   const code = run(['a', 'b'], deps);
