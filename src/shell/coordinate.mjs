@@ -178,6 +178,8 @@ export function startCoordinator({
       complete: r.complete,
       readyToMerge: r.readyToMerge ?? null,
       testsPassed: r.testsPassed,
+      // The red gate's { reason, logPath }, null on green or before completion (DESIGN §2.8).
+      testsReason: r.testsReason ?? null,
       done: r.complete,
       tasks: r.tasks,
     };
@@ -228,7 +230,7 @@ export function startCoordinator({
       const r = pass();
       if (onPass) onPass(r, p);
       if (r.complete)
-        return { reason: 'complete', passes: p, complete: true, readyToMerge: r.readyToMerge, testsPassed: r.testsPassed };
+        return { reason: 'complete', passes: p, complete: true, readyToMerge: r.readyToMerge, testsPassed: r.testsPassed, testsReason: r.testsReason };
       if (r.halted) return { reason: 'halted', passes: p, complete: false };
       const productive = r.actions.some((a) => ['spawn', 'review', 'merge', 'close'].includes(a.type));
       idle = productive ? 0 : idle + 1;
@@ -765,10 +767,12 @@ export function displayPhaseFor(t) {
 }
 
 // buildRunState({ passTasks, stateTasks, branch, ceiling, sinceByTask, doneMsByTask, complete,
-// readyToMerge, interrupted }) → the runState buildDisplay consumes (DESIGN §2.3). passTasks are the
+// readyToMerge, testsReason, interrupted }) → the runState buildDisplay consumes (DESIGN §2.3). passTasks are the
 // parsed PROGRESS rows the pass returned ({ num, name, deps, state }); stateTasks is
 // coordinator.state.tasks (the live workers). A ✅ row is done; otherwise a tracked worker's phase names
 // the row. sinceByTask/doneMsByTask carry the phase-start and final-duration times the shell tracks.
+// testsReason is the red gate's { reason, logPath } (null otherwise); it rides in runState so it lands in
+// status.json and a detached viewer can say why a finished run is red (DESIGN §2.8).
 export function buildRunState({
   passTasks,
   stateTasks = {},
@@ -778,6 +782,7 @@ export function buildRunState({
   doneMsByTask = {},
   complete = false,
   readyToMerge = false,
+  testsReason = null,
   interrupted = false,
 } = {}) {
   const tasks = passTasks.map((t) => {
@@ -798,7 +803,7 @@ export function buildRunState({
       prompt: phase === 'asking' ? st.decision?.prompt ?? null : null,
     };
   });
-  return { branch, ceiling, complete, readyToMerge: !!readyToMerge, interrupted: !!interrupted, tasks };
+  return { branch, ceiling, complete, readyToMerge: !!readyToMerge, testsReason: testsReason ?? null, interrupted: !!interrupted, tasks };
 }
 
 async function main(argv) {
@@ -1076,6 +1081,7 @@ async function main(argv) {
         doneMsByTask,
         complete: r.complete,
         readyToMerge: !!r.readyToMerge,
+        testsReason: r.testsReason,
       });
       lastRunState = runState;
       // Feed the detached live view (DESIGN §2.4): write this pass's run state to the snapshot the

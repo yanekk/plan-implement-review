@@ -164,6 +164,32 @@ test('a stale/final run renders its last frame with a stale marker (§2.4)', () 
   assert.match(frameText(stopped), /stopped · this frame is stale.*resumes from committed work/s, 'a stopped run shows the resume note');
 });
 
+test('a finished red frame says not ready to merge and never offers `git merge`; green keeps the hand-off (DESIGN §2.8)', () => {
+  const tasks = [{ id: 'T01', slug: 'a', deps: [], done: true, phase: null, since: null, doneMs: 100, question: null }];
+  const frameFor = (runState) => frameText(buildWatchFrame(
+    { slug: 'gamma', state: 'finished', repo: 'repoC', snap: { version: 1, proc: {}, finalState: 'finished', runState }, record: { pid: 9, branch: 'pir/gamma' } },
+    { now: NOW, columns: 200 },
+  ));
+  const red = frameFor({ branch: 'pir/gamma', ceiling: 2, complete: true, readyToMerge: false, tasks, testsReason: { reason: 'test `make test` exited 2', logPath: '/p/tests.log' } });
+  assert.ok(!/git merge/.test(red), 'no merge offer anywhere on a red frame');
+  assert.match(red, /Not ready to merge — fix pir\/gamma, see the output above\./);
+  assert.match(red, /test `make test` exited 2 · output: \/p\/tests\.log/, 'the footer above carries the reason');
+
+  const green = frameFor({ branch: 'pir/gamma', ceiling: 2, complete: true, readyToMerge: true, tasks });
+  assert.match(green, /finished · this frame is stale\. Hand-off: git merge pir\/gamma/);
+});
+
+test('a finished run with no snapshot does not guess green: no merge offer, it points at run.log (DESIGN §2.8)', () => {
+  const controlDir = '/r/plans/gamma/.parallel/control';
+  const text = frameText(buildWatchFrame(
+    { slug: 'gamma', state: 'finished', repo: 'repoC', snap: null, record: { pid: 9, branch: 'pir/gamma', controlDir } },
+    { now: NOW },
+  ));
+  assert.ok(!/git merge/.test(text), 'no merge offer without a runState to prove green');
+  assert.match(text, /no snapshot recorded — finished/);
+  assert.ok(text.includes(`${controlDir}/run.log`), 'and names run.log');
+});
+
 test('a running watch frame ticks the spinner and shows the pid/awake note; no snapshot shows a waiting line', () => {
   const runState = { branch: 'pir/alpha', ceiling: 2, tasks: [{ id: 'T01', slug: 'a', deps: [], done: false, phase: 'building', since: NOW, doneMs: null, question: null }] };
   const snap = { version: 1, proc: {}, finalState: null, runState };

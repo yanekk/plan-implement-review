@@ -221,6 +221,22 @@ test('formatLines renders the row content the renderer paints, with no escapes o
   assert.match(joined, /needs T02/, 'the waiting row names its unmet dependency');
 });
 
+test('a red footer prints the gate reason and log path as a second line, and none for an old snapshot (DESIGN §2.8)', () => {
+  const base = { branch: 'pir/demo', ceiling: 2, complete: true, readyToMerge: false, tasks: [{ id: 'T01', slug: 'a', deps: [], done: true, phase: null, since: null, doneMs: 100, question: null }] };
+  const why = formatLines(buildDisplay({ ...base, testsReason: { reason: 'test `make test` exited 127', logPath: '/p/tests.log' } }, { now: 0 }));
+  const at = why.findIndex((l) => l.includes('its tests fail — not ready to merge'));
+  assert.ok(at >= 0, 'the red line is there');
+  assert.equal(why[at + 1], '  test `make test` exited 127 · output: /p/tests.log', 'the second line says why and where');
+  assert.ok(!why.some((l) => /git merge/.test(l)), 'a red footer never offers the merge');
+
+  const logOnly = formatLines(buildDisplay({ ...base, testsReason: { reason: null, logPath: '/p/tests.log' } }, { now: 0 }));
+  assert.ok(logOnly.includes('  output: /p/tests.log'), 'a log path alone still prints');
+
+  const old = formatLines(buildDisplay(base, { now: 0 }));
+  const oldAt = old.findIndex((l) => l.includes('not ready to merge'));
+  assert.equal(old.length, oldAt + 1, 'an old snapshot with no reason gets no second line');
+});
+
 test('on a colour TTY each row is tinted by status: active cyan, done green, idle dim (T16)', () => {
   const stream = fakeStream();
   const r = createRenderer({ stream, colour: true });

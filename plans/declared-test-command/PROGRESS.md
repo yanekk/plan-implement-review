@@ -26,7 +26,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T02 | command-runner | — | ⬜ | |
 | T03 | start-refusal | T01 | ⬜ | |
 | T04 | end-gate-from-block | T01, T02 | ⬜ | |
-| T05 | red-reason-visible | — | ⬜ | |
+| T05 | red-reason-visible | — | 🔍 | testsReason runPass → buildRunState → status.json; red footer second line; viewer red frame drops `git merge`. 8 tests. Deviations: drain() and drive() also return testsReason (for tests). No-snapshot finished note reads "whether its tests passed is in the log:" plus the run.log path. |
 | T06 | spawn-note | — | ⬜ | |
 | T07 | worker-setup | T01, T02, T06 | ⬜ | |
 | T08 | planner-writes-block | T01 | ⬜ | |
@@ -35,7 +35,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T11 | docs | T03, T04, T05, T07, T08, T09 | ⬜ | |
 | T12 | prove-and-install | T03, T04, T05, T07, T08, T09, T10, T11 | ⬜ | |
 
-**Review queue:** *(empty)*
+**Review queue:** T05
 
 ## Blocked on the user
 

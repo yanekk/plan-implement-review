@@ -388,6 +388,23 @@ test('a red feature branch is completed but not handed off: no readyToMerge, the
   assert.equal(worktree.mainCommitCount(), 1, 'a red feature branch never reaches main');
 });
 
+test('a red end gate carries its reason and log path out of the pass; a green one carries null (DESIGN §2.8)', (t) => {
+  const red = setup(t, [{ num: 'T01' }]);
+  const runTests = () => ({ ok: false, reason: 'test `make test` exited 2', logPath: '/x/tests.log' });
+  const redResult = drain({ ...red.base, runTests });
+  assert.equal(redResult.testsPassed, false);
+  assert.deepEqual(redResult.testsReason, { reason: 'test `make test` exited 2', logPath: '/x/tests.log' });
+
+  const bare = setup(t, [{ num: 'T01' }]);
+  const bareResult = drain({ ...bare.base, runTests: () => ({ ok: false }) });
+  assert.deepEqual(bareResult.testsReason, { reason: null, logPath: null }, 'a gate with no reason still marks red');
+
+  const green = setup(t, [{ num: 'T01' }]);
+  const greenResult = drain({ ...green.base, runTests: () => ({ ok: true, logPath: '/x/tests.log' }) });
+  assert.equal(greenResult.testsPassed, true);
+  assert.equal(greenResult.testsReason, null, 'a green run has no reason to carry');
+});
+
 test('a crashed worker is closed as dead and its worktree reclaimed, freeing its slot', (t) => {
   const { platform, worktree, base } = setup(t, [{ num: 'T01' }], { behaviors: { T01: { crash: true } } });
   const state = createRunState();
