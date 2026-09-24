@@ -12,8 +12,7 @@ writes a cell also fixes the over-budget cell they walk past.
 
 **Status:** Planned 2026-09-24. Nothing built.
 **Last updated:** 2026-09-24
-**Next `pir-work` will:** T01; T02, T05 and T06 have no dependency and may
-follow in any order.
+**Next `pir-work` will:** any of T02, T03, T05, T09, T10; their dependencies are ✅.
 
 ## Tasks
 
@@ -29,13 +28,13 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T05 | red-reason-visible | — | ⬜ | |
 | T06 | spawn-note | — | ✅ | |
 | T07 | worker-setup | T01, T02, T06 | ⬜ | |
-| T08 | planner-writes-block | T01 | 🔍 | Template opens with the block; pir-plan Stage 3 measures setup in a fresh worktree, Stage 7 lists it; implement, review, worker and CLAUDE.md name the block. 1 test. Kept the "no verbose variant in the block" rule, reworded off the fence. pir-review-plan wording left for T09. |
+| T08 | planner-writes-block | T01 | ✅ | Template opens with the block; skills and CLAUDE.md name its test lines. Review clean, no fix commit: suite green, test fails if the block is gutted, grep finds no fenced-block or § Environment-only wording outside pir-review-plan (T09). Probed the template's comment line and setup cd semantics. |
 | T09 | review-verifies-block | T01 | ⬜ | |
 | T10 | harness-fixture-block | T01 | ⬜ | |
 | T11 | docs | T03, T04, T05, T07, T08, T09 | ⬜ | |
 | T12 | prove-and-install | T03, T04, T05, T07, T08, T09, T10, T11 | ⬜ | |
 
-**Review queue:** T08
+**Review queue:** none
 
 ## Blocked on the user
 
