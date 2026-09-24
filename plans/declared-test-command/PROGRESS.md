@@ -12,7 +12,7 @@ writes a cell also fixes the over-budget cell they walk past.
 
 **Status:** Planned 2026-09-24. Nothing built.
 **Last updated:** 2026-09-24
-**Next `pir-work` will:** T01; T05 and T06 have no dependency and may follow in any order.
+**Next `pir-work` will:** T03, T04, T05, T07, T08, T09 or T10; all their dependencies are done.
 
 ## Tasks
 
@@ -21,12 +21,12 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 
 | # | Task | Depends on | State | Notes |
 |---|---|---|---|---|
-| T01 | parse-test-block | — | ⬜ | |
+| T01 | parse-test-block | — | ✅ | |
 | T02 | command-runner | — | ✅ | Review clean, no fix commit. `commands.mjs`: scrubEnv, runLines, startLines, `readLogTail` moved from `pir-tui.mjs` (re-exported). Probed beyond the doc: sync and background give identical results for a signal-killed line, a missing cwd and a line that backgrounds a child; a detached line outlives a SIGINT'd parent (FINDINGS). |
 | T03 | start-refusal | T01 | ⬜ | |
 | T04 | end-gate-from-block | T01, T02 | ⬜ | |
 | T05 | red-reason-visible | — | ⬜ | |
-| T06 | spawn-note | — | ⬜ | |
+| T06 | spawn-note | — | ✅ | |
 | T07 | worker-setup | T01, T02, T06 | ⬜ | |
 | T08 | planner-writes-block | T01 | ⬜ | |
 | T09 | review-verifies-block | T01 | ⬜ | |

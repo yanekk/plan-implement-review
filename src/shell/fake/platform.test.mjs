@@ -85,3 +85,12 @@ test('a crashed worker vanishes from list(); close removes a worker', (t) => {
   assert.ok(other.closed.includes(id2));
   assert.ok(id); // referenced
 });
+
+test('spawn records the note it was given, and null when none (DESIGN §2.4)', () => {
+  // No worktree needed: spawn only records; nothing advances until list().
+  const platform = createFakePlatform();
+  platform.spawn({ cwd: '/wt/T01', name: NAME, phase: 'implement', note: 'Setup failed.' });
+  platform.spawn({ cwd: '/wt/T01', name: NAME, phase: 'review' });
+  assert.equal(platform.spawns[0].note, 'Setup failed.');
+  assert.equal(platform.spawns[1].note, null);
+});
