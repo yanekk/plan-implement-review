@@ -20,6 +20,7 @@ import { decideDispatch } from '../core/dispatch.mjs';
 import { decideResume } from '../core/resume.mjs';
 import { workerName, isWorkerOf, parseAgentName } from '../core/naming.mjs';
 import { buildConflictPrompt } from '../core/conflict.mjs';
+import { formatSetupNote } from '../core/setupnote.mjs';
 
 // The phases the loop tracks per task from a worker's own messages plus the lifecycle step it
 // drives (DESIGN §2.8: the name carries identity, the lifecycle carries phase). Only three of these
@@ -29,6 +30,10 @@ const REVIEW_READY = 'review-ready';
 const REVIEWING = 'reviewing';
 const AWAITING = 'awaiting-answer';
 const DONE = 'done';
+// The plan's setup lines are running in the task's fresh worktree and its implementer is not spawned
+// yet (DESIGN §2.4). The task has no session: it holds a ceiling slot (it is about to become a worker)
+// but is exempt from the liveness and death checks, and `setup` on the task is the startLines handle.
+export const PREPARING = 'preparing';
 
 // A fresh run's bookkeeping. `feature` is set the first pass; `tasks` maps a task id to what the
 // loop knows about the worker holding it: its worktree, its live session id, its role and phase,
@@ -46,6 +51,11 @@ const NO_CONTROL = { isHalted: () => false, log: () => {} };
 // the test command on the feature branch; the dry run has no suite on the scratch repo, so green is
 // the default and a test injects a red result to prove the loop refuses to hand off a red branch.
 const GREEN = () => ({ ok: true });
+
+// The default worker-setup step: nothing to run, so every implementer spawns in the pass that
+// dispatches it, exactly as before setup existed (`setup: none`, and the dry run). A real run injects
+// prepare(num, worktreePath) → a startLines handle for the plan's setup lines (coordinate.mjs).
+const NO_PREPARE = () => null;
 
 function taskByWorkerId(state, workerId) {
   for (const [num, t] of Object.entries(state.tasks)) if (t.workerId === workerId) return { num, t };
@@ -165,6 +175,13 @@ function buildAssignments(state, liveList) {
   }
   const assignments = [];
   for (const [num, t] of Object.entries(state.tasks)) {
+    // A preparing task has no session to find, so it is live by definition: it takes its task and a
+    // slot, and is never declared dead, respawned or given a second setup. workerId null — nothing to
+    // close; the halt path kills its setup handle instead.
+    if (t.phase === PREPARING) {
+      assignments.push({ workerId: null, task: num, phase: PREPARING, live: true });
+      continue;
+    }
     const w = byNumRole.get(`${num}/${t.role}`);
     if (w) {
       t.workerId = w.id; // authoritative id from the list, what close can actually stop
@@ -347,7 +364,7 @@ function reconcile({ platform, worktree, repo, slug, maxWorkers, state, featureP
 // runPass — one turn of the loop. Gathers, decides, executes, and returns the structured actions it
 // took plus a human log and the counts drain needs to know when to stop. `state` carries the phase
 // memory across passes; the platform, worktree, control and runTests are injected.
-export function runPass({ platform, worktree, repo, slug, maxWorkers, state, control = NO_CONTROL, runTests = GREEN, now = () => Date.now() }) {
+export function runPass({ platform, worktree, repo, slug, maxWorkers, state, control = NO_CONTROL, runTests = GREEN, prepare = NO_PREPARE, now = () => Date.now() }) {
   const actions = [];
   const log = [];
   const record = (type, extra = {}) => {
@@ -441,7 +458,15 @@ export function runPass({ platform, worktree, repo, slug, maxWorkers, state, con
   // 3a. Halted: close every worker's session and do nothing else. Worktrees and branches are left on
   // disk for inspection; main is untouched (DESIGN §2.4, §2.5). No promotion, no merge, no spawn.
   if (halted) {
+    // Kill every running setup first (DESIGN §2.4): its lines run detached in their own process group,
+    // so nothing else would stop an `npm ci` the run no longer wants.
+    for (const [num, t] of Object.entries(state.tasks)) {
+      if (t.phase !== PREPARING) continue;
+      t.setup?.kill();
+      record('setup-kill', { task: num });
+    }
     for (const id of decision.close) {
+      if (id == null) continue; // a preparing task's slot — no session, its setup was killed above
       // Close only — NO platform.remove here (T41, DESIGN §2.3): a HALT is an emergency stop, and a
       // killed worker's session record is deliberately left in `claude agents` for forensics, exactly as
       // its worktree and branch are left on disk. Removal is for workers that FINISHED, not ones a HALT
@@ -452,7 +477,7 @@ export function runPass({ platform, worktree, repo, slug, maxWorkers, state, con
     }
     for (const id of closedThisPass) state.closedIds.add(id);
     const liveAfter = [...liveIds].filter((id) => !closedThisPass.has(id)).length;
-    return { actions, log, halted: true, complete: false, liveAfter, tasks: parsed.tasks };
+    return { actions, log, halted: true, complete: false, liveAfter, preparing: 0, tasks: parsed.tasks };
   }
 
   // 3a. Clean up dead workers first (DESIGN §2.5 — a crashed or abandoned worker). Their session is
@@ -479,19 +504,49 @@ export function runPass({ platform, worktree, repo, slug, maxWorkers, state, con
   // §2.5, §2.9). Every task is built the same way now: an implement worker, then a review; a task that
   // needs the person's judgement is an ordinary worker that prepares the ground and asks (§2.5, the
   // worker-contract half in T07). decideDispatch has already capped this to the ceiling.
-  for (const num of decision.spawn) {
-    const wt = worktree.createTask(slug, num);
+  //
+  // A fresh implementer first gets the plan's setup lines run in its worktree (DESIGN §2.4), in the
+  // background because this pass is synchronous and an `npm ci` would freeze every other worker's merge
+  // and the display. Only this path prepares: the review hand-off (3c) and restart's reviewer reuse a
+  // worktree an implementer already ran in. A restart after a coordinator died mid-setup finds the
+  // worktree but no worker, dispatches the task here again, and so re-runs setup.
+  const spawnImplementer = (num, wt, taskSlug, note, extra = {}) => {
     const role = 'implement';
-    const taskSlug = slugByNum.get(num);
     const name = workerName({ repo, plan: slug, task: num, slug: taskSlug, role });
-    const id = platform.spawn({ cwd: wt.path, name, phase: role });
+    const id = platform.spawn({ cwd: wt.path, name, phase: role, note });
     // workerId here is spawn's best-effort return, not trusted for liveness: buildAssignments resolves
     // the authoritative id by name next pass. grace lets the worker appear in the list before it could
     // be called dead (FINDINGS 2026-09-09). The task slug is stored so a later rebuild of this worker's
     // name (teardown) addresses the exact session that was spawned (§2.9).
     state.tasks[num] = { worktree: wt, workerId: id, role, slug: taskSlug, phase: IMPLEMENTING, grace: APPEAR_GRACE };
     spawnedThisPass.push(id);
-    record('spawn', { task: num, role, workerId: id, slug: taskSlug });
+    record('spawn', { task: num, role, workerId: id, slug: taskSlug, ...extra });
+  };
+
+  // Setups that finished since last pass: spawn their implementers. A failed setup still spawns (best
+  // effort, user 2026-09-24) with the failure appended to the opening instruction, so the worker gets
+  // its worktree ready itself. Task order, so the spawn order is stable.
+  const preparingNums = Object.keys(state.tasks)
+    .filter((num) => state.tasks[num].phase === PREPARING)
+    .sort((a, b) => Number(a.slice(1)) - Number(b.slice(1)));
+  for (const num of preparingNums) {
+    const t = state.tasks[num];
+    const result = t.setup.poll();
+    if (result === null) continue;
+    const note = result.ok ? null : formatSetupNote(result, { slug });
+    spawnImplementer(num, t.worktree, t.slug, note, { setup: result.ok ? 'ok' : 'failed' });
+  }
+
+  for (const num of decision.spawn) {
+    const wt = worktree.createTask(slug, num);
+    const taskSlug = slugByNum.get(num);
+    const setup = prepare(num, wt.path);
+    if (setup === null) {
+      spawnImplementer(num, wt, taskSlug, null);
+      continue;
+    }
+    state.tasks[num] = { worktree: wt, role: 'implement', slug: taskSlug, phase: PREPARING, setup };
+    record('prepare', { task: num });
   }
 
   // Finished workers whose close is held this pass because the agent list still shows them busy (T13
@@ -679,8 +734,11 @@ export function runPass({ platform, worktree, repo, slug, maxWorkers, state, con
   // Remember what we closed this pass so a lingering (still-listed) closed session is not recounted as
   // live next pass — the over-count that fired the runaway breaker on the first live single run.
   for (const id of closedThisPass) state.closedIds.add(id);
+  // A preparing task counts as live work: it holds its slot and is about to become a worker, so a run
+  // whose only work is a long `npm ci` is not "nothing left to do" (DESIGN §2.4).
+  const preparing = Object.values(state.tasks).filter((t) => t.phase === PREPARING).length;
   const liveAfter =
-    [...liveIds].filter((id) => !closedThisPass.has(id)).length + spawnedThisPass.length;
+    [...liveIds].filter((id) => !closedThisPass.has(id)).length + spawnedThisPass.length + preparing;
   // Hand back the rows as they stand AFTER this pass's merge, not the ones read at the top. 3d folds the
   // merged row to ✅ and deletes its task from state in the same pass; returning the pre-merge row paired
   // with the post-merge state made the live display read "not done, no worker" — `queued` — for one pass
@@ -688,7 +746,7 @@ export function runPass({ platform, worktree, repo, slug, maxWorkers, state, con
   const tasks = actions.some((a) => a.type === 'merge')
     ? parseProgress(readFileSync(featureProgressPath, 'utf8')).tasks
     : parsed.tasks;
-  return { actions, log, halted: false, complete, testsPassed, testsReason, readyToMerge, liveAfter, tasks };
+  return { actions, log, halted: false, complete, testsPassed, testsReason, readyToMerge, liveAfter, preparing, tasks };
 }
 
 // drain — run passes until the plan is complete (every task ✅, tests run on the feature branch), the
@@ -709,7 +767,8 @@ export function drain(opts) {
       return { reason: 'complete', passes: p, complete: true, readyToMerge: r.readyToMerge, testsPassed: r.testsPassed, testsReason: r.testsReason, actions: allActions, state };
     if (r.halted) return { reason: 'halted', passes: p, complete: false, actions: allActions, state };
 
-    const productive = r.actions.some((a) => ['spawn', 'review', 'merge', 'close'].includes(a.type));
+    // A pass that only waited on a running setup is not quiet: the setup is work in flight (DESIGN §2.4).
+    const productive = r.actions.some((a) => ['spawn', 'review', 'merge', 'close'].includes(a.type)) || r.preparing > 0;
     idle = productive ? 0 : idle + 1;
     if (idle >= 2) {
       const reason = r.liveAfter > 0 ? 'parked' : 'stalled';

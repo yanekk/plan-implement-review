@@ -343,3 +343,14 @@ test('the parked-worker footer is a compact single line and never the full quest
   const footerLines = lines.filter((l) => l.includes('claude agents'));
   assert.equal(footerLines.length, 1, 'a single compact asking footer line, not the old multi-line block');
 });
+
+test('a preparing row spins and is tinted active, like a building one (T07)', () => {
+  const display = buildDisplay(
+    { branch: 'pir/x', ceiling: 2, tasks: [{ id: 'T07', slug: 'worker-setup', deps: [], done: false, phase: 'preparing', since: null, doneMs: null, question: null }] },
+    { now: 0 },
+  );
+  assert.match(formatLines(display, { spinnerChar: '⠋' }).join('\n'), /⠋ T07 {2}worker-setup/);
+  const stream = fakeStream();
+  const r = createRenderer({ stream, colour: true });
+  assert.match(paintDelta(r, stream, display), /\x1b\[36m[^\x1b]*worker-setup/);
+});

@@ -1091,3 +1091,158 @@ test('restart: a ✅ branch that introduced a new task has it adopted at the rec
   assert.ok(platform.spawns.some((s) => s.task === 'T03' && s.role === 'implement'), 'the adopted task is dispatched');
   assert.match(worktree.progressOn(`pir/${SLUG}`), /\|\s*T03\s*\|.*✅/, 'T03 is built, reviewed and ✅ on the feature branch');
 });
+
+// --- T07: worker setup runs in the fresh worktree before the implementer spawns (DESIGN §2.4) ---------
+
+// A fake setup runner: prepare(num, path) hands back a startLines-shaped handle the test controls.
+// `after` finishes the setup on its Nth poll with `result`; with no `after` it runs until the test calls
+// finish(). Every call and every kill is recorded.
+function fakePrepare({ after = null, result = { ok: true, logPath: '/log' } } = {}) {
+  const calls = [];
+  const handles = {};
+  const prepare = (num, worktreePath) => {
+    let polls = 0;
+    let done = null;
+    const h = {
+      killed: false,
+      finish(r) {
+        done = r;
+      },
+      poll() {
+        polls += 1;
+        if (done === null && after !== null && polls >= after) done = result;
+        return done;
+      },
+      kill() {
+        h.killed = true;
+        done ??= { ok: false, reason: 'killed' };
+      },
+    };
+    calls.push({ num, path: worktreePath });
+    handles[num] = h;
+    return h;
+  };
+  return { prepare, calls, handles };
+}
+
+test('setup: none (prepare → null) spawns the implementer in the dispatching pass, as before (T07)', (t) => {
+  const { platform, base } = setup(t, [{ num: 'T01' }]);
+  const calls = [];
+  const r = runPass({ ...base, state: createRunState(), prepare: (num) => (calls.push(num), null) });
+  assert.deepEqual(calls, ['T01'], 'prepare is asked once for the fresh implementer');
+  assert.ok(r.actions.some((a) => a.type === 'spawn' && a.task === 'T01'), 'spawned the same pass');
+  assert.equal(platform.spawns[0].note, null, 'no note');
+});
+
+test('a running setup keeps the task PREPARING across passes and holds its ceiling slot (T07)', (t) => {
+  const { platform, base } = setup(t, [{ num: 'T01' }, { num: 'T02' }]);
+  const { prepare, calls } = fakePrepare();
+  const state = createRunState();
+  for (let i = 0; i < 6; i++) {
+    const r = runPass({ ...base, maxWorkers: 1, state, prepare });
+    assert.equal(r.liveAfter, 1, 'the preparing task counts as live');
+    assert.equal(r.preparing, 1);
+  }
+  assert.equal(state.tasks.T01.phase, 'preparing');
+  assert.deepEqual(calls.map((c) => c.num), ['T01'], 'one setup, and T02 is not dispatched past the ceiling');
+  assert.equal(platform.spawns.length, 0, 'no worker spawns while setup runs');
+});
+
+test('a preparing task is never declared dead, respawned or given a second setup (T07)', (t) => {
+  const { platform, worktree, base } = setup(t, [{ num: 'T01' }]);
+  const { prepare, calls } = fakePrepare();
+  const state = createRunState();
+  const actions = [];
+  for (let i = 0; i < 6; i++) actions.push(...runPass({ ...base, state, prepare }).actions);
+  assert.equal(calls.length, 1, 'one setup only');
+  assert.ok(!actions.some((a) => a.type === 'close'), 'nothing closed as dead');
+  assert.equal(platform.closed.length, 0);
+  assert.ok(!worktree.events.some((e) => e.op === 'remove'), 'its worktree is kept');
+});
+
+test('setup ok → the implementer spawns with no note, in its prepared worktree (T07)', (t) => {
+  const { platform, base } = setup(t, [{ num: 'T01' }]);
+  const { prepare, calls, handles } = fakePrepare();
+  const state = createRunState();
+  runPass({ ...base, state, prepare });
+  handles.T01.finish({ ok: true, logPath: '/x/T01.log' });
+  const r = runPass({ ...base, state, prepare });
+  const spawn = r.actions.find((a) => a.type === 'spawn');
+  assert.equal(spawn.task, 'T01');
+  assert.equal(spawn.setup, 'ok');
+  assert.equal(platform.spawns[0].note, null);
+  assert.equal(platform.spawns[0].cwd, calls[0].path, 'the worker starts where setup ran');
+  assert.equal(state.tasks.T01.phase, 'implementing');
+  assert.equal(state.tasks.T01.setup, undefined, 'the handle is dropped once the worker spawns');
+});
+
+test('setup failed → the implementer still spawns, with the formatted setup note (T07)', async (t) => {
+  const { formatSetupNote } = await import('../core/setupnote.mjs');
+  const { platform, base } = setup(t, [{ num: 'T01' }]);
+  const failed = { ok: false, line: 'npm ci', status: 1, reason: '`npm ci` exited 1', tail: 'npm ERR! boom', logPath: '/x/T01.log' };
+  const { prepare } = fakePrepare({ after: 1, result: failed });
+  const state = createRunState();
+  runPass({ ...base, state, prepare });
+  const r = runPass({ ...base, state, prepare });
+  assert.equal(r.actions.find((a) => a.type === 'spawn').setup, 'failed');
+  assert.equal(platform.spawns[0].note, formatSetupNote(failed, { slug: SLUG }));
+  assert.match(platform.spawns[0].note, /npm ERR! boom/);
+});
+
+test('HALT kills every running setup and spawns nothing (T07)', (t) => {
+  const { platform, base } = setup(t, [{ num: 'T01' }, { num: 'T02' }]);
+  const { prepare, handles } = fakePrepare();
+  let halted = false;
+  const control = { isHalted: () => halted, log: () => {} };
+  const state = createRunState();
+  runPass({ ...base, control, state, prepare });
+  halted = true;
+  const r = runPass({ ...base, control, state, prepare });
+  assert.equal(r.halted, true);
+  assert.ok(handles.T01.killed && handles.T02.killed, 'both setups killed');
+  assert.deepEqual(r.actions.filter((a) => a.type === 'setup-kill').map((a) => a.task), ['T01', 'T02']);
+  assert.equal(platform.closed.length, 0, 'no session to close — close is never called with a null id');
+  assert.equal(platform.spawns.length, 0);
+  assert.equal(r.liveAfter, 0);
+});
+
+test('a run whose only task prepares longer than every quiet-run limit is not declared stalled or parked (T07)', (t) => {
+  const { base } = setup(t, [{ num: 'T01' }]);
+  // Finishes on its 8th poll: longer than drain's 2 quiet passes and the bin's STALL_GRACE of 3.
+  const { prepare, calls } = fakePrepare({ after: 8 });
+  const result = drain({ ...base, prepare });
+  assert.equal(result.reason, 'complete');
+  assert.equal(result.testsPassed, true);
+  assert.equal(calls.length, 1);
+});
+
+test('the review hand-off runs no setup: one setup per task, implementers only (T07)', (t) => {
+  const { platform, base } = setup(t, chain(3));
+  const { prepare, calls } = fakePrepare({ after: 2 });
+  const result = drain({ ...base, prepare });
+  assert.equal(result.reason, 'complete');
+  assert.deepEqual(calls.map((c) => c.num), ['T01', 'T02', 'T03']);
+  assert.equal(platform.spawns.filter((s) => s.role === 'review').length, 3, 'three reviewers, no setup for them');
+});
+
+test('restart with a worktree and no worker (coordinator died mid-setup) runs setup again (T07)', (t) => {
+  const { platform, worktree, base } = setup(t, [{ num: 'T01' }]);
+  worktree.openFeature(SLUG);
+  worktree.createTask(SLUG, 'T01'); // the dead run's worktree, nothing committed on it
+  const { prepare, calls } = fakePrepare();
+  const r = runPass({ ...base, state: createRunState(), prepare });
+  assert.deepEqual(calls.map((c) => c.num), ['T01'], 'setup runs again');
+  assert.ok(calls[0].path.endsWith('/wt-T01'), 'in the existing worktree');
+  assert.ok(r.actions.some((a) => a.type === 'prepare' && a.task === 'T01'));
+  assert.equal(platform.spawns.length, 0);
+});
+
+test('restart reviewer on an adopted 🔍 worktree runs no setup (T07)', (t) => {
+  const { worktree, base } = setup(t, [{ num: 'T01' }]);
+  worktree.openFeature(SLUG);
+  seedBranch(worktree, SLUG, 'T01', '🔍', { file: 'work-T01.txt' });
+  const { prepare, calls } = fakePrepare({ after: 1 });
+  const result = drain({ ...base, prepare });
+  assert.equal(result.reason, 'complete');
+  assert.equal(calls.length, 0);
+});

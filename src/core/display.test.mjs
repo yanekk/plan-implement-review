@@ -179,3 +179,14 @@ test('an asking task that hit a merge conflict carries its copy-paste prompt on 
   ).footer;
   assert.deepEqual(plain, { kind: 'asking', task: 'T05', slug: 'ask-one', question: 'which format?' }, 'a plain question footer is unchanged — no prompt key');
 });
+
+test('a preparing task (setup running, DESIGN §2.4) is an active row labelled `preparing`, counted in running (T07)', () => {
+  const d = buildDisplay(
+    { branch: 'pir/x', ceiling: 1, tasks: [task({ id: 'T01', phase: 'preparing', since: NOW - 2000 }), task({ id: 'T02' })] },
+    { now: NOW },
+  );
+  assert.deepEqual(d.rows[0], { id: 'T01', slug: 'a-thing', kind: 'preparing', label: 'preparing', elapsedMs: 2000 });
+  assert.equal(d.summary.running, 1);
+  assert.equal(d.summary.ceilingFull, true, 'it holds its slot under the ceiling');
+  assert.equal(d.rows[1].label, 'queued · ceiling full');
+});
