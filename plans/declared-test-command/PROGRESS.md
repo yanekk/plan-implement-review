@@ -10,10 +10,9 @@ writes a cell also fixes the over-budget cell they walk past.
 
 **Plan reviewed:** 2026-09-24 — 8 fixed, 4 decided with the user
 
-**Status:** T01 built, awaiting review.
+**Status:** T01 done.
 **Last updated:** 2026-09-24
-**Next `pir-work` will:** review T01; T02, T05 and T06 have no dependency and may
-follow in any order.
+**Next `pir-work` will:** implement any of T02, T03, T05, T06, T08, T09, T10; their dependencies are met.
 
 ## Tasks
 
@@ -22,7 +21,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 
 | # | Task | Depends on | State | Notes |
 |---|---|---|---|---|
-| T01 | parse-test-block | — | 🔍 | `parseTestBlock` in `src/core/testblock.mjs`, 16 tests. Beyond the doc: indented lines under an unknown key are skipped (nested maps too); items accept any indent and spacing after `-`; a repeated key replaces the earlier one. `testcommand.mjs` left for T04. |
+| T01 | parse-test-block | — | ✅ | Review clean, no fix commit. All listed cases asserted; 31 tests green with boundary. Probed beyond the doc: BOM, `--- ` with trailing space, `setup:none`, repeated key, mixed line endings; all spec-literal. Implementer choices (unknown-key bodies skipped, any item indent, last repeated key wins) accepted. |
 | T02 | command-runner | — | ⬜ | |
 | T03 | start-refusal | T01 | ⬜ | |
 | T04 | end-gate-from-block | T01, T02 | ⬜ | |
@@ -35,7 +34,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T11 | docs | T03, T04, T05, T07, T08, T09 | ⬜ | |
 | T12 | prove-and-install | T03, T04, T05, T07, T08, T09, T10, T11 | ⬜ | |
 
-**Review queue:** T01
+**Review queue:** empty
 
 ## Blocked on the user
 
