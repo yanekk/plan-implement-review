@@ -24,7 +24,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 |---|---|---|---|---|
 | T01 | parse-test-block | — | ✅ | |
 | T02 | command-runner | — | ⬜ | |
-| T03 | start-refusal | T01 | ⬜ | |
+| T03 | start-refusal | T01 | 🔍 | `readTestBlockGate` + exported `testBlockRefusal` (shared message) in coordinate.mjs; check in `main` before `PARALLEL_LIVE`; launch `no-test-block` after the review gate; pir.mjs prints it. 9 tests incl. dry-mode bin subprocess on a scratch git repo. launch.test scratch repos now write a valid DESIGN.md by default. No deviations. |
 | T04 | end-gate-from-block | T01, T02 | ⬜ | |
 | T05 | red-reason-visible | — | ⬜ | |
 | T06 | spawn-note | — | ✅ | |
@@ -35,7 +35,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T11 | docs | T03, T04, T05, T07, T08, T09 | ⬜ | |
 | T12 | prove-and-install | T03, T04, T05, T07, T08, T09, T10, T11 | ⬜ | |
 
-**Review queue:** *(empty)*
+**Review queue:** T03
 
 ## Blocked on the user
 

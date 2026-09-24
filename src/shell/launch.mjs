@@ -16,7 +16,7 @@ import { mkdirSync, openSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { basename, join } from 'node:path';
 
-import { readReviewGate } from './coordinate.mjs';
+import { readReviewGate, readTestBlockGate } from './coordinate.mjs';
 import { startTimeOf, resolveLiveness } from './identity.mjs';
 import { indexDir, listRecords, writeRecord } from './index-store.mjs';
 import { classifyRun } from '../core/runstate.mjs';
@@ -28,7 +28,8 @@ const DEFAULT_FS = { mkdirSync, openSync };
 
 // startRun(slug, { cwd, spawn, exec, kill, fs, now, env }) →
 //   { started:true, pid, record } | { started:false, reason, alreadyRunning? }
-//   reason: 'no-plan' | 'not-reviewed' | 'already-running'
+//   { started:false, reason:'no-test-block', detail }   // detail: the parser's reason
+//   reason: 'no-plan' | 'not-reviewed' | 'no-test-block' | 'already-running'
 //
 // cwd is the target repo's root: `pir` is invoked from inside the repo whose plan is being run, so its
 // basename is the repo name the index entry and the coordinator's worker names share (DESIGN §2.8), and
@@ -54,6 +55,11 @@ export function startRun(
   const gate = readReviewGate(slug, { root: repoRoot });
   if (gate.missing) return { started: false, reason: 'no-plan' };
   if (!gate.reviewed) return { started: false, reason: 'not-reviewed' };
+
+  // 2b: a plan without a valid setup/test block in DESIGN.md counts as not reviewed (declared-test-command
+  // DESIGN §2.3) — checked after the review gate so an unreviewed plan still reports not-reviewed first.
+  const block = readTestBlockGate(slug, { root: repoRoot });
+  if (!block.ok) return { started: false, reason: 'no-test-block', detail: block.reason };
 
   // 3: no run for this slug is already live. Read the index entry (T06), resolve liveness (T05) and
   // classify it (T01); only a `running` classification blocks a start. A crashed, stopped or finished

@@ -21,14 +21,18 @@ const FAKE_FD = 77;
 const REVIEWED = '# Progress\n\n**Plan reviewed:** 2026-09-22 — looks good\n';
 const UNREVIEWED = '# Progress\n\n**Plan reviewed:** not yet\n';
 
+// A DESIGN.md with a valid setup/test block (declared-test-command DESIGN §2.1), which start requires.
+const VALID_DESIGN = '---\nsetup: none\ntest:\n  - npm test\n---\n# Design\n';
+
 // A scratch repo with a plans/{slug}/ folder; `progress` is written as PROGRESS.md when given, and
-// omitted entirely to exercise the no-plan (missing) case.
-function scratchRepo(slug, progress) {
+// omitted entirely to exercise the no-plan (missing) case. `design` is written as DESIGN.md unless null.
+function scratchRepo(slug, progress, design = VALID_DESIGN) {
   const root = mkdtempSync(join(tmpdir(), 'pir-launch-repo-'));
   if (progress !== undefined) {
     const planDir = join(root, 'plans', slug);
     mkdirSync(planDir, { recursive: true });
     writeFileSync(join(planDir, 'PROGRESS.md'), progress);
+    if (design !== null) writeFileSync(join(planDir, 'DESIGN.md'), design);
   }
   return root;
 }
@@ -91,6 +95,40 @@ test('pre-flight: an unreviewed plan → not-reviewed, and nothing is spawned', 
     rmSync(home, { recursive: true, force: true });
   }
 });
+
+test('pre-flight: an unreviewed plan without a test block still reports not-reviewed first', () => {
+  const root = scratchRepo('demo', UNREVIEWED, null);
+  const home = scratchHome();
+  const { spawn, calls } = makeSpawn();
+  try {
+    const r = startRun('demo', { cwd: root, spawn, exec: execAlive, kill: () => {}, env: { PIR_HOME: home } });
+    assert.deepEqual(r, { started: false, reason: 'not-reviewed' });
+    assert.equal(calls.length, 0);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+for (const [label, design, detail] of [
+  ['no DESIGN.md', null, 'no DESIGN.md'],
+  ['a DESIGN.md with no block', '# Design\n\nRun `npm test`.\n', 'no front-matter block'],
+  ['a malformed block', '---\nsetup: none\n---\n# Design\n', 'no test key'],
+]) {
+  test(`pre-flight: a reviewed plan with ${label} → no-test-block with the parser's reason, nothing spawned`, () => {
+    const root = scratchRepo('demo', REVIEWED, design);
+    const home = scratchHome();
+    const { spawn, calls } = makeSpawn();
+    try {
+      const r = startRun('demo', { cwd: root, spawn, exec: execAlive, kill: () => {}, env: { PIR_HOME: home } });
+      assert.deepEqual(r, { started: false, reason: 'no-test-block', detail });
+      assert.equal(calls.length, 0, 'no spawn on a plan without a valid block');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+}
 
 test('pre-flight: a slug already running → already-running, alreadyRunning:true, nothing spawned', () => {
   const root = scratchRepo('demo', REVIEWED);
