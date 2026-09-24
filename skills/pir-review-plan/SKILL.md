@@ -238,13 +238,16 @@ The plan was measured on a machine, possibly on a different day. Re-measure:
   git worktree add --detach "$V" HEAD
   ( cd "$V" \
       && sh -c '<setup line 1>' && sh -c '<setup line 2>' \
-      && test -z "$(git status --porcelain)" \
+      && { D="$(git status --porcelain)"; test -z "$D" || { echo "setup left the copy unclean:"; echo "$D"; false; }; } \
       && sh -c '<test line 1>' && sh -c '<test line 2>' )
+  echo "verify exit $?"                 # read this line: the remove below sets the command's own status
   git worktree remove --force "$V"      # always, pass or fail
   ```
 
   Each line runs in its own `sh -c` from the copy's root, so a `cd` does not carry over — the
   way the engine runs them. With `setup: none`, skip straight to the clean check and the tests.
+  The verdict is the `verify exit` line, not the command's exit status: the remove runs last and
+  succeeds either way, so a failing quiet test line would otherwise look green.
   **Remove the worktree whatever happened**, in the same command or the next one; a stale one
   blocks the next verification. It is local and needs no approval (`git worktree prune` clears
   a leftover).
