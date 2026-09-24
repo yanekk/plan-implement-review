@@ -8,7 +8,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, existsSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, writeSync, existsSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -16,6 +16,7 @@ import {
   coordinatorLaunchArgv,
   seatbeltEnv,
   spawnCoordinator,
+  coordinatorOutPath,
   controlDirFor,
   touchHalt,
   runOutcome,
@@ -107,6 +108,36 @@ test('spawnCoordinator runs node with the argv/cwd/env and exposes pid, kill and
   child.exit(0, null);
   await Promise.resolve();
   assert.deepEqual(resolved, { code: 0, signal: null });
+});
+
+// declared-test-command T10: the coordinator's stdout, which carries its printed hand-off, is written to
+// the given file (created with its folder), appended to rather than truncated so a restart's second
+// coordinator keeps the first one's output. Without stdoutPath the stdio stays ignored.
+test('spawnCoordinator writes the child stdout to stdoutPath when given', () => {
+  const ws = workspace();
+  try {
+    const out = join(ws.dir, 'plans', 'single', '.parallel', 'control', 'coordinator.out');
+    // The fake child "prints" through the descriptor it was handed, as a real child's stdout would.
+    const spawn = (cmd, argv, opts) => {
+      const [, stdout, stderr] = opts.stdio;
+      writeSync(stdout, 'git merge pir/single\n');
+      writeSync(stderr, 'a warning\n');
+      return fakeSpawner()(cmd, argv, opts);
+    };
+    spawnCoordinator({ argv: ['x'], cwd: ws.dir, spawn, stdoutPath: out });
+    spawnCoordinator({ argv: ['x'], cwd: ws.dir, spawn, stdoutPath: out });
+    assert.equal(readFileSync(out, 'utf8'), 'git merge pir/single\na warning\n'.repeat(2));
+
+    const quiet = fakeSpawner();
+    spawnCoordinator({ argv: ['x'], cwd: ws.dir, spawn: quiet });
+    assert.equal(quiet.children[0].opts.stdio, 'ignore');
+  } finally {
+    ws.cleanup();
+  }
+});
+
+test('coordinatorOutPath names coordinator.out in the control dir', () => {
+  assert.equal(coordinatorOutPath('/scratch/plans/single/.parallel/control'), '/scratch/plans/single/.parallel/control/coordinator.out');
 });
 
 // --- controlDirFor + touchHalt (DESIGN §2.4, §3.5) ----------------------------------------------
