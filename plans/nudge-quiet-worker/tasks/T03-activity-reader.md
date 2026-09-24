@@ -20,6 +20,11 @@ DESIGN §2.2, §2.7 (git failure, transcript not found), §3.4, §3.5.
 - `src/shell/fake/platform.mjs`: `list()` entries gain `sessionId` and `pid`; `activity()` returns a
   scripted observation per worker (`behaviors` gains an `activity` script keyed by pass or clock).
 - `src/shell/fake/platform.test.mjs` if it exists, else covered in `loop.test.mjs` by T05.
+- `src/shell/harness/capture.mjs`: `escapeProjectPath`, `defaultProjectsDir` and `resolveTranscriptPath`
+  move to `platform.mjs` and capture imports them from there (user decision 2026-09-24). They cannot be
+  imported from the harness: `fixtures.mjs` installs core and shell into a scratch repo without the
+  harness, so a shell → harness import breaks every live scenario. Their tests in `capture.test.mjs`
+  move with them or keep passing through the import.
 
 ## Interface
 
@@ -38,7 +43,8 @@ activity({ worktreePath, sessionId, transcriptPath /* cached from last call, or 
 
 - Fingerprint: HEAD sha + `git status --porcelain=v1 -uall` + size and mtimeMs of each listed path.
   The mtimes catch a second edit to an already-dirty file, which porcelain alone does not.
-- Transcript lookup: the first `<projectsDir>/*/<sessionId>.jsonl`, found once and returned so the
+- Transcript lookup: `resolveTranscriptPath(projectsDir, worktreePath, sessionId)`, the existing harness
+  helper (`<projectsDir>/<escape(cwd)>/<sessionId>.jsonl`), not a glob. Resolved once and returned so the
   caller caches it. T00 confirms the location.
 - The read cuts at the last newline byte before decoding, so a UTF-8 character or a JSON line split
   across two reads is never parsed half-written.
@@ -50,7 +56,9 @@ activity({ worktreePath, sessionId, transcriptPath /* cached from last call, or 
 - [ ] Fingerprint on a scratch git repo: unchanged tree → same string; new file, edit of a tracked
       file, second edit of an already-dirty file, a commit → each a different string.
 - [ ] git failing (not a repo) → `fingerprint: null`, no throw.
-- [ ] Transcript found by globbing a temp `projectsDir`; missing → `transcriptFound: false`, text ''.
+- [ ] Transcript found at the escaped path under a temp `projectsDir`; missing → `transcriptFound: false`,
+      text ''.
+- [ ] `capture.test.mjs` stays green with capture importing the moved helpers.
 - [ ] Incremental read: two appends read as two slices with no overlap and no gap.
 - [ ] A trailing partial line is held back until its newline arrives; a multibyte character split at
       the read boundary decodes correctly.

@@ -20,8 +20,8 @@ DESIGN §2.3, §2.4, §2.6 (log lines and run.log), §2.7, §3.4, §3.5.
   skipped entirely when halted. `runPass` gains `nudgeMs` (default `DEFAULT_NUDGE_MS`).
 - `src/shell/loop.test.mjs`: tests below, against the fake platform with an injected clock.
 - `src/shell/coordinate.mjs`: read `PARALLEL_NUDGE_MS` beside `PARALLEL_POLL_MS`; thread it and `now`
-  through `startCoordinator` into `passOpts`; `renderer.line` per nudge/stuck/unstuck/nudge-failed
-  action; `buildRunState` copies `nudges` and `stuck` from `stateTasks` onto each run-state task.
+  through `startCoordinator` into `passOpts`; `renderer.line` per nudge/stuck/unstuck/nudge-failed/unpark
+  action, worded exactly as DESIGN §2.6; `buildRunState` copies `nudges` and `stuck` from `stateTasks` onto each run-state task.
 - `src/shell/coordinate.test.mjs`: the env read and the `buildRunState` fields.
 
 ## Interface
@@ -34,6 +34,9 @@ state.tasks[num] gains:
 per pass, per task t with a live worker w:
   eligible = !halted && (t.phase === IMPLEMENTING || t.phase === REVIEWING) && w past grace
   a phase change since last pass (new worker, back from AWAITING) → fresh activity, nudges 0
+  t.phase === AWAITING: keep reading the transcript (never nudge); the first parsePersonReplies entry
+    after the park → t.phase = IMPLEMENTING or REVIEWING by t.role, t.decision cleared, fresh stretch,
+    record('unpark', { task }) (DESIGN §2.4)
   obs = platform.activity({ worktreePath: t.worktree.path, sessionId: w.sessionId, … })
   { state, output, varied } = observeActivity(t.activity, { …obs, actions: parseOwnActions(obs.text),
                                                            reported }, { now, windowMs: nudgeMs })
@@ -50,7 +53,7 @@ either await the send inside an async step the bin already awaits, or fire it an
 from a promise the next pass collects. Either way the count and `lastNudgeAt` move on the pass the
 send is made, so a slow socket cannot cause a double nudge.
 
-`nudge`, `nudge-failed`, `stuck`, `unstuck` and `activity-degraded` must not be added to the
+`nudge`, `nudge-failed`, `stuck`, `unstuck`, `unpark` and `activity-degraded` must not be added to the
 productive-action lists (`['spawn','review','merge','close']` in coordinate.mjs and loop.mjs). A nudge
 is not progress and must not hide a stall.
 
@@ -61,8 +64,11 @@ is not progress and must not hide a stall.
       `nudgeMessage` texts.
 - [ ] Varied work between nudges postpones nudge 2 but does not reset the count.
 - [ ] A worktree change after nudge 1 logs `unstuck`, resets to 0, and clears `stuck`.
-- [ ] A worker that drops a `question` report is never nudged while `AWAITING`; on return its clock
-      restarts from that pass.
+- [ ] A worker that drops a `question` report is never nudged while `AWAITING`, however long it waits.
+- [ ] A person's reply in its transcript un-parks it: phase back by role, `decision` cleared, the
+      display phase no longer `asking`, and its quiet clock starts from that pass.
+- [ ] The worker's own actions while parked do not un-park it.
+- [ ] A coordinator-parked conflict un-parks the same way.
 - [ ] `review-ready` and `done` workers are never nudged.
 - [ ] HALT present: no `platform.activity` and no `platform.nudge` call at all.
 - [ ] A new reviewer on the same worktree starts a fresh stretch.
@@ -72,6 +78,7 @@ is not progress and must not hide a stall.
 - [ ] Stall detection is not reset by a pass whose only actions are nudges.
 - [ ] `PARALLEL_NUDGE_MS` is read (default 900000) and reaches `runPass`.
 - [ ] `buildRunState` carries `nudges` and `stuck`.
+- [ ] Each run.log line matches DESIGN §2.6 character for character.
 
 ## Done when
 

@@ -20,7 +20,7 @@ DESIGN §2.1, §2.7 (send failures), §3.1 (the narrowed guard).
   person).
 - `src/shell/platform.test.mjs`: tests below; update the comment on `createMessaging exposes inbox and
   no send` (the assertion stays).
-- `src/shell/fake/platform.mjs`: `nudge()` records `{ workerId, text }` into a `nudged` array and
+- `src/shell/fake/platform.mjs`: `nudge({ pid }, text)` records `{ pid, text }` into a `nudged` array and
   returns a scriptable result.
 - `src/shell/no-down-channel.test.mjs`: the narrowed guard.
 

@@ -17,7 +17,9 @@ DESIGN §5.1, §5.2 (the drill's seatbelts), §2.6 (the log lines the facts key 
 
 - `src/shell/harness/fixtures/quiet-worker.mjs` (new), registered in `fixtures.mjs`.
 - `src/shell/harness/scenario.mjs`: the scenario entry, ceiling 1, `timeoutMs` 25 min, and the env the
-  runner passes (`PARALLEL_NUDGE_MS=120000`).
+  runner passes (`PARALLEL_NUDGE_MS=120000`). `defineScenario` has no env field today; add one.
+- `src/shell/harness/run.mjs`: `seatbeltEnv` builds the coordinator child's env from the scenario and
+  today carries only the ceiling and `PARALLEL_ALLOW_HERE`; it gains the scenario's env.
 - `src/shell/harness/assertions.mjs`: the new facts.
 - Matching `*.test.mjs` files.
 
@@ -28,17 +30,18 @@ suggested shape, which the implementing session may improve: the task's own test
 helper that never exits, and the task doc tells the worker to wait for a "ready" file the helper
 never writes, checking every 30 seconds. The real work (one small file and its test) needs neither.
 It must not tell the worker to ask the person, and must not be solvable only by guessing what the
-person wants.
+person wants. The helper must write nothing inside the task worktree that git would list: any such write
+is real output under DESIGN §2.2 and would keep the worker from ever being nudged.
 
 Facts, over the flow log and final files:
 
 ```
 nudgedAtLeastOnce      — ≥1 `nudge <task>` line
 noNudgeFailed          — no `nudge-failed` line
-unstuckAfterNudge      — an `unstuck <task>` or the task's `implemented` report follows the first nudge
-noQuestionSurfaced     — no `surface <task>` question/decision line
+unstuckAfterNudge      — an `unstuck <task>` or `review <task>` line follows the first nudge
+noQuestionSurfaced     — no `surface <task>` line (the flow log carries no surface kind)
 neverStuck             — no `stuck <task>` line
-taskMerged             — the run hands off with the task ✅ (existing fact, reused)
+handedOffGreenBranch   — the existing fact in assertions.mjs, reused
 ```
 
 `noQuestionSurfaced` and `neverStuck` are the machine half of "freed itself without asking the
@@ -54,7 +57,7 @@ person". The judgement half is T10's.
 
 ## Done when
 
-- [ ] `node src/shell/harness/run.mjs quiet-worker` is a valid invocation (the dry-run tests prove the
+- [ ] `node src/shell/harness/run.mjs quiet-worker --into <dir>` is a valid invocation (the dry-run tests prove the
       wiring).
 - [ ] All new facts have passing good-path and bad-path tests in `npm test`.
 - [ ] The fixture's wait is needless by construction and says nothing about asking the person.

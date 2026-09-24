@@ -26,6 +26,13 @@
       "Bash(node src/shell/harness/run.mjs worker-death-twice --into:*)",
       "Bash(PARALLEL_MAX_WORKERS=1 node src/shell/pir.mjs worker-death)",
       "Bash(./install.sh)"
+    ],
+    "ask": [
+      "Bash(node spike/nudge-probe.mjs spawn)",
+      "Bash(node spike/nudge-probe.mjs status)",
+      "Bash(node spike/nudge-probe.mjs post:*)",
+      "Bash(node spike/nudge-probe.mjs teardown)",
+      "Bash(PARALLEL_NUDGE_MS=120000 node src/shell/harness/run.mjs quiet-worker --into /tmp/pir-quiet-worker)"
     ]
   }
 }

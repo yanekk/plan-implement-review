@@ -34,8 +34,11 @@ teardown: the harness tears workers down on every exit. Afterwards confirm no se
 ## Automated checks (the worker runs these)
 
 ```
-PARALLEL_NUDGE_MS=120000 node src/shell/harness/run.mjs quiet-worker
+PARALLEL_NUDGE_MS=120000 node src/shell/harness/run.mjs quiet-worker --into /tmp/pir-quiet-worker
 ```
+
+`--into` is required: run from this repo's folder the harness refuses without it (`run.mjs` canonical-repo
+guard), as every earlier drill command (`resume-dead-worker`, `coordinator-restart-resume`) does.
 
 Record the fact report verbatim (pass/fail per fact) and the bundle path. If a fact fails, record which
 and why from the bundle, and stop; do not re-run in a loop.

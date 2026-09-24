@@ -12,7 +12,7 @@ action" is one tested rule.
 
 ## Design sections this implements
 
-DESIGN §2.2, §2.4 (observation starts at spawn), §2.7 (degraded transcript), §3.5.
+DESIGN §2.2, §2.4 (observation starts at spawn; the person's reply un-parks), §2.7 (degraded transcript), §3.5.
 
 ## Files
 
@@ -27,6 +27,11 @@ DESIGN §2.2, §2.4 (observation starts at spawn), §2.7 (degraded transcript), 
 // blocks count; tool results, attachments, notifications, incoming messages and assistant text do not.
 // A line that does not parse is skipped, not thrown.
 parseOwnActions(text) → [{ at: number /* ms, Date.parse(timestamp) */, sig: string }]
+
+// JSONL text of complete lines → the times of messages the person typed into the session, oldest
+// first. Tool results, notifications, attachments and socket posts are not the person (T00 names the
+// field that tells them apart). The loop uses this to un-park an AWAITING worker (DESIGN §2.4).
+parsePersonReplies(text) → [{ at: number }]
 
 // tool name + input with digit runs → '#', whitespace collapsed, Bash `description` dropped.
 actionSignature({ name, input }) → string
@@ -62,6 +67,8 @@ and the loop already knows it from the inbox.
 - [ ] Fingerprint change → `output` true and `lastActivityAt = now`; `reported` alone → `output` true.
 - [ ] Fingerprint null → previous fingerprint kept, `output` false.
 - [ ] `transcriptFound` false → only the fingerprint and `reported` can move `lastActivityAt`.
+- [ ] `parsePersonReplies` on the T00 fixture returns exactly the person-typed line; the socket post,
+      notification and tool results in the same fixture return nothing.
 - [ ] `recent` is pruned to the window, so memory does not grow over a long run.
 
 ## Done when

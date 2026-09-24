@@ -12,15 +12,15 @@ is FINDINGS rows and a captured transcript fixture.
 
 ## Design sections this implements
 
-DESIGN §2.8 (the six questions), §2.1, §5.3 `inbox-probe`.
+DESIGN §2.8 (the seven questions), §2.1, §5.3 `inbox-probe`.
 
 ## Files
 
 - `spike/nudge-probe.mjs`: throwaway, deleted before the task is marked 🔍. Subcommands `spawn`,
   `post`, `status`, `teardown`.
 - `src/core/fixtures/transcript-sample.jsonl` (new, kept): a trimmed real transcript that contains
-  assistant `tool_use` lines, tool results, a background-task notification, and a received probe
-  message. T01's tests parse it. Strip anything that is not needed; it must hold no secrets or tokens.
+  assistant `tool_use` lines, tool results, a background-task notification, a received probe
+  message, and a message typed by the person into the session (DESIGN §2.4, §2.8 question 6). T01's tests parse it. Strip anything that is not needed; it must hold no secrets or tokens.
 - `plans/nudge-quiet-worker/FINDINGS.md`: one row per answered question.
 
 ## Interface
@@ -46,7 +46,7 @@ No automated tests; this is a spike. The kept fixture file is exercised by T01.
 
 ## Done when
 
-- FINDINGS.md has a dated row for each of the six questions in DESIGN §2.8, each stating what was
+- FINDINGS.md has a dated row for each of the seven questions in DESIGN §2.8, each stating what was
   observed, not what was expected.
 - `src/core/fixtures/transcript-sample.jsonl` exists and holds each line kind listed above.
 - `spike/` is deleted, `teardown` confirmed no probe session is left, and `npm test` is still green.
@@ -65,8 +65,14 @@ No automated tests; this is a spike. The kept fixture file is exercised by T01.
 3. post again while the probe runs a tool-call wait-loop you asked it to run (e.g. a Bash check
    every 20 s, as separate tool calls) → read between tool calls? (question 4)
 4. compare the pid across turns and the socket path under /tmp/cc-socks* (question 5)
-5. teardown, and confirm.
+5. get a person-typed message into the probe (question 6): first try a way a program can produce one;
+   if none exists, ask the person to attach to the probe and type one short line. Compare its transcript
+   line with the socket post's and record exactly which fields tell them apart, or that none do.
+6. teardown, and confirm.
 ```
+
+If step 5 finds no field that tells a person's message from a socket post or notification, stop and
+raise it with the person: DESIGN §2.4 says the un-park rule falls back in that case.
 
 If step 2 shows the message was refused, or held for approval, stop and raise it with the person
 before writing anything else: DESIGN §2.8 says the plan returns to them in that case.

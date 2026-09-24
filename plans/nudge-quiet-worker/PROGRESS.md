@@ -10,7 +10,7 @@ touching the task you pick up, and append yours there.
 cell is an index for the next session; the account is the commit message. Whoever writes a
 cell also fixes the over-budget cell they walk past.
 
-**Plan reviewed:** not yet — run `/pir-review-plan nudge-quiet-worker` before the first `/pir-work`
+**Plan reviewed:** 2026-09-24 — 12 fixed, 5 decided with the user
 
 **Status:** Planned 2026-09-24. Nothing built. T00 (live inbox probe) gates everything.
 **Last updated:** 2026-09-24
@@ -39,5 +39,5 @@ done · ⛔ blocked, needs a human.
 
 ## Blocked on the user
 
-Nothing yet. T00 and T10 run `ask`-bin actions (DESIGN §5.3); their permission rules are written at
-plan review.
+Nothing yet. T00 and T10 run `ask`-bin actions (DESIGN §5.3); their rules are in `.claude/settings.json`.
+T00 may ask the person to type one line into the probe session (§2.8 question 6).
