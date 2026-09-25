@@ -34,7 +34,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T08 | conflict-to-worker | T05 | ⬜ | |
 | T09 | asking-kinds | T05, T08 | ⬜ | |
 | T10 | runtime-deps | T00 | ✅ | |
-| T11 | screen-on-pi-tui | T10 | 🔍 | FrameView in new `pir-view.mjs` (SGR map moved there); TuiAltScreen with mouse off and `preserveScreen` on close; decodeKey on pi-tui `parseKey` (adds Kitty forms, ignores key-ups). A screen with `listen` owns input; fakes without it keep the stdin path. 7 new tests. Old/new identical: 39 pty screens and user by hand. |
+| T11 | screen-on-pi-tui | T10 | ✅ | FrameView paints spans; TuiAltScreen, mouse off, preserveScreen on close; keys via pi-tui parseKey. Old/new identical: 39 pty screens and user by hand. Review: clean bar one dead constant (DEFAULT_ROWS) removed; probed shrinking frames, resize repaint, modifyOtherKeys and bracketed-paste input. |
 | T12 | task-selection | T09, T11 | ⬜ | |
 | T13 | conversation-view | T02, T07, T12 | ⬜ | |
 | T14 | worker-contract | T05 | ⬜ | |
@@ -43,7 +43,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T17 | docs | T06, T07, T08, T13, T14, T15 | ⬜ | |
 | T18 | live-run | T08, T13, T14, T16, T17 | ⬜ | |
 
-**Review queue:** T11
+**Review queue:** empty
 
 ## Blocked on the user
 
