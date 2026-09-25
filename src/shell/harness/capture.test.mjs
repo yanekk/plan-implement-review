@@ -181,6 +181,21 @@ test('a worker that has not spoken yet takes the newest unclaimed log for its ta
   }
 });
 
+test('a worker with no log of its own never borrows one another worker’s session id claims', () => {
+  const ws = workspace();
+  try {
+    const p = procs({ alive: [401] });
+    // Only another worker's log exists (the tick fell between workers.json and this worker's first append).
+    writeLog(ws, 'T04-implement-1.ndjson', [sent(1), init(2, 'other'), said(3, 'other')]);
+    writeWorkers(ws, [rec('mine', 'T04', 'implement', 401)]);
+    const [w] = capture(ws, p).tick().workers;
+    assert.equal(w.log, null);
+    assert.equal(w.state, 'starting');
+  } finally {
+    ws.cleanup();
+  }
+});
+
 test('a missing or torn workers.json records an empty tick, never a throw', () => {
   const ws = workspace();
   try {
