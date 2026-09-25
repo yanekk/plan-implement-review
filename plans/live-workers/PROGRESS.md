@@ -36,12 +36,14 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T10 | runtime-deps | T00 | ✅ | |
 | T11 | screen-on-pi-tui | T10 | ✅ | |
 | T12 | task-selection | T09, T11 | ✅ | |
-| T13 | conversation-view | T02, T07, T12 | ⬜ | |
+| T13 | conversation-view | T02, T07, T12 | 🔍 | Built view, log-follow, readLogTail byte budget; 25 tests incl. fake-run e2e. Deviations: feel check moved to T20 (user 2026-09-25). Tab and Esc go to the slash menu while it is open. Read-only also takes ↑↓ and Tab. Esc there is inert, not quit. Scratch run started without the missing `ask` prompt; halted, deleted. |
 | T14 | worker-contract | T05 | ✅ | |
 | T15 | sunset-pir-coordinate | T10 | ✅ | |
 | T16 | harness-conversations | T05, T06 | ✅ | |
 | T17 | docs | T06, T07, T08, T13, T14, T15 | ⬜ | |
 | T18 | live-run | T08, T13, T14, T16, T17 | ⬜ | |
+| T19 | conversation-view-rig | T13 | ⬜ | |
+| T20 | conversation-view-feel | T19; blocks T18 | ⬜ | |
 
 **Review queue:** empty
 
