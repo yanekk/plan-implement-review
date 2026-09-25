@@ -42,3 +42,37 @@ export function clipText(text, width) {
   if (w === 0) return '';
   return chars.slice(0, w - 1).join('') + '…';
 }
+
+// Reduce text a worker or a tool produced to what a terminal would show as plain characters. Tool output
+// carries colour codes, progress-bar carriage returns and tabs, and painted raw an escape would move the
+// cursor, clear the screen or retitle the window, while every width count here would be off by the
+// escape's length. Escape sequences (CSI, OSC, the two-byte forms) go; within each line only what follows
+// the last carriage return stays, as a terminal would overwrite it; tabs expand to 8-column stops; any
+// other C0/C1 control and DEL go. Newlines are kept for the caller to split on.
+const CSI = /\x1b\[[0-?]*[ -/]*[@-~]/g;
+const OSC = /\x1b\][^\x07\x1b]*(?:\x07|\x1b\\|$)/g;
+const ESC2 = /\x1b[ -/]*[0-~]/g;
+const CONTROL = /[\x00-\x08\x0b-\x1f\x7f-\x9f]/g; // keeps \t (expanded below) and \n
+export function plainText(text) {
+  const s = String(text ?? '').replace(OSC, '').replace(CSI, '').replace(ESC2, '').replace(/\r\n/g, '\n');
+  return s
+    .split('\n')
+    .map((line) => {
+      const shown = line.slice(line.lastIndexOf('\r') + 1).replace(CONTROL, '');
+      if (!shown.includes('\t')) return shown;
+      let col = 0;
+      let out = '';
+      for (const ch of shown) {
+        if (ch === '\t') {
+          const pad = 8 - (col % 8);
+          out += ' '.repeat(pad);
+          col += pad;
+        } else {
+          out += ch;
+          col += 1;
+        }
+      }
+      return out;
+    })
+    .join('\n');
+}

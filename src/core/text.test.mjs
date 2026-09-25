@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { wrapLine, clipText } from './text.mjs';
+import { wrapLine, clipText, plainText } from './text.mjs';
 
 test('wrapLine breaks at spaces and hard-breaks a long token, keeping every segment within the width', () => {
   assert.deepEqual(wrapLine('short', 20), ['short'], 'text within the width is one line');
@@ -27,4 +27,15 @@ test('clipText cuts to the width by code point with an ellipsis, and never split
   assert.equal(clipped, '😀😀…');
   assert.equal([...clipped].length, 3);
   assert.ok(!/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/.test(clipped), 'no lone high surrogate');
+});
+
+test('plainText drops terminal escapes and control characters, expands tabs, and keeps what a CR overwrote last', () => {
+  assert.equal(plainText('\x1b[31mFAIL\x1b[0m ok'), 'FAIL ok', 'colour codes go');
+  assert.equal(plainText('a\x1b[2Jb\x1b[10;1Hc'), 'abc', 'cursor and clear-screen codes go');
+  assert.equal(plainText('x\x1b]0;title\x07y\x1b]8;;http://e\x1b\\z'), 'xyz', 'OSC (title, hyperlink) goes');
+  assert.equal(plainText('a\tb\n1234567\tc'), 'a       b\n1234567 c', 'tabs expand to 8-column stops per line');
+  assert.equal(plainText('10%\r50%\r100%\r\nnext'), '100%\nnext', 'a progress bar shows its last state; CRLF is a newline');
+  assert.equal(plainText('a\x00\x07\x08\x7f\u009bb'), 'ab', 'other C0, DEL and C1 controls go');
+  assert.equal(plainText('😀 é ✓'), '😀 é ✓', 'printable text is untouched');
+  assert.equal(plainText(undefined), '');
 });

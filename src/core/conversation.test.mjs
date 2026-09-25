@@ -406,3 +406,15 @@ test('the picker prompt shows the current question, its boxes and the cursor', (
   assert.ok(done.includes('  ❯ [x] Other: fig  type your own answer in the box'));
   assert.ok(done.at(-1).includes('↵ send answers'));
 });
+
+test('terminal escapes and control characters in worker text and tool output never reach the lines', () => {
+  const dirty = '\x1b[31mFAIL\x1b[0m a\tb\x1b[2J 50%\r100%';
+  const log = [use('u1', 'Bash\x1b[2J', { command: 'npm\x1b[1m test' }), res('u1', dirty), say('hi \x1b]0;title\x07there'), request('r1', 'Bash\x1b[2J')];
+  for (const full of [false, true]) {
+    const { lines, pinned } = buildConversation(log, { width: 80, taskId: 'T05', full });
+    const painted = [...lines, ...promptLines(pinned, { width: 80, taskId: 'T05' })];
+    for (const l of painted) for (const s of l) assert.ok(!/[\x00-\x1f\x7f-\x9f]/.test(s.text), JSON.stringify(s.text));
+    if (!full) assert.equal(textOf(lines[0]), '  ⎿ Bash npm test  100%');
+    assert.ok(all(lines).includes('T05 ▸ hi there'));
+  }
+});

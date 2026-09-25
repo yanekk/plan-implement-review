@@ -11,7 +11,7 @@
 
 import { readEntry, workerActivity, DEFAULT_REFUSAL } from './stream.mjs';
 import { grantFrom } from './person-input.mjs';
-import { wrapLine, clipText } from './text.mjs';
+import { wrapLine, clipText, plainText } from './text.mjs';
 
 const span = (text, style = null) => ({ text, style });
 const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
@@ -48,9 +48,10 @@ export function mainArg(name, input) {
 function clipSpans(spans, width) {
   const out = [];
   let left = Math.max(1, width | 0);
-  for (const s of spans) {
+  for (const raw of spans) {
+    const s = span(plainText(raw.text).replace(/\n/g, ' '), raw.style);
     const n = [...s.text].length;
-    if (n < left || (n === left && s === spans[spans.length - 1])) {
+    if (n < left || (n === left && raw === spans[spans.length - 1])) {
       out.push(s);
       left -= n;
       continue;
@@ -65,10 +66,11 @@ function clipSpans(spans, width) {
 // Wrap `text` (which may hold newlines) under a prefix: the first line starts with the prefix, the rest
 // are indented to line up under the text. Wrapped, never truncated: a message is read in full.
 function wrapped(prefix, text, style, width) {
+  prefix = plainText(prefix);
   const indent = ' '.repeat([...prefix].length);
   const w = Math.max(1, width - [...prefix].length);
   const lines = [];
-  for (const logical of String(text ?? '').replace(/\s+$/, '').split('\n')) {
+  for (const logical of plainText(text).replace(/\s+$/, '').split('\n')) {
     for (const seg of wrapLine(logical, w)) lines.push([span((lines.length ? indent : prefix) + seg, style)]);
   }
   return lines;
@@ -187,7 +189,7 @@ function stepLines(use, result, { full, width }) {
   const arg = firstLine(mainArg(use.name, use.input));
   const head = `  ⎿ ${use.name}${arg ? ` ${arg}` : ''}`;
   if (!full) {
-    const last = result ? lastLine(result.text) : '';
+    const last = result ? lastLine(plainText(result.text)) : '';
     const spans = [span(head, style)];
     if (last) spans.push(span(`  ${last}`, 'dim'));
     return [clipSpans(spans, width)];
@@ -241,7 +243,7 @@ function requestLines(req, res, { width, taskId }) {
 }
 
 function gateHead(gate, taskId, width) {
-  const out = [[span(`⚑ ${taskId} wants to use ${gate.tool}`, 'prompt')]];
+  const out = [[span(plainText(`⚑ ${taskId} wants to use ${gate.tool}`), 'prompt')]];
   if (gate.summary) out.push(...wrapped('  ', gate.summary, null, width));
   if (gate.description) out.push(...wrapped('  ', `(${gate.description})`, 'dim', width));
   if (gate.reason) out.push(...wrapped('  ', gate.reason, 'dim', width));
