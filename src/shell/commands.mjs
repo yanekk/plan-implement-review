@@ -22,9 +22,11 @@ export function scrubEnv(env) {
   return Object.fromEntries(Object.entries(env).filter(([k]) => !k.startsWith('PARALLEL_') && k !== 'PIR_RUN'));
 }
 
-// readTailBytes(path, maxBytes, { fs }) → { buf, end } | null. The last `maxBytes` of a file as a Buffer
-// that starts on a line boundary: when the read cut into the file, the partial first line is dropped so no
-// half-line is ever shown. `end` is the file's size at the read, where a follower picks up (log-follow.mjs).
+// readTailBytes(path, maxBytes, { fs }) → { buf, end, midLine } | null. The last `maxBytes` of a file as a
+// Buffer that starts on a line boundary: when the read cut into the file, the partial first line is dropped so
+// no half-line is ever shown. `end` is the file's size at the read, where a follower picks up (log-follow.mjs).
+// `midLine` is true when the cut found no newline at all: `end` then sits inside a line whose start was never
+// read, and a follower must skip to the next newline rather than take the rest of it as a line.
 // null when the file cannot be read. Bytes, not text, so a cut or a later append never splits a character.
 export function readTailBytes(path, maxBytes, { fs = { openSync, fstatSync, readSync, closeSync } } = {}) {
   if (!path) return null;
@@ -35,11 +37,13 @@ export function readTailBytes(path, maxBytes, { fs = { openSync, fstatSync, read
     const len = Math.min(size, Math.max(0, maxBytes | 0));
     let buf = Buffer.alloc(len);
     if (len > 0) fs.readSync(fd, buf, 0, len, size - len);
+    let midLine = false;
     if (len < size) {
       const nl = buf.indexOf(0x0a);
+      midLine = nl < 0;
       buf = nl < 0 ? Buffer.alloc(0) : buf.subarray(nl + 1); // drop the partial first line from the cut
     }
-    return { buf, end: size };
+    return { buf, end: size, midLine };
   } catch {
     return null; // no file, or unreadable — the caller simply shows none
   } finally {

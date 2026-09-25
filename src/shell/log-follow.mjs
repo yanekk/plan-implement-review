@@ -22,9 +22,17 @@ const defaultFs = { openSync, fstatSync, readSync, closeSync };
 export function followLog(path, { tailBytes = 262144, onEntries = () => {}, pollMs = POLL_MS, watch = fsWatch, fs = defaultFs } = {}) {
   let offset = 0;
   let held = Buffer.alloc(0); // bytes of a line whose newline has not arrived yet
+  let skipping = false; // the tail read began inside a line whose start it never saw: drop up to its newline
   let stopped = false;
 
-  const emit = (buf) => {
+  const emit = (input) => {
+    let buf = input;
+    if (skipping) {
+      const cut = buf.indexOf(0x0a);
+      if (cut < 0) return;
+      skipping = false;
+      buf = buf.subarray(cut + 1);
+    }
     const all = held.length ? Buffer.concat([held, buf]) : buf;
     const nl = all.lastIndexOf(0x0a);
     if (nl < 0) {
@@ -39,6 +47,7 @@ export function followLog(path, { tailBytes = 262144, onEntries = () => {}, poll
   const first = readTailBytes(path, tailBytes, { fs });
   if (first) {
     offset = first.end;
+    skipping = first.midLine;
     emit(first.buf);
   }
 
@@ -51,6 +60,7 @@ export function followLog(path, { tailBytes = 262144, onEntries = () => {}, poll
       if (size < offset) {
         offset = 0;
         held = Buffer.alloc(0);
+        skipping = false;
       }
       if (size === offset) return;
       const buf = Buffer.alloc(size - offset);

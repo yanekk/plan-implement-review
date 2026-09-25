@@ -11,6 +11,19 @@ paid run (T18) waits for it, so what it finds is fixed before the person sits th
 Drive the conversation view through T19's rig as the person would, judge it against DESIGN §2.11 and the
 approved prototype (`prototype/`, the feel, not a spec), fix what is small, and write down what was seen.
 
+## Files
+
+- `src/shell/conversation-view.mjs`, `src/core/conversation.mjs` and their tests, only where a fix lands
+- the captured screens go to the task's scratch folder, not the repo
+
+## Interface
+
+None new: T20 drives T19's `conversation-rig.mjs` and `driveScreen`, and changes no signature.
+
+## Tests
+
+- [ ] every fix comes with a test that fails without it
+
 ## What to drive (every item, by the T19 driver, at 80×24 and at 120×40)
 
 - open a live worker from the run view; the conversation reads one line per step and updates live; Tab

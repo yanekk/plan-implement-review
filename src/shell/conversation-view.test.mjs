@@ -54,6 +54,19 @@ test('followLog: a file that does not exist yet is read once it appears, and the
   assert.deepEqual(got, ['a', 'b']);
 });
 
+test('followLog: opened inside a line still being written, the rest of that line is skipped, not shown as a line', () => {
+  const p = join(tmp(), 'c.ndjson');
+  writeFileSync(p, '{"a":1}\n{"big":"' + 'x'.repeat(2000));
+  const got = [];
+  const f = followLog(p, { tailBytes: 1000, onEntries: (l) => got.push(...l), watch: null, pollMs: 60_000 });
+  appendFileSync(p, 'xx');
+  f.check();
+  appendFileSync(p, '"}\n{"b":2}\n');
+  f.check();
+  f.stop();
+  assert.deepEqual(got, ['{"b":2}']);
+});
+
 test('followLog: a character split across two appends is decoded whole', () => {
   const p = join(tmp(), 'c.ndjson');
   const bytes = Buffer.from('żółw\n');
