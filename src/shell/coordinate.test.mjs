@@ -36,7 +36,9 @@ import {
 import { readSnapshot } from './snapshot-store.mjs';
 import { serializeRecord } from '../core/runrecord.mjs';
 import { EventEmitter } from 'node:events';
-import { createMessaging } from './platform.mjs';
+import { createMessaging, createPlatform, encodeMessage } from './platform.mjs';
+import { startWorker } from './worker-proc.mjs';
+import { fakeClaudeSpawner, turn } from './fake/claude-stream.mjs';
 import { createFakePlatform } from './fake/platform.mjs';
 import { createFakeWorktree, git } from './fake/worktree.mjs';
 import { workerName } from '../core/naming.mjs';
@@ -478,7 +480,7 @@ test('a worker `decision` message parks and surfaces like a question; the worker
 
 // --- 15. P6: no exit path orphans a spawned worker ------------------------------------------------
 
-test('teardownRun closes every live worker of the run (stop + SIGTERM), so no exit orphans one (P6, T12)', (t) => {
+test('teardownRun closes every live worker of the run at once (immediate SIGTERM), so no exit orphans one (P6, T12)', (t) => {
   const { coordinator, platform, worktree } = setup(t, [{ num: 'T01' }, { num: 'T02' }], {
     behaviors: { T01: { question: 'blocked on you' } },
   });
@@ -489,12 +491,14 @@ test('teardownRun closes every live worker of the run (stop + SIGTERM), so no ex
 
   const { closed } = teardownRun({ platform, worktree, state: coordinator.state, repo: REPO, slug: SLUG });
   assert.ok(closed.includes(parkedId), 'teardown reported the parked worker closed');
-  assert.ok(platform.closed.includes(parkedId), 'it was closed through the platform (stop + SIGTERM live)');
-  assert.ok(!platform._workers.has(parkedId), 'no live session of this run remains after teardown');
-  // teardownRun is not the HALT forensics path (the loop handles that and never reaches here), so it also
-  // clears each closed worker's leftover record with `claude rm`, so a stalled/errored exit leaves nothing
-  // in the "Claude agents" view (T41).
-  assert.ok(platform.removed.includes(parkedId), 'teardown removes the leftover record too (claude rm)');
+  assert.ok(platform.closed.includes(parkedId), 'it was closed through the platform');
+  assert.ok(
+    platform.closeOpts.some((c) => c.id === parkedId && c.immediate === true),
+    'closed immediate: teardown runs just before process.exit, so the SIGTERM cannot wait (live-workers §2.12)',
+  );
+  assert.ok(!platform._workers.has(parkedId), 'no live worker of this run remains after teardown');
+  // teardownRun is not the HALT forensics path, so it also calls remove (T41), a no-op for live children.
+  assert.ok(platform.removed.includes(parkedId), 'teardown calls remove on a finish path');
 });
 
 // --- 16. P4/P5: the ported bin guards (ensureMain, promotion guard, runaway breaker) ---------------
@@ -1199,4 +1203,112 @@ test('testingRunState marks the run as the end gate running, so a viewer does no
   assert.equal(rs.readyToMerge, false);
   assert.equal(rs.tasks[0].done, true);
   assert.equal(rs.tasks[0].doneMs, 5000);
+});
+
+// --- live-workers T05: the coordinator over the REAL platform, workers played by the fake `claude` ---
+//
+// The platform is the real one (platform.mjs → worker-proc → the Agent SDK); only the process behind each
+// worker is the fake `claude`. A fake worker cannot commit or drop a report, so the test plays that part:
+// when a worker's turn ends (its `result` is logged) the test commits that phase's work on the worker's
+// task branch and queues its report for the inbox, as a real worker's skills would.
+
+function livePlatform(t, { script = [{ await: 'user' }, ...turn('ok')] } = {}) {
+  const dir = mkdtempSync(join(tmpdir(), 'pir-live-coord-'));
+  const controlDir = join(dir, 'control');
+  const reports = [];
+  const received = [];
+  let n = 0;
+  const start = (o) => {
+    n += 1;
+    const scriptPath = join(dir, `script-${n}.json`);
+    writeFileSync(scriptPath, JSON.stringify(script));
+    const rec = join(dir, `received-${n}.ndjson`);
+    received.push(rec);
+    const worker = startWorker({ ...o, spawnProcess: fakeClaudeSpawner({ script: scriptPath, received: rec }) });
+    const [, , task, , role] = o.name.split(' / ');
+    let done = false;
+    worker.onEvent((e) => {
+      if (done || e.dir !== 'in' || e.event.type !== 'result') return;
+      done = true;
+      const glyph = role === 'implement' ? '🔍' : '✅';
+      if (role === 'implement') writeFileSync(join(o.cwd, `work-${task}.txt`), `work ${task}\n`);
+      const progress = join(o.cwd, progressPathFor(SLUG));
+      writeFileSync(progress, reconcileTaskRow(readFileSync(progress, 'utf8'), { num: task, state: glyph, notes: role }));
+      git(o.cwd, ['add', '-A']);
+      git(o.cwd, ['commit', '-m', `${task}: ${role}`, '--no-edit']);
+      reports.push({ from: o.name, text: encodeMessage({ kind: role === 'implement' ? 'implemented' : 'done', task }) });
+    });
+    return worker;
+  };
+  const platform = createPlatform({
+    controlDir,
+    transport: { drain: () => reports.splice(0) },
+    startWorker: start,
+    claudePath: '/nonexistent/claude',
+  });
+  t.after(async () => {
+    for (const w of platform.list()) platform.close(w.id, { immediate: true });
+    await until(() => platform.list().length === 0, 'every child to exit');
+    rmSync(dir, { recursive: true, force: true });
+  });
+  const workersFile = () => JSON.parse(readFileSync(join(controlDir, 'workers.json'), 'utf8'));
+  const receivedLines = (i) =>
+    existsSync(received[i]) ? readFileSync(received[i], 'utf8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l)) : [];
+  return { platform, controlDir, workersFile, receivedLines };
+}
+
+async function until(pred, what, ms = 10000) {
+  const start = Date.now();
+  for (;;) {
+    const v = pred();
+    if (v) return v;
+    if (Date.now() - start > ms) throw new Error(`timed out waiting for ${what}`);
+    await new Promise((r) => setTimeout(r, 15));
+  }
+}
+
+test('the coordinator drives two workers from spawn to done through the real platform (live-workers T05)', async (t) => {
+  const { platform, controlDir } = livePlatform(t);
+  const worktree = createFakeWorktree({ progress: progressDoc([{ num: 'T01' }, { num: 'T02' }]), slug: SLUG });
+  t.after(() => worktree.cleanup());
+  const coordinator = startCoordinator({ slug: SLUG, repo: REPO, platform, worktree, maxWorkers: 2 });
+
+  // pass() is synchronous and the children answer in their own time, so the test paces the passes.
+  let result;
+  const completed = [];
+  await until(() => {
+    result = coordinator.pass();
+    completed.push(...result.completed);
+    return result.complete;
+  }, 'the plan to complete');
+
+  assert.equal(result.testsPassed, true);
+  assert.deepEqual(result.readyToMerge, { branch: `pir/${SLUG}` });
+  assert.deepEqual([...completed].sort(), ['T01', 'T02']);
+  assert.ok(worktree.fileOn(`pir/${SLUG}`, 'work-T01.txt').ok && worktree.fileOn(`pir/${SLUG}`, 'work-T02.txt').ok, 'both tasks merged');
+  assert.equal(worktree.mainCommitCount(), 1, 'main untouched');
+
+  const logs = readdirSync(join(controlDir, 'conversations')).sort();
+  assert.deepEqual(logs, ['T01-implement-1.ndjson', 'T01-review-1.ndjson', 'T02-implement-1.ndjson', 'T02-review-1.ndjson']);
+  await until(() => platform.list().length === 0, 'every merged worker to exit after its close');
+});
+
+test('teardownRun SIGTERMs every live child at once and workers.json empties as they exit (live-workers T05)', async (t) => {
+  // Workers that ignore stdin EOF: only the SIGTERM can end them, so their exit proves teardown sent it.
+  const { platform, workersFile, receivedLines } = livePlatform(t, { script: [{ onEof: 'ignore' }, { await: 'user' }] });
+  const worktree = createFakeWorktree({ progress: progressDoc([{ num: 'T01' }, { num: 'T02' }]), slug: SLUG });
+  t.after(() => worktree.cleanup());
+  const coordinator = startCoordinator({ slug: SLUG, repo: REPO, platform, worktree, maxWorkers: 2 });
+
+  coordinator.pass(); // spawns both implementers
+  assert.equal(platform.list().length, 2);
+  assert.equal(workersFile().length, 2, 'workers.json lists both live children');
+  // Let both fakes install their SIGTERM recorder (they log each stdin line after it is set up).
+  await until(() => [0, 1].every((i) => receivedLines(i).some((l) => l.line)), 'both fakes to take their opening message');
+
+  const { closed } = teardownRun({ platform, state: coordinator.state, repo: REPO, slug: SLUG });
+  assert.equal(closed.length, 2, 'both children closed');
+  await until(() => platform.list().length === 0, 'both children to exit');
+  assert.ok([0, 1].every((i) => receivedLines(i).some((l) => l.signal === 'SIGTERM')), 'each child got its SIGTERM');
+  assert.deepEqual(workersFile(), [], 'workers.json lists exactly the live children: none');
 });

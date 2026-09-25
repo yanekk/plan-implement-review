@@ -28,7 +28,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T02 | conversation-model | T01 | ⬜ | |
 | T03 | person-input | T01 | ✅ | |
 | T04 | worker-process | T01, T10 | ✅ | |
-| T05 | live-platform | T04 | ⬜ | |
+| T05 | live-platform | T04 | 🔍 | Platform over worker-proc children; loop matches by spawn id. Dropped name match, APPEAR_GRACE, resurrectClosed; kept closedIds, lingerClosed, lingerBusy with reasons. 19 tests new or rewritten. Deviations: close takes `{immediate}` for teardown's synchronous SIGTERM; added resolveClaudePath, injectable claudePath/startTimeOf; stopRun and harness reaps see no children until T06/T16; run.test.mjs still names `'--bg'` (absence check). |
 | T06 | reap-workers | T04, T05 | ⬜ | |
 | T07 | person-inbox | T03, T05 | ⬜ | |
 | T08 | conflict-to-worker | T05 | ⬜ | |

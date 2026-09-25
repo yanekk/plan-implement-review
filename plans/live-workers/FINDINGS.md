@@ -12,6 +12,8 @@ changed.
 
 | Date | | Finding |
 |---|---|---|
+| 2026-09-25 | 📌 | T05: `createPlatform().list()` now holds only this process's children, so `stopRun`'s wedged-coordinator reap (pir-tui `defaultPlatform`) and harness `teardownScenario` find no workers until T06 (workers.json reap) and T16 land. |
+| 2026-09-25 | 📌 | T05: a SIGTERM sent to the fake `claude` before node has loaded its script kills it unrecorded. Tests wait for the fake's first received line before signalling it. |
 | 2026-09-25 | 📌 | T04 review: SDK 0.3.282 skips an unparsable stdout line without error; only a non-zero exit mid-turn throws from the stream. A fake script needs `{exit: n}` to produce `sdk-error`, not garbage. |
 | 2026-09-25 | 📌 | T04: SDK 0.3.282 aborts a pending `canUseTool` signal only on the CLI's `control_cancel_request`, not on `interrupt()` itself. The fake must emit that line after an interrupt. A custom `spawnClaudeCodeProcess` is never existence-checked; the SDK leaves stderr unread. |
 | 2026-09-25 | 📌 | T03: Claude suggested `echo probe-one *` for `echo probe-one > probe.txt`; pir's grant does not match that redirecting request, since Claude checks redirect targets against Edit rules and pir does not. Such requests still reach the person. |

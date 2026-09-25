@@ -32,7 +32,7 @@ import { parseRecord } from '../core/runrecord.mjs';
 import { parseTestBlock } from '../core/testblock.mjs';
 import { runLines, startLines } from './commands.mjs';
 import { runPass, createRunState } from './loop.mjs';
-import { createPlatform } from './platform.mjs';
+import { createPlatform, resolveClaudePath } from './platform.mjs';
 import { createRenderer } from './render.mjs';
 import { writeSnapshot } from './snapshot-store.mjs';
 import { createWorktree } from './worktree.mjs';
@@ -337,11 +337,14 @@ export function createReportInbox({ dir } = {}) {
 //
 // The drill's bin ran out its pass budget and printed "ran out of passes" while a worker was still
 // live and parked, leaving a paid session orphaned that had to be stopped by hand. So EVERY exit path
-// that is not a clean promotion/halt (a stall, a signal, an error) must close this run's
-// live workers. `platform.close` is stop + SIGTERM — `claude stop` alone only interrupts (FINDINGS
-// 2026-09-09), so this is what actually ends the session. Closing an already-gone id is a safe no-op.
+// that is not a clean promotion/halt (a stall, a signal, an error) must close this run's live workers.
+// Since live-workers T05 every worker is a child of this process, and teardownRun stays synchronous
+// because it runs from signal handlers just before process.exit: `platform.close(id, { immediate })`
+// ends the child's input queue and SIGTERMs its pid now, without waiting (live-workers DESIGN §2.12). A
+// child that survives the SIGTERM is reaped from workers.json by the next start or a stop (T06).
+// Closing an already-gone id is a safe no-op.
 //
-// It closes sessions ONLY and never removes a task worktree or branch, on any exit. Those branches are
+// It closes workers ONLY and never removes a task worktree or branch, on any exit. Those branches are
 // the durable record of in-flight work, and the next `pir {slug}` reconciles them from git: a 🔍 branch
 // goes to review, a half-built one is resumed. Removing them on exit is what made a restart rebuild
 // everything: on 2026-09-22 a full disk (ENOSPC) threw, the `error` teardown deleted a built T04, a
@@ -367,24 +370,22 @@ export function teardownRun({ platform, state, repo, slug, control } = {}) {
   const closeId = (id, name) => {
     if (!id || closed.has(id)) return;
     try {
-      platform.close(id);
+      platform.close(id, { immediate: true });
     } catch {
       /* already gone */
     }
-    // Clear the leftover `stopped` record too (T41, DESIGN §2.3). teardownRun runs on every exit that is
-    // not a clean promotion or a kill-switch halt (a stall, a signal, an error) — none of
-    // them the HALT forensics case, which the loop handles and never reaches here — so these workers have
-    // finished and leave the view. Best-effort and optional: a platform without `remove` is fine.
+    // remove (T41, DESIGN §2.3) is a no-op for live children; kept for a platform that holds a record.
+    // Never the HALT forensics case, which the loop handles and never reaches here.
     try {
       platform.remove?.(id);
     } catch {
-      /* best-effort record cleanup; the session close is what matters for orphan-avoidance */
+      /* best-effort; the close is what matters for orphan-avoidance */
     }
     closed.add(id);
     control?.log?.(`teardown: closed ${name ?? ''} (${id})`.trim());
   };
 
-  // Every worker of THIS run the platform still lists — the authoritative live sessions.
+  // Every worker of THIS run the platform still lists: its live children.
   let live = [];
   try {
     live = platform.list().filter((w) => isWorkerOf(w.name, { repo, plan: slug }));
@@ -392,8 +393,9 @@ export function teardownRun({ platform, state, repo, slug, control } = {}) {
     live = [];
   }
   for (const w of live) closeId(w.id, w.name);
-  // Plus any worker this run spawned that we still track — covers the appear-grace window in which a
-  // just-spawned session is not listed yet, so a spawn is never left behind on an early exit.
+  // Plus any worker this run still tracks, so an id the list somehow lacks is still closed (a no-op on
+  // an exited child). Cheap belt and braces from the `claude --bg` days, when a new session took a pass
+  // to appear.
   for (const [num, t] of Object.entries(state?.tasks ?? {})) {
     if (t.workerId) closeId(t.workerId, workerName({ repo, plan: slug, task: num, slug: t.slug, role: t.role ?? 'implement' }));
   }
@@ -952,7 +954,16 @@ async function main(argv) {
   if (hygiene.cleared.length) console.log(`cleared stale control feeds from a prior run: ${hygiene.cleared.join(', ')}`);
 
   const inbox = createReportInbox({ dir: control.dir });
-  const platform = createPlatform({ root, transport: inbox.transport });
+  // Workers run the installed `claude`, resolved once here so a machine without one fails before the
+  // first spawn rather than at it (live-workers DESIGN §2.1).
+  let claudePath;
+  try {
+    claudePath = resolveClaudePath();
+  } catch (err) {
+    console.error(err.message);
+    process.exit(1);
+  }
+  const platform = createPlatform({ root, controlDir: control.dir, transport: inbox.transport, claudePath });
   const worktree = createWorktree({ root });
   let design = '';
   try {
