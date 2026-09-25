@@ -10,11 +10,11 @@ writes a cell also fixes the over-budget cell they walk past.
 
 **Plan reviewed:** 2026-09-25 — re-review after the Agent SDK amendment: 21 fixed, 4 decided with the user
 
-**Status:** Planned 2026-09-24. Nothing built.
+**Status:** T00 implemented, awaiting review.
 **Last updated:** 2026-09-25
 **Starts after:** `declared-test-command` is merged to main (user 2026-09-24, plan review): done,
 d1f95ac, 2026-09-25. `nudge-quiet-worker` and `resume-dead-worker` wait for this plan.
-**Next `pir-work` will:** T00, the only task with no dependency.
+**Next `pir-work` will:** review T00.
 
 ## Tasks
 
@@ -23,7 +23,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 
 | # | Task | Depends on | State | Notes |
 |---|---|---|---|---|
-| T00 | prove-live-worker | — | ⬜ | |
+| T00 | prove-live-worker | — | 🔍 | Spike measured all 8 items; 11 FINDINGS rows, notes in DESIGN §2.4, §2.6, §2.12. Item 8 hand-verified. Deviations: extra default-mode probes because auto mode asked nothing; kill test ran after user approval past a classifier block, `sleep 30 && echo slept`. Open for user: SDK honours session grants, so pir's grant list may be redundant. |
 | T01 | stream-protocol | T00 | ⬜ | |
 | T02 | conversation-model | T01 | ⬜ | |
 | T03 | person-input | T01 | ⬜ | |
@@ -43,7 +43,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T17 | docs | T06, T07, T08, T13, T14, T15 | ⬜ | |
 | T18 | live-run | T08, T13, T14, T16, T17 | ⬜ | |
 
-**Review queue:** empty
+**Review queue:** T00
 
 ## Blocked on the user
 

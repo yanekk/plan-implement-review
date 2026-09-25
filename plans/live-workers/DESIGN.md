@@ -145,6 +145,8 @@ in and no `result` has come back), `idle` (last turn ended, nothing pending), `p
 request has no reply). The loop's existing `isBusy` and force-idle logic read this instead of
 `claude agents` status.
 
+T00, 2026-09-25: stands. A `result` with nothing pending was never followed by another message in 20 s, over five results.
+
 A task row shows "asking you" when the worker has a report of kind question/decision/conflict (as
 today) or a pending permission or question set. The row says which: `asking you · allow a command?`,
 `asking you · a question`. The asking footer reads `● Txx slug — asking you; open it (→) to answer`, and the
@@ -203,6 +205,11 @@ pir answers by resolving the pending `canUseTool` promise with a `PermissionResu
 `behavior:"deny"` with the message `The person refused.` or the typed text. A request left unanswered
 keeps its promise open. The SDK itself sets no deadline ("permission prompts have no park deadline",
 sdk.d.ts 0.3.282); whether Claude gives up on a long-unanswered request is not yet measured; T00 checks it.
+
+T00, 2026-09-25: a request left 300 s unanswered was not timed out. Through the SDK, Claude did honour a
+session `addRules` grant (contrary to the raw-line row), so pir's own grant list may be redundant: a decision
+for the user, unchanged here. The grant returned must be the `addRules` suggestion only: returning every
+suggestion also applied `setMode acceptEdits` to the worker.
 
 ### 2.7 Question sets
 
@@ -277,6 +284,7 @@ fight over the cursor.
 A worker does not reliably die with a coordinator killed by SIGKILL: a child mid-command was still alive
 22 s after its parent was killed (measured 2026-09-24). An idle SDK-driven worker whose parent exited
 hard was gone within about a second (measured 2026-09-25), which does not cover the mid-command case.
+T00, 2026-09-25: stands. Re-measured through the SDK: alive 10 s after the parent's SIGKILL, mid-command.
 pir spawns the process itself through `spawnClaudeCodeProcess` (§2.1), so it has the pid. So:
 
 - The coordinator writes `control/workers.json`, `[{ id, task, role, pid, startTime }]`, temp-then-rename,
