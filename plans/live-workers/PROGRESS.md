@@ -30,7 +30,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T04 | worker-process | T01, T10 | ✅ | |
 | T05 | live-platform | T04 | ✅ | |
 | T06 | reap-workers | T04, T05 | ⬜ | |
-| T07 | person-inbox | T03, T05 | 🔍 | Forwarder, grants, drop writer; 19 tests. Deviations: reader and watcher generalised into new `drop-folder.mjs` (no import cycle; coordinate keeps `waitForReport`); `startPersonInbox` also takes `log`; platform gains `pending`, `note`; allow-always also answers that worker's already-pending requests the grant covers; a reply of the wrong kind is `undelivered`. |
+| T07 | person-inbox | T03, T05 | ✅ | Review clean, no fix commit. Deviations accepted: `drop-folder.mjs` split (no import cycle), platform `pending`/`note`, allow-always also answering covered pending requests. Probed: hygiene runs before the forwarder starts, drains cannot interleave, dead-worker message and interrupt noted by worker-proc, tmp-then-rename wake race bounded by the 5 s backstop, timing tests green over 5 reruns. |
 | T08 | conflict-to-worker | T05 | ⬜ | |
 | T09 | asking-kinds | T05, T08 | ⬜ | |
 | T10 | runtime-deps | T00 | ✅ | |
@@ -43,7 +43,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T17 | docs | T06, T07, T08, T13, T14, T15 | ⬜ | |
 | T18 | live-run | T08, T13, T14, T16, T17 | ⬜ | |
 
-**Review queue:** T07
+**Review queue:** empty
 
 ## Blocked on the user
 
