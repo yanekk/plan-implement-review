@@ -15,9 +15,9 @@ setup/test block.
 
 **Status:** Planned 2026-09-24. Nothing built.
 **Last updated:** 2026-09-25
-**Starts after:** `declared-test-command` is merged to main (user 2026-09-24, plan review). Until then
-`pir-work` stops. `nudge-quiet-worker` and `resume-dead-worker` wait for this plan.
-**Next `pir-work` will:** stop until the plan is re-reviewed; then T00, the only task with no dependency, once that merge is in.
+**Starts after:** `declared-test-command` is merged to main (user 2026-09-24, plan review): done,
+d1f95ac, 2026-09-25. `nudge-quiet-worker` and `resume-dead-worker` wait for this plan.
+**Next `pir-work` will:** stop until the plan is re-reviewed; then T00, the only task with no dependency.
 
 ## Tasks
 
