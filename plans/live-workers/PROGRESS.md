@@ -37,7 +37,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T11 | screen-on-pi-tui | T10 | ✅ | |
 | T12 | task-selection | T09, T11 | ⬜ | |
 | T13 | conversation-view | T02, T07, T12 | ⬜ | |
-| T14 | worker-contract | T05 | 🔍 | pir-worker, pir-implement, pir-review skill text: ask in this conversation, AskUserQuestion for a choice, answered from `pir`; idle read from the stream; conflict fix arrives as a message from pir and is acted on. No `claude agents` or attach left. Deviation: conflict steps gain "run the test command" and ask on a judgement, per §2.10. No tests (skill text). |
+| T14 | worker-contract | T05 | ✅ | Skill text: ask in this conversation, AskUserQuestion for a choice, answered in `pir`; conflict fix arrives from pir; recorded deviation (tests + ask on judgement) matches §2.10. Review fix: a typed reply refusing AskUserQuestion is the answer, not a re-ask (§2.7). Probed grep for `claude agents`/attach, report writer unchanged, classic wording untouched. |
 | T15 | sunset-pir-coordinate | T10 | ✅ | |
 | T16 | harness-conversations | T05, T06 | ⬜ | |
 | T17 | docs | T06, T07, T08, T13, T14, T15 | ⬜ | |
