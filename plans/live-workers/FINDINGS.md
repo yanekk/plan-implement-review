@@ -12,6 +12,7 @@ changed.
 
 | Date | | Finding |
 |---|---|---|
+| 2026-09-25 | 📌 | T03: Claude suggested `echo probe-one *` for `echo probe-one > probe.txt`; pir's grant does not match that redirecting request, since Claude checks redirect targets against Edit rules and pir does not. Such requests still reach the person. |
 | 2026-09-25 | ✅ | T11, verified by hand with the user: old and new `pir` screens side by side on seeded runs in every state (asking, conflict, crashed, end tests, red, green, stopped, twin slugs): "identical". A pty cell-by-cell diff of 39 screens also matched. |
 | 2026-09-25 | 📌 | T11: pi-tui `TuiAltScreen` defaults would change the screen: mouse capture (steals terminal text selection) and, on `stop()`, reprinting the last frame onto the main screen. pir passes `mouse:false` and `stop({preserveScreen:true})`. |
 | 2026-09-25 | 🐞 | T01 review probe (SDK 0.3.282, haiku): `interrupt()` while `canUseTool` was pending aborted its signal; tool came back rejected, turn ended `error_during_execution`, no reply. `workerActivity` now drops requests pending at an interrupt at that result. |
