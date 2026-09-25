@@ -189,6 +189,12 @@ test('grantMatches: output to /dev/null and 2>&1 are not treated as redirects', 
   assert.equal(matches('npm test *', 'npm test 2>&1 | tee log'), false);
 });
 
+test('grantMatches: a redirect only looking like /dev/null or 2>&1 is a redirect', () => {
+  // bash reads `>&1foo` as "stdout and stderr to the file 1foo"; the others name real paths too.
+  for (const c of ['npm test >&1foo', 'npm test 2>&1x', 'npm test >/dev/null.txt', 'npm test 2>/dev/null-x', 'npm test >/dev/null/x'])
+    assert.equal(matches('npm test *', c), false, c);
+});
+
 test('grantMatches: `Bash(*)` and a bare Bash rule match every simple command', () => {
   assert.equal(grantMatches(bashGrant('*'), bashReq('anything at all')), true);
   assert.equal(grantMatches({ rules: [{ toolName: 'Bash' }] }, bashReq('ls')), true);
@@ -216,6 +222,17 @@ test('grantMatches: a path rule must equal the tool\'s primary field', () => {
   assert.equal(grantMatches(grant, { toolName: 'Edit', input: { file_path: 'src/b.mjs' } }), false);
   assert.equal(grantMatches({ rules: [{ toolName: 'Edit', ruleContent: 'src/**' }] }, { toolName: 'Edit', input: { file_path: 'src/a.mjs' } }), false);
   assert.equal(grantMatches({ rules: [{ toolName: 'mcp__x__y', ruleContent: 'a' }] }, { toolName: 'mcp__x__y', input: { a: 'a' } }), false);
+});
+
+test('grantMatches: path rules read their anchor as Claude does', () => {
+  const edit = (ruleContent, file_path) => grantMatches({ rules: [{ toolName: 'Edit', ruleContent }] }, { toolName: 'Edit', input: { file_path } });
+  // `//path` is absolute: it names the file `/path`.
+  assert.equal(edit('//Users/a/p/x.mjs', '/Users/a/p/x.mjs'), true);
+  assert.equal(edit('//Users/a/p/x.mjs', '//Users/a/p/x.mjs'), false);
+  // `/path` is relative to the settings source, a root pir does not know: never the file at `/path`.
+  assert.equal(edit('/src/a.mjs', '/src/a.mjs'), false);
+  // `~/path` is relative to home, which pir does not resolve.
+  assert.equal(edit('~/a.mjs', '~/a.mjs'), false);
 });
 
 test('grantMatches: WebFetch domain rules match the hostname exactly, case-insensitive', () => {

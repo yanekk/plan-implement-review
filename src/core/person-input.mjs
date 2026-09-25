@@ -21,7 +21,9 @@
 //   extra-checks those, pir does not.
 // Other tools: a rule with no `ruleContent` matches every request of that tool (Claude's bare tool
 // rule); `WebFetch` `domain:<host>` matches the URL's hostname exactly, case-insensitive, no wildcard;
-// any other `ruleContent` must equal the tool's primary field (file_path, path, notebook_path, url).
+// any other `ruleContent` must equal the tool's primary field (file_path, path, notebook_path, url),
+// reading its anchor as Claude does (§ Read and Edit): `//path` names `/path`; a `/path` (relative to the
+// settings source) or `~/path` rule never matches, since pir does not know those roots.
 
 const KINDS = ['message', 'interrupt', 'permission', 'answers', 'decline-questions'];
 const DECISIONS = ['allow', 'deny', 'allow-always'];
@@ -121,7 +123,16 @@ function ruleMatches(rule, input) {
     return host !== null && !content.includes('*') && host === content.slice('domain:'.length).toLowerCase().replace(/\.$/, '');
   }
   const field = PRIMARY_FIELD[rule.toolName];
-  return field !== undefined && input[field] === content;
+  return field !== undefined && typeof input[field] === 'string' && input[field] === pathRuleTarget(content);
+}
+
+// The literal path a path rule names, or null when its anchor is one pir cannot resolve. Claude reads
+// `//path` as absolute, `/path` as relative to the settings source and `~/path` as relative to home;
+// only the first names a path pir can compare. A plain `path` is relative to the working directory.
+function pathRuleTarget(content) {
+  if (content.startsWith('//')) return content.slice(1);
+  if (content.startsWith('/') || content.startsWith('~')) return null;
+  return content;
 }
 
 function bashMatches(pattern, command) {
@@ -138,7 +149,9 @@ function bashMatches(pattern, command) {
 // A command pir can match whole: no separator, no substitution, no redirect beyond the harmless ones.
 function commandIsSimple(command) {
   if (typeof command !== 'string') return false;
-  const rest = command.replace(/\s*\d?>&1/g, ' ').replace(/\s*\d?>>?\s*\/dev\/null\b/g, ' ');
+  // Each harmless redirect must end the word: bash reads `>&1foo` as a write to the file `1foo`, and
+  // `/dev/null.txt` is a path of its own.
+  const rest = command.replace(/\s*\d?>&1(?!\S)/g, ' ').replace(/\s*\d?>>?\s*\/dev\/null(?!\S)/g, ' ');
   return !/[;&|<>`\n\r]|\$\(/.test(rest);
 }
 
