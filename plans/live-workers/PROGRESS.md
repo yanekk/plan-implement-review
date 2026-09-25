@@ -40,12 +40,12 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T14 | worker-contract | T05 | ✅ | |
 | T15 | sunset-pir-coordinate | T10 | ✅ | |
 | T16 | harness-conversations | T05, T06 | ✅ | |
-| T17 | docs | T06, T07, T08, T13, T14, T15 | ⬜ | |
+| T17 | docs | T06, T07, T08, T13, T14, T15 | 🔍 | /docs, root README install, CLAUDE.md install line and stale `claude agents` comments rewritten for live workers. Docs only; suite green. Deviation: human-flow documents the no-live-worker conflict as a ⛔ row plus a `run.log` prompt, not DESIGN §2.10's orange row, which the code no longer reaches (FINDINGS). |
 | T18 | live-run | T08, T13, T14, T16, T17 | ⬜ | |
 | T19 | conversation-view-rig | T13 | ⬜ | |
 | T20 | conversation-view-feel | T19; blocks T18 | ⬜ | |
 
-**Review queue:** empty
+**Review queue:** T17
 
 ## Blocked on the user
 

@@ -140,7 +140,8 @@ function rowFor(t, { now, doneIds, ceilingFull }) {
     const elapsedMs = t.since != null && now != null ? now - t.since : null;
     // A task parked on a merge conflict the run hit at its own merge is not a worker asking anything:
     // its worker has stopped and does not know. It reads `merge conflict` (orange, user 2026-09-24) so the
-    // person looks for the paste-in prompt instead of attaching to wait for a question that never comes.
+    // person looks for the paste-in prompt instead of opening the worker to wait for a question that
+    // never comes.
     if (isConflict(t)) return { ...base, kind: 'conflict', label: 'merge conflict', elapsedMs };
     // The worker was sent the fix and is working on it: nothing for the person to do (§2.10).
     if (isFixingConflict(t)) return { ...base, kind: 'fixing-conflict', label: 'fixing conflict', elapsedMs };
