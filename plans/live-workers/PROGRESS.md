@@ -25,7 +25,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 |---|---|---|---|---|
 | T00 | prove-live-worker | — | ✅ | |
 | T01 | stream-protocol | T00 | ✅ | |
-| T02 | conversation-model | T01 | ⬜ | |
+| T02 | conversation-model | T01 | 🔍 | Built `core/conversation.mjs` (+`promptLines`, `mainArg`), `wrapLine`+`clipText` in `core/text.mjs`; 26+2 tests. Deviations: under `defaultToNo` `a` also arms (second `a` sends), so `armed` is `false|'allow'|'allow-always'`; `promptLines` added so T13 paints prompts without rules; `canAlwaysAllow` = `grantFrom` non-null; grant-allowed request answered by its dim note. |
 | T03 | person-input | T01 | ✅ | |
 | T04 | worker-process | T01, T10 | ✅ | |
 | T05 | live-platform | T04 | ✅ | |
@@ -43,7 +43,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T17 | docs | T06, T07, T08, T13, T14, T15 | ⬜ | |
 | T18 | live-run | T08, T13, T14, T16, T17 | ⬜ | |
 
-**Review queue:** empty
+**Review queue:** T02
 
 ## Blocked on the user
 
