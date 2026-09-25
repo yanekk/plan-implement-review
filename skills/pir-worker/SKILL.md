@@ -106,7 +106,9 @@ wrong — you do two things and then **wait** (DESIGN §2.2):
    to do, the options and their costs, and your recommendation, the shape `CLAUDE.md` asks for. **When
    the answer is a choice between options, ask it with the AskUserQuestion tool** — options with a
    one-line cost each, your recommendation first and marked `(Recommended)`; the person picks it in a
-   picker, or types an answer of their own. When the answer is open-ended, ask it in plain text and end
+   picker, or types an answer of their own. If the person replies in words instead of using the
+   picker, the tool comes back refused with their text as its message: that text is their answer — act
+   on it, do not re-ask the same question. When the answer is open-ended, ask it in plain text and end
    the turn with the question put *to the person* and nothing running, so your session goes idle on a
    clear ask. Either way the person sees your question in this conversation inside `pir`, opens it there
    and answers there; the answer arrives in your own session and you continue from it. `pir` is the
