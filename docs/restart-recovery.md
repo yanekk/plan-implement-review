@@ -19,7 +19,7 @@ is refused before anything is reconciled (see [run-lifecycle.md](run-lifecycle.m
 - **Per-task branches and worktrees.** `pir/{plan}-T{nn}` and `.claude/worktrees/pir-{slug}-T{nn}`
   are deterministic and reused the same way (`createTask`). Reconciliation adopts the work already
   on each task branch (below); a task it resumes is spawned into the existing branch and worktree,
-  and a branch whose worktree folder is gone gets the folder re-attached rather than being skipped.
+  and a branch whose worktree folder is gone gets its folder recreated rather than being skipped.
 - **Completed work.** Any task already merged into the feature branch reads `✅` in the feature
   branch's `PROGRESS.md`, so a re-run does not rebuild it — the feature branch is the durable record
   of what has actually landed. `main` is untouched (nothing ever merges to `main`), so an
@@ -57,19 +57,24 @@ uncommitted. It is kept, though, for the resumed implementer to inspect (below).
 
 `teardownRun` (`coordinate.mjs`) runs on every exit that is not a clean hand-off or a halt — a `pir`
 stop, Ctrl-C, an uncaught error, the runaway breaker, a stall. It closes this run's
-worker sessions and **never removes a task worktree or branch**. It used to remove them on every exit
+workers and **never removes a task worktree or branch**. It used to remove them on every exit
 but the detached stop; on 2026-09-22 a full disk (`ENOSPC`) crashed a real run, that `error` teardown
 deleted two built tasks and one half-built one, and the restart implemented all three again.
 
 ### Reap the dead run's workers first
 
 A crash that skips the command's own shutdown — a `SIGKILL`, a power loss, a stop that outlasts its
-grace and is force-killed — leaves the dead run's worker sessions still running. Each orphaned session both inflates
-the live-worker count (tripping the runaway breaker) and stays invisible to the slot maths (so the
-run would over-spawn). So the first thing reconciliation does, before adopting anything, is stop
-every worker session of this slug the platform still lists — **session-only** (close the session and
-remove its record, never `worktree.remove`), because the task branches and worktrees are exactly
-what the adoption needs. This makes the ceiling genuinely free before any reviewer spawns.
+grace and is force-killed — can leave the dead run's workers running: a worker in the middle of a
+command outlives its killed parent (measured 22 s on 2026-09-24, still alive at 10 s through the SDK on
+2026-09-25). No listing finds such a worker, because the new coordinator lists only its own children.
+So before anything else, startup hygiene reaps every worker the dead coordinator recorded in the
+control folder's `workers.json` (`startupControlHygiene` in `coordinate.mjs`, `reapRecorded` in
+`src/shell/reap.mjs`): each recorded pid that is still alive **and** still has its recorded start time
+gets SIGTERM, then SIGKILL after 3 s. A pid whose start time differs is a reused number and is never
+signalled. The reap ends processes only — never `worktree.remove` — because the task branches and
+worktrees are exactly what the adoption needs. The command prints and logs which workers it reaped. A
+pending permission request or question set dies with its worker; the new worker starts clean, and the
+old conversation stays readable in `conversations/`.
 
 ### One action per task
 
@@ -81,20 +86,20 @@ decides one action from the feature-row state and the committed task-branch glyp
 | `✅` | (any / absent) | **skip** | already merged; a leftover branch is cleaned up |
 | `⛔` | (any / absent) | **skip** | a person deferred it; its dependents wait |
 | `⬜` | `✅` | **merge** | built and reviewed — folded into the feature branch directly, no worker |
-| `⬜` | `🔍` | **review** | built, not reviewed — a fresh reviewer session is spawned on its worktree |
+| `⬜` | `🔍` | **review** | built, not reviewed — a fresh reviewer is spawned on its worktree |
 | `⬜` | present, neither `✅` nor `🔍` | **resume** | half-built — a fresh implementer continues on the existing branch |
 | `⬜` | absent | **implement** | never started — the pass's normal dispatch handles it |
 
 - **merge** reuses the loop's own merge-and-reconcile: `worktree.mergeTask` folds the branch in,
   the feature row is reconciled to `✅`, and the task worktree and branch are removed. No worker
-  session is involved, because the branch is already reviewed, so a merge does not consume the
+  is involved, because the branch is already reviewed, so a merge does not consume the
   ceiling. Merges are applied in task order.
 - **review** spawns a **fresh** reviewer on the existing task worktree and seeds it into run state as
   a normal reviewing task, so from the next pass the live loop reviews and merges it like any other.
   It runs no setup: the worktree is the one its implementer already ran in. There is no implementer to
   close — it died in the crash. Merges and reviews are done this way (a review always with a live
-  session, a merge with none) because the loop's assignment machinery treats a tracked task with no
-  live session as dead and would remove its branch, discarding the adopted work.
+  worker, a merge with none) because the loop's assignment machinery treats a tracked task with no
+  live worker as dead and would remove its branch, discarding the adopted work.
 - **resume** leaves the branch and worktree alone; the feature row stays `⬜`, so the same pass's
   normal spawn step dispatches a fresh implementer, and `createTask` hands it the existing branch and
   worktree. That spawn step runs the plan's `setup` lines in the worktree first, as for any new
@@ -107,7 +112,7 @@ decides one action from the feature-row state and the committed task-branch glyp
   2026-09-23 by the user's decision: a rebuild threw away hours of work on every restart. Anything
   short of `🔍`/`✅` still counts as not built, so nothing half-done reaches review until an implementer
   marks it `🔍`.
-- **merge** and **review** re-attach a worktree when the branch exists but its folder does not
+- **merge** and **review** recreate a worktree when the branch exists but its folder does not
   (`createTask` reuses the branch), so a lost folder never demotes a built task to a re-implement.
 
 ### When a `✅` branch will not merge
@@ -137,11 +142,15 @@ adopts nothing, so it emits no summary, and a first run's output is unchanged.
 The control folder (`plans/{slug}/.parallel/control/`) is reused across a re-run. Before the run
 writes anything, `startupControlHygiene` separates the transient feed from the durable records:
 
-- **Cleared — `reports/`.** The worker up-channel is a live-run buffer; a leftover report from the
-  dead run would be read as a fresh worker's signal, so it is emptied at startup. Clearing runs on
-  every startup, not only a detected restart, because a genuine first start has it empty anyway.
-  `reports/` is now the only feed there is to clear — the down-channel feeds (`outbox`, `answers`,
-  `surfaced`) it used to clear alongside are gone (see [control-folder.md](control-folder.md)).
+- **Reaped — `workers.json`.** The dead run's surviving workers are ended first (above).
+- **Cleared — `reports/` and `inbox/`.** Both are live-run buffers: a leftover report from the dead
+  run would be read as a fresh worker's signal, and a leftover input from the person, addressed to a
+  previous run's worker, must never reach a new one. Both are emptied at startup, on every startup,
+  not only a detected restart, because a genuine first start has them empty anyway. The old
+  down-channel feeds (`outbox`, `answers`, `surfaced`) are gone (see
+  [control-folder.md](control-folder.md)).
+- **Preserved — `conversations/`.** Every earlier worker's conversation stays; a new worker for the
+  same task gets the next number in its file name.
 - **Preserved — `log`.** The append-only event log is the audit trail and the durable signal the
   test harness reads. It is never cleared; a restart appends a `restart` marker line so the log
   shows the boundary between runs.
@@ -170,12 +179,15 @@ When a re-run is not what is wanted, the pieces are all inspectable and removabl
 - **Leftover task branches from a run nobody will restart:** since no exit removes them, delete them
   with `git worktree remove --force` and `git branch -D` (below), or re-run the command, which merges,
   reviews or resumes each one.
-- **A leaked worker, worktree, or branch:** `claude agents --json` lists live sessions with their
-  pid; `git worktree list` lists worktrees. End a session with `kill <pid>` (`claude stop` only
-  interrupts), clear its record with `claude rm <id>`, and remove the worktree and branch with
-  `git worktree remove --force` and `git branch -D`.
+- **A leaked worker, worktree, or branch:** `cat plans/{slug}/.parallel/control/workers.json` lists
+  the workers the last coordinator recorded, with pid and start time. `kill <pid>` each one still
+  running whose `ps -p <pid> -o lstart=` equals its recorded `startTime` (a different time is a reused
+  pid, not the worker); `pir {slug}` or a stop from the dashboard does exactly this. `git worktree
+  list` lists worktrees; remove one and its branch with `git worktree remove --force` and `git branch
+  -D`. A worker also shows in `claude agents` under its name while it runs, but cannot be attached to
+  or stopped from there.
 - **A confused or runaway run:** create the `HALT` flag (`touch
-  plans/{slug}/.parallel/control/HALT`). All dispatch and delivery stop and every worker is ended;
+  plans/{slug}/.parallel/control/HALT`). All dispatch and delivery stop and every worker is closed;
   `main` is untouched. Remove the flag and re-run to continue.
 - **Inspecting what reconciliation will see:** `git show pir/{slug}-T{nn}:plans/{slug}/PROGRESS.md`
   is the exact read it makes — the committed glyph in that row is the action it will pick.

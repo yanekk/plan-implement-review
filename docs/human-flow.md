@@ -2,35 +2,61 @@
 
 Parallel mode keeps the classic rule that a person owns every genuine decision. A worker never
 guesses an underspecified requirement or a real choice — it escalates. The difference from classic
-mode is only where the person answers: not at a `/pir-work` prompt, but directly in the blocked
-worker's own session.
+mode is only where the person answers: not at a `/pir-work` prompt, but in the blocked worker's own
+conversation, opened inside the `pir` screen.
 
-## Questions and decisions — the person answers the worker directly
+## Questions and decisions — the person answers the worker in `pir`
 
 When a worker cannot continue on its own, it pauses its task and does two things, then waits, doing
 nothing further:
 
-1. It **drops a one-line report** into the control folder's `reports/` up-channel — a `question`
-   (something unspecified) or a `decision` (a genuine choice, either answer defensible). This is a
-   plain file drop the command's loop reads directly; no agent is in the path. See
+1. It **drops a one-line report** into the control folder's `reports/` — a `question` (something
+   unspecified) or a `decision` (a genuine choice, either answer defensible). This is a plain file
+   drop the command's loop reads directly; no agent is in the path. See
    [control-folder.md](control-folder.md).
-2. It **stays parked in its own `claude agents` session**, holding its worktree, waiting for a reply
-   in that session.
+2. It **asks the person in its own conversation** and ends its turn, holding its worktree.
 
-On its next pass the command uses that report for two things only: it keeps the parked worker's
-slot counted under the ceiling (a parked worker is alive, not dead), and it **prints the question in
-the live display** so the person can see who is asking and correlate several at once. The command
-**routes nothing** — there is no down-channel, no relay, no answer feed. It never sees the answer.
+On its next pass the command uses that report for two things: it keeps the parked worker's slot
+counted under the ceiling (a parked worker is alive, not dead), and it marks the task's row
+**asking you** in the live display, with the question, so the person can see who is asking and
+correlate several at once. The footer reads `● Txx slug — asking you; open it (→) to answer`
+(`render.mjs`), and the coordinator's start banner in `run.log` says the same.
 
-The person **finds the asking worker in their own `claude agents` view, attaches to its session,
-and answers there, in plain English**. The worker un-parks itself and continues. Because the person
-reads the workers directly, there is no separate human-facing "asks" file: the report signal exists
-for the command's slot-keeping and the display, not to relay a question to a person.
+The person **selects the task's row in the run's live view, opens its worker (→ or Enter), and
+answers in the worker's conversation, in plain English** (see [detached-runs.md](detached-runs.md)
+for the view and its keys). The answer is dropped into the control folder's `inbox/` and forwarded
+to the worker at once (see [control-folder.md](control-folder.md)); the worker un-parks and
+continues. The command does not read or relay the answer: it only carries it. A worker is not a
+`claude agents` session any more — it appears in that list, but cannot be attached to — so `pir` is
+the only place to answer it.
 
 One parked worker does not stall the others: every other independent task keeps moving while it
 waits, so the person is the bottleneck for that one decision only. A parked worker still holds a
 slot under the ceiling, so if several stack up the run correctly throttles down to human speed. The
 worker's side of escalating is in `skills/pir-worker`, `pir-implement`, and `pir-review`.
+
+## Permission requests and question sets
+
+A worker can also stop on Claude's own prompts, which reach pir over the worker's line rather than as
+reports (`canUseTool` in `worker-proc.mjs`, logged as a `request` entry):
+
+- **A permission request** — Claude asks before running a tool its permission rules do not already
+  allow. The row reads `asking you · allow a command?`. In the conversation the request is pinned
+  above the typing box with the tool, the command or input, and the worker's description. `y` allows
+  it once, `n` refuses, `a` allows it and does not ask this worker again for the same thing. Typing a
+  reply instead refuses and sends the text, so the worker sees why. "Do not ask again" is kept by pir
+  in memory for that worker's life and never written to any settings file (`createGrants`,
+  `person-inbox.mjs`); a later request it covers is allowed by pir at once and logged
+  `delivered-by-grant`, so it still shows in the conversation. `a` is offered only when Claude
+  suggested a rule for the request and did not flag the rule as granting more than the request. A
+  request Claude flags as risky needs the approving key twice, `y` or `a` ("press y again to allow"); `n` still refuses in one press and any other key disarms it (`gateReducer` in `src/core/conversation.mjs`).
+- **A question set** — the worker's AskUserQuestion tool. The row reads `asking you · a question`. The
+  questions are pinned one at a time as a picker: ↑↓ move, space picks or ticks, Enter goes to the
+  next question and on the last sends; every question has a final "Other" line for a typed answer.
+  Typing a reply instead of using the picker declines the questions with the typed text.
+
+These keys work only while the typing box is empty. A request left unanswered simply waits: nothing
+times it out.
 
 ## A task that needs the person's eyes is an ordinary worker that asks
 
@@ -49,11 +75,11 @@ A worker that deploys, calls a paid service or changes anything outside the repo
 plan's `DESIGN.md §5.3` gives that action. `/pir-review-plan` turned the bins the person approved into
 project permission rules in `.claude/settings.json`, which every worktree inherits because the file is
 committed. A `worker` action is `allow`ed and runs without stopping. An `ask` action is under an `ask`
-rule: the worker drops a `question` report, explains the action in its session and runs the command,
-and the platform parks the session on its permission prompt. It shows as needing input in
-`claude agents`, and the person attaches and approves or refuses there, so one approval is the whole
-exchange. A `person` action is only a login, a device or a judgement, raised like any other question.
-An action with no row is treated as `ask`.
+rule: the worker drops a `question` report, explains the action in its conversation and runs the
+command, and Claude stops on the permission request, which reaches pir as above. The person opens the
+worker in `pir` and presses `y` or `n` there, so one approval is the whole exchange. A `person` action
+is only a login, a device or a judgement, raised like any other question. An action with no row is
+treated as `ask`.
 
 ## Merge conflicts
 
@@ -61,27 +87,31 @@ There are two places a conflict can arise:
 
 - **At a worker's own integrate.** Before signalling done, a worker merges the current feature
   branch into its task branch. If that conflicts in code, the worker attempts the resolution — it
-  holds the task's context. If it cannot resolve cleanly, it escalates a `decision` and waits, as
-  above, for the person to attach and decide.
+  holds the task's context. If it cannot resolve cleanly, it drops a `conflict` report and waits, as
+  above, for the person to open its conversation in `pir` and decide.
 - **At the coordinator's own merge.** A worker's integrate was clean when it signalled done, but
   another task changed the same lines before the command merged this one, so `mergeTask` conflicts.
-  The command **keeps that worker alive and parked** — it does not close it, remove its worktree,
-  delete its task, or respawn it. Because that worker finished clean and has no idea a clash happened,
-  the command **composes a ready-to-paste resolution prompt** and prints it: which worker to attach
-  to, the `git merge` that folds the feature branch into the task branch, the conflicting files, and
-  the finish steps (commit, the test command — the `test` lines of the plan's `DESIGN.md` setup/test
-  block — re-signal done). It names no side: the
-  worker resolves where both sides' work makes the result clear, and asks the person in its own
-  session when choosing a side is a judgement. The command **sends nothing**: the person copies the
-  prompt, attaches to that same worker, and pastes it. The worker resolves on its branch and re-signals done,
-  and only then does the command merge the now-clean branch. The merge and the worker's close are
-  paired — a worker is closed only after its branch has actually merged — so a conflict can never
-  destroy the worker that must resolve it. The task's row reads `merge conflict` in orange, not
-  `asking you`, and the header counts it separately. The prompt is bulky, so the in-place frame stays a
-  compact line naming the parked worker; the prompt itself is drawn in full under the live view in
-  `pir` for as long as the conflict is open, and the coordinator also prints it once on its own normal
-  screen, which for a detached run is only `run.log`. (On a restart, a finished branch can clash with no live worker to attach
-  to; the prompt then names the task branch to check out and land by hand.)
+  The command **keeps that worker alive** — it does not close it, remove its worktree, delete its
+  task, or respawn it — and, because the worker finished clean and has no idea a clash happened, the
+  command **sends it the fix over its line** (`loop.mjs`; the text is `buildConflictPrompt` with
+  `audience: 'worker'` in `src/core/conflict.mjs`). The message names the `git merge` that folds the
+  feature branch into the task branch and the conflicting files, and tells the worker to resolve,
+  run the test command (the `test` lines of the plan's `DESIGN.md` setup/test block), commit and
+  re-signal done. It names no side: the worker resolves where both sides' work makes the result
+  clear, and asks the person in its conversation when choosing a side is a judgement, which turns the
+  row `asking you` like any other question. Nothing is asked of the person otherwise: the row reads
+  `fixing conflict` in the working (cyan) style, with no paste block and no conflict footer. The
+  worker resolves on its branch and re-signals done, and only then does the command merge the
+  now-clean branch. The merge and the worker's close are paired — a worker is closed only after its
+  branch has actually merged — so a conflict can never destroy the worker that must resolve it.
+
+  **With no live worker to send it to**, the command falls back to a printed prompt: a ready-to-paste
+  resolution for the person, which names the task branch to check out and land by hand
+  (`buildConflictPrompt` with `workerName: null`). That happens on a restart, where reconciliation
+  finds a reviewed branch that no longer merges, and when the send fails because the worker exited
+  between the listing and the merge (`loop.mjs` 3d). Either way the task is marked `⛔` on the feature
+  branch, so it is not rebuilt and its dependents wait, the branch is kept, and the prompt is printed
+  once on the coordinator's screen, which for a detached run is `run.log`.
 
 The command never merges a dirty branch into the feature branch. At the end it runs the plan's
 declared `setup` then `test` lines on the feature branch first and, if they fail, prints the failure
@@ -113,10 +143,10 @@ live-worker count stays over the ceiling.
 ## Known limitation: a leaked background process outlives its worker
 
 The idle-gate and its `force-idle` timeout (see [control-folder.md](control-folder.md)) only unblock
-the command when a finished worker's session stays `busy`. They do **not** clean up a background
+the command when a finished worker stays `busy`. They do **not** clean up a background
 process the worker left running. A daemon that double-forks detaches from the session's process
-group and reparents to init, so it survives the worker session's SIGTERM entirely (a real run left
+group and reparents to init, so it survives the worker's SIGTERM entirely (a real run left
 `cockpitd` daemons running 8+ hours later as pid-1 orphans). The reliable cleanup is the worker's own
 discipline — run test suites in the foreground so their `trap … EXIT` fires, and leave nothing
-running before going idle (`pir-worker`). Killing the session cannot undo a leak the worker left
+running before going idle (`pir-worker`). Killing the worker cannot undo a leak the worker left
 behind. This is worker-side hygiene the code cannot enforce, not a coordinator bug to fix here.

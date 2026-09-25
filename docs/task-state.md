@@ -70,7 +70,7 @@ nothing downstream of it is dispatched.
 
 The task table is not fixed for the life of a run. A worker building one task can discover that
 another task is needed; it asks the person, and once the person approves in the worker's own
-session, it writes the new task down on its own task branch — a `⬜` row in `PROGRESS.md`, a row in
+conversation (opened in `pir`), it writes the new task down on its own task branch — a `⬜` row in `PROGRESS.md`, a row in
 `PLAN.md`, and a full `tasks/T{nn}-{slug}.md` doc. The new row reaches the feature branch's
 `PROGRESS.md` **at the merge of the task that introduced it**, not the moment it is proposed: at
 merge the command adopts genuinely new task rows from the branch onto the feature copy

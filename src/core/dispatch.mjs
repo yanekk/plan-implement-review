@@ -2,8 +2,8 @@
 // A pure function of its arguments: the parsed task table, the live worker assignments, the
 // worker ceiling and the kill-switch flag. It reads no clock and no filesystem, which is what
 // lets the entire dispatch logic be proven before any agent exists (DESIGN §3.1, §4). The
-// loop in src/shell/ gathers the state (parse PROGRESS.md, `claude agents --json`, the control
-// flag) and executes the actions this returns.
+// loop in src/shell/ gathers the state (parse PROGRESS.md, the platform's list of live workers, the
+// control flag) and executes the actions this returns.
 //
 // It answers, for this one pass: which ready tasks to spawn a worker for (every task builds the
 // same way now, §2.5), which implemented task needs a
