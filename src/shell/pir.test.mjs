@@ -110,7 +110,7 @@ const REPO = join(HERE, '..', '..');
 const WRAPPER = join(REPO, 'bin', 'pir');
 
 test('bin/pir execs the engine entrypoint and forwards its arguments', () => {
-  // A thin wrapper mirroring bin/pir-coordinate: exec node <engine>/src/shell/pir.mjs "$@". The engine
+  // A thin wrapper: exec node <engine>/src/shell/pir.mjs "$@". The engine
   // dir is a placeholder install.sh bakes in (T13), so the file names the entrypoint relative to it.
   const wrapper = readFileSync(WRAPPER, 'utf8');
   assert.match(wrapper, /src\/shell\/pir\.mjs/, 'entrypoint is src/shell/pir.mjs');
