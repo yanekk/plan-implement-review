@@ -34,11 +34,13 @@ import {
   makePrepare,
 } from './coordinate.mjs';
 import { readSnapshot } from './snapshot-store.mjs';
+import { parseSnapshot, serializeSnapshot } from '../core/snapshot.mjs';
+import { buildDisplay } from '../core/display.mjs';
 import { serializeRecord } from '../core/runrecord.mjs';
 import { EventEmitter } from 'node:events';
 import { createMessaging, createPlatform, encodeMessage } from './platform.mjs';
 import { startWorker } from './worker-proc.mjs';
-import { fakeClaudeSpawner, turn } from './fake/claude-stream.mjs';
+import { canUseTool, fakeClaudeSpawner, initEvent, turn } from './fake/claude-stream.mjs';
 import { createFakePlatform } from './fake/platform.mjs';
 import { createFakeWorktree, git } from './fake/worktree.mjs';
 import { workerName } from '../core/naming.mjs';
@@ -786,7 +788,10 @@ test('buildRunState assembles the display model input from a pass result and the
   assert.equal(rs.branch, 'pir/demo');
   assert.equal(rs.ceiling, 4);
   const by = Object.fromEntries(rs.tasks.map((t) => [t.id, t]));
-  assert.deepEqual(by.T01, { id: 'T01', slug: 'done-one', deps: [], done: true, phase: null, since: null, doneMs: 6400, question: null, prompt: null, conflictSent: false });
+  assert.deepEqual(by.T01, {
+    id: 'T01', slug: 'done-one', deps: [], done: true, phase: null, since: null, doneMs: 6400, question: null, prompt: null, conflictSent: false,
+    asking: null, worker: null, workers: [],
+  });
   assert.equal(by.T02.phase, 'building');
   assert.equal(by.T02.since, 100);
   assert.equal(by.T03.phase, 'asking');
@@ -1397,4 +1402,114 @@ test('teardownRun SIGTERMs every live child at once and workers.json empties as 
   await until(() => platform.list().length === 0, 'both children to exit');
   assert.ok([0, 1].every((i) => receivedLines(i).some((l) => l.signal === 'SIGTERM')), 'each child got its SIGTERM');
   assert.deepEqual(workersFile(), [], 'workers.json lists exactly the live children: none');
+});
+
+// --- live-workers T09: asking kinds and the worker `pir` opens ----------------------------------------
+
+const w = (id, task, role, n, live, state = 'busy') => ({
+  id, task, role, n, live, logPath: `c/${task}-${role}-${n}.ndjson`, activity: { state, pending: [] },
+});
+
+test('buildRunState names the asking kind: a live request over a report; a report alone is a question', () => {
+  const passTasks = ['T01', 'T02', 'T03', 'T04', 'T05', 'T06'].map((num) => ({ num, name: num.toLowerCase(), deps: [], state: '⬜' }));
+  const stateTasks = {
+    T01: { role: 'implement', phase: 'awaiting-answer', decision: { text: 'q' } },
+    T02: { role: 'implement', phase: 'implementing' },
+    T03: { role: 'review', phase: 'reviewing' },
+    T04: { role: 'implement', phase: 'awaiting-answer', decision: { text: 'q' } },
+    T05: { role: 'implement', phase: 'implementing' },
+    T06: { role: 'review', phase: 'awaiting-answer', decision: { kind: 'conflict', text: 'c', prompt: 'p' } },
+  };
+  const workers = [
+    w('a', 'T01', 'implement', 1, true, 'idle'),
+    w('b', 'T02', 'implement', 1, true, 'permission'),
+    w('c', 'T03', 'review', 1, true, 'questions'),
+    w('d', 'T04', 'implement', 1, true, 'permission'),
+    w('e', 'T05', 'implement', 1, true, 'busy'),
+    // An exited worker's stale request is not asking anything.
+    w('f', 'T05', 'implement', 0, false, 'permission'),
+  ];
+  const rs = buildRunState({ passTasks, stateTasks, workers, branch: 'b', ceiling: 9 });
+  const asking = Object.fromEntries(rs.tasks.map((t) => [t.id, t.asking]));
+  assert.deepEqual(asking, { T01: 'question', T02: 'permission', T03: 'questions', T04: 'permission', T05: null, T06: null });
+  const rows = Object.fromEntries(buildDisplay(rs, { now: 0 }).rows.map((r) => [r.id, r.label]));
+  assert.equal(rows.T02, 'asking you · allow a command?');
+  assert.equal(rows.T03, 'asking you · a question');
+  assert.equal(rows.T05, 'building', 'a non-asking row reads as before');
+  assert.equal(rows.T06, 'merge conflict', 'a coordinator-side conflict is not a question');
+});
+
+test('buildRunState: `worker` is the live one, else the latest; `workers` lists all of the task\'s in order', () => {
+  const passTasks = [
+    { num: 'T01', name: 'live', deps: [], state: '⬜' },
+    { num: 'T02', name: 'finished', deps: [], state: '✅' },
+    { num: 'T03', name: 'none', deps: [], state: '⬜' },
+  ];
+  const workers = [
+    w('i1', 'T01', 'implement', 1, false),
+    w('i2', 'T02', 'implement', 1, false),
+    w('r1', 'T01', 'review', 1, true),
+    w('r2', 'T02', 'review', 1, false, 'permission'),
+  ];
+  const rs = buildRunState({ passTasks, stateTasks: { T01: { role: 'review', phase: 'reviewing' } }, workers, branch: 'b', ceiling: 2 });
+  const [t1, t2, t3] = rs.tasks;
+  assert.deepEqual(t1.worker, { id: 'r1', live: true, logPath: 'c/T01-review-1.ndjson' });
+  assert.deepEqual(t1.workers, [
+    { id: 'i1', role: 'implement', n: 1, logPath: 'c/T01-implement-1.ndjson' },
+    { id: 'r1', role: 'review', n: 1, logPath: 'c/T01-review-1.ndjson' },
+  ]);
+  assert.deepEqual(t2.worker, { id: 'r2', live: false, logPath: 'c/T02-review-1.ndjson' }, 'no live one: the latest, read-only');
+  assert.equal(t2.asking, null, 'a done task asks nothing');
+  assert.equal(t3.worker, null);
+  assert.deepEqual(t3.workers, []);
+});
+
+test('the fake platform\'s workers() keeps closed workers in spawn order and shows a requested kind (T09)', (t) => {
+  const { coordinator, platform } = setup(t, [{ num: 'T01' }], { behaviors: { T01: { request: 'permission' } } });
+  const r = coordinator.pass();
+  const rs = buildRunState({ passTasks: r.tasks, stateTasks: coordinator.state.tasks, workers: platform.workers(), branch: 'b', ceiling: 4 });
+  assert.equal(rs.tasks[0].asking, 'permission');
+  assert.deepEqual(rs.tasks[0].worker, { id: 'w1', live: true, logPath: 'conversations/T01-implement-1.ndjson' });
+  platform.close('w1');
+  assert.deepEqual(platform.workers().map((x) => [x.id, x.live]), [['w1', false]]);
+});
+
+test('an old snapshot without the new task fields still reads and paints (T09)', () => {
+  const old = JSON.stringify({
+    version: 1, proc: { pid: 1 }, finalState: null,
+    runState: { branch: 'b', ceiling: 2, tasks: [
+      { id: 'T01', slug: 'a', deps: [], done: false, phase: 'asking', since: 0, doneMs: null, question: 'q', prompt: null },
+      { id: 'T02', slug: 'b', deps: [], done: false, phase: 'building', since: 0, doneMs: null, question: null, prompt: null },
+    ] },
+  });
+  const snap = parseSnapshot(old);
+  assert.ok(snap);
+  const d = buildDisplay(snap.runState, { now: 0 });
+  assert.deepEqual(d.rows.map((r) => r.label), ['asking you · a question', 'building']);
+});
+
+test('the snapshot of a run whose live worker has a pending permission shows asking:permission and its log path (T09)', async (t) => {
+  const script = [{ await: 'user' }, { emit: initEvent() }, { emit: canUseTool('req1', 'Bash', { command: 'git push --force' }) }, { await: 'control_response' }];
+  const { platform, controlDir } = livePlatform(t, { script });
+  const worktree = createFakeWorktree({ progress: progressDoc([{ num: 'T01' }]), slug: SLUG });
+  t.after(() => worktree.cleanup());
+  const coordinator = startCoordinator({ slug: SLUG, repo: REPO, platform, worktree, maxWorkers: 1 });
+  const r = coordinator.pass();
+  await until(() => platform.workers()[0]?.activity.state === 'permission', 'the permission request to be pending');
+  const runState = buildRunState({ passTasks: r.tasks, stateTasks: coordinator.state.tasks, workers: platform.workers(), branch: 'b', ceiling: 1 });
+  const snap = parseSnapshot(serializeSnapshot({ proc: { pid: 1 }, runState }));
+  const task = snap.runState.tasks[0];
+  assert.equal(task.asking, 'permission');
+  assert.equal(task.worker.live, true);
+  assert.equal(task.worker.logPath, join(controlDir, 'conversations', 'T01-implement-1.ndjson'));
+  assert.ok(existsSync(task.worker.logPath), 'the log path is the worker\'s real conversation log');
+  assert.deepEqual(task.workers, [{ id: task.worker.id, role: 'implement', n: 1, logPath: task.worker.logPath }]);
+  assert.equal(buildDisplay(snap.runState, { now: 0 }).rows[0].label, 'asking you · allow a command?');
+});
+
+test('the start banner says to answer in `pir`, never `claude agents` or attaching (T09)', () => {
+  const src = readFileSync(fileURLToPath(new URL('./coordinate.mjs', import.meta.url)), 'utf8');
+  const banner = src.split('\n').find((l) => l.includes('A worker that asks you'));
+  assert.match(banner, /answer it in \\`pir\\`/);
+  assert.doesNotMatch(banner, /claude agents|attach/i);
 });

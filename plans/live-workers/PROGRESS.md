@@ -32,12 +32,12 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T06 | reap-workers | T04, T05 | ✅ | |
 | T07 | person-inbox | T03, T05 | ✅ | |
 | T08 | conflict-to-worker | T05 | ✅ | |
-| T09 | asking-kinds | T05, T08 | ⬜ | |
+| T09 | asking-kinds | T05, T08 | ✅ | |
 | T10 | runtime-deps | T00 | ✅ | |
 | T11 | screen-on-pi-tui | T10 | ✅ | |
 | T12 | task-selection | T09, T11 | ⬜ | |
 | T13 | conversation-view | T02, T07, T12 | ⬜ | |
-| T14 | worker-contract | T05 | ⬜ | |
+| T14 | worker-contract | T05 | ✅ | |
 | T15 | sunset-pir-coordinate | T10 | ✅ | |
 | T16 | harness-conversations | T05, T06 | ✅ | Review: no defect; one test added (an unspoken worker never borrows another's log; mutation had survived). Probed by mutating eight paths (log dedupe, reused pid, plan-less hand-off, token unwrap, reap, symlink); pid is set synchronously at spawn, so workers.json never records null. Deviations accepted. |
 | T17 | docs | T06, T07, T08, T13, T14, T15 | ⬜ | |
