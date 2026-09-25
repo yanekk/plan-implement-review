@@ -302,16 +302,23 @@ test('a coordinator-hit merge conflict keeps the worker alive, SENDS it the fix,
   assert.equal(worktree.mainCommitCount(), 1, 'main is untouched');
 });
 
-test('a coordinator-hit conflict whose worker cannot be reached is printed for the person, in the no-worker wording (live-workers T08)', (t) => {
+test('a coordinator-hit conflict whose worker cannot be reached is printed for the person and the branch kept, ⛔ (live-workers T08)', (t) => {
   // The worker exited between the listing and the merge: send fails, so the person gets today's
   // printed prompt, without the "attach in claude agents" line, since there is nobody to attach to.
+  // The prompt says "land this branch yourself", so the run must keep it: ⛔ on the feature row, no
+  // dead-worker cleanup, no rebuild — as the restart path does (T08 review, 2026-09-25).
   const cr = (mine) => ({ conflictResolve: { file: 'greeting.txt', mine, resolved: 'hello there\n' } });
-  const { platform, base } = setup(t, [{ num: 'T01' }, { num: 'T02' }], {
+  const { platform, worktree, base } = setup(t, [{ num: 'T01' }, { num: 'T02' }], {
     files: { 'greeting.txt': 'hello world\n' },
     behaviors: { T01: cr('hello there\n'), T02: cr('hi world\n') },
   });
+  let gone = null;
   const deaf = Object.create(platform);
-  deaf.send = () => ({ ok: false });
+  deaf.send = (id) => {
+    gone = id;
+    return { ok: false };
+  };
+  deaf.list = () => platform.list().filter((w) => w.id !== gone);
   const state = createRunState();
   let surfaced = null;
   for (let i = 0; i < 20 && !surfaced; i++) {
@@ -320,9 +327,20 @@ test('a coordinator-hit conflict whose worker cannot be reached is printed for t
     surfaced = r.actions.find((a) => a.type === 'surface' && a.kind === 'conflict');
   }
   assert.ok(surfaced, 'the conflict is surfaced for the person');
+  const num = surfaced.task;
   assert.match(surfaced.prompt, /----- copy everything between these lines/, 'the person variant, with its copy markers');
+  assert.match(surfaced.prompt, /land this branch yourself/, 'the no-worker wording');
   assert.doesNotMatch(surfaced.prompt, /claude agents/, 'no worker to attach to');
-  assert.equal(state.tasks[surfaced.task].decision.sent, undefined, 'the parked task is not marked sent');
+  assert.equal(state.tasks[num], undefined, 'the task is released, not left parked on a dead worker');
+  assert.match(worktree.progressOn(`pir/${SLUG}`), new RegExp(`\\| ${num} \\|[^\\n]*⛔`), 'the feature row is ⛔');
+
+  // Later passes neither clean the branch up as a dead worker's nor rebuild the task.
+  for (let i = 0; i < 3; i++) {
+    const r = runPass({ ...base, platform: deaf, state });
+    assert.ok(!r.actions.some((a) => a.task === num && (a.type === 'spawn' || a.type === 'close')), `pass ${i}: ${num} is left alone`);
+  }
+  assert.equal(worktree.fileOn(`pir/${SLUG}-${num}`, 'greeting.txt').stdout, 'hi world\n', 'the reviewed branch is kept for the person to land');
+  assert.equal(platform.spawns.filter((s) => s.task === num && s.role === 'implement').length, 1, 'never rebuilt');
 });
 
 test('the kill switch mid-drain stops dispatch and closes every fake worker; main untouched', (t) => {

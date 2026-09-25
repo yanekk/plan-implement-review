@@ -611,9 +611,20 @@ export function runPass({ platform, worktree, repo, slug, maxWorkers, state, con
         record('conflict-sent', { task: num, workerId, text });
         continue;
       }
+      // A failed send means the worker is gone, so this is the restart path's case — a reviewed branch
+      // with nobody to fix it — and it is handled the same way: ⛔ on the feature row, the branch kept,
+      // the task forgotten. Left parked, the next pass lists the worker dead, deletes the branch and
+      // rebuilds from scratch, while the printed prompt tells the person to land that branch by hand
+      // (reproduced in T08 review, 2026-09-25).
       const prompt = promptFor('person');
-      t.decision = { kind: 'conflict', text, prompt };
       record('surface', { task: num, kind: 'conflict', text, prompt });
+      const blocked = reconcileTaskRow(readFileSync(featureProgressPath, 'utf8'), { num, state: '⛔', notes: '' });
+      writeFileSync(featureProgressPath, blocked);
+      worktree.commitFeature(`reconcile ${num} → ⛔ (merge conflict, worker gone, needs a hand)`);
+      platform.close(workerId);
+      platform.remove?.(workerId);
+      closedThisPass.add(workerId);
+      delete state.tasks[num];
       continue;
     }
     // The row folds back as ✅ (the task has been implemented and reviewed).
