@@ -49,7 +49,7 @@ reports (`canUseTool` in `worker-proc.mjs`, logged as a `request` entry):
   `person-inbox.mjs`); a later request it covers is allowed by pir at once and logged
   `delivered-by-grant`, so it still shows in the conversation. `a` is offered only when Claude
   suggested a rule for the request and did not flag the rule as granting more than the request. A
-  request Claude flags as risky needs `y` twice ("press y again to allow"); any other key disarms it.
+  request Claude flags as risky needs the approving key twice, `y` or `a` ("press y again to allow"); `n` still refuses in one press and any other key disarms it (`gateReducer` in `src/core/conversation.mjs`).
 - **A question set** — the worker's AskUserQuestion tool. The row reads `asking you · a question`. The
   questions are pinned one at a time as a picker: ↑↓ move, space picks or ticks, Enter goes to the
   next question and on the last sends; every question has a final "Other" line for a typed answer.
