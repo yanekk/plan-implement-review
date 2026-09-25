@@ -1,48 +1,26 @@
-// platform.mjs, proven without a live agent (DESIGN §4, §5.1). T07's send/inbox half: the wire format
-// round-trips; same-repo resolution is exercised against a real scratch repo and its linked worktree;
-// the `--cwd` gotcha is guarded with a spy; `claude agents --json` parses. T08's spawn/list/close half:
-// the opening instruction and argv are asserted directly, and spawn/list/close are driven through a
-// spy `claude` runner to the edge of the real process. The two things the tests cannot reach — a `·`
-// name accepted by the live messaging layer, and a real agent spawning — are hand-verified and recorded
-// in FINDINGS (DESIGN §2.8, §5.1).
+// platform.mjs, proven without a live agent (live-workers DESIGN §4). The report wire format round-trips
+// and the opening instruction is pinned. The live-worker half (live-workers T05) runs the real Agent SDK
+// against the scripted fake `claude` (fake/claude-stream.mjs): spawn, list, close, send, interrupt,
+// answer and workers.json are all exercised on real child processes, none of them the real `claude`.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync, readFileSync, existsSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { execFileSync } from 'node:child_process';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
   encodeMessage,
   parseMessage,
-  resolveSameRepo,
-  parseAgents,
   createMessaging,
   openingInstruction,
-  spawnArgv,
-  listArgv,
-  closeArgv,
   createPlatform,
+  nextLogPath,
+  resolveClaudePath,
 } from './platform.mjs';
-
-const git = (dir, args) => execFileSync('git', args, { cwd: dir, encoding: 'utf8' });
-
-// A scratch repo with one commit on main, plus a named linked worktree, so an agent cwd can point at
-// either. Never the real project (the seatbelt): a throwaway temp dir, no agent spawned.
-function scratchRepo(prefix = 'pir-t07-') {
-  const dir = mkdtempSync(join(tmpdir(), prefix));
-  const repo = join(dir, 'repo');
-  git(dir, ['init', '-b', 'main', 'repo']);
-  git(repo, ['config', 'user.email', 't07@test.local']);
-  git(repo, ['config', 'user.name', 'T07 Test']);
-  git(repo, ['config', 'commit.gpgsign', 'false']);
-  writeFileSync(join(repo, 'f.txt'), 'x\n');
-  git(repo, ['add', '-A']);
-  git(repo, ['commit', '-m', 'init', '--no-edit']);
-  const wt = join(dir, 'wt');
-  git(repo, ['worktree', 'add', '-b', 'side', wt]);
-  return { dir, repo, wt, cleanup: () => rmSync(dir, { recursive: true, force: true }) };
-}
+import { startWorker } from './worker-proc.mjs';
+import { fakeClaudeSpawner, turn, canUseTool, initEvent } from './fake/claude-stream.mjs';
+import { allowResult } from '../core/stream.mjs';
 
 // --- the wire format --------------------------------------------------------------------------
 
@@ -121,108 +99,14 @@ test('a "kind: done" prose signal parses to done; a bare word "done" in a note d
   assert.equal(note.kind, 'message', 'no explicit kind marker → plain message, never guessed');
 });
 
-// --- same-repo resolution ---------------------------------------------------------------------
-
-test('two worktrees of one repo resolve same-repo; a different repo does not', (t) => {
-  const a = scratchRepo();
-  const b = scratchRepo('pir-t07-other-');
-  t.after(a.cleanup);
-  t.after(b.cleanup);
-
-  const agents = [
-    { id: 'w1', cwd: a.repo }, // the coordinator's own checkout
-    { id: 'w2', cwd: a.wt }, // a worker in a linked worktree of the same repo
-    { id: 'w3', cwd: b.repo }, // a session in a different repo
-    { id: 'w4', cwd: null }, // no cwd — must be dropped, not crash
-  ];
-  const kept = resolveSameRepo(agents, { root: a.repo }).map((x) => x.id);
-  assert.deepEqual(kept.sort(), ['w1', 'w2']);
-});
-
-test('same-repo resolution never passes --cwd (the known gotcha)', () => {
-  // A spy runner standing in for git: it records every arg vector and answers a fixed common-dir per
-  // cwd, so we can assert the resolver asks `rev-parse --git-common-dir` and never `--cwd`.
-  const calls = [];
-  const commons = {
-    '/repo': '/repo/.git',
-    '/repo/wt': '/repo/.git',
-    '/other': '/other/.git',
-  };
-  const run = (dir, args) => {
-    calls.push({ dir, args });
-    return { ok: dir in commons, stdout: `${commons[dir] ?? ''}\n` };
-  };
-  const agents = [{ id: 'a', cwd: '/repo' }, { id: 'b', cwd: '/repo/wt' }, { id: 'c', cwd: '/other' }];
-  const kept = resolveSameRepo(agents, { root: '/repo', run }).map((x) => x.id);
-  assert.deepEqual(kept.sort(), ['a', 'b']);
-  assert.ok(calls.length > 0, 'the resolver did run git');
-  for (const c of calls) {
-    assert.ok(!c.args.includes('--cwd'), `--cwd must never be used, saw: ${c.args.join(' ')}`);
-    assert.deepEqual(c.args, ['rev-parse', '--git-common-dir']);
-  }
-});
-
-test('resolveSameRepo returns nothing when the root is not a repo', () => {
-  const run = () => ({ ok: false, stdout: '' });
-  assert.deepEqual(resolveSameRepo([{ id: 'a', cwd: '/x' }], { root: '/nope', run }), []);
-});
-
-// --- claude agents --json ---------------------------------------------------------------------
-
-test('parseAgents pulls id/cwd/status/state/name from a sample and drops the rest', () => {
-  // Shape as observed from the real `claude agents --json` (2.1.263).
-  const sample = JSON.stringify([
-    {
-      pid: 24990,
-      id: 'ea11998b',
-      cwd: '/Users/x/src/skaut',
-      kind: 'background',
-      startedAt: 1788759264498,
-      sessionId: '91a137f7',
-      name: 'skaut / cd-speech',
-      status: 'idle',
-      state: 'blocked',
-    },
-    {
-      pid: 72756,
-      id: '28e9678c',
-      cwd: '/Users/x/src/pir',
-      name: 'pir / parallel-pir / T05 / work / implement',
-      status: 'busy',
-      state: 'working',
-    },
-  ]);
-  const agents = parseAgents(sample);
-  assert.equal(agents.length, 2);
-  assert.deepEqual(agents[0], {
-    id: 'ea11998b',
-    pid: 24990, // kept: close needs it to SIGTERM the session (claude stop only interrupts)
-    cwd: '/Users/x/src/skaut',
-    status: 'idle',
-    state: 'blocked',
-    name: 'skaut / cd-speech',
-  });
-  assert.equal(agents[1].id, '28e9678c');
-  assert.equal(agents[1].pid, 72756);
-  assert.equal(agents[1].state, 'working');
-  assert.equal(agents[1].name, 'pir / parallel-pir / T05 / work / implement');
-  assert.equal('sessionId' in agents[0], false);
-});
-
-test('parseAgents accepts an already-parsed array and tolerates non-arrays', () => {
-  assert.equal(parseAgents([{ id: 'x', cwd: '/a', status: 'idle', state: 'done' }]).length, 1);
-  assert.deepEqual(parseAgents('{}'), []);
-  assert.deepEqual(parseAgents(null), []);
-});
-
 // --- the messaging surface --------------------------------------------------------------------
 
-// createMessaging is now the up-channel only — { inbox } — because the down-channel is gone (DESIGN
-// §2.2, T03): a blocked worker is answered by the person directly, not routed. So there is no `send`.
-test('createMessaging exposes inbox and no send (the down-channel is gone, DESIGN §2.2)', () => {
+// createMessaging is the report up-channel only — { inbox }. The line down to a worker is the
+// platform's send (live-workers T05), not a report-file feature.
+test('createMessaging exposes inbox and no send', () => {
   const m = createMessaging({ transport: { drain: () => [] } });
   assert.equal(typeof m.inbox, 'function');
-  assert.equal(m.send, undefined, 'no down-channel send remains on the messaging surface');
+  assert.equal(m.send, undefined, 'the messaging surface only reads reports');
 });
 
 test('createMessaging.inbox parses each report drained from the up-channel transport', () => {
@@ -275,129 +159,236 @@ test('openingInstruction refuses an unknown phase or a missing task', () => {
   assert.throws(() => openingInstruction('implement', null), /no task/);
 });
 
-test('spawnArgv is claude --bg -n <name> <instruction> (task POSITIONAL, T00), close/list argv fixed', () => {
-  // T00 found `claude --bg` takes the opening turn positionally, not with -p (--bg+--print conflict).
-  const argv = spawnArgv({ name: 'repo / plan / T08 / work / implement', instruction: 'do the thing' });
-  assert.deepEqual(argv, ['--bg', '-n', 'repo / plan / T08 / work / implement', 'do the thing']);
-  assert.equal(argv.includes('-p'), false, '--bg must not be given -p');
-  assert.equal(argv.includes('--print'), false);
 
-  assert.deepEqual(closeArgv('abc123'), ['stop', 'abc123']);
-  assert.deepEqual(listArgv(), ['agents', '--json']);
-});
+// --- live workers through the real SDK against the fake `claude` (live-workers T05) -------------
 
-// --- createPlatform: spawn / list / close over an injected claude runner ------------------------
+const NAME = (task, role = 'implement') => `plan-implement-review / live-workers / ${task} / live-platform / ${role}`;
+const CLAUDE = '/nonexistent/claude'; // never launched: the fake spawner ignores the command
 
-// A spy `claude` runner: records every call and answers a scripted result, so spawn/list/close are
-// exercised to the edge of the real process without one. The name in spawn carries the `·` separator
-// so the argv assertion also proves execFile-style args need no shell quoting.
-function claudeSpy(results = {}) {
-  const calls = [];
-  const run = (args, opts = {}) => {
-    calls.push({ args, opts });
-    if (args[0] === '--bg') return results.spawn ?? { ok: true, stdout: 'sess-1\n' };
-    if (args[0] === 'agents') return results.list ?? { ok: true, stdout: '[]' };
-    if (args[0] === 'stop') return results.close ?? { ok: true, stdout: '' };
-    return { ok: false, stdout: '', stderr: 'unexpected' };
+// setupPlatform(t, scripts) → a platform over a scratch control folder whose workers run the fake
+// `claude`. `scripts` maps a task id to its fake script; each spawn gets its own received-lines file.
+function setupPlatform(t, scripts = {}, opts = {}) {
+  const dir = mkdtempSync(join(tmpdir(), 'pir-platform-'));
+  const controlDir = join(dir, 'control');
+  const spawned = []; // { task, role, cwd, received, spawner }
+  const start = (o) => {
+    const [, , task, , role] = o.name.split(' / ');
+    const n = spawned.length + 1;
+    const scriptPath = join(dir, `script-${n}.json`);
+    writeFileSync(scriptPath, JSON.stringify(scripts[task] ?? [{ await: 'user' }, ...turn('ok')]));
+    const received = join(dir, `received-${n}.ndjson`);
+    const spawner = fakeClaudeSpawner({ script: scriptPath, received });
+    spawned.push({ task, role, cwd: o.cwd, received, spawner, opts: o });
+    return startWorker({ ...o, spawnProcess: spawner });
   };
-  return { run, calls };
+  const platform = createPlatform({ controlDir, transport: { drain: () => [] }, startWorker: start, claudePath: CLAUDE, ...opts });
+  t.after(async () => {
+    for (const w of platform.list()) platform.close(w.id, { immediate: true });
+    await waitFor(() => platform.list().length === 0, 'every child to exit');
+    rmSync(dir, { recursive: true, force: true });
+  });
+  const received = (i) =>
+    existsSync(spawned[i].received)
+      ? readFileSync(spawned[i].received, 'utf8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l))
+      : [];
+  const logOf = (id) => readFileSync(platform.logPathOf(id), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+  const workersFile = () => JSON.parse(readFileSync(join(controlDir, 'workers.json'), 'utf8'));
+  return { dir, controlDir, platform, spawned, received, logOf, workersFile };
 }
 
-test('spawn builds the argv from the name+phase, runs in the worktree cwd, returns the printed id', () => {
-  const spy = claudeSpy({ spawn: { ok: true, stdout: '  28e9678c\n' } });
-  const p = createPlatform({ runClaude: spy.run });
-  const id = p.spawn({ cwd: '/wt/T08', name: 'repo / plan / T08 / work / implement', phase: 'implement' });
-  assert.equal(id, '28e9678c'); // trimmed
-  const call = spy.calls[0];
-  assert.equal(call.args[0], '--bg');
-  assert.deepEqual(call.args.slice(0, 3), ['--bg', '-n', 'repo / plan / T08 / work / implement']);
-  assert.match(call.args[3], /pir-implement T08/); // the opening instruction is the positional turn
-  assert.equal(call.opts.cwd, '/wt/T08'); // spawned in the worker's worktree
-});
+async function waitFor(pred, what, ms = 5000) {
+  const start = Date.now();
+  for (;;) {
+    const v = pred();
+    if (v) return v;
+    if (Date.now() - start > ms) throw new Error(`timed out waiting for ${what}`);
+    await new Promise((r) => setTimeout(r, 10));
+  }
+}
 
-test('spawn with a note delivers it inside the one positional instruction; without one, no change', () => {
-  const spy = claudeSpy();
-  const p = createPlatform({ runClaude: spy.run });
-  const name = 'repo / plan / T08 / work / implement';
-  p.spawn({ cwd: '/wt/T08', name, phase: 'implement', note: 'Setup failed.\nline two' });
-  const args = spy.calls[0].args;
-  assert.equal(args.length, 4); // still exactly one positional turn after --bg -n <name>
-  assert.equal(args[3], `${PLAIN_IMPLEMENT_T08}\n\nSetup failed.\nline two`);
+const userLines = (lines) => lines.filter((l) => l.line).map((l) => JSON.parse(l.line)).filter((m) => m.type === 'user');
 
-  p.spawn({ cwd: '/wt/T08', name, phase: 'implement' });
-  assert.equal(spy.calls[1].args[3], PLAIN_IMPLEMENT_T08);
-});
+test('spawn starts the worker through the SDK in the task cwd with the §2.1 options; the opening instruction is its first user message', async (t) => {
+  const { platform, spawned, received, dir, logOf } = setupPlatform(t);
+  const cwd = mkdtempSync(join(dir, 'wt-'));
+  const id = platform.spawn({ cwd, name: NAME('T05'), phase: 'implement' });
+  assert.match(id, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/, 'the id is a uuid pir chose');
 
-test('spawn on the review phase names pir-review; a spawn that returns no id or fails throws', () => {
-  const spy = claudeSpy();
-  const p = createPlatform({ runClaude: spy.run });
-  p.spawn({ cwd: '/wt/T08', name: 'repo / plan / T08 / work / review', phase: 'review' });
-  assert.match(spy.calls[0].args[3], /pir-review T08/);
-
-  const empty = createPlatform({ runClaude: () => ({ ok: true, stdout: '  \n' }) });
-  assert.throws(() => empty.spawn({ cwd: '/x', name: 'repo / plan / T08 / work / implement', phase: 'implement' }), /no id/);
-  const failed = createPlatform({ runClaude: () => ({ ok: false, stderr: 'boom' }) });
-  assert.throws(() => failed.spawn({ cwd: '/x', name: 'repo / plan / T08 / work / implement', phase: 'implement' }), /boom/);
-});
-
-test('close interrupts with `claude stop <id>` then SIGTERMs the pid (stop alone does not remove it)', () => {
-  // T08 live run: `claude stop` only interrupts a session's turn; it stays listed and running. So close
-  // must also terminate the process. It looks the session up by id to get its pid, then sends SIGTERM.
-  const killed = [];
-  const listing = JSON.stringify([
-    { id: 'sess-1', pid: 4242, cwd: '/repo', name: 'r / p / T01 / work / implement', status: 'idle', state: 'working' },
+  await waitFor(() => userLines(received(0)).length > 0, 'the first user message');
+  const { spawner } = spawned[0];
+  assert.equal(spawner.calls[0].command, CLAUDE, 'the SDK was pointed at the resolved claude');
+  assert.equal(spawner.calls[0].cwd, cwd, 'the worker runs in the task worktree');
+  assert.deepEqual(spawner.calls[0].args, [
+    '--output-format', 'stream-json', '--verbose', '--input-format', 'stream-json',
+    '--permission-prompt-tool', 'stdio', '--permission-mode', 'auto', `--session-id=${id}`, '--name', NAME('T05'),
   ]);
-  const calls = [];
-  const run = (args) => {
-    calls.push(args);
-    if (args[0] === 'stop') return { ok: true, stdout: '' };
-    if (args[0] === 'agents') return { ok: true, stdout: listing };
-    return { ok: false };
-  };
-  const p = createPlatform({ runClaude: run, kill: (pid, sig) => killed.push([pid, sig]) });
-  assert.deepEqual(p.close('sess-1'), { ok: true });
-  assert.deepEqual(calls[0], ['stop', 'sess-1'], 'first interrupts the turn');
-  assert.ok(calls.some((c) => c[0] === 'agents'), 'then looks the session up for its pid');
-  assert.deepEqual(killed, [[4242, 'SIGTERM']], 'then terminates the process');
+  const [first] = userLines(received(0));
+  assert.equal(first.message.content, openingInstruction('implement', 'T05'), 'the opening instruction is the first user message, not an argument');
+
+  const out = logOf(id).find((e) => e.dir === 'out');
+  assert.deepEqual({ from: out.from, kind: out.kind, text: out.text }, { from: 'pir', kind: 'message', text: openingInstruction('implement', 'T05') });
+  assert.match(platform.logPathOf(id), /conversations\/T05-implement-1\.ndjson$/);
 });
 
-test('close of an already-gone id is a safe no-op — nothing to terminate', () => {
-  const killed = [];
-  const run = (args) => (args[0] === 'agents' ? { ok: true, stdout: '[]' } : { ok: true, stdout: '' });
-  const p = createPlatform({ runClaude: run, kill: (pid) => killed.push(pid) });
-  assert.deepEqual(p.close('ghost'), { ok: true });
-  assert.deepEqual(killed, [], 'no pid found, nothing killed');
+test('spawn with a note appends it to the opening message; a review names pir-review', async (t) => {
+  const { platform, received } = setupPlatform(t);
+  platform.spawn({ cwd: tmpdir(), name: NAME('T05'), phase: 'implement', note: 'Setup failed.\nline two' });
+  platform.spawn({ cwd: tmpdir(), name: NAME('T06', 'review'), phase: 'review' });
+  await waitFor(() => userLines(received(0)).length && userLines(received(1)).length, 'both first messages');
+  assert.equal(userLines(received(0))[0].message.content, `${openingInstruction('implement', 'T05')}\n\nSetup failed.\nline two`);
+  assert.match(userLines(received(1))[0].message.content, /pir-review T06$/);
 });
 
-test('list parses a live-shaped `claude agents --json` into id/name/cwd/status/state/live', () => {
-  // Two agents in this repo, one in another; same-repo filtering is done by the injected git spy so
-  // the test is hermetic (the resolveSameRepo path itself is exercised against real git elsewhere).
-  const sample = JSON.stringify([
-    { pid: 1, id: 'a', cwd: '/repo/wt-T01', name: 'repo / plan / T01 / work / implement', status: 'busy', state: 'working' },
-    { pid: 2, id: 'b', cwd: '/repo/wt-T02', name: 'repo / plan / T02 / work / implement', status: 'idle', state: 'blocked' },
-    { pid: 3, id: 'c', cwd: '/other', name: 'other · thing', status: 'idle', state: 'working' },
-  ]);
-  const commons = { '/repo': '/repo/.git', '/repo/wt-T01': '/repo/.git', '/repo/wt-T02': '/repo/.git', '/other': '/other/.git' };
-  const gitSpy = (dir) => ({ ok: dir in commons, stdout: `${commons[dir] ?? ''}\n` });
-  const p = createPlatform({
-    root: '/repo',
-    runClaude: (args) => (args[0] === 'agents' ? { ok: true, stdout: sample } : { ok: false }),
-    sameRepoRun: gitSpy,
+test('list reports each live child with its task, role, pid and activity; status flips to idle on the result', async (t) => {
+  const { platform } = setupPlatform(t, { T05: [{ await: 'user' }, { sleep: 300 }, ...turn('ok')] });
+  const id = platform.spawn({ cwd: tmpdir(), name: NAME('T05'), phase: 'implement' });
+  const [w] = platform.list();
+  assert.equal(w.id, id);
+  assert.equal(w.task, 'T05');
+  assert.equal(w.role, 'implement');
+  assert.equal(w.name, NAME('T05'));
+  assert.equal(typeof w.pid, 'number');
+  assert.equal(w.live, true);
+  assert.equal(w.status, 'busy', 'busy while its opening turn is open');
+  await waitFor(() => platform.list()[0]?.status === 'idle', 'the result to end the turn');
+  assert.equal(platform.list()[0].activity.state, 'idle');
+});
+
+test('a worker waiting on a permission request is listed idle (parked on the person), and answer resolves it', async (t) => {
+  const { platform, received } = setupPlatform(t, {
+    T05: [{ await: 'user' }, { emit: initEvent() }, { emit: canUseTool('req-1', 'Bash', { command: 'git push -f' }) }, { await: 'control_response' }, ...turn('pushed').slice(1)],
   });
-  const live = p.list();
-  assert.deepEqual(live.map((w) => w.id).sort(), ['a', 'b']); // /other dropped
-  assert.deepEqual(live[0], {
-    id: 'a',
-    pid: 1,
-    name: 'repo / plan / T01 / work / implement',
-    cwd: '/repo/wt-T01',
-    status: 'busy',
-    state: 'working',
-    live: true,
-  });
+  const id = platform.spawn({ cwd: tmpdir(), name: NAME('T05'), phase: 'implement' });
+  await waitFor(() => platform.list()[0]?.state === 'permission', 'the request to be pending');
+  assert.equal(platform.list()[0].status, 'idle', 'a worker waiting on the person is not busy (DESIGN §2.4)');
+
+  const request = platform.list()[0].activity.pending[0];
+  assert.deepEqual(platform.answer(id, 'req-1', allowResult(request)), { ok: true });
+  await waitFor(() => received(0).some((l) => l.line && JSON.parse(l.line).type === 'control_response'), 'the reply at the fake');
+  assert.deepEqual(platform.answer(id, 'req-1', allowResult(request)), { ok: false }, 'a second answer finds nothing pending');
+  await waitFor(() => platform.list()[0]?.status === 'idle' && platform.list()[0].state === 'idle', 'the turn to end');
 });
 
-test('list returns [] when `claude agents --json` fails, rather than throwing', () => {
-  const p = createPlatform({ runClaude: () => ({ ok: false, stdout: '' }) });
+test('a child that exits is gone from list at once, and send / interrupt / answer to it are undelivered', async (t) => {
+  const { platform, logOf } = setupPlatform(t, { T05: [{ await: 'user' }, ...turn('bye'), { exit: 3 }] });
+  const id = platform.spawn({ cwd: tmpdir(), name: NAME('T05'), phase: 'implement' });
+  await waitFor(() => platform.list().length === 0, 'the exit');
+  assert.ok(logOf(id).some((e) => e.dir === 'note' && e.kind === 'exited' && e.code === 3));
+
+  assert.deepEqual(platform.send(id, 'hello?', { from: 'person' }), { ok: false });
+  assert.deepEqual(platform.interrupt(id), { ok: false });
+  assert.deepEqual(platform.answer(id, 'req-x', { behavior: 'allow', updatedInput: {} }), { ok: false });
+  await waitFor(() => logOf(id).filter((e) => e.kind === 'undelivered').length === 3, 'three undelivered notes');
+  assert.deepEqual(
+    logOf(id).filter((e) => e.kind === 'undelivered').map((e) => e.what),
+    ['message', 'interrupt', 'reply'],
+  );
+
+  for (const r of [platform.send('nobody', 'x'), platform.interrupt('nobody'), platform.answer('nobody', 'r', {})]) {
+    assert.deepEqual(r, { ok: false }, 'an id never spawned here has no worker and no log');
+  }
+  assert.equal(platform.logPathOf('nobody'), null);
+});
+
+test('send reaches a live worker as a user message logged with its sender; interrupt is sent', async (t) => {
+  const { platform, received, logOf } = setupPlatform(t, { T05: [{ await: 'user' }, ...turn('one'), { await: 'user' }, { emit: initEvent() }, { await: 'interrupt' }] });
+  const id = platform.spawn({ cwd: tmpdir(), name: NAME('T05'), phase: 'implement' });
+  await waitFor(() => platform.list()[0]?.status === 'idle', 'the first turn');
+  assert.deepEqual(platform.send(id, 'merge the feature branch in', { from: 'pir' }), { ok: true });
+  await waitFor(() => userLines(received(0)).length === 2, 'the second message at the fake');
+  assert.equal(userLines(received(0))[1].message.content, 'merge the feature branch in');
+  assert.deepEqual(platform.interrupt(id), { ok: true });
+  await waitFor(() => received(0).some((l) => l.line && JSON.parse(l.line).request?.subtype === 'interrupt'), 'the interrupt at the fake');
+  const outs = logOf(id).filter((e) => e.dir === 'out').map((e) => [e.from, e.kind]);
+  assert.deepEqual(outs, [['pir', 'message'], ['pir', 'message'], ['person', 'interrupt']]);
+});
+
+test('workers.json lists exactly the live children after each spawn and exit, with a start time', async (t) => {
+  const { platform, workersFile } = setupPlatform(t, {
+    T05: [{ await: 'user' }, ...turn('a')],
+    T06: [{ await: 'user' }, ...turn('b'), { exit: 0 }],
+  });
+  const a = platform.spawn({ cwd: tmpdir(), name: NAME('T05'), phase: 'implement' });
+  assert.deepEqual(workersFile().map((w) => w.id), [a]);
+  const b = platform.spawn({ cwd: tmpdir(), name: NAME('T06', 'review'), phase: 'review' });
+  const both = workersFile();
+  assert.deepEqual(both.map((w) => [w.id, w.task, w.role]), [[a, 'T05', 'implement'], [b, 'T06', 'review']]);
+  for (const w of both) {
+    assert.equal(typeof w.pid, 'number');
+    assert.equal(typeof w.startTime, 'string', 'stamped with the process start time (DESIGN §2.12)');
+    assert.deepEqual(Object.keys(w).sort(), ['id', 'pid', 'role', 'startTime', 'task']);
+  }
+  await waitFor(() => workersFile().length === 1, 'T06 to exit');
+  assert.deepEqual(workersFile().map((w) => w.id), [a], 'the exited child left the file');
+  platform.close(a);
+  await waitFor(() => workersFile().length === 0, 'T05 to exit after close');
+});
+
+test('close ends the input queue and the child exits; the closing child stays listed until it does', async (t) => {
+  const { platform } = setupPlatform(t);
+  const id = platform.spawn({ cwd: tmpdir(), name: NAME('T05'), phase: 'implement' });
+  await waitFor(() => platform.list()[0]?.status === 'idle', 'the first turn');
+  assert.deepEqual(platform.close(id), { ok: true });
+  assert.equal(platform.list().length, 1, 'close is fire-and-forget: still listed the same tick');
+  await waitFor(() => platform.list().length === 0, 'the exit on stdin EOF');
+  assert.deepEqual(platform.close(id), { ok: true }, 'closing an exited id is a no-op');
+  assert.deepEqual(platform.remove(id), { ok: true });
+});
+
+test('close { immediate } SIGTERMs the child synchronously, before the caller could exit', async (t) => {
+  const { platform, received } = setupPlatform(t, { T05: [{ onEof: 'ignore' }, { await: 'user' }, ...turn('ok')] });
+  const id = platform.spawn({ cwd: tmpdir(), name: NAME('T05'), phase: 'implement' });
+  await waitFor(() => platform.list()[0]?.status === 'idle', 'the first turn');
+  platform.close(id, { immediate: true });
+  await waitFor(() => received(0).some((l) => l.signal === 'SIGTERM'), 'the SIGTERM at the fake');
+  await waitFor(() => platform.list().length === 0, 'the exit');
+});
+
+test('conversation logs count per task and role, and a new platform on the same folder continues the count', async (t) => {
+  const { platform, controlDir } = setupPlatform(t);
+  const one = platform.spawn({ cwd: tmpdir(), name: NAME('T05'), phase: 'implement' });
+  const two = platform.spawn({ cwd: tmpdir(), name: NAME('T05'), phase: 'implement' });
+  const rev = platform.spawn({ cwd: tmpdir(), name: NAME('T05', 'review'), phase: 'review' });
+  assert.match(platform.logPathOf(one), /T05-implement-1\.ndjson$/);
+  assert.match(platform.logPathOf(two), /T05-implement-2\.ndjson$/);
+  assert.match(platform.logPathOf(rev), /T05-review-1\.ndjson$/);
+  assert.match(nextLogPath(controlDir, 'T05', 'implement'), /T05-implement-3\.ndjson$/, 'a restart continues, never overwrites');
+  assert.deepEqual(readdirSync(join(controlDir, 'conversations')).sort(), ['T05-implement-1.ndjson', 'T05-implement-2.ndjson', 'T05-review-1.ndjson']);
+});
+
+test('nextLogPath counts from the highest file, ignores other tasks and roles, and starts at 1 with no folder', () => {
+  const readdir = () => ['T05-implement-1.ndjson', 'T05-implement-7.ndjson', 'T15-implement-9.ndjson', 'T05-review-4.ndjson', 'junk'];
+  assert.equal(nextLogPath('/c', 'T05', 'implement', { readdir }), '/c/conversations/T05-implement-8.ndjson');
+  assert.equal(nextLogPath('/c', 'T05', 'review', { readdir }), '/c/conversations/T05-review-5.ndjson');
+  assert.equal(nextLogPath('/nonexistent-pir', 'T05', 'implement'), '/nonexistent-pir/conversations/T05-implement-1.ndjson');
+});
+
+test('resolveClaudePath returns the installed claude and throws when there is none', () => {
+  assert.equal(resolveClaudePath({ exec: () => '/usr/local/bin/claude\n' }), '/usr/local/bin/claude');
+  assert.throws(() => resolveClaudePath({ exec: () => '' }), /no `claude` on PATH/);
+  assert.throws(() => resolveClaudePath({ exec: () => { throw new Error('exit 1'); } }), /no `claude` on PATH/);
+});
+
+test('a platform without a control folder lists nothing and refuses to spawn', () => {
+  const p = createPlatform({});
   assert.deepEqual(p.list(), []);
+  assert.throws(() => p.spawn({ cwd: '/x', name: NAME('T05'), phase: 'implement' }), /control folder/);
+});
+
+test('platform.mjs calls no `claude agents`, `claude stop` or `claude rm`, and no shell file passes --bg', () => {
+  const shellDir = dirname(fileURLToPath(import.meta.url));
+  const src = readFileSync(join(shellDir, 'platform.mjs'), 'utf8');
+  // Built, not written out, so the task's own grep for the quoted flag does not find this test.
+  const BG = `'--${'bg'}'`;
+  for (const sub of ["'agents'", "'stop'", "'rm'", BG]) assert.ok(!src.includes(sub), `platform.mjs still names ${sub}`);
+  const offenders = [];
+  const walk = (d) => {
+    for (const e of readdirSync(d, { withFileTypes: true })) {
+      const p = join(d, e.name);
+      if (e.isDirectory()) walk(p);
+      else if (e.name.endsWith('.mjs') && !e.name.endsWith('.test.mjs') && readFileSync(p, 'utf8').includes(BG)) offenders.push(p);
+    }
+  };
+  walk(shellDir);
+  assert.deepEqual(offenders, []);
 });

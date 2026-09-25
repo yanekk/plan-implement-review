@@ -206,7 +206,7 @@ test('a worker question surfaces via the inbox and a sent answer resumes that wo
   assert.equal(surfaced.text, 'which format?');
 
   // The user answers; the worker resumes and the plan finishes.
-  platform.send(wname('T01', 'implement'), 'use json');
+  platform.send(state.tasks.T01.workerId, 'use json', { from: 'person' });
   const result = drain({ ...base, state });
   assert.equal(result.complete, true, 'the answered worker resumes and the plan completes, ready to hand off');
 });
@@ -270,7 +270,7 @@ test('a coordinator-hit merge conflict keeps the worker alive; its decision is d
   const implSpawns = platform.spawns.filter((s) => s.task === parkedTask && s.role === 'implement');
   assert.equal(implSpawns.length, 1, 'the parked task was built by exactly one implementer — no respawn');
 
-  // Deliver the user's decision to the SAME, still-alive parked worker (addressed by its current role).
+  // Deliver the user's decision to the SAME, still-alive parked worker (by its id; the prompt names it).
   const name = wname(parkedTask, parked.role);
   // The conflict surface carries a ready-to-paste resolution prompt (T14) naming that same worker, the
   // feature branch to merge in and the conflicting file; the worker picks the side, asking if unsure. It
@@ -281,7 +281,7 @@ test('a coordinator-hit merge conflict keeps the worker alive; its decision is d
   assert.ok(conflict.prompt.includes('greeting.txt'), 'the prompt lists the conflicting file');
   assert.doesNotMatch(conflict.prompt, /KEEP:/, 'no keep-which-side blank for the person (user 2026-09-24)');
   assert.equal(state.tasks[parkedTask].decision.prompt, conflict.prompt, 'the same prompt rides on the parked task for the display');
-  platform.send(name, { kind: 'answer', task: parkedTask, text: 'keep hello there' });
+  platform.send(parked.workerId, 'keep hello there', { from: 'person' });
 
   // Second drain: the worker resolves on its branch, re-signals done, the loop merges the clean branch
   // and the plan completes, ready to hand off.
@@ -410,25 +410,19 @@ test('a crashed worker is closed as dead and its worktree reclaimed, freeing its
   const state = createRunState();
   runPass({ ...base, state }); // spawn T01
   const implId = platform.spawns[0].id;
-  // The worker crashes before it ever appears in the live list. buildAssignments matches workers by
-  // name and gives a just-spawned worker a one-pass grace to appear (so a slow worker is not respawned
-  // into a duplicate — FINDINGS 2026-09-09), so a never-appearing crash is recognised a pass or two
-  // later, not instantly. Drive passes until the dead-close lands.
-  let dead;
-  for (let i = 0; i < 5 && !dead; i++) {
-    const r = runPass({ ...base, state });
-    dead = r.actions.find((a) => a.type === 'close' && a.reason === 'dead');
-  }
-  assert.ok(dead, 'the crashed worker is eventually closed as dead');
+  // The worker crashes on its first tick, so the very next pass finds it unlisted: a child that exited
+  // is gone from list() at once, and there is no appear grace any more (live-workers T05).
+  const r = runPass({ ...base, state });
+  const dead = r.actions.find((a) => a.type === 'close' && a.reason === 'dead');
+  assert.ok(dead, 'the crashed worker is closed as dead on the next pass');
   assert.ok(platform.closed.includes(implId));
   assert.ok(worktree.events.some((e) => e.op === 'remove'), 'its worktree is removed');
 });
 
-test('a worker whose spawn id differs from its listed id is tracked by name, not respawned, and closed by the listed id (FINDINGS 2026-09-09)', (t) => {
-  // The live runaway: `claude --bg` returns an id that does not match the `id` in `claude agents
-  // --json`. A platform that reproduces exactly that — spawn returns BOGUS, list reports REAL under
-  // the same name — must not make the loop respawn (it should recognise the worker by name), and a
-  // close must use the listed id, the only one that can actually stop the session.
+test('a worker is tracked by the id spawn returned: listed under it, it is live; gone from the list, it is dead (live-workers T05)', (t) => {
+  // The platform lists its children under the uuid spawn returned, so the loop matches by id. The old
+  // match by name, for `claude --bg`'s mismatched ids (FINDINGS 2026-09-09), is gone: an entry carrying
+  // this task's worker NAME under another id is not this run's worker and is never adopted as it.
   const worktree = createFakeWorktree({ progress: progressDoc([{ num: 'T01' }]), slug: SLUG });
   t.after(() => worktree.cleanup());
   const NAME = wname('T01', 'implement');
@@ -437,9 +431,10 @@ test('a worker whose spawn id differs from its listed id is tracked by name, not
   let listed = [];
   const platform = {
     spawn({ name }) {
+      const id = `ID-${spawns.length + 1}`;
       spawns.push(name);
-      listed = [{ id: 'REAL-1', name, cwd: '/x', status: 'busy', state: 'working', live: true }];
-      return 'BOGUS-1'; // the mismatch: the returned id is not the one list()/close use
+      listed.push({ id, name, cwd: '/x', status: 'busy', live: true });
+      return id;
     },
     list: () => listed,
     close: (id) => (closed.push(id), (listed = listed.filter((w) => w.id !== id)), { ok: true }),
@@ -448,16 +443,16 @@ test('a worker whose spawn id differs from its listed id is tracked by name, not
   const base = { platform, worktree, repo: REPO, slug: SLUG, maxWorkers: 1 };
   const state = createRunState();
 
-  runPass({ ...base, state }); // pass 1: spawn (returns BOGUS-1; list now reports REAL-1)
-  assert.equal(spawns.length, 1, 'spawned once');
-  const r2 = runPass({ ...base, state }); // pass 2: recognised live BY NAME, not respawned
-  assert.equal(spawns.length, 1, 'not respawned despite the id mismatch — the name matched');
-  assert.equal(r2.liveAfter, 1, 'still exactly one worker, not a runaway');
+  runPass({ ...base, state }); // pass 1: spawn ID-1
+  const r2 = runPass({ ...base, state }); // pass 2: listed under its id → live, not respawned
+  assert.equal(spawns.length, 1, 'not respawned while listed under its id');
+  assert.equal(r2.liveAfter, 1);
 
-  const halted = { isHalted: () => true, log() {} };
-  runPass({ ...base, state, control: halted }); // halt closes it
-  assert.ok(closed.includes('REAL-1'), 'closed by the listed id, the only one close can act on');
-  assert.ok(!closed.includes('BOGUS-1'), 'the bogus spawn id was never used to close');
+  // The child exits and something else carrying the same name is listed under another id.
+  listed = [{ id: 'STRANGER', name: NAME, cwd: '/y', status: 'idle', live: true }];
+  const r3 = runPass({ ...base, state });
+  assert.ok(r3.actions.some((a) => a.type === 'close' && a.reason === 'dead' && a.workerId === 'ID-1'), 'the exited worker is dead by its id');
+  assert.ok(!closed.includes('STRANGER'), 'a same-named entry under another id is not adopted or closed as the worker');
 });
 
 test('the coordinator does not count its OWN session (or a foreign agent) toward the ceiling (T12 P5)', (t) => {
@@ -482,10 +477,11 @@ test('the coordinator does not count its OWN session (or a foreign agent) toward
   assert.ok(!fake.closed.includes('COORD') && !fake.closed.includes('FOREIGN'), 'neither non-worker was closed');
 });
 
-test('a closed session lingering in the agent list is not recounted — the false runaway the first live single run hit (2026-09-12)', (t) => {
-  // Real `claude close` is async and a stale registry entry can outlive the process, so a just-closed
-  // implementer keeps showing up in `claude agents --json` for a few passes alongside its fresh
-  // reviewer. At ceiling 1 the loop must count one live worker across the hand-off, not two — else the
+test('a closed worker still listed until its child exits is not recounted — the false runaway the first live single run hit (2026-09-12)', (t) => {
+  // close is fire-and-forget: a just-closed implementer stays listed until its child exits (up to the
+  // SIGTERM/SIGKILL escalation), alongside its fresh reviewer. (Under `claude --bg` the cause was a
+  // stale registry entry; the shape is the same.) At ceiling 1 the loop must count one live worker
+  // across the hand-off, not two — else the
   // runaway breaker (coordinate.mjs, reading r.live) fires "2 over ceiling 1 for 3 passes" and tears the
   // run down mid-review before it can promote, which is exactly what killed the first live single run.
   // lingerClosed keeps the closed implementer listed; lingerBusy keeps the reviewer working while it
@@ -503,32 +499,6 @@ test('a closed session lingering in the agent list is not recounted — the fals
   assert.ok(maxLive <= 1, `never more than the ceiling of 1 counted live (saw ${maxLive}) — no false runaway`);
 });
 
-test('a closed session that VANISHES then reappears under the same id is still not recounted — the human-decision live false runaway (2026-09-13)', (t) => {
-  // The harder shape lingerClosed does not cover: `claude close` SIGTERMs the implementer and it drops
-  // off `claude agents --json` at once — but a stale Remote Control registry entry brings it back a few
-  // passes later under the SAME id, `idle`, beside its fresh reviewer. The earlier fix pruned closedIds
-  // the moment an id fell off the list, so the reappearance was no longer suppressed: at ceiling 1 the
-  // loop counted 2 live for 3 passes and the runaway breaker (coordinate.mjs, reading r.live) tore the
-  // run down mid-review — which is what killed the human-decision live run after its decision cycle had
-  // already completed correctly. closedIds must survive the absence, so the resurrected id stays
-  // suppressed and the run promotes.
-  // resurrectClosed: the implementer vanishes on close then reappears one pass later; lingerBusy holds
-  // the fresh reviewer busy for a few passes (its merge deferred until idle), so it is still live when
-  // the implementer comes back — the overlap that made the live run count 2 at ceiling 1. Without both,
-  // a lone fast reviewer promotes before the resurrection and the overlap never happens.
-  const { base } = setup(t, [{ num: 'T01' }], { behaviors: { T01: { resurrectClosed: 1, lingerBusy: 3 } } });
-  const state = createRunState();
-  let complete = false;
-  let maxLive = 0;
-  for (let i = 0; i < 30 && !complete; i++) {
-    const r = runPass({ ...base, maxWorkers: 1, state });
-    maxLive = Math.max(maxLive, r.liveAfter);
-    complete = r.complete;
-  }
-  assert.ok(complete, 'the plan completes despite the closed implementer reappearing in the list');
-  assert.ok(maxLive <= 1, `never more than the ceiling of 1 counted live (saw ${maxLive}) — the resurrected id was suppressed`);
-});
-
 // --- T30: no hello is sent at spawn (the spawn ping is retired) ------------------------------------
 
 test('no hello is sent or logged at any spawn — the loop makes no down-send of its own (T30)', (t) => {
@@ -539,11 +509,11 @@ test('no hello is sent or logged at any spawn — the loop makes no down-send of
   runPass({ ...base, state }); // pass 2: implemented → fresh reviewer spawns — still no hello
   runPass({ ...base, state }); // pass 3: reviewer resolves, merge/close
 
-  const hellos = platform.sent.filter((s) => s.msg.kind === 'hello');
+  const hellos = platform.sent.filter((s) => /hello/i.test(s.text));
   assert.equal(hellos.length, 0, 'no hello message was ever sent at spawn');
-  // The loop never calls platform.send — there is no down-channel (DESIGN §2.2, T03): a blocked worker
-  // is answered by the person directly, nothing is routed. So the loop opens and uses no send path.
-  assert.equal(platform.sent.length, 0, 'the loop sent nothing — there is no down-channel');
+  // The loop sends nothing of its own here: the opening instruction travels inside platform.spawn, and
+  // the conflict fix (live-workers T08) is the loop's only send.
+  assert.equal(platform.sent.length, 0, 'the loop sent nothing on a clean run');
 });
 
 test('a question report keeps the worker slot and is recorded, and the loop routes no answer (DESIGN §2.2, T03)', (t) => {
