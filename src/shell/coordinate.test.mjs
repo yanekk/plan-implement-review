@@ -896,7 +896,10 @@ test('a stale report is gone after the clear, so it cannot route to a fresh work
   assert.equal(readdirSync(join(dir, 'reports')).filter((n) => n.endsWith('.json')).length, 0, 'the stale reports are gone');
 });
 
-test('startupControlHygiene refuses a still-HALTed run without clearing HALT or the reports (T03)', (t) => {
+// A reap that finds nothing, so the hygiene tests below never read a real process table.
+const noReap = async () => ({ reaped: [], skipped: [] });
+
+test('startupControlHygiene refuses a still-HALTed run without clearing HALT or the reports (T03)', async (t) => {
   const repo = mkdtempSync(join(tmpdir(), 'pir-halt-'));
   t.after(() => rmSync(repo, { recursive: true, force: true }));
   const control = fileControl(repo, SLUG);
@@ -904,7 +907,7 @@ test('startupControlHygiene refuses a still-HALTed run without clearing HALT or 
   mkdirSync(join(control.dir, 'reports'), { recursive: true });
   writeFileSync(join(control.dir, 'reports', '001.json'), '{"from":"w","text":"stale"}');
 
-  const r = startupControlHygiene(control);
+  const r = await startupControlHygiene(control, { reap: noReap });
 
   assert.equal(r.halted, true, 'a present HALT refuses the run');
   assert.equal(r.flag, control.flag, 'the refusal names the flag path so the person knows what to remove');
@@ -913,7 +916,7 @@ test('startupControlHygiene refuses a still-HALTed run without clearing HALT or 
   assert.ok(!existsSync(control.logPath), 'no restart marker is written when the run is refused');
 });
 
-test('startupControlHygiene clears the reports and appends a restart marker, preserving prior log lines (T03)', (t) => {
+test('startupControlHygiene clears the reports and appends a restart marker, preserving prior log lines (T03)', async (t) => {
   const repo = mkdtempSync(join(tmpdir(), 'pir-restart-'));
   t.after(() => rmSync(repo, { recursive: true, force: true }));
   const control = fileControl(repo, SLUG);
@@ -921,7 +924,7 @@ test('startupControlHygiene clears the reports and appends a restart marker, pre
   writeFileSync(join(control.dir, 'reports', '001.json'), '{"from":"w","text":"stale"}');
   writeFileSync(control.logPath, '2026-09-17T00:00:00.000Z spawn T01\n');
 
-  const r = startupControlHygiene(control);
+  const r = await startupControlHygiene(control, { reap: noReap });
 
   assert.equal(r.halted, false, 'no HALT, so the run proceeds');
   assert.deepEqual(
@@ -932,6 +935,54 @@ test('startupControlHygiene clears the reports and appends a restart marker, pre
   const log = readFileSync(control.logPath, 'utf8');
   assert.match(log, /spawn T01/, 'the prior log line is preserved');
   assert.match(log, /restart\n$/, 'a restart marker is appended to the log');
+});
+
+test('startupControlHygiene reaps workers.json first, logs the reaped pids, then clears and marks the restart (live-workers T06)', async (t) => {
+  const repo = mkdtempSync(join(tmpdir(), 'pir-reap-start-'));
+  t.after(() => rmSync(repo, { recursive: true, force: true }));
+  const control = fileControl(repo, SLUG);
+  mkdirSync(join(control.dir, 'reports'), { recursive: true });
+  writeFileSync(join(control.dir, 'reports', '001.json'), '{"from":"w","text":"stale"}');
+  const seen = [];
+  const reap = async (dir) => {
+    seen.push({ dir, reportsLeft: readdirSync(join(dir, 'reports')).length, logged: existsSync(control.logPath) });
+    return { reaped: [501, 502], skipped: [503] };
+  };
+
+  const r = await startupControlHygiene(control, { reap });
+
+  assert.deepEqual(seen, [{ dir: control.dir, reportsLeft: 1, logged: false }], 'the reap ran first, on the control folder');
+  assert.deepEqual(r.reaped, [501, 502]);
+  assert.match(readFileSync(control.logPath, 'utf8'), /startup: reaped leftover workers 501, 502\n.*restart\n$/);
+});
+
+test('startupControlHygiene still reaps on a HALTed start, and still refuses it (live-workers T06)', async (t) => {
+  const repo = mkdtempSync(join(tmpdir(), 'pir-reap-halt-'));
+  t.after(() => rmSync(repo, { recursive: true, force: true }));
+  const control = fileControl(repo, SLUG);
+  writeFileSync(control.flag, '');
+  let reaps = 0;
+
+  const r = await startupControlHygiene(control, {
+    reap: async () => {
+      reaps += 1;
+      return { reaped: [], skipped: [] };
+    },
+  });
+
+  assert.equal(reaps, 1);
+  assert.equal(r.halted, true);
+  assert.ok(existsSync(control.flag), 'HALT is never cleared');
+});
+
+test('the bin runs startup hygiene (and so the reap) before its first pass, and lists no `claude agents` at startup (live-workers T06)', () => {
+  const src = readFileSync(new URL('./coordinate.mjs', import.meta.url), 'utf8');
+  const main = src.slice(src.indexOf('async function main('));
+  const hygieneAt = main.indexOf('await startupControlHygiene(control)');
+  const passAt = main.indexOf('startCoordinator(');
+  assert.ok(hygieneAt > 0, 'main awaits startupControlHygiene');
+  assert.ok(passAt > hygieneAt, 'the loop (startCoordinator, whose first pass reconciles) starts after the hygiene');
+  assert.doesNotMatch(src, /claude agents --json|['"]agents['"]/, 'no `claude agents` listing in the coordinator');
 });
 
 // --- waitForReport survives a runtime watch failure (T17) ---------------------------------------

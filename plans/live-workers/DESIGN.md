@@ -506,7 +506,8 @@ Approved by the user at plan review, 2026-09-25, as listed. At the re-review the
 If the new engine misbehaves after install: `git checkout <commit before T05> -- src skills install.sh`
 in a scratch clone and run its `./install.sh`, which puts the `--bg` engine back. An orphaned worker
 from a killed coordinator: `cat plans/{slug}/.parallel/control/workers.json`, then `kill <pid>` for each
-entry still running (`ps -p <pid>`).
+entry still running whose `ps -p <pid> -o lstart=` equals its recorded `startTime` (a different time is
+a reused pid, not the worker). `pir {slug}` or a stop from the dashboard does exactly this (T06).
 
 ---
 

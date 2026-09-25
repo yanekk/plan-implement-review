@@ -186,18 +186,9 @@ function buildAssignments(state, liveList) {
 // with git; the presence of task branches cannot). `record` is the runPass logger, so every action
 // reconciliation takes also reaches the flow log the harness reads.
 function reconcile({ platform, worktree, repo, slug, maxWorkers, state, featureProgressPath, record }) {
-  // Reap any listed worker of this slug FIRST, session-only (DESIGN §2.5): close it, NEVER
-  // worktree.remove, because the task branches and worktrees are exactly what the adoption below needs.
-  // Since live-workers T05 the platform lists only this process's own children, so on a restart this
-  // finds nothing: a dead run's orphans are not this process's children. Reaping them from
-  // workers.json is T06's, which also drops this loop. Reaped ids go into closedIds so a closing child
-  // is not recounted against the ceiling.
-  for (const w of platform.list()) {
-    if (!isWorkerOf(w.name, { repo, plan: slug })) continue;
-    platform.close(w.id);
-    platform.remove?.(w.id);
-    state.closedIds.add(w.id);
-  }
+  // No reap here. A dead run's leftover workers are not this process's children, so no platform listing
+  // finds them (live-workers T05); the bin reaps them from workers.json in startupControlHygiene, before
+  // this first pass (T06, DESIGN §2.12).
 
   // Read the task list and terminal states from the feature branch, each task's in-flight state from
   // its own task branch's committed glyph (DESIGN §2.2), and classify (pure, DESIGN §2.3).
@@ -367,11 +358,9 @@ export function runPass({ platform, worktree, repo, slug, maxWorkers, state, con
   const featureProgressPath = join(state.feature.path, progressPathFor(slug));
 
   // 0.5 Reconcile from git once, before the first dispatch (DESIGN §2.1, §2.4). A no-op on a genuine
-  // first start (no task branches to adopt); on a restart it reaps any listed worker of this run,
-  // merges ✅ branches, hands 🔍 branches to fresh reviewers, and keeps half-built ones to resume — so the loop
-  // below runs over a state that matches git. closedIds may be absent on a hand-built state; ensure it
-  // before the reap writes to it.
-  state.closedIds ??= new Set();
+  // first start (no task branches to adopt); on a restart it merges ✅ branches, hands 🔍 branches to
+  // fresh reviewers, and keeps half-built ones to resume — so the loop below runs over a state that
+  // matches git.
   if (!state.reconciled) {
     reconcile({ platform, worktree, repo, slug, maxWorkers, state, featureProgressPath, record });
   }

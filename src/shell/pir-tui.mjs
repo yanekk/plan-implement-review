@@ -28,7 +28,6 @@ import { resolveLiveness } from './identity.mjs';
 import { indexDir, listRecords } from './index-store.mjs';
 import { readSnapshot } from './snapshot-store.mjs';
 import { stopRun, removeRun } from './control-run.mjs';
-import { createPlatform } from './platform.mjs';
 import { FrameView } from './pir-view.mjs';
 import { ProcessTerminal, TuiAltScreen, isKeyRelease, parseKey } from '@earendil-works/pi-tui';
 
@@ -504,13 +503,6 @@ export function loadDashboard({ dir = indexDir(), now = Date.now(), kill, exec, 
   return buildDashboard(views);
 }
 
-// The default platform for a stop's worker-reap (control-run.mjs escalates to platform.list()/close() only
-// when a wedged coordinator will not exit). Built against the run's own repo so it lists that repo's
-// sessions. No transport is needed — stop never reads the worker inbox — so none is passed.
-function defaultPlatform(record) {
-  return createPlatform({ root: record.repoPath });
-}
-
 // openDashboard(deps) / openWatch(slug, deps) — the two entry points pir.mjs (T11) dispatches to. The
 // dashboard opens on the list; the watch form opens straight into a run's live view (`pir {slug}` drops
 // into the run it just started/opened, §2.1), and ← from there steps back to the list like any other open
@@ -546,7 +538,6 @@ async function runTui({
   load = loadDashboard,
   stop = stopRun,
   remove = removeRun,
-  makePlatform = defaultPlatform,
   initial = initialUi(),
 } = {}) {
   const dir = indexDir({ env });
@@ -637,7 +628,7 @@ async function runTui({
           selectedKey = runKey(dash.rows[ui.sel]) ?? selectedKey;
           if (intent?.type === 'stop') {
             const view = dash.rows.find((r) => runKey(r) === intent.key);
-            if (view) await stop(view.record, { platform: makePlatform(view.record), kill });
+            if (view) await stop(view.record, { kill });
           } else if (intent?.type === 'remove') {
             const view = dash.rows.find((r) => runKey(r) === intent.key);
             if (view) remove(view.record, { dir, fs });

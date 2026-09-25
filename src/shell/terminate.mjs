@@ -1,6 +1,6 @@
 // The one SIGTERM-wait-SIGKILL escalation (plans/live-workers DESIGN §2.12, §3.2), extracted from the
-// inline loop in control-run.mjs `stopRun` so a worker's close (worker-proc.mjs), T06's reap and, once
-// T06 moves it over, stopRun share one copy (user 2026-09-25, plan review).
+// inline loop in control-run.mjs `stopRun` so a worker's close (worker-proc.mjs), the workers.json reap
+// (reap.mjs) and stopRun share one copy (user 2026-09-25, plan review).
 //
 // The timeline is measured from the call:
 //   0 … graceMs         wait for the process to leave on its own (a worker whose input just closed

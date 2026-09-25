@@ -893,32 +893,25 @@ test('mixed restart: T01 ✅-merge, T02 🔍-review, T03 half-built resume, T04 
   assert.equal((worktree.progressOn(`pir/${SLUG}`).match(/✅/g) || []).length, 4, 'all four tasks are ✅ on the feature branch');
 });
 
-test('a leftover worker session of this slug is reaped session-only on restart; its ✅ branch is still merged and it is never counted against the ceiling', (t) => {
+test('reconcile reaps nothing from the platform list; its ✅ branch is still merged (the restart reap is startup hygiene, live-workers T06)', (t) => {
   const worktree = createFakeWorktree({ progress: progressDoc([{ num: 'T01' }]), slug: SLUG });
   t.after(() => worktree.cleanup());
   worktree.openFeature(SLUG);
   seedBranch(worktree, SLUG, 'T01', '✅', { file: 'work-T01.txt' });
   const fake = createFakePlatform({});
-  // The dead run's worker session, still listed after a crash that skipped teardown. A plain listing
-  // entry (not a real fake worker), so enumerating it in the reap does not advance/commit over the
-  // seeded branch — the same non-advancing-agent trick the "own session" test uses.
+  // A listed worker of this run the loop never spawned. Since T05 the real platform lists only its own
+  // children, so a dead run's orphan never appears here; reconcile no longer walks the list to close
+  // one, and startupControlHygiene reaps orphans from workers.json before this pass instead.
   const leftover = { id: 'LEFTOVER', name: wname('T01', 'implement'), cwd: '/x', status: 'idle', state: 'done', live: true };
   const platform = { ...fake, list: () => [...fake.list(), leftover] };
-  const base = { platform, worktree, repo: REPO, slug: SLUG, maxWorkers: 2 };
 
   const state = createRunState();
-  let complete = false;
-  let maxLive = 0;
-  for (let i = 0; i < 10 && !complete; i++) {
-    const r = runPass({ ...base, state });
-    maxLive = Math.max(maxLive, r.liveAfter);
-    complete = r.complete;
-  }
-  assert.ok(complete, 'the plan completes despite the orphaned session lingering in the list');
-  assert.ok(fake.closed.includes('LEFTOVER'), 'the leftover session was stopped, session-only');
-  assert.ok(fake.removed.includes('LEFTOVER'), 'its session record was removed too');
-  assert.ok(worktree.fileOn(`pir/${SLUG}`, 'work-T01.txt').ok, 'the ✅ branch survived the reap and was merged (never worktree.remove in the reap)');
-  assert.ok(maxLive <= 2, `the reaped orphan was never counted against the ceiling (saw ${maxLive})`);
+  runPass({ platform, worktree, repo: REPO, slug: SLUG, maxWorkers: 2, state });
+
+  assert.ok(state.reconciled, 'the first pass reconciled');
+  assert.ok(!fake.closed.includes('LEFTOVER'), 'reconcile closed no listed worker');
+  assert.ok(!fake.removed.includes('LEFTOVER'), 'reconcile removed no listed worker');
+  assert.ok(worktree.fileOn(`pir/${SLUG}`, 'work-T01.txt').ok, 'the ✅ branch was merged');
 });
 
 test('mutation guard: a ✅ branch and a 🔍 branch are never dispatched as fresh implementers (reverting reconciliation reddens this)', (t) => {
