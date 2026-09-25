@@ -114,6 +114,38 @@ install_engine() {
     mkdir -p "$ENGINE_DEST"
     cp -R "$SRC/src" "$ENGINE_DEST/src"
     echo "  refreshed $ENGINE_DEST/src (parallel coordinator engine)"
+    install_engine_deps
+}
+
+# The engine's two runtime packages (pi-tui, the Agent SDK; live-workers DESIGN §5) go in a
+# node_modules beside the engine's src/, where its bare imports resolve. The rm -rf above wipes
+# them, so every install re-fetches the lockfile's exact versions and needs the network. The omit
+# flags repeat .npmrc on purpose: a CLI --omit REPLACES the .npmrc list rather than adding to it,
+# so `--omit=dev` alone would pull in the SDK's ~95 peer packages and its 222 MB bundled claude.
+ENGINE_DEPS_FAILED=0
+install_engine_deps() {
+    cp "$SRC/package.json" "$SRC/package-lock.json" "$SRC/.npmrc" "$ENGINE_DEST/"
+    if (cd "$ENGINE_DEST" && npm ci --omit=dev --omit=peer --omit=optional --no-audit --no-fund --no-update-notifier >/dev/null); then
+        echo "  installed $ENGINE_DEST/node_modules (engine runtime packages)"
+    else
+        ENGINE_DEPS_FAILED=1
+        echo "  could not install the engine's packages in $ENGINE_DEST (npm ci failed)" >&2
+    fi
+}
+
+# Printed last, so a failed package install is not scrolled away: without node_modules the
+# installed pir cannot start. Exit non-zero so a script driving install.sh sees it too.
+report_engine_deps() {
+    [[ "$ENGINE_DEPS_FAILED" == 0 ]] && return 0
+    cat >&2 <<STEP
+
+  The engine's packages did NOT install, so the installed pir will not start.
+  npm ci needs the network (every install re-fetches them). Once online, re-run:
+
+      ./install.sh
+
+STEP
+    exit 1
 }
 
 MERGE="$SRC/src/shell/settings-merge.mjs"
@@ -200,6 +232,7 @@ if [[ -z "$TARGET" || "$TARGET" == "--global" ]]; then
     echo "    pir             # the cross-repo dashboard"
     echo "The foreground launcher pir-coordinate {slug} is deprecated; prefer pir {slug}, which"
     echo "runs live and detached. (pir-coordinate still runs, and is the only dry-by-default rehearsal.)"
+    report_engine_deps
     exit 0
 fi
 
@@ -237,3 +270,4 @@ Done. One thing left, by hand:
 
   (the foreground launcher pir-coordinate {slug} is deprecated; prefer pir {slug}.)
 MSG
+report_engine_deps

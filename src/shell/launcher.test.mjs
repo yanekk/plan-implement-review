@@ -86,3 +86,21 @@ test('install.sh names both launchers in its closing messages', () => {
   const detached = install.match(/pir \{slug\}/g) ?? [];
   assert.ok(detached.length >= 2, 'both closing messages name the detached pir {slug} too');
 });
+
+test('install.sh puts the engine runtime packages beside the installed src/', () => {
+  // The three package files land in the engine dir, then npm ci runs there (live-workers T10).
+  assert.match(
+    install,
+    /cp "\$SRC\/package\.json" "\$SRC\/package-lock\.json" "\$SRC\/\.npmrc" "\$ENGINE_DEST\/"/,
+    'copies package.json, package-lock.json and .npmrc into the engine',
+  );
+  const ci = install.match(/\(cd "\$ENGINE_DEST" && (npm ci[^)>]*)/);
+  assert.ok(ci, 'runs npm ci with the engine dir as its cwd');
+  // A CLI --omit replaces .npmrc's omit list, so peer and optional must be repeated beside dev.
+  for (const kind of ['dev', 'peer', 'optional']) {
+    assert.match(ci[1], new RegExp(`--omit=${kind}\\b`), `npm ci omits ${kind}`);
+  }
+  assert.match(install, /\n    install_engine_deps\n/, 'install_engine calls the package install');
+  assert.match(install, /report_engine_deps\n\s*exit 0/, 'the --global closing reports a failed install');
+  assert.match(install, /MSG\nreport_engine_deps\n?$/, 'the project closing reports it too');
+});
