@@ -312,6 +312,11 @@ test('mergeConflictResolved passes when the conflict was kept alive, resumed wit
   assert.equal(mergeConflictResolved(decided).check(resolvedBundle()).pass, true);
 });
 
+test('mergeConflictResolved also passes when the conflict was sent to the live worker (conflict-sent, live-workers T08)', () => {
+  const b = resolvedBundle({ flow: [fl('t3', 'merge', 'T01'), fl('t4', 'conflict-sent', 'T02'), fl('t6', 'merge', 'T02')] });
+  assert.equal(mergeConflictResolved(decided).check(b).pass, true);
+});
+
 test('mergeConflictResolved fails when no task was surfaced', () => {
   const r = mergeConflictResolved(decided).check(bundle({ flow: [fl('t3', 'merge', 'T01')] }));
   assert.equal(r.pass, false);

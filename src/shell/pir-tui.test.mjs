@@ -517,6 +517,16 @@ test('a running watch frame draws a merge conflict\'s paste-in prompt under the 
   assert.ok(!frameText(stale).includes('git merge pir/alpha'), 'a run that is not running does not offer a stale prompt');
 });
 
+test('a conflict sent to its live worker draws no paste block in the watch frame (live-workers T08)', () => {
+  const runState = { branch: 'pir/alpha', ceiling: 2, tasks: [{ id: 'T05', slug: 'clash', deps: [], done: false, phase: 'asking', since: NOW, doneMs: null, question: 'merge conflict in a.txt', prompt: 'The run could not merge your branch\n  git merge pir/alpha\n', conflictSent: true }] };
+  const snap = { version: 1, proc: {}, finalState: null, runState };
+  const frame = buildWatchFrame({ slug: 'alpha', state: 'running', repo: 'repoA', snap, record: { pid: 1, branch: 'pir/alpha' } }, { now: NOW, columns: 120 });
+  const text = frameText(frame);
+  assert.ok(!text.includes('git merge pir/alpha'), 'the sent prompt is not drawn for the person');
+  assert.ok(text.includes('fixing conflict'), 'the row reads fixing conflict');
+  assert.equal(findSpan(frame, 'fixing conflict').style, 'active');
+});
+
 test('↓ reaches every row when two repos share a slug, and stop acts on the selected repo\'s run (user 2026-09-25)', async () => {
   // Pinned by slug, ↓ onto the second `parallel-pir` re-resolved to the first and snapped back, so the
   // fifth row was unreachable; the stop intent would also have resolved to the other repo's run.

@@ -32,9 +32,14 @@ const PHASE_LABEL = {
   asking: 'asking you',
 };
 
-// A coordinator-side merge conflict is the one asking state that carries a copy-paste prompt (T14).
+// A coordinator-side merge conflict is the one asking state that carries a prompt (T14). Since
+// live-workers T08 the prompt is sent to the live worker when there is one (`conflictSent`): that task is
+// being fixed and asks nothing of the person (§2.10). Only an unsent one waits on the person's paste.
 function isConflict(t) {
-  return t.phase === 'asking' && !!t.prompt;
+  return t.phase === 'asking' && !!t.prompt && !t.conflictSent;
+}
+function isFixingConflict(t) {
+  return t.phase === 'asking' && !!t.prompt && !!t.conflictSent;
 }
 
 // buildDisplay(runState, { now, spinnerFrame }) → { summary, rows, footer } (DESIGN §2.3).
@@ -46,7 +51,7 @@ function isConflict(t) {
 //            branch, else null. Every task is merged by then, so without it the screen reads as done for
 //            the minutes the suite takes (user 2026-09-25).
 //   task: { id, slug, deps:[id…], done:bool, phase:null|'preparing'|'building'|'reviewing'|'merging'|'asking',
-//           since:ms|null, doneMs:ms|null, question:string|null, prompt:string|null }
+//           since:ms|null, doneMs:ms|null, question:string|null, prompt:string|null, conflictSent?:bool }
 //     phase   — set when a live worker holds the task; null when no worker does. An `asking` task that
 //               carries a `prompt` is a merge conflict and shows as row/footer kind `conflict`.
 //     since   — when the current phase began, for the elapsed clock (now − since).
@@ -58,6 +63,8 @@ function isConflict(t) {
 //               `pir`'s watch view draws it under the block, and the coordinator prints it once on its
 //               normal screen (coordinate.mjs). It rides in the model so the vocabulary stays testable without a
 //               terminal, and null for an ordinary question (only a coordinator-side conflict has one).
+//     conflictSent — the prompt went to the task's live worker (live-workers §2.10): row kind
+//               `fixing-conflict` in the active style, counted as running, no footer.
 //
 // opts.now is the current time in ms (the clock, injected — never read here, §3.1). opts.spinnerFrame
 // is accepted for signature symmetry with the renderer but not used by the model: the spinner glyph is
@@ -74,7 +81,7 @@ export function buildDisplay(runState, { now, spinnerFrame } = {}) {
 
   const done = doneIds.size;
   const total = tasks.length;
-  const asking = tasks.filter((t) => !t.done && t.phase === 'asking' && !isConflict(t)).length;
+  const asking = tasks.filter((t) => !t.done && t.phase === 'asking' && !isConflict(t) && !isFixingConflict(t)).length;
   const conflicts = tasks.filter((t) => !t.done && isConflict(t)).length;
   // A run whose tasks are all merged is not finished while its end gate is still running.
   const finished = complete || (!testing && total > 0 && done === total);
@@ -112,6 +119,8 @@ function rowFor(t, { now, doneIds, ceilingFull }) {
     // its worker has stopped and does not know. It reads `merge conflict` (orange, user 2026-09-24) so the
     // person looks for the paste-in prompt instead of attaching to wait for a question that never comes.
     if (isConflict(t)) return { ...base, kind: 'conflict', label: 'merge conflict', elapsedMs };
+    // The worker was sent the fix and is working on it: nothing for the person to do (§2.10).
+    if (isFixingConflict(t)) return { ...base, kind: 'fixing-conflict', label: 'fixing conflict', elapsedMs };
     return { ...base, kind: t.phase, label: PHASE_LABEL[t.phase], elapsedMs };
   }
 
@@ -136,7 +145,8 @@ function rowFor(t, { now, doneIds, ceilingFull }) {
 function footerFor({ tasks, complete, readyToMerge, testsReason, testing, interrupted, branch, now }) {
   if (interrupted) return { kind: 'interrupted' };
 
-  const asking = tasks.find((t) => !t.done && t.phase === 'asking');
+  // A worker fixing a conflict it was sent asks nothing, so it never takes the footer (§2.10).
+  const asking = tasks.find((t) => !t.done && t.phase === 'asking' && !isFixingConflict(t));
   if (asking) {
     // A merge conflict the run hit at its own merge carries a copy-paste resolution prompt (T14) and
     // gets its own footer kind; an ordinary question keeps the unchanged `asking` shape with no prompt key.
