@@ -42,10 +42,10 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T16 | harness-conversations | T05, T06 | ✅ | |
 | T17 | docs | T06, T07, T08, T13, T14, T15 | ⬜ | |
 | T18 | live-run | T08, T13, T14, T16, T17 | ⬜ | |
-| T19 | conversation-view-rig | T13 | ⬜ | |
+| T19 | conversation-view-rig | T13 | 🔍 | `conversation-rig.mjs` (scenarios tour, long) and pty driver `driveScreen`; 8 tests. Fake gained `resultFor` and `chat` steps. Deviations: screen model is new (`createScreenModel`), not `drawnRows` extended: `drawnRows` reads the cursor parked at column 1 as a blank row. `--into` must be empty or absent, since teardown deletes it. |
 | T20 | conversation-view-feel | T19; blocks T18 | ⬜ | |
 
-**Review queue:** empty
+**Review queue:** T19
 
 ## Blocked on the user
 
