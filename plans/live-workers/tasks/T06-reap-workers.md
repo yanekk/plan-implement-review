@@ -1,6 +1,6 @@
 # T06 — reap-workers
 
-**Phase:** 2 · **Depends on:** T04 · **Weight:** light
+**Phase:** 2 · **Depends on:** T04, T05 · **Weight:** light
 
 ## Goal
 
@@ -19,7 +19,13 @@ DESIGN §2.3 (retention), §2.12.
 - `src/shell/loop.mjs` `reconcile` (its `platform.list()` reap of the previous run's workers only sees this
   process's children after T05; drop it, the startup reap covers it) and its test
 - `src/shell/control-run.mjs` (`stopRun`'s own escalation replaced by T04's `terminate`; `stopRun` reaps from `workers.json` instead of `claude agents`;
-  `removeRun` deletes `conversations/`), and its test
+  `removeRun` deletes `conversations/`), and its test. `terminate` takes the injected shape stopRun's tests use
+- `src/shell/pir-tui.mjs` (`defaultPlatform(record)`, the `makePlatform` dependency: it builds the
+  `createPlatform({ root })` that `stopRun` lists and closes through; after T05 that platform has no
+  children, so `stopRun` gets the `workers.json` reap instead)
+
+Depends on T05 because T05 writes `workers.json` and makes the old `platform.list()` reaps blind; landing
+this first would stop reaping a still-`--bg` run's workers.
 
 ## Interface
 

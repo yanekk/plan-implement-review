@@ -29,6 +29,10 @@ DESIGN §2.4, §2.11 (row labels, what the task row opens).
 // display row labels: 'asking you · a question' (report or questions), 'asking you · allow a command?'
 ```
 
+The display's newer states stay as they are: the `preparing` phase (setup running, `worker` is null) and
+the `testing` and `red` footers (declared-test-command). `buildRunState` already carries `testsReason` and
+`interrupted`; the new fields sit beside them.
+
 A task is `asking` when it has a question/decision/conflict report (today) or its live worker's activity
 is `permission` or `questions`. Report and pending request together show the request's label.
 

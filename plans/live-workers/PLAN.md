@@ -63,7 +63,7 @@ the SDK install pinned and import from `src/shell/`.
 |---|---|---|
 | [T04](tasks/T04-worker-process.md) | worker-process | T01, T10 |
 | [T05](tasks/T05-live-platform.md) | live-platform | T04 |
-| [T06](tasks/T06-reap-workers.md) | reap-workers | T04 |
+| [T06](tasks/T06-reap-workers.md) | reap-workers | T04, T05 |
 | [T07](tasks/T07-person-inbox.md) | person-inbox | T03, T05 |
 | [T08](tasks/T08-conflict-to-worker.md) | conflict-to-worker | T05 |
 | [T09](tasks/T09-asking-kinds.md) | asking-kinds | T05, T08 |

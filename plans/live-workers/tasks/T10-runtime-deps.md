@@ -20,10 +20,13 @@ DESIGN §3.1 (boundary extension), §5 (Dependencies), §5.3.
   `"engines": { "node": ">=22.19" }`)
 - `package-lock.json` (new, committed)
 - `.npmrc` (new): `omit=peer` and `omit=optional`, with a comment line citing DESIGN §5
-- `install.sh` (copy `package.json`, `package-lock.json` and `.npmrc` into the engine; run `npm ci --omit=dev` there)
+- `install.sh` (copy `package.json`, `package-lock.json` and `.npmrc` into the engine; run `npm ci --omit=dev` there).
+  Today `install_engine` does `rm -rf` of the engine then copies `src/` only, so every install re-runs `npm ci`
+  and needs the network; say so in the script's closing message if it fails offline
 - `src/shell/launcher.test.mjs` (assert the new install lines)
-- `src/core/boundary.test.mjs` (forbid bare-specifier imports in `src/core/`)
-- `.gitignore` (`node_modules/`)
+- `src/core/boundary.test.mjs` (forbid bare-specifier imports in `src/core/`). Its checks are an inline loop
+  over the files today; pull them into a function over source text so a fixture string can be tested.
+  `.gitignore` already lists `node_modules/`
 
 ## Tests
 
@@ -40,6 +43,8 @@ DESIGN §3.1 (boundary extension), §5 (Dependencies), §5.3.
 - [ ] after `HOME=/tmp/pir-live-workers-home ./install.sh`, both packages import with cwd
       `/tmp/pir-live-workers-home/.claude/pir-engine` (a scratch HOME: the real engine is not replaced during the parallel build)
 - [ ] both versions are exact, not ranges, and the lockfile is committed
+- [ ] the DESIGN.md setup line (`test ! -f package-lock.json || npm ci`) installs in a fresh worktree of this
+      commit and leaves `git status` clean; `npm test` then passes there
 
 ## Outside actions
 

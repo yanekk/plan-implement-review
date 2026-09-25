@@ -26,9 +26,10 @@ DESIGN §2.1, §2.2, §2.3 (log path), §2.4 (isBusy), §1 Stance (the withdrawn
 
 ```js
 createPlatform({ root, controlDir, transport, startWorker = realStartWorker, uuid }) → {
-  spawn({ cwd, name, phase }) → id          // id is a uuid pir chose; opening instruction sent as first line
+  spawn({ cwd, name, phase, note }) → id    // id is a uuid pir chose; openingInstruction(phase, task, note)
+                                            // (the setup-failure note, loop.mjs) is the first user message
   list() → [{ id, pid, name, cwd, status: 'busy'|'idle', state, live: true, task, role, activity }]
-  close(id) → Promise<{ ok }>
+  close(id) → { ok }                        // fire-and-forget: the pass is synchronous (DESIGN §2.12)
   remove(id) → { ok: true }                 // no-op: there is no session record to clear
   inbox()                                   // unchanged, reports/ drop dir
   send(id, text, { from }) → { ok }         // user line
@@ -46,6 +47,19 @@ The platform keeps `control/workers.json` current with T04's `writeWorkersFile` 
 
 `status` is `busy` unless `workerActivity` says `idle`; a worker waiting on a permission or a question
 set is not busy (it is parked on the person, as a question report parks it today).
+
+`teardownRun` stays synchronous (it runs from signal handlers): it ends every input queue and SIGTERMs
+every child without waiting; T06's reap catches a survivor. Its `platform.list()` filtered by `isWorkerOf`
+now sees only this process's children, which is what it wants.
+
+A PREPARING task (setup running, loop.mjs) has `workerId: null` and no child; `list()` and `workers.json`
+must not expect one for it.
+
+The loop carries workarounds for `claude agents` lag besides the name match: `closedIds`, `APPEAR_GRACE`
+and the name match in `buildAssignments` (loop.mjs), and the fake's `lingerClosed`, `resurrectClosed` and
+`lingerBusy` behaviours (fake/platform.mjs). Each is dropped, or kept with a comment saying what live
+children still need it for. `platform.remove?.()` callers stay; their "clear leftover record" comments are
+reworded.
 
 The no-down-channel test is narrowed, not deleted: it keeps forbidding the removed relay machinery
 (`createAgentBridge`, `outbox`, the answers/surfaced feeds, `send-failed`) and drops the bare `.send(`

@@ -22,6 +22,9 @@ All of DESIGN §2, as current behaviour.
 - `docs/restart-recovery.md` (reap from `workers.json`; hygiene clears `inbox/`)
 - `docs/branch-model.md` (agent names: `-n` on a `-p` worker; listed in `claude agents`, not attachable)
 - `CLAUDE.md` only where it names `pir-coordinate` or `claude agents` as how parallel mode is used
+- `README.md` (root: its install section says only `src/` is copied to the engine; T10 adds packages)
+- stale `claude agents` comments in code no other task rewrites: `core/naming.mjs`, `core/dispatch.mjs`,
+  `core/dashboard.mjs`, `shell/control-run.mjs`, `core/display.mjs`
 
 ## Tests
 

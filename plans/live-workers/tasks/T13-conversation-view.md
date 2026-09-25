@@ -17,7 +17,10 @@ DESIGN §2.5 (not-running refusal), §2.6, §2.7, §2.8, §2.9, §2.11 (conversa
 ## Files
 
 - `src/shell/conversation-view.mjs` (new), `src/shell/conversation-view.test.mjs` (new)
-- `src/shell/log-follow.mjs` (new, or inside the view if small): read the last 256 KB, then follow appends
+- `src/shell/log-follow.mjs` (new, or inside the view if small): read the last 256 KB, then follow appends.
+  The tail read extends `readLogTail` (`src/shell/commands.mjs`, which already reads the last 16 KiB and drops
+  the partial first line): the byte count becomes a parameter and it can return whole lines; the crashed-run
+  log tail keeps its behaviour and tests. Only following appends is new (user 2026-09-25, re-review)
 - `src/shell/pir-tui.mjs` (mount the view for `ui.view === 'worker'`)
 
 ## Interface
@@ -30,7 +33,10 @@ createConversationView({ run /* slug, controlDir, pid */, worker /* openWorker f
 followLog(path, { tailBytes = 262144, onEntries }) → { stop() }   // partial last line held until complete
 ```
 
-Key routing follows DESIGN §2.11's table exactly. y/n/a and the picker keys act only while the box is
+Key routing follows DESIGN §2.11's table exactly. `runTui` turns a lone Esc into quit before any routing
+today, and Ctrl+C likewise; in the `'worker'` view it routes both to the view instead (Ctrl+C clears a
+non-empty box, else interrupts; user 2026-09-25, re-review). The coordinator-alive check is the open
+run's state `running` (DESIGN §2.5), not `resolveLiveness` alone. y/n/a and the picker keys act only while the box is
 empty; typed text with a pending permission sends a refusal carrying the text; with a pending question set
 it sends `decline-questions`.
 
@@ -38,7 +44,10 @@ it sends `decline-questions`.
 
 - [ ] follow: tail of a large file starts at a line boundary; appended lines arrive; a partial line waits
 - [ ] Enter with text drops a `message`; Esc drops `interrupt`; ← with text does not navigate
-- [ ] y / n / a drop the right `permission` decision; `a` absent when the gate says so
+- [ ] Ctrl+C with text clears the box and drops nothing; with an empty box drops `interrupt`; in list and
+      watch it still quits
+- [ ] y / n / a drop the right `permission` decision through `gateReducer`; `a` absent when the gate says so;
+      a `defaultToNo` request needs y twice and shows the arming hint
 - [ ] picker keys drive `pickerReducer` and the final Enter drops `answers`
 - [ ] coordinator not alive: nothing dropped, the view says the run is not running, the text stays
 - [ ] read-only worker: no editor, only ← and scrolling work
@@ -75,5 +84,5 @@ Tell me: does it read and respond the way you expected from the prototype, and w
 
 ## Outside actions
 
-- Install packages from npm — `ask` (`npm ci` in the worktree)
+- Install the locked packages — `worker` (`npm ci` in the worktree)
 - Person-check scratch run — `ask` (the scratch run above, ceiling 1)

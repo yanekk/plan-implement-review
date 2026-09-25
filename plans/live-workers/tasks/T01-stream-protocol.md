@@ -36,7 +36,7 @@ of turns (T00's note on the looping probe).
 readEntry(entry) → WorkerEvent[]   // an assistant message with several blocks yields several events
 // WorkerEvent kinds: 'init' {sessionId, slashCommands[], terminalSlashCommands[], tools[], permissionMode}
 //   'text' {text} · 'tool-use' {toolUseId, name, input} · 'tool-result' {toolUseId, text, isError}
-//   'permission' {requestId, toolName, input, description, reason, suggestions[]}
+//   'permission' {requestId, toolName, input, description, reason, suggestions[], defaultToNo, suppressAlwaysAllowRule}
 //   'questions' {requestId, questions:[{question, header, multiSelect, options:[{label, description}]}]}
 //   'reply' {requestId, behavior} · 'sent' {from, text} · 'interrupt' {}
 //   'result' {subtype, text, isError} · 'system' {subtype} · 'note' {kind, …} · 'raw' {raw}

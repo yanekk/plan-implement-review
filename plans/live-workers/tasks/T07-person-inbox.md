@@ -16,10 +16,12 @@ DESIGN §2.5, §2.6 (grants, auto-answer), §2.7 (answers, decline), §2.8 (inte
 ## Files
 
 - `src/shell/person-inbox.mjs` (new), `src/shell/person-inbox.test.mjs` (new)
-- `src/shell/coordinate.mjs` (start the watcher with the run; clear `inbox/` in `startupControlHygiene`).
+- `src/shell/coordinate.mjs` (start the watcher with the run; clear `inbox/` in `clearTransientFeeds`,
+  which `startupControlHygiene` calls and which clears `reports/` today).
   `createReportInbox`'s drain (sorted `*.json`, parse, unlink, drop malformed) and `waitForReport`'s
   `fs.watch` are generalised to take the folder and a parser, and serve both `reports/` and `inbox/`; no
-  second reader or watcher is written (user 2026-09-25, plan review)
+  second reader or watcher is written (user 2026-09-25, plan review). The main loop's wait between passes
+  (`waitForReport(reportsDir, timeoutMs, { watch })`) then wakes on either folder
 - `src/shell/platform.mjs` (hook: on each `permission` event, consult grants before it counts as pending)
 
 ## Interface

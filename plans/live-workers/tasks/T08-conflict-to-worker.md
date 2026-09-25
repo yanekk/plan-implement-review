@@ -16,7 +16,9 @@ DESIGN §2.10.
 
 - `src/core/conflict.mjs` and its test (a worker-addressed variant)
 - `src/shell/loop.mjs` step 3d and its test
-- `src/shell/coordinate.mjs` `buildRunState` (carry `conflictSent` on the task) and its test
+- `src/shell/coordinate.mjs` `buildRunState` (carry `conflictSent` on the task) and the conflict print (it
+  prints every surface carrying a `prompt`; a sent conflict records `conflict-sent` and prints nothing), and
+  their tests
 - `src/core/display.mjs`, `src/shell/render.mjs`, `src/shell/pir-tui.mjs` `buildWatchFrame` and their tests
   (the sent-conflict row; DESIGN §2.10)
 
@@ -26,12 +28,14 @@ DESIGN §2.10.
 buildConflictPrompt({ …existing, audience: 'person' | 'worker' })
 // 'worker': no copy markers (the KEEP: blank is already gone for both, f3d4b8f); says merge <feature> in, resolve, run the test command,
 // commit, signal done again, and ask the person if choosing a side needs a judgement.
-// 'person': unchanged (the restart path with no live worker).
+// 'person': unchanged text, but the printed path now always has no live worker, so loop.mjs passes
+//   workerName: null and the prompt never says "attach in `claude agents`" (conflict.mjs's no-worker wording).
 ```
 
 runState task gains `conflictSent: boolean`. display: an asking task with a prompt and `conflictSent` is row
 kind `fixing-conflict`, label `fixing conflict`, style active, no footer; without `conflictSent` it is
-today's orange `conflict` row. `buildWatchFrame` draws the paste block only for the unsent kind.
+today's orange `conflict` row, whose footer (render.mjs) drops "(`claude agents`)". `summary.conflicts`
+excludes `conflictSent` tasks. `buildWatchFrame` draws the paste block only for the unsent kind.
 
 Loop step 3d: live worker → `platform.send(workerId, prompt, { from: 'pir' })`, record `conflict-sent`
 in the control log, park the task as today until the worker re-signals done. No live worker → today's

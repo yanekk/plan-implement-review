@@ -16,7 +16,10 @@ DESIGN §1 Success criteria, §5.1.
 ## Files
 
 - A harness fixture that forces one question set and one permission request (new
-  `src/shell/harness/fixtures/live-workers-demo.mjs`, id and slug `live-workers-demo`), and its test.
+  `src/shell/harness/fixtures/live-workers-demo.mjs`, id and slug `live-workers-demo`, built on
+  `commonPlanFiles` so it declares the setup/test block), and its test.
+- `src/shell/harness/fixtures.mjs` (register it: import and map) and `fixtures.test.mjs` (its `EXPECT` entry;
+  the test asserts the fixture count matches)
 
 ## Environment (the worker owns this)
 
@@ -56,6 +59,6 @@ Tell me: did every step happen as described, and anything that confused you on t
 
 ## Outside actions
 
-- Install packages from npm — `ask` (`npm ci` in the worktree)
+- Install the locked packages — `worker` (`npm ci` in the worktree)
 - Live harness run — `worker`
 - T18 end-to-end run — `ask`

@@ -17,9 +17,12 @@ DESIGN §2.1, §2.2, §2.3, §2.12 (workers.json writer only), §4.
 
 - `src/shell/worker-proc.mjs` (new), `src/shell/worker-proc.test.mjs` (new). The only module in `src/`
   that imports `@anthropic-ai/claude-agent-sdk` (installed by T10).
-- `src/shell/terminate.mjs` (new) and its test: the SIGTERM-wait-SIGKILL escalation lifted from
-  `control-run.mjs` `stopRun`, so `close` here and T06's reap and `stopRun` share one copy (user 2026-09-25,
+- `src/shell/terminate.mjs` (new) and its test: the SIGTERM-wait-SIGKILL escalation extracted from
+  `control-run.mjs` `stopRun`, where it is inline today, so `close` here and T06's reap and `stopRun` share one copy (user 2026-09-25,
   plan review); T06 moves `stopRun` onto it
+- a shared temp-then-rename JSON writer (for example `src/shell/atomic-write.mjs`), extracted from
+  `index-store.mjs` `writeRecord` and `snapshot-store.mjs` `writeSnapshot`, which both move onto it with their
+  tests unchanged; `writeWorkersFile` is its third user, not a third copy (user 2026-09-25, re-review)
 - `src/shell/fake/claude-stream.mjs` (new): a node script standing in for the `claude` executable, driven by
   a JSON script file named in `PIR_FAKE_CLAUDE_SCRIPT`. It answers the SDK's `initialize` control request
   the way T01's `wire-sample.ndjson` shows, then runs its script
@@ -29,7 +32,9 @@ DESIGN §2.1, §2.2, §2.3, §2.12 (workers.json writer only), §4.
 ```js
 workerOptions({ cwd, sessionId, name, claudePath, canUseTool, spawnProcess }) → SDK Options   // exactly DESIGN §2.1
 startWorker({ cwd, sessionId, name, logPath, claudePath, query = sdk.query,
-              spawnProcess = childProcess.spawn, now = Date.now }) → Worker
+              spawnProcess = spawnAdapter, now = Date.now }) → Worker
+// spawnAdapter({ command, args, cwd, env }) → ChildProcess: the SDK's spawnClaudeCodeProcess signature
+// (DESIGN §2.1) over child_process.spawn; tests pass one that runs the fake instead.
 // Worker:
 //   id (= sessionId), pid, startedAt
 //   send(text, { from: 'pir'|'person' }) → boolean   // pushes userMessage; logs {dir:'out', kind:'message'};
@@ -43,12 +48,13 @@ startWorker({ cwd, sessionId, name, logPath, claudePath, query = sdk.query,
 //   onExit(fn)   // fn({ code, signal }) once; logs {dir:'note', kind:'exited'}
 //   entries() → the in-memory log entries (for workerActivity)
 //   close({ graceMs = 5000, killMs = 10000 }) → Promise<void>  // end the input queue, then terminate(pid)
-terminate(pid, { graceMs, killMs, isAlive, kill, sleep }) → Promise<{ escalated }>   // shell/terminate.mjs
+terminate(pid, { graceMs, killMs, isAlive, kill, now, sleep, pollMs }) → Promise<{ escalated }>   // shell/terminate.mjs
+// the injected shape stopRun's tests already use (control-run.mjs), so T06 moves stopRun onto it unchanged
 writeWorkersFile(controlDir, workers /* [{id, task, role, pid, startTime}] */)   // temp then rename
 ```
 
 `canUseTool` logs a `request` entry (DESIGN §2.3: `requestId`, `decisionReason` as `reason`,
-`description`, `suggestions`, from the SDK's call options) and returns a promise that `answer` resolves.
+`description`, `suggestions`, `defaultToNo`, `suppressAlwaysAllowRule`, from the SDK's call options) and returns a promise that `answer` resolves.
 T07 decides grants before a request counts as pending; this module only holds and resolves.
 
 The input queue is an async iterable pir owns. Closing it uses an internal sentinel that is never

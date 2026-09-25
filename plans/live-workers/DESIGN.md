@@ -1,3 +1,10 @@
+---
+setup:
+  - test ! -f package-lock.json || npm ci
+test:
+  - npm test
+---
+
 # Live workers — Design
 
 How parallel mode behaves is canonical in `/docs`. This file is build-time rationale for this plan;
@@ -57,9 +64,14 @@ query({ prompt: <pir's input queue, an AsyncIterable of SDK user messages>, opti
   pathToClaudeCodeExecutable: <the installed `claude`, resolved once at coordinator start>,
   extraArgs: { name: <agent name from naming.mjs> },
   canUseTool: <pir's handler, §2.6, §2.7>,
-  spawnClaudeCodeProcess: <node:child_process.spawn, so pir holds the pid (§2.12) and tests swap the binary>,
+  spawnClaudeCodeProcess: <pir's adapter over node:child_process.spawn, so pir holds the pid (§2.12) and tests swap the binary>,
 }})
 ```
+
+`spawnClaudeCodeProcess` is `(SpawnOptions { command, args, cwd, env, signal }) → SpawnedProcess` (sdk.d.ts
+0.3.282), not `spawn`'s own signature, so pir passes a small adapter: `spawn(command, args, { cwd, env, stdio })`,
+returning the ChildProcess (which satisfies SpawnedProcess). The SDK's forwarded `signal` fires only after its
+own stdin-EOF grace, so the adapter may hang a kill on it without racing the worker's clean exit.
 
 - The SDK launches exactly the line the plan-time probes measured by hand (seen 2026-09-25 on 2.1.282):
   `claude --output-format stream-json --verbose --input-format stream-json --permission-prompt-tool stdio
@@ -107,7 +119,7 @@ messages waiting for idle.
 ```
 { "t": <ms>, "dir": "in", "event": <an SDK message, exactly as query() yielded it> }
 { "t": <ms>, "dir": "request", "requestId": "…", "toolName": "…", "input": {…}, "suggestions": […],
-  "reason": "…", "description": "…" }
+  "reason": "…", "description": "…", "defaultToNo": bool, "suppressAlwaysAllowRule": bool }
 { "t": <ms>, "dir": "out", "from": "pir" | "person", "kind": "message", "text": "…" }
 { "t": <ms>, "dir": "out", "from": "person", "kind": "interrupt" }
 { "t": <ms>, "dir": "out", "from": "pir" | "person", "kind": "reply", "requestId": "…", "result": <PermissionResult> }
@@ -160,8 +172,9 @@ The `pir` screen and the coordinator are separate processes. The screen writes o
 - A forwarded input is logged as `dir:"out", from:"person"`; one addressed to a worker that is gone, or
   answering a request that is no longer pending, is logged as a `note` `undelivered` and deleted. The
   view shows it, so a lost answer is never silent.
-- Before writing, the screen checks the coordinator is alive (`resolveLiveness` of the run's pid). If it
-  is not, nothing is written, the view says the run is not running, and the typed text stays in the box.
+- Before writing, the screen checks the coordinator is alive: the open run's state is `running`, as the
+  dashboard's `classifyRun` decides it (pid and start time; `resolveLiveness` alone reads the pid only, so a
+  reused pid would pass). If it is not, nothing is written, the view says the run is not running, and the typed text stays in the box.
 - Startup hygiene clears `inbox/` like `reports/`: an input addressed to a previous run's worker must
   never reach a new one.
 
@@ -180,10 +193,16 @@ logged as `delivered-by-grant`. Matching follows Claude's rule form: an exact `r
 identical input; a `prefix:*` form matches any command starting with the prefix. When a request carries
 no `addRules` suggestion, `a` is not offered.
 
+Claude flags some requests itself (`canUseTool` options, sdk.d.ts 0.3.282), and pir honours both flags (user
+2026-09-25, re-review): `suppressAlwaysAllowRule` means the rule would grant more than this request, so `a`
+is not offered; `defaultToNo` means one stray key must not approve it, so the first `y` only arms the gate
+("press y again to allow") and a second `y` allows, the press-twice pattern pir uses for stop and remove.
+Any other key disarms. `n` refuses in one press as usual.
+
 pir answers by resolving the pending `canUseTool` promise with a `PermissionResult`. A refusal is
 `behavior:"deny"` with the message `The person refused.` or the typed text. A request left unanswered
-keeps its promise open. Whether the SDK or Claude gives up on a long-unanswered request is not yet
-measured; T00 checks it.
+keeps its promise open. The SDK itself sets no deadline ("permission prompts have no park deadline",
+sdk.d.ts 0.3.282); whether Claude gives up on a long-unanswered request is not yet measured; T00 checks it.
 
 ### 2.7 Question sets
 
@@ -241,6 +260,7 @@ fight over the cursor.
 |---|---|
 | typing, Enter | send a message to the worker |
 | Esc | interrupt the worker (§2.8) |
+| Ctrl+C | clear the box if it holds text, else interrupt the worker, as in Claude's own screen (user 2026-09-25, re-review; it quits `pir` in the other views) |
 | ← with an empty box | back to the run live view |
 | Tab | one line per step (default) ⇄ full detail |
 | y / n / a | answer a pending permission request, only while the box is empty (§2.6) |
@@ -265,7 +285,10 @@ pir spawns the process itself through `spawnClaudeCodeProcess` (§2.1), so it ha
 - Closing a worker: end its input queue (the SDK then closes the worker's stdin), SIGTERM after 5 s if it
   has not exited, SIGKILL after 10 s. pir's escalation runs on the pid; it does not depend on the SDK's
   own grace window (about 2 s after stdin EOF).
-- `teardownRun` closes every live child. Startup hygiene and the dashboard's `stopRun` reap any pid in
+- `teardownRun` closes every live child. It stays synchronous because it runs from signal handlers and the
+  loop's pass is synchronous: it ends every input queue and SIGTERMs every pid without waiting, and
+  `close(id)` called from the pass is fire-and-forget. A child that outlives this is reaped from
+  `workers.json` by `stopRun` or the next startup. Startup hygiene and the dashboard's `stopRun` reap any pid in
   `workers.json` whose start time still matches, instead of listing `claude agents`.
 - `removeRun` also deletes the run's `conversations/` folder (§2.3).
 
@@ -334,9 +357,11 @@ New, shell:
 - `shell/conversation-view.mjs` — the conversation view on pi-tui; `shell/log-follow.mjs` — tail and follow a
   conversation log (T13).
 - `shell/reap.mjs` — read `workers.json` and reap recorded pids (T06).
-- `shell/terminate.mjs` — the one SIGTERM-wait-SIGKILL helper, lifted from `stopRun` (T04); the person inbox
+- `shell/terminate.mjs` — the one SIGTERM-wait-SIGKILL helper, extracted from `stopRun`'s inline escalation (T04); the person inbox
   reuses `coordinate.mjs`'s report-folder reader and watcher, generalised (T07). Extending, not copying:
-  user 2026-09-25, plan review.
+  user 2026-09-25, plan review. Likewise at the re-review: `wrapLine` moves from pir-tui.mjs to core for T02,
+  `readLogTail` (commands.mjs) grows into the log tail T13 follows, and one shared temp-then-rename JSON writer
+  serves `writeRecord`, `writeSnapshot` and `workers.json` (T04).
 - `shell/pir-view.mjs` — the pi-tui component painting styled-span frames (T11, if split out).
 
 Changed: `shell/platform.mjs` (live children instead of `--bg`), `shell/loop.mjs` (isBusy, conflict
@@ -403,7 +428,9 @@ npm test
 Which is `FORCE_COLOR=0 NO_COLOR=1 node --test --test-reporter=dot 'src/**/*.test.mjs'`: quiet on
 green, colour off inside the command, loud on failure. To debug one file, run it with
 `--test-reporter=spec`. It is the only evidence a session may produce on its own. After T10 a fresh
-checkout needs `npm ci` before it; the engine install does that itself (§5.3).
+checkout needs `npm ci` before it: the setup line at the top of this file runs it once `package-lock.json`
+exists and is a no-op before, because the engine reads the block once at run start from the main checkout,
+so one line must serve worktrees made before and after T10 lands. The engine install runs its own (§5.3).
 
 **Dependencies.** Exactly two runtime packages, `@earendil-works/pi-tui` (the screen, user 2026-09-24)
 and `@anthropic-ai/claude-agent-sdk` (the line, user 2026-09-25), each pinned to an exact version with a
@@ -450,12 +477,14 @@ Scratch paths must already be trusted by Claude Code (`hasTrustDialogAccepted` i
 
 ### 5.3 Outside the code — who acts
 
-Approved by the user at plan review, 2026-09-25, as listed; no `ask` row moved down.
+Approved by the user at plan review, 2026-09-25, as listed. At the re-review the same day the user moved
+`npm ci` of the committed lockfile down to `worker`; nothing else moved.
 
 | Action | Command | Bin | Why this bin | Way back | Cost |
 |---|---|---|---|---|---|
 | Probe worker (T00, T01) | `perl -e 'alarm 900; exec @ARGV' node <spike script>` (T00) or `perl -e 'alarm 120; exec @ARGV' node <probe script>` (T01) on a scratch repo, one SDK-driven worker. The script stops after a fixed number of turns and never sends its own stop marker as a message | `worker` | Minutes of model time, one worker, scratch only | Kill the pid; delete scratch | under a dollar |
-| Install packages from npm | `npm i @earendil-works/pi-tui@0.87.1` and `npm i --omit=peer --omit=optional @anthropic-ai/claude-agent-sdk@0.3.282` in a scratch folder (T00); `npm ci` in the repo or a task worktree (T10, T13, T18 bring-up) | `ask` | First third-party code this project runs, native `.node` binary included (§5) | Revert the commit; delete `node_modules` | none |
+| Install packages from npm | `npm i @earendil-works/pi-tui@0.87.1` and `npm i --omit=peer --omit=optional @anthropic-ai/claude-agent-sdk@0.3.282` in a scratch folder (T00, T01) or the repo (T10) | `ask` | First third-party code this project runs, native `.node` binary included (§5) | Revert the commit; delete `node_modules` | none |
+| Install the locked packages | `npm ci` in the repo or a task worktree: the setup line above, run by the engine in every fresh worktree, and T10/T13/T18 bring-up | `worker` | User 2026-09-25, re-review: the engine runs setup unattended, and `npm ci` installs only the exact versions the `ask` row above let in at T10 | Delete `node_modules` | none |
 | Live harness run | `node src/shell/harness/run.mjs <fixture> --into <scratch>` | `worker` | Bounded by ceiling 1, 10-min timeout, scratch only | HALT; scratch deleted | a few dollars |
 | Person-check scratch run (T13) | `PARALLEL_MAX_WORKERS=1 node <worktree>/src/shell/pir.mjs <fixture>` in a scratch repo | `ask` | Paid, and no automatic time limit: it runs until Ctrl+S twice or HALT | HALT or Ctrl+S twice; scratch deleted | a few dollars |
 | T18 end-to-end run | `PARALLEL_MAX_WORKERS=2 node <worktree>/src/shell/pir.mjs live-workers-demo` in a scratch repo | `ask` | A whole small plan of paid workers | HALT or Ctrl+S twice; scratch deleted | a few dollars |

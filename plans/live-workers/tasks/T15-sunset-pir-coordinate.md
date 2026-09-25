@@ -14,13 +14,16 @@ DESIGN §2.13.
 
 ## Files
 
-- `bin/pir-coordinate` (deleted)
-- `install.sh` (stop installing it; remove an installed `pir-coordinate` launcher it finds in the bin dir)
+- `bin/pir-coordinate` (deleted); `bin/pir` (its header comment names it)
+- `install.sh` (stop installing it: `LAUNCHERS`, both closing messages and the project heredoc; remove an
+  installed `pir-coordinate` launcher from `~/.local/bin` and `~/.claude/bin`, both of which install_launcher
+  may have used. `ORPHAN_SKILLS` keeps `pir-coordinate`: that is the old skill's removal)
 - `src/shell/launcher.test.mjs` (today asserts `LAUNCHERS` is `pir` and `pir-coordinate`, and that install.sh
   mentions `pir-coordinate {slug}` at least twice; install.sh's closing messages carry those lines)
 - `src/shell/pir.test.mjs` (a comment naming the launcher)
-- `src/shell/coordinate.mjs` only if its bin section prints `pir-coordinate` guidance; the dry path stays
-  where tests use it
+- comments naming it: `src/shell/coordinate.mjs` (it prints no guidance), `src/shell/pir-tui.mjs`,
+  `src/shell/harness/fixtures.mjs` and its test, `src/shell/harness/run.test.mjs`. The dry path stays where
+  tests use it
 
 ## Tests
 
@@ -30,7 +33,8 @@ DESIGN §2.13.
 ## Done when
 
 - [ ] `npm test` green
-- [ ] `grep -rn "pir-coordinate" bin install.sh src` finds only the removal line and history comments
+- [ ] `grep -rn "pir-coordinate" bin install.sh src` finds only the launcher removal, the `ORPHAN_SKILLS`
+      entry and history comments
 - [ ] with a stale `pir-coordinate` planted in a scratch HOME's bin dir, `HOME=/tmp/pir-live-workers-home ./install.sh`
       removes it and installs `pir` only
 

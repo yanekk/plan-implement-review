@@ -16,6 +16,9 @@ DESIGN §2.3, §2.6, §2.7, §2.11 (conversation view content, one line per step
 ## Files
 
 - `src/core/conversation.mjs` (new), `src/core/conversation.test.mjs` (new)
+- `wrapLine(text, width)` moves from `src/shell/pir-tui.mjs` (pure, code-point based, breaks at spaces and
+  hard-breaks long tokens) to a core module (`src/core/text.mjs`, or beside its first user), with its tests;
+  pir-tui.mjs imports it back. Worker text is wrapped with it, not a second wrapper (user 2026-09-25, re-review)
 
 ## Interface
 
@@ -31,7 +34,10 @@ buildConversation(entries, { full = false, width, taskId, readOnly = false }) �
 // Notes (undelivered, delivered-by-grant, exited) render as dim lines.
 
 // Permission gate
-gateFor(request) → { kind:'permission', requestId, tool, summary, reason, canAlwaysAllow }
+gateFor(request) → { kind:'permission', requestId, tool, summary, reason, canAlwaysAllow, confirmAllow, armed: false }
+// canAlwaysAllow: an addRules suggestion and no suppressAlwaysAllowRule. confirmAllow = defaultToNo.
+gateReducer(gate, key /* 'y'|'n'|'a'|other */) → { gate, send: null | 'allow'|'deny'|'allow-always' }
+//   confirmAllow: the first y arms (hint "press y again to allow"), a second y sends allow, any other key disarms
 // Question-set picker
 pickerFor(request) → { kind:'questions', requestId, q: 0, cursor: 0, questions:[{…, picks:[], other:''}] }
 pickerReducer(picker, event) → { picker, send: null | { answers } }
@@ -47,7 +53,9 @@ pickerReducer(picker, event) → { picker, send: null | { answers } }
 - [ ] a failing tool result styles the step line `step-error`
 - [ ] full mode shows every result line; toggling changes nothing else
 - [ ] a pending permission appears as `pinned`, not in `lines`; once answered it moves into `lines` with the answer
-- [ ] `canAlwaysAllow` is false when the request has no `addRules` suggestion
+- [ ] `canAlwaysAllow` is false when the request has no `addRules` suggestion, or has `suppressAlwaysAllowRule`
+- [ ] with `defaultToNo`: one y arms and sends nothing, y y allows, y then another key disarms, n refuses at once;
+      without it one y allows
 - [ ] picker: single-select replace, multi-select toggle, Other with text, next/submit, empty-answer no-op
 - [ ] submit builds `answers` keyed by question text, multi labels in option order joined `", "`
 - [ ] `raw` and `system` entries never crash the builder; unknown notes render dim

@@ -8,16 +8,13 @@ task you pick up, and append yours there.
 **Sixty words to a Notes cell, counted.** Flat prose. The account is the commit message. Whoever
 writes a cell also fixes the over-budget cell they walk past.
 
-**Plan reviewed:** not yet — run `/pir-review-plan live-workers` before the first `/pir-work`. Reviewed
-2026-09-25 (12 fixed, 5 decided with the user), then amended the same day by user decision: workers
-driven through the Agent SDK. The amendment has had no fresh-eyes read, and DESIGN.md still lacks its
-setup/test block.
+**Plan reviewed:** 2026-09-25 — re-review after the Agent SDK amendment: 21 fixed, 4 decided with the user
 
 **Status:** Planned 2026-09-24. Nothing built.
 **Last updated:** 2026-09-25
 **Starts after:** `declared-test-command` is merged to main (user 2026-09-24, plan review): done,
 d1f95ac, 2026-09-25. `nudge-quiet-worker` and `resume-dead-worker` wait for this plan.
-**Next `pir-work` will:** stop until the plan is re-reviewed; then T00, the only task with no dependency.
+**Next `pir-work` will:** T00, the only task with no dependency.
 
 ## Tasks
 
@@ -32,7 +29,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T03 | person-input | T01 | ⬜ | |
 | T04 | worker-process | T01, T10 | ⬜ | |
 | T05 | live-platform | T04 | ⬜ | |
-| T06 | reap-workers | T04 | ⬜ | |
+| T06 | reap-workers | T04, T05 | ⬜ | |
 | T07 | person-inbox | T03, T05 | ⬜ | |
 | T08 | conflict-to-worker | T05 | ⬜ | |
 | T09 | asking-kinds | T05, T08 | ⬜ | |

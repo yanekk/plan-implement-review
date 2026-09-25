@@ -16,9 +16,10 @@ DESIGN §2.4, §2.7, §2.10.
 ## Files
 
 - `skills/pir-worker/SKILL.md` (the asking section around "finds you in their `claude agents` view", the
-  "Leave a clean, idle session" section)
-- `skills/pir-implement/SKILL.md`, `skills/pir-review/SKILL.md` (their parallel-mode asking lines)
-- any skill test that asserts on that text
+  "Leave a clean, idle session" section, the merge-conflict lines where "the person attaches", the
+  permission-prompt lines on needing input in `claude agents`, and the naming lines about the `claude agents` list)
+- `skills/pir-implement/SKILL.md`, `skills/pir-review/SKILL.md` (their parallel-mode asking lines already say
+  ask in this session and wait; they gain only the AskUserQuestion wording). No test asserts on skill text
 
 ## Tests
 

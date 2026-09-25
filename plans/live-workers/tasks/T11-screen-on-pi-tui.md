@@ -15,24 +15,29 @@ DESIGN §2.11 (first bullet), §2.14 (restore on throw).
 
 ## Files
 
-- `src/shell/pir-tui.mjs` (`createScreen`, `runTui`, `decodeKey` if pi-tui's key parsing replaces it)
+- `src/shell/pir-tui.mjs` (`createScreen`, `runTui`, `decodeKey` if pi-tui's key parsing replaces it). `runTui`
+  is not exported; `openDashboard` and `openWatch` are the entry points `pir.mjs` uses, and they keep their options
 - `src/shell/pir-tui.test.mjs`
 - `src/shell/pir-view.mjs` (new, if it keeps pir-tui.mjs readable): a pi-tui component that paints
-  styled-span lines with render.mjs's exact style→SGR map
+  styled-span lines with pir-tui.mjs's own `SGR` map (a superset of render.mjs's six keys; the list view's
+  head, bar, selected, count, hint, armed and dim styles exist only there)
 
 ## Interface
 
 ```js
 // A pi-tui component wrapping today's frame builders.
 class FrameView { constructor(getLines /* () => [[span…]…] */) ; render(width) → string[] ; invalidate() }
-runTui({ …same options as today }) → Promise<void>   // same contract; pi-tui underneath
+openDashboard/openWatch({ …same options as today }) → Promise<void>   // same contract; pi-tui underneath
+// pi-tui is created behind the existing `makeScreen` seam, so the restore-on-throw test keeps injecting one
 ```
 
 ## Tests
 
 - [ ] `FrameView.render` turns a span line into the same SGR sequence render.mjs's map produces
 - [ ] lines are clipped to width, never wrapped, as today (wide characters counted correctly)
-- [ ] every key today's `decodeKey` maps still yields the same reducer event
+- [ ] every key today's `decodeKey` maps still yields the same reducer event (CSI and SS3 arrows, CR and LF,
+      lone Esc and Ctrl+C quit, Ctrl+S, Ctrl+X)
+- [ ] a non-TTY output still gets plain text with no escapes; a frame taller than the terminal is cut at its rows
 - [ ] a throw inside painting restores raw mode and leaves the alt screen before rethrowing (keep the existing test)
 - [ ] frame builder tests and reducer tests pass unchanged
 
@@ -54,6 +59,10 @@ node <old checkout>/src/shell/pir.mjs      # today's screen
 node <new checkout>/src/shell/pir.mjs      # pi-tui screen
 ```
 
-Expect: identical rows, colours, selection bar, footer and keys (↑↓, Enter/→, Esc, Ctrl+S ×2, Ctrl+X ×2),
+Open runs in each state the screen draws: running, asking, merge conflict with its paste block, crashed with
+its log tail, end-of-run tests running, red with its reason, green hand-off, and two runs of one slug from
+two repos.
+
+Expect: identical rows, colours, selection bar, footer and keys (↑↓, Enter/→, Esc, Ctrl+C, Ctrl+S ×2, Ctrl+X ×2),
 no flicker, the terminal normal after quitting.
 Tell me: any difference you can see or feel, however small.
