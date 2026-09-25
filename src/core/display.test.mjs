@@ -224,3 +224,37 @@ test('the end gate running reads as testing, not finished, with its elapsed cloc
   assert.equal(done.footer.kind, 'handoff');
   assert.equal(done.summary.finished, true);
 });
+
+// --- a conflict pir sent to the live worker reads `fixing conflict` (live-workers T08, DESIGN §2.10) ---
+
+test('a sent conflict is an active `fixing conflict` row, counted as running not as a conflict, with no footer', () => {
+  const d = buildDisplay(
+    {
+      branch: 'pir/demo',
+      ceiling: 4,
+      tasks: [task({ id: 'T05', slug: 'clash', phase: 'asking', since: NOW - 3000, question: 'merge conflict in a.txt', prompt: 'The run could not merge…', conflictSent: true })],
+    },
+    { now: NOW },
+  );
+  assert.deepEqual(d.rows[0], { id: 'T05', slug: 'clash', kind: 'fixing-conflict', label: 'fixing conflict', elapsedMs: 3000 });
+  assert.equal(d.summary.running, 1, 'the fixing worker holds its slot');
+  assert.equal(d.summary.conflicts, 0, 'not a conflict waiting on the person');
+  assert.equal(d.summary.asking, 0, 'nothing is asked of the person');
+  assert.deepEqual(d.footer, { kind: 'running' }, 'no conflict or asking footer');
+});
+
+test('a sent conflict does not hide another worker\'s question from the footer', () => {
+  const d = buildDisplay(
+    {
+      branch: 'pir/demo',
+      ceiling: 4,
+      tasks: [
+        task({ id: 'T05', slug: 'clash', phase: 'asking', since: NOW, prompt: 'sent', conflictSent: true }),
+        task({ id: 'T06', slug: 'ask', phase: 'asking', since: NOW, question: 'which format?' }),
+      ],
+    },
+    { now: NOW },
+  );
+  assert.equal(d.footer.kind, 'asking');
+  assert.equal(d.footer.task, 'T06');
+});

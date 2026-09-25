@@ -234,71 +234,95 @@ test('a merge conflict a worker cannot resolve surfaces as a decision, and nothi
   assert.equal(worktree.mainCommitCount(), 1, 'main is untouched');
 });
 
-test('a coordinator-hit merge conflict keeps the worker alive; its decision is delivered, it resolves, and the branch merges cleanly exactly once (T28)', (t) => {
-  // The T22 conflict-path bug end to end (§2.5 Option 2). Two tasks edit the same line of greeting.txt
-  // from a common base; T01 merges clean, T02's coordinator-side merge conflicts. The loop must keep
-  // T02's worker ALIVE and parked (not close it, not remove its worktree, not delete its task, not
-  // respawn it), deliver the user's decision, let the worker resolve on its own branch and re-signal
-  // done, then merge the now-clean branch exactly once — with the DECIDED content, not the losing side.
+test('a coordinator-hit merge conflict keeps the worker alive, SENDS it the fix, and the branch merges cleanly exactly once (T28, live-workers T08)', (t) => {
+  // The T22 conflict-path bug end to end (§2.5 Option 2), now with no person in the loop (live-workers
+  // §2.10). Two tasks edit the same line of greeting.txt from a common base; T01 merges clean, T02's
+  // coordinator-side merge conflicts. The loop keeps T02's worker ALIVE and parked (not closed, worktree
+  // kept, task kept, never respawned), sends it the resolution prompt over its line, and once the worker
+  // resolves on its own branch and re-signals done, merges the now-clean branch exactly once.
   const cr = (mine) => ({ conflictResolve: { file: 'greeting.txt', mine, resolved: 'hello there\n' } });
   const { platform, worktree, base } = setup(t, [{ num: 'T01' }, { num: 'T02' }], {
     files: { 'greeting.txt': 'hello world\n' },
     behaviors: { T01: cr('hello there\n'), T02: cr('hi world\n') },
   });
+  const logLines = [];
+  const control = { isHalted: () => false, log: (l) => logLines.push(l) };
   const state = createRunState();
 
-  // First drain: both build and review; T01 merges clean into the feature branch, T02's merge conflicts
-  // and the worker PARKS. Nothing reaches main.
-  const first = drain({ ...base, state });
-  assert.equal(first.reason, 'parked', 'the run parks on the coordinator-hit conflict — it does not stall or promote');
-  const conflict = first.actions.find((a) => a.type === 'surface' && a.kind === 'conflict');
-  assert.ok(conflict, 'the conflict is surfaced to the user');
-  const parkedTask = conflict.task;
+  // Pass until the conflict is sent, then inspect the parked state before the worker picks it up.
+  let sentPass = null;
+  for (let i = 0; i < 20 && !sentPass; i++) {
+    const r = runPass({ ...base, control, state });
+    if (r.actions.some((a) => a.type === 'conflict-sent')) sentPass = r;
+  }
+  assert.ok(sentPass, 'the conflict fix was sent to the worker');
+  const sentAction = sentPass.actions.find((a) => a.type === 'conflict-sent');
+  const parkedTask = sentAction.task;
   assert.equal(parkedTask, 'T02', 'T02 merges second, so it is the branch that conflicts');
+  assert.ok(!sentPass.actions.some((a) => a.type === 'surface' && a.kind === 'conflict'), 'nothing is surfaced for the person to paste');
+  assert.ok(logLines.includes(`conflict-sent ${parkedTask}`), `the control log carries conflict-sent; got: ${logLines.join(' | ')}`);
   assert.equal(worktree.mainCommitCount(), 1, 'main is untouched while the conflict is parked');
 
-  // The parked worker is KEPT ALIVE — the whole fix. Not closed, worktree not removed, task not deleted.
+  // The parked worker is KEPT ALIVE — the whole T28 fix. Not closed, worktree not removed, task not deleted.
   const parked = state.tasks[parkedTask];
-  assert.ok(parked, 'the parked task is still tracked (not deleted from state)');
   assert.equal(parked.phase, 'awaiting-answer', 'the worker is parked AWAITING, not closed');
   assert.ok(!platform.closed.includes(parked.workerId), "the parked worker's session was not closed");
   assert.ok(
     !worktree.events.some((e) => e.op === 'remove' && e.branch === `pir/${SLUG}-${parkedTask}`),
     "the parked worker's worktree/branch was not removed",
   );
-  // Exactly one worker ran the task — never respawned into a clobbering fresh build (the T22 clobber).
+
+  // Exactly one message, to that same worker, from pir: the worker variant of the prompt.
+  assert.equal(platform.sent.length, 1, 'one message sent');
+  const [msg] = platform.sent;
+  assert.equal(msg.to, parked.workerId, 'sent to the worker that built the branch');
+  assert.equal(msg.from, 'pir');
+  assert.match(msg.text, new RegExp(`git merge pir/${SLUG}\\b`), 'it names the feature branch to merge in');
+  assert.ok(msg.text.includes('greeting.txt'), 'it lists the conflicting file');
+  assert.doesNotMatch(msg.text, /-----/, 'no copy markers: it is the message itself');
+  assert.doesNotMatch(msg.text, /claude agents/, 'no attach instructions');
+  assert.equal(parked.decision.prompt, msg.text, 'the sent prompt rides on the parked task');
+  assert.equal(parked.decision.sent, true, 'the parked task records that the fix was sent');
+
+  // Drain: the worker resolves on its branch, re-signals done, and the loop merges the clean branch.
+  const second = drain({ ...base, control, state });
+  assert.equal(second.complete, true, 'the resolved branch merges cleanly and the plan completes');
+  assert.deepEqual(second.readyToMerge, { branch: `pir/${SLUG}` });
+  assert.equal(platform.sent.length, 1, 'the fix was sent once, never re-sent on later passes');
+
+  // The merge was retried only after the worker re-signalled done: one conflicting try, then one clean.
+  const mergesOfParked = worktree.events.filter((e) => e.op === 'mergeTask' && e.branch === `pir/${SLUG}-${parkedTask}`);
+  assert.deepEqual(mergesOfParked.map((e) => !!e.conflict), [true, false], 'one conflicting merge, then one clean merge after re-signal');
   const implSpawns = platform.spawns.filter((s) => s.task === parkedTask && s.role === 'implement');
   assert.equal(implSpawns.length, 1, 'the parked task was built by exactly one implementer — no respawn');
 
-  // Deliver the user's decision to the SAME, still-alive parked worker (by its id; the prompt names it).
-  const name = wname(parkedTask, parked.role);
-  // The conflict surface carries a ready-to-paste resolution prompt (T14) naming that same worker, the
-  // feature branch to merge in and the conflicting file; the worker picks the side, asking if unsure. It
-  // is also on the parked task's decision so the display can show who is asking.
-  assert.ok(conflict.prompt, 'the conflict surface carries a copy-paste resolution prompt (T14)');
-  assert.ok(conflict.prompt.includes(name), 'the prompt names the worker to attach to (§2.9)');
-  assert.match(conflict.prompt, new RegExp(`git merge pir/${SLUG}\\b`), 'the prompt names the feature branch to merge in');
-  assert.ok(conflict.prompt.includes('greeting.txt'), 'the prompt lists the conflicting file');
-  assert.doesNotMatch(conflict.prompt, /KEEP:/, 'no keep-which-side blank for the person (user 2026-09-24)');
-  assert.equal(state.tasks[parkedTask].decision.prompt, conflict.prompt, 'the same prompt rides on the parked task for the display');
-  platform.send(parked.workerId, 'keep hello there', { from: 'person' });
-
-  // Second drain: the worker resolves on its branch, re-signals done, the loop merges the clean branch
-  // and the plan completes, ready to hand off.
-  const second = drain({ ...base, state });
-  assert.equal(second.complete, true, 'the resolved branch merges cleanly and the plan completes');
-  assert.deepEqual(second.readyToMerge, { branch: `pir/${SLUG}` });
-
-  const cleanMergesOfParked = worktree.events.filter(
-    (e) => e.op === 'mergeTask' && e.branch === `pir/${SLUG}-${parkedTask}` && !e.conflict,
-  );
-  assert.equal(cleanMergesOfParked.length, 1, 'the parked task merged cleanly exactly once, after resolution');
-
-  // The DECIDED side won: the feature branch carries the decision, not the losing content (the T22
-  // regression). main is never touched — the person merges pir/demo by hand (DESIGN §2.4).
-  assert.equal(worktree.fileOn(`pir/${SLUG}`, 'greeting.txt').stdout, 'hello there\n', 'the feature branch carries the decided content, not "hi world"');
+  // The resolved side won and main is never touched (the person merges pir/demo by hand, DESIGN §2.4).
+  assert.equal(worktree.fileOn(`pir/${SLUG}`, 'greeting.txt').stdout, 'hello there\n', 'the feature branch carries the resolved content, not "hi world"');
   assert.equal(worktree.events.filter((e) => e.op === 'promote').length, 0, 'nothing was ever promoted to main');
   assert.equal(worktree.mainCommitCount(), 1, 'main is untouched');
+});
+
+test('a coordinator-hit conflict whose worker cannot be reached is printed for the person, in the no-worker wording (live-workers T08)', (t) => {
+  // The worker exited between the listing and the merge: send fails, so the person gets today's
+  // printed prompt, without the "attach in claude agents" line, since there is nobody to attach to.
+  const cr = (mine) => ({ conflictResolve: { file: 'greeting.txt', mine, resolved: 'hello there\n' } });
+  const { platform, base } = setup(t, [{ num: 'T01' }, { num: 'T02' }], {
+    files: { 'greeting.txt': 'hello world\n' },
+    behaviors: { T01: cr('hello there\n'), T02: cr('hi world\n') },
+  });
+  const deaf = Object.create(platform);
+  deaf.send = () => ({ ok: false });
+  const state = createRunState();
+  let surfaced = null;
+  for (let i = 0; i < 20 && !surfaced; i++) {
+    const r = runPass({ ...base, platform: deaf, state });
+    assert.ok(!r.actions.some((a) => a.type === 'conflict-sent'), 'nothing is recorded as sent');
+    surfaced = r.actions.find((a) => a.type === 'surface' && a.kind === 'conflict');
+  }
+  assert.ok(surfaced, 'the conflict is surfaced for the person');
+  assert.match(surfaced.prompt, /----- copy everything between these lines/, 'the person variant, with its copy markers');
+  assert.doesNotMatch(surfaced.prompt, /claude agents/, 'no worker to attach to');
+  assert.equal(state.tasks[surfaced.task].decision.sent, undefined, 'the parked task is not marked sent');
 });
 
 test('the kill switch mid-drain stops dispatch and closes every fake worker; main untouched', (t) => {
@@ -776,7 +800,7 @@ test('restart with a ✅ branch whose worktree folder is gone: it is still merge
 });
 
 test('restart with a ✅ branch whose merge conflicts: the conflict is surfaced and the branch is left untouched, not rebuilt', (t) => {
-  const { worktree, base } = setup(t, [{ num: 'T01' }], { files: { 'greeting.txt': 'base\n' } });
+  const { platform, worktree, base } = setup(t, [{ num: 'T01' }], { files: { 'greeting.txt': 'base\n' } });
   worktree.openFeature(SLUG);
   seedBranch(worktree, SLUG, 'T01', '✅', { file: 'greeting.txt', content: 'T01 version\n' });
   // A sibling changed the same file on the feature branch after T01 was cut, so the adopted merge collides.
@@ -784,7 +808,11 @@ test('restart with a ✅ branch whose merge conflicts: the conflict is surfaced 
   worktree.commitFeature('sibling change on the feature branch');
 
   const r = runPass({ ...base, state: createRunState() });
-  assert.ok(r.actions.some((a) => a.type === 'surface' && a.kind === 'conflict' && a.task === 'T01'), 'the conflict is surfaced to the user');
+  const surfaced = r.actions.find((a) => a.type === 'surface' && a.kind === 'conflict' && a.task === 'T01');
+  assert.ok(surfaced, 'the conflict is surfaced to the user');
+  // No live worker holds a restarted task, so the prompt is still printed for the person (live-workers T08).
+  assert.match(surfaced.prompt, /git checkout pir\/demo-T01/, 'the printed prompt names the branch to check out');
+  assert.equal(platform.sent.length, 0, 'nothing is sent: there is no worker');
   assert.ok(!r.actions.some((a) => a.type === 'merge' && a.task === 'T01'), 'the conflicting branch is not merged');
   assert.ok(!r.actions.some((a) => a.type === 'rebuild' && a.task === 'T01'), 'a reviewed-but-unmergeable branch is never rebuilt');
   assert.ok(worktree.branchExists(`pir/${SLUG}-T01`), 'the branch is left untouched for a person to land');

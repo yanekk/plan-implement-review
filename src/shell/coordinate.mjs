@@ -848,6 +848,10 @@ export function buildRunState({
       // A coordinator-side merge conflict carries a copy-paste resolution prompt (T14); an ordinary
       // question does not, so this is null for a plain ask.
       prompt: phase === 'asking' ? st.decision?.prompt ?? null : null,
+      // The conflict prompt went to the live worker instead (loop.mjs 3d, live-workers §2.10): the row
+      // reads `fixing conflict` and nothing is asked of the person. A later question from that worker
+      // replaces the decision, so the flag drops and the row turns `asking you`.
+      conflictSent: phase === 'asking' && !!st.decision?.sent,
     };
   });
   return { branch, ceiling, complete, readyToMerge: !!readyToMerge, testsReason: testsReason ?? null, interrupted: !!interrupted, tasks };
@@ -1154,6 +1158,8 @@ async function main(argv) {
       // via line() — never inside the compact, clipped live frame, which would truncate it to useless and
       // re-open the T15 wrap bug. A conflict is surfaced exactly once, on the pass it happens, so each
       // prompt prints exactly once; the compact live footer keeps naming the parked worker to attach to.
+      // A conflict sent to its live worker (live-workers T08) is a `conflict-sent` action, not a surface,
+      // so it prints nothing here.
       for (const s of r.surfaces) {
         if (s.kind === 'conflict' && s.prompt) renderer.line(`\n${s.prompt}`);
       }

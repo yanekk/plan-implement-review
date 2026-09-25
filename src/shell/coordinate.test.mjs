@@ -786,7 +786,7 @@ test('buildRunState assembles the display model input from a pass result and the
   assert.equal(rs.branch, 'pir/demo');
   assert.equal(rs.ceiling, 4);
   const by = Object.fromEntries(rs.tasks.map((t) => [t.id, t]));
-  assert.deepEqual(by.T01, { id: 'T01', slug: 'done-one', deps: [], done: true, phase: null, since: null, doneMs: 6400, question: null, prompt: null });
+  assert.deepEqual(by.T01, { id: 'T01', slug: 'done-one', deps: [], done: true, phase: null, since: null, doneMs: 6400, question: null, prompt: null, conflictSent: false });
   assert.equal(by.T02.phase, 'building');
   assert.equal(by.T02.since, 100);
   assert.equal(by.T03.phase, 'asking');
@@ -796,6 +796,41 @@ test('buildRunState assembles the display model input from a pass result and the
   // reports no phase and passes the deps through.
   assert.equal(by.T04.phase, null);
   assert.deepEqual(by.T04.deps, ['T03']);
+});
+
+test('a coordinator-hit conflict with a live worker is sent, not surfaced: no paste block, and the row reads fixing (live-workers T08)', (t) => {
+  const cr = (mine) => ({ conflictResolve: { file: 'greeting.txt', mine, resolved: 'hello there\n' } });
+  const { coordinator, platform } = setup(t, [{ num: 'T01' }, { num: 'T02' }], {
+    files: { 'greeting.txt': 'hello world\n' },
+    behaviors: { T01: cr('hello there\n'), T02: cr('hi world\n') },
+  });
+  let sent = null;
+  let r;
+  for (let i = 0; i < 20 && !sent; i++) {
+    r = coordinator.pass();
+    sent = r.actions.find((a) => a.type === 'conflict-sent');
+    assert.ok(!r.surfaces.some((s) => s.kind === 'conflict'), 'no conflict surface, so the bin prints no paste block');
+  }
+  assert.ok(sent, 'the conflict was sent to the live worker');
+  assert.equal(platform.sent.length, 1);
+  const rs = buildRunState({ passTasks: r.tasks, stateTasks: coordinator.state.tasks, branch: 'pir/demo', ceiling: 4 });
+  const row = rs.tasks.find((x) => x.id === sent.task);
+  assert.equal(row.phase, 'asking');
+  assert.equal(row.conflictSent, true, 'the run state carries conflictSent for the display');
+});
+
+test('buildRunState marks conflictSent only for a sent conflict', () => {
+  const passTasks = [
+    { num: 'T01', name: 'sent', deps: [], state: '⬜' },
+    { num: 'T02', name: 'printed', deps: [], state: '⬜' },
+  ];
+  const stateTasks = {
+    T01: { role: 'review', phase: 'awaiting-answer', decision: { kind: 'conflict', text: 'c', prompt: 'p', sent: true } },
+    T02: { role: 'review', phase: 'awaiting-answer', decision: { kind: 'conflict', text: 'c', prompt: 'p' } },
+  };
+  const by = Object.fromEntries(buildRunState({ passTasks, stateTasks, branch: 'b', ceiling: 2 }).tasks.map((x) => [x.id, x]));
+  assert.equal(by.T01.conflictSent, true);
+  assert.equal(by.T02.conflictSent, false);
 });
 
 // --- 19. Control-folder cleanup on restart (DESIGN §2.7, §3.5) -------------------------------------
