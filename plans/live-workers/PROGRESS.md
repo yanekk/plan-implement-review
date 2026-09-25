@@ -27,7 +27,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T01 | stream-protocol | T00 | ✅ | |
 | T02 | conversation-model | T01 | ⬜ | |
 | T03 | person-input | T01 | ✅ | |
-| T04 | worker-process | T01, T10 | ⬜ | |
+| T04 | worker-process | T01, T10 | ✅ | |
 | T05 | live-platform | T04 | ⬜ | |
 | T06 | reap-workers | T04, T05 | ⬜ | |
 | T07 | person-inbox | T03, T05 | ⬜ | |
