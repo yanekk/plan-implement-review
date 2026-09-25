@@ -8,6 +8,7 @@ changed.
 
 | Date | | Finding |
 |---|---|---|
+| 2026-09-25 | ✅ | Post-plan fix `a311861` verified by the user in `pir` on a live `single` run whose end gate slept 60s: `running the tests` with ticking clock was clear, and `pir` stayed open after `finished`. |
 | 2026-09-25 | ✅ | T12 watched by the user in the `pir` viewer: `preparing` reads as getting ready, the green ending is clear. Seen on a 90s-setup scratch halted before spawn; an 8s preparing ends before the run is opened. |
 | 2026-09-25 | 📌 | T12 live `single` run, setup `sleep 8 && touch .setup-ran`, ceiling 1: `.setup-ran` 21:34:18, spawn 21:34:21, `setup/T01.log` written, `finished`, `readyToMerge` true, `testsReason` null, `tests.log` ran setup then `npm test`. |
 | 2026-09-25 | 📌 | T12 blockless scratch: `pir.mjs single` exit 1 with the T03 message, no `.parallel`, no branch. Narrow pass wrote `setup: none`/`npm test`, fresh copy verify exit 0, committed; `startRun` then passed both block gates and stopped on a pre-placed HALT. |
