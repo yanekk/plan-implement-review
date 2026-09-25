@@ -14,7 +14,7 @@ writes a cell also fixes the over-budget cell they walk past.
 **Last updated:** 2026-09-25
 **Starts after:** `declared-test-command` is merged to main (user 2026-09-24, plan review): done,
 d1f95ac, 2026-09-25. `nudge-quiet-worker` and `resume-dead-worker` wait for this plan.
-**Next `pir-work` will:** review T10.
+**Next `pir-work` will:** implement T01 or T11 (dependencies met).
 
 ## Tasks
 
@@ -33,7 +33,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T07 | person-inbox | T03, T05 | ⬜ | |
 | T08 | conflict-to-worker | T05 | ⬜ | |
 | T09 | asking-kinds | T05, T08 | ⬜ | |
-| T10 | runtime-deps | T00 | 🔍 | Two pinned deps, lockfile, `.npmrc`, install.sh `npm ci` into the engine (fails loud offline), boundary bans bare imports, 7 new tests. Deviations: smoke test imports `TuiMainScreen` (0.87.1 has no `TUI`); `.npmrc` uses `omit[]=`; install runs `npm ci --omit=dev --omit=peer --omit=optional` because a CLI omit replaces `.npmrc`. |
+| T10 | runtime-deps | T00 | ✅ | Clean, no fix commit. Recorded deviations accepted (pi-tui 0.87.1 has no `TUI`; `omit[]=`; CLI omits repeated). Probed: fresh clone setup+tests, scratch-HOME install imports both, npm ci failure simulated by a failing npm shim (loud message, exit 1), native `.node` ships in-package, no zod/MCP/bundled claude installed. |
 | T11 | screen-on-pi-tui | T10 | ⬜ | |
 | T12 | task-selection | T09, T11 | ⬜ | |
 | T13 | conversation-view | T02, T07, T12 | ⬜ | |
@@ -43,7 +43,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T17 | docs | T06, T07, T08, T13, T14, T15 | ⬜ | |
 | T18 | live-run | T08, T13, T14, T16, T17 | ⬜ | |
 
-**Review queue:** T10
+**Review queue:** empty
 
 ## Blocked on the user
 
