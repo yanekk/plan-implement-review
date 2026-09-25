@@ -39,6 +39,7 @@ const GLYPH = {
   building: null, // the spinner frame — filled in at paint time
   reviewing: null,
   merging: null,
+  'fixing-conflict': null, // working, so it spins like the other active rows
   asking: '●',
   conflict: '●',
   done: '✔',
@@ -111,6 +112,7 @@ const ROW_STYLE = {
   building: 'active',
   reviewing: 'active',
   merging: 'active',
+  'fixing-conflict': 'active', // the worker was sent the fix and is working (live-workers §2.10)
   asking: 'asking',
   conflict: 'conflict',
   done: 'done',
@@ -192,7 +194,7 @@ function footerLines(footer, summary, spinnerChar = SPINNER[0]) {
       // The prompt itself is multi-line, so it is not drawn in this bounded block: `pir` shows it under the
       // live view, and the coordinator's own screen prints it once when the conflict happens (T14).
       const who = [footer.task, footer.slug].filter(Boolean).join(' ');
-      return [blank, { text: `● ${who} — merge conflict; paste the prompt shown in \`pir\` into its worker (\`claude agents\`)`, style: 'conflict' }];
+      return [blank, { text: `● ${who} — merge conflict; paste the prompt shown in \`pir\` into its worker`, style: 'conflict' }];
     }
     case 'handoff':
       return [

@@ -410,7 +410,11 @@ export function adoptedAndDispatched() {
 export function mergeConflictResolved({ file, content } = {}) {
   return fact('merge-conflict-resolved', 'A coordinator-hit conflict was kept alive, resolved by a person on the live worker, and the decided side was handed off', (bundle) => {
     const evidence = [];
-    const surfaces = flowOf(bundle, 'surface').filter((e) => /^T\d+$/.test(e.rest));
+    // Since live-workers T08 a conflict whose worker is live is SENT to it (`conflict-sent {task}`) rather
+    // than surfaced; only the no-worker path still writes `surface {task}`. Either line marks the conflict.
+    const surfaces = [...flowOf(bundle, 'surface'), ...flowOf(bundle, 'conflict-sent')]
+      .filter((e) => /^T\d+$/.test(e.rest))
+      .sort((a, b) => (a.ts < b.ts ? -1 : a.ts > b.ts ? 1 : 0));
     if (surfaces.length === 0) {
       return { pass: false, evidence, detail: 'no task surface — a merge conflict was expected to be surfaced' };
     }

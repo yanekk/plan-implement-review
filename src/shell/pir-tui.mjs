@@ -299,7 +299,8 @@ export function buildWatchFrame(view, { now, spinnerChar = SPINNER[0], ui = init
     // re-surfaces its own conflicts. Wrapped with no indent so the copy block pastes exactly.
     if (alive) {
       for (const t of snap.runState?.tasks ?? []) {
-        if (t.done || t.phase !== 'asking' || !t.prompt) continue;
+        // A conflict pir sent to its live worker asks nothing of the person: no paste block (live-workers §2.10).
+        if (t.done || t.phase !== 'asking' || !t.prompt || t.conflictSent) continue;
         lines.push([]);
         const [head, ...rest] = String(t.prompt).replace(/\s+$/, '').split('\n');
         note(head, 'conflict', '');

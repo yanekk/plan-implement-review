@@ -358,7 +358,23 @@ test('a merge conflict row and footer paint orange and say `merge conflict`; the
   assert.equal(row.style, 'conflict');
   const foot = lines[lines.length - 1];
   assert.match(foot.text, /T05 clash — merge conflict; paste the prompt shown in `pir`/);
+  assert.doesNotMatch(foot.text, /claude agents/, 'no worker to attach to on the printed path (live-workers T08)');
   assert.equal(foot.style, 'conflict');
+});
+
+test('a conflict sent to its live worker paints a spinning `fixing conflict` row in the active style, with no footer (live-workers T08)', async () => {
+  const { styledLines } = await import('./render.mjs');
+  const d = buildDisplay(
+    { branch: 'pir/demo', ceiling: 4, tasks: [{ id: 'T05', slug: 'clash', deps: [], done: false, phase: 'asking', since: NOW, doneMs: null, question: 'merge conflict in a.txt', prompt: 'sent', conflictSent: true }] },
+    { now: NOW },
+  );
+  const lines = styledLines(d, { spinnerChar: '⠋' });
+  assert.doesNotMatch(lines[0].text, /merge conflict|asking you/, 'the summary counts it as running only');
+  assert.match(lines[0].text, /1 running/);
+  const row = lines.find((l) => l.text.includes('T05'));
+  assert.match(row.text, /⠋ T05\s+clash\s+fixing conflict/);
+  assert.equal(row.style, 'active');
+  assert.ok(!lines.some((l) => /paste|claude agents/.test(l.text)), 'no conflict footer');
 });
 
 test('a preparing row spins and is tinted active, like a building one (T07)', () => {

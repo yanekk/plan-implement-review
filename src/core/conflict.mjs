@@ -15,12 +15,18 @@
 // the person to fill in before pasting; the person dropped it (user 2026-09-24) — the worker asks when
 // the right side is a judgement, like any other decision. The prompt still bakes in no resolution.
 //
-// The human is the transport (§2.2). This returns text the run prints on its OWN display; it sends
-// nothing to the worker and revives no down-channel.
+// The function itself sends nothing: it returns text. The loop prints the 'person' variant on its own
+// display, or sends the 'worker' variant down the live line (below).
 //
 // workerName is the `/`-separated session name to attach to (DESIGN §2.9). It is null when no live
 // worker holds the task — the restart-reconcile path, where the crashed run's session is gone (§2.6) —
 // and the prompt then names the branch to check out and land by hand instead of a worker to re-signal.
+//
+// audience (live-workers T08, DESIGN §2.10). 'person' (the default) is the text above, printed for a
+// person to paste; since T08 the loop only prints it when no live worker holds the task, so it passes
+// workerName null. 'worker' is what pir SENDS a live worker over its line: no copy markers and no
+// attach instructions, since it is the message itself, and it is addressed to the worker, so "ask me"
+// becomes "ask the person" — the person, not pir, answers a worker's question (§2.2).
 
 // The pasteable block is delimited so the person can select exactly what to copy — plain ASCII markers,
 // never box-drawing, because those would be copied into the worker along with the content.
@@ -35,10 +41,12 @@ export function buildConflictPrompt({
   taskBranch,
   featureBranch,
   files = [],
+  audience = 'person',
 } = {}) {
+  if (audience === 'worker') return workerPrompt({ plan, taskBranch, featureBranch, files });
   const label = [task, slug].filter(Boolean).join(' ') || 'a task';
   const branchOn = taskBranch ? ` (${taskBranch})` : '';
-  const fileList = (files.length ? files : ['(the feature branch)']).map((f) => `  - ${f}`).join('\n');
+  const fileList = listFiles(files);
 
   // Where the person goes to drive the resolution: the live worker's own session, or — on a restart
   // with no live worker — the task branch, checked out by hand.
@@ -54,9 +62,7 @@ export function buildConflictPrompt({
   // runs projects on any stack, and the gate at the end of the run runs the same lines (DESIGN §2.5).
   // The folder is the PLAN's slug; `slug` is the task's and named a folder that does not exist
   // (plans/red-reason-visible/, declared-test-command T05, 2026-09-24).
-  const testStep =
-    `the \`test\` lines at the top of plans/${plan || '{plan}'}/DESIGN.md (run its \`setup\` lines\n` +
-    `     first if the worktree is not ready)`;
+  const testStep = testStepFor(plan);
   const finish = workerName
     ? `  4. Signal done again so the run can merge your branch.`
     : `  4. Commit, run the \`test\` lines again, then land this branch yourself — the run has parked it\n` +
@@ -86,4 +92,41 @@ export function buildConflictPrompt({
     `${where}\n\n` +
     `${COPY_START}\n${pasteable}\n${COPY_END}\n`
   );
+}
+
+function listFiles(files) {
+  return (files.length ? files : ['(the feature branch)']).map((f) => `  - ${f}`).join('\n');
+}
+
+function testStepFor(plan) {
+  return (
+    `the \`test\` lines at the top of plans/${plan || '{plan}'}/DESIGN.md (run its \`setup\` lines\n` +
+    `     first if the worktree is not ready)`
+  );
+}
+
+// The message pir sends a live worker (DESIGN §2.10). The worker had already integrated cleanly and
+// signalled done, so it opens by saying its branch did NOT land. The finish step names the `done` report,
+// because re-signalling done is what makes the loop's merge step run again (§2.5).
+function workerPrompt({ plan, taskBranch, featureBranch, files }) {
+  const branchOn = taskBranch ? ` (${taskBranch})` : '';
+  return [
+    `The run could not merge your branch into ${featureBranch}: the merge conflicts, so your task has`,
+    `not landed. Resolve it on your own task branch${branchOn}:`,
+    ``,
+    `  git merge ${featureBranch}`,
+    ``,
+    `Conflicting file(s):`,
+    listFiles(files),
+    ``,
+    `Resolve it where both sides' work makes the right result clear. If choosing a side needs a`,
+    `judgement, ask the person before you resolve it, as with any other decision.`,
+    ``,
+    `Then:`,
+    `  1. Resolve the conflict in the file(s) above.`,
+    `  2. git add the resolved file(s) and commit.`,
+    `  3. Run ${testStepFor(plan)}.`,
+    `  4. Signal done again (a fresh \`done\` report) so the run can merge your branch.`,
+    ``,
+  ].join('\n');
 }

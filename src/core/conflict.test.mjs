@@ -81,3 +81,24 @@ test('the test step names the PLAN folder, never the task slug (declared-test-co
   assert.match(p, /`test` lines at the top of plans\/demo\/DESIGN\.md/);
   assert.ok(!p.includes('plans/greet/'), 'the task slug is not a plan folder');
 });
+
+// --- the worker variant: what pir sends a live worker over its line (live-workers T08, DESIGN §2.10) ---
+
+test('the worker variant names the branches and files, has no copy markers, and tells the worker to ask the person', () => {
+  const p = buildConflictPrompt({ ...base, plan: 'demo', audience: 'worker' });
+  assert.match(p, /git merge pir\/demo\b/, 'it tells the worker to merge the feature branch in');
+  assert.ok(p.includes('pir/demo-T02'), 'it names the task branch');
+  assert.ok(p.includes('greeting.txt') && p.includes('src/app.mjs'), 'it lists every conflicting file');
+  assert.doesNotMatch(p, /-----/, 'no copy markers: the text IS the message');
+  assert.doesNotMatch(p, /claude agents|[Aa]ttach/, 'no attach instructions for a person');
+  assert.ok(!p.includes(WORKER), 'it does not name the worker to itself');
+  assert.match(p, /judgement, ask the person/, 'a judgement goes to the person');
+  assert.match(p, /`test` lines at the top of plans\/demo\/DESIGN\.md/, 'it runs the plan\'s own tests');
+  assert.match(p, /commit/i);
+  assert.match(p, /[Ss]ignal done again/, 'it re-signals done so the run merges again');
+  assert.doesNotMatch(p, /KEEP:|resolved:/, 'no side is baked in');
+});
+
+test('the person variant is the default and is unchanged by the audience switch', () => {
+  assert.equal(buildConflictPrompt({ ...base, audience: 'person' }), buildConflictPrompt(base));
+});

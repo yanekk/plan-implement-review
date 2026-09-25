@@ -347,8 +347,8 @@ export function runPass({ platform, worktree, repo, slug, maxWorkers, state, con
   // The loop itself sends a worker nothing beyond the opening instruction, which platform.spawn pushes
   // as the worker's first message (live-workers DESIGN §2.1). A worker that cannot continue drops a
   // question/decision report UP (applyMessages below parks it and records the escalation for the live
-  // display). The line down exists (platform.send, DESIGN §1 Stance); the merge-conflict fix is the
-  // loop's first use of it (live-workers T08). The spawn-time hello stays retired (T30).
+  // display). The line down exists (platform.send, DESIGN §1 Stance); the merge-conflict fix (3d) is
+  // the loop's one use of it (live-workers T08). The spawn-time hello stays retired (T30).
 
   // 0. Open the feature branch once, in the coordinator's own worktree (DESIGN §2.9).
   if (!state.feature) {
@@ -545,9 +545,9 @@ export function runPass({ platform, worktree, repo, slug, maxWorkers, state, con
   // close the worker (the T22 conflict-path bug, where the same pass parked the conflict yet still
   // closed the done+merged worker and deleted its task, letting the next pass respawn a clobbering
   // fresh build). On a conflict the coordinator keeps the worker ALIVE and parked (AWAITING): its
-  // session, worktree and task all stay, it holds its slot, and the person attaches to that same worker
-  // directly to drive the resolution — nothing is routed down (§2.2, the down-channel is gone). It
-  // resolves on its own branch and re-signals done (§2.5 Option 2, T28).
+  // session, worktree and task all stay, it holds its slot, and pir sends that same worker the
+  // resolution prompt over its live line (live-workers §2.10). It resolves on its own branch and
+  // re-signals done (§2.5 Option 2, T28).
   for (const workerId of decision.merge) {
     const found = taskByWorkerId(state, workerId);
     if (!found) continue;
@@ -572,27 +572,48 @@ export function runPass({ platform, worktree, repo, slug, maxWorkers, state, con
     t.busySince = undefined;
     const res = worktree.mergeTask(t.worktree.branch);
     if (res.conflict) {
-      // Keep the worker alive and parked — do NOT close it, remove its worktree, or delete its task.
-      // There is no down-channel and no answer() any more (DESIGN §2.2, T03): the PERSON drives the
-      // resolution. The run parks the worker and hands the person a ready-to-paste resolution prompt
-      // (buildConflictPrompt, T14) naming this worker, the branch to merge in, and the conflicting files
-      // — the worker picks the side and asks if that is a judgement. The person attaches to this same worker, resolves
-      // on its branch and re-signals done, at which point this merge step runs again and lands cleanly
-      // (§2.5, §2.8, T28). The run routes nothing down.
+      // Keep the worker alive and parked — do NOT close it, remove its worktree, or delete its task
+      // (T28). The worker that built the branch holds the task's context, so pir SENDS it the resolution
+      // prompt over its live line (live-workers DESIGN §2.10): merge the feature branch in, resolve,
+      // test, commit, re-signal done — asking the person if choosing a side is a judgement. Its fresh
+      // `done` report runs this merge step again. It is sent once: the task stays parked until that
+      // report, so this branch is not reached again while the worker works.
+      //
+      // Only when the send fails (the worker exited between the listing and this merge) is the prompt
+      // printed for a person, in the no-worker wording (workerName null): there is nobody to attach to.
       const text = `merge conflict in ${res.files?.join(', ') || 'the feature branch'}`;
-      const name = workerName({ repo, plan: slug, task: num, slug: t.slug, role: t.role });
-      const prompt = buildConflictPrompt({
-        task: num,
-        slug: t.slug,
-        plan: slug,
-        workerName: name,
-        taskBranch: t.worktree.branch,
-        featureBranch: state.feature.branch,
-        files: res.files,
-      });
+      const promptFor = (audience) =>
+        buildConflictPrompt({
+          task: num,
+          slug: t.slug,
+          plan: slug,
+          workerName: null,
+          taskBranch: t.worktree.branch,
+          featureBranch: state.feature.branch,
+          files: res.files,
+          audience,
+        });
       t.phase = AWAITING;
-      t.decision = { kind: 'conflict', text, prompt };
+      const workerText = promptFor('worker');
+      if (platform.send(workerId, workerText, { from: 'pir' })?.ok) {
+        t.decision = { kind: 'conflict', text, prompt: workerText, sent: true };
+        record('conflict-sent', { task: num, workerId, text });
+        continue;
+      }
+      // A failed send means the worker is gone, so this is the restart path's case — a reviewed branch
+      // with nobody to fix it — and it is handled the same way: ⛔ on the feature row, the branch kept,
+      // the task forgotten. Left parked, the next pass lists the worker dead, deletes the branch and
+      // rebuilds from scratch, while the printed prompt tells the person to land that branch by hand
+      // (reproduced in T08 review, 2026-09-25).
+      const prompt = promptFor('person');
       record('surface', { task: num, kind: 'conflict', text, prompt });
+      const blocked = reconcileTaskRow(readFileSync(featureProgressPath, 'utf8'), { num, state: '⛔', notes: '' });
+      writeFileSync(featureProgressPath, blocked);
+      worktree.commitFeature(`reconcile ${num} → ⛔ (merge conflict, worker gone, needs a hand)`);
+      platform.close(workerId);
+      platform.remove?.(workerId);
+      closedThisPass.add(workerId);
+      delete state.tasks[num];
       continue;
     }
     // The row folds back as ✅ (the task has been implemented and reviewed).
