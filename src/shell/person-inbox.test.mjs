@@ -396,13 +396,13 @@ test('waitForDrop wakes on any of several folders, and on abort', async () => {
 
 // --- startup hygiene ------------------------------------------------------------------------------
 
-test('startup hygiene empties inbox/ like reports/', (t) => {
+test('startup hygiene empties inbox/ like reports/', async (t) => {
   const repo = mkdtempSync(join(tmpdir(), 'pir-hygiene-'));
   t.after(() => rmSync(repo, { recursive: true, force: true }));
   const control = fileControl(repo, 'plan');
   mkdirSync(inboxDirOf(control.dir), { recursive: true });
   writeFileSync(join(inboxDirOf(control.dir), '1.json'), JSON.stringify({ to: 'old-worker', kind: 'message', text: 'stale' }));
-  const { halted, cleared } = startupControlHygiene(control);
+  const { halted, cleared } = await startupControlHygiene(control, { reap: async () => ({ reaped: [] }) });
   assert.equal(halted, false);
   assert.ok(cleared.includes('inbox/'));
   assert.deepEqual(readdirSync(inboxDirOf(control.dir)), []);

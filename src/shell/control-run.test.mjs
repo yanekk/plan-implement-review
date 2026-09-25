@@ -6,6 +6,8 @@ import {
   writeFileSync,
   existsSync,
   rmSync,
+  readFileSync,
+  readdirSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -13,7 +15,7 @@ import { join } from 'node:path';
 import { stopRun, removeRun } from './control-run.mjs';
 import { writeRecord, listRecords, recordPath } from './index-store.mjs';
 import { snapshotPath } from './snapshot-store.mjs';
-import { workerName } from '../core/naming.mjs';
+import { reapRecorded } from './reap.mjs';
 
 // --- stopRun: a fake coordinator process the timeline is driven against -------------------------
 //
@@ -52,111 +54,126 @@ function makeProcess({ termDeathAfterMs = null, startDead = false } = {}) {
   };
 }
 
-// A record carries only what stop reads: the pid to signal, and the repo+slug that name this run's
-// workers. The rest of the index-record fields are irrelevant to stop and left off.
+// A record carries only what stop reads: the pid to signal, and the control folder whose workers.json
+// the reap reads. The rest of the index-record fields are irrelevant to stop and left off.
 function stopRecord(overrides = {}) {
-  return { pid: 4242, repo: 'myrepo', slug: 'myplan', ...overrides };
+  return { pid: 4242, repo: 'myrepo', slug: 'myplan', controlDir: '/ctl', ...overrides };
 }
 
-// A platform whose every method throws — passed where stop must never touch it (the clean paths), so a
-// stray reap on a non-escalated stop fails loudly rather than passing silently.
-const explodingPlatform = {
-  list: () => {
-    throw new Error('platform.list must not be called on a clean stop');
-  },
-  close: () => {
-    throw new Error('platform.close must not be called on a clean stop');
-  },
-};
+// A reap that records when it ran, and whether the coordinator was already dead at that moment, so a
+// test can prove stop reaps only after the coordinator is gone (DESIGN §2.12).
+function spyReap(proc) {
+  const calls = [];
+  const reap = async (controlDir) => {
+    calls.push({ controlDir, coordinatorSignals: [...proc.signals] });
+    return { reaped: [], skipped: [] };
+  };
+  return { reap, calls };
+}
 
-test('stop: coordinator exits within grace → one SIGTERM, no SIGKILL, escalated:false', async () => {
+test('stop: coordinator exits within grace → one SIGTERM, no SIGKILL, escalated:false, then the reap', async () => {
   // It dies 300 ms after SIGTERM — well inside the 4 s grace, after a few poll passes.
   const { proc, kill, now, sleep } = makeProcess({ termDeathAfterMs: 300 });
+  const { reap, calls } = spyReap(proc);
 
-  const result = await stopRun(stopRecord(), { kill, now, sleep, platform: explodingPlatform });
+  const result = await stopRun(stopRecord(), { kill, now, sleep, reap });
 
   assert.deepEqual(result, { stopped: true, escalated: false });
   assert.deepEqual(proc.signals, ['SIGTERM'], 'exactly one SIGTERM, and no SIGKILL');
+  assert.deepEqual(calls, [{ controlDir: '/ctl', coordinatorSignals: ['SIGTERM'] }], 'workers.json reaped once, after the exit');
 });
 
-test('stop: coordinator still alive after grace → SIGKILL + workers reaped, escalated:true', async () => {
-  const { proc, kill, now, sleep } = makeProcess({ termDeathAfterMs: null }); // never dies on TERM
-  const closed = [];
-  const worker = workerName({ repo: 'myrepo', plan: 'myplan', task: 'T01', slug: 'foo', role: 'implement' });
-  const platform = {
-    list: () => [{ id: 'sess-1', name: worker }],
-    close: (id) => {
-      closed.push(id);
-      return { ok: true };
-    },
-  };
+test('stop: coordinator still alive after grace → SIGKILL, then the recorded workers are reaped, escalated:true', async () => {
+  const { proc, kill, now, sleep, clock } = makeProcess({ termDeathAfterMs: null }); // never dies on TERM
+  const { reap, calls } = spyReap(proc);
 
-  const result = await stopRun(stopRecord(), { kill, now, sleep, platform });
+  const result = await stopRun(stopRecord(), { kill, now, sleep, reap });
 
   assert.deepEqual(result, { stopped: true, escalated: true });
   assert.deepEqual(proc.signals, ['SIGTERM', 'SIGKILL'], 'TERM first, then KILL after the grace');
-  assert.deepEqual(closed, ['sess-1'], 'the run’s worker was closed');
+  assert.ok(clock.t >= 4000, 'the SIGKILL waited out the 4 s grace');
+  assert.equal(calls.length, 1);
+  assert.deepEqual(calls[0].coordinatorSignals, ['SIGTERM', 'SIGKILL'], 'the reap ran after the coordinator was killed');
 });
 
-test('stop on a coordinator already gone → no signal, stopped (idempotent)', async () => {
+test('stop on a coordinator already gone → no signal, stopped, and its orphans are still reaped', async () => {
   const { proc, kill, now, sleep } = makeProcess({ startDead: true });
+  const { reap, calls } = spyReap(proc);
 
-  const result = await stopRun(stopRecord(), { kill, now, sleep, platform: explodingPlatform });
+  const result = await stopRun(stopRecord(), { kill, now, sleep, reap });
 
   assert.deepEqual(result, { stopped: true, escalated: false });
   assert.deepEqual(proc.signals, [], 'a dead pid is never signalled');
+  assert.equal(calls.length, 1, 'a crashed coordinator leaves workers.json behind; stop reaps it');
 });
 
-test('stop never removes worktrees — only sessions are closed, on the escalated path', async () => {
-  const { kill, now, sleep } = makeProcess({ termDeathAfterMs: null });
-  const worker = workerName({ repo: 'myrepo', plan: 'myplan', task: 'T01', slug: 'foo', role: 'review' });
-  let worktreeRemovals = 0;
-  let sessionRemovals = 0;
-  const platform = {
-    list: () => [{ id: 'sess-1', name: worker }],
-    close: () => ({ ok: true }),
-    // The two teardown surfaces stop must never reach: a worktree removal, and the claude-agents
-    // record removal (`platform.remove`). Step 3 closes sessions and nothing else (§2.6).
-    removeWorktree: () => {
-      worktreeRemovals += 1;
-    },
-    remove: () => {
-      sessionRemovals += 1;
-    },
-  };
-
-  const result = await stopRun(stopRecord(), { kill, now, sleep, platform });
-
-  assert.equal(result.escalated, true);
-  assert.equal(worktreeRemovals, 0, 'no worktree is ever torn down by a stop');
-  assert.equal(sessionRemovals, 0, 'stop closes sessions, it does not remove their agent records');
+test('stop with the default reap reads workers.json: a matching live worker is killed, the coordinator first', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'pir-stop-'));
+  try {
+    // One process table on one clock: the coordinator (4242) ignores SIGTERM, worker 777 leaves on it,
+    // and worker 888 is alive but was recorded with no start time, so it can never be verified and is
+    // never signalled.
+    const clock = { t: 0 };
+    const signals = [];
+    const dead = new Set();
+    const kill = (pid, sig) => {
+      if (sig === 0) {
+        if (dead.has(pid)) esrch();
+        return;
+      }
+      signals.push([pid, sig]);
+      if (sig === 'SIGKILL' || pid === 777) dead.add(pid);
+    };
+    writeFileSync(
+      join(dir, 'workers.json'),
+      JSON.stringify([
+        { id: 'a', task: 'T01', role: 'implement', pid: 777, startTime: 'launch-777' },
+        { id: 'b', task: 'T02', role: 'review', pid: 888, startTime: null },
+      ]),
+    );
+    const result = await stopRun(stopRecord({ controlDir: dir }), {
+      kill,
+      now: () => clock.t,
+      sleep: async (ms) => {
+        clock.t += ms;
+      },
+      reap: (controlDir) =>
+        reapRecorded(controlDir, {
+          kill,
+          startTimeOf: (pid) => `launch-${pid}`,
+          now: () => clock.t,
+          wait: async (ms) => {
+            clock.t += ms;
+          },
+        }),
+    });
+    assert.equal(result.escalated, true);
+    assert.deepEqual(signals, [
+      [4242, 'SIGTERM'],
+      [4242, 'SIGKILL'],
+      [777, 'SIGTERM'],
+    ]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
-test('escalated reap closes only THIS run’s workers, not another plan’s or a foreign agent', async () => {
-  const { kill, now, sleep } = makeProcess({ termDeathAfterMs: null });
-  const closed = [];
-  const mineImpl = workerName({ repo: 'myrepo', plan: 'myplan', task: 'T01', slug: 'a', role: 'implement' });
-  const mineRev = workerName({ repo: 'myrepo', plan: 'myplan', task: 'T02', slug: 'b', role: 'review' });
-  // Same repo, different plan — shares the git dir and so appears in the same list, but is not ours.
-  const sibling = workerName({ repo: 'myrepo', plan: 'otherplan', task: 'T01', slug: 'c', role: 'implement' });
-  const foreign = 'some unrelated agent';
-  const platform = {
-    list: () => [
-      { id: 'mine-1', name: mineImpl },
-      { id: 'sibling-1', name: sibling },
-      { id: 'foreign-1', name: foreign },
-      { id: 'mine-2', name: mineRev },
-    ],
-    close: (id) => {
-      closed.push(id);
-      return { ok: true };
+test('stop without a control folder skips the reap and still stops', async () => {
+  const { kill, now, sleep } = makeProcess({ termDeathAfterMs: 0 });
+  const result = await stopRun(stopRecord({ controlDir: undefined }), {
+    kill,
+    now,
+    sleep,
+    reap: () => {
+      throw new Error('no control folder, nothing to reap');
     },
-  };
+  });
+  assert.deepEqual(result, { stopped: true, escalated: false });
+});
 
-  const result = await stopRun(stopRecord(), { kill, now, sleep, platform });
-
-  assert.equal(result.escalated, true);
-  assert.deepEqual(closed.sort(), ['mine-1', 'mine-2'], 'only this run’s two workers are reaped');
+test('the stop path lists no `claude agents` session: control-run.mjs has no platform', () => {
+  const src = readFileSync(new URL('./control-run.mjs', import.meta.url), 'utf8');
+  assert.doesNotMatch(src, /platform|claude agents|isWorkerOf/);
 });
 
 // --- removeRun: real scratch dirs, proving the plan is never touched ----------------------------
@@ -257,6 +274,28 @@ test('remove of an already-removed run does not throw and returns removed (idemp
       result = removeRun(s.record, { dir: s.runsDir });
     });
     assert.deepEqual(result, { removed: true });
+  } finally {
+    cleanup(s.home, s.repoRoot);
+  }
+});
+
+test('remove deletes conversations/ and leaves every other file in the control folder alone', () => {
+  const s = scaffold();
+  try {
+    const conv = join(s.controlDir, 'conversations');
+    mkdirSync(conv, { recursive: true });
+    writeFileSync(join(conv, 'T01-implement-1.ndjson'), '{}\n');
+    writeFileSync(join(conv, 'T01-review-1.ndjson'), '{}\n');
+    for (const f of ['log', 'workers.json', 'HALT']) writeFileSync(join(s.controlDir, f), 'keep');
+    mkdirSync(join(s.controlDir, 'reports'));
+    writeFileSync(join(s.controlDir, 'reports', '1.json'), '{}');
+
+    removeRun(s.record, { dir: s.runsDir });
+
+    assert.ok(!existsSync(conv), 'the conversations folder is gone');
+    assert.deepEqual(readdirSync(s.controlDir).sort(), ['HALT', 'log', 'reports', 'workers.json']);
+    for (const f of ['log', 'workers.json', 'HALT']) assert.equal(readFileSync(join(s.controlDir, f), 'utf8'), 'keep');
+    assert.deepEqual(readdirSync(join(s.controlDir, 'reports')), ['1.json']);
   } finally {
     cleanup(s.home, s.repoRoot);
   }

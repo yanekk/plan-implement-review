@@ -29,7 +29,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T03 | person-input | T01 | ✅ | |
 | T04 | worker-process | T01, T10 | ✅ | |
 | T05 | live-platform | T04 | ✅ | |
-| T06 | reap-workers | T04, T05 | ⬜ | |
+| T06 | reap-workers | T04, T05 | ✅ | |
 | T07 | person-inbox | T03, T05 | ✅ | Review clean, no fix commit. Deviations accepted: `drop-folder.mjs` split (no import cycle), platform `pending`/`note`, allow-always also answering covered pending requests. Probed: hygiene runs before the forwarder starts, drains cannot interleave, dead-worker message and interrupt noted by worker-proc, tmp-then-rename wake race bounded by the 5 s backstop, timing tests green over 5 reruns. |
 | T08 | conflict-to-worker | T05 | ⬜ | |
 | T09 | asking-kinds | T05, T08 | ⬜ | |
