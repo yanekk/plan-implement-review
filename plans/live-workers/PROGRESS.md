@@ -14,7 +14,7 @@ writes a cell also fixes the over-budget cell they walk past.
 **Last updated:** 2026-09-25
 **Starts after:** `declared-test-command` is merged to main (user 2026-09-24, plan review): done,
 d1f95ac, 2026-09-25. `nudge-quiet-worker` and `resume-dead-worker` wait for this plan.
-**Next `pir-work` will:** T00, the only task with no dependency.
+**Next `pir-work` will:** T02, T03 or T11 (dependencies done); T05 once T04 merges.
 
 ## Tasks
 
@@ -27,7 +27,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T01 | stream-protocol | T00 | ✅ | |
 | T02 | conversation-model | T01 | ⬜ | |
 | T03 | person-input | T01 | ⬜ | |
-| T04 | worker-process | T01, T10 | 🔍 | worker-proc.mjs, terminate.mjs, atomic-write.mjs (writeRecord, writeSnapshot moved onto it), fake/claude-stream.mjs with `fakeClaudeSpawner`; 22 tests. Deviations: terminate returns `{escalated, signal}`, graceMs 0 is stopRun's shape; fake adds `onEof`, `onSigterm` steps and `PIR_FAKE_CLAUDE_RECEIVED`; exited note carries a stderr tail. stopRun untouched (T06). |
+| T04 | worker-process | T01, T10 | ✅ | Review: one fix. A failed log append threw from send and the exit path, so onExit never fired and close hung; reproduced by deleting the log folder under a live fake, now swallowed, test locks it. Probed close before spawn, garbage without exit (SDK skips it), escalation timing, stopRun shape. Deviations accepted. |
 | T05 | live-platform | T04 | ⬜ | |
 | T06 | reap-workers | T04, T05 | ⬜ | |
 | T07 | person-inbox | T03, T05 | ⬜ | |
@@ -43,7 +43,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T17 | docs | T06, T07, T08, T13, T14, T15 | ⬜ | |
 | T18 | live-run | T08, T13, T14, T16, T17 | ⬜ | |
 
-**Review queue:** T04
+**Review queue:** empty
 
 ## Blocked on the user
 

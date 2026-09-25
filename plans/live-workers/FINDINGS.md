@@ -12,6 +12,7 @@ changed.
 
 | Date | | Finding |
 |---|---|---|
+| 2026-09-25 | 📌 | T04 review: SDK 0.3.282 skips an unparsable stdout line without error; only a non-zero exit mid-turn throws from the stream. A fake script needs `{exit: n}` to produce `sdk-error`, not garbage. |
 | 2026-09-25 | 📌 | T04: SDK 0.3.282 aborts a pending `canUseTool` signal only on the CLI's `control_cancel_request`, not on `interrupt()` itself. The fake must emit that line after an interrupt. A custom `spawnClaudeCodeProcess` is never existence-checked; the SDK leaves stderr unread. |
 | 2026-09-25 | 🐞 | T01 review probe (SDK 0.3.282, haiku): `interrupt()` while `canUseTool` was pending aborted its signal; tool came back rejected, turn ended `error_during_execution`, no reply. `workerActivity` now drops requests pending at an interrupt at that result. |
 | 2026-09-25 | 📌 | T01 probe (2.1.282, haiku): a background Bash job's `system:task_notification` after a `result` opened a new turn unasked (`init`, assistant, `result`). `workerActivity` opens a turn on `init` or assistant output, not on the notification. |
