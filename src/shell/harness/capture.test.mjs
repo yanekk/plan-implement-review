@@ -1,19 +1,19 @@
-// capture.mjs, proven without a live agent (DESIGN §4.1, T14 acceptance). The path-escape convention
-// is asserted against the exact observed example; the timeline is assembled from a canned sequence of
-// `agents --json` snapshots (a worker busy, then idle, then absent) and read back through loadBundle;
-// transcripts are snapshotted from a temp projects/ tree (present and missing); ownership tagging is
-// checked for a worker of this run, this run's coordinator, and a foreign agent. The one thing these
-// cannot reach — a real agent producing the snapshots and transcripts — arrives in T17.
+// capture.mjs, proven without a live agent (DESIGN §4.1, T14 acceptance; live-workers T16). The timeline
+// is assembled from a temp control folder whose workers.json and conversation logs a test rewrites between
+// ticks (a worker busy, then idle, then gone), with fake pid probes; seal bundles every conversation log
+// and workers.json; loadBundle reads it all back. The one thing these cannot reach — a real coordinator
+// writing those files — is the live run (T18).
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, appendFileSync, readFileSync, existsSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
-  escapeProjectPath,
-  resolveTranscriptPath,
-  parseAgentsForCapture,
+  parseLogName,
+  parseLog,
+  logSessionId,
+  statusOf,
   bundleDirFor,
   createCapture,
   loadBundle,
@@ -21,356 +21,226 @@ import {
 
 const REPO = 'pir-t14';
 const SLUG = 'scratch';
-const W1 = `${REPO} / ${SLUG} / T01 / work / implement`;
-const W2 = `${REPO} / ${SLUG} / T02 / work / implement`;
-// A name shaped like the old coordinator name ({repo} / {plan}, no task) — there is no coordinator
-// session any more (DESIGN §2.9), so this must be tagged neither a worker nor a coordinator.
-const COORD_SHAPED = `${REPO} / ${SLUG}`;
 
-// A temp workspace holding a bundle dir, a control dir (the flow log), a projects/ transcript store and
-// a scratch repo dir. Never the real project — a throwaway temp dir, no agent spawned (the seatbelt).
 function workspace() {
-  const dir = mkdtempSync(join(tmpdir(), 'pir-t14-'));
+  const dir = mkdtempSync(join(tmpdir(), 'pir-t16-cap-'));
+  const control = join(dir, 'control');
+  mkdirSync(join(control, 'conversations'), { recursive: true });
   return {
     dir,
     bundle: join(dir, 'bundle'),
-    control: join(dir, 'control'),
-    projects: join(dir, 'projects'),
+    control,
+    conversations: join(control, 'conversations'),
     repo: join(dir, 'repo'),
     cleanup: () => rmSync(dir, { recursive: true, force: true }),
   };
 }
 
-// A canned `claude` runner: successive `agents --json` snapshots per tick, and a fixed `--all` result
-// at seal. Records its calls so a test can assert argv (never `--cwd`, always `agents --json`).
-function claudeSpy({ ticks = [], all = [] } = {}) {
-  let i = 0;
-  const calls = [];
-  const fn = (args) => {
-    calls.push(args);
-    if (args.includes('--all')) return { ok: true, stdout: JSON.stringify(all) };
-    const snap = ticks.length ? ticks[Math.min(i, ticks.length - 1)] : [];
-    i += 1;
-    return { ok: true, stdout: JSON.stringify(snap) };
+// Conversation-log entries in the shape worker-proc writes (live-workers §2.3).
+const sent = (t, text = 'pir-implement T01') => ({ t, dir: 'out', from: 'pir', kind: 'message', text });
+const init = (t, sid) => ({ t, dir: 'in', event: { type: 'system', subtype: 'init', session_id: sid } });
+const said = (t, sid, text = 'working') => ({
+  t,
+  dir: 'in',
+  event: { type: 'assistant', session_id: sid, message: { role: 'assistant', content: [{ type: 'text', text }] } },
+});
+const result = (t, sid) => ({ t, dir: 'in', event: { type: 'result', subtype: 'success', session_id: sid, result: 'done' } });
+const ask = (t) => ({ t, dir: 'request', requestId: 'r1', toolName: 'Bash', input: { command: 'rm -rf x' } });
+
+function writeLog(ws, file, entries) {
+  writeFileSync(join(ws.conversations, file), entries.map((e) => JSON.stringify(e) + '\n').join(''));
+}
+function writeWorkers(ws, workers) {
+  writeFileSync(join(ws.control, 'workers.json'), JSON.stringify(workers));
+}
+const rec = (id, task, role, pid, startTime = 'Mon 1') => ({ id, task, role, pid, startTime });
+
+// Fake pid probes: `alive` is the set of live pids, `starts` their start times.
+function procs({ alive = [], starts = {} } = {}) {
+  const live = new Set(alive);
+  return {
+    live,
+    isAlive: (pid) => live.has(pid),
+    startTimeOf: (pid) => starts[pid] ?? 'Mon 1',
   };
-  fn.calls = calls;
-  return fn;
 }
 
-function agent({ name, sessionId, cwd, status = 'busy', state = 'working', id = sessionId }) {
-  return { id, sessionId, name, cwd, status, state, pid: 4242 };
+function capture(ws, p, extra = {}) {
+  return createCapture({
+    repo: REPO,
+    slug: SLUG,
+    dir: ws.bundle,
+    controlDir: ws.control,
+    repoDir: ws.repo,
+    runGit: () => ({ ok: true, stdout: '* abc T01\n' }),
+    isAlive: p.isAlive,
+    startTimeOf: p.startTimeOf,
+    ...extra,
+  });
 }
 
-// --- escape(cwd) (DESIGN §4.1, the exact observed convention) ------------------------------------
+// --- the log helpers ------------------------------------------------------------------------------
 
-test('escapeProjectPath replaces every / and . with - (the observed convention)', () => {
-  assert.equal(
-    escapeProjectPath('/Users/j/src/pir-t10/.claude/worktrees/pir-scratch-T01'),
-    '-Users-j-src-pir-t10--claude-worktrees-pir-scratch-T01',
-  );
-  // A leading / becomes a leading -, and /.claude collapses to --claude (the '/' and '.' abut).
-  assert.equal(escapeProjectPath('/a/.b'), '-a--b');
-  assert.equal(escapeProjectPath(''), '');
+test('parseLogName reads {Txx}-{role}-{n}.ndjson and rejects anything else', () => {
+  assert.deepEqual(parseLogName('T05-review-2.ndjson'), { task: 'T05', role: 'review', n: 2 });
+  assert.equal(parseLogName('T05-review-2.ndjson.tmp'), null);
+  assert.equal(parseLogName('notes.txt'), null);
 });
 
-test('resolveTranscriptPath joins projectsDir, escaped cwd and sessionId.jsonl; null without both', () => {
-  assert.equal(
-    resolveTranscriptPath('/proj', '/Users/j/wt', 'sess-1'),
-    join('/proj', '-Users-j-wt', 'sess-1.jsonl'),
-  );
-  assert.equal(resolveTranscriptPath('/proj', null, 'sess-1'), null);
-  assert.equal(resolveTranscriptPath('/proj', '/Users/j/wt', null), null);
+test('parseLog keeps an unparsable line raw; logSessionId reads the worker’s own session id', () => {
+  const text = `${JSON.stringify(sent(1))}\n${JSON.stringify(init(2, 'sid-1'))}\n{"t":3,"dir":"in","ev`;
+  const entries = parseLog(text);
+  assert.equal(entries.length, 3);
+  assert.equal(typeof entries[2], 'string', 'the torn last line is kept raw (§2.3)');
+  assert.equal(logSessionId(entries), 'sid-1');
+  assert.equal(logSessionId([sent(1)]), null, 'nothing said yet → no id');
 });
 
-// --- parse for capture keeps sessionId (which platform.parseAgents drops) ------------------------
-
-test('parseAgentsForCapture keeps sessionId and accepts raw text or an array', () => {
-  const raw = JSON.stringify([{ id: 'a', sessionId: 's1', name: W1, cwd: '/wt', status: 'idle', state: 'done' }]);
-  const [a] = parseAgentsForCapture(raw);
-  assert.equal(a.sessionId, 's1');
-  assert.equal(a.status, 'idle');
-  const [b] = parseAgentsForCapture([{ id: 'b', sessionId: 's2', name: W2, cwd: '/c' }]);
-  assert.equal(b.sessionId, 's2');
-  assert.deepEqual(parseAgentsForCapture('not-an-array-json' && '{}'), []);
+test('statusOf: busy and starting are busy; idle, permission and questions are not (§2.4)', () => {
+  assert.equal(statusOf('busy'), 'busy');
+  assert.equal(statusOf('starting'), 'busy');
+  for (const s of ['idle', 'permission', 'questions']) assert.equal(statusOf(s), 'idle');
 });
 
-// --- timeline assembly: busy → idle → absent (DESIGN §4.1) ---------------------------------------
+// --- the timeline: workers.json plus each worker's activity from its log ---------------------------
 
-test('the timeline shows a worker busy, then idle, then absent, and reads back via loadBundle', () => {
+test('the timeline shows a worker busy, then idle, then gone, and reads back via loadBundle', () => {
   const ws = workspace();
   try {
-    const runClaude = claudeSpy({
-      ticks: [
-        [agent({ name: W1, sessionId: 's1', cwd: ws.repo, status: 'busy', state: 'working' })],
-        [agent({ name: W1, sessionId: 's1', cwd: ws.repo, status: 'idle', state: 'working' })],
-        [], // the worker has ended — gone from the live list
-      ],
-      all: [],
-    });
-    const cap = createCapture({
-      repo: REPO,
-      slug: SLUG,
-      dir: ws.bundle,
-      controlDir: ws.control,
-      repoDir: ws.repo,
-      runClaude,
-      runGit: () => ({ ok: true, stdout: '' }),
-      projectsDir: ws.projects,
-    });
-    cap.tick();
-    cap.tick();
-    cap.tick();
-    cap.seal();
+    const p = procs({ alive: [101] });
+    writeWorkers(ws, [rec('sid-1', 'T01', 'implement', 101)]);
+    writeLog(ws, 'T01-implement-1.ndjson', [sent(1), init(2, 'sid-1'), said(3, 'sid-1')]);
+    let clock = 0;
+    const cap = capture(ws, p, { now: () => new Date(Date.UTC(2026, 0, 1, 0, 0, clock++)) });
 
-    const b = loadBundle(ws.bundle);
-    assert.equal(b.timeline.length, 3);
-    assert.equal(b.timeline[0].agents[0].status, 'busy');
-    assert.equal(b.timeline[1].agents[0].status, 'idle');
-    assert.equal(b.timeline[2].agents.length, 0, 'the worker has disappeared from the last tick');
-    // The busy→idle transition is present, which is what proves an idle-gated close (DESIGN §2.3).
-    const statuses = b.timeline.map((t) => t.agents[0]?.status ?? null);
-    assert.deepEqual(statuses, ['busy', 'idle', null]);
-    assert.ok(b.timeline.every((t) => typeof t.ts === 'string'));
+    const t1 = cap.tick();
+    assert.deepEqual(t1.workers, [
+      { id: 'sid-1', task: 'T01', role: 'implement', pid: 101, startTime: 'Mon 1', status: 'busy', state: 'busy', log: 'T01-implement-1.ndjson' },
+    ]);
+
+    appendFileSync(join(ws.conversations, 'T01-implement-1.ndjson'), JSON.stringify(result(4, 'sid-1')) + '\n');
+    assert.equal(cap.tick().workers[0].status, 'idle', 'its turn ended → idle');
+
+    appendFileSync(join(ws.conversations, 'T01-implement-1.ndjson'), JSON.stringify(ask(5)) + '\n');
+    const parked = cap.tick().workers[0];
+    assert.equal(parked.state, 'permission', 'a pending request is the finer state');
+    assert.equal(parked.status, 'idle', 'a worker waiting on the person is not busy');
+
+    p.live.delete(101); // the child exited; workers.json may lag, the pid probe does not
+    assert.deepEqual(cap.tick().workers, []);
+
+    const b = cap.seal();
+    assert.equal(b.timeline.length, 4);
+    assert.deepEqual(b.timeline.map((t) => t.workers.map((w) => w.status)), [['busy'], ['idle'], ['idle'], []]);
   } finally {
     ws.cleanup();
   }
 });
 
-// --- ownership tagging by name (DESIGN §2.8, §4.1) -----------------------------------------------
-
-test('tags this run’s worker by name; a foreign agent and a coordinator-shaped name are not-ours', () => {
+test('a recorded pid reused by another process (start time differs) is not counted live', () => {
   const ws = workspace();
-  const FOREIGN = 'someone-else / other / T99 / work / implement';
   try {
-    const runClaude = claudeSpy({
-      ticks: [
-        [
-          agent({ name: W1, sessionId: 's1', cwd: ws.repo }),
-          agent({ name: COORD_SHAPED, sessionId: 's2', cwd: ws.repo }),
-          agent({ name: FOREIGN, sessionId: 's3', cwd: '/elsewhere' }),
-        ],
-      ],
-    });
-    const cap = createCapture({
-      repo: REPO,
-      slug: SLUG,
-      dir: ws.bundle,
-      controlDir: ws.control,
-      runClaude,
-      runGit: () => ({ ok: true, stdout: '' }),
-      projectsDir: ws.projects,
-    });
-    const entry = cap.tick();
-    const byName = Object.fromEntries(entry.agents.map((a) => [a.name, a]));
-
-    assert.equal(byName[W1].isWorkerOf, true);
-    assert.equal(byName[W1].isCoordinator, false);
-    // isCoordinator is always false: the coordinator is a plain process, never in `claude agents` (§2.9).
-    assert.equal(byName[COORD_SHAPED].isCoordinator, false);
-    assert.equal(byName[COORD_SHAPED].isWorkerOf, false, 'a coordinator-shaped name is not a worker');
-    assert.equal(byName[FOREIGN].isWorkerOf, false, 'foreign worker not ours');
-    assert.equal(byName[FOREIGN].isCoordinator, false);
-    // Every agent is kept per tick, not just this run's (DESIGN §4.1).
-    assert.equal(entry.agents.length, 3);
+    const p = procs({ alive: [101, 102], starts: { 101: 'Mon 1', 102: 'Tue 9' } });
+    writeWorkers(ws, [rec('a', 'T01', 'implement', 101), rec('b', 'T02', 'implement', 102, 'Mon 2')]);
+    const cap = capture(ws, p);
+    assert.deepEqual(cap.tick().workers.map((w) => w.id), ['a']);
   } finally {
     ws.cleanup();
   }
 });
 
-// --- transcript snapshot: present copied, missing recorded copied:false, not a throw -------------
-
-test('snapshots each session’s transcript; a present one is copied, a missing one is copied:false', () => {
+test('a worker is matched to its own log by session id, not merely the newest file for its task', () => {
   const ws = workspace();
   try {
-    // A real transcript on disk for the worker's session, at the exact escaped path.
-    const escaped = escapeProjectPath(ws.repo);
-    mkdirSync(join(ws.projects, escaped), { recursive: true });
-    const transcriptBody = '{"type":"assistant"}\n{"type":"user"}\n';
-    writeFileSync(join(ws.projects, escaped, 's1.jsonl'), transcriptBody);
-
-    const runClaude = claudeSpy({
-      ticks: [
-        [
-          agent({ name: W1, sessionId: 's1', cwd: ws.repo }), // transcript present
-          agent({ name: W2, sessionId: 's2', cwd: ws.repo }), // no transcript file on disk
-        ],
-      ],
-    });
-    const cap = createCapture({
-      repo: REPO,
-      slug: SLUG,
-      dir: ws.bundle,
-      controlDir: ws.control,
-      runClaude,
-      runGit: () => ({ ok: true, stdout: '' }),
-      projectsDir: ws.projects,
-    });
-    cap.tick();
-    const bundle = cap.seal(); // must not throw on the missing transcript
-
-    // The manifest maps name → its entry, and the worker's transcript was copied into the bundle.
-    const worker = bundle.manifest[W1];
-    assert.ok(worker, 'the worker is in the manifest, keyed by name');
-    assert.equal(worker.copied, true);
-    assert.equal(worker.role, 'worker');
-    assert.equal(worker.sessionId, 's1');
-    assert.equal(worker.transcriptPath, join(ws.projects, escaped, 's1.jsonl'));
-    assert.equal(readFileSync(join(ws.bundle, worker.copiedTo), 'utf8'), transcriptBody);
-
-    // The second worker's transcript is missing → recorded, not thrown; role is worker.
-    const w2 = bundle.manifest[W2];
-    assert.equal(w2.copied, false);
-    assert.equal(w2.role, 'worker');
-    assert.equal(w2.copiedTo, null);
+    const p = procs({ alive: [201] });
+    // T02's first implementer finished (log 1); a restart spawned a second (log 2) that is live and busy.
+    writeLog(ws, 'T02-implement-1.ndjson', [sent(1), init(2, 'old'), result(3, 'old')]);
+    writeLog(ws, 'T02-implement-2.ndjson', [sent(4), init(5, 'new'), said(6, 'new')]);
+    writeWorkers(ws, [rec('old', 'T02', 'implement', 201)]);
+    const cap = capture(ws, p);
+    const [w] = cap.tick().workers;
+    assert.equal(w.log, 'T02-implement-1.ndjson');
+    assert.equal(w.status, 'idle');
   } finally {
     ws.cleanup();
   }
 });
 
-// --- T41: a worker removed mid-run still has its transcript in the sealed bundle -----------------
-
-test('a worker whose transcript is deleted mid-run (claude rm) is still in the bundle via the eager copy (T41)', () => {
+test('a worker that has not spoken yet takes the newest unclaimed log for its task and role', () => {
   const ws = workspace();
   try {
-    // The coordinator now `claude rm`s a finished worker mid-run; if that also deletes the on-disk
-    // transcript, seal() would find nothing to copy. tick() eagerly stages each worker's transcript, so
-    // the bundle survives the removal. Drive exactly that: the transcript is present at tick, then deleted
-    // (the `claude rm`), and the worker leaves the list before seal.
-    const escaped = escapeProjectPath(ws.repo);
-    mkdirSync(join(ws.projects, escaped), { recursive: true });
-    const src = join(ws.projects, escaped, 's1.jsonl');
-    const body = '{"type":"assistant","turn":1}\n{"type":"user","turn":2}\n';
-    writeFileSync(src, body);
-
-    const runClaude = claudeSpy({
-      ticks: [
-        [agent({ name: W1, sessionId: 's1', cwd: ws.repo, status: 'idle', state: 'done' })], // present + finished
-        [], // the coordinator removed the worker: gone from the list
-      ],
-    });
-    const cap = createCapture({
-      repo: REPO,
-      slug: SLUG,
-      dir: ws.bundle,
-      controlDir: ws.control,
-      runClaude,
-      runGit: () => ({ ok: true, stdout: '' }),
-      projectsDir: ws.projects,
-    });
-    cap.tick(); // observes W1 present → eagerly stages its transcript
-    rmSync(src); // `claude rm` deleted the live transcript mid-run
-    cap.tick(); // W1 is gone from the list now
-    const bundle = cap.seal(); // the live source is gone; seal must fall back to the staged copy
-
-    const worker = bundle.manifest[W1];
-    assert.ok(worker, 'the removed worker is still in the manifest (it was seen in an earlier tick)');
-    assert.equal(worker.copied, true, 'its transcript is still copied into the bundle despite the mid-run removal');
-    assert.equal(worker.fromEager, true, 'the copy came from the eager pre-removal snapshot, not the deleted live file');
-    assert.equal(readFileSync(join(ws.bundle, worker.copiedTo), 'utf8'), body, 'the staged copy holds the full transcript');
-
-    // The staging dir is cleaned up at seal, so it does not double the bundle's transcript bytes.
-    assert.ok(!existsSync(join(ws.bundle, '.eager-transcripts')), 'the eager staging dir is removed at seal');
+    const p = procs({ alive: [301] });
+    writeLog(ws, 'T03-review-1.ndjson', [sent(1), init(2, 'earlier'), result(3, 'earlier')]);
+    writeLog(ws, 'T03-review-2.ndjson', [sent(4, 'pir-review T03')]);
+    writeWorkers(ws, [rec('fresh', 'T03', 'review', 301)]);
+    const [w] = capture(ws, p).tick().workers;
+    assert.equal(w.log, 'T03-review-2.ndjson');
+    assert.equal(w.status, 'busy', 'the opening instruction went in: a turn is open');
   } finally {
     ws.cleanup();
   }
 });
 
-// --- a worker name that recurs across sessions (implementer then its fresh reviewer, §2.8) -------
-
-test('one worker name across two sessions keeps both transcripts — key and file disambiguated', () => {
+test('a missing or torn workers.json records an empty tick, never a throw', () => {
   const ws = workspace();
   try {
-    // Two sessions can carry the same worker name at different times — e.g. a crashed implementer
-    // respawned as `implement` again (§2.8; role-suffixed names make the implement→review pair distinct,
-    // but a same-role respawn still recurs). Both transcripts exist on disk under the same escaped cwd.
-    const escaped = escapeProjectPath(ws.repo);
-    mkdirSync(join(ws.projects, escaped), { recursive: true });
-    writeFileSync(join(ws.projects, escaped, 's1.jsonl'), '{"impl":true}\n');
-    writeFileSync(join(ws.projects, escaped, 's2.jsonl'), '{"review":true}\n');
-
-    // Two ticks: the first session, then (after it ends) a second session under the same name.
-    const runClaude = claudeSpy({
-      ticks: [
-        [agent({ name: W1, sessionId: 's1', cwd: ws.repo })],
-        [agent({ name: W1, sessionId: 's2', cwd: ws.repo })],
-      ],
-    });
-    const cap = createCapture({
-      repo: REPO,
-      slug: SLUG,
-      dir: ws.bundle,
-      controlDir: ws.control,
-      runClaude,
-      runGit: () => ({ ok: true, stdout: '' }),
-      projectsDir: ws.projects,
-    });
-    cap.tick();
-    cap.tick();
-    const bundle = cap.seal();
-
-    // Both sessions are in the manifest: the first keyed by name, the second disambiguated by session.
-    const first = bundle.manifest[W1];
-    const second = bundle.manifest[`${W1} (s2)`];
-    assert.ok(first, 'the first session is keyed by the bare worker name');
-    assert.ok(second, 'the second session under the same name is keyed name (sessionId), not lost');
-    assert.equal(first.sessionId, 's1');
-    assert.equal(second.sessionId, 's2');
-    // Neither transcript file overwrote the other — distinct copiedTo paths, distinct contents.
-    assert.notEqual(first.copiedTo, second.copiedTo);
-    assert.equal(readFileSync(join(ws.bundle, first.copiedTo), 'utf8'), '{"impl":true}\n');
-    assert.equal(readFileSync(join(ws.bundle, second.copiedTo), 'utf8'), '{"review":true}\n');
+    const cap = capture(ws, procs());
+    assert.deepEqual(cap.tick().workers, []);
+    writeFileSync(join(ws.control, 'workers.json'), '[{"id":');
+    assert.deepEqual(cap.tick().workers, []);
   } finally {
     ws.cleanup();
   }
 });
 
-// --- the whole sealed bundle reads back, all fields present (DESIGN §4.1 "Done when") ------------
+// --- seal: every conversation log and workers.json of the run --------------------------------------
 
-test('loadBundle reads a sealed bundle back with every field present', () => {
+test('seal bundles every conversations/*.ndjson and workers.json of the run, with a manifest and run.json', () => {
   const ws = workspace();
   try {
-    // A pre-existing flow log the coordinator would have written (loop.mjs record + fileControl format).
-    mkdirSync(ws.control, { recursive: true });
-    writeFileSync(
-      join(ws.control, 'log'),
-      '2026-09-10T00:00:00.000Z open-feature pir/scratch\n' +
-        '2026-09-10T00:00:01.000Z spawn T01\n' +
-        '2026-09-10T00:00:02.000Z ceiling full: 4/4 busy, waiting: T05\n',
-    );
-    const runClaude = claudeSpy({
-      ticks: [[agent({ name: W1, sessionId: 's1', cwd: ws.repo, status: 'idle' })]],
-      all: [agent({ name: W1, sessionId: 's1', cwd: ws.repo, status: null, state: 'stopped' })],
-    });
-    const cap = createCapture({
-      repo: REPO,
-      slug: SLUG,
-      dir: ws.bundle,
-      controlDir: ws.control,
-      repoDir: ws.repo,
-      runClaude,
-      runGit: () => ({ ok: true, stdout: '* abc123 (HEAD -> main) promote\n' }),
-      projectsDir: ws.projects,
-    });
-    cap.tick();
-    cap.seal();
+    writeLog(ws, 'T01-implement-1.ndjson', [sent(1), init(2, 'i1'), result(3, 'i1')]);
+    writeLog(ws, 'T01-review-1.ndjson', [sent(4, 'pir-review T01'), init(5, 'r1'), result(6, 'r1')]);
+    writeLog(ws, 'T02-implement-1.ndjson', [sent(7)]); // never spoke
+    writeFileSync(join(ws.conversations, 'stray.txt'), 'not a log');
+    writeWorkers(ws, [rec('r1', 'T01', 'review', 401)]);
+    writeFileSync(join(ws.control, 'log'), '2026-01-01T00:00:00Z spawn T01\n');
 
-    const b = loadBundle(ws.bundle);
-    // Flow parsed: timestamp split off, action type and its argument recovered.
-    assert.equal(b.flow.length, 3);
-    assert.equal(b.flow[0].type, 'open-feature');
-    assert.equal(b.flow[0].rest, 'pir/scratch');
-    assert.equal(b.flow[1].type, 'spawn');
-    assert.equal(b.flow[1].rest, 'T01');
-    assert.equal(b.flow[2].type, 'ceiling'); // free-text lines still split cleanly
-    assert.ok(b.flowText.includes('open-feature'));
+    const b = capture(ws, procs()).seal();
 
-    assert.equal(b.timeline.length, 1);
-    assert.equal(Array.isArray(b.final), true);
-    assert.equal(b.final[0].state, 'stopped', 'the resting state from --all');
-    assert.equal(typeof b.manifest, 'object');
-    assert.ok(b.manifest[W1]);
-    assert.ok(b.gitLog.includes('promote'));
-    assert.equal(b.name, ws.bundle.split('/').pop());
+    for (const f of ['T01-implement-1.ndjson', 'T01-review-1.ndjson', 'T02-implement-1.ndjson']) {
+      assert.equal(
+        readFileSync(join(ws.bundle, 'conversations', f), 'utf8'),
+        readFileSync(join(ws.conversations, f), 'utf8'),
+        `${f} copied byte for byte`,
+      );
+    }
+    assert.ok(!existsSync(join(ws.bundle, 'conversations', 'stray.txt')), 'only conversation logs are bundled');
+    assert.deepEqual(Object.keys(b.manifest), ['T01-implement-1.ndjson', 'T01-review-1.ndjson', 'T02-implement-1.ndjson']);
+    assert.deepEqual(b.manifest['T01-review-1.ndjson'], {
+      role: 'worker',
+      task: 'T01',
+      workerRole: 'review',
+      n: 1,
+      sessionId: 'r1',
+      copied: true,
+      copiedTo: join('conversations', 'T01-review-1.ndjson'),
+    });
+    assert.equal(b.manifest['T02-implement-1.ndjson'].sessionId, null);
+    assert.deepEqual(b.workers, [rec('r1', 'T01', 'review', 401)]);
+    assert.deepEqual(b.run, { repo: REPO, plan: SLUG });
+    assert.equal(b.flow[0].type, 'spawn');
+    assert.equal(b.gitLog, '* abc T01\n');
+  } finally {
+    ws.cleanup();
+  }
+});
+
+test('seal copies the coordinator stdout into the bundle as coordinatorOut', () => {
+  const ws = workspace();
+  try {
+    writeFileSync(join(ws.control, 'coordinator.out'), 'Yours to merge:\n\n  git merge pir/scratch\n');
+    const b = capture(ws, procs()).seal();
+    assert.match(b.coordinatorOut, /git merge pir\/scratch/);
   } finally {
     ws.cleanup();
   }
@@ -382,82 +252,56 @@ test('loadBundle over an empty bundle dir yields present-but-empty fields, never
     mkdirSync(ws.bundle, { recursive: true });
     const b = loadBundle(ws.bundle);
     assert.deepEqual(b.flow, []);
-    assert.equal(b.flowText, '');
     assert.deepEqual(b.timeline, []);
-    assert.deepEqual(b.final, []);
+    assert.deepEqual(b.workers, []);
+    assert.deepEqual(b.run, {});
     assert.deepEqual(b.manifest, {});
     assert.equal(b.gitLog, '');
-    assert.equal(b.coordinatorOut, null, 'an absent coordinator.out reads as missing, not empty');
+    assert.equal(b.coordinatorOut, null, 'absent hand-off reads differently from an empty one');
   } finally {
     ws.cleanup();
   }
 });
-
-// declared-test-command T10: the coordinator's stdout (run.mjs writes it to control/coordinator.out)
-// is sealed into the bundle, so handedOffGreenBranch can read the end-of-run gate's verdict after teardown.
-test('seal copies the coordinator stdout into the bundle as coordinatorOut', () => {
-  const ws = workspace();
-  try {
-    mkdirSync(ws.control, { recursive: true });
-    writeFileSync(join(ws.control, 'coordinator.out'), '✔ all 1 task(s) green\n\n  git merge pir/scratch\n');
-    const cap = createCapture({
-      repo: REPO,
-      slug: SLUG,
-      dir: ws.bundle,
-      controlDir: ws.control,
-      repoDir: ws.repo,
-      runClaude: claudeSpy({ ticks: [], all: [] }),
-      runGit: () => ({ ok: true, stdout: '' }),
-      projectsDir: ws.projects,
-    });
-    const b = cap.seal();
-    assert.equal(b.coordinatorOut, '✔ all 1 task(s) green\n\n  git merge pir/scratch\n');
-    assert.ok(existsSync(join(ws.bundle, 'coordinator.out')));
-  } finally {
-    ws.cleanup();
-  }
-});
-
-// --- bundleDirFor: a dated, filesystem-safe directory --------------------------------------------
 
 test('bundleDirFor puts a filesystem-safe dated dir under {parallel}/capture', () => {
-  const d = bundleDirFor('/plans/x/.parallel', new Date('2026-09-10T12:34:56.789Z'));
-  assert.equal(d, join('/plans/x/.parallel', 'capture', '2026-09-10T12-34-56-789Z'));
-  assert.ok(!d.split('/').pop().includes(':'), 'no colon in the dir name');
+  const d = bundleDirFor('/p/.parallel', new Date('2026-09-10T12:34:56.789Z'));
+  assert.equal(d, '/p/.parallel/capture/2026-09-10T12-34-56-789Z');
 });
-
-// --- seal is idempotent and start()/stop() drive tick without real time --------------------------
 
 test('seal is idempotent and stop() seals after start()-driven sampling', () => {
   const ws = workspace();
   try {
-    const runClaude = claudeSpy({ ticks: [[agent({ name: W1, sessionId: 's1', cwd: ws.repo })]] });
-    // A fake timer: setInterval fires nothing on its own here; start() takes the immediate first sample.
-    let cleared = false;
+    let ticks = 0;
     const timers = {
-      setInterval: () => ({ unref() {} }),
-      clearInterval: () => {
-        cleared = true;
-      },
+      setInterval: (fn) => ({ fn }),
+      clearInterval: () => {},
     };
-    const cap = createCapture({
-      repo: REPO,
-      slug: SLUG,
-      dir: ws.bundle,
-      controlDir: ws.control,
-      repoDir: ws.repo,
-      runClaude,
-      runGit: () => ({ ok: true, stdout: '' }),
-      projectsDir: ws.projects,
+    const cap = capture(ws, procs(), {
       timers,
+      readWorkers: () => {
+        ticks += 1;
+        return [];
+      },
     });
-    cap.start(); // one immediate tick
-    const first = cap.stop(); // clears the interval and seals
-    assert.equal(cleared, true);
-    assert.equal(first.timeline.length, 1);
-    const again = cap.seal(); // sealing twice is a no-op that re-reads the bundle
-    assert.equal(again.timeline.length, 1);
+    cap.start();
+    assert.equal(ticks, 1, 'start takes an immediate first sample');
+    const a = cap.stop();
+    const b = cap.seal();
+    assert.equal(a.timeline.length, 1);
+    assert.deepEqual(a.manifest, b.manifest);
   } finally {
     ws.cleanup();
+  }
+});
+
+// --- no harness path calls `claude agents` any more (live-workers T16) ----------------------------
+
+test('no harness module calls `claude agents` or reads ~/.claude transcripts', () => {
+  const here = new URL('.', import.meta.url).pathname;
+  for (const f of ['capture.mjs', 'run.mjs', 'assertions.mjs', 'fixtures.mjs', 'tokens.mjs', 'scenario.mjs']) {
+    const src = readFileSync(join(here, f), 'utf8');
+    assert.doesNotMatch(src, /agents --json|\['agents'|'claude', \[?args/, `${f} calls claude agents`);
+    assert.doesNotMatch(src, /execFileSync\('claude'/, `${f} runs the claude CLI`);
+    assert.doesNotMatch(src, /\.claude', 'projects'/, `${f} reads ~/.claude/projects`);
   }
 });

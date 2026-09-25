@@ -14,8 +14,8 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 
-// sumUsage(lines) → the token totals over the assistant turns in one transcript. `lines` is the JSONL
-// transcript, either raw strings (one JSON event per line) or already-parsed objects; a blank or
+// sumUsage(lines) → the token totals over the assistant turns in one transcript or conversation log.
+// `lines` is the NDJSON text split into lines, either raw strings (one JSON event per line) or already-parsed objects; a blank or
 // unparseable line is skipped. Only `type:"assistant"` events with a `message.usage` are counted — a
 // user turn or a tool result carries no model spend. Pure: no I/O, no clock, no randomness.
 export function sumUsage(lines) {
@@ -31,6 +31,8 @@ export function sumUsage(lines) {
         continue;
       }
     }
+    // A conversation log wraps each SDK message as `{ dir: 'in', event }` (live-workers §2.3).
+    if (o?.dir === 'in') o = o.event;
     const u = o?.message?.usage;
     if (o?.type !== 'assistant' || !u) continue;
     acc.turns += 1;

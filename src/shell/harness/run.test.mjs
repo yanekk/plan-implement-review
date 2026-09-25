@@ -29,6 +29,7 @@ import {
   snapshotControlFeeds,
   runRestartScenario,
 } from './run.mjs';
+import { reapRecorded } from '../reap.mjs';
 
 function workspace() {
   const dir = mkdtempSync(join(tmpdir(), 'pir-t17-'));
@@ -237,39 +238,63 @@ test('captureFinalFiles reads `git show {ref}:<file>` and omits a file git canno
   );
 });
 
-// --- teardownScenario: no worker is orphaned; there is no coordinator session to close ------------
+// --- teardownScenario: no worker is orphaned; the recorded pids are reaped (live-workers T16) --------
 
-function fakePlatform({ agents = [] } = {}) {
-  const closed = [];
+// Fake pid probes and signals: `live` is the set of running pids; SIGTERM or SIGKILL ends one. The start
+// time of every pid is 'Mon 1' unless `starts` says otherwise (a reused pid).
+function fakeProcs(alive = [], starts = {}) {
+  const live = new Set(alive);
+  const kills = [];
   return {
-    closed,
-    list: () => agents,
-    close: (id) => {
-      closed.push(id);
-      return { ok: true };
+    live,
+    kills,
+    isAlive: (pid) => live.has(pid),
+    startTimeOf: (pid) => starts[pid] ?? 'Mon 1',
+    kill: (pid, sig) => {
+      kills.push([pid, sig]);
+      if (sig === 'SIGTERM' || sig === 'SIGKILL') live.delete(pid);
     },
   };
 }
-const fakeWorktree = { remove: () => {} };
+const rec = (id, task, role, pid, startTime = 'Mon 1') => ({ id, task, role, pid, startTime });
+function writeWorkersJson(control, workers) {
+  mkdirSync(control, { recursive: true });
+  writeFileSync(join(control, 'workers.json'), JSON.stringify(workers));
+}
+const reapWith = (p) => (dir) => reapRecorded(dir, { isAlive: p.isAlive, startTimeOf: p.startTimeOf, kill: p.kill });
 
-test('teardownScenario touches HALT and closes every worker of this run (via teardownRun), foreign left alone', () => {
+test('teardownScenario touches HALT and reaps every recorded worker still running; none is left alive', async () => {
   const ws = workspace();
   try {
-    const repo = 'scratchrepo';
-    const slug = 'single';
-    const control = controlDirFor(ws.dir, slug);
-    const agents = [
-      { id: 'w1', name: `${repo} / ${slug} / T01 / work / implement` },
-      { id: 'w2', name: `${repo} / ${slug} / T02 / work / review` },
-      { id: 'foreign', name: 'someone-else / other / T09 / work / implement' },
-    ];
-    const platform = fakePlatform({ agents });
-    const r = teardownScenario({ platform, worktree: fakeWorktree, repo, slug, controlDir: control });
+    const control = controlDirFor(ws.dir, 'single');
+    // 7001 and 7002 are live workers; 7003 has exited; 7004's number now belongs to another process.
+    writeWorkersJson(control, [
+      rec('a', 'T01', 'implement', 7001),
+      rec('b', 'T02', 'review', 7002),
+      rec('c', 'T03', 'implement', 7003),
+      rec('d', 'T04', 'implement', 7004),
+    ]);
+    const p = fakeProcs([7001, 7002, 7004], { 7004: 'Tue 9' });
+    const r = await teardownScenario({ controlDir: control, reap: reapWith(p) });
 
-    assert.ok(platform.closed.includes('w1') && platform.closed.includes('w2'));
-    assert.ok(!platform.closed.includes('foreign'));
-    assert.equal(r.closed.length, 2);
+    assert.deepEqual(r.closed.sort(), [7001, 7002]);
+    assert.ok(!p.live.has(7001) && !p.live.has(7002), 'no recorded worker is left alive');
+    assert.ok(p.live.has(7004), 'a reused pid is never signalled');
+    assert.ok(!p.kills.some(([pid]) => pid === 7003 || pid === 7004));
     assert.ok(existsSync(join(control, 'HALT')), 'HALT flag written by teardown');
+  } finally {
+    ws.cleanup();
+  }
+});
+
+test('teardownScenario with no workers.json reaps nothing and still touches HALT', async () => {
+  const ws = workspace();
+  try {
+    const control = controlDirFor(ws.dir, 'single');
+    const p = fakeProcs();
+    const r = await teardownScenario({ controlDir: control, reap: reapWith(p) });
+    assert.deepEqual(r.closed, []);
+    assert.ok(existsSync(join(control, 'HALT')));
   } finally {
     ws.cleanup();
   }
@@ -277,16 +302,21 @@ test('teardownScenario touches HALT and closes every worker of this run (via tea
 
 // --- runScenario end to end, with fakes (the whole build half) -----------------------------------
 //
-// A fake `install` lays a tiny scratch repo and pre-writes the coordinator flow log. A fake process
-// `spawn` hands out the coordinator child; a fake `claude` runner answers the capture's `agents --json`
-// and drives the child to exit (the hand-off) after a poll. No real process, no real agent, no real git.
+// A fake `install` lays a tiny scratch repo and pre-writes the coordinator flow log (and, where a test
+// needs them, a conversation log and workers.json). A fake process `spawn` hands out the coordinator
+// child; a fake workers.json reader answers the capture's ticks and drives the child to exit (the
+// hand-off) after a poll; fake pid probes stand in for the workers. No real process, agent or git.
 
-function installFake({ into, controlLog, slug = 'single' }) {
+function installFake({ into, controlLog, slug = 'single', conversations = {}, workers = null }) {
   return () => {
     mkdirSync(into, { recursive: true });
     const control = controlDirFor(into, slug);
-    mkdirSync(control, { recursive: true });
+    mkdirSync(join(control, 'conversations'), { recursive: true });
     writeFileSync(join(control, 'log'), controlLog);
+    for (const [file, entries] of Object.entries(conversations)) {
+      writeFileSync(join(control, 'conversations', file), entries.map((e) => JSON.stringify(e) + '\n').join(''));
+    }
+    if (workers) writeFileSync(join(control, 'workers.json'), JSON.stringify(workers));
   };
 }
 
@@ -294,36 +324,36 @@ test('runScenario installs, launches the coordinator process, captures, seals on
   const ws = workspace();
   try {
     const into = join(ws.dir, 'scratch-repo');
-    const projects = join(ws.dir, 'projects');
-    mkdirSync(projects, { recursive: true });
-
     const spawn = fakeSpawner();
-    const worker = { id: 'w1', sessionId: 's1', name: 'scratch-repo / single / T01 / work / implement', cwd: into, status: 'busy', state: 'working', pid: 1 };
+    const worker = rec('s1', 'T01', 'implement', 6001);
+    const p = fakeProcs([6001]);
     let polls = 0;
-    const claudeRun = (args) => {
-      if (args.includes('--all')) return { ok: true, stdout: '[]' };
-      if (args[0] === 'agents') {
-        polls += 1;
-        if (polls === 1) return { ok: true, stdout: JSON.stringify([worker]) };
-        // The coordinator has done its hand-off and exits; the worker is gone from the list.
-        spawn.children[0].exit(0);
-        return { ok: true, stdout: '[]' };
-      }
-      return { ok: true, stdout: '' };
+    const readWorkers = () => {
+      polls += 1;
+      if (polls === 1) return [worker];
+      // The coordinator has done its hand-off and exits; its worker has exited too.
+      p.live.delete(6001);
+      spawn.children[0].exit(0);
+      return [];
     };
-    const gitRun = () => ({ ok: true, stdout: '* abc123 T01' });
-    const platform = fakePlatform({ agents: [] });
+    const log = [
+      { t: 1, dir: 'out', from: 'pir', kind: 'message', text: 'pir-implement T01' },
+      { t: 2, dir: 'in', event: { type: 'system', subtype: 'init', session_id: 's1' } },
+      { t: 3, dir: 'in', event: { type: 'result', subtype: 'success', session_id: 's1' } },
+    ];
 
     const result = await runScenario({
       fixtureId: 'single',
       scratchDir: into,
-      install: installFake({ into, controlLog: '2026-01-01T00:00:00Z spawn T01\n2026-01-01T00:01:00Z merge T01\n' }),
+      install: installFake({
+        into,
+        controlLog: '2026-01-01T00:00:00Z spawn T01\n2026-01-01T00:01:00Z merge T01\n',
+        conversations: { 'T01-implement-1.ndjson': log },
+      }),
       spawn,
-      claudeRun,
-      gitRun,
-      platform,
-      worktree: fakeWorktree,
-      projectsDir: projects,
+      readWorkers,
+      procs: p,
+      gitRun: () => ({ ok: true, stdout: '* abc123 T01' }),
       pollMs: 1,
     });
 
@@ -340,7 +370,15 @@ test('runScenario installs, launches the coordinator process, captures, seals on
     assert.equal(result.reason, 'completed');
     assert.ok(result.bundleDir && existsSync(result.bundleDir), 'a bundle dir exists');
     assert.ok(existsSync(join(result.bundleDir, 'flow.log')), 'the flow log was captured');
-    assert.ok(existsSync(join(result.bundleDir, 'manifest.json')), 'the transcript manifest was sealed');
+    // The worker's conversation log is in the bundle, and the timeline sampled the worker from workers.json.
+    assert.equal(
+      readFileSync(join(result.bundleDir, 'conversations', 'T01-implement-1.ndjson'), 'utf8').split('\n').filter(Boolean).length,
+      3,
+    );
+    const manifest = JSON.parse(readFileSync(join(result.bundleDir, 'manifest.json'), 'utf8'));
+    assert.equal(manifest['T01-implement-1.ndjson'].sessionId, 's1');
+    const timeline = readFileSync(join(result.bundleDir, 'timeline.jsonl'), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
+    assert.deepEqual(timeline[0].workers.map((w) => [w.id, w.status, w.log]), [['s1', 'idle', 'T01-implement-1.ndjson']]);
 
     // checkScenario ran the single fixture's declared facts (a report with those fact ids came back).
     const ids = result.report.facts.map((f) => f.id);
@@ -355,31 +393,21 @@ test('runScenario auto-touches HALT on the wall-clock timeout and reports timeou
   const ws = workspace();
   try {
     const into = join(ws.dir, 'scratch-repo');
-    const projects = join(ws.dir, 'projects');
-    mkdirSync(projects, { recursive: true });
     const control = controlDirFor(into, 'single');
 
     // The coordinator process never exits and a worker stays live forever → only the wall-clock timeout
     // can end the run. The fake child is never told to exit.
     const spawn = fakeSpawner();
-    const liveWorker = { id: 'w1', sessionId: 's1', name: 'scratch-repo / single / T01 / work / implement', cwd: into, status: 'busy', state: 'working', pid: 1 };
-    const claudeRun = (args) => {
-      if (args.includes('--all')) return { ok: true, stdout: '[]' };
-      if (args[0] === 'agents') return { ok: true, stdout: JSON.stringify([liveWorker]) };
-      return { ok: true, stdout: '' };
-    };
-    const platform = fakePlatform({ agents: [liveWorker] });
+    const live = rec('s1', 'T01', 'implement', 6001);
+    const p = fakeProcs([6001]);
 
     const result = await runScenario({
       fixtureId: 'single',
       scratchDir: into,
-      install: installFake({ into, controlLog: '2026-01-01T00:00:00Z spawn T01\n' }),
+      install: installFake({ into, controlLog: '2026-01-01T00:00:00Z spawn T01\n', workers: [live] }),
       spawn,
-      claudeRun,
+      procs: p,
       gitRun: () => ({ ok: true, stdout: '' }),
-      platform,
-      worktree: fakeWorktree,
-      projectsDir: projects,
       pollMs: 2,
       timeoutMs: 5, // fire the wall-clock cap almost immediately
       haltGrace: 2, // a short grace, then give up on the hung process
@@ -388,9 +416,10 @@ test('runScenario auto-touches HALT on the wall-clock timeout and reports timeou
     assert.equal(result.reason, 'timeout');
     assert.equal(result.ok, false, 'a timed-out run never passes');
     assert.ok(existsSync(join(control, 'HALT')), 'the timeout auto-touched HALT (seatbelt §5.2)');
-    // The exit path SIGTERMs the coordinator process and sweeps the still-live worker — no orphan.
+    // The exit path SIGTERMs the coordinator process and reaps the still-live worker — no orphan.
     assert.deepEqual(spawn.children[0].kills, ['SIGTERM'], 'the coordinator process was SIGTERMed on exit');
-    assert.ok(platform.closed.includes('w1'), 'the live worker was closed on exit');
+    assert.deepEqual(p.kills, [[6001, 'SIGTERM']], 'the recorded worker was reaped on exit');
+    assert.ok(!p.live.has(6001));
   } finally {
     ws.cleanup();
   }
@@ -402,44 +431,39 @@ test('runScenario auto-touches HALT on the wall-clock timeout and reports timeou
 // the real one does — it writes `halt-close` ONLY once it sees the flag — so scoring the run `halted`
 // proves runScenario touched HALT mid-run (before any timeout; the 10-min wall-clock is never reached).
 
+// A per-poll fake coordinator over the workers.json reader: first poll a worker is up; after that it
+// writes halt-close only if HALT exists, then exits.
+function haltReactingCoordinator({ spawn, control, p }) {
+  const flowPath = join(control, 'log');
+  let polls = 0;
+  return () => {
+    polls += 1;
+    if (polls === 1) return [rec('s1', 'T01', 'implement', 6001)];
+    if (existsSync(join(control, 'HALT'))) {
+      writeFileSync(flowPath, '2026-01-01T00:00:00Z spawn T01\n2026-01-01T00:01:00Z halt-close T01\n');
+    }
+    p.live.delete(6001);
+    spawn.children[0].exit(0);
+    return [];
+  };
+}
+
 test('runScenario fires the kill-switch drill: after the first spawn it touches HALT, and the run is scored on halt-close', async () => {
   const ws = workspace();
   try {
     const into = join(ws.dir, 'scratch-repo');
-    const projects = join(ws.dir, 'projects');
-    mkdirSync(projects, { recursive: true });
     const control = controlDirFor(into, 'parallel');
-    const flowPath = join(control, 'log');
-
-    const worker = { id: 'w1', sessionId: 's1', name: 'scratch-repo / parallel / T01 / work / implement', cwd: into, status: 'busy', state: 'working', pid: 1 };
     const spawn = fakeSpawner();
-    let polls = 0;
-    const claudeRun = (args) => {
-      if (args.includes('--all')) return { ok: true, stdout: '[]' };
-      if (args[0] === 'agents') {
-        polls += 1;
-        if (polls === 1) return { ok: true, stdout: JSON.stringify([worker]) }; // first spawn is up
-        // The coordinator reacts to HALT like the real one: it only writes halt-close if it saw the flag.
-        // So halt-close (→ reason 'halted') can only appear if the drill touched HALT mid-run.
-        if (existsSync(join(control, 'HALT'))) {
-          writeFileSync(flowPath, '2026-01-01T00:00:00Z spawn T01\n2026-01-01T00:01:00Z halt-close T01\n');
-        }
-        spawn.children[0].exit(0);
-        return { ok: true, stdout: '[]' };
-      }
-      return { ok: true, stdout: '' };
-    };
+    const p = fakeProcs([6001]);
 
     const result = await runScenario({
       fixtureId: 'parallel',
       scratchDir: into,
       install: installFake({ into, controlLog: '2026-01-01T00:00:00Z spawn T01\n', slug: 'parallel' }),
       spawn,
-      claudeRun,
+      readWorkers: haltReactingCoordinator({ spawn, control, p }),
+      procs: p,
       gitRun: () => ({ ok: true, stdout: '' }),
-      platform: fakePlatform({ agents: [] }),
-      worktree: fakeWorktree,
-      projectsDir: projects,
       pollMs: 1,
     });
 
@@ -455,40 +479,20 @@ test('a fixture with no drill flag is not touched mid-run — the timeout guard 
   const ws = workspace();
   try {
     const into = join(ws.dir, 'scratch-repo');
-    const projects = join(ws.dir, 'projects');
-    mkdirSync(projects, { recursive: true });
     const control = controlDirFor(into, 'single');
-    const flowPath = join(control, 'log');
-
-    const worker = { id: 'w1', sessionId: 's1', name: 'scratch-repo / single / T01 / work / implement', cwd: into, status: 'busy', state: 'working', pid: 1 };
     const spawn = fakeSpawner();
-    let polls = 0;
+    const p = fakeProcs([6001]);
+
     // The same HALT-reacting coordinator. `single` declares no drill, so HALT is never touched mid-run,
     // so no halt-close is ever written and the run hands off `completed`.
-    const claudeRun = (args) => {
-      if (args.includes('--all')) return { ok: true, stdout: '[]' };
-      if (args[0] === 'agents') {
-        polls += 1;
-        if (polls === 1) return { ok: true, stdout: JSON.stringify([worker]) };
-        if (existsSync(join(control, 'HALT'))) {
-          writeFileSync(flowPath, '2026-01-01T00:00:00Z spawn T01\n2026-01-01T00:01:00Z halt-close T01\n');
-        }
-        spawn.children[0].exit(0);
-        return { ok: true, stdout: '[]' };
-      }
-      return { ok: true, stdout: '' };
-    };
-
     const result = await runScenario({
       fixtureId: 'single',
       scratchDir: into,
       install: installFake({ into, controlLog: '2026-01-01T00:00:00Z spawn T01\n', slug: 'single' }),
       spawn,
-      claudeRun,
+      readWorkers: haltReactingCoordinator({ spawn, control, p }),
+      procs: p,
       gitRun: () => ({ ok: true, stdout: '' }),
-      platform: fakePlatform({ agents: [] }),
-      worktree: fakeWorktree,
-      projectsDir: projects,
       pollMs: 1,
     });
 
@@ -509,18 +513,12 @@ test('runScenario: a parked fixture whose facts pass and which times out scores 
   const ws = workspace();
   try {
     const into = join(ws.dir, 'scratch-repo');
-    const projects = join(ws.dir, 'projects');
-    mkdirSync(projects, { recursive: true });
 
     // The parked worker of T01 stays live every poll; the coordinator process never exits (the park never
     // resolves), so only the wall-clock timeout can end the run.
     const spawn = fakeSpawner();
-    const parked = { id: 'w1', sessionId: 's1', name: 'scratch-repo / human-decision / T01 / work / implement', cwd: into, status: 'busy', state: 'working', pid: 1 };
-    const claudeRun = (args) => {
-      if (args.includes('--all')) return { ok: true, stdout: '[]' };
-      if (args[0] === 'agents') return { ok: true, stdout: JSON.stringify([parked]) };
-      return { ok: true, stdout: '' };
-    };
+    const parked = rec('s1', 'T01', 'implement', 6001);
+    const p = fakeProcs([6001]);
     // The flow the coordinator would have written: T01 surfaced a question and parked; the independent T02
     // merged past it. Early timestamps so the live capture ticks (real `now`) sort at/after the surface.
     const controlLog = '2026-01-01T00:00:00Z surface T01\n2026-01-01T00:00:30Z merge T02\n';
@@ -528,13 +526,10 @@ test('runScenario: a parked fixture whose facts pass and which times out scores 
     const result = await runScenario({
       fixtureId: 'human-decision',
       scratchDir: into,
-      install: installFake({ into, controlLog, slug: 'human-decision' }),
+      install: installFake({ into, controlLog, slug: 'human-decision', workers: [parked] }),
       spawn,
-      claudeRun,
+      procs: p,
       gitRun: () => ({ ok: true, stdout: '' }),
-      platform: fakePlatform({ agents: [parked] }),
-      worktree: fakeWorktree,
-      projectsDir: projects,
       pollMs: 2,
       timeoutMs: 5, // fire the wall-clock cap almost immediately — the park cannot resolve
       haltGrace: 2,
@@ -591,38 +586,31 @@ test('seedStaleFeeds writes a leftover into the reports feed; snapshotControlFee
 // --- runRestartScenario end to end, with fakes (the whole crash-and-restart orchestration) --------
 //
 // A fake install lays the scratch and pre-writes the first run's flow. A fake process `spawn` hands out
-// the two coordinator children (crash then restart); a fake `claude` answers the capture ticks; a fake
+// the two coordinator children (crash then restart); a fake workers.json reader answers the capture ticks; a fake
 // worktree's taskBranchState reports 🔍 after two polls (the crash point); the first child is SIGKILLed
-// at the crash point, and once the second launch is live the agents handler exits it so the wait
+// at the crash point, and once the second launch is live the reader exits it so the wait
 // terminates. So install-once, launch/kill/relaunch, the stale-feed seeding and the two-launch-spanning
 // bundle are all proven with no live agent — the live crash-and-restart over real agents is T09.
 test('runRestartScenario installs once, launches, SIGKILLs the process at 🔍, relaunches on the same scratch, and spans both', async () => {
   const ws = workspace();
   try {
     const into = join(ws.dir, 'scratch-repo');
-    const projects = join(ws.dir, 'projects');
-    mkdirSync(projects, { recursive: true });
     const control = controlDirFor(into, 'restart');
     const flowPath = join(control, 'log');
-
-    const w2 = { id: 'w2', sessionId: 'i2', name: 'scratch-repo / restart / T02 / work / implement', cwd: into, status: 'busy', state: 'working', pid: 5001 };
 
     const firstFlow = '2026-01-01T00:00:00Z restart\n2026-01-01T00:00:05Z merge T01\n2026-01-01T00:00:08Z review T02\n';
     const resumedFlow = firstFlow + '2026-01-01T00:00:10Z restart\n2026-01-01T00:00:12Z merge T02\n';
 
     const spawn = fakeSpawner();
-    const claudeRun = (args) => {
-      if (args.includes('--all')) return { ok: true, stdout: '[]' };
-      if (args[0] === 'agents') {
-        if (spawn.children.length >= 2) {
-          // The resumed run: write its flow, then exit the second coordinator so the wait terminates.
-          writeFileSync(flowPath, resumedFlow);
-          spawn.children[1].exit(0);
-          return { ok: true, stdout: '[]' };
-        }
-        return { ok: true, stdout: JSON.stringify([w2]) };
+    const p = fakeProcs([6002]);
+    const readWorkers = () => {
+      if (spawn.children.length >= 2) {
+        // The resumed run: write its flow, then exit the second coordinator so the wait terminates.
+        writeFileSync(flowPath, resumedFlow);
+        spawn.children[1].exit(0);
+        return [];
       }
-      return { ok: true, stdout: '' };
+      return [rec('i2', 'T02', 'implement', 6002)];
     };
 
     let installs = 0;
@@ -640,11 +628,10 @@ test('runRestartScenario installs once, launches, SIGKILLs the process at 🔍, 
       scratchDir: into,
       install,
       spawn,
-      claudeRun,
+      readWorkers,
+      procs: p,
       gitRun: () => ({ ok: true, stdout: '' }),
-      platform: fakePlatform({ agents: [] }),
       worktree,
-      projectsDir: projects,
       pollMs: 1,
       startupGrace: 100,
     });

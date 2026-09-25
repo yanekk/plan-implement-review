@@ -39,11 +39,11 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T13 | conversation-view | T02, T07, T12 | ⬜ | |
 | T14 | worker-contract | T05 | ⬜ | |
 | T15 | sunset-pir-coordinate | T10 | ✅ | |
-| T16 | harness-conversations | T05, T06 | ⬜ | |
+| T16 | harness-conversations | T05, T06 | 🔍 | Timeline is workers.json plus log activity; bundle holds conversations/, workers.json, run.json; teardown reaps workers.json; scratch links node_modules. Capture tests rewritten, 7 new elsewhere. Deviations: tokens.mjs unwraps log entries (unlisted); scaffold .gitignore `node_modules` without slash so the link is ignored; implementer count reads logs; handedOffGreenBranch fails without run.json; reap before seal. |
 | T17 | docs | T06, T07, T08, T13, T14, T15 | ⬜ | |
 | T18 | live-run | T08, T13, T14, T16, T17 | ⬜ | |
 
-**Review queue:** empty
+**Review queue:** T16
 
 ## Blocked on the user
 
