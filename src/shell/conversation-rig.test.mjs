@@ -183,6 +183,11 @@ test('the screen model keeps a row the cursor is parked on, and drops colour, OS
   m.write('\x1b[1;');
   m.write('7Hworld'); // an escape split across two writes
   assert.deepEqual(m.rows(), ['hello world', '> box', 'wide 界 an'].map((r) => r.slice(0, 10)));
+  const past = m.overflows();
+  assert.ok(past > 0, 'text past the right edge is counted');
+  m.write('\x1b[4;1H');
+  m.write('\x1b[3;1H\n');
+  assert.equal(m.overflows(), past + 2, 'a row address below the grid and a line feed on the last row are counted');
 });
 
 // The driver on the tour: open the rig's run from the dashboard, open its worker, answer everything, talk
@@ -194,7 +199,7 @@ test('the driver walks the tour on the real pir screen', { timeout: 90000 }, asy
   const cols = 100;
   const rows = 30;
   const ESC = '\x1b';
-  const { screens } = await driveScreen({
+  const { screens, overflows } = await driveScreen({
     cols,
     rows,
     env: { ...process.env, ...env },
@@ -221,6 +226,7 @@ test('the driver walks the tour on the real pir screen', { timeout: 90000 }, asy
   });
 
   for (const s of screens) assert.equal(s.rows.length, rows, 'every captured screen is exactly `rows` lines');
+  assert.equal(overflows, 0, 'pir never addressed, scrolled or wrote past the window, so no frame was clipped to fit');
   const conversation = screens.slice(2, -1);
   for (const s of conversation) {
     assert.match(s.rows.at(-1), /esc interrupt · ← back/, `the key hint is the last line:\n${s.rows.join('\n')}`);

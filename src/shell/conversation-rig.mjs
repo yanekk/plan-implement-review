@@ -292,13 +292,16 @@ sys.exit(os.waitstatus_to_exitcode(status) & 0xff)
 // erases and printable text, and ignores the rest. It starts from pir-tui.test.mjs's `drawnRows`, which
 // splits the stream at row addresses, but that split misreads the cursor park at column 1 (an empty box)
 // as a blank row write, so the model tracks the cursor instead. Autowrap is off (pi-tui turns it off), so
-// text past the last column is dropped.
+// text past the last column is dropped. Every place where pir's output does not fit the window (a row or
+// column address off the grid, a line feed on the last row, text past the right edge) is counted in
+// `overflows()`, because clamping or scrolling it would hide exactly the frame that is too tall or wide.
 export function createScreenModel({ rows = 24, cols = 80 } = {}) {
   const blank = () => Array.from({ length: cols }, () => ' ');
   let grid = Array.from({ length: rows }, blank);
   let r = 0;
   let c = 0;
   let pending = ''; // an escape sequence split across two writes
+  let overflows = 0;
   const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 
   function csi(params, final) {
@@ -308,6 +311,7 @@ export function createScreenModel({ rows = 24, cols = 80 } = {}) {
     switch (final) {
       case 'H':
       case 'f':
+        if (n(0, 1) > rows || n(1, 1) > cols) overflows += 1;
         r = clamp(n(0, 1) - 1, 0, rows - 1);
         c = clamp(n(1, 1) - 1, 0, cols - 1);
         break;
@@ -362,7 +366,10 @@ export function createScreenModel({ rows = 24, cols = 80 } = {}) {
       }
       if (ch === '\r') c = 0;
       else if (ch === '\n') {
-        if (r === rows - 1) grid = [...grid.slice(1), blank()];
+        if (r === rows - 1) {
+          overflows += 1;
+          grid = [...grid.slice(1), blank()];
+        }
         else r += 1;
       } else if (ch === '\b') c = Math.max(0, c - 1);
       else if (ch >= ' ') {
@@ -372,7 +379,7 @@ export function createScreenModel({ rows = 24, cols = 80 } = {}) {
           grid[r][c] = cp;
           if (w === 2) grid[r][c + 1] = '';
           c += w;
-        }
+        } else if (w > 0) overflows += 1;
         i += cp.length;
         continue;
       }
@@ -383,10 +390,11 @@ export function createScreenModel({ rows = 24, cols = 80 } = {}) {
   return {
     write,
     rows: () => grid.map((row) => row.join('').replace(/\s+$/, '')),
+    overflows: () => overflows,
   };
 }
 
-// driveScreen({ cols, rows, keys, args, cwd, env, settleMs, timeoutMs }) → { screens, exitCode }.
+// driveScreen({ cols, rows, keys, args, cwd, env, settleMs, timeoutMs }) → { screens, exitCode, overflows }.
 // Runs `node pir.mjs ...args` under a pty of cols×rows, waits for its first frame, then sends each key in
 // turn and captures the screen once output has been quiet for settleMs. A key is a string (the bytes to
 // send) or { keys, until, timeoutMs }: `until` (a RegExp or a function of the screen text) holds the
@@ -440,7 +448,7 @@ export async function driveScreen({ cols = 100, rows = 30, keys = [], args = [],
     await exited;
     clearTimeout(timer);
   }
-  return { screens, exitCode: child.exitCode };
+  return { screens, exitCode: child.exitCode, overflows: model.overflows() };
 }
 
 // ---- The command. ----
