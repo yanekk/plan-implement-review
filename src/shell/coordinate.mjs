@@ -36,6 +36,7 @@ import { createPlatform, resolveClaudePath } from './platform.mjs';
 import { createRenderer } from './render.mjs';
 import { writeSnapshot } from './snapshot-store.mjs';
 import { createWorktree } from './worktree.mjs';
+import { reapRecorded } from './reap.mjs';
 
 const DONE_GLYPH = '✅';
 const READY_GLYPH = '⬜';
@@ -673,19 +674,26 @@ export function clearTransientFeeds(controlDir) {
   return { cleared };
 }
 
-// startupControlHygiene(control) → the restart-hygiene step the bin runs once, before it stands up the
-// loop (DESIGN §2.7, §7). If HALT is still present it is a deliberate stop the person must lift, so this
-// refuses ({ halted:true }) and NEVER clears the flag — auto-clearing would blow a restarted run
-// straight past the kill switch. Otherwise it clears the transient feeds and appends a `restart` marker
-// to the preserved log (the audit-trail boundary between runs), returning what it cleared. Exported so
-// both halves — the refusal and the clear+marker — are unit-tested without the live bin.
-export function startupControlHygiene(control) {
+// startupControlHygiene(control, { reap }) → the restart-hygiene step the bin runs once, before it stands
+// up the loop (DESIGN §2.7, §7). First it reaps the previous coordinator's surviving workers from
+// workers.json (live-workers T06, DESIGN §2.12: a child mid-command outlives a SIGKILLed parent, and no
+// listing finds it since T05). The reap comes before the first pass, so a leftover worker is gone before
+// reconcile adopts its branch and a fresh worker is spawned into its worktree; it also runs on a HALTed
+// start, because a HALT stops every worker and a survivor of it is still a worker burning tokens. Then, if
+// HALT is still present, it is a deliberate stop the person must lift, so this refuses ({ halted:true })
+// and NEVER clears the flag — auto-clearing would blow a restarted run straight past the kill switch.
+// Otherwise it clears the transient feeds and appends a `restart` marker to the preserved log (the
+// audit-trail boundary between runs). Async only for the reap's SIGKILL window. Exported so every half is
+// unit-tested without the live bin.
+export async function startupControlHygiene(control, { reap = reapRecorded } = {}) {
+  const { reaped } = await reap(control.dir);
+  if (reaped.length) control.log(`startup: reaped leftover workers ${reaped.join(', ')}`);
   if (control.isHalted()) {
-    return { halted: true, flag: control.flag };
+    return { halted: true, flag: control.flag, reaped };
   }
   const { cleared } = clearTransientFeeds(control.dir);
   control.log('restart');
-  return { halted: false, cleared };
+  return { halted: false, cleared, reaped };
 }
 
 // waitForReport(reportsDir, timeoutMs, { watch }) → resolve as soon as anything changes in the reports
@@ -941,7 +949,7 @@ async function main(argv) {
   // the flag, never clearing it) and clear the dead run's transient reports so none of its leftovers
   // route into a fresh worker. Runs before the report inbox and the loop, so neither side has written a
   // report yet this run. The log and HALT are preserved; a `restart` marker records the boundary.
-  const hygiene = startupControlHygiene(control);
+  const hygiene = await startupControlHygiene(control);
   if (hygiene.halted) {
     console.error(
       `HALT flag present at ${hygiene.flag} — remove it to restart.\n` +
@@ -951,6 +959,7 @@ async function main(argv) {
     );
     process.exit(1);
   }
+  if (hygiene.reaped.length) console.log(`reaped ${hygiene.reaped.length} leftover worker(s) from a prior run: ${hygiene.reaped.join(', ')}`);
   if (hygiene.cleared.length) console.log(`cleared stale control feeds from a prior run: ${hygiene.cleared.join(', ')}`);
 
   const inbox = createReportInbox({ dir: control.dir });

@@ -29,7 +29,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T03 | person-input | T01 | ✅ | |
 | T04 | worker-process | T01, T10 | ✅ | |
 | T05 | live-platform | T04 | ✅ | |
-| T06 | reap-workers | T04, T05 | ⬜ | |
+| T06 | reap-workers | T04, T05 | 🔍 | reap.mjs + 8 tests; stopRun, hygiene, removeRun, loop tests updated. Deviations: stopRun reaps on every path, not only escalated; hygiene reaps on a HALTed start too; a null startTime is never killed; stopRun takes `reap`, pir-tui `makePlatform` dropped; DESIGN §6 recovery now compares `lstart`. |
 | T07 | person-inbox | T03, T05 | ⬜ | |
 | T08 | conflict-to-worker | T05 | ⬜ | |
 | T09 | asking-kinds | T05, T08 | ⬜ | |
@@ -43,7 +43,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T17 | docs | T06, T07, T08, T13, T14, T15 | ⬜ | |
 | T18 | live-run | T08, T13, T14, T16, T17 | ⬜ | |
 
-**Review queue:** empty
+**Review queue:** T06
 
 ## Blocked on the user
 
