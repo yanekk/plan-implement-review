@@ -8,6 +8,10 @@ changed.
 
 | Date | | Finding |
 |---|---|---|
+| 2026-09-25 | ✅ | T12 watched by the user in the `pir` viewer: `preparing` reads as getting ready, the green ending is clear. Seen on a 90s-setup scratch halted before spawn; an 8s preparing ends before the run is opened. |
+| 2026-09-25 | 📌 | T12 live `single` run, setup `sleep 8 && touch .setup-ran`, ceiling 1: `.setup-ran` 21:34:18, spawn 21:34:21, `setup/T01.log` written, `finished`, `readyToMerge` true, `testsReason` null, `tests.log` ran setup then `npm test`. |
+| 2026-09-25 | 📌 | T12 blockless scratch: `pir.mjs single` exit 1 with the T03 message, no `.parallel`, no branch. Narrow pass wrote `setup: none`/`npm test`, fresh copy verify exit 0, committed; `startRun` then passed both block gates and stopped on a pre-placed HALT. |
+| 2026-09-25 | 📌 | `claude --bg` scratches reused trusted absent paths `/private/tmp/pir-t34-rerun`, `pir-t35-rerun`. The review-plan parser recipe imports `~/.claude/pir-engine/src/core/testblock.mjs`, absent until install; the scratch used its own `src`. |
 | 2026-09-24 | 📌 | `coordinator.defer` removes a task's worktree without killing a running `t.setup`. No production caller today, so left alone; a future caller should kill the setup first. |
 | 2026-09-24 | 🐞 | A stalled run ends `finished` with `complete` false, so the `pir-tui.mjs` stale note still offers `Hand-off: git merge` on an unfinished branch. Reproduced in T05 review; left open, wording for that state is undecided. |
 | 2026-09-24 | 📌 | A red finished run's header still reads `✓ pir/<slug> · n/n done`, styled green (`render.mjs` header rule: green when finished). Only the footer says red. Not in T05's scope. |
