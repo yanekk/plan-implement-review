@@ -12,6 +12,8 @@ changed.
 
 | Date | | Finding |
 |---|---|---|
+| 2026-09-25 | 📌 | T04 review: SDK 0.3.282 skips an unparsable stdout line without error; only a non-zero exit mid-turn throws from the stream. A fake script needs `{exit: n}` to produce `sdk-error`, not garbage. |
+| 2026-09-25 | 📌 | T04: SDK 0.3.282 aborts a pending `canUseTool` signal only on the CLI's `control_cancel_request`, not on `interrupt()` itself. The fake must emit that line after an interrupt. A custom `spawnClaudeCodeProcess` is never existence-checked; the SDK leaves stderr unread. |
 | 2026-09-25 | 📌 | T03: Claude suggested `echo probe-one *` for `echo probe-one > probe.txt`; pir's grant does not match that redirecting request, since Claude checks redirect targets against Edit rules and pir does not. Such requests still reach the person. |
 | 2026-09-25 | ✅ | T11, verified by hand with the user: old and new `pir` screens side by side on seeded runs in every state (asking, conflict, crashed, end tests, red, green, stopped, twin slugs): "identical". A pty cell-by-cell diff of 39 screens also matched. |
 | 2026-09-25 | 📌 | T11: pi-tui `TuiAltScreen` defaults would change the screen: mouse capture (steals terminal text selection) and, on `stop()`, reprinting the last frame onto the main screen. pir passes `mouse:false` and `stop({preserveScreen:true})`. |

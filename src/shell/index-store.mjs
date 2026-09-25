@@ -28,6 +28,7 @@ import {
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { serializeRecord, parseRecord } from '../core/runrecord.mjs';
+import { writeFileAtomic } from './atomic-write.mjs';
 
 // The default filesystem: the real node:fs calls this module needs, bundled so a caller can inject a
 // fake with the same shape. Every fs use below goes through the injected object, never a bare import.
@@ -97,11 +98,7 @@ export function listRecords({ dir = indexDir(), fs = DEFAULT_FS } = {}) {
 // a random suffix so two writers in the same directory cannot collide on it, and ends in `.tmp` so it
 // is never mistaken for an entry.
 export function writeRecord(record, { dir = indexDir(), fs = DEFAULT_FS } = {}) {
-  fs.mkdirSync(dir, { recursive: true });
-  const finalPath = recordPath(record.repo, record.slug, { dir });
-  const tempPath = `${finalPath}.${process.pid}-${Math.random().toString(36).slice(2)}.tmp`;
-  fs.writeFileSync(tempPath, serializeRecord(record));
-  fs.renameSync(tempPath, finalPath);
+  writeFileAtomic(recordPath(record.repo, record.slug, { dir }), serializeRecord(record), { fs });
 }
 
 // removeRecord({ repo, slug }, { dir, fs }) → delete a run's index file. Removing a run deletes its
