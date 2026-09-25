@@ -30,6 +30,7 @@ import { indexDir, listRecords } from './index-store.mjs';
 import { readSnapshot } from './snapshot-store.mjs';
 import { stopRun, removeRun } from './control-run.mjs';
 import { FrameView } from './pir-view.mjs';
+import { createConversationView } from './conversation-view.mjs';
 import { ProcessTerminal, TuiAltScreen, isKeyRelease, parseKey } from '@earendil-works/pi-tui';
 
 // The spinner frames, one per refresh (a poll tick). The SAME Braille frames render.mjs uses, so a live
@@ -107,7 +108,6 @@ function footerLine(context, ui) {
     return lineOf(`⚠ Ctrl+X again to remove ${ui.armed.slug}'s record`, 'armed');
   }
   if (context === 'watch') return lineOf('↑↓ pick a task · → open its worker · ← back · Ctrl+S Ctrl+S stop this run · esc quit', 'hint');
-  if (context === 'worker') return lineOf('← back · esc quit', 'hint');
   return lineOf('↑↓ move · ↵ open · Ctrl+S stop · Ctrl+X remove · esc quit', 'hint');
 }
 
@@ -320,23 +320,6 @@ export function buildWatchFrame(view, { now, spinnerChar = SPINNER[0], ui = init
   return lines;
 }
 
-// buildWorkerFrame(view, ui) → frame: the 'worker' view's placeholder until T13 mounts the conversation
-// view in its place. It names the worker opened and where its conversation log is, so the routing can be
-// seen working end to end.
-export function buildWorkerFrame(view, ui = initialUi()) {
-  const w = ui.openWorker ?? {};
-  const lines = [];
-  lines.push([
-    span(`${view?.slug ?? ''} · ${w.taskId ?? ''}`, 'head'),
-    span(`  worker ${w.workerId ?? '?'} · ${w.live ? 'live' : 'finished, read only'}`, 'dim'),
-  ]);
-  lines.push([]);
-  lines.push(lineOf(`  conversation log: ${w.logPath ?? 'none recorded'}`, 'dim'));
-  lines.push([]);
-  lines.push(footerLine('worker', ui));
-  return lines;
-}
-
 // decodeKey(data) → the intent for a keypress, or null for a key the dashboard does not bind.
 //
 //   ↑ / ↓ arrows → 'up' / 'down'      (move the selection)
@@ -347,6 +330,9 @@ export function buildWorkerFrame(view, ui = initialUi()) {
 //   Ctrl+S       → 'ctrlS'            (arm / confirm stop)
 //   Ctrl+X       → 'ctrlX'            (arm / confirm remove)
 //   Ctrl+C       → 'quit'             (leave `pir` at once)
+//
+// In the 'worker' view none of this applies: runTui hands every key to the conversation view, where Esc
+// interrupts the worker and Ctrl+C clears the box or interrupts (live-workers §2.11, user 2026-09-25).
 //
 // Back and quit are split across two keys at the user's direction (2026-09-22): ← walks back a level, Esc
 // leaves outright — rather than the original Esc-steps-back-then-quits from the prototype (DESIGN §2.4,
@@ -401,9 +387,18 @@ export function createScreen({ stream = process.stdout, colour, terminal } = {})
   const useColour = isTTY && (colour ?? !('NO_COLOR' in process.env));
 
   if (!isTTY) {
+    let mounted = null;
     return {
+      colour: false,
+      host: { requestRender() {}, terminal: { rows: stream.rows || 24, columns: stream.columns || DEFAULT_COLS } },
       paint(frame) {
         stream.write(frame.map((l) => l.map((s) => s.text).join('')).join('\n') + '\n');
+      },
+      mount(component) {
+        mounted = component;
+      },
+      renderNow() {
+        if (mounted) stream.write(mounted.render(stream.columns || DEFAULT_COLS).join('\n') + '\n');
       },
       close() {},
     };
@@ -416,13 +411,16 @@ export function createScreen({ stream = process.stdout, colour, terminal } = {})
   let onInput = null;
   let onError = null;
   const view = new FrameView(() => frame, { colour: useColour });
+  // The conversation view (T13) is a pi-tui component of its own, with a typing box: while one is mounted
+  // it is drawn in the frame's place and has the focus, so the box's cursor lands where the person types.
+  let mounted = null;
   // pi-tui also renders on its own — after a resize, and once on start. A throw there would surface on a
   // timer, outside runTui's try, so it is caught and handed to runTui's error path (restore the terminal,
   // then rethrow, §2.14). A throw during paint() propagates straight to paint's caller instead.
   const guarded = {
     render(width) {
       try {
-        return view.render(width);
+        return (mounted ?? view).render(width);
       } catch (err) {
         if (painting || !onError) throw err;
         onError(err);
@@ -439,6 +437,12 @@ export function createScreen({ stream = process.stdout, colour, terminal } = {})
     return { consume: true };
   });
 
+  function mount(component) {
+    if (mounted === (component ?? null)) return;
+    mounted = component ?? null;
+    tui.setFocus(mounted);
+  }
+
   function start() {
     if (started || closed) return;
     started = true;
@@ -446,6 +450,19 @@ export function createScreen({ stream = process.stdout, colour, terminal } = {})
   }
 
   return {
+    colour: useColour,
+    host: tui,
+    mount,
+    renderNow() {
+      if (closed) return;
+      start();
+      painting = true;
+      try {
+        tui.renderNow();
+      } finally {
+        painting = false;
+      }
+    },
     listen(input, error) {
       onInput = input;
       onError = error;
@@ -453,6 +470,7 @@ export function createScreen({ stream = process.stdout, colour, terminal } = {})
     },
     paint(next) {
       if (closed) return;
+      if (mounted) mount(null);
       frame = next;
       start();
       painting = true;
@@ -537,6 +555,8 @@ async function runTui({
   load = loadDashboard,
   stop = stopRun,
   remove = removeRun,
+  drop,
+  follow,
   initial = initialUi(),
 } = {}) {
   const dir = indexDir({ env });
@@ -555,6 +575,51 @@ async function runTui({
   const selectedTask = new Map();
 
   const read = () => load({ dir, now: now(), kill, exec, fs });
+
+  // The open worker's conversation view (T13), created on entering the 'worker' view and disposed on
+  // leaving it. It takes every key while it is open: its own table (§2.11) replaces Esc-quits and
+  // Ctrl+C-quits, and it calls back on ← to step out.
+  let conv = null;
+  let renderSoon = null; // a screen with no pi-tui host repaints the view on its own requests
+  const host = screen.host ?? {
+    terminal: { get rows() { return stdout.rows || 24; }, get columns() { return stdout.columns || DEFAULT_COLS; } },
+    requestRender: () => renderSoon?.(),
+  };
+
+  function closeConv() {
+    conv?.dispose();
+    conv = null;
+    screen.mount?.(null);
+  }
+
+  function paintConv(dash) {
+    if (!conv) {
+      const open = findOpen(dash.rows, ui);
+      const opened = { ...ui };
+      conv = createConversationView({
+        run: { slug: open?.slug ?? ui.openSlug, controlDir: open?.record?.controlDir ?? open?.controlDir ?? null },
+        worker: ui.openWorker,
+        // The coordinator is alive when the open run is `running` as classifyRun decides it (pid AND start
+        // time, §2.5), read fresh at the moment of the drop.
+        alive: () => findOpen(read().rows, opened)?.state === 'running',
+        onBack: () => {
+          ui = dashboardReducer(ui, { type: 'back' }, dash.rows).ui;
+          closeConv();
+          repaint();
+        },
+        tui: host,
+        colour: screen.colour ?? false,
+        ...(drop ? { drop } : {}),
+        ...(follow ? { follow } : {}),
+      });
+    }
+    if (typeof screen.mount === 'function') {
+      screen.mount(conv);
+      screen.renderNow();
+    } else {
+      screen.paint(conv.render(Math.max(20, stdout.columns || DEFAULT_COLS)).map((l) => lineOf(l)));
+    }
+  }
 
   // Re-derive taskSel from the open run's pinned task id against a fresh read, then re-pin, as repaint
   // does for the list's `sel`. The keypress path runs it too, before the reducer, so an arrow moves from
@@ -589,7 +654,7 @@ async function runTui({
     spin += 1;
     const spinnerChar = SPINNER[spin % SPINNER.length];
     if (ui.view === 'worker') {
-      screen.paint(buildWorkerFrame(findOpen(dash.rows, ui) ?? { slug: ui.openSlug }, ui));
+      paintConv(dash);
     } else if (ui.view === 'watch') {
       const view = findOpen(dash.rows, ui) ?? { slug: ui.openSlug, state: 'crashed', repo: '', snap: null };
       // A crashed run's log tail is shown inline; read it only for the open, crashed run (not every row).
@@ -613,6 +678,7 @@ async function runTui({
 
       function cleanup() {
         settled = true;
+        renderSoon = null;
         if (refresh) clearInterval(refresh);
         if (!ownInput) return; // pi-tui drops its own stdin listener when the screen closes
         if (typeof stdin.off === 'function') stdin.off('data', onData);
@@ -631,6 +697,11 @@ async function runTui({
         // A key pi-tui delivers between the quit and the screen closing belongs to nobody.
         if (settled) return;
         try {
+          if (ui.view === 'worker' && conv) {
+            conv.handleInput(Buffer.isBuffer(data) ? data.toString('utf8') : String(data ?? ''));
+            if (ui.view === 'worker' && !settled) paintConv(read());
+            return;
+          }
           const key = decodeKey(data);
           if (key === 'quit') return finish(); // Esc or Ctrl+C: leave pir
           if (key == null) return;
@@ -671,6 +742,15 @@ async function runTui({
         }
       }
 
+      renderSoon = () => {
+        if (!settled && ui.view === 'worker' && conv && typeof screen.mount !== 'function') {
+          try {
+            paintConv(read());
+          } catch (err) {
+            fail(err);
+          }
+        }
+      };
       if (ownInput) stdin.on('data', onData);
       else screen.listen(onData, fail);
       refresh = setInterval(() => {
@@ -689,6 +769,7 @@ async function runTui({
       }
     });
   } finally {
+    conv?.dispose();
     if (ownInput && typeof stdin.setRawMode === 'function') stdin.setRawMode(false);
     if (ownInput && typeof stdin.pause === 'function') stdin.pause();
     screen.close();

@@ -91,6 +91,8 @@ interrupts, answers permissions and question sets.
 | [T16](tasks/T16-harness-conversations.md) | harness-conversations | T05, T06 |
 | [T17](tasks/T17-docs.md) | docs | T06, T07, T08, T13, T14, T15 |
 | [T18](tasks/T18-live-run.md) | live-run | T08, T13, T14, T16, T17 |
+| [T19](tasks/T19-conversation-view-rig.md) | conversation-view-rig | T13 |
+| [T20](tasks/T20-conversation-view-feel.md) | conversation-view-feel | T19; blocks T18 |
 
 T15 depends on T10 only because both rewrite `install.sh`, and T09 on T08 because both change the display
 and the footer (`display.mjs`, `render.mjs`); serialising each pair avoids a certain conflict.

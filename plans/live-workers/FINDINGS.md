@@ -12,6 +12,10 @@ changed.
 
 | Date | | Finding |
 |---|---|---|
+| 2026-09-25 | 📌 | T13 review: with a permission or question pending the conversation hint is 90 columns, so at 80 its `PgUp/PgDn scroll` is clipped; the code comment claims it fits. Wording is the person's; left for T20. |
+| 2026-09-25 | 🔄 | T13: the user had no time for the hands-on feel check. Added T19 (a free rig: pretend run, real screen, pty driver) and T20 (a worker drives it, not the person: "You drive, not me"); T20 blocks T18. |
+| 2026-09-25 | 📌 | T13: while a permission is pending and the box is empty, y/n/a answer at once, so a typed reply cannot begin with those letters (a capital works). Left for T20 to raise with the user. |
+| 2026-09-25 | 📌 | T13: no `ask` rule stopped the person-check scratch run (§5.3): `startRun` ran without a prompt. The auto-mode classifier then blocked reading that run's control folder ("Real-World Transactions"). Run halted by HALT, index record and folder removed. |
 | 2026-09-25 | 📌 | T16: harness fixture prose still tells the person to attach in `claude agents` (`dynamic-task.mjs` task doc, `merge-conflict.mjs` steps). Left for T18's live run to correct; a worker reading it would look for a session that no longer exists. |
 | 2026-09-25 | 📌 | T09: a task's `workers` in status.json come from `platform.workers()`, this coordinator's spawns only. After a restart an earlier run's logs stay in `conversations/` but no row opens them until something scans that folder. |
 | 2026-09-25 | 📌 | T07: worker-proc logs a `request` entry, and fires `onEvent`, before it parks the request as pending, so the platform's grant auto-answer waits one microtask. Answering inside the listener would log `undelivered`. |

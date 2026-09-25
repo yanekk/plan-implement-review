@@ -22,28 +22,30 @@ export function scrubEnv(env) {
   return Object.fromEntries(Object.entries(env).filter(([k]) => !k.startsWith('PARALLEL_') && k !== 'PIR_RUN'));
 }
 
-// readLogTail(logPath, n, { fs }) → the last `n` lines of a log, or null if it cannot be read.
-// A crashed run wrote why it died into run.log; showing the tail in the watch view saves the person
-// opening the file (user 2026-09-22). Only the last 16 KiB is read so a long run's huge log never loads
-// in full on every refresh; a partial first line from that cut is dropped so no half-line is shown.
-// Moved here from pir-tui.mjs (which re-exports it) so the runner need not import the TUI.
-export function readLogTail(logPath, n = 5, { fs = { openSync, fstatSync, readSync, closeSync } } = {}) {
-  if (!logPath) return null;
-  const MAX = 16 * 1024;
+// readTailBytes(path, maxBytes, { fs }) → { buf, end, midLine } | null. The last `maxBytes` of a file as a
+// Buffer that starts on a line boundary: when the read cut into the file, the partial first line is dropped so
+// no half-line is ever shown. `end` is the file's size at the read, where a follower picks up (log-follow.mjs).
+// `midLine` is true when the cut found no newline at all: `end` then sits inside a line whose start was never
+// read, and a follower must skip to the next newline rather than take the rest of it as a line.
+// null when the file cannot be read. Bytes, not text, so a cut or a later append never splits a character.
+export function readTailBytes(path, maxBytes, { fs = { openSync, fstatSync, readSync, closeSync } } = {}) {
+  if (!path) return null;
   let fd;
   try {
-    fd = fs.openSync(logPath, 'r');
+    fd = fs.openSync(path, 'r');
     const size = fs.fstatSync(fd).size;
-    const len = Math.min(size, MAX);
-    const buf = Buffer.alloc(len);
+    const len = Math.min(size, Math.max(0, maxBytes | 0));
+    let buf = Buffer.alloc(len);
     if (len > 0) fs.readSync(fd, buf, 0, len, size - len);
-    let text = buf.toString('utf8');
-    if (len < size) text = text.slice(text.indexOf('\n') + 1); // drop the partial first line from the cut
-    const lines = text.split('\n');
-    while (lines.length && lines[lines.length - 1] === '') lines.pop();
-    return lines.length ? lines.slice(-n) : null;
+    let midLine = false;
+    if (len < size) {
+      const nl = buf.indexOf(0x0a);
+      midLine = nl < 0;
+      buf = nl < 0 ? Buffer.alloc(0) : buf.subarray(nl + 1); // drop the partial first line from the cut
+    }
+    return { buf, end: size, midLine };
   } catch {
-    return null; // no log, or unreadable — the caller simply shows none
+    return null; // no file, or unreadable — the caller simply shows none
   } finally {
     if (fd !== undefined) {
       try {
@@ -53,6 +55,19 @@ export function readLogTail(logPath, n = 5, { fs = { openSync, fstatSync, readSy
       }
     }
   }
+}
+
+// readLogTail(logPath, n, { fs, maxBytes }) → the last `n` lines of a log, or null if it cannot be read.
+// A crashed run wrote why it died into run.log; showing the tail in the watch view saves the person
+// opening the file (user 2026-09-22). Only the last `maxBytes` (16 KiB) is read so a long run's huge log
+// never loads in full on every refresh. `n = Infinity` returns every whole line in that tail.
+// Moved here from pir-tui.mjs (which re-exports it) so the runner need not import the TUI.
+export function readLogTail(logPath, n = 5, { fs, maxBytes = 16 * 1024 } = {}) {
+  const tail = readTailBytes(logPath, maxBytes, fs ? { fs } : {});
+  if (!tail) return null;
+  const lines = tail.buf.toString('utf8').split('\n');
+  while (lines.length && lines[lines.length - 1] === '') lines.pop();
+  return lines.length ? lines.slice(-n) : null;
 }
 
 function openLog(logPath, flags) {
