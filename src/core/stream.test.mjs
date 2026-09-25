@@ -269,6 +269,21 @@ test('interrupt while busy → next result (error_during_execution) → idle', (
   assert.equal(workerActivity(log).turns, 1);
 });
 
+test('an interrupt while a request is pending cancels it: the turn\'s result leaves the worker idle (T01 review probe)', () => {
+  // Measured: interrupt() while canUseTool was pending aborted its signal; Claude logged the tool as
+  // rejected and ended the turn with error_during_execution. No reply is ever written for the request.
+  const log = [sent(), init(), request('r1'), interrupt()];
+  assert.equal(workerActivity(log).state, 'permission', 'still shown until the turn ends');
+  log.push(inMsg({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'tu1', content: 'rejected', is_error: true }] } }));
+  log.push(result('error_during_execution'));
+  const a = workerActivity(log);
+  assert.equal(a.state, 'idle');
+  assert.deepEqual(a.pending, []);
+  // A request raised after the interrupt is not cancelled by it.
+  const later = [sent(), request('r1'), interrupt(), request('r2'), result('error_during_execution')];
+  assert.deepEqual(workerActivity(later).pending.map((p) => p.requestId), ['r2']);
+});
+
 test('a background task notification after a result: the turn it opens is busy with no message sent (T01 probe)', () => {
   // Measured: result, then background_tasks_changed, task_updated, task_notification, then a new
   // init, assistant text and result, all without pir sending anything.

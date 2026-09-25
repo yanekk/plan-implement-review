@@ -198,6 +198,8 @@ const TURN_OPENERS = new Set(['init', 'text', 'tool-use']);
 //   idle       the last turn ended and nothing is pending
 //   permission / questions   the oldest unanswered request is a permission request / a question set
 // A pending request outranks busy and idle: a background job may ask after its turn's `result`.
+// An interrupt cancels the requests pending when it was sent: the SDK aborts their `canUseTool` signal
+// and the turn ends with no reply ever logged (T01 review probe), so they are dropped at that `result`.
 // `pending` holds the unanswered requests' events, oldest first. `turns` counts results.
 // `lastEventAt` is the last entry's `t`; this never reads a clock.
 export function workerActivity(entries) {
@@ -207,6 +209,7 @@ export function workerActivity(entries) {
   let lastEventAt = null;
   let slashCommands = [];
   const pending = new Map();
+  let cancelled = null; // requests pending when the person interrupted, dropped at the turn's `result`
 
   for (const entry of entries) {
     if (isObject(entry) && Number.isFinite(entry.t)) lastEventAt = entry.t;
@@ -220,6 +223,11 @@ export function workerActivity(entries) {
           open = false;
           started = true;
           turns += 1;
+          if (cancelled) for (const id of cancelled) pending.delete(id);
+          cancelled = null;
+          break;
+        case 'interrupt':
+          cancelled = new Set([...(cancelled ?? []), ...pending.keys()]);
           break;
         case 'permission':
         case 'questions':
