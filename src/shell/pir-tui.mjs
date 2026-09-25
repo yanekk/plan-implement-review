@@ -21,6 +21,7 @@ import { join } from 'node:path';
 import { readLogTail } from './commands.mjs';
 
 import { buildDisplay } from '../core/display.mjs';
+import { wrapLine } from '../core/text.mjs';
 import { buildDashboard, dashboardReducer, findOpen, initialUi, runKey } from '../core/dashboard.mjs';
 import { styledLines } from './render.mjs';
 import { classifyRun } from '../core/runstate.mjs';
@@ -60,36 +61,6 @@ function pad(s, n) {
   const chars = [...String(s ?? '')];
   if (chars.length >= n) return chars.slice(0, n).join('');
   return chars.join('') + ' '.repeat(n - chars.length);
-}
-
-// Wrap one logical line to at most `width` visible columns, breaking at a space when there is one and
-// hard-breaking a token longer than the width (a file path has no spaces, so it hard-breaks — which is
-// how a long run.log path is made to fit rather than being clipped off the right edge, user 2026-09-22).
-// Returns one-or-more strings, counted by code point. An empty string wraps to a single empty line.
-export function wrapLine(text, width) {
-  const w = Math.max(1, width | 0 || 1);
-  const chars = [...String(text ?? '')];
-  if (chars.length <= w) return [chars.join('')];
-  const out = [];
-  let start = 0;
-  while (start < chars.length) {
-    let end = Math.min(start + w, chars.length);
-    if (end < chars.length) {
-      // Prefer a break at the last space in the window; if there is none, hard-break at the width.
-      let brk = -1;
-      for (let i = end; i > start; i--) {
-        if (chars[i - 1] === ' ') {
-          brk = i;
-          break;
-        }
-      }
-      if (brk > start) end = brk;
-    }
-    out.push(chars.slice(start, end).join('').replace(/\s+$/, ''));
-    start = end;
-    while (start < chars.length && chars[start] === ' ') start += 1; // swallow the break's leading spaces
-  }
-  return out;
 }
 
 // readLogTail lives in commands.mjs (the setup runner needs it too); re-exported for this file's callers.
