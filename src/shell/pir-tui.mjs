@@ -40,9 +40,8 @@ const SPINNER = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', 
 // The style→colour map and the span painter live in pir-view.mjs (FrameView, T11): pi-tui draws the
 // terminal, so this file writes no cursor-control escape of its own (DESIGN §2.11).
 
-// Sensible sizes when a TTY does not report its dimensions (render.mjs's defaults).
+// A sensible width when a TTY does not report its dimensions (render.mjs's default).
 const DEFAULT_COLS = 80;
-const DEFAULT_ROWS = 24;
 
 // The list's column widths. Not binding (§2.11: exact terminal spacing is the builder's, not the mock's);
 // chosen to line up the five columns the dashboard scans — slug, state, repo, progress, workers.
