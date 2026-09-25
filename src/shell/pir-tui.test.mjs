@@ -411,6 +411,8 @@ test('readLogTail returns the last N lines of a log, and null when there is none
   assert.deepEqual(readLogTail(p, 10), ['line1', 'line2', 'line3', 'line4', 'line5'], 'asking for more than exist returns all');
   assert.equal(readLogTail(join(d, 'nope.log'), 3), null, 'a missing log reads as null, never a throw');
   assert.equal(readLogTail(null, 3), null, 'a null path is null');
+  // The byte budget is a parameter (T13): a cut drops the partial first line, n = Infinity keeps every whole line.
+  assert.deepEqual(readLogTail(p, Infinity, { maxBytes: 14 }), ['line4', 'line5'], 'the cut "3" was a partial line and is dropped');
 });
 
 // A fake stream that records everything written and declares its TTY-ness and size, standing in for
@@ -749,8 +751,7 @@ test('runTui: → on a task opens its worker, ← comes back to the same task, �
   await t.key('\x1b[B'); // T02
   assert.match(t.barRow(), /T02/);
   await t.key('\x1b[C'); // → opens T02's live worker
-  assert.match(t.text(), /worker w2 · live/);
-  assert.match(t.text(), /conversation log: \/c\/w2\.jsonl/);
+  assert.match(t.text(), /T02  worker w2 · live/);
   await t.key('\x1b[D'); // ← back to the live view
   assert.match(t.barRow(), /T02/, 'the task selection is kept');
   await t.key('\x1b[D'); // ← back to the list
@@ -771,7 +772,8 @@ test('runTui: → on a task with no worker shows the note; a finished worker ope
   assert.doesNotMatch(t.text(), /has no worker/, 'the note clears on the next key');
   await t.key('\x1b[A'); // T01, finished
   await t.key('\r');
-  assert.match(t.text(), /worker w1 · finished, read only/);
+  assert.match(t.text(), /T01  worker w1 · finished, read only/);
+  await t.key('\x1b[D'); // ← back: in the worker view Esc does not quit (T13)
   await t.key('\x1b');
   await t.done;
 });
@@ -832,4 +834,88 @@ test('runTui: Ctrl+S Ctrl+S in watch still stops the open run with a task select
   assert.deepEqual(stopped, ['plan']);
   await t.key('\x1b');
   await t.done;
+});
+
+// --- the conversation view mounted in runTui (live-workers T13, DESIGN §2.11) -----------------------
+
+test('runTui: in the worker view Esc and Ctrl+C go to the conversation, not quit; ← steps out; Ctrl+C quits in watch', async () => {
+  const drops = [];
+  const log = [
+    { t: 1, dir: 'out', from: 'pir', kind: 'message', text: 'Build T02.' },
+    { t: 2, dir: 'request', requestId: 'r1', toolName: 'Bash', input: { command: 'rm -rf x' }, suggestions: [] },
+  ];
+  let alive = true;
+  const t = driveTui(() => [tasksRun(T12_TASKS, { state: alive ? 'running' : 'stopped' })], {
+    follow: (_p, { onEntries }) => {
+      onEntries(log.map((e) => JSON.stringify(e)));
+      return { stop() {} };
+    },
+    drop: (dir, input, { coordinatorAlive }) => {
+      if (!coordinatorAlive()) return { ok: false, reason: 'not-running' };
+      drops.push(input);
+      return { ok: true };
+    },
+  });
+  await t.key('\r');
+  await t.key('\x1b[B'); // T02, live
+  await t.key('\x1b[C');
+  assert.match(t.text(), /pir ▸ Build T02\./, 'the conversation is drawn');
+  assert.match(t.text(), /⚑ T02 wants to use Bash/);
+  await t.key('\x1b');
+  await t.key('\x03');
+  assert.deepEqual(drops, [{ to: 'w2', kind: 'interrupt' }, { to: 'w2', kind: 'interrupt' }], 'Esc and Ctrl+C interrupted the worker');
+  await t.key('n');
+  assert.deepEqual(drops.at(-1), { to: 'w2', kind: 'permission', requestId: 'r1', decision: 'deny' });
+  alive = false; // the open run is no longer `running`: nothing is dropped
+  await t.key('x');
+  await t.key('\r');
+  assert.equal(drops.length, 3);
+  assert.match(t.text(), /the run is not running — your message was not sent/);
+  alive = true;
+  await t.key('\x03'); // clears the box
+  await t.key('\x1b[D'); // ← with an empty box
+  assert.match(t.barRow(), /T02/, 'back in the live view on the same task');
+  await t.key('\x03'); // Ctrl+C in watch still quits
+  await t.done;
+});
+
+test('through pi-tui: the conversation view is mounted in the frame\'s place, takes typing, and ← puts the frame back', async () => {
+  const tty = fakeStream({ isTTY: true, columns: 100, rows: 30 });
+  const term = fakeTerminal(tty);
+  const drops = [];
+  const done = openDashboard({
+    stdin: {},
+    stdout: tty,
+    refreshMs: 60_000,
+    now: () => NOW,
+    makeScreen: (opts) => createScreen({ ...opts, colour: false, terminal: term }),
+    load: () => buildDashboard([tasksRun(T12_TASKS)]),
+    follow: (_p, { onEntries }) => {
+      onEntries([JSON.stringify({ t: 1, dir: 'out', from: 'pir', kind: 'message', text: 'Build T02.' })]);
+      return { stop() {} };
+    },
+    drop: (_d, input) => (drops.push(input), { ok: true }),
+  });
+  const tick = () => new Promise((r) => setImmediate(r));
+  const rows = () => drawnRows(tty.text());
+  term.press('\r');
+  await tick();
+  term.press('\x1b[B');
+  await tick();
+  term.press('\x1b[C');
+  await tick();
+  assert.ok(rows().some((l) => /pir ▸ Build T02\./.test(l)), 'the conversation is on screen');
+  assert.equal(rows().filter((l) => l !== undefined).length <= 30, true, 'it fits the terminal rows');
+  for (const c of 'hi') term.press(c);
+  await tick();
+  assert.ok(rows().some((l) => /│?\s*hi/.test(l) && !/Build/.test(l)), 'the typed text is in the box');
+  term.press('\r');
+  await tick();
+  assert.deepEqual(drops, [{ to: 'w2', kind: 'message', text: 'hi' }]);
+  term.press('\x1b[D');
+  await tick();
+  assert.ok(rows().some((l) => l?.startsWith('▎') && /T02/.test(l)), 'the live view is back, T02 selected');
+  term.press('\x1b');
+  await done;
+  assert.equal(term.stopped, 1);
 });

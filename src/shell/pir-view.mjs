@@ -36,6 +36,16 @@ export const SGR = {
   hint: '\x1b[2m', // the faint key-hint footer
   armed: '\x1b[1;33m', // the armed stop/remove confirmation, amber and bold
   dim: '\x1b[2m', // plain dim text (repo column, worker count, notes)
+  // the conversation view's keys (core/conversation.mjs, live-workers §2.11), after the approved prototype:
+  // pir orange, the person green, the worker bold, a step magenta (red when it failed), a pending prompt amber.
+  pir: '\x1b[38;5;208m',
+  person: '\x1b[32m',
+  worker: '\x1b[1m',
+  step: '\x1b[35m',
+  'step-error': '\x1b[31m',
+  prompt: '\x1b[1;33m',
+  ok: '\x1b[32m',
+  bad: '\x1b[31m',
 };
 export const RESET = '\x1b[0m';
 
@@ -60,6 +70,14 @@ export function clipSpans(spans, width) {
   return out;
 }
 
+// paintLine(spans, width, colour) → one terminal string: the spans clipped to `width` columns, each in its
+// colour. FrameView paints every frame line this way; the conversation view (T13) paints its own lines with it.
+export function paintLine(spans, width, colour = true) {
+  return clipSpans(spans, Math.max(1, width | 0))
+    .map(({ text, style }) => (colour && style && SGR[style] ? `${SGR[style]}${text}${RESET}` : text))
+    .join('');
+}
+
 export class FrameView {
   // getLines() → the frame to paint now. colour off paints the bare text (NO_COLOR, or a caller that
   // decided the stream cannot take colour).
@@ -70,11 +88,7 @@ export class FrameView {
 
   render(width) {
     const cols = Math.max(1, width | 0);
-    return (this.getLines() ?? []).map((spans) =>
-      clipSpans(spans, cols)
-        .map(({ text, style }) => (this.colour && style && SGR[style] ? `${SGR[style]}${text}${RESET}` : text))
-        .join(''),
-    );
+    return (this.getLines() ?? []).map((spans) => paintLine(spans, cols, this.colour));
   }
 
   // Nothing is cached between renders: every render reads the current frame.
