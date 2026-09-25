@@ -38,12 +38,12 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T12 | task-selection | T09, T11 | ⬜ | |
 | T13 | conversation-view | T02, T07, T12 | ⬜ | |
 | T14 | worker-contract | T05 | ⬜ | |
-| T15 | sunset-pir-coordinate | T10 | ⬜ | |
+| T15 | sunset-pir-coordinate | T10 | 🔍 | bin/pir-coordinate deleted; install.sh ships `pir` only and removes a stale launcher from ~/.local/bin and ~/.claude/bin; 4 new launcher tests. Scratch-HOME install checked. Deviation: removal only deletes a file that execs `pir-engine/src/shell/`, so a user's own same-named command survives. History comments in run.test/fixtures.test kept. |
 | T16 | harness-conversations | T05, T06 | ⬜ | |
 | T17 | docs | T06, T07, T08, T13, T14, T15 | ⬜ | |
 | T18 | live-run | T08, T13, T14, T16, T17 | ⬜ | |
 
-**Review queue:** empty
+**Review queue:** T15
 
 ## Blocked on the user
 

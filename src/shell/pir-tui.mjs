@@ -31,7 +31,7 @@ import { stopRun, removeRun } from './control-run.mjs';
 import { createPlatform } from './platform.mjs';
 
 // The spinner frames, one per refresh (a poll tick). The SAME Braille frames render.mjs uses, so a live
-// run painted here spins identically to the same run painted by pir-coordinate (§2.4). render.mjs does
+// run painted here spins identically to the same run painted by coordinate.mjs's own display (§2.4). render.mjs does
 // not export them, so they are duplicated here rather than reaching across into its internals.
 const SPINNER = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 

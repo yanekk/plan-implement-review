@@ -143,7 +143,7 @@ function carrySkills(srcDir, destDir) {
   return names;
 }
 
-// carrySource(srcDir, destDir) → true if the framework code was copied. `pir-coordinate` shells out to
+// carrySource(srcDir, destDir) → true if the framework code was copied. The coordinator runs as
 // `node src/shell/coordinate.mjs`, so the scratch repo must carry the src/ tree, exactly as it carries the
 // skills — without it the coordinator cannot find its bin and the run stalls with an empty flow log (T17
 // live run 2026-09-11). Two things are deliberately left out: every `*.test.mjs` (else the scratch's
