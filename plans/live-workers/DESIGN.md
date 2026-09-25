@@ -187,9 +187,9 @@ worker's description. Keys: `y` allow once, `n` refuse, `a` allow and do not ask
 this. Typing a reply instead refuses and sends the text as the refusal message, so the worker sees why.
 
 "Do not ask again" is remembered by pir, per worker, in memory for the worker's life, never written to
-any settings file (user 2026-09-24). pir keeps it because Claude does not: returning
-`updatedPermissions` with `destination:"session"` did not stop the next identical request (measured
-on the raw line 2026-09-24; T00 rechecks it through the SDK). The grant is the `addRules` rule Claude
+any settings file (user 2026-09-24). pir keeps it so every
+request the grant allows still reaches pir and shows in the conversation; an allow therefore never returns
+`updatedPermissions` to Claude (user 2026-09-25, T00 review). The grant is the `addRules` rule Claude
 itself suggested for that request, which the SDK passes to `canUseTool` as `suggestions`; a later request from the same worker that the rule matches is allowed by pir at once and
 logged as `delivered-by-grant`. Matching follows Claude's rule form: an exact `ruleContent` matches the
 identical input; a `prefix:*` form matches any command starting with the prefix. When a request carries
@@ -207,9 +207,9 @@ keeps its promise open. The SDK itself sets no deadline ("permission prompts hav
 sdk.d.ts 0.3.282); whether Claude gives up on a long-unanswered request is not yet measured; T00 checks it.
 
 T00, 2026-09-25: a request left 300 s unanswered was not timed out. Through the SDK, Claude did honour a
-session `addRules` grant (contrary to the raw-line row), so pir's own grant list may be redundant: a decision
-for the user, unchanged here. The grant returned must be the `addRules` suggestion only: returning every
-suggestion also applied `setMode acceptEdits` to the worker.
+session `addRules` grant (contrary to the raw-line row). pir still keeps its own list (user 2026-09-25, T00
+review): an allow never carries `updatedPermissions`, so every later match reaches `canUseTool` and is logged
+as `delivered-by-grant`. Returning suggestions would also apply their `setMode acceptEdits`.
 
 ### 2.7 Question sets
 

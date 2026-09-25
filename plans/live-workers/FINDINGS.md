@@ -12,6 +12,7 @@ changed.
 
 | Date | | Finding |
 |---|---|---|
+| 2026-09-25 | 🔄 | T00 review: Claude honours SDK session grants, but the user kept pir's own "don't ask again" list so every grant-allowed request stays visible; pir never returns `updatedPermissions` (DESIGN §2.6). |
 | 2026-09-25 | ✅ | T00 item 8, verified by hand with the user: pi-tui 0.87.1 drew Markdown and an Editor; ↑ ↓ ← → Esc Tab Enter Space Ctrl+S parsed as `up down left right escape tab enter space ctrl+s`; terminal clean after exit. |
 | 2026-09-25 | 📌 | T00: an input listener also received the terminal's cell-size reply `\u001b[6;16;8t` at start; pir's key handling must ignore it, not treat it as a key. |
 | 2026-09-25 | 📌 | T00 item 5b (user-approved after an auto-mode `[Create Unsafe Agents]` block): parent SIGKILLed mid `sleep 30 && echo slept`; worker alive at +10 s, gone by +20 s. The Bash tool refuses a standalone `sleep 30`. |
@@ -30,7 +31,7 @@ changed.
 | 2026-09-24 | 📌 | pi-tui 0.87.1 ships prebuilt `.node` binaries (darwin-arm64 `darwin-platform.node`); `terminal.js` loads it for modifier keys and clipboard. It is native code, not only JavaScript (plan review, `npm pack`). |
 | 2026-09-24 | 📌 | A `-p` stream-json worker is listed in `claude agents --json` as `kind:"interactive"`, its `-n` name, `status:"busy"`, `id:null`. Visible to the person, not attachable, and must never be used as a handle (2.1.282). |
 | 2026-09-24 | 📌 | A `-p` worker survived its parent's SIGKILL for 22 s while mid-command, until killed by hand. Hence `workers.json` and the reap (DESIGN §2.12). T00 measures exit after the turn ends. |
-| 2026-09-24 | 📌 | Returning `updatedPermissions` with `destination:"session"` in a `can_use_tool` reply did not stop the next identical request (SDK contradicts: see T00 row). pir keeps "don't ask again" itself (DESIGN §2.6). |
+| 2026-09-24 | 📌 | Returning `updatedPermissions` with `destination:"session"` in a `can_use_tool` reply did not stop the next identical request (SDK contradicts: see T00 row). pir keeps "don't ask again" itself anyway (DESIGN §2.6). |
 | 2026-09-24 | 📌 | `--permission-mode auto`: routine commands pass silently; a force-push arrived as `can_use_tool` with `decision_reason:"This command requires approval"`. A deny reply reached the model as a refusal. Without the flag, `default` mode. T00: a local force-push passed unasked. |
 | 2026-09-24 | 📌 | Interrupt: `{"type":"control_request","request_id":…,"request":{"subtype":"interrupt"}}` ended the open turn in about 1 s (`result` subtype `error_during_execution`); the next user line ran normally. A backgrounded command kept running. |
 | 2026-09-24 | 📌 | AskUserQuestion exists over `-p` only with `--permission-prompt-tool stdio`. Reply `allow` with `updatedInput` = input + `answers:{question:label}`, multi-select joined `", "`; round trip verified with two questions. |
