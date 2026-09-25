@@ -120,7 +120,15 @@ export function startWorker({
 
   function log(entry) {
     const full = { t: now(), ...entry };
-    appendFileSync(logPath, JSON.stringify(full) + '\n');
+    // A failed append (the folder removed under a live worker, a full disk) must not throw: it would
+    // escape send() to its caller and, from the exit path, leave the exit unreported, close() hung and
+    // the coordinator with an uncaught exception. The entry still reaches memory and the listeners.
+    // The folder is not recreated, so a run removed on purpose stays removed.
+    try {
+      appendFileSync(logPath, JSON.stringify(full) + '\n');
+    } catch {
+      // the entry is kept in memory only
+    }
     entries.push(full);
     // A listener that throws must not stop the worker's log or its message stream.
     for (const fn of eventFns) {

@@ -185,7 +185,9 @@ test('send logs `out` with its sender; after exit it returns false and logs only
   assert.equal(await worker.interrupt(), false, 'an interrupt after exit is undelivered too');
 });
 
-test('an SDK stream error (the fake writes garbage and exits mid-turn) is logged sdk-error and reported as exit', async (t) => {
+// The SDK skips a stdout line it cannot parse (probed in review: garbage alone raises nothing); the
+// stream error here comes from the non-zero exit mid-turn. The garbage line stays to show it is harmless.
+test('an SDK stream error (the fake exits 1 mid-turn) is logged sdk-error and reported as exit', async (t) => {
   const { worker } = setup([{ await: 'user' }, { emit: initEvent() }, { emit: 'this is {not json' }, { exit: 1 }], t);
   const gone = exited(worker);
   worker.send('go');
@@ -234,6 +236,20 @@ test('close on a fake that ignores EOF and SIGTERM escalates to SIGTERM, then SI
   assert.equal(note.signal, 'SIGKILL');
   assert.ok(receivedLines().some((r) => r.signal === 'SIGTERM'), 'SIGTERM reached it first');
   assert.ok(took >= 450 && took < 3000, `took ${took} ms`);
+});
+
+// Reproduced in review: with the log's folder gone, send threw ENOENT, the exit note threw inside the
+// exit path, onExit never fired and close hung, and the coordinator took an uncaught exception.
+test('a log that cannot be written never stops the worker: send, exit and close still work', async (t) => {
+  const { worker, logPath } = setup([{ await: 'user' }, ...turn('hi'), { exit: 0 }], t);
+  rmSync(dirname(logPath), { recursive: true });
+  const gone = exited(worker);
+  assert.equal(worker.send('go'), true);
+  assert.deepEqual(await gone, { code: 0, signal: null });
+  assert.ok(hasResult(worker)(), 'the in-memory log still has the turn');
+  assert.equal(worker.entries().at(-1).kind, 'exited');
+  await worker.close({ graceMs: 100, killMs: 300 });
+  assert.equal(existsSync(dirname(logPath)), false, 'the removed folder is not recreated');
 });
 
 test('writeWorkersFile writes the five fields, temp then rename, leaving no temp', (t) => {
