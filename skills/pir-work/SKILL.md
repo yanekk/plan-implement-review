@@ -10,6 +10,7 @@ description: Do exactly one unit of work on a plan — read plans/{slug}/PROGRES
 ```
 read plans/{slug}/PROGRESS.md
   ├─ plan not reviewed ?   → STOP — /pir-review-plan runs first
+  │  (no valid setup/test block in DESIGN.md counts as not reviewed)
   ├─ any task marked 🔍 ?  → REVIEW the lowest-numbered one
   ├─ else any task 🟡 ?    → FINISH it
   └─ else                  → IMPLEMENT the next ⬜ whose dependencies are ✅
@@ -83,6 +84,28 @@ time.
 **If the line is missing entirely**, the plan predates the check. Say so and ask the user
 whether to review it first or carry on — do not decide it for them, and do not write the line
 yourself.
+
+**A reviewed plan also needs a valid setup/test block**, the one `plans/{slug}/DESIGN.md`
+opens with. Its first line is `---`, it ends at the next line that is exactly `---`, and it
+holds a `setup:` key (`none`, or a list) and a `test:` key with at least one line, each list
+item written `  - <command>`. Check it with the engine's own parser rather than by eye:
+
+```
+node --input-type=module -e 'import {parseTestBlock} from "'"$HOME"'/.claude/pir-engine/src/core/testblock.mjs"; import {readFileSync} from "node:fs"; console.log(JSON.stringify(parseTestBlock(readFileSync(process.argv[1],"utf8"))))' plans/{slug}/DESIGN.md
+```
+
+`{"ok":true,…}` passes. Anything else — the block missing, or a reason such as `no test key`
+— means the plan counts as not reviewed, whatever the `Plan reviewed:` line says, and this
+session builds nothing. Stop with:
+
+```
+plans/{slug}/DESIGN.md has no valid setup/test block, so the plan counts as not reviewed. Run /pir-review-plan {slug}.
+```
+
+and add the parser's reason. The block is what the tests are run with, and the parallel engine
+refuses the same plan at start; a plan reviewed or started before the block existed gets it
+from a narrow pass of `/pir-review-plan` that changes nothing else. Do not write the block
+yourself: it is verified in a fresh copy and approved by the user there.
 
 **The user can overrule this.** If they say build anyway, build — and say in your report that
 the plan is unreviewed, so the next session knows what it inherited.

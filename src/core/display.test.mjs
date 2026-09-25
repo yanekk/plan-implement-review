@@ -120,7 +120,16 @@ test('footer is handoff (green), red, asking, running or interrupted per the run
     { branch: 'pir/demo', ceiling: 4, complete: true, readyToMerge: false, tasks: [task({ done: true })] },
     { now: NOW },
   ).footer;
-  assert.deepEqual(red, { kind: 'red', branch: 'pir/demo' });
+  assert.deepEqual(red, { kind: 'red', branch: 'pir/demo', reason: null, logPath: null }, 'an old snapshot has no reason');
+
+  const redWhy = buildDisplay(
+    {
+      branch: 'pir/demo', ceiling: 4, complete: true, readyToMerge: false, tasks: [task({ done: true })],
+      testsReason: { reason: 'test `make test` exited 2', logPath: '/x/tests.log' },
+    },
+    { now: NOW },
+  ).footer;
+  assert.deepEqual(redWhy, { kind: 'red', branch: 'pir/demo', reason: 'test `make test` exited 2', logPath: '/x/tests.log' });
 
   const asking = buildDisplay(
     { branch: 'pir/demo', ceiling: 4, tasks: [task({ id: 'T05', slug: 'ask-one', phase: 'asking', since: NOW, question: 'which format?' })] },
@@ -191,4 +200,27 @@ test('a task parked on a merge conflict is row kind `conflict` labelled `merge c
   assert.equal(d.summary.asking, 1, 'the conflict is not counted as asking you');
   assert.equal(d.summary.conflicts, 1);
   assert.equal(d.summary.running, 2, 'a parked conflict still holds its slot');
+});
+
+test('a preparing task (setup running, DESIGN §2.4) is an active row labelled `preparing`, counted in running (T07)', () => {
+  const d = buildDisplay(
+    { branch: 'pir/x', ceiling: 1, tasks: [task({ id: 'T01', phase: 'preparing', since: NOW - 2000 }), task({ id: 'T02' })] },
+    { now: NOW },
+  );
+  assert.deepEqual(d.rows[0], { id: 'T01', slug: 'a-thing', kind: 'preparing', label: 'preparing', elapsedMs: 2000 });
+  assert.equal(d.summary.running, 1);
+  assert.equal(d.summary.ceilingFull, true, 'it holds its slot under the ceiling');
+  assert.equal(d.rows[1].label, 'queued · ceiling full');
+});
+
+test('the end gate running reads as testing, not finished, with its elapsed clock (user 2026-09-25)', () => {
+  const allDone = [task({ id: 'T01', done: true }), task({ id: 'T02', done: true })];
+  const d = buildDisplay({ branch: 'pir/demo', ceiling: 4, tasks: allDone, testing: { since: NOW - 72_000 } }, { now: NOW });
+  assert.equal(d.summary.finished, false, 'every task merged is not finished while the tests run');
+  assert.deepEqual(d.footer, { kind: 'testing', branch: 'pir/demo', elapsedMs: 72_000 });
+
+  // The verdict wins over a stale testing marker: a complete run shows its hand-off.
+  const done = buildDisplay({ branch: 'pir/demo', ceiling: 4, tasks: allDone, complete: true, readyToMerge: true, testing: { since: NOW } }, { now: NOW });
+  assert.equal(done.footer.kind, 'handoff');
+  assert.equal(done.summary.finished, true);
 });

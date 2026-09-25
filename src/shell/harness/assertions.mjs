@@ -508,10 +508,11 @@ function promotionMergeLines(gitLog, plan) {
 //     same needle the promotion used, minus the ` into ` integration merges a dependent worker makes on
 //     its own task branch — so a correct hand-off reads zero, not a false positive from an integration);
 //   - at least one `merge {task}` flow line — the plan WAS assembled on the feature branch, so the pass
-//     is never vacuous over a run that merged nothing.
-// The printed `git merge` hand-off line is NOT checkable here: run.mjs launches the coordinator with
-// stdio ignored, so the bundle never captures the coordinator's stdout (FINDINGS). Assert from the flow
-// log and git only.
+//     is never vacuous over a run that merged nothing;
+//   - the coordinator's own printed hand-off (bundle.coordinatorOut, its stdout, captured by run.mjs)
+//     carries the green `git merge pir/{plan}` line and not the red `not ready to merge` one. The flow log
+//     and git look identical for a red and a green finish, so this is the only signal of the end-of-run
+//     gate's verdict; a missing capture fails rather than passing unseen (declared-test-command T10).
 export function handedOffGreenBranch() {
   return fact('handed-off-green-branch', 'The run handed off a green feature branch and left main untouched (§2.4)', (bundle) => {
     const evidence = [];
@@ -537,7 +538,33 @@ export function handedOffGreenBranch() {
     if (taskMerges.length === 0) {
       return { pass: false, evidence, detail: 'no task merged into the feature branch — nothing was assembled, so the hand-off is vacuous' };
     }
-    return { pass: true, evidence, detail: `${taskMerges.length} task merge(s) on the feature branch, zero promotes, main untouched — a clean hand-off` };
+    // The gate's verdict, from the coordinator's printed hand-off (coordinate.mjs renderHandoff).
+    const out = bundle.coordinatorOut;
+    if (out == null) {
+      return { pass: false, evidence, detail: 'no coordinator.out in the bundle — the end-of-run gate verdict was not captured' };
+    }
+    const outLines = out.split('\n');
+    // The LAST red line: on a non-TTY the renderer appends the final red frame, whose footer says `not
+    // ready to merge` with no reason under it, before renderHandoff prints its own red line and reason.
+    const redAt = outLines.findLastIndex((l) => l.includes('not ready to merge'));
+    if (redAt !== -1) {
+      evidence.push(`coordinator.out: ${outLines[redAt].trim()}`);
+      // renderHandoff prints the gate's reason on the line after the red one.
+      const why = outLines[redAt + 1]?.trim();
+      return { pass: false, evidence, detail: `the feature-branch tests went red${why ? `: ${why}` : ''}` };
+    }
+    // The merge line must follow `Yours to merge:` (renderHandoff, blank line between). A bare
+    // `git merge pir/{plan}` also appears in the conflict-resolution prompt printed mid-run, so a run that
+    // conflicted and then stalled would otherwise read as green.
+    const mergeLine = `git merge pir/${plan ?? ''}`;
+    const nextNonBlank = (i) => outLines.slice(i + 1).find((l) => l.trim() !== '');
+    const offerAt = outLines.findLastIndex((l, i) => l.includes('Yours to merge:') && nextNonBlank(i)?.trim() === mergeLine.trim());
+    const green = offerAt === -1 ? null : nextNonBlank(offerAt);
+    if (!green) {
+      return { pass: false, evidence, detail: `coordinator.out has no \`${mergeLine.trim()}\` hand-off line — the run did not hand off a green branch` };
+    }
+    evidence.push(`coordinator.out: ${green.trim()}`);
+    return { pass: true, evidence, detail: `${taskMerges.length} task merge(s) on the feature branch, zero promotes, main untouched, tests green — a clean hand-off` };
   });
 }
 

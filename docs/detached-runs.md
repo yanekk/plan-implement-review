@@ -80,7 +80,10 @@ coordinator's environment. Under `PIR_RUN`, and only then, the coordinator repor
 - **Each pass** it writes the run state it already builds for the live display, plus its process
   facts, to `plans/{slug}/.parallel/control/status.json` — the same control folder as the log and
   the report inbox ([control-folder.md](control-folder.md)). The write is temp-then-rename, so a
-  reader gets either the previous complete snapshot or the new one, never a half-written file.
+  reader gets either the previous complete snapshot or the new one, never a half-written file. A red
+  end carries the gate's reason and `tests.log` path as `runState.testsReason` (`{ reason, logPath }`,
+  null otherwise). Run state is opaque to the snapshot schema, so this needed no version bump; a
+  snapshot written before the field existed shows a red footer without the reason.
 - **On exit** it records the final status. A clean end (a hand-off, a stall with nothing left to do)
   writes `finished`; a stop writes `stopped`. Every abnormal exit — the `HALT` kill switch, the
   runaway breaker, an uncaught error — writes **nothing**, leaving the last live
@@ -108,8 +111,12 @@ The front-end does not invent a second display: it reads the snapshot and paints
 coordinator's own model (`buildDisplay`) and renderer (`src/shell/render.mjs`), re-reading as the
 snapshot changes. Finished, stopped and crashed runs are openable too — their last frame is exactly
 what a person opens the dashboard to see — shown marked stale, with the note that re-starting the slug
-resumes it. A crashed run that never wrote a snapshot shows its `run.log` tail and the log's full path
-instead, so a run that failed to start says why.
+resumes it. A finished run's stale note offers `Hand-off: git merge pir/{slug}` only when its last
+frame was green. A red one — complete but not ready to merge — shows the red footer (the reason and
+the log path, from `runState.testsReason`) and a stale note saying it is not ready to merge and to fix
+the branch, with no merge line; a finished run with no snapshot at all points at `run.log` rather than
+guess (`buildWatchFrame` in `src/shell/pir-tui.mjs`). A crashed run that never wrote a snapshot shows
+its `run.log` tail and the log's full path instead, so a run that failed to start says why.
 
 ### Key bindings
 
@@ -133,11 +140,16 @@ copy could contend for.
 
 ## Start
 
-Before it spawns anything, `pir {slug}` runs a pre-flight: the plan folder exists, the plan is marked
-reviewed in `PROGRESS.md` (the same gate `pir-work` and the coordinator enforce), and no run for the
-slug is already live. An unreviewed plan is refused with the same pointer to `/pir-review-plan`, and
-nothing is spawned — a pre-flight failure that only surfaced after detaching would show a crashed run
-instead of a clean error.
+Before it spawns anything, `pir {slug}` runs a pre-flight (`startRun` in `src/shell/launch.mjs`): the
+plan folder exists, the plan is marked reviewed in `PROGRESS.md` (the same gate `pir-work` and the
+coordinator enforce), its `DESIGN.md` opens with a valid setup/test block (the coordinator's own
+`readTestBlockGate`, read from the main checkout — see [run-lifecycle.md](run-lifecycle.md)), and no
+run for the slug is already live. An unreviewed plan is refused with the same pointer to
+`/pir-review-plan`; a plan without a valid block is refused as `no-test-block`, and `pir` prints the
+coordinator's own message — the parser's reason, that the plan counts as not reviewed, and
+`/pir-review-plan {slug}` as the fix. The review gate is checked first, so an unreviewed plan reports
+that, not the block. Either way nothing is spawned — a pre-flight failure that only surfaced after
+detaching would show a crashed run instead of a clean error.
 
 On a clean pre-flight the spawn detaches the coordinator from the terminal — a new session and process
 group, its stdout and stderr to `run.log` in the control folder, and the parent returns at once. A

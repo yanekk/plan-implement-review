@@ -7,6 +7,9 @@ the stage it had actually reached, rather than rebuilding from the start. No exi
 branch, so there is always something to reconcile. This page describes what
 that re-run picks up and how it decides.
 
+A re-run is checked like a first start: a plan without a valid setup/test block in its `DESIGN.md`
+is refused before anything is reconciled (see [run-lifecycle.md](run-lifecycle.md)).
+
 ## What a re-run reliably picks up
 
 - **The feature branch and its worktree.** `pir/{plan}` and `.claude/worktrees/pir-{slug}` are
@@ -86,19 +89,24 @@ decides one action from the feature-row state and the committed task-branch glyp
   the feature row is reconciled to `✅`, and the task worktree and branch are removed. No worker
   session is involved, because the branch is already reviewed, so a merge does not consume the
   ceiling. Merges are applied in task order.
-- **review** spawns a **fresh** reviewer on the existing task worktree and seeds it into run state
-  as a normal reviewing task, so from the next pass the live loop reviews and merges it like any
-  other. There is no implementer to close — it died in the crash. Merges and reviews are done this
-  way (a review always with a live session, a merge with none) because the loop's assignment
-  machinery treats a tracked task with no live session as dead and would remove its branch,
-  discarding the adopted work.
+- **review** spawns a **fresh** reviewer on the existing task worktree and seeds it into run state as
+  a normal reviewing task, so from the next pass the live loop reviews and merges it like any other.
+  It runs no setup: the worktree is the one its implementer already ran in. There is no implementer to
+  close — it died in the crash. Merges and reviews are done this way (a review always with a live
+  session, a merge with none) because the loop's assignment machinery treats a tracked task with no
+  live session as dead and would remove its branch, discarding the adopted work.
 - **resume** leaves the branch and worktree alone; the feature row stays `⬜`, so the same pass's
   normal spawn step dispatches a fresh implementer, and `createTask` hands it the existing branch and
-  worktree. The worker contract (`skills/pir-worker` § Before you start) has every worker check
-  `git log pir/{plan}..HEAD` and `git status` first and continue what an earlier session left. This
-  replaced discard-and-rebuild on 2026-09-23 by the user's decision: a rebuild threw away hours of
-  work on every restart. Anything short of `🔍`/`✅` still counts as not built, so nothing half-done
-  reaches review until an implementer marks it `🔍`.
+  worktree. That spawn step runs the plan's `setup` lines in the worktree first, as for any new
+  implementer (see [run-lifecycle.md](run-lifecycle.md)), so a task whose coordinator died mid-setup —
+  a worktree with no worker — gets its setup run again rather than a worker in a half-installed
+  worktree. A setup child the dead coordinator left running may still be at work in the same worktree;
+  that is rare, accepted, and fails loudly into the new worker's setup note. The worker contract
+  (`skills/pir-worker` § Before you start) has every worker check `git log pir/{plan}..HEAD` and
+  `git status` first and continue what an earlier session left. This replaced discard-and-rebuild on
+  2026-09-23 by the user's decision: a rebuild threw away hours of work on every restart. Anything
+  short of `🔍`/`✅` still counts as not built, so nothing half-done reaches review until an implementer
+  marks it `🔍`.
 - **merge** and **review** re-attach a worktree when the branch exists but its folder does not
   (`createTask` reuses the branch), so a lost folder never demotes a built task to a re-implement.
 

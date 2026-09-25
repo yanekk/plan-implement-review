@@ -71,11 +71,19 @@ ${dw}
 }
 
 // commonPlanFiles(slug, { title }) → the DESIGN/PLAN/FINDINGS a complete, runnable scratch plan carries.
-// DESIGN names the test command (`npm test`) so a worker's pir-implement knows the only evidence it may
-// produce (DESIGN §5). PLAN and FINDINGS are minimal but present so the plan tree is whole.
+// DESIGN opens with the setup/test block (declared-test-command §2.1): the coordinator refuses a plan
+// without one at start, and runs its `test` lines as the end-of-run gate, so a fixture without it can
+// never end green. `setup: none` because the scaffold's `npm test` has no dependencies to install. PLAN
+// and FINDINGS are minimal but present so the plan tree is whole.
 export function commonPlanFiles(slug, { title }) {
   return {
-    [`plans/${slug}/DESIGN.md`]: `# ${slug} — scratch fixture design
+    [`plans/${slug}/DESIGN.md`]: `---
+setup: none
+test:
+  - npm test
+---
+
+# ${slug} — scratch fixture design
 
 Throwaway plan used by the parallel-pir live-scenario harness (T16/T17). Not a real feature; it exists
 only to force one coordinator path with a real worker, then be torn down.

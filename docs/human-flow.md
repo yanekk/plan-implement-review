@@ -69,7 +69,8 @@ There are two places a conflict can arise:
   delete its task, or respawn it. Because that worker finished clean and has no idea a clash happened,
   the command **composes a ready-to-paste resolution prompt** and prints it: which worker to attach
   to, the `git merge` that folds the feature branch into the task branch, the conflicting files, and
-  the finish steps (commit, the test command from the plan's `DESIGN.md`, re-signal done). It names no side: the
+  the finish steps (commit, the test command — the `test` lines of the plan's `DESIGN.md` setup/test
+  block — re-signal done). It names no side: the
   worker resolves where both sides' work makes the result clear, and asks the person in its own
   session when choosing a side is a judgement. The command **sends nothing**: the person copies the
   prompt, attaches to that same worker, and pastes it. The worker resolves on its branch and re-signals done,
@@ -82,9 +83,23 @@ There are two places a conflict can arise:
   screen, which for a detached run is only `run.log`. (On a restart, a finished branch can clash with no live worker to attach
   to; the prompt then names the task branch to check out and land by hand.)
 
-The command never merges a dirty branch into the feature branch. At the end it runs the tests on the
-feature branch first and, if they fail, prints the failure and does not offer the `git merge`
-hand-off — it never tells the person a red branch is ready.
+The command never merges a dirty branch into the feature branch. At the end it runs the plan's
+declared `setup` then `test` lines on the feature branch first and, if they fail, prints the failure
+and does not offer the `git merge` hand-off — it never tells the person a red branch is ready. The
+red hand-off says which half failed and how (``test `make test` exited 2``), and names `tests.log`;
+the same reason and path show in the live display's footer and in the `pir` viewer's frame of the
+finished run, which says the branch is not ready to merge instead of offering `git merge` (see
+[run-lifecycle.md](run-lifecycle.md), [detached-runs.md](detached-runs.md)). The person fixes the
+feature branch and merges it themselves.
+
+## The test command is the block
+
+In both flows a plan's test command is the `test` lines of the setup/test block its `DESIGN.md` opens
+with — not a command named in prose. A worker runs them as its test command, and runs the `setup`
+lines first when its tests cannot start because something is not installed. When the plan's setup
+failed in a worker's fresh worktree, the worker's opening instruction says which line failed, shows
+the last lines of its output and the log path, and the worker gets the worktree ready itself; the
+person is not asked about it. See [run-lifecycle.md](run-lifecycle.md).
 
 ## The worker ceiling
 

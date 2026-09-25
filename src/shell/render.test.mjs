@@ -221,6 +221,22 @@ test('formatLines renders the row content the renderer paints, with no escapes o
   assert.match(joined, /needs T02/, 'the waiting row names its unmet dependency');
 });
 
+test('a red footer prints the gate reason and log path as a second line, and none for an old snapshot (DESIGN §2.8)', () => {
+  const base = { branch: 'pir/demo', ceiling: 2, complete: true, readyToMerge: false, tasks: [{ id: 'T01', slug: 'a', deps: [], done: true, phase: null, since: null, doneMs: 100, question: null }] };
+  const why = formatLines(buildDisplay({ ...base, testsReason: { reason: 'test `make test` exited 127', logPath: '/p/tests.log' } }, { now: 0 }));
+  const at = why.findIndex((l) => l.includes('its tests fail — not ready to merge'));
+  assert.ok(at >= 0, 'the red line is there');
+  assert.equal(why[at + 1], '  test `make test` exited 127 · output: /p/tests.log', 'the second line says why and where');
+  assert.ok(!why.some((l) => /git merge/.test(l)), 'a red footer never offers the merge');
+
+  const logOnly = formatLines(buildDisplay({ ...base, testsReason: { reason: null, logPath: '/p/tests.log' } }, { now: 0 }));
+  assert.ok(logOnly.includes('  output: /p/tests.log'), 'a log path alone still prints');
+
+  const old = formatLines(buildDisplay(base, { now: 0 }));
+  const oldAt = old.findIndex((l) => l.includes('not ready to merge'));
+  assert.equal(old.length, oldAt + 1, 'an old snapshot with no reason gets no second line');
+});
+
 test('on a colour TTY each row is tinted by status: active cyan, done green, idle dim (T16)', () => {
   const stream = fakeStream();
   const r = createRenderer({ stream, colour: true });
@@ -343,4 +359,24 @@ test('a merge conflict row and footer paint orange and say `merge conflict`; the
   const foot = lines[lines.length - 1];
   assert.match(foot.text, /T05 clash — merge conflict; paste the prompt shown in `pir`/);
   assert.equal(foot.style, 'conflict');
+});
+
+test('a preparing row spins and is tinted active, like a building one (T07)', () => {
+  const display = buildDisplay(
+    { branch: 'pir/x', ceiling: 2, tasks: [{ id: 'T07', slug: 'worker-setup', deps: [], done: false, phase: 'preparing', since: null, doneMs: null, question: null }] },
+    { now: 0 },
+  );
+  assert.match(formatLines(display, { spinnerChar: '⠋' }).join('\n'), /⠋ T07 {2}worker-setup/);
+  const stream = fakeStream();
+  const r = createRenderer({ stream, colour: true });
+  assert.match(paintDelta(r, stream, display), /\x1b\[36m[^\x1b]*worker-setup/);
+});
+
+test('the end gate running paints a ticking header and a testing footer, not the finished header (user 2026-09-25)', () => {
+  const NOW = 1_000_000;
+  const tasks = [{ id: 'T01', slug: 'one', deps: [], done: true, phase: null, since: null, doneMs: 60_000, question: null }];
+  const lines = formatLines(buildDisplay({ branch: 'pir/demo', ceiling: 4, tasks, testing: { since: NOW - 72_000 } }, { now: NOW }), { spinnerChar: '⠧' });
+  assert.equal(lines[0], '⠧ pir/demo · 1/1 done · running the tests');
+  assert.equal(lines.at(-1), "⠧ all 1 task(s) merged · running the plan's setup and tests on pir/demo · 1:12");
+  assert.ok(!lines.some((l) => l.startsWith('✓')), 'no finished header while the tests run');
 });

@@ -18,7 +18,7 @@
 // unchanged alongside the list's), which keeps the watch frame byte-for-byte the coordinator's display.
 
 import { join } from 'node:path';
-import { openSync, fstatSync, readSync, closeSync } from 'node:fs';
+import { readLogTail } from './commands.mjs';
 
 import { buildDisplay } from '../core/display.mjs';
 import { buildDashboard, dashboardReducer, findOpen, initialUi, runKey } from '../core/dashboard.mjs';
@@ -138,37 +138,8 @@ export function wrapLine(text, width) {
   return out;
 }
 
-// readLogTail(logPath, n, { fs }) → the last `n` lines of a run's log, or null if it cannot be read.
-// A crashed run wrote why it died into run.log; showing the tail in the watch view saves the person
-// opening the file (user 2026-09-22). Only the last 16 KiB is read so a long run's huge log never loads
-// in full on every refresh; a partial first line from that cut is dropped so no half-line is shown.
-export function readLogTail(logPath, n = 5, { fs = { openSync, fstatSync, readSync, closeSync } } = {}) {
-  if (!logPath) return null;
-  const MAX = 16 * 1024;
-  let fd;
-  try {
-    fd = fs.openSync(logPath, 'r');
-    const size = fs.fstatSync(fd).size;
-    const len = Math.min(size, MAX);
-    const buf = Buffer.alloc(len);
-    if (len > 0) fs.readSync(fd, buf, 0, len, size - len);
-    let text = buf.toString('utf8');
-    if (len < size) text = text.slice(text.indexOf('\n') + 1); // drop the partial first line from the cut
-    const lines = text.split('\n');
-    while (lines.length && lines[lines.length - 1] === '') lines.pop();
-    return lines.length ? lines.slice(-n) : null;
-  } catch {
-    return null; // no log, or unreadable — the caller simply shows none
-  } finally {
-    if (fd !== undefined) {
-      try {
-        fs.closeSync(fd);
-      } catch {
-        // already closed / gone
-      }
-    }
-  }
-}
+// readLogTail lives in commands.mjs (the setup runner needs it too); re-exported for this file's callers.
+export { readLogTail };
 
 // The state cell: the glyph+word and its §2.11 colour. running green (●), finished dim (◌), crashed red
 // (✕), stopped dim (◼). An unrecognised state (an unreachable/stale index entry, §2.8) shows its raw
@@ -354,7 +325,10 @@ export function buildWatchFrame(view, { now, spinnerChar = SPINNER[0], ui = init
       note(logPath ?? "run.log in the run's control folder", 'dim', '    ');
       note(`Esc quits pir; then \`pir ${slug}\` retries it.`, 'dim');
     } else if (state === 'finished') {
-      note(`no snapshot recorded — finished. Hand-off: git merge ${record?.branch ?? `pir/${slug}`}`, 'ended');
+      // With no snapshot there is no runState to tell green from red, so never offer the merge on a guess
+      // (DESIGN §2.8): point at run.log, which records how the gate ended.
+      note('no snapshot recorded — finished. Whether its tests passed is in the log:', 'ended');
+      note(logPath ?? "run.log in the run's control folder", 'dim', '    ');
     } else if (state === 'stopped') {
       note(`no snapshot recorded — stopped. \`pir ${slug}\` resumes from committed work.`, 'ended');
     } else {
@@ -392,7 +366,12 @@ export function buildWatchFrame(view, { now, spinnerChar = SPINNER[0], ui = init
         }
         note(`← back to the list; \`pir ${slug}\` resumes it.`, 'dim');
       } else if (state === 'finished') {
-        note(`— finished · this frame is stale. Hand-off: git merge ${record?.branch ?? `pir/${slug}`}`, 'ended', '');
+        const branch = record?.branch ?? `pir/${slug}`;
+        // A complete run that is not ready to merge ended red (DESIGN §2.8): its footer above already shows
+        // the reason and log path, so the stale note must not offer the merge.
+        const red = !!snap.runState?.complete && !snap.runState?.readyToMerge;
+        const end = red ? `Not ready to merge — fix ${branch}, see the output above.` : `Hand-off: git merge ${branch}`;
+        note(`— finished · this frame is stale. ${end}`, 'ended', '');
       } else if (state === 'stopped') {
         note(`— stopped · this frame is stale. \`pir ${slug}\` resumes from committed work.`, 'ended', '');
       }

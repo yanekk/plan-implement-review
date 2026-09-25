@@ -42,7 +42,8 @@ test('it leaves the side to the worker, who asks when it is a judgement, and bak
 test('it ends with the finish steps: commit, the plan\'s test command, then re-signal done (a live worker)', () => {
   const p = buildConflictPrompt(base);
   assert.match(p, /commit/i, 'it tells the worker to commit the resolution');
-  assert.match(p, /test command in plans\/[^/]+\/DESIGN\.md/, 'it tells the worker to run the plan\'s own tests');
+  assert.match(p, /`test` lines at the top of plans\/[^/]+\/DESIGN\.md/, 'it tells the worker to run the plan\'s own tests');
+  assert.match(p, /its `setup` lines\s+first if the worktree is not ready/, 'and names setup for a worktree that is not ready');
   assert.doesNotMatch(p, /npm test/, 'never a fixed npm test — the project may not be Node');
   assert.match(p, /[Ss]ignal done again/, 'it tells the worker to re-signal done so the run can merge it');
 });
@@ -77,6 +78,6 @@ test('empty file list degrades to naming the feature branch rather than an empty
 
 test('the test step names the PLAN folder, never the task slug (declared-test-command T05, 2026-09-24)', () => {
   const p = buildConflictPrompt({ ...base, plan: 'demo' });
-  assert.match(p, /test command in plans\/demo\/DESIGN\.md/);
+  assert.match(p, /`test` lines at the top of plans\/demo\/DESIGN\.md/);
   assert.ok(!p.includes('plans/greet/'), 'the task slug is not a plan folder');
 });

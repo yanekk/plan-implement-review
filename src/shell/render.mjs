@@ -35,6 +35,7 @@ const SPINNER = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', 
 // merged task is a check; an idle task is a faint dot. The model carries the kind; these characters are
 // the renderer's alone (DESIGN §2.3).
 const GLYPH = {
+  preparing: null,
   building: null, // the spinner frame — filled in at paint time
   reviewing: null,
   merging: null,
@@ -61,9 +62,9 @@ const CLEAR = '\x1b[2J';
 // pipe read stdout as text, DESIGN §2.3). Colour is layered on top of the glyphs the model already
 // carries, so it is never the only signal — a colour-blind reader or a NO_COLOR terminal loses nothing.
 // The map is by the model's row/footer `kind`, resolved to one of these styles (T16, PM 2026-09-20):
-//   active (building/reviewing/merging) cyan · done green · asking amber+bold (the standout) · idle dim ·
-//   red/interrupted red · a merge conflict orange+bold (256-colour 208; user 2026-09-24), so it reads
-//   apart from a question. RESET closes every coloured span.
+//   active (preparing/building/reviewing/merging) cyan · done green · asking amber+bold (the standout) ·
+//   idle dim · red/interrupted red · a merge conflict orange+bold (256-colour 208; user 2026-09-24), so
+//   it reads apart from a question. RESET closes every coloured span.
 const SGR = {
   done: '\x1b[32m', // green
   active: '\x1b[36m', // cyan
@@ -106,6 +107,7 @@ function clip(line, cols) {
 // share cyan; a parked worker is the amber-bold standout; done is green; an idle task is dim. A kind with
 // no entry (or a null style) paints plain. This is the renderer's, like GLYPH — the model carries `kind`.
 const ROW_STYLE = {
+  preparing: 'active',
   building: 'active',
   reviewing: 'active',
   merging: 'active',
@@ -125,7 +127,7 @@ export function styledLines(display, { spinnerChar = SPINNER[0] } = {}) {
   const { summary, rows, footer, branch } = display;
   const out = [summaryLine(summary, footer, branch, spinnerChar)];
   for (const r of rows) out.push(rowLine(r, spinnerChar));
-  for (const f of footerLines(footer, summary)) out.push(f);
+  for (const f of footerLines(footer, summary, spinnerChar)) out.push(f);
   return out;
 }
 
@@ -145,6 +147,11 @@ function summaryLine(summary, footer, branch, spinnerChar) {
   }
   if (summary.finished) {
     return { text: `✓ ${branch || 'run'} · ${summary.done}/${summary.total} done`, style: 'done' };
+  }
+  // Every task merged but the end gate still running: the spinner keeps ticking so the run does not read
+  // as finished or frozen while the suite takes its minutes (user 2026-09-25).
+  if (footer?.kind === 'testing') {
+    return { text: `${spinnerChar} ${branch || 'run'} · ${summary.done}/${summary.total} done · running the tests`, style: null };
   }
   const parts = [`${summary.done}/${summary.total} done`, `${summary.running} running`];
   if (summary.asking > 0) parts.push(`${summary.asking} asking you`);
@@ -172,7 +179,7 @@ function rowLine(r, spinnerChar) {
 // question in the live frame would only bloat the bounded region and is exactly what made the streaming
 // worst while a worker was parked. The model still carries `question` for anything that wants it; the
 // live display does not draw it.
-function footerLines(footer, summary) {
+function footerLines(footer, summary, spinnerChar = SPINNER[0]) {
   const blank = { text: '', style: null };
   switch (footer?.kind) {
     case 'asking': {
@@ -193,8 +200,19 @@ function footerLines(footer, summary) {
         { text: `✔ all ${summary.total} task(s) green on ${footer.branch} · tests pass. Yours to merge:`, style: 'done' },
         { text: `    git merge ${footer.branch}`, style: 'done' },
       ];
-    case 'red':
-      return [blank, { text: `✗ ${summary.total} task(s) built on ${footer.branch}, but its tests fail — not ready to merge.`, style: 'red' }];
+    case 'red': {
+      const lines = [blank, { text: `✗ ${summary.total} task(s) built on ${footer.branch}, but its tests fail — not ready to merge.`, style: 'red' }];
+      // The second line is the gate's reason and log path (DESIGN §2.8), so the person watching knows what
+      // failed and where to read it. An old snapshot carries neither, and gets no second line.
+      const why = [footer.reason, footer.logPath && `output: ${footer.logPath}`].filter(Boolean).join(' · ');
+      if (why) lines.push({ text: `  ${why}`, style: 'red' });
+      return lines;
+    }
+    case 'testing': {
+      const el = fmtElapsed(footer.elapsedMs);
+      const text = `${spinnerChar} all ${summary.total} task(s) merged · running the plan's setup and tests on ${footer.branch}${el ? ` · ${el}` : ''}`;
+      return [blank, { text, style: 'active' }];
+    }
     case 'interrupted':
       return [blank, { text: '^C — closing workers… main is untouched. Re-run to resume from committed work.', style: 'red' }];
     default:

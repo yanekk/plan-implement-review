@@ -16,7 +16,8 @@ all sessions can address.
 | `HALT` | the kill-switch flag file. Its presence halts the run — see below. |
 | `log` | the event log: one ISO-timestamped line per coordinator action. |
 | `reports/` | the worker → coordinator up-channel: one JSON file per worker report. |
-| `tests.log` | the output of the feature-branch test command at the end of the run, rewritten each time it runs (see [run-lifecycle.md](run-lifecycle.md)). |
+| `tests.log` | the output of the end-of-run gate on the feature branch: the plan's `setup` lines, then its `test` lines, each under a `$ <line>` header. Setup rewrites it and the tests append, so it is rewritten each time the gate runs (see [run-lifecycle.md](run-lifecycle.md)). A red end names this path. |
+| `setup/T{nn}.log` | the output of the plan's `setup` lines in task T{nn}'s fresh worktree, run before its implementer is spawned; rewritten per attempt. A failed setup's last 20 lines and this path go into the worker's opening instruction (see [run-lifecycle.md](run-lifecycle.md)). |
 
 There is no `outbox`, `answers`, or `surfaced`: those were the coordinator↔person↔worker relay of
 the old agentic coordinator, and they were removed with the down-channel (DESIGN of
@@ -60,12 +61,15 @@ records:
 
 ## The log
 
-Every coordinator action appends one line to `log`, tagged by kind: `open-feature`, `spawn`,
-`await-idle`, `force-idle`, `review`, `resume`, `cleanup`, `merge`, `adopt`, `surface`, `close`,
-`halt-close`, `teardown`, `ceiling full`, and, on a restart, a `restart` marker and a
+Every coordinator action appends one line to `log`, tagged by kind: `open-feature`, `prepare`,
+`spawn`, `await-idle`, `force-idle`, `review`, `resume`, `cleanup`, `merge`, `adopt`, `surface`,
+`close`, `setup-kill`, `halt-close`, `teardown`, `ceiling full`, and, on a restart, a `restart` marker and a
 `restart-summary` line naming what reconciliation adopted (see [restart-recovery.md](restart-recovery.md)).
 An `adopt` line marks the command taking a worker-introduced task's new row onto the feature branch
 at merge — one line per adopted task, naming the task (see [task-state.md](task-state.md)).
+A `prepare` line marks a task's setup starting in its fresh worktree; `spawn` follows once it has
+exited. A `setup-kill` line marks the kill switch ending a running setup, and a `teardown: killed
+setup for T{nn}` line the same on any other exit (see [run-lifecycle.md](run-lifecycle.md)).
 A `surface` line marks a worker parking on a `question`, a `decision`, or a merge `conflict`, or the
 command flagging a red feature branch or a `bad-plan-change`; it records the task, not the kind, so
 the harness keys on the task. A `bad-plan-change` surface is the one exception to "surface means a
@@ -81,9 +85,9 @@ human-readable record of what a run did, and the durable signal the test harness
 
 `HALT` is a plain flag file. While it is present, the command dispatches nothing, delivers nothing,
 and merges nothing, and it ends every live worker — SIGTERM to each worker's pid, because `claude
-stop` only interrupts. It is hard-stop only; there is no pause or resume. A HALT-killed worker's
-session record, worktree, and branch are deliberately **left** for forensics — removal is reserved
-for workers that finished normally. `main` is untouched, because nothing in this system ever merges
+stop` only interrupts — and kills every worker setup still running. It is hard-stop only; there is
+no pause or resume. A HALT-killed worker's session record, worktree, and branch are deliberately
+**left** for forensics — removal is reserved for workers that finished normally. `main` is untouched, because nothing in this system ever merges
 to `main` (see [branch-model.md](branch-model.md)). To continue, the person removes the flag and
 re-runs the command (see [restart-recovery.md](restart-recovery.md)).
 

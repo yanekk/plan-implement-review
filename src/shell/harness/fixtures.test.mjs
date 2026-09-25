@@ -14,6 +14,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { parseProgress } from '../../core/progress.mjs';
+import { parseTestBlock } from '../../core/testblock.mjs';
 import { listFixtures, getFixture, fixtureFiles, installFixture, DEFAULT_SKILLS_DIR } from './fixtures.mjs';
 
 // What each fixture must be, from DESIGN §4.1. Task graph (count + deps), the scenario ceiling, and the
@@ -86,6 +87,21 @@ const EXPECT = {
 test('listFixtures returns exactly the DESIGN §4.1 fixtures', () => {
   assert.deepEqual(new Set(listFixtures()), new Set(Object.keys(EXPECT)));
   assert.equal(listFixtures().length, Object.keys(EXPECT).length);
+});
+
+// declared-test-command T10: the coordinator refuses to start a plan without a valid setup/test block
+// and runs its `test` lines as the end-of-run gate, so every fixture must carry one or no live run
+// can start, let alone end green.
+test('every fixture installs a DESIGN.md whose setup/test block parses: setup none, test npm test', () => {
+  for (const id of listFixtures()) {
+    const fx = getFixture(id);
+    const design = fixtureFiles(fx)[`plans/${fx.slug}/DESIGN.md`];
+    assert.ok(design, `${id}: no DESIGN.md`);
+    const r = parseTestBlock(design);
+    assert.equal(r.ok, true, `${id}: ${r.reason}`);
+    assert.deepEqual(r.setup, [], id);
+    assert.deepEqual(r.test, ['npm test'], id);
+  }
 });
 
 test('getFixture throws on an unknown id, naming the known ones', () => {

@@ -195,7 +195,9 @@ and is left alone; a forbidden edit of an existing task is rejected at merge, ne
 ### Anything the tests cannot establish is verified with me, not asserted
 
 **The project's test command is the only evidence a session may produce on its own.** It is
-named in `DESIGN.md § Environment`, along with the table of what that command cannot reach.
+the `test` lines of the setup/test block `DESIGN.md` opens with (run the `setup` lines first if
+the tests cannot start for something not installed); `DESIGN.md § Environment` holds the table
+of what that command cannot reach.
 If a claim can only be established by taking the screen, logging in as somebody else,
 rebooting, pointing a camera at something, calling a paid service the plan gave you no bin
 for, or watching a real user, then this session cannot establish it — and must not write it
