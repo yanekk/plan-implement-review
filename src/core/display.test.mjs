@@ -46,7 +46,7 @@ test('buildDisplay maps a task in every kind to the right row (id + slug), label
   assert.deepEqual(by.T02, { id: 'T02', slug: 'building-one', kind: 'building', label: 'building', elapsedMs: 4000 });
   assert.deepEqual(by.T03, { id: 'T03', slug: 'review-one', kind: 'reviewing', label: 'reviewing', elapsedMs: 2000 });
   assert.deepEqual(by.T04, { id: 'T04', slug: 'merge-one', kind: 'merging', label: 'merging', elapsedMs: 400 });
-  assert.deepEqual(by.T05, { id: 'T05', slug: 'ask-one', kind: 'asking', label: 'asking you', elapsedMs: 9000 });
+  assert.deepEqual(by.T05, { id: 'T05', slug: 'ask-one', kind: 'asking', label: 'asking you · a question', elapsedMs: 9000 });
   // T06 waits on the not-done T05; the label names the unmet dep (§2.3).
   assert.deepEqual(by.T06, { id: 'T06', slug: 'waits-on-05', kind: 'waiting', label: 'needs T05', elapsedMs: null });
   // T07 is ready and, since the ceiling (5) is not full (four active workers), simply queued.
@@ -257,4 +257,54 @@ test('a sent conflict does not hide another worker\'s question from the footer',
   );
   assert.equal(d.footer.kind, 'asking');
   assert.equal(d.footer.task, 'T06');
+});
+
+// --- asking kinds (live-workers T09, DESIGN §2.4) --------------------------------------------------
+
+test('each asking source maps to its label; with no source the row keeps its phase label', () => {
+  const tasks = [
+    task({ id: 'T01', slug: 'report', phase: 'asking', asking: 'question', since: NOW - 1000 }),
+    task({ id: 'T02', slug: 'set', phase: 'building', asking: 'questions', since: NOW - 2000 }),
+    task({ id: 'T03', slug: 'perm', phase: 'reviewing', asking: 'permission', since: NOW - 3000 }),
+    // A report and a pending request together: the request says what is wanted now.
+    task({ id: 'T04', slug: 'both', phase: 'asking', asking: 'permission', since: NOW }),
+    task({ id: 'T05', slug: 'plain', phase: 'building', asking: null, since: NOW }),
+    // A snapshot from before the field: an `asking` phase reads as a question.
+    task({ id: 'T06', slug: 'old', phase: 'asking', since: NOW }),
+  ];
+  const { rows } = buildDisplay({ branch: 'pir/demo', ceiling: 9, tasks }, { now: NOW });
+  const by = Object.fromEntries(rows.map((r) => [r.id, r]));
+  assert.deepEqual(by.T01, { id: 'T01', slug: 'report', kind: 'asking', label: 'asking you · a question', elapsedMs: 1000 });
+  assert.deepEqual(by.T02, { id: 'T02', slug: 'set', kind: 'asking', label: 'asking you · a question', elapsedMs: 2000 });
+  assert.deepEqual(by.T03, { id: 'T03', slug: 'perm', kind: 'asking', label: 'asking you · allow a command?', elapsedMs: 3000 });
+  assert.equal(by.T04.label, 'asking you · allow a command?');
+  assert.deepEqual(by.T05, { id: 'T05', slug: 'plain', kind: 'building', label: 'building', elapsedMs: 0 });
+  assert.equal(by.T06.label, 'asking you · a question');
+});
+
+test('summary counts request-only askers as asking you (and running); the footer names one', () => {
+  const tasks = [
+    task({ id: 'T01', slug: 'perm', phase: 'building', asking: 'permission', since: NOW }),
+    task({ id: 'T02', slug: 'busy', phase: 'building', since: NOW }),
+  ];
+  const d = buildDisplay({ branch: 'pir/demo', ceiling: 2, tasks }, { now: NOW });
+  assert.equal(d.summary.asking, 1);
+  assert.equal(d.summary.running, 2);
+  assert.deepEqual(d.footer, { kind: 'asking', task: 'T01', slug: 'perm', question: '' });
+});
+
+test('a worker fixing a sent conflict that raises a permission request is asking, not fixing', () => {
+  const tasks = [task({ id: 'T01', slug: 'fix', phase: 'asking', prompt: 'P', conflictSent: true, asking: 'permission', since: NOW })];
+  const d = buildDisplay({ branch: 'pir/demo', ceiling: 2, tasks }, { now: NOW });
+  assert.equal(d.rows[0].kind, 'asking');
+  assert.equal(d.rows[0].label, 'asking you · allow a command?');
+  assert.equal(d.summary.conflicts, 0);
+  assert.equal(d.footer.kind, 'asking');
+  assert.ok(!('prompt' in d.footer), 'no copy-paste prompt: the worker has it already');
+});
+
+test('a done task with a stale asking field reads merged', () => {
+  const d = buildDisplay({ branch: 'b', ceiling: 1, tasks: [task({ done: true, asking: 'permission' })] }, { now: NOW });
+  assert.equal(d.rows[0].kind, 'done');
+  assert.equal(d.summary.asking, 0);
 });

@@ -13,8 +13,8 @@
 // live CLI + git in the bin below.
 //
 // There is no down-channel (DESIGN §2.2, T03). The coordinator used to relay a worker's question up to
-// the person and the answer back down; the person now finds the asking worker in their own `claude
-// agents` view, attaches, and answers there — nothing is routed. Only the UP-channel remains: a worker
+// the person and the answer back down; the person now opens the asking worker's conversation in `pir`
+// and answers there (live-workers §2.4, §2.11) — nothing is relayed. Only the UP-channel remains: a worker
 // drops a one-line report into the control folder's `reports/` drop-dir (createReportInbox below), which
 // a Node process reads directly — no agent needed. The program uses that signal for two things only: to
 // keep a parked worker's slot under the ceiling, and to show its question in the live display so the
@@ -828,9 +828,13 @@ export function displayPhaseFor(t) {
 // the row. sinceByTask/doneMsByTask carry the phase-start and final-duration times the shell tracks.
 // testsReason is the red gate's { reason, logPath } (null otherwise); it rides in runState so it lands in
 // status.json and a detached viewer can say why a finished run is red (DESIGN §2.8).
+// workers is platform.workers(): every worker the run spawned, live or exited, in spawn order, each with
+// its activity. From it each task gets `asking` (the kind of answer wanted, live-workers §2.4), `worker`
+// (the one `pir` opens: the live one, else the latest, §2.11) and `workers` (all of the task's).
 export function buildRunState({
   passTasks,
   stateTasks = {},
+  workers = [],
   branch,
   ceiling,
   sinceByTask = {},
@@ -860,9 +864,26 @@ export function buildRunState({
       // reads `fixing conflict` and nothing is asked of the person. A later question from that worker
       // replaces the decision, so the flag drops and the row turns `asking you`.
       conflictSent: phase === 'asking' && !!st.decision?.sent,
+      ...workerFields(workers.filter((w) => w.task === t.num), { done, phase, prompt: st?.decision?.prompt }),
     };
   });
   return { branch, ceiling, complete, readyToMerge: !!readyToMerge, testsReason: testsReason ?? null, interrupted: !!interrupted, tasks };
+}
+
+// A live worker's pending request is what the person must answer now, so it names the asking kind over
+// a report; a report alone (question, decision, a worker's own conflict) is `question`. A coordinator-side
+// conflict carries a `prompt` and is not a question to answer (display.mjs reads it as `merge conflict`).
+const REQUEST_KINDS = new Set(['permission', 'questions']);
+function workerFields(taskWorkers, { done, phase, prompt }) {
+  const liveOnes = taskWorkers.filter((w) => w.live);
+  const open = liveOnes.at(-1) ?? taskWorkers.at(-1) ?? null;
+  const request = done ? null : liveOnes.map((w) => w.activity?.state).find((s) => REQUEST_KINDS.has(s)) ?? null;
+  const asking = request ?? (!done && phase === 'asking' && !prompt ? 'question' : null);
+  return {
+    asking,
+    worker: open ? { id: open.id, live: !!open.live, logPath: open.logPath ?? null } : null,
+    workers: taskWorkers.map((w) => ({ id: w.id, role: w.role, n: w.n ?? null, logPath: w.logPath ?? null })),
+  };
 }
 
 // testingRunState(runState, { since }) → the same run state marked as the end gate running: `testing`
@@ -999,10 +1020,9 @@ async function main(argv) {
   console.log(`ceiling: ${maxWorkers}   control: ${control.dir}`);
   console.log(`ABORT:   touch ${control.flag}`);
   console.log(`reports: ${inbox.reportsDir}`);
-  // A blocked worker is answered by the person DIRECTLY (DESIGN §2.2): find it in `claude agents`,
-  // attach, and reply there. Nothing is routed through this command, so there is no coordinator session
-  // and no answers file to write to.
-  console.log(`\nA worker that asks you shows in the display below; answer it directly with \`claude agents\`.\n`);
+  // A worker that asks is answered by the person in `pir`: its task row opens the worker's conversation,
+  // where the person replies, allows a command or answers a question set (live-workers §2.4, §2.11).
+  console.log(`\nA worker that asks you shows in the display below; answer it in \`pir\`: open its task (→).\n`);
 
   const POLL_MS = Number(process.env.PARALLEL_POLL_MS ?? 5000);
   const CEILING = maxWorkers;
@@ -1141,7 +1161,7 @@ async function main(argv) {
   showTesting = (passTasks) => {
     const since = Date.now();
     trackTiming({}, passTasks.map((t) => t.num)); // the last merge's duration, before the pass ends
-    const runState = testingRunState(buildRunState({ passTasks, branch, ceiling: CEILING, doneMsByTask }), { since });
+    const runState = testingRunState(buildRunState({ passTasks, workers: platform.workers(), branch, ceiling: CEILING, doneMsByTask }), { since });
     lastRunState = runState;
     if (selfReport) writeRunSnapshot({ controlDir: control.dir, proc, runState });
     renderer.paint(buildDisplay(runState, { now: since }));
@@ -1188,6 +1208,7 @@ async function main(argv) {
       const runState = buildRunState({
         passTasks: r.tasks,
         stateTasks: coordinator.state.tasks,
+        workers: platform.workers(),
         branch,
         ceiling: CEILING,
         sinceByTask,

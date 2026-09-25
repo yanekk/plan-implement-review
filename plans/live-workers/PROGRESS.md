@@ -32,7 +32,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T06 | reap-workers | T04, T05 | ✅ | |
 | T07 | person-inbox | T03, T05 | ⬜ | |
 | T08 | conflict-to-worker | T05 | ✅ | |
-| T09 | asking-kinds | T05, T08 | ⬜ | |
+| T09 | asking-kinds | T05, T08 | 🔍 | Asking labels, pir footer and banner, task `asking`/`worker`/`workers`; 10 tests. Added read-only `platform.workers()` (real and fake; fake `request` behaviour) since fake `list()` ticks. A pending request beats `fixing conflict`. `workers` holds this process's spawns only. Snapshot unversioned: runState is opaque. |
 | T10 | runtime-deps | T00 | ✅ | |
 | T11 | screen-on-pi-tui | T10 | ✅ | |
 | T12 | task-selection | T09, T11 | ⬜ | |
@@ -43,7 +43,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T17 | docs | T06, T07, T08, T13, T14, T15 | ⬜ | |
 | T18 | live-run | T08, T13, T14, T16, T17 | ⬜ | |
 
-**Review queue:** empty
+**Review queue:** T09
 
 ## Blocked on the user
 

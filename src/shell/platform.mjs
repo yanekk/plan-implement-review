@@ -168,6 +168,12 @@ export function nextLogPath(controlDir, task, role, { readdir = readdirSync } = 
   return join(dir, `${task}-${role}-${max + 1}.ndjson`);
 }
 
+// logCounter(logPath) → the `n` of a conversations/{Txx}-{role}-{n}.ndjson path, or null.
+function logCounter(logPath) {
+  const m = /-(\d+)\.ndjson$/.exec(logPath ?? '');
+  return m ? Number(m[1]) : null;
+}
+
 // A worker waiting on the person — a permission request or a question set — is parked, not busy
 // (DESIGN §2.4), exactly as a question report parks it; so is one whose last turn has ended. `starting`
 // (nothing said yet, the opening instruction not yet taken) counts as busy: it has work in hand.
@@ -190,6 +196,7 @@ export function createPlatform({
   const messaging = createMessaging({ transport });
   const live = new Map(); // id → record, while the child has not exited
   const gone = new Map(); // id → record, after exit: its log still takes the `undelivered` notes
+  const order = []; // every record, in spawn order: the screen opens a task's finished workers too
   let claude = claudePath;
 
   // control/workers.json lists exactly the live children, rewritten on every spawn and exit (DESIGN
@@ -219,6 +226,7 @@ export function createPlatform({
       const rec = { id, worker, name, cwd, task, role: phase, logPath, pid: worker.pid, startTime: null };
       rec.startTime = rec.pid ? startTimeOf(rec.pid) : null;
       live.set(id, rec);
+      order.push(rec);
       worker.onExit(() => {
         live.delete(id);
         gone.set(id, rec);
@@ -302,6 +310,22 @@ export function createPlatform({
       const rec = recordOf(id);
       if (!rec) return { ok: false };
       return { ok: rec.worker.answer(requestId, result, { from }) };
+    },
+
+    // workers() → every worker this platform spawned, live or exited, in spawn order, each with its
+    // activity folded from its log: { id, task, role, n, logPath, live, activity }. Read-only, unlike the
+    // loop's list(), so the run state can call it for the screen without touching the pass (live-workers
+    // T09). `n` is the log's counter (DESIGN §2.3), so it continues a restarted run's count.
+    workers() {
+      return [...order].map((rec) => ({
+        id: rec.id,
+        task: rec.task,
+        role: rec.role,
+        n: logCounter(rec.logPath),
+        logPath: rec.logPath,
+        live: live.has(rec.id),
+        activity: workerActivity(rec.worker.entries()),
+      }));
     },
 
     // logPathOf(id) → the worker's conversation log, live or exited; null for an id never spawned here.
