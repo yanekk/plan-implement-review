@@ -90,22 +90,31 @@ bug — the common case adds a single task and never hits it (see
 
 ## Agent names
 
-Every worker has a deterministic name (`src/core/naming.mjs`), so the command finds and addresses
-its workers from the name alone, without an id handed around out of band:
+Every worker has a deterministic name (`src/core/naming.mjs`), built from the repo, plan, task and
+role:
 
 - **Worker:** `{repo} / {plan} / {task} / {slug} / {role}` — five fields separated by ` / `. For
   example `plan-implement-review / non-agentic-coordinator / T01 / stop-promoting / implement`. The
   `{role}` is `implement` or `review` — the only two roles; the old `verify` role is gone with the
-  hands-on path. `{slug}` is the task's kebab name (see [task-state.md](task-state.md)).
-- **The command has no agent name at all**, because it is a plain process and never appears in
-  `claude agents`. There is no coordinator name.
+  hands-on path. `{slug}` is the task's kebab name (see [task-state.md](task-state.md)). `{repo}` is
+  the basename of the main checkout.
+- **The command has no agent name at all**, because it is a plain process, not a Claude session.
 
-The separator is `/`, and there is no leading `@`. It was `·` only because the old down-channel used
-cross-session messaging, which rejected a `/`; with the down-channel gone the separator reverts to
-`/` for readability (DESIGN of `non-agentic-coordinator`, §2.9). The role is part of the name so a
-task's implementer and its fresh reviewer are two distinct addresses, told apart directly rather
-than by which spawned most recently. The task number, not the slug, stays the identity the command
-matches on: `parseAgentName` extracts it so a restart still matches a live worker to its task by
-number regardless of the slug, and only agents whose name matches this run's `{repo} / {plan} / …`
-count against the ceiling, so a foreign session is never miscounted. `{repo}` is the basename of the
-main checkout.
+The name is passed to the worker's `claude` as `--name` (the SDK's `extraArgs`, `worker-proc.mjs`).
+It is a label, not a handle: the command addresses a worker by the session id it chose itself when it
+started it, a uuid that is the worker's `id` everywhere — in `workers.json`, in the status snapshot and
+in every input the `pir` screen drops (see [control-folder.md](control-folder.md)). Because a worker
+runs headless over stream-json (Claude's print mode), it also shows in `claude agents` under that name
+while it runs, but it cannot be attached to from there, and nothing in pir treats that listing as a
+handle on a worker. The person reaches a worker through `pir` (see [human-flow.md](human-flow.md)).
+
+The name still does work inside the command. The role is part of it so a task's implementer and its
+fresh reviewer are two distinct names. The loop keeps only workers whose name matches this run's
+`{repo} / {plan} / …` (`isWorkerOf`), a guard that a foreign entry can never be counted, adopted or
+closed; with workers as the command's own children the real platform lists nothing else, but the loop
+runs on an injected platform and a test's may list anything. The task number, not the slug, is what
+`parseAgentName` extracts, so the slug never changes which task a worker resolves to.
+
+The separator is `/`, and there is no leading `@`. It was `·` only because an older down-channel used
+cross-session messaging, which rejected a `/` (DESIGN of `non-agentic-coordinator`, §2.9); nothing
+messages a worker by name now.

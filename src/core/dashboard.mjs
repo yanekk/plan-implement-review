@@ -7,7 +7,7 @@
 // milliseconds, not judged by eye (DESIGN §2.3's reason for the model/reducer split; it mirrors the
 // display.mjs / render.mjs split the coordinator already uses).
 //
-// The two-press chords match `claude agents` (DESIGN §2.6, §2.7): Ctrl+S twice stops a running run,
+// The two-press chords were taken from `claude agents` (DESIGN §2.6, §2.7): Ctrl+S twice stops a running run,
 // Ctrl+X twice removes a non-running one. The first matching press arms a confirmation; the second
 // identical press (same action, same run) carries it out; any other event cancels the arm. Both are
 // irreversible in the moment — stop kills in-flight work, remove drops the record — so the guard is

@@ -1,14 +1,13 @@
 // The agent-name helpers (DESIGN §2.9). Pure string work: build a worker name, and parse a name back
-// to its repo, plan, task, slug and role. No clock, no I/O — the loop reads `claude agents --json` in
-// src/shell/ and hands the names here to identify workers (DESIGN §3.1, §3.4), so worker-to-task state
-// comes from the names and cannot drift from separate bookkeeping.
+// to its repo, plan, task, slug and role. No clock, no I/O. The name is passed to each worker's `claude`
+// as `--name` (live-workers §2.1), and the loop filters the platform's listing by it (isWorkerOf); a
+// worker is addressed by the session uuid pir chose, not by its name, since live-workers T05.
 //
 // The convention (DESIGN §2.9):
 //   worker  {repo} / {plan} / {task} / {slug} / {role}   role ∈ implement | review
 //
-// There is NO coordinator name. The coordinator is a plain foreground process (`node
-// src/shell/coordinate.mjs {slug}`), never a session, so it never appears in `claude agents` and needs
-// no addressable name (DESIGN §2.1, §2.9). The `coordinatorName` helper and the `verify` role that the
+// There is NO coordinator name. The coordinator is a plain process (`node src/shell/coordinate.mjs
+// {slug}`), never a Claude session, so it needs no name (DESIGN §2.1, §2.9). The `coordinatorName` helper and the `verify` role that the
 // removed hands-on/`you` path used were both retired in T05, once their last callers — in the loop, the
 // platform and the live-scenario harness — were gone (DESIGN §3.2, §2.5).
 //
@@ -18,16 +17,16 @@
 // beside its reviewer (single live run 2026-09-12). Putting the role in the name makes each session
 // addressable on its own: implement and review are distinct names (user decision 2026-09-12).
 //
-// Why the slug is in the name (DESIGN §2.9): a worker's name used to carry only its number, so `claude
-// agents` could not tell what T01 was doing. The slug (the kebab name from the task's doc filename and
+// Why the slug is in the name (DESIGN §2.9): a worker's name used to carry only its number, so a
+// listing of workers could not tell what T01 was doing. The slug (the kebab name from the task's doc filename and
 // its PROGRESS.md Task cell) is carried as a readable label. The task NUMBER stays the identity the
 // program matches on across a restart (`buildAssignments` keys on parseAgentName().task), so the slug
 // never changes which task a worker resolves to.
 //
 // Why "/" and not "·": the down-channel is gone (DESIGN §2.2), so the one reason the separator was ever
 // "·" — SendMessage rejecting a "/" in a name (T00, FINDINGS 2026-09-07) — is removed with it. The
-// separator is "/" (§2.9). Launch-time acceptance of a "/" in `claude --bg -n` is confirmed live in the
-// capstone (T09); names with "/" already appear in `claude agents` here.
+// separator is "/" (§2.9). A "/" name passes intact through `--name` to an SDK-driven worker (live-workers
+// T00, 2026-09-25).
 
 // The worker-name separator (DESIGN §2.9).
 const SEP = ' / ';
@@ -81,9 +80,10 @@ export function parseAgentName(name) {
 // plan. `role` is optional: omit it to match any of this run's workers (the ceiling count and teardown
 // want all roles), pass it to match only that role. The coordinator identifies its workers from the
 // name alone (DESIGN §2.9), so this is how it counts only its own workers against the ceiling. A foreign
-// agent, or a worker of a sibling plan in the same repo (they share the git-dir and so appear in
-// `claude agents --json`), is filtered out — without this filter they inflate the live count and the
-// coordinator under-dispatches by one (T12 Problem 5). The slug never enters the match — matching is by
+// agent, or a worker of a sibling plan in the same repo, is filtered out — without this filter they
+// inflated the live count of the `claude agents` days and the coordinator under-dispatched by one (T12
+// Problem 5). Since live-workers T05 the real platform lists only this coordinator's own children, so the
+// filter is a guard for an injected platform that may list anything. The slug never enters the match — matching is by
 // repo/plan/task-number/role — so a worker resolves to the same task regardless of its label.
 export function isWorkerOf(name, { repo, plan, role } = {}) {
   const p = parseAgentName(name);
