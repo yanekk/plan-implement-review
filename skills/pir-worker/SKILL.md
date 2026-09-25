@@ -13,8 +13,10 @@ your own session and they answer there** — and as you go you record your progr
 small report file (DESIGN §2.1, §2.2). Everything else — how you implement, how you review — is the
 stock procedure, unchanged.
 
-You do not need to know how the run is orchestrated behind you, and you never correspond with it.
-Your world is your one task, the report files you drop, and the person you ask when you are stuck.
+You do not need to know how the run is orchestrated behind you, and you never message it. It holds a
+live line into this session: your opening instruction came down it, and so may one later message from
+`pir` (a merge-conflict fix, below). Your world is your one task, the report files you drop, the person
+you ask when you are stuck, and that one message from `pir` if it comes.
 The rules are below; they are the whole contract you run under.
 
 ## You do exactly the task you were given, and nothing else
@@ -101,13 +103,17 @@ wrong — you do two things and then **wait** (DESIGN §2.2):
    in the live display so the person can see who is asking. Nothing reads that file and answers you —
    it is not a message to anyone.
 2. **Ask the person, in this session, as your last turn before you park** — lay out what you are trying
-   to do, the options and their costs, and your recommendation, the shape `CLAUDE.md` asks for. End the
-   turn with the question put *to the person* and nothing running, so your session goes idle on a clear
-   ask. The person watches the display, finds you in their `claude agents` view, attaches to *this*
-   session, and answers here; the answer arrives in your own session and you continue from it (DESIGN §2.2).
+   to do, the options and their costs, and your recommendation, the shape `CLAUDE.md` asks for. **When
+   the answer is a choice between options, ask it with the AskUserQuestion tool** — options with a
+   one-line cost each, your recommendation first and marked `(Recommended)`; the person picks it in a
+   picker, or types an answer of their own. When the answer is open-ended, ask it in plain text and end
+   the turn with the question put *to the person* and nothing running, so your session goes idle on a
+   clear ask. Either way the person sees your question in this conversation inside `pir`, opens it there
+   and answers there; the answer arrives in your own session and you continue from it. `pir` is the
+   only place the person reaches you (live-workers DESIGN §2.4, §2.7).
 
    **The person is the only one who answers you — address them, and no one else.** Nothing else in the
-   run has an inbox or can reply to you, so never say — to the person, or in your own session — that you
+   run answers your questions, so never say — to the person, or in your own session — that you
    are "waiting" on anything to come back or that anything "will reply". The report you dropped in step 1
    is only a signal that you are stuck; it is not a question anything answers. The words a watching person
    reads must name *them* as the one who answers, here, in this session. Do not poll a channel and do not
@@ -232,17 +238,20 @@ acted on even if the name is imperfect. If you forget the header entirely, at le
 `kind: <kind>` in the body so the loop can still recognise the kind (a bare word like "done" in prose is
 NOT enough — it must be an explicit `kind:` marker).
 
-The report is a signal only; there is no channel back and nothing sends you anything. A routine
+The report is a signal only; nothing answers the report itself. A routine
 `implemented`/`done`/`conflict` report is read off disk and needs no answer. A `question`/`decision`
 report is parked on: after you drop it you **ask the person in this very session** (above) and wait for
-them to attach and answer here — no answer is ever routed to you, and there is no message to poll for.
-If you never park, you never hear from anyone; just build from your opening instruction.
+them to answer here, from `pir` — there is no message to poll for. The one message `pir` itself may send
+you after your opening instruction is a merge-conflict fix (§ If a later merge of your branch conflicts);
+act on it when it comes. Otherwise, if you never park, you hear from nobody; just build from your
+opening instruction.
 
 ## Leave a clean, idle session — that is how the run knows you are done
 
 The run cannot read your mind or your commits directly. It decides your task has finished its current
-step by watching your session go **idle** in `claude agents` — your task is handed to the reviewer, and
-your branch is merged, only once you are idle (DESIGN §2.5, the T13 idle gate). That gate is what stops
+step by watching your session go **idle** — it reads that straight from your session's own output: your
+turn has ended and nothing is pending. Your task is handed to the reviewer, and your branch is merged,
+only once you are idle (DESIGN §2.5, the T13 idle gate; live-workers DESIGN §2.4). That gate is what stops
 you being cut off mid-commit. The flip side: **a session that stays busy blocks the whole run**, even
 after your work is committed and your report is dropped — the run keeps waiting on you and no other task
 moves.
@@ -300,23 +309,25 @@ dispatched. Nothing you do reaches `main`; the whole feature branch is promoted 
 Your integrate can be clean when you signal done and still conflict later: while your `done` was in
 flight, another task changed the same lines, so the merge of your branch into the feature branch
 conflicts. That conflict is **not** resolved for you — you hold this task's context, so it is yours
-(DESIGN §2.5). You are kept alive and parked (not closed, not respawned) and the conflict is shown in
-the live display; the person then attaches to *this* session and gives you the resolution directly here
-(DESIGN §2.2).
+(DESIGN §2.5). You are kept alive and parked (not closed, not respawned), and `pir` sends the fix
+straight into *this* session as a message: which files conflict and what to do about them
+(live-workers DESIGN §2.10). Nobody copies or pastes it; it arrives here like the person's own words.
 
-**When the person answers you in this session after you have already reported done, treat it as: "your
-branch conflicts with the feature branch — resolve it this way, then re-signal done."** Do exactly that:
+**A message in this session after you have already reported done is that fix, and you act on it:
+"your branch conflicts with the feature branch — resolve it, then re-signal done."** Whether it came
+from `pir` or from the person, do exactly that:
 
 - Integrate the current feature branch into your task branch again (`git merge pir/{plan}` in your
   worktree — get the slug from your branch name, the worktree root from `git rev-parse --show-toplevel`).
-- Resolve the conflicting file(s) **exactly as the decision says** — take the side it names, or combine
-  them as it instructs. Never guess the resolution; the decision text is your instruction, and the wording
-  a user sees is theirs to decide, not yours.
-- Commit the resolution, then drop a fresh `[pir:v1 kind=done task=Txx]`.
+- Resolve the conflicting file(s) **as the message says** — take the side it names, or combine them as
+  it instructs. Where it leaves the choice of side to a judgement, especially over wording a user sees,
+  do not guess: ask the person (§ When a stock skill would "ask the user and wait") and resolve as they
+  answer.
+- Run the test command, commit the resolution, then drop a fresh `[pir:v1 kind=done task=Txx]`.
 
-Your now-clean branch is then merged. If, while resolving, you find the decision itself is
-ambiguous or cannot be applied, drop a `[pir:v1 kind=question task=Txx]` with the specifics and wait —
-never hand back a dirty or guessed-at branch.
+Your now-clean branch is then merged. If, while resolving, you find the message itself is
+ambiguous or cannot be applied, drop a `[pir:v1 kind=question task=Txx]` with the specifics, ask the
+person here, and wait — never hand back a dirty or guessed-at branch.
 
 ## The bar for handing something to the person: everything mechanical is yours
 
@@ -332,8 +343,8 @@ and "I did not build the tool" is not "the tests cannot establish it."
 on the outside world` says: `worker` you run and report; `ask` you explain and then run in the same
 turn, and the `ask` permission rule stops your session for the person's approval. Drop a
 `[pir:v1 kind=question task=Txx]` report first, so the live display shows who is waiting: the session
-parks on the permission prompt and shows as needing input in `claude agents`, and the person attaches
-and approves there. `person` is only a login, a device or a judgement. You never hand the person a
+parks on the permission request, `pir` shows it as asking the person, and the person approves or
+refuses it there. `person` is only a login, a device or a judgement. You never hand the person a
 command to paste that a `worker` or `ask` row covers.
 
 You hand over **only** the irreducible remainder no tool you could write would ever settle: a real
@@ -349,17 +360,16 @@ working for real.
 ## Addressing: your name
 
 You do NOT message anyone — you report by dropping a file (above). Your name still matters as the `from`
-you write in that report, so the person reading the live display and the `claude agents` list can tell
-which worker is which.
+you write in that report, so the person reading the `pir` screen can tell which worker is which.
 
 Your name follows §2.9: `{repo} / {plan} / {task} / {slug} / {role}`, five fields separated by ` / ` —
 for example `plan-implement-review / non-agentic-coordinator / T05 / harness-and-restart / review`, where
 `{role}` is `implement` or `review` and `{slug}` is the task's kebab slug, the same one in its
 `tasks/T{nn}-{slug}.md` filename and its `PROGRESS.md` Task cell. Build it yourself from the repo, the
-plan, your task number, its slug and your role; you are not handed an id. Only workers appear in
-`claude agents`; the run itself has no agent name and never shows up there (DESIGN §2.1, §2.9).
+plan, your task number, its slug and your role; you are not handed an id. Only workers carry a name;
+the run itself has none (DESIGN §2.1, §2.9).
 
 The separator is `/`. The reason it was once `·` — the messaging layer rejected a name containing `/` —
-is gone with the down-channel (DESIGN §2.2): nothing messages you now, so nothing constrains the name,
-and `/` reads better in the display. Launch-time acceptance of a `/` in the name is confirmed in the
+is gone (DESIGN §2.2): `pir` reaches you over your own session's input, never by name, so nothing
+constrains the name, and `/` reads better in the display. Launch-time acceptance of a `/` in the name is confirmed in the
 capstone (DESIGN §2.9, §5.1).
