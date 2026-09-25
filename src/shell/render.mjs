@@ -177,18 +177,18 @@ function rowLine(r, spinnerChar) {
 
 // The footer, in the model's kinds. The parked-worker footer is a COMPACT single line (DESIGN §2.2,
 // §2.3, T15): it names who is asking and how to reach them, and never the worker's full question — the
-// person reads and answers that in the worker's own session (`claude agents`), so a multi-paragraph
-// question in the live frame would only bloat the bounded region and is exactly what made the streaming
-// worst while a worker was parked. The model still carries `question` for anything that wants it; the
-// live display does not draw it.
+// person reads and answers that in the worker's conversation in `pir` (live-workers §2.4, §2.11), so a
+// multi-paragraph question in the live frame would only bloat the bounded region and is exactly what made
+// the streaming worst while a worker was parked. The model still carries `question` for anything that
+// wants it; the live display does not draw it.
 function footerLines(footer, summary, spinnerChar = SPINNER[0]) {
   const blank = { text: '', style: null };
   switch (footer?.kind) {
     case 'asking': {
       const who = [footer.task, footer.slug].filter(Boolean).join(' ');
       // Amber-bold so the one thing needing the person cannot be missed (T16). The full question is still
-      // not drawn here — the person reads and answers it in the worker's own session (§2.2, T15).
-      return [blank, { text: `● ${who} — asking you; attach in \`claude agents\` to answer`, style: 'asking' }];
+      // not drawn here — the person opens the task's worker in `pir` and answers there (live-workers §2.4).
+      return [blank, { text: `● ${who} — asking you; open it (→) to answer`, style: 'asking' }];
     }
     case 'conflict': {
       // The prompt itself is multi-line, so it is not drawn in this bounded block: `pir` shows it under the

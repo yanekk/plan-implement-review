@@ -36,10 +36,28 @@ const PHASE_LABEL = {
 // live-workers T08 the prompt is sent to the live worker when there is one (`conflictSent`): that task is
 // being fixed and asks nothing of the person (§2.10). Only an unsent one waits on the person's paste.
 function isConflict(t) {
-  return t.phase === 'asking' && !!t.prompt && !t.conflictSent;
+  return t.phase === 'asking' && !!t.prompt && !t.conflictSent && !isRequest(t);
 }
 function isFixingConflict(t) {
-  return t.phase === 'asking' && !!t.prompt && !!t.conflictSent;
+  return t.phase === 'asking' && !!t.prompt && !!t.conflictSent && !isRequest(t);
+}
+
+// What kind of answer an asking task wants (live-workers DESIGN §2.4). A live worker's pending permission
+// request or question set rides in `t.asking` beside whatever phase the loop has it in, and wins over a
+// report: the request says what the person must do now. A question/decision/conflict report alone is
+// `question`, and so is an `asking` row from a snapshot written before this field existed.
+const ASKING_LABEL = {
+  question: 'asking you · a question',
+  questions: 'asking you · a question',
+  permission: 'asking you · allow a command?',
+};
+function isRequest(t) {
+  return t.asking === 'permission' || t.asking === 'questions';
+}
+function askingKind(t) {
+  if (isRequest(t)) return t.asking;
+  if (t.phase === 'asking' && !isConflict(t) && !isFixingConflict(t)) return 'question';
+  return null;
 }
 
 // buildDisplay(runState, { now, spinnerFrame }) → { summary, rows, footer } (DESIGN §2.3).
@@ -65,6 +83,11 @@ function isFixingConflict(t) {
 //               terminal, and null for an ordinary question (only a coordinator-side conflict has one).
 //     conflictSent — the prompt went to the task's live worker (live-workers §2.10): row kind
 //               `fixing-conflict` in the active style, counted as running, no footer.
+//     asking  — null | 'question' | 'permission' | 'questions' (live-workers §2.4): the kind of answer the
+//               task's worker wants. A pending request makes the row `asking` whatever its phase.
+//     worker  — null | { id, live, logPath }: the worker `pir` opens for this task, the live one else the
+//               latest (§2.11). workers — [{ id, role, n, logPath }], all of the task's in spawn order.
+//               Both ride through to status.json for the screen; this model does not read them.
 //
 // opts.now is the current time in ms (the clock, injected — never read here, §3.1). opts.spinnerFrame
 // is accepted for signature symmetry with the renderer but not used by the model: the spinner glyph is
@@ -74,14 +97,14 @@ export function buildDisplay(runState, { now, spinnerFrame } = {}) {
     runState ?? {};
 
   const doneIds = new Set(tasks.filter((t) => t.done).map((t) => t.id));
-  const running = tasks.filter((t) => !t.done && ACTIVE_PHASES.has(t.phase)).length;
+  const running = tasks.filter((t) => !t.done && (ACTIVE_PHASES.has(t.phase) || isRequest(t))).length;
   const ceilingFull = ceiling != null && running >= ceiling;
 
   const rows = tasks.map((t) => rowFor(t, { now, doneIds, ceilingFull }));
 
   const done = doneIds.size;
   const total = tasks.length;
-  const asking = tasks.filter((t) => !t.done && t.phase === 'asking' && !isConflict(t) && !isFixingConflict(t)).length;
+  const asking = tasks.filter((t) => !t.done && askingKind(t)).length;
   const conflicts = tasks.filter((t) => !t.done && isConflict(t)).length;
   // A run whose tasks are all merged is not finished while its end gate is still running.
   const finished = complete || (!testing && total > 0 && done === total);
@@ -113,7 +136,7 @@ function rowFor(t, { now, doneIds, ceilingFull }) {
     return { ...base, kind: 'done', label: 'merged', elapsedMs: t.doneMs ?? null };
   }
 
-  if (ACTIVE_PHASES.has(t.phase)) {
+  if (ACTIVE_PHASES.has(t.phase) || isRequest(t)) {
     const elapsedMs = t.since != null && now != null ? now - t.since : null;
     // A task parked on a merge conflict the run hit at its own merge is not a worker asking anything:
     // its worker has stopped and does not know. It reads `merge conflict` (orange, user 2026-09-24) so the
@@ -121,6 +144,8 @@ function rowFor(t, { now, doneIds, ceilingFull }) {
     if (isConflict(t)) return { ...base, kind: 'conflict', label: 'merge conflict', elapsedMs };
     // The worker was sent the fix and is working on it: nothing for the person to do (§2.10).
     if (isFixingConflict(t)) return { ...base, kind: 'fixing-conflict', label: 'fixing conflict', elapsedMs };
+    const asking = askingKind(t);
+    if (asking) return { ...base, kind: 'asking', label: ASKING_LABEL[asking], elapsedMs };
     return { ...base, kind: t.phase, label: PHASE_LABEL[t.phase], elapsedMs };
   }
 
@@ -146,7 +171,7 @@ function footerFor({ tasks, complete, readyToMerge, testsReason, testing, interr
   if (interrupted) return { kind: 'interrupted' };
 
   // A worker fixing a conflict it was sent asks nothing, so it never takes the footer (§2.10).
-  const asking = tasks.find((t) => !t.done && t.phase === 'asking' && !isFixingConflict(t));
+  const asking = tasks.find((t) => !t.done && (isConflict(t) || askingKind(t)));
   if (asking) {
     // A merge conflict the run hit at its own merge carries a copy-paste resolution prompt (T14) and
     // gets its own footer kind; an ordinary question keeps the unchanged `asking` shape with no prompt key.

@@ -254,7 +254,7 @@ test('on a colour TTY the parked pointer and its row stand out in amber bold, qu
   // The asking row itself is amber-bold.
   assert.match(out, /\x1b\[1;33m[^\x1b]*stop-promoting/, 'the parked row is amber bold');
   // The footer pointer line is amber-bold too.
-  assert.match(out, /\x1b\[1;33m[^\x1b]*asking you; attach in/, 'the asking footer pointer is amber bold');
+  assert.match(out, /\x1b\[1;33m[^\x1b]*asking you; open it \(→\) to answer/, 'the asking footer pointer is amber bold');
   assert.ok(!stripAnsi(out).includes('multi-paragraph question'), 'the full question is still not drawn in the frame');
 });
 
@@ -291,7 +291,7 @@ test('colour is off when colour:false — cursor control still present, no SGR e
   assert.ok(out.includes('\x1b[H'), 'still homes the cursor (in-place paint is unaffected)');
   assert.ok(!SGR_ESCAPE.test(out), `no colour escape when colour is off, got: ${JSON.stringify(out)}`);
   // The frame is byte-identical to what T15 drew: plain clipped text between HOME+CLEAR.
-  assert.match(stripAnsi(out), /asking you; attach in/, 'the pointer content is unchanged, just uncoloured');
+  assert.match(stripAnsi(out), /asking you; open it \(→\) to answer/, 'the pointer content is unchanged, just uncoloured');
 });
 
 test('colour never reaches a non-TTY stream even when colour:true is passed (T16)', () => {
@@ -337,10 +337,11 @@ test('the parked-worker footer is a compact single line and never the full quest
   const lines = formatLines(display, { spinnerChar: '⠋' });
   const joined = lines.join('\n');
   assert.match(joined, /asking you/, 'the compact row says who is asking');
-  assert.match(joined, /claude agents/, 'and how to reach them');
+  assert.match(joined, /open it \(→\) to answer/, 'and how to reach them: in `pir` (live-workers §2.4)');
+  assert.doesNotMatch(joined, /claude agents|attach/i, 'no `claude agents` and no attaching any more');
   assert.ok(!joined.includes('multi-paragraph question'), 'the full question is not drawn in the live frame');
-  // The footer is the compact parked block; "claude agents" is unique to it, so it marks that block.
-  const footerLines = lines.filter((l) => l.includes('claude agents'));
+  // The footer is the compact parked block; "to answer" is unique to it, so it marks that block.
+  const footerLines = lines.filter((l) => l.includes('to answer'));
   assert.equal(footerLines.length, 1, 'a single compact asking footer line, not the old multi-line block');
 });
 

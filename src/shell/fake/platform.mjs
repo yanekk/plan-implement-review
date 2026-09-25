@@ -82,6 +82,8 @@ function addTaskRows(cwd, task, plan, rows) {
 //                            child is listed until it exits, up to the 5 s + 5 s SIGTERM/SIGKILL
 //                            escalation (platform.mjs). Lets a test prove the loop does not recount a
 //                            closed-but-still-listed worker (loop.mjs closedIds).
+//     { request: kind }      the task's live workers show a pending 'permission' or 'questions' request
+//                            in workers() (not in list(): the loop's pass is unchanged). T09.
 //
 // The `resurrectClosed` behaviour of the `claude --bg` days (a closed session reappearing under its old
 // id as a stale registry entry) is gone with live-workers T05: a child that exited cannot come back.
@@ -96,6 +98,8 @@ export function createFakePlatform({ behaviors = {} } = {}) {
   const interrupts = []; // every interrupt: { to, from }
   const answers = []; // every answer: { to, requestId, result, from }
   let nextId = 0;
+  const all = []; // every worker record in spawn order, kept after close, for workers()
+  const counters = new Map(); // `${task}-${role}` → n, the conversation-log counter (DESIGN §2.3)
 
   function emit(w, kind, text = '') {
     inboxQueue.push({ from: w.name, task: w.task, kind, text });
@@ -240,7 +244,12 @@ export function createFakePlatform({ behaviors = {} } = {}) {
         pid: 10000 + nextId,
         busyHold: b.lingerBusy ?? 0,
       };
+      const key = `${parsed.task}-${phase}`;
+      w.n = (counters.get(key) ?? 0) + 1;
+      counters.set(key, w.n);
+      w.logPath = `conversations/${key}-${w.n}.ndjson`;
       workers.set(id, w);
+      all.push(w);
       spawns.push({ id, name, task: parsed.task, role: phase, cwd, note });
       return id;
     },
@@ -306,6 +315,18 @@ export function createFakePlatform({ behaviors = {} } = {}) {
           role: w.role,
           activity: { state: w.status === 'busy' ? 'busy' : 'idle', pending: [] },
         }));
+    },
+
+    // workers() → every worker spawned, live or closed, in spawn order, as the real platform's workers()
+    // (live-workers T09). No tick: it only reads. A `request: 'permission' | 'questions'` behaviour
+    // gives the task's live workers that pending request, so a test can see the asking kind.
+    workers() {
+      return all.map((w) => {
+        const isLive = !!liveWorker(w.id);
+        const request = isLive ? behaviors[w.task]?.request ?? null : null;
+        const state = request ?? (w.status === 'busy' ? 'busy' : 'idle');
+        return { id: w.id, task: w.task, role: w.role, n: w.n, logPath: w.logPath, live: isLive, activity: { state, pending: [] } };
+      });
     },
 
     // close(id, opts) → stop the worker. Worker teardown only; removing the worktree and branch is the
