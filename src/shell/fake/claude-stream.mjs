@@ -35,6 +35,16 @@
 //                             away when its input closes.
 //   {"onSigterm": "exit" | "ignore"}  default "exit" (node's own SIGTERM death); "ignore" logs the signal
 //                             and keeps running, so only SIGKILL ends it.
+//   {"resultFor": "<requestId>", "allowed": "<text>"}  emit the tool_result a real worker's tool returns
+//                             once pir answered that `canUseTool` (the reply taken by an earlier
+//                             `{"await":"control_response"}`): allowed, the text, or for AskUserQuestion
+//                             the answers as Claude words them; refused, an error result carrying pir's
+//                             message. The tool_use id is `toolu_<requestId>`, as `canUseTool` builds it.
+//   {"chat": {"workMs": <ms>, "init": <object>}}  from here on, answer every user message the way a
+//                             worker replies to the person: a turn that says what it was sent, works for
+//                             workMs (a tool step), then replies. An interrupt during the work ends the
+//                             turn as the real CLI does (`[Request interrupted by user]`, then a result
+//                             `error_during_execution`). Never returns; stdin EOF still exits.
 // After the last step the fake keeps reading stdin, acking control requests, until EOF.
 //
 // An interrupt does not cancel an open `can_use_tool` by itself: the real CLI sends
@@ -97,6 +107,32 @@ export function canUseTool(requestId, toolName, input, extra = {}) {
   };
 }
 
+// One tool use and its result, as a worker's assistant message and the user message that answers it.
+export function toolUse(id, name, input) {
+  return {
+    type: 'assistant', parent_tool_use_id: null, session_id: '{{session}}',
+    message: { model: 'claude-fake', id: `msg_${id}`, type: 'message', role: 'assistant', content: [{ type: 'tool_use', id, name, input }], stop_reason: null, usage: {} },
+    uuid: '00000000-0000-4000-8000-000000000004',
+  };
+}
+
+export function toolResult(id, text, isError = false) {
+  return {
+    type: 'user', parent_tool_use_id: null, session_id: '{{session}}',
+    message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: text, is_error: isError }] },
+    uuid: '00000000-0000-4000-8000-000000000005',
+  };
+}
+
+// The user text block the CLI emits when a turn is interrupted (T01 probe).
+export function interruptedText() {
+  return {
+    type: 'user', parent_tool_use_id: null, session_id: '{{session}}',
+    message: { role: 'user', content: [{ type: 'text', text: '[Request interrupted by user]' }] },
+    uuid: '00000000-0000-4000-8000-000000000006',
+  };
+}
+
 // fakeClaudeSpawner({ script, received }) → a `spawnProcess` for startWorker / workerOptions. It runs
 // this file under the current node with the SDK's own argv, cwd and env, plus the two variables above,
 // and ignores the command the SDK asked for: that is how no test can ever launch the real `claude`.
@@ -153,6 +189,22 @@ async function main() {
     else queues[kind].push(msg);
   };
   const take = (kind) => (queues[kind].length ? Promise.resolve(queues[kind].shift()) : new Promise((r) => waiters[kind].push(r)));
+  // take, or null after `ms`: the waiter is withdrawn on the timeout so a later line is not swallowed.
+  const takeWithin = (kind, ms) =>
+    new Promise((resolve) => {
+      if (queues[kind].length) return resolve(queues[kind].shift());
+      const w = (msg) => {
+        clearTimeout(timer);
+        resolve(msg);
+      };
+      const timer = setTimeout(() => {
+        const i = waiters[kind].indexOf(w);
+        if (i >= 0) waiters[kind].splice(i, 1);
+        resolve(null);
+      }, ms);
+      waiters[kind].push(w);
+    });
+  const responses = new Map(); // request_id → the PermissionResult pir sent for it
 
   process.on('SIGTERM', () => {
     record({ signal: 'SIGTERM' });
@@ -198,7 +250,12 @@ async function main() {
 
   for (const step of steps) {
     if ('emit' in step) out(step.emit);
-    else if ('await' in step) await take(step.await);
+    else if ('await' in step) {
+      const msg = await take(step.await);
+      const r = msg?.response;
+      if (step.await === 'control_response' && r?.request_id) responses.set(r.request_id, r.response ?? {});
+    } else if ('resultFor' in step) out(resultFor(step, responses.get(step.resultFor) ?? {}));
+    else if ('chat' in step) await chat(step.chat ?? {}, { out, take, takeWithin, queues });
     else if ('sleep' in step) await new Promise((r) => setTimeout(r, step.sleep));
     else if ('exit' in step) process.exit(step.exit);
     else if ('onEof' in step) {
@@ -208,6 +265,43 @@ async function main() {
   }
   // Script done: stdin keeps the process alive until EOF; with onEof "ignore", hold on regardless.
   if (onEof === 'ignore') setInterval(() => {}, 1 << 30);
+}
+
+// The tool_result for an answered `canUseTool`. An allowed AskUserQuestion reads back its answers in
+// Claude's own words; any refusal is an error result carrying the message pir sent.
+function resultFor(step, response) {
+  const id = `toolu_${step.resultFor}`;
+  if (response.behavior !== 'allow') return toolResult(id, response.message ?? 'The person refused.', true);
+  const answers = response.updatedInput?.answers;
+  if (answers && typeof answers === 'object') {
+    const said = Object.entries(answers).map(([q, a]) => `"${q}"="${a}"`).join(', ');
+    return toolResult(id, `User has answered your questions: ${said}. You can now continue with the user's answers in mind.`);
+  }
+  return toolResult(id, step.allowed ?? 'ok');
+}
+
+// The chat step: one turn per user message, for ever. The opening line names what was sent, so a
+// driver sees its own message come back; the work in the middle is where an interrupt lands.
+async function chat({ workMs = 1000, init = initEvent() }, { out, take, takeWithin, queues }) {
+  for (let n = 1; ; n++) {
+    const msg = await take('user');
+    queues.interrupt.length = 0; // an interrupt sent while idle belongs to no turn
+    const content = msg?.message?.content;
+    const text = typeof content === 'string' ? content : Array.isArray(content) ? content.map((b) => b?.text ?? '').join(' ') : '';
+    out(init);
+    out(assistantText(`You said: ${text}. Working on it.`));
+    const id = `toolu_chat_${n}`;
+    out(toolUse(id, 'Bash', { command: `sleep ${Math.ceil(workMs / 1000)}`, description: 'Pretend to work' }));
+    if (await takeWithin('interrupt', workMs)) {
+      out(interruptedText());
+      out(resultEvent('error_during_execution'));
+      continue;
+    }
+    out(toolResult(id, 'done'));
+    const reply = `Done with "${text}".`;
+    out(assistantText(reply));
+    out(resultEvent('success', reply));
+  }
 }
 
 if (process.argv[1] === SELF) main();
