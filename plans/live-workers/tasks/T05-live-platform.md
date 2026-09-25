@@ -11,14 +11,15 @@ this task a run drives stream-json workers and nothing in the coordinator lists 
 
 ## Design sections this implements
 
-DESIGN §2.1, §2.2, §2.4 (isBusy), §1 Stance (the withdrawn rule).
+DESIGN §2.1, §2.2, §2.3 (log path), §2.4 (isBusy), §1 Stance (the withdrawn rule).
 
 ## Files
 
 - `src/shell/platform.mjs`, `src/shell/platform.test.mjs`
 - `src/shell/loop.mjs`, `src/shell/loop.test.mjs` (liveness, isBusy, the name-match workaround)
 - `src/shell/coordinate.mjs` (construct the platform with the control dir; `teardownRun` closes children)
-- `src/shell/fake/platform.mjs` and its test (gain `send`, `interrupt`, `answer`, activity)
+- `src/shell/fake/platform.mjs` and its test (its existing `send(idOrName, msg)`, which un-parks a worker,
+  is extended to `send(id, text, { from })`; it gains `interrupt`, `answer`, activity)
 - `src/shell/no-down-channel.test.mjs` (narrowed, see below)
 
 ## Interface
@@ -36,6 +37,9 @@ createPlatform({ root, controlDir, transport, startWorker = realStartWorker, uui
   logPathOf(id) → string
 }
 ```
+
+`spawn` names the log `conversations/{Txx}-{role}-{n}.ndjson` (DESIGN §2.3), taking `n` as one past the
+highest existing file for that task and role, so a restarted run continues the count instead of overwriting.
 
 The platform keeps `control/workers.json` current with T04's `writeWorkersFile` on every spawn and exit
 (DESIGN §2.12); T06 only reads it.

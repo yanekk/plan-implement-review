@@ -16,7 +16,10 @@ DESIGN §2.5, §2.6 (grants, auto-answer), §2.7 (answers, decline), §2.8 (inte
 ## Files
 
 - `src/shell/person-inbox.mjs` (new), `src/shell/person-inbox.test.mjs` (new)
-- `src/shell/coordinate.mjs` (start the watcher with the run; clear `inbox/` in `startupControlHygiene`)
+- `src/shell/coordinate.mjs` (start the watcher with the run; clear `inbox/` in `startupControlHygiene`).
+  `createReportInbox`'s drain (sorted `*.json`, parse, unlink, drop malformed) and `waitForReport`'s
+  `fs.watch` are generalised to take the folder and a parser, and serve both `reports/` and `inbox/`; no
+  second reader or watcher is written (user 2026-09-25, plan review)
 - `src/shell/platform.mjs` (hook: on each `permission` event, consult grants before it counts as pending)
 
 ## Interface
@@ -42,6 +45,7 @@ worker. A permission request that `decide` allows is answered by pir immediately
 - [ ] a drop for a dead worker or an already-answered request is logged `undelivered`
 - [ ] `allow-always` then an identical request: the second is answered by pir with no pending state
 - [ ] a partial file (no rename yet) is never read; temp files are ignored
+- [ ] the existing report-inbox and waitForReport tests pass unchanged on the generalised reader
 - [ ] `dropPersonInput` with the coordinator not alive writes nothing and returns `not-running`
 - [ ] startup hygiene empties `inbox/`
 

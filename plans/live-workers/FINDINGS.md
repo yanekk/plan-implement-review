@@ -12,6 +12,7 @@ changed.
 
 | Date | | Finding |
 |---|---|---|
+| 2026-09-24 | 📌 | pi-tui 0.87.1 ships prebuilt `.node` binaries (darwin-arm64 `darwin-platform.node`); `terminal.js` loads it for modifier keys and clipboard. It is native code, not only JavaScript (plan review, `npm pack`). |
 | 2026-09-24 | 📌 | A `-p` stream-json worker is listed in `claude agents --json` as `kind:"interactive"`, its `-n` name, `status:"busy"`, `id:null`. Visible to the person, not attachable, and must never be used as a handle (2.1.282). |
 | 2026-09-24 | 📌 | A `-p` worker survived its parent's SIGKILL for 22 s while mid-command, until killed by hand. Hence `workers.json` and the reap (DESIGN §2.12). T00 measures exit after the turn ends. |
 | 2026-09-24 | 📌 | Returning `updatedPermissions` with `destination:"session"` in a `can_use_tool` reply did not stop the next identical request. pir keeps "don't ask again" itself (DESIGN §2.6). |

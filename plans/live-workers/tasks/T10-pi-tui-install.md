@@ -30,10 +30,11 @@ DESIGN §3.1 (boundary extension), §5 (Dependencies), §5.3.
 ## Done when
 
 - [ ] `npm ci && npm test` green in a fresh clone
-- [ ] after `./install.sh`, `node -e "import('@earendil-works/pi-tui')"` succeeds with cwd `~/.claude/pir-engine`
+- [ ] after `HOME=/tmp/pir-live-workers-home ./install.sh`, `node -e "import('@earendil-works/pi-tui')"` succeeds with cwd
+      `/tmp/pir-live-workers-home/.claude/pir-engine` (a scratch HOME: the real engine is not replaced during the parallel build)
 - [ ] the version is exact, not a range, and the lockfile is committed
 
 ## Outside actions
 
 - Install pi-tui from npm — `ask`
-- `./install.sh` — `worker` (only after this task is merged to main, if the build is parallel)
+- Scratch install — `worker` (PLAN.md build route)

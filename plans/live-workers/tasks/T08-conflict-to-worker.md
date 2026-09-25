@@ -16,15 +16,22 @@ DESIGN §2.10.
 
 - `src/core/conflict.mjs` and its test (a worker-addressed variant)
 - `src/shell/loop.mjs` step 3d and its test
+- `src/shell/coordinate.mjs` `buildRunState` (carry `conflictSent` on the task) and its test
+- `src/core/display.mjs`, `src/shell/render.mjs`, `src/shell/pir-tui.mjs` `buildWatchFrame` and their tests
+  (the sent-conflict row; DESIGN §2.10)
 
 ## Interface
 
 ```js
 buildConflictPrompt({ …existing, audience: 'person' | 'worker' })
-// 'worker': no copy markers, no KEEP: blank; says merge <feature> in, resolve, run the test command,
+// 'worker': no copy markers (the KEEP: blank is already gone for both, f3d4b8f); says merge <feature> in, resolve, run the test command,
 // commit, signal done again, and ask the person if choosing a side needs a judgement.
 // 'person': unchanged (the restart path with no live worker).
 ```
+
+runState task gains `conflictSent: boolean`. display: an asking task with a prompt and `conflictSent` is row
+kind `fixing-conflict`, label `fixing conflict`, style active, no footer; without `conflictSent` it is
+today's orange `conflict` row. `buildWatchFrame` draws the paste block only for the unsent kind.
 
 Loop step 3d: live worker → `platform.send(workerId, prompt, { from: 'pir' })`, record `conflict-sent`
 in the control log, park the task as today until the worker re-signals done. No live worker → today's
@@ -32,11 +39,13 @@ printed prompt.
 
 ## Tests
 
-- [ ] worker variant names the branch and files, has no `KEEP:` and no copy markers, tells it to ask the person
+- [ ] worker variant names the branch and files, has no copy markers, tells it to ask the person
 - [ ] person variant is byte-for-byte what it was (existing tests unchanged)
 - [ ] fake conflict with a live worker: the prompt is sent once, not re-sent on later passes
 - [ ] the merge is retried only after the worker re-signals done, as today
 - [ ] restart-reconcile conflict with no live worker still prints
+- [ ] a sent conflict renders `fixing conflict` in the active style, counts as running not as a conflict, and
+      draws no paste block; an unsent one is unchanged from f3d4b8f
 
 ## Done when
 

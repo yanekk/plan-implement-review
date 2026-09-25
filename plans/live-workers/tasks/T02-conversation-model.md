@@ -51,7 +51,9 @@ pickerReducer(picker, event) → { picker, send: null | { answers } }
 - [ ] picker: single-select replace, multi-select toggle, Other with text, next/submit, empty-answer no-op
 - [ ] submit builds `answers` keyed by question text, multi labels in option order joined `", "`
 - [ ] `raw` and `system` entries never crash the builder; unknown notes render dim
-- [ ] width truncation never splits a surrogate pair or a wide character (use the same width helper as pir-tui)
+- [ ] truncation counts code points and never splits a surrogate pair. Core may not import packages and pir-tui
+      has no wide-character helper today, so exact column clipping of wide characters is the painter's job in the
+      shell (pi-tui `truncateToWidth`, T11/T13), not this module's
 
 ## Done when
 

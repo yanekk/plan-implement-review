@@ -16,13 +16,15 @@ DESIGN §1 Success criteria, §5.1.
 ## Files
 
 - A harness fixture that forces one question set and one permission request (new
-  `src/shell/harness/fixtures/live-workers.mjs`, or an extension of `human-decision.mjs`), and its test.
+  `src/shell/harness/fixtures/live-workers-demo.mjs`, id and slug `live-workers-demo`), and its test.
 
 ## Environment (the worker owns this)
 
 ```
-bring-up: ./install.sh (engine at this commit); copy the fixture to a trusted scratch path;
-          PARALLEL_MAX_WORKERS=2 pir live-workers-fixture   (detached)
+bring-up: `npm ci` in this task's worktree (no ./install.sh during the parallel build, PLAN.md); materialise
+          the fixture in a trusted scratch path with harness/fixtures.mjs `installFixture`, which carries this
+          worktree's skills/ (a harness run writes no index record, so `pir` would not list it);
+          PARALLEL_MAX_WORKERS=2 node <worktree>/src/shell/pir.mjs live-workers-demo   (detached, cwd the scratch repo)
 teardown: Ctrl+S twice in pir or touch <scratch>/plans/<slug>/.parallel/control/HALT;
           confirm no pid in workers.json is alive; delete the scratch copy
 ```
@@ -30,7 +32,7 @@ teardown: Ctrl+S twice in pir or touch <scratch>/plans/<slug>/.parallel/control/
 ## Automated checks (the worker runs these)
 
 ```
-node src/shell/harness/run.mjs live-workers --into <scratch>   # ceiling 1, 10-min timeout
+node src/shell/harness/run.mjs live-workers-demo --into <scratch>   # fixture seatbelts: ceiling 1, 10-min timeout
 ```
 
 Record: the run's terminal state, the bundle path, and that every conversation log parses.
@@ -38,7 +40,7 @@ Record: the run's terminal state, the bundle path, and that every conversation l
 ## Needs a person
 
 ```
-pir        # open the scratch run
+node <worktree>/src/shell/pir.mjs        # open the scratch run
 ```
 
 Expect: tasks build; one row shows `asking you · a question`, another `asking you · allow a command?`;
@@ -54,6 +56,6 @@ Tell me: did every step happen as described, and anything that confused you on t
 
 ## Outside actions
 
+- Install pi-tui from npm — `ask` (`npm ci` in the worktree)
 - Live harness run — `worker`
 - T18 end-to-end run — `ask`
-- `./install.sh` — `worker`

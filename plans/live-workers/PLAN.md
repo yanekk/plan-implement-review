@@ -4,11 +4,14 @@
 interfaces it defines, and what "done" means. Track state in [PROGRESS.md](PROGRESS.md). Read
 [DESIGN.md](DESIGN.md) first.
 
-**Build route: classic recommended.** This plan replaces the machinery a parallel run uses to drive its
-own workers (platform, loop, coordinator, worker skills). A parallel run of it would be driven by the
-installed engine it is rewriting; that works only if `./install.sh` is never run mid-build (DESIGN §5.3),
-and every merge conflict in `loop.mjs`/`coordinate.mjs` would still go through today's copy-and-paste
-path. Which route to use is settled at plan review.
+**Build route: parallel** (user 2026-09-24, plan review; classic was recommended). The run is driven by
+today's installed `--bg` engine, which this plan rewrites, so nothing is installed for real until the person
+merges `pir/live-workers` to main (DESIGN §5). During the build: install checks (T10, T15) run
+`HOME=/tmp/pir-live-workers-home ./install.sh`, which writes only under that HOME; live checks (T13, T18) run the new
+engine from the task worktree (`node <worktree>/src/shell/pir.mjs`, after `npm ci` there), and
+`installFixture` carries that worktree's `skills/` into the scratch repo. Merge conflicts in
+`loop.mjs`/`coordinate.mjs` go through today's copy-and-paste path. After the merge, one `./install.sh` makes
+it live. The run starts only after `declared-test-command` is merged (PROGRESS.md).
 
 ## Shape of the build
 
@@ -61,7 +64,7 @@ conversation renders to styled lines, and the grant matcher decides, all in `npm
 | [T06](tasks/T06-reap-workers.md) | reap-workers | T04 |
 | [T07](tasks/T07-person-inbox.md) | person-inbox | T03, T05 |
 | [T08](tasks/T08-conflict-to-worker.md) | conflict-to-worker | T05 |
-| [T09](tasks/T09-asking-kinds.md) | asking-kinds | T05 |
+| [T09](tasks/T09-asking-kinds.md) | asking-kinds | T05, T08 |
 
 End: the coordinator drives fake-`claude` workers end to end, forwards the person's drops, sends the
 conflict fix, reaps orphans, and its snapshot says which kind of answer each asking worker wants.
@@ -88,31 +91,31 @@ interrupts, answers permissions and question sets.
 | [T17](tasks/T17-docs.md) | docs | T06, T07, T08, T13, T14, T15 |
 | [T18](tasks/T18-live-run.md) | live-run | T08, T13, T14, T16, T17 |
 
-T15 depends on T10 only because both rewrite `install.sh`; serialising them avoids a certain conflict
-in one file.
+T15 depends on T10 only because both rewrite `install.sh`, and T09 on T08 because both change the display
+and the footer (`display.mjs`, `render.mjs`); serialising each pair avoids a certain conflict.
 
 ## Critical path
 
 ```
-T00 → T01 → T04 → T05 → T09 → T12 → T13 → T17 → T18
+T00 → T01 → T04 → T05 → T08 → T09 → T12 → T13 → T17 → T18
 T00 → T10 → T11 → T12                  (the screen branch meets it at T12)
 ```
 
-Off the path: T02, T03, T06, T07, T08, T10, T11, T14, T15, T16 slot in wherever convenient.
+Off the path: T02, T03, T06, T07, T10, T11, T14, T15, T16 slot in wherever convenient.
 
 Leaves: T18 only. Every other task feeds T13, T17 or T18.
 
 ## Parallel width
 
-19 tasks · longest dependency chain 9 · up to 5 could run at once (`analyzeParallelism` over the
-PROGRESS table). The widest moments are T02, T03, T04 with T10 after T01, and T06–T09, T14 after T05.
+19 tasks · longest dependency chain 10 · up to 5 could run at once (`analyzeParallelism` over the
+PROGRESS table). The widest moments are T02, T03, T04 with T10 after T01, and T06–T08, T14 after T05.
 
 ## Rough sizing
 
 | Weight | Tasks |
 |---|---|
-| **Heavy** | T05, T11, T13 |
-| **Medium** | T00, T01, T02, T04, T07, T16, T17, T18 |
+| **Heavy** | T05, T11, T13, T16 |
+| **Medium** | T00, T01, T02, T04, T07, T17, T18 |
 | **Light** | T03, T06, T08, T09, T10, T12, T14, T15 |
 
 T05 will overrun if the loop's name-matching and grace logic assume `claude agents` in more places than
@@ -121,5 +124,4 @@ byte; the rule is "looks the same", not "same bytes", so near enough is judged b
 
 ## Decisions still open
 
-- Build route (classic or parallel): settled at plan review.
-- Nothing else blocks.
+- None. Build route and build order settled at plan review.

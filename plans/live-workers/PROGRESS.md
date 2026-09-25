@@ -8,11 +8,13 @@ task you pick up, and append yours there.
 **Sixty words to a Notes cell, counted.** Flat prose. The account is the commit message. Whoever
 writes a cell also fixes the over-budget cell they walk past.
 
-**Plan reviewed:** not yet — run `/pir-review-plan live-workers` before the first `/pir-work`
+**Plan reviewed:** 2026-09-25 — 12 fixed, 5 decided with the user
 
 **Status:** Planned 2026-09-24. Nothing built.
-**Last updated:** 2026-09-24
-**Next `pir-work` will:** T00, the only task with no dependency.
+**Last updated:** 2026-09-25
+**Starts after:** `declared-test-command` is merged to main (user 2026-09-24, plan review). Until then
+`pir-work` stops. `nudge-quiet-worker` and `resume-dead-worker` wait for this plan.
+**Next `pir-work` will:** T00, the only task with no dependency, once that merge is in.
 
 ## Tasks
 
@@ -30,7 +32,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T06 | reap-workers | T04 | ⬜ | |
 | T07 | person-inbox | T03, T05 | ⬜ | |
 | T08 | conflict-to-worker | T05 | ⬜ | |
-| T09 | asking-kinds | T05 | ⬜ | |
+| T09 | asking-kinds | T05, T08 | ⬜ | |
 | T10 | pi-tui-install | T00 | ⬜ | |
 | T11 | screen-on-pi-tui | T10 | ⬜ | |
 | T12 | task-selection | T09, T11 | ⬜ | |

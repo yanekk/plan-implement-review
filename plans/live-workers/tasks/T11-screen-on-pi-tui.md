@@ -44,9 +44,10 @@ runTui({ …same options as today }) → Promise<void>   // same contract; pi-tu
 
 ## Needs a person
 
-The worker installs the old build (current main) under one name and the new under another, or gives two
-commands from two checkouts, against the same running or finished runs, so they can be opened one after
-the other.
+The worker makes a second checkout of the commit before T11 (`git worktree add --detach <job tmp>/old <sha>`;
+`install.sh` has one fixed launcher name, so the old screen runs from that checkout, not from an install) and
+gives two commands against the same running or finished runs, so they can be opened one after the other.
+The worker removes that checkout afterwards.
 
 ```
 node <old checkout>/src/shell/pir.mjs      # today's screen

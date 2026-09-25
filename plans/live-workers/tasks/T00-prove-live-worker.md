@@ -31,7 +31,8 @@ job's tmp folder. All deleted after.
 3. Ask the worker, in a second turn, to use AskUserQuestion; answer it; confirm the answer lands.
 4. After the worker's turn has ended, close its stdin: does it exit, how fast, with what code? Then kill
    the parent spike with SIGKILL while the worker is idle: does the worker exit on its own, and how fast?
-5. `-n "<name with ·>"`: does the name survive, and how does the worker appear in `claude agents --json`?
+5. `-n "<a real workerName(), e.g. repo / plan / T01 / slug / implement>"` (naming.mjs joins with ` / `): does
+   the name survive, and how does the worker appear in `claude agents --json`?
 6. List every event kind the run produced (init, assistant text, tool_use, tool_result, `can_use_tool`
    for a tool and for AskUserQuestion, result success and interrupted, system notifications). Leave the
    recording in the scratch folder only until T01 starts: T01 regenerates its own sample lines with a

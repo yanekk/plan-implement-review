@@ -111,7 +111,9 @@ request is unanswered). The loop's existing `isBusy` and force-idle logic read t
 
 A task row shows "asking you" when the worker has a report of kind question/decision/conflict (as
 today) or a pending permission or question set. The row says which: `asking you · allow a command?`,
-`asking you · a question`. The report file stays part of the worker contract because it is what keeps
+`asking you · a question`. The asking footer reads `● Txx slug — asking you; open it (→) to answer`, and the
+coordinator's start banner in `run.log` says to answer in `pir` the same way; neither mentions
+`claude agents` or attaching any more. The report file stays part of the worker contract because it is what keeps
 a parked worker's slot and task phase in the loop; the pending request is what tells the person what
 kind of answer is wanted.
 
@@ -183,10 +185,15 @@ over the line.
 
 When the coordinator's merge of a task branch conflicts and the worker that built it is live, pir sends
 it the resolution prompt directly (§2.2) instead of printing it for the person. `buildConflictPrompt`
-(core/conflict.mjs) drops the `KEEP:` blank and the copy markers for this path and tells the worker to
+(core/conflict.mjs) drops the copy markers for this path (the `KEEP:` blank is already gone, f3d4b8f) and tells the worker to
 merge the feature branch in, resolve, run the test command, commit, re-signal done, and ask the person
 when choosing a side needs a judgement. The restart path with no live worker keeps today's printed
 prompt, because there is nobody to send it to.
+
+Once the fix is sent, the task row reads `fixing conflict` in the working (cyan) style, with no paste block
+and no conflict footer: nothing is asked of the person, and if the worker needs a judgement it asks and the
+row turns `asking you` like any question (user 2026-09-24, plan review). The orange `merge conflict` row and
+its paste-in prompt in the watch view (f3d4b8f) stay only for a conflict no live worker received.
 
 ### 2.11 The `pir` screen
 
@@ -198,7 +205,8 @@ fight over the cursor.
   bug. The pure frame builders (`buildListFrame`, `buildWatchFrame`, `dashboardReducer`) and their tests
   stay; only the painting changes.
 - The run live view gains a selectable task row. ↑↓ move it, → or Enter opens that task's worker. A task
-  with no worker yet says so in the footer. Esc still steps back to the list.
+  with no worker yet says so in the footer. ← still steps back to the list and Esc still quits `pir`,
+  as today (`decodeKey`: lone Esc is `quit`, ← is `back`).
 - The conversation view (prototype approved 2026-09-24, `prototype/`):
 
 | Key | Does |
@@ -286,7 +294,13 @@ New, shell:
 - `shell/worker-proc.mjs` — spawn and hold one worker; append its log; write lines; report exit.
 - `shell/person-inbox.mjs` — the screen's `dropPersonInput` and the coordinator's watcher/forwarder.
 - `shell/fake/claude-stream.mjs` — a scripted fake `claude` speaking stream-json, for tests.
-- `shell/conversation-view.mjs` — the conversation view on pi-tui.
+- `shell/conversation-view.mjs` — the conversation view on pi-tui; `shell/log-follow.mjs` — tail and follow a
+  conversation log (T13).
+- `shell/reap.mjs` — read `workers.json` and reap recorded pids (T06).
+- `shell/terminate.mjs` — the one SIGTERM-wait-SIGKILL helper, lifted from `stopRun` (T04); the person inbox
+  reuses `coordinate.mjs`'s report-folder reader and watcher, generalised (T07). Extending, not copying:
+  user 2026-09-25, plan review.
+- `shell/pir-view.mjs` — the pi-tui component painting styled-span frames (T11, if split out).
 
 Changed: `shell/platform.mjs` (live children instead of `--bg`), `shell/loop.mjs` (isBusy, conflict
 send), `shell/coordinate.mjs` (inbox watcher, workers.json, hygiene, teardown), `shell/control-run.mjs`
@@ -336,7 +350,7 @@ the reader keeps as `raw`.
 | OS | macOS 26.5.1 (Darwin 25.5.0) |
 | Runtime | Node 24.2.0, ES modules, `node:test`; npm 11.4.2 |
 | Toolchain | git 2.50.1; Claude Code 2.1.282 (every stream-json fact in §2 was measured on 2.1.281) |
-| New dependency | `@earendil-works/pi-tui` 0.87.1, MIT, needs Node ≥ 22.19; deps `marked`, `get-east-asian-width` |
+| New dependency | `@earendil-works/pi-tui` 0.87.1, MIT, needs Node ≥ 22.19; deps `marked`, `get-east-asian-width`; ships prebuilt `.node` binaries (`native/darwin/prebuilds/darwin-arm64/darwin-platform.node`), loaded by its terminal module for modifier keys and clipboard |
 | Deliberately absent | no Ink/React; no Agent SDK; no second npm package |
 
 **The test command.**
@@ -357,8 +371,11 @@ replaces the "no runtime dependencies" rule of `parallel-pir` DESIGN §5 for the
 2026-09-24.
 
 **After changing engine code or a skill, run `./install.sh`** and grep the change in
-`~/.claude/pir-engine/`. Not during a parallel run of this plan: that run's workers use the installed
-engine and skills (§5.3).
+`~/.claude/pir-engine/`. Never while any parallel run is live, of this plan or another: a live run's workers
+use the installed engine and skills, and from T06 on the installed `pir` stops a run by `workers.json`, which
+an older run's `--bg` workers are not in, so they would be orphaned (§5.3; user 2026-09-24). This plan is
+built in parallel, so until `pir/live-workers` is merged its tasks install only into a scratch `HOME`
+(`HOME=/tmp/pir-live-workers-home ./install.sh`) and run the new engine from their worktree (PLAN.md build route).
 
 ### 5.1 What the test command cannot reach
 
@@ -385,13 +402,17 @@ Scratch paths must already be trusted by Claude Code (`hasTrustDialogAccepted` i
 
 ### 5.3 Outside the code — who acts
 
+Approved by the user at plan review, 2026-09-25, as listed; no `ask` row moved down.
+
 | Action | Command | Bin | Why this bin | Way back | Cost |
 |---|---|---|---|---|---|
 | Probe worker (T00, T01) | `perl -e 'alarm 900; exec @ARGV' node <spike script>` (T00) or a `claude -p` probe (T01) on a scratch repo, one worker | `worker` | Minutes of model time, one worker, scratch only | Kill the pid; delete scratch | under a dollar |
-| Install pi-tui from npm | `npm ci` in the repo (T10) and in `~/.claude/pir-engine` via `./install.sh` | `ask` | First third-party code this project runs | Revert the commit, re-run `./install.sh` | none |
+| Install pi-tui from npm | `npm i @earendil-works/pi-tui@0.87.1` in a scratch folder (T00); `npm ci` in the repo or a task worktree (T10, T13, T18 bring-up) | `ask` | First third-party code this project runs, native `.node` binary included (§5) | Revert the commit; delete `node_modules` | none |
 | Live harness run | `node src/shell/harness/run.mjs <fixture> --into <scratch>` | `worker` | Bounded by ceiling 1, 10-min timeout, scratch only | HALT; scratch deleted | a few dollars |
-| T18 end-to-end run | `pir <fixture>` in a scratch repo, ceiling 2 | `ask` | A whole small plan of paid workers | HALT or Ctrl+S twice; scratch deleted | a few dollars |
-| `./install.sh` | refresh the installed engine and skills | `worker` | Local, idempotent; not during a parallel build of this plan | Re-run from the previous commit | none |
+| Person-check scratch run (T13) | `PARALLEL_MAX_WORKERS=1 node <worktree>/src/shell/pir.mjs <fixture>` in a scratch repo | `ask` | Paid, and no automatic time limit: it runs until Ctrl+S twice or HALT | HALT or Ctrl+S twice; scratch deleted | a few dollars |
+| T18 end-to-end run | `PARALLEL_MAX_WORKERS=2 node <worktree>/src/shell/pir.mjs live-workers-demo` in a scratch repo | `ask` | A whole small plan of paid workers | HALT or Ctrl+S twice; scratch deleted | a few dollars |
+| Scratch install (T10, T15) | `HOME=/tmp/pir-live-workers-home ./install.sh` | `worker` | Writes only under that HOME; re-fetches the lockfile's exact packages | `rm -rf /tmp/pir-live-workers-home` | none |
+| `./install.sh` | refresh the installed engine and skills, once, after `pir/live-workers` is merged to main | `worker` | Local, idempotent; never while any parallel run is live (§5) | Re-run from the previous commit | none |
 
 ---
 
@@ -424,6 +445,9 @@ All user decisions are 2026-09-24.
   lasting settings file on one key press.
 - **Existing plans untouched.** `nudge-quiet-worker` and `resume-dead-worker` stay as they are and are
   revisited after this plan; restart behaviour is today's.
+- **Build order** (plan review): T00 starts only after `declared-test-command` is merged to main, since it
+  rewrites some 40 of the files this plan changes; `nudge-quiet-worker` and `resume-dead-worker` are built
+  after this plan and re-planned first, since both are designed on `claude --bg` workers.
 - **`pir-coordinate` sunset**, rehearsal included.
 - **The conflict fix goes straight to the worker**; a judgement it needs comes back as its question.
 - **Report files stay.** They already drive the loop's phases; replacing them with stream inference is

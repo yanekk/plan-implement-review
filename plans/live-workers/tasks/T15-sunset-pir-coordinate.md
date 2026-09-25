@@ -16,7 +16,9 @@ DESIGN §2.13.
 
 - `bin/pir-coordinate` (deleted)
 - `install.sh` (stop installing it; remove an installed `pir-coordinate` launcher it finds in the bin dir)
-- `src/shell/launcher.test.mjs`
+- `src/shell/launcher.test.mjs` (today asserts `LAUNCHERS` is `pir` and `pir-coordinate`, and that install.sh
+  mentions `pir-coordinate {slug}` at least twice; install.sh's closing messages carry those lines)
+- `src/shell/pir.test.mjs` (a comment naming the launcher)
 - `src/shell/coordinate.mjs` only if its bin section prints `pir-coordinate` guidance; the dry path stays
   where tests use it
 
@@ -29,8 +31,9 @@ DESIGN §2.13.
 
 - [ ] `npm test` green
 - [ ] `grep -rn "pir-coordinate" bin install.sh src` finds only the removal line and history comments
-- [ ] after `./install.sh`, `command -v pir-coordinate` finds nothing
+- [ ] with a stale `pir-coordinate` planted in a scratch HOME's bin dir, `HOME=/tmp/pir-live-workers-home ./install.sh`
+      removes it and installs `pir` only
 
 ## Outside actions
 
-- `./install.sh` — `worker`
+- Scratch install — `worker` (PLAN.md build route)

@@ -53,7 +53,11 @@ it sends `decline-questions`.
 ## Environment (the worker owns this)
 
 ```
-bring-up: a scratch copy of a harness fixture, trusted path, `PARALLEL_MAX_WORKERS=1 pir <fixture>` detached
+bring-up: `npm ci` in this task's worktree; a harness fixture materialised with `installFixture` (it carries
+          this worktree's skills/) in a trusted scratch path (not a harness run: those write no index
+          record and `pir` would not list them); in the scratch repo,
+          `PARALLEL_MAX_WORKERS=1 node <worktree>/src/shell/pir.mjs <fixture>` detached (the installed `pir` is
+          still the old engine during the parallel build)
 teardown: Ctrl+S twice in pir (or `touch …/control/HALT`), confirm no worker pid from workers.json is alive,
           delete the scratch copy
 ```
@@ -61,7 +65,7 @@ teardown: Ctrl+S twice in pir (or `touch …/control/HALT`), confirm no worker p
 ## Needs a person
 
 ```
-pir        # then open the scratch run, pick the working task, →
+node <worktree>/src/shell/pir.mjs        # then open the scratch run, pick the working task, →
 ```
 
 Expect: the worker's conversation, one line per step, updating live; typing and Enter reaches the worker;
@@ -71,4 +75,5 @@ Tell me: does it read and respond the way you expected from the prototype, and w
 
 ## Outside actions
 
-- Live harness run — `worker` (the scratch run above, ceiling 1)
+- Install pi-tui from npm — `ask` (`npm ci` in the worktree)
+- Person-check scratch run — `ask` (the scratch run above, ceiling 1)

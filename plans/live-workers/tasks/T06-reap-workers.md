@@ -16,7 +16,9 @@ DESIGN §2.3 (retention), §2.12.
 
 - `src/shell/reap.mjs` (new), `src/shell/reap.test.mjs` (new)
 - `src/shell/coordinate.mjs` (`startupControlHygiene` calls the reap before the first pass)
-- `src/shell/control-run.mjs` (`stopRun` reaps from `workers.json` instead of `claude agents`;
+- `src/shell/loop.mjs` `reconcile` (its `platform.list()` reap of the previous run's workers only sees this
+  process's children after T05; drop it, the startup reap covers it) and its test
+- `src/shell/control-run.mjs` (`stopRun`'s own escalation replaced by T04's `terminate`; `stopRun` reaps from `workers.json` instead of `claude agents`;
   `removeRun` deletes `conversations/`), and its test
 
 ## Interface
@@ -24,7 +26,7 @@ DESIGN §2.3 (retention), §2.12.
 ```js
 readWorkersFile(controlDir) → [{ id, task, role, pid, startTime }]   // [] if absent or corrupt
 reapRecorded(controlDir, { isAlive, startTimeOf, kill, wait }) → { reaped: [pid…], skipped: [pid…] }
-// kill only when isAlive(pid) and startTimeOf(pid) === recorded startTime; SIGTERM, then SIGKILL after 3 s
+// kill only when isAlive(pid) and startTimeOf(pid) === recorded startTime; T04's terminate(), SIGKILL after 3 s
 ```
 
 ## Tests
@@ -32,7 +34,7 @@ reapRecorded(controlDir, { isAlive, startTimeOf, kill, wait }) → { reaped: [pi
 - [ ] a live recorded pid with matching start time is SIGTERMed, then SIGKILLed if still alive
 - [ ] a pid alive with a different start time (reused) is skipped
 - [ ] a dead pid is skipped; a corrupt or missing file reaps nothing and does not throw
-- [ ] startup hygiene reaps before the first pass; `stopRun` reaps after the coordinator is gone
+- [ ] startup hygiene reaps before the first pass (so before `reconcile`); `stopRun` reaps after the coordinator is gone
 - [ ] `removeRun` deletes `conversations/` and leaves nothing else changed
 
 ## Done when
