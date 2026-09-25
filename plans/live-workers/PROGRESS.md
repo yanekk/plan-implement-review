@@ -36,7 +36,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T10 | runtime-deps | T00 | ✅ | |
 | T11 | screen-on-pi-tui | T10 | ✅ | |
 | T12 | task-selection | T09, T11 | ✅ | |
-| T13 | conversation-view | T02, T07, T12 | ✅ | Review: one fix, the log follower emitted the rest of a line its tail read began inside as a raw line (reproduced, test locks it); T20 doc given Files, Interface, Tests. Probed key routing, pi-tui input consumption, drop validation, prompt resync. Feel check is T20's (user). Hint clips at 80 columns, in FINDINGS. |
+| T13 | conversation-view | T02, T07, T12 | ✅ | Review: one fix, the log follower emitted the rest of a line its tail read began inside as a raw line (reproduced, test locks it); T20 doc given Files, Interface, Tests. Probed key routing, input consumption, prompt resync. Feel check is T20's (user). Hint clips at 80 columns, in FINDINGS. |
 | T14 | worker-contract | T05 | ✅ | |
 | T15 | sunset-pir-coordinate | T10 | ✅ | |
 | T16 | harness-conversations | T05, T06 | ✅ | |
