@@ -33,7 +33,7 @@ createPlatform({ root, controlDir, transport, startWorker = realStartWorker, uui
   inbox()                                   // unchanged, reports/ drop dir
   send(id, text, { from }) → { ok }         // user line
   interrupt(id) → { ok }
-  answer(id, requestId, reply) → { ok }     // reply built by core/stream.mjs
+  answer(id, requestId, result) → { ok }    // a PermissionResult built by core/stream.mjs
   logPathOf(id) → string
 }
 ```
@@ -54,7 +54,7 @@ now misleads; say which in the commit.
 
 ## Tests
 
-- [ ] spawn starts a fake worker in the task cwd with the §2.1 argv and the opening instruction as the first user line
+- [ ] spawn starts a fake worker through the SDK in the task cwd with the §2.1 options and the opening instruction as the first user message
 - [ ] list reflects exits immediately; a worker that exited is gone from list and the loop treats it as dead as before
 - [ ] isBusy flips on the fake's `result`; force-idle still triggers on an idle worker past the timeout
 - [ ] send/interrupt/answer on a dead id return `{ok:false}` and log `undelivered`

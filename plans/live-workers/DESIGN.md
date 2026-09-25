@@ -10,8 +10,9 @@ anything to them: it starts them with one instruction and afterwards only reads 
 drop. The person reaches a worker by leaving `pir`, finding it in `claude agents` and attaching. A merge
 conflict is resolved by the person copying a prompt out of pir and pasting it into the worker.
 
-This plan makes every worker a child process of the coordinator, driven over Claude Code's stream-json
-protocol, so the coordinator holds a live two-way line to each one. Through that line pir can message a
+This plan makes every worker a child process of the coordinator, driven through the Claude Agent SDK,
+which speaks Claude Code's stream-json protocol to the installed `claude`, so the coordinator holds a
+live two-way line to each one. Through that line pir can message a
 worker at any moment, a worker's permission requests and question sets come to pir, and everything the
 worker does is saved as it happens. The `pir` screen gains a third view, a worker's conversation, where
 the person reads the worker and answers, approves, interrupts or types to it without leaving pir. It is
@@ -26,8 +27,8 @@ reviving a dead one) build on.
   the worker carries on; an Esc interrupts a busy worker within about a second.
 - A merge conflict reaches the worker as a message from pir with no copy and paste.
 - The runs list and the run live view look and behave as before the move to pi-tui.
-- `npm test` stays green, quiet and free of paid calls: every protocol path is exercised against a fake
-  `claude` that speaks stream-json.
+- `npm test` stays green, quiet and free of paid calls: every protocol path is exercised by the real SDK
+  against a fake `claude` that speaks stream-json.
 
 ### Stance
 
@@ -46,24 +47,39 @@ reviving a dead one) build on.
 
 ### 2.1 A worker is a stream-json child of the coordinator
 
-The coordinator starts each worker with `node:child_process.spawn`, cwd its task worktree, stdio piped:
+The coordinator starts each worker with the Agent SDK's `query()` (`@anthropic-ai/claude-agent-sdk`,
+§5), user 2026-09-25. pir does not build protocol lines itself; the SDK owns the wire format and is
+released in step with Claude Code (SDK 0.3.N pairs with CLI 2.1.N).
 
-```
-claude -p --input-format stream-json --output-format stream-json --verbose
-       --permission-prompt-tool stdio --permission-mode auto
-       --session-id <uuid chosen by pir> -n "<agent name from naming.mjs>"
+```js
+query({ prompt: <pir's input queue, an AsyncIterable of SDK user messages>, options: {
+  cwd: <task worktree>, sessionId: <uuid chosen by pir>, permissionMode: 'auto',
+  pathToClaudeCodeExecutable: <the installed `claude`, resolved once at coordinator start>,
+  extraArgs: { name: <agent name from naming.mjs> },
+  canUseTool: <pir's handler, §2.6, §2.7>,
+  spawnClaudeCodeProcess: <node:child_process.spawn, so pir holds the pid (§2.12) and tests swap the binary>,
+}})
 ```
 
-- The opening instruction (`openingInstruction`, platform.mjs) is sent as the first user line, not as
+- The SDK launches exactly the line the plan-time probes measured by hand (seen 2026-09-25 on 2.1.282):
+  `claude --output-format stream-json --verbose --input-format stream-json --permission-prompt-tool stdio
+  --permission-mode auto --session-id=<uuid> --name <name>`. It runs on the person's Claude login; no API
+  key is read (`apiKeySource: none`, measured).
+- The installed `claude` is used, not the SDK's bundled binary: workers run the same Claude the person
+  runs, and the 222 MB binary is not installed (`--omit=optional`, §5).
+- `settingSources` is left at its default (user, project, local, as the CLI), so CLAUDE.md, skills and
+  the auto-mode exception load as they do for a `--bg` worker.
+- The opening instruction (`openingInstruction`, platform.mjs) is pushed as the first user message, not as
   an argument. One path for every message keeps the log uniform.
 - pir chooses the session id, and that uuid is the worker's `id` everywhere. This removes today's
   mismatch between the id `claude --bg` prints and the id `claude agents` lists (loop.mjs matches by
   name to work around it).
-- `--permission-mode auto` keeps today's behaviour: workers ran in auto mode, which is why this project
+- `permissionMode: 'auto'` keeps today's behaviour: workers ran in auto mode, which is why this project
   ships an auto-mode exception (`src/core/settings.mjs`). A `-p` worker defaults to `default` mode if
-  the flag is left off (measured 2026-09-24).
-- `--permission-prompt-tool stdio` is what makes permission requests and AskUserQuestion reach pir as
-  `control_request` lines. Without it AskUserQuestion is absent from the worker's tools (measured).
+  the mode is left off (measured 2026-09-24).
+- Passing `canUseTool` is what makes the SDK add `--permission-prompt-tool stdio`, which routes permission
+  requests and AskUserQuestion to pir. Without it AskUserQuestion is absent from the worker's tools
+  (measured on the raw line 2026-09-24).
 - The worker's skills load as before: `user-invocable: false` skills are missing from `init.slash_commands`
   but still load through the Skill tool (measured).
 
@@ -75,8 +91,8 @@ that listing as a handle on a live worker.
 
 ### 2.2 The line down
 
-pir writes one JSON line per message to the worker's stdin. Every line pir sends is also appended to
-the conversation log (§2.3) with its sender, `pir` or `person`, so the view shows who said what. In this
+pir pushes each message into the worker's input queue, which the SDK writes to the worker. Every
+message pir sends is also appended to the conversation log (§2.3) with its sender, `pir` or `person`, so the view shows who said what. In this
 plan pir itself sends exactly two things: the opening instruction, and the merge-conflict fix (§2.10).
 Anything else pir might say later (nudges) belongs to the plan that needs it.
 
@@ -89,24 +105,32 @@ messages waiting for idle.
 `n` counting that task and role's workers from 1 in this run. One JSON object per line:
 
 ```
-{ "t": <ms>, "dir": "in", "event": <the worker's stream-json line, parsed> }
-{ "t": <ms>, "dir": "out", "from": "pir" | "person", "line": <the line pir wrote> }
-{ "t": <ms>, "dir": "note", "kind": "delivered-by-grant" | "undelivered" | "exited" | …, … }
+{ "t": <ms>, "dir": "in", "event": <an SDK message, exactly as query() yielded it> }
+{ "t": <ms>, "dir": "request", "requestId": "…", "toolName": "…", "input": {…}, "suggestions": […],
+  "reason": "…", "description": "…" }
+{ "t": <ms>, "dir": "out", "from": "pir" | "person", "kind": "message", "text": "…" }
+{ "t": <ms>, "dir": "out", "from": "person", "kind": "interrupt" }
+{ "t": <ms>, "dir": "out", "from": "pir" | "person", "kind": "reply", "requestId": "…", "result": <PermissionResult> }
+{ "t": <ms>, "dir": "note", "kind": "delivered-by-grant" | "undelivered" | "exited" | "sdk-error" | …, … }
 ```
 
+- A `request` entry is one `canUseTool` call: `requestId`, `decisionReason` (as `reason`) and
+  `description` come from the SDK's call options, `suggestions` from its `suggestions`. The SDK does
+  not yield control requests as messages, so pir records them itself.
 - Written by the coordinator only, appended one `write` per line, so a reader never sees a torn line
   from a single writer and the view needs no lock.
-- A worker line that is not valid JSON is kept as `{dir:"in", raw:"…"}` and never stops the reader;
-  losing a line to a parse error would hide exactly the output that explains a failure.
+- A log line that fails to parse on read (a crash mid-append) is kept by the reader as `raw` and never
+  stops it. An error thrown by the SDK's message stream is logged as a `sdk-error` note with its message,
+  and the worker is then handled as exited (§2.14).
 - Kept until the person removes the run from the dashboard (Ctrl+X), which deletes the folder with the
   run's index record. A restart keeps it; a new worker for the same task gets the next `n`.
 
 ### 2.4 Worker state from the stream
 
-The pure core derives each worker's activity from its events: `busy` (a turn is open: a user line went
+The pure core derives each worker's activity from its events: `busy` (a turn is open: a message went
 in and no `result` has come back), `idle` (last turn ended, nothing pending), `permission` (a
-`can_use_tool` request for any tool but AskUserQuestion is unanswered), `questions` (an AskUserQuestion
-request is unanswered). The loop's existing `isBusy` and force-idle logic read this instead of
+`request` entry for any tool but AskUserQuestion has no reply), `questions` (an AskUserQuestion
+request has no reply). The loop's existing `isBusy` and force-idle logic read this instead of
 `claude agents` status.
 
 A task row shows "asking you" when the worker has a report of kind question/decision/conflict (as
@@ -143,35 +167,39 @@ The `pir` screen and the coordinator are separate processes. The screen writes o
 
 ### 2.6 Permission requests
 
-A `can_use_tool` request shows in the conversation with the tool, the command or input, and the
+A permission request (a `canUseTool` call, logged as a `request` entry) shows in the conversation with the tool, the command or input, and the
 worker's description. Keys: `y` allow once, `n` refuse, `a` allow and do not ask this worker again for
 this. Typing a reply instead refuses and sends the text as the refusal message, so the worker sees why.
 
 "Do not ask again" is remembered by pir, per worker, in memory for the worker's life, never written to
 any settings file (user 2026-09-24). pir keeps it because Claude does not: returning
 `updatedPermissions` with `destination:"session"` did not stop the next identical request (measured
-2026-09-24). The grant is the `addRules` rule Claude itself suggested in `permission_suggestions` for
-that request; a later request from the same worker that the rule matches is allowed by pir at once and
+on the raw line 2026-09-24; T00 rechecks it through the SDK). The grant is the `addRules` rule Claude
+itself suggested for that request, which the SDK passes to `canUseTool` as `suggestions`; a later request from the same worker that the rule matches is allowed by pir at once and
 logged as `delivered-by-grant`. Matching follows Claude's rule form: an exact `ruleContent` matches the
 identical input; a `prefix:*` form matches any command starting with the prefix. When a request carries
 no `addRules` suggestion, `a` is not offered.
 
-A refusal is `behavior:"deny"` with the message `The person refused.` or the typed text.
+pir answers by resolving the pending `canUseTool` promise with a `PermissionResult`. A refusal is
+`behavior:"deny"` with the message `The person refused.` or the typed text. A request left unanswered
+keeps its promise open. Whether the SDK or Claude gives up on a long-unanswered request is not yet
+measured; T00 checks it.
 
 ### 2.7 Question sets
 
 An AskUserQuestion request (`input.questions[]`: `question`, `header`, `options[{label,description}]`,
 `multiSelect`) shows as a picker, one question at a time, like Claude's own: ↑↓ move, space picks or
 ticks, Enter goes to the next question and on the last sends. Every question gets a final "Other" line
-that takes the typed text as the answer. The reply is `behavior:"allow"`, `updatedInput` = the request's
+that takes the typed text as the answer. The `canUseTool` result is `behavior:"allow"`, `updatedInput` = the request's
 input plus `answers: { "<question text>": "<label>" }`, several labels joined with `", "` (the round trip
 was measured). Typing a reply instead of using the picker sends `decline-questions`: pir refuses the
 tool with the typed text as the message, which is what Claude's own "chat about this" amounts to.
 
 ### 2.8 Interrupt
 
-Esc in a worker's conversation sends `{"type":"control_request","request_id":…,"request":{"subtype":"interrupt"}}`.
-The open turn ends at once (measured: about 1 s); the person then types a new instruction. A command
+Esc in a worker's conversation calls the SDK's `interrupt()`, which sends the interrupt control request.
+The open turn ends at once with a `result` of subtype `error_during_execution` (measured on the raw line
+2026-09-24, about 1 s; through the SDK 2026-09-25, acknowledged at once); the person then types a new instruction. A command
 the worker had already moved to the background keeps running and reports later, as with Esc in Claude.
 
 ### 2.9 Slash commands
@@ -226,13 +254,17 @@ fight over the cursor.
 
 ### 2.12 Stop, remove, restart, and orphaned workers
 
-A worker does not die with a coordinator killed by SIGKILL: a child mid-command was still alive 22 s
-after its parent was killed (measured 2026-09-24). So:
+A worker does not reliably die with a coordinator killed by SIGKILL: a child mid-command was still alive
+22 s after its parent was killed (measured 2026-09-24). An idle SDK-driven worker whose parent exited
+hard was gone within about a second (measured 2026-09-25), which does not cover the mid-command case.
+pir spawns the process itself through `spawnClaudeCodeProcess` (§2.1), so it has the pid. So:
 
 - The coordinator writes `control/workers.json`, `[{ id, task, role, pid, startTime }]`, temp-then-rename,
   on every spawn and exit. `startTime` is `startTimeOf(pid)` (identity.mjs), so a reused pid is never
   mistaken for a worker.
-- Closing a worker: end its stdin, SIGTERM after 5 s if it has not exited, SIGKILL after 10 s.
+- Closing a worker: end its input queue (the SDK then closes the worker's stdin), SIGTERM after 5 s if it
+  has not exited, SIGKILL after 10 s. pir's escalation runs on the pid; it does not depend on the SDK's
+  own grace window (about 2 s after stdin EOF).
 - `teardownRun` closes every live child. Startup hygiene and the dashboard's `stopRun` reap any pid in
   `workers.json` whose start time still matches, instead of listing `claude agents`.
 - `removeRun` also deletes the run's `conversations/` folder (§2.3).
@@ -253,8 +285,10 @@ coordinator's dry path stays only where the test suite uses it. `install.sh` rem
 - **A worker exits unexpectedly:** the loop sees the child gone and treats the worker as dead, exactly
   as it treats a vanished session today; the log gets an `exited` note with the exit code and signal.
 - **A worker never answers a line** (hung): unchanged from today; nothing here times a worker out.
-- **stdin write fails** (child closing): the input is logged `undelivered`; the exit path handles the
-  rest.
+- **A message for a worker whose process has exited** (or whose input queue is closed): the input is
+  logged `undelivered`; the exit path handles the rest.
+- **The SDK's message stream throws** (the process died, a protocol error): logged as a `sdk-error` note;
+  the worker is treated as exited.
 - **The person answers the same request twice or from two screens:** the first answer is forwarded, the
   second finds nothing pending and is logged `undelivered`.
 - **The coordinator restarts with a request pending:** the old worker is reaped, its request dies with
@@ -277,23 +311,26 @@ src/shell/  — spawns workers, writes logs and drop files, watches folders, dra
 ```
 
 `src/core/boundary.test.mjs` enforces it. This plan extends it to forbid any bare-specifier import
-(an npm package) in `src/core/`, since pi-tui is the first package in the repo. If that test fails the
+(an npm package) in `src/core/`, since pi-tui and the Agent SDK are the first packages in the repo. If that test fails the
 fix is to move the code, never to relax the test. Everything on the pure side is tested exhaustively in
 milliseconds; every rule that leaks across becomes a rule only a person can check.
 
 ### 3.2 Modules
 
 New, pure:
-- `core/stream.mjs` — parse worker lines; build outgoing lines; derive worker activity (§2.4); list
-  pending requests.
+- `core/stream.mjs` — read conversation-log entries (SDK messages, requests, replies) into worker
+  events; build the SDK user message and the `PermissionResult`s pir returns; derive worker activity
+  (§2.4); list pending requests. It never builds a protocol line: the SDK does.
 - `core/conversation.mjs` — log entries → styled lines (one line per step or full); the permission gate
   and question-set picker models and their reducers.
 - `core/person-input.mjs` — validate inbox drops (§2.5); the per-worker grant list and rule matcher (§2.6).
 
 New, shell:
-- `shell/worker-proc.mjs` — spawn and hold one worker; append its log; write lines; report exit.
+- `shell/worker-proc.mjs` — start and hold one worker through the SDK's `query()`: its input queue, its
+  `canUseTool` handler, its log, its pid, its exit. The only module that imports the SDK.
 - `shell/person-inbox.mjs` — the screen's `dropPersonInput` and the coordinator's watcher/forwarder.
-- `shell/fake/claude-stream.mjs` — a scripted fake `claude` speaking stream-json, for tests.
+- `shell/fake/claude-stream.mjs` — a scripted fake `claude` executable speaking stream-json, including the
+  control handshake the SDK opens with (`initialize`), so the real SDK drives it in tests.
 - `shell/conversation-view.mjs` — the conversation view on pi-tui; `shell/log-follow.mjs` — tail and follow a
   conversation log (T13).
 - `shell/reap.mjs` — read `workers.json` and reap recorded pids (T06).
@@ -308,14 +345,14 @@ send), `shell/coordinate.mjs` (inbox watcher, workers.json, hygiene, teardown), 
 `core/dashboard.mjs` (task selection, conversation view state), `core/conflict.mjs` (worker-addressed
 prompt), `core/display.mjs` and `coordinate.mjs buildRunState` (asking kinds, worker ids, log paths),
 `shell/fake/platform.mjs`, `shell/harness/*`, `skills/pir-worker|pir-implement|pir-review`, `install.sh`,
-`package.json`.
+`package.json`, `.npmrc`.
 
 ### 3.3 Data flow
 
 ```
-worker ──stdout──▶ worker-proc ──append──▶ conversations/*.ndjson ──read/follow──▶ pir screen
-   ▲                   │
-   └──stdin────────────┤◀── platform.send/interrupt/answer ◀── loop (opening, conflict fix)
+worker ◀─stdio─▶ SDK query() ──messages, canUseTool──▶ worker-proc ──append──▶ conversations/*.ndjson ──read/follow──▶ pir screen
+                     ▲                                     │
+                     └── input queue, interrupt(), results ┤◀── platform.send/interrupt/answer ◀── loop (opening, conflict fix)
                        │◀── person-inbox forwarder ◀── inbox/*.json ◀── pir screen (person)
 worker-proc ──activity──▶ platform.list ──▶ loop ──▶ status.json snapshot ──▶ pir screen rows
 ```
@@ -331,11 +368,14 @@ the reader keeps as `raw`.
 
 ## 4. Testing
 
-- Pure core: exhaustive unit tests. Stream fixtures are real lines recorded by T00 (paths scrubbed) so
-  the parser is tested against what Claude actually emits, not what its docs say.
-- Shell: `worker-proc`, platform and the inbox forwarder run against `fake/claude-stream.mjs`, a node
-  script launched in place of `claude` that replays a scripted conversation, emits `control_request`s,
-  honours interrupts and exits on stdin EOF. No test spawns the real `claude`.
+- Pure core: exhaustive unit tests. Fixtures are real SDK messages and `canUseTool` calls recorded by
+  T01's probe (paths scrubbed), so the reader is tested against what Claude actually emits, not what its
+  docs say.
+- Shell: `worker-proc`, platform and the inbox forwarder run the real SDK against `fake/claude-stream.mjs`,
+  a node script launched in place of `claude` (through `spawnClaudeCodeProcess`) that answers the SDK's
+  `initialize`, replays a scripted conversation, emits `control_request`s, honours interrupts and exits
+  on stdin EOF. The fake's wire lines are copied from T01's committed recording of the SDK talking to
+  the real `claude`. No test spawns the real `claude`.
 - The fake platform (`fake/platform.mjs`) gains `send`, `interrupt`, `answer` and activity so loop and
   coordinator tests cover the conflict send and the asking kinds.
 - None of it can prove a real worker behaves over the line for a whole task, or that the screen feels
@@ -351,7 +391,8 @@ the reader keeps as `raw`.
 | Runtime | Node 24.2.0, ES modules, `node:test`; npm 11.4.2 |
 | Toolchain | git 2.50.1; Claude Code 2.1.282 (every stream-json fact in §2 was measured on 2.1.281) |
 | New dependency | `@earendil-works/pi-tui` 0.87.1, MIT, needs Node ≥ 22.19; deps `marked`, `get-east-asian-width`; ships prebuilt `.node` binaries (`native/darwin/prebuilds/darwin-arm64/darwin-platform.node`), loaded by its terminal module for modifier keys and clipboard |
-| Deliberately absent | no Ink/React; no Agent SDK; no second npm package |
+| New dependency | `@anthropic-ai/claude-agent-sdk` 0.3.282 (pairs with Claude Code 2.1.282), Anthropic Commercial Terms, Node ≥ 18. Installed with peers and optionals omitted: 4.9 MB, one package, `sdk.mjs` imports only Node built-ins (measured 2026-09-25). Its peers (`zod`, `@anthropic-ai/sdk`, `@modelcontextprotocol/sdk`, some 95 packages with an HTTP server) serve only in-process MCP tools pir does not use; its optionals are the 222 MB bundled `claude` |
+| Deliberately absent | no Ink/React; no third npm package; no SDK peers or bundled binary |
 
 **The test command.**
 
@@ -364,11 +405,18 @@ green, colour off inside the command, loud on failure. To debug one file, run it
 `--test-reporter=spec`. It is the only evidence a session may produce on its own. After T10 a fresh
 checkout needs `npm ci` before it; the engine install does that itself (§5.3).
 
-**Dependencies.** Exactly one runtime package, `@earendil-works/pi-tui`, pinned to an exact version
-with a committed `package-lock.json`, imported only from `src/shell/`. It is 0.x and publishes often,
-so it is upgraded deliberately, never by range. Any other package is a decision for the user. This
-replaces the "no runtime dependencies" rule of `parallel-pir` DESIGN §5 for the `pir` screen, user
-2026-09-24.
+**Dependencies.** Exactly two runtime packages, `@earendil-works/pi-tui` (the screen, user 2026-09-24)
+and `@anthropic-ai/claude-agent-sdk` (the line, user 2026-09-25), each pinned to an exact version with a
+committed `package-lock.json`, imported only from `src/shell/`. Both are 0.x and publish often, so they
+are upgraded deliberately, never by range. A committed `.npmrc` sets `omit=peer` and `omit=optional`, so
+`npm ci` anywhere installs neither the SDK's peers nor its bundled binary (T10 confirms pi-tui needs
+neither). Any other package is a decision for the user. This replaces the "no runtime dependencies"
+rule of `parallel-pir` DESIGN §5.
+
+**SDK and Claude versions.** Workers run the installed `claude`, which updates itself, while the SDK is
+pinned. A skew that breaks the protocol is expected to surface as an `sdk-error` at the first
+worker; nothing here detects a subtler one. Upgrading the SDK to the installed Claude's paired version is a
+deliberate change with its own `npm test` run.
 
 **After changing engine code or a skill, run `./install.sh`** and grep the change in
 `~/.claude/pir-engine/`. Never while any parallel run is live, of this plan or another: a live run's workers
@@ -406,8 +454,8 @@ Approved by the user at plan review, 2026-09-25, as listed; no `ask` row moved d
 
 | Action | Command | Bin | Why this bin | Way back | Cost |
 |---|---|---|---|---|---|
-| Probe worker (T00, T01) | `perl -e 'alarm 900; exec @ARGV' node <spike script>` (T00) or a `claude -p` probe (T01) on a scratch repo, one worker | `worker` | Minutes of model time, one worker, scratch only | Kill the pid; delete scratch | under a dollar |
-| Install pi-tui from npm | `npm i @earendil-works/pi-tui@0.87.1` in a scratch folder (T00); `npm ci` in the repo or a task worktree (T10, T13, T18 bring-up) | `ask` | First third-party code this project runs, native `.node` binary included (§5) | Revert the commit; delete `node_modules` | none |
+| Probe worker (T00, T01) | `perl -e 'alarm 900; exec @ARGV' node <spike script>` (T00) or `perl -e 'alarm 120; exec @ARGV' node <probe script>` (T01) on a scratch repo, one SDK-driven worker. The script stops after a fixed number of turns and never sends its own stop marker as a message | `worker` | Minutes of model time, one worker, scratch only | Kill the pid; delete scratch | under a dollar |
+| Install packages from npm | `npm i @earendil-works/pi-tui@0.87.1` and `npm i --omit=peer --omit=optional @anthropic-ai/claude-agent-sdk@0.3.282` in a scratch folder (T00); `npm ci` in the repo or a task worktree (T10, T13, T18 bring-up) | `ask` | First third-party code this project runs, native `.node` binary included (§5) | Revert the commit; delete `node_modules` | none |
 | Live harness run | `node src/shell/harness/run.mjs <fixture> --into <scratch>` | `worker` | Bounded by ceiling 1, 10-min timeout, scratch only | HALT; scratch deleted | a few dollars |
 | Person-check scratch run (T13) | `PARALLEL_MAX_WORKERS=1 node <worktree>/src/shell/pir.mjs <fixture>` in a scratch repo | `ask` | Paid, and no automatic time limit: it runs until Ctrl+S twice or HALT | HALT or Ctrl+S twice; scratch deleted | a few dollars |
 | T18 end-to-end run | `PARALLEL_MAX_WORKERS=2 node <worktree>/src/shell/pir.mjs live-workers-demo` in a scratch repo | `ask` | A whole small plan of paid workers | HALT or Ctrl+S twice; scratch deleted | a few dollars |
@@ -427,8 +475,19 @@ entry still running (`ps -p <pid>`).
 
 ## 7. Decisions and rationale
 
-All user decisions are 2026-09-24.
+All user decisions are 2026-09-24 unless dated otherwise.
 
+- **The Agent SDK for the line, not a hand-built protocol** (user 2026-09-25, after plan review). The
+  plan first wrote its own stream-json reader, line builders and control-request handling (old T01, T04).
+  The SDK already wraps that exact protocol (`canUseTool`, `interrupt()`, streaming input, chosen session
+  id), ships in step with Claude Code, and so moves the least-documented part of the plan onto Anthropic.
+  A survey found no terminal tool doing this whole job (claude-squad and ccmanager drive PTYs; Toad over
+  ACP has no question sets; Vibe Kanban and Nimbalyst speak the protocol but are web or desktop apps), so
+  only the line is taken off the shelf. Checked before deciding: it runs on the person's subscription
+  login with no API key, and personal use is permitted. Costs accepted: a proprietary licence (Anthropic
+  Commercial Terms) and a pinned SDK against a self-updating `claude` (§5). Billing is unchanged: `-p` and
+  SDK use draw the subscription's limits, since Anthropic paused its 2026-06-15 plan to move them to a
+  separate credit (support.claude.com article 15036540, read 2026-09-25); a revival would hit `-p` equally.
 - **Stream-json children over `claude attach`.** `claude attach <id>` would have shown the real Claude
   screen for a `--bg` worker at almost no cost, but gives pir no line to the worker; the user wants pir
   to talk to workers, so the cezar-style design won.

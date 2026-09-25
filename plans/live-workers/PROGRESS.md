@@ -8,13 +8,16 @@ task you pick up, and append yours there.
 **Sixty words to a Notes cell, counted.** Flat prose. The account is the commit message. Whoever
 writes a cell also fixes the over-budget cell they walk past.
 
-**Plan reviewed:** 2026-09-25 — 12 fixed, 5 decided with the user
+**Plan reviewed:** not yet — run `/pir-review-plan live-workers` before the first `/pir-work`. Reviewed
+2026-09-25 (12 fixed, 5 decided with the user), then amended the same day by user decision: workers
+driven through the Agent SDK. The amendment has had no fresh-eyes read, and DESIGN.md still lacks its
+setup/test block.
 
 **Status:** Planned 2026-09-24. Nothing built.
 **Last updated:** 2026-09-25
 **Starts after:** `declared-test-command` is merged to main (user 2026-09-24, plan review). Until then
 `pir-work` stops. `nudge-quiet-worker` and `resume-dead-worker` wait for this plan.
-**Next `pir-work` will:** T00, the only task with no dependency, once that merge is in.
+**Next `pir-work` will:** stop until the plan is re-reviewed; then T00, the only task with no dependency, once that merge is in.
 
 ## Tasks
 
@@ -27,13 +30,13 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T01 | stream-protocol | T00 | ⬜ | |
 | T02 | conversation-model | T01 | ⬜ | |
 | T03 | person-input | T01 | ⬜ | |
-| T04 | worker-process | T01 | ⬜ | |
+| T04 | worker-process | T01, T10 | ⬜ | |
 | T05 | live-platform | T04 | ⬜ | |
 | T06 | reap-workers | T04 | ⬜ | |
 | T07 | person-inbox | T03, T05 | ⬜ | |
 | T08 | conflict-to-worker | T05 | ⬜ | |
 | T09 | asking-kinds | T05, T08 | ⬜ | |
-| T10 | pi-tui-install | T00 | ⬜ | |
+| T10 | runtime-deps | T00 | ⬜ | |
 | T11 | screen-on-pi-tui | T10 | ⬜ | |
 | T12 | task-selection | T09, T11 | ⬜ | |
 | T13 | conversation-view | T02, T07, T12 | ⬜ | |

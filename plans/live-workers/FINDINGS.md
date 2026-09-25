@@ -12,6 +12,10 @@ changed.
 
 | Date | | Finding |
 |---|---|---|
+| 2026-09-25 | 📌 | Agent SDK 0.3.282 on the Max login: `apiKeySource:none`, no API key. It spawned `claude --output-format stream-json --verbose --input-format stream-json --permission-prompt-tool stdio --permission-mode … --session-id=<ours> --name <ours>`; `interrupt()` acked at once, turn ended `error_during_execution`. |
+| 2026-09-25 | 📌 | `npm i --omit=peer --omit=optional @anthropic-ai/claude-agent-sdk` installs one package, 4.9 MB; `sdk.mjs` imports only Node built-ins and ran fine. Default install is 269 MB: 95 peer packages plus the bundled 222 MB `claude`. |
+| 2026-09-25 | 📌 | An idle SDK-driven worker exited within about 1 s after its parent `process.exit`ed. The 2026-09-24 mid-command survival (22 s) is not disproved; T00 item 5 rechecks it. |
+| 2026-09-25 | 📌 | Billing: Anthropic paused (2026-06-15) moving `claude -p` and Agent SDK use to a separate monthly credit; both still draw subscription limits (support.claude.com article 15036540). Piped stream-json without `-p` also runs print mode (`entrypoint:"sdk-cli"`). |
 | 2026-09-24 | 📌 | pi-tui 0.87.1 ships prebuilt `.node` binaries (darwin-arm64 `darwin-platform.node`); `terminal.js` loads it for modifier keys and clipboard. It is native code, not only JavaScript (plan review, `npm pack`). |
 | 2026-09-24 | 📌 | A `-p` stream-json worker is listed in `claude agents --json` as `kind:"interactive"`, its `-n` name, `status:"busy"`, `id:null`. Visible to the person, not attachable, and must never be used as a handle (2.1.282). |
 | 2026-09-24 | 📌 | A `-p` worker survived its parent's SIGKILL for 22 s while mid-command, until killed by hand. Hence `workers.json` and the reap (DESIGN §2.12). T00 measures exit after the turn ends. |

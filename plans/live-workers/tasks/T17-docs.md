@@ -4,7 +4,7 @@
 
 ## Goal
 
-Make `/docs` describe what the code now does: workers as stream-json children, the line down and why the
+Make `/docs` describe what the code now does: workers as SDK-driven stream-json children, the line down and why the
 old "routes nothing" rule is gone, the conversation log and inbox in the control folder, answering in the
 `pir` screen, the conflict fix sent to the worker, reaping, the new view and keys, and no `pir-coordinate`.
 

@@ -56,6 +56,6 @@ Tell me: did every step happen as described, and anything that confused you on t
 
 ## Outside actions
 
-- Install pi-tui from npm — `ask` (`npm ci` in the worktree)
+- Install packages from npm — `ask` (`npm ci` in the worktree)
 - Live harness run — `worker`
 - T18 end-to-end run — `ask`

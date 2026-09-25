@@ -75,5 +75,5 @@ Tell me: does it read and respond the way you expected from the prototype, and w
 
 ## Outside actions
 
-- Install pi-tui from npm — `ask` (`npm ci` in the worktree)
+- Install packages from npm — `ask` (`npm ci` in the worktree)
 - Person-check scratch run — `ask` (the scratch run above, ceiling 1)
