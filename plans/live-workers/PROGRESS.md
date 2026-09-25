@@ -38,12 +38,12 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T12 | task-selection | T09, T11 | ⬜ | |
 | T13 | conversation-view | T02, T07, T12 | ⬜ | |
 | T14 | worker-contract | T05 | ⬜ | |
-| T15 | sunset-pir-coordinate | T10 | 🔍 | bin/pir-coordinate deleted; install.sh ships `pir` only and removes a stale launcher from ~/.local/bin and ~/.claude/bin; 4 new launcher tests. Scratch-HOME install checked. Deviation: removal only deletes a file that execs `pir-engine/src/shell/`, so a user's own same-named command survives. History comments in run.test/fixtures.test kept. |
+| T15 | sunset-pir-coordinate | T10 | ✅ | Review clean, no fix commit. Launcher deleted; install.sh ships `pir` only, removes a stale `pir-coordinate` from both bin dirs only if it execs `pir-engine/src/shell/` (accepted: every past install baked that path). Probed: scratch-HOME install removed both, spared a foreign one; npm test green; remaining mentions in docs/CLAUDE.md are T17. |
 | T16 | harness-conversations | T05, T06 | ⬜ | |
 | T17 | docs | T06, T07, T08, T13, T14, T15 | ⬜ | |
 | T18 | live-run | T08, T13, T14, T16, T17 | ⬜ | |
 
-**Review queue:** T15
+**Review queue:** empty
 
 ## Blocked on the user
 
