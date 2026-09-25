@@ -22,7 +22,7 @@
 // exercised there — its live behaviour is hand-verified (T09).
 
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, readdirSync, readFileSync, unlinkSync, watch, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 
 import { parseProgress, reconcileTaskRow, progressPathFor } from '../core/progress.mjs';
@@ -34,6 +34,8 @@ import { runLines, startLines } from './commands.mjs';
 import { runPass, createRunState } from './loop.mjs';
 import { createPlatform, resolveClaudePath } from './platform.mjs';
 import { createRenderer } from './render.mjs';
+import { drainDropFolder, waitForDrop } from './drop-folder.mjs';
+import { createGrants, startPersonInbox } from './person-inbox.mjs';
 import { writeSnapshot } from './snapshot-store.mjs';
 import { createWorktree } from './worktree.mjs';
 import { reapRecorded } from './reap.mjs';
@@ -287,40 +289,15 @@ export function createReportInbox({ dir } = {}) {
   const reportsDir = join(dir, 'reports');
   mkdirSync(reportsDir, { recursive: true });
 
-  // Drain the reports drop-dir: each *.json file is one worker report, read exactly once and removed.
-  // Files are processed in name order (workers name them with a leading timestamp, so reports are
-  // ingested roughly in the order they were sent). A file that does not parse is unlinked and dropped —
-  // never re-read, never guessed into a message — the drop-dir analogue of a malformed inbox line.
-  const drainReports = () => {
-    let names;
-    try {
-      names = readdirSync(reportsDir).filter((n) => n.endsWith('.json')).sort();
-    } catch {
-      return [];
-    }
-    const out = [];
-    for (const n of names) {
-      const p = join(reportsDir, n);
-      let raw;
-      try {
-        raw = readFileSync(p, 'utf8');
-      } catch {
-        continue; // vanished under us (a concurrent drain); skip
-      }
-      try {
-        unlinkSync(p); // consume it, so a report is ingested exactly once
-      } catch {
-        /* already gone */
-      }
-      try {
+  // Drain the reports drop-dir: each *.json file is one worker report, read exactly once and removed,
+  // in name order (drop-folder.mjs). A file that does not parse is dropped, never guessed into a message.
+  const drainReports = () =>
+    drainDropFolder(reportsDir, {
+      parse: (raw) => {
         const { from = null, text = '' } = JSON.parse(raw);
-        out.push({ from, text });
-      } catch {
-        /* a torn or malformed report — dropped, not guessed into a wrong message */
-      }
-    }
-    return out;
-  };
+        return { from, text };
+      },
+    });
 
   return {
     reportsDir,
@@ -638,37 +615,39 @@ export function fileControl(repo, slug) {
 
 // --- Restart hygiene for the control folder (DESIGN §2.7, §7) ---------------------------------
 //
-// The control folder is reused across a restart. clearTransientFeeds empties the one transient feed —
-// `reports/`, the worker up-channel (DESIGN §3.5) — so a dead run's leftover reports never route into a
-// fresh run. The down-channel feeds are gone (removed with the relay, DESIGN §2.2, T03), so reports/ is
-// all that is left to clear. The two DURABLE records are never touched
+// The control folder is reused across a restart. clearTransientFeeds empties the two transient feeds —
+// `reports/`, the worker up-channel (DESIGN §3.5), and `inbox/`, the person's input (live-workers T07) —
+// so a dead run's leftovers never route into a fresh run. The two DURABLE records are never touched
 // here — `log` is the audit trail and the harness signal, and `HALT` is the deliberate stop whose whole
 // value is surviving a restart until a person removes it (auto-clearing it would defeat the kill switch,
 // §2.7).
 //
 // Clearing runs on every startup, not only a detected restart: a genuine first start has reports/ empty,
 // so an unconditional clear is safe and needs no restart detection (matches the reconciliation approach
-// in §2.1). reports/ is a dir of one-file-per-report, so emptying its *.json is the clear. Best-effort:
+// in §2.1). Each feed is a dir of one-file-per-drop, so emptying its *.json is the clear. Best-effort:
 // a missing feed is nothing to clear, and its clear may never throw the run down. Returns what it
 // touched, for the startup log line.
 export function clearTransientFeeds(controlDir) {
   const cleared = [];
 
-  const reportsDir = join(controlDir, 'reports');
-  try {
-    if (existsSync(reportsDir)) {
-      for (const n of readdirSync(reportsDir)) {
+  // inbox/ is the person's input to workers (live-workers DESIGN §2.5, T07): an input addressed to a
+  // previous run's worker must never reach a new one, so it is cleared with reports/.
+  for (const feed of ['reports', 'inbox']) {
+    const feedDir = join(controlDir, feed);
+    try {
+      if (!existsSync(feedDir)) continue;
+      for (const n of readdirSync(feedDir)) {
         if (!n.endsWith('.json')) continue;
         try {
-          unlinkSync(join(reportsDir, n));
+          unlinkSync(join(feedDir, n));
         } catch {
           /* vanished under us; nothing to clear for this one */
         }
       }
-      cleared.push('reports/');
+      cleared.push(`${feed}/`);
+    } catch {
+      /* cannot read the dir — best-effort, leave it */
     }
-  } catch {
-    /* cannot read the dir — best-effort, leave it */
   }
 
   return { cleared };
@@ -696,56 +675,13 @@ export async function startupControlHygiene(control, { reap = reapRecorded } = {
   return { halted: false, cleared, reaped };
 }
 
-// waitForReport(reportsDir, timeoutMs, { watch }) → resolve as soon as anything changes in the reports
-// drop-dir, or after timeoutMs, whichever comes first (DESIGN §2.2). This is the "react, don't poll"
-// half: a worker dropping a report file wakes the loop immediately, and the timeout is only a backstop
-// so a missed filesystem event is still picked up within a poll interval. fs.watch may be unavailable on
-// some filesystems — then this degrades to a plain timeout, which is exactly the old polling behaviour,
-// so correctness never depends on the watch firing.
-//
-// fs.watch signals a RUNTIME failure (EMFILE under fd pressure, ENOSPC, a watch that dies later) by
-// emitting an 'error' event on the FSWatcher, NOT by throwing from watch() — the sync try/catch below
-// only covers a watch that cannot start at all. Without an 'error' listener Node re-throws that event as
-// an unhandled 'error' and the whole coordinator process exits, defeating the very timeout backstop this
-// function exists to provide (a live run can always meet fd pressure — several sessions push fs.watch
-// past the OS limit). So on an 'error' we close the dead watcher and do NOTHING else: we do not finish()
-// (resolving immediately would busy-spin the pass loop into re-watching every pass), letting the pending
-// setTimeout(finish) fire so this pass degrades to paced POLL_MS polling. Each later pass re-attempts a
-// fresh watch(); if the OS is still refusing, it keeps falling back, which is correct. `watch` is
-// injectable so a test can emit 'error' without a real EMFILE.
-export function waitForReport(reportsDir, timeoutMs, { watch: watchFn = watch } = {}) {
-  return new Promise((resolve) => {
-    let done = false;
-    let watcher = null;
-    let timer = null;
-    const finish = () => {
-      if (done) return;
-      done = true;
-      try {
-        watcher?.close();
-      } catch {
-        /* already closed */
-      }
-      clearTimeout(timer);
-      resolve();
-    };
-    try {
-      watcher = watchFn(reportsDir, () => finish());
-      watcher.on('error', () => {
-        // Runtime watch failure: drop the dead watcher and let the timeout backstop take over. Do not
-        // finish() here — that would re-watch every pass in a tight loop. Paced POLL_MS polling is correct.
-        try {
-          watcher?.close();
-        } catch {
-          /* already gone */
-        }
-        watcher = null;
-      });
-    } catch {
-      /* no fs.watch here — fall back to the pure timeout (old polling behaviour) */
-    }
-    timer = setTimeout(finish, timeoutMs);
-  });
+// waitForReport(dirs, timeoutMs, { watch }) → resolve as soon as anything lands in the reports drop-dir
+// (and, since live-workers T07, the person's inbox/), or after timeoutMs (DESIGN §2.2). A worker's report
+// or the person's input wakes the loop at once; the timeout is only a backstop for a missed fs.watch
+// event. The watcher itself, including its survival of a runtime FSWatcher 'error' (T17), lives in
+// drop-folder.mjs's waitForDrop, which the person inbox's forwarder shares.
+export function waitForReport(dirs, timeoutMs, opts = {}) {
+  return waitForDrop(dirs, timeoutMs, opts);
 }
 
 // Run the plan's declared setup and test lines on the feature worktree (DESIGN §2.5): the last gate
@@ -997,7 +933,11 @@ async function main(argv) {
     console.error(err.message);
     process.exit(1);
   }
-  const platform = createPlatform({ root, controlDir: control.dir, transport: inbox.transport, claudePath });
+  // The person's input from the `pir` screen (live-workers DESIGN §2.5, T07): the grants are shared, so a
+  // "do not ask again" the inbox records is what the platform consults on the worker's next request.
+  const grants = createGrants();
+  const platform = createPlatform({ root, controlDir: control.dir, transport: inbox.transport, claudePath, grants });
+  const personInbox = startPersonInbox({ controlDir: control.dir, platform, grants, log: control.log });
   const worktree = createWorktree({ root });
   let design = '';
   try {
@@ -1175,6 +1115,7 @@ async function main(argv) {
     // down after ~7h while the person slept. Waiting costs nothing: a pass is local file and `claude
     // agents` reads, and a parked worker's session makes no model calls until it is answered.
     for (;;) {
+      personInbox.drain(); // the backstop for a drop the forwarder's watch missed
       const r = coordinator.pass();
       trackTiming(coordinator.state.tasks, r.completed);
 
@@ -1264,15 +1205,18 @@ async function main(argv) {
       }
 
       // React to a worker's report instead of only polling for it (DESIGN §2.2). A worker drops its
-      // report into reports/, so watch that dir and wake the moment a file lands; POLL_MS is only a
-      // backstop for a missed fs.watch event. Only reports/ is watched, never the control dir at large,
-      // so the bin's OWN writes this pass (the flow log) cannot wake it into a busy spin.
-      await waitForReport(inbox.reportsDir, POLL_MS);
+      // report into reports/ and the person's input lands in inbox/, so watch both and wake the moment a
+      // file lands: a forwarded answer changes what the next pass shows. POLL_MS is only a backstop for a
+      // missed fs.watch event. Only these two folders are watched, never the control dir at large, so the
+      // bin's OWN writes this pass (the flow log) cannot wake it into a busy spin.
+      await waitForReport([inbox.reportsDir, personInbox.inboxDir], POLL_MS);
     }
   } catch (e) {
     // Abnormal exit (T10): an uncaught error records NO final status → crashed.
     teardownOnce('error');
     throw e;
+  } finally {
+    personInbox.stop();
   }
 }
 

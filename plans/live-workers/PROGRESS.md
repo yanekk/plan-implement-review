@@ -30,14 +30,14 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T04 | worker-process | T01, T10 | ✅ | |
 | T05 | live-platform | T04 | ✅ | |
 | T06 | reap-workers | T04, T05 | ✅ | |
-| T07 | person-inbox | T03, T05 | ⬜ | |
+| T07 | person-inbox | T03, T05 | ✅ | |
 | T08 | conflict-to-worker | T05 | ✅ | |
 | T09 | asking-kinds | T05, T08 | ✅ | Review clean, no fix commit. Labels, footer and banner match DESIGN §2.4; `worker`/`workers` per §2.11; npm test green. Probed: request beating a sent conflict, stale request on an exited or done worker, old snapshot, only the real platform reaching main. A closing worker's pending request can read asking for its ≤10 s grace. |
 | T10 | runtime-deps | T00 | ✅ | |
 | T11 | screen-on-pi-tui | T10 | ✅ | |
 | T12 | task-selection | T09, T11 | ⬜ | |
 | T13 | conversation-view | T02, T07, T12 | ⬜ | |
-| T14 | worker-contract | T05 | ⬜ | |
+| T14 | worker-contract | T05 | ✅ | |
 | T15 | sunset-pir-coordinate | T10 | ✅ | |
 | T16 | harness-conversations | T05, T06 | ⬜ | |
 | T17 | docs | T06, T07, T08, T13, T14, T15 | ⬜ | |

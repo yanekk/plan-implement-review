@@ -13,6 +13,7 @@ changed.
 | Date | | Finding |
 |---|---|---|
 | 2026-09-25 | 📌 | T09: a task's `workers` in status.json come from `platform.workers()`, this coordinator's spawns only. After a restart an earlier run's logs stay in `conversations/` but no row opens them until something scans that folder. |
+| 2026-09-25 | 📌 | T07: worker-proc logs a `request` entry, and fires `onEvent`, before it parks the request as pending, so the platform's grant auto-answer waits one microtask. Answering inside the listener would log `undelivered`. |
 | 2026-09-25 | 📌 | T05: `createPlatform().list()` now holds only this process's children, so harness `teardownScenario` finds no workers until T16 lands. `stopRun` and startup reap from workers.json since T06. |
 | 2026-09-25 | 📌 | T05: a SIGTERM sent to the fake `claude` before node has loaded its script kills it unrecorded. Tests wait for the fake's first received line before signalling it. |
 | 2026-09-25 | 📌 | T04 review: SDK 0.3.282 skips an unparsable stdout line without error; only a non-zero exit mid-turn throws from the stream. A fake script needs `{exit: n}` to produce `sdk-error`, not garbage. |
