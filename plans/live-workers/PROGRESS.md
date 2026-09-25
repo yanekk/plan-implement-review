@@ -14,7 +14,7 @@ writes a cell also fixes the over-budget cell they walk past.
 **Last updated:** 2026-09-25
 **Starts after:** `declared-test-command` is merged to main (user 2026-09-24, plan review): done,
 d1f95ac, 2026-09-25. `nudge-quiet-worker` and `resume-dead-worker` wait for this plan.
-**Next `pir-work` will:** T00, the only task with no dependency.
+**Next `pir-work` will:** T17 or T19, now that T13 is done.
 
 ## Tasks
 
@@ -36,7 +36,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T10 | runtime-deps | T00 | ✅ | |
 | T11 | screen-on-pi-tui | T10 | ✅ | |
 | T12 | task-selection | T09, T11 | ✅ | |
-| T13 | conversation-view | T02, T07, T12 | 🔍 | Built view, log-follow, readLogTail byte budget; 25 tests incl. fake-run e2e. Deviations: feel check moved to T20 (user 2026-09-25). Tab and Esc go to the slash menu while it is open. Read-only also takes ↑↓ and Tab. Esc there is inert, not quit. Scratch run started without the missing `ask` prompt; halted, deleted. |
+| T13 | conversation-view | T02, T07, T12 | ✅ | Review: one fix, the log follower emitted the rest of a line its tail read began inside as a raw line (reproduced, test locks it); T20 doc given Files, Interface, Tests. Probed key routing, pi-tui input consumption, drop validation, prompt resync. Feel check is T20's (user). Hint clips at 80 columns, in FINDINGS. |
 | T14 | worker-contract | T05 | ✅ | |
 | T15 | sunset-pir-coordinate | T10 | ✅ | |
 | T16 | harness-conversations | T05, T06 | ✅ | |

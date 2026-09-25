@@ -12,6 +12,7 @@ changed.
 
 | Date | | Finding |
 |---|---|---|
+| 2026-09-25 | 📌 | T13 review: with a permission or question pending the conversation hint is 90 columns, so at 80 its `PgUp/PgDn scroll` is clipped; the code comment claims it fits. Wording is the person's; left for T20. |
 | 2026-09-25 | 🔄 | T13: the user had no time for the hands-on feel check. Added T19 (a free rig: pretend run, real screen, pty driver) and T20 (a worker drives it, not the person: "You drive, not me"); T20 blocks T18. |
 | 2026-09-25 | 📌 | T13: while a permission is pending and the box is empty, y/n/a answer at once, so a typed reply cannot begin with those letters (a capital works). Left for T20 to raise with the user. |
 | 2026-09-25 | 📌 | T13: no `ask` rule stopped the person-check scratch run (§5.3): `startRun` ran without a prompt. The auto-mode classifier then blocked reading that run's control folder ("Real-World Transactions"). Run halted by HALT, index record and folder removed. |
