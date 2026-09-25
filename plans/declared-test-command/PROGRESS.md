@@ -10,10 +10,9 @@ writes a cell also fixes the over-budget cell they walk past.
 
 **Plan reviewed:** 2026-09-24 — 8 fixed, 4 decided with the user
 
-**Status:** Planned 2026-09-24. Nothing built.
-**Last updated:** 2026-09-24
-**Next `pir-work` will:** T01; T02, T05 and T06 have no dependency and may
-follow in any order.
+**Status:** All tasks ✅ 2026-09-25. Install pending the merge to main.
+**Last updated:** 2026-09-25
+**Next `pir-work` will:** nothing; the plan is done.
 
 ## Tasks
 
@@ -33,10 +32,12 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T09 | review-verifies-block | T01 | ✅ | |
 | T10 | harness-fixture-block | T01 | ✅ | |
 | T11 | docs | T03, T04, T05, T07, T08, T09 | ✅ | |
-| T12 | prove-and-install | T03, T04, T05, T07, T08, T09, T10, T11 | 🔍 | Live checks and user verdict in FINDINGS 2026-09-25. No code. Deviations: install not run, plan defers it to after merge to main; runs started via `launch.startRun` (no TTY for the viewer); post-narrow-pass start stopped by pre-placed HALT, no spawn; user viewed `preparing` on a 90s-setup halted probe. |
+| T12 | prove-and-install | T03, T04, T05, T07, T08, T09, T10, T11 | ✅ | Review clean, no fix commit. Live checks and user verdict in FINDINGS 2026-09-25. Re-ran blockless refusal in a fresh fixture: exit 1, T03 message, no `.parallel`, no branch; `npm test` green; scratches gone. Install not run: plan defers it until after merge to main, see Blocked on the user. |
 
-**Review queue:** T12
+**Review queue:** *(empty)*
 
 ## Blocked on the user
 
-Nothing.
+After the user merges `pir/declared-test-command` to main: run `./install.sh`, then
+`grep -n parseTestBlock ~/.claude/pir-engine/src/shell/coordinate.mjs` and check
+`~/.claude/skills/pir-work/SKILL.md` has the block gate (T12 done-when, last item).
