@@ -24,7 +24,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | # | Task | Depends on | State | Notes |
 |---|---|---|---|---|
 | T00 | prove-live-worker | — | ✅ | |
-| T01 | stream-protocol | T00 | ⬜ | |
+| T01 | stream-protocol | T00 | 🔍 | `src/core/stream.mjs`, 29 tests, both fixtures from one haiku probe. Deviations: `readEntry` also takes a raw line string (truncated line → raw); events add `role` on text, `from` on sent/interrupt/reply, `event` on system; note reads `{kind:'note', note}`; a `delivered-by-grant` note with `requestId` clears pending. Wire fixture lines are `{dir, line}`. |
 | T02 | conversation-model | T01 | ⬜ | |
 | T03 | person-input | T01 | ⬜ | |
 | T04 | worker-process | T01, T10 | ⬜ | |
@@ -43,7 +43,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T17 | docs | T06, T07, T08, T13, T14, T15 | ⬜ | |
 | T18 | live-run | T08, T13, T14, T16, T17 | ⬜ | |
 
-**Review queue:** empty
+**Review queue:** T01
 
 ## Blocked on the user
 

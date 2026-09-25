@@ -12,6 +12,7 @@ changed.
 
 | Date | | Finding |
 |---|---|---|
+| 2026-09-25 | 📌 | T01 probe (2.1.282, haiku): a background Bash job's `system:task_notification` after a `result` opened a new turn unasked (`init`, assistant, `result`). `workerActivity` opens a turn on `init` or assistant output, not on the notification. |
 | 2026-09-25 | 🔄 | T00 review: Claude honours SDK session grants, but the user kept pir's own "don't ask again" list so every grant-allowed request stays visible; pir never returns `updatedPermissions` (DESIGN §2.6). |
 | 2026-09-25 | ✅ | T00 item 8, verified by hand with the user: pi-tui 0.87.1 drew Markdown and an Editor; ↑ ↓ ← → Esc Tab Enter Space Ctrl+S parsed as `up down left right escape tab enter space ctrl+s`; terminal clean after exit. |
 | 2026-09-25 | 📌 | T00: an input listener also received the terminal's cell-size reply `\u001b[6;16;8t` at start; pir's key handling must ignore it, not treat it as a key. |
