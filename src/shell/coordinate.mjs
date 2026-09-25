@@ -405,7 +405,7 @@ export function teardownRun({ platform, state, repo, slug, control } = {}) {
 // When `pir` launches the coordinator detached (T08), nobody is attached to read the live display, so
 // the coordinator writes its state to disk instead: a live snapshot each pass (fed to the dashboard,
 // §2.4) and a final status on every exit path (§2.2, §2.6). This whole half is gated on the PIR_RUN
-// marker the launcher sets (§3.5), so a foreground `pir-coordinate` run — which never sets it — writes
+// marker the launcher sets (§3.5), so a bare `node src/shell/coordinate.mjs` run — which never sets it — writes
 // no snapshot and touches no index entry, and the classic path is byte-for-byte unchanged.
 
 // shouldSelfReport(env) → whether this run reports on itself. True only when PIR_RUN is set, which only
@@ -987,7 +987,7 @@ async function main(argv) {
   const branch = `pir/${slug}`;
 
   // Detached self-reporting (DESIGN §2.4, §2.6, §3.5; T10). PIR_RUN is set only by the `pir` launcher
-  // (T08); a foreground `pir-coordinate` run leaves it unset and skips everything below, so the classic
+  // (T08); a bare `node src/shell/coordinate.mjs` run leaves it unset and skips everything below, so the classic
   // path is unchanged.
   const selfReport = shouldSelfReport(process.env);
 
