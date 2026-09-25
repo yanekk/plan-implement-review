@@ -5,47 +5,35 @@
 // list of facts and the evidence that proves or breaks each, not a person's recollection.
 //
 // PURITY (DESIGN §3.1). Every fact `check(bundle)` is a pure function of an already-loaded bundle — no
-// clock, no filesystem, no live agent. The ONE I/O in this file is loadTranscripts(), a loader that
-// reads the transcript files T14's manifest points at into memory BEFORE any predicate runs; a fact
-// never touches disk. The layer lives in src/shell/ (not scanned by the core boundary test) precisely
-// because it reads a bundle off disk to build the in-memory structure the pure predicates consume.
+// clock, no filesystem, no live agent. The only I/O in this file is the loaders (loadTranscripts and its
+// siblings), which read bundle files into memory BEFORE any predicate runs; a fact never touches disk.
+// The layer lives in src/shell/ (not scanned by the core boundary test) for exactly those loaders.
 //
-// WHAT A BUNDLE CARRIES (T14 loadBundle + loadTranscripts here):
+// WHAT A BUNDLE CARRIES (capture.mjs loadBundle + loadTranscripts here; live-workers T16):
 //   flow      — [{ ts, type, rest }] parsed from the coordinator's control/log. Each line is
 //               `${ISO} ${type} ${task-or-branch}` (loop.mjs record()): the type is the action
-//               (open-feature, spawn, await-idle, review, merge, close, halt-close, surface, rebuild,
-//               cleanup, restart), the rest is a task id (T05), a branch, or free text. The down-channel
-//               types (answer, send-failed) and the promote type went with the relay and the promotion
-//               (DESIGN §2.2, §2.4, T05). The spawn `hello` was retired in T30. The line does NOT carry a
-//               surface's KIND (conflict/question/decision) — loop.mjs writes only type+task — so the
-//               parked/conflict facts key on the TASK id a scenario names (see parkedWorkerHoldsSlot /
-//               mergeConflictResolved).
-//   timeline  — [{ ts, agents:[{ name, sessionId, cwd, status, state, isWorkerOf, isCoordinator }] }]
-//               one sampled `agents --json` per tick. status is live-only, so a busy→idle transition
-//               proves the idle-gated close (DESIGN §2.3); a session absent from a tick has ended.
-//               isCoordinator is always false: the coordinator is a plain process, never in the list (§2.9).
-//   final     — the resting-state `agents --json --all` snapshot.
-//   manifest  — { <agent name>: { sessionId, cwd, role, copied, copiedTo } }, keyed by name; a name
-//               that recurs (implementer then its fresh reviewer) is keyed `name (sessionId)` (T14).
+//               (open-feature, spawn, await-idle, review, merge, close, halt-close, surface, conflict-sent,
+//               rebuild, resume, cleanup, restart), the rest is a task id (T05), a branch, or free text.
+//               The line does NOT carry a surface's KIND (conflict/question/decision), so the parked and
+//               conflict facts key on the TASK id.
+//   timeline  — [{ ts, workers:[{ id, task, role, pid, startTime, status, state, log }] }], one per tick:
+//               the coordinator's workers.json joined with each worker's activity from its conversation
+//               log (live-workers §2.4). `status` is busy/idle, `state` the finer activity, `log` its
+//               conversation file. A worker absent from a tick had exited (or was reaped).
+//   workers   — the run's final workers.json.
+//   run       — { repo, plan }, the run's identity, written by capture.
+//   manifest  — { <log file>: { role:'worker', task, workerRole, n, sessionId, copied, copiedTo } }, one
+//               entry per conversation log of the run (§2.3).
 //   gitLog    — `git log --oneline --graph --all` text of the scratch repo.
-//   transcripts (added here) — [{ key, name, role, task, sessionId, events }] parsed from the copied
-//               .jsonl files. A worker's SendMessage is an assistant tool_use carrying { to, summary,
-//               message } (confirmed against the real T10 worker transcript 2026-09-10). No fact reads a
-//               coordinator transcript any more — mergeConflictResolved's supporting read of one went with
-//               the down-channel it described (§2.2, T05); the facts key on the flow log and the timeline.
+//   transcripts (added here) — [{ key, task, role, n, sessionId, events }], each worker's conversation
+//               log parsed to its entries (`{ t, dir, … }`, §2.3). One log is one worker ever spawned,
+//               which is how the respawn checks count implementers, including one too short-lived for a
+//               tick to see.
 
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { parseAgentName } from '../../core/naming.mjs';
 
 // --- Small pure helpers over a bundle ------------------------------------------------------------
-
-// A messaging name may arrive with a trailing ` [ref]` disambiguator (SendMessage shows one when two
-// listings collide, e.g. "pir-t10 · scratch [54afd5]"). It is not part of the addressable name, so it
-// is stripped before any name comparison.
-function stripRef(name) {
-  return String(name ?? '').replace(/\s*\[[0-9a-fA-F]+\]\s*$/, '').trim();
-}
 
 // Reconstruct a flow line for evidence, in the on-disk shape a person would grep.
 function flowLine(e) {
@@ -54,75 +42,42 @@ function flowLine(e) {
 
 const flowOf = (bundle, type) => (bundle.flow ?? []).filter((e) => e.type === type);
 
-// runIdentity(bundle) → { repo, plan, coordName }. The repo and plan the run belongs to, read from the
-// agent names (DESIGN §2.9) so they cannot drift from bookkeeping. There is no coordinator session any
-// more (§2.1, §2.9), so the identity is read from a WORKER's name — every worker of the run carries the
-// repo and plan. coordName is kept in the shape (as null when no coordinator is present) for the older
-// canned-bundle facts that still look for one; a legacy bundle that tagged a coordinator is still read
-// first, so those facts keep working. A live bundle (workers only) falls through to the worker read.
-export function runIdentity(bundle) {
-  // Legacy: a bundle that still carries a tagged coordinator (canned test data) — read it first.
-  for (const tick of bundle.timeline ?? []) {
-    for (const a of tick.agents ?? []) {
-      if (a.isCoordinator && a.name) {
-        const p = parseAgentName(a.name);
-        if (p.matches) return { repo: p.repo, plan: p.plan, coordName: stripRef(a.name) };
-      }
-    }
-  }
-  for (const t of bundle.transcripts ?? []) {
-    if (t.role === 'coordinator' && t.name) {
-      const p = parseAgentName(t.name);
-      if (p.matches) return { repo: p.repo, plan: p.plan, coordName: stripRef(t.name) };
-    }
-  }
-  // The live path: derive repo/plan from any worker of the run. There is no coordinator name to resolve.
-  for (const tick of bundle.timeline ?? []) {
-    for (const a of tick.agents ?? []) {
-      if (a.isWorkerOf && a.name) {
-        const p = parseAgentName(a.name);
-        if (p.matches) return { repo: p.repo, plan: p.plan, coordName: null };
-      }
-    }
-  }
-  for (const t of bundle.transcripts ?? []) {
-    if (t.role === 'worker' && t.name) {
-      const p = parseAgentName(t.name);
-      if (p.matches) return { repo: p.repo, plan: p.plan, coordName: null };
-    }
-  }
-  return { repo: null, plan: null, coordName: null };
-}
+const workersOf = (tick) => tick?.workers ?? [];
+const workerLabel = (w) => `${w.task ?? '?'}-${w.role ?? '?'}`;
 
-// The manifest key is the agent name, or `name (sessionId)` when a name recurred across sessions (T14).
-// Recover the bare name so it parses back to a task.
-function manifestName(key, sessionId) {
-  if (sessionId && key.endsWith(` (${sessionId})`)) return key.slice(0, -` (${sessionId})`.length);
-  return key;
+// runIdentity(bundle) → { repo, plan }, from the bundle's run.json (capture writes the repo and slug it
+// was built for). workers.json carries no agent name, so the identity is no longer read from one; a bundle
+// without run.json has { repo: null, plan: null } and the facts that need the plan fail on it.
+export function runIdentity(bundle) {
+  return { repo: bundle.run?.repo ?? null, plan: bundle.run?.plan ?? null };
 }
 
 // --- Transcripts: the one loader (I/O), then pure accessors --------------------------------------
 
-// loadTranscripts(bundle, { readFile }) → a new bundle with `transcripts` attached. The ONLY disk read
-// in this file, done once up front so the predicates stay pure. readFile is injected so a test can load
-// a canned bundle with no real files. A transcript that was not copied (manifest copied:false) or fails
-// to read is included with events: [] rather than dropped, so a fact can say "no transcript" from data.
+// loadTranscripts(bundle, { readFile }) → a new bundle with `transcripts` attached: every conversation log
+// the manifest lists, parsed. readFile is injected so a test can load a canned bundle with no real files. A
+// log that was not copied or fails to read is included with events: [] rather than dropped, so a fact can
+// say "no log" from data.
 export function loadTranscripts(bundle, { readFile = (p) => readFileSync(p, 'utf8') } = {}) {
   const transcripts = [];
   for (const [key, entry] of Object.entries(bundle.manifest ?? {})) {
     if (!entry) continue;
-    const name = manifestName(key, entry.sessionId);
-    const task = parseAgentName(name).task;
     let events = [];
     if (entry.copied && entry.copiedTo) {
       try {
-        const text = readFile(join(bundle.dir, entry.copiedTo));
-        events = parseTranscript(text);
+        events = parseTranscript(readFile(join(bundle.dir, entry.copiedTo)));
       } catch {
         events = [];
       }
     }
-    transcripts.push({ key, name, role: entry.role ?? null, task, sessionId: entry.sessionId ?? null, events });
+    transcripts.push({
+      key,
+      task: entry.task ?? null,
+      role: entry.workerRole ?? null,
+      n: entry.n ?? null,
+      sessionId: entry.sessionId ?? null,
+      events,
+    });
   }
   return { ...bundle, transcripts };
 }
@@ -178,7 +133,7 @@ export function loadRestartPoint(bundle, { readFile = (p) => readFileSync(p, 'ut
   return { ...bundle, restartPoint };
 }
 
-// parseTranscript(text) → the JSONL lines parsed to objects, malformed lines skipped (never a throw).
+// parseTranscript(text) → the NDJSON lines parsed to objects, malformed lines skipped (never a throw).
 export function parseTranscript(text) {
   return String(text ?? '')
     .split('\n')
@@ -193,12 +148,14 @@ export function parseTranscript(text) {
     .filter(Boolean);
 }
 
-// sendMessagesOf(transcript) → the SendMessage calls the session made: an assistant tool_use named
-// SendMessage carrying { to, summary, message } (the real transcript shape, T10 2026-09-10). Pure.
+// sendMessagesOf(transcript) → the SendMessage calls the worker made: in its conversation log, an `in`
+// entry whose SDK assistant message holds a tool_use named SendMessage carrying { to, summary, message }.
+// Pure.
 export function sendMessagesOf(transcript) {
   const out = [];
-  for (const ev of transcript?.events ?? []) {
-    const content = ev?.message?.content;
+  for (const e of transcript?.events ?? []) {
+    if (e?.dir !== 'in' || e.event?.type !== 'assistant') continue;
+    const content = e.event.message?.content;
     if (!Array.isArray(content)) continue;
     for (const part of content) {
       if (part?.type === 'tool_use' && part?.name === 'SendMessage' && part.input) {
@@ -258,8 +215,8 @@ export function noCloseBeforeIdle() {
       const task = close.rest;
       const obs = [];
       for (const tick of bundle.timeline ?? []) {
-        for (const a of tick.agents ?? []) {
-          if (a.isWorkerOf && parseAgentName(a.name).task === task) obs.push({ ts: tick.ts, status: a.status });
+        for (const w of workersOf(tick)) {
+          if (w.task === task) obs.push({ ts: tick.ts, status: w.status });
         }
       }
       const wasBusy = obs.some((o) => o.status === 'busy');
@@ -283,8 +240,8 @@ export function noCloseBeforeIdle() {
 // A worker that asked the person PARKED and held its slot, and the program routed nothing down while
 // every independent task kept moving (DESIGN §2.2, §2.8). This REPLACES the old questionRoundTrip fact,
 // which asserted the coordinator relayed an answer DOWN to the worker (surface → answer → resume). That
-// down-channel is gone: the person answers a blocked worker directly in its own session, and the program
-// routes nothing (§2.2). So the load-bearing property is no longer "the answer came back" but "the park
+// relay is gone: the person answers a blocked worker in its conversation view in `pir` (live-workers
+// §2.5), and the program routes no decision of its own (§2.2). So the load-bearing property is no longer "the answer came back" but "the park
 // costs only that one task": it reads off the bundle
 //   - a `surface {task}` line (the worker asked — a question or a decision, the loop records both);
 //   - the parked worker of `task` still sampled LIVE in the timeline at/after it surfaced (it held its
@@ -314,7 +271,7 @@ export function parkedWorkerHoldsSlot(task) {
 
     // The parked worker held its slot: still sampled live at or after it surfaced (not closed while parked).
     const seenAfter = (bundle.timeline ?? []).some(
-      (tick) => tick.ts >= surfaceTs && (tick.agents ?? []).some((a) => a.isWorkerOf && parseAgentName(a.name).task === task),
+      (tick) => tick.ts >= surfaceTs && workersOf(tick).some((w) => w.task === task),
     );
     if (!seenAfter) {
       return { pass: false, evidence, detail: `${task}'s worker was not sampled live after it surfaced — its slot was not held` };
@@ -384,9 +341,9 @@ export function adoptedAndDispatched() {
 }
 
 // A coordinator-hit merge conflict was RESOLVED in the non-agentic, ATTENDED model (DESIGN §2.8, §2.2):
-// the coordinator kept the conflicting worker alive and parked (it never closed it or merged past it) and
-// offered a ready-to-paste resolution prompt (T14). There is no down-channel and no `answer()` any more
-// (§2.2, T05), so no decision is routed — a PERSON attaches to that worker directly and pastes it. The
+// the coordinator kept the conflicting worker alive (it never closed it or merged past it) and, since
+// live-workers T08, sends the resolution prompt to that worker itself over its line (`conflict-sent`); a
+// conflict with no live worker is still surfaced to the person. No `answer` line is involved. The
 // worker merges the feature branch into its own branch, resolves keeping the decided side, commits and
 // re-signals done; the coordinator's next pass merges its now-clean branch and the run HANDS OFF the green
 // feature branch (§2.4 — it never merges to main). This REPLACES the old down-channel shape, which
@@ -396,11 +353,11 @@ export function adoptedAndDispatched() {
 // 2026-09-11), so it finds the task that took the resolution shape rather than naming it. The flow line
 // does NOT carry a surface's kind (loop.mjs writes type+task only — see WHAT A BUNDLE CARRIES), so like
 // parkedWorkerHoldsSlot it keys on the task id, not on `kind: conflict`. It reads off the bundle:
-//   - a `surface` for that task, with NO `merge` of it BEFORE the surface (the conflict was caught,
-//     nothing bad merged first);
-//   - a `merge {task}` AFTER the surface (the same worker resumed and its now-clean branch merged), with
-//     NO `answer` line required — the person, not a routed answer, drove the resolution (§2.2);
-//   - exactly ONE implement session for the task in the timeline (no respawn — the T22 clobber spawned a
+//   - a `surface` or `conflict-sent` for that task, with NO `merge` of it BEFORE it (the conflict was
+//     caught, nothing bad merged first);
+//   - a `merge {task}` AFTER it (the same worker resumed and its now-clean branch merged), with NO
+//     `answer` line required;
+//   - exactly ONE implement worker for the task (implementSessionIds: its conversation logs; no respawn — the T22 clobber spawned a
 //     second implementer; this mirrors resumedNotRebuilt's no-respawn check);
 //   - the run handed off a green feature branch (composed with handedOffGreenBranch: ZERO promote, NO merge
 //     of pir/{plan} into main, ≥1 `merge T{nn}` on the feature branch);
@@ -446,17 +403,10 @@ export function mergeConflictResolved({ file, content } = {}) {
     evidence.push(flowLine(resolved.surface));
     evidence.push(flowLine(resolved.mergedAfter));
 
-    // No respawn: exactly one implement-role session ran the conflicting task (mirrors resumedNotRebuilt).
-    // The T22 clobber closed the done worker and spawned a SECOND implementer over the same task. Counted
-    // from distinct session ids in the timeline; 0 (the phase was never sampled) cannot prove a respawn, so
-    // only >1 fails.
-    const implSids = new Set();
-    for (const tick of bundle.timeline ?? []) {
-      for (const a of tick.agents ?? []) {
-        const p = parseAgentName(a.name);
-        if (a.isWorkerOf && p.task === task && p.role === 'implement' && a.sessionId) implSids.add(a.sessionId);
-      }
-    }
+    // No respawn: exactly one implement worker ran the conflicting task (mirrors resumedNotRebuilt). The
+    // T22 clobber closed the done worker and spawned a SECOND implementer over the same task. Counted by
+    // implementSessionIds; 0 (no log, never sampled) cannot prove a respawn, so only >1 fails.
+    const implSids = implementSessionIds(bundle, task);
     if (implSids.size > 1) {
       evidence.push(`implement sessions for ${task}: ${implSids.size}`);
       return { pass: false, evidence, detail: `${task} was built by ${implSids.size} implement sessions — it was respawned (the T22 clobber)` };
@@ -526,16 +476,18 @@ export function handedOffGreenBranch() {
     if (promotes.length > 0) {
       return { pass: false, evidence, detail: `${promotes.length} promote line(s) in the flow — the run merged to main, which §2.4 removed` };
     }
-    // main gained nothing beyond the seed: no promotion merge of the feature branch into main.
+    // main gained nothing beyond the seed: no promotion merge of the feature branch into main. Without the
+    // run's plan that cannot be checked, so the fact fails rather than skipping it.
     const { plan } = runIdentity(bundle);
-    if (plan) {
-      const promoMerges = promotionMergeLines(bundle.gitLog, plan);
-      for (const l of promoMerges) evidence.push(l.trim());
-      if (promoMerges.length > 0) {
-        return { pass: false, evidence, detail: `git log shows ${promoMerges.length} promotion merge(s) of pir/${plan} into main — main was not left untouched` };
-      }
-      evidence.push('git log: no promotion merge into main');
+    if (!plan) {
+      return { pass: false, evidence, detail: 'the bundle does not name its plan (no run.json) — cannot check that main was left untouched' };
     }
+    const promoMerges = promotionMergeLines(bundle.gitLog, plan);
+    for (const l of promoMerges) evidence.push(l.trim());
+    if (promoMerges.length > 0) {
+      return { pass: false, evidence, detail: `git log shows ${promoMerges.length} promotion merge(s) of pir/${plan} into main — main was not left untouched` };
+    }
+    evidence.push('git log: no promotion merge into main');
     // The plan was assembled on the feature branch: at least one task merged there (a non-vacuous pass).
     const taskMerges = flowOf(bundle, 'merge').filter((e) => /^T\d+$/.test(e.rest));
     for (const m of taskMerges) evidence.push(flowLine(m));
@@ -560,7 +512,7 @@ export function handedOffGreenBranch() {
     // The merge line must follow `Yours to merge:` (renderHandoff, blank line between). A bare
     // `git merge pir/{plan}` also appears in the conflict-resolution prompt printed mid-run, so a run that
     // conflicted and then stalled would otherwise read as green.
-    const mergeLine = `git merge pir/${plan ?? ''}`;
+    const mergeLine = `git merge pir/${plan}`;
     const nextNonBlank = (i) => outLines.slice(i + 1).find((l) => l.trim() !== '');
     const offerAt = outLines.findLastIndex((l, i) => l.includes('Yours to merge:') && nextNonBlank(i)?.trim() === mergeLine.trim());
     const green = offerAt === -1 ? null : nextNonBlank(offerAt);
@@ -590,9 +542,9 @@ export function killSwitchStoppedAll() {
     }
     const ticks = bundle.timeline ?? [];
     const last = ticks[ticks.length - 1];
-    const survivors = (last?.agents ?? []).filter((a) => a.isWorkerOf);
+    const survivors = workersOf(last);
     if (survivors.length > 0) {
-      evidence.push(`last tick ${last.ts} still lists: ${survivors.map((a) => a.name).join(', ')}`);
+      evidence.push(`last tick ${last.ts} still lists: ${survivors.map(workerLabel).join(', ')}`);
       return { pass: false, evidence, detail: `${survivors.length} worker(s) still live after the kill switch` };
     }
     evidence.push('last tick lists no live worker of this run');
@@ -600,57 +552,53 @@ export function killSwitchStoppedAll() {
   });
 }
 
-// slotsInTick(agents) → the number of worker SLOTS live in one timeline tick (DESIGN §2.4 the ceiling;
-// §2.1 a task in review holds one slot, not two). Group this run's live workers by task: a task's
-// implement+review overlap is ONE slot (the loop closes the implementer as its reviewer spawns, but the
-// stopped session lingers in `claude agents --json` for a sample — T08 FINDINGS 2026-09-09 — so counting
-// raw sessions would read ceiling+1 on a legit handoff). An EXTRA same-role session on a task is a
-// respawn runaway and adds a slot; a worker that does not parse to a task is its own slot, keyed by name
-// so it is never silently merged away. Shared by ceilingHeld and leftoverSessionsReaped so both count the
-// ceiling the one way.
-function slotsInTick(agents) {
-  const live = (agents ?? []).filter((a) => a.isWorkerOf);
+// slotsInTick(workers) → the number of worker SLOTS live in one timeline tick (DESIGN §2.4 the ceiling;
+// §2.1 a task in review holds one slot, not two). Group the tick's live workers by task: a task's
+// implement+review overlap is ONE slot (the loop closes the implementer as its reviewer spawns, and the
+// closing child can still be alive for a sample), so counting raw workers would read ceiling+1 on a legit
+// handoff. An EXTRA same-role worker on a task is a respawn runaway and adds a slot. Shared by ceilingHeld
+// and leftoverSessionsReaped so both count the ceiling the one way.
+function slotsInTick(workers) {
   const byTask = new Map();
-  for (const a of live) {
-    const key = parseAgentName(a.name).task ?? `?${a.name}`;
+  for (const w of workers ?? []) {
+    const key = w.task ?? `?${w.id}`;
     if (!byTask.has(key)) byTask.set(key, []);
-    byTask.get(key).push(a);
+    byTask.get(key).push(w);
   }
   let slots = 0;
   for (const group of byTask.values()) {
-    const roles = new Set(group.map((a) => parseAgentName(a.name).role ?? '?'));
+    const roles = new Set(group.map((w) => w.role ?? '?'));
     slots += 1 + Math.max(0, group.length - roles.size);
   }
   return slots;
 }
 
 // The timeline never shows more than n worker SLOTS in flight at once (DESIGN §2.4 the ceiling; §2.1
-// a task in review holds one slot, not two). Counting raw worker sessions over-counts a review
-// handoff: the loop closes the implementer AS the fresh reviewer spawns (loop.mjs 3c/3e), but
-// `claude stop` is async so the stopped implementer lingers in `claude agents --json` for a ~2s
-// sample beside its reviewer (T08 FINDINGS 2026-09-09). A single handoff then reads ceiling+1 and two
-// overlapping handoffs ceiling+2 — a FALSE fail, not a real breach: the loop's own `closedIds` count
-// (loop.mjs) never recounted the stopped session, so the true ceiling held (clean-merge 2026-09-13).
+// a task in review holds one slot, not two). Counting raw workers over-counts a review handoff: the loop
+// closes the implementer AS the fresh reviewer spawns (loop.mjs 3c/3e), but a closing worker takes up to
+// its close grace to exit, so it can still be alive in workers.json for a sample beside its reviewer (the
+// same lag `claude stop` had, T08 FINDINGS 2026-09-09). A single handoff then reads ceiling+1 — a FALSE
+// fail, not a real breach: the loop's own `closedIds` count never recounts the closing worker.
 //
-// So count by task, not by session: a task's implement+review overlap is ONE slot. Grouping also keeps
-// the runaway honest — the 2026-09-09 runaway spawned DUPLICATE same-role sessions for one task, so an
-// extra session of a role already present on a task adds a slot, and N over-provisioned real workers
-// still exceed n. (A duplicate is a genuine second paid agent; a stopped-but-listed implementer is not,
-// and it never shares its reviewer's role.) Fixtures assert the bare true ceiling, no ceiling+1 fudge.
+// So count by task, not by worker: a task's implement+review overlap is ONE slot. Grouping also keeps
+// the runaway honest — the 2026-09-09 runaway spawned DUPLICATE same-role workers for one task, so an
+// extra worker of a role already present on a task adds a slot, and N over-provisioned real workers
+// still exceed n. (A duplicate is a genuine second paid agent; a closing implementer is not, and it never
+// shares its reviewer's role.) Fixtures assert the bare true ceiling, no ceiling+1 fudge.
 export function ceilingHeld(n) {
   return fact(`ceiling-held:${n}`, `At most ${n} worker slots in flight at once`, (bundle) => {
     const evidence = [];
     let max = 0;
     let worstTick = null;
     for (const tick of bundle.timeline ?? []) {
-      const slots = slotsInTick(tick.agents);
+      const slots = slotsInTick(workersOf(tick));
       if (slots > max) {
         max = slots;
         worstTick = tick;
       }
     }
     if (worstTick) {
-      evidence.push(`peak ${max} slot(s) at ${worstTick.ts}: ${worstTick.agents.filter((a) => a.isWorkerOf).map((a) => a.name).join(', ')}`);
+      evidence.push(`peak ${max} slot(s) at ${worstTick.ts}: ${workersOf(worstTick).map(workerLabel).join(', ')}`);
     }
     if (max > n) {
       return { pass: false, evidence, detail: `peak of ${max} worker slots exceeds the ceiling of ${n}` };
@@ -665,15 +613,14 @@ export function ceilingHeld(n) {
 // in parallel, which is the whole point of the coordinator. reachedWidth(n) is that proof: PASS iff some
 // single timeline tick shows at least n DISTINCT tasks whose implement-role worker is busy at once.
 //
-// It counts by task, mirroring ceilingHeld's grouping: two roster rows for one task (a respawn, or a
-// stopped session lingering beside its successor) are one task, not two, so a duplicate can never inflate
-// the width. It counts implementers only — a reviewer is a follow-on session,
-// not a build running in parallel, so their roles are excluded. Keyed on the worker→task mapping already
-// in the timeline agent name (§2.8), so it cannot drift from bookkeeping.
+// It counts by task, mirroring ceilingHeld's grouping: two workers of one task (a respawn, or a closing
+// worker beside its successor) are one task, not two, so a duplicate can never inflate the width. It
+// counts implementers only — a reviewer is a follow-on worker, not a build running in parallel. Keyed on
+// the task and role workers.json records, so it cannot drift from bookkeeping.
 //
 // STRICT on purpose: a PASS must mean the builds genuinely overlapped, so an implementer counts only while
-// its live `status` is `busy` (working this tick). An idle-but-listed implementer — one that has gone
-// quiet or is a stopped session still in the roster — is not a build in flight and does not count toward
+// its `status` is `busy` (a turn open this tick, from its log). An idle implementer — one whose turn ended
+// or that waits on the person — is not a build in flight and does not count toward
 // the width, the opposite bias to ceilingHeld (which counts it, to catch a runaway from above).
 export function reachedWidth(n) {
   return fact(`reached-width:${n}`, `At least ${n} task implementers built at once`, (bundle) => {
@@ -682,12 +629,10 @@ export function reachedWidth(n) {
     let best = null;
     for (const tick of bundle.timeline ?? []) {
       const tasks = new Set();
-      for (const a of tick.agents ?? []) {
-        if (!a.isWorkerOf) continue;
-        const p = parseAgentName(a.name);
-        if (p.role !== 'implement') continue; // a reviewer is not a build in flight
-        if (a.status !== 'busy') continue; // only a session working this tick counts (§4.1, strict lower bound)
-        if (p.task) tasks.add(p.task);
+      for (const w of workersOf(tick)) {
+        if (w.role !== 'implement') continue; // a reviewer is not a build in flight
+        if (w.status !== 'busy') continue; // only a worker in a turn this tick counts (§4.1, strict lower bound)
+        if (w.task) tasks.add(w.task);
       }
       if (tasks.size > max) {
         max = tasks.size;
@@ -722,16 +667,19 @@ function restartBoundary(bundle) {
   return restarts.length >= 2 ? restarts[restarts.length - 1].ts : null;
 }
 
-// implementSessionIds(bundle, task) → the distinct session ids that ran `task` as an IMPLEMENTER across
-// the whole run. More than one means the task was re-implemented (a second build spawned over it), the
-// signature of a rebuild where a resume was expected. Read from the timeline agent names (§2.8), which
-// carry the role, so it cannot drift from bookkeeping.
+// implementSessionIds(bundle, task) → one key per IMPLEMENT worker `task` had across the whole run. More
+// than one means the task was re-implemented (a second build spawned over it), the signature of a rebuild
+// where a resume was expected. Every spawn opens its own conversation log (live-workers §2.3), so each
+// `{task}-implement-{n}` log is one implementer, including one too short-lived for any tick to see; the
+// timeline adds any worker whose log was not captured, keyed by that same log name when it has one.
 function implementSessionIds(bundle, task) {
   const ids = new Set();
+  for (const t of bundle.transcripts ?? []) {
+    if (t.task === task && t.role === 'implement') ids.add(t.key);
+  }
   for (const tick of bundle.timeline ?? []) {
-    for (const a of tick.agents ?? []) {
-      const p = parseAgentName(a.name);
-      if (a.isWorkerOf && p.task === task && p.role === 'implement' && a.sessionId) ids.add(a.sessionId);
+    for (const w of workersOf(tick)) {
+      if (w.task === task && w.role === 'implement') ids.add(w.log ?? `id:${w.id}`);
     }
   }
   return ids;
@@ -925,11 +873,11 @@ export function feedsCleared() {
   });
 }
 
-// The dead run's leftover worker sessions were reaped by the restart (DESIGN §2.5, T06). A SIGKILL of the
-// coordinator leaves its workers alive; reconciliation stops every listed worker of the slug before it
-// adopts anything, session-only, so an orphan neither inflates the live count nor hides from the slot
-// maths. Proven from the timeline, which spans the crash: at least one worker session was sampled BEFORE
-// the boundary (there was a leftover to reap), none of those pre-crash sessions is still live in the final
+// The dead run's leftover workers were reaped by the restart (DESIGN §2.5; live-workers T06). A SIGKILL of
+// the coordinator can leave a worker mid-command alive; the next start reaps every pid workers.json
+// recorded before it adopts anything, so an orphan neither inflates the live count nor hides from the slot
+// maths. Proven from the timeline, which spans the crash: at least one worker was sampled BEFORE the
+// boundary (there was a leftover to reap), none of those pre-crash workers is still live in the final
 // tick (they were reaped, not left lingering past the resumed run), and the worker-slot peak across the
 // WHOLE run stayed within the ceiling (an un-reaped orphan beside the resumed workers would exceed it). A
 // leftover still live at the end, or a slot peak over the ceiling, reddens it.
@@ -944,11 +892,11 @@ export function leftoverSessionsReaped({ ceiling } = {}) {
     }
     const ticks = bundle.timeline ?? [];
     // The pre-crash worker sessions: any worker sampled in a tick before the boundary.
-    const preCrash = new Map(); // sessionId → name
+    const preCrash = new Map(); // worker id → label
     for (const tick of ticks) {
       if (tick.ts >= boundary) continue;
-      for (const a of tick.agents ?? []) {
-        if (a.isWorkerOf && a.sessionId) preCrash.set(a.sessionId, a.name);
+      for (const w of workersOf(tick)) {
+        if (w.id) preCrash.set(w.id, workerLabel(w));
       }
     }
     if (preCrash.size === 0) {
@@ -956,9 +904,9 @@ export function leftoverSessionsReaped({ ceiling } = {}) {
     }
     // None of them may still be live in the final tick — the restart reaped them, they did not linger.
     const last = ticks[ticks.length - 1];
-    const survivors = (last?.agents ?? []).filter((a) => a.isWorkerOf && a.sessionId && preCrash.has(a.sessionId));
+    const survivors = workersOf(last).filter((w) => w.id && preCrash.has(w.id));
     if (survivors.length > 0) {
-      for (const s of survivors) evidence.push(`leftover still live at ${last.ts}: ${s.name} (${s.sessionId})`);
+      for (const w of survivors) evidence.push(`leftover still live at ${last.ts}: ${workerLabel(w)} (${w.id})`);
       return { pass: false, evidence, detail: `${survivors.length} leftover session(s) still live after the restart — not reaped` };
     }
     // The ceiling held across the whole run, reap plus resume included.
@@ -966,14 +914,14 @@ export function leftoverSessionsReaped({ ceiling } = {}) {
       let max = 0;
       let worstTick = null;
       for (const tick of ticks) {
-        const slots = slotsInTick(tick.agents);
+        const slots = slotsInTick(workersOf(tick));
         if (slots > max) {
           max = slots;
           worstTick = tick;
         }
       }
       if (worstTick) {
-        evidence.push(`peak ${max} slot(s) at ${worstTick.ts}: ${worstTick.agents.filter((a) => a.isWorkerOf).map((a) => a.name).join(', ')}`);
+        evidence.push(`peak ${max} slot(s) at ${worstTick.ts}: ${workersOf(worstTick).map(workerLabel).join(', ')}`);
       }
       if (max > ceiling) {
         return { pass: false, evidence, detail: `peak of ${max} worker slots across the restart exceeds the ceiling of ${ceiling} — a leftover was counted alongside the resumed workers` };

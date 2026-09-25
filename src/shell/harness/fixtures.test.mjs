@@ -322,6 +322,31 @@ test('installFixture writes the tree, carries the parallel skills, and seeds a c
   }
 });
 
+// live-workers T16: the carried src/shell imports the Agent SDK (worker-proc.mjs) and pi-tui, and the
+// scratch has no install of its own, so installFixture links the source repo's node_modules in. Without it
+// every live harness run dies at import. The link is gitignored, so the seed stays clean and deterministic.
+test('a scratch repo from installFixture imports the SDK and pi-tui from its carried src/shell/', () => {
+  const dir = tmp('pir-fix-modules-');
+  try {
+    const res = installFixture('single', { into: dir });
+    assert.equal(res.modules, true, 'node_modules was linked in');
+    const out = execFileSync(
+      process.execPath,
+      [
+        '--input-type=module',
+        '-e',
+        "const w = await import('./src/shell/worker-proc.mjs'); await import('./src/shell/coordinate.mjs'); await import('./src/shell/pir-tui.mjs'); console.log(typeof w.startWorker);",
+      ],
+      { cwd: dir, encoding: 'utf8' },
+    );
+    assert.equal(out.trim(), 'function');
+    assert.equal(git(dir, ['status', '--porcelain']).trim(), '', 'the node_modules link is not a change');
+    assert.doesNotMatch(git(dir, ['ls-files']), /node_modules/, 'the link is never committed');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('installFixture is deterministic — two installs of a fixture share a commit SHA', () => {
   const a = tmp('pir-fix-det-a-');
   const b = tmp('pir-fix-det-b-');

@@ -5,8 +5,8 @@
 // (T15). It prints a fact-by-fact report and exits non-zero on any failed fact — the verdict is data.
 //
 // WHY THE COORDINATOR IS A PLAIN CHILD PROCESS, NOT A SESSION (DESIGN §2.1, §2.6, §2.9). The coordinator
-// is `node src/shell/coordinate.mjs {slug}`, a foreground process — no `claude` session, no agent name,
-// so it never appears in `claude agents`. The runner SPAWNS that process, holds its pid, and detects the
+// is `node src/shell/coordinate.mjs {slug}`, a foreground process — no `claude` session, no agent name.
+// The runner SPAWNS that process, holds its pid, and detects the
 // run finishing by the process EXITING (it prints the hand-off and returns). This is the property the
 // whole design rests on: a plain process has a stable pid, so the runner can crash it with a real signal
 // and prove kill-and-rebuild (§2.6) — which an agentic coordinator, whose background session rotates its
@@ -15,8 +15,9 @@
 // §2.5); the person answers a blocked worker directly and the runner routes nothing.
 //
 // THE ORCHESTRATION IS FULLY TESTABLE (T17 acceptance). Everything platform-shaped is injected: the
-// process `spawn` (launch + crash), the `claude` runner (capture ticks + worker teardown), the git
-// runner (fixture seed + capture git log), the timers and the clock. So the launch, the exit-detection,
+// process `spawn` (launch + crash), the workers.json reader and the pid probes (capture ticks + the
+// teardown reap, live-workers T16), the git runner (fixture seed + capture git log), the timers and the
+// clock. So the launch, the exit-detection,
 // the timeout→HALT path, the crash-and-relaunch, teardown-on-exit and the checkScenario wiring are all
 // proven with NO live agent (DESIGN §5.2 dry-run seatbelt). Only actually spawning a real coordinator +
 // real workers needs a person — the live half (T09).
@@ -24,8 +25,8 @@
 // SEATBELTS ON EVERY LIVE RUN (DESIGN §5.2): a scratch plan in a scratch repo; the scenario's own low
 // ceiling (passed as PARALLEL_MAX_WORKERS); the kill switch wired (the coordinator's HALT flag); and a
 // per-scenario wall-clock timeout that auto-touches HALT so a hung real worker cannot run — or cost —
-// unboundedly. The runner tears every worker down on any exit (reusing the coordinator's teardownRun
-// orphan-guard, T12 P6) and kills the coordinator process too.
+// unboundedly. On any exit the runner kills the coordinator process, whose own teardown closes its
+// workers, then reaps any worker still recorded in workers.json (live-workers §2.12, T06).
 
 import { existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync, openSync, closeSync } from 'node:fs';
 import { join, basename, dirname } from 'node:path';
@@ -33,12 +34,11 @@ import { execFileSync, spawn as nodeSpawn } from 'node:child_process';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 
-import { isWorkerOf } from '../../core/naming.mjs';
 import { getFixture, installFixture } from './fixtures.mjs';
 import { createCapture, bundleDirFor } from './capture.mjs';
 import { checkScenario, loadTranscripts, loadFinalFiles, loadControlFeeds, loadRestartPoint, formatReport } from './assertions.mjs';
-import { teardownRun } from '../coordinate.mjs';
-import { createPlatform } from '../platform.mjs';
+import { reapRecorded, readWorkersFile } from '../reap.mjs';
+import { isAlive as isAliveReal, startTimeOf as startTimeOfReal } from '../identity.mjs';
 import { createWorktree } from '../worktree.mjs';
 
 // --- Pure wiring pieces (each unit-tested with no live agent, T17 acceptance) --------------------
@@ -256,20 +256,6 @@ export function snapshotControlFeeds(controlDir, { fs = { existsSync, readdirSyn
 
 // --- The default injected effects (mirroring platform.mjs / capture.mjs) -------------------------
 
-function defaultRunClaude(args, { cwd, env } = {}) {
-  try {
-    const stdout = execFileSync('claude', args, {
-      cwd,
-      env: env ? { ...process.env, ...env } : process.env,
-      encoding: 'utf8',
-      stdio: ['pipe', 'pipe', 'pipe'],
-    });
-    return { ok: true, stdout, stderr: '' };
-  } catch (e) {
-    return { ok: false, stdout: e.stdout ?? '', stderr: e.stderr ?? String(e) };
-  }
-}
-
 function defaultRunGit(args, { cwd, env } = {}) {
   try {
     const stdout = execFileSync('git', args, {
@@ -284,25 +270,30 @@ function defaultRunGit(args, { cwd, env } = {}) {
   }
 }
 
+// The real pid probes and signal sender. Tests replace all three, so no test ever signals a real pid.
+const REAL_PROCS = {
+  isAlive: (pid) => isAliveReal(pid),
+  startTimeOf: (pid) => startTimeOfReal(pid),
+  kill: (pid, sig) => process.kill(pid, sig),
+};
+
 // --- Teardown-on-exit: no paid worker is ever orphaned (DESIGN §2.3, §2.6, §5.2) -----------------
 //
-// Reuses the coordinator's own teardownRun orphan-guard (T12 P6) for the workers — SIGTERM each, since
-// `claude stop` alone only interrupts (FINDINGS 2026-09-09). There is no coordinator session to close:
-// the coordinator is a plain process the runner kills by its pid (runScenario's finally). Touching HALT
-// first tells a still-running coordinator to stop dispatching and close its own workers, so this races
-// nothing. Everything is injected, so the whole path is provable with a fake platform in the tests.
-export function teardownScenario({ platform, worktree, repo, slug, controlDir, control } = {}) {
-  // Wire the kill switch first: a live coordinator sees HALT and halts its own dispatch (§2.4).
-  if (controlDir) {
-    try {
-      touchHalt(controlDir);
-    } catch {
-      /* best-effort; the direct SIGTERM below is what actually ends the sessions */
-    }
+// Every worker is a child of the coordinator process (live-workers §2.1), not of this runner, so the
+// runner holds no handle on one: the coordinator's own teardown closes its children when the runner kills
+// it, and whatever survives — a worker mid-command outlives a SIGKILLed parent (live-workers §2.12) — is
+// still recorded in control/workers.json. So teardown is: touch HALT, so a coordinator still running stops
+// dispatching, then reap every recorded pid that still carries its recorded start time (reap.mjs, T06:
+// SIGTERM, SIGKILL 3 s later). `reap` is injected, so the tests reap fake pids.
+export async function teardownScenario({ controlDir, reap = (dir) => reapRecorded(dir) } = {}) {
+  if (!controlDir) return { closed: [] };
+  try {
+    touchHalt(controlDir);
+  } catch {
+    /* best-effort; the reap below is what actually ends the workers */
   }
-  // Close this run's workers with the coordinator's own guard (empty state → it lists them by name).
-  const { closed } = teardownRun({ platform, worktree, state: { tasks: {} }, repo, slug, control });
-  return { closed };
+  const { reaped } = await reap(controlDir);
+  return { closed: reaped };
 }
 
 // --- The runner ----------------------------------------------------------------------------------
@@ -316,15 +307,17 @@ export function teardownScenario({ platform, worktree, repo, slug, controlDir, c
 //   scratchDir   — the scratch repo root to install into (a throwaway temp dir, NEVER the real project;
 //                  a seatbelt, DESIGN §5.2). Defaults to a fresh mkdtemp dir.
 //   allowHere    — pass PARALLEL_ALLOW_HERE=1 to the coordinator (a same-named scratch clone). Default off.
-//   pollMs       — the wait-loop cadence; each poll samples agents (capture.tick) and checks the process.
+//   pollMs       — the wait-loop cadence; each poll samples the workers (capture.tick) and checks the process.
 //   haltGrace    — after the wall-clock timeout auto-HALTs, how many extra polls to wait for the
 //                  coordinator to react and exit before giving up and reporting 'timeout' (§5.2).
 //   timeoutMs    — the wall-clock cap; on expiry the runner auto-touches HALT (§5.2). Defaults to the
 //                  scenario's own seatbelt timeout.
 //   spawn        — node:child_process spawn, injected so a test drives a fake child (no real process).
-//   claudeRun    — (args,{cwd,env}) => { ok, stdout } for the capture ticks and worker teardown.
+//   readWorkers  — (controlDir) => the recorded workers, for the capture ticks (reap.mjs's reader).
+//   procs        — { isAlive, startTimeOf, kill } over pids, for the capture ticks and the teardown reap.
+//   reap         — (controlDir) => { reaped }, the teardown reap; defaults to reapRecorded over `procs`.
 //   gitRun       — (args,{cwd}) => { ok, stdout } for the fixture seed and the capture git log.
-//   platform / worktree — injected for teardown; defaults build the real ones over claudeRun/gitRun.
+//   worktree     — injected for the restart runner's branch reads; default is the real one.
 //   install      — installFixture (injectable so a test need not re-seed real git every case).
 //   capture      — a createCapture instance (injectable); default is built from the injected runners.
 //   timers, now  — injected clock/timers so a test drives time (DESIGN §3.1: the shell owns the clock).
@@ -337,13 +330,13 @@ export async function runScenario({
   haltGrace = 5,
   timeoutMs,
   spawn = nodeSpawn,
-  claudeRun = defaultRunClaude,
+  readWorkers = readWorkersFile,
+  procs = REAL_PROCS,
+  reap,
   gitRun = defaultRunGit,
-  platform,
   worktree,
   install = installFixture,
   capture,
-  projectsDir,
   timers = { setTimeout, clearTimeout },
   now = () => new Date(),
   log = () => {},
@@ -362,10 +355,7 @@ export async function runScenario({
   const repo = basename(repoDir);
   const controlDir = controlDirFor(repoDir, slug);
 
-  // Real teardown effects unless a test injected fakes. createPlatform needs no transport for
-  // list/close (teardown never sends), and createWorktree needs only the root.
-  const teardownPlatform = platform ?? createPlatform({ root: repoDir, runClaude: claudeRun });
-  const teardownWorktree = worktree ?? createWorktree({ root: repoDir });
+  const reapWorkers = reap ?? ((dir) => reapRecorded(dir, procs));
 
   log(`installing fixture "${fixtureId}" into ${repoDir}`);
   install(fixtureId, { into: repoDir, runGit: gitRun });
@@ -379,9 +369,10 @@ export async function runScenario({
       dir: bundleDirFor(controlDir, now()),
       controlDir,
       repoDir,
-      runClaude: claudeRun,
       runGit: gitRun,
-      projectsDir,
+      readWorkers,
+      isAlive: procs.isAlive,
+      startTimeOf: procs.startTimeOf,
       now,
     });
 
@@ -412,7 +403,7 @@ export async function runScenario({
     child = spawnCoordinator({ argv, cwd: repoDir, env, spawn, stdoutPath: coordinatorOutPath(controlDir) });
 
     // Wait for the run to reach a terminal: the coordinator process exits (hand-off or stall or halt), or
-    // the wall-clock timeout fires. Each poll samples the agent list into the bundle (capture.tick).
+    // the wall-clock timeout fires. Each poll samples the workers into the bundle (capture.tick).
     reason = await waitForCompletion({
       cap,
       controlDir,
@@ -427,19 +418,20 @@ export async function runScenario({
     log(`run reached: ${reason}`);
   } finally {
     if (timeoutHandle) timers.clearTimeout(timeoutHandle);
-    // Kill the coordinator process (its own SIGTERM handler closes its workers); then seal and sweep any
-    // worker it did not, so no paid session is orphaned (DESIGN §2.3, §2.6). Idempotent and best-effort.
+    // Kill the coordinator process (its own SIGTERM handler closes its workers), reap any worker it did
+    // not, so no paid worker is orphaned (DESIGN §2.3, §2.6), then seal: after the reap, so the bundle's
+    // logs carry each worker's exit. Idempotent and best-effort.
     if (child) child.kill('SIGTERM');
+    try {
+      const t = await teardownScenario({ controlDir, reap: reapWorkers });
+      if (t.closed.length) log(`teardown: reaped ${t.closed.length} worker(s)`);
+    } catch (e) {
+      log(`teardown failed: ${e.message}`);
+    }
     try {
       bundle = cap.seal();
     } catch (e) {
       log(`capture seal failed: ${e.message}`);
-    }
-    try {
-      const t = teardownScenario({ platform: teardownPlatform, worktree: teardownWorktree, repo, slug, controlDir });
-      if (t.closed.length) log(`teardown: closed ${t.closed.length} worker(s)`);
-    } catch (e) {
-      log(`teardown failed: ${e.message}`);
     }
   }
 
@@ -487,13 +479,13 @@ export async function runRestartScenario({
   startupGrace = 45,
   timeoutMs,
   spawn = nodeSpawn,
-  claudeRun = defaultRunClaude,
+  readWorkers = readWorkersFile,
+  procs = REAL_PROCS,
+  reap,
   gitRun = defaultRunGit,
-  platform,
   worktree,
   install = installFixture,
   capture,
-  projectsDir,
   timers = { setTimeout, clearTimeout },
   now = () => new Date(),
   log = () => {},
@@ -520,8 +512,8 @@ export async function runRestartScenario({
   const repo = basename(repoDir);
   const controlDir = controlDirFor(repoDir, slug);
 
-  const teardownPlatform = platform ?? createPlatform({ root: repoDir, runClaude: claudeRun });
   const teardownWorktree = worktree ?? createWorktree({ root: repoDir });
+  const reapWorkers = reap ?? ((dir) => reapRecorded(dir, procs));
 
   log(`installing fixture "${fixtureId}" into ${repoDir} (once — the relaunch must not reinstall)`);
   install(fixtureId, { into: repoDir, runGit: gitRun });
@@ -534,9 +526,10 @@ export async function runRestartScenario({
       dir: bundleDirFor(controlDir, now()),
       controlDir,
       repoDir,
-      runClaude: claudeRun,
       runGit: gitRun,
-      projectsDir,
+      readWorkers,
+      isAlive: procs.isAlive,
+      startTimeOf: procs.startTimeOf,
       now,
     });
 
@@ -578,7 +571,6 @@ export async function runRestartScenario({
     const target = await waitForTarget({
       cap,
       controlDir,
-      repo,
       slug,
       waitFor,
       worktree: teardownWorktree,
@@ -651,19 +643,19 @@ export async function runRestartScenario({
     }
   } finally {
     if (timeoutHandle) timers.clearTimeout(timeoutHandle);
-    // Make sure neither coordinator process is left alive, then seal and sweep workers.
+    // Make sure neither coordinator process is left alive, reap the workers, then seal.
     if (child1) child1.kill('SIGKILL');
     if (child2) child2.kill('SIGTERM');
+    try {
+      const t = await teardownScenario({ controlDir, reap: reapWorkers });
+      if (t.closed.length) log(`teardown: reaped ${t.closed.length} worker(s)`);
+    } catch (e) {
+      log(`teardown failed: ${e.message}`);
+    }
     try {
       bundle = cap.seal();
     } catch (e) {
       log(`capture seal failed: ${e.message}`);
-    }
-    try {
-      const t = teardownScenario({ platform: teardownPlatform, worktree: teardownWorktree, repo, slug, controlDir });
-      if (t.closed.length) log(`teardown: closed ${t.closed.length} worker(s)`);
-    } catch (e) {
-      log(`teardown failed: ${e.message}`);
     }
   }
 
@@ -730,10 +722,9 @@ function readRestartPoint({ gitRun, repoDir, slug, task, worktree, signal }) {
 // restart crash point is reached ('target'), the wall-clock timeout fires ('timeout'), or the coordinator
 // process exits before the target ('exited'). The crash point is a taskBranchState read (T02) of the
 // target task returning the crash-point glyph, or the flow fallback (restartTargetReached); it is NOT a
-// timer (§2.6). The runner already holds the coordinator's pid (child), so it kills it directly — no need
-// to find it in the agent list. startupGrace bounds a coordinator that dies before ever reaching the
+// timer (§2.6). The runner already holds the coordinator's pid (child), so it kills it directly. startupGrace bounds a coordinator that dies before ever reaching the
 // target: if the process has exited and quiet polls accumulate, the run stalled.
-async function waitForTarget({ cap, controlDir, repo, slug, waitFor, worktree, gitRun, repoDir, child, pollMs, startupGrace, timers, isTimedOut, log = () => {} }) {
+async function waitForTarget({ cap, controlDir, slug, waitFor, worktree, gitRun, repoDir, child, pollMs, startupGrace, timers, isTimedOut, log = () => {} }) {
   const flowPath = join(controlDir, 'log');
   let exited = false;
   child.exited.then(() => {
@@ -755,10 +746,9 @@ async function waitForTarget({ cap, controlDir, repo, slug, waitFor, worktree, g
     }
     if (isTimedOut()) return { reason: 'timeout' };
 
-    // Bound a coordinator that dies before the target: once its process has exited and no worker of this
-    // run is live, count quiet polls and stall past the startup budget.
-    const agents = snap.agents ?? [];
-    const anyWorkerLive = agents.some((a) => isWorkerOf(a.name, { repo, plan: slug }));
+    // Bound a coordinator that dies before the target: once its process has exited and no worker it
+    // recorded is still running, count quiet polls and stall past the startup budget.
+    const anyWorkerLive = (snap.workers ?? []).length > 0;
     if (!exited || anyWorkerLive) {
       quiet = 0;
     } else {
@@ -773,7 +763,7 @@ async function waitForTarget({ cap, controlDir, repo, slug, waitFor, worktree, g
 }
 
 // waitForCompletion(...) → the terminal reason ('completed' | 'halted' | 'timeout'). Polls on the injected
-// timers: each tick samples the agent list into the capture bundle and watches the coordinator process.
+// timers: each tick samples the workers into the capture bundle and watches the coordinator process.
 // The run is over when the process EXITS — it prints the hand-off and returns (§2.1); the flow log then
 // says whether it was a clean hand-off ('completed') or the kill switch ('halted', a `halt-close` line).
 // There is no `promote` marker any more (§2.4), and no stall detection here: the coordinator detects its
@@ -791,7 +781,7 @@ async function waitForCompletion({ cap, controlDir, child, pollMs, haltGrace = 5
   let graceAfterTimeout = 0;
   let drillFired = false;
   for (;;) {
-    cap.tick(); // one sampled `agents --json`, recorded into the bundle
+    cap.tick(); // one sample of workers.json and the workers' logs, recorded into the bundle
     const flowText = existsSync(flowPath) ? safeRead(flowPath) : '';
 
     // Kill-switch drill (DESIGN §4.1, T11): the moment the first worker is up (a `spawn` in the flow),

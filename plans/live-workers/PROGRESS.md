@@ -25,7 +25,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 |---|---|---|---|---|
 | T00 | prove-live-worker | — | ✅ | |
 | T01 | stream-protocol | T00 | ✅ | |
-| T02 | conversation-model | T01 | ⬜ | |
+| T02 | conversation-model | T01 | ✅ | |
 | T03 | person-input | T01 | ✅ | |
 | T04 | worker-process | T01, T10 | ✅ | |
 | T05 | live-platform | T04 | ✅ | |
@@ -39,7 +39,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T13 | conversation-view | T02, T07, T12 | ⬜ | |
 | T14 | worker-contract | T05 | ✅ | |
 | T15 | sunset-pir-coordinate | T10 | ✅ | |
-| T16 | harness-conversations | T05, T06 | ⬜ | |
+| T16 | harness-conversations | T05, T06 | ✅ | |
 | T17 | docs | T06, T07, T08, T13, T14, T15 | ⬜ | |
 | T18 | live-run | T08, T13, T14, T16, T17 | ⬜ | |
 

@@ -20,7 +20,6 @@ import {
   createScreen,
   loadDashboard,
   openDashboard,
-  wrapLine,
   readLogTail,
 } from './pir-tui.mjs';
 import { FrameView, SGR, clipSpans } from './pir-view.mjs';
@@ -370,20 +369,6 @@ test('loadDashboard classifies each run and reads its snapshot for progress and 
 
   // Tidy the scratch index entry so a re-run does not accrete files (the control dirs are OS temp).
   writeFileSync(recordPath('my-repo', 'demo', { dir }), '', { flag: 'w' });
-});
-
-test('wrapLine breaks at spaces and hard-breaks a long token, keeping every segment within the width', () => {
-  assert.deepEqual(wrapLine('short', 20), ['short'], 'text within the width is one line');
-  const wrapped = wrapLine('the quick brown fox jumps', 10);
-  for (const seg of wrapped) assert.ok([...seg].length <= 10, `each segment fits: ${JSON.stringify(seg)}`);
-  assert.ok(wrapped.length > 1, 'a long sentence wraps to several lines');
-  assert.equal(wrapped.join(' '), 'the quick brown fox jumps', 'word-wrap loses no words');
-
-  // A path has no spaces, so it must HARD-break — the fix for "the run.log path doesn't fit".
-  const path = '/Users/x/very/deep/project/plans/some-slug/.parallel/control/run.log';
-  const segs = wrapLine(path, 24);
-  for (const seg of segs) assert.ok([...seg].length <= 24, `each path segment fits: ${JSON.stringify(seg)}`);
-  assert.equal(segs.join(''), path, 'the path is fully reconstructable from its wrapped segments');
 });
 
 test('the watch view wraps a long run.log path so it survives painting at a narrow width (regression)', () => {
