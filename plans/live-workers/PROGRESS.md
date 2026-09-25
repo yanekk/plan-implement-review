@@ -23,7 +23,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 
 | # | Task | Depends on | State | Notes |
 |---|---|---|---|---|
-| T00 | prove-live-worker | — | ⬜ | |
+| T00 | prove-live-worker | — | ✅ | |
 | T01 | stream-protocol | T00 | ⬜ | |
 | T02 | conversation-model | T01 | ⬜ | |
 | T03 | person-input | T01 | ⬜ | |
