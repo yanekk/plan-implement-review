@@ -131,7 +131,8 @@ A run ends in one of three ways:
   continue, the person removes `HALT` and re-runs the command (see
   [restart-recovery.md](restart-recovery.md)).
 - **Quiet** — every remaining worker is parked on a person's decision, or there is nothing left to
-  dispatch. A parked run waits for the person.
+  dispatch. A parked run waits for the person indefinitely: there is no pass cap or time limit
+  (one used to tear a run down after ~7 hours), and waiting makes no model calls.
 
 On any exit that is not a clean hand-off or a halt, the command tears down every live worker of the
 run, so no session is left running (`teardownRun` in `coordinate.mjs`). Ctrl-C (SIGINT/SIGTERM) runs

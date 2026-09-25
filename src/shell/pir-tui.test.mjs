@@ -431,3 +431,40 @@ test('a running watch frame draws a merge conflict\'s paste-in prompt under the 
   const stale = buildWatchFrame({ slug: 'alpha', state: 'stopped', repo: 'repoA', snap, record: { pid: 1, branch: 'pir/alpha' } }, { now: NOW, columns: 120 });
   assert.ok(!frameText(stale).includes('git merge pir/alpha'), 'a run that is not running does not offer a stale prompt');
 });
+
+test('↓ reaches every row when two repos share a slug, and stop acts on the selected repo\'s run (user 2026-09-25)', async () => {
+  // Pinned by slug, ↓ onto the second `parallel-pir` re-resolved to the first and snapped back, so the
+  // fifth row was unreachable; the stop intent would also have resolved to the other repo's run.
+  const rec = (repo, slug, state) => ({ key: `${repo}__${slug}`, slug, repo, state, progress: { done: 0, total: 1 }, workers: 0, record: { repo, slug } });
+  const rows = [
+    rec('a-repo', 'alpha', 'finished'),
+    rec('a-repo', 'beta', 'finished'),
+    rec('pir-run', 'parallel-pir', 'running'),
+    rec('plan-implement-review', 'parallel-pir', 'running'),
+    rec('z-repo', 'zeta', 'finished'),
+  ];
+  let onData = null;
+  const stdin = { on: (_e, fn) => (onData = fn), off: () => {} };
+  const frames = [];
+  const stopped = [];
+  const done = openDashboard({
+    stdin,
+    stdout: {},
+    refreshMs: 60_000,
+    makeScreen: () => ({ paint: (f) => frames.push(f), close: () => {} }),
+    load: () => buildDashboard(rows),
+    stop: async (record) => stopped.push(record.repo),
+  });
+  const selectedRow = () => frameText(frames.at(-1)).split('\n').find((l) => l.startsWith('▎'));
+
+  for (let i = 0; i < 3; i++) await onData('\x1b[B');
+  assert.match(selectedRow(), /parallel-pir.*plan-implement-rev/, 'the second same-slug row is selectable');
+  await onData('\x13');
+  await onData('\x13');
+  assert.deepEqual(stopped, ['plan-implement-review'], 'stop resolved to the selected repo, not the first same-slug row');
+  await onData('\x1b[B');
+  assert.match(selectedRow(), /zeta/, 'the fifth row is reachable');
+
+  await onData('\x1b');
+  await done;
+});

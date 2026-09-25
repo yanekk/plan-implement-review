@@ -308,7 +308,7 @@ export function createReportInbox({ dir } = {}) {
 //
 // The drill's bin ran out its pass budget and printed "ran out of passes" while a worker was still
 // live and parked, leaving a paid session orphaned that had to be stopped by hand. So EVERY exit path
-// that is not a clean promotion/halt (a safety cap, a stall, a signal, an error) must close this run's
+// that is not a clean promotion/halt (a stall, a signal, an error) must close this run's
 // live workers. `platform.close` is stop + SIGTERM — `claude stop` alone only interrupts (FINDINGS
 // 2026-09-09), so this is what actually ends the session. Closing an already-gone id is a safe no-op.
 //
@@ -329,7 +329,7 @@ export function teardownRun({ platform, state, repo, slug, control } = {}) {
       /* already gone */
     }
     // Clear the leftover `stopped` record too (T41, DESIGN §2.3). teardownRun runs on every exit that is
-    // not a clean promotion or a kill-switch halt (a stall, a safety cap, a signal, an error) — none of
+    // not a clean promotion or a kill-switch halt (a stall, a signal, an error) — none of
     // them the HALT forensics case, which the loop handles and never reaches here — so these workers have
     // finished and leave the view. Best-effort and optional: a platform without `remove` is fine.
     try {
@@ -374,7 +374,7 @@ export function shouldSelfReport(env = process.env) {
 // finalStateForExit(reason) → the final status a given exit path records, or null for none (DESIGN §2.2,
 // §7; T10 interface). Only a CLEAN end records a status: a completed hand-off (green OR red branch) and a
 // stall ("nothing left to do") are `finished`; a stop is `stopped`. Every ABNORMAL exit — the HALT kill
-// switch, the runaway breaker, the safety cap, an uncaught error — records NOTHING, so its snapshot and
+// switch, the runaway breaker, an uncaught error — records NOTHING, so its snapshot and
 // index entry both stay finalState:null and the front-end classifies the gone process crashed (red), not
 // dim `finished`. A red feature branch is a clean exit: the run finished, the code is red (§2.2).
 export function finalStateForExit(reason) {
@@ -904,9 +904,6 @@ async function main(argv) {
   console.log(`\nA worker that asks you shows in the display below; answer it directly with \`claude agents\`.\n`);
 
   const POLL_MS = Number(process.env.PARALLEL_POLL_MS ?? 5000);
-  // A safety cap only — the run's real end is the hand-off, a halt, or a stall, not a fixed pass budget
-  // (the drill exited on its budget and orphaned a worker; DESIGN §2.6). At the cap we tear down.
-  const MAX_PASSES = Number(process.env.PARALLEL_MAX_PASSES ?? 5000);
   const CEILING = maxWorkers;
   const OVER_GRACE = Number(process.env.PARALLEL_OVER_GRACE ?? 3);
   const STALL_GRACE = 3; // consecutive quiet passes with nothing live before the run is declared done
@@ -964,7 +961,7 @@ async function main(argv) {
   let lastRunState = buildRunState({ passTasks: [], branch, ceiling: CEILING, interrupted: true });
 
   // Tear down every live worker of this run on any exit that is not a clean hand-off or a kill-switch
-  // halt (both of which the loop already handled). This is the orphan-guard: a safety cap, a stall, a
+  // halt (both of which the loop already handled). This is the orphan-guard: a stall, a
   // Ctrl-C or an error must not leave a paid session running (DESIGN §2.6). Idempotent (close is safe
   // twice). A re-run reaps whatever a second Ctrl-C during teardown left behind (§2.6, §2.8).
   const teardown = () => teardownRun({ platform, state: coordinator.state, repo, slug, control });
@@ -1038,7 +1035,11 @@ async function main(argv) {
   let over = 0;
   let idle = 0;
   try {
-    for (let p = 1; p <= MAX_PASSES; p++) {
+    // No pass cap: the run's only ends are the hand-off, a halt, the runaway breaker, a stall, or a signal.
+    // A worker parked on a question waits for the person indefinitely — a cap here used to tear the run
+    // down after ~7h while the person slept. Waiting costs nothing: a pass is local file and `claude
+    // agents` reads, and a parked worker's session makes no model calls until it is answered.
+    for (;;) {
       const r = coordinator.pass();
       trackTiming(coordinator.state.tasks, r.completed);
 
@@ -1129,10 +1130,8 @@ async function main(argv) {
       // so the bin's OWN writes this pass (the flow log) cannot wake it into a busy spin.
       await waitForReport(inbox.reportsDir, POLL_MS);
     }
-    // Abnormal exit (T10): the safety cap and an uncaught error both record NO final status → crashed.
-    renderer.line('\n=== safety cap reached ===');
-    teardownOnce('safety cap');
   } catch (e) {
+    // Abnormal exit (T10): an uncaught error records NO final status → crashed.
     teardownOnce('error');
     throw e;
   }

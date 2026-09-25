@@ -21,7 +21,7 @@ import { join } from 'node:path';
 import { openSync, fstatSync, readSync, closeSync } from 'node:fs';
 
 import { buildDisplay } from '../core/display.mjs';
-import { buildDashboard, dashboardReducer, initialUi } from '../core/dashboard.mjs';
+import { buildDashboard, dashboardReducer, findOpen, initialUi, runKey } from '../core/dashboard.mjs';
 import { styledLines } from './render.mjs';
 import { classifyRun } from '../core/runstate.mjs';
 import { resolveLiveness } from './identity.mjs';
@@ -557,7 +557,9 @@ export function loadDashboard({ dir = indexDir(), now = Date.now(), kill, exec, 
     // The live-worker count is the number of active workers this pass — exactly buildDisplay's `running`
     // tally (the active phases, DESIGN §2.4), so the list and the live view agree on it.
     const workers = display ? display.summary.running : 0;
-    return { slug: record.slug, state, repo: record.repo, progress, workers, snap, record, controlDir: record.controlDir };
+    // key mirrors the index filename (`{repo}__{slug}`, §2.8): the slug alone repeats across repos.
+    const key = `${record.repo}__${record.slug}`;
+    return { key, slug: record.slug, state, repo: record.repo, progress, workers, snap, record, controlDir: record.controlDir };
   });
   views.sort((a, b) => a.repo.localeCompare(b.repo) || a.slug.localeCompare(b.slug));
   return buildDashboard(views);
@@ -579,7 +581,7 @@ export function openDashboard(deps = {}) {
 }
 
 export function openWatch(slug, deps = {}) {
-  return runTui({ ...deps, initial: { view: 'watch', sel: 0, openSlug: slug, armed: null } });
+  return runTui({ ...deps, initial: { view: 'watch', sel: 0, openSlug: slug, openKey: null, armed: null } });
 }
 
 // runTui — the raw-mode input/paint loop (DESIGN §2.3, §2.4, §5.1). It sets raw mode, paints a first
@@ -610,30 +612,32 @@ async function runTui({
   const screen = makeScreen({ stream: stdout, colour });
   let ui = initial;
   let spin = 0;
-  // The selection is pinned to a RUN (its slug), not to a row index, so a refresh never moves the
+  // The selection is pinned to a RUN (its runKey), not to a row index, so a refresh never moves the
   // highlight even if the list changes underneath it (user 2026-09-22: "the selection keeps dropping
-  // because of the refresh"). onData writes the slug the user moved to; repaint re-derives the index from
-  // it each frame, and only falls back to clamping the old index if that run is no longer listed.
-  let selectedSlug = null;
+  // because of the refresh"). onData writes the run the user moved to; repaint re-derives the index from
+  // it each frame, and only falls back to clamping the old index if that run is no longer listed. It is
+  // the key and not the slug because two repos can share a slug: pinned by slug, ↓ onto the second of a
+  // same-slug pair snapped back to the first, so no row below it could be reached (user 2026-09-25).
+  let selectedKey = null;
 
   const read = () => load({ dir, now: now(), kill, exec, fs });
 
   function repaint(dashboard) {
     const dash = dashboard ?? read();
     let sel = ui.sel;
-    if (selectedSlug != null) {
-      const idx = dash.rows.findIndex((r) => r.slug === selectedSlug);
+    if (selectedKey != null) {
+      const idx = dash.rows.findIndex((r) => runKey(r) === selectedKey);
       if (idx >= 0) sel = idx;
-      else selectedSlug = null; // the pinned run is gone (removed) — fall back to the clamped index
+      else selectedKey = null; // the pinned run is gone (removed) — fall back to the clamped index
     }
     sel = Math.max(0, Math.min(sel, Math.max(0, dash.rows.length - 1)));
     ui = { ...ui, sel };
-    if (selectedSlug == null) selectedSlug = dash.rows[sel]?.slug ?? null; // seed / reseed the pin
+    if (selectedKey == null) selectedKey = runKey(dash.rows[sel]); // seed / reseed the pin
 
     spin += 1;
     const spinnerChar = SPINNER[spin % SPINNER.length];
     if (ui.view === 'watch') {
-      const view = dash.rows.find((r) => r.slug === ui.openSlug) ?? { slug: ui.openSlug, state: 'crashed', repo: '', snap: null };
+      const view = findOpen(dash.rows, ui) ?? { slug: ui.openSlug, state: 'crashed', repo: '', snap: null };
       // A crashed run's log tail is shown inline; read it only for the open, crashed run (not every row).
       const logTail = view.state === 'crashed' ? readLogTail(view.record?.controlDir ? join(view.record.controlDir, 'run.log') : null, 5, fs ? { fs } : {}) : null;
       const columns = Math.max(20, stdout.columns || DEFAULT_COLS);
@@ -675,19 +679,19 @@ async function runTui({
             // ← steps back a level: a run's live view → the list. In the list there is no level to step
             // back to (Esc quits), so ← is inert there.
             if (ui.view === 'watch') ui = dashboardReducer(ui, { type: 'back' }, dash.rows).ui;
-            selectedSlug = dash.rows[ui.sel]?.slug ?? selectedSlug;
+            selectedKey = runKey(dash.rows[ui.sel]) ?? selectedKey;
             return repaint(dash);
           }
 
           const { ui: nextUi, intent } = dashboardReducer(ui, { type: key }, dash.rows);
           ui = nextUi;
           // Pin the selection to whatever run the cursor is now on, so the next refresh keeps it there.
-          selectedSlug = dash.rows[ui.sel]?.slug ?? selectedSlug;
+          selectedKey = runKey(dash.rows[ui.sel]) ?? selectedKey;
           if (intent?.type === 'stop') {
-            const view = dash.rows.find((r) => r.slug === intent.slug);
+            const view = dash.rows.find((r) => runKey(r) === intent.key);
             if (view) await stop(view.record, { platform: makePlatform(view.record), kill });
           } else if (intent?.type === 'remove') {
-            const view = dash.rows.find((r) => r.slug === intent.slug);
+            const view = dash.rows.find((r) => runKey(r) === intent.key);
             if (view) remove(view.record, { dir, fs });
           }
           repaint();

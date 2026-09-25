@@ -40,17 +40,26 @@ export function buildDashboard(views = []) {
   return { rows: [...views], counts };
 }
 
+// runKey(view) → the identity of one run. A slug alone is not unique: the same plan slug can run in two
+// repos (the index keeps them apart as `{repo}__{slug}`, §2.8), and keying on the slug made the second of
+// two same-slug rows unreachable by arrow key and let stop/remove resolve to the other repo's run. A view
+// carries `key` when the loader built it from an index record; a view without one falls back to its slug.
+export function runKey(view) {
+  return view?.key ?? view?.slug ?? null;
+}
+
 // The navigation state the reducer owns. `view` is which block is on screen; `sel` is the highlighted
-// row index in the list; `openSlug` is the run the watch view is showing; `armed` is the pending
-// confirm, null unless a chord's first press has landed.
+// row index in the list; `openSlug` is the run the watch view is showing and `openKey` its identity
+// (null when it was opened by slug alone, `pir {slug}`); `armed` is the pending confirm, null unless a
+// chord's first press has landed.
 export function initialUi() {
-  return { view: 'list', sel: 0, openSlug: null, armed: null };
+  return { view: 'list', sel: 0, openSlug: null, openKey: null, armed: null };
 }
 
 // dashboardReducer(ui, event, views) → { ui, intent } (DESIGN §2.3, §2.6, §2.7).
 //
 //   ui    = { view:'list'|'watch', sel, openSlug, armed }
-//           armed: null | { action:'stop'|'remove', slug }
+//           armed: null | { action:'stop'|'remove', slug, key }
 //   event = { type, ... }:
 //     {type:'down'} {type:'up'}     move selection, clamped to the list ends
 //     {type:'select', index}        set selection (a click)
@@ -64,7 +73,8 @@ export function initialUi() {
 //           selected/open row to read the target run's slug and state. This third argument is the one
 //           addition to the interface sketch, which the task's own rule ("it takes the current views")
 //           calls for.
-//   intent = null | {type:'quit'} | {type:'stop', slug} | {type:'remove', slug}
+//   intent = null | {type:'quit'} | {type:'stop', slug, key} | {type:'remove', slug, key}
+//           key is runKey of the target run; the caller resolves the run by it, never by slug alone.
 //
 // The one invariant across every branch: any event other than the second half of a chord clears `armed`
 // first (DESIGN §2.6). So a stray keystroke — even a move onto another row — cancels a pending confirm,
@@ -81,11 +91,14 @@ export function dashboardReducer(ui, event, views = []) {
     case 'open':
       // Only the list opens a run; from watch, `open` has nothing new to open, so it just clears the arm.
       if (ui.view !== 'list') return { ui: { ...ui, armed: null }, intent: null };
-      return { ui: { ...ui, view: 'watch', openSlug: views[ui.sel]?.slug ?? null, armed: null }, intent: null };
+      return {
+        ui: { ...ui, view: 'watch', openSlug: views[ui.sel]?.slug ?? null, openKey: runKey(views[ui.sel]), armed: null },
+        intent: null,
+      };
     case 'back':
       // Esc steps back one level: watch → list (no confirm), and list → quit `pir` outright (DESIGN §2.3:
       // quitting stops nothing, so there is no confirm here — the confirms are on stop/remove only).
-      if (ui.view === 'watch') return { ui: { ...ui, view: 'list', openSlug: null, armed: null }, intent: null };
+      if (ui.view === 'watch') return { ui: { ...ui, view: 'list', openSlug: null, openKey: null, armed: null }, intent: null };
       return { ui: { ...ui, armed: null }, intent: { type: 'quit' } };
     case 'ctrlS':
     case 'ctrlX':
@@ -114,7 +127,7 @@ function chord(type, ui, views) {
   // otherwise the selected row. Remove is a list action and always targets the selected row.
   const target =
     action === 'stop' && ui.view === 'watch'
-      ? views.find((v) => v.slug === ui.openSlug)
+      ? findOpen(views, ui)
       : views[ui.sel];
 
   // Ineligible — no such run, or the chord does not apply to its state (Ctrl+S on a non-running run,
@@ -124,10 +137,18 @@ function chord(type, ui, views) {
   }
 
   // Second identical press (same action, same run) carries the confirm out and disarms.
-  if (ui.armed && ui.armed.action === action && ui.armed.slug === target.slug) {
-    return { ui: { ...ui, armed: null }, intent: { type: action, slug: target.slug } };
+  const key = runKey(target);
+  if (ui.armed && ui.armed.action === action && ui.armed.key === key) {
+    return { ui: { ...ui, armed: null }, intent: { type: action, slug: target.slug, key } };
   }
 
   // First matching press arms the confirmation line for that exact run.
-  return { ui: { ...ui, armed: { action, slug: target.slug } }, intent: null };
+  return { ui: { ...ui, armed: { action, slug: target.slug, key } }, intent: null };
+}
+
+// findOpen(views, ui) → the run the watch view is showing: by its key when it was opened from the list,
+// by slug when it was opened by `pir {slug}` (which names no repo), else undefined.
+export function findOpen(views, ui) {
+  if (ui.openKey != null) return views.find((v) => runKey(v) === ui.openKey);
+  return views.find((v) => v.slug === ui.openSlug);
 }

@@ -41,7 +41,7 @@ repos is two independent runs. A run is in exactly one of four states, decided b
 - **stopped** — the person stopped it (below), which records a `stopped` final status.
 - **crashed** — its recorded process is gone and it recorded no final status. This covers a true
   crash (SIGKILL, power loss, reboot) *and* a run that died abnormally on its own — an uncaught
-  error, the runaway circuit-breaker, the safety cap, or the by-hand `HALT` kill switch. Those paths
+  error, the runaway circuit-breaker, or the by-hand `HALT` kill switch. Those paths
   deliberately record no final status, so a run that errored out or tripped a safety brake shows
   crashed (red), never dim `finished`.
 
@@ -83,7 +83,7 @@ coordinator's environment. Under `PIR_RUN`, and only then, the coordinator repor
   reader gets either the previous complete snapshot or the new one, never a half-written file.
 - **On exit** it records the final status. A clean end (a hand-off, a stall with nothing left to do)
   writes `finished`; a stop writes `stopped`. Every abnormal exit — the `HALT` kill switch, the
-  runaway breaker, the safety cap, an uncaught error — writes **nothing**, leaving the last live
+  runaway breaker, an uncaught error — writes **nothing**, leaving the last live
   snapshot and the index entry both without a final status, so the front-end classifies the gone
   process crashed, not `finished`.
 

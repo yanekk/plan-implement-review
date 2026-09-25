@@ -53,7 +53,7 @@ uncommitted. It is kept, though, for the resumed implementer to inspect (below).
 ### Every exit keeps the task branches
 
 `teardownRun` (`coordinate.mjs`) runs on every exit that is not a clean hand-off or a halt — a `pir`
-stop, Ctrl-C, an uncaught error, the safety cap, the runaway breaker, a stall. It closes this run's
+stop, Ctrl-C, an uncaught error, the runaway breaker, a stall. It closes this run's
 worker sessions and **never removes a task worktree or branch**. It used to remove them on every exit
 but the detached stop; on 2026-09-22 a full disk (`ENOSPC`) crashed a real run, that `error` teardown
 deleted two built tasks and one half-built one, and the restart implemented all three again.

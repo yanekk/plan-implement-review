@@ -135,18 +135,18 @@ test('back in list emits {type:quit}', () => {
 test('ctrlS on a running run arms; second ctrlS emits {type:stop, slug} and disarms', () => {
   const ui0 = { view: 'list', sel: 0, openSlug: null, armed: null }; // run-running selected
   const first = dashboardReducer(ui0, { type: 'ctrlS' }, RUNS);
-  assert.deepEqual(first.ui.armed, { action: 'stop', slug: 'run-running' });
+  assert.deepEqual(first.ui.armed, { action: 'stop', slug: 'run-running', key: 'run-running' });
   assert.equal(first.intent, null);
 
   const second = dashboardReducer(first.ui, { type: 'ctrlS' }, RUNS);
-  assert.deepEqual(second.intent, { type: 'stop', slug: 'run-running' });
+  assert.deepEqual(second.intent, { type: 'stop', slug: 'run-running', key: 'run-running' });
   assert.equal(second.ui.armed, null, 'the confirm disarms once it fires');
 });
 
 test('an intervening down between the two ctrlS presses cancels the arm (no intent)', () => {
   const ui0 = { view: 'list', sel: 0, openSlug: null, armed: null };
   const armed = dashboardReducer(ui0, { type: 'ctrlS' }, RUNS);
-  assert.deepEqual(armed.ui.armed, { action: 'stop', slug: 'run-running' });
+  assert.deepEqual(armed.ui.armed, { action: 'stop', slug: 'run-running', key: 'run-running' });
 
   const moved = dashboardReducer(armed.ui, { type: 'down' }, RUNS);
   assert.equal(moved.ui.armed, null, 'moving cancels the pending confirm');
@@ -172,11 +172,11 @@ for (const idx of [1, 2, 3]) {
   test(`ctrlX on ${RUNS[idx].state} arms; second emits {type:remove, slug}`, () => {
     const ui0 = { view: 'list', sel: idx, openSlug: null, armed: null };
     const first = dashboardReducer(ui0, { type: 'ctrlX' }, RUNS);
-    assert.deepEqual(first.ui.armed, { action: 'remove', slug: RUNS[idx].slug });
+    assert.deepEqual(first.ui.armed, { action: 'remove', slug: RUNS[idx].slug, key: RUNS[idx].slug });
     assert.equal(first.intent, null);
 
     const second = dashboardReducer(first.ui, { type: 'ctrlX' }, RUNS);
-    assert.deepEqual(second.intent, { type: 'remove', slug: RUNS[idx].slug });
+    assert.deepEqual(second.intent, { type: 'remove', slug: RUNS[idx].slug, key: RUNS[idx].slug });
     assert.equal(second.ui.armed, null);
   });
 }
@@ -202,7 +202,7 @@ test('ctrlX on a running run: no arm, no intent (stop it first)', () => {
 
 test('a ctrlS on a non-running run also clears a pending arm', () => {
   // Armed to remove a crashed run, then Ctrl+S on it (ineligible): the arm is cleared, nothing fires.
-  const armed = { view: 'list', sel: 2, openSlug: null, armed: { action: 'remove', slug: 'run-crashed' } };
+  const armed = { view: 'list', sel: 2, openSlug: null, armed: { action: 'remove', slug: 'run-crashed', key: 'run-crashed' } };
   const r = dashboardReducer(armed, { type: 'ctrlS' }, RUNS);
   assert.equal(r.ui.armed, null);
   assert.equal(r.intent, null);
@@ -214,10 +214,10 @@ test('ctrlS while in watch on a running open run arms and confirms the open run'
   // Watching run-running; the selected row index points elsewhere to prove the target is the OPEN run.
   const watching = { view: 'watch', sel: 3, openSlug: 'run-running', armed: null };
   const first = dashboardReducer(watching, { type: 'ctrlS' }, RUNS);
-  assert.deepEqual(first.ui.armed, { action: 'stop', slug: 'run-running' }, 'targets the open run, not sel');
+  assert.deepEqual(first.ui.armed, { action: 'stop', slug: 'run-running', key: 'run-running' }, 'targets the open run, not sel');
 
   const second = dashboardReducer(first.ui, { type: 'ctrlS' }, RUNS);
-  assert.deepEqual(second.intent, { type: 'stop', slug: 'run-running' });
+  assert.deepEqual(second.intent, { type: 'stop', slug: 'run-running', key: 'run-running' });
   assert.equal(second.ui.armed, null);
 });
 
