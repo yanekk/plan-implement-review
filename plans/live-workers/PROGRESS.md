@@ -26,7 +26,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T00 | prove-live-worker | — | ✅ | |
 | T01 | stream-protocol | T00 | ✅ | |
 | T02 | conversation-model | T01 | ⬜ | |
-| T03 | person-input | T01 | ⬜ | |
+| T03 | person-input | T01 | 🔍 | `core/person-input.mjs`, 25 tests. Deviations: permission drop may carry `text` on deny (§2.6 typed refusal); `grantFrom` null on `suppressAlwaysAllowRule`, keeps every allow `addRules` rule; matcher is a strict subset of Claude's: compound, substitution or redirect (except /dev/null, `2>&1`) asks, path and domain rules exact only, no wrapper stripping. |
 | T04 | worker-process | T01, T10 | ⬜ | |
 | T05 | live-platform | T04 | ⬜ | |
 | T06 | reap-workers | T04, T05 | ⬜ | |
@@ -43,7 +43,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T17 | docs | T06, T07, T08, T13, T14, T15 | ⬜ | |
 | T18 | live-run | T08, T13, T14, T16, T17 | ⬜ | |
 
-**Review queue:** empty
+**Review queue:** T03
 
 ## Blocked on the user
 
