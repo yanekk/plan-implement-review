@@ -33,9 +33,9 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T09 | review-verifies-block | T01 | ✅ | |
 | T10 | harness-fixture-block | T01 | ✅ | |
 | T11 | docs | T03, T04, T05, T07, T08, T09 | ✅ | |
-| T12 | prove-and-install | T03, T04, T05, T07, T08, T09, T10, T11 | ⬜ | |
+| T12 | prove-and-install | T03, T04, T05, T07, T08, T09, T10, T11 | 🔍 | Live checks and user verdict in FINDINGS 2026-09-25. No code. Deviations: install not run, plan defers it to after merge to main; runs started via `launch.startRun` (no TTY for the viewer); post-narrow-pass start stopped by pre-placed HALT, no spawn; user viewed `preparing` on a 90s-setup halted probe. |
 
-**Review queue:** *(empty)*
+**Review queue:** T12
 
 ## Blocked on the user
 
