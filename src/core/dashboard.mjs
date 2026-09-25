@@ -71,6 +71,9 @@ export function noWorkerNote(task, tasks = []) {
   const id = task?.id ?? 'This task';
   if (task?.done) return `${id} has no worker to open — it was merged before this run started.`;
   if (task?.phase === 'preparing') return `${id} has no worker yet — its worktree is being set up.`;
+  // Any other phase is a task in progress whose worker this process does not hold — after a restart the
+  // task state is restored but platform.workers() starts empty — so "waiting for a slot" would be false.
+  if (task?.phase) return `${id} has no worker to open — none is running for it right now.`;
   const done = new Set(tasks.filter((t) => t.done).map((t) => t.id));
   const unmet = (task?.deps ?? []).filter((d) => !done.has(d));
   if (unmet.length > 0) return `${id} has no worker yet — it starts when ${unmet.join(', ')} ${unmet.length === 1 ? 'is' : 'are'} merged.`;

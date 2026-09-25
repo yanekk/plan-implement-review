@@ -5,7 +5,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildDashboard, dashboardReducer, initialUi } from './dashboard.mjs';
+import { buildDashboard, dashboardReducer, initialUi, noWorkerNote } from './dashboard.mjs';
 
 // One resolved run view in the shape the shell hands the model (state already from classifyRun, T01).
 const view = (over) => ({
@@ -319,6 +319,15 @@ test('open on a task with no worker stays in watch and sets a footer note saying
   assert.equal(noteAt(3), 'T04 has no worker yet — it starts when a slot frees up.');
   assert.equal(noteAt(4), 'T05 has no worker yet — its worktree is being set up.');
   assert.equal(noteAt(5), 'T06 has no worker to open — it was merged before this run started.');
+});
+
+test('a task in progress with no worker to open says none is running, not that it waits for a slot (T12 review, user 2026-09-25)', () => {
+  // After a restart the coordinator's task state survives but this process's worker list does not, so a
+  // task can read `building` or `merge conflict` with worker null.
+  for (const phase of ['building', 'reviewing', 'merging', 'asking']) {
+    const task = { id: 'T07', deps: [], done: false, phase, worker: null };
+    assert.equal(noWorkerNote(task, [task]), 'T07 has no worker to open — none is running for it right now.');
+  }
 });
 
 test('the footer note clears on the next event', () => {
