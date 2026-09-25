@@ -35,7 +35,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T09 | asking-kinds | T05, T08 | ✅ | |
 | T10 | runtime-deps | T00 | ✅ | |
 | T11 | screen-on-pi-tui | T10 | ✅ | |
-| T12 | task-selection | T09, T11 | ⬜ | |
+| T12 | task-selection | T09, T11 | 🔍 | Reducer: taskSel, 'worker' view, openWorker, no-worker note; bar on the watch row; runTui pins task per run key. 18 tests. Deviations: ui gains one-shot `note`; placeholder `buildWorkerFrame` until T13; watch hint and note wording approved by user 2026-09-25; in 'worker' only ← acts. |
 | T13 | conversation-view | T02, T07, T12 | ⬜ | |
 | T14 | worker-contract | T05 | ✅ | |
 | T15 | sunset-pir-coordinate | T10 | ✅ | |
@@ -43,7 +43,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T17 | docs | T06, T07, T08, T13, T14, T15 | ⬜ | |
 | T18 | live-run | T08, T13, T14, T16, T17 | ⬜ | |
 
-**Review queue:** empty
+**Review queue:** T12
 
 ## Blocked on the user
 

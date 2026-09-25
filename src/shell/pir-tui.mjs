@@ -21,7 +21,7 @@ import { join } from 'node:path';
 import { readLogTail } from './commands.mjs';
 
 import { buildDisplay } from '../core/display.mjs';
-import { buildDashboard, dashboardReducer, findOpen, initialUi, runKey } from '../core/dashboard.mjs';
+import { buildDashboard, dashboardReducer, findOpen, initialUi, openTasks, runKey } from '../core/dashboard.mjs';
 import { styledLines } from './render.mjs';
 import { classifyRun } from '../core/runstate.mjs';
 import { resolveLiveness } from './identity.mjs';
@@ -135,7 +135,8 @@ function footerLine(context, ui) {
     }
     return lineOf(`⚠ Ctrl+X again to remove ${ui.armed.slug}'s record`, 'armed');
   }
-  if (context === 'watch') return lineOf('← back · Ctrl+S Ctrl+S stop this run · esc quit', 'hint');
+  if (context === 'watch') return lineOf('↑↓ pick a task · → open its worker · ← back · Ctrl+S Ctrl+S stop this run · esc quit', 'hint');
+  if (context === 'worker') return lineOf('← back · esc quit', 'hint');
   return lineOf('↑↓ move · ↵ open · Ctrl+S stop · Ctrl+X remove · esc quit', 'hint');
 }
 
@@ -291,7 +292,15 @@ export function buildWatchFrame(view, { now, spinnerChar = SPINNER[0], ui = init
   } else {
     // A stale (non-running) frame freezes its spinner to a dot so it cannot read as still ticking.
     const spin = alive ? spinnerChar : '·';
-    for (const l of watchDisplayLines(snap, { now, spinnerChar: spin })) lines.push([span(l.text, l.style)]);
+    // The block's lines 1..n are the task rows, in runState.tasks order (line 0 is the summary). The
+    // selected one carries the list's bar in place of its leading '  ' (live-workers §2.11), so this block
+    // is no longer byte-for-byte the coordinator's display, on purpose; every other line is.
+    const taskCount = snap.runState?.tasks?.length ?? 0;
+    const selLine = taskCount > 0 ? 1 + Math.max(0, Math.min(ui.taskSel ?? 0, taskCount - 1)) : -1;
+    watchDisplayLines(snap, { now, spinnerChar: spin }).forEach((l, i) => {
+      if (i === selLine && l.text.startsWith('  ')) lines.push([span('▎ ', 'selected'), span(l.text.slice(2), l.style)]);
+      else lines.push([span(l.text, l.style)]);
+    });
     // A merge conflict the run hit at its own merge: draw its paste-in prompt (buildConflictPrompt, T14)
     // here, right under the live block so a short terminal clips the key hints before it. The coordinator
     // prints it once on its own screen, but a detached run's screen is only run.log, which nobody watches
@@ -334,7 +343,26 @@ export function buildWatchFrame(view, { now, spinnerChar = SPINNER[0], ui = init
   }
 
   lines.push([]);
+  // Why the last → on a task row opened nothing (a task with no worker yet), dim above the hint.
+  if (ui.note) note(ui.note, 'dim', '');
   lines.push(footerLine('watch', ui));
+  return lines;
+}
+
+// buildWorkerFrame(view, ui) → frame: the 'worker' view's placeholder until T13 mounts the conversation
+// view in its place. It names the worker opened and where its conversation log is, so the routing can be
+// seen working end to end.
+export function buildWorkerFrame(view, ui = initialUi()) {
+  const w = ui.openWorker ?? {};
+  const lines = [];
+  lines.push([
+    span(`${view?.slug ?? ''} · ${w.taskId ?? ''}`, 'head'),
+    span(`  worker ${w.workerId ?? '?'} · ${w.live ? 'live' : 'finished, read only'}`, 'dim'),
+  ]);
+  lines.push([]);
+  lines.push(lineOf(`  conversation log: ${w.logPath ?? 'none recorded'}`, 'dim'));
+  lines.push([]);
+  lines.push(footerLine('worker', ui));
   return lines;
 }
 
@@ -512,7 +540,7 @@ export function openDashboard(deps = {}) {
 }
 
 export function openWatch(slug, deps = {}) {
-  return runTui({ ...deps, initial: { view: 'watch', sel: 0, openSlug: slug, openKey: null, armed: null } });
+  return runTui({ ...deps, initial: { ...initialUi(), view: 'watch', openSlug: slug } });
 }
 
 // runTui — the input/paint loop (DESIGN §2.3, §2.4, §5.1). It paints a first frame, then repaints on every
@@ -551,8 +579,27 @@ async function runTui({
   // the key and not the slug because two repos can share a slug: pinned by slug, ↓ onto the second of a
   // same-slug pair snapped back to the first, so no row below it could be reached (user 2026-09-25).
   let selectedKey = null;
+  // The task row is pinned the same way, by task id, and per run (by runKey): a refresh that adds or
+  // removes task rows keeps the highlight on its task, and two runs of one slug keep separate selections.
+  const selectedTask = new Map();
 
   const read = () => load({ dir, now: now(), kill, exec, fs });
+
+  // Re-derive taskSel from the open run's pinned task id against a fresh read, then re-pin, as repaint
+  // does for the list's `sel`. The keypress path runs it too, before the reducer, so an arrow moves from
+  // where the task is now rather than from an index a refresh has since shifted.
+  function syncTask(dash) {
+    if (ui.view === 'list') return;
+    const open = findOpen(dash.rows, ui);
+    const runId = runKey(open) ?? ui.openKey ?? ui.openSlug;
+    const tasks = open?.snap?.runState?.tasks ?? [];
+    let taskSel = ui.taskSel ?? 0;
+    const idx = tasks.findIndex((t) => t.id === selectedTask.get(runId));
+    if (idx >= 0) taskSel = idx;
+    taskSel = Math.max(0, Math.min(taskSel, Math.max(0, tasks.length - 1)));
+    ui = { ...ui, taskSel };
+    if (tasks[taskSel]) selectedTask.set(runId, tasks[taskSel].id);
+  }
 
   function repaint(dashboard) {
     const dash = dashboard ?? read();
@@ -566,9 +613,13 @@ async function runTui({
     ui = { ...ui, sel };
     if (selectedKey == null) selectedKey = runKey(dash.rows[sel]); // seed / reseed the pin
 
+    syncTask(dash);
+
     spin += 1;
     const spinnerChar = SPINNER[spin % SPINNER.length];
-    if (ui.view === 'watch') {
+    if (ui.view === 'worker') {
+      screen.paint(buildWorkerFrame(findOpen(dash.rows, ui) ?? { slug: ui.openSlug }, ui));
+    } else if (ui.view === 'watch') {
       const view = findOpen(dash.rows, ui) ?? { slug: ui.openSlug, state: 'crashed', repo: '', snap: null };
       // A crashed run's log tail is shown inline; read it only for the open, crashed run (not every row).
       const logTail = view.state === 'crashed' ? readLogTail(view.record?.controlDir ? join(view.record.controlDir, 'run.log') : null, 5, fs ? { fs } : {}) : null;
@@ -615,17 +666,27 @@ async function runTui({
           const dash = read();
 
           if (key === 'back') {
-            // ← steps back a level: a run's live view → the list. In the list there is no level to step
-            // back to (Esc quits), so ← is inert there.
-            if (ui.view === 'watch') ui = dashboardReducer(ui, { type: 'back' }, dash.rows).ui;
+            // ← steps back a level: a worker → its run's live view → the list. In the list there is no
+            // level to step back to (Esc quits), so ← is inert there.
+            if (ui.view !== 'list') ui = dashboardReducer(ui, { type: 'back' }, dash.rows).ui;
             selectedKey = runKey(dash.rows[ui.sel]) ?? selectedKey;
             return repaint(dash);
           }
 
+          const wasWatching = ui.view === 'watch';
+          if (wasWatching) syncTask(dash);
           const { ui: nextUi, intent } = dashboardReducer(ui, { type: key }, dash.rows);
           ui = nextUi;
           // Pin the selection to whatever run the cursor is now on, so the next refresh keeps it there.
           selectedKey = runKey(dash.rows[ui.sel]) ?? selectedKey;
+          if (wasWatching && ui.view === 'watch') {
+            // …and the task row likewise, to the task the cursor is now on in the open run. Only a move
+            // inside the live view re-pins it: opening a run starts its taskSel at 0, and repaint then
+            // restores the task that run last had selected.
+            const open = findOpen(dash.rows, ui);
+            const task = openTasks(dash.rows, ui)[ui.taskSel ?? 0];
+            if (task) selectedTask.set(runKey(open) ?? ui.openKey ?? ui.openSlug, task.id);
+          }
           if (intent?.type === 'stop') {
             const view = dash.rows.find((r) => runKey(r) === intent.key);
             if (view) await stop(view.record, { kill });
