@@ -168,7 +168,12 @@ answer there), or, at the end, the green feature branch and the `git merge` hand
 footer says the branch is not ready to merge and adds a second line with the gate's reason and the
 `tests.log` path (`footerFor` in `display.mjs` carries `testsReason`; `render.mjs` prints it), so the
 person watching sees why without opening a log. A `preparing` row is active, with the spinner, so the
-screen does not look stalled during an `npm ci`.
+screen does not look stalled during an `npm ci`. While the end gate runs, the header reads
+`N/N done · running the tests` with the spinner, not the finished `✓`, and the footer reads `all N
+task(s) merged · running the plan's setup and tests on pir/{slug} · m:ss`. The gate blocks the
+completing pass, so before running it the command paints and snapshots a run state carrying
+`testing: { since }` (`testingRunState` in `coordinate.mjs`); a detached `pir` viewer ticks the
+spinner and clock from it.
 
 ## End
 

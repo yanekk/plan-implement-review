@@ -715,7 +715,9 @@ export function runPass({ platform, worktree, repo, slug, maxWorkers, state, con
   let readyToMerge = null;
   if (decision.complete) {
     complete = true;
-    const test = runTests(state.feature.path);
+    // The rows ride along so the shell can paint "running the tests" over the full, all-✅ task list
+    // before the suite blocks this pass for its minutes (user 2026-09-25).
+    const test = runTests(state.feature.path, { tasks: parsed.tasks });
     if (test.ok) {
       testsPassed = true;
       readyToMerge = { branch: state.feature.branch };

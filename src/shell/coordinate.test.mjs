@@ -23,6 +23,7 @@ import {
   startupControlHygiene,
   fileControl,
   buildRunState,
+  testingRunState,
   displayPhaseFor,
   waitForReport,
   shouldSelfReport,
@@ -1188,4 +1189,14 @@ test('makePrepare with the real runner runs the lines in the worktree and the ha
   assert.deepEqual(h.poll(), { ok: true, logPath: join(dir, 'setup', 'T01.log') });
   assert.equal(readFileSync(join(dir, 'wt', 'marker'), 'utf8'), 'ready\n');
   assert.match(readFileSync(join(dir, 'setup', 'T01.log'), 'utf8'), /\$ echo ready > marker/);
+});
+
+test('testingRunState marks the run as the end gate running, so a viewer does not read it as finished (user 2026-09-25)', () => {
+  const passTasks = [{ num: 'T01', name: 'one', deps: [], state: '✅' }];
+  const rs = testingRunState(buildRunState({ passTasks, branch: 'pir/demo', ceiling: 4, doneMsByTask: { T01: 5000 } }), { since: 42 });
+  assert.deepEqual(rs.testing, { since: 42 });
+  assert.equal(rs.complete, false);
+  assert.equal(rs.readyToMerge, false);
+  assert.equal(rs.tasks[0].done, true);
+  assert.equal(rs.tasks[0].doneMs, 5000);
 });

@@ -851,6 +851,13 @@ export function buildRunState({
   return { branch, ceiling, complete, readyToMerge: !!readyToMerge, testsReason: testsReason ?? null, interrupted: !!interrupted, tasks };
 }
 
+// testingRunState(runState, { since }) → the same run state marked as the end gate running: `testing`
+// carries when the gate started, so the display says the tests are running and for how long instead of
+// reading as finished. Only painted from inside the completing pass, where every row is already ✅.
+export function testingRunState(runState, { since } = {}) {
+  return { ...runState, complete: false, readyToMerge: false, testsReason: null, testing: { since: since ?? null } };
+}
+
 async function main(argv) {
   const slug = argv[0];
   if (!slug) {
@@ -954,8 +961,13 @@ async function main(argv) {
     /* no DESIGN.md: makePrepare sees no block and runs no setup */
   }
   const prepare = makePrepare({ design, setupDir: join(control.dir, 'setup') });
+  // Set once the display state below exists; runTests calls it before the suite blocks the pass.
+  let showTesting = () => {};
   const coordinator = startCoordinator({ slug, repo, platform, worktree, maxWorkers, control,
-    runTests: (featurePath) => runFeatureTests(featurePath, { slug, root, logPath: join(control.dir, 'tests.log') }),
+    runTests: (featurePath, { tasks } = {}) => {
+      showTesting(tasks ?? []);
+      return runFeatureTests(featurePath, { slug, root, logPath: join(control.dir, 'tests.log') });
+    },
     ...(prepare ? { prepare } : {}),
   });
   const renderer = createRenderer({ stream: process.stdout });
@@ -1098,6 +1110,20 @@ async function main(argv) {
     for (const num of completed) {
       if (doneMsByTask[num] == null) doneMsByTask[num] = t - (startByTask[num] ?? t);
     }
+  };
+
+  // The end gate runs synchronously inside the completing pass, so without this the last frame painted
+  // (every task merged, or the final one still `merging`) sat unchanged for the minutes the suite took
+  // and read as done or frozen (user 2026-09-25). Paint and snapshot a `testing` state first: the
+  // coordinator's own frame cannot tick while the suite blocks it, but a detached `pir` viewer ticks its
+  // spinner and clock from `testing.since`.
+  showTesting = (passTasks) => {
+    const since = Date.now();
+    trackTiming({}, passTasks.map((t) => t.num)); // the last merge's duration, before the pass ends
+    const runState = testingRunState(buildRunState({ passTasks, branch, ceiling: CEILING, doneMsByTask }), { since });
+    lastRunState = runState;
+    if (selfReport) writeRunSnapshot({ controlDir: control.dir, proc, runState });
+    renderer.paint(buildDisplay(runState, { now: since }));
   };
 
   let over = 0;

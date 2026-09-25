@@ -123,7 +123,7 @@ export function styledLines(display, { spinnerChar = SPINNER[0] } = {}) {
   const { summary, rows, footer, branch } = display;
   const out = [summaryLine(summary, footer, branch, spinnerChar)];
   for (const r of rows) out.push(rowLine(r, spinnerChar));
-  for (const f of footerLines(footer, summary)) out.push(f);
+  for (const f of footerLines(footer, summary, spinnerChar)) out.push(f);
   return out;
 }
 
@@ -143,6 +143,11 @@ function summaryLine(summary, footer, branch, spinnerChar) {
   }
   if (summary.finished) {
     return { text: `✓ ${branch || 'run'} · ${summary.done}/${summary.total} done`, style: 'done' };
+  }
+  // Every task merged but the end gate still running: the spinner keeps ticking so the run does not read
+  // as finished or frozen while the suite takes its minutes (user 2026-09-25).
+  if (footer?.kind === 'testing') {
+    return { text: `${spinnerChar} ${branch || 'run'} · ${summary.done}/${summary.total} done · running the tests`, style: null };
   }
   const parts = [`${summary.done}/${summary.total} done`, `${summary.running} running`];
   if (summary.asking > 0) parts.push(`${summary.asking} asking you`);
@@ -169,7 +174,7 @@ function rowLine(r, spinnerChar) {
 // question in the live frame would only bloat the bounded region and is exactly what made the streaming
 // worst while a worker was parked. The model still carries `question` for anything that wants it; the
 // live display does not draw it.
-function footerLines(footer, summary) {
+function footerLines(footer, summary, spinnerChar = SPINNER[0]) {
   const blank = { text: '', style: null };
   switch (footer?.kind) {
     case 'asking': {
@@ -191,6 +196,11 @@ function footerLines(footer, summary) {
       const why = [footer.reason, footer.logPath && `output: ${footer.logPath}`].filter(Boolean).join(' · ');
       if (why) lines.push({ text: `  ${why}`, style: 'red' });
       return lines;
+    }
+    case 'testing': {
+      const el = fmtElapsed(footer.elapsedMs);
+      const text = `${spinnerChar} all ${summary.total} task(s) merged · running the plan's setup and tests on ${footer.branch}${el ? ` · ${el}` : ''}`;
+      return [blank, { text, style: 'active' }];
     }
     case 'interrupted':
       return [blank, { text: '^C — closing workers… main is untouched. Re-run to resume from committed work.', style: 'red' }];

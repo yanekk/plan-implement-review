@@ -190,3 +190,15 @@ test('a preparing task (setup running, DESIGN §2.4) is an active row labelled `
   assert.equal(d.summary.ceilingFull, true, 'it holds its slot under the ceiling');
   assert.equal(d.rows[1].label, 'queued · ceiling full');
 });
+
+test('the end gate running reads as testing, not finished, with its elapsed clock (user 2026-09-25)', () => {
+  const allDone = [task({ id: 'T01', done: true }), task({ id: 'T02', done: true })];
+  const d = buildDisplay({ branch: 'pir/demo', ceiling: 4, tasks: allDone, testing: { since: NOW - 72_000 } }, { now: NOW });
+  assert.equal(d.summary.finished, false, 'every task merged is not finished while the tests run');
+  assert.deepEqual(d.footer, { kind: 'testing', branch: 'pir/demo', elapsedMs: 72_000 });
+
+  // The verdict wins over a stale testing marker: a complete run shows its hand-off.
+  const done = buildDisplay({ branch: 'pir/demo', ceiling: 4, tasks: allDone, complete: true, readyToMerge: true, testing: { since: NOW } }, { now: NOW });
+  assert.equal(done.footer.kind, 'handoff');
+  assert.equal(done.summary.finished, true);
+});

@@ -1246,3 +1246,15 @@ test('restart reviewer on an adopted 🔍 worktree runs no setup (T07)', (t) => 
   assert.equal(result.reason, 'complete');
   assert.equal(calls.length, 0);
 });
+
+test('the end gate is handed the all-✅ rows, so the shell can paint "running the tests" over them (user 2026-09-25)', (t) => {
+  const { base } = setup(t, [{ num: 'T01' }]);
+  const seen = [];
+  const runTests = (_path, opts) => {
+    seen.push(opts?.tasks?.map((r) => `${r.num} ${r.state}`));
+    return { ok: true };
+  };
+  const result = drain({ ...base, runTests });
+  assert.equal(result.reason, 'complete');
+  assert.deepEqual(seen, [['T01 ✅']]);
+});

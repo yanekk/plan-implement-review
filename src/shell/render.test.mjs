@@ -354,3 +354,12 @@ test('a preparing row spins and is tinted active, like a building one (T07)', ()
   const r = createRenderer({ stream, colour: true });
   assert.match(paintDelta(r, stream, display), /\x1b\[36m[^\x1b]*worker-setup/);
 });
+
+test('the end gate running paints a ticking header and a testing footer, not the finished header (user 2026-09-25)', () => {
+  const NOW = 1_000_000;
+  const tasks = [{ id: 'T01', slug: 'one', deps: [], done: true, phase: null, since: null, doneMs: 60_000, question: null }];
+  const lines = formatLines(buildDisplay({ branch: 'pir/demo', ceiling: 4, tasks, testing: { since: NOW - 72_000 } }, { now: NOW }), { spinnerChar: '⠧' });
+  assert.equal(lines[0], '⠧ pir/demo · 1/1 done · running the tests');
+  assert.equal(lines.at(-1), "⠧ all 1 task(s) merged · running the plan's setup and tests on pir/demo · 1:12");
+  assert.ok(!lines.some((l) => l.startsWith('✓')), 'no finished header while the tests run');
+});
