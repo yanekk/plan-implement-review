@@ -67,3 +67,16 @@ test('tokenReport rolls coordinator+workers into the run total and keeps foreign
   assert.equal(rep.run.turns, 3);
   assert.equal(rep.foreign.output, 9999, 'foreign is reported, but only in its own bucket');
 });
+
+// live-workers T16: a bundle now holds conversation logs, where each SDK message is wrapped as
+// `{ dir: 'in', event }` beside pir's own `out`, `request` and `note` entries (DESIGN §2.3).
+test('sumUsage reads the assistant turns a conversation log wraps, and nothing pir wrote', () => {
+  const usage = { input_tokens: 2, cache_creation_input_tokens: 10, cache_read_input_tokens: 100, output_tokens: 5 };
+  const lines = [
+    JSON.stringify({ t: 1, dir: 'out', from: 'pir', kind: 'message', text: 'pir-implement T01' }),
+    JSON.stringify({ t: 2, dir: 'in', event: { type: 'assistant', message: { role: 'assistant', usage } } }),
+    JSON.stringify({ t: 3, dir: 'request', requestId: 'r', toolName: 'Bash', input: {} }),
+    JSON.stringify({ t: 4, dir: 'in', event: { type: 'result', subtype: 'success' } }),
+  ];
+  assert.deepEqual(sumUsage(lines), { turns: 1, input: 2, cacheCreate: 10, cacheRead: 100, output: 5, thinking: 0 });
+});

@@ -125,7 +125,7 @@ test('scratch fixture smoke — npm test is green on a fresh checkout', () => {
   assert.ok(true);
 });
 `,
-    '.gitignore': `node_modules/
+    '.gitignore': `node_modules
 .claude/worktrees/
 plans/*/.parallel/
 `,
