@@ -23,7 +23,7 @@ import { randomUUID } from 'node:crypto';
 import { readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { parseAgentName } from '../core/naming.mjs';
-import { workerActivity } from '../core/stream.mjs';
+import { allowResult, workerActivity } from '../core/stream.mjs';
 import { startTimeOf as startTimeOfReal } from './identity.mjs';
 import { startWorker as realStartWorker, writeWorkersFile } from './worker-proc.mjs';
 
@@ -173,12 +173,15 @@ export function nextLogPath(controlDir, task, role, { readdir = readdirSync } = 
 // (nothing said yet, the opening instruction not yet taken) counts as busy: it has work in hand.
 const NOT_BUSY = new Set(['idle', 'permission', 'questions']);
 
-// createPlatform({ root, controlDir, transport, startWorker, uuid, claudePath, startTimeOf }) → the
+// createPlatform({ root, controlDir, transport, startWorker, uuid, claudePath, startTimeOf, grants }) → the
 // platform object the loop injects. Every worker is a child of this process, so the platform holds them
 // all and list() is its own memory, current the moment a child exits: no listing lags behind, no id
 // differs between spawn and list. `startWorker` is worker-proc's, injected so the tests run it against
 // the fake `claude`; `startTimeOf` stamps workers.json so a reused pid is never mistaken for a worker
-// (DESIGN §2.12). `root` is kept for callers that pass it; nothing here needs the repo any more.
+// (DESIGN §2.12). `grants` is person-inbox's createGrants (T07): every permission request a worker makes
+// is checked against that worker's grants first, and one they cover is allowed by pir at once and logged
+// `delivered-by-grant`, so it never shows as pending. `root` is kept for callers that pass it; nothing
+// here needs the repo any more.
 export function createPlatform({
   controlDir = null,
   transport,
@@ -186,6 +189,7 @@ export function createPlatform({
   uuid = randomUUID,
   claudePath = null,
   startTimeOf = startTimeOfReal,
+  grants = null,
 } = {}) {
   const messaging = createMessaging({ transport });
   const live = new Map(); // id → record, while the child has not exited
@@ -205,6 +209,20 @@ export function createPlatform({
 
   const recordOf = (id) => live.get(id) ?? gone.get(id) ?? null;
 
+  // A `request` entry is logged before worker-proc parks the request on its promise, both inside the one
+  // synchronous canUseTool call, so the answer waits a microtask for the request to be pending. Nothing
+  // else runs in between, so no list() can see it pending. A question set is never answered by a grant.
+  const answerByGrant = (id, worker, entry) => {
+    if (entry.dir !== 'request' || entry.toolName === 'AskUserQuestion') return;
+    const request = { toolName: entry.toolName, input: entry.input };
+    if (grants.decide(id, request) !== 'allow-by-grant') return;
+    queueMicrotask(() => {
+      if (worker.answer(entry.requestId, allowResult(request), { from: 'pir' })) {
+        worker.note('delivered-by-grant', { requestId: entry.requestId, toolName: entry.toolName });
+      }
+    });
+  };
+
   return {
     // spawn({ cwd, name, phase, note }) → id. The id is a uuid pir chose and passes as the session id,
     // so it is the worker's id everywhere (DESIGN §2.1). The opening instruction is the first user message.
@@ -219,6 +237,7 @@ export function createPlatform({
       const rec = { id, worker, name, cwd, task, role: phase, logPath, pid: worker.pid, startTime: null };
       rec.startTime = rec.pid ? startTimeOf(rec.pid) : null;
       live.set(id, rec);
+      if (grants) worker.onEvent((entry) => answerByGrant(id, worker, entry));
       worker.onExit(() => {
         live.delete(id);
         gone.set(id, rec);
@@ -302,6 +321,21 @@ export function createPlatform({
       const rec = recordOf(id);
       if (!rec) return { ok: false };
       return { ok: rec.worker.answer(requestId, result, { from }) };
+    },
+
+    // pending(id) → the worker's unanswered requests, as core/stream.mjs reads them (`kind` permission or
+    // questions, `requestId`, `toolName`, `input`, `suggestions`, …). An exited or unknown worker has none.
+    pending(id) {
+      return live.get(id)?.worker.pending() ?? [];
+    },
+
+    // note(id, kind, fields) → { ok }. A `note` entry in the worker's log, live or exited (the person
+    // inbox's `undelivered`, T07); an unknown id has no log.
+    note(id, kind, fields = {}) {
+      const rec = recordOf(id);
+      if (!rec) return { ok: false };
+      rec.worker.note(kind, fields);
+      return { ok: true };
     },
 
     // logPathOf(id) → the worker's conversation log, live or exited; null for an id never spawned here.
