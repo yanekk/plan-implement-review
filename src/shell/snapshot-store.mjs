@@ -18,6 +18,7 @@
 import * as nodeFs from 'node:fs';
 import { join } from 'node:path';
 import { serializeSnapshot, parseSnapshot } from '../core/snapshot.mjs';
+import { writeFileAtomic } from './atomic-write.mjs';
 
 const SNAPSHOT_FILE = 'status.json';
 // The temp file the write renames from. Same directory as status.json (so the rename stays on one
@@ -38,10 +39,7 @@ export function snapshotPath(controlDir) {
 // fresh run cannot fail on an absent directory. `fs` is injectable for the tests; it defaults to
 // node:fs.
 export function writeSnapshot(controlDir, snap, { fs = nodeFs } = {}) {
-  fs.mkdirSync(controlDir, { recursive: true });
-  const tempPath = join(controlDir, TEMP_FILE);
-  fs.writeFileSync(tempPath, serializeSnapshot(snap));
-  fs.renameSync(tempPath, snapshotPath(controlDir));
+  writeFileAtomic(snapshotPath(controlDir), serializeSnapshot(snap), { fs, tempPath: join(controlDir, TEMP_FILE) });
 }
 
 // readSnapshot(controlDir, { fs }) → snap | null. Reads status.json and parses it through T03.
