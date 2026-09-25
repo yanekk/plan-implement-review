@@ -145,6 +145,8 @@ in and no `result` has come back), `idle` (last turn ended, nothing pending), `p
 request has no reply). The loop's existing `isBusy` and force-idle logic read this instead of
 `claude agents` status.
 
+T00, 2026-09-25: stands. A `result` with nothing pending was never followed by another message in 20 s, over five results.
+
 A task row shows "asking you" when the worker has a report of kind question/decision/conflict (as
 today) or a pending permission or question set. The row says which: `asking you · allow a command?`,
 `asking you · a question`. The asking footer reads `● Txx slug — asking you; open it (→) to answer`, and the
@@ -185,9 +187,9 @@ worker's description. Keys: `y` allow once, `n` refuse, `a` allow and do not ask
 this. Typing a reply instead refuses and sends the text as the refusal message, so the worker sees why.
 
 "Do not ask again" is remembered by pir, per worker, in memory for the worker's life, never written to
-any settings file (user 2026-09-24). pir keeps it because Claude does not: returning
-`updatedPermissions` with `destination:"session"` did not stop the next identical request (measured
-on the raw line 2026-09-24; T00 rechecks it through the SDK). The grant is the `addRules` rule Claude
+any settings file (user 2026-09-24). pir keeps it so every
+request the grant allows still reaches pir and shows in the conversation; an allow therefore never returns
+`updatedPermissions` to Claude (user 2026-09-25, T00 review). The grant is the `addRules` rule Claude
 itself suggested for that request, which the SDK passes to `canUseTool` as `suggestions`; a later request from the same worker that the rule matches is allowed by pir at once and
 logged as `delivered-by-grant`. Matching follows Claude's rule form: an exact `ruleContent` matches the
 identical input; a `prefix:*` form matches any command starting with the prefix. When a request carries
@@ -203,6 +205,11 @@ pir answers by resolving the pending `canUseTool` promise with a `PermissionResu
 `behavior:"deny"` with the message `The person refused.` or the typed text. A request left unanswered
 keeps its promise open. The SDK itself sets no deadline ("permission prompts have no park deadline",
 sdk.d.ts 0.3.282); whether Claude gives up on a long-unanswered request is not yet measured; T00 checks it.
+
+T00, 2026-09-25: a request left 300 s unanswered was not timed out. Through the SDK, Claude did honour a
+session `addRules` grant (contrary to the raw-line row). pir still keeps its own list (user 2026-09-25, T00
+review): an allow never carries `updatedPermissions`, so every later match reaches `canUseTool` and is logged
+as `delivered-by-grant`. Returning suggestions would also apply their `setMode acceptEdits`.
 
 ### 2.7 Question sets
 
@@ -277,6 +284,7 @@ fight over the cursor.
 A worker does not reliably die with a coordinator killed by SIGKILL: a child mid-command was still alive
 22 s after its parent was killed (measured 2026-09-24). An idle SDK-driven worker whose parent exited
 hard was gone within about a second (measured 2026-09-25), which does not cover the mid-command case.
+T00, 2026-09-25: stands. Re-measured through the SDK: alive 10 s after the parent's SIGKILL, mid-command.
 pir spawns the process itself through `spawnClaudeCodeProcess` (§2.1), so it has the pid. So:
 
 - The coordinator writes `control/workers.json`, `[{ id, task, role, pid, startTime }]`, temp-then-rename,
