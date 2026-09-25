@@ -35,7 +35,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T09 | asking-kinds | T05, T08 | ✅ | |
 | T10 | runtime-deps | T00 | ✅ | |
 | T11 | screen-on-pi-tui | T10 | ✅ | |
-| T12 | task-selection | T09, T11 | ⬜ | |
+| T12 | task-selection | T09, T11 | ✅ | |
 | T13 | conversation-view | T02, T07, T12 | ⬜ | |
 | T14 | worker-contract | T05 | ✅ | |
 | T15 | sunset-pir-coordinate | T10 | ✅ | |
