@@ -8,7 +8,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -23,6 +23,8 @@ import {
   wrapLine,
   readLogTail,
 } from './pir-tui.mjs';
+import { FrameView, SGR, clipSpans } from './pir-view.mjs';
+import { visibleWidth } from '@earendil-works/pi-tui';
 import { buildDashboard, initialUi } from '../core/dashboard.mjs';
 import { buildDisplay } from '../core/display.mjs';
 import { formatLines } from './render.mjs';
@@ -258,7 +260,7 @@ test('createScreen on a non-TTY appends plain text with no escapes; on a colour 
   assert.match(plain, /alpha/, 'the content is still there, just plain');
 
   const tty = fakeStream({ isTTY: true });
-  const s2 = createScreen({ stream: tty, colour: true });
+  const s2 = createScreen({ stream: tty, colour: true, terminal: fakeTerminal(tty) });
   s2.paint(buildListFrame(buildDashboard(VIEWS), initialUi()));
   const coloured = tty.text();
   assert.ok(coloured.includes('\x1b[32m'), 'a colour TTY tints green (running)');
@@ -266,14 +268,15 @@ test('createScreen on a non-TTY appends plain text with no escapes; on a colour 
   assert.ok(coloured.includes('\x1b[?1049h') && coloured.includes('\x1b[?25l'), 'and enters the alternate screen, hiding the cursor');
 });
 
-test('createScreen clips each line to the terminal width and caps the frame at its row budget', () => {
+test('createScreen clips each line to the terminal width and cuts the frame at its rows, keeping the top', () => {
   const tty = fakeStream({ isTTY: true, columns: 20, rows: 3 });
-  const s = createScreen({ stream: tty, colour: false });
+  const s = createScreen({ stream: tty, colour: false, terminal: fakeTerminal(tty) });
   s.paint(buildListFrame(buildDashboard(VIEWS), initialUi()));
-  const body = tty.text().replace(/\x1b\[[0-9;?]*[A-Za-z]/g, ''); // strip escapes, leave drawn text
-  const lines = body.split('\n');
-  for (const ln of lines) assert.ok([...ln].length <= 20, `no drawn line exceeds the width: ${JSON.stringify(ln)}`);
-  assert.ok(lines.length <= 3, `the frame is capped at the row budget, got ${lines.length}`);
+  const rows = drawnRows(tty.text());
+  assert.equal(rows.length, 3, 'exactly the terminal\'s rows are drawn');
+  for (const ln of rows) assert.ok([...ln].length <= 20, `no drawn line exceeds the width: ${JSON.stringify(ln)}`);
+  assert.equal(rows[0], 'pir  runs on this ma', 'the frame is cut from the top, as before: the title stays');
+  assert.match(rows[2], /^  SLUG/, 'the third line is the column header, not the tail of the frame');
 });
 
 test('the TUI restores raw mode and leaves the alternate screen even when a paint throws (§5.1, T15)', async () => {
@@ -395,11 +398,8 @@ test('the watch view wraps a long run.log path so it survives painting at a narr
   // Paint the frame at 40 cols and confirm the FULL path is still there — if it had not wrapped, the paint
   // would clip it to 40 and lose its tail. rows is generous so no path line is dropped for height.
   const tty = fakeStream({ isTTY: true, columns, rows: 60 });
-  createScreen({ stream: tty, colour: false }).paint(frame);
-  const painted = tty
-    .text()
-    .replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '')
-    .replace(/[\n ]/g, '');
+  createScreen({ stream: tty, colour: false, terminal: fakeTerminal(tty) }).paint(frame);
+  const painted = drawnRows(tty.text()).join('').replace(/ /g, '');
   assert.ok(painted.includes(`${controlDir}/run.log`), 'the full path survives painting at 40 cols — it wrapped, not clipped');
 });
 
@@ -442,6 +442,65 @@ function fakeStream({ isTTY = true, columns = 80, rows = 24 } = {}) {
     },
     text: () => chunks.join(''),
   };
+}
+
+// pi-tui's Terminal seam over a fakeStream: output goes to the stream, input is fed with `press`, and
+// start/stop are recorded (a real ProcessTerminal sets and restores raw mode in exactly those two calls).
+function fakeTerminal(stream) {
+  const t = {
+    started: 0,
+    stopped: 0,
+    onInput: null,
+    onResize: null,
+    start(onInput, onResize) {
+      t.started += 1;
+      t.onInput = onInput;
+      t.onResize = onResize;
+    },
+    stop() {
+      t.stopped += 1;
+      t.onInput = null;
+    },
+    drainInput: async () => {},
+    write: (d) => stream.write(d),
+    get columns() {
+      return stream.columns;
+    },
+    get rows() {
+      return stream.rows;
+    },
+    kittyProtocolActive: false,
+    moveBy() {},
+    hideCursor() {},
+    showCursor() {},
+    clearLine() {},
+    clearFromCursor() {},
+    clearScreen() {},
+    setTitle() {},
+    setProgress() {},
+    press: (data) => t.onInput?.(data),
+  };
+  return t;
+}
+
+// The rows pi-tui left on screen after its paints: it addresses each row absolutely (`CSI row;1H`), so
+// replaying the writes into a row map and stripping every other escape gives the drawn text per row.
+function drawnRows(out) {
+  const rows = [];
+  const re = /\x1b\[(\d+);1H/g;
+  let m;
+  const marks = [];
+  while ((m = re.exec(out))) marks.push({ row: Number(m[1]) - 1, at: m.index + m[0].length });
+  marks.forEach((mk, i) => {
+    const end = i + 1 < marks.length ? marks[i + 1].at - `\x1b[${marks[i + 1].row + 1};1H`.length : out.length;
+    rows[mk.row] = out
+      .slice(mk.at, end)
+      .replace(/\x1b\][^\x07]*\x07/g, '') // OSC (pi-tui closes each line's hyperlink)
+      .replace(/\x1b_[^\x1b]*\x1b\\/g, '') // APC
+      .replace(/\x1b\[[0-9;?<>=]*[A-Za-z]/g, ''); // CSI
+  });
+  while (rows.length && !rows.at(-1)) rows.pop();
+  return rows.map((r) => r ?? '');
 }
 
 test('a running watch frame draws a merge conflict\'s paste-in prompt under the live block, orange head, exact lines (user 2026-09-24)', () => {
@@ -493,4 +552,117 @@ test('↓ reaches every row when two repos share a slug, and stop acts on the se
 
   await onData('\x1b');
   await done;
+});
+
+test('FrameView paints a span in the same SGR sequence render.mjs\'s map produces, and plain with colour off', () => {
+  // render.mjs does not export its map, so read its six codes from its source: this is the proof the
+  // reused watch frame colours exactly as the coordinator paints it.
+  const src = readFileSync(new URL('./render.mjs', import.meta.url), 'utf8');
+  const block = src.slice(src.indexOf('const SGR = {'), src.indexOf('};', src.indexOf('const SGR = {')));
+  const renderMap = Object.fromEntries([...block.matchAll(/(\w+): '([^']*)'/g)].map(([, k, v]) => [k, v.replace(/\\x1b/g, '\x1b')]));
+  assert.deepEqual(Object.keys(renderMap).sort(), ['active', 'asking', 'conflict', 'done', 'idle', 'red']);
+  for (const [style, code] of Object.entries(renderMap)) {
+    assert.equal(SGR[style], code, `pir-view carries render.mjs's ${style} code unchanged`);
+    const [line] = new FrameView(() => [[{ text: 'T05 work', style }]]).render(80);
+    assert.equal(line, `${code}T05 work\x1b[0m`, `a ${style} span paints as render.mjs would`);
+  }
+  const [mixed] = new FrameView(() => [[{ text: 'a', style: 'head' }, { text: 'b', style: null }]]).render(80);
+  assert.equal(mixed, '\x1b[1ma\x1b[0mb', 'a plain span gets no escape');
+  const [plain] = new FrameView(() => [[{ text: 'a', style: 'head' }]], { colour: false }).render(80);
+  assert.equal(plain, 'a', 'colour off paints the bare text');
+});
+
+test('FrameView clips a line to the width across spans, never wraps, and counts wide characters as two', () => {
+  const view = new FrameView(() => [[{ text: '漢字', style: 'done' }, { text: 'abcdef', style: null }], [{ text: 'x'.repeat(50) }]]);
+  const lines = view.render(7);
+  assert.equal(lines.length, 2, 'one output line per frame line: nothing wraps');
+  assert.equal(lines[0], '\x1b[32m漢字\x1b[0mabc', 'the two wide characters take four of the seven columns');
+  assert.equal(visibleWidth(lines[1]), 7);
+  assert.equal(new FrameView(() => [[{ text: 'ab漢' }]], { colour: false }).render(3)[0], 'ab', 'a wide character straddling the edge is dropped, not half-drawn');
+  assert.deepEqual(clipSpans([{ text: 'abc', style: 'x' }], 0), [], 'zero width draws nothing');
+});
+
+test('decodeKey reads the Kitty-protocol forms pi-tui may negotiate, and ignores key-ups and terminal replies', () => {
+  assert.equal(decodeKey('\x1b[27u'), 'quit', 'Kitty Esc');
+  assert.equal(decodeKey('\x1b[13u'), 'open', 'Kitty Enter');
+  assert.equal(decodeKey('\x1b[99;5u'), 'quit', 'Kitty Ctrl+C');
+  assert.equal(decodeKey('\x1b[115;5u'), 'ctrlS', 'Kitty Ctrl+S');
+  assert.equal(decodeKey('\x1b[120;5u'), 'ctrlX', 'Kitty Ctrl+X');
+  assert.equal(decodeKey('\x1b[1;1:3A'), null, 'a key release is not a press');
+  assert.equal(decodeKey('\x1b[6;16;8t'), null, 'the cell-size reply is not a key (FINDINGS 2026-09-25)');
+  assert.equal(decodeKey(''), null);
+});
+
+test('through pi-tui: keys move and open, Esc quits, and the terminal is stopped and the alternate screen left', async () => {
+  const tty = fakeStream({ isTTY: true, columns: 100, rows: 30 });
+  const term = fakeTerminal(tty);
+  const rows = [
+    { key: 'r__alpha', slug: 'alpha', repo: 'r', state: 'finished', progress: { done: 1, total: 1 }, workers: 0, record: { repo: 'r', slug: 'alpha' } },
+    { key: 'r__beta', slug: 'beta', repo: 'r', state: 'finished', progress: { done: 1, total: 1 }, workers: 0, record: { repo: 'r', slug: 'beta' } },
+  ];
+  const done = openDashboard({
+    stdin: { setRawMode: () => assert.fail('pi-tui owns raw mode; the loop must not touch stdin') },
+    stdout: tty,
+    refreshMs: 60_000,
+    makeScreen: (opts) => createScreen({ ...opts, colour: false, terminal: term }),
+    load: () => buildDashboard(rows),
+  });
+  assert.equal(term.started, 1, 'the pi-tui terminal is started once');
+  const selected = () => drawnRows(tty.text()).find((l) => l.startsWith('▎'));
+  assert.match(selected(), /alpha/);
+  term.press('\x1b[B');
+  await new Promise((r) => setImmediate(r));
+  assert.match(selected(), /beta/, '↓ moved the selection');
+  term.press('\x1b[C');
+  await new Promise((r) => setImmediate(r));
+  assert.ok(drawnRows(tty.text()).some((l) => l.startsWith('beta')), '→ opened the run');
+  term.press('\x1b');
+  await done;
+  assert.equal(term.stopped, 1, 'the terminal is stopped (raw mode restored) exactly once');
+  assert.ok(tty.text().endsWith('\x1b[?1049l\x1b[?25h\x1b[?2026l'), 'the alternate screen is left last, cursor shown, and no frame printed after it');
+});
+
+test('through pi-tui: a throw inside painting stops the terminal and leaves the alternate screen before rethrowing (§2.14)', async () => {
+  const tty = fakeStream({ isTTY: true });
+  const term = fakeTerminal(tty);
+  const boom = { toString: () => { throw new Error('paint blew up'); } };
+  await assert.rejects(
+    openDashboard({
+      stdin: {},
+      stdout: tty,
+      makeScreen: (opts) => {
+        const screen = createScreen({ ...opts, terminal: term });
+        return { ...screen, paint: () => screen.paint([[{ text: boom, style: null }]]) };
+      },
+      load: () => buildDashboard([]),
+    }),
+    /paint blew up/,
+  );
+  assert.equal(term.started, 1);
+  assert.equal(term.stopped, 1, 'the terminal is stopped on the way out');
+  assert.ok(tty.text().includes('\x1b[?1049l'), 'the alternate screen is left');
+});
+
+test('through pi-tui: a throw in a render pi-tui starts on its own (a resize) reaches the loop, which restores and rethrows', async () => {
+  const tty = fakeStream({ isTTY: true });
+  const term = fakeTerminal(tty);
+  let bad = false;
+  // A span that paints fine until `bad` is set, so the loop's own paints succeed and only pi-tui's
+  // resize render, on its own timer outside the loop's try, meets the throw.
+  const flaky = { toString: () => { if (bad) throw new Error('resize paint'); return 'ok'; } };
+  const done = openDashboard({
+    stdin: {},
+    stdout: tty,
+    refreshMs: 60_000,
+    makeScreen: (opts) => {
+      const screen = createScreen({ ...opts, terminal: term });
+      return { ...screen, paint: () => screen.paint([[{ text: flaky, style: null }]]) };
+    },
+    load: () => buildDashboard([]),
+  });
+  bad = true;
+  term.onResize();
+  await assert.rejects(done, /resize paint/, 'the error is rethrown from the loop, not left uncaught on a timer');
+  assert.equal(term.stopped, 1, 'the terminal is stopped');
+  assert.ok(tty.text().includes('\x1b[?1049l'), 'the alternate screen is left');
 });
