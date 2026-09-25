@@ -12,6 +12,8 @@ changed.
 
 | Date | | Finding |
 |---|---|---|
+| 2026-09-25 | ✅ | T11, verified by hand with the user: old and new `pir` screens side by side on seeded runs in every state (asking, conflict, crashed, end tests, red, green, stopped, twin slugs): "identical". A pty cell-by-cell diff of 39 screens also matched. |
+| 2026-09-25 | 📌 | T11: pi-tui `TuiAltScreen` defaults would change the screen: mouse capture (steals terminal text selection) and, on `stop()`, reprinting the last frame onto the main screen. pir passes `mouse:false` and `stop({preserveScreen:true})`. |
 | 2026-09-25 | 📌 | T10: `.npmrc` needs `omit[]=peer` / `omit[]=optional`; a repeated plain `omit=` keeps only the last, and `npm ci` then installed all 95 SDK peers. A CLI `--omit=dev` replaces the `.npmrc` list, so install.sh repeats all three. |
 | 2026-09-25 | 📌 | T10: pi-tui 0.87.1 has no `TUI` export; its screens are `TuiMainScreen` and `TuiAltScreen` (T11). With optionals omitted `npm ci` leaves empty `@babel`, `@hono`, `@modelcontextprotocol`, `@stablelib` scope folders holding no package. |
 | 2026-09-25 | 🔄 | T00 review: Claude honours SDK session grants, but the user kept pir's own "don't ask again" list so every grant-allowed request stays visible; pir never returns `updatedPermissions` (DESIGN §2.6). |
