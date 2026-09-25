@@ -14,7 +14,7 @@ writes a cell also fixes the over-budget cell they walk past.
 **Last updated:** 2026-09-25
 **Starts after:** `declared-test-command` is merged to main (user 2026-09-24, plan review): done,
 d1f95ac, 2026-09-25. `nudge-quiet-worker` and `resume-dead-worker` wait for this plan.
-**Next `pir-work` will:** T00, the only task with no dependency.
+**Next `pir-work` will:** T02, T03 or T10 (T01 done).
 
 ## Tasks
 
@@ -24,7 +24,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | # | Task | Depends on | State | Notes |
 |---|---|---|---|---|
 | T00 | prove-live-worker | — | ✅ | |
-| T01 | stream-protocol | T00 | 🔍 | `src/core/stream.mjs`, 29 tests, both fixtures from one haiku probe. Deviations: `readEntry` also takes a raw line string (truncated line → raw); events add `role` on text, `from` on sent/interrupt/reply, `event` on system; note reads `{kind:'note', note}`; a `delivered-by-grant` note with `requestId` clears pending. Wire fixture lines are `{dir, line}`. |
+| T01 | stream-protocol | T00 | ✅ | `src/core/stream.mjs`, 30 tests, fixtures from one haiku probe; recorded deviations (raw line input, extra event fields, grant note clears pending) accepted. Review fix: a request pending at an interrupt stayed `permission` forever; reproduced by SDK probe, now dropped at the turn's result. Probed fixture scrubbing, malformed entries. |
 | T02 | conversation-model | T01 | ⬜ | |
 | T03 | person-input | T01 | ⬜ | |
 | T04 | worker-process | T01, T10 | ⬜ | |
@@ -43,7 +43,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T17 | docs | T06, T07, T08, T13, T14, T15 | ⬜ | |
 | T18 | live-run | T08, T13, T14, T16, T17 | ⬜ | |
 
-**Review queue:** T01
+**Review queue:** empty
 
 ## Blocked on the user
 
