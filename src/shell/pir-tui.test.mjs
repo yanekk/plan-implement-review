@@ -661,3 +661,175 @@ test('through pi-tui: a throw in a render pi-tui starts on its own (a resize) re
   assert.equal(term.stopped, 1, 'the terminal is stopped');
   assert.ok(tty.text().includes('\x1b[?1049l'), 'the alternate screen is left');
 });
+
+// --- the task row in the run live view (live-workers T12, DESIGN §2.11) -----------------------------
+
+const T12_TASKS = [
+  { id: 'T01', slug: 'one', deps: [], done: true, phase: null, worker: { id: 'w1', live: false, logPath: '/c/w1.jsonl' } },
+  { id: 'T02', slug: 'two', deps: [], done: false, phase: 'building', since: NOW - 5000, worker: { id: 'w2', live: true, logPath: '/c/w2.jsonl' } },
+  { id: 'T03', slug: 'three', deps: ['T02'], done: false, phase: null, worker: null },
+];
+const tasksRun = (tasks, over = {}) => ({
+  key: 'repo__plan',
+  slug: 'plan',
+  state: 'running',
+  repo: 'repo',
+  progress: { done: 0, total: tasks.length },
+  workers: 0,
+  snap: { runState: { branch: 'pir/plan', ceiling: 2, tasks } },
+  record: { repo: 'repo', slug: 'plan' },
+  ...over,
+});
+
+test('the selection bar draws on the selected task row in the list\'s style; every other line is the coordinator\'s', () => {
+  const run = tasksRun(T12_TASKS);
+  const ui = { ...initialUi(), view: 'watch', openSlug: 'plan', taskSel: 1 };
+  const frame = buildWatchFrame(run, { now: NOW, ui });
+  const block = formatLines(buildDisplay(run.snap.runState, { now: NOW }), { spinnerChar: '⠋' });
+  const drawn = frame.slice(2, 2 + block.length);
+  drawn.forEach((line, i) => {
+    const text = line.map((s) => s.text).join('');
+    if (i === 2) {
+      assert.equal(line[0].text, '▎ ');
+      assert.equal(line[0].style, 'selected', 'the same span style the list uses for its bar');
+      assert.equal(text, '▎ ' + block[i].slice(2), 'the bar replaces the row\'s leading two spaces');
+    } else {
+      assert.equal(text, block[i], `line ${i} is unchanged`);
+    }
+  });
+  // The list's own bar is the same span.
+  const listBar = buildListFrame(buildDashboard(VIEWS), initialUi()).flat().find((s) => s.text === '▎ ');
+  assert.deepEqual(listBar, frame.flat().find((s) => s.text === '▎ '));
+});
+
+test('a task selection past the end draws the bar on the last task row', () => {
+  const frame = buildWatchFrame(tasksRun(T12_TASKS), { now: NOW, ui: { ...initialUi(), view: 'watch', taskSel: 9 } });
+  assert.match(frameText(frame).split('\n').find((l) => l.startsWith('▎')), /T03/);
+});
+
+test('the watch footer shows the no-worker note above the key hint, and the hint names the task keys', () => {
+  const ui = { ...initialUi(), view: 'watch', note: 'T03 has no worker yet — it starts when T02 is merged.' };
+  const text = frameText(buildWatchFrame(tasksRun(T12_TASKS), { now: NOW, ui })).split('\n');
+  assert.equal(text.at(-2), 'T03 has no worker yet — it starts when T02 is merged.');
+  assert.equal(text.at(-1), '↑↓ pick a task · → open its worker · ← back · Ctrl+S Ctrl+S stop this run · esc quit');
+  assert.equal(findSpan(buildWatchFrame(tasksRun(T12_TASKS), { now: NOW, ui }), 'has no worker').style, 'dim');
+});
+
+test('the list frame is byte-identical whatever the task-selection fields hold (T11\'s list)', () => {
+  const t11Ui = { view: 'list', sel: 1, openSlug: null, openKey: null, armed: null };
+  const t12Ui = { ...t11Ui, taskSel: 3, openWorker: null, note: null };
+  assert.deepEqual(buildListFrame(buildDashboard(VIEWS), t12Ui), buildListFrame(buildDashboard(VIEWS), t11Ui));
+});
+
+// Drive runTui with a scripted loader; `rows()` is re-read on every refresh/keypress.
+function driveTui(rows, extra = {}) {
+  let onData = null;
+  const frames = [];
+  const stdin = { on: (_e, fn) => (onData = fn), off: () => {} };
+  const done = openDashboard({
+    stdin,
+    stdout: {},
+    refreshMs: 60_000,
+    now: () => NOW,
+    makeScreen: () => ({ paint: (f) => frames.push(f), close: () => {} }),
+    load: () => buildDashboard(rows()),
+    ...extra,
+  });
+  const text = () => frameText(frames.at(-1));
+  const barRow = () => text().split('\n').find((l) => l.startsWith('▎'));
+  return { key: (k) => onData(k), text, barRow, done, frames };
+}
+
+test('runTui: → on a task opens its worker, ← comes back to the same task, ↑↓ never move the list selection', async () => {
+  const other = { key: 'a__first', slug: 'first', state: 'finished', repo: 'a', progress: { done: 0, total: 0 }, workers: 0, record: {} };
+  const t = driveTui(() => [other, tasksRun(T12_TASKS, { key: 'r__plan', repo: 'r' })]);
+  await t.key('\x1b[B'); // list: onto `plan`
+  await t.key('\r'); // open the run
+  assert.match(t.barRow(), /T01/, 'the task selection starts at the first task');
+  await t.key('\x1b[B'); // T02
+  assert.match(t.barRow(), /T02/);
+  await t.key('\x1b[C'); // → opens T02's live worker
+  assert.match(t.text(), /worker w2 · live/);
+  assert.match(t.text(), /conversation log: \/c\/w2\.jsonl/);
+  await t.key('\x1b[D'); // ← back to the live view
+  assert.match(t.barRow(), /T02/, 'the task selection is kept');
+  await t.key('\x1b[D'); // ← back to the list
+  assert.match(t.barRow(), /plan/, 'the list selection did not drift while ↑↓ moved the task row');
+  await t.key('\x1b');
+  await t.done;
+});
+
+test('runTui: → on a task with no worker shows the note; a finished worker opens read-only', async () => {
+  const t = driveTui(() => [tasksRun(T12_TASKS)]);
+  await t.key('\r');
+  await t.key('\x1b[B');
+  await t.key('\x1b[B'); // T03
+  await t.key('\x1b[C');
+  assert.match(t.barRow(), /T03/);
+  assert.match(t.text(), /T03 has no worker yet — it starts when T02 is merged\./);
+  await t.key('\x1b[A');
+  assert.doesNotMatch(t.text(), /has no worker/, 'the note clears on the next key');
+  await t.key('\x1b[A'); // T01, finished
+  await t.key('\r');
+  assert.match(t.text(), /worker w1 · finished, read only/);
+  await t.key('\x1b');
+  await t.done;
+});
+
+test('runTui: the task selection survives a refresh that adds or removes task rows (pinned by id)', async () => {
+  let tasks = T12_TASKS;
+  const t = driveTui(() => [tasksRun(tasks)]);
+  await t.key('\r');
+  await t.key('\x1b[B'); // T02
+  await t.key('\x1b[B'); // T03
+  // Ctrl+X is inert in watch on a running run, so it serves as "repaint from a fresh read".
+  const refresh = () => t.key('\x18');
+  tasks = [{ id: 'T00', slug: 'zero', deps: [], done: true, phase: null, worker: null }, ...T12_TASKS];
+  await refresh();
+  assert.match(t.barRow(), /T03/, 'a row added above does not move the selection off T03');
+  tasks = T12_TASKS.filter((x) => x.id !== 'T01');
+  await refresh();
+  assert.match(t.barRow(), /T03/, 'a row removed above does not move it either');
+  tasks = [{ id: 'T00', slug: 'zero', deps: [], done: true, phase: null, worker: null }, ...T12_TASKS];
+  await t.key('\x1b[A'); // the read this key makes has T00 on top again: ↑ goes from T03 to T02
+  assert.match(t.barRow(), /T02/, 'an arrow moves from where the task is now, not from a stale index');
+  await t.key('\x1b[B');
+  tasks = T12_TASKS.filter((x) => x.id !== 'T03');
+  await refresh();
+  assert.match(t.barRow(), /T02/, 'the selected task gone: the index clamps to the last row');
+  await t.key('\x1b');
+  await t.done;
+});
+
+test('runTui: two runs of one slug keep their own task selection, by run key', async () => {
+  const a = tasksRun(T12_TASKS, { key: 'a__plan', repo: 'a' });
+  const b = tasksRun(T12_TASKS, { key: 'b__plan', repo: 'b' });
+  const t = driveTui(() => [a, b]);
+  await t.key('\r'); // open a
+  await t.key('\x1b[B');
+  await t.key('\x1b[B'); // a: T03
+  await t.key('\x1b[D'); // list
+  await t.key('\x1b[B'); // onto b
+  await t.key('\r');
+  assert.match(t.barRow(), /T01/, 'b starts at its own first task, not a\'s T03');
+  await t.key('\x1b[B'); // b: T02
+  await t.key('\x1b[D');
+  await t.key('\x1b[A'); // onto a
+  await t.key('\r');
+  assert.match(t.barRow(), /T03/, 'a kept its selection');
+  await t.key('\x1b');
+  await t.done;
+});
+
+test('runTui: Ctrl+S Ctrl+S in watch still stops the open run with a task selected', async () => {
+  const stopped = [];
+  const t = driveTui(() => [tasksRun(T12_TASKS)], { stop: async (record) => stopped.push(record.slug) });
+  await t.key('\r');
+  await t.key('\x1b[B');
+  await t.key('\x13');
+  assert.match(t.text(), /Ctrl\+S again to stop plan/);
+  await t.key('\x13');
+  assert.deepEqual(stopped, ['plan']);
+  await t.key('\x1b');
+  await t.done;
+});

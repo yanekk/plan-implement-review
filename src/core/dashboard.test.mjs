@@ -5,7 +5,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildDashboard, dashboardReducer, initialUi } from './dashboard.mjs';
+import { buildDashboard, dashboardReducer, initialUi, noWorkerNote } from './dashboard.mjs';
 
 // One resolved run view in the shape the shell hands the model (state already from classifyRun, T01).
 const view = (over) => ({
@@ -242,4 +242,126 @@ test('a non-running run can never produce a stop intent', () => {
   const armed = { view: 'list', sel: 1, openSlug: null, armed: { action: 'stop', slug: 'run-finished' } };
   const r = dashboardReducer(armed, { type: 'ctrlS' }, RUNS);
   assert.equal(r.intent, null);
+});
+
+// --- the task row in the run live view (live-workers T12, DESIGN §2.11) -----------------------------
+
+// A run view carrying a snapshot whose runState.tasks are the live view's task rows, in order.
+const task = (id, over) => ({ id, slug: `s-${id}`, deps: [], done: false, phase: null, worker: null, ...over });
+const withTasks = (over, tasks) => view({ ...over, snap: { runState: { tasks } } });
+const LIVE = { id: 'w-live', live: true, logPath: '/c/conversations/w-live.jsonl' };
+const DEAD = { id: 'w-dead', live: false, logPath: '/c/conversations/w-dead.jsonl' };
+const TASKED = [
+  withTasks({ slug: 'plan', key: 'r1__plan' }, [
+    task('T01', { done: true, worker: DEAD }),
+    task('T02', { phase: 'building', worker: LIVE }),
+    task('T03', { deps: ['T02'] }),
+    task('T04'),
+    task('T05', { phase: 'preparing' }),
+    task('T06', { done: true }),
+  ]),
+  view({ slug: 'other' }),
+];
+const watchingTasks = (over) => ({ ...initialUi(), view: 'watch', sel: 1, openSlug: 'plan', openKey: 'r1__plan', ...over });
+
+test('in watch, up/down move taskSel and clamp to the task rows; the list sel does not drift', () => {
+  let ui = watchingTasks();
+  ui = dashboardReducer(ui, { type: 'up' }, TASKED).ui;
+  assert.equal(ui.taskSel, 0, 'up clamps at the first task');
+  for (let i = 0; i < 10; i++) ui = dashboardReducer(ui, { type: 'down' }, TASKED).ui;
+  assert.equal(ui.taskSel, 5, 'down clamps at the last of six tasks');
+  assert.equal(ui.sel, 1, 'the list selection stays where it was');
+  assert.equal(ui.view, 'watch');
+});
+
+test('in watch on a run with no snapshot, the arrows keep taskSel at 0', () => {
+  const ui = { ...initialUi(), view: 'watch', openSlug: 'other' };
+  assert.equal(dashboardReducer(ui, { type: 'down' }, TASKED).ui.taskSel, 0);
+});
+
+test('opening a run from the list starts its task selection at the top', () => {
+  const ui = { ...initialUi(), taskSel: 4 };
+  const opened = dashboardReducer(ui, { type: 'open' }, TASKED).ui;
+  assert.equal(opened.view, 'watch');
+  assert.equal(opened.taskSel, 0);
+});
+
+test('two runs of one slug: the task rows are the run named by openKey', () => {
+  const twin = withTasks({ slug: 'plan', key: 'r2__plan' }, [task('T09', { worker: LIVE })]);
+  const views = [TASKED[0], twin];
+  const ui = watchingTasks({ openKey: 'r2__plan' });
+  assert.equal(dashboardReducer(ui, { type: 'down' }, views).ui.taskSel, 0, 'r2 has one task, so down clamps at 0');
+  const opened = dashboardReducer(ui, { type: 'open' }, views).ui;
+  assert.equal(opened.openWorker.taskId, 'T09', 'open reads the r2 run, not the first same-slug row');
+});
+
+test('open on a task with a live worker goes to the worker view with the snapshot\'s log path', () => {
+  const r = dashboardReducer(watchingTasks({ taskSel: 1 }), { type: 'open' }, TASKED);
+  assert.equal(r.ui.view, 'worker');
+  assert.deepEqual(r.ui.openWorker, { taskId: 'T02', workerId: 'w-live', logPath: '/c/conversations/w-live.jsonl', live: true });
+  assert.equal(r.intent, null);
+});
+
+test('open on a task whose workers have all finished opens the latest one read-only', () => {
+  const r = dashboardReducer(watchingTasks({ taskSel: 0 }), { type: 'open' }, TASKED);
+  assert.equal(r.ui.view, 'worker');
+  assert.deepEqual(r.ui.openWorker, { taskId: 'T01', workerId: 'w-dead', logPath: '/c/conversations/w-dead.jsonl', live: false });
+});
+
+test('open on a task with no worker stays in watch and sets a footer note saying why', () => {
+  const noteAt = (taskSel) => {
+    const r = dashboardReducer(watchingTasks({ taskSel }), { type: 'open' }, TASKED);
+    assert.equal(r.ui.view, 'watch');
+    assert.equal(r.ui.openWorker, null);
+    return r.ui.note;
+  };
+  assert.equal(noteAt(2), 'T03 has no worker yet — it starts when T02 is merged.');
+  assert.equal(noteAt(3), 'T04 has no worker yet — it starts when a slot frees up.');
+  assert.equal(noteAt(4), 'T05 has no worker yet — its worktree is being set up.');
+  assert.equal(noteAt(5), 'T06 has no worker to open — it was merged before this run started.');
+});
+
+test('a task in progress with no worker to open says none is running, not that it waits for a slot (T12 review, user 2026-09-25)', () => {
+  // After a restart the coordinator's task state survives but this process's worker list does not, so a
+  // task can read `building` or `merge conflict` with worker null.
+  for (const phase of ['building', 'reviewing', 'merging', 'asking']) {
+    const task = { id: 'T07', deps: [], done: false, phase, worker: null };
+    assert.equal(noWorkerNote(task, [task]), 'T07 has no worker to open — none is running for it right now.');
+  }
+});
+
+test('the footer note clears on the next event', () => {
+  const noted = dashboardReducer(watchingTasks({ taskSel: 3 }), { type: 'open' }, TASKED).ui;
+  assert.ok(noted.note);
+  assert.equal(dashboardReducer(noted, { type: 'down' }, TASKED).ui.note, null);
+});
+
+test('back from the worker view returns to watch with the task selection kept', () => {
+  const inWorker = dashboardReducer(watchingTasks({ taskSel: 1 }), { type: 'open' }, TASKED).ui;
+  const back = dashboardReducer(inWorker, { type: 'back' }, TASKED);
+  assert.equal(back.ui.view, 'watch');
+  assert.equal(back.ui.taskSel, 1);
+  assert.equal(back.ui.openWorker, null);
+  assert.equal(back.ui.openKey, 'r1__plan', 'still on the same run');
+  assert.equal(back.intent, null);
+});
+
+test('in the worker view every event but back is inert, the chords included', () => {
+  const inWorker = dashboardReducer(watchingTasks({ taskSel: 1 }), { type: 'open' }, TASKED).ui;
+  for (const type of ['up', 'down', 'open', 'ctrlS', 'ctrlX', 'select']) {
+    const r = dashboardReducer(inWorker, { type, index: 0 }, TASKED);
+    assert.equal(r.ui.view, 'worker', type);
+    assert.deepEqual(r.ui.openWorker, inWorker.openWorker, type);
+    assert.equal(r.ui.taskSel, 1, type);
+    assert.equal(r.ui.armed, null, type);
+    assert.equal(r.intent, null, type);
+  }
+});
+
+test('Ctrl+S in watch still arms and fires stop for the open run with a task selected', () => {
+  const ui = watchingTasks({ openSlug: 'plan', openKey: 'r1__plan', taskSel: 2 });
+  const first = dashboardReducer(ui, { type: 'ctrlS' }, TASKED);
+  assert.deepEqual(first.ui.armed, { action: 'stop', slug: 'plan', key: 'r1__plan' });
+  const second = dashboardReducer(first.ui, { type: 'ctrlS' }, TASKED);
+  assert.deepEqual(second.intent, { type: 'stop', slug: 'plan', key: 'r1__plan' });
 });

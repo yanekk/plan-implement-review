@@ -50,23 +50,50 @@ export function runKey(view) {
 
 // The navigation state the reducer owns. `view` is which block is on screen; `sel` is the highlighted
 // row index in the list; `openSlug` is the run the watch view is showing and `openKey` its identity
-// (null when it was opened by slug alone, `pir {slug}`); `armed` is the pending confirm, null unless a
+// (null when it was opened by slug alone, `pir {slug}`); `taskSel` is the highlighted task row in the
+// watch view (live-workers §2.11); `openWorker` is the worker the 'worker' view shows; `note` is a
+// one-shot footer line (why a task row did not open); `armed` is the pending confirm, null unless a
 // chord's first press has landed.
 export function initialUi() {
-  return { view: 'list', sel: 0, openSlug: null, openKey: null, armed: null };
+  return { view: 'list', sel: 0, openSlug: null, openKey: null, taskSel: 0, openWorker: null, note: null, armed: null };
+}
+
+// openTasks(views, ui) → the open run's task list, in the live view's row order (buildDisplay maps
+// runState.tasks one row per task, in order), or [] when the run has no snapshot yet.
+export function openTasks(views, ui) {
+  return findOpen(views, ui)?.snap?.runState?.tasks ?? [];
+}
+
+// Why a task row with no worker to open did not open (live-workers §2.11: "a task with no worker yet
+// says so in the footer"). Worded after the approved prototype's "T15 has no worker yet — it starts
+// when T12 is merged."
+export function noWorkerNote(task, tasks = []) {
+  const id = task?.id ?? 'This task';
+  if (task?.done) return `${id} has no worker to open — it was merged before this run started.`;
+  if (task?.phase === 'preparing') return `${id} has no worker yet — its worktree is being set up.`;
+  // Any other phase is a task in progress whose worker this process does not hold — after a restart the
+  // task state is restored but platform.workers() starts empty — so "waiting for a slot" would be false.
+  if (task?.phase) return `${id} has no worker to open — none is running for it right now.`;
+  const done = new Set(tasks.filter((t) => t.done).map((t) => t.id));
+  const unmet = (task?.deps ?? []).filter((d) => !done.has(d));
+  if (unmet.length > 0) return `${id} has no worker yet — it starts when ${unmet.join(', ')} ${unmet.length === 1 ? 'is' : 'are'} merged.`;
+  return `${id} has no worker yet — it starts when a slot frees up.`;
 }
 
 // dashboardReducer(ui, event, views) → { ui, intent } (DESIGN §2.3, §2.6, §2.7).
 //
-//   ui    = { view:'list'|'watch', sel, openSlug, armed }
+//   ui    = { view:'list'|'watch'|'worker', sel, openSlug, openKey, taskSel, openWorker, note, armed }
 //           armed: null | { action:'stop'|'remove', slug, key }
+//           openWorker: null | { taskId, workerId, logPath, live }
 //   event = { type, ... }:
-//     {type:'down'} {type:'up'}     move selection, clamped to the list ends
+//     {type:'down'} {type:'up'}     move selection, clamped to the list ends; in watch, the task row
 //     {type:'select', index}        set selection (a click)
-//     {type:'open'}                 list → watch on the selected run
-//     {type:'back'}                 watch → list; list → intent {type:'quit'}
+//     {type:'open'}                 list → watch on the selected run; watch → worker on the selected
+//                                   task's worker (the snapshot's `worker`, T09), else a footer `note`
+//     {type:'back'}                 worker → watch (taskSel kept); watch → list; list → intent quit
 //     {type:'ctrlS'}                arm/confirm stop on the selected (list) or open (watch) run
 //     {type:'ctrlX'}                arm/confirm remove on the selected run
+//   In 'worker' only `back` acts: the conversation view's keys are T13's, so the rest are inert here.
 //   views — the current resolved views (the output of buildDashboard's `rows`, or anything carrying
 //           {slug, state} per row). Passed rather than held so the reducer stays a pure function of its
 //           inputs and never caches run data (DESIGN §2.3): it needs the length to clamp `sel` and the
@@ -81,20 +108,40 @@ export function initialUi() {
 // which is why an intervening `down` between two Ctrl+S presses re-arms from scratch rather than firing.
 export function dashboardReducer(ui, event, views = []) {
   const len = views.length;
+  // `note` is one-shot like `armed`: whatever the next event is, it clears.
+  ui = { ...ui, note: null };
+  if (ui.view === 'worker') {
+    if (event?.type === 'back') return { ui: { ...ui, view: 'watch', openWorker: null, armed: null }, intent: null };
+    return { ui: { ...ui, armed: null }, intent: null };
+  }
   switch (event?.type) {
     case 'down':
-      return { ui: { ...ui, sel: clamp(ui.sel + 1, len), armed: null }, intent: null };
-    case 'up':
-      return { ui: { ...ui, sel: clamp(ui.sel - 1, len), armed: null }, intent: null };
+    case 'up': {
+      const step = event.type === 'down' ? 1 : -1;
+      // In the live view the arrows move the task row, and the list's `sel` stays where it was.
+      if (ui.view === 'watch') {
+        return { ui: { ...ui, taskSel: clamp((ui.taskSel ?? 0) + step, openTasks(views, ui).length), armed: null }, intent: null };
+      }
+      return { ui: { ...ui, sel: clamp(ui.sel + step, len), armed: null }, intent: null };
+    }
     case 'select':
       return { ui: { ...ui, sel: clamp(event.index, len), armed: null }, intent: null };
-    case 'open':
-      // Only the list opens a run; from watch, `open` has nothing new to open, so it just clears the arm.
+    case 'open': {
+      if (ui.view === 'watch') {
+        const tasks = openTasks(views, ui);
+        const task = tasks[ui.taskSel ?? 0];
+        if (!task) return { ui: { ...ui, armed: null }, intent: null };
+        const w = task.worker;
+        if (!w?.id) return { ui: { ...ui, note: noWorkerNote(task, tasks), armed: null }, intent: null };
+        const openWorker = { taskId: task.id, workerId: w.id, logPath: w.logPath ?? null, live: !!w.live };
+        return { ui: { ...ui, view: 'worker', openWorker, armed: null }, intent: null };
+      }
       if (ui.view !== 'list') return { ui: { ...ui, armed: null }, intent: null };
       return {
-        ui: { ...ui, view: 'watch', openSlug: views[ui.sel]?.slug ?? null, openKey: runKey(views[ui.sel]), armed: null },
+        ui: { ...ui, view: 'watch', openSlug: views[ui.sel]?.slug ?? null, openKey: runKey(views[ui.sel]), taskSel: 0, armed: null },
         intent: null,
       };
+    }
     case 'back':
       // Esc steps back one level: watch → list (no confirm), and list → quit `pir` outright (DESIGN §2.3:
       // quitting stops nothing, so there is no confirm here — the confirms are on stop/remove only).
