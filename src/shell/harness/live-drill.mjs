@@ -6,7 +6,7 @@
 //
 //   node src/shell/harness/live-drill.mjs --into <trusted scratch> [--out <screens file>] [--only T03,T04]
 //
-// It installs the fixture into the scratch folder, opens `pir live-workers-demo` there under a pty (which
+// It installs the fixture into the scratch folder, opens `pir start live-workers-demo` there under a pty (which
 // starts the run, PARALLEL_MAX_WORKERS=2), and then, every two seconds, reads the workers' conversation
 // logs and does the one thing each task needs (nextAction): Esc on T01 while its 90 s pause runs, then a
 // typed instruction; Enter on T02's permission; the single-choice question on T01 with ↓ Enter; the
@@ -146,7 +146,7 @@ async function main(argv) {
   installFixture(SLUG, { into });
   if (argv.includes('--only')) markDoneExcept(into, argv[argv.indexOf('--only') + 1].split(','));
   const controlDir = join(into, 'plans', SLUG, '.parallel', 'control');
-  const screen = openScreen({ cols: 100, rows: 34, args: [SLUG], cwd: into, env: { ...process.env, PARALLEL_MAX_WORKERS: '2' } });
+  const screen = openScreen({ cols: 100, rows: 34, args: ['start', SLUG], cwd: into, env: { ...process.env, PARALLEL_MAX_WORKERS: '2' } });
   const LEFT = '\x1b[D';
   const RIGHT = '\x1b[C';
   const DOWN = '\x1b[B';

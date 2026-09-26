@@ -328,7 +328,7 @@ export function createReportInbox({ dir } = {}) {
 // Closing an already-gone id is a safe no-op.
 //
 // It closes workers ONLY and never removes a task worktree or branch, on any exit. Those branches are
-// the durable record of in-flight work, and the next `pir {slug}` reconciles them from git: a 🔍 branch
+// the durable record of in-flight work, and the next `pir start {slug}` reconciles them from git: a 🔍 branch
 // goes to review, a half-built one is resumed. Removing them on exit is what made a restart rebuild
 // everything: on 2026-09-22 a full disk (ENOSPC) threw, the `error` teardown deleted a built T04, a
 // built T06 and a half-built T07 in real-screen-time, and the next start implemented all three again.
@@ -937,7 +937,7 @@ async function main(argv) {
     process.exit(1);
   }
 
-  console.log(`pir ${slug} — plan reviewed (${gate.note}). This is a plain command; there is no coordinator session.`);
+  console.log(`pir start ${slug} — plan reviewed (${gate.note}). This is a plain command; there is no coordinator session.`);
 
   const maxWorkers = Number(process.env.PARALLEL_MAX_WORKERS ?? 4);
 
