@@ -196,7 +196,7 @@ export function createConversationView({
     scrollBack = Math.max(0, scrollBack + by);
   }
 
-  // A key while the box is empty and a request is pinned: y/n/a for a permission, ↑↓ space Enter for a
+  // A key while the box is empty and a request is pinned: Enter/n/a for a permission, ↑↓ space Enter for a
   // question set. true when the prompt took the key.
   function promptKey(key) {
     const p = livePrompt();
@@ -204,7 +204,7 @@ export function createConversationView({
     if (p.kind === 'permission') {
       const { gate, send: decision } = gateReducer(p, key);
       prompt = gate;
-      if (!decision) return key === 'y' || key === 'n' || key === 'a';
+      if (!decision) return key === 'enter' || key === 'n' || key === 'a';
       if (send({ kind: 'permission', requestId: p.requestId, decision }, 'your answer')) answered.add(p.requestId);
       return true;
     }
@@ -254,7 +254,7 @@ export function createConversationView({
   // (user 2026-09-26, T20 review): the pending request is pinned in view, and the person has just used PgUp.
   function hint(m, scrolled) {
     if (m.readOnly) return `← back · PgUp/PgDn scroll · Tab detail · ${m.ended ? 'exited' : 'finished'}, read only`;
-    // ← goes back only with an empty box, and y/n/a answer only then.
+    // ← goes back only with an empty box, and Enter/n/a answer only then.
     if (livePrompt()) return `${scrolled ? '' : 'answer above or type a reply · '}esc interrupt · ← back · Tab detail · PgUp/PgDn`;
     return `↵ send · esc interrupt · ← back · Tab detail · PgUp/PgDn${scrolled ? '' : ' scroll'}`;
   }

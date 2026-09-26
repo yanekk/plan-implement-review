@@ -206,12 +206,12 @@ test('the driver walks the tour on the real pir screen', { timeout: 90000 }, asy
     first: new RegExp(rig.repo),
     keys: [
       { keys: '\r', until: /pick a task/ },
-      { keys: `${ESC}[C`, until: /y allow · n refuse · a allow, don't ask again/ },
-      { keys: 'y', until: /→ allowed[\s\S]*⚑ T01 wants to use Bash\s*\n\s*rm -rf build\// },
-      { keys: 'y', until: /press y again to allow/ },
-      { keys: 'y', until: /⚑ T01 wants to use Write/ },
-      { keys: 'y', until: /\? T01 asks you 2 questions/ },
-      { keys: ' ', until: /\(•\) pir-rig/ },
+      { keys: `${ESC}[C`, until: /↵ allow · n refuse · a allow, don't ask again/ },
+      { keys: '\r', until: /→ allowed[\s\S]*⚑ T01 wants to use Bash\s*\n\s*rm -rf build\// },
+      { keys: '\r', until: /press ↵ again to allow/ },
+      { keys: '\r', until: /⚑ T01 wants to use Write/ },
+      { keys: '\r', until: /\? T01 asks you 2 questions/ },
+      // One Enter chooses the highlighted line of a single-select question (user 2026-09-26, T18 drill).
       { keys: '\r', until: /Which scenarios should it ship with\? \(pick any\)/ },
       { keys: ' ', until: /\[x\] tour/ },
       { keys: `${ESC}[B`, until: /❯ \[ \] long/ },

@@ -235,6 +235,8 @@ test('live-workers-demo: T01 must ask through AskUserQuestion; T02 runs the exac
   const fx = getFixture('live-workers-demo');
   assert.equal(fx.scenario.answerPending, true);
   assert.match(fx.tasks['T01-greeting.md'], /AskUserQuestion tool/);
+  // A 90 s pause first, so the person can interrupt a busy worker.
+  assert.match(fx.tasks['T01-greeting.md'], /run exactly `node -e "setTimeout\(\(\) => \{\}, 90000\)"`/);
   const settings = JSON.parse(fx.seedFiles['.claude/settings.json']);
   assert.deepEqual(settings.permissions.ask, ['Bash(touch approved.txt)']);
   assert.match(fx.tasks['T02-approval.md'], /running exactly `touch approved\.txt`/);

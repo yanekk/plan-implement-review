@@ -285,29 +285,30 @@ test('canAlwaysAllow is false with no addRules suggestion or with suppressAlways
   assert.equal(gateReducer(gateFor(request('r', 'Bash', {}, { suggestions: [] })), 'a').send, null);
 });
 
-test('without defaultToNo: one y allows, n refuses, a allows always, other keys do nothing', () => {
+test('without defaultToNo: one Enter allows, n refuses, a allows always, other keys (y too) do nothing', () => {
   const g = gateFor(request('r'));
-  assert.equal(gateReducer(g, 'y').send, 'allow');
+  assert.equal(gateReducer(g, 'enter').send, 'allow');
+  assert.deepEqual(gateReducer(g, 'y'), { gate: g, send: null }, 'Enter replaced y (user 2026-09-26)');
   assert.equal(gateReducer(g, 'n').send, 'deny');
   assert.equal(gateReducer(g, 'a').send, 'allow-always');
   assert.deepEqual(gateReducer(g, 'x'), { gate: g, send: null });
 });
 
-test('with defaultToNo: y arms, y y allows, y then another key disarms, n refuses at once', () => {
+test('with defaultToNo: Enter arms, Enter Enter allows, Enter then another key disarms, n refuses at once', () => {
   const g = gateFor(request('r', 'Bash', { command: 'x' }, { defaultToNo: true }));
-  const once = gateReducer(g, 'y');
+  const once = gateReducer(g, 'enter');
   assert.equal(once.send, null);
   assert.equal(once.gate.armed, 'allow');
-  assert.ok(all(promptLines(once.gate, { width: 80 })).some((l) => l.includes('press y again to allow')));
-  assert.equal(gateReducer(once.gate, 'y').send, 'allow');
-  assert.equal(gateReducer(once.gate, 'y').gate.armed, false);
+  assert.ok(all(promptLines(once.gate, { width: 80 })).some((l) => l.includes('press ↵ again to allow')));
+  assert.equal(gateReducer(once.gate, 'enter').send, 'allow');
+  assert.equal(gateReducer(once.gate, 'enter').gate.armed, false);
   const disarmed = gateReducer(once.gate, 'x');
   assert.equal(disarmed.send, null);
   assert.equal(disarmed.gate.armed, false);
-  assert.equal(gateReducer(disarmed.gate, 'y').send, null, 'disarmed: the next y arms again');
+  assert.equal(gateReducer(disarmed.gate, 'enter').send, null, 'disarmed: the next Enter arms again');
   assert.equal(gateReducer(g, 'n').send, 'deny');
   assert.equal(gateReducer(once.gate, 'n').send, 'deny');
-  // a approves too, so it arms the same way; y then a does not allow.
+  // a approves too, so it arms the same way; Enter then a does not allow.
   const a1 = gateReducer(g, 'a');
   assert.equal(a1.send, null);
   assert.equal(gateReducer(a1.gate, 'a').send, 'allow-always');
@@ -320,10 +321,10 @@ test('the gate prompt names the keys it offers', () => {
     '⚑ T05 wants to use Bash',
     '  npm test',
     '  (Run the tests)',
-    "  y allow · n refuse · a allow, don't ask again · or type a reply to refuse with it",
+    "  ↵ allow · n refuse · a allow, don't ask again · or type a reply to refuse with it",
   ]);
   const plain = all(promptLines(gateFor(request('r', 'Bash', { command: 'x' }, { suggestions: [] })), { width: 200 }));
-  assert.equal(plain.at(-1), '  y allow · n refuse · or type a reply to refuse with it');
+  assert.equal(plain.at(-1), '  ↵ allow · n refuse · or type a reply to refuse with it');
   assert.deepEqual(promptLines(null), []);
 });
 
@@ -374,12 +375,32 @@ test('picker: Other takes typed text; single-select picks give way to it, multi 
   assert.deepEqual([back.picker.questions[0].picks, back.picker.questions[0].other], [[0], '']);
 });
 
-test('picker: next with no answer is a no-op; empty Other text is no answer', () => {
+test('picker: single-select Enter picks the line under the cursor and moves on (user 2026-09-26)', () => {
+  const r = run(picker(), [{ type: 'down' }, { type: 'next' }]);
+  assert.equal(r.picker.q, 1);
+  assert.deepEqual(r.picker.questions[0].picks, [1]);
+  // A picked option is replaced by the one under the cursor at Enter.
+  const moved = run(picker(), [{ type: 'toggle' }, { type: 'down' }, { type: 'next' }]);
+  assert.deepEqual(moved.picker.questions[0].picks, [1]);
+  // On Other with no text Enter starts the typing and stays; with text it answers with it.
+  const other = run(picker(), [{ type: 'up' }, { type: 'next' }]);
+  assert.equal(other.picker.q, 0);
+  assert.equal(other.picker.typingOther, true);
+  const typed = run(other.picker, [{ type: 'other', text: 'green' }, { type: 'next' }]);
+  assert.equal(typed.picker.q, 1);
+  assert.equal(typed.picker.questions[0].other, 'green');
+  // A lone single-select question sends at the first Enter.
+  const lone = pickerFor({ requestId: 'q', questions: [QUESTIONS.questions[0]] });
+  assert.deepEqual(pickerReducer(lone, { type: 'next' }).send, { answers: { 'Which colour?': 'red' } });
+});
+
+test('picker: next with no answer is a no-op on a multi-select question; empty Other text is no answer', () => {
   const p = picker();
-  assert.deepEqual(pickerReducer(p, { type: 'next' }), { picker: p, send: null });
-  const r = run(p, [{ type: 'other', text: '   ' }, { type: 'next' }]);
+  const r = run(p, [{ type: 'up' }, { type: 'other', text: '   ' }, { type: 'next' }]);
   assert.equal(r.picker.q, 0);
   assert.equal(r.send, null);
+  const onMulti = run(p, [{ type: 'next' }]).picker;
+  assert.deepEqual(pickerReducer(onMulti, { type: 'next' }), { picker: onMulti, send: null });
   const last = run(p, [{ type: 'toggle' }, { type: 'next' }, { type: 'next' }]);
   assert.equal(last.picker.q, 1);
   assert.equal(last.send, null, 'the last question unanswered sends nothing');
@@ -394,7 +415,7 @@ test('the picker prompt shows the current question, its boxes and the cursor', (
     '    ( ) red  r',
     '  ❯ (•) blue  b',
     '    ( ) Other  type your own answer in the box',
-    '  ↑↓ move · space choose · ↵ next question · or type a reply to explain instead',
+    '  ↑↓ move · ↵ choose, next question · or type a reply to explain instead',
   ]);
   const multi = run(r.picker, [{ type: 'next' }, { type: 'toggle' }, { type: 'down' }, { type: 'down' }, { type: 'down' }, { type: 'toggle' }]);
   const lines = all(promptLines(multi.picker, { width: 200, taskId: 'T05' }));

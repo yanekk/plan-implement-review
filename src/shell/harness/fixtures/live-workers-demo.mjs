@@ -19,6 +19,11 @@ const title = 'Live workers demo — a question set and a permission, answered i
 // is caught by it.
 const ASKED_COMMAND = 'touch approved.txt';
 
+// T01 opens with a pause so a busy worker waits long enough for the person to press Esc on it (the T18
+// drill: the person was too slow to interrupt a worker that finished in seconds, user 2026-09-26). A
+// node timer, not `sleep`: the Bash tool refuses a standalone `sleep` (FINDINGS 2026-09-25).
+const PAUSE_COMMAND = 'node -e "setTimeout(() => {}, 90000)"';
+
 const progress = progressDoc({
   slug,
   summary:
@@ -34,7 +39,9 @@ const tasks = {
     num: 'T01',
     title: 'Write the greeting file (asks a question set)',
     goal:
-      'Create `greeting.txt` at the repo root holding the greeting the person picks, followed by one trailing ' +
+      `First, before anything else, run exactly \`${PAUSE_COMMAND}\` with the Bash tool: a 90-second pause ` +
+      'that gives the person time to practise interrupting you. If you are interrupted, follow what the ' +
+      'person types next. Then create `greeting.txt` at the repo root holding the greeting the person picks, followed by one trailing ' +
       'newline and nothing else. The wording is the person\'s choice, not yours. Ask it with the ' +
       '**AskUserQuestion tool** (not a plain-text question): one question, "Which greeting should greeting.txt ' +
       'hold?", header "Greeting", single-select, options `Hello, world` and `Hi there`. Wait for the answer, ' +

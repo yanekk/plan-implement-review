@@ -183,8 +183,9 @@ The `pir` screen and the coordinator are separate processes. The screen writes o
 ### 2.6 Permission requests
 
 A permission request (a `canUseTool` call, logged as a `request` entry) shows in the conversation with the tool, the command or input, and the
-worker's description. Keys: `y` allow once, `n` refuse, `a` allow and do not ask this worker again for
-this. Typing a reply instead refuses and sends the text as the refusal message, so the worker sees why.
+worker's description. Keys: Enter on the empty box allows once, `n` refuse, `a` allow and do not ask this
+worker again for this. Typing a reply instead refuses and sends the text as the refusal message, so the
+worker sees why. Enter replaced `y` (user 2026-09-26, T18 drill), so a reply starting with "y" cannot approve.
 
 "Do not ask again" is remembered by pir, per worker, in memory for the worker's life, never written to
 any settings file (user 2026-09-24). pir keeps it so every
@@ -197,8 +198,8 @@ no `addRules` suggestion, `a` is not offered.
 
 Claude flags some requests itself (`canUseTool` options, sdk.d.ts 0.3.282), and pir honours both flags (user
 2026-09-25, re-review): `suppressAlwaysAllowRule` means the rule would grant more than this request, so `a`
-is not offered; `defaultToNo` means one stray key must not approve it, so the first `y` only arms the gate
-("press y again to allow") and a second `y` allows, the press-twice pattern pir uses for stop and remove.
+is not offered; `defaultToNo` means one stray key must not approve it, so the first Enter only arms the gate
+("press ↵ again to allow") and a second Enter allows, the press-twice pattern pir uses for stop and remove.
 Any other key disarms. `n` refuses in one press as usual.
 
 pir answers by resolving the pending `canUseTool` promise with a `PermissionResult`. A refusal is
@@ -215,7 +216,9 @@ as `delivered-by-grant`. Returning suggestions would also apply their `setMode a
 
 An AskUserQuestion request (`input.questions[]`: `question`, `header`, `options[{label,description}]`,
 `multiSelect`) shows as a picker, one question at a time, like Claude's own: ↑↓ move, space picks or
-ticks, Enter goes to the next question and on the last sends. Every question gets a final "Other" line
+ticks, Enter goes to the next question and on the last sends. On a single-select question Enter also picks
+the highlighted line, so one Enter answers it (user 2026-09-26, T18 drill); on its Other line with nothing
+typed, Enter starts the typing. Every question gets a final "Other" line
 that takes the typed text as the answer. The `canUseTool` result is `behavior:"allow"`, `updatedInput` = the request's
 input plus `answers: { "<question text>": "<label>" }`, several labels joined with `", "` (the round trip
 was measured). Typing a reply instead of using the picker sends `decline-questions`: pir refuses the

@@ -300,10 +300,11 @@ export function gateFor(request) {
 }
 
 // gateReducer(gate, key) → { gate, send }. `send` is null or 'allow' | 'deny' | 'allow-always'.
-// With confirmAllow (Claude's defaultToNo) one stray key must not approve: the first y arms, a second y
-// allows, any other key disarms; `a` approves too, so it arms the same way and a second `a` sends
-// allow-always. `armed` records which approval is armed ('allow' | 'allow-always'), or false. `n`
-// refuses in one press.
+// Enter on the empty box allows (user 2026-09-26, T18 drill: it replaced `y`, so a typed reply starting
+// with "y" can no longer approve). With confirmAllow (Claude's defaultToNo) one stray key must not
+// approve: the first Enter arms, a second Enter allows, any other key disarms; `a` approves too, so it
+// arms the same way and a second `a` sends allow-always. `armed` records which approval is armed
+// ('allow' | 'allow-always'), or false. `n` refuses in one press.
 export function gateReducer(gate, key) {
   const disarmed = { ...gate, armed: false };
   const approve = (action) => {
@@ -311,7 +312,7 @@ export function gateReducer(gate, key) {
     return { gate: { ...gate, armed: action }, send: null };
   };
   if (key === 'n') return { gate: disarmed, send: 'deny' };
-  if (key === 'y') return approve('allow');
+  if (key === 'enter') return approve('allow');
   if (key === 'a' && gate.canAlwaysAllow) return approve('allow-always');
   return { gate: disarmed, send: null };
 }
@@ -342,7 +343,9 @@ function answerOf(qn) {
 // question text. Events: up/down move (wrapping), toggle picks (single-select replaces, multi-select
 // ticks; on Other it sets `typingOther` so the view takes the box's text), other {text} sets the Other
 // answer (a single-select's picks give way to it), next moves on, and on the last question sends. next
-// on an unanswered question does nothing.
+// on an unanswered question does nothing. On a single-select question next first picks the line under the
+// cursor, so one Enter answers it (user 2026-09-26, T18 drill); on its Other line with no text yet, next
+// starts the typing instead.
 export function pickerReducer(picker, event) {
   const qn = picker.questions[picker.q];
   if (!qn) return { picker, send: null };
@@ -371,7 +374,11 @@ export function pickerReducer(picker, event) {
       return { picker: withQuestion(changes, { typingOther: false }), send: null };
     }
     case 'next': {
-      if (!answerOf(qn)) return { picker, send: null };
+      if (!qn.multiSelect) {
+        if (picker.cursor < qn.options.length) picker = withQuestion({ picks: [picker.cursor], other: '' });
+        else if (!qn.other) return { picker: { ...picker, typingOther: true }, send: null };
+      }
+      if (!answerOf(picker.questions[picker.q])) return { picker, send: null };
       if (picker.q < picker.questions.length - 1) {
         return { picker: { ...picker, q: picker.q + 1, cursor: 0, typingOther: false }, send: null };
       }
@@ -392,9 +399,9 @@ export function promptLines(prompt, { width = 80, taskId = 'worker' } = {}) {
   if (prompt?.kind === 'permission') {
     const out = gateHead(prompt, taskId, w);
     let keys;
-    if (prompt.armed === 'allow') keys = 'press y again to allow · any other key cancels';
+    if (prompt.armed === 'allow') keys = 'press ↵ again to allow · any other key cancels';
     else if (prompt.armed === 'allow-always') keys = 'press a again to allow and not ask again · any other key cancels';
-    else keys = `y allow · n refuse${prompt.canAlwaysAllow ? " · a allow, don't ask again" : ''} · or type a reply to refuse with it`;
+    else keys = `↵ allow · n refuse${prompt.canAlwaysAllow ? " · a allow, don't ask again" : ''} · or type a reply to refuse with it`;
     out.push(...wrapped('  ', keys, 'prompt', w));
     return out;
   }
@@ -419,7 +426,9 @@ export function promptLines(prompt, { width = 80, taskId = 'worker' } = {}) {
     const last = prompt.q === total - 1;
     const hint = prompt.typingOther
       ? 'type your answer in the box, then ↵'
-      : `↑↓ move · space ${qn.multiSelect ? 'tick' : 'choose'} · ↵ ${last ? 'send answers' : 'next question'} · or type a reply to explain instead`;
+      : qn.multiSelect
+        ? `↑↓ move · space tick · ↵ ${last ? 'send answers' : 'next question'} · or type a reply to explain instead`
+        : `↑↓ move · ↵ ${last ? 'choose and send' : 'choose, next question'} · or type a reply to explain instead`;
     out.push(...wrapped('  ', hint, 'prompt', w));
     return out;
   }
