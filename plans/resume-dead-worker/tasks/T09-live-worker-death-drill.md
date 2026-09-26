@@ -5,7 +5,8 @@
 ## Goal
 
 See the fix work over real agents: a real worker killed mid-task is revived on its kept branch, a
-second kill falls back to a fresh worker, and the task rows read right to the person in `pir`.
+second kill falls back to a fresh worker, and the task rows and the conversation view read right in
+`pir`. The worker drives `pir` itself and judges the screen (CLAUDE.md; `pir-e2e` skill).
 
 ## Environment (the worker owns this)
 
@@ -17,9 +18,9 @@ run whose workers use the installed engine and skills (DESIGN §5.3).
 node src/shell/harness/run.mjs worker-death --into <trusted scratch A>
 node src/shell/harness/run.mjs worker-death-twice --into <trusted scratch B>
 # watched run: install the worker-death fixture into trusted scratch C (fixtures.installFixture), then
-cd <scratch C> && PARALLEL_MAX_WORKERS=1 node src/shell/pir.mjs worker-death    # detached, the branch's engine
-# SIGKILL T01's implementer pid once `T01: part 1` is on its branch (Kill a scratch worker)
-# teardown: HALT if still running; claude agents --json --all shows no fixture session; delete A, B, C
+# drive `PARALLEL_MAX_WORKERS=1 node src/shell/pir.mjs worker-death` in a pseudo-terminal rig (pir-e2e)
+# SIGKILL T01's implementer pid from control/workers.json once `T01: part 1` is on its branch
+# teardown: Ctrl+S twice or HALT; no fixture worker pid from workers.json still alive; delete A, B, C
 ```
 
 ## Outside actions
@@ -33,22 +34,19 @@ cd <scratch C> && PARALLEL_MAX_WORKERS=1 node src/shell/pir.mjs worker-death    
 Both harness runs: every fact PASS; record each bundle path. `worker-death-twice` must show
 `fellBackAfterSecondDeath`.
 
-## Needs a person
+## Worker drill (the worker judges)
 
-Start the watched run first, then hand this over and wait:
+In the watched run, capture the screen at each step and judge it against DESIGN §2.6:
 
-```
-Needs you — I cannot see this from here:
+- after the kill, T01's row reads `implementing · worker restarted 1×`, then the task finishes and merges;
+- opening T01 (→) shows one conversation: the worker's work before the kill, the `exited` line, the
+  `revived` line, pir's continuation message, and the worker carrying on;
+- nothing on screen is confusing, cut off or missing next to the prototype-era views.
 
-  node <scratch C>/src/shell/pir.mjs          # the viewer only; ↵ opens the worker-death run
-
-Expect: T01's row reads `implementing · worker restarted 1×` after the kill, then the task finishes
-and merges.
-Tell me: does the row read right, and is anything on screen confusing or missing?
-```
+Record the verdict as worker-driven, not as verified by hand.
 
 ## Done when
 
 - [ ] Both harness runs PASS, bundle paths in FINDINGS with the date.
-- [ ] The person's verdict on the rows is recorded in FINDINGS as a ✅ row with the date.
-- [ ] No fixture session is left in `claude agents --json --all`; scratches A, B and C are deleted.
+- [ ] The drill's verdict and captures are recorded in FINDINGS as a worker-driven 📌 row with the date.
+- [ ] No fixture worker is left running; scratches A, B and C are deleted.

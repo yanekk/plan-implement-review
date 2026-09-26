@@ -10,12 +10,13 @@ with its restarts so a `pir` user sees them.
 
 ## Design sections this implements
 
-DESIGN §2.6.
+DESIGN §2.6, and §2.3 for the conversation log.
 
 ## Files
 
 - `src/shell/coordinate.mjs`, `src/shell/coordinate.test.mjs`
 - `src/core/display.mjs`, `src/core/display.test.mjs`
+- `src/core/conversation.mjs`, `src/core/conversation.test.mjs` (the `revived` note line)
 - `src/shell/render.mjs` if the row kind needs a style
 
 ## Interface
@@ -28,6 +29,7 @@ DESIGN §2.6.
 //         live phase and deaths > 0 → label `${PHASE_LABEL[phase]} · worker restarted ${deaths}×`
 // deaths/gaveUp are plain task fields; the snapshot stores runState whole, so `pir` paints them too
 // stall exit: the end message lists given-up tasks by number
+// conversation.mjs noteLines: `revived` → one dim line, exactly DESIGN §2.6
 ```
 
 ## Tests
@@ -37,6 +39,7 @@ DESIGN §2.6.
 - [ ] A live task with one death reads `implementing · worker restarted 1×`; with none, its label is unchanged.
 - [ ] A snapshot written and read back keeps `deaths` and `gaveUp`, so the `pir` view shows both.
 - [ ] A stall with a given-up task names it in the end message.
+- [ ] A `revived` note renders as one line in both the step and the full mode; an unknown note kind is unchanged.
 - [ ] A run with no deaths prints nothing new.
 
 ## Done when

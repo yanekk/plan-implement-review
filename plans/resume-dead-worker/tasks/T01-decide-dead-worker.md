@@ -23,6 +23,7 @@ DESIGN §2.2, §2.4, §2.5, §3.3.
 decideResume({ featureTasks, branchStates, deaths = {}, maxDeaths = 3 })
   → { merge, review, resume, revive, giveUp }   // sorted task numbers
 // deaths[num] = { count, role: 'implement'|'review', sessionId: string|null, revived: bool }
+//   sessionId: the dead worker's id mid-run; on restart null when no revivable session was found (§2.7)
 // order: ✅ → merge; count >= maxDeaths → giveUp; branch null → none;
 //        revive-eligible (§2.4) && !revived && sessionId → revive; 🔍 → review; else resume
 

@@ -2,13 +2,10 @@
 
 **Phase:** 3 · **Depends on:** T04 · **Weight:** medium
 
-> The working tree had uncommitted edits to `src/shell/coordinate.mjs` (pass-cap removal) at plan
-> time. They must be committed or dropped by their owner before the run starts (PLAN.md).
-
 ## Goal
 
-Apply the revive-once rule on restart: find each unfinished task's previous worker by name and revive
-it before falling back to a fresh one, and stop destroying the records that makes possible.
+Apply the revive-once rule on restart: find each unfinished task's previous worker in its conversation
+log and revive it before falling back to a fresh one.
 
 ## Design sections this implements
 
@@ -17,35 +14,34 @@ DESIGN §2.7, and §2.3 for the revive itself.
 ## Files
 
 - `src/shell/loop.mjs` (reconcile), `src/shell/loop.test.mjs`
-- `src/shell/coordinate.mjs` (`teardownRun`), `src/shell/coordinate.test.mjs`
+- `src/shell/coordinate.mjs` (pass the reap's unverified pids to the loop), `src/shell/coordinate.test.mjs`
 
 ## Interface
 
 ```js
-// reconcile: after the reap, before decideResume
-const past = platform.history();          // newest per (task, role) whose name parses to this plan
-deaths[num] = { count: 0, role, sessionId, revived: false }   // only for tasks with a kept branch
-// decideResume → revive list → platform.revive; fallback as T04
-// ok → state.closedIds.delete(id) (the reap just added it; DESIGN §2.3), seed state.tasks[num]
-//      { worktree, workerId: id, role, slug, phase, grace: APPEAR_GRACE } so dispatch sees it held
+// startupControlHygiene already reaps workers.json before the first pass. Its result gains the ids of
+// recorded workers it skipped as unverifiable (alive, no startTime); the bin hands them to the loop.
+runPass({ ..., unverifiedIds = new Set() })
+
+// reconcile, before decideResume: for each task with a kept branch, the role the glyph needs (§2.4)
+const last = lastConversation(controlDir, num, role);      // T02
+deaths[num] = { count: 0, role, sessionId: last && !unverifiedIds.has(last.id) ? last.id : null, revived: false }
+// decideResume → revive list → platform.reviveSession({ id, cwd: handle.path, name, task, role, logPath })
+// ok   → seed state.tasks[num] { worktree, workerId: id, role, slug, phase, revived: true }
+// !ok  → the fallback as T04, same pass
 // restart-summary gains `woke ${list} where they left off`
 ```
 
-Per T00: if `-n` plus cwd restores a removed session under its own id, `teardownRun` and the reap keep
-calling `platform.remove` and the restart revive passes the name; otherwise both skip `remove` for
-workers of unfinished tasks and the finish paths still remove.
-
 ## Tests
 
-- [ ] Restart with a half-built branch and a matching past session → one revive in the worktree, no fresh spawn.
-- [ ] A worker the reap closed and the revive woke is not in `closedIds` and is not declared dead next pass.
-- [ ] Same with no past session, or revive fails → a fresh implementer, as today.
-- [ ] 🔍 branch with a past reviewer → reviewer revived; with only a past implementer → fresh reviewer.
+- [ ] Restart with a half-built branch and a matching conversation log → one revive in the worktree under the logged id, no fresh spawn.
+- [ ] Same with no log, a log with no `init`, an unverified id, or a failed revive → a fresh implementer, as today.
+- [ ] 🔍 branch with a reviewer's log → reviewer revived; with only an implementer's log → fresh reviewer.
+- [ ] A restart-revived worker that exits before init falls back without a counted death (T04 rule).
 - [ ] The restart-summary names the woken tasks; a first start prints no summary.
-- [ ] Teardown keeps or removes records per the T00 answer; a merged task's record is still removed.
 - [ ] Existing restart tests pass.
 
 ## Done when
 
 - [ ] Every test above passes in `npm test`.
-- [ ] A restart never has two live sessions for one task.
+- [ ] A restart never has two live workers for one task.
