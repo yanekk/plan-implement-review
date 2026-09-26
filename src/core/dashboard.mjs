@@ -135,13 +135,39 @@ export function runKey(view) {
 // one-shot footer line (why a task row did not open); `armed` is the pending confirm, null unless a
 // chord's first press has landed.
 export function initialUi() {
-  return { view: 'list', sel: 0, openSlug: null, openKey: null, taskSel: 0, openWorker: null, note: null, armed: null };
+  return { view: 'list', sel: 0, openSlug: null, openKey: null, openRun: null, taskSel: 0, openWorker: null, note: null, armed: null };
 }
 
-// openTasks(views, ui) → the open run's task list, in the live view's row order (buildDisplay maps
-// runState.tasks one row per task, in order), or [] when the run has no snapshot yet.
+// The steps a planning run's live view lists (pir-plan-command §2.11), in row order. A run with no
+// snapshot yet still has the three, so the arrows and the footer note work from the first frame.
+const STEP_IDS = ['plan', 'review', 'build'];
+function planSteps(view) {
+  const steps = planState(view)?.steps ?? [];
+  return STEP_IDS.map((id) => steps.find((s) => s.id === id) ?? { id, phase: 'pending', worker: null });
+}
+
+// openTasks(views, ui) → the open run's selectable rows, in the live view's row order: a build's tasks
+// (buildDisplay maps runState.tasks one row per task, in order), or [] when it has no snapshot yet; a
+// planning run's steps.
 export function openTasks(views, ui) {
-  return findOpen(views, ui)?.snap?.runState?.tasks ?? [];
+  const open = findOpen(views, ui);
+  if (open && isPlan(open)) return planSteps(open);
+  return open?.snap?.runState?.tasks ?? [];
+}
+
+// Why a step row did not open (§2.11: a step with no session yet says so in the footer).
+export function noSessionNote(step) {
+  if (step?.id === 'build') return 'build has no conversation here — the build shows its own tasks once it starts.';
+  if (step?.id === 'review') return 'review has no session yet — the reviewer starts when the plan is written.';
+  return 'plan has no session yet — the planner is starting.';
+}
+
+// goOpen(views, ui) → whether the open run is waiting for the person's go (§2.8): the watch view of a
+// planning run whose display state reads `your-go`.
+export function goOpen(views, ui) {
+  if (ui.view !== 'watch') return false;
+  const open = findOpen(views, ui);
+  return !!open && runDisplayState(open) === 'your-go';
 }
 
 // Why a task row with no worker to open did not open (live-workers §2.11: "a task with no worker yet
@@ -182,7 +208,10 @@ export function noWorkerNote(task, tasks = []) {
 //           selected/open row to read the target run's slug and state. This third argument is the one
 //           addition to the interface sketch, which the task's own rule ("it takes the current views")
 //           calls for.
+//     {type:'key', key:'enter'|'n'} while the open planning run waits for the go (goOpen): intent start
+//                                   or decline (pir-plan-command §2.8); otherwise Enter is `open` and `n` inert
 //   intent = null | {type:'quit'} | {type:'stop', slug, key} | {type:'remove', slug, key} | {type:'resume', slug, key}
+//            | {type:'start', slug, key} | {type:'decline', slug, key}
 //           key is runKey of the target run; the caller resolves the run by it, never by slug alone.
 //
 // The one invariant across every branch: any event other than the second half of a chord clears `armed`
@@ -191,6 +220,17 @@ export function noWorkerNote(task, tasks = []) {
 export function dashboardReducer(ui, event, views = []) {
   const len = views.length;
   if (event?.type === 'key' && event.key === 'ctrl+r') event = { type: 'ctrlR' };
+  // The go keys (pir-plan-command §2.8, §2.11): while the open planning run waits for the go, Enter starts
+  // the build and `n` declines it; otherwise Enter opens as → does and `n` is unbound. Esc is not here:
+  // it quits `pir`, which leaves the question in place because nothing is written.
+  if (event?.type === 'key' && (event.key === 'enter' || event.key === 'n')) {
+    if (ui.view === 'watch' && goOpen(views, ui)) {
+      const open = findOpen(views, ui);
+      const type = event.key === 'enter' ? 'start' : 'decline';
+      return { ui: { ...ui, note: null, armed: null }, intent: { type, slug: open.slug, key: runKey(open) } };
+    }
+    event = event.key === 'enter' ? { type: 'open' } : { type: 'unbound' };
+  }
   // `note` is one-shot like `armed`: whatever the next event is, it clears.
   ui = { ...ui, note: null };
   if (ui.view === 'worker') {
@@ -215,20 +255,22 @@ export function dashboardReducer(ui, event, views = []) {
         const task = tasks[ui.taskSel ?? 0];
         if (!task) return { ui: { ...ui, armed: null }, intent: null };
         const w = task.worker;
-        if (!w?.id) return { ui: { ...ui, note: noWorkerNote(task, tasks), armed: null }, intent: null };
+        const plan = isPlan(findOpen(views, ui));
+        if (!w?.id) return { ui: { ...ui, note: plan ? noSessionNote(task) : noWorkerNote(task, tasks), armed: null }, intent: null };
         const openWorker = { taskId: task.id, workerId: w.id, logPath: w.logPath ?? null, live: !!w.live };
         return { ui: { ...ui, view: 'worker', openWorker, armed: null }, intent: null };
       }
       if (ui.view !== 'list') return { ui: { ...ui, armed: null }, intent: null };
       return {
-        ui: { ...ui, view: 'watch', openSlug: views[ui.sel]?.slug ?? null, openKey: runKey(views[ui.sel]), taskSel: 0, armed: null },
+        // A run waiting for the go opens on its build step, the row the question is about (prototype scene 5).
+        ui: { ...ui, view: 'watch', openSlug: views[ui.sel]?.slug ?? null, openKey: runKey(views[ui.sel]), openRun: runIdentity(views[ui.sel]), taskSel: runDisplayState(views[ui.sel]) === 'your-go' ? 2 : 0, armed: null },
         intent: null,
       };
     }
     case 'back':
       // Esc steps back one level: watch → list (no confirm), and list → quit `pir` outright (DESIGN §2.3:
       // quitting stops nothing, so there is no confirm here — the confirms are on stop/remove only).
-      if (ui.view === 'watch') return { ui: { ...ui, view: 'list', openSlug: null, openKey: null, armed: null }, intent: null };
+      if (ui.view === 'watch') return { ui: { ...ui, view: 'list', openSlug: null, openKey: null, openRun: null, armed: null }, intent: null };
       return { ui: { ...ui, armed: null }, intent: { type: 'quit' } };
     case 'ctrlS':
     case 'ctrlX':
@@ -281,8 +323,34 @@ function chord(type, ui, views) {
 }
 
 // findOpen(views, ui) → the run the watch view is showing: by its key when it was opened from the list,
-// by slug when it was opened by `pir start {slug}` (which names no repo), else undefined.
+// by slug when it was opened by `pir start {slug}` (which names no repo), else by the process it was
+// opened on (`openRun`), else undefined. The last is the rename (pir-plan-command §2.6): a planning run's
+// index entry moves from `{repo}__plan-{hex4}` to `{repo}__{slug}` under an open view, and the program
+// that wrote both is the same one, so its repo, pid and start time still name it.
 export function findOpen(views, ui) {
-  if (ui.openKey != null) return views.find((v) => runKey(v) === ui.openKey);
-  return views.find((v) => v.slug === ui.openSlug);
+  const byName = ui.openKey != null ? views.find((v) => runKey(v) === ui.openKey) : views.find((v) => v.slug === ui.openSlug);
+  if (byName || !ui.openRun) return byName;
+  return views.find((v) => sameRun(runIdentity(v), ui.openRun));
+}
+
+// runIdentity(view) → { repo, pid, startTime } of the program behind a run, or null without a record.
+export function runIdentity(view) {
+  const r = view?.record;
+  if (!r || r.pid == null || r.startTime == null) return null;
+  return { repo: r.repo ?? view.repo ?? null, pid: r.pid, startTime: r.startTime };
+}
+
+function sameRun(a, b) {
+  return !!a && !!b && a.repo === b.repo && a.pid === b.pid && a.startTime === b.startTime;
+}
+
+// repinOpen(ui, views) → ui whose openKey/openSlug/openRun follow the open run: found by name, its identity
+// is refreshed (a go replaces the record with the build's under the same key); found only by identity,
+// its new key and slug are taken, so the view stays on the run through a rename. The shell calls it on
+// every read, before the reducer and before painting.
+export function repinOpen(ui, views) {
+  if (ui.view === 'list') return ui;
+  const open = findOpen(views, ui);
+  if (!open) return ui;
+  return { ...ui, openKey: runKey(open), openSlug: open.slug ?? ui.openSlug, openRun: runIdentity(open) ?? ui.openRun ?? null };
 }

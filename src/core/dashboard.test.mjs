@@ -520,3 +520,118 @@ test('Ctrl+R is inert outside the list: the live view and the worker view', () =
   const worker = { ...watching, view: 'worker', openWorker: { taskId: 'T01', workerId: 'w', logPath: null, live: false } };
   assert.equal(dashboardReducer(worker, { type: 'ctrlR' }, RESUMABLE).ui.armed, null);
 });
+
+// ---- T12: a planning run's steps view and its go (pir-plan-command §2.8, §2.11). ----
+
+import { findOpen, goOpen, openTasks, repinOpen, runIdentity } from './dashboard.mjs';
+
+const PLAN_REC = { kind: 'plan', label: null, go: null, repo: 'blog', slug: 'dark-mode', pid: 4242, startTime: 'Sat Sep 26 10:00:00 2026' };
+const stepRow = (id, phase, worker = null) => ({ id, phase, worker });
+function stepsView({ state = 'running', step = 'plan', outcome = null, go = null, steps, key = 'blog__dark-mode', slug = 'dark-mode', label = null } = {}) {
+  return {
+    key, slug, state, repo: 'blog',
+    record: { ...PLAN_REC, slug, go, label },
+    snap: { runState: { kind: 'plan', slug, step, outcome, steps: steps ?? [stepRow('plan', 'planning', { id: 'p1', live: true, logPath: '/c/plan-1.ndjson' }), stepRow('review', 'pending'), stepRow('build', 'pending')] } },
+  };
+}
+const reviewedView = (over = {}) =>
+  stepsView({ state: 'finished', step: 'done', outcome: 'reviewed', steps: [stepRow('plan', 'done', { id: 'p1', live: false, logPath: '/c/plan-1.ndjson' }), stepRow('review', 'done', { id: 'r1', live: false, logPath: '/c/review-1.ndjson' }), stepRow('build', 'pending')], ...over });
+const watching = (views) => dashboardReducer(initialUi(), { type: 'open' }, views).ui;
+
+test('the go keys act only while the open run waits for the go', () => {
+  const go = [reviewedView()];
+  const ui = watching(go);
+  assert.equal(goOpen(go, ui), true);
+  assert.deepEqual(dashboardReducer(ui, { type: 'key', key: 'enter' }, go).intent, { type: 'start', slug: 'dark-mode', key: 'blog__dark-mode' });
+  assert.deepEqual(dashboardReducer(ui, { type: 'key', key: 'n' }, go).intent, { type: 'decline', slug: 'dark-mode', key: 'blog__dark-mode' });
+
+  // Declined, or still planning: Enter opens the selected step as → does, and `n` does nothing.
+  for (const views of [[reviewedView({ go: 'declined' })], [stepsView()]]) {
+    const u = watching(views);
+    assert.equal(goOpen(views, u), false);
+    const enter = dashboardReducer(u, { type: 'key', key: 'enter' }, views);
+    assert.equal(enter.intent, null);
+    assert.equal(enter.ui.view, 'worker', 'Enter opened the plan step');
+    const n = dashboardReducer(u, { type: 'key', key: 'n' }, views);
+    assert.equal(n.intent, null);
+    assert.equal(n.ui.view, 'watch');
+  }
+  // On the list the go keys are not the go: Enter opens the row, `n` is inert.
+  assert.equal(dashboardReducer(initialUi(), { type: 'key', key: 'enter' }, go).ui.view, 'watch');
+  assert.equal(dashboardReducer(initialUi(), { type: 'key', key: 'n' }, go).intent, null);
+});
+
+test('leaving the go question writes nothing: ← goes to the list with no intent, and the question is still there on return', () => {
+  const go = [reviewedView()];
+  const back = dashboardReducer(watching(go), { type: 'back' }, go);
+  assert.equal(back.intent, null);
+  assert.equal(back.ui.view, 'list');
+  assert.equal(goOpen(go, dashboardReducer(back.ui, { type: 'open' }, go).ui), true);
+});
+
+test('a step row opens its latest session, read-only when it is not live; a step with none gets a footer note', () => {
+  const views = [reviewedView()];
+  let ui = watching(views);
+  assert.deepEqual(openTasks(views, ui).map((s) => s.id), ['plan', 'review', 'build']);
+  assert.equal(ui.taskSel, 2, 'a run waiting for the go opens on its build step');
+  ui = dashboardReducer(ui, { type: 'up' }, views).ui;
+  const opened = dashboardReducer(ui, { type: 'open' }, views).ui;
+  assert.equal(opened.view, 'worker');
+  assert.deepEqual(opened.openWorker, { taskId: 'review', workerId: 'r1', logPath: '/c/review-1.ndjson', live: false });
+
+  // Planning: the review step has no session yet, nor does build.
+  const planning = [stepsView()];
+  let u = watching(planning);
+  u = dashboardReducer(u, { type: 'down' }, planning).ui;
+  const r = dashboardReducer(u, { type: 'open' }, planning).ui;
+  assert.equal(r.view, 'watch');
+  assert.match(r.note, /^review has no session yet/);
+  u = dashboardReducer(u, { type: 'down' }, planning).ui;
+  assert.match(dashboardReducer(u, { type: 'open' }, planning).ui.note, /^build has no conversation here/);
+  assert.equal(dashboardReducer(u, { type: 'down' }, planning).ui.taskSel, 2, 'the step rows clamp at build');
+});
+
+test('a planning run with no snapshot still has three steps, and none opens', () => {
+  const v = { ...stepsView(), snap: null };
+  const ui = watching([v]);
+  assert.deepEqual(openTasks([v], ui).map((s) => s.id), ['plan', 'review', 'build']);
+  assert.match(dashboardReducer(ui, { type: 'open' }, [v]).ui.note, /^plan has no session yet/);
+});
+
+test('an open steps view and an open step conversation keep their run through the rename', () => {
+  const before = [stepsView({ key: 'blog__plan-3f2a', slug: 'plan-3f2a', label: 'Add dark mode' })];
+  const after = [stepsView({ key: 'blog__dark-mode', slug: 'dark-mode', step: 'review' })];
+  const ui = watching(before);
+  assert.deepEqual(ui.openRun, runIdentity(before[0]));
+  assert.equal(findOpen(after, ui), after[0], 'found by its program once its key is gone');
+  const repinned = repinOpen(ui, after);
+  assert.equal(repinned.openKey, 'blog__dark-mode');
+  assert.equal(repinned.openSlug, 'dark-mode');
+
+  // The step conversation, opened before the rename, still finds its run, and ← lands on the steps view.
+  const inConv = dashboardReducer(ui, { type: 'open' }, before).ui;
+  assert.equal(inConv.view, 'worker');
+  assert.equal(findOpen(after, inConv), after[0]);
+  const backUi = dashboardReducer(repinOpen(inConv, after), { type: 'back' }, after).ui;
+  assert.equal(backUi.view, 'watch');
+  assert.equal(findOpen(after, backUi), after[0]);
+
+  // Opened by slug (`pir plan` lands on the run id): the first repin takes its identity, so the rename holds.
+  const bySlug = repinOpen({ ...initialUi(), view: 'watch', openSlug: 'plan-3f2a' }, before);
+  assert.deepEqual(bySlug.openRun, runIdentity(before[0]));
+  assert.equal(findOpen(after, bySlug), after[0]);
+
+  // A different program of the same repo is not mistaken for it.
+  const other = [{ ...after[0], record: { ...after[0].record, pid: 1 } }];
+  assert.equal(findOpen(other, ui), undefined);
+});
+
+test('the go replaces the record under the same key: the open view becomes the build', () => {
+  const go = [reviewedView()];
+  const ui = watching(go);
+  const build = [{ key: 'blog__dark-mode', slug: 'dark-mode', state: 'running', repo: 'blog', record: { repo: 'blog', slug: 'dark-mode', pid: 999, startTime: 'later' }, snap: null }];
+  const next = repinOpen(ui, build);
+  assert.equal(findOpen(build, next), build[0]);
+  assert.deepEqual(next.openRun, { repo: 'blog', pid: 999, startTime: 'later' });
+  assert.equal(goOpen(build, next), false);
+});

@@ -205,3 +205,90 @@ test('end to end: Ctrl+S Ctrl+S stops a planning run mid-planner, and Ctrl+R Ctr
     await screen.close();
   }
 });
+
+// ---- T12: the steps view, the go, and the build it starts, end to end (DESIGN §2.8, §2.11). ----
+
+const RIGHT = '\x1b[C';
+const LEFT = '\x1b[D';
+const ENTER = '\r';
+
+test('end to end: opening a planning run shows its steps — plan asking, review and build pending', async (t) => {
+  const { rig } = await startRigPlan(t);
+  for (const [cols, rows] of SIZES) {
+    const { screens, overflows } = await rig.driveScreen({
+      cols, rows, first: /● planning/,
+      keys: [{ keys: ENTER, until: /pick a step/ }],
+    });
+    const text = screens.at(-1).rows.join('\n');
+    assert.match(text, new RegExp(`"${esc(LABEL)}" · planning · pir/plan-[0-9a-f]{4}`), `${cols}×${rows}`);
+    assert.match(text, /▎ ● plan +planner +asking you · a question +\d+:\d\d/);
+    assert.match(text, /○ review +reviewer +starts when the plan is written/);
+    assert.match(text, /○ build +— +asks your go after review/);
+    assert.match(text, /● plan — asking you; open it \(→\) to answer/);
+    assert.equal(overflows, 0, `${cols}×${rows}: nothing wraps`);
+  }
+});
+
+// Drives one screen from the steps view through the planner's question to the go, at the given size.
+async function toTheGo(rig, screen) {
+  await screen.waitFor(/● planning/);
+  screen.send(ENTER);
+  await screen.waitFor(/▎ ● plan +planner +asking you/);
+  screen.send(RIGHT);
+  await screen.waitFor(new RegExp(esc(PLAN_RIG_QUESTION)));
+  screen.send(ENTER); // the first option is selected: answer it
+  await screen.waitFor(new RegExp(`plan ${PLAN_RIG_SLUG} is committed`), 30000);
+  screen.send(LEFT);
+  // The rename moved the run's key under the open view; the steps view is still this run.
+  const rows = await screen.waitFor(/Start the parallel build now\?/, 30000);
+  return rows.join('\n');
+}
+
+test('end to end at 80×24: → answers the planner, ← is the steps view, the go question; n declines it', async (t) => {
+  const { rig, dir } = await startRigPlan(t);
+  const screen = rig.openScreen({ cols: 80, rows: 24 });
+  try {
+    const go = await toTheGo(rig, screen);
+    assert.match(go, new RegExp(`${PLAN_RIG_SLUG} · reviewed · pir/${PLAN_RIG_SLUG}`));
+    assert.match(go, /✔ plan +planner +plan written/);
+    assert.match(go, /✔ review +reviewer +reviewed/);
+    assert.match(go, /● build +— +waiting for your go/);
+    assert.match(go, /1 task, longest chain 1, up to 1 can run at once\./);
+    assert.match(go, /↵ start · n not now/);
+
+    screen.send('n');
+    const after = (await screen.waitFor(/Build it with/)).join('\n');
+    assert.match(after, new RegExp(`${PLAN_RIG_SLUG} · finished`));
+    assert.match(after, new RegExp(`Build it with: pir start ${PLAN_RIG_SLUG}`));
+    assert.doesNotMatch(after, /Start the parallel build/);
+    assert.equal(listRecords({ dir }).find((r) => r.slug === PLAN_RIG_SLUG).go, 'declined');
+
+    screen.send(LEFT);
+    await screen.waitFor(new RegExp(`${PLAN_RIG_SLUG} +plan +◌ finished`));
+    assert.equal(screen.overflows(), 0);
+  } finally {
+    await screen.close();
+  }
+});
+
+test('end to end at 120×40: ↵ on the go starts the build on the same row, which ends green with main unchanged', async (t) => {
+  const { rig, dir } = await startRigPlan(t);
+  const mainBefore = git(rig.repoDir, 'rev-parse', 'main');
+  const screen = rig.openScreen({ cols: 120, rows: 40 });
+  try {
+    await toTheGo(rig, screen);
+    screen.send(ENTER);
+    // The fake task is worked on for a moment only, so every frame is looked at, not the settled one.
+    await until(() => /T01 +first-task +(preparing|building|reviewing|merging)/.test(screen.text()), "the fake plan's task running", 30000);
+    const record = listRecords({ dir }).find((r) => r.slug === PLAN_RIG_SLUG);
+    assert.equal(record.kind, 'work', 'the row flipped from plan to work');
+    const done = (await screen.waitFor(new RegExp(`git merge pir/${PLAN_RIG_SLUG}`), 90000)).join('\n');
+    assert.match(done, /all 1 task\(s\) green/);
+    assert.equal(git(rig.repoDir, 'rev-parse', 'main'), mainBefore, 'main is untouched');
+    screen.send(LEFT);
+    await screen.waitFor(new RegExp(`${PLAN_RIG_SLUG} +work +`));
+    assert.equal(screen.overflows(), 0);
+  } finally {
+    await screen.close();
+  }
+});

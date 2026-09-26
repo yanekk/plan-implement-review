@@ -34,7 +34,7 @@ done · ⛔ blocked, needs a human.
 | T09 | pir-commands | T08 | ✅ | |
 | T10 | plan-rig | T05 | ✅ | |
 | T11 | dashboard-type | T02, T07, T08, T10 | ✅ | |
-| T12 | plan-watch-view | T07, T08, T10, T11 | ⬜ | |
+| T12 | plan-watch-view | T07, T08, T10, T11 | 🔍 | plandisplay.mjs, steps frame, go keys; 28 tests, 3 rig cases. Deviations: buildPlanDisplay takes `state`, `progress` text (no `width`); reducer intents `start`/`decline`; decodeKey Enter is `enter`; rename followed by pid+startTime (`openRun`); go view opens on build row; done steps show no clock (no end time in runState). |
 | T13 | brief-box | T09, T12 | ⬜ | |
 | T14 | plan-screen-drill | T11, T12, T13 | ⬜ | |
 | T15 | planning-skills | T01 | ✅ | |
@@ -42,7 +42,7 @@ done · ⛔ blocked, needs a human.
 | T17 | harness-plan-fixture | T07, T08, T15 | ⬜ | |
 | T18 | live-plan-run | T14, T16, T17 | ⬜ | |
 
-**Review queue:** *(empty)*
+**Review queue:** T12
 
 ## Blocked on the user
 
