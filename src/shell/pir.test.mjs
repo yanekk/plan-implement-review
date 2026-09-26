@@ -9,12 +9,15 @@ import { readFileSync, statSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
-import { run, USAGE, openBriefBoxStub } from './pir.mjs';
+import { run, USAGE } from './pir.mjs';
 
 // A set of spies for run's collaborators: startRun and startPlanRun return whatever the test wants, the
 // TUI hand-offs record their calls, and stderr is a sink shaped like process.stderr.
-function harness(startResult, planResult, briefBoxResult) {
-  const calls = { start: [], plan: [], dash: 0, watch: [], brief: 0 };
+//
+// The brief box spy acts as the person would: `box` is 'cancel' or the text they send, and the spy records
+// the order of events so a test can see the pre-flight ran before the box opened.
+function harness(startResult, planResult, { box = 'cancel', preflight = { ok: true, root: '/r', repo: 'shop' } } = {}) {
+  const calls = { start: [], plan: [], dash: 0, watch: [], planner: [], brief: [], order: [] };
   const errs = [];
   const deps = {
     startRun: (slug) => {
@@ -31,9 +34,20 @@ function harness(startResult, planResult, briefBoxResult) {
     openWatch: (slug) => {
       calls.watch.push(slug);
     },
-    openBriefBox: () => {
-      calls.brief += 1;
-      return briefBoxResult;
+    openPlanner: (key) => {
+      calls.planner.push(key);
+      calls.order.push('planner');
+      return Promise.resolve();
+    },
+    planPreflight: () => {
+      calls.order.push('preflight');
+      return preflight;
+    },
+    openBriefBox: async ({ repo, onSubmit, onCancel }) => {
+      calls.brief.push(repo);
+      calls.order.push('box');
+      if (box === 'cancel') return onCancel();
+      return onSubmit(box);
     },
     stderr: { write: (s) => errs.push(s) },
   };
@@ -62,34 +76,49 @@ test('no args → the dashboard, exit 0', () => {
 
 // --- pir plan ---------------------------------------------------------------------------
 
-test('[plan] → the brief box, its code returned', () => {
-  const { calls, errs, deps } = harness(undefined, undefined, 0);
-  assert.equal(run(['plan'], deps), 0);
-  assert.equal(calls.brief, 1, 'openBriefBox called once');
-  assert.deepEqual(calls.plan, [], 'no planning run without a brief');
+test('[plan] → pre-flight, then the brief box on the repo; cancel → exit 0 with nothing started', async () => {
+  const { calls, errs, deps } = harness(undefined, { started: true, runId: 'plan-3f2a' });
+  const code = await run(['plan'], deps);
+  assert.equal(code, 0);
+  assert.deepEqual(calls.order, ['preflight', 'box']);
+  assert.deepEqual(calls.brief, ['shop']);
+  assert.deepEqual(calls.plan, [], 'startPlanRun never called on a cancel');
+  assert.deepEqual(calls.planner, []);
   assert.deepEqual(errs, []);
 });
 
-test('[plan] with no brief box injected → the stand-in prints how to give the brief, exit 2', () => {
-  const { calls, errs, deps } = harness();
-  delete deps.openBriefBox;
-  assert.equal(run(['plan'], deps), 2);
-  assert.deepEqual(errs, ['pir plan: write the brief as an argument for now\n']);
+test('[plan] → a multi-line brief sent from the box reaches startPlanRun with its newlines, then the planner opens', async () => {
+  const brief = 'Export orders as CSV.\nFilters apply to the export.';
+  const { calls, errs, deps } = harness(undefined, { started: true, runId: 'plan-3f2a' }, { box: brief });
+  assert.equal(await run(['plan'], deps), 0);
+  assert.deepEqual(calls.plan, [brief]);
+  assert.deepEqual(calls.planner, ['plan-3f2a']);
+  assert.deepEqual(calls.watch, [], 'the planner view, not the bare watch view');
+  assert.deepEqual(errs, []);
+});
+
+test('[plan] → a pre-flight refusal prints before any box opens, exit 1', () => {
+  const { calls, errs, deps } = harness(undefined, undefined, { preflight: { ok: false, reason: 'no-main' } });
+  assert.equal(run(['plan'], deps), 1, 'refused at once, not as a promise');
+  assert.deepEqual(errs, ["pir plan: this repo has no local 'main' branch — a plan is cut from main\n"]);
+  assert.deepEqual(calls.order, ['preflight']);
   assert.deepEqual(calls.plan, []);
-  assert.deepEqual(calls.watch, []);
 });
 
-test('openBriefBoxStub prints the stand-in line and returns 2', () => {
-  const errs = [];
-  assert.equal(openBriefBoxStub({ stderr: { write: (s) => errs.push(s) } }), 2);
-  assert.deepEqual(errs, ['pir plan: write the brief as an argument for now\n']);
+test('[plan] → a start refused after the box closes prints its line and exits 1', async () => {
+  const { calls, errs, deps } = harness(undefined, { started: false, reason: 'no-main' }, { box: 'a brief' });
+  assert.equal(await run(['plan'], deps), 1);
+  assert.deepEqual(errs, ["pir plan: this repo has no local 'main' branch — a plan is cut from main\n"]);
+  assert.deepEqual(calls.planner, []);
 });
 
-test('[plan, words…] → startPlanRun with the words joined by one space, then the run id watched, exit 0', () => {
+test('[plan, words…] → startPlanRun with the words joined by one space, then the planner opened on the run id, exit 0', () => {
   const { calls, errs, deps } = harness(undefined, { started: true, runId: 'plan-3f2a', pid: 1, record: {} });
   assert.equal(run(['plan', 'a', 'daily', 'screen budget'], deps), 0);
   assert.deepEqual(calls.plan, ['a daily screen budget']);
-  assert.deepEqual(calls.watch, ['plan-3f2a'], 'the live view opens on the run id, the record key before the rename');
+  assert.deepEqual(calls.planner, ['plan-3f2a'], "the planner's conversation opens on the run id, the record key before the rename");
+  assert.deepEqual(calls.watch, []);
+  assert.deepEqual(calls.brief, [], 'no box when the brief is given');
   assert.deepEqual(calls.start, [], 'no build is started');
   assert.equal(calls.dash, 0);
   assert.deepEqual(errs, []);
@@ -117,6 +146,7 @@ for (const [reason, message] of [
     assert.equal(run(['plan', '  '], deps), 1);
     assert.deepEqual(errs, [message]);
     assert.deepEqual(calls.watch, []);
+    assert.deepEqual(calls.planner, []);
     assert.equal(calls.dash, 0);
   });
 }

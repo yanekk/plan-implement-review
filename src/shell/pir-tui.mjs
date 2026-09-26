@@ -33,7 +33,7 @@ import { stopRun, removeRun } from './control-run.mjs';
 import { resumeRun, startRun } from './launch.mjs';
 import { updateRecord } from './index-store.mjs';
 import { planHome } from './plan-home.mjs';
-import { FrameView } from './pir-view.mjs';
+import { FrameView, paintLine } from './pir-view.mjs';
 import { createConversationView } from './conversation-view.mjs';
 import { ProcessTerminal, TuiAltScreen, TUI_KEYBINDINGS, getKeybindings, isKeyRelease, parseKey } from '@earendil-works/pi-tui';
 
@@ -468,6 +468,40 @@ export function decodeKey(data) {
   return KEY_INTENTS[parseKey(s)] ?? null;
 }
 
+// withHeadLine(line, make, { host, colour }) → the component `make(tui)` builds, headed by one line (§2.12:
+// the reviewer's conversation after following into it). The inner view is handed a terminal one row short,
+// so the line costs it a row of scrollback and the frame still fits. With no line, `make(host)` as it is.
+function withHeadLine(line, make, { host, colour }) {
+  if (!line) return make(host);
+  const tui = {
+    requestRender: (...a) => host.requestRender?.(...a),
+    terminal: {
+      get rows() {
+        return Math.max(9, (host.terminal?.rows || 24) - 1);
+      },
+      get columns() {
+        return host.terminal?.columns || DEFAULT_COLS;
+      },
+    },
+  };
+  const inner = make(tui);
+  return {
+    render: (width) => [paintLine([span(line, 'ok')], Math.max(20, width | 0), colour), ...inner.render(width)],
+    handleInput: (data) => inner.handleInput(data),
+    invalidate: () => inner.invalidate(),
+    get focused() {
+      return inner.focused;
+    },
+    set focused(v) {
+      inner.focused = v;
+    },
+    dispose: () => inner.dispose(),
+    get state() {
+      return inner.state;
+    },
+  };
+}
+
 // --- The impure edge: painting a frame on a real terminal, and the input loop -----------------------
 
 // createScreen({ stream, colour, terminal }) → { paint(frame), close(), listen?(onInput, onError) }. The one
@@ -652,6 +686,59 @@ export function openWatch(slug, deps = {}) {
   return runTui({ ...deps, initial: { ...initialUi(), view: 'watch', openSlug: slug } });
 }
 
+// openPlanner(key, deps) — where both forms of `pir plan` land (pir-plan-command §2.12): the run's watch view
+// told to open its `plan` step's conversation as soon as the snapshot names the planner's session. Until then
+// the view says `starting the planner…`, and ← gives up the wait for the steps view.
+export function openPlanner(key, deps = {}) {
+  return runTui({ ...deps, initial: { ...initialUi(), view: 'watch', openSlug: key, openStep: 'plan' } });
+}
+
+// The step's session as the 'worker' view opens it (dashboardReducer's `open` on a step row), or null.
+function stepWorker(step) {
+  const w = step?.worker;
+  return w?.id ? { taskId: step.id, workerId: w.id, logPath: w.logPath ?? null, live: !!w.live } : null;
+}
+
+// landStep(ui, views) → ui (§2.12). While `ui.openStep` names a step of the open planning run, the view waits
+// for that step's session; once the snapshot names it, the ui is that session's conversation, the step row
+// selected. Any other ui passes through unchanged.
+export function landStep(ui, views) {
+  if (!ui?.openStep || ui.view !== 'watch') return ui;
+  const steps = openTasks(views, ui);
+  const i = steps.findIndex((s) => s.id === ui.openStep);
+  const openWorker = stepWorker(steps[i]);
+  if (!openWorker) return ui;
+  return { ...ui, view: 'worker', openWorker, taskSel: i, openStep: null };
+}
+
+// followStep(ui, views, seenReviewId) → ui with the reviewer's conversation open, or null for no move (§2.12).
+// Only a person in the planner's conversation is moved, and only when the review step gains a session that
+// was not there when that conversation opened (`seenReviewId`): reopening a finished run's planner must not
+// bounce the person into its old reviewer. The steps view and the list are never moved.
+export const FOLLOW_LINE = 'the planner finished; the reviewer has started';
+export function followStep(ui, views, seenReviewId = null) {
+  if (ui?.view !== 'worker' || ui.openWorker?.taskId !== 'plan') return null;
+  if (!isPlan(findOpen(views, ui))) return null;
+  const steps = openTasks(views, ui);
+  const i = steps.findIndex((s) => s.id === 'review');
+  const openWorker = stepWorker(steps[i]);
+  if (!openWorker || openWorker.workerId === seenReviewId) return null;
+  return { ...ui, openWorker: { ...openWorker, headLine: FOLLOW_LINE }, taskSel: i };
+}
+
+// buildLandingFrame(view) → the frame shown while `pir plan` waits for the planner's session. FrameView clips
+// each line to the terminal's width, as it does every frame.
+export function buildLandingFrame(view) {
+  const branch = view?.record?.branch;
+  return [
+    [span(view ? displayName(view) : '', 'head'), span(` · planning${branch ? ` · ${branch}` : ''}`, 'dim')],
+    [],
+    lineOf('  starting the planner…', 'dim'),
+    [],
+    lineOf("← the run's steps · esc quit", 'hint'),
+  ];
+}
+
 // runTui — the input/paint loop (DESIGN §2.3, §2.4, §5.1). It paints a first frame, then repaints on every
 // keypress (through dashboardReducer, T04) and on a short refresh poll (§2.4: watch the snapshot by
 // polling, the safe default). A pi-tui screen owns the keyboard (raw mode included) and hands keys over
@@ -704,6 +791,8 @@ async function runTui({
   // leaving it. It takes every key while it is open: its own table (§2.11) replaces Esc-quits and
   // Ctrl+C-quits, and it calls back on ← to step out.
   let conv = null;
+  // The review step's session when the planner's conversation opened (followStep): only a new one moves it.
+  let seenReviewId = null;
   let renderSoon = null; // a screen with no pi-tui host repaints the view on its own requests
   const host = screen.host ?? {
     terminal: { get rows() { return stdout.rows || 24; }, get columns() { return stdout.columns || DEFAULT_COLS; } },
@@ -720,7 +809,9 @@ async function runTui({
     if (!conv) {
       const open = findOpen(dash.rows, ui);
       const opened = { ...ui };
-      conv = createConversationView({
+      if (ui.openWorker?.taskId === 'plan') seenReviewId = stepWorker(openTasks(dash.rows, ui).find((st) => st.id === 'review'))?.workerId ?? null;
+      const headLine = ui.openWorker?.headLine ?? null;
+      conv = withHeadLine(headLine, (tui) => createConversationView({
         run: { slug: open?.slug ?? ui.openSlug, controlDir: open?.record?.controlDir ?? open?.controlDir ?? null },
         worker: ui.openWorker,
         // The coordinator is alive when the open run is `running` as classifyRun decides it (pid AND start
@@ -731,11 +822,11 @@ async function runTui({
           closeConv();
           repaint();
         },
-        tui: host,
+        tui,
         colour: screen.colour ?? false,
         ...(drop ? { drop } : {}),
         ...(follow ? { follow } : {}),
-      });
+      }), { host, colour: screen.colour ?? false });
     }
     if (typeof screen.mount === 'function') {
       screen.mount(conv);
@@ -794,9 +885,24 @@ async function runTui({
 
     syncTask(dash);
 
+    // `pir plan` lands in the planner's conversation once it has a session (§2.12), and a person still in it
+    // when the reviewer starts follows into the reviewer's.
+    // The step row is re-pinned to the step now open, so ← from its conversation lands on that row.
+    const moved = (next) => {
+      ui = next;
+      closeConv();
+      selectedTask.set(runKey(findOpen(dash.rows, ui)) ?? ui.openKey ?? ui.openSlug, ui.openWorker.taskId);
+    };
+    const landed = landStep(ui, dash.rows);
+    if (landed !== ui) moved(landed);
+    const followed = followStep(ui, dash.rows, seenReviewId);
+    if (followed) moved(followed);
+
     spin += 1;
     const spinnerChar = SPINNER[spin % SPINNER.length];
-    if (ui.view === 'worker') {
+    if (ui.view === 'watch' && ui.openStep) {
+      screen.paint(buildLandingFrame(findOpen(dash.rows, ui)));
+    } else if (ui.view === 'worker') {
       paintConv(dash);
     } else if (ui.view === 'watch') {
       const view = findOpen(dash.rows, ui) ?? { slug: ui.openSlug, state: 'crashed', repo: '', snap: null };
@@ -875,6 +981,12 @@ async function runTui({
           if (key == null) return;
           const dash = read();
           ui = repinOpen(ui, dash.rows);
+
+          // Waiting for the planner's session: ← gives up the wait for the steps view; nothing else acts.
+          if (ui.openStep) {
+            if (key === 'back') ui = { ...ui, openStep: null, taskSel: 0 };
+            return repaint(dash);
+          }
 
           if (key === 'back') {
             // ← steps back a level: a worker → its run's live view → the list. In the list there is no
