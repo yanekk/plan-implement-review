@@ -355,6 +355,31 @@ test('the key hint fits 80 columns in every state', () => {
   fits(exited, '← back · PgUp/PgDn scroll · Tab detail · exited, read only');
 });
 
+// T20 review (user 2026-09-26): scrolled up, `↓ N more below · ` leads the hint and pushed it to 96 columns
+// with a request pending; the live hints drop a phrase then, and still fit with a four-digit count.
+test('scrolled up, the key hint with its more-below count fits 80 columns', () => {
+  const long = [init(), opening, ...Array.from({ length: 2000 }, (_, i) => said(`line ${i}`))];
+  const fits = (t, want) => {
+    const hint = t.screen().at(-1);
+    assert.equal(hint, want);
+    assert.ok([...hint].length <= 80, `${[...hint].length} wide: ${hint}`);
+  };
+  const t = makeView({ log: long, rows: 20 });
+  for (let i = 0; i < 100; i++) t.v.handleInput(KEY.pgUp);
+  const n = t.v.state.scrollBack;
+  assert.ok(n >= 1000, `${n} lines below`);
+  fits(t, `↓ ${n} more below · ↵ send · esc interrupt · ← back · Tab detail · PgUp/PgDn`);
+  t.screen();
+  t.push(permission());
+  t.screen();
+  const m = t.v.state.scrollBack;
+  fits(t, `↓ ${m} more below · esc interrupt · ← back · Tab detail · PgUp/PgDn`);
+  const ro = makeView({ log: long, rows: 20, live: false });
+  for (let i = 0; i < 100; i++) ro.v.handleInput(KEY.pgUp);
+  ro.screen();
+  fits(ro, `↓ ${ro.v.state.scrollBack} more below · ← back · PgUp/PgDn scroll · Tab detail · finished, read only`);
+});
+
 test('new lines follow the end; scrolled up, the view stays put', () => {
   const t = makeView({ log: [init(), opening, ...Array.from({ length: 40 }, (_, i) => said(`line ${i}`))], rows: 16 });
   t.push(said('fresh'));

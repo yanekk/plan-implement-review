@@ -250,11 +250,13 @@ export function createConversationView({
 
   // Every state's hint fits one line at 80 columns (user 2026-09-26, T20): `Tab detail` names the key both
   // ways, and with a request pending the scroll key is only `PgUp/PgDn`.
-  function hint(m) {
+  // Scrolled up, `↓ N more below · ` leads the hint, so the live hints shed a phrase to keep it within 80
+  // (user 2026-09-26, T20 review): the pending request is pinned in view, and the person has just used PgUp.
+  function hint(m, scrolled) {
     if (m.readOnly) return `← back · PgUp/PgDn scroll · Tab detail · ${m.ended ? 'exited' : 'finished'}, read only`;
     // ← goes back only with an empty box, and y/n/a answer only then.
-    if (livePrompt()) return 'answer above or type a reply · esc interrupt · ← back · Tab detail · PgUp/PgDn';
-    return '↵ send · esc interrupt · ← back · Tab detail · PgUp/PgDn scroll';
+    if (livePrompt()) return `${scrolled ? '' : 'answer above or type a reply · '}esc interrupt · ← back · Tab detail · PgUp/PgDn`;
+    return `↵ send · esc interrupt · ← back · Tab detail · PgUp/PgDn${scrolled ? '' : ' scroll'}`;
   }
 
   function render(width) {
@@ -289,7 +291,7 @@ export function createConversationView({
     while (shown.length < height) shown.push('');
     // Painted after the offset settled, so the count is the one this frame shows (T20 review).
     const more = scrollBack > 0 ? `↓ ${scrollBack} more below · ` : '';
-    out.push(...shown, ...bottom, paint([span(more + hint(m), 'hint')], w));
+    out.push(...shown, ...bottom, paint([span(more + hint(m, scrollBack > 0), 'hint')], w));
     return out.slice(0, rows);
   }
 
