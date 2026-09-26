@@ -16,6 +16,9 @@ The reason it exists: a defect in a plan is copied into every task built from it
 alternating build-review pass will not catch it. `pir-review` checks a task against the plan.
 Nothing, until now, checked the plan.
 
+**If your opening instruction says you are run by `pir plan`, read § Run by pir plan at the end
+of this file before anything else.**
+
 ---
 
 ## Before you start — three ways this session must refuse
@@ -456,3 +459,65 @@ anything you checked that is now known to hold. Say the next command is `/pir-wo
 put it on its own line, and **stop**.
 
 **Do not implement T00.** The next session does that.
+
+---
+
+## Run by pir plan
+
+**This section applies only when your opening instruction contains the sentence "You are run by
+`pir plan`".** A `/pir-review-plan` typed by hand skips it. `pir plan` hosts this same review: every
+stage above still binds you, the person answers you in `pir`'s screen (or over Remote Control), and
+the rules below replace only the parts that assumed a session the person opened themselves. Where a
+stage above and this section disagree, this section wins.
+
+**Where you run.** You are in a worktree on the plan's branch `pir/{slug}`, not in the main checkout,
+and the plan exists only on that branch. `CLAUDE.md § Where sessions run` ("main checkout, main
+branch, always; stop if you find yourself in a worktree") does not bind a planning session run by
+`pir plan`, exactly as it does not bind a build worker. Do not stop, do not switch to `main`, and do
+not rename, merge or delete the branch or the worktree; the build later runs on this same branch. A
+project installed before this carve-out has an older `CLAUDE.md` without it; this section is the
+carve-out there. Write nothing under `.git`, because Claude Code never auto-approves a write there
+and your session would stall on it.
+
+**Which plan (refusal 3).** The opening instruction names the plan. Review that one; do not list
+`plans/` or ask which. Refusal 1 still holds and is already true: the planner was a different session.
+
+**Asking.** Ask the person in this conversation, with AskUserQuestion when the answer is a choice
+between options. Questions are never reported as files; `pir` shows the person that you are asking.
+
+**Permission rules (Stage 5).** Write the §5.3 rules into `.claude/settings.json` in this worktree and
+commit them on this branch. That is where the build will run, so every build worker's worktree
+inherits them from here; do not touch the main checkout's copy.
+
+**Commit everything, and leave the worktree clean.** Stage 6's commit goes on this branch and must
+hold every file you changed. Before you report, `git status --porcelain` prints nothing.
+
+**Reporting instead of handing over (Stage 6).** Stage 6's hand-over changes. Report to the person in
+plain English as it says, but do not name `/pir-work` or any other command as the next step: `pir`
+asks the person itself whether to start the build. Instead drop one report into the reports folder
+your opening instruction named, in one Bash command, then stop and go idle:
+
+```
+node -e 'const fs=require("fs"),p=require("path");const d=process.argv[1];fs.mkdirSync(d,{recursive:true});const f=p.join(d,Date.now()+"-review-"+Math.random().toString(36).slice(2)+".json");const t=f+".tmp";fs.writeFileSync(t,JSON.stringify({from:"reviewer",text:fs.readFileSync(0,"utf8")}));fs.renameSync(t,f)' "<reports folder>" <<'PIR_EOF'
+[pir:v1 kind=reviewed plan={slug}]
+<one or two plain lines: the verdict>
+PIR_EOF
+```
+
+The first line is the header `pir` reads, exactly; the body is for the person. The two reports a
+reviewer may drop:
+
+```
+[pir:v1 kind=reviewed plan={slug}]
+[pir:v1 kind=not-reviewed plan={slug}]
+```
+
+- `reviewed` when the `Plan reviewed:` line is written and committed on this branch.
+- `not-reviewed` when the review ends without that line: the person stopped to think, or a decision
+  is still open. Commit what was settled so far, so the worktree is clean. `pir` can resume this
+  same conversation later.
+
+`pir` checks a `reviewed` report against the branch: the review line reads reviewed in the committed
+`PROGRESS.md`, the setup/test block in the committed `DESIGN.md` parses, the worktree is clean. If a
+check fails, `pir` sends you a message naming it; fix what it names, commit, then drop the report
+again. Once it passes, `pir` closes this session.

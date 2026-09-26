@@ -11,6 +11,9 @@ a mock that lets the user confirm the product's direction before it is designed 
 When the plan is written, you stop. `/pir-review-plan {slug}` checks it in the next session,
 and `/pir-work {slug}` then builds it, one task at a time.
 
+**If your opening instruction says you are run by `pir plan`, read § Run by pir plan at the end
+of this file before Stage 1.**
+
 The output is a folder:
 
 ```
@@ -514,3 +517,73 @@ the method catches it.
 
 **Do not implement T00.** The next session does that, and it is the first of the alternating
 pairs the whole method rests on.
+
+---
+
+## Run by pir plan
+
+**This section applies only when your opening instruction contains the sentence "You are run by `pir plan`".** A
+`/pir-plan` typed by hand skips it. `pir plan` hosts this same planning conversation: every stage
+above still binds you, the person answers you in `pir`'s screen (or over Remote Control), and the
+rules below replace only the parts that assumed a session the person opened themselves. Where a
+stage above and this section disagree, this section wins.
+
+**Where you run.** You are in a worktree on a `pir/…` side branch cut from `main`, not in the main
+checkout. `CLAUDE.md § Where sessions run` ("main checkout, main branch, always; stop if you find
+yourself in a worktree") does not bind a planning session run by `pir plan`, exactly as it does not
+bind a build worker. Do not stop, do not switch to `main`, and do not rename, merge or delete the
+branch or the worktree: `pir` renames them to your slug after you report. A project installed before
+this carve-out has an older `CLAUDE.md` without it; this section is the carve-out there. Write
+nothing under `.git`, because Claude Code never auto-approves a write there and your session would
+stall on it.
+
+**Choosing the slug (Stage 1).** Before you write any file, check the slug you and the person agreed
+is free, and choose another with them if it is not:
+
+- no `plans/{slug}/` on `main`: `git ls-tree -d main plans/{slug}` prints nothing (check `main`
+  itself, not only your worktree, since `main` may have moved since your branch was cut);
+- no branch `pir/{slug}`: `git branch --list pir/{slug}` prints nothing;
+- it is kebab-case (`^[a-z0-9]+(-[a-z0-9]+)*$`) and not of the form `plan-{hex4}` (`plan-` and four
+  hex characters), which is the name `pir` gives a run before it has a slug.
+
+**The prototype (Stage 2).** There is no Artifact tool in a session `pir` runs. Write the mock as a
+single self-contained file at `plans/{slug}/prototype/index.html` and show it to the person with
+`open plans/{slug}/prototype/index.html`, then ask for their verdict in the conversation and wait, as
+Stage 2 says. It stays there as the parked prototype if they approve it.
+
+**Asking.** Ask the person in this conversation, with AskUserQuestion when the answer is a choice
+between options. Questions are never reported as files; `pir` shows the person that you are asking.
+
+**Commit everything, and leave the worktree clean.** Stage 7's commit goes on your branch and must
+hold every file you wrote, the prototype included. Before you report, `git status --porcelain` prints
+nothing.
+
+**Reporting instead of handing over (Stage 8).** Stage 8's hand-over changes. Report to the person in
+plain English as it says, but do not tell them to start a new session or to run
+`/pir-review-plan`: `pir` starts the reviewer itself. Instead drop one report into the reports
+folder your opening instruction named, in one Bash command, then stop and go idle:
+
+```
+node -e 'const fs=require("fs"),p=require("path");const d=process.argv[1];fs.mkdirSync(d,{recursive:true});const f=p.join(d,Date.now()+"-plan-"+Math.random().toString(36).slice(2)+".json");const t=f+".tmp";fs.writeFileSync(t,JSON.stringify({from:"planner",text:fs.readFileSync(0,"utf8")}));fs.renameSync(t,f)' "<reports folder>" <<'PIR_EOF'
+[pir:v1 kind=planned plan={slug}]
+<one or two plain lines: what the plan is>
+PIR_EOF
+```
+
+The first line is the header `pir` reads, exactly; the body is for the person. The two reports a
+planner may drop:
+
+```
+[pir:v1 kind=planned plan={slug}]
+[pir:v1 kind=no-plan plan=-]
+```
+
+- `planned` when the plan is written and committed on this branch, with `{slug}` the folder under
+  `plans/`.
+- `no-plan` when the person called the planning off and there is nothing to review. Commit or
+  discard what you wrote first, as they say, so the worktree is clean.
+
+`pir` checks a `planned` report against the branch: the three plan files committed under
+`plans/{slug}/`, the slug free and well-formed, the worktree clean. If a check fails, `pir` sends you
+a message naming it; fix what it names (for a taken slug, choose another with the person, rename the
+folder with `git mv`, commit), then drop the report again. Once it passes, `pir` closes this session.

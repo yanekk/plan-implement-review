@@ -6,13 +6,15 @@
 # How we work together
 
 Work on this project is planned once, read back once, and then executed one task at a time,
-by sessions that alternate between building and reviewing. Three commands drive it:
+by sessions that alternate between building and reviewing. These commands drive it:
 
 | Command | What it does |
 |---|---|
 | `/pir-plan` | Brainstorm, settle the requirements, show a throwaway mock to confirm the direction when the thing has a feel to it, get the tech right, check what the code already does before planning to build it again, split the work into tasks, and write it all down under `plans/{slug}/` |
 | `/pir-review-plan {slug}` | Read that plan back with fresh eyes, before a line of it is built — the gaps, the contradictions, and anything the machine does not actually support. Runs once, and `/pir-work` will not start until it has |
 | `/pir-work {slug}` | Do exactly one unit of work on that plan — implement the next task, or review the last one — then stop |
+| `pir plan` | The same planning and plan review, run for you inside `pir`: it holds the planner and then a fresh reviewer, you answer both in `pir`'s screen, the plan stays on its own branch off `main`, and when it is reviewed `pir` asks whether to start the parallel build |
+| `pir start {slug}` | Start (or open) the parallel build of a reviewed plan |
 
 **Read `plans/{slug}/DESIGN.md` before changing behaviour.** Every rule in it was decided
 deliberately and most carry a rationale. If you disagree with one, say so — do not quietly
@@ -298,6 +300,14 @@ yourself in a worktree") binds the **classic single-stream flow only**. A worker
 the command merges each task into the feature branch and, when the plan is green, hands you
 `git merge pir/{slug}` to run by hand — it never merges to `main` itself. If you are a classic
 session, the base rule still binds you in full.
+
+**Planning sessions run by `pir plan` are the same exception.** `pir plan` runs the planner and
+then a fresh plan reviewer as sessions it holds, on a side branch `pir/…` in its own worktree, so an
+unbuilt plan never lands on `main`; the reviewed plan's branch then becomes the build's feature
+branch. A `pir-plan` or `pir-review-plan` session whose opening instruction says it is run by
+`pir plan` is where it is meant to be and does not halt: it follows its skill's "Run by pir plan"
+section, commits on that branch, and reports back to `pir` instead of naming the next command. A
+`/pir-plan` or `/pir-review-plan` you type by hand is a classic session, bound by the base rule.
 
 ---
 
