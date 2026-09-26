@@ -57,6 +57,19 @@ export function slashProvider(names) {
 }
 
 // Parse one log line; one that does not parse stays a string, which core reads as `raw` (§2.3).
+// hasEnded(entries) → whether the log's session is over: it exited (or the SDK failed) and was not
+// resumed since. A resumed planning session appends to the log it exited in (pir-plan-command §2.14), so
+// an `exited` note before the `resumed` one belongs to the old process, not to the live one.
+export function hasEnded(entries) {
+  let ended = false;
+  for (const e of entries) {
+    if (e?.dir !== 'note') continue;
+    if (e.kind === 'exited' || e.kind === 'sdk-error') ended = true;
+    else if (e.kind === 'resumed') ended = false;
+  }
+  return ended;
+}
+
 function parseLine(line) {
   try {
     return JSON.parse(line);
@@ -135,7 +148,7 @@ export function createConversationView({
     const key = `${version}|${width}|${full}`;
     if (built?.key === key) return built;
     const activity = workerActivity(entries);
-    const ended = entries.some((e) => e?.dir === 'note' && (e.kind === 'exited' || e.kind === 'sdk-error'));
+    const ended = hasEnded(entries);
     const readOnly = !editor || ended;
     const conv = buildConversation(entries, { full, width, taskId, readOnly });
     // Scrolled up, new lines at the end must not move what the person is reading: the offset from the end

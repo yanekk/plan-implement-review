@@ -110,15 +110,17 @@ test('reviewerInstruction matches DESIGN §2.3', () => {
   );
 });
 
-test('resumeInstruction matches DESIGN §2.14', () => {
+// The design's block, its line wraps read as layout: one paragraph (user, T14 drill).
+test('resumeInstruction matches DESIGN §2.14 as one paragraph', () => {
   assert.equal(
     resumeInstruction(),
     [
       'You were stopped and have been resumed in the same worktree. Whatever you were doing when you stopped',
       'may not have finished: check `git status` and the plan files, tell the person where things stand, and',
       'carry on. Any question you had open was lost, so ask it again.',
-    ].join('\n'),
+    ].join(' '),
   );
+  assert.ok(!resumeInstruction().includes('\n'));
 });
 
 // --- state and the planner step -----------------------------------------------------------------

@@ -342,3 +342,18 @@ test('user text Claude marks isSynthetic reads as synthetic; other user text doe
   const [plain] = readEntry({ t: 1, dir: 'in', event: { type: 'user', message: { content: [{ type: 'text', text: '[Request interrupted by user]' }] } } });
   assert.equal(plain.synthetic, undefined);
 });
+
+// A planning session resumed into its own log (pir-plan-command §2.14, T14): what was pending or under
+// way died with the old process.
+test('workerActivity: a `resumed` note drops what was pending and ends the open turn', () => {
+  const ask = { t: 2, dir: 'request', requestId: 'q1', toolName: 'AskUserQuestion', input: { questions: [] } };
+  const before = [{ t: 1, dir: 'out', from: 'pir', kind: 'message', text: 'go' }, ask, { t: 3, dir: 'note', kind: 'exited', code: 143 }];
+  assert.equal(workerActivity(before).state, 'questions');
+  const resumed = [...before, { t: 4, dir: 'note', kind: 'resumed', sessionId: 's' }];
+  assert.deepEqual(workerActivity(resumed).pending, []);
+  assert.equal(workerActivity(resumed).open, false);
+  const spoken = [...resumed, { t: 5, dir: 'out', from: 'pir', kind: 'message', text: 'You were stopped' }];
+  assert.equal(workerActivity(spoken).state, 'busy');
+  // A request asked after the resume is pending as usual.
+  assert.equal(workerActivity([...spoken, { ...ask, t: 6, requestId: 'q2' }]).state, 'questions');
+});

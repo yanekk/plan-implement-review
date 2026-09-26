@@ -12,8 +12,8 @@ const RECORD_UNNAMED = { slug: 'plan-3f2a', label: 'Add dark mode to the bl…',
 const RECORD = { slug: 'dark-mode', label: null, branch: 'pir/dark-mode', go: null };
 
 // A runState as plan-run.mjs writes it, so the model is tested against the real snapshot shape.
-function rs(state, sessions = [], { since = {}, stoppedAt = {}, label = null } = {}) {
-  return planRunState({ id: 'plan-3f2a', slug: null, step: 'plan', outcome: null, ...state }, { label, sessions, since, stoppedAt });
+function rs(state, sessions = [], { since = {}, stoppedAt = {}, label = null, took = {} } = {}) {
+  return planRunState({ id: 'plan-3f2a', slug: null, step: 'plan', outcome: null, ...state }, { label, sessions, since, stoppedAt, took });
 }
 const session = (step, activity, live = true, n = 1) => ({ id: `${step}-sess-${n}`, step, n, logPath: `/c/conversations/${step}-${n}.ndjson`, live, activity: { state: activity } });
 const byId = (d) => Object.fromEntries(d.rows.map((r) => [r.id, r]));
@@ -121,4 +121,29 @@ test('widthLine: counts, chain and width from PROGRESS.md; null for nothing read
   assert.equal(widthLine(text), '3 tasks, longest chain 2, up to 2 can run at once.');
   assert.equal(widthLine(null), null);
   assert.equal(widthLine('# nothing here\n'), null);
+});
+
+// ---- T14 drill fixes. ----
+
+test('a finished step shows how long it took; a step with no recorded time shows none', () => {
+  const sessions = [session('plan', 'exited', false), session('review', 'exited', false)];
+  const done = rs({ slug: 'dark-mode', step: 'done', outcome: 'reviewed' }, sessions, { took: { plan: 1_872_000, review: 65_000 } });
+  const r = byId(buildPlanDisplay(done, { now: NOW, record: RECORD, state: 'finished' }));
+  assert.equal(r.plan.clock, 1_872_000);
+  assert.equal(r.review.clock, 65_000);
+  assert.equal(r.build.clock, null);
+  const failed = rs({ step: 'done', outcome: 'no-plan' }, [session('plan', 'exited', false)], { took: { plan: 4000 } });
+  assert.equal(byId(buildPlanDisplay(failed, { now: NOW, record: RECORD_UNNAMED, state: 'finished' })).plan.clock, 4000);
+  assert.equal(byId(buildPlanDisplay(reviewed(), { now: NOW, record: RECORD, state: 'finished' })).plan.clock, null);
+  // A live step's time is its running clock, never a took value.
+  const live = rs({}, [session('plan', 'busy')], { since: { plan: 40_000 }, took: { plan: 5 } });
+  assert.equal(byId(buildPlanDisplay(live, { now: NOW, record: RECORD_UNNAMED, state: 'running' })).plan.clock, 60_000);
+});
+
+test('a step an ended run never reached reads not started, not what it waits on', () => {
+  const noPlan = buildPlanDisplay(rs({ step: 'done', outcome: 'no-plan' }, [session('plan', 'exited', false)]), { now: NOW, record: RECORD_UNNAMED, state: 'finished' });
+  assert.deepEqual(byId(noPlan).review, { id: 'review', role: 'reviewer', kind: 'pending', text: 'not started', clock: null });
+  // A stopped run can still be resumed into it, so its pending review keeps saying what it waits on.
+  const stopped = buildPlanDisplay(rs({}, [session('plan', 'exited', false)]), { now: NOW, record: RECORD_UNNAMED, state: 'stopped' });
+  assert.equal(byId(stopped).review.text, 'starts when the plan is written');
 });

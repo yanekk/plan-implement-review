@@ -526,3 +526,30 @@ test('terminal escapes and control characters in worker text and tool output nev
     assert.ok(all(lines).includes('T05 ▸ hi there'));
   }
 });
+
+// T14: a question pending when a planning session was stopped died with it; once resumed into the same
+// log the view is live again, and that question must read never answered, not pinned as answerable.
+test('buildConversation: a request pending at a `resumed` note is never answered and is not pinned', () => {
+  const q = { question: 'Which way?', header: 'Way', multiSelect: false, options: [{ label: 'Small', description: '' }] };
+  const entries = [
+    { t: 1, dir: 'out', from: 'pir', kind: 'message', text: 'go' },
+    { t: 2, dir: 'request', requestId: 'q1', toolName: 'AskUserQuestion', input: { questions: [q] } },
+    { t: 3, dir: 'note', kind: 'exited', code: 143 },
+    { t: 4, dir: 'note', kind: 'resumed', sessionId: 's' },
+  ];
+  const conv = buildConversation(entries, { width: 80, readOnly: false });
+  assert.equal(conv.pinned, null);
+  assert.match(conv.lines.map((l) => (Array.isArray(l) ? l.map((x) => x.text ?? x).join('') : String(l.text ?? l))).join('\n'), /never answered/);
+});
+
+// T14 review: only what was still pending at the `resumed` note died with the old process; a request an
+// interrupt cancelled earlier keeps reading cancelled after the resume.
+test('buildConversation: a request cancelled before a stop still reads cancelled after the resume', () => {
+  const log = [
+    out('person', 'go'), request('r1'), { t: t++, dir: 'out', from: 'person', kind: 'interrupt' }, done('error_during_execution'),
+    { t: t++, dir: 'note', kind: 'exited', code: 143 }, { t: t++, dir: 'note', kind: 'resumed', sessionId: 's' },
+  ];
+  const text = all(buildConversation(log, { width: 80, taskId: 'T05', readOnly: false }).lines);
+  assert.ok(text.includes('  → cancelled by the interrupt'));
+  assert.ok(!text.includes('  → never answered'));
+});

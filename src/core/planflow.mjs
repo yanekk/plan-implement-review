@@ -81,11 +81,13 @@ export function reviewerInstruction({ reportsDir, slug }) {
 
 // The one message a resumed session is sent (§2.14). A resumed session takes no turn until spoken to,
 // misremembers a killed command as never started, and has lost any question it had open (measured by
-// plans/resume-dead-worker), so this tells it all three. The text is the design's block, line for line.
+// plans/resume-dead-worker), so this tells it all three. The words are the design's block; its line
+// wraps are layout, as in the opening instructions above, so it is one paragraph: kept verbatim it showed
+// mid-sentence breaks in the person's conversation view (user, T14 drill, 2026-09-26).
 export function resumeInstruction() {
   return (
-    'You were stopped and have been resumed in the same worktree. Whatever you were doing when you stopped\n' +
-    'may not have finished: check `git status` and the plan files, tell the person where things stand, and\n' +
+    'You were stopped and have been resumed in the same worktree. Whatever you were doing when you stopped ' +
+    'may not have finished: check `git status` and the plan files, tell the person where things stand, and ' +
     'carry on. Any question you had open was lost, so ask it again.'
   );
 }
@@ -130,12 +132,10 @@ export function initialPlanState({ id }) {
 }
 
 // The message a session gets when its report failed a check (§2.5, §2.7). The shell's reason names the
-// failed check and what to do about it; this wraps it so the session knows which report it answers.
+// failed check and what to do about it, ending with the report to drop again; this only says which report
+// it answers. A closing line of its own repeated the reason's last sentence on the person's screen (T14).
 function rejectionText(report, reason) {
-  return (
-    `pir did not accept your \`${report.kind}\` report for plan ${report.plan}: ${reason}\n` +
-    `Fix it, commit, and drop the \`${report.kind}\` report again.`
-  );
+  return `pir did not accept your \`${report.kind}\` report for plan ${report.plan}: ${reason}`;
 }
 
 function clone(state) {

@@ -108,9 +108,10 @@ export function buildConversation(entries, { full = false, width = 80, taskId = 
   const answers = new Map(); // requestId → { result, from } from the reply entry
   const byGrant = new Set();
   const remotely = new Set(); // requestIds answered over Remote Control
+  const lost = new Set(); // requestIds still pending at a `resumed` note: they died with the old process
   const toolNames = new Map(); // toolUseId → tool name, so a background task knows it is a Monitor
   const background = new Map(); // task_id → { description, tool, ended } for work moved to the background
-  for (const entry of list) {
+  list.forEach((entry, i) => {
     for (const ev of readEntry(entry)) {
       if (ev.kind === 'tool-use') toolNames.set(ev.toolUseId, ev.name);
       if (ev.kind === 'system') {
@@ -122,8 +123,10 @@ export function buildConversation(entries, { full = false, width = 80, taskId = 
       else if (ev.kind === 'reply') answers.set(ev.requestId, { result: isObject(entry.result) ? entry.result : {}, from: ev.from });
       else if (ev.kind === 'note' && ev.note === 'delivered-by-grant' && typeof ev.requestId === 'string') byGrant.add(ev.requestId);
       else if (ev.kind === 'note' && ev.note === 'answered-remotely' && typeof ev.requestId === 'string') remotely.add(ev.requestId);
+      // Only what was still pending: one an interrupt cancelled earlier keeps reading cancelled (T14 review).
+      else if (ev.kind === 'note' && ev.note === 'resumed') for (const r of workerActivity(list.slice(0, i)).pending) lost.add(r.requestId);
     }
-  }
+  });
   const pending = workerActivity(list).pending;
   const pendingIds = new Set(pending.map((r) => r.requestId));
   const pinnedRequest = !readOnly && pending.length ? pending[0] : null;
@@ -133,6 +136,7 @@ export function buildConversation(entries, { full = false, width = 80, taskId = 
     if (byGrant.has(id)) return { by: 'grant' };
     if (remotely.has(id)) return { by: 'remote' };
     if (pendingIds.has(id)) return { by: readOnly ? 'never' : 'waiting' };
+    if (lost.has(id)) return { by: 'never' };
     return { by: 'interrupt' };
   };
 

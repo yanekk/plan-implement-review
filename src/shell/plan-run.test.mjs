@@ -17,7 +17,7 @@ import { recordPath, writeRecord } from './index-store.mjs';
 import { dropPersonInput } from './person-inbox.mjs';
 import { readSnapshot } from './snapshot-store.mjs';
 import { git, openPlanBranch } from './worktree.mjs';
-import { findControlDir, findSessionLog, nextPlanLogPath, parseArgs, planRunState, plannerChecks, reviewerChecks, rootOf, runPlanning } from './plan-run.mjs';
+import { findControlDir, findSessionLog, nextPlanLogPath, parseArgs, planRunState, plannerChecks, reviewerChecks, rootOf, runPlanning, stepWorkedMs } from './plan-run.mjs';
 
 const PROGRAM = fileURLToPath(new URL('./plan-run.mjs', import.meta.url));
 const SESSIONS = fileURLToPath(new URL('./fake/sessions.mjs', import.meta.url));
@@ -697,4 +697,16 @@ test('nextPlanLogPath counts per step from the folder; rootOf; parseArgs', () =>
   assert.deepEqual(parseArgs(['--control', '/x', '--resume']), { controlDir: '/x', resume: true });
   assert.match(parseArgs([]).error, /--control/);
   assert.match(parseArgs(['--control', '/x', '--bogus']).error, /--bogus/);
+});
+
+// T14: a finished step's time is read from its logs, and the gap between a stop and its resume (after the
+// `resumed` note) is not counted.
+test('stepWorkedMs sums each log segment between resumes, and is null with nothing stamped', () => {
+  const note = (t, kind) => ({ t, dir: 'note', kind });
+  const log = [{ t: 1000, dir: 'out' }, { t: 5000, dir: 'in' }, note(6000, 'exited'), note(90_000, 'resumed'), { t: 91_000, dir: 'out' }, note(94_000, 'exited')];
+  assert.equal(stepWorkedMs([log]), 5000 + 4000);
+  assert.equal(stepWorkedMs([log, [{ t: 0 }, { t: 500 }]]), 9500, 'every log of the step counts');
+  assert.equal(stepWorkedMs([[]]), null);
+  assert.equal(stepWorkedMs([[{ t: 7 }]]), null);
+  assert.equal(stepWorkedMs([]), null);
 });

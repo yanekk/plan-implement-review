@@ -4,7 +4,7 @@ import { mkdtempSync, readdirSync, readFileSync, writeFileSync, appendFileSync, 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { stripTerminalSequences } from '@earendil-works/pi-tui';
-import { createConversationView, slashCommandsOf, slashProvider } from './conversation-view.mjs';
+import { createConversationView, hasEnded, slashCommandsOf, slashProvider } from './conversation-view.mjs';
 import { followLog } from './log-follow.mjs';
 import { dropPersonInput } from './person-inbox.mjs';
 
@@ -523,4 +523,15 @@ test('the status line counts background work: alone when the worker waits, besid
   assert.match(t.text(), /◌ 1 running in the background/);
   t.push(end('b'));
   assert.doesNotMatch(t.text(), /running in the background$/m);
+});
+
+// T14: a planning session resumed into the log it exited in is live again; only an exit after the last
+// `resumed` note ends it.
+test('hasEnded: an exit ends the log until a `resumed` note, and an exit after it ends it again', () => {
+  const note = (kind) => ({ dir: 'note', kind });
+  assert.equal(hasEnded([{ dir: 'out' }]), false);
+  assert.equal(hasEnded([note('exited')]), true);
+  assert.equal(hasEnded([note('sdk-error')]), true);
+  assert.equal(hasEnded([note('exited'), note('resumed')]), false);
+  assert.equal(hasEnded([note('exited'), note('resumed'), { dir: 'in' }, note('exited')]), true);
 });

@@ -17,7 +17,12 @@ Legend: 🐞 defect found · ✅ verified by hand with the user · 📌 worth kn
 
 | Date | | Finding |
 |---|---|---|
-| 2026-09-26 | 🐞 | T13 review: T12's rig test `↵ on the go starts the build` fails about half of `npm test` runs, feature branch too. The fake build finishes between frames and `until` reads only the current `screen.text()`. Test defect, left alone. |
+| 2026-09-26 | 🔄 | T14 drill, user: `pir start {slug}` on a live planning run opens its steps view; the resume message is one paragraph; a finished step shows its time (`tookMs`, from its logs). |
+| 2026-09-26 | 🐞 | T14 drill, fixed: resumed conversation opened read only; stop mid-question logged `answered-remotely`; rejection message said "report again" twice; no-plan review read "starts when…"; ended steps view offered Ctrl+S. |
+| 2026-09-26 | 📌 | T14: the build's watch view also offers `Ctrl+S Ctrl+S stop this run` on a finished or stopped run, where the chord is inert. Build view, not this plan; left alone. |
+| 2026-09-26 | 📌 | T14: a person's own stop shows `the worker's line failed: … exited with code 143` in the conversation, for planning sessions and build workers alike. Left alone. |
+| 2026-09-26 | 📌 | T14: the fake takes a resumed session's first message as the resume prompt and emits no `result`, so the rig's resumed conversation reads `working…` until the person writes. Real Claude replies. |
+| 2026-09-26 | 🐞 | T13 review: T12's rig test `↵ on the go starts the build` failed about half the runs (fake task done between polls). T14 waits for the T01 row in any state. |
 | 2026-09-26 | 📌 | T13 review: a planning run that dies before its planner has a session leaves `pir plan` on `starting the planner…` under `planning` indefinitely; ← reaches the steps view. Unspecified; left alone. |
 | 2026-09-26 | 📌 | T17: the plan-command scratch repo has no CLAUDE.md, so the real planner in T18 runs without the method's rules file; the skills cite `CLAUDE.md` sections. Not specified by the task; left alone. |
 | 2026-09-26 | 📌 | T07: after a crash between the control-folder move and the index rename, `resumeRun` (T08) recreates `plans/plan-{hex4}/.parallel/plan/run.log` from `record.controlDir`; plan-run finds the moved state.json but that run's output lands in the old folder. Left alone. |

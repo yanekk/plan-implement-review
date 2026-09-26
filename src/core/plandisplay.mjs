@@ -54,7 +54,7 @@ export function widthLine(progressText) {
 //   header — { name, state, branch }: name is the slug, or the label in quotes before the rename
 //   kind   — 'active' | 'asking' | 'done' | 'failed' | 'pending'
 //   clock  — elapsed ms for an active or asking step (stopped at stoppedAt while asking, as task rows are),
-//            else null
+//            the step's tookMs for a done or failed one (null when not recorded), else null
 //   footer — null | { kind: 'asking', step } | { kind: 'build-later', slug, branch } | { kind: 'no-plan', branch }
 //            | { kind: 'not-reviewed' } | { kind: 'stale', state }
 //   go     — null | { slug, branch, widthLine }: set exactly when runDisplayState reads 'your-go'
@@ -80,9 +80,11 @@ export function buildPlanDisplay(runState, { now = null, record = null, state = 
       return { ...base, kind: 'pending', text: PENDING_TEXT.build, clock: null };
     }
     const phase = s?.phase ?? (id === 'plan' && !rs ? 'planning' : 'pending');
-    if (phase === 'done') return { ...base, kind: 'done', text: DONE_TEXT[id], clock: null };
-    if (phase === 'failed') return { ...base, kind: 'failed', text: FAILED_TEXT[id], clock: null };
-    if (phase === 'pending') return { ...base, kind: 'pending', text: PENDING_TEXT[id], clock: null };
+    // A finished step shows how long it worked, as a ✅ task row shows its time (user, T14 drill).
+    if (phase === 'done') return { ...base, kind: 'done', text: DONE_TEXT[id], clock: s?.tookMs ?? null };
+    if (phase === 'failed') return { ...base, kind: 'failed', text: FAILED_TEXT[id], clock: s?.tookMs ?? null };
+    // A run with an outcome has ended: a step it never reached will not start (a no-plan run's review).
+    if (phase === 'pending') return { ...base, kind: 'pending', text: outcome ? 'not started' : PENDING_TEXT[id], clock: null };
     // An active or asking step of a run whose program is gone is stale: it names how the run ended, and
     // its clock is not shown, since nothing is running for it (the dashboard decides crashed, §2.10).
     if (!alive) return { ...base, kind: 'failed', text: state === 'stopped' ? 'stopped' : 'crashed', clock: null };

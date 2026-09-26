@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join, basename } from 'node:path';
 
 import { planPreflight, resumeRun, startPlanRun, startRun } from './launch.mjs';
-import { listRecords, recordPath, writeRecord } from './index-store.mjs';
+import { indexDir, listRecords, recordPath, writeRecord } from './index-store.mjs';
 import { initialPlanState } from '../core/planflow.mjs';
 
 // The launch tests never touch a real coordinator, a real caffeinate, the real ~/.pir, or the real
@@ -584,5 +584,18 @@ test('startRun on a branch-home unreviewed plan → not-reviewed with where: bra
   const { spawn, calls } = makeSpawn();
   const r = startRun('demo', { cwd: s.root, spawn, exec: execAlive, kill: () => {}, env: s.env });
   assert.deepEqual(r, { started: false, reason: 'not-reviewed', where: 'branch' });
+  assert.equal(calls.length, 0);
+
+  // Its planning run live (being reviewed): `pir start` opens it rather than naming resume (user, T14).
+  writeRecord(
+    { version: 1, kind: 'plan', label: null, go: null, slug: 'demo', repo: basename(s.root), repoPath: s.root,
+      controlDir: join(s.root, 'plans', 'demo', '.parallel', 'plan'), pid: 9001, startTime: LSTART,
+      startedAt: '2026-09-26T08:00:00.000Z', branch: 'pir/demo', finalState: null, updatedAt: null },
+    { dir: indexDir({ env: s.env }) },
+  );
+  assert.deepEqual(startRun('demo', { cwd: s.root, spawn, exec: execAlive, kill: () => {}, env: s.env }), { started: false, reason: 'already-running', alreadyRunning: true });
+  // Stopped, it is refused naming resume again.
+  const dead = () => { throw Object.assign(new Error('ESRCH'), { code: 'ESRCH' }); };
+  assert.deepEqual(startRun('demo', { cwd: s.root, spawn, exec: execAlive, kill: dead, env: s.env }), { started: false, reason: 'not-reviewed', where: 'branch' });
   assert.equal(calls.length, 0);
 });
