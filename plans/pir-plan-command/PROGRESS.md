@@ -38,11 +38,11 @@ done · ⛔ blocked, needs a human.
 | T13 | brief-box | T09, T12 | ✅ | |
 | T14 | plan-screen-drill | T11, T12, T13 | ✅ | |
 | T15 | planning-skills | T01 | ✅ | |
-| T16 | docs-readme | T14, T15 | ⬜ | |
+| T16 | docs-readme | T14, T15 | 🔍 | New docs/planning-runs.md; seven docs and README updated, no command-to-type `pir {slug}` left. Deviation: also docs/human-flow.md (its `PARALLEL_REMOTE=0 pir {slug}`, and planning sessions' whole-session Remote Control). Key tables checked against pir-tui.mjs footers and BRIEF_HINT. Docs only; npm test green. |
 | T17 | harness-plan-fixture | T07, T08, T15 | ✅ | |
 | T18 | live-plan-run | T14, T16, T17 | ⬜ | |
 
-**Review queue:** *(empty)*
+**Review queue:** T16
 
 ## Blocked on the user
 

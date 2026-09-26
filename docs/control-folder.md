@@ -9,6 +9,16 @@ Workers reach this folder even though they live in separate worktrees, because e
 resolves the shared git dir to the one main checkout, so the control folder has a single location
 all sessions can address.
 
+A **planning run** (`pir plan`) keeps its own control folder beside it, `plans/{slug}/.parallel/plan/`,
+gitignored by the same rule and never touched by the build's control-folder hygiene, so the plan's
+conversations stay with the plan. Before the planner names the plan the folder is
+`plans/plan-{hex4}/.parallel/plan/`, under the run id; it moves at the rename and the emptied
+`plans/plan-{hex4}/` is removed. It is under `plans/`, not `.git`, because Claude Code never
+auto-approves a write under `.git` and the planner writes its report there. It holds `brief.md`,
+`state.json`, `reports/`, `conversations/plan-{n}.ndjson` and `review-{n}.ndjson`, `inbox/`,
+`workers.json`, `status.json` and `run.log` — see [planning-runs.md](planning-runs.md). The rest of
+this page is the build's folder.
+
 ## What is in it
 
 | Entry | What it is |

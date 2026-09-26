@@ -79,6 +79,11 @@ headless worker). Once the answer is in and the worker is working again, it is s
 ends the web session; a closing worker is switched off first. The session is named like the worker
 (`{repo} / {plan} / {task} / {slug} / {role}`).
 
+A `pir plan` session is the exception: the planner and the plan reviewer have Remote Control on for
+their whole session, not only while they wait, because a planning session is a conversation with the
+person from start to finish (see [planning-runs.md](planning-runs.md)). `PARALLEL_REMOTE=0` turns it
+off there too.
+
 - **An answer given there reaches the worker as if given in `pir`.** A permission request or question
   set answered on claude.ai is withdrawn from the worker's line and logged `answered-remotely`, so the
   row stops asking at once; the answer itself is in the tool result that follows. A reply typed there
@@ -86,7 +91,7 @@ ends the web session; a closing worker is switched off first. The session is nam
   view shows the worker's response, not what was typed.
 - **Notifications.** All three kinds notify the Claude app; for a permission request or a question
   report the notification was seen to arrive later than for a question set (2026-09-26).
-- **Opt out** with `PARALLEL_REMOTE=0` when starting the run (`PARALLEL_REMOTE=0 pir {slug}`): no
+- **Opt out** with `PARALLEL_REMOTE=0` when starting the run (`PARALLEL_REMOTE=0 pir start {slug}`): no
   session then appears in the person's claude.ai account. A refusal — Remote Control disabled by
   managed settings, no claude.ai login — is logged `remote-control-failed` in that worker's
   conversation once, and the worker is still answered in `pir` as usual.

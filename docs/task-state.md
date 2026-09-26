@@ -123,6 +123,8 @@ because the engine could not run its tests at the end. `/pir-review-plan` writes
 it in a fresh copy of the repo; on a plan already reviewed or started it does only that, in a narrow
 pass that changes nothing else and leaves the `Plan reviewed:` line as it was.
 
-The command refuses to start until both read as reviewed, and `pir {slug}` refuses the same plan
-before detaching (see [run-lifecycle.md](run-lifecycle.md), [detached-runs.md](detached-runs.md)).
+Both are read from the plan's home (`planHome`): the main checkout's `plans/{slug}/`, else the
+committed tree of branch `pir/{slug}` for a plan `pir plan` made and has not yet been merged (see
+[run-lifecycle.md](run-lifecycle.md), [planning-runs.md](planning-runs.md)). The command refuses to
+start until both read as reviewed, and `pir start {slug}` refuses the same plan before detaching (see [run-lifecycle.md](run-lifecycle.md), [detached-runs.md](detached-runs.md)).
 `pir-work` applies the same gate in the classic flow.

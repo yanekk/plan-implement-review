@@ -3,8 +3,9 @@
 This folder is the single source of truth for how the **parallel** plan-implement-review
 workflow behaves: its components, the lifecycle of a run, where task state lives, the branch
 and worktree model, the control folder, the human decision flow, the kill switch, the worker
-ceiling, restart and recovery, and the detached `pir` front-end that starts a run outliving its
-terminal and watches every run on the machine. It is the behavioural spec — nouns, states, data
+ceiling, restart and recovery, the detached `pir` front-end that starts a run outliving its
+terminal and watches every run on the machine, and `pir plan`, which runs the planning and the plan
+review inside that front-end. It is the behavioural spec — nouns, states, data
 flows, and guarantees.
 
 It is not the step-by-step. The procedure a worker session follows lives in the skills
@@ -32,9 +33,12 @@ task. It never merges to `main`: the command stops at a green feature branch and
 `git merge` to run by hand. A project opts into parallel mode per run; nothing about the classic
 flow changes.
 
-A person launches parallel mode with `pir {slug}`, run from inside the target repo — it starts the
-coordinator detached and drops into its live view; a bare `pir` opens the cross-repo dashboard (see
-[detached-runs.md](detached-runs.md)). The person answers a worker inside that same screen, by
+A person launches parallel mode with `pir start {slug}`, run from inside the target repo — it starts
+the coordinator detached and drops into its live view; a bare `pir` opens the cross-repo dashboard (see
+[detached-runs.md](detached-runs.md)). The front half can run in `pir` too: `pir plan` hosts the
+planner and then a fresh plan reviewer as sessions answered in the same screen, on a side branch
+`pir/{slug}` that the build later reuses as its feature branch, and asks for the go to start the build
+when the plan is reviewed (see [planning-runs.md](planning-runs.md)). The person answers a worker inside that same screen, by
 opening the worker's conversation (see [human-flow.md](human-flow.md)). The one-time setup is
 `./install.sh`, which puts the `pir` command on the PATH and installs the coordinator engine, with its
 two npm packages, where it can run against any set-up repo.
@@ -45,7 +49,7 @@ and it had no conversation view. `install.sh` removes an installed copy it finds
 
 ## The components
 
-- **The coordinator command** — launched with `pir {slug}`, which runs `node
+- **The coordinator command** — launched with `pir start {slug}`, which runs `node
   src/shell/coordinate.mjs {slug}` detached: a plain program, not a session and not an agent. It opens
   the feature branch in its own worktree, decides which task each worker builds, spawns and closes
   workers, holds a live line to each one, prints a live status display, and hands the person the
@@ -77,6 +81,12 @@ and it had no conversation view. `install.sh` removes an installed copy it finds
   what the core decides. The pure core also gained `stream.mjs` (read conversation-log entries, derive
   a worker's activity), `conversation.mjs` (log entries to screen lines, the permission gate and
   question picker) and `person-input.mjs` (validate the person's input, the "do not ask again" grants).
+- **The planning program** (`src/shell/plan-run.mjs`) — the detached program behind `pir plan`. It
+  holds one planning session at a time through the same worker line, checks each report against git,
+  renames the run's branch, worktree and control folder once the plan has a name, and records the
+  outcome. The pure step machine is `src/core/planflow.mjs`; the steps view and the go question are
+  `src/core/plandisplay.mjs`; the brief box is `src/shell/brief-box.mjs`. `src/shell/plan-home.mjs`
+  tells a build where its plan lives: the main checkout, else the committed branch `pir/{slug}`.
 
 ## The documents
 
@@ -89,4 +99,6 @@ and it had no conversation view. `install.sh` removes an installed copy it finds
   `pir` screen, merge conflicts, the kill switch, the worker ceiling.
 - [restart-recovery.md](restart-recovery.md) — what a restart picks up, and the known limitations.
 - [detached-runs.md](detached-runs.md) — the `pir` front-end: start a run detached, the cross-repo
-  dashboard to watch, stop and clear runs, and a worker's conversation view.
+  dashboard to watch, stop, clear and resume runs, and a worker's conversation view.
+- [planning-runs.md](planning-runs.md) — `pir plan`: the planner and the plan reviewer run inside `pir`,
+  the rename, the go that starts the build, resume.

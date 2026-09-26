@@ -5,8 +5,9 @@ A working method for Claude Code, packaged so it can be dropped into any project
 Work is planned once, read back once before anything is built, and then built by many Claude
 sessions at once. Four ideas carry the whole method:
 
-- **It runs in parallel.** `pir {slug}` builds every task whose dependencies are done at the same
-  time, and shows you the whole run on one screen.
+- **It runs in parallel.** `pir start {slug}` builds every task whose dependencies are done at the
+  same time, and shows you the whole run on one screen. `pir plan` does the planning in the same
+  screen, and asks whether to start the build when the plan is reviewed.
 - **You set the autonomy.** Inside the code the agents work on their own; outside it they go only
   as far as you allowed, action by action.
 - **Every step starts with a clean slate.** Each task is sized to fit one session, and each session
@@ -19,20 +20,33 @@ You act as product manager: you own *what* gets built and why. The sessions own 
 ## The workflow: plan, review the plan, run it
 
 ```
+pir plan "what to build"   →  pir/{slug} branch        planned, then read back by a fresh session,
+                                                        all answered in pir's screen
+    ↵ at "Start the build?" →  pir/{slug} branch, green every task built and reviewed in parallel
+git merge pir/{slug}       →  main                      the one step you run by hand
+```
+
+`pir plan` runs the two planning steps for you, one after the other, as sessions inside `pir` (see
+[Planning inside `pir`](#planning-inside-pir--pir-plan) below). You can also run them yourself, as
+slash commands inside Claude Code, and then start the build:
+
+```
 /pir-plan                  →  plans/{slug}/            a reviewed-ready plan, split into tasks
 /pir-review-plan {slug}    →  plan marked reviewed      fresh eyes before a line is built
-pir {slug}                 →  pir/{slug} branch, green  every task built and reviewed in parallel
+pir start {slug}           →  pir/{slug} branch, green  every task built and reviewed in parallel
 git merge pir/{slug}       →  main                      the one step you run by hand
 ```
 
 | Step | What it does |
 |---|---|
+| `pir plan ["brief"]` | Run the planning and the plan review below inside `pir`, on a branch of their own, answered in `pir`'s screen; when the plan is reviewed, ask whether to start the build. |
 | `/pir-plan` | Brainstorm the requirements, confirm the direction with a throwaway mock when the thing has a feel to it, probe the tech on the actual machine, survey what the codebase already does so nothing gets built twice, settle the architecture, split the work into session-sized tasks with their dependencies, write it all to `plans/{slug}/`. Writes no product code. |
 | `/pir-review-plan {slug}` | Read the finished plan back with fresh eyes, before a line of it is built. Fixes what has one right answer, brings everything else to you as a decision, applies what you decide, marks the plan reviewed. Runs once. |
-| `pir {slug}` | Run the reviewed plan in parallel, from a terminal inside the repo. Starts a coordinator in the background that builds every task whose dependencies are done, each in its own worker session, has a different worker review it, and merges it into the plan's feature branch — then drops you into a live view of every task. |
+| `pir start {slug}` | Run the reviewed plan in parallel, from a terminal inside the repo. Starts a coordinator in the background that builds every task whose dependencies are done, each in its own worker session, has a different worker review it, and merges it into the plan's feature branch — then drops you into a live view of every task. |
 
-The first two are slash commands inside Claude Code. `pir` is a shell command, installed on your
-PATH by `./install.sh`.
+`/pir-plan` and `/pir-review-plan` are slash commands inside Claude Code. `pir` is a shell command,
+installed on your PATH by `./install.sh`: `pir` alone opens the dashboard, `pir plan` plans, `pir start
+{slug}` builds. The old `pir {slug}` is gone; typed now, it tells you to use `pir start {slug}`.
 
 How far the agents may go on their own outside the code — deploys, paid calls, anything other
 people see — is yours to set, action by action, in the plan. See
@@ -40,6 +54,47 @@ people see — is yours to set, action by action, in the plan. See
 
 (The same plan can also be built one task per session, by typing `/pir-work {slug}` repeatedly —
 the original single-stream flow, still supported.)
+
+## Planning inside `pir` — `pir plan`
+
+```sh
+pir plan "a daily screen budget with a warning"
+```
+
+`pir plan` starts the planning conversation in the background and drops you straight into it, inside
+`pir`. Type `pir plan` with no words and a box opens for you to write the brief first (`↵` starts,
+`shift+↵` adds a line, `esc` cancels). You talk to the planner exactly as you would in `/pir-plan`:
+it asks, you answer in `pir`'s screen or from your phone. When the plan is written, `pir` closes the
+planner and opens a brand-new reviewer that never saw it being written; your screen follows you into
+that conversation. When the reviewer is done, `pir` asks:
+
+```
+screen-time is reviewed. Start the parallel build now?
+9 tasks, longest chain 4, up to 3 can run at once.
+It builds on pir/screen-time.
+
+  ↵ Start the build     n Not now
+```
+
+`↵` starts the build on the same branch, and the dashboard row turns from `plan` to `work`. `n` leaves
+it for later: `pir start screen-time` builds it whenever you like.
+
+What that gets you:
+
+- **`main` stays clean.** The plan is written on its own branch, `pir/{slug}`, which the build then
+  uses as its feature branch; the plan reaches `main` with its code, in your one `git merge`. `pir`
+  never deletes a branch.
+- **Nothing to carry between sessions.** No slug to copy, no second session to open for the review.
+- **It survives the terminal closing.** Like a build, it runs in the background. The dashboard shows
+  it with a `plan` type, and `planning`, `reviewing` or `your go` as its state.
+- **Stop and pick up where you left off.** Stop a planning run from the dashboard (`Ctrl+S` twice); to
+  resume it, or one that crashed, press `Ctrl+R` twice on its row. The same planner or reviewer comes
+  back with the whole conversation, is told it was stopped, and asks again whatever it was asking. The
+  same keys resume a stopped build.
+
+Limits: a plan that lives only on its branch cannot be built one task per session with `/pir-work`
+until you merge it to `main`, and editing a reviewed plan before the go means resuming a session or
+editing the branch by hand. The full behaviour is in [docs/planning-runs.md](docs/planning-runs.md).
 
 ## You set how much the agents do on their own
 
@@ -131,10 +186,10 @@ the builder and reviewer skills cannot be run directly — they do not appear in
 plan itself gets the same treatment before any of it is built: `/pir-review-plan` must run in a
 session that did not write the plan (below).
 
-## Watching a run — `pir {slug}` and `pir`
+## Watching a run — `pir start {slug}` and `pir`
 
-`pir {slug}` starts the run detached from your terminal, so closing the pane or the terminal app
-does not stop it, and opens its live view straight away. Running `pir {slug}` again while it is
+`pir start {slug}` starts the run detached from your terminal, so closing the pane or the terminal app
+does not stop it, and opens its live view straight away. Running `pir start {slug}` again while it is
 going just reopens the view; running it on a stopped or crashed run resumes from the work already
 committed.
 
@@ -168,21 +223,23 @@ What it tells you at a glance:
   Claude's Remote Control: the Claude app notifies you, and you can answer on claude.ai or your phone
   instead of in `pir`. Once you have answered and the worker is back at work, it is closed again.
   Notifications for a permission request or a plain question can lag behind those for a question
-  with choices. Start a run with `PARALLEL_REMOTE=0 pir {slug}` to keep it off. See
+  with choices. Start a run with `PARALLEL_REMOTE=0 pir start {slug}` to keep it off. See
   [human-flow.md](docs/human-flow.md#answering-away-from-the-terminal--remote-control).
 - **When it is done.** A finished run runs the tests on the feature branch and, only if they
   pass, prints the `git merge pir/{slug}` for you to run. It never merges to `main` itself.
 
 `pir` on its own opens a dashboard of every run on the machine, across every repo: each run's
-state (running, finished, stopped, crashed), its progress and how many workers are live.
+type (`plan` or `work`), its state (running, finished, stopped, crashed; for a planning run
+planning, reviewing or your go), its progress and how many workers are live.
 
 | View | Keys |
 |---|---|
-| Dashboard | `↑↓` move · `↵` open a run · `Ctrl+S` twice stop · `Ctrl+X` twice remove · `esc` quit |
-| Live view | `←` back to the dashboard · `Ctrl+S` twice stop this run · `esc` quit |
+| Dashboard | `↑↓` move · `↵` open a run · `Ctrl+R` twice resume · `Ctrl+S` twice stop · `Ctrl+X` twice remove · `esc` quit |
+| Live view | `↑↓` pick a task · `→` open its worker · `←` back to the dashboard · `Ctrl+S` twice stop this run · `esc` quit |
+| A planning run | `↑↓` pick a step · `→` open its conversation · `←` back · at the go, `↵` start or `n` not now |
 
 Quitting either view stops nothing. Stopping a run closes its workers at once and keeps
-everything already merged; `pir {slug}` picks it up again later. At most four workers run at a
+everything already merged; `Ctrl+R` twice on its row, or `pir start {slug}`, picks it up again later. At most four workers run at a
 time (`PARALLEL_MAX_WORKERS` changes it), which caps both cost and merge complexity.
 
 The full behaviour — the run lifecycle, task state, the branch and worktree model, restart and
@@ -342,7 +399,7 @@ session before it could start.
     → applies your answers, marks the plan reviewed, stops
                                              commit: plan-review(screen-time): 6 fixes, 3 decisions
 
-$ pir screen-time
+$ pir start screen-time
     → checks the plan is reviewed, starts the run in the background, opens the live view
     → T00 has no dependencies: a new worker builds it, marks it 🔍 and is closed;
       a second, fresh worker reviews it — no memory of the build — fixes a missed
@@ -373,7 +430,7 @@ it.
 The full set is in [CLAUDE.md](CLAUDE.md) — it is appended into each project and binds every
 session. The ones that bite most often:
 
-- **No plan gets built unread.** `pir {slug}` (and `/pir-work`) refuse a plan that has never
+- **No plan gets built unread.** `pir start {slug}` (and `/pir-work`) refuse a plan that has never
   been through `/pir-review-plan`, and say so.
 - **Nothing unspecified gets invented.** A half-specified requirement is a question for you,
   not a gap for a worker to close quietly — it stops and asks, and waits for your answer.
@@ -396,7 +453,7 @@ CLAUDE.md        the shared working method, appended into each project
 install.sh       idempotent installer — skills + engine user-scoped, `pir` on the PATH,
                  method into a project
 bin/
-└── pir                the parallel front-end: `pir {slug}` runs a plan, `pir` the dashboard
+└── pir                the parallel front-end: `pir plan` plans, `pir start {slug}` builds, `pir` the dashboard
 docs/            how parallel mode behaves today — the canonical reference
 src/
 ├── core/              the pure decision core of the coordinator

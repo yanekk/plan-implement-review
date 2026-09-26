@@ -7,6 +7,14 @@ the stage it had actually reached, rather than rebuilding from the start. No exi
 branch, so there is always something to reconcile. This page describes what
 that re-run picks up and how it decides.
 
+From the dashboard the same re-run is the resume chord, `Ctrl+R Ctrl+R` on a stopped or crashed build
+row: it is `startRun(slug)`, exactly `pir start {slug}` ([detached-runs.md](detached-runs.md)). A
+**planning run** (`pir plan`) resumes differently, because it holds a conversation rather than a task
+table: the same chord re-spawns the planning program with `--resume`, which finishes a half-done rename
+and reopens the step's last planner or reviewer session by its session id, and sends it one fixed
+message saying it was stopped and to ask any open question again (see
+[planning-runs.md](planning-runs.md)). The rest of this page is the build.
+
 A re-run is checked like a first start: a plan without a valid setup/test block in its `DESIGN.md`
 is refused before anything is reconciled (see [run-lifecycle.md](run-lifecycle.md)).
 
@@ -182,7 +190,7 @@ When a re-run is not what is wanted, the pieces are all inspectable and removabl
 - **A leaked worker, worktree, or branch:** `cat plans/{slug}/.parallel/control/workers.json` lists
   the workers the last coordinator recorded, with pid and start time. `kill <pid>` each one still
   running whose `ps -p <pid> -o lstart=` equals its recorded `startTime` (a different time is a reused
-  pid, not the worker); `pir {slug}` or a stop from the dashboard does exactly this. `git worktree
+  pid, not the worker); `pir start {slug}` or a stop from the dashboard does exactly this. `git worktree
   list` lists worktrees; remove one and its branch with `git worktree remove --force` and `git branch
   -D`. A worker also shows in `claude agents` under its name while it runs, but cannot be attached to
   or stopped from there.

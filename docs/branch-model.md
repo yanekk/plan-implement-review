@@ -22,6 +22,28 @@ person judges one finished feature branch. This is a deliberate departure from t
 sessions run` and in the `pir-worker` contract so a worker in a task-branch worktree does not halt
 on its own worktree.
 
+## A plan made by `pir plan` arrives on its branch
+
+`pir plan` cuts the branch before there is a build ([planning-runs.md](planning-runs.md)). The planning
+run starts on `pir/plan-{hex4}` (a random run id), cut from local `main`, in worktree
+`.claude/worktrees/pir-plan-{hex4}` (`openPlanBranch`). The planner and the plan reviewer commit the plan
+there, never on `main`. Once the planner names the plan, between the two sessions, the run renames the
+branch to `pir/{slug}` (`git branch -m`) and moves the worktree to `.claude/worktrees/pir-{slug}`
+(`git worktree move`; `renamePlanBranch`). Those are exactly the feature branch and feature worktree a
+build of `{slug}` uses, so at the go the build's `openFeature` finds them and reuses them: the plan's
+commits are the first commits on the feature branch, and the plan reaches `main` with its code in the
+one `git merge pir/{slug}`. The build reads the plan from that branch until then (`planHome`, see
+[run-lifecycle.md](run-lifecycle.md)). `pir` deletes no branch: a planning run that ended without a
+plan leaves its `pir/plan-{hex4}` branch and worktree for the person.
+
+```
+main ──●
+        \
+         ● pir/plan-a3f0 ──● plan ──● review      (renamed to pir/{slug} after the planner)
+                                        \
+                                         ● T01 …  (the build's task branches, as above)
+```
+
 ## Worktrees
 
 Each branch is checked out in its own worktree, so several sessions work at once without touching
@@ -29,6 +51,8 @@ each other's files:
 
 - The **command** works in the feature-branch worktree at `.claude/worktrees/pir-{slug}`, leaving
   the person's main checkout on `main`.
+- A **planning run**'s sessions work in `.claude/worktrees/pir-plan-{hex4}`, then, after the rename,
+  in `.claude/worktrees/pir-{slug}` — the worktree the build then takes over.
 - Each **worker** works in a task-branch worktree at `.claude/worktrees/pir-{slug}-T{nn}`.
 
 Worktrees live under `<main>/.claude/worktrees`, the same place Claude Code puts its own linked
