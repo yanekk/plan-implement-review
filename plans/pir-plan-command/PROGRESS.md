@@ -26,7 +26,7 @@ done · ⛔ blocked, needs a human.
 | T01 | plan-flow-core | — | ⬜ | |
 | T02 | run-record-type | — | ✅ | Review clean, no fix commit. Six test rows and three done-when items verified; npm test green; dashboard and coordinator tests unchanged. Probed: failed write still throws, failed read no-ops; patch cannot move key fields; retry after a half-done rename gives EEXIST, logged for T07. |
 | T03 | plan-home | — | ⬜ | |
-| T04 | plan-branch | — | ⬜ | |
+| T04 | plan-branch | — | ✅ | |
 | T05 | fake-claude-sessions | — | ⬜ | |
 | T06 | plan-run-planner | T01, T02, T04, T05 | ⬜ | |
 | T07 | plan-run-review | T06 | ⬜ | |
