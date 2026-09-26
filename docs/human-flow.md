@@ -32,7 +32,8 @@ to answer it are `pir` and, while it waits, claude.ai or the Claude app (below).
 
 The row stays **asking you** until the worker is working again: the first pass that sees the park
 notes the turn the ask ends with, and a turn opened after it returns the task to `building` or
-`reviewing` (`resumeAnswered` in `loop.mjs`), whichever place the answer came from. No report is
+`reviewing` (`resumeAnswered` in `loop.mjs`), whichever place the answer came from. A worker that
+asks with a question set in the same turn instead is working again once that set is answered. No report is
 needed for that; the worker's log shows it.
 
 One parked worker does not stall the others: every other independent task keeps moving while it

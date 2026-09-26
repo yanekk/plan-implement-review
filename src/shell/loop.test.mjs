@@ -618,6 +618,24 @@ test('a parked question returns to its role\'s phase once the worker opens a tur
   assert.ok(r.actions.some((a) => a.type === 'resumed' && a.task === 'T01'));
 });
 
+test('a parked worker that asks with a question set in the same turn is resumed once it is answered', (t) => {
+  const { platform, base } = setup(t, [{ num: 'T01' }], { behaviors: { T01: { question: 'which format?' } } });
+  let act = null;
+  const list = platform.list.bind(platform);
+  platform.list = () => list().map((w) => (act && w.task === 'T01' ? { ...w, activity: { ...w.activity, ...act } } : w));
+  const state = createRunState();
+  runPass({ ...base, state }); // spawn T01
+  act = { turns: 0, open: true, pending: [] };
+  runPass({ ...base, state }); // T01 reports its question, mid-turn
+  act = { turns: 0, open: true, pending: [{ kind: 'questions', requestId: 'q1' }] }; // and asks with a form
+  runPass({ ...base, state });
+  assert.equal(state.tasks.T01.phase, 'awaiting-answer');
+  act = { turns: 0, open: true, pending: [] }; // answered (in pir or on the phone); the same turn goes on
+  const r = runPass({ ...base, state });
+  assert.equal(state.tasks.T01.phase, 'implementing');
+  assert.ok(r.actions.some((a) => a.type === 'resumed' && a.task === 'T01'));
+});
+
 test('a conflict fix pir sent is not resumed by the worker working on it', (t) => {
   const { platform, base } = setup(t, [{ num: 'T01' }]);
   const state = createRunState();

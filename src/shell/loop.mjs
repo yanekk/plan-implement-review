@@ -132,18 +132,23 @@ function applyMessages(state, messages, record) {
 // `asking you` until its next report (`implemented`/`done`), with its clock stopped and its remote
 // session left on. The answer is read from the worker's log instead: the first pass that sees the
 // park records the turn the ask ends with (`askEnd`, the open turn if one is under way); a turn opened
-// after it means the worker is working again, and the task returns to its role's phase. A conflict fix
-// pir itself sent (`sent`) is not a question to the person and is left to its `done` report.
+// after it means the worker is working again, and the task returns to its role's phase. A worker may
+// instead ask with a question set inside the same turn and carry on once it is answered (seen live,
+// human-decision fixture 2026-09-26); so a request seen pending while parked (`asked`) and now answered,
+// with the turn still open, counts as working again too. A conflict fix pir itself sent (`sent`) is not
+// a question to the person and is left to its `done` report.
 function resumeAnswered(state, liveById, record) {
   for (const [num, t] of Object.entries(state.tasks)) {
     if (t.phase !== AWAITING || !t.decision || t.decision.sent) continue;
     const act = liveById.get(t.workerId)?.activity;
     if (!Number.isFinite(act?.turns)) continue; // a listing without the log's fold (some test fakes)
+    if (act.pending?.length) t.decision.asked = true;
     if (t.decision.askEnd === undefined) {
       t.decision.askEnd = act.turns + (act.open ? 1 : 0);
       continue;
     }
-    if (act.turns > t.decision.askEnd || (act.turns === t.decision.askEnd && act.open)) {
+    const answeredInTurn = t.decision.asked && !act.pending?.length && act.open;
+    if (answeredInTurn || act.turns > t.decision.askEnd || (act.turns === t.decision.askEnd && act.open)) {
       t.phase = t.role === 'review' ? REVIEWING : IMPLEMENTING;
       delete t.decision;
       record('resumed', { task: num });
