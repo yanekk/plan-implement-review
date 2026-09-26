@@ -2,32 +2,210 @@
 
 A working method for Claude Code, packaged so it can be dropped into any project.
 
-Work is planned once, read back once before anything is built, then executed one task at a
-time by sessions that alternate between building and reviewing. The session that reviews a task is never the session that wrote it —
-that alternation is the whole point, and it is what buys a genuine fresh-eyes pass on every
-task.
+Work is planned once, read back once before anything is built, and then built by many Claude
+sessions at once. Four ideas carry the whole method:
+
+- **It runs in parallel.** `pir {slug}` builds every task whose dependencies are done at the same
+  time, and shows you the whole run on one screen.
+- **You set the autonomy.** Inside the code the agents work on their own; outside it they go only
+  as far as you allowed, action by action.
+- **Every step starts with a clean slate.** Each task is sized to fit one session, and each session
+  is closed when its step is done, so no agent ever works from a long, stale conversation.
+- **Nobody reviews their own work.** Every task is built by one session and reviewed by a
+  different, brand-new one that never saw it being written.
 
 You act as product manager: you own *what* gets built and why. The sessions own *how*.
 
-## The three commands
+## The workflow: plan, review the plan, run it
 
-| Command | What it does |
+```
+/pir-plan                  →  plans/{slug}/            a reviewed-ready plan, split into tasks
+/pir-review-plan {slug}    →  plan marked reviewed      fresh eyes before a line is built
+pir {slug}                 →  pir/{slug} branch, green  every task built and reviewed in parallel
+git merge pir/{slug}       →  main                      the one step you run by hand
+```
+
+| Step | What it does |
 |---|---|
-| `/pir-plan` | Brainstorm the requirements, confirm the direction with a throwaway mock when the thing has a feel to it, probe the tech on the actual machine, survey what the codebase already does so nothing gets built twice, settle the architecture, split the work into session-sized tasks, write it all to `plans/{slug}/`. Writes no product code. |
+| `/pir-plan` | Brainstorm the requirements, confirm the direction with a throwaway mock when the thing has a feel to it, probe the tech on the actual machine, survey what the codebase already does so nothing gets built twice, settle the architecture, split the work into session-sized tasks with their dependencies, write it all to `plans/{slug}/`. Writes no product code. |
 | `/pir-review-plan {slug}` | Read the finished plan back with fresh eyes, before a line of it is built. Fixes what has one right answer, brings everything else to you as a decision, applies what you decide, marks the plan reviewed. Runs once. |
-| `/pir-work {slug}` | Do exactly one unit of work — implement the next task, or review the last one — then stop. |
+| `pir {slug}` | Run the reviewed plan in parallel, from a terminal inside the repo. Starts a coordinator in the background that builds every task whose dependencies are done, each in its own worker session, has a different worker review it, and merges it into the plan's feature branch — then drops you into a live view of every task. |
 
-`/pir-work` dispatches on the state table in `plans/{slug}/PROGRESS.md`:
+The first two are slash commands inside Claude Code. `pir` is a shell command, installed on your
+PATH by `./install.sh`.
+
+How far the agents may go on their own outside the code — deploys, paid calls, anything other
+people see — is yours to set, action by action, in the plan. See
+[You set how much the agents do on their own](#you-set-how-much-the-agents-do-on-their-own).
+
+(The same plan can also be built one task per session, by typing `/pir-work {slug}` repeatedly —
+the original single-stream flow, still supported.)
+
+## You set how much the agents do on their own
+
+Inside the repo the workers are fully autonomous: they write the code, run the tests, review each
+other's work and merge it onto the run's branch without stopping for you. Everything a task does
+**outside** the code — a deploy, a paid API call, a DNS change, a message somebody else receives,
+a change to a real device — has its level of autonomy set by you, one action at a time.
+
+`/pir-plan` lists every such action in `DESIGN.md §5.3` and puts each in one of three bins:
+
+| Bin | What happens | Typical use |
+|---|---|---|
+| `worker` | The agent runs it and tells you afterwards in one line | A redeploy of a preview build, a free read-only call |
+| `ask` | The agent explains it, runs it, and the permission prompt waits for your yes | A production deploy, a paid call, anything others will see |
+| `person` | Only you can do it — the agent prepares everything and asks | A login, a physical device, a judgement call |
+
+- **Risky actions start at `ask`.** Anything that cannot be undone, may cost more than its task
+  expects, is seen or received by other people, or changes the infrastructure itself is `ask` by
+  default. An action nobody listed is treated as `ask` too.
+- **You move the dial at plan review.** `/pir-review-plan` walks every action in both directions
+  and brings each question to you: a `person` step an agent could run after your yes (too little
+  autonomy — you should not be pasting commands), and a `worker` action that crosses one of the
+  lines above (too much). You can move an action down to `worker` there, and only there; the row
+  records the date and your reason.
+- **The machine enforces it, not the agent's good intentions.** The review turns the bins into
+  permission rules in the project's `.claude/settings.json`, which every worker inherits: `worker`
+  actions are allowed outright, `ask` actions stop on a permission prompt. In a parallel run that
+  prompt shows up in `pir` as the worker asking you — you open it, approve or refuse, and it
+  carries on.
+- **Every action states its way back.** Each row names the exact command, whether and how it can
+  be undone, what it is expected to cost, and a login check the agent runs first, so the decision
+  reaches you while it is still a decision, not as a report afterwards.
+
+The result is a run that is as hands-off as you decide it should be: a plan whose actions are all
+`worker` stops only for genuine questions about what to build, and one full of `ask` rows also
+stops exactly where you wanted to look before anything touches the live world.
+
+## Every step starts with a clean slate
+
+A long agent session degrades. The conversation fills with old attempts, abandoned ideas and
+detail from tasks long finished; the model starts to lose track of the rules it was given at the
+start, and eventually its history is summarised away and what it was told is gone. This is
+*context rot*, and the method is built so that no step of the work ever runs long enough to reach
+it:
+
+- **A task is one session's work.** `/pir-plan` splits the plan until every task can be built,
+  tested and handed over inside a single session, and writes each one down with its goal, the files
+  it touches, its interface and what "done" means — everything a session needs to start cold.
+- **A task that turns out bigger than planned does not have to grow.** Its worker can propose
+  moving the extra work into a new task — asked and approved like any other question — and the
+  run schedules it with its own fresh builder and reviewer (see
+  [The plan can grow while it runs](#the-plan-can-grow-while-it-runs)). What the original task
+  promised in its "done" is still finished in its own session; only work beyond that moves out.
+- **Every worker is new, and is closed when its step is done.** A task's builder is closed when it
+  hands the task over for review; the reviewer is closed once the task is merged. No session ever
+  carries a second task, so none accumulates history from the last one.
+- **The coordinator has no conversation at all.** It is a plain program, not an AI session, so the
+  one piece that runs for the whole plan has nothing to go stale.
+- **Memory lives in files, and the files are kept short.** What one session must hand the next
+  goes into the plan's files, not into anyone's conversation: the design with its reasons, the
+  task file, `PROGRESS.md` (the handoff) and `FINDINGS.md` (the lessons learned). The last two are
+  read at the start of every session, so they have hard word limits and whoever adds to them trims
+  them first — see [What `/pir-plan` produces](#what-pir-plan-produces).
+- **The long story goes in git.** The reasoning behind a change is written in its commit message,
+  where it costs nothing until somebody goes looking for it, instead of in a file every session
+  must re-read.
+
+So the tenth task of a plan is built by an agent in the same fresh state as the first, working
+from the same written rules.
+
+## Nobody reviews their own work
+
+An agent that has just written a piece of code is the worst-placed reviewer of it: it remembers
+what it meant, so it reads what it meant, not what it wrote. So every task passes through two
+different sessions:
+
+1. **A builder** (`pir-implement`) implements the task, runs the tests, marks it `🔍` — built,
+   awaiting review — and is closed.
+2. **A reviewer** (`pir-review`) is started fresh on the same work. It has no memory of the build:
+   it knows only the task file, the plan's design rules and the change itself. It checks four
+   things — every acceptance criterion, one by one; whether the tests really test something (a
+   test that would still pass with the code gutted does not count); the traps the design and the
+   project's recorded lessons name; and the edge cases, error paths and boundaries the task file
+   did not anticipate. It fixes what it finds, marks the task `✅`, and only then is the task merged.
+
+The separation is enforced, not requested. In a parallel run the coordinator decides who reviews
+and always starts a new session to do it. In the single-stream flow `pir-work` picks the step, and
+the builder and reviewer skills cannot be run directly — they do not appear in the `/` menu. The
+plan itself gets the same treatment before any of it is built: `/pir-review-plan` must run in a
+session that did not write the plan (below).
+
+## Watching a run — `pir {slug}` and `pir`
+
+`pir {slug}` starts the run detached from your terminal, so closing the pane or the terminal app
+does not stop it, and opens its live view straight away. Running `pir {slug}` again while it is
+going just reopens the view; running it on a stopped or crashed run resumes from the work already
+committed.
+
+The live view is one line per task, updated in place:
 
 ```
-plan not reviewed ?  → STOP — /pir-review-plan runs first
-any task 🔍 ?        → REVIEW the lowest-numbered one
-else any 🟡 ?        → FINISH it
-else                 → IMPLEMENT the next ⬜ whose dependencies are ✅
+⠹ pir/screen-time · 3/9 done · 3 running · 1 asking you · 2 waiting · ceiling 4
+  ✔ T00  prove-the-ground        merged                    4:12
+  ✔ T01  usage-log-reader        merged                    9:47
+  ✔ T02  budget-ledger           merged                    7:03
+  ⠹ T03  policy-decision         building                  3:31
+  ⠹ T04  weekend-rule            reviewing                 1:58
+  ⠹ T05  warning-notifier        merging                   0:12
+  ● T06  limit-screen            asking you · a question   6:40
+  · T07  settings-file           needs T03
+  · T08  daily-report            needs T05, T06
+
+● T06 limit-screen — asking you; open it (→) to answer
 ```
 
-Task states: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review ·
-✅ reviewed and done · ⛔ blocked, needs a human.
+What it tells you at a glance:
+
+- **What is being built, reviewed or merged right now**, and for how long.
+- **What is waiting, and on what** — `needs T03` means that task starts the moment T03 is merged.
+- **Who is asking you something.** A worker that hits a question only you can answer — an
+  unspecified requirement, a genuine choice, something that needs your eyes on a running thing —
+  stops and waits, highlighted in amber, and its clock stops while it waits. Select its row and
+  open it (→ or Enter): the worker's conversation opens inside `pir`, and you answer there in plain
+  English, or pick from its question or allow its command; it carries on by itself. Every other task keeps moving meanwhile.
+- **When it is done.** A finished run runs the tests on the feature branch and, only if they
+  pass, prints the `git merge pir/{slug}` for you to run. It never merges to `main` itself.
+
+`pir` on its own opens a dashboard of every run on the machine, across every repo: each run's
+state (running, finished, stopped, crashed), its progress and how many workers are live.
+
+| View | Keys |
+|---|---|
+| Dashboard | `↑↓` move · `↵` open a run · `Ctrl+S` twice stop · `Ctrl+X` twice remove · `esc` quit |
+| Live view | `←` back to the dashboard · `Ctrl+S` twice stop this run · `esc` quit |
+
+Quitting either view stops nothing. Stopping a run closes its workers at once and keeps
+everything already merged; `pir {slug}` picks it up again later. At most four workers run at a
+time (`PARALLEL_MAX_WORKERS` changes it), which caps both cost and merge complexity.
+
+The full behaviour — the run lifecycle, task state, the branch and worktree model, restart and
+recovery, known limitations — is in [`docs/`](docs/README.md), starting with
+[detached-runs.md](docs/detached-runs.md) for `pir` itself.
+
+## The plan can grow while it runs
+
+A run does not need a perfect plan up front. When a worker finds that the plan is missing a task
+— a piece of wiring nobody listed, a check a later task will need — it stops and asks you, the
+same way it asks any other question. Once you say yes, it writes the new task down: its row in
+`PROGRESS.md` and `PLAN.md`, and a full task file under `tasks/`.
+
+The run picks the new task up when that worker's own work is merged, and fits it into the order
+automatically:
+
+- **It waits for what it depends on.** The new task starts the moment the tasks it names are
+  done, like any other.
+- **It can hold back existing tasks.** The new task can name tasks that must wait for it — a new
+  T11 whose dependencies read `T04, T05; blocks T10` — and the run adds that wait to T10 without
+  anyone editing T10.
+  The live view then shows T10 as `needs T11`.
+- **It is checked before it lands.** A task that depends on something that does not exist, or a
+  wait that would go round in a circle, is refused and shown to you rather than applied.
+
+What cannot change mid-run: a task that already exists cannot be edited, split, reordered or
+given different dependencies — another worker may be building it at that moment. And a task that
+has already started cannot be held back; if a new task asks for that, it is still added, and the
+run tells you that the started task was built without the new work. The details are in [docs/task-state.md](docs/task-state.md).
 
 ## Why the plan gets reviewed too
 
@@ -57,12 +235,6 @@ decision at a time. Then it applies what you decided and stops.
 It refuses to run in the session that wrote the plan, and refuses to run once building has
 started. Its account lives in its commit message; there is no review report file to maintain.
 
-`pir-implement` and `pir-review` are never invoked directly — `pir-work` chooses the
-task, and that choice is what guarantees the alternation. Both are marked
-`user-invocable: false`, so they do not appear in the `/` menu and cannot be typed as slash
-commands: the only way in is through `pir-work`. The model still reaches them via the Skill
-tool, which is the whole point.
-
 ## Install
 
 The skills install **user-scoped** — once for your account, under `~/.claude/skills/`, where
@@ -78,7 +250,7 @@ optional packages omitted, so it needs npm and the network on every run; if that
 and exits non-zero, since `pir` cannot start without them. In a checkout, `npm ci` once before
 `npm test`.
 
-For your account — the skills, nothing else:
+For your account — the skills, the engine and the `pir` command, nothing else:
 
 ```sh
 ./install.sh --global
@@ -99,7 +271,8 @@ account skills are present and amends this project's `CLAUDE.md`:
 ```
 
 Every form is idempotent: re-running refreshes the skills in place and never appends
-`CLAUDE.md` twice. Skills are read at session start — install, then start a **new** session.
+`CLAUDE.md` twice. If the folder `pir` lands in is not on your PATH, the installer prints the
+exact `export PATH` line to add. Skills are read at session start — install, then start a **new** session.
 
 Parallel mode needs one per-user setting so a worker's own `git`/`npm test` clear the
 auto-mode safety classifier: a `permissions.allow` list (shipped in a project's
@@ -150,7 +323,7 @@ session before it could start.
       say the direction is right; the mock is parked at prototype/
     → searches the code for what already does part of this: finds the existing
       usage log covers two thirds of T03, asks whether to extend it or start clean
-    → checkpoint: phase table and task list, you say yes
+    → checkpoint: phase table, task list and dependencies, you say yes
     → writes plans/screen-time/, commits, stops
                                              commit: plan(screen-time): …
 
@@ -163,59 +336,75 @@ session before it could start.
     → applies your answers, marks the plan reviewed, stops
                                              commit: plan-review(screen-time): 6 fixes, 3 decisions
 
-/pir-work screen-time
-    → T00 is ⬜ and has no dependencies → implement
-    → writes the spike, runs the test command, marks T00 🔍, stops
-                                             commit: T00: prove the ground
-
-/pir-work screen-time
-    → T00 is 🔍 → review (fresh session, did not write it)
-    → walks the acceptance criteria, reads the tests for what they assert,
-      probes past the doc for edge cases; finds nothing
-    → marks T00 ✅, stops
-                                             commit: T00 review: clean
-
-/pir-work screen-time
-    → T01 next; its dependency T00 is ✅ → implement
-    → …
+$ pir screen-time
+    → checks the plan is reviewed, starts the run in the background, opens the live view
+    → T00 has no dependencies: a new worker builds it, marks it 🔍 and is closed;
+      a second, fresh worker reviews it — no memory of the build — fixes a missed
+      edge case, marks it ✅; it is merged and the reviewer is closed
+    → T01, T02 and T03 all depended only on T00: three workers start at once
+    → T06 needs your eyes: its worker starts the limit screen and asks you to look
+      → the view shows "T06 limit-screen — asking you"; you open it in `pir`,
+        run the command it gives you, say what you saw; it records that and carries on
+    → T05's worker finds nothing in the plan wires the warning into the app; it asks
+      you, you say yes, it adds T09 "warning-wiring; blocks T08" — once T05 merges,
+      the view gains a T09 row, and T08 now needs T09 as well
+    → T07 reaches `npm run deploy:web`, an `ask` action in §5.3: its worker says what it
+      will deploy and how to roll it back, and waits on the permission prompt; you
+      open it in `pir`, press Enter to allow, and it deploys and carries on
+    → you close the terminal to go to lunch; the run keeps going
+$ pir
+    → the dashboard shows screen-time running, 8/10 done; ↵ reopens its live view
+    → last task merged, tests on pir/screen-time pass:
+        ✔ all 10 task(s) green on pir/screen-time · tests pass. Yours to merge:
+            git merge pir/screen-time
 ```
 
-One task per invocation. A session never implements and reviews in the same run, and never
-starts the next task after closing a review.
+A task is never reviewed by the worker that built it, and nothing lands on `main` until you merge
+it.
 
 ## Rules worth remembering
 
 The full set is in [CLAUDE.md](CLAUDE.md) — it is appended into each project and binds every
 session. The ones that bite most often:
 
-- **Scope is strict.** A session touches only the task it picked up. Everything else it
-  notices goes in `FINDINGS.md` and is left alone.
-- **The test command is the only evidence a session can produce on its own.** Anything
-  needing a screen, a login, a second account, a reboot, a real device or a paid API is
-  verified *with you* — the session hands you the exact command with a seatbelt on it, and
-  waits for the answer rather than leaving it as homework.
-- **Main checkout, main branch, always.** The review boundary is the session, not the
-  branch, so there is nothing to merge, ever.
+- **No plan gets built unread.** `pir {slug}` (and `/pir-work`) refuse a plan that has never
+  been through `/pir-review-plan`, and say so.
 - **Nothing unspecified gets invented.** A half-specified requirement is a question for you,
-  not a gap for a session to close quietly.
-- **No plan gets built unread.** `/pir-work` stops on a plan that has never been through
-  `/pir-review-plan`, and says so.
+  not a gap for a worker to close quietly — it stops and asks, and waits for your answer.
+- **Scope is strict.** A worker touches only the task it was given. Everything else it notices
+  goes in `FINDINGS.md` and is left alone. The one exception: a worker that finds the plan is
+  missing a task may add one, and only after you say yes.
+- **The test command is the only evidence a worker can produce on its own.** Anything needing
+  a screen, a login, a second account, a reboot, a real device or a paid API is verified *with
+  you* — the worker hands you the exact command with a seatbelt on it, and waits for the answer.
+- **Outside the code, the agents go only as far as you allowed.** Each live action sits in the
+  `worker`, `ask` or `person` bin you approved at plan review, enforced as a permission rule; an
+  action with no bin is `ask`.
+- **`main` is yours.** A run builds on its own feature branch, one branch and worktree per
+  task, and hands you the final `git merge`. Nothing merges to `main` without you.
 
 ## Layout of this repo
 
 ```
 CLAUDE.md        the shared working method, appended into each project
-install.sh       idempotent installer — skills + engine user-scoped, method into a project
+install.sh       idempotent installer — skills + engine user-scoped, `pir` on the PATH,
+                 method into a project
+bin/
+└── pir                the parallel front-end: `pir {slug}` runs a plan, `pir` the dashboard
+docs/            how parallel mode behaves today — the canonical reference
+src/
+├── core/              the pure decision core of the coordinator
+└── shell/             the coordinator, worktrees, the `pir` dashboard and live view
 skills/
 ├── pir-plan/          the eight-stage planning procedure
 │   └── templates/     DESIGN, PLAN, PROGRESS, FINDINGS, TASK
 ├── pir-review-plan/   read the plan back before anything is built
-├── pir-work/          the dispatch — picks exactly one unit of work
+├── pir-worker/        the contract a parallel-mode worker session runs under
 ├── pir-implement/     build one task, hand it over unreviewed
 ├── pir-review/        check someone else's task, fix what it finds, close it
+├── pir-work/          the single-stream dispatch — picks exactly one unit of work
 ├── pir-install/       set up the method in a repo — check skills, amend CLAUDE.md
-├── pir-e2e/           reference: reuse a project's e2e tooling, else Playwright / a pty rig; the drill
-└── pir-worker/        the contract a parallel-mode worker session runs under
+└── pir-e2e/           reference: reuse a project's e2e tooling, else Playwright / a pty rig; the drill
 pir-engine/ (installed) src/ and its npm packages, put in ~/.claude/pir-engine/ by install.sh
 ```
 
