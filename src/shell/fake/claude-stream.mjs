@@ -8,7 +8,13 @@
 // How it is launched. Point the SDK at it through `spawnClaudeCodeProcess` with `fakeClaudeSpawner`
 // (exported below), which runs `node claude-stream.mjs <the argv the SDK built>` whatever command the
 // SDK asked for, and sets two environment variables:
-//   PIR_FAKE_CLAUDE_SCRIPT    path of a JSON file: the script, below. Required.
+//   PIR_FAKE_CLAUDE_SCRIPT    path of a JSON file: the script, below.
+//   PIR_FAKE_CLAUDE_SCRIPTS   path of a JSON file [{ match: <regex source>, script: [...] }], used instead
+//                             of PIR_FAKE_CLAUDE_SCRIPT when set. The fake waits for the first user
+//                             message and runs the first entry whose regex matches its text, so one file
+//                             stands in for every session of a run: planner, reviewer, build workers
+//                             (pir-plan-command T05). The message stays queued for the script's own
+//                             `{"await":"user"}`. No entry matching is an error result, then idle.
 //   PIR_FAKE_CLAUDE_RECEIVED  optional path of an NDJSON file the fake appends to: first
 //                             {"argv":[…]}, then every stdin line as {"line":"…"}, then
 //                             {"signal":"SIGTERM"} for each SIGTERM it catches. Tests read it to check
@@ -46,7 +52,22 @@
 //                             workMs (a tool step), then replies. An interrupt during the work ends the
 //                             turn as the real CLI does (`[Request interrupted by user]`, then a result
 //                             `error_during_execution`). Never returns; stdin EOF still exits.
+//   {"sh": "<command>"}       run `/bin/sh -c <command>` in the session's cwd and wait for it. Its env
+//                             adds FAKE_CWD (that cwd) and FAKE_OPENING (the text of the first user
+//                             message). A non-zero exit emits an error result carrying the stderr tail
+//                             and ends the script there (the fake then idles until EOF), so a resume
+//                             re-runs the failed step.
+// In `emit` and `sh` steps `{{reportsDir}}` is replaced with the path after `Reports folder: ` in the
+// opening message (pir-plan-command DESIGN §2.3), which is how a scripted session finds where to drop
+// its report.
 // After the last step the fake keeps reading stdin, acking control requests, until EOF.
+//
+// Resume (scripts-file mode only). Every completed step is recorded in `<dir>/fake-progress-<session>.json` ({ entry, done,
+// opening }), <dir> being the folder of the scripts file. A start with `--resume=<id>` (or `--resume
+// <id>`) takes no turn until a user message arrives, as real Claude does; that message is consumed as
+// the resume prompt, and the script continues from the step after the last completed one, with the
+// original opening. An `exit` step counts as completed before it exits, so a script that "crashes" with
+// {"exit":1} resumes past the crash.
 //
 // An interrupt does not cancel an open `can_use_tool` by itself: the real CLI sends
 // `{"type":"control_cancel_request","request_id":…}`, which aborts the SDK's canUseTool signal. A
@@ -56,7 +77,8 @@
 // `canUseTool(requestId, toolName, input)` is the control request of one permission ask. Both are
 // exported so a test builds its script from the same shapes the recording holds.
 
-import { appendFileSync, readFileSync } from 'node:fs';
+import { appendFileSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
@@ -169,24 +191,64 @@ const INITIALIZE_RESPONSE = {
   session_state: 'idle',
 };
 
+// argValue(argv, flag) → the value of `--flag=v` or `--flag v`, or null. The SDK writes `--resume=<id>`;
+// the other form is what a person (or pir's own tests) types.
+function argValue(argv, flag) {
+  for (let i = 0; i < argv.length; i++) {
+    if (argv[i].startsWith(`${flag}=`)) return argv[i].slice(flag.length + 1);
+    if (argv[i] === flag && i + 1 < argv.length) return argv[i + 1];
+  }
+  return null;
+}
+
+// The text of a user message, whether its content is a string or blocks.
+function userText(msg) {
+  const content = msg?.message?.content;
+  if (typeof content === 'string') return content;
+  if (Array.isArray(content)) return content.map((b) => b?.text ?? '').join(' ');
+  return '';
+}
+
 async function main() {
   const scriptPath = process.env.PIR_FAKE_CLAUDE_SCRIPT;
+  const scriptsPath = process.env.PIR_FAKE_CLAUDE_SCRIPTS;
   const receivedPath = process.env.PIR_FAKE_CLAUDE_RECEIVED;
   const record = (obj) => {
     if (receivedPath) appendFileSync(receivedPath, JSON.stringify(obj) + '\n');
   };
-  record({ argv: process.argv.slice(2) });
+  const argv = process.argv.slice(2);
+  record({ argv });
 
-  const session = (process.argv.find((a) => a.startsWith('--session-id=')) ?? '').slice('--session-id='.length);
+  const resumeId = argValue(argv, '--resume');
+  const session = resumeId ?? argValue(argv, '--session-id') ?? '';
+  let opening = null; // the text of the first user message; restored from progress on a resume
+  // The path runs to the end of its line (DESIGN §2.3), so a folder whose path holds a space survives.
+  const reportsDir = () => /Reports folder: (.+)/.exec(opening ?? '')?.[1].trim() ?? '';
   const fill = (v) => {
-    if (typeof v === 'string') return v.replaceAll('{{session}}', session);
+    if (typeof v === 'string') return v.replaceAll('{{session}}', session).replaceAll('{{reportsDir}}', reportsDir());
     if (Array.isArray(v)) return v.map(fill);
     if (v && typeof v === 'object') return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, fill(x)]));
     return v;
   };
   const out = (v) => process.stdout.write((typeof v === 'string' ? fill(v) : JSON.stringify(fill(v))) + '\n');
 
-  const steps = scriptPath ? JSON.parse(readFileSync(scriptPath, 'utf8')) : [];
+  // Only the scripts file persists progress: a single-script test's scratch dir stays exactly as it was.
+  const progressPath = scriptsPath && session ? join(dirname(scriptsPath), `fake-progress-${session}.json`) : null;
+  const readProgress = () => {
+    try {
+      return JSON.parse(readFileSync(progressPath, 'utf8'));
+    } catch {
+      return null;
+    }
+  };
+  let entry = null; // index into the scripts file, null for a single script
+  const saveProgress = (done) => {
+    if (!progressPath) return;
+    const tmp = `${progressPath}.tmp`;
+    writeFileSync(tmp, JSON.stringify({ entry, done, opening }));
+    renameSync(tmp, progressPath);
+  };
+
   let onEof = 'exit';
 
   // Inbound lines are sorted into queues by kind; an `await` step takes from its queue or waits.
@@ -256,14 +318,52 @@ async function main() {
       } else if (msg.type === 'control_response') {
         deliver('control_response', msg);
       } else if (msg.type === 'user') {
+        if (opening === null) opening = userText(msg);
         deliver('user', msg);
       }
     }
   });
   process.stdin.on('end', onEnd);
 
-  for (const step of steps) {
+  // Which script, and from which step. A resume waits for its prompt before anything else, as the real
+  // CLI takes no turn on `--resume` alone; the scripts file waits for the opening to choose by.
+  let steps = [];
+  let start = 0;
+  const prior = resumeId ? readProgress() : null;
+  if (prior) {
+    await take('user');
+    opening = prior.opening ?? null;
+    entry = prior.entry ?? null;
+    start = prior.done ?? 0;
+    steps = entry === null ? readJson(scriptPath) : readJson(scriptsPath)[entry]?.script ?? [];
+  } else if (scriptsPath) {
+    const first = await take('user');
+    queues.user.unshift(first); // left for the script's own {"await":"user"}
+    const entries = readJson(scriptsPath);
+    const text = userText(first);
+    const i = entries.findIndex((e) => new RegExp(e.match).test(text));
+    if (i < 0) {
+      out(resultEvent('error_during_execution'));
+      process.stderr.write(`fake claude: no script matches the opening message: ${text.slice(0, 200)}\n`);
+    } else {
+      entry = i;
+      steps = entries[i].script ?? [];
+    }
+  } else if (scriptPath) {
+    steps = readJson(scriptPath);
+  }
+
+  for (let i = start; i < steps.length; i++) {
+    const step = steps[i];
+    if ('exit' in step) saveProgress(i + 1);
     if ('emit' in step) out(step.emit);
+    else if ('sh' in step) {
+      const r = await runSh(fill(step.sh), opening ?? '');
+      if (r.code !== 0) {
+        out({ ...resultEvent('error_during_execution'), errors: [`sh exited ${r.code}: ${r.stderr.slice(-2000)}`] });
+        break;
+      }
+    }
     else if ('await' in step) {
       const msg = await take(step.await);
       const r = msg?.response;
@@ -276,9 +376,32 @@ async function main() {
       onEof = step.onEof;
       if (eof) onEnd();
     } else if ('onSigterm' in step) sigterm = step.onSigterm;
+    saveProgress(i + 1);
   }
   // Script done: stdin keeps the process alive until EOF; with onEof "ignore", hold on regardless.
   if (onEof === 'ignore') setInterval(() => {}, 1 << 30);
+}
+
+function readJson(path) {
+  return JSON.parse(readFileSync(path, 'utf8'));
+}
+
+// runSh(command, opening) → { code, stderr }. Asynchronous, so control requests are still acked while a
+// long command runs. stdout is discarded: a session's shell output is not part of its stream.
+function runSh(command, opening) {
+  return new Promise((resolve) => {
+    const cwd = process.cwd();
+    const child = spawn('/bin/sh', ['-c', command], {
+      cwd,
+      env: { ...process.env, FAKE_CWD: cwd, FAKE_OPENING: opening },
+      stdio: ['ignore', 'ignore', 'pipe'],
+    });
+    let stderr = '';
+    child.stderr.setEncoding('utf8');
+    child.stderr.on('data', (d) => (stderr = (stderr + d).slice(-8192)));
+    child.on('error', (e) => resolve({ code: 127, stderr: String(e.message) }));
+    child.on('close', (code, signal) => resolve({ code: code ?? (signal ? 128 : 1), stderr }));
+  });
 }
 
 // The tool_result for an answered `canUseTool`. An allowed AskUserQuestion reads back its answers in
@@ -300,8 +423,7 @@ async function chat({ workMs = 1000, init = initEvent() }, { out, take, takeWith
   for (let n = 1; ; n++) {
     const msg = await take('user');
     queues.interrupt.length = 0; // an interrupt sent while idle belongs to no turn
-    const content = msg?.message?.content;
-    const text = typeof content === 'string' ? content : Array.isArray(content) ? content.map((b) => b?.text ?? '').join(' ') : '';
+    const text = userText(msg);
     out(init);
     out(assistantText(`You said: ${text}. Working on it.`));
     const id = `toolu_chat_${n}`;

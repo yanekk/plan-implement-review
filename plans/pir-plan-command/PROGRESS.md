@@ -27,7 +27,7 @@ done · ⛔ blocked, needs a human.
 | T02 | run-record-type | — | ✅ | |
 | T03 | plan-home | — | ✅ | |
 | T04 | plan-branch | — | ✅ | |
-| T05 | fake-claude-sessions | — | ⬜ | |
+| T05 | fake-claude-sessions | — | ✅ | |
 | T06 | plan-run-planner | T01, T02, T04, T05 | ⬜ | |
 | T07 | plan-run-review | T06 | ⬜ | |
 | T08 | plan-launch | T01, T02, T03, T04 | ✅ | Review clean, no fix commit. Recorded deviations accepted (`kill`/`now` on resumeRun, finalState cleared on resume, `where` only on branch home). Probed pre-flight order, id retry per collision kind, linked-worktree root, resume of stopped/finished records. Untracked `plans/` in other repos logged to FINDINGS. |
