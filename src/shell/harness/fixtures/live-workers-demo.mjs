@@ -45,10 +45,10 @@ const progress = progressDoc({
   summary:
     'Four independent tasks: T01 asks a single-choice question after a pause, T02 runs a command this repo marks `ask`, T03 asks a pick-several question and one answered by typing, T04 runs two background commands and a monitor (live-workers §2.6, §2.7, T18).',
   tasks: [
-    { num: 'T01', name: 'Write the greeting file (asks a question set)', deps: [], state: '⬜' },
-    { num: 'T02', name: 'Create the approval marker (asks a permission)', deps: [], state: '⬜' },
-    { num: 'T03', name: 'Write the extras and name files (asks a pick-several and a typed answer)', deps: [], state: '⬜' },
-    { num: 'T04', name: 'Record background work (two background commands and a monitor)', deps: [], state: '⬜' },
+    { num: 'T01', name: 'Greeting (one question)', deps: [], state: '⬜' },
+    { num: 'T02', name: 'Approval (a permission)', deps: [], state: '⬜' },
+    { num: 'T03', name: 'Extras and name (pick several, typed)', deps: [], state: '⬜' },
+    { num: 'T04', name: 'Background work and a monitor', deps: [], state: '⬜' },
   ],
 });
 
