@@ -476,8 +476,9 @@ branch, always; stop if you find yourself in a worktree") does not bind a planni
 `pir plan`, exactly as it does not bind a build worker. Do not stop, do not switch to `main`, and do
 not rename, merge or delete the branch or the worktree; the build later runs on this same branch. A
 project installed before this carve-out has an older `CLAUDE.md` without it; this section is the
-carve-out there. Write nothing under `.git`, because Claude Code never auto-approves a write there
-and your session would stall on it.
+carve-out there. Do not create or edit a file under `.git` yourself (no Write or Edit there, no redirect into it),
+because Claude Code never auto-approves such a write and your session would stall on it. Git's own
+commands are fine: `git commit`, and Pass 3's `git worktree add` for the fresh copy.
 
 **Which plan (refusal 3).** The opening instruction names the plan. Review that one; do not list
 `plans/` or ask which. Refusal 1 still holds and is already true: the planner was a different session.

@@ -533,9 +533,9 @@ checkout. `CLAUDE.md § Where sessions run` ("main checkout, main branch, always
 yourself in a worktree") does not bind a planning session run by `pir plan`, exactly as it does not
 bind a build worker. Do not stop, do not switch to `main`, and do not rename, merge or delete the
 branch or the worktree: `pir` renames them to your slug after you report. A project installed before
-this carve-out has an older `CLAUDE.md` without it; this section is the carve-out there. Write
-nothing under `.git`, because Claude Code never auto-approves a write there and your session would
-stall on it.
+this carve-out has an older `CLAUDE.md` without it; this section is the carve-out there. Do not create or edit a file under `.git` yourself (no Write or Edit there, no redirect into it),
+because Claude Code never auto-approves such a write and your session would stall on it. Git's own
+commands are fine: `git commit`.
 
 **Choosing the slug (Stage 1).** Before you write any file, check the slug you and the person agreed
 is free, and choose another with them if it is not:
