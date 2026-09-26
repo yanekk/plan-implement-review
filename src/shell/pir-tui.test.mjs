@@ -20,7 +20,12 @@ import {
   createScreen,
   loadDashboard,
   openDashboard,
+  openPlanner,
   readLogTail,
+  landStep,
+  followStep,
+  buildLandingFrame,
+  FOLLOW_LINE,
 } from './pir-tui.mjs';
 import { FrameView, SGR, SELECTED_BG, clipSpans } from './pir-view.mjs';
 import { visibleWidth } from '@earendil-works/pi-tui';
@@ -1281,4 +1286,88 @@ test('a refused start shows its reason under the question and keeps it', async (
 
 test('decodeKey: n is the not-now key', () => {
   assert.equal(decodeKey('n'), 'n');
+});
+
+// --- where `pir plan` lands, and following into the reviewer (pir-plan-command T13, DESIGN §2.12) ---------
+
+const planStep = (id, worker = null) => ({ id, phase: worker ? 'planning' : 'pending', worker });
+const landingRun = (steps) => stepsRun({ state: 'running', outcome: null, step: 'plan', steps });
+const landingUi = { ...initialUi(), view: 'watch', openSlug: 'csv-export', openStep: 'plan' };
+
+test('landStep: waits while the planner has no session, then opens its conversation with the plan row selected', () => {
+  const waiting = [landingRun([planStep('plan'), planStep('review'), planStep('build')])];
+  assert.equal(landStep(landingUi, waiting), landingUi, 'no session yet: unchanged');
+  const ready = [landingRun([planStep('plan', { id: 'p1', live: true, logPath: '/c/plan-1.ndjson' }), planStep('review'), planStep('build')])];
+  const ui = landStep(landingUi, ready);
+  assert.equal(ui.view, 'worker');
+  assert.deepEqual(ui.openWorker, { taskId: 'plan', workerId: 'p1', logPath: '/c/plan-1.ndjson', live: true });
+  assert.equal(ui.taskSel, 0);
+  assert.equal(ui.openStep, null);
+  const plain = { ...initialUi(), view: 'watch', openSlug: 'csv-export' };
+  assert.equal(landStep(plain, ready), plain, 'a view not waiting on a step is left alone');
+});
+
+test("followStep: the planner's conversation open and a new review session → the reviewer's, headed by the line", () => {
+  const ui = { ...initialUi(), view: 'worker', openSlug: 'csv-export', taskSel: 0, openWorker: { taskId: 'plan', workerId: 'p1', logPath: '/c/plan-1.ndjson', live: true } };
+  const before = [landingRun([planStep('plan', { id: 'p1', live: true }), planStep('review'), planStep('build')])];
+  assert.equal(followStep(ui, before, null), null, 'no reviewer yet');
+  const after = [landingRun([planStep('plan', { id: 'p1', live: false }), planStep('review', { id: 'r1', live: true, logPath: '/c/review-1.ndjson' }), planStep('build')])];
+  const next = followStep(ui, after, null);
+  assert.equal(next.view, 'worker');
+  assert.deepEqual(next.openWorker, { taskId: 'review', workerId: 'r1', logPath: '/c/review-1.ndjson', live: true, headLine: FOLLOW_LINE });
+  assert.equal(next.taskSel, 1);
+  assert.equal(FOLLOW_LINE, 'the planner finished; the reviewer has started');
+  assert.equal(followStep(ui, after, 'r1'), null, 'a reviewer already there when the planner was opened does not move it');
+});
+
+test('followStep: the steps view, the list, and the reviewer\'s own conversation are never moved', () => {
+  const after = [landingRun([planStep('plan', { id: 'p1' }), planStep('review', { id: 'r1', live: true }), planStep('build')])];
+  assert.equal(followStep({ ...initialUi(), view: 'watch', openSlug: 'csv-export' }, after, null), null);
+  assert.equal(followStep({ ...initialUi(), view: 'list' }, after, null), null);
+  assert.equal(followStep({ ...initialUi(), view: 'worker', openSlug: 'csv-export', openWorker: { taskId: 'review', workerId: 'r1' } }, after, null), null);
+});
+
+test('buildLandingFrame: the run by its label and branch, and the starting line', () => {
+  const run = landingRun([planStep('plan'), planStep('review'), planStep('build')]);
+  run.record = { ...run.record, label: 'Export orders', slug: 'plan-3f9a', branch: 'pir/plan-3f9a' };
+  const text = frameText(buildLandingFrame(run));
+  assert.match(text, /^"Export orders" · planning · pir\/plan-3f9a/);
+  assert.match(text, /starting the planner…/);
+  assert.match(text, /← the run's steps · esc quit/);
+});
+
+test('openPlanner: starting the planner…, then ← on it is the steps view', async () => {
+  let onData = null;
+  const stdin = { on: (_e, fn) => (onData = fn), off: () => {} };
+  const frames = [];
+  const run = landingRun([planStep('plan'), planStep('review'), planStep('build')]);
+  const done = openPlanner('csv-export', {
+    stdin,
+    stdout: { columns: 80 },
+    refreshMs: 60_000,
+    makeScreen: () => ({ paint: (f) => frames.push(frameText(f)), close: () => {} }),
+    load: () => buildDashboard([run]),
+  });
+  assert.match(frames.at(-1), /starting the planner…/);
+  await onData('\x1b[B'); // other keys do nothing while waiting
+  assert.match(frames.at(-1), /starting the planner…/);
+  await onData('\x1b[D');
+  assert.match(frames.at(-1), /pick a step/);
+  await onData('\x1b');
+  await done;
+});
+
+// T13 review: the follow's "was the reviewer already there" id was read only when the conversation was built,
+// after followStep had already run for that repaint, so opening a finished run's planner bounced straight to its
+// old reviewer.
+test("runTui: opening a finished run's planner from its steps view stays in the planner's conversation", async () => {
+  const t = driveTui(() => [stepsRun({ step: 'done', outcome: 'not-reviewed' })]);
+  await t.key('\r'); // open the row: the steps view
+  assert.match(t.barRow(), /plan/);
+  await t.key('\x1b[C'); // → the planner's conversation
+  assert.match(t.text(), /^plan +worker p1/m, "the planner's conversation");
+  assert.doesNotMatch(t.text(), /the planner finished; the reviewer has started/);
+  await t.key('\x1b[D');
+  await t.key('\x1b');
+  await t.done;
 });

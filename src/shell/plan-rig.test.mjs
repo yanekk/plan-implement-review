@@ -4,7 +4,8 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -291,4 +292,105 @@ test('end to end at 120×40: ↵ on the go starts the build on the same row, whi
   } finally {
     await screen.close();
   }
+});
+
+// ---- T13: the brief box, and where `pir plan` lands, end to end (DESIGN §2.12, §2.13). ----
+
+const SHIFT_ENTER = '\x1b[13;2u';
+
+// Stop every run the rig's index still shows live, then remove the rig.
+function rigWithTeardown(t, opts) {
+  const rig = startPlanRig(opts);
+  t.after(async () => {
+    for (const record of listRecords({ dir: indexDir({ env: rig.env }) })) {
+      if (record.finalState === null) await stopRun(record).catch(() => {});
+    }
+    rig.cleanup();
+  });
+  return rig;
+}
+
+for (const [cols, rows] of SIZES) {
+  test(`end to end at ${cols}×${rows}: \`pir plan\` → the brief box; two lines with shift+enter; enter lands in the planner's conversation`, async (t) => {
+    const rig = rigWithTeardown(t);
+    const screen = rig.openScreen({ cols, rows, args: ['plan'] });
+    try {
+      const box = (await screen.waitFor(/esc cancel/)).join('\n');
+      assert.match(box, /^pir plan {2}new plan in repo/);
+      assert.match(box, /What do you want to build\?/);
+      assert.match(box, /↵ start planning · shift\+↵ new line · esc cancel/);
+      screen.send('Add dark mode');
+      screen.send(SHIFT_ENTER);
+      screen.send('to the blog please');
+      const typed = (await screen.waitFor(/to the blog please/)).join('\n');
+      assert.match(typed, /^Add dark mode\nto the blog please$/m, 'two lines in the box');
+      screen.send(ENTER);
+      const conv = (await screen.waitFor(new RegExp(esc(PLAN_RIG_QUESTION)), 20000)).join('\n');
+      assert.match(conv, /^plan +worker \w+ · live/m, "the planner's conversation, not the steps view");
+      assert.match(conv, /pir ▸ Load the pir-plan skill/, "pir's first message");
+      assert.match(conv, /^ +Add dark mode\n +to the blog please$/m, 'the brief, with its newline, inside it');
+      assert.equal(screen.overflows(), 0);
+    } finally {
+      await screen.close();
+    }
+    const [record] = listRecords({ dir: indexDir({ env: rig.env }) });
+    assert.equal(readFileSync(join(record.controlDir, 'brief.md'), 'utf8'), 'Add dark mode\nto the blog please');
+  });
+}
+
+test("end to end at 80×24: `pir plan \"one line brief\"` lands in the planner's conversation with no box", async (t) => {
+  const rig = rigWithTeardown(t);
+  const screen = rig.openScreen({ cols: 80, rows: 24, args: ['plan', 'one line brief'] });
+  try {
+    const conv = (await screen.waitFor(new RegExp(esc(PLAN_RIG_QUESTION)), 20000)).join('\n');
+    assert.match(conv, /^plan +worker \w+ · live/m);
+    assert.match(conv, /one line brief/);
+    assert.doesNotMatch(screen.text(), /esc cancel/);
+  } finally {
+    await screen.close();
+  }
+});
+
+test("end to end at 120×40: still in the planner's conversation when it finishes → the reviewer's, headed by the line; ← is the steps view", async (t) => {
+  const rig = rigWithTeardown(t);
+  const screen = rig.openScreen({ cols: 120, rows: 40, args: ['plan', BRIEF] });
+  try {
+    await screen.waitFor(new RegExp(esc(PLAN_RIG_QUESTION)), 20000);
+    screen.send(ENTER); // the first option is selected: answer it, and the fake planner finishes
+    const conv = (await screen.waitFor(/^review +worker/m, 30000)).join('\n');
+    assert.match(conv, /^the planner finished; the reviewer has started\nreview +worker \w+/, 'the line heads the view');
+    assert.equal(screen.overflows(), 0);
+    screen.send(LEFT);
+    const steps = (await screen.waitFor(/pick a step|Start the parallel build now\?/, 30000)).join('\n');
+    assert.match(steps, /  ✔ plan +planner +plan written/);
+    assert.match(steps, /▎ ✔ review +reviewer/, 'the row of the conversation just left is selected');
+  } finally {
+    await screen.close();
+  }
+});
+
+test('end to end at 80×24: `pir plan` then esc → back to the shell, exit 0, no planning branch', async (t) => {
+  const rig = rigWithTeardown(t);
+  const screen = rig.openScreen({ cols: 80, rows: 24, args: ['plan'] });
+  await screen.waitFor(/esc cancel/);
+  screen.send('half a brief');
+  await screen.waitFor(/half a brief/);
+  screen.send('\x1b');
+  // Wait for pir to leave on its own: close() ends the pty's input, which the relay answers with SIGTERM.
+  await assert.rejects(screen.waitFor(() => false, 10000), /pir exited before/);
+  const code = await screen.close();
+  assert.equal(code, 0);
+  assert.equal(git(rig.repoDir, 'branch', '--list', 'pir/*'), '', 'no branch pir/plan-* was created');
+  assert.deepEqual(listRecords({ dir: indexDir({ env: rig.env }) }), [], 'no run recorded');
+  assert.ok(!existsSync(join(rig.repoDir, 'plans')), 'no plans/ folder');
+});
+
+test('end to end: `pir plan` in a repo without main → the refusal line, and no box', (t) => {
+  const rig = rigWithTeardown(t);
+  git(rig.repoDir, 'branch', '-m', 'main', 'trunk');
+  const pir = fileURLToPath(new URL('./pir.mjs', import.meta.url));
+  const r = spawnSync(process.execPath, [pir, 'plan'], { cwd: rig.repoDir, env: rig.env, encoding: 'utf8', timeout: 10000 });
+  assert.equal(r.status, 1);
+  assert.equal(r.stderr, "pir plan: this repo has no local 'main' branch — a plan is cut from main\n");
+  assert.doesNotMatch(r.stdout, /esc cancel|new plan in/);
 });
