@@ -391,11 +391,13 @@ screen, a window) is proven by a worker driving it, never by the person looking 
   extend it and no rig task is planned. If it found none, or it cannot drive this surface, plan
   one rig task (the runner, the fake backend, the driver, and one test proving it drives the
   screen) before the first task with a surface, and make those tasks depend on it.
-- **Each phase that builds a surface ends with a drill task** (`{surface}-drill`), depending on
-  every task whose surface it drives: a worker uses the whole flow at every size, judges it against
-  DESIGN and the prototype, fixes what has one right answer with a test each, and brings the person
-  only the choices with two defensible answers. It is a normal task, built and reviewed like any
-  other; anything later that the person will sit through (a paid live run, a launch) depends on it.
+- **A plan with a surface ends with one drill task** (`drill`), depending on every task with a
+  surface: a worker uses the whole product at every size, judges it against DESIGN and the
+  prototype, fixes what has one right answer with a test each, and brings the person only the
+  choices with two defensible answers. One drill, not one per phase: the feel is judged across the
+  finished flow, and the end-to-end tests already guard each task as it lands (user 2026-09-26). It
+  is a normal task, built and reviewed like any other; anything the person will sit through (a paid
+  live run, a launch) depends on it.
 
 ### When a deliverable needs a person
 
@@ -485,8 +487,8 @@ epigrams gets epigrams back for ever. See `CLAUDE.md § How to write in these fi
 Then check the plan against itself before you show it: every dependency points at a task
 that exists and comes earlier; every step of the main path has a wirer; every leaf other than the
 final deliverable is justified; every "Done when" is checkable; every task with a surface has an
-"End to end" section, reuses the project's tooling or depends on the rig task, and its phase ends in a
-drill; no "Needs a person" block asks how a screen looks or feels; every task that genuinely needs a
+"End to end" section, reuses the project's tooling or depends on the rig task, and the drill task depends
+on it; no "Needs a person" block asks how a screen looks or feels; every task that genuinely needs a
 person says so in its own doc; every outside action a task runs has a §5.3 row
 and is listed in that task's doc; nothing in PLAN.md contradicts DESIGN.md.
 
