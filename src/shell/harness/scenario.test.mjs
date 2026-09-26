@@ -36,6 +36,6 @@ test('defineScenario rejects a fact that is not a { check } builder result', () 
 test('defineScenario: answerPending defaults off and normalises to { typed } (T18)', () => {
   const spec = (answerPending) => defineScenario({ id: 'a', fixture: 'f', facts: [noHelloEver()], answerPending }).answerPending;
   assert.equal(spec(undefined), false);
-  assert.deepEqual(spec(true), { typed: {} });
-  assert.deepEqual(spec({ typed: { 'Q?': 'mine' } }), { typed: { 'Q?': 'mine' } });
+  assert.deepEqual(spec(true), { typed: {}, say: {} });
+  assert.deepEqual(spec({ typed: { 'Q?': 'mine' }, say: { T04: 'go' } }), { typed: { 'Q?': 'mine' }, say: { T04: 'go' } });
 });

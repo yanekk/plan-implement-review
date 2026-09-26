@@ -7,7 +7,8 @@
 //   T02 must run one exact command that the scratch repo's own `.claude/settings.json` marks `ask`, so it
 //       reaches pir as a permission request (§2.6) even in auto mode.
 //   T03 asks a pick-several question and one meant to be answered by typing on its Other line.
-//   T04 runs two background commands and a Monitor, whose notifications arrive between turns.
+//   T04 waits for the person's `go`, then runs two background commands and a Monitor, whose
+//       notifications arrive between turns.
 // The harness run has no person at the screen, so the scenario declares `answerPending` and the runner
 // answers through the inbox (answerer.mjs), typing the name T03 asks for; the hands-on run is where a
 // person does it with keys.
@@ -30,7 +31,9 @@ const PAUSE_COMMAND = 'node -e "setTimeout(() => {}, 90000)"';
 
 // T03's two questions. The name question is meant to be answered through its Other line, with typed text.
 const EXTRAS_QUESTION = 'Which extras should extras.txt list?';
-const NAME_QUESTION = 'What name should name.txt hold?';
+// The question itself says a typed answer is wanted: on the T18 drill the person picked an option and the
+// typed path was never exercised (user 2026-09-26).
+const NAME_QUESTION = 'What name should name.txt hold? Type your own under Other.';
 // The answer the harness types into the Other line, so the unattended run proves a custom answer lands.
 const TYPED_NAME = 'Typed by the harness';
 
@@ -95,8 +98,10 @@ const tasks = {
       `"${EXTRAS_QUESTION}", header "Extras", **multiSelect true**, options \`apples\`, \`pears\`, \`plums\`; ` +
       `second "${NAME_QUESTION}", header "Name", single-select, options \`Ada\` and \`Grace\`. The person ` +
       'is expected to type their own name through the free-text answer the tool offers, so use whatever ' +
-      'text comes back. Then write `extras.txt` with each chosen extra on its own line, and `name.txt` with ' +
-      'the name exactly as answered; each file ends with one trailing newline and holds nothing else.',
+      'text comes back; keep the question text exactly as given. Then write `extras.txt` with each chosen ' +
+      'extra on its own line, and `name.txt` with the name exactly as answered; each file ends with one ' +
+      'trailing newline and holds nothing else. Then tell the person, in one line of your reply, exactly ' +
+      'what you wrote to each file, so they can see their typed answer arrived.',
     files: ['`extras.txt` — new.', '`name.txt` — new.'],
     doneWhen: [
       'Both questions went through one AskUserQuestion call; the first was multi-select.',
@@ -108,7 +113,10 @@ const tasks = {
     num: 'T04',
     title: 'Record background work (two background commands and a monitor)',
     goal:
-      'Practise background work, so the person can watch how it shows in pir. With the Bash tool and ' +
+      'Practise background work, so the person can watch how it shows in pir. **Before starting any of ' +
+      'it, wait for the person\'s go:** drop a `question` report saying you are ready to start the background ' +
+      'work, tell the person in this session "Ready: type go when you are watching", and end your turn. ' +
+      'Start only when the person\'s message says go. Then, with the Bash tool and ' +
       `**run_in_background: true**, start \`${BACKGROUND_ONE}\` and then \`${BACKGROUND_TWO}\`. Then, with ` +
       `the **Monitor tool** (load it with ToolSearch if it is not loaded), watch \`${MONITOR_COMMAND}\`, ` +
       'which prints three `tick` lines ten seconds apart. Do not poll and do not sleep: wait for the ' +
@@ -118,6 +126,7 @@ const tasks = {
       'to you, say so in your report and write `no monitor` as the third line instead.',
     files: ['`background.txt` — new.'],
     doneWhen: [
+      'Nothing started before the person said go.',
       'Both commands ran in the background and their completion was received, not polled for.',
       'The monitor delivered its tick lines as events.',
       '`background.txt` holds `first done`, `second done` and `tick 3` (or `no monitor`), one per line.',
@@ -145,7 +154,8 @@ const scenario = defineScenario({
     ceilingHeld(2),
     handedOffGreenBranch(),
   ],
-  answerPending: { typed: { [NAME_QUESTION]: TYPED_NAME } },
+  // T04 waits for the person's go, which the stand-in sends as a message once T04's worker has gone idle.
+  answerPending: { typed: { [NAME_QUESTION]: TYPED_NAME }, say: { T04: 'go' } },
 });
 
 export default { id: slug, slug, title, progress, tasks, seedFiles, scenario };

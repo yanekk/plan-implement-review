@@ -239,7 +239,11 @@ test('dynamic-task: T01 is told to propose-and-wait before adding the missing ta
 
 test('live-workers-demo: T01 must ask through AskUserQuestion; T02 runs the exact command the seeded settings mark ask', () => {
   const fx = getFixture('live-workers-demo');
-  assert.deepEqual(fx.scenario.answerPending, { typed: { 'What name should name.txt hold?': 'Typed by the harness' } });
+  assert.deepEqual(fx.scenario.answerPending, {
+    typed: { 'What name should name.txt hold? Type your own under Other.': 'Typed by the harness' },
+    say: { T04: 'go' },
+  });
+  assert.match(fx.tasks['T04-background.md'], /wait for the person's go/);
   assert.match(fx.tasks['T03-extras.md'], /multiSelect true/);
   assert.match(fx.tasks['T04-background.md'], /run_in_background: true[\s\S]*Monitor tool/);
   assert.match(fx.tasks['T01-greeting.md'], /AskUserQuestion tool/);

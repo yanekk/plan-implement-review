@@ -321,7 +321,7 @@ export async function teardownScenario({ controlDir, reap = (dir) => reapRecorde
 //   worktree     — injected for the restart runner's branch reads; default is the real one.
 //   install      — installFixture (injectable so a test need not re-seed real git every case).
 //   capture      — a createCapture instance (injectable); default is built from the injected runners.
-//   makeAnswerer — ({ controlDir, typed, log }) => { tick() }, the person's stand-in for an `answerPending`
+//   makeAnswerer — ({ controlDir, typed, say, log }) => { tick() }, the person's stand-in for an `answerPending`
 //                  scenario (answerer.mjs, T18); injected so a test sees its ticks.
 //   timers, now  — injected clock/timers so a test drives time (DESIGN §3.1: the shell owns the clock).
 //   log          — where the runner prints progress (default console.log); the fact report is returned.
@@ -362,7 +362,7 @@ export async function runScenario({
   const reapWorkers = reap ?? ((dir) => reapRecorded(dir, procs));
   // The person's stand-in, for a scenario that forces requests nobody at a screen would answer (T18).
   const answerer = spec.answerPending
-    ? (makeAnswerer ?? createAnswerer)({ controlDir, typed: spec.answerPending.typed, log })
+    ? (makeAnswerer ?? createAnswerer)({ controlDir, typed: spec.answerPending.typed, say: spec.answerPending.say, log })
     : null;
 
   log(`installing fixture "${fixtureId}" into ${repoDir}`);

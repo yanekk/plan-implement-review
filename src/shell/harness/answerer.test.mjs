@@ -61,8 +61,8 @@ test('pendingDrops answers each pending request, addressed to the log\'s session
   ];
   const drops = pendingDrops(logs);
   assert.deepEqual(drops, [
-    { to: 'w1', kind: 'answers', requestId: 'q1', answers: { 'Which greeting should greeting.txt hold?': 'Hello, world' } },
-    { to: 'w2', kind: 'permission', requestId: 'p1', decision: 'allow' },
+    { to: 'w1', kind: 'answers', requestId: 'q1', answers: { 'Which greeting should greeting.txt hold?': 'Hello, world' }, key: 'q1' },
+    { to: 'w2', kind: 'permission', requestId: 'p1', decision: 'allow', key: 'p1' },
   ]);
   for (const d of drops) assert.equal(validateDrop(d).ok, true);
 });
@@ -120,4 +120,18 @@ test('createAnswerer retries a request whose drop failed, and a missing conversa
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test('pendingDrops says a task\'s message once, to its idle implementer only', () => {
+  const result = { t: 5, dir: 'in', event: { type: 'result', subtype: 'success' } };
+  const sent = { t: 1, dir: 'out', from: 'pir', kind: 'message', text: 'pir-implement T04' };
+  const logs = [
+    { file: 'T04-implement-1.ndjson', entries: [sent, init('w4'), result] },
+    { file: 'T04-review-1.ndjson', entries: [sent, init('r4'), result] },
+    { file: 'T03-implement-1.ndjson', entries: [sent, init('w3'), result] },
+  ];
+  assert.deepEqual(pendingDrops(logs, new Set(), {}, { T04: 'go' }), [{ to: 'w4', kind: 'message', text: 'go', key: 'say:T04' }]);
+  assert.deepEqual(pendingDrops(logs, new Set(['say:T04']), {}, { T04: 'go' }), []);
+  const busy = [{ file: 'T04-implement-1.ndjson', entries: [sent, init('w4')] }];
+  assert.deepEqual(pendingDrops(busy, new Set(), {}, { T04: 'go' }), [], 'not while its turn is open');
 });

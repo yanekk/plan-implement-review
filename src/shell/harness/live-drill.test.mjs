@@ -39,7 +39,7 @@ test('nextAction interrupts T01 during its pause once, then answers each request
     order.push(a.id);
     done.add(a.id);
   }
-  assert.deepEqual(order, ['interrupt', 'permission:r1', 'watch-background']);
+  assert.deepEqual(order, ['interrupt', 'permission:r1', 'go', 'watch-background']);
   assert.equal(nextAction({ T01: { role: 'review', pausing: true } }), null, 'a reviewer is never interrupted');
 });
 
@@ -54,4 +54,23 @@ test('questionKeys: a pick-several ticks two, a name is typed on Other, any othe
   const single = questionKeys({ questions: [{ question: 'Which greeting?', options: [{ label: 'a' }, { label: 'b' }] }] });
   assert.deepEqual(single.map((s) => s.keys), ['\x1b[B', '\r']);
   assert.ok(single.at(-1).until.test('⚑ answer sent — waiting for pir to deliver it'));
+});
+
+test('markDoneExcept marks every other task ✅ and commits it', async () => {
+  const { mkdtempSync, rmSync, readFileSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const { execFileSync } = await import('node:child_process');
+  const { installFixture } = await import('./fixtures.mjs');
+  const { markDoneExcept } = await import('./live-drill.mjs');
+  const dir = mkdtempSync(join(tmpdir(), 'pir-drill-'));
+  try {
+    installFixture('live-workers-demo', { into: dir, skillsDir: null, srcDir: null });
+    markDoneExcept(dir, ['T03', 'T04']);
+    const rows = readFileSync(join(dir, 'plans/live-workers-demo/PROGRESS.md'), 'utf8').split('\n').filter((l) => /^\| T0/.test(l));
+    assert.deepEqual(rows.map((r) => [r.slice(2, 5), r.includes('✅') ? '✅' : '⬜']), [['T01', '✅'], ['T02', '✅'], ['T03', '⬜'], ['T04', '⬜']]);
+    assert.equal(execFileSync('git', ['status', '--short'], { cwd: dir, encoding: 'utf8' }), '', 'committed');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

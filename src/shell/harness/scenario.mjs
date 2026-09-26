@@ -76,6 +76,6 @@ export function defineScenario(spec = {}) {
     facts,
     killSwitchDrill: !!killSwitchDrill,
     expectedTerminal,
-    answerPending: answerPending ? { typed: { ...(answerPending.typed ?? {}) } } : false,
+    answerPending: answerPending ? { typed: { ...(answerPending.typed ?? {}) }, say: { ...(answerPending.say ?? {}) } } : false,
   };
 }

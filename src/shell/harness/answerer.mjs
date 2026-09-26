@@ -40,27 +40,39 @@ export function answerFor(request, typed = {}) {
 // [{ file, entries }], one per conversation log; the worker's id (the `to`) is the session id its own
 // messages carry (capture logSessionId, DESIGN §2.1). A request already in `answered` is skipped, so a
 // drop the coordinator has not forwarded yet is never written twice. Pure.
-export function pendingDrops(logs, answered = new Set(), typed = {}) {
+//
+// `say` ({ <task>: <text> }) sends that task's implementer a message the first time it is idle with nothing
+// pending, the person's go that the T04 practice task waits for (user 2026-09-26). Its key in `answered` is
+// `say:<task>`, carried on the drop as `key` (the inbox validator drops the field).
+export function pendingDrops(logs, answered = new Set(), typed = {}, say = {}) {
   const out = [];
-  for (const { entries } of logs) {
+  for (const { file, entries } of logs) {
     const to = logSessionId(entries);
     if (!to) continue;
-    for (const request of workerActivity(entries).pending) {
+    const activity = workerActivity(entries);
+    for (const request of activity.pending) {
       if (answered.has(request.requestId)) continue;
       const drop = answerFor(request, typed);
-      if (drop) out.push({ to, ...drop });
+      if (drop) out.push({ to, ...drop, key: request.requestId });
+    }
+    const name = parseLogName(file);
+    const text = name && name.role === 'implement' ? say[name.task] : undefined;
+    const exited = entries.some((e) => e?.dir === 'note' && e.kind === 'exited');
+    if (text && !exited && activity.state === 'idle' && !answered.has(`say:${name.task}`)) {
+      out.push({ to, kind: 'message', text, key: `say:${name.task}` });
     }
   }
   return out;
 }
 
-// createAnswerer({ controlDir, typed, drop, log }) → { tick() → the drops written this tick }. Reads every
+// createAnswerer({ controlDir, typed, say, drop, log }) → { tick() → the drops written this tick }. Reads every
 // conversation log of the run, answers what is pending, and remembers what it answered. `drop` is
 // dropPersonInput with the coordinator taken as alive (the runner only ticks while it runs); injected so
 // a test sees the drops without an inbox.
 export function createAnswerer({
   controlDir,
   typed = {},
+  say = {},
   drop = (input) => dropPersonInput(controlDir, input, { coordinatorAlive: true }),
   log = () => {},
 } = {}) {
@@ -82,15 +94,16 @@ export function createAnswerer({
   return {
     tick() {
       const written = [];
-      for (const d of pendingDrops(readLogs(), answered, typed)) {
+      for (const { key, ...d } of pendingDrops(readLogs(), answered, typed, say)) {
         const r = drop(d);
         if (!r?.ok) {
-          log(`answerer: could not answer ${d.requestId}: ${r?.reason ?? 'unknown'}`);
+          log(`answerer: could not answer ${key}: ${r?.reason ?? 'unknown'}`);
           continue;
         }
-        answered.add(d.requestId);
+        answered.add(key);
         written.push(d);
-        log(`answerer: ${d.kind === 'permission' ? 'allowed' : 'answered'} ${d.requestId} for ${d.to}`);
+        const verb = d.kind === 'permission' ? 'allowed' : d.kind === 'message' ? `said "${d.text}" as` : 'answered';
+        log(`answerer: ${verb} ${key} for ${d.to}`);
       }
       return written;
     },

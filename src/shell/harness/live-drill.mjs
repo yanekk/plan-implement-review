@@ -4,19 +4,21 @@
 // T18 hand-over: every key the person's drill asks for is pressed here first, and every screen is saved,
 // so what the person is asked to judge has already been seen working.
 //
-//   node src/shell/harness/live-drill.mjs --into <trusted scratch> [--out <screens file>]
+//   node src/shell/harness/live-drill.mjs --into <trusted scratch> [--out <screens file>] [--only T03,T04]
 //
 // It installs the fixture into the scratch folder, opens `pir live-workers-demo` there under a pty (which
 // starts the run, PARALLEL_MAX_WORKERS=2), and then, every two seconds, reads the workers' conversation
 // logs and does the one thing each task needs (nextAction): Esc on T01 while its 90 s pause runs, then a
 // typed instruction; Enter on T02's permission; the single-choice question on T01 with ↓ Enter; the
-// pick-several and typed-answer questions on T03; a look at T04 while its background work runs. It ends
+// pick-several and typed-answer questions on T03; `go` to T04, which waits for it, and a look at T04 while
+// its background work runs. `--only` marks the other tasks done first, so a rerun drills just those. It ends
 // when the run's live view shows the green hand-off, or on its own deadline (15 min), and then stops the
 // run with Ctrl+S twice if it is still going. Paid: a whole small plan of real workers (DESIGN §5.3,
 // `T18 end-to-end run`, bin `ask`).
 
 import { existsSync, readdirSync, readFileSync, writeFileSync, appendFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { execFileSync } from 'node:child_process';
 
 import { workerActivity } from '../../core/stream.mjs';
 import { installFixture } from './fixtures.mjs';
@@ -70,7 +72,9 @@ export function nextAction(views, done = new Set()) {
     const qs = pendingOf(t, 'questions');
     if (qs && !done.has(`questions:${qs.requestId}`)) return { id: `questions:${qs.requestId}`, task: t, kind: 'questions', request: qs };
   }
-  if (!done.has('watch-background') && v('T04').role === 'implement' && v('T04').state === 'idle') return { id: 'watch-background', task: 'T04' };
+  // T04 waits for the person's go (user 2026-09-26) before it starts its background work.
+  if (!done.has('go') && v('T04').role === 'implement' && v('T04').state === 'idle') return { id: 'go', task: 'T04' };
+  if (done.has('go') && !done.has('watch-background') && v('T04').role === 'implement' && v('T04').state === 'idle') return { id: 'watch-background', task: 'T04' };
   return null;
 }
 
@@ -121,6 +125,16 @@ function readLogs(controlDir) {
     });
 }
 
+// markDoneExcept(into, keep) → marks every task of the installed practice plan not in `keep` ✅ and
+// commits that on main, so a rerun drills only the tasks named (user 2026-09-26: rerun T03 and T04).
+export function markDoneExcept(into, keep) {
+  const path = join(into, 'plans', SLUG, 'PROGRESS.md');
+  const text = readFileSync(path, 'utf8').replace(/^\| (T\d\d) \|(.*)\| ⬜ \|/gm, (row, id, mid) => (keep.includes(id) ? row : `| ${id} |${mid}| ✅ |`));
+  writeFileSync(path, text);
+  const git = (...args) => execFileSync('git', ['-c', 'user.name=PIR Fixture', '-c', 'user.email=fixture@pir.local', '-c', 'commit.gpgsign=false', ...args], { cwd: into, stdio: 'pipe' });
+  git('commit', '-qam', `drill: only ${keep.join(', ')}`);
+}
+
 async function main(argv) {
   const into = argv[argv.indexOf('--into') + 1];
   if (!argv.includes('--into') || !into) throw new Error('usage: live-drill.mjs --into <trusted scratch> [--out <file>]');
@@ -133,6 +147,7 @@ async function main(argv) {
   };
 
   installFixture(SLUG, { into });
+  if (argv.includes('--only')) markDoneExcept(into, argv[argv.indexOf('--only') + 1].split(','));
   const controlDir = join(into, 'plans', SLUG, '.parallel', 'control');
   const screen = openScreen({ cols: 100, rows: 34, args: [SLUG], cwd: into, env: { ...process.env, PARALLEL_MAX_WORKERS: '2' } });
   const LEFT = '\x1b[D';
@@ -197,6 +212,12 @@ async function main(argv) {
           screen.send(step.keys);
           shot(`key ${JSON.stringify(step.keys)}`, await screen.waitFor(step.until ?? null, 15000));
         }
+      } else if (action.id === 'go') {
+        shot('T04 waiting for go', await screen.waitFor(/T04 ▸ .*[Rr]eady/, 15000));
+        screen.send('go');
+        await screen.waitFor(/^go\s*$/m, 5000);
+        screen.send('\r');
+        shot('go sent', await screen.waitFor(/you ▸ go/, 15000));
       } else if (action.id === 'watch-background') {
         // The worker is between turns with its commands and monitor still going: the view must say so
         // (user 2026-09-26), not look idle.
