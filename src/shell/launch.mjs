@@ -1,4 +1,4 @@
-// The engine behind `pir {slug}` (DESIGN §2.5, §2.9, §3.4): run the pre-flight, launch the
+// The engine behind `pir start {slug}` and `pir plan` (DESIGN §2.5, §2.9, §3.4): run the pre-flight, launch the
 // coordinator detached from the terminal, register the run in the cross-repo index, and hold the Mac
 // awake for the run's lifetime. This is the piece that makes a run outlive WezTerm — the detached
 // spawn was proven on this machine to reparent to launchd and keep running after its parent exited

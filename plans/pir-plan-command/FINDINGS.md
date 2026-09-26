@@ -17,6 +17,7 @@ Legend: 🐞 defect found · ✅ verified by hand with the user · 📌 worth kn
 
 | Date | | Finding |
 |---|---|---|
+| 2026-09-26 | 📌 | T09 review: `pir --help` and `pir -h` fall into the unknown-command row, printing "To build a plan: pir start --help" plus usage, exit 2. Matches DESIGN §2.1 literally; a help flag was never specified. Left alone. |
 | 2026-09-26 | 📌 | T08 review: `plans/*/.parallel/` is ignored only by this repo's `.gitignore`. In another repo `startPlanRun` (and `startRun`) leave `?? plans/` in the main checkout; reproduced on a scratch repo. DESIGN §2.2 "already ignored" assumes otherwise. Left alone. |
 | 2026-09-26 | 📌 | T01 review, for T06: `decidePlanStep` never persists step `rename`; one call moves `plan` to `review` with rename and spawn actions. Write `state.json` before executing them, or a crash mid-rename resumes the closed planner in a moved worktree. |
 | 2026-09-26 | 📌 | T01 review, for T06: `facts.checks` is judged only when a report arrives. A planner that edits after an accepted `planned` report is still closed and renamed on idle, dirty worktree included. Left alone; T06 may re-check at close. |

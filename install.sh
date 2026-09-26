@@ -243,9 +243,10 @@ if [[ -z "$TARGET" || "$TARGET" == "--global" ]]; then
     echo "or append the method by hand:"
     echo "    ./install.sh /path/to/project"
     echo
-    echo "To run a reviewed plan in parallel, from inside a set-up repo:"
-    echo "    pir {slug}      # start detached, drop into its live view"
-    echo "    pir             # the cross-repo dashboard"
+    echo "To plan and build in parallel, from inside a set-up repo:"
+    echo "    pir plan \"brief\"      # plan something new, answered in pir's own screen"
+    echo "    pir start {slug}      # build a reviewed plan: start detached, drop into its live view"
+    echo "    pir                   # the cross-repo dashboard"
     report_engine_deps
     exit 0
 fi
@@ -277,9 +278,10 @@ Done. One thing left, by hand:
 
       /pir-work {slug}
 
-  or, to run a reviewed plan in parallel instead (from inside the repo):
+  or, to plan and build in parallel instead (from inside the repo):
 
-      pir {slug}      # start detached, drop into its live view
-      pir             # the cross-repo dashboard
+      pir plan "brief"      # plan something new, answered in pir's own screen
+      pir start {slug}      # build a reviewed plan: start detached, drop into its live view
+      pir                   # the cross-repo dashboard
 MSG
 report_engine_deps

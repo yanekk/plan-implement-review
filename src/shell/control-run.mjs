@@ -45,7 +45,7 @@ const DEFAULT_POLL_MS = 100;
 //      A clean coordinator's teardown only SIGTERMs its children without waiting, and a crashed or
 //      SIGKILLed one closed nothing, so a survivor is possible on every path. The reap checks each
 //      pid's start time, so an already-reaped or reused pid is skipped.
-//   3. Never remove a worktree — the next `pir {slug}` reconciles them from git (§2.6, §6).
+//   3. Never remove a worktree — the next `pir start {slug}` reconciles them from git (§2.6, §6).
 export async function stopRun(
   record,
   {

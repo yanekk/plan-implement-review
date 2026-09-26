@@ -130,7 +130,7 @@ export function buildListFrame(dashboard, ui = initialUi()) {
   lines.push([]); // a blank spacer line
 
   if (rows.length === 0) {
-    lines.push(lineOf('  No runs yet — start one with `pir {slug}`', 'dim'));
+    lines.push(lineOf('  No runs yet — start one with `pir start {slug}`', 'dim'));
   } else {
     lines.push(
       lineOf(
@@ -199,7 +199,7 @@ export function watchDisplayLines(snap, { now, spinnerChar = SPINNER[0] } = {}) 
 //             person sees why it died without opening the file (user 2026-09-22); null for none.
 //
 // The frame is a thin header (slug, state, repo, and — while running — the pid and the awake note), the
-// live block, and, for a run that is NOT running, a stale note saying the frame is old and how `pir {slug}`
+// live block, and, for a run that is NOT running, a stale note saying the frame is old and how `pir start {slug}`
 // resumes it (§2.4: painting a stale snapshot plainly is more honest than a blank screen). A crashed run
 // also shows the tail of its log and the full log path. A run with no snapshot yet shows a waiting line.
 // The spinner ticks only while the run is running; a stale frame's glyph is a static dot.
@@ -249,14 +249,14 @@ export function buildWatchFrame(view, { now, spinnerChar = SPINNER[0], ui = init
       lines.push([]);
       note('full log:', 'dim');
       note(logPath ?? "run.log in the run's control folder", 'dim', '    ');
-      note(`Esc quits pir; then \`pir ${slug}\` retries it.`, 'dim');
+      note(`Esc quits pir; then \`pir start ${slug}\` retries it.`, 'dim');
     } else if (state === 'finished') {
       // With no snapshot there is no runState to tell green from red, so never offer the merge on a guess
       // (DESIGN §2.8): point at run.log, which records how the gate ended.
       note('no snapshot recorded — finished. Whether its tests passed is in the log:', 'ended');
       note(logPath ?? "run.log in the run's control folder", 'dim', '    ');
     } else if (state === 'stopped') {
-      note(`no snapshot recorded — stopped. \`pir ${slug}\` resumes from committed work.`, 'ended');
+      note(`no snapshot recorded — stopped. \`pir start ${slug}\` resumes from committed work.`, 'ended');
     } else {
       note('no snapshot recorded.', 'dim');
     }
@@ -285,7 +285,7 @@ export function buildWatchFrame(view, { now, spinnerChar = SPINNER[0], ui = init
           note('full log:', 'dim');
           note(logPath, 'dim', '    ');
         }
-        note(`← back to the list; \`pir ${slug}\` resumes it.`, 'dim');
+        note(`← back to the list; \`pir start ${slug}\` resumes it.`, 'dim');
       } else if (state === 'finished') {
         const branch = record?.branch ?? `pir/${slug}`;
         // A complete run that is not ready to merge ended red (DESIGN §2.8): its footer above already shows
@@ -294,7 +294,7 @@ export function buildWatchFrame(view, { now, spinnerChar = SPINNER[0], ui = init
         const end = red ? `Not ready to merge — fix ${branch}, see the output above.` : `Hand-off: git merge ${branch}`;
         note(`— finished · this frame is stale. ${end}`, 'ended', '');
       } else if (state === 'stopped') {
-        note(`— stopped · this frame is stale. \`pir ${slug}\` resumes from committed work.`, 'ended', '');
+        note(`— stopped · this frame is stale. \`pir start ${slug}\` resumes from committed work.`, 'ended', '');
       }
     }
   }
@@ -515,7 +515,7 @@ export function loadDashboard({ dir = indexDir(), now = Date.now(), kill, exec, 
 }
 
 // openDashboard(deps) / openWatch(slug, deps) — the two entry points pir.mjs (T11) dispatches to. The
-// dashboard opens on the list; the watch form opens straight into a run's live view (`pir {slug}` drops
+// dashboard opens on the list; the watch form opens straight into a run's live view (`pir start {slug}` drops
 // into the run it just started/opened, §2.1), and ← from there steps back to the list like any other open
 // run (Esc quits pir; user 2026-09-22). Both run the one loop below.
 export function openDashboard(deps = {}) {
