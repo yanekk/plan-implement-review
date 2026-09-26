@@ -7,13 +7,16 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { parseRecord, serializeRecord } from './runrecord.mjs';
+import { parseRecord, serializeRecord, labelFromBrief } from './runrecord.mjs';
 
 // A fully-populated, valid record in the canonical shape parseRecord returns — all fields present,
 // the optional ones filled. Cloned per test so a mutation cannot leak between cases.
 function validRecord() {
   return {
     version: 1,
+    kind: 'work',
+    label: null,
+    go: null,
     slug: 'detached-runs',
     repo: 'plan-implement-review',
     repoPath: '/Users/someone/src/plan-implement-review',
@@ -54,6 +57,9 @@ test('optional fields absent are filled with null on parse', () => {
   };
   assert.deepEqual(parseRecord(JSON.stringify(minimal)), {
     ...minimal,
+    kind: 'work',
+    label: null,
+    go: null,
     startedAt: null,
     finalState: null,
     updatedAt: null,
@@ -167,4 +173,78 @@ test('non-string input → null, no throw', () => {
   for (const input of [null, undefined, 42, {}, [], true]) {
     assert.equal(parseRecord(input), null);
   }
+});
+
+// --- kind, label, go (plans/pir-plan-command T02, DESIGN §2.2, §2.8, §2.10, §3.5) -------------------
+
+test('an old record with none of kind/label/go parses as kind work, label null, go null', () => {
+  const old = validRecord();
+  delete old.kind;
+  delete old.label;
+  delete old.go;
+  const parsed = parseRecord(JSON.stringify(old));
+  assert.equal(parsed.kind, 'work');
+  assert.equal(parsed.label, null);
+  assert.equal(parsed.go, null);
+});
+
+test('round trip of a plan record with a label and go declined', () => {
+  const r = { ...validRecord(), kind: 'plan', label: 'a budget for screen ti…', go: 'declined' };
+  assert.deepEqual(parseRecord(serializeRecord(r)), r);
+});
+
+test('serializeRecord writes kind, label and go, defaulting an absent kind to work', () => {
+  const r = validRecord();
+  delete r.kind;
+  delete r.label;
+  delete r.go;
+  const data = JSON.parse(serializeRecord(r));
+  assert.equal(data.kind, 'work');
+  assert.ok('label' in data && data.label === null);
+  assert.ok('go' in data && data.go === null);
+});
+
+test('an unknown kind is a parse error, not a silent work', () => {
+  assert.equal(parseRecord(JSON.stringify({ ...validRecord(), kind: 'review' })), null);
+  assert.equal(parseRecord(JSON.stringify({ ...validRecord(), kind: 7 })), null);
+});
+
+test('a label of the wrong type, or a go outside the enum, is a parse error', () => {
+  assert.equal(parseRecord(JSON.stringify({ ...validRecord(), label: 12 })), null);
+  assert.equal(parseRecord(JSON.stringify({ ...validRecord(), go: 'started' })), null);
+  assert.equal(parseRecord(JSON.stringify({ ...validRecord(), go: true })), null);
+});
+
+test('labelFromBrief: a short brief is its own label', () => {
+  assert.equal(labelFromBrief('screen time budget'), 'screen time budget');
+  assert.equal(labelFromBrief('x'.repeat(24)), 'x'.repeat(24), 'exactly 24 is not cut');
+});
+
+test('labelFromBrief: a long line is cut to 24 characters ending in an ellipsis', () => {
+  const label = labelFromBrief('a daily screen budget with a warning before it runs out');
+  assert.equal(label, 'a daily screen budget w…');
+  assert.equal([...label].length, 24);
+  assert.equal(labelFromBrief('y'.repeat(25)), 'y'.repeat(23) + '…');
+});
+
+test('labelFromBrief: only the first line of a multi-line brief, trimmed', () => {
+  assert.equal(labelFromBrief('  first line  \nsecond line\nthird'), 'first line');
+  assert.equal(labelFromBrief('one\r\ntwo'), 'one');
+});
+
+test('labelFromBrief: leading blank lines are skipped', () => {
+  assert.equal(labelFromBrief('\n   \n\t\nthe real brief\nmore'), 'the real brief');
+  assert.equal(labelFromBrief('   \n\n'), '', 'a blank brief has an empty label');
+});
+
+test('labelFromBrief: an emoji at the cut is kept whole or dropped whole, never split', () => {
+  // 22 letters, then two emoji straddling the cut: the 23rd grapheme is the family (a ZWJ sequence
+  // of several code points), the 24th a thumbs-up, the 25th forces the cut.
+  const family = '👨‍👩‍👧';
+  const label = labelFromBrief('a'.repeat(22) + family + '👍' + 'b');
+  assert.equal(label, 'a'.repeat(22) + family + '…');
+  // A lone astral emoji at position 24 of a 25-long line is dropped whole — no lone surrogate.
+  const cut = labelFromBrief('c'.repeat(23) + '🙂' + 'd');
+  assert.equal(cut, 'c'.repeat(23) + '…');
+  assert.ok(!/[\uD800-\uDFFF]/.test(cut.replace(/[\uD800-\uDBFF][\uDC00-\uDFFF]/g, '')), 'no lone surrogate');
 });

@@ -24,9 +24,9 @@ done · ⛔ blocked, needs a human.
 | # | Task | Depends on | State | Notes |
 |---|---|---|---|---|
 | T01 | plan-flow-core | — | ⬜ | |
-| T02 | run-record-type | — | ⬜ | |
+| T02 | run-record-type | — | ✅ | |
 | T03 | plan-home | — | ✅ | planHome in shell/plan-home.mjs; gates, runFeatureTests, prepare design and dry-run read through it. Review clean, no fix commit: npm test green, grep finds no bypassing read, deviations (refs/heads pin, fixture PROGRESS.md, file-name check) accepted. Probed git show under a textconv attribute (raw bytes) and the remaining feature-worktree reads (sanctioned by §2.9). |
-| T04 | plan-branch | — | ⬜ | |
+| T04 | plan-branch | — | ✅ | |
 | T05 | fake-claude-sessions | — | ⬜ | |
 | T06 | plan-run-planner | T01, T02, T04, T05 | ⬜ | |
 | T07 | plan-run-review | T06 | ⬜ | |

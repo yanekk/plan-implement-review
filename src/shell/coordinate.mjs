@@ -23,7 +23,7 @@
 
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
-import { basename, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 
 import { parseProgress, reconcileTaskRow, progressPathFor } from '../core/progress.mjs';
 import { workerName, isWorkerOf } from '../core/naming.mjs';
@@ -37,6 +37,7 @@ import { createRenderer } from './render.mjs';
 import { drainDropFolder, waitForDrop } from './drop-folder.mjs';
 import { createGrants, startPersonInbox } from './person-inbox.mjs';
 import { writeSnapshot } from './snapshot-store.mjs';
+import { updateRecord } from './index-store.mjs';
 import { createWorktree } from './worktree.mjs';
 import { reapRecorded } from './reap.mjs';
 import { planHome } from './plan-home.mjs';
@@ -458,12 +459,12 @@ export function writeRunFinal({
 }
 
 // updateIndexFinalState({ repo, slug, finalState, indexStore, readFile, now }) → stamp a run's final
-// status onto its cross-repo index entry (DESIGN §2.8, §3.4; T10 interface). It reads the entry the
-// launcher wrote (T08), sets its finalState (and an updatedAt stamp), and writes it back through the
-// index store's atomic writeRecord — composing T02's parseRecord with T06's store rather than owning
-// either format or path, so there stays one owner per fact. `indexStore` is null when the store module
-// is not present (see the bin's lazy load), in which case this is a no-op; a missing or unparseable
-// entry is likewise a no-op, never a throw, because the exit path must not fail on bookkeeping.
+// status onto its cross-repo index entry (DESIGN §2.8, §3.4; T10 interface). A thin call to the store's
+// updateRecord, the one read-modify-write of an entry (plans/pir-plan-command T02, user at plan review
+// 2026-09-26): it patches finalState and an updatedAt stamp and keeps every other field, writing back
+// through the injected store's writeRecord. `indexStore` is null when the store module is not present
+// (see the bin's lazy load), in which case this is a no-op; a missing or unparseable entry is likewise a
+// no-op, never a throw, because the exit path must not fail on bookkeeping.
 export function updateIndexFinalState({
   repo,
   slug,
@@ -473,16 +474,27 @@ export function updateIndexFinalState({
   now = () => new Date().toISOString(),
 } = {}) {
   if (!indexStore) return { updated: false, reason: 'no-index-store' };
-  let existing;
+  // Only a failed read is the no-op; a failed write surfaces, as it did before the delegation.
+  let writing = false;
   try {
-    existing = parseRecord(readFile(indexStore.recordPath(repo, slug), 'utf8'));
-  } catch {
+    const record = updateRecord(
+      { repo, slug },
+      { finalState, updatedAt: now() },
+      {
+        dir: dirname(indexStore.recordPath(repo, slug)),
+        fs: { readFileSync: readFile },
+        write: (rec) => {
+          writing = true;
+          indexStore.writeRecord(rec);
+        },
+      },
+    );
+    return { updated: true, record };
+  } catch (err) {
+    if (writing) throw err;
+    if (err && err.code === 'EUNPARSEABLE') return { updated: false, reason: 'unparseable-entry' };
     return { updated: false, reason: 'no-entry' }; // the launcher's entry is not there to update.
   }
-  if (!existing) return { updated: false, reason: 'unparseable-entry' };
-  const record = { ...existing, finalState, updatedAt: now() };
-  indexStore.writeRecord(record);
-  return { updated: true, record };
 }
 
 // --- The runaway circuit-breaker verdict (DESIGN §5.2; ported from spawn-one-scratch.mjs, T12 P5) --
