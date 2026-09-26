@@ -91,8 +91,7 @@ task's list does what `DESIGN.md` says through the real input path; the states t
 
 ## 3. The drill
 
-A drill is one task at the end of a plan that builds a surface (named `drill`, depending on every
-surface task and preceding anything the person will sit through, such as a paid live run), and a
+A drill is its own task at the end of a phase that builds a surface (named `{surface}-drill`), and a
 short pass in `pir-review` on any task that changes a surface. It has a list of interactions, the
 sizes, and what to judge against. The worker:
 

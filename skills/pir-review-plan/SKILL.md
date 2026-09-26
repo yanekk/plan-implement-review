@@ -158,12 +158,11 @@ The whole of `plans/{slug}/` has to describe one buildable thing. Check:
   - **A screen handed to the person.** A "Needs a person" block, verification row or "Done when"
     that asks how a surface looks, reads or feels — "does it respond the way you expected from the
     prototype", "check the layout" — is a drill a worker runs (`pir-e2e`). It becomes an "End to
-    end" section plus the plan's drill task, and if the only environment named is a paid or real
+    end" section plus the phase's drill task, and if the only environment named is a paid or real
     run, the missing piece is a free rig. live-workers T13 shipped exactly this block, and its
     worker handed the check to the user until T19 built the rig and T20 drove it.
   - **A surface with no end-to-end proof.** A task that builds or changes a surface with no "End to
-    end" section, no rig to run it on, or a plan with a surface and no final drill task depending on
-    every surface task.
+    end" section, no rig to run it on, or a phase with a surface and no drill task.
   - **A task that secretly leans on the user.** Read its "Done when" and its steps for any point
     where the worker would have to hand the user a thing to run, configure or set up that the
     task never gave the worker the means to automate. Either the task carries the tool that
