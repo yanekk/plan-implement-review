@@ -1,6 +1,6 @@
 # T02 — nudge-decision
 
-**Phase:** 1 · **Depends on:** T00 · **Weight:** light
+**Phase:** 1 · **Depends on:** — · **Weight:** light
 
 ## Goal
 

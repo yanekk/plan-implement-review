@@ -10,11 +10,13 @@ touching the task you pick up, and append yours there.
 cell is an index for the next session; the account is the commit message. Whoever writes a
 cell also fixes the over-budget cell they walk past.
 
-**Plan reviewed:** 2026-09-24 — 12 fixed, 6 decided with the user (channel changed to hooks at review)
+**Plan reviewed:** not yet — run `/pir-review-plan` before the first `/pir-work`
 
-**Status:** Planned 2026-09-24. Nothing built. T00 (live inbox probe) gates everything.
-**Last updated:** 2026-09-24
-**Next `pir-work` will:** implement T00, the only task with no dependencies, once the plan is reviewed.
+**Status:** Planned 2026-09-24, reviewed 2026-09-24; re-planned 2026-09-26 on `live-workers` (nudge
+over `platform.send`, activity from pir's conversation log; old T00 probe and T04 note sender dropped,
+tasks renumbered). The re-plan needs its own review. Nothing built.
+**Last updated:** 2026-09-26
+**Next `pir-work` will:** stop until the plan is reviewed; then T01, T02, T03 and T05 have no dependency.
 
 ## Tasks
 
@@ -23,21 +25,18 @@ done · ⛔ blocked, needs a human.
 
 | # | Task | Depends on | State | Notes |
 |---|---|---|---|---|
-| T00 | prove-the-inbox | — | ⬜ | |
-| T01 | activity-signals | T00 | ⬜ | |
-| T02 | nudge-decision | T00 | ⬜ | |
-| T03 | activity-reader | T00 | ⬜ | |
-| T04 | nudge-sender | T00 | ⬜ | |
-| T05 | loop-wiring | T01, T02, T03, T04 | ⬜ | |
-| T06 | dashboard-label | T00 | ⬜ | |
-| T07 | worker-skill | T02 | ⬜ | |
-| T08 | docs | T05, T06, T07 | ⬜ | |
-| T09 | quiet-worker-scenario | T05, T06, T07 | ⬜ | |
-| T10 | live-nudge-drill | T09 | ⬜ | |
+| T01 | activity-signals | — | ⬜ | |
+| T02 | nudge-decision | — | ⬜ | |
+| T03 | worker-observer | — | ⬜ | |
+| T04 | loop-wiring | T01, T02, T03 | ⬜ | |
+| T05 | dashboard-label | — | ⬜ | |
+| T06 | worker-skill | T02 | ⬜ | |
+| T07 | docs | T04, T05, T06 | ⬜ | |
+| T08 | quiet-worker-scenario | T04, T05, T06 | ⬜ | |
+| T09 | live-nudge-drill | T08 | ⬜ | |
 
 **Review queue:** *(empty)*
 
 ## Blocked on the user
 
-Nothing yet. T00 and T10 run `ask`-bin actions (DESIGN §5.3); their rules are in `.claude/settings.json`.
-T00 may ask the person to type one line into the probe session (§2.8 question 5).
+Nothing yet. T09 runs the `ask`-bin drill (DESIGN §5.3); its rule is in `.claude/settings.json`.
