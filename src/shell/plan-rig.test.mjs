@@ -8,9 +8,12 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { startPlanRig, scriptSet, SCRIPT_SETS, PLAN_RIG_SLUG, PLAN_RIG_SLUG_2 } from './plan-rig.mjs';
+import { startPlanRig, scriptSet, SCRIPT_SETS, PLAN_RIG_SLUG, PLAN_RIG_SLUG_2, PLAN_RIG_QUESTION } from './plan-rig.mjs';
 import { PLANNER_MATCH, REVIEWER_MATCH } from './fake/sessions.mjs';
-import { indexDir, writeRecord } from './index-store.mjs';
+import { indexDir, listRecords, writeRecord } from './index-store.mjs';
+import { startPlanRun } from './launch.mjs';
+import { dropPersonInput } from './person-inbox.mjs';
+import { stopRun } from './control-run.mjs';
 
 const git = (cwd, ...a) => execFileSync('git', a, { cwd, encoding: 'utf8' }).trim();
 const inside = (path, dir) => realpathSync(path).startsWith(realpathSync(dir) + '/');
@@ -113,4 +116,92 @@ test("end to end at 80×24: a run in the rig's own index is what `pir` lists", a
   const text = screens[0].rows.join('\n');
   assert.match(text, new RegExp(slug));
   assert.doesNotMatch(text, /No runs yet/);
+});
+
+// ---- T11: planning runs on the dashboard, end to end (DESIGN §2.10, §2.14). ----
+
+const BRIEF = 'Add dark mode to the blog please';
+const LABEL = 'Add dark mode to the bl…';
+const SIZES = [[80, 24], [120, 40]];
+const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+async function until(fn, what, ms = 20000) {
+  const end = Date.now() + ms;
+  for (;;) {
+    const v = fn();
+    if (v) return v;
+    if (Date.now() > end) throw new Error(`timed out waiting for ${what}`);
+    await new Promise((r) => setTimeout(r, 50));
+  }
+}
+
+const ndjson = (path) => (existsSync(path) ? readFileSync(path, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l)) : []);
+
+// A planning run started as `pir plan` starts it, in the rig, with the planner parked on its question.
+// The test's teardown stops every run the rig's index still shows live, then removes the rig.
+async function startRigPlan(t) {
+  const rig = startPlanRig();
+  const dir = indexDir({ env: rig.env });
+  t.after(async () => {
+    for (const record of listRecords({ dir })) {
+      if (record.finalState === null) await stopRun(record).catch(() => {});
+    }
+    rig.cleanup();
+  });
+  const started = startPlanRun(BRIEF, { cwd: rig.repoDir, env: rig.env });
+  assert.equal(started.started, true, JSON.stringify(started));
+  const request = await until(() => ndjson(join(started.controlDir, 'conversations', 'plan-1.ndjson')).find((e) => e.dir === 'request'), 'the planner question');
+  return { rig, dir, started, request };
+}
+
+test('end to end: a planning run lists as planning with its label, then as your go once planned and reviewed', async (t) => {
+  const { rig, dir, started, request } = await startRigPlan(t);
+  const planning = new RegExp(`"${esc(LABEL)}" +plan +● planning +repo +plan … +1`);
+  for (const [cols, rows] of SIZES) {
+    const { screens, overflows } = await rig.driveScreen({ cols, rows, first: planning });
+    const text = screens[0].rows.join('\n');
+    assert.match(text, /SLUG +TYPE +STATE +REPO +PROGRESS +WK/, `${cols}×${rows}`);
+    assert.match(text, /1 run · 1 running · 0 finished · 0 crashed/);
+    assert.match(text, /Ctrl\+R resume/);
+    assert.equal(overflows, 0, `${cols}×${rows}: nothing wraps`);
+  }
+
+  // Answer the planner's question as the conversation view would; the fake plans, the reviewer reviews.
+  const workers = JSON.parse(readFileSync(join(started.controlDir, 'workers.json'), 'utf8'));
+  const dropped = dropPersonInput(started.controlDir, { to: workers[0].id, kind: 'answers', requestId: request.requestId, answers: { [PLAN_RIG_QUESTION]: 'Small' } }, { coordinatorAlive: true });
+  assert.deepEqual(dropped, { ok: true });
+  await until(() => listRecords({ dir }).find((r) => r.slug === PLAN_RIG_SLUG && r.finalState === 'finished'), 'the reviewed run finished', 30000);
+
+  const yourGo = new RegExp(`${PLAN_RIG_SLUG} +plan +● your go +repo +plan ✓ review ✓`);
+  for (const [cols, rows] of SIZES) {
+    const { screens, overflows } = await rig.driveScreen({ cols, rows, first: yourGo });
+    const text = screens[0].rows.join('\n');
+    assert.match(text, /1 run · 0 running · 0 finished · 0 crashed · 1 waiting for you/, `${cols}×${rows}`);
+    assert.doesNotMatch(text, /"/, 'the label is gone once the run has its slug');
+    assert.equal(overflows, 0);
+  }
+});
+
+test('end to end: Ctrl+S Ctrl+S stops a planning run mid-planner, and Ctrl+R Ctrl+R brings the row back to planning', async (t) => {
+  const { rig, dir, started } = await startRigPlan(t);
+  const screen = rig.openScreen({ cols: 80, rows: 24 });
+  try {
+    await screen.waitFor(new RegExp(`"${esc(LABEL)}" +plan +● planning`));
+    screen.send('\x13');
+    await screen.waitFor(/⚠ Ctrl\+S again to stop/);
+    screen.send('\x13');
+    await screen.waitFor(new RegExp(`"${esc(LABEL)}" +plan +◼ stopped`), 20000);
+    assert.equal(listRecords({ dir }).find((r) => r.slug === started.runId).finalState, 'stopped');
+
+    screen.send('\x12');
+    await screen.waitFor(new RegExp(`⚠ Ctrl\\+R again to resume "${esc(LABEL)}"`));
+    screen.send('\x12');
+    await screen.waitFor(new RegExp(`"${esc(LABEL)}" +plan +● planning +repo +plan …`), 20000);
+    const record = listRecords({ dir }).find((r) => r.slug === started.runId);
+    assert.equal(record.finalState, null, 'the resumed run is live again');
+    assert.notEqual(record.pid, started.pid, 'a new planning program');
+    assert.equal(screen.overflows(), 0);
+  } finally {
+    await screen.close();
+  }
 });

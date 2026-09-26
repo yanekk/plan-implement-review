@@ -22,13 +22,14 @@ import { readLogTail } from './commands.mjs';
 
 import { buildDisplay } from '../core/display.mjs';
 import { wrapLine } from '../core/text.mjs';
-import { buildDashboard, dashboardReducer, findOpen, initialUi, openTasks, runKey } from '../core/dashboard.mjs';
+import { buildDashboard, dashboardReducer, displayName, findOpen, initialUi, isPlan, openTasks, planProgress, runKey } from '../core/dashboard.mjs';
 import { styledLines } from './render.mjs';
 import { classifyRun } from '../core/runstate.mjs';
 import { resolveLiveness } from './identity.mjs';
 import { indexDir, listRecords } from './index-store.mjs';
 import { readSnapshot } from './snapshot-store.mjs';
 import { stopRun, removeRun } from './control-run.mjs';
+import { resumeRun } from './launch.mjs';
 import { FrameView } from './pir-view.mjs';
 import { createConversationView } from './conversation-view.mjs';
 import { ProcessTerminal, TuiAltScreen, TUI_KEYBINDINGS, getKeybindings, isKeyRelease, parseKey } from '@earendil-works/pi-tui';
@@ -45,8 +46,18 @@ const SPINNER = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', 
 const DEFAULT_COLS = 80;
 
 // The list's column widths. Not binding (§2.11: exact terminal spacing is the builder's, not the mock's);
-// chosen to line up the five columns the dashboard scans — slug, state, repo, progress, workers.
-const COL = { marker: 2, slug: 16, state: 12, repo: 20, progress: 16 };
+// chosen to line up the six columns the dashboard scans — slug, type, state, repo, progress, workers — in
+// 80 columns. SLUG holds a planning run's label in quotes (24 characters at most, runrecord.mjs's
+// LABEL_MAX, plus the quotes and a space). REPO takes what the terminal has left, between REPO_MIN and
+// REPO_MAX: at 80 columns it gave up six to the label and TYPE (pir-plan-command §2.10), and a wider
+// terminal gives them back.
+const COL = { marker: 2, slug: 27, type: 6, state: 12, progress: 16, wk: 3 };
+const REPO_MIN = 12;
+const REPO_MAX = 24;
+function repoWidth(columns) {
+  const fixed = COL.marker + COL.slug + COL.type + COL.state + COL.progress + COL.wk;
+  return Math.max(REPO_MIN, Math.min(REPO_MAX, (columns | 0 || DEFAULT_COLS) - fixed));
+}
 
 // span(text, style) / lineOf(text, style) — the two shapes a frame is built from. A frame is an array of
 // LINES; a line is an array of SPANS; a span is `{ text, style }` where style is a key into pir-view.mjs's SGR (or null
@@ -57,10 +68,11 @@ const span = (text, style = null) => ({ text, style });
 const lineOf = (text, style = null) => [span(text, style)];
 
 // Right-pad (or truncate) a string to exactly `n` visible characters, counted by code point so a glyph
-// like the state's ● counts as one. Truncation keeps the columns from drifting when a slug or repo is long.
+// like the state's ● counts as one. Truncation keeps the columns from drifting when a slug or repo is long;
+// a cut value ends in `…` and keeps one space before the next column, so it never runs into it.
 function pad(s, n) {
   const chars = [...String(s ?? '')];
-  if (chars.length >= n) return chars.slice(0, n).join('');
+  if (chars.length >= n) return n >= 3 ? chars.slice(0, n - 2).join('') + '… ' : chars.slice(0, n).join('');
   return chars.join('') + ' '.repeat(n - chars.length);
 }
 
@@ -70,10 +82,19 @@ export { readLogTail };
 // The state cell: the glyph+word and its §2.11 colour. running green (●), finished dim (◌), crashed red
 // (✕), stopped dim (◼). An unrecognised state (an unreachable/stale index entry, §2.8) shows its raw
 // value uncoloured rather than being forced into one of the four.
+//
+// A planning run's row shows its display state (runDisplayState, pir-plan-command §2.10): planning and
+// reviewing green as running, `your go` amber bold (the colour of asking), the rest as a build's.
 function stateCell(state) {
   switch (state) {
     case 'running':
       return { text: '● running', style: 'running' };
+    case 'planning':
+      return { text: '● planning', style: 'running' };
+    case 'reviewing':
+      return { text: '● reviewing', style: 'running' };
+    case 'your-go':
+      return { text: '● your go', style: 'your-go' };
     case 'finished':
       return { text: '◌ finished', style: 'ended' };
     case 'crashed':
@@ -100,15 +121,20 @@ function progressCell(state, { done = 0, total = 0 } = {}) {
 // key hint for the current view. The armed line names the run and what the second press does, matching
 // `claude agents`' guard; any other key clears `armed` in the reducer, so this line is shown only while a
 // confirm is genuinely pending.
-function footerLine(context, ui) {
+function footerLine(context, ui, rows = []) {
   if (ui.armed) {
+    if (ui.armed.action === 'resume') {
+      // Named as the row names it: a planning run before its rename has only its label.
+      const row = rows.find((r) => runKey(r) === ui.armed.key);
+      return lineOf(`⚠ Ctrl+R again to resume ${row ? displayName(row) : ui.armed.slug}`, 'armed');
+    }
     if (ui.armed.action === 'stop') {
       return lineOf(`⚠ Ctrl+S again to stop ${ui.armed.slug} now — this kills its in-flight workers`, 'armed');
     }
     return lineOf(`⚠ Ctrl+X again to remove ${ui.armed.slug}'s record`, 'armed');
   }
   if (context === 'watch') return lineOf('↑↓ pick a task · → open its worker · ← back · Ctrl+S Ctrl+S stop this run · esc quit', 'hint');
-  return lineOf('↑↓ move · ↵ open · Ctrl+S stop · Ctrl+X remove · esc quit', 'hint');
+  return lineOf('↑↓ move · ↵ open · Ctrl+R resume · Ctrl+S stop · Ctrl+X remove · esc quit', 'hint');
 }
 
 // buildListFrame(dashboard, ui) → frame (DESIGN §2.3, §2.11).
@@ -122,8 +148,11 @@ function footerLine(context, ui) {
 // screen reads as broken on a first open. Otherwise: the title, a column header, one row per run, the
 // counts line, and the footer. Each row's spans are coloured by §2.11; the selected row leads with a
 // 'selected' `▎` span, which paintLine (pir-view.mjs) turns into a full-width grey band when colour is on.
-export function buildListFrame(dashboard, ui = initialUi()) {
-  const { rows = [], counts = { running: 0, finished: 0, crashed: 0, stopped: 0, total: 0 } } = dashboard ?? {};
+//
+// `columns` is the terminal width; REPO widens with it (repoWidth), everything else is fixed.
+export function buildListFrame(dashboard, ui = initialUi(), { columns = DEFAULT_COLS } = {}) {
+  const repoCol = repoWidth(columns);
+  const { rows = [], counts = { running: 0, finished: 0, crashed: 0, stopped: 0, waiting: 0, total: 0 } } = dashboard ?? {};
   const lines = [];
 
   lines.push([span('pir', 'head'), span('  runs on this machine', 'dim')]);
@@ -134,7 +163,7 @@ export function buildListFrame(dashboard, ui = initialUi()) {
   } else {
     lines.push(
       lineOf(
-        '  ' + pad('SLUG', COL.slug) + pad('STATE', COL.state) + pad('REPO', COL.repo) + pad('PROGRESS', COL.progress) + 'WK',
+        '  ' + pad('SLUG', COL.slug) + pad('TYPE', COL.type) + pad('STATE', COL.state) + pad('REPO', repoCol) + pad('PROGRESS', COL.progress) + 'WK',
         'dim',
       ),
     );
@@ -143,13 +172,19 @@ export function buildListFrame(dashboard, ui = initialUi()) {
       // A run is "live" only while running; a non-running run's slug is dimmed so the eye lands on the
       // active ones. The state colour lives on the state cell, separately, so both signals show at once.
       const live = v.state === 'running';
-      const st = stateCell(v.state);
-      const prog = progressCell(v.state, v.progress);
+      // A planning run (pir-plan-command §2.10): TYPE `plan` magenta, its label dimmed in quotes until it has
+      // a slug, its display state, and its steps in PROGRESS. A record without `kind` is a build, `work`.
+      // isPlan is the rule runDisplayState uses, so TYPE, STATE and PROGRESS never disagree on a row.
+      const plan = isPlan(v);
+      const labelled = plan && !!v.record?.label;
+      const st = stateCell(v.display ?? v.state);
+      const prog = plan ? { text: planProgress(v.snap?.runState), style: v.state === 'crashed' ? 'bar-crash' : null } : progressCell(v.state, v.progress);
       lines.push([
         span(selected ? '▎ ' : '  ', selected ? 'selected' : null), // the selected-row mark (paintLine)
-        span(pad(v.slug, COL.slug), live ? null : 'dim'),
+        span(pad(displayName(v), COL.slug), live && !labelled ? null : 'dim'),
+        span(pad(plan ? 'plan' : 'work', COL.type), plan ? 'type-plan' : 'type-work'),
         span(pad(st.text, COL.state), st.style),
-        span(pad(v.repo, COL.repo), 'dim'),
+        span(pad(v.repo, repoCol), 'dim'),
         span(pad(prog.text, COL.progress), prog.style),
         span(v.workers > 0 ? String(v.workers) : '·', 'dim'),
       ]);
@@ -159,7 +194,9 @@ export function buildListFrame(dashboard, ui = initialUi()) {
   lines.push([]);
   lines.push(countsLine(counts));
   lines.push([]);
-  lines.push(footerLine('list', ui));
+  // Why a resume did not start (resumeRun's refusal), dim above the hint; one-shot like the watch note.
+  if (ui.note) lines.push(lineOf(ui.note, 'dim'));
+  lines.push(footerLine('list', ui, rows));
   return lines;
 }
 
@@ -174,6 +211,8 @@ function countsLine(counts) {
     span(`${counts.crashed} crashed`, 'count-crash'),
   ];
   if (counts.stopped > 0) spans.push(span(` · ${counts.stopped} stopped`, 'dim'));
+  // Planning runs waiting on the person's go (pir-plan-command §2.10), amber like the row's state.
+  if (counts.waiting > 0) spans.push(span(' · ', 'dim'), span(`${counts.waiting} waiting for you`, 'your-go'));
   return spans;
 }
 
@@ -315,6 +354,7 @@ export function buildWatchFrame(view, { now, spinnerChar = SPINNER[0], ui = init
 //   Esc          → 'quit'             (leave `pir` — from the list or a run's view)
 //   Ctrl+S       → 'ctrlS'            (arm / confirm stop)
 //   Ctrl+X       → 'ctrlX'            (arm / confirm remove)
+//   Ctrl+R       → 'ctrlR'            (arm / confirm resume, pir-plan-command §2.14)
 //   Ctrl+C       → 'quit'             (leave `pir` at once)
 //
 // In the 'worker' view none of this applies: runTui hands every key to the conversation view, where Esc
@@ -342,6 +382,7 @@ const KEY_INTENTS = {
   'ctrl+c': 'quit',
   'ctrl+s': 'ctrlS',
   'ctrl+x': 'ctrlX',
+  'ctrl+r': 'ctrlR',
 };
 export function decodeKey(data) {
   const s = Buffer.isBuffer(data) ? data.toString('utf8') : String(data ?? '');
@@ -499,6 +540,13 @@ export function loadDashboard({ dir = indexDir(), now = Date.now(), kill, exec, 
       liveStartTime,
     });
     const snap = readSnapshot(record.controlDir, fs ? { fs } : {});
+    // A planning run's snapshot has steps, not tasks (pir-plan-command §3.5): buildDisplay is the build's
+    // model and is not fed it. Its WK is the number of live sessions, which is one or none.
+    if (record.kind === 'plan' || snap?.runState?.kind === 'plan') {
+      const live = (snap?.runState?.steps ?? []).filter((st) => st.worker?.live).length;
+      const key = `${record.repo}__${record.slug}`;
+      return { key, slug: record.slug, state, repo: record.repo, progress: { done: 0, total: 0 }, workers: live, snap, record, controlDir: record.controlDir };
+    }
     const display = snap ? buildDisplay(snap.runState, { now }) : null;
     const progress = display
       ? { done: display.summary.done, total: display.summary.total }
@@ -549,6 +597,7 @@ async function runTui({
   load = loadDashboard,
   stop = stopRun,
   remove = removeRun,
+  resume = resumeRun,
   drop,
   follow,
   initial = initialUi(),
@@ -656,7 +705,7 @@ async function runTui({
       const columns = Math.max(20, stdout.columns || DEFAULT_COLS);
       screen.paint(buildWatchFrame(view, { now: now(), spinnerChar, ui, columns, logTail }));
     } else {
-      screen.paint(buildListFrame(dash, ui));
+      screen.paint(buildListFrame(dash, ui, { columns: Math.max(20, stdout.columns || DEFAULT_COLS) }));
     }
   }
 
@@ -685,6 +734,21 @@ async function runTui({
       function fail(err) {
         cleanup();
         reject(err);
+      }
+
+      // The run action in flight (see onData), and how one is carried out.
+      let acting = Promise.resolve();
+      async function act(intent) {
+        const view = read().rows.find((r) => runKey(r) === intent.key);
+        if (!view) return;
+        if (intent.type === 'stop') await stop(view.record, { kill });
+        else if (intent.type === 'remove') remove(view.record, { dir, fs });
+        else if (intent.type === 'resume') {
+          // resumeRun (T08) re-spawns a planning program or starts the build; a refusal (the run came
+          // back to life meanwhile, or startRun refused) is shown under the list rather than dropped.
+          const r = await resume(view.record, { kill, exec, env });
+          if (r && r.resumed === false) ui = { ...ui, note: `Could not resume ${displayName(view)}: ${r.reason}` };
+        }
       }
 
       async function onData(data) {
@@ -723,12 +787,15 @@ async function runTui({
             const task = openTasks(dash.rows, ui)[ui.taskSel ?? 0];
             if (task) selectedTask.set(runKey(open) ?? ui.openKey ?? ui.openSlug, task.id);
           }
-          if (intent?.type === 'stop') {
-            const view = dash.rows.find((r) => runKey(r) === intent.key);
-            if (view) await stop(view.record, { kill });
-          } else if (intent?.type === 'remove') {
-            const view = dash.rows.find((r) => runKey(r) === intent.key);
-            if (view) remove(view.record, { dir, fs });
+          if (intent && intent.type !== 'quit') {
+            // One run action at a time. A stop returns only after it has reaped the run's sessions, and
+            // keys keep arriving meanwhile: the row can already read `stopped` (the program recorded it)
+            // while the reap is still going, and a resume fired then had its new session killed by that
+            // reap (pir-plan-command T11). So each action waits for the one before it, and then finds its
+            // run in a fresh read, not in the rows of the keypress that armed it.
+            const run = acting.then(() => act(intent));
+            acting = run.catch(() => {});
+            await run;
           }
           repaint();
         } catch (err) {
