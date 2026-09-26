@@ -12,6 +12,7 @@ changed.
 
 | Date | | Finding |
 |---|---|---|
+| 2026-09-26 | 🔄 | T18 review, user: the `live-workers-demo` harness fixture keeps ceiling 2 and a 15-min timeout, above the §5.3 harness bound of 1 and 10 min; four tasks with a 90 s pause do not fit it. Written into §5.3. |
 | 2026-09-26 | ✅ | T18, verified by hand with the user: T03 rerun, own answers typed on the inline `Other:` line (extra `oranges`, name `Ada`) arrived as answers: "works as I wanted". T04 background `↳` lines and `◌ N running in the background`: "clear". |
 | 2026-09-26 | 📌 | T18: the user also drove two full demo runs (3 interrupts with typed instructions, permission, question, all logged delivered) but stated no verdict on them; `live-drill.mjs` covered those keys on the real screen, green four times. |
 | 2026-09-26 | 🔄 | T18 drill, user: Enter on the empty box allows a permission (`y` removed); one Enter answers a pick-one question; typing on a question lands on its inline `Other:` field, never the box; Esc to talk instead. |
