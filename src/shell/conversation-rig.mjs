@@ -9,13 +9,13 @@
 // HALT file in the run's control folder. While it runs, open the screen from another terminal:
 //
 //   node src/shell/pir.mjs            the dashboard: the rig's run is listed `running`
-//   cd <scratch> && node <repo>/src/shell/pir.mjs rig     straight into the run's live view
+//   cd <scratch> && node <repo>/src/shell/pir.mjs start rig     straight into the run's live view
 //
 // then → on task T01 opens its worker's conversation.
 //
 // What it stands up (all of it the real code, bar the `claude` executable):
 //   - a scratch repo (`--into`, else a fresh temp folder) holding a reviewed one-task plan `rig`, so
-//     `pir rig` from there opens the run instead of starting a coordinator;
+//     `pir start rig` from there opens the run instead of starting a coordinator;
 //   - an index record whose pid and start time are the rig's own, so pir classifies the run `running`
 //     and lets the person's input through (§2.5);
 //   - createPlatform with one worker spawned through the SDK on fake/claude-stream.mjs, its conversation
@@ -153,7 +153,7 @@ export function scenarioScript(name = 'tour', { paceMs = 300, workMs = 4000 } = 
   throw new Error(`unknown scenario "${name}" (tour, long)`);
 }
 
-// The one-task plan: reviewed and with a test block, so `pir rig` from the scratch repo passes its
+// The one-task plan: reviewed and with a test block, so `pir start rig` from the scratch repo passes its
 // pre-flight and, the run being `running`, opens it instead of starting a coordinator (launch.mjs).
 function writePlan(repoRoot, scenario) {
   const plan = join(repoRoot, 'plans', RIG_SLUG);

@@ -50,7 +50,7 @@ export function runKey(view) {
 
 // The navigation state the reducer owns. `view` is which block is on screen; `sel` is the highlighted
 // row index in the list; `openSlug` is the run the watch view is showing and `openKey` its identity
-// (null when it was opened by slug alone, `pir {slug}`); `taskSel` is the highlighted task row in the
+// (null when it was opened by slug alone, `pir start {slug}`); `taskSel` is the highlighted task row in the
 // watch view (live-workers §2.11); `openWorker` is the worker the 'worker' view shows; `note` is a
 // one-shot footer line (why a task row did not open); `armed` is the pending confirm, null unless a
 // chord's first press has landed.
@@ -194,7 +194,7 @@ function chord(type, ui, views) {
 }
 
 // findOpen(views, ui) → the run the watch view is showing: by its key when it was opened from the list,
-// by slug when it was opened by `pir {slug}` (which names no repo), else undefined.
+// by slug when it was opened by `pir start {slug}` (which names no repo), else undefined.
 export function findOpen(views, ui) {
   if (ui.openKey != null) return views.find((v) => runKey(v) === ui.openKey);
   return views.find((v) => v.slug === ui.openSlug);

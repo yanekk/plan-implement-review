@@ -72,7 +72,7 @@ test('the list frame builds the title, a row per run, the counts line and the ke
 test('the empty dashboard shows the get-started line, not a blank list (§2.3)', () => {
   const frame = buildListFrame(buildDashboard([]), initialUi());
   const text = frameText(frame);
-  assert.match(text, /No runs yet — start one with `pir \{slug\}`/, 'the get-started line stands in for the empty list');
+  assert.match(text, /No runs yet — start one with `pir start \{slug\}`/, 'the get-started line stands in for the empty list');
   assert.ok(!text.includes('SLUG'), 'no column header is drawn when there is nothing to list');
   assert.match(text, /0 runs · 0 running/, 'the counts line still reads zero');
 });
@@ -148,7 +148,7 @@ test('a stale/final run renders its last frame with a stale marker (§2.4)', () 
   const staleMarker = findSpan(crashed, 'this frame is stale');
   assert.ok(staleMarker, 'a stale marker is drawn');
   assert.equal(staleMarker.style, 'crashed', 'the crashed run\'s stale marker is red');
-  assert.match(crashedText, /pir beta` resumes it/, 'and names how to resume');
+  assert.match(crashedText, /`pir start beta` resumes it/, 'and names how to resume');
 
   // Finished and stopped are dim, each with their own resume/hand-off note.
   const finished = buildWatchFrame(

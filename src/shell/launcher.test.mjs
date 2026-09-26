@@ -92,9 +92,11 @@ test('install.sh removes a stale pir-coordinate launcher from both bin dirs it m
   assert.match(install, /rm -f "\$dir\/\$name"/);
 });
 
-test('install.sh closing messages name pir {slug} and never tell anyone to run pir-coordinate', () => {
-  const detached = install.match(/pir \{slug\}/g) ?? [];
-  assert.ok(detached.length >= 2, 'both closing messages name the detached pir {slug}');
+test('install.sh closing messages name pir start {slug} and pir plan, and never tell anyone to run pir-coordinate', () => {
+  const start = install.match(/pir start \{slug\}/g) ?? [];
+  assert.ok(start.length >= 2, 'both closing messages name pir start {slug}');
+  const plan = install.match(/pir plan \\?"brief\\?"/g) ?? [];
+  assert.ok(plan.length >= 2, 'both closing messages name pir plan');
   assert.doesNotMatch(install, /pir-coordinate \{slug\}/, 'no message names the retired launcher');
   // Every remaining mention sits in a comment or a removal list, never in printed text.
   const printed = install.split('\n').filter((l) => l.includes('pir-coordinate') && !/^\s*#/.test(l));
@@ -121,6 +123,30 @@ function codeLines(dir) {
 
 test('no user-facing message in src/ tells the person to run pir-coordinate', () => {
   const hits = codeLines(join(REPO, 'src')).filter((l) => l.includes('pir-coordinate'));
+  assert.deepEqual(hits, []);
+});
+
+// The bare-slug form is gone (pir-plan-command DESIGN §2.1): no file that ships, and no test, may still
+// tell the person to type `pir {slug}` or print `pir ${slug}`. Comments are scanned too, since a comment
+// naming the old form is how the old form gets copied back into a message. This file is skipped only
+// because the pattern below names the old form.
+test('nothing in src/, bin/ or install.sh names the removed pir {slug} form', () => {
+  const OLD = /\bpir (\{slug\}|\$\{slug\})/;
+  const files = [join(REPO, 'bin', 'pir'), INSTALL];
+  const walk = (dir) => {
+    for (const e of readdirSync(dir, { withFileTypes: true })) {
+      const p = join(dir, e.name);
+      if (e.isDirectory()) walk(p);
+      else if (e.name.endsWith('.mjs') && p !== fileURLToPath(import.meta.url)) files.push(p);
+    }
+  };
+  walk(join(REPO, 'src'));
+  const hits = [];
+  for (const f of files) {
+    readFileSync(f, 'utf8').split('\n').forEach((l, i) => {
+      if (OLD.test(l)) hits.push(`${f}:${i + 1}: ${l.trim()}`);
+    });
+  }
   assert.deepEqual(hits, []);
 });
 

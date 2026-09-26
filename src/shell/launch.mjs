@@ -1,4 +1,4 @@
-// The engine behind `pir {slug}` (DESIGN §2.5, §2.9, §3.4): run the pre-flight, launch the
+// The engine behind `pir start {slug}` and `pir plan` (DESIGN §2.5, §2.9, §3.4): run the pre-flight, launch the
 // coordinator detached from the terminal, register the run in the cross-repo index, and hold the Mac
 // awake for the run's lifetime. This is the piece that makes a run outlive WezTerm — the detached
 // spawn was proven on this machine to reparent to launchd and keep running after its parent exited
@@ -13,15 +13,22 @@
 // unreviewed plan for exactly the reason and with exactly the verdict the coordinator would. The `exec`
 // injected here is identity.mjs's `ps` probe, not git, so it is deliberately not passed to the gates.
 
-import { spawn as realSpawn } from 'node:child_process';
+import { spawn as realSpawn, execFileSync } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
+import * as nodeFs from 'node:fs';
 import { mkdirSync, openSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { basename, join } from 'node:path';
 
-import { readReviewGate, readTestBlockGate } from './coordinate.mjs';
+import { canPromoteHere, readReviewGate, readTestBlockGate } from './coordinate.mjs';
 import { startTimeOf, resolveLiveness } from './identity.mjs';
-import { indexDir, listRecords, writeRecord } from './index-store.mjs';
+import { indexDir, listRecords, recordPath, updateRecord, writeRecord } from './index-store.mjs';
+import { planHome } from './plan-home.mjs';
+import { openPlanBranch } from './worktree.mjs';
+import { writeFileAtomic, writeJsonAtomic } from './atomic-write.mjs';
 import { classifyRun } from '../core/runstate.mjs';
+import { initialPlanState, runIdFrom } from '../core/planflow.mjs';
+import { labelFromBrief } from '../core/runrecord.mjs';
 
 // The filesystem calls startRun makes directly — only to prepare the coordinator's run.log. The index
 // writes go through index-store's own fs (a scratch dir via $PIR_HOME in tests); this pair is what a
@@ -57,7 +64,12 @@ export function startRun(
   // plan is refused with the same 'not-reviewed' the coordinator uses.
   const gate = readReviewGate(slug, { root: repoRoot });
   if (gate.missing) return { started: false, reason: 'no-plan' };
-  if (!gate.reviewed) return { started: false, reason: 'not-reviewed' };
+  if (!gate.reviewed) {
+    // A plan that lives only on pir/{slug} is a `pir plan` run not yet reviewed: `pir` names resume
+    // rather than /pir-review-plan (pir-plan-command §2.16). A plan on main keeps today's exact result.
+    if (planHome(slug, { root: repoRoot }).where === 'branch') return { started: false, reason: 'not-reviewed', where: 'branch' };
+    return { started: false, reason: 'not-reviewed' };
+  }
 
   // 2b: a plan without a valid setup/test block in DESIGN.md counts as not reviewed (declared-test-command
   // DESIGN §2.3) — checked after the review gate so an unreviewed plan still reports not-reviewed first.
@@ -131,4 +143,180 @@ export function startRun(
   spawn('caffeinate', ['-i', '-w', String(child.pid)], { detached: true, stdio: 'ignore' }).unref();
 
   return { started: true, pid: child.pid, record };
+}
+
+// ---- Planning runs (pir-plan-command T08, DESIGN §2.2, §2.14, §2.16) ----
+//
+// startPlanRun is the one entry every surface uses to start a planning run (the `pir plan` commands,
+// the brief box), and resumeRun the one entry to resume a stopped or crashed run of either type (the
+// dashboard's Ctrl+R chord). Git runs for real — the pre-flight and openPlanBranch are git questions and
+// the tests drive them against scratch repos — while `spawn`, `exec` (identity.mjs's `ps` probe, as in
+// startRun) and `kill` are injected so no process is ever started by a test.
+
+// The planning program, resolved from this file like the coordinator: the installed engine's own copy,
+// never a path under the target repo.
+const planRunPath = () => fileURLToPath(new URL('./plan-run.mjs', import.meta.url));
+
+// How many run ids are drawn before giving up. 65 536 ids exist; hitting this means the random source
+// is broken (a stuck injected one), not that the repo is full.
+const MAX_ID_TRIES = 64;
+
+function gitOk(cwd, args) {
+  try {
+    const stdout = execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+    return { ok: true, stdout };
+  } catch {
+    return { ok: false, stdout: '' };
+  }
+}
+
+// planPreflight({ cwd, env }) → { ok: true, root, repo } | { ok: false, reason }
+// DESIGN §2.2 steps 1–3, in order, touching nothing. The brief (step 4) is the caller's: the brief box
+// runs this before the person has typed one (§2.13).
+export function planPreflight({ cwd = process.cwd(), env = process.env } = {}) {
+  // 1. Inside a work tree. The root is the MAIN worktree, whichever folder or linked worktree `pir plan`
+  // was typed in: `git worktree list` names the main one first from anywhere in the repo.
+  const inside = gitOk(cwd, ['rev-parse', '--is-inside-work-tree']);
+  if (!inside.ok || inside.stdout.trim() !== 'true') return { ok: false, reason: 'not-a-repo' };
+  const first = gitOk(cwd, ['worktree', 'list', '--porcelain']).stdout.split('\n').find((l) => l.startsWith('worktree '));
+  if (!first) return { ok: false, reason: 'not-a-repo' };
+  const root = first.slice('worktree '.length).trim();
+  const repo = basename(root);
+
+  // 2. A local main. Never created here: ensureMain's `checkout -B main` would move the person's checkout.
+  if (!gitOk(root, ['rev-parse', '--verify', '--quiet', 'refs/heads/main']).ok) return { ok: false, reason: 'no-main' };
+
+  // 3. The canonical-repo guard, the build's rule and variable: a planning run cuts branches too.
+  if (!canPromoteHere(repo, { allowHere: env.PARALLEL_ALLOW_HERE === '1' })) return { ok: false, reason: 'canonical-repo' };
+
+  return { ok: true, root, repo };
+}
+
+function defaultRandom() {
+  return randomBytes(2).toString('hex');
+}
+
+// A run id is taken when anything the run would create under it already exists: its branch, its index
+// entry (the file, parseable or not, since writeRecord would overwrite it) or its plans/ folder.
+function runIdTaken(runId, { root, repo, dir, fs }) {
+  if (gitOk(root, ['rev-parse', '--verify', '--quiet', `refs/heads/pir/${runId}`]).ok) return true;
+  if (fs.existsSync(recordPath(repo, runId, { dir }))) return true;
+  return fs.existsSync(join(root, 'plans', runId));
+}
+
+// Spawn a detached node program with its output appended to <controlDir>/run.log, plus the caffeinate
+// that holds the Mac awake for exactly its lifetime — startRun's launch, for the planning program.
+function spawnDetached(args, { cwd, controlDir, spawn, fs, env }) {
+  fs.mkdirSync(controlDir, { recursive: true });
+  const logFd = fs.openSync(join(controlDir, 'run.log'), 'a');
+  const child = spawn('node', args, {
+    cwd,
+    detached: true,
+    stdio: ['ignore', logFd, logFd],
+    env: { ...env, PIR_RUN: '1' },
+  });
+  child.unref();
+  // The child holds its own copy of the descriptor; pir keeps running its screen, so close ours.
+  if (typeof fs.closeSync === 'function') fs.closeSync(logFd);
+  return child;
+}
+
+function keepAwake(pid, spawn) {
+  spawn('caffeinate', ['-i', '-w', String(pid)], { detached: true, stdio: 'ignore' }).unref();
+}
+
+// startPlanRun(brief, { cwd, spawn, exec, fs, now, env, random }) →
+//   { started: true, runId, pid, record, controlDir }
+//   | { started: false, reason: 'not-a-repo'|'no-main'|'canonical-repo'|'empty-brief' }
+// `random()` returns four lowercase hex characters. `fs` is node:fs-shaped (existsSync, mkdirSync,
+// openSync, closeSync, writeFileSync, renameSync) and defaults to the real one.
+export function startPlanRun(
+  brief,
+  { cwd = process.cwd(), spawn = realSpawn, exec, fs = nodeFs, now = () => new Date(), env = process.env, random = defaultRandom } = {},
+) {
+  const pre = planPreflight({ cwd, env });
+  if (!pre.ok) return { started: false, reason: pre.reason };
+  if (typeof brief !== 'string' || brief.trim() === '') return { started: false, reason: 'empty-brief' };
+  const { root, repo } = pre;
+  const dir = indexDir({ env });
+
+  let runId = null;
+  for (let i = 0; i < MAX_ID_TRIES && runId === null; i += 1) {
+    const candidate = runIdFrom(random());
+    if (!runIdTaken(candidate, { root, repo, dir, fs })) runId = candidate;
+  }
+  if (runId === null) throw new Error(`startPlanRun: no free run id after ${MAX_ID_TRIES} tries`);
+
+  let branch;
+  try {
+    ({ branch } = openPlanBranch(runId, { root }));
+  } catch (err) {
+    // main vanished between the pre-flight and here: the same refusal, still nothing created.
+    if (err && err.code === 'no-main') return { started: false, reason: 'no-main' };
+    throw err;
+  }
+
+  // Under plans/{runId}/, not .git: the planner writes its reports here and Claude Code never
+  // auto-approves a write under .git (§2.2). Ignored by plans/*/.parallel/.
+  const controlDir = join(root, 'plans', runId, '.parallel', 'plan');
+  fs.mkdirSync(controlDir, { recursive: true });
+  writeFileAtomic(join(controlDir, 'brief.md'), brief, { fs });
+  writeJsonAtomic(join(controlDir, 'state.json'), initialPlanState({ id: runId }), { fs });
+
+  const child = spawnDetached([planRunPath(), '--control', controlDir], { cwd: root, controlDir, spawn, fs, env });
+  const record = {
+    version: 1,
+    kind: 'plan',
+    label: labelFromBrief(brief),
+    go: null,
+    slug: runId,
+    repo,
+    repoPath: root,
+    controlDir,
+    pid: child.pid,
+    startTime: startTimeOf(child.pid, { exec }),
+    startedAt: now().toISOString(),
+    branch,
+    finalState: null,
+    updatedAt: null,
+  };
+  writeRecord(record, { dir });
+  keepAwake(child.pid, spawn);
+  return { started: true, runId, pid: child.pid, record, controlDir };
+}
+
+// resumeRun(record, { spawn, exec, kill, fs, now, env }) → { resumed: true, pid } | { resumed: false, reason }
+// A plan record: the planning program again, detached, with --resume on the record's control folder
+// (it reads state.json and resumes the step's last session, §2.14). A work record: startRun, exactly
+// `pir start {slug}`, whose own refusals come back as the reason. A run still running is refused for
+// either kind: two programs on one control folder would fight over it.
+export function resumeRun(
+  record,
+  { spawn = realSpawn, exec, kill, fs = nodeFs, now = () => new Date(), env = process.env } = {},
+) {
+  const { alive, liveStartTime } = resolveLiveness(record.pid, { kill, exec });
+  const state = classifyRun({ recordedStartTime: record.startTime, finalState: record.finalState, alive, liveStartTime });
+  if (state === 'running') return { resumed: false, reason: 'already-running' };
+
+  if (record.kind !== 'plan') {
+    const r = startRun(record.slug, { cwd: record.repoPath, spawn, exec, kill, fs, now, env });
+    return r.started ? { resumed: true, pid: r.pid } : { resumed: false, reason: r.reason };
+  }
+
+  const child = spawnDetached([planRunPath(), '--control', record.controlDir, '--resume'], {
+    cwd: record.repoPath,
+    controlDir: record.controlDir,
+    spawn,
+    fs,
+    env,
+  });
+  // finalState is cleared with the new pid: a resumed `stopped` or finished-not-reviewed run that kept
+  // its old final status would classify as ended while its program runs again.
+  updateRecord(
+    { repo: record.repo, slug: record.slug },
+    { pid: child.pid, startTime: startTimeOf(child.pid, { exec }), finalState: null, updatedAt: null },
+    { dir: indexDir({ env }) },
+  );
+  keepAwake(child.pid, spawn);
+  return { resumed: true, pid: child.pid };
 }

@@ -17,6 +17,8 @@ Legend: 🐞 defect found · ✅ verified by hand with the user · 📌 worth kn
 
 | Date | | Finding |
 |---|---|---|
+| 2026-09-26 | 📌 | T09 review: `pir --help` and `pir -h` fall into the unknown-command row, printing "To build a plan: pir start --help" plus usage, exit 2. Matches DESIGN §2.1 literally; a help flag was never specified. Left alone. |
+| 2026-09-26 | 📌 | T08 review: `plans/*/.parallel/` is ignored only by this repo's `.gitignore`. In another repo `startPlanRun` (and `startRun`) leave `?? plans/` in the main checkout; reproduced on a scratch repo. DESIGN §2.2 "already ignored" assumes otherwise. Left alone. |
 | 2026-09-26 | 📌 | T06: the SDK may send `remote_control` ahead of the opening user message on the wire. The two T01 notes for T06 (persist `rename`, re-check at close) are now in plan-run.mjs. |
 | 2026-09-26 | 📌 | `renameRecord` refuses with EEXIST whenever the target exists, including the half-done state a crash leaves with both entries written. T07's resume must spot that case and remove the source rather than re-call `renameRecord`. Reproduced in T02 review. |
 | 2026-09-26 | 📌 | A repo without `.claude/worktrees/` ignored shows `?? .claude/` in the person's main checkout once `openFeature` or `openPlanBranch` adds a worktree; this repo hides it only via `.git/info/exclude`. worktree.mjs comment claims git excludes it (T04). |
