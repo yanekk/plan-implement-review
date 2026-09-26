@@ -53,6 +53,13 @@ test('buildDisplay maps a task in every kind to the right row (id + slug), label
   assert.deepEqual(by.T07, { id: 'T07', slug: 'ready-one', kind: 'queued', label: 'queued', elapsedMs: null });
 });
 
+test('an asking task with a stoppedAt shows a stopped clock that does not move with now (user 2026-09-26)', () => {
+  const tasks = [task({ id: 'T01', phase: 'asking', since: NOW - 9000, stoppedAt: NOW - 5000 })];
+  const at = (now) => buildDisplay({ branch: 'b', ceiling: 2, tasks }, { now }).rows[0].elapsedMs;
+  assert.equal(at(NOW), 4000);
+  assert.equal(at(NOW + 60_000), 4000);
+});
+
 test('a waiting task names every unmet dependency, and a satisfied dependency drops out of the label', () => {
   const tasks = [
     task({ id: 'T01', slug: 'done-dep', done: true }),

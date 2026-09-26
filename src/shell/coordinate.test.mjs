@@ -25,6 +25,8 @@ import {
   buildRunState,
   testingRunState,
   displayPhaseFor,
+  newTiming,
+  advanceTiming,
   waitForReport,
   shouldSelfReport,
   finalStateForExit,
@@ -775,6 +777,7 @@ test('buildRunState assembles the display model input from a pass result and the
     branch: 'pir/demo',
     ceiling: 4,
     sinceByTask: { T02: 100, T03: 50 },
+    stoppedAtByTask: { T03: 80 },
     doneMsByTask: { T01: 6400 },
     complete: false,
     readyToMerge: false,
@@ -782,16 +785,45 @@ test('buildRunState assembles the display model input from a pass result and the
   assert.equal(rs.branch, 'pir/demo');
   assert.equal(rs.ceiling, 4);
   const by = Object.fromEntries(rs.tasks.map((t) => [t.id, t]));
-  assert.deepEqual(by.T01, { id: 'T01', slug: 'done-one', deps: [], done: true, phase: null, since: null, doneMs: 6400, question: null, prompt: null });
+  assert.deepEqual(by.T01, { id: 'T01', slug: 'done-one', deps: [], done: true, phase: null, since: null, stoppedAt: null, doneMs: 6400, question: null, prompt: null });
   assert.equal(by.T02.phase, 'building');
   assert.equal(by.T02.since, 100);
   assert.equal(by.T03.phase, 'asking');
   assert.equal(by.T03.question, 'which layout?');
+  assert.equal(by.T03.stoppedAt, 80, 'an asking task carries where its clock stopped');
+  assert.equal(by.T02.stoppedAt, null);
   assert.equal(by.T03.prompt, null, 'a plain question carries no copy-paste prompt (only a conflict does — T14)');
   // T04 has no worker and its dep is not ✅: the pure model will read it as waiting; buildRunState just
   // reports no phase and passes the deps through.
   assert.equal(by.T04.phase, null);
   assert.deepEqual(by.T04.deps, ['T03']);
+});
+
+test('advanceTiming stops a task clock while it asks the person and resumes it after (user 2026-09-26)', () => {
+  const timing = newTiming();
+  const building = { T01: { role: 'implement', phase: 'implementing' } };
+  const asking = { T01: { role: 'implement', phase: 'awaiting-answer' } };
+  advanceTiming(timing, building, [], 1000);
+  advanceTiming(timing, asking, [], 5000); // worked 4s, then asks
+  assert.equal(timing.sinceByTask.T01, 1000, 'asking keeps the phase start, so the clock reads 4s');
+  assert.equal(timing.stoppedAtByTask.T01, 5000);
+  advanceTiming(timing, asking, [], 60000); // still waiting: nothing moves
+  assert.equal(timing.stoppedAtByTask.T01, 5000);
+  advanceTiming(timing, building, [], 65000); // answered after 60s, back to building
+  assert.equal(timing.sinceByTask.T01, 61000, 'the clock resumes at 4s, not 0 and not 64s');
+  assert.equal(timing.stoppedAtByTask.T01, undefined);
+  advanceTiming(timing, { T01: { role: 'review', phase: 'reviewing' } }, [], 70000);
+  assert.equal(timing.sinceByTask.T01, 70000, 'a new phase starts its own clock');
+  advanceTiming(timing, {}, ['T01'], 72000);
+  assert.equal(timing.doneMsByTask.T01, 11000, 'the merged duration leaves the 60s wait out');
+});
+
+test('advanceTiming: an ask answered into a different phase starts that phase at zero', () => {
+  const timing = newTiming();
+  advanceTiming(timing, { T01: { role: 'implement', phase: 'implementing' } }, [], 0);
+  advanceTiming(timing, { T01: { role: 'implement', phase: 'awaiting-answer' } }, [], 3000);
+  advanceTiming(timing, { T01: { role: 'implement', phase: 'done' } }, [], 9000);
+  assert.equal(timing.sinceByTask.T01, 9000);
 });
 
 // --- 19. Control-folder cleanup on restart (DESIGN §2.7, §3.5) -------------------------------------
