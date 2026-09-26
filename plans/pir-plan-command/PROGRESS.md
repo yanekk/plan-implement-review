@@ -30,14 +30,14 @@ done · ⛔ blocked, needs a human.
 | T05 | fake-claude-sessions | — | ✅ | |
 | T06 | plan-run-planner | T01, T02, T04, T05 | ⬜ | |
 | T07 | plan-run-review | T06 | ⬜ | |
-| T08 | plan-launch | T01, T02, T03, T04 | ⬜ | |
+| T08 | plan-launch | T01, T02, T03, T04 | ✅ | |
 | T09 | pir-commands | T08 | ⬜ | |
 | T10 | plan-rig | T05 | ✅ | Review: one fix. Empty-runs e2e passed with env dropped on a clean machine (reproduced by mutation); added 80×24 test that a run seeded in the rig's index is listed. Probed the shim under rig env (no-plan report drops). Deviations accepted: scratch HOME, root/{repo,home,bin}, extra returns. Script sets unrun end to end until T06/T12. |
 | T11 | dashboard-type | T02, T07, T08, T10 | ⬜ | |
 | T12 | plan-watch-view | T07, T08, T10, T11 | ⬜ | |
 | T13 | brief-box | T09, T12 | ⬜ | |
 | T14 | plan-screen-drill | T11, T12, T13 | ⬜ | |
-| T15 | planning-skills | T01 | ⬜ | |
+| T15 | planning-skills | T01 | ✅ | |
 | T16 | docs-readme | T14, T15 | ⬜ | |
 | T17 | harness-plan-fixture | T07, T08, T15 | ⬜ | |
 | T18 | live-plan-run | T14, T16, T17 | ⬜ | |
