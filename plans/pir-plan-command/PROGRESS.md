@@ -27,7 +27,7 @@ done · ⛔ blocked, needs a human.
 | T02 | run-record-type | — | ⬜ | |
 | T03 | plan-home | — | ⬜ | |
 | T04 | plan-branch | — | ✅ | |
-| T05 | fake-claude-sessions | — | ⬜ | |
+| T05 | fake-claude-sessions | — | 🔍 | Scripts file, `sh`, `{{reportsDir}}`, resume, shim, canned sessions; 10 tests in new claude-stream.test.mjs. Deviations: progress persisted only with a scripts file; failing `sh` ends the script; `exit` counts as completed; resume prompt consumed; extra exports (`*_MATCH`, `FAKE_TASK`, `fakePlanFiles`); resume new here, resume-dead-worker T02 not landed. |
 | T06 | plan-run-planner | T01, T02, T04, T05 | ⬜ | |
 | T07 | plan-run-review | T06 | ⬜ | |
 | T08 | plan-launch | T01, T02, T03, T04 | ⬜ | |
