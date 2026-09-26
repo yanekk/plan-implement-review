@@ -28,7 +28,8 @@ const CHORD = {
 
 // isPlan(view) → whether a view is a planning run. The index record's `kind` decides (absent reads `work`,
 // T02); a view with no record but a plan snapshot counts too, so a caller holding only the snapshot agrees.
-function isPlan(view) {
+// Exported so the list frame paints TYPE and PROGRESS by the same rule STATE uses.
+export function isPlan(view) {
   const kind = view?.record?.kind;
   if (kind) return kind === 'plan';
   return view?.snap?.runState?.kind === 'plan';

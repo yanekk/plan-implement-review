@@ -990,6 +990,15 @@ test('the list frame: TYPE column, the label in quotes, plan states and steps, a
   assert.equal(SGR['your-go'], '\x1b[1;33m');
 });
 
+test('the list frame: TYPE, STATE and PROGRESS follow one rule, so a record saying work beside a plan snapshot is all work (T11 review)', () => {
+  // Reproduced by rendering this row: before the fix TYPE and PROGRESS read the snapshot (plan, `plan …`)
+  // while STATE read the record (● running), three cells telling two stories.
+  const view = { key: 'shop__odd', slug: 'odd', state: 'running', repo: 'shop', progress: { done: 0, total: 0 }, workers: 0, record: { kind: 'work' }, snap: { runState: { kind: 'plan', step: 'plan', outcome: null, steps: [] } } };
+  const text = frameText(buildListFrame(buildDashboard([view]), initialUi()));
+  assert.match(text, /odd +work +● running +shop +/);
+  assert.doesNotMatch(text, /plan …/);
+});
+
 test('the list frame at 80 columns: every row aligned under the header and none wider than 80, a long label included', () => {
   const frame = buildListFrame(buildDashboard(PLAN_VIEWS), initialUi(), { columns: 80 });
   const header = frame.find((l) => l.length === 1 && l[0].text.startsWith('  SLUG'))[0].text;

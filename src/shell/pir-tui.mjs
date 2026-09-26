@@ -22,7 +22,7 @@ import { readLogTail } from './commands.mjs';
 
 import { buildDisplay } from '../core/display.mjs';
 import { wrapLine } from '../core/text.mjs';
-import { buildDashboard, dashboardReducer, displayName, findOpen, initialUi, openTasks, planProgress, runKey } from '../core/dashboard.mjs';
+import { buildDashboard, dashboardReducer, displayName, findOpen, initialUi, isPlan, openTasks, planProgress, runKey } from '../core/dashboard.mjs';
 import { styledLines } from './render.mjs';
 import { classifyRun } from '../core/runstate.mjs';
 import { resolveLiveness } from './identity.mjs';
@@ -174,7 +174,8 @@ export function buildListFrame(dashboard, ui = initialUi(), { columns = DEFAULT_
       const live = v.state === 'running';
       // A planning run (pir-plan-command §2.10): TYPE `plan` magenta, its label dimmed in quotes until it has
       // a slug, its display state, and its steps in PROGRESS. A record without `kind` is a build, `work`.
-      const plan = v.record?.kind === 'plan' || v.snap?.runState?.kind === 'plan';
+      // isPlan is the rule runDisplayState uses, so TYPE, STATE and PROGRESS never disagree on a row.
+      const plan = isPlan(v);
       const labelled = plan && !!v.record?.label;
       const st = stateCell(v.display ?? v.state);
       const prog = plan ? { text: planProgress(v.snap?.runState), style: v.state === 'crashed' ? 'bar-crash' : null } : progressCell(v.state, v.progress);
