@@ -14,7 +14,7 @@ past.
 
 **Status:** Planned 2026-09-26. Nothing built.
 **Last updated:** 2026-09-26
-**Next `pir-work` will:** T01 plan-flow-core: it heads the critical path.
+**Next `pir-work` will:** review T18.
 
 ## Tasks
 
@@ -40,9 +40,9 @@ done · ⛔ blocked, needs a human.
 | T15 | planning-skills | T01 | ✅ | |
 | T16 | docs-readme | T14, T15 | ✅ | |
 | T17 | harness-plan-fixture | T07, T08, T15 | ✅ | |
-| T18 | live-plan-run | T14, T16, T17 | ⬜ | |
+| T18 | live-plan-run | T14, T16, T17 | 🔍 | Live run 2026-09-26 PASS, all five facts green first time; no defect, no code change. Numbers in FINDINGS. Planning skills copied to `~/.claude/skills` (user yes); scratch removed, no process left. |
 
-**Review queue:** *(empty)*
+**Review queue:** T18
 
 ## Blocked on the user
 
