@@ -80,7 +80,7 @@ project permission rules in `.claude/settings.json`, which every worktree inheri
 committed. A `worker` action is `allow`ed and runs without stopping. An `ask` action is under an `ask`
 rule: the worker drops a `question` report, explains the action in its conversation and runs the
 command, and Claude stops on the permission request, which reaches pir as above. The person opens the
-worker in `pir` and presses `y` or `n` there, so one approval is the whole exchange. A `person` action
+worker in `pir` and presses Enter (allow) or `n` there, so one approval is the whole exchange. A `person` action
 is only a login, a device or a judgement, raised like any other question. An action with no row is
 treated as `ask`.
 
