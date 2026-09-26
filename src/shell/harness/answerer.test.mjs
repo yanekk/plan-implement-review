@@ -140,3 +140,84 @@ test('pendingDrops says a task\'s message once, to its idle implementer only', (
   const busy = [{ file: 'T04-implement-1.ndjson', entries: [sent, init('w4')] }];
   assert.deepEqual(pendingDrops(busy, new Set(), {}, { T04: 'go' }), [], 'not while its turn is open');
 });
+
+// --- The canned reply to a planning session (pir-plan-command T17) -------------------------------
+
+const opening = { t: 1, dir: 'out', from: 'pir', kind: 'message', text: 'Load the pir-plan skill and run it.' };
+const says = (text, t = 6) => ({ t, dir: 'in', event: { type: 'assistant', session_id: 'p1', message: { content: [{ type: 'text', text }] } } });
+const ended = (t = 7) => ({ t, dir: 'in', event: { type: 'result', subtype: 'success', session_id: 'p1' } });
+const person = (text, t = 8) => ({ t, dir: 'out', from: 'person', kind: 'message', text });
+const toolUse = (t = 6) => ({ t, dir: 'in', event: { type: 'assistant', session_id: 'p1', message: { content: [{ type: 'tool_use', id: 'u1', name: 'Bash', input: {} }] } } });
+const REPLIES = { text: 'Yes. Go with your recommendation.', cap: 2 };
+
+test('a planning session that ended its turn on its own words gets the reply once for that turn', () => {
+  const logs = [{ file: 'plan-1.ndjson', entries: [opening, init('p1'), says('Shall I keep it to one task?'), ended()] }];
+  const drops = pendingDrops(logs, new Set(), {}, {}, REPLIES);
+  assert.deepEqual(drops, [{ to: 'p1', kind: 'message', text: REPLIES.text, key: 'reply:plan-1.ndjson:1' }]);
+  assert.equal(validateDrop(drops[0]).ok, true);
+  assert.deepEqual(pendingDrops(logs, new Set(['reply:plan-1.ndjson:1']), {}, {}, REPLIES), [], 'once per turn, however many ticks it stays idle');
+  // The next turn, after the reply went and the session spoke again, is due again.
+  const next = [{ file: 'plan-1.ndjson', entries: [...logs[0].entries, person(REPLIES.text), says('And the name?', 9), ended(10)] }];
+  assert.deepEqual(pendingDrops(next, new Set(['reply:plan-1.ndjson:1']), {}, {}, REPLIES).map((d) => d.key), ['reply:plan-1.ndjson:2']);
+  // The reviewer's log is a planning session too.
+  const review = [{ file: 'review-1.ndjson', entries: [opening, init('p1'), says('Two decisions for you.'), ended()] }];
+  assert.deepEqual(pendingDrops(review, new Set(), {}, {}, REPLIES).map((d) => d.key), ['reply:review-1.ndjson:1']);
+});
+
+test('no reply while the session is busy, asking, has exited, or did not speak last — nor to a build worker', () => {
+  const none = (entries, file = 'plan-1.ndjson') => assert.deepEqual(pendingDrops([{ file, entries }], new Set(), {}, {}, REPLIES).filter((d) => d.kind === 'message'), []);
+  none([opening, init('p1'), says('Working on it.')]); // busy: the turn is still open
+  none([opening, init('p1'), says('Which way?'), questions('q1')]); // pending: the question form answers it, not a reply
+  none([opening, init('p1'), says('Which way?'), ended(), { t: 9, dir: 'note', kind: 'exited' }]);
+  none([opening, init('p1'), says('Which way?'), ended(), person('Small.')]); // the person spoke last
+  none([opening, init('p1'), says('Running the tests.'), toolUse(7), ended(8)]); // a tool call after its words
+  none([opening, init('p1'), says('Which way?'), ended()], 'T01-implement-1.ndjson');
+  assert.deepEqual(pendingDrops([{ file: 'plan-1.ndjson', entries: [opening, init('p1'), says('?'), ended()] }], new Set(), {}, {}, null), [], 'no replies declared');
+});
+
+test('replies stop at the cap, counted over the whole run, and the answerer says the cap is spent', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'pir-answerer-'));
+  try {
+    const conv = join(dir, 'control', 'conversations');
+    mkdirSync(conv, { recursive: true });
+    const write = (file, entries) => writeFileSync(join(conv, file), entries.map((e) => JSON.stringify(e)).join('\n'));
+    const dropped = [];
+    const a = createAnswerer({ controlDir: join(dir, 'control'), replies: REPLIES, drop: (d) => (dropped.push(d), { ok: true }) });
+    let entries = [opening, init('p1'), says('One?'), ended()];
+    write('plan-1.ndjson', entries);
+    assert.equal(a.tick().length, 1);
+    entries = [...entries, person(REPLIES.text), says('Two?', 9), ended(10)];
+    write('plan-1.ndjson', entries);
+    assert.equal(a.tick().length, 1);
+    assert.equal(a.capReached(), false, 'nothing is waiting beyond the cap yet');
+    entries = [...entries, person(REPLIES.text, 11), says('Three?', 12), ended(13)];
+    write('plan-1.ndjson', entries);
+    assert.deepEqual(a.tick(), [], 'the third reply is over the cap of two');
+    assert.equal(a.capReached(), true);
+    assert.equal(dropped.length, 2);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('createAnswerer reads the control folder each tick, and holds replies while told to', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'pir-answerer-'));
+  try {
+    const before = join(dir, 'plans', 'plan-ab12', '.parallel', 'plan');
+    const after = join(dir, 'plans', 'slugify', '.parallel', 'plan');
+    for (const c of [before, after]) mkdirSync(join(c, 'conversations'), { recursive: true });
+    writeFileSync(join(after, 'conversations', 'review-1.ndjson'), [opening, init('r1'), says('Reviewed?'), ended()].map((e) => JSON.stringify(e)).join('\n'));
+    let current = before;
+    let hold = true;
+    const seen = [];
+    const a = createAnswerer({ controlDir: () => current, replies: REPLIES, holdReplies: () => hold, drop: (d, root) => (seen.push(root), { ok: true }) });
+    assert.deepEqual(a.tick(), [], 'nothing under the old folder');
+    current = after;
+    assert.deepEqual(a.tick(), [], 'held');
+    hold = false;
+    assert.equal(a.tick().length, 1);
+    assert.deepEqual(seen, [after], 'dropped under the folder the run has now');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

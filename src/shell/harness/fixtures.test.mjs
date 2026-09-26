@@ -96,16 +96,19 @@ const EXPECT = {
 
 // --- The registry ---------------------------------------------------------------------------------
 
-test('listFixtures returns exactly the DESIGN §4.1 fixtures', () => {
-  assert.deepEqual(new Set(listFixtures()), new Set(Object.keys(EXPECT)));
-  assert.equal(listFixtures().length, Object.keys(EXPECT).length);
+// The fixtures that seed no plan (pir-plan-command T17): checked on their own below, not by the loops.
+const PLANLESS = ['plan-command'];
+
+test('listFixtures returns exactly the DESIGN §4.1 fixtures, and the plan-command one', () => {
+  assert.deepEqual(new Set(listFixtures()), new Set([...Object.keys(EXPECT), ...PLANLESS]));
+  assert.equal(listFixtures().length, Object.keys(EXPECT).length + PLANLESS.length);
 });
 
 // declared-test-command T10: the coordinator refuses to start a plan without a valid setup/test block
 // and runs its `test` lines as the end-of-run gate, so every fixture must carry one or no live run
 // can start, let alone end green.
 test('every fixture installs a DESIGN.md whose setup/test block parses: setup none, test npm test', () => {
-  for (const id of listFixtures()) {
+  for (const id of listFixtures().filter((f) => !PLANLESS.includes(f))) {
     const fx = getFixture(id);
     const design = fixtureFiles(fx)[`plans/${fx.slug}/DESIGN.md`];
     assert.ok(design, `${id}: no DESIGN.md`);
@@ -461,6 +464,46 @@ test('clean-merge probe: the two different-file edits merge cleanly', () => {
     const fx = getFixture('clean-merge');
     installFixture('clean-merge', { into: dir });
     assert.equal(replayProbe(dir, fx.probe), false, 'the second merge must be clean');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// --- plan-command: a repo with no plan (pir-plan-command T17) -------------------------------------
+
+test('plan-command: a plan scenario with the §5.2 seatbelts and the plan-command facts', () => {
+  const fx = getFixture('plan-command');
+  const s = fx.scenario;
+  assert.equal(s.kind, 'plan');
+  assert.equal(s.fixture, 'plan-command');
+  assert.equal(s.seatbelts.ceiling, 2);
+  assert.equal(s.seatbelts.timeoutMs, 90 * 60_000);
+  assert.equal(s.replyCap, 40);
+  assert.equal(s.reply, 'Yes. Go with your recommendation, and keep it as small as possible.');
+  assert.match(fx.brief, /^Add a slugify\(text\) function to src\/slug\.mjs: .*at most three tasks\.$/);
+  assert.deepEqual(
+    s.facts.map((f) => f.id),
+    ['plan-reviewed-on-branch', 'every-task-done', 'handed-off-green-branch', 'main-untouched', 'index-row-is-work'],
+  );
+  assert.ok(!Object.keys(fixtureFiles(fx)).some((p) => p.startsWith('plans/')), 'no plan is laid down');
+});
+
+test('plan-command installs a scratch repo with no plans/, the skills but not src/ carried, and a green npm test', () => {
+  const dir = tmp('pir-fix-plan-command-');
+  try {
+    const res = installFixture('plan-command', { into: dir });
+    assert.equal(res.source, false, 'the engine runs from the harness checkout, not a copy');
+    assert.equal(existsSync(join(dir, 'plans')), false, 'no plans/');
+    assert.ok(existsSync(join(dir, 'src/slug.mjs')));
+    assert.equal(existsSync(join(dir, 'src/shell')), false, 'the framework is not carried into src/');
+    assert.ok(existsSync(join(dir, '.claude/skills/pir-plan/SKILL.md')), 'the planning skills are carried');
+    assert.equal(git(dir, ['status', '--porcelain']).trim(), '', 'the seeded tree is clean');
+    assert.equal(git(dir, ['rev-parse', '--abbrev-ref', 'HEAD']).trim(), 'main');
+    // NODE_TEST_CONTEXT is this runner's: a child `node --test` that inherits it reports to us, not to stdout.
+    const { NODE_TEST_CONTEXT, ...env } = process.env;
+    const out = execFileSync('npm', ['test'], { cwd: dir, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+    assert.match(out, /pass 1/);
+    assert.match(out, /fail 0/);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

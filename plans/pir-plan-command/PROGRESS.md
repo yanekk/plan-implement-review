@@ -39,7 +39,7 @@ done · ⛔ blocked, needs a human.
 | T14 | plan-screen-drill | T11, T12, T13 | ⬜ | |
 | T15 | planning-skills | T01 | ✅ | |
 | T16 | docs-readme | T14, T15 | ⬜ | |
-| T17 | harness-plan-fixture | T07, T08, T15 | ⬜ | |
+| T17 | harness-plan-fixture | T07, T08, T15 | ✅ | |
 | T18 | live-plan-run | T14, T16, T17 | ⬜ | |
 
 **Review queue:** —

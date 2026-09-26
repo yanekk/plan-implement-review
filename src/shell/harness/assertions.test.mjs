@@ -38,6 +38,11 @@ import {
   checkScenario,
   formatReport,
   requestAnswered,
+  loadPlanRun,
+  planReviewedOnBranch,
+  everyTaskDone,
+  mainUntouched,
+  indexRowIsWork,
 } from './assertions.mjs';
 
 const REPO = 'pir-h';
@@ -1019,5 +1024,80 @@ test('requestAnswered fails on no log, no reply, a refusal, or a grant answered 
     const r = requestAnswered('T01', 'permission').check({ transcripts: [tx('T01', events)] });
     assert.equal(r.pass, false);
     assert.match(r.detail, /no person's allowing answer/);
+  }
+});
+
+// --- The plan-command facts (pir-plan-command T17) ------------------------------------------------
+
+// The PROGRESS.md a finished plan-command run leaves on pir/slugify: reviewed, every task ✅.
+const planProgress = (states = ['✅', '✅'], reviewed = '2026-09-26 — 2 fixes, 1 decision') =>
+  `# Progress\n\n**Plan reviewed:** ${reviewed}\n\n## Tasks\n\n| # | Task | Depends on | State | Notes |\n|---|---|---|---|---|\n` +
+  states.map((st, i) => `| T0${i + 1} | task-${i + 1} | — | ${st} | |`).join('\n') +
+  '\n';
+const workRecord = { slug: 'slugify', kind: 'work', finalState: 'finished' };
+// A whole plan-command bundle, hand-built: the planning run reviewed `slugify`, the build merged both tasks
+// and printed the green hand-off, main never moved, and the one index row is the build's.
+function planBundle(planRun = {}, over = {}) {
+  return bundle({
+    run: { repo: REPO, plan: 'slugify' },
+    flow: [fl('t5', 'merge', 'T01'), fl('t6', 'merge', 'T02')],
+    gitLog: '* T02 (pir/slugify)\n* T01\n* plan-review(slugify)\n* plan(slugify)\n* seed (main)\n',
+    coordinatorOut: `pass 9\n${renderHandoff({ readyToMerge: true, taskCount: 2, slug: 'slugify' })}\n`,
+    planRun: {
+      runId: 'plan-ab12',
+      slug: 'slugify',
+      outcome: 'reviewed',
+      planFinalState: 'finished',
+      mainBefore: 'abc123',
+      mainAfter: 'abc123',
+      progress: planProgress(),
+      records: [workRecord],
+      ...planRun,
+    },
+    ...over,
+  });
+}
+const PLAN_FACTS = () => [planReviewedOnBranch(), everyTaskDone(), handedOffGreenBranch(), mainUntouched(), indexRowIsWork()];
+
+test('the plan-command facts all pass over a finished run: reviewed on the branch, all ✅, green, main still, one work row', () => {
+  const report = checkScenario({ id: 'plan-command', facts: PLAN_FACTS() }, planBundle());
+  assert.equal(report.pass, true, formatReport(report));
+});
+
+test('planReviewedOnBranch fails on a run that did not end reviewed, or whose branch PROGRESS.md is not reviewed', () => {
+  assert.equal(planReviewedOnBranch().check(planBundle({ outcome: 'not-reviewed' })).pass, false);
+  assert.equal(planReviewedOnBranch().check(planBundle({ progress: null })).pass, false);
+  const r = planReviewedOnBranch().check(planBundle({ progress: planProgress(['✅'], 'not yet') }));
+  assert.equal(r.pass, false);
+  assert.match(r.detail, /does not read reviewed/);
+  assert.equal(planReviewedOnBranch().check(bundle()).pass, false, 'no plan-run capture');
+});
+
+test('everyTaskDone fails while any task is short of ✅, and on a plan with no tasks', () => {
+  const r = everyTaskDone().check(planBundle({ progress: planProgress(['✅', '🔍']) }));
+  assert.equal(r.pass, false);
+  assert.match(r.detail, /1 of 2 task\(s\) not ✅: T02/);
+  assert.equal(everyTaskDone().check(planBundle({ progress: planProgress([]) })).pass, false);
+});
+
+test('mainUntouched fails when main moved or was not read', () => {
+  assert.equal(mainUntouched().check(planBundle({ mainAfter: 'def456' })).pass, false);
+  assert.equal(mainUntouched().check(planBundle({ mainBefore: null })).pass, false);
+});
+
+test('indexRowIsWork fails on a plan row, a leftover run-id row, or no row', () => {
+  assert.equal(indexRowIsWork().check(planBundle({ records: [{ ...workRecord, kind: 'plan' }] })).pass, false);
+  assert.equal(indexRowIsWork().check(planBundle({ records: [workRecord, { slug: 'plan-ab12', kind: 'plan' }] })).pass, false);
+  assert.equal(indexRowIsWork().check(planBundle({ records: [] })).pass, false);
+});
+
+test('loadPlanRun reads plan-run.json into the bundle, and a missing one reads null', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'pir-planrun-'));
+  try {
+    assert.equal(loadPlanRun({ dir }).planRun, null);
+    writeFileSync(join(dir, 'plan-run.json'), JSON.stringify({ slug: 'slugify', outcome: 'reviewed' }));
+    assert.deepEqual(loadPlanRun({ dir }).planRun, { slug: 'slugify', outcome: 'reviewed' });
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
   }
 });

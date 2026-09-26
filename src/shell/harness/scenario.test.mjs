@@ -45,3 +45,15 @@ test('defineScenario: answerPending defaults off and normalises to { typed } (T1
   assert.deepEqual(spec(true), { typed: {}, say: {} });
   assert.deepEqual(spec({ typed: { 'Q?': 'mine' }, say: { T04: 'go' } }), { typed: { 'Q?': 'mine' }, say: { T04: 'go' } });
 });
+
+test('defineScenario: kind defaults to build; a plan scenario carries its reply and cap (pir-plan-command T17)', () => {
+  const base = { id: 'a', fixture: 'f', facts: [noHelloEver()] };
+  const b = defineScenario(base);
+  assert.equal(b.kind, 'build');
+  assert.equal(b.reply, null);
+  const p = defineScenario({ ...base, kind: 'plan', reply: 'Yes.', replyCap: 40 });
+  assert.deepEqual([p.kind, p.reply, p.replyCap], ['plan', 'Yes.', 40]);
+  assert.throws(() => defineScenario({ ...base, kind: 'nope' }), /kind must be one of/);
+  assert.throws(() => defineScenario({ ...base, kind: 'plan', replyCap: 40 }), /needs a reply text/);
+  assert.throws(() => defineScenario({ ...base, kind: 'plan', reply: 'Yes.', replyCap: 0 }), /positive whole replyCap/);
+});
