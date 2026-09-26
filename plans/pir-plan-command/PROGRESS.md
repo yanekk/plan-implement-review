@@ -12,9 +12,9 @@ past.
 
 **Plan reviewed:** 2026-09-26 — 8 fixed, 7 decided with the user
 
-**Status:** Planned 2026-09-26. Nothing built.
+**Status:** T01 done.
 **Last updated:** 2026-09-26
-**Next `pir-work` will:** review T01 plan-flow-core.
+**Next `pir-work` will:** implement T02 run-record-type.
 
 ## Tasks
 
@@ -23,7 +23,7 @@ done · ⛔ blocked, needs a human.
 
 | # | Task | Depends on | State | Notes |
 |---|---|---|---|---|
-| T01 | plan-flow-core | — | 🔍 | `core/planflow.mjs`, 41 tests. State adds `live`, `accepted`, `rejected` beyond §3.5. `facts.sessionId` records ids. Fresh `spawn` means the shell sends the opening instruction. Rejection dedupe keyed on kind, plan, reason. Resume in rename spawns the reviewer fresh. Planner instruction unwrapped; resume text kept line for line. |
+| T01 | plan-flow-core | — | ✅ | Reviewed: one fix. A failed re-report after an accepted `planned` left it accepted, so idle renamed to the withdrawn slug; reproduced by script, fixed, test locks it. Probed resume crash points, session-id recording, stale reports. Recorded deviations accepted. Two T06 notes in FINDINGS. |
 | T02 | run-record-type | — | ⬜ | |
 | T03 | plan-home | — | ⬜ | |
 | T04 | plan-branch | — | ⬜ | |
@@ -42,7 +42,7 @@ done · ⛔ blocked, needs a human.
 | T17 | harness-plan-fixture | T07, T08, T15 | ⬜ | |
 | T18 | live-plan-run | T14, T16, T17 | ⬜ | |
 
-**Review queue:** T01
+**Review queue:** empty
 
 ## Blocked on the user
 
