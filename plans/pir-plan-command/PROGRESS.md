@@ -30,7 +30,7 @@ done · ⛔ blocked, needs a human.
 | T05 | fake-claude-sessions | — | ⬜ | |
 | T06 | plan-run-planner | T01, T02, T04, T05 | ⬜ | |
 | T07 | plan-run-review | T06 | ⬜ | |
-| T08 | plan-launch | T01, T02, T03, T04 | ⬜ | |
+| T08 | plan-launch | T01, T02, T03, T04 | 🔍 | startPlanRun, planPreflight, resumeRun; 12 tests. Deviations: `exec` is the `ps` probe as in startRun, git runs real, planPreflight takes no exec; resumeRun also takes `kill`, `now`; resume clears `finalState`, else a stopped run reads stopped; `where: 'branch'` only on branch home; brief.md verbatim. |
 | T09 | pir-commands | T08 | ⬜ | |
 | T10 | plan-rig | T05 | ⬜ | |
 | T11 | dashboard-type | T02, T07, T08, T10 | ⬜ | |
@@ -42,7 +42,7 @@ done · ⛔ blocked, needs a human.
 | T17 | harness-plan-fixture | T07, T08, T15 | ⬜ | |
 | T18 | live-plan-run | T14, T16, T17 | ⬜ | |
 
-**Review queue:** *(empty)*
+**Review queue:** T08
 
 ## Blocked on the user
 
