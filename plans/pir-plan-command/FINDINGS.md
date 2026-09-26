@@ -17,6 +17,8 @@ Legend: 🐞 defect found · ✅ verified by hand with the user · 📌 worth kn
 
 | Date | | Finding |
 |---|---|---|
+| 2026-09-26 | 📌 | T18: `~/.claude/skills/pir-plan` and `pir-review-plan` now hold this branch's copies. Way back before merge: `cp -R skills/pir-plan skills/pir-review-plan ~/.claude/skills/` from the main checkout; after merge `./install.sh` supersedes it. |
+| 2026-09-26 | 📌 | T18 live run, Claude 2.1.283: plan-command PASS, all five facts. Plan `slugify`, one task T00. Planner 105 s $0.66, reviewer 72 s $0.50, build 2 min. Five questions answered; two canned replies undelivered, step already ended. |
 | 2026-09-26 | 🔄 | T14 drill, user: `pir start {slug}` on a live planning run opens its steps view; the resume message is one paragraph; a finished step shows its time (`tookMs`, from its logs). |
 | 2026-09-26 | 🐞 | T14 drill, fixed: resumed conversation opened read only; stop mid-question logged `answered-remotely`; rejection message said "report again" twice; no-plan review read "starts when…"; ended steps view offered Ctrl+S. |
 | 2026-09-26 | 📌 | T14: the build's watch view also offers `Ctrl+S Ctrl+S stop this run` on a finished or stopped run, where the chord is inert. Build view, not this plan; left alone. |
