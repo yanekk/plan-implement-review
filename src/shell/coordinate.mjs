@@ -39,6 +39,7 @@ import { createGrants, startPersonInbox } from './person-inbox.mjs';
 import { writeSnapshot } from './snapshot-store.mjs';
 import { createWorktree } from './worktree.mjs';
 import { reapRecorded } from './reap.mjs';
+import { planHome } from './plan-home.mjs';
 
 const DONE_GLYPH = '✅';
 const READY_GLYPH = '⬜';
@@ -51,24 +52,25 @@ const BLOCKED_GLYPH = '⛔';
 // multiplies that. This reads the file (so it is shell, not core) and delegates the actual verdict to
 // the pure parseProgress gate, which is conservative — anything short of a positive "reviewed" note
 // (missing line, empty note, "not yet …") reads as not reviewed.
-export function readReviewGate(slug, { root = process.cwd() } = {}) {
-  const path = join(root, progressPathFor(slug));
-  if (!existsSync(path)) {
+export function readReviewGate(slug, { root = process.cwd(), exec, fs } = {}) {
+  const text = planHome(slug, { root, exec, fs }).read('PROGRESS.md');
+  if (text == null) {
     return { reviewed: false, note: '', missing: true };
   }
-  const { planReviewed } = parseProgress(readFileSync(path, 'utf8'));
+  const { planReviewed } = parseProgress(text);
   return { reviewed: planReviewed.reviewed, note: planReviewed.note, missing: false };
 }
 
 // --- The setup/test block gate (declared-test-command DESIGN §2.2, §2.3) -----------------------
 //
 // A plan whose DESIGN.md has no valid setup/test block counts as not reviewed: the engine could not run
-// its tests at the end, so it is not ready to be built by it. Read from the main checkout's copy, the
-// same one readReviewGate reads, because that is the copy a narrow review pass fixes.
-export function readTestBlockGate(slug, { root = process.cwd() } = {}) {
-  const path = join(root, 'plans', slug, 'DESIGN.md');
-  if (!existsSync(path)) return { ok: false, reason: 'no DESIGN.md' };
-  return parseTestBlock(readFileSync(path, 'utf8'));
+// its tests at the end, so it is not ready to be built by it. Read from the plan's home (planHome,
+// pir-plan-command §2.9), the same copy readReviewGate reads: the main checkout's when the plan is
+// there, because that is the copy a narrow review pass fixes, else the committed pir/{slug} branch.
+export function readTestBlockGate(slug, { root = process.cwd(), exec, fs } = {}) {
+  const text = planHome(slug, { root, exec, fs }).read('DESIGN.md');
+  if (text == null) return { ok: false, reason: 'no DESIGN.md' };
+  return parseTestBlock(text);
 }
 
 // The refusal both entry points print (the coordinator bin here, `pir` via launch.mjs's no-test-block).
@@ -687,21 +689,18 @@ export function waitForReport(dirs, timeoutMs, opts = {}) {
 }
 
 // Run the plan's declared setup and test lines on the feature worktree (DESIGN §2.5): the last gate
-// before the run hands the branch off. The lines come from the front-matter block of the main
-// checkout's plans/<slug>/DESIGN.md (`root`), never the feature worktree's copy: a feature branch cut
+// before the run hands the branch off. The lines come from the front-matter block of the plan's home
+// (planHome: the main checkout's plans/<slug>/DESIGN.md under `root`, else the committed pir/{slug}
+// branch — pir-plan-command §2.9), never the feature worktree's copy: a feature branch cut
 // before a narrow review pass wrote the block would otherwise still lack it (§2.2). No prose is read and
 // nothing is guessed — an invalid block is red with the parser's reason and runs nothing. Setup runs
 // first because the feature worktree is fresh (remote-e2e's `make server-test` exited 127 until `npm ci`).
 // Both halves share one log: setup rewrites it, test appends, so the `$` headers read in run order. The
 // env scrub and log format live in commands.mjs. Returns { ok, half, command, logPath, reason }; half is
 // 'setup' or 'test' when a line failed, null otherwise; command names the failing line, null on green.
-export function runFeatureTests(featurePath, { slug, logPath = null, root } = {}) {
-  let design = '';
-  try {
-    design = readFileSync(join(root, 'plans', slug, 'DESIGN.md'), 'utf8');
-  } catch {
-    /* no DESIGN.md — the parser reports it as no front-matter block */
-  }
+export function runFeatureTests(featurePath, { slug, logPath = null, root, exec, fs } = {}) {
+  // No DESIGN.md reads as '' — the parser reports it as no front-matter block.
+  const design = planHome(slug, { root, exec, fs }).read('DESIGN.md') ?? '';
   const block = parseTestBlock(design);
   if (!block.ok) {
     return { ok: false, half: null, command: null, logPath: null, reason: `plans/${slug}/DESIGN.md: ${block.reason}` };
@@ -719,8 +718,8 @@ function red(half, r) {
 }
 
 // makePrepare({ design, setupDir, start }) → the loop's prepare(num, worktreePath) for this plan, or null
-// when there is nothing to run (DESIGN §2.4). `design` is the text of the main checkout's DESIGN.md
-// (§2.2). No setup lines — `setup: none`, or a block that does not parse (the start refusal, T03, keeps
+// when there is nothing to run (DESIGN §2.4). `design` is the text of the plan's DESIGN.md as planHome
+// resolves it (§2.2; pir-plan-command §2.9). No setup lines — `setup: none`, or a block that does not parse (the start refusal, T03, keeps
 // such a plan from running at all) — gives null, so the loop spawns in the dispatching pass as before.
 // Otherwise each call starts the setup lines in the background in that worktree, logging to
 // `{setupDir}/T{nn}.log`, rewritten per attempt; the loop polls the handle once per pass.
@@ -907,7 +906,7 @@ async function main(argv) {
   const gate = readReviewGate(slug, { root });
   if (!gate.reviewed) {
     const why = gate.missing
-      ? `plans/${slug}/PROGRESS.md was not found`
+      ? `plans/${slug}/PROGRESS.md was not found in this checkout or on branch pir/${slug}`
       : gate.note
         ? `the plan-reviewed gate says: "${gate.note}"`
         : 'the plan has no positive "Plan reviewed:" line';
@@ -938,7 +937,7 @@ async function main(argv) {
   // deliberately on the scratch plan, ceiling 1:
   //   PARALLEL_LIVE=1 PARALLEL_MAX_WORKERS=1 node src/shell/coordinate.mjs scratch
   if (process.env.PARALLEL_LIVE !== '1') {
-    const { tasks } = parseProgress(readFileSync(join(root, progressPathFor(slug)), 'utf8'));
+    const { tasks } = parseProgress(planHome(slug, { root }).read('PROGRESS.md') ?? '');
     const ready = readyWaiting(tasks, new Set());
     console.log(
       `\nDRY: not spawning real workers (set PARALLEL_LIVE=1 to actually drive — the live drive is\n` +
@@ -1003,12 +1002,8 @@ async function main(argv) {
   const platform = createPlatform({ root, controlDir: control.dir, transport: inbox.transport, claudePath, grants });
   const personInbox = startPersonInbox({ controlDir: control.dir, platform, grants, log: control.log });
   const worktree = createWorktree({ root });
-  let design = '';
-  try {
-    design = readFileSync(join(root, 'plans', slug, 'DESIGN.md'), 'utf8');
-  } catch {
-    /* no DESIGN.md: makePrepare sees no block and runs no setup */
-  }
+  // No DESIGN.md reads as '': makePrepare sees no block and runs no setup.
+  const design = planHome(slug, { root }).read('DESIGN.md') ?? '';
   const prepare = makePrepare({ design, setupDir: join(control.dir, 'setup') });
   // Set once the display state below exists; runTests calls it before the suite blocks the pass.
   let showTesting = () => {};
