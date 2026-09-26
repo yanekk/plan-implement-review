@@ -1,6 +1,6 @@
 # The lifecycle of a run
 
-A run is driven by the coordinator command — a person launches it with `pir {slug}` (detached; see
+A run is driven by the coordinator command — a person launches it with `pir start {slug}` (detached; see
 [detached-runs.md](detached-runs.md)), which runs `node src/shell/coordinate.mjs {slug}` until the
 plan is done or the person stops it. (The foreground launcher `pir-coordinate` was removed in
 `plans/live-workers` §2.13; the tests and the harness still run `coordinate.mjs` directly.) Each turn of its loop is one
@@ -12,11 +12,22 @@ without per-task typing.
 
 ## Start
 
-1. The person runs the command on a plan (`pir {slug}`). It **refuses a
+1. The person runs the command on a plan (`pir start {slug}`, or the go at the end of a `pir plan`
+   run — [planning-runs.md](planning-runs.md)). It **refuses a
    plan that is not reviewed** — it reads the `**Plan reviewed:**` line in `PROGRESS.md` and, on
    anything short of a positive verdict, stops and points the person at `/pir-review-plan`
    (`readReviewGate` in `coordinate.mjs`, `parsePlanReviewed` in `progress.mjs`). An unreviewed
    plan copies its defects into every task, and running many at once multiplies that.
+
+   **Where the plan is read from.** Every read of the plan's `PROGRESS.md` and `DESIGN.md` in the
+   pre-flight, the worker setup and the end gate goes through `planHome(slug)`
+   (`src/shell/plan-home.mjs`): the main checkout's working tree if `plans/{slug}/PROGRESS.md` exists
+   there — the hand-made plan, read exactly as before — else the **committed** tree of branch
+   `pir/{slug}`, read with `git show`, which is where `pir plan` leaves a reviewed plan until the person
+   merges it. The branch is read committed, not from its worktree, because a worktree may hold
+   uncommitted edits no build would see. Main comes first so a narrow re-review committed on `main`
+   while its build runs is still what the build reads. Dispatch reads `PROGRESS.md` from the feature
+   worktree, as always.
 2. It then **refuses a plan whose `DESIGN.md` has no valid setup/test block** — the front-matter
    block the file opens with, declaring the plan's `setup` lines and its `test` lines:
 
@@ -29,13 +40,13 @@ without per-task typing.
    ---
    ```
 
-   `readTestBlockGate` in `coordinate.mjs` reads `plans/{slug}/DESIGN.md` from the main checkout and
+   `readTestBlockGate` in `coordinate.mjs` reads `plans/{slug}/DESIGN.md` from the plan's home and
    parses it with `parseTestBlock` (`src/core/testblock.mjs`); both keys are required, `setup: none`
    is the explicit empty setup, and `test` needs at least one line. A missing or malformed block
    counts as not reviewed: the command prints the parser's reason (`no front-matter block`, `no test
    key`, …) and points at `/pir-review-plan {slug}`, which writes and verifies the block
    (`testBlockRefusal`). The check runs before anything is spawned or any worktree created, dry run
-   included, so a restart — a re-run of the same command — is checked the same way. `pir {slug}`
+   included, so a restart — a re-run of the same command — is checked the same way. `pir start {slug}`
    refuses the same plan in its pre-flight (see [detached-runs.md](detached-runs.md)), and `pir-work`
    in the classic flow. A plan whose tests the engine cannot run is not ready to be built by it.
 3. **The dry-run seatbelt.** Without `PARALLEL_LIVE=1` the command does the safe half only — it
@@ -49,7 +60,8 @@ without per-task typing.
    `coordinate.mjs` — the name is historical; it now guards the feature branch, not a promotion), so
    a live run cannot open and mangle the real repo's branches by accident.
 5. On the first pass the command opens the **feature branch** `pir/{plan}` off `main`, in its own
-   worktree, and works there — the person's main checkout stays on `main` (`openFeature` in
+   worktree, and works there (a plan made by `pir plan` already has that branch and worktree, and the
+   command reuses them) — the person's main checkout stays on `main` (`openFeature` in
    `worktree.mjs`). See [branch-model.md](branch-model.md).
 6. Still on the first pass, before dispatching, the command **reconciles each task from its own
    task branch** — a restart adopts in-flight work (merges a finished task, reviews a built one,
@@ -127,8 +139,9 @@ A pass does, in order:
 - **Complete.** When every task is `✅` and no worker is live, the pass reports a `complete` flag;
   the command runs the plan's declared lines on the feature branch and reports the result. It never
   merges to `main` — see **End** below. `runFeatureTests` (`coordinate.mjs`) reads the setup/test
-  block from the main checkout's `plans/{slug}/DESIGN.md` — not the feature branch's copy, which may
-  predate a review pass that added the block — and runs the `setup` lines, then the `test` lines, in
+  block from the plan's home (`planHome`, above: the main checkout's `plans/{slug}/DESIGN.md`, else the
+  committed `pir/{slug}`) — not the feature worktree's copy, which may predate a review pass that added
+  the block — and runs the `setup` lines, then the `test` lines, in
   the feature worktree, each via `/bin/sh -c`, stopping at the first failure (`runLines` in
   `commands.mjs`). The run's own `PARALLEL_*` and `PIR_RUN` variables are removed from their
   environment. Setup runs first because the feature worktree is fresh too. All output goes to

@@ -1,31 +1,48 @@
 # Detached runs — `pir`
 
-`pir {slug}` is how parallel mode is run. It starts the **coordinator** detached from the terminal,
-so the run outlives the pane, and `pir` on its own opens a full-screen dashboard of every run on the
-machine, from which a run is watched, stopped, or cleared, and a worker is read and answered.
+`pir start {slug}` is how parallel mode is run. It starts the **coordinator** detached from the
+terminal, so the run outlives the pane, and `pir` on its own opens a full-screen dashboard of every run
+on the machine, from which a run is watched, stopped, resumed or cleared, and a worker is read and
+answered. `pir plan` starts a **planning run** the same way, and the dashboard lists it beside the
+builds (see [planning-runs.md](planning-runs.md)).
 
-`pir` does not change how a run works: `pir {slug}` spawns `coordinate.mjs` detached, with two env
+`pir` does not change how a run works: `pir start {slug}` spawns `coordinate.mjs` detached, with two env
 flags set (below). Everything in [run-lifecycle.md](run-lifecycle.md),
 [branch-model.md](branch-model.md), [task-state.md](task-state.md) and
 [restart-recovery.md](restart-recovery.md) describes the run itself. This page is the lifecycle `pir`
 adds around it: detach, index, snapshot, watch, the conversation view, stop, remove, keep-awake. (The
 deprecated foreground launcher `pir-coordinate` was removed in `plans/live-workers` §2.13.)
 
-## The two invocations
+## The commands
 
-- **`pir {slug}`** — start the run for that slug detached, and drop straight into its live view. If
-  the slug is already running, it opens that run's live view instead of starting a second one. If
-  the slug is stopped, crashed or finished, it starts it, and the coordinator resumes from committed
-  work (recovery is re-running the slug — [restart-recovery.md](restart-recovery.md)).
-- **`pir`** — open the dashboard: one row per run across every repo on the machine.
+| Invocation | Does |
+|---|---|
+| `pir` | open the dashboard: one row per run across every repo on the machine |
+| `pir plan` | open the brief box, then start a planning run ([planning-runs.md](planning-runs.md)) |
+| `pir plan <words…>` | start a planning run with the words, joined by one space, as the brief |
+| `pir start {slug}` | start the build of a reviewed plan detached, and drop straight into its live view |
+| `pir <anything else>` | `pir: unknown command '<arg>'. To build a plan: pir start <arg>` and the usage, exit 2 |
 
-There are no subcommands. Stop, remove and watch are actions inside the dashboard, not separate
-verbs. `pir` is a reader and a launcher: it starts a run, reads state files, and the only run it
-ever signals is one it stops.
+`pir start {slug}` is start-or-open: if the slug is already running, it opens that run's live view
+instead of starting a second one (a live planning run of that slug included: its steps view opens). If
+the slug is stopped, crashed or finished, it starts it, and the coordinator resumes from committed work
+(recovery is re-running the slug — [restart-recovery.md](restart-recovery.md)). `pir start` with no slug
+or more than one is a usage error.
+
+Exit codes: 0 a view opened (or the brief box was cancelled), 1 a refused start, 2 a usage error, so a
+script can tell a refused run from a running one.
+
+The bare `pir {slug}` form of earlier versions is gone, not aliased: `plan` and `start` would otherwise
+be indistinguishable from slugs, and a plan named `plan` would silently change meaning. `pir --help`
+and `pir -h` are not special: they read as unknown commands.
+
+Stop, remove, resume and watch are actions inside the dashboard, not separate verbs. `pir` is a reader
+and a launcher: it starts a run, reads state files, and the only run it ever signals is one it stops.
 
 ## Run identity and the four states
 
-A run is keyed by its slug within its repo — at most one live run per slug, and the same slug in two
+A run is keyed by its slug within its repo (a planning run, until its plan is named, by its run id
+`plan-{hex4}`) — at most one live run per slug, and the same slug in two
 repos is two independent runs. A run is in exactly one of four states, decided by `classifyRun`
 (`src/core/runstate.mjs`), a pure function of recorded facts plus a liveness answer:
 
@@ -58,7 +75,10 @@ can list runs across every repo, a small per-run entry is also written under `~/
 file per run named `{repo}__{slug}.json` (the repo name in the filename is why the same slug in two
 repos never collides). The entry is a pointer plus what is needed to classify the run without opening
 the repo: the slug, the repo and its path, the control-folder path, the process number and launch
-time, and the final status once set. `~/.pir/` is outside any repo and is never committed.
+time, and the final status once set. It also carries `kind` — `plan` for a planning run, `work` for a
+build, absent read as `work` — and, for a planning run, its `label` before the rename and `go`, the
+person's answer to the go question ([planning-runs.md](planning-runs.md)). A build writes its record
+under the same key as the planning run it came from, so one plan is one row. `~/.pir/` is outside any repo and is never committed.
 
 `pir` reads every index entry to enumerate the runs, then reads each run's snapshot for live detail.
 A malformed entry is dropped and the rest are listed — one corrupt pointer never blinds the dashboard
@@ -95,16 +115,19 @@ The snapshot is gitignored with the rest of the control folder (below).
 
 ## The dashboard and the live view
 
-`pir` paints a full-screen list, one row per run: slug, state, repo, progress (done/total from the
-snapshot), and live-worker count. There is no process-number column — the person does not act on it.
+`pir` paints a full-screen list, one row per run: slug, TYPE (`plan` or `work`), state, repo, progress
+(done/total from the snapshot), and live-worker count. A planning row's state, progress and slug read
+differently — `planning`, `reviewing`, `your go`; `plan ✓ review …`; the brief's label in quotes before
+the plan has a name — and a `your go` row adds `· N waiting for you` to the counts line (see
+[planning-runs.md](planning-runs.md)). There is no process-number column — the person does not act on it.
 Colour carries state and is never the only signal (glyphs carry the same state, so `NO_COLOR` and a
 colour-blind reader lose nothing): a running run is green, finished and stopped are dim, crashed is
 red; the progress bar is blue for a running run and red for a crashed one; the selected row is a dark
 grey band across the full width, its dim text brightened (with colour off it is marked `▎` instead); an armed stop/remove confirmation is amber and bold. With no runs at all, the list is
-replaced by one line — `No runs yet — start one with pir {slug}` — so a first open does not read as
-broken.
+replaced by one line — ``No runs yet — start one with `pir start {slug}` `` — so a first open does
+not read as broken.
 
-Opening a run shows the **same** live task display the coordinator paints in the foreground — the
+Opening a build shows the **same** live task display the coordinator paints in the foreground — the
 summary line, one row per task with its glyph, phase and elapsed clock, and the "asking you" footer.
 The front-end does not invent a second display: it reads the snapshot and paints it with the
 coordinator's own model (`buildDisplay`) and renderer (`src/shell/render.mjs`), re-reading as the
@@ -116,6 +139,10 @@ the log path, from `runState.testsReason`) and a stale note saying it is not rea
 the branch, with no merge line; a finished run with no snapshot at all points at `run.log` rather than
 guess (`buildWatchFrame` in `src/shell/pir-tui.mjs`). A crashed run that never wrote a snapshot shows
 its `run.log` tail and the log's full path instead, so a run that failed to start says why.
+
+Opening a planning run shows its **steps view** instead — one row each for `plan`, `review` and `build`
+— and, when the plan is reviewed and waiting, the go question that starts the build (see
+[planning-runs.md](planning-runs.md)).
 
 ### The conversation view
 
@@ -154,8 +181,11 @@ The keys, as built, are shown in the footer of each view:
 
 | View | Keys |
 |---|---|
-| List | `↑↓` move · `↵` or `→` open the selected run · `Ctrl+S Ctrl+S` stop · `Ctrl+X Ctrl+X` remove · `esc` quit |
+| List | `↑↓` move · `↵` or `→` open the selected run · `Ctrl+R Ctrl+R` resume · `Ctrl+S Ctrl+S` stop · `Ctrl+X Ctrl+X` remove · `esc` quit |
 | Watch | `↑↓` pick a task · `→` or `↵` open its worker · `←` back to the list · `Ctrl+S Ctrl+S` stop this run · `esc` quit |
+| Steps (a planning run) | `↑↓` pick a step · `→` or `↵` open its conversation · `←` back to the list · `Ctrl+S Ctrl+S` stop this run (while it runs) · `esc` quit |
+| The go question | `↵` start the build · `n` not now · `←` back to the list · `esc` quit, leaving the question in place |
+| Brief box (`pir plan`) | typing · `↵` start planning · `shift+↵` or `ctrl+j` new line · `esc` or `Ctrl+C` cancel |
 | Conversation | typing, `↵` send · `esc` interrupt the worker · `Ctrl+C` clear the box, or interrupt when it is empty · `←` with an empty box back to the live view · `Tab` one line per step ⇄ full detail · `↵`/`n`/`a` answer a pending permission, and `↑↓` `space` `↵` drive a pending question set (one `↵` answers a pick-one question), both only while the box is empty, and typing while a question set is pending goes to its Other line · `PgUp`/`PgDn` scroll |
 
 `←` steps back one view; `esc` quits `pir` outright from the list and the live view, but in the
@@ -176,12 +206,16 @@ copy could contend for.
 
 ## Start
 
-Before it spawns anything, `pir {slug}` runs a pre-flight (`startRun` in `src/shell/launch.mjs`): the
-plan folder exists, the plan is marked reviewed in `PROGRESS.md` (the same gate `pir-work` and the
+Before it spawns anything, `pir start {slug}` runs a pre-flight (`startRun` in `src/shell/launch.mjs`):
+the plan exists, the plan is marked reviewed in `PROGRESS.md` (the same gate `pir-work` and the
 coordinator enforce), its `DESIGN.md` opens with a valid setup/test block (the coordinator's own
-`readTestBlockGate`, read from the main checkout — see [run-lifecycle.md](run-lifecycle.md)), and no
-run for the slug is already live. An unreviewed plan is refused with the same pointer to
-`/pir-review-plan`; a plan without a valid block is refused as `no-test-block`, and `pir` prints the
+`readTestBlockGate`), and no run for the slug is already live. Both gates read the plan from its
+**home** (`planHome` in `src/shell/plan-home.mjs`): the main checkout's `plans/{slug}/` when it has a
+`PROGRESS.md`, else the committed tree of branch `pir/{slug}`, where `pir plan` leaves a reviewed plan
+(see [run-lifecycle.md](run-lifecycle.md)). No plan in either place is refused as `no plan '{slug}'`.
+An unreviewed plan on `main` is refused with the same pointer to `/pir-review-plan`; one that lives
+only on its branch is refused with `'{slug}' is not reviewed — resume its planning run in pir
+(Ctrl+R)`; a plan without a valid block is refused as `no-test-block`, and `pir` prints the
 coordinator's own message — the parser's reason, that the plan counts as not reviewed, and
 `/pir-review-plan {slug}` as the fix. The review gate is checked first, so an unreviewed plan reports
 that, not the block. Either way nothing is spawned — a pre-flight failure that only surfaced after
@@ -193,7 +227,7 @@ detached, session-leading child is not sent the hang-up signal when its terminal
 lets the run outlive WezTerm. The launcher then records the child's process number and launch time,
 registers the run in the index, and starts keep-awake.
 
-A split-second double-launch — two `pir {slug}` fired in the same instant, both reading "no live run"
+A split-second double-launch — two `pir start {slug}` fired in the same instant, both reading "no live run"
 — is accepted, not locked out. It is a human-paced tool, and the coordinator's own feature-branch and
 worktree guards make the second coordinator fail loudly rather than corrupt the run; the recovery is
 the ordinary one, stop the misbehaving run and re-start the slug.
@@ -214,7 +248,8 @@ gone, `stopRun` then reaps the workers it recorded in the control folder's `work
 still alive with its recorded start time is sent SIGTERM, then SIGKILL after 3 s (`reapRecorded` in
 `src/shell/reap.mjs`). A wedged coordinator cannot strand a run half-stopped with its workers still
 burning tokens. The grace period is what separates a stop from a crash — never force-kill a run
-without it.
+without it. A planning run stops the same way: its program closes its session and records `stopped`,
+with the same grace, force-kill and reap.
 
 ## Remove
 
@@ -229,11 +264,21 @@ Stop and remove are chorded and double-confirmed: `Ctrl+S` twice to stop,
 the same selection carries it out; any other key cancels the arm. Both are irreversible in the moment
 (stop kills in-flight work, remove drops the record), so both are guarded.
 
+## Resume
+
+`Ctrl+R` twice on a `stopped` or `crashed` row resumes it, chorded and confirmed like stop and remove
+(the armed line reads `⚠ Ctrl+R again to resume {name}`). On a build it is `startRun(slug)`, exactly
+`pir start {slug}`, and the coordinator reconciles from committed work
+([restart-recovery.md](restart-recovery.md)). On a planning run — also offered on a finished one whose
+review ended not reviewed — it reopens the same planner or reviewer conversation
+([planning-runs.md](planning-runs.md)). A refusal (the run came back to life meanwhile, or `startRun`
+refused the plan) is shown under the list (`resumeRun` in `launch.mjs`).
+
 ## Keep-awake
 
 A run holds the Mac awake while it works. The launcher starts `caffeinate -i -w {pid}` against the
 coordinator's process number: `-i` blocks idle sleep, `-w` makes `caffeinate` wait on that process and
-exit when it dies. Tying the awake-hold to the coordinator's lifetime with `-w` means any death of the
+exit when it dies (for a planning run, against the planning program's). Tying the awake-hold to the coordinator's lifetime with `-w` means any death of the
 run — clean exit, stop, crash or force-kill — releases the Mac, so no code path can strand it awake.
 The hold is unconditional, not battery-aware. (A forced sleep — the lid closed on battery — can still
 sleep the Mac; the run pauses and resumes on wake, and its snapshot is simply stale meanwhile, which
@@ -244,18 +289,19 @@ the dashboard already shows plainly.)
 - **Status snapshot** — `plans/{slug}/.parallel/control/status.json`, in the existing per-run control
   folder, written temp-then-rename each pass by the coordinator (the single writer). Already
   gitignored via `plans/*/.parallel/` (see `.gitignore` and [control-folder.md](control-folder.md)),
-  so it never rides a task branch or the feature branch.
+  so it never rides a task branch or the feature branch. A planning run's snapshot is in its own
+  `plans/{slug}/.parallel/plan/` ([planning-runs.md](planning-runs.md)).
 - **Index entry** — `~/.pir/runs/{repo}__{slug}.json`, one small JSON file per run, written
   temp-then-rename. `~/.pir/` is outside any repo and is never committed, so nothing gitignores it.
 
 ## Recovery
 
-Nothing this front-end does is irreversible. A run is recovered by re-running its slug: `pir {slug}`
-on a crashed or stopped run resumes from committed work (git is ground truth; the coordinator
+Nothing this front-end does is irreversible. A run is recovered by resuming it (`Ctrl+R Ctrl+R`) or
+re-running its slug: `pir start {slug}` on a crashed or stopped build resumes from committed work (git is ground truth; the coordinator
 reconciles — [restart-recovery.md](restart-recovery.md)). Removing a run's record deletes only
 bookkeeping; the plan and its git branches are untouched, so a removed run is re-listed the moment it
 is started again. The one action that changes the world outside the code is stopping a run, and its
-way back is the same resume: `pir {slug}`.
+way back is the same resume: `pir start {slug}`, or `Ctrl+R Ctrl+R` on its row.
 
 If `pir` itself is unavailable, the by-hand recovery is in [restart-recovery.md](restart-recovery.md):
 worker pids from `plans/{slug}/.parallel/control/workers.json`, `kill`, `git worktree remove --force`,
