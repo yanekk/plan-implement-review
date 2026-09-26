@@ -434,8 +434,12 @@ export async function runPlanning({ controlDir, resume = false, deps = {} }) {
   try {
     for (;;) {
       if (signal?.aborted) {
-        await closeCurrent(STOP_CLOSE);
+        // `stopped` goes on record first: closing a session that will not go takes the whole 4 s before
+        // pir's SIGKILL, and a program killed before it records reads as crashed. A session that outlives
+        // us is reaped from workers.json. The snapshot is written again once the session is closed.
         recordFinal('stopped');
+        await closeCurrent(STOP_CLOSE);
+        paint('stopped');
         log('stopped');
         return 0;
       }

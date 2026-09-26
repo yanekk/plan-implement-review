@@ -210,6 +210,24 @@ test('planner: planned with DESIGN.md missing → the planner hears which file, 
   assert.equal(indexOf(s).finalState, null, 'no index write without PIR_RUN');
 });
 
+test('planner: an accepted planned, then an uncommitted edit before idle → re-checked at idle, not closed', async (t) => {
+  const slug = 'edited-after';
+  const script = quickPlanner(slug);
+  // After the report is read and accepted (the session still busy), the planner leaves a stray file.
+  script.splice(4, 0, { sleep: 1500 }, { sh: 'touch stray.txt' });
+  const s = setup(t, [{ match: PLANNER_MATCH, script }]);
+  const run = start(s);
+  t.after(() => run.stop.abort());
+  await waitFor(() => run.lines.some((l) => /checks for planned edited-after: ok/.test(l)), 'the report accepted while busy');
+  const msg = await waitFor(() => planLog(s).find((e) => e.dir === 'out' && /did not accept/.test(e.text ?? '')), 'the failure at idle');
+  assert.match(msg.text, /uncommitted changes/);
+  assert.equal(stateOf(s).step, 'plan');
+  assert.equal(stateOf(s).accepted, null);
+  assert.equal(run.code, undefined, 'the planner was not closed');
+  run.stop.abort();
+  assert.equal(await run.done, 0);
+});
+
 test('planner: planned with a taken slug → the message says the name is taken and to choose another', async (t) => {
   const slug = 'taken-name';
   const s = setup(t, [{ match: PLANNER_MATCH, script: quickPlanner(slug) }]);
@@ -275,6 +293,31 @@ test('the program under SIGTERM: session closed, stopped in snapshot and index, 
   assert.equal(readSnapshot(s.controlDir).finalState, 'stopped');
   assert.equal(indexOf(s).finalState, 'stopped');
   assert.match(out, /stopped/);
+});
+
+// pir SIGKILLs a stopped program 4 s after its SIGTERM (DESIGN §2.16), and closing a session that will not
+// go takes up to that long (the Remote Control switch-off, then the grace and the SIGTERM wait). `stopped`
+// must be on record before the close, or a stubborn session turns a stop into a crash on the dashboard.
+test('the program under SIGTERM with a session that will not go: `stopped` is recorded before the close ends', async (t) => {
+  const s = setup(t, [{ match: PLANNER_MATCH, script: [{ onSigterm: 'ignore' }, { onEof: 'ignore' }, { await: 'user' }, { emit: initEvent() }, { sleep: 600000 }] }]);
+  const child = spawnChild(process.execPath, [PROGRAM, '--control', s.controlDir], {
+    env: { ...process.env, PATH: `${s.bin}:${process.env.PATH}`, PIR_HOME: s.home, PIR_RUN: '1' },
+    stdio: 'ignore',
+  });
+  const exited = new Promise((r) => child.on('exit', (code) => r(code)));
+  t.after(() => child.kill('SIGKILL'));
+  await waitFor(() => existsSync(join(s.controlDir, 'workers.json')) && workersOf(s).length === 1, 'the live planner');
+  await waitFor(() => planLog(s).some((e) => e.dir === 'in' && e.event.type === 'system'), 'the planner init');
+  const { pid } = workersOf(s)[0];
+  child.kill('SIGTERM');
+  await waitFor(() => indexOf(s).finalState === 'stopped', '`stopped` in the index', 1000);
+  assert.equal(readSnapshot(s.controlDir).finalState, 'stopped');
+  assert.doesNotThrow(() => process.kill(pid, 0), 'recorded while the session is still being closed');
+  assert.equal(await exited, 0);
+  assert.throws(() => process.kill(pid, 0), 'the stubborn session was killed');
+  assert.equal(indexOf(s).finalState, 'stopped');
+  assert.equal(readSnapshot(s.controlDir).runState.steps[0].worker.live, false, 'the last snapshot shows the session closed');
+  assert.deepEqual(workersOf(s), []);
 });
 
 test('T07 is not here yet: --resume and a state past plan are refused with exit 2', async (t) => {
