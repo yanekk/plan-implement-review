@@ -29,7 +29,7 @@ done · ⛔ blocked, needs a human.
 | T04 | plan-branch | — | ✅ | |
 | T05 | fake-claude-sessions | — | ✅ | |
 | T06 | plan-run-planner | T01, T02, T04, T05 | ✅ | |
-| T07 | plan-run-review | T06 | 🔍 | Rename executor, reviewer step, `--resume`; worker-proc `resume` (resume-dead-worker T02 not landed). 13 new tests. Deviations: index rename also patches `controlDir` and `branch` so resumeRun finds the moved folder; `findControlDir` finds state.json moved before the index rename; resuming a finished non-resumable run restores `finished` in the index. |
+| T07 | plan-run-review | T06 | ✅ | Review: one fix, reviewerChecks read `block.error` where parseTestBlock returns `reason`, so the reviewer heard "(invalid)"; reproduced by test, fixed. Deviations accepted (index rename patches controlDir/branch; findControlDir; finished resume restores `finished`). Probed half-done renames, resume id and log reuse, Remote Control, rename errors. |
 | T08 | plan-launch | T01, T02, T03, T04 | ✅ | |
 | T09 | pir-commands | T08 | ✅ | |
 | T10 | plan-rig | T05 | ✅ | |
@@ -42,7 +42,7 @@ done · ⛔ blocked, needs a human.
 | T17 | harness-plan-fixture | T07, T08, T15 | ⬜ | |
 | T18 | live-plan-run | T14, T16, T17 | ⬜ | |
 
-**Review queue:** T07
+**Review queue:** *(empty)*
 
 ## Blocked on the user
 
