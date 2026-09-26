@@ -32,3 +32,8 @@ test('defineScenario rejects a spec with no id, no fixture, or no facts', () => 
 test('defineScenario rejects a fact that is not a { check } builder result', () => {
   assert.throws(() => defineScenario({ id: 's', fixture: 'f', facts: [{ id: 'nope' }] }), /must be a \{ id, label, check \}/);
 });
+
+test('defineScenario: answerPending defaults off and normalises to a boolean (T18)', () => {
+  assert.equal(defineScenario({ id: 'a', fixture: 'f', facts: [noHelloEver()] }).answerPending, false);
+  assert.equal(defineScenario({ id: 'a', fixture: 'f', facts: [noHelloEver()], answerPending: 1 }).answerPending, true);
+});

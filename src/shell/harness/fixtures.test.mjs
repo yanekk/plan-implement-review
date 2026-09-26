@@ -80,6 +80,12 @@ const EXPECT = {
     ceiling: 1,
     factIds: ['adopted-and-dispatched', 'handed-off-green-branch'],
   },
+  'live-workers-demo': {
+    taskCount: 2,
+    deps: { T01: [], T02: [] },
+    ceiling: 1,
+    factIds: ['request-answered:T01:questions', 'request-answered:T02:permission', 'ceiling-held:1', 'handed-off-green-branch'],
+  },
 };
 
 // --- The registry ---------------------------------------------------------------------------------
@@ -223,6 +229,17 @@ test('dynamic-task: T01 is told to propose-and-wait before adding the missing ta
   // An attended, completing run: no scripted answer (the person approves directly), a human-speed budget.
   assert.equal(fx.scenario.expectedTerminal, 'completed', 'the approved run completes; it is not a forever-park');
   assert.ok(fx.scenario.seatbelts.timeoutMs >= 20 * 60 * 1000, 'a human-speed timeout budget is set');
+});
+
+test('live-workers-demo: T01 must ask through AskUserQuestion; T02 runs the exact command the seeded settings mark ask', () => {
+  const fx = getFixture('live-workers-demo');
+  assert.equal(fx.scenario.answerPending, true);
+  assert.match(fx.tasks['T01-greeting.md'], /AskUserQuestion tool/);
+  const settings = JSON.parse(fx.seedFiles['.claude/settings.json']);
+  assert.deepEqual(settings.permissions.ask, ['Bash(touch approved.txt)']);
+  assert.match(fx.tasks['T02-approval.md'], /running exactly `touch approved\.txt`/);
+  // Committed with the seed, so every task worktree loads it.
+  assert.ok(fixtureFiles(fx)['.claude/settings.json']);
 });
 
 test('parallel: at least two independent tasks so workers run concurrently', () => {

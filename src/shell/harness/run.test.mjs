@@ -547,6 +547,68 @@ test('runScenario: a parked fixture whose facts pass and which times out scores 
   }
 });
 
+// --- answerPending: the person's stand-in ticks while the coordinator runs (T18) -------------------
+
+test('runScenario builds the answerer for an answerPending fixture and ticks it on every poll', async () => {
+  const ws = workspace();
+  try {
+    const into = join(ws.dir, 'scratch-repo');
+    const spawn = fakeSpawner();
+    const p = fakeProcs([]);
+    let polls = 0;
+    const readWorkers = () => {
+      polls += 1;
+      if (polls === 3) spawn.children[0].exit(0);
+      return [];
+    };
+    const made = [];
+    let ticks = 0;
+    const makeAnswerer = (opts) => {
+      made.push(opts);
+      return { tick: () => (ticks += 1) };
+    };
+    await runScenario({
+      fixtureId: 'live-workers-demo',
+      scratchDir: into,
+      install: installFake({ into, controlLog: '2026-01-01T00:00:00Z spawn T01\n', slug: 'live-workers-demo' }),
+      spawn,
+      readWorkers,
+      procs: p,
+      gitRun: () => ({ ok: true, stdout: '' }),
+      makeAnswerer,
+      pollMs: 1,
+    });
+    assert.equal(made.length, 1);
+    assert.equal(made[0].controlDir, controlDirFor(into, 'live-workers-demo'));
+    assert.ok(ticks >= 2, `ticked ${ticks} times while the coordinator ran`);
+  } finally {
+    ws.cleanup();
+  }
+});
+
+test('runScenario builds no answerer for a fixture that does not declare answerPending', async () => {
+  const ws = workspace();
+  try {
+    const into = join(ws.dir, 'scratch-repo');
+    const spawn = fakeSpawner();
+    let made = 0;
+    await runScenario({
+      fixtureId: 'single',
+      scratchDir: into,
+      install: installFake({ into, controlLog: '2026-01-01T00:00:00Z spawn T01\n' }),
+      spawn,
+      readWorkers: () => (spawn.children[0].exit(0), []),
+      procs: fakeProcs([]),
+      gitRun: () => ({ ok: true, stdout: '' }),
+      makeAnswerer: () => ((made += 1), { tick() {} }),
+      pollMs: 1,
+    });
+    assert.equal(made, 0);
+  } finally {
+    ws.cleanup();
+  }
+});
+
 // --- restart-mode pure wiring (T05) --------------------------------------------------------------
 
 test('restartTargetReached is true on the branch-glyph read, and on the review-line fallback for 🔍', () => {

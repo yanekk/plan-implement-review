@@ -51,6 +51,7 @@ import restart from './fixtures/restart.mjs';
 import restartReview from './fixtures/restart-review.mjs';
 import restartImplement from './fixtures/restart-implement.mjs';
 import dynamicTask from './fixtures/dynamic-task.mjs';
+import liveWorkersDemo from './fixtures/live-workers-demo.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -80,6 +81,7 @@ const FIXTURES = Object.freeze({
   [restartReview.id]: restartReview,
   [restartImplement.id]: restartImplement,
   [dynamicTask.id]: dynamicTask,
+  [liveWorkersDemo.id]: liveWorkersDemo,
 });
 
 // listFixtures() → the fixture ids, in registry order.

@@ -37,6 +37,7 @@ import {
   loadRestartPoint,
   checkScenario,
   formatReport,
+  requestAnswered,
 } from './assertions.mjs';
 
 const REPO = 'pir-h';
@@ -972,4 +973,36 @@ test('checkScenario reports a throwing fact as failed rather than aborting', () 
   const report = checkScenario({ id: 'x', facts: [boom] }, bundle());
   assert.equal(report.pass, false);
   assert.match(report.facts[0].detail, /kaboom/);
+});
+
+// --- requestAnswered (live-workers T18) ------------------------------------------------------------
+
+const tx = (task, events) => ({ key: `${task}-implement-1.ndjson`, task, role: 'implement', n: 1, events });
+const askReq = (id) => ({ dir: 'request', requestId: id, toolName: 'AskUserQuestion', input: { questions: [] } });
+const bashReq = (id) => ({ dir: 'request', requestId: id, toolName: 'Bash', input: { command: 'touch approved.txt' } });
+const replyOf = (id, from, behavior) => ({ dir: 'out', kind: 'reply', requestId: id, from, result: { behavior } });
+
+test('requestAnswered passes when the task asked that kind and the person\'s allowing reply reached it', () => {
+  const bundle = {
+    transcripts: [tx('T01', [askReq('q1'), replyOf('q1', 'person', 'allow')]), tx('T02', [bashReq('p1'), replyOf('p1', 'person', 'allow')])],
+  };
+  assert.equal(requestAnswered('T01', 'questions').check(bundle).pass, true);
+  assert.equal(requestAnswered('T02', 'permission').check(bundle).pass, true);
+  assert.equal(requestAnswered('T01', 'questions').id, 'request-answered:T01:questions');
+});
+
+test('requestAnswered keeps the kinds apart: a permission is not a question set', () => {
+  const bundle = { transcripts: [tx('T02', [bashReq('p1'), replyOf('p1', 'person', 'allow')])] };
+  const r = requestAnswered('T02', 'questions').check(bundle);
+  assert.equal(r.pass, false);
+  assert.match(r.detail, /never asked a question set/);
+});
+
+test('requestAnswered fails on no log, no reply, a refusal, or a grant answered by pir', () => {
+  assert.match(requestAnswered('T01', 'permission').check({ transcripts: [] }).detail, /no conversation log/);
+  for (const events of [[bashReq('p1')], [bashReq('p1'), replyOf('p1', 'person', 'deny')], [bashReq('p1'), replyOf('p1', 'pir', 'allow')]]) {
+    const r = requestAnswered('T01', 'permission').check({ transcripts: [tx('T01', events)] });
+    assert.equal(r.pass, false);
+    assert.match(r.detail, /no person's allowing answer/);
+  }
 });

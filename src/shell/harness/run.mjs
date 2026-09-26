@@ -40,6 +40,7 @@ import { checkScenario, loadTranscripts, loadFinalFiles, loadControlFeeds, loadR
 import { reapRecorded, readWorkersFile } from '../reap.mjs';
 import { isAlive as isAliveReal, startTimeOf as startTimeOfReal } from '../identity.mjs';
 import { createWorktree } from '../worktree.mjs';
+import { createAnswerer } from './answerer.mjs';
 
 // --- Pure wiring pieces (each unit-tested with no live agent, T17 acceptance) --------------------
 
@@ -320,6 +321,8 @@ export async function teardownScenario({ controlDir, reap = (dir) => reapRecorde
 //   worktree     — injected for the restart runner's branch reads; default is the real one.
 //   install      — installFixture (injectable so a test need not re-seed real git every case).
 //   capture      — a createCapture instance (injectable); default is built from the injected runners.
+//   makeAnswerer — ({ controlDir, log }) => { tick() }, the person's stand-in for an `answerPending`
+//                  scenario (answerer.mjs, T18); injected so a test sees its ticks.
 //   timers, now  — injected clock/timers so a test drives time (DESIGN §3.1: the shell owns the clock).
 //   log          — where the runner prints progress (default console.log); the fact report is returned.
 export async function runScenario({
@@ -337,6 +340,7 @@ export async function runScenario({
   worktree,
   install = installFixture,
   capture,
+  makeAnswerer,
   timers = { setTimeout, clearTimeout },
   now = () => new Date(),
   log = () => {},
@@ -356,6 +360,8 @@ export async function runScenario({
   const controlDir = controlDirFor(repoDir, slug);
 
   const reapWorkers = reap ?? ((dir) => reapRecorded(dir, procs));
+  // The person's stand-in, for a scenario that forces requests nobody at a screen would answer (T18).
+  const answerer = spec.answerPending ? (makeAnswerer ?? createAnswerer)({ controlDir, log }) : null;
 
   log(`installing fixture "${fixtureId}" into ${repoDir}`);
   install(fixtureId, { into: repoDir, runGit: gitRun });
@@ -411,6 +417,7 @@ export async function runScenario({
       pollMs,
       haltGrace,
       killSwitchDrill,
+      answerer,
       timers,
       isTimedOut: () => timedOut,
       log,
@@ -770,7 +777,7 @@ async function waitForTarget({ cap, controlDir, slug, waitFor, worktree, gitRun,
 // own stall and exits, so the process exit is the single terminal. The wall-clock timeout is the backstop
 // for a coordinator that hangs without exiting: it auto-touches HALT, and after a bounded haltGrace of
 // further polls with no exit, the run ends 'timeout' and the finally kills the process.
-async function waitForCompletion({ cap, controlDir, child, pollMs, haltGrace = 5, killSwitchDrill = false, timers, isTimedOut, log = () => {} }) {
+async function waitForCompletion({ cap, controlDir, child, pollMs, haltGrace = 5, killSwitchDrill = false, answerer = null, timers, isTimedOut, log = () => {} }) {
   const flowPath = join(controlDir, 'log');
   let exited = false;
   let exitResult = {};
@@ -782,6 +789,13 @@ async function waitForCompletion({ cap, controlDir, child, pollMs, haltGrace = 5
   let drillFired = false;
   for (;;) {
     cap.tick(); // one sample of workers.json and the workers' logs, recorded into the bundle
+    if (answerer && !exited) {
+      try {
+        answerer.tick();
+      } catch (e) {
+        log(`answerer failed: ${e.message}`);
+      }
+    }
     const flowText = existsSync(flowPath) ? safeRead(flowPath) : '';
 
     // Kill-switch drill (DESIGN §4.1, T11): the moment the first worker is up (a `spawn` in the flow),
