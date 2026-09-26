@@ -85,6 +85,16 @@ test('parseLogName reads {Txx}-{role}-{n}.ndjson and rejects anything else', () 
   assert.deepEqual(parseLogName('T05-review-2.ndjson'), { task: 'T05', role: 'review', n: 2 });
   assert.equal(parseLogName('T05-review-2.ndjson.tmp'), null);
   assert.equal(parseLogName('notes.txt'), null);
+  assert.deepEqual(parseLogName('T12-implement-1.ndjson'), { task: 'T12', role: 'implement', n: 1 });
+});
+
+test('parseLogName reads a planning run’s plan-{n} and review-{n} logs as the plan’s planner and reviewer', () => {
+  // The same task/role pair plan-run.mjs writes into workers.json, so locateLog pairs them.
+  assert.deepEqual(parseLogName('plan-1.ndjson'), { task: 'plan', role: 'planner', n: 1 });
+  assert.deepEqual(parseLogName('review-2.ndjson'), { task: 'plan', role: 'reviewer', n: 2 });
+  assert.equal(parseLogName('plan-1.ndjson.tmp'), null);
+  assert.equal(parseLogName('plan-x.ndjson'), null);
+  assert.equal(parseLogName('reviewer-1.ndjson'), null);
 });
 
 test('parseLog keeps an unparsable line raw; logSessionId reads the worker’s own session id', () => {
