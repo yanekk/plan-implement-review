@@ -22,7 +22,7 @@ import {
   openDashboard,
   readLogTail,
 } from './pir-tui.mjs';
-import { FrameView, SGR, clipSpans } from './pir-view.mjs';
+import { FrameView, SGR, SELECTED_BG, clipSpans } from './pir-view.mjs';
 import { visibleWidth } from '@earendil-works/pi-tui';
 import { buildDashboard, initialUi } from '../core/dashboard.mjs';
 import { buildDisplay } from '../core/display.mjs';
@@ -583,6 +583,21 @@ test('FrameView paints a span in the same SGR sequence render.mjs\'s map produce
   const [plain] = new FrameView(() => [[{ text: 'a', style: 'head' }]], { colour: false }).render(80);
   assert.equal(plain, 'a', 'colour off paints the bare text');
 });
+
+test('FrameView paints the selected row as a full-width grey band with dim text brightened; colour off keeps the ▎ mark', () => {
+  const row = [{ text: '▎ ', style: 'selected' }, { text: 'alpha ', style: 'dim' }, { text: '● running', style: 'running' }];
+  const [line] = new FrameView(() => [row]).render(20);
+  assert.equal(visibleWidth(line), 20, 'the band runs the full width');
+  assert.ok(!line.includes('▎'), 'with colour the mark is blanked: the band is the selection');
+  assert.ok(!line.includes(SGR.dim), 'dim text is brightened on the band');
+  assert.ok(line.includes(`${SELECTED_BG}${SGR.running}● running`), 'a state colour is kept, on the band');
+  assert.ok(line.split(RESET_RE).every((part) => part === '' || part.startsWith(SELECTED_BG)), 'every painted piece re-opens the band after a reset');
+  const [plain] = new FrameView(() => [row], { colour: false }).render(20);
+  assert.equal(plain, '▎ alpha ● running', 'colour off draws the mark as text, so colour is not the only signal');
+  const [other] = new FrameView(() => [[{ text: '  beta', style: 'dim' }]]).render(20);
+  assert.ok(!other.includes(SELECTED_BG), 'an unselected row has no band');
+});
+const RESET_RE = /\x1b\[0m/;
 
 test('FrameView clips a line to the width across spans, never wraps, and counts wide characters as two', () => {
   const view = new FrameView(() => [[{ text: '漢字', style: 'done' }, { text: 'abcdef', style: null }], [{ text: 'x'.repeat(50) }]]);

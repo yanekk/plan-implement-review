@@ -12,7 +12,7 @@
 //
 // Why the list is new painting but the live view is not (§2.11): the list's semantic colours are this
 // task's to build (running green, crashed red, finished/stopped dim, the progress bar blue/red/dim, the
-// selected row's blue left edge, the amber-bold armed line). The live view MUST be the coordinator's
+// selected row's grey band, the amber-bold armed line). The live view MUST be the coordinator's
 // renderer, not a second one that drifts — so its lines come straight from render.mjs's styledLines and
 // are painted with render.mjs's exact style→colour mapping (pir-view.mjs's SGR map carries render's keys
 // unchanged alongside the list's), which keeps the watch frame byte-for-byte the coordinator's display.
@@ -120,8 +120,8 @@ function footerLine(context, ui) {
 //
 // With no rows it paints the get-started line in place of an empty list (§2.3, user decision §7): a blank
 // screen reads as broken on a first open. Otherwise: the title, a column header, one row per run, the
-// counts line, and the footer. Each row's spans are coloured by §2.11; the selected row carries a blue
-// left-edge marker (the terminal stand-in for the mock's blue border).
+// counts line, and the footer. Each row's spans are coloured by §2.11; the selected row leads with a
+// 'selected' `▎` span, which paintLine (pir-view.mjs) turns into a full-width grey band when colour is on.
 export function buildListFrame(dashboard, ui = initialUi()) {
   const { rows = [], counts = { running: 0, finished: 0, crashed: 0, stopped: 0, total: 0 } } = dashboard ?? {};
   const lines = [];
@@ -146,7 +146,7 @@ export function buildListFrame(dashboard, ui = initialUi()) {
       const st = stateCell(v.state);
       const prog = progressCell(v.state, v.progress);
       lines.push([
-        span(selected ? '▎ ' : '  ', selected ? 'selected' : null),
+        span(selected ? '▎ ' : '  ', selected ? 'selected' : null), // the selected-row mark (paintLine)
         span(pad(v.slug, COL.slug), live ? null : 'dim'),
         span(pad(st.text, COL.state), st.style),
         span(pad(v.repo, COL.repo), 'dim'),
@@ -264,8 +264,9 @@ export function buildWatchFrame(view, { now, spinnerChar = SPINNER[0], ui = init
     // A stale (non-running) frame freezes its spinner to a dot so it cannot read as still ticking.
     const spin = alive ? spinnerChar : '·';
     // The block's lines 1..n are the task rows, in runState.tasks order (line 0 is the summary). The
-    // selected one carries the list's bar in place of its leading '  ' (live-workers §2.11), so this block
-    // is no longer byte-for-byte the coordinator's display, on purpose; every other line is.
+    // selected one carries the list's selected-row mark in place of its leading '  ' (painted as the grey
+    // band, see paintLine), so this block is no longer byte-for-byte the coordinator's display, on purpose;
+    // every other line is.
     const taskCount = snap.runState?.tasks?.length ?? 0;
     const selLine = taskCount > 0 ? 1 + Math.max(0, Math.min(ui.taskSel ?? 0, taskCount - 1)) : -1;
     watchDisplayLines(snap, { now, spinnerChar: spin }).forEach((l, i) => {

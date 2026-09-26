@@ -12,7 +12,7 @@ import { sliceByColumn, visibleWidth } from '@earendil-works/pi-tui';
 // keys with render.mjs's exact codes, so the watch frame — whose lines come from render.mjs's styledLines
 // — colours byte-for-byte the way the coordinator paints it (§2.4). The second block is the list's §2.11
 // semantic colours: running green, crashed red, finished/stopped dim; the progress bar blue for a running
-// run, red for a crashed one, dim otherwise; the selected row's blue left edge; the running/crashed counts
+// run, red for a crashed one, dim otherwise; the selected row's mark (see paintLine); the running/crashed counts
 // green/red; the faint key-hint footer; the amber-bold armed confirmation line.
 export const SGR = {
   // render.mjs's live-view keys — kept identical so the reused watch frame matches the coordinator.
@@ -30,7 +30,7 @@ export const SGR = {
   'bar-run': '\x1b[34m', // progress bar of a running run, blue
   'bar-crash': '\x1b[31m', // progress bar of a crashed run, red
   'bar-idle': '\x1b[2m', // progress bar otherwise, dim
-  selected: '\x1b[34m', // the selected row's left edge, blue
+  selected: '\x1b[34m', // the selected row's `▎` mark, blue — drawn only with colour off (see paintLine)
   'count-run': '\x1b[32m', // the running count, green
   'count-crash': '\x1b[31m', // the crashed count, red
   hint: '\x1b[2m', // the faint key-hint footer
@@ -48,6 +48,9 @@ export const SGR = {
   bad: '\x1b[31m',
 };
 export const RESET = '\x1b[0m';
+
+// The selected row's band: a dark grey background (256-colour 236) across the full width (user 2026-09-26).
+export const SELECTED_BG = '\x1b[48;5;236m';
 
 // Clip a line's spans to at most `width` terminal columns across the whole line, so a multi-span row
 // truncates as one line and never wraps. Counted in columns, not code points: a wide (CJK) character
@@ -72,10 +75,29 @@ export function clipSpans(spans, width) {
 
 // paintLine(spans, width, colour) → one terminal string: the spans clipped to `width` columns, each in its
 // colour. FrameView paints every frame line this way; the conversation view (T13) paints its own lines with it.
+//
+// A line whose first span is styled 'selected' is the selected row. With colour it paints as a dark grey
+// band across the whole width, the `▎` mark blanked, and dim text brightened: dim on grey is barely
+// legible (user 2026-09-26). With colour off the band cannot show, so the `▎` mark is drawn as text, which
+// keeps colour from being the only sign of the selection (docs/detached-runs.md).
 export function paintLine(spans, width, colour = true) {
-  return clipSpans(spans, Math.max(1, width | 0))
+  const cols = Math.max(1, width | 0);
+  if (colour && spans[0]?.style === 'selected') return paintSelected(spans, cols);
+  return clipSpans(spans, cols)
     .map(({ text, style }) => (colour && style && SGR[style] ? `${SGR[style]}${text}${RESET}` : text))
     .join('');
+}
+
+function paintSelected(spans, cols) {
+  const body = clipSpans([{ text: ' '.repeat(visibleWidth(spans[0].text)) }, ...spans.slice(1)], cols);
+  const used = body.reduce((n, sp) => n + visibleWidth(sp.text), 0);
+  // RESET clears the background too, so every span re-opens the band before its own colour.
+  const painted = body.map(({ text, style }) => {
+    const code = style && SGR[style] !== SGR.dim ? (SGR[style] ?? '') : '';
+    return `${SELECTED_BG}${code}${text}${RESET}`;
+  });
+  if (used < cols) painted.push(`${SELECTED_BG}${' '.repeat(cols - used)}${RESET}`);
+  return painted.join('');
 }
 
 export class FrameView {

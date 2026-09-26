@@ -99,8 +99,8 @@ The snapshot is gitignored with the rest of the control folder (below).
 snapshot), and live-worker count. There is no process-number column — the person does not act on it.
 Colour carries state and is never the only signal (glyphs carry the same state, so `NO_COLOR` and a
 colour-blind reader lose nothing): a running run is green, finished and stopped are dim, crashed is
-red; the progress bar is blue for a running run and red for a crashed one; the selected row has a
-blue left edge; an armed stop/remove confirmation is amber and bold. With no runs at all, the list is
+red; the progress bar is blue for a running run and red for a crashed one; the selected row is a dark
+grey band across the full width, its dim text brightened (with colour off it is marked `▎` instead); an armed stop/remove confirmation is amber and bold. With no runs at all, the list is
 replaced by one line — `No runs yet — start one with pir {slug}` — so a first open does not read as
 broken.
 
@@ -119,7 +119,7 @@ its `run.log` tail and the log's full path instead, so a run that failed to star
 
 ### The conversation view
 
-The run's live view has a selectable task row (a blue left edge). ↑↓ move it, and → or Enter opens
+The run's live view has a selectable task row (the same grey band). ↑↓ move it, and → or Enter opens
 that task's worker in a third view, the worker's **conversation** (`src/shell/conversation-view.mjs`,
 drawn with `@earendil-works/pi-tui`; the rules for what each line says are in
 `src/core/conversation.mjs`). A task with no worker yet says so in the footer instead. The view opens
