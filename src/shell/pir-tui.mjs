@@ -22,14 +22,17 @@ import { readLogTail } from './commands.mjs';
 
 import { buildDisplay } from '../core/display.mjs';
 import { wrapLine } from '../core/text.mjs';
-import { buildDashboard, dashboardReducer, displayName, findOpen, initialUi, isPlan, openTasks, planProgress, runKey } from '../core/dashboard.mjs';
+import { buildDashboard, dashboardReducer, displayName, findOpen, goOpen, initialUi, isPlan, openTasks, planProgress, repinOpen, runKey } from '../core/dashboard.mjs';
+import { buildPlanDisplay } from '../core/plandisplay.mjs';
 import { styledLines } from './render.mjs';
 import { classifyRun } from '../core/runstate.mjs';
 import { resolveLiveness } from './identity.mjs';
 import { indexDir, listRecords } from './index-store.mjs';
 import { readSnapshot } from './snapshot-store.mjs';
 import { stopRun, removeRun } from './control-run.mjs';
-import { resumeRun } from './launch.mjs';
+import { resumeRun, startRun } from './launch.mjs';
+import { updateRecord } from './index-store.mjs';
+import { planHome } from './plan-home.mjs';
 import { FrameView } from './pir-view.mjs';
 import { createConversationView } from './conversation-view.mjs';
 import { ProcessTerminal, TuiAltScreen, TUI_KEYBINDINGS, getKeybindings, isKeyRelease, parseKey } from '@earendil-works/pi-tui';
@@ -133,6 +136,8 @@ function footerLine(context, ui, rows = []) {
     }
     return lineOf(`⚠ Ctrl+X again to remove ${ui.armed.slug}'s record`, 'armed');
   }
+  if (context === 'go') return lineOf('↵ start · n not now · ← back to the list · esc quit (the question keeps)', 'hint');
+  if (context === 'steps') return lineOf('↑↓ pick a step · → open it · ← back · Ctrl+S Ctrl+S stop this run · esc quit', 'hint');
   if (context === 'watch') return lineOf('↑↓ pick a task · → open its worker · ← back · Ctrl+S Ctrl+S stop this run · esc quit', 'hint');
   return lineOf('↑↓ move · ↵ open · Ctrl+R resume · Ctrl+S stop · Ctrl+X remove · esc quit', 'hint');
 }
@@ -242,7 +247,9 @@ export function watchDisplayLines(snap, { now, spinnerChar = SPINNER[0] } = {}) 
 // resumes it (§2.4: painting a stale snapshot plainly is more honest than a blank screen). A crashed run
 // also shows the tail of its log and the full log path. A run with no snapshot yet shows a waiting line.
 // The spinner ticks only while the run is running; a stale frame's glyph is a static dot.
-export function buildWatchFrame(view, { now, spinnerChar = SPINNER[0], ui = initialUi(), columns = DEFAULT_COLS, logTail = null } = {}) {
+export function buildWatchFrame(view, { now, spinnerChar = SPINNER[0], ui = initialUi(), columns = DEFAULT_COLS, logTail = null, progress = null } = {}) {
+  // A planning run has steps, not tasks: its own frame (pir-plan-command §2.11), reached the same way.
+  if (isPlan(view)) return buildPlanWatchFrame(view, { now, spinnerChar, ui, columns, logTail, progress });
   const { slug, state, repo, snap, record } = view ?? {};
   const lines = [];
   const cols = Math.max(20, columns | 0 || DEFAULT_COLS);
@@ -345,6 +352,76 @@ export function buildWatchFrame(view, { now, spinnerChar = SPINNER[0], ui = init
   return lines;
 }
 
+// The step rows' glyphs and colours: a step is painted as a task row is (render.mjs's GLYPH and ROW_STYLE),
+// so a live step spins, an asking one is the amber-bold dot, a done one the green check (§2.11).
+const STEP_GLYPH = { asking: '●', done: '✔', failed: '✗', pending: '○' };
+const STEP_STYLE = { active: 'active', asking: 'asking', done: 'done', failed: 'red', pending: 'idle' };
+
+// mm:ss, render.mjs's clock format; null reads blank.
+function fmtClock(ms) {
+  if (ms == null) return '';
+  const s = Math.max(0, Math.floor(ms / 1000));
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+}
+
+// buildPlanWatchFrame(view, { now, spinnerChar, ui, columns, logTail, progress }) → frame
+// (pir-plan-command §2.8, §2.11). A planning run's live view: a header (name, state, branch), one row per
+// step, then either the go question with its keys, or the one note the run's state calls for. `progress` is
+// the reviewed plan's PROGRESS.md text, read by the shell only while the go is asked, for the width line.
+export function buildPlanWatchFrame(view, { now, spinnerChar = SPINNER[0], ui = initialUi(), columns = DEFAULT_COLS, logTail = null, progress = null } = {}) {
+  const { state, snap, record } = view ?? {};
+  const d = buildPlanDisplay(snap?.runState ?? null, { now, record: record ?? { slug: view?.slug }, state, progress });
+  const lines = [];
+  const cols = Math.max(20, columns | 0 || DEFAULT_COLS);
+  const note = (text, style, indent = '  ') => {
+    const width = Math.max(1, cols - [...indent].length);
+    for (const seg of wrapLine(text, width)) lines.push(lineOf(indent + seg, style));
+  };
+  const alive = state === 'running';
+  lines.push([span(d.header.name, 'head'), span(` · ${d.header.state}${d.header.branch ? ` · ${d.header.branch}` : ''}`, 'dim')]);
+  lines.push([]);
+  const sel = Math.max(0, Math.min(ui.taskSel ?? 0, d.rows.length - 1));
+  d.rows.forEach((r, i) => {
+    const glyph = r.kind === 'active' ? (alive ? spinnerChar : '·') : STEP_GLYPH[r.kind];
+    const text = `${glyph} ${r.id.padEnd(8)} ${r.role.padEnd(12)} ${r.text.padEnd(30)} ${fmtClock(r.clock)}`.replace(/\s+$/, '');
+    lines.push([span(i === sel ? '▎ ' : '  ', i === sel ? 'selected' : null), span(text, STEP_STYLE[r.kind] ?? null)]);
+  });
+  lines.push([]);
+
+  const f = d.footer;
+  if (d.go) {
+    note(`${d.go.slug} is reviewed. Start the parallel build now?`, 'your-go', '');
+    if (d.go.widthLine) note(d.go.widthLine, null, '');
+    if (d.go.branch) note(`It builds on ${d.go.branch}.`, 'dim', '');
+    lines.push([]);
+    lines.push([span('  ↵ Start the build', 'your-go'), span('     ', null), span('n Not now', 'your-go')]);
+  } else if (f?.kind === 'asking') {
+    note(`● ${f.step} — asking you; open it (→) to answer`, 'asking', '');
+  } else if (f?.kind === 'build-later') {
+    note(`Reviewed and waiting on ${f.branch}. Build it with: pir start ${f.slug}`, 'ended', '');
+  } else if (f?.kind === 'no-plan') {
+    note(`— finished · the planner ended without a plan. ${f.branch ? `Its branch ${f.branch} is kept.` : ''}`.trim(), 'ended', '');
+  } else if (f?.kind === 'not-reviewed') {
+    note('— finished · the review ended with the plan not reviewed. Ctrl+R Ctrl+R on the list resumes the reviewer.', 'ended', '');
+  } else if (f?.kind === 'stale') {
+    if (f.state === 'crashed') {
+      note('— the planning program died; this frame is stale. Ctrl+R Ctrl+R on the list resumes it.', 'crashed', '');
+      if (logTail && logTail.length) {
+        lines.push([]);
+        lines.push(lineOf('  last lines of run.log:', 'dim'));
+        for (const raw of logTail) note(raw.replace(/\s+$/, ''), 'dim', '    ');
+      }
+    } else {
+      note(`— ${f.state} · this frame is stale. Ctrl+R Ctrl+R on the list resumes it.`, 'ended', '');
+    }
+  }
+
+  lines.push([]);
+  if (ui.note) note(ui.note, 'dim', '');
+  lines.push(footerLine(d.go ? 'go' : 'steps', ui));
+  return lines;
+}
+
 // decodeKey(data) → the intent for a keypress, or null for a key the dashboard does not bind.
 //
 //   ↑ / ↓ arrows → 'up' / 'down'      (move the selection)
@@ -377,7 +454,8 @@ const KEY_INTENTS = {
   down: 'down',
   left: 'back', // ← steps back a level
   right: 'open', // → opens the selected run, like Enter (user 2026-09-22)
-  enter: 'open',
+  enter: 'enter', // opens, as → does, except on the go question, where it starts the build (§2.8)
+  n: 'n', // `n` not now on the go question; unbound anywhere else
   escape: 'quit',
   'ctrl+c': 'quit',
   'ctrl+s': 'ctrlS',
@@ -598,6 +676,9 @@ async function runTui({
   stop = stopRun,
   remove = removeRun,
   resume = resumeRun,
+  start = startRun,
+  decline = (record, { dir }) => updateRecord({ repo: record.repo, slug: record.slug }, { go: 'declined' }, { dir }),
+  readProgress = (record) => planHome(record.slug, { root: record.repoPath }).read('PROGRESS.md'),
   drop,
   follow,
   initial = initialUi(),
@@ -671,7 +752,7 @@ async function runTui({
     if (ui.view === 'list') return;
     const open = findOpen(dash.rows, ui);
     const runId = runKey(open) ?? ui.openKey ?? ui.openSlug;
-    const tasks = open?.snap?.runState?.tasks ?? [];
+    const tasks = openTasks(dash.rows, ui);
     let taskSel = ui.taskSel ?? 0;
     const idx = tasks.findIndex((t) => t.id === selectedTask.get(runId));
     if (idx >= 0) taskSel = idx;
@@ -680,8 +761,27 @@ async function runTui({
     if (tasks[taskSel]) selectedTask.set(runId, tasks[taskSel].id);
   }
 
+  // The go question's width line reads the reviewed plan's PROGRESS.md through git (planHome), so it is
+  // read once per run and kept, not on every refresh tick; the plan does not change while it waits.
+  const progressCache = new Map();
+  function goProgress(view) {
+    const key = runKey(view);
+    if (!progressCache.has(key)) {
+      let text = null;
+      try {
+        text = readProgress(view.record);
+      } catch {
+        text = null;
+      }
+      progressCache.set(key, text);
+    }
+    return progressCache.get(key);
+  }
+
   function repaint(dashboard) {
     const dash = dashboard ?? read();
+    // Follow the open run through a rename (its index key changes under the open view, §2.6).
+    ui = repinOpen(ui, dash.rows);
     let sel = ui.sel;
     if (selectedKey != null) {
       const idx = dash.rows.findIndex((r) => runKey(r) === selectedKey);
@@ -703,7 +803,8 @@ async function runTui({
       // A crashed run's log tail is shown inline; read it only for the open, crashed run (not every row).
       const logTail = view.state === 'crashed' ? readLogTail(view.record?.controlDir ? join(view.record.controlDir, 'run.log') : null, 5, fs ? { fs } : {}) : null;
       const columns = Math.max(20, stdout.columns || DEFAULT_COLS);
-      screen.paint(buildWatchFrame(view, { now: now(), spinnerChar, ui, columns, logTail }));
+      const progress = goOpen(dash.rows, ui) && view.record ? goProgress(view) : null;
+      screen.paint(buildWatchFrame(view, { now: now(), spinnerChar, ui, columns, logTail, progress }));
     } else {
       screen.paint(buildListFrame(dash, ui, { columns: Math.max(20, stdout.columns || DEFAULT_COLS) }));
     }
@@ -748,6 +849,15 @@ async function runTui({
           // back to life meanwhile, or startRun refused) is shown under the list rather than dropped.
           const r = await resume(view.record, { kill, exec, env });
           if (r && r.resumed === false) ui = { ...ui, note: `Could not resume ${displayName(view)}: ${r.reason}` };
+        } else if (intent.type === 'start') {
+          // The go (§2.8): the same call `pir start {slug}` makes. The build writes its own record under the
+          // same key, so the open view becomes the build's live view on the next read. A refusal keeps the
+          // question and says why under it.
+          const r = await start(view.record.slug, { cwd: view.record.repoPath, kill, exec, env });
+          if (r && r.started === false && !r.alreadyRunning) ui = { ...ui, note: `Could not start ${view.record.slug}: ${r.reason}${r.detail ? ` — ${r.detail}` : ''}` };
+          else ui = { ...ui, taskSel: 0 };
+        } else if (intent.type === 'decline') {
+          decline(view.record, { dir });
         }
       }
 
@@ -764,6 +874,7 @@ async function runTui({
           if (key === 'quit') return finish(); // Esc or Ctrl+C: leave pir
           if (key == null) return;
           const dash = read();
+          ui = repinOpen(ui, dash.rows);
 
           if (key === 'back') {
             // ← steps back a level: a worker → its run's live view → the list. In the list there is no
@@ -775,7 +886,8 @@ async function runTui({
 
           const wasWatching = ui.view === 'watch';
           if (wasWatching) syncTask(dash);
-          const { ui: nextUi, intent } = dashboardReducer(ui, { type: key }, dash.rows);
+          const event = key === 'enter' || key === 'n' ? { type: 'key', key } : { type: key };
+          const { ui: nextUi, intent } = dashboardReducer(ui, event, dash.rows);
           ui = nextUi;
           // Pin the selection to whatever run the cursor is now on, so the next refresh keeps it there.
           selectedKey = runKey(dash.rows[ui.sel]) ?? selectedKey;

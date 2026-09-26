@@ -239,8 +239,8 @@ test('decodeKey maps the arrow / Enter / ← / → / Esc / Ctrl-S / Ctrl-X bytes
   assert.equal(decodeKey(Buffer.from('\x1bOB')), 'down', 'down arrow (application-cursor SS3)');
   assert.equal(decodeKey(Buffer.from('\x1b[D')), 'back', 'left arrow steps back a level');
   assert.equal(decodeKey(Buffer.from('\x1bOD')), 'back', 'left arrow (application-cursor SS3)');
-  assert.equal(decodeKey(Buffer.from('\r')), 'open', 'Enter (CR)');
-  assert.equal(decodeKey(Buffer.from('\n')), 'open', 'Enter (LF)');
+  assert.equal(decodeKey(Buffer.from('\r')), 'enter', 'Enter (CR): opens, or starts on the go question');
+  assert.equal(decodeKey(Buffer.from('\n')), 'enter', 'Enter (LF)');
   assert.equal(decodeKey(Buffer.from('\x1b')), 'quit', 'a lone Esc quits pir (back moved to ←)');
   assert.equal(decodeKey(Buffer.from([0x13])), 'ctrlS', 'Ctrl+S');
   assert.equal(decodeKey(Buffer.from([0x18])), 'ctrlX', 'Ctrl+X');
@@ -598,7 +598,7 @@ test('FrameView clips a line to the width across spans, never wraps, and counts 
 
 test('decodeKey reads the Kitty-protocol forms pi-tui may negotiate, and ignores key-ups and terminal replies', () => {
   assert.equal(decodeKey('\x1b[27u'), 'quit', 'Kitty Esc');
-  assert.equal(decodeKey('\x1b[13u'), 'open', 'Kitty Enter');
+  assert.equal(decodeKey('\x1b[13u'), 'enter', 'Kitty Enter');
   assert.equal(decodeKey('\x1b[99;5u'), 'quit', 'Kitty Ctrl+C');
   assert.equal(decodeKey('\x1b[115;5u'), 'ctrlS', 'Kitty Ctrl+S');
   assert.equal(decodeKey('\x1b[120;5u'), 'ctrlX', 'Kitty Ctrl+X');
@@ -1130,4 +1130,155 @@ test('a resume pressed while a stop is still reaping waits for the stop to finis
   assert.deepEqual(events, ['stop start', 'stop end', 'resume']);
   await onData('\x1b');
   await done;
+});
+
+// --- a planning run's live view and its go (pir-plan-command T12, DESIGN §2.8, §2.11) -----------------
+
+const stepsRun = ({ state = 'finished', outcome = 'reviewed', step = 'done', go = null, steps } = {}) => ({
+  key: 'shop__csv-export',
+  slug: 'csv-export',
+  state,
+  repo: 'shop',
+  progress: { done: 0, total: 0 },
+  workers: 0,
+  record: { kind: 'plan', label: null, go, repo: 'shop', slug: 'csv-export', repoPath: '/x/shop', branch: 'pir/csv-export', pid: 42, startTime: 't0' },
+  snap: {
+    runState: {
+      kind: 'plan', label: null, slug: 'csv-export', step, outcome,
+      steps: steps ?? [
+        { id: 'plan', phase: 'done', since: 0, stoppedAt: null, asking: null, worker: { id: 'p1', live: false, logPath: '/c/plan-1.ndjson' } },
+        { id: 'review', phase: 'done', since: 0, stoppedAt: null, asking: null, worker: { id: 'r1', live: false, logPath: '/c/review-1.ndjson' } },
+        { id: 'build', phase: 'pending', since: null, stoppedAt: null, asking: null, worker: null },
+      ],
+    },
+  },
+});
+const PROGRESS_3 = '## Tasks\n\n| # | Task | Depends on | State | Notes |\n|---|---|---|---|---|\n| T01 | a | — | ⬜ | |\n| T02 | b | T01 | ⬜ | |\n| T03 | c | T01 | ⬜ | |\n';
+
+test('the steps frame: a row per step painted as task rows, the asking footer, and the steps key hint', () => {
+  const run = stepsRun({
+    state: 'running', outcome: null, step: 'plan',
+    steps: [
+      { id: 'plan', phase: 'asking', since: NOW - 60_000, stoppedAt: NOW - 20_000, asking: 'questions', worker: { id: 'p1', live: true } },
+      { id: 'review', phase: 'pending', worker: null },
+      { id: 'build', phase: 'pending', worker: null },
+    ],
+  });
+  const frame = buildWatchFrame(run, { now: NOW, ui: { ...initialUi(), view: 'watch', taskSel: 0 } });
+  const text = frameText(frame);
+  assert.match(text, /^csv-export · planning · pir\/csv-export/);
+  assert.match(text, /▎ ● plan +planner +asking you · a question +0:40/);
+  assert.match(text, /  ○ review +reviewer +starts when the plan is written/);
+  assert.match(text, /  ○ build +— +asks your go after review/);
+  assert.match(text, /● plan — asking you; open it \(→\) to answer/);
+  assert.match(text, /↑↓ pick a step · → open it · ← back · Ctrl\+S Ctrl\+S stop this run · esc quit/);
+  assert.ok([...text.split('\n').at(-1)].length <= 80, 'the hint fits 80 columns');
+  assert.equal(findSpan(frame, 'asking you · a question').style, 'asking');
+  assert.equal(findSpan(frame, 'starts when').style, 'idle');
+});
+
+test('the go question: the slug, the width line, the keys, and a hint that esc keeps it', () => {
+  const frame = buildWatchFrame(stepsRun(), { now: NOW, ui: { ...initialUi(), view: 'watch' }, progress: PROGRESS_3 });
+  const text = frameText(frame);
+  assert.match(text, /csv-export · reviewed · pir\/csv-export/);
+  assert.match(text, /● build +— +waiting for your go/);
+  assert.match(text, /csv-export is reviewed\. Start the parallel build now\?/);
+  assert.match(text, /3 tasks, longest chain 2, up to 2 can run at once\./);
+  assert.match(text, /It builds on pir\/csv-export\./);
+  assert.match(text, /↵ Start the build +n Not now/);
+  assert.match(text, /↵ start · n not now · ← back to the list · esc quit \(the question keeps\)/);
+  assert.equal(findSpan(frame, 'Start the parallel build').style, 'your-go');
+});
+
+test('declined: the stale note says how to build it later, and there is no question', () => {
+  const text = frameText(buildWatchFrame(stepsRun({ go: 'declined' }), { now: NOW }));
+  assert.match(text, /csv-export · finished/);
+  assert.match(text, /Build it with: pir start csv-export/);
+  assert.doesNotMatch(text, /Start the parallel build/);
+  assert.match(text, /○ build +— +not started/);
+});
+
+test('crashed mid-review: stale note naming Ctrl+R, and the log tail', () => {
+  const run = stepsRun({ state: 'crashed', outcome: null, step: 'review', steps: [
+    { id: 'plan', phase: 'done', worker: { id: 'p1', live: false } },
+    { id: 'review', phase: 'reviewing', since: 0, worker: { id: 'r1', live: true } },
+    { id: 'build', phase: 'pending', worker: null },
+  ] });
+  const text = frameText(buildWatchFrame(run, { now: NOW, logTail: ['boom'], columns: 120 }));
+  assert.match(text, /✗ review +reviewer +crashed/);
+  assert.match(text, /the planning program died; this frame is stale\. Ctrl\+R Ctrl\+R on the list resumes it/);
+  assert.match(text, /boom/);
+});
+
+// Drive runTui on the go question with a fake load that answers from a mutable list.
+function goHarness({ startAnswer = { started: true, pid: 9 } } = {}) {
+  let onData = null;
+  const stdin = { on: (_e, fn) => (onData = fn), off: () => {} };
+  const frames = [];
+  const calls = { start: [], decline: [], progress: 0 };
+  let views = [stepsRun()];
+  const done = openDashboard({
+    stdin,
+    stdout: { columns: 100 },
+    refreshMs: 60_000,
+    makeScreen: () => ({ paint: (f) => frames.push(f), close: () => {} }),
+    load: () => buildDashboard(views),
+    readProgress: () => {
+      calls.progress += 1;
+      return PROGRESS_3;
+    },
+    start: async (slug, opts) => {
+      calls.start.push({ slug, cwd: opts.cwd });
+      if (startAnswer.started) views = [{ key: 'shop__csv-export', slug: 'csv-export', state: 'running', repo: 'shop', progress: { done: 0, total: 1 }, workers: 0, record: { repo: 'shop', slug: 'csv-export', pid: 9, startTime: 't1', controlDir: '/c' }, snap: null }];
+      return startAnswer;
+    },
+    decline: (record) => {
+      calls.decline.push(record.slug);
+      views = [stepsRun({ go: 'declined' })];
+    },
+  });
+  return { send: (k) => onData(k), last: () => frameText(frames.at(-1)), calls, done };
+}
+
+test('↵ on the go question calls startRun in the repo and the view becomes the build of the same row', async () => {
+  const h = goHarness();
+  await h.send('\r'); // open the row
+  assert.match(h.last(), /Start the parallel build now\?/);
+  assert.match(h.last(), /3 tasks, longest chain 2/);
+  await h.send('\x1b[B'); // moving the step selection does not answer it
+  assert.deepEqual(h.calls.start, []);
+  await h.send('\r');
+  assert.deepEqual(h.calls.start, [{ slug: 'csv-export', cwd: '/x/shop' }]);
+  assert.match(h.last(), /waiting for the first snapshot/, "the build's live view, on the same key");
+  assert.match(h.last(), /pick a task/);
+  assert.equal(h.calls.progress, 1, 'the plan is read once for its width line, not on every paint');
+  await h.send('\x1b');
+  await h.done;
+});
+
+test('n on the go question records the decline; the question is gone and the note says pir start', async () => {
+  const h = goHarness();
+  await h.send('\r');
+  await h.send('n');
+  assert.deepEqual(h.calls.decline, ['csv-export']);
+  assert.deepEqual(h.calls.start, []);
+  assert.doesNotMatch(h.last(), /Start the parallel build/);
+  assert.match(h.last(), /Build it with: pir start csv-export/);
+  await h.send('\x1b');
+  await h.done;
+});
+
+test('a refused start shows its reason under the question and keeps it', async () => {
+  const h = goHarness({ startAnswer: { started: false, reason: 'no-test-block', detail: 'no test lines' } });
+  await h.send('\r');
+  await h.send('\r');
+  assert.match(h.last(), /Could not start csv-export: no-test-block — no test lines/);
+  assert.match(h.last(), /Start the parallel build now\?/);
+  await h.send('\x1b'); // esc quits; nothing was declined
+  await h.done;
+  assert.deepEqual(h.calls.decline, []);
+});
+
+test('decodeKey: n is the not-now key', () => {
+  assert.equal(decodeKey('n'), 'n');
 });
