@@ -25,7 +25,7 @@ done · ⛔ blocked, needs a human.
 |---|---|---|---|---|
 | T01 | plan-flow-core | — | ⬜ | |
 | T02 | run-record-type | — | ⬜ | |
-| T03 | plan-home | — | 🔍 | planHome in shell/plan-home.mjs; gates, runFeatureTests, prepare design and dry-run read through it. 10 tests. Deviations: branch read pins refs/heads/pir/{slug} so a tag never matches; existing DESIGN-only fixtures in coordinate.test gained a PROGRESS.md, since a plan is found by it; read() refuses file names with / or .. |
+| T03 | plan-home | — | ✅ | planHome in shell/plan-home.mjs; gates, runFeatureTests, prepare design and dry-run read through it. Review clean, no fix commit: npm test green, grep finds no bypassing read, deviations (refs/heads pin, fixture PROGRESS.md, file-name check) accepted. Probed git show under a textconv attribute (raw bytes) and the remaining feature-worktree reads (sanctioned by §2.9). |
 | T04 | plan-branch | — | ⬜ | |
 | T05 | fake-claude-sessions | — | ⬜ | |
 | T06 | plan-run-planner | T01, T02, T04, T05 | ⬜ | |
@@ -42,7 +42,7 @@ done · ⛔ blocked, needs a human.
 | T17 | harness-plan-fixture | T07, T08, T15 | ⬜ | |
 | T18 | live-plan-run | T14, T16, T17 | ⬜ | |
 
-**Review queue:** T03
+**Review queue:** empty
 
 ## Blocked on the user
 
