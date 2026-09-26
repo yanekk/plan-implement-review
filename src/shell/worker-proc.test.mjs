@@ -4,7 +4,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, writeFileSync, readFileSync, readdirSync, existsSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync, readFileSync, readdirSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -62,6 +62,42 @@ test('workerOptions is exactly DESIGN §2.1', () => {
     canUseTool: canUseToolFn,
     spawnClaudeCodeProcess: spawnProcess,
   });
+});
+
+test('workerOptions with resume: `resume` and no `sessionId`', () => {
+  const opts = workerOptions({ cwd: '/w', resume: SESSION, name: NAME, claudePath: '/bin/claude' });
+  assert.equal(opts.resume, SESSION);
+  assert.equal('sessionId' in opts, false);
+  // A stray sessionId beside resume is dropped: the SDK refuses both without forkSession.
+  const both = workerOptions({ cwd: '/w', sessionId: 'other', resume: SESSION, name: NAME, claudePath: '/bin/claude' });
+  assert.equal(both.resume, SESSION);
+  assert.equal('sessionId' in both, false);
+});
+
+test('startWorker with resume: --resume on the argv, the resumed id everywhere, the log appended to', async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'pir-worker-proc-resume-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const scriptPath = join(dir, 'script.json');
+  const received = join(dir, 'received.ndjson');
+  writeFileSync(scriptPath, JSON.stringify([{ await: 'user' }, ...turn('back')]));
+  const spawner = fakeClaudeSpawner({ script: scriptPath, received });
+  const logPath = join(dir, 'conversations', 'plan-1.ndjson');
+  const earlier = { t: 1, dir: 'note', kind: 'earlier' };
+  mkdirSync(dirname(logPath), { recursive: true });
+  writeFileSync(logPath, JSON.stringify(earlier) + '\n');
+  const worker = startWorker({ cwd: dir, resume: SESSION, name: NAME, logPath, claudePath: CLAUDE, spawnProcess: spawner });
+  t.after(() => worker.close({ graceMs: 100, killMs: 300 }));
+  assert.equal(worker.id, SESSION);
+  worker.send('you were resumed', { from: 'pir' });
+  await waitFor(hasResult(worker), 'the resumed turn');
+  const args = spawner.calls[0].args;
+  assert.ok(args.includes(`--resume=${SESSION}`), args.join(' '));
+  assert.ok(!args.some((a) => a.startsWith('--session-id')), 'no --session-id beside --resume');
+  const lines = readFileSync(logPath, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+  assert.deepEqual(lines[0], earlier, 'the earlier conversation is kept');
+  assert.equal(lines.length, 1 + worker.entries().length);
+  const sent = readFileSync(received, 'utf8').trim().split('\n').map((l) => JSON.parse(l)).filter((x) => x.line).map((x) => JSON.parse(x.line)).find((m) => m.type === 'user');
+  assert.equal(sent.session_id, SESSION, 'the message carries the resumed id');
 });
 
 test('the SDK spawns the argv T00 measured, and the process it runs is the fake', async (t) => {

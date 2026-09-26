@@ -9,36 +9,40 @@
 // order. It decides nothing itself: every branch below is either an action of decidePlanStep or the
 // plumbing that feeds it facts.
 //
-// T06 is the planner half. At the planner's accepted `planned` the program writes state.json at step
-// `rename` and stops with no final status; T07 adds the rename, the reviewer and `--resume`, and until
-// then a resume or a state past `plan` is refused with exit 2 (see `unsupported`).
+// The run: the planner (T06), then at its accepted `planned` the rename of branch, worktree, control
+// folder and index entry (§2.6), then a fresh reviewer, finished on its `reviewed` or `not-reviewed`
+// (§2.7). `--resume` (§2.14) reads state.json, finishes a half-done rename, and reopens the current
+// step's last session by its id, sending it resumeInstruction() rather than the opening again (T07).
 //
 // Under PIR_RUN=1 (set only by the launcher, as for the coordinator) it writes status.json on every
 // change of what the screen would show, and the final status to the snapshot and the index entry. Without
 // it neither is touched, so a bare run in a test leaves no dashboard trace.
 
 import { randomUUID } from 'node:crypto';
-import { existsSync, readdirSync, readFileSync } from 'node:fs';
-import { basename, join, resolve } from 'node:path';
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmdirSync } from 'node:fs';
+import { basename, dirname, join, resolve } from 'node:path';
 import {
   decidePlanStep,
   isValidSlug,
   parsePlanReport,
   planSessionName,
   plannerInstruction,
+  reviewerInstruction,
 } from '../core/planflow.mjs';
+import { parseProgress } from '../core/progress.mjs';
+import { parseTestBlock } from '../core/testblock.mjs';
 import { parseRecord } from '../core/runrecord.mjs';
 import { allowResult, workerActivity } from '../core/stream.mjs';
 import { writeJsonAtomic } from './atomic-write.mjs';
 import { drainDropFolder, waitForDrop } from './drop-folder.mjs';
 import { startTimeOf as startTimeOfReal } from './identity.mjs';
-import { indexDir as indexDirOf, recordPath, updateRecord } from './index-store.mjs';
+import { indexDir as indexDirOf, recordPath, removeRecord, renameRecord, updateRecord } from './index-store.mjs';
 import { createGrants, startPersonInbox } from './person-inbox.mjs';
 import { resolveClaudePath } from './platform.mjs';
 import { reapRecorded } from './reap.mjs';
 import { writeSnapshot as writeSnapshotReal } from './snapshot-store.mjs';
 import { startWorker as startWorkerReal, writeWorkersFile } from './worker-proc.mjs';
-import { git as gitReal, slugTaken as slugTakenReal } from './worktree.mjs';
+import { git as gitReal, renamePlanBranch as renamePlanBranchReal, slugTaken as slugTakenReal } from './worktree.mjs';
 
 // The wait between loop turns when nothing wakes it. A report, a person's input or any entry in the
 // session's log wakes it at once; this is only the backstop for a missed watch event.
@@ -48,8 +52,10 @@ const POLL_MS = 5000;
 // input closing and 3 s after its SIGTERM; the reap covers anything left.
 const STOP_CLOSE = { graceMs: 1000, killMs: 3000 };
 
-// The report kinds the planner step acts on (DESIGN §2.4). Only a `planned` claim needs the git checks.
-const PLAN_KINDS = ['planned', 'no-plan'];
+// The report kinds each step acts on (DESIGN §2.4). Only `planned` and `reviewed` claims need the git
+// checks; `no-plan` and `not-reviewed` end the run on the session's word.
+const STEP_KINDS = { plan: ['planned', 'no-plan'], review: ['reviewed', 'not-reviewed'] };
+const CHECKED_KINDS = new Set(['planned', 'reviewed']);
 
 // A pending request is the session asking the person (a permission prompt or a question set).
 const REQUEST_KINDS = new Set(['permission', 'questions']);
@@ -207,20 +213,91 @@ function createWaker() {
   };
 }
 
-// T07 adds the worker's `resume` option and the steps after the planner. Until then this program runs a
-// fresh planner step only; anything else is refused rather than half-done.
-function unsupported({ resume, state }) {
-  if (resume) return 'resume is not built yet (pir-plan-command T07)';
-  if (state.step !== 'plan') return `state.json is at step "${state.step}", which pir-plan-command T07 carries on from`;
+// findControlDir(controlDir) → the folder that holds the run's state.json. It is the one given, except
+// after a crash between the control-folder move (§2.6 step 3) and the index rename (step 4): the index
+// entry, and so `pir`'s resume, still names the folder under the run id, while state.json has moved
+// under the slug. The run id is the folder name under plans/, so the moved folder is found by it.
+export function findControlDir(controlDir, { readdir = readdirSync, exists = existsSync, readFile = readFileSync } = {}) {
+  if (exists(statePathOf(controlDir))) return controlDir;
+  const id = basename(resolve(controlDir, '..', '..'));
+  const plans = join(rootOf(controlDir), 'plans');
+  let names = [];
+  try {
+    names = readdir(plans);
+  } catch {
+    return controlDir;
+  }
+  for (const name of names) {
+    const dir = join(plans, name, '.parallel', 'plan');
+    try {
+      if (JSON.parse(readFile(statePathOf(dir), 'utf8')).id === id) return dir;
+    } catch {
+      // not a planning run's folder
+    }
+  }
+  return controlDir;
+}
+
+// findSessionLog(controlDir, step, sessionId) → the conversation log a session wrote, or null: the
+// highest-n plan-{n} / review-{n} log whose `init` carries that session id. A resumed session appends
+// to it, so the person reads one conversation (DESIGN §2.3, §2.14).
+export function findSessionLog(controlDir, step, sessionId, { readdir = readdirSync, readFile = readFileSync } = {}) {
+  const prefix = step === 'plan' ? 'plan' : 'review';
+  const dir = join(controlDir, 'conversations');
+  let names = [];
+  try {
+    names = readdir(dir);
+  } catch {
+    return null;
+  }
+  const re = new RegExp(`^${prefix}-(\\d+)\\.ndjson$`);
+  const logs = names
+    .map((name) => ({ name, n: Number(re.exec(name)?.[1] ?? NaN) }))
+    .filter((l) => Number.isFinite(l.n))
+    .sort((a, b) => b.n - a.n);
+  const needle = `"session_id":${JSON.stringify(sessionId)}`;
+  for (const l of logs) {
+    let text = '';
+    try {
+      text = readFile(join(dir, l.name), 'utf8');
+    } catch {
+      continue;
+    }
+    if (text.includes(needle)) return { logPath: join(dir, l.name), n: l.n };
+  }
   return null;
 }
 
-// runPlanning({ controlDir, resume, deps }) → exit code: 0 at a clean end (finished, stopped, or the
-// planner step handed on to the rename), 1 when the session left no way forward (crashed), 2 when the
-// run cannot start. deps, all optional:
+// reviewerChecks({ slug, worktree, git }) → { ok, reason } — the §2.7 checks of a `reviewed` claim, on
+// the committed tree of the plan branch: the review gate reads reviewed as the build will read it
+// (readReviewGate), the setup/test block parses as the build's pre-flight will parse it, and the
+// worktree is clean. The reason is sent to the reviewer as is.
+export function reviewerChecks({ slug, worktree, git = gitReal }) {
+  const again = 'commit, and drop the `reviewed` report again';
+  const show = (file) => git(worktree, ['show', `HEAD:plans/${slug}/${file}`]);
+  const progress = show('PROGRESS.md');
+  if (!progress.ok) return { ok: false, reason: `plans/${slug}/PROGRESS.md is not committed on this branch. Restore it, ${again}.` };
+  if (!parseProgress(progress.stdout).planReviewed.reviewed) {
+    return { ok: false, reason: `The committed plans/${slug}/PROGRESS.md does not read reviewed: its **Plan reviewed:** line is missing, empty or "not yet". Mark it reviewed, ${again}.` };
+  }
+  const design = show('DESIGN.md');
+  const block = design.ok ? parseTestBlock(design.stdout) : { ok: false, reason: 'the file is not committed' };
+  if (!block.ok) {
+    return { ok: false, reason: `The setup/test block at the top of the committed plans/${slug}/DESIGN.md does not parse (${block.reason ?? 'invalid'}). Fix it, ${again}.` };
+  }
+  const status = git(worktree, ['status', '--porcelain']);
+  if (!status.ok || status.stdout.trim() !== '') {
+    return { ok: false, reason: `The worktree has uncommitted changes (git status --porcelain is not empty). Commit everything you wrote, then drop the \`reviewed\` report again.` };
+  }
+  return { ok: true, reason: null };
+}
+
+// runPlanning({ controlDir, resume, deps }) → exit code: 0 at a clean end (finished, stopped, or a
+// `--resume` of a run with nothing left to do), 1 when the session left no way forward or a step failed
+// (crashed, resumable), 2 when the run cannot start. deps, all optional:
 //   env, now, log, signal (an AbortSignal: a stop), claudePath, startWorker, startTimeOf, reap, git,
-//   slugTaken, writeSnapshot, updateRecord, watch, uuid, pollMs
-export async function runPlanning({ controlDir, resume = false, deps = {} }) {
+//   slugTaken, renamePlanBranch, writeSnapshot, updateRecord, watch, uuid, pollMs
+export async function runPlanning({ controlDir: givenControlDir, resume = false, deps = {} }) {
   const {
     env = process.env,
     now = Date.now,
@@ -231,6 +308,7 @@ export async function runPlanning({ controlDir, resume = false, deps = {} }) {
     reap = reapRecorded,
     git = gitReal,
     slugTaken = slugTakenReal,
+    renamePlanBranch = renamePlanBranchReal,
     writeSnapshot = writeSnapshotReal,
     updateRecord: updateRecordFn = updateRecord,
     watch,
@@ -238,7 +316,11 @@ export async function runPlanning({ controlDir, resume = false, deps = {} }) {
     pollMs = POLL_MS,
   } = deps;
 
-  const statePath = statePathOf(controlDir);
+  // Every path below is re-pointed when the control folder moves at the rename (§2.6 step 3).
+  let controlDir = resume ? findControlDir(givenControlDir) : givenControlDir;
+  if (controlDir !== givenControlDir) log(`state.json found in ${controlDir} (the rename had moved it)`);
+  let statePath = statePathOf(controlDir);
+  let reportsDir = reportsDirOf(controlDir);
   let state;
   let brief;
   try {
@@ -248,20 +330,35 @@ export async function runPlanning({ controlDir, resume = false, deps = {} }) {
     log(`cannot start: ${err?.message ?? err}`);
     return 2;
   }
-  const refused = unsupported({ resume, state });
-  if (refused) {
-    log(`cannot start: ${refused}`);
-    return 2;
-  }
 
   const root = rootOf(controlDir);
   const repo = basename(root);
-  const worktree = join(root, '.claude', 'worktrees', `pir-${state.id}`);
-  const reportsDir = reportsDirOf(controlDir);
+  const worktreesBase = join(root, '.claude', 'worktrees');
   const indexDir = indexDirOf({ env });
   const selfReport = !!env.PIR_RUN;
   const remote = env.PARALLEL_REMOTE !== '0';
   const indexKey = () => state.slug ?? state.id;
+  const controlOf = (name) => join(root, 'plans', name, '.parallel', 'plan');
+  const hasRecord = (key) => existsSync(recordPath(repo, key, { dir: indexDir }));
+  const branchExists = (b) => git(root, ['rev-parse', '--verify', '--quiet', `refs/heads/${b}`]).ok;
+
+  // renamedOnDisk() → which §2.6 sub-steps are done, read from git and the disk rather than state.json,
+  // since a crash can fall between a sub-step and the state write that records it. An index with no
+  // entry under either name has nothing to rename; one with both (renameRecord wrote the new entry and
+  // died before removing the old) is not done, and the executor finishes it.
+  const renamedOnDisk = () => {
+    const slug = state.slug;
+    if (!slug) return { branch: false, worktree: false, control: false, index: false };
+    return {
+      branch: !branchExists(`pir/${state.id}`) && branchExists(`pir/${slug}`),
+      worktree: existsSync(join(worktreesBase, `pir-${slug}`, '.git')) && !existsSync(join(worktreesBase, `pir-${state.id}`)),
+      control: existsSync(statePathOf(controlOf(slug))),
+      index: !hasRecord(state.id),
+    };
+  };
+  // The session's working directory: the plan branch's worktree, under whichever name it has now.
+  const worktreeNow = () =>
+    state.slug && existsSync(join(worktreesBase, `pir-${state.slug}`)) ? join(worktreesBase, `pir-${state.slug}`) : join(worktreesBase, `pir-${state.id}`);
 
   let claudePath = deps.claudePath;
   try {
@@ -280,13 +377,22 @@ export async function runPlanning({ controlDir, resume = false, deps = {} }) {
   }
 
   // ---- The sessions this program holds, and the platform the person inbox forwards through. ----
-  const sessions = []; // { id, step, n, logPath, worker, live }
+  // A session from an earlier program (a resume) is listed closed, with its log, so the screen can still
+  // open its conversation; a resumed one is taken up again in the same record.
+  const sessions = []; // { id, step, n, logPath, worker, live, startTime }
+  for (const step of ['plan', 'review']) {
+    for (const id of state.sessions?.[step] ?? []) {
+      const found = findSessionLog(controlDir, step, id);
+      sessions.push({ id, step, n: found?.n ?? null, logPath: found?.logPath ?? null, worker: null, live: false, startTime: null });
+    }
+  }
   let current = null;
   const since = {};
   const stoppedAt = {};
   const waker = createWaker();
   const grants = createGrants();
   const byId = (id) => sessions.find((s) => s.id === id) ?? null;
+  const workerOf = (id) => byId(id)?.worker ?? null;
 
   const writeWorkers = () => {
     try {
@@ -300,34 +406,42 @@ export async function runPlanning({ controlDir, resume = false, deps = {} }) {
   };
 
   const platform = {
-    send: (id, text, opts) => ({ ok: !!byId(id)?.worker.send(text, opts) }),
+    send: (id, text, opts) => ({ ok: !!workerOf(id)?.send(text, opts) }),
     interrupt: (id, opts) => {
-      const s = byId(id);
-      if (!s) return { ok: false };
-      s.worker.interrupt(opts).catch(() => {});
-      return { ok: s.live };
+      const w = workerOf(id);
+      if (!w) return { ok: false };
+      w.interrupt(opts).catch(() => {});
+      return { ok: byId(id).live };
     },
-    answer: (id, requestId, result, opts) => ({ ok: !!byId(id)?.worker.answer(requestId, result, opts) }),
+    answer: (id, requestId, result, opts) => ({ ok: !!workerOf(id)?.answer(requestId, result, opts) }),
     pending: (id) => (byId(id)?.live ? byId(id).worker.pending() : []),
     note: (id, kind, fields) => {
-      const s = byId(id);
-      if (!s) return { ok: false };
-      s.worker.note(kind, fields);
+      const w = workerOf(id);
+      if (!w) return { ok: false };
+      w.note(kind, fields);
       return { ok: true };
     },
     logPathOf: (id) => byId(id)?.logPath ?? null,
   };
 
-  const spawn = (step) => {
-    if (step !== 'plan') throw new Error(`plan-run: a ${ROLE[step] ?? step} session needs pir-plan-command T07`);
-    const id = uuid();
-    const logPath = nextPlanLogPath(controlDir, step);
-    const n = Number(/-(\d+)\.ndjson$/.exec(logPath)[1]);
+  // spawn(step, resumeSessionId?) → a fresh session with its opening instruction, or the step's last
+  // session reopened (§2.14): same id, same worktree, the same log after a `resumed` note, and no
+  // opening instruction; decidePlanStep's next action sends it resumeInstruction().
+  const spawn = (step, resumeSessionId = null) => {
+    const prior = resumeSessionId ? byId(resumeSessionId) : null;
+    const id = resumeSessionId ?? uuid();
+    let logPath = prior?.logPath ?? null;
+    if (!logPath) logPath = nextPlanLogPath(controlDir, step);
+    const n = prior?.n ?? Number(/-(\d+)\.ndjson$/.exec(logPath)[1]);
     const name = planSessionName({ repo, plan: indexKey(), step });
-    const worker = startWorker({ cwd: worktree, sessionId: id, name, logPath, claudePath });
-    const rec = { id, step, n, logPath, worker, live: true, startTime: null };
+    const cwd = worktreeNow();
+    const worker = resumeSessionId
+      ? startWorker({ cwd, resume: id, name, logPath, claudePath })
+      : startWorker({ cwd, sessionId: id, name, logPath, claudePath });
+    const rec = prior ?? { id, step, n, logPath, worker: null, live: false, startTime: null };
+    Object.assign(rec, { n, logPath, worker, live: true });
     rec.startTime = worker.pid ? startTimeOf(worker.pid) : null;
-    sessions.push(rec);
+    if (!prior) sessions.push(rec);
     current = rec;
     since[step] = now();
     worker.onEvent((entry) => {
@@ -346,15 +460,16 @@ export async function runPlanning({ controlDir, resume = false, deps = {} }) {
       waker.wake();
     });
     worker.onExit(() => {
-      rec.live = false;
+      if (rec.worker === worker) rec.live = false;
       writeWorkers();
       waker.wake();
     });
     writeWorkers();
-    worker.send(plannerInstruction({ reportsDir, brief }), { from: 'pir' });
-    // On for the session's whole life (DESIGN §2.3); close() switches it off first.
+    if (resumeSessionId) worker.note('resumed', { sessionId: id });
+    else worker.send(step === 'plan' ? plannerInstruction({ reportsDir, brief }) : reviewerInstruction({ reportsDir, slug: state.slug }), { from: 'pir' });
+    // On for the session's whole life, a resumed one included (DESIGN §2.3); close() switches it off first.
     if (remote) worker.remoteControl(true).catch(() => {});
-    log(`${ROLE[step]} started: session ${id}, log ${logPath}`);
+    log(`${ROLE[step]} ${resumeSessionId ? 'resumed' : 'started'}: session ${id}, log ${logPath}`);
     return rec;
   };
 
@@ -379,7 +494,11 @@ export async function runPlanning({ controlDir, resume = false, deps = {} }) {
     try {
       return parseRecord(readFileSync(recordPath(repo, indexKey(), { dir: indexDir }), 'utf8'));
     } catch {
-      return null;
+      try {
+        return parseRecord(readFileSync(recordPath(repo, state.id, { dir: indexDir }), 'utf8'));
+      } catch {
+        return null;
+      }
     }
   };
   const indexed = selfReport ? record() : null;
@@ -387,28 +506,32 @@ export async function runPlanning({ controlDir, resume = false, deps = {} }) {
   const proc = {
     pid: process.pid,
     startTime: indexed?.startTime ?? env.PIR_START_TIME ?? null,
-    slug: indexKey(),
     repo,
-    branch: `pir/${state.id}`,
     startedAt: new Date(now()).toISOString(),
   };
   const runState = () => {
-    const views = sessions.map((s) => ({ id: s.id, step: s.step, n: s.n, logPath: s.logPath, live: s.live, activity: workerActivity(s.worker.entries()) }));
+    const views = sessions.map((s) => ({
+      id: s.id, step: s.step, n: s.n, logPath: s.logPath, live: s.live,
+      activity: s.worker ? workerActivity(s.worker.entries()) : { state: 'exited' },
+    }));
     for (const v of views) {
       if (v.live && REQUEST_KINDS.has(v.activity.state)) stoppedAt[v.step] ??= now();
       else if (v.live) delete stoppedAt[v.step];
     }
-    return planRunState(state, { label, sessions: views, since, stoppedAt });
+    // The label names the run only until it has a slug (§2.6 step 4 clears it in the index).
+    return planRunState(state, { label: state.slug && state.renamed?.index ? null : label, sessions: views, since, stoppedAt });
   };
+  // The branch the run is on: the renamed one once git says so.
+  const branchNow = () => (state.slug && branchExists(`pir/${state.slug}`) ? `pir/${state.slug}` : `pir/${state.id}`);
   let lastPainted = null;
   const paint = (finalState = null) => {
     if (!selfReport) return;
     const rs = runState();
-    const text = JSON.stringify([rs, finalState]);
+    const text = JSON.stringify([rs, finalState, controlDir]);
     if (text === lastPainted && finalState === null) return;
     lastPainted = text;
     try {
-      writeSnapshot(controlDir, { proc: { ...proc, slug: indexKey() }, finalState, runState: rs });
+      writeSnapshot(controlDir, { proc: { ...proc, slug: indexKey(), branch: branchNow() }, finalState, runState: rs });
     } catch (err) {
       log(`snapshot write failed: ${err?.message ?? err}`);
     }
@@ -417,7 +540,9 @@ export async function runPlanning({ controlDir, resume = false, deps = {} }) {
     paint(finalState);
     if (!selfReport) return;
     try {
-      updateRecordFn({ repo, slug: indexKey() }, { finalState, updatedAt: new Date(now()).toISOString() }, { dir: indexDir });
+      // Under the slug once the entry is renamed; a stop in the middle of the rename still finds it.
+      const key = state.slug && hasRecord(state.slug) ? state.slug : state.id;
+      updateRecordFn({ repo, slug: key }, { finalState, updatedAt: new Date(now()).toISOString() }, { dir: indexDir });
     } catch (err) {
       log(`index final-status update failed: ${err?.message ?? err}`);
     }
@@ -428,8 +553,58 @@ export async function runPlanning({ controlDir, resume = false, deps = {} }) {
     writeJsonAtomic(statePath, state);
   };
 
+  let personInbox = startPersonInbox({ controlDir, platform, grants, watch, log });
+
+  // ---- The rename (§2.6), one sub-step at a time; each is a no-op when already done. ----
+  const renameStep = (substep) => {
+    const slug = state.slug;
+    if (substep === 'branch' || substep === 'worktree') {
+      // renamePlanBranch does both, skipping whichever is already done, so a crash between them is
+      // finished by the same call.
+      const done = renamedOnDisk();
+      if (done.branch && done.worktree) return;
+      renamePlanBranch(state.id, slug, { root });
+      log(`renamed branch and worktree to pir/${slug}`);
+    } else if (substep === 'control') {
+      const from = controlOf(state.id);
+      const to = controlOf(slug);
+      // The inbox watch is on the old folder; it is restarted on the new one below.
+      personInbox.stop();
+      if (!existsSync(statePathOf(to))) {
+        if (existsSync(to)) throw new Error(`plan-run: ${to} already exists and is not this run's control folder`);
+        mkdirSync(dirname(to), { recursive: true });
+        renameSync(from, to);
+      }
+      // Never a recursive delete: only the emptied folders go. run.log keeps being written: its open
+      // descriptor follows the moved file.
+      for (const dir of [join(root, 'plans', state.id, '.parallel'), join(root, 'plans', state.id)]) {
+        try {
+          rmdirSync(dir);
+        } catch (err) {
+          if (err?.code !== 'ENOENT') log(`left ${dir} in place: ${err?.code ?? err?.message ?? err}`);
+        }
+      }
+      const oldPrefix = from + '/';
+      for (const s of sessions) if (s.logPath?.startsWith(oldPrefix)) s.logPath = join(to, s.logPath.slice(oldPrefix.length));
+      controlDir = to;
+      statePath = statePathOf(to);
+      reportsDir = reportsDirOf(to);
+      personInbox = startPersonInbox({ controlDir, platform, grants, watch, log });
+      writeWorkers();
+      log(`moved the control folder to ${to}`);
+    } else if (substep === 'index') {
+      if (hasRecord(slug)) {
+        // A crash inside renameRecord left both entries: the new one is whole, the old one goes
+        // (FINDINGS 2026-09-26: renameRecord refuses EEXIST whenever its target exists).
+        if (hasRecord(state.id)) removeRecord({ repo, slug: state.id }, { dir: indexDir });
+      } else if (hasRecord(state.id)) {
+        renameRecord({ repo, from: state.id, to: slug }, { label: null, controlDir, branch: `pir/${slug}` }, { dir: indexDir });
+        log(`renamed the index entry to ${repo}__${slug}`);
+      }
+    }
+  };
+
   // ---- The loop. ----
-  const personInbox = startPersonInbox({ controlDir, platform, grants, watch, log });
   let first = true;
   try {
     for (;;) {
@@ -451,15 +626,22 @@ export async function runPlanning({ controlDir, resume = false, deps = {} }) {
       for (const r of reports) log(`report: ${r.kind} plan=${r.plan ?? '-'}`);
       const activity = activityOf(current);
 
-      // The checks run for the claim decidePlanStep will act on: the last planner report this call, or,
-      // when the session has gone quiet on a claim accepted earlier, that claim again, so a planner that
-      // edited after its report is not closed and renamed over a dirty or changed tree (FINDINGS T01).
-      let facts = { resume: first && resume, reports, activity, checks: null, sessionId: current?.id ?? null };
-      const claim = reports.filter((r) => PLAN_KINDS.includes(r.kind)).at(-1);
+      // The checks run for the claim decidePlanStep will act on: the last report of the current step this
+      // call, or, when the session has gone quiet on a claim accepted earlier, that claim again, so a
+      // session that edited after its report is not closed over a dirty or changed tree (FINDINGS T01).
+      const kinds = STEP_KINDS[state.step] ?? [];
+      const isResume = first && resume;
+      let facts = { resume: isResume, reports, activity, checks: null, sessionId: current?.id ?? null };
+      if (isResume || state.step === 'rename') facts.renamed = renamedOnDisk();
+      const claim = reports.filter((r) => kinds.includes(r.kind) && (state.step !== 'review' || r.plan === state.slug)).at(-1);
       const recheck = !claim && state.accepted && (activity === 'idle' || activity === 'exited');
-      const checked = claim?.kind === 'planned' ? claim : recheck ? state.accepted : null;
+      const checked = claim && CHECKED_KINDS.has(claim.kind) ? claim : recheck ? state.accepted : null;
       if (checked) {
-        const checks = plannerChecks({ slug: checked.plan, worktree, root, repo, indexDir, git, slugTaken });
+        const worktree = worktreeNow();
+        const checks =
+          checked.kind === 'planned'
+            ? plannerChecks({ slug: checked.plan, worktree, root, repo, indexDir, git, slugTaken })
+            : reviewerChecks({ slug: checked.plan, worktree, git });
         facts = { ...facts, checks, reports: claim ? reports : [...reports, checked] };
         log(`checks for ${checked.kind} ${checked.plan}: ${checks.ok ? 'ok' : checks.reason}`);
       }
@@ -468,33 +650,48 @@ export async function runPlanning({ controlDir, resume = false, deps = {} }) {
       const prev = state;
       const { state: next, actions } = decidePlanStep(state, facts);
 
-      // The planner's claim is accepted and it is quiet: decidePlanStep closes it and goes on through the
-      // rename to the reviewer in one call. state.json is written at step `rename` first, so a crash
-      // before the rename is done resumes into the rename, never into the closed planner (FINDINGS T01).
-      // T07 carries on from here; this program closes the planner and stops.
-      if (actions.some((a) => a.type === 'rename')) {
-        saveState({ ...next, step: 'rename', renamed: { ...prev.renamed }, live: false, accepted: null, rejected: null });
-        for (const a of actions) {
-          if (a.type === 'rename') break;
-          if (a.type === 'close') await closeCurrent();
-        }
-        paint();
-        log(`planner done: plan ${state.slug}; state.json at step rename`);
+      // A run with nothing left to do: a `--resume` of a finished run that is not resumable (§2.14).
+      if (next.step === 'done' && actions.length === 0) {
+        // `pir`'s resume cleared the final status with the new pid; put it back so the row is not crashed.
+        if (selfReport && indexed && indexed.finalState == null) recordFinal('finished');
+        log(`nothing to resume: the run is finished (${next.outcome})`);
         return 0;
       }
 
-      if (JSON.stringify(next) !== JSON.stringify(prev)) saveState(next);
+      // The rename runs between the sessions. state.json is written at step `rename` before the planner
+      // is closed, so a crash from here on resumes into the rename, never into the closed planner, and
+      // each sub-step is recorded as it lands; the step becomes `review` only as the reviewer is spawned.
+      // A resume already at `review` (its state was written just before a sub-step reached the disk) stays
+      // at `review`, so the reviewer's session is resumed rather than started afresh.
+      const renaming = actions.some((a) => a.type === 'rename');
+      if (renaming) {
+        const onDisk = facts.renamed ?? renamedOnDisk();
+        saveState({
+          ...next,
+          step: prev.step === 'review' ? 'review' : 'rename',
+          renamed: { ...onDisk },
+          live: false,
+          accepted: null,
+          rejected: null,
+        });
+      } else if (JSON.stringify(next) !== JSON.stringify(prev)) {
+        saveState(next);
+      }
 
       let spawned = false;
       for (const a of actions) {
         if (a.type === 'spawn') {
-          if (a.resumeSessionId) throw new Error('plan-run: a resumed session needs pir-plan-command T07');
-          spawn(a.step);
+          if (renaming) saveState(next);
+          spawn(a.step, a.resumeSessionId ?? null);
           spawned = true;
         } else if (a.type === 'send') {
           if (!current?.worker.send(a.text, { from: 'pir' })) log('a message to the session was not delivered');
         } else if (a.type === 'close') {
           await closeCurrent();
+        } else if (a.type === 'rename') {
+          renameStep(a.substep);
+          saveState({ ...state, renamed: { ...state.renamed, [a.substep]: true } });
+          paint();
         } else if (a.type === 'finish') {
           recordFinal('finished');
           log(`finished: ${a.outcome}`);
