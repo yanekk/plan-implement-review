@@ -269,6 +269,9 @@ export function decidePlanStep(state, facts = {}) {
       s.accepted = { kind: report.kind, plan: report.plan };
       s.rejected = null;
     } else {
+      // A failed report supersedes an earlier accepted one: the session has changed the plan since
+      // (a new name, a new commit), and closing on idle would rename to a claim it has withdrawn.
+      s.accepted = null;
       // The same report failing the same way is sent once: a re-delivered report must not repeat the
       // message, and a session that tried again and failed differently hears the new reason.
       const key = `${report.kind} ${report.plan} ${facts.checks.reason ?? ''}`;

@@ -218,6 +218,16 @@ test('a failed report followed by a passing one is accepted', () => {
   assert.equal(passed.state.step, 'review');
 });
 
+test('a failed re-report supersedes an earlier accepted one: no close on idle', () => {
+  const accepted = decidePlanStep(planning(), { reports: [{ kind: 'planned', plan: 'screen-time' }], activity: 'busy', checks: OK });
+  const failed = decidePlanStep(accepted.state, { reports: [{ kind: 'planned', plan: 'screen-budget' }], activity: 'busy', checks: { ok: false, reason: 'the worktree is dirty' } });
+  assert.deepEqual(types(failed.actions), ['send']);
+  assert.equal(failed.state.accepted, null);
+  const idle = decidePlanStep(failed.state, { activity: 'idle', renamed: NONE_DONE });
+  assert.deepEqual(idle.actions, []);
+  assert.equal(idle.state.step, 'plan');
+});
+
 test('a planned report without checks is a caller bug', () => {
   assert.throws(() => decidePlanStep(planning(), { reports: [{ kind: 'planned', plan: 'x' }], activity: 'idle', checks: null }), /checks/);
 });
