@@ -7,9 +7,11 @@
 //
 // Everything the tests must not really do is injected: `spawn` (no real coordinator, no real
 // caffeinate), `exec`/`kill` (no real `ps`/`kill` — these ride through to identity.mjs), `fs` (no real
-// run.log), `now` (a fixed clock), and `env` (a scratch `~/.pir`). Only `readReviewGate` reads the real
-// filesystem — the same gate the coordinator enforces (DESIGN §2.1), so `pir` refuses an unreviewed
-// plan for exactly the reason and with exactly the verdict the coordinator would.
+// run.log), `now` (a fixed clock), and `env` (a scratch `~/.pir`). Only the two plan gates read for real
+// — the working tree and, for a plan that lives only on branch pir/{slug}, git (planHome,
+// pir-plan-command §2.9) — the same gates the coordinator enforces (DESIGN §2.1), so `pir` refuses an
+// unreviewed plan for exactly the reason and with exactly the verdict the coordinator would. The `exec`
+// injected here is identity.mjs's `ps` probe, not git, so it is deliberately not passed to the gates.
 
 import { spawn as realSpawn } from 'node:child_process';
 import { mkdirSync, openSync } from 'node:fs';
@@ -50,7 +52,8 @@ export function startRun(
   // surfaced after detaching would show the user a crashed run instead of a clean error.
 
   // 1 & 2: the plan folder and its review gate, via the coordinator's own gate. `missing` means there
-  // is no plans/{slug}/PROGRESS.md at all — the plain "no such plan" case; a present-but-unreviewed
+  // is no plans/{slug}/PROGRESS.md at all, neither in this checkout nor committed on pir/{slug}
+  // (planHome) — the plain "no such plan" case; a present-but-unreviewed
   // plan is refused with the same 'not-reviewed' the coordinator uses.
   const gate = readReviewGate(slug, { root: repoRoot });
   if (gate.missing) return { started: false, reason: 'no-plan' };

@@ -135,14 +135,16 @@ test('readReviewGate refuses a plan whose gate says "not yet", and passes a revi
 test('readTestBlockGate: a valid block passes; a missing block, a malformed one and no DESIGN.md refuse', () => {
   const dir = mkdtempSync(join(tmpdir(), 'pir-block-'));
   try {
+    // A plan is found by its PROGRESS.md (planHome, pir-plan-command §2.9), so each fixture carries one.
     const write = (slug, text) => {
       mkdirSync(join(dir, 'plans', slug), { recursive: true });
-      writeFileSync(join(dir, 'plans', slug, 'DESIGN.md'), text);
+      writeFileSync(join(dir, 'plans', slug, 'PROGRESS.md'), '# Progress\n');
+      if (text != null) writeFileSync(join(dir, 'plans', slug, 'DESIGN.md'), text);
     };
     write('valid', '---\nsetup:\n  - npm ci\ntest:\n  - npm test\n---\n# Design\n');
     write('noblock', '# Design\n\nThe test command is `npm test`.\n');
     write('malformed', '---\nsetup: none\ntest: none\n---\n');
-    mkdirSync(join(dir, 'plans', 'nodesign'), { recursive: true });
+    write('nodesign', null);
 
     assert.deepEqual(readTestBlockGate('valid', { root: dir }), { ok: true, setup: ['npm ci'], test: ['npm test'] });
     assert.deepEqual(readTestBlockGate('noblock', { root: dir }), { ok: false, reason: 'no front-matter block' });
@@ -558,6 +560,8 @@ function gate(t, designBody) {
     rmSync(dir, { recursive: true, force: true });
   });
   mkdirSync(join(root, 'plans', 'demo'), { recursive: true });
+  // planHome finds a plan by its PROGRESS.md (pir-plan-command §2.9); DESIGN.md is what is under test.
+  writeFileSync(join(root, 'plans', 'demo', 'PROGRESS.md'), '# Progress\n');
   if (designBody != null) writeFileSync(join(root, 'plans', 'demo', 'DESIGN.md'), designBody);
   const logPath = join(root, 'tests.log');
   return { root, dir, logPath, run: () => runFeatureTests(dir, { slug: 'demo', root, logPath }) };
