@@ -344,6 +344,9 @@ export function renamePlanBranch(runId, slug, { root = process.cwd() } = {}) {
     throw new Error(`renamePlanBranch: ${from} is not checked out at ${oldPath}`);
   }
   const worktreeDone = wt === newPath;
+  // git still lists a worktree whose folder was deleted by hand, and `worktree move` then fails —
+  // after the branch rename, leaving a half-done rename. Refuse up front instead.
+  if (!worktreeDone && !existsSync(oldPath)) throw new Error(`renamePlanBranch: worktree ${oldPath} is missing (git worktree prune)`);
   if (!worktreeDone && existsSync(newPath)) throw new Error(`renamePlanBranch: ${newPath} already exists`);
 
   if (!branchDone) {

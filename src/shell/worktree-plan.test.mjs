@@ -166,3 +166,14 @@ test('renamePlanBranch: an existing target path is refused and nothing moves', (
   assert.deepEqual({ refs: branches(s.repo), wts: worktreeList(s.repo) }, before);
   assert.deepEqual(readdirSync(target), ['stray.txt']);
 });
+
+test('renamePlanBranch: a worktree folder deleted by hand is refused before the branch is renamed', (t) => {
+  const s = scratchRepo();
+  t.after(s.cleanup);
+  const opened = openPlanBranch('plan-3f9a', { root: s.repo });
+  rmSync(opened.path, { recursive: true, force: true });
+  const before = { refs: branches(s.repo), wts: worktreeList(s.repo) };
+  assert.throws(() => renamePlanBranch('plan-3f9a', 'screen-time', { root: s.repo }), /missing/);
+  assert.deepEqual({ refs: branches(s.repo), wts: worktreeList(s.repo) }, before);
+  assert.equal(branchExists(s.repo, 'pir/plan-3f9a'), true);
+});
