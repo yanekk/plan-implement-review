@@ -809,7 +809,6 @@ async function runTui({
     if (!conv) {
       const open = findOpen(dash.rows, ui);
       const opened = { ...ui };
-      if (ui.openWorker?.taskId === 'plan') seenReviewId = stepWorker(openTasks(dash.rows, ui).find((st) => st.id === 'review'))?.workerId ?? null;
       const headLine = ui.openWorker?.headLine ?? null;
       conv = withHeadLine(headLine, (tui) => createConversationView({
         run: { slug: open?.slug ?? ui.openSlug, controlDir: open?.record?.controlDir ?? open?.controlDir ?? null },
@@ -895,6 +894,11 @@ async function runTui({
     };
     const landed = landStep(ui, dash.rows);
     if (landed !== ui) moved(landed);
+    // The planner's conversation about to be built: note the reviewer already there, before followStep reads
+    // it, so opening a finished run's planner does not bounce the person into its old reviewer.
+    if (!conv && ui.view === 'worker' && ui.openWorker?.taskId === 'plan') {
+      seenReviewId = stepWorker(openTasks(dash.rows, ui).find((st) => st.id === 'review'))?.workerId ?? null;
+    }
     const followed = followStep(ui, dash.rows, seenReviewId);
     if (followed) moved(followed);
 

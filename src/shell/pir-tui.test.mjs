@@ -1356,3 +1356,18 @@ test('openPlanner: starting the planner…, then ← on it is the steps view', a
   await onData('\x1b');
   await done;
 });
+
+// T13 review: the follow's "was the reviewer already there" id was read only when the conversation was built,
+// after followStep had already run for that repaint, so opening a finished run's planner bounced straight to its
+// old reviewer.
+test("runTui: opening a finished run's planner from its steps view stays in the planner's conversation", async () => {
+  const t = driveTui(() => [stepsRun({ step: 'done', outcome: 'not-reviewed' })]);
+  await t.key('\r'); // open the row: the steps view
+  assert.match(t.barRow(), /plan/);
+  await t.key('\x1b[C'); // → the planner's conversation
+  assert.match(t.text(), /^plan +worker p1/m, "the planner's conversation");
+  assert.doesNotMatch(t.text(), /the planner finished; the reviewer has started/);
+  await t.key('\x1b[D');
+  await t.key('\x1b');
+  await t.done;
+});
