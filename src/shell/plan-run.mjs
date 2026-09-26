@@ -281,9 +281,9 @@ export function reviewerChecks({ slug, worktree, git = gitReal }) {
     return { ok: false, reason: `The committed plans/${slug}/PROGRESS.md does not read reviewed: its **Plan reviewed:** line is missing, empty or "not yet". Mark it reviewed, ${again}.` };
   }
   const design = show('DESIGN.md');
-  const block = design.ok ? parseTestBlock(design.stdout) : { ok: false, error: 'the file is not committed' };
+  const block = design.ok ? parseTestBlock(design.stdout) : { ok: false, reason: 'the file is not committed' };
   if (!block.ok) {
-    return { ok: false, reason: `The setup/test block at the top of the committed plans/${slug}/DESIGN.md does not parse (${block.error ?? 'invalid'}). Fix it, ${again}.` };
+    return { ok: false, reason: `The setup/test block at the top of the committed plans/${slug}/DESIGN.md does not parse (${block.reason ?? 'invalid'}). Fix it, ${again}.` };
   }
   const status = git(worktree, ['status', '--porcelain']);
   if (!status.ok || status.stdout.trim() !== '') {

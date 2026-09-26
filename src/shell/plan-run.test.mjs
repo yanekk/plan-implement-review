@@ -633,7 +633,7 @@ test('reviewerChecks: each §2.7 failure has its reason, and a clean reviewed pl
   assert.match(check().reason, /uncommitted changes/);
   dirty = '';
   files['DESIGN.md'] = '# no block\n';
-  assert.match(check().reason, /setup\/test block .* does not parse/);
+  assert.match(check().reason, /setup\/test block .* does not parse \(no front-matter block\)/, 'the parser\'s own reason is passed on');
   files['PROGRESS.md'] = '**Plan reviewed:** not yet\n';
   assert.match(check().reason, /does not read reviewed/);
   delete files['PROGRESS.md'];
