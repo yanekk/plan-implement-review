@@ -50,12 +50,18 @@ A task is **waiting on the person** when either holds:
 
 - its live worker has a permission request or question set pending (activity state `permission` or
   `questions`), or
-- it is parked on its own report (phase `awaiting-answer`, `decision.sent` not set) and its worker's
-  turn is not open (activity `open` false).
+- it is parked on its own report (phase `awaiting-answer`, `decision.sent` not set) and its worker is
+  not inside the asking turn, the turn it dropped the report in. The asking turn is open when activity
+  `open` is true and `decision.askEnd` is unset or `activity.turns < decision.askEnd` (`resumeAnswered`
+  sets `askEnd` to the asking turn's end on the first pass that sees the park, and never moves it).
 
 Why the second clause looks at `open`: a worker drops its report from inside a turn and then ends that
 turn with the question put to the person (pir-worker skill), so the park is only real once the turn
 has ended. While the turn is open the worker is working, whatever report it dropped (user 2026-09-26).
+A later turn that is not an answer (a background wake-up, §2.2) leaves the task asking: the question is
+still unanswered, and flipping the row, the clock and Remote Control for the seconds a wake-up lasts
+would switch the person's phone session off and on under them (user, plan review 2026-09-26). An
+answering turn un-parks the task at the start of the pass, so it never reaches this rule.
 
 A report-parked task whose turn is open reads `building` (implementer) or `reviewing` (reviewer),
 plain, with no hint of the pending report (user 2026-09-26: the row says only what needs the person
@@ -84,6 +90,7 @@ turn opened by an answer:
 | Turn opened by | Answer? |
 |---|---|
 | A message pir sent with `from: 'person'` (typed in `pir`) | yes |
+| A `from: 'person'` message delivered into a turn already open, the asking turn included | yes (user, plan review 2026-09-26) |
 | Remote Control input: a message typed on claude.ai or the phone | yes |
 | A request answered in `pir`, by a grant, or `answered-remotely`, with the turn still open | yes (5b899df, kept) |
 | A background job's `task_notification` wake-up | no |
@@ -111,7 +118,13 @@ skill line "if you stop still waiting on the person, drop a fresh question repor
 asked before T03 starts (user 2026-09-26, option A as the fallback).
 
 A turn that is not an answer moves the park's reference point forward, so a later answering turn is
-still recognised: the answer is any answering turn opened after the latest non-answer turn.
+still recognised: the answer is any answering turn opened after the latest non-answer turn. A person message counts wherever it lands:
+`resumeAnswered` records the worker's count of `from: 'person'` sends on the pass that first sees the park
+(`decision.personSends`), and any later send un-parks, even one injected into the still-open asking turn.
+Otherwise an early reply would leave the row `asking you` once that turn ended, the original bug again.
+A send between the report and that first pass (one pass, seconds) is missed and waits for the next. That moving
+point is its own field (`decision.answerFrom`), not `askEnd`: §2.1 reads the fixed `askEnd` to tell the
+asking turn from a later wake-up, and moving it would make a wake-up read as the asking turn.
 
 ### 2.3 The worker contract
 
@@ -168,8 +181,8 @@ Per pass: `platform.workers()` gives each live worker's `activity` (folded from 
 NO_COLOR=1`, set in `package.json`); a pass prints a few lines of dots and exits 0, a failure
 prints its assertion and stack. Run one file with `node --test src/core/asking.test.mjs` for detail.
 
-The fake worker (`src/shell/fake/claude-stream.mjs`, `src/shell/fake/platform.mjs`) scripts turns,
-requests and `task_notification`s, so every row of §2.2 except real Remote Control input is testable in
+The fake worker (`src/shell/fake/claude-stream.mjs`, `src/shell/fake/platform.mjs`) scripts turns and
+requests; T03 adds a scripted `task_notification` wake-up (it has none today), so every row of §2.2 except real Remote Control input is testable in
 `loop.test.mjs` and `coordinate.test.mjs`. T00 records real entries into a fixture so the Remote Control
 row is tested against what the real CLI emits.
 
@@ -219,6 +232,10 @@ change out, revert the task commits and run `./install.sh`.
 
 All user decisions 2026-09-26.
 
+- **Only the asking turn reads as working; a wake-up turn after it stays `asking you`** (user, plan
+  review 2026-09-26). §1 and §2.1 disagreed; a flicker would toggle Remote Control under the person.
+- **A person message un-parks wherever it lands, mid-turn included** (user, plan review 2026-09-26):
+  counting only turns it opens would leave an early reply reading `asking you`.
 - **Plain `building`/`reviewing` while a report is pending and the worker works** (user). The row says
   only what needs the person now; a hint would be a false alarm in the T10 case.
 - **Narrow scope** (user): a worker idle without any report is not `asking you`; that is

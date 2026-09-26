@@ -10,13 +10,12 @@ touching the task you pick up, and append yours there.
 cell is an index for the next session; the account is the commit message. Whoever writes a
 cell also fixes the over-budget cell they walk past.
 
-**Plan reviewed:** not yet
+**Plan reviewed:** 2026-09-26 — 3 fixed, 4 decided with the user
 
 **Status:** Planned 2026-09-26 on main after `live-workers` and the Remote Control un-park (bda34a5,
 5b899df). Nothing built.
 **Last updated:** 2026-09-26
-**Next `pir-work` will:** stop; `/pir-review-plan real-asking-state` runs first. Then T00, T01 and T02
-have no dependency.
+**Next `pir-work` will:** implement T00 (T00, T01 and T02 have no dependency).
 
 ## Tasks
 

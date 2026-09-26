@@ -25,10 +25,12 @@ DESIGN §2.1, §3.1, §3.2.
 ```js
 // src/core/asking.mjs
 // waitingOn(task, activity) → null | 'question' | 'permission' | 'questions'
-//   task:     { phase, decision } from coordinator.state.tasks, or undefined
+//   task:     { phase, decision } from coordinator.state.tasks, or undefined (decision.askEnd from resumeAnswered)
 //   activity: the task's live worker's workerActivity result, or undefined (worker unseen)
 // 'permission' / 'questions' when a request is pending (it outranks the report);
-// 'question' when phase is 'awaiting-answer', !decision.sent, and activity is undefined or !activity.open;
+// 'question' when phase is 'awaiting-answer', !decision.sent, and the asking turn is not open: activity is
+//   undefined, or !activity.open, or decision.askEnd is set and activity.turns >= decision.askEnd
+//   (a later non-answer turn, such as a background wake-up, keeps the task asking; DESIGN §2.1);
 // null otherwise.
 export function waitingOn(task, activity) {}
 ```
@@ -44,6 +46,8 @@ the set of tasks with `waitingOn` non-null, so `advanceTiming` stops the clock o
 - [ ] `waitingOn`: request pending with phase implementing → `permission`/`questions`.
 - [ ] `waitingOn`: parked, `open` true, nothing pending → null.
 - [ ] `waitingOn`: parked, `open` false → `question`.
+- [ ] `waitingOn`: parked, `askEnd` set, `turns >= askEnd`, `open` true (a wake-up turn) → `question`.
+- [ ] `waitingOn`: parked, `askEnd` set, `turns < askEnd`, `open` true (the asking turn) → null.
 - [ ] `waitingOn`: parked with `decision.sent` → null.
 - [ ] `waitingOn`: parked, activity undefined → `question` (unseen worker keeps today's reading).
 - [ ] `buildRunState`: parked implementer with open turn → phase `building`, `asking` null, no question text.

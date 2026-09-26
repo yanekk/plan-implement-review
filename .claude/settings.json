@@ -37,7 +37,8 @@
       "Bash(node src/shell/harness/run.mjs quiet-worker --into /tmp/pir-quiet-worker)",
       "Bash(test ! -f package-lock.json || npm ci)",
       "Bash(HOME=/tmp/pir-plan-command-home ./install.sh)",
-      "Bash(claude auth status)"
+      "Bash(claude auth status)",
+      "Bash(node src/shell/harness/run.mjs real-asking --into /tmp/real-asking-live)"
     ],
     "ask": [
       "Bash(npm i @earendil-works/pi-tui@0.87.1)",

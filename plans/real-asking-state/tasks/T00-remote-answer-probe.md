@@ -36,7 +36,8 @@ Drive these cases, each after the worker has ended a turn with a plain-text ques
 2. The person types an answer on the phone (Claude app, Remote Control).
 3. The worker asks with AskUserQuestion; the person picks on the phone.
 4. The worker runs a command that needs permission; the person allows it on the phone.
-5. The worker started a background Bash job (`sleep 45`) before asking; the job finishes and wakes it.
+5. The worker started a background Bash job (`node -e "setTimeout(() => {}, 45000)"`; the Bash tool
+   refuses a standalone `sleep`, live-workers FINDINGS 2026-09-25) before asking; the job finishes and wakes it.
    The person does not answer.
 
 For each case record: every stream message and hook call from the end of the asking turn to the end of

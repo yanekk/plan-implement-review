@@ -28,14 +28,18 @@ DESIGN §2.2, §3.2, §3.3.
 ## Interface
 
 ```js
-// workerActivity(entries) → { …existing, turnCauses }
+// workerActivity(entries) → { …existing, turnCauses, personSends }
+//   personSends: how many `out` sends from 'person' the log holds, mid-turn injections included.
 //   turnCauses: one entry per turn opened, in order: 'person' | 'remote' | 'pir' | 'system' | 'unknown'
 //   'person' = opened by an `out` send from 'person'; 'pir' = from 'pir';
 //   'system' = opened after a task_notification (or T00's other non-answer markers);
 //   'remote' = T00's Remote Control marker; 'unknown' = none of these.
-// resumeAnswered: a turn at index ≥ decision.askEnd whose cause is 'person' or 'remote' un-parks;
-//   a 'system' / 'pir' / 'unknown' turn advances decision.askEnd past itself and leaves the park.
+// resumeAnswered: a turn at index ≥ decision.answerFrom (initialised to askEnd) whose cause is 'person'
+//   or 'remote' un-parks; a 'system' / 'pir' / 'unknown' turn advances decision.answerFrom past itself
+//   and leaves the park. decision.askEnd is never moved: waitingOn reads it (DESIGN §2.1, §2.2).
 //   The in-turn answer case (decision.asked, 5b899df) is unchanged.
+//   decision.personSends is set on the pass that first sees the park; act.personSends above it un-parks,
+//   whether the send opened a turn or landed in an open one (DESIGN §2.2).
 ```
 
 Whether `unknown` counts as an answer is decided by T00's results; the default here is no (DESIGN §2.2).
@@ -44,11 +48,14 @@ Whether `unknown` counts as an answer is decided by T00's results; the default h
 
 - [ ] Parked, turn opened by a `from: 'person'` send → resumed.
 - [ ] Parked, turn opened by the Remote Control marker (fixture entries from T00) → resumed.
-- [ ] Parked, `task_notification` then a turn → still parked, `askEnd` advanced.
+- [ ] Parked, `task_notification` then a turn → still parked, `answerFrom` advanced, `askEnd` unchanged.
 - [ ] Parked, wake-up turn, then a person turn → resumed on the second.
+- [ ] Parked, asking turn still open, a `from: 'person'` message injected into it → resumed, and the row
+      does not turn `asking you` when that turn ends.
 - [ ] Parked, request answered remotely with the turn open → resumed (existing 5b899df case).
 - [ ] Parked with `decision.sent` → untouched.
-- [ ] Row stays `asking you` through the wake-up turn once it ends, and Remote Control stays on.
+- [ ] Row stays `asking you` during and after the wake-up turn, and Remote Control stays on throughout
+      (`askEnd` stays fixed, so `waitingOn` never reads the wake-up turn as the asking turn).
 
 ## Done when
 
