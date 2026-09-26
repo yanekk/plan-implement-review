@@ -35,14 +35,14 @@ done · ⛔ blocked, needs a human.
 | T10 | plan-rig | T05 | ✅ | |
 | T11 | dashboard-type | T02, T07, T08, T10 | ✅ | |
 | T12 | plan-watch-view | T07, T08, T10, T11 | ✅ | |
-| T13 | brief-box | T09, T12 | 🔍 | brief-box.mjs; pre-flight before the box; openPlanner landing and reviewer follow in pir-tui. 9 box, 5 tui, 4 pir unit tests; 5 rig e2e. Deviations: Ctrl+C cancels like esc; hint wording from the mock; follow only on a review session new since the planner view opened; bare `pir plan` returns its code as a promise. |
+| T13 | brief-box | T09, T12 | ✅ | Review: one fix, reproduced by a runTui test. Opening a finished run's planner bounced to its old reviewer; seenReviewId now set before followStep. Deviations accepted (Ctrl+C cancels, mock hint wording). Probed paste/esc paths, refusal after the box, crashed-before-planner landing (FINDINGS). |
 | T14 | plan-screen-drill | T11, T12, T13 | ⬜ | |
 | T15 | planning-skills | T01 | ✅ | |
 | T16 | docs-readme | T14, T15 | ⬜ | |
 | T17 | harness-plan-fixture | T07, T08, T15 | ✅ | |
 | T18 | live-plan-run | T14, T16, T17 | ⬜ | |
 
-**Review queue:** T13
+**Review queue:** *(empty)*
 
 ## Blocked on the user
 
