@@ -10,6 +10,7 @@ import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { startPlanRig, scriptSet, SCRIPT_SETS, PLAN_RIG_SLUG, PLAN_RIG_SLUG_2 } from './plan-rig.mjs';
 import { PLANNER_MATCH, REVIEWER_MATCH } from './fake/sessions.mjs';
+import { indexDir, writeRecord } from './index-store.mjs';
 
 const git = (cwd, ...a) => execFileSync('git', a, { cwd, encoding: 'utf8' }).trim();
 const inside = (path, dir) => realpathSync(path).startsWith(realpathSync(dir) + '/');
@@ -95,4 +96,21 @@ test('end to end at 80×24: bare `pir` under the rig opens on the empty-runs lin
   // Nothing was started, so the shim was never run. The real ~/.pir is not compared before and after:
   // a live run on this machine may write it meanwhile. The env test above holds the index in the rig.
   assert.ok(!existsSync(rig.received));
+});
+
+// The empty-runs line alone does not prove the rig's PIR_HOME reached pir: on a machine whose real ~/.pir
+// is empty it would pass with the env dropped. A run written into the rig's own index must show.
+test("end to end at 80×24: a run in the rig's own index is what `pir` lists", async (t) => {
+  const rig = startPlanRig();
+  t.after(() => rig.cleanup());
+  const slug = 'rig-seeded-run';
+  writeRecord(
+    { version: 1, slug, repo: 'repo', repoPath: rig.repoDir, controlDir: join(rig.root, 'control'), pid: 2147483646,
+      startTime: 'Sat Sep 26 12:00:00 2026', startedAt: null, branch: `pir/${slug}`, finalState: null, updatedAt: null },
+    { dir: indexDir({ env: rig.env }) },
+  );
+  const { screens } = await rig.driveScreen({ cols: 80, rows: 24, first: new RegExp(slug) });
+  const text = screens[0].rows.join('\n');
+  assert.match(text, new RegExp(slug));
+  assert.doesNotMatch(text, /No runs yet/);
 });
