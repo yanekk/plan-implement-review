@@ -42,18 +42,21 @@ reports (`canUseTool` in `worker-proc.mjs`, logged as a `request` entry):
 
 - **A permission request** — Claude asks before running a tool its permission rules do not already
   allow. The row reads `asking you · allow a command?`. In the conversation the request is pinned
-  above the typing box with the tool, the command or input, and the worker's description. `y` allows
-  it once, `n` refuses, `a` allows it and does not ask this worker again for the same thing. Typing a
+  above the typing box with the tool, the command or input, and the worker's description. Enter on the
+  empty box allows it once, `n` refuses, `a` allows it and does not ask this worker again for the same thing. Typing a
   reply instead refuses and sends the text, so the worker sees why. "Do not ask again" is kept by pir
   in memory for that worker's life and never written to any settings file (`createGrants`,
   `person-inbox.mjs`); a later request it covers is allowed by pir at once and logged
   `delivered-by-grant`, so it still shows in the conversation. `a` is offered only when Claude
   suggested a rule for the request and did not flag the rule as granting more than the request. A
-  request Claude flags as risky needs the approving key twice, `y` or `a` ("press y again to allow"); `n` still refuses in one press and any other key disarms it (`gateReducer` in `src/core/conversation.mjs`).
+  request Claude flags as risky needs the approving key twice, Enter or `a` ("press ↵ again to allow"); `n` still refuses in one press and any other key disarms it (`gateReducer` in `src/core/conversation.mjs`).
 - **A question set** — the worker's AskUserQuestion tool. The row reads `asking you · a question`. The
-  questions are pinned one at a time as a picker: ↑↓ move, space picks or ticks, Enter goes to the
-  next question and on the last sends; every question has a final "Other" line for a typed answer.
-  Typing a reply instead of using the picker declines the questions with the typed text.
+  questions are pinned one at a time as a picker: ↑↓ move. On a pick-one question Enter chooses the
+  highlighted line and goes on; on a pick-any question space ticks and Enter goes on. The last
+  question's Enter sends. Every question ends with an "Other" line that is a text field: move onto it,
+  or just start typing, and the text appears next to "Other:" (never in the typing box); Enter answers
+  with it. It replaces a pick-one choice and joins a pick-any question's ticks. To talk instead of
+  answering, Esc interrupts the worker, which cancels the question.
 
 These keys work only while the typing box is empty. A request left unanswered simply waits: nothing
 times it out.
@@ -77,7 +80,7 @@ project permission rules in `.claude/settings.json`, which every worktree inheri
 committed. A `worker` action is `allow`ed and runs without stopping. An `ask` action is under an `ask`
 rule: the worker drops a `question` report, explains the action in its conversation and runs the
 command, and Claude stops on the permission request, which reaches pir as above. The person opens the
-worker in `pir` and presses `y` or `n` there, so one approval is the whole exchange. A `person` action
+worker in `pir` and presses Enter (allow) or `n` there, so one approval is the whole exchange. A `person` action
 is only a login, a device or a judgement, raised like any other question. An action with no row is
 treated as `ask`.
 

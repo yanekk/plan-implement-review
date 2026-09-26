@@ -932,6 +932,39 @@ export function leftoverSessionsReaped({ ceiling } = {}) {
   });
 }
 
+// A worker of `task` asked the person something of `kind` over the line, and the person's answer reached
+// it (live-workers §2.6, §2.7, T18). `kind` is `questions` (an AskUserQuestion request) or `permission`
+// (a request for any other tool). Read from the task's conversation logs: a `request` entry of that kind,
+// and an `out` `reply` to the same requestId `from:"person"` whose result allowed it. A reply from pir (a
+// grant) does not count, and neither does a refusal: the fixture's point is that an answer let the worker
+// carry on. Pure over the loaded transcripts.
+export function requestAnswered(task, kind) {
+  return fact(`request-answered:${task}:${kind}`, `${task} asked the person ${kind === 'questions' ? 'a question set' : 'a permission'} and the answer reached it`, (bundle) => {
+    const evidence = [];
+    const logs = (bundle.transcripts ?? []).filter((t) => t.task === task);
+    if (logs.length === 0) return { pass: false, evidence, detail: `no conversation log for ${task}` };
+    let asked = 0;
+    for (const t of logs) {
+      const events = t.events ?? [];
+      const requests = events.filter(
+        (e) => e?.dir === 'request' && (e.toolName === 'AskUserQuestion') === (kind === 'questions'),
+      );
+      asked += requests.length;
+      for (const r of requests) {
+        evidence.push(`${t.key}: request ${r.requestId} ${r.toolName}`);
+        const reply = events.find((e) => e?.dir === 'out' && e.kind === 'reply' && e.requestId === r.requestId);
+        if (!reply) continue;
+        evidence.push(`${t.key}: reply ${r.requestId} from ${reply.from} ${reply.result?.behavior}`);
+        if (reply.from === 'person' && reply.result?.behavior === 'allow') {
+          return { pass: true, evidence, detail: `${task}'s ${r.toolName} request was answered by the person and allowed` };
+        }
+      }
+    }
+    if (asked === 0) return { pass: false, evidence, detail: `${task} never asked ${kind === 'questions' ? 'a question set' : 'a permission'}` };
+    return { pass: false, evidence, detail: `${task} asked ${asked} time(s) but no person's allowing answer reached it` };
+  });
+}
+
 // --- Running a scenario's facts and rendering the verdict ----------------------------------------
 
 // checkScenario(spec, bundle) → { scenario, pass, facts:[{ id, label, pass, evidence, detail }] }. Runs

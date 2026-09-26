@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
-import { buildConversation, gateFor, gateReducer, pickerFor, pickerReducer, promptLines, mainArg } from './conversation.mjs';
+import { buildConversation, gateFor, gateReducer, pickerFor, pickerReducer, promptLines, mainArg, onOther } from './conversation.mjs';
 
 const SAMPLE = readFileSync(fileURLToPath(new URL('./fixtures/stream-sample.ndjson', import.meta.url)), 'utf8')
   .split('\n')
@@ -73,6 +73,67 @@ test('worker text is wrapped, never truncated, with continuation lines under the
 });
 
 // ---- Steps ----
+
+test('a skill body Claude injects (isSynthetic user text) is not drawn; an interrupted marker still is (T18)', () => {
+  const userText = (text, extra = {}) => ({ t: t++, dir: 'in', event: { type: 'user', message: { role: 'user', content: [{ type: 'text', text }] }, ...extra } });
+  const { lines } = buildConversation([
+    use('s1', 'Skill', { skill: 'pir-worker' }),
+    res('s1', 'Launching skill: pir-worker'),
+    userText('Base directory for this skill: /x\n\n# worker\n\nline after line', { isSynthetic: true }),
+    userText('[Request interrupted by user for tool use]'),
+  ]);
+  const text = all(lines).join('\n');
+  assert.doesNotMatch(text, /Base directory|# worker|line after line/);
+  assert.match(text, /⎿ Skill pir-worker/);
+  assert.match(text, /\[Request interrupted by user for tool use\]/);
+});
+
+// Background work, as Claude Code 2.1.282 reported it on the T18 live run (user 2026-09-26: show it).
+const sys = (event) => ({ t: t++, dir: 'in', event: { type: 'system', ...event } });
+const bgStart = (id, toolUseId, description) => sys({ subtype: 'task_started', task_id: id, tool_use_id: toolUseId, description, is_backgrounded: true, task_type: 'local_bash' });
+const bgEnd = (id, status = 'completed') => [
+  sys({ subtype: 'task_updated', task_id: id, patch: { status } }),
+  sys({ subtype: 'task_notification', task_id: id, status, summary: 'x' }),
+];
+
+test('background commands and a monitor get a line when they start and when they end; the count follows', () => {
+  const start = [
+    use('b1', 'Bash', { command: 'node slow.js', run_in_background: true }),
+    bgStart('t1', 'b1', 'first slow command'),
+    res('b1', 'Command running in background with ID: t1.'),
+    use('m1', 'Monitor', { command: 'node ticks.js' }),
+    bgStart('t2', 'm1', 'three ticks'),
+    res('m1', 'Monitor started (task t2).'),
+    done(),
+  ];
+  let conv = buildConversation(start);
+  const text = () => all(conv.lines).join('\n');
+  assert.match(text(), /↳ running in the background: first slow command/);
+  assert.match(text(), /↳ monitor started: three ticks/);
+  assert.equal(conv.background, 2);
+  conv = buildConversation([...start, ...bgEnd('t1')]);
+  assert.match(text(), /↳ finished in the background: first slow command/);
+  assert.equal(conv.background, 1);
+  conv = buildConversation([...start, ...bgEnd('t1'), ...bgEnd('t2')]);
+  assert.match(text(), /↳ monitor ended: three ticks/);
+  assert.equal(conv.background, 0);
+  assert.equal((text().match(/finished in the background/g) ?? []).length, 1, 'task_updated draws no second end line');
+});
+
+test('a background command that fails is drawn as failed; a foreground task and other system events draw nothing', () => {
+  const conv = buildConversation([
+    use('b1', 'Bash', { command: 'false', run_in_background: true }),
+    bgStart('t1', 'b1', 'doomed'),
+    ...bgEnd('t1', 'failed'),
+    sys({ subtype: 'task_started', task_id: 't9', description: 'a subagent', is_backgrounded: false }),
+    sys({ subtype: 'task_notification', task_id: 't8', status: 'completed' }),
+    sys({ subtype: 'rate_limit_event' }),
+  ]);
+  const lines = conv.lines.filter((l) => textOf(l).includes('↳'));
+  assert.deepEqual(lines.map(textOf), ['  ↳ running in the background: doomed', '  ↳ failed in the background: doomed']);
+  assert.equal(styleOf(lines[1]), 'bad');
+  assert.equal(conv.background, 0);
+});
 
 test('one tool use renders as exactly one line by default, regardless of result length', () => {
   const body = Array.from({ length: 50 }, (_, i) => `line ${i + 1}`).join('\n');
@@ -285,29 +346,30 @@ test('canAlwaysAllow is false with no addRules suggestion or with suppressAlways
   assert.equal(gateReducer(gateFor(request('r', 'Bash', {}, { suggestions: [] })), 'a').send, null);
 });
 
-test('without defaultToNo: one y allows, n refuses, a allows always, other keys do nothing', () => {
+test('without defaultToNo: one Enter allows, n refuses, a allows always, other keys (y too) do nothing', () => {
   const g = gateFor(request('r'));
-  assert.equal(gateReducer(g, 'y').send, 'allow');
+  assert.equal(gateReducer(g, 'enter').send, 'allow');
+  assert.deepEqual(gateReducer(g, 'y'), { gate: g, send: null }, 'Enter replaced y (user 2026-09-26)');
   assert.equal(gateReducer(g, 'n').send, 'deny');
   assert.equal(gateReducer(g, 'a').send, 'allow-always');
   assert.deepEqual(gateReducer(g, 'x'), { gate: g, send: null });
 });
 
-test('with defaultToNo: y arms, y y allows, y then another key disarms, n refuses at once', () => {
+test('with defaultToNo: Enter arms, Enter Enter allows, Enter then another key disarms, n refuses at once', () => {
   const g = gateFor(request('r', 'Bash', { command: 'x' }, { defaultToNo: true }));
-  const once = gateReducer(g, 'y');
+  const once = gateReducer(g, 'enter');
   assert.equal(once.send, null);
   assert.equal(once.gate.armed, 'allow');
-  assert.ok(all(promptLines(once.gate, { width: 80 })).some((l) => l.includes('press y again to allow')));
-  assert.equal(gateReducer(once.gate, 'y').send, 'allow');
-  assert.equal(gateReducer(once.gate, 'y').gate.armed, false);
+  assert.ok(all(promptLines(once.gate, { width: 80 })).some((l) => l.includes('press ↵ again to allow')));
+  assert.equal(gateReducer(once.gate, 'enter').send, 'allow');
+  assert.equal(gateReducer(once.gate, 'enter').gate.armed, false);
   const disarmed = gateReducer(once.gate, 'x');
   assert.equal(disarmed.send, null);
   assert.equal(disarmed.gate.armed, false);
-  assert.equal(gateReducer(disarmed.gate, 'y').send, null, 'disarmed: the next y arms again');
+  assert.equal(gateReducer(disarmed.gate, 'enter').send, null, 'disarmed: the next Enter arms again');
   assert.equal(gateReducer(g, 'n').send, 'deny');
   assert.equal(gateReducer(once.gate, 'n').send, 'deny');
-  // a approves too, so it arms the same way; y then a does not allow.
+  // a approves too, so it arms the same way; Enter then a does not allow.
   const a1 = gateReducer(g, 'a');
   assert.equal(a1.send, null);
   assert.equal(gateReducer(a1.gate, 'a').send, 'allow-always');
@@ -320,10 +382,10 @@ test('the gate prompt names the keys it offers', () => {
     '⚑ T05 wants to use Bash',
     '  npm test',
     '  (Run the tests)',
-    "  y allow · n refuse · a allow, don't ask again · or type a reply to refuse with it",
+    "  ↵ allow · n refuse · a allow, don't ask again · or type a reply to refuse with it",
   ]);
   const plain = all(promptLines(gateFor(request('r', 'Bash', { command: 'x' }, { suggestions: [] })), { width: 200 }));
-  assert.equal(plain.at(-1), '  y allow · n refuse · or type a reply to refuse with it');
+  assert.equal(plain.at(-1), '  ↵ allow · n refuse · or type a reply to refuse with it');
   assert.deepEqual(promptLines(null), []);
 });
 
@@ -341,13 +403,15 @@ test('pickerFor starts at the first question with nothing picked', () => {
   assert.deepEqual(p.questions.map((x) => [x.picks, x.other]), [[[], ''], [[], '']]);
 });
 
-test('picker: single-select replaces the pick, up/down wrap through Other', () => {
+test('picker: single-select replaces the pick; up/down wrap through the Other line', () => {
   let r = run(picker(), [{ type: 'toggle' }, { type: 'down' }, { type: 'toggle' }]);
   assert.deepEqual(r.picker.questions[0].picks, [1]);
-  r = run(r.picker, [{ type: 'down' }, { type: 'down' }]);
+  r = run(r.picker, [{ type: 'down' }]);
+  assert.equal(onOther(r.picker), true, 'the line after the options is Other');
+  r = run(r.picker, [{ type: 'down' }]);
   assert.equal(r.picker.cursor, 0, 'down past Other wraps to the top');
   r = run(r.picker, [{ type: 'up' }]);
-  assert.equal(r.picker.cursor, 2, 'up from the top lands on Other');
+  assert.equal(onOther(r.picker), true, 'up from the top lands on Other');
 });
 
 test('picker: multi-select toggles, and the answer keeps option order', () => {
@@ -360,52 +424,73 @@ test('picker: multi-select toggles, and the answer keeps option order', () => {
   assert.deepEqual(r.send, { answers: { 'Which colour?': 'red', 'Which fruits?': 'pear, plum' } });
 });
 
-test('picker: Other takes typed text; single-select picks give way to it, multi keeps both', () => {
-  let r = run(picker(), [{ type: 'toggle' }, { type: 'down' }, { type: 'down' }, { type: 'toggle' }]);
-  assert.equal(r.picker.typingOther, true);
-  assert.deepEqual(r.picker.questions[0].picks, [0], 'toggling Other does not pick yet');
-  r = run(r.picker, [{ type: 'other', text: '  green  ' }]);
-  assert.equal(r.picker.typingOther, false);
-  assert.deepEqual(r.picker.questions[0], { ...QUESTIONS.questions[0], picks: [], other: 'green' });
-  r = run(r.picker, [{ type: 'next' }, { type: 'down' }, { type: 'down' }, { type: 'toggle' }, { type: 'down' }, { type: 'other', text: 'fig' }, { type: 'next' }]);
+test('picker: typing lands on the Other line, from anywhere, and is edited there (user 2026-09-26)', () => {
+  // From an option, the first character moves the cursor onto Other.
+  let r = run(picker(), [{ type: 'char', text: 'g' }, { type: 'char', text: 'reen' }, { type: 'toggle' }, { type: 'char', text: 'x' }, { type: 'backspace' }, { type: 'backspace' }]);
+  assert.equal(onOther(r.picker), true);
+  assert.equal(r.picker.questions[0].other, 'green', 'space typed a space on Other; backspace deleted');
+  // Leaving the line keeps the text; Enter on an option then answers with the option instead.
+  const left = run(r.picker, [{ type: 'down' }, { type: 'next' }]);
+  assert.deepEqual([left.picker.q, left.picker.questions[0].picks, left.picker.questions[0].other], [1, [0], '']);
+  // Enter on Other answers with the text.
+  r = run(r.picker, [{ type: 'next' }]);
+  assert.deepEqual([r.picker.q, r.picker.questions[0].other, r.picker.questions[0].picks], [1, 'green', []]);
+  // Multi-select: the text joins the ticks, and the last Enter sends.
+  r = run(r.picker, [{ type: 'down' }, { type: 'down' }, { type: 'toggle' }, { type: 'char', text: 'fig' }, { type: 'next' }]);
   assert.deepEqual(r.send, { answers: { 'Which colour?': 'green', 'Which fruits?': 'plum, fig' } });
-  // Picking an option after Other clears the Other text on a single-select question.
-  const back = run(picker(), [{ type: 'other', text: 'green' }, { type: 'toggle' }]);
-  assert.deepEqual([back.picker.questions[0].picks, back.picker.questions[0].other], [[0], '']);
+  // Enter on an empty Other line does nothing; backspace off the Other line does nothing.
+  const empty = run(picker(), [{ type: 'up' }]).picker;
+  assert.deepEqual(pickerReducer(empty, { type: 'next' }), { picker: empty, send: null });
+  const p = picker();
+  assert.deepEqual(pickerReducer(p, { type: 'backspace' }), { picker: p, send: null });
 });
 
-test('picker: next with no answer is a no-op; empty Other text is no answer', () => {
+
+test('picker: single-select Enter picks the line under the cursor and moves on (user 2026-09-26)', () => {
+  const r = run(picker(), [{ type: 'down' }, { type: 'next' }]);
+  assert.equal(r.picker.q, 1);
+  assert.deepEqual(r.picker.questions[0].picks, [1]);
+  // A picked option is replaced by the one under the cursor at Enter.
+  const moved = run(picker(), [{ type: 'toggle' }, { type: 'down' }, { type: 'next' }]);
+  assert.deepEqual(moved.picker.questions[0].picks, [1]);
+  // A lone single-select question sends at the first Enter.
+  const lone = pickerFor({ requestId: 'q', questions: [QUESTIONS.questions[0]] });
+  assert.deepEqual(pickerReducer(lone, { type: 'next' }).send, { answers: { 'Which colour?': 'red' } });
+});
+
+test('picker: next with no tick is a no-op on a multi-select question; blank typed text does nothing', () => {
   const p = picker();
-  assert.deepEqual(pickerReducer(p, { type: 'next' }), { picker: p, send: null });
-  const r = run(p, [{ type: 'other', text: '   ' }, { type: 'next' }]);
-  assert.equal(r.picker.q, 0);
-  assert.equal(r.send, null);
+  const blank = pickerReducer(p, { type: 'typed', text: '   ' });
+  assert.deepEqual(blank, { picker: p, send: null });
+  const onMulti = run(p, [{ type: 'next' }]).picker;
+  assert.deepEqual(pickerReducer(onMulti, { type: 'next' }), { picker: onMulti, send: null });
   const last = run(p, [{ type: 'toggle' }, { type: 'next' }, { type: 'next' }]);
   assert.equal(last.picker.q, 1);
   assert.equal(last.send, null, 'the last question unanswered sends nothing');
   assert.deepEqual(pickerReducer(p, { type: 'bogus' }), { picker: p, send: null });
 });
 
-test('the picker prompt shows the current question, its boxes and the cursor', () => {
+test('the picker prompt shows the question, its boxes, the cursor and the Other line as a text field', () => {
   const r = run(picker(), [{ type: 'down' }, { type: 'toggle' }]);
   assert.deepEqual(all(promptLines(r.picker, { width: 200, taskId: 'T05' })), [
     '? T05 asks you 2 questions  [Colour ✔] [Fruits]',
     '  Which colour? (pick one)',
     '    ( ) red  r',
     '  ❯ (•) blue  b',
-    '    ( ) Other  type your own answer in the box',
-    '  ↑↓ move · space choose · ↵ next question · or type a reply to explain instead',
+    '    ( ) Other: type your own answer',
+    '  ↑↓ move · ↵ choose, next question · or just type your own answer',
   ]);
-  const multi = run(r.picker, [{ type: 'next' }, { type: 'toggle' }, { type: 'down' }, { type: 'down' }, { type: 'down' }, { type: 'toggle' }]);
+  const typing = all(promptLines(run(r.picker, [{ type: 'char', text: 'teal' }]).picker, { width: 200, taskId: 'T05' }));
+  assert.equal(typing.at(-2), '  ❯ ( ) Other: teal▏');
+  assert.equal(typing.at(-1), '  type your answer here · ↵ next question · ↑↓ leave it');
+  const multi = run(r.picker, [{ type: 'next' }, { type: 'toggle' }, { type: 'char', text: 'fig' }, { type: 'up' }]);
   const lines = all(promptLines(multi.picker, { width: 200, taskId: 'T05' }));
   assert.ok(lines.includes('    [x] apple'));
-  assert.ok(lines.includes('  ❯ [ ] Other  type your own answer in the box'));
-  assert.equal(lines.at(-1), '  type your answer in the box, then ↵');
-  const typed = run(multi.picker, [{ type: 'other', text: 'fig' }]);
-  const done = all(promptLines(typed.picker, { width: 200, taskId: 'T05' }));
-  assert.ok(done.includes('  ❯ [x] Other: fig  type your own answer in the box'));
-  assert.ok(done.at(-1).includes('↵ send answers'));
+  assert.ok(lines.includes('    [x] Other: fig'), 'typed text reads as ticked, and stays when the cursor leaves');
+  assert.equal(lines.at(-1), '  ↑↓ move · space tick · ↵ send answers · or just type your own answer');
 });
+
+
 
 test('terminal escapes and control characters in worker text and tool output never reach the lines', () => {
   const dirty = '\x1b[31mFAIL\x1b[0m a\tb\x1b[2J 50%\r100%';

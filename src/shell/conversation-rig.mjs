@@ -394,13 +394,13 @@ export function createScreenModel({ rows = 24, cols = 80 } = {}) {
   };
 }
 
-// driveScreen({ cols, rows, keys, args, cwd, env, settleMs, timeoutMs }) → { screens, exitCode, overflows }.
-// Runs `node pir.mjs ...args` under a pty of cols×rows, waits for its first frame, then sends each key in
-// turn and captures the screen once output has been quiet for settleMs. A key is a string (the bytes to
-// send) or { keys, until, timeoutMs }: `until` (a RegExp or a function of the screen text) holds the
-// capture until the screen shows it, and throws, with the screen, if it never does. The first entry of
-// `screens` is the opening frame ({ keys: null }). After the last key the input is closed, which ends pir.
-export async function driveScreen({ cols = 100, rows = 30, keys = [], args = [], cwd = process.cwd(), env = process.env, settleMs = 250, timeoutMs = 15000, first = null } = {}) {
+// openScreen({ cols, rows, args, cwd, env, settleMs }) → { send(bytes), waitFor(until, limit) → rows, text(),
+// close() → exit code, overflows() }. Runs `node pir.mjs ...args` under a pty of cols×rows and keeps its
+// screen. waitFor holds until output has been quiet for settleMs and `until` (a RegExp or a function of the
+// screen text; none means any frame) holds, and throws, with the screen, on the deadline or if pir exits
+// first. close() ends pir by closing its input. Interactive, so a live drill can decide its next key from
+// what the screen shows (T18); driveScreen below is the fixed-script form over it.
+export function openScreen({ cols = 100, rows = 30, args = [], cwd = process.cwd(), env = process.env, settleMs = 250 } = {}) {
   const child = spawn('python3', ['-c', PTY_RELAY, String(rows), String(cols), process.execPath, PIR, ...args], {
     cwd,
     env: { TERM: 'xterm-256color', ...env },
@@ -422,33 +422,54 @@ export async function driveScreen({ cols = 100, rows = 30, keys = [], args = [],
 
   const text = () => model.rows().join('\n');
   const holds = (until) => !until || (typeof until === 'function' ? until(text()) : until.test(text()));
-  async function capture(until, limit) {
-    const deadline = Date.now() + limit;
-    for (;;) {
-      await new Promise((r) => setTimeout(r, 25));
-      const quiet = Date.now() - lastOutput >= settleMs;
-      if (quiet && holds(until)) return model.rows();
-      if (gone && !holds(until)) throw new Error(`pir exited before the screen showed ${until}\n${stderr}\n${text()}`);
-      if (Date.now() > deadline) throw new Error(`timed out waiting for ${until} after ${limit} ms; the screen:\n${text()}\n${stderr}`);
-    }
-  }
-
-  const screens = [];
-  try {
-    screens.push({ keys: null, rows: await capture(first ?? ((t) => t.trim() !== ''), timeoutMs) });
-    for (const k of keys) {
-      const { keys: bytes, until = null, timeoutMs: limit = timeoutMs } = typeof k === 'string' ? { keys: k } : k;
+  return {
+    text,
+    send(bytes) {
       child.stdin.write(bytes);
       lastOutput = Date.now();
-      screens.push({ keys: bytes, rows: await capture(until, limit) });
+    },
+    async waitFor(until = null, limit = 15000) {
+      const deadline = Date.now() + limit;
+      for (;;) {
+        await new Promise((r) => setTimeout(r, 25));
+        const quiet = Date.now() - lastOutput >= settleMs;
+        if (quiet && holds(until)) return model.rows();
+        if (gone && !holds(until)) throw new Error(`pir exited before the screen showed ${until}\n${stderr}\n${text()}`);
+        if (Date.now() > deadline) throw new Error(`timed out waiting for ${until} after ${limit} ms; the screen:\n${text()}\n${stderr}`);
+      }
+    },
+    async close() {
+      child.stdin.end();
+      const timer = setTimeout(() => child.kill('SIGKILL'), 5000);
+      await exited;
+      clearTimeout(timer);
+      return child.exitCode;
+    },
+    overflows: () => model.overflows(),
+  };
+}
+
+// driveScreen({ cols, rows, keys, args, cwd, env, settleMs, timeoutMs }) → { screens, exitCode, overflows }.
+// Runs `node pir.mjs ...args` under a pty of cols×rows, waits for its first frame, then sends each key in
+// turn and captures the screen once output has been quiet for settleMs. A key is a string (the bytes to
+// send) or { keys, until, timeoutMs }: `until` (a RegExp or a function of the screen text) holds the
+// capture until the screen shows it, and throws, with the screen, if it never does. The first entry of
+// `screens` is the opening frame ({ keys: null }). After the last key the input is closed, which ends pir.
+export async function driveScreen({ cols = 100, rows = 30, keys = [], args = [], cwd = process.cwd(), env = process.env, settleMs = 250, timeoutMs = 15000, first = null } = {}) {
+  const screen = openScreen({ cols, rows, args, cwd, env, settleMs });
+  const screens = [];
+  let exitCode;
+  try {
+    screens.push({ keys: null, rows: await screen.waitFor(first ?? ((t) => t.trim() !== ''), timeoutMs) });
+    for (const k of keys) {
+      const { keys: bytes, until = null, timeoutMs: limit = timeoutMs } = typeof k === 'string' ? { keys: k } : k;
+      screen.send(bytes);
+      screens.push({ keys: bytes, rows: await screen.waitFor(until, limit) });
     }
   } finally {
-    child.stdin.end();
-    const timer = setTimeout(() => child.kill('SIGKILL'), 5000);
-    await exited;
-    clearTimeout(timer);
+    exitCode = await screen.close();
   }
-  return { screens, exitCode: child.exitCode, overflows: model.overflows() };
+  return { screens, exitCode, overflows: screen.overflows() };
 }
 
 // ---- The command. ----

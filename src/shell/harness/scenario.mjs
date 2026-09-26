@@ -33,9 +33,21 @@ const EXPECTED_TERMINALS = Object.freeze(['completed', 'parked']);
 // Two declarative drill flags the T17 runner reads (T11), kept here so a scenario stays a pure data
 // declaration of how it is driven and judged: `killSwitchDrill` — touch HALT once mid-run (after the
 // first spawn) so the kill switch is actually exercised on a fast run that would otherwise hand off
-// before it fired; `expectedTerminal` — the run's correct end (see EXPECTED_TERMINALS).
+// before it fired; `expectedTerminal` — the run's correct end (see EXPECTED_TERMINALS). A third,
+// `answerPending` (live-workers T18), has the runner stand in for the person and answer every pending
+// permission request and question set through the inbox (answerer.mjs), so a fixture that forces them can
+// still run to a hand-off unattended.
 export function defineScenario(spec = {}) {
-  const { id, title, fixture, seatbelts = {}, facts = [], killSwitchDrill = false, expectedTerminal = 'completed' } = spec;
+  const {
+    id,
+    title,
+    fixture,
+    seatbelts = {},
+    facts = [],
+    killSwitchDrill = false,
+    expectedTerminal = 'completed',
+    answerPending = false,
+  } = spec;
 
   if (!id || typeof id !== 'string') {
     throw new Error('defineScenario: a scenario needs a string id');
@@ -64,5 +76,6 @@ export function defineScenario(spec = {}) {
     facts,
     killSwitchDrill: !!killSwitchDrill,
     expectedTerminal,
+    answerPending: answerPending ? { typed: { ...(answerPending.typed ?? {}) }, say: { ...(answerPending.say ?? {}) } } : false,
   };
 }

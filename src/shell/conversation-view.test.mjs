@@ -177,16 +177,16 @@ test('Ctrl+C with text clears the box and drops nothing; with an empty box it dr
   assert.deepEqual(t.drops, [{ to: 'w-1', kind: 'interrupt' }]);
 });
 
-test('y, n and a answer a pending permission through the gate; the prompt is pinned above the box', () => {
-  for (const [key, decision] of [['y', 'allow'], ['n', 'deny'], ['a', 'allow-always']]) {
+test('Enter, n and a answer a pending permission through the gate; the prompt is pinned above the box', () => {
+  for (const [key, decision] of [[KEY.enter, 'allow'], ['n', 'deny'], ['a', 'allow-always']]) {
     const t = makeView({ log: [init(), opening, permission()] });
     assert.match(t.text(), /⚑ T05 wants to use Bash/);
-    assert.match(t.text(), /y allow · n refuse · a allow, don't ask again/);
+    assert.match(t.text(), /↵ allow · n refuse · a allow, don't ask again/);
     t.v.handleInput(key);
     assert.deepEqual(t.drops, [{ to: 'w-1', kind: 'permission', requestId: 'r1', decision }], key);
     assert.equal(t.v.state.text, '', `${key} did not go into the box`);
     assert.match(t.text(), /answer sent — waiting for pir to deliver it/);
-    t.v.handleInput('y');
+    t.v.handleInput(KEY.enter);
     assert.equal(t.drops.length, 1, 'a second key does not answer the same request twice');
   }
 });
@@ -198,35 +198,34 @@ test('a is not offered when the gate says so, and does nothing', () => {
   assert.deepEqual(t.drops, []);
 });
 
-test('a defaultToNo request needs y twice and shows the arming hint; any other key disarms', () => {
+test('a defaultToNo request needs Enter twice and shows the arming hint; any other key disarms', () => {
   const t = makeView({ log: [init(), opening, permission({ defaultToNo: true })] });
-  t.v.handleInput('y');
+  t.v.handleInput(KEY.enter);
   assert.deepEqual(t.drops, []);
-  assert.match(t.text(), /press y again to allow/);
+  assert.match(t.text(), /press ↵ again to allow/);
   t.v.handleInput(KEY.down);
-  assert.doesNotMatch(t.text(), /press y again/, 'another key disarmed it');
-  t.v.handleInput('y');
-  t.v.handleInput('y');
+  assert.doesNotMatch(t.text(), /press ↵ again/, 'another key disarmed it');
+  t.v.handleInput(KEY.enter);
+  t.v.handleInput(KEY.enter);
   assert.deepEqual(t.drops, [{ to: 'w-1', kind: 'permission', requestId: 'r1', decision: 'allow' }]);
 });
 
-test('typed text with a pending permission refuses it with the text; y inside text is just a letter', () => {
+test('typed text with a pending permission refuses it with the text; a leading y is just a letter', () => {
   const t = makeView({ log: [init(), opening, permission()] });
-  t.type('Maybe, but y first'); // a y/n/a only answers while the box is empty
+  t.type('yes, but later'); // Enter/n/a only answer while the box is empty, and y is no key any more
   t.v.handleInput(KEY.enter);
-  assert.deepEqual(t.drops, [{ to: 'w-1', kind: 'permission', requestId: 'r1', decision: 'deny', text: 'Maybe, but y first' }]);
+  assert.deepEqual(t.drops, [{ to: 'w-1', kind: 'permission', requestId: 'r1', decision: 'deny', text: 'yes, but later' }]);
 });
 
 test('the picker keys drive the question set and the final Enter drops the answers', () => {
   const t = makeView({ log: [init(), opening, questions()] });
   assert.match(t.text(), /\? T05 asks you 2 questions/);
   assert.match(t.text(), /Which colour\? \(pick one\)/);
-  t.v.handleInput(KEY.enter);
-  assert.equal(t.drops.length, 0, 'Enter on an unanswered question does nothing');
   t.v.handleInput(KEY.down);
-  t.v.handleInput(KEY.space); // Blue
-  t.v.handleInput(KEY.enter);
+  t.v.handleInput(KEY.enter); // one Enter chooses Blue on a single-select question (user 2026-09-26)
   assert.match(t.text(), /Which sizes\? \(pick any\)/);
+  t.v.handleInput(KEY.enter);
+  assert.equal(t.drops.length, 0, 'Enter on an unticked multi-select question does nothing');
   t.v.handleInput(KEY.space); // S
   t.v.handleInput(KEY.down);
   t.v.handleInput(KEY.down);
@@ -236,35 +235,45 @@ test('the picker keys drive the question set and the final Enter drops the answe
   assert.equal(t.v.state.text, '', 'no picker key reached the box');
 });
 
-test('the picker\'s Other line takes the typed text as the answer', () => {
+test('typing with a question set pending lands next to "Other:", not in the box (user 2026-09-26)', () => {
   const t = makeView({ log: [init(), opening, questions()] });
-  t.v.handleInput(KEY.up); // wraps to Other
-  t.v.handleInput(KEY.space);
-  t.type('Green');
+  t.type('Green é');
+  assert.equal(t.v.state.text, '', 'the box stays empty');
+  assert.match(t.text(), /❯ \(•\) Other: Green é▏/);
+  t.v.handleInput('\x7f'); // backspace
+  t.v.handleInput('\x7f');
   t.v.handleInput(KEY.enter);
-  assert.deepEqual(t.drops, [], 'the text became the answer, not a message');
-  assert.match(t.text(), /Other: Green/);
-  t.v.handleInput(KEY.enter); // next question
-  t.v.handleInput(KEY.space);
+  assert.deepEqual(t.drops, [], 'the first of two questions: nothing sent yet');
+  assert.match(t.text(), /Which sizes\? \(pick any\)/, 'moved to the next question');
+  t.v.handleInput(KEY.space); // S
+  t.type('XL');
+  assert.match(t.text(), /esc to talk instead/, 'with a question pinned, the footer says how to talk instead');
   t.v.handleInput(KEY.enter);
-  assert.deepEqual(t.drops[0].answers, { 'Which colour?': 'Green', 'Which sizes?': 'S' });
+  assert.deepEqual(t.drops, [{ to: 'w-1', kind: 'answers', requestId: 'q1', answers: { 'Which colour?': 'Green', 'Which sizes?': 'S, XL' } }]);
 });
 
-test('typed text with a pending question set declines it with the text', () => {
-  const t = makeView({ log: [init(), opening, questions()] });
-  t.type('let us talk first');
+
+
+test('text already in the box when a question arrives moves onto its Other line on Enter', () => {
+  const t = makeView({ log: [init(), opening] });
+  t.type('Jan');
+  t.push(questions());
   t.v.handleInput(KEY.enter);
-  assert.deepEqual(t.drops, [{ to: 'w-1', kind: 'decline-questions', requestId: 'q1', text: 'let us talk first' }]);
+  assert.deepEqual(t.drops, []);
+  assert.equal(t.v.state.text, '');
+  assert.match(t.text(), /❯ \(•\) Other: Jan▏/);
 });
+
+
 
 test('the answer arriving in the log unpins the prompt; a new request pins fresh', () => {
   const t = makeView({ log: [init(), opening, permission()] });
-  t.v.handleInput('y');
+  t.v.handleInput(KEY.enter);
   t.push(entry({ dir: 'out', from: 'person', kind: 'reply', requestId: 'r1', result: { behavior: 'allow', updatedInput: {} } }));
   assert.doesNotMatch(t.text(), /answer sent/);
   assert.match(t.text(), /→ allowed/);
   t.push(permission({ requestId: 'r2', input: { command: 'git push' } }));
-  assert.match(t.text(), /y allow · n refuse/);
+  assert.match(t.text(), /↵ allow · n refuse/);
   t.v.handleInput('n');
   assert.deepEqual(t.drops.at(-1), { to: 'w-1', kind: 'permission', requestId: 'r2', decision: 'deny' });
 });
@@ -299,7 +308,7 @@ test('read-only worker: no box, only ← and scrolling work', () => {
   assert.match(s[0], /finished, read only/);
   assert.match(s.at(-1), /← back · PgUp\/PgDn scroll/);
   assert.match(t.text(), /T05 ▸ step 59/, 'it opens at the end');
-  assert.doesNotMatch(t.text(), /y allow · n refuse/, 'nothing is pinned');
+  assert.doesNotMatch(t.text(), /↵ allow · n refuse/, 'nothing is pinned');
   for (const k of ['y', 'n', 'a', 'h', KEY.enter, KEY.esc, KEY.ctrlC, KEY.space]) t.v.handleInput(k);
   assert.deepEqual(t.drops, [], 'no key sends anything');
   assert.equal(t.v.state.text, null, 'there is no box');
@@ -401,7 +410,7 @@ test('scrolled up, a prompt pinned below the scrollback does not move the lines 
   t.v.handleInput(KEY.pgUp);
   const before = t.screen().slice(2, 6);
   t.push(permission());
-  assert.match(t.text(), /y allow · n refuse/, 'the request is pinned');
+  assert.match(t.text(), /↵ allow · n refuse/, 'the request is pinned');
   assert.deepEqual(t.screen().slice(2, 6), before, 'the top of the scrollback stayed where it was');
   t.v.handleInput(KEY.pgDn);
   t.v.handleInput(KEY.pgDn);
@@ -491,10 +500,27 @@ test('against a fake run: the view shows a permission from the real log, y answe
 
   await waitFor(/⚑ T05 wants to use Bash/, 'the permission request');
   assert.match(text(), /git push -f/);
-  v.handleInput('y');
+  v.handleInput('\r');
   await waitFor(/→ allowed/, 'the reply in the log');
   await waitFor(/^(?![\s\S]*● working)/, 'the turn to end');
   for (let i = 0; i < 500 && platform.list()[0]?.state !== 'idle'; i++) await new Promise((r) => setTimeout(r, 10));
   assert.equal(platform.list()[0].state, 'idle', 'the fake worker carried on to its result');
   assert.ok(renders > 0, 'the follower asked for repaints as the log grew');
+});
+
+// T18 drill (user 2026-09-26): a worker waiting on background work must not look idle.
+test('the status line counts background work: alone when the worker waits, beside working… when busy', () => {
+  const bg = (id, description) => entry({ dir: 'in', event: { type: 'system', subtype: 'task_started', task_id: id, description, is_backgrounded: true } });
+  const end = (id) => entry({ dir: 'in', event: { type: 'system', subtype: 'task_notification', task_id: id, status: 'completed' } });
+  const result = () => entry({ dir: 'in', event: { type: 'result', subtype: 'success' } });
+  const t = makeView({ log: [init(), opening, bg('a', 'one'), bg('b', 'two'), result()] });
+  assert.match(t.text(), /◌ 2 running in the background/);
+  assert.doesNotMatch(t.text(), /● working…/);
+  t.push(said('still waiting'));
+  assert.match(t.text(), /● working… · 2 running in the background/);
+  t.push(result());
+  t.push(end('a'));
+  assert.match(t.text(), /◌ 1 running in the background/);
+  t.push(end('b'));
+  assert.doesNotMatch(t.text(), /running in the background$/m);
 });

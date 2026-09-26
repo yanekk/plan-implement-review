@@ -107,8 +107,16 @@ export function buildConversation(entries, { full = false, width = 80, taskId = 
   const results = new Map(); // toolUseId → tool-result event
   const answers = new Map(); // requestId → { result, from } from the reply entry
   const byGrant = new Set();
+  const toolNames = new Map(); // toolUseId → tool name, so a background task knows it is a Monitor
+  const background = new Map(); // task_id → { description, tool, ended } for work moved to the background
   for (const entry of list) {
     for (const ev of readEntry(entry)) {
+      if (ev.kind === 'tool-use') toolNames.set(ev.toolUseId, ev.name);
+      if (ev.kind === 'system') {
+        const task = backgroundEvent(ev);
+        if (task?.started) background.set(task.id, { description: task.description, tool: toolNames.get(task.toolUseId) ?? '', ended: null });
+        else if (task?.ended && background.has(task.id)) background.get(task.id).ended ??= task.ended;
+      }
       if (ev.kind === 'tool-result') results.set(ev.toolUseId, ev);
       else if (ev.kind === 'reply') answers.set(ev.requestId, { result: isObject(entry.result) ? entry.result : {}, from: ev.from });
       else if (ev.kind === 'note' && ev.note === 'delivered-by-grant' && typeof ev.requestId === 'string') byGrant.add(ev.requestId);
@@ -137,7 +145,7 @@ export function buildConversation(entries, { full = false, width = 80, taskId = 
           break;
         }
         case 'text': {
-          if (!ev.text.trim()) break;
+          if (!ev.text.trim() || ev.synthetic) break; // a skill body Claude injected: hundreds of lines nobody said
           if (ev.role === 'assistant') lines.push(...wrapped(`${taskId} ▸ `, ev.text, 'worker', w));
           else lines.push(...wrapped('  ', ev.text, 'dim', w)); // e.g. `[Request interrupted by user]`
           break;
@@ -169,8 +177,23 @@ export function buildConversation(entries, { full = false, width = 80, taskId = 
         case 'raw':
           lines.push([span('· an unreadable log line', 'dim')]);
           break;
+        case 'system': {
+          // Background work (user 2026-09-26, T18 drill): one line when a command or a monitor moves to the
+          // background and one when it ends, so a worker waiting on it does not look idle. The monitor's
+          // own events never reach pir (Claude hands them to the model only), so only its start and end show.
+          const task = backgroundEvent(ev);
+          const known = task && background.get(task.id);
+          if (!known) break;
+          const what = known.description || (known.tool === 'Monitor' ? 'a monitor' : 'a command');
+          if (task.started) lines.push(...wrapped('  ↳ ', `${known.tool === 'Monitor' ? 'monitor started' : 'running in the background'}: ${what}`, 'dim', w));
+          else if (task.ended && task.notification) {
+            const verb = task.ended === 'completed' ? (known.tool === 'Monitor' ? 'monitor ended' : 'finished in the background') : `${task.ended} in the background`;
+            lines.push(...wrapped('  ↳ ', `${verb}: ${what}`, task.ended === 'completed' ? 'dim' : 'bad', w));
+          }
+          break;
+        }
         default:
-          // init, system (rate limits, thinking tokens, task events), tool-result (drawn on its step).
+          // init, tool-result (drawn on its step).
           break;
       }
     }
@@ -178,7 +201,25 @@ export function buildConversation(entries, { full = false, width = 80, taskId = 
 
   let pinned = null;
   if (pinnedRequest) pinned = pinnedRequest.kind === 'questions' ? pickerFor(pinnedRequest) : gateFor(pinnedRequest);
-  return { lines, pinned };
+  // How many background commands and monitors are still running: started and not yet ended.
+  const running = [...background.values()].filter((b) => !b.ended).length;
+  return { lines, pinned, background: running };
+}
+
+// backgroundEvent(ev) → { id, started, toolUseId, description } | { id, ended, notification } | null, for
+// one `system` event (stream.mjs) about background work, as measured on Claude Code 2.1.282 (T18 live run):
+// `task_started` with `is_backgrounded: true` when a Bash command or a Monitor goes to the background;
+// `task_updated` with a terminal `patch.status`, then `task_notification` with `status`, when it ends.
+// Anything else (a foreground task, rate limits, thinking tokens) is null.
+function backgroundEvent(ev) {
+  const e = ev?.event;
+  if (!isObject(e) || typeof e.task_id !== 'string') return null;
+  if (e.subtype === 'task_started') {
+    return e.is_backgrounded === true ? { id: e.task_id, started: true, toolUseId: e.tool_use_id, description: typeof e.description === 'string' ? e.description : '' } : null;
+  }
+  const status = e.subtype === 'task_notification' ? e.status : e.subtype === 'task_updated' ? e.patch?.status : null;
+  if (!['completed', 'failed', 'killed', 'stopped'].includes(status)) return null;
+  return { id: e.task_id, ended: status, notification: e.subtype === 'task_notification' };
 }
 
 // One tool use. Default: exactly one line, `⎿ <Tool> <main arg>  <last result line>`, clipped to width.
@@ -300,10 +341,11 @@ export function gateFor(request) {
 }
 
 // gateReducer(gate, key) → { gate, send }. `send` is null or 'allow' | 'deny' | 'allow-always'.
-// With confirmAllow (Claude's defaultToNo) one stray key must not approve: the first y arms, a second y
-// allows, any other key disarms; `a` approves too, so it arms the same way and a second `a` sends
-// allow-always. `armed` records which approval is armed ('allow' | 'allow-always'), or false. `n`
-// refuses in one press.
+// Enter on the empty box allows (user 2026-09-26, T18 drill: it replaced `y`, so a typed reply starting
+// with "y" can no longer approve). With confirmAllow (Claude's defaultToNo) one stray key must not
+// approve: the first Enter arms, a second Enter allows, any other key disarms; `a` approves too, so it
+// arms the same way and a second `a` sends allow-always. `armed` records which approval is armed
+// ('allow' | 'allow-always'), or false. `n` refuses in one press.
 export function gateReducer(gate, key) {
   const disarmed = { ...gate, armed: false };
   const approve = (action) => {
@@ -311,7 +353,7 @@ export function gateReducer(gate, key) {
     return { gate: { ...gate, armed: action }, send: null };
   };
   if (key === 'n') return { gate: disarmed, send: 'deny' };
-  if (key === 'y') return approve('allow');
+  if (key === 'enter') return approve('allow');
   if (key === 'a' && gate.canAlwaysAllow) return approve('allow-always');
   return { gate: disarmed, send: null };
 }
@@ -319,65 +361,84 @@ export function gateReducer(gate, key) {
 // ---- The question-set picker (DESIGN §2.7). ----
 
 // pickerFor(request) → the picker for a pending question set (a stream.mjs `questions` event). Every
-// question gets a final "Other" line (cursor index options.length) that takes typed text.
+// question ends with an "Other" line (cursor index options.length) that is itself a text field: the
+// person's own answer is typed there, next to "Other:", never in the box (user 2026-09-26, T18 drill).
 export function pickerFor(request) {
   return {
     kind: 'questions',
     requestId: request.requestId,
     q: 0,
     cursor: 0,
-    typingOther: false,
     questions: (request.questions ?? []).map((qn) => ({ ...qn, picks: [], other: '' })),
   };
+}
+
+// onOther(picker) → is the cursor on the current question's Other line.
+export function onOther(picker) {
+  const qn = picker?.questions?.[picker.q];
+  return !!qn && picker.cursor === qn.options.length;
 }
 
 // The answer to one question: its picked labels in option order, then the Other text, joined ", ".
 function answerOf(qn) {
   const labels = qn.options.filter((_, i) => qn.picks.includes(i)).map((o) => o.label);
-  if (qn.other) labels.push(qn.other);
+  const own = qn.other.trim();
+  if (own) labels.push(own);
   return labels.join(', ');
 }
 
 // pickerReducer(picker, event) → { picker, send }. `send` is null or { answers }, answers keyed by
-// question text. Events: up/down move (wrapping), toggle picks (single-select replaces, multi-select
-// ticks; on Other it sets `typingOther` so the view takes the box's text), other {text} sets the Other
-// answer (a single-select's picks give way to it), next moves on, and on the last question sends. next
-// on an unanswered question does nothing.
+// question text. Events (user 2026-09-26, T18 drill):
+//   up/down    move, wrapping through the Other line; the Other text stays when the cursor leaves it.
+//   toggle     space on an option: a single-select question replaces its pick, a multi-select one ticks.
+//   char {text}  typing: it lands on the Other line, moving the cursor there first if it was on an option,
+//              so typed text is only ever the person's own answer (their option 1).
+//   backspace  on the Other line, deletes the last character.
+//   next       Enter: answers and moves on, sending on the last question. A single-select question takes
+//              the line under the cursor (an option, or the Other text); a multi-select one its ticks plus
+//              any Other text. With no answer it does nothing.
 export function pickerReducer(picker, event) {
   const qn = picker.questions[picker.q];
   if (!qn) return { picker, send: null };
   const n = qn.options.length + 1;
-  const withQuestion = (changes, rest = {}) => ({
-    ...picker,
-    ...rest,
-    questions: picker.questions.map((x, i) => (i === picker.q ? { ...x, ...changes } : x)),
+  const withQuestion = (p, changes) => ({
+    ...p,
+    questions: p.questions.map((x, i) => (i === p.q ? { ...x, ...changes } : x)),
   });
+  const advance = (p) => {
+    if (!answerOf(p.questions[p.q])) return { picker, send: null };
+    if (p.q < p.questions.length - 1) return { picker: { ...p, q: p.q + 1, cursor: 0 }, send: null };
+    const answers = {};
+    for (const x of p.questions) answers[x.question] = answerOf(x);
+    return { picker: p, send: { answers } };
+  };
+  const other = qn.options.length;
   switch (event?.type) {
     case 'up':
-      return { picker: { ...picker, cursor: (picker.cursor + n - 1) % n, typingOther: false }, send: null };
+      return { picker: { ...picker, cursor: (picker.cursor + n - 1) % n }, send: null };
     case 'down':
-      return { picker: { ...picker, cursor: (picker.cursor + 1) % n, typingOther: false }, send: null };
+      return { picker: { ...picker, cursor: (picker.cursor + 1) % n }, send: null };
     case 'toggle': {
-      if (picker.cursor === qn.options.length) return { picker: { ...picker, typingOther: true }, send: null };
+      if (picker.cursor === other) return pickerReducer(picker, { type: 'char', text: ' ' });
       if (qn.multiSelect) {
         const picks = qn.picks.includes(picker.cursor) ? qn.picks.filter((i) => i !== picker.cursor) : [...qn.picks, picker.cursor];
-        return { picker: withQuestion({ picks }), send: null };
+        return { picker: withQuestion(picker, { picks }), send: null };
       }
-      return { picker: withQuestion({ picks: [picker.cursor], other: '' }), send: null };
+      return { picker: withQuestion(picker, { picks: [picker.cursor] }), send: null };
     }
-    case 'other': {
-      const text = typeof event.text === 'string' ? event.text.trim() : '';
-      const changes = qn.multiSelect || !text ? { other: text } : { other: text, picks: [] };
-      return { picker: withQuestion(changes, { typingOther: false }), send: null };
+    case 'char': {
+      const text = typeof event.text === 'string' ? event.text : '';
+      if (!text) return { picker, send: null };
+      return { picker: withQuestion({ ...picker, cursor: other }, { other: qn.other + text }), send: null };
+    }
+    case 'backspace': {
+      if (picker.cursor !== other || !qn.other) return { picker, send: null };
+      return { picker: withQuestion(picker, { other: [...qn.other].slice(0, -1).join('') }), send: null };
     }
     case 'next': {
-      if (!answerOf(qn)) return { picker, send: null };
-      if (picker.q < picker.questions.length - 1) {
-        return { picker: { ...picker, q: picker.q + 1, cursor: 0, typingOther: false }, send: null };
-      }
-      const answers = {};
-      for (const x of picker.questions) answers[x.question] = answerOf(x);
-      return { picker, send: { answers } };
+      if (qn.multiSelect) return advance(picker);
+      if (picker.cursor === other) return qn.other.trim() ? advance(withQuestion(picker, { picks: [] })) : { picker, send: null };
+      return advance(withQuestion(picker, { picks: [picker.cursor], other: '' }));
     }
     default:
       return { picker, send: null };
@@ -392,9 +453,9 @@ export function promptLines(prompt, { width = 80, taskId = 'worker' } = {}) {
   if (prompt?.kind === 'permission') {
     const out = gateHead(prompt, taskId, w);
     let keys;
-    if (prompt.armed === 'allow') keys = 'press y again to allow · any other key cancels';
+    if (prompt.armed === 'allow') keys = 'press ↵ again to allow · any other key cancels';
     else if (prompt.armed === 'allow-always') keys = 'press a again to allow and not ask again · any other key cancels';
-    else keys = `y allow · n refuse${prompt.canAlwaysAllow ? " · a allow, don't ask again" : ''} · or type a reply to refuse with it`;
+    else keys = `↵ allow · n refuse${prompt.canAlwaysAllow ? " · a allow, don't ask again" : ''} · or type a reply to refuse with it`;
     out.push(...wrapped('  ', keys, 'prompt', w));
     return out;
   }
@@ -405,21 +466,29 @@ export function promptLines(prompt, { width = 80, taskId = 'worker' } = {}) {
     const qn = prompt.questions[prompt.q];
     if (!qn) return out;
     out.push(...wrapped('  ', `${qn.question} (${qn.multiSelect ? 'pick any' : 'pick one'})`, null, w));
-    const opts = [...qn.options, { label: 'Other', description: 'type your own answer in the box' }];
-    opts.forEach((o, i) => {
-      const isOther = i === qn.options.length;
-      const on = isOther ? qn.other !== '' : qn.picks.includes(i);
+    qn.options.forEach((o, i) => {
+      const on = qn.picks.includes(i);
       const box = qn.multiSelect ? (on ? '[x]' : '[ ]') : on ? '(•)' : '( )';
       const cursor = i === prompt.cursor ? '❯ ' : '  ';
-      const label = isOther && qn.other ? `Other: ${qn.other}` : o.label;
-      const spans = [span(`  ${cursor}${box} ${label}`, on ? 'ok' : i === prompt.cursor ? 'prompt' : null)];
+      const spans = [span(`  ${cursor}${box} ${o.label}`, on ? 'ok' : i === prompt.cursor ? 'prompt' : null)];
       if (o.description) spans.push(span(`  ${o.description}`, 'dim'));
       out.push(clipSpans(spans, w));
     });
+    // The Other line is a text field: the typed answer sits next to "Other:", with a caret while the cursor
+    // is on it (user 2026-09-26, T18 drill).
+    const here = onOther(prompt);
+    const own = qn.other !== '';
+    const otherBox = qn.multiSelect ? (own ? '[x]' : '[ ]') : own && !qn.picks.length ? '(•)' : '( )';
+    const otherSpans = [span(`  ${here ? '❯ ' : '  '}${otherBox} Other: `, own ? 'ok' : here ? 'prompt' : null), span(qn.other, 'ok')];
+    if (here) otherSpans.push(span('▏', 'prompt'));
+    else if (!own) otherSpans.push(span('type your own answer', 'dim'));
+    out.push(clipSpans(otherSpans, w));
     const last = prompt.q === total - 1;
-    const hint = prompt.typingOther
-      ? 'type your answer in the box, then ↵'
-      : `↑↓ move · space ${qn.multiSelect ? 'tick' : 'choose'} · ↵ ${last ? 'send answers' : 'next question'} · or type a reply to explain instead`;
+    const hint = here
+      ? `type your answer here · ↵ ${last ? 'send' : 'next question'} · ↑↓ leave it`
+      : qn.multiSelect
+        ? `↑↓ move · space tick · ↵ ${last ? 'send answers' : 'next question'} · or just type your own answer`
+        : `↑↓ move · ↵ ${last ? 'choose and send' : 'choose, next question'} · or just type your own answer`;
     out.push(...wrapped('  ', hint, 'prompt', w));
     return out;
   }
