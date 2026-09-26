@@ -31,7 +31,8 @@ rather than adding a second resume path.
 //   step { sh: '<command>' } → runs /bin/sh -c in the session's cwd, env includes FAKE_CWD and the
 //     text of the first user message as FAKE_OPENING; a non-zero exit is emitted as an error result
 //   {{reportsDir}} in a step is substituted from 'Reports folder: <path>' in the opening message
-//   a resumed start (--resume <id>) continues from the step after the last one it completed, persisted
+//   a resumed start (--resume <id>) takes no turn until a user message arrives, as real Claude does, then
+//   continues from the step after the last one it completed, persisted
 //     in <dir>/fake-progress-<session>.json
 // claude-shim.mjs
 export function writeClaudeShim(dir, { scriptsFile, received }) → shimPath   // dir/claude, chmod 755
@@ -48,10 +49,10 @@ export function noPlanScript() → steps
 - [ ] Two sessions from one scripts file get different scripts by their opening message.
 - [ ] `sh` runs in the session's cwd and a commit it makes is visible in git.
 - [ ] `{{reportsDir}}` is substituted from the opening message.
-- [ ] A resumed start continues after the last completed step.
+- [ ] A resumed start stays silent until a user message, then continues after the last completed step.
 - [ ] The shim on `PATH` is what `resolveClaudePath` returns, and a worker started through `startWorker`
       with it completes one scripted turn.
-- [ ] `plannerScript`'s plan passes `parsePlanReviewed` after `reviewerScript` and `parseTestBlock` before.
+- [ ] `plannerScript`'s plan reads reviewed through `parseProgress(text).planReviewed` after `reviewerScript` and `parseTestBlock` before.
 
 ## Done when
 

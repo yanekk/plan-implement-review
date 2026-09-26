@@ -45,6 +45,8 @@ the question.
 - [ ] Clock stops while a step is asking (same rule as task rows, `stoppedAt`).
 - [ ] Go keys only act while `go` is set; `esc` leaves the question in place.
 - [ ] A step with no session yet → footer note, no open.
+- [ ] An open steps view or step conversation keeps its run when the rename changes the record's key
+      (`findOpen` today matches `openSlug`/`openKey`, which the rename invalidates).
 
 ## Done when
 

@@ -34,13 +34,18 @@
       "Bash(HOME=/tmp/pir-live-workers-home ./install.sh)",
       "Bash(node src/shell/harness/run.mjs live-workers-demo --into:*)",
       "Bash(npm ci)",
-      "Bash(node src/shell/harness/run.mjs quiet-worker --into /tmp/pir-quiet-worker)"
+      "Bash(node src/shell/harness/run.mjs quiet-worker --into /tmp/pir-quiet-worker)",
+      "Bash(test ! -f package-lock.json || npm ci)",
+      "Bash(HOME=/tmp/pir-plan-command-home ./install.sh)",
+      "Bash(claude auth status)"
     ],
     "ask": [
       "Bash(npm i @earendil-works/pi-tui@0.87.1)",
       "Bash(npm i --omit=peer --omit=optional @anthropic-ai/claude-agent-sdk@0.3.282)",
       "Bash(PARALLEL_MAX_WORKERS=1 node /Users/jan.krolikowski/src/plan-implement-review/.claude/worktrees/:*)",
-      "Bash(PARALLEL_MAX_WORKERS=2 node /Users/jan.krolikowski/src/plan-implement-review/.claude/worktrees/:*)"
+      "Bash(PARALLEL_MAX_WORKERS=2 node /Users/jan.krolikowski/src/plan-implement-review/.claude/worktrees/:*)",
+      "Bash(cp -R skills/pir-plan skills/pir-review-plan \"$HOME/.claude/skills/\")",
+      "Bash(node src/shell/harness/run.mjs plan-command --into:*)"
     ]
   }
 }

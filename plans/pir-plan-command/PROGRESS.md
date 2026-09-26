@@ -10,11 +10,11 @@ touching the task you pick up, and append yours there.
 the account is the commit message. Whoever writes a cell also fixes the over-budget cell they walk
 past.
 
-**Plan reviewed:** not yet — run `/pir-review-plan pir-plan-command` before the first `/pir-work`
+**Plan reviewed:** 2026-09-26 — 8 fixed, 7 decided with the user
 
 **Status:** Planned 2026-09-26. Nothing built.
 **Last updated:** 2026-09-26
-**Next `pir-work` will:** once reviewed, T01 plan-flow-core: it heads the critical path.
+**Next `pir-work` will:** T01 plan-flow-core: it heads the critical path.
 
 ## Tasks
 
@@ -30,7 +30,7 @@ done · ⛔ blocked, needs a human.
 | T05 | fake-claude-sessions | — | ⬜ | |
 | T06 | plan-run-planner | T01, T02, T04, T05 | ⬜ | |
 | T07 | plan-run-review | T06 | ⬜ | |
-| T08 | plan-launch | T02, T03, T04 | ⬜ | |
+| T08 | plan-launch | T01, T02, T03, T04 | ⬜ | |
 | T09 | pir-commands | T08 | ⬜ | |
 | T10 | plan-rig | T05 | ⬜ | |
 | T11 | dashboard-type | T02, T07, T08, T10 | ⬜ | |
@@ -46,4 +46,4 @@ done · ⛔ blocked, needs a human.
 
 ## Blocked on the user
 
-Nothing yet. T18's live run is an `ask` action (DESIGN §5.3): the permission prompt is the user's yes.
+Nothing yet. T18's skill copy and live run are `ask` actions (DESIGN §5.3): the permission prompt is the user's yes.

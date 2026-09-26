@@ -78,13 +78,15 @@ Pre-flight, in order, each a clean stderr message and exit 1 with nothing create
 Then, in order:
 
 - A run id `plan-{hex4}`: four random hex characters from the shell, retried while branch
-  `pir/plan-{hex4}` or index entry `{repo}__plan-{hex4}` exists.
+  `pir/plan-{hex4}`, index entry `{repo}__plan-{hex4}` or folder `<main>/plans/plan-{hex4}/` exists.
 - Branch `pir/plan-{hex4}` cut from local `main`, worktree `<main>/.claude/worktrees/pir-plan-{hex4}`
   (`openPlanBranch`, T04). Cut from `main` because that is what a build's feature branch is cut from
   today; the build later reuses this branch as its feature branch (§2.9).
-- Control folder `<git-common-dir>/pir/plan-{hex4}/`. Inside `.git` because the slug does not exist
-  yet, so `plans/{slug}/.parallel/` cannot be named, and `.git` is never tracked and needs no
-  gitignore. `brief.md` is written there, and `state.json` (§3.5).
+- Control folder `<main>/plans/plan-{hex4}/.parallel/plan/`, the shape it has after the rename (§2.6) with
+  the run id standing in for the slug, and already ignored by `plans/*/.parallel/`. Not inside `.git`:
+  Claude Code never auto-approves a write under `.git` (a protected path; auto mode sends it to the
+  classifier and allow rules cannot pre-approve it), so the planner's report could stall the run at its
+  last step (FINDINGS 2026-09-26, user at plan review). `brief.md` is written there, and `state.json` (§3.5).
 - The planning program (`src/shell/plan-run.mjs`) spawned detached exactly as `startRun` spawns the
   coordinator: new session and process group, stdout and stderr to `run.log` in the control folder,
   env `PIR_RUN=1`, `caffeinate -i -w {pid}`.
@@ -101,8 +103,15 @@ the planner in `pir` is the same act as answering a worker, and every fix to one
 - Names: `{repo} / {runId-or-slug} / plan / planner` and `{repo} / {slug} / plan / reviewer`. They
   deliberately fail `parseAgentName` (no `T{nn}`), so no coordinator ever counts or closes them.
 - Logs: `conversations/plan-{n}.ndjson` and `conversations/review-{n}.ndjson` in the run's control
-  folder, `n` counted from the folder as `nextLogPath` does.
+  folder, `n` counted from the folder as `nextLogPath` does. A resumed session appends to its own log, not
+  the next `n`, so the person reads one conversation (§2.14; resume-dead-worker §2.3 does the same).
 - Working directory: the plan branch's worktree.
+- Remote Control follows the person being waited on, as for build workers: `worker.remoteControl(true)` while
+  the live session's activity is `permission`, `questions` or `idle` (a planning session ends a turn only to
+  wait on the person, and asks mostly in prose, with no question report), `false` once it is `busy` again and
+  before a close. On by default, off under `PARALLEL_REMOTE=0`, the build's variable (user at plan review,
+  2026-09-26: one rule for anything waiting on the person). The coordinator's `remoteWanted` is not reused: it
+  keys on task state a planning run does not have.
 - One session at a time. The reviewer is never started while the planner is live, because
   `pir-review-plan` refuses to read back a plan whose author is still in the room.
 
@@ -119,7 +128,7 @@ reviewer: Load the pir-review-plan skill and run it on plan {slug}. You are run 
 ```
 
 The folder is named in the message because a planning session cannot derive it: before the rename the
-control folder is inside `.git`, and the reviewer runs after it moved.
+control folder is under the run id, and the reviewer runs after it moved.
 
 ### 2.4 Reports
 
@@ -167,8 +176,9 @@ halfway is finished by a resume:
 
 1. `git branch -m pir/plan-{hex4} pir/{slug}`
 2. `git worktree move .claude/worktrees/pir-plan-{hex4} .claude/worktrees/pir-{slug}`
-3. Move the control folder to `<main>/plans/{slug}/.parallel/plan/`; the running program re-points
-   every path it holds.
+3. Move the control folder from `plans/plan-{hex4}/.parallel/plan/` to `<main>/plans/{slug}/.parallel/plan/`,
+   then remove the emptied `plans/plan-{hex4}/.parallel/` and `plans/plan-{hex4}/` (only if empty); the
+   running program re-points every path it holds.
 4. Rename the index entry to `{repo}__{slug}.json`, keeping `kind: 'plan'`, clearing `label`.
 
 The rename happens between sessions because a live session's working directory must not move under
@@ -183,7 +193,7 @@ worktree both work, and the worktree reports the new branch.
 
 The reviewer is spawned in `.claude/worktrees/pir-{slug}` with the reviewer instruction (§2.3). On
 `reviewed plan={slug}`, `pir` checks on the committed branch tree that the review gate reads reviewed
-(`parsePlanReviewed` on `plans/{slug}/PROGRESS.md`) and the setup/test block parses (`parseTestBlock`
+(`parseProgress(text).planReviewed` on `plans/{slug}/PROGRESS.md`, as `readReviewGate` reads it) and the setup/test block parses (`parseTestBlock`
 on `DESIGN.md`), and that the worktree is clean. A failure is a message to the reviewer, as in §2.5.
 On success, once not busy, the reviewer is closed and the run finishes: outcome `reviewed`, final
 status `finished`.
@@ -262,6 +272,11 @@ run's steps view. The person started the run to talk to the planner, and the pla
 arrives within seconds. Until the planning program has written its first snapshot naming the planner,
 the view says `starting the planner…`.
 
+When the reviewer starts while the person is in the planner's conversation, the view follows into the
+reviewer's conversation, headed by one line `the planner finished; the reviewer has started`, and `←` goes to
+the steps view. A person on the steps view or the list is not moved. The person is there to talk to whoever
+is working on the plan, the same reason as the landing (user at plan review, 2026-09-26).
+
 ### 2.13 The brief box
 
 Bare `pir plan` opens a full-screen box: a title `pir plan  new plan in {repo}`, one prompt line, the
@@ -277,14 +292,25 @@ opens, so the person does not write a brief that is then refused.
 
 - A plan row: the planning program is spawned detached again with `--resume`, which reads `state.json`
   and resumes the current step's last session by its session id (the SDK's `resume` option), in the same
-  worktree. A rename left half-done is finished first (§2.6).
+  worktree, appending to its log after a `resumed` note. A rename left half-done is finished first (§2.6).
+  `pir` then sends the resumed session one fixed message as its first user message (below).
 - A work row: `startRun(slug)`, exactly `pir start {slug}`.
 
 Resuming the same conversation is the user's choice (2026-09-26): the planner remembers everything
 discussed, and nothing typed is lost. Measured 2026-09-26 on Claude Code 2.1.283 and SDK 0.3.282 by
 `plans/resume-dead-worker`: a session SIGKILLed mid-command and resumed with `query({ resume: id })`
 in the same cwd kept its id, its transcript and its memory. It misremembered its killed command as
-never started, so a resumed session is told nothing false about what ran.
+never started, and a resumed session takes no turn until a message arrives. So `pir` sends, exactly
+(`resumeInstruction`, T01):
+
+```
+You were stopped and have been resumed in the same worktree. Whatever you were doing when you stopped
+may not have finished: check `git status` and the plan files, tell the person where things stand, and
+carry on. Any question you had open was lost, so ask it again.
+```
+
+Without it a session that died mid-work sits idle with nothing on screen asking the person, and a
+question pending at the kill is gone with the process (user at plan review, 2026-09-26).
 
 ### 2.15 The planning skills under `pir`
 
@@ -345,7 +371,7 @@ New or changed, by task:
 |---|---|---|---|
 | `core/planflow.mjs` | pure | the planning run's state machine, report parsing, slug and id rules, session names | T01 |
 | `core/runrecord.mjs` | pure | `kind`, `label`, `go` fields | T02 |
-| `shell/index-store.mjs` | shell | `renameRecord` | T02 |
+| `shell/index-store.mjs` | shell | `renameRecord`, `updateRecord` (the build's `updateIndexFinalState` delegates to it) | T02 |
 | `shell/plan-home.mjs` | shell | `planHome(slug)` and the file reads the gates use | T03 |
 | `shell/coordinate.mjs`, `shell/launch.mjs` | shell | read the plan through `planHome` | T03 |
 | `shell/worktree.mjs` | shell | `openPlanBranch`, `renamePlanBranch` | T04 |
@@ -447,7 +473,8 @@ test`. Sizes: 80×24 and 120×40.
 **After changing engine code or a skill, run `./install.sh`**, never while any parallel or planning
 run is live, because a live run's sessions use the installed engine and skills. Until `pir/pir-plan-
 command` is merged, a task installs only into a scratch HOME (`HOME=/tmp/pir-plan-command-home
-./install.sh`) and runs the engine from its worktree.
+./install.sh`) and runs the engine from its worktree. The one exception is T18 copying the two planning
+skills into the real HOME after the person's yes (§5.3).
 
 ### 5.1 What the test command cannot reach
 
@@ -469,13 +496,15 @@ command` is merged, a task installs only into a scratch HOME (`HOME=/tmp/pir-pla
 
 ### 5.3 Outside the code — who acts
 
-Proposed; the user places them at plan review.
+Placed by the user at plan review, 2026-09-26: kept as proposed. The rules are in `.claude/settings.json`
+(`worker` rows and login checks under `allow`, `ask` rows under `ask`).
 
 | Action | Command | Bin | Why this bin | Way back | Expected cost | Login check |
 |---|---|---|---|---|---|---|
 | Install the locked packages | `test ! -f package-lock.json \|\| npm ci` in the repo or a worktree | `worker` | Exact locked versions only (live-workers §5.3, user 2026-09-25) | Delete `node_modules` | none | none |
 | Scratch install | `HOME=/tmp/pir-plan-command-home ./install.sh` | `worker` | Writes only under that HOME | `rm -rf /tmp/pir-plan-command-home` | none | none |
-| Live plan-command run (T18) | `node src/shell/harness/run.mjs plan-command --into <scratch>` | `ask` | A whole plan of paid sessions: planner, reviewer, build | HALT, or the harness timeout; scratch deleted | an hour or two of model time on the plan | `claude --version` |
+| Live plan-command run (T18) | `node src/shell/harness/run.mjs plan-command --into <scratch>` | `ask` | A whole plan of paid sessions: planner, reviewer, build | HALT, or the harness timeout; scratch deleted | an hour or two of model time on the plan | `claude auth status` (`loggedIn: true`) |
+| Planning skills live for T18 | `cp -R skills/pir-plan skills/pir-review-plan "$HOME/.claude/skills/"` from the T18 worktree | `ask` | Changes the person's installed skills before merge; a personal skill shadows the harness's project copy (FINDINGS 2026-09-26) | The same `cp` from the main checkout restores `main`'s copies | none | none |
 | `./install.sh` | refresh the installed engine and skills, once, after `pir/pir-plan-command` is merged | `worker` | Local, idempotent; never while any run is live | Re-run from the previous commit | none | none |
 
 Credentials: none beyond the Claude Code login this machine already uses for `claude` (measured: the
@@ -487,7 +516,7 @@ probe of 2026-09-26 ran). Headless sessions draw on the plan's usage (memory, ch
 
 A planning run that misbehaves: stop it in `pir` (`Ctrl+S Ctrl+S`). By hand: `kill` each pid in
 `<control>/workers.json` whose `ps -p <pid> -o lstart=` equals its `startTime`, then the program's pid
-from `~/.pir/runs/{repo}__{id|slug}.json`. The control folder is `<repo>/.git/pir/plan-{hex4}/` before
+from `~/.pir/runs/{repo}__{id|slug}.json`. The control folder is `<repo>/plans/plan-{hex4}/.parallel/plan/` before
 the rename and `<repo>/plans/{slug}/.parallel/plan/` after. An unwanted plan branch: `git worktree
 remove --force .claude/worktrees/pir-{name}` then `git branch -D pir/{name}`. None of this touches
 `main`.
@@ -527,6 +556,16 @@ All user decisions are 2026-09-26.
   there too with the same interface; whichever plan lands first builds it and the other reuses it.
 - **The canonical-repo guard applies to planning runs** (§2.2): they create branches exactly as a
   build does, and the same variable lets the person plan in this repo on purpose.
+- **Remote Control for planning sessions, same default and opt-out as workers** (user, plan review; §2.3).
+- **The view follows the planner into the reviewer** (user, plan review), rather than returning to the steps
+  view as the mock shows (§2.12).
+- **T18 installs only the two planning skills into the real HOME, after a yes** (user, plan review): an
+  installed personal skill shadows the harness's project copy, so the real planner would otherwise load the old
+  skill. The full installer would also replace `pir` before merge (§5.3).
+- **A resumed session is sent one fixed message and keeps its log** (user, plan review): real Claude takes no
+  turn after a resume until spoken to, and a question pending at the kill is lost (§2.14).
+- **The control folder starts under `plans/plan-{hex4}/`, not `.git`** (user, plan review): `.git` is a
+  protected path the planner cannot reliably write its report into (§2.2).
 - **Prototype as a local file** (§2.15): the Artifact tool is not available to a headless session.
 
 ---

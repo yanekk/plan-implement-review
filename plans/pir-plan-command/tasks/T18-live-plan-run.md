@@ -22,7 +22,10 @@ DESIGN §1 success criteria, §5.1 first row.
 
 ```
 S=$(mktemp -d /tmp/pir-plan-command-live.XXXX)       # a trusted scratch path (see live-workers §5.2 note)
-HOME=/tmp/pir-plan-command-home ./install.sh           # skills and engine from this branch
+cp -R skills/pir-plan skills/pir-review-plan "$HOME/.claude/skills/"   # ask: the live sessions load the
+                                                    # installed skill, which shadows the harness's copy
+grep -l "Run by pir plan" "$HOME"/.claude/skills/pir-plan/SKILL.md "$HOME"/.claude/skills/pir-review-plan/SKILL.md
+# the engine runs from this worktree (the harness), so nothing else is installed
 # after: rm -rf "$S"; confirm no process from workers.json or the index entry is alive
 ```
 
@@ -38,11 +41,12 @@ captured bundle, fixed with a test, and the run repeated.
 
 ## Outside actions
 
+- Planning skills live for T18 — `ask`
 - Live plan-command run (T18) — `ask`
-- Scratch install — `worker`
 
 ## Done when
 
 - [ ] One run with every T17 assertion green, recorded in `FINDINGS.md` with its date and numbers.
 - [ ] Every defect it found is fixed with a test, and `npm test` is green.
 - [ ] Scratch removed and no process of the run left alive.
+- [ ] The installed planning skills are the branch's (grep above); the way back is noted in `FINDINGS.md`.

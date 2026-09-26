@@ -33,6 +33,8 @@ DESIGN §4, §5.2 (timeout, ceiling, reply cap), §2.8 (the go through `startRun
 //             reply: 'Yes. Go with your recommendation, and keep it as small as possible.' }
 // run.mjs plan kind: startPlanRun (T08) with PIR_HOME scratch, answerer until the plan run finishes,
 //   then startRun(slug) as the go, then the existing completion wait on the build; HALT and stop on timeout
+//   the answerer reads logs and drops input under the index record's current controlDir, re-read each tick,
+//   because the control folder moves at the rename (DESIGN §2.6)
 // answerer: pendingDrops gains replies = { text, cap }: an idle planning session with nothing pending
 //   whose last entry is its own text gets `text` once per turn, at most `cap` times per run
 ```

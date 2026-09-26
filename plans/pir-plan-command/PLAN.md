@@ -39,7 +39,7 @@ Phase 3  ▸  T15 … T18             skills, docs, the real run
 | [T05](tasks/T05-fake-claude-sessions.md) | fake-claude-sessions | — |
 | [T06](tasks/T06-plan-run-planner.md) | plan-run-planner | T01, T02, T04, T05 |
 | [T07](tasks/T07-plan-run-review.md) | plan-run-review | T06 |
-| [T08](tasks/T08-plan-launch.md) | plan-launch | T02, T03, T04 |
+| [T08](tasks/T08-plan-launch.md) | plan-launch | T01, T02, T03, T04 |
 | [T09](tasks/T09-pir-commands.md) | pir-commands | T08 |
 
 At the end of Phase 1, `startPlanRun` starts a detached planning run that, against fake sessions, ends
@@ -115,7 +115,3 @@ T18 will overrun: a real planner's conversation with a stand-in is the least pre
 and T17's answerer is guessed until T18 watches it. T12 carries both the steps frame and the go flow
 into a fake build; if its "Done when" does not fit a session, the fake build to green is the part to
 move to T14.
-
-## Decisions still open
-
-- §5.3 bins are proposals until the plan review places them.

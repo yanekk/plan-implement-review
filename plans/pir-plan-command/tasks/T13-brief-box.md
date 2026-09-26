@@ -10,7 +10,7 @@ the first thing the person sees of the feature.
 
 ## Design sections this implements
 
-DESIGN §2.12, §2.13, prototype scenes 1–2.
+DESIGN §2.12 (landing, and following into the reviewer), §2.13, prototype scenes 1–2.
 
 ## Files
 
@@ -28,7 +28,9 @@ export function openBriefBox({ repo, tui, onSubmit, onCancel }) → Promise<void
 // pir.mjs: ['plan'] → planPreflight (T08) → refused: message, 1 → else openBriefBox → submit →
 //   startPlanRun(brief) → openPlanner(runId); cancel → 0 with nothing created
 // pir-tui.mjs: openPlanner(key) = openWatch with { openStep: 'plan' }; until the snapshot names the
-//   planner session the view shows 'starting the planner…'; ← goes to the steps view
+//   planner session the view shows 'starting the planner…'; ← goes to the steps view. While the planner's
+//   conversation is open and the snapshot's review step gains a session, the view switches to it with the head
+//   line 'the planner finished; the reviewer has started'; any other view is left where it is
 ```
 
 ## Tests
@@ -37,6 +39,7 @@ export function openBriefBox({ repo, tui, onSubmit, onCancel }) → Promise<void
 - [ ] A multi-line brief reaches `startPlanRun` with its newlines.
 - [ ] Esc cancels with nothing started (spy never called).
 - [ ] A pre-flight refusal prints before the box opens.
+- [ ] Follow rule: planner conversation open + review session appears → switch; steps view or list open → no switch.
 
 ## Done when
 
@@ -49,5 +52,7 @@ export function openBriefBox({ repo, tui, onSubmit, onCancel }) → Promise<void
 - [ ] `pir plan` → box with title and hint; type two lines with shift+enter; enter → planner's
       conversation opens showing the brief as pir's first message and then the fake planner's question.
 - [ ] `pir plan "one line brief"` → lands in the same conversation, no box.
+- [ ] Still in the planner's conversation when the fake planner finishes → the reviewer's conversation opens
+      with the `the planner finished; the reviewer has started` line; `←` → steps view with `plan ✓`.
 - [ ] `pir plan` then esc → back to the shell, exit 0, no branch `pir/plan-*` created.
 - [ ] `pir plan` in a repo without `main` → refusal line, no box.

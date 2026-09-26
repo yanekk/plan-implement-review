@@ -20,7 +20,7 @@ All of DESIGN §2, as built (the drill T14 may have changed details; the code wi
 - `docs/README.md`, `docs/detached-runs.md` (commands, "there are no subcommands" removed, TYPE, resume
   chord, key table), `docs/run-lifecycle.md` (plan home in the pre-flight and end gate),
   `docs/branch-model.md` (plan branch cut and rename), `docs/task-state.md` (gate reads the plan home),
-  `docs/control-folder.md` (`.parallel/plan/`, `.git/pir/`), `docs/restart-recovery.md` (resume)
+  `docs/control-folder.md` (`.parallel/plan/`, `plans/plan-{hex4}/` before the rename), `docs/restart-recovery.md` (resume)
 - `README.md`: a section leading with `pir plan`, the command table, every `pir {slug}` → `pir start {slug}`
 
 ## Tests

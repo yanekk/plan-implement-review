@@ -16,6 +16,8 @@ DESIGN §2.2 (label), §2.6 step 4, §2.8 (`go`), §2.10, §3.5.
 
 - `src/core/runrecord.mjs`, `src/core/runrecord.test.mjs`
 - `src/shell/index-store.mjs`, `src/shell/index-store.test.mjs`
+- `src/shell/coordinate.mjs`: `updateIndexFinalState` becomes a call to `updateRecord` (same signature and return), so
+  one read-modify-write of an entry exists (user at plan review, 2026-09-26)
 
 ## Interface
 
@@ -24,7 +26,9 @@ DESIGN §2.2 (label), §2.6 step 4, §2.8 (`go`), §2.10, §3.5.
 //               go: null|'declined' (absent → null). serializeRecord writes all three.
 export function labelFromBrief(brief) → string   // first non-empty line, ≤24 chars, '…' when cut
 // index-store
-export function renameRecord({ repo, from, to }, { dir, fs }) → record   // temp-then-rename; refuses if `to` exists
+export function renameRecord({ repo, from, to }, patch, { dir, fs }) → record   // temp-then-rename; refuses if `to` exists
+//   the new record has slug = to and the patch applied: T07 passes { branch: 'pir/{slug}', controlDir: <new>,
+//   label: null }, so the dashboard and resume read the moved control folder
 export function updateRecord({ repo, slug }, patch, { dir, fs }) → record
 ```
 
@@ -38,10 +42,12 @@ rename (DESIGN §2.6).
 - [ ] Round trip of a plan record with a label and `go: 'declined'`.
 - [ ] An unknown `kind` value is a parse error, not a silent `work`.
 - [ ] `labelFromBrief`: short, long, multi-line, leading blank lines, emoji at the cut.
-- [ ] `renameRecord` moves the entry, refuses an existing target, leaves the source on refusal.
+- [ ] `renameRecord` moves the entry with `slug`, `branch`, `controlDir` and `label` from the patch, refuses an existing
+      target, leaves the source on refusal.
 - [ ] `updateRecord` patches `go` and keeps every other field.
 
 ## Done when
 
 - [ ] Every row passes in `npm test`.
 - [ ] Existing dashboard tests pass unchanged (old records read as work).
+- [ ] `updateIndexFinalState` delegates to `updateRecord`; its existing coordinator tests pass unchanged.

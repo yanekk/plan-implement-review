@@ -1,6 +1,6 @@
 # T08 — plan-launch
 
-**Phase:** 1 · **Depends on:** T02, T03, T04 · **Weight:** medium
+**Phase:** 1 · **Depends on:** T01, T02, T03, T04 · **Weight:** medium
 
 ## Goal
 
@@ -22,7 +22,7 @@ DESIGN §2.2, §2.14 (dispatch by type), §2.16 (`pir start` on an unreviewed br
 export function startPlanRun(brief, { cwd, spawn, exec, fs, now, env, random }) →
     { started: true, runId, pid, record, controlDir }
   | { started: false, reason: 'not-a-repo'|'no-main'|'canonical-repo'|'empty-brief' }
-//   pre-flight exactly DESIGN §2.2, then openPlanBranch, control folder in <git-common-dir>/pir/{runId},
+//   pre-flight exactly DESIGN §2.2, then openPlanBranch, control folder <main>/plans/{runId}/.parallel/plan,
 //   brief.md, initial state.json (planflow.initialPlanState), detached spawn of plan-run.mjs --control,
 //   index record kind 'plan' with label, caffeinate -i -w
 export function planPreflight({ cwd, exec, env }) → { ok: true, root, repo } | { ok: false, reason }
@@ -42,7 +42,7 @@ resume wording of DESIGN §2.16.
 - [ ] A clean start: branch, worktree, control folder with `brief.md` and `state.json`, index record
       `kind 'plan'` with label, spawn argv and env (`PIR_RUN=1`), caffeinate argv.
 - [ ] Run from a subfolder and from a linked worktree: root is the main worktree.
-- [ ] Id collision: the injected random first returns a taken id, then a free one.
+- [ ] Id collision: the injected random first returns a taken id (branch, index entry or `plans/{runId}/`), then a free one.
 - [ ] `resumeRun` on a plan record spawns `--resume` with its control folder; on a work record calls `startRun`.
 - [ ] `resumeRun` on a running record refuses `already-running`.
 - [ ] `startRun` on a branch-home unreviewed plan returns `not-reviewed` with `where: 'branch'`.

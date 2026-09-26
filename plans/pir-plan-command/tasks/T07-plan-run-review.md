@@ -27,11 +27,13 @@ startWorker({ ..., resume })     // the session's id is then read from the init 
 ```
 
 ```
-plan-run.mjs, rename executor: renamePlanBranch (T04), then fs.renameSync of the control folder to
-  <main>/plans/{slug}/.parallel/plan (mkdir -p its parent), then renameRecord (T02); every held path
+plan-run.mjs, rename executor: renamePlanBranch (T04), then fs.renameSync of the control folder from
+  <main>/plans/{runId}/.parallel/plan to <main>/plans/{slug}/.parallel/plan (mkdir -p its parent), then rmdir the
+  emptied plans/{runId}/.parallel and plans/{runId} (never a recursive delete), then renameRecord (T02); every held path
   (log, reports, inbox, workers.json, snapshot) re-pointed before the reviewer spawns
 --resume: reads state.json, finishes a half-done rename, then spawns the current step with
-  resumeSessionId = its last session id; the resumed session gets no new opening instruction
+  resumeSessionId = its last session id, appending to that session's log after a `resumed` note, and sends
+  resumeInstruction() (T01) as its first message; no opening instruction is sent again
 ```
 
 ## Tests
@@ -40,13 +42,14 @@ With the T05 shim, in a scratch repo:
 
 - [ ] Planner → `planned` → rename → reviewer spawned in `.claude/worktrees/pir-{slug}` with the exact
       reviewer instruction → `reviewed` → finished `reviewed`; branch `pir/{slug}` holds the reviewed plan;
-      `main` unchanged; control folder now under `plans/{slug}/.parallel/plan`; index key `{repo}__{slug}`.
+      `main` unchanged; control folder now under `plans/{slug}/.parallel/plan` and `plans/{runId}/` gone; index key `{repo}__{slug}`.
 - [ ] `reviewed` while `PROGRESS.md` is not marked: reviewer gets the failure message.
 - [ ] `reviewed` with a dirty worktree: reviewer gets the failure message; nothing committed by `pir`.
 - [ ] `not-reviewed`: finished `not-reviewed`.
 - [ ] Crash after the branch rename only, then `--resume`: rename completes, reviewer starts.
-- [ ] SIGKILL mid-planner then `--resume`: the planner session resumes (fake continues its script) with
-      the same session id, and no second opening instruction is sent.
+- [ ] SIGKILL mid-planner then `--resume`: the planner session resumes with the same session id, receives
+      exactly the resume message (and no second opening instruction), continues its script only after it, and
+      its turns append to the same `plan-{n}.ndjson`.
 - [ ] `--resume` on `not-reviewed` reopens the reviewer's session.
 - [ ] `--resume` on a finished `reviewed` run exits 0 doing nothing.
 
