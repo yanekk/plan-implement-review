@@ -146,6 +146,12 @@ line per task, a summary line, and a footer. This is the command's status — th
   you"), `waiting` (`needs T..`), `queued` (marked when the ceiling is full), or `done` (shown
   "merged"). The summary carries done/total, how many are running, asking, and
   waiting, and the ceiling. This is tested exhaustively.
+- **An asking row's clock is stopped.** A row's elapsed clock counts from when its phase began,
+  except while the worker waits on the person: `advanceTiming` in `coordinate.mjs` records the stop
+  time as the task's `stoppedAt` in the run state, and the model reads `stoppedAt − since` instead of
+  `now − since`, so the coordinator and a detached `pir` viewer freeze at the same value. When the
+  answer returns the task to the phase it left, the clock resumes where it stopped; the merged
+  duration leaves the wait out.
 - **The renderer is shell** (`createRenderer` in `src/shell/render.mjs`): on a TTY it paints the
   model in place with cursor control and ticks a spinner; when stdout is not a TTY — piped,
   redirected, or captured by the test harness — it **degrades to plain append-only lines**, because

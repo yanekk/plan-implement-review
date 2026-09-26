@@ -46,10 +46,14 @@ function isConflict(t) {
 //            branch, else null. Every task is merged by then, so without it the screen reads as done for
 //            the minutes the suite takes (user 2026-09-25).
 //   task: { id, slug, deps:[id…], done:bool, phase:null|'preparing'|'building'|'reviewing'|'merging'|'asking',
-//           since:ms|null, doneMs:ms|null, question:string|null, prompt:string|null }
+//           since:ms|null, stoppedAt:ms|null, doneMs:ms|null, question:string|null, prompt:string|null }
 //     phase   — set when a live worker holds the task; null when no worker does. An `asking` task that
 //               carries a `prompt` is a merge conflict and shows as row/footer kind `conflict`.
 //     since   — when the current phase began, for the elapsed clock (now − since).
+//     stoppedAt— when an `asking` task began waiting on the person, or null. The clock stops there
+//               (stoppedAt − since) so time spent waiting on the person does not count as work
+//               (user 2026-09-26). Carried in the state, not derived from `now`, so a detached `pir`
+//               viewer freezes at the same value the coordinator does.
 //     doneMs  — the final duration to show on a ✅ row, or null if the run never timed it.
 //     question— the parked worker's rendered question, shown on the asking row's footer.
 //     prompt  — the copy-paste resolution prompt for a merge conflict the run hit at its own merge
@@ -107,7 +111,8 @@ function rowFor(t, { now, doneIds, ceilingFull }) {
   }
 
   if (ACTIVE_PHASES.has(t.phase)) {
-    const elapsedMs = t.since != null && now != null ? now - t.since : null;
+    const until = t.stoppedAt ?? now;
+    const elapsedMs = t.since != null && until != null ? until - t.since : null;
     // A task parked on a merge conflict the run hit at its own merge is not a worker asking anything:
     // its worker has stopped and does not know. It reads `merge conflict` (orange, user 2026-09-24) so the
     // person looks for the paste-in prompt instead of attaching to wait for a question that never comes.

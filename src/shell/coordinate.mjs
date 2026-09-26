@@ -811,11 +811,12 @@ export function displayPhaseFor(t) {
   return 'building';
 }
 
-// buildRunState({ passTasks, stateTasks, branch, ceiling, sinceByTask, doneMsByTask, complete,
+// buildRunState({ passTasks, stateTasks, branch, ceiling, sinceByTask, stoppedAtByTask, doneMsByTask, complete,
 // readyToMerge, testsReason, interrupted }) → the runState buildDisplay consumes (DESIGN §2.3). passTasks are the
 // parsed PROGRESS rows the pass returned ({ num, name, deps, state }); stateTasks is
 // coordinator.state.tasks (the live workers). A ✅ row is done; otherwise a tracked worker's phase names
-// the row. sinceByTask/doneMsByTask carry the phase-start and final-duration times the shell tracks.
+// the row. sinceByTask/doneMsByTask carry the phase-start and final-duration times the shell tracks;
+// stoppedAtByTask is when an asking task began waiting, where its clock stops.
 // testsReason is the red gate's { reason, logPath } (null otherwise); it rides in runState so it lands in
 // status.json and a detached viewer can say why a finished run is red (DESIGN §2.8).
 export function buildRunState({
@@ -824,6 +825,7 @@ export function buildRunState({
   branch,
   ceiling,
   sinceByTask = {},
+  stoppedAtByTask = {},
   doneMsByTask = {},
   complete = false,
   readyToMerge = false,
@@ -841,6 +843,7 @@ export function buildRunState({
       done,
       phase,
       since: phase ? sinceByTask[t.num] ?? null : null,
+      stoppedAt: phase === 'asking' ? stoppedAtByTask[t.num] ?? null : null,
       doneMs: done ? doneMsByTask[t.num] ?? null : null,
       question: phase === 'asking' ? st.decision?.text ?? null : null,
       // A coordinator-side merge conflict carries a copy-paste resolution prompt (T14); an ordinary
@@ -849,6 +852,43 @@ export function buildRunState({
     };
   });
   return { branch, ceiling, complete, readyToMerge: !!readyToMerge, testsReason: testsReason ?? null, interrupted: !!interrupted, tasks };
+}
+
+// newTiming() / advanceTiming(timing, stateTasks, completed, now) — per-task timing for the display's
+// elapsed clocks (DESIGN §2.3): when each task's current phase began (for `now − since`) and, once
+// merged, how long it took. A completed task is dropped from state.tasks at merge, so its start is
+// remembered separately. A task asking the person stops its clock (user 2026-09-26): `since` is kept and
+// the stop time recorded; when the answer sends it back to the phase it left, since and start shift
+// forward by the wait, so the clock resumes where it stopped and the merged duration leaves the wait out.
+// `now` is passed in so the bookkeeping is unit-tested without a clock.
+export function newTiming() {
+  return { startByTask: {}, phaseByTask: {}, sinceByTask: {}, stoppedAtByTask: {}, resumeByTask: {}, doneMsByTask: {} };
+}
+
+export function advanceTiming(timing, stateTasks, completed, now) {
+  const { startByTask, phaseByTask, sinceByTask, stoppedAtByTask, resumeByTask, doneMsByTask } = timing;
+  for (const [num, st] of Object.entries(stateTasks)) {
+    if (startByTask[num] == null) startByTask[num] = now;
+    const ph = displayPhaseFor(st);
+    const prev = phaseByTask[num];
+    if (prev === ph) continue;
+    phaseByTask[num] = ph;
+    if (ph === 'asking') {
+      stoppedAtByTask[num] = now;
+      if (prev == null) sinceByTask[num] = now;
+      continue;
+    }
+    const stoppedAt = stoppedAtByTask[num];
+    delete stoppedAtByTask[num];
+    if (stoppedAt != null) startByTask[num] += now - stoppedAt;
+    // resumeByTask is the last non-asking phase: only a return to it continues the stopped clock.
+    if (stoppedAt != null && ph === resumeByTask[num]) sinceByTask[num] += now - stoppedAt;
+    else sinceByTask[num] = now;
+    resumeByTask[num] = ph;
+  }
+  for (const num of completed) {
+    if (doneMsByTask[num] == null) doneMsByTask[num] = now - (startByTask[num] ?? now);
+  }
 }
 
 // testingRunState(runState, { since }) → the same run state marked as the end gate running: `testing`
@@ -1087,27 +1127,11 @@ async function main(argv) {
     });
   }
 
-  // Per-task timing for the display's elapsed clocks (DESIGN §2.3): when each task's current phase began
-  // (for `now − since`) and, once merged, how long it took. Tracked here in the shell, never in the pure
-  // model. A completed task is dropped from state.tasks at merge, so its start is remembered separately.
-  const startByTask = {};
-  const phaseByTask = {};
-  const sinceByTask = {};
-  const doneMsByTask = {};
-  const trackTiming = (stateTasks, completed) => {
-    const t = Date.now();
-    for (const [num, st] of Object.entries(stateTasks)) {
-      if (startByTask[num] == null) startByTask[num] = t;
-      const ph = displayPhaseFor(st);
-      if (phaseByTask[num] !== ph) {
-        phaseByTask[num] = ph;
-        sinceByTask[num] = t;
-      }
-    }
-    for (const num of completed) {
-      if (doneMsByTask[num] == null) doneMsByTask[num] = t - (startByTask[num] ?? t);
-    }
-  };
+  // Per-task timing for the display's elapsed clocks (DESIGN §2.3), tracked here in the shell, never in
+  // the pure model (advanceTiming below).
+  const timing = newTiming();
+  const { sinceByTask, stoppedAtByTask, doneMsByTask } = timing;
+  const trackTiming = (stateTasks, completed) => advanceTiming(timing, stateTasks, completed, Date.now());
 
   // The end gate runs synchronously inside the completing pass, so without this the last frame painted
   // (every task merged, or the final one still `merging`) sat unchanged for the minutes the suite took
@@ -1165,6 +1189,7 @@ async function main(argv) {
         branch,
         ceiling: CEILING,
         sinceByTask,
+        stoppedAtByTask,
         doneMsByTask,
         complete: r.complete,
         readyToMerge: !!r.readyToMerge,
