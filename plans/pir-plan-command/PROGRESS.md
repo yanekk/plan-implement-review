@@ -36,7 +36,7 @@ done · ⛔ blocked, needs a human.
 | T11 | dashboard-type | T02, T07, T08, T10 | ✅ | |
 | T12 | plan-watch-view | T07, T08, T10, T11 | ✅ | |
 | T13 | brief-box | T09, T12 | ✅ | |
-| T14 | plan-screen-drill | T11, T12, T13 | ⬜ | |
+| T14 | plan-screen-drill | T11, T12, T13 | ✅ | |
 | T15 | planning-skills | T01 | ✅ | |
 | T16 | docs-readme | T14, T15 | ⬜ | |
 | T17 | harness-plan-fixture | T07, T08, T15 | ✅ | |
