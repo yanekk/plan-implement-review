@@ -145,6 +145,8 @@ in and no `result` has come back), `idle` (last turn ended, nothing pending), `p
 request has no reply). The loop's existing `isBusy` and force-idle logic read this instead of
 `claude agents` status.
 
+T00, 2026-09-25: stands. A `result` with nothing pending was never followed by another message in 20 s, over five results.
+
 A task row shows "asking you" when the worker has a report of kind question/decision/conflict (as
 today) or a pending permission or question set. The row says which: `asking you · allow a command?`,
 `asking you · a question`. The asking footer reads `● Txx slug — asking you; open it (→) to answer`, and the
@@ -181,13 +183,14 @@ The `pir` screen and the coordinator are separate processes. The screen writes o
 ### 2.6 Permission requests
 
 A permission request (a `canUseTool` call, logged as a `request` entry) shows in the conversation with the tool, the command or input, and the
-worker's description. Keys: `y` allow once, `n` refuse, `a` allow and do not ask this worker again for
-this. Typing a reply instead refuses and sends the text as the refusal message, so the worker sees why.
+worker's description. Keys: Enter on the empty box allows once, `n` refuse, `a` allow and do not ask this
+worker again for this. Typing a reply instead refuses and sends the text as the refusal message, so the
+worker sees why. Enter replaced `y` (user 2026-09-26, T18 drill), so a reply starting with "y" cannot approve.
 
 "Do not ask again" is remembered by pir, per worker, in memory for the worker's life, never written to
-any settings file (user 2026-09-24). pir keeps it because Claude does not: returning
-`updatedPermissions` with `destination:"session"` did not stop the next identical request (measured
-on the raw line 2026-09-24; T00 rechecks it through the SDK). The grant is the `addRules` rule Claude
+any settings file (user 2026-09-24). pir keeps it so every
+request the grant allows still reaches pir and shows in the conversation; an allow therefore never returns
+`updatedPermissions` to Claude (user 2026-09-25, T00 review). The grant is the `addRules` rule Claude
 itself suggested for that request, which the SDK passes to `canUseTool` as `suggestions`; a later request from the same worker that the rule matches is allowed by pir at once and
 logged as `delivered-by-grant`. Matching follows Claude's rule form: an exact `ruleContent` matches the
 identical input; a `prefix:*` form matches any command starting with the prefix. When a request carries
@@ -195,8 +198,8 @@ no `addRules` suggestion, `a` is not offered.
 
 Claude flags some requests itself (`canUseTool` options, sdk.d.ts 0.3.282), and pir honours both flags (user
 2026-09-25, re-review): `suppressAlwaysAllowRule` means the rule would grant more than this request, so `a`
-is not offered; `defaultToNo` means one stray key must not approve it, so the first `y` only arms the gate
-("press y again to allow") and a second `y` allows, the press-twice pattern pir uses for stop and remove.
+is not offered; `defaultToNo` means one stray key must not approve it, so the first Enter only arms the gate
+("press ↵ again to allow") and a second Enter allows, the press-twice pattern pir uses for stop and remove.
 Any other key disarms. `n` refuses in one press as usual.
 
 pir answers by resolving the pending `canUseTool` promise with a `PermissionResult`. A refusal is
@@ -204,15 +207,25 @@ pir answers by resolving the pending `canUseTool` promise with a `PermissionResu
 keeps its promise open. The SDK itself sets no deadline ("permission prompts have no park deadline",
 sdk.d.ts 0.3.282); whether Claude gives up on a long-unanswered request is not yet measured; T00 checks it.
 
+T00, 2026-09-25: a request left 300 s unanswered was not timed out. Through the SDK, Claude did honour a
+session `addRules` grant (contrary to the raw-line row). pir still keeps its own list (user 2026-09-25, T00
+review): an allow never carries `updatedPermissions`, so every later match reaches `canUseTool` and is logged
+as `delivered-by-grant`. Returning suggestions would also apply their `setMode acceptEdits`.
+
 ### 2.7 Question sets
 
 An AskUserQuestion request (`input.questions[]`: `question`, `header`, `options[{label,description}]`,
 `multiSelect`) shows as a picker, one question at a time, like Claude's own: ↑↓ move, space picks or
-ticks, Enter goes to the next question and on the last sends. Every question gets a final "Other" line
-that takes the typed text as the answer. The `canUseTool` result is `behavior:"allow"`, `updatedInput` = the request's
-input plus `answers: { "<question text>": "<label>" }`, several labels joined with `", "` (the round trip
-was measured). Typing a reply instead of using the picker sends `decline-questions`: pir refuses the
-tool with the typed text as the message, which is what Claude's own "chat about this" amounts to.
+ticks, Enter goes to the next question and on the last sends. On a single-select question Enter also picks
+the highlighted line, so one Enter answers it (user 2026-09-26, T18 drill). Every question ends with an
+"Other" line that is a text field: moving onto it, or just typing from any line, puts the text next to
+"Other:", never in the box; space types a space there, backspace deletes, ↑↓ leave it keeping the text, and
+Enter answers with it. The text replaces a single-select pick and joins a multi-select question's ticks
+(user 2026-09-26, T18 drill, after a first cut without the Other line). Typing never declines the set: to talk
+instead of answering, Esc interrupts the worker, which cancels the request (§2.8). The `canUseTool` result is
+`behavior:"allow"`, `updatedInput` = the request's input plus `answers: { "<question text>": "<label>" }`,
+several labels joined with `", "` (the round trip was measured). The inbox still accepts
+`decline-questions` (pir refuses the tool with the text as the message); the screen no longer sends it.
 
 ### 2.8 Interrupt
 
@@ -263,13 +276,18 @@ fight over the cursor.
 | Ctrl+C | clear the box if it holds text, else interrupt the worker, as in Claude's own screen (user 2026-09-25, re-review; it quits `pir` in the other views) |
 | ← with an empty box | back to the run live view |
 | Tab | one line per step (default) ⇄ full detail |
-| y / n / a | answer a pending permission request, only while the box is empty (§2.6) |
-| ↑↓ space Enter | drive a pending question set, only while the box is empty (§2.7) |
+| Enter / n / a | answer a pending permission request, only while the box is empty (§2.6; Enter replaced `y`, user 2026-09-26) |
+| ↑↓ space Enter, typing | drive a pending question set; typing goes to its Other line (§2.7) |
 | PgUp / PgDn | scroll |
 
   One line per step is the default (user 2026-09-24). A step line is the tool name, its main argument,
   and the last line of its result. Messages from pir, the person and the worker are marked and coloured
   differently. A pending permission request or question set is highlighted and pinned above the box.
+  Text Claude injects itself (`isSynthetic`, a loaded skill's body) is not drawn (T18 live run: it was
+  most of every conversation). Background work (user 2026-09-26, T18 drill) gets a dim `↳` line when a
+  command or Monitor starts and ends (`task_started` with `is_backgrounded`, `task_notification`), and the
+  line above the box counts what still runs (`◌ N running in the background`). A Monitor's events reach
+  only the model, never the stream, so pir cannot show them.
 - The view opens the task's live worker; with none live, the task's latest worker, read-only (no box).
 
 ### 2.12 Stop, remove, restart, and orphaned workers
@@ -277,6 +295,7 @@ fight over the cursor.
 A worker does not reliably die with a coordinator killed by SIGKILL: a child mid-command was still alive
 22 s after its parent was killed (measured 2026-09-24). An idle SDK-driven worker whose parent exited
 hard was gone within about a second (measured 2026-09-25), which does not cover the mid-command case.
+T00, 2026-09-25: stands. Re-measured through the SDK: alive 10 s after the parent's SIGKILL, mid-command.
 pir spawns the process itself through `spawnClaudeCodeProcess` (§2.1), so it has the pid. So:
 
 - The coordinator writes `control/workers.json`, `[{ id, task, role, pid, startTime }]`, temp-then-rename,
@@ -485,7 +504,7 @@ Approved by the user at plan review, 2026-09-25, as listed. At the re-review the
 | Probe worker (T00, T01) | `perl -e 'alarm 900; exec @ARGV' node <spike script>` (T00) or `perl -e 'alarm 120; exec @ARGV' node <probe script>` (T01) on a scratch repo, one SDK-driven worker. The script stops after a fixed number of turns and never sends its own stop marker as a message | `worker` | Minutes of model time, one worker, scratch only | Kill the pid; delete scratch | under a dollar |
 | Install packages from npm | `npm i @earendil-works/pi-tui@0.87.1` and `npm i --omit=peer --omit=optional @anthropic-ai/claude-agent-sdk@0.3.282` in a scratch folder (T00, T01) or the repo (T10) | `ask` | First third-party code this project runs, native `.node` binary included (§5) | Revert the commit; delete `node_modules` | none |
 | Install the locked packages | `npm ci` in the repo or a task worktree: the setup line above, run by the engine in every fresh worktree, and T10/T13/T18 bring-up | `worker` | User 2026-09-25, re-review: the engine runs setup unattended, and `npm ci` installs only the exact versions the `ask` row above let in at T10 | Delete `node_modules` | none |
-| Live harness run | `node src/shell/harness/run.mjs <fixture> --into <scratch>` | `worker` | Bounded by ceiling 1, 10-min timeout, scratch only | HALT; scratch deleted | a few dollars |
+| Live harness run | `node src/shell/harness/run.mjs <fixture> --into <scratch>` | `worker` | Bounded by ceiling 1, 10-min timeout, scratch only; the `live-workers-demo` fixture alone ceiling 2, 15 min (user 2026-09-26, T18 review) | HALT; scratch deleted | a few dollars |
 | Person-check scratch run (T13) | `PARALLEL_MAX_WORKERS=1 node <worktree>/src/shell/pir.mjs <fixture>` in a scratch repo | `ask` | Paid, and no automatic time limit: it runs until Ctrl+S twice or HALT | HALT or Ctrl+S twice; scratch deleted | a few dollars |
 | T18 end-to-end run | `PARALLEL_MAX_WORKERS=2 node <worktree>/src/shell/pir.mjs live-workers-demo` in a scratch repo | `ask` | A whole small plan of paid workers | HALT or Ctrl+S twice; scratch deleted | a few dollars |
 | Scratch install (T10, T15) | `HOME=/tmp/pir-live-workers-home ./install.sh` | `worker` | Writes only under that HOME; re-fetches the lockfile's exact packages | `rm -rf /tmp/pir-live-workers-home` | none |
@@ -498,7 +517,8 @@ Approved by the user at plan review, 2026-09-25, as listed. At the re-review the
 If the new engine misbehaves after install: `git checkout <commit before T05> -- src skills install.sh`
 in a scratch clone and run its `./install.sh`, which puts the `--bg` engine back. An orphaned worker
 from a killed coordinator: `cat plans/{slug}/.parallel/control/workers.json`, then `kill <pid>` for each
-entry still running (`ps -p <pid>`).
+entry still running whose `ps -p <pid> -o lstart=` equals its recorded `startTime` (a different time is
+a reused pid, not the worker). `pir {slug}` or a stop from the dashboard does exactly this (T06).
 
 ---
 

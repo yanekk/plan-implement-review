@@ -206,7 +206,7 @@ test('a worker question surfaces via the inbox and a sent answer resumes that wo
   assert.equal(surfaced.text, 'which format?');
 
   // The user answers; the worker resumes and the plan finishes.
-  platform.send(wname('T01', 'implement'), 'use json');
+  platform.send(state.tasks.T01.workerId, 'use json', { from: 'person' });
   const result = drain({ ...base, state });
   assert.equal(result.complete, true, 'the answered worker resumes and the plan completes, ready to hand off');
 });
@@ -234,71 +234,113 @@ test('a merge conflict a worker cannot resolve surfaces as a decision, and nothi
   assert.equal(worktree.mainCommitCount(), 1, 'main is untouched');
 });
 
-test('a coordinator-hit merge conflict keeps the worker alive; its decision is delivered, it resolves, and the branch merges cleanly exactly once (T28)', (t) => {
-  // The T22 conflict-path bug end to end (§2.5 Option 2). Two tasks edit the same line of greeting.txt
-  // from a common base; T01 merges clean, T02's coordinator-side merge conflicts. The loop must keep
-  // T02's worker ALIVE and parked (not close it, not remove its worktree, not delete its task, not
-  // respawn it), deliver the user's decision, let the worker resolve on its own branch and re-signal
-  // done, then merge the now-clean branch exactly once — with the DECIDED content, not the losing side.
+test('a coordinator-hit merge conflict keeps the worker alive, SENDS it the fix, and the branch merges cleanly exactly once (T28, live-workers T08)', (t) => {
+  // The T22 conflict-path bug end to end (§2.5 Option 2), now with no person in the loop (live-workers
+  // §2.10). Two tasks edit the same line of greeting.txt from a common base; T01 merges clean, T02's
+  // coordinator-side merge conflicts. The loop keeps T02's worker ALIVE and parked (not closed, worktree
+  // kept, task kept, never respawned), sends it the resolution prompt over its line, and once the worker
+  // resolves on its own branch and re-signals done, merges the now-clean branch exactly once.
   const cr = (mine) => ({ conflictResolve: { file: 'greeting.txt', mine, resolved: 'hello there\n' } });
   const { platform, worktree, base } = setup(t, [{ num: 'T01' }, { num: 'T02' }], {
     files: { 'greeting.txt': 'hello world\n' },
     behaviors: { T01: cr('hello there\n'), T02: cr('hi world\n') },
   });
+  const logLines = [];
+  const control = { isHalted: () => false, log: (l) => logLines.push(l) };
   const state = createRunState();
 
-  // First drain: both build and review; T01 merges clean into the feature branch, T02's merge conflicts
-  // and the worker PARKS. Nothing reaches main.
-  const first = drain({ ...base, state });
-  assert.equal(first.reason, 'parked', 'the run parks on the coordinator-hit conflict — it does not stall or promote');
-  const conflict = first.actions.find((a) => a.type === 'surface' && a.kind === 'conflict');
-  assert.ok(conflict, 'the conflict is surfaced to the user');
-  const parkedTask = conflict.task;
+  // Pass until the conflict is sent, then inspect the parked state before the worker picks it up.
+  let sentPass = null;
+  for (let i = 0; i < 20 && !sentPass; i++) {
+    const r = runPass({ ...base, control, state });
+    if (r.actions.some((a) => a.type === 'conflict-sent')) sentPass = r;
+  }
+  assert.ok(sentPass, 'the conflict fix was sent to the worker');
+  const sentAction = sentPass.actions.find((a) => a.type === 'conflict-sent');
+  const parkedTask = sentAction.task;
   assert.equal(parkedTask, 'T02', 'T02 merges second, so it is the branch that conflicts');
+  assert.ok(!sentPass.actions.some((a) => a.type === 'surface' && a.kind === 'conflict'), 'nothing is surfaced for the person to paste');
+  assert.ok(logLines.includes(`conflict-sent ${parkedTask}`), `the control log carries conflict-sent; got: ${logLines.join(' | ')}`);
   assert.equal(worktree.mainCommitCount(), 1, 'main is untouched while the conflict is parked');
 
-  // The parked worker is KEPT ALIVE — the whole fix. Not closed, worktree not removed, task not deleted.
+  // The parked worker is KEPT ALIVE — the whole T28 fix. Not closed, worktree not removed, task not deleted.
   const parked = state.tasks[parkedTask];
-  assert.ok(parked, 'the parked task is still tracked (not deleted from state)');
   assert.equal(parked.phase, 'awaiting-answer', 'the worker is parked AWAITING, not closed');
   assert.ok(!platform.closed.includes(parked.workerId), "the parked worker's session was not closed");
   assert.ok(
     !worktree.events.some((e) => e.op === 'remove' && e.branch === `pir/${SLUG}-${parkedTask}`),
     "the parked worker's worktree/branch was not removed",
   );
-  // Exactly one worker ran the task — never respawned into a clobbering fresh build (the T22 clobber).
+
+  // Exactly one message, to that same worker, from pir: the worker variant of the prompt.
+  assert.equal(platform.sent.length, 1, 'one message sent');
+  const [msg] = platform.sent;
+  assert.equal(msg.to, parked.workerId, 'sent to the worker that built the branch');
+  assert.equal(msg.from, 'pir');
+  assert.match(msg.text, new RegExp(`git merge pir/${SLUG}\\b`), 'it names the feature branch to merge in');
+  assert.ok(msg.text.includes('greeting.txt'), 'it lists the conflicting file');
+  assert.doesNotMatch(msg.text, /-----/, 'no copy markers: it is the message itself');
+  assert.doesNotMatch(msg.text, /claude agents/, 'no attach instructions');
+  assert.equal(parked.decision.prompt, msg.text, 'the sent prompt rides on the parked task');
+  assert.equal(parked.decision.sent, true, 'the parked task records that the fix was sent');
+
+  // Drain: the worker resolves on its branch, re-signals done, and the loop merges the clean branch.
+  const second = drain({ ...base, control, state });
+  assert.equal(second.complete, true, 'the resolved branch merges cleanly and the plan completes');
+  assert.deepEqual(second.readyToMerge, { branch: `pir/${SLUG}` });
+  assert.equal(platform.sent.length, 1, 'the fix was sent once, never re-sent on later passes');
+
+  // The merge was retried only after the worker re-signalled done: one conflicting try, then one clean.
+  const mergesOfParked = worktree.events.filter((e) => e.op === 'mergeTask' && e.branch === `pir/${SLUG}-${parkedTask}`);
+  assert.deepEqual(mergesOfParked.map((e) => !!e.conflict), [true, false], 'one conflicting merge, then one clean merge after re-signal');
   const implSpawns = platform.spawns.filter((s) => s.task === parkedTask && s.role === 'implement');
   assert.equal(implSpawns.length, 1, 'the parked task was built by exactly one implementer — no respawn');
 
-  // Deliver the user's decision to the SAME, still-alive parked worker (addressed by its current role).
-  const name = wname(parkedTask, parked.role);
-  // The conflict surface carries a ready-to-paste resolution prompt (T14) naming that same worker, the
-  // feature branch to merge in and the conflicting file; the worker picks the side, asking if unsure. It
-  // is also on the parked task's decision so the display can show who is asking.
-  assert.ok(conflict.prompt, 'the conflict surface carries a copy-paste resolution prompt (T14)');
-  assert.ok(conflict.prompt.includes(name), 'the prompt names the worker to attach to (§2.9)');
-  assert.match(conflict.prompt, new RegExp(`git merge pir/${SLUG}\\b`), 'the prompt names the feature branch to merge in');
-  assert.ok(conflict.prompt.includes('greeting.txt'), 'the prompt lists the conflicting file');
-  assert.doesNotMatch(conflict.prompt, /KEEP:/, 'no keep-which-side blank for the person (user 2026-09-24)');
-  assert.equal(state.tasks[parkedTask].decision.prompt, conflict.prompt, 'the same prompt rides on the parked task for the display');
-  platform.send(name, { kind: 'answer', task: parkedTask, text: 'keep hello there' });
-
-  // Second drain: the worker resolves on its branch, re-signals done, the loop merges the clean branch
-  // and the plan completes, ready to hand off.
-  const second = drain({ ...base, state });
-  assert.equal(second.complete, true, 'the resolved branch merges cleanly and the plan completes');
-  assert.deepEqual(second.readyToMerge, { branch: `pir/${SLUG}` });
-
-  const cleanMergesOfParked = worktree.events.filter(
-    (e) => e.op === 'mergeTask' && e.branch === `pir/${SLUG}-${parkedTask}` && !e.conflict,
-  );
-  assert.equal(cleanMergesOfParked.length, 1, 'the parked task merged cleanly exactly once, after resolution');
-
-  // The DECIDED side won: the feature branch carries the decision, not the losing content (the T22
-  // regression). main is never touched — the person merges pir/demo by hand (DESIGN §2.4).
-  assert.equal(worktree.fileOn(`pir/${SLUG}`, 'greeting.txt').stdout, 'hello there\n', 'the feature branch carries the decided content, not "hi world"');
+  // The resolved side won and main is never touched (the person merges pir/demo by hand, DESIGN §2.4).
+  assert.equal(worktree.fileOn(`pir/${SLUG}`, 'greeting.txt').stdout, 'hello there\n', 'the feature branch carries the resolved content, not "hi world"');
   assert.equal(worktree.events.filter((e) => e.op === 'promote').length, 0, 'nothing was ever promoted to main');
   assert.equal(worktree.mainCommitCount(), 1, 'main is untouched');
+});
+
+test('a coordinator-hit conflict whose worker cannot be reached is printed for the person and the branch kept, ⛔ (live-workers T08)', (t) => {
+  // The worker exited between the listing and the merge: send fails, so the person gets today's
+  // printed prompt, without the "attach in claude agents" line, since there is nobody to attach to.
+  // The prompt says "land this branch yourself", so the run must keep it: ⛔ on the feature row, no
+  // dead-worker cleanup, no rebuild — as the restart path does (T08 review, 2026-09-25).
+  const cr = (mine) => ({ conflictResolve: { file: 'greeting.txt', mine, resolved: 'hello there\n' } });
+  const { platform, worktree, base } = setup(t, [{ num: 'T01' }, { num: 'T02' }], {
+    files: { 'greeting.txt': 'hello world\n' },
+    behaviors: { T01: cr('hello there\n'), T02: cr('hi world\n') },
+  });
+  let gone = null;
+  const deaf = Object.create(platform);
+  deaf.send = (id) => {
+    gone = id;
+    return { ok: false };
+  };
+  deaf.list = () => platform.list().filter((w) => w.id !== gone);
+  const state = createRunState();
+  let surfaced = null;
+  for (let i = 0; i < 20 && !surfaced; i++) {
+    const r = runPass({ ...base, platform: deaf, state });
+    assert.ok(!r.actions.some((a) => a.type === 'conflict-sent'), 'nothing is recorded as sent');
+    surfaced = r.actions.find((a) => a.type === 'surface' && a.kind === 'conflict');
+  }
+  assert.ok(surfaced, 'the conflict is surfaced for the person');
+  const num = surfaced.task;
+  assert.match(surfaced.prompt, /----- copy everything between these lines/, 'the person variant, with its copy markers');
+  assert.match(surfaced.prompt, /land this branch yourself/, 'the no-worker wording');
+  assert.doesNotMatch(surfaced.prompt, /claude agents/, 'no worker to attach to');
+  assert.equal(state.tasks[num], undefined, 'the task is released, not left parked on a dead worker');
+  assert.match(worktree.progressOn(`pir/${SLUG}`), new RegExp(`\\| ${num} \\|[^\\n]*⛔`), 'the feature row is ⛔');
+
+  // Later passes neither clean the branch up as a dead worker's nor rebuild the task.
+  for (let i = 0; i < 3; i++) {
+    const r = runPass({ ...base, platform: deaf, state });
+    assert.ok(!r.actions.some((a) => a.task === num && (a.type === 'spawn' || a.type === 'close')), `pass ${i}: ${num} is left alone`);
+  }
+  assert.equal(worktree.fileOn(`pir/${SLUG}-${num}`, 'greeting.txt').stdout, 'hi world\n', 'the reviewed branch is kept for the person to land');
+  assert.equal(platform.spawns.filter((s) => s.task === num && s.role === 'implement').length, 1, 'never rebuilt');
 });
 
 test('the kill switch mid-drain stops dispatch and closes every fake worker; main untouched', (t) => {
@@ -410,25 +452,19 @@ test('a crashed worker is closed as dead and its worktree reclaimed, freeing its
   const state = createRunState();
   runPass({ ...base, state }); // spawn T01
   const implId = platform.spawns[0].id;
-  // The worker crashes before it ever appears in the live list. buildAssignments matches workers by
-  // name and gives a just-spawned worker a one-pass grace to appear (so a slow worker is not respawned
-  // into a duplicate — FINDINGS 2026-09-09), so a never-appearing crash is recognised a pass or two
-  // later, not instantly. Drive passes until the dead-close lands.
-  let dead;
-  for (let i = 0; i < 5 && !dead; i++) {
-    const r = runPass({ ...base, state });
-    dead = r.actions.find((a) => a.type === 'close' && a.reason === 'dead');
-  }
-  assert.ok(dead, 'the crashed worker is eventually closed as dead');
+  // The worker crashes on its first tick, so the very next pass finds it unlisted: a child that exited
+  // is gone from list() at once, and there is no appear grace any more (live-workers T05).
+  const r = runPass({ ...base, state });
+  const dead = r.actions.find((a) => a.type === 'close' && a.reason === 'dead');
+  assert.ok(dead, 'the crashed worker is closed as dead on the next pass');
   assert.ok(platform.closed.includes(implId));
   assert.ok(worktree.events.some((e) => e.op === 'remove'), 'its worktree is removed');
 });
 
-test('a worker whose spawn id differs from its listed id is tracked by name, not respawned, and closed by the listed id (FINDINGS 2026-09-09)', (t) => {
-  // The live runaway: `claude --bg` returns an id that does not match the `id` in `claude agents
-  // --json`. A platform that reproduces exactly that — spawn returns BOGUS, list reports REAL under
-  // the same name — must not make the loop respawn (it should recognise the worker by name), and a
-  // close must use the listed id, the only one that can actually stop the session.
+test('a worker is tracked by the id spawn returned: listed under it, it is live; gone from the list, it is dead (live-workers T05)', (t) => {
+  // The platform lists its children under the uuid spawn returned, so the loop matches by id. The old
+  // match by name, for `claude --bg`'s mismatched ids (FINDINGS 2026-09-09), is gone: an entry carrying
+  // this task's worker NAME under another id is not this run's worker and is never adopted as it.
   const worktree = createFakeWorktree({ progress: progressDoc([{ num: 'T01' }]), slug: SLUG });
   t.after(() => worktree.cleanup());
   const NAME = wname('T01', 'implement');
@@ -437,9 +473,10 @@ test('a worker whose spawn id differs from its listed id is tracked by name, not
   let listed = [];
   const platform = {
     spawn({ name }) {
+      const id = `ID-${spawns.length + 1}`;
       spawns.push(name);
-      listed = [{ id: 'REAL-1', name, cwd: '/x', status: 'busy', state: 'working', live: true }];
-      return 'BOGUS-1'; // the mismatch: the returned id is not the one list()/close use
+      listed.push({ id, name, cwd: '/x', status: 'busy', live: true });
+      return id;
     },
     list: () => listed,
     close: (id) => (closed.push(id), (listed = listed.filter((w) => w.id !== id)), { ok: true }),
@@ -448,16 +485,16 @@ test('a worker whose spawn id differs from its listed id is tracked by name, not
   const base = { platform, worktree, repo: REPO, slug: SLUG, maxWorkers: 1 };
   const state = createRunState();
 
-  runPass({ ...base, state }); // pass 1: spawn (returns BOGUS-1; list now reports REAL-1)
-  assert.equal(spawns.length, 1, 'spawned once');
-  const r2 = runPass({ ...base, state }); // pass 2: recognised live BY NAME, not respawned
-  assert.equal(spawns.length, 1, 'not respawned despite the id mismatch — the name matched');
-  assert.equal(r2.liveAfter, 1, 'still exactly one worker, not a runaway');
+  runPass({ ...base, state }); // pass 1: spawn ID-1
+  const r2 = runPass({ ...base, state }); // pass 2: listed under its id → live, not respawned
+  assert.equal(spawns.length, 1, 'not respawned while listed under its id');
+  assert.equal(r2.liveAfter, 1);
 
-  const halted = { isHalted: () => true, log() {} };
-  runPass({ ...base, state, control: halted }); // halt closes it
-  assert.ok(closed.includes('REAL-1'), 'closed by the listed id, the only one close can act on');
-  assert.ok(!closed.includes('BOGUS-1'), 'the bogus spawn id was never used to close');
+  // The child exits and something else carrying the same name is listed under another id.
+  listed = [{ id: 'STRANGER', name: NAME, cwd: '/y', status: 'idle', live: true }];
+  const r3 = runPass({ ...base, state });
+  assert.ok(r3.actions.some((a) => a.type === 'close' && a.reason === 'dead' && a.workerId === 'ID-1'), 'the exited worker is dead by its id');
+  assert.ok(!closed.includes('STRANGER'), 'a same-named entry under another id is not adopted or closed as the worker');
 });
 
 test('the coordinator does not count its OWN session (or a foreign agent) toward the ceiling (T12 P5)', (t) => {
@@ -482,10 +519,11 @@ test('the coordinator does not count its OWN session (or a foreign agent) toward
   assert.ok(!fake.closed.includes('COORD') && !fake.closed.includes('FOREIGN'), 'neither non-worker was closed');
 });
 
-test('a closed session lingering in the agent list is not recounted — the false runaway the first live single run hit (2026-09-12)', (t) => {
-  // Real `claude close` is async and a stale registry entry can outlive the process, so a just-closed
-  // implementer keeps showing up in `claude agents --json` for a few passes alongside its fresh
-  // reviewer. At ceiling 1 the loop must count one live worker across the hand-off, not two — else the
+test('a closed worker still listed until its child exits is not recounted — the false runaway the first live single run hit (2026-09-12)', (t) => {
+  // close is fire-and-forget: a just-closed implementer stays listed until its child exits (up to the
+  // SIGTERM/SIGKILL escalation), alongside its fresh reviewer. (Under `claude --bg` the cause was a
+  // stale registry entry; the shape is the same.) At ceiling 1 the loop must count one live worker
+  // across the hand-off, not two — else the
   // runaway breaker (coordinate.mjs, reading r.live) fires "2 over ceiling 1 for 3 passes" and tears the
   // run down mid-review before it can promote, which is exactly what killed the first live single run.
   // lingerClosed keeps the closed implementer listed; lingerBusy keeps the reviewer working while it
@@ -503,32 +541,6 @@ test('a closed session lingering in the agent list is not recounted — the fals
   assert.ok(maxLive <= 1, `never more than the ceiling of 1 counted live (saw ${maxLive}) — no false runaway`);
 });
 
-test('a closed session that VANISHES then reappears under the same id is still not recounted — the human-decision live false runaway (2026-09-13)', (t) => {
-  // The harder shape lingerClosed does not cover: `claude close` SIGTERMs the implementer and it drops
-  // off `claude agents --json` at once — but a stale Remote Control registry entry brings it back a few
-  // passes later under the SAME id, `idle`, beside its fresh reviewer. The earlier fix pruned closedIds
-  // the moment an id fell off the list, so the reappearance was no longer suppressed: at ceiling 1 the
-  // loop counted 2 live for 3 passes and the runaway breaker (coordinate.mjs, reading r.live) tore the
-  // run down mid-review — which is what killed the human-decision live run after its decision cycle had
-  // already completed correctly. closedIds must survive the absence, so the resurrected id stays
-  // suppressed and the run promotes.
-  // resurrectClosed: the implementer vanishes on close then reappears one pass later; lingerBusy holds
-  // the fresh reviewer busy for a few passes (its merge deferred until idle), so it is still live when
-  // the implementer comes back — the overlap that made the live run count 2 at ceiling 1. Without both,
-  // a lone fast reviewer promotes before the resurrection and the overlap never happens.
-  const { base } = setup(t, [{ num: 'T01' }], { behaviors: { T01: { resurrectClosed: 1, lingerBusy: 3 } } });
-  const state = createRunState();
-  let complete = false;
-  let maxLive = 0;
-  for (let i = 0; i < 30 && !complete; i++) {
-    const r = runPass({ ...base, maxWorkers: 1, state });
-    maxLive = Math.max(maxLive, r.liveAfter);
-    complete = r.complete;
-  }
-  assert.ok(complete, 'the plan completes despite the closed implementer reappearing in the list');
-  assert.ok(maxLive <= 1, `never more than the ceiling of 1 counted live (saw ${maxLive}) — the resurrected id was suppressed`);
-});
-
 // --- T30: no hello is sent at spawn (the spawn ping is retired) ------------------------------------
 
 test('no hello is sent or logged at any spawn — the loop makes no down-send of its own (T30)', (t) => {
@@ -539,11 +551,11 @@ test('no hello is sent or logged at any spawn — the loop makes no down-send of
   runPass({ ...base, state }); // pass 2: implemented → fresh reviewer spawns — still no hello
   runPass({ ...base, state }); // pass 3: reviewer resolves, merge/close
 
-  const hellos = platform.sent.filter((s) => s.msg.kind === 'hello');
+  const hellos = platform.sent.filter((s) => /hello/i.test(s.text));
   assert.equal(hellos.length, 0, 'no hello message was ever sent at spawn');
-  // The loop never calls platform.send — there is no down-channel (DESIGN §2.2, T03): a blocked worker
-  // is answered by the person directly, nothing is routed. So the loop opens and uses no send path.
-  assert.equal(platform.sent.length, 0, 'the loop sent nothing — there is no down-channel');
+  // The loop sends nothing of its own here: the opening instruction travels inside platform.spawn, and
+  // the conflict fix (live-workers T08) is the loop's only send.
+  assert.equal(platform.sent.length, 0, 'the loop sent nothing on a clean run');
 });
 
 test('a question report keeps the worker slot and is recorded, and the loop routes no answer (DESIGN §2.2, T03)', (t) => {
@@ -806,7 +818,7 @@ test('restart with a ✅ branch whose worktree folder is gone: it is still merge
 });
 
 test('restart with a ✅ branch whose merge conflicts: the conflict is surfaced and the branch is left untouched, not rebuilt', (t) => {
-  const { worktree, base } = setup(t, [{ num: 'T01' }], { files: { 'greeting.txt': 'base\n' } });
+  const { platform, worktree, base } = setup(t, [{ num: 'T01' }], { files: { 'greeting.txt': 'base\n' } });
   worktree.openFeature(SLUG);
   seedBranch(worktree, SLUG, 'T01', '✅', { file: 'greeting.txt', content: 'T01 version\n' });
   // A sibling changed the same file on the feature branch after T01 was cut, so the adopted merge collides.
@@ -814,7 +826,11 @@ test('restart with a ✅ branch whose merge conflicts: the conflict is surfaced 
   worktree.commitFeature('sibling change on the feature branch');
 
   const r = runPass({ ...base, state: createRunState() });
-  assert.ok(r.actions.some((a) => a.type === 'surface' && a.kind === 'conflict' && a.task === 'T01'), 'the conflict is surfaced to the user');
+  const surfaced = r.actions.find((a) => a.type === 'surface' && a.kind === 'conflict' && a.task === 'T01');
+  assert.ok(surfaced, 'the conflict is surfaced to the user');
+  // No live worker holds a restarted task, so the prompt is still printed for the person (live-workers T08).
+  assert.match(surfaced.prompt, /git checkout pir\/demo-T01/, 'the printed prompt names the branch to check out');
+  assert.equal(platform.sent.length, 0, 'nothing is sent: there is no worker');
   assert.ok(!r.actions.some((a) => a.type === 'merge' && a.task === 'T01'), 'the conflicting branch is not merged');
   assert.ok(!r.actions.some((a) => a.type === 'rebuild' && a.task === 'T01'), 'a reviewed-but-unmergeable branch is never rebuilt');
   assert.ok(worktree.branchExists(`pir/${SLUG}-T01`), 'the branch is left untouched for a person to land');
@@ -877,32 +893,25 @@ test('mixed restart: T01 ✅-merge, T02 🔍-review, T03 half-built resume, T04 
   assert.equal((worktree.progressOn(`pir/${SLUG}`).match(/✅/g) || []).length, 4, 'all four tasks are ✅ on the feature branch');
 });
 
-test('a leftover worker session of this slug is reaped session-only on restart; its ✅ branch is still merged and it is never counted against the ceiling', (t) => {
+test('reconcile reaps nothing from the platform list; its ✅ branch is still merged (the restart reap is startup hygiene, live-workers T06)', (t) => {
   const worktree = createFakeWorktree({ progress: progressDoc([{ num: 'T01' }]), slug: SLUG });
   t.after(() => worktree.cleanup());
   worktree.openFeature(SLUG);
   seedBranch(worktree, SLUG, 'T01', '✅', { file: 'work-T01.txt' });
   const fake = createFakePlatform({});
-  // The dead run's worker session, still listed after a crash that skipped teardown. A plain listing
-  // entry (not a real fake worker), so enumerating it in the reap does not advance/commit over the
-  // seeded branch — the same non-advancing-agent trick the "own session" test uses.
+  // A listed worker of this run the loop never spawned. Since T05 the real platform lists only its own
+  // children, so a dead run's orphan never appears here; reconcile no longer walks the list to close
+  // one, and startupControlHygiene reaps orphans from workers.json before this pass instead.
   const leftover = { id: 'LEFTOVER', name: wname('T01', 'implement'), cwd: '/x', status: 'idle', state: 'done', live: true };
   const platform = { ...fake, list: () => [...fake.list(), leftover] };
-  const base = { platform, worktree, repo: REPO, slug: SLUG, maxWorkers: 2 };
 
   const state = createRunState();
-  let complete = false;
-  let maxLive = 0;
-  for (let i = 0; i < 10 && !complete; i++) {
-    const r = runPass({ ...base, state });
-    maxLive = Math.max(maxLive, r.liveAfter);
-    complete = r.complete;
-  }
-  assert.ok(complete, 'the plan completes despite the orphaned session lingering in the list');
-  assert.ok(fake.closed.includes('LEFTOVER'), 'the leftover session was stopped, session-only');
-  assert.ok(fake.removed.includes('LEFTOVER'), 'its session record was removed too');
-  assert.ok(worktree.fileOn(`pir/${SLUG}`, 'work-T01.txt').ok, 'the ✅ branch survived the reap and was merged (never worktree.remove in the reap)');
-  assert.ok(maxLive <= 2, `the reaped orphan was never counted against the ceiling (saw ${maxLive})`);
+  runPass({ platform, worktree, repo: REPO, slug: SLUG, maxWorkers: 2, state });
+
+  assert.ok(state.reconciled, 'the first pass reconciled');
+  assert.ok(!fake.closed.includes('LEFTOVER'), 'reconcile closed no listed worker');
+  assert.ok(!fake.removed.includes('LEFTOVER'), 'reconcile removed no listed worker');
+  assert.ok(worktree.fileOn(`pir/${SLUG}`, 'work-T01.txt').ok, 'the ✅ branch was merged');
 });
 
 test('mutation guard: a ✅ branch and a 🔍 branch are never dispatched as fresh implementers (reverting reconciliation reddens this)', (t) => {

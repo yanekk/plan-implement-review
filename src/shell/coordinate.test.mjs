@@ -27,6 +27,7 @@ import {
   displayPhaseFor,
   newTiming,
   advanceTiming,
+  requestingTasks,
   waitForReport,
   shouldSelfReport,
   finalStateForExit,
@@ -36,9 +37,13 @@ import {
   makePrepare,
 } from './coordinate.mjs';
 import { readSnapshot } from './snapshot-store.mjs';
+import { parseSnapshot, serializeSnapshot } from '../core/snapshot.mjs';
+import { buildDisplay } from '../core/display.mjs';
 import { serializeRecord } from '../core/runrecord.mjs';
 import { EventEmitter } from 'node:events';
-import { createMessaging } from './platform.mjs';
+import { createMessaging, createPlatform, encodeMessage } from './platform.mjs';
+import { startWorker } from './worker-proc.mjs';
+import { canUseTool, fakeClaudeSpawner, initEvent, turn } from './fake/claude-stream.mjs';
 import { createFakePlatform } from './fake/platform.mjs';
 import { createFakeWorktree, git } from './fake/worktree.mjs';
 import { workerName } from '../core/naming.mjs';
@@ -480,7 +485,7 @@ test('a worker `decision` message parks and surfaces like a question; the worker
 
 // --- 15. P6: no exit path orphans a spawned worker ------------------------------------------------
 
-test('teardownRun closes every live worker of the run (stop + SIGTERM), so no exit orphans one (P6, T12)', (t) => {
+test('teardownRun closes every live worker of the run at once (immediate SIGTERM), so no exit orphans one (P6, T12)', (t) => {
   const { coordinator, platform, worktree } = setup(t, [{ num: 'T01' }, { num: 'T02' }], {
     behaviors: { T01: { question: 'blocked on you' } },
   });
@@ -491,12 +496,14 @@ test('teardownRun closes every live worker of the run (stop + SIGTERM), so no ex
 
   const { closed } = teardownRun({ platform, worktree, state: coordinator.state, repo: REPO, slug: SLUG });
   assert.ok(closed.includes(parkedId), 'teardown reported the parked worker closed');
-  assert.ok(platform.closed.includes(parkedId), 'it was closed through the platform (stop + SIGTERM live)');
-  assert.ok(!platform._workers.has(parkedId), 'no live session of this run remains after teardown');
-  // teardownRun is not the HALT forensics path (the loop handles that and never reaches here), so it also
-  // clears each closed worker's leftover record with `claude rm`, so a stalled/errored exit leaves nothing
-  // in the "Claude agents" view (T41).
-  assert.ok(platform.removed.includes(parkedId), 'teardown removes the leftover record too (claude rm)');
+  assert.ok(platform.closed.includes(parkedId), 'it was closed through the platform');
+  assert.ok(
+    platform.closeOpts.some((c) => c.id === parkedId && c.immediate === true),
+    'closed immediate: teardown runs just before process.exit, so the SIGTERM cannot wait (live-workers §2.12)',
+  );
+  assert.ok(!platform._workers.has(parkedId), 'no live worker of this run remains after teardown');
+  // teardownRun is not the HALT forensics path, so it also calls remove (T41), a no-op for live children.
+  assert.ok(platform.removed.includes(parkedId), 'teardown calls remove on a finish path');
 });
 
 // --- 16. P4/P5: the ported bin guards (ensureMain, promotion guard, runaway breaker) ---------------
@@ -785,7 +792,10 @@ test('buildRunState assembles the display model input from a pass result and the
   assert.equal(rs.branch, 'pir/demo');
   assert.equal(rs.ceiling, 4);
   const by = Object.fromEntries(rs.tasks.map((t) => [t.id, t]));
-  assert.deepEqual(by.T01, { id: 'T01', slug: 'done-one', deps: [], done: true, phase: null, since: null, stoppedAt: null, doneMs: 6400, question: null, prompt: null });
+  assert.deepEqual(by.T01, {
+    id: 'T01', slug: 'done-one', deps: [], done: true, phase: null, since: null, stoppedAt: null, doneMs: 6400, question: null, prompt: null, conflictSent: false,
+    asking: null, worker: null, workers: [],
+  });
   assert.equal(by.T02.phase, 'building');
   assert.equal(by.T02.since, 100);
   assert.equal(by.T03.phase, 'asking');
@@ -824,6 +834,61 @@ test('advanceTiming: an ask answered into a different phase starts that phase at
   advanceTiming(timing, { T01: { role: 'implement', phase: 'awaiting-answer' } }, [], 3000);
   advanceTiming(timing, { T01: { role: 'implement', phase: 'done' } }, [], 9000);
   assert.equal(timing.sinceByTask.T01, 9000);
+});
+
+test('advanceTiming stops the clock while a live worker has a permission request or question set pending', () => {
+  const timing = newTiming();
+  const building = { T01: { role: 'implement', phase: 'implementing' } };
+  const workers = (state) => [{ id: 'w1', task: 'T01', live: true, activity: { state } }, { id: 'w0', task: 'T02', live: false, activity: { state: 'permission' } }];
+  advanceTiming(timing, building, [], 1000, requestingTasks(workers('busy')));
+  advanceTiming(timing, building, [], 4000, requestingTasks(workers('permission'))); // worked 3s, then asks
+  assert.equal(timing.stoppedAtByTask.T01, 4000);
+  assert.equal(timing.stoppedAtByTask.T02, undefined, 'an exited worker asks nothing');
+  const rs = buildRunState({
+    passTasks: [{ num: 'T01', name: 'one', deps: [], state: '⬜' }],
+    stateTasks: building, workers: workers('permission'), branch: 'b', ceiling: 2, ...timing,
+  });
+  assert.equal(rs.tasks[0].stoppedAt, 4000, 'the request row carries the stop, so the display freezes it');
+  advanceTiming(timing, building, [], 30000, requestingTasks(workers('questions')));
+  assert.equal(timing.stoppedAtByTask.T01, 4000, 'moving from a permission to a question keeps the stop');
+  advanceTiming(timing, building, [], 50000, requestingTasks(workers('busy'))); // answered after 46s
+  assert.equal(timing.sinceByTask.T01, 47000, 'the clock resumes at 3s');
+  assert.equal(timing.stoppedAtByTask.T01, undefined);
+});
+
+test('a coordinator-hit conflict with a live worker is sent, not surfaced: no paste block, and the row reads fixing (live-workers T08)', (t) => {
+  const cr = (mine) => ({ conflictResolve: { file: 'greeting.txt', mine, resolved: 'hello there\n' } });
+  const { coordinator, platform } = setup(t, [{ num: 'T01' }, { num: 'T02' }], {
+    files: { 'greeting.txt': 'hello world\n' },
+    behaviors: { T01: cr('hello there\n'), T02: cr('hi world\n') },
+  });
+  let sent = null;
+  let r;
+  for (let i = 0; i < 20 && !sent; i++) {
+    r = coordinator.pass();
+    sent = r.actions.find((a) => a.type === 'conflict-sent');
+    assert.ok(!r.surfaces.some((s) => s.kind === 'conflict'), 'no conflict surface, so the bin prints no paste block');
+  }
+  assert.ok(sent, 'the conflict was sent to the live worker');
+  assert.equal(platform.sent.length, 1);
+  const rs = buildRunState({ passTasks: r.tasks, stateTasks: coordinator.state.tasks, branch: 'pir/demo', ceiling: 4 });
+  const row = rs.tasks.find((x) => x.id === sent.task);
+  assert.equal(row.phase, 'asking');
+  assert.equal(row.conflictSent, true, 'the run state carries conflictSent for the display');
+});
+
+test('buildRunState marks conflictSent only for a sent conflict', () => {
+  const passTasks = [
+    { num: 'T01', name: 'sent', deps: [], state: '⬜' },
+    { num: 'T02', name: 'printed', deps: [], state: '⬜' },
+  ];
+  const stateTasks = {
+    T01: { role: 'review', phase: 'awaiting-answer', decision: { kind: 'conflict', text: 'c', prompt: 'p', sent: true } },
+    T02: { role: 'review', phase: 'awaiting-answer', decision: { kind: 'conflict', text: 'c', prompt: 'p' } },
+  };
+  const by = Object.fromEntries(buildRunState({ passTasks, stateTasks, branch: 'b', ceiling: 2 }).tasks.map((x) => [x.id, x]));
+  assert.equal(by.T01.conflictSent, true);
+  assert.equal(by.T02.conflictSent, false);
 });
 
 // --- 19. Control-folder cleanup on restart (DESIGN §2.7, §3.5) -------------------------------------
@@ -889,7 +954,10 @@ test('a stale report is gone after the clear, so it cannot route to a fresh work
   assert.equal(readdirSync(join(dir, 'reports')).filter((n) => n.endsWith('.json')).length, 0, 'the stale reports are gone');
 });
 
-test('startupControlHygiene refuses a still-HALTed run without clearing HALT or the reports (T03)', (t) => {
+// A reap that finds nothing, so the hygiene tests below never read a real process table.
+const noReap = async () => ({ reaped: [], skipped: [] });
+
+test('startupControlHygiene refuses a still-HALTed run without clearing HALT or the reports (T03)', async (t) => {
   const repo = mkdtempSync(join(tmpdir(), 'pir-halt-'));
   t.after(() => rmSync(repo, { recursive: true, force: true }));
   const control = fileControl(repo, SLUG);
@@ -897,7 +965,7 @@ test('startupControlHygiene refuses a still-HALTed run without clearing HALT or 
   mkdirSync(join(control.dir, 'reports'), { recursive: true });
   writeFileSync(join(control.dir, 'reports', '001.json'), '{"from":"w","text":"stale"}');
 
-  const r = startupControlHygiene(control);
+  const r = await startupControlHygiene(control, { reap: noReap });
 
   assert.equal(r.halted, true, 'a present HALT refuses the run');
   assert.equal(r.flag, control.flag, 'the refusal names the flag path so the person knows what to remove');
@@ -906,7 +974,7 @@ test('startupControlHygiene refuses a still-HALTed run without clearing HALT or 
   assert.ok(!existsSync(control.logPath), 'no restart marker is written when the run is refused');
 });
 
-test('startupControlHygiene clears the reports and appends a restart marker, preserving prior log lines (T03)', (t) => {
+test('startupControlHygiene clears the reports and appends a restart marker, preserving prior log lines (T03)', async (t) => {
   const repo = mkdtempSync(join(tmpdir(), 'pir-restart-'));
   t.after(() => rmSync(repo, { recursive: true, force: true }));
   const control = fileControl(repo, SLUG);
@@ -914,7 +982,7 @@ test('startupControlHygiene clears the reports and appends a restart marker, pre
   writeFileSync(join(control.dir, 'reports', '001.json'), '{"from":"w","text":"stale"}');
   writeFileSync(control.logPath, '2026-09-17T00:00:00.000Z spawn T01\n');
 
-  const r = startupControlHygiene(control);
+  const r = await startupControlHygiene(control, { reap: noReap });
 
   assert.equal(r.halted, false, 'no HALT, so the run proceeds');
   assert.deepEqual(
@@ -925,6 +993,54 @@ test('startupControlHygiene clears the reports and appends a restart marker, pre
   const log = readFileSync(control.logPath, 'utf8');
   assert.match(log, /spawn T01/, 'the prior log line is preserved');
   assert.match(log, /restart\n$/, 'a restart marker is appended to the log');
+});
+
+test('startupControlHygiene reaps workers.json first, logs the reaped pids, then clears and marks the restart (live-workers T06)', async (t) => {
+  const repo = mkdtempSync(join(tmpdir(), 'pir-reap-start-'));
+  t.after(() => rmSync(repo, { recursive: true, force: true }));
+  const control = fileControl(repo, SLUG);
+  mkdirSync(join(control.dir, 'reports'), { recursive: true });
+  writeFileSync(join(control.dir, 'reports', '001.json'), '{"from":"w","text":"stale"}');
+  const seen = [];
+  const reap = async (dir) => {
+    seen.push({ dir, reportsLeft: readdirSync(join(dir, 'reports')).length, logged: existsSync(control.logPath) });
+    return { reaped: [501, 502], skipped: [503] };
+  };
+
+  const r = await startupControlHygiene(control, { reap });
+
+  assert.deepEqual(seen, [{ dir: control.dir, reportsLeft: 1, logged: false }], 'the reap ran first, on the control folder');
+  assert.deepEqual(r.reaped, [501, 502]);
+  assert.match(readFileSync(control.logPath, 'utf8'), /startup: reaped leftover workers 501, 502\n.*restart\n$/);
+});
+
+test('startupControlHygiene still reaps on a HALTed start, and still refuses it (live-workers T06)', async (t) => {
+  const repo = mkdtempSync(join(tmpdir(), 'pir-reap-halt-'));
+  t.after(() => rmSync(repo, { recursive: true, force: true }));
+  const control = fileControl(repo, SLUG);
+  writeFileSync(control.flag, '');
+  let reaps = 0;
+
+  const r = await startupControlHygiene(control, {
+    reap: async () => {
+      reaps += 1;
+      return { reaped: [], skipped: [] };
+    },
+  });
+
+  assert.equal(reaps, 1);
+  assert.equal(r.halted, true);
+  assert.ok(existsSync(control.flag), 'HALT is never cleared');
+});
+
+test('the bin runs startup hygiene (and so the reap) before its first pass, and lists no `claude agents` at startup (live-workers T06)', () => {
+  const src = readFileSync(new URL('./coordinate.mjs', import.meta.url), 'utf8');
+  const main = src.slice(src.indexOf('async function main('));
+  const hygieneAt = main.indexOf('await startupControlHygiene(control)');
+  const passAt = main.indexOf('startCoordinator(');
+  assert.ok(hygieneAt > 0, 'main awaits startupControlHygiene');
+  assert.ok(passAt > hygieneAt, 'the loop (startCoordinator, whose first pass reconciles) starts after the hygiene');
+  assert.doesNotMatch(src, /claude agents --json|['"]agents['"]/, 'no `claude agents` listing in the coordinator');
 });
 
 // --- waitForReport survives a runtime watch failure (T17) ---------------------------------------
@@ -1231,4 +1347,222 @@ test('testingRunState marks the run as the end gate running, so a viewer does no
   assert.equal(rs.readyToMerge, false);
   assert.equal(rs.tasks[0].done, true);
   assert.equal(rs.tasks[0].doneMs, 5000);
+});
+
+// --- live-workers T05: the coordinator over the REAL platform, workers played by the fake `claude` ---
+//
+// The platform is the real one (platform.mjs → worker-proc → the Agent SDK); only the process behind each
+// worker is the fake `claude`. A fake worker cannot commit or drop a report, so the test plays that part:
+// when a worker's turn ends (its `result` is logged) the test commits that phase's work on the worker's
+// task branch and queues its report for the inbox, as a real worker's skills would.
+
+function livePlatform(t, { script = [{ await: 'user' }, ...turn('ok')] } = {}) {
+  const dir = mkdtempSync(join(tmpdir(), 'pir-live-coord-'));
+  const controlDir = join(dir, 'control');
+  const reports = [];
+  const received = [];
+  let n = 0;
+  const start = (o) => {
+    n += 1;
+    const scriptPath = join(dir, `script-${n}.json`);
+    writeFileSync(scriptPath, JSON.stringify(script));
+    const rec = join(dir, `received-${n}.ndjson`);
+    received.push(rec);
+    const worker = startWorker({ ...o, spawnProcess: fakeClaudeSpawner({ script: scriptPath, received: rec }) });
+    const [, , task, , role] = o.name.split(' / ');
+    let done = false;
+    worker.onEvent((e) => {
+      if (done || e.dir !== 'in' || e.event.type !== 'result') return;
+      done = true;
+      const glyph = role === 'implement' ? '🔍' : '✅';
+      if (role === 'implement') writeFileSync(join(o.cwd, `work-${task}.txt`), `work ${task}\n`);
+      const progress = join(o.cwd, progressPathFor(SLUG));
+      writeFileSync(progress, reconcileTaskRow(readFileSync(progress, 'utf8'), { num: task, state: glyph, notes: role }));
+      git(o.cwd, ['add', '-A']);
+      git(o.cwd, ['commit', '-m', `${task}: ${role}`, '--no-edit']);
+      reports.push({ from: o.name, text: encodeMessage({ kind: role === 'implement' ? 'implemented' : 'done', task }) });
+    });
+    return worker;
+  };
+  const platform = createPlatform({
+    controlDir,
+    transport: { drain: () => reports.splice(0) },
+    startWorker: start,
+    claudePath: '/nonexistent/claude',
+  });
+  t.after(async () => {
+    for (const w of platform.list()) platform.close(w.id, { immediate: true });
+    await until(() => platform.list().length === 0, 'every child to exit');
+    rmSync(dir, { recursive: true, force: true });
+  });
+  const workersFile = () => JSON.parse(readFileSync(join(controlDir, 'workers.json'), 'utf8'));
+  const receivedLines = (i) =>
+    existsSync(received[i]) ? readFileSync(received[i], 'utf8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l)) : [];
+  return { platform, controlDir, workersFile, receivedLines };
+}
+
+async function until(pred, what, ms = 10000) {
+  const start = Date.now();
+  for (;;) {
+    const v = pred();
+    if (v) return v;
+    if (Date.now() - start > ms) throw new Error(`timed out waiting for ${what}`);
+    await new Promise((r) => setTimeout(r, 15));
+  }
+}
+
+test('the coordinator drives two workers from spawn to done through the real platform (live-workers T05)', async (t) => {
+  const { platform, controlDir } = livePlatform(t);
+  const worktree = createFakeWorktree({ progress: progressDoc([{ num: 'T01' }, { num: 'T02' }]), slug: SLUG });
+  t.after(() => worktree.cleanup());
+  const coordinator = startCoordinator({ slug: SLUG, repo: REPO, platform, worktree, maxWorkers: 2 });
+
+  // pass() is synchronous and the children answer in their own time, so the test paces the passes.
+  let result;
+  const completed = [];
+  await until(() => {
+    result = coordinator.pass();
+    completed.push(...result.completed);
+    return result.complete;
+  }, 'the plan to complete');
+
+  assert.equal(result.testsPassed, true);
+  assert.deepEqual(result.readyToMerge, { branch: `pir/${SLUG}` });
+  assert.deepEqual([...completed].sort(), ['T01', 'T02']);
+  assert.ok(worktree.fileOn(`pir/${SLUG}`, 'work-T01.txt').ok && worktree.fileOn(`pir/${SLUG}`, 'work-T02.txt').ok, 'both tasks merged');
+  assert.equal(worktree.mainCommitCount(), 1, 'main untouched');
+
+  const logs = readdirSync(join(controlDir, 'conversations')).sort();
+  assert.deepEqual(logs, ['T01-implement-1.ndjson', 'T01-review-1.ndjson', 'T02-implement-1.ndjson', 'T02-review-1.ndjson']);
+  await until(() => platform.list().length === 0, 'every merged worker to exit after its close');
+});
+
+test('teardownRun SIGTERMs every live child at once and workers.json empties as they exit (live-workers T05)', async (t) => {
+  // Workers that ignore stdin EOF: only the SIGTERM can end them, so their exit proves teardown sent it.
+  const { platform, workersFile, receivedLines } = livePlatform(t, { script: [{ onEof: 'ignore' }, { await: 'user' }] });
+  const worktree = createFakeWorktree({ progress: progressDoc([{ num: 'T01' }, { num: 'T02' }]), slug: SLUG });
+  t.after(() => worktree.cleanup());
+  const coordinator = startCoordinator({ slug: SLUG, repo: REPO, platform, worktree, maxWorkers: 2 });
+
+  coordinator.pass(); // spawns both implementers
+  assert.equal(platform.list().length, 2);
+  assert.equal(workersFile().length, 2, 'workers.json lists both live children');
+  // Let both fakes install their SIGTERM recorder (they log each stdin line after it is set up).
+  await until(() => [0, 1].every((i) => receivedLines(i).some((l) => l.line)), 'both fakes to take their opening message');
+
+  const { closed } = teardownRun({ platform, state: coordinator.state, repo: REPO, slug: SLUG });
+  assert.equal(closed.length, 2, 'both children closed');
+  await until(() => platform.list().length === 0, 'both children to exit');
+  assert.ok([0, 1].every((i) => receivedLines(i).some((l) => l.signal === 'SIGTERM')), 'each child got its SIGTERM');
+  assert.deepEqual(workersFile(), [], 'workers.json lists exactly the live children: none');
+});
+
+// --- live-workers T09: asking kinds and the worker `pir` opens ----------------------------------------
+
+const w = (id, task, role, n, live, state = 'busy') => ({
+  id, task, role, n, live, logPath: `c/${task}-${role}-${n}.ndjson`, activity: { state, pending: [] },
+});
+
+test('buildRunState names the asking kind: a live request over a report; a report alone is a question', () => {
+  const passTasks = ['T01', 'T02', 'T03', 'T04', 'T05', 'T06'].map((num) => ({ num, name: num.toLowerCase(), deps: [], state: '⬜' }));
+  const stateTasks = {
+    T01: { role: 'implement', phase: 'awaiting-answer', decision: { text: 'q' } },
+    T02: { role: 'implement', phase: 'implementing' },
+    T03: { role: 'review', phase: 'reviewing' },
+    T04: { role: 'implement', phase: 'awaiting-answer', decision: { text: 'q' } },
+    T05: { role: 'implement', phase: 'implementing' },
+    T06: { role: 'review', phase: 'awaiting-answer', decision: { kind: 'conflict', text: 'c', prompt: 'p' } },
+  };
+  const workers = [
+    w('a', 'T01', 'implement', 1, true, 'idle'),
+    w('b', 'T02', 'implement', 1, true, 'permission'),
+    w('c', 'T03', 'review', 1, true, 'questions'),
+    w('d', 'T04', 'implement', 1, true, 'permission'),
+    w('e', 'T05', 'implement', 1, true, 'busy'),
+    // An exited worker's stale request is not asking anything.
+    w('f', 'T05', 'implement', 0, false, 'permission'),
+  ];
+  const rs = buildRunState({ passTasks, stateTasks, workers, branch: 'b', ceiling: 9 });
+  const asking = Object.fromEntries(rs.tasks.map((t) => [t.id, t.asking]));
+  assert.deepEqual(asking, { T01: 'question', T02: 'permission', T03: 'questions', T04: 'permission', T05: null, T06: null });
+  const rows = Object.fromEntries(buildDisplay(rs, { now: 0 }).rows.map((r) => [r.id, r.label]));
+  assert.equal(rows.T02, 'asking you · allow a command?');
+  assert.equal(rows.T03, 'asking you · a question');
+  assert.equal(rows.T05, 'building', 'a non-asking row reads as before');
+  assert.equal(rows.T06, 'merge conflict', 'a coordinator-side conflict is not a question');
+});
+
+test('buildRunState: `worker` is the live one, else the latest; `workers` lists all of the task\'s in order', () => {
+  const passTasks = [
+    { num: 'T01', name: 'live', deps: [], state: '⬜' },
+    { num: 'T02', name: 'finished', deps: [], state: '✅' },
+    { num: 'T03', name: 'none', deps: [], state: '⬜' },
+  ];
+  const workers = [
+    w('i1', 'T01', 'implement', 1, false),
+    w('i2', 'T02', 'implement', 1, false),
+    w('r1', 'T01', 'review', 1, true),
+    w('r2', 'T02', 'review', 1, false, 'permission'),
+  ];
+  const rs = buildRunState({ passTasks, stateTasks: { T01: { role: 'review', phase: 'reviewing' } }, workers, branch: 'b', ceiling: 2 });
+  const [t1, t2, t3] = rs.tasks;
+  assert.deepEqual(t1.worker, { id: 'r1', live: true, logPath: 'c/T01-review-1.ndjson' });
+  assert.deepEqual(t1.workers, [
+    { id: 'i1', role: 'implement', n: 1, logPath: 'c/T01-implement-1.ndjson' },
+    { id: 'r1', role: 'review', n: 1, logPath: 'c/T01-review-1.ndjson' },
+  ]);
+  assert.deepEqual(t2.worker, { id: 'r2', live: false, logPath: 'c/T02-review-1.ndjson' }, 'no live one: the latest, read-only');
+  assert.equal(t2.asking, null, 'a done task asks nothing');
+  assert.equal(t3.worker, null);
+  assert.deepEqual(t3.workers, []);
+});
+
+test('the fake platform\'s workers() keeps closed workers in spawn order and shows a requested kind (T09)', (t) => {
+  const { coordinator, platform } = setup(t, [{ num: 'T01' }], { behaviors: { T01: { request: 'permission' } } });
+  const r = coordinator.pass();
+  const rs = buildRunState({ passTasks: r.tasks, stateTasks: coordinator.state.tasks, workers: platform.workers(), branch: 'b', ceiling: 4 });
+  assert.equal(rs.tasks[0].asking, 'permission');
+  assert.deepEqual(rs.tasks[0].worker, { id: 'w1', live: true, logPath: 'conversations/T01-implement-1.ndjson' });
+  platform.close('w1');
+  assert.deepEqual(platform.workers().map((x) => [x.id, x.live]), [['w1', false]]);
+});
+
+test('an old snapshot without the new task fields still reads and paints (T09)', () => {
+  const old = JSON.stringify({
+    version: 1, proc: { pid: 1 }, finalState: null,
+    runState: { branch: 'b', ceiling: 2, tasks: [
+      { id: 'T01', slug: 'a', deps: [], done: false, phase: 'asking', since: 0, doneMs: null, question: 'q', prompt: null },
+      { id: 'T02', slug: 'b', deps: [], done: false, phase: 'building', since: 0, doneMs: null, question: null, prompt: null },
+    ] },
+  });
+  const snap = parseSnapshot(old);
+  assert.ok(snap);
+  const d = buildDisplay(snap.runState, { now: 0 });
+  assert.deepEqual(d.rows.map((r) => r.label), ['asking you · a question', 'building']);
+});
+
+test('the snapshot of a run whose live worker has a pending permission shows asking:permission and its log path (T09)', async (t) => {
+  const script = [{ await: 'user' }, { emit: initEvent() }, { emit: canUseTool('req1', 'Bash', { command: 'git push --force' }) }, { await: 'control_response' }];
+  const { platform, controlDir } = livePlatform(t, { script });
+  const worktree = createFakeWorktree({ progress: progressDoc([{ num: 'T01' }]), slug: SLUG });
+  t.after(() => worktree.cleanup());
+  const coordinator = startCoordinator({ slug: SLUG, repo: REPO, platform, worktree, maxWorkers: 1 });
+  const r = coordinator.pass();
+  await until(() => platform.workers()[0]?.activity.state === 'permission', 'the permission request to be pending');
+  const runState = buildRunState({ passTasks: r.tasks, stateTasks: coordinator.state.tasks, workers: platform.workers(), branch: 'b', ceiling: 1 });
+  const snap = parseSnapshot(serializeSnapshot({ proc: { pid: 1 }, runState }));
+  const task = snap.runState.tasks[0];
+  assert.equal(task.asking, 'permission');
+  assert.equal(task.worker.live, true);
+  assert.equal(task.worker.logPath, join(controlDir, 'conversations', 'T01-implement-1.ndjson'));
+  assert.ok(existsSync(task.worker.logPath), 'the log path is the worker\'s real conversation log');
+  assert.deepEqual(task.workers, [{ id: task.worker.id, role: 'implement', n: 1, logPath: task.worker.logPath }]);
+  assert.equal(buildDisplay(snap.runState, { now: 0 }).rows[0].label, 'asking you · allow a command?');
+});
+
+test('the start banner says to answer in `pir`, never `claude agents` or attaching (T09)', () => {
+  const src = readFileSync(fileURLToPath(new URL('./coordinate.mjs', import.meta.url)), 'utf8');
+  const banner = src.split('\n').find((l) => l.includes('A worker that asks you'));
+  assert.match(banner, /answer it in \\`pir\\`/);
+  assert.doesNotMatch(banner, /claude agents|attach/i);
 });

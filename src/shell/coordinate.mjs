@@ -13,8 +13,8 @@
 // live CLI + git in the bin below.
 //
 // There is no down-channel (DESIGN §2.2, T03). The coordinator used to relay a worker's question up to
-// the person and the answer back down; the person now finds the asking worker in their own `claude
-// agents` view, attaches, and answers there — nothing is routed. Only the UP-channel remains: a worker
+// the person and the answer back down; the person now opens the asking worker's conversation in `pir`
+// and answers there (live-workers §2.4, §2.11) — nothing is relayed. Only the UP-channel remains: a worker
 // drops a one-line report into the control folder's `reports/` drop-dir (createReportInbox below), which
 // a Node process reads directly — no agent needed. The program uses that signal for two things only: to
 // keep a parked worker's slot under the ceiling, and to show its question in the live display so the
@@ -22,7 +22,7 @@
 // exercised there — its live behaviour is hand-verified (T09).
 
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, readdirSync, readFileSync, unlinkSync, watch, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 
 import { parseProgress, reconcileTaskRow, progressPathFor } from '../core/progress.mjs';
@@ -32,10 +32,13 @@ import { parseRecord } from '../core/runrecord.mjs';
 import { parseTestBlock } from '../core/testblock.mjs';
 import { runLines, startLines } from './commands.mjs';
 import { runPass, createRunState } from './loop.mjs';
-import { createPlatform } from './platform.mjs';
+import { createPlatform, resolveClaudePath } from './platform.mjs';
 import { createRenderer } from './render.mjs';
+import { drainDropFolder, waitForDrop } from './drop-folder.mjs';
+import { createGrants, startPersonInbox } from './person-inbox.mjs';
 import { writeSnapshot } from './snapshot-store.mjs';
 import { createWorktree } from './worktree.mjs';
+import { reapRecorded } from './reap.mjs';
 
 const DONE_GLYPH = '✅';
 const READY_GLYPH = '⬜';
@@ -286,40 +289,15 @@ export function createReportInbox({ dir } = {}) {
   const reportsDir = join(dir, 'reports');
   mkdirSync(reportsDir, { recursive: true });
 
-  // Drain the reports drop-dir: each *.json file is one worker report, read exactly once and removed.
-  // Files are processed in name order (workers name them with a leading timestamp, so reports are
-  // ingested roughly in the order they were sent). A file that does not parse is unlinked and dropped —
-  // never re-read, never guessed into a message — the drop-dir analogue of a malformed inbox line.
-  const drainReports = () => {
-    let names;
-    try {
-      names = readdirSync(reportsDir).filter((n) => n.endsWith('.json')).sort();
-    } catch {
-      return [];
-    }
-    const out = [];
-    for (const n of names) {
-      const p = join(reportsDir, n);
-      let raw;
-      try {
-        raw = readFileSync(p, 'utf8');
-      } catch {
-        continue; // vanished under us (a concurrent drain); skip
-      }
-      try {
-        unlinkSync(p); // consume it, so a report is ingested exactly once
-      } catch {
-        /* already gone */
-      }
-      try {
+  // Drain the reports drop-dir: each *.json file is one worker report, read exactly once and removed,
+  // in name order (drop-folder.mjs). A file that does not parse is dropped, never guessed into a message.
+  const drainReports = () =>
+    drainDropFolder(reportsDir, {
+      parse: (raw) => {
         const { from = null, text = '' } = JSON.parse(raw);
-        out.push({ from, text });
-      } catch {
-        /* a torn or malformed report — dropped, not guessed into a wrong message */
-      }
-    }
-    return out;
-  };
+        return { from, text };
+      },
+    });
 
   return {
     reportsDir,
@@ -337,11 +315,14 @@ export function createReportInbox({ dir } = {}) {
 //
 // The drill's bin ran out its pass budget and printed "ran out of passes" while a worker was still
 // live and parked, leaving a paid session orphaned that had to be stopped by hand. So EVERY exit path
-// that is not a clean promotion/halt (a stall, a signal, an error) must close this run's
-// live workers. `platform.close` is stop + SIGTERM — `claude stop` alone only interrupts (FINDINGS
-// 2026-09-09), so this is what actually ends the session. Closing an already-gone id is a safe no-op.
+// that is not a clean promotion/halt (a stall, a signal, an error) must close this run's live workers.
+// Since live-workers T05 every worker is a child of this process, and teardownRun stays synchronous
+// because it runs from signal handlers just before process.exit: `platform.close(id, { immediate })`
+// ends the child's input queue and SIGTERMs its pid now, without waiting (live-workers DESIGN §2.12). A
+// child that survives the SIGTERM is reaped from workers.json by the next start or a stop (T06).
+// Closing an already-gone id is a safe no-op.
 //
-// It closes sessions ONLY and never removes a task worktree or branch, on any exit. Those branches are
+// It closes workers ONLY and never removes a task worktree or branch, on any exit. Those branches are
 // the durable record of in-flight work, and the next `pir {slug}` reconciles them from git: a 🔍 branch
 // goes to review, a half-built one is resumed. Removing them on exit is what made a restart rebuild
 // everything: on 2026-09-22 a full disk (ENOSPC) threw, the `error` teardown deleted a built T04, a
@@ -367,24 +348,22 @@ export function teardownRun({ platform, state, repo, slug, control } = {}) {
   const closeId = (id, name) => {
     if (!id || closed.has(id)) return;
     try {
-      platform.close(id);
+      platform.close(id, { immediate: true });
     } catch {
       /* already gone */
     }
-    // Clear the leftover `stopped` record too (T41, DESIGN §2.3). teardownRun runs on every exit that is
-    // not a clean promotion or a kill-switch halt (a stall, a signal, an error) — none of
-    // them the HALT forensics case, which the loop handles and never reaches here — so these workers have
-    // finished and leave the view. Best-effort and optional: a platform without `remove` is fine.
+    // remove (T41, DESIGN §2.3) is a no-op for live children; kept for a platform that holds a record.
+    // Never the HALT forensics case, which the loop handles and never reaches here.
     try {
       platform.remove?.(id);
     } catch {
-      /* best-effort record cleanup; the session close is what matters for orphan-avoidance */
+      /* best-effort; the close is what matters for orphan-avoidance */
     }
     closed.add(id);
     control?.log?.(`teardown: closed ${name ?? ''} (${id})`.trim());
   };
 
-  // Every worker of THIS run the platform still lists — the authoritative live sessions.
+  // Every worker of THIS run the platform still lists: its live children.
   let live = [];
   try {
     live = platform.list().filter((w) => isWorkerOf(w.name, { repo, plan: slug }));
@@ -392,8 +371,9 @@ export function teardownRun({ platform, state, repo, slug, control } = {}) {
     live = [];
   }
   for (const w of live) closeId(w.id, w.name);
-  // Plus any worker this run spawned that we still track — covers the appear-grace window in which a
-  // just-spawned session is not listed yet, so a spawn is never left behind on an early exit.
+  // Plus any worker this run still tracks, so an id the list somehow lacks is still closed (a no-op on
+  // an exited child). Cheap belt and braces from the `claude --bg` days, when a new session took a pass
+  // to appear.
   for (const [num, t] of Object.entries(state?.tasks ?? {})) {
     if (t.workerId) closeId(t.workerId, workerName({ repo, plan: slug, task: num, slug: t.slug, role: t.role ?? 'implement' }));
   }
@@ -405,7 +385,7 @@ export function teardownRun({ platform, state, repo, slug, control } = {}) {
 // When `pir` launches the coordinator detached (T08), nobody is attached to read the live display, so
 // the coordinator writes its state to disk instead: a live snapshot each pass (fed to the dashboard,
 // §2.4) and a final status on every exit path (§2.2, §2.6). This whole half is gated on the PIR_RUN
-// marker the launcher sets (§3.5), so a foreground `pir-coordinate` run — which never sets it — writes
+// marker the launcher sets (§3.5), so a bare `node src/shell/coordinate.mjs` run — which never sets it — writes
 // no snapshot and touches no index entry, and the classic path is byte-for-byte unchanged.
 
 // shouldSelfReport(env) → whether this run reports on itself. True only when PIR_RUN is set, which only
@@ -635,107 +615,73 @@ export function fileControl(repo, slug) {
 
 // --- Restart hygiene for the control folder (DESIGN §2.7, §7) ---------------------------------
 //
-// The control folder is reused across a restart. clearTransientFeeds empties the one transient feed —
-// `reports/`, the worker up-channel (DESIGN §3.5) — so a dead run's leftover reports never route into a
-// fresh run. The down-channel feeds are gone (removed with the relay, DESIGN §2.2, T03), so reports/ is
-// all that is left to clear. The two DURABLE records are never touched
+// The control folder is reused across a restart. clearTransientFeeds empties the two transient feeds —
+// `reports/`, the worker up-channel (DESIGN §3.5), and `inbox/`, the person's input (live-workers T07) —
+// so a dead run's leftovers never route into a fresh run. The two DURABLE records are never touched
 // here — `log` is the audit trail and the harness signal, and `HALT` is the deliberate stop whose whole
 // value is surviving a restart until a person removes it (auto-clearing it would defeat the kill switch,
 // §2.7).
 //
 // Clearing runs on every startup, not only a detected restart: a genuine first start has reports/ empty,
 // so an unconditional clear is safe and needs no restart detection (matches the reconciliation approach
-// in §2.1). reports/ is a dir of one-file-per-report, so emptying its *.json is the clear. Best-effort:
+// in §2.1). Each feed is a dir of one-file-per-drop, so emptying its *.json is the clear. Best-effort:
 // a missing feed is nothing to clear, and its clear may never throw the run down. Returns what it
 // touched, for the startup log line.
 export function clearTransientFeeds(controlDir) {
   const cleared = [];
 
-  const reportsDir = join(controlDir, 'reports');
-  try {
-    if (existsSync(reportsDir)) {
-      for (const n of readdirSync(reportsDir)) {
+  // inbox/ is the person's input to workers (live-workers DESIGN §2.5, T07): an input addressed to a
+  // previous run's worker must never reach a new one, so it is cleared with reports/.
+  for (const feed of ['reports', 'inbox']) {
+    const feedDir = join(controlDir, feed);
+    try {
+      if (!existsSync(feedDir)) continue;
+      for (const n of readdirSync(feedDir)) {
         if (!n.endsWith('.json')) continue;
         try {
-          unlinkSync(join(reportsDir, n));
+          unlinkSync(join(feedDir, n));
         } catch {
           /* vanished under us; nothing to clear for this one */
         }
       }
-      cleared.push('reports/');
+      cleared.push(`${feed}/`);
+    } catch {
+      /* cannot read the dir — best-effort, leave it */
     }
-  } catch {
-    /* cannot read the dir — best-effort, leave it */
   }
 
   return { cleared };
 }
 
-// startupControlHygiene(control) → the restart-hygiene step the bin runs once, before it stands up the
-// loop (DESIGN §2.7, §7). If HALT is still present it is a deliberate stop the person must lift, so this
-// refuses ({ halted:true }) and NEVER clears the flag — auto-clearing would blow a restarted run
-// straight past the kill switch. Otherwise it clears the transient feeds and appends a `restart` marker
-// to the preserved log (the audit-trail boundary between runs), returning what it cleared. Exported so
-// both halves — the refusal and the clear+marker — are unit-tested without the live bin.
-export function startupControlHygiene(control) {
+// startupControlHygiene(control, { reap }) → the restart-hygiene step the bin runs once, before it stands
+// up the loop (DESIGN §2.7, §7). First it reaps the previous coordinator's surviving workers from
+// workers.json (live-workers T06, DESIGN §2.12: a child mid-command outlives a SIGKILLed parent, and no
+// listing finds it since T05). The reap comes before the first pass, so a leftover worker is gone before
+// reconcile adopts its branch and a fresh worker is spawned into its worktree; it also runs on a HALTed
+// start, because a HALT stops every worker and a survivor of it is still a worker burning tokens. Then, if
+// HALT is still present, it is a deliberate stop the person must lift, so this refuses ({ halted:true })
+// and NEVER clears the flag — auto-clearing would blow a restarted run straight past the kill switch.
+// Otherwise it clears the transient feeds and appends a `restart` marker to the preserved log (the
+// audit-trail boundary between runs). Async only for the reap's SIGKILL window. Exported so every half is
+// unit-tested without the live bin.
+export async function startupControlHygiene(control, { reap = reapRecorded } = {}) {
+  const { reaped } = await reap(control.dir);
+  if (reaped.length) control.log(`startup: reaped leftover workers ${reaped.join(', ')}`);
   if (control.isHalted()) {
-    return { halted: true, flag: control.flag };
+    return { halted: true, flag: control.flag, reaped };
   }
   const { cleared } = clearTransientFeeds(control.dir);
   control.log('restart');
-  return { halted: false, cleared };
+  return { halted: false, cleared, reaped };
 }
 
-// waitForReport(reportsDir, timeoutMs, { watch }) → resolve as soon as anything changes in the reports
-// drop-dir, or after timeoutMs, whichever comes first (DESIGN §2.2). This is the "react, don't poll"
-// half: a worker dropping a report file wakes the loop immediately, and the timeout is only a backstop
-// so a missed filesystem event is still picked up within a poll interval. fs.watch may be unavailable on
-// some filesystems — then this degrades to a plain timeout, which is exactly the old polling behaviour,
-// so correctness never depends on the watch firing.
-//
-// fs.watch signals a RUNTIME failure (EMFILE under fd pressure, ENOSPC, a watch that dies later) by
-// emitting an 'error' event on the FSWatcher, NOT by throwing from watch() — the sync try/catch below
-// only covers a watch that cannot start at all. Without an 'error' listener Node re-throws that event as
-// an unhandled 'error' and the whole coordinator process exits, defeating the very timeout backstop this
-// function exists to provide (a live run can always meet fd pressure — several sessions push fs.watch
-// past the OS limit). So on an 'error' we close the dead watcher and do NOTHING else: we do not finish()
-// (resolving immediately would busy-spin the pass loop into re-watching every pass), letting the pending
-// setTimeout(finish) fire so this pass degrades to paced POLL_MS polling. Each later pass re-attempts a
-// fresh watch(); if the OS is still refusing, it keeps falling back, which is correct. `watch` is
-// injectable so a test can emit 'error' without a real EMFILE.
-export function waitForReport(reportsDir, timeoutMs, { watch: watchFn = watch } = {}) {
-  return new Promise((resolve) => {
-    let done = false;
-    let watcher = null;
-    let timer = null;
-    const finish = () => {
-      if (done) return;
-      done = true;
-      try {
-        watcher?.close();
-      } catch {
-        /* already closed */
-      }
-      clearTimeout(timer);
-      resolve();
-    };
-    try {
-      watcher = watchFn(reportsDir, () => finish());
-      watcher.on('error', () => {
-        // Runtime watch failure: drop the dead watcher and let the timeout backstop take over. Do not
-        // finish() here — that would re-watch every pass in a tight loop. Paced POLL_MS polling is correct.
-        try {
-          watcher?.close();
-        } catch {
-          /* already gone */
-        }
-        watcher = null;
-      });
-    } catch {
-      /* no fs.watch here — fall back to the pure timeout (old polling behaviour) */
-    }
-    timer = setTimeout(finish, timeoutMs);
-  });
+// waitForReport(dirs, timeoutMs, { watch }) → resolve as soon as anything lands in the reports drop-dir
+// (and, since live-workers T07, the person's inbox/), or after timeoutMs (DESIGN §2.2). A worker's report
+// or the person's input wakes the loop at once; the timeout is only a backstop for a missed fs.watch
+// event. The watcher itself, including its survival of a runtime FSWatcher 'error' (T17), lives in
+// drop-folder.mjs's waitForDrop, which the person inbox's forwarder shares.
+export function waitForReport(dirs, timeoutMs, opts = {}) {
+  return waitForDrop(dirs, timeoutMs, opts);
 }
 
 // Run the plan's declared setup and test lines on the feature worktree (DESIGN §2.5): the last gate
@@ -819,9 +765,13 @@ export function displayPhaseFor(t) {
 // stoppedAtByTask is when an asking task began waiting, where its clock stops.
 // testsReason is the red gate's { reason, logPath } (null otherwise); it rides in runState so it lands in
 // status.json and a detached viewer can say why a finished run is red (DESIGN §2.8).
+// workers is platform.workers(): every worker the run spawned, live or exited, in spawn order, each with
+// its activity. From it each task gets `asking` (the kind of answer wanted, live-workers §2.4), `worker`
+// (the one `pir` opens: the live one, else the latest, §2.11) and `workers` (all of the task's).
 export function buildRunState({
   passTasks,
   stateTasks = {},
+  workers = [],
   branch,
   ceiling,
   sinceByTask = {},
@@ -843,12 +793,18 @@ export function buildRunState({
       done,
       phase,
       since: phase ? sinceByTask[t.num] ?? null : null,
-      stoppedAt: phase === 'asking' ? stoppedAtByTask[t.num] ?? null : null,
+      // Held only while the task waits on the person: an `asking` phase or a live worker's request.
+      stoppedAt: phase ? stoppedAtByTask[t.num] ?? null : null,
       doneMs: done ? doneMsByTask[t.num] ?? null : null,
       question: phase === 'asking' ? st.decision?.text ?? null : null,
       // A coordinator-side merge conflict carries a copy-paste resolution prompt (T14); an ordinary
       // question does not, so this is null for a plain ask.
       prompt: phase === 'asking' ? st.decision?.prompt ?? null : null,
+      // The conflict prompt went to the live worker instead (loop.mjs 3d, live-workers §2.10): the row
+      // reads `fixing conflict` and nothing is asked of the person. A later question from that worker
+      // replaces the decision, so the flag drops and the row turns `asking you`.
+      conflictSent: phase === 'asking' && !!st.decision?.sent,
+      ...workerFields(workers.filter((w) => w.task === t.num), { done, phase, prompt: st?.decision?.prompt }),
     };
   });
   return { branch, ceiling, complete, readyToMerge: !!readyToMerge, testsReason: testsReason ?? null, interrupted: !!interrupted, tasks };
@@ -860,16 +816,18 @@ export function buildRunState({
 // remembered separately. A task asking the person stops its clock (user 2026-09-26): `since` is kept and
 // the stop time recorded; when the answer sends it back to the phase it left, since and start shift
 // forward by the wait, so the clock resumes where it stopped and the merged duration leaves the wait out.
-// `now` is passed in so the bookkeeping is unit-tested without a clock.
+// `now` is passed in so the bookkeeping is unit-tested without a clock. `requesting` is the set of task
+// ids whose live worker has a permission request or question set pending (requestingTasks): the task's
+// own phase stays `building`, but it is waiting on the person all the same, so it stops the clock too.
 export function newTiming() {
   return { startByTask: {}, phaseByTask: {}, sinceByTask: {}, stoppedAtByTask: {}, resumeByTask: {}, doneMsByTask: {} };
 }
 
-export function advanceTiming(timing, stateTasks, completed, now) {
+export function advanceTiming(timing, stateTasks, completed, now, requesting = new Set()) {
   const { startByTask, phaseByTask, sinceByTask, stoppedAtByTask, resumeByTask, doneMsByTask } = timing;
   for (const [num, st] of Object.entries(stateTasks)) {
     if (startByTask[num] == null) startByTask[num] = now;
-    const ph = displayPhaseFor(st);
+    const ph = requesting.has(num) ? 'asking' : displayPhaseFor(st);
     const prev = phaseByTask[num];
     if (prev === ph) continue;
     phaseByTask[num] = ph;
@@ -889,6 +847,27 @@ export function advanceTiming(timing, stateTasks, completed, now) {
   for (const num of completed) {
     if (doneMsByTask[num] == null) doneMsByTask[num] = now - (startByTask[num] ?? now);
   }
+}
+
+// A live worker's pending request is what the person must answer now, so it names the asking kind over
+// a report; a report alone (question, decision, a worker's own conflict) is `question`. A coordinator-side
+// conflict carries a `prompt` and is not a question to answer (display.mjs reads it as `merge conflict`).
+const REQUEST_KINDS = new Set(['permission', 'questions']);
+
+// requestingTasks(workers) → the ids of tasks whose live worker has a request pending, for advanceTiming.
+export function requestingTasks(workers) {
+  return new Set(workers.filter((w) => w.live && REQUEST_KINDS.has(w.activity?.state)).map((w) => w.task));
+}
+function workerFields(taskWorkers, { done, phase, prompt }) {
+  const liveOnes = taskWorkers.filter((w) => w.live);
+  const open = liveOnes.at(-1) ?? taskWorkers.at(-1) ?? null;
+  const request = done ? null : liveOnes.map((w) => w.activity?.state).find((s) => REQUEST_KINDS.has(s)) ?? null;
+  const asking = request ?? (!done && phase === 'asking' && !prompt ? 'question' : null);
+  return {
+    asking,
+    worker: open ? { id: open.id, live: !!open.live, logPath: open.logPath ?? null } : null,
+    workers: taskWorkers.map((w) => ({ id: w.id, role: w.role, n: w.n ?? null, logPath: w.logPath ?? null })),
+  };
 }
 
 // testingRunState(runState, { since }) → the same run state marked as the end gate running: `testing`
@@ -979,7 +958,7 @@ async function main(argv) {
   // the flag, never clearing it) and clear the dead run's transient reports so none of its leftovers
   // route into a fresh worker. Runs before the report inbox and the loop, so neither side has written a
   // report yet this run. The log and HALT are preserved; a `restart` marker records the boundary.
-  const hygiene = startupControlHygiene(control);
+  const hygiene = await startupControlHygiene(control);
   if (hygiene.halted) {
     console.error(
       `HALT flag present at ${hygiene.flag} — remove it to restart.\n` +
@@ -989,10 +968,24 @@ async function main(argv) {
     );
     process.exit(1);
   }
+  if (hygiene.reaped.length) console.log(`reaped ${hygiene.reaped.length} leftover worker(s) from a prior run: ${hygiene.reaped.join(', ')}`);
   if (hygiene.cleared.length) console.log(`cleared stale control feeds from a prior run: ${hygiene.cleared.join(', ')}`);
 
   const inbox = createReportInbox({ dir: control.dir });
-  const platform = createPlatform({ root, transport: inbox.transport });
+  // Workers run the installed `claude`, resolved once here so a machine without one fails before the
+  // first spawn rather than at it (live-workers DESIGN §2.1).
+  let claudePath;
+  try {
+    claudePath = resolveClaudePath();
+  } catch (err) {
+    console.error(err.message);
+    process.exit(1);
+  }
+  // The person's input from the `pir` screen (live-workers DESIGN §2.5, T07): the grants are shared, so a
+  // "do not ask again" the inbox records is what the platform consults on the worker's next request.
+  const grants = createGrants();
+  const platform = createPlatform({ root, controlDir: control.dir, transport: inbox.transport, claudePath, grants });
+  const personInbox = startPersonInbox({ controlDir: control.dir, platform, grants, log: control.log });
   const worktree = createWorktree({ root });
   let design = '';
   try {
@@ -1015,10 +1008,9 @@ async function main(argv) {
   console.log(`ceiling: ${maxWorkers}   control: ${control.dir}`);
   console.log(`ABORT:   touch ${control.flag}`);
   console.log(`reports: ${inbox.reportsDir}`);
-  // A blocked worker is answered by the person DIRECTLY (DESIGN §2.2): find it in `claude agents`,
-  // attach, and reply there. Nothing is routed through this command, so there is no coordinator session
-  // and no answers file to write to.
-  console.log(`\nA worker that asks you shows in the display below; answer it directly with \`claude agents\`.\n`);
+  // A worker that asks is answered by the person in `pir`: its task row opens the worker's conversation,
+  // where the person replies, allows a command or answers a question set (live-workers §2.4, §2.11).
+  console.log(`\nA worker that asks you shows in the display below; answer it in \`pir\`: open its task (→).\n`);
 
   const POLL_MS = Number(process.env.PARALLEL_POLL_MS ?? 5000);
   const CEILING = maxWorkers;
@@ -1027,7 +1019,7 @@ async function main(argv) {
   const branch = `pir/${slug}`;
 
   // Detached self-reporting (DESIGN §2.4, §2.6, §3.5; T10). PIR_RUN is set only by the `pir` launcher
-  // (T08); a foreground `pir-coordinate` run leaves it unset and skips everything below, so the classic
+  // (T08); a bare `node src/shell/coordinate.mjs` run leaves it unset and skips everything below, so the classic
   // path is unchanged.
   const selfReport = shouldSelfReport(process.env);
 
@@ -1131,7 +1123,8 @@ async function main(argv) {
   // the pure model (advanceTiming below).
   const timing = newTiming();
   const { sinceByTask, stoppedAtByTask, doneMsByTask } = timing;
-  const trackTiming = (stateTasks, completed) => advanceTiming(timing, stateTasks, completed, Date.now());
+  const trackTiming = (stateTasks, completed) =>
+    advanceTiming(timing, stateTasks, completed, Date.now(), requestingTasks(platform.workers()));
 
   // The end gate runs synchronously inside the completing pass, so without this the last frame painted
   // (every task merged, or the final one still `merging`) sat unchanged for the minutes the suite took
@@ -1141,7 +1134,7 @@ async function main(argv) {
   showTesting = (passTasks) => {
     const since = Date.now();
     trackTiming({}, passTasks.map((t) => t.num)); // the last merge's duration, before the pass ends
-    const runState = testingRunState(buildRunState({ passTasks, branch, ceiling: CEILING, doneMsByTask }), { since });
+    const runState = testingRunState(buildRunState({ passTasks, workers: platform.workers(), branch, ceiling: CEILING, doneMsByTask }), { since });
     lastRunState = runState;
     if (selfReport) writeRunSnapshot({ controlDir: control.dir, proc, runState });
     renderer.paint(buildDisplay(runState, { now: since }));
@@ -1155,6 +1148,7 @@ async function main(argv) {
     // down after ~7h while the person slept. Waiting costs nothing: a pass is local file and `claude
     // agents` reads, and a parked worker's session makes no model calls until it is answered.
     for (;;) {
+      personInbox.drain(); // the backstop for a drop the forwarder's watch missed
       const r = coordinator.pass();
       trackTiming(coordinator.state.tasks, r.completed);
 
@@ -1167,6 +1161,8 @@ async function main(argv) {
       // via line() — never inside the compact, clipped live frame, which would truncate it to useless and
       // re-open the T15 wrap bug. A conflict is surfaced exactly once, on the pass it happens, so each
       // prompt prints exactly once; the compact live footer keeps naming the parked worker to attach to.
+      // A conflict sent to its live worker (live-workers T08) is a `conflict-sent` action, not a surface,
+      // so it prints nothing here.
       for (const s of r.surfaces) {
         if (s.kind === 'conflict' && s.prompt) renderer.line(`\n${s.prompt}`);
       }
@@ -1186,6 +1182,7 @@ async function main(argv) {
       const runState = buildRunState({
         passTasks: r.tasks,
         stateTasks: coordinator.state.tasks,
+        workers: platform.workers(),
         branch,
         ceiling: CEILING,
         sinceByTask,
@@ -1242,15 +1239,18 @@ async function main(argv) {
       }
 
       // React to a worker's report instead of only polling for it (DESIGN §2.2). A worker drops its
-      // report into reports/, so watch that dir and wake the moment a file lands; POLL_MS is only a
-      // backstop for a missed fs.watch event. Only reports/ is watched, never the control dir at large,
-      // so the bin's OWN writes this pass (the flow log) cannot wake it into a busy spin.
-      await waitForReport(inbox.reportsDir, POLL_MS);
+      // report into reports/ and the person's input lands in inbox/, so watch both and wake the moment a
+      // file lands: a forwarded answer changes what the next pass shows. POLL_MS is only a backstop for a
+      // missed fs.watch event. Only these two folders are watched, never the control dir at large, so the
+      // bin's OWN writes this pass (the flow log) cannot wake it into a busy spin.
+      await waitForReport([inbox.reportsDir, personInbox.inboxDir], POLL_MS);
     }
   } catch (e) {
     // Abnormal exit (T10): an uncaught error records NO final status → crashed.
     teardownOnce('error');
     throw e;
+  } finally {
+    personInbox.stop();
   }
 }
 

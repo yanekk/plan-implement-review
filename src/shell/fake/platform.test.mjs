@@ -94,3 +94,37 @@ test('spawn records the note it was given, and null when none (DESIGN §2.4)', (
   assert.equal(platform.spawns[0].note, 'Setup failed.');
   assert.equal(platform.spawns[1].note, null);
 });
+
+test('list() carries the real platform\'s fields: task, role, pid and a busy/idle activity', (t) => {
+  const { task } = taskWorktree(t);
+  const platform = createFakePlatform({ behaviors: { T01: { lingerBusy: 1 } } });
+  const id = platform.spawn({ cwd: task.path, name: NAME, phase: 'implement' });
+  const [busy] = platform.list(); // implemented, but held busy one more tick
+  assert.deepEqual(
+    { id: busy.id, task: busy.task, role: busy.role, status: busy.status, activity: busy.activity.state, live: busy.live },
+    { id, task: 'T01', role: 'implement', status: 'busy', activity: 'busy', live: true },
+  );
+  assert.equal(typeof busy.pid, 'number');
+  const [idle] = platform.list();
+  assert.equal(idle.status, 'idle');
+  assert.equal(idle.activity.state, 'idle');
+});
+
+test('send / interrupt / answer take the worker id, record the call, and return ok:false once it is gone', (t) => {
+  const { task } = taskWorktree(t);
+  const platform = createFakePlatform();
+  const id = platform.spawn({ cwd: task.path, name: NAME, phase: 'implement' });
+  assert.deepEqual(platform.send(id, 'hello', { from: 'person' }), { ok: true });
+  assert.deepEqual(platform.interrupt(id), { ok: true });
+  assert.deepEqual(platform.answer(id, 'req-1', { behavior: 'allow', updatedInput: {} }), { ok: true });
+  assert.deepEqual(platform.sent, [{ to: id, text: 'hello', from: 'person' }]);
+  assert.deepEqual(platform.interrupts, [{ to: id, from: 'person' }]);
+  assert.equal(platform.answers[0].requestId, 'req-1');
+
+  platform.close(id, { immediate: true });
+  assert.deepEqual(platform.closeOpts, [{ id, immediate: true }]);
+  assert.deepEqual(platform.send(id, 'late'), { ok: false });
+  assert.deepEqual(platform.interrupt(id), { ok: false });
+  assert.deepEqual(platform.answer(id, 'req-1', {}), { ok: false });
+  assert.deepEqual(platform.send('nobody', 'x'), { ok: false });
+});

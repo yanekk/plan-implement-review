@@ -9,7 +9,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { loadBundle } from './capture.mjs';
+import { loadBundle, createCapture } from './capture.mjs';
 import { renderHandoff } from '../coordinate.mjs';
 import { buildConflictPrompt } from '../../core/conflict.mjs';
 import {
@@ -37,92 +37,126 @@ import {
   loadRestartPoint,
   checkScenario,
   formatReport,
+  requestAnswered,
 } from './assertions.mjs';
 
 const REPO = 'pir-h';
 const PLAN = 'scratch';
-// A coordinator-shaped name for the transcript-loader mechanics tests (the loader tags role from the
-// manifest, not the name). There is no coordinator SESSION any more (DESIGN §2.9), so this is a plain
-// two-field label that parseAgentName reports as not-a-worker.
-const COORD = `${REPO} / ${PLAN}`;
-const wname = (t, role = 'implement') => `${REPO} / ${PLAN} / ${t} / work / ${role}`;
 
 // --- canned-bundle builders ----------------------------------------------------------------------
+//
+// A timeline tick is what capture.tick records since live-workers T16: workers.json joined with each
+// worker's activity from its conversation log.
 
 const fl = (ts, type, rest = '') => ({ ts, type, rest });
-const tick = (ts, agents) => ({ ts, agents });
+const tick = (ts, workers) => ({ ts, workers });
 
-function wagent(task, status, { sessionId, state = 'working', role = 'implement' } = {}) {
-  return { name: wname(task, role), sessionId: sessionId ?? 's' + task + role, cwd: '/wt/' + task, status, state, isWorkerOf: true, isCoordinator: false };
+function wagent(task, status, { sessionId, state = status, role = 'implement', log = null } = {}) {
+  return { id: sessionId ?? 's' + task + role, task, role, pid: 1000, startTime: 'Mon 1', status, state, log };
 }
-function cagent({ status = 'busy' } = {}) {
-  return { name: COORD, sessionId: 'sc', cwd: '/c', status, state: 'working', isWorkerOf: false, isCoordinator: true };
+// A SendMessage in a conversation log: an `in` entry wrapping the SDK assistant message (§2.3).
+function sendEntry(to, summary = '', message = '') {
+  return {
+    t: 1,
+    dir: 'in',
+    event: { type: 'assistant', session_id: 's1', message: { role: 'assistant', content: [{ type: 'tool_use', name: 'SendMessage', input: { to, summary, message } }] } },
+  };
 }
-// A SendMessage transcript event in the real shape (assistant tool_use { to, summary, message }).
-function sendEvent(to, summary = '', message = '') {
-  return { type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', name: 'SendMessage', input: { to, summary, message } }] } };
-}
-function transcript(name, role, task, events = []) {
-  return { key: name, name, role, task, sessionId: 'sess-' + (task || role), events };
+// A worker's loaded conversation log, as loadTranscripts builds it.
+function transcript(task, role, n = 1, events = []) {
+  return { key: `${task}-${role}-${n}.ndjson`, task, role, n, sessionId: null, events };
 }
 // A minimal bundle with sensible empty defaults; a test overrides the fields its fact reads.
 function bundle(over = {}) {
-  return { dir: '/bundle', name: 'bundle', flow: [], timeline: [], final: [], manifest: {}, gitLog: '', transcripts: [], ...over };
+  return {
+    dir: '/bundle',
+    name: 'bundle',
+    flow: [],
+    timeline: [],
+    workers: [],
+    run: { repo: REPO, plan: PLAN },
+    manifest: {},
+    gitLog: '',
+    transcripts: [],
+    ...over,
+  };
 }
 
 // --- runIdentity ---------------------------------------------------------------------------------
 
-test('runIdentity reads repo/plan from a worker; there is no coordinator name (DESIGN §2.9)', () => {
-  const b = bundle({ timeline: [tick('t1', [wagent('T01', 'busy')])] });
-  assert.deepEqual(runIdentity(b), { repo: REPO, plan: PLAN, coordName: null });
+test('runIdentity reads repo/plan from the bundle run.json; none recorded → nulls', () => {
+  assert.deepEqual(runIdentity(bundle()), { repo: REPO, plan: PLAN });
+  assert.deepEqual(runIdentity(bundle({ run: {} })), { repo: null, plan: null });
 });
 
-// --- transcripts: parse and the SendMessage accessor ---------------------------------------------
+// --- conversation logs: parse and the SendMessage accessor ----------------------------------------
 
-test('parseTranscript skips malformed lines; sendMessagesOf extracts SendMessage inputs', () => {
-  const text = JSON.stringify(sendEvent(COORD, 'hi', 'body')) + '\nnot json\n' + JSON.stringify({ type: 'user', message: { role: 'user', content: 'x' } });
+test('parseTranscript skips malformed lines; sendMessagesOf reads SendMessage calls from a conversation log', () => {
+  const text = [
+    JSON.stringify({ t: 0, dir: 'out', from: 'pir', kind: 'message', text: 'pir-implement T01' }),
+    JSON.stringify(sendEntry('someone', 'hi', 'body')),
+    'not json',
+    JSON.stringify({ t: 2, dir: 'in', event: { type: 'user', message: { role: 'user', content: 'x' } } }),
+  ].join('\n');
   const events = parseTranscript(text);
-  assert.equal(events.length, 2, 'the malformed middle line is dropped');
-  const t = transcript(wname('T01'), 'worker', 'T01', events);
-  const sends = sendMessagesOf(t);
+  assert.equal(events.length, 3, 'the malformed line is dropped');
+  const sends = sendMessagesOf(transcript('T01', 'implement', 1, events));
   assert.equal(sends.length, 1);
-  assert.equal(sends[0].to, COORD);
-  assert.equal(sends[0].summary, 'hi');
+  assert.deepEqual(sends[0], { to: 'someone', summary: 'hi', message: 'body' });
 });
 
-test('loadTranscripts maps the T14 manifest to parsed transcripts via an injected reader', () => {
+// The same count the old transcript reader gave: one SendMessage per tool_use, several per message, none
+// from what pir sent (an `out` entry) or from a request pir recorded.
+test('sendMessagesOf counts the same calls from a conversation log as from the bare transcript it wraps', () => {
+  const two = {
+    type: 'assistant',
+    message: {
+      role: 'assistant',
+      content: [
+        { type: 'text', text: 'asking' },
+        { type: 'tool_use', name: 'SendMessage', input: { to: 'a', summary: '1', message: '' } },
+        { type: 'tool_use', name: 'Bash', input: { command: 'ls' } },
+        { type: 'tool_use', name: 'SendMessage', input: { to: 'b', summary: '2', message: '' } },
+      ],
+    },
+  };
+  const events = [
+    { t: 1, dir: 'in', event: two },
+    sendEntry('c', '3'),
+    { t: 3, dir: 'request', requestId: 'r', toolName: 'SendMessage', input: { to: 'x' } },
+    { t: 4, dir: 'out', from: 'pir', kind: 'message', text: 'SendMessage' },
+  ];
+  assert.deepEqual(sendMessagesOf(transcript('T01', 'implement', 1, events)).map((m) => m.to), ['a', 'b', 'c']);
+});
+
+test('loadTranscripts maps the manifest to parsed conversation logs via an injected reader', () => {
   const manifest = {
-    [COORD]: { sessionId: 'sc', cwd: '/c', role: 'coordinator', copied: true, copiedTo: 'transcripts/coordinator.jsonl' },
-    [wname('T01')]: { sessionId: 's1', cwd: '/wt', role: 'worker', copied: true, copiedTo: 'transcripts/T01.jsonl' },
-    [`${wname('T01')} (s2)`]: { sessionId: 's2', cwd: '/wt', role: 'worker', copied: false, copiedTo: null },
+    'T01-implement-1.ndjson': { role: 'worker', task: 'T01', workerRole: 'implement', n: 1, sessionId: 's1', copied: true, copiedTo: 'conversations/T01-implement-1.ndjson' },
+    'T01-review-1.ndjson': { role: 'worker', task: 'T01', workerRole: 'review', n: 1, sessionId: null, copied: false, copiedTo: null },
   };
-  const files = {
-    '/bundle/transcripts/coordinator.jsonl': JSON.stringify(sendEvent(wname('T01'), 'hello')),
-    '/bundle/transcripts/T01.jsonl': JSON.stringify(sendEvent(COORD, 'question')),
-  };
+  const files = { '/bundle/conversations/T01-implement-1.ndjson': JSON.stringify(sendEntry('q')) };
   const b = loadTranscripts(bundle({ manifest }), { readFile: (p) => { if (!(p in files)) throw new Error('nope'); return files[p]; } });
-  assert.equal(b.transcripts.length, 3);
-  const coord = b.transcripts.find((t) => t.role === 'coordinator');
-  assert.equal(sendMessagesOf(coord)[0].to, wname('T01'));
-  // The recurring-name reviewer session keeps its bare name (parses to a task) and reads copied:false as empty.
-  const reviewer = b.transcripts.find((t) => t.sessionId === 's2');
-  assert.equal(reviewer.name, wname('T01'));
-  assert.equal(reviewer.task, 'T01');
-  assert.deepEqual(reviewer.events, []);
+  assert.equal(b.transcripts.length, 2);
+  const impl = b.transcripts.find((t) => t.role === 'implement');
+  assert.deepEqual([impl.key, impl.task, impl.n, impl.sessionId], ['T01-implement-1.ndjson', 'T01', 1, 's1']);
+  assert.equal(sendMessagesOf(impl)[0].to, 'q');
+  const rev = b.transcripts.find((t) => t.role === 'review');
+  assert.deepEqual(rev.events, [], 'an uncopied log reads as empty, not dropped');
 });
 
-test('loadTranscripts reads a real bundle written by capture.loadBundle (the T14 seam)', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'pir-t15-'));
+test('loadTranscripts reads a real bundle sealed by capture (the capture→assertions seam)', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'pir-t16-asr-'));
   try {
-    mkdirSync(join(dir, 'transcripts'), { recursive: true });
-    writeFileSync(join(dir, 'transcripts', 'T01.jsonl'), JSON.stringify(sendEvent(COORD, 'q')) + '\n');
-    writeFileSync(
-      join(dir, 'manifest.json'),
-      JSON.stringify({ [wname('T01')]: { sessionId: 's1', cwd: '/wt', role: 'worker', copied: true, copiedTo: join('transcripts', 'T01.jsonl') } }),
-    );
-    const b = loadTranscripts(loadBundle(dir));
+    const control = join(dir, 'control');
+    mkdirSync(join(control, 'conversations'), { recursive: true });
+    writeFileSync(join(control, 'conversations', 'T01-implement-1.ndjson'), JSON.stringify(sendEntry('q')) + '\n');
+    const cap = createCapture({ repo: REPO, slug: PLAN, dir: join(dir, 'bundle'), controlDir: control, isAlive: () => false });
+    cap.seal();
+    const b = loadTranscripts(loadBundle(join(dir, 'bundle')));
     assert.equal(b.transcripts.length, 1);
-    assert.equal(sendMessagesOf(b.transcripts[0])[0].to, COORD);
+    assert.equal(b.transcripts[0].task, 'T01');
+    assert.equal(sendMessagesOf(b.transcripts[0])[0].to, 'q');
+    assert.deepEqual(runIdentity(b), { repo: REPO, plan: PLAN });
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -290,8 +324,7 @@ const RED_OUT = `pass 12\n${renderHandoff({
 // A bundle in the attended-resolution shape (DESIGN §2.8): T01 (winner) merged clean; T02 conflicted, was
 // surfaced, and the SAME worker resumed to a merge — NO `answer` line (the person resolved it on the live
 // worker, nothing routed). The run HANDED OFF: no `promote`, no `Merge branch 'pir/scratch'` into main in
-// the git log (only task-branch integrations), and the feature branch carries the decided side. A worker in
-// the timeline lets runIdentity resolve the plan for the hand-off git-log check.
+// the git log (only task-branch integrations), and the feature branch carries the decided side.
 function resolvedBundle(over = {}) {
   return bundle({
     flow: [
@@ -310,6 +343,11 @@ const decided = { file: 'greeting.txt', content: 'hello there' };
 
 test('mergeConflictResolved passes when the conflict was kept alive, resumed without a routed answer, and the decided side was handed off', () => {
   assert.equal(mergeConflictResolved(decided).check(resolvedBundle()).pass, true);
+});
+
+test('mergeConflictResolved also passes when the conflict was sent to the live worker (conflict-sent, live-workers T08)', () => {
+  const b = resolvedBundle({ flow: [fl('t3', 'merge', 'T01'), fl('t4', 'conflict-sent', 'T02'), fl('t6', 'merge', 'T02')] });
+  assert.equal(mergeConflictResolved(decided).check(b).pass, true);
 });
 
 test('mergeConflictResolved fails when no task was surfaced', () => {
@@ -375,8 +413,7 @@ test('loadFinalFiles reads the bundle final-files.json into bundle.finalFiles; m
 // --- handedOffGreenBranch (T10: no promotion; the run hands off a green feature branch, §2.4) --------
 
 // A clean hand-off bundle: a task merged onto the feature branch, no `promote` line, and main carries no
-// promotion merge (git log has only the task work, not `Merge branch 'pir/scratch'`). A worker in the
-// timeline lets runIdentity resolve the plan so the git-log check runs.
+// promotion merge (git log has only the task work, not `Merge branch 'pir/scratch'`).
 test('handedOffGreenBranch passes when a task merged, nothing was promoted, and main gained no merge', () => {
   const b = bundle({
     flow: [fl('t5', 'merge', 'T01')],
@@ -515,6 +552,20 @@ test('handedOffGreenBranch passes when a worker integration merge shares the pro
 
 // Non-vacuous: a run that promoted nothing AND merged no task assembled nothing, so the hand-off is
 // vacuous and must FAIL — otherwise an empty run would pass trivially.
+// With an empty timeline the old name-derived identity found no plan and silently skipped the main-untouched
+// check; the plan now comes from run.json, and a bundle without it fails rather than passing unchecked.
+test('handedOffGreenBranch fails when the bundle does not name its plan, instead of skipping the main check', () => {
+  const b = bundle({
+    run: {},
+    flow: [fl('t5', 'merge', 'T01')],
+    gitLog: "* Merge branch 'pir/scratch'\n* seed\n",
+    coordinatorOut: GREEN_OUT,
+  });
+  const r = handedOffGreenBranch().check(b);
+  assert.equal(r.pass, false);
+  assert.match(r.detail, /does not name its plan/);
+});
+
 test('handedOffGreenBranch fails vacuously-safe when no task merged onto the feature branch', () => {
   const b = bundle({
     flow: [fl('t1', 'spawn', 'T01')],
@@ -531,7 +582,7 @@ test('handedOffGreenBranch fails vacuously-safe when no task merged onto the fea
 test('killSwitchStoppedAll passes when halt-close fired, no promote, and no worker survives the last tick', () => {
   const b = bundle({
     flow: [fl('t3', 'halt-close', ''), fl('t3', 'halt-close', '')],
-    timeline: [tick('t1', [wagent('T01', 'busy'), wagent('T02', 'busy')]), tick('t4', [cagent()])],
+    timeline: [tick('t1', [wagent('T01', 'busy'), wagent('T02', 'busy')]), tick('t4', [])],
   });
   assert.equal(killSwitchStoppedAll().check(b).pass, true);
 });
@@ -660,8 +711,8 @@ const resumedBundle = () =>
       fl('2026-01-01T00:00:12Z', 'merge', 'T02'),
     ],
     timeline: [
-      tick('2026-01-01T00:00:03Z', [cagent(), wagent('T02', 'busy', { sessionId: 'i2', role: 'implement' })]),
-      tick('2026-01-01T00:00:11Z', [cagent(), wagent('T02', 'busy', { sessionId: 'r2', role: 'review' })]),
+      tick('2026-01-01T00:00:03Z', [wagent('T02', 'busy', { sessionId: 'i2', role: 'implement' })]),
+      tick('2026-01-01T00:00:11Z', [wagent('T02', 'busy', { sessionId: 'r2', role: 'review' })]),
     ],
   });
 
@@ -673,10 +724,30 @@ test('resumedNotRebuilt passes when the 🔍 task was adopted and merged with on
 test('resumedNotRebuilt fails when the task was rebuilt (a rebuild line + a second implementer)', () => {
   const b = resumedBundle();
   b.flow.splice(3, 0, fl('2026-01-01T00:00:10Z', 'rebuild', 'T02'), fl('2026-01-01T00:00:11Z', 'spawn', 'T02'));
-  b.timeline[1].agents.push(wagent('T02', 'busy', { sessionId: 'i2b', role: 'implement' })); // a second build
+  b.timeline[1].workers.push(wagent('T02', 'busy', { sessionId: 'i2b', role: 'implement' })); // a second build
   const r = resumedNotRebuilt('T02').check(b);
   assert.equal(r.pass, false);
   assert.match(r.detail, /rebuilt/);
+});
+
+// Every spawn opens its own conversation log (live-workers §2.3), so a second implementer too short-lived
+// for any tick to sample still shows as a second `T02-implement-{n}` log.
+test('resumedNotRebuilt fails on a second implementer seen only in the conversation logs', () => {
+  const b = {
+    ...resumedBundle(),
+    transcripts: [transcript('T02', 'implement', 1), transcript('T02', 'implement', 2), transcript('T02', 'review', 1)],
+  };
+  b.timeline[0].workers[0].log = 'T02-implement-1.ndjson'; // the sampled one is log 1; log 2 was never sampled
+  const r = resumedNotRebuilt('T02').check(b);
+  assert.equal(r.pass, false);
+  assert.match(r.detail, /2 implement sessions/);
+});
+
+test('resumedNotRebuilt counts a worker in both the timeline and its log once', () => {
+  const b = { ...resumedBundle(), transcripts: [transcript('T02', 'implement', 1), transcript('T02', 'review', 1)] };
+  b.timeline[0].workers[0].log = 'T02-implement-1.ndjson';
+  const r = resumedNotRebuilt('T02').check(b);
+  assert.equal(r.pass, true, r.detail);
 });
 
 test('resumedNotRebuilt fails vacuously-safe when the run never restarted (one marker)', () => {
@@ -785,7 +856,7 @@ const leftAloneBundle = () =>
       fl('2026-01-01T00:00:10Z', 'restart'),
       fl('2026-01-01T00:00:12Z', 'merge', 'T02'),
     ],
-    timeline: [tick('2026-01-01T00:00:03Z', [cagent(), wagent('T01', 'busy', { sessionId: 'i1', role: 'implement' })])],
+    timeline: [tick('2026-01-01T00:00:03Z', [wagent('T01', 'busy', { sessionId: 'i1', role: 'implement' })])],
   });
 
 test('noRebuildFrom passes when the ✅+merged task is untouched after the restart', () => {
@@ -850,8 +921,8 @@ const reapedBundle = () =>
   bundle({
     flow: twoRestarts,
     timeline: [
-      tick('2026-01-01T00:00:03Z', [cagent(), wagent('T02', 'busy', { sessionId: 'w2', role: 'implement' })]), // pre-crash
-      tick('2026-01-01T00:00:11Z', [cagent(), wagent('T02', 'busy', { sessionId: 'r2', role: 'review' })]), // w2 reaped
+      tick('2026-01-01T00:00:03Z', [wagent('T02', 'busy', { sessionId: 'w2', role: 'implement' })]), // pre-crash
+      tick('2026-01-01T00:00:11Z', [wagent('T02', 'busy', { sessionId: 'r2', role: 'review' })]), // w2 reaped
     ],
   });
 
@@ -862,7 +933,7 @@ test('leftoverSessionsReaped passes when the pre-crash session is gone by the fi
 
 test('leftoverSessionsReaped fails when a pre-crash leftover is still live at the end', () => {
   const b = reapedBundle();
-  b.timeline[1].agents.push(wagent('T02', 'idle', { sessionId: 'w2', role: 'implement' })); // the leftover lingers
+  b.timeline[1].workers.push(wagent('T02', 'idle', { sessionId: 'w2', role: 'implement' })); // the leftover lingers
   const r = leftoverSessionsReaped({ ceiling: 1 }).check(b);
   assert.equal(r.pass, false);
   assert.match(r.detail, /still live/);
@@ -871,7 +942,7 @@ test('leftoverSessionsReaped fails when a pre-crash leftover is still live at th
 test('leftoverSessionsReaped fails when the slot peak exceeds the ceiling across the restart', () => {
   const b = reapedBundle();
   // A post-boundary tick with two distinct tasks live (an un-reaped orphan counted beside a resumed worker).
-  b.timeline.splice(1, 0, tick('2026-01-01T00:00:10Z', [cagent(), wagent('T02', 'busy', { sessionId: 'r2', role: 'review' }), wagent('T03', 'busy', { sessionId: 'w3', role: 'implement' })]));
+  b.timeline.splice(1, 0, tick('2026-01-01T00:00:10Z', [wagent('T02', 'busy', { sessionId: 'r2', role: 'review' }), wagent('T03', 'busy', { sessionId: 'w3', role: 'implement' })]));
   const r = leftoverSessionsReaped({ ceiling: 1 }).check(b);
   assert.equal(r.pass, false);
   assert.match(r.detail, /exceeds the ceiling/);
@@ -902,4 +973,36 @@ test('checkScenario reports a throwing fact as failed rather than aborting', () 
   const report = checkScenario({ id: 'x', facts: [boom] }, bundle());
   assert.equal(report.pass, false);
   assert.match(report.facts[0].detail, /kaboom/);
+});
+
+// --- requestAnswered (live-workers T18) ------------------------------------------------------------
+
+const tx = (task, events) => ({ key: `${task}-implement-1.ndjson`, task, role: 'implement', n: 1, events });
+const askReq = (id) => ({ dir: 'request', requestId: id, toolName: 'AskUserQuestion', input: { questions: [] } });
+const bashReq = (id) => ({ dir: 'request', requestId: id, toolName: 'Bash', input: { command: 'touch approved.txt' } });
+const replyOf = (id, from, behavior) => ({ dir: 'out', kind: 'reply', requestId: id, from, result: { behavior } });
+
+test('requestAnswered passes when the task asked that kind and the person\'s allowing reply reached it', () => {
+  const bundle = {
+    transcripts: [tx('T01', [askReq('q1'), replyOf('q1', 'person', 'allow')]), tx('T02', [bashReq('p1'), replyOf('p1', 'person', 'allow')])],
+  };
+  assert.equal(requestAnswered('T01', 'questions').check(bundle).pass, true);
+  assert.equal(requestAnswered('T02', 'permission').check(bundle).pass, true);
+  assert.equal(requestAnswered('T01', 'questions').id, 'request-answered:T01:questions');
+});
+
+test('requestAnswered keeps the kinds apart: a permission is not a question set', () => {
+  const bundle = { transcripts: [tx('T02', [bashReq('p1'), replyOf('p1', 'person', 'allow')])] };
+  const r = requestAnswered('T02', 'questions').check(bundle);
+  assert.equal(r.pass, false);
+  assert.match(r.detail, /never asked a question set/);
+});
+
+test('requestAnswered fails on no log, no reply, a refusal, or a grant answered by pir', () => {
+  assert.match(requestAnswered('T01', 'permission').check({ transcripts: [] }).detail, /no conversation log/);
+  for (const events of [[bashReq('p1')], [bashReq('p1'), replyOf('p1', 'person', 'deny')], [bashReq('p1'), replyOf('p1', 'pir', 'allow')]]) {
+    const r = requestAnswered('T01', 'permission').check({ transcripts: [tx('T01', events)] });
+    assert.equal(r.pass, false);
+    assert.match(r.detail, /no person's allowing answer/);
+  }
 });

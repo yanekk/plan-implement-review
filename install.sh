@@ -27,9 +27,14 @@ MARKER="Appended by plan-implement-review"
 DEST="$HOME/.claude/skills"
 ENGINE_DEST="$HOME/.claude/pir-engine"
 SKILLS=(pir-plan pir-review-plan pir-work pir-implement pir-review pir-install pir-worker pir-e2e)
-# The user-facing launchers, both installed onto the PATH the same way (install_launcher): pir-coordinate
-# drives a foreground run, pir (T13) starts one detached and opens the cross-repo dashboard.
-LAUNCHERS=(pir-coordinate pir)
+# The user-facing launchers, installed onto the PATH by install_launcher. pir (T13) starts a run
+# detached and opens the cross-repo dashboard; it is the only one since pir-coordinate was sunset
+# (live-workers §2.13).
+LAUNCHERS=(pir)
+# Launchers an earlier install put on the PATH and this one no longer ships. The foreground
+# pir-coordinate would strand a live worker's question (live-workers §2.13), so install_launcher
+# deletes it from both directories it may have used.
+STALE_LAUNCHERS=(pir-coordinate)
 
 # Skills deleted from the repo when parallel mode stopped being agentic (T07): the coordinator is
 # now a plain command, not a skill, and the verify/parallelize helpers went with the you/auto split.
@@ -71,10 +76,10 @@ remove_orphan_skills() {
     done
 }
 
-# Install the launchers onto a PATH directory (pir-coordinate T18, pir T13). Both are logic-free
-# wrappers (DESIGN §2.1, §2.9) that exec the engine; the installed engine path is baked in HERE, at
-# install time — sed substitutes the same __PIR_ENGINE__ placeholder in each with ENGINE_DEST — so a
-# command runs from any repo, not just this one. Prefer ~/.local/bin (already on this user's PATH;
+# Install the launchers onto a PATH directory (pir T13). Each is a logic-free wrapper (DESIGN §2.1,
+# §2.9) that execs the engine; the installed engine path is baked in HERE, at install time — sed
+# substitutes the __PIR_ENGINE__ placeholder with ENGINE_DEST — so a command runs from any repo, not
+# just this one. Prefer ~/.local/bin (already on this user's PATH;
 # `claude` lives there); if it is absent or off PATH, fall back to ~/.claude/bin and print the exact
 # export PATH step once, never silently installing commands the user cannot invoke (the
 # apply_automode_rule pattern).
@@ -86,16 +91,27 @@ install_launcher() {
         bindir="$HOME/.claude/bin"
     fi
     mkdir -p "$bindir"
-    # '@' delimiter so the '/'-heavy engine path needs no escaping. Same substitution for both
-    # launchers: each carries the __PIR_ENGINE__ placeholder and its own engine entrypoint.
+    # '@' delimiter so the '/'-heavy engine path needs no escaping. Each launcher carries the
+    # __PIR_ENGINE__ placeholder and its own engine entrypoint.
     for name in "${LAUNCHERS[@]}"; do
         sed "s@__PIR_ENGINE__@$ENGINE_DEST@" "$SRC/bin/$name" > "$bindir/$name"
         chmod +x "$bindir/$name"
         echo "  installed the launcher $bindir/$name"
     done
+    # Either bin dir may hold a stale launcher: an earlier install could have chosen the other one.
+    # Only a file that execs our engine is removed, so a same-named command of the user's survives.
+    local dir
+    for name in "${STALE_LAUNCHERS[@]}"; do
+        for dir in "$HOME/.local/bin" "$HOME/.claude/bin"; do
+            if [[ -f "$dir/$name" ]] && grep -q "pir-engine/src/shell/" "$dir/$name"; then
+                rm -f "$dir/$name"
+                echo "  removed the retired launcher $dir/$name"
+            fi
+        done
+    done
     if ! on_path "$bindir"; then
         cat <<STEP
-  $bindir is not on your PATH — add it so \`pir\` and \`pir-coordinate\` resolve:
+  $bindir is not on your PATH — add it so \`pir\` resolves:
 
       export PATH="$bindir:\$PATH"
 
@@ -114,6 +130,38 @@ install_engine() {
     mkdir -p "$ENGINE_DEST"
     cp -R "$SRC/src" "$ENGINE_DEST/src"
     echo "  refreshed $ENGINE_DEST/src (parallel coordinator engine)"
+    install_engine_deps
+}
+
+# The engine's two runtime packages (pi-tui, the Agent SDK; live-workers DESIGN §5) go in a
+# node_modules beside the engine's src/, where its bare imports resolve. The rm -rf above wipes
+# them, so every install re-fetches the lockfile's exact versions and needs the network. The omit
+# flags repeat .npmrc on purpose: a CLI --omit REPLACES the .npmrc list rather than adding to it,
+# so `--omit=dev` alone would pull in the SDK's ~95 peer packages and its 222 MB bundled claude.
+ENGINE_DEPS_FAILED=0
+install_engine_deps() {
+    cp "$SRC/package.json" "$SRC/package-lock.json" "$SRC/.npmrc" "$ENGINE_DEST/"
+    if (cd "$ENGINE_DEST" && npm ci --omit=dev --omit=peer --omit=optional --no-audit --no-fund --no-update-notifier >/dev/null); then
+        echo "  installed $ENGINE_DEST/node_modules (engine runtime packages)"
+    else
+        ENGINE_DEPS_FAILED=1
+        echo "  could not install the engine's packages in $ENGINE_DEST (npm ci failed)" >&2
+    fi
+}
+
+# Printed last, so a failed package install is not scrolled away: without node_modules the
+# installed pir cannot start. Exit non-zero so a script driving install.sh sees it too.
+report_engine_deps() {
+    [[ "$ENGINE_DEPS_FAILED" == 0 ]] && return 0
+    cat >&2 <<STEP
+
+  The engine's packages did NOT install, so the installed pir will not start.
+  npm ci needs the network (every install re-fetches them). Once online, re-run:
+
+      ./install.sh
+
+STEP
+    exit 1
 }
 
 MERGE="$SRC/src/shell/settings-merge.mjs"
@@ -198,8 +246,7 @@ if [[ -z "$TARGET" || "$TARGET" == "--global" ]]; then
     echo "To run a reviewed plan in parallel, from inside a set-up repo:"
     echo "    pir {slug}      # start detached, drop into its live view"
     echo "    pir             # the cross-repo dashboard"
-    echo "The foreground launcher pir-coordinate {slug} is deprecated; prefer pir {slug}, which"
-    echo "runs live and detached. (pir-coordinate still runs, and is the only dry-by-default rehearsal.)"
+    report_engine_deps
     exit 0
 fi
 
@@ -234,6 +281,5 @@ Done. One thing left, by hand:
 
       pir {slug}      # start detached, drop into its live view
       pir             # the cross-repo dashboard
-
-  (the foreground launcher pir-coordinate {slug} is deprecated; prefer pir {slug}.)
 MSG
+report_engine_deps

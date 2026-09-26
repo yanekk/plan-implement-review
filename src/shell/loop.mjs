@@ -18,7 +18,7 @@ import { join } from 'node:path';
 import { parseProgress, reconcileTaskRow, progressPathFor } from '../core/progress.mjs';
 import { decideDispatch } from '../core/dispatch.mjs';
 import { decideResume } from '../core/resume.mjs';
-import { workerName, isWorkerOf, parseAgentName } from '../core/naming.mjs';
+import { workerName, isWorkerOf } from '../core/naming.mjs';
 import { buildConflictPrompt } from '../core/conflict.mjs';
 import { formatSetupNote } from '../core/setupnote.mjs';
 
@@ -126,14 +126,8 @@ function applyMessages(state, messages, record) {
   }
 }
 
-// How many passes a just-spawned worker may be absent from the live list before it is declared dead.
-// A worker takes a moment to appear in `claude agents --json`; without this grace a worker not yet
-// listed would be called dead and respawned into a duplicate — the runaway the name-based match below
-// otherwise prevents (FINDINGS 2026-09-09).
-const APPEAR_GRACE = 1;
-
-// How long the loop keeps DEFERRING a finished worker (review-ready or done) that `claude agents
-// --json` still reports `busy`, before it stops trusting that flag and forces the hand-off (3c) or the
+// How long the loop keeps DEFERRING a finished worker (review-ready or done) that the platform still
+// reports `busy` (its log shows an open turn, core/stream.mjs workerActivity), before it stops trusting that flag and forces the hand-off (3c) or the
 // merge-and-close (3d). The idle gate (T13 Problem B) exists to avoid SIGTERMing a worker mid-turn and
 // to let its final commit land — but a worker that has already dropped its `implemented`/`done` report
 // has finished its deliverable, so a session that stays busy long past that report is almost always a
@@ -153,43 +147,27 @@ const APPEAR_GRACE = 1;
 // Generous on purpose: a real final commit lands in seconds, so it only ever fires on a stuck session.
 const AWAIT_IDLE_TIMEOUT_MS = 5 * 60 * 1000;
 
-// Rebuild the assignments decideDispatch consumes, matching each tracked task to a live worker BY
-// the task NUMBER and role parsed out of the worker's NAME, not by the id spawn returned. The id
-// `claude --bg` prints does NOT reliably equal the `id` in `claude agents --json` (T08 live run,
-// FINDINGS 2026-09-09), so trusting it made the loop declare every worker dead and respawn — a runaway
-// that breached the ceiling. The name is the key, and the live id comes from the list: it is written
-// back onto the task as the authoritative id that close acts on.
-//
-// The match is on the NUMBER (and role), never a reconstruction of the full name: a worker name now
-// carries a readable slug (DESIGN §2.9) that is a label, not the identity, so matching on the number
-// keeps a worker resolving to its task regardless of its slug — and regardless of the legacy "·" vs new
-// "/" separator during the T02→T05 transition, since parseAgentName reads both. liveList is already
-// this run's workers only (the caller filters with isWorkerOf), so a foreign or coordinator name never
-// enters the map. A task whose worker is absent from the list past its grace is dead (DESIGN §2.5); one
-// still within grace is treated as live-pending, not respawned.
+// Rebuild the assignments decideDispatch consumes, matching each tracked task to a live worker by the
+// id spawn returned. Since live-workers T05 that id is the session uuid pir chose, and the platform
+// lists its own children under it, so the spawned id and the listed id are one (DESIGN §2.1). The old
+// match by the name's task number and role, and the one-pass appear grace beside it, existed only
+// because `claude --bg` printed an id `claude agents --json` did not list and a new session took a
+// moment to appear there (FINDINGS 2026-09-09); a child is listed the moment it is spawned. liveList
+// is already this run's not-yet-closed workers (the caller filters it). A tracked task whose worker is
+// not listed has exited: it is dead (DESIGN §2.5).
 function buildAssignments(state, liveList) {
-  const byNumRole = new Map();
-  for (const w of liveList) {
-    const p = parseAgentName(w.name);
-    if (p.task) byNumRole.set(`${p.task}/${p.role}`, w);
-  }
+  const liveIds = new Set(liveList.map((w) => w.id));
   const assignments = [];
   for (const [num, t] of Object.entries(state.tasks)) {
-    // A preparing task has no session to find, so it is live by definition: it takes its task and a
+    // A preparing task has no worker to find, so it is live by definition: it takes its task and a
     // slot, and is never declared dead, respawned or given a second setup. workerId null — nothing to
     // close; the halt path kills its setup handle instead.
     if (t.phase === PREPARING) {
       assignments.push({ workerId: null, task: num, phase: PREPARING, live: true });
       continue;
     }
-    const w = byNumRole.get(`${num}/${t.role}`);
-    if (w) {
-      t.workerId = w.id; // authoritative id from the list, what close can actually stop
-      t.grace = 0;
-      assignments.push({ workerId: w.id, task: num, phase: t.phase, live: true });
-    } else if ((t.grace ?? 0) > 0) {
-      t.grace -= 1; // spawned but not yet listed — wait rather than respawn into a duplicate
-      assignments.push({ workerId: t.workerId ?? null, task: num, phase: t.phase, live: true });
+    if (liveIds.has(t.workerId)) {
+      assignments.push({ workerId: t.workerId, task: num, phase: t.phase, live: true });
     } else if (t.workerId) {
       assignments.push({ workerId: t.workerId, task: num, phase: 'dead', live: false });
     }
@@ -208,20 +186,9 @@ function buildAssignments(state, liveList) {
 // with git; the presence of task branches cannot). `record` is the runPass logger, so every action
 // reconciliation takes also reaches the flow log the harness reads.
 function reconcile({ platform, worktree, repo, slug, maxWorkers, state, featureProgressPath, record }) {
-  // Reap the dead run's leftover worker sessions FIRST, session-only (DESIGN §2.5). The only crash that
-  // leaves task branches to reconcile is one that skips coordinate.mjs's SIGTERM teardown (which would
-  // have removed the worktrees and branches) — and that same abruptness leaves the dead run's worker
-  // sessions still running. An un-reaped orphan both inflates the live-worker count (tripping the runaway
-  // breaker) and hides from decideDispatch's slot maths (so it would over-spawn). So stop every listed
-  // worker of this slug before adopting anything — close + remove the session record ONLY, NEVER
-  // worktree.remove, because the task branches and worktrees are exactly what the adoption below needs.
-  // Reaped ids go into closedIds so a lingering listing is not recounted against the ceiling.
-  for (const w of platform.list()) {
-    if (!isWorkerOf(w.name, { repo, plan: slug })) continue;
-    platform.close(w.id);
-    platform.remove?.(w.id);
-    state.closedIds.add(w.id);
-  }
+  // No reap here. A dead run's leftover workers are not this process's children, so no platform listing
+  // finds them (live-workers T05); the bin reaps them from workers.json in startupControlHygiene, before
+  // this first pass (T06, DESIGN §2.12).
 
   // Read the task list and terminal states from the feature branch, each task's in-flight state from
   // its own task branch's committed glyph (DESIGN §2.2), and classify (pure, DESIGN §2.3).
@@ -289,7 +256,7 @@ function reconcile({ platform, worktree, repo, slug, maxWorkers, state, featureP
 
   // review: hand each built-but-unreviewed (🔍) branch to a FRESH reviewer on its existing worktree and
   // seed it into run state as a normal reviewing task (worktree, the reviewer's id, role review, phase
-  // reviewing, appear grace), so from the next pass the live loop owns it and reviews and merges it like
+  // reviewing), so from the next pass the live loop owns it and reviews and merges it like
   // any other (DESIGN §2.5). The seeded task has a real, freshly spawned session — never a sessionless
   // one, or buildAssignments would call it dead and discard the adopted branch. Cap review spawns at the
   // ceiling: the in-flight bound makes exceeding it unreachable (a 🔍 branch held a live slot at the
@@ -304,7 +271,7 @@ function reconcile({ platform, worktree, repo, slug, maxWorkers, state, featureP
     const taskSlug = slugByNum.get(num);
     const name = workerName({ repo, plan: slug, task: num, slug: taskSlug, role: 'review' });
     const reviewerId = platform.spawn({ cwd: handle.path, name, phase: 'review' });
-    state.tasks[num] = { worktree: handle, workerId: reviewerId, role: 'review', slug: taskSlug, phase: REVIEWING, grace: APPEAR_GRACE };
+    state.tasks[num] = { worktree: handle, workerId: reviewerId, role: 'review', slug: taskSlug, phase: REVIEWING };
     reviewSpawns += 1;
     record('review', { task: num, workerId: reviewerId, adopted: true });
   }
@@ -377,12 +344,11 @@ export function runPass({ platform, worktree, repo, slug, maxWorkers, state, con
     return a;
   };
 
-  // The loop makes no down-send, and there is no down-channel to make one on (DESIGN §2.2, T03). A
-  // worker that cannot continue drops a question/decision report UP (applyMessages below parks it and
-  // records the escalation for the live display); the person then answers that worker DIRECTLY in its
-  // own session, and the worker un-parks and re-signals on its own. Nothing is routed back down — the
-  // program never sees the answer. The spawn-time hello was retired in T30 and the whole down-channel,
-  // with the answer relay, in T03, so this loop never calls a platform send.
+  // The loop itself sends a worker nothing beyond the opening instruction, which platform.spawn pushes
+  // as the worker's first message (live-workers DESIGN §2.1). A worker that cannot continue drops a
+  // question/decision report UP (applyMessages below parks it and records the escalation for the live
+  // display). The line down exists (platform.send, DESIGN §1 Stance); the merge-conflict fix (3d) is
+  // the loop's one use of it (live-workers T08). The spawn-time hello stays retired (T30).
 
   // 0. Open the feature branch once, in the coordinator's own worktree (DESIGN §2.9).
   if (!state.feature) {
@@ -392,11 +358,9 @@ export function runPass({ platform, worktree, repo, slug, maxWorkers, state, con
   const featureProgressPath = join(state.feature.path, progressPathFor(slug));
 
   // 0.5 Reconcile from git once, before the first dispatch (DESIGN §2.1, §2.4). A no-op on a genuine
-  // first start (no task branches to adopt); on a restart it reaps the dead run's leftover sessions,
-  // merges ✅ branches, hands 🔍 branches to fresh reviewers, and keeps half-built ones to resume — so the loop
-  // below runs over a state that matches git. closedIds may be absent on a hand-built state; ensure it
-  // before the reap writes to it.
-  state.closedIds ??= new Set();
+  // first start (no task branches to adopt); on a restart it merges ✅ branches, hands 🔍 branches to
+  // fresh reviewers, and keeps half-built ones to resume — so the loop below runs over a state that
+  // matches git.
   if (!state.reconciled) {
     reconcile({ platform, worktree, repo, slug, maxWorkers, state, featureProgressPath, record });
   }
@@ -404,37 +368,26 @@ export function runPass({ platform, worktree, repo, slug, maxWorkers, state, con
   // 1. Gather. list() is the fake's tick, so it is called exactly once and its result reused.
   const halted = control.isHalted();
   const listed = platform.list();
-  // A session this loop has already closed can linger in `claude agents --json` for several passes:
-  // `close` SIGTERMs the process, but that is asynchronous and a stale Remote Control registry entry
-  // can outlive the process itself (single live run 2026-09-12: a just-closed implementer stayed listed
-  // alongside its fresh reviewer, so at ceiling 1 the loop counted 2 workers for 3 passes and the
-  // runaway breaker tore the run down mid-review, before any promote). So the loop remembers every id it
-  // closed and never recounts it as live.
-  //
-  // The memory is NEVER pruned within a run. An earlier version pruned an id the moment it fell off the
-  // list — but a SIGTERM'd session does not just linger, it can VANISH for a pass or two and then
-  // REAPPEAR under the SAME id as a stale registry entry (human-decision live run 2026-09-13: a closed
-  // implementer dropped off `claude agents --json` for ~10s, came back `idle` beside its reviewer, and
-  // was recounted → 2 over ceiling 1 for 3 passes → the runaway breaker tore the run down mid-review,
-  // the exact failure the 2026-09-12 fix meant to close). Pruning on a single-pass absence un-suppressed
-  // exactly that resurrection. Session ids are unique per session, so a remembered closed id can never
-  // collide with a genuinely new worker; retaining every closed id for the life of the run is safe, and
-  // the set stays small (at most one implement + one review id per task).
+  // A worker this loop has already closed stays listed until its child actually exits: close is
+  // fire-and-forget, ending the input queue and escalating to SIGTERM at 5 s and SIGKILL at 10 s
+  // (platform.mjs, DESIGN §2.12). So the loop remembers every id it closed and never recounts it as
+  // live; without that, at ceiling 1 a closing implementer beside its fresh reviewer counts 2, and the
+  // runaway breaker tears the run down (single live run 2026-09-12, then under `claude --bg`). The
+  // memory is never pruned within a run: ids are uuids unique per worker, so a remembered closed id can
+  // never collide with a new one, and the set stays small (one implement and one review id per task).
   state.closedIds ??= new Set();
-  // Keep only THIS run's workers ({repo} · {slug} · T…), and drop any we have already closed. `claude
-  // agents --json` lists every session sharing the repo git-dir, which includes the coordinator's OWN
-  // session and any foreign agent; the drill counted the coordinator itself and reported `ceiling full:
-  // 2/1 busy` with one real worker (T12 Problem 5). Everything downstream — the ceiling count,
-  // buildAssignments, close — operates on this run's not-yet-closed workers only, so a foreign session
-  // can never be counted, adopted or closed, and neither can a closed session lingering in the list.
+  // Keep only THIS run's workers ({repo} / {slug} / T…), and drop any we have already closed. The real
+  // platform lists only this process's children, all of them this run's; the name filter stays as the
+  // guard that a foreign or coordinator entry can never be counted, adopted or closed (T12 Problem 5,
+  // from the `claude agents` days), since a platform is injected and a test's may list anything.
   const liveList = listed.filter(
     (w) => isWorkerOf(w.name, { repo, plan: slug }) && !state.closedIds.has(w.id),
   );
-  // The live worker record by its authoritative id, so a close of a FINISHED worker can be gated on it
-  // being idle (T13 Problem B). `claude agents --json` reports each session's `status` (idle/busy);
-  // parseAgents carries it through (platform.mjs). A worker is "busy" only when the list explicitly
-  // says so, so an ad-hoc platform that omits `status` (some loop.test fakes) reads as not-busy and the
-  // gate is inert — this only ever DEFERS a close, never forces one.
+  // The live worker record by its id, so a close of a FINISHED worker can be gated on it being idle
+  // (T13 Problem B). The platform's `status` is `busy` unless the worker's log folds to idle or to a
+  // request waiting on the person (platform.mjs list, DESIGN §2.4). A worker is "busy" only when the
+  // list explicitly says so, so an ad-hoc platform that omits `status` (some loop.test fakes) reads as
+  // not-busy and the gate is inert — this only ever DEFERS a close, never forces one.
   const liveById = new Map(liveList.map((w) => [w.id, w]));
   const isBusy = (id) => liveById.get(id)?.status === 'busy';
   const messages = platform.inbox();
@@ -469,9 +422,9 @@ export function runPass({ platform, worktree, repo, slug, maxWorkers, state, con
     for (const id of decision.close) {
       if (id == null) continue; // a preparing task's slot — no session, its setup was killed above
       // Close only — NO platform.remove here (T41, DESIGN §2.3): a HALT is an emergency stop, and a
-      // killed worker's session record is deliberately left in `claude agents` for forensics, exactly as
-      // its worktree and branch are left on disk. Removal is for workers that FINISHED, not ones a HALT
-      // killed; a mutation that removes on halt reddens the HALT-exception test.
+      // killed worker is left for forensics, as its worktree and branch are left on disk. remove is a
+      // no-op for live children (live-workers T05); the finish-only rule stays for any platform that
+      // does keep a record, and the HALT-exception test still pins it.
       platform.close(id);
       closedThisPass.add(id);
       record('halt-close', { workerId: id });
@@ -490,7 +443,7 @@ export function runPass({ platform, worktree, repo, slug, maxWorkers, state, con
     if (!deadIds.has(workerId)) continue;
     const found = taskByWorkerId(state, workerId);
     platform.close(workerId);
-    platform.remove?.(workerId); // clear the leftover `stopped` record — a normal finish (T41, DESIGN §2.3)
+    platform.remove?.(workerId); // a normal finish (T41); a no-op for live children (live-workers T05)
     closedThisPass.add(workerId);
     if (found) {
       worktree.remove(found.t.worktree);
@@ -515,11 +468,9 @@ export function runPass({ platform, worktree, repo, slug, maxWorkers, state, con
     const role = 'implement';
     const name = workerName({ repo, plan: slug, task: num, slug: taskSlug, role });
     const id = platform.spawn({ cwd: wt.path, name, phase: role, note });
-    // workerId here is spawn's best-effort return, not trusted for liveness: buildAssignments resolves
-    // the authoritative id by name next pass. grace lets the worker appear in the list before it could
-    // be called dead (FINDINGS 2026-09-09). The task slug is stored so a later rebuild of this worker's
-    // name (teardown) addresses the exact session that was spawned (§2.9).
-    state.tasks[num] = { worktree: wt, workerId: id, role, slug: taskSlug, phase: IMPLEMENTING, grace: APPEAR_GRACE };
+    // workerId is the id the platform lists the worker under (buildAssignments). The task slug is stored
+    // so a later rebuild of this worker's name (teardown's log line) matches the spawned name (§2.9).
+    state.tasks[num] = { worktree: wt, workerId: id, role, slug: taskSlug, phase: IMPLEMENTING };
     spawnedThisPass.push(id);
     record('spawn', { task: num, role, workerId: id, slug: taskSlug, ...extra });
   };
@@ -594,9 +545,9 @@ export function runPass({ platform, worktree, repo, slug, maxWorkers, state, con
   // close the worker (the T22 conflict-path bug, where the same pass parked the conflict yet still
   // closed the done+merged worker and deleted its task, letting the next pass respawn a clobbering
   // fresh build). On a conflict the coordinator keeps the worker ALIVE and parked (AWAITING): its
-  // session, worktree and task all stay, it holds its slot, and the person attaches to that same worker
-  // directly to drive the resolution — nothing is routed down (§2.2, the down-channel is gone). It
-  // resolves on its own branch and re-signals done (§2.5 Option 2, T28).
+  // session, worktree and task all stay, it holds its slot, and pir sends that same worker the
+  // resolution prompt over its live line (live-workers §2.10). It resolves on its own branch and
+  // re-signals done (§2.5 Option 2, T28).
   for (const workerId of decision.merge) {
     const found = taskByWorkerId(state, workerId);
     if (!found) continue;
@@ -621,27 +572,48 @@ export function runPass({ platform, worktree, repo, slug, maxWorkers, state, con
     t.busySince = undefined;
     const res = worktree.mergeTask(t.worktree.branch);
     if (res.conflict) {
-      // Keep the worker alive and parked — do NOT close it, remove its worktree, or delete its task.
-      // There is no down-channel and no answer() any more (DESIGN §2.2, T03): the PERSON drives the
-      // resolution. The run parks the worker and hands the person a ready-to-paste resolution prompt
-      // (buildConflictPrompt, T14) naming this worker, the branch to merge in, and the conflicting files
-      // — the worker picks the side and asks if that is a judgement. The person attaches to this same worker, resolves
-      // on its branch and re-signals done, at which point this merge step runs again and lands cleanly
-      // (§2.5, §2.8, T28). The run routes nothing down.
+      // Keep the worker alive and parked — do NOT close it, remove its worktree, or delete its task
+      // (T28). The worker that built the branch holds the task's context, so pir SENDS it the resolution
+      // prompt over its live line (live-workers DESIGN §2.10): merge the feature branch in, resolve,
+      // test, commit, re-signal done — asking the person if choosing a side is a judgement. Its fresh
+      // `done` report runs this merge step again. It is sent once: the task stays parked until that
+      // report, so this branch is not reached again while the worker works.
+      //
+      // Only when the send fails (the worker exited between the listing and this merge) is the prompt
+      // printed for a person, in the no-worker wording (workerName null): there is nobody to attach to.
       const text = `merge conflict in ${res.files?.join(', ') || 'the feature branch'}`;
-      const name = workerName({ repo, plan: slug, task: num, slug: t.slug, role: t.role });
-      const prompt = buildConflictPrompt({
-        task: num,
-        slug: t.slug,
-        plan: slug,
-        workerName: name,
-        taskBranch: t.worktree.branch,
-        featureBranch: state.feature.branch,
-        files: res.files,
-      });
+      const promptFor = (audience) =>
+        buildConflictPrompt({
+          task: num,
+          slug: t.slug,
+          plan: slug,
+          workerName: null,
+          taskBranch: t.worktree.branch,
+          featureBranch: state.feature.branch,
+          files: res.files,
+          audience,
+        });
       t.phase = AWAITING;
-      t.decision = { kind: 'conflict', text, prompt };
+      const workerText = promptFor('worker');
+      if (platform.send(workerId, workerText, { from: 'pir' })?.ok) {
+        t.decision = { kind: 'conflict', text, prompt: workerText, sent: true };
+        record('conflict-sent', { task: num, workerId, text });
+        continue;
+      }
+      // A failed send means the worker is gone, so this is the restart path's case — a reviewed branch
+      // with nobody to fix it — and it is handled the same way: ⛔ on the feature row, the branch kept,
+      // the task forgotten. Left parked, the next pass lists the worker dead, deletes the branch and
+      // rebuilds from scratch, while the printed prompt tells the person to land that branch by hand
+      // (reproduced in T08 review, 2026-09-25).
+      const prompt = promptFor('person');
       record('surface', { task: num, kind: 'conflict', text, prompt });
+      const blocked = reconcileTaskRow(readFileSync(featureProgressPath, 'utf8'), { num, state: '⛔', notes: '' });
+      writeFileSync(featureProgressPath, blocked);
+      worktree.commitFeature(`reconcile ${num} → ⛔ (merge conflict, worker gone, needs a hand)`);
+      platform.close(workerId);
+      platform.remove?.(workerId);
+      closedThisPass.add(workerId);
+      delete state.tasks[num];
       continue;
     }
     // The row folds back as ✅ (the task has been implemented and reviewed).
@@ -664,7 +636,7 @@ export function runPass({ platform, worktree, repo, slug, maxWorkers, state, con
     // removal) and forget its task. This is the close decideDispatch used to schedule; pairing it with
     // the successful merge is what makes a conflicted merge leave the worker untouched (T28).
     platform.close(workerId);
-    platform.remove?.(workerId); // clear the leftover `stopped` record — a normal finish (T41, DESIGN §2.3)
+    platform.remove?.(workerId); // a normal finish (T41); a no-op for live children (live-workers T05)
     closedThisPass.add(workerId);
     worktree.remove(t.worktree);
     record('close', { task: num, workerId, reason: 'merged' });
@@ -681,20 +653,19 @@ export function runPass({ platform, worktree, repo, slug, maxWorkers, state, con
     if (reviewSwaps.has(workerId)) {
       const { num, reviewerId } = reviewSwaps.get(workerId);
       platform.close(workerId);
-      // The implementer's worktree is KEPT for the reviewer, but the implementer SESSION has finished,
-      // so clear its leftover record — the "implementer lingered beside its reviewer" clutter (T41).
+      // The implementer's worktree is KEPT for the reviewer; its worker has finished (T41 remove, a
+      // no-op for live children).
       platform.remove?.(workerId);
       closedThisPass.add(workerId);
       const t = state.tasks[num];
-      t.workerId = reviewerId; // best-effort; resolved to the real id by name next pass
-      t.grace = APPEAR_GRACE; // the fresh reviewer needs time to appear in the list
+      t.workerId = reviewerId;
       t.role = 'review';
       t.phase = REVIEWING;
       continue;
     }
     const found = taskByWorkerId(state, workerId);
     platform.close(workerId);
-    platform.remove?.(workerId); // a defensive finish close — clear its leftover record too (T41)
+    platform.remove?.(workerId); // a defensive finish close (T41)
     closedThisPass.add(workerId);
     if (found) {
       worktree.remove(found.t.worktree);

@@ -8,92 +8,48 @@
 // buildListFrame, buildWatchFrame, decodeKey — tested exhaustively without a TTY; only the in-place
 // painting and the feel of moving and opening need a person at a real terminal (§5.1, T12). So the frame
 // builders emit STYLED LINES (arrays of `{ text, style }` spans) as data, exactly the way render.mjs's
-// styledLines does, and createScreen is the one impure piece that turns them into escapes on a TTY.
+// styledLines does, and createScreen is the one impure piece that hands them to pi-tui to paint (T11).
 //
 // Why the list is new painting but the live view is not (§2.11): the list's semantic colours are this
 // task's to build (running green, crashed red, finished/stopped dim, the progress bar blue/red/dim, the
 // selected row's blue left edge, the amber-bold armed line). The live view MUST be the coordinator's
 // renderer, not a second one that drifts — so its lines come straight from render.mjs's styledLines and
-// are painted with render.mjs's exact style→colour mapping (the SGR block below carries render's keys
+// are painted with render.mjs's exact style→colour mapping (pir-view.mjs's SGR map carries render's keys
 // unchanged alongside the list's), which keeps the watch frame byte-for-byte the coordinator's display.
 
 import { join } from 'node:path';
 import { readLogTail } from './commands.mjs';
 
 import { buildDisplay } from '../core/display.mjs';
-import { buildDashboard, dashboardReducer, findOpen, initialUi, runKey } from '../core/dashboard.mjs';
+import { wrapLine } from '../core/text.mjs';
+import { buildDashboard, dashboardReducer, findOpen, initialUi, openTasks, runKey } from '../core/dashboard.mjs';
 import { styledLines } from './render.mjs';
 import { classifyRun } from '../core/runstate.mjs';
 import { resolveLiveness } from './identity.mjs';
 import { indexDir, listRecords } from './index-store.mjs';
 import { readSnapshot } from './snapshot-store.mjs';
 import { stopRun, removeRun } from './control-run.mjs';
-import { createPlatform } from './platform.mjs';
+import { FrameView } from './pir-view.mjs';
+import { createConversationView } from './conversation-view.mjs';
+import { ProcessTerminal, TuiAltScreen, TUI_KEYBINDINGS, getKeybindings, isKeyRelease, parseKey } from '@earendil-works/pi-tui';
 
 // The spinner frames, one per refresh (a poll tick). The SAME Braille frames render.mjs uses, so a live
-// run painted here spins identically to the same run painted by pir-coordinate (§2.4). render.mjs does
+// run painted here spins identically to the same run painted by coordinate.mjs's own display (§2.4). render.mjs does
 // not export them, so they are duplicated here rather than reaching across into its internals.
 const SPINNER = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 
-// The cursor-control escapes (a stable terminal protocol, not a choice): enter and leave the alternate
-// screen so the dashboard never scrolls the person's scrollback and vanishes cleanly on exit; hide and
-// show the cursor; home to the top-left; erase-to-end-of-line and erase-to-end-of-screen.
-//
-// The dashboard repaints several times a second (unlike the coordinator's once-per-pass), so it must NOT
-// blank the whole screen each frame the way render.mjs does with `2J` — that blank-then-redraw is a
-// visible flicker and reads as the selection "dropping" on every refresh (user 2026-09-22). Instead it
-// homes, overwrites each line clearing that line's leftovers with EL, and clears anything below the last
-// line with ED. The screen is only ever overwritten in place, never blanked, so a refresh no longer
-// flashes.
-const ENTER_ALT = '\x1b[?1049h';
-const LEAVE_ALT = '\x1b[?1049l';
-const HIDE_CURSOR = '\x1b[?25l';
-const SHOW_CURSOR = '\x1b[?25h';
-const HOME = '\x1b[H';
-const ERASE_EOL = '\x1b[K'; // erase from the cursor to the end of the line
-const ERASE_EOS = '\x1b[J'; // erase from the cursor to the end of the screen
-const RESET = '\x1b[0m';
+// The style→colour map and the span painter live in pir-view.mjs (FrameView, T11): pi-tui draws the
+// terminal, so this file writes no cursor-control escape of its own (DESIGN §2.11).
 
-// The style→colour (SGR) map. It carries TWO vocabularies. The first block is render.mjs's own row/footer
-// keys with render.mjs's exact codes, so the watch frame — whose lines come from render.mjs's styledLines
-// — colours byte-for-byte the way the coordinator paints it (§2.4). The second block is the list's §2.11
-// semantic colours, this task's to build: running green, crashed red, finished/stopped dim; the progress
-// bar blue for a running run, red for a crashed one, dim otherwise; the selected row's blue left edge; the
-// running/crashed counts green/red; the faint key-hint footer; the amber-bold armed confirmation line.
-const SGR = {
-  // render.mjs's live-view keys — kept identical so the reused watch frame matches the coordinator.
-  done: '\x1b[32m', // green
-  active: '\x1b[36m', // cyan
-  asking: '\x1b[1;33m', // bold amber
-  idle: '\x1b[2m', // dim
-  red: '\x1b[31m', // failure / interrupted
-  conflict: '\x1b[1;38;5;208m', // bold orange, a merge conflict
-  // the list's §2.11 keys.
-  head: '\x1b[1m', // the `pir` title, bold
-  running: '\x1b[32m', // a running run's state word, green
-  crashed: '\x1b[31m', // a crashed run's state word, red
-  ended: '\x1b[2m', // finished / stopped, dim
-  'bar-run': '\x1b[34m', // progress bar of a running run, blue
-  'bar-crash': '\x1b[31m', // progress bar of a crashed run, red
-  'bar-idle': '\x1b[2m', // progress bar otherwise, dim
-  selected: '\x1b[34m', // the selected row's left edge, blue
-  'count-run': '\x1b[32m', // the running count, green
-  'count-crash': '\x1b[31m', // the crashed count, red
-  hint: '\x1b[2m', // the faint key-hint footer
-  armed: '\x1b[1;33m', // the armed stop/remove confirmation, amber and bold
-  dim: '\x1b[2m', // plain dim text (repo column, worker count, notes)
-};
-
-// Sensible sizes when a TTY does not report its dimensions (render.mjs's defaults).
+// A sensible width when a TTY does not report its dimensions (render.mjs's default).
 const DEFAULT_COLS = 80;
-const DEFAULT_ROWS = 24;
 
 // The list's column widths. Not binding (§2.11: exact terminal spacing is the builder's, not the mock's);
 // chosen to line up the five columns the dashboard scans — slug, state, repo, progress, workers.
 const COL = { marker: 2, slug: 16, state: 12, repo: 20, progress: 16 };
 
 // span(text, style) / lineOf(text, style) — the two shapes a frame is built from. A frame is an array of
-// LINES; a line is an array of SPANS; a span is `{ text, style }` where style is a key into SGR (or null
+// LINES; a line is an array of SPANS; a span is `{ text, style }` where style is a key into pir-view.mjs's SGR (or null
 // for plain). One line can carry several differently-coloured spans (a list row does); a single-colour
 // line is just one span. This is the same data render.mjs's styledLines emits, one level richer (many
 // spans per line) so a row can colour its state and its progress bar independently.
@@ -106,36 +62,6 @@ function pad(s, n) {
   const chars = [...String(s ?? '')];
   if (chars.length >= n) return chars.slice(0, n).join('');
   return chars.join('') + ' '.repeat(n - chars.length);
-}
-
-// Wrap one logical line to at most `width` visible columns, breaking at a space when there is one and
-// hard-breaking a token longer than the width (a file path has no spaces, so it hard-breaks — which is
-// how a long run.log path is made to fit rather than being clipped off the right edge, user 2026-09-22).
-// Returns one-or-more strings, counted by code point. An empty string wraps to a single empty line.
-export function wrapLine(text, width) {
-  const w = Math.max(1, width | 0 || 1);
-  const chars = [...String(text ?? '')];
-  if (chars.length <= w) return [chars.join('')];
-  const out = [];
-  let start = 0;
-  while (start < chars.length) {
-    let end = Math.min(start + w, chars.length);
-    if (end < chars.length) {
-      // Prefer a break at the last space in the window; if there is none, hard-break at the width.
-      let brk = -1;
-      for (let i = end; i > start; i--) {
-        if (chars[i - 1] === ' ') {
-          brk = i;
-          break;
-        }
-      }
-      if (brk > start) end = brk;
-    }
-    out.push(chars.slice(start, end).join('').replace(/\s+$/, ''));
-    start = end;
-    while (start < chars.length && chars[start] === ' ') start += 1; // swallow the break's leading spaces
-  }
-  return out;
 }
 
 // readLogTail lives in commands.mjs (the setup runner needs it too); re-exported for this file's callers.
@@ -181,7 +107,7 @@ function footerLine(context, ui) {
     }
     return lineOf(`⚠ Ctrl+X again to remove ${ui.armed.slug}'s record`, 'armed');
   }
-  if (context === 'watch') return lineOf('← back · Ctrl+S Ctrl+S stop this run · esc quit', 'hint');
+  if (context === 'watch') return lineOf('↑↓ pick a task · → open its worker · ← back · Ctrl+S Ctrl+S stop this run · esc quit', 'hint');
   return lineOf('↑↓ move · ↵ open · Ctrl+S stop · Ctrl+X remove · esc quit', 'hint');
 }
 
@@ -337,7 +263,15 @@ export function buildWatchFrame(view, { now, spinnerChar = SPINNER[0], ui = init
   } else {
     // A stale (non-running) frame freezes its spinner to a dot so it cannot read as still ticking.
     const spin = alive ? spinnerChar : '·';
-    for (const l of watchDisplayLines(snap, { now, spinnerChar: spin })) lines.push([span(l.text, l.style)]);
+    // The block's lines 1..n are the task rows, in runState.tasks order (line 0 is the summary). The
+    // selected one carries the list's bar in place of its leading '  ' (live-workers §2.11), so this block
+    // is no longer byte-for-byte the coordinator's display, on purpose; every other line is.
+    const taskCount = snap.runState?.tasks?.length ?? 0;
+    const selLine = taskCount > 0 ? 1 + Math.max(0, Math.min(ui.taskSel ?? 0, taskCount - 1)) : -1;
+    watchDisplayLines(snap, { now, spinnerChar: spin }).forEach((l, i) => {
+      if (i === selLine && l.text.startsWith('  ')) lines.push([span('▎ ', 'selected'), span(l.text.slice(2), l.style)]);
+      else lines.push([span(l.text, l.style)]);
+    });
     // A merge conflict the run hit at its own merge: draw its paste-in prompt (buildConflictPrompt, T14)
     // here, right under the live block so a short terminal clips the key hints before it. The coordinator
     // prints it once on its own screen, but a detached run's screen is only run.log, which nobody watches
@@ -345,7 +279,8 @@ export function buildWatchFrame(view, { now, spinnerChar = SPINNER[0], ui = init
     // re-surfaces its own conflicts. Wrapped with no indent so the copy block pastes exactly.
     if (alive) {
       for (const t of snap.runState?.tasks ?? []) {
-        if (t.done || t.phase !== 'asking' || !t.prompt) continue;
+        // A conflict pir sent to its live worker asks nothing of the person: no paste block (live-workers §2.10).
+        if (t.done || t.phase !== 'asking' || !t.prompt || t.conflictSent) continue;
         lines.push([]);
         const [head, ...rest] = String(t.prompt).replace(/\s+$/, '').split('\n');
         note(head, 'conflict', '');
@@ -379,6 +314,8 @@ export function buildWatchFrame(view, { now, spinnerChar = SPINNER[0], ui = init
   }
 
   lines.push([]);
+  // Why the last → on a task row opened nothing (a task with no worker yet), dim above the hint.
+  if (ui.note) note(ui.note, 'dim', '');
   lines.push(footerLine('watch', ui));
   return lines;
 }
@@ -394,120 +331,167 @@ export function buildWatchFrame(view, { now, spinnerChar = SPINNER[0], ui = init
 //   Ctrl+X       → 'ctrlX'            (arm / confirm remove)
 //   Ctrl+C       → 'quit'             (leave `pir` at once)
 //
+// In the 'worker' view none of this applies: runTui hands every key to the conversation view, where Esc
+// interrupts the worker and Ctrl+C clears the box or interrupts (live-workers §2.11, user 2026-09-25).
+//
 // Back and quit are split across two keys at the user's direction (2026-09-22): ← walks back a level, Esc
 // leaves outright — rather than the original Esc-steps-back-then-quits from the prototype (DESIGN §2.4,
 // §2.11). 'back' and 'quit' are the loop's own intents, not reducer events; the loop translates a ← in the
 // live view into the reducer's 'back' and ignores it in the list, where there is no level to step back to.
 //
-// It decodes a whole input chunk. In raw mode an arrow arrives as its full 3-byte escape sequence in one
-// chunk, while a lone Esc arrives as the single byte 0x1b — which is how the same 0x1b prefix reads as
-// 'quit' on its own but as part of an arrow in a sequence. A human-paced TUI never splits an arrow across
-// chunks in practice; a stray fragment simply decodes to null and is ignored.
+// It decodes one key sequence with pi-tui's own parser, so every encoding a terminal may send reads the
+// same: CSI (`\x1b[A`) and application-cursor SS3 (`\x1bOA`) arrows, CR and LF, and — once pi-tui has
+// negotiated the Kitty keyboard protocol with the terminal — the CSI-u forms of Esc, Enter and the Ctrl
+// chords (`\x1b[27u`, `\x1b[115;5u`), which the old byte table could not read. On a real terminal pi-tui
+// splits a batch of input into single sequences before it arrives here, and tells a lone Esc from the
+// start of an arrow by a short timeout. Anything unbound, a terminal reply included (the cell-size report
+// `\x1b[6;16;8t`, FINDINGS 2026-09-25), decodes to null and is ignored.
+const KEY_INTENTS = {
+  up: 'up',
+  down: 'down',
+  left: 'back', // ← steps back a level
+  right: 'open', // → opens the selected run, like Enter (user 2026-09-22)
+  enter: 'open',
+  escape: 'quit',
+  'ctrl+c': 'quit',
+  'ctrl+s': 'ctrlS',
+  'ctrl+x': 'ctrlX',
+};
 export function decodeKey(data) {
-  const b = Buffer.isBuffer(data) ? data : Buffer.from(String(data ?? ''), 'utf8');
-  if (b.length === 1) {
-    switch (b[0]) {
-      case 0x0d: // CR
-      case 0x0a: // LF
-        return 'open';
-      case 0x1b: // lone Esc
-        return 'quit';
-      case 0x13: // Ctrl+S (DC3)
-        return 'ctrlS';
-      case 0x18: // Ctrl+X (CAN)
-        return 'ctrlX';
-      case 0x03: // Ctrl+C (ETX)
-        return 'quit';
-      default:
-        return null;
-    }
-  }
-  const s = b.toString('latin1');
-  // The two arrow encodings terminals emit: CSI (`\x1b[A`) and the application-cursor SS3 (`\x1bOA`).
-  if (s === '\x1b[A' || s === '\x1bOA') return 'up';
-  if (s === '\x1b[B' || s === '\x1bOB') return 'down';
-  if (s === '\x1b[D' || s === '\x1bOD') return 'back'; // ← steps back a level
-  if (s === '\x1b[C' || s === '\x1bOC') return 'open'; // → opens the selected run, like Enter (user 2026-09-22)
-  return null; // anything else is unbound
+  const s = Buffer.isBuffer(data) ? data.toString('utf8') : String(data ?? '');
+  if (s === '' || isKeyRelease(s)) return null; // a Kitty key-up is not a second press
+  return KEY_INTENTS[parseKey(s)] ?? null;
 }
 
 // --- The impure edge: painting a frame on a real terminal, and the input loop -----------------------
 
-// createScreen({ stream, colour }) → { paint(frame), close() }. The one impure piece: it turns the styled
-// frames the builders emit into escapes on a TTY, owning a bounded region exactly as render.mjs does —
-// enter the alternate screen once (hiding the cursor), then each frame home + clear + draw clipped to the
-// terminal size so nothing wraps or scrolls (the T15 discipline). On a non-TTY it appends plain text with
-// no escapes, so a pipe or the test harness reads it as text. close() leaves the alternate screen and
-// shows the cursor, once, and must run on every exit path (the loop's finally block).
-export function createScreen({ stream = process.stdout, colour } = {}) {
+// createScreen({ stream, colour, terminal }) → { paint(frame), close(), listen?(onInput, onError) }. The one
+// impure piece. On a TTY it is a pi-tui alternate screen (TuiAltScreen) whose only component is a FrameView
+// over the latest frame: pi-tui enters and leaves the alternate screen, hides the cursor, clips each line
+// to the width, cuts the frame at the terminal's rows (from the top, as before) and repaints only the rows
+// that changed, so a refresh never flickers. The screen owns the keyboard too, through pi-tui's
+// ProcessTerminal (raw mode, sequence splitting, Kitty negotiation); runTui reads keys through `listen`.
+// On a non-TTY there is no pi-tui at all: it appends plain text with no escapes, so a pipe or the test
+// harness reads it as text, and it has no `listen`, so runTui reads stdin itself.
+//
+// Two pi-tui defaults are switched off to keep the screen as it was (§2.11: any visible difference is a
+// bug): mouse capture, which would take the terminal's own text selection away; and, on close, printing
+// the last frame onto the main screen after leaving the alternate one (`preserveScreen`), so quitting
+// leaves the person's terminal exactly as it was before `pir`.
+//
+// `terminal` is pi-tui's Terminal seam: ProcessTerminal (process.stdin/stdout) by default, a fake in tests.
+export function createScreen({ stream = process.stdout, colour, terminal } = {}) {
   const isTTY = !!stream.isTTY;
   // Colour only on a TTY, and honour NO_COLOR (the de-facto standard), matching render.mjs so the two
   // agree on when the live view is coloured.
   const useColour = isTTY && (colour ?? !('NO_COLOR' in process.env));
-  let inAlt = false;
+
+  if (!isTTY) {
+    let mounted = null;
+    return {
+      colour: false,
+      host: { requestRender() {}, terminal: { rows: stream.rows || 24, columns: stream.columns || DEFAULT_COLS } },
+      paint(frame) {
+        stream.write(frame.map((l) => l.map((s) => s.text).join('')).join('\n') + '\n');
+      },
+      mount(component) {
+        mounted = component;
+      },
+      renderNow() {
+        if (mounted) stream.write(mounted.render(stream.columns || DEFAULT_COLS).join('\n') + '\n');
+      },
+      close() {},
+    };
+  }
+
+  let frame = [];
+  let started = false;
   let closed = false;
-
-  function colourize(text, style) {
-    return useColour && style && SGR[style] ? `${SGR[style]}${text}${RESET}` : text;
-  }
-
-  // Clip a line's spans to at most `cols` visible columns, counted by code point across the whole line, so
-  // a multi-span row truncates as one line and never wraps (the T15 no-wrap guarantee, extended to spans).
-  function clipLine(lineSpans, cols) {
-    const out = [];
-    let used = 0;
-    for (const sp of lineSpans) {
-      if (used >= cols) break;
-      const chars = [...sp.text];
-      if (used + chars.length <= cols) {
-        out.push(sp);
-        used += chars.length;
-      } else {
-        out.push({ text: chars.slice(0, cols - used).join(''), style: sp.style });
-        used = cols;
-        break;
+  let painting = false;
+  let onInput = null;
+  let onError = null;
+  const view = new FrameView(() => frame, { colour: useColour });
+  // The conversation view (T13) is a pi-tui component of its own, with a typing box: while one is mounted
+  // it is drawn in the frame's place and has the focus, so the box's cursor lands where the person types.
+  let mounted = null;
+  // pi-tui also renders on its own — after a resize, and once on start. A throw there would surface on a
+  // timer, outside runTui's try, so it is caught and handed to runTui's error path (restore the terminal,
+  // then rethrow, §2.14). A throw during paint() propagates straight to paint's caller instead.
+  const guarded = {
+    render(width) {
+      try {
+        return (mounted ?? view).render(width);
+      } catch (err) {
+        if (painting || !onError) throw err;
+        onError(err);
+        return [];
       }
-    }
-    return out;
+    },
+    invalidate() {},
+  };
+  // TuiAltScreen scrolls its own viewport on PgUp/PgDn, Home/End and Ctrl+↑/↓, and opens a transcript
+  // search on Ctrl+Shift+F, in an input listener that runs before pir's and consumes the key. pir's frame
+  // is always exactly the terminal's height, so that viewport never moves: the keys just vanished, and the
+  // conversation view's PgUp/PgDn scrolled nothing (T20). pir owns every key (§2.11), so every
+  // `tui.altScreen.*` binding is unbound; pi-tui's keybindings are process-wide, which is fine for pir.
+  const kb = getKeybindings();
+  const unbound = Object.fromEntries(Object.keys(TUI_KEYBINDINGS).filter((id) => id.startsWith('tui.altScreen.')).map((id) => [id, []]));
+  kb.setUserBindings({ ...kb.getUserBindings(), ...unbound });
+  const tui = new TuiAltScreen(terminal ?? new ProcessTerminal(), false, undefined, { mouse: false });
+  tui.setLayoutRoot(guarded);
+  tui.addInputListener((data) => {
+    if (!onInput) return undefined;
+    onInput(data);
+    return { consume: true };
+  });
+
+  function mount(component) {
+    if (mounted === (component ?? null)) return;
+    mounted = component ?? null;
+    tui.setFocus(mounted);
   }
 
-  function leaveAlt() {
-    if (isTTY && inAlt) {
-      stream.write(SHOW_CURSOR + LEAVE_ALT);
-      inAlt = false;
-    }
+  function start() {
+    if (started || closed) return;
+    started = true;
+    tui.start();
   }
 
   return {
-    paint(frame) {
-      if (!isTTY) {
-        // Not a terminal: append plain lines, never an escape (they garble a pipe and the harness reads
-        // this as text). No in-place redraw, so nothing to clip or remember.
-        stream.write(frame.map((l) => l.map((s) => s.text).join('')).join('\n') + '\n');
-        return;
-      }
+    colour: useColour,
+    host: tui,
+    mount,
+    renderNow() {
       if (closed) return;
-
-      if (!inAlt) {
-        stream.write(ENTER_ALT + HIDE_CURSOR);
-        inAlt = true;
+      start();
+      painting = true;
+      try {
+        tui.renderNow();
+      } finally {
+        painting = false;
       }
-
-      const cols = Math.max(1, stream.columns || DEFAULT_COLS);
-      const maxRows = Math.max(1, stream.rows || DEFAULT_ROWS);
-      // Home, then each line's clipped/coloured content followed by EL (clear its leftovers), then ED
-      // after the last line (clear any rows a taller previous frame left below). No full-screen blank, so
-      // no flicker. `\n` returns to column 0 in the alternate screen exactly as render.mjs relies on.
-      const drawn = frame
-        .slice(0, maxRows)
-        .map((lineSpans) => clipLine(lineSpans, cols).map((s) => colourize(s.text, s.style)).join('') + ERASE_EOL)
-        .join('\n');
-      stream.write(HOME + drawn + ERASE_EOS);
     },
-
+    listen(input, error) {
+      onInput = input;
+      onError = error;
+      start();
+    },
+    paint(next) {
+      if (closed) return;
+      if (mounted) mount(null);
+      frame = next;
+      start();
+      painting = true;
+      try {
+        tui.renderNow();
+      } finally {
+        painting = false;
+      }
+    },
     close() {
-      leaveAlt();
+      if (closed) return;
       closed = true;
+      if (started) tui.stop({ preserveScreen: true });
     },
   };
 }
@@ -544,13 +528,6 @@ export function loadDashboard({ dir = indexDir(), now = Date.now(), kill, exec, 
   return buildDashboard(views);
 }
 
-// The default platform for a stop's worker-reap (control-run.mjs escalates to platform.list()/close() only
-// when a wedged coordinator will not exit). Built against the run's own repo so it lists that repo's
-// sessions. No transport is needed — stop never reads the worker inbox — so none is passed.
-function defaultPlatform(record) {
-  return createPlatform({ root: record.repoPath });
-}
-
 // openDashboard(deps) / openWatch(slug, deps) — the two entry points pir.mjs (T11) dispatches to. The
 // dashboard opens on the list; the watch form opens straight into a run's live view (`pir {slug}` drops
 // into the run it just started/opened, §2.1), and ← from there steps back to the list like any other open
@@ -560,16 +537,18 @@ export function openDashboard(deps = {}) {
 }
 
 export function openWatch(slug, deps = {}) {
-  return runTui({ ...deps, initial: { view: 'watch', sel: 0, openSlug: slug, openKey: null, armed: null } });
+  return runTui({ ...deps, initial: { ...initialUi(), view: 'watch', openSlug: slug } });
 }
 
-// runTui — the raw-mode input/paint loop (DESIGN §2.3, §2.4, §5.1). It sets raw mode, paints a first
-// frame, then repaints on every keypress (through dashboardReducer, T04) and on a short refresh poll
-// (§2.4: watch the snapshot by polling, the safe default). It ALWAYS restores raw mode and leaves the
-// alternate screen on exit — a clean quit, a stop/remove error, or a paint throw — via the finally block,
-// so the terminal is never left in raw mode or the alternate screen (the T15/close discipline, extended to
-// the input side). Everything the tests must not really do is injected: stdin/stdout, the clock, the
-// process boundary (kill/exec), the loader, and stop/remove.
+// runTui — the input/paint loop (DESIGN §2.3, §2.4, §5.1). It paints a first frame, then repaints on every
+// keypress (through dashboardReducer, T04) and on a short refresh poll (§2.4: watch the snapshot by
+// polling, the safe default). A pi-tui screen owns the keyboard (raw mode included) and hands keys over
+// through `listen`; a screen without `listen` (a non-TTY, or a test's fake) gets raw mode and stdin from
+// here, as before. It ALWAYS restores raw mode and leaves the alternate screen on exit — a clean quit, a
+// stop/remove error, or a paint throw — via the finally block, so the terminal is never left in raw mode
+// or the alternate screen (the T15/close discipline, §2.14). Everything the tests must not really do is
+// injected: stdin/stdout, the clock, the process boundary (kill/exec), the screen, the loader, and
+// stop/remove.
 async function runTui({
   stdin = process.stdin,
   stdout = process.stdout,
@@ -584,7 +563,8 @@ async function runTui({
   load = loadDashboard,
   stop = stopRun,
   remove = removeRun,
-  makePlatform = defaultPlatform,
+  drop,
+  follow,
   initial = initialUi(),
 } = {}) {
   const dir = indexDir({ env });
@@ -598,8 +578,72 @@ async function runTui({
   // the key and not the slug because two repos can share a slug: pinned by slug, ↓ onto the second of a
   // same-slug pair snapped back to the first, so no row below it could be reached (user 2026-09-25).
   let selectedKey = null;
+  // The task row is pinned the same way, by task id, and per run (by runKey): a refresh that adds or
+  // removes task rows keeps the highlight on its task, and two runs of one slug keep separate selections.
+  const selectedTask = new Map();
 
   const read = () => load({ dir, now: now(), kill, exec, fs });
+
+  // The open worker's conversation view (T13), created on entering the 'worker' view and disposed on
+  // leaving it. It takes every key while it is open: its own table (§2.11) replaces Esc-quits and
+  // Ctrl+C-quits, and it calls back on ← to step out.
+  let conv = null;
+  let renderSoon = null; // a screen with no pi-tui host repaints the view on its own requests
+  const host = screen.host ?? {
+    terminal: { get rows() { return stdout.rows || 24; }, get columns() { return stdout.columns || DEFAULT_COLS; } },
+    requestRender: () => renderSoon?.(),
+  };
+
+  function closeConv() {
+    conv?.dispose();
+    conv = null;
+    screen.mount?.(null);
+  }
+
+  function paintConv(dash) {
+    if (!conv) {
+      const open = findOpen(dash.rows, ui);
+      const opened = { ...ui };
+      conv = createConversationView({
+        run: { slug: open?.slug ?? ui.openSlug, controlDir: open?.record?.controlDir ?? open?.controlDir ?? null },
+        worker: ui.openWorker,
+        // The coordinator is alive when the open run is `running` as classifyRun decides it (pid AND start
+        // time, §2.5), read fresh at the moment of the drop.
+        alive: () => findOpen(read().rows, opened)?.state === 'running',
+        onBack: () => {
+          ui = dashboardReducer(ui, { type: 'back' }, dash.rows).ui;
+          closeConv();
+          repaint();
+        },
+        tui: host,
+        colour: screen.colour ?? false,
+        ...(drop ? { drop } : {}),
+        ...(follow ? { follow } : {}),
+      });
+    }
+    if (typeof screen.mount === 'function') {
+      screen.mount(conv);
+      screen.renderNow();
+    } else {
+      screen.paint(conv.render(Math.max(20, stdout.columns || DEFAULT_COLS)).map((l) => lineOf(l)));
+    }
+  }
+
+  // Re-derive taskSel from the open run's pinned task id against a fresh read, then re-pin, as repaint
+  // does for the list's `sel`. The keypress path runs it too, before the reducer, so an arrow moves from
+  // where the task is now rather than from an index a refresh has since shifted.
+  function syncTask(dash) {
+    if (ui.view === 'list') return;
+    const open = findOpen(dash.rows, ui);
+    const runId = runKey(open) ?? ui.openKey ?? ui.openSlug;
+    const tasks = open?.snap?.runState?.tasks ?? [];
+    let taskSel = ui.taskSel ?? 0;
+    const idx = tasks.findIndex((t) => t.id === selectedTask.get(runId));
+    if (idx >= 0) taskSel = idx;
+    taskSel = Math.max(0, Math.min(taskSel, Math.max(0, tasks.length - 1)));
+    ui = { ...ui, taskSel };
+    if (tasks[taskSel]) selectedTask.set(runId, tasks[taskSel].id);
+  }
 
   function repaint(dashboard) {
     const dash = dashboard ?? read();
@@ -613,9 +657,13 @@ async function runTui({
     ui = { ...ui, sel };
     if (selectedKey == null) selectedKey = runKey(dash.rows[sel]); // seed / reseed the pin
 
+    syncTask(dash);
+
     spin += 1;
     const spinnerChar = SPINNER[spin % SPINNER.length];
-    if (ui.view === 'watch') {
+    if (ui.view === 'worker') {
+      paintConv(dash);
+    } else if (ui.view === 'watch') {
       const view = findOpen(dash.rows, ui) ?? { slug: ui.openSlug, state: 'crashed', repo: '', snap: null };
       // A crashed run's log tail is shown inline; read it only for the open, crashed run (not every row).
       const logTail = view.state === 'crashed' ? readLogTail(view.record?.controlDir ? join(view.record.controlDir, 'run.log') : null, 5, fs ? { fs } : {}) : null;
@@ -626,15 +674,21 @@ async function runTui({
     }
   }
 
-  if (typeof stdin.setRawMode === 'function') stdin.setRawMode(true);
-  if (typeof stdin.resume === 'function') stdin.resume();
+  // The screen reads the keyboard itself when it can (pi-tui); otherwise the loop drives stdin directly.
+  const ownInput = typeof screen.listen !== 'function';
+  if (ownInput && typeof stdin.setRawMode === 'function') stdin.setRawMode(true);
+  if (ownInput && typeof stdin.resume === 'function') stdin.resume();
 
   try {
     await new Promise((resolve, reject) => {
       let refresh = null;
+      let settled = false;
 
       function cleanup() {
+        settled = true;
+        renderSoon = null;
         if (refresh) clearInterval(refresh);
+        if (!ownInput) return; // pi-tui drops its own stdin listener when the screen closes
         if (typeof stdin.off === 'function') stdin.off('data', onData);
         else if (typeof stdin.removeListener === 'function') stdin.removeListener('data', onData);
       }
@@ -648,27 +702,44 @@ async function runTui({
       }
 
       async function onData(data) {
+        // A key pi-tui delivers between the quit and the screen closing belongs to nobody.
+        if (settled) return;
         try {
+          if (ui.view === 'worker' && conv) {
+            conv.handleInput(Buffer.isBuffer(data) ? data.toString('utf8') : String(data ?? ''));
+            if (ui.view === 'worker' && !settled) paintConv(read());
+            return;
+          }
           const key = decodeKey(data);
           if (key === 'quit') return finish(); // Esc or Ctrl+C: leave pir
           if (key == null) return;
           const dash = read();
 
           if (key === 'back') {
-            // ← steps back a level: a run's live view → the list. In the list there is no level to step
-            // back to (Esc quits), so ← is inert there.
-            if (ui.view === 'watch') ui = dashboardReducer(ui, { type: 'back' }, dash.rows).ui;
+            // ← steps back a level: a worker → its run's live view → the list. In the list there is no
+            // level to step back to (Esc quits), so ← is inert there.
+            if (ui.view !== 'list') ui = dashboardReducer(ui, { type: 'back' }, dash.rows).ui;
             selectedKey = runKey(dash.rows[ui.sel]) ?? selectedKey;
             return repaint(dash);
           }
 
+          const wasWatching = ui.view === 'watch';
+          if (wasWatching) syncTask(dash);
           const { ui: nextUi, intent } = dashboardReducer(ui, { type: key }, dash.rows);
           ui = nextUi;
           // Pin the selection to whatever run the cursor is now on, so the next refresh keeps it there.
           selectedKey = runKey(dash.rows[ui.sel]) ?? selectedKey;
+          if (wasWatching && ui.view === 'watch') {
+            // …and the task row likewise, to the task the cursor is now on in the open run. Only a move
+            // inside the live view re-pins it: opening a run starts its taskSel at 0, and repaint then
+            // restores the task that run last had selected.
+            const open = findOpen(dash.rows, ui);
+            const task = openTasks(dash.rows, ui)[ui.taskSel ?? 0];
+            if (task) selectedTask.set(runKey(open) ?? ui.openKey ?? ui.openSlug, task.id);
+          }
           if (intent?.type === 'stop') {
             const view = dash.rows.find((r) => runKey(r) === intent.key);
-            if (view) await stop(view.record, { platform: makePlatform(view.record), kill });
+            if (view) await stop(view.record, { kill });
           } else if (intent?.type === 'remove') {
             const view = dash.rows.find((r) => runKey(r) === intent.key);
             if (view) remove(view.record, { dir, fs });
@@ -679,7 +750,17 @@ async function runTui({
         }
       }
 
-      stdin.on('data', onData);
+      renderSoon = () => {
+        if (!settled && ui.view === 'worker' && conv && typeof screen.mount !== 'function') {
+          try {
+            paintConv(read());
+          } catch (err) {
+            fail(err);
+          }
+        }
+      };
+      if (ownInput) stdin.on('data', onData);
+      else screen.listen(onData, fail);
       refresh = setInterval(() => {
         try {
           repaint();
@@ -696,8 +777,9 @@ async function runTui({
       }
     });
   } finally {
-    if (typeof stdin.setRawMode === 'function') stdin.setRawMode(false);
-    if (typeof stdin.pause === 'function') stdin.pause();
+    conv?.dispose();
+    if (ownInput && typeof stdin.setRawMode === 'function') stdin.setRawMode(false);
+    if (ownInput && typeof stdin.pause === 'function') stdin.pause();
     screen.close();
   }
 }

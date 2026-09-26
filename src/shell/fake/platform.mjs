@@ -1,6 +1,6 @@
-// The fake platform: in-memory agents standing in for real background `claude` sessions
-// (DESIGN §2.2, §2.3, §4). It answers the same shell interface the real platform.mjs of T06/T08
-// will — spawn / send / list / close / inbox — so the loop is written once and run against either.
+// The fake platform: in-memory workers standing in for the live stream-json children of platform.mjs
+// (live-workers DESIGN §2.1, §4). It answers the same shell interface — spawn / list / close / remove /
+// inbox / send / interrupt / answer — so the loop is written once and run against either.
 // It lives in src/shell/ and may use fs and git; the boundary test guards only src/core/.
 //
 // Fidelity choices, so the loop is genuinely exercised, not stubbed:
@@ -74,29 +74,32 @@ function addTaskRows(cwd, task, plan, rows) {
 //                            supplies the row text, so it can introduce a valid new task or a
 //                            malformed/bad-dep one to drive the reject-and-surface path (§2.5).
 //     { lingerBusy: N }      after the worker reaches a resting stage (implemented / done / awaiting),
-//                            list() reports it `busy` for N more ticks before `idle`. Models a real
-//                            session still mid-turn after it committed, so a test can prove the loop
-//                            gates a finished worker's close on it going idle (T13 Problem B).
-//     { lingerClosed: N }    after close(), the session stays in list() for N more ticks (still
-//                            `state:working`) before it drops off. Models the real `claude close`:
-//                            SIGTERM is async and a stale Remote Control registry entry can outlive the
-//                            process, so a just-closed worker lingers in `claude agents --json` for a
-//                            few passes (single live run 2026-09-12). Lets a test prove the loop does
-//                            not recount a closed-but-still-listed worker (loop.mjs closedIds).
-//     { resurrectClosed: N } after close(), the session drops off list() at once, then REAPPEARS under
-//                            the SAME id N ticks later (idle/done) and stays listed. Models the harder
-//                            real failure lingerClosed does not: a SIGTERM'd session that vanishes and
-//                            then comes back as a stale registry entry (human-decision live run
-//                            2026-09-13). Lets a test prove closedIds is not pruned on a transient
-//                            absence, so the resurrected id is still suppressed (loop.mjs closedIds).
+//                            list() reports it `busy` for N more ticks before `idle`. Models a live
+//                            worker still in its turn after it dropped its report, so a test can prove
+//                            the loop gates a finished worker's close on it going idle (T13 Problem B).
+//     { lingerClosed: N }    after close(), the worker stays in list() for N more ticks (`busy`) before
+//                            it drops off. Models a live child's close: it is fire-and-forget, and the
+//                            child is listed until it exits, up to the 5 s + 5 s SIGTERM/SIGKILL
+//                            escalation (platform.mjs). Lets a test prove the loop does not recount a
+//                            closed-but-still-listed worker (loop.mjs closedIds).
+//     { request: kind }      the task's live workers show a pending 'permission' or 'questions' request
+//                            in workers() (not in list(): the loop's pass is unchanged). T09.
+//
+// The `resurrectClosed` behaviour of the `claude --bg` days (a closed session reappearing under its old
+// id as a stale registry entry) is gone with live-workers T05: a child that exited cannot come back.
 export function createFakePlatform({ behaviors = {} } = {}) {
   const workers = new Map(); // id → worker record
   const inboxQueue = []; // messages from workers to the coordinator, drained by inbox()
   const spawns = []; // every spawn, for test introspection
   const closed = []; // every close, for test introspection
+  const closeOpts = []; // every close with its options ({ id, immediate })
   const removed = []; // every remove (claude rm), for test introspection
-  const sent = []; // every send, for test introspection
+  const sent = []; // every send: { to, text, from }, for test introspection
+  const interrupts = []; // every interrupt: { to, from }
+  const answers = []; // every answer: { to, requestId, result, from }
   let nextId = 0;
+  const all = []; // every worker record in spawn order, kept after close, for workers()
+  const counters = new Map(); // `${task}-${role}` → n, the conversation-log counter (DESIGN §2.3)
 
   function emit(w, kind, text = '') {
     inboxQueue.push({ from: w.name, task: w.task, kind, text });
@@ -194,31 +197,29 @@ export function createFakePlatform({ behaviors = {} } = {}) {
   // A worker is `busy` (mid-turn) until it reaches a resting stage, then `idle` — the coordinator's
   // close of a finished worker is gated on this (T13 Problem B). `lingerBusy` holds it `busy` for a few
   // extra ticks after it rests, so a test can watch the loop DEFER a close while busy and only close
-  // once idle. Mirrors `claude agents --json`'s status/state (idle/busy, working/done, FINDINGS
-  // 2026-09-07). Called once per tick in list(), after advance, so a stage change is reflected the same
-  // observation the coordinator reads it on.
+  // once idle. Mirrors the real list()'s status (busy until workerActivity says idle). Called once per
+  // tick in list(), after advance, so a stage change is reflected the same observation the coordinator
+  // reads it on.
   const RESTING = new Set(['implemented', 'done', 'awaiting', 'parked', 'dead']);
   function updateStatus(w) {
     if (!RESTING.has(w.stage)) {
       w.status = 'busy';
-      w.state = 'working';
       return;
     }
     if (w.busyHold > 0) {
       w.busyHold -= 1;
       w.status = 'busy';
-      w.state = 'working';
       return;
     }
     w.status = 'idle';
-    w.state = 'done';
   }
 
-  function findByIdOrName(idOrName) {
-    if (workers.has(idOrName)) return workers.get(idOrName);
-    for (const w of workers.values()) if (w.name === idOrName) return w;
-    return null;
-  }
+  // The live worker under `id`, or null when it is closed, crashed or unknown: the real platform's
+  // send / interrupt / answer to an exited worker return ok:false, and so do these.
+  const liveWorker = (id) => {
+    const w = workers.get(id);
+    return w && w.live && w.stage !== 'closed' && w.stage !== 'dead' ? w : null;
+  };
 
   return {
     // spawn({ cwd, name, phase, note }) → id. phase is the worker's role: "implement" | "review" | "verify".
@@ -240,20 +241,27 @@ export function createFakePlatform({ behaviors = {} } = {}) {
         live: true,
         answered: false,
         status: 'busy',
-        state: 'working',
+        pid: 10000 + nextId,
         busyHold: b.lingerBusy ?? 0,
       };
+      const key = `${parsed.task}-${phase}`;
+      w.n = (counters.get(key) ?? 0) + 1;
+      counters.set(key, w.n);
+      w.logPath = `conversations/${key}-${w.n}.ndjson`;
       workers.set(id, w);
+      all.push(w);
       spawns.push({ id, name, task: parsed.task, role: phase, cwd, note });
       return id;
     },
 
-    // send(idOrName, msg) → deliver a message to a worker. Used for the user's answer to a parked
-    // worker's question, which un-parks it (DESIGN §2.5).
-    send(idOrName, msg) {
-      const w = findByIdOrName(idOrName);
-      sent.push({ to: idOrName, msg });
-      if (w && w.stage === 'awaiting') w.answered = true;
+    // send(id, text, { from }) → { ok }. A message into the worker's input (platform.mjs send). Any
+    // message un-parks a worker awaiting an answer to its question, as the person's reply does (DESIGN
+    // §2.5).
+    send(id, text, { from = 'pir' } = {}) {
+      sent.push({ to: id, text, from });
+      const w = liveWorker(id);
+      if (!w) return { ok: false };
+      if (w.stage === 'awaiting') w.answered = true;
       // A worker parked on a coordinator-hit merge conflict (it had already reported done, so it is a
       // review-role session at stage 'done') receives the user's decision and moves to resolve it on
       // its own branch, re-signalling done (DESIGN §2.5 Option 2, T28). Only conflictResolve tasks have
@@ -262,33 +270,30 @@ export function createFakePlatform({ behaviors = {} } = {}) {
         w.stage = 'resolving';
         w.busyHold = 0;
       }
-      return { ok: !!w };
+      return { ok: true };
+    },
+
+    // interrupt(id, { from }) → { ok }. Recorded only: the fake's workers have no turn to cut short.
+    interrupt(id, { from = 'person' } = {}) {
+      interrupts.push({ to: id, from });
+      return { ok: !!liveWorker(id) };
+    },
+
+    // answer(id, requestId, result, { from }) → { ok }. Recorded only: the fake's workers raise no
+    // permission requests, so there is never one pending to resolve beyond a live worker accepting it.
+    answer(id, requestId, result, { from = 'person' } = {}) {
+      answers.push({ to: id, requestId, result, from });
+      return { ok: !!liveWorker(id) };
     },
 
     // list() → live workers with their state. Advances every live worker one tick first (see header).
+    // Each carries the fields the real list() does, `activity` included, folded from the fake's stage.
     list() {
       for (const w of workers.values()) {
-        if (w.resurrectIn != null) {
-          // A closed session that vanished from the list and then comes back under the SAME id as a
-          // stale Remote Control registry entry (human-decision live run 2026-09-13). It is absent for
-          // `resurrectIn` ticks, then reappears `idle`/`done` and stays listed. The loop must not
-          // recount it — which it will only get right if closedIds is not pruned on the absence.
-          if (w.resurrectIn > 0) {
-            w.resurrectIn -= 1;
-            w.live = false;
-            continue;
-          }
-          w.live = true;
-          w.status = 'idle';
-          w.state = 'done';
-          w.lingerClosed = Infinity; // stays listed as a stale entry; never advances
-          w.resurrectIn = null;
-          continue;
-        }
         if (!w.live) continue;
         if (w.stage === 'closed') {
-          // a closed session lingers a few ticks before it drops off the list (see close()); while it
-          // lingers it stays a stale `working` entry and does not advance.
+          // a closed worker stays listed a few ticks before its child exits (see close()); while it
+          // lingers it stays `busy` and does not advance.
           if (w.lingerClosed <= 0) w.live = false;
           else w.lingerClosed -= 1;
           continue;
@@ -298,44 +303,57 @@ export function createFakePlatform({ behaviors = {} } = {}) {
       }
       return [...workers.values()]
         .filter((w) => w.live)
-        .map((w) => ({ id: w.id, name: w.name, cwd: w.cwd, status: w.status, state: w.state, live: true }));
+        .map((w) => ({
+          id: w.id,
+          pid: w.pid,
+          name: w.name,
+          cwd: w.cwd,
+          status: w.status,
+          state: w.status === 'busy' ? 'busy' : 'idle',
+          live: true,
+          task: w.task,
+          role: w.role,
+          activity: { state: w.status === 'busy' ? 'busy' : 'idle', pending: [] },
+        }));
     },
 
-    // close(id) → stop the session. Session teardown only; removing the worktree and branch is the
+    // workers() → every worker spawned, live or closed, in spawn order, as the real platform's workers()
+    // (live-workers T09). No tick: it only reads. A `request: 'permission' | 'questions'` behaviour
+    // gives the task's live workers that pending request, so a test can see the asking kind.
+    workers() {
+      return all.map((w) => {
+        const isLive = !!liveWorker(w.id);
+        const request = isLive ? behaviors[w.task]?.request ?? null : null;
+        const state = request ?? (w.status === 'busy' ? 'busy' : 'idle');
+        return { id: w.id, task: w.task, role: w.role, n: w.n, logPath: w.logPath, live: isLive, activity: { state, pending: [] } };
+      });
+    },
+
+    // close(id, opts) → stop the worker. Worker teardown only; removing the worktree and branch is the
     // worktree's job (worktree.remove), so an implementer can be closed while its reviewer keeps the
-    // shared worktree (DESIGN §2.3). Safe on an already-gone id. With `lingerClosed: N` the session is
-    // stopped but stays listed for N more ticks (a stale `working` entry), modelling the real close's
-    // async teardown so a test can prove the loop does not recount it (loop.mjs closedIds).
-    close(id) {
+    // shared worktree (DESIGN §2.3). Safe on an already-gone id. With `lingerClosed: N` the worker is
+    // stopped but stays listed for N more ticks, modelling the real close's fire-and-forget escalation
+    // so a test can prove the loop does not recount it (loop.mjs closedIds). `opts` ({ immediate }) is
+    // recorded for teardown tests.
+    close(id, opts = {}) {
       closed.push(id);
+      closeOpts.push({ id, ...opts });
       const w = workers.get(id);
-      const resurrect = w ? behaviors[w.task]?.resurrectClosed : undefined;
-      if (w && resurrect != null) {
-        // vanish now, reappear under the same id `resurrect` ticks later (see list()) — the harder
-        // 2026-09-13 failure lingerClosed does not model.
-        w.live = false;
-        w.stage = 'closed';
-        w.resurrectIn = resurrect;
-        return;
-      }
       const linger = w ? behaviors[w.task]?.lingerClosed ?? 0 : 0;
       if (w && linger > 0) {
         w.stage = 'closed'; // no further advance; list() ages it out over `linger` ticks
         w.lingerClosed = linger;
         w.status = 'busy';
-        w.state = 'working';
       } else {
         workers.delete(id);
       }
+      return { ok: true };
     },
 
-    // remove(id) → { ok }. Clears a finished worker's leftover `stopped` record (real: `claude rm <id>`,
-    // DESIGN §2.3). RECORD-ONLY here, deliberately: it does NOT drop the session from list(). The loop
-    // must never depend on `claude rm` instantly clearing an async-lingering registry entry — closedIds
-    // is the real guarantee against a recount (loop.mjs), and modelling remove as an instant clear would
-    // silently weaken the lingerClosed/resurrectClosed tests. So the fake only logs the id, so a loop test
-    // can assert the coordinator removed on each normal finish path and NOT on `halt-close` (T41). Safe on
-    // any id — a non-live id is recorded and ignored, never an error.
+    // remove(id) → { ok }. A no-op in the real platform since live-workers T05 (a child leaves no
+    // session record). RECORD-ONLY here, and it does NOT drop the worker from list(): closedIds is the
+    // guarantee against a recount (loop.mjs). The loop still calls it on each normal finish path and not
+    // on `halt-close` (T41), and a loop test asserts that.
     remove(id) {
       removed.push(id);
       return { ok: true };
@@ -349,8 +367,11 @@ export function createFakePlatform({ behaviors = {} } = {}) {
     // --- test introspection ---
     spawns,
     closed,
+    closeOpts,
     removed,
     sent,
+    interrupts,
+    answers,
     _workers: workers,
   };
 }

@@ -34,6 +34,7 @@ import {
   existsSync,
   readdirSync,
   cpSync,
+  symlinkSync,
 } from 'node:fs';
 import { join, dirname, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -50,6 +51,7 @@ import restart from './fixtures/restart.mjs';
 import restartReview from './fixtures/restart-review.mjs';
 import restartImplement from './fixtures/restart-implement.mjs';
 import dynamicTask from './fixtures/dynamic-task.mjs';
+import liveWorkersDemo from './fixtures/live-workers-demo.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -79,6 +81,7 @@ const FIXTURES = Object.freeze({
   [restartReview.id]: restartReview,
   [restartImplement.id]: restartImplement,
   [dynamicTask.id]: dynamicTask,
+  [liveWorkersDemo.id]: liveWorkersDemo,
 });
 
 // listFixtures() → the fixture ids, in registry order.
@@ -143,7 +146,7 @@ function carrySkills(srcDir, destDir) {
   return names;
 }
 
-// carrySource(srcDir, destDir) → true if the framework code was copied. `pir-coordinate` shells out to
+// carrySource(srcDir, destDir) → true if the framework code was copied. The coordinator runs as
 // `node src/shell/coordinate.mjs`, so the scratch repo must carry the src/ tree, exactly as it carries the
 // skills — without it the coordinator cannot find its bin and the run stalls with an empty flow log (T17
 // live run 2026-09-11). Two things are deliberately left out: every `*.test.mjs` (else the scratch's
@@ -158,6 +161,22 @@ function carrySource(srcDir, destDir) {
     recursive: true,
     filter: (from) => !from.endsWith('.test.mjs') && from !== harness && !from.startsWith(harness + sep),
   });
+  return true;
+}
+
+// carryModules(srcDir, into) → true if the scratch repo's node_modules now links to the source repo's.
+// The carried src/shell imports npm packages (the Agent SDK from worker-proc.mjs, pi-tui from pir-tui.mjs,
+// live-workers T04, T10), and Node resolves them by walking up from the importing file, so a scratch repo
+// with no node_modules fails every live run at import. A symlink, not a copy or an `npm ci`: the scratch
+// runs the exact packages the source repo tested, costs no network and no disk, and the scratch's
+// .gitignore (`node_modules`, no trailing slash, so it matches a symlink) keeps it out of the seed commit.
+// A source with no node_modules (a stub srcDir) links nothing.
+function carryModules(srcDir, into) {
+  if (!srcDir) return false;
+  const modules = join(srcDir, '..', 'node_modules');
+  const link = join(into, 'node_modules');
+  if (!existsSync(modules) || existsSync(link)) return false;
+  symlinkSync(modules, link, 'dir');
   return true;
 }
 
@@ -182,7 +201,7 @@ function seedGit(dir, runGit, date) {
   if (!commit.ok) throw new Error(`fixture seed: git commit failed: ${commit.stderr}`);
 }
 
-// installFixture(id, opts) → { id, slug, dir, files, skills, source }. Lay the fixture down as a
+// installFixture(id, opts) → { id, slug, dir, files, skills, source, modules }. Lay the fixture down as a
 // self-contained scratch repo at `into` and seed its git state. The T17 live runner calls this, then opens
 // the feature branch off the seeded `main` and drives real workers; a test calls it against a temp dir
 // with real git.
@@ -191,7 +210,8 @@ function seedGit(dir, runGit, date) {
 //                seatbelt, enforced there, not here — this installer will lay a fixture anywhere).
 //   skillsDir  — where to carry the parallel skills from (default: the repo's skills/).
 //   srcDir     — where to carry the framework code from (default: the repo's src/); the coordinator skill
-//                runs `node src/shell/coordinate.mjs` inside the scratch repo, so it must be present.
+//                runs `node src/shell/coordinate.mjs` inside the scratch repo, so it must be present. The
+//                node_modules beside it is linked in, so the carried code resolves its packages.
 //   runGit     — injected git runner, so a test can drive real git or a fake.
 //   date       — the fixed commit date, for a reproducible seed.
 export function installFixture(
@@ -213,7 +233,8 @@ export function installFixture(
 
   const skills = carrySkills(skillsDir, join(into, '.claude', 'skills'));
   const source = carrySource(srcDir, join(into, 'src'));
+  const modules = source ? carryModules(srcDir, into) : false;
   seedGit(into, runGit, date);
 
-  return { id, slug: fixture.slug, dir: into, files: written, skills, source };
+  return { id, slug: fixture.slug, dir: into, files: written, skills, source, modules };
 }

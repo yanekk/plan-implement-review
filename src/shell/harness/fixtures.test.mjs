@@ -80,6 +80,18 @@ const EXPECT = {
     ceiling: 1,
     factIds: ['adopted-and-dispatched', 'handed-off-green-branch'],
   },
+  'live-workers-demo': {
+    taskCount: 4,
+    deps: { T01: [], T02: [], T03: [], T04: [] },
+    ceiling: 2,
+    factIds: [
+      'request-answered:T01:questions',
+      'request-answered:T02:permission',
+      'request-answered:T03:questions',
+      'ceiling-held:2',
+      'handed-off-green-branch',
+    ],
+  },
 };
 
 // --- The registry ---------------------------------------------------------------------------------
@@ -225,6 +237,25 @@ test('dynamic-task: T01 is told to propose-and-wait before adding the missing ta
   assert.ok(fx.scenario.seatbelts.timeoutMs >= 20 * 60 * 1000, 'a human-speed timeout budget is set');
 });
 
+test('live-workers-demo: T01 must ask through AskUserQuestion; T02 runs the exact command the seeded settings mark ask', () => {
+  const fx = getFixture('live-workers-demo');
+  assert.deepEqual(fx.scenario.answerPending, {
+    typed: { 'What name should name.txt hold? Type your own.': 'Typed by the harness' },
+    say: { T04: 'go' },
+  });
+  assert.match(fx.tasks['T04-background.md'], /wait for the person's go/);
+  assert.match(fx.tasks['T03-extras.md'], /multiSelect true/);
+  assert.match(fx.tasks['T04-background.md'], /run_in_background: true[\s\S]*Monitor tool/);
+  assert.match(fx.tasks['T01-greeting.md'], /AskUserQuestion tool/);
+  // A 90 s pause first, so the person can interrupt a busy worker.
+  assert.match(fx.tasks['T01-greeting.md'], /run exactly `node -e "setTimeout\(\(\) => \{\}, 90000\)"`/);
+  const settings = JSON.parse(fx.seedFiles['.claude/settings.json']);
+  assert.deepEqual(settings.permissions.ask, ['Bash(touch approved.txt)']);
+  assert.match(fx.tasks['T02-approval.md'], /running exactly `touch approved\.txt`/);
+  // Committed with the seed, so every task worktree loads it.
+  assert.ok(fixtureFiles(fx)['.claude/settings.json']);
+});
+
 test('parallel: at least two independent tasks so workers run concurrently', () => {
   const { tasks } = parseProgress(getFixture('parallel').progress);
   const independent = tasks.filter((t) => t.deps.length === 0);
@@ -317,6 +348,31 @@ test('installFixture writes the tree, carries the parallel skills, and seeds a c
     assert.match(tracked, /plans\/single\/PROGRESS\.md/);
     assert.match(tracked, /\.claude\/skills\/pir-worker\/SKILL\.md/);
     assert.doesNotMatch(tracked, /\.parallel\//, 'per-run control state is never committed');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// live-workers T16: the carried src/shell imports the Agent SDK (worker-proc.mjs) and pi-tui, and the
+// scratch has no install of its own, so installFixture links the source repo's node_modules in. Without it
+// every live harness run dies at import. The link is gitignored, so the seed stays clean and deterministic.
+test('a scratch repo from installFixture imports the SDK and pi-tui from its carried src/shell/', () => {
+  const dir = tmp('pir-fix-modules-');
+  try {
+    const res = installFixture('single', { into: dir });
+    assert.equal(res.modules, true, 'node_modules was linked in');
+    const out = execFileSync(
+      process.execPath,
+      [
+        '--input-type=module',
+        '-e',
+        "const w = await import('./src/shell/worker-proc.mjs'); await import('./src/shell/coordinate.mjs'); await import('./src/shell/pir-tui.mjs'); console.log(typeof w.startWorker);",
+      ],
+      { cwd: dir, encoding: 'utf8' },
+    );
+    assert.equal(out.trim(), 'function');
+    assert.equal(git(dir, ['status', '--porcelain']).trim(), '', 'the node_modules link is not a change');
+    assert.doesNotMatch(git(dir, ['ls-files']), /node_modules/, 'the link is never committed');
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

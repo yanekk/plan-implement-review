@@ -1,12 +1,12 @@
-// Shell-level checks for the shipped launcher wrappers and the install.sh wiring that puts them on
-// PATH, removes the orphan skills, and names them in the closing message. Two launchers ship:
-// `pir-coordinate` (foreground engine, T18) and `pir` (detached front-end, T13), installed the same
-// way. Read-of-the-file checks in the T06 settings.test.mjs style — the launchers spawn real, paid
-// workers, so nothing here executes a run; the live launch is a hand-check (T18/T12 Done-when).
+// Shell-level checks for the shipped launcher wrapper and the install.sh wiring that puts it on PATH,
+// removes the orphan skills and the retired launcher, and names it in the closing message. One launcher
+// ships: `pir` (detached front-end, T13). The foreground `pir-coordinate` was sunset (live-workers
+// T15, DESIGN §2.13). Read-of-the-file checks in the T06 settings.test.mjs style — the launcher spawns
+// real, paid workers, so nothing here executes a run; the live launch is a hand-check.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, statSync } from 'node:fs';
+import { readFileSync, readdirSync, statSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
@@ -15,10 +15,9 @@ const REPO = join(HERE, '..', '..');
 const INSTALL = join(REPO, 'install.sh');
 const install = readFileSync(INSTALL, 'utf8');
 
-// Each launcher and the engine entrypoint it must exec. Both are logic-free wrappers that exec node
-// against the install-time __PIR_ENGINE__ placeholder and forward "$@" unchanged.
+// Each launcher and the engine entrypoint it must exec: a logic-free wrapper that execs node against
+// the install-time __PIR_ENGINE__ placeholder and forwards "$@" unchanged.
 const LAUNCHERS = [
-  { name: 'pir-coordinate', entry: 'src/shell/coordinate.mjs' },
   { name: 'pir', entry: 'src/shell/pir.mjs' },
 ];
 
@@ -65,13 +64,14 @@ test('install.sh removes exactly the three orphan skills, and no live skill', ()
   assert.match(install, /remove_orphan_skills/, 'and the removal function is actually called');
 });
 
-test('install.sh installs both launchers onto a PATH dir with the fallback printed', () => {
+test('install.sh installs pir alone onto a PATH dir with the fallback printed', () => {
   assert.match(install, /install_launcher/, 'the launcher install runs');
-  // The launcher list install.sh iterates must name both wrappers, so each lands on PATH.
-  const m = install.match(/LAUNCHERS=\(([^)]*)\)/);
+  // The launcher list install.sh iterates names pir only; pir-coordinate is retired (§2.13).
+  const m = install.match(/(?:^|\n)LAUNCHERS=\(([^)]*)\)/);
   assert.ok(m, 'install.sh must declare LAUNCHERS');
   const named = m[1].trim().split(/\s+/).sort();
-  assert.deepEqual(named, ['pir', 'pir-coordinate'], 'both wrappers are installed');
+  assert.deepEqual(named, ['pir'], 'pir is the only launcher installed');
+  assert.ok(!existsSync(join(REPO, 'bin', 'pir-coordinate')), 'bin/pir-coordinate is deleted');
   assert.match(install, /\.local\/bin/, 'prefers ~/.local/bin');
   assert.match(install, /\.claude\/bin/, 'falls back to ~/.claude/bin');
   assert.match(install, /__PIR_ENGINE__/, 'bakes the engine path into the placeholder');
@@ -80,9 +80,64 @@ test('install.sh installs both launchers onto a PATH dir with the fallback print
   assert.match(install, /export PATH=/, 'prints the exact export PATH step when the dir is off PATH');
 });
 
-test('install.sh names both launchers in its closing messages', () => {
-  const coord = install.match(/pir-coordinate \{slug\}/g) ?? [];
-  assert.ok(coord.length >= 2, 'both the global and the project closing messages name pir-coordinate {slug}');
+test('install.sh removes a stale pir-coordinate launcher from both bin dirs it may have used', () => {
+  const m = install.match(/STALE_LAUNCHERS=\(([^)]*)\)/);
+  assert.ok(m, 'install.sh must declare STALE_LAUNCHERS');
+  assert.deepEqual(m[1].trim().split(/\s+/), ['pir-coordinate']);
+  assert.match(install, /for name in "\$\{STALE_LAUNCHERS\[@\]\}"/, 'each stale launcher is visited');
+  // install_launcher may have picked either dir on an earlier install, so both are swept.
+  assert.match(install, /for dir in "\$HOME\/\.local\/bin" "\$HOME\/\.claude\/bin"/);
+  // Only our own wrapper is removed: it execs the installed engine.
+  assert.match(install, /grep -q "pir-engine\/src\/shell\/" "\$dir\/\$name"/);
+  assert.match(install, /rm -f "\$dir\/\$name"/);
+});
+
+test('install.sh closing messages name pir {slug} and never tell anyone to run pir-coordinate', () => {
   const detached = install.match(/pir \{slug\}/g) ?? [];
-  assert.ok(detached.length >= 2, 'both closing messages name the detached pir {slug} too');
+  assert.ok(detached.length >= 2, 'both closing messages name the detached pir {slug}');
+  assert.doesNotMatch(install, /pir-coordinate \{slug\}/, 'no message names the retired launcher');
+  // Every remaining mention sits in a comment or a removal list, never in printed text.
+  const printed = install.split('\n').filter((l) => l.includes('pir-coordinate') && !/^\s*#/.test(l));
+  assert.deepEqual(
+    printed.map((l) => l.trim()).sort(),
+    ['ORPHAN_SKILLS=(pir-coordinate pir-verify pir-parallelize-plan)', 'STALE_LAUNCHERS=(pir-coordinate)'],
+  );
+});
+
+// Every non-comment line of the shipped engine; a message a person reads is a string on one of these.
+function codeLines(dir) {
+  const out = [];
+  for (const e of readdirSync(dir, { withFileTypes: true })) {
+    const p = join(dir, e.name);
+    if (e.isDirectory()) out.push(...codeLines(p));
+    else if (e.name.endsWith('.mjs') && !e.name.endsWith('.test.mjs')) {
+      readFileSync(p, 'utf8').split('\n').forEach((l, i) => {
+        if (!/^\s*(\/\/|\*|\/\*)/.test(l)) out.push(`${p}:${i + 1}: ${l}`);
+      });
+    }
+  }
+  return out;
+}
+
+test('no user-facing message in src/ tells the person to run pir-coordinate', () => {
+  const hits = codeLines(join(REPO, 'src')).filter((l) => l.includes('pir-coordinate'));
+  assert.deepEqual(hits, []);
+});
+
+test('install.sh puts the engine runtime packages beside the installed src/', () => {
+  // The three package files land in the engine dir, then npm ci runs there (live-workers T10).
+  assert.match(
+    install,
+    /cp "\$SRC\/package\.json" "\$SRC\/package-lock\.json" "\$SRC\/\.npmrc" "\$ENGINE_DEST\/"/,
+    'copies package.json, package-lock.json and .npmrc into the engine',
+  );
+  const ci = install.match(/\(cd "\$ENGINE_DEST" && (npm ci[^)>]*)/);
+  assert.ok(ci, 'runs npm ci with the engine dir as its cwd');
+  // A CLI --omit replaces .npmrc's omit list, so peer and optional must be repeated beside dev.
+  for (const kind of ['dev', 'peer', 'optional']) {
+    assert.match(ci[1], new RegExp(`--omit=${kind}\\b`), `npm ci omits ${kind}`);
+  }
+  assert.match(install, /\n    install_engine_deps\n/, 'install_engine calls the package install');
+  assert.match(install, /report_engine_deps\n\s*exit 0/, 'the --global closing reports a failed install');
+  assert.match(install, /MSG\nreport_engine_deps\n?$/, 'the project closing reports it too');
 });

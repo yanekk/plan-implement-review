@@ -71,6 +71,13 @@ a copy that goes stale. The parallel coordinator engine installs the same way, u
 `~/.claude/pir-engine/`, so it runs a plan in **any** repo — it reads its target from the
 coordinator's working directory. Re-running the installer refreshes both in place.
 
+The engine is `src/` plus its two npm packages, `@earendil-works/pi-tui` (the `pir` screen) and
+`@anthropic-ai/claude-agent-sdk` (the line to each worker), pinned in the committed
+`package-lock.json`. The installer runs `npm ci` beside the installed engine with dev, peer and
+optional packages omitted, so it needs npm and the network on every run; if that fails it says so
+and exits non-zero, since `pir` cannot start without them. In a checkout, `npm ci` once before
+`npm test`.
+
 For your account — the skills, nothing else:
 
 ```sh
@@ -209,7 +216,7 @@ skills/
 ├── pir-install/       set up the method in a repo — check skills, amend CLAUDE.md
 ├── pir-e2e/           reference: reuse a project's e2e tooling, else Playwright / a pty rig; the drill
 └── pir-worker/        the contract a parallel-mode worker session runs under
-pir-engine/ (installed) src/ copied to ~/.claude/pir-engine/ by install.sh
+pir-engine/ (installed) src/ and its npm packages, put in ~/.claude/pir-engine/ by install.sh
 ```
 
 ## Running the tests

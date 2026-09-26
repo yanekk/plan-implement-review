@@ -1,9 +1,9 @@
 # The lifecycle of a run
 
 A run is driven by the coordinator command — a person launches it with `pir {slug}` (detached; see
-[detached-runs.md](detached-runs.md)) or the deprecated `pir-coordinate {slug}` (foreground, printing
-as it goes); underneath either runs `node src/shell/coordinate.mjs {slug}`, until the plan is done or
-the person stops it. Each turn of its loop is one
+[detached-runs.md](detached-runs.md)), which runs `node src/shell/coordinate.mjs {slug}` until the
+plan is done or the person stops it. (The foreground launcher `pir-coordinate` was removed in
+`plans/live-workers` §2.13; the tests and the harness still run `coordinate.mjs` directly.) Each turn of its loop is one
 **pass** (`runPass` in `src/shell/loop.mjs`): it gathers state, asks the pure core what to do
 (`decideDispatch` in `src/core/dispatch.mjs`), and executes the result against the real platform
 and git. The pass is the internal unit the tests and harness drive; it is not a verb the person
@@ -12,7 +12,7 @@ without per-task typing.
 
 ## Start
 
-1. The person runs the command on a plan (`pir {slug}`, or the deprecated `pir-coordinate {slug}`). It **refuses a
+1. The person runs the command on a plan (`pir {slug}`). It **refuses a
    plan that is not reviewed** — it reads the `**Plan reviewed:**` line in `PROGRESS.md` and, on
    anything short of a positive verdict, stops and points the person at `/pir-review-plan`
    (`readReviewGate` in `coordinate.mjs`, `parsePlanReviewed` in `progress.mjs`). An unreviewed
@@ -41,6 +41,7 @@ without per-task typing.
 3. **The dry-run seatbelt.** Without `PARALLEL_LIVE=1` the command does the safe half only — it
    confirms the gate and prints what it *would* dispatch — then returns, spawning no worker and
    touching no branch. Only with `PARALLEL_LIVE=1` does it open branches and spawn real workers.
+   `pir` always sets it, so a dry run is only reachable by running `coordinate.mjs` by hand.
    See [restart-recovery.md](restart-recovery.md) and the seatbelts in
    `plans/non-agentic-coordinator/DESIGN.md § 5.2`.
 4. **The branch-safety guard.** Before a live run the command refuses to run inside the canonical
@@ -62,13 +63,20 @@ A pass does, in order:
 - **Read the kill switch.** If the `HALT` flag file is present, kill every running worker setup
   (below; logged `setup-kill`), close every worker of this run and do nothing else — no spawn, no
   merge. See [human-flow.md](human-flow.md).
-- **List workers and fold in their reports.** The command lists live sessions
-  (`claude agents --json`), keeps only this run's own workers (matched by name), and reads any
-  reports workers dropped since the last pass (a worker signalling `implemented`, `done`, a
-  `question`, a `decision`, or a merge `conflict`). See [control-folder.md](control-folder.md).
-- **Clean up dead workers.** A worker that has vanished from the list past a one-pass grace is
-  dead; its session is closed and its worktree and branch removed, so a crashed worker never holds
-  a slot forever.
+- **List workers and fold in their reports.** The command lists its live workers — its own child
+  processes, held by `platform.mjs`; `claude agents` is not consulted — and reads any reports workers
+  dropped since the last pass (a worker signalling `implemented`, `done`, a `question`, a `decision`,
+  or a merge `conflict`). See [control-folder.md](control-folder.md). Each listed worker carries its
+  activity, derived from its conversation log (`workerActivity` in `src/core/stream.mjs`): `busy` (a
+  turn is open), `idle` (the last turn ended and nothing is pending), `permission` or `questions` (a
+  permission request or a question set waits on the person). Only `busy` holds up a close.
+- **Clean up dead workers.** A worker is live while its process has not exited. One whose process
+  has exited is dead at once — there is no grace pass, since a child is listed the moment it is
+  spawned — and its worktree and branch are removed, so a crashed worker never holds a slot forever.
+  Its conversation log gets an `exited` note with the exit code and signal (`worker-proc.mjs`).
+- **Forward the person's input.** Separately from the pass, the command watches the control folder's
+  `inbox/` and forwards each message, interrupt or answer to its worker the moment it lands (see
+  [control-folder.md](control-folder.md)), so a dispatch cycle never holds it up.
 - **Spawn ready tasks.** Every `⬜` task whose dependencies are all `✅` and which no live worker
   holds is a candidate, lowest number first, capped so live-plus-spawned never exceeds the ceiling.
   Every task spawns an autonomous builder (`pir-implement Txx`); there is one kind of worker. The
@@ -86,7 +94,7 @@ A pass does, in order:
   has exited and spawns the implementer. Setup runs in the background because a pass is synchronous:
   a blocking `npm ci` would freeze every other worker's merge and the display for its whole length.
   - A preparing task holds a slot under the ceiling (it is about to become a worker) but has no
-    session, so it is exempt from the liveness and death checks, and it counts as live work, so the
+    worker, so it is exempt from the liveness and death checks, and it counts as live work, so the
     run's "nothing left to do" end never fires while setup runs.
   - **Setup failure still spawns the worker** (best effort): its opening instruction carries a note
     naming the failing line and its exit status, the last 20 lines of its output inline, and the log
@@ -97,13 +105,13 @@ A pass does, in order:
     worktree at restart. A setup that hangs leaves the task `preparing` until HALT or stop; there is
     no time limit.
 - **Hand off review.** When a worker reports `implemented` (its task is `🔍` on its branch), the
-  command spawns a **fresh** session on the same worktree to review it (`pir-review Txx`) and
+  command spawns a **fresh** worker on the same worktree to review it (`pir-review Txx`) and
   closes the implementer. A task in review holds one slot, not two, and the reviewer has no
   implementer context — that is where fresh-eyes review comes from.
 - **Merge one done task.** When a worker reports `done`, the command merges its task branch into the
   feature branch (**one per pass, serialized**), reconciles its row to `✅` on the feature branch,
-  and closes the worker. A merge that conflicts instead parks the worker — see
-  [human-flow.md](human-flow.md). The merge may also **adopt new task rows** the branch carried — a
+  and closes the worker. A merge that conflicts instead keeps the worker and sends it the fix over its
+  line — see [human-flow.md](human-flow.md). The merge may also **adopt new task rows** the branch carried — a
   worker-introduced task: each adopted row is appended to the feature `PROGRESS.md` as `⬜` and logged
   with an `adopt` line, and a later pass's spawn step dispatches it (above). A row that cannot be
   adopted — an edit of an existing task, or a dependency on a task that does not exist — is left
@@ -128,8 +136,11 @@ A pass does, in order:
   [detached-runs.md](detached-runs.md)).
 
 The idle-gate: a close that follows a worker finishing (a review hand-off, or a merge-and-close)
-waits for the agent list to show that worker `idle` before sending SIGTERM, so a final commit is
-never cut off mid-turn. That wait is bounded — see [control-folder.md](control-folder.md) and the
+waits until the worker's activity is no longer `busy`, so a final commit is never cut off mid-turn.
+Closing a worker ends its input queue, which lets it exit cleanly, then sends SIGTERM after 5 s and
+SIGKILL after 10 s if it is still running (`close` in `worker-proc.mjs`); the command records every
+live worker's pid and start time in the control folder's `workers.json` so one that outlives it can be
+reaped. That wait is bounded — see [control-folder.md](control-folder.md) and the
 known-limitation note in [human-flow.md](human-flow.md) about leaked background processes.
 
 ## The live status display
@@ -142,9 +153,11 @@ line per task, a summary line, and a footer. This is the command's status — th
   pass produces plus the current time and spinner frame, returning `{branch, summary, rows, footer}`
   as data, with no I/O and no clock. Each row carries a `kind` — `preparing` (the plan's setup is
   running in the task's fresh worktree; no worker yet), `building`, `reviewing`, `merging` (the
-  reviewer has reported done; the merge waits for its session to go idle), `asking` (shown "asking
-  you"), `waiting` (`needs T..`), `queued` (marked when the ceiling is full), or `done` (shown
-  "merged"). The summary carries done/total, how many are running, asking, and
+  reviewer has reported done; the merge waits for it to go idle), `asking` (shown `asking you` for a
+  question or decision report, `asking you · allow a command?` for a pending permission request,
+  `asking you · a question` for a pending question set), `fixing-conflict` (shown `fixing conflict`:
+  the worker was sent a merge-conflict fix and is working on it, nothing asked of the person),
+  `waiting` (`needs T..`), `queued` (marked when the ceiling is full), or `done` (shown "merged"). The summary carries done/total, how many are running, asking, and
   waiting, and the ceiling. This is tested exhaustively.
 - **An asking row's clock is stopped.** A row's elapsed clock counts from when its phase began,
   except while the worker waits on the person: `advanceTiming` in `coordinate.mjs` records the stop
@@ -158,7 +171,7 @@ line per task, a summary line, and a footer. This is the command's status — th
   cursor-control escapes garble a non-terminal. The in-place painting is what only a person can
   judge (hand-verified, T09).
 - **Colour is a paint-time layer** (T16): on a colour TTY the renderer tints each line by the
-  model's `kind` — active work (preparing, building, reviewing, merging) cyan, a merged task green,
+  model's `kind` — active work (preparing, building, reviewing, merging, fixing conflict) cyan, a merged task green,
   a **parked `asking` worker amber and bold** so the one thing needing the person stands out, idle tasks
   (`waiting`, `queued`) dim, and a failed or interrupted run red. The summary header stays neutral
   while the run is going and takes a colour only at the end — green when finished, red when Ctrl-C
@@ -169,8 +182,9 @@ line per task, a summary line, and a footer. This is the command's status — th
   colour TTY and `NO_COLOR` is unset (any value of `NO_COLOR` disables it); a non-TTY — a pipe or
   the test harness — is never coloured, so that output stays plain, escape-free text.
 
-The footer names the current asking worker and how to reach it (find it in `claude agents`, attach,
-answer there), or, at the end, the green feature branch and the `git merge` hand-off. A red end's
+The footer names the current asking worker and how to reach it — `● Txx slug — asking you; open it (→)
+to answer` (`render.mjs`): the person opens the task's row in `pir` and answers in the worker's
+conversation (see [human-flow.md](human-flow.md)) — or, at the end, the green feature branch and the `git merge` hand-off. A red end's
 footer says the branch is not ready to merge and adds a second line with the gate's reason and the
 `tests.log` path (`footerFor` in `display.mjs` carries `testsReason`; `render.mjs` prints it), so the
 person watching sees why without opening a log. A `preparing` row is active, with the spinner, so the
@@ -200,10 +214,14 @@ A run ends in one of three ways:
   (one used to tear a run down after ~7 hours), and waiting makes no model calls.
 
 On any exit that is not a clean hand-off or a halt, the command tears down every live worker of the
-run, so no session is left running (`teardownRun` in `coordinate.mjs`). It also kills any worker
+run (`teardownRun` in `coordinate.mjs`). Teardown runs from signal handlers, so it is synchronous: it
+ends every worker's input queue and sends every worker SIGTERM at once, without waiting. A worker that
+survives it is reaped from `workers.json` by a stop from the dashboard or the next start (see
+[restart-recovery.md](restart-recovery.md)). It also kills any worker
 setup still running, because setup lines run detached in their own process group and would otherwise
 outlive the command. Ctrl-C (SIGINT/SIGTERM) runs the same teardown as an orphan-guard before it
-exits. The teardown closes sessions and setups only: task branches and worktrees are always left for
+exits. The teardown closes workers and setups only: task branches and worktrees are always left for
 the next start to reconcile, and a task left with a worktree and no worker gets its setup run again
 there (see [restart-recovery.md](restart-recovery.md)). A coordinator killed outright (SIGKILL, a
-crash) skips the teardown, so a setup it was running can outlive it.
+crash) skips the teardown, so a setup it was running can outlive it, and so can a worker in the middle
+of a command; the worker is reaped from `workers.json`, the setup is not.

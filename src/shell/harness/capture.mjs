@@ -1,110 +1,73 @@
-// The live-scenario harness's capture layer (DESIGN §4.1, T14). It turns one live coordinator run
-// into a self-contained, dated BUNDLE of evidence: the coordinator's flow log, a sampled agent-status
-// timeline, a snapshot of every session's transcript, and the scratch repo's `git log`. The assertion
-// layer (T15) checks a bundle; the live runner (T17) produces one.
+// The live-scenario harness's capture layer (DESIGN §4.1, T14; live-workers T16). It turns one live
+// coordinator run into a self-contained, dated BUNDLE of evidence: the coordinator's flow log, a sampled
+// worker timeline, every worker's conversation log, the run's final workers.json, and the scratch repo's
+// `git log`. The assertion layer checks a bundle; the live runner produces one.
 //
-// It OBSERVES only. It never modifies the reviewed coordinator (coordinate.mjs / loop.mjs /
-// platform.mjs) and never changes run behaviour — it reads the flow log the coordinator already
-// writes, samples `claude agents --json` on the side, and copies files that already exist on disk.
+// It OBSERVES only. It never modifies the coordinator and never changes run behaviour: it reads files
+// the coordinator already writes (the flow `log`, `workers.json`, `conversations/*.ndjson`) and copies
+// them. Since live-workers every worker is a stream-json child of the coordinator (live-workers DESIGN
+// §2.1), so there is no `claude agents` listing to sample and no ~/.claude transcript to copy: the
+// coordinator's own records are the evidence.
 //
-// Why capture parses `agents --json` itself instead of platform.parseAgents. The transcript filename
-// is the session's `sessionId` (DESIGN §4.1), and platform.parseAgents deliberately drops sessionId —
-// it is not part of any coordinator decision. Rather than widen the reviewed parser, capture keeps its
-// own read that retains the fields evidence needs (id, sessionId, name, cwd, status, state). This is
-// also why the layer can be read-only against the coordinator: it shares nothing mutable with it.
+// Why the timeline is still sampled live. workers.json lists only the coordinator's LIVE children and is
+// rewritten on every spawn and exit (live-workers §2.12), so who was running at the same time, and whether
+// a worker went idle before it was closed, survives only if the file is read while the run is going. Each
+// tick joins workers.json with each worker's activity folded from its conversation log (core/stream.mjs
+// workerActivity, the same fold the coordinator's platform.list() uses, §2.4). A recorded pid is only
+// counted live when the process is alive with its recorded start time: after a SIGKILLed coordinator the
+// file still names its workers, and a reaped one must not read as live.
 //
-// Why the timeline must be sampled live (the one source not otherwise recorded, DESIGN §4.1). `status`
-// (idle/busy) and `pid` exist in `agents --json` ONLY while a session is live; once it ends, `--all`
-// still lists it but with just its final `state`, no `status`. So the busy→idle transition that proves
-// the idle-gated close (DESIGN §2.3) survives only if snapshots are taken while the workers live. The
-// flow log and the transcripts are durable — the flow log is appended by the coordinator, and the
-// transcripts live under ~/.claude and survive a worker's kill and its worktree's removal (FINDINGS
-// 2026-09-10) — so only the timeline is polled.
+// The conversation logs themselves are durable: the coordinator keeps them until the run is removed from
+// the dashboard (§2.3), so seal copies them once, at the end, and needs no eager staging.
 //
-// Everything is injected exactly as platform.mjs injects runClaude and its git runner, so escaping,
-// path resolution, timeline assembly, tagging and loadBundle are all unit-tested against canned
-// `agents --json` output and a temp projects/ tree with no live agent (DESIGN §4.1, T14 acceptance).
+// Everything that touches a process or the clock is injected, so tick, seal and loadBundle are
+// unit-tested against a temp control folder with no live worker (DESIGN §4.1, T14 acceptance).
 
-import {
-  mkdirSync,
-  writeFileSync,
-  appendFileSync,
-  readFileSync,
-  copyFileSync,
-  existsSync,
-  rmSync,
-} from 'node:fs';
+import { mkdirSync, writeFileSync, appendFileSync, readFileSync, readdirSync, copyFileSync, existsSync } from 'node:fs';
 import { join, basename } from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { homedir } from 'node:os';
-import { isWorkerOf, parseAgentName } from '../../core/naming.mjs';
+import { workerActivity } from '../../core/stream.mjs';
+import { readWorkersFile } from '../reap.mjs';
+import { isAlive as isAliveReal, startTimeOf as startTimeOfReal } from '../identity.mjs';
 
-// --- The transcript path convention (DESIGN §4.1, confirmed on this machine 2026-09-10) -----------
-//
-// A session's transcript lives at:
-//   ~/.claude/projects/<escape(cwd)>/<sessionId>.jsonl
-// where escape() replaces EVERY '/' and '.' in the absolute cwd with '-'. So a leading '/' becomes a
-// leading '-', and a '/.claude' segment becomes '--claude' (the '/' → '-' and the '.' → '-' abut).
-// Exported so the T17 live runner can reuse it without importing the whole capture surface.
-export function escapeProjectPath(cwd) {
-  return String(cwd ?? '').replace(/[/.]/g, '-');
+// --- Conversation logs (live-workers DESIGN §2.3) ------------------------------------------------
+
+// parseLogName(file) → { task, role, n } for `{Txx}-{role}-{n}.ndjson`, else null.
+export function parseLogName(file) {
+  const m = /^(T\d+)-(implement|review)-(\d+)\.ndjson$/.exec(String(file ?? ''));
+  return m ? { task: m[1], role: m[2], n: Number(m[3]) } : null;
 }
 
-// The default projects store, overridable for tests (a temp projects/ tree with no live agent).
-export function defaultProjectsDir() {
-  return join(homedir(), '.claude', 'projects');
+// parseLog(text) → the log's entries, one per non-blank line. A line that does not parse (a crash
+// mid-append) is kept as its raw string, as core/stream.mjs's reader expects (§2.3); it never throws.
+export function parseLog(text) {
+  return String(text ?? '')
+    .split('\n')
+    .filter((l) => l.trim() !== '')
+    .map((l) => {
+      try {
+        return JSON.parse(l);
+      } catch {
+        return l;
+      }
+    });
 }
 
-// resolveTranscriptPath(projectsDir, cwd, sessionId) → the absolute .jsonl path, or null if either
-// the cwd or the sessionId is missing (a session listed with neither cannot be resolved).
-export function resolveTranscriptPath(projectsDir, cwd, sessionId) {
-  if (!cwd || !sessionId) return null;
-  return join(projectsDir, escapeProjectPath(cwd), `${sessionId}.jsonl`);
+// logSessionId(entries) → the session id the worker's own messages carry, or null before it has said
+// anything. pir chose that id and it is the worker's `id` in workers.json (§2.1), so this is what ties a
+// recorded worker to its log file.
+export function logSessionId(entries) {
+  for (const e of entries ?? []) {
+    const sid = e?.dir === 'in' ? e.event?.session_id : null;
+    if (typeof sid === 'string' && sid) return sid;
+  }
+  return null;
 }
 
-// --- Reading `claude agents --json` for evidence (capture's own parse; see the header) ------------
-//
-// Keeps the fields the bundle needs and drops nothing evidence-relevant. Accepts raw JSON text or an
-// already-parsed array (as platform.parseAgents does), so a test can hand it either. A record with no
-// name still passes through — a foreign or unnamed session is kept, tagged not-ours (DESIGN §4.1: keep
-// every agent each tick).
-export function parseAgentsForCapture(json) {
-  const arr = typeof json === 'string' ? JSON.parse(json) : json;
-  if (!Array.isArray(arr)) return [];
-  return arr.map((a) => ({
-    id: a.id ?? null,
-    sessionId: a.sessionId ?? null,
-    name: a.name ?? null,
-    cwd: a.cwd ?? null,
-    status: a.status ?? null,
-    state: a.state ?? null,
-    pid: a.pid ?? null,
-  }));
-}
-
-// tagAgent(agent, { repo, plan }) → the agent with two ownership tags added (DESIGN §4.1: tag which
-// are this run's workers by name). isWorkerOf is true for a worker of THIS run (name parses to
-// {repo}/{plan}/T{nn}/…); a foreign agent gets it false — tagged not-ours. Ownership is read from the
-// name alone, the same way the coordinator identifies its workers (DESIGN §2.9), so it cannot drift
-// from separate bookkeeping. isCoordinator is always false: the coordinator is a plain foreground
-// process (`node src/shell/coordinate.mjs`), never a session, so it never appears in `claude agents`
-// (DESIGN §2.1, §2.9). The tag is kept on the record — always false — so the bundle shape the assertion
-// layer reads is stable.
-function tagAgent(agent, { repo, plan }) {
-  const worker = isWorkerOf(agent.name, { repo, plan });
-  return { ...agent, isWorkerOf: worker, isCoordinator: false };
-}
-
-// The filename label for a session's transcript copy (DESIGN §4.1 "<worker-name-or-role>.jsonl"):
-// a worker by its task id and role (T05-implement.jsonl, T05-review.jsonl), the coordinator by role
-// (coordinator.jsonl), anything else by a filesystem-safe version of its name or, failing that, its
-// sessionId. The role keeps the implementer's and reviewer's transcripts of one task from colliding.
-function transcriptLabel(agent) {
-  if (agent.isCoordinator) return 'coordinator';
-  const parsed = parseAgentName(agent.name);
-  if (agent.isWorkerOf && parsed.task) return parsed.role ? `${parsed.task}-${parsed.role}` : parsed.task;
-  const raw = agent.name || agent.sessionId || 'unknown';
-  return String(raw).replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '') || 'unknown';
+// statusOf(state) → 'busy' | 'idle', the two-valued status the timeline facts read. Mirrors platform.mjs:
+// a worker waiting on the person, or whose turn ended, is not busy; `starting` has work in hand (§2.4).
+export function statusOf(state) {
+  return state === 'busy' || state === 'starting' ? 'busy' : 'idle';
 }
 
 // --- The bundle directory ------------------------------------------------------------------------
@@ -118,24 +81,14 @@ export function bundleDirFor(parallelDir, now = new Date()) {
 
 const BUNDLE_FILES = {
   flow: 'flow.log',
-  timeline: 'agents-timeline.jsonl',
-  final: 'agents-final.json',
+  timeline: 'timeline.jsonl',
+  workers: 'workers.json',
+  run: 'run.json',
   manifest: 'manifest.json',
   gitLog: 'git-log.txt',
   coordinatorOut: 'coordinator.out',
-  transcripts: 'transcripts',
+  conversations: 'conversations',
 };
-
-// --- The default injected runners (mirroring platform.mjs) ---------------------------------------
-
-function defaultRunClaude(args) {
-  try {
-    const stdout = execFileSync('claude', args, { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] });
-    return { ok: true, stdout };
-  } catch (e) {
-    return { ok: false, stdout: e.stdout ?? '' };
-  }
-}
 
 function defaultRunGit(args, { cwd } = {}) {
   try {
@@ -146,18 +99,17 @@ function defaultRunGit(args, { cwd } = {}) {
   }
 }
 
-// createCapture(opts) → { dir, tick, start, stop, seal }. The in-process API the T17 runner drives:
-// start sampling, stop-and-seal. Everything it touches is injected so the whole layer is provable with
-// no live agent (DESIGN §4.1).
+// createCapture(opts) → { dir, tick, start, stop, seal }. The in-process API the live runner drives:
+// start sampling, stop-and-seal.
 //
-//   repo, slug     — identify this run's coordinator and workers by name (DESIGN §2.8).
-//   dir            — the bundle directory to write (created if absent). The runner computes it, e.g.
-//                    with bundleDirFor; a test passes a temp dir.
-//   controlDir     — where the coordinator's flow `log` lives (plans/{slug}/.parallel/control).
+//   repo, slug     — the run's identity, written to run.json so the facts know which plan's branch to
+//                    check without parsing it out of worker names (workers.json carries none).
+//   dir            — the bundle directory to write (created if absent).
+//   controlDir     — plans/{slug}/.parallel/control: the flow `log`, workers.json, conversations/.
 //   repoDir        — the scratch repo root, for the `git log` at seal.
-//   runClaude      — (args) => { ok, stdout }, for `agents --json` (tick) and `--all` (seal).
 //   runGit         — (args, { cwd }) => { ok, stdout }, for the git log at seal.
-//   projectsDir    — the transcript store root (~/.claude/projects by default).
+//   readWorkers    — (controlDir) => the recorded workers; reap.mjs's reader by default.
+//   isAlive, startTimeOf — (pid) probes, injected so a test uses fake pids (identity.mjs by default).
 //   intervalMs     — poll cadence for start()/stop() (default ~2000, DESIGN §4.1).
 //   now            — clock, injected (this is shell; the pure core stays clockless, DESIGN §3.1).
 //   timers         — { setInterval, clearInterval }, injected so a test need not use real time.
@@ -167,78 +119,103 @@ export function createCapture({
   dir,
   controlDir,
   repoDir,
-  runClaude = defaultRunClaude,
   runGit = defaultRunGit,
-  projectsDir = defaultProjectsDir(),
+  readWorkers = readWorkersFile,
+  isAlive = (pid) => isAliveReal(pid),
+  startTimeOf = (pid) => startTimeOfReal(pid),
   intervalMs = 2000,
   now = () => new Date(),
   timers = { setInterval, clearInterval },
 } = {}) {
   if (!dir) throw new Error('createCapture: no bundle dir');
   const timelinePath = join(dir, BUNDLE_FILES.timeline);
+  const conversationsDir = controlDir ? join(controlDir, 'conversations') : null;
   mkdirSync(dir, { recursive: true });
 
-  // Eager transcript staging (DESIGN §4.1, T41). The coordinator now removes a finished worker's session
-  // with `claude rm` mid-run (loop.mjs), and it is undocumented whether that also deletes the on-disk
-  // `.jsonl` transcript seal() copies from. The build must not depend on the answer: on every tick, each
-  // of this run's worker transcripts is copied into a staging dir, overwriting so the latest pre-removal
-  // copy wins. If the live transcript is still on disk at seal, seal copies THAT (authoritative); only if
-  // it is gone — the worker was removed mid-run and `claude rm` did delete it — does seal fall back to the
-  // staged copy, so a sealed bundle still holds every worker's transcript either way. The staging dir is
-  // cleaned up at the end of seal so it does not double the bundle's transcript bytes.
-  const eagerDir = join(dir, '.eager-transcripts');
-  const eagerBySession = new Map(); // sessionId → staged .jsonl path
-
-  // The timeline is held in memory as well as appended to disk: seal() gathers the sessions to snapshot
-  // from it without re-reading, and a caller can inspect it live.
   const timeline = [];
+  const logOf = new Map(); // worker id → its log file name, once matched
   let handle = null;
   let sealed = false;
 
-  // tick() → the snapshot it recorded. One sample of `agents --json`: parse, tag every agent by name,
-  // append { ts, agents } to the timeline (memory and disk). A failed `agents --json` records an empty
-  // tick rather than throwing, so one hiccup does not abort a run's capture.
+  const readEntries = (file) => {
+    try {
+      return parseLog(readFileSync(join(conversationsDir, file), 'utf8'));
+    } catch {
+      return [];
+    }
+  };
+
+  // locateLog(worker) → { file, entries } | null. A worker's log is `{task}-{role}-{n}.ndjson`; the one
+  // whose messages carry the worker's session id is its own. Before the worker has said anything no log
+  // carries the id yet, so the newest file for that task and role with no session id stands in: the
+  // platform names the log at spawn, one past the highest n (platform.mjs nextLogPath).
+  function locateLog(w) {
+    if (!conversationsDir) return null;
+    const known = logOf.get(w.id);
+    if (known) return { file: known, entries: readEntries(known) };
+    let names = [];
+    try {
+      names = readdirSync(conversationsDir);
+    } catch {
+      return null;
+    }
+    const candidates = names
+      .map((file) => ({ file, p: parseLogName(file) }))
+      .filter(({ p }) => p && p.task === w.task && p.role === w.role)
+      .sort((a, b) => b.p.n - a.p.n);
+    let fallback = null;
+    for (const { file } of candidates) {
+      const entries = readEntries(file);
+      const sid = logSessionId(entries);
+      if (sid === w.id) {
+        logOf.set(w.id, file);
+        return { file, entries };
+      }
+      if (sid == null && !fallback) fallback = { file, entries };
+    }
+    return fallback;
+  }
+
+  // tick() → the entry it recorded: { ts, workers: [{ id, task, role, pid, startTime, status, state, log }] }.
+  // One read of workers.json, keeping the workers whose process still runs, each with its activity from its
+  // log. A read failure records an empty tick rather than throwing: capture must never break the run.
   function tick() {
     const ts = now().toISOString();
-    const r = runClaude(['agents', '--json']);
-    let agents = [];
-    if (r.ok) {
+    const workers = [];
+    let recorded = [];
+    try {
+      recorded = controlDir ? readWorkers(controlDir) : [];
+    } catch {
+      recorded = [];
+    }
+    for (const w of recorded) {
       try {
-        agents = parseAgentsForCapture(r.stdout).map((a) => tagAgent(a, { repo, plan: slug }));
+        if (!isAlive(w.pid)) continue;
+        if (w.startTime != null && startTimeOf(w.pid) !== w.startTime) continue; // a reused pid
+        const log = locateLog(w);
+        const state = log ? workerActivity(log.entries).state : 'starting';
+        workers.push({
+          id: w.id,
+          task: w.task,
+          role: w.role,
+          pid: w.pid,
+          startTime: w.startTime ?? null,
+          status: statusOf(state),
+          state,
+          log: log?.file ?? null,
+        });
       } catch {
-        agents = [];
+        /* one unreadable worker must not drop the tick */
       }
     }
-    const entry = { ts, agents };
+    const entry = { ts, workers };
     timeline.push(entry);
     try {
       appendFileSync(timelinePath, `${JSON.stringify(entry)}\n`);
     } catch {
       /* capture must never break the run it observes */
     }
-    // Stage each of this run's worker transcripts now, before the coordinator can `claude rm` the session
-    // out from under seal (T41). Every worker with a resolvable, on-disk transcript is copied (overwrite),
-    // so the freshest copy is always staged; the coordinator is never removed mid-run, so it is left to
-    // seal's live copy. Best-effort — a copy failure must never break the run capture observes.
-    for (const a of agents) eagerSnapshot(a);
     return entry;
-  }
-
-  // eagerSnapshot(agent) — copy one worker's live transcript into the staging dir if it exists (T41). No
-  // trigger on idle/busy: copying on every tick and overwriting keeps the latest, and covers a worker
-  // removed while still listed busy (a crashed/dead worker the loop removes) as well as a finished one.
-  function eagerSnapshot(agent) {
-    if (!agent?.isWorkerOf || !agent.sessionId) return;
-    const src = resolveTranscriptPath(projectsDir, agent.cwd, agent.sessionId);
-    if (!src || !existsSync(src)) return;
-    try {
-      mkdirSync(eagerDir, { recursive: true });
-      const staged = join(eagerDir, `${agent.sessionId}.jsonl`);
-      copyFileSync(src, staged); // overwrite: the latest copy before a possible `claude rm` wins
-      eagerBySession.set(agent.sessionId, staged);
-    } catch {
-      /* eager staging is best-effort; seal still tries the live source first */
-    }
   }
 
   function start() {
@@ -248,131 +225,67 @@ export function createCapture({
     if (handle && typeof handle.unref === 'function') handle.unref();
   }
 
-  // The unique sessions seen across the whole run, keyed by sessionId (the transcript's true key). A
-  // session with no sessionId cannot be resolved to a transcript, so it is skipped here; its rows still
-  // stand in the timeline. The last-seen tag/name wins, which is correct — a session's name is stable.
-  function sessionsSeen() {
-    const bySession = new Map();
-    for (const { agents } of timeline) {
-      for (const a of agents ?? []) {
-        if (a.sessionId) bySession.set(a.sessionId, a);
-      }
+  function copyIfPresent(src, dest) {
+    if (!existsSync(src)) return false;
+    try {
+      copyFileSync(src, dest);
+      return true;
+    } catch {
+      return false;
     }
-    return [...bySession.values()];
   }
 
-  // snapshotTranscripts() → the manifest. For every session seen, resolve its transcript and copy it
-  // into transcripts/<label>.jsonl. A missing transcript is recorded copied:false, never a throw
-  // (DESIGN §4.1 acceptance). The manifest is keyed by agent name; if one name recurs across the run
-  // with a different session — an implementer and its fresh reviewer share a worker name but never run
-  // at once (DESIGN §2.8) — the later key is disambiguated with the sessionId so neither is lost.
-  function snapshotTranscripts() {
-    const transcriptsDir = join(dir, BUNDLE_FILES.transcripts);
-    mkdirSync(transcriptsDir, { recursive: true });
+  // snapshotConversations() → the manifest: every `conversations/*.ndjson` of the run copied into the
+  // bundle's conversations/, keyed by its file name. `role: 'worker'` is what tokens.mjs totals; the
+  // worker's own role (implement/review), task, n and session id sit beside it.
+  function snapshotConversations() {
     const manifest = {};
-    const usedLabels = new Set();
-    for (const a of sessionsSeen()) {
-      const role = a.isCoordinator ? 'coordinator' : a.isWorkerOf ? 'worker' : 'foreign';
-      const src = resolveTranscriptPath(projectsDir, a.cwd, a.sessionId);
-      // A filename must not collide when two sessions share a label (same task across the run).
-      let label = transcriptLabel(a);
-      if (usedLabels.has(label)) label = `${label}-${a.sessionId}`;
-      usedLabels.add(label);
-      const bundleFile = join(BUNDLE_FILES.transcripts, `${label}.jsonl`);
-      let copied = false;
-      let fromEager = false;
-      if (src && existsSync(src)) {
-        try {
-          copyFileSync(src, join(dir, bundleFile));
-          copied = true;
-        } catch {
-          copied = false;
-        }
-      } else if (a.sessionId && eagerBySession.has(a.sessionId)) {
-        // The live transcript is gone — this worker was removed mid-run and `claude rm` deleted it. Fall
-        // back to the copy tick() staged before the removal (T41), so the bundle still holds it.
-        const staged = eagerBySession.get(a.sessionId);
-        if (existsSync(staged)) {
-          try {
-            copyFileSync(staged, join(dir, bundleFile));
-            copied = true;
-            fromEager = true;
-          } catch {
-            copied = false;
-          }
-        }
-      }
-      const entry = {
-        sessionId: a.sessionId,
-        cwd: a.cwd,
-        transcriptPath: src,
-        role,
+    if (!conversationsDir || !existsSync(conversationsDir)) return manifest;
+    let names = [];
+    try {
+      names = readdirSync(conversationsDir).filter((n) => n.endsWith('.ndjson')).sort();
+    } catch {
+      return manifest;
+    }
+    mkdirSync(join(dir, BUNDLE_FILES.conversations), { recursive: true });
+    for (const file of names) {
+      const copiedTo = join(BUNDLE_FILES.conversations, file);
+      const copied = copyIfPresent(join(conversationsDir, file), join(dir, copiedTo));
+      const p = parseLogName(file);
+      manifest[file] = {
+        role: 'worker',
+        task: p?.task ?? null,
+        workerRole: p?.role ?? null,
+        n: p?.n ?? null,
+        sessionId: copied ? logSessionId(readEntries(file)) : null,
         copied,
-        copiedTo: copied ? bundleFile : null,
-        fromEager, // true when the live transcript was gone at seal and the staged copy was used (T41)
+        copiedTo: copied ? copiedTo : null,
       };
-      // Key by name; disambiguate a recurring name (implementer vs its later reviewer) by sessionId.
-      let key = a.name || a.sessionId || 'unknown';
-      if (Object.prototype.hasOwnProperty.call(manifest, key)) key = `${key} (${a.sessionId})`;
-      manifest[key] = entry;
     }
     return manifest;
   }
 
-  // seal() — the stop-and-seal half. Copies the flow log, takes one `agents --json --all` for the
-  // resting states, snapshots every session's transcript, captures the scratch repo's git log, and
-  // writes the manifest. Idempotent: sealing twice is a no-op. Returns the loaded bundle.
+  // seal() — the stop-and-seal half. Copies the flow log, the coordinator's stdout, workers.json and every
+  // conversation log, writes run.json and the manifest, and captures the scratch repo's git log.
+  // Idempotent: sealing twice is a no-op. Returns the loaded bundle.
   function seal() {
     if (sealed) return loadBundle(dir);
     sealed = true;
 
-    // Flow log: copy it in place (the coordinator wrote it; it is not re-derived, DESIGN §4.1).
     if (controlDir) {
-      const flowSrc = join(controlDir, 'log');
-      if (existsSync(flowSrc)) {
-        try {
-          copyFileSync(flowSrc, join(dir, BUNDLE_FILES.flow));
-        } catch {
-          /* absent or unreadable flow log is recorded as an empty flow by loadBundle */
-        }
-      }
+      // The flow log is copied in place (the coordinator wrote it; it is not re-derived, DESIGN §4.1). The
+      // coordinator's stdout (run.mjs spawnCoordinator) holds its printed hand-off, the one record of
+      // whether the end-of-run gate went green or red. workers.json is whatever the run left recorded.
+      copyIfPresent(join(controlDir, 'log'), join(dir, BUNDLE_FILES.flow));
+      copyIfPresent(join(controlDir, 'coordinator.out'), join(dir, BUNDLE_FILES.coordinatorOut));
+      copyIfPresent(join(controlDir, 'workers.json'), join(dir, BUNDLE_FILES.workers));
     }
 
-    // The coordinator's own stdout (run.mjs spawnCoordinator), which holds its printed hand-off: the one
-    // record of whether the end-of-run gate went green or red. Absent when the runner did not capture it.
-    if (controlDir) {
-      const outSrc = join(controlDir, 'coordinator.out');
-      if (existsSync(outSrc)) {
-        try {
-          copyFileSync(outSrc, join(dir, BUNDLE_FILES.coordinatorOut));
-        } catch {
-          /* unreadable: loadBundle records it as missing, and the hand-off fact fails on that */
-        }
-      }
-    }
-
-    // Resting states: `--all` still lists ended sessions (with only their final `state`, DESIGN §4.1).
-    const all = runClaude(['agents', '--json', '--all']);
-    try {
-      const parsed = all.ok ? parseAgentsForCapture(all.stdout).map((a) => tagAgent(a, { repo, plan: slug })) : [];
-      writeFileSync(join(dir, BUNDLE_FILES.final), `${JSON.stringify(parsed, null, 2)}\n`);
-    } catch {
-      writeFileSync(join(dir, BUNDLE_FILES.final), '[]\n');
-    }
-
-    const manifest = snapshotTranscripts();
+    writeFileSync(join(dir, BUNDLE_FILES.run), `${JSON.stringify({ repo: repo ?? null, plan: slug ?? null })}\n`);
+    const manifest = snapshotConversations();
     writeFileSync(join(dir, BUNDLE_FILES.manifest), `${JSON.stringify(manifest, null, 2)}\n`);
 
-    // The staged eager copies have done their job (they were the fallback source above); drop the staging
-    // dir so it does not double the bundle's transcript bytes (T41). Best-effort — a stale staging dir is
-    // harmless if this fails.
-    try {
-      rmSync(eagerDir, { recursive: true, force: true });
-    } catch {
-      /* leaving the staging dir behind is harmless */
-    }
-
-    // git log of the scratch repo, so a merge/promotion is checkable after teardown (DESIGN §4.1).
+    // git log of the scratch repo, so a merge is checkable after teardown (DESIGN §4.1).
     if (repoDir) {
       const g = runGit(['log', '--oneline', '--graph', '--all'], { cwd: repoDir });
       writeFileSync(join(dir, BUNDLE_FILES.gitLog), g.ok ? g.stdout : '');
@@ -381,8 +294,7 @@ export function createCapture({
     return loadBundle(dir);
   }
 
-  // stop() — end live sampling (if start()ed) and seal. The single call the live runner makes at the
-  // end of a scenario.
+  // stop() — end live sampling (if start()ed) and seal.
   function stop() {
     if (handle) {
       timers.clearInterval(handle);
@@ -418,16 +330,24 @@ function readTextOr(path, fallback = '') {
   }
 }
 
-// loadBundle(dir) → a plain object the assertion layer (T15) reads: the parsed flow, the agent-status
-// timeline, the resting-state final snapshot, the transcript manifest, and the git log. Every field is
-// present even when its file is absent (an empty array or string), so an assertion never has to guard
-// for a missing file — a fact simply does not hold over empty evidence.
+function readJsonOr(path, fallback, valid) {
+  try {
+    const v = JSON.parse(readTextOr(path, ''));
+    return valid(v) ? v : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+// loadBundle(dir) → a plain object the assertion layer reads: the parsed flow, the worker timeline, the
+// final workers.json, the run identity, the conversation manifest, and the git log. Every field is
+// present even when its file is absent (an empty array, object or string), so an assertion never has to
+// guard for a missing file — a fact simply does not hold over empty evidence.
 export function loadBundle(dir) {
   const flowText = readTextOr(join(dir, BUNDLE_FILES.flow));
   const flow = flowText.split('\n').filter((l) => l.trim() !== '').map(parseFlowLine);
 
-  const timelineText = readTextOr(join(dir, BUNDLE_FILES.timeline));
-  const timeline = timelineText
+  const timeline = readTextOr(join(dir, BUNDLE_FILES.timeline))
     .split('\n')
     .filter((l) => l.trim() !== '')
     .map((l) => {
@@ -439,27 +359,14 @@ export function loadBundle(dir) {
     })
     .filter(Boolean);
 
-  let final = [];
-  try {
-    const t = readTextOr(join(dir, BUNDLE_FILES.final), '[]');
-    final = JSON.parse(t);
-    if (!Array.isArray(final)) final = [];
-  } catch {
-    final = [];
-  }
-
-  let manifest = {};
-  try {
-    const t = readTextOr(join(dir, BUNDLE_FILES.manifest), '{}');
-    manifest = JSON.parse(t) ?? {};
-  } catch {
-    manifest = {};
-  }
-
+  const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
+  const workers = readJsonOr(join(dir, BUNDLE_FILES.workers), [], Array.isArray);
+  const run = readJsonOr(join(dir, BUNDLE_FILES.run), {}, isObj);
+  const manifest = readJsonOr(join(dir, BUNDLE_FILES.manifest), {}, isObj);
   const gitLog = readTextOr(join(dir, BUNDLE_FILES.gitLog));
 
   // null, not '', when absent: a missing hand-off record must read differently from an empty one.
   const coordinatorOut = readTextOr(join(dir, BUNDLE_FILES.coordinatorOut), null);
 
-  return { dir, name: basename(dir), flow, flowText, timeline, final, manifest, gitLog, coordinatorOut };
+  return { dir, name: basename(dir), flow, flowText, timeline, workers, run, manifest, gitLog, coordinatorOut };
 }

@@ -1,20 +1,15 @@
 # Detached runs — `pir`
 
-`pir {slug}` is the recommended way to run parallel mode. It starts the **coordinator** detached
-from the terminal, so the run outlives the pane, and `pir` on its own opens a full-screen dashboard
-of every run on the machine, from which a run is watched, stopped, or cleared. The deprecated
-`pir-coordinate {slug}` (see [run-lifecycle.md](run-lifecycle.md)) drives the same run in the
-foreground instead — a child of the terminal it was launched from, so closing or restarting that
-terminal — WezTerm, my-agentic-ide — kills the run mid-task.
+`pir {slug}` is how parallel mode is run. It starts the **coordinator** detached from the terminal,
+so the run outlives the pane, and `pir` on its own opens a full-screen dashboard of every run on the
+machine, from which a run is watched, stopped, or cleared, and a worker is read and answered.
 
-`pir-coordinate` is deprecated (user 2026-09-22) but still runs, and remains the only dry-by-default
-rehearsal; `pir` always runs live. Neither touches how a run works — the engine is unchanged:
-`pir {slug}` spawns `coordinate.mjs` exactly as `pir-coordinate` runs it, only detached and with two
-env flags set (below). Everything in [run-lifecycle.md](run-lifecycle.md),
+`pir` does not change how a run works: `pir {slug}` spawns `coordinate.mjs` detached, with two env
+flags set (below). Everything in [run-lifecycle.md](run-lifecycle.md),
 [branch-model.md](branch-model.md), [task-state.md](task-state.md) and
-[restart-recovery.md](restart-recovery.md) describes the run itself and is true whichever front-end
-started it. This page is only the lifecycle `pir` adds around it: detach, index, snapshot, watch,
-stop, remove, keep-awake.
+[restart-recovery.md](restart-recovery.md) describes the run itself. This page is the lifecycle `pir`
+adds around it: detach, index, snapshot, watch, the conversation view, stop, remove, keep-awake. (The
+deprecated foreground launcher `pir-coordinate` was removed in `plans/live-workers` §2.13.)
 
 ## The two invocations
 
@@ -90,8 +85,12 @@ coordinator's environment. Under `PIR_RUN`, and only then, the coordinator repor
   snapshot and the index entry both without a final status, so the front-end classifies the gone
   process crashed, not `finished`.
 
-This whole self-reporting half is gated on `PIR_RUN`. A foreground `pir-coordinate` never sets it,
-writes no snapshot, touches no index entry, and behaves byte-for-byte as it did before this feature.
+This whole self-reporting half is gated on `PIR_RUN`. A coordinator run by hand (`node
+src/shell/coordinate.mjs {slug}`, as the tests and harness do) without it writes no snapshot and
+touches no index entry. Each task in the snapshot's run state also carries the worker its row opens
+(id, whether live, conversation-log path), the ids, roles and log paths of this coordinator's workers
+for the task, and what kind of answer it is asking for (`asking`: a question, a permission, a question
+set) (`buildRunState` in `coordinate.mjs`).
 The snapshot is gitignored with the rest of the control folder (below).
 
 ## The dashboard and the live view
@@ -118,21 +117,58 @@ the branch, with no merge line; a finished run with no snapshot at all points at
 guess (`buildWatchFrame` in `src/shell/pir-tui.mjs`). A crashed run that never wrote a snapshot shows
 its `run.log` tail and the log's full path instead, so a run that failed to start says why.
 
+### The conversation view
+
+The run's live view has a selectable task row (a blue left edge). ↑↓ move it, and → or Enter opens
+that task's worker in a third view, the worker's **conversation** (`src/shell/conversation-view.mjs`,
+drawn with `@earendil-works/pi-tui`; the rules for what each line says are in
+`src/core/conversation.mjs`). A task with no worker yet says so in the footer instead. The view opens
+the task's live worker; with none live, its latest one, read-only, with no typing box.
+
+The view reads the worker's conversation log from the control folder (the last 256 KB, then every
+append; `log-follow.mjs`), so a closed `pir` loses nothing and two open screens agree. By default each
+tool step is one line: the tool name, its main argument and the last line of its result; Tab switches
+to full detail. Messages from pir, from the person and from the worker are marked and coloured
+differently. A pending permission request or question set is highlighted and pinned above the typing
+box (see [human-flow.md](human-flow.md)). Text Claude injects itself (a loaded skill's body, marked
+`isSynthetic`) is not drawn.
+
+Background work gets a dim `↳` line when a command or a Monitor moves to the background and another
+when it ends (`running in the background: …`, `finished in the background: …`, `monitor started`,
+`monitor ended`; a failure or a stop reads as such), from Claude's `task_started` and
+`task_notification` events. While any of it is still running, the line above the box reads
+`◌ N running in the background`, or `● working… · N running in the background` during a turn, so a
+worker waiting on it does not look idle. A Monitor's own events never reach pir (Claude hands them to
+the model only); the person sees the worker's reply to each.
+
+What the person types is sent to the worker as a message, taken into its turn even if it is busy. A
+slash command is sent the same way and its reply comes back as worker text; the box autocompletes the
+worker's own slash commands, minus the four that do not work over the line (`/doctor`, `/color`,
+`/focus`, `/reload-plugins`). Every input is dropped into the control folder's `inbox/` and forwarded
+by the coordinator (see [control-folder.md](control-folder.md)); if the run is not `running`, nothing
+is sent, the view says so, and the typed text stays in the box.
+
 ### Key bindings
 
-The keys, as built (T12), are shown in the footer of each view:
+The keys, as built, are shown in the footer of each view:
 
 | View | Keys |
 |---|---|
-| List | `↑↓` move · `↵` open the selected run · `Ctrl+S` stop · `Ctrl+X` remove · `esc` quit |
-| Watch | `←` back to the list · `Ctrl+S Ctrl+S` stop this run · `esc` quit |
+| List | `↑↓` move · `↵` or `→` open the selected run · `Ctrl+S Ctrl+S` stop · `Ctrl+X Ctrl+X` remove · `esc` quit |
+| Watch | `↑↓` pick a task · `→` or `↵` open its worker · `←` back to the list · `Ctrl+S Ctrl+S` stop this run · `esc` quit |
+| Conversation | typing, `↵` send · `esc` interrupt the worker · `Ctrl+C` clear the box, or interrupt when it is empty · `←` with an empty box back to the live view · `Tab` one line per step ⇄ full detail · `↵`/`n`/`a` answer a pending permission, and `↑↓` `space` `↵` drive a pending question set (one `↵` answers a pick-one question), both only while the box is empty, and typing while a question set is pending goes to its Other line · `PgUp`/`PgDn` scroll |
 
-`←` steps back from a run's live view to the list; `esc` quits `pir` outright from either view.
-Quitting the dashboard stops nothing and loses nothing — every run keeps running — so there is no
-confirm on quit. Stop and remove are the destructive actions, and they are the ones guarded (below).
+`←` steps back one view; `esc` quits `pir` outright from the list and the live view, but in the
+conversation view it interrupts the worker, as in Claude's own screen: the open turn ends at once, and
+the person then types a new instruction. A command the worker had moved to the background keeps
+running. Quitting the dashboard stops nothing and loses nothing — every run keeps running — so there
+is no confirm on quit. Stop and remove are the destructive actions, and they are the ones guarded
+(below). The read-only conversation view takes only `←`, scrolling and `Tab`.
 
 (This replaces an earlier "`esc` steps back one level, then quits" model. `plans/detached-runs/DESIGN.md`
-§2.3, §2.4 and §2.11 still describe that older model; the footers and this table are the built truth.)
+§2.3, §2.4 and §2.11 still describe that older model; the footers and this table are the built truth.
+The whole screen moved onto pi-tui in `plans/live-workers` T11; the list and live view look as they
+did before.)
 
 Two dashboards open at once are both readers of the same files; either can stop or remove a run, and
 the other repaints from the changed state on its next read. The dashboard holds no authority a second
@@ -170,22 +206,25 @@ coordinator closes its in-flight workers, records a `stopped` final status, rele
 exits, leaving the task worktrees in place for the next start to reconcile from git. In-flight work is
 cheap to redo, and a fast, predictable stop is worth more than salvaging a half-built task.
 
-Workers are not children of the coordinator — they are `claude --bg` sessions tracked by name
-([branch-model.md](branch-model.md)) — so stopping cannot be "kill one process": the coordinator,
-which knows its workers, closes them as part of its stop. If it does not exit within a short grace
-period (4 s), the front-end escalates: it force-kills the process (SIGKILL) and closes the run's
-workers itself by the same name-matching the coordinator uses. A wedged coordinator cannot strand a
-run half-stopped with its workers still burning tokens. The grace period is what separates a stop from
-a crash — never force-kill a run without it.
+Workers are children of the coordinator, and a clean stop closes them. But a worker in the middle of
+a command can outlive a coordinator that is force-killed (measured 2026-09-24 and 2026-09-25), so
+stopping cannot rely on the coordinator alone. If it does not exit within a short grace period (4 s),
+the front-end escalates: it force-kills the process (SIGKILL). On every path, once the coordinator is
+gone, `stopRun` then reaps the workers it recorded in the control folder's `workers.json`: each pid
+still alive with its recorded start time is sent SIGTERM, then SIGKILL after 3 s (`reapRecorded` in
+`src/shell/reap.mjs`). A wedged coordinator cannot strand a run half-stopped with its workers still
+burning tokens. The grace period is what separates a stop from a crash — never force-kill a run
+without it.
 
 ## Remove
 
 A finished, stopped or crashed run's record is cleared from the dashboard with remove. A running run
-cannot be removed; it must be stopped first. Remove clears the index entry and the run's status
-snapshot; the plan files under `plans/{slug}/` are untouched — the record is process bookkeeping, not
+cannot be removed; it must be stopped first. Remove clears the index entry, the run's status
+snapshot and its workers' conversation logs (`conversations/`, `removeRun` in `control-run.mjs`); the
+plan files under `plans/{slug}/` are untouched — the record is process bookkeeping, not
 the plan.
 
-Stop and remove are chorded and double-confirmed, matching `claude agents`: `Ctrl+S` twice to stop,
+Stop and remove are chorded and double-confirmed: `Ctrl+S` twice to stop,
 `Ctrl+X` twice to remove. The first press arms a confirmation line; the second identical press within
 the same selection carries it out; any other key cancels the arm. Both are irreversible in the moment
 (stop kills in-flight work, remove drops the record), so both are guarded.
@@ -218,15 +257,22 @@ bookkeeping; the plan and its git branches are untouched, so a removed run is re
 is started again. The one action that changes the world outside the code is stopping a run, and its
 way back is the same resume: `pir {slug}`.
 
-If `pir` itself is unavailable, the by-hand recovery is unchanged from
-[restart-recovery.md](restart-recovery.md): `claude agents --json` for worker pids, `kill`,
-`claude rm`, `git worktree remove --force`, `git branch -D`, and `touch
-plans/{slug}/.parallel/control/HALT` to halt.
+If `pir` itself is unavailable, the by-hand recovery is in [restart-recovery.md](restart-recovery.md):
+worker pids from `plans/{slug}/.parallel/control/workers.json`, `kill`, `git worktree remove --force`,
+`git branch -D`, and `touch plans/{slug}/.parallel/control/HALT` to halt.
 
 ## Install
 
-`pir` is installed the same way as `pir-coordinate`: `./install.sh` copies the engine to
-`~/.claude/pir-engine/` and puts a logic-free `pir` wrapper on the PATH (preferring `~/.local/bin`,
-falling back to `~/.claude/bin` with the exact `export PATH` step printed), baking the installed
-engine path into it. So `pir` runs against whatever repo it is invoked from, driving a detached run in
-the current repo. See `bin/pir` and `install.sh`.
+`./install.sh` copies the engine (`src/`) to `~/.claude/pir-engine/` and puts a logic-free `pir`
+wrapper on the PATH (preferring `~/.local/bin`, falling back to `~/.claude/bin` with the exact `export
+PATH` step printed), baking the installed engine path into it. So `pir` runs against whatever repo it
+is invoked from, driving a detached run in the current repo. See `bin/pir` and `install.sh`.
+
+The engine has two npm packages, `@earendil-works/pi-tui` (the screen) and
+`@anthropic-ai/claude-agent-sdk` (the line to workers), pinned in the committed `package-lock.json`.
+The installer copies `package.json`, the lockfile and `.npmrc` beside the engine and runs `npm ci`
+there with dev, peer and optional packages omitted, so neither the SDK's peers nor its bundled
+`claude` binary is installed: workers run the `claude` already on the PATH. Every install re-fetches
+them, so it needs npm and the network; if `npm ci` fails the installer says so last and exits
+non-zero, because the installed `pir` cannot start without them. It also removes an installed
+`pir-coordinate` launcher it finds.

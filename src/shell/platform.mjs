@@ -1,26 +1,31 @@
-// The platform wrapper's inbox half (DESIGN §3.2 platform.mjs, §2.2). This is the PIR-specific glue
-// over the worker up-channel: the wire format a worker packs its structured report into, the same-repo
-// rail that keeps a coordinator counting only its own workers, and the parse of `claude agents --json`.
-// Spawn / list / close — the live-session half — landed in T08 at the foot of this file. Every part of
-// them short of the process actually starting is unit-tested (argv, json parsing, same-repo filtering);
-// the live spawn / list / close is hand-verified (DESIGN §5.1, spawn-one-scratch.mjs).
+// The platform the coordinator loop injects (plans/live-workers DESIGN §2.1, §2.2, §3.2): the worker
+// report inbox and the live workers themselves. Since live-workers T05 every worker is a stream-json
+// child of this process, started and held by worker-proc.mjs through the Agent SDK; the `claude --bg`
+// sessions, `claude agents --json` listing, `claude stop` and `claude rm` are gone from this file. A
+// worker is live while its process has not exited, and its id is the session uuid pir chose, so the
+// listed id and the spawned id are one and the same.
 //
-// There is no down-channel any more (DESIGN §2.2, T03). The coordinator used to relay a worker's
-// question up to the person and the person's answer back down; the person now talks to a blocked
-// worker directly in its own session, so nothing is routed. Only the UP-channel remains: a worker
-// drops a one-line report into the control folder's `reports/` drop-dir, and the injected transport
-// drains it — no `claude` subcommand can send a cross-session message (that is the `SendMessage`
-// agent tool), and none is needed to read a plain file drop. This module owns the format and the
-// addressing; the transport owns the file-moving (a fake in the dry run, the reports drain in the bin).
+// The line down is back (DESIGN §1 Stance, user 2026-09-24): the rule "the coordinator routes nothing
+// to a worker" is withdrawn. send / interrupt / answer go straight into a worker's input queue or its
+// pending `canUseTool` promise, and every one is recorded in its conversation log. Nothing passes
+// through a model, which is what the old relay's rule guarded against.
+//
+// The UP-channel is unchanged: a worker drops a one-line report into the control folder's `reports/`
+// drop-dir, and the injected transport drains it. This module owns the report format; the transport
+// owns the file-moving (the reports drain in the bin, a fake in the tests).
 //
 // The payload field is `text`, not the `body` the T07 interface sketch named. loop.mjs and the fake
 // platform both carry it as `text` (`m.text`), so inbox() returns `text` to be the drop-in the loop
 // already consumes. The four logical fields — from, kind, task, text — are all present.
 
 import { execFileSync } from 'node:child_process';
-import { realpathSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { randomUUID } from 'node:crypto';
+import { readdirSync } from 'node:fs';
+import { join } from 'node:path';
 import { parseAgentName } from '../core/naming.mjs';
+import { allowResult, workerActivity } from '../core/stream.mjs';
+import { startTimeOf as startTimeOfReal } from './identity.mjs';
+import { startWorker as realStartWorker, writeWorkersFile } from './worker-proc.mjs';
 
 // --- The wire format --------------------------------------------------------------------------
 //
@@ -80,105 +85,26 @@ export function parseMessage({ from = null, text = '' } = {}) {
   return { from, kind: 'message', task: parseAgentName(from).task, text };
 }
 
-// --- Same-repo resolution (DESIGN §2.4) -------------------------------------------------------
-//
-// A coordinator talks only to workers in its own repo, for a tight blast radius. Workers live in
-// linked worktrees, so "same repo" is not a path prefix: it is the shared git dir. Each agent's cwd
-// is resolved with `git -C <cwd> rev-parse --git-common-dir` and compared to the coordinator's own.
-// NOT `--cwd`: T00 found `claude agents --cwd` matches the repo root and returns nothing for a
-// worktree (FINDINGS 2026-09-07), so filtering on it would silently drop every worker. The git
-// runner is injected so a test can both drive a real scratch repo and assert `--cwd` is never used.
-
-function defaultRun(dir, args) {
-  try {
-    const stdout = execFileSync('git', args, { cwd: dir, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] });
-    return { ok: true, stdout };
-  } catch (e) {
-    return { ok: false, stdout: e.stdout ?? '' };
-  }
-}
-
-// The absolute, symlink-resolved common git dir of `dir`, or null if it is not a repo. `--git-common-dir`
-// returns ".git" (relative) for a main worktree and an absolute path for a linked one, so it is
-// resolved against `dir` and realpath'd before comparison — otherwise a repo reached through
-// /tmp (a symlink to /private/tmp on macOS) would not compare equal to itself.
-function commonDir(dir, run) {
-  const r = run(dir, ['rev-parse', '--git-common-dir']);
-  if (!r.ok) return null;
-  const p = resolve(dir, r.stdout.trim());
-  try {
-    return realpathSync(p);
-  } catch {
-    return p;
-  }
-}
-
-// resolveSameRepo(agents, { root, run }) → the agents whose cwd shares this repo's git dir. An agent
-// with no cwd, or one git cannot resolve, is dropped rather than guessed in.
-export function resolveSameRepo(agents, { root = process.cwd(), run = defaultRun } = {}) {
-  const mine = commonDir(root, run);
-  if (!mine) return [];
-  return (agents ?? []).filter((a) => a && a.cwd && commonDir(a.cwd, run) === mine);
-}
-
-// --- claude agents --json ---------------------------------------------------------------------
-
-// parseAgents(json) → [{ id, cwd, status, state, name }]. Accepts the raw JSON text or an
-// already-parsed array. Keeps only the fields the loop needs (id, cwd, status, state) plus name,
-// which naming.mjs parses back into repo/plan/task. Extra fields (pid, sessionId, startedAt) are
-// dropped: they are not part of any decision and carrying them would invite a decision to grow one.
-// pid is kept because `claude stop` only interrupts a session's turn — it does NOT remove it (T08
-// live run 2026-09-09: a stopped session stays listed as `state:working`) — so close terminates the
-// worker by sending its process SIGTERM, and that needs the pid.
-export function parseAgents(json) {
-  const arr = typeof json === 'string' ? JSON.parse(json) : json;
-  if (!Array.isArray(arr)) return [];
-  return arr.map((a) => ({
-    id: a.id ?? null,
-    pid: a.pid ?? null,
-    cwd: a.cwd ?? null,
-    status: a.status ?? null,
-    state: a.state ?? null,
-    name: a.name ?? null,
-  }));
-}
-
 // --- The inbox surface the loop calls ---------------------------------------------------------
 //
 // createMessaging({ transport }) → { inbox }, the up-channel half of the platform object the loop
 // injects (DESIGN §2.2, §3.4). It binds the wire format to a transport that only reads:
 //   transport.drain() → [{ from, text }]     // the worker reports received since the last drain
 // so the file-moving stays outside this module (the reports drop-dir drain in the bin, a fake in the
-// dry run) while the format and addressing stay in it. There is no `send` — the down-channel is gone
-// (DESIGN §2.2, T03); a blocked worker is answered by the person directly, not routed.
+// dry run) while the format and addressing stay in it. The line down to a worker is createPlatform's
+// send, not this module's: a report file is read-only traffic.
 export function createMessaging({ transport } = {}) {
   return {
     // inbox() → the received reports, each parsed from the wire. Drop-in for the loop's
     // platform.inbox() (DESIGN §3.4): same { from, kind, task, text } shape as the fake.
     inbox() {
-      const raw = transport.drain?.() ?? [];
+      const raw = transport?.drain?.() ?? [];
       return raw.map(parseMessage);
     },
   };
 }
 
-// --- The live session half: spawn / list / close (DESIGN §2.1, §2.3, §3.2, T08) ---------------
-//
-// The three operations that actually touch a real `claude` process, built on the T00 spike's
-// confirmed mechanics (FINDINGS 2026-09-07):
-//   - `claude --bg` prints the new session id to stdout and takes the opening turn POSITIONALLY,
-//     not with `-p` (`--bg`+`--print` conflict and exit 1). `-n "<name>"` sets the name verbatim,
-//     which is what `claude agents --json` shows and what messaging addresses by (§2.8).
-//   - `claude agents --json` lists sessions across every repo; same-repo filtering is by shared git
-//     dir, never `--cwd` (resolveSameRepo above).
-//   - `claude stop <id>` ends a session. It does NOT remove the worktree — that is worktree.remove's
-//     job (T06). Keeping close() session-only is deliberate: an implementer is closed as its reviewer
-//     spawns on the SAME worktree, so close must not tear the worktree down (FINDINGS 2026-09-08,
-//     DESIGN §2.3). This is why the T08.md `close → remove the worktree` sketch is not followed.
-//
-// The `claude` runner is injected (runClaude) exactly as the git runner is, so argv construction and
-// json parsing — everything short of the process actually starting — are unit-tested, and the one
-// thing the tests cannot reach (a real agent spawning) is hand-verified (DESIGN §5.1, spawn-one-scratch).
+// --- The live workers: spawn / list / close / send / interrupt / answer (live-workers T05) -------
 
 // Which stock skill the coordinator's opening instruction names, per the phase the loop hands spawn.
 // The loop passes 'implement' | 'review' (loop.mjs); the worker runs exactly that under the
@@ -190,8 +116,8 @@ const SKILL_FOR = { implement: 'pir-implement', review: 'pir-review' };
 // the pir-worker contract (so the fresh session knows it was given its task, never runs pir-work and
 // never self-selects one, §2.1) and names the single phase+task it must carry out. It deliberately
 // does not tell the worker how the run is orchestrated — the worker's world is its one task and the
-// person it asks when stuck (§2.2); "coordinator" is a word the worker never needs. This exact string
-// is what T08's hand-verified run tests: whether a live worker acts on it (DESIGN §5.1). A `note` (the
+// person it asks when stuck (§2.2); "coordinator" is a word the worker never needs. spawn pushes it as
+// the worker's first user message, not an argument (live-workers DESIGN §2.1). A `note` (the
 // setup-failure note, DESIGN §2.4) is appended after one blank line; without one the string is
 // unchanged, so a worker whose setup succeeded reads exactly what it always did.
 export function openingInstruction(phase, task, note = null) {
@@ -206,123 +132,239 @@ export function openingInstruction(phase, task, note = null) {
   return note ? `${base}\n\n${note}` : base;
 }
 
-// argv builders, exported so the tests assert them without a live process (DESIGN §5.1). The name
-// carries the `·` separator from naming.mjs; execFile passes each element as one argument, so the
-// spaces in the name and the instruction never need shell quoting.
-export function spawnArgv({ name, instruction }) {
-  return ['--bg', '-n', name, instruction];
-}
-export function listArgv() {
-  return ['agents', '--json'];
-}
-export function closeArgv(id) {
-  return ['stop', id];
-}
-// `claude rm <id>` clears a session's leftover record from `claude agents` (DESIGN §2.3). It is the
-// cleanup for the `stopped` entry a close leaves behind — `stop`+SIGTERM ends the process but the list
-// record lingers — so the coordinator runs it right after close on every normal finish path (T41).
-export function removeArgv(id) {
-  return ['rm', id];
-}
 
-// The default `claude` runner, mirroring defaultRun (git) above: a value on success or failure, never
-// a throw, so a failed spawn or a `claude` that is absent is something the caller inspects.
-function defaultRunClaude(args, { cwd } = {}) {
+// resolveClaudePath() → the absolute path of the installed `claude`, resolved once at coordinator start
+// (DESIGN §2.1): workers run the Claude the person runs, never the SDK's bundled binary, which is not
+// installed (`omit=optional`). Throws when there is none, so a run fails before its first spawn.
+export function resolveClaudePath({ exec = execFileSync } = {}) {
+  let out = '';
   try {
-    const stdout = execFileSync('claude', args, {
-      cwd,
-      encoding: 'utf8',
-      stdio: ['pipe', 'pipe', 'pipe'],
-    });
-    return { ok: true, stdout, stderr: '' };
-  } catch (e) {
-    return { ok: false, stdout: e.stdout ?? '', stderr: e.stderr ?? String(e) };
+    out = exec('/bin/sh', ['-c', 'command -v claude'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+  } catch {
+    out = '';
   }
+  const path = String(out).trim();
+  if (!path) throw new Error('no `claude` on PATH: workers run the installed Claude Code (DESIGN §2.1)');
+  return path;
 }
 
-// createPlatform({ root, transport, runClaude, sameRepoRun }) → the full platform object the loop
-// injects (DESIGN §3.2, §3.4): spawn / list / close over real `claude`, and inbox over the messaging
-// bound to `transport`. The two runners (claude, git-for-same-repo) are injected so the whole surface
-// is testable and a scratch entry can drive it. In the bin `transport` is backed by the `reports/`
-// drop-dir drain (coordinate.mjs); there is no down-channel to back, because the person answers a
-// blocked worker directly (DESIGN §2.2).
+// nextLogPath(controlDir, task, role, { readdir }) → conversations/{Txx}-{role}-{n}.ndjson (DESIGN §2.3),
+// n one past the highest existing file for that task and role. Counting from the folder, not from memory,
+// is what makes a restarted run continue the count instead of overwriting the last run's conversation.
+export function nextLogPath(controlDir, task, role, { readdir = readdirSync } = {}) {
+  const dir = join(controlDir, 'conversations');
+  const re = new RegExp(`^${task}-${role}-(\\d+)\\.ndjson$`);
+  let names = [];
+  try {
+    names = readdir(dir);
+  } catch {
+    names = [];
+  }
+  let max = 0;
+  for (const n of names) {
+    const m = re.exec(n);
+    if (m) max = Math.max(max, Number(m[1]));
+  }
+  return join(dir, `${task}-${role}-${max + 1}.ndjson`);
+}
+
+// logCounter(logPath) → the `n` of a conversations/{Txx}-{role}-{n}.ndjson path, or null.
+function logCounter(logPath) {
+  const m = /-(\d+)\.ndjson$/.exec(logPath ?? '');
+  return m ? Number(m[1]) : null;
+}
+
+// A worker waiting on the person — a permission request or a question set — is parked, not busy
+// (DESIGN §2.4), exactly as a question report parks it; so is one whose last turn has ended. `starting`
+// (nothing said yet, the opening instruction not yet taken) counts as busy: it has work in hand.
+const NOT_BUSY = new Set(['idle', 'permission', 'questions']);
+
+// createPlatform({ root, controlDir, transport, startWorker, uuid, claudePath, startTimeOf, grants }) → the
+// platform object the loop injects. Every worker is a child of this process, so the platform holds them
+// all and list() is its own memory, current the moment a child exits: no listing lags behind, no id
+// differs between spawn and list. `startWorker` is worker-proc's, injected so the tests run it against
+// the fake `claude`; `startTimeOf` stamps workers.json so a reused pid is never mistaken for a worker
+// (DESIGN §2.12). `grants` is person-inbox's createGrants (T07): every permission request a worker makes
+// is checked against that worker's grants first, and one they cover is allowed by pir at once and logged
+// `delivered-by-grant`, so it never shows as pending. `root` is kept for callers that pass it; nothing
+// here needs the repo any more.
 export function createPlatform({
-  root = process.cwd(),
+  controlDir = null,
   transport,
-  runClaude = defaultRunClaude,
-  sameRepoRun,
-  kill = (pid, signal) => process.kill(pid, signal),
+  startWorker = realStartWorker,
+  uuid = randomUUID,
+  claudePath = null,
+  startTimeOf = startTimeOfReal,
+  grants = null,
 } = {}) {
   const messaging = createMessaging({ transport });
+  const live = new Map(); // id → record, while the child has not exited
+  const gone = new Map(); // id → record, after exit: its log still takes the `undelivered` notes
+  const order = []; // every record, in spawn order: the screen opens a task's finished workers too
+  let claude = claudePath;
+
+  // control/workers.json lists exactly the live children, rewritten on every spawn and exit (DESIGN
+  // §2.12) so a coordinator killed outright leaves the pids its successor must reap (T06).
+  const writeWorkers = () => {
+    if (!controlDir) return;
+    try {
+      writeWorkersFile(controlDir, [...live.values()]);
+    } catch {
+      // A failed write must not throw out of an exit listener or a pass; the next spawn or exit rewrites it.
+    }
+  };
+
+  const recordOf = (id) => live.get(id) ?? gone.get(id) ?? null;
+
+  // A `request` entry is logged before worker-proc parks the request on its promise, both inside the one
+  // synchronous canUseTool call, so the answer waits a microtask for the request to be pending. Nothing
+  // else runs in between, so no list() can see it pending. A question set is never answered by a grant.
+  const answerByGrant = (id, worker, entry) => {
+    if (entry.dir !== 'request' || entry.toolName === 'AskUserQuestion') return;
+    const request = { toolName: entry.toolName, input: entry.input };
+    if (grants.decide(id, request) !== 'allow-by-grant') return;
+    queueMicrotask(() => {
+      if (worker.answer(entry.requestId, allowResult(request), { from: 'pir' })) {
+        worker.note('delivered-by-grant', { requestId: entry.requestId, toolName: entry.toolName });
+      }
+    });
+  };
+
   return {
-    // spawn({ cwd, name, phase, note }) → id. Matches the loop's call and the fake's signature (NOT the
-    // T08.md `spawn(cwd, task, phase)` sketch): the loop builds the name with naming.mjs and passes it
-    // in, and the task is recovered from the name so list() can report it. The opening instruction is
-    // the positional turn; `-n` sets the name. Returns the id `claude --bg` prints.
+    // spawn({ cwd, name, phase, note }) → id. The id is a uuid pir chose and passes as the session id,
+    // so it is the worker's id everywhere (DESIGN §2.1). The opening instruction is the first user message.
     spawn({ cwd, name, phase, note = null }) {
-      const task = parseAgentName(name).task;
-      const instruction = openingInstruction(phase, task, note);
-      const r = runClaude(spawnArgv({ name, instruction }), { cwd });
-      if (!r.ok) throw new Error(`spawn failed for ${name}: ${r.stderr || r.stdout || 'unknown error'}`);
-      const id = (r.stdout ?? '').trim();
-      if (!id) throw new Error(`spawn returned no id for ${name}`);
+      if (!controlDir) throw new Error('spawn: the platform was built without a control folder');
+      const { task } = parseAgentName(name);
+      const text = openingInstruction(phase, task, note);
+      claude ??= resolveClaudePath();
+      const id = uuid();
+      const logPath = nextLogPath(controlDir, task, phase);
+      const worker = startWorker({ cwd, sessionId: id, name, logPath, claudePath: claude });
+      const rec = { id, worker, name, cwd, task, role: phase, logPath, pid: worker.pid, startTime: null };
+      rec.startTime = rec.pid ? startTimeOf(rec.pid) : null;
+      live.set(id, rec);
+      order.push(rec);
+      if (grants) worker.onEvent((entry) => answerByGrant(id, worker, entry));
+      worker.onExit(() => {
+        live.delete(id);
+        gone.set(id, rec);
+        writeWorkers();
+      });
+      writeWorkers();
+      worker.send(text, { from: 'pir' });
       return id;
     },
 
-    // list() → [{ id, name, cwd, status, state, live }], only this repo's sessions. `claude agents
-    // --json` lists every repo's sessions; resolveSameRepo keeps the ones sharing this git dir. A
-    // listed session is live by definition (a crashed worker vanishes from the list — DESIGN §2.5), so
-    // live is always true here; the loop treats absence from the list as death.
+    // list() → every live child with its activity folded from its own log (DESIGN §2.4). A worker that
+    // exited is gone at once, which the loop reads as dead, as it read a vanished session before.
     list() {
-      const r = runClaude(listArgv());
-      if (!r.ok) return [];
-      const agents = parseAgents(r.stdout);
-      return resolveSameRepo(agents, { root, run: sameRepoRun }).map((a) => ({
-        id: a.id,
-        pid: a.pid,
-        name: a.name,
-        cwd: a.cwd,
-        status: a.status,
-        state: a.state,
-        live: true,
-      }));
+      return [...live.values()].map((rec) => {
+        const activity = workerActivity(rec.worker.entries());
+        return {
+          id: rec.id,
+          pid: rec.pid,
+          name: rec.name,
+          cwd: rec.cwd,
+          status: NOT_BUSY.has(activity.state) ? 'idle' : 'busy',
+          state: activity.state,
+          live: true,
+          task: rec.task,
+          role: rec.role,
+          activity,
+        };
+      });
     },
 
-    // close(id) → { ok }. Terminates the session; the worktree and branch are torn down separately by
-    // worktree.remove (T06). Two steps, because `claude stop` alone does NOT remove a session — it only
-    // interrupts the current turn and the session stays alive and listed (T08 live run 2026-09-09,
-    // FINDINGS; both stopped workers stayed `state:working`, which made the loop over-count and never
-    // free a slot). So: `claude stop <id>` to interrupt any in-flight work, then look the session up in
-    // the live list to get its pid and send that process SIGTERM, which is what actually removes it.
-    // Identity is the `id` field (unique per session), the same one list() reports. Safe on an
-    // already-gone id: the stop is a swallowed no-op and the pid lookup simply finds nothing.
-    close(id) {
-      runClaude(closeArgv(id));
-      const listing = runClaude(listArgv());
-      const agent = listing.ok ? parseAgents(listing.stdout).find((a) => a.id === id) : null;
-      if (agent?.pid) {
+    // close(id, { immediate }) → { ok }. Fire-and-forget, because the loop's pass is synchronous (DESIGN
+    // §2.12): end the input queue, then SIGTERM at 5 s and SIGKILL at 10 s on the pid (worker-proc). The
+    // child stays in list() until it has actually exited, which is why the loop still remembers the ids
+    // it closed. `immediate` is teardownRun's: it runs from a signal handler just before process.exit,
+    // so the SIGTERM is sent now, synchronously; the escalation left behind never runs, and a survivor
+    // is reaped from workers.json (T06). Closing an exited or unknown id is a no-op.
+    close(id, { immediate = false } = {}) {
+      const rec = live.get(id);
+      if (!rec) return { ok: true };
+      rec.worker.close(immediate ? { graceMs: 0 } : undefined).catch(() => {});
+      if (immediate && rec.pid) {
         try {
-          kill(agent.pid, 'SIGTERM');
+          process.kill(rec.pid, 'SIGTERM');
         } catch {
-          // the process is already gone — nothing to terminate
+          // already gone
         }
       }
       return { ok: true };
     },
 
-    // remove(id) → { ok }. Clears a FINISHED worker's leftover `stopped` record from `claude agents`
-    // with `claude rm <id>` (DESIGN §2.3, T41). Run right after close on every normal finish path, so a
-    // finished worker leaves the "Claude agents" view instead of piling up; NEVER on `halt-close`, where
-    // a killed worker's record is left for forensics (loop.mjs). Best-effort: removing an id that is
-    // already gone is not an error and a `remove` never throws the loop off course (runClaude swallows a
-    // failed `claude rm` exactly as close's `claude stop` does). Acts on the authoritative list id — the
-    // same `id` close and list use — never the spawn-returned id.
-    remove(id) {
-      if (!id) return { ok: true };
-      runClaude(removeArgv(id));
+    // remove(id) → { ok: true }. A no-op: a child leaves no session record behind to clear (the
+    // `claude rm` of the --bg days). Kept so the loop's finish paths need no platform check.
+    remove() {
       return { ok: true };
     },
 
     inbox: messaging.inbox,
+
+    // send(id, text, { from }) → { ok }. A user message into the worker's input queue, taken into the
+    // open turn if one is running (DESIGN §2.2). A dead worker logs it `undelivered`; an unknown id has
+    // no log to write to.
+    send(id, text, { from = 'pir' } = {}) {
+      const rec = recordOf(id);
+      if (!rec) return { ok: false };
+      return { ok: rec.worker.send(text, { from }) };
+    },
+
+    // interrupt(id, { from }) → { ok }. The SDK's interrupt() (DESIGN §2.8); its acknowledgement arrives
+    // later, so ok means it was sent. A failure after sending is logged `undelivered` by the worker.
+    interrupt(id, { from = 'person' } = {}) {
+      const rec = recordOf(id);
+      if (!rec) return { ok: false };
+      // On an exited worker this only logs `undelivered` (worker-proc checks before it sends).
+      rec.worker.interrupt({ from }).catch(() => {});
+      return { ok: live.has(id) };
+    },
+
+    // answer(id, requestId, result, { from }) → { ok }. Resolves that worker's pending `canUseTool` with a
+    // PermissionResult built by core/stream.mjs; a request no longer pending is logged `undelivered`.
+    answer(id, requestId, result, { from = 'person' } = {}) {
+      const rec = recordOf(id);
+      if (!rec) return { ok: false };
+      return { ok: rec.worker.answer(requestId, result, { from }) };
+    },
+
+    // workers() → every worker this platform spawned, live or exited, in spawn order, each with its
+    // activity folded from its log: { id, task, role, n, logPath, live, activity }. Read-only, unlike the
+    // loop's list(), so the run state can call it for the screen without touching the pass (live-workers
+    // T09). `n` is the log's counter (DESIGN §2.3), so it continues a restarted run's count.
+    workers() {
+      return [...order].map((rec) => ({
+        id: rec.id,
+        task: rec.task,
+        role: rec.role,
+        n: logCounter(rec.logPath),
+        logPath: rec.logPath,
+        live: live.has(rec.id),
+        activity: workerActivity(rec.worker.entries()),
+      }));
+    },
+
+    // pending(id) → the worker's unanswered requests, as core/stream.mjs reads them (`kind` permission or
+    // questions, `requestId`, `toolName`, `input`, `suggestions`, …). An exited or unknown worker has none.
+    pending(id) {
+      return live.get(id)?.worker.pending() ?? [];
+    },
+
+    // note(id, kind, fields) → { ok }. A `note` entry in the worker's log, live or exited (the person
+    // inbox's `undelivered`, T07); an unknown id has no log.
+    note(id, kind, fields = {}) {
+      const rec = recordOf(id);
+      if (!rec) return { ok: false };
+      rec.worker.note(kind, fields);
+      return { ok: true };
+    },
+
+    // logPathOf(id) → the worker's conversation log, live or exited; null for an id never spawned here.
+    logPathOf(id) {
+      return recordOf(id)?.logPath ?? null;
+    },
   };
 }
