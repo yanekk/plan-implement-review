@@ -11,7 +11,7 @@ writes a cell also fixes the over-budget cell they walk past.
 **Plan reviewed:** 2026-09-25 — re-review after the Agent SDK amendment: 21 fixed, 4 decided with the user
 
 **Status:** Planned 2026-09-24. Nothing built.
-**Last updated:** 2026-09-25
+**Last updated:** 2026-09-26
 **Starts after:** `declared-test-command` is merged to main (user 2026-09-24, plan review): done,
 d1f95ac, 2026-09-25. `nudge-quiet-worker` and `resume-dead-worker` wait for this plan.
 **Next `pir-work` will:** T00, the only task with no dependency.
@@ -41,11 +41,11 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T15 | sunset-pir-coordinate | T10 | ✅ | |
 | T16 | harness-conversations | T05, T06 | ✅ | |
 | T17 | docs | T06, T07, T08, T13, T14, T15 | ✅ | |
-| T18 | live-run | T08, T13, T14, T16, T17 | ⬜ | |
+| T18 | live-run | T08, T13, T14, T16, T17 | 🔍 | Demo fixture (4 tasks), harness answerer, `requestAnswered`, `live-drill.mjs`. Harness completed, PASS, before T04's `go` step; the final fixture's rerun was stopped by the user. Hand half ✅ (FINDINGS). Deviations: harness/drill files beyond the doc, to automate; user-decided view changes (Enter keys, inline Other, background lines, skill bodies hidden) touch T13's files. See commits. |
 | T19 | conversation-view-rig | T13 | ✅ | |
 | T20 | conversation-view-feel | T19; blocks T18 | ✅ | |
 
-**Review queue:** empty
+**Review queue:** T18
 
 ## Blocked on the user
 
