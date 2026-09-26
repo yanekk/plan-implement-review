@@ -31,7 +31,7 @@ done · ⛔ blocked, needs a human.
 | T06 | plan-run-planner | T01, T02, T04, T05 | ⬜ | |
 | T07 | plan-run-review | T06 | ⬜ | |
 | T08 | plan-launch | T01, T02, T03, T04 | ✅ | |
-| T09 | pir-commands | T08 | ⬜ | |
+| T09 | pir-commands | T08 | ✅ | |
 | T10 | plan-rig | T05 | ✅ | |
 | T11 | dashboard-type | T02, T07, T08, T10 | ⬜ | |
 | T12 | plan-watch-view | T07, T08, T10, T11 | ⬜ | |
