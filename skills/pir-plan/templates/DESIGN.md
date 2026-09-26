@@ -134,10 +134,15 @@ the default in the command itself — a flag that has to be remembered saves not
 **Dependencies.** What may be added and what may not, decided once rather than one library at
 a time under pressure.
 
+**End to end.** *(Delete if nothing has a surface.)* How each surface is driven (`pir-e2e`): the
+existing tooling found and reused, or the tool the rig task adds (Playwright for web, a
+pseudo-terminal rig for a terminal UI); its command and whether it is in the test block, and why
+not if not; the free backend it runs against; the sizes every surface is checked at.
+
 ### 5.1 What the test command cannot reach
 
 Each row is something only a person can establish. Add to it whenever the build finds
-another.
+another. A screen is never a row: a worker drives it (§ End to end).
 
 | Cannot be tested automatically | Why it needs a person |
 |---|---|
@@ -169,7 +174,7 @@ machine enforces it rather than a session's good intentions.
 |---|---|---|
 | `worker` | The worker, then tells the person in one line | `allow` |
 | `ask` | The worker, after explaining it. The machine's permission prompt is the person's yes | `ask` |
-| `person` | The person. Only for what a person physically must do: a login, a device, a screen to judge | none |
+| `person` | The person. Only for what a person physically must do: a login, a device, a judgement no tool can make | none |
 
 **The hard lines put an action in `ask`**: it cannot be undone, it costs more than the task
 expects, other people can see or receive it, or it changes the infrastructure itself rather than

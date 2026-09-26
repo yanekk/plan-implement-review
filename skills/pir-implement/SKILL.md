@@ -51,7 +51,10 @@ title — projects name it differently. Every entry on it has already cost someb
    made unless it is wrong.
 3. **Implement only what the task specifies.** Not the obvious next thing, not the tidy-up
    next door. See *Scope* below.
-4. **Write the tests the task doc lists**, plus the ones its edge cases imply. A green suite
+4. **Write the tests the task doc lists**, plus the ones its edge cases imply. If the task has
+   an "End to end" section, or builds or changes anything a person sees, load `pir-e2e` and
+   write those tests in the project's existing end-to-end suite (or the plan's rig), driving the
+   real surface through its real input path at the sizes named. A green suite
    that tests nothing is the failure mode here — the whole point of the testability boundary
    is that a full run of behaviour is checkable in milliseconds.
 5. **Leave the test command green.** It is the `test` lines of the block `DESIGN.md` opens
@@ -116,7 +119,8 @@ session logs the missing task as a finding and leaves it.
 This task is yours to finish. Before you hand *anything* to
 the user, you build whatever tool makes the machine decide it — that is the job, not a favour
 you ask the user for. A program that has to be launched, you drive from a script. A surface
-that has to be looked at, you render headless and snapshot, or assert on what it would draw. A
+that has to be looked at, you drive end to end and judge yourself (`pir-e2e`): a real browser
+through Playwright, a real pseudo-terminal through a rig, the project's own tooling first. A
 state that has to be inspected, you seed and read back. A log that would say it worked, you
 scrape. Standing up the environment to do any of this — a server, a fixture, a seeded database
 — is yours too. **"I did not build the tool" is not "the tests cannot establish it."** The bar
@@ -138,7 +142,8 @@ yourself.
   the rule is missing (the prompt did not appear last time, or the settings lack it), ask in
   words and wait for a yes before running. A refusal is an answer: do not retry, record it, and
   ask what they want instead.
-- **`person`** — only a login, a device or a judgement. Hand over that one step and wait.
+- **`person`** — only a login, a device or a judgement no tool can make (never how a screen
+  reads). Hand over that one step and wait.
   **Never hand the user a command to paste that sits in the `worker` or `ask` bin.** Their yes
   is the grant; running it is your job.
 
@@ -148,9 +153,11 @@ missing from `.claude/settings.json`: ask the user, do not work around it.
 
 ## What you genuinely may not claim
 
-Some things no tool reaches: a real screen a person has to *judge* — not render, judge: "does
-this look right" — a login only they hold, a second account, a reboot, a physical device, a
-camera, a run only a person may watch. Those, and only those, are handed over —
+Some things no tool reaches: a login only they hold, a second account, a reboot, a physical
+device, a camera, a real person's reaction, a run only a person may watch. Those, and only those,
+are handed over — never a screen to look at or "does this feel right", which is a drill you run
+yourself (`pir-e2e § 3`); if you lack the rig for it, ask for the task that builds it, never for
+the person to drive. Handed over
 with the exact command and its seatbelt, **the moment you need it, then wait for the answer**,
 rather than left as homework at the end. Mark that half unverified in `PROGRESS.md` and in the
 report. Never run the unbounded dangerous version to find out for yourself. See `CLAUDE.md`

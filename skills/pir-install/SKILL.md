@@ -7,7 +7,7 @@ description: Install the plan-implement-review (PIR) working method into the cur
 
 Set the current repository up to use the plan-implement-review method. Two jobs, in order:
 
-1. **The five working skills must be reachable here.** They are account-scoped — installed
+1. **The six working skills must be reachable here.** They are account-scoped — installed
    once under `~/.claude/skills/` and available in every repository — never copied per
    project, because a per-project copy is a copy that goes stale.
 2. **This repository's `CLAUDE.md` must carry the PIR routine**, so every session opened in
@@ -17,11 +17,11 @@ Do both, report what changed, and stop. This skill writes no plan and no product
 
 ## 1 — Make sure the account-level skills are reachable
 
-The five are `pir-plan`, `pir-review-plan`, `pir-work`, `pir-implement`, `pir-review`, and
+The six are `pir-plan`, `pir-review-plan`, `pir-work`, `pir-implement`, `pir-review`, `pir-e2e`, and
 they belong under `~/.claude/skills/`. Check which are present:
 
 ```sh
-for s in pir-plan pir-review-plan pir-work pir-implement pir-review; do
+for s in pir-plan pir-review-plan pir-work pir-implement pir-review pir-e2e; do
   [ -d "$HOME/.claude/skills/$s" ] && echo "present  $s" || echo "MISSING  $s"
 done
 ```
@@ -37,7 +37,7 @@ they never lag behind the source, then report that they were refreshed:
 **If it is not a PIR checkout**, do not download anything and do not carry a copy — an
 arbitrary repo has no source to install from. Just report the check:
 
-- All five present → say so and move on to `CLAUDE.md`.
+- All six present → say so and move on to `CLAUDE.md`.
 - Any missing → **stop here.** Tell the user how to install them for their account, then stop
   and wait; do not try to work around it:
 

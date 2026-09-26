@@ -65,7 +65,7 @@ lost the fresh-eyes pass on that half.
    already done against it is a decision about history and it is the user's. Offer: a new
    slug for a new plan, or an explicit amendment to the existing one.
 3. **Look at what is already there** — the repo, its README, its build files, its dependency
-   list, its tests, any existing code. A plan that ignores the codebase it lands in is a plan
+   list, its tests (end-to-end tooling included), any existing code. A plan that ignores the codebase it lands in is a plan
    rewritten in week two. This is the orientation pass; the real search happens in *Stage 4*,
    once you know what is being asked for.
 4. Say in one line what you understood the goal to be, and let the user correct it before
@@ -92,13 +92,15 @@ Cover, in roughly this order, stopping to ask whenever the answer is not already
   refused in writing.
 - **What must never happen.** The failure this thing exists to prevent, and any failure it
   must not be able to cause. This is what the seatbelts in Stage 3 are for.
-- **What the user will judge themselves.** Anything whose proof is a person's eyes on a
-  screen, a device or a real person's reaction. It becomes the verification table.
+- **What only the user can reach.** Anything whose proof needs a physical device, a login only
+  they hold, a second account, a camera or a real person's reaction. It becomes the verification
+  table. A screen is not on this list: a worker drives screens and judges them (`pir-e2e`), so
+  "the user will look at it" is never a requirement to write down here.
 - **What it touches outside the code, and who acts on it.** Every cloud account, paid
   service, domain, store listing, device or message somebody else receives. For each action on
   it, settle its bin with the user (*Stage 3*, `DESIGN.md §5.3`): the worker alone, the worker
   after the user's yes, or the user's own hands. The user's hands are for a login, a device or a
-  judgement, never for pasting a command a worker could run.
+  judgement no tool can make, never for pasting a command a worker could run.
 
 **Checkpoint.** Play the requirements back in plain English — a short numbered list, no
 jargon — and get an explicit yes before you prototype or design anything. Say what you are
@@ -194,9 +196,14 @@ Establish and write down:
     machine-readable CI path such as JUnit XML or TAP is left intact.
 - **The dependency policy.** What may be added, and what may not. Decide it now, with the
   user, rather than one library at a time under pressure.
+- **How each surface is driven end to end** (`pir-e2e`). If the thing has a screen, find the
+  project's end-to-end tooling first (`pir-e2e § 1`): the runner, the browser or terminal driver,
+  the fakes, the command, whether it is in the test block. Reuse it. Only if there is none, name
+  the default (Playwright for web, a pseudo-terminal rig for a terminal UI) and the free backend it
+  runs against, and plan the rig as its own task (*Stage 6*). Record it in § Environment.
 - **What the test command cannot reach.** The verification table: each row is a thing only a
-  person can establish, and why. Screens, cameras, logins, second accounts, reboots, real
-  devices, a paid API no §5.3 row lets a worker call, anything with a human in the loop.
+  person can establish, and why. Cameras, logins, second accounts, reboots, real devices, a paid
+  API no §5.3 row lets a worker call, a real person's reaction. Not a screen: a worker drives it.
 - **The seatbelts.** For anything that could take the machine, the screen, the account or
   real money: the bound that makes it safe to run — a time limit, a dry-run flag, a spending
   cap, a scratch account, a fake data directory. **If a dangerous capability has no seatbelt,
@@ -204,7 +211,8 @@ Establish and write down:
   improvised the first time someone needs it.
 - **Who acts on the outside world** (`DESIGN.md §5.3`). One row per action, each in a bin:
   `worker` (runs it, tells the user after), `ask` (explains it, runs it, and the machine's
-  permission prompt is the user's yes), `person` (a login, a device, a screen to judge). An
+  permission prompt is the user's yes), `person` (a login, a device, a judgement no tool can
+  make — never how a screen reads). An
   action that cannot be undone, may cost more than its task expects, is seen or received by other
   people, or changes the infrastructure rather than the code on it goes in `ask`; only the user
   can move one down, at plan review. Default everything else to `worker`: a worker is sent to
@@ -260,6 +268,9 @@ for something already doing it:
 - **Read the tests.** A test asserting behaviour you were about to plan is proof that
   behaviour already exists.
 - **Read the dependency list.** Something already installed may do the whole job.
+- **Read the test tooling.** An end-to-end runner, a browser or terminal driver, a fake backend
+  or a fixture set already in the repo is where this plan's end-to-end tests go (`pir-e2e § 1`).
+  A plan that adds a second one has rebuilt it.
 
 ### Then place each hit
 
@@ -310,8 +321,8 @@ makes no request. The world-touching part is as thin as you can make it.
 
 The reason is testability. Everything on the pure side can be tested exhaustively, in
 milliseconds, in the ordinary test run. Everything on the other side can only be checked by
-a person, and a person is slow and occasionally unavailable. **Every rule that leaks across
-that boundary becomes a rule that can only be verified by hand.**
+a rig driving the real program end to end, which is slower and costlier to build. **Every rule
+that leaks across that boundary becomes a rule that needs a rig to verify.**
 
 Name the boundary in DESIGN.md, say which module is on which side, and — if the language
 allows it — **give it a test**: a check that scans the pure side for forbidden imports. The
@@ -367,27 +378,43 @@ end-to-end task) or the task that consumes it is. Fix it, or write in `PLAN.md` 
 that task is genuinely terminal. "It never lengthens the critical path" is not a reason; it is the
 symptom.
 
-### When a deliverable can only be verified by a person
+### Every surface is driven end to end, by a worker
 
-Some tasks build something whose only real proof is a person's *judgement* — a change on a real
-device, a run against real agents, a surface a person must look at and call right or wrong. This is
-not a separate kind of task and not a separate worker: every task is built by an autonomous worker,
-and one whose real proof is a person's judgement is handled the way the classic flow always handled
-it — the worker builds and prepares up to the point where the only missing thing is the person's
-eyes, then asks (DESIGN §2.5).
+A task that builds or changes something a person sees or moves through (a page, a terminal
+screen, a window) is proven by a worker driving it, never by the person looking at it. Follow
+`pir-e2e`:
 
-Note what does *not* belong to the person: "a program has to be launched" is not a person-only check,
-because a worker launches programs and reads what they print; only the part no tool could ever decide
-is the person's. Reduce the check to a machine one as far as it goes, and plan a person for the
-irreducible remainder alone. So the task doc gives that remainder a **"Needs a person" block** — what
-the person must judge, what to expect, and what only a person can answer — so the worker has something
-concrete to put in front of them. When the check needs an environment stood up, put the bring-up and
-teardown in a **worker-owned "Environment" section** beside it, not in the person's block: standing
-the stack up and tearing it down is the worker's job, and the person only judges the running thing.
+- **Its task doc gets an "End to end" section**: the interactions to drive, the sizes, what each
+  must show, and the suite it adds to. Those tests are part of its "Done when", run through the
+  real input path (a real browser, a real pseudo-terminal), against a free backend.
+- **The rig comes first.** If `Stage 3` found end-to-end tooling that carries this, the tasks
+  extend it and no rig task is planned. If it found none, or it cannot drive this surface, plan
+  one rig task (the runner, the fake backend, the driver, and one test proving it drives the
+  screen) before the first task with a surface, and make those tasks depend on it.
+- **Each phase that builds a surface ends with a drill task** (`{surface}-drill`), depending on
+  every task whose surface it drives: a worker uses the whole flow at every size, judges it against
+  DESIGN and the prototype, fixes what has one right answer with a test each, and brings the person
+  only the choices with two defensible answers. It is a normal task, built and reviewed like any
+  other; anything later that the person will sit through (a paid live run, a launch) depends on it.
+
+### When a deliverable needs a person
+
+Some tasks have a remainder no tool on this machine can reach: a change on a real device, a login
+only the user holds, a second account, a camera, a real person's reaction, a run against real paid
+agents. This is not a separate kind of task and not a separate worker: the worker builds and
+prepares up to the point where the only missing thing is the person, then asks (DESIGN §2.5).
+
+Note what does *not* belong to the person: "a program has to be launched" and "a screen has to be
+looked at" are not person-only checks, because a worker launches programs and drives screens; only
+the part no tool could ever reach is the person's. Reduce the check to a machine one as far as it
+goes, and plan a person for the irreducible remainder alone. So the task doc gives that remainder a
+**"Needs a person" block** — what the person must do or decide, what to expect, and what only a person
+can answer — so the worker has something concrete to put in front of them. When the check needs an
+environment stood up, put the bring-up and teardown in a **worker-owned "Environment" section** beside
+it, not in the person's block: standing the stack up and tearing it down is the worker's job.
 Guaranteed teardown is the seatbelt that lets the worker bring a live environment up at all. When part
-of the check is a machine-decidable test — install a driver, run an end-to-end suite — put that in a
-**worker-owned "Automated checks" section** too: a test the machine can decide is the worker's to run
-and record, and the person is asked only what a machine cannot answer, the subjective look.
+of the check is a machine-decidable test, put that in a **worker-owned "Automated checks" section**
+too: a test the machine can decide is the worker's to run and record.
 
 Do not water a genuine hands-on check down to a checkbox, and do not invent a person-only step for a
 thing a tool could decide. The bar for what a worker may hand to the person, rather than settle
@@ -457,8 +484,10 @@ epigrams gets epigrams back for ever. See `CLAUDE.md § How to write in these fi
 
 Then check the plan against itself before you show it: every dependency points at a task
 that exists and comes earlier; every step of the main path has a wirer; every leaf other than the
-final deliverable is justified; every "Done when" is checkable; every task that can only be
-verified by a person says so in its own doc; every outside action a task runs has a §5.3 row
+final deliverable is justified; every "Done when" is checkable; every task with a surface has an
+"End to end" section, reuses the project's tooling or depends on the rig task, and its phase ends in a
+drill; no "Needs a person" block asks how a screen looks or feels; every task that genuinely needs a
+person says so in its own doc; every outside action a task runs has a §5.3 row
 and is listed in that task's doc; nothing in PLAN.md contradicts DESIGN.md.
 
 **Do not write the permission rules into `.claude/settings.json` yourself.** The bins are a

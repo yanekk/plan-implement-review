@@ -47,9 +47,10 @@ would mean. It is throwaway code and it is deleted afterwards.
 | [T02](tasks/T02-the-surface.md) | the-surface | T01 |
 
 The Task cell is the task's kebab slug, matching its `tasks/T{nn}-{slug}.md` filename (DESIGN §2.9).
-Every task is built by an autonomous worker; a task whose real proof is a person's judgement is not a
-separate kind of task — the worker builds, prepares, and asks the person for that judgement through the
-normal question path (DESIGN §2.5).
+Every task is built by an autonomous worker; a task that needs a person is not a separate kind of task —
+the worker builds, prepares, and asks the person through the normal question path (DESIGN §2.5). A phase
+that builds a surface ends with a `{surface}-drill` task, and a rig task precedes its first surface task
+unless the project's end-to-end tooling already carries it (`pir-e2e`).
 
 *(one section per phase, each with a line saying what is true at the end of it)*
 

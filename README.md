@@ -207,6 +207,7 @@ skills/
 ├── pir-implement/     build one task, hand it over unreviewed
 ├── pir-review/        check someone else's task, fix what it finds, close it
 ├── pir-install/       set up the method in a repo — check skills, amend CLAUDE.md
+├── pir-e2e/           reference: reuse a project's e2e tooling, else Playwright / a pty rig; the drill
 └── pir-worker/        the contract a parallel-mode worker session runs under
 pir-engine/ (installed) src/ copied to ~/.claude/pir-engine/ by install.sh
 ```

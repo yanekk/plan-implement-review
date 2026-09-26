@@ -32,12 +32,13 @@ waits, so the person is the bottleneck for that one decision only. A parked work
 slot under the ceiling, so if several stack up the run correctly throttles down to human speed. The
 worker's side of escalating is in `skills/pir-worker`, `pir-implement`, and `pir-review`.
 
-## A task that needs the person's eyes is an ordinary worker that asks
+## A task that needs the person is an ordinary worker that asks
 
-There is no separate hands-on task type and no `pir-verify` path. When a task's real proof is a
-person's judgement — a spike, a look at a running thing — the worker handles it the way the classic
-flow always did: it builds and prepares up to the point where the only missing thing is the person's
-eyes, then asks a specific question through the same escalation path as any other worker (above) — a
+There is no separate hands-on task type and no `pir-verify` path. A surface is not such a task: the
+worker drives it end to end and runs the drill itself (`skills/pir-e2e`), and the person is never asked
+how a screen looks. When a task's real proof needs the person — a device, a login, a real person's
+reaction — the worker handles it the way the classic flow always did: it builds and prepares up to the
+point where the only missing thing is the person, then asks a specific question through the same escalation path as any other worker (above) — a
 running thing and a list of what to look at, with the exact seatbelted command, not "can you check
 this." The worker records the answer in `FINDINGS.md` on its task branch under its normal contract.
 The bar for "genuinely cannot verify this itself" is written into the `pir-worker` contract, not

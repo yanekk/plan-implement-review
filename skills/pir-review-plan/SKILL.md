@@ -155,6 +155,14 @@ The whole of `plans/{slug}/` has to describe one buildable thing. Check:
     files and stands environments up. If the only thing the person adds is pressing enter, it
     belongs in the worker-owned sections, and leaving it with the person seats the user at a
     keyboard for work the machine should own.
+  - **A screen handed to the person.** A "Needs a person" block, verification row or "Done when"
+    that asks how a surface looks, reads or feels — "does it respond the way you expected from the
+    prototype", "check the layout" — is a drill a worker runs (`pir-e2e`). It becomes an "End to
+    end" section plus the phase's drill task, and if the only environment named is a paid or real
+    run, the missing piece is a free rig. live-workers T13 shipped exactly this block, and its
+    worker handed the check to the user until T19 built the rig and T20 drove it.
+  - **A surface with no end-to-end proof.** A task that builds or changes a surface with no "End to
+    end" section, no rig to run it on, or a phase with a surface and no drill task.
   - **A task that secretly leans on the user.** Read its "Done when" and its steps for any point
     where the worker would have to hand the user a thing to run, configure or set up that the
     task never gave the worker the means to automate. Either the task carries the tool that
@@ -321,6 +329,9 @@ module, the function, the data shape, the endpoint, the file it names — and go
 - **Look in the obvious neighbours.** Whatever this repo calls its utilities; the tests, where
   a test for behaviour the plan proposes to build is proof the behaviour exists; and the
   dependency list, where a library already installed may do the whole task.
+- **Check the end-to-end tooling** against every rig task and "End to end" section (`pir-e2e
+  § 1`): a rig task where the repo already has a runner, a browser or terminal driver or a fake
+  backend is a rebuild, and a task writing its tests outside the existing suite is a second suite.
 
 Sort each hit, because they lead to different answers:
 

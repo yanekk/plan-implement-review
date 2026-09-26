@@ -202,6 +202,10 @@ If a claim can only be established by taking the screen, logging in as somebody 
 rebooting, pointing a camera at something, calling a paid service the plan gave you no bin
 for, or watching a real user, then this session cannot establish it — and must not write it
 down as though it had. Say what you built, say what it has not been shown to do, and hand me the exact command.
+A screen the project itself draws is not on that list: a session drives it end to end, in a real
+browser or a real terminal against a free backend, and judges it itself, and I am never asked how it
+looks or feels. What that drill saw is written down as worker-driven, not as verified by hand
+(the `pir-e2e` skill).
 
 **How to hand it over.** Raise it the moment you need it and **wait for the answer** — see
 [I am your hands on the real machine](#i-am-your-hands-on-the-real-machine); it is not

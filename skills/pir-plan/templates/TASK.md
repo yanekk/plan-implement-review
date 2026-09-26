@@ -54,6 +54,17 @@ three, this is two tasks.
 - [ ]
 - [ ]
 
+## End to end (the worker drives this)
+
+*(Delete if this task builds or changes nothing a person sees or moves through. Otherwise, per
+`pir-e2e`: the suite these tests join — the project's existing end-to-end tooling, or the plan's rig
+task — the sizes, and the interactions to drive through the real input path (a real browser, a real
+pseudo-terminal) against the free backend, each with what it must show. These tests are part of
+"Done when" and of the test command. A surface is never handed to the person to look at.)*
+
+- suite: {existing suite or rig task} · sizes: {e.g. 80×24, 120×40 / 390×844, 1280×800}
+- [ ] {interaction} → {what the screen shows}
+
 ## Environment (the worker owns this)
 
 *(Delete if the check needs no environment stood up. Otherwise: the commands that bring the
@@ -92,19 +103,20 @@ never rounds an ambiguous result up to the person's later judgement of it.)*
 
 ## Needs a person
 
-*(Delete if nothing here needs a person. Otherwise: exactly what the person must **judge** —
-what only a person can look at and decide — never the environment setup or teardown, and never an
-automated test, which are the worker's (above). State what to look at, what to expect, and what to
+*(Delete if nothing here needs a person. Otherwise: exactly what only a person can do or decide —
+a physical device, a login only they hold, a second account, a camera, a real person's reaction, a
+paid live run in its §5.3 bin — never the environment setup or teardown, never an automated test,
+and never how a screen looks or feels, which are the worker's (above, and `pir-e2e`). State what to look at, what to expect, and what to
 report back. The worker records the machine result and the person's judgement separately and never
 inflates an ambiguous reply toward the bigger claim.)*
 
-The worker builds and prepares up to the point where the only missing thing is the person's eyes,
+The worker builds and prepares up to the point where the only missing thing is the person,
 then raises this block through the normal question path — the moment it needs it, waiting for the
 answer, not homework left at the end (DESIGN §2.5). It is a running thing and a list of what to look
 at, with the seatbelted command, not "can you check this."
 
 ```
-{what the person looks at — the judgement, with its seatbelt if it carries one}
+{what the person does or decides, with its seatbelt if it carries one}
 ```
 
 Expect: {what should happen}

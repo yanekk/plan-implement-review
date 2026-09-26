@@ -63,6 +63,12 @@ summary), then check all four:
    returns half an answer. Probe past the doc. **This is where reviews find real defects** —
    the first three checks mostly confirm; the fourth is the one that pays.
 
+**If the task builds or changes a surface**, load `pir-e2e`: check its end-to-end tests drive
+the real surface through the real input path (a test that calls a key handler directly is not one)
+and live in the project's existing suite rather than a second one, then run a short drill of what
+the task changed (`pir-e2e § 3`) at the sizes named, fixing what it finds with a test each. The
+person is never asked to look at it.
+
 Check the deviations the implementing session recorded in `PROGRESS.md` — each one is a
 decision that has not been reviewed yet. And check for deviations it did *not* record.
 
@@ -107,8 +113,9 @@ tool. Drive the program from a script, render the surface headless and diff the 
 assert on what it would draw, reproduce the input, read the state off disk. This is the
 print-vision trap: a reviewer who sees "look at the popover" and hands it straight to the user
 has skipped the step where a scripted render settles it with no person at all. Only when no
-tool you could write would settle it — a real screen to be *judged*, a device, a login only
-the user holds, a run only a person may watch — is it the hands-on-the-machine handover: ask, and
+tool you could write would settle it — a device, a login only the user holds, a camera, a run
+only a person may watch — is it the hands-on-the-machine handover. A screen is never on that list:
+you drive it and judge it (`pir-e2e`): ask, and
 wait, with the seatbelt. See `CLAUDE.md`. **"I did not build the reproduction" is not "only a
 person can see it."**
 
@@ -168,8 +175,8 @@ the strength of the tests alone. Say which half is which — in `PROGRESS.md` an
 — and give the user the exact command with its seatbelt. Never run the unbounded dangerous
 version to find out for yourself.
 
-A hands-on half is one no tool you could write would have closed — a real screen to be judged,
-a device, a login only the user holds, an unwatchable run. A live action in the `worker` or
+A hands-on half is one no tool you could write would have closed — a device, a login only the
+user holds, a camera, an unwatchable run. How a screen looks or feels is not one: that is a drill. A live action in the `worker` or
 `ask` bin is not one: you run it (above). A check you left to the user because you
 did not build the harness is not an unverified half; it is an unfinished review. Reduce it to
 a machine check first (above), and hand over only what stays genuinely person-only.

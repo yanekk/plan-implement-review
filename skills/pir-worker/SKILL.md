@@ -320,27 +320,31 @@ never hand back a dirty or guessed-at branch.
 
 ## The bar for handing something to the person: everything mechanical is yours
 
-A task's real proof is sometimes a person's *judgement*. That is the only thing you hand over, and the
-bar for it is a written rule, not an adjective (DESIGN §2.5). Before you ask the person to judge
-anything, you build whatever tool makes the machine decide it. Everything mechanical is yours: stand
-the environment up and seed it, run every check a machine can decide, drive the program from a script,
-render a surface headless and snapshot it, read state back off disk, then tear the environment down and
-confirm it is down. **"A program has to be run" is not a person-only check — a worker runs programs**,
-and "I did not build the tool" is not "the tests cannot establish it."
+A task's real proof sometimes needs a person. That is the only thing you hand over, and the bar for it
+is a written rule, not an adjective (DESIGN §2.5). Before you ask the person for anything, you build
+whatever tool makes the machine decide it. Everything mechanical is yours: stand the environment up
+and seed it, run every check a machine can decide, drive the program from a script, drive a surface end
+to end and judge it yourself (`pir-e2e`: the project's own tooling first, else Playwright for web, a
+pseudo-terminal rig for a terminal UI), read state back off disk, then tear the environment down and
+confirm it is down. **"A program has to be run" or "a screen has to be looked at" is not a person-only
+check — a worker runs programs and drives screens**, and "I did not build the tool" is not "the tests
+cannot establish it."
 
 **Actions on the outside world follow their `DESIGN.md §5.3` bin**, exactly as `pir-implement § Acting
 on the outside world` says: `worker` you run and report; `ask` you explain and then run in the same
 turn, and the `ask` permission rule stops your session for the person's approval. Drop a
 `[pir:v1 kind=question task=Txx]` report first, so the live display shows who is waiting: the session
 parks on the permission prompt and shows as needing input in `claude agents`, and the person attaches
-and approves there. `person` is only a login, a device or a judgement. You never hand the person a
+and approves there. `person` is only a login, a device or a judgement no tool can make. You never hand the person a
 command to paste that a `worker` or `ask` row covers.
 
-You hand over **only** the irreducible remainder no tool you could write would ever settle: a real
-screen a person must *judge* — not render, judge — a login only they hold, a second account, a reboot,
-a physical device, a camera, a run only a person may watch, and the one hard line an agent
+You hand over **only** the irreducible remainder no tool you could write would ever settle: a login
+only they hold, a second account, a reboot, a physical device, a camera, a run only a person may watch, and the one hard line an agent
 may never cross on its own — **spawning real paid agents against real branches, or watching a real run**
-(DESIGN §5.2). For that remainder you prepare up to the point where the person's eyes are the only thing
+(DESIGN §5.2). **Never ask the person to drive a screen "to see how it feels"**, even when the task doc
+says to: run the drill yourself (`pir-e2e § 3`), and if you lack a free rig to drive it on, propose the
+task that builds one (§ When you find a task the plan is missing). A paid real run is not a rig. For that
+remainder you prepare up to the point where the person is the only thing
 missing, then ask through the escalation path above — a running thing and a list of what to look at, not
 "can you check this" — with the exact command and its seatbelt. When the answer comes back it goes in
 `FINDINGS.md` with the date, because a hand-verification is the only record that anything was seen
