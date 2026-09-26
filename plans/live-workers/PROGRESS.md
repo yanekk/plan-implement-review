@@ -14,7 +14,7 @@ writes a cell also fixes the over-budget cell they walk past.
 **Last updated:** 2026-09-25
 **Starts after:** `declared-test-command` is merged to main (user 2026-09-24, plan review): done,
 d1f95ac, 2026-09-25. `nudge-quiet-worker` and `resume-dead-worker` wait for this plan.
-**Next `pir-work` will:** T00, the only task with no dependency.
+**Next `pir-work` will:** review T20.
 
 ## Tasks
 
@@ -43,9 +43,9 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T17 | docs | T06, T07, T08, T13, T14, T15 | ✅ | |
 | T18 | live-run | T08, T13, T14, T16, T17 | ⬜ | |
 | T19 | conversation-view-rig | T13 | ✅ | |
-| T20 | conversation-view-feel | T19; blocks T18 | ⬜ | |
+| T20 | conversation-view-feel | T19; blocks T18 | 🔍 | Drove every item at 80×24 and 120×40, screens in the job scratch folder. Fixed PgUp/PgDn swallowed by pi-tui, scroll jump under a new prompt, 80-column hint (user wording). y/n/a quirk kept (user). 3 tests. |
 
-**Review queue:** empty
+**Review queue:** T20
 
 ## Blocked on the user
 
