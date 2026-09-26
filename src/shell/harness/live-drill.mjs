@@ -198,7 +198,9 @@ async function main(argv) {
           shot(`key ${JSON.stringify(step.keys)}`, await screen.waitFor(step.until ?? null, 15000));
         }
       } else if (action.id === 'watch-background') {
-        shot('T04 while its background work runs', screen.text().split('\n'));
+        // The worker is between turns with its commands and monitor still going: the view must say so
+        // (user 2026-09-26), not look idle.
+        shot('T04 while its background work runs', await screen.waitFor(/◌ \d running in the background/, 15000));
       }
       await back();
     }
