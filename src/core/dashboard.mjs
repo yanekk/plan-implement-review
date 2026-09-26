@@ -16,10 +16,72 @@
 // A run can be stopped only while running, and removed only while NOT running (DESIGN §2.6, §2.7): a
 // running run must be stopped before its record can be cleared. These two predicates are the whole of
 // "which chord is live on which run", and they are what the tests pin.
+// Resume (plans/pir-plan-command §2.14) is the third chord, Ctrl+R twice, and its eligibility needs the
+// whole view (a plan row's outcome), not the state alone, so every predicate takes the view.
 const CHORD = {
-  ctrlS: { action: 'stop', eligible: (state) => state === 'running' },
-  ctrlX: { action: 'remove', eligible: (state) => state !== 'running' },
+  ctrlS: { action: 'stop', eligible: (view) => view.state === 'running' },
+  ctrlX: { action: 'remove', eligible: (view) => view.state !== 'running' },
+  ctrlR: { action: 'resume', eligible: (view) => canResume(view) },
 };
+
+// --- Planning runs beside builds (plans/pir-plan-command §2.10, §2.14) ----------------------------------
+
+// isPlan(view) → whether a view is a planning run. The index record's `kind` decides (absent reads `work`,
+// T02); a view with no record but a plan snapshot counts too, so a caller holding only the snapshot agrees.
+function isPlan(view) {
+  const kind = view?.record?.kind;
+  if (kind) return kind === 'plan';
+  return view?.snap?.runState?.kind === 'plan';
+}
+
+// The planning run's snapshot state, or null before its program wrote one.
+function planState(view) {
+  const rs = view?.snap?.runState;
+  return rs && rs.kind === 'plan' ? rs : null;
+}
+
+// runDisplayState(view) → the STATE a row shows (§2.10).
+//   view = { state (classifyRun's), record ({ kind, go }), snap ({ runState: { kind:'plan', step, outcome } }) }
+// A build shows its classification unchanged. A planning run shows `planning` or `reviewing` while it runs
+// (by the snapshot's step: the rename between the two already has the planner done, so it reads
+// `reviewing`), `your-go` once finished `reviewed` with no go recorded (§2.8), `finished` for any other
+// finished outcome or a declined go, and `stopped`/`crashed` as classified. Any other classification (an
+// unreachable entry) passes through as it came.
+export function runDisplayState(view) {
+  const state = view?.state;
+  if (!isPlan(view)) return state;
+  const rs = planState(view);
+  if (state === 'running') return rs && (rs.step === 'rename' || rs.step === 'review' || rs.step === 'done') ? 'reviewing' : 'planning';
+  if (state === 'finished') return rs?.outcome === 'reviewed' && (view.record?.go ?? null) === null ? 'your-go' : 'finished';
+  return state;
+}
+
+// planProgress(runState) → a planning run's PROGRESS cell (§2.10): the steps it has been through. The
+// outcome decides a finished run; otherwise the step does. No snapshot yet reads as the planner at work.
+export function planProgress(runState) {
+  const outcome = runState?.outcome ?? null;
+  if (outcome === 'no-plan') return 'plan ✗';
+  if (outcome === 'not-reviewed') return 'plan ✓ review ✗';
+  if (outcome === 'reviewed') return 'plan ✓ review ✓';
+  const step = runState?.step ?? 'plan';
+  return step === 'plan' ? 'plan …' : 'plan ✓ review …';
+}
+
+// canResume(view) → whether Ctrl+R Ctrl+R is offered on a row (§2.14): a stopped or crashed run of either
+// type, and a finished planning run whose review ended not-reviewed (the person stopped to think).
+export function canResume(view) {
+  if (!view) return false;
+  if (view.state === 'stopped' || view.state === 'crashed') return true;
+  return view.state === 'finished' && isPlan(view) && planState(view)?.outcome === 'not-reviewed';
+}
+
+// displayName(view) → how a row names its run: the planning run's label in quotes while it has no slug
+// (the index clears `label` at the rename, §2.6), else the slug. The armed resume line uses it too, so a
+// person confirming a resume sees the name the row shows.
+export function displayName(view) {
+  const label = isPlan(view) ? view?.record?.label : null;
+  return label ? `"${label}"` : view?.slug ?? '';
+}
 
 // buildDashboard(views) → { rows, counts } (DESIGN §2.3).
 //
@@ -30,15 +92,32 @@ const CHORD = {
 //   rows   — the same views, in input order. The front-end paints them; order is the caller's, not ours.
 //   counts — { running, finished, crashed, stopped, total }. `total` is every view; the four named are
 //            tallies of the matching state, so the counts line can colour running green and crashed red.
+//
+// Each row gains `display` (runDisplayState) and the tallies count by it: `planning`/`reviewing` are
+// running, and a `your-go` row is counted in `waiting` rather than `finished`, as the prototype's counts
+// line reads (pir-plan-command §2.10).
 export function buildDashboard(views = []) {
-  const counts = { running: 0, finished: 0, crashed: 0, stopped: 0, total: views.length };
-  for (const v of views) {
-    // Only the four named states have a tally; an unknown state contributes to `total` alone.
-    if (Object.prototype.hasOwnProperty.call(counts, v.state) && v.state !== 'total') counts[v.state] += 1;
+  const counts = { running: 0, finished: 0, crashed: 0, stopped: 0, waiting: 0, total: views.length };
+  const rows = views.map((v) => ({ ...v, display: runDisplayState(v) }));
+  for (const v of rows) {
+    const tally = TALLY[v.display];
+    // Only the named states have a tally; an unknown state contributes to `total` alone.
+    if (tally) counts[tally] += 1;
   }
-  // Rows preserve input order (a shallow copy so a caller mutating the array later cannot reorder ours).
-  return { rows: [...views], counts };
+  // Rows preserve input order.
+  return { rows, counts };
 }
+
+// Which tally each display state counts in.
+const TALLY = {
+  running: 'running',
+  planning: 'running',
+  reviewing: 'running',
+  finished: 'finished',
+  crashed: 'crashed',
+  stopped: 'stopped',
+  'your-go': 'waiting',
+};
 
 // runKey(view) → the identity of one run. A slug alone is not unique: the same plan slug can run in two
 // repos (the index keeps them apart as `{repo}__{slug}`, §2.8), and keying on the slug made the second of
@@ -83,7 +162,7 @@ export function noWorkerNote(task, tasks = []) {
 // dashboardReducer(ui, event, views) → { ui, intent } (DESIGN §2.3, §2.6, §2.7).
 //
 //   ui    = { view:'list'|'watch'|'worker', sel, openSlug, openKey, taskSel, openWorker, note, armed }
-//           armed: null | { action:'stop'|'remove', slug, key }
+//           armed: null | { action:'stop'|'remove'|'resume', slug, key }
 //           openWorker: null | { taskId, workerId, logPath, live }
 //   event = { type, ... }:
 //     {type:'down'} {type:'up'}     move selection, clamped to the list ends; in watch, the task row
@@ -93,6 +172,8 @@ export function noWorkerNote(task, tasks = []) {
 //     {type:'back'}                 worker → watch (taskSel kept); watch → list; list → intent quit
 //     {type:'ctrlS'}                arm/confirm stop on the selected (list) or open (watch) run
 //     {type:'ctrlX'}                arm/confirm remove on the selected run
+//     {type:'ctrlR'}                arm/confirm resume on the selected run (pir-plan-command §2.14);
+//                                   {type:'key', key:'ctrl+r'} is the same event
 //   In 'worker' only `back` acts: the conversation view's keys are T13's, so the rest are inert here.
 //   views — the current resolved views (the output of buildDashboard's `rows`, or anything carrying
 //           {slug, state} per row). Passed rather than held so the reducer stays a pure function of its
@@ -100,7 +181,7 @@ export function noWorkerNote(task, tasks = []) {
 //           selected/open row to read the target run's slug and state. This third argument is the one
 //           addition to the interface sketch, which the task's own rule ("it takes the current views")
 //           calls for.
-//   intent = null | {type:'quit'} | {type:'stop', slug, key} | {type:'remove', slug, key}
+//   intent = null | {type:'quit'} | {type:'stop', slug, key} | {type:'remove', slug, key} | {type:'resume', slug, key}
 //           key is runKey of the target run; the caller resolves the run by it, never by slug alone.
 //
 // The one invariant across every branch: any event other than the second half of a chord clears `armed`
@@ -108,6 +189,7 @@ export function noWorkerNote(task, tasks = []) {
 // which is why an intervening `down` between two Ctrl+S presses re-arms from scratch rather than firing.
 export function dashboardReducer(ui, event, views = []) {
   const len = views.length;
+  if (event?.type === 'key' && event.key === 'ctrl+r') event = { type: 'ctrlR' };
   // `note` is one-shot like `armed`: whatever the next event is, it clears.
   ui = { ...ui, note: null };
   if (ui.view === 'worker') {
@@ -149,6 +231,7 @@ export function dashboardReducer(ui, event, views = []) {
       return { ui: { ...ui, armed: null }, intent: { type: 'quit' } };
     case 'ctrlS':
     case 'ctrlX':
+    case 'ctrlR':
       return chord(event.type, ui, views);
     default:
       // An unrecognised event is inert but still cancels a pending confirm (the invariant above): a key
@@ -166,12 +249,15 @@ function clamp(i, len) {
   return Math.max(0, Math.min(i, len - 1));
 }
 
-// A Ctrl+S / Ctrl+X press. Resolve the run it acts on, check the chord is live on that run's state, then
+// A Ctrl+S / Ctrl+X / Ctrl+R press. Resolve the run it acts on, check the chord is live on that run's state, then
 // either arm (first press), fire the intent (second identical press) or cancel (ineligible run).
 function chord(type, ui, views) {
   const { action, eligible } = CHORD[type];
+  // Resume is offered on the list's selected row only (§2.14). In the live view `sel` can point at a row
+  // other than the open run (a view opened by `pir start {slug}` starts at row 0), so it is inert there.
+  if (action === 'resume' && ui.view !== 'list') return { ui: { ...ui, armed: null }, intent: null };
   // Stop targets the OPEN run while watching (DESIGN §2.6 — you can stop a run from inside its live view),
-  // otherwise the selected row. Remove is a list action and always targets the selected row.
+  // otherwise the selected row. Remove and resume are list actions and always target the selected row.
   const target =
     action === 'stop' && ui.view === 'watch'
       ? findOpen(views, ui)
@@ -179,7 +265,7 @@ function chord(type, ui, views) {
 
   // Ineligible — no such run, or the chord does not apply to its state (Ctrl+S on a non-running run,
   // Ctrl+X on a running one): no arm, no intent, and any pending confirm is cleared (DESIGN §2.6, §2.7).
-  if (!target || !eligible(target.state)) {
+  if (!target || !eligible(target)) {
     return { ui: { ...ui, armed: null }, intent: null };
   }
 

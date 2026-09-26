@@ -33,7 +33,7 @@ done · ⛔ blocked, needs a human.
 | T08 | plan-launch | T01, T02, T03, T04 | ✅ | |
 | T09 | pir-commands | T08 | ✅ | |
 | T10 | plan-rig | T05 | ✅ | |
-| T11 | dashboard-type | T02, T07, T08, T10 | ⬜ | |
+| T11 | dashboard-type | T02, T07, T08, T10 | 🔍 | TYPE, plan states, `your go`, waiting count, Ctrl+R resume; 22 tests, 2 rig e2e. Deviations: reducer takes `ctrlR` (doc's `key` form accepted), returns intent `resume` not `effect`; resume list-only; pir-view.mjs gains 3 colours; REPO width follows terminal (14 at 80); run actions serialized, a stop's reap killed a resumed session. |
 | T12 | plan-watch-view | T07, T08, T10, T11 | ⬜ | |
 | T13 | brief-box | T09, T12 | ⬜ | |
 | T14 | plan-screen-drill | T11, T12, T13 | ⬜ | |
@@ -42,7 +42,7 @@ done · ⛔ blocked, needs a human.
 | T17 | harness-plan-fixture | T07, T08, T15 | ⬜ | |
 | T18 | live-plan-run | T14, T16, T17 | ⬜ | |
 
-**Review queue:** *(empty)*
+**Review queue:** T11
 
 ## Blocked on the user
 

@@ -5,7 +5,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildDashboard, dashboardReducer, initialUi, noWorkerNote } from './dashboard.mjs';
+import { buildDashboard, canResume, runKey, dashboardReducer, displayName, initialUi, noWorkerNote, planProgress, runDisplayState } from './dashboard.mjs';
 
 // One resolved run view in the shape the shell hands the model (state already from classifyRun, T01).
 const view = (over) => ({
@@ -39,23 +39,23 @@ test('buildDashboard counts each state and preserves row order', () => {
   const { rows, counts } = buildDashboard(views);
 
   assert.deepEqual(rows.map((r) => r.slug), ['a', 'b', 'c', 'd', 'e']); // input order preserved
-  assert.deepEqual(counts, { running: 2, finished: 1, crashed: 1, stopped: 1, total: 5 });
+  assert.deepEqual(counts, { running: 2, finished: 1, crashed: 1, stopped: 1, waiting: 0, total: 5 });
 });
 
 test('buildDashboard on no runs gives all-zero counts and an empty list', () => {
   assert.deepEqual(buildDashboard([]), {
     rows: [],
-    counts: { running: 0, finished: 0, crashed: 0, stopped: 0, total: 0 },
+    counts: { running: 0, finished: 0, crashed: 0, stopped: 0, waiting: 0, total: 0 },
   });
   // Called with nothing at all behaves the same (a fresh machine, §2.3's empty dashboard).
-  assert.deepEqual(buildDashboard().counts, { running: 0, finished: 0, crashed: 0, stopped: 0, total: 0 });
+  assert.deepEqual(buildDashboard().counts, { running: 0, finished: 0, crashed: 0, stopped: 0, waiting: 0, total: 0 });
 });
 
 test('buildDashboard counts an unknown state in total only, never as one of the four', () => {
   // A stale index entry can classify as unreachable (§2.8); it is still a run in the total but is not
   // one of the four coloured tallies, so it must not land in any of them.
   const { counts } = buildDashboard([view({ state: 'unreachable' }), view({ state: 'running' })]);
-  assert.deepEqual(counts, { running: 1, finished: 0, crashed: 0, stopped: 0, total: 2 });
+  assert.deepEqual(counts, { running: 1, finished: 0, crashed: 0, stopped: 0, waiting: 0, total: 2 });
 });
 
 test('buildDashboard rows are a copy: mutating the returned list does not reorder the input', () => {
@@ -364,4 +364,159 @@ test('Ctrl+S in watch still arms and fires stop for the open run with a task sel
   assert.deepEqual(first.ui.armed, { action: 'stop', slug: 'plan', key: 'r1__plan' });
   const second = dashboardReducer(first.ui, { type: 'ctrlS' }, TASKED);
   assert.deepEqual(second.intent, { type: 'stop', slug: 'plan', key: 'r1__plan' });
+});
+
+// --- planning runs beside builds (pir-plan-command T11, DESIGN §2.10, §2.14) -----------------------
+
+const STATES = ['running', 'finished', 'stopped', 'crashed'];
+const STEPS = ['plan', 'rename', 'review', 'done'];
+const OUTCOMES = [null, 'no-plan', 'reviewed', 'not-reviewed'];
+const planView = ({ state = 'running', step = 'plan', outcome = null, go = null, label = null, snap = true, slug = 'plan-ab12' } = {}) => ({
+  key: `repo__${slug}`,
+  slug,
+  state,
+  repo: 'repo',
+  progress: { done: 0, total: 0 },
+  workers: 0,
+  record: { kind: 'plan', label, go, repo: 'repo', slug },
+  snap: snap ? { runState: { kind: 'plan', label, slug: null, step, outcome, steps: [] } } : null,
+});
+
+test('runDisplayState: a build (kind work, or no kind at all) shows its classification unchanged', () => {
+  for (const state of [...STATES, 'unreachable']) {
+    assert.equal(runDisplayState(view({ state })), state, `no record: ${state}`);
+    assert.equal(runDisplayState(view({ state, record: { kind: 'work', go: null } })), state, `kind work: ${state}`);
+    assert.equal(runDisplayState(view({ state, record: { kind: 'work', go: 'declined' } })), state);
+  }
+});
+
+test('runDisplayState: every plan combination of classification, step, outcome and go', () => {
+  for (const state of STATES) {
+    for (const step of STEPS) {
+      for (const outcome of OUTCOMES) {
+        for (const go of [null, 'declined']) {
+          let want;
+          if (state === 'running') want = step === 'plan' ? 'planning' : 'reviewing';
+          else if (state === 'finished') want = outcome === 'reviewed' && go === null ? 'your-go' : 'finished';
+          else want = state;
+          assert.equal(runDisplayState(planView({ state, step, outcome, go })), want, `${state} ${step} ${outcome} ${go}`);
+        }
+      }
+    }
+  }
+});
+
+test('runDisplayState: a plan with no snapshot yet is planning while running, finished once finished', () => {
+  assert.equal(runDisplayState(planView({ snap: false })), 'planning');
+  assert.equal(runDisplayState(planView({ state: 'finished', snap: false })), 'finished');
+  assert.equal(runDisplayState(planView({ state: 'crashed', snap: false })), 'crashed');
+  // A view with no record but a plan snapshot is a plan too.
+  const { record, ...bare } = planView({ step: 'review' });
+  void record;
+  assert.equal(runDisplayState(bare), 'reviewing');
+});
+
+test('planProgress: each step and each outcome', () => {
+  assert.equal(planProgress(null), 'plan …');
+  assert.equal(planProgress({ step: 'plan', outcome: null }), 'plan …');
+  assert.equal(planProgress({ step: 'rename', outcome: null }), 'plan ✓ review …');
+  assert.equal(planProgress({ step: 'review', outcome: null }), 'plan ✓ review …');
+  assert.equal(planProgress({ step: 'done', outcome: 'reviewed' }), 'plan ✓ review ✓');
+  assert.equal(planProgress({ step: 'done', outcome: 'no-plan' }), 'plan ✗');
+  assert.equal(planProgress({ step: 'plan', outcome: 'no-plan' }), 'plan ✗');
+  assert.equal(planProgress({ step: 'done', outcome: 'not-reviewed' }), 'plan ✓ review ✗');
+  assert.equal(planProgress({ step: 'review', outcome: 'not-reviewed' }), 'plan ✓ review ✗');
+});
+
+test('canResume: stopped or crashed of either type, and a finished plan that ended not-reviewed, nothing else', () => {
+  for (const state of STATES) {
+    const want = state === 'stopped' || state === 'crashed';
+    assert.equal(canResume(view({ state })), want, `work ${state}`);
+    for (const outcome of OUTCOMES) {
+      const plan = want || (state === 'finished' && outcome === 'not-reviewed');
+      assert.equal(canResume(planView({ state, step: 'done', outcome })), plan, `plan ${state} ${outcome}`);
+    }
+  }
+  assert.equal(canResume(view({ state: 'unreachable' })), false);
+  assert.equal(canResume(undefined), false);
+});
+
+test('displayName: a plan row before the rename shows its label in quotes, else the slug', () => {
+  assert.equal(displayName(planView({ label: 'Add dark mode to the bl…' })), '"Add dark mode to the bl…"');
+  assert.equal(displayName(planView({ label: null, slug: 'dark-mode' })), 'dark-mode');
+  assert.equal(displayName(view({ slug: 'a-build', record: { kind: 'work', label: 'stray' } })), 'a-build');
+});
+
+test('buildDashboard: plan rows count planning/reviewing as running, your go as waiting, and carry `display`', () => {
+  const { rows, counts } = buildDashboard([
+    planView({ slug: 'a', state: 'finished', step: 'done', outcome: 'reviewed' }),
+    planView({ slug: 'b', state: 'running', step: 'plan' }),
+    view({ slug: 'c', state: 'running' }),
+    planView({ slug: 'd', state: 'crashed', step: 'review' }),
+    planView({ slug: 'e', state: 'finished', step: 'done', outcome: 'reviewed', go: 'declined' }),
+  ]);
+  assert.deepEqual(rows.map((r) => r.display), ['your-go', 'planning', 'running', 'crashed', 'finished']);
+  assert.deepEqual(counts, { running: 2, finished: 1, crashed: 1, stopped: 0, waiting: 1, total: 5 });
+});
+
+const RESUMABLE = [
+  view({ slug: 'w-running', state: 'running' }),
+  view({ slug: 'w-stopped', state: 'stopped' }),
+  planView({ slug: 'p-crashed', state: 'crashed' }),
+  planView({ slug: 'p-not-reviewed', state: 'finished', step: 'done', outcome: 'not-reviewed' }),
+  planView({ slug: 'p-your-go', state: 'finished', step: 'done', outcome: 'reviewed' }),
+  view({ slug: 'w-finished', state: 'finished' }),
+];
+
+test('Ctrl+R arms on a resumable row and a second Ctrl+R on the same row fires {type:resume}', () => {
+  for (const sel of [1, 2, 3]) {
+    const target = RESUMABLE[sel];
+    const first = dashboardReducer({ ...initialUi(), sel }, { type: 'ctrlR' }, RESUMABLE);
+    assert.deepEqual(first.ui.armed, { action: 'resume', slug: target.slug, key: runKey(target) });
+    assert.equal(first.intent, null);
+    const second = dashboardReducer(first.ui, { type: 'ctrlR' }, RESUMABLE);
+    assert.deepEqual(second.intent, { type: 'resume', slug: target.slug, key: runKey(target) });
+    assert.equal(second.ui.armed, null);
+  }
+});
+
+test("the task doc's {type:'key', key:'ctrl+r'} form is the same event", () => {
+  const first = dashboardReducer({ ...initialUi(), sel: 1 }, { type: 'key', key: 'ctrl+r' }, RESUMABLE);
+  assert.equal(first.ui.armed.action, 'resume');
+  const second = dashboardReducer(first.ui, { type: 'key', key: 'ctrl+r' }, RESUMABLE);
+  assert.equal(second.intent.type, 'resume');
+});
+
+test('Ctrl+R is not offered where canResume is false: running, your go, a plain finished build', () => {
+  for (const sel of [0, 4, 5]) {
+    const armedBefore = { ...initialUi(), sel, armed: { action: 'stop', slug: 'x', key: 'x' } };
+    const r = dashboardReducer(armedBefore, { type: 'ctrlR' }, RESUMABLE);
+    assert.equal(r.ui.armed, null, `sel ${sel}: no arm, and a pending arm is cleared`);
+    assert.equal(r.intent, null);
+  }
+});
+
+test('any other key between the two Ctrl+R presses cancels the resume, and a move re-arms from scratch', () => {
+  const first = dashboardReducer({ ...initialUi(), sel: 1 }, { type: 'ctrlR' }, RESUMABLE);
+  for (const ev of [{ type: 'ctrlS' }, { type: 'ctrlX' }, { type: 'down' }, { type: 'up' }, { type: 'bogus' }]) {
+    const other = dashboardReducer(first.ui, ev, RESUMABLE);
+    if (ev.type === 'ctrlX') {
+      // Ctrl+X on the same stopped row arms remove instead: the resume arm is gone either way.
+      assert.equal(other.ui.armed?.action, 'remove');
+    } else assert.equal(other.ui.armed, null, ev.type);
+    const again = dashboardReducer(other.ui, { type: 'ctrlR' }, RESUMABLE);
+    assert.equal(again.intent, null, `${ev.type} then Ctrl+R does not fire`);
+  }
+  // A Ctrl+S armed on a row then Ctrl+R does not fire resume either.
+  const armedStop = { ...initialUi(), sel: 1, armed: { action: 'stop', slug: 'w-stopped', key: 'w-stopped' } };
+  assert.equal(dashboardReducer(armedStop, { type: 'ctrlR' }, RESUMABLE).intent, null);
+});
+
+test('Ctrl+R is inert outside the list: the live view and the worker view', () => {
+  const watching = { ...initialUi(), view: 'watch', sel: 1, openSlug: 'w-stopped', openKey: 'w-stopped' };
+  const r = dashboardReducer(watching, { type: 'ctrlR' }, RESUMABLE);
+  assert.equal(r.ui.armed, null);
+  assert.equal(dashboardReducer({ ...watching, armed: { action: 'resume', slug: 'w-stopped', key: 'w-stopped' } }, { type: 'ctrlR' }, RESUMABLE).intent, null);
+  const worker = { ...watching, view: 'worker', openWorker: { taskId: 'T01', workerId: 'w', logPath: null, live: false } };
+  assert.equal(dashboardReducer(worker, { type: 'ctrlR' }, RESUMABLE).ui.armed, null);
 });

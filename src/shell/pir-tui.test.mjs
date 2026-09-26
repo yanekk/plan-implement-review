@@ -66,7 +66,7 @@ test('the list frame builds the title, a row per run, the counts line and the ke
   assert.match(text, /gamma.*◌ finished.*4\/4/s, 'the finished run');
   assert.match(text, /delta.*◼ stopped.*0\/6/s, 'the stopped run');
   assert.match(text, /4 runs · 1 running · 1 finished · 1 crashed · 1 stopped/, 'the counts line tallies each state');
-  assert.match(text, /↑↓ move · ↵ open · Ctrl\+S stop · Ctrl\+X remove · esc quit/, 'the key-hint footer');
+  assert.match(text, /↑↓ move · ↵ open · Ctrl\+R resume · Ctrl\+S stop · Ctrl\+X remove · esc quit/, 'the key-hint footer');
 });
 
 test('the empty dashboard shows the get-started line, not a blank list (§2.3)', () => {
@@ -532,7 +532,8 @@ test('↓ reaches every row when two repos share a slug, and stop acts on the se
   const stopped = [];
   const done = openDashboard({
     stdin,
-    stdout: {},
+    // Wide enough for the whole repo name: at 80 columns REPO is cut to make room for TYPE (T11).
+    stdout: { columns: 120 },
     refreshMs: 60_000,
     makeScreen: () => ({ paint: (f) => frames.push(f), close: () => {} }),
     load: () => buildDashboard(rows),
@@ -934,4 +935,190 @@ test('through pi-tui: the conversation view is mounted in the frame\'s place, ta
   term.press('\x1b');
   await done;
   assert.equal(term.stopped, 1);
+});
+
+// --- planning runs in the list (pir-plan-command T11, DESIGN §2.10, §2.14) ---------------------------
+
+const planRow = ({ slug, state = 'running', step = 'plan', outcome = null, go = null, label = null, repo = 'shop', live = 1 }) => ({
+  key: `${repo}__${slug}`,
+  slug,
+  state,
+  repo,
+  progress: { done: 0, total: 0 },
+  workers: live,
+  record: { kind: 'plan', label, go, repo, slug },
+  snap: { runState: { kind: 'plan', label, slug: null, step, outcome, steps: [] } },
+});
+const PLAN_VIEWS = [
+  planRow({ slug: 'csv-export', state: 'finished', step: 'done', outcome: 'reviewed', live: 0 }),
+  planRow({ slug: 'plan-3f2a', label: 'Add dark mode to the bl…', repo: 'blog' }),
+  { key: 'shop__invoice-import', slug: 'invoice-import', state: 'running', repo: 'shop', progress: { done: 6, total: 10 }, workers: 3 },
+  planRow({ slug: 'search-rework', state: 'crashed', step: 'review', live: 0 }),
+  // An index record written before planning runs existed: no kind at all.
+  { key: 'plan-implement-review__old-build', slug: 'old-build', state: 'finished', repo: 'plan-implement-review', progress: { done: 4, total: 4 }, workers: 0, record: { repo: 'plan-implement-review', slug: 'old-build' } },
+];
+
+// The visible column each span of a row starts at.
+const spanStarts = (line) => {
+  let at = 0;
+  return line.map((sp) => {
+    const start = at;
+    at += visibleWidth(sp.text);
+    return start;
+  });
+};
+
+test('the list frame: TYPE column, the label in quotes, plan states and steps, and old records as work', () => {
+  const frame = buildListFrame(buildDashboard(PLAN_VIEWS), initialUi());
+  const text = frameText(frame);
+  assert.match(text, /SLUG +TYPE +STATE +REPO +PROGRESS +WK/, 'TYPE sits between SLUG and STATE');
+  assert.match(text, /csv-export +plan +● your go +shop +plan ✓ review ✓ +·/);
+  assert.match(text, /"Add dark mode to the bl…" +plan +● planning +blog +plan … +1/);
+  assert.match(text, /invoice-import +work +● running +shop +▰+▱+ 6\/10 +3/);
+  assert.match(text, /search-rework +plan +✕ crashed +shop +plan ✓ review …/);
+  assert.match(text, /old-build +work +◌ finished +plan-imple\S*… +▰+ 4\/4/, 'a record without kind reads work');
+  assert.match(text, /5 runs · 2 running · 1 finished · 1 crashed · 1 waiting for you/, 'your go counts as waiting, not finished');
+
+  assert.equal(findSpan(frame, 'plan  ').style, 'type-plan', 'TYPE plan is magenta');
+  assert.equal(findSpan(frame, 'work  ').style, 'type-work', 'TYPE work is blue');
+  assert.equal(findSpan(frame, '● your go').style, 'your-go', 'your go is amber bold');
+  assert.equal(findSpan(frame, '● planning').style, 'running', 'planning is green, as running');
+  assert.equal(findSpan(frame, '"Add dark mode').style, 'dim', 'the label is dimmed');
+  assert.equal(findSpan(frame, '1 waiting for you').style, 'your-go');
+  assert.equal(SGR['type-plan'], '\x1b[35m');
+  assert.equal(SGR['type-work'], '\x1b[34m');
+  assert.equal(SGR['your-go'], '\x1b[1;33m');
+});
+
+test('the list frame at 80 columns: every row aligned under the header and none wider than 80, a long label included', () => {
+  const frame = buildListFrame(buildDashboard(PLAN_VIEWS), initialUi(), { columns: 80 });
+  const header = frame.find((l) => l.length === 1 && l[0].text.startsWith('  SLUG'))[0].text;
+  const rows = frame.filter((l) => l.length === 7);
+  assert.equal(rows.length, PLAN_VIEWS.length);
+  const heads = ['TYPE', 'STATE', 'REPO', 'PROGRESS', 'WK'].map((h) => header.indexOf(h));
+  for (const row of rows) {
+    assert.deepEqual(spanStarts(row).slice(2), heads, `aligned: ${row.map((s) => s.text).join('')}`);
+    assert.ok(visibleWidth(row.map((s) => s.text).join('')) <= 80);
+  }
+  assert.ok(visibleWidth(header) <= 80);
+  for (const line of frame) assert.ok(visibleWidth(line.map((s) => s.text).join('')) <= 80, line.map((s) => s.text).join(''));
+  // A 24-character label (runrecord's LABEL_MAX) shows whole, with a space before TYPE.
+  assert.ok(rows.some((r) => r[1].text === '"Add dark mode to the bl…" '));
+  // At 120 columns the repo is not cut.
+  assert.match(frameText(buildListFrame(buildDashboard(PLAN_VIEWS), initialUi(), { columns: 120 })), /plan-implement-review +▰/);
+});
+
+test('the armed resume line names the row as it shows: the label for an unnamed plan', () => {
+  const dash = buildDashboard(PLAN_VIEWS);
+  const armed = { ...initialUi(), sel: 1, armed: { action: 'resume', slug: 'plan-3f2a', key: 'blog__plan-3f2a' } };
+  const line = findSpan(buildListFrame(dash, armed), 'Ctrl+R again');
+  assert.equal(line.text, '⚠ Ctrl+R again to resume "Add dark mode to the bl…"');
+  assert.equal(line.style, 'armed');
+  const named = findSpan(buildListFrame(dash, { ...armed, armed: { action: 'resume', slug: 'search-rework', key: 'shop__search-rework' } }), 'Ctrl+R again');
+  assert.equal(named.text, '⚠ Ctrl+R again to resume search-rework');
+});
+
+test('decodeKey: Ctrl+R, raw and Kitty, is ctrlR', () => {
+  assert.equal(decodeKey(Buffer.from([0x12])), 'ctrlR');
+  assert.equal(decodeKey('\x1b[114;5u'), 'ctrlR');
+});
+
+test('Ctrl+R Ctrl+R on a resumable row calls resumeRun with its record; a refusal shows under the list', async () => {
+  let onData = null;
+  const stdin = { on: (_e, fn) => (onData = fn), off: () => {} };
+  const frames = [];
+  const resumed = [];
+  let answer = { resumed: true, pid: 7 };
+  const done = openDashboard({
+    stdin,
+    stdout: { columns: 80 },
+    refreshMs: 60_000,
+    makeScreen: () => ({ paint: (f) => frames.push(f), close: () => {} }),
+    load: () => buildDashboard(PLAN_VIEWS),
+    resume: async (record) => {
+      resumed.push(record.slug);
+      return answer;
+    },
+  });
+  const last = () => frameText(frames.at(-1));
+  // Row 0 is `your go`: Ctrl+R is not offered there.
+  await onData('\x12');
+  assert.doesNotMatch(last(), /Ctrl\+R again/);
+  for (let i = 0; i < 3; i++) await onData('\x1b[B');
+  await onData('\x12');
+  assert.match(last(), /⚠ Ctrl\+R again to resume search-rework/);
+  await onData('\x12');
+  assert.deepEqual(resumed, ['search-rework']);
+  assert.doesNotMatch(last(), /Ctrl\+R again|Could not resume/);
+
+  answer = { resumed: false, reason: 'already-running' };
+  await onData('\x12');
+  await onData('\x12');
+  assert.match(last(), /Could not resume search-rework: already-running/);
+  await onData('\x1b[A');
+  assert.doesNotMatch(last(), /Could not resume/, 'the note clears on the next key');
+  await onData('\x1b');
+  await done;
+});
+
+test('loadDashboard on a planning run: WK is its live sessions, and the plan snapshot never reaches buildDisplay', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'pir-index-'));
+  const controlDir = mkdtempSync(join(tmpdir(), 'pir-control-'));
+  const record = {
+    version: 1, kind: 'plan', label: 'Add dark mode', go: null, slug: 'plan-3f2a', repo: 'blog', repoPath: '/x/blog', controlDir,
+    pid: 4242, startTime: 'Sat Sep 26 10:00:00 2026', startedAt: null, branch: 'pir/plan-3f2a', finalState: null, updatedAt: null,
+  };
+  writeRecord(record, { dir });
+  const step = (id, live) => ({ id, phase: 'planning', since: null, stoppedAt: null, asking: null, worker: live === null ? null : { id: 's', live, logPath: null }, workers: [] });
+  writeSnapshot(controlDir, {
+    proc: { pid: 4242, startTime: record.startTime, slug: 'plan-3f2a', repo: 'blog', branch: 'pir/plan-3f2a' },
+    finalState: null,
+    runState: { kind: 'plan', label: 'Add dark mode', slug: null, step: 'plan', outcome: null, steps: [step('plan', true), step('review', null), step('build', null)] },
+  });
+  const dash = loadDashboard({ dir, now: NOW, kill: () => {}, exec: () => ({ ok: true, stdout: `${record.startTime}\n` }) });
+  const [row] = dash.rows;
+  assert.equal(row.state, 'running');
+  assert.equal(row.display, 'planning');
+  assert.equal(row.workers, 1);
+  assert.equal(row.record.kind, 'plan');
+  assert.match(frameText(buildListFrame(dash, initialUi())), /"Add dark mode" +plan +● planning +blog +plan … +1/);
+});
+
+test('a resume pressed while a stop is still reaping waits for the stop to finish (T11)', async () => {
+  let onData = null;
+  const stdin = { on: (_e, fn) => (onData = fn), off: () => {} };
+  const events = [];
+  let finishStop;
+  let rows = [planRow({ slug: 'plan-1', label: 'A plan', state: 'running' })];
+  const done = openDashboard({
+    stdin,
+    stdout: { columns: 80 },
+    refreshMs: 60_000,
+    makeScreen: () => ({ paint: () => {}, close: () => {} }),
+    load: () => buildDashboard(rows),
+    stop: async () => {
+      events.push('stop start');
+      // The program has recorded `stopped`, so the row reads stopped while the reap goes on.
+      rows = [planRow({ slug: 'plan-1', label: 'A plan', state: 'stopped' })];
+      await new Promise((r) => (finishStop = r));
+      events.push('stop end');
+    },
+    resume: async () => {
+      events.push('resume');
+      return { resumed: true, pid: 1 };
+    },
+  });
+  await onData('\x13');
+  const stopping = onData('\x13');
+  await new Promise((r) => setImmediate(r));
+  await onData('\x12');
+  const resuming = onData('\x12');
+  await new Promise((r) => setImmediate(r));
+  assert.deepEqual(events, ['stop start'], 'the resume has not run while the stop is in flight');
+  finishStop();
+  await stopping;
+  await resuming;
+  assert.deepEqual(events, ['stop start', 'stop end', 'resume']);
+  await onData('\x1b');
+  await done;
 });
