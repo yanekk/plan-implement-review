@@ -27,7 +27,7 @@ done · ⛔ blocked, needs a human.
 | T02 | run-record-type | — | ✅ | |
 | T03 | plan-home | — | ✅ | |
 | T04 | plan-branch | — | ✅ | |
-| T05 | fake-claude-sessions | — | ⬜ | |
+| T05 | fake-claude-sessions | — | ✅ | |
 | T06 | plan-run-planner | T01, T02, T04, T05 | ⬜ | |
 | T07 | plan-run-review | T06 | ⬜ | |
 | T08 | plan-launch | T01, T02, T03, T04 | ⬜ | |
