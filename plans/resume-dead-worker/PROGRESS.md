@@ -8,13 +8,12 @@ task you pick up, and append yours there.
 **Sixty words to a Notes cell, counted.** Flat prose. The account is the commit message. Whoever
 writes a cell also fixes the over-budget cell they walk past.
 
-**Plan reviewed:** not yet — re-planned onto live workers 2026-09-26; run `/pir-review-plan` before the first
-`/pir-work`. The 2026-09-24 review (5 fixed, 6 decided) covered the superseded `claude --bg` plan.
+**Plan reviewed:** 2026-09-26 — 8 fixed, 3 decided with the user
 
 **Status:** Planned 2026-09-24, re-planned onto live workers 2026-09-26. Nothing built.
 **Last updated:** 2026-09-26
 **Build route:** parallel (`pir resume-dead-worker`), user decision at plan review.
-**Next:** `/pir-review-plan resume-dead-worker`; then T01 and T02, which have no dependency.
+**Next:** `/pir-work resume-dead-worker` (or `pir resume-dead-worker`); T01 and T02 have no dependency. Not at the same time as `nudge-quiet-worker` (PLAN.md).
 
 ## Tasks
 

@@ -14,7 +14,9 @@ DESIGN §2.7, and §2.3 for the revive itself.
 ## Files
 
 - `src/shell/loop.mjs` (reconcile), `src/shell/loop.test.mjs`
-- `src/shell/coordinate.mjs` (pass the reap's unverified pids to the loop), `src/shell/coordinate.test.mjs`
+- `src/shell/coordinate.mjs` (pass the reap's unverified ids to the loop), `src/shell/coordinate.test.mjs`
+- `src/shell/reap.mjs`, `src/shell/reap.test.mjs` (`reapRecorded` returns only pids today, and its
+  `skipped` mixes dead pids with unverifiable live ones)
 
 ## Interface
 
@@ -24,11 +26,15 @@ DESIGN §2.7, and §2.3 for the revive itself.
 runPass({ ..., unverifiedIds = new Set() })
 
 // reconcile, before decideResume: for each task with a kept branch, the role the glyph needs (§2.4)
-const last = lastConversation(controlDir, num, role);      // T02
+const last = lastConversation(controlDir, num, role);      // T02; controlDir = control.dir, and a
+                                                           // control with no dir (NO_CONTROL) revives nothing
 deaths[num] = { count: 0, role, sessionId: last && !unverifiedIds.has(last.id) ? last.id : null, revived: false }
 // decideResume → revive list → platform.reviveSession({ id, cwd: handle.path, name, task, role, logPath })
 // ok   → seed state.tasks[num] { worktree, workerId: id, role, slug, phase, revived: true }
 // !ok  → the fallback as T04, same pass
+// ceiling (DESIGN §2.7): revives + reconcile's review spawns ≤ maxWorkers; revive candidates in task
+// order, and each one over the ceiling takes its fallback instead (resume → 3b when a slot frees;
+// review → reconcile's reviewer spawn, under the same cap)
 // restart-summary gains `woke ${list} where they left off`
 ```
 
@@ -39,6 +45,7 @@ deaths[num] = { count: 0, role, sessionId: last && !unverifiedIds.has(last.id) ?
 - [ ] 🔍 branch with a reviewer's log → reviewer revived; with only an implementer's log → fresh reviewer.
 - [ ] A restart-revived worker that exits before init falls back without a counted death (T04 rule).
 - [ ] The restart-summary names the woken tasks; a first start prints no summary.
+- [ ] Ceiling 2 with three revivable tasks: the two lowest-numbered revived, the third gets a fresh implementer on its kept branch once a slot frees; never more than 2 live.
 - [ ] Existing restart tests pass.
 
 ## Done when

@@ -31,7 +31,8 @@ const r = platform.revive(workerId);
 ```
 
 A revived task holds its slot and is never also in this pass's 3b spawn (see T03 on `decideDispatch`
-running before 3a).
+running before 3a). The revived id counts in the pass's `liveAfter` as a spawn does (the runaway
+breaker and the stall check read it), and `revive` is a productive action in `drain`'s idle check.
 
 ## Tests
 
@@ -41,6 +42,7 @@ running before 3a).
 - [ ] `revive` returns `failed` → fallback spawn in the same pass; never two live workers for the task.
 - [ ] A revived worker that exits before init → fallback, death count unchanged; one that exits after init → count 2.
 - [ ] A successful revive is not also spawned fresh by 3b in the same pass, and the ceiling holds.
+- [ ] A pass whose only work is a revive reports the revived worker in `liveAfter`, and `drain` does not end that run as a stall.
 - [ ] A task parked AWAITING that dies is revived with its phase and decision kept.
 - [ ] `HALT` → no revive.
 

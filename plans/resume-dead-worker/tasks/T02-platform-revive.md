@@ -27,6 +27,7 @@ DESIGN §2.1, §2.3, §2.7, §2.8 (failed revive), §3.2.
 // (the SDK rejects both without forkSession). The log is opened for append, so a revive continues it.
 workerOptions({ cwd, sessionId, resume, name, claudePath, canUseTool, spawnProcess })
 startWorker({ cwd, sessionId, resume, name, logPath, claudePath, ... }) → Worker
+// with resume, worker.id and every sent message's session_id (userMessage) are the resumed id
 worker.exitInfo() → { code, signal, beforeInit: bool } | null   // beforeInit: no `init` since this start
 
 continuationMessage(plan) → string    // the DESIGN §2.3 text, {plan} filled in
@@ -35,7 +36,8 @@ platform.revive(id) → { ok: true } | { ok: false, reason: 'live' | 'unknown' |
 // 'live': id is still a live child (never two processes on one session); 'unknown': never spawned here.
 // Otherwise startWorker({ resume: id, cwd, name, logPath }) from the gone record, a `revived` note,
 // then send(continuationMessage) from 'pir'; the record moves back to live under the same id and
-// workers.json is rewritten. A throw from startWorker → 'failed'.
+// workers.json is rewritten. A throw from startWorker → 'failed'. The same record is reused (new worker,
+// pid, startTime), so workers() still lists the id once and the screen shows one worker, not two.
 
 platform.reviveSession({ id, cwd, name, task, role, logPath }) → same result
 // restart: revive a session this platform never spawned (the dead coordinator's), same steps.
@@ -56,7 +58,7 @@ commit once on its branch, then vanish from `list()`.
 - [ ] Against the fake `claude` through the real SDK: a revived worker takes the continuation message and appends to the same log after a `revived` note.
 - [ ] A worker that exits before its first `init` reports `beforeInit: true`; one that exits later reports false.
 - [ ] `revive` of a live id → `'live'` and no child started; of an unknown id → `'unknown'`; a throwing start → `'failed'`, never a throw out of `revive`.
-- [ ] After a successful `revive` the id is in `list()` and in `workers.json`.
+- [ ] After a successful `revive` the id is in `list()` and in `workers.json`, and `workers()` lists it exactly once.
 - [ ] `continuationMessage('p')` names `git status --short`, `git log --oneline pir/p..HEAD`, and the PROGRESS row.
 - [ ] `lastConversation` picks the highest `n` for the task and role, reads the id from `init`, and returns null for no file or no `init`.
 - [ ] Fake: `crashAfterCommit` leaves one commit on the branch and the worker absent from `list()`; `revive` restores it with the same id.

@@ -8,6 +8,12 @@ See the fix work over real agents: a real worker killed mid-task is revived on i
 second kill falls back to a fresh worker, and the task rows and the conversation view read right in
 `pir`. The worker drives `pir` itself and judges the screen (CLAUDE.md; `pir-e2e` skill).
 
+## Files
+
+None committed but `FINDINGS.md` and `PROGRESS.md`. The watched run is driven with `openScreen` from
+`src/shell/conversation-rig.mjs`, as `src/shell/harness/live-drill.mjs` drives `pir` under a pty; any
+driver script is scratch, not product code.
+
 ## Environment (the worker owns this)
 
 Everything runs from a fixture scratch, which carries this branch's `src/` (harness `carrySource`), so

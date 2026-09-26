@@ -44,6 +44,11 @@ spawn must stay under the ceiling. A `resume` still reaches the fresh implemente
 `createTask` on the kept branch, as reconcile's does. Handling deaths before `decideDispatch`, as
 reconcile does, is one way; the tests below are the contract.
 
+The existing loop.test.mjs cases driven by the fake's `{ crash: true }` (e.g. "a crashed worker is
+closed as dead and its worktree reclaimed, freeing its slot") assert the old removal. They are the one
+set of existing expectations this task changes: rewrite them to the kept branch. `crash: true` crashes
+every spawn of the task, so it is also the fixture for the give-up test.
+
 ## Tests
 
 - [ ] Fake `crashAfterCommit`: the branch and its commit survive the death, and the respawned implementer is spawned into the same worktree.

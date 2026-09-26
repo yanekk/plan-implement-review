@@ -11,7 +11,8 @@ live proof is a machine check rather than a reading of logs.
 ## Files
 
 - `src/shell/harness/run.mjs`, `src/shell/harness/run.test.mjs`
-- `src/shell/harness/fixtures/worker-death.mjs`, `src/shell/harness/fixtures.mjs`
+- `src/shell/harness/fixtures/worker-death.mjs`, `src/shell/harness/fixtures/worker-death-twice.mjs`
+  (one fixture per file, as `restart-review.mjs` / `restart-implement.mjs`), `src/shell/harness/fixtures.mjs`
 - `src/shell/harness/assertions.mjs`, `src/shell/harness/assertions.test.mjs`
 
 ## Interface

@@ -35,6 +35,7 @@ DESIGN §2.6, and §2.3 for the conversation log.
 ## Tests
 
 - [ ] Each of the four actions renders the §2.6 sentence for a sample task, including "(2 of 3)".
+- [ ] A first death not revived reads "stopped unexpectedly … (1 of 3)", never "again"; a failed revive reads "could not be woken" with no count; each fallback ending matches adoptTask's action.
 - [ ] A given-up task's row reads `gave up · worker died 3×`, not `queued`.
 - [ ] A live task with one death reads `implementing · worker restarted 1×`; with none, its label is unchanged.
 - [ ] A snapshot written and read back keeps `deaths` and `gaveUp`, so the `pir` view shows both.

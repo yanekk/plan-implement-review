@@ -128,7 +128,11 @@ step. Given the committed task-branch glyph:
 | implement | ⬜ / 🟡 / other | revive | fresh implementer on the kept branch (`resume`) |
 | implement | 🔍 | fresh reviewer (`review`); no revive | same |
 | review | 🔍 | revive | fresh reviewer (`review`) |
+| review | ⬜ / 🟡 / other | fresh implementer (`resume`); no revive | same |
 | any | ✅ | merge directly; no revive | same |
+
+The review-on-⬜/🟡 row is not expected to occur (a reviewer is spawned only on a 🔍 branch and commits
+only ✅); it is listed so the table is total and matches §3.3's order.
 
 An implementer that already committed 🔍 has finished its job, so the next step is a fresh-eyes
 review, never the author. A ✅ branch is merged exactly as restart merges it. This reverses the old
@@ -157,7 +161,14 @@ User-approved 2026-09-24. One line per event, printed by the coordinator:
 ```
 
 The fallback line names what `decideResume` chose: "started a new worker", "sent it to a fresh
-reviewer", or "merged its finished branch". A given-up task's row reads `gave up · worker died 3×`
+reviewer", or "merged its finished branch". A first death that is not revived (§2.4) says "stopped
+unexpectedly" instead of "stopped again"; the "(N of 3)" count (N = deaths) is on every fallback line.
+A failed revive (§2.8) is not a new death and carries no count. User-approved 2026-09-26:
+
+```
+↻ T05's worker stopped unexpectedly — sent it to a fresh reviewer (1 of 3)
+↻ T05's worker could not be woken — started a new worker on its kept branch
+``` A given-up task's row reads `gave up · worker died 3×`
 instead of `queued`. A task that has had a death this run and is still live shows its phase label
 followed by `· worker restarted N×` (N = its deaths), e.g. `implementing · worker restarted 1×`. Under
 `pir` the coordinator's lines go to `run.log` and the screen paints only the task rows, so the row is
@@ -182,6 +193,12 @@ restart (live-workers §2.3), so no record-keeping change is needed; the first p
 The restart revive runs after startup hygiene has reaped `workers.json`. A session whose recorded pid
 was skipped by the reap because it could not be verified (no recorded start time) is not revived: that
 process may still be running on the session, so the task gets a fresh worker instead.
+
+Restart revives and reconcile's review spawns together stay under the ceiling. Revive candidates are
+taken lowest task number first; those over the ceiling fall back to their fallback (`resume` or
+`review`) and get a fresh worker when a slot frees, as restart does today (user decision 2026-09-26).
+Candidates can exceed the old in-flight bound, because a task given up last run has a kept branch and
+a conversation log too, and more than one worker over the ceiling trips the runaway breaker.
 
 ### 2.8 The unhappy paths
 
@@ -343,6 +360,9 @@ is reaped from `workers.json` by the next start or a stop (restart-recovery.md).
 - 2026-09-26, re-plan: a revive whose process exits before its first `init` is a failed revive, not a
   death. The 2026-09-24 rule "a failed revive falls back and the death still counts" counted only the
   original death; with an asynchronous start this keeps it that way.
+- 2026-09-26, user (plan review): restart revives past the ceiling fall back to a fresh worker, lowest
+  task number revived first. Rare, loses no work, and keeps T06 small; waiting to revive would need
+  pending-revive state across passes.
 - Extend `decideResume` and reuse `reconcile`'s merge/review/resume execution as one helper, not a
   second decision: two resume decisions are how the two paths came to disagree.
 - The cezar per-task handoff file is not copied: the kept branch and the conversation already carry
