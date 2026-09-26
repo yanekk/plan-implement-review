@@ -1,7 +1,7 @@
-// buildConflictPrompt, tested without a terminal (DESIGN §2.8, §4). The prompt is what the person copies
-// and pastes to a parked worker when the run's own merge conflicts, so what it does and does NOT say is a
-// rule a person relies on: it must name the worker, the branch to merge in and the files, and it must
-// leave the keep-which-side choice to the worker, who asks when it is a judgement — never bake a resolution in.
+// buildConflictPrompt, tested without a terminal (DESIGN §2.8, §4). The 'worker' variant is what pir sends
+// a live worker when the run's own merge conflicts; the 'person' variant is printed only when no worker is
+// left to send it to. Either way it must name the branch to merge in and the files, and leave the
+// keep-which-side choice to whoever resolves, who asks when it is a judgement — never bake a resolution in.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -12,16 +12,13 @@ const WORKER = 'plan-implement-review / non-agentic-coordinator / T02 / greet / 
 const base = {
   task: 'T02',
   slug: 'greet',
-  workerName: WORKER,
   taskBranch: 'pir/demo-T02',
   featureBranch: 'pir/demo',
   files: ['greeting.txt', 'src/app.mjs'],
 };
 
-test('the prompt names the worker to attach to, the feature branch to merge in, and every conflicting file', () => {
+test('the prompt names the feature branch to merge in, every conflicting file, and the task', () => {
   const p = buildConflictPrompt(base);
-  assert.match(p, /claude agents/, 'it tells the person to attach in `claude agents`');
-  assert.ok(p.includes(WORKER), 'it names the exact worker session to attach to (§2.9)');
   assert.match(p, /git merge pir\/demo/, 'it tells the worker to merge the feature branch into its branch');
   assert.ok(p.includes('greeting.txt'), 'it lists the first conflicting file');
   assert.ok(p.includes('src/app.mjs'), 'it lists the second conflicting file');
@@ -39,21 +36,14 @@ test('it leaves the side to the worker, who asks when it is a judgement, and bak
   assert.ok(!/resolved:/i.test(p), 'no resolved content is baked in');
 });
 
-test('it ends with the finish steps: commit, the plan\'s test command, then re-signal done (a live worker)', () => {
+test('with no live worker it names the branch to check out and has the person land it', () => {
   const p = buildConflictPrompt(base);
-  assert.match(p, /commit/i, 'it tells the worker to commit the resolution');
-  assert.match(p, /`test` lines at the top of plans\/[^/]+\/DESIGN\.md/, 'it tells the worker to run the plan\'s own tests');
+  assert.doesNotMatch(p, /claude agents|[Aa]ttach/, 'there is no live worker to attach to');
+  assert.match(p, /git checkout pir\/demo-T02/, 'it tells the person to check the task branch out by hand');
+  assert.match(p, /commit/i, 'it tells whoever resolves to commit');
+  assert.match(p, /`test` lines at the top of plans\/[^/]+\/DESIGN\.md/, 'it runs the plan\'s own tests');
   assert.match(p, /its `setup` lines\s+first if the worktree is not ready/, 'and names setup for a worktree that is not ready');
   assert.doesNotMatch(p, /npm test/, 'never a fixed npm test — the project may not be Node');
-  assert.match(p, /[Ss]ignal done again/, 'it tells the worker to re-signal done so the run can merge it');
-});
-
-test('with no live worker (restart-reconcile) it names the branch to check out instead of a worker to attach to', () => {
-  const p = buildConflictPrompt({ ...base, workerName: null });
-  assert.doesNotMatch(p, /claude agents/, 'there is no live worker to attach to');
-  assert.match(p, /git checkout pir\/demo-T02/, 'it tells the person to check the task branch out by hand');
-  assert.match(p, /git merge pir\/demo/, 'the git scaffold to merge the feature branch is still there');
-  assert.match(p, /ask me before you resolve it/, 'the ask-when-unsure line is still there');
   assert.match(p, /land this branch yourself/i, 'with no worker to re-signal, the person lands the branch');
 });
 

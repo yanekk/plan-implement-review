@@ -57,11 +57,14 @@ export function coordinatorLaunchArgv({ slug }) {
 // live path only runs with PARALLEL_LIVE=1; the ceiling is the scenario's own low cap; PARALLEL_ALLOW
 // _HERE lets a same-named scratch clone through the canonical-repo branch-safety guard (coordinate.mjs
 // canPromoteHere) — a scratch repo built by installFixture is named for its temp dir, not the canonical
-// repo, so it is normally not needed, but a scenario may opt in. Values are strings (an env is strings).
-export function seatbeltEnv({ ceiling, allowHere = false } = {}) {
+// repo, so it is normally not needed, but a scenario may opt in. PARALLEL_HOLD_MERGES is a scenario's
+// `holdMerges` (dispatch.mjs): no merge while a worker still builds, so a same-line clash lands at the
+// coordinator. Values are strings (an env is strings).
+export function seatbeltEnv({ ceiling, allowHere = false, holdMerges = false } = {}) {
   const env = { PARALLEL_LIVE: '1' };
   if (ceiling != null) env.PARALLEL_MAX_WORKERS = String(ceiling);
   if (allowHere) env.PARALLEL_ALLOW_HERE = '1';
+  if (holdMerges) env.PARALLEL_HOLD_MERGES = '1';
   return env;
 }
 
@@ -406,7 +409,7 @@ export async function runScenario({
   try {
     // Launch the coordinator as a plain child process with the seatbelt env (§2.1, §5.2).
     const argv = coordinatorLaunchArgv({ slug });
-    const env = seatbeltEnv({ ceiling, allowHere });
+    const env = seatbeltEnv({ ceiling, allowHere, holdMerges: spec.holdMerges });
     log(`launching coordinator process: node ${argv.join(' ')}  (ceiling ${ceiling}, timeout ${timeout}ms)`);
     child = spawnCoordinator({ argv, cwd: repoDir, env, spawn, stdoutPath: coordinatorOutPath(controlDir) });
 

@@ -7,8 +7,9 @@
 // the live run exercises; only the keys are not pressed.
 //
 // The choice is fixed and dull on purpose: a permission is allowed once; a question gets the text the
-// scenario says to type on its Other line (`typed`), else a pick-several question its first two options and
-// a pick-one question its first. Anything subtler is the person's judgement and belongs to the hands-on run.
+// scenario says to type on its Other line (`typed`, keyed by the question; the key `*` matches any question
+// not named, for a worker whose wording the fixture cannot know), else a pick-several question its first two
+// options and a pick-one question its first. Anything subtler is the person's judgement and belongs to the hands-on run.
 
 import { readdirSync, readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
@@ -26,7 +27,11 @@ export function answerFor(request, typed = {}) {
     const answers = {};
     for (const q of request.questions ?? []) {
       const labels = (q.options ?? []).map((o) => o.label).filter(Boolean);
-      const answer = Object.hasOwn(typed, q.question) ? typed[q.question] : labels.slice(0, q.multiSelect ? 2 : 1).join(', ');
+      const answer = Object.hasOwn(typed, q.question)
+        ? typed[q.question]
+        : Object.hasOwn(typed, '*')
+          ? typed['*']
+          : labels.slice(0, q.multiSelect ? 2 : 1).join(', ');
       if (!answer) return null;
       answers[q.question] = answer;
     }

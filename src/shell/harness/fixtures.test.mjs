@@ -176,19 +176,18 @@ test('merge-conflict: both task docs edit the same file, and the probe expects a
   assert.equal(fx.seedFiles['greeting.txt'], 'hello world\n');
 });
 
-test('merge-conflict: attended — no scripted answer, a Needs-a-person block, a human-speed budget, decided final content (T13)', () => {
+test('merge-conflict: unattended — merges held, the answerer types the decided side on any question, decided final content (live-workers §2.10)', () => {
   const fx = getFixture('merge-conflict');
-  // The down-channel is gone (§2.2, T05): nothing is routed — a person resolves the conflict on the live
-  // worker directly, so the fixture carries no scripted answer any more.
-  assert.equal(fx.scriptedAnswer, undefined, 'no scripted answer — the person resolves the conflict directly (§2.2)');
-  // A "Needs a person" block names the manual step and pins the decided side so the run stays deterministic.
-  assert.match(fx.needsPerson, /attach/i, 'the block tells the person to attach to the parked worker');
-  assert.match(fx.needsPerson, /hello there/, 'the block pins "hello there" as the side to keep');
-  // A human-speed wall-clock budget (above the 10-min default) so a real person has time to attach and
-  // paste before the auto-HALT; the attended run FINISHES once resolved, so it declares no forever-park.
-  assert.ok(fx.scenario.seatbelts.timeoutMs >= 20 * 60 * 1000, 'a human-speed timeout budget is set');
-  assert.notEqual(fx.scenario.expectedTerminal, 'parked', 'the attended run completes; it is not a designed forever-park');
-  // The fact list is the conflict resolution plus the ceiling bound.
+  // The coordinator sends the fix to the live worker, so nobody pastes: no hands-on block.
+  assert.equal(fx.needsPerson, undefined, 'no person step — the fix is sent, the question answered by the stand-in');
+  // Merges are held so the clash lands at the coordinator's merge, not the worker's own integrate.
+  assert.equal(fx.scenario.holdMerges, true);
+  // The worker's question wording cannot be known, so the answer is typed on any question.
+  assert.match(fx.scenario.answerPending.typed['*'], /hello there/, 'the stand-in keeps "hello there"');
+  // Both task docs make the side a judgement to ask about, so the worker asks rather than picks.
+  for (const doc of Object.values(fx.tasks)) assert.match(doc, /ask the person which greeting to keep/);
+  assert.ok(fx.scenario.seatbelts.timeoutMs <= 20 * 60 * 1000, 'an unattended budget, not a human-speed one');
+  assert.notEqual(fx.scenario.expectedTerminal, 'parked', 'the run completes; it is not a designed forever-park');
   const factIds = fx.scenario.facts.map((f) => f.id);
   assert.ok(factIds.includes('merge-conflict-resolved'), 'the conflict-resolution fact is declared');
   assert.ok(factIds.includes('ceiling-held:2'), 'ceilingHeld(2) is kept in the fact list');

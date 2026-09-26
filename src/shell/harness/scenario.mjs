@@ -36,7 +36,8 @@ const EXPECTED_TERMINALS = Object.freeze(['completed', 'parked']);
 // before it fired; `expectedTerminal` — the run's correct end (see EXPECTED_TERMINALS). A third,
 // `answerPending` (live-workers T18), has the runner stand in for the person and answer every pending
 // permission request and question set through the inbox (answerer.mjs), so a fixture that forces them can
-// still run to a hand-off unattended.
+// still run to a hand-off unattended. A fourth, `holdMerges`, launches the coordinator with
+// PARALLEL_HOLD_MERGES=1 (dispatch.mjs) so a same-line clash is hit at the coordinator's own merge.
 export function defineScenario(spec = {}) {
   const {
     id,
@@ -47,6 +48,7 @@ export function defineScenario(spec = {}) {
     killSwitchDrill = false,
     expectedTerminal = 'completed',
     answerPending = false,
+    holdMerges = false,
   } = spec;
 
   if (!id || typeof id !== 'string') {
@@ -76,6 +78,7 @@ export function defineScenario(spec = {}) {
     facts,
     killSwitchDrill: !!killSwitchDrill,
     expectedTerminal,
+    holdMerges: !!holdMerges,
     answerPending: answerPending ? { typed: { ...(answerPending.typed ?? {}) }, say: { ...(answerPending.say ?? {}) } } : false,
   };
 }

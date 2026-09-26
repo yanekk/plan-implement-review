@@ -231,7 +231,6 @@ function reconcile({ platform, worktree, repo, slug, maxWorkers, state, featureP
         task: num,
         slug: slugByNum.get(num),
         plan: slug,
-        workerName: null,
         taskBranch: handle.branch,
         featureBranch: state.feature.branch,
         files: res.files,
@@ -332,7 +331,7 @@ function reconcile({ platform, worktree, repo, slug, maxWorkers, state, featureP
 // runPass — one turn of the loop. Gathers, decides, executes, and returns the structured actions it
 // took plus a human log and the counts drain needs to know when to stop. `state` carries the phase
 // memory across passes; the platform, worktree, control and runTests are injected.
-export function runPass({ platform, worktree, repo, slug, maxWorkers, state, control = NO_CONTROL, runTests = GREEN, prepare = NO_PREPARE, now = () => Date.now() }) {
+export function runPass({ platform, worktree, repo, slug, maxWorkers, state, control = NO_CONTROL, runTests = GREEN, prepare = NO_PREPARE, now = () => Date.now(), holdMerges = false }) {
   const actions = [];
   const log = [];
   const record = (type, extra = {}) => {
@@ -402,7 +401,7 @@ export function runPass({ platform, worktree, repo, slug, maxWorkers, state, con
   const assignments = buildAssignments(state, liveList);
 
   // 2. Decide.
-  const decision = decideDispatch({ tasks: parsed.tasks, assignments, maxWorkers, halted });
+  const decision = decideDispatch({ tasks: parsed.tasks, assignments, maxWorkers, halted, holdMerges });
 
   const liveIds = new Set(liveList.map((w) => w.id));
   const closedThisPass = new Set();
@@ -580,14 +579,13 @@ export function runPass({ platform, worktree, repo, slug, maxWorkers, state, con
       // report, so this branch is not reached again while the worker works.
       //
       // Only when the send fails (the worker exited between the listing and this merge) is the prompt
-      // printed for a person, in the no-worker wording (workerName null): there is nobody to attach to.
+      // printed for a person, in the no-worker wording: there is nobody to send it to.
       const text = `merge conflict in ${res.files?.join(', ') || 'the feature branch'}`;
       const promptFor = (audience) =>
         buildConflictPrompt({
           task: num,
           slug: t.slug,
           plan: slug,
-          workerName: null,
           taskBranch: t.worktree.branch,
           featureBranch: state.feature.branch,
           files: res.files,

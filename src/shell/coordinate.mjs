@@ -141,6 +141,7 @@ export function startCoordinator({
   control,
   runTests,
   prepare,
+  holdMerges = false,
 } = {}) {
   if (!slug) throw new Error('startCoordinator: no slug');
   if (!repo) throw new Error('startCoordinator: no repo (worker names are built from it, DESIGN §2.8)');
@@ -151,6 +152,7 @@ export function startCoordinator({
   if (control) passOpts.control = control;
   if (runTests) passOpts.runTests = runTests;
   if (prepare) passOpts.prepare = prepare;
+  if (holdMerges) passOpts.holdMerges = true;
 
   // The account of what one pass did, in the shape the skill acts on. It re-expresses the loop's raw
   // actions as the things the skill has to do something about: surface a decision, report a task
@@ -1002,6 +1004,9 @@ async function main(argv) {
       return runFeatureTests(featurePath, { slug, root, logPath: join(control.dir, 'tests.log') });
     },
     ...(prepare ? { prepare } : {}),
+    // A test lever for the merge-conflict fixture (dispatch.mjs holdMerges): the harness sets it so a
+    // live run reaches the coordinator-side conflict deterministically. No person has a reason to.
+    holdMerges: process.env.PARALLEL_HOLD_MERGES === '1',
   });
   const renderer = createRenderer({ stream: process.stdout });
 

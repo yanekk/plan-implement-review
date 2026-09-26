@@ -19,6 +19,7 @@ const READY = '⬜';
 const PHASE_REVIEW_READY = 'review-ready';
 const PHASE_DONE = 'done';
 const PHASE_DEAD = 'dead';
+const PHASE_AWAITING = 'awaiting-answer';
 // A worker parked on the user (a question, a decision, or a merge conflict the coordinator hit) sits in
 // the phase 'awaiting-answer' (loop.mjs AWAITING). It is a LIVE session holding a slot, but it is TAKEN
 // and must never be merged, closed or respawned while parked — merging or closing it is exactly the T22
@@ -49,7 +50,13 @@ function idsByTask(assignments) {
   return [...assignments].sort((x, y) => order(x.task) - order(y.task)).map((a) => a.workerId);
 }
 
-export function decideDispatch({ tasks, assignments, maxWorkers, halted }) {
+// holdMerges (default off) is a test lever, never a product setting: merge nothing while any live worker
+// is still building (implementing, review-ready, reviewing). Two same-line tasks then both integrate
+// against the same feature branch before either lands, so the second merge conflicts at the COORDINATOR,
+// not at the worker's own integrate — the only way a live run reaches the send-the-fix path (loop.mjs 3d)
+// on purpose rather than by timing (merge-conflict fixture). A parked worker does not hold merges, so a
+// question left open cannot deadlock the run.
+export function decideDispatch({ tasks, assignments, maxWorkers, halted, holdMerges = false }) {
   // Kill switch: dispatch nothing, deliver nothing, merge nothing, complete nothing, and close
   // every worker there is (§2.4). Dead ones are closed too — that is cleanup, not a slot game.
   if (halted) {
@@ -74,7 +81,8 @@ export function decideDispatch({ tasks, assignments, maxWorkers, halted }) {
   // arrives and it re-signals done (T28 §2.5).
   const doneLive = live.filter((a) => a.phase === PHASE_DONE);
   doneLive.sort((x, y) => order(x.task) - order(y.task));
-  const merged = doneLive[0];
+  const building = live.some((a) => a.phase !== PHASE_DONE && a.phase !== PHASE_AWAITING);
+  const merged = holdMerges && building ? undefined : doneLive[0];
   const merge = merged ? [merged.workerId] : [];
 
   // close, two sources (§3.3): every dead worker (frees its leaked slot); and the implement

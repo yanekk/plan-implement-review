@@ -88,6 +88,7 @@ test('seatbeltEnv sets PARALLEL_LIVE and the ceiling, and ALLOW_HERE only when a
     PARALLEL_ALLOW_HERE: '1',
   });
   assert.deepEqual(seatbeltEnv({}), { PARALLEL_LIVE: '1' });
+  assert.deepEqual(seatbeltEnv({ ceiling: 2, holdMerges: true }), { PARALLEL_LIVE: '1', PARALLEL_MAX_WORKERS: '2', PARALLEL_HOLD_MERGES: '1' });
 });
 
 // --- spawnCoordinator wraps the injected spawn (pid, kill, exited) -------------------------------

@@ -321,19 +321,24 @@ const RED_OUT = `pass 12\n${renderHandoff({
 
 // --- mergeConflictResolved (task-agnostic, attended non-agentic model, T13) -----------------------
 
-// A bundle in the attended-resolution shape (DESIGN §2.8): T01 (winner) merged clean; T02 conflicted, was
-// surfaced, and the SAME worker resumed to a merge — NO `answer` line (the person resolved it on the live
-// worker, nothing routed). The run HANDED OFF: no `promote`, no `Merge branch 'pir/scratch'` into main in
-// the git log (only task-branch integrations), and the feature branch carries the decided side.
+// A bundle in the sent-and-asked shape (live-workers §2.10): T01 (winner) merged clean; T02's merge
+// conflicted, the fix was SENT to its live worker, whose reviewer session asked the person which side ships
+// and got the answer, and the SAME worker resolved to a merge. The run HANDED OFF: no `promote`, no
+// `Merge branch 'pir/scratch'` into main in the git log, and the feature branch carries the decided side.
+const askedT02 = { key: 'T02-review-1.ndjson', task: 'T02', role: 'review', n: 1, sessionId: null, events: [
+  { dir: 'request', requestId: 'q1', toolName: 'AskUserQuestion', input: { questions: [] } },
+  { dir: 'out', kind: 'reply', requestId: 'q1', from: 'person', result: { behavior: 'allow' } },
+] };
 function resolvedBundle(over = {}) {
   return bundle({
     flow: [
       fl('t3', 'merge', 'T01'),
-      fl('t4', 'surface', 'T02'),
+      fl('t4', 'conflict-sent', 'T02'),
       fl('t6', 'merge', 'T02'),
     ],
     gitLog: '* merge pir/scratch-T02 (pir/scratch)\n* merge pir/scratch-T01\n* seed\n',
     timeline: [tick('t1', [wagent('T02', 'idle', { sessionId: 's2i', role: 'implement' })])],
+    transcripts: [askedT02],
     finalFiles: { 'greeting.txt': 'hello there\n' },
     coordinatorOut: GREEN_OUT,
     ...over,
@@ -341,25 +346,35 @@ function resolvedBundle(over = {}) {
 }
 const decided = { file: 'greeting.txt', content: 'hello there' };
 
-test('mergeConflictResolved passes when the conflict was kept alive, resumed without a routed answer, and the decided side was handed off', () => {
+test('mergeConflictResolved passes when the fix was sent to the live worker, the person was asked, and the decided side was handed off', () => {
   assert.equal(mergeConflictResolved(decided).check(resolvedBundle()).pass, true);
 });
 
-test('mergeConflictResolved also passes when the conflict was sent to the live worker (conflict-sent, live-workers T08)', () => {
-  const b = resolvedBundle({ flow: [fl('t3', 'merge', 'T01'), fl('t4', 'conflict-sent', 'T02'), fl('t6', 'merge', 'T02')] });
-  assert.equal(mergeConflictResolved(decided).check(b).pass, true);
+test('mergeConflictResolved fails when the conflict was only surfaced for a person, not sent to the worker', () => {
+  const r = mergeConflictResolved(decided).check(resolvedBundle({ flow: [fl('t3', 'merge', 'T01'), fl('t4', 'surface', 'T02'), fl('t6', 'merge', 'T02')] }));
+  assert.equal(r.pass, false);
+  assert.match(r.detail, /surfaced .* not sent to the live worker/);
 });
 
-test('mergeConflictResolved fails when no task was surfaced', () => {
+test('mergeConflictResolved fails when the worker resolved without asking the person', () => {
+  const r = mergeConflictResolved(decided).check(resolvedBundle({ transcripts: [] }));
+  assert.equal(r.pass, false);
+  assert.match(r.detail, /not asked which side ships/);
+  // A question the implementer asked earlier is not the conflict's question.
+  const early = mergeConflictResolved(decided).check(resolvedBundle({ transcripts: [{ ...askedT02, key: 'T02-implement-1.ndjson', role: 'implement' }] }));
+  assert.equal(early.pass, false);
+});
+
+test('mergeConflictResolved fails when no conflict was sent', () => {
   const r = mergeConflictResolved(decided).check(bundle({ flow: [fl('t3', 'merge', 'T01')] }));
   assert.equal(r.pass, false);
-  assert.match(r.detail, /no task surface/);
+  assert.match(r.detail, /no conflict-sent/);
 });
 
-test('mergeConflictResolved fails when the surfaced task never merged (the conflict was never resolved on the live worker)', () => {
-  // Surfaced but no later merge — the worker was closed and its branch never landed.
+test('mergeConflictResolved fails when the task sent the fix never merged (the conflict was never resolved on the live worker)', () => {
+  // Sent but no later merge — the worker never re-signalled done and its branch never landed.
   const r = mergeConflictResolved(decided).check(
-    bundle({ flow: [fl('t4', 'surface', 'T02')], timeline: [tick('t1', [wagent('T02', 'busy')])] }),
+    bundle({ flow: [fl('t4', 'conflict-sent', 'T02')], timeline: [tick('t1', [wagent('T02', 'busy')])] }),
   );
   assert.equal(r.pass, false);
   assert.match(r.detail, /branch never landed/);
@@ -369,7 +384,7 @@ test('mergeConflictResolved fails when the run promoted to main instead of handi
   // A resolved conflict that ended in the removed promotion is not a hand-off — the composed
   // handedOffGreenBranch rejects the `promote` line.
   const r = mergeConflictResolved(decided).check(resolvedBundle({
-    flow: [fl('t3', 'merge', 'T01'), fl('t4', 'surface', 'T02'), fl('t6', 'merge', 'T02'), fl('t9', 'promote', 'pir/scratch')],
+    flow: [fl('t3', 'merge', 'T01'), fl('t4', 'conflict-sent', 'T02'), fl('t6', 'merge', 'T02'), fl('t9', 'promote', 'pir/scratch')],
   }));
   assert.equal(r.pass, false);
   assert.match(r.detail, /did not hand off a green feature branch/);

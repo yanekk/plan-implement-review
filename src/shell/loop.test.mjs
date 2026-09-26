@@ -234,6 +234,22 @@ test('a merge conflict a worker cannot resolve surfaces as a decision, and nothi
   assert.equal(worktree.mainCommitCount(), 1, 'main is untouched');
 });
 
+// holdMerges (dispatch.mjs) is the merge-conflict fixture's lever: with it, T01's finished branch waits
+// until the slow T02 is done too, so both integrated against the same feature branch before either landed.
+test('holdMerges holds a done branch until no worker is still building; off, it merges at once', (t) => {
+  for (const holdMerges of [true, false]) {
+    const { base } = setup(t, [{ num: 'T01' }, { num: 'T02' }], { behaviors: { T02: { slow: 6 } } });
+    const state = createRunState();
+    let t02AtFirstMerge;
+    for (let i = 0; i < 40 && t02AtFirstMerge === undefined; i++) {
+      const r = runPass({ ...base, state, holdMerges });
+      if (r.actions.some((a) => a.type === 'merge')) t02AtFirstMerge = state.tasks.T02?.phase ?? 'merged';
+    }
+    if (holdMerges) assert.equal(t02AtFirstMerge, 'done', 'held: the first merge waits for T02 to finish');
+    else assert.notEqual(t02AtFirstMerge, 'done', 'off: T01 merges while T02 is still building');
+  }
+});
+
 test('a coordinator-hit merge conflict keeps the worker alive, SENDS it the fix, and the branch merges cleanly exactly once (T28, live-workers T08)', (t) => {
   // The T22 conflict-path bug end to end (§2.5 Option 2), now with no person in the loop (live-workers
   // §2.10). Two tasks edit the same line of greeting.txt from a common base; T01 merges clean, T02's

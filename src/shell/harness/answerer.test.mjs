@@ -47,6 +47,11 @@ test('answerFor ticks a pick-several question\'s first two options and types wha
   assert.deepEqual(answerFor({ kind: 'questions', requestId: 'q', questions: [{ question: 'Free?', options: [] }] }, { 'Free?': 'x' }).answers, { 'Free?': 'x' });
 });
 
+test('answerFor types the `*` answer on any question the scenario does not name', () => {
+  const request = { kind: 'questions', requestId: 'q', questions: [{ question: 'Worded any way?', options: [{ label: 'x' }] }, { question: 'Named?', options: [] }] };
+  assert.deepEqual(answerFor(request, { '*': 'keep hello there', 'Named?': 'own' }).answers, { 'Worded any way?': 'keep hello there', 'Named?': 'own' });
+});
+
 test('answerFor gives up on a question with no options, and on anything else', () => {
   assert.equal(answerFor({ kind: 'questions', requestId: 'q', questions: [{ question: 'A?', options: [] }] }), null);
   assert.equal(answerFor({ kind: 'questions', requestId: 'q', questions: [] }), null);

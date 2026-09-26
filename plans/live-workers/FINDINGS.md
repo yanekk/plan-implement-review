@@ -12,6 +12,7 @@ changed.
 
 | Date | | Finding |
 |---|---|---|
+| 2026-09-26 | 📌 | Worker-driven live run: `run.mjs merge-conflict` PASS unattended. `PARALLEL_HOLD_MERGES=1` forced the coordinator-side clash; `conflict-sent T02`, its reviewer asked via AskUserQuestion, the answerer replied, `pir/merge-conflict` reads `hello there`. |
 | 2026-09-26 | 🔄 | T18 review, user: the `live-workers-demo` harness fixture keeps ceiling 2 and a 15-min timeout, above the §5.3 harness bound of 1 and 10 min; four tasks with a 90 s pause do not fit it. Written into §5.3. |
 | 2026-09-26 | ✅ | T18, verified by hand with the user: T03 rerun, own answers typed on the inline `Other:` line (extra `oranges`, name `Ada`) arrived as answers: "works as I wanted". T04 background `↳` lines and `◌ N running in the background`: "clear". |
 | 2026-09-26 | 📌 | T18: the user also drove two full demo runs (3 interrupts with typed instructions, permission, question, all logged delivered) but stated no verdict on them; `live-drill.mjs` covered those keys on the real screen, green four times. |
@@ -23,10 +24,10 @@ changed.
 | 2026-09-26 | 🐞 | T20, a worker driving the T19 rig at 80×24 and 120×40, not a hand-verification: every §2.11 item worked except PgUp/PgDn, swallowed by pi-tui `tui.altScreen.*` bindings (now unbound), and a scrolled-up view jumping under a new prompt (fixed). |
 | 2026-09-26 | 🔄 | T20: with a request pending and the box empty, n/a (then y) answer at once: typing "no, leave it" refuses without the text, then "o, leave it" refuses the next request. User kept it; a reply starts with a capital. |
 | 2026-09-26 | 📌 | T20: an `a` answer draws `→ allowed`, like `y`; the log's reply does not record the grant. The header says `live` after the run stops. A SIGTERM-closed worker logs `the worker's line failed: … code 143`. |
-| 2026-09-25 | 📌 | T17: the orange `merge conflict` row and pir's paste block (display.mjs `isConflict`, pir-tui.mjs) are unreachable: a failed conflict send and the restart path both mark ⛔ and drop the task. conflict.mjs's `claude agents` attach wording is likewise dead. |
+| 2026-09-25 | 📌 | T17: the orange `merge conflict` row and pir's paste block (display.mjs `isConflict`, pir-tui.mjs) are unreachable: a failed conflict send and the restart path both mark ⛔ and drop the task. conflict.mjs's attach wording was removed 2026-09-26. |
 | 2026-09-25 | 🔄 | T13: the user had no time for the hands-on feel check. Added T19 (a free rig: pretend run, real screen, pty driver) and T20 (a worker drives it, not the person: "You drive, not me"); T20 blocks T18. |
 | 2026-09-25 | 📌 | T13: no `ask` rule stopped the person-check scratch run (§5.3): `startRun` ran without a prompt. The auto-mode classifier then blocked reading that run's control folder ("Real-World Transactions"). Run halted by HALT, index record and folder removed. |
-| 2026-09-25 | 📌 | T16: harness fixture prose still tells the person to attach in `claude agents` (`dynamic-task.mjs` task doc, `merge-conflict.mjs` steps). Left for T18's live run to correct; a worker reading it would look for a session that no longer exists. |
+| 2026-09-25 | 📌 | T16: `dynamic-task.mjs` task doc still tells the person to attach in `claude agents`, a session that no longer exists. `merge-conflict.mjs` was reworked unattended 2026-09-26. |
 | 2026-09-25 | 📌 | T09: a task's `workers` in status.json come from `platform.workers()`, this coordinator's spawns only. After a restart an earlier run's logs stay in `conversations/` but no row opens them until something scans that folder. |
 | 2026-09-25 | 📌 | T07: worker-proc logs a `request` entry, and fires `onEvent`, before it parks the request as pending, so the platform's grant auto-answer waits one microtask. Answering inside the listener would log `undelivered`. |
 | 2026-09-25 | 📌 | T05: a SIGTERM sent to the fake `claude` before node has loaded its script kills it unrecorded. Tests wait for the fake's first received line before signalling it. |

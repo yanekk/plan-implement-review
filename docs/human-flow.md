@@ -106,7 +106,8 @@ There are two places a conflict can arise:
   row `asking you` like any other question. Nothing is asked of the person otherwise: the row reads
   `fixing conflict` in the working (cyan) style, with no paste block and no conflict footer. The
   worker resolves on its branch and re-signals done, and only then does the command merge the
-  now-clean branch. The merge and the worker's close are paired — a worker is closed only after its
+  now-clean branch. The `merge-conflict` harness fixture drives this path live and unattended: the
+  worker asks which greeting ships and the harness's stand-in for the person answers it. The merge and the worker's close are paired — a worker is closed only after its
   branch has actually merged — so a conflict can never destroy the worker that must resolve it.
 
   **With no live worker to send it to**, the command falls back to a printed prompt: a ready-to-paste

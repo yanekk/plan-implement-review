@@ -82,6 +82,8 @@ function addTaskRows(cwd, task, plan, rows) {
 //                            child is listed until it exits, up to the 5 s + 5 s SIGTERM/SIGKILL
 //                            escalation (platform.mjs). Lets a test prove the loop does not recount a
 //                            closed-but-still-listed worker (loop.mjs closedIds).
+//     { slow: N }            the implementer spends N extra ticks building before it commits, so a
+//                            test can hold one task mid-build while another finishes (holdMerges).
 //     { request: kind }      the task's live workers show a pending 'permission' or 'questions' request
 //                            in workers() (not in list(): the loop's pass is unchanged). T09.
 //
@@ -119,6 +121,10 @@ export function createFakePlatform({ behaviors = {} } = {}) {
 
     if (w.role === 'implement') {
       if (w.stage === 'fresh') {
+        if (b.slow && (w.slowed ?? 0) < b.slow) {
+          w.slowed = (w.slowed ?? 0) + 1;
+          return;
+        }
         if (b.crash) {
           w.live = false;
           w.stage = 'dead';

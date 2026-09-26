@@ -111,7 +111,10 @@ A pass does, in order:
 - **Merge one done task.** When a worker reports `done`, the command merges its task branch into the
   feature branch (**one per pass, serialized**), reconciles its row to `✅` on the feature branch,
   and closes the worker. A merge that conflicts instead keeps the worker and sends it the fix over its
-  line — see [human-flow.md](human-flow.md). The merge may also **adopt new task rows** the branch carried — a
+  line — see [human-flow.md](human-flow.md). `PARALLEL_HOLD_MERGES=1` is a test lever, not a setting:
+  it merges nothing while any worker is still building (a parked one does not count), so two
+  same-line tasks both finish before either lands and the second conflicts at this step rather than
+  at the worker's own integrate. The `merge-conflict` harness fixture sets it. The merge may also **adopt new task rows** the branch carried — a
   worker-introduced task: each adopted row is appended to the feature `PROGRESS.md` as `⬜` and logged
   with an `adopt` line, and a later pass's spawn step dispatches it (above). A row that cannot be
   adopted — an edit of an existing task, or a dependency on a task that does not exist — is left

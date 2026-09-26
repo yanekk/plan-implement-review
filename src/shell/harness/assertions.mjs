@@ -340,23 +340,21 @@ export function adoptedAndDispatched() {
   });
 }
 
-// A coordinator-hit merge conflict was RESOLVED in the non-agentic, ATTENDED model (DESIGN §2.8, §2.2):
-// the coordinator kept the conflicting worker alive (it never closed it or merged past it) and, since
-// live-workers T08, sends the resolution prompt to that worker itself over its line (`conflict-sent`); a
-// conflict with no live worker is still surfaced to the person. No `answer` line is involved. The
-// worker merges the feature branch into its own branch, resolves keeping the decided side, commits and
-// re-signals done; the coordinator's next pass merges its now-clean branch and the run HANDS OFF the green
-// feature branch (§2.4 — it never merges to main). This REPLACES the old down-channel shape, which
-// required an `answer {task}` flow line and a `promote` to main — both gone with the relay and the
-// promotion (T05), which is why the old fact could never go green again (FINDINGS 2026-09-20). The fact is
-// task-AGNOSTIC: which of the two same-line tasks merges second — and so conflicts — is a timing race (T16
-// 2026-09-11), so it finds the task that took the resolution shape rather than naming it. The flow line
-// does NOT carry a surface's kind (loop.mjs writes type+task only — see WHAT A BUNDLE CARRIES), so like
-// parkedWorkerHoldsSlot it keys on the task id, not on `kind: conflict`. It reads off the bundle:
-//   - a `surface` or `conflict-sent` for that task, with NO `merge` of it BEFORE it (the conflict was
-//     caught, nothing bad merged first);
-//   - a `merge {task}` AFTER it (the same worker resumed and its now-clean branch merged), with NO
-//     `answer` line required;
+// A coordinator-hit merge conflict was SENT to its live worker and resolved there, with the person asked
+// the judgement as an ordinary question (live-workers §2.10). The coordinator kept the conflicting worker
+// alive (it never closed it or merged past it), sent it the resolution prompt over its line
+// (`conflict-sent`), the worker asked the person which side ships (an AskUserQuestion the person — the
+// harness answerer — answered), merged the feature branch into its own branch, resolved, committed and
+// re-signalled done; the coordinator's next pass merged its now-clean branch and the run HANDED OFF the
+// green feature branch (§2.4 — it never merges to main). The fact is task-AGNOSTIC: which of the two
+// same-line tasks merges second is a race, so it finds the task that took the resolution shape rather
+// than naming it. The flow line carries type+task only (see WHAT A BUNDLE CARRIES). It reads off the bundle:
+//   - a `conflict-sent` for that task, with NO `merge` of it BEFORE it (the conflict was caught at the
+//     coordinator, nothing bad merged first). A `surface` does not count: that is the printed paste-in
+//     prompt (no live worker) or a conflict the worker hit at its own integrate, neither the path proven;
+//   - a `merge {task}` AFTER it (the same worker resolved and its now-clean branch merged);
+//   - that task's review session (the one sent the fix) asked the person a question set and the person's
+//     answer reached it (requestAnswered);
 //   - exactly ONE implement worker for the task (implementSessionIds: its conversation logs; no respawn — the T22 clobber spawned a
 //     second implementer; this mirrors resumedNotRebuilt's no-respawn check);
 //   - the run handed off a green feature branch (composed with handedOffGreenBranch: ZERO promote, NO merge
@@ -365,21 +363,26 @@ export function adoptedAndDispatched() {
 //     (bundle.finalFiles, captured by the runner from `pir/{slug}`: loadFinalFiles) matches the DECIDED
 //     side. This is the crux of the old T22 regression — the branch must read "hello there", not "hi world".
 export function mergeConflictResolved({ file, content } = {}) {
-  return fact('merge-conflict-resolved', 'A coordinator-hit conflict was kept alive, resolved by a person on the live worker, and the decided side was handed off', (bundle) => {
+  return fact('merge-conflict-resolved', 'A coordinator-hit conflict was sent to its live worker, the person was asked which side ships, and the decided side was handed off', (bundle) => {
     const evidence = [];
-    // Since live-workers T08 a conflict whose worker is live is SENT to it (`conflict-sent {task}`) rather
-    // than surfaced; only the no-worker path still writes `surface {task}`. Either line marks the conflict.
-    const surfaces = [...flowOf(bundle, 'surface'), ...flowOf(bundle, 'conflict-sent')]
+    const surfaces = flowOf(bundle, 'conflict-sent')
       .filter((e) => /^T\d+$/.test(e.rest))
       .sort((a, b) => (a.ts < b.ts ? -1 : a.ts > b.ts ? 1 : 0));
     if (surfaces.length === 0) {
-      return { pass: false, evidence, detail: 'no task surface — a merge conflict was expected to be surfaced' };
+      const printed = flowOf(bundle, 'surface').filter((e) => /^T\d+$/.test(e.rest));
+      for (const s of printed) evidence.push(flowLine(s));
+      return {
+        pass: false,
+        evidence,
+        detail: printed.length
+          ? 'no conflict-sent — the conflict was surfaced (a printed prompt, or caught at the worker\'s own integrate), not sent to the live worker'
+          : 'no conflict-sent — no coordinator-side merge conflict was sent to a worker',
+      };
     }
     const merges = flowOf(bundle, 'merge');
 
-    // Find the surfaced task that took the resolution path: surfaced, not merged before, and then merged.
-    // No `answer` line is required — the down-channel is gone (§2.2); the person, not a routed answer,
-    // drove the resolution. Which task conflicts is a race, so the fact discovers it rather than naming it.
+    // Find the task that took the resolution path: sent the fix, not merged before, and then merged. Which
+    // task conflicts is a race, so the fact discovers it rather than naming it.
     let resolved = null;
     for (const s of surfaces) {
       const task = s.rest;
@@ -396,12 +399,22 @@ export function mergeConflictResolved({ file, content } = {}) {
       return {
         pass: false,
         evidence,
-        detail: 'no surfaced task was later merged — the conflict was not resolved on the live worker and the branch never landed',
+        detail: 'no task sent the fix was later merged — the conflict was not resolved on the live worker and the branch never landed',
       };
     }
     const { task } = resolved;
     evidence.push(flowLine(resolved.surface));
     evidence.push(flowLine(resolved.mergedAfter));
+
+    // The judgement reached the person as an ordinary question and their answer reached the worker. Only
+    // the review session counts: it is the one that signalled done, so the fix went to it — a question
+    // the implementer asked earlier is not this one.
+    const reviewOnly = { ...bundle, transcripts: (bundle.transcripts ?? []).filter((t) => t.role === 'review') };
+    const asked = requestAnswered(task, 'questions').check(reviewOnly);
+    for (const e of asked.evidence) evidence.push(e);
+    if (!asked.pass) {
+      return { pass: false, evidence, detail: `the person was not asked which side ships: ${asked.detail}` };
+    }
 
     // No respawn: exactly one implement worker ran the conflicting task (mirrors resumedNotRebuilt). The
     // T22 clobber closed the done worker and spawned a SECOND implementer over the same task. Counted by
@@ -436,7 +449,7 @@ export function mergeConflictResolved({ file, content } = {}) {
       evidence.push(`feature-branch:${file} = ${JSON.stringify(String(got).trim())} (the decided side)`);
     }
 
-    return { pass: true, evidence, detail: `${task}'s conflict was surfaced, resolved by the live worker without a routed answer, and the decided side merged and handed off` };
+    return { pass: true, evidence, detail: `${task}'s conflict was sent to its live worker, the person answered which side ships, and the decided side merged and handed off` };
   });
 }
 

@@ -33,6 +33,12 @@ test('defineScenario rejects a fact that is not a { check } builder result', () 
   assert.throws(() => defineScenario({ id: 's', fixture: 'f', facts: [{ id: 'nope' }] }), /must be a \{ id, label, check \}/);
 });
 
+test('defineScenario: holdMerges defaults off and is a boolean', () => {
+  const spec = (holdMerges) => defineScenario({ id: 'a', fixture: 'f', facts: [noHelloEver()], holdMerges }).holdMerges;
+  assert.equal(spec(undefined), false);
+  assert.equal(spec(true), true);
+});
+
 test('defineScenario: answerPending defaults off and normalises to { typed } (T18)', () => {
   const spec = (answerPending) => defineScenario({ id: 'a', fixture: 'f', facts: [noHelloEver()], answerPending }).answerPending;
   assert.equal(spec(undefined), false);

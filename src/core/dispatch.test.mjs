@@ -86,6 +86,24 @@ test('merge is at most one task branch per pass even when two workers are done',
   assert.deepEqual(close, []);
 });
 
+test('holdMerges: a done worker waits while another is still building, then merges', () => {
+  const tasks = [task('T01', '⬜'), task('T02', '⬜')];
+  for (const phase of ['implementing', 'review-ready', 'reviewing']) {
+    const held = call({ tasks, holdMerges: true, assignments: [asg('w-a', 'T01', 'done'), asg('w-b', 'T02', phase)] });
+    assert.deepEqual(held.merge, [], `held while the other is ${phase}`);
+  }
+  const both = call({ tasks, holdMerges: true, assignments: [asg('w-a', 'T01', 'done'), asg('w-b', 'T02', 'done')] });
+  assert.deepEqual(both.merge, ['w-a'], 'both done: one merge per pass, as without the hold');
+  const off = call({ tasks, assignments: [asg('w-a', 'T01', 'done'), asg('w-b', 'T02', 'implementing')] });
+  assert.deepEqual(off.merge, ['w-a'], 'off by default');
+});
+
+test('holdMerges: a parked or dead worker does not hold the merge', () => {
+  const tasks = [task('T01', '⬜'), task('T02', '⬜'), task('T03', '⬜')];
+  const assignments = [asg('w-a', 'T01', 'done'), asg('w-b', 'T02', 'awaiting-answer'), asg('w-c', 'T03', 'implementing', false)];
+  assert.deepEqual(call({ tasks, assignments, holdMerges: true }).merge, ['w-a']);
+});
+
 test('a worker parked AWAITING a decision is never merged, closed or respawned', () => {
   // The T22 conflict-path guarantee at the decision level: an AWAITING worker holds its slot and its
   // task, and decideDispatch touches none of it — no merge (its phase is not done), no close (it is
