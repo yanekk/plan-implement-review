@@ -216,7 +216,9 @@ test('the driver walks the tour on the real pir screen', { timeout: 90000 }, asy
       { keys: ' ', until: /\[x\] tour/ },
       { keys: `${ESC}[B`, until: /❯ \[ \] long/ },
       { keys: ' ', until: /\[x\] long/ },
-      { keys: '\r', until: /Which scenarios should it ship with\? → tour, long/ },
+      // Typing lands on the Other line, next to "Other:", not in the box (user 2026-09-26, T18 drill).
+      { keys: 'mine too', until: /❯ \[x\] Other: mine too▏/ },
+      { keys: '\r', until: /Which scenarios should it ship with\? → tour, long, mine too/ },
       { keys: 'hello rig', until: /hello rig/ },
       { keys: '\r', until: /Done with "hello rig"\./, timeoutMs: 20000 },
       { keys: 'stop me\r', until: /You said: stop me\. Working on it\./ },
@@ -229,14 +231,14 @@ test('the driver walks the tour on the real pir screen', { timeout: 90000 }, asy
   assert.equal(overflows, 0, 'pir never addressed, scrolled or wrote past the window, so no frame was clipped to fit');
   const conversation = screens.slice(2, -1);
   for (const s of conversation) {
-    assert.match(s.rows.at(-1), /esc interrupt · ← back/, `the key hint is the last line:\n${s.rows.join('\n')}`);
+    assert.match(s.rows.at(-1), /esc (interrupt|to talk instead) · ← back/, `the key hint is the last line:\n${s.rows.join('\n')}`);
     assert.match(s.rows.at(-2), /^─+$/, 'the box\'s lower edge is right above it');
   }
   const opened = screens[2].rows;
   assert.match(opened[0], new RegExp(`^T01  worker ${rig.workerId.slice(0, 8)} · live`), 'the header names the worker');
   const text = (i) => screens[i].rows.join('\n');
   assert.match(text(2), /⎿ Bash npm test/, 'the tool steps are in the scrollback, the failed one included');
-  assert.match(text(12), /Which name should the rig command have\? → pir-rig/);
+  assert.match(text(13), /Which name should the rig command have\? → pir-rig/);
   assert.match(text(screens.length - 1), /T01/, '← returned to the run\'s live view');
 
   const sent = logOf(rig).filter((e) => e.dir === 'out' && e.from === 'person').map((e) => e.kind);

@@ -235,28 +235,35 @@ test('the picker keys drive the question set and the final Enter drops the answe
   assert.equal(t.v.state.text, '', 'no picker key reached the box');
 });
 
-test('text typed with a question set pending answers the question on screen (user 2026-09-26)', () => {
+test('typing with a question set pending lands next to "Other:", not in the box (user 2026-09-26)', () => {
   const t = makeView({ log: [init(), opening, questions()] });
-  assert.doesNotMatch(t.text(), /Other/, 'no Other line');
-  t.type('Green');
+  t.type('Green é');
+  assert.equal(t.v.state.text, '', 'the box stays empty');
+  assert.match(t.text(), /❯ \(•\) Other: Green é▏/);
+  t.v.handleInput('\x7f'); // backspace
+  t.v.handleInput('\x7f');
   t.v.handleInput(KEY.enter);
   assert.deepEqual(t.drops, [], 'the first of two questions: nothing sent yet');
   assert.match(t.text(), /Which sizes\? \(pick any\)/, 'moved to the next question');
   t.v.handleInput(KEY.space); // S
   t.type('XL');
+  assert.match(t.text(), /esc to talk instead/, 'with a question pinned, the footer says how to talk instead');
   t.v.handleInput(KEY.enter);
   assert.deepEqual(t.drops, [{ to: 'w-1', kind: 'answers', requestId: 'q1', answers: { 'Which colour?': 'Green', 'Which sizes?': 'S, XL' } }]);
-  assert.equal(t.v.state.text, '');
 });
 
 
-test('a failed answer drop puts the typed text back and the picker where it was', () => {
-  const t = makeView({ log: [init(), opening, questions({ input: { questions: [{ question: 'Name?', header: 'Name', multiSelect: false, options: [{ label: 'Ada', description: '' }, { label: 'Grace', description: '' }] }] } })], alive: false });
+
+test('text already in the box when a question arrives moves onto its Other line on Enter', () => {
+  const t = makeView({ log: [init(), opening] });
   t.type('Jan');
+  t.push(questions());
   t.v.handleInput(KEY.enter);
-  assert.equal(t.v.state.text, 'Jan');
-  assert.match(t.text(), /Name\? \(pick one\)/);
+  assert.deepEqual(t.drops, []);
+  assert.equal(t.v.state.text, '');
+  assert.match(t.text(), /❯ \(•\) Other: Jan▏/);
 });
+
 
 
 test('the answer arriving in the log unpins the prompt; a new request pins fresh', () => {

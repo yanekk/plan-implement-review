@@ -10,7 +10,7 @@
 // worker is not live, or its log says it exited) has no box and takes only ←, scrolling and Tab.
 
 import { Editor, CombinedAutocompleteProvider, isKeyRelease, parseKey } from '@earendil-works/pi-tui';
-import { buildConversation, gateReducer, pickerReducer, promptLines } from '../core/conversation.mjs';
+import { buildConversation, gateReducer, pickerReducer, promptLines, onOther } from '../core/conversation.mjs';
 import { readEntry, workerActivity } from '../core/stream.mjs';
 import { dropPersonInput } from './person-inbox.mjs';
 import { followLog } from './log-follow.mjs';
@@ -170,21 +170,14 @@ export function createConversationView({
     if (send({ kind: 'interrupt' }, 'the interrupt')) status = { text: 'interrupt sent', style: 'dim' };
   }
 
-  // The box's Enter. Typed text refuses a pending permission with the text (§2.6), answers the question
-  // on screen of a pending question set (user 2026-09-26, T18 drill: it replaced declining the set), or is
-  // a message. A drop that fails puts the text back in the box and the picker back where it was.
+  // The box's Enter. Typed text refuses a pending permission with the text (§2.6) or is a message. Text
+  // already in the box when a question set arrives moves onto the question's Other line to be confirmed
+  // there (user 2026-09-26: typed text only ever answers). A drop that fails puts the text back in the box.
   function submit(text) {
     if (!text) return;
     const p = livePrompt();
     if (p?.kind === 'questions') {
-      const r = pickerReducer(p, { type: 'typed', text });
-      prompt = r.picker;
-      if (!r.send) return;
-      if (send({ kind: 'answers', requestId: p.requestId, answers: r.send.answers }, 'your answers')) answered.add(p.requestId);
-      else {
-        prompt = p;
-        editor.setText(text);
-      }
+      prompt = pickerReducer(p, { type: 'char', text }).picker;
       return;
     }
     let ok;
@@ -202,9 +195,9 @@ export function createConversationView({
     scrollBack = Math.max(0, scrollBack + by);
   }
 
-  // A key while the box is empty and a request is pinned: Enter/n/a for a permission, ↑↓ space Enter for a
-  // question set. true when the prompt took the key.
-  function promptKey(key) {
+  // A key while the box is empty and a request is pinned: Enter/n/a for a permission; ↑↓ space Enter,
+  // backspace and any typing for a question set. true when the prompt took the key.
+  function promptKey(key, data) {
     const p = livePrompt();
     if (!p) return false;
     if (p.kind === 'permission') {
@@ -214,9 +207,13 @@ export function createConversationView({
       if (send({ kind: 'permission', requestId: p.requestId, decision }, 'your answer')) answered.add(p.requestId);
       return true;
     }
-    const event = { up: 'up', down: 'down', space: 'toggle', enter: 'next' }[key];
+    // Typing lands on the picker's Other line, never in the box (user 2026-09-26, T18 drill): a plain
+    // printable key or paste is text; on the Other line space and backspace edit it.
+    let event = { up: 'up', down: 'down', space: 'toggle', enter: 'next', backspace: 'backspace' }[key];
+    if (key === 'space' && onOther(p)) event = { type: 'char', text: ' ' };
+    else if (!event && typeof data === 'string' && /^[^\x00-\x1f\x7f]+$/.test(data)) event = { type: 'char', text: data };
     if (!event) return false;
-    const r = pickerReducer(p, { type: event });
+    const r = pickerReducer(p, typeof event === 'string' ? { type: event } : event);
     prompt = r.picker;
     if (r.send && send({ kind: 'answers', requestId: p.requestId, answers: r.send.answers }, 'your answers')) answered.add(p.requestId);
     return true;
@@ -242,7 +239,7 @@ export function createConversationView({
         else editor.setText('');
       } else if (key === 'tab' && !completing) full = !full;
       else if (key === 'left' && empty) return onBack();
-      else if (empty && !completing && promptKey(key)) {
+      else if (empty && !completing && promptKey(key, data)) {
         /* the pinned prompt took it */
       } else {
         // Any other key disarms an armed permission gate (§2.6) and goes to the box.
@@ -261,6 +258,8 @@ export function createConversationView({
   function hint(m, scrolled) {
     if (m.readOnly) return `← back · PgUp/PgDn scroll · Tab detail · ${m.ended ? 'exited' : 'finished'}, read only`;
     // ← goes back only with an empty box, and Enter/n/a answer only then.
+    // With a question set pinned, typing answers it, so talking instead is Esc (user 2026-09-26, T18 drill).
+    if (livePrompt()?.kind === 'questions') return `${scrolled ? '' : 'answer above · '}esc to talk instead · ← back · Tab detail · PgUp/PgDn`;
     if (livePrompt()) return `${scrolled ? '' : 'answer above or type a reply · '}esc interrupt · ← back · Tab detail · PgUp/PgDn`;
     return `↵ send · esc interrupt · ← back · Tab detail · PgUp/PgDn${scrolled ? '' : ' scroll'}`;
   }

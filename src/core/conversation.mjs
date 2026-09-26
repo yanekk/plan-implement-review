@@ -360,9 +360,9 @@ export function gateReducer(gate, key) {
 
 // ---- The question-set picker (DESIGN §2.7). ----
 
-// pickerFor(request) → the picker for a pending question set (a stream.mjs `questions` event). There is
-// no "Other" line: text typed in the box is the answer to the question on screen (user 2026-09-26, T18
-// drill), so an own answer needs no extra step.
+// pickerFor(request) → the picker for a pending question set (a stream.mjs `questions` event). Every
+// question ends with an "Other" line (cursor index options.length) that is itself a text field: the
+// person's own answer is typed there, next to "Other:", never in the box (user 2026-09-26, T18 drill).
 export function pickerFor(request) {
   return {
     kind: 'questions',
@@ -373,24 +373,34 @@ export function pickerFor(request) {
   };
 }
 
-// The answer to one question: its picked labels in option order, then the typed text, joined ", ".
+// onOther(picker) → is the cursor on the current question's Other line.
+export function onOther(picker) {
+  const qn = picker?.questions?.[picker.q];
+  return !!qn && picker.cursor === qn.options.length;
+}
+
+// The answer to one question: its picked labels in option order, then the Other text, joined ", ".
 function answerOf(qn) {
   const labels = qn.options.filter((_, i) => qn.picks.includes(i)).map((o) => o.label);
-  if (qn.other) labels.push(qn.other);
+  const own = qn.other.trim();
+  if (own) labels.push(own);
   return labels.join(', ');
 }
 
 // pickerReducer(picker, event) → { picker, send }. `send` is null or { answers }, answers keyed by
-// question text. Events: up/down move (wrapping); toggle picks (single-select replaces, multi-select
-// ticks); next answers the question and moves on, sending on the last: a single-select question takes the
-// line under the cursor, so one Enter answers it (user 2026-09-26), a multi-select one needs a tick;
-// typed {text} answers the question with the text the person typed in the box (user 2026-09-26, T18
-// drill), replacing a single-select pick and joining a multi-select question's ticks, then moves on the
-// same way. Blank text does nothing.
+// question text. Events (user 2026-09-26, T18 drill):
+//   up/down    move, wrapping through the Other line; the Other text stays when the cursor leaves it.
+//   toggle     space on an option: a single-select question replaces its pick, a multi-select one ticks.
+//   char {text}  typing: it lands on the Other line, moving the cursor there first if it was on an option,
+//              so typed text is only ever the person's own answer (their option 1).
+//   backspace  on the Other line, deletes the last character.
+//   next       Enter: answers and moves on, sending on the last question. A single-select question takes
+//              the line under the cursor (an option, or the Other text); a multi-select one its ticks plus
+//              any Other text. With no answer it does nothing.
 export function pickerReducer(picker, event) {
   const qn = picker.questions[picker.q];
   if (!qn) return { picker, send: null };
-  const n = Math.max(1, qn.options.length);
+  const n = qn.options.length + 1;
   const withQuestion = (p, changes) => ({
     ...p,
     questions: p.questions.map((x, i) => (i === p.q ? { ...x, ...changes } : x)),
@@ -402,27 +412,33 @@ export function pickerReducer(picker, event) {
     for (const x of p.questions) answers[x.question] = answerOf(x);
     return { picker: p, send: { answers } };
   };
+  const other = qn.options.length;
   switch (event?.type) {
     case 'up':
       return { picker: { ...picker, cursor: (picker.cursor + n - 1) % n }, send: null };
     case 'down':
       return { picker: { ...picker, cursor: (picker.cursor + 1) % n }, send: null };
     case 'toggle': {
-      if (picker.cursor >= qn.options.length) return { picker, send: null };
+      if (picker.cursor === other) return pickerReducer(picker, { type: 'char', text: ' ' });
       if (qn.multiSelect) {
         const picks = qn.picks.includes(picker.cursor) ? qn.picks.filter((i) => i !== picker.cursor) : [...qn.picks, picker.cursor];
         return { picker: withQuestion(picker, { picks }), send: null };
       }
-      return { picker: withQuestion(picker, { picks: [picker.cursor], other: '' }), send: null };
+      return { picker: withQuestion(picker, { picks: [picker.cursor] }), send: null };
     }
-    case 'typed': {
-      const text = typeof event.text === 'string' ? event.text.trim() : '';
+    case 'char': {
+      const text = typeof event.text === 'string' ? event.text : '';
       if (!text) return { picker, send: null };
-      return advance(withQuestion(picker, qn.multiSelect ? { other: text } : { other: text, picks: [] }));
+      return { picker: withQuestion({ ...picker, cursor: other }, { other: qn.other + text }), send: null };
+    }
+    case 'backspace': {
+      if (picker.cursor !== other || !qn.other) return { picker, send: null };
+      return { picker: withQuestion(picker, { other: [...qn.other].slice(0, -1).join('') }), send: null };
     }
     case 'next': {
-      if (!qn.multiSelect && picker.cursor < qn.options.length) return advance(withQuestion(picker, { picks: [picker.cursor], other: '' }));
-      return advance(picker);
+      if (qn.multiSelect) return advance(picker);
+      if (picker.cursor === other) return qn.other.trim() ? advance(withQuestion(picker, { picks: [] })) : { picker, send: null };
+      return advance(withQuestion(picker, { picks: [picker.cursor], other: '' }));
     }
     default:
       return { picker, send: null };
@@ -458,10 +474,21 @@ export function promptLines(prompt, { width = 80, taskId = 'worker' } = {}) {
       if (o.description) spans.push(span(`  ${o.description}`, 'dim'));
       out.push(clipSpans(spans, w));
     });
+    // The Other line is a text field: the typed answer sits next to "Other:", with a caret while the cursor
+    // is on it (user 2026-09-26, T18 drill).
+    const here = onOther(prompt);
+    const own = qn.other !== '';
+    const otherBox = qn.multiSelect ? (own ? '[x]' : '[ ]') : own && !qn.picks.length ? '(•)' : '( )';
+    const otherSpans = [span(`  ${here ? '❯ ' : '  '}${otherBox} Other: `, own ? 'ok' : here ? 'prompt' : null), span(qn.other, 'ok')];
+    if (here) otherSpans.push(span('▏', 'prompt'));
+    else if (!own) otherSpans.push(span('type your own answer', 'dim'));
+    out.push(clipSpans(otherSpans, w));
     const last = prompt.q === total - 1;
-    const hint = qn.multiSelect
-      ? `↑↓ move · space tick · ↵ ${last ? 'send answers' : 'next question'} · or type your own answer and ↵`
-      : `↑↓ move · ↵ ${last ? 'choose and send' : 'choose, next question'} · or type your own answer and ↵`;
+    const hint = here
+      ? `type your answer here · ↵ ${last ? 'send' : 'next question'} · ↑↓ leave it`
+      : qn.multiSelect
+        ? `↑↓ move · space tick · ↵ ${last ? 'send answers' : 'next question'} · or just type your own answer`
+        : `↑↓ move · ↵ ${last ? 'choose and send' : 'choose, next question'} · or just type your own answer`;
     out.push(...wrapped('  ', hint, 'prompt', w));
     return out;
   }
