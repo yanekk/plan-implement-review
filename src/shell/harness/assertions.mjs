@@ -33,6 +33,8 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
+import { parseProgress } from '../../core/progress.mjs';
+
 // --- Small pure helpers over a bundle ------------------------------------------------------------
 
 // Reconstruct a flow line for evidence, in the on-disk shape a person would grep.
@@ -131,6 +133,24 @@ export function loadRestartPoint(bundle, { readFile = (p) => readFileSync(p, 'ut
     restartPoint = null;
   }
   return { ...bundle, restartPoint };
+}
+
+// loadPlanRun(bundle, { readFile }) → a new bundle with `planRun` attached, read from the bundle's
+// `plan-run.json` (written by the plan-scenario runner at seal, pir-plan-command T17): what the planning
+// run and its build left behind, captured while the scratch repo still stood.
+//   { runId, slug, outcome, planFinalState, mainBefore, mainAfter, progress, records }
+// `progress` is plans/{slug}/PROGRESS.md as committed on pir/{slug} (null when git could not show it);
+// `records` is every index record of the scratch repo, parsed. A missing or malformed file yields null,
+// so each plan fact reports "no plan-run capture" from data rather than throwing.
+export function loadPlanRun(bundle, { readFile = (p) => readFileSync(p, 'utf8') } = {}) {
+  let planRun = null;
+  try {
+    const parsed = JSON.parse(readFile(join(bundle.dir, 'plan-run.json')));
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) planRun = parsed;
+  } catch {
+    planRun = null;
+  }
+  return { ...bundle, planRun };
 }
 
 // parseTranscript(text) → the NDJSON lines parsed to objects, malformed lines skipped (never a throw).
@@ -975,6 +995,82 @@ export function requestAnswered(task, kind) {
     }
     if (asked === 0) return { pass: false, evidence, detail: `${task} never asked ${kind === 'questions' ? 'a question set' : 'a permission'}` };
     return { pass: false, evidence, detail: `${task} asked ${asked} time(s) but no person's allowing answer reached it` };
+  });
+}
+
+// --- The plan-command facts (pir-plan-command DESIGN §1 success criteria, T17) --------------------
+//
+// A plan scenario starts from a repo with no plan, so what it must show is the whole of `pir plan`'s
+// promise: a reviewed plan on pir/{slug}, a build that finished every task on that branch (its green
+// hand-off is handedOffGreenBranch above), `main` exactly where the seed left it, and the dashboard's one
+// row for the slug turned into the build's. Each reads `bundle.planRun` (loadPlanRun) and nothing else.
+
+const NO_PLAN_RUN = { pass: false, evidence: [], detail: 'no plan-run capture in the bundle (plan-run.json)' };
+
+// The planning run ended `reviewed` with a slug, and the plan committed on pir/{slug} reads reviewed
+// (parseProgress's gate, the one the build's review gate reads).
+export function planReviewedOnBranch() {
+  return fact('plan-reviewed-on-branch', 'The planning run left a reviewed plan on pir/{slug} (§2.7)', (bundle) => {
+    const pr = bundle.planRun;
+    if (!pr) return NO_PLAN_RUN;
+    const evidence = [`outcome: ${pr.outcome ?? '(none)'}`, `slug: ${pr.slug ?? '(none)'}`];
+    if (pr.outcome !== 'reviewed' || !pr.slug) {
+      return { pass: false, evidence, detail: `the planning run ended ${pr.outcome ?? 'without an outcome'}, not reviewed` };
+    }
+    if (typeof pr.progress !== 'string') {
+      return { pass: false, evidence, detail: `plans/${pr.slug}/PROGRESS.md is not committed on pir/${pr.slug}` };
+    }
+    const gate = parseProgress(pr.progress).planReviewed;
+    evidence.push(`Plan reviewed: ${gate?.reviewed ? 'yes' : 'no'}${gate?.note ? ` — ${gate.note}` : ''}`);
+    if (!gate?.reviewed) return { pass: false, evidence, detail: `pir/${pr.slug}'s PROGRESS.md does not read reviewed` };
+    return { pass: true, evidence, detail: `plan ${pr.slug} is reviewed on pir/${pr.slug}` };
+  });
+}
+
+// Every task row of the plan on pir/{slug} is ✅: the build ran the whole plan, not part of it.
+export function everyTaskDone() {
+  return fact('every-task-done', 'Every task of the plan is ✅ on pir/{slug}', (bundle) => {
+    const pr = bundle.planRun;
+    if (!pr) return NO_PLAN_RUN;
+    if (typeof pr.progress !== 'string') return { pass: false, evidence: [], detail: 'no PROGRESS.md captured from pir/{slug}' };
+    const { tasks, errors } = parseProgress(pr.progress);
+    const evidence = [...tasks.map((t) => `${t.num} ${t.name} ${t.state}`), ...errors.map((e) => `parse: ${e}`)];
+    if (tasks.length === 0) return { pass: false, evidence, detail: 'the plan has no task rows' };
+    if (errors.length) return { pass: false, evidence, detail: `PROGRESS.md has ${errors.length} unreadable row(s)` };
+    const open = tasks.filter((t) => t.state !== '✅');
+    if (open.length) return { pass: false, evidence, detail: `${open.length} of ${tasks.length} task(s) not ✅: ${open.map((t) => t.num).join(', ')}` };
+    return { pass: true, evidence, detail: `all ${tasks.length} task(s) ✅` };
+  });
+}
+
+// `main` points at the commit it pointed at before the planning run started: planning and building both
+// happen on pir/… branches, and the person merges (§1, §8).
+export function mainUntouched() {
+  return fact('main-untouched', "main's head is unchanged by the planning run and its build", (bundle) => {
+    const pr = bundle.planRun;
+    if (!pr) return NO_PLAN_RUN;
+    const evidence = [`main before: ${pr.mainBefore ?? '(unread)'}`, `main after: ${pr.mainAfter ?? '(unread)'}`];
+    if (!pr.mainBefore || !pr.mainAfter) return { pass: false, evidence, detail: "main's head was not read at both ends" };
+    if (pr.mainBefore !== pr.mainAfter) return { pass: false, evidence, detail: 'main moved' };
+    return { pass: true, evidence, detail: 'main is where the seed left it' };
+  });
+}
+
+// The dashboard holds one row for the slug and it is the build's (`kind 'work'`, §2.8, §2.10): the go
+// turned the planning run's row into the build's, and no row is left under the temporary run id.
+export function indexRowIsWork() {
+  return fact('index-row-is-work', "The slug's index row flipped from plan to work at the go (§2.8)", (bundle) => {
+    const pr = bundle.planRun;
+    if (!pr) return NO_PLAN_RUN;
+    const records = Array.isArray(pr.records) ? pr.records : [];
+    const evidence = records.map((r) => `${r?.slug}: kind ${r?.kind ?? 'work'}, final ${r?.finalState ?? 'none'}`);
+    const leftover = pr.runId ? records.filter((r) => r?.slug === pr.runId) : [];
+    if (leftover.length) return { pass: false, evidence, detail: `a row is still under the run id ${pr.runId}` };
+    const mine = records.filter((r) => r?.slug === pr.slug);
+    if (mine.length !== 1) return { pass: false, evidence, detail: `${mine.length} row(s) for ${pr.slug ?? '(no slug)'}, expected one` };
+    const kind = mine[0].kind ?? 'work';
+    if (kind !== 'work') return { pass: false, evidence, detail: `the row for ${pr.slug} is kind ${kind}` };
+    return { pass: true, evidence, detail: `one row for ${pr.slug}, kind work` };
   });
 }
 

@@ -28,7 +28,7 @@
 // unboundedly. On any exit the runner kills the coordinator process, whose own teardown closes its
 // workers, then reaps any worker still recorded in workers.json (live-workers §2.12, T06).
 
-import { existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync, openSync, closeSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync, openSync, closeSync, copyFileSync, cpSync } from 'node:fs';
 import { join, basename, dirname } from 'node:path';
 import { execFileSync, spawn as nodeSpawn } from 'node:child_process';
 import { mkdtempSync } from 'node:fs';
@@ -36,11 +36,14 @@ import { tmpdir } from 'node:os';
 
 import { getFixture, installFixture } from './fixtures.mjs';
 import { createCapture, bundleDirFor } from './capture.mjs';
-import { checkScenario, loadTranscripts, loadFinalFiles, loadControlFeeds, loadRestartPoint, formatReport } from './assertions.mjs';
+import { checkScenario, loadTranscripts, loadFinalFiles, loadControlFeeds, loadRestartPoint, loadPlanRun, formatReport } from './assertions.mjs';
 import { reapRecorded, readWorkersFile } from '../reap.mjs';
 import { isAlive as isAliveReal, startTimeOf as startTimeOfReal } from '../identity.mjs';
 import { createWorktree } from '../worktree.mjs';
 import { createAnswerer } from './answerer.mjs';
+import { startPlanRun, startRun } from '../launch.mjs';
+import { stopRun } from '../control-run.mjs';
+import { indexDir, listRecords } from '../index-store.mjs';
 
 // --- Pure wiring pieces (each unit-tested with no live agent, T17 acceptance) --------------------
 
@@ -847,6 +850,332 @@ function delay(timers, ms) {
   return new Promise((resolve) => timers.setTimeout(resolve, ms));
 }
 
+// --- The plan runner (pir-plan-command DESIGN §4, §5.2, §2.8, T17) --------------------------------
+//
+// A `kind: 'plan'` scenario starts from a repo with no plan and drives `pir plan`'s whole promise with
+// the real programs: startPlanRun (T08) launches the detached planning program exactly as `pir plan`
+// does, an answerer plays the person through the planner and the reviewer, and on a reviewed plan
+// startRun(slug) gives the go exactly as the go question's Start does (§2.8). The build then runs to its
+// hand-off under the same completion wait as a build scenario. Both programs are the engine's own, from
+// this checkout (launch.mjs resolves them from its own file), with the scratch repo as their cwd.
+//
+// The seatbelts (§5.2): the scratch repo; PIR_HOME inside it, so the run's index is never the person's;
+// PARALLEL_MAX_WORKERS = the scenario's ceiling; one wall-clock timeout over planning and build alike —
+// during planning it stops the planning program as `pir`'s stop does (control-run stopRun: SIGTERM, then
+// SIGKILL, then the workers.json reap), during the build it touches HALT; and the reply cap, which ends
+// the run the moment a session is still waiting after the cap is spent.
+
+// planEnv({ baseEnv, pirHome, ceiling, allowHere }) → the env both programs get. PARALLEL_ALLOW_HERE is
+// dropped unless the caller opted in, so an outer shell's setting cannot let a run into the canonical
+// checkout. Pure.
+export function planEnv({ baseEnv = process.env, pirHome, ceiling, allowHere = false } = {}) {
+  const env = { ...baseEnv };
+  delete env.PARALLEL_ALLOW_HERE;
+  if (allowHere) env.PARALLEL_ALLOW_HERE = '1';
+  if (pirHome) env.PIR_HOME = pirHome;
+  if (ceiling != null) env.PARALLEL_MAX_WORKERS = String(ceiling);
+  return env;
+}
+
+// planRecordOf(records, { repo, runId }) → this planning run's index record: before the rename it sits
+// under the run id, after it under the slug, still `kind: 'plan'`. A crash inside the rename can leave
+// both (index-store renameRecord); the slug's one is the whole one. Pure.
+export function planRecordOf(records = [], { repo, runId } = {}) {
+  const mine = records.filter((r) => r?.repo === repo && r.kind === 'plan');
+  return mine.find((r) => r.slug !== runId) ?? mine.find((r) => r.slug === runId) ?? null;
+}
+
+// holdPlanReplies(controlDir, { fs }) → true while a session's claim is being acted on: a report is in
+// the folder and not yet drained, or plan-run has accepted a claim and waits for the session to go idle
+// to close it (state.json `accepted`). A reply then would talk a finished session into another turn and
+// keep it busy past its close (DESIGN §2.5's idle gate).
+export function holdPlanReplies(controlDir, { fs = { existsSync, readdirSync, readFileSync } } = {}) {
+  if (!controlDir) return false;
+  try {
+    const reports = join(controlDir, 'reports');
+    if (fs.existsSync(reports) && fs.readdirSync(reports).some((n) => n.endsWith('.json'))) return true;
+  } catch {
+    /* an unreadable folder holds nothing */
+  }
+  try {
+    return JSON.parse(fs.readFileSync(join(controlDir, 'state.json'), 'utf8'))?.accepted != null;
+  } catch {
+    return false;
+  }
+}
+
+// planEnd({ record, alive, capReached, timedOut }) → null while planning goes on, else what ended it:
+// 'finished' (the program recorded its final status), 'stopped', 'crashed' (its process is gone with no
+// final status), 'reply-cap', 'timeout'. Pure.
+export function planEnd({ record, alive, capReached = false, timedOut = false } = {}) {
+  if (record?.finalState === 'finished') return 'finished';
+  if (record?.finalState) return record.finalState;
+  if (record && !alive) return 'crashed';
+  if (capReached) return 'reply-cap';
+  if (timedOut) return 'timeout';
+  return null;
+}
+
+// wrapChild(child) → the { pid, kill, exited } handle waitForCompletion watches, over a ChildProcess the
+// runner caught from startRun's own spawn. startRun detaches and unrefs it, but its `exit` still fires
+// while this process is alive, and this process is: it is polling.
+function wrapChild(child) {
+  const exited = new Promise((resolve) => {
+    if (child.exitCode != null || child.signalCode != null) resolve({ code: child.exitCode, signal: child.signalCode });
+    else child.on('exit', (code, signal) => resolve({ code, signal }));
+  });
+  return {
+    pid: child.pid ?? null,
+    kill: (signal = 'SIGTERM') => {
+      try {
+        child.kill(signal);
+      } catch {
+        /* already gone */
+      }
+    },
+    exited,
+  };
+}
+
+function readJsonOr(path, fallback) {
+  try {
+    return JSON.parse(readFileSync(path, 'utf8'));
+  } catch {
+    return fallback;
+  }
+}
+
+// runPlanScenario(opts) → { scenario, ok, reason, bundleDir, report }, the shape runScenario returns.
+// Everything platform-shaped is injectable as in runScenario; startPlan and startBuild default to the
+// real launch.mjs calls and stopPlan to control-run's stopRun. `baseEnv` is the env the programs start
+// from (a test puts the fake `claude` first on its PATH, DESIGN §5 End to end).
+export async function runPlanScenario({
+  fixtureId,
+  scratchDir,
+  allowHere = false,
+  pollMs = 2000,
+  haltGrace = 5,
+  timeoutMs,
+  baseEnv = process.env,
+  spawn = nodeSpawn,
+  readWorkers = readWorkersFile,
+  procs = REAL_PROCS,
+  reap,
+  gitRun = defaultRunGit,
+  install = installFixture,
+  startPlan = startPlanRun,
+  startBuild = startRun,
+  stopPlan,
+  makeAnswerer = createAnswerer,
+  timers = { setTimeout, clearTimeout },
+  now = () => new Date(),
+  log = () => {},
+} = {}) {
+  const fixture = getFixture(fixtureId);
+  const spec = fixture.scenario;
+  if (spec.kind !== 'plan') throw new Error(`runPlanScenario: fixture "${fixtureId}" is not a plan scenario`);
+  const seatbelts = spec.seatbelts ?? {};
+  const timeout = timeoutMs ?? seatbelts.timeoutMs;
+
+  const repoDir = scratchDir ?? mkdtempSync(join(tmpdir(), `pir-plan-${fixtureId}-`));
+  const repo = basename(repoDir);
+  const reapWorkers = reap ?? ((dir) => reapRecorded(dir, procs));
+  const stopPlanning = stopPlan ?? ((record) => stopRun(record, { kill: procs.kill, reap: reapWorkers }));
+
+  log(`installing fixture "${fixtureId}" into ${repoDir}`);
+  install(fixtureId, { into: repoDir, runGit: gitRun });
+  const pirHome = join(repoDir, fixture.pirHome ?? '.pir-home');
+  mkdirSync(pirHome, { recursive: true });
+  const env = planEnv({ baseEnv, pirHome, ceiling: seatbelts.ceiling, allowHere });
+  const dir = indexDir({ env });
+  const mainHead = () => {
+    const r = gitRun(['rev-parse', '--verify', '--quiet', 'refs/heads/main'], { cwd: repoDir });
+    return r.ok ? r.stdout.trim() : null;
+  };
+  const mainBefore = mainHead();
+
+  // One wall-clock timeout over planning and build. During the build it touches HALT; the planning loop
+  // reads the flag itself and stops the planning program.
+  let timedOut = false;
+  let buildControl = null;
+  const timeoutHandle =
+    timeout != null
+      ? timers.setTimeout(() => {
+          timedOut = true;
+          log(`\n=== timeout after ${timeout}ms (seatbelt §5.2) ===`);
+          try {
+            if (buildControl) touchHalt(buildControl);
+          } catch {
+            /* the teardown below still stops everything */
+          }
+        }, timeout)
+      : null;
+  if (timeoutHandle && typeof timeoutHandle.unref === 'function') timeoutHandle.unref();
+
+  let reason = 'error';
+  let runId = null;
+  let planControl = null;
+  let planRecord = null;
+  let planState = null;
+  let buildChild = null;
+  let cap = null;
+  let bundle = null;
+  let planStopped = false;
+  const currentRecord = () => planRecordOf(listRecords({ dir }), { repo, runId });
+  const liveOf = (record) => {
+    if (!record?.pid || !procs.isAlive(record.pid)) return false;
+    return record.startTime == null || procs.startTimeOf(record.pid) === record.startTime;
+  };
+
+  try {
+    log(`starting the planning run: ${fixture.brief}`);
+    const started = startPlan(fixture.brief, { cwd: repoDir, env, spawn });
+    if (!started.started) {
+      reason = `plan-refused:${started.reason}`;
+    } else {
+      runId = started.runId;
+      planControl = started.controlDir;
+      log(`planning run ${runId} started (pid ${started.pid})`);
+      const answerer = makeAnswerer({
+        controlDir: () => planControl,
+        typed: { '*': spec.reply },
+        replies: { text: spec.reply, cap: spec.replyCap },
+        holdReplies: () => holdPlanReplies(planControl),
+        log,
+      });
+
+      // Planning: answer, follow the control folder through the rename, until the program records its end.
+      let end = null;
+      for (;;) {
+        planRecord = currentRecord() ?? planRecord;
+        if (planRecord?.controlDir) planControl = planRecord.controlDir;
+        try {
+          answerer.tick();
+        } catch (e) {
+          log(`answerer failed: ${e.message}`);
+        }
+        end = planEnd({ record: planRecord, alive: liveOf(planRecord), capReached: answerer.capReached(), timedOut });
+        if (end) break;
+        await delay(timers, pollMs);
+      }
+      planState = readJsonOr(join(planControl, 'state.json'), null);
+      log(`planning ended: ${end}${planState?.outcome ? ` (${planState.outcome})` : ''}`);
+
+      if (end === 'reply-cap' || end === 'timeout') {
+        // pir's own stop: the program closes its session and records `stopped` (§2.16).
+        planStopped = true;
+        await stopPlanning(planRecord);
+        reason = end;
+      } else if (end !== 'finished') {
+        reason = `plan-${end}`;
+      } else if (planState?.outcome !== 'reviewed' || !planState?.slug) {
+        reason = `plan-${planState?.outcome ?? 'no-outcome'}`;
+      } else {
+        // The go: the call the go question's Start makes (§2.8). The coordinator it spawns is caught so the
+        // completion wait can watch it exit, as it watches a build scenario's.
+        const slug = planState.slug;
+        buildControl = controlDirFor(repoDir, slug);
+        const catching = (cmd, args, opts) => {
+          const c = spawn(cmd, args, opts);
+          if (cmd === 'node' && !buildChild) buildChild = c;
+          return c;
+        };
+        log(`the go: startRun(${slug})`);
+        const go = startBuild(slug, { cwd: repoDir, env, spawn: catching });
+        if (!go.started || !buildChild) {
+          reason = `go-refused:${go.reason ?? 'no coordinator'}`;
+        } else {
+          if (timedOut) touchHalt(buildControl); // the clock ran out between the end of planning and here
+          cap = createCapture({
+            repo,
+            slug,
+            dir: bundleDirFor(buildControl, now()),
+            controlDir: buildControl,
+            repoDir,
+            runGit: gitRun,
+            readWorkers,
+            isAlive: procs.isAlive,
+            startTimeOf: procs.startTimeOf,
+            now,
+          });
+          // A build worker that asks gets the same answer the planner got; no canned replies here.
+          const buildAnswerer = makeAnswerer({ controlDir: buildControl, typed: { '*': spec.reply }, log });
+          reason = await waitForCompletion({
+            cap,
+            controlDir: buildControl,
+            child: wrapChild(buildChild),
+            pollMs,
+            haltGrace,
+            answerer: buildAnswerer,
+            timers,
+            isTimedOut: () => timedOut,
+            log,
+          });
+          log(`build reached: ${reason}`);
+        }
+      }
+    }
+  } finally {
+    if (timeoutHandle) timers.clearTimeout(timeoutHandle);
+    if (buildChild) {
+      try {
+        buildChild.kill('SIGTERM');
+      } catch {
+        /* already gone */
+      }
+      try {
+        const t = await teardownScenario({ controlDir: buildControl, reap: reapWorkers });
+        if (t.closed.length) log(`teardown: reaped ${t.closed.length} build worker(s)`);
+      } catch (e) {
+        log(`build teardown failed: ${e.message}`);
+      }
+    }
+    // A planning program still up (an error above) is stopped the way pir stops it.
+    try {
+      const rec = currentRecord() ?? planRecord;
+      if (rec && !planStopped && liveOf(rec)) await stopPlanning(rec);
+    } catch (e) {
+      log(`planning teardown failed: ${e.message}`);
+    }
+    try {
+      // startRun sends the coordinator's output to run.log; handedOffGreenBranch reads it as coordinator.out.
+      if (buildControl && existsSync(join(buildControl, 'run.log'))) copyFileSync(join(buildControl, 'run.log'), coordinatorOutPath(buildControl));
+      cap ??= createCapture({ repo, slug: planState?.slug ?? null, dir: bundleDirFor(planControl ?? join(repoDir, 'plans'), now()), controlDir: null, repoDir, runGit: gitRun, now });
+      bundle = cap.seal();
+    } catch (e) {
+      log(`capture seal failed: ${e.message}`);
+    }
+  }
+
+  // What the facts read, captured while the scratch still stands (loadPlanRun).
+  if (bundle?.dir) {
+    try {
+      const slug = planState?.slug ?? null;
+      const shown = slug ? gitRun(['show', `pir/${slug}:plans/${slug}/PROGRESS.md`], { cwd: repoDir }) : { ok: false };
+      const planRun = {
+        runId,
+        slug,
+        outcome: planState?.outcome ?? null,
+        planFinalState: planRecord?.finalState ?? null,
+        mainBefore,
+        mainAfter: mainHead(),
+        progress: shown.ok ? shown.stdout : null,
+        records: listRecords({ dir }).filter((r) => r.repo === repo),
+      };
+      writeFileSync(join(bundle.dir, 'plan-run.json'), `${JSON.stringify(planRun, null, 2)}\n`);
+      // The planning conversations, for a person reading the bundle after the scratch is gone.
+      const conv = planControl ? join(planControl, 'conversations') : null;
+      if (conv && existsSync(conv)) cpSync(conv, join(bundle.dir, 'plan-conversations'), { recursive: true });
+    } catch (e) {
+      log(`plan-run capture failed: ${e.message}`);
+    }
+  }
+
+  const report = checkScenario(spec, loadPlanRun(loadTranscripts(bundle ?? { dir: repoDir, manifest: {} })));
+  const ok = report.pass && reason === 'completed' && reachedExpectedTerminal({ timedOut, reason });
+  return { scenario: spec.id, ok, reason: timedOut ? 'timeout' : reason, bundleDir: bundle?.dir ?? null, report };
+}
+
 // --- The `run {fixtureId}` bin entry -------------------------------------------------------------
 //
 // The live launcher (T09 "Needs a person"): the user starts this on the scratch harness, it spawns a real
@@ -858,7 +1187,7 @@ const CANONICAL_REPO = 'plan-implement-review';
 async function main(argv) {
   const fixtureId = argv[0];
   if (!fixtureId) {
-    console.error(`usage: node src/shell/harness/run.mjs {fixtureId}\n  fixtures: (see fixtures.mjs listFixtures)`);
+    console.error(`usage: node src/shell/harness/run.mjs {fixtureId} [--into <scratch dir>]\n  fixtures: (see fixtures.mjs listFixtures)\n  e.g. node src/shell/harness/run.mjs plan-command --into <scratch dir>`);
     process.exit(2);
   }
 
@@ -880,11 +1209,13 @@ async function main(argv) {
 
   // A fixture that declares a `restart` crash point runs the crash-and-restart drill (T05); every other
   // fixture runs the straight-through scenario. Both take the same options and return the same shape.
+  // A plan scenario (pir-plan-command T17) starts from a repo with no plan and runs `pir plan` first.
   const isRestart = !!getFixture(fixtureId).restart;
+  const isPlan = getFixture(fixtureId).scenario?.kind === 'plan';
   console.log(
-    `=== live ${isRestart ? 'restart ' : ''}scenario: ${fixtureId} (real paid workers; seatbelted §5.2) ===`,
+    `=== live ${isRestart ? 'restart ' : isPlan ? 'plan ' : ''}scenario: ${fixtureId} (real paid workers; seatbelted §5.2) ===`,
   );
-  const runner = isRestart ? runRestartScenario : runScenario;
+  const runner = isPlan ? runPlanScenario : isRestart ? runRestartScenario : runScenario;
   const result = await runner({ fixtureId, scratchDir, allowHere, log: (m) => console.log(m) });
 
   console.log(`\nbundle: ${result.bundleDir}`);

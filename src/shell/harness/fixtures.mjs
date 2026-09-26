@@ -52,6 +52,7 @@ import restartReview from './fixtures/restart-review.mjs';
 import restartImplement from './fixtures/restart-implement.mjs';
 import dynamicTask from './fixtures/dynamic-task.mjs';
 import liveWorkersDemo from './fixtures/live-workers-demo.mjs';
+import planCommand from './fixtures/plan-command.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -82,6 +83,7 @@ const FIXTURES = Object.freeze({
   [restartImplement.id]: restartImplement,
   [dynamicTask.id]: dynamicTask,
   [liveWorkersDemo.id]: liveWorkersDemo,
+  [planCommand.id]: planCommand,
 });
 
 // listFixtures() → the fixture ids, in registry order.
@@ -100,7 +102,11 @@ export function getFixture(id) {
 // fixtureFiles(fixture) → the full repo-relative path → content map the installer writes: the runnable
 // scaffold, the common plan files, the fixture's own PROGRESS.md and task docs, and any seedFiles. Pure
 // (no I/O), so a test can inspect exactly what a fixture lays down without touching the disk.
+//
+// A fixture that seeds no plan (plan-command, pir-plan-command T17) declares its whole tree as `files`
+// instead, and gets exactly that: no scaffold, no plan tree.
 export function fixtureFiles(fixture) {
+  if (fixture.files) return { ...fixture.files };
   const { slug, title } = fixture;
   const taskFiles = Object.fromEntries(
     Object.entries(fixture.tasks).map(([name, body]) => [`plans/${slug}/tasks/${name}`, body]),
@@ -232,7 +238,8 @@ export function installFixture(
   }
 
   const skills = carrySkills(skillsDir, join(into, '.claude', 'skills'));
-  const source = carrySource(srcDir, join(into, 'src'));
+  // A fixture whose programs run from the engine checkout (plan-command) opts out of the src/ copy.
+  const source = fixture.carrySource === false ? false : carrySource(srcDir, join(into, 'src'));
   const modules = source ? carryModules(srcDir, into) : false;
   seedGit(into, runGit, date);
 

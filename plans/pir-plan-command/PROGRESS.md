@@ -39,10 +39,10 @@ done · ⛔ blocked, needs a human.
 | T14 | plan-screen-drill | T11, T12, T13 | ⬜ | |
 | T15 | planning-skills | T01 | ✅ | |
 | T16 | docs-readme | T14, T15 | ⬜ | |
-| T17 | harness-plan-fixture | T07, T08, T15 | ⬜ | |
+| T17 | harness-plan-fixture | T07, T08, T15 | 🔍 | runPlanScenario in run.mjs, plan-command fixture, reply rule, five facts; 25 tests incl. dry pass on fakes. Deviations: separate runner dispatched on scenario.kind; no src/ carried, engine runs from harness checkout; PIR_HOME is scratch `.pir-home/`; replies held while a report or accepted claim is pending; question forms get the reply typed; cap spent stops the run. |
 | T18 | live-plan-run | T14, T16, T17 | ⬜ | |
 
-**Review queue:** *(empty)*
+**Review queue:** T17
 
 ## Blocked on the user
 

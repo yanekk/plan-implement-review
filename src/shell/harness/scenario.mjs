@@ -25,6 +25,12 @@ export const DEFAULT_SEATBELTS = Object.freeze({
 // HALT it — that is success, carried by the fixture's own facts, not a timeout-failure. run.mjs reads this.
 const EXPECTED_TERMINALS = Object.freeze(['completed', 'parked']);
 
+// How a scenario is driven (pir-plan-command T17). `build` — the default — seeds a reviewed plan and
+// launches the coordinator on it. `plan` starts from a repo with no plan: the runner starts a planning
+// run (`pir plan`'s startPlanRun), plays the person through planning and review with the canned `reply`
+// (at most `replyCap` times, DESIGN §5.2), gives the go (`startRun`) and waits for the build.
+const KINDS = Object.freeze(['build', 'plan']);
+
 // defineScenario(spec) → a normalized, validated scenario spec. Throws on the mistakes that would make
 // a scenario meaningless: no id, no fixture, or no facts (a scenario that asserts nothing proves
 // nothing). facts are Fact objects from assertions.mjs — each `{ id, label, check }`; this module does
@@ -49,6 +55,9 @@ export function defineScenario(spec = {}) {
     expectedTerminal = 'completed',
     answerPending = false,
     holdMerges = false,
+    kind = 'build',
+    reply = null,
+    replyCap = null,
   } = spec;
 
   if (!id || typeof id !== 'string') {
@@ -65,6 +74,12 @@ export function defineScenario(spec = {}) {
       throw new Error(`defineScenario(${id}): every fact must be a { id, label, check } from assertions.mjs`);
     }
   }
+  if (!KINDS.includes(kind)) {
+    throw new Error(`defineScenario(${id}): kind must be one of ${KINDS.join(', ')}`);
+  }
+  if (kind === 'plan' && (typeof reply !== 'string' || !reply.trim() || !Number.isInteger(replyCap) || replyCap < 1)) {
+    throw new Error(`defineScenario(${id}): a plan scenario needs a reply text and a positive whole replyCap`);
+  }
   if (!EXPECTED_TERMINALS.includes(expectedTerminal)) {
     throw new Error(`defineScenario(${id}): expectedTerminal must be one of ${EXPECTED_TERMINALS.join(', ')}`);
   }
@@ -79,6 +94,9 @@ export function defineScenario(spec = {}) {
     killSwitchDrill: !!killSwitchDrill,
     expectedTerminal,
     holdMerges: !!holdMerges,
+    kind,
+    reply: kind === 'plan' ? reply : null,
+    replyCap: kind === 'plan' ? replyCap : null,
     answerPending: answerPending ? { typed: { ...(answerPending.typed ?? {}) }, say: { ...(answerPending.say ?? {}) } } : false,
   };
 }

@@ -32,10 +32,16 @@ import { isAlive as isAliveReal, startTimeOf as startTimeOfReal } from '../ident
 
 // --- Conversation logs (live-workers DESIGN §2.3) ------------------------------------------------
 
-// parseLogName(file) → { task, role, n } for `{Txx}-{role}-{n}.ndjson`, else null.
+// parseLogName(file) → { task, role, n } for a build worker's `{Txx}-{role}-{n}.ndjson`, or for a planning
+// session's `plan-{n}.ndjson` / `review-{n}.ndjson` (pir-plan-command DESIGN §2.3), else null. A planning
+// log reads as task `plan` with role `planner` or `reviewer`, the same pair plan-run.mjs writes into its
+// workers.json, so locateLog matches a planning session to its log exactly as it matches a worker.
 export function parseLogName(file) {
-  const m = /^(T\d+)-(implement|review)-(\d+)\.ndjson$/.exec(String(file ?? ''));
-  return m ? { task: m[1], role: m[2], n: Number(m[3]) } : null;
+  const name = String(file ?? '');
+  const m = /^(T\d+)-(implement|review)-(\d+)\.ndjson$/.exec(name);
+  if (m) return { task: m[1], role: m[2], n: Number(m[3]) };
+  const p = /^(plan|review)-(\d+)\.ndjson$/.exec(name);
+  return p ? { task: 'plan', role: p[1] === 'plan' ? 'planner' : 'reviewer', n: Number(p[2]) } : null;
 }
 
 // parseLog(text) → the log's entries, one per non-blank line. A line that does not parse (a crash

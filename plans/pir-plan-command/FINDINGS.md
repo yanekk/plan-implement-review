@@ -17,6 +17,7 @@ Legend: 🐞 defect found · ✅ verified by hand with the user · 📌 worth kn
 
 | Date | | Finding |
 |---|---|---|
+| 2026-09-26 | 📌 | T17: the plan-command scratch repo has no CLAUDE.md, so the real planner in T18 runs without the method's rules file; the skills cite `CLAUDE.md` sections. Not specified by the task; left alone. |
 | 2026-09-26 | 📌 | T07: after a crash between the control-folder move and the index rename, `resumeRun` (T08) recreates `plans/plan-{hex4}/.parallel/plan/run.log` from `record.controlDir`; plan-run finds the moved state.json but that run's output lands in the old folder. Left alone. |
 | 2026-09-26 | 📌 | T09 review: `pir --help` and `pir -h` fall into the unknown-command row, printing "To build a plan: pir start --help" plus usage, exit 2. Matches DESIGN §2.1 literally; a help flag was never specified. Left alone. |
 | 2026-09-26 | 📌 | T08 review: `plans/*/.parallel/` is ignored only by this repo's `.gitignore`. In another repo `startPlanRun` (and `startRun`) leave `?? plans/` in the main checkout; reproduced on a scratch repo. DESIGN §2.2 "already ignored" assumes otherwise. Left alone. |
