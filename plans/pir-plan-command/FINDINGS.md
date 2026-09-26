@@ -17,6 +17,7 @@ Legend: 🐞 defect found · ✅ verified by hand with the user · 📌 worth kn
 
 | Date | | Finding |
 |---|---|---|
+| 2026-09-26 | 📌 | `renameRecord` refuses with EEXIST whenever the target exists, including the half-done state a crash leaves with both entries written. T07's resume must spot that case and remove the source rather than re-call `renameRecord`. Reproduced in T02 review. |
 | 2026-09-26 | 📌 | Claude Code docs (skills): a personal skill in `~/.claude/skills` shadows a same-named project skill. The harness `carrySkills` copy is ignored for any installed skill, so a live run uses the installed `pir-plan`. Plan review. |
 | 2026-09-26 | 🐞 | Claude Code docs (permission-modes § protected paths): writes under `.git` are never auto-approved; auto mode routes them to the classifier and `permissions.allow` cannot pre-approve them. Control folder moved to `plans/plan-{hex4}/` (DESIGN §2.2). |
 | 2026-09-26 | 📌 | SDK resume measured by `plans/resume-dead-worker` (2.1.283, SDK 0.3.282): SIGKILLed session resumed with `query({ resume })` kept id and memory, but thought its killed command never ran. T00 dropped (user). |

@@ -24,7 +24,7 @@ done · ⛔ blocked, needs a human.
 | # | Task | Depends on | State | Notes |
 |---|---|---|---|---|
 | T01 | plan-flow-core | — | ⬜ | |
-| T02 | run-record-type | — | 🔍 | Built kind/label/go, labelFromBrief, updateRecord, renameRecord; updateIndexFinalState delegates. 13 new tests. Deviations: updateRecord takes an optional `write` so coordinator tests stay unchanged; errors carry codes ENOENT, EUNPARSEABLE, EEXIST; label counts graphemes, 23 plus `…`; old runrecord/index-store fixtures gained the three fields. |
+| T02 | run-record-type | — | ✅ | Review clean, no fix commit. Six test rows and three done-when items verified; npm test green; dashboard and coordinator tests unchanged. Probed: failed write still throws, failed read no-ops; patch cannot move key fields; retry after a half-done rename gives EEXIST, logged for T07. |
 | T03 | plan-home | — | ⬜ | |
 | T04 | plan-branch | — | ⬜ | |
 | T05 | fake-claude-sessions | — | ⬜ | |
@@ -42,7 +42,7 @@ done · ⛔ blocked, needs a human.
 | T17 | harness-plan-fixture | T07, T08, T15 | ⬜ | |
 | T18 | live-plan-run | T14, T16, T17 | ⬜ | |
 
-**Review queue:** T02
+**Review queue:** empty
 
 ## Blocked on the user
 
