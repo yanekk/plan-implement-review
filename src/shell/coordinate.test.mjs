@@ -793,7 +793,7 @@ test('buildRunState assembles the display model input from a pass result and the
   assert.equal(rs.ceiling, 4);
   const by = Object.fromEntries(rs.tasks.map((t) => [t.id, t]));
   assert.deepEqual(by.T01, {
-    id: 'T01', slug: 'done-one', deps: [], done: true, phase: null, since: null, stoppedAt: null, doneMs: 6400, question: null, prompt: null, conflictSent: false,
+    id: 'T01', slug: 'done-one', deps: [], done: true, phase: null, since: null, stoppedAt: null, doneMs: 6400, question: null, conflictSent: false,
     asking: null, worker: null, workers: [],
   });
   assert.equal(by.T02.phase, 'building');
@@ -802,7 +802,7 @@ test('buildRunState assembles the display model input from a pass result and the
   assert.equal(by.T03.question, 'which layout?');
   assert.equal(by.T03.stoppedAt, 80, 'an asking task carries where its clock stopped');
   assert.equal(by.T02.stoppedAt, null);
-  assert.equal(by.T03.prompt, null, 'a plain question carries no copy-paste prompt (only a conflict does — T14)');
+  assert.ok(!('prompt' in by.T03), 'the run state carries no conflict prompt: a sent fix is flagged by conflictSent');
   // T04 has no worker and its dep is not ✅: the pure model will read it as waiting; buildRunState just
   // reports no phase and passes the deps through.
   assert.equal(by.T04.phase, null);
@@ -1471,7 +1471,7 @@ test('buildRunState names the asking kind: a live request over a report; a repor
     T03: { role: 'review', phase: 'reviewing' },
     T04: { role: 'implement', phase: 'awaiting-answer', decision: { text: 'q' } },
     T05: { role: 'implement', phase: 'implementing' },
-    T06: { role: 'review', phase: 'awaiting-answer', decision: { kind: 'conflict', text: 'c', prompt: 'p' } },
+    T06: { role: 'review', phase: 'awaiting-answer', decision: { kind: 'conflict', text: 'c', prompt: 'p', sent: true } },
   };
   const workers = [
     w('a', 'T01', 'implement', 1, true, 'idle'),
@@ -1489,7 +1489,7 @@ test('buildRunState names the asking kind: a live request over a report; a repor
   assert.equal(rows.T02, 'asking you · allow a command?');
   assert.equal(rows.T03, 'asking you · a question');
   assert.equal(rows.T05, 'building', 'a non-asking row reads as before');
-  assert.equal(rows.T06, 'merge conflict', 'a coordinator-side conflict is not a question');
+  assert.equal(rows.T06, 'fixing conflict', 'a conflict sent to its worker is not a question');
 });
 
 test('buildRunState: `worker` is the live one, else the latest; `workers` lists all of the task\'s in order', () => {

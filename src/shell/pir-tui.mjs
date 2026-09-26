@@ -273,21 +273,6 @@ export function buildWatchFrame(view, { now, spinnerChar = SPINNER[0], ui = init
       if (i === selLine && l.text.startsWith('  ')) lines.push([span('▎ ', 'selected'), span(l.text.slice(2), l.style)]);
       else lines.push([span(l.text, l.style)]);
     });
-    // A merge conflict the run hit at its own merge: draw its paste-in prompt (buildConflictPrompt, T14)
-    // here, right under the live block so a short terminal clips the key hints before it. The coordinator
-    // prints it once on its own screen, but a detached run's screen is only run.log, which nobody watches
-    // (T05 of declared-test-command sat parked 6 min unseen, 2026-09-24). Live runs only: a restarted run
-    // re-surfaces its own conflicts. Wrapped with no indent so the copy block pastes exactly.
-    if (alive) {
-      for (const t of snap.runState?.tasks ?? []) {
-        // A conflict pir sent to its live worker asks nothing of the person: no paste block (live-workers §2.10).
-        if (t.done || t.phase !== 'asking' || !t.prompt || t.conflictSent) continue;
-        lines.push([]);
-        const [head, ...rest] = String(t.prompt).replace(/\s+$/, '').split('\n');
-        note(head, 'conflict', '');
-        for (const raw of rest) note(raw, null, '');
-      }
-    }
     // The stale marker for a run that has ended (§2.4) — shown ONLY when there is a real frozen frame
     // above it. Red for crashed (something went wrong), dim for a clean finished/stopped end.
     if (state !== 'running') {

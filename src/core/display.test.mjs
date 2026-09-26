@@ -164,49 +164,10 @@ test('the asking footer names the first parked worker when several are asking at
   assert.equal(footer.task, 'T02', 'the first asking worker is the one the footer names; the person correlates the rest');
 });
 
-// --- footer: a coordinator-side merge conflict carries the copy-paste resolution prompt (T14) --------
-
-test('an asking task that hit a merge conflict carries its copy-paste prompt on the footer; a plain question does not (T14, §2.8)', () => {
-  // A conflict is modelled as an asking task with a `prompt` (buildConflictPrompt's output, carried by
-  // the shell from the parked worker's decision). The model carries it as DATA so the vocabulary is
-  // testable without a terminal; the live renderer keeps its frame compact and the shell prints the block
-  // on the normal screen (T15, §2.3).
-  const PROMPT = 'Merge conflict on T05 ask-one …\n  git merge pir/demo\n  1. Resolve';
-  const conflicted = buildDisplay(
-    { branch: 'pir/demo', ceiling: 4, tasks: [task({ id: 'T05', slug: 'ask-one', phase: 'asking', since: NOW, question: 'merge conflict in greeting.txt', prompt: PROMPT })] },
-    { now: NOW },
-  ).footer;
-  assert.equal(conflicted.kind, 'conflict', 'a merge conflict has its own footer kind, not `asking`');
-  assert.equal(conflicted.prompt, PROMPT, 'the conflicted footer carries the ready-to-paste prompt block');
-
-  // A plain question (no prompt) keeps the unchanged footer shape — no `prompt` key at all.
-  const plain = buildDisplay(
-    { branch: 'pir/demo', ceiling: 4, tasks: [task({ id: 'T05', slug: 'ask-one', phase: 'asking', since: NOW, question: 'which format?' })] },
-    { now: NOW },
-  ).footer;
-  assert.deepEqual(plain, { kind: 'asking', task: 'T05', slug: 'ask-one', question: 'which format?' }, 'a plain question footer is unchanged — no prompt key');
-});
-
-// --- a merge conflict reads `merge conflict`, not `asking you` (user 2026-09-24) -------------------
-
-test('a task parked on a merge conflict is row kind `conflict` labelled `merge conflict`, counted apart from asking', () => {
-  const d = buildDisplay(
-    {
-      branch: 'pir/demo',
-      ceiling: 4,
-      tasks: [
-        task({ id: 'T05', slug: 'clash', phase: 'asking', since: NOW - 5000, question: 'merge conflict in FINDINGS.md', prompt: 'Merge conflict on T05 clash' }),
-        task({ id: 'T06', slug: 'ask', phase: 'asking', since: NOW, question: 'which format?' }),
-      ],
-    },
-    { now: NOW },
-  );
-  const [clash, ask] = d.rows;
-  assert.deepEqual(clash, { id: 'T05', slug: 'clash', kind: 'conflict', label: 'merge conflict', elapsedMs: 5000 });
-  assert.equal(ask.kind, 'asking', 'a plain question stays `asking`');
-  assert.equal(d.summary.asking, 1, 'the conflict is not counted as asking you');
-  assert.equal(d.summary.conflicts, 1);
-  assert.equal(d.summary.running, 2, 'a parked conflict still holds its slot');
+test('a plain question footer names the task and its question, and a summary has no conflicts count', () => {
+  const d = buildDisplay({ branch: 'pir/demo', ceiling: 4, tasks: [task({ id: 'T05', slug: 'ask-one', phase: 'asking', since: NOW, question: 'which format?' })] }, { now: NOW });
+  assert.deepEqual(d.footer, { kind: 'asking', task: 'T05', slug: 'ask-one', question: 'which format?' });
+  assert.ok(!('conflicts' in d.summary), 'the paste-in conflict state is gone (2026-09-26)');
 });
 
 test('a preparing task (setup running, DESIGN §2.4) is an active row labelled `preparing`, counted in running (T07)', () => {
@@ -239,13 +200,12 @@ test('a sent conflict is an active `fixing conflict` row, counted as running not
     {
       branch: 'pir/demo',
       ceiling: 4,
-      tasks: [task({ id: 'T05', slug: 'clash', phase: 'asking', since: NOW - 3000, question: 'merge conflict in a.txt', prompt: 'The run could not merge…', conflictSent: true })],
+      tasks: [task({ id: 'T05', slug: 'clash', phase: 'asking', since: NOW - 3000, question: 'merge conflict in a.txt', conflictSent: true })],
     },
     { now: NOW },
   );
   assert.deepEqual(d.rows[0], { id: 'T05', slug: 'clash', kind: 'fixing-conflict', label: 'fixing conflict', elapsedMs: 3000 });
   assert.equal(d.summary.running, 1, 'the fixing worker holds its slot');
-  assert.equal(d.summary.conflicts, 0, 'not a conflict waiting on the person');
   assert.equal(d.summary.asking, 0, 'nothing is asked of the person');
   assert.deepEqual(d.footer, { kind: 'running' }, 'no conflict or asking footer');
 });
@@ -256,7 +216,7 @@ test('a sent conflict does not hide another worker\'s question from the footer',
       branch: 'pir/demo',
       ceiling: 4,
       tasks: [
-        task({ id: 'T05', slug: 'clash', phase: 'asking', since: NOW, prompt: 'sent', conflictSent: true }),
+        task({ id: 'T05', slug: 'clash', phase: 'asking', since: NOW, conflictSent: true }),
         task({ id: 'T06', slug: 'ask', phase: 'asking', since: NOW, question: 'which format?' }),
       ],
     },
@@ -301,13 +261,11 @@ test('summary counts request-only askers as asking you (and running); the footer
 });
 
 test('a worker fixing a sent conflict that raises a permission request is asking, not fixing', () => {
-  const tasks = [task({ id: 'T01', slug: 'fix', phase: 'asking', prompt: 'P', conflictSent: true, asking: 'permission', since: NOW })];
+  const tasks = [task({ id: 'T01', slug: 'fix', phase: 'asking', conflictSent: true, asking: 'permission', since: NOW })];
   const d = buildDisplay({ branch: 'pir/demo', ceiling: 2, tasks }, { now: NOW });
   assert.equal(d.rows[0].kind, 'asking');
   assert.equal(d.rows[0].label, 'asking you · allow a command?');
-  assert.equal(d.summary.conflicts, 0);
   assert.equal(d.footer.kind, 'asking');
-  assert.ok(!('prompt' in d.footer), 'no copy-paste prompt: the worker has it already');
 });
 
 test('a done task with a stale asking field reads merged', () => {

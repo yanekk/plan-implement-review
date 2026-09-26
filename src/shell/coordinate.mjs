@@ -799,14 +799,11 @@ export function buildRunState({
       stoppedAt: phase ? stoppedAtByTask[t.num] ?? null : null,
       doneMs: done ? doneMsByTask[t.num] ?? null : null,
       question: phase === 'asking' ? st.decision?.text ?? null : null,
-      // A coordinator-side merge conflict carries a copy-paste resolution prompt (T14); an ordinary
-      // question does not, so this is null for a plain ask.
-      prompt: phase === 'asking' ? st.decision?.prompt ?? null : null,
-      // The conflict prompt went to the live worker instead (loop.mjs 3d, live-workers §2.10): the row
+      // A merge-conflict fix went to the live worker (loop.mjs 3d, live-workers §2.10): the row
       // reads `fixing conflict` and nothing is asked of the person. A later question from that worker
       // replaces the decision, so the flag drops and the row turns `asking you`.
       conflictSent: phase === 'asking' && !!st.decision?.sent,
-      ...workerFields(workers.filter((w) => w.task === t.num), { done, phase, prompt: st?.decision?.prompt }),
+      ...workerFields(workers.filter((w) => w.task === t.num), { done, phase, conflictSent: !!st?.decision?.sent }),
     };
   });
   return { branch, ceiling, complete, readyToMerge: !!readyToMerge, testsReason: testsReason ?? null, interrupted: !!interrupted, tasks };
@@ -852,19 +849,19 @@ export function advanceTiming(timing, stateTasks, completed, now, requesting = n
 }
 
 // A live worker's pending request is what the person must answer now, so it names the asking kind over
-// a report; a report alone (question, decision, a worker's own conflict) is `question`. A coordinator-side
-// conflict carries a `prompt` and is not a question to answer (display.mjs reads it as `merge conflict`).
+// a report; a report alone (question, decision, a worker's own conflict) is `question`. A conflict fix sent
+// to the worker is not a question to answer (display.mjs reads it as `fixing conflict`).
 const REQUEST_KINDS = new Set(['permission', 'questions']);
 
 // requestingTasks(workers) → the ids of tasks whose live worker has a request pending, for advanceTiming.
 export function requestingTasks(workers) {
   return new Set(workers.filter((w) => w.live && REQUEST_KINDS.has(w.activity?.state)).map((w) => w.task));
 }
-function workerFields(taskWorkers, { done, phase, prompt }) {
+function workerFields(taskWorkers, { done, phase, conflictSent }) {
   const liveOnes = taskWorkers.filter((w) => w.live);
   const open = liveOnes.at(-1) ?? taskWorkers.at(-1) ?? null;
   const request = done ? null : liveOnes.map((w) => w.activity?.state).find((s) => REQUEST_KINDS.has(s)) ?? null;
-  const asking = request ?? (!done && phase === 'asking' && !prompt ? 'question' : null);
+  const asking = request ?? (!done && phase === 'asking' && !conflictSent ? 'question' : null);
   return {
     asking,
     worker: open ? { id: open.id, live: !!open.live, logPath: open.logPath ?? null } : null,
@@ -1161,11 +1158,10 @@ async function main(argv) {
       // look like a fresh start (DESIGN §2.8). Only ever set on the first pass of a run that adopted work.
       if (r.restartSummary) renderer.line(`  ↻ ${r.restartSummary}`);
 
-      // A coordinator-side merge conflict scrolls its copy-paste resolution prompt above the live block
-      // (T14, §2.8). The block is bulky and must be selectable to copy, so it lands on the NORMAL screen
-      // via line() — never inside the compact, clipped live frame, which would truncate it to useless and
-      // re-open the T15 wrap bug. A conflict is surfaced exactly once, on the pass it happens, so each
-      // prompt prints exactly once; the compact live footer keeps naming the parked worker to attach to.
+      // A coordinator-side merge conflict with no live worker to send it to (a restart, or a worker that
+      // exited before the send) scrolls its resolution prompt above the live block (T14, §2.8): bulky and
+      // selectable, so on the NORMAL screen via line(), never inside the clipped live frame (the T15 wrap
+      // bug). It is surfaced exactly once, so it prints exactly once; the task is ⛔ and off the live block.
       // A conflict sent to its live worker (live-workers T08) is a `conflict-sent` action, not a surface,
       // so it prints nothing here.
       for (const s of r.surfaces) {

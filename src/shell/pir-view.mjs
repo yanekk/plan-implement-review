@@ -21,7 +21,6 @@ export const SGR = {
   asking: '\x1b[1;33m', // bold amber
   idle: '\x1b[2m', // dim
   red: '\x1b[31m', // failure / interrupted
-  conflict: '\x1b[1;38;5;208m', // bold orange, a merge conflict
   // the list's §2.11 keys.
   head: '\x1b[1m', // the `pir` title, bold
   running: '\x1b[32m', // a running run's state word, green

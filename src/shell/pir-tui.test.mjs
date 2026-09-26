@@ -505,26 +505,12 @@ function drawnRows(out) {
   return rows.map((r) => r ?? '');
 }
 
-test('a running watch frame draws a merge conflict\'s paste-in prompt under the live block, orange head, exact lines (user 2026-09-24)', () => {
-  const PROMPT = 'Merge conflict on T05 clash — the run parked it for you (DESIGN §2.8).\n\n----- copy -----\n  git merge pir/alpha\n  1. Resolve\n----- end -----\n';
-  const runState = { branch: 'pir/alpha', ceiling: 2, tasks: [{ id: 'T05', slug: 'clash', deps: [], done: false, phase: 'asking', since: NOW, doneMs: null, question: 'merge conflict in FINDINGS.md', prompt: PROMPT }] };
-  const snap = { version: 1, proc: {}, finalState: null, runState };
-  const frame = buildWatchFrame({ slug: 'alpha', state: 'running', repo: 'repoA', snap, record: { pid: 1, branch: 'pir/alpha' } }, { now: NOW, columns: 120 });
-  const text = frameText(frame);
-  assert.ok(text.includes('----- copy -----\n  git merge pir/alpha\n  1. Resolve\n----- end -----'), 'the paste block is drawn verbatim, indentation kept');
-  assert.equal(findSpan(frame, 'Merge conflict on T05').style, 'conflict');
-  assert.equal(findSpan(frame, 'merge conflict   ').style, 'conflict', 'the task row is orange');
-
-  const stale = buildWatchFrame({ slug: 'alpha', state: 'stopped', repo: 'repoA', snap, record: { pid: 1, branch: 'pir/alpha' } }, { now: NOW, columns: 120 });
-  assert.ok(!frameText(stale).includes('git merge pir/alpha'), 'a run that is not running does not offer a stale prompt');
-});
-
 test('a conflict sent to its live worker draws no paste block in the watch frame (live-workers T08)', () => {
-  const runState = { branch: 'pir/alpha', ceiling: 2, tasks: [{ id: 'T05', slug: 'clash', deps: [], done: false, phase: 'asking', since: NOW, doneMs: null, question: 'merge conflict in a.txt', prompt: 'The run could not merge your branch\n  git merge pir/alpha\n', conflictSent: true }] };
+  const runState = { branch: 'pir/alpha', ceiling: 2, tasks: [{ id: 'T05', slug: 'clash', deps: [], done: false, phase: 'asking', since: NOW, doneMs: null, question: 'merge conflict in a.txt', conflictSent: true }] };
   const snap = { version: 1, proc: {}, finalState: null, runState };
   const frame = buildWatchFrame({ slug: 'alpha', state: 'running', repo: 'repoA', snap, record: { pid: 1, branch: 'pir/alpha' } }, { now: NOW, columns: 120 });
   const text = frameText(frame);
-  assert.ok(!text.includes('git merge pir/alpha'), 'the sent prompt is not drawn for the person');
+  assert.ok(!text.includes('git merge'), 'no paste block is drawn for the person');
   assert.ok(text.includes('fixing conflict'), 'the row reads fixing conflict');
   assert.equal(findSpan(frame, 'fixing conflict').style, 'active');
 });
@@ -567,12 +553,12 @@ test('↓ reaches every row when two repos share a slug, and stop acts on the se
 });
 
 test('FrameView paints a span in the same SGR sequence render.mjs\'s map produces, and plain with colour off', () => {
-  // render.mjs does not export its map, so read its six codes from its source: this is the proof the
+  // render.mjs does not export its map, so read its five codes from its source: this is the proof the
   // reused watch frame colours exactly as the coordinator paints it.
   const src = readFileSync(new URL('./render.mjs', import.meta.url), 'utf8');
   const block = src.slice(src.indexOf('const SGR = {'), src.indexOf('};', src.indexOf('const SGR = {')));
   const renderMap = Object.fromEntries([...block.matchAll(/(\w+): '([^']*)'/g)].map(([, k, v]) => [k, v.replace(/\\x1b/g, '\x1b')]));
-  assert.deepEqual(Object.keys(renderMap).sort(), ['active', 'asking', 'conflict', 'done', 'idle', 'red']);
+  assert.deepEqual(Object.keys(renderMap).sort(), ['active', 'asking', 'done', 'idle', 'red']);
   for (const [style, code] of Object.entries(renderMap)) {
     assert.equal(SGR[style], code, `pir-view carries render.mjs's ${style} code unchanged`);
     const [line] = new FrameView(() => [[{ text: 'T05 work', style }]]).render(80);
