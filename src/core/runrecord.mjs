@@ -29,14 +29,31 @@ const FINAL_STATES = new Set(['finished', 'stopped']);
 // pid (a number) and finalState (an enum-or-null) are validated separately below.
 const REQUIRED_STRINGS = ['slug', 'repo', 'repoPath', 'controlDir', 'startTime', 'branch'];
 
+// What kind of run an entry points at (plans/pir-plan-command DESIGN §2.10, §3.5): a planning run
+// (`pir plan`) or a build (`pir start`). Absent reads `work`, so every entry written before planning
+// runs existed reads exactly as it did. An unknown value is a parse failure, not a silent `work`: a
+// newer writer's kind the dashboard does not know must not be shown as a build it can resume.
+const KINDS = new Set(['plan', 'work']);
+
+// The person's go decision on a reviewed plan (§2.8). null is "not decided"; the only recorded
+// decision is `declined` — a start is recorded by the build overwriting the entry as `kind: 'work'`.
+const GO_VALUES = new Set(['declined']);
+
+// The longest label a planning run carries before it has a slug (§2.2, §2.10), counted in
+// user-perceived characters, the ellipsis included.
+const LABEL_MAX = 24;
+
 // serializeRecord(record) → canonical JSON text.
-// Writes the fields in a fixed order with the three optional fields filled to null when absent, so a
-// serialize→parse round-trip is symmetric and two equal records serialize identically. Trailing
-// newline for a tidy file; JSON.parse ignores it on the way back. Does not validate — the store
+// Writes the fields in a fixed order with the optional fields filled when absent (kind to `work`, the
+// rest to null), so a serialize→parse round-trip is symmetric and two equal records serialize
+// identically. Trailing newline for a tidy file; JSON.parse ignores it on the way back. Does not validate — the store
 // hands it a record it built, and parseRecord is where a value read off disk is checked.
 export function serializeRecord(record) {
   const canonical = {
     version: record.version ?? RECORD_VERSION,
+    kind: record.kind ?? 'work',
+    label: record.label ?? null,
+    go: record.go ?? null,
     slug: record.slug,
     repo: record.repo,
     repoPath: record.repoPath,
@@ -56,8 +73,8 @@ export function serializeRecord(record) {
 // on anything malformed — non-JSON, the wrong top-level type, a wrong or absent version, a missing or
 // mistyped required field, a bad pid, or a finalState outside the allowed set. Never throws on any
 // string input (DESIGN §2.10 / task Done-when). The returned record always carries all fields, with
-// finalState, startedAt and updatedAt defaulted to null when the entry omitted them, so a reader gets
-// one predictable shape. Extra unknown fields on the entry are ignored, not rejected, so a newer
+// finalState, startedAt and updatedAt defaulted to null (kind to 'work', label and go to null) when
+// the entry omitted them, so a reader gets one predictable shape. Extra unknown fields on the entry are ignored, not rejected, so a newer
 // writer that adds a field does not break an older reader.
 export function parseRecord(text) {
   if (typeof text !== 'string') return null;
@@ -95,8 +112,18 @@ export function parseRecord(text) {
   const updatedAt = optionalString(data.updatedAt);
   if (updatedAt === INVALID) return null;
 
+  const kind = data.kind ?? 'work';
+  if (!KINDS.has(kind)) return null;
+  const label = optionalString(data.label);
+  if (label === INVALID) return null;
+  const go = data.go ?? null;
+  if (go !== null && !GO_VALUES.has(go)) return null;
+
   return {
     version: RECORD_VERSION,
+    kind,
+    label,
+    go,
     slug: data.slug,
     repo: data.repo,
     repoPath: data.repoPath,
@@ -108,6 +135,21 @@ export function parseRecord(text) {
     finalState,
     updatedAt,
   };
+}
+
+// labelFromBrief(brief) → the dashboard's name for a planning run that has no slug yet (§2.2, §2.10):
+// the brief's first non-blank line, trimmed, at most LABEL_MAX characters with `…` as the last one
+// when cut. Characters are grapheme clusters (Intl.Segmenter), so a cut never splits an emoji or its
+// surrogate pair into a replacement character on the dashboard. A brief with no non-blank line gives ''.
+export function labelFromBrief(brief) {
+  const line = String(brief ?? '')
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .find((l) => l !== '');
+  if (line === undefined) return '';
+  const graphemes = Array.from(new Intl.Segmenter(undefined, { granularity: 'grapheme' }).segment(line), (g) => g.segment);
+  if (graphemes.length <= LABEL_MAX) return line;
+  return graphemes.slice(0, LABEL_MAX - 1).join('').trimEnd() + '…';
 }
 
 // Sentinel distinguishing "optional field present but the wrong type" (invalidates the record) from

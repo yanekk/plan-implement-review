@@ -17,6 +17,9 @@ Legend: 🐞 defect found · ✅ verified by hand with the user · 📌 worth kn
 
 | Date | | Finding |
 |---|---|---|
+| 2026-09-26 | 📌 | T01 review, for T06: `decidePlanStep` never persists step `rename`; one call moves `plan` to `review` with rename and spawn actions. Write `state.json` before executing them, or a crash mid-rename resumes the closed planner in a moved worktree. |
+| 2026-09-26 | 📌 | T01 review, for T06: `facts.checks` is judged only when a report arrives. A planner that edits after an accepted `planned` report is still closed and renamed on idle, dirty worktree included. Left alone; T06 may re-check at close. |
+| 2026-09-26 | 📌 | `renameRecord` refuses with EEXIST whenever the target exists, including the half-done state a crash leaves with both entries written. T07's resume must spot that case and remove the source rather than re-call `renameRecord`. Reproduced in T02 review. |
 | 2026-09-26 | 📌 | A repo without `.claude/worktrees/` ignored shows `?? .claude/` in the person's main checkout once `openFeature` or `openPlanBranch` adds a worktree; this repo hides it only via `.git/info/exclude`. worktree.mjs comment claims git excludes it (T04). |
 | 2026-09-26 | 📌 | Claude Code docs (skills): a personal skill in `~/.claude/skills` shadows a same-named project skill. The harness `carrySkills` copy is ignored for any installed skill, so a live run uses the installed `pir-plan`. Plan review. |
 | 2026-09-26 | 🐞 | Claude Code docs (permission-modes § protected paths): writes under `.git` are never auto-approved; auto mode routes them to the classifier and `permissions.allow` cannot pre-approve them. Control folder moved to `plans/plan-{hex4}/` (DESIGN §2.2). |

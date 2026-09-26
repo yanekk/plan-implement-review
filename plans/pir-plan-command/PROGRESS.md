@@ -23,9 +23,9 @@ done · ⛔ blocked, needs a human.
 
 | # | Task | Depends on | State | Notes |
 |---|---|---|---|---|
-| T01 | plan-flow-core | — | ⬜ | |
-| T02 | run-record-type | — | ⬜ | |
-| T03 | plan-home | — | ⬜ | |
+| T01 | plan-flow-core | — | ✅ | |
+| T02 | run-record-type | — | ✅ | |
+| T03 | plan-home | — | ✅ | |
 | T04 | plan-branch | — | ✅ | |
 | T05 | fake-claude-sessions | — | ✅ | Reviewed, two fixes, both reproduced: a reports-folder path holding a space was cut at it (now read to end of line); the no-match test was flaky, stderr racing stdout. Worker test now uses openingInstruction. Probed both resume forms and the shim through the SDK. Accepted deviations: progress kept only with a scripts file; resume consumes its prompt; failing `sh` ends the script. |
 | T06 | plan-run-planner | T01, T02, T04, T05 | ⬜ | |
