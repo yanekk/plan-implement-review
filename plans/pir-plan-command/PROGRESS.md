@@ -28,7 +28,7 @@ done · ⛔ blocked, needs a human.
 | T03 | plan-home | — | ✅ | |
 | T04 | plan-branch | — | ✅ | |
 | T05 | fake-claude-sessions | — | ✅ | |
-| T06 | plan-run-planner | T01, T02, T04, T05 | 🔍 | plan-run.mjs planner half; 10 tests, fake claude. Deviations: planRunState lives in plan-run.mjs, takes {label, sessions, since, stoppedAt}; accepted `planned` re-checked when the planner goes quiet; state.json written at `rename` before the close; `--resume` or a later step exits 2 until T07; startup reaps workers.json. |
+| T06 | plan-run-planner | T01, T02, T04, T05 | ✅ | Review: one fix. `stopped` was recorded after the session close, which can outlast pir's 4 s SIGKILL; reproduced with a SIGTERM-ignoring fake, now recorded first, test locks it. Added a mutation-checked test for the re-check-at-idle deviation. Deviations accepted. Probed grants, the rename-step state write, workers.json on every exit. |
 | T07 | plan-run-review | T06 | ⬜ | |
 | T08 | plan-launch | T01, T02, T03, T04 | ⬜ | |
 | T09 | pir-commands | T08 | ⬜ | |
@@ -42,7 +42,7 @@ done · ⛔ blocked, needs a human.
 | T17 | harness-plan-fixture | T07, T08, T15 | ⬜ | |
 | T18 | live-plan-run | T14, T16, T17 | ⬜ | |
 
-**Review queue:** T06
+**Review queue:** *(empty)*
 
 ## Blocked on the user
 
