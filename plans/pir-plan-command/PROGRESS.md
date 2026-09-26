@@ -24,7 +24,7 @@ done · ⛔ blocked, needs a human.
 | # | Task | Depends on | State | Notes |
 |---|---|---|---|---|
 | T01 | plan-flow-core | — | ⬜ | |
-| T02 | run-record-type | — | ⬜ | |
+| T02 | run-record-type | — | ✅ | |
 | T03 | plan-home | — | ⬜ | |
 | T04 | plan-branch | — | ✅ | |
 | T05 | fake-claude-sessions | — | ⬜ | |
