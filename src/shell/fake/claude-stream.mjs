@@ -222,7 +222,8 @@ async function main() {
   const resumeId = argValue(argv, '--resume');
   const session = resumeId ?? argValue(argv, '--session-id') ?? '';
   let opening = null; // the text of the first user message; restored from progress on a resume
-  const reportsDir = () => /Reports folder: (\S+)/.exec(opening ?? '')?.[1] ?? '';
+  // The path runs to the end of its line (DESIGN §2.3), so a folder whose path holds a space survives.
+  const reportsDir = () => /Reports folder: (.+)/.exec(opening ?? '')?.[1].trim() ?? '';
   const fill = (v) => {
     if (typeof v === 'string') return v.replaceAll('{{session}}', session).replaceAll('{{reportsDir}}', reportsDir());
     if (Array.isArray(v)) return v.map(fill);

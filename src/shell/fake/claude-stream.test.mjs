@@ -15,7 +15,7 @@ import { writeClaudeShim } from './claude-shim.mjs';
 import {
   plannerScript, reviewerScript, noPlanScript, workerScripts, PLANNER_MATCH, REVIEWER_MATCH, FAKE_TASK,
 } from './sessions.mjs';
-import { resolveClaudePath } from '../platform.mjs';
+import { openingInstruction, resolveClaudePath } from '../platform.mjs';
 import { startWorker } from '../worker-proc.mjs';
 import { parseProgress } from '../../core/progress.mjs';
 import { parseTestBlock } from '../../core/testblock.mjs';
@@ -116,7 +116,8 @@ test('an opening no entry matches is an error result, not a guess', async (t) =>
   const r = await waitFor(() => f.result(), 'a result');
   assert.equal(r.is_error, true);
   assert.deepEqual(f.texts(), []);
-  assert.match(f.stderr(), /no script matches/);
+  // stderr is a separate pipe from the result line on stdout, so it may land later: wait for it.
+  await waitFor(() => /no script matches/.test(f.stderr()), 'the stderr line');
 });
 
 test('sh runs in the session cwd with FAKE_CWD and FAKE_OPENING, and its commit is in git', async (t) => {
@@ -156,7 +157,7 @@ test('a failing sh is an error result and ends the script', async (t) => {
 
 test('{{reportsDir}} is substituted from the opening message in emit and sh', async (t) => {
   const dir = scratch(t);
-  const rep = join(dir, 'ctl', 'reports');
+  const rep = join(dir, 'my repo', 'ctl', 'reports'); // a space: the path runs to the end of its line
   const scripts = writeScripts(dir, [{
     match: 'Reports folder',
     script: [{ await: 'user' }, { sh: 'mkdir -p "{{reportsDir}}" && touch "{{reportsDir}}/r.json"' }, { emit: assistantText('to {{reportsDir}}') }, { emit: resultEvent('success', 'ok') }],
@@ -312,21 +313,19 @@ test('workerScripts: the implementer marks 🔍 and reports implemented; the rev
   g('checkout', '-q', 'main');
 
   const scripts = writeScripts(scratch(t), workerScripts());
-  const opening = (skill) =>
-    'You are a worker session in a parallel PIR run. You have been given one task and one phase to carry out — you did not choose it, so do not run pir-work and do not pick your own task. Invoke the pir-worker skill and follow its contract, then carry out exactly this instruction and nothing else: ' +
-    `${skill} T01`;
+  const opening = (phase) => openingInstruction(phase, 'T01'); // the text pir really sends
   const rep = join(main, 'plans', slug, '.parallel', 'control', 'reports');
   const wg = (...a) => execFileSync('git', a, { cwd: wt, encoding: 'utf8' }).trim();
 
   const impl = runFake(t, { env: { PIR_FAKE_CLAUDE_SCRIPTS: scripts }, args: [`--session-id=${S1}`], cwd: wt });
-  impl.user(opening('pir-implement'));
+  impl.user(opening('implement'));
   assert.equal((await waitFor(() => impl.result(), 'implement result')).subtype, 'success');
   assert.equal(parseProgress(wg('show', 'HEAD:plans/demo/PROGRESS.md')).tasks[0].state, '🔍');
   assert.equal(wg('log', '-1', '--format=%s'), 'T01: fake implementation');
   assert.match(reports(rep).map((x) => x.text).join('\n'), /^\[pir:v1 kind=implemented task=T01\]/m);
 
   const rev = runFake(t, { env: { PIR_FAKE_CLAUDE_SCRIPTS: scripts }, args: [`--session-id=${S2}`], cwd: wt });
-  rev.user(opening('pir-review'));
+  rev.user(opening('review'));
   assert.equal((await waitFor(() => rev.result(), 'review result')).subtype, 'success');
   assert.equal(parseProgress(wg('show', 'HEAD:plans/demo/PROGRESS.md')).tasks[0].state, '✅');
   wg('merge-base', '--is-ancestor', `pir/${slug}`, 'HEAD');
