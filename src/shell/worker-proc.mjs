@@ -371,6 +371,10 @@ export function startWorker({
     // End the input queue (the SDK then closes the worker's stdin), then escalate on the pid:
     // SIGTERM at graceMs, SIGKILL at killMs (DESIGN §2.12). Resolves once the exit is reported.
     async close({ graceMs = 5000, killMs = 10000 } = {}) {
+      // A request open now is cancelled by the close, not answered elsewhere: switching Remote Control off
+      // or ending the process aborts its signal, which would otherwise log `answered-remotely` and show
+      // "answered on claude.ai" for a question nobody answered (seen stopping a planner mid-question, T14).
+      for (const p of pendingById.values()) p.interrupted = true;
       // Switched off first, so the web session ends at once rather than lingering after the process
       // goes (probed 2026-09-26: switching off ends it with no further message). Capped: a close must
       // not hang on the network.

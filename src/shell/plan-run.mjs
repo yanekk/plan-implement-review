@@ -133,11 +133,12 @@ export function plannerChecks({ slug, worktree, root, repo, indexDir, git = gitR
 //   sessions   every session this program started, in spawn order: { id, step, n, logPath, live, activity }
 //   since      { plan, review } — when that step's latest session started (ms)
 //   stoppedAt  { plan, review } — when that step's live session began asking the person (ms)
+//   took       { plan, review } — how long a finished step's sessions worked (ms, stepWorkedMs), or absent
 // Each step's phase: 'planning' | 'reviewing' while it is the current step (the dashboard tells a gone
 // process crashed by itself), 'asking' while its live session has a request pending, 'done', 'failed'
 // for the step a no-plan or not-reviewed outcome ended, 'pending' before it starts. `build` is pending
 // here; the go and the build are read from the index (§2.8).
-export function planRunState(state, { label = null, sessions = [], since = {}, stoppedAt = {} } = {}) {
+export function planRunState(state, { label = null, sessions = [], since = {}, stoppedAt = {}, took = {} } = {}) {
   const at = { plan: 0, rename: 1, review: 2, done: 3 }[state.step] ?? 0;
   const stepRow = (id) => {
     const mine = sessions.filter((s) => s.step === id);
@@ -159,6 +160,7 @@ export function planRunState(state, { label = null, sessions = [], since = {}, s
       phase,
       since: current || phase === 'done' ? since[id] ?? null : null,
       stoppedAt: asking ? stoppedAt[id] ?? null : null,
+      tookMs: phase === 'done' || phase === 'failed' ? took[id] ?? null : null,
       asking,
       worker: open ? { id: open.id, live: !!open.live, logPath: open.logPath ?? null } : null,
       workers: mine.map((s) => ({ id: s.id, role: ROLE[id], n: s.n ?? null, logPath: s.logPath ?? null })),
@@ -173,7 +175,7 @@ export function planRunState(state, { label = null, sessions = [], since = {}, s
     steps: [
       stepRow('plan'),
       stepRow('review'),
-      { id: 'build', phase: 'pending', since: null, stoppedAt: null, asking: null, worker: null, workers: [] },
+      { id: 'build', phase: 'pending', since: null, stoppedAt: null, tookMs: null, asking: null, worker: null, workers: [] },
     ],
   };
 }
@@ -236,6 +238,56 @@ export function findControlDir(controlDir, { readdir = readdirSync, exists = exi
     }
   }
   return controlDir;
+}
+
+// stepWorkedMs(logs) → how long a finished step's sessions worked, in ms, from their conversation logs'
+// `t` stamps, or null when no log has two stamps. A resumed session appends to the log it exited in
+// after a `resumed` note, so each log is cut into segments at those notes and the time between a stop
+// and its resume is not counted, as the task rows' clocks do not count time nobody was working (T14,
+// user 2026-09-26: a finished step shows how long it took, as the prototype does). Pure: `logs` is one
+// array of parsed entries per log.
+export function stepWorkedMs(logs) {
+  let total = 0;
+  let any = false;
+  for (const entries of logs) {
+    let first = null;
+    let last = null;
+    const close = () => {
+      if (first != null && last != null && last > first) {
+        total += last - first;
+        any = true;
+      }
+      first = last = null;
+    };
+    for (const e of entries) {
+      if (e?.dir === 'note' && e.kind === 'resumed') close();
+      if (!Number.isFinite(e?.t)) continue;
+      first ??= e.t;
+      last = e.t;
+    }
+    close();
+  }
+  return any ? total : null;
+}
+
+// A conversation log's entries, the lines that parse; a missing log reads as none.
+function readLogEntries(path) {
+  let text = '';
+  try {
+    text = readFileSync(path, 'utf8');
+  } catch {
+    return [];
+  }
+  const out = [];
+  for (const line of text.split('\n')) {
+    if (!line.trim()) continue;
+    try {
+      out.push(JSON.parse(line));
+    } catch {
+      // a torn last line of a killed session: skipped
+    }
+  }
+  return out;
 }
 
 // findSessionLog(controlDir, step, sessionId) → the conversation log a session wrote, or null: the
@@ -389,6 +441,7 @@ export async function runPlanning({ controlDir: givenControlDir, resume = false,
   let current = null;
   const since = {};
   const stoppedAt = {};
+  const took = {};
   const waker = createWaker();
   const grants = createGrants();
   const byId = (id) => sessions.find((s) => s.id === id) ?? null;
@@ -518,8 +571,17 @@ export async function runPlanning({ controlDir: givenControlDir, resume = false,
       if (v.live && REQUEST_KINDS.has(v.activity.state)) stoppedAt[v.step] ??= now();
       else if (v.live) delete stoppedAt[v.step];
     }
+    // A finished step's time, read once from its logs when none of its sessions is live any more; a
+    // finished step does not change, so the logs are not re-read on every paint.
+    for (const step of ['plan', 'review']) {
+      if (step in took || sessions.some((x) => x.step === step && x.live)) continue;
+      const finished = step === 'plan' ? state.step !== 'plan' || state.outcome === 'no-plan' : state.outcome === 'reviewed' || state.outcome === 'not-reviewed';
+      if (!finished) continue;
+      const paths = [...new Set(sessions.filter((x) => x.step === step && x.logPath).map((x) => x.logPath))];
+      took[step] = stepWorkedMs(paths.map(readLogEntries));
+    }
     // The label names the run only until it has a slug (§2.6 step 4 clears it in the index).
-    return planRunState(state, { label: state.slug && state.renamed?.index ? null : label, sessions: views, since, stoppedAt });
+    return planRunState(state, { label: state.slug && state.renamed?.index ? null : label, sessions: views, since, stoppedAt, took });
   };
   // The branch the run is on: the renamed one once git says so.
   const branchNow = () => (state.slug && branchExists(`pir/${state.slug}`) ? `pir/${state.slug}` : `pir/${state.id}`);

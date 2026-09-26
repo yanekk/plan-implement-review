@@ -275,6 +275,21 @@ test('a request cancelled by pir\'s own interrupt is not logged answered-remotel
   assert.equal(worker.entries().some((e) => e.kind === 'answered-remotely'), false);
 });
 
+// Stopping a planner mid-question showed "answered on claude.ai" for a question nobody answered: the
+// close aborts the request's signal, which read as a Remote Control answer (pir-plan-command T14).
+test('a request pending at close is not logged answered-remotely', async (t) => {
+  const { worker, logLines } = setup([
+    { await: 'user' }, { emit: initEvent() }, { emit: canUseTool('req-5', 'AskUserQuestion', { questions: [] }) },
+    { await: 'control_response' },
+  ], t);
+  worker.send('go');
+  await waitFor(() => worker.pending().length === 1, 'the pending question');
+  await worker.remoteControl(true);
+  await worker.close({ graceMs: 500, killMs: 1000 });
+  assert.ok(logLines().some((e) => e.kind === 'exited'));
+  assert.equal(logLines().some((e) => e.kind === 'answered-remotely'), false);
+});
+
 test('close switches Remote Control off before the worker goes', async (t) => {
   const { worker, receivedLines } = setup([{ await: 'user' }, ...turn('ok')], t);
   worker.send('go');

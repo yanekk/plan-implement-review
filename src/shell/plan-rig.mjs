@@ -24,6 +24,7 @@ import { fileURLToPath } from 'node:url';
 import { openScreen as openScreenRaw, driveScreen as driveScreenRaw } from './conversation-rig.mjs';
 import { writeClaudeShim } from './fake/claude-shim.mjs';
 import { PLANNER_MATCH, REVIEWER_MATCH, noPlanScript, plannerScript, reviewerScript, workerScripts } from './fake/sessions.mjs';
+import { assistantText, canUseTool, initEvent, resultEvent, toolUse } from './fake/claude-stream.mjs';
 
 const SESSIONS = fileURLToPath(new URL('./fake/sessions.mjs', import.meta.url));
 
@@ -32,7 +33,9 @@ const SESSIONS = fileURLToPath(new URL('./fake/sessions.mjs', import.meta.url));
 export const PLAN_RIG_SLUG = 'rig-plan';
 export const PLAN_RIG_SLUG_2 = 'rig-plan-two';
 export const PLAN_RIG_QUESTION = 'Which way should the plan go?';
-export const SCRIPT_SETS = ['happy', 'no-plan', 'taken-slug', 'crash-planner'];
+export const PLAN_RIG_REVIEW_ASK = 'Is the name rig-plan fine before I mark it reviewed?';
+export const PLAN_RIG_REVIEW_COMMAND = 'git log --oneline -3';
+export const SCRIPT_SETS = ['happy', 'no-plan', 'taken-slug', 'crash-planner', 'reviewer-asks'];
 
 const q = (s) => `'${String(s).replaceAll("'", `'\\''`)}'`;
 const GIT_ID = ['-c', 'user.name=pir rig', '-c', 'user.email=rig@pir.invalid'];
@@ -55,6 +58,9 @@ function reportStep(steps) {
 //   crash-planner  as happy, but the planner exits 1 after committing and before reporting; a resume
 //                  continues past the crash (claude-stream.mjs records an `exit` step as completed) and
 //                  drops `planned`
+//   reviewer-asks  as happy, but the reviewer first asks permission to run PLAN_RIG_REVIEW_COMMAND, then
+//                  asks PLAN_RIG_REVIEW_ASK in plain words and waits for the person's reply before it
+//                  reviews (T14): a live reviewer to answer, and to stop and resume mid-review
 export function scriptSet(name = 'happy') {
   const planner = plannerScript({ slug: PLAN_RIG_SLUG, question: PLAN_RIG_QUESTION });
   let reviewed = PLAN_RIG_SLUG;
@@ -74,10 +80,28 @@ export function scriptSet(name = 'happy') {
       { sh: [process.execPath, SESSIONS, 'report', '{{reportsDir}}', 'plan', report].map(q).join(' ') },
       ...planner.slice(-2).map((s) => JSON.parse(JSON.stringify(s).replaceAll(PLAN_RIG_SLUG, PLAN_RIG_SLUG_2))),
     ];
-  } else throw new Error(`unknown script set "${name}" (${SCRIPT_SETS.join(', ')})`);
+  } else if (name === 'reviewer-asks') plannerSteps = planner;
+  else throw new Error(`unknown script set "${name}" (${SCRIPT_SETS.join(', ')})`);
+  let reviewerSteps = reviewerScript({ slug: reviewed });
+  if (name === 'reviewer-asks') {
+    // reviewerScript is: await, init, a line, then the work; the asks go between the line and the work.
+    const input = { command: PLAN_RIG_REVIEW_COMMAND, description: 'Read the plan commits' };
+    reviewerSteps = [
+      ...reviewerSteps.slice(0, 3),
+      { emit: toolUse('toolu_rev-ask-1', 'Bash', input) },
+      { emit: canUseTool('rev-ask-1', 'Bash', input) },
+      { await: 'control_response' },
+      { resultFor: 'rev-ask-1', allowed: `abc1234 plan(${reviewed}): fake plan` },
+      { emit: assistantText(PLAN_RIG_REVIEW_ASK) },
+      { emit: resultEvent('success', PLAN_RIG_REVIEW_ASK) },
+      { await: 'user' },
+      { emit: initEvent() },
+      ...reviewerSteps.slice(3),
+    ];
+  }
   return [
     { match: PLANNER_MATCH, script: plannerSteps },
-    { match: REVIEWER_MATCH, script: reviewerScript({ slug: reviewed }) },
+    { match: REVIEWER_MATCH, script: reviewerSteps },
     ...workerScripts(),
   ];
 }

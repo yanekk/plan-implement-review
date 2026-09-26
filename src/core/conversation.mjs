@@ -108,6 +108,8 @@ export function buildConversation(entries, { full = false, width = 80, taskId = 
   const answers = new Map(); // requestId → { result, from } from the reply entry
   const byGrant = new Set();
   const remotely = new Set(); // requestIds answered over Remote Control
+  const lost = new Set(); // requestIds asked before a `resumed` note: they died with the old process
+  const asked = [];
   const toolNames = new Map(); // toolUseId → tool name, so a background task knows it is a Monitor
   const background = new Map(); // task_id → { description, tool, ended } for work moved to the background
   for (const entry of list) {
@@ -122,6 +124,8 @@ export function buildConversation(entries, { full = false, width = 80, taskId = 
       else if (ev.kind === 'reply') answers.set(ev.requestId, { result: isObject(entry.result) ? entry.result : {}, from: ev.from });
       else if (ev.kind === 'note' && ev.note === 'delivered-by-grant' && typeof ev.requestId === 'string') byGrant.add(ev.requestId);
       else if (ev.kind === 'note' && ev.note === 'answered-remotely' && typeof ev.requestId === 'string') remotely.add(ev.requestId);
+      else if (ev.kind === 'note' && ev.note === 'resumed') for (const id of asked) lost.add(id);
+      else if (ev.kind === 'permission' || ev.kind === 'questions') asked.push(ev.requestId);
     }
   }
   const pending = workerActivity(list).pending;
@@ -133,6 +137,7 @@ export function buildConversation(entries, { full = false, width = 80, taskId = 
     if (byGrant.has(id)) return { by: 'grant' };
     if (remotely.has(id)) return { by: 'remote' };
     if (pendingIds.has(id)) return { by: readOnly ? 'never' : 'waiting' };
+    if (lost.has(id)) return { by: 'never' };
     return { by: 'interrupt' };
   };
 

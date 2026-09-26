@@ -245,6 +245,14 @@ export function workerActivity(entries) {
           // A request pir allowed from its own grant list is answered without the person (DESIGN §2.6);
           // one answered over Remote Control was answered by the person elsewhere (worker-proc.mjs).
           if (ANSWER_NOTES.has(ev.note) && typeof ev.requestId === 'string') pending.delete(ev.requestId);
+          // A session resumed into the same log (pir-plan-command §2.14) is a new process: whatever was
+          // pending or under way died with the old one, and its questions are lost (the resumed session is
+          // told to ask again), so nothing before the note is still waiting.
+          if (ev.note === 'resumed') {
+            pending.clear();
+            cancelled = null;
+            open = false;
+          }
           break;
         default:
           if (ev.kind === 'init') slashCommands = ev.slashCommands;

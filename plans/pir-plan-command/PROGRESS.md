@@ -36,13 +36,13 @@ done · ⛔ blocked, needs a human.
 | T11 | dashboard-type | T02, T07, T08, T10 | ✅ | |
 | T12 | plan-watch-view | T07, T08, T10, T11 | ✅ | |
 | T13 | brief-box | T09, T12 | ✅ | |
-| T14 | plan-screen-drill | T11, T12, T13 | ⬜ | |
+| T14 | plan-screen-drill | T11, T12, T13 | 🔍 | Drill driven at 80×24 and 120×40; 5 defects fixed, 3 user decisions applied (FINDINGS). 9 rig tests plus unit tests; new `reviewer-asks` script set. Deviation: fixes reach worker-proc, stream, conversation, launch, plan-run and planflow, beyond the doc's file list, where each defect lived. T12's flaky go test fixed. |
 | T15 | planning-skills | T01 | ✅ | |
 | T16 | docs-readme | T14, T15 | ⬜ | |
 | T17 | harness-plan-fixture | T07, T08, T15 | ✅ | |
 | T18 | live-plan-run | T14, T16, T17 | ⬜ | |
 
-**Review queue:** *(empty)*
+**Review queue:** T14
 
 ## Blocked on the user
 

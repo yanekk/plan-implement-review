@@ -64,10 +64,24 @@ export function startRun(
   // plan is refused with the same 'not-reviewed' the coordinator uses.
   const gate = readReviewGate(slug, { root: repoRoot });
   if (gate.missing) return { started: false, reason: 'no-plan' };
+  // Whether a run of this slug is live now: only a `running` classification counts. A crashed, stopped
+  // or finished run does NOT block a start — re-running its slug is exactly how a run resumes (DESIGN
+  // §2.5, §6), and the coordinator reconciles from committed work.
+  const existing = listRecords({ dir }).find((r) => r.repo === repo && r.slug === slug);
+  const running = () => {
+    if (!existing) return false;
+    const { alive, liveStartTime } = resolveLiveness(existing.pid, { kill, exec });
+    return classifyRun({ recordedStartTime: existing.startTime, finalState: existing.finalState, alive, liveStartTime }) === 'running';
+  };
   if (!gate.reviewed) {
     // A plan that lives only on pir/{slug} is a `pir plan` run not yet reviewed: `pir` names resume
     // rather than /pir-review-plan (pir-plan-command §2.16). A plan on main keeps today's exact result.
-    if (planHome(slug, { root: repoRoot }).where === 'branch') return { started: false, reason: 'not-reviewed', where: 'branch' };
+    if (planHome(slug, { root: repoRoot }).where === 'branch') {
+      // Its planning run is live (being planned or reviewed): open it, as `pir start` opens a live build,
+      // rather than tell the person to resume what is not stopped (user, T14 drill, 2026-09-26).
+      if (running()) return { started: false, reason: 'already-running', alreadyRunning: true };
+      return { started: false, reason: 'not-reviewed', where: 'branch' };
+    }
     return { started: false, reason: 'not-reviewed' };
   }
 
@@ -76,24 +90,9 @@ export function startRun(
   const block = readTestBlockGate(slug, { root: repoRoot });
   if (!block.ok) return { started: false, reason: 'no-test-block', detail: block.reason };
 
-  // 3: no run for this slug is already live. Read the index entry (T06), resolve liveness (T05) and
-  // classify it (T01); only a `running` classification blocks a start. A crashed, stopped or finished
-  // run does NOT block — re-running its slug is exactly how a run resumes (DESIGN §2.5, §6), and the
-  // coordinator reconciles from committed work.
-  const existing = listRecords({ dir }).find((r) => r.repo === repo && r.slug === slug);
-  if (existing) {
-    const { alive, liveStartTime } = resolveLiveness(existing.pid, { kill, exec });
-    const state = classifyRun({
-      recordedStartTime: existing.startTime,
-      finalState: existing.finalState,
-      alive,
-      liveStartTime,
-    });
-    if (state === 'running') {
-      // The caller opens the live view instead of starting a second run (DESIGN §2.5).
-      return { started: false, reason: 'already-running', alreadyRunning: true };
-    }
-  }
+  // 3: no run for this slug is already live (the index entry T06, liveness T05, classification T01).
+  // The caller opens the live view instead of starting a second run (DESIGN §2.5).
+  if (running()) return { started: false, reason: 'already-running', alreadyRunning: true };
 
   // Launch. The coordinator path is the engine's own sibling coordinate.mjs, resolved from this file's
   // URL — NOT the bare relative 'src/shell/coordinate.mjs', which would look under the target repo's

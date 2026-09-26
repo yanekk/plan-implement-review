@@ -138,6 +138,9 @@ function footerLine(context, ui, rows = []) {
   }
   if (context === 'go') return lineOf('↵ start · n not now · ← back to the list · esc quit (the question keeps)', 'hint');
   if (context === 'steps') return lineOf('↑↓ pick a step · → open it · ← back · Ctrl+S Ctrl+S stop this run · esc quit', 'hint');
+  // A planning run that is not running cannot be stopped (the chord is inert on it), so its hint does not
+  // offer the stop; its note above says how it resumes, if it can (T14).
+  if (context === 'steps-ended') return lineOf('↑↓ pick a step · → open it · ← back · esc quit', 'hint');
   if (context === 'watch') return lineOf('↑↓ pick a task · → open its worker · ← back · Ctrl+S Ctrl+S stop this run · esc quit', 'hint');
   return lineOf('↑↓ move · ↵ open · Ctrl+R resume · Ctrl+S stop · Ctrl+X remove · esc quit', 'hint');
 }
@@ -418,7 +421,7 @@ export function buildPlanWatchFrame(view, { now, spinnerChar = SPINNER[0], ui = 
 
   lines.push([]);
   if (ui.note) note(ui.note, 'dim', '');
-  lines.push(footerLine(d.go ? 'go' : 'steps', ui));
+  lines.push(footerLine(d.go ? 'go' : alive ? 'steps' : 'steps-ended', ui));
   return lines;
 }
 

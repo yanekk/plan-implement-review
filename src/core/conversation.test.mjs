@@ -526,3 +526,18 @@ test('terminal escapes and control characters in worker text and tool output nev
     assert.ok(all(lines).includes('T05 ▸ hi there'));
   }
 });
+
+// T14: a question pending when a planning session was stopped died with it; once resumed into the same
+// log the view is live again, and that question must read never answered, not pinned as answerable.
+test('buildConversation: a request pending at a `resumed` note is never answered and is not pinned', () => {
+  const q = { question: 'Which way?', header: 'Way', multiSelect: false, options: [{ label: 'Small', description: '' }] };
+  const entries = [
+    { t: 1, dir: 'out', from: 'pir', kind: 'message', text: 'go' },
+    { t: 2, dir: 'request', requestId: 'q1', toolName: 'AskUserQuestion', input: { questions: [q] } },
+    { t: 3, dir: 'note', kind: 'exited', code: 143 },
+    { t: 4, dir: 'note', kind: 'resumed', sessionId: 's' },
+  ];
+  const conv = buildConversation(entries, { width: 80, readOnly: false });
+  assert.equal(conv.pinned, null);
+  assert.match(conv.lines.map((l) => (Array.isArray(l) ? l.map((x) => x.text ?? x).join('') : String(l.text ?? l))).join('\n'), /never answered/);
+});
