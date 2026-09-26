@@ -14,7 +14,7 @@ past.
 
 **Status:** Planned 2026-09-26. Nothing built.
 **Last updated:** 2026-09-26
-**Next `pir-work` will:** review T18.
+**Next `pir-work` will:** nothing; every task ✅.
 
 ## Tasks
 
@@ -40,9 +40,9 @@ done · ⛔ blocked, needs a human.
 | T15 | planning-skills | T01 | ✅ | |
 | T16 | docs-readme | T14, T15 | ✅ | |
 | T17 | harness-plan-fixture | T07, T08, T15 | ✅ | |
-| T18 | live-plan-run | T14, T16, T17 | 🔍 | Live run 2026-09-26 PASS, all five facts green first time; no defect, no code change. Numbers in FINDINGS. Planning skills copied to `~/.claude/skills` (user yes); scratch removed, no process left. |
+| T18 | live-plan-run | T14, T16, T17 | ✅ | Live run 2026-09-26 PASS, five facts green, no code change. Review clean, no fix commit: installed skills diff-identical to branch, scratch gone, no run process alive, npm test green, undelivered replies traced to answerer `replies` after step end. Run bundle itself not re-read (scratch deleted per task). |
 
-**Review queue:** T18
+**Review queue:** *(empty)*
 
 ## Blocked on the user
 
