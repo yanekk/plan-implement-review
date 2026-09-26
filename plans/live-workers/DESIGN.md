@@ -280,6 +280,11 @@ fight over the cursor.
   One line per step is the default (user 2026-09-24). A step line is the tool name, its main argument,
   and the last line of its result. Messages from pir, the person and the worker are marked and coloured
   differently. A pending permission request or question set is highlighted and pinned above the box.
+  Text Claude injects itself (`isSynthetic`, a loaded skill's body) is not drawn (T18 live run: it was
+  most of every conversation). Background work (user 2026-09-26, T18 drill) gets a dim `↳` line when a
+  command or Monitor starts and ends (`task_started` with `is_backgrounded`, `task_notification`), and the
+  line above the box counts what still runs (`◌ N running in the background`). A Monitor's events reach
+  only the model, never the stream, so pir cannot show them.
 - The view opens the task's live worker; with none live, the task's latest worker, read-only (no box).
 
 ### 2.12 Stop, remove, restart, and orphaned workers

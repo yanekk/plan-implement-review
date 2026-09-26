@@ -497,3 +497,20 @@ test('against a fake run: the view shows a permission from the real log, y answe
   assert.equal(platform.list()[0].state, 'idle', 'the fake worker carried on to its result');
   assert.ok(renders > 0, 'the follower asked for repaints as the log grew');
 });
+
+// T18 drill (user 2026-09-26): a worker waiting on background work must not look idle.
+test('the status line counts background work: alone when the worker waits, beside working… when busy', () => {
+  const bg = (id, description) => entry({ dir: 'in', event: { type: 'system', subtype: 'task_started', task_id: id, description, is_backgrounded: true } });
+  const end = (id) => entry({ dir: 'in', event: { type: 'system', subtype: 'task_notification', task_id: id, status: 'completed' } });
+  const result = () => entry({ dir: 'in', event: { type: 'result', subtype: 'success' } });
+  const t = makeView({ log: [init(), opening, bg('a', 'one'), bg('b', 'two'), result()] });
+  assert.match(t.text(), /◌ 2 running in the background/);
+  assert.doesNotMatch(t.text(), /● working…/);
+  t.push(said('still waiting'));
+  assert.match(t.text(), /● working… · 2 running in the background/);
+  t.push(result());
+  t.push(end('a'));
+  assert.match(t.text(), /◌ 1 running in the background/);
+  t.push(end('b'));
+  assert.doesNotMatch(t.text(), /running in the background$/m);
+});

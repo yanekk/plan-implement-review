@@ -130,7 +130,16 @@ append; `log-follow.mjs`), so a closed `pir` loses nothing and two open screens 
 tool step is one line: the tool name, its main argument and the last line of its result; Tab switches
 to full detail. Messages from pir, from the person and from the worker are marked and coloured
 differently. A pending permission request or question set is highlighted and pinned above the typing
-box (see [human-flow.md](human-flow.md)).
+box (see [human-flow.md](human-flow.md)). Text Claude injects itself (a loaded skill's body, marked
+`isSynthetic`) is not drawn.
+
+Background work gets a dim `↳` line when a command or a Monitor moves to the background and another
+when it ends (`running in the background: …`, `finished in the background: …`, `monitor started`,
+`monitor ended`; a failure or a stop reads as such), from Claude's `task_started` and
+`task_notification` events. While any of it is still running, the line above the box reads
+`◌ N running in the background`, or `● working… · N running in the background` during a turn, so a
+worker waiting on it does not look idle. A Monitor's own events never reach pir (Claude hands them to
+the model only); the person sees the worker's reply to each.
 
 What the person types is sent to the worker as a message, taken into its turn even if it is busy. A
 slash command is sent the same way and its reply comes back as worker text; the box autocompletes the
@@ -147,7 +156,7 @@ The keys, as built, are shown in the footer of each view:
 |---|---|
 | List | `↑↓` move · `↵` or `→` open the selected run · `Ctrl+S Ctrl+S` stop · `Ctrl+X Ctrl+X` remove · `esc` quit |
 | Watch | `↑↓` pick a task · `→` or `↵` open its worker · `←` back to the list · `Ctrl+S Ctrl+S` stop this run · `esc` quit |
-| Conversation | typing, `↵` send · `esc` interrupt the worker · `Ctrl+C` clear the box, or interrupt when it is empty · `←` with an empty box back to the live view · `Tab` one line per step ⇄ full detail · `y`/`n`/`a` answer a pending permission, and `↑↓` `space` `↵` drive a pending question set, both only while the box is empty · `PgUp`/`PgDn` scroll |
+| Conversation | typing, `↵` send · `esc` interrupt the worker · `Ctrl+C` clear the box, or interrupt when it is empty · `←` with an empty box back to the live view · `Tab` one line per step ⇄ full detail · `↵`/`n`/`a` answer a pending permission, and `↑↓` `space` `↵` drive a pending question set (one `↵` answers a pick-one question), both only while the box is empty · `PgUp`/`PgDn` scroll |
 
 `←` steps back one view; `esc` quits `pir` outright from the list and the live view, but in the
 conversation view it interrupts the worker, as in Claude's own screen: the open turn ends at once, and

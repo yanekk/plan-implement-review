@@ -88,6 +88,53 @@ test('a skill body Claude injects (isSynthetic user text) is not drawn; an inter
   assert.match(text, /\[Request interrupted by user for tool use\]/);
 });
 
+// Background work, as Claude Code 2.1.282 reported it on the T18 live run (user 2026-09-26: show it).
+const sys = (event) => ({ t: t++, dir: 'in', event: { type: 'system', ...event } });
+const bgStart = (id, toolUseId, description) => sys({ subtype: 'task_started', task_id: id, tool_use_id: toolUseId, description, is_backgrounded: true, task_type: 'local_bash' });
+const bgEnd = (id, status = 'completed') => [
+  sys({ subtype: 'task_updated', task_id: id, patch: { status } }),
+  sys({ subtype: 'task_notification', task_id: id, status, summary: 'x' }),
+];
+
+test('background commands and a monitor get a line when they start and when they end; the count follows', () => {
+  const start = [
+    use('b1', 'Bash', { command: 'node slow.js', run_in_background: true }),
+    bgStart('t1', 'b1', 'first slow command'),
+    res('b1', 'Command running in background with ID: t1.'),
+    use('m1', 'Monitor', { command: 'node ticks.js' }),
+    bgStart('t2', 'm1', 'three ticks'),
+    res('m1', 'Monitor started (task t2).'),
+    done(),
+  ];
+  let conv = buildConversation(start);
+  const text = () => all(conv.lines).join('\n');
+  assert.match(text(), /↳ running in the background: first slow command/);
+  assert.match(text(), /↳ monitor started: three ticks/);
+  assert.equal(conv.background, 2);
+  conv = buildConversation([...start, ...bgEnd('t1')]);
+  assert.match(text(), /↳ finished in the background: first slow command/);
+  assert.equal(conv.background, 1);
+  conv = buildConversation([...start, ...bgEnd('t1'), ...bgEnd('t2')]);
+  assert.match(text(), /↳ monitor ended: three ticks/);
+  assert.equal(conv.background, 0);
+  assert.equal((text().match(/finished in the background/g) ?? []).length, 1, 'task_updated draws no second end line');
+});
+
+test('a background command that fails is drawn as failed; a foreground task and other system events draw nothing', () => {
+  const conv = buildConversation([
+    use('b1', 'Bash', { command: 'false', run_in_background: true }),
+    bgStart('t1', 'b1', 'doomed'),
+    ...bgEnd('t1', 'failed'),
+    sys({ subtype: 'task_started', task_id: 't9', description: 'a subagent', is_backgrounded: false }),
+    sys({ subtype: 'task_notification', task_id: 't8', status: 'completed' }),
+    sys({ subtype: 'rate_limit_event' }),
+  ]);
+  const lines = conv.lines.filter((l) => textOf(l).includes('↳'));
+  assert.deepEqual(lines.map(textOf), ['  ↳ running in the background: doomed', '  ↳ failed in the background: doomed']);
+  assert.equal(styleOf(lines[1]), 'bad');
+  assert.equal(conv.background, 0);
+});
+
 test('one tool use renders as exactly one line by default, regardless of result length', () => {
   const body = Array.from({ length: 50 }, (_, i) => `line ${i + 1}`).join('\n');
   const { lines } = buildConversation([use('u1', 'Bash', { command: 'npm test\n--verbose' }), res('u1', `${body}\n\n`)], { width: 80, taskId: 'T05' });

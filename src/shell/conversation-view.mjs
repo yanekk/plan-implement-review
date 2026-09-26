@@ -274,7 +274,12 @@ export function createConversationView({
     const p = m.readOnly ? null : prompt;
     if (p && answered.has(p.requestId)) bottom.push(paint([span('⚑ answer sent — waiting for pir to deliver it', 'prompt')], w));
     else if (p) for (const l of promptLines(p, { width: w, taskId })) bottom.push(paint(l, w));
-    else if (!m.readOnly && m.activity.state === 'busy') bottom.push(paint([span('● working…', 'active')], w));
+    else if (!m.readOnly) {
+      // A worker waiting on background work is not idle (user 2026-09-26, T18 drill): say how much is running.
+      const bg = m.conv.background ? `${m.conv.background} running in the background` : '';
+      if (m.activity.state === 'busy') bottom.push(paint([span('● working…', 'active'), ...(bg ? [span(` · ${bg}`, 'dim')] : [])], w));
+      else if (bg) bottom.push(paint([span(`◌ ${bg}`, 'dim')], w));
+    }
     if (status) bottom.push(paint([span(status.text, status.style)], w));
     if (!m.readOnly) bottom.push(...editor.render(w));
 

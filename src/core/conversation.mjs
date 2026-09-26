@@ -107,8 +107,16 @@ export function buildConversation(entries, { full = false, width = 80, taskId = 
   const results = new Map(); // toolUseId → tool-result event
   const answers = new Map(); // requestId → { result, from } from the reply entry
   const byGrant = new Set();
+  const toolNames = new Map(); // toolUseId → tool name, so a background task knows it is a Monitor
+  const background = new Map(); // task_id → { description, tool, ended } for work moved to the background
   for (const entry of list) {
     for (const ev of readEntry(entry)) {
+      if (ev.kind === 'tool-use') toolNames.set(ev.toolUseId, ev.name);
+      if (ev.kind === 'system') {
+        const task = backgroundEvent(ev);
+        if (task?.started) background.set(task.id, { description: task.description, tool: toolNames.get(task.toolUseId) ?? '', ended: null });
+        else if (task?.ended && background.has(task.id)) background.get(task.id).ended ??= task.ended;
+      }
       if (ev.kind === 'tool-result') results.set(ev.toolUseId, ev);
       else if (ev.kind === 'reply') answers.set(ev.requestId, { result: isObject(entry.result) ? entry.result : {}, from: ev.from });
       else if (ev.kind === 'note' && ev.note === 'delivered-by-grant' && typeof ev.requestId === 'string') byGrant.add(ev.requestId);
@@ -169,8 +177,23 @@ export function buildConversation(entries, { full = false, width = 80, taskId = 
         case 'raw':
           lines.push([span('· an unreadable log line', 'dim')]);
           break;
+        case 'system': {
+          // Background work (user 2026-09-26, T18 drill): one line when a command or a monitor moves to the
+          // background and one when it ends, so a worker waiting on it does not look idle. The monitor's
+          // own events never reach pir (Claude hands them to the model only), so only its start and end show.
+          const task = backgroundEvent(ev);
+          const known = task && background.get(task.id);
+          if (!known) break;
+          const what = known.description || (known.tool === 'Monitor' ? 'a monitor' : 'a command');
+          if (task.started) lines.push(...wrapped('  ↳ ', `${known.tool === 'Monitor' ? 'monitor started' : 'running in the background'}: ${what}`, 'dim', w));
+          else if (task.ended && task.notification) {
+            const verb = task.ended === 'completed' ? (known.tool === 'Monitor' ? 'monitor ended' : 'finished in the background') : `${task.ended} in the background`;
+            lines.push(...wrapped('  ↳ ', `${verb}: ${what}`, task.ended === 'completed' ? 'dim' : 'bad', w));
+          }
+          break;
+        }
         default:
-          // init, system (rate limits, thinking tokens, task events), tool-result (drawn on its step).
+          // init, tool-result (drawn on its step).
           break;
       }
     }
@@ -178,7 +201,25 @@ export function buildConversation(entries, { full = false, width = 80, taskId = 
 
   let pinned = null;
   if (pinnedRequest) pinned = pinnedRequest.kind === 'questions' ? pickerFor(pinnedRequest) : gateFor(pinnedRequest);
-  return { lines, pinned };
+  // How many background commands and monitors are still running: started and not yet ended.
+  const running = [...background.values()].filter((b) => !b.ended).length;
+  return { lines, pinned, background: running };
+}
+
+// backgroundEvent(ev) → { id, started, toolUseId, description } | { id, ended, notification } | null, for
+// one `system` event (stream.mjs) about background work, as measured on Claude Code 2.1.282 (T18 live run):
+// `task_started` with `is_backgrounded: true` when a Bash command or a Monitor goes to the background;
+// `task_updated` with a terminal `patch.status`, then `task_notification` with `status`, when it ends.
+// Anything else (a foreground task, rate limits, thinking tokens) is null.
+function backgroundEvent(ev) {
+  const e = ev?.event;
+  if (!isObject(e) || typeof e.task_id !== 'string') return null;
+  if (e.subtype === 'task_started') {
+    return e.is_backgrounded === true ? { id: e.task_id, started: true, toolUseId: e.tool_use_id, description: typeof e.description === 'string' ? e.description : '' } : null;
+  }
+  const status = e.subtype === 'task_notification' ? e.status : e.subtype === 'task_updated' ? e.patch?.status : null;
+  if (!['completed', 'failed', 'killed', 'stopped'].includes(status)) return null;
+  return { id: e.task_id, ended: status, notification: e.subtype === 'task_notification' };
 }
 
 // One tool use. Default: exactly one line, `⎿ <Tool> <main arg>  <last result line>`, clipped to width.
