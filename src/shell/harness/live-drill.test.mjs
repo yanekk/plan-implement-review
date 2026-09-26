@@ -43,14 +43,14 @@ test('nextAction interrupts T01 during its pause once, then answers each request
   assert.equal(nextAction({ T01: { role: 'review', pausing: true } }), null, 'a reviewer is never interrupted');
 });
 
-test('questionKeys: a pick-several ticks two, a name is typed on Other, any other pick-one takes ↓ Enter', () => {
+test('questionKeys: a pick-several ticks two, a name is typed in the box, any other pick-one takes ↓ Enter', () => {
   const keys = questionKeys({
     questions: [
       { question: 'Which extras should extras.txt list?', multiSelect: true, options: [{ label: 'apples' }, { label: 'pears' }, { label: 'plums' }] },
       { question: 'What name should name.txt hold?', options: [{ label: 'Ada' }, { label: 'Grace' }] },
     ],
   }).map((s) => s.keys);
-  assert.deepEqual(keys, [' ', '\x1b[B', '\x1b[B', ' ', '\r', '\x1b[A', '\r', TYPED_NAME, '\r', '\r']);
+  assert.deepEqual(keys, [' ', '\x1b[B', '\x1b[B', ' ', '\r', TYPED_NAME, '\r']);
   const single = questionKeys({ questions: [{ question: 'Which greeting?', options: [{ label: 'a' }, { label: 'b' }] }] });
   assert.deepEqual(single.map((s) => s.keys), ['\x1b[B', '\r']);
   assert.ok(single.at(-1).until.test('⚑ answer sent — waiting for pir to deliver it'));

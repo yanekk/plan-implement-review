@@ -79,12 +79,11 @@ export function nextAction(views, done = new Set()) {
 }
 
 // The keys that answer one question set on the picker: a pick-several question ticks its first and last
-// option; a question naming a name is answered on its Other line with TYPED_NAME; any other pick-one
+// option; a question naming a name is answered by typing TYPED_NAME in the box; any other pick-one
 // question takes its second option with ↓ Enter (one Enter answers it, user 2026-09-26). Each step is
 // { keys, until } for the screen. Pure.
 export function questionKeys(request) {
   const DOWN = '\x1b[B';
-  const UP = '\x1b[A';
   const steps = [];
   const qs = request.questions ?? [];
   qs.forEach((q, i) => {
@@ -96,10 +95,8 @@ export function questionKeys(request) {
       steps.push({ keys: ' ' });
       steps.push({ keys: '\r', until: after });
     } else if (/name/i.test(q.question)) {
-      steps.push({ keys: UP, until: /❯ .*Other/ });
-      steps.push({ keys: '\r' });
+      // Typed in the box, the text is the answer (user 2026-09-26): no Other line to reach first.
       steps.push({ keys: TYPED_NAME, until: new RegExp(escape(TYPED_NAME)) });
-      steps.push({ keys: '\r', until: new RegExp(`Other: ${escape(TYPED_NAME)}`) });
       steps.push({ keys: '\r', until: after });
     } else {
       steps.push({ keys: DOWN });

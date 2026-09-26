@@ -235,26 +235,29 @@ test('the picker keys drive the question set and the final Enter drops the answe
   assert.equal(t.v.state.text, '', 'no picker key reached the box');
 });
 
-test('the picker\'s Other line takes the typed text as the answer', () => {
+test('text typed with a question set pending answers the question on screen (user 2026-09-26)', () => {
   const t = makeView({ log: [init(), opening, questions()] });
-  t.v.handleInput(KEY.up); // wraps to Other
-  t.v.handleInput(KEY.space);
+  assert.doesNotMatch(t.text(), /Other/, 'no Other line');
   t.type('Green');
   t.v.handleInput(KEY.enter);
-  assert.deepEqual(t.drops, [], 'the text became the answer, not a message');
-  assert.match(t.text(), /Other: Green/);
-  t.v.handleInput(KEY.enter); // next question
-  t.v.handleInput(KEY.space);
+  assert.deepEqual(t.drops, [], 'the first of two questions: nothing sent yet');
+  assert.match(t.text(), /Which sizes\? \(pick any\)/, 'moved to the next question');
+  t.v.handleInput(KEY.space); // S
+  t.type('XL');
   t.v.handleInput(KEY.enter);
-  assert.deepEqual(t.drops[0].answers, { 'Which colour?': 'Green', 'Which sizes?': 'S' });
+  assert.deepEqual(t.drops, [{ to: 'w-1', kind: 'answers', requestId: 'q1', answers: { 'Which colour?': 'Green', 'Which sizes?': 'S, XL' } }]);
+  assert.equal(t.v.state.text, '');
 });
 
-test('typed text with a pending question set declines it with the text', () => {
-  const t = makeView({ log: [init(), opening, questions()] });
-  t.type('let us talk first');
+
+test('a failed answer drop puts the typed text back and the picker where it was', () => {
+  const t = makeView({ log: [init(), opening, questions({ input: { questions: [{ question: 'Name?', header: 'Name', multiSelect: false, options: [{ label: 'Ada', description: '' }, { label: 'Grace', description: '' }] }] } })], alive: false });
+  t.type('Jan');
   t.v.handleInput(KEY.enter);
-  assert.deepEqual(t.drops, [{ to: 'w-1', kind: 'decline-questions', requestId: 'q1', text: 'let us talk first' }]);
+  assert.equal(t.v.state.text, 'Jan');
+  assert.match(t.text(), /Name\? \(pick one\)/);
 });
+
 
 test('the answer arriving in the log unpins the prompt; a new request pins fresh', () => {
   const t = makeView({ log: [init(), opening, permission()] });

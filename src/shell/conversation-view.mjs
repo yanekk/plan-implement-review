@@ -170,19 +170,25 @@ export function createConversationView({
     if (send({ kind: 'interrupt' }, 'the interrupt')) status = { text: 'interrupt sent', style: 'dim' };
   }
 
-  // The box's Enter. Typed text answers a pending request by refusing it with the text (§2.6) or
-  // declining the question set with it (§2.7); while the picker's Other line is taking text, the text is
-  // that answer instead. Otherwise it is a message. A drop that fails puts the text back in the box.
+  // The box's Enter. Typed text refuses a pending permission with the text (§2.6), answers the question
+  // on screen of a pending question set (user 2026-09-26, T18 drill: it replaced declining the set), or is
+  // a message. A drop that fails puts the text back in the box and the picker back where it was.
   function submit(text) {
     if (!text) return;
     const p = livePrompt();
-    if (p?.kind === 'questions' && p.typingOther) {
-      prompt = pickerReducer(p, { type: 'other', text }).picker;
+    if (p?.kind === 'questions') {
+      const r = pickerReducer(p, { type: 'typed', text });
+      prompt = r.picker;
+      if (!r.send) return;
+      if (send({ kind: 'answers', requestId: p.requestId, answers: r.send.answers }, 'your answers')) answered.add(p.requestId);
+      else {
+        prompt = p;
+        editor.setText(text);
+      }
       return;
     }
     let ok;
     if (p?.kind === 'permission') ok = send({ kind: 'permission', requestId: p.requestId, decision: 'deny', text }, 'your reply');
-    else if (p?.kind === 'questions') ok = send({ kind: 'decline-questions', requestId: p.requestId, text }, 'your reply');
     else ok = send({ kind: 'message', text }, 'your message');
     if (!ok) {
       editor.setText(text);

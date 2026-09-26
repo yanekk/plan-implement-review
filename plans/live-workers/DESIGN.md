@@ -217,12 +217,13 @@ as `delivered-by-grant`. Returning suggestions would also apply their `setMode a
 An AskUserQuestion request (`input.questions[]`: `question`, `header`, `options[{label,description}]`,
 `multiSelect`) shows as a picker, one question at a time, like Claude's own: ↑↓ move, space picks or
 ticks, Enter goes to the next question and on the last sends. On a single-select question Enter also picks
-the highlighted line, so one Enter answers it (user 2026-09-26, T18 drill); on its Other line with nothing
-typed, Enter starts the typing. Every question gets a final "Other" line
-that takes the typed text as the answer. The `canUseTool` result is `behavior:"allow"`, `updatedInput` = the request's
-input plus `answers: { "<question text>": "<label>" }`, several labels joined with `", "` (the round trip
-was measured). Typing a reply instead of using the picker sends `decline-questions`: pir refuses the
-tool with the typed text as the message, which is what Claude's own "chat about this" amounts to.
+the highlighted line, so one Enter answers it (user 2026-09-26, T18 drill). Text typed in the box answers
+the question on screen and moves on: it replaces a single-select pick and joins a multi-select question's
+ticks (user 2026-09-26, T18 drill). There is no "Other" line, and typing no longer declines the set: to talk
+instead of answering, Esc interrupts the worker, which cancels the request (§2.8). The `canUseTool` result is
+`behavior:"allow"`, `updatedInput` = the request's input plus `answers: { "<question text>": "<label>" }`,
+several labels joined with `", "` (the round trip was measured). The inbox still accepts
+`decline-questions` (pir refuses the tool with the text as the message); the screen no longer sends it.
 
 ### 2.8 Interrupt
 
@@ -274,7 +275,7 @@ fight over the cursor.
 | ← with an empty box | back to the run live view |
 | Tab | one line per step (default) ⇄ full detail |
 | Enter / n / a | answer a pending permission request, only while the box is empty (§2.6; Enter replaced `y`, user 2026-09-26) |
-| ↑↓ space Enter | drive a pending question set, only while the box is empty (§2.7) |
+| ↑↓ space Enter, or type an answer | drive a pending question set; the keys only while the box is empty (§2.7) |
 | PgUp / PgDn | scroll |
 
   One line per step is the default (user 2026-09-24). A step line is the tool name, its main argument,

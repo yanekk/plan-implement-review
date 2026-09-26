@@ -33,7 +33,7 @@ const PAUSE_COMMAND = 'node -e "setTimeout(() => {}, 90000)"';
 const EXTRAS_QUESTION = 'Which extras should extras.txt list?';
 // The question itself says a typed answer is wanted: on the T18 drill the person picked an option and the
 // typed path was never exercised (user 2026-09-26).
-const NAME_QUESTION = 'What name should name.txt hold? Type your own under Other.';
+const NAME_QUESTION = 'What name should name.txt hold? Type your own.';
 // The answer the harness types into the Other line, so the unattended run proves a custom answer lands.
 const TYPED_NAME = 'Typed by the harness';
 

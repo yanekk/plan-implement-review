@@ -403,13 +403,13 @@ test('pickerFor starts at the first question with nothing picked', () => {
   assert.deepEqual(p.questions.map((x) => [x.picks, x.other]), [[[], ''], [[], '']]);
 });
 
-test('picker: single-select replaces the pick, up/down wrap through Other', () => {
+test('picker: single-select replaces the pick; up/down wrap over the options only (no Other line)', () => {
   let r = run(picker(), [{ type: 'toggle' }, { type: 'down' }, { type: 'toggle' }]);
   assert.deepEqual(r.picker.questions[0].picks, [1]);
-  r = run(r.picker, [{ type: 'down' }, { type: 'down' }]);
-  assert.equal(r.picker.cursor, 0, 'down past Other wraps to the top');
+  r = run(r.picker, [{ type: 'down' }]);
+  assert.equal(r.picker.cursor, 0, 'down past the last option wraps to the top');
   r = run(r.picker, [{ type: 'up' }]);
-  assert.equal(r.picker.cursor, 2, 'up from the top lands on Other');
+  assert.equal(r.picker.cursor, 1, 'up from the top lands on the last option');
 });
 
 test('picker: multi-select toggles, and the answer keeps option order', () => {
@@ -422,18 +422,17 @@ test('picker: multi-select toggles, and the answer keeps option order', () => {
   assert.deepEqual(r.send, { answers: { 'Which colour?': 'red', 'Which fruits?': 'pear, plum' } });
 });
 
-test('picker: Other takes typed text; single-select picks give way to it, multi keeps both', () => {
-  let r = run(picker(), [{ type: 'toggle' }, { type: 'down' }, { type: 'down' }, { type: 'toggle' }]);
-  assert.equal(r.picker.typingOther, true);
-  assert.deepEqual(r.picker.questions[0].picks, [0], 'toggling Other does not pick yet');
-  r = run(r.picker, [{ type: 'other', text: '  green  ' }]);
-  assert.equal(r.picker.typingOther, false);
+test('picker: typed text answers the question on screen and moves on (user 2026-09-26)', () => {
+  // Single-select: the text replaces a pick.
+  let r = run(picker(), [{ type: 'toggle' }, { type: 'typed', text: '  green  ' }]);
+  assert.equal(r.picker.q, 1);
   assert.deepEqual(r.picker.questions[0], { ...QUESTIONS.questions[0], picks: [], other: 'green' });
-  r = run(r.picker, [{ type: 'next' }, { type: 'down' }, { type: 'down' }, { type: 'toggle' }, { type: 'down' }, { type: 'other', text: 'fig' }, { type: 'next' }]);
+  // Multi-select: the text joins the ticks, and on the last question it sends.
+  r = run(r.picker, [{ type: 'down' }, { type: 'down' }, { type: 'toggle' }, { type: 'typed', text: 'fig' }]);
   assert.deepEqual(r.send, { answers: { 'Which colour?': 'green', 'Which fruits?': 'plum, fig' } });
-  // Picking an option after Other clears the Other text on a single-select question.
-  const back = run(picker(), [{ type: 'other', text: 'green' }, { type: 'toggle' }]);
-  assert.deepEqual([back.picker.questions[0].picks, back.picker.questions[0].other], [[0], '']);
+  // Typed text alone answers a multi-select question too.
+  const alone = run(picker(), [{ type: 'next' }, { type: 'typed', text: 'kiwi' }]);
+  assert.deepEqual(alone.send, { answers: { 'Which colour?': 'red', 'Which fruits?': 'kiwi' } });
 });
 
 test('picker: single-select Enter picks the line under the cursor and moves on (user 2026-09-26)', () => {
@@ -443,23 +442,15 @@ test('picker: single-select Enter picks the line under the cursor and moves on (
   // A picked option is replaced by the one under the cursor at Enter.
   const moved = run(picker(), [{ type: 'toggle' }, { type: 'down' }, { type: 'next' }]);
   assert.deepEqual(moved.picker.questions[0].picks, [1]);
-  // On Other with no text Enter starts the typing and stays; with text it answers with it.
-  const other = run(picker(), [{ type: 'up' }, { type: 'next' }]);
-  assert.equal(other.picker.q, 0);
-  assert.equal(other.picker.typingOther, true);
-  const typed = run(other.picker, [{ type: 'other', text: 'green' }, { type: 'next' }]);
-  assert.equal(typed.picker.q, 1);
-  assert.equal(typed.picker.questions[0].other, 'green');
   // A lone single-select question sends at the first Enter.
   const lone = pickerFor({ requestId: 'q', questions: [QUESTIONS.questions[0]] });
   assert.deepEqual(pickerReducer(lone, { type: 'next' }).send, { answers: { 'Which colour?': 'red' } });
 });
 
-test('picker: next with no answer is a no-op on a multi-select question; empty Other text is no answer', () => {
+test('picker: next with no tick is a no-op on a multi-select question; blank typed text does nothing', () => {
   const p = picker();
-  const r = run(p, [{ type: 'up' }, { type: 'other', text: '   ' }, { type: 'next' }]);
-  assert.equal(r.picker.q, 0);
-  assert.equal(r.send, null);
+  const blank = pickerReducer(p, { type: 'typed', text: '   ' });
+  assert.deepEqual(blank, { picker: p, send: null });
   const onMulti = run(p, [{ type: 'next' }]).picker;
   assert.deepEqual(pickerReducer(onMulti, { type: 'next' }), { picker: onMulti, send: null });
   const last = run(p, [{ type: 'toggle' }, { type: 'next' }, { type: 'next' }]);
@@ -468,26 +459,22 @@ test('picker: next with no answer is a no-op on a multi-select question; empty O
   assert.deepEqual(pickerReducer(p, { type: 'bogus' }), { picker: p, send: null });
 });
 
-test('the picker prompt shows the current question, its boxes and the cursor', () => {
+test('the picker prompt shows the current question, its boxes and the cursor, and no Other line', () => {
   const r = run(picker(), [{ type: 'down' }, { type: 'toggle' }]);
   assert.deepEqual(all(promptLines(r.picker, { width: 200, taskId: 'T05' })), [
     '? T05 asks you 2 questions  [Colour ✔] [Fruits]',
     '  Which colour? (pick one)',
     '    ( ) red  r',
     '  ❯ (•) blue  b',
-    '    ( ) Other  type your own answer in the box',
-    '  ↑↓ move · ↵ choose, next question · or type a reply to explain instead',
+    '  ↑↓ move · ↵ choose, next question · or type your own answer and ↵',
   ]);
-  const multi = run(r.picker, [{ type: 'next' }, { type: 'toggle' }, { type: 'down' }, { type: 'down' }, { type: 'down' }, { type: 'toggle' }]);
+  const multi = run(r.picker, [{ type: 'next' }, { type: 'toggle' }]);
   const lines = all(promptLines(multi.picker, { width: 200, taskId: 'T05' }));
-  assert.ok(lines.includes('    [x] apple'));
-  assert.ok(lines.includes('  ❯ [ ] Other  type your own answer in the box'));
-  assert.equal(lines.at(-1), '  type your answer in the box, then ↵');
-  const typed = run(multi.picker, [{ type: 'other', text: 'fig' }]);
-  const done = all(promptLines(typed.picker, { width: 200, taskId: 'T05' }));
-  assert.ok(done.includes('  ❯ [x] Other: fig  type your own answer in the box'));
-  assert.ok(done.at(-1).includes('↵ send answers'));
+  assert.ok(lines.includes('  ❯ [x] apple'));
+  assert.ok(!lines.some((l) => l.includes('Other')));
+  assert.equal(lines.at(-1), '  ↑↓ move · space tick · ↵ send answers · or type your own answer and ↵');
 });
+
 
 test('terminal escapes and control characters in worker text and tool output never reach the lines', () => {
   const dirty = '\x1b[31mFAIL\x1b[0m a\tb\x1b[2J 50%\r100%';
