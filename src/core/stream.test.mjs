@@ -318,3 +318,10 @@ test('stream.mjs imports nothing: no fs, child_process, clock or package', () =>
   assert.ok(!/\brequire\(|\bimport\(/.test(source));
   assert.ok(!/Date\.now|new Date\(\s*\)|performance\.now|Math\.random/.test(source));
 });
+
+test('user text Claude marks isSynthetic reads as synthetic; other user text does not (T18)', () => {
+  const [synthetic] = readEntry({ t: 1, dir: 'in', event: { type: 'user', isSynthetic: true, message: { content: [{ type: 'text', text: 'skill body' }] } } });
+  assert.deepEqual(synthetic, { kind: 'text', role: 'user', text: 'skill body', synthetic: true });
+  const [plain] = readEntry({ t: 1, dir: 'in', event: { type: 'user', message: { content: [{ type: 'text', text: '[Request interrupted by user]' }] } } });
+  assert.equal(plain.synthetic, undefined);
+});

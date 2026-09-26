@@ -74,6 +74,20 @@ test('worker text is wrapped, never truncated, with continuation lines under the
 
 // ---- Steps ----
 
+test('a skill body Claude injects (isSynthetic user text) is not drawn; an interrupted marker still is (T18)', () => {
+  const userText = (text, extra = {}) => ({ t: t++, dir: 'in', event: { type: 'user', message: { role: 'user', content: [{ type: 'text', text }] }, ...extra } });
+  const { lines } = buildConversation([
+    use('s1', 'Skill', { skill: 'pir-worker' }),
+    res('s1', 'Launching skill: pir-worker'),
+    userText('Base directory for this skill: /x\n\n# worker\n\nline after line', { isSynthetic: true }),
+    userText('[Request interrupted by user for tool use]'),
+  ]);
+  const text = all(lines).join('\n');
+  assert.doesNotMatch(text, /Base directory|# worker|line after line/);
+  assert.match(text, /⎿ Skill pir-worker/);
+  assert.match(text, /\[Request interrupted by user for tool use\]/);
+});
+
 test('one tool use renders as exactly one line by default, regardless of result length', () => {
   const body = Array.from({ length: 50 }, (_, i) => `line ${i + 1}`).join('\n');
   const { lines } = buildConversation([use('u1', 'Bash', { command: 'npm test\n--verbose' }), res('u1', `${body}\n\n`)], { width: 80, taskId: 'T05' });

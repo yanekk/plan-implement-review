@@ -83,7 +83,9 @@ function readMessage(m, entry) {
         if (b.type === 'tool_result') {
           return [{ kind: 'tool-result', toolUseId: str(b.tool_use_id), text: resultText(b.content), isError: b.is_error === true }];
         }
-        if (b.type === 'text') return [{ kind: 'text', role: 'user', text: str(b.text) }];
+        // Claude marks the text it injects itself `isSynthetic` (a loaded skill's whole body, T18 live
+        // run); it is context for the model, not something anyone said.
+        if (b.type === 'text') return [{ kind: 'text', role: 'user', text: str(b.text), ...(m.isSynthetic === true ? { synthetic: true } : {}) }];
         return [];
       });
     }

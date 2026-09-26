@@ -137,7 +137,7 @@ export function buildConversation(entries, { full = false, width = 80, taskId = 
           break;
         }
         case 'text': {
-          if (!ev.text.trim()) break;
+          if (!ev.text.trim() || ev.synthetic) break; // a skill body Claude injected: hundreds of lines nobody said
           if (ev.role === 'assistant') lines.push(...wrapped(`${taskId} ▸ `, ev.text, 'worker', w));
           else lines.push(...wrapped('  ', ev.text, 'dim', w)); // e.g. `[Request interrupted by user]`
           break;
