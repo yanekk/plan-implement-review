@@ -31,7 +31,7 @@ import { readSnapshot } from './snapshot-store.mjs';
 import { stopRun, removeRun } from './control-run.mjs';
 import { FrameView } from './pir-view.mjs';
 import { createConversationView } from './conversation-view.mjs';
-import { ProcessTerminal, TuiAltScreen, isKeyRelease, parseKey } from '@earendil-works/pi-tui';
+import { ProcessTerminal, TuiAltScreen, TUI_KEYBINDINGS, getKeybindings, isKeyRelease, parseKey } from '@earendil-works/pi-tui';
 
 // The spinner frames, one per refresh (a poll tick). The SAME Braille frames render.mjs uses, so a live
 // run painted here spins identically to the same run painted by coordinate.mjs's own display (§2.4). render.mjs does
@@ -429,6 +429,14 @@ export function createScreen({ stream = process.stdout, colour, terminal } = {})
     },
     invalidate() {},
   };
+  // TuiAltScreen scrolls its own viewport on PgUp/PgDn, Home/End and Ctrl+↑/↓, and opens a transcript
+  // search on Ctrl+Shift+F, in an input listener that runs before pir's and consumes the key. pir's frame
+  // is always exactly the terminal's height, so that viewport never moves: the keys just vanished, and the
+  // conversation view's PgUp/PgDn scrolled nothing (T20). pir owns every key (§2.11), so every
+  // `tui.altScreen.*` binding is unbound; pi-tui's keybindings are process-wide, which is fine for pir.
+  const kb = getKeybindings();
+  const unbound = Object.fromEntries(Object.keys(TUI_KEYBINDINGS).filter((id) => id.startsWith('tui.altScreen.')).map((id) => [id, []]));
+  kb.setUserBindings({ ...kb.getUserBindings(), ...unbound });
   const tui = new TuiAltScreen(terminal ?? new ProcessTerminal(), false, undefined, { mouse: false });
   tui.setLayoutRoot(guarded);
   tui.addInputListener((data) => {

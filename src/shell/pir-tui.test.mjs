@@ -278,6 +278,21 @@ test('createScreen clips each line to the terminal width and cuts the frame at i
   assert.match(rows[2], /^  SLUG/, 'the third line is the column header, not the tail of the frame');
 });
 
+// T20: pi-tui's alternate screen scrolls its own viewport on PgUp/PgDn, Home/End, Ctrl+↑/↓ and opens a
+// search on Ctrl+Shift+F, consuming those keys before pir's listener. pir's frame is always the terminal's
+// height, so that viewport never scrolls: in the conversation view PgUp/PgDn did nothing at all.
+test('every key reaches pir: pi-tui\'s viewport scrolling and search keys are not swallowed', () => {
+  const tty = fakeStream({ isTTY: true, columns: 40, rows: 5 });
+  const term = fakeTerminal(tty);
+  const s = createScreen({ stream: tty, colour: false, terminal: term });
+  const got = [];
+  s.listen((d) => got.push(d), () => {});
+  const keys = ['\x1b[5~', '\x1b[6~', '\x1b[H', '\x1b[F', '\x1b[1;5A', '\x1b[1;5B', '\x1b[1;6A', '\x1b[102;6u', 'x'];
+  for (const k of keys) term.press(k);
+  s.close();
+  assert.deepEqual(got, keys);
+});
+
 test('the TUI restores raw mode and leaves the alternate screen even when a paint throws (§5.1, T15)', async () => {
   const raw = [];
   const stdin = {

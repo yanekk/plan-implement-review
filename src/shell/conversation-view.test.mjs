@@ -150,7 +150,7 @@ test('the view renders exactly the terminal\'s rows: header, scrollback, box, hi
   assert.match(lines[0], /^T05 {2}worker w-1 · live {2}· plan/);
   assert.match(t.text(), /pir ▸ Build T05\./);
   assert.match(t.text(), /T05 ▸ Starting on the task\./);
-  assert.match(lines.at(-1), /^↵ send · esc interrupt · ← back · Tab full detail/);
+  assert.equal(lines.at(-1), '↵ send · esc interrupt · ← back · Tab detail · PgUp/PgDn scroll');
 });
 
 test('Enter with text drops a message; Esc drops an interrupt; ← with text does not navigate', () => {
@@ -330,7 +330,54 @@ test('Tab switches between one line per step and full detail', () => {
   t.v.handleInput(KEY.tab);
   assert.match(t.text(), /first out/);
   assert.equal(t.v.state.full, true);
-  assert.match(t.screen().at(-1), /Tab one line per step/);
+  assert.match(t.screen().at(-1), /Tab detail/, 'the hint names the key, the same both ways');
+});
+
+// T20 (user 2026-09-26): at 80 columns the hint with a request pending was 90 wide and lost
+// `PgUp/PgDn scroll`; a read-only one lost `read only`. The shorter wording fits every state.
+test('the key hint fits 80 columns in every state', () => {
+  const fits = (t, want) => {
+    const hint = t.screen().at(-1);
+    assert.equal(hint, want);
+    assert.ok([...hint].length <= 80, `${[...hint].length} wide: ${hint}`);
+  };
+  const live = makeView();
+  fits(live, '↵ send · esc interrupt · ← back · Tab detail · PgUp/PgDn scroll');
+  live.push(permission());
+  fits(live, 'answer above or type a reply · esc interrupt · ← back · Tab detail · PgUp/PgDn');
+  live.v.handleInput(KEY.tab);
+  fits(live, 'answer above or type a reply · esc interrupt · ← back · Tab detail · PgUp/PgDn');
+  const finished = makeView({ live: false });
+  fits(finished, '← back · PgUp/PgDn scroll · Tab detail · finished, read only');
+  const exited = makeView();
+  exited.push(entry({ dir: 'note', kind: 'exited', code: 0 }));
+  exited.v.handleInput(KEY.tab);
+  fits(exited, '← back · PgUp/PgDn scroll · Tab detail · exited, read only');
+});
+
+// T20 review (user 2026-09-26): scrolled up, `↓ N more below · ` leads the hint and pushed it to 96 columns
+// with a request pending; the live hints drop a phrase then, and still fit with a four-digit count.
+test('scrolled up, the key hint with its more-below count fits 80 columns', () => {
+  const long = [init(), opening, ...Array.from({ length: 2000 }, (_, i) => said(`line ${i}`))];
+  const fits = (t, want) => {
+    const hint = t.screen().at(-1);
+    assert.equal(hint, want);
+    assert.ok([...hint].length <= 80, `${[...hint].length} wide: ${hint}`);
+  };
+  const t = makeView({ log: long, rows: 20 });
+  for (let i = 0; i < 100; i++) t.v.handleInput(KEY.pgUp);
+  const n = t.v.state.scrollBack;
+  assert.ok(n >= 1000, `${n} lines below`);
+  fits(t, `↓ ${n} more below · ↵ send · esc interrupt · ← back · Tab detail · PgUp/PgDn`);
+  t.screen();
+  t.push(permission());
+  t.screen();
+  const m = t.v.state.scrollBack;
+  fits(t, `↓ ${m} more below · esc interrupt · ← back · Tab detail · PgUp/PgDn`);
+  const ro = makeView({ log: long, rows: 20, live: false });
+  for (let i = 0; i < 100; i++) ro.v.handleInput(KEY.pgUp);
+  ro.screen();
+  fits(ro, `↓ ${ro.v.state.scrollBack} more below · ← back · PgUp/PgDn scroll · Tab detail · finished, read only`);
 });
 
 test('new lines follow the end; scrolled up, the view stays put', () => {
@@ -345,6 +392,33 @@ test('new lines follow the end; scrolled up, the view stays put', () => {
   t.v.handleInput(KEY.pgDn);
   t.v.handleInput(KEY.pgDn);
   assert.match(t.text(), /fresher/, 'back at the end it follows again');
+});
+
+// T20: the pinned prompt or the `● working…` line appearing below the scrollback shrank it from the top,
+// so the lines a scrolled-up person was reading jumped up by that many rows.
+test('scrolled up, a prompt pinned below the scrollback does not move the lines being read', () => {
+  const t = makeView({ log: [init(), opening, ...Array.from({ length: 40 }, (_, i) => said(`line ${i}`))], rows: 20 });
+  t.v.handleInput(KEY.pgUp);
+  const before = t.screen().slice(2, 6);
+  t.push(permission());
+  assert.match(t.text(), /y allow · n refuse/, 'the request is pinned');
+  assert.deepEqual(t.screen().slice(2, 6), before, 'the top of the scrollback stayed where it was');
+  t.v.handleInput(KEY.pgDn);
+  t.v.handleInput(KEY.pgDn);
+  t.v.handleInput(KEY.pgDn);
+  assert.doesNotMatch(t.text(), /more below/, 'PgDn still reaches the end');
+});
+
+// T20 review: the `↓ N more below` count was built before the offset absorbed a height change, so the frame
+// a prompt appeared on showed the old count; the next paint, with nothing changed, showed another.
+test('scrolled up, the more-below count is the one the frame shows, the paint a prompt appears on too', () => {
+  const t = makeView({ log: [init(), opening, ...Array.from({ length: 40 }, (_, i) => said(`line ${i}`))], rows: 20 });
+  t.v.handleInput(KEY.pgUp);
+  t.screen();
+  t.push(permission());
+  const first = t.screen().at(-1);
+  assert.match(first, /↓ \d+ more below/);
+  assert.equal(first, t.screen().at(-1), 'a second paint with nothing changed reads the same');
 });
 
 test('autocomplete offers /context, never /doctor', async () => {

@@ -96,6 +96,7 @@ export function createConversationView({
   let full = false;
   let scrollBack = 0; // lines scrolled up from the end; 0 follows new lines
   let lastPage = 10;
+  let lastHeight = null; // the scrollback's height at the last paint
   let prompt = null; // the pinned request's gate or picker, as the person has driven it
   const answered = new Set(); // requestIds this view dropped an answer for, until the log shows the reply
   let status = null; // a one-shot { text, style } line
@@ -247,15 +248,15 @@ export function createConversationView({
     tui.requestRender();
   }
 
-  function hint(m) {
-    const detail = full ? 'Tab one line per step' : 'Tab full detail';
-    if (m.readOnly) {
-      const why = m.ended ? 'this worker has exited' : 'this worker has finished';
-      return `← back · PgUp/PgDn scroll · ${detail} · ${why}, read only`;
-    }
-    // ← goes back only with an empty box, and y/n/a answer only then; the hint stays one line at 80 columns.
-    const lead = livePrompt() ? 'answer above or type a reply' : '↵ send';
-    return `${lead} · esc interrupt · ← back · ${detail} · PgUp/PgDn scroll`;
+  // Every state's hint fits one line at 80 columns (user 2026-09-26, T20): `Tab detail` names the key both
+  // ways, and with a request pending the scroll key is only `PgUp/PgDn`.
+  // Scrolled up, `↓ N more below · ` leads the hint, so the live hints shed a phrase to keep it within 80
+  // (user 2026-09-26, T20 review): the pending request is pinned in view, and the person has just used PgUp.
+  function hint(m, scrolled) {
+    if (m.readOnly) return `← back · PgUp/PgDn scroll · Tab detail · ${m.ended ? 'exited' : 'finished'}, read only`;
+    // ← goes back only with an empty box, and y/n/a answer only then.
+    if (livePrompt()) return `${scrolled ? '' : 'answer above or type a reply · '}esc interrupt · ← back · Tab detail · PgUp/PgDn`;
+    return `↵ send · esc interrupt · ← back · Tab detail · PgUp/PgDn${scrolled ? '' : ' scroll'}`;
   }
 
   function render(width) {
@@ -276,17 +277,21 @@ export function createConversationView({
     else if (!m.readOnly && m.activity.state === 'busy') bottom.push(paint([span('● working…', 'active')], w));
     if (status) bottom.push(paint([span(status.text, status.style)], w));
     if (!m.readOnly) bottom.push(...editor.render(w));
-    const more = scrollBack > 0 ? `↓ ${scrollBack} more below · ` : '';
-    bottom.push(paint([span(more + hint(m), 'hint')], w));
 
-    const height = Math.max(1, rows - out.length - bottom.length);
+    const height = Math.max(1, rows - out.length - bottom.length - 1); // the last 1 is the hint line
+    // Scrolled up, the scrollback losing rows to a prompt or `● working…` below it (or getting them back)
+    // must not move what the person is reading: keep the top line fixed by moving the offset from the end.
+    if (scrollBack > 0 && lastHeight !== null) scrollBack = Math.max(0, scrollBack + lastHeight - height);
+    lastHeight = height;
     lastPage = Math.max(1, height - 1);
     const lines = worker?.logPath ? m.conv.lines : [[span('  no conversation log was recorded for this worker', 'dim')]];
     scrollBack = Math.min(scrollBack, Math.max(0, lines.length - height));
     const end = lines.length - scrollBack;
     const shown = lines.slice(Math.max(0, end - height), end).map((l) => paint(l, w));
     while (shown.length < height) shown.push('');
-    out.push(...shown, ...bottom);
+    // Painted after the offset settled, so the count is the one this frame shows (T20 review).
+    const more = scrollBack > 0 ? `↓ ${scrollBack} more below · ` : '';
+    out.push(...shown, ...bottom, paint([span(more + hint(m, scrollBack > 0), 'hint')], w));
     return out.slice(0, rows);
   }
 
