@@ -35,6 +35,10 @@ export const SGR = {
   hint: '\x1b[2m', // the faint key-hint footer
   armed: '\x1b[1;33m', // the armed stop/remove confirmation, amber and bold
   dim: '\x1b[2m', // plain dim text (repo column, worker count, notes)
+  // the TYPE column and the planning run's `your go` (pir-plan-command §2.10), after the approved prototype.
+  'type-plan': '\x1b[35m', // TYPE `plan`, magenta
+  'type-work': '\x1b[34m', // TYPE `work`, blue
+  'your-go': '\x1b[1;33m', // a reviewed plan waiting on the person's go, and its count: amber bold, the colour of asking
   // the conversation view's keys (core/conversation.mjs, live-workers §2.11), after the approved prototype:
   // pir orange, the person green, the worker bold, a step magenta (red when it failed), a pending prompt amber.
   pir: '\x1b[38;5;208m',
