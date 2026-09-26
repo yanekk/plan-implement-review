@@ -37,12 +37,12 @@ done · ⛔ blocked, needs a human.
 | T12 | plan-watch-view | T07, T08, T10, T11 | ⬜ | |
 | T13 | brief-box | T09, T12 | ⬜ | |
 | T14 | plan-screen-drill | T11, T12, T13 | ⬜ | |
-| T15 | planning-skills | T01 | 🔍 | "Run by pir plan" sections plus top pointers in both skills; CLAUDE.md carve-out and two table rows. `planning-skills.test.mjs`, 10 tests; scratch install grepped. Deviations: report `from` is plain `planner`/`reviewer`, not the §2.3 name (routing uses the header); CLAUDE.md "Three commands" became "These commands". |
+| T15 | planning-skills | T01 | ✅ | Review: one fix, the ".git" write rule read as barring git commands (Pass 3 worktree add); reworded in both skills. Probed: ran the skill's drop command, parsePlanReport read it; classic paths additions-only; `from` deviation accepted (routing uses the header). Scratch install grepped. |
 | T16 | docs-readme | T14, T15 | ⬜ | |
 | T17 | harness-plan-fixture | T07, T08, T15 | ⬜ | |
 | T18 | live-plan-run | T14, T16, T17 | ⬜ | |
 
-**Review queue:** T15
+**Review queue:** *(empty)*
 
 ## Blocked on the user
 
