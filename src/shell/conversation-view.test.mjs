@@ -384,6 +384,18 @@ test('scrolled up, a prompt pinned below the scrollback does not move the lines 
   assert.doesNotMatch(t.text(), /more below/, 'PgDn still reaches the end');
 });
 
+// T20 review: the `↓ N more below` count was built before the offset absorbed a height change, so the frame
+// a prompt appeared on showed the old count; the next paint, with nothing changed, showed another.
+test('scrolled up, the more-below count is the one the frame shows, the paint a prompt appears on too', () => {
+  const t = makeView({ log: [init(), opening, ...Array.from({ length: 40 }, (_, i) => said(`line ${i}`))], rows: 20 });
+  t.v.handleInput(KEY.pgUp);
+  t.screen();
+  t.push(permission());
+  const first = t.screen().at(-1);
+  assert.match(first, /↓ \d+ more below/);
+  assert.equal(first, t.screen().at(-1), 'a second paint with nothing changed reads the same');
+});
+
 test('autocomplete offers /context, never /doctor', async () => {
   const names = slashCommandsOf([init()]);
   assert.ok(names.includes('context'));

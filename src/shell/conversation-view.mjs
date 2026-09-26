@@ -275,10 +275,8 @@ export function createConversationView({
     else if (!m.readOnly && m.activity.state === 'busy') bottom.push(paint([span('● working…', 'active')], w));
     if (status) bottom.push(paint([span(status.text, status.style)], w));
     if (!m.readOnly) bottom.push(...editor.render(w));
-    const more = scrollBack > 0 ? `↓ ${scrollBack} more below · ` : '';
-    bottom.push(paint([span(more + hint(m), 'hint')], w));
 
-    const height = Math.max(1, rows - out.length - bottom.length);
+    const height = Math.max(1, rows - out.length - bottom.length - 1); // the last 1 is the hint line
     // Scrolled up, the scrollback losing rows to a prompt or `● working…` below it (or getting them back)
     // must not move what the person is reading: keep the top line fixed by moving the offset from the end.
     if (scrollBack > 0 && lastHeight !== null) scrollBack = Math.max(0, scrollBack + lastHeight - height);
@@ -289,7 +287,9 @@ export function createConversationView({
     const end = lines.length - scrollBack;
     const shown = lines.slice(Math.max(0, end - height), end).map((l) => paint(l, w));
     while (shown.length < height) shown.push('');
-    out.push(...shown, ...bottom);
+    // Painted after the offset settled, so the count is the one this frame shows (T20 review).
+    const more = scrollBack > 0 ? `↓ ${scrollBack} more below · ` : '';
+    out.push(...shown, ...bottom, paint([span(more + hint(m), 'hint')], w));
     return out.slice(0, rows);
   }
 
