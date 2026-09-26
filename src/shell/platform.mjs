@@ -331,6 +331,16 @@ export function createPlatform({
       return { ok: rec.worker.answer(requestId, result, { from }) };
     },
 
+    // remoteControl(id, on) → { ok }. Switches Remote Control on or off for a live worker (worker-proc);
+    // fire-and-forget, as the pass is synchronous, and the outcome is logged in the worker's own log. An
+    // exited or unknown worker has no session to reach.
+    remoteControl(id, on) {
+      const rec = live.get(id);
+      if (!rec) return { ok: false };
+      rec.worker.remoteControl(on).catch(() => {});
+      return { ok: true };
+    },
+
     // workers() → every worker this platform spawned, live or exited, in spawn order, each with its
     // activity folded from its log: { id, task, role, n, logPath, live, activity }. Read-only, unlike the
     // loop's list(), so the run state can call it for the screen without touching the pass (live-workers

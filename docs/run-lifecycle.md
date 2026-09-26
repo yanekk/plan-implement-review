@@ -69,7 +69,9 @@ A pass does, in order:
   or a merge `conflict`). See [control-folder.md](control-folder.md). Each listed worker carries its
   activity, derived from its conversation log (`workerActivity` in `src/core/stream.mjs`): `busy` (a
   turn is open), `idle` (the last turn ended and nothing is pending), `permission` or `questions` (a
-  permission request or a question set waits on the person). Only `busy` holds up a close.
+  permission request or a question set waits on the person). Only `busy` holds up a close. A task
+  parked on a question or decision report returns to its role's phase once its worker opens a turn
+  after the asking one — the person answered (`resumeAnswered`, see [human-flow.md](human-flow.md)).
 - **Clean up dead workers.** A worker is live while its process has not exited. One whose process
   has exited is dead at once — there is no grace pass, since a child is listed the moment it is
   spawned — and its worktree and branch are removed, so a crashed worker never holds a slot forever.
@@ -145,6 +147,10 @@ SIGKILL after 10 s if it is still running (`close` in `worker-proc.mjs`); the co
 live worker's pid and start time in the control folder's `workers.json` so one that outlives it can be
 reaped. That wait is bounded — see [control-folder.md](control-folder.md) and the
 known-limitation note in [human-flow.md](human-flow.md) about leaked background processes.
+
+After each pass the command switches Remote Control on for every live worker waiting on the person
+and off for every other, unless the run was started with `PARALLEL_REMOTE=0` (see
+[human-flow.md](human-flow.md)); a closing worker switches it off before its input queue ends.
 
 ## The live status display
 

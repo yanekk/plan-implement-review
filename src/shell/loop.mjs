@@ -126,6 +126,31 @@ function applyMessages(state, messages, record) {
   }
 }
 
+// A worker parked on its own report (question, decision, or a conflict it caught itself) asks the
+// person in its conversation and ends that turn; the answer comes back as a message, typed in pir or
+// over Remote Control, and the worker carries on. Nothing reports that, so without this the task read
+// `asking you` until its next report (`implemented`/`done`), with its clock stopped and its remote
+// session left on. The answer is read from the worker's log instead: the first pass that sees the
+// park records the turn the ask ends with (`askEnd`, the open turn if one is under way); a turn opened
+// after it means the worker is working again, and the task returns to its role's phase. A conflict fix
+// pir itself sent (`sent`) is not a question to the person and is left to its `done` report.
+function resumeAnswered(state, liveById, record) {
+  for (const [num, t] of Object.entries(state.tasks)) {
+    if (t.phase !== AWAITING || !t.decision || t.decision.sent) continue;
+    const act = liveById.get(t.workerId)?.activity;
+    if (!Number.isFinite(act?.turns)) continue; // a listing without the log's fold (some test fakes)
+    if (t.decision.askEnd === undefined) {
+      t.decision.askEnd = act.turns + (act.open ? 1 : 0);
+      continue;
+    }
+    if (act.turns > t.decision.askEnd || (act.turns === t.decision.askEnd && act.open)) {
+      t.phase = t.role === 'review' ? REVIEWING : IMPLEMENTING;
+      delete t.decision;
+      record('resumed', { task: num });
+    }
+  }
+}
+
 // How long the loop keeps DEFERRING a finished worker (review-ready or done) that the platform still
 // reports `busy` (its log shows an open turn, core/stream.mjs workerActivity), before it stops trusting that flag and forces the hand-off (3c) or the
 // merge-and-close (3d). The idle gate (T13 Problem B) exists to avoid SIGTERMing a worker mid-turn and
@@ -391,6 +416,7 @@ export function runPass({ platform, worktree, repo, slug, maxWorkers, state, con
   const isBusy = (id) => liveById.get(id)?.status === 'busy';
   const messages = platform.inbox();
   applyMessages(state, messages, record);
+  resumeAnswered(state, liveById, record);
 
   const progressText = readFileSync(featureProgressPath, 'utf8');
   const parsed = parseProgress(progressText);

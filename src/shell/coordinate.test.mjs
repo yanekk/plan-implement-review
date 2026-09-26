@@ -28,6 +28,7 @@ import {
   newTiming,
   advanceTiming,
   requestingTasks,
+  remoteWanted,
   waitForReport,
   shouldSelfReport,
   finalStateForExit,
@@ -834,6 +835,24 @@ test('advanceTiming: an ask answered into a different phase starts that phase at
   advanceTiming(timing, { T01: { role: 'implement', phase: 'awaiting-answer' } }, [], 3000);
   advanceTiming(timing, { T01: { role: 'implement', phase: 'done' } }, [], 9000);
   assert.equal(timing.sinceByTask.T01, 9000);
+});
+
+test('remoteWanted: a live worker with a pending request, or holding a task parked on its own report', () => {
+  const workers = [
+    { id: 'a', task: 'T01', live: true, activity: { state: 'permission' } },
+    { id: 'b', task: 'T02', live: true, activity: { state: 'questions' } },
+    { id: 'c', task: 'T03', live: true, activity: { state: 'idle' } }, // parked on a report
+    { id: 'd', task: 'T04', live: true, activity: { state: 'busy' } }, // fixing a conflict pir sent
+    { id: 'e', task: 'T05', live: true, activity: { state: 'busy' } }, // building
+    { id: 'f', task: 'T06', live: false, activity: { state: 'permission' } }, // exited
+    { id: 'g', task: 'T03', live: true, activity: { state: 'busy' } }, // not the parked task's worker
+  ];
+  const stateTasks = {
+    T03: { phase: 'awaiting-answer', workerId: 'c', decision: { kind: 'question', text: 'which?' } },
+    T04: { phase: 'awaiting-answer', workerId: 'd', decision: { kind: 'conflict', text: 'x', sent: true } },
+    T05: { phase: 'implementing', workerId: 'e' },
+  };
+  assert.deepEqual([...remoteWanted(workers, stateTasks)].sort(), ['a', 'b', 'c']);
 });
 
 test('advanceTiming stops the clock while a live worker has a permission request or question set pending', () => {

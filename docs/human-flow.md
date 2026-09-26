@@ -27,8 +27,13 @@ answers in the worker's conversation, in plain English** (see [detached-runs.md]
 for the view and its keys). The answer is dropped into the control folder's `inbox/` and forwarded
 to the worker at once (see [control-folder.md](control-folder.md)); the worker un-parks and
 continues. The command does not read or relay the answer: it only carries it. A worker is not a
-`claude agents` session any more — it appears in that list, but cannot be attached to — so `pir` is
-the only place to answer it.
+`claude agents` session any more — it appears in that list, but cannot be attached to — so the places
+to answer it are `pir` and, while it waits, claude.ai or the Claude app (below).
+
+The row stays **asking you** until the worker is working again: the first pass that sees the park
+notes the turn the ask ends with, and a turn opened after it returns the task to `building` or
+`reviewing` (`resumeAnswered` in `loop.mjs`), whichever place the answer came from. No report is
+needed for that; the worker's log shows it.
 
 One parked worker does not stall the others: every other independent task keeps moving while it
 waits, so the person is the bottleneck for that one decision only. A parked worker still holds a
@@ -60,6 +65,30 @@ reports (`canUseTool` in `worker-proc.mjs`, logged as a `request` entry):
 
 These keys work only while the typing box is empty. A request left unanswered simply waits: nothing
 times it out.
+
+## Answering away from the terminal — Remote Control
+
+While a worker waits on the person — a question or decision report, a permission request, or a
+question set — its session is switched to Claude's Remote Control, so the person is notified in the
+Claude app and can answer from claude.ai or the phone as well as from `pir`. Each pass the command
+works out which live workers are waiting (`remoteWanted` in `coordinate.mjs`) and switches each worker
+on or off to match (`remoteControl` in `worker-proc.mjs`, which uses the SDK's undocumented
+`enableRemoteControl`; the CLI's `--remote-control` flag and `/remote-control` are refused for a
+headless worker). Once the answer is in and the worker is working again, it is switched off, which
+ends the web session; a closing worker is switched off first. The session is named like the worker
+(`{repo} / {plan} / {task} / {slug} / {role}`).
+
+- **An answer given there reaches the worker as if given in `pir`.** A permission request or question
+  set answered on claude.ai is withdrawn from the worker's line and logged `answered-remotely`, so the
+  row stops asking at once; the answer itself is in the tool result that follows. A reply typed there
+  to a question report goes straight into the worker and is **not** in pir's log: the conversation
+  view shows the worker's response, not what was typed.
+- **Notifications.** All three kinds notify the Claude app; for a permission request or a question
+  report the notification was seen to arrive later than for a question set (2026-09-26).
+- **Opt out** with `PARALLEL_REMOTE=0` when starting the run (`PARALLEL_REMOTE=0 pir {slug}`): no
+  session then appears in the person's claude.ai account. A refusal — Remote Control disabled by
+  managed settings, no claude.ai login — is logged `remote-control-failed` in that worker's
+  conversation once, and the worker is still answered in `pir` as usual.
 
 ## A task that needs the person is an ordinary worker that asks
 

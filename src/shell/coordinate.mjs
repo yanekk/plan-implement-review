@@ -857,6 +857,23 @@ const REQUEST_KINDS = new Set(['permission', 'questions']);
 export function requestingTasks(workers) {
   return new Set(workers.filter((w) => w.live && REQUEST_KINDS.has(w.activity?.state)).map((w) => w.task));
 }
+
+// remoteWanted(workers, stateTasks) → the ids of the live workers waiting on the person, whose
+// sessions the run makes reachable over Remote Control (claude.ai and the Claude app, so the person is
+// notified and can answer away from the terminal). Waiting is either a pending request (a permission
+// request or a question set) or a task parked on its own report whose worker holds it; a conflict fix
+// pir sent asks the person nothing. Every other live worker has Remote Control off.
+export function remoteWanted(workers, stateTasks = {}) {
+  const ids = new Set();
+  for (const w of workers) {
+    if (!w.live) continue;
+    const t = stateTasks[w.task];
+    const parked = t?.phase === 'awaiting-answer' && !t.decision?.sent && t.workerId === w.id;
+    if (parked || REQUEST_KINDS.has(w.activity?.state)) ids.add(w.id);
+  }
+  return ids;
+}
+
 function workerFields(taskWorkers, { done, phase, conflictSent }) {
   const liveOnes = taskWorkers.filter((w) => w.live);
   const open = liveOnes.at(-1) ?? taskWorkers.at(-1) ?? null;
@@ -1142,6 +1159,16 @@ async function main(argv) {
     renderer.paint(buildDisplay(runState, { now: since }));
   };
 
+  // Remote Control follows the person being waited on (remoteWanted): on while a worker waits, off once
+  // it is answered and working again. On unless PARALLEL_REMOTE=0 (user 2026-09-26): it puts a session in
+  // the person's claude.ai account and may notify their phone, which not everyone wants.
+  const REMOTE = process.env.PARALLEL_REMOTE !== '0';
+  const syncRemote = (stateTasks) => {
+    const workers = platform.workers();
+    const wanted = remoteWanted(workers, stateTasks);
+    for (const w of workers) if (w.live) platform.remoteControl(w.id, wanted.has(w.id));
+  };
+
   let over = 0;
   let idle = 0;
   try {
@@ -1153,6 +1180,7 @@ async function main(argv) {
       personInbox.drain(); // the backstop for a drop the forwarder's watch missed
       const r = coordinator.pass();
       trackTiming(coordinator.state.tasks, r.completed);
+      if (REMOTE) syncRemote(coordinator.state.tasks);
 
       // A restart's one-line reconciliation summary scrolls above the live block, so the run does not
       // look like a fresh start (DESIGN §2.8). Only ever set on the first pass of a run that adopted work.

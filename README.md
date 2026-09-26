@@ -164,6 +164,12 @@ What it tells you at a glance:
   stops and waits, highlighted in amber, and its clock stops while it waits. Select its row and
   open it (→ or Enter): the worker's conversation opens inside `pir`, and you answer there in plain
   English, or pick from its question or allow its command; it carries on by itself. Every other task keeps moving meanwhile.
+- **Or answer from your phone.** While a worker waits on you, its session is also opened to
+  Claude's Remote Control: the Claude app notifies you, and you can answer on claude.ai or your phone
+  instead of in `pir`. Once you have answered and the worker is back at work, it is closed again.
+  Notifications for a permission request or a plain question can lag behind those for a question
+  with choices. Start a run with `PARALLEL_REMOTE=0 pir {slug}` to keep it off. See
+  [human-flow.md](docs/human-flow.md#answering-away-from-the-terminal--remote-control).
 - **When it is done.** A finished run runs the tests on the feature branch and, only if they
   pass, prints the `git merge pir/{slug}` for you to run. It never merges to `main` itself.
 

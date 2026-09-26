@@ -15,8 +15,9 @@
 //                             what the SDK actually sent (a reply's PermissionResult, an interrupt).
 //
 // What it does without being told. It answers the SDK's `initialize` control request with a trimmed
-// copy of the recorded response, answers every other control request (`interrupt`, anything a newer
-// SDK adds) with `success`, and, when stdin reaches EOF, exits 0 — unless the script said otherwise.
+// copy of the recorded response, a `remote_control` switching on with the session the real CLI returns
+// (probed 2026-09-26), every other control request (`interrupt`, anything a newer SDK adds) with
+// `success`, and, when stdin reaches EOF, exits 0 — unless the script said otherwise.
 //
 // The script is a JSON array of steps, run in order:
 //   {"emit": <object>}        write the object as one stdout line. Every string in it has
@@ -152,6 +153,15 @@ export function fakeClaudeSpawner({ script, received }) {
 // ---- The fake itself. ----
 
 // The recorded initialize response, trimmed to what the SDK reads.
+// The shape Claude Code 2.1.283 returned for `enableRemoteControl(true, name)` (probe, 2026-09-26).
+export const REMOTE_CONTROL_RESPONSE = {
+  session_url: 'https://claude.ai/code/session_01FakeRemoteSession00000000',
+  connect_url: 'https://claude.ai/code?environment=',
+  environment_id: '',
+  bridge_epoch: 1,
+  bridge_session_id: 'cse_01FakeRemoteSession00000000',
+};
+
 const INITIALIZE_RESPONSE = {
   commands: [{ name: 'context', description: 'Show context usage', argumentHint: '' }],
   agents: [], output_style: 'default', available_output_styles: ['default'], models: [],
@@ -236,7 +246,11 @@ async function main() {
       }
       if (msg.type === 'control_request') {
         const subtype = msg.request?.subtype;
-        const response = subtype === 'initialize' ? INITIALIZE_RESPONSE : subtype === 'interrupt' ? { still_queued: [] } : {};
+        const response =
+          subtype === 'initialize' ? INITIALIZE_RESPONSE
+          : subtype === 'interrupt' ? { still_queued: [] }
+          : subtype === 'remote_control' && msg.request.enabled ? REMOTE_CONTROL_RESPONSE
+          : {};
         out({ type: 'control_response', response: { subtype: 'success', request_id: msg.request_id, response } });
         if (subtype === 'interrupt') deliver('interrupt', msg);
       } else if (msg.type === 'control_response') {

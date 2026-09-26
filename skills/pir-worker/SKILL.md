@@ -110,9 +110,10 @@ wrong — you do two things and then **wait** (DESIGN §2.2):
    picker, the tool comes back refused with their text as its message: that text is their answer — act
    on it, do not re-ask the same question. When the answer is open-ended, ask it in plain text and end
    the turn with the question put *to the person* and nothing running, so your session goes idle on a
-   clear ask. Either way the person sees your question in this conversation inside `pir`, opens it there
-   and answers there; the answer arrives in your own session and you continue from it. `pir` is the
-   only place the person reaches you (live-workers DESIGN §2.4, §2.7).
+   clear ask. Either way the person sees your question in this conversation, inside `pir` or — while
+   you wait, over Remote Control — on claude.ai or their phone, and answers there; the answer arrives
+   in your own session and you continue from it. Those are the only places the person reaches you
+   (live-workers DESIGN §2.4, §2.7; `docs/human-flow.md`).
 
    **The person is the only one who answers you — address them, and no one else.** Nothing else in the
    run answers your questions, so never say — to the person, or in your own session — that you

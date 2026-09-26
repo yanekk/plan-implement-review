@@ -267,6 +267,29 @@ test('a request allowed by a grant is answered by its dim note, not pinned', () 
   assert.ok(!all(lines).some((l) => l.includes('→')));
 });
 
+test('a request answered over Remote Control is answered by its dim note, not pinned', () => {
+  const log = [request('r1'), { t: t++, dir: 'note', kind: 'answered-remotely', requestId: 'r1', toolName: 'Bash' }];
+  const { pinned, lines } = buildConversation(log, { width: 80, taskId: 'T05' });
+  assert.equal(pinned, null);
+  assert.equal(textOf(lines.at(-1)), '· answered on claude.ai');
+  assert.ok(!all(lines).some((l) => l.includes('cancelled by the interrupt')));
+});
+
+test('Remote Control switching on, off and failing render as dim notes', () => {
+  const log = [
+    { t: t++, dir: 'note', kind: 'remote-control', on: true, url: 'https://claude.ai/code/session_x' },
+    { t: t++, dir: 'note', kind: 'remote-control', on: false },
+    { t: t++, dir: 'note', kind: 'remote-control-failed', on: true, message: 'Remote Control is disabled' },
+  ];
+  const { lines } = buildConversation(log, { width: 200 });
+  assert.deepEqual(lines.map(textOf), [
+    '· remote control on: answer from claude.ai or the Claude app (https://claude.ai/code/session_x)',
+    '· remote control off',
+    '· remote control could not be switched on: Remote Control is disabled',
+  ]);
+  assert.ok(lines.every((l) => styleOf(l) === 'dim'));
+});
+
 // ---- Notes, raw, system ----
 
 test('raw and system entries never crash the builder; notes, known and unknown, render dim', () => {

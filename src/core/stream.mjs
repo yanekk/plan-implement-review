@@ -193,8 +193,9 @@ export function declineQuestionsResult(request, text) {
 // background job's notification opens one with nothing sent (T01 probe); assistant output covers a
 // log whose `init` was lost. A tool_result, rate limit or task event alone does not.
 const TURN_OPENERS = new Set(['init', 'text', 'tool-use']);
+const ANSWER_NOTES = new Set(['delivered-by-grant', 'answered-remotely']);
 
-// workerActivity(entries) → { state, pending, turns, lastEventAt, slashCommands }.
+// workerActivity(entries) → { state, open, pending, turns, lastEventAt, slashCommands }.
 //   starting   nothing has been sent and the worker has not spoken
 //   busy       a turn is open: a message went in, or the worker began one, and no `result` came back
 //   idle       the last turn ended and nothing is pending
@@ -202,7 +203,8 @@ const TURN_OPENERS = new Set(['init', 'text', 'tool-use']);
 // A pending request outranks busy and idle: a background job may ask after its turn's `result`.
 // An interrupt cancels the requests pending when it was sent: the SDK aborts their `canUseTool` signal
 // and the turn ends with no reply ever logged (T01 review probe), so they are dropped at that `result`.
-// `pending` holds the unanswered requests' events, oldest first. `turns` counts results.
+// `pending` holds the unanswered requests' events, oldest first. `turns` counts results. `open` is
+// whether a turn is under way, whatever a pending request makes `state` read.
 // `lastEventAt` is the last entry's `t`; this never reads a clock.
 export function workerActivity(entries) {
   let open = false;
@@ -240,8 +242,9 @@ export function workerActivity(entries) {
           pending.delete(ev.requestId);
           break;
         case 'note':
-          // A request pir allowed from its own grant list is answered without the person (DESIGN §2.6).
-          if (ev.note === 'delivered-by-grant' && typeof ev.requestId === 'string') pending.delete(ev.requestId);
+          // A request pir allowed from its own grant list is answered without the person (DESIGN §2.6);
+          // one answered over Remote Control was answered by the person elsewhere (worker-proc.mjs).
+          if (ANSWER_NOTES.has(ev.note) && typeof ev.requestId === 'string') pending.delete(ev.requestId);
           break;
         default:
           if (ev.kind === 'init') slashCommands = ev.slashCommands;
@@ -259,5 +262,5 @@ export function workerActivity(entries) {
   else if (open) state = 'busy';
   else if (started) state = 'idle';
   else state = 'starting';
-  return { state, pending: waiting, turns, lastEventAt, slashCommands };
+  return { state, open, pending: waiting, turns, lastEventAt, slashCommands };
 }

@@ -75,8 +75,10 @@ line (`worker-proc.mjs`):
   call): its `requestId`, tool, input, Claude's suggested rule and flags.
 - `dir: "out"` — something sent to the worker, `from` `pir` or `person`: a message, an interrupt,
   or a reply to a request.
-- `dir: "note"` — what pir observed: `delivered-by-grant`, `undelivered`, `exited` (with exit code and
-  signal), `sdk-error`.
+- `dir: "note"` — what pir observed: `delivered-by-grant`, `answered-remotely` (a request answered on
+  claude.ai; see [human-flow.md](human-flow.md)), `remote-control` (switched `on`, with the session
+  `url`, or off), `remote-control-failed`, `undelivered`, `exited` (with exit code and signal),
+  `sdk-error`.
 
 The `pir` screen reads the last 256 KB and follows appends (`log-follow.mjs`); a line that does not
 parse (a crash mid-append) is shown raw and never stops the reader. A worker's state — busy, idle,

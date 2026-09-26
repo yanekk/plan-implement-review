@@ -261,6 +261,23 @@ test('a request allowed from pir\'s grant list is answered by its delivered-by-g
   assert.equal(workerActivity(log).state, 'busy');
 });
 
+test('a request answered over Remote Control is answered by its answered-remotely note, mid-turn', () => {
+  const log = [sent(), init(), request('r1', 'AskUserQuestion')];
+  assert.equal(workerActivity(log).state, 'questions');
+  log.push(at({ dir: 'note', kind: 'answered-remotely', requestId: 'r1' }));
+  const a = workerActivity(log);
+  assert.equal(a.state, 'busy');
+  assert.equal(a.pending.length, 0);
+});
+
+test('`open` says a turn is under way even while a pending request names the state', () => {
+  const log = [sent(), init(), request('r1')];
+  assert.equal(workerActivity(log).state, 'permission');
+  assert.equal(workerActivity(log).open, true);
+  log.push(result());
+  assert.equal(workerActivity(log).open, false);
+});
+
 test('interrupt while busy → next result (error_during_execution) → idle', () => {
   const log = [sent(), init(), interrupt()];
   assert.equal(workerActivity(log).state, 'busy');

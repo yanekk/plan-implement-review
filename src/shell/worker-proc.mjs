@@ -158,14 +158,22 @@ export function startWorker({
     });
     return new Promise((resolve) => {
       if (exitInfo) return resolve({ behavior: 'deny', message: 'The worker has exited.' });
-      pendingById.set(requestId, { entry, resolve });
-      // An interrupt aborts the SDK's signal for every open request and the turn ends with no reply
-      // (T01 review probe). The request is no longer answerable, so it leaves `pending()`; the log
-      // needs no entry, since workerActivity drops it at the interrupted turn's `result`.
+      const p = { entry, resolve, interrupted: false };
+      pendingById.set(requestId, p);
+      // The CLI aborts the SDK's signal when the request stops being answerable here. Two causes:
+      // - pir's interrupt: the turn ends with no reply (T01 review probe); workerActivity drops the
+      //   request at that turn's `result`, so the log needs no entry.
+      // - an answer given over Remote Control (claude.ai or the phone): the CLI takes the answer from
+      //   there, cancels this request and the turn carries on, the answer arriving only as the tool's
+      //   result (probed 2026-09-26). No `result` follows soon, so it is logged `answered-remotely`,
+      //   which workerActivity reads as the request's answer.
       opts.signal?.addEventListener(
         'abort',
         () => {
-          if (pendingById.get(requestId)?.entry === entry) pendingById.delete(requestId);
+          if (pendingById.get(requestId) === p) {
+            pendingById.delete(requestId);
+            if (!p.interrupted) note('answered-remotely', { requestId, toolName });
+          }
           resolve({ behavior: 'deny', message: 'Interrupted.' });
         },
         { once: true },
@@ -238,6 +246,39 @@ export function startWorker({
 
   const undelivered = (what, fields) => note('undelivered', { what, ...fields });
 
+  // Remote Control: the worker's session reachable from claude.ai and the Claude app while it waits on
+  // the person. The SDK's `enableRemoteControl` is undocumented (absent from sdk.d.ts, probed on
+  // 0.3.282): the CLI's own `--remote-control` flag, `remoteControlAtStartup` and `/remote-control` are
+  // all refused in headless mode. Only the latest wish is applied, one call at a time. A refusal (a
+  // managed `disableRemoteControl`, no claude.ai login, an SDK without the method) is noted once and
+  // not retried for this worker: the coordinator asks every pass and would otherwise fill the log.
+  let remoteOn = false;
+  let remoteWant = false;
+  let remoteRefused = false;
+  let remoteSync = null;
+  function syncRemote() {
+    remoteSync ??= (async () => {
+      try {
+        while (remoteOn !== remoteWant && !remoteRefused && !exitInfo) {
+          const on = remoteWant;
+          try {
+            if (typeof q.enableRemoteControl !== 'function') throw new Error('this SDK has no enableRemoteControl');
+            const r = await q.enableRemoteControl(on, on ? name : undefined);
+            remoteOn = on;
+            note('remote-control', on ? { on, url: r?.session_url ?? null } : { on });
+          } catch (err) {
+            if (on) remoteRefused = true;
+            else remoteOn = false; // the session is going regardless; nothing to retry
+            note('remote-control-failed', { on, message: String(err?.message ?? err) });
+          }
+        }
+      } finally {
+        remoteSync = null;
+      }
+    })();
+    return remoteSync;
+  }
+
   return {
     id: sessionId,
     get pid() {
@@ -261,6 +302,8 @@ export function startWorker({
         return false;
       }
       log({ dir: 'out', from, kind: 'interrupt' });
+      // Every request open now is cancelled by this interrupt, not answered elsewhere.
+      for (const p of pendingById.values()) p.interrupted = true;
       try {
         await q.interrupt();
         return true;
@@ -286,6 +329,19 @@ export function startWorker({
       return [...pendingById.values()].map((p) => readEntry(p.entry)[0]);
     },
 
+    // remoteControl(on) → a promise settled once the wish is applied (or refused). Idempotent: asking
+    // for the state already in force sends nothing. Each change is logged `remote-control` or
+    // `remote-control-failed`.
+    remoteControl(on) {
+      if (!!on === remoteWant && !remoteSync) return Promise.resolve();
+      remoteWant = !!on;
+      return syncRemote();
+    },
+
+    get remote() {
+      return remoteOn;
+    },
+
     note,
 
     onEvent(fn) {
@@ -305,6 +361,13 @@ export function startWorker({
     // End the input queue (the SDK then closes the worker's stdin), then escalate on the pid:
     // SIGTERM at graceMs, SIGKILL at killMs (DESIGN §2.12). Resolves once the exit is reported.
     async close({ graceMs = 5000, killMs = 10000 } = {}) {
+      // Switched off first, so the web session ends at once rather than lingering after the process
+      // goes (probed 2026-09-26: switching off ends it with no further message). Capped: a close must
+      // not hang on the network.
+      if (remoteOn || remoteSync) {
+        remoteWant = false;
+        await Promise.race([syncRemote(), new Promise((r) => setTimeout(r, Math.min(graceMs, 3000)).unref?.())]);
+      }
       queue.close();
       if (child && !childGone) {
         await terminate(child.pid, { graceMs, killMs, isAlive: () => !childGone });

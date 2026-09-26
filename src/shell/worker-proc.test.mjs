@@ -9,7 +9,7 @@ import { tmpdir } from 'node:os';
 import { join, dirname, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { startWorker, workerOptions, writeWorkersFile } from './worker-proc.mjs';
-import { fakeClaudeSpawner, turn, canUseTool, initEvent, assistantText, resultEvent } from './fake/claude-stream.mjs';
+import { fakeClaudeSpawner, turn, canUseTool, initEvent, assistantText, resultEvent, REMOTE_CONTROL_RESPONSE } from './fake/claude-stream.mjs';
 import { workerActivity, allowResult } from '../core/stream.mjs';
 
 const SESSION = '11111111-1111-4111-8111-111111111111';
@@ -169,6 +169,84 @@ test('an interrupt drops a request pending at it from pending()', async (t) => {
   await waitFor(() => worker.pending().length === 0, 'the request to be cancelled');
   await waitFor(hasResult(worker, 'error_during_execution'), 'the interrupted result');
   assert.equal(worker.answer('req-2', { behavior: 'allow', updatedInput: {} }), false);
+});
+
+// Remote Control is the SDK's undocumented enableRemoteControl (probed 2026-09-26): a `remote_control`
+// control request carrying `enabled` and the session name.
+const sentControl = (receivedLines, subtype) =>
+  receivedLines().map((r) => r.line && JSON.parse(r.line)).filter((m) => m?.type === 'control_request' && m.request.subtype === subtype);
+
+test('remoteControl switches on with the worker name, logs the session url, and sends nothing for a repeat', async (t) => {
+  const { worker, receivedLines } = setup([{ await: 'user' }, ...turn('ok')], t);
+  worker.send('go');
+  await waitFor(hasResult(worker), 'the turn');
+  await worker.remoteControl(true);
+  assert.equal(worker.remote, true);
+  const [on] = sentControl(receivedLines, 'remote_control');
+  assert.equal(on.request.enabled, true);
+  assert.equal(on.request.name, NAME);
+  const note = worker.entries().find((e) => e.kind === 'remote-control');
+  assert.equal(note.on, true);
+  assert.equal(note.url, REMOTE_CONTROL_RESPONSE.session_url);
+
+  await worker.remoteControl(true);
+  assert.equal(sentControl(receivedLines, 'remote_control').length, 1, 'already on: nothing sent');
+
+  await worker.remoteControl(false);
+  assert.equal(worker.remote, false);
+  const sent = sentControl(receivedLines, 'remote_control');
+  assert.equal(sent.length, 2);
+  assert.equal(sent[1].request.enabled, false);
+  assert.equal(worker.entries().filter((e) => e.kind === 'remote-control').at(-1).on, false);
+});
+
+test('a request answered over Remote Control leaves pending() and is logged answered-remotely', async (t) => {
+  const ask = canUseTool('req-3', 'AskUserQuestion', { questions: [{ question: 'Colour?', header: 'Colour', options: [{ label: 'Red' }, { label: 'Blue' }], multiSelect: false }] });
+  const toolResult = {
+    type: 'user', parent_tool_use_id: null, session_id: '{{session}}',
+    message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_req-3', content: 'Your questions have been answered: "Colour?"="Red".' }] },
+  };
+  const { worker } = setup([
+    { await: 'user' }, { emit: initEvent() }, { emit: ask },
+    { await: 'user' }, { emit: { type: 'control_cancel_request', request_id: 'req-3' } },
+    { emit: toolResult }, { emit: assistantText('You picked red.') }, { emit: resultEvent('success', 'You picked red.') },
+  ], t);
+  worker.send('go');
+  await waitFor(() => worker.pending().length === 1, 'the pending question');
+  assert.equal(workerActivity(worker.entries()).state, 'questions');
+  worker.send('(the phone answers)'); // releases the fake's cancel
+  await waitFor(() => worker.pending().length === 0, 'the question to be withdrawn');
+  const note = worker.entries().find((e) => e.kind === 'answered-remotely');
+  assert.equal(note.requestId, 'req-3');
+  assert.equal(note.toolName, 'AskUserQuestion');
+  // Mid-turn, with no `result` yet: the note alone is what stops the task reading `asking you`.
+  const beforeResult = worker.entries().slice(0, worker.entries().indexOf(note) + 1);
+  assert.equal(workerActivity(beforeResult).state, 'busy');
+  await waitFor(hasResult(worker), 'the turn to finish');
+  assert.equal(workerActivity(worker.entries()).state, 'idle');
+});
+
+test('a request cancelled by pir\'s own interrupt is not logged answered-remotely', async (t) => {
+  const { worker } = setup([
+    { await: 'user' }, { emit: initEvent() }, { emit: canUseTool('req-4', 'Bash', { command: 'ls' }) },
+    { await: 'interrupt' }, { emit: { type: 'control_cancel_request', request_id: 'req-4' } },
+    { emit: resultEvent('error_during_execution') },
+  ], t);
+  worker.send('go');
+  await waitFor(() => worker.pending().length === 1, 'the pending request');
+  await worker.interrupt();
+  await waitFor(hasResult(worker, 'error_during_execution'), 'the interrupted result');
+  assert.equal(worker.entries().some((e) => e.kind === 'answered-remotely'), false);
+});
+
+test('close switches Remote Control off before the worker goes', async (t) => {
+  const { worker, receivedLines } = setup([{ await: 'user' }, ...turn('ok')], t);
+  worker.send('go');
+  await waitFor(hasResult(worker), 'the turn');
+  await worker.remoteControl(true);
+  await worker.close({ graceMs: 500, killMs: 1000 });
+  const sent = sentControl(receivedLines, 'remote_control');
+  assert.deepEqual(sent.map((m) => m.request.enabled), [true, false]);
 });
 
 test('send logs `out` with its sender; after exit it returns false and logs only an undelivered note', async (t) => {

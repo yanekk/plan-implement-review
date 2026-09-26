@@ -107,6 +107,7 @@ export function buildConversation(entries, { full = false, width = 80, taskId = 
   const results = new Map(); // toolUseId → tool-result event
   const answers = new Map(); // requestId → { result, from } from the reply entry
   const byGrant = new Set();
+  const remotely = new Set(); // requestIds answered over Remote Control
   const toolNames = new Map(); // toolUseId → tool name, so a background task knows it is a Monitor
   const background = new Map(); // task_id → { description, tool, ended } for work moved to the background
   for (const entry of list) {
@@ -120,6 +121,7 @@ export function buildConversation(entries, { full = false, width = 80, taskId = 
       if (ev.kind === 'tool-result') results.set(ev.toolUseId, ev);
       else if (ev.kind === 'reply') answers.set(ev.requestId, { result: isObject(entry.result) ? entry.result : {}, from: ev.from });
       else if (ev.kind === 'note' && ev.note === 'delivered-by-grant' && typeof ev.requestId === 'string') byGrant.add(ev.requestId);
+      else if (ev.kind === 'note' && ev.note === 'answered-remotely' && typeof ev.requestId === 'string') remotely.add(ev.requestId);
     }
   }
   const pending = workerActivity(list).pending;
@@ -129,6 +131,7 @@ export function buildConversation(entries, { full = false, width = 80, taskId = 
   const resolution = (id) => {
     if (answers.has(id)) return { by: 'reply', ...answers.get(id) };
     if (byGrant.has(id)) return { by: 'grant' };
+    if (remotely.has(id)) return { by: 'remote' };
     if (pendingIds.has(id)) return { by: readOnly ? 'never' : 'waiting' };
     return { by: 'interrupt' };
   };
@@ -271,6 +274,8 @@ function requestLines(req, res, { width, taskId }) {
     }
     case 'grant':
       break; // the `delivered-by-grant` note that follows is its answer
+    case 'remote':
+      break; // the `answered-remotely` note that follows is its answer; the tool result carries what was said
     case 'interrupt':
       answer('cancelled by the interrupt', 'dim');
       break;
@@ -311,6 +316,15 @@ function noteLines(note, width) {
       text = `the worker exited${how ? ` (${how})` : ''}`;
       break;
     }
+    case 'remote-control':
+      text = note.on ? `remote control on: answer from claude.ai or the Claude app${note.url ? ` (${note.url})` : ''}` : 'remote control off';
+      break;
+    case 'remote-control-failed':
+      text = `remote control could not be switched ${note.on ? 'on' : 'off'}: ${note.message ?? ''}`;
+      break;
+    case 'answered-remotely':
+      text = 'answered on claude.ai';
+      break;
     case 'sdk-error':
       text = `the worker's line failed: ${note.message ?? ''}`;
       break;

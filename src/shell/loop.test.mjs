@@ -593,6 +593,45 @@ test('a question report keeps the worker slot and is recorded, and the loop rout
   assert.equal(platform.sent.length, 0, 'the loop routed no answer down — there is no down-channel');
 });
 
+// The answer reaches the worker as a message (typed in pir, or over Remote Control, where pir never
+// sees it); the loop reads the worker working again from its log's turns instead.
+test('a parked question returns to its role\'s phase once the worker opens a turn after the asking one', (t) => {
+  const { platform, base } = setup(t, [{ num: 'T01' }], { behaviors: { T01: { question: 'which format?' } } });
+  let act = null;
+  const list = platform.list.bind(platform);
+  platform.list = () => list().map((w) => (act && w.task === 'T01' ? { ...w, activity: { ...w.activity, ...act } } : w));
+  const state = createRunState();
+  runPass({ ...base, state }); // spawn T01
+  act = { turns: 0, open: true }; // the worker is mid-turn as it drops its report
+  runPass({ ...base, state }); // T01 asks
+  assert.equal(state.tasks.T01.phase, 'awaiting-answer');
+  assert.equal(state.tasks.T01.decision.askEnd, 1, 'the ask ends with the open turn');
+
+  act = { turns: 1, open: false }; // asked and waiting
+  runPass({ ...base, state });
+  assert.equal(state.tasks.T01.phase, 'awaiting-answer', 'still waiting on the person');
+
+  act = { turns: 1, open: true }; // the answer came in and the worker is working again
+  const r = runPass({ ...base, state });
+  assert.equal(state.tasks.T01.phase, 'implementing');
+  assert.equal(state.tasks.T01.decision, undefined);
+  assert.ok(r.actions.some((a) => a.type === 'resumed' && a.task === 'T01'));
+});
+
+test('a conflict fix pir sent is not resumed by the worker working on it', (t) => {
+  const { platform, base } = setup(t, [{ num: 'T01' }]);
+  const state = createRunState();
+  runPass({ ...base, state }); // spawn T01
+  const t1 = state.tasks.T01;
+  t1.phase = 'awaiting-answer';
+  t1.decision = { kind: 'conflict', text: 'merge conflict', sent: true };
+  const list = platform.list.bind(platform);
+  platform.list = () => list().map((w) => ({ ...w, activity: { ...w.activity, turns: 5, open: true } }));
+  const actions = [runPass({ ...base, state }), runPass({ ...base, state })].flatMap((r) => r.actions);
+  assert.equal(actions.some((a) => a.type === 'resumed'), false);
+  assert.equal(t1.decision?.askEnd, undefined, 'a sent conflict is never tracked for an answer');
+});
+
 test('the loop still runs against a platform with no send half (no crash) (T13/T30)', (t) => {
   // The id-mismatch platform below has no `send` method. The loop must not require one — it makes no
   // down-send of its own since the hello was retired (T30) — so it simply spawns, is recognised by
