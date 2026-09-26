@@ -106,12 +106,12 @@ the planner in `pir` is the same act as answering a worker, and every fix to one
   folder, `n` counted from the folder as `nextLogPath` does. A resumed session appends to its own log, not
   the next `n`, so the person reads one conversation (§2.14; resume-dead-worker §2.3 does the same).
 - Working directory: the plan branch's worktree.
-- Remote Control follows the person being waited on, as for build workers: `worker.remoteControl(true)` while
-  the live session's activity is `permission`, `questions` or `idle` (a planning session ends a turn only to
-  wait on the person, and asks mostly in prose, with no question report), `false` once it is `busy` again and
-  before a close. On by default, off under `PARALLEL_REMOTE=0`, the build's variable (user at plan review,
-  2026-09-26: one rule for anything waiting on the person). The coordinator's `remoteWanted` is not reused: it
-  keys on task state a planning run does not have.
+- Remote Control is on for the planner's and the reviewer's whole session: `worker.remoteControl(true)` right
+  after the spawn or resume, and off only at the close (`close()` already switches it off first). Unlike a build
+  worker, which is remote-controlled only while it waits on the person, because a planning session is a
+  conversation with the person from start to finish, and the person may follow it from claude.ai or the phone
+  whatever it is doing (user, 2026-09-26, after plan review). Off under `PARALLEL_REMOTE=0`, the build's
+  variable. The coordinator's `remoteWanted` is not used.
 - One session at a time. The reviewer is never started while the planner is live, because
   `pir-review-plan` refuses to read back a plan whose author is still in the room.
 
@@ -556,7 +556,8 @@ All user decisions are 2026-09-26.
   there too with the same interface; whichever plan lands first builds it and the other reuses it.
 - **The canonical-repo guard applies to planning runs** (§2.2): they create branches exactly as a
   build does, and the same variable lets the person plan in this repo on purpose.
-- **Remote Control for planning sessions, same default and opt-out as workers** (user, plan review; §2.3).
+- **Remote Control for the whole planning session**, not only while it waits (user, after plan review; §2.3).
+  Same opt-out as workers.
 - **The view follows the planner into the reviewer** (user, plan review), rather than returning to the steps
   view as the mock shows (§2.12).
 - **T18 installs only the two planning skills into the real HOME, after a yes** (user, plan review): an

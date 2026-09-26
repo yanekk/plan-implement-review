@@ -52,6 +52,8 @@ With the T05 shim, in a scratch repo:
       its turns append to the same `plan-{n}.ndjson`.
 - [ ] `--resume` on `not-reviewed` reopens the reviewer's session.
 - [ ] `--resume` on a finished `reviewed` run exits 0 doing nothing.
+- [ ] Remote Control is switched on right after the reviewer spawns and after any resumed session starts, and is
+      off only at the close (DESIGN §2.3); not under `PARALLEL_REMOTE=0`.
 
 ## Done when
 

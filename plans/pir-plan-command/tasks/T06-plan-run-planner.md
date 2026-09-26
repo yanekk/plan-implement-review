@@ -52,8 +52,8 @@ With the T05 shim first on `PATH`, in a scratch repo, the plan branch opened wit
 - [ ] `no-plan`: finished, outcome `no-plan`, final status `finished`, snapshot says so.
 - [ ] The planner process exiting with no report: program exits without a final status (crashed).
 - [ ] SIGTERM: session closed, `stopped` recorded in snapshot and index, exit.
-- [ ] Remote Control: switched on when the planner goes idle or asks, off when it is busy again and before the
-      close; never switched under `PARALLEL_REMOTE=0` (the fake answers `remote_control`).
+- [ ] Remote Control: switched on once right after the planner spawns and stays on while it is busy, idle or
+      asking; off only at the close; never switched under `PARALLEL_REMOTE=0` (the fake answers `remote_control`).
 - [ ] Under `PIR_RUN=1` a snapshot is written each transition; without it none is.
 
 ## Done when
