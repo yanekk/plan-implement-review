@@ -1,11 +1,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, realpathSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, basename } from 'node:path';
 
-import { startRun } from './launch.mjs';
-import { writeRecord } from './index-store.mjs';
+import { planPreflight, resumeRun, startPlanRun, startRun } from './launch.mjs';
+import { listRecords, recordPath, writeRecord } from './index-store.mjs';
+import { initialPlanState } from '../core/planflow.mjs';
 
 // The launch tests never touch a real coordinator, a real caffeinate, the real ~/.pir, or the real
 // Mac's power state. Only readReviewGate reads the real filesystem, so each test builds a scratch repo
@@ -281,4 +283,306 @@ test('keep-awake: caffeinate -i -w {pid} spawned detached and unref\'d', () => {
     rmSync(root, { recursive: true, force: true });
     rmSync(home, { recursive: true, force: true });
   }
+});
+
+// ---- Planning runs (pir-plan-command T08) ----
+//
+// Real git in a scratch repo (the pre-flight and openPlanBranch are git questions), a scratch $PIR_HOME
+// for the index, and an injected spawn so no planning program or caffeinate is ever started. The real
+// fs writes brief.md, state.json and an empty run.log inside the scratch repo.
+
+function g(cwd, ...args) {
+  return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+}
+
+// A repo named `name` with one commit on `branch`, under a realpath'd temp dir so paths compare equal
+// to what git reports (/var → /private/var on macOS).
+function gitRepo(t, { name = 'proj', branch = 'main' } = {}) {
+  const base = realpathSync(mkdtempSync(join(tmpdir(), 'pir-planlaunch-')));
+  t.after(() => rmSync(base, { recursive: true, force: true }));
+  const root = join(base, name);
+  mkdirSync(root);
+  g(root, 'init', '-q', '-b', branch);
+  g(root, 'config', 'user.email', 't08@test.local');
+  g(root, 'config', 'user.name', 'T08');
+  g(root, 'config', 'commit.gpgsign', 'false');
+  writeFileSync(join(root, 'README.md'), 'x\n');
+  g(root, 'add', '-A');
+  g(root, 'commit', '-q', '-m', 'init');
+  const home = join(base, 'home');
+  mkdirSync(home);
+  return { base, root, home, env: { PIR_HOME: home, KEEP: 'yes' } };
+}
+
+const branchesOf = (root) => g(root, 'for-each-ref', '--format=%(refname:short)', 'refs/heads').trim().split('\n').sort();
+
+// Everything a start could have created: branches, worktrees, a plans/ folder, index entries.
+function footprint(s) {
+  return {
+    branches: branchesOf(s.root),
+    worktrees: g(s.root, 'worktree', 'list', '--porcelain'),
+    plans: existsSync(join(s.root, 'plans')),
+    index: listRecords({ dir: join(s.home, '.pir', 'runs') }).length,
+  };
+}
+
+// A random source that yields the given hex4 values in order.
+function seq(...values) {
+  let i = 0;
+  return () => values[Math.min(i++, values.length - 1)];
+}
+
+for (const [label, setup, reason] of [
+  ['outside a git repo', (s) => ({ cwd: s.base }), 'not-a-repo'],
+  ['a repo with no local main', (s) => { g(s.root, 'branch', '-m', 'main', 'trunk'); return {}; }, 'no-main'],
+  ['an empty brief', () => ({ brief: '  \n\t ' }), 'empty-brief'],
+]) {
+  test(`startPlanRun pre-flight: ${label} → ${reason}, nothing created`, (t) => {
+    const s = gitRepo(t);
+    const extra = setup(s);
+    const before = footprint(s);
+    const { spawn, calls } = makeSpawn();
+    const r = startPlanRun(extra.brief ?? 'a brief', { cwd: extra.cwd ?? s.root, spawn, exec: execAlive, env: s.env, random: seq('abcd') });
+    assert.deepEqual(r, { started: false, reason });
+    assert.equal(calls.length, 0, 'nothing spawned');
+    assert.deepEqual(footprint(s), before, 'no branch, worktree, folder or index entry');
+  });
+}
+
+test('startPlanRun pre-flight: the canonical checkout is refused unless PARALLEL_ALLOW_HERE=1', (t) => {
+  const s = gitRepo(t, { name: 'plan-implement-review' });
+  const before = footprint(s);
+  const { spawn, calls } = makeSpawn();
+  const r = startPlanRun('a brief', { cwd: s.root, spawn, exec: execAlive, env: s.env, random: seq('abcd') });
+  assert.deepEqual(r, { started: false, reason: 'canonical-repo' });
+  assert.equal(calls.length, 0);
+  assert.deepEqual(footprint(s), before);
+
+  const ok = startPlanRun('a brief', { cwd: s.root, spawn, exec: execAlive, env: { ...s.env, PARALLEL_ALLOW_HERE: '1' }, random: seq('abcd') });
+  assert.equal(ok.started, true, 'the same variable as a live build lets it through');
+});
+
+test('startPlanRun pre-flight order: not-a-repo before an empty brief; checks run before the brief', (t) => {
+  const s = gitRepo(t);
+  const { spawn } = makeSpawn();
+  assert.equal(startPlanRun('', { cwd: s.base, spawn, env: s.env }).reason, 'not-a-repo');
+  g(s.root, 'branch', '-m', 'main', 'trunk');
+  assert.equal(startPlanRun('', { cwd: s.root, spawn, env: s.env }).reason, 'no-main');
+});
+
+test('startPlanRun: a clean start creates branch, worktree, control folder, index record, and spawns', (t) => {
+  const s = gitRepo(t);
+  const mainHead = g(s.root, 'rev-parse', 'HEAD').trim();
+  const { spawn, calls, unrefs } = makeSpawn();
+  const brief = 'A daily screen budget with a warning before it runs out\nsecond line';
+  const r = startPlanRun(brief, { cwd: s.root, spawn, exec: execAlive, env: s.env, now: fixedNow, random: seq('3f9a') });
+
+  assert.equal(r.started, true);
+  assert.equal(r.runId, 'plan-3f9a');
+  assert.equal(r.pid, CHILD_PID);
+
+  // Branch cut from main, checked out in its own worktree; the main checkout stays on main.
+  assert.equal(g(s.root, 'rev-parse', 'pir/plan-3f9a').trim(), mainHead);
+  const wt = join(s.root, '.claude', 'worktrees', 'pir-plan-3f9a');
+  assert.equal(g(wt, 'symbolic-ref', '--short', 'HEAD').trim(), 'pir/plan-3f9a');
+  assert.equal(g(s.root, 'symbolic-ref', '--short', 'HEAD').trim(), 'main');
+
+  // Control folder under plans/{runId}/, not .git, holding the brief and a fresh state.json.
+  const controlDir = join(s.root, 'plans', 'plan-3f9a', '.parallel', 'plan');
+  assert.equal(r.controlDir, controlDir);
+  assert.equal(readFileSync(join(controlDir, 'brief.md'), 'utf8'), brief);
+  assert.deepEqual(JSON.parse(readFileSync(join(controlDir, 'state.json'), 'utf8')), initialPlanState({ id: 'plan-3f9a' }));
+  assert.ok(existsSync(join(controlDir, 'run.log')), 'run.log opened for the program output');
+  assert.deepEqual(readdirSync(controlDir).filter((n) => n.endsWith('.tmp')), [], 'no temp left behind');
+
+  // The planning program, detached, with its control folder; PIR_RUN on, the caller's env carried.
+  const prog = calls[0];
+  assert.equal(prog.cmd, 'node');
+  assert.ok(prog.args[0].endsWith(join('src', 'shell', 'plan-run.mjs')), prog.args[0]);
+  assert.deepEqual(prog.args.slice(1), ['--control', controlDir]);
+  assert.equal(prog.opts.cwd, s.root);
+  assert.equal(prog.opts.detached, true);
+  assert.equal(prog.opts.stdio[0], 'ignore');
+  assert.equal(typeof prog.opts.stdio[1], 'number');
+  assert.equal(prog.opts.stdio[1], prog.opts.stdio[2], 'stdout and stderr share run.log');
+  assert.equal(prog.opts.env.PIR_RUN, '1');
+  assert.equal(prog.opts.env.KEEP, 'yes');
+  assert.equal(prog.opts.env.PARALLEL_LIVE, undefined, 'a planning run is not a live build');
+
+  // Keep-awake tied to the program's pid.
+  assert.equal(calls.length, 2);
+  assert.equal(calls[1].cmd, 'caffeinate');
+  assert.deepEqual(calls[1].args, ['-i', '-w', String(CHILD_PID)]);
+  assert.equal(calls[1].opts.detached, true);
+  assert.equal(unrefs(), 2);
+
+  // Index record kind 'plan', keyed by run id, labelled from the brief's first line.
+  const dir = join(s.home, '.pir', 'runs');
+  const records = listRecords({ dir });
+  assert.equal(records.length, 1);
+  assert.ok(existsSync(recordPath('proj', 'plan-3f9a', { dir })));
+  assert.deepEqual(records[0], {
+    version: 1,
+    kind: 'plan',
+    label: 'A daily screen budget w…',
+    go: null,
+    slug: 'plan-3f9a',
+    repo: 'proj',
+    repoPath: s.root,
+    controlDir,
+    pid: CHILD_PID,
+    startTime: LSTART,
+    startedAt: '2026-09-22T08:27:37.000Z',
+    branch: 'pir/plan-3f9a',
+    finalState: null,
+    updatedAt: null,
+  });
+  assert.deepEqual(r.record, records[0]);
+
+  // Nothing tracked changed in the person's checkout.
+  assert.equal(g(s.root, 'status', '--porcelain', '--untracked-files=no'), '');
+});
+
+test('startPlanRun from a subfolder and from a linked worktree: root is the main worktree', (t) => {
+  const s = gitRepo(t);
+  mkdirSync(join(s.root, 'deep', 'er'), { recursive: true });
+  const linked = join(s.base, 'linked');
+  g(s.root, 'worktree', 'add', '-q', '-b', 'side', linked);
+
+  for (const [cwd, hex] of [[join(s.root, 'deep', 'er'), 'aaa1'], [linked, 'aaa2']]) {
+    assert.deepEqual(planPreflight({ cwd, env: s.env }), { ok: true, root: s.root, repo: 'proj' });
+    const { spawn, calls } = makeSpawn();
+    const r = startPlanRun('brief', { cwd, spawn, exec: execAlive, env: s.env, random: seq(hex) });
+    assert.equal(r.record.repoPath, s.root);
+    assert.equal(r.record.repo, 'proj');
+    assert.equal(r.controlDir, join(s.root, 'plans', `plan-${hex}`, '.parallel', 'plan'));
+    assert.equal(calls[0].opts.cwd, s.root);
+    assert.ok(existsSync(join(s.root, '.claude', 'worktrees', `pir-plan-${hex}`)));
+  }
+});
+
+test('startPlanRun: a run id taken by a branch, an index entry or a plans/ folder is drawn again', (t) => {
+  const s = gitRepo(t);
+  const dir = join(s.home, '.pir', 'runs');
+  g(s.root, 'branch', 'pir/plan-0001');
+  writeRecord({ version: 1, slug: 'plan-0002', repo: 'proj', repoPath: s.root, controlDir: '/x', pid: 1, startTime: LSTART, branch: 'pir/plan-0002' }, { dir });
+  mkdirSync(join(s.root, 'plans', 'plan-0003'), { recursive: true });
+
+  const { spawn } = makeSpawn();
+  const drawn = [];
+  const random = () => {
+    const v = ['0001', '0002', '0003', '0004'][drawn.length];
+    drawn.push(v);
+    return v;
+  };
+  const r = startPlanRun('brief', { cwd: s.root, spawn, exec: execAlive, env: s.env, random });
+  assert.equal(r.runId, 'plan-0004');
+  assert.deepEqual(drawn, ['0001', '0002', '0003', '0004']);
+  // The taken ones were left exactly as they were.
+  assert.equal(g(s.root, 'rev-parse', 'pir/plan-0001').trim(), g(s.root, 'rev-parse', 'main').trim());
+  assert.equal(listRecords({ dir }).find((x) => x.slug === 'plan-0002').controlDir, '/x');
+});
+
+function planRecord(s, overrides = {}) {
+  return {
+    version: 1,
+    kind: 'plan',
+    label: 'a brief',
+    go: null,
+    slug: 'plan-3f9a',
+    repo: 'proj',
+    repoPath: s.root,
+    controlDir: join(s.root, 'plans', 'plan-3f9a', '.parallel', 'plan'),
+    pid: 9001,
+    startTime: 'Mon Sep 21 10:00:00 2026',
+    startedAt: '2026-09-21T10:00:00.000Z',
+    branch: 'pir/plan-3f9a',
+    finalState: 'stopped',
+    updatedAt: '2026-09-21T11:00:00.000Z',
+    ...overrides,
+  };
+}
+
+const dead = () => { const e = new Error('no such process'); e.code = 'ESRCH'; throw e; };
+
+test('resumeRun on a plan record: plan-run.mjs --resume on its control folder; index pid and start time updated', (t) => {
+  const s = gitRepo(t);
+  const dir = join(s.home, '.pir', 'runs');
+  for (const finalState of ['stopped', null, 'finished']) {
+    const rec = planRecord(s, { finalState });
+    writeRecord(rec, { dir });
+    const { spawn, calls } = makeSpawn();
+    const r = resumeRun(rec, { spawn, exec: execAlive, kill: dead, env: { ...s.env, KEEP: 'yes' } });
+    assert.deepEqual(r, { resumed: true, pid: CHILD_PID }, `from finalState ${finalState}`);
+    assert.equal(calls[0].cmd, 'node');
+    assert.ok(calls[0].args[0].endsWith(join('src', 'shell', 'plan-run.mjs')));
+    assert.deepEqual(calls[0].args.slice(1), ['--control', rec.controlDir, '--resume']);
+    assert.equal(calls[0].opts.cwd, s.root);
+    assert.equal(calls[0].opts.detached, true);
+    assert.equal(calls[0].opts.env.PIR_RUN, '1');
+    assert.equal(calls[0].opts.env.KEEP, 'yes');
+    assert.ok(existsSync(join(rec.controlDir, 'run.log')));
+    assert.equal(calls[1].cmd, 'caffeinate');
+    assert.deepEqual(calls[1].args, ['-i', '-w', String(CHILD_PID)]);
+
+    const after = listRecords({ dir });
+    assert.equal(after.length, 1);
+    assert.deepEqual(after[0], { ...rec, pid: CHILD_PID, startTime: LSTART, finalState: null, updatedAt: null });
+  }
+});
+
+test('resumeRun on a work record calls startRun (pir start {slug})', (t) => {
+  const s = gitRepo(t);
+  mkdirSync(join(s.root, 'plans', 'demo'), { recursive: true });
+  writeFileSync(join(s.root, 'plans', 'demo', 'PROGRESS.md'), REVIEWED);
+  writeFileSync(join(s.root, 'plans', 'demo', 'DESIGN.md'), VALID_DESIGN);
+  const rec = planRecord(s, {
+    kind: 'work',
+    label: null,
+    slug: 'demo',
+    branch: 'pir/demo',
+    controlDir: join(s.root, 'plans', 'demo', '.parallel', 'control'),
+    finalState: null,
+  });
+  const { fs } = makeFs();
+  const { spawn, calls } = makeSpawn();
+  const r = resumeRun(rec, { spawn, exec: execAlive, kill: dead, fs, env: s.env });
+  assert.deepEqual(r, { resumed: true, pid: CHILD_PID });
+  assert.ok(calls[0].args[0].endsWith('coordinate.mjs'), 'the coordinator, not the planning program');
+  assert.equal(calls[0].args[1], 'demo');
+  assert.equal(calls[0].opts.cwd, s.root);
+  assert.equal(calls[0].opts.env.PARALLEL_LIVE, '1');
+
+  // startRun's own refusal comes back as the reason.
+  writeFileSync(join(s.root, 'plans', 'demo', 'PROGRESS.md'), UNREVIEWED);
+  const refused = resumeRun(rec, { spawn: makeSpawn().spawn, exec: execAlive, kill: dead, fs, env: s.env });
+  assert.deepEqual(refused, { resumed: false, reason: 'not-reviewed' });
+});
+
+test('resumeRun on a running record refuses already-running, for either kind, nothing spawned', (t) => {
+  const s = gitRepo(t);
+  for (const kind of ['plan', 'work']) {
+    const rec = planRecord(s, { kind, finalState: null, startTime: LSTART });
+    const { spawn, calls } = makeSpawn();
+    const r = resumeRun(rec, { spawn, exec: execAlive, kill: () => {}, env: s.env });
+    assert.deepEqual(r, { resumed: false, reason: 'already-running' });
+    assert.equal(calls.length, 0);
+  }
+});
+
+test('startRun on a branch-home unreviewed plan → not-reviewed with where: branch', (t) => {
+  const s = gitRepo(t);
+  g(s.root, 'checkout', '-q', '-b', 'pir/demo');
+  mkdirSync(join(s.root, 'plans', 'demo'), { recursive: true });
+  writeFileSync(join(s.root, 'plans', 'demo', 'PROGRESS.md'), UNREVIEWED);
+  writeFileSync(join(s.root, 'plans', 'demo', 'DESIGN.md'), VALID_DESIGN);
+  g(s.root, 'add', '-A');
+  g(s.root, 'commit', '-q', '-m', 'plan');
+  g(s.root, 'checkout', '-q', 'main');
+  assert.ok(!existsSync(join(s.root, 'plans', 'demo')), 'the plan is only on the branch');
+
+  const { spawn, calls } = makeSpawn();
+  const r = startRun('demo', { cwd: s.root, spawn, exec: execAlive, kill: () => {}, env: s.env });
+  assert.deepEqual(r, { started: false, reason: 'not-reviewed', where: 'branch' });
+  assert.equal(calls.length, 0);
 });
