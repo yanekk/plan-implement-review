@@ -36,10 +36,16 @@ const STDERR_TAIL = 4096;
 // workerOptions(...) → the SDK Options, exactly DESIGN §2.1. `settingSources` is left at its default so
 // CLAUDE.md, skills and the auto-mode exception load as for a `--bg` worker. Passing `canUseTool` is
 // what makes the SDK add `--permission-prompt-tool stdio`.
-export function workerOptions({ cwd, sessionId, name, claudePath, canUseTool, spawnProcess }) {
+//
+// `sessionId` starts a fresh session under that id; `resume` reopens that saved session instead and
+// then no `sessionId` is passed, since the SDK rejects both together unless it is forking
+// (plans/resume-dead-worker T02 defines the same interface). A
+// resumed session keeps its id and transcript, but Claude Code keys a saved session by its project
+// folder, so `cwd` must be the one it first ran in.
+export function workerOptions({ cwd, sessionId, resume, name, claudePath, canUseTool, spawnProcess }) {
   return {
     cwd,
-    sessionId,
+    ...(resume ? { resume } : { sessionId }),
     permissionMode: 'auto',
     pathToClaudeCodeExecutable: claudePath,
     extraArgs: { name },
@@ -97,7 +103,8 @@ function inputQueue() {
 // startWorker(...) → Worker. See the task interface (T04) for each method.
 export function startWorker({
   cwd,
-  sessionId,
+  sessionId: freshId,
+  resume,
   name,
   logPath,
   claudePath,
@@ -106,6 +113,9 @@ export function startWorker({
   now = Date.now,
 }) {
   mkdirSync(dirname(logPath), { recursive: true });
+  // A resumed session runs under the id it was saved with; every message pir sends carries that id.
+  // The log is appended to, so a resumed session continues its own conversation file.
+  const sessionId = resume ?? freshId;
 
   const entries = [];
   const eventFns = [];
@@ -225,7 +235,7 @@ export function startWorker({
 
   const q = query({
     prompt: queue,
-    options: workerOptions({ cwd, sessionId, name, claudePath, canUseTool, spawnProcess: spawnWrapped }),
+    options: workerOptions({ cwd, sessionId, resume, name, claudePath, canUseTool, spawnProcess: spawnWrapped }),
   });
 
   const startedAt = now();

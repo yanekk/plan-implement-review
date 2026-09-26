@@ -1,23 +1,23 @@
-// pir-plan-command T06 — the planning program's planner half, run against the fake Claude (T05) in
-// scratch repos. No real `claude` is ever started: every session is the shim.
+// pir-plan-command T06, T07 — the planning program (planner, rename, reviewer, resume), run against the
+// fake Claude (T05) in scratch repos. No real `claude` is ever started: every session is the shim.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawn as spawnChild } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { execFileSync, spawn as spawnChild } from 'node:child_process';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { initialPlanState, plannerInstruction } from '../core/planflow.mjs';
+import { initialPlanState, plannerInstruction, resumeInstruction, reviewerInstruction } from '../core/planflow.mjs';
 import { parseRecord } from '../core/runrecord.mjs';
 import { writeClaudeShim } from './fake/claude-shim.mjs';
 import { initEvent, assistantText, resultEvent } from './fake/claude-stream.mjs';
-import { plannerScript, noPlanScript, PLANNER_MATCH } from './fake/sessions.mjs';
+import { plannerScript, noPlanScript, reviewerScript, PLANNER_MATCH, REVIEWER_MATCH } from './fake/sessions.mjs';
 import { recordPath, writeRecord } from './index-store.mjs';
 import { dropPersonInput } from './person-inbox.mjs';
 import { readSnapshot } from './snapshot-store.mjs';
 import { git, openPlanBranch } from './worktree.mjs';
-import { nextPlanLogPath, parseArgs, planRunState, plannerChecks, rootOf, runPlanning } from './plan-run.mjs';
+import { findControlDir, findSessionLog, nextPlanLogPath, parseArgs, planRunState, plannerChecks, reviewerChecks, rootOf, runPlanning } from './plan-run.mjs';
 
 const PROGRAM = fileURLToPath(new URL('./plan-run.mjs', import.meta.url));
 const SESSIONS = fileURLToPath(new URL('./fake/sessions.mjs', import.meta.url));
@@ -73,13 +73,14 @@ function setup(t, scripts, { indexEntry = true } = {}) {
 }
 
 // runPlanning in this process, with a stop lever and the program's log kept.
-function start(s, { env = {}, deps = {} } = {}) {
+function start(s, { env = {}, deps = {}, resume = false, controlDir = s.controlDir } = {}) {
   const stop = new AbortController();
   const lines = [];
   const snaps = [];
   let code;
   const done = runPlanning({
-    controlDir: s.controlDir,
+    controlDir,
+    resume,
     deps: {
       env: { PIR_HOME: s.home, ...env },
       claudePath: s.shim,
@@ -101,6 +102,7 @@ const planLog = (s, n = 1) => readLog(join(s.controlDir, 'conversations', `plan-
 const stateOf = (s) => JSON.parse(readFileSync(join(s.controlDir, 'state.json'), 'utf8'));
 const workersOf = (s) => JSON.parse(readFileSync(join(s.controlDir, 'workers.json'), 'utf8'));
 const indexOf = (s, key = ID) => parseRecord(readFileSync(recordPath(s.repo, key, { dir: join(s.home, '.pir', 'runs') }), 'utf8'));
+const controlAfter = (s, slug) => join(s.root, 'plans', slug, '.parallel', 'plan');
 const notes = (log, kind) => log.filter((e) => e.dir === 'note' && e.kind === kind);
 
 // A planner that writes the fake plan (optionally without some files), commits, drops `planned`, and
@@ -120,9 +122,9 @@ function quickPlanner(slug, { drop = [] } = {}) {
 
 // ---- The planner step end to end. ----
 
-test('planner: exact instruction, question pending, inbox answer forwarded, planned → closed, state at rename, no final status', async (t) => {
+test('planner: exact instruction, question pending, inbox answer forwarded, planned → closed after idle, then renamed and reviewed', async (t) => {
   const slug = 'small-thing';
-  const s = setup(t, [{ match: PLANNER_MATCH, script: plannerScript({ slug, question: 'Big or small?' }) }]);
+  const s = setup(t, [{ match: PLANNER_MATCH, script: plannerScript({ slug, question: 'Big or small?' }) }, { match: REVIEWER_MATCH, script: reviewerScript({ slug }) }]);
   const run = start(s, { env: { PIR_RUN: '1' } });
   t.after(() => run.stop.abort());
 
@@ -143,37 +145,30 @@ test('planner: exact instruction, question pending, inbox answer forwarded, plan
   assert.deepEqual(dropped, { ok: true });
 
   assert.equal(await run.done, 0);
-  const after = planLog(s);
+  // The run went on through the rename and the reviewer: the planner's log is now under the slug.
+  const moved = controlAfter(s, slug);
+  const after = readLog(join(moved, 'conversations', 'plan-1.ndjson'));
   assert.ok(after.some((e) => e.dir === 'out' && e.kind === 'reply' && e.from === 'person'), 'the answer reached the planner');
-  assert.ok(git(s.worktree, ['cat-file', '-e', `HEAD:plans/${slug}/PROGRESS.md`]).ok, 'the planner carried on and committed');
+  assert.ok(git(s.root, ['cat-file', '-e', `pir/${slug}:plans/${slug}/PROGRESS.md`]).ok, 'the planner carried on and committed');
 
-  // planned with a valid plan: the planner was closed after idle; state.json at step rename.
-  const st = stateOf(s);
-  assert.equal(st.step, 'rename');
+  // planned with a valid plan: the planner was closed after idle, and only then renamed and reviewed.
+  const st = JSON.parse(readFileSync(join(moved, 'state.json'), 'utf8'));
   assert.equal(st.slug, slug);
   assert.deepEqual(st.sessions.plan, [sessionId]);
-  assert.deepEqual(st.renamed, { branch: false, worktree: false, control: false, index: false });
-  assert.equal(st.live, false);
   const result = after.findIndex((e) => e.dir === 'in' && e.event.type === 'result' && e.event.subtype === 'success');
   const exited = after.findIndex((e) => e.dir === 'note' && e.kind === 'exited');
   assert.ok(result >= 0 && exited > result, 'closed only after its turn ended');
-  assert.deepEqual(workersOf(s), [], 'workers.json emptied');
-  assert.equal(git(s.root, ['rev-parse', '--verify', '--quiet', `refs/heads/pir/${ID}`]).ok, true, 'no rename yet (T07)');
-
-  // No final status yet: the snapshot is live and the index untouched.
-  const snap = readSnapshot(s.controlDir);
-  assert.equal(snap.finalState, null);
-  assert.equal(snap.runState.step, 'rename');
-  assert.equal(snap.runState.steps[0].phase, 'done');
-  assert.equal(indexOf(s).finalState, null);
+  assert.equal(exited, after.length - 1, 'nothing reached the planner after its close');
 
   // Remote Control: on once right after the spawn, never off while busy, idle or asking, off at the close.
   const rc = notes(after, 'remote-control');
   assert.deepEqual(rc.map((n) => n.on), [true, false]);
   assert.ok(after.indexOf(rc[1]) > result, 'off only at the close');
   // On the wire: the one switch-on went out at the spawn, before the question was answered,
-  // and the switch-off after the planner's last turn.
-  const wire = readFileSync(s.received, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l)).filter((x) => x.line).map((x) => JSON.parse(x.line));
+  // and the switch-off after the planner's last turn. The planner's lines are the first session's.
+  const wireAll = readFileSync(s.received, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
+  const secondStart = wireAll.findIndex((x, i) => i > 0 && x.argv);
+  const wire = wireAll.slice(0, secondStart).filter((x) => x.line).map((x) => JSON.parse(x.line));
   const rcWire = wire.filter((m) => m.type === 'control_request' && m.request?.subtype === 'remote_control');
   assert.deepEqual(rcWire.map((m) => m.request.enabled), [true, false]);
   const at = (m) => wire.indexOf(m);
@@ -187,7 +182,8 @@ test('planner: exact instruction, question pending, inbox answer forwarded, plan
   const phases = run.snaps.map((x) => x.runState.steps[0].phase);
   for (const p of ['planning', 'asking', 'done']) assert.ok(phases.includes(p), `a snapshot at ${p}: ${phases}`);
   assert.ok(phases.lastIndexOf('planning') > phases.indexOf('asking'), 'back to planning after the answer');
-  assert.ok(run.snaps.every((x) => x.finalState === null));
+  assert.ok(run.snaps.some((x) => x.runState.step === 'review' && x.runState.steps[1].phase === 'reviewing'), 'a snapshot while reviewing');
+  assert.equal(run.snaps.at(-1).finalState, 'finished');
 });
 
 test('planner: planned with DESIGN.md missing → the planner hears which file, the step continues; no snapshot without PIR_RUN', async (t) => {
@@ -320,13 +316,276 @@ test('the program under SIGTERM with a session that will not go: `stopped` is re
   assert.deepEqual(workersOf(s), []);
 });
 
-test('T07 is not here yet: --resume and a state past plan are refused with exit 2', async (t) => {
+// ---- T07: the rename, the reviewer, and resume. ----
+
+// gate(file) → a `sh` step that waits (at most 10 s) for `file` to exist. A session parked on it is
+// closed or killed mid-step, so the step is not recorded as done and a resumed fake re-runs it; the test
+// creates the file before the resume, so the re-run passes at once. Bounded, so an orphaned wait ends.
+const gate = (file) => ({ sh: `i=0; while [ ! -f ${q(file)} ] && [ $i -lt 100 ]; do sleep 0.1; i=$((i+1)); done` });
+const reviewLog = (dir, n = 1) => readLog(join(dir, 'conversations', `review-${n}.ndjson`));
+const pirTexts = (log) => log.filter((e) => e.dir === 'out' && e.from === 'pir' && e.kind === 'message').map((e) => e.text);
+const argvs = (s) => readFileSync(s.received, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l)).filter((x) => x.argv).map((x) => x.argv);
+
+// A reviewer that runs `steps` in the worktree after its opening, then reports `kind`.
+function reviewer(slug, { steps = [], kind = 'reviewed', after = [] } = {}) {
+  return [
+    { await: 'user' },
+    { emit: initEvent() },
+    ...steps,
+    { sh: sessionsCmd('report', '{{reportsDir}}', 'plan', `[pir:v1 kind=${kind} plan=${slug}]\n${kind}`) },
+    { emit: assistantText(`Reported ${kind}.`) },
+    { emit: resultEvent('success', `Reported ${kind}.`) },
+    ...after,
+  ];
+}
+const markReviewed = (slug) => ({ sh: `${sessionsCmd('review-plan', slug)} && ${GIT} commit -q -am ${q(`plan-review(${slug}): clean`)}` });
+
+// The plan branch as a planner leaves it: the fake plan committed, state.json at step `rename`.
+function planned(s, slug, { sessions = ['planner-session'] } = {}) {
+  execFileSync(process.execPath, [SESSIONS, 'write-plan', slug], { cwd: s.worktree });
+  git(s.worktree, ['add', '-A']);
+  git(s.worktree, ['commit', '-q', '-m', `plan(${slug})`]);
+  writeFileSync(join(s.controlDir, 'state.json'), JSON.stringify({ ...initialPlanState({ id: ID }), step: 'rename', slug, sessions: { plan: sessions, review: [] } }));
+}
+
+test('the whole run: planner → planned → rename → reviewer with the exact instruction in pir-{slug} → reviewed → finished', async (t) => {
+  const slug = 'whole-run';
+  const s = setup(t, [{ match: PLANNER_MATCH, script: quickPlanner(slug) }, { match: REVIEWER_MATCH, script: reviewerScript({ slug }) }]);
+  const mainBefore = git(s.root, ['rev-parse', 'main']).stdout.trim();
+  const began = Date.now();
+  const run = start(s, { env: { PIR_RUN: '1' } });
+  assert.equal(await run.done, 0, run.lines.join('\n'));
+  assert.ok(Date.now() - began < 30000, 'brief → reviewed plan in under 30 s');
+
+  // The rename: branch, worktree, control folder, index entry.
+  const moved = controlAfter(s, slug);
+  const newWorktree = join(s.root, '.claude', 'worktrees', `pir-${slug}`);
+  assert.equal(git(s.root, ['rev-parse', '--verify', '--quiet', `refs/heads/pir/${ID}`]).ok, false);
+  assert.equal(existsSync(s.worktree), false, 'the old worktree moved');
+  assert.equal(git(newWorktree, ['branch', '--show-current']).stdout.trim(), `pir/${slug}`);
+  assert.ok(existsSync(join(moved, 'state.json')));
+  assert.equal(existsSync(join(s.root, 'plans', ID)), false, 'plans/{runId}/ is gone');
+  const rec = indexOf(s, slug);
+  assert.equal(rec.kind, 'plan');
+  assert.equal(rec.label, null);
+  assert.equal(rec.controlDir, moved);
+  assert.equal(rec.branch, `pir/${slug}`);
+  assert.equal(rec.finalState, 'finished');
+  assert.equal(existsSync(recordPath(s.repo, ID, { dir: join(s.home, '.pir', 'runs') })), false);
+
+  // The reviewer: fresh, with the exact instruction naming the moved reports folder; it did its work in
+  // the renamed worktree, so the reviewed plan is on pir/{slug}. main is untouched.
+  const log = reviewLog(moved);
+  assert.deepEqual(pirTexts(log), [reviewerInstruction({ reportsDir: join(moved, 'reports'), slug })]);
+  const progress = git(s.root, ['show', `pir/${slug}:plans/${slug}/PROGRESS.md`]).stdout;
+  assert.match(progress, /\*\*Plan reviewed:\*\* yes/);
+  assert.equal(git(s.root, ['log', '-1', '--format=%s', `pir/${slug}`]).stdout.trim(), `plan-review(${slug}): clean`);
+  assert.equal(git(s.root, ['rev-parse', 'main']).stdout.trim(), mainBefore, 'main unchanged');
+  assert.equal(argvs(s).length, 2, 'two sessions: planner and reviewer');
+  assert.ok(argvs(s)[1].some((a) => a.startsWith('--session-id')), 'the reviewer is a fresh session');
+  assert.ok(argvs(s)[1].includes(`${s.repo} / ${slug} / plan / reviewer`), 'the reviewer is named by the slug');
+
+  const st = JSON.parse(readFileSync(join(moved, 'state.json'), 'utf8'));
+  assert.equal(st.step, 'done');
+  assert.equal(st.outcome, 'reviewed');
+  assert.deepEqual(st.renamed, { branch: true, worktree: true, control: true, index: true });
+  assert.equal(st.sessions.plan.length, 1);
+  assert.equal(st.sessions.review.length, 1);
+  const snap = readSnapshot(moved);
+  assert.equal(snap.finalState, 'finished');
+  assert.equal(snap.proc.slug, slug);
+  assert.equal(snap.proc.branch, `pir/${slug}`);
+  assert.deepEqual(snap.runState.steps.map((x) => x.phase), ['done', 'done', 'pending']);
+  assert.equal(snap.runState.steps[0].worker.logPath, join(moved, 'conversations', 'plan-1.ndjson'), 'held paths re-pointed');
+  assert.deepEqual(JSON.parse(readFileSync(join(moved, 'workers.json'), 'utf8')), []);
+
+  // Remote Control: on right after the reviewer spawned, off only at its close.
+  const rc = notes(log, 'remote-control');
+  assert.deepEqual(rc.map((n) => n.on), [true, false]);
+  const lastResult = log.findLastIndex((e) => e.dir === 'in' && e.event.type === 'result');
+  assert.ok(log.indexOf(rc[1]) > lastResult, 'off only at the close');
+});
+
+test('reviewer: `reviewed` while PROGRESS.md is not marked → the reviewer hears it, the run goes on', async (t) => {
+  const slug = 'not-marked';
+  const s = setup(t, [{ match: REVIEWER_MATCH, script: reviewer(slug, { after: [{ chat: { workMs: 10 } }] }) }]);
+  planned(s, slug);
+  const run = start(s, { resume: true });
+  t.after(() => run.stop.abort());
+  const moved = controlAfter(s, slug);
+  const msg = await waitFor(() => reviewLog(moved).find((e) => e.dir === 'out' && /did not accept/.test(e.text ?? '')), 'the failure message');
+  assert.match(msg.text, /does not read reviewed/);
+  assert.equal(run.code, undefined);
+  assert.equal(JSON.parse(readFileSync(join(moved, 'state.json'), 'utf8')).step, 'review');
+  run.stop.abort();
+  assert.equal(await run.done, 0);
+});
+
+test('reviewer: `reviewed` with a dirty worktree → the reviewer hears it; pir commits nothing', async (t) => {
+  const slug = 'dirty-review';
+  const s = setup(t, [{ match: REVIEWER_MATCH, script: reviewer(slug, { steps: [markReviewed(slug), { sh: 'touch stray.txt' }], after: [{ chat: { workMs: 10 } }] }) }]);
+  planned(s, slug);
+  const run = start(s, { resume: true });
+  t.after(() => run.stop.abort());
+  const moved = controlAfter(s, slug);
+  const msg = await waitFor(() => reviewLog(moved).find((e) => e.dir === 'out' && /did not accept/.test(e.text ?? '')), 'the failure message');
+  assert.match(msg.text, /uncommitted changes/);
+  run.stop.abort();
+  assert.equal(await run.done, 0);
+  const wt = join(s.root, '.claude', 'worktrees', `pir-${slug}`);
+  assert.equal(git(wt, ['log', '-1', '--format=%s']).stdout.trim(), `plan-review(${slug}): clean`, 'nothing committed by pir');
+  assert.match(git(wt, ['status', '--porcelain']).stdout, /stray\.txt/);
+});
+
+test('reviewer: `not-reviewed` → finished not-reviewed; --resume reopens the reviewer session, which then finishes reviewed', async (t) => {
+  const slug = 'second-look';
   const s = setup(t, []);
-  const lines = [];
-  assert.equal(await runPlanning({ controlDir: s.controlDir, resume: true, deps: { log: (l) => lines.push(l), claudePath: s.shim, env: { PIR_HOME: s.home } } }), 2);
-  writeFileSync(join(s.controlDir, 'state.json'), JSON.stringify({ ...initialPlanState({ id: ID }), step: 'rename', slug: 'x' }));
-  assert.equal(await runPlanning({ controlDir: s.controlDir, deps: { log: (l) => lines.push(l), claudePath: s.shim, env: { PIR_HOME: s.home } } }), 2);
-  assert.match(lines.join('\n'), /T07/);
+  const open = join(s.dir, 'resume-gate');
+  writeFileSync(join(s.dir, 'fake', 'scripts.json'), JSON.stringify([
+    { match: REVIEWER_MATCH, script: reviewer(slug, { kind: 'not-reviewed', after: [gate(open), markReviewed(slug), { sh: sessionsCmd('report', '{{reportsDir}}', 'plan', `[pir:v1 kind=reviewed plan=${slug}]\nreviewed`) }, { emit: assistantText('Now reviewed.') }, { emit: resultEvent('success', 'Now reviewed.') }] }) },
+  ]));
+  planned(s, slug);
+  const first = start(s, { resume: true, env: { PIR_RUN: '1', PARALLEL_REMOTE: '0' } });
+  assert.equal(await first.done, 0, first.lines.join('\n'));
+  const moved = controlAfter(s, slug);
+  let st = JSON.parse(readFileSync(join(moved, 'state.json'), 'utf8'));
+  assert.equal(st.step, 'done');
+  assert.equal(st.outcome, 'not-reviewed');
+  assert.equal(indexOf(s, slug).finalState, 'finished');
+  assert.equal(readSnapshot(moved).runState.steps[1].phase, 'failed');
+  const reviewerId = st.sessions.review[0];
+  assert.equal(notes(reviewLog(moved), 'remote-control').length, 0, 'no Remote Control under PARALLEL_REMOTE=0');
+
+  writeFileSync(open, '');
+  const second = start(s, { resume: true, controlDir: moved });
+  assert.equal(await second.done, 0, second.lines.join('\n'));
+  st = JSON.parse(readFileSync(join(moved, 'state.json'), 'utf8'));
+  assert.equal(st.outcome, 'reviewed');
+  assert.deepEqual(st.sessions.review, [reviewerId], 'the same session, not a new one');
+  const av = argvs(s);
+  assert.ok(av.at(-1).includes(`--resume=${reviewerId}`) || av.at(-1).includes(reviewerId), av.at(-1).join(' '));
+  const log = reviewLog(moved);
+  assert.equal(existsSync(join(moved, 'conversations', 'review-2.ndjson')), false, 'appended to review-1');
+  assert.deepEqual(pirTexts(log), [reviewerInstruction({ reportsDir: join(moved, 'reports'), slug }), resumeInstruction()]);
+  const resumedAt = log.findIndex((e) => e.dir === 'note' && e.kind === 'resumed');
+  assert.ok(resumedAt > 0);
+  const rc = notes(log.slice(resumedAt), 'remote-control');
+  assert.deepEqual(rc.map((n) => n.on), [true, false], 'Remote Control on once the resumed session starts, off at its close');
+});
+
+test('crash after the branch rename only, then --resume: the rename completes and the reviewer starts', async (t) => {
+  const slug = 'half-renamed';
+  const s = setup(t, [{ match: REVIEWER_MATCH, script: reviewerScript({ slug }) }]);
+  planned(s, slug);
+  git(s.root, ['branch', '-m', `pir/${ID}`, `pir/${slug}`]);
+  const run = start(s, { resume: true, env: { PIR_RUN: '1' } });
+  assert.equal(await run.done, 0, run.lines.join('\n'));
+  const moved = controlAfter(s, slug);
+  assert.ok(existsSync(join(s.root, '.claude', 'worktrees', `pir-${slug}`)));
+  assert.equal(existsSync(join(s.root, 'plans', ID)), false);
+  assert.equal(indexOf(s, slug).finalState, 'finished');
+  const st = JSON.parse(readFileSync(join(moved, 'state.json'), 'utf8'));
+  assert.equal(st.outcome, 'reviewed');
+  assert.deepEqual(st.sessions.plan, ['planner-session'], 'the planner was not resumed');
+  assert.deepEqual(pirTexts(reviewLog(moved)), [reviewerInstruction({ reportsDir: join(moved, 'reports'), slug })], 'a fresh reviewer');
+});
+
+test('crash after the control folder moved, before the index rename: --resume on the old folder finds the moved one', async (t) => {
+  const slug = 'moved-control';
+  const s = setup(t, [{ match: REVIEWER_MATCH, script: reviewerScript({ slug }) }]);
+  planned(s, slug);
+  git(s.root, ['branch', '-m', `pir/${ID}`, `pir/${slug}`]);
+  git(s.root, ['worktree', 'move', s.worktree, join(s.root, '.claude', 'worktrees', `pir-${slug}`)]);
+  const moved = controlAfter(s, slug);
+  mkdirSync(join(s.root, 'plans', slug, '.parallel'), { recursive: true });
+  renameSync(s.controlDir, moved);
+  // The index entry still names the old folder, which is what pir's resume passes.
+  const run = start(s, { resume: true, env: { PIR_RUN: '1' } });
+  assert.equal(await run.done, 0, run.lines.join('\n'));
+  const rec = indexOf(s, slug);
+  assert.equal(rec.controlDir, moved);
+  assert.equal(rec.finalState, 'finished');
+  assert.equal(existsSync(recordPath(s.repo, ID, { dir: join(s.home, '.pir', 'runs') })), false);
+});
+
+test('crash inside the index rename (both entries written), then --resume: the old entry goes, the new one stays', async (t) => {
+  const slug = 'both-entries';
+  const s = setup(t, [{ match: REVIEWER_MATCH, script: reviewerScript({ slug }) }]);
+  planned(s, slug);
+  git(s.root, ['branch', '-m', `pir/${ID}`, `pir/${slug}`]);
+  git(s.root, ['worktree', 'move', s.worktree, join(s.root, '.claude', 'worktrees', `pir-${slug}`)]);
+  const moved = controlAfter(s, slug);
+  mkdirSync(join(s.root, 'plans', slug, '.parallel'), { recursive: true });
+  renameSync(s.controlDir, moved);
+  const dir = join(s.home, '.pir', 'runs');
+  writeRecord({ ...indexOf(s), slug, label: null, controlDir: moved, branch: `pir/${slug}` }, { dir });
+  const run = start(s, { resume: true, controlDir: moved, env: { PIR_RUN: '1' } });
+  assert.equal(await run.done, 0, run.lines.join('\n'));
+  assert.equal(existsSync(recordPath(s.repo, ID, { dir })), false);
+  assert.equal(indexOf(s, slug).finalState, 'finished');
+});
+
+test('SIGKILL mid-planner, then --resume: same session id, exactly the resume message, same log, the run goes on to reviewed', async (t) => {
+  const slug = 'killed-planner';
+  const s = setup(t, []);
+  const open = join(s.dir, 'resume-gate');
+  const planner = [
+    { await: 'user' },
+    { emit: initEvent() },
+    { emit: assistantText('Thinking about it.') },
+    { emit: resultEvent('success', 'Thinking about it.') },
+    gate(open),
+    { sh: `${sessionsCmd('write-plan', slug)} && ${GIT} add -A ${q(`plans/${slug}`)} && ${GIT} commit -q -m plan` },
+    { sh: sessionsCmd('report', '{{reportsDir}}', 'plan', `[pir:v1 kind=planned plan=${slug}]\nThe plan is committed.`) },
+    { emit: assistantText('Reported.') },
+    { emit: resultEvent('success', 'Reported.') },
+  ];
+  writeFileSync(join(s.dir, 'fake', 'scripts.json'), JSON.stringify([{ match: PLANNER_MATCH, script: planner }, { match: REVIEWER_MATCH, script: reviewerScript({ slug }) }]));
+  const child = spawnChild(process.execPath, [PROGRAM, '--control', s.controlDir], {
+    env: { ...process.env, PATH: `${s.bin}:${process.env.PATH}`, PIR_HOME: s.home, PIR_RUN: '1' },
+    stdio: 'ignore',
+  });
+  const exited = new Promise((r) => child.on('exit', (code, sig) => r(sig)));
+  t.after(() => child.kill('SIGKILL'));
+  await waitFor(() => planLog(s).some((e) => e.dir === 'in' && e.event.type === 'result'), 'the planner thinking');
+  await waitFor(() => stateOf(s).sessions.plan.length === 1, 'the session id in state.json');
+  const plannerId = stateOf(s).sessions.plan[0];
+  child.kill('SIGKILL');
+  assert.equal(await exited, 'SIGKILL');
+  writeFileSync(open, '');
+
+  const run = start(s, { resume: true, env: { PIR_RUN: '1' } });
+  assert.equal(await run.done, 0, run.lines.join('\n'));
+  const moved = controlAfter(s, slug);
+  const st = JSON.parse(readFileSync(join(moved, 'state.json'), 'utf8'));
+  assert.equal(st.outcome, 'reviewed');
+  assert.deepEqual(st.sessions.plan, [plannerId], 'resumed under the same id');
+  assert.ok(argvs(s)[1].includes(`--resume=${plannerId}`) || argvs(s)[1].includes(plannerId), argvs(s)[1].join(' '));
+  assert.equal(existsSync(join(moved, 'conversations', 'plan-2.ndjson')), false, 'no second planner log');
+  const log = readLog(join(moved, 'conversations', 'plan-1.ndjson'));
+  assert.deepEqual(pirTexts(log), [plannerInstruction({ reportsDir: join(s.controlDir, 'reports'), brief: BRIEF }), resumeInstruction()], 'the opening once, then only the resume message');
+  const resumedAt = log.findIndex((e) => e.dir === 'note' && e.kind === 'resumed');
+  const resumeMsg = log.findIndex((e) => e.dir === 'out' && e.text === resumeInstruction());
+  assert.ok(resumedAt > 0 && resumeMsg > resumedAt, 'the `resumed` note, then the message');
+  const firstInAfter = log.findIndex((e, i) => i > resumedAt && e.dir === 'in');
+  assert.ok(firstInAfter > resumeMsg, 'the resumed session took no turn before the message');
+  assert.ok(notes(log.slice(resumedAt), 'remote-control').some((n) => n.on), 'Remote Control on for the resumed planner');
+  assert.deepEqual(reviewLog(moved).length > 0, true);
+});
+
+test('--resume on a finished reviewed run exits 0 doing nothing', async (t) => {
+  const slug = 'already-done';
+  const s = setup(t, []);
+  planned(s, slug);
+  git(s.root, ['branch', '-m', `pir/${ID}`, `pir/${slug}`]);
+  const done = { ...stateOf(s), step: 'done', outcome: 'reviewed', sessions: { plan: ['p'], review: ['r'] }, renamed: { branch: true, worktree: true, control: true, index: true } };
+  writeFileSync(join(s.controlDir, 'state.json'), JSON.stringify(done));
+  const run = start(s, { resume: true });
+  assert.equal(await run.done, 0);
+  assert.deepEqual(stateOf(s), done, 'state untouched');
+  assert.equal(existsSync(s.received), false, 'no session started');
+  assert.equal(git(s.root, ['rev-parse', '--verify', '--quiet', `refs/heads/pir/${slug}`]).ok, true);
+  assert.ok(existsSync(s.worktree), 'nothing renamed');
 });
 
 // ---- The pure helpers. ----
@@ -352,6 +611,56 @@ test('plannerChecks: each §2.5 failure has its reason, and a clean valid plan p
   taken = null;
   dirty = '?? stray.txt';
   assert.match(plannerChecks({ ...base, slug: 'ok-plan' }).reason, /uncommitted changes/);
+});
+
+test('reviewerChecks: each §2.7 failure has its reason, and a clean reviewed plan passes', () => {
+  const files = {
+    'PROGRESS.md': '# Progress\n\n**Plan reviewed:** 2026-09-26 — clean\n',
+    'DESIGN.md': '---\nsetup: none\ntest:\n  - npm test\n---\n# D\n',
+  };
+  let dirty = '';
+  const git = (_cwd, args) => {
+    if (args[0] === 'show') {
+      const f = args[1].split('/').at(-1);
+      return f in files ? { ok: true, stdout: files[f] } : { ok: false, stdout: '' };
+    }
+    if (args[0] === 'status') return { ok: true, stdout: dirty };
+    throw new Error(`unexpected git ${args}`);
+  };
+  const check = () => reviewerChecks({ slug: 'p', worktree: '/w', git });
+  assert.deepEqual(check(), { ok: true, reason: null });
+  dirty = ' M x';
+  assert.match(check().reason, /uncommitted changes/);
+  dirty = '';
+  files['DESIGN.md'] = '# no block\n';
+  assert.match(check().reason, /setup\/test block .* does not parse/);
+  files['PROGRESS.md'] = '**Plan reviewed:** not yet\n';
+  assert.match(check().reason, /does not read reviewed/);
+  delete files['PROGRESS.md'];
+  assert.match(check().reason, /PROGRESS\.md is not committed/);
+});
+
+test('findSessionLog picks the highest-n log of the step whose init names the session; findControlDir follows a moved folder', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'pir-plan-run-find-'));
+  try {
+    const conv = join(dir, 'repo', 'plans', 'the-slug', '.parallel', 'plan', 'conversations');
+    mkdirSync(conv, { recursive: true });
+    const init = (id) => JSON.stringify({ dir: 'in', event: { type: 'system', subtype: 'init', session_id: id } }) + '\n';
+    writeFileSync(join(conv, 'plan-1.ndjson'), init('a'));
+    writeFileSync(join(conv, 'plan-2.ndjson'), init('b'));
+    writeFileSync(join(conv, 'review-3.ndjson'), init('a'));
+    const control = dirname(conv);
+    assert.deepEqual(findSessionLog(control, 'plan', 'a'), { logPath: join(conv, 'plan-1.ndjson'), n: 1 });
+    assert.deepEqual(findSessionLog(control, 'review', 'a'), { logPath: join(conv, 'review-3.ndjson'), n: 3 });
+    assert.equal(findSessionLog(control, 'plan', 'zz'), null);
+    writeFileSync(join(control, 'state.json'), JSON.stringify({ id: 'plan-ab12' }));
+    const old = join(dir, 'repo', 'plans', 'plan-ab12', '.parallel', 'plan');
+    assert.equal(findControlDir(old), control);
+    assert.equal(findControlDir(control), control);
+    assert.equal(findControlDir(join(dir, 'repo', 'plans', 'plan-ffff', '.parallel', 'plan')), join(dir, 'repo', 'plans', 'plan-ffff', '.parallel', 'plan'));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test('planRunState: phases per step, the asking kind, the open session and its clock', () => {
