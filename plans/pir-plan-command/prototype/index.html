@@ -1,0 +1,262 @@
+<title>pir plan</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;600&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+  :root {
+    --page-bg: #f3f1ec; --page-fg: #2b2a27; --page-muted: #6b675e; --page-line: #ddd8cd;
+    --card-bg: #ffffff; --accent: #2f7d5b;
+    --term-bg: #0b0e14; --term-fg: #c9d1d9; --term-dim: #6e7681; --term-faint: #3b4048;
+    --sel-bg: #1b2330; --ok: #3fb950; --run: #58a6ff; --cyan: #56d4dd; --warn: #d29922;
+    --bad: #f85149; --head: #79c0ff; --mag: #d2a8ff; --pir: #f0883e; --you: #7ee787;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --page-bg: #16181d; --page-fg: #e6e3db; --page-muted: #9a958a;
+      --page-line: #2a2d34; --card-bg: #1d2027; --accent: #4bb98a;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --page-bg: #16181d; --page-fg: #e6e3db; --page-muted: #9a958a;
+    --page-line: #2a2d34; --card-bg: #1d2027; --accent: #4bb98a;
+  }
+  * { box-sizing: border-box; }
+  body { background: var(--page-bg); color: var(--page-fg);
+    font-family: "IBM Plex Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.5; }
+  .wrap { max-width: 980px; margin: 0 auto; padding-block: 28px 56px; padding-inline: 16px; }
+  .eyebrow { font-size: 12px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--accent); font-weight: 600; margin: 0 0 6px; }
+  h1 { font-family: "JetBrains Mono", ui-monospace, monospace; font-size: clamp(24px, 4vw, 34px); margin: 0 0 8px; text-wrap: balance; }
+  .sub { color: var(--page-muted); margin: 0; max-width: 68ch; font-size: 15px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 18px; }
+  .chip { font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 12.5px; background: var(--card-bg);
+    color: var(--page-fg); border: 1px solid var(--page-line); border-radius: 999px; padding: 5px 12px; cursor: pointer; }
+  .chip[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); font-weight: 600; }
+  .chip:focus-visible, .k:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .caption { margin-top: 14px; font-size: 14px; color: var(--page-muted); max-width: 80ch; border-left: 2px solid var(--page-line); padding-left: 12px; min-height: 3em; }
+  .caption b { color: var(--page-fg); }
+  .term-window { margin-top: 16px; border-radius: 12px; overflow: hidden; background: var(--term-bg);
+    box-shadow: 0 18px 40px -22px rgba(0,0,0,0.55), 0 0 0 1px rgba(0,0,0,0.06); }
+  .term-bar { display: flex; align-items: center; gap: 8px; padding: 10px 14px; background: #161b22; border-bottom: 1px solid #21262d; }
+  .dot { width: 12px; height: 12px; border-radius: 50%; } .dot.r{background:#ff5f56}.dot.y{background:#ffbd2e}.dot.g{background:#27c93f}
+  .term-title { margin-left: 8px; font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 12px; color: var(--term-dim); }
+  .term-screen { font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 13px; line-height: 1.6; color: var(--term-fg);
+    padding: 14px; height: 470px; overflow: auto; font-variant-numeric: tabular-nums; }
+  @media (max-width: 560px) { .term-screen { font-size: 10.5px; } }
+  .line { display: block; white-space: pre; min-height: 1.6em; }
+  .wl { display: block; white-space: pre-wrap; min-height: 1.6em; max-width: 96ch; }
+  .dim{color:var(--term-dim)} .faint{color:var(--term-faint)} .ok{color:var(--ok)} .run{color:var(--run)} .cyan{color:var(--cyan)}
+  .warn{color:var(--warn)} .bad{color:var(--bad)} .head{color:var(--head)} .mag{color:var(--mag)} .pir{color:var(--pir)} .you{color:var(--you)} .b{font-weight:600}
+  .sel { background: var(--sel-bg); }
+  .gate { display: block; white-space: pre-wrap; border-left: 2px solid var(--warn); padding: 4px 10px; margin: 6px 0; background: rgba(210,153,34,0.08); max-width: 96ch; }
+  .box { display: block; white-space: pre-wrap; border: 1px solid #30363d; border-radius: 6px; padding: 8px 10px; margin: 8px 0; min-height: 6.4em; color: #e6edf3; }
+  .caret { display: inline-block; width: 0.6em; background: var(--you); animation: blink 1s steps(1) infinite; }
+  @keyframes blink { 50% { opacity: 0; } }
+  @media (prefers-reduced-motion: reduce) { .caret { animation: none; } }
+  .k { font: inherit; background: #161b22; color: var(--term-fg); border: 1px solid #30363d; border-radius: 4px; padding: 0 6px; cursor: pointer; }
+  .k:hover { border-color: var(--run); }
+  .keys { padding: 8px 16px 12px; font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 12px; color: var(--term-dim);
+    background: var(--term-bg); border-top: 1px solid #21262d; white-space: pre-wrap; }
+  .open { margin-top: 22px; font-size: 14px; color: var(--page-muted); max-width: 80ch; }
+  .open h2 { font-size: 15px; color: var(--page-fg); margin: 0 0 6px; }
+  .open ul { margin: 0; padding-left: 18px; display: grid; gap: 4px; }
+</style>
+
+<div class="wrap">
+  <p class="eyebrow">Throwaway mock · pir-plan-command</p>
+  <h1>pir plan</h1>
+  <p class="sub">From a brief to a reviewed plan to a running build, all inside pir. Click the scenes in order, or press the highlighted keys inside the terminal. The data is made up and nothing here is wired to anything.</p>
+  <div class="chips" id="chips" role="group" aria-label="Scenes"></div>
+  <p class="caption" id="caption"></p>
+  <div class="term-window">
+    <div class="term-bar"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="term-title" id="ttitle">~/src/shop</span></div>
+    <div class="term-screen" id="screen" tabindex="0"></div>
+    <div class="keys" id="keys"></div>
+  </div>
+  <div class="open">
+    <h2>Deliberately left open by this mock</h2>
+    <ul>
+      <li>Exact wording of every line, the colours, and the key for resume.</li>
+      <li>How the conversation view looks: it is today's worker conversation, unchanged.</li>
+    </ul>
+  </div>
+</div>
+
+<script>
+const S = (cls, t) => `<span class="${cls}">${t}</span>`;
+const L = (html, cls = 'line') => `<span class="${cls}">${html}</span>`;
+const K = (label, go) => `<button class="k" data-go="${go}">${label}</button>`;
+
+const scenes = [
+  {
+    id: 'brief', chip: '1 · pir plan',
+    caption: '<b>Bare <code>pir plan</code></b> opens a box for the brief, like Claude\'s own prompt box. Shift+Enter adds a line and Enter sends. <code>pir plan "…"</code> skips this screen.',
+    title: '~/src/shop — pir plan',
+    body: () => [
+      L(S('head b', 'pir plan') + S('dim', '  new plan in shop')),
+      L(''),
+      L(S('dim', 'What do you want to build? Write it the way you would brief a colleague.')),
+      `<span class="box">Let shop owners export their orders as CSV from the orders page.
+Filters on the page should apply to the export. Big shops have
+~200k orders, so it can't block the page.<span class="caret">&nbsp;</span></span>`,
+      L(S('dim', 'A planner starts on its own branch. Your checkout stays on main.')),
+    ].join(''),
+    keys: () => `${K('↵ start planning', 'planner')}  ·  shift+↵ new line  ·  esc cancel`,
+  },
+  {
+    id: 'planner', chip: '2 · planner talks',
+    caption: 'You land in the <b>planner\'s conversation</b>, the same view you answer build workers in. Its questions and pickers work as they do today. Quitting pir loses nothing; the planner waits.',
+    title: '~/src/shop — pir',
+    body: () => [
+      L(S('head b', 'shop') + S('dim', ' · ') + S('b', 'planning') + S('dim', ' · "Let shop owners export their orders…" · pir/plan-3f9a')),
+      L(''),
+      L(S('pir', 'pir ▸ ') + S('dim', '/pir-plan Let shop owners export their orders as CSV from the orders page…')),
+      L(S('mag', '● ') + 'I read the orders page and the order query. I\'d call this plan ' + S('b', 'csv-export') + '.'),
+      L(S('you', 'you ▸ ') + 'fine'),
+      L(S('mag', '● ') + 'Filters apply to the export. What about the columns?'),
+      L(''),
+      `<span class="gate">${S('warn b', '? Which columns go in the export?')}
+  ${S('sel', '› Same columns as the table on screen (Recommended)')}
+    Every field an order has
+    Let the owner pick columns each time</span>`,
+    ].join(''),
+    keys: () => `↑↓ pick  ·  ↵ answer  ·  esc interrupt  ·  ${K('← back to the run', 'watch-plan')}  ·  ${K('skip ahead: planner finishes', 'renamed')}`,
+  },
+  {
+    id: 'watch-plan', chip: '3 · the run',
+    caption: 'A planning run\'s live view lists its <b>steps</b> where a build lists tasks: plan, review, build. → opens a step\'s conversation. Until the plan has a name, the run is labelled with your brief.',
+    title: '~/src/shop — pir',
+    body: () => [
+      L(S('head b', '"Let shop owners export…"') + S('dim', ' · planning · pir/plan-3f9a')),
+      L(''),
+      L(S('sel', '  ' + S('warn b', '●') + ' plan     planner      ' + S('warn b', 'asking you · a question') + '        12:40 ')),
+      L('  ' + S('dim', '○ review   reviewer     starts when the plan is written')),
+      L('  ' + S('dim', '○ build    —            asks your go after review')),
+      L(''),
+      L(S('warn b', '● plan — asking you; open it (→) to answer')),
+    ].join(''),
+    keys: () => `↑↓ pick a step  ·  ${K('→ open its conversation', 'planner')}  ·  ${K('← back to the list', 'list')}  ·  Ctrl+S Ctrl+S stop  ·  esc quit`,
+  },
+  {
+    id: 'renamed', chip: '4 · review starts',
+    caption: 'The planner committed <code>plans/csv-export/</code>. pir closed it, <b>renamed the branch</b> to <code>pir/csv-export</code>, and started a fresh reviewer. You did nothing.',
+    title: '~/src/shop — pir',
+    body: () => [
+      L(S('head b', 'csv-export') + S('dim', ' · reviewing · pir/csv-export')),
+      L(''),
+      L('  ' + S('ok', '✓') + ' plan     planner      ' + S('ok', 'plan written · 9 tasks') + '         31:12'),
+      L(S('sel', '  ' + S('cyan', '⠋') + ' review   reviewer     ' + S('cyan', 'reading the plan') + '                 2:05 ')),
+      L('  ' + S('dim', '○ build    —            asks your go after review')),
+      L(''),
+      L(S('dim', 'renamed pir/plan-3f9a → pir/csv-export')),
+    ].join(''),
+    keys: () => `↑↓ pick a step  ·  → open its conversation  ·  ${K('skip ahead: review done', 'go')}  ·  ${K('← back to the list', 'list')}`,
+  },
+  {
+    id: 'go', chip: '5 · your go',
+    caption: 'The reviewer marked the plan reviewed. pir <b>asks before building</b>. If you are away, the question waits in the dashboard (state: "your go").',
+    title: '~/src/shop — pir',
+    body: () => [
+      L(S('head b', 'csv-export') + S('dim', ' · reviewed · pir/csv-export')),
+      L(''),
+      L('  ' + S('ok', '✓') + ' plan     planner      ' + S('ok', 'plan written · 9 tasks') + '         31:12'),
+      L('  ' + S('ok', '✓') + ' review   reviewer     ' + S('ok', 'reviewed · 4 fixes, 2 decisions') + '  18:47'),
+      L(S('sel', '  ' + S('warn b', '●') + ' build    —            ' + S('warn b', 'waiting for your go') + '               ')),
+      L(''),
+      `<span class="gate">${S('warn b', 'csv-export is reviewed. Start the parallel build now?')}
+9 tasks, longest chain 5, up to 3 can run at once. It builds on pir/csv-export.
+
+  ${K('↵ Start the build', 'build')}     ${K('n Not now', 'notnow')}</span>`,
+    ].join(''),
+    keys: () => `↵ start  ·  n not now  ·  ← back to the list  ·  esc quit (the question keeps)`,
+  },
+  {
+    id: 'build', chip: '6 · build runs',
+    caption: '<b>Start</b> turns the run into the build you know, on the same branch, exactly as <code>pir start csv-export</code> would. It ends, as today, with <code>git merge pir/csv-export</code>, which brings plan and code to main together.',
+    title: '~/src/shop — pir',
+    body: () => [
+      L(S('head b', 'csv-export') + S('dim', ' · pir/csv-export · 0/9 done · 3 running · ceiling 4')),
+      L(''),
+      L(S('sel', '  ' + S('cyan', '⠙') + ' T00 stream-spike        ' + S('cyan', 'building') + '      0:41 ')),
+      L('  ' + S('cyan', '⠙') + ' T01 csv-writer          ' + S('cyan', 'building') + '      0:41'),
+      L('  ' + S('cyan', '⠙') + ' T02 filter-query        ' + S('cyan', 'preparing') + '     0:12'),
+      L('  ' + S('dim', '· T03 export-endpoint     needs T01, T02')),
+      L('  ' + S('dim', '· T04 export-button       needs T03')),
+      L('  ' + S('dim', '…')),
+    ].join(''),
+    keys: () => `↑↓ pick a task  ·  → open its worker  ·  ${K('← back to the list', 'list')}  ·  Ctrl+S Ctrl+S stop this run  ·  esc quit`,
+  },
+  {
+    id: 'notnow', chip: '6b · not now',
+    caption: '<b>Not now</b> ends the planning run. The reviewed plan stays on <code>pir/csv-export</code>, and <code>pir start csv-export</code> builds it later.',
+    title: '~/src/shop — pir',
+    body: () => [
+      L(S('head b', 'csv-export') + S('dim', ' · finished · pir/csv-export')),
+      L(''),
+      L('  ' + S('ok', '✓') + ' plan     planner      ' + S('ok', 'plan written · 9 tasks') + '         31:12'),
+      L('  ' + S('ok', '✓') + ' review   reviewer     ' + S('ok', 'reviewed · 4 fixes, 2 decisions') + '  18:47'),
+      L('  ' + S('dim', '○ build    —            not started')),
+      L(''),
+      L(S('dim', 'Reviewed and waiting on pir/csv-export. Build it with: ') + S('b', 'pir start csv-export')),
+    ].join(''),
+    keys: () => `${K('← back to the list', 'list')}  ·  esc quit`,
+  },
+  {
+    id: 'list', chip: '7 · dashboard',
+    caption: 'Bare <code>pir</code>. TYPE says <b>plan</b> or <b>work</b>. A plan keeps one row, and its TYPE flips from plan to work when you give the go. For a planning run, PROGRESS shows the step it is on. A stopped or crashed run gets a <b>resume</b> key that reopens the same conversation. The key shown here is a placeholder.',
+    title: '~/src — pir',
+    body: () => [
+      L(S('head b', 'pir') + S('dim', '  runs on this machine')),
+      L(''),
+      L(S('dim', '  SLUG                        TYPE  STATE      REPO        PROGRESS           WK')),
+      L(S('sel', '▎ csv-export                  ' + S('mag', 'plan') + '  ' + S('warn b', 'your go') + '    ' + S('dim', 'shop') + '        plan ✓ review ✓    · ')),
+      L('  ' + S('dim', '"Add dark mode to the…"  ') + '  ' + S('mag', 'plan') + '  ' + S('ok', 'planning') + '   ' + S('dim', 'blog') + '        plan …             1'),
+      L('  invoice-import              ' + S('run', 'work') + '  ' + S('ok', 'running') + '    ' + S('dim', 'shop') + '        ' + S('run', '██████░░░░') + ' 6/10   3'),
+      L('  ' + S('dim', 'search-rework') + '               ' + S('mag', 'plan') + '  ' + S('bad', 'crashed') + '    ' + S('dim', 'shop') + '        plan ✓ review …    ·'),
+      L(''),
+      L(S('dim', '4 runs · ') + S('ok', '2 running') + S('dim', ' · 0 finished · ') + S('bad', '1 crashed') + S('dim', ' · 1 waiting for you')),
+    ].join(''),
+    keys: () => `↑↓ move  ·  ${K('↵ open', 'go')}  ·  Ctrl+R Ctrl+R resume  ·  Ctrl+S stop  ·  Ctrl+X remove  ·  esc quit`,
+  },
+  {
+    id: 'cli', chip: '8 · the commands',
+    caption: '<code>pir {slug}</code> is gone. It fails with a pointer to <code>pir start {slug}</code>, which builds a reviewed plan from its <code>pir/{slug}</code> branch or, for a plan made by hand, from main.',
+    title: '~/src/shop — zsh',
+    body: () => [
+      L(S('you', '$ ') + 'pir csv-export'),
+      L(S('bad', 'pir: unknown command \'csv-export\'. To build a plan: pir start csv-export')),
+      L(S('dim', 'usage: pir                 the dashboard')),
+      L(S('dim', '       pir plan ["brief"]  plan something new')),
+      L(S('dim', '       pir start {slug}    build a reviewed plan')),
+      L(''),
+      L(S('you', '$ ') + 'pir start csv-export'),
+      L(S('dim', '(opens the build\'s live view, scene 6)')),
+    ].join(''),
+    keys: () => `${K('back to the start', 'brief')}`,
+  },
+];
+
+const byId = Object.fromEntries(scenes.map(s => [s.id, s]));
+const chips = document.getElementById('chips');
+scenes.forEach(s => {
+  const b = document.createElement('button');
+  b.className = 'chip'; b.textContent = s.chip; b.dataset.go = s.id;
+  chips.appendChild(b);
+});
+function show(id) {
+  const s = byId[id] || scenes[0];
+  document.getElementById('screen').innerHTML = s.body();
+  document.getElementById('keys').innerHTML = s.keys();
+  document.getElementById('caption').innerHTML = s.caption;
+  document.getElementById('ttitle').textContent = s.title;
+  chips.querySelectorAll('.chip').forEach(c => c.setAttribute('aria-pressed', c.dataset.go === id ? 'true' : 'false'));
+  try { localStorage.setItem('pir-plan-scene', id); } catch (e) {}
+}
+document.addEventListener('click', e => {
+  const t = e.target.closest('[data-go]');
+  if (t) show(t.dataset.go);
+});
+let start = 'brief';
+try { start = localStorage.getItem('pir-plan-scene') || 'brief'; } catch (e) {}
+show(start);
+</script>
