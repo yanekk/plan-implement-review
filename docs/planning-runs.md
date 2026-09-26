@@ -25,8 +25,8 @@ The pure rules — report parsing, slug and run-id rules, session names and the 
   line · esc cancel`. `shift+↵` or `ctrl+j` adds a line and `↵` sends. An empty or whitespace-only brief
   is not sent. `esc` (or `Ctrl+C`) cancels: nothing is created and `pir` exits 0 (`brief-box.mjs`).
 
-Before anything is created — before the brief box opens, for the bare form — a pre-flight
-(`planPreflight`) refuses, with one line on stderr and exit 1:
+Before anything is created — before the brief box opens, for the bare form — `pir plan` refuses, with
+one line on stderr and exit 1:
 
 1. outside a git work tree. The repo root is the **main** worktree, so `pir plan` works from any folder
    or linked worktree of the repo;
@@ -34,7 +34,10 @@ Before anything is created — before the brief box opens, for the bare form —
    would move the person's own checkout;
 3. the `plan-implement-review` checkout itself, unless `PARALLEL_ALLOW_HERE=1` — the same guard and
    variable as a live build, since a planning run cuts branches as a build does;
-4. an empty brief.
+4. an empty brief (`pir plan ""`; the brief box never sends one).
+
+The first three are `planPreflight`; the fourth is checked by `startPlanRun`, still before anything is
+created.
 
 Then `startPlanRun`:
 
