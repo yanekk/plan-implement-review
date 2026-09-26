@@ -41,7 +41,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T15 | sunset-pir-coordinate | T10 | ✅ | |
 | T16 | harness-conversations | T05, T06 | ✅ | |
 | T17 | docs | T06, T07, T08, T13, T14, T15 | ✅ | |
-| T18 | live-run | T08, T13, T14, T16, T17 | ⬜ | |
+| T18 | live-run | T08, T13, T14, T16, T17 | ✅ | |
 | T19 | conversation-view-rig | T13 | ✅ | |
 | T20 | conversation-view-feel | T19; blocks T18 | ✅ | |
 
