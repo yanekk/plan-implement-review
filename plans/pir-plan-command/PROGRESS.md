@@ -40,7 +40,7 @@ done · ⛔ blocked, needs a human.
 | T15 | planning-skills | T01 | ✅ | |
 | T16 | docs-readme | T14, T15 | ✅ | |
 | T17 | harness-plan-fixture | T07, T08, T15 | ✅ | |
-| T18 | live-plan-run | T14, T16, T17 | ⬜ | |
+| T18 | live-plan-run | T14, T16, T17 | ✅ | |
 
 **Review queue:** *(empty)*
 
