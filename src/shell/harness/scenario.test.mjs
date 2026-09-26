@@ -33,7 +33,9 @@ test('defineScenario rejects a fact that is not a { check } builder result', () 
   assert.throws(() => defineScenario({ id: 's', fixture: 'f', facts: [{ id: 'nope' }] }), /must be a \{ id, label, check \}/);
 });
 
-test('defineScenario: answerPending defaults off and normalises to a boolean (T18)', () => {
-  assert.equal(defineScenario({ id: 'a', fixture: 'f', facts: [noHelloEver()] }).answerPending, false);
-  assert.equal(defineScenario({ id: 'a', fixture: 'f', facts: [noHelloEver()], answerPending: 1 }).answerPending, true);
+test('defineScenario: answerPending defaults off and normalises to { typed } (T18)', () => {
+  const spec = (answerPending) => defineScenario({ id: 'a', fixture: 'f', facts: [noHelloEver()], answerPending }).answerPending;
+  assert.equal(spec(undefined), false);
+  assert.deepEqual(spec(true), { typed: {} });
+  assert.deepEqual(spec({ typed: { 'Q?': 'mine' } }), { typed: { 'Q?': 'mine' } });
 });

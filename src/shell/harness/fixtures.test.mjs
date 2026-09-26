@@ -81,10 +81,16 @@ const EXPECT = {
     factIds: ['adopted-and-dispatched', 'handed-off-green-branch'],
   },
   'live-workers-demo': {
-    taskCount: 2,
-    deps: { T01: [], T02: [] },
-    ceiling: 1,
-    factIds: ['request-answered:T01:questions', 'request-answered:T02:permission', 'ceiling-held:1', 'handed-off-green-branch'],
+    taskCount: 4,
+    deps: { T01: [], T02: [], T03: [], T04: [] },
+    ceiling: 2,
+    factIds: [
+      'request-answered:T01:questions',
+      'request-answered:T02:permission',
+      'request-answered:T03:questions',
+      'ceiling-held:2',
+      'handed-off-green-branch',
+    ],
   },
 };
 
@@ -233,7 +239,9 @@ test('dynamic-task: T01 is told to propose-and-wait before adding the missing ta
 
 test('live-workers-demo: T01 must ask through AskUserQuestion; T02 runs the exact command the seeded settings mark ask', () => {
   const fx = getFixture('live-workers-demo');
-  assert.equal(fx.scenario.answerPending, true);
+  assert.deepEqual(fx.scenario.answerPending, { typed: { 'What name should name.txt hold?': 'Typed by the harness' } });
+  assert.match(fx.tasks['T03-extras.md'], /multiSelect true/);
+  assert.match(fx.tasks['T04-background.md'], /run_in_background: true[\s\S]*Monitor tool/);
   assert.match(fx.tasks['T01-greeting.md'], /AskUserQuestion tool/);
   // A 90 s pause first, so the person can interrupt a busy worker.
   assert.match(fx.tasks['T01-greeting.md'], /run exactly `node -e "setTimeout\(\(\) => \{\}, 90000\)"`/);

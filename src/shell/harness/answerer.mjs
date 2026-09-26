@@ -6,8 +6,9 @@
 // to the worker and logs the reply `from:"person"`, so the whole person path below the screen is the one
 // the live run exercises; only the keys are not pressed.
 //
-// The choice is fixed and dull on purpose: a permission is allowed once, a question set gets each
-// question's first option. Anything subtler is the person's judgement and belongs to the hands-on run.
+// The choice is fixed and dull on purpose: a permission is allowed once; a question gets the text the
+// scenario says to type on its Other line (`typed`), else a pick-several question its first two options and
+// a pick-one question its first. Anything subtler is the person's judgement and belongs to the hands-on run.
 
 import { readdirSync, readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
@@ -16,16 +17,18 @@ import { workerActivity } from '../../core/stream.mjs';
 import { dropPersonInput } from '../person-inbox.mjs';
 import { parseLog, parseLogName, logSessionId } from './capture.mjs';
 
-// answerFor(request) → the inbox drop (without `to`) that answers one pending request, or null for a
-// request this stand-in cannot answer (a question with no options). Pure.
-export function answerFor(request) {
+// answerFor(request, typed) → the inbox drop (without `to`) that answers one pending request, or null for
+// a request this stand-in cannot answer (a question with no options and nothing to type). The answer to a
+// question is its labels joined ", ", as the picker sends them (§2.7). Pure.
+export function answerFor(request, typed = {}) {
   if (request?.kind === 'permission') return { kind: 'permission', requestId: request.requestId, decision: 'allow' };
   if (request?.kind === 'questions') {
     const answers = {};
     for (const q of request.questions ?? []) {
-      const label = q.options?.[0]?.label;
-      if (!label) return null;
-      answers[q.question] = label;
+      const labels = (q.options ?? []).map((o) => o.label).filter(Boolean);
+      const answer = Object.hasOwn(typed, q.question) ? typed[q.question] : labels.slice(0, q.multiSelect ? 2 : 1).join(', ');
+      if (!answer) return null;
+      answers[q.question] = answer;
     }
     if (Object.keys(answers).length === 0) return null;
     return { kind: 'answers', requestId: request.requestId, answers };
@@ -33,30 +36,31 @@ export function answerFor(request) {
   return null;
 }
 
-// pendingDrops(logs, answered) → the drops to write now, each { to, kind, requestId, … }. `logs` is
+// pendingDrops(logs, answered, typed) → the drops to write now, each { to, kind, requestId, … }. `logs` is
 // [{ file, entries }], one per conversation log; the worker's id (the `to`) is the session id its own
 // messages carry (capture logSessionId, DESIGN §2.1). A request already in `answered` is skipped, so a
 // drop the coordinator has not forwarded yet is never written twice. Pure.
-export function pendingDrops(logs, answered = new Set()) {
+export function pendingDrops(logs, answered = new Set(), typed = {}) {
   const out = [];
   for (const { entries } of logs) {
     const to = logSessionId(entries);
     if (!to) continue;
     for (const request of workerActivity(entries).pending) {
       if (answered.has(request.requestId)) continue;
-      const drop = answerFor(request);
+      const drop = answerFor(request, typed);
       if (drop) out.push({ to, ...drop });
     }
   }
   return out;
 }
 
-// createAnswerer({ controlDir, drop, log }) → { tick() → the drops written this tick }. Reads every
+// createAnswerer({ controlDir, typed, drop, log }) → { tick() → the drops written this tick }. Reads every
 // conversation log of the run, answers what is pending, and remembers what it answered. `drop` is
 // dropPersonInput with the coordinator taken as alive (the runner only ticks while it runs); injected so
 // a test sees the drops without an inbox.
 export function createAnswerer({
   controlDir,
+  typed = {},
   drop = (input) => dropPersonInput(controlDir, input, { coordinatorAlive: true }),
   log = () => {},
 } = {}) {
@@ -78,7 +82,7 @@ export function createAnswerer({
   return {
     tick() {
       const written = [];
-      for (const d of pendingDrops(readLogs(), answered)) {
+      for (const d of pendingDrops(readLogs(), answered, typed)) {
         const r = drop(d);
         if (!r?.ok) {
           log(`answerer: could not answer ${d.requestId}: ${r?.reason ?? 'unknown'}`);

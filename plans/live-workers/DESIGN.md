@@ -273,7 +273,7 @@ fight over the cursor.
 | Ctrl+C | clear the box if it holds text, else interrupt the worker, as in Claude's own screen (user 2026-09-25, re-review; it quits `pir` in the other views) |
 | ← with an empty box | back to the run live view |
 | Tab | one line per step (default) ⇄ full detail |
-| y / n / a | answer a pending permission request, only while the box is empty (§2.6) |
+| Enter / n / a | answer a pending permission request, only while the box is empty (§2.6; Enter replaced `y`, user 2026-09-26) |
 | ↑↓ space Enter | drive a pending question set, only while the box is empty (§2.7) |
 | PgUp / PgDn | scroll |
 

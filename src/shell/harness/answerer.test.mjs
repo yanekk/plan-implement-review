@@ -34,6 +34,19 @@ test('answerFor allows a permission once and picks each question\'s first option
   );
 });
 
+test('answerFor ticks a pick-several question\'s first two options and types what the scenario says', () => {
+  const request = {
+    kind: 'questions',
+    requestId: 'q',
+    questions: [
+      { question: 'Extras?', multiSelect: true, options: [{ label: 'apples' }, { label: 'pears' }, { label: 'plums' }] },
+      { question: 'Name?', options: [{ label: 'Ada' }] },
+    ],
+  };
+  assert.deepEqual(answerFor(request, { 'Name?': 'Typed' }).answers, { 'Extras?': 'apples, pears', 'Name?': 'Typed' });
+  assert.deepEqual(answerFor({ kind: 'questions', requestId: 'q', questions: [{ question: 'Free?', options: [] }] }, { 'Free?': 'x' }).answers, { 'Free?': 'x' });
+});
+
 test('answerFor gives up on a question with no options, and on anything else', () => {
   assert.equal(answerFor({ kind: 'questions', requestId: 'q', questions: [{ question: 'A?', options: [] }] }), null);
   assert.equal(answerFor({ kind: 'questions', requestId: 'q', questions: [] }), null);
