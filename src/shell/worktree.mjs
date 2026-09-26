@@ -272,3 +272,87 @@ export function createWorktree({ root = process.cwd() } = {}) {
     },
   };
 }
+
+// ---- Planning-run branch (pir-plan-command T04, DESIGN §2.2, §2.5, §2.6) ----
+//
+// A planning run works on a temporary branch pir/{runId} (runId = plan-{hex4}) in its own worktree,
+// renamed to pir/{slug} once the planner has named the plan. The renamed worktree lands exactly on the
+// build's feature worktree path, so openFeature later reuses it. Nothing here runs `checkout` in the
+// main worktree: unlike the coordinator's ensureMain, a planning run must never move the person's own
+// checkout (DESIGN §2.2 pre-flight 2). No call here creates a commit, so NOSIGN is not needed.
+
+function noMain() {
+  const e = new Error('no-main');
+  e.code = 'no-main';
+  return e;
+}
+
+// Cut pir/{runId} from local main and check it out in <main>/.claude/worktrees/pir-{runId}. Reuses
+// the branch and worktree when they already exist, as openFeature does, so a relaunch is harmless.
+export function openPlanBranch(runId, { root = process.cwd() } = {}) {
+  const branch = featureBranchOf(runId);
+  const existing = worktreeForBranch(root, branch);
+  if (existing) return { path: existing, branch };
+  if (!branchExists(root, branch)) {
+    // Checked before anything is created, so a repo without main is left exactly as it was.
+    if (!branchExists(root, 'main')) throw noMain();
+    const r = git(root, ['branch', branch, 'refs/heads/main']);
+    if (!r.ok) throw new Error(`openPlanBranch: could not create ${branch}: ${r.stderr}`);
+  }
+  const path = join(worktreesBase(root), `pir-${runId}`);
+  const add = git(root, ['worktree', 'add', path, branch]);
+  if (!add.ok) throw new Error(`openPlanBranch: worktree add failed: ${add.stderr}`);
+  return { path, branch };
+}
+
+// Why a slug cannot be taken for a new plan, or null when it is free (DESIGN §2.5): a branch
+// pir/{slug}, a plan already committed on main, or a dashboard index entry. The index lives outside
+// git, so its lookup is injected (indexHas(slug) → boolean) and this stays a git-only function.
+export function slugTaken(slug, { root = process.cwd(), indexHas = () => false } = {}) {
+  if (branchExists(root, featureBranchOf(slug))) return 'branch';
+  if (git(root, ['cat-file', '-e', `refs/heads/main:${progressPathFor(slug)}`]).ok) return 'main-plan';
+  if (indexHas(slug)) return 'index';
+  return null;
+}
+
+// Rename pir/{runId} → pir/{slug} and move its worktree pir-{runId} → pir-{slug} (DESIGN §2.6 steps
+// 1–2; the control folder and index entry are the caller's). Each sub-step is skipped when already
+// done, so a resume after a crash between them finishes the job. `done` says which sub-steps THIS
+// call performed. Every refusal is decided before either step runs, so a refusal moves nothing.
+//
+// "Ours" is judged from git alone: a pir/{slug} that exists while pir/{runId} is gone is taken as
+// our earlier rename only when it is checked out at our old or new worktree path; anything else is
+// somebody else's branch and is refused.
+export function renamePlanBranch(runId, slug, { root = process.cwd() } = {}) {
+  const from = featureBranchOf(runId);
+  const to = featureBranchOf(slug);
+  const base = worktreesBase(root);
+  const oldPath = join(base, `pir-${runId}`);
+  const newPath = join(base, `pir-${slug}`);
+  const fromExists = branchExists(root, from);
+  const toExists = branchExists(root, to);
+
+  if (fromExists && toExists) throw new Error(`renamePlanBranch: ${to} already exists`);
+  if (!fromExists && !toExists) throw new Error(`renamePlanBranch: neither ${from} nor ${to} exists`);
+
+  const branchDone = !fromExists;
+  const current = branchDone ? to : from;
+  const wt = worktreeForBranch(root, current);
+  if (wt !== oldPath && wt !== newPath) {
+    // Either the branch has no worktree, or it is checked out somewhere we never put it.
+    if (branchDone) throw new Error(`renamePlanBranch: ${to} exists and is not ours`);
+    throw new Error(`renamePlanBranch: ${from} is not checked out at ${oldPath}`);
+  }
+  const worktreeDone = wt === newPath;
+  if (!worktreeDone && existsSync(newPath)) throw new Error(`renamePlanBranch: ${newPath} already exists`);
+
+  if (!branchDone) {
+    const r = git(root, ['branch', '-m', from, to]);
+    if (!r.ok) throw new Error(`renamePlanBranch: branch rename failed: ${r.stderr}`);
+  }
+  if (!worktreeDone) {
+    const r = git(root, ['worktree', 'move', oldPath, newPath]);
+    if (!r.ok) throw new Error(`renamePlanBranch: worktree move failed: ${r.stderr}`);
+  }
+  return { path: newPath, branch: to, done: { branch: !branchDone, worktree: !worktreeDone } };
+}

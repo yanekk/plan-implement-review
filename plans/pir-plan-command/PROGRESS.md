@@ -26,7 +26,7 @@ done · ⛔ blocked, needs a human.
 | T01 | plan-flow-core | — | ⬜ | |
 | T02 | run-record-type | — | ⬜ | |
 | T03 | plan-home | — | ⬜ | |
-| T04 | plan-branch | — | ⬜ | |
+| T04 | plan-branch | — | 🔍 | openPlanBranch, slugTaken, renamePlanBranch in worktree.mjs; 11 tests. Deviations: tests in new worktree-plan.test.mjs (not worktree.test.mjs) to avoid parallel merge conflicts; `done` reports sub-steps performed by this call; "ours" means target checked out at our old or new path. No commits made, so no gpgsign. |
 | T05 | fake-claude-sessions | — | ⬜ | |
 | T06 | plan-run-planner | T01, T02, T04, T05 | ⬜ | |
 | T07 | plan-run-review | T06 | ⬜ | |
@@ -42,7 +42,7 @@ done · ⛔ blocked, needs a human.
 | T17 | harness-plan-fixture | T07, T08, T15 | ⬜ | |
 | T18 | live-plan-run | T14, T16, T17 | ⬜ | |
 
-**Review queue:** *(empty)*
+**Review queue:** T04
 
 ## Blocked on the user
 
