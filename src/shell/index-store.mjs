@@ -113,3 +113,65 @@ export function removeRecord({ repo, slug }, { dir = indexDir(), fs = DEFAULT_FS
     throw err;
   }
 }
+
+// readExisting(path, fs) → the parsed record at path. Throws an Error with code ENOENT when there is
+// no file and EUNPARSEABLE when the file is there but not a valid entry, so a caller can tell "nothing
+// to update" from "something is wrong with what is there" (coordinate.mjs maps them to its reasons).
+function readExisting(path, fs) {
+  const record = parseRecord(fs.readFileSync(path, 'utf8'));
+  if (record === null) {
+    const err = new Error(`index entry is not a valid record: ${path}`);
+    err.code = 'EUNPARSEABLE';
+    throw err;
+  }
+  return record;
+}
+
+// updateRecord({ repo, slug }, patch, { dir, fs, write }) → the record as written.
+// The one read-modify-write of an index entry (plans/pir-plan-command T02, user at plan review
+// 2026-09-26): read the entry, apply the patch, write it back atomically through writeRecord. The key
+// fields repo and slug come from the key, never the patch, so an update can only ever rewrite the file
+// it read; moving an entry is renameRecord's job. No clock here: a caller that wants an updatedAt stamp
+// puts it in the patch. A missing entry throws ENOENT and an unparseable one EUNPARSEABLE — neither is
+// conjured into a fresh entry. `write` defaults to this store's writeRecord into `dir`; coordinate.mjs
+// passes its injected store's writeRecord so its tests keep capturing the write.
+export function updateRecord(
+  { repo, slug },
+  patch = {},
+  { dir = indexDir(), fs = DEFAULT_FS, write = (record) => writeRecord(record, { dir, fs }) } = {},
+) {
+  const existing = readExisting(recordPath(repo, slug, { dir }), fs);
+  const record = { ...existing, ...patch, repo, slug };
+  write(record);
+  return record;
+}
+
+// renameRecord({ repo, from, to }, patch, { dir, fs }) → the record written under `to`.
+// Moves a planning run's entry from its temporary key to its slug (DESIGN §2.6 step 4): the new record
+// is the old one with slug = to and the patch applied — T07 passes { branch, controlDir, label: null }
+// so the dashboard and resume read the moved branch and control folder. Refuses (EEXIST) when an entry
+// under `to` already exists, leaving the source untouched, because overwriting it would silently merge
+// two runs into one row. The new file is written before the old one is removed, so a crash between
+// leaves two entries rather than none; listRecords keeps both and the planning program's resume
+// finishes the rename (§2.6, §2.14).
+export function renameRecord({ repo, from, to }, patch = {}, { dir = indexDir(), fs = DEFAULT_FS } = {}) {
+  const source = recordPath(repo, from, { dir });
+  const existing = readExisting(source, fs);
+  const target = recordPath(repo, to, { dir });
+  let taken = true;
+  try {
+    fs.readFileSync(target, 'utf8');
+  } catch (err) {
+    if (!err || err.code !== 'ENOENT') throw err;
+    taken = false;
+  }
+  if (taken) {
+    const err = new Error(`index entry already exists: ${target}`);
+    err.code = 'EEXIST';
+    throw err;
+  }
+  const record = { ...existing, ...patch, repo, slug: to };
+  writeRecord(record, { dir, fs });
+  removeRecord({ repo, slug: from }, { dir, fs });
+  return record;
+}
