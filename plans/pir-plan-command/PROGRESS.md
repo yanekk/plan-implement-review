@@ -12,9 +12,9 @@ past.
 
 **Plan reviewed:** 2026-09-26 — 8 fixed, 7 decided with the user
 
-**Status:** T01 done.
+**Status:** T01–T04 done.
 **Last updated:** 2026-09-26
-**Next `pir-work` will:** implement T02 run-record-type.
+**Next `pir-work` will:** implement T05 fake-claude-sessions.
 
 ## Tasks
 
@@ -24,9 +24,9 @@ done · ⛔ blocked, needs a human.
 | # | Task | Depends on | State | Notes |
 |---|---|---|---|---|
 | T01 | plan-flow-core | — | ✅ | Reviewed: one fix. A failed re-report after an accepted `planned` left it accepted, so idle renamed to the withdrawn slug; reproduced by script, fixed, test locks it. Probed resume crash points, session-id recording, stale reports. Recorded deviations accepted. Two T06 notes in FINDINGS. |
-| T02 | run-record-type | — | ⬜ | |
-| T03 | plan-home | — | ⬜ | |
-| T04 | plan-branch | — | ⬜ | |
+| T02 | run-record-type | — | ✅ | |
+| T03 | plan-home | — | ✅ | |
+| T04 | plan-branch | — | ✅ | |
 | T05 | fake-claude-sessions | — | ⬜ | |
 | T06 | plan-run-planner | T01, T02, T04, T05 | ⬜ | |
 | T07 | plan-run-review | T06 | ⬜ | |

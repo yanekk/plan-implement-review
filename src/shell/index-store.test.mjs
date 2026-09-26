@@ -1,10 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, readdirSync, existsSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readdirSync, readFileSync, renameSync, unlinkSync, existsSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { indexDir, recordPath, listRecords, writeRecord, removeRecord } from './index-store.mjs';
+import { indexDir, recordPath, listRecords, writeRecord, removeRecord, updateRecord, renameRecord } from './index-store.mjs';
 
 // A scratch index directory under the OS temp dir, cleaned up after each test. Nothing here writes to
 // the real ~/.pir: every call passes { dir } explicitly, and the indexDir tests pass a fake env.
@@ -17,6 +17,9 @@ function scratchDir() {
 function makeRecord(overrides = {}) {
   return {
     version: 1,
+    kind: 'work',
+    label: null,
+    go: null,
     slug: 'demo',
     repo: 'plan-implement-review',
     repoPath: '/Users/x/src/pir',
@@ -227,4 +230,109 @@ test('fs is injectable: writeRecord and listRecords go through the passed fs', (
 
   removeRecord({ repo: 'plan-implement-review', slug: 'demo' }, { dir, fs });
   assert.equal(listRecords({ dir, fs }).length, 0);
+});
+
+// --- updateRecord and renameRecord (plans/pir-plan-command T02, DESIGN §2.6 step 4, §2.8) -----------
+
+test('updateRecord patches go and keeps every other field', () => {
+  const dir = scratchDir();
+  try {
+    const record = makeRecord({ kind: 'plan', slug: 'screen-time', branch: 'pir/screen-time', finalState: 'finished' });
+    writeRecord(record, { dir });
+    const updated = updateRecord({ repo: record.repo, slug: 'screen-time' }, { go: 'declined' }, { dir });
+    assert.deepEqual(updated, { ...record, go: 'declined' });
+    assert.deepEqual(listRecords({ dir }), [{ ...record, go: 'declined' }], 'the file on disk carries the patch');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('updateRecord cannot move an entry: repo and slug come from the key', () => {
+  const dir = scratchDir();
+  try {
+    writeRecord(makeRecord(), { dir });
+    updateRecord({ repo: 'plan-implement-review', slug: 'demo' }, { slug: 'elsewhere', pid: 7 }, { dir });
+    const listed = listRecords({ dir });
+    assert.equal(listed.length, 1);
+    assert.equal(listed[0].slug, 'demo');
+    assert.equal(listed[0].pid, 7);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('updateRecord on a missing entry throws ENOENT and creates nothing; on a corrupt one EUNPARSEABLE', () => {
+  const dir = scratchDir();
+  try {
+    assert.throws(() => updateRecord({ repo: 'r', slug: 'nope' }, { go: 'declined' }, { dir }), { code: 'ENOENT' });
+    assert.deepEqual(readdirSync(dir), []);
+    writeFileSync(recordPath('r', 'bad', { dir }), '{ not json');
+    assert.throws(() => updateRecord({ repo: 'r', slug: 'bad' }, { go: 'declined' }, { dir }), { code: 'EUNPARSEABLE' });
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('renameRecord moves the entry to its slug with branch, controlDir and label from the patch', () => {
+  const dir = scratchDir();
+  try {
+    const temp = makeRecord({
+      kind: 'plan',
+      slug: 'plan-a1b2',
+      label: 'a daily screen budget w…',
+      branch: 'pir/plan-a1b2',
+      controlDir: '/Users/x/src/pir/plans/plan-a1b2/.parallel/plan',
+    });
+    writeRecord(temp, { dir });
+    const patch = { branch: 'pir/screen-time', controlDir: '/Users/x/src/pir/plans/screen-time/.parallel/plan', label: null };
+    const moved = renameRecord({ repo: temp.repo, from: 'plan-a1b2', to: 'screen-time' }, patch, { dir });
+    const expected = { ...temp, ...patch, slug: 'screen-time' };
+    assert.deepEqual(moved, expected);
+    assert.equal(moved.kind, 'plan', 'kind stays plan across the rename');
+    assert.deepEqual(listRecords({ dir }), [expected], 'only the renamed entry is left');
+    assert.ok(!existsSync(recordPath(temp.repo, 'plan-a1b2', { dir })), 'the temporary entry is gone');
+    assert.ok(existsSync(recordPath(temp.repo, 'screen-time', { dir })));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('renameRecord refuses an existing target and leaves the source in place', () => {
+  const dir = scratchDir();
+  try {
+    const temp = makeRecord({ kind: 'plan', slug: 'plan-a1b2', label: 'x', branch: 'pir/plan-a1b2' });
+    const other = makeRecord({ slug: 'screen-time', branch: 'pir/screen-time', pid: 999 });
+    writeRecord(temp, { dir });
+    writeRecord(other, { dir });
+    assert.throws(
+      () => renameRecord({ repo: temp.repo, from: 'plan-a1b2', to: 'screen-time' }, { label: null }, { dir }),
+      { code: 'EEXIST' },
+    );
+    const bySlug = Object.fromEntries(listRecords({ dir }).map((r) => [r.slug, r]));
+    assert.deepEqual(bySlug['plan-a1b2'], temp, 'the source is untouched');
+    assert.deepEqual(bySlug['screen-time'], other, 'the existing target is untouched');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('renameRecord writes the new entry before removing the old one', () => {
+  const dir = scratchDir();
+  try {
+    writeRecord(makeRecord({ kind: 'plan', slug: 'plan-a1b2', branch: 'pir/plan-a1b2' }), { dir });
+    // A fake fs over the real one that records the order of the rename-into-place and the unlink.
+    const order = [];
+    const fs = {
+      mkdirSync, writeFileSync, readdirSync, readFileSync,
+      renameSync: (a, b) => { order.push(['rename', b]); renameSync(a, b); },
+      unlinkSync: (p) => { order.push(['unlink', p]); unlinkSync(p); },
+    };
+    renameRecord({ repo: 'plan-implement-review', from: 'plan-a1b2', to: 'screen-time' }, {}, { dir, fs });
+    assert.deepEqual(order, [
+      ['rename', recordPath('plan-implement-review', 'screen-time', { dir })],
+      ['unlink', recordPath('plan-implement-review', 'plan-a1b2', { dir })],
+    ]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
