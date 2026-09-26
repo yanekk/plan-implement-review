@@ -15,9 +15,11 @@ DESIGN §5.1, §5.2 (the drill's seatbelts), §2.6 (the log lines the facts key 
 
 ## Files
 
-- `src/shell/harness/fixtures/quiet-worker.mjs` (new), registered in `fixtures.mjs`.
-- `src/shell/harness/scenario.mjs`: the scenario entry, ceiling 1, `timeoutMs` 25 min, `answerPending`
-  off, and a new `nudgeMs` field (120000 here), validated like `holdMerges`.
+- `src/shell/harness/fixtures/quiet-worker.mjs` (new), registered in `fixtures.mjs`. Its scenario is a
+  `defineScenario(...)` value in this file, as every fixture's is: `seatbelts: { ceiling: 1, timeoutMs:
+  25 min }`, `answerPending` off, `nudgeMs: 120000`.
+- `src/shell/harness/scenario.mjs`: `defineScenario` accepts and validates the new `nudgeMs` field (a
+  positive number or absent), carried through like `holdMerges`.
 - `src/shell/harness/run.mjs`: `seatbeltEnv` gains `nudgeMs` → `PARALLEL_NUDGE_MS`, the way `holdMerges`
   became `PARALLEL_HOLD_MERGES`.
 - `src/shell/harness/assertions.mjs`: the new facts.

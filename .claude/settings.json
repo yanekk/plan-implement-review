@@ -33,10 +33,10 @@
       "Bash(perl -e 'alarm 120; exec @ARGV' node:*)",
       "Bash(HOME=/tmp/pir-live-workers-home ./install.sh)",
       "Bash(node src/shell/harness/run.mjs live-workers-demo --into:*)",
-      "Bash(npm ci)"
+      "Bash(npm ci)",
+      "Bash(node src/shell/harness/run.mjs quiet-worker --into /tmp/pir-quiet-worker)"
     ],
     "ask": [
-      "Bash(node src/shell/harness/run.mjs quiet-worker --into /tmp/pir-quiet-worker)",
       "Bash(npm i @earendil-works/pi-tui@0.87.1)",
       "Bash(npm i --omit=peer --omit=optional @anthropic-ai/claude-agent-sdk@0.3.282)",
       "Bash(PARALLEL_MAX_WORKERS=1 node /Users/jan.krolikowski/src/plan-implement-review/.claude/worktrees/:*)",

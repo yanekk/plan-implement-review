@@ -18,7 +18,7 @@ Re-planned 2026-09-26 on `live-workers` (DESIGN, head note). The first version h
   reacts to the text, is what the live drill (T09) is for.
 - **Everything testable automatically comes before the live run.** Phase 1 is the pure core, the
   platform's observer against scratch git and the fake worker entries, and the display. By the end of
-  Phase 2 a whole stuck stretch (nudge, nudge, stuck, unstuck) and an unpark pass in `loop.test.mjs`.
+  Phase 2 a whole stuck stretch (nudge, nudge, stuck, unstuck) passes in `loop.test.mjs`.
 - **Small before full size.** The live drill runs one worker with a 2-minute quiet period and a
   25-minute cap on a scratch repo, never the 15-minute default on a real plan.
 - **Prose after the machine.** The worker skill (T06) follows the fixed text (T02); the docs and README
@@ -55,8 +55,8 @@ names DESIGN §2.6 fixes.
 | [T07](tasks/T07-docs.md) | docs | T04, T05, T06 |
 
 At the end of Phase 2 a real coordinator would nudge real workers, workers know what a nudge is, and
-`/docs` and `README.md` describe it. T04 is the wirer for every Phase 1 part: it builds the nudge and
-unpark steps in `runPass`, threads `PARALLEL_NUDGE_MS` and `now` through `coordinate.mjs`, copies
+`/docs` and `README.md` describe it. T04 is the wirer for every Phase 1 part: it builds the nudge step
+in `runPass`, threads `PARALLEL_NUDGE_MS` and `now` through `coordinate.mjs`, copies
 `nudges`/`stuck` into `buildRunState` (which connects T05's label to live data), and adds the send-text
 guard.
 
@@ -94,18 +94,17 @@ not by any later task; the live drill does not read them.
 | **Medium** | T01, T08, T09 |
 | **Light** | T02, T03, T05, T06, T07 |
 
-T04 is where overruns will happen: the per-task state has to survive phase changes, the unpark has to
-leave the conflict-sent park alone, and neither may disturb the existing idle-gate accounting.
+T04 is where overruns will happen: the per-task state has to survive phase changes, including the ones
+`resumeAnswered` makes, and must not disturb the existing idle-gate accounting.
 
 ## Coordination with sibling work
 
-`resume-dead-worker` also edits `src/shell/loop.mjs` around dead-worker handling, and it too was
-designed on `claude --bg` workers and is to be re-planned on `live-workers` before it is built. Do not
-run the two plans' loop tasks at the same time. This plan no longer depends on anything from it: the
+`resume-dead-worker` also edits `src/shell/loop.mjs` around dead-worker handling; it was re-planned on
+`live-workers` on 2026-09-26 and is not yet reviewed. Do not run the two plans' loop tasks at the same
+time. This plan no longer depends on anything from it: the
 old stop-and-resume fallback that would have used its `platform.revive` is gone.
 
-## Decisions still open
+## Outside this plan
 
-None block the build. Plan review should confirm with the user the one behaviour this re-plan derived
-rather than was told: a worker fixing a merge conflict pir sent it is eligible for a nudge (DESIGN
-§2.4, §7).
+T04 builds on `resumeAnswered` in `loop.mjs`, the un-park committed beside Remote Control outside any
+plan (bda34a5, 5b899df; DESIGN §2.4, plan review 2026-09-26).

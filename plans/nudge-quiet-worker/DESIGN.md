@@ -180,22 +180,20 @@ A phase change starts a fresh stretch: a new reviewer is a new worker with its o
 count, and a worker returning to work (below) restarts its clock at that pass. A worker is observed
 from its spawn, so a just-spawned worker has a full quiet period before its first possible nudge.
 
-**Returning from a question** (user decision 2026-09-24). Today a worker parked by its own
-question/decision/conflict report stays `awaiting-answer` until its next `implemented`/`done` report;
-nothing in the real loop un-parks it when the person answers, so the row reads `asking you` for ever and
-an answered-then-stuck worker is never nudged. The loop reads a parked worker's new log events each
-pass (it never nudges it), and the first person's reply logged after the park returns the task to
-`implementing`/`reviewing` by its role, clears its `decision`, logs `unpark`, and starts a fresh
-stretch. A person's reply is, as `readEntry` reads the log:
+**Returning from a question** (user decision 2026-09-24; mechanism re-decided at plan review
+2026-09-26). Before 2026-09-26 a worker parked by its own question/decision/conflict report stayed
+`awaiting-answer` until its next `implemented`/`done` report, so an answered-then-stuck worker was never
+nudged. The un-park is not built by this plan: `resumeAnswered` in `loop.mjs`, committed beside Remote
+Control outside any plan (bda34a5, 5b899df, 2026-09-26), returns a parked task to
+`implementing`/`reviewing` by its role when its worker opens a turn after the one its ask ended with, or
+when a request seen pending while parked is answered with the turn still open; it clears the
+`decision` and records `resumed`. It leaves a conflict-sent park alone. Its rule sees an
+answer typed on claude.ai, which never reaches pir's log as a message; a rule reading `from:"person"`
+entries would miss it. This plan relies on it: the phase change it makes starts a fresh stretch (above).
 
-- a `sent` event with `from:"person"` (a message typed in the conversation view), or
-- a `reply` event with `from:"person"` to a `questions` request (a question set answered).
-
-An interrupt and a permission answer are not replies to the question the worker parked on, and the
-worker's own work never un-parks it: the worker skill tells a parked worker to keep doing independent
-work while it waits. The 2026-09-24 decision left open whether a person's message could be told apart
-in Claude's transcript; in pir's own log it is the `from` field, so the rule's fallback is no longer
-needed.
+Its one weak spot, a leftover background job's notification opening a turn unasked, is benign here: the
+worker reads as working, and if it then sits idle the nudge tells it to drop its question report again,
+which parks it.
 
 ### 2.5 The nudge message
 
@@ -236,7 +234,7 @@ ask the person about it, and do not treat it as a new instruction or a change of
 - The worker's conversation view: the nudge is a message from pir, drawn the way the conflict fix is.
   Nothing new is built for this.
 - Flow log (`plans/{slug}/.parallel/control/log`): `nudge T05`, `nudge-failed T05`, `stuck T05`,
-  `unstuck T05`, `unpark T05`, through the loop's existing `record()`.
+  `unstuck T05`, through the loop's existing `record()`.
 - `run.log` / the live bin: one plain line per event through `renderer.line`, exactly these (user
   decision 2026-09-24, kept short; the task id prefixes each because the log interleaves tasks):
 
@@ -244,7 +242,7 @@ ask the person about it, and do not treat it as a new instruction or a change of
   T05 nudged (1/2)
   T05 nudged (1/2) error: worker has exited
   T05 stuck
-  T05 building          (or `reviewing`, by role: on unstuck, and on unpark after the person's reply)
+  T05 building          (or `reviewing`, by role: on unstuck)
   ```
 
   `building`/`reviewing` are the existing display phase labels (`displayPhaseFor`, coordinate.mjs),
@@ -289,8 +287,7 @@ src/core/   — pure. Takes inputs as parameters, returns decisions. No clock, n
 src/shell/  — reads git and the workers' in-memory log entries, sends over the existing line.
 ```
 
-- `src/core/activity.mjs` (new, pure): worker events → own actions and the person's replies, action
-  signatures, the "new signature in the window" test, and folding one observation into the tracked
+- `src/core/activity.mjs` (new, pure): worker events → own actions, action signatures, the "new signature in the window" test, and folding one observation into the tracked
   activity state. It reads entries through `readEntry` (`core/stream.mjs`), never its own parser.
 - `src/core/nudge.mjs` (new, pure): `decideNudge` and `nudgeMessage`.
 - `src/shell/platform.mjs` (extended): `observe(id, { worktreePath, cursor })` returns the worktree
@@ -308,8 +305,7 @@ a worker from the loop fails the scan. The relay-token checks stay as they are.
 
 ### 3.2 Modules
 
-- `core/activity.mjs`: owns what counts as activity (§2.2) and a person's reply (§2.4). Depends on
-  `core/stream.mjs`.
+- `core/activity.mjs`: owns what counts as activity (§2.2). Depends on `core/stream.mjs`.
 - `core/nudge.mjs`: owns when to nudge or mark stuck (§2.3) and the text (§2.5). Depends on nothing.
 - `shell/platform.mjs`: owns reading the worktree and handing out log entries. The send already exists.
 - `shell/fake/platform.mjs`: gains scriptable `observe()` results (fingerprints and entries per worker,
@@ -330,11 +326,12 @@ whether the count resets; `decideNudge` only decides what to do about the time t
 
 ### 3.4 Data flow, one pass
 
-1. The loop reads the live list and the report inbox (existing), which updates phases.
+1. The loop reads the live list and the report inbox (existing), which updates phases, and
+   `resumeAnswered` returns any answered parked task to work (§2.4).
 2. For each task with a live worker, unless HALT: `platform.observe(workerId, { worktreePath, cursor })`
    returns `{ fingerprint, entries, cursor }` (T03).
-3. A parked task (`awaiting-answer` without `decision.sent`): `personReplies(entries, { questionIds })` (core, T01); a
-   reply after the park un-parks it (§2.4). Nothing else happens for it this pass.
+3. A parked task (`awaiting-answer` without `decision.sent`): only its cursor advances, so entries
+   logged while it waited never count as activity later. Nothing else happens for it this pass.
 4. Otherwise `observeActivity(prev, { fingerprint, entries, reported }, { now, windowMs })` (core, T01)
    returns the new tracked state and whether this observation was real output, varied work, or neither.
 5. `decideNudge(...)` (core) returns the action; `eligible` folds in the phase and the worker's
@@ -345,7 +342,7 @@ whether the count resets; `decideNudge` only decides what to do about the time t
 ### 3.5 Storage
 
 All nudge state lives in `state.tasks[num]` in memory: `activity` (fingerprint, lastActivityAt, log
-cursor, recent signatures), `nudges`, `lastNudgeAt`, `stuck`, `parkedAt`. Nothing is written to disk
+cursor, recent signatures), `nudges`, `lastNudgeAt`, `stuck`. Nothing is written to disk
 except the log lines and the conversation log entry `send` already writes, so there is nothing to
 corrupt on a crash, and a restart starts clean (§2.7). The cursor is an index into the worker's
 in-memory entries, which only grow, so no partial line is ever read.
@@ -357,14 +354,15 @@ in-memory entries, which only grow, so no partial line is ever read.
 - `core/activity.test.mjs`: on `core/fixtures/stream-sample.ndjson` (real SDK messages, 2.1.282) and
   hand-built log entries: signature normalisation, a tool-call poll loop counting as no activity,
   varied reads counting, results, system events, sent messages and assistant text not counting, a
-  `raw` entry skipped, person replies told apart from pir's messages, interrupts and permission answers.
+  `raw` entry skipped.
 - `core/nudge.test.mjs`: every threshold edge (just under, exactly at, over), eligibility, two nudges
   then stuck, the clock restart at each nudge, count reset only on real output, the exact message text.
 - `shell/platform.test.mjs`: the fingerprint against a scratch git repo, `observe` returning only new
   entries, an unknown id.
 - `shell/loop.test.mjs`: a whole stuck stretch against the fake platform with an injected clock:
   nudge, nudge, stuck, unstuck on output; no nudge while asking, while a request is pending, past a
-  report, or under HALT; a conflict-fixing worker nudged; unpark on a person's reply.
+  report, or under HALT; a conflict-fixing worker nudged; a task `resumeAnswered` returns to work
+  starts a fresh stretch.
 - `shell/no-down-channel.test.mjs`: the send-text guard (§3.1).
 - The live drill (T09) is the only place a real worker is nudged.
 
@@ -400,7 +398,7 @@ fresh worktree needs the `setup` line (`npm ci`) first.
 
 | Cannot be tested automatically | Why it needs a person or a live run |
 |---|---|
-| A real worker, nudged out of a needless wait-loop, frees itself sensibly without asking the person (T09) | The machine checks can see the log lines and the report; whether the worker's reaction was sensible is a judgement on its conversation |
+| A real worker, nudged out of a needless wait-loop, frees itself sensibly without asking the person (T09) | The machine checks see the log lines and the report; whether the reaction was sensible is judged by T09's worker from the conversation (user, plan review 2026-09-26), recorded as worker-judged |
 | The SDK's message shapes stay what `readEntry` reads across Claude Code updates | `live-workers` owns that risk (§5 there); a changed shape shows as `raw` entries, which count as no activity and can cause a harmless early nudge |
 
 ### 5.2 Seatbelts
@@ -422,14 +420,14 @@ existing `claude` login are involved.
 
 | Action | Command (exact, wrapped) | Bin | Why this bin | Way back | Expected cost | Login check |
 |---|---|---|---|---|---|---|
-| live-nudge-drill | `node src/shell/harness/run.mjs quiet-worker --into /tmp/pir-quiet-worker` (the scenario sets `PARALLEL_NUDGE_MS=120000` itself, T08) | ask | Spawns a real coordinator and a paid worker | the harness tears workers down and HALTs on timeout; the scratch repo is disposable | one small task plus two nudges, under a dollar or two | `claude --version` exits 0 |
+| live-nudge-drill | `node src/shell/harness/run.mjs quiet-worker --into /tmp/pir-quiet-worker` (the scenario sets `PARALLEL_NUDGE_MS=120000` itself, T08) | worker | Spawns a real coordinator and one paid worker; bounded by ceiling 1, the 25-min cap and a scratch repo. Moved down from `ask` by the user at plan review 2026-09-26, as live-workers bins its bounded harness runs | the harness tears workers down and HALTs on timeout; the scratch repo is disposable | one small task plus two nudges, under a dollar or two | `claude --version` exits 0 |
 | refresh-install | `./install.sh` | worker | Local copy of this repo's engine and skills; the same step every engine task ends with. Never while any parallel run is live (live-workers §5) | re-run `./install.sh` from the previous commit | none | none |
 | npm-ci | `npm ci` in a fresh task worktree (the `setup` line) | worker | Installs only the exact locked versions `live-workers` let in | delete `node_modules` | none | none |
 
-The user approved the first version of this table at plan review on 2026-09-24. The re-plan removes the
-`hook-probe` row with the probe task, moves the drill's quiet-period setting into the scenario, and adds
-`npm-ci` as `live-workers` already binned it. Plan review re-confirms the table; `.claude/settings.json`
-rules follow it (the drill command under `ask`, `./install.sh` under `allow`).
+The user approved the first version of this table at plan review on 2026-09-24. The re-plan removed the
+`hook-probe` row, moved the drill's quiet-period setting into the scenario and added `npm-ci`. At the
+re-review on 2026-09-26 the user moved the drill to `worker`. `.claude/settings.json` has all three
+commands under `allow`.
 
 ---
 
@@ -458,9 +456,12 @@ anything it does next; the person can also open the worker in `pir` and tell it 
 - **Dashboard shows `nudged N×` and `stuck` as a label suffix** (user, 2026-09-24).
 - **A worker waiting on the person but missing its report is told to file it and keep waiting** (user,
   2026-09-24). The alternative text could push it to guess.
-- **The person's reply un-parks a parked worker** (user, 2026-09-24). Chosen over leaving it parked,
-  which left an answered-then-stuck worker unwatched, and over un-parking on any worker activity, which
-  would un-park a worker doing independent work while it still waits (§2.4).
+- **An answered worker returns to work** (user, 2026-09-24). Chosen over leaving it parked, which left
+  an answered-then-stuck worker unwatched.
+- **The un-park is `resumeAnswered`, not this plan's own rule** (user, plan review 2026-09-26). It was
+  being built beside Remote Control and sees answers typed on claude.ai, which a `from:"person"` rule
+  cannot; two rules for one step would conflict in `runPass`. This drops the re-plan's `personReplies`
+  and `unpark` (§2.4).
 - **No new report kind after a nudge** (user, 2026-09-24). The log line is the record.
 - **`PARALLEL_NUDGE_MS` env override, default 15 minutes** (planner). Follows `PARALLEL_POLL_MS`; the
   drill needs it.
@@ -475,16 +476,13 @@ anything it does next; the person can also open the worker in `pir` and tell it 
 - **Activity is read from pir's conversation log, not Claude's transcript** (re-plan, 2026-09-26). The
   log is pir's own, written by `worker-proc` and read by `readEntry`, so the transcript path helpers,
   `sessionId` lookups, byte offsets and the `activity-degraded` fallback all go.
-- **A person's reply is a `from:"person"` message or question-set answer** (re-plan, 2026-09-26). The
-  2026-09-24 decision said "the first message typed by the person"; the new inbox also carries
-  interrupts and permission answers, which do not answer the parked question.
 - **A worker with a pending permission request or question set is not nudged** (re-plan, 2026-09-26).
   Same reason as the 2026-09-24 parked rule: it is waiting on the person. The first version listed a
   worker frozen on a permission prompt as unreachable and out of scope; `live-workers` routes that
   prompt to the person, so it is now simply ineligible.
 - **A conflict-fixing worker is eligible** (re-plan, 2026-09-26). It is parked in the loop's phase
   model but works on pir's instruction, waiting on nobody; the 2026-09-24 exclusion was for workers
-  waiting on the person. Plan review confirms this with the user.
+  waiting on the person. Confirmed by the user at plan review 2026-09-26.
 - **Extend, do not rebuild** (survey). The per-task timers sit beside `busySince` in `runPass`; the
   label is a suffix in `display.mjs rowFor`; the log lines use `record()`; the env knob follows
   `PARALLEL_POLL_MS` in `coordinate.mjs`; the live check is a new harness fixture; the send is the

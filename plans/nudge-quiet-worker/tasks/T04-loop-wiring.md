@@ -2,10 +2,13 @@
 
 **Phase:** 2 · **Depends on:** T01, T02, T03 · **Weight:** heavy
 
+Builds on `resumeAnswered` in `loop.mjs` (bda34a5, 5b899df), the un-park this plan does not build
+(DESIGN §2.4, plan review 2026-09-26). Read it before wiring the step after it.
+
 ## Goal
 
-Wire observation, decision and sending into the coordinator so a real run nudges quiet workers and
-un-parks a worker the person has answered. Each pass, for each task with a live worker, the loop
+Wire observation, decision and sending into the coordinator so a real run nudges quiet workers. Each
+pass, for each task with a live worker, the loop
 observes it (T03), folds the observation (T01), asks `decideNudge` (T02), sends `nudgeMessage` over
 `platform.send` and records the outcome. `coordinate.mjs` reads `PARALLEL_NUDGE_MS`, injects the clock,
 prints the run.log line, and carries the nudge fields into the run state the dashboard reads. The
@@ -18,12 +21,12 @@ DESIGN §2.1, §2.3, §2.4, §2.6 (log lines and run.log), §2.7, §3.1 (the gua
 
 ## Files
 
-- `src/shell/loop.mjs`: an observe/unpark/nudge step in `runPass`, after `applyMessages` and the live
-  listing, skipped entirely when halted. `runPass` gains `nudgeMs` (default `DEFAULT_NUDGE_MS`).
+- `src/shell/loop.mjs`: an observe/nudge step in `runPass`, after `applyMessages` and
+  `resumeAnswered`, skipped entirely when halted. `runPass` gains `nudgeMs` (default `DEFAULT_NUDGE_MS`).
 - `src/shell/loop.test.mjs`: tests below, against the fake platform with an injected clock.
 - `src/shell/coordinate.mjs`: read `PARALLEL_NUDGE_MS` beside `PARALLEL_POLL_MS`; pass it and `now` into
   `passOpts` (today `startCoordinator` passes no `now`, so `runPass` uses its `Date.now` default);
-  `renderer.line` per nudge / nudge-failed / stuck / unstuck / unpark action, worded exactly as DESIGN
+  `renderer.line` per nudge / nudge-failed / stuck / unstuck action, worded exactly as DESIGN
   §2.6; `buildRunState` copies `nudges` and `stuck` from `stateTasks` onto each run-state task.
 - `src/shell/coordinate.test.mjs`: the env read, the `now` pass-through and the `buildRunState` fields.
 - `src/shell/no-down-channel.test.mjs`: the send-text check (DESIGN §3.1).
@@ -32,22 +35,18 @@ DESIGN §2.1, §2.3, §2.4, §2.6 (log lines and run.log), §2.7, §3.1 (the gua
 
 ```
 state.tasks[num] gains:
-  activity: { fingerprint, lastActivityAt, recent, cursor, questionIds } | undefined
-  nudges: number, lastNudgeAt: number|null, stuck: boolean, parkedAt: number|undefined
+  activity: { fingerprint, lastActivityAt, recent, cursor } | undefined
+  nudges: number, lastNudgeAt: number|null, stuck: boolean
 
 per pass, unless halted, per task t with a live worker w (from platform.list()):
   obs = platform.observe(w.id, { worktreePath: t.worktree.path, cursor: t.activity?.cursor ?? 0 })
   parked = t.phase === AWAITING && !t.decision?.sent
   parked:
-    t.parkedAt ??= now
-    { replies } = personReplies(obs.entries, { questionIds })
-    a reply with at >= t.parkedAt → t.phase = t.role === 'review' ? REVIEWING : IMPLEMENTING,
-      t.decision = undefined, t.parkedAt = undefined, fresh stretch (activity from this pass,
-      nudges 0, stuck false), record('unpark', { task })
-    advance the cursor; nothing else this pass
+    advance the cursor to obs.cursor; nothing else this pass (resumeAnswered owns the un-park)
   eligible = (t.phase === IMPLEMENTING || t.phase === REVIEWING || (t.phase === AWAITING && t.decision?.sent))
              && w.state !== 'permission' && w.state !== 'questions'
-  a phase change or a new worker id since last pass → fresh activity, nudges 0
+  a phase change (resumeAnswered's included) or a new worker id since last pass → fresh activity from
+    this pass with the cursor at obs.cursor, nudges 0, stuck false
   w.state was permission/questions last pass and is not now → lastActivityAt = now (clock restart, count kept)
   { state, output, varied } = observeActivity(t.activity, { fingerprint, entries, reported }, { now, windowMs: nudgeMs })
   output → if (t.nudges > 0 || t.stuck) record('unstuck'); t.nudges = 0; t.stuck = false
@@ -57,11 +56,12 @@ per pass, unless halted, per task t with a live worker w (from platform.list()):
   stuck → t.stuck = true; record('stuck', { task })
 ```
 
+`now` in the sketch is one reading of `runPass`'s existing `now` clock function, taken once per pass.
 `reported` is true when this pass's `applyMessages` moved the task on a report. `platform.send` and
 `observe` are synchronous, so `runPass` stays synchronous. The count and `lastNudgeAt` move on the pass
 the nudge is made.
 
-`nudge`, `nudge-failed`, `stuck`, `unstuck` and `unpark` must not be added to the productive-action
+`nudge`, `nudge-failed`, `stuck` and `unstuck` must not be added to the productive-action
 lists (`['spawn','review','merge','close']` in coordinate.mjs and loop.mjs `drain`). A nudge is not
 progress and must not hide a stall.
 
@@ -80,13 +80,10 @@ Its self-test proves `platform.send(id, 'free text', …)` fails and both allowe
 - [ ] A worker whose `list()` state is `permission` or `questions` is never nudged, however long; once
       answered, its next nudge is a full quiet period later, and its count is what it was.
 - [ ] A worker that drops a `question` report is never nudged while parked, however long it waits.
-- [ ] A person's message after the park un-parks it: phase back by role, `decision` cleared, the display
-      phase no longer `asking`, `unpark` logged, and its quiet clock starts from that pass.
-- [ ] A person's answer to a question set un-parks it the same way.
-- [ ] pir's own message, a person's interrupt, a person's permission answer, and the worker's own
-      actions while parked do not un-park it.
-- [ ] A conflict-sent worker (`decision.sent`) is not un-parked by anything here, and is nudged on
-      schedule like a building worker.
+- [ ] A task `resumeAnswered` returns to `implementing` starts a fresh stretch: nudges 0, its quiet
+      clock from that pass, and entries logged while it was parked do not count as activity.
+- [ ] A conflict-sent worker (`decision.sent`), which `resumeAnswered` leaves parked, is nudged on
+      schedule like a building worker (user, plan review 2026-09-26).
 - [ ] `review-ready` and `done` workers are never nudged.
 - [ ] HALT present: no `platform.observe` and no nudge send at all.
 - [ ] A new reviewer on the same worktree starts a fresh stretch.
@@ -100,7 +97,7 @@ Its self-test proves `platform.send(id, 'free text', …)` fails and both allowe
 ## Done when
 
 - [ ] A fake-platform run in `loop.test.mjs` goes nudge, nudge, stuck, unstuck with an injected clock,
-      and a parked worker un-parks on a person's reply.
+      and a resumed task starts a fresh stretch.
 - [ ] The `no-down-channel` guard passes with the real nudge call in place.
 - [ ] `npm test` is green and `./install.sh` has refreshed the installed engine (grep `decideNudge` in
       `~/.claude/pir-engine/src/shell/loop.mjs`), with no parallel run live.

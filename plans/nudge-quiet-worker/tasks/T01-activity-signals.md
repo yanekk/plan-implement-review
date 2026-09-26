@@ -6,13 +6,13 @@
 
 The pure rule for "is this worker making progress": pick a worker's own actions out of its
 conversation-log entries, give each action a signature, tell varied work from a repeated wait-loop,
-recognise a person's reply to a parked worker, and fold one observation (worktree fingerprint plus new
+and fold one observation (worktree fingerprint plus new
 log entries) into the tracked activity state. This is the loop detector the person asked for; it lives
 in `src/core/` so what counts as "the same action" is one tested rule.
 
 ## Design sections this implements
 
-DESIGN §2.2, §2.4 (observation starts at spawn; the person's reply un-parks), §2.7 (`raw` entries, git
+DESIGN §2.2, §2.4 (observation starts at spawn), §2.7 (`raw` entries, git
 failure), §3.5.
 
 ## Files
@@ -35,12 +35,6 @@ ownActions(entries) → [{ at: number, sig: string }]
 
 // tool name + input with digit runs → '#', whitespace collapsed, Bash `description` dropped.
 actionSignature({ name, input }) → string
-
-// entries → the person's replies, oldest first (DESIGN §2.4): a `sent` event from:'person', or a
-// `reply` event from:'person' whose requestId is a question-set request. `questionIds` carries the
-// ids of `questions` requests seen on earlier passes, since a request and its reply may arrive in
-// different slices. Returns the ids seen in this slice so the caller can carry them forward.
-personReplies(entries, { questionIds }) → { replies: [{ at: number }], questionIds: Set<string> }
 
 // Fold one observation into the tracked state.
 // prev: null on the first observation of a task (then lastActivityAt = now, nothing is "output").
@@ -72,14 +66,11 @@ and the loop already knows it from the report inbox.
 - [ ] First observation: `lastActivityAt = now`, `output` false.
 - [ ] Fingerprint change → `output` true and `lastActivityAt = now`; `reported` alone → `output` true.
 - [ ] Fingerprint null → previous fingerprint kept, `output` false.
-- [ ] `personReplies`: a person's message counts; pir's message (opening, conflict, nudge) does not; a
-      person's answer to a question set counts, also when the request was in an earlier slice; a
-      person's permission answer and a person's interrupt do not.
 - [ ] `recent` is pruned to the window, so memory does not grow over a long run.
 
 ## Done when
 
 - [ ] Every interface function exists with the shape above and every listed test passes in `npm test`.
 - [ ] `boundary.test.mjs` is green with `activity.mjs` in `src/core/`.
-- [ ] The fixture-driven test uses the real `stream-sample.ndjson`, not a hand-written imitation; the
-      person-reply cases may use hand-built `out` entries in the shape `worker-proc` writes.
+- [ ] The fixture-driven test uses the real `stream-sample.ndjson`, not a hand-written imitation;
+      cases the fixture lacks may use hand-built entries in the shape `worker-proc` writes.
