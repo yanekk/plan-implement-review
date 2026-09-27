@@ -12,9 +12,9 @@ past.
 
 **Plan reviewed:** 2026-09-27 — 4 fixed, 5 decided with the user
 
-**Status:** Planned 2026-09-26. T01 done.
+**Status:** Planned 2026-09-26. T01, T02 done.
 **Last updated:** 2026-09-27
-**Next `pir-work` will:** T02 plan-box-rules: it heads the critical path.
+**Next `pir-work` will:** T03 repo-scan or T04 list-view-box; both wait only on T02.
 
 ## Tasks
 
@@ -24,7 +24,7 @@ done · ⛔ blocked, needs a human.
 | # | Task | Depends on | State | Notes |
 |---|---|---|---|---|
 | T01 | drop-canonical-guard | — | ✅ | Review clean, no fix commit. Guard gone from coordinator, `planPreflight`, `pir plan`; `npm test` green. Probed: `git grep PARALLEL_ALLOW_HERE` leaves only drops, tests and comments; harness `run.mjs` run from a dir named plan-implement-review still refuses without `--into`, even with the old variable set. Deviation `liveRunRefused` extraction accepted. |
-| T02 | plan-box-rules | — | ⬜ | |
+| T02 | plan-box-rules | — | ✅ | |
 | T03 | repo-scan | T02 | ⬜ | |
 | T04 | list-view-box | T02 | ⬜ | |
 | T05 | box-starts-plan | T03, T04 | ⬜ | |
