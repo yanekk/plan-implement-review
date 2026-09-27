@@ -12,10 +12,9 @@ cell also fixes the over-budget cell they walk past.
 
 **Plan reviewed:** 2026-09-27 — 3 fixed, 2 decided with the user
 
-**Status:** Planned 2026-09-27 on main. Nothing built. Needs `pir/real-asking-state` merged to `main`
-first (DESIGN, Base); a trial merge conflicts in `coordinate.mjs` and `harness/run.mjs` (FINDINGS).
+**Status:** All six tasks ✅ 2026-09-27.
 **Last updated:** 2026-09-27
-**Next `pir-work` will:** review T05.
+**Next `pir-work` will:** nothing; all tasks ✅, plan complete.
 
 ## Tasks
 
@@ -28,10 +27,10 @@ done · ⛔ blocked, needs a human.
 | T02 | stopped-predicate | — | ✅ | |
 | T03 | planning-steps-asking | T02 | ✅ | |
 | T04 | worker-reports-every-ask | — | ✅ | |
-| T05 | docs | T03, T04, T06 | 🔍 | human-flow.md: stopped clause, background exception, mistaken stops, interrupt, planning pointer. planning-runs.md: step asking rule. README: one sentence. No automated tests; npm test green. Deviation: task-state.md untouched, it never states when a task reads asking. |
+| T05 | docs | T03, T04, T06 | ✅ | Review: one fix, README said any stopped worker reads asking; now only before its task is done (waitingOn holds in implementing/reviewing only). Every doc claim checked against asking.mjs, plan-run.mjs sessionAsking, stream.mjs interrupt and background fold, remoteWanted, pir-worker skill. task-state.md deviation accepted. npm test green. |
 | T06 | stopped-asking-live | T01, T02 | ✅ | |
 
-**Review queue:** T05
+**Review queue:** *(empty)*
 
 ## Blocked on the user
 
