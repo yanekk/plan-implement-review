@@ -23,7 +23,7 @@ done · ⛔ blocked, needs a human.
 
 | # | Task | Depends on | State | Notes |
 |---|---|---|---|---|
-| T00 | coordinator-probe | — | ⬜ | |
+| T00 | coordinator-probe | — | ✅ | |
 | T01 | coordinator-rulebook | T00 | ⬜ | |
 | T02 | coordinator-skill | — | ✅ | |
 | T03 | coordinator-session | T01 | ⬜ | |
