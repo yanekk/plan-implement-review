@@ -34,9 +34,9 @@ done · ⛔ blocked, needs a human.
 | T08 | docs | T02, T04, T05, T06 | ✅ | |
 | T09 | live-coordinator-check | T07, T08 | ⬜ | |
 | T10 | end-tests-fix | T05; blocks T09 | ✅ | |
-| T11 | end-helper-row | T06, T10; blocks T09 | 🔍 | `runState.helpers` rows below tasks (label `working`/`finishing`), not in n/m; ↑↓ → open it. 9 unit tests, end-helper drill at both sizes. Deviations: `./install.sh` not run from the task branch (FINDINGS T04/T05 rule); helpers count in the asking tally; advanceTiming drops phase clocks of gone workers. |
+| T11 | end-helper-row | T06, T10; blocks T09 | ✅ | Review clean, no fix commit. `runState.helpers` rows below tasks, not in n/m, ↑↓ → opens them; end-helper drill green at both sizes. Probed 80-column fit with the wider id column, advanceTiming clock drop on dead-worker respawn, taskSel re-pin; mutation on openTasks turns its test red. `./install.sh` still to run on the feature branch. |
 
-**Review queue:** T11
+**Review queue:** *(empty)*
 
 ## Blocked on the user
 
