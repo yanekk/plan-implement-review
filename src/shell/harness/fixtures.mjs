@@ -4,7 +4,8 @@
 // down as a self-contained scratch repo and seed its git state. The set covers the coordinator paths:
 // a single task, a concurrent pair, a review queue, a clean merge, a merge conflict, a worker that parks
 // on the person, a crash-and-restart, a stop-and-restart mid-review and mid-implement, and a worker
-// introducing a task the coordinator adopts and dispatches. The old `hands-on` and `blog-app` fixtures
+// introducing a task the coordinator adopts and dispatches, and the real asking state (a report dropped
+// mid-work, a wake-up while parked). The old `hands-on` and `blog-app` fixtures
 // exercised the `you`/hands-on model, which was removed with the down-channel (DESIGN §2.5, T05); they
 // went with it.
 //
@@ -53,6 +54,7 @@ import restartImplement from './fixtures/restart-implement.mjs';
 import dynamicTask from './fixtures/dynamic-task.mjs';
 import liveWorkersDemo from './fixtures/live-workers-demo.mjs';
 import planCommand from './fixtures/plan-command.mjs';
+import realAsking from './fixtures/real-asking.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -84,6 +86,7 @@ const FIXTURES = Object.freeze({
   [dynamicTask.id]: dynamicTask,
   [liveWorkersDemo.id]: liveWorkersDemo,
   [planCommand.id]: planCommand,
+  [realAsking.id]: realAsking,
 });
 
 // listFixtures() → the fixture ids, in registry order.

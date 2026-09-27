@@ -43,7 +43,9 @@ const KINDS = Object.freeze(['build', 'plan']);
 // `answerPending` (live-workers T18), has the runner stand in for the person and answer every pending
 // permission request and question set through the inbox (answerer.mjs), so a fixture that forces them can
 // still run to a hand-off unattended. A fourth, `holdMerges`, launches the coordinator with
-// PARALLEL_HOLD_MERGES=1 (dispatch.mjs) so a same-line clash is hit at the coordinator's own merge.
+// PARALLEL_HOLD_MERGES=1 (dispatch.mjs) so a same-line clash is hit at the coordinator's own merge. A
+// fifth, `statusSnapshots` (real-asking-state T05), launches it as `pir` does (PIR_RUN=1, a scratch
+// PIR_HOME) so it writes control/status.json every pass and the capture can keep the row history.
 export function defineScenario(spec = {}) {
   const {
     id,
@@ -55,6 +57,7 @@ export function defineScenario(spec = {}) {
     expectedTerminal = 'completed',
     answerPending = false,
     holdMerges = false,
+    statusSnapshots = false,
     kind = 'build',
     reply = null,
     replyCap = null,
@@ -97,6 +100,9 @@ export function defineScenario(spec = {}) {
     kind,
     reply: kind === 'plan' ? reply : null,
     replyCap: kind === 'plan' ? replyCap : null,
-    answerPending: answerPending ? { typed: { ...(answerPending.typed ?? {}) }, say: { ...(answerPending.say ?? {}) } } : false,
+    answerPending: answerPending
+      ? { typed: { ...(answerPending.typed ?? {}) }, say: { ...(answerPending.say ?? {}) }, afterWake: { ...(answerPending.afterWake ?? {}) } }
+      : false,
+    statusSnapshots: !!statusSnapshots,
   };
 }

@@ -28,6 +28,7 @@ import { join, basename } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { workerActivity } from '../../core/stream.mjs';
 import { readWorkersFile } from '../reap.mjs';
+import { snapshotPath } from '../snapshot-store.mjs';
 import { isAlive as isAliveReal, startTimeOf as startTimeOfReal } from '../identity.mjs';
 
 // --- Conversation logs (live-workers DESIGN §2.3) ------------------------------------------------
@@ -88,6 +89,7 @@ export function bundleDirFor(parallelDir, now = new Date()) {
 const BUNDLE_FILES = {
   flow: 'flow.log',
   timeline: 'timeline.jsonl',
+  statuses: 'status.jsonl',
   workers: 'workers.json',
   run: 'run.json',
   manifest: 'manifest.json',
@@ -135,6 +137,7 @@ export function createCapture({
 } = {}) {
   if (!dir) throw new Error('createCapture: no bundle dir');
   const timelinePath = join(dir, BUNDLE_FILES.timeline);
+  const statusesPath = join(dir, BUNDLE_FILES.statuses);
   const conversationsDir = controlDir ? join(controlDir, 'conversations') : null;
   mkdirSync(dir, { recursive: true });
 
@@ -221,7 +224,22 @@ export function createCapture({
     } catch {
       /* capture must never break the run it observes */
     }
+    snapshotStatus(ts);
     return entry;
+  }
+
+  // snapshotStatus(ts) — copy control/status.json, as it stands this tick, into the bundle's status.jsonl
+  // with the tick's time (real-asking-state T05). The coordinator rewrites that file every pass and keeps
+  // no history, so the rows a person saw (`building`, `asking you`) survive the run only if they are read
+  // while it goes. A run that writes none (no PIR_RUN), or a file caught unreadable, records nothing.
+  function snapshotStatus(ts) {
+    if (!controlDir) return;
+    try {
+      const status = JSON.parse(readFileSync(snapshotPath(controlDir), 'utf8'));
+      appendFileSync(statusesPath, `${JSON.stringify({ ts, status })}\n`);
+    } catch {
+      /* absent or mid-write: nothing to record this tick */
+    }
   }
 
   function start() {
@@ -365,6 +383,19 @@ export function loadBundle(dir) {
     })
     .filter(Boolean);
 
+  // The status snapshots, one per tick that found a status.json: [{ ts, status }] (T05).
+  const statuses = readTextOr(join(dir, BUNDLE_FILES.statuses))
+    .split('\n')
+    .filter((l) => l.trim() !== '')
+    .map((l) => {
+      try {
+        return JSON.parse(l);
+      } catch {
+        return null;
+      }
+    })
+    .filter(Boolean);
+
   const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
   const workers = readJsonOr(join(dir, BUNDLE_FILES.workers), [], Array.isArray);
   const run = readJsonOr(join(dir, BUNDLE_FILES.run), {}, isObj);
@@ -374,5 +405,5 @@ export function loadBundle(dir) {
   // null, not '', when absent: a missing hand-off record must read differently from an empty one.
   const coordinatorOut = readTextOr(join(dir, BUNDLE_FILES.coordinatorOut), null);
 
-  return { dir, name: basename(dir), flow, flowText, timeline, workers, run, manifest, gitLog, coordinatorOut };
+  return { dir, name: basename(dir), flow, flowText, timeline, statuses, workers, run, manifest, gitLog, coordinatorOut };
 }

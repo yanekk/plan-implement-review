@@ -88,6 +88,13 @@ test('seatbeltEnv sets PARALLEL_LIVE and the ceiling, and ALLOW_HERE only when a
     PARALLEL_ALLOW_HERE: '1',
   });
   assert.deepEqual(seatbeltEnv({}), { PARALLEL_LIVE: '1' });
+  // statusSnapshots (real-asking-state T05): run as `pir` does, with a scratch index home.
+  assert.deepEqual(seatbeltEnv({ ceiling: 2, pirHome: '/tmp/x/pir-home' }), {
+    PARALLEL_LIVE: '1',
+    PARALLEL_MAX_WORKERS: '2',
+    PIR_RUN: '1',
+    PIR_HOME: '/tmp/x/pir-home',
+  });
   assert.deepEqual(seatbeltEnv({ ceiling: 2, holdMerges: true }), { PARALLEL_LIVE: '1', PARALLEL_MAX_WORKERS: '2', PARALLEL_HOLD_MERGES: '1' });
 });
 
@@ -582,6 +589,38 @@ test('runScenario builds the answerer for an answerPending fixture and ticks it 
     assert.equal(made.length, 1);
     assert.equal(made[0].controlDir, controlDirFor(into, 'live-workers-demo'));
     assert.ok(ticks >= 2, `ticked ${ticks} times while the coordinator ran`);
+  } finally {
+    ws.cleanup();
+  }
+});
+
+test('runScenario runs a statusSnapshots fixture as pir does and hands the answerer its afterWake', async () => {
+  const ws = workspace();
+  try {
+    const into = join(ws.dir, 'scratch-repo');
+    const spawn = fakeSpawner();
+    let polls = 0;
+    const readWorkers = () => {
+      polls += 1;
+      if (polls === 2) spawn.children[0].exit(0);
+      return [];
+    };
+    const made = [];
+    await runScenario({
+      fixtureId: 'real-asking',
+      scratchDir: into,
+      install: installFake({ into, controlLog: '2026-01-01T00:00:00Z spawn T01\n', slug: 'real-asking' }),
+      spawn,
+      readWorkers,
+      procs: fakeProcs([]),
+      gitRun: () => ({ ok: true, stdout: '' }),
+      makeAnswerer: (opts) => (made.push(opts), { tick: () => {} }),
+      pollMs: 1,
+    });
+    assert.deepEqual(made[0].afterWake, { T02: 'blue' });
+    const env = spawn.children[0].opts.env;
+    assert.equal(env.PIR_RUN, '1');
+    assert.equal(env.PIR_HOME, join(controlDirFor(into, 'real-asking'), '..', 'pir-home'));
   } finally {
     ws.cleanup();
   }
