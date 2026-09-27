@@ -7,7 +7,7 @@
 // survive a reboot (§2.8). A finished `reviewed` run with no `go` in its record IS the question; the same
 // rule the dashboard's STATE uses (runDisplayState), so the row and the view never disagree.
 
-import { runDisplayState } from './dashboard.mjs';
+import { planStepState, runDisplayState } from './dashboard.mjs';
 import { analyzeParallelism } from './parallelism.mjs';
 import { parseProgress } from './progress.mjs';
 
@@ -65,7 +65,7 @@ export function buildPlanDisplay(runState, { now = null, record = null, state = 
   const slug = rs?.slug ?? record?.slug ?? null;
   const label = record?.label ?? rs?.label ?? null;
   const branch = record?.branch ?? (slug ? `pir/${slug}` : null);
-  const header = { name: label ? `"${label}"` : slug ?? '', state: HEADER_STATE[display] ?? display ?? '', branch };
+  const header = { name: label ? `"${label}"` : slug ?? '', state: display === 'asking-you' ? planStepState(rs) : HEADER_STATE[display] ?? display ?? '', branch };
 
   const steps = rs?.steps ?? [];
   const stepOf = (id) => steps.find((s) => s.id === id) ?? null;

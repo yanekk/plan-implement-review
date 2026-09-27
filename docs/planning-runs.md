@@ -197,11 +197,12 @@ The dashboard ([detached-runs.md](detached-runs.md)) lists planning runs beside 
 **TYPE** column, `plan` or `work`. One row per plan: at the go, the planning row becomes the build's row.
 
 - **SLUG**: before the rename, the label in quotes, dimmed.
-- **STATE**: `planning` or `reviewing` while running (green), `your go` for a reviewed run waiting for
+- **STATE**: `planning` or `reviewing` while running (green), `asking you` (amber, bold) instead while
+  the planner or the reviewer has a question set or a permission request open, `your go` for a reviewed run waiting for
   the person's go (amber, bold), `finished` otherwise, `stopped`, `crashed`.
 - **PROGRESS**: `plan …`, `plan ✓ review …`, `plan ✓ review ✓`, `plan ✗` for no plan, `plan ✓ review
   ✗` for not reviewed.
-- The counts line gains `· N waiting for you` while any row reads `your go`.
+- The counts line gains `· N waiting for you` while any row reads `your go` or `asking you`.
 
 **Where `pir plan` lands.** Both forms open the planner's conversation directly; until the program has
 named its planner the view reads `starting the planner…`. `←` goes to the run's steps view. When the
