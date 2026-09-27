@@ -42,8 +42,15 @@ test('defineScenario: holdMerges defaults off and is a boolean', () => {
 test('defineScenario: answerPending defaults off and normalises to { typed } (T18)', () => {
   const spec = (answerPending) => defineScenario({ id: 'a', fixture: 'f', facts: [noHelloEver()], answerPending }).answerPending;
   assert.equal(spec(undefined), false);
-  assert.deepEqual(spec(true), { typed: {}, say: {} });
-  assert.deepEqual(spec({ typed: { 'Q?': 'mine' }, say: { T04: 'go' } }), { typed: { 'Q?': 'mine' }, say: { T04: 'go' } });
+  assert.deepEqual(spec(true), { typed: {}, say: {}, afterWake: {} });
+  assert.deepEqual(spec({ typed: { 'Q?': 'mine' }, say: { T04: 'go' } }), { typed: { 'Q?': 'mine' }, say: { T04: 'go' }, afterWake: {} });
+  assert.deepEqual(spec({ afterWake: { T02: 'blue' } }), { typed: {}, say: {}, afterWake: { T02: 'blue' } });
+});
+
+test('defineScenario: statusSnapshots defaults off (real-asking-state T05)', () => {
+  const base = { id: 'a', fixture: 'f', facts: [noHelloEver()] };
+  assert.equal(defineScenario(base).statusSnapshots, false);
+  assert.equal(defineScenario({ ...base, statusSnapshots: true }).statusSnapshots, true);
 });
 
 test('defineScenario: kind defaults to build; a plan scenario carries its reply and cap (pir-plan-command T17)', () => {

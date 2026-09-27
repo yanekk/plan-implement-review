@@ -49,7 +49,11 @@ export function answerFor(request, typed = {}) {
 // `say` ({ <task>: <text> }) sends that task's implementer a message the first time it is idle with nothing
 // pending, the person's go that the T04 practice task waits for (user 2026-09-26). Its key in `answered` is
 // `say:<task>`, carried on the drop as `key` (the inbox validator drops the field).
-export function pendingDrops(logs, answered = new Set(), typed = {}, say = {}, replies = null) {
+//
+// `afterWake` ({ <task>: <text> }) answers a report-parked implementer with a plain message, but only once
+// a background job has woken it and that wake-up turn has ended (real-asking-state T05): the live check
+// needs the row seen `asking you` through the wake-up before the answer takes it off. Key `wake:<task>`.
+export function pendingDrops(logs, answered = new Set(), typed = {}, say = {}, replies = null, afterWake = {}) {
   const out = [];
   for (const { file, entries } of logs) {
     const to = logSessionId(entries);
@@ -66,6 +70,10 @@ export function pendingDrops(logs, answered = new Set(), typed = {}, say = {}, r
     if (text && !exited && activity.state === 'idle' && !answered.has(`say:${name.task}`)) {
       out.push({ to, kind: 'message', text, key: `say:${name.task}` });
     }
+    const wakeText = name && name.role === 'implement' ? afterWake[name.task] : undefined;
+    if (wakeText && !exited && wokenAndIdle(activity) && !answered.has(`wake:${name.task}`)) {
+      out.push({ to, kind: 'message', text: wakeText, key: `wake:${name.task}` });
+    }
   }
   if (replies?.text) {
     let sent = repliesSent(answered);
@@ -76,6 +84,13 @@ export function pendingDrops(logs, answered = new Set(), typed = {}, say = {}, r
     }
   }
   return out;
+}
+
+// wokenAndIdle(activity) → true once a turn opened by a background job's wake-up (turn cause 'system',
+// core/stream.mjs) has ended and the worker is idle with nothing pending. Idle means no turn is open, so
+// every turn opened so far, the wake-up's included, has ended. Pure.
+export function wokenAndIdle(activity) {
+  return activity?.state === 'idle' && (activity.turnCauses ?? []).includes('system');
 }
 
 // --- The canned reply to a planning session (pir-plan-command DESIGN §5.2, T17) ------------------
@@ -123,7 +138,7 @@ export function dueReplies(logs, answered = new Set()) {
 
 const repliesSent = (answered) => [...answered].filter((k) => String(k).startsWith('reply:')).length;
 
-// createAnswerer({ controlDir, typed, say, replies, holdReplies, drop, log }) → { tick(), capReached() }.
+// createAnswerer({ controlDir, typed, say, afterWake, replies, holdReplies, drop, log }) → { tick(), capReached() }.
 // Reads every conversation log of the run, answers what is pending, and remembers what it answered.
 // `controlDir` is a path or a function returning one, called every tick: a planning run's control folder
 // moves at the rename (pir-plan-command DESIGN §2.6), so the plan scenario passes the index record's
@@ -136,6 +151,7 @@ export function createAnswerer({
   controlDir,
   typed = {},
   say = {},
+  afterWake = {},
   replies = null,
   holdReplies = () => false,
   drop = (input, dir) => dropPersonInput(dir, input, { coordinatorAlive: true }),
@@ -165,7 +181,7 @@ export function createAnswerer({
       if (!root) return written;
       const logs = readLogs(root);
       const withReplies = replies?.text && !holdReplies() ? replies : null;
-      for (const { key, ...d } of pendingDrops(logs, answered, typed, say, withReplies)) {
+      for (const { key, ...d } of pendingDrops(logs, answered, typed, say, withReplies, afterWake)) {
         const r = drop(d, root);
         if (!r?.ok) {
           log(`answerer: could not answer ${key}: ${r?.reason ?? 'unknown'}`);

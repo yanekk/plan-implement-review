@@ -92,6 +92,12 @@ const EXPECT = {
       'handed-off-green-branch',
     ],
   },
+  'real-asking': {
+    taskCount: 2,
+    deps: { T01: [], T02: [] },
+    ceiling: 2,
+    factIds: ['ceiling-held:2', 'handed-off-green-branch'],
+  },
 };
 
 // --- The registry ---------------------------------------------------------------------------------
@@ -244,6 +250,7 @@ test('live-workers-demo: T01 must ask through AskUserQuestion; T02 runs the exac
   assert.deepEqual(fx.scenario.answerPending, {
     typed: { 'What name should name.txt hold? Type your own.': 'Typed by the harness' },
     say: { T04: 'go' },
+    afterWake: {},
   });
   assert.match(fx.tasks['T04-background.md'], /wait for the person's go/);
   assert.match(fx.tasks['T03-extras.md'], /multiSelect true/);
@@ -256,6 +263,20 @@ test('live-workers-demo: T01 must ask through AskUserQuestion; T02 runs the exac
   assert.match(fx.tasks['T02-approval.md'], /running exactly `touch approved\.txt`/);
   // Committed with the seed, so every task worktree loads it.
   assert.ok(fixtureFiles(fx)['.claude/settings.json']);
+});
+
+test('real-asking: T01 reports, works on and only then asks in plain text; T02 is woken while asking and answered by the harness', () => {
+  const fx = getFixture('real-asking');
+  assert.deepEqual(fx.scenario.answerPending, { typed: {}, say: {}, afterWake: { T02: 'blue' } });
+  assert.equal(fx.scenario.statusSnapshots, true, 'the coordinator writes status.json so the row history is captured');
+  assert.equal(fx.scenario.seatbelts.timeoutMs, 15 * 60 * 1000);
+  const t01 = fx.tasks['T01-greeting.md'];
+  assert.match(t01, /\(1\) drop a `question` report[\s\S]*\(2\) keep working[\s\S]*run exactly `node -e "setTimeout\(\(\) => \{\}, 30000\)"`[\s\S]*\(3\) only then ask the person, in plain text/);
+  assert.match(t01, /NOT the\s+AskUserQuestion tool/);
+  const t02 = fx.tasks['T02-colour.md'];
+  assert.match(t02, /run_in_background: true\*\*, start exactly `node -e "setTimeout\(\(\) => \{\}, 60000\)"`/);
+  assert.match(t02, /not the person's answer/);
+  assert.doesNotMatch(t02, /`sleep/);
 });
 
 test('parallel: at least two independent tasks so workers run concurrently', () => {
