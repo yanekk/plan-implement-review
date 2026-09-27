@@ -82,18 +82,25 @@ test('coordinatorLaunchArgv throws without a slug', () => {
 // --- seatbeltEnv (DESIGN §5.2) -------------------------------------------------------------------
 
 test('seatbeltEnv sets PARALLEL_LIVE and the ceiling, and never PARALLEL_ALLOW_HERE', () => {
-  assert.deepEqual(seatbeltEnv({ ceiling: 2 }), { PARALLEL_LIVE: '1', PARALLEL_MAX_WORKERS: '2' });
+  // Every scenario runs without the coordinator agent unless it sets `coordinator` (pir-coordinator T04).
+  const OFF = { PARALLEL_COORDINATOR: '0' };
+  assert.deepEqual(seatbeltEnv({ ceiling: 2 }), { PARALLEL_LIVE: '1', PARALLEL_MAX_WORKERS: '2', ...OFF });
   // The old allowHere option is gone (dashboard-plan-box DESIGN §2.8); passing it does nothing.
-  assert.deepEqual(seatbeltEnv({ ceiling: 1, allowHere: true }), { PARALLEL_LIVE: '1', PARALLEL_MAX_WORKERS: '1' });
-  assert.deepEqual(seatbeltEnv({}), { PARALLEL_LIVE: '1' });
+  assert.deepEqual(seatbeltEnv({ ceiling: 1, allowHere: true }), { PARALLEL_LIVE: '1', PARALLEL_MAX_WORKERS: '1', ...OFF });
+  assert.deepEqual(seatbeltEnv({}), { PARALLEL_LIVE: '1', ...OFF });
   // statusSnapshots (real-asking-state T05): run as `pir` does, with a scratch index home.
   assert.deepEqual(seatbeltEnv({ ceiling: 2, pirHome: '/tmp/x/pir-home' }), {
     PARALLEL_LIVE: '1',
+    ...OFF,
     PARALLEL_MAX_WORKERS: '2',
     PIR_RUN: '1',
     PIR_HOME: '/tmp/x/pir-home',
   });
-  assert.deepEqual(seatbeltEnv({ ceiling: 2, holdMerges: true }), { PARALLEL_LIVE: '1', PARALLEL_MAX_WORKERS: '2', PARALLEL_HOLD_MERGES: '1' });
+  assert.deepEqual(seatbeltEnv({ ceiling: 2, holdMerges: true }), { PARALLEL_LIVE: '1', PARALLEL_MAX_WORKERS: '2', PARALLEL_HOLD_MERGES: '1', ...OFF });
+});
+
+test('seatbeltEnv: a scenario with `coordinator` runs the agent (no PARALLEL_COORDINATOR)', () => {
+  assert.deepEqual(seatbeltEnv({ ceiling: 1, coordinator: true }), { PARALLEL_LIVE: '1', PARALLEL_MAX_WORKERS: '1' });
 });
 
 // --- The live launcher's paid-scenario guard (dashboard-plan-box DESIGN §2.8) ------------------------
@@ -379,6 +386,8 @@ test('runScenario installs, launches the coordinator process, captures, seals on
     assert.equal(child.opts.cwd, into);
     assert.equal(child.opts.env.PARALLEL_LIVE, '1');
     assert.equal(child.opts.env.PARALLEL_MAX_WORKERS, '1'); // the single fixture's ceiling
+    // A scenario without `coordinator` runs with the agent off (pir-coordinator T04).
+    assert.equal(child.opts.env.PARALLEL_COORDINATOR, '0');
 
     // It reached the completed terminal (the process exited) and produced a real, dated bundle.
     assert.equal(result.reason, 'completed');

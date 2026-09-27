@@ -29,7 +29,14 @@ async function waitFor(pred, what, ms = 5000) {
 // A scratch repo with a feature worktree and a control folder, and a fake platform holding two workers.
 function scratch(t) {
   const dir = mkdtempSync(join(tmpdir(), 'pir-coord-agent-'));
-  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  // Close every agent started in this scratch before removing it: node runs `after` hooks in the order
+  // they were added, so a separate close hook ran after the rm, and a fake session still writing into the
+  // folder failed the rm with ENOTEMPTY under a loaded full suite (T04 review).
+  const closers = [];
+  t.after(async () => {
+    await Promise.all(closers.map((close) => close()));
+    rmSync(dir, { recursive: true, force: true });
+  });
   const repoRoot = join(dir, 'repo');
   const featurePath = join(repoRoot, '.claude', 'worktrees', 'pir-demo');
   const controlDir = join(repoRoot, 'plans', 'demo', '.parallel', 'control');
@@ -38,7 +45,7 @@ function scratch(t) {
   const platform = createFakePlatform();
   const w1 = platform.spawn({ cwd: dir, name: 'repo / demo / T05 / thing / implement', phase: 'implement' });
   const w2 = platform.spawn({ cwd: dir, name: 'repo / demo / T06 / other / implement', phase: 'implement' });
-  return { dir, repoRoot, featurePath, controlDir, skillsDir, platform, w1, w2, decisionsDir: join(controlDir, 'coordinator', 'decisions') };
+  return { dir, closers, repoRoot, featurePath, controlDir, skillsDir, platform, w1, w2, decisionsDir: join(controlDir, 'coordinator', 'decisions') };
 }
 
 // start(s, script, opts) → a coordinator agent whose session runs `script` in the fake.
@@ -52,7 +59,7 @@ function start(s, script, t, opts = {}) {
     startWorker: (o) => realStartWorker({ ...o, spawnProcess: spawner }),
     ...opts,
   });
-  t.after(() => agent.close({ graceMs: 100, killMs: 300 }));
+  s.closers.push(() => agent.close({ graceMs: 100, killMs: 300 }));
   return { agent, spawner };
 }
 
@@ -171,6 +178,16 @@ test('brief sends briefFor(item) once per item; answeredElsewhere tells the agen
   assert.equal(told(agent).at(-1), 'hand-off');
 });
 
+test('forget(item): a worker\'s next report park under the same key is briefed afresh (T04)', async (t) => {
+  const s = scratch(t);
+  const { agent } = start(s, [{ await: 'user' }], t);
+  const item = reportItem(s);
+  assert.equal(agent.brief(item), true);
+  assert.equal(agent.brief(item), false);
+  agent.forget(item);
+  assert.equal(agent.brief({ ...item, text: 'A second question' }), true);
+});
+
 // ---- Draining decisions ----
 
 test('a scripted agent allows a permission: platform.answer with allowResult from the coordinator, ledgered', async (t) => {
@@ -188,7 +205,7 @@ test('a scripted agent allows a permission: platform.answer with allowResult fro
   await waitFor(() => existsSync(file), 'the decision file');
 
   const out = agent.drain([item]);
-  assert.deepEqual(out, { passed: [] });
+  assert.deepEqual(out, { passed: [], settled: [{ worker: s.w1, requestId: 'r1' }] });
   assert.deepEqual(s.platform.answers, [{ to: s.w1, requestId: 'r1', result: allowResult(item.request), from: 'coordinator' }]);
   assert.deepEqual(readdirSync(s.decisionsDir), [], 'consumed');
   const [line] = agent.ledger();
@@ -378,7 +395,7 @@ test('a torn last ledger line is skipped on read', (t) => {
     claudePath: CLAUDE, skillsDir: s.skillsDir,
     startWorker: (o) => realStartWorker({ ...o, spawnProcess: fakeClaudeSpawner({ script: writeScript(s.dir) }) }),
   });
-  t.after(() => agent.close({ graceMs: 100, killMs: 300 }));
+  s.closers.push(() => agent.close({ graceMs: 100, killMs: 300 }));
   assert.deepEqual(agent.ledger(), [{ kind: 'pass' }]);
 
   // The next applied decision is appended on a line of its own, not fused onto the torn one.

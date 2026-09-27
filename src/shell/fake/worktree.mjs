@@ -66,7 +66,10 @@ export function createFakeWorktree({ progress, files = {}, slug = 'demo' } = {})
   configure(repo);
   mkdirSync(join(repo, dirname(progressRel)), { recursive: true });
   writeFileSync(join(repo, progressRel), progress ?? '');
-  for (const [p, content] of Object.entries(files)) writeFileSync(join(repo, p), content);
+  for (const [p, content] of Object.entries(files)) {
+    mkdirSync(dirname(join(repo, p)), { recursive: true }); // a nested path (`.claude/settings.json`)
+    writeFileSync(join(repo, p), content);
+  }
   git(repo, ['add', '-A']);
   git(repo, ['commit', '-m', 'initial: fake plan', '--no-edit']);
 

@@ -28,7 +28,8 @@ import { basename, dirname, join } from 'node:path';
 import { parseProgress, reconcileTaskRow, progressPathFor } from '../core/progress.mjs';
 import { workerName, isWorkerOf } from '../core/naming.mjs';
 import { buildDisplay } from '../core/display.mjs';
-import { waitingOn } from '../core/asking.mjs';
+import { waitingOn, waitingFor, waitingItems, itemKey } from '../core/asking.mjs';
+import { readEntry } from '../core/stream.mjs';
 import { parseRecord } from '../core/runrecord.mjs';
 import { parseTestBlock } from '../core/testblock.mjs';
 import { runLines, startLines } from './commands.mjs';
@@ -42,6 +43,8 @@ import { updateRecord } from './index-store.mjs';
 import { createWorktree } from './worktree.mjs';
 import { reapRecorded } from './reap.mjs';
 import { planHome } from './plan-home.mjs';
+import { startCoordinatorAgent } from './coordinator-agent.mjs';
+import { startWorker } from './worker-proc.mjs';
 
 const DONE_GLYPH = '✅';
 const READY_GLYPH = '⬜';
@@ -132,8 +135,10 @@ function readyWaiting(tasks, assignedNums) {
     .map((t) => t.num);
 }
 
-// startCoordinator({ slug, repo, platform, worktree, maxWorkers, control, runTests }) → the controller
-// the skill drives. `platform` and `worktree` are injected (the fakes in tests, the real CLI+git in
+// startCoordinator({ slug, repo, platform, worktree, maxWorkers, control, runTests, startAgent }) → the
+// controller the bin drives. `startAgent({ featurePath, askRules })` → a CoordinatorAgent
+// (coordinator-agent.mjs), called once the feature worktree is open; null runs without one (DESIGN §2.1,
+// `--no-coordinator` / PARALLEL_COORDINATOR=0), which is exactly the run as it was before the agent. `platform` and `worktree` are injected (the fakes in tests, the real CLI+git in
 // the bin); `repo` is the repo name the worker/coordinator names are built from (DESIGN §2.8); control
 // and runTests default the same way runPass defaults them (never halted, tests green).
 export function startCoordinator({
@@ -146,6 +151,8 @@ export function startCoordinator({
   runTests,
   prepare,
   holdMerges = false,
+  startAgent = null,
+  lastWords = lastWordsOf,
 } = {}) {
   if (!slug) throw new Error('startCoordinator: no slug');
   if (!repo) throw new Error('startCoordinator: no repo (worker names are built from it, DESIGN §2.8)');
@@ -163,9 +170,112 @@ export function startCoordinator({
   // reaching ✅, and know when the run is done or blocked. There is no auto/you distinction any more,
   // so nothing is a hands-on worker the user must go drive (§2.5) — a task that needs the person is an
   // ordinary worker that parks and asks, which surfaces like any other question.
+  // --- The coordinator agent in front of the person (pir-coordinator DESIGN §2.3–§2.5, §2.11, §3.6) ---
+  //
+  // Every waiting item is briefed to the agent the first pass it is waiting (waitingItems uses the same
+  // predicate as the row), and it is the agent's from then until it is answered or passed on. A reserved
+  // item is briefed for a note but is the person's from the start; an item that first waits while the
+  // agent is down is the person's for good. The person may answer any item at any time: the first answer
+  // wins and the agent is told. `held` is what the row, the clock and Remote Control read (heldByAgent).
+  let agent = null;
+  let agentTried = false;
+  let askRules = [];
+  const held = new Map(); // itemKey → the item, while the agent holds it
+  const seen = new Map(); // itemKey → the item, every item waiting last pass (briefed or not)
+  // Items the agent answered this pass. A `message` to a report park lands after runPass read the park, so
+  // the task stays parked until the next pass's resumeAnswered sees the coordinator send; counting the item
+  // as the agent's until then keeps its worker off Remote Control (DESIGN §2.5). One pass only: whatever is
+  // still waiting after it is the person's.
+  let justSettled = new Set();
+
+  const briefItem = (item, workers) => {
+    const t = state.tasks[item.task];
+    const brief = { ...item };
+    if (t?.slug) brief.name = workerName({ repo, plan: slug, task: item.task, slug: t.slug, role: t.role ?? 'implement' });
+    if (item.kind === 'report') {
+      const words = lastWords(workers.find((w) => w.id === item.worker)?.logPath);
+      if (words) brief.lastWords = words;
+    }
+    return brief;
+  };
+
+  function route() {
+    const out = { passed: [], report: null, close: false };
+    if (!agent) return out;
+    const alive = agent.alive();
+    justSettled = new Set();
+    // A dead agent never leaves a worker waiting on it: what it held is the person's (DESIGN §2.11).
+    if (!alive) held.clear();
+    const workers = platform.workers();
+    const items = waitingItems(state.tasks, workers, { askRules });
+    const now = new Map(items.map((i) => [itemKey(i), i]));
+
+    const drained = alive ? agent.drain(items) : { passed: [], settled: [] };
+    const settled = new Set((drained.settled ?? []).map(itemKey));
+    for (const key of settled) held.delete(key);
+    justSettled = settled;
+    for (const p of drained.passed ?? []) {
+      held.delete(itemKey(p));
+      out.passed.push(p);
+      control?.log?.(`coordinator-pass ${now.get(itemKey(p))?.task ?? p.worker}`);
+    }
+    if (drained.report) out.report = drained.report;
+    if (drained.close) out.close = true;
+
+    // Held items no longer waiting were answered by the person first (DESIGN §2.3): the agent drops them.
+    for (const [key, item] of held) {
+      if (now.has(key) || settled.has(key)) continue;
+      held.delete(key);
+      if (alive) agent.answeredElsewhere(item);
+    }
+    // An item gone from the wait is forgotten, so the same worker's next park is briefed afresh.
+    for (const [key, item] of seen) if (!now.has(key)) agent.forget?.(item);
+
+    for (const [key, item] of now) {
+      if (seen.has(key) || settled.has(key)) continue;
+      if (!alive) continue; // first waiting while the agent is down: the person's
+      const briefed = agent.brief(briefItem(item, workers));
+      if (briefed && !item.reserved) held.set(key, item);
+    }
+    seen.clear();
+    for (const [key, item] of now) seen.set(key, item);
+    return out;
+  }
+
+  // closeAgent({ immediate }) → the agent's session ended (teardown, HALT). `immediate` is teardownRun's:
+  // called from a signal handler just before process.exit, so the SIGTERM goes now, as platform.close does.
+  function closeAgent({ immediate = false } = {}) {
+    if (!agent) return;
+    const a = agent;
+    const pid = a.session?.pid ?? null;
+    a.close(immediate ? { graceMs: 0 } : undefined).catch(() => {});
+    if (immediate && pid) {
+      try {
+        process.kill(pid, 'SIGTERM');
+      } catch {
+        // already gone
+      }
+    }
+  }
+
   function pass() {
     const r = runPass(passOpts);
     const of = (type) => r.actions.filter((a) => a.type === type);
+
+    // Started once the feature worktree is open, so its settings and plan files are the current ones.
+    if (startAgent && !agentTried && state.feature) {
+      agentTried = true;
+      askRules = readAskRules(state.feature.path);
+      try {
+        agent = startAgent({ featurePath: state.feature.path, askRules });
+        control?.log?.('coordinator agent started');
+      } catch (err) {
+        // A run without its agent is today's run: every item is the person's.
+        control?.log?.(`coordinator agent failed to start: ${err?.message ?? err}`);
+      }
+    }
+    if (r.halted) closeAgent();
+    const routed = r.halted ? { passed: [], report: null, close: false } : route();
 
     const surfaces = of('surface').map(renderSurface);
     const spawned = of('spawn').map((a) => ({ task: a.task, role: a.role, slug: a.slug }));
@@ -216,6 +326,9 @@ export function startCoordinator({
       testsReason: r.testsReason ?? null,
       done: r.complete,
       tasks: r.tasks,
+      // What the coordinator agent returned this pass: items it passed on, and its report / close
+      // decisions for the end of the run (T05).
+      agent: routed,
     };
   }
 
@@ -277,7 +390,63 @@ export function startCoordinator({
     return { reason: 'maxPasses', passes: maxPasses, complete: false };
   }
 
-  return { state, pass, defer, drive };
+  return {
+    state,
+    pass,
+    defer,
+    drive,
+    closeAgent,
+    // The agent, or null (not started, disabled, or failed to start).
+    get agent() {
+      return agent;
+    },
+    // The keys of the items the agent holds now; empty while it is down, so every item is the person's.
+    heldByAgent() {
+      return agent?.alive() ? new Set([...held.keys(), ...justSettled]) : new Set();
+    },
+  };
+}
+
+// coordinatorEnabled(env) → whether this run has a coordinator agent (pir-coordinator DESIGN §2.1): on by
+// default; PARALLEL_COORDINATOR=0 (set by `pir start --no-coordinator`, and by the harness for a scenario
+// that does not ask for the agent) turns it off, and the run is exactly as it was before the agent.
+export function coordinatorEnabled(env = process.env) {
+  return env.PARALLEL_COORDINATOR !== '0';
+}
+
+// readAskRules(featurePath) → the `permissions.ask` strings of the feature worktree's
+// `.claude/settings.json` (pir-coordinator DESIGN §2.4: the plan review writes the §5.3 bins there). A
+// missing or unreadable file, or no such key, is []: nothing is reserved by rule, and the rest of the
+// rulebook (destructive commands, the SDK's flags) still holds.
+export function readAskRules(featurePath) {
+  try {
+    const ask = JSON.parse(readFileSync(join(featurePath, '.claude', 'settings.json'), 'utf8'))?.permissions?.ask;
+    return Array.isArray(ask) ? ask.filter((r) => typeof r === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
+// lastWordsOf(logPath) → the worker's last assistant text in its conversation log, for a report park's
+// brief (DESIGN §2.3), or null. Read on the pass the park is first briefed, never after.
+export function lastWordsOf(logPath) {
+  if (typeof logPath !== 'string' || !existsSync(logPath)) return null;
+  let last = null;
+  try {
+    for (const line of readFileSync(logPath, 'utf8').split('\n')) {
+      if (!line.trim()) continue;
+      let entry;
+      try {
+        entry = JSON.parse(line);
+      } catch {
+        continue;
+      }
+      for (const ev of readEntry(entry)) if (ev.kind === 'text' && ev.role === 'assistant' && ev.text.trim()) last = ev.text;
+    }
+  } catch {
+    return null;
+  }
+  return last;
 }
 
 // --- The worker up-channel: the reports drop-dir the bin drains directly (DESIGN §2.2, §3.5) --
@@ -871,18 +1040,23 @@ export function advanceTiming(timing, stateTasks, completed, now, workers = []) 
   }
 }
 
-// remoteWanted(workers, stateTasks) → the ids of the live workers waiting on the person (waitingOn),
-// whose sessions the run makes reachable over Remote Control (claude.ai and the Claude app, so the person
-// is notified and can answer away from the terminal). A park counts only for the worker holding the task,
-// and only once its asking turn has ended; a conflict fix pir sent asks the person nothing. Every other
-// live worker has Remote Control off.
-export function remoteWanted(workers, stateTasks = {}) {
+// remoteWanted(workers, stateTasks, { agentId, heldByAgent }) → the ids of the live workers waiting on the
+// person (waitingOn), whose sessions the run makes reachable over Remote Control (claude.ai and the Claude
+// app, so the person is notified and can answer away from the terminal). A park counts only for the worker
+// holding the task, and only once its asking turn has ended; a conflict fix pir sent asks the person
+// nothing. A worker whose every waiting item the coordinator agent holds is not the person's yet
+// (pir-coordinator DESIGN §2.5): it becomes reachable once the agent passes an item on, or when the item
+// is reserved. The agent's own session is wanted for the whole run (DESIGN §2.8). Every other live worker
+// has Remote Control off.
+export function remoteWanted(workers, stateTasks = {}, { agentId = null, heldByAgent = new Set() } = {}) {
   const ids = new Set();
   for (const w of workers) {
     if (!w.live) continue;
     const t = stateTasks[w.task];
-    if (waitingOn(t?.workerId === w.id ? t : undefined, w.activity)) ids.add(w.id);
+    const waiting = waitingFor(t?.workerId === w.id ? t : undefined, w.activity, { workerId: w.id, heldByAgent });
+    if (waiting?.holder === 'person') ids.add(w.id);
   }
+  if (agentId) ids.add(agentId);
   return ids;
 }
 
@@ -1008,7 +1182,30 @@ async function main(argv) {
   const prepare = makePrepare({ design, setupDir: join(control.dir, 'setup') });
   // Set once the display state below exists; runTests calls it before the suite blocks the pass.
   let showTesting = () => {};
-  const coordinator = startCoordinator({ slug, repo, platform, worktree, maxWorkers, control,
+  // Remote Control follows the person being waited on (remoteWanted): on while a worker waits, off once
+  // it is answered and working again. On unless PARALLEL_REMOTE=0 (user 2026-09-26): it puts a session in
+  // the person's claude.ai account and may notify their phone, which not everyone wants.
+  const REMOTE = process.env.PARALLEL_REMOTE !== '0';
+  // The coordinator agent (pir-coordinator DESIGN §2.1): on unless `pir start --no-coordinator`, which
+  // the launcher passes as PARALLEL_COORDINATOR=0. Its project rules are `.claude/pir-coordinator.md`.
+  const startAgent = !coordinatorEnabled(process.env)
+      ? null
+      : ({ featurePath, askRules }) => {
+          const rules = join(featurePath, '.claude', 'pir-coordinator.md');
+          return startCoordinatorAgent({
+            controlDir: control.dir,
+            featurePath,
+            repoRoot: root,
+            slug,
+            projectRulesPath: existsSync(rules) ? rules : null,
+            platform,
+            askRules,
+            startWorker,
+            claudePath,
+            remote: REMOTE,
+          });
+        };
+  const coordinator = startCoordinator({ slug, repo, platform, worktree, maxWorkers, control, startAgent,
     runTests: (featurePath, { tasks } = {}) => {
       showTesting(tasks ?? []);
       return runFeatureTests(featurePath, { slug, root, logPath: join(control.dir, 'tests.log') });
@@ -1088,7 +1285,10 @@ async function main(argv) {
   // halt (both of which the loop already handled). This is the orphan-guard: a stall, a
   // Ctrl-C or an error must not leave a paid session running (DESIGN §2.6). Idempotent (close is safe
   // twice). A re-run reaps whatever a second Ctrl-C during teardown left behind (§2.6, §2.8).
-  const teardown = () => teardownRun({ platform, state: coordinator.state, repo, slug, control });
+  const teardown = () => {
+    coordinator.closeAgent({ immediate: true });
+    return teardownRun({ platform, state: coordinator.state, repo, slug, control });
+  };
   let tornDown = false;
   const teardownOnce = (why) => {
     if (tornDown) return;
@@ -1108,6 +1308,7 @@ async function main(argv) {
     if (tornDown) return;
     tornDown = true;
     renderer.close();
+    coordinator.closeAgent({ immediate: true });
     const { closed } = teardownRun({ platform, state: coordinator.state, repo, slug, control });
     writeRunFinal({ controlDir: control.dir, proc, runState: lastRunState, reason: 'stop', updateIndex, log: control.log });
     renderer.line(
@@ -1155,13 +1356,11 @@ async function main(argv) {
     renderer.paint(buildDisplay(runState, { now: since }));
   };
 
-  // Remote Control follows the person being waited on (remoteWanted): on while a worker waits, off once
-  // it is answered and working again. On unless PARALLEL_REMOTE=0 (user 2026-09-26): it puts a session in
-  // the person's claude.ai account and may notify their phone, which not everyone wants.
-  const REMOTE = process.env.PARALLEL_REMOTE !== '0';
+  // The agent's own Remote Control is its session's, switched on when it starts (coordinator-agent.mjs);
+  // only the workers are synced here, each on once an item of its is the person's.
   const syncRemote = (stateTasks) => {
     const workers = platform.workers();
-    const wanted = remoteWanted(workers, stateTasks);
+    const wanted = remoteWanted(workers, stateTasks, { heldByAgent: coordinator.heldByAgent() });
     for (const w of workers) if (w.live) platform.remoteControl(w.id, wanted.has(w.id));
   };
 
@@ -1225,6 +1424,8 @@ async function main(argv) {
       renderer.paint(buildDisplay(runState, { now: Date.now() }));
 
       if (r.complete) {
+        // The end of the run with the agent (sync, report, ready to merge) is T05's; until then it ends here.
+        coordinator.closeAgent();
         // The plan is done and the loop has run the feature-branch tests (§2.4). Hand the branch off: on
         // green, print the `git merge` command for the person to run; on red, print the failure and offer
         // no merge (§2.8). The run never merges to main itself. The complete pass has no live workers, so

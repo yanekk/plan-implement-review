@@ -86,6 +86,10 @@ function addTaskRows(cwd, task, plan, rows) {
 //                            test can hold one task mid-build while another finishes (holdMerges).
 //     { request: kind }      the task's live workers show a pending 'permission' or 'questions' request
 //                            in workers() (not in list(): the loop's pass is unchanged). T09.
+//     { requests: [req…] }   the implementer raises these requests (each `{ kind?, toolName, input }` or
+//                            `{ kind: 'questions', questions }`) with ids `${workerId}-r1`, … and does
+//                            not build until every one is answered through answer(); workers() shows the
+//                            unanswered ones as its `pending`, as the real fold does (pir-coordinator T04).
 //
 // The `resurrectClosed` behaviour of the `claude --bg` days (a closed session reappearing under its old
 // id as a stale registry entry) is gone with live-workers T05: a child that exited cannot come back.
@@ -122,6 +126,7 @@ export function createFakePlatform({ behaviors = {} } = {}) {
     const implContent = cr ? cr.mine : `work ${w.task}\n`;
 
     if (w.role === 'implement') {
+      if (w.requests?.length) return; // waiting on an answer to its own request
       if (w.stage === 'fresh') {
         if (b.slow && (w.slowed ?? 0) < b.slow) {
           w.slowed = (w.slowed ?? 0) + 1;
@@ -252,6 +257,9 @@ export function createFakePlatform({ behaviors = {} } = {}) {
         pid: 10000 + nextId,
         busyHold: b.lingerBusy ?? 0,
       };
+      if (phase === 'implement' && Array.isArray(b.requests)) {
+        w.requests = b.requests.map((r, i) => ({ kind: 'permission', ...r, requestId: `${id}-r${i + 1}` }));
+      }
       const key = `${parsed.task}-${phase}`;
       w.n = (counters.get(key) ?? 0) + 1;
       counters.set(key, w.n);
@@ -291,7 +299,16 @@ export function createFakePlatform({ behaviors = {} } = {}) {
     // permission requests, so there is never one pending to resolve beyond a live worker accepting it.
     answer(id, requestId, result, { from = 'person' } = {}) {
       answers.push({ to: id, requestId, result, from });
-      return { ok: !!liveWorker(id) };
+      const w = liveWorker(id);
+      if (!w) return { ok: false };
+      // A scripted request (`requests`) is answered once, like the real one: a second answer finds
+      // nothing pending and is refused.
+      if (w.requests) {
+        const at = w.requests.findIndex((r) => r.requestId === requestId);
+        if (at === -1) return { ok: false };
+        w.requests.splice(at, 1);
+      }
+      return { ok: true };
     },
 
     // remoteControl(id, on) → { ok }. Recorded only, as the real platform's is fire-and-forget; a closed
@@ -345,9 +362,10 @@ export function createFakePlatform({ behaviors = {} } = {}) {
     workers() {
       return all.map((w) => {
         const isLive = !!liveWorker(w.id);
-        const request = isLive ? behaviors[w.task]?.request ?? null : null;
+        const pending = isLive && w.requests?.length ? w.requests.map((r) => ({ ...r })) : [];
+        const request = isLive ? pending[0]?.kind ?? behaviors[w.task]?.request ?? null : null;
         const state = request ?? (w.status === 'busy' ? 'busy' : 'idle');
-        return { id: w.id, task: w.task, role: w.role, n: w.n, logPath: w.logPath, cwd: w.cwd ?? null, live: isLive, activity: { state, pending: [] } };
+        return { id: w.id, task: w.task, role: w.role, n: w.n, logPath: w.logPath, cwd: w.cwd ?? null, live: isLive, activity: { state, pending } };
       });
     },
 

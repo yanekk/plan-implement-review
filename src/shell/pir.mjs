@@ -96,11 +96,16 @@ export function run(
   }
 
   if (verb === 'start') {
-    if (rest.length !== 1) {
+    // One slug and, optionally, --no-coordinator (pir-coordinator DESIGN §2.1), in either order. Any other
+    // flag is refused with the usage rather than read as a slug.
+    const flags = rest.filter((a) => a.startsWith('-'));
+    const slugs = rest.filter((a) => !a.startsWith('-'));
+    if (slugs.length !== 1 || flags.some((f) => f !== '--no-coordinator')) {
       stderr.write(USAGE);
       return 2;
     }
-    return startBuild(rest[0], { startRun, openW, stderr });
+    const coordinator = !flags.includes('--no-coordinator');
+    return startBuild(slugs[0], { startRun, openW, stderr, coordinator });
   }
 
   stderr.write(`pir: unknown command '${verb}'. To build a plan: pir start ${verb}\n${USAGE}`);
@@ -121,8 +126,9 @@ function startPlan(brief, { startPlanRun, openP, stderr }) {
   return { code: planRefused(r.reason, stderr), opened: null };
 }
 
-function startBuild(slug, { startRun, openW, stderr }) {
-  const r = startRun(slug);
+function startBuild(slug, { startRun, openW, stderr, coordinator = true }) {
+  // The default is passed as no option at all, so a caller's startRun sees exactly what it did before.
+  const r = coordinator ? startRun(slug) : startRun(slug, { coordinator: false });
 
   // Started, or already running: either way the person wants to watch this run, so drop into its live
   // view. `alreadyRunning` is the "start or open" case — never a second coordinator for the same slug.

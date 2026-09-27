@@ -53,6 +53,12 @@ test('defineScenario: statusSnapshots defaults off (real-asking-state T05)', () 
   assert.equal(defineScenario({ ...base, statusSnapshots: true }).statusSnapshots, true);
 });
 
+test('defineScenario: coordinator defaults off, so a drill runs without the agent (pir-coordinator T04)', () => {
+  const base = { id: 'a', fixture: 'f', facts: [noHelloEver()] };
+  assert.equal(defineScenario(base).coordinator, false);
+  assert.equal(defineScenario({ ...base, coordinator: true }).coordinator, true);
+});
+
 test('defineScenario: kind defaults to build; a plan scenario carries its reply and cap (pir-plan-command T17)', () => {
   const base = { id: 'a', fixture: 'f', facts: [noHelloEver()] };
   const b = defineScenario(base);

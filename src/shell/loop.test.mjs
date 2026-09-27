@@ -695,6 +695,21 @@ test('parked: a turn opened by a person send in pir resumes the task', (t) => {
   assert.equal(state.tasks.T01.phase, 'implementing');
 });
 
+test('parked: a coordinator agent `message` un-parks the task like the person\'s (pir-coordinator T04)', (t) => {
+  const { state, pass } = parkedWorker(t);
+  pass(RESULT); // the asking turn ends
+  assert.equal(state.tasks.T01.phase, 'awaiting-answer');
+  const r = pass(SEND('coordinator'), INIT);
+  assert.ok(resumedIn(r));
+  assert.equal(state.tasks.T01.phase, 'implementing');
+});
+
+test('parked: a coordinator message injected into the still-open asking turn resumes too', (t) => {
+  const { state, pass } = parkedWorker(t);
+  assert.ok(resumedIn(pass(SEND('coordinator'))));
+  assert.equal(state.tasks.T01.phase, 'implementing');
+});
+
 test('parked: a turn opened by Remote Control input (recorded) resumes the task', (t) => {
   const { state, pass } = parkedWorker(t);
   pass(RESULT);
