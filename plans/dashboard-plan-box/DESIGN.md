@@ -103,7 +103,9 @@ starts nothing and sets the note, keeping the text, when:
 A partial name is never completed on Enter (user, 2026-09-26, reversing an earlier yes to unique-prefix
 matching): only an exact name starts a run. A name in two roots is the one repo §2.4's list offers that Enter
 refuses; the pop-up shows both rows with their paths (user, 2026-09-27: never guess a folder, and it needs
-two roots to happen). `{roots}` is the roots as the person would type them (`~/src`).
+two roots to happen). `{roots}` is the roots as the person would type them (`~/src`), and so are the
+ambiguous note's `{path}`s (T06 drill: absolute, they overran 80 columns). `{reason}` is a refusal code in
+plain words (`it has no local main branch`; user, 2026-09-27, T06 drill), a thrown error by its message.
 
 Otherwise the screen calls `startPlanRun(brief, { cwd: repo.path, env, … })`, the call `pir plan` makes,
 resets the box to `@`, and opens the run as `openPlanner` does: `{ view: 'watch', openSlug: runId, openKey:
@@ -118,8 +120,9 @@ The head line is `new plan  in {name}` (dim) when the text names a listed repo, 
 @repo` (dim) when bare, and `new plan  @{name} is not a repo in {roots}` (amber, `your-go`) when it names
 anything else, and `new plan  start with @repo` (amber) when there is no name at all (prototype). On a bare box the hint is the list's existing footer (`footerLine('list', …)`, armed
 confirmations included) with ` · type to plan (@repo)` appended when it fits the width; not bare, it is
-`↵ start planning · shift+↵ new line · esc clear`. Every line fits 80 columns, which the prototype's
-hint did not.
+`↵ start planning · shift+↵ new line · esc clear`, except while a chord is armed: then it is the armed
+`⚠` line, as on a bare box (user, 2026-09-27, T06 drill: the second press otherwise acted unannounced).
+Every line fits 80 columns, which the prototype's hint did not.
 
 ### 2.7 A list taller than the screen
 

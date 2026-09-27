@@ -177,6 +177,14 @@ test('startFailedNote: §2.5 row 5', () => {
   assert.equal(startFailedNote('skaut', 'no main branch'), 'Could not start planning in skaut: no main branch');
 });
 
+// T06 drill (user, 2026-09-27): startPlanRun's refusal codes read as plain words, each note within 80 columns.
+test("startFailedNote: startPlanRun's refusal codes in plain words", () => {
+  assert.equal(startFailedNote('repo', 'no-main'), 'Could not start planning in repo: it has no local main branch');
+  assert.equal(startFailedNote('repo', 'not-a-repo'), 'Could not start planning in repo: it is not a git repository');
+  assert.equal(startFailedNote('repo', 'empty-brief'), 'Could not start planning in repo: the brief is empty');
+  for (const code of ['no-main', 'not-a-repo', 'empty-brief']) assert.ok(startFailedNote('plan-implement-review', code).length <= 80, code);
+});
+
 test('NOTES are §2.5 verbatim', () => {
   assert.equal(NOTES.noAt(), 'start with @repo, then say what to plan');
   assert.equal(NOTES.unknownRepo('x', '~/src'), 'no repo @x in ~/src — pick one from the list');

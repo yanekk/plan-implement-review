@@ -21,9 +21,18 @@ export const NOTES = {
   emptyBrief: (name) => `say what to plan after @${name}`,
 };
 
+// startPlanRun's refusal codes in plain words, short enough that the note fits 80 columns (user, 2026-09-27,
+// T06 drill: the raw `no-main` read as an internal code). A reason not listed, e.g. a thrown error's message,
+// is shown as it came.
+const START_REFUSALS = {
+  'not-a-repo': 'it is not a git repository',
+  'no-main': 'it has no local main branch',
+  'empty-brief': 'the brief is empty',
+};
+
 // §2.5's last row: startPlanRun refused or threw.
 export function startFailedNote(name, reason) {
-  return `Could not start planning in ${name}: ${reason}`;
+  return `Could not start planning in ${name}: ${START_REFUSALS[reason] ?? reason}`;
 }
 
 // The `@name` token: an '@' at the very start, then a run of non-whitespace. '@' followed by

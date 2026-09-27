@@ -39,7 +39,10 @@ the call `pir plan` makes, resets the box to `@` and lands in the planner's conv
   paste starting with `@`) into a bare `@` is absorbed, so `@skaut` and `skaut` read the same. Once the
   box has text: `↵` starts, `shift+↵` or `ctrl+j` adds a line, `esc` or `Ctrl+C` resets it to `@`
   (a second `esc` then quits), `Ctrl+R/S/X` still act on the selected run, and the arrows move the
-  cursor. The routing is `routeBoxKey` in `src/core/planbox.mjs`.
+  cursor. The hint line under the box is `↵ start planning · shift+↵ new line · esc clear`, except
+  while a chord is half-pressed: then it shows the chord's `⚠ … again to …` warning, as on a bare box.
+  A key typed into the box cancels a half-pressed chord, like any other key. The routing is
+  `routeBoxKey` in `src/core/planbox.mjs`.
 - **The repos.** Every git repo directly inside each root with a real `.git` folder (a linked
   worktree is skipped) and a local `main`, most recently worked in first (`scanRepos` in
   `src/shell/repo-scan.mjs`). The roots are `PIR_REPOS`, split on `:` with `~` expanded; unset, the
@@ -51,9 +54,10 @@ the call `pir plan` makes, resets the box to `@` and lands in the planner's conv
 - **What Enter refuses** (nothing is started, the text stays, and a note says why): no `@name`
   (`start with @repo, then say what to plan`); a name that is not exactly a listed repo's
   (`no repo @{name} in {roots} — pick one from the list`; a partial name is never completed on Enter);
-  a name in two roots (`@{name} is in more than one folder: {path}, {path}`); no brief
-  (`say what to plan after @{name}`); and `startPlanRun` refusing or throwing
-  (`Could not start planning in {name}: {reason}`, e.g. `no-main`).
+  a name in two roots (`@{name} is in more than one folder: {path}, {path}`, home written as `~`); no
+  brief (`say what to plan after @{name}`); and `startPlanRun` refusing or throwing
+  (`Could not start planning in {name}: {reason}`; a refusal code in words, e.g. `it has no local
+  main branch`, a thrown error by its message).
 
 The box is only on the runs list, not on a run's view or a conversation. On a terminal that is not a
 TTY the list is painted without it, as before.
