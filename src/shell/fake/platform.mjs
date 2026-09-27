@@ -99,6 +99,8 @@ export function createFakePlatform({ behaviors = {} } = {}) {
   const sent = []; // every send: { to, text, from }, for test introspection
   const interrupts = []; // every interrupt: { to, from }
   const answers = []; // every answer: { to, requestId, result, from }
+  const remotes = []; // every remoteControl: { to, on }
+  const notes = []; // every note: { to, kind, fields }
   let nextId = 0;
   const all = []; // every worker record in spawn order, kept after close, for workers()
   const counters = new Map(); // `${task}-${role}` → n, the conversation-log counter (DESIGN §2.3)
@@ -292,6 +294,20 @@ export function createFakePlatform({ behaviors = {} } = {}) {
       return { ok: !!liveWorker(id) };
     },
 
+    // remoteControl(id, on) → { ok }. Recorded only, as the real platform's is fire-and-forget; a closed
+    // or unknown worker has no session to reach (platform.mjs).
+    remoteControl(id, on) {
+      remotes.push({ to: id, on: !!on });
+      return { ok: !!liveWorker(id) };
+    },
+
+    // note(id, kind, fields) → { ok }. Recorded only; the real one writes a `note` into the worker's log,
+    // live or exited, so any id this fake ever spawned takes one.
+    note(id, kind, fields = {}) {
+      notes.push({ to: id, kind, fields });
+      return { ok: all.some((w) => w.id === id) };
+    },
+
     // list() → live workers with their state. Advances every live worker one tick first (see header).
     // Each carries the fields the real list() does, `activity` included, folded from the fake's stage.
     list() {
@@ -378,6 +394,8 @@ export function createFakePlatform({ behaviors = {} } = {}) {
     sent,
     interrupts,
     answers,
+    remotes,
+    notes,
     _workers: workers,
   };
 }

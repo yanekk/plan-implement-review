@@ -18,14 +18,14 @@ const NAME = 'plan-implement-review / live-workers / T04 / worker-process / impl
 const CLAUDE = '/nonexistent/claude';
 
 // setup(script) → a scratch dir, a fake spawner running `script`, and a worker started on it.
-function setup(script, t) {
+function setup(script, t, opts = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'pir-worker-proc-'));
   const scriptPath = join(dir, 'script.json');
   const received = join(dir, 'received.ndjson');
   writeFileSync(scriptPath, JSON.stringify(script));
   const spawner = fakeClaudeSpawner({ script: scriptPath, received });
   const logPath = join(dir, 'conversations', 'T04-implement-1.ndjson');
-  const worker = startWorker({ cwd: dir, sessionId: SESSION, name: NAME, logPath, claudePath: CLAUDE, spawnProcess: spawner });
+  const worker = startWorker({ cwd: dir, sessionId: SESSION, name: NAME, logPath, claudePath: CLAUDE, spawnProcess: spawner, ...opts });
   t.after(async () => {
     await worker.close({ graceMs: 100, killMs: 300 });
     rmSync(dir, { recursive: true, force: true });
@@ -185,6 +185,65 @@ test('a can_use_tool becomes a request entry and a pending request; answer sends
   assert.equal(last.kind, 'undelivered');
   assert.equal(last.requestId, 'req-1');
   assert.equal(workerActivity(worker.entries()).state, 'idle');
+});
+
+// pir-coordinator T03: the gate and the extra SDK options, for the coordinator agent's session.
+test('workerOptions passes permissionMode, tools and disallowedTools only when given', () => {
+  const opts = workerOptions({ cwd: '/w', sessionId: SESSION, name: NAME, claudePath: '/bin/claude', permissionMode: 'default', tools: ['Read'], disallowedTools: ['Bash'] });
+  assert.equal(opts.permissionMode, 'default');
+  assert.deepEqual(opts.tools, ['Read']);
+  assert.deepEqual(opts.disallowedTools, ['Bash']);
+});
+
+test('the SDK spawns the agent argv: --permission-mode default, --tools and --disallowedTools', async (t) => {
+  const { spawner, receivedLines } = setup([], t, { permissionMode: 'default', tools: ['Read', 'Write'], disallowedTools: ['Bash', 'Edit'] });
+  await waitFor(() => receivedLines().length > 0, 'the fake to start');
+  const args = spawner.calls[0].args;
+  const after = (flag) => args[args.indexOf(flag) + 1];
+  assert.equal(after('--permission-mode'), 'default');
+  assert.equal(after('--tools'), 'Read,Write');
+  assert.equal(after('--disallowedTools'), 'Bash,Edit');
+});
+
+test('a gate verdict answers a request at once, logged decided-by-gate; null parks it as before', async (t) => {
+  const decide = (toolName, input) => (toolName === 'Bash' ? 'deny' : toolName === 'Read' ? 'allow' : null);
+  const { worker, receivedLines } = setup([
+    { await: 'user' }, { emit: initEvent() },
+    { emit: canUseTool('g-1', 'Bash', { command: 'ls' }) }, { await: 'control_response' },
+    { emit: canUseTool('g-2', 'Read', { file_path: '/x' }) }, { await: 'control_response' },
+    { emit: canUseTool('g-3', 'Write', { file_path: '/y' }) }, { await: 'control_response' },
+    { emit: resultEvent('success', 'ok') },
+  ], t, { decide, denyMessage: (tool) => `no ${tool}` });
+  worker.send('go');
+  await waitFor(() => worker.pending().length === 1, 'the third request to park');
+
+  const replies = () => receivedLines().map((r) => r.line && JSON.parse(r.line)).filter((m) => m?.type === 'control_response');
+  const byId = (id) => replies().find((m) => m.response.request_id === id)?.response.response;
+  assert.equal(byId('g-1').behavior, 'deny');
+  assert.equal(byId('g-1').message, 'no Bash');
+  assert.equal(byId('g-2').behavior, 'allow');
+  assert.deepEqual(byId('g-2').updatedInput, { file_path: '/x' });
+  assert.equal(byId('g-3'), undefined, 'null parks: nothing sent');
+  assert.equal(worker.pending()[0].requestId, 'g-3');
+
+  const gated = worker.entries().filter((e) => e.dir === 'note' && e.kind === 'decided-by-gate');
+  assert.deepEqual(gated.map((e) => [e.requestId, e.toolName, e.verdict]), [['g-1', 'Bash', 'deny'], ['g-2', 'Read', 'allow']]);
+  const outs = worker.entries().filter((e) => e.dir === 'out' && e.kind === 'reply');
+  assert.deepEqual(outs.map((e) => [e.requestId, e.from]), [['g-1', 'pir'], ['g-2', 'pir']]);
+  assert.equal(workerActivity(worker.entries()).state, 'permission', 'only the parked one is pending');
+
+  worker.answer('g-3', allowResult(worker.pending()[0]), { from: 'person' });
+  await waitFor(hasResult(worker), 'the turn to finish');
+});
+
+test('a gate that throws denies', async (t) => {
+  const { worker, receivedLines } = setup([
+    { await: 'user' }, { emit: initEvent() }, { emit: canUseTool('g-9', 'Read', { file_path: '/x' }) }, { await: 'control_response' }, { emit: resultEvent('success', 'ok') },
+  ], t, { decide: () => { throw new Error('boom'); } });
+  worker.send('go');
+  await waitFor(hasResult(worker), 'the turn to finish');
+  const reply = receivedLines().map((r) => r.line && JSON.parse(r.line)).find((m) => m?.type === 'control_response');
+  assert.equal(reply.response.response.behavior, 'deny');
 });
 
 test('interrupt reaches the fake as the interrupt control request and the turn ends error_during_execution', async (t) => {

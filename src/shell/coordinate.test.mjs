@@ -1047,6 +1047,23 @@ test('a stale report is gone after the clear, so it cannot route to a fresh work
   assert.equal(readdirSync(join(dir, 'reports')).filter((n) => n.endsWith('.json')).length, 0, 'the stale reports are gone');
 });
 
+test('clearTransientFeeds clears coordinator/decisions/ and keeps ledger.jsonl and session.json (pir-coordinator T03)', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'pir-control-coord-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const coord = join(dir, 'coordinator');
+  mkdirSync(join(coord, 'decisions'), { recursive: true });
+  writeFileSync(join(coord, 'decisions', '1-a.json'), '{"kind":"close"}');
+  writeFileSync(join(coord, 'ledger.jsonl'), '{"kind":"permission"}\n');
+  writeFileSync(join(coord, 'session.json'), '{"sessionId":"s","restarts":[]}');
+
+  const { cleared } = clearTransientFeeds(dir);
+
+  assert.deepEqual(readdirSync(join(coord, 'decisions')), [], 'a dead run\'s decisions are gone');
+  assert.equal(readFileSync(join(coord, 'ledger.jsonl'), 'utf8'), '{"kind":"permission"}\n', 'the ledger is durable');
+  assert.ok(existsSync(join(coord, 'session.json')), 'the session record is durable');
+  assert.deepEqual(cleared, ['coordinator/decisions/']);
+});
+
 // A reap that finds nothing, so the hygiene tests below never read a real process table.
 const noReap = async () => ({ reaped: [], skipped: [] });
 
