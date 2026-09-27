@@ -2436,3 +2436,42 @@ test('buildRunState: a task whose items the agent holds carries holder coordinat
   const idle = buildRunState({ passTasks: oneRow, stateTasks: building, workers: [liveWorker({ state: 'busy', open: true, turns: 0, pending: [] })], branch: 'b', ceiling: 2 });
   assert.equal('holder' in idle.tasks[0], false, 'a task nothing asks for keeps its old shape');
 });
+
+// --- end-of-run helper rows (pir-coordinator T11) ---------------------------------------------------
+
+test('buildRunState: an end-of-run helper with a worker gets a row entry in `helpers`, asking like a task (T11)', () => {
+  const passTasks = [{ num: 'T01', name: 'one', deps: [], state: '✅' }];
+  const stateTasks = { 'tests-fix': { worktree: {}, workerId: 'wf', role: 'fix', slug: 'tests-fix', name: 'r / p / tests-fix', phase: 'implementing' } };
+  const asking = { state: 'questions', open: true, turns: 1, pending: [{ kind: 'questions', requestId: 'q1' }] };
+  const workers = [{ id: 'wf', task: 'tests-fix', role: 'fix', live: true, logPath: '/c/wf.jsonl', cwd: '/f', activity: asking }];
+  const held = buildRunState({ passTasks, stateTasks, workers, branch: 'b', ceiling: 2, sinceByTask: { 'tests-fix': 10 }, heldByAgent: new Set(['wf:q1']) });
+  assert.equal(held.tasks.length, 1, 'the plan rows are untouched');
+  const [h] = held.helpers;
+  assert.equal(h.id, 'tests-fix');
+  assert.equal(h.slug, 'fix-red-tests');
+  assert.equal(h.helper, true);
+  assert.equal(h.asking, 'questions');
+  assert.equal(h.holder, 'coordinator');
+  assert.equal(h.since, 10);
+  assert.deepEqual(h.worker, { id: 'wf', live: true, logPath: '/c/wf.jsonl', cwd: '/f' });
+
+  const passed = buildRunState({ passTasks, stateTasks, workers, branch: 'b', ceiling: 2 });
+  assert.equal(passed.helpers[0].holder, 'person', 'passed on: the person\'s');
+  assert.equal(buildDisplay(passed, { now: 20 }).footer.task, 'tests-fix');
+
+  const sync = buildRunState({ passTasks, stateTasks: { 'main-sync': { ...stateTasks['tests-fix'], role: 'sync', workerId: 'ws' } }, workers: [], branch: 'b', ceiling: 2 });
+  assert.equal(sync.helpers[0].slug, 'resolve-main-merge');
+  assert.equal(sync.helpers[0].phase, 'building');
+  assert.equal('helpers' in buildRunState({ passTasks, stateTasks: {}, branch: 'b', ceiling: 2 }), false, 'no helper, no key');
+});
+
+test('advanceTiming: a helper spawned again under its label starts a fresh clock (T11)', () => {
+  const timing = newTiming();
+  const fix = { 'tests-fix': { workerId: 'w1', role: 'fix', phase: 'implementing' } };
+  advanceTiming(timing, fix, [], 100);
+  assert.equal(timing.sinceByTask['tests-fix'], 100);
+  advanceTiming(timing, {}, [], 200); // the first fix worker closed and dropped
+  assert.equal(timing.sinceByTask['tests-fix'], undefined);
+  advanceTiming(timing, { 'tests-fix': { ...fix['tests-fix'], workerId: 'w2' } }, [], 500);
+  assert.equal(timing.sinceByTask['tests-fix'], 500);
+});

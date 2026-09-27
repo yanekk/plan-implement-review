@@ -419,3 +419,30 @@ test('every row\'s clock lines up when one label is longer than the column', () 
   const plain = formatLines(buildDisplay({ branch: 'pir/demo', ceiling: 1, tasks: [t('T01')] }, { now: 65000 }), { spinnerChar: '*' });
   assert.equal(plain[1], `  * T01  ${'one'.padEnd(22)} ${'building'.padEnd(24)} 1:05`);
 });
+
+// An end-of-run helper's row (pir-coordinator T11): its id is wider than a task's, so the id column
+// widens with it and every row's slug still starts in one column; the footer points at it; nothing is
+// wider than 80 columns even with the longest label.
+test('a helper row lines up with the task rows and its asking footer names it (T11)', () => {
+  const d = buildDisplay(
+    {
+      branch: 'pir/demo',
+      ceiling: 2,
+      tasks: [{ id: 'T01', slug: 'stop-promoting', deps: [], done: true, doneMs: 6400 }],
+      helpers: [{ id: 'tests-fix', slug: 'fix-red-tests', helper: true, deps: [], done: false, phase: 'building', asking: 'permission', holder: 'coordinator', since: NOW - 3000 }],
+      handoff: { state: 'preparing' },
+    },
+    { now: NOW },
+  );
+  const lines = formatLines(d, { spinnerChar: '⠋' });
+  const t01 = lines.find((l) => l.includes('T01'));
+  const fix = lines.find((l) => l.includes('tests-fix'));
+  assert.equal(t01.indexOf('stop-promoting'), fix.indexOf('fix-red-tests'), 'slugs in one column');
+  assert.match(fix, /tests-fix fix-red-tests +asking coordinator · allow a command\? +0:03$/);
+  for (const l of lines) assert.ok([...l].length <= 80, `wider than 80: ${l}`);
+
+  const asking = formatLines(
+    buildDisplay({ branch: 'pir/demo', ceiling: 2, tasks: [{ id: 'T01', slug: 'x', deps: [], done: true }], helpers: [{ id: 'main-sync', slug: 'resolve-main-merge', helper: true, deps: [], done: false, phase: 'asking', holder: 'person' }] }, { now: NOW }),
+  );
+  assert.ok(asking.includes('● main-sync resolve-main-merge — asking you; open it (→) to answer'), asking.join('\n'));
+});

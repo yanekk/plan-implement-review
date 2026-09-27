@@ -14,7 +14,7 @@ import { join } from 'node:path';
 import { startPlanRig } from './plan-rig.mjs';
 import { indexDir, listRecords } from './index-store.mjs';
 import { stopRun } from './control-run.mjs';
-import { DRILL_QUESTION, DRILL_SLUG } from './fake/sessions.mjs';
+import { DRILL_QUESTION, DRILL_SLUG, HELPER_DRILL_QUESTION, HELPER_DRILL_SLUG } from './fake/sessions.mjs';
 
 const SIZES = [[80, 24], [120, 40]];
 const DOWN = '\x1b[B';
@@ -26,8 +26,8 @@ const ENTER = '\r';
 const said = (text) => new RegExp(text.split(' ').map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('\\s+'));
 const git = (cwd, ...a) => execFileSync('git', a, { cwd, encoding: 'utf8' }).trim();
 
-function drillRig(t) {
-  const rig = startPlanRig({ scripts: 'coordinator-drill' });
+function drillRig(t, scripts = 'coordinator-drill') {
+  const rig = startPlanRig({ scripts });
   t.after(async () => {
     for (const record of listRecords({ dir: indexDir({ env: rig.env }) })) {
       if (record.finalState === null) await stopRun(record).catch(() => {});
@@ -51,7 +51,7 @@ function recordFrames(screen) {
 
 const rowOf = (text, task) => text.split('\n').find((l) => new RegExp(`^[▎ ] . ${task} `).test(l)) ?? null;
 
-// Move the run view's cursor (▎) to `task`; the list is three rows, so a bounded walk down then up finds it.
+// Move the run view's cursor (▎) to `task`; the list is at most three rows, so a bounded walk down then up finds it.
 async function select(screen, task) {
   for (const key of [null, DOWN, DOWN, UP, UP, UP]) {
     if (key) {
@@ -175,6 +175,56 @@ for (const [cols, rows] of SIZES) {
       assert.doesNotMatch(s, /ready to merge|preparing|REPORT\.md/, 'the end is today\'s: no hand-off, no report');
       assert.equal(screen.overflows(), 0);
     } finally {
+      await screen.close();
+    }
+  });
+}
+
+// The end-of-run helper's row (pir-coordinator T11): the one-task plan's tests are red at the end, so the
+// run spawns its tests-fix helper. The helper asks a question, the agent passes it on, and the person finds
+// the helper as a row below the tasks, opens it with → and answers there, as for any task. The helper then
+// commits the fix and the run ends in `ready to merge`.
+for (const [cols, rows] of SIZES) {
+  test(`end-helper drill at ${cols}×${rows}: the tests-fix helper's passed-on question is answered from its row in pir`, { timeout: 180000 }, async (t) => {
+    const rig = drillRig(t, 'end-helper');
+    const screen = rig.openScreen({ cols, rows, args: ['start', HELPER_DRILL_SLUG] });
+    const rec = recordFrames(screen);
+    try {
+      let s = (await screen.waitFor(/tests-fix +fix-red-tests +asking you · a question/, 60000)).join('\n');
+      s = (await screen.waitFor(/● tests-fix fix-red-tests — asking you; open it \(→\) to answer/, 20000)).join('\n');
+      assert.match(s, /1\/1 done/, 'the header counts the plan task only');
+
+      // The agent's pointer names the helper's conversation.
+      screen.send('c');
+      await screen.waitFor(said("Answer it in tests-fix's conversation; I would add the file."), 20000);
+      screen.send(LEFT);
+      await screen.waitFor(/c coordinator/);
+
+      // The person walks down to the helper's row, opens it and answers there.
+      await select(screen, 'tests-fix');
+      screen.send(RIGHT);
+      await screen.waitFor(new RegExp(HELPER_DRILL_QUESTION.replace(/[.?]/g, '\\$&')));
+      screen.send(ENTER);
+      await screen.waitFor(/→ Add it/);
+      screen.send(LEFT);
+
+      s = (await screen.waitFor(/ready to merge · git merge pir\/helper/, 60000)).join('\n');
+      assert.equal(rowOf(s, 'tests-fix'), null, 'the helper\'s row is gone once it has finished');
+      assert.match(rowOf(s, 'T01') ?? '', /merged/);
+
+      rec.stop();
+      if (process.env.PIR_DRILL_DUMP) writeFileSync(`${process.env.PIR_DRILL_DUMP}-helper-${cols}x${rows}.txt`, rec.frames.join('\n==========\n'));
+      const withHelper = rec.frames.filter((f) => rowOf(f, 'tests-fix'));
+      assert.ok(withHelper.length > 0, 'the helper had a row');
+      assert.ok(withHelper.some((f) => /asking coordinator/.test(rowOf(f, 'tests-fix'))), 'the question was the agent\'s before it passed it');
+      for (const f of rec.frames) {
+        assert.doesNotMatch(f, /\/2 done/, `the helper is never counted as a task:\n${f}`);
+        for (const r of f.split('\n')) assert.ok([...r].length <= cols, `a line wider than ${cols}: ${r}`);
+      }
+      assert.equal(screen.overflows(), 0, 'no frame was clipped to fit the window');
+      assert.equal(git(rig.repoDir, 'show', `pir/${HELPER_DRILL_SLUG}:fixed.txt`), 'ok', 'the helper committed its fix on the feature branch');
+    } finally {
+      rec.stop();
       await screen.close();
     }
   });

@@ -32,6 +32,11 @@ const PHASE_LABEL = {
   asking: 'asking you',
 };
 
+// An end-of-run helper's row (pir-coordinator T11) in the active phases the loop gives it: its worker is
+// `building` until it reports done, then `merging` while it is closed. Neither word fits a merge of main or
+// a test fix.
+const HELPER_LABEL = { building: 'working', merging: 'finishing' };
+
 // A coordinator-side merge conflict is sent to the task's live worker (`conflictSent`, live-workers
 // §2.10): that task is being fixed and asks nothing of the person. There is no unsent state to show — with
 // no live worker the task is marked ⛔ and dropped (loop.mjs 3d) — so the old paste-in `conflict` row and
@@ -74,8 +79,16 @@ const asksPerson = (t) => !!askingKind(t) && !heldByCoordinator(t);
 // the runs list's `asking you` state (dashboard.mjs) both read this, so the list row and the live view
 // never disagree on whether a run needs the person. A task the coordinator agent holds is not counted:
 // the run must not turn amber for a question the person is not being asked (pir-coordinator §2.5).
+// An end-of-run helper (main-sync, tests-fix) waiting on the person counts too: the run needs them, and
+// the list must say so, though the helper is no task of the plan (pir-coordinator T11).
 export function askingCount(runState) {
-  return (runState?.tasks ?? []).filter((t) => !t.done && asksPerson(t)).length;
+  return rowEntries(runState).filter((t) => !t.done && asksPerson(t)).length;
+}
+
+// rowEntries(runState) → every row the live view draws, in order: the plan's tasks, then the end-of-run
+// helpers (pir-coordinator T11). The watch view's ↑↓ walks the same list (dashboard.mjs openTasks).
+export function rowEntries(runState) {
+  return [...(runState?.tasks ?? []), ...(runState?.helpers ?? [])];
 }
 
 // buildDisplay(runState, { now, spinnerFrame }) → { summary, rows, footer } (DESIGN §2.3).
@@ -87,6 +100,10 @@ export function askingCount(runState) {
 //            coordinator agent (pir-coordinator §2.9, §2.10); null with the agent off, where the footer is
 //            today's hand-off or red line.
 //   coordinator: null | { id, live, logPath } — the run's agent, for the screen to open; not read here.
+//   helpers: absent | [task…] — the end-of-run helper workers (main-sync, tests-fix) while they run, each
+//            shaped like a task with `helper: true` (pir-coordinator T11). Each is a row below the tasks,
+//            reading `working` or asking like a task's; the summary's done/total/running/waiting count the
+//            plan's tasks only, and the asking tally and the asking footer take a helper too.
 //   testing: { since:ms } while the end gate runs the plan's setup and test lines on the finished feature
 //            branch, else null. Every task is merged by then, so without it the screen reads as done for
 //            the minutes the suite takes (user 2026-09-25).
@@ -107,6 +124,7 @@ export function askingCount(runState) {
 //     holder  — null | 'coordinator' | 'person' (pir-coordinator §2.5): who holds the waiting items. A
 //               coordinator-held task reads `asking coordinator` (row kind `asking-coordinator`) and is
 //               left out of the asking tally and footer; absent or 'person' is today's `asking you`.
+//     helper  — true on an end-of-run helper's entry (runState.helpers, below); absent on a plan task.
 //     worker  — null | { id, live, logPath }: the worker `pir` opens for this task, the live one else the
 //               latest (§2.11). workers — [{ id, role, n, logPath }], all of the task's in spawn order.
 //               Both ride through to status.json for the screen; this model does not read them.
@@ -122,7 +140,8 @@ export function buildDisplay(runState, { now, spinnerFrame } = {}) {
   const running = tasks.filter((t) => !t.done && (ACTIVE_PHASES.has(t.phase) || isRequest(t))).length;
   const ceilingFull = ceiling != null && running >= ceiling;
 
-  const rows = tasks.map((t) => rowFor(t, { now, doneIds, ceilingFull }));
+  const helpers = runState?.helpers ?? [];
+  const rows = [...tasks, ...helpers].map((t) => rowFor(t, { now, doneIds, ceilingFull }));
 
   const done = doneIds.size;
   const total = tasks.length;
@@ -143,7 +162,7 @@ export function buildDisplay(runState, { now, spinnerFrame } = {}) {
   // `branch` rides at the top level beside summary/rows/footer: the renderer shows the run's branch in
   // its header line on every paint, but the footer only carries a branch in some states (handoff, red),
   // so the summary line cannot source it from there. It is the one field added to the interface sketch.
-  return { branch: branch ?? null, summary, rows, footer: footerFor({ tasks, complete, readyToMerge, testsReason, testing, interrupted, handoff, branch, now }) };
+  return { branch: branch ?? null, summary, rows, footer: footerFor({ tasks: [...tasks, ...helpers], complete, readyToMerge, testsReason, testing, interrupted, handoff, branch, now }) };
 }
 
 // One row for one task. The order of the checks is the priority: a ✅ task is done however it got there;
@@ -164,6 +183,8 @@ function rowFor(t, { now, doneIds, ceilingFull }) {
     const asking = askingKind(t);
     if (asking && heldByCoordinator(t)) return { ...base, kind: 'asking-coordinator', label: COORDINATOR_LABEL[asking], elapsedMs };
     if (asking) return { ...base, kind: 'asking', label: ASKING_LABEL[asking], elapsedMs };
+    // A helper builds nothing and merges nothing: it is working until it reports, then closing.
+    if (t.helper) return { ...base, kind: t.phase, label: HELPER_LABEL[t.phase] ?? PHASE_LABEL[t.phase], elapsedMs };
     return { ...base, kind: t.phase, label: PHASE_LABEL[t.phase], elapsedMs };
   }
 

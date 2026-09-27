@@ -248,6 +248,15 @@ gets `✗ not ready · tests red on pir/{slug} — no merge offered` with the re
 written and says so, and the run waits the same way. While it prepares, the footer reads `all N
 task(s) merged · preparing: syncing main, writing the report`.
 
+**The helpers' rows.** While a test-fix or main-sync worker runs, it has a row below the tasks, keyed by
+its label: `tests-fix  fix-red-tests` or `main-sync  resolve-main-merge` (`runState.helpers`, built by
+`buildRunState` from `state.tasks`). It reads like a task's row, `working` (then `finishing` once it has
+reported), `asking coordinator` or `asking you`, with its clock stopped while it asks. It is not counted in
+`n/m done`, running or waiting; it is counted in the `asking you` tally and takes the `asking you`
+footer, so the runs list reads `asking you` for it. `↑↓` reaches it and `→` opens its conversation, so a
+question the agent passes on from it is answered in `pir` like a task's, or on the phone. The row goes
+when the worker is closed.
+
 The run stays open, its agent reachable in `pir` and on the phone, until:
 
 - **the person merges**: the command sees `main` contains the feature tip (`git merge-base
@@ -304,8 +313,6 @@ All under the run's gitignored control folder ([control-folder.md](control-folde
 
 ## Known limitations
 
-- **The main-sync and test-fix workers have no row in `pir`.** Their questions are briefed to the agent. One the agent
-  passes on is reachable on the phone over Remote Control, but cannot be opened from the live view.
 - **The agent's session is not in `workers.json`.** A coordinator that is SIGKILLed leaves the agent
   running, and the reap that ends orphaned workers does not find it. A stop, `HALT` and teardown close
   it.

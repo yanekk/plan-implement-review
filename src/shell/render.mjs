@@ -132,7 +132,10 @@ export function styledLines(display, { spinnerChar = SPINNER[0] } = {}) {
   // does not push its own row's clock out of line with the others (pir-coordinator T07 drill). Floor 24, the
   // width it always had; capped so one odd label cannot push every clock off a narrow window.
   const labelWidth = Math.min(LABEL_MAX, Math.max(LABEL_MIN, ...rows.map((r) => [...(r.label ?? '')].length)));
-  for (const r of rows) out.push(rowLine(r, spinnerChar, labelWidth));
+  // The id column fits the longest id: 4 for a plan's `T01`, wider while an end-of-run helper's row
+  // (`tests-fix`, pir-coordinator T11) is shown, so its slug still starts in the same column as the tasks'.
+  const idWidth = Math.max(ID_MIN, ...rows.map((r) => [...(r.id ?? '')].length));
+  for (const r of rows) out.push(rowLine(r, spinnerChar, labelWidth, idWidth));
   for (const f of footerLines(footer, summary, spinnerChar)) out.push(f);
   return out;
 }
@@ -167,13 +170,14 @@ function summaryLine(summary, footer, branch, spinnerChar) {
 }
 
 const LABEL_MIN = 24;
+const ID_MIN = 4;
 const LABEL_MAX = 40;
 
-function rowLine(r, spinnerChar, labelWidth = LABEL_MIN) {
+function rowLine(r, spinnerChar, labelWidth = LABEL_MIN, idWidth = ID_MIN) {
   const glyph = GLYPH[r.kind] === null || GLYPH[r.kind] === undefined ? spinnerChar : GLYPH[r.kind];
   // For an idle/queued row the glyph is a faint dot; keep the columns aligned enough to read.
   const g = r.kind === 'waiting' || r.kind === 'queued' ? '·' : glyph;
-  const id = r.id.padEnd(4);
+  const id = r.id.padEnd(idWidth);
   const slug = (r.slug ?? '').padEnd(22);
   const label = r.label.padEnd(labelWidth);
   const el = fmtElapsed(r.elapsedMs);

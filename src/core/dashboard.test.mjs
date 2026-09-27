@@ -707,3 +707,25 @@ test('dashboardReducer: `c` in a build\'s live view opens its coordinator agent\
   assert.equal(list.ui.view, 'list', 'inert on the list');
   assert.equal(list.ui.note, null);
 });
+
+// --- end-of-run helper rows (pir-coordinator T11) ----------------------------------------------------
+
+test('in watch, ↓ reaches an end-of-run helper row below the tasks and → opens its conversation (T11)', () => {
+  const helperWorker = { id: 'w-fix', live: true, logPath: '/c/conversations/w-fix.jsonl' };
+  const run = view({
+    slug: 'plan',
+    key: 'r1__plan',
+    snap: { runState: { tasks: [task('T01', { done: true }), task('T02', { done: true })], helpers: [task('tests-fix', { helper: true, phase: 'asking', worker: helperWorker })] } },
+  });
+  let ui = watchingTasks({ sel: 0 });
+  for (let i = 0; i < 5; i++) ui = dashboardReducer(ui, { type: 'down' }, [run]).ui;
+  assert.equal(ui.taskSel, 2, 'the helper is the third row');
+  const r = dashboardReducer(ui, { type: 'open' }, [run]);
+  assert.equal(r.ui.view, 'worker');
+  assert.deepEqual(r.ui.openWorker, { taskId: 'tests-fix', workerId: 'w-fix', logPath: '/c/conversations/w-fix.jsonl', live: true });
+});
+
+test('a run whose helper waits on the person reads asking-you in the list (T11)', () => {
+  const run = view({ state: 'running', snap: { runState: { tasks: [task('T01', { done: true })], helpers: [task('main-sync', { helper: true, phase: 'asking', holder: 'person' })], handoff: { state: 'preparing' } } } });
+  assert.equal(runDisplayState(run), 'asking-you');
+});

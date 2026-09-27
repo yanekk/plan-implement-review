@@ -242,7 +242,10 @@ current `main` into the feature branch, so the person's merge goes through clean
 a **main-sync worker** is spawned in the feature worktree to finish the merge, test and report `done`;
 its questions go to the agent first like any worker's. Red tests at the end get the same treatment: one
 **test-fix worker** in the feature worktree, one attempt, and the branch is handed over red only if the
-tests still fail after it. Neither has a row in the live view (see
+tests still fail after it. While either runs it has a row of its own below the tasks, `main-sync` or
+`tests-fix`, which reads like a task's (`working`, `asking coordinator`, `asking you`) but is not counted
+in `n/m done`. A question the agent passes on from it is answered as for any task: select its row, open
+it (→ or Enter) and answer in its conversation, in `pir` or on the phone (see
 [coordinator-agent.md](coordinator-agent.md#the-end-of-the-run)).
 
 ## The test command is the block

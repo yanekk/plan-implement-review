@@ -26,7 +26,7 @@ import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { openScreen as openScreenRaw, driveScreen as driveScreenRaw } from './conversation-rig.mjs';
 import { writeClaudeShim } from './fake/claude-shim.mjs';
-import { COORDINATOR_MATCH, DRILL_SLUG, PLANNER_MATCH, REVIEWER_MATCH, coordinatorScript, drillPlanFiles, drillScripts, noPlanScript, plannerScript, reviewerScript, workerScripts } from './fake/sessions.mjs';
+import { COORDINATOR_MATCH, DRILL_SLUG, HELPER_DRILL_SLUG, PLANNER_MATCH, REVIEWER_MATCH, coordinatorScript, drillPlanFiles, drillScripts, helperDrillPlanFiles, helperDrillScripts, noPlanScript, plannerScript, reviewerScript, workerScripts } from './fake/sessions.mjs';
 import { assistantText, canUseTool, initEvent, resultEvent, toolUse } from './fake/claude-stream.mjs';
 
 const SESSIONS = fileURLToPath(new URL('./fake/sessions.mjs', import.meta.url));
@@ -38,7 +38,7 @@ export const PLAN_RIG_SLUG_2 = 'rig-plan-two';
 export const PLAN_RIG_QUESTION = 'Which way should the plan go?';
 export const PLAN_RIG_REVIEW_ASK = 'Is the name rig-plan fine before I mark it reviewed?';
 export const PLAN_RIG_REVIEW_COMMAND = 'git log --oneline -3';
-export const SCRIPT_SETS = ['happy', 'no-plan', 'taken-slug', 'crash-planner', 'reviewer-asks']; // planning sets; 'coordinator-drill' plans nothing
+export const SCRIPT_SETS = ['happy', 'no-plan', 'taken-slug', 'crash-planner', 'reviewer-asks']; // planning sets; 'coordinator-drill' and 'end-helper' plan nothing
 
 const q = (s) => `'${String(s).replaceAll("'", `'\\''`)}'`;
 const GIT_ID = ['-c', 'user.name=pir rig', '-c', 'user.email=rig@pir.invalid'];
@@ -67,8 +67,12 @@ function reportStep(steps) {
 //   coordinator-drill  no planning: startPlanRig commits the reviewed three-task plan DRILL_SLUG on `main`,
 //                  whose implementers each ask one thing and whose coordinator agent reacts to whatever
 //                  it is sent (pir-coordinator T07; fake/sessions.mjs drillScripts)
+//   end-helper     no planning: startPlanRig commits the reviewed one-task plan HELPER_DRILL_SLUG, whose
+//                  tests are red at the end until its tests-fix helper, after asking the person one
+//                  question the agent passes on, commits the fix (pir-coordinator T11; helperDrillScripts)
 export function scriptSet(name = 'happy') {
   if (name === 'coordinator-drill') return drillScripts();
+  if (name === 'end-helper') return helperDrillScripts();
   const planner = plannerScript({ slug: PLAN_RIG_SLUG, question: PLAN_RIG_QUESTION });
   let reviewed = PLAN_RIG_SLUG;
   let plannerSteps;
@@ -168,13 +172,15 @@ export function startPlanRig({ into = null, scripts = 'happy', keep = false, bas
   writeFileSync(join(repoDir, '.git', 'info', 'exclude'), '.claude/worktrees/\n');
   git(repoDir, 'add', '-A');
   git(repoDir, 'commit', '-q', '-m', 'rig: scratch repo');
-  if (scripts === 'coordinator-drill') {
-    for (const [path, content] of Object.entries(drillPlanFiles(DRILL_SLUG))) {
+  const committedPlan = { 'coordinator-drill': [DRILL_SLUG, drillPlanFiles, 'coordinator'], 'end-helper': [HELPER_DRILL_SLUG, helperDrillPlanFiles, 'end-helper'] }[scripts];
+  if (committedPlan) {
+    const [planSlug, files, drill] = committedPlan;
+    for (const [path, content] of Object.entries(files(planSlug))) {
       mkdirSync(join(repoDir, path, '..'), { recursive: true });
       writeFileSync(join(repoDir, path), content);
     }
     git(repoDir, 'add', '-A');
-    git(repoDir, 'commit', '-q', '-m', `plan(${DRILL_SLUG}): the coordinator drill's plan`);
+    git(repoDir, 'commit', '-q', '-m', `plan(${planSlug}): the ${drill} drill's plan`);
   }
   // A taken slug by its branch (DESIGN §2.5), which leaves `main` at its one commit.
   if (scripts === 'taken-slug') git(repoDir, 'branch', `pir/${PLAN_RIG_SLUG}`);
@@ -200,7 +206,7 @@ export function startPlanRig({ into = null, scripts = 'happy', keep = false, bas
     shimDir,
     scriptsFile,
     received,
-    slug: scripts === 'taken-slug' ? PLAN_RIG_SLUG_2 : scripts === 'coordinator-drill' ? DRILL_SLUG : PLAN_RIG_SLUG,
+    slug: scripts === 'taken-slug' ? PLAN_RIG_SLUG_2 : committedPlan ? committedPlan[0] : PLAN_RIG_SLUG,
     cleanup,
     openScreen: (opts = {}) => openScreenRaw({ cwd: repoDir, env, ...opts }),
     driveScreen: (opts = {}) => driveScreenRaw({ cwd: repoDir, env, ...opts }),
