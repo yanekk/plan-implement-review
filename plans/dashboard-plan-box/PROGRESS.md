@@ -14,7 +14,7 @@ past.
 
 **Status:** Planned 2026-09-26. Nothing built.
 **Last updated:** 2026-09-27
-**Next `pir-work` will:** review T05 box-starts-plan.
+**Next `pir-work` will:** implement T06 plan-box-drill.
 
 ## Tasks
 
@@ -27,10 +27,10 @@ done · ⛔ blocked, needs a human.
 | T02 | plan-box-rules | — | ✅ | |
 | T03 | repo-scan | T02 | ✅ | |
 | T04 | list-view-box | T02 | ✅ | |
-| T05 | box-starts-plan | T03, T04 | 🔍 | runTui mounts the list view, Enter starts via startPlan and lands on the planner; rig sets PIR_REPOS; docs and README. 5 unit, 4 pty tests. Deviations: box only on a screen with mount+listen (non-TTY keeps the painted list); two paint-throw tests now use openWatch, the list no longer paints. |
+| T05 | box-starts-plan | T03, T04 | ✅ | Review clean, one test added: Ctrl+X twice reaches the list with text in the box and keeps it. Probed openKey against the index key, sync startPlanRun, refusal and throw paths, docs vs code. Recorded deviations (non-TTY painted list, paint-throw tests via openWatch) accepted. A refusal note persists until Esc, as the prototype does. |
 | T06 | plan-box-drill | T01, T05 | ⬜ | |
 
-**Review queue:** T05
+**Review queue:** empty
 
 ## Blocked on the user
 
