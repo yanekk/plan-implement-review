@@ -28,7 +28,7 @@ done · ⛔ blocked, needs a human.
 | T02 | coordinator-skill | — | ✅ | |
 | T03 | coordinator-session | T01 | ✅ | |
 | T04 | answer-first-routing | T03 | ✅ | |
-| T05 | end-of-run-handoff | T04 | 🔍 | End sequence is `endPass` in startCoordinator, one step per pass; main-sync worker via `platform.spawn({ task, opening })`, role `sync`. 27 new tests. Deviations: `./install.sh` not run (parallel run live, FINDINGS). Section order: delivered, decisions, check by hand, risks. Adoptions ledgered as `kind: adopt`. Added `mainTip`, `syncPending`, `abortSync`, `replaceFooter`, `resyncedFor`. |
+| T05 | end-of-run-handoff | T04 | ✅ | Review: two fixes. The plan-rig end-to-end build hung at the end (rig fake had no agent script, so no report); reproduced against the parent, fixed with a fake coordinator script and a REPORT.md assertion. A restart after the person merged re-synced and waited for ever; reproduced by a test, now finishes as merged. `./install.sh` not run (live run). |
 | T06 | coordinator-screen | T04, T05 | ⬜ | |
 | T07 | coordinator-drill | T06 | ⬜ | |
 | T08 | docs | T02, T04, T05, T06 | ⬜ | |
