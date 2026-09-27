@@ -9,7 +9,7 @@ import { tmpdir } from 'node:os';
 import { join, dirname, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { startWorker, workerOptions, writeWorkersFile } from './worker-proc.mjs';
-import { fakeClaudeSpawner, turn, wakeUp, remoteInputTurn, canUseTool, initEvent, assistantText, resultEvent, REMOTE_CONTROL_RESPONSE } from './fake/claude-stream.mjs';
+import { fakeClaudeSpawner, turn, wakeUp, backgroundTasks, remoteInputTurn, canUseTool, initEvent, assistantText, resultEvent, REMOTE_CONTROL_RESPONSE } from './fake/claude-stream.mjs';
 import { workerActivity, allowResult } from '../core/stream.mjs';
 
 const SESSION = '11111111-1111-4111-8111-111111111111';
@@ -142,6 +142,31 @@ test('a wake-up and a Remote Control turn pass through the SDK and fold to their
   assert.deepEqual(a.turnCauses, ['pir', 'system', 'remote']);
   assert.equal(a.remoteSends, 1);
   assert.equal(a.state, 'idle');
+});
+
+test('a fake background job and its wakeUp() fold like the recorded case 5 (stopped-worker-asking T01)', async (t) => {
+  // The job starts inside the first turn; the turn ends with it running; wakeUp() sends the shrunken list,
+  // the notification and the wake-up turn, as the real CLI does.
+  const script = [{ await: 'user' }, { emit: initEvent() }, { emit: backgroundTasks(['bgfake']) }, { emit: assistantText('waiting') }, { emit: resultEvent('success', 'waiting') }, ...wakeUp()];
+  const { worker, logLines } = setup(script, t);
+  worker.send('begin', { from: 'pir' });
+  await waitFor(() => worker.entries().filter((e) => e.dir === 'in' && e.event.type === 'result').length === 2, 'two results');
+  const log = logLines();
+  const firstResult = log.findIndex((e) => e.event?.type === 'result');
+  const wakeInit = log.findIndex((e, i) => i > firstResult && e.event?.subtype === 'init');
+  assert.ok(log.slice(firstResult, wakeInit).some((e) => e.event?.subtype === 'background_tasks_changed'), 'the shrunken list comes before the wake-up');
+  for (let i = firstResult; i < wakeInit; i += 1) {
+    const a = workerActivity(log.slice(0, i + 1));
+    assert.equal(a.state, 'idle', `entry ${i}`);
+    assert.deepEqual(a.background, ['bgfake'], `entry ${i}: held while idle before the wake-up`);
+  }
+  const woke = workerActivity(log.slice(0, wakeInit + 1));
+  assert.equal(woke.state, 'busy');
+  assert.deepEqual(woke.background, []);
+  const end = workerActivity(log);
+  assert.equal(end.state, 'idle');
+  assert.deepEqual(end.background, []);
+  assert.deepEqual(end.turnCauses, ['pir', 'system']);
 });
 
 test('a can_use_tool becomes a request entry and a pending request; answer sends the PermissionResult', async (t) => {

@@ -24,14 +24,14 @@ done · ⛔ blocked, needs a human.
 
 | # | Task | Depends on | State | Notes |
 |---|---|---|---|---|
-| T01 | background-fold | — | ⬜ | |
+| T01 | background-fold | — | 🔍 | `background` fold in `workerActivity`, `readEntry` kind `background`, fake `backgroundTasks()`; `wakeUp()` sends the shrunken list first. 11 tests. Deviations: `wakeUp` gained a third arg `still` (jobs left running); the fake-log test lives in `worker-proc.test.mjs`, which drives the fake through the SDK. |
 | T02 | stopped-predicate | — | ⬜ | |
 | T03 | planning-steps-asking | T02 | ⬜ | |
 | T04 | worker-reports-every-ask | — | ⬜ | |
 | T05 | docs | T03, T04, T06 | ⬜ | |
 | T06 | stopped-asking-live | T01, T02 | ⬜ | |
 
-**Review queue:** *(empty)*
+**Review queue:** T01
 
 ## Blocked on the user
 
