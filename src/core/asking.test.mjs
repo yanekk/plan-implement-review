@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { waitingOn } from './asking.mjs';
+import { stoppedOnPerson, waitingOn } from './asking.mjs';
 
 const parked = (decision = {}) => ({ phase: 'awaiting-answer', decision: { kind: 'question', text: 'which?', ...decision } });
 const act = (o) => ({ state: o.open ? 'busy' : 'idle', turns: 0, open: false, pending: [], ...o });
@@ -44,4 +44,60 @@ test('waitingOn: a task not parked and no request → null', () => {
   assert.equal(waitingOn({ phase: 'implementing' }, act({ open: true, turns: 1 })), null);
   assert.equal(waitingOn({ phase: 'reviewing' }, undefined), null);
   assert.equal(waitingOn(undefined, undefined), null);
+});
+
+// --- stopped-worker-asking T02: a stopped implementer or reviewer is waiting on the person ------------
+
+const stopped = (o = {}) => act({ open: false, turns: 3, background: [], ...o });
+
+test('stoppedOnPerson: idle with no background job running, and nothing else', () => {
+  assert.equal(stoppedOnPerson(stopped()), true);
+  assert.equal(stoppedOnPerson(stopped({ background: ['bg1'] })), false, 'a job of its own still running');
+  assert.equal(stoppedOnPerson(act({ open: false, turns: 3 })), false, 'no `background` field: pir cannot see its jobs');
+  assert.equal(stoppedOnPerson({ state: 'idle', pending: [] }), false, 'the fake platform shape');
+  for (const state of ['busy', 'permission', 'questions', 'starting']) {
+    assert.equal(stoppedOnPerson(stopped({ state })), false, state);
+  }
+  assert.equal(stoppedOnPerson(undefined), false);
+  assert.equal(stoppedOnPerson(null), false);
+  assert.equal(stoppedOnPerson({ state: 'idle', background: 'x' }), false, 'a non-array is not an empty list');
+});
+
+test('waitingOn: an implementer or reviewer that stopped is asking a question', () => {
+  assert.equal(waitingOn({ phase: 'implementing' }, stopped()), 'question');
+  assert.equal(waitingOn({ phase: 'reviewing' }, stopped()), 'question');
+});
+
+test('waitingOn: an implementer idle behind its own background job is working', () => {
+  assert.equal(waitingOn({ phase: 'implementing' }, stopped({ background: ['bg1'] })), null);
+  assert.equal(waitingOn({ phase: 'reviewing' }, stopped({ background: ['bg1', 'bg2'] })), null);
+});
+
+test('waitingOn: a busy implementer, or one pir cannot see, is working', () => {
+  assert.equal(waitingOn({ phase: 'implementing' }, stopped({ state: 'busy', open: true })), null);
+  assert.equal(waitingOn({ phase: 'implementing' }, undefined), null);
+  assert.equal(waitingOn({ phase: 'implementing' }, act({ open: false, turns: 3 })), null, 'no `background` field');
+});
+
+test('waitingOn: a stopped worker in any other phase is not asking', () => {
+  for (const phase of ['review-ready', 'done', 'preparing', 'verifying']) {
+    assert.equal(waitingOn({ phase }, stopped()), null, phase);
+  }
+  assert.equal(waitingOn(undefined, stopped()), null, 'no tracked task');
+});
+
+test('waitingOn: a conflict fix pir sent stays unasked when its worker stops', () => {
+  assert.equal(waitingOn(parked({ kind: 'conflict', sent: true }), stopped()), null);
+});
+
+test('waitingOn: a pending request on an implementer still names its kind, background or not', () => {
+  assert.equal(waitingOn({ phase: 'implementing' }, stopped({ state: 'permission', background: ['bg1'] })), 'permission');
+  assert.equal(waitingOn({ phase: 'reviewing' }, stopped({ state: 'questions' })), 'questions');
+});
+
+test('waitingOn: a report park reads as before when the activity carries `background`', () => {
+  assert.equal(waitingOn(parked({ askEnd: 3 }), stopped({ state: 'busy', open: true, turns: 2 })), null, 'still in the asking turn');
+  assert.equal(waitingOn(parked({ askEnd: 3 }), stopped()), 'question');
+  assert.equal(waitingOn(parked({ askEnd: 3 }), stopped({ background: ['bg1'] })), 'question', 'a report park ignores the job');
+  assert.equal(waitingOn(parked({ askEnd: 3 }), stopped({ state: 'busy', open: true, turns: 4 })), 'question', 'a wake-up turn');
 });

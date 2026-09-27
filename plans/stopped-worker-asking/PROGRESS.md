@@ -25,13 +25,13 @@ done · ⛔ blocked, needs a human.
 | # | Task | Depends on | State | Notes |
 |---|---|---|---|---|
 | T01 | background-fold | — | ⬜ | |
-| T02 | stopped-predicate | — | ⬜ | |
+| T02 | stopped-predicate | — | 🔍 | `stoppedOnPerson` and `waitingOn` stopped clause in `asking.mjs`; `displayPhaseFor` reads `asking` for stopped implementing/reviewing. 8 core tests, 6 coordinate tests incl. a full fake run never reading asking. No deviations; `verifying` (you-scribe) phase deliberately excluded, as the doc's phase list implies. |
 | T03 | planning-steps-asking | T02 | ⬜ | |
 | T04 | worker-reports-every-ask | — | ⬜ | |
 | T05 | docs | T03, T04, T06 | ⬜ | |
 | T06 | stopped-asking-live | T01, T02 | ⬜ | |
 
-**Review queue:** *(empty)*
+**Review queue:** T02
 
 ## Blocked on the user
 
