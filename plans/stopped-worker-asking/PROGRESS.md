@@ -25,7 +25,7 @@ done · ⛔ blocked, needs a human.
 | # | Task | Depends on | State | Notes |
 |---|---|---|---|---|
 | T01 | background-fold | — | ⬜ | |
-| T02 | stopped-predicate | — | ⬜ | |
+| T02 | stopped-predicate | — | ✅ | |
 | T03 | planning-steps-asking | T02 | ⬜ | |
 | T04 | worker-reports-every-ask | — | ✅ | |
 | T05 | docs | T03, T04, T06 | ⬜ | |
