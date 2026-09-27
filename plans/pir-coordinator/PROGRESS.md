@@ -24,7 +24,7 @@ done · ⛔ blocked, needs a human.
 | # | Task | Depends on | State | Notes |
 |---|---|---|---|---|
 | T00 | coordinator-probe | — | ✅ | |
-| T01 | coordinator-rulebook | T00 | 🔍 | `coordinator-policy.mjs` + 27 tests; `ruleMatches` exported. Extras: exported `commandParts` (splits, reads `$()` bodies, drops env/redirects) and `describeItem`. `answers` must cover exactly the asked questions. Deny message is the agent's reason. `pass` without requestId targets the report park only. Any `git restore` reserved. |
+| T01 | coordinator-rulebook | T00 | ✅ | Reviewed: fixed reservation bypasses (wrappers like `nohup`/`env`/`sudo`, `then`/`{`, quoted `sh -c`, `&>`, `/bin/rm`, `\rm`), reproduced by script, test locks it; ask-rule match now tries every word tail, over-matching by design. Probed decision checks, `commandIsSimple` edge cases. Extras kept: exported `commandParts`/`describeItem`, exact-question `answers`, any `git restore` reserved. |
 | T02 | coordinator-skill | — | ✅ | |
 | T03 | coordinator-session | T01 | ⬜ | |
 | T04 | answer-first-routing | T03 | ⬜ | |
@@ -34,7 +34,7 @@ done · ⛔ blocked, needs a human.
 | T08 | docs | T02, T04, T05, T06 | ⬜ | |
 | T09 | live-coordinator-check | T07, T08 | ⬜ | |
 
-**Review queue:** T01
+**Review queue:** empty
 
 ## Blocked on the user
 
