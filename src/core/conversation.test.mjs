@@ -515,6 +515,28 @@ test('the picker prompt shows the question, its boxes, the cursor and the Other 
 
 
 
+test('option descriptions and the Other answer word-wrap under their label instead of clipping (user 2026-09-27)', () => {
+  const long = { label: 'Split it', description: 'two tasks, one for the parser and one for the view' };
+  const p = pickerFor({ requestId: 'q', questions: [{ question: 'How?', header: 'How', multiSelect: false, options: [long] }] });
+  const lines = all(promptLines(p, { width: 40, taskId: 'T05' }));
+  assert.deepEqual(lines.slice(2, 5), ['  ❯ ( ) Split it  two tasks, one for the', '        parser and one for the view', '    ( ) Other: type your own answer']);
+  assert.ok(lines.every((l) => [...l].length <= 40 && !l.includes('…')));
+  const typed = run(p, [{ type: 'char', text: 'first the parser then the view in a later task' }]).picker;
+  const other = all(promptLines(typed, { width: 40, taskId: 'T05' })).slice(4, 6);
+  assert.deepEqual(other, ['  ❯ (•) Other: first the parser then the', '        view in a later task▏']);
+});
+
+test('picker: left/right move the Other caret; typing and backspace work at it', () => {
+  let r = run(picker(), [{ type: 'char', text: 'tel' }, { type: 'left' }, { type: 'char', text: 'a' }, { type: 'left' }, { type: 'left' }, { type: 'left' }, { type: 'left' }]);
+  assert.deepEqual([r.picker.questions[0].other, r.picker.questions[0].caret], ['teal', 0], 'the caret stops at the start');
+  r = run(r.picker, [{ type: 'right' }, { type: 'backspace' }, { type: 'right' }, { type: 'right' }, { type: 'right' }, { type: 'right' }]);
+  assert.deepEqual([r.picker.questions[0].other, r.picker.questions[0].caret], ['eal', 3], 'the caret stops at the end');
+  // Off the Other line, left/right do nothing; typing from an option appends at the end.
+  const off = run(r.picker, [{ type: 'left' }, { type: 'up' }]).picker;
+  assert.deepEqual(pickerReducer(off, { type: 'left' }), { picker: off, send: null });
+  assert.equal(pickerReducer(off, { type: 'char', text: '!' }).picker.questions[0].other, 'eal!');
+});
+
 test('terminal escapes and control characters in worker text and tool output never reach the lines', () => {
   const dirty = '\x1b[31mFAIL\x1b[0m a\tb\x1b[2J 50%\r100%';
   const log = [use('u1', 'Bash\x1b[2J', { command: 'npm\x1b[1m test' }), res('u1', dirty), say('hi \x1b]0;title\x07there'), request('r1', 'Bash\x1b[2J')];

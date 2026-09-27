@@ -108,8 +108,9 @@ reports (`canUseTool` in `worker-proc.mjs`, logged as a `request` entry):
   questions are pinned one at a time as a picker: ↑↓ move. On a pick-one question Enter chooses the
   highlighted line and goes on; on a pick-any question space ticks and Enter goes on. The last
   question's Enter sends. Every question ends with an "Other" line that is a text field: move onto it,
-  or just start typing, and the text appears next to "Other:" (never in the typing box); Enter answers
-  with it. It replaces a pick-one choice and joins a pick-any question's ticks. To talk instead of
+  or just start typing, and the text appears next to "Other:" (never in the typing box), wrapped to as
+  many lines as it needs; ←/→ move the cursor within it, and ← goes back to the live view only once it
+  is empty. Enter answers with it. Option descriptions wrap too, never cut short. It replaces a pick-one choice and joins a pick-any question's ticks. To talk instead of
   answering, Esc interrupts the worker, which cancels the question.
 
 These keys work only while the typing box is empty. A request left unanswered simply waits: nothing

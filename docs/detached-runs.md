@@ -199,7 +199,7 @@ The keys, as built, are shown in the footer of each view:
 | Steps (a planning run) | `↑↓` pick a step · `→` or `↵` open its conversation · `←` back to the list · `Ctrl+S Ctrl+S` stop this run (while it runs) · `esc` quit |
 | The go question | `↵` start the build · `n` not now · `←` back to the list · `esc` quit, leaving the question in place |
 | Brief box (`pir plan`) | typing · `↵` start planning · `shift+↵` or `ctrl+j` new line · `esc` or `Ctrl+C` cancel |
-| Conversation | typing, `↵` send · `esc` interrupt the worker · `Ctrl+C` clear the box, or interrupt when it is empty · `←` with an empty box back to the live view · `Tab` one line per step ⇄ full detail · `↵`/`n`/`a` answer a pending permission, and `↑↓` `space` `↵` drive a pending question set (one `↵` answers a pick-one question), both only while the box is empty, and typing while a question set is pending goes to its Other line · `PgUp`/`PgDn` scroll |
+| Conversation | typing, `↵` send · `esc` interrupt the worker · `Ctrl+C` clear the box, or interrupt when it is empty · `←` with an empty box back to the live view · `Tab` one line per step ⇄ full detail · `↵`/`n`/`a` answer a pending permission, and `↑↓` `space` `↵` drive a pending question set (one `↵` answers a pick-one question), both only while the box is empty, and typing while a question set is pending goes to its Other line, where `←`/`→` move the cursor and `←` goes back only once the line is empty · `PgUp`/`PgDn` scroll |
 
 `←` steps back one view; `esc` quits `pir` outright from the list and the live view, but in the
 conversation view it interrupts the worker, as in Claude's own screen: the open turn ends at once, and
