@@ -392,10 +392,11 @@ export function startWorker({
 }
 
 // writeWorkersFile(controlDir, workers) → control/workers.json, temp then rename, so the reap never
-// reads a partial list (DESIGN §2.12). Only the five recorded fields are written.
+// reads a partial list (DESIGN §2.12). Only the recorded fields are written; cwd is the worktree the
+// worker was spawned in, for a reader that follows the worker's folder (the dashboard state file).
 export function writeWorkersFile(controlDir, workers) {
   writeJsonAtomic(
     join(controlDir, 'workers.json'),
-    workers.map(({ id, task, role, pid, startTime }) => ({ id, task, role, pid, startTime })),
+    workers.map(({ id, task, role, pid, startTime, cwd }) => ({ id, task, role, pid, startTime, cwd: cwd ?? null })),
   );
 }

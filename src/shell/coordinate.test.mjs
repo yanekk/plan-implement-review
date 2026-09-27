@@ -1529,12 +1529,12 @@ test('buildRunState: `worker` is the live one, else the latest; `workers` lists 
   ];
   const rs = buildRunState({ passTasks, stateTasks: { T01: { role: 'review', phase: 'reviewing' } }, workers, branch: 'b', ceiling: 2 });
   const [t1, t2, t3] = rs.tasks;
-  assert.deepEqual(t1.worker, { id: 'r1', live: true, logPath: 'c/T01-review-1.ndjson' });
+  assert.deepEqual(t1.worker, { id: 'r1', live: true, logPath: 'c/T01-review-1.ndjson', cwd: null });
   assert.deepEqual(t1.workers, [
-    { id: 'i1', role: 'implement', n: 1, logPath: 'c/T01-implement-1.ndjson' },
-    { id: 'r1', role: 'review', n: 1, logPath: 'c/T01-review-1.ndjson' },
+    { id: 'i1', role: 'implement', n: 1, logPath: 'c/T01-implement-1.ndjson', cwd: null },
+    { id: 'r1', role: 'review', n: 1, logPath: 'c/T01-review-1.ndjson', cwd: null },
   ]);
-  assert.deepEqual(t2.worker, { id: 'r2', live: false, logPath: 'c/T02-review-1.ndjson' }, 'no live one: the latest, read-only');
+  assert.deepEqual(t2.worker, { id: 'r2', live: false, logPath: 'c/T02-review-1.ndjson', cwd: null }, 'no live one: the latest, read-only');
   assert.equal(t2.asking, null, 'a done task asks nothing');
   assert.equal(t3.worker, null);
   assert.deepEqual(t3.workers, []);
@@ -1545,7 +1545,7 @@ test('the fake platform\'s workers() keeps closed workers in spawn order and sho
   const r = coordinator.pass();
   const rs = buildRunState({ passTasks: r.tasks, stateTasks: coordinator.state.tasks, workers: platform.workers(), branch: 'b', ceiling: 4 });
   assert.equal(rs.tasks[0].asking, 'permission');
-  assert.deepEqual(rs.tasks[0].worker, { id: 'w1', live: true, logPath: 'conversations/T01-implement-1.ndjson' });
+  assert.deepEqual(rs.tasks[0].worker, { id: 'w1', live: true, logPath: 'conversations/T01-implement-1.ndjson', cwd: platform.spawns[0].cwd });
   platform.close('w1');
   assert.deepEqual(platform.workers().map((x) => [x.id, x.live]), [['w1', false]]);
 });
@@ -1579,7 +1579,8 @@ test('the snapshot of a run whose live worker has a pending permission shows ask
   assert.equal(task.worker.live, true);
   assert.equal(task.worker.logPath, join(controlDir, 'conversations', 'T01-implement-1.ndjson'));
   assert.ok(existsSync(task.worker.logPath), 'the log path is the worker\'s real conversation log');
-  assert.deepEqual(task.workers, [{ id: task.worker.id, role: 'implement', n: 1, logPath: task.worker.logPath }]);
+  assert.deepEqual(task.workers, [{ id: task.worker.id, role: 'implement', n: 1, logPath: task.worker.logPath, cwd: task.worker.cwd }]);
+  assert.ok(task.worker.cwd.endsWith('wt-T01'), 'the worker names the worktree it was spawned in');
   assert.equal(buildDisplay(snap.runState, { now: 0 }).rows[0].label, 'asking you · allow a command?');
 });
 

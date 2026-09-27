@@ -238,6 +238,12 @@ planning, reviewing or your go), its progress and how many workers are live.
 | Live view | `↑↓` pick a task · `→` open its worker · `←` back to the dashboard · `Ctrl+S` twice stop this run · `esc` quit |
 | A planning run | `↑↓` pick a step · `→` open its conversation · `←` back · at the go, `↵` start or `n` not now |
 
+Another program can follow what the dashboard has open: start it as
+`PIR_DASHBOARD_STATE=/abs/path.json pir` and it keeps that file naming the open run or worker and its
+folder, which is how a cockpit that shows `pir` in a pane points its diff viewer and terminals at the
+right worktree. Without the variable nothing is written. See
+[detached-runs.md](docs/detached-runs.md#following-the-dashboard-from-another-program--pir_dashboard_state).
+
 Quitting either view stops nothing. Stopping a run closes its workers at once and keeps
 everything already merged; `Ctrl+R` twice on its row, or `pir start {slug}`, picks it up again later. At most four workers run at a
 time (`PARALLEL_MAX_WORKERS` changes it), which caps both cost and merge complexity.

@@ -381,13 +381,13 @@ test('a log that cannot be written never stops the worker: send, exit and close 
   assert.equal(existsSync(dirname(logPath)), false, 'the removed folder is not recreated');
 });
 
-test('writeWorkersFile writes the five fields, temp then rename, leaving no temp', (t) => {
+test('writeWorkersFile writes the recorded fields, temp then rename, leaving no temp', (t) => {
   const dir = mkdtempSync(join(tmpdir(), 'pir-workers-file-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const controlDir = join(dir, 'control');
-  writeWorkersFile(controlDir, [{ id: SESSION, task: 'T04', role: 'implement', pid: 42, startTime: 'Fri Sep 25 10:00:00 2026', extra: 'dropped' }]);
+  writeWorkersFile(controlDir, [{ id: SESSION, task: 'T04', role: 'implement', pid: 42, startTime: 'Fri Sep 25 10:00:00 2026', cwd: '/wt/T04', extra: 'dropped' }]);
   assert.deepEqual(JSON.parse(readFileSync(join(controlDir, 'workers.json'), 'utf8')), [
-    { id: SESSION, task: 'T04', role: 'implement', pid: 42, startTime: 'Fri Sep 25 10:00:00 2026' },
+    { id: SESSION, task: 'T04', role: 'implement', pid: 42, startTime: 'Fri Sep 25 10:00:00 2026', cwd: '/wt/T04' },
   ]);
   writeWorkersFile(controlDir, []);
   assert.deepEqual(JSON.parse(readFileSync(join(controlDir, 'workers.json'), 'utf8')), []);

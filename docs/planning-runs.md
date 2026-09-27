@@ -148,7 +148,7 @@ auto-approves a write under `.git`, which would stall the planner at its last st
 | `reports/` | the sessions' report files |
 | `conversations/` | `plan-{n}.ndjson` and `review-{n}.ndjson`, one per session. A resumed session appends to its own log after a `resumed` note, so the person reads one conversation |
 | `inbox/` | the person's input on its way to the session, as for a build |
-| `workers.json` | the live session's pid and start time, for reaping |
+| `workers.json` | the live session's pid, start time and worktree (`cwd`), for reaping |
 | `status.json`, `run.log` | the snapshot the screen paints, and the program's output |
 
 The snapshot's `runState` for a planning run is `{ kind: 'plan', label, slug, step, outcome, steps }`,

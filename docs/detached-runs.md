@@ -204,6 +204,44 @@ Two dashboards open at once are both readers of the same files; either can stop 
 the other repaints from the changed state on its next read. The dashboard holds no authority a second
 copy could contend for.
 
+### Following the dashboard from another program — `PIR_DASHBOARD_STATE`
+
+A program that shows the dashboard in a pane (the agentic-ide cockpit) can follow what the person has
+open. When `PIR_DASHBOARD_STATE` holds an absolute file path, bare `pir` keeps that file current; unset,
+it writes nothing. `pir plan` and `pir start` never write it, even though they land in the same screen.
+
+```json
+{
+  "version": 1,
+  "pid": 12345,
+  "view": "list" | "run" | "worker",
+  "run": null | { "key": "{repo}__{slug}", "kind": "plan" | "work", "slug": "…", "repo": "…",
+                  "repoPath": "/abs", "branch": "pir/…", "cwd": "/abs" | null },
+  "worker": null | { "id": "<worker uuid>", "task": "T03", "role": "implement" | "review", "cwd": "/abs" | null },
+  "updatedAt": "<ISO timestamp>"
+}
+```
+
+- `view` is `list` on the runs list, `run` in a run's live view or steps view (the go question included),
+  `worker` in a conversation. `run` is set in `run` and `worker`, `worker` only in `worker`. An open run
+  whose record has gone (removed from another dashboard) publishes its view with `run: null`.
+- `run.cwd` is the run's shared worktree, `{main worktree}/.claude/worktrees/pir-{slug}` for a build and
+  the planning worktree (`pir-{runId}`, then `pir-{slug}` after the rename) for a planning run; `null`
+  until that folder exists. The main worktree is git's, not the checkout the run was started from.
+- `worker.cwd` is the worktree the worker was spawned in, read from the status snapshot's worker entries
+  (which carry `cwd` alongside `workers.json`), so a finished worker still names its folder. A planning
+  run's sessions all name the planning worktree under its current name. `null` for a snapshot written
+  before `cwd` was recorded. A planning run's worker has `task` `plan` or `review`; its planner publishes
+  role `implement` and its reviewer `review`.
+- The file is rewritten only when what it says changes — the view, the open run or worker, or a path
+  in it (a planning worktree renamed, a worktree created) — never on a refresh tick or a cursor move,
+  because the reader moves panes on every write. Each write is a temp file beside it, then a rename.
+- A clean quit removes the file. A crash or a kill can leave it behind; `pid` lets a reader tell.
+- A failed write never disturbs the screen: it is retried on the next change and reported once, on
+  stderr, after `pir` has left the screen (as is a path that is not absolute, which publishes nothing).
+
+Built in `src/core/dashboard-state.mjs` (the object) and `src/shell/dashboard-publish.mjs` (the write).
+
 ## Start
 
 Before it spawns anything, `pir start {slug}` runs a pre-flight (`startRun` in `src/shell/launch.mjs`):

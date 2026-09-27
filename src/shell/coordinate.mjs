@@ -892,8 +892,9 @@ function workerFields(taskWorkers, { done, phase, conflictSent }) {
   const asking = request ?? (!done && phase === 'asking' && !conflictSent ? 'question' : null);
   return {
     asking,
-    worker: open ? { id: open.id, live: !!open.live, logPath: open.logPath ?? null } : null,
-    workers: taskWorkers.map((w) => ({ id: w.id, role: w.role, n: w.n ?? null, logPath: w.logPath ?? null })),
+    // cwd is the worktree each was spawned in, kept after it exits so the dashboard can name its folder.
+    worker: open ? { id: open.id, live: !!open.live, logPath: open.logPath ?? null, cwd: open.cwd ?? null } : null,
+    workers: taskWorkers.map((w) => ({ id: w.id, role: w.role, n: w.n ?? null, logPath: w.logPath ?? null, cwd: w.cwd ?? null })),
   };
 }
 

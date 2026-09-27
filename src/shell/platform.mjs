@@ -342,7 +342,7 @@ export function createPlatform({
     },
 
     // workers() → every worker this platform spawned, live or exited, in spawn order, each with its
-    // activity folded from its log: { id, task, role, n, logPath, live, activity }. Read-only, unlike the
+    // activity folded from its log: { id, task, role, n, logPath, cwd, live, activity }. Read-only, unlike the
     // loop's list(), so the run state can call it for the screen without touching the pass (live-workers
     // T09). `n` is the log's counter (DESIGN §2.3), so it continues a restarted run's count.
     workers() {
@@ -352,6 +352,7 @@ export function createPlatform({
         role: rec.role,
         n: logCounter(rec.logPath),
         logPath: rec.logPath,
+        cwd: rec.cwd ?? null,
         live: live.has(rec.id),
         activity: workerActivity(rec.worker.entries()),
       }));

@@ -35,6 +35,7 @@ import { updateRecord } from './index-store.mjs';
 import { planHome } from './plan-home.mjs';
 import { FrameView, paintLine } from './pir-view.mjs';
 import { createConversationView } from './conversation-view.mjs';
+import { createDashboardPublisher } from './dashboard-publish.mjs';
 import { ProcessTerminal, TuiAltScreen, TUI_KEYBINDINGS, getKeybindings, isKeyRelease, parseKey } from '@earendil-works/pi-tui';
 
 // The spinner frames, one per refresh (a poll tick). The SAME Braille frames render.mjs uses, so a live
@@ -681,8 +682,19 @@ export function loadDashboard({ dir = indexDir(), now = Date.now(), kill, exec, 
 // dashboard opens on the list; the watch form opens straight into a run's live view (`pir start {slug}` drops
 // into the run it just started/opened, §2.1), and ← from there steps back to the list like any other open
 // run (Esc quits pir; user 2026-09-22). Both run the one loop below.
-export function openDashboard(deps = {}) {
-  return runTui({ ...deps, initial: initialUi() });
+//
+// Only the bare dashboard publishes what it has open (PIR_DASHBOARD_STATE, dashboard-publish.mjs), for the
+// agentic-ide cockpit that shows it in a pane; `pir start` and `pir plan` land in the same loop and do not.
+export async function openDashboard(deps = {}) {
+  const { makePublisher = createDashboardPublisher, ...rest } = deps;
+  const publisher = makePublisher({ env: rest.env ?? process.env, now: rest.now ?? Date.now, ...(rest.fs ? { fs: rest.fs } : {}) });
+  try {
+    return await runTui({ ...rest, publisher, initial: initialUi() });
+  } finally {
+    publisher?.close();
+    // After the screen is restored, so the one line cannot tear a frame.
+    publisher?.report(rest.stderr ?? process.stderr);
+  }
 }
 
 export function openWatch(slug, deps = {}) {
@@ -771,6 +783,7 @@ async function runTui({
   readProgress = (record) => planHome(record.slug, { root: record.repoPath }).read('PROGRESS.md'),
   drop,
   follow,
+  publisher = null,
   initial = initialUi(),
 } = {}) {
   const dir = indexDir({ env });
@@ -801,6 +814,12 @@ async function runTui({
     terminal: { get rows() { return stdout.rows || 24; }, get columns() { return stdout.columns || DEFAULT_COLS; } },
     requestRender: () => renderSoon?.(),
   };
+
+  // Tell the state file's reader what is open. The publisher writes only when that changes, so calling it
+  // on every repaint costs nothing on a refresh tick or a cursor move.
+  function publish(dash) {
+    publisher?.update(ui, dash.rows);
+  }
 
   function closeConv() {
     conv?.dispose();
@@ -921,6 +940,7 @@ async function runTui({
     } else {
       screen.paint(buildListFrame(dash, ui, { columns: Math.max(20, stdout.columns || DEFAULT_COLS) }));
     }
+    publish(dash);
   }
 
   // The screen reads the keyboard itself when it can (pi-tui); otherwise the loop drives stdin directly.

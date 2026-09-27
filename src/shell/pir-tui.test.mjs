@@ -8,7 +8,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -34,6 +34,7 @@ import { buildDisplay } from '../core/display.mjs';
 import { formatLines } from './render.mjs';
 import { writeRecord, recordPath } from './index-store.mjs';
 import { writeSnapshot } from './snapshot-store.mjs';
+import { createDashboardPublisher } from './dashboard-publish.mjs';
 
 const NOW = 1_000_000;
 
@@ -1370,4 +1371,48 @@ test("runTui: opening a finished run's planner from its steps view stays in the 
   await t.key('\x1b[D');
   await t.key('\x1b');
   await t.done;
+});
+
+test('bare pir with PIR_DASHBOARD_STATE: the file follows list → run → worker → back, and is gone on quit', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'pir-dash-'));
+  const path = join(dir, 'state.json');
+  const seen = [];
+  const read = () => JSON.parse(readFileSync(path, 'utf8'));
+  const t = driveTui(() => [tasksRun(T12_TASKS)], {
+    env: { PIR_DASHBOARD_STATE: path },
+    makePublisher: (opts) => {
+      const p = createDashboardPublisher({ ...opts, mainWorktree: () => null });
+      return { ...p, update: (ui, rows) => (p.update(ui, rows), seen.push(read().view)) };
+    },
+  });
+  assert.deepEqual([read().view, read().pid], ['list', process.pid]);
+  await t.key('\r');
+  assert.deepEqual(read().run, { key: 'repo__plan', kind: 'work', slug: 'plan', repo: 'repo', repoPath: null, branch: null, cwd: null });
+  await t.key('\x1b[B'); // a task-cursor move rewrites nothing
+  await t.key('\x1b[C'); // T02's worker
+  assert.deepEqual(read().worker, { id: 'w2', task: 'T02', role: null, cwd: null });
+  await t.key('\x1b[D');
+  assert.equal(read().view, 'run');
+  await t.key('\x1b[D');
+  assert.equal(read().view, 'list');
+  await t.key('\x1b');
+  await t.done;
+  assert.ok(!existsSync(path), 'a clean quit removes the file');
+});
+
+test('pir start and pir plan never publish, whatever PIR_DASHBOARD_STATE says', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'pir-dash-'));
+  const path = join(dir, 'state.json');
+  let onData = null;
+  const done = openPlanner('repo__plan', {
+    stdin: { on: (_e, fn) => (onData = fn), off: () => {} },
+    stdout: {},
+    refreshMs: 60_000,
+    env: { PIR_DASHBOARD_STATE: path },
+    makeScreen: () => ({ paint: () => {}, close: () => {} }),
+    load: () => buildDashboard([tasksRun(T12_TASKS)]),
+  });
+  await onData('\x1b');
+  await done;
+  assert.ok(!existsSync(path));
 });

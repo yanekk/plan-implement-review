@@ -316,7 +316,8 @@ test('workers.json lists exactly the live children after each spawn and exit, wi
   for (const w of both) {
     assert.equal(typeof w.pid, 'number');
     assert.equal(typeof w.startTime, 'string', 'stamped with the process start time (DESIGN §2.12)');
-    assert.deepEqual(Object.keys(w).sort(), ['id', 'pid', 'role', 'startTime', 'task']);
+    assert.deepEqual(Object.keys(w).sort(), ['cwd', 'id', 'pid', 'role', 'startTime', 'task']);
+    assert.equal(w.cwd, tmpdir(), 'the worktree it was spawned in');
   }
   await waitFor(() => workersFile().length === 1, 'T06 to exit');
   assert.deepEqual(workersFile().map((w) => w.id), [a], 'the exited child left the file');

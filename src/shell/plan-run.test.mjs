@@ -671,8 +671,8 @@ test('planRunState: phases per step, the asking kind, the open session and its c
   assert.equal(rs.label, 'A thing');
   assert.deepEqual(rs.steps.map((x) => [x.id, x.phase]), [['plan', 'planning'], ['review', 'pending'], ['build', 'pending']]);
   assert.equal(rs.steps[0].since, 5);
-  assert.deepEqual(rs.steps[0].worker, { id: 'plan-true', live: true, logPath: '/c/plan-1.ndjson' });
-  assert.deepEqual(rs.steps[0].workers, [{ id: 'plan-true', role: 'planner', n: 1, logPath: '/c/plan-1.ndjson' }]);
+  assert.deepEqual(rs.steps[0].worker, { id: 'plan-true', live: true, logPath: '/c/plan-1.ndjson', cwd: null });
+  assert.deepEqual(rs.steps[0].workers, [{ id: 'plan-true', role: 'planner', n: 1, logPath: '/c/plan-1.ndjson', cwd: null }]);
 
   rs = planRunState(st({}), { sessions: [sess('plan', true, 'permission')], since: { plan: 5 }, stoppedAt: { plan: 9 } });
   assert.equal(rs.steps[0].phase, 'asking');

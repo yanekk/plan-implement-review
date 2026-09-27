@@ -129,8 +129,8 @@ test('a corrupt, non-list or malformed workers.json reads as [] or drops bad ent
   assert.deepEqual(readWorkersFile(dir), [{ pid: 7, startTime: 'A' }]);
 });
 
-test('readWorkersFile returns the five fields writeWorkersFile records', (t) => {
+test('readWorkersFile returns the fields writeWorkersFile records', (t) => {
   const dir = scratch(t);
-  writeWorkersFile(dir, [{ ...rec(9, 'A'), worker: {}, logPath: '/x' }]);
-  assert.deepEqual(readWorkersFile(dir), [rec(9, 'A')]);
+  writeWorkersFile(dir, [{ ...rec(9, 'A'), worker: {}, logPath: '/x', cwd: '/wt' }]);
+  assert.deepEqual(readWorkersFile(dir), [{ ...rec(9, 'A'), cwd: '/wt' }]);
 });

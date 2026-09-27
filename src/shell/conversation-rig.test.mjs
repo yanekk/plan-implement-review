@@ -64,7 +64,7 @@ test("the rig's run is listed by loadDashboard as running, with one task whose w
   const tasks = row.snap.runState.tasks;
   assert.equal(tasks.length, 1);
   assert.equal(tasks[0].id, RIG_TASK);
-  assert.deepEqual(tasks[0].worker, { id: rig.workerId, live: true, logPath: rig.logPath });
+  assert.deepEqual(tasks[0].worker, { id: rig.workerId, live: true, logPath: rig.logPath, cwd: rig.repoRoot });
 });
 
 test('each tour step reaches the log in order, and the fake answers replies and an interrupt as a real worker', async (t) => {

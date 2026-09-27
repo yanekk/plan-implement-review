@@ -331,7 +331,7 @@ export function createFakePlatform({ behaviors = {} } = {}) {
         const isLive = !!liveWorker(w.id);
         const request = isLive ? behaviors[w.task]?.request ?? null : null;
         const state = request ?? (w.status === 'busy' ? 'busy' : 'idle');
-        return { id: w.id, task: w.task, role: w.role, n: w.n, logPath: w.logPath, live: isLive, activity: { state, pending: [] } };
+        return { id: w.id, task: w.task, role: w.role, n: w.n, logPath: w.logPath, cwd: w.cwd ?? null, live: isLive, activity: { state, pending: [] } };
       });
     },
 

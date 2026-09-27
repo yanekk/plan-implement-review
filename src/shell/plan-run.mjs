@@ -130,7 +130,7 @@ export function plannerChecks({ slug, worktree, root, repo, indexDir, git = gitR
 // planRunState(state, session) → the status.json runState of a planning run (DESIGN §3.5), for T12 to
 // paint. Pure. `session` is what this program holds beside state.json:
 //   label      the dashboard name before the rename
-//   sessions   every session this program started, in spawn order: { id, step, n, logPath, live, activity }
+//   sessions   every session this program started, in spawn order: { id, step, n, logPath, cwd, live, activity }
 //   since      { plan, review } — when that step's latest session started (ms)
 //   stoppedAt  { plan, review } — when that step's live session began asking the person (ms)
 //   took       { plan, review } — how long a finished step's sessions worked (ms, stepWorkedMs), or absent
@@ -162,8 +162,8 @@ export function planRunState(state, { label = null, sessions = [], since = {}, s
       stoppedAt: asking ? stoppedAt[id] ?? null : null,
       tookMs: phase === 'done' || phase === 'failed' ? took[id] ?? null : null,
       asking,
-      worker: open ? { id: open.id, live: !!open.live, logPath: open.logPath ?? null } : null,
-      workers: mine.map((s) => ({ id: s.id, role: ROLE[id], n: s.n ?? null, logPath: s.logPath ?? null })),
+      worker: open ? { id: open.id, live: !!open.live, logPath: open.logPath ?? null, cwd: open.cwd ?? null } : null,
+      workers: mine.map((s) => ({ id: s.id, role: ROLE[id], n: s.n ?? null, logPath: s.logPath ?? null, cwd: s.cwd ?? null })),
     };
   };
   return {
@@ -451,7 +451,7 @@ export async function runPlanning({ controlDir: givenControlDir, resume = false,
     try {
       writeWorkersFile(
         controlDir,
-        sessions.filter((s) => s.live).map((s) => ({ id: s.id, task: 'plan', role: ROLE[s.step], pid: s.worker.pid, startTime: s.startTime })),
+        sessions.filter((s) => s.live).map((s) => ({ id: s.id, task: 'plan', role: ROLE[s.step], pid: s.worker.pid, startTime: s.startTime, cwd: worktreeNow() })),
       );
     } catch (err) {
       log(`workers.json write failed: ${err?.message ?? err}`);
@@ -564,7 +564,9 @@ export async function runPlanning({ controlDir: givenControlDir, resume = false,
   };
   const runState = () => {
     const views = sessions.map((s) => ({
-      id: s.id, step: s.step, n: s.n, logPath: s.logPath, live: s.live,
+      // Every session runs in the one planning worktree, named as it is now, so a planner whose folder
+      // the rename moved still names where its work is.
+      id: s.id, step: s.step, n: s.n, logPath: s.logPath, cwd: worktreeNow(), live: s.live,
       activity: s.worker ? workerActivity(s.worker.entries()) : { state: 'exited' },
     }));
     for (const v of views) {
