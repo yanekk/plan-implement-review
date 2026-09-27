@@ -318,7 +318,14 @@ run the test block, commit, and report `done`. It reuses the existing worker aud
 The agent is started through `startWorker` (`worker-proc.mjs`), like a worker, with cwd the feature
 worktree and its conversation at `control/conversations/coordinator-{n}.ndjson`. Differences:
 
-- `permissionMode: 'default'`, not `auto`, so no tool runs without passing the command's gate.
+- `tools: ['Read', 'Glob', 'Grep', 'Write', 'Skill']`, an allowlist: every other built-in tool is absent
+  from the session. Why (T00, user 2026-09-27): in `default` mode `EnterWorktree`, `CronCreate` and
+  `ListAgents` ran without reaching `canUseTool`, so a deny list plus the gate did not hold; the
+  allowlist was measured to hold. MCP connector tools stay listed but reach the gate, which denies them.
+- `permissionMode: 'default'`, not `auto`, so no tool runs without passing the command's gate. Measured
+  exceptions (T00): `Read`/`Glob`/`Grep` inside cwd, and `Skill` for a skill that declares no
+  `allowed-tools`, run without reaching the gate. Both only read, so this stands; `pir-coordinator` must
+  declare no `allowed-tools`.
 - The gate (`decide`) allows `Read`, `Glob`, `Grep` under the repo, its worktrees and the installed
   skills, `Skill` for `pir-coordinator` only (its opening instruction invokes it), and `Write` only to a path inside `control/coordinator/decisions/`; it denies everything
   else, without parking a request for the person. `disallowedTools` names Bash, Edit, NotebookEdit,
@@ -327,8 +334,9 @@ worktree and its conversation at `control/conversations/coordinator-{n}.ndjson`.
 - Its opening instruction: invoke the `pir-coordinator` skill for plan `{slug}`, the project rules path
   if the file exists, its drop folder path.
 
-T00 measures that this allowance holds on 2.1.283 (default mode prompts for what the gate must see,
-an absolute-path Write lands, the fences deny).
+T00 measured this allowance on 2.1.283: with the allowlist, an absolute-path Write into the drop folder
+reaches the gate and lands, a Write in cwd, a Read outside cwd, an MCP tool and a Skill declaring
+`allowed-tools` reach the gate and are denied (fixture `coordinator-requests.json`, `gate`).
 
 ### 3.5 Storage
 
