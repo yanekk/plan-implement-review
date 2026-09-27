@@ -55,18 +55,20 @@ without per-task typing.
    `pir` always sets it, so a dry run is only reachable by running `coordinate.mjs` by hand.
    See [restart-recovery.md](restart-recovery.md) and the seatbelts in
    `plans/non-agentic-coordinator/DESIGN.md § 5.2`.
-4. **The branch-safety guard.** Before a live run the command refuses to run inside the canonical
-   `plan-implement-review` checkout unless `PARALLEL_ALLOW_HERE=1` is set (`canPromoteHere` in
-   `coordinate.mjs` — the name is historical; it now guards the feature branch, not a promotion), so
-   a live run cannot open and mangle the real repo's branches by accident.
-5. On the first pass the command opens the **feature branch** `pir/{plan}` off `main`, in its own
+4. On the first pass the command opens the **feature branch** `pir/{plan}` off `main`, in its own
    worktree, and works there (a plan made by `pir plan` already has that branch and worktree, and the
    command reuses them) — the person's main checkout stays on `main` (`openFeature` in
    `worktree.mjs`). See [branch-model.md](branch-model.md).
-6. Still on the first pass, before dispatching, the command **reconciles each task from its own
+5. Still on the first pass, before dispatching, the command **reconciles each task from its own
    task branch** — a restart adopts in-flight work (merges a finished task, reviews a built one,
    resumes a half-built one on its branch) rather than starting over; a genuine first start finds no task
    branches and reconciles nothing. See [restart-recovery.md](restart-recovery.md).
+
+There is no repo-name check: a live build runs in any checkout, the `plan-implement-review` one
+included, with no environment flag. The old canonical-repo guard (`canPromoteHere`,
+`PARALLEL_ALLOW_HERE`) is gone. Only the harness's live scenario launcher
+(`src/shell/harness/run.mjs`) still refuses to run a paid scenario from a checkout named
+`plan-implement-review`, and `--into <dir>` is its only override.
 
 ## Each pass
 

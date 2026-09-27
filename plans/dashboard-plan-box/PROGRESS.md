@@ -23,14 +23,14 @@ done · ⛔ blocked, needs a human.
 
 | # | Task | Depends on | State | Notes |
 |---|---|---|---|---|
-| T01 | drop-canonical-guard | — | ⬜ | |
+| T01 | drop-canonical-guard | — | 🔍 | Guard removed from coordinator, `planPreflight`, `pir plan`; harness keeps `liveRunRefused` with `--into` only. 5 tests replaced or added. Deviation: extracted `liveRunRefused` from harness `main` so the kept guard is tested. `pir-tui.test.mjs` sample text left as is. |
 | T02 | plan-box-rules | — | ⬜ | |
 | T03 | repo-scan | T02 | ⬜ | |
 | T04 | list-view-box | T02 | ⬜ | |
 | T05 | box-starts-plan | T03, T04 | ⬜ | |
 | T06 | plan-box-drill | T01, T05 | ⬜ | |
 
-**Review queue:** *(empty)*
+**Review queue:** T01
 
 ## Blocked on the user
 
