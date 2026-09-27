@@ -21,6 +21,7 @@ import {
   loadDashboard,
   openDashboard,
   openPlanner,
+  openWatch,
   readLogTail,
   landStep,
   followStep,
@@ -641,12 +642,14 @@ test('through pi-tui: keys move and open, Esc quits, and the terminal is stopped
   assert.ok(tty.text().endsWith('\x1b[?1049l\x1b[?25h\x1b[?2026l'), 'the alternate screen is left last, cursor shown, and no frame printed after it');
 });
 
+// These two paint a run's view (openWatch), not the list: the list is a mounted component now (dashboard-plan-box
+// T05) and never goes through screen.paint, which is the call they make throw.
 test('through pi-tui: a throw inside painting stops the terminal and leaves the alternate screen before rethrowing (§2.14)', async () => {
   const tty = fakeStream({ isTTY: true });
   const term = fakeTerminal(tty);
   const boom = { toString: () => { throw new Error('paint blew up'); } };
   await assert.rejects(
-    openDashboard({
+    openWatch('gone', {
       stdin: {},
       stdout: tty,
       makeScreen: (opts) => {
@@ -669,7 +672,7 @@ test('through pi-tui: a throw in a render pi-tui starts on its own (a resize) re
   // A span that paints fine until `bad` is set, so the loop's own paints succeed and only pi-tui's
   // resize render, on its own timer outside the loop's try, meets the throw.
   const flaky = { toString: () => { if (bad) throw new Error('resize paint'); return 'ok'; } };
-  const done = openDashboard({
+  const done = openWatch('gone', {
     stdin: {},
     stdout: tty,
     refreshMs: 60_000,
@@ -1437,3 +1440,139 @@ test('listFooter is the footer buildListFrame ends with, armed line included', (
   assert.deepEqual(listFooter(ui, dash.rows), buildListFrame(dash, ui).at(-1));
   assert.deepEqual(listFooter(initialUi()), buildListFrame(dash, initialUi()).at(-1));
 });
+
+// --- the new-plan box starts a planning run (dashboard-plan-box T05, DESIGN §2.3, §2.5) -----------------
+
+const BOX_REPOS = [
+  { name: 'repo', path: '/scratch/src/repo', mtimeMs: 2 },
+  { name: 'dup', path: '/scratch/src/dup', mtimeMs: 1 },
+  { name: 'dup', path: '/scratch/other/dup', mtimeMs: 1 },
+];
+const BOX_ENV = { HOME: '/scratch', PIR_HOME: '/scratch/.pir', PIR_REPOS: '/scratch/src:/scratch/other' };
+
+// runTui on the pi-tui screen (the list view mounted) with a fake startPlan and scan. `rows()` is re-read on
+// every refresh and keypress; `plan` is what the fake startPlan does with (brief, opts).
+function driveBox({ rows = () => [], plan = () => ({ started: true, runId: 'plan-ab12', record: { repo: 'repo' } }) } = {}) {
+  const tty = fakeStream({ isTTY: true, columns: 100, rows: 30 });
+  const term = fakeTerminal(tty);
+  const calls = [];
+  const done = openDashboard({
+    stdin: {},
+    stdout: tty,
+    env: BOX_ENV,
+    refreshMs: 60_000,
+    now: () => NOW,
+    makeScreen: (opts) => createScreen({ ...opts, colour: false, terminal: term }),
+    load: () => buildDashboard(rows()),
+    scan: () => BOX_REPOS,
+    startPlan: (brief, opts) => {
+      calls.push({ brief, opts });
+      return plan(brief, opts);
+    },
+  });
+  const settle = () => new Promise((r) => setTimeout(r, 60)); // the @ pop-up is debounced, then async
+  const type = async (s) => {
+    for (const ch of s) term.press(ch);
+    await settle();
+  };
+  const key = async (k) => {
+    term.press(k);
+    await settle();
+  };
+  const screen = () => drawnRows(tty.text()).join('\n');
+  // The box's own line: the one under the head line's top border.
+  const boxLine = () => {
+    const r = drawnRows(tty.text());
+    const head = r.findIndex((l) => l.startsWith('new plan'));
+    return head < 0 ? null : r[head + 2];
+  };
+  return { done, calls, type, key, screen, boxLine, term };
+}
+
+test('box: Enter on `@repo a brief` calls startPlan once, in the repo, with the brief, and lands on the planner', async () => {
+  const t = driveBox();
+  await t.type('repo a brief');
+  assert.match(t.boxLine(), /^@repo a brief/);
+  assert.match(t.screen(), /new plan {2}in repo/);
+  await t.key('\r');
+  assert.equal(t.calls.length, 1, 'started once');
+  assert.equal(t.calls[0].brief, 'a brief');
+  assert.equal(t.calls[0].opts.cwd, '/scratch/src/repo');
+  assert.equal(t.calls[0].opts.env, BOX_ENV);
+  assert.match(t.screen(), /starting the planner…/, "openPlanner's landing");
+  await t.key('\x1b');
+  await t.done;
+});
+
+test('box: every §2.5 refusal starts nothing, keeps the text and shows the note', async () => {
+  const cases = [
+    { keys: ['\x7f', 'hello there'], text: /^hello there/, note: 'start with @repo, then say what to plan' },
+    { keys: ['nope x'], text: /^@nope x/, note: 'no repo @nope in ~/src, ~/other — pick one from the list' },
+    { keys: ['dup x'], text: /^@dup x/, note: '@dup is in more than one folder: /scratch/src/dup, /scratch/other/dup' },
+    { keys: ['repo '], text: /^@repo/, note: 'say what to plan after @repo' },
+  ];
+  for (const c of cases) {
+    const t = driveBox();
+    for (const k of c.keys) await t.type(k);
+    await t.key('\r');
+    assert.equal(t.calls.length, 0, `${c.note}: nothing started`);
+    assert.ok(t.screen().includes(c.note), `${c.note}: the note shows`);
+    assert.match(t.boxLine(), c.text, `${c.note}: the text is kept`);
+    await t.key('\x1b'); // reset
+    assert.match(t.boxLine(), /^@\s*$/);
+    assert.ok(!t.screen().includes(c.note), 'Esc clears the note');
+    await t.key('\x1b'); // quit
+    await t.done;
+  }
+});
+
+test('box: startPlan refusing (no-main) or throwing both give the start-failed note, the text kept', async () => {
+  for (const plan of [() => ({ started: false, reason: 'no-main' }), () => { throw new Error('spawn failed'); }]) {
+    const t = driveBox({ plan });
+    await t.type('repo a brief');
+    await t.key('\r');
+    assert.equal(t.calls.length, 1);
+    const reason = plan.toString().includes('no-main') ? 'no-main' : 'spawn failed';
+    assert.ok(t.screen().includes(`Could not start planning in repo: ${reason}`), t.screen());
+    assert.match(t.boxLine(), /^@repo a brief/);
+    assert.doesNotMatch(t.screen(), /starting the planner/);
+    await t.key('\x1b');
+    await t.key('\x1b');
+    await t.done;
+  }
+});
+
+test('box: on a bare box ↓ and → reach the list (open a run); ← back shows the box at @', async () => {
+  const rows = [
+    { key: 'r__alpha', slug: 'alpha', repo: 'r', state: 'finished', progress: { done: 1, total: 1 }, workers: 0, record: { repo: 'r', slug: 'alpha' } },
+    { key: 'r__beta', slug: 'beta', repo: 'r', state: 'finished', progress: { done: 1, total: 1 }, workers: 0, record: { repo: 'r', slug: 'beta' } },
+  ];
+  const t = driveBox({ rows: () => rows });
+  await t.key('\x1b[B');
+  assert.match(drawnRowsSel(t), /beta/);
+  await t.key('\x1b[C');
+  assert.equal(t.boxLine(), null, 'the run view has no box');
+  assert.match(t.screen(), /^beta/m);
+  await t.key('\x1b[D');
+  assert.match(t.boxLine(), /^@\s*$/, 'back on the list, the box reads @');
+  assert.match(drawnRowsSel(t), /beta/, 'the selection kept');
+  await t.key('\x1b');
+  await t.done;
+});
+
+test('box: after a start and back out to the list, the box reads @ again', async () => {
+  const t = driveBox();
+  await t.type('repo a brief');
+  await t.key('\r');
+  assert.match(t.screen(), /starting the planner…/);
+  await t.key('\x1b[D'); // gives up the wait: the steps view
+  await t.key('\x1b[D'); // the list
+  assert.match(t.boxLine(), /^@\s*$/);
+  assert.doesNotMatch(t.screen(), /a brief/);
+  await t.key('\x1b');
+  await t.done;
+});
+
+function drawnRowsSel(t) {
+  return t.screen().split('\n').find((l) => l.startsWith('▎')) ?? '';
+}

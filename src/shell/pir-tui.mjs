@@ -17,7 +17,8 @@
 // are painted with render.mjs's exact style→colour mapping (pir-view.mjs's SGR map carries render's keys
 // unchanged alongside the list's), which keeps the watch frame byte-for-byte the coordinator's display.
 
-import { join } from 'node:path';
+import { join, resolve as resolvePath } from 'node:path';
+import { homedir } from 'node:os';
 import { readLogTail } from './commands.mjs';
 
 import { buildDisplay } from '../core/display.mjs';
@@ -30,11 +31,14 @@ import { resolveLiveness } from './identity.mjs';
 import { indexDir, listRecords } from './index-store.mjs';
 import { readSnapshot } from './snapshot-store.mjs';
 import { stopRun, removeRun } from './control-run.mjs';
-import { resumeRun, startRun } from './launch.mjs';
+import { resumeRun, startPlanRun, startRun } from './launch.mjs';
 import { updateRecord } from './index-store.mjs';
 import { planHome } from './plan-home.mjs';
 import { FrameView, paintLine } from './pir-view.mjs';
 import { createConversationView } from './conversation-view.mjs';
+import { createListView } from './list-view.mjs';
+import { repoRoots, rootsLabel, scanRepos } from './repo-scan.mjs';
+import { parseBoxText, startFailedNote } from '../core/planbox.mjs';
 import { ProcessTerminal, TuiAltScreen, TUI_KEYBINDINGS, getKeybindings, isKeyRelease, parseKey } from '@earendil-works/pi-tui';
 
 // The spinner frames, one per refresh (a poll tick). The SAME Braille frames render.mjs uses, so a live
@@ -842,6 +846,8 @@ async function runTui({
   readProgress = (record) => planHome(record.slug, { root: record.repoPath }).read('PROGRESS.md'),
   drop,
   follow,
+  startPlan = startPlanRun,
+  scan = scanRepos,
   initial = initialUi(),
 } = {}) {
   const dir = indexDir({ env });
@@ -872,6 +878,69 @@ async function runTui({
     terminal: { get rows() { return stdout.rows || 24; }, get columns() { return stdout.columns || DEFAULT_COLS; } },
     requestRender: () => renderSoon?.(),
   };
+
+  // The runs list with its new-plan box (dashboard-plan-box §2.1, §3.2), mounted in the frame's place on a
+  // screen that can mount a component and owns the keyboard (the pi-tui screen). A non-TTY screen, or a test's
+  // paint-only fake, keeps today's painted list and key path: buildListFrame's box-less form is for exactly
+  // that (T04). Built once and kept, so its text survives a refresh; it is reset to `@` on a start (§2.2).
+  const boxed = typeof screen.mount === 'function' && typeof screen.listen === 'function';
+  const roots = repoRoots(env);
+  const rootsText = rootsLabel(roots, env);
+  // The repos the pop-up last offered: the list view scans once per non-bare stretch (§2.4) through this, and
+  // Enter parses against the same list the person just picked from. Scanned afresh only if it never scanned.
+  let lastRepos = null;
+  const repos = () => (lastRepos = scan({ env }));
+  let listView = null;
+  // What the list view's last handleInput decided (its callbacks run synchronously inside it).
+  let routed = null;
+  function getListView() {
+    if (!listView) {
+      listView = createListView({
+        tui: host,
+        colour: screen.colour ?? false,
+        repos,
+        roots: rootsText,
+        home: resolvePath(env.HOME || homedir()),
+        onSubmit: (text) => (routed = { kind: 'submit', text }),
+        onListKey: (data) => (routed = { kind: 'list', data }),
+        onQuit: () => (routed = { kind: 'quit' }),
+      });
+    }
+    return listView;
+  }
+
+  function paintList(dash) {
+    const lv = getListView();
+    lv.update({ dashboard: dash, ui });
+    screen.mount(lv);
+    screen.renderNow();
+  }
+
+  // Enter on a box that is not bare (§2.5): a refusal keeps the text and says why; a start resets the box and
+  // lands in the planner's conversation exactly as `pir plan` does (openPlanner's ui, with the run's key, since
+  // a run id alone could repeat across repos).
+  function submitBox(text) {
+    const lv = getListView();
+    const r = parseBoxText(text, lastRepos ?? repos(), { roots: rootsText });
+    if (!r.ok) {
+      lv.update({ note: r.note });
+      return;
+    }
+    let s;
+    try {
+      s = startPlan(r.brief, { cwd: r.repo.path, env, kill, exec });
+    } catch (err) {
+      lv.update({ note: startFailedNote(r.repo.name, err?.message ?? String(err)) });
+      return;
+    }
+    if (!s?.started) {
+      lv.update({ note: startFailedNote(r.repo.name, s?.reason ?? 'unknown') });
+      return;
+    }
+    lv.reset();
+    lastRepos = null;
+    ui = { ...initialUi(), view: 'watch', openSlug: s.runId, openKey: `${s.record?.repo}__${s.runId}`, openStep: 'plan' };
+  }
 
   function closeConv() {
     conv?.dispose();
@@ -989,6 +1058,8 @@ async function runTui({
       const columns = Math.max(20, stdout.columns || DEFAULT_COLS);
       const progress = goOpen(dash.rows, ui) && view.record ? goProgress(view) : null;
       screen.paint(buildWatchFrame(view, { now: now(), spinnerChar, ui, columns, logTail, progress }));
+    } else if (boxed) {
+      paintList(dash);
     } else {
       screen.paint(buildListFrame(dash, ui, { columns: Math.max(20, stdout.columns || DEFAULT_COLS) }));
     }
@@ -1053,6 +1124,20 @@ async function runTui({
             conv.handleInput(Buffer.isBuffer(data) ? data.toString('utf8') : String(data ?? ''));
             if (ui.view === 'worker' && !settled) paintConv(read());
             return;
+          }
+          // On the list the box decides first (routeBoxKey, §2.3): a list key takes today's path below
+          // unchanged, a submit starts the plan, and anything else was the box's own.
+          if (boxed && ui.view === 'list' && !ui.openStep) {
+            routed = null;
+            getListView().handleInput(data);
+            const r = routed;
+            routed = null;
+            if (r?.kind === 'quit') return finish();
+            if (r?.kind === 'submit') {
+              submitBox(r.text);
+              return repaint();
+            }
+            if (r?.kind !== 'list') return; // the box took it and asked pi-tui for a render itself
           }
           const key = decodeKey(data);
           if (key === 'quit') return finish(); // Esc or Ctrl+C: leave pir
