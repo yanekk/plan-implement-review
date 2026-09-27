@@ -14,7 +14,7 @@ past.
 
 **Status:** Planned 2026-09-26. Nothing built.
 **Last updated:** 2026-09-27
-**Next `pir-work` will:** T01 drop-canonical-guard or T03 repo-scan; T05 waits on T03.
+**Next `pir-work` will:** T03 repo-scan; T05 waits on it.
 
 ## Tasks
 
