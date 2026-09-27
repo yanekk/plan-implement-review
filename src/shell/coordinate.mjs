@@ -635,8 +635,10 @@ export function clearTransientFeeds(controlDir) {
   const cleared = [];
 
   // inbox/ is the person's input to workers (live-workers DESIGN §2.5, T07): an input addressed to a
-  // previous run's worker must never reach a new one, so it is cleared with reports/.
-  for (const feed of ['reports', 'inbox']) {
+  // previous run's worker must never reach a new one, so it is cleared with reports/. The coordinator
+  // agent's decisions/ are the same kind of feed, naming workers and requests of a run that is gone
+  // (pir-coordinator DESIGN §3.5); the rest of coordinator/ (ledger.jsonl, session.json) is durable.
+  for (const feed of ['reports', 'inbox', join('coordinator', 'decisions')]) {
     const feedDir = join(controlDir, feed);
     try {
       if (!existsSync(feedDir)) continue;
