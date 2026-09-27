@@ -84,6 +84,7 @@ function addTaskRows(cwd, task, plan, rows) {
 //                            closed-but-still-listed worker (loop.mjs closedIds).
 //     { slow: N }            the implementer spends N extra ticks building before it commits, so a
 //                            test can hold one task mid-build while another finishes (holdMerges).
+//     keyed 'tests-fix'      the end-of-run test-fix worker (role 'fix', T10): { crash } or { question }.
 //     { request: kind }      the task's live workers show a pending 'permission' or 'questions' request
 //                            in workers() (not in list(): the loop's pass is unchanged). T09.
 //     { requests: [req…] }   the implementer raises these requests (each `{ kind?, toolName, input }` or
@@ -215,6 +216,30 @@ export function createFakePlatform({ behaviors = {} } = {}) {
         git(w.cwd, ['add', '-A']);
         git(w.cwd, ['commit', '--no-edit', '-m', 'resolve main sync']);
       }
+      emit(w, 'done');
+      w.stage = 'done';
+      return;
+    }
+
+    if (w.role === 'fix') {
+      // The end-of-run test-fix worker (pir-coordinator T10), spawned in the feature worktree when the
+      // tests are red. It commits `tests-fix.txt` and reports done. `crash: true` exits first;
+      // `question: "text"` parks with that question until answered, then fixes.
+      if (w.stage === 'fresh') {
+        if (b.crash) {
+          w.live = false;
+          w.stage = 'dead';
+          return;
+        }
+        if (b.question) {
+          emit(w, 'question', b.question);
+          w.stage = 'awaiting';
+          return;
+        }
+      } else if (!(w.stage === 'awaiting' && w.answered)) return;
+      writeFileSync(join(w.cwd, 'tests-fix.txt'), 'fixed\n');
+      git(w.cwd, ['add', '-A']);
+      git(w.cwd, ['commit', '--no-edit', '-m', 'fix the red tests']);
       emit(w, 'done');
       w.stage = 'done';
       return;

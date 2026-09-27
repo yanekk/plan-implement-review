@@ -206,6 +206,11 @@ starts a fresh line after it.
 With the agent on, the run no longer ends at the green end gate. After every task is `✅` and the
 feature-branch tests have run, the command takes one step per pass, so the live view stays live:
 
+0. **Red gate: one test-fix worker.** If the end gate's tests are red, a **test-fix worker** is spawned
+   in the feature worktree first (task label `tests-fix`, role `fix`) with the tests-red prompt
+   (`buildConflictPrompt` kind `tests-red`: the gate's reason and log path, fix only the cause, run the
+   test block, commit, report `done`, or `question` if it cannot). Its questions route through the agent
+   like any worker's. On its `done` (or exit) it is closed and the tests rerun; then the sync below.
 1. **Merge `main` into the feature branch**, in the feature worktree (`syncMain` in `worktree.mjs`;
    commit `sync main into pir/{slug}`). Up to date: nothing to do. Merged cleanly: the tests run again.
    Conflicted: a **main-sync worker** is spawned in the feature worktree with the main-sync conflict
@@ -213,15 +218,21 @@ feature-branch tests have run, the command takes one step per pass, so the live 
    runs the test block, commits and reports `done`, and the tests run again. Its questions route
    through the agent like any worker's. If it reports done without finishing the merge, or exits, the
    merge is aborted so the branch is clean, and the branch is marked not ready. The person's own
-   checkout of `main` is never written.
+   checkout of `main` is never written. If the tests rerun after a clean or resolved merge are red and
+   no test-fix worker has run in this end sequence, one is spawned now, as in step 0. **One attempt per
+   end sequence**, whichever fires first: still red after it, the run ends red. A re-sync while waiting
+   in `ready to merge` is a new sequence and gets its own attempt; an unresolved sync gets none, since
+   that branch is already not ready. A restart mid-fix finds the feature worktree kept with whatever the
+   first worker left, the gate is rerun, and a fresh test-fix worker is spawned if it is still red.
 2. **Brief the agent** with the run's facts: the task table, the ledger, the `FINDINGS.md` rows, the
-   tasks whose `PROGRESS.md` row says `unverified`, the sync result and the tests result.
+   tasks whose `PROGRESS.md` row says `unverified`, the sync result, the tests result, and whether a
+   test-fix worker ran and whether it made the tests green.
 3. **The agent writes a `report` decision** with three markdown sections: what was delivered and what
    was not, what to check by hand, risks and follow-ups.
 4. **The command assembles and commits `plans/{slug}/REPORT.md`** on the feature branch (`report({slug}):
    delivery report`), in this order: what was delivered, **Decisions made for you**, what to check by
    hand, risks and follow-ups, and a `## Branch` footer (the `main` commit it was synced against, when,
-   and the tests result). The decisions section is rendered by the command from the ledger's notable
+   whether a test-fix worker fixed the tests or left them red, and the tests result). The decisions section is rendered by the command from the ledger's notable
    lines and adoptions, not written by the agent, so no decision can drop out of it. The report reaches
    `main` with the person's merge.
 5. **Hand-off.** The command sends the agent the report and `git merge pir/{slug}`, or, on red, the
@@ -231,7 +242,8 @@ feature-branch tests have run, the command takes one step per pass, so the live 
 
 The live view's footer reads `✔ ready to merge · git merge pir/{slug}` with `report:
 plans/{slug}/REPORT.md` under it, and the dashboard lists the run as `● ready to merge` in amber,
-counted in `waiting for you`. A red branch (the tests fail, or the main sync could not be resolved)
+counted in `waiting for you`. A red branch (the tests still fail after the test-fix worker's attempt, or the main sync could not be
+resolved)
 gets `✗ not ready · tests red on pir/{slug} — no merge offered` with the reason; the report is still
 written and says so, and the run waits the same way. While it prepares, the footer reads `all N
 task(s) merged · preparing: syncing main, writing the report`.
@@ -292,7 +304,7 @@ All under the run's gitignored control folder ([control-folder.md](control-folde
 
 ## Known limitations
 
-- **The main-sync worker has no row in `pir`.** Its questions are briefed to the agent. One the agent
+- **The main-sync and test-fix workers have no row in `pir`.** Their questions are briefed to the agent. One the agent
   passes on is reachable on the phone over Remote Control, but cannot be opened from the live view.
 - **The agent's session is not in `workers.json`.** A coordinator that is SIGKILLed leaves the agent
   running, and the reap that ends orphaned workers does not find it. A stop, `HALT` and teardown close

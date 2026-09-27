@@ -14,6 +14,7 @@ Legend: 🐞 defect found · ✅ verified by hand with the user · 📌 worth kn
 
 | Date | | Finding |
 |---|---|---|
+| 2026-09-27 | 📌 | T10: the `tests-fix` worker (role `fix`) sits in `state.tasks` beside `main-sync` (`HELPERS` in `coordinate.mjs`); T11's row must cover both. A restart in a red `ready` spawns a fresh fix attempt, then rewrites the footer. |
 | 2026-09-27 | 🔄 | T07: red tests at the end get one fix worker, like a main-sync conflict; still red after it ends `not ready` (user). Added T10 end-tests-fix, blocks T09. Replaces labelling the red end on the dashboard. |
 | 2026-09-27 | 🔄 | T07: the main-sync (and T10 tests-fix) worker gets a row in `pir` so a passed-on question is answerable there, not only on the phone (user). Added T11 end-helper-row, blocks T09. |
 | 2026-09-27 | 🐞 | T07 drill fixed: agent header read `coordinator  worker <id>` (now `agent`); a label over 24 columns pushed its row's clock out of line; `preparing the hand-off…` was cut at 80 columns (now `preparing: syncing main, writing the report`). |

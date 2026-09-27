@@ -2127,24 +2127,149 @@ test('end: the sync worker cannot resolve → merge abandoned, report says not r
   assert.doesNotMatch(run.told().at(-1), /git merge/);
 });
 
-test('end: red tests after the sync → report with the red footer, handoff red, no merge offered', (t) => {
+test('end: red tests after the sync → one fix worker; still red after its done → report with the red footer, handoff red, no merge offered', (t) => {
   let tests = 0;
   const run = endRun(t, { runTests: () => ((tests += 1), tests === 1 ? { ok: true } : { ok: false, reason: 'test exit 1', logPath: '/x/tests.log' }) });
   run.coordinator.pass();
   run.moveMain('other.txt', 'x\n');
   run.toGate();
+  run.until((r) => r.actions.some((a) => a.type === 'spawn' && a.task === 'tests-fix'));
+  assert.equal(tests, 2, 'the red run after the sync');
+  const spawn = run.platform.spawns.at(-1);
+  assert.match(spawn.opening, /test block fails on pir\/demo/);
+  assert.match(spawn.opening, /test exit 1/);
+  run.until((r) => r.actions.some((a) => a.type === 'tests-fix'));
+  assert.equal(tests, 3, 'rerun after the fix worker\'s done');
   run.until(() => run.told().some((m) => m.startsWith('Every task is done')));
-  assert.match(run.told().find((m) => m.startsWith('Every task is done')), /Tests on the feature branch: red/);
+  const brief = run.told().find((m) => m.startsWith('Every task is done'));
+  assert.match(brief, /Tests on the feature branch: red/);
+  assert.match(brief, /a worker tried to fix them and they stayed red/);
   run.decide({ kind: 'report', sections: SECTIONS });
   const r = run.until((x) => x.handoff.state !== 'preparing');
   assert.equal(r.handoff.state, 'red');
   assert.equal(r.readyToMerge, null);
   assert.deepEqual(r.testsReason, { reason: 'test exit 1', logPath: '/x/tests.log' });
   assert.match(run.report().stdout, /Tests: red\. The branch is not ready to merge\./);
+  assert.match(run.report().stdout, /stayed red/);
+  assert.equal(run.platform.spawns.filter((x) => x.task === 'tests-fix').length, 1, 'one attempt only');
   const handoff = run.told().at(-1);
   assert.doesNotMatch(handoff, /git merge/);
   assert.match(handoff, /No merge is offered/);
   assert.equal(run.coordinator.pass().finished, null, 'a red run waits the same way');
+});
+
+// --- pir-coordinator T10: red tests at the end get one fix worker -----------------------------------
+
+test('end: a red gate → a tests-fix worker in the feature worktree with the tests-red prompt; its done with tests green → ready', (t) => {
+  let tests = 0;
+  const run = endRun(t, { runTests: () => ((tests += 1), tests === 1 ? { ok: false, reason: 'test exit 1', logPath: '/x/gate.log' } : { ok: true }) });
+  run.toGate();
+  assert.equal(run.coordinator.handoff.state, 'preparing');
+  const s = run.until((r) => r.actions.some((a) => a.type === 'spawn' && a.task === 'tests-fix'));
+  assert.equal(s.actions.some((a) => a.type === 'main-sync'), false, 'before the sync');
+  const spawn = run.platform.spawns.at(-1);
+  assert.equal(spawn.role, 'fix');
+  assert.equal(spawn.cwd, run.coordinator.state.feature.path);
+  assert.match(spawn.opening, /pir-worker skill/);
+  assert.match(spawn.opening, /\/x\/gate\.log/);
+  assert.match(spawn.opening, /kind=done task=tests-fix/);
+  run.until((r) => r.actions.some((a) => a.type === 'tests-fix' && a.state === 'green'));
+  assert.equal(run.platform.closed.includes(spawn.id), true, 'the fix worker is closed');
+  assert.equal(run.worktree.fileOn(`pir/${SLUG}`, 'tests-fix.txt').ok, true, 'its fix is on the feature branch');
+  run.until(() => run.told().some((m) => m.startsWith('Every task is done')));
+  assert.match(run.told().find((m) => m.startsWith('Every task is done')), /a worker fixed them/);
+  run.decide({ kind: 'report', sections: SECTIONS });
+  const r = run.until((x) => x.handoff.state !== 'preparing');
+  assert.equal(r.handoff.state, 'ready');
+  assert.deepEqual(r.readyToMerge, { branch: `pir/${SLUG}` });
+  assert.match(run.report().stdout, /a worker fixed them\.\nTests: green\./);
+  assert.equal(tests, 2, 'the gate, then the rerun after the fix; up-to-date main needs no third');
+});
+
+test('end: gate red, fix leaves it red, sync merges main, red again → still one fix worker', (t) => {
+  let tests = 0;
+  const run = endRun(t, { runTests: () => ((tests += 1), { ok: false, reason: 'still failing' }) });
+  run.coordinator.pass();
+  run.moveMain('other.txt', 'x\n');
+  run.toGate();
+  run.until((r) => r.actions.some((a) => a.type === 'tests-fix' && a.state === 'red'));
+  run.until((r) => r.actions.some((a) => a.type === 'main-sync' && a.state === 'merged'));
+  run.until(() => run.told().some((m) => m.startsWith('Every task is done')));
+  assert.equal(tests, 3, 'gate, after the fix, after the sync');
+  assert.equal(run.platform.spawns.filter((x) => x.task === 'tests-fix').length, 1);
+  run.decide({ kind: 'report', sections: SECTIONS });
+  assert.equal(run.until((x) => x.handoff.state !== 'preparing').handoff.state, 'red');
+});
+
+test('end: an unresolved sync → no fix worker', (t) => {
+  let tests = 0;
+  const run = endRun(t, { files: { 'work-T01.txt': 'base\n' }, behaviors: { 'main-sync': { unresolved: true } }, runTests: () => ((tests += 1), { ok: true }) });
+  run.coordinator.pass();
+  run.moveMain('work-T01.txt', 'main side\n');
+  run.toGate();
+  run.until(() => run.told().some((m) => m.startsWith('Every task is done')));
+  assert.equal(run.platform.spawns.some((x) => x.task === 'tests-fix'), false);
+  assert.equal(tests, 1);
+});
+
+test('end, agent off: a red gate spawns no fix worker — today\'s red end', (t) => {
+  const { coordinator, platform } = setup(t, chain(1), { runTests: () => ({ ok: false, reason: 'red' }) });
+  const r = coordinator.drive();
+  assert.equal(r.reason, 'complete');
+  assert.equal(r.testsPassed, false);
+  coordinator.pass();
+  assert.equal(platform.spawns.some((x) => x.task === 'tests-fix'), false);
+  assert.equal(coordinator.handoff, null);
+});
+
+test('end: a question from the fix worker is briefed to the agent; its answer lets it finish', (t) => {
+  let tests = 0;
+  const run = endRun(t, { behaviors: { 'tests-fix': { question: 'Is the timeout in T03 meant to be 5 s?' } }, runTests: () => ((tests += 1), tests === 1 ? { ok: false } : { ok: true }) });
+  run.toGate();
+  run.until(() => run.told().some((m) => m.includes('Is the timeout in T03 meant to be 5 s?')));
+  const w = run.platform.spawns.find((x) => x.task === 'tests-fix').id;
+  assert.match(run.told().find((m) => m.includes('Is the timeout')), /tests-fix/);
+  assert.equal(run.coordinator.handoff.state, 'preparing');
+  run.decide({ kind: 'message', worker: w, text: 'Yes, 5 s.', reason: 'DESIGN says so' });
+  run.until((r) => r.actions.some((a) => a.type === 'tests-fix' && a.state === 'green'));
+});
+
+test('end: a restart mid-fix → the feature worktree is kept and a fresh fix worker is spawned in it', (t) => {
+  let tests = 0;
+  const first = endRun(t, { behaviors: { 'tests-fix': { crash: true } }, runTests: () => ((tests += 1), { ok: false, reason: 'red' }) });
+  first.toGate();
+  first.until((r) => r.actions.some((a) => a.type === 'spawn' && a.task === 'tests-fix'));
+  const featurePath = first.coordinator.state.feature.path;
+  writeFileSync(join(featurePath, 'half-done.txt'), 'an edit the first fix worker left\n');
+  first.coordinator.closeAgent();
+
+  // The restart's gate runs over the half-done edit and is still red; the respawned worker finishes it.
+  let again = 0;
+  const second = endRun(t, { worktree: first.worktree, controlDir: first.controlDir, runTests: () => ((again += 1), again === 1 ? { ok: false } : { ok: true }) });
+  second.toGate();
+  second.until((r) => r.actions.some((a) => a.type === 'spawn' && a.task === 'tests-fix'));
+  const spawn = second.platform.spawns.find((x) => x.task === 'tests-fix');
+  assert.equal(spawn.cwd, second.coordinator.state.feature.path);
+  assert.equal(second.coordinator.state.feature.path, featurePath, 'the kept feature worktree');
+  assert.match(spawn.opening, /An earlier session may have left edits here/);
+  second.until((r) => r.actions.some((a) => a.type === 'tests-fix' && a.state === 'green'));
+  assert.equal(second.worktree.fileOn(`pir/${SLUG}`, 'half-done.txt').ok, true, 'the earlier edit is kept and committed');
+});
+
+test('end: red after the fix; main moves in waiting and the re-sync is green → the footer does not keep the old fix line', (t) => {
+  let tests = 0;
+  const run = endRun(t, { runTests: () => ((tests += 1), tests <= 2 ? { ok: false, reason: 'red' } : { ok: true }) });
+  run.toGate();
+  run.until(() => run.told().some((m) => m.startsWith('Every task is done')));
+  run.decide({ kind: 'report', sections: SECTIONS });
+  run.until((x) => x.handoff.state === 'red');
+  assert.match(run.report().stdout, /stayed red/);
+  const moved = run.moveMain('later.txt', 'main fixed it\n');
+  run.until((x) => x.handoff.state === 'ready' && x.handoff.mainSha === moved);
+  const text = run.report().stdout;
+  assert.match(text, /Tests: green\./);
+  assert.doesNotMatch(text, /stayed red/, 'the footer describes this sync, not the earlier fix');
+  assert.equal(run.platform.spawns.filter((x) => x.task === 'tests-fix').length, 1);
 });
 
 test('end: close mid-build refused and the run carries on; main moves in ready → re-synced, footer updated, agent told; close → finished', (t) => {

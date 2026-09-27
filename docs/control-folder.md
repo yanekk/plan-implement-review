@@ -145,7 +145,7 @@ task was built without the new work and the person decides whether it needs redo
 [task-state.md](task-state.md)). With the coordinator agent on, the log also carries `coordinator agent
 started` (or `coordinator agent failed to start: …`), `coordinator-pass Txx` when the agent passes an
 item on, and the end sequence's `main-sync` (or `main-sync failed: …`), `spawn main-sync` for a
-main-sync worker, `tests`, `report plans/{slug}/REPORT.md` (a bare `report` for a footer rewrite) and
+main-sync worker, `spawn tests-fix` and `tests-fix` for a test-fix worker, `tests`, `report plans/{slug}/REPORT.md` (a bare `report` for a footer rewrite) and
 `finished` lines (see [coordinator-agent.md](coordinator-agent.md)). This is the
 human-readable record of what a run did, and the durable signal the test harness reads.
 

@@ -39,6 +39,12 @@ test('branchFooter: the sha, the time and the tests; red and unresolved say not 
   assert.match(branchFooter({ mainSha: 'abc', tests: 'red', unresolved: true }), /conflicted and was not resolved/);
 });
 
+test('branchFooter: whether a test-fix worker ran and whether it made the tests green (T10)', () => {
+  assert.match(branchFooter({ mainSha: 'abc', tests: 'green', fix: 'green' }), /a worker fixed them\.\nTests: green\./);
+  assert.match(branchFooter({ mainSha: 'abc', tests: 'red', fix: 'red' }), /tried to fix them and they stayed red\.\nTests: red/);
+  assert.doesNotMatch(branchFooter({ mainSha: 'abc', tests: 'green' }), /worker/);
+});
+
 test('assembleReport: four sections in order, then the footer', () => {
   const text = assembleReport({ slug: 'demo', sections, notable: notableDecisions(ledger), footer });
   const heads = [...text.matchAll(/^## (.+)$/gm)].map((m) => m[1]);
@@ -83,4 +89,7 @@ test('endFacts normalises the facts for the brief', () => {
   assert.deepEqual(f.sync, { state: 'merged', mainSha: 'abc', files: [] });
   assert.equal(f.tests, 'green');
   assert.equal(endFacts({}).tests, 'red');
+  assert.equal(endFacts({}).fix, null);
+  assert.equal(endFacts({ fix: 'green' }).fix, 'green');
+  assert.equal(endFacts({ fix: 'running' }).fix, null);
 });
