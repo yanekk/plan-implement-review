@@ -28,6 +28,7 @@ import {
   newTiming,
   advanceTiming,
   remoteWanted,
+  taskActivity,
   waitForReport,
   shouldSelfReport,
   finalStateForExit,
@@ -1657,4 +1658,14 @@ test('the start banner says to answer in `pir`, never `claude agents` or attachi
   const banner = src.split('\n').find((l) => l.includes('A worker that asks you'));
   assert.match(banner, /answer it in \\`pir\\`/);
   assert.doesNotMatch(banner, /claude agents|attach/i);
+});
+
+test('taskActivity: a task with a tracked worker reads only that worker, never another live one on the task (review T02)', () => {
+  const stateTasks = { T01: parkedTask('implement') }; // tracked w1, not live
+  const other = { id: 'w2', task: 'T01', role: 'implement', live: true, activity: { state: 'busy', open: true, turns: 0, pending: [] } };
+  const workers = [liveWorker({ state: 'idle', open: false, turns: 3, pending: [] }, { live: false }), other];
+  const rs = buildRunState({ passTasks: oneRow, stateTasks, workers, branch: 'b', ceiling: 2 });
+  assert.equal(rs.tasks[0].phase, 'asking', 'the untracked worker\'s open turn does not un-ask the park');
+  assert.equal(rs.tasks[0].asking, 'question');
+  assert.equal(taskActivity([other], 'T01', { phase: 'implementing' }), other.activity, 'an untracked task falls back to its live worker');
 });

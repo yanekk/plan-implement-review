@@ -775,11 +775,14 @@ export function displayPhaseFor(t, activity) {
   return 'building';
 }
 
-// taskActivity(workers, num, st) → the activity of the live worker holding task `num` (its tracked
-// workerId, else the task's latest live worker), or undefined when none is live or visible.
+// taskActivity(workers, num, st) → the activity of the live worker holding task `num`, or undefined when
+// none is live or visible. A task with a tracked workerId reads only that worker, as resumeAnswered and
+// remoteWanted do: falling back to another live worker on the task (an implementer still closing as its
+// reviewer starts) would let its open turn un-ask a park the loop still holds. Only an untracked task
+// (some test fakes) takes the task's latest live worker.
 export function taskActivity(workers, num, st) {
   const live = workers.filter((w) => w.live && w.task === num);
-  return (live.find((w) => st?.workerId && w.id === st.workerId) ?? live.at(-1))?.activity;
+  return (st?.workerId ? live.find((w) => w.id === st.workerId) : live.at(-1))?.activity;
 }
 
 // clockPhase(st, activity) → the phase the clock tracks: `asking` whenever the task waits on the person
