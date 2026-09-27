@@ -13,8 +13,8 @@
 //   - PIR_HOME and HOME both point at a scratch folder, so the index (indexDir) and anything else that
 //     reads the home folder never touch the person's real `~/.pir` or `~/.claude`. That home has a
 //     .gitconfig with an identity, because a scratch HOME has none and git refuses a commit without one.
-//   - PARALLEL_ALLOW_HERE and the fake's single-script variables are dropped, so an outer test's
-//     setting cannot leak in (§5.2: never the canonical checkout).
+//   - The fake's single-script variables are dropped, so an outer test's setting cannot leak in. A stale
+//     PARALLEL_ALLOW_HERE is dropped too, harmlessly: its guard is gone (dashboard-plan-box DESIGN §2.8).
 
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';

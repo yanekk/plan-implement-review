@@ -133,13 +133,10 @@ test('[plan, "quoted brief"] → the brief passed as it is', () => {
 for (const [reason, message] of [
   ['not-a-repo', 'pir plan: not inside a git repository — run it from the repo you want to plan in\n'],
   ['no-main', "pir plan: this repo has no local 'main' branch — a plan is cut from main\n"],
-  [
-    'canonical-repo',
-    'pir plan: refusing to plan inside the plan-implement-review checkout itself; use a scratch clone, ' +
-      'or set PARALLEL_ALLOW_HERE=1 if this really is one that shares the name\n',
-  ],
   ['empty-brief', 'pir plan: the brief is empty — say what to plan, e.g. pir plan "a daily screen budget"\n'],
   ['something-new', 'pir plan: cannot start: something-new\n'],
+  // The canonical-repo refusal is gone (dashboard-plan-box DESIGN §2.8): no dedicated message is left.
+  ['canonical-repo', 'pir plan: cannot start: canonical-repo\n'],
 ]) {
   test(`[plan] refused ${reason} → one clean line on stderr, exit 1, no view`, () => {
     const { calls, errs, deps } = harness(undefined, { started: false, reason });

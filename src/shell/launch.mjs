@@ -20,7 +20,7 @@ import { mkdirSync, openSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { basename, join } from 'node:path';
 
-import { canPromoteHere, readReviewGate, readTestBlockGate } from './coordinate.mjs';
+import { readReviewGate, readTestBlockGate } from './coordinate.mjs';
 import { startTimeOf, resolveLiveness } from './identity.mjs';
 import { indexDir, listRecords, recordPath, updateRecord, writeRecord } from './index-store.mjs';
 import { planHome } from './plan-home.mjs';
@@ -169,10 +169,11 @@ function gitOk(cwd, args) {
   }
 }
 
-// planPreflight({ cwd, env }) → { ok: true, root, repo } | { ok: false, reason }
-// DESIGN §2.2 steps 1–3, in order, touching nothing. The brief (step 4) is the caller's: the brief box
+// planPreflight({ cwd }) → { ok: true, root, repo } | { ok: false, reason: 'not-a-repo'|'no-main' }
+// DESIGN §2.2 steps 1–2, in order, touching nothing. There is no repo-name check: the canonical-repo
+// guard was removed (dashboard-plan-box DESIGN §2.8), so planning works in any checkout. The brief (step 4) is the caller's: the brief box
 // runs this before the person has typed one (§2.13).
-export function planPreflight({ cwd = process.cwd(), env = process.env } = {}) {
+export function planPreflight({ cwd = process.cwd() } = {}) {
   // 1. Inside a work tree. The root is the MAIN worktree, whichever folder or linked worktree `pir plan`
   // was typed in: `git worktree list` names the main one first from anywhere in the repo.
   const inside = gitOk(cwd, ['rev-parse', '--is-inside-work-tree']);
@@ -184,9 +185,6 @@ export function planPreflight({ cwd = process.cwd(), env = process.env } = {}) {
 
   // 2. A local main. Never created here: ensureMain's `checkout -B main` would move the person's checkout.
   if (!gitOk(root, ['rev-parse', '--verify', '--quiet', 'refs/heads/main']).ok) return { ok: false, reason: 'no-main' };
-
-  // 3. The canonical-repo guard, the build's rule and variable: a planning run cuts branches too.
-  if (!canPromoteHere(repo, { allowHere: env.PARALLEL_ALLOW_HERE === '1' })) return { ok: false, reason: 'canonical-repo' };
 
   return { ok: true, root, repo };
 }
@@ -226,14 +224,14 @@ function keepAwake(pid, spawn) {
 
 // startPlanRun(brief, { cwd, spawn, exec, fs, now, env, random }) →
 //   { started: true, runId, pid, record, controlDir }
-//   | { started: false, reason: 'not-a-repo'|'no-main'|'canonical-repo'|'empty-brief' }
+//   | { started: false, reason: 'not-a-repo'|'no-main'|'empty-brief' }
 // `random()` returns four lowercase hex characters. `fs` is node:fs-shaped (existsSync, mkdirSync,
 // openSync, closeSync, writeFileSync, renameSync) and defaults to the real one.
 export function startPlanRun(
   brief,
   { cwd = process.cwd(), spawn = realSpawn, exec, fs = nodeFs, now = () => new Date(), env = process.env, random = defaultRandom } = {},
 ) {
-  const pre = planPreflight({ cwd, env });
+  const pre = planPreflight({ cwd });
   if (!pre.ok) return { started: false, reason: pre.reason };
   if (typeof brief !== 'string' || brief.trim() === '') return { started: false, reason: 'empty-brief' };
   const { root, repo } = pre;

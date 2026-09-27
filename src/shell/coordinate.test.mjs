@@ -14,7 +14,6 @@ import {
   createReportInbox,
   teardownRun,
   ensureMain,
-  canPromoteHere,
   renderHandoff,
   runFeatureTests,
   runawayVerdict,
@@ -666,10 +665,11 @@ test('nothing imports testcommand.mjs any more', () => {
   assert.equal(existsSync(join(src, 'core', 'testcommand.mjs')), false);
 });
 
-test('canPromoteHere refuses the canonical repo unless PARALLEL_ALLOW_HERE overrides (P5, T12)', () => {
-  assert.equal(canPromoteHere('plan-implement-review', {}), false, 'the canonical repo is refused by default');
-  assert.equal(canPromoteHere('plan-implement-review', { allowHere: true }), true, 'the override permits it');
-  assert.equal(canPromoteHere('pir-scratch', {}), true, 'a differently-named scratch clone is fine');
+// The canonical-repo guard (canPromoteHere) is gone (dashboard-plan-box DESIGN §2.8): no repo name is
+// refused a live build, so there is nothing left to export.
+test('the coordinator exports no canonical-repo guard', async () => {
+  const mod = await import('./coordinate.mjs');
+  assert.equal('canPromoteHere' in mod, false);
 });
 
 test('runawayVerdict tolerates a transient CEILING+1 handoff but aborts a real runaway (P5, T12)', () => {

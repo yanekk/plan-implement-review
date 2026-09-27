@@ -56,17 +56,15 @@ export function coordinatorLaunchArgv({ slug }) {
   return ['src/shell/coordinate.mjs', slug];
 }
 
-// seatbeltEnv({ ceiling, allowHere }) → the env the launched coordinator inherits (DESIGN §5.2). The
-// live path only runs with PARALLEL_LIVE=1; the ceiling is the scenario's own low cap; PARALLEL_ALLOW
-// _HERE lets a same-named scratch clone through the canonical-repo branch-safety guard (coordinate.mjs
-// canPromoteHere) — a scratch repo built by installFixture is named for its temp dir, not the canonical
-// repo, so it is normally not needed, but a scenario may opt in. PARALLEL_HOLD_MERGES is a scenario's
+// seatbeltEnv({ ceiling, holdMerges }) → the env the launched coordinator inherits (DESIGN §5.2). The
+// live path only runs with PARALLEL_LIVE=1; the ceiling is the scenario's own low cap. (The coordinator's
+// canonical-repo guard and its PARALLEL_ALLOW_HERE override are gone, dashboard-plan-box DESIGN §2.8, so
+// there is nothing to pass for it.) PARALLEL_HOLD_MERGES is a scenario's
 // `holdMerges` (dispatch.mjs): no merge while a worker still builds, so a same-line clash lands at the
 // coordinator. Values are strings (an env is strings).
-export function seatbeltEnv({ ceiling, allowHere = false, holdMerges = false } = {}) {
+export function seatbeltEnv({ ceiling, holdMerges = false } = {}) {
   const env = { PARALLEL_LIVE: '1' };
   if (ceiling != null) env.PARALLEL_MAX_WORKERS = String(ceiling);
-  if (allowHere) env.PARALLEL_ALLOW_HERE = '1';
   if (holdMerges) env.PARALLEL_HOLD_MERGES = '1';
   return env;
 }
@@ -313,7 +311,6 @@ export async function teardownScenario({ controlDir, reap = (dir) => reapRecorde
 //   fixtureId    — which fixture to run (fixtures.mjs). Its scenario spec carries the facts.
 //   scratchDir   — the scratch repo root to install into (a throwaway temp dir, NEVER the real project;
 //                  a seatbelt, DESIGN §5.2). Defaults to a fresh mkdtemp dir.
-//   allowHere    — pass PARALLEL_ALLOW_HERE=1 to the coordinator (a same-named scratch clone). Default off.
 //   pollMs       — the wait-loop cadence; each poll samples the workers (capture.tick) and checks the process.
 //   haltGrace    — after the wall-clock timeout auto-HALTs, how many extra polls to wait for the
 //                  coordinator to react and exit before giving up and reporting 'timeout' (§5.2).
@@ -334,7 +331,6 @@ export async function teardownScenario({ controlDir, reap = (dir) => reapRecorde
 export async function runScenario({
   fixtureId,
   scratchDir,
-  allowHere = false,
   pollMs = 2000,
   haltGrace = 5,
   timeoutMs,
@@ -412,7 +408,7 @@ export async function runScenario({
   try {
     // Launch the coordinator as a plain child process with the seatbelt env (§2.1, §5.2).
     const argv = coordinatorLaunchArgv({ slug });
-    const env = seatbeltEnv({ ceiling, allowHere, holdMerges: spec.holdMerges });
+    const env = seatbeltEnv({ ceiling, holdMerges: spec.holdMerges });
     log(`launching coordinator process: node ${argv.join(' ')}  (ceiling ${ceiling}, timeout ${timeout}ms)`);
     child = spawnCoordinator({ argv, cwd: repoDir, env, spawn, stdoutPath: coordinatorOutPath(controlDir) });
 
@@ -488,7 +484,6 @@ export async function runScenario({
 export async function runRestartScenario({
   fixtureId,
   scratchDir,
-  allowHere = false,
   pollMs = 2000,
   haltGrace = 5,
   startupGrace = 45,
@@ -570,7 +565,7 @@ export async function runRestartScenario({
   let seededFeeds = false;
 
   const argv = coordinatorLaunchArgv({ slug });
-  const env = seatbeltEnv({ ceiling, allowHere });
+  const env = seatbeltEnv({ ceiling });
 
   let reason = 'error';
   let bundle = null;
@@ -865,13 +860,12 @@ function delay(timers, ms) {
 // SIGKILL, then the workers.json reap), during the build it touches HALT; and the reply cap, which ends
 // the run the moment a session is still waiting after the cap is spent.
 
-// planEnv({ baseEnv, pirHome, ceiling, allowHere }) → the env both programs get. PARALLEL_ALLOW_HERE is
-// dropped unless the caller opted in, so an outer shell's setting cannot let a run into the canonical
-// checkout. Pure.
-export function planEnv({ baseEnv = process.env, pirHome, ceiling, allowHere = false } = {}) {
+// planEnv({ baseEnv, pirHome, ceiling }) → the env both programs get. Pure. PARALLEL_ALLOW_HERE no
+// longer means anything (its guard is gone, dashboard-plan-box DESIGN §2.8), but an inherited one is
+// still dropped so an outer shell cannot leak a stale setting into a fixture's run.
+export function planEnv({ baseEnv = process.env, pirHome, ceiling } = {}) {
   const env = { ...baseEnv };
   delete env.PARALLEL_ALLOW_HERE;
-  if (allowHere) env.PARALLEL_ALLOW_HERE = '1';
   if (pirHome) env.PIR_HOME = pirHome;
   if (ceiling != null) env.PARALLEL_MAX_WORKERS = String(ceiling);
   return env;
@@ -952,7 +946,6 @@ function readJsonOr(path, fallback) {
 export async function runPlanScenario({
   fixtureId,
   scratchDir,
-  allowHere = false,
   pollMs = 2000,
   haltGrace = 5,
   timeoutMs,
@@ -986,7 +979,7 @@ export async function runPlanScenario({
   install(fixtureId, { into: repoDir, runGit: gitRun });
   const pirHome = join(repoDir, fixture.pirHome ?? '.pir-home');
   mkdirSync(pirHome, { recursive: true });
-  const env = planEnv({ baseEnv, pirHome, ceiling: seatbelts.ceiling, allowHere });
+  const env = planEnv({ baseEnv, pirHome, ceiling: seatbelts.ceiling });
   const dir = indexDir({ env });
   const mainHead = () => {
     const r = gitRun(['rev-parse', '--verify', '--quiet', 'refs/heads/main'], { cwd: repoDir });
@@ -1180,9 +1173,17 @@ export async function runPlanScenario({
 //
 // The live launcher (T09 "Needs a person"): the user starts this on the scratch harness, it spawns a real
 // coordinator process + real workers under the seatbelts, and prints the fact report. It refuses to run
-// inside the canonical project unless PARALLEL_ALLOW_HERE=1 — the same guard coordinate.mjs applies —
-// because a scenario spawns real paid agents and cuts real branches.
+// inside the canonical project unless --into <dir> names a scratch repo, because a scenario spawns real
+// paid agents and cuts real branches. This guard protects a paid test run, not planning or building, so it
+// outlived the coordinator's canonical-repo guard (dashboard-plan-box DESIGN §2.8); --into is its only
+// override.
 const CANONICAL_REPO = 'plan-implement-review';
+
+// liveRunRefused({ cwd, scratchDir }) → true when main must refuse: the cwd is the canonical checkout and
+// no --into scratch dir was named. Pure, so the guard is tested without launching anything.
+export function liveRunRefused({ cwd, scratchDir } = {}) {
+  return basename(cwd) === CANONICAL_REPO && !scratchDir;
+}
 
 async function main(argv) {
   const fixtureId = argv[0];
@@ -1194,15 +1195,13 @@ async function main(argv) {
   // A caller may point at an existing scratch repo (--into <dir>); otherwise a temp dir is used.
   const intoFlag = argv.indexOf('--into');
   const scratchDir = intoFlag !== -1 ? argv[intoFlag + 1] : undefined;
-  const allowHere = process.env.PARALLEL_ALLOW_HERE === '1';
 
   // Seatbelt: never run a scenario that spawns real agents inside the canonical project by accident.
-  if (basename(process.cwd()) === CANONICAL_REPO && !scratchDir && !allowHere) {
+  if (liveRunRefused({ cwd: process.cwd(), scratchDir })) {
     console.error(
       `Refusing to run a live scenario inside "${CANONICAL_REPO}" — it spawns real paid workers and\n` +
         `cuts real branches. It installs into a throwaway temp scratch repo by default, so this guard\n` +
-        `only trips if you meant to. Pass --into <dir> to name a scratch repo, or set\n` +
-        `PARALLEL_ALLOW_HERE=1 if you know what you are doing.`,
+        `only trips if you meant to. Pass --into <dir> to name a scratch repo.`,
     );
     process.exit(1);
   }
@@ -1216,7 +1215,7 @@ async function main(argv) {
     `=== live ${isRestart ? 'restart ' : isPlan ? 'plan ' : ''}scenario: ${fixtureId} (real paid workers; seatbelted §5.2) ===`,
   );
   const runner = isPlan ? runPlanScenario : isRestart ? runRestartScenario : runScenario;
-  const result = await runner({ fixtureId, scratchDir, allowHere, log: (m) => console.log(m) });
+  const result = await runner({ fixtureId, scratchDir, log: (m) => console.log(m) });
 
   console.log(`\nbundle: ${result.bundleDir}`);
   console.log(formatReport(result.report));
