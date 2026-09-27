@@ -25,12 +25,12 @@ done · ⛔ blocked, needs a human.
 |---|---|---|---|---|
 | T01 | drop-canonical-guard | — | ⬜ | |
 | T02 | plan-box-rules | — | ✅ | |
-| T03 | repo-scan | T02 | ⬜ | |
+| T03 | repo-scan | T02 | 🔍 | `src/shell/repo-scan.mjs`: repoRoots, rootsLabel, scanRepos (fs and git injectable). 9 tests over real `git init` repos. No deviations; added: HOME falls back to os.homedir() only when env has no HOME, relative PIR_REPOS entries resolve against cwd. |
 | T04 | list-view-box | T02 | ⬜ | |
 | T05 | box-starts-plan | T03, T04 | ⬜ | |
 | T06 | plan-box-drill | T01, T05 | ⬜ | |
 
-**Review queue:** *(empty)*
+**Review queue:** T03
 
 ## Blocked on the user
 
