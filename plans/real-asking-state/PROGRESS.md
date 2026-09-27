@@ -15,7 +15,7 @@ cell also fixes the over-budget cell they walk past.
 **Status:** Planned 2026-09-26 on main after `live-workers` and the Remote Control un-park (bda34a5,
 5b899df). Nothing built.
 **Last updated:** 2026-09-26
-**Next `pir-work` will:** implement T00 (T00, T01 and T02 have no dependency).
+**Next `pir-work` will:** implement T05 (live asking check, needs the person's phone).
 
 ## Tasks
 
@@ -28,10 +28,10 @@ done · ⛔ blocked, needs a human.
 | T01 | worker-contract | — | ✅ | |
 | T02 | waiting-predicate | — | ✅ | |
 | T03 | answer-only-unpark | T00, T02 | ✅ | |
-| T04 | docs | T01, T03 | 🔍 | human-flow.md gains the §2.1 predicate, the §2.2 un-park table and the §2.3 no-report rule for `ask` actions (Live actions section rewritten); run-lifecycle.md updated for the asking row, clock and Remote Control. README one sentence. Deviation: control-folder.md unchanged, it does not describe the un-park. |
+| T04 | docs | T01, T03 | ✅ | Review clean, no fix commit. Checked every doc claim against asking.mjs, stream.mjs workerActivity, loop.mjs resumeAnswered and coordinate.mjs (field names, command_lifecycle, fixing conflict, unseen worker); README anchors resolve; no report-first instruction left in docs or skills. control-folder.md correctly untouched. |
 | T05 | live-asking-check | T04 | ⬜ | |
 
-**Review queue:** T04
+**Review queue:** empty
 
 ## Blocked on the user
 
