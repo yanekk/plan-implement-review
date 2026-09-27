@@ -130,10 +130,12 @@ reserved item is refused and the item passed on with the agent's text as its not
   with the same matcher "do not ask again" grants use. A compound Bash command is split on `&&`, `||`,
   `;`, `|` and newlines, `$()` and backtick bodies are read too, and the request is reserved if any
   part matches. A request carrying the SDK's `matchedAskRule` or `defaultToNo` is reserved as well.
-- **A destructive command.** A Bash command matching the destructive list: `rm` with `-r` or `-f`,
-  `git push` with `--force`, `-f` or `--force-with-lease`, `git reset --hard`, `git clean -f`,
-  `git branch -D`, `git checkout --` and `git restore` on paths, `git rebase`, `git filter-branch`,
-  `DROP TABLE`, `DROP DATABASE` or `TRUNCATE` in any case, `mkfs`, `dd of=`. The list errs toward the
+- **A destructive command.** A Bash command matching the destructive list (`DESTRUCTIVE` in
+  `coordinator-policy.mjs`): `rm` with `-r` or `-f` (or `--recursive`, `--force`), `git push` with
+  `--force`, `-f`, `--force-with-lease` or a `+refspec`, `git reset --hard`, `git clean -f`,
+  `git branch -D` (or a forced `-d`), `git checkout --` or `git checkout .`, any `git restore`,
+  `git rebase`, `git filter-branch`, `DROP TABLE`, `DROP DATABASE` or `TRUNCATE` in any case, `mkfs`,
+  `dd of=`. The list errs toward the
   person: a false positive costs one question.
 
 ## What the agent may decide

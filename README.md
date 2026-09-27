@@ -12,7 +12,8 @@ sessions at once. Four ideas carry the whole method:
   as far as you allowed, action by action. During a build a coordinator agent stands in for you,
   answering the routine questions and passing on the rest, so an overnight run keeps moving.
 - **Every step starts with a clean slate.** Each task is sized to fit one session, and each session
-  is closed when its step is done, so no agent ever works from a long, stale conversation.
+  is closed when its step is done, so no worker ever works from a long, stale conversation
+  (the coordinator agent, below, is the one long session, and it re-reads the plan instead).
 - **Nobody reviews their own work.** Every task is built by one session and reviewed by a
   different, brand-new one that never saw it being written.
 
