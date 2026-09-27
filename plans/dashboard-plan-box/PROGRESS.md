@@ -23,7 +23,7 @@ done · ⛔ blocked, needs a human.
 
 | # | Task | Depends on | State | Notes |
 |---|---|---|---|---|
-| T01 | drop-canonical-guard | — | ⬜ | |
+| T01 | drop-canonical-guard | — | ✅ | |
 | T02 | plan-box-rules | — | ✅ | |
 | T03 | repo-scan | T02 | ⬜ | |
 | T04 | list-view-box | T02 | ⬜ | |
