@@ -10,7 +10,7 @@
 // exceptions reaches `canUseTool`, and the `decide` gate below, which answers every request itself and
 // never parks one for the person.
 
-import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, unlinkSync } from 'node:fs';
+import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, realpathSync, statSync, unlinkSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -47,6 +47,14 @@ function canonical(p) {
 const within = (p, root) => p === root || p.startsWith(root.endsWith(sep) ? root : root + sep);
 const strictlyWithin = (p, root) => p !== root && within(p, root);
 
+// A `..` after the first glob segment (`**/../../etc/*`) is outside what the prefix check sees, so a
+// pattern holding one is refused outright (review T03).
+const climbsAfterGlob = (pattern) => {
+  const segs = pattern.split('/');
+  const first = segs.findIndex((s) => /[*?[\]{}]/.test(s));
+  return first !== -1 && segs.slice(first).includes('..');
+};
+
 // The static prefix of a glob pattern: its path segments up to the first one with a glob character.
 function globPrefix(pattern) {
   const segs = pattern.split('/');
@@ -79,6 +87,7 @@ export function gateFor({ cwd, readRoots, decisionsDir }) {
         const base = str(i.path) ? i.path : cwd;
         if (!readable(base)) return 'deny';
         if (!str(i.pattern)) return 'allow';
+        if (climbsAfterGlob(i.pattern)) return 'deny';
         const prefix = globPrefix(i.pattern);
         return readable(isAbsolute(prefix) ? prefix : resolve(base, prefix)) ? 'allow' : 'deny';
       }
@@ -235,9 +244,27 @@ export function startCoordinatorAgent({
   const keyOf = (item) => `${item.worker}:${item.requestId ?? 'report'}`;
   const tell = (text) => (alive() ? worker.send(text, { from: 'pir' }) : false);
 
+  // A torn last line (DESIGN §3.5) has no newline; appending straight after it would fuse the new line
+  // onto it and lose both on read, so a missing newline is written first (review T03).
+  const endsTorn = () => {
+    let fd;
+    try {
+      const { size } = statSync(ledgerPath);
+      if (size === 0) return false;
+      fd = openSync(ledgerPath, 'r');
+      const b = Buffer.alloc(1);
+      readSync(fd, b, 0, 1, size - 1);
+      return b[0] !== 0x0a;
+    } catch {
+      return false;
+    } finally {
+      if (fd !== undefined) closeSync(fd);
+    }
+  };
+
   const appendLedger = (line) => {
     try {
-      appendFileSync(ledgerPath, JSON.stringify({ t: new Date(now()).toISOString(), ...line }) + '\n');
+      appendFileSync(ledgerPath, (endsTorn() ? '\n' : '') + JSON.stringify({ t: new Date(now()).toISOString(), ...line }) + '\n');
     } catch {
       // a ledger that cannot be written must not take the pass down; the answer was still applied
     }

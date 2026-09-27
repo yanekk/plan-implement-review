@@ -84,6 +84,7 @@ test('gate: each allowed tool and path allowed; everything else denied', (t) => 
   assert.equal(decide('Glob', { pattern: '**/*.md', path: s.repoRoot }), 'allow');
   assert.equal(decide('Glob', { pattern: '/etc/*' }), 'deny');
   assert.equal(decide('Glob', { pattern: '../../../../../*' }), 'deny');
+  assert.equal(decide('Glob', { pattern: '**/../../../../../etc/*' }), 'deny', '`..` after a wildcard');
   assert.equal(decide('Grep', { pattern: 'x', path: s.featurePath }), 'allow');
   assert.equal(decide('Grep', { pattern: 'x' }), 'allow');
   assert.equal(decide('Grep', { pattern: 'x', path: '/etc' }), 'deny');
@@ -379,6 +380,12 @@ test('a torn last ledger line is skipped on read', (t) => {
   });
   t.after(() => agent.close({ graceMs: 100, killMs: 300 }));
   assert.deepEqual(agent.ledger(), [{ kind: 'pass' }]);
+
+  // The next applied decision is appended on a line of its own, not fused onto the torn one.
+  drop(s, '1-a.json', { kind: 'pass', worker: s.w2, reason: 'r', suggestion: 'no' });
+  agent.drain([reportItem(s)]);
+  assert.deepEqual(agent.ledger().map((l) => l.kind), ['pass', 'pass']);
+  assert.equal(agent.ledger()[1].worker, s.w2);
 });
 
 function writeScript(dir) {
