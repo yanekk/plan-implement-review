@@ -139,6 +139,8 @@ role:
 - **The coordinator agent:** `{repo} / {plan} / coordinator agent`. It is not one of the workers the
   loop lists, so `isWorkerOf` and `parseAgentName` never see it.
 - **The main-sync worker** at the end of a run: `{repo} / {plan} / main-sync`, in the feature worktree.
+- **The test-fix worker** at the end of a run whose tests are red: `{repo} / {plan} / tests-fix`, in the
+  feature worktree; it commits its fix on `pir/{slug}` itself.
 
 The name is passed to the worker's `claude` as `--name` (the SDK's `extraArgs`, `worker-proc.mjs`).
 It is a label, not a handle: the command addresses a worker by the session id it chose itself when it

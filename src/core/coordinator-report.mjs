@@ -66,9 +66,10 @@ export function decisionsSection(notable = []) {
   return `${head}${items.join('\n')}\n`;
 }
 
-// branchFooter({ mainSha, tests, syncedAt, unresolved }) → the footer: which main the branch was synced
-// against, when, and the tests result. Red or unresolved says the branch is not ready to merge.
-export function branchFooter({ mainSha, tests, syncedAt, unresolved = false } = {}) {
+// branchFooter({ mainSha, tests, syncedAt, unresolved, fix }) → the footer: which main the branch was synced
+// against, when, and the tests result. Red or unresolved says the branch is not ready to merge. `fix` is
+// the end-of-run test-fix worker's result (T10): null when none ran, else 'green' | 'red' after it.
+export function branchFooter({ mainSha, tests, syncedAt, unresolved = false, fix = null } = {}) {
   const sha = nonEmpty(mainSha) ? `\`${mainSha.slice(0, 12)}\`` : 'an unknown commit';
   const when = nonEmpty(syncedAt) ? ` on ${syncedAt}` : '';
   const lines = [`${FOOTER_HEADING}\n`];
@@ -77,6 +78,8 @@ export function branchFooter({ mainSha, tests, syncedAt, unresolved = false } = 
   } else {
     lines.push(`Synced with \`main\` at ${sha}${when}.`);
   }
+  if (fix === 'green') lines.push('The tests were red at the end; a worker fixed them.');
+  else if (fix === 'red') lines.push('The tests were red at the end; a worker tried to fix them and they stayed red.');
   lines.push(tests === 'green' ? 'Tests: green.' : 'Tests: red. The branch is not ready to merge.');
   return lines.join('\n') + '\n';
 }
@@ -139,8 +142,9 @@ export function findingRows(findingsText) {
 
 // endFacts({ tasks, ledger, findings, unverified, sync, tests }) → the end brief's facts, normalised
 // (DESIGN §2.9 step 2). tasks are parsed PROGRESS rows ({ num, name, state }); ledger the ledger lines;
-// findings the FINDINGS rows; unverified task ids; sync { state, mainSha, files? }; tests 'green'|'red'.
-export function endFacts({ tasks = [], ledger = [], findings = [], unverified = [], sync = null, tests = 'red' } = {}) {
+// findings the FINDINGS rows; unverified task ids; sync { state, mainSha, files? }; tests 'green'|'red';
+// fix null when no test-fix worker ran (T10), else its result 'green'|'red'.
+export function endFacts({ tasks = [], ledger = [], findings = [], unverified = [], sync = null, tests = 'red', fix = null } = {}) {
   return {
     tasks: (Array.isArray(tasks) ? tasks : []).filter(isObject).map((t) => ({ num: t.num, name: t.name ?? '', state: t.state ?? '' })),
     ledger: (Array.isArray(ledger) ? ledger : []).filter(isObject).map((l) => ({
@@ -150,5 +154,6 @@ export function endFacts({ tasks = [], ledger = [], findings = [], unverified = 
     unverified: (Array.isArray(unverified) ? unverified : []).filter(nonEmpty),
     sync: isObject(sync) ? { state: sync.state ?? 'unknown', mainSha: sync.mainSha ?? null, files: Array.isArray(sync.files) ? sync.files : [] } : { state: 'unknown', mainSha: null, files: [] },
     tests: tests === 'green' ? 'green' : 'red',
+    fix: fix === 'green' || fix === 'red' ? fix : null,
   };
 }

@@ -192,8 +192,15 @@ When every task is ✅ and the feature-branch tests pass (today's end gate), the
    reruns the tests. If it conflicts, it spawns a worker with the main-sync conflict prompt (§3.3) in
    the feature worktree; that worker resolves, runs the tests and reports `done`, and its questions
    route through the agent like any worker's (user 2026-09-27).
+   Red tests get a fix worker the same way (T10, user 2026-09-27): if the end gate is red, before the
+   sync, or the tests rerun after a clean or resolved sync are red, it spawns one worker in the feature
+   worktree with the tests-red prompt (`buildConflictPrompt` kind `tests-red`, label `tests-fix`); it
+   fixes the cause, runs the test block, commits and reports `done`, and the tests rerun. One attempt per
+   end sequence, whichever fires first; a re-sync while in `ready to merge` gets one of its own; an
+   `unresolved` sync gets none. Still red after it: the run ends red as below. Why: a red end otherwise
+   sat as `running` waiting on the person (T07 drill), and a fix is ordinary worker work.
 2. Briefs the agent with the run's facts: the task table, the ledger, open FINDINGS rows, tasks with a
-   hand-verification half unchecked, the sync result and the tests.
+   hand-verification half unchecked, the sync result, the tests, and whether a fix worker ran.
 3. The agent drops a `report` decision holding the markdown for three sections: what was delivered
    (and what was not), what to check by hand, risks and follow-ups (user 2026-09-27).
 4. The command assembles `plans/{slug}/REPORT.md` from the agent's sections, the rendered decisions
@@ -249,8 +256,10 @@ person merging another run first is the ordinary way that promise breaks.
   respawned) and new ones are briefed afresh.
 - pir restarts a run in `ready to merge`: reconciliation finds every task ✅ and `REPORT.md` committed;
   the command re-checks the sync and returns to `ready to merge` without rewriting the report.
-- The main-sync conflict worker cannot resolve, or the tests stay red: its question passes through the
-  agent, which may pass it on; the report says the branch is not ready.
+- The main-sync conflict worker cannot resolve, or the tests stay red after the one test-fix worker
+  (§2.9 step 1, user 2026-09-27): its question passes through the agent, which may pass it on; the
+  report says the branch is not ready. A restart mid-fix keeps the feature worktree with what the worker
+  left; the gate reruns and, still red, a fresh test-fix worker is spawned, as for main-sync.
 - The main checkout has uncommitted changes: irrelevant, since the sync happens in the feature worktree
   and main is never written.
 - The agent's context grows over a long run: Claude Code compacts it. The durable memory is the plan

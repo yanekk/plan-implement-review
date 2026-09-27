@@ -34,7 +34,7 @@ import { parseRecord } from '../core/runrecord.mjs';
 import { parseTestBlock } from '../core/testblock.mjs';
 import { runLines, startLines } from './commands.mjs';
 import { runPass, createRunState, applyMessages, resumeAnswered } from './loop.mjs';
-import { buildConflictPrompt, MAIN_SYNC_TASK } from '../core/conflict.mjs';
+import { buildConflictPrompt, MAIN_SYNC_TASK, TESTS_FIX_TASK } from '../core/conflict.mjs';
 import { handoffFor, resyncedFor } from '../core/coordinator-brief.mjs';
 import {
   notableDecisions, branchFooter, assembleReport, replaceFooter, endFacts, unverifiedTasks, findingRows,
@@ -204,7 +204,7 @@ export function startCoordinator({
   const briefItem = (item, workers) => {
     const t = state.tasks[item.task];
     const brief = { ...item };
-    if (t?.name) brief.name = t.name; // the main-sync worker, which holds no task of the plan
+    if (t?.name) brief.name = t.name; // an end-of-run helper (main-sync, tests-fix), which holds no task of the plan
     else if (t?.slug) brief.name = workerName({ repo, plan: slug, task: item.task, slug: t.slug, role: t.role ?? 'implement' });
     if (item.kind === 'report') {
       const words = lastWords(workers.find((w) => w.id === item.worker)?.logPath);
@@ -333,7 +333,9 @@ export function startCoordinator({
     // it always did.
     if (r.complete && endOfRun) {
       lastTasks = r.tasks;
-      handoff = { state: 'preparing', step: 'sync', gate: r.testsPassed ? 'green' : 'red', gateReason: r.testsReason ?? null, tests: null, sync: null, mainSha: null, reportPath: null, finished: null };
+      // A red gate gets its one test-fix worker before the sync (T10, user 2026-09-27).
+      const gate = r.testsPassed ? 'green' : 'red';
+      handoff = { state: 'preparing', step: gate === 'red' ? 'fix' : 'sync', gate, gateReason: r.testsReason ?? null, tests: null, testsReason: null, sync: null, mainSha: null, reportPath: null, finished: null, fix: null, fixUsed: false, fixAfter: null };
     }
 
     return {
@@ -372,8 +374,9 @@ export function startCoordinator({
 
   // --- The end of the run with the agent on (pir-coordinator DESIGN §2.9–§2.11, T05) ---
   //
-  // One step per pass, so the display stays live: sync main into the feature branch → (a conflict: a
-  // worker in the feature worktree finishes the merge) → tests → brief the agent → its `report` → REPORT.md
+  // One step per pass, so the display stays live: (a red gate: one test-fix worker, T10) → sync main into
+  // the feature branch → (a conflict: a worker in the feature worktree finishes the merge) → tests (red, and
+  // no fix worker yet this sequence: one now) → brief the agent → its `report` → REPORT.md
   // committed → hand-off told → `ready to merge` (or `red`). Waiting there, each pass: main holds the tip
   // (the person merged) or a `close` from the agent ends the run; main moved without it → re-sync, rewrite
   // the report's footer, commit, tell the agent. A restart in `ready` finds REPORT.md already committed and
@@ -397,20 +400,71 @@ export function startCoordinator({
   };
   const isoNow = () => new Date(now()).toISOString().replace(/\.\d+Z$/, 'Z');
   const branchReady = () => handoff.tests === 'green' && handoff.sync?.state !== 'unresolved';
+  const fixResult = () => (handoff.fix === 'green' || handoff.fix === 'red' ? handoff.fix : null);
   const footerNow = () =>
-    branchFooter({ mainSha: handoff.sync?.mainSha ?? null, tests: handoff.tests, syncedAt: isoNow(), unresolved: handoff.sync?.state === 'unresolved' });
+    branchFooter({ mainSha: handoff.sync?.mainSha ?? null, tests: handoff.tests, syncedAt: isoNow(), unresolved: handoff.sync?.state === 'unresolved', fix: fixResult() });
   const settle = () => {
     handoff.state = branchReady() ? 'ready' : 'red';
     handoff.mainSha = handoff.sync?.mainSha ?? handoff.mainSha;
     handoff.step = 'waiting';
   };
 
-  function spawnSyncWorker(files) {
-    const prompt = buildConflictPrompt({ kind: 'main-sync', slug, plan: slug, files, audience: 'worker' });
-    const name = `${repo} / ${slug} / ${MAIN_SYNC_TASK}`;
-    const id = platform.spawn({ cwd: state.feature.path, name, phase: 'sync', task: MAIN_SYNC_TASK, opening: mainSyncOpening(prompt) });
-    state.tasks[MAIN_SYNC_TASK] = { worktree: state.feature, workerId: id, role: 'sync', slug: MAIN_SYNC_TASK, name, phase: 'implementing' };
+  // An end-of-run helper worker (main-sync, tests-fix): spawned in the feature worktree under its task
+  // label, held in state.tasks under that label so its reports and parks are read like a task worker's.
+  function spawnHelper(label, role, prompt) {
+    const name = `${repo} / ${slug} / ${label}`;
+    const id = platform.spawn({ cwd: state.feature.path, name, phase: role, task: label, opening: mainSyncOpening(prompt) });
+    state.tasks[label] = { worktree: state.feature, workerId: id, role, slug: label, name, phase: 'implementing' };
     return id;
+  }
+
+  // helperFinished(label, listed) → true once the helper has reported done or is gone (closed and dropped
+  // from state.tasks), false while it still works or waits on a question.
+  function helperFinished(label, listed) {
+    const t = state.tasks[label];
+    const live = t && listed.some((w) => w.id === t.workerId);
+    if (t && t.phase !== 'done' && live) return false;
+    if (t) {
+      platform.close(t.workerId);
+      platform.remove?.(t.workerId);
+      state.closedIds.add(t.workerId);
+      delete state.tasks[label];
+    }
+    return true;
+  }
+
+  function spawnSyncWorker(files) {
+    return spawnHelper(MAIN_SYNC_TASK, 'sync', buildConflictPrompt({ kind: 'main-sync', slug, plan: slug, files, audience: 'worker' }));
+  }
+
+  // The one test-fix worker of an end sequence (T10, DESIGN §2.9 step 1, user 2026-09-27). `after` is
+  // where the sequence goes once it is done: 'sync' from a red gate, else the report (brief or footer).
+  function startFix(rec, after, reason) {
+    handoff.fixUsed = true;
+    handoff.fixAfter = after;
+    handoff.fix = 'running';
+    const prompt = buildConflictPrompt({ kind: 'tests-red', slug, plan: slug, testsReason: reason?.reason ?? null, logPath: reason?.logPath ?? null, audience: 'worker' });
+    const id = spawnHelper(TESTS_FIX_TASK, 'fix', prompt);
+    rec('spawn', { task: TESTS_FIX_TASK, role: 'fix', workerId: id });
+    handoff.step = 'fixing';
+  }
+
+  function endFix(rec) {
+    // A restart after the person merged while pir was down: nothing to fix, endSync finishes it as merged.
+    if (existsSync(join(state.feature.path, reportRel)) && worktree.mainContains(state.feature.branch)) {
+      handoff.step = 'sync';
+      return;
+    }
+    startFix(rec, 'sync', handoff.gateReason);
+  }
+
+  function endFixing(rec, listed) {
+    if (!helperFinished(TESTS_FIX_TASK, listed)) return;
+    runEndTests();
+    handoff.fix = handoff.tests;
+    rec('tests-fix', { state: handoff.fix });
+    rec('tests', { state: handoff.tests });
+    handoff.step = handoff.fixAfter === 'sync' ? 'sync' : handoff.rewrite ? 'footer' : 'brief';
   }
 
   function endSync(rec) {
@@ -441,7 +495,10 @@ export function startCoordinator({
     handoff.sync = { state: res.state, mainSha: res.mainSha, files: res.files ?? [] };
     if (res.state === 'up-to-date') {
       handoff.tests ??= handoff.gate;
-      if (existing) {
+      if (existing && handoff.fix) {
+        // A restart in a red `ready`, and this sequence's fix worker ran: its result goes in the footer.
+        handoff.step = 'footer';
+      } else if (existing) {
         // A restart in `ready` (DESIGN §2.11): nothing moved, so the committed report stands as it is.
         handoff.reportPath = reportRel;
         settle();
@@ -458,15 +515,7 @@ export function startCoordinator({
   }
 
   function endSyncing(rec, listed) {
-    const t = state.tasks[MAIN_SYNC_TASK];
-    const live = t && listed.some((w) => w.id === t.workerId);
-    if (t && t.phase !== 'done' && live) return; // still resolving, or parked on a question
-    if (t) {
-      platform.close(t.workerId);
-      platform.remove?.(t.workerId);
-      state.closedIds.add(t.workerId);
-      delete state.tasks[MAIN_SYNC_TASK];
-    }
+    if (!helperFinished(MAIN_SYNC_TASK, listed)) return; // still resolving, or parked on a question
     if (worktree.syncPending(state.feature.path)) {
       // The worker reported done without finishing the merge, or exited: the conflict stands unresolved,
       // the merge is abandoned so the branch is clean, and the report says the branch is not ready.
@@ -482,11 +531,21 @@ export function startCoordinator({
     handoff.step = 'tests';
   }
 
-  function endTests(rec) {
+  function runEndTests() {
     const res = (passOpts.runTests ?? (() => ({ ok: true })))(state.feature.path, { tasks: lastTasks });
     handoff.tests = res.ok ? 'green' : 'red';
     handoff.testsReason = res.ok ? null : { reason: res.reason ?? null, logPath: res.logPath ?? null };
+    return res;
+  }
+
+  function endTests(rec) {
+    runEndTests();
     rec('tests', { state: handoff.tests });
+    // Red after the sync, and this sequence has had no fix worker yet: its one attempt (T10).
+    if (handoff.tests === 'red' && !handoff.fixUsed) {
+      startFix(rec, 'report', handoff.testsReason);
+      return;
+    }
     handoff.step = handoff.rewrite ? 'footer' : 'brief';
   }
 
@@ -516,6 +575,7 @@ export function startCoordinator({
         unverified: unverifiedTasks(planFile('PROGRESS.md')),
         sync: handoff.sync,
         tests: handoff.tests,
+        fix: fixResult(),
       });
       if (agent.briefEnd(facts)) handoff.step = 'report';
       return;
@@ -546,23 +606,31 @@ export function startCoordinator({
     const rec = endRecord(actions);
     const halted = control?.isHalted?.() ?? false;
     if (halted) {
-      const t = state.tasks[MAIN_SYNC_TASK];
-      if (t) platform.close(t.workerId);
+      for (const label of HELPERS) {
+        const t = state.tasks[label];
+        if (t) platform.close(t.workerId);
+      }
       closeAgent();
       return endResult({ actions, halted: true, routed: { passed: [], report: null, close: false } });
     }
 
-    // The main-sync worker's reports and answers, read the way the loop reads a task worker's: list()
-    // once (the fake's tick), then the inbox.
+    // The helper workers' reports and answers (main-sync, tests-fix), read the way the loop reads a task
+    // worker's: list() once (the fake's tick), then the inbox.
     const listed = platform.list().filter((w) => !state.closedIds.has(w.id));
-    const messages = platform.inbox().filter((m) => m.task === MAIN_SYNC_TASK);
-    if (state.tasks[MAIN_SYNC_TASK]) {
+    const messages = platform.inbox().filter((m) => HELPERS.includes(m.task));
+    if (HELPERS.some((label) => state.tasks[label])) {
       applyMessages(state, messages, rec);
       resumeAnswered(state, new Map(listed.map((w) => [w.id, w])), rec);
     }
     const routed = route();
 
     switch (handoff.step) {
+      case 'fix':
+        endFix(rec);
+        break;
+      case 'fixing':
+        endFixing(rec, listed);
+        break;
       case 'sync':
         endSync(rec);
         break;
@@ -589,6 +657,8 @@ export function startCoordinator({
           // main moved without the feature tip: re-sync so the hand-off still merges cleanly (§2.10).
           handoff.state = 'preparing';
           handoff.rewrite = true;
+          // A re-sync whose tests turn red gets one fix attempt of its own (T10).
+          handoff.fixUsed = false;
           endSync(rec);
         }
         break;
@@ -600,7 +670,7 @@ export function startCoordinator({
 
   function endResult({ actions, halted, routed, listed = [] }) {
     const surfaces = actions.filter((a) => a.type === 'surface').map(renderSurface);
-    const live = listed.filter((w) => w.id === state.tasks[MAIN_SYNC_TASK]?.workerId).length;
+    const live = listed.filter((w) => HELPERS.some((label) => w.id === state.tasks[label]?.workerId)).length;
     const waitingNow = handoff.step === 'waiting';
     return {
       handoff: handoffView(),
@@ -707,9 +777,12 @@ export function startCoordinator({
   };
 }
 
-// mainSyncOpening(prompt) → the opening instruction of the end-of-run main-sync worker (T05). It runs
-// under the pir-worker contract for asking the person and dropping its report, but its instruction is the
-// main-sync prompt, not a stock skill: it holds no task of the plan.
+// The end-of-run helper workers' task labels (pir-coordinator T05, T10): each holds no task of the plan.
+const HELPERS = [MAIN_SYNC_TASK, TESTS_FIX_TASK];
+
+// mainSyncOpening(prompt) → the opening instruction of an end-of-run helper worker: main-sync (T05) or
+// tests-fix (T10). It runs under the pir-worker contract for asking the person and dropping its report,
+// but its instruction is the helper's prompt, not a stock skill: it holds no task of the plan.
 export function mainSyncOpening(prompt) {
   return (
     'You are a worker session in a parallel PIR run. Invoke the pir-worker skill and follow its contract for ' +

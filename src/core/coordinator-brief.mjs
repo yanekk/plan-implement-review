@@ -121,6 +121,8 @@ export function endBriefFor(facts) {
   const files = Array.isArray(sync.files) && sync.files.length ? ` (files: ${sync.files.join(', ')})` : '';
   parts.push(`Sync with main: ${SYNC_WORDS[sync.state] ?? sync.state ?? 'unknown'}${sync.mainSha ? `, main at ${String(sync.mainSha).slice(0, 12)}` : ''}${files}.`);
   parts.push(`Tests on the feature branch: ${f.tests === 'green' ? 'green' : 'red'}.`);
+  if (f.fix === 'green') parts.push('The tests were red at the end; a worker fixed them.');
+  else if (f.fix === 'red') parts.push('The tests were red at the end; a worker tried to fix them and they stayed red.');
   parts.push(
     'Write one `report` decision: { "kind": "report", "sections": { "delivered": "…", "checkByHand": "…", "risks": "…" } }, ' +
       'each a markdown string, per the pir-coordinator skill § The report. pir renders the decisions section and the branch footer itself.',

@@ -240,7 +240,9 @@ feature branch and merges it themselves.
 With the coordinator agent on there is a third place: at the end of the run the command merges the
 current `main` into the feature branch, so the person's merge goes through cleanly. If that conflicts,
 a **main-sync worker** is spawned in the feature worktree to finish the merge, test and report `done`;
-its questions go to the agent first like any worker's. It has no row in the live view (see
+its questions go to the agent first like any worker's. Red tests at the end get the same treatment: one
+**test-fix worker** in the feature worktree, one attempt, and the branch is handed over red only if the
+tests still fail after it. Neither has a row in the live view (see
 [coordinator-agent.md](coordinator-agent.md#the-end-of-the-run)).
 
 ## The test command is the block

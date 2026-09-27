@@ -101,3 +101,9 @@ test('resyncedFor: main moved, the new sha, green keeps the merge line, red and 
   assert.doesNotMatch(resyncedFor({ slug: 'demo', mainSha: 'a', tests: 'red' }), /git merge/);
   assert.match(resyncedFor({ slug: 'demo', mainSha: 'a', tests: 'red', unresolved: true }), /conflicted and was not resolved/);
 });
+
+test('endBriefFor: says whether a test-fix worker ran and what came of it (T10)', () => {
+  assert.match(endBriefFor({ tests: 'green', fix: 'green' }), /red at the end; a worker fixed them/);
+  assert.match(endBriefFor({ tests: 'red', fix: 'red' }), /tried to fix them and they stayed red/);
+  assert.doesNotMatch(endBriefFor({ tests: 'green' }), /a worker fixed/);
+});

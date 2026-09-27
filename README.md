@@ -281,8 +281,9 @@ What it tells you at a glance:
   feature branch so your merge will go through cleanly, runs the tests, and commits a delivery report
   (`plans/{slug}/REPORT.md`): what was delivered, the decisions made for you, what to check by hand,
   and the risks. The coordinator agent shows you the report and the `git merge pir/{slug}` to run, and
-  the run waits in `ready to merge` until you merge or tell the agent to close it. If the tests fail,
-  the report says so and no merge is offered. It never merges to `main` itself. See
+  the run waits in `ready to merge` until you merge or tell the agent to close it. If the tests fail
+  at the end, one worker is sent in to make them pass, as it is for a clash with `main`; if they still
+  fail after that one attempt, the report says so and no merge is offered. It never merges to `main` itself. See
   [coordinator-agent.md](docs/coordinator-agent.md#the-end-of-the-run).
 
 `pir` on its own opens a dashboard of every run on the machine, across every repo: each run's

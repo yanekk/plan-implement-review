@@ -36,9 +36,12 @@ export function buildConflictPrompt({
   taskBranch,
   featureBranch,
   files = [],
+  testsReason = null,
+  logPath = null,
   audience = 'person',
 } = {}) {
   if (kind === 'main-sync') return mainSyncPrompt({ plan: plan ?? slug, files });
+  if (kind === 'tests-red') return testsRedPrompt({ plan: plan ?? slug, testsReason, logPath });
   if (audience === 'worker') return workerPrompt({ plan, taskBranch, featureBranch, files });
   const label = [task, slug].filter(Boolean).join(' ') || 'a task';
   const branchOn = taskBranch ? ` (${taskBranch})` : '';
@@ -153,6 +156,43 @@ function mainSyncPrompt({ plan, files }) {
     ``,
     `You are on ${featureBranch} itself, not a task branch: there is nothing to integrate afterwards, and you`,
     `never merge into main or push.`,
+    ``,
+  ].join('\n');
+}
+
+// The task label the end-of-run test-fix worker reports under (pir-coordinator T10), like MAIN_SYNC_TASK.
+export const TESTS_FIX_TASK = 'tests-fix';
+
+// kind 'tests-red' (pir-coordinator T10, DESIGN §2.9 step 1, user 2026-09-27): every task is ✅ but the
+// plan's test block fails on the feature branch, at the end gate or after main was merged in. A worker
+// spawned in the feature worktree gets one attempt to make it pass, the way a main-sync conflict gets a
+// worker. It is only ever sent to a worker. `testsReason` is the gate's one-line reason, `logPath` where
+// the full output was written; either may be missing.
+function testsRedPrompt({ plan, testsReason, logPath }) {
+  const featureBranch = `pir/${plan || '{plan}'}`;
+  const why = [];
+  if (testsReason) why.push(`  What failed: ${String(testsReason).replace(/\s+/g, ' ').trim()}`);
+  if (logPath) why.push(`  Full output: ${logPath}`);
+  return [
+    `Every task of plan ${plan || '{plan}'} is built and reviewed, but the plan's test block fails on ${featureBranch},`,
+    `here in this worktree. Make it pass.`,
+    ``,
+    ...(why.length ? [...why, ``] : []),
+    `An earlier session may have left edits here (a restart during a fix): read \`git status\` and keep what is`,
+    `right rather than starting over.`,
+    ``,
+    `Fix the cause, and only the cause: do not change what any task delivered beyond what the fix needs, and`,
+    `never weaken or delete a test to make it pass. If the right fix needs a judgement about what the plan`,
+    `should do, ask the person, as with any other decision.`,
+    ``,
+    `Then:`,
+    `  1. Run ${testStepFor(plan)}.`,
+    `  2. Commit the fix on ${featureBranch}.`,
+    `  3. Report done: \`[pir:v1 kind=done task=${TESTS_FIX_TASK}]\`, saying whether the tests pass. If you`,
+    `     cannot make them pass, report \`[pir:v1 kind=question task=${TESTS_FIX_TASK}]\` and ask the person.`,
+    ``,
+    `You are on ${featureBranch} itself, not a task branch: there is nothing to integrate afterwards, and you`,
+    `never merge into main or push. pir reruns the tests after your done; you get one attempt.`,
     ``,
   ].join('\n');
 }

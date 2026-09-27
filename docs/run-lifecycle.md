@@ -238,8 +238,9 @@ spinner and clock from it.
 ## End
 
 With the coordinator agent on (the default), reaching the end gate does not end the run. The command
-then merges the current `main` into the feature branch (a conflict is finished by a main-sync worker),
-reruns the tests if anything merged, has the agent write the delivery report's sections, commits
+gives red tests one attempt by a test-fix worker in the feature worktree, merges the current `main`
+into the feature branch (a conflict is finished by a main-sync worker), reruns the tests if anything
+merged (red there, and no fix attempt yet, gets the one attempt then), has the agent write the delivery report's sections, commits
 `plans/{slug}/REPORT.md` on the feature branch, and waits in **ready to merge**: the footer reads
 `✔ ready to merge · git merge pir/{slug}` and names the report, or `✗ not ready · tests red …` on red.
 The run stays open until the person merges `pir/{slug}` into `main` (the command sees `main` contains
