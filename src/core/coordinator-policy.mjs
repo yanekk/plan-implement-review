@@ -62,13 +62,30 @@ export function commandParts(command) {
   const pieces = [command, ...subs].flatMap((c) => c.split(/&&|\|\||[;|\n\r]|(?<![>&<])&(?![>&])/));
   const parts = [];
   for (let p of pieces) {
-    p = p.replace(/\d?(?:>>?|<)&?\s*\S+/g, ' '); // redirects (`> out`, `2>&1`, `< in`)
+    p = p.replace(/(?:\d|&)?(?:>>?|<)&?\s*\S+/g, ' '); // redirects (`> out`, `2>&1`, `&>out`, `< in`)
     p = p.replace(/[()]/g, ' ').trim();
     while (/^[A-Za-z_]\w*=\S*\s+/.test(p)) p = p.replace(/^[A-Za-z_]\w*=\S*\s+/, '');
     p = p.replace(/\s+/g, ' ');
     if (p) parts.push(p);
   }
   return parts;
+}
+
+// Every word-boundary tail of every part, with quotes and backslashes dropped and each tail also taken
+// with its first word's directory cut (`/bin/rm` → `rm`). A wrapper (`nohup`, `env`, `sudo`, `xargs`,
+// `time`), a keyword (`then`, `{`) or a quoted `sh -c` body therefore cannot carry a reserved command
+// past the match (review T01). It over-matches (`echo git push`), which is the person's side.
+function commandTails(parts) {
+  const tails = new Set();
+  for (const part of parts) {
+    const words = part.replace(/["'\\]/g, '').split(' ').filter(Boolean);
+    for (let i = 0; i < words.length; i++) {
+      const tail = words.slice(i).join(' ');
+      tails.add(tail);
+      tails.add(tail.replace(/^\S*\//, ''));
+    }
+  }
+  return [...tails].filter(Boolean);
 }
 
 const ruleText = (r) => (r.ruleContent === undefined ? r.toolName : `${r.toolName}(${r.ruleContent})`);
@@ -87,7 +104,7 @@ export function reservedFor(request, askRules = []) {
     return { kind: 'ask-rule', why: `the project's ask rule ${ruleText(request.matchedAskRule)} holds this for the person` };
   }
   const bash = request.toolName === 'Bash';
-  const parts = bash ? commandParts(input.command) : [];
+  const parts = bash ? commandTails(commandParts(input.command)) : [];
   for (const text of Array.isArray(askRules) ? askRules : []) {
     const rule = parseRule(text);
     if (!rule || rule.toolName !== request.toolName) continue;

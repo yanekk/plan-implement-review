@@ -139,6 +139,20 @@ test('commandParts splits, strips assignments and redirects, keeps 2>&1 from spl
   assert.deepEqual(commandParts('cd x && FOO=1 BAR=2 git push origin main 2>&1 > out'), ['cd x', 'git push origin main']);
   assert.deepEqual(commandParts('a | b || c ; d\ne & f'), ['a', 'b', 'c', 'd', 'e', 'f']);
   assert.deepEqual(commandParts(undefined), []);
+  assert.deepEqual(commandParts('git push &>out'), ['git push']);
+});
+
+// Review: a wrapper, a keyword, a quoted `sh -c` body or a path-qualified binary must not carry a reserved
+// command past the person. Over-matching (`echo git push`) is the accepted cost (DESIGN §3.3).
+test('a reserved command behind a wrapper, keyword, quotes or a path is still reserved', () => {
+  for (const c of ['nohup git push', 'time git push origin', 'env FOO=1 git push', 'sudo git push', 'xargs git push',
+    '{ git push; }', 'if true; then git push; fi', 'sh -c "cd x && git push"', "bash -c 'git push'", 'git push &>out']) {
+    assert.equal(reservedFor(bash(c), ASK)?.kind, 'ask-rule', c);
+  }
+  for (const c of ['/bin/rm -rf x', '\\rm -rf x', '"rm" -rf x', "sh -c 'rm -rf build'"]) {
+    assert.equal(reservedFor(bash(c), ASK)?.kind, 'destructive', c);
+  }
+  for (const c of ['git status', 'nohup npm test', 'sh -c "npm test"', 'rm file.txt']) assert.equal(reservedFor(bash(c), ASK), null, c);
 });
 
 // ---- readDecision ----
