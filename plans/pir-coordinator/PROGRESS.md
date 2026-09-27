@@ -25,7 +25,7 @@ done · ⛔ blocked, needs a human.
 |---|---|---|---|---|
 | T00 | coordinator-probe | — | ⬜ | |
 | T01 | coordinator-rulebook | T00 | ⬜ | |
-| T02 | coordinator-skill | — | 🔍 | `skills/pir-coordinator/SKILL.md`, install.sh SKILLS entry, 10 tests in `coordinator-skill.test.mjs` (decision shapes parsed from the skill's json block). Deviation: `./install.sh` and the `ls` check not run, since this parallel run is live (DESIGN §5.3); run it after the run ends. |
+| T02 | coordinator-skill | — | ✅ | Review: one fix, the skill's tool list now names `Skill` (§3.4). Probed shapes against T01 and `answersResult` multi-select joining; mutated the skill, tests go red. `npm test` green. Unverified: `./install.sh` and the `ls` check, deferred because a parallel run is live (§5.3); run after the run. |
 | T03 | coordinator-session | T01 | ⬜ | |
 | T04 | answer-first-routing | T03 | ⬜ | |
 | T05 | end-of-run-handoff | T04 | ⬜ | |
@@ -34,7 +34,7 @@ done · ⛔ blocked, needs a human.
 | T08 | docs | T02, T04, T05, T06 | ⬜ | |
 | T09 | live-coordinator-check | T07, T08 | ⬜ | |
 
-**Review queue:** T02
+**Review queue:** empty
 
 ## Blocked on the user
 
