@@ -111,7 +111,9 @@ export function decidePermission(grants, request) {
 
 const PRIMARY_FIELD = { Read: 'file_path', Edit: 'file_path', Write: 'file_path', NotebookEdit: 'notebook_path', Grep: 'path', Glob: 'path', WebFetch: 'url' };
 
-function ruleMatches(rule, input) {
+// ruleMatches(rule, input) → true when one parsed rule `{ toolName, ruleContent? }` covers a request's input.
+// The caller checks the tool name. Exported for the coordinator agent's ask-rule match (pir-coordinator T01).
+export function ruleMatches(rule, input) {
   const content = rule.ruleContent;
   // A bare tool rule, or `Bash(*)`, which Claude treats as the same.
   if (content === undefined || (rule.toolName === 'Bash' && content === '*')) {
