@@ -9,7 +9,8 @@ sessions at once. Four ideas carry the whole method:
   same time, and shows you the whole run on one screen. `pir plan` does the planning in the same
   screen, and asks whether to start the build when the plan is reviewed.
 - **You set the autonomy.** Inside the code the agents work on their own; outside it they go only
-  as far as you allowed, action by action.
+  as far as you allowed, action by action. During a build a coordinator agent stands in for you,
+  answering the routine questions and passing on the rest, so an overnight run keeps moving.
 - **Every step starts with a clean slate.** Each task is sized to fit one session, and each session
   is closed when its step is done, so no agent ever works from a long, stale conversation.
 - **Nobody reviews their own work.** Every task is built by one session and reviewed by a
@@ -42,7 +43,7 @@ git merge pir/{slug}       →  main                      the one step you run b
 | `pir plan ["brief"]` | Run the planning and the plan review below inside `pir`, on a branch of their own, answered in `pir`'s screen; when the plan is reviewed, ask whether to start the build. |
 | `/pir-plan` | Brainstorm the requirements, confirm the direction with a throwaway mock when the thing has a feel to it, probe the tech on the actual machine, survey what the codebase already does so nothing gets built twice, settle the architecture, split the work into session-sized tasks with their dependencies, write it all to `plans/{slug}/`. Writes no product code. |
 | `/pir-review-plan {slug}` | Read the finished plan back with fresh eyes, before a line of it is built. Fixes what has one right answer, brings everything else to you as a decision, applies what you decide, marks the plan reviewed. Runs once. |
-| `pir start {slug}` | Run the reviewed plan in parallel, from a terminal inside the repo. Starts a coordinator in the background that builds every task whose dependencies are done, each in its own worker session, has a different worker review it, and merges it into the plan's feature branch — then drops you into a live view of every task. |
+| `pir start {slug}` | Run the reviewed plan in parallel, from a terminal inside the repo. Starts a coordinator in the background that builds every task whose dependencies are done, each in its own worker session, has a different worker review it, and merges it into the plan's feature branch — then drops you into a live view of every task. A coordinator agent answers the workers' routine questions for you; `--no-coordinator` runs without it. |
 
 `/pir-plan` and `/pir-review-plan` are slash commands inside Claude Code. `pir` is a shell command,
 installed on your PATH by `./install.sh`: `pir` alone opens the dashboard, `pir plan` plans, `pir start
@@ -133,7 +134,7 @@ a change to a real device — has its level of autonomy set by you, one action a
   permission rules in the project's `.claude/settings.json`, which every worker inherits: `worker`
   actions are allowed outright, `ask` actions stop on a permission prompt. In a parallel run that
   prompt shows up in `pir` as the worker asking you — you open it, approve or refuse, and it
-  carries on.
+  carries on. The coordinator agent never answers an `ask` prompt for you.
 - **Every action states its way back.** Each row names the exact command, whether and how it can
   be undone, what it is expected to cost, and a login check the agent runs first, so the decision
   reaches you while it is still a decision, not as a report afterwards.
@@ -162,7 +163,10 @@ it:
   hands the task over for review; the reviewer is closed once the task is merged. No session ever
   carries a second task, so none accumulates history from the last one.
 - **The coordinator has no conversation at all.** It is a plain program, not an AI session, so the
-  one piece that runs for the whole plan has nothing to go stale.
+  piece that drives the whole plan has nothing to go stale. The coordinator agent, your stand-in
+  during a build, is the one session that lasts the whole run; it re-reads the plan files before it
+  answers rather than trusting its memory, and every decision it makes is kept in a file by the
+  program, not in its conversation.
 - **Memory lives in files, and the files are kept short.** What one session must hand the next
   goes into the plan's files, not into anyone's conversation: the design with its reasons, the
   task file, `PROGRESS.md` (the handoff) and `FINDINGS.md` (the lessons learned). The last two are
@@ -195,6 +199,39 @@ and always starts a new session to do it. In the single-stream flow `pir-work` p
 the builder and reviewer skills cannot be run directly — they do not appear in the `/` menu. The
 plan itself gets the same treatment before any of it is built: `/pir-review-plan` must run in a
 session that did not write the plan (below).
+
+## A stand-in while you are away — the coordinator agent
+
+A parallel build runs for hours, often overnight, and most of what workers ask is routine for
+someone who has read the plan: the answer is already in the design, or the command is an ordinary
+build or test. So every build started from `pir` has a **coordinator agent**, an AI session that
+stands in for you:
+
+- **It sees every question first.** When a worker asks a question or wants permission to run
+  something, the agent reads the plan and either answers it for you or passes it on. While it is
+  deciding, the task's row reads `asking coordinator`, and nothing is asked of you yet.
+- **When it passes a question on, it tells you why.** In its own conversation it says which worker
+  is asking, why it held back, and what it would pick. Only then does the worker's row turn
+  `asking you` and reach your phone, and you answer the worker directly, as always. The agent never
+  carries a question or an answer back and forth.
+- **Some things are always yours.** An action you put in the `ask` bin and any destructive command
+  (deleting files, forcing a push, resetting history and the like) always come to you. That is
+  enforced by the program, not left to the agent's judgement.
+- **It may decide more than routine answers.** It may approve a worker adding a task, settle a
+  question the design leaves open, or approve going against a design rule. Every such decision is
+  listed in the delivery report under "Decisions made for you".
+- **You can talk to it.** Press `c` in a run's live view to open its conversation, in `pir` or on
+  your phone: ask where things stand, or tell it something for the rest of the run ("don't approve
+  new tasks tonight").
+- **It cannot touch anything.** It can only read the plan and write its decisions; the program
+  checks each one and applies it. It never merges into `main` and never pushes.
+
+You can give it project rules in `.claude/pir-coordinator.md` in your repo, in plain words ("never
+approve anything touching payments"). You can answer any question yourself at any time, even one
+the agent is holding; the first answer wins. `pir start {slug} --no-coordinator` runs a build without
+it, with every question coming to you. If the agent crashes repeatedly, questions come to you as if
+it were off. Details and known limits are in
+[docs/coordinator-agent.md](docs/coordinator-agent.md).
 
 ## Watching a run — `pir start {slug}` and `pir`
 
@@ -239,21 +276,26 @@ What it tells you at a glance:
   Notifications for a permission request or a plain question can lag behind those for a question
   with choices. Start a run with `PARALLEL_REMOTE=0 pir start {slug}` to keep it off. See
   [human-flow.md](docs/human-flow.md#answering-away-from-the-terminal--remote-control).
-- **When it is done.** A finished run runs the tests on the feature branch and, only if they
-  pass, prints the `git merge pir/{slug}` for you to run. It never merges to `main` itself.
+- **When it is done.** Once every task is merged, the run brings the latest `main` into the
+  feature branch so your merge will go through cleanly, runs the tests, and commits a delivery report
+  (`plans/{slug}/REPORT.md`): what was delivered, the decisions made for you, what to check by hand,
+  and the risks. The coordinator agent shows you the report and the `git merge pir/{slug}` to run, and
+  the run waits in `ready to merge` until you merge or tell the agent to close it. If the tests fail,
+  the report says so and no merge is offered. It never merges to `main` itself. See
+  [coordinator-agent.md](docs/coordinator-agent.md#the-end-of-the-run).
 
 `pir` on its own opens a dashboard of every run on the machine, across every repo: each run's
 type (`plan` or `work`), its state (running, finished, stopped, crashed; for a planning run
 planning, reviewing or your go), its progress and how many workers are live. A build with any worker
-waiting on you reads `asking you` in amber instead of `running`, so you can see from the list which
-runs need you; the counts line adds up those and every `your go` as `N waiting for you`. Under the
+waiting on you reads `asking you` in amber instead of `running`, and one waiting for your merge reads
+`ready to merge`, so you can see from the list which runs need you; the counts line adds up those and every `your go` as `N waiting for you`. Under the
 list is the new-plan box, for starting a planning run in any of your repos (above).
 
 | View | Keys |
 |---|---|
 | Dashboard | `↑↓` move · `↵` open a run · `Ctrl+R` twice resume · `Ctrl+S` twice stop · `Ctrl+X` twice remove · `esc` quit |
 | Dashboard, typing in the box | `@repo` then a brief · `↵` start planning · `shift+↵` new line · `esc` clear the box |
-| Live view | `↑↓` pick a task · `→` open its worker · `←` back to the dashboard · `Ctrl+S` twice stop this run · `esc` quit |
+| Live view | `↑↓` pick a task · `→` open its worker · `c` open the coordinator agent · `←` back to the dashboard · `Ctrl+S` twice stop this run · `esc` quit |
 | A planning run | `↑↓` pick a step · `→` open its conversation · `←` back · at the go, `↵` start or `n` not now |
 
 Another program can follow what the dashboard has open: start it as
@@ -273,8 +315,9 @@ recovery, known limitations — is in [`docs/`](docs/README.md), starting with
 ## The plan can grow while it runs
 
 A run does not need a perfect plan up front. When a worker finds that the plan is missing a task
-— a piece of wiring nobody listed, a check a later task will need — it stops and asks you, the
-same way it asks any other question. Once you say yes, it writes the new task down: its row in
+— a piece of wiring nobody listed, a check a later task will need — it stops and asks, the
+same way it asks any other question; in a run with a coordinator agent, the agent may approve it for
+you, and the report lists it. Once the answer is yes, it writes the new task down: its row in
 `PROGRESS.md` and `PLAN.md`, and a full task file under `tasks/`.
 
 The run picks the new task up when that worker's own work is merged, and fits it into the order
@@ -441,9 +484,10 @@ $ pir start screen-time
     → you close the terminal to go to lunch; the run keeps going
 $ pir
     → the dashboard shows screen-time running, 8/10 done; ↵ reopens its live view
-    → last task merged, tests on pir/screen-time pass:
-        ✔ all 10 task(s) green on pir/screen-time · tests pass. Yours to merge:
-            git merge pir/screen-time
+    → last task merged; main is merged into pir/screen-time and the tests pass
+    → REPORT.md is committed; the coordinator agent shows you the report and:
+        ✔ ready to merge · git merge pir/screen-time
+    → you run the merge; the run sees it and finishes
 ```
 
 A task is never reviewed by the worker that built it, and nothing lands on `main` until you merge
@@ -460,7 +504,8 @@ session. The ones that bite most often:
   not a gap for a worker to close quietly — it stops and asks, and waits for your answer.
 - **Scope is strict.** A worker touches only the task it was given. Everything else it notices
   goes in `FINDINGS.md` and is left alone. The one exception: a worker that finds the plan is
-  missing a task may add one, and only after you say yes.
+  missing a task may add one, and only after you (or, in a parallel run, the coordinator agent
+  standing in for you) say yes.
 - **The test command is the only evidence a worker can produce on its own.** Anything needing
   a screen, a login, a second account, a reboot, a real device or a paid API is verified *with
   you* — the worker hands you the exact command with a seatbelt on it, and waits for the answer.
@@ -468,7 +513,8 @@ session. The ones that bite most often:
   `worker`, `ask` or `person` bin you approved at plan review, enforced as a permission rule; an
   action with no bin is `ask`.
 - **`main` is yours.** A run builds on its own feature branch, one branch and worktree per
-  task, and hands you the final `git merge`. Nothing merges to `main` without you.
+  task, and hands you the final `git merge`. Nothing merges to `main` without you, the coordinator
+  agent included.
 
 ## Layout of this repo
 
@@ -490,6 +536,7 @@ skills/
 ├── pir-implement/     build one task, hand it over unreviewed
 ├── pir-review/        check someone else's task, fix what it finds, close it
 ├── pir-work/          the single-stream dispatch — picks exactly one unit of work
+├── pir-coordinator/   the coordinator agent's base definition — your stand-in during a build
 ├── pir-install/       set up the method in a repo — check skills, amend CLAUDE.md
 └── pir-e2e/           reference: reuse a project's e2e tooling, else Playwright / a pty rig; the drill
 pir-engine/ (installed) src/ and its npm packages, put in ~/.claude/pir-engine/ by install.sh

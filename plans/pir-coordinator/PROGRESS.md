@@ -31,10 +31,10 @@ done · ⛔ blocked, needs a human.
 | T05 | end-of-run-handoff | T04 | ✅ | |
 | T06 | coordinator-screen | T04, T05 | ✅ | |
 | T07 | coordinator-drill | T06 | ⬜ | |
-| T08 | docs | T02, T04, T05, T06 | ⬜ | |
+| T08 | docs | T02, T04, T05, T06 | 🔍 | New docs/coordinator-agent.md; seven docs, README, CLAUDE.md, pir-worker amended; 2 tests. Deviations: docs/task-state.md also amended (adoption approval); `./install.sh` not run, DESIGN §5.3 forbids it during a live run; limitations documented from FINDINGS (main-sync row, workers.json, matchedAskRule). |
 | T09 | live-coordinator-check | T07, T08 | ⬜ | |
 
-**Review queue:** *(empty)*
+**Review queue:** T08
 
 ## Blocked on the user
 

@@ -146,3 +146,29 @@ test('rules precedence and the notable flag are stated', () => {
   assert.match(d, /notable: true/);
   assert.match(section(SKILL, 'Read first, and re-read rather than remember'), /DESIGN\.md.*PLAN\.md.*PROGRESS\.md/s);
 });
+
+// T08: the worker contract says an answer may come from the coordinator agent on the person's behalf, and
+// that it counts as the person's, a task-adding yes included; the worker still addresses only the person.
+test('pir-worker: the coordinator agent may answer on the person\'s behalf, and the worker never addresses it', () => {
+  const worker = readFileSync(join(ROOT, 'skills/pir-worker/SKILL.md'), 'utf8');
+  assert.match(worker, /coordinator agent/);
+  assert.match(worker, /counts as the\s+person's/);
+  assert.match(worker, /yes to adding a\s+task/);
+  assert.match(worker, /never write to the agent/);
+  assert.match(worker, /`ask`-bin action and a destructive command are never answered\s+by the agent/);
+  assert.match(worker, /Never add a task without a yes\*\* — the person's, or the\s+coordinator agent's/);
+});
+
+// T08: the canonical docs carry the agent, and CLAUDE.md names it as the person's stand-in.
+test('docs index the coordinator agent page, and CLAUDE.md names the stand-in', () => {
+  const index = readFileSync(join(ROOT, 'docs/README.md'), 'utf8');
+  assert.match(index, /\[coordinator-agent\.md\]\(coordinator-agent\.md\)/);
+  const page = readFileSync(join(ROOT, 'docs/coordinator-agent.md'), 'utf8');
+  for (const h of ['## Answer first', '## What always goes to the person', '## Passing on', '## The end of the run', '## Known limitations']) {
+    assert.ok(page.includes(`\n${h}\n`), `coordinator-agent.md has ${h}`);
+  }
+  assert.match(page, /--no-coordinator/);
+  const claude = readFileSync(join(ROOT, 'CLAUDE.md'), 'utf8');
+  assert.match(claude, /the coordinator agent stands in for me/);
+  assert.match(claude, /never answers an `ask`-bin action or a\s+destructive command/);
+});

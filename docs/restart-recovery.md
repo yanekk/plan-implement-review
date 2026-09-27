@@ -36,6 +36,19 @@ is refused before anything is reconciled (see [run-lifecycle.md](run-lifecycle.m
   (`✅`) on its own task branch but not yet merged is picked up at that stage, not re-dispatched from
   scratch. A task only partly built is resumed on its branch, commits and uncommitted edits intact.
   This is the reconciliation pass below.
+- **The coordinator agent's session and its ledger.** The agent's session id is kept in
+  `coordinator/session.json`, and a re-run resumes that session by id rather than starting a new one;
+  it is told it was restarted and to re-read `PROGRESS.md`. The ledger (`coordinator/ledger.jsonl`) is
+  kept, so the report still lists every decision made before the restart. Items that were waiting at
+  the crash are lost with their workers, which are respawned, and whatever waits next is briefed
+  afresh. An agent given up (four exits within an hour) stays given up across a re-run inside that
+  hour. A re-run keeps the run's `--no-coordinator` choice (see
+  [coordinator-agent.md](coordinator-agent.md#when-the-agent-fails)).
+- **A run waiting in `ready to merge`.** Reconciliation finds every task `✅` and the end gate runs
+  again; the command then finds `REPORT.md` already committed on the feature branch, re-checks the
+  sync with `main`, and returns to `ready to merge` without rewriting the report (only its `## Branch`
+  footer, if `main` moved). If the person merged the feature branch while pir was down, the run ends as
+  merged instead of syncing `main` back in.
 
 ## Reconciliation — git is the ground truth
 
@@ -151,12 +164,15 @@ The control folder (`plans/{slug}/.parallel/control/`) is reused across a re-run
 writes anything, `startupControlHygiene` separates the transient feed from the durable records:
 
 - **Reaped — `workers.json`.** The dead run's surviving workers are ended first (above).
-- **Cleared — `reports/` and `inbox/`.** Both are live-run buffers: a leftover report from the dead
-  run would be read as a fresh worker's signal, and a leftover input from the person, addressed to a
-  previous run's worker, must never reach a new one. Both are emptied at startup, on every startup,
+- **Cleared — `reports/`, `inbox/` and `coordinator/decisions/`.** All are live-run buffers: a leftover
+  report from the dead run would be read as a fresh worker's signal, a leftover input from the person,
+  addressed to a previous run's worker, must never reach a new one, and a leftover agent decision names
+  an item that no longer waits. All are emptied at startup, on every startup,
   not only a detected restart, because a genuine first start has them empty anyway. The old
   down-channel feeds (`outbox`, `answers`, `surfaced`) are gone (see
   [control-folder.md](control-folder.md)).
+- **Preserved — `coordinator/ledger.jsonl` and `coordinator/session.json`.** The report is rendered
+  from the ledger, and the agent's session is resumed from `session.json`.
 - **Preserved — `conversations/`.** Every earlier worker's conversation stays; a new worker for the
   same task gets the next number in its file name.
 - **Preserved — `log`.** The append-only event log is the audit trail and the durable signal the
@@ -194,6 +210,12 @@ When a re-run is not what is wanted, the pieces are all inspectable and removabl
   list` lists worktrees; remove one and its branch with `git worktree remove --force` and `git branch
   -D`. A worker also shows in `claude agents` under its name while it runs, but cannot be attached to
   or stopped from there.
+- **A coordinator agent that misbehaves:** stop the run from the dashboard and start it again with
+  `pir start {slug} --no-coordinator`; the run carries on with every question going to the person.
+  Every decision the agent made is in `plans/{slug}/.parallel/control/coordinator/ledger.jsonl`, and it
+  can never have touched `main`. A coordinator agent session left running by a SIGKILLed coordinator is
+  not in `workers.json`; its `claude` process carries `--name '{repo} / {slug} / coordinator agent'`,
+  so `ps -ax -o pid,command | grep 'coordinator agent'` finds it for a `kill`.
 - **A confused or runaway run:** create the `HALT` flag (`touch
   plans/{slug}/.parallel/control/HALT`). All dispatch and delivery stop and every worker is closed;
   `main` is untouched. Remove the flag and re-run to continue.

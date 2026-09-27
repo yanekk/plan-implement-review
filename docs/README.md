@@ -5,19 +5,22 @@ workflow behaves: its components, the lifecycle of a run, where task state lives
 and worktree model, the control folder, the human decision flow, the kill switch, the worker
 ceiling, restart and recovery, the detached `pir` front-end that starts a run outliving its
 terminal and watches every run on the machine, and `pir plan`, which runs the planning and the plan
-review inside that front-end. It is the behavioural spec — nouns, states, data
+review inside that front-end, and the coordinator agent that stands in for the person during a build.
+It is the behavioural spec — nouns, states, data
 flows, and guarantees.
 
 It is not the step-by-step. The procedure a worker session follows lives in the skills
-(`skills/pir-worker`, `pir-implement`, `pir-review`), and that is where it stays. There is no
-coordinator skill: the coordinator is a plain command, not a session. Where a behaviour here
+(`skills/pir-worker`, `pir-implement`, `pir-review`), and that is where it stays. The coordinator
+command has no skill: it is a plain program, not a session. The coordinator agent's base definition is
+the `pir-coordinator` skill. Where a behaviour here
 corresponds to a worker procedure, this spec states the behaviour and names the skill for the
 "how you do it."
 
 These docs describe the **actual current behaviour**, verified against the code in
 `src/core/` and `src/shell/`. Where current behaviour has a known gap, it is called out under a
 **Known limitations** heading rather than papered over. `plans/parallel-pir/DESIGN.md`,
-`plans/non-agentic-coordinator/DESIGN.md` and `plans/live-workers/DESIGN.md` are the build-time
+`plans/non-agentic-coordinator/DESIGN.md`, `plans/live-workers/DESIGN.md` and
+`plans/pir-coordinator/DESIGN.md` are the build-time
 rationale that produced this system and are retained as history; where a DESIGN and these docs
 disagree on what the code does today, these docs win.
 
@@ -30,7 +33,9 @@ plan**: a single **coordinator command** — a plain program, not a session the 
 talks to — spawns many **worker** sessions at once, each in its own worktree, so independent tasks
 build and review concurrently. The plan runs on one **feature branch** with a **task branch** per
 task. It never merges to `main`: the command stops at a green feature branch and hands the person a
-`git merge` to run by hand. A project opts into parallel mode per run; nothing about the classic
+`git merge` to run by hand. With the coordinator agent on (the default), it first merges `main` into
+the feature branch, commits a delivery report, and waits in `ready to merge` until the person merges
+or closes the run. A project opts into parallel mode per run; nothing about the classic
 flow changes.
 
 A person launches parallel mode with `pir start {slug}`, run from inside the target repo — it starts
@@ -39,7 +44,8 @@ the coordinator detached and drops into its live view; a bare `pir` opens the cr
 planner and then a fresh plan reviewer as sessions answered in the same screen, on a side branch
 `pir/{slug}` that the build later reuses as its feature branch, and asks for the go to start the build
 when the plan is reviewed (see [planning-runs.md](planning-runs.md)). The person answers a worker inside that same screen, by
-opening the worker's conversation (see [human-flow.md](human-flow.md)). The one-time setup is
+opening the worker's conversation (see [human-flow.md](human-flow.md)), unless the run's coordinator
+agent answers it first (see [coordinator-agent.md](coordinator-agent.md)). The one-time setup is
 `./install.sh`, which puts the `pir` command on the PATH and installs the coordinator engine, with its
 two npm packages, where it can run against any set-up repo.
 
@@ -54,7 +60,8 @@ and it had no conversation view. `install.sh` removes an installed copy it finds
   the feature branch in its own worktree, decides which task each worker builds, spawns and closes
   workers, holds a live line to each one, prints a live status display, and hands the person the
   finished feature branch to merge. It has no agent name and never appears in `claude agents`. It
-  never merges to `main` and never writes product code. Run by hand, it is dry by default and only
+  starts the run's coordinator agent, briefs it, and checks and applies its decisions. It never merges
+  to `main` and never writes product code. Run by hand, it is dry by default and only
   spawns real workers under `PARALLEL_LIVE=1`; `pir` always sets it (see
   [run-lifecycle.md](run-lifecycle.md)).
 - **Workers** — `claude` processes the command starts as its own **child processes**, one per task
@@ -81,6 +88,14 @@ and it had no conversation view. `install.sh` removes an installed copy it finds
   what the core decides. The pure core also gained `stream.mjs` (read conversation-log entries, derive
   a worker's activity), `conversation.mjs` (log entries to screen lines, the permission gate and
   question picker) and `person-input.mjs` (validate the person's input, the "do not ask again" grants).
+- **The coordinator agent** — one Claude session per build run, held by the command beside the
+  workers (`src/shell/coordinator-agent.mjs`), on unless `pir start {slug} --no-coordinator`. It is the
+  person's stand-in: it sees every worker question and permission request first and answers it or
+  passes it on, and at the end writes the delivery report's sections. It only decides, by writing
+  decision files; the command checks and applies them, and keeps `ask`-bin actions and destructive
+  commands for the person in code (`src/core/coordinator-policy.mjs`). Its base definition is the
+  `pir-coordinator` skill; a project may add `.claude/pir-coordinator.md`. It never merges into
+  `main` and never pushes (see [coordinator-agent.md](coordinator-agent.md)).
 - **The planning program** (`src/shell/plan-run.mjs`) — the detached program behind `pir plan`. It
   holds one planning session at a time through the same worker line, checks each report against git,
   renames the run's branch, worktree and control folder once the plan has a name, and records the
@@ -100,5 +115,8 @@ and it had no conversation view. `install.sh` removes an installed copy it finds
 - [restart-recovery.md](restart-recovery.md) — what a restart picks up, and the known limitations.
 - [detached-runs.md](detached-runs.md) — the `pir` front-end: start a run detached, the cross-repo
   dashboard to watch, stop, clear and resume runs, and a worker's conversation view.
+- [coordinator-agent.md](coordinator-agent.md) — the coordinator agent: answer first, what is reserved
+  for the person, passing on, its conversation, the ledger, the end-of-run main sync, `REPORT.md` and
+  `ready to merge`, `--no-coordinator`.
 - [planning-runs.md](planning-runs.md) — `pir plan`: the planner and the plan reviewer run inside `pir`,
   the rename, the go that starts the build, resume.
