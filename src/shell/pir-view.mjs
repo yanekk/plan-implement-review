@@ -119,3 +119,20 @@ export class FrameView {
   // Nothing is cached between renders: every render reads the current frame.
   invalidate() {}
 }
+
+// editorTheme(colour) → the pi-tui EditorTheme pir's typing boxes share (dashboard-plan-box DESIGN §6): a dim
+// border, the pop-up's selected row amber like a prompt, its descriptions dim. The brief box and the runs
+// list's new-plan box use it so the two boxes look the same.
+export function editorTheme(colour) {
+  const style = (s, text) => (colour && SGR[s] ? `${SGR[s]}${text}${RESET}` : text);
+  return {
+    borderColor: (s) => style('dim', s),
+    selectList: {
+      selectedPrefix: (s) => style('prompt', s),
+      selectedText: (s) => style('prompt', s),
+      description: (s) => style('dim', s),
+      scrollInfo: (s) => style('dim', s),
+      noMatch: (s) => style('dim', s),
+    },
+  };
+}

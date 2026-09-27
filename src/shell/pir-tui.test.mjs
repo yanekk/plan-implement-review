@@ -1371,3 +1371,69 @@ test("runTui: opening a finished run's planner from its steps view stays in the 
   await t.key('\x1b');
   await t.done;
 });
+
+// --- dashboard-plan-box T04: the list block windowed above the new-plan box (§2.7) -----------------
+
+import { rowWindow, listFooter, EMPTY_LIST_BOX } from './pir-tui.mjs';
+
+const manyViews = (n) => Array.from({ length: n }, (_, i) => ({ slug: `run-${String(i).padStart(2, '0')}`, state: 'finished', repo: 'r', progress: { done: 1, total: 1 }, workers: 0 }));
+
+test('rowWindow keeps the selection visible and counts the rows cut on each side', () => {
+  assert.deepEqual(rowWindow(4, 2, 5), { start: 0, end: 4, up: 0, down: 0 }, 'everything fits: no window');
+  assert.deepEqual(rowWindow(30, 0, 5), { start: 0, end: 4, up: 0, down: 26 });
+  assert.deepEqual(rowWindow(30, 15, 5), { start: 14, end: 17, up: 14, down: 13 });
+  assert.deepEqual(rowWindow(30, 29, 5), { start: 26, end: 30, up: 26, down: 0 });
+  assert.deepEqual(rowWindow(30, 15, 1), { start: 15, end: 16, up: 0, down: 0 }, 'one slot: the selected row, no marker');
+  assert.deepEqual(rowWindow(30, 0, 2), { start: 0, end: 1, up: 0, down: 29 }, 'a marker shows beside one row when both fit');
+  assert.deepEqual(rowWindow(30, 15, 2), { start: 15, end: 17, up: 0, down: 0 }, 'two markers do not fit beside a row: two rows, no marker');
+});
+
+test('buildListFrame with rows is the list block alone, cut to the budget: spacers first, then the title', () => {
+  const dash = buildDashboard(VIEWS);
+  const full = buildListFrame(dash, initialUi(), { rows: 20 });
+  assert.equal(full.length, 10, 'title, spacer, header, 4 rows, spacer, counts, spacer');
+  assert.doesNotMatch(frameText(full), /esc quit/, 'no footer: the list view draws it under the box');
+  assert.match(frameText(full[0] ? [full[0]] : []), /runs on this machine/);
+
+  const minus2 = buildListFrame(dash, initialUi(), { rows: 8 });
+  assert.equal(minus2.length, 8);
+  assert.match(frameText([minus2[0]]), /runs on this machine/, 'the title stays while a spacer can go');
+  assert.equal(minus2.filter((l) => l.length === 0).length, 1, 'two spacers dropped, the one under the title kept');
+
+  const noTitle = buildListFrame(dash, initialUi(), { rows: 6 });
+  assert.equal(noTitle.length, 6);
+  assert.match(frameText([noTitle[0]]), /SLUG/, 'spacers and title gone; the header leads');
+  assert.match(frameText([noTitle.at(-1)]), /4 runs/, 'the counts line stays');
+});
+
+test('buildListFrame with rows windows 30 runs, with ↑/↓ n more, the selected row always visible', () => {
+  const dash = buildDashboard(manyViews(30));
+  for (const [sel, up, down] of [[0, 0, 26], [15, 14, 13], [29, 26, 0]]) {
+    const f = buildListFrame(dash, { ...initialUi(), sel }, { rows: 7 });
+    const text = frameText(f);
+    assert.equal(f.length, 7, `sel ${sel}: exactly the budget`);
+    assert.match(text, new RegExp(`▎ run-${String(sel).padStart(2, '0')}`), `sel ${sel}: the selected row shows`);
+    if (up) assert.match(text, new RegExp(`↑ ${up} more`));
+    else assert.doesNotMatch(text, /↑ \d+ more/);
+    if (down) assert.match(text, new RegExp(`↓ ${down} more`));
+    else assert.doesNotMatch(text, /↓ \d+ more/);
+  }
+  const one = buildListFrame(dash, { ...initialUi(), sel: 12 }, { rows: 3 });
+  assert.equal(one.length, 3, 'header, one row, counts');
+  assert.match(frameText(one), /▎ run-12/);
+  assert.doesNotMatch(frameText(one), /more/, 'no marker with room for one row only');
+});
+
+test('the empty list above the box points at the box; without rows it still points at pir start', () => {
+  const dash = buildDashboard([]);
+  assert.match(frameText(buildListFrame(dash, initialUi(), { rows: 20 })), new RegExp(EMPTY_LIST_BOX.trim()));
+  assert.equal(EMPTY_LIST_BOX.trim(), 'No runs yet — type after @ below to plan something new');
+  assert.match(frameText(buildListFrame(dash, initialUi())), /start one with `pir start \{slug\}`/);
+});
+
+test('listFooter is the footer buildListFrame ends with, armed line included', () => {
+  const ui = { ...initialUi(), armed: { action: 'stop', slug: 'alpha' } };
+  const dash = buildDashboard(VIEWS);
+  assert.deepEqual(listFooter(ui, dash.rows), buildListFrame(dash, ui).at(-1));
+  assert.deepEqual(listFooter(initialUi()), buildListFrame(dash, initialUi()).at(-1));
+});
