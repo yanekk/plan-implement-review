@@ -26,7 +26,7 @@ SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MARKER="Appended by plan-implement-review"
 DEST="$HOME/.claude/skills"
 ENGINE_DEST="$HOME/.claude/pir-engine"
-SKILLS=(pir-plan pir-review-plan pir-work pir-implement pir-review pir-install pir-worker pir-e2e)
+SKILLS=(pir-plan pir-review-plan pir-work pir-implement pir-review pir-install pir-worker pir-e2e pir-coordinator)
 # The user-facing launchers, installed onto the PATH by install_launcher. pir (T13) starts a run
 # detached and opens the cross-repo dashboard; it is the only one since pir-coordinate was sunset
 # (live-workers §2.13).
