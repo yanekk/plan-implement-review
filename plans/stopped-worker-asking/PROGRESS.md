@@ -12,10 +12,10 @@ cell also fixes the over-budget cell they walk past.
 
 **Plan reviewed:** 2026-09-27 — 3 fixed, 2 decided with the user
 
-**Status:** Planned 2026-09-27 on main. Nothing built. Needs `pir/real-asking-state` merged to `main`
+**Status:** Planned 2026-09-27 on main. T04 done. Needs `pir/real-asking-state` merged to `main`
 first (DESIGN, Base); a trial merge conflicts in `coordinate.mjs` and `harness/run.mjs` (FINDINGS).
 **Last updated:** 2026-09-27
-**Next `pir-work` will:** implement T01 (T01, T02 and T04 have no dependency).
+**Next `pir-work` will:** implement T01 (T01 and T02 have no dependency).
 
 ## Tasks
 
@@ -27,11 +27,11 @@ done · ⛔ blocked, needs a human.
 | T01 | background-fold | — | ⬜ | |
 | T02 | stopped-predicate | — | ⬜ | |
 | T03 | planning-steps-asking | T02 | ⬜ | |
-| T04 | worker-reports-every-ask | — | 🔍 | One sentence added to pir-worker step 1: drop a fresh question/decision report every time a turn ends waiting on the person, follow-ups included. No automated test (skill text); npm test green. No deviations. |
+| T04 | worker-reports-every-ask | — | ✅ | Review clean, no fix commit. Sentence sits in pir-worker step 1 as §2.4 says, only change to the skill; npm test green. Probed: no other copy of the section text in the repo, no clash with the ask-bin rule against pre-dropping a report for a permission prompt. |
 | T05 | docs | T03, T04, T06 | ⬜ | |
 | T06 | stopped-asking-live | T01, T02 | ⬜ | |
 
-**Review queue:** T04
+**Review queue:** empty
 
 ## Blocked on the user
 
