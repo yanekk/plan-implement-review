@@ -14,8 +14,8 @@ cell also fixes the over-budget cell they walk past.
 
 **Status:** Planned 2026-09-26 on main after `live-workers` and the Remote Control un-park (bda34a5,
 5b899df). Nothing built.
-**Last updated:** 2026-09-26
-**Next `pir-work` will:** implement T00 (T00, T01 and T02 have no dependency).
+**Last updated:** 2026-09-27
+**Next `pir-work` will:** review T00.
 
 ## Tasks
 
@@ -24,14 +24,14 @@ done · ⛔ blocked, needs a human.
 
 | # | Task | Depends on | State | Notes |
 |---|---|---|---|---|
-| T00 | remote-answer-probe | — | ⬜ | |
+| T00 | remote-answer-probe | — | 🔍 | Spike done, cases 1–5 run and hand-verified on the user's phone 2026-09-27. Verdict: stream-only (`command_lifecycle`) separates; hook `source` absent; replay works but unneeded. Fixture `remote-answer-sample.ndjson`, 6 cases. Deviations: probe ran haiku; case 4 `permissionMode: default` to force a prompt; case 5 auto-allowed its Bash request; extra case 2 run without replay. |
 | T01 | worker-contract | — | ⬜ | |
 | T02 | waiting-predicate | — | ⬜ | |
 | T03 | answer-only-unpark | T00, T02 | ⬜ | |
 | T04 | docs | T01, T03 | ⬜ | |
 | T05 | live-asking-check | T04 | ⬜ | |
 
-**Review queue:** *(empty)*
+**Review queue:** T00
 
 ## Blocked on the user
 
