@@ -116,6 +116,15 @@ test('open moves to watch with openSlug set; back returns to list', () => {
   assert.equal(back.intent, null);
 });
 
+test('open on an empty list is inert: no live view on a run that is not there', () => {
+  for (const event of [{ type: 'open' }, { type: 'key', key: 'enter' }]) {
+    const r = dashboardReducer(initialUi(), event, []);
+    assert.equal(r.ui.view, 'list', 'stays on the list rather than drawing a placeholder crashed run');
+    assert.equal(r.ui.openSlug ?? null, null);
+    assert.equal(r.intent, null);
+  }
+});
+
 test('open from watch is inert (nothing new to open)', () => {
   const watching = { view: 'watch', sel: 0, openSlug: 'run-running', armed: null };
   const r = dashboardReducer(watching, { type: 'open' }, RUNS);

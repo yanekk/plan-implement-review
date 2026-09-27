@@ -267,6 +267,9 @@ export function dashboardReducer(ui, event, views = []) {
         return { ui: { ...ui, view: 'worker', openWorker, armed: null }, intent: null };
       }
       if (ui.view !== 'list') return { ui: { ...ui, armed: null }, intent: null };
+      // An empty list has no run to open: without this, → or Enter opened a live view on nothing, which
+      // the screen then drew as a placeholder crashed run.
+      if (!views[ui.sel]) return { ui: { ...ui, armed: null }, intent: null };
       return {
         // A run waiting for the go opens on its build step, the row the question is about (prototype scene 5).
         ui: { ...ui, view: 'watch', openSlug: views[ui.sel]?.slug ?? null, openKey: runKey(views[ui.sel]), openRun: runIdentity(views[ui.sel]), taskSel: runDisplayState(views[ui.sel]) === 'your-go' ? 2 : 0, armed: null },
