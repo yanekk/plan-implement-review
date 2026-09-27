@@ -28,7 +28,7 @@ done · ⛔ blocked, needs a human.
 | T01 | worker-contract | — | ✅ | |
 | T02 | waiting-predicate | — | ✅ | |
 | T03 | answer-only-unpark | T00, T02 | ✅ | |
-| T04 | docs | T01, T03 | ⬜ | |
+| T04 | docs | T01, T03 | ✅ | |
 | T05 | live-asking-check | T04 | ⬜ | |
 
 **Review queue:** *(empty)*
