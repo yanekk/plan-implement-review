@@ -357,3 +357,69 @@ test('workerActivity: a `resumed` note drops what was pending and ends the open 
   // A request asked after the resume is pending as usual.
   assert.equal(workerActivity([...spoken, { ...ask, t: 6, requestId: 'q2' }]).state, 'questions');
 });
+
+// ---- Why each turn opened (real-asking-state DESIGN §2.2, T03) ----
+
+// T00's recording against Claude Code 2.1.283: one case per probe run, keyed by `case`.
+const REMOTE_PATH = new URL('./fixtures/remote-answer-sample.ndjson', import.meta.url);
+const remote = readFileSync(REMOTE_PATH, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
+const remoteCase = (name) => remote.filter((e) => e.case === name);
+const personSent = (text = 'yes') => at({ dir: 'out', from: 'person', kind: 'message', text });
+const notification = () => inMsg({ type: 'system', subtype: 'task_notification', task_id: 'b1', status: 'completed' });
+const lifecycle = (state, uuid = 'c1') => inMsg({ type: 'command_lifecycle', command_uuid: uuid, state });
+
+test('recorded: a turn opened by a person send in pir is `person`, pir\'s opening is `pir`', () => {
+  const a = workerActivity(remoteCase('1-pir-typed'));
+  assert.deepEqual(a.turnCauses, ['pir', 'person']);
+  assert.equal(a.personSends, 1);
+  assert.equal(a.remoteSends, 0);
+});
+
+test('recorded: a turn opened by Remote Control input is `remote`, with or without the replay option', () => {
+  for (const name of ['2-remote-typed', '2-remote-typed-replay']) {
+    const a = workerActivity(remoteCase(name));
+    assert.deepEqual(a.turnCauses, ['pir', 'remote'], name);
+    assert.equal(a.remoteSends, 1, `${name}: queued and started of one command count once`);
+    assert.equal(a.personSends, 0, name);
+  }
+});
+
+test('recorded: a background job\'s wake-up turn is `system`, in both recordings', () => {
+  assert.deepEqual(workerActivity(remoteCase('5-wakeup-replay')).turnCauses, ['pir', 'system']);
+  assert.equal(workerActivity(sample).turnCauses.at(-1), 'system', 'the T01 recording\'s last turn is a wake-up');
+});
+
+test('recorded: a picker or permission answered on the phone opens no new turn', () => {
+  for (const name of ['3-remote-picker-replay', '4-remote-permission-replay']) {
+    const a = workerActivity(remoteCase(name));
+    assert.deepEqual(a.turnCauses, ['pir'], name);
+    assert.deepEqual(a.pending, [], `${name}: answered-remotely clears the request`);
+  }
+});
+
+test('a turn the worker opens with nothing announcing it is `unknown`', () => {
+  assert.deepEqual(workerActivity([sent(), init(), result(), init()]).turnCauses, ['pir', 'unknown']);
+});
+
+test('a person send into an open turn opens no turn but is counted', () => {
+  const a = workerActivity([sent(), init(), personSent(), result()]);
+  assert.deepEqual(a.turnCauses, ['pir']);
+  assert.equal(a.personSends, 1);
+});
+
+test('Remote Control input while a turn runs is counted then, and opens the next turn as `remote`', () => {
+  const log = [sent(), init(), lifecycle('queued', 'c9')];
+  assert.equal(workerActivity(log).remoteSends, 1, 'counted while the turn is still open');
+  log.push(result(), lifecycle('started', 'c9'), init(), result(), lifecycle('completed', 'c9'));
+  const a = workerActivity(log);
+  assert.deepEqual(a.turnCauses, ['pir', 'remote']);
+  assert.equal(a.remoteSends, 1);
+});
+
+test('a notification inside an open turn does not mark the next turn a wake-up', () => {
+  assert.deepEqual(workerActivity([sent(), init(), notification(), result(), init()]).turnCauses, ['pir', 'unknown']);
+});
+
+test('a person send after a notification opens the turn as `person`', () => {
+  assert.deepEqual(workerActivity([sent(), init(), result(), notification(), personSent(), init()]).turnCauses, ['pir', 'person']);
+});
