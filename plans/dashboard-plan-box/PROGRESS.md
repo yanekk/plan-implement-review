@@ -28,7 +28,7 @@ done · ⛔ blocked, needs a human.
 | T03 | repo-scan | T02 | ✅ | |
 | T04 | list-view-box | T02 | ✅ | |
 | T05 | box-starts-plan | T03, T04 | ✅ | |
-| T06 | plan-box-drill | T01, T05 | ⬜ | |
+| T06 | plan-box-drill | T01, T05 | ✅ | |
 
 **Review queue:** *(empty)*
 
