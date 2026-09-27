@@ -15,7 +15,7 @@ cell also fixes the over-budget cell they walk past.
 **Status:** Planned 2026-09-27 on main. Nothing built. Needs `pir/real-asking-state` merged to `main`
 first (DESIGN, Base); a trial merge conflicts in `coordinate.mjs` and `harness/run.mjs` (FINDINGS).
 **Last updated:** 2026-09-27
-**Next `pir-work` will:** implement T01 (T01, T02 and T04 have no dependency).
+**Next `pir-work` will:** implement T05 (T03, T04 and T06 done).
 
 ## Tasks
 
@@ -29,9 +29,9 @@ done · ⛔ blocked, needs a human.
 | T03 | planning-steps-asking | T02 | ⬜ | |
 | T04 | worker-reports-every-ask | — | ✅ | |
 | T05 | docs | T03, T04, T06 | ⬜ | |
-| T06 | stopped-asking-live | T01, T02 | 🔍 | Fixture `stopped-asking`, `answerPending.taskReplies`; 7 new tests. Live run passed, all Done-when met (FINDINGS). Deviations: replies held 15 s after the turn ends so a pass paints `asking`; `scenario.mjs` normalises `taskReplies`; `loop.test.mjs` injected-answer case now expects `asking` after the turn ends, red since T01+T02 merged. |
+| T06 | stopped-asking-live | T01, T02 | ✅ | Review clean, no fix commit. Reviewer re-ran the live fixture: T01 `asking` on the first 5 s pass after both turns, no report or surface; T02 `building` through timer and Monitor (`local_bash`). Confirmed the `loop.test` change was red on the feature branch; probed the answerer hold's epoch clock. |
 
-**Review queue:** T06
+**Review queue:** empty
 
 ## Blocked on the user
 

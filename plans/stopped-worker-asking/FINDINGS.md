@@ -17,6 +17,7 @@ Legend: 📌 fact learned · 🐞 bug found · ✅ verified by hand with the use
 
 | Date | | Finding |
 |---|---|---|
+| 2026-09-27 | 📌 | T06 review re-run, worker-driven: same result. T01 `asking` 6.5 s and 4 s after each `result` (first 5 s pass), `building` within 3 s of each reply, Remote Control on/off; no reports. T02 never `asking`; Monitor again `local_bash`. |
 | 2026-09-27 | 📌 | T06 live run: a Monitor job appears in `background_tasks_changed` as `task_type: local_bash`, so T02 read `building` through its background timer and its Monitor wait, never `asking`. |
 | 2026-09-27 | 📌 | T06 run, worker-driven: T01 asked twice in plain text, no report; row `asking` 2 s and 4 s after each turn's `result` (13:45:08, 13:45:31), `building` within 2 s of each reply; Remote Control on/off both times. No T01 `surface`. |
 | 2026-09-27 | 📌 | Plan review: a trial merge of `pir/real-asking-state` into main conflicts in `src/shell/coordinate.mjs` and `src/shell/harness/run.mjs`, the files T02 and T06 edit. |
