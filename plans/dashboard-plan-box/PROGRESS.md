@@ -12,9 +12,9 @@ past.
 
 **Plan reviewed:** 2026-09-27 — 4 fixed, 5 decided with the user
 
-**Status:** Planned 2026-09-26. Nothing built.
+**Status:** All six tasks reviewed ✅; awaiting merge of `pir/dashboard-plan-box` and `./install.sh`.
 **Last updated:** 2026-09-27
-**Next `pir-work` will:** review T06 plan-box-drill.
+**Next `pir-work` will:** nothing; the plan is done once merged and installed.
 
 ## Tasks
 
@@ -28,9 +28,9 @@ done · ⛔ blocked, needs a human.
 | T03 | repo-scan | T02 | ✅ | |
 | T04 | list-view-box | T02 | ✅ | |
 | T05 | box-starts-plan | T03, T04 | ✅ | |
-| T06 | plan-box-drill | T01, T05 | 🔍 | Drill driven at 80×12/80×24/120×40, kept as 8 `plan-rig.test.mjs` cases; 3 unit tests added, 2 updated. Fixed: box keys disarm a chord; ambiguous note paths with `~`. User decided: `⚠` line over the typed hint; refusal codes in words (DESIGN §2.5, §2.6, docs amended). No install: parallel build. |
+| T06 | plan-box-drill | T01, T05 | ✅ | Built: drill kept as 8 `plan-rig.test.mjs` cases; fixed box keys not disarming a chord and ambiguous-note paths now `~`; user decided `⚠` over typed hint, refusal codes in words. Review clean, no fix commit: both fix tests fail on the old code, plan-rig suite green twice, `~` matches the pop-up. `./install.sh` follows the merge. |
 
-**Review queue:** T06
+**Review queue:** empty
 
 ## Blocked on the user
 
