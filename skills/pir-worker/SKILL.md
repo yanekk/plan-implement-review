@@ -346,10 +346,10 @@ cannot establish it."
 
 **Actions on the outside world follow their `DESIGN.md §5.3` bin**, exactly as `pir-implement § Acting
 on the outside world` says: `worker` you run and report; `ask` you explain and then run in the same
-turn, and the `ask` permission rule stops your session for the person's approval. Drop a
-`[pir:v1 kind=question task=Txx]` report first, so the live display shows who is waiting: the session
-parks on the permission request, `pir` shows it as asking the person, and the person approves or
-refuses it there. `person` is only a login, a device or a judgement no tool can make. You never hand the person a
+turn; if the `ask` permission rule stops your session, `pir` shows the pending request to the person
+as asking, and they approve or refuse it there. **Do not drop a report for it**: `pir` already shows a
+pending request as asking by itself, and in auto mode the prompt may never come, so a report dropped
+in advance leaves your row reading "asking you" while you work. `person` is only a login, a device or a judgement no tool can make. You never hand the person a
 command to paste that a `worker` or `ask` row covers.
 
 You hand over **only** the irreducible remainder no tool you could write would ever settle: a login

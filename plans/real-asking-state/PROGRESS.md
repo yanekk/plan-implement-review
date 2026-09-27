@@ -15,7 +15,7 @@ cell also fixes the over-budget cell they walk past.
 **Status:** Planned 2026-09-26 on main after `live-workers` and the Remote Control un-park (bda34a5,
 5b899df). Nothing built.
 **Last updated:** 2026-09-27
-**Next `pir-work` will:** implement T00 or T01 (no dependency); T03 needs T00.
+**Next `pir-work` will:** implement T00; T03 needs it.
 
 ## Tasks
 
@@ -25,7 +25,7 @@ done · ⛔ blocked, needs a human.
 | # | Task | Depends on | State | Notes |
 |---|---|---|---|---|
 | T00 | remote-answer-probe | — | ⬜ | |
-| T01 | worker-contract | — | ⬜ | |
+| T01 | worker-contract | — | ✅ | |
 | T02 | waiting-predicate | — | ✅ | `core/asking.mjs` `waitingOn` drives row, clock, Remote Control; `requestingTasks` removed, `advanceTiming` takes `platform.workers()` (accepted). Review: `taskActivity` fell back to another live worker when the tracked one was not live, un-asking a park the loop held; reproduced by a red test, fixed. Probed askEnd against `resumeAnswered`, conflict-sent, unseen worker. |
 | T03 | answer-only-unpark | T00, T02 | ⬜ | |
 | T04 | docs | T01, T03 | ⬜ | |
