@@ -635,3 +635,29 @@ test('the go replaces the record under the same key: the open view becomes the b
   assert.deepEqual(next.openRun, { repo: 'blog', pid: 999, startTime: 'later' });
   assert.equal(goOpen(build, next), false);
 });
+
+// A build's snapshot with one task in the given shape; the rest of the run is irrelevant to the STATE.
+const buildSnap = (task) => ({ runState: { branch: 'pir/x', ceiling: 2, tasks: [{ id: 'T01', slug: 'one', deps: [], done: false, phase: 'building', ...task }] } });
+
+test('runDisplayState: a running build with a worker waiting on the person reads asking-you, by the live view\'s rule', () => {
+  const at = (state, task) => runDisplayState(view({ state, snap: buildSnap(task) }));
+  assert.equal(at('running', { phase: 'asking' }), 'asking-you', 'a question or decision report');
+  assert.equal(at('running', { phase: 'building', asking: 'permission' }), 'asking-you', 'a pending permission request');
+  assert.equal(at('running', { phase: 'reviewing', asking: 'questions' }), 'asking-you', 'a pending question set');
+  assert.equal(at('running', { phase: 'building' }), 'running', 'nothing asked');
+  assert.equal(at('running', { phase: 'asking', conflictSent: true }), 'running', 'fixing a conflict asks nothing of the person');
+  assert.equal(at('running', { phase: 'asking', done: true }), 'running', 'a merged task asks nothing');
+  assert.equal(at('stopped', { phase: 'asking' }), 'stopped', 'only a running run is asking');
+  assert.equal(at('crashed', { phase: 'asking' }), 'crashed');
+  assert.equal(runDisplayState(view({ state: 'running', snap: null })), 'running', 'no snapshot yet');
+});
+
+test('buildDashboard: an asking build counts in waiting beside your go, not in running', () => {
+  const { rows, counts } = buildDashboard([
+    view({ slug: 'a', state: 'running', snap: buildSnap({ phase: 'asking' }) }),
+    view({ slug: 'b', state: 'running', snap: buildSnap({ phase: 'building' }) }),
+    planView({ slug: 'c', state: 'finished', step: 'done', outcome: 'reviewed' }),
+  ]);
+  assert.deepEqual(rows.map((r) => r.display), ['asking-you', 'running', 'your-go']);
+  assert.deepEqual(counts, { running: 1, finished: 0, crashed: 0, stopped: 0, waiting: 2, total: 3 });
+});

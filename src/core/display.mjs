@@ -58,6 +58,13 @@ function askingKind(t) {
   return null;
 }
 
+// askingCount(runState) → how many unfinished tasks wait on the person. The summary's `asking` tally and
+// the runs list's `asking you` state (dashboard.mjs) both read this, so the list row and the live view
+// never disagree on whether a run needs the person.
+export function askingCount(runState) {
+  return (runState?.tasks ?? []).filter((t) => !t.done && askingKind(t)).length;
+}
+
 // buildDisplay(runState, { now, spinnerFrame }) → { summary, rows, footer } (DESIGN §2.3).
 //
 // runState (a pass's output, assembled by the shell):
@@ -99,7 +106,7 @@ export function buildDisplay(runState, { now, spinnerFrame } = {}) {
 
   const done = doneIds.size;
   const total = tasks.length;
-  const asking = tasks.filter((t) => !t.done && askingKind(t)).length;
+  const asking = askingCount(runState);
   // A run whose tasks are all merged is not finished while its end gate is still running.
   const finished = complete || (!testing && total > 0 && done === total);
   const summary = {

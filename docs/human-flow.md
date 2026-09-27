@@ -20,7 +20,9 @@ On its next pass the command uses that report for two things: it keeps the parke
 counted under the ceiling (a parked worker is alive, not dead), and it marks the task's row
 **asking you** in the live display, with the question, so the person can see who is asking and
 correlate several at once. The footer reads `● Txx slug — asking you; open it (→) to answer`
-(`render.mjs`), and the coordinator's start banner in `run.log` says the same.
+(`render.mjs`), and the coordinator's start banner in `run.log` says the same. On `pir`'s runs list the
+whole run reads `asking you` in amber bold while any of its workers waits on the person, so the question
+is visible without opening the run (see [detached-runs.md](detached-runs.md)).
 
 The person **selects the task's row in the run's live view, opens its worker (→ or Enter), and
 answers in the worker's conversation, in plain English** (see [detached-runs.md](detached-runs.md)

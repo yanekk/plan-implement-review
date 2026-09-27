@@ -13,6 +13,8 @@
 // irreversible in the moment — stop kills in-flight work, remove drops the record — so the guard is
 // deliberate, not friction.
 
+import { askingCount } from './display.mjs';
+
 // A run can be stopped only while running, and removed only while NOT running (DESIGN §2.6, §2.7): a
 // running run must be stopped before its record can be cleared. These two predicates are the whole of
 // "which chord is live on which run", and they are what the tests pin.
@@ -43,14 +45,16 @@ function planState(view) {
 
 // runDisplayState(view) → the STATE a row shows (§2.10).
 //   view = { state (classifyRun's), record ({ kind, go }), snap ({ runState: { kind:'plan', step, outcome } }) }
-// A build shows its classification unchanged. A planning run shows `planning` or `reviewing` while it runs
+// A build shows its classification unchanged, except that a running build with any task waiting on the
+// person reads `asking-you` (askingCount, the live view's own rule), so a question is visible from the
+// list without opening the run (user 2026-09-27). A planning run shows `planning` or `reviewing` while it runs
 // (by the snapshot's step: the rename between the two already has the planner done, so it reads
 // `reviewing`), `your-go` once finished `reviewed` with no go recorded (§2.8), `finished` for any other
 // finished outcome or a declined go, and `stopped`/`crashed` as classified. Any other classification (an
 // unreachable entry) passes through as it came.
 export function runDisplayState(view) {
   const state = view?.state;
-  if (!isPlan(view)) return state;
+  if (!isPlan(view)) return state === 'running' && askingCount(view?.snap?.runState) > 0 ? 'asking-you' : state;
   const rs = planState(view);
   if (state === 'running') return rs && (rs.step === 'rename' || rs.step === 'review' || rs.step === 'done') ? 'reviewing' : 'planning';
   if (state === 'finished') return rs?.outcome === 'reviewed' && (view.record?.go ?? null) === null ? 'your-go' : 'finished';
@@ -96,7 +100,8 @@ export function displayName(view) {
 //
 // Each row gains `display` (runDisplayState) and the tallies count by it: `planning`/`reviewing` are
 // running, and a `your-go` row is counted in `waiting` rather than `finished`, as the prototype's counts
-// line reads (pir-plan-command §2.10).
+// line reads (pir-plan-command §2.10). A build's `asking-you` row counts in `waiting` too, not `running`:
+// the one tally says how many runs need the person, whichever kind.
 export function buildDashboard(views = []) {
   const counts = { running: 0, finished: 0, crashed: 0, stopped: 0, waiting: 0, total: views.length };
   const rows = views.map((v) => ({ ...v, display: runDisplayState(v) }));
@@ -118,6 +123,7 @@ const TALLY = {
   crashed: 'crashed',
   stopped: 'stopped',
   'your-go': 'waiting',
+  'asking-you': 'waiting',
 };
 
 // runKey(view) → the identity of one run. A slug alone is not unique: the same plan slug can run in two

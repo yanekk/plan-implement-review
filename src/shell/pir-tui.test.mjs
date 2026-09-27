@@ -996,6 +996,17 @@ test('the list frame: TYPE column, the label in quotes, plan states and steps, a
   assert.equal(SGR['your-go'], '\x1b[1;33m');
 });
 
+test('the list frame: a build with a worker asking reads `asking you` amber bold and counts as waiting', () => {
+  const tasks = [{ id: 'T01', slug: 'one', deps: [], done: false, phase: 'asking' }];
+  const asking = { key: 'shop__checkout', slug: 'checkout', state: 'running', repo: 'shop', progress: { done: 1, total: 4 }, workers: 2, snap: { runState: { branch: 'pir/checkout', ceiling: 2, tasks } } };
+  const frame = buildListFrame(buildDashboard([asking, ...PLAN_VIEWS]), initialUi());
+  const text = frameText(frame);
+  assert.match(text, /checkout +work +● asking you +shop +▰+▱+ 1\/4 +2/, 'the whole state fits its column');
+  assert.equal(findSpan(frame, '● asking you').style, 'your-go', 'the colour of asking');
+  assert.equal(findSpan(frame, '▰').style, 'bar-run', 'the progress bar stays a running run\'s');
+  assert.match(text, /6 runs · 2 running · 1 finished · 1 crashed · 2 waiting for you/);
+});
+
 test('the list frame: TYPE, STATE and PROGRESS follow one rule, so a record saying work beside a plan snapshot is all work (T11 review)', () => {
   // Reproduced by rendering this row: before the fix TYPE and PROGRESS read the snapshot (plan, `plan …`)
   // while STATE read the record (● running), three cells telling two stories.
