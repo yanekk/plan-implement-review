@@ -239,6 +239,17 @@ test('spawn with a note appends it to the opening message; a review names pir-re
   assert.match(userLines(received(1))[0].message.content, /pir-review T06$/);
 });
 
+test('spawn with a task label and an opening (the main-sync worker, pir-coordinator T05): that text first, listed under the label', async (t) => {
+  const { platform, received } = setupPlatform(t);
+  const id = platform.spawn({ cwd: tmpdir(), name: 'repo / demo / main-sync', phase: 'sync', task: 'main-sync', opening: 'Finish the merge.' });
+  await waitFor(() => userLines(received(0)).length, 'the first message');
+  assert.equal(userLines(received(0))[0].message.content, 'Finish the merge.');
+  const w = platform.list().find((x) => x.id === id);
+  assert.equal(w.task, 'main-sync');
+  assert.equal(w.role, 'sync');
+  assert.match(platform.logPathOf(id), /conversations\/main-sync-sync-1\.ndjson$/);
+});
+
 test('list reports each live child with its task, role, pid and activity; status flips to idle on the result', async (t) => {
   const { platform } = setupPlatform(t, { T05: [{ await: 'user' }, { sleep: 300 }, ...turn('ok')] });
   const id = platform.spawn({ cwd: tmpdir(), name: NAME('T05'), phase: 'implement' });

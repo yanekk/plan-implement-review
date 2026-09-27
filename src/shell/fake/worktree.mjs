@@ -27,6 +27,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, existsSync
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { progressPathFor, parseProgress, adoptNewTaskRows } from '../../core/progress.mjs';
+import { syncMain, mainContains, mainTip, syncPending, abortSync } from '../worktree.mjs';
 
 // Run one git command in cwd. Returns { ok, stdout, stderr, status } rather than throwing, so a
 // non-zero exit (a merge conflict, a missing ref) is a value the caller inspects, not an
@@ -241,6 +242,12 @@ export function createFakeWorktree({ progress, files = {}, slug = 'demo' } = {})
     remove,
     taskBranchState,
     taskWorktreeHandle,
+    // The end-of-run sync (pir-coordinator T05) is the real module's git, bound to the scratch repo.
+    syncMain: (featurePath) => syncMain(featurePath, { root: repo }),
+    mainContains: (branch) => mainContains(branch, { root: repo }),
+    mainTip: () => mainTip({ root: repo }),
+    syncPending: (featurePath) => syncPending(featurePath),
+    abortSync: (featurePath) => abortSync(featurePath),
     // introspection
     dir,
     repo,

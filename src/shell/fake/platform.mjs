@@ -195,6 +195,31 @@ export function createFakePlatform({ behaviors = {} } = {}) {
       return;
     }
 
+    if (w.role === 'sync') {
+      // The end-of-run main-sync worker (pir-coordinator T05), spawned in the feature worktree with a merge
+      // of main in progress. It resolves each conflicted file to `resolve[file]` (else keeps the feature's
+      // side), commits the merge and reports done. `unresolved: true` reports done without resolving;
+      // `crash: true` exits first.
+      if (w.stage !== 'fresh') return;
+      if (b.crash) {
+        w.live = false;
+        w.stage = 'dead';
+        return;
+      }
+      if (!b.unresolved) {
+        const files = git(w.cwd, ['diff', '--name-only', '--diff-filter=U']).stdout.split('\n').filter(Boolean);
+        for (const f of files) {
+          if (b.resolve?.[f] !== undefined) writeFileSync(join(w.cwd, f), b.resolve[f]);
+          else git(w.cwd, ['checkout', '--ours', '--', f]);
+        }
+        git(w.cwd, ['add', '-A']);
+        git(w.cwd, ['commit', '--no-edit', '-m', 'resolve main sync']);
+      }
+      emit(w, 'done');
+      w.stage = 'done';
+      return;
+    }
+
     if (w.role === 'verify') {
       if (w.stage === 'fresh') {
         // A hands-on worker: the person ran the live steps; the worker records the finding and marks
@@ -239,14 +264,15 @@ export function createFakePlatform({ behaviors = {} } = {}) {
     // `note` is the text appended to the opening instruction (DESIGN §2.4), recorded for tests.
     // The name is built by the loop with naming.mjs; the task is recovered from it here so list()
     // reports it and the loop can rebuild assignments from names alone (DESIGN §2.8).
-    spawn({ cwd, name, phase, note = null }) {
+    spawn({ cwd, name, phase, note = null, task: taskLabel = null, opening = null }) {
       const parsed = parseAgentName(name);
-      const b = behaviors[parsed.task] ?? {};
+      const task = taskLabel ?? parsed.task;
+      const b = behaviors[task] ?? {};
       const id = `w${++nextId}`;
       const w = {
         id,
         name,
-        task: parsed.task,
+        task,
         plan: parsed.plan,
         cwd,
         role: phase,
@@ -260,13 +286,13 @@ export function createFakePlatform({ behaviors = {} } = {}) {
       if (phase === 'implement' && Array.isArray(b.requests)) {
         w.requests = b.requests.map((r, i) => ({ kind: 'permission', ...r, requestId: `${id}-r${i + 1}` }));
       }
-      const key = `${parsed.task}-${phase}`;
+      const key = `${task}-${phase}`;
       w.n = (counters.get(key) ?? 0) + 1;
       counters.set(key, w.n);
       w.logPath = `conversations/${key}-${w.n}.ndjson`;
       workers.set(id, w);
       all.push(w);
-      spawns.push({ id, name, task: parsed.task, role: phase, cwd, note });
+      spawns.push({ id, name, task, role: phase, cwd, note, opening });
       return id;
     },
 

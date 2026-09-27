@@ -89,3 +89,67 @@ export function resumedFor() {
   return 'pir restarted your session. Items you were briefed on before may since have been answered, and a ' +
     'decision for one of those is refused; new items are briefed as they come. Re-read PROGRESS.md before you answer.';
 }
+
+// ---- The end of the run (DESIGN §2.9, §2.10, T05) ----
+
+const SYNC_WORDS = {
+  'up-to-date': 'the branch already held the current main',
+  merged: 'main merged in cleanly',
+  resolved: 'main merged in; a worker resolved the conflicts',
+  unresolved: 'merging main conflicted and was NOT resolved',
+  unknown: 'unknown',
+};
+
+// endBriefFor(facts) → the end brief (DESIGN §2.9 step 2): the run's facts, from coordinator-report's
+// endFacts, and what to write back — one `report` decision with three markdown sections.
+export function endBriefFor(facts) {
+  const f = isObject(facts) ? facts : {};
+  const tasks = Array.isArray(f.tasks) ? f.tasks : [];
+  const ledger = Array.isArray(f.ledger) ? f.ledger : [];
+  const findings = Array.isArray(f.findings) ? f.findings : [];
+  const unverified = Array.isArray(f.unverified) ? f.unverified : [];
+  const sync = isObject(f.sync) ? f.sync : {};
+  const parts = ['Every task is done. Write the delivery report.'];
+  parts.push(['Tasks:', ...tasks.map((t) => `- ${t.num} ${t.name ?? ''} ${t.state ?? ''}`.trimEnd())].join('\n'));
+  parts.push(
+    ledger.length
+      ? ['Decisions applied during the run (ledger):', ...ledger.map((l) => `- ${l.task ?? '-'} ${l.kind}${l.notable ? ' (notable)' : ''}: ${l.item} → ${l.answer}${l.reason ? ` (why: ${l.reason})` : ''}`)].join('\n')
+      : 'Decisions applied during the run (ledger): none.',
+  );
+  parts.push(findings.length ? ['FINDINGS rows:', ...findings].join('\n') : 'FINDINGS rows: none.');
+  parts.push(`Tasks with a hand-checked half still unverified: ${unverified.length ? unverified.join(', ') : 'none'}.`);
+  const files = Array.isArray(sync.files) && sync.files.length ? ` (files: ${sync.files.join(', ')})` : '';
+  parts.push(`Sync with main: ${SYNC_WORDS[sync.state] ?? sync.state ?? 'unknown'}${sync.mainSha ? `, main at ${String(sync.mainSha).slice(0, 12)}` : ''}${files}.`);
+  parts.push(`Tests on the feature branch: ${f.tests === 'green' ? 'green' : 'red'}.`);
+  parts.push(
+    'Write one `report` decision: { "kind": "report", "sections": { "delivered": "…", "checkByHand": "…", "risks": "…" } }, ' +
+      'each a markdown string, per the pir-coordinator skill § The report. pir renders the decisions section and the branch footer itself.',
+  );
+  return parts.join('\n\n');
+}
+
+// handoffFor({ slug, reportPath, ready, report }) → the hand-off message (DESIGN §2.9 step 5): the report
+// and the merge command, or, red, why no merge is offered. The agent presents it to the person in its reply.
+export function handoffFor({ slug, reportPath, ready, report = null }) {
+  const parts = [`The delivery report is committed on pir/${slug} as ${reportPath}.`];
+  if (nonEmpty(report)) parts.push(`The report:\n\n${report.trim()}`);
+  if (ready) {
+    parts.push(`The branch is ready to merge. The person merges it themselves:\n\n  git merge pir/${slug}`);
+  } else {
+    parts.push('The branch is not ready to merge: its tests are red or main could not be merged in, as the report says. No merge is offered.');
+  }
+  parts.push('Present the report and this to the person in your reply. The run now waits until they merge, or tell you to close it.');
+  return parts.join('\n\n');
+}
+
+// resyncedFor({ slug, mainSha, tests, unresolved }) → main moved while the run waited and pir re-synced
+// the branch (DESIGN §2.10); the report's footer is updated. The agent tells the person in one line.
+export function resyncedFor({ slug, mainSha, tests, unresolved = false }) {
+  const sha = nonEmpty(mainSha) ? String(mainSha).slice(0, 12) : 'its new tip';
+  const what = unresolved
+    ? `merging it into pir/${slug} conflicted and was not resolved, so the branch is not ready to merge`
+    : tests === 'green'
+      ? `pir/${slug} now holds it and its tests are green; the merge command is unchanged: git merge pir/${slug}`
+      : `pir/${slug} now holds it but its tests are red, so no merge is offered`;
+  return `main moved to ${sha} while the run waited, and pir re-synced the branch: ${what}. The report's branch footer is updated. Tell the person in one line.`;
+}

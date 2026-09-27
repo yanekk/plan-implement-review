@@ -107,7 +107,7 @@ function taskInAdoptError(text) {
 // at mergeTask is logged by its own record('surface') in 3d; this closes the worker-raised path so
 // both an operator and the harness see every escalation. The log line stays `surface {task}` (no
 // kind on disk), so the facts still key on the task, not a kind (see this file's header note).
-function applyMessages(state, messages, record) {
+export function applyMessages(state, messages, record) {
   for (const m of messages) {
     const t = state.tasks[m.task];
     if (!t) continue;
@@ -151,7 +151,7 @@ function applyMessages(state, messages, record) {
 // DESIGN §2.3), so its sends count alongside the person's.
 const ANSWER_CAUSES = new Set(['person', 'remote', 'coordinator']);
 
-function resumeAnswered(state, liveById, record) {
+export function resumeAnswered(state, liveById, record) {
   for (const [num, t] of Object.entries(state.tasks)) {
     if (t.phase !== AWAITING || !t.decision || t.decision.sent) continue;
     const act = liveById.get(t.workerId)?.activity;
