@@ -58,7 +58,9 @@ without per-task typing.
 4. On the first pass the command opens the **feature branch** `pir/{plan}` off `main`, in its own
    worktree, and works there (a plan made by `pir plan` already has that branch and worktree, and the
    command reuses them) — the person's main checkout stays on `main` (`openFeature` in
-   `worktree.mjs`). See [branch-model.md](branch-model.md).
+   `worktree.mjs`). See [branch-model.md](branch-model.md). On the same pass, unless the run was
+   started with `--no-coordinator`, it starts the run's **coordinator agent** in the feature worktree
+   (see [coordinator-agent.md](coordinator-agent.md)).
 5. Still on the first pass, before dispatching, the command **reconciles each task from its own
    task branch** — a restart adopts in-flight work (merges a finished task, reviews a built one,
    resumes a half-built one on its branch) rather than starting over; a genuine first start finds no task
@@ -93,6 +95,11 @@ A pass does, in order:
   has exited is dead at once — there is no grace pass, since a child is listed the moment it is
   spawned — and its worktree and branch are removed, so a crashed worker never holds a slot forever.
   Its conversation log gets an `exited` note with the exit code and signal (`worker-proc.mjs`).
+- **Route waiting items through the coordinator agent.** With the agent on, the command lists every
+  waiting item (a report park, a permission request, a question set), drains the agent's decision
+  files and applies the ones that pass its checks, briefs the agent on items waiting for the first
+  time, and marks which items the agent holds and which are the person's (see
+  [coordinator-agent.md](coordinator-agent.md#answer-first)).
 - **Forward the person's input.** Separately from the pass, the command watches the control folder's
   `inbox/` and forwards each message, interrupt or answer to its worker the moment it lands (see
   [control-folder.md](control-folder.md)), so a dispatch cycle never holds it up.
@@ -168,7 +175,7 @@ known-limitation note in [human-flow.md](human-flow.md) about leaked background 
 
 After each pass the command switches Remote Control on for every live worker waiting on the person
 (`remoteWanted`, reading the same `waitingOn` predicate as the row and the clock, so it stays off
-while a parked worker's asking turn is still open) and off for every other, unless the run was started with `PARALLEL_REMOTE=0` (see
+while a parked worker's asking turn is still open, and while the coordinator agent holds the item) and off for every other, unless the run was started with `PARALLEL_REMOTE=0` (see
 [human-flow.md](human-flow.md)); a closing worker switches it off before its input queue ends.
 
 ## The live status display
@@ -187,6 +194,8 @@ line per task, a summary line, and a footer. This is the command's status — th
   a task parked on a report whose asking turn is still open reads `building` or `reviewing`, see
   [human-flow.md](human-flow.md#when-a-row-reads-asking-you)), `fixing-conflict` (shown `fixing conflict`:
   the worker was sent a merge-conflict fix and is working on it, nothing asked of the person),
+  `asking-coordinator` (shown `asking coordinator · …` in the working style: the coordinator agent holds
+  the item, nothing is asked of the person, and it is not counted as asking),
   `waiting` (`needs T..`), `queued` (marked when the ceiling is full), or `done` (shown "merged"). The summary carries done/total, how many are running, asking, and
   waiting, and the ceiling. This is tested exhaustively.
 - **An asking row's clock is stopped.** A row's elapsed clock counts from when its phase began,
@@ -228,7 +237,18 @@ spinner and clock from it.
 
 ## End
 
-A run ends in one of three ways:
+With the coordinator agent on (the default), reaching the end gate does not end the run. The command
+then merges the current `main` into the feature branch (a conflict is finished by a main-sync worker),
+reruns the tests if anything merged, has the agent write the delivery report's sections, commits
+`plans/{slug}/REPORT.md` on the feature branch, and waits in **ready to merge**: the footer reads
+`✔ ready to merge · git merge pir/{slug}` and names the report, or `✗ not ready · tests red …` on red.
+The run stays open until the person merges `pir/{slug}` into `main` (the command sees `main` contains
+its tip) or tells the agent to close it; either ends it as `finished`. If `main` moves meanwhile, the
+branch is re-synced and the report's footer rewritten. The command still never merges into `main`. The
+steps, the report and the failure paths are in [coordinator-agent.md](coordinator-agent.md#the-end-of-the-run).
+
+A run ends in one of three ways. With the agent on, the first is the ready-to-merge end above;
+without it (`pir start {slug} --no-coordinator`), it is:
 
 - **Handed off** — every task reached `✅`, the feature branch is green, and the command prints the
   branch and the one line `git merge pir/{slug}` for the person to run by hand (`renderHandoff` in
@@ -237,7 +257,7 @@ A run ends in one of three ways:
   and offers no `git merge` line — the command never tells the person a red branch is ready. The red
   line names which half failed, the failing line and its exit code (or the parser's reason when the
   block is invalid) and the path to `tests.log`.
-- **Halted** — the `HALT` flag closed every worker; nothing merged, `main` is untouched. To
+- **Halted** — the `HALT` flag closed every worker (and the coordinator agent); nothing merged, `main` is untouched. To
   continue, the person removes `HALT` and re-runs the command (see
   [restart-recovery.md](restart-recovery.md)).
 - **Quiet** — every remaining worker is parked on a person's decision, or there is nothing left to
@@ -255,4 +275,6 @@ exits. The teardown closes workers and setups only: task branches and worktrees 
 the next start to reconcile, and a task left with a worktree and no worker gets its setup run again
 there (see [restart-recovery.md](restart-recovery.md)). A coordinator killed outright (SIGKILL, a
 crash) skips the teardown, so a setup it was running can outlive it, and so can a worker in the middle
-of a command; the worker is reaped from `workers.json`, the setup is not.
+of a command; the worker is reaped from `workers.json`, the setup is not. Teardown also closes the
+coordinator agent; the agent is not in `workers.json`, so one left by a SIGKILLed coordinator is not
+reaped (see [coordinator-agent.md](coordinator-agent.md#known-limitations)).
