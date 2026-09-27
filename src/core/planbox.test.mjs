@@ -53,7 +53,11 @@ for (const text of BARE) {
     test(`${at}: Shift+Enter / Ctrl+J (newLine) go to the box`, () => {
       assert.equal(routeBoxKey({ text, key: 'shift+enter', completing, newLine: true }), 'box');
       assert.equal(routeBoxKey({ text, key: 'ctrl+j', completing, newLine: true }), 'box');
-      assert.equal(routeBoxKey({ text, key: 'enter', completing, newLine: true }), 'box');
+    });
+    // pi-tui parses a bare LF as 'enter' AND matches it against tui.input.newLine (ctrl+j); the list
+    // opens on LF today (pir-tui decodeKey 'Enter (LF)'), and §1 keeps every list key on a bare box.
+    test(`${at}: an LF Enter (key 'enter' matching newLine) still opens — the list's`, () => {
+      assert.equal(routeBoxKey({ text, key: 'enter', completing, newLine: true }), 'list');
     });
   }
 }

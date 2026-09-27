@@ -87,16 +87,18 @@ const RESET_KEYS = new Set(['escape', 'ctrl+c']);
 //   key: pi-tui's parseKey name, or null for text (a printable, a paste).
 //   completing: the repo pop-up is open. newLine: the data matches tui.input.newLine.
 //
-// A newLine key is always the editor's, never a submit (§2.3: Shift+Enter, Ctrl+J). On a bare box
-// the pop-up is ignored: §2.3 says none shows there, so a stale one must not swallow the list's keys.
-// Once the box is not bare an open pop-up takes every key (§2.3's first row), chords included.
+// On a bare box the list's table is consulted first, newLine included: pi-tui parses a bare LF as
+// 'enter' and also matches it to tui.input.newLine (ctrl+j), and the list opens on LF today, which §1
+// keeps. The pop-up is ignored there too: §2.3 says none shows, so a stale one must not swallow the
+// list's keys. Once the box is not bare a newLine key is the editor's, never a submit (Shift+Enter,
+// Ctrl+J), and an open pop-up takes every key (§2.3's first row), chords included.
 export function routeBoxKey({ text, key, completing = false, newLine = false } = {}) {
-  if (newLine) return 'box';
   if (isBare(text)) {
     if (RESET_KEYS.has(key)) return 'quit';
     if (LIST_KEYS.has(key)) return 'list';
     return 'box';
   }
+  if (newLine) return 'box';
   if (completing) return 'box';
   if (key === 'enter') return 'submit';
   if (RESET_KEYS.has(key)) return 'reset';
