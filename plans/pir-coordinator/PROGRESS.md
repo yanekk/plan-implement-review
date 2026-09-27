@@ -14,7 +14,7 @@ write. **Whoever writes a cell also fixes the over-budget cell they walk past.**
 
 **Status:** Planned 2026-09-27. Nothing built. Precondition: `real-asking-state` merged into main.
 **Last updated:** 2026-09-27
-**Next `pir-work` will:** T00, the probe, once `real-asking-state` is merged into main (T00 checks it).
+**Next `pir-work` will:** T05, end-of-run-handoff (T04 is ✅).
 
 ## Tasks
 
@@ -27,14 +27,14 @@ done · ⛔ blocked, needs a human.
 | T01 | coordinator-rulebook | T00 | ✅ | |
 | T02 | coordinator-skill | — | ✅ | |
 | T03 | coordinator-session | T01 | ✅ | |
-| T04 | answer-first-routing | T03 | 🔍 | Agent briefed/drained per pass, held-set routing, RC, `--no-coordinator`, harness off by default; 35 tests. Deviations: holder via new `waitingFor` (waitingOn unchanged); `coordinator` send cause in stream.mjs; drain returns `settled`, agent `forget()`; usage text unchanged; row wording left to T06; install.sh not run from a task branch. |
+| T04 | answer-first-routing | T03 | ✅ | Review fixed two: a coordinator `message` to a report park turned its worker's Remote Control on for one pass (reproduced in the fake run, test locks it); a scratch-teardown race failed the full suite with ENOTEMPTY. Probed resume keeping `--no-coordinator`, the agent absent from `platform.workers()`. Deviations accepted. `./install.sh` deferred to after merge. |
 | T05 | end-of-run-handoff | T04 | ⬜ | |
 | T06 | coordinator-screen | T04, T05 | ⬜ | |
 | T07 | coordinator-drill | T06 | ⬜ | |
 | T08 | docs | T02, T04, T05, T06 | ⬜ | |
 | T09 | live-coordinator-check | T07, T08 | ⬜ | |
 
-**Review queue:** T04
+**Review queue:** empty
 
 ## Blocked on the user
 

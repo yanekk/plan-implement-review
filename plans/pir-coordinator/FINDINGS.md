@@ -14,6 +14,7 @@ Legend: 🐞 defect found · ✅ verified by hand with the user · 📌 worth kn
 
 | Date | | Finding |
 |---|---|---|
+| 2026-09-27 | 📌 | T04 engine changes are not installed: `./install.sh` is not run from a task branch. Run it once the feature branch holds T04, before any live check (T09) uses the installed `pir`. |
 | 2026-09-27 | 📌 | `pir start` usage text is pinned by tests and does not mention `--no-coordinator` (T04 left it). T08's docs and README must carry the flag. |
 | 2026-09-27 | 🐞 | The agent's session is not in `workers.json`, so a SIGKILLed coordinator leaves it running; `reapRecorded` never finds it. Teardown and HALT close it (T04). |
 | 2026-09-27 | 🐞 | `worker-proc` canUseTool logs no `matchedAskRule`, so `reservedFor` never sees it; the settings match alone carries the ask bin (T04). Harmless while CLI 2.1.283 sends none. |
