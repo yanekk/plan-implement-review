@@ -62,10 +62,18 @@ export function coordinatorLaunchArgv({ slug }) {
 // there is nothing to pass for it.) PARALLEL_HOLD_MERGES is a scenario's
 // `holdMerges` (dispatch.mjs): no merge while a worker still builds, so a same-line clash lands at the
 // coordinator. Values are strings (an env is strings).
-export function seatbeltEnv({ ceiling, holdMerges = false } = {}) {
+//
+// `pirHome` (a scenario's `statusSnapshots`, real-asking-state T05) sets PIR_RUN=1 so the coordinator
+// writes control/status.json each pass, as it does under `pir`, and points PIR_HOME at a scratch folder so
+// its index lookups never touch the person's own `pir` index.
+export function seatbeltEnv({ ceiling, holdMerges = false, pirHome = null } = {}) {
   const env = { PARALLEL_LIVE: '1' };
   if (ceiling != null) env.PARALLEL_MAX_WORKERS = String(ceiling);
   if (holdMerges) env.PARALLEL_HOLD_MERGES = '1';
+  if (pirHome) {
+    env.PIR_RUN = '1';
+    env.PIR_HOME = pirHome;
+  }
   return env;
 }
 
@@ -364,7 +372,13 @@ export async function runScenario({
   const reapWorkers = reap ?? ((dir) => reapRecorded(dir, procs));
   // The person's stand-in, for a scenario that forces requests nobody at a screen would answer (T18).
   const answerer = spec.answerPending
-    ? (makeAnswerer ?? createAnswerer)({ controlDir, typed: spec.answerPending.typed, say: spec.answerPending.say, log })
+    ? (makeAnswerer ?? createAnswerer)({
+        controlDir,
+        typed: spec.answerPending.typed,
+        say: spec.answerPending.say,
+        afterWake: spec.answerPending.afterWake,
+        log,
+      })
     : null;
 
   log(`installing fixture "${fixtureId}" into ${repoDir}`);
@@ -408,7 +422,10 @@ export async function runScenario({
   try {
     // Launch the coordinator as a plain child process with the seatbelt env (§2.1, §5.2).
     const argv = coordinatorLaunchArgv({ slug });
-    const env = seatbeltEnv({ ceiling, holdMerges: spec.holdMerges });
+    // The scratch PIR_HOME sits in the plan's .parallel/, which the scratch repo's .gitignore keeps out of
+    // git, so the index it may hold never dirties the checkout the coordinator merges in.
+    const pirHome = spec.statusSnapshots ? join(controlDir, '..', 'pir-home') : null;
+    const env = seatbeltEnv({ ceiling, holdMerges: spec.holdMerges, pirHome });
     log(`launching coordinator process: node ${argv.join(' ')}  (ceiling ${ceiling}, timeout ${timeout}ms)`);
     child = spawnCoordinator({ argv, cwd: repoDir, env, spawn, stdoutPath: coordinatorOutPath(controlDir) });
 

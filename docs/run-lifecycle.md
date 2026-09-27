@@ -84,8 +84,11 @@ A pass does, in order:
   activity, derived from its conversation log (`workerActivity` in `src/core/stream.mjs`): `busy` (a
   turn is open), `idle` (the last turn ended and nothing is pending), `permission` or `questions` (a
   permission request or a question set waits on the person). Only `busy` holds up a close. A task
-  parked on a question or decision report returns to its role's phase once its worker opens a turn
-  after the asking one — the person answered (`resumeAnswered`, see [human-flow.md](human-flow.md)).
+  parked on a question or decision report returns to its role's phase once the person answers: a turn
+  opened by a message from the person (typed in `pir` or over Remote Control), person input landing
+  in an open turn, or a request answered with the turn still open. A background job's wake-up or a
+  message pir sent is not an answer and leaves the task parked (`resumeAnswered`, see
+  [human-flow.md](human-flow.md#what-un-parks-a-report-park)).
 - **Clean up dead workers.** A worker is live while its process has not exited. One whose process
   has exited is dead at once — there is no grace pass, since a child is listed the moment it is
   spawned — and its worktree and branch are removed, so a crashed worker never holds a slot forever.
@@ -164,7 +167,8 @@ reaped. That wait is bounded — see [control-folder.md](control-folder.md) and 
 known-limitation note in [human-flow.md](human-flow.md) about leaked background processes.
 
 After each pass the command switches Remote Control on for every live worker waiting on the person
-and off for every other, unless the run was started with `PARALLEL_REMOTE=0` (see
+(`remoteWanted`, reading the same `waitingOn` predicate as the row and the clock, so it stays off
+while a parked worker's asking turn is still open) and off for every other, unless the run was started with `PARALLEL_REMOTE=0` (see
 [human-flow.md](human-flow.md)); a closing worker switches it off before its input queue ends.
 
 ## The live status display
@@ -178,13 +182,16 @@ line per task, a summary line, and a footer. This is the command's status — th
   as data, with no I/O and no clock. Each row carries a `kind` — `preparing` (the plan's setup is
   running in the task's fresh worktree; no worker yet), `building`, `reviewing`, `merging` (the
   reviewer has reported done; the merge waits for it to go idle), `asking` (shown `asking you` for a
-  question or decision report, `asking you · allow a command?` for a pending permission request,
-  `asking you · a question` for a pending question set), `fixing-conflict` (shown `fixing conflict`:
+  question or decision report once the worker has ended the turn it asked in, `asking you · allow a
+  command?` for a pending permission request, `asking you · a question` for a pending question set;
+  a task parked on a report whose asking turn is still open reads `building` or `reviewing`, see
+  [human-flow.md](human-flow.md#when-a-row-reads-asking-you)), `fixing-conflict` (shown `fixing conflict`:
   the worker was sent a merge-conflict fix and is working on it, nothing asked of the person),
   `waiting` (`needs T..`), `queued` (marked when the ceiling is full), or `done` (shown "merged"). The summary carries done/total, how many are running, asking, and
   waiting, and the ceiling. This is tested exhaustively.
 - **An asking row's clock is stopped.** A row's elapsed clock counts from when its phase began,
-  except while the worker waits on the person: `advanceTiming` in `coordinate.mjs` records the stop
+  except while the worker waits on the person — the same `waitingOn` predicate as the row, so a
+  parked task's clock keeps running until its asking turn ends: `advanceTiming` in `coordinate.mjs` records the stop
   time as the task's `stoppedAt` in the run state, and the model reads `stoppedAt − since` instead of
   `now − since`, so the coordinator and a detached `pir` viewer freeze at the same value. When the
   answer returns the task to the phase it left, the clock resumes where it stopped; the merged

@@ -141,6 +141,55 @@ test('pendingDrops says a task\'s message once, to its idle implementer only', (
   assert.deepEqual(pendingDrops(busy, new Set(), {}, { T04: 'go' }), [], 'not while its turn is open');
 });
 
+test('afterWake answers a parked implementer only after its post-task_notification turn, never before', () => {
+  const sent = { t: 1, dir: 'out', from: 'pir', kind: 'message', text: 'pir-implement T02' };
+  const result = (t) => ({ t, dir: 'in', event: { type: 'result', subtype: 'success' } });
+  const wake = { t: 6, dir: 'in', event: { type: 'system', subtype: 'task_notification', session_id: 'w2' } };
+  const wakeInit = { t: 7, dir: 'in', event: { type: 'system', subtype: 'init', session_id: 'w2' } };
+  const log = (entries) => [{ file: 'T02-implement-1.ndjson', entries }];
+  const drops = (entries, answered = new Set()) => pendingDrops(log(entries), answered, {}, {}, null, { T02: 'blue' });
+
+  // Parked after its asking turn, with no wake-up yet: not answered.
+  const asked = [sent, init('w2'), result(5)];
+  assert.deepEqual(drops(asked), [], 'not before any wake-up');
+  // The wake-up turn is open: still not answered.
+  assert.deepEqual(drops([...asked, wake, wakeInit]), [], 'not while the wake-up turn runs');
+  // The wake-up turn has ended: answered once, as a plain message.
+  const woken = [...asked, wake, wakeInit, result(8)];
+  assert.deepEqual(drops(woken), [{ to: 'w2', kind: 'message', text: 'blue', key: 'wake:T02' }]);
+  assert.deepEqual(drops(woken, new Set(['wake:T02'])), [], 'only once');
+  // A turn opened by a pir send is not a wake-up.
+  assert.deepEqual(drops([...asked, { ...sent, t: 6 }, init('w2'), result(8)]), [], 'a pir turn is not a wake-up');
+  // Never a reviewer, never a task not named, never an exited worker.
+  assert.deepEqual(pendingDrops([{ file: 'T02-review-1.ndjson', entries: woken }], new Set(), {}, {}, null, { T02: 'blue' }), []);
+  assert.deepEqual(pendingDrops(log(woken), new Set(), {}, {}, null, { T01: 'x' }), []);
+  assert.deepEqual(drops([...woken, { t: 9, dir: 'note', kind: 'exited' }]), []);
+});
+
+test('createAnswerer passes afterWake through to its inbox drops', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'answerer-wake-'));
+  try {
+    mkdirSync(join(dir, 'conversations'), { recursive: true });
+    const lines = [
+      { t: 1, dir: 'out', from: 'pir', kind: 'message', text: 'pir-implement T02' },
+      init('w2'),
+      { t: 5, dir: 'in', event: { type: 'result', subtype: 'success' } },
+      { t: 6, dir: 'in', event: { type: 'system', subtype: 'task_notification', session_id: 'w2' } },
+      { t: 7, dir: 'in', event: { type: 'system', subtype: 'init', session_id: 'w2' } },
+      { t: 8, dir: 'in', event: { type: 'result', subtype: 'success' } },
+    ];
+    writeFileSync(join(dir, 'conversations', 'T02-implement-1.ndjson'), lines.map((l) => JSON.stringify(l)).join('\n') + '\n');
+    const dropped = [];
+    const a = createAnswerer({ controlDir: dir, afterWake: { T02: 'blue' }, drop: (input) => (dropped.push(input), { ok: true }) });
+    a.tick();
+    a.tick();
+    assert.deepEqual(dropped, [{ to: 'w2', kind: 'message', text: 'blue' }]);
+    assert.equal(validateDrop({ ...dropped[0] }).ok, true, 'the drop is a valid person message');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 // --- The canned reply to a planning session (pir-plan-command T17) -------------------------------
 
 const opening = { t: 1, dir: 'out', from: 'pir', kind: 'message', text: 'Load the pir-plan skill and run it.' };

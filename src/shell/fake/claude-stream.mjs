@@ -74,6 +74,8 @@
 // script that interrupts a turn with an ask open emits that line itself after `{"await":"interrupt"}`.
 //
 // Helpers for scripts: `turn(text)` is the `init`, assistant text and `result` of one plain turn;
+// `wakeUp()` is a background job's notification and the turn it opens; `remoteInputTurn()` is a turn
+// opened by input typed over Remote Control;
 // `canUseTool(requestId, toolName, input)` is the control request of one permission ask. Both are
 // exported so a test builds its script from the same shapes the recording holds.
 
@@ -145,6 +147,36 @@ export function toolResult(id, text, isError = false) {
     message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: text, is_error: isError }] },
     uuid: '00000000-0000-4000-8000-000000000005',
   };
+}
+
+// A background job's wake-up, as Claude Code 2.1.283 emits it after the turn's `result`
+// (src/core/fixtures/remote-answer-sample.ndjson, T00): the notification, then a turn pir never asked for.
+export function taskNotification(taskId = 'bgfake') {
+  return {
+    type: 'system', subtype: 'task_notification', task_id: taskId, tool_use_id: `toolu_${taskId}`, status: 'completed',
+    output_file: '/fake/task.output', summary: 'Background command completed', session_id: '{{session}}',
+    uuid: '00000000-0000-4000-8000-000000000007',
+  };
+}
+
+export function wakeUp(text = 'The background job finished.', taskId = 'bgfake') {
+  return [{ emit: taskNotification(taskId) }, ...turn(text)];
+}
+
+// Input typed over Remote Control, as the real CLI announces it (T00): `command_lifecycle` `queued` and
+// `started` before the turn it opens, `completed` after its `result`. The typed text itself never
+// reaches the SDK stream without the replay option; pir's only sign of it is this lifecycle.
+export function commandLifecycle(state, commandUuid = 'cmd-fake') {
+  return { type: 'command_lifecycle', command_uuid: commandUuid, state, session_id: '{{session}}', uuid: '00000000-0000-4000-8000-000000000008' };
+}
+
+export function remoteInputTurn(text = 'Thanks, carrying on.', commandUuid = 'cmd-fake') {
+  return [
+    { emit: commandLifecycle('queued', commandUuid) },
+    { emit: commandLifecycle('started', commandUuid) },
+    ...turn(text),
+    { emit: commandLifecycle('completed', commandUuid) },
+  ];
 }
 
 // The user text block the CLI emits when a turn is interrupted (T01 probe).

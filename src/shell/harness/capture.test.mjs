@@ -218,6 +218,34 @@ test('a missing or torn workers.json records an empty tick, never a throw', () =
   }
 });
 
+// --- Status snapshots (real-asking-state T05) ------------------------------------------------------
+
+test('each tick records status.json with the tick time; a missing or torn status.json records nothing', () => {
+  const ws = workspace();
+  try {
+    const times = ['2026-09-27T10:00:00.000Z', '2026-09-27T10:00:02.000Z', '2026-09-27T10:00:04.000Z', '2026-09-27T10:00:06.000Z'];
+    let i = 0;
+    const cap = capture(ws, procs(), { now: () => new Date(times[i++]) });
+    cap.tick(); // no status.json yet
+    const building = { runState: { tasks: [{ id: 'T01', phase: 'building' }] } };
+    writeFileSync(join(ws.control, 'status.json'), JSON.stringify(building));
+    cap.tick();
+    writeFileSync(join(ws.control, 'status.json'), '{"runState":');
+    cap.tick(); // torn mid-write
+    const asking = { runState: { tasks: [{ id: 'T01', phase: 'asking' }] } };
+    writeFileSync(join(ws.control, 'status.json'), JSON.stringify(asking));
+    cap.tick();
+    const b = cap.seal();
+    assert.deepEqual(b.statuses, [
+      { ts: times[1], status: building },
+      { ts: times[3], status: asking },
+    ]);
+    assert.equal(b.timeline.length, 4, 'the worker timeline still ticks every time');
+  } finally {
+    ws.cleanup();
+  }
+});
+
 // --- seal: every conversation log and workers.json of the run --------------------------------------
 
 test('seal bundles every conversations/*.ndjson and workers.json of the run, with a manifest and run.json', () => {
@@ -278,6 +306,7 @@ test('loadBundle over an empty bundle dir yields present-but-empty fields, never
     const b = loadBundle(ws.bundle);
     assert.deepEqual(b.flow, []);
     assert.deepEqual(b.timeline, []);
+    assert.deepEqual(b.statuses, []);
     assert.deepEqual(b.workers, []);
     assert.deepEqual(b.run, {});
     assert.deepEqual(b.manifest, {});

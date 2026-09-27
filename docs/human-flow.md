@@ -17,8 +17,9 @@ nothing further:
 2. It **asks the person in its own conversation** and ends its turn, holding its worktree.
 
 On its next pass the command uses that report for two things: it keeps the parked worker's slot
-counted under the ceiling (a parked worker is alive, not dead), and it marks the task's row
-**asking you** in the live display, with the question, so the person can see who is asking and
+counted under the ceiling (a parked worker is alive, not dead), and, once the worker has ended the
+turn it asked in, it marks the task's row **asking you** in the live display, with the question (see
+[When a row reads asking you](#when-a-row-reads-asking-you)), so the person can see who is asking and
 correlate several at once. The footer reads `● Txx slug — asking you; open it (→) to answer`
 (`render.mjs`), and the coordinator's start banner in `run.log` says the same. On `pir`'s runs list the
 whole run reads `asking you` in amber bold while any of its workers waits on the person, so the question
@@ -32,11 +33,56 @@ continues. The command does not read or relay the answer: it only carries it. A 
 `claude agents` session any more — it appears in that list, but cannot be attached to — so the places
 to answer it are `pir` and, while it waits, claude.ai or the Claude app (below).
 
-The row stays **asking you** until the worker is working again: the first pass that sees the park
-notes the turn the ask ends with, and a turn opened after it returns the task to `building` or
-`reviewing` (`resumeAnswered` in `loop.mjs`), whichever place the answer came from. A worker that
-asks with a question set in the same turn instead is working again once that set is answered. No report is
-needed for that; the worker's log shows it.
+### When a row reads asking you
+
+A task is **waiting on the person** — its row reads `asking you`, its clock is stopped, and Remote
+Control is on (below) — when either holds (`waitingOn` in `src/core/asking.mjs`, the one predicate the
+row, the clock and Remote Control all read, so they cannot disagree):
+
+- its live worker has a permission request or a question set pending (the row reads `asking you ·
+  allow a command?` or `asking you · a question`), or
+- it is parked on its own `question` or `decision` report, and its worker is **not inside the asking
+  turn** — the turn it dropped the report in. The report is only a real park once that turn has ended.
+
+A worker drops its report from inside a turn and then ends the turn with the question put to the
+person. While that turn is still open the worker is working, whatever it reported: the row reads plain
+`building` or `reviewing`, with no hint of the pending report, its clock runs and Remote Control stays
+off. When the turn ends with the park still standing, the row turns `asking you` and the clock stops.
+A worker that drops a report and works on to `implemented` in the same turn reads `building`
+throughout. A later turn that is not an answer (a background job waking the worker, below) leaves the
+row `asking you`: the question is still open, and flipping the row and Remote Control for the seconds
+a wake-up lasts would switch the person's phone session off and on under them.
+
+The task's own phase is unchanged by this: a report-parked task stays parked while its asking turn
+runs, keeps its slot under the ceiling, and is never dispatched past. Only what the person is shown
+changes. A worker pir cannot see in its listing keeps reading `asking you`, since guessing `building`
+would hide a real question. A merge-conflict fix pir sent is not asking and reads `fixing conflict`.
+
+### What un-parks a report park
+
+The row stays **asking you** until the person answers. The worker's log shows the answer; no report is
+needed for it. `resumeAnswered` in `loop.mjs` returns the task to `building` or `reviewing` on the first
+pass that sees one of these:
+
+| What happened | Answer? |
+|---|---|
+| A turn opened by a message typed in `pir` (sent `from: 'person'`) | yes |
+| A message typed in `pir` delivered into a turn already open, the asking turn included | yes |
+| A turn opened by a message typed on claude.ai or the phone over Remote Control | yes |
+| A permission request or question set answered in `pir`, by a remembered grant, or over Remote Control (`answered-remotely`), with the turn still open | yes |
+| A turn opened by a background job's wake-up (`task_notification`) | no |
+| A turn opened by a message pir itself sent (`from: 'pir'`) | no |
+| A turn opened by anything else pir cannot recognise | no |
+
+A turn that is not an answer moves the point answers are looked for from past it, so an answer after a
+wake-up still counts. Input from the person counts wherever it lands: the first pass that sees the park
+records how many messages the person has sent (in `pir` and over Remote Control), and any later one
+un-parks, even one typed while the asking turn is still running. A reply sent in the seconds between
+the report and that first pass is missed and waits for the next answer. How pir tells Remote Control
+input from a wake-up: a message typed over Remote Control is announced in the worker's stream by a
+`command_lifecycle` system message (`queued`, then `started`) before its turn opens; a pir send is
+logged `out`, and a wake-up follows `task_notification` (`workerActivity` in `src/core/stream.mjs`,
+measured against Claude Code 2.1.283).
 
 One parked worker does not stall the others: every other independent task keeps moving while it
 waits, so the person is the bottleneck for that one decision only. A parked worker still holds a
@@ -71,8 +117,8 @@ times it out.
 
 ## Answering away from the terminal — Remote Control
 
-While a worker waits on the person — a question or decision report, a permission request, or a
-question set — its session is switched to Claude's Remote Control, so the person is notified in the
+While a worker waits on the person — a question or decision report whose asking turn has ended, a
+permission request, or a question set ([When a row reads asking you](#when-a-row-reads-asking-you)) — its session is switched to Claude's Remote Control, so the person is notified in the
 Claude app and can answer from claude.ai or the phone as well as from `pir`. Each pass the command
 works out which live workers are waiting (`remoteWanted` in `coordinate.mjs`) and switches each worker
 on or off to match (`remoteControl` in `worker-proc.mjs`, which uses the SDK's undocumented
@@ -89,8 +135,9 @@ off there too.
 - **An answer given there reaches the worker as if given in `pir`.** A permission request or question
   set answered on claude.ai is withdrawn from the worker's line and logged `answered-remotely`, so the
   row stops asking at once; the answer itself is in the tool result that follows. A reply typed there
-  to a question report goes straight into the worker and is **not** in pir's log: the conversation
-  view shows the worker's response, not what was typed.
+  to a question report goes straight into the worker and its text is **not** in pir's log: the
+  conversation view shows the worker's response, not what was typed. pir still sees that the person
+  spoke, from the `command_lifecycle` message that announces it, and un-parks the task (above).
 - **Notifications.** All three kinds notify the Claude app; for a permission request or a question
   report the notification was seen to arrive later than for a question set (2026-09-26).
 - **Opt out** with `PARALLEL_REMOTE=0` when starting the run (`PARALLEL_REMOTE=0 pir start {slug}`): no
@@ -116,8 +163,10 @@ A worker that deploys, calls a paid service or changes anything outside the repo
 plan's `DESIGN.md §5.3` gives that action. `/pir-review-plan` turned the bins the person approved into
 project permission rules in `.claude/settings.json`, which every worktree inherits because the file is
 committed. A `worker` action is `allow`ed and runs without stopping. An `ask` action is under an `ask`
-rule: the worker drops a `question` report, explains the action in its conversation and runs the
-command, and Claude stops on the permission request, which reaches pir as above. The person opens the
+rule: the worker explains the action in its conversation and runs the command, and Claude stops on
+the permission request, which reaches pir as above. The worker drops **no** report for it: the pending
+request already reads `asking you · allow a command?`, and in auto mode the prompt may never come, so a
+report dropped in advance would leave the row asking while the worker works (`skills/pir-worker`). The person opens the
 worker in `pir` and presses Enter (allow) or `n` there, so one approval is the whole exchange. A `person` action
 is only a login, a device or a judgement, raised like any other question. An action with no row is
 treated as `ask`.

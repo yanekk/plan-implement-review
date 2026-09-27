@@ -28,6 +28,7 @@ import { basename, dirname, join } from 'node:path';
 import { parseProgress, reconcileTaskRow, progressPathFor } from '../core/progress.mjs';
 import { workerName, isWorkerOf } from '../core/naming.mjs';
 import { buildDisplay } from '../core/display.mjs';
+import { waitingOn } from '../core/asking.mjs';
 import { parseRecord } from '../core/runrecord.mjs';
 import { parseTestBlock } from '../core/testblock.mjs';
 import { runLines, startLines } from './commands.mjs';
@@ -743,18 +744,38 @@ export function makePrepare({ design, setupDir, start = startLines } = {}) {
 // shell glue but read no clock or fs — `now`, `since` and `doneMs` arrive as arguments — so the mapping
 // is unit-tested; only the painting itself is judged by eye (T09).
 
-// displayPhaseFor(t) → the display phase for a tracked worker, or null when no worker holds the task. A
-// worker parked on the person (AWAITING, §2.2) is `asking` whatever its role; a worker that has reported
-// `done` is `merging` — its review is finished and the loop is waiting for the session to go idle before
-// it merges (loop.mjs 3d), which can take up to AWAIT_IDLE_TIMEOUT_MS, so `reviewing` there would lie.
-// Otherwise the role names it — an implementer (or a `you` scribe) is `building`, a reviewer `reviewing`.
-export function displayPhaseFor(t) {
+// displayPhaseFor(t, activity) → the display phase for a tracked worker, or null when no worker holds the
+// task. A worker parked on the person (AWAITING, §2.2) is `asking` whatever its role, but only while it is
+// actually waiting (waitingOn, real-asking-state §2.1): a worker that dropped its report and is still inside
+// that turn is working, and reads its role's phase. `activity` is the task's live worker's fold
+// (taskActivity); without it a park keeps reading `asking`. A conflict fix pir sent stays `asking` here and
+// the display reads it as `fixing conflict` (conflictSent). A worker that has reported `done` is `merging` —
+// its review is finished and the loop is waiting for the session to go idle before it merges (loop.mjs 3d),
+// which can take up to AWAIT_IDLE_TIMEOUT_MS, so `reviewing` there would lie. Otherwise the role names it —
+// an implementer (or a `you` scribe) is `building`, a reviewer `reviewing`.
+export function displayPhaseFor(t, activity) {
   if (!t) return null;
   if (t.phase === 'preparing') return 'preparing'; // setup running, no worker yet (DESIGN §2.4)
-  if (t.phase === 'awaiting-answer') return 'asking';
+  if (t.phase === 'awaiting-answer' && (t.decision?.sent || waitingOn(t, activity))) return 'asking';
   if (t.phase === 'done') return 'merging';
   if (t.role === 'review') return 'reviewing';
   return 'building';
+}
+
+// taskActivity(workers, num, st) → the activity of the live worker holding task `num`, or undefined when
+// none is live or visible. A task with a tracked workerId reads only that worker, as resumeAnswered and
+// remoteWanted do: falling back to another live worker on the task (an implementer still closing as its
+// reviewer starts) would let its open turn un-ask a park the loop still holds. Only an untracked task
+// (some test fakes) takes the task's latest live worker.
+export function taskActivity(workers, num, st) {
+  const live = workers.filter((w) => w.live && w.task === num);
+  return (st?.workerId ? live.find((w) => w.id === st.workerId) : live.at(-1))?.activity;
+}
+
+// clockPhase(st, activity) → the phase the clock tracks: `asking` whenever the task waits on the person
+// (a pending request stops the clock even though the loop's phase is still `building`).
+function clockPhase(st, activity) {
+  return waitingOn(st, activity) ? 'asking' : displayPhaseFor(st, activity);
 }
 
 // buildRunState({ passTasks, stateTasks, branch, ceiling, sinceByTask, stoppedAtByTask, doneMsByTask, complete,
@@ -785,7 +806,8 @@ export function buildRunState({
   const tasks = passTasks.map((t) => {
     const done = t.state === DONE_GLYPH;
     const st = done ? null : stateTasks[t.num];
-    const phase = st ? displayPhaseFor(st) : null;
+    const activity = st ? taskActivity(workers, t.num, st) : undefined;
+    const phase = st ? displayPhaseFor(st, activity) : null;
     return {
       id: t.num,
       slug: t.name,
@@ -801,7 +823,7 @@ export function buildRunState({
       // reads `fixing conflict` and nothing is asked of the person. A later question from that worker
       // replaces the decision, so the flag drops and the row turns `asking you`.
       conflictSent: phase === 'asking' && !!st.decision?.sent,
-      ...workerFields(workers.filter((w) => w.task === t.num), { done, phase, conflictSent: !!st?.decision?.sent }),
+      ...workerFields(workers.filter((w) => w.task === t.num), { done, waiting: st ? waitingOn(st, activity) : null }),
     };
   });
   return { branch, ceiling, complete, readyToMerge: !!readyToMerge, testsReason: testsReason ?? null, interrupted: !!interrupted, tasks };
@@ -813,18 +835,19 @@ export function buildRunState({
 // remembered separately. A task asking the person stops its clock (user 2026-09-26): `since` is kept and
 // the stop time recorded; when the answer sends it back to the phase it left, since and start shift
 // forward by the wait, so the clock resumes where it stopped and the merged duration leaves the wait out.
-// `now` is passed in so the bookkeeping is unit-tested without a clock. `requesting` is the set of task
-// ids whose live worker has a permission request or question set pending (requestingTasks): the task's
-// own phase stays `building`, but it is waiting on the person all the same, so it stops the clock too.
+// `now` is passed in so the bookkeeping is unit-tested without a clock. `workers` is platform.workers():
+// each task's live worker activity decides whether it is waiting on the person (waitingOn, the same rule
+// the row and Remote Control read), so a pending request stops the clock though the loop's phase is still
+// `building`, and a parked worker still inside its asking turn keeps its clock running.
 export function newTiming() {
   return { startByTask: {}, phaseByTask: {}, sinceByTask: {}, stoppedAtByTask: {}, resumeByTask: {}, doneMsByTask: {} };
 }
 
-export function advanceTiming(timing, stateTasks, completed, now, requesting = new Set()) {
+export function advanceTiming(timing, stateTasks, completed, now, workers = []) {
   const { startByTask, phaseByTask, sinceByTask, stoppedAtByTask, resumeByTask, doneMsByTask } = timing;
   for (const [num, st] of Object.entries(stateTasks)) {
     if (startByTask[num] == null) startByTask[num] = now;
-    const ph = requesting.has(num) ? 'asking' : displayPhaseFor(st);
+    const ph = clockPhase(st, taskActivity(workers, num, st));
     const prev = phaseByTask[num];
     if (prev === ph) continue;
     phaseByTask[num] = ph;
@@ -846,39 +869,28 @@ export function advanceTiming(timing, stateTasks, completed, now, requesting = n
   }
 }
 
-// A live worker's pending request is what the person must answer now, so it names the asking kind over
-// a report; a report alone (question, decision, a worker's own conflict) is `question`. A conflict fix sent
-// to the worker is not a question to answer (display.mjs reads it as `fixing conflict`).
-const REQUEST_KINDS = new Set(['permission', 'questions']);
-
-// requestingTasks(workers) → the ids of tasks whose live worker has a request pending, for advanceTiming.
-export function requestingTasks(workers) {
-  return new Set(workers.filter((w) => w.live && REQUEST_KINDS.has(w.activity?.state)).map((w) => w.task));
-}
-
-// remoteWanted(workers, stateTasks) → the ids of the live workers waiting on the person, whose
-// sessions the run makes reachable over Remote Control (claude.ai and the Claude app, so the person is
-// notified and can answer away from the terminal). Waiting is either a pending request (a permission
-// request or a question set) or a task parked on its own report whose worker holds it; a conflict fix
-// pir sent asks the person nothing. Every other live worker has Remote Control off.
+// remoteWanted(workers, stateTasks) → the ids of the live workers waiting on the person (waitingOn),
+// whose sessions the run makes reachable over Remote Control (claude.ai and the Claude app, so the person
+// is notified and can answer away from the terminal). A park counts only for the worker holding the task,
+// and only once its asking turn has ended; a conflict fix pir sent asks the person nothing. Every other
+// live worker has Remote Control off.
 export function remoteWanted(workers, stateTasks = {}) {
   const ids = new Set();
   for (const w of workers) {
     if (!w.live) continue;
     const t = stateTasks[w.task];
-    const parked = t?.phase === 'awaiting-answer' && !t.decision?.sent && t.workerId === w.id;
-    if (parked || REQUEST_KINDS.has(w.activity?.state)) ids.add(w.id);
+    if (waitingOn(t?.workerId === w.id ? t : undefined, w.activity)) ids.add(w.id);
   }
   return ids;
 }
 
-function workerFields(taskWorkers, { done, phase, conflictSent }) {
+// workerFields(taskWorkers, { done, waiting }) → the row's `asking` kind (waitingOn for the task, none once
+// done) and the workers `pir` can open: the live one, else the latest (live-workers §2.4, §2.11).
+function workerFields(taskWorkers, { done, waiting }) {
   const liveOnes = taskWorkers.filter((w) => w.live);
   const open = liveOnes.at(-1) ?? taskWorkers.at(-1) ?? null;
-  const request = done ? null : liveOnes.map((w) => w.activity?.state).find((s) => REQUEST_KINDS.has(s)) ?? null;
-  const asking = request ?? (!done && phase === 'asking' && !conflictSent ? 'question' : null);
   return {
-    asking,
+    asking: done ? null : waiting ?? null,
     // cwd is the worktree each was spawned in, kept after it exits so the dashboard can name its folder.
     worker: open ? { id: open.id, live: !!open.live, logPath: open.logPath ?? null, cwd: open.cwd ?? null } : null,
     workers: taskWorkers.map((w) => ({ id: w.id, role: w.role, n: w.n ?? null, logPath: w.logPath ?? null, cwd: w.cwd ?? null })),
@@ -1125,7 +1137,7 @@ async function main(argv) {
   const timing = newTiming();
   const { sinceByTask, stoppedAtByTask, doneMsByTask } = timing;
   const trackTiming = (stateTasks, completed) =>
-    advanceTiming(timing, stateTasks, completed, Date.now(), requestingTasks(platform.workers()));
+    advanceTiming(timing, stateTasks, completed, Date.now(), platform.workers());
 
   // The end gate runs synchronously inside the completing pass, so without this the last frame painted
   // (every task merged, or the final one still `merging`) sat unchanged for the minutes the suite took

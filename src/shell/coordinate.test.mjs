@@ -26,8 +26,8 @@ import {
   displayPhaseFor,
   newTiming,
   advanceTiming,
-  requestingTasks,
   remoteWanted,
+  taskActivity,
   waitForReport,
   shouldSelfReport,
   finalStateForExit,
@@ -863,8 +863,8 @@ test('advanceTiming stops the clock while a live worker has a permission request
   const timing = newTiming();
   const building = { T01: { role: 'implement', phase: 'implementing' } };
   const workers = (state) => [{ id: 'w1', task: 'T01', live: true, activity: { state } }, { id: 'w0', task: 'T02', live: false, activity: { state: 'permission' } }];
-  advanceTiming(timing, building, [], 1000, requestingTasks(workers('busy')));
-  advanceTiming(timing, building, [], 4000, requestingTasks(workers('permission'))); // worked 3s, then asks
+  advanceTiming(timing, building, [], 1000, workers('busy'));
+  advanceTiming(timing, building, [], 4000, workers('permission')); // worked 3s, then asks
   assert.equal(timing.stoppedAtByTask.T01, 4000);
   assert.equal(timing.stoppedAtByTask.T02, undefined, 'an exited worker asks nothing');
   const rs = buildRunState({
@@ -872,11 +872,81 @@ test('advanceTiming stops the clock while a live worker has a permission request
     stateTasks: building, workers: workers('permission'), branch: 'b', ceiling: 2, ...timing,
   });
   assert.equal(rs.tasks[0].stoppedAt, 4000, 'the request row carries the stop, so the display freezes it');
-  advanceTiming(timing, building, [], 30000, requestingTasks(workers('questions')));
+  advanceTiming(timing, building, [], 30000, workers('questions'));
   assert.equal(timing.stoppedAtByTask.T01, 4000, 'moving from a permission to a question keeps the stop');
-  advanceTiming(timing, building, [], 50000, requestingTasks(workers('busy'))); // answered after 46s
+  advanceTiming(timing, building, [], 50000, workers('busy')); // answered after 46s
   assert.equal(timing.sinceByTask.T01, 47000, 'the clock resumes at 3s');
   assert.equal(timing.stoppedAtByTask.T01, undefined);
+});
+
+// --- real-asking-state T02: row, clock and Remote Control read one predicate (waitingOn) ------------
+
+const parkedTask = (role, decision = {}) => ({
+  role, phase: 'awaiting-answer', workerId: 'w1', decision: { kind: 'question', text: 'which layout?', ...decision },
+});
+const liveWorker = (activity, extra = {}) => ({ id: 'w1', task: 'T01', role: 'implement', live: true, activity, ...extra });
+const oneRow = [{ num: 'T01', name: 'one', deps: [], state: '⬜' }];
+
+test('displayPhaseFor: a parked worker still in its asking turn reads its role phase; once the turn ends, asking', () => {
+  const open = { state: 'busy', open: true, turns: 2, pending: [] };
+  const ended = { state: 'idle', open: false, turns: 3, pending: [] };
+  assert.equal(displayPhaseFor(parkedTask('implement'), open), 'building');
+  assert.equal(displayPhaseFor(parkedTask('review'), open), 'reviewing');
+  assert.equal(displayPhaseFor(parkedTask('implement'), ended), 'asking');
+  assert.equal(displayPhaseFor(parkedTask('implement', { askEnd: 3 }), { ...open, turns: 3 }), 'asking', 'a wake-up turn stays asking');
+});
+
+test('buildRunState: a parked implementer with its turn open reads building, asks nothing; after the turn ends it asks', () => {
+  const stateTasks = { T01: parkedTask('implement') };
+  let rs = buildRunState({ passTasks: oneRow, stateTasks, workers: [liveWorker({ state: 'busy', open: true, turns: 2, pending: [] })], branch: 'b', ceiling: 2 });
+  assert.equal(rs.tasks[0].phase, 'building');
+  assert.equal(rs.tasks[0].asking, null);
+  assert.equal(rs.tasks[0].question, null, 'no hint of the pending report');
+  rs = buildRunState({ passTasks: oneRow, stateTasks, workers: [liveWorker({ state: 'idle', open: false, turns: 3, pending: [] })], branch: 'b', ceiling: 2 });
+  assert.equal(rs.tasks[0].phase, 'asking');
+  assert.equal(rs.tasks[0].asking, 'question');
+  assert.equal(rs.tasks[0].question, 'which layout?');
+});
+
+test('buildRunState: a parked reviewer with its turn open reads reviewing', () => {
+  const rs = buildRunState({
+    passTasks: oneRow, stateTasks: { T01: parkedTask('review') },
+    workers: [liveWorker({ state: 'busy', open: true, turns: 0, pending: [] }, { role: 'review' })], branch: 'b', ceiling: 2,
+  });
+  assert.equal(rs.tasks[0].phase, 'reviewing');
+  assert.equal(rs.tasks[0].asking, null);
+});
+
+test('advanceTiming: the clock runs through the open asking turn, stops when it ends, resumes on un-park', () => {
+  const timing = newTiming();
+  const building = { T01: { role: 'implement', phase: 'implementing', workerId: 'w1' } };
+  const parked = { T01: parkedTask('implement') };
+  const w = (open, turns) => [liveWorker({ state: open ? 'busy' : 'idle', open, turns, pending: [] })];
+  advanceTiming(timing, building, [], 1000, w(true, 0));
+  advanceTiming(timing, parked, [], 3000, w(true, 0)); // report dropped, still working
+  assert.equal(timing.stoppedAtByTask.T01, undefined, 'the clock runs during the asking turn');
+  assert.equal(timing.sinceByTask.T01, 1000);
+  advanceTiming(timing, parked, [], 5000, w(false, 1)); // turn ended: now waiting on the person
+  assert.equal(timing.stoppedAtByTask.T01, 5000);
+  advanceTiming(timing, building, [], 65000, w(true, 1)); // answered, un-parked by the loop
+  assert.equal(timing.stoppedAtByTask.T01, undefined);
+  assert.equal(timing.sinceByTask.T01, 61000, 'resumes at 4s: the 60s wait is left out');
+});
+
+test('remoteWanted: a parked worker with its asking turn open is not wanted; once the turn ends it is', () => {
+  const stateTasks = { T01: parkedTask('implement') };
+  assert.deepEqual([...remoteWanted([liveWorker({ state: 'busy', open: true, turns: 2, pending: [] })], stateTasks)], []);
+  assert.deepEqual([...remoteWanted([liveWorker({ state: 'idle', open: false, turns: 3, pending: [] })], stateTasks)], ['w1']);
+});
+
+test('a conflict fix pir sent still reads fixing conflict and is not wanted for Remote Control', () => {
+  const stateTasks = { T01: parkedTask('implement', { kind: 'conflict', sent: true }) };
+  const workers = [liveWorker({ state: 'busy', open: true, turns: 4, pending: [] })];
+  const rs = buildRunState({ passTasks: oneRow, stateTasks, workers, branch: 'b', ceiling: 2 });
+  assert.equal(rs.tasks[0].phase, 'asking');
+  assert.equal(rs.tasks[0].conflictSent, true);
+  assert.equal(rs.tasks[0].asking, null);
+  assert.deepEqual([...remoteWanted(workers, stateTasks)], []);
 });
 
 test('a coordinator-hit conflict with a live worker is sent, not surfaced: no paste block, and the row reads fixing (live-workers T08)', (t) => {
@@ -1589,4 +1659,14 @@ test('the start banner says to answer in `pir`, never `claude agents` or attachi
   const banner = src.split('\n').find((l) => l.includes('A worker that asks you'));
   assert.match(banner, /answer it in \\`pir\\`/);
   assert.doesNotMatch(banner, /claude agents|attach/i);
+});
+
+test('taskActivity: a task with a tracked worker reads only that worker, never another live one on the task (review T02)', () => {
+  const stateTasks = { T01: parkedTask('implement') }; // tracked w1, not live
+  const other = { id: 'w2', task: 'T01', role: 'implement', live: true, activity: { state: 'busy', open: true, turns: 0, pending: [] } };
+  const workers = [liveWorker({ state: 'idle', open: false, turns: 3, pending: [] }, { live: false }), other];
+  const rs = buildRunState({ passTasks: oneRow, stateTasks, workers, branch: 'b', ceiling: 2 });
+  assert.equal(rs.tasks[0].phase, 'asking', 'the untracked worker\'s open turn does not un-ask the park');
+  assert.equal(rs.tasks[0].asking, 'question');
+  assert.equal(taskActivity([other], 'T01', { phase: 'implementing' }), other.activity, 'an untracked task falls back to its live worker');
 });

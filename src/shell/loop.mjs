@@ -130,25 +130,59 @@ function applyMessages(state, messages, record) {
 // person in its conversation and ends that turn; the answer comes back as a message, typed in pir or
 // over Remote Control, and the worker carries on. Nothing reports that, so without this the task read
 // `asking you` until its next report (`implemented`/`done`), with its clock stopped and its remote
-// session left on. The answer is read from the worker's log instead: the first pass that sees the
-// park records the turn the ask ends with (`askEnd`, the open turn if one is under way); a turn opened
-// after it means the worker is working again, and the task returns to its role's phase. A worker may
-// instead ask with a question set inside the same turn and carry on once it is answered (seen live,
-// human-decision fixture 2026-09-26); so a request seen pending while parked (`asked`) and now answered,
-// with the turn still open, counts as working again too. A conflict fix pir itself sent (`sent`) is not
-// a question to the person and is left to its `done` report.
+// session left on. The answer is read from the worker's log instead (real-asking-state DESIGN §2.2).
+// The first pass that sees the park records the turn the ask ends with (`askEnd`, the open turn if one
+// is under way; waitingOn reads it and it never moves), the point answers are looked for from
+// (`answerFrom`, an index into the fold's `turnCauses`), and the person's input counts so far
+// (`personSends`, `remoteSends`). Then any of these un-parks, and the task returns to its role's phase:
+//   - a turn opened at or after `answerFrom` by the person: a `from: 'person'` send, or Remote Control
+//     input. A turn opened by anything else (a background job's wake-up, a pir send, an unrecognised
+//     opening) answered nothing: `answerFrom` moves past it and the park stands, so the row keeps
+//     telling the person the question is open and Remote Control is not toggled under them;
+//   - a person send or Remote Control input counted since the park was first seen, wherever it landed:
+//     an early reply injected into the still-open asking turn is an answer too;
+//   - a request seen pending while parked (`asked`) now answered with the turn still open: the worker
+//     asked with a question set inside the same turn (seen live, human-decision fixture 2026-09-26).
+// A listing without `turnCauses` (some test fakes) keeps the older reading: any turn after the asking
+// one un-parks. A conflict fix pir itself sent (`sent`) is not a question to the person and is left to
+// its `done` report.
+const ANSWER_CAUSES = new Set(['person', 'remote']);
+
 function resumeAnswered(state, liveById, record) {
   for (const [num, t] of Object.entries(state.tasks)) {
     if (t.phase !== AWAITING || !t.decision || t.decision.sent) continue;
     const act = liveById.get(t.workerId)?.activity;
     if (!Number.isFinite(act?.turns)) continue; // a listing without the log's fold (some test fakes)
-    if (act.pending?.length) t.decision.asked = true;
-    if (t.decision.askEnd === undefined) {
-      t.decision.askEnd = act.turns + (act.open ? 1 : 0);
+    const d = t.decision;
+    const causes = Array.isArray(act.turnCauses) ? act.turnCauses : null;
+    const personSends = act.personSends ?? 0;
+    const remoteSends = act.remoteSends ?? 0;
+    if (act.pending?.length) d.asked = true;
+    if (d.askEnd === undefined) {
+      d.askEnd = act.turns + (act.open ? 1 : 0);
+      // `turnCauses.length` counts the asking turn when it is open, and every turn before it: the same
+      // number as askEnd when every opened turn has its result, and still right after a `resumed` note
+      // closed a turn with none.
+      d.answerFrom = causes ? causes.length : d.askEnd;
+      d.personSends = personSends;
+      d.remoteSends = remoteSends;
       continue;
     }
-    const answeredInTurn = t.decision.asked && !act.pending?.length && act.open;
-    if (answeredInTurn || act.turns > t.decision.askEnd || (act.turns === t.decision.askEnd && act.open)) {
+    const answeredInTurn = d.asked && !act.pending?.length && act.open;
+    const spokeSince = personSends > (d.personSends ?? Infinity) || remoteSends > (d.remoteSends ?? Infinity);
+    let answerTurn = false;
+    if (causes) {
+      for (let i = d.answerFrom ?? d.askEnd; i < causes.length; i++) {
+        if (ANSWER_CAUSES.has(causes[i])) {
+          answerTurn = true;
+          break;
+        }
+        d.answerFrom = i + 1;
+      }
+    } else {
+      answerTurn = act.turns > d.askEnd || (act.turns === d.askEnd && act.open);
+    }
+    if (answeredInTurn || spokeSince || answerTurn) {
       t.phase = t.role === 'review' ? REVIEWING : IMPLEMENTING;
       delete t.decision;
       record('resumed', { task: num });
