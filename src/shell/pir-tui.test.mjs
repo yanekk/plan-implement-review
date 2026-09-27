@@ -1576,3 +1576,31 @@ test('box: after a start and back out to the list, the box reads @ again', async
 function drawnRowsSel(t) {
   return t.screen().split('\n').find((l) => l.startsWith('▎')) ?? '';
 }
+
+test('box: Ctrl+X twice removes the selected run, on a bare box and with text typed; the text survives (§2.3)', async () => {
+  for (const typed of [null, 'repo half a brief']) {
+    const rows = [{ key: 'r__alpha', slug: 'alpha', repo: 'r', state: 'finished', progress: { done: 1, total: 1 }, workers: 0, record: { repo: 'r', slug: 'alpha' } }];
+    const removed = [];
+    const tty = fakeStream({ isTTY: true, columns: 100, rows: 30 });
+    const term = fakeTerminal(tty);
+    const done = openDashboard({
+      stdin: {}, stdout: tty, env: BOX_ENV, refreshMs: 60_000, now: () => NOW,
+      makeScreen: (opts) => createScreen({ ...opts, colour: false, terminal: term }),
+      load: () => buildDashboard(rows), scan: () => BOX_REPOS,
+      remove: (record) => removed.push(record.slug),
+      startPlan: () => assert.fail('nothing starts'),
+    });
+    const settle = () => new Promise((r) => setTimeout(r, 60));
+    if (typed) { for (const ch of typed) term.press(ch); await settle(); }
+    term.press('\x18'); await settle();
+    assert.deepEqual(removed, [], 'the first press only arms');
+    term.press('\x18'); await settle();
+    assert.deepEqual(removed, ['alpha'], `removed (${typed ?? 'bare'})`);
+    const r = drawnRows(tty.text());
+    const head = r.findIndex((l) => l.startsWith('new plan'));
+    assert.match(r[head + 2], typed ? /^@repo half a brief/ : /^@\s*$/, 'the box text is untouched');
+    term.press('\x1b'); await settle();
+    if (typed) { term.press('\x1b'); await settle(); }
+    await done;
+  }
+});
