@@ -48,7 +48,7 @@ import { updateRecord } from './index-store.mjs';
 import { createWorktree } from './worktree.mjs';
 import { reapRecorded } from './reap.mjs';
 import { planHome } from './plan-home.mjs';
-import { startCoordinatorAgent } from './coordinator-agent.mjs';
+import { startCoordinatorAgent, withAgent } from './coordinator-agent.mjs';
 import { startWorker } from './worker-proc.mjs';
 
 const DONE_GLYPH = '✅';
@@ -1298,12 +1298,18 @@ export function buildRunState({
   testsReason = null,
   interrupted = false,
   handoff = null,
+  heldByAgent = new Set(),
+  coordinator = null,
 } = {}) {
   const tasks = passTasks.map((t) => {
     const done = t.state === DONE_GLYPH;
     const st = done ? null : stateTasks[t.num];
     const activity = st ? taskActivity(workers, t.num, st) : undefined;
     const phase = st ? displayPhaseFor(st, activity) : null;
+    // Who holds the task's waiting items (pir-coordinator §2.5): the row reads `asking coordinator` while
+    // the agent holds every one, `asking you` once one is the person's. waitingFor is the rule Remote
+    // Control reads, so the row and the phone cannot disagree.
+    const holder = st ? waitingFor(st, activity, { workerId: st.workerId, heldByAgent })?.holder ?? null : null;
     return {
       id: t.num,
       slug: t.name,
@@ -1320,11 +1326,25 @@ export function buildRunState({
       // replaces the decision, so the flag drops and the row turns `asking you`.
       conflictSent: phase === 'asking' && !!st.decision?.sent,
       ...workerFields(workers.filter((w) => w.task === t.num), { done, waiting: st ? waitingOn(st, activity) : null }),
+      // Only on a task something is asking for, so a row with nothing waiting keeps its old shape.
+      ...(holder ? { holder } : {}),
     };
   });
   // handoff is the end of the run with the agent on (pir-coordinator T05): { state: 'preparing'|'ready'|'red',
   // reportPath, mainSha }, null otherwise.
-  return { branch, ceiling, complete, readyToMerge: !!readyToMerge, testsReason: testsReason ?? null, interrupted: !!interrupted, handoff: handoff ?? null, tasks };
+  // coordinator is the run's agent for the screen to open (pir-coordinator §2.8): { id, live, logPath }, null
+  // with `--no-coordinator` or when it never started.
+  return {
+    branch,
+    ceiling,
+    complete,
+    readyToMerge: !!readyToMerge,
+    testsReason: testsReason ?? null,
+    interrupted: !!interrupted,
+    handoff: handoff ?? null,
+    coordinator: coordinator ?? null,
+    tasks,
+  };
 }
 
 // newTiming() / advanceTiming(timing, stateTasks, completed, now) — per-task timing for the display's
@@ -1502,7 +1522,10 @@ async function main(argv) {
   // "do not ask again" the inbox records is what the platform consults on the worker's next request.
   const grants = createGrants();
   const platform = createPlatform({ root, controlDir: control.dir, transport: inbox.transport, claudePath, grants });
-  const personInbox = startPersonInbox({ controlDir: control.dir, platform, grants, log: control.log });
+  // The person may type to the coordinator agent in its own conversation (pir-coordinator §2.8): the inbox
+  // forwards to it by id once it has started (currentAgent is set when the controller exists).
+  let currentAgent = () => null;
+  const personInbox = startPersonInbox({ controlDir: control.dir, platform: withAgent(platform, () => currentAgent()), grants, log: control.log });
   const worktree = createWorktree({ root });
   // No DESIGN.md reads as '': makePrepare sees no block and runs no setup.
   const design = planHome(slug, { root }).read('DESIGN.md') ?? '';
@@ -1542,6 +1565,7 @@ async function main(argv) {
     // live run reaches the coordinator-side conflict deterministically. No person has a reason to.
     holdMerges: process.env.PARALLEL_HOLD_MERGES === '1',
   });
+  currentAgent = () => coordinator.agent;
   const renderer = createRenderer({ stream: process.stdout });
 
   console.log(`ceiling: ${maxWorkers}   control: ${control.dir}`);
@@ -1677,7 +1701,10 @@ async function main(argv) {
   showTesting = (passTasks) => {
     const since = Date.now();
     trackTiming({}, passTasks.map((t) => t.num)); // the last merge's duration, before the pass ends
-    const runState = testingRunState(buildRunState({ passTasks, workers: platform.workers(), branch, ceiling: CEILING, doneMsByTask }), { since });
+    const runState = testingRunState(
+      buildRunState({ passTasks, workers: platform.workers(), branch, ceiling: CEILING, doneMsByTask, coordinator: coordinator.agent?.view?.() ?? null }),
+      { since },
+    );
     lastRunState = runState;
     if (selfReport) writeRunSnapshot({ controlDir: control.dir, proc, runState });
     renderer.paint(buildDisplay(runState, { now: since }));
@@ -1745,6 +1772,8 @@ async function main(argv) {
         readyToMerge: r.handoff ? r.handoff.state === 'ready' : !!r.readyToMerge,
         testsReason: r.testsReason,
         handoff: r.handoff,
+        heldByAgent: coordinator.heldByAgent(),
+        coordinator: coordinator.agent?.view?.() ?? null,
       });
       lastRunState = runState;
       // Feed the detached live view (DESIGN §2.4): write this pass's run state to the snapshot the

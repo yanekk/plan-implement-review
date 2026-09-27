@@ -5,7 +5,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildDisplay } from './display.mjs';
+import { askingCount, buildDisplay } from './display.mjs';
 
 // A base clock, so `now − since` is a round number in the assertions.
 const NOW = 1_000_000;
@@ -272,4 +272,59 @@ test('a done task with a stale asking field reads merged', () => {
   const d = buildDisplay({ branch: 'b', ceiling: 1, tasks: [task({ done: true, asking: 'permission' })] }, { now: NOW });
   assert.equal(d.rows[0].kind, 'done');
   assert.equal(d.summary.asking, 0);
+});
+
+// --- the coordinator agent (pir-coordinator T06, DESIGN §2.5, §2.9, §2.10) ------------------------
+
+test('an item the coordinator agent holds reads `asking coordinator`; the person\'s reads `asking you`; only the person\'s are counted', () => {
+  const tasks = [
+    task({ id: 'T01', slug: 'agent-q', phase: 'asking', since: NOW - 3000, stoppedAt: NOW - 1000, holder: 'coordinator' }),
+    task({ id: 'T02', slug: 'agent-perm', phase: 'building', since: NOW - 3000, asking: 'permission', holder: 'coordinator' }),
+    task({ id: 'T03', slug: 'person-q', phase: 'asking', since: NOW - 3000, holder: 'person' }),
+    task({ id: 'T04', slug: 'old-snap', phase: 'asking', since: NOW - 3000 }),
+  ];
+  const d = buildDisplay({ branch: 'pir/demo', ceiling: 8, tasks }, { now: NOW });
+  assert.deepEqual(
+    d.rows.map((r) => [r.id, r.kind, r.label]),
+    [
+      ['T01', 'asking-coordinator', 'asking coordinator · a question'],
+      ['T02', 'asking-coordinator', 'asking coordinator · allow a command?'],
+      ['T03', 'asking', 'asking you · a question'],
+      ['T04', 'asking', 'asking you · a question'],
+    ],
+  );
+  assert.equal(d.rows[0].elapsedMs, 2000, 'the clock stops for the coordinator too (§2.5)');
+  assert.equal(d.summary.asking, 2, 'the summary counts the person\'s only');
+  assert.equal(d.summary.running, 4, 'every asking task still holds its slot');
+  assert.deepEqual(d.footer, { kind: 'asking', task: 'T03', slug: 'person-q', question: '' }, 'the footer names the person\'s, never the agent\'s');
+
+  const agentOnly = buildDisplay({ branch: 'pir/demo', ceiling: 8, tasks: tasks.slice(0, 2) }, { now: NOW });
+  assert.equal(agentOnly.summary.asking, 0);
+  assert.deepEqual(agentOnly.footer, { kind: 'running' }, 'nothing asks the person, so the run reads as running');
+  assert.equal(askingCount({ tasks: tasks.slice(0, 2) }), 0, 'the runs list does not turn the run amber');
+  assert.equal(askingCount({ tasks }), 2);
+});
+
+test('the hand-off block with the agent: preparing, ready to merge with the report, red with why; absent with the agent off', () => {
+  const done = [task({ done: true })];
+  const at = (handoff, over = {}) => buildDisplay({ branch: 'pir/demo', ceiling: 4, tasks: done, handoff, ...over }, { now: NOW }).footer;
+
+  assert.deepEqual(at({ state: 'preparing', reportPath: null, mainSha: null }), { kind: 'handoff', branch: 'pir/demo', state: 'preparing', reportPath: null });
+  assert.deepEqual(
+    at({ state: 'ready', reportPath: 'plans/demo/REPORT.md', mainSha: 'abc' }, { complete: true, readyToMerge: true }),
+    { kind: 'handoff', branch: 'pir/demo', state: 'ready', reportPath: 'plans/demo/REPORT.md' },
+  );
+  assert.deepEqual(
+    at({ state: 'red', reportPath: 'plans/demo/REPORT.md', mainSha: 'abc' }, { complete: true, testsReason: { reason: 'test `npm test` exited 1', logPath: '/c/tests.log' } }),
+    { kind: 'handoff', branch: 'pir/demo', state: 'red', reportPath: 'plans/demo/REPORT.md', reason: 'test `npm test` exited 1', logPath: '/c/tests.log' },
+  );
+  // With --no-coordinator there is no handoff, and the footers are today's.
+  assert.deepEqual(at(null, { complete: true, readyToMerge: true }), { kind: 'handoff', branch: 'pir/demo' });
+  assert.deepEqual(at(null, { complete: true, readyToMerge: false }), { kind: 'red', branch: 'pir/demo', reason: null, logPath: null });
+  // A question the person must answer still comes first.
+  const asking = buildDisplay(
+    { branch: 'pir/demo', ceiling: 4, tasks: [task({ phase: 'asking', holder: 'person' })], handoff: { state: 'preparing' } },
+    { now: NOW },
+  ).footer;
+  assert.equal(asking.kind, 'asking');
 });

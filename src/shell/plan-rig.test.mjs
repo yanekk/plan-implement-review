@@ -289,7 +289,8 @@ test('end to end at 120×40: ↵ on the go starts the build on the same row, whi
     const record = listRecords({ dir }).find((r) => r.slug === PLAN_RIG_SLUG);
     assert.equal(record.kind, 'work', 'the row flipped from plan to work');
     const done = (await screen.waitFor(new RegExp(`git merge pir/${PLAN_RIG_SLUG}`), 90000)).join('\n');
-    assert.match(done, /all 1 task\(s\) green/);
+    // With the agent on the end reads `ready to merge` and names the report (pir-coordinator T06).
+    assert.match(done, new RegExp(`✔ ready to merge · git merge pir/${PLAN_RIG_SLUG}\\n  report: plans/${PLAN_RIG_SLUG}/REPORT\\.md`));
     assert.equal(git(rig.repoDir, 'rev-parse', 'main'), mainBefore, 'main is untouched');
     // With the agent on (the default), the merge is offered only once the delivery report is committed on
     // the feature branch (pir-coordinator T05): the fake agent's sections, the rendered decisions, the footer.

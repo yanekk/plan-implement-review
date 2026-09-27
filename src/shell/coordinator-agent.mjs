@@ -182,6 +182,7 @@ export function startCoordinatorAgent({
   const saveSession = () => writeJsonAtomic(sessionPath, session);
 
   let worker = null;
+  let logPath = null; // the conversation log of the session now (or last) holding the agent
   let up = false;
   let givenUp = false;
   let closing = false;
@@ -196,7 +197,7 @@ export function startCoordinatorAgent({
     }
     const n = lastLogN(convDir);
     // A resumed session continues its own conversation file; a fresh one starts the next.
-    const logPath = join(convDir, `coordinator-${resume ? Math.max(n, 1) : n + 1}.ndjson`);
+    logPath = join(convDir, `coordinator-${resume ? Math.max(n, 1) : n + 1}.ndjson`);
     worker = startWorker({
       cwd: featurePath,
       ...(resume ? { resume: session.sessionId } : { sessionId: session.sessionId }),
@@ -412,6 +413,15 @@ export function startCoordinatorAgent({
     get session() {
       return worker;
     },
+    // The agent's conversation log, for the screen to open (pir-coordinator §2.8); null before a launch.
+    get logPath() {
+      return logPath;
+    },
+    // view() → { id, live, logPath } for the run state (buildRunState's `coordinator`), or null when it
+    // never launched.
+    view() {
+      return logPath ? { id: session.sessionId, live: alive(), logPath } : null;
+    },
     brief(item) {
       if (!alive() || !item) return false;
       const key = keyOf(item);
@@ -443,6 +453,50 @@ export function startCoordinatorAgent({
     async close(opts) {
       closing = true;
       if (worker) await worker.close(opts);
+    },
+  };
+}
+
+// withAgent(platform, getAgent) → the platform the person inbox forwards through, with the coordinator
+// agent's session added under its id (pir-coordinator DESIGN §2.8). The agent is not one of the platform's
+// workers (it is started beside them), so without this a message the person types in the agent's
+// conversation in `pir` would be refused as "no such worker in this run". Everything else is the
+// platform's, unchanged. `getAgent()` is read per call: the agent starts after the inbox, and a resume
+// swaps the session under the same id.
+export function withAgent(platform, getAgent) {
+  const sessionFor = (id) => {
+    const a = getAgent?.();
+    return a && id != null && a.id === id && a.session ? a : null;
+  };
+  return {
+    ...platform,
+    send(id, text, opts = {}) {
+      const a = sessionFor(id);
+      return a ? { ok: a.session.send(text, { from: opts.from ?? 'person' }) } : platform.send(id, text, opts);
+    },
+    interrupt(id, opts = {}) {
+      const a = sessionFor(id);
+      if (!a) return platform.interrupt(id, opts);
+      a.session.interrupt({ from: opts.from ?? 'person' }).catch(() => {});
+      return { ok: a.alive() };
+    },
+    answer(id, requestId, result, opts = {}) {
+      const a = sessionFor(id);
+      return a ? { ok: a.session.answer(requestId, result, { from: opts.from ?? 'person' }) } : platform.answer(id, requestId, result, opts);
+    },
+    pending(id) {
+      const a = sessionFor(id);
+      return a ? a.session.pending() : platform.pending(id);
+    },
+    note(id, kind, fields = {}) {
+      const a = sessionFor(id);
+      if (!a) return platform.note(id, kind, fields);
+      a.session.note(kind, fields);
+      return { ok: true };
+    },
+    logPathOf(id) {
+      const a = sessionFor(id);
+      return a ? a.logPath : platform.logPathOf(id);
     },
   };
 }

@@ -41,6 +41,7 @@ const GLYPH = {
   merging: null,
   'fixing-conflict': null, // working, so it spins like the other active rows
   asking: '●',
+  'asking-coordinator': '●', // held by the coordinator agent: the asking dot, in the active colour
   done: '✔',
   waiting: '·',
   queued: '·',
@@ -111,6 +112,9 @@ const ROW_STYLE = {
   merging: 'active',
   'fixing-conflict': 'active', // the worker was sent the fix and is working (live-workers §2.10)
   asking: 'asking',
+  // The coordinator agent holds the question (pir-coordinator §2.5): nothing for the person yet, so it is
+  // not the amber standout.
+  'asking-coordinator': 'active',
   done: 'done',
   waiting: 'idle',
   queued: 'idle',
@@ -186,6 +190,7 @@ function footerLines(footer, summary, spinnerChar = SPINNER[0]) {
       return [blank, { text: `● ${who} — asking you; open it (→) to answer`, style: 'asking' }];
     }
     case 'handoff':
+      if (footer.state) return agentHandoffLines(footer, summary, spinnerChar);
       return [
         blank,
         { text: `✔ all ${summary.total} task(s) green on ${footer.branch} · tests pass. Yours to merge:`, style: 'done' },
@@ -209,6 +214,24 @@ function footerLines(footer, summary, spinnerChar = SPINNER[0]) {
     default:
       return [blank];
   }
+}
+
+// The end of a run with the coordinator agent (pir-coordinator §2.9, §2.10): preparing while main is merged
+// in and the report written, then `ready to merge` with the merge line, or `not ready` red, each naming the
+// committed REPORT.md. The merge itself stays the person's.
+function agentHandoffLines(footer, summary, spinnerChar) {
+  const blank = { text: '', style: null };
+  const report = footer.reportPath ? [{ text: `  report: ${footer.reportPath}`, style: 'idle' }] : [];
+  if (footer.state === 'ready') {
+    return [blank, { text: `✔ ready to merge · git merge ${footer.branch}`, style: 'done' }, ...report];
+  }
+  if (footer.state === 'red') {
+    const lines = [blank, { text: `✗ not ready · tests red on ${footer.branch} — no merge offered`, style: 'red' }];
+    const why = [footer.reason, footer.logPath && `output: ${footer.logPath}`].filter(Boolean).join(' · ');
+    if (why) lines.push({ text: `  ${why}`, style: 'red' });
+    return [...lines, ...report];
+  }
+  return [blank, { text: `${spinnerChar} all ${summary.total} task(s) merged · preparing the hand-off: syncing main, writing the report`, style: 'active' }];
 }
 
 // createRenderer({ stream }) → { paint(display), line(text), close() } (DESIGN §2.3, T15).

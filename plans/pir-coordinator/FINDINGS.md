@@ -14,6 +14,7 @@ Legend: 🐞 defect found · ✅ verified by hand with the user · 📌 worth kn
 
 | Date | | Finding |
 |---|---|---|
+| 2026-09-27 | 📌 | T06 shows `runState.handoff` but gives the `main-sync` worker no row or key: a question the agent passes on from it is reachable only on the phone, not in `pir`. Needs a task or T07/T08 decision. |
 | 2026-09-27 | 📌 | T05: the plan rig drives the end to `ready` through the real `pir` (fake agent `coordinatorScript`); the finished path and `renderFinished` in `main()` are not. T06 should show `runState.handoff` and the `main-sync` worker (role `sync`). |
 | 2026-09-27 | 📌 | T04 and T05 engine changes are not installed: `./install.sh` is not run from a task branch while a run is live. Run it once the feature branch holds them, before any live check (T09) uses the installed `pir`. |
 | 2026-09-27 | 📌 | `pir start` usage text is pinned by tests and does not mention `--no-coordinator` (T04 left it). T08's docs and README must carry the flag. |
