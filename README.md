@@ -79,6 +79,16 @@ It builds on pir/screen-time.
 `↵` starts the build on the same branch, and the dashboard row turns from `plan` to `work`. `n` leaves
 it for later: `pir start screen-time` builds it whenever you like.
 
+You can also start one from the dashboard without leaving `pir`: the box at the bottom of the runs
+list starts as `@`. Type the repo's name (a pop-up lists the git repos in `~/src`, or in the folders
+`PIR_REPOS` names), then the brief, and `↵` starts the planning run there and opens the planner, just
+as `pir plan` does. Only an exact repo name starts anything; otherwise the box says why and keeps what
+you typed. While the box holds only `@`, the dashboard's keys work as before
+([planning-runs.md](docs/planning-runs.md#the-new-plan-box)).
+
+`pir plan` and `pir start` work in any git repo with a local `main`, this project's own checkout
+included; there is no flag to set ([planning-runs.md](docs/planning-runs.md)).
+
 What that gets you:
 
 - **`main` stays clean.** The plan is written on its own branch, `pir/{slug}`, which the build then
@@ -230,11 +240,13 @@ What it tells you at a glance:
 
 `pir` on its own opens a dashboard of every run on the machine, across every repo: each run's
 type (`plan` or `work`), its state (running, finished, stopped, crashed; for a planning run
-planning, reviewing or your go), its progress and how many workers are live.
+planning, reviewing or your go), its progress and how many workers are live. Under the list is the
+new-plan box, for starting a planning run in any of your repos (above).
 
 | View | Keys |
 |---|---|
 | Dashboard | `↑↓` move · `↵` open a run · `Ctrl+R` twice resume · `Ctrl+S` twice stop · `Ctrl+X` twice remove · `esc` quit |
+| Dashboard, typing in the box | `@repo` then a brief · `↵` start planning · `shift+↵` new line · `esc` clear the box |
 | Live view | `↑↓` pick a task · `→` open its worker · `←` back to the dashboard · `Ctrl+S` twice stop this run · `esc` quit |
 | A planning run | `↑↓` pick a step · `→` open its conversation · `←` back · at the go, `↵` start or `n` not now |
 

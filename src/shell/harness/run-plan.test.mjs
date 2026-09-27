@@ -20,10 +20,11 @@ const tmp = (p) => mkdtempSync(join(tmpdir(), p));
 
 // --- The pure pieces ------------------------------------------------------------------------------
 
-test('planEnv sets PIR_HOME and the ceiling, and drops an inherited PARALLEL_ALLOW_HERE unless asked', () => {
+test('planEnv sets PIR_HOME and the ceiling, and always drops an inherited PARALLEL_ALLOW_HERE', () => {
   const env = planEnv({ baseEnv: { PATH: '/bin', PARALLEL_ALLOW_HERE: '1' }, pirHome: '/s/.pir-home', ceiling: 2 });
   assert.deepEqual(env, { PATH: '/bin', PIR_HOME: '/s/.pir-home', PARALLEL_MAX_WORKERS: '2' });
-  assert.equal(planEnv({ baseEnv: {}, allowHere: true }).PARALLEL_ALLOW_HERE, '1');
+  // The old allowHere option is gone (dashboard-plan-box DESIGN §2.8): it no longer sets the variable.
+  assert.equal(planEnv({ baseEnv: {}, allowHere: true }).PARALLEL_ALLOW_HERE, undefined);
 });
 
 test('planRecordOf finds the run before and after the rename, and prefers the slug when both exist', () => {

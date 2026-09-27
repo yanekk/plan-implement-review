@@ -17,7 +17,7 @@ deprecated foreground launcher `pir-coordinate` was removed in `plans/live-worke
 
 | Invocation | Does |
 |---|---|
-| `pir` | open the dashboard: one row per run across every repo on the machine |
+| `pir` | open the dashboard: one row per run across every repo on the machine, and the new-plan box under it |
 | `pir plan` | open the brief box, then start a planning run ([planning-runs.md](planning-runs.md)) |
 | `pir plan <words…>` | start a planning run with the words, joined by one space, as the brief |
 | `pir start {slug}` | start the build of a reviewed plan detached, and drop straight into its live view |
@@ -124,8 +124,15 @@ Colour carries state and is never the only signal (glyphs carry the same state, 
 colour-blind reader lose nothing): a running run is green, finished and stopped are dim, crashed is
 red; the progress bar is blue for a running run and red for a crashed one; the selected row is a dark
 grey band across the full width, its dim text brightened (with colour off it is marked `▎` instead); an armed stop/remove confirmation is amber and bold. With no runs at all, the list is
-replaced by one line — ``No runs yet — start one with `pir start {slug}` `` — so a first open does
-not read as broken.
+replaced by one line — `No runs yet — type after @ below to plan something new` — so a first open
+does not read as broken.
+
+Below the list sits the **new-plan box**, a typing box whose text starts as `@`: type `@repo`, a brief,
+and `↵` starts a planning run in that repo and opens its planner's conversation, as `pir plan` does
+(the rules, the repo list and the refusals are in [planning-runs.md](planning-runs.md#the-new-plan-box)).
+While the box is bare the list's keys work as before. A list longer than the rows the box leaves
+scrolls to keep the selected run visible, with `↑ n more` / `↓ n more` where rows are cut. On a non-TTY
+the list is painted as before, without the box, and its empty line still points at `pir start {slug}`.
 
 Opening a build shows the **same** live task display the coordinator paints in the foreground — the
 summary line, one row per task with its glyph, phase and elapsed clock, and the "asking you" footer.
@@ -181,7 +188,8 @@ The keys, as built, are shown in the footer of each view:
 
 | View | Keys |
 |---|---|
-| List | `↑↓` move · `↵` or `→` open the selected run · `Ctrl+R Ctrl+R` resume · `Ctrl+S Ctrl+S` stop · `Ctrl+X Ctrl+X` remove · `esc` quit |
+| List, box bare (`@`) | `↑↓` move · `↵` or `→` open the selected run · `Ctrl+R Ctrl+R` resume · `Ctrl+S Ctrl+S` stop · `Ctrl+X Ctrl+X` remove · `esc` quit · any other key types into the box |
+| List, box typed in | `↵` start planning · `shift+↵` or `ctrl+j` new line · `esc` or `Ctrl+C` reset the box to `@` · `Ctrl+R/S/X` twice as above · arrows move the cursor · while the repo pop-up is open, `↑↓` pick and `Tab`/`↵` choose |
 | Watch | `↑↓` pick a task · `→` or `↵` open its worker · `←` back to the list · `Ctrl+S Ctrl+S` stop this run · `esc` quit |
 | Steps (a planning run) | `↑↓` pick a step · `→` or `↵` open its conversation · `←` back to the list · `Ctrl+S Ctrl+S` stop this run (while it runs) · `esc` quit |
 | The go question | `↵` start the build · `n` not now · `←` back to the list · `esc` quit, leaving the question in place |

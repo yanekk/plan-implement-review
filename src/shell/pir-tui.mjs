@@ -17,7 +17,8 @@
 // are painted with render.mjs's exact style→colour mapping (pir-view.mjs's SGR map carries render's keys
 // unchanged alongside the list's), which keeps the watch frame byte-for-byte the coordinator's display.
 
-import { join } from 'node:path';
+import { join, resolve as resolvePath } from 'node:path';
+import { homedir } from 'node:os';
 import { readLogTail } from './commands.mjs';
 
 import { buildDisplay } from '../core/display.mjs';
@@ -30,12 +31,15 @@ import { resolveLiveness } from './identity.mjs';
 import { indexDir, listRecords } from './index-store.mjs';
 import { readSnapshot } from './snapshot-store.mjs';
 import { stopRun, removeRun } from './control-run.mjs';
-import { resumeRun, startRun } from './launch.mjs';
+import { resumeRun, startPlanRun, startRun } from './launch.mjs';
 import { updateRecord } from './index-store.mjs';
 import { planHome } from './plan-home.mjs';
 import { FrameView, paintLine } from './pir-view.mjs';
 import { createConversationView } from './conversation-view.mjs';
 import { createDashboardPublisher } from './dashboard-publish.mjs';
+import { createListView } from './list-view.mjs';
+import { repoRoots, rootsLabel, scanRepos } from './repo-scan.mjs';
+import { NOTES, parseBoxText, startFailedNote } from '../core/planbox.mjs';
 import { ProcessTerminal, TuiAltScreen, TUI_KEYBINDINGS, getKeybindings, isKeyRelease, parseKey } from '@earendil-works/pi-tui';
 
 // The spinner frames, one per refresh (a poll tick). The SAME Braille frames render.mjs uses, so a live
@@ -146,7 +150,7 @@ function footerLine(context, ui, rows = []) {
   return lineOf('↑↓ move · ↵ open · Ctrl+R resume · Ctrl+S stop · Ctrl+X remove · esc quit', 'hint');
 }
 
-// buildListFrame(dashboard, ui) → frame (DESIGN §2.3, §2.11).
+// buildListFrame(dashboard, ui, { columns, rows }) → frame (DESIGN §2.3, §2.11).
 //
 //   dashboard = { rows, counts } — buildDashboard's output (T04). rows are the resolved run views in the
 //               order the caller sorted them; counts is the tallies line's source.
@@ -159,45 +163,54 @@ function footerLine(context, ui, rows = []) {
 // 'selected' `▎` span, which paintLine (pir-view.mjs) turns into a full-width grey band when colour is on.
 //
 // `columns` is the terminal width; REPO widens with it (repoWidth), everything else is fixed.
-export function buildListFrame(dashboard, ui = initialUi(), { columns = DEFAULT_COLS } = {}) {
+//
+// `rows` (dashboard-plan-box §2.7, T04) is the line budget of the list block when the list sits above the
+// new-plan box (list-view.mjs). Given, the frame is the list block alone — no note and no footer, since
+// the list view draws those under and around the box — windowed to the budget by windowListBlock. Absent,
+// the frame is exactly today's: the non-TTY path has no box, so it keeps its footer and its get-started
+// line, which there still points at `pir start`.
+export function buildListFrame(dashboard, ui = initialUi(), { columns = DEFAULT_COLS, rows: budget } = {}) {
   const repoCol = repoWidth(columns);
   const { rows = [], counts = { running: 0, finished: 0, crashed: 0, stopped: 0, waiting: 0, total: 0 } } = dashboard ?? {};
-  const lines = [];
+  const title = [span('pir', 'head'), span('  runs on this machine', 'dim')];
+  const header = lineOf(
+    '  ' + pad('SLUG', COL.slug) + pad('TYPE', COL.type) + pad('STATE', COL.state) + pad('REPO', repoCol) + pad('PROGRESS', COL.progress) + 'WK',
+    'dim',
+  );
+  const rowLine = (v, i) => {
+    const selected = i === ui.sel;
+    // A run is "live" only while running; a non-running run's slug is dimmed so the eye lands on the
+    // active ones. The state colour lives on the state cell, separately, so both signals show at once.
+    const live = v.state === 'running';
+    // A planning run (pir-plan-command §2.10): TYPE `plan` magenta, its label dimmed in quotes until it has
+    // a slug, its display state, and its steps in PROGRESS. A record without `kind` is a build, `work`.
+    // isPlan is the rule runDisplayState uses, so TYPE, STATE and PROGRESS never disagree on a row.
+    const plan = isPlan(v);
+    const labelled = plan && !!v.record?.label;
+    const st = stateCell(v.display ?? v.state);
+    const prog = plan ? { text: planProgress(v.snap?.runState), style: v.state === 'crashed' ? 'bar-crash' : null } : progressCell(v.state, v.progress);
+    return [
+      span(selected ? '▎ ' : '  ', selected ? 'selected' : null), // the selected-row mark (paintLine)
+      span(pad(displayName(v), COL.slug), live && !labelled ? null : 'dim'),
+      span(pad(plan ? 'plan' : 'work', COL.type), plan ? 'type-plan' : 'type-work'),
+      span(pad(st.text, COL.state), st.style),
+      span(pad(v.repo, repoCol), 'dim'),
+      span(pad(prog.text, COL.progress), prog.style),
+      span(v.workers > 0 ? String(v.workers) : '·', 'dim'),
+    ];
+  };
 
-  lines.push([span('pir', 'head'), span('  runs on this machine', 'dim')]);
+  if (budget != null) return windowListBlock({ title, header, rows, rowLine, sel: ui.sel, counts: countsLine(counts), budget });
+
+  const lines = [];
+  lines.push(title);
   lines.push([]); // a blank spacer line
 
   if (rows.length === 0) {
     lines.push(lineOf('  No runs yet — start one with `pir start {slug}`', 'dim'));
   } else {
-    lines.push(
-      lineOf(
-        '  ' + pad('SLUG', COL.slug) + pad('TYPE', COL.type) + pad('STATE', COL.state) + pad('REPO', repoCol) + pad('PROGRESS', COL.progress) + 'WK',
-        'dim',
-      ),
-    );
-    rows.forEach((v, i) => {
-      const selected = i === ui.sel;
-      // A run is "live" only while running; a non-running run's slug is dimmed so the eye lands on the
-      // active ones. The state colour lives on the state cell, separately, so both signals show at once.
-      const live = v.state === 'running';
-      // A planning run (pir-plan-command §2.10): TYPE `plan` magenta, its label dimmed in quotes until it has
-      // a slug, its display state, and its steps in PROGRESS. A record without `kind` is a build, `work`.
-      // isPlan is the rule runDisplayState uses, so TYPE, STATE and PROGRESS never disagree on a row.
-      const plan = isPlan(v);
-      const labelled = plan && !!v.record?.label;
-      const st = stateCell(v.display ?? v.state);
-      const prog = plan ? { text: planProgress(v.snap?.runState), style: v.state === 'crashed' ? 'bar-crash' : null } : progressCell(v.state, v.progress);
-      lines.push([
-        span(selected ? '▎ ' : '  ', selected ? 'selected' : null), // the selected-row mark (paintLine)
-        span(pad(displayName(v), COL.slug), live && !labelled ? null : 'dim'),
-        span(pad(plan ? 'plan' : 'work', COL.type), plan ? 'type-plan' : 'type-work'),
-        span(pad(st.text, COL.state), st.style),
-        span(pad(v.repo, repoCol), 'dim'),
-        span(pad(prog.text, COL.progress), prog.style),
-        span(v.workers > 0 ? String(v.workers) : '·', 'dim'),
-      ]);
-    });
+    lines.push(header);
+    rows.forEach((v, i) => lines.push(rowLine(v, i)));
   }
 
   lines.push([]);
@@ -207,6 +220,68 @@ export function buildListFrame(dashboard, ui = initialUi(), { columns = DEFAULT_
   if (ui.note) lines.push(lineOf(ui.note, 'dim'));
   lines.push(footerLine('list', ui, rows));
   return lines;
+}
+
+// The get-started line under the box (dashboard-plan-box §2.7): the box is right below it, so it points there.
+export const EMPTY_LIST_BOX = '  No runs yet — type after @ below to plan something new';
+
+// windowListBlock → the list block cut to `budget` lines (dashboard-plan-box §2.7, user 2026-09-26).
+// The block is title, spacer, header, rows, spacer, counts, spacer. When it does not fit, the three spacers
+// go first (bottom one first), then the title; the header and the counts line always stay. The rows then
+// get what is left, at least one slot: they scroll so the selected row is visible, and a dim `↑ n more` /
+// `↓ n more` takes the first / last slot when rows are cut on that side and there is room for the marker
+// plus at least one row. With one slot only, it is the selected row and no marker shows.
+function windowListBlock({ title, header, rows, rowLine, sel, counts, budget }) {
+  const n = rows.length;
+  const need = Math.max(1, n); // the empty list's one line counts as one row that always shows
+  let keep = 4; // droppables still shown, dropped in the order sp3, sp2, sp1, title
+  while (keep > 0 && 2 + keep + need > budget) keep -= 1;
+  const slots = Math.max(1, budget - 2 - keep);
+  const has = (i) => keep > 3 - i; // 0: sp3, 1: sp2, 2: sp1, 3: title — dropped in that order
+
+  let body;
+  if (n === 0) body = [lineOf(EMPTY_LIST_BOX, 'dim')];
+  else {
+    const s = Math.min(Math.max(0, sel | 0), n - 1);
+    const w = rowWindow(n, s, slots);
+    body = [];
+    if (w.up > 0) body.push(lineOf(`  ↑ ${w.up} more`, 'dim'));
+    for (let i = w.start; i < w.end; i++) body.push(rowLine(rows[i], i));
+    if (w.down > 0) body.push(lineOf(`  ↓ ${w.down} more`, 'dim'));
+  }
+
+  const lines = [];
+  if (has(3)) lines.push(title);
+  if (has(2)) lines.push([]);
+  if (n > 0) lines.push(header);
+  lines.push(...body);
+  if (has(1)) lines.push([]);
+  lines.push(counts);
+  if (has(0)) lines.push([]);
+  return lines;
+}
+
+// rowWindow(n, sel, slots) → { start, end, up, down }: which rows show in `slots` lines, and how many are
+// hidden above and below. The window is stateless — centred on the selection and clamped to the ends — so
+// the pure frame needs no scroll offset carried between paints. Markers cost a slot each, so the widest
+// window whose markers still fit wins; one slot is always the selected row alone.
+export function rowWindow(n, sel, slots) {
+  if (n <= slots) return { start: 0, end: n, up: 0, down: 0 };
+  for (let v = slots; v >= 1; v--) {
+    const start = Math.min(Math.max(0, sel - Math.floor((v - 1) / 2)), n - v);
+    const up = start > 0 ? start : 0;
+    const down = start + v < n ? n - start - v : 0;
+    if (v + (up > 0) + (down > 0) <= slots) return { start, end: start + v, up, down };
+  }
+  // No marker fits beside a row: the slots are all rows, centred on the selection, and no marker shows.
+  const start = Math.min(Math.max(0, sel - Math.floor((slots - 1) / 2)), n - slots);
+  return { start, end: start + slots, up: 0, down: 0 };
+}
+
+// listFooter(ui, rows) → the list's footer line (the armed confirmation, or the key hint), for the list view
+// to draw under its box (dashboard-plan-box §2.6). The same line buildListFrame ends with.
+export function listFooter(ui, rows = []) {
+  return footerLine('list', ui ?? initialUi(), rows);
 }
 
 // The counts line (§2.3, §2.11): the total, then the running count green and the crashed count red, with
@@ -784,6 +859,8 @@ async function runTui({
   drop,
   follow,
   publisher = null,
+  startPlan = startPlanRun,
+  scan = scanRepos,
   initial = initialUi(),
 } = {}) {
   const dir = indexDir({ env });
@@ -819,6 +896,72 @@ async function runTui({
   // on every repaint costs nothing on a refresh tick or a cursor move.
   function publish(dash) {
     publisher?.update(ui, dash.rows);
+  }
+
+  // The runs list with its new-plan box (dashboard-plan-box §2.1, §3.2), mounted in the frame's place on a
+  // screen that can mount a component and owns the keyboard (the pi-tui screen). A non-TTY screen, or a test's
+  // paint-only fake, keeps today's painted list and key path: buildListFrame's box-less form is for exactly
+  // that (T04). Built once and kept, so its text survives a refresh; it is reset to `@` on a start (§2.2).
+  const boxed = typeof screen.mount === 'function' && typeof screen.listen === 'function';
+  const roots = repoRoots(env);
+  const rootsText = rootsLabel(roots, env);
+  // The repos the pop-up last offered: the list view scans once per non-bare stretch (§2.4) through this, and
+  // Enter parses against the same list the person just picked from. Scanned afresh only if it never scanned.
+  let lastRepos = null;
+  const repos = () => (lastRepos = scan({ env }));
+  let listView = null;
+  // What the list view's last handleInput decided (its callbacks run synchronously inside it).
+  let routed = null;
+  function getListView() {
+    if (!listView) {
+      listView = createListView({
+        tui: host,
+        colour: screen.colour ?? false,
+        repos,
+        roots: rootsText,
+        home: resolvePath(env.HOME || homedir()),
+        onSubmit: (text) => (routed = { kind: 'submit', text }),
+        onListKey: (data) => (routed = { kind: 'list', data }),
+        onQuit: () => (routed = { kind: 'quit' }),
+      });
+    }
+    return listView;
+  }
+
+  function paintList(dash) {
+    const lv = getListView();
+    lv.update({ dashboard: dash, ui });
+    screen.mount(lv);
+    screen.renderNow();
+  }
+
+  // Enter on a box that is not bare (§2.5): a refusal keeps the text and says why; a start resets the box and
+  // lands in the planner's conversation exactly as `pir plan` does (openPlanner's ui, with the run's key, since
+  // a run id alone could repeat across repos).
+  function submitBox(text) {
+    const lv = getListView();
+    const r = parseBoxText(text, lastRepos ?? repos(), { roots: rootsText });
+    if (!r.ok) {
+      // The paths as the pop-up shows them, home as `~`: absolute, two of them overran 80 columns and the
+      // second was cut off (T06 drill).
+      const note = r.reason === 'ambiguous-repo' ? NOTES.ambiguousRepo(r.name, r.paths.map((p) => rootsLabel([p], env))) : r.note;
+      lv.update({ note });
+      return;
+    }
+    let s;
+    try {
+      s = startPlan(r.brief, { cwd: r.repo.path, env, kill, exec });
+    } catch (err) {
+      lv.update({ note: startFailedNote(r.repo.name, err?.message ?? String(err)) });
+      return;
+    }
+    if (!s?.started) {
+      lv.update({ note: startFailedNote(r.repo.name, s?.reason ?? 'unknown') });
+      return;
+    }
+    lv.reset();
+    lastRepos = null;
+    ui = { ...initialUi(), view: 'watch', openSlug: s.runId, openKey: `${s.record?.repo}__${s.runId}`, openStep: 'plan' };
   }
 
   function closeConv() {
@@ -937,6 +1080,8 @@ async function runTui({
       const columns = Math.max(20, stdout.columns || DEFAULT_COLS);
       const progress = goOpen(dash.rows, ui) && view.record ? goProgress(view) : null;
       screen.paint(buildWatchFrame(view, { now: now(), spinnerChar, ui, columns, logTail, progress }));
+    } else if (boxed) {
+      paintList(dash);
     } else {
       screen.paint(buildListFrame(dash, ui, { columns: Math.max(20, stdout.columns || DEFAULT_COLS) }));
     }
@@ -1002,6 +1147,27 @@ async function runTui({
             conv.handleInput(Buffer.isBuffer(data) ? data.toString('utf8') : String(data ?? ''));
             if (ui.view === 'worker' && !settled) paintConv(read());
             return;
+          }
+          // On the list the box decides first (routeBoxKey, §2.3): a list key takes today's path below
+          // unchanged, a submit starts the plan, and anything else was the box's own.
+          if (boxed && ui.view === 'list' && !ui.openStep) {
+            routed = null;
+            getListView().handleInput(data);
+            const r = routed;
+            routed = null;
+            // A key the box took (or a submit, or a reset) never reaches the reducer, whose invariant is that
+            // every event but a chord's second half clears `armed` and the one-shot `note`. Without this, Ctrl+S,
+            // then typing, then one more Ctrl+S stopped the run on a single press (T06 drill).
+            if (r?.kind !== 'list' && (ui.armed || ui.note)) {
+              ui = { ...ui, armed: null, note: null };
+              if (r?.kind !== 'quit' && r?.kind !== 'submit') repaint();
+            }
+            if (r?.kind === 'quit') return finish();
+            if (r?.kind === 'submit') {
+              submitBox(r.text);
+              return repaint();
+            }
+            if (r?.kind !== 'list') return; // the box took it and asked pi-tui for a render itself
           }
           const key = decodeKey(data);
           if (key === 'quit') return finish(); // Esc or Ctrl+C: leave pir
