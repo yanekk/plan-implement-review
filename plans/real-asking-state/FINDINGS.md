@@ -17,6 +17,7 @@ Legend: 📌 fact learned · 🐞 bug found · ✅ verified by hand with the use
 
 | Date | | Finding |
 |---|---|---|
+| 2026-09-27 | ⚠️ | T01: `./install.sh` not run by implementer or reviewer, the task bars it during a live parallel run. The new `ask` wording reaches `~/.claude/skills/pir-worker/SKILL.md` only once someone installs after the run. |
 | 2026-09-26 | 📌 | Planning: SDK 0.3.282 `UserPromptSubmitHookInput.source` is `user`/`sdk`/`system`/…; `SDKTaskNotificationMessage` precedes a background wake-up; `SDKUserMessageReplay` has `isReplay`. None yet measured against Remote Control input (T00). |
 | 2026-09-26 | 📌 | Planning, from the `pir-remote-control` session: Remote Control-typed input yields no `user` message and no `bridge_state` in pir's stream, only the new turn's `system/init` (Claude Code 2.1.283). |
 | 2026-09-25 | 🐞 | Live-workers run: T10 dropped a `question` report before an `ask`-bin `npm i`, auto mode allowed it with no prompt, and its row read `asking you` while it worked to `implemented`. The origin of this plan. |
