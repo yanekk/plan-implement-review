@@ -219,6 +219,10 @@ What it tells you at a glance:
   stops and waits, highlighted in amber, and its clock stops while it waits. Select its row and
   open it (→ or Enter): the worker's conversation opens inside `pir`, and you answer there in plain
   English, or pick from its question or allow its command; it carries on by itself. Every other task keeps moving meanwhile.
+  A row says `asking you` only when the worker has actually stopped for you, and it stays that way
+  until you answer: a worker still finishing the turn it asked in reads as working, and a background
+  job waking it up does not count as your answer. See
+  [human-flow.md](docs/human-flow.md#when-a-row-reads-asking-you).
 - **Or answer from your phone.** While a worker waits on you, its session is also opened to
   Claude's Remote Control: the Claude app notifies you, and you can answer on claude.ai or your phone
   instead of in `pir`. Once you have answered and the worker is back at work, it is closed again.

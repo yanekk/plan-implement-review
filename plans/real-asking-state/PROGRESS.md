@@ -28,10 +28,10 @@ done · ⛔ blocked, needs a human.
 | T01 | worker-contract | — | ✅ | |
 | T02 | waiting-predicate | — | ✅ | |
 | T03 | answer-only-unpark | T00, T02 | ✅ | |
-| T04 | docs | T01, T03 | ⬜ | |
+| T04 | docs | T01, T03 | 🔍 | human-flow.md gains the §2.1 predicate, the §2.2 un-park table and the §2.3 no-report rule for `ask` actions (Live actions section rewritten); run-lifecycle.md updated for the asking row, clock and Remote Control. README one sentence. Deviation: control-folder.md unchanged, it does not describe the un-park. |
 | T05 | live-asking-check | T04 | ⬜ | |
 
-**Review queue:** *(empty)*
+**Review queue:** T04
 
 ## Blocked on the user
 
