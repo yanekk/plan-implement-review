@@ -285,7 +285,10 @@ export function createConversationView({
     const out = [];
 
     const where = m.readOnly ? (m.ended ? 'exited, read only' : 'finished, read only') : 'live';
-    out.push(paint([span(`${taskId}`, 'head'), span(`  worker ${String(worker?.workerId ?? '?').slice(0, 8)} · ${where}`, 'dim'), span(`  · ${run?.slug ?? ''}`, 'dim')], w));
+    // The coordinator agent is not a worker (pir-coordinator DESIGN §2.1); calling it one on its own header
+    // misled in the T07 drill.
+    const who = taskId === 'coordinator' ? 'agent' : 'worker';
+    out.push(paint([span(`${taskId}`, 'head'), span(`  ${who} ${String(worker?.workerId ?? '?').slice(0, 8)} · ${where}`, 'dim'), span(`  · ${run?.slug ?? ''}`, 'dim')], w));
     out.push(paint([span('─'.repeat(w), 'dim')], w));
 
     const bottom = [];

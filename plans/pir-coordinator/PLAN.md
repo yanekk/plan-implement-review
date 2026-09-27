@@ -1,6 +1,6 @@
 # Implementation plan
 
-10 tasks in 4 phases. Each has a file in [tasks/](tasks/) with its goal, the files it touches, the
+12 tasks in 4 phases. Each has a file in [tasks/](tasks/) with its goal, the files it touches, the
 interfaces it defines, and what "done" means.
 
 Track state in [PROGRESS.md](PROGRESS.md). Read [DESIGN.md](DESIGN.md) first.
@@ -65,6 +65,8 @@ T04 is the wirer for answering: it starts the agent in `coordinate.mjs`, briefs 
 | [T07](tasks/T07-coordinator-drill.md) | coordinator-drill | T06 |
 | [T08](tasks/T08-docs.md) | docs | T02, T04, T05, T06 |
 | [T09](tasks/T09-live-coordinator-check.md) | live-coordinator-check | T07, T08 |
+| [T10](tasks/T10-end-tests-fix.md) | end-tests-fix | T05; blocks T09 |
+| [T11](tasks/T11-end-helper-row.md) | end-helper-row | T06, T10; blocks T09 |
 
 At the end of phase 3 the feature is documented and seen working on a real run with the person's phone.
 

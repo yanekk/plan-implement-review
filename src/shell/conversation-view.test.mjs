@@ -561,7 +561,7 @@ test('the coordinator agent\'s conversation shows its pointer reply, pir\'s hand
     said('All five tasks are built and the branch is ready: git merge pir/demo. The report is plans/demo/REPORT.md.'),
   );
   const text = () => v.render(80).map((l) => stripTerminalSequences(l)).join('\n');
-  assert.match(text(), /^coordinator {2}worker sess-1/m, 'headed as the coordinator');
+  assert.match(text(), /^coordinator {2}agent sess-1/m, "headed as the coordinator agent, not a worker (T07 drill)");
   assert.match(text(), /coordinator ▸ T01 \(layout\) has a question I will not decide/);
   assert.match(text(), /pir ▸ The run is ready to merge\. Report: plans\/demo\/REPORT\.md\./);
   assert.match(text(), /coordinator ▸ All five tasks are built and the branch is ready: git merge\s+pir\/demo\./);

@@ -128,7 +128,11 @@ const ROW_STYLE = {
 export function styledLines(display, { spinnerChar = SPINNER[0] } = {}) {
   const { summary, rows, footer, branch } = display;
   const out = [summaryLine(summary, footer, branch, spinnerChar)];
-  for (const r of rows) out.push(rowLine(r, spinnerChar));
+  // The label column fits the longest label shown, so a long one (`asking coordinator · allow a command?`)
+  // does not push its own row's clock out of line with the others (pir-coordinator T07 drill). Floor 24, the
+  // width it always had; capped so one odd label cannot push every clock off a narrow window.
+  const labelWidth = Math.min(LABEL_MAX, Math.max(LABEL_MIN, ...rows.map((r) => [...(r.label ?? '')].length)));
+  for (const r of rows) out.push(rowLine(r, spinnerChar, labelWidth));
   for (const f of footerLines(footer, summary, spinnerChar)) out.push(f);
   return out;
 }
@@ -162,13 +166,16 @@ function summaryLine(summary, footer, branch, spinnerChar) {
   return { text: `${spinnerChar} ${branch || 'run'} · ${parts.join(' · ')}${ceiling}`, style: null };
 }
 
-function rowLine(r, spinnerChar) {
+const LABEL_MIN = 24;
+const LABEL_MAX = 40;
+
+function rowLine(r, spinnerChar, labelWidth = LABEL_MIN) {
   const glyph = GLYPH[r.kind] === null || GLYPH[r.kind] === undefined ? spinnerChar : GLYPH[r.kind];
   // For an idle/queued row the glyph is a faint dot; keep the columns aligned enough to read.
   const g = r.kind === 'waiting' || r.kind === 'queued' ? '·' : glyph;
   const id = r.id.padEnd(4);
   const slug = (r.slug ?? '').padEnd(22);
-  const label = r.label.padEnd(24);
+  const label = r.label.padEnd(labelWidth);
   const el = fmtElapsed(r.elapsedMs);
   const text = `  ${g} ${id} ${slug} ${label} ${el}`.replace(/\s+$/, '');
   return { text, style: ROW_STYLE[r.kind] ?? null };
@@ -231,7 +238,7 @@ function agentHandoffLines(footer, summary, spinnerChar) {
     if (why) lines.push({ text: `  ${why}`, style: 'red' });
     return [...lines, ...report];
   }
-  return [blank, { text: `${spinnerChar} all ${summary.total} task(s) merged · preparing the hand-off: syncing main, writing the report`, style: 'active' }];
+  return [blank, { text: `${spinnerChar} all ${summary.total} task(s) merged · preparing: syncing main, writing the report`, style: 'active' }];
 }
 
 // createRenderer({ stream }) → { paint(display), line(text), close() } (DESIGN §2.3, T15).
