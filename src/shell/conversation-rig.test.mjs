@@ -270,7 +270,7 @@ for (const [cols, rows] of [[80, 24], [120, 40]]) {
 
       screen.send('c');
       s = (await screen.waitFor(/coordinator ▸ T01 wants to push its task branch/)).join('\n');
-      assert.match(s, /^coordinator {2}worker /m, 'the agent\'s conversation is open');
+      assert.match(s, /^coordinator {2}agent /m, 'the agent\'s conversation is open');
 
       screen.send('where are we?');
       await screen.waitFor(/where are we\?/);

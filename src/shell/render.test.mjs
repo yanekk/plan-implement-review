@@ -397,5 +397,25 @@ test('formatLines: `asking coordinator` rows and the agent hand-off lines (ready
   assert.deepEqual(red.slice(-3), ['✗ not ready · tests red on pir/demo — no merge offered', '  test `npm test` exited 1 · output: /c/tests.log', '  report: plans/demo/REPORT.md']);
 
   const prep = formatLines(buildDisplay({ branch: 'pir/demo', ceiling: 2, tasks: done, handoff: { state: 'preparing', reportPath: null } }, { now: 0 }), { spinnerChar: '*' });
-  assert.equal(prep.at(-1), '* all 1 task(s) merged · preparing the hand-off: syncing main, writing the report');
+  // Short enough to fit 80 columns whole; the T07 drill found the longer wording cut to `writing the repor`.
+  assert.equal(prep.at(-1), '* all 1 task(s) merged · preparing: syncing main, writing the report');
+  assert.ok(prep.at(-1).length <= 78, 'fits an 80-column window with the view\'s margin');
+});
+
+// pir-coordinator T07 drill: `asking coordinator · allow a command?` is 37 columns, past the 24 the label
+// column had, and pushed that row's clock one space after its label while the others stayed in line.
+test('every row\'s clock lines up when one label is longer than the column', () => {
+  const t = (id, over) => ({ id, slug: 'one', deps: [], done: false, phase: 'building', since: 0, doneMs: null, question: null, ...over });
+  const lines = formatLines(
+    buildDisplay({ branch: 'pir/demo', ceiling: 3, tasks: [t('T01', { phase: 'asking', holder: 'coordinator', asking: 'permission' }), t('T02'), t('T03', { phase: 'asking', holder: 'person', asking: 'questions' })] }, { now: 65000 }),
+    { spinnerChar: '*' },
+  );
+  const rows = lines.slice(1, 4);
+  assert.match(rows[0], /asking coordinator · allow a command\?/);
+  const clockAt = rows.map((r) => r.lastIndexOf('1:05'));
+  assert.ok(clockAt[0] > 0, rows.join('\n'));
+  assert.deepEqual(clockAt, [clockAt[0], clockAt[0], clockAt[0]], `the clocks line up:\n${rows.join('\n')}`);
+  // Short labels keep the column they always had.
+  const plain = formatLines(buildDisplay({ branch: 'pir/demo', ceiling: 1, tasks: [t('T01')] }, { now: 65000 }), { spinnerChar: '*' });
+  assert.equal(plain[1], `  * T01  ${'one'.padEnd(22)} ${'building'.padEnd(24)} 1:05`);
 });

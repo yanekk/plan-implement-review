@@ -234,7 +234,7 @@ plans/{slug}/REPORT.md` under it, and the dashboard lists the run as `● ready 
 counted in `waiting for you`. A red branch (the tests fail, or the main sync could not be resolved)
 gets `✗ not ready · tests red on pir/{slug} — no merge offered` with the reason; the report is still
 written and says so, and the run waits the same way. While it prepares, the footer reads `all N
-task(s) merged · preparing the hand-off: syncing main, writing the report`.
+task(s) merged · preparing: syncing main, writing the report`.
 
 The run stays open, its agent reachable in `pir` and on the phone, until:
 
@@ -305,5 +305,3 @@ All under the run's gitignored control folder ([control-folder.md](control-folde
   never reaches the agent or the person (T00 saw `rm -rf` and `git reset --hard` run unasked in auto
   mode).
 - **A red hand-off lists as `running`** on the dashboard; only a ready one has its own list state.
-- **The agent's conversation is headed like a worker's** (`coordinator  worker <id>`) in the
-  conversation view.

@@ -14,6 +14,11 @@ Legend: 🐞 defect found · ✅ verified by hand with the user · 📌 worth kn
 
 | Date | | Finding |
 |---|---|---|
+| 2026-09-27 | 🔄 | T07: red tests at the end get one fix worker, like a main-sync conflict; still red after it ends `not ready` (user). Added T10 end-tests-fix, blocks T09. Replaces labelling the red end on the dashboard. |
+| 2026-09-27 | 🔄 | T07: the main-sync (and T10 tests-fix) worker gets a row in `pir` so a passed-on question is answerable there, not only on the phone (user). Added T11 end-helper-row, blocks T09. |
+| 2026-09-27 | 🐞 | T07 drill fixed: agent header read `coordinator  worker <id>` (now `agent`); a label over 24 columns pushed its row's clock out of line; `preparing the hand-off…` was cut at 80 columns (now `preparing: syncing main, writing the report`). |
+| 2026-09-27 | 📌 | T07: the run view's title reads `● running` while the run waits in `ready to merge`, as it did for `asking you` before this plan; the footer says ready. Left. |
+| 2026-09-27 | 📌 | Pre-existing: the watch hint without the agent (`↑↓ pick a task · … · esc quit`) is cut to `esc` at 80 columns. Not this plan's screen. |
 | 2026-09-27 | 📌 | T06 review: the agent's conversation is headed `coordinator  worker <id>`, and a run whose agent hand-off is red lists as `running`, not as waiting on the person. Both left for the T07 drill to judge. |
 | 2026-09-27 | 📌 | T06 shows `runState.handoff` but gives the `main-sync` worker no row or key: a question the agent passes on from it is reachable only on the phone, not in `pir`. Needs a task or T07/T08 decision. |
 | 2026-09-27 | 📌 | T05: the plan rig drives the end to `ready` through the real `pir` (fake agent `coordinatorScript`); the finished path and `renderFinished` in `main()` are not. T06 should show `runState.handoff` and the `main-sync` worker (role `sync`). |
