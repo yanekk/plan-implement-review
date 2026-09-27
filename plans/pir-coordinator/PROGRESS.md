@@ -30,7 +30,7 @@ done · ⛔ blocked, needs a human.
 | T04 | answer-first-routing | T03 | ✅ | |
 | T05 | end-of-run-handoff | T04 | ✅ | |
 | T06 | coordinator-screen | T04, T05 | ✅ | |
-| T07 | coordinator-drill | T06 | ⬜ | |
+| T07 | coordinator-drill | T06 | ✅ | |
 | T08 | docs | T02, T04, T05, T06 | ✅ | |
 | T09 | live-coordinator-check | T07, T08 | ⬜ | |
 | T10 | end-tests-fix | T05; blocks T09 | ⬜ | |
