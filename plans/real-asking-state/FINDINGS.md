@@ -17,6 +17,7 @@ Legend: 📌 fact learned · 🐞 bug found · ✅ verified by hand with the use
 
 | Date | | Finding |
 |---|---|---|
+| 2026-09-27 | ⚠️ | T01: `./install.sh` not run by implementer or reviewer, the task bars it during a live parallel run. The new `ask` wording reaches `~/.claude/skills/pir-worker/SKILL.md` only once someone installs after the run. |
 | 2026-09-27 | 📌 | T00 review: not probed are a Remote Control message typed while a turn is open, and `origin` on `result`, which `readEntry` drops. T03 keys on `command_lifecycle` and tests the mid-turn case itself. |
 | 2026-09-27 | ✅ | T00 verified by hand with the user's phone: a Remote Control typed reply, an AskUserQuestion pick and a permission allow each reached the probe worker; pick and allow logged `answered-remotely`. Recorded in `src/core/fixtures/remote-answer-sample.ndjson`. |
 | 2026-09-27 | 📌 | T00 stream-only candidate separates, and T03 should use it: a Remote Control-typed turn opens with `command_lifecycle` `queued`/`started`; pir sends and wake-ups never emit it. Its `result` has `origin.kind` `human`, a wake-up's `task-notification`. Supersedes the `system/init`-only row. |
