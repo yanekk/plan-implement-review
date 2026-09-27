@@ -27,7 +27,7 @@ done · ⛔ blocked, needs a human.
 | T01 | background-fold | — | ✅ | Reviewed clean, no fix commit. `background` fold per DESIGN §2.2; `wakeUp` gained third arg `still`; fake-log test sits in `worker-proc.test.mjs`. Probed: six mutations of the fold each fail a test; `readEntry`'s new `background` kind breaks no other consumer; the one real-run log with a job shows no idle-and-empty moment before a wake-up. |
 | T02 | stopped-predicate | — | ⬜ | |
 | T03 | planning-steps-asking | T02 | ⬜ | |
-| T04 | worker-reports-every-ask | — | ⬜ | |
+| T04 | worker-reports-every-ask | — | ✅ | |
 | T05 | docs | T03, T04, T06 | ⬜ | |
 | T06 | stopped-asking-live | T01, T02 | ⬜ | |
 
