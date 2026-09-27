@@ -231,7 +231,10 @@ What it tells you at a glance:
   English, or pick from its question or allow its command; it carries on by itself. Every other task keeps moving meanwhile.
   A row says `asking you` only when the worker has actually stopped for you, and it stays that way
   until you answer: a worker still finishing the turn it asked in reads as working, and a background
-  job waking it up does not count as your answer. See
+  job waking it up does not count as your answer. Any worker that stops with nothing left running
+  reads `asking you`, even if it asked in passing without flagging it, or stopped by mistake (then
+  tell it to carry on); one waiting on its own tests or build in the background still reads as
+  working. The same holds for the planner and plan reviewer in `pir plan`. See
   [human-flow.md](docs/human-flow.md#when-a-row-reads-asking-you).
 - **Or answer from your phone.** While a worker waits on you, its session is also opened to
   Claude's Remote Control: the Claude app notifies you, and you can answer on claude.ai or your phone

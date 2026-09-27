@@ -15,7 +15,7 @@ cell also fixes the over-budget cell they walk past.
 **Status:** Planned 2026-09-27 on main. Nothing built. Needs `pir/real-asking-state` merged to `main`
 first (DESIGN, Base); a trial merge conflicts in `coordinate.mjs` and `harness/run.mjs` (FINDINGS).
 **Last updated:** 2026-09-27
-**Next `pir-work` will:** implement T01 (T01, T02 and T04 have no dependency).
+**Next `pir-work` will:** review T05.
 
 ## Tasks
 
@@ -28,10 +28,10 @@ done · ⛔ blocked, needs a human.
 | T02 | stopped-predicate | — | ✅ | |
 | T03 | planning-steps-asking | T02 | ✅ | |
 | T04 | worker-reports-every-ask | — | ✅ | |
-| T05 | docs | T03, T04, T06 | ⬜ | |
+| T05 | docs | T03, T04, T06 | 🔍 | human-flow.md: stopped clause, background exception, mistaken stops, interrupt, planning pointer. planning-runs.md: step asking rule. README: one sentence. No automated tests; npm test green. Deviation: task-state.md untouched, it never states when a task reads asking. |
 | T06 | stopped-asking-live | T01, T02 | ✅ | |
 
-**Review queue:** *(empty)*
+**Review queue:** T05
 
 ## Blocked on the user
 

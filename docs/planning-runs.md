@@ -131,7 +131,15 @@ A planning session reports by dropping a file into the reports folder, in the wo
 ```
 
 Questions are not reported: a planning session asks in its own conversation, and the screen shows it
-asking.
+asking. A step reads asking while its live session has a permission request or a question set pending,
+or while the session has **stopped** — its last turn ended, nothing pending, no background job of its
+own still running — and no report of that step has been accepted yet (`sessionAsking` in
+`plan-run.mjs`, using the same `stoppedOnPerson` rule as a build worker, see
+[human-flow.md](human-flow.md#when-a-row-reads-asking-you)). A stopped session reads `asking you · a
+question`, and the step's clock stops while it asks. A planner idle after its `planned` report is
+accepted is waiting on pir's checks and close, not on the person, and does not read asking; nor does a
+session idle behind a background job of its own. Remote Control is not affected: a planning session has
+it on for its whole life.
 
 A report is a claim; `pir` checks it against git before acting (`plannerChecks`, `reviewerChecks` in
 `plan-run.mjs`).
