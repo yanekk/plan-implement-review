@@ -12,9 +12,9 @@ past.
 
 **Plan reviewed:** 2026-09-27 — 4 fixed, 5 decided with the user
 
-**Status:** Planned 2026-09-26. Nothing built.
+**Status:** T02 implemented, awaiting review.
 **Last updated:** 2026-09-27
-**Next `pir-work` will:** T02 plan-box-rules: it heads the critical path.
+**Next `pir-work` will:** review T02 plan-box-rules.
 
 ## Tasks
 
@@ -24,13 +24,13 @@ done · ⛔ blocked, needs a human.
 | # | Task | Depends on | State | Notes |
 |---|---|---|---|---|
 | T01 | drop-canonical-guard | — | ⬜ | |
-| T02 | plan-box-rules | — | ⬜ | |
+| T02 | plan-box-rules | — | 🔍 | `src/core/planbox.mjs`, 51 tests. Adds `NOTES` export (§2.5 note builders). Bare box ignores `completing` (§2.3: no pop-up when bare). Typed box with pop-up open sends every key, chords included, to the box. `newLine` wins before any other rule. `←` on bare routes to the list. |
 | T03 | repo-scan | T02 | ⬜ | |
 | T04 | list-view-box | T02 | ⬜ | |
 | T05 | box-starts-plan | T03, T04 | ⬜ | |
 | T06 | plan-box-drill | T01, T05 | ⬜ | |
 
-**Review queue:** *(empty)*
+**Review queue:** T02
 
 ## Blocked on the user
 
