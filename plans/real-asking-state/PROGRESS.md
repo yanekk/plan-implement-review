@@ -26,12 +26,12 @@ done · ⛔ blocked, needs a human.
 |---|---|---|---|---|
 | T00 | remote-answer-probe | — | ⬜ | |
 | T01 | worker-contract | — | ⬜ | |
-| T02 | waiting-predicate | — | ⬜ | |
+| T02 | waiting-predicate | — | 🔍 | `core/asking.mjs` `waitingOn`; row, clock, Remote Control read it. 8 core + 6 coordinate tests. Deviation: `requestingTasks` removed; `advanceTiming`'s last argument is now `platform.workers()` (per-task activity via new `taskActivity`), since a set alone cannot tell a parked open turn from a wait. |
 | T03 | answer-only-unpark | T00, T02 | ⬜ | |
 | T04 | docs | T01, T03 | ⬜ | |
 | T05 | live-asking-check | T04 | ⬜ | |
 
-**Review queue:** *(empty)*
+**Review queue:** T02
 
 ## Blocked on the user
 
