@@ -55,6 +55,7 @@ import dynamicTask from './fixtures/dynamic-task.mjs';
 import liveWorkersDemo from './fixtures/live-workers-demo.mjs';
 import planCommand from './fixtures/plan-command.mjs';
 import realAsking from './fixtures/real-asking.mjs';
+import stoppedAsking from './fixtures/stopped-asking.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -87,6 +88,7 @@ const FIXTURES = Object.freeze({
   [liveWorkersDemo.id]: liveWorkersDemo,
   [planCommand.id]: planCommand,
   [realAsking.id]: realAsking,
+  [stoppedAsking.id]: stoppedAsking,
 });
 
 // listFixtures() → the fixture ids, in registry order.
