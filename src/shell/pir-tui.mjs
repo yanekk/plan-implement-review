@@ -38,7 +38,7 @@ import { FrameView, paintLine } from './pir-view.mjs';
 import { createConversationView } from './conversation-view.mjs';
 import { createListView } from './list-view.mjs';
 import { repoRoots, rootsLabel, scanRepos } from './repo-scan.mjs';
-import { parseBoxText, startFailedNote } from '../core/planbox.mjs';
+import { NOTES, parseBoxText, startFailedNote } from '../core/planbox.mjs';
 import { ProcessTerminal, TuiAltScreen, TUI_KEYBINDINGS, getKeybindings, isKeyRelease, parseKey } from '@earendil-works/pi-tui';
 
 // The spinner frames, one per refresh (a poll tick). The SAME Braille frames render.mjs uses, so a live
@@ -923,7 +923,10 @@ async function runTui({
     const lv = getListView();
     const r = parseBoxText(text, lastRepos ?? repos(), { roots: rootsText });
     if (!r.ok) {
-      lv.update({ note: r.note });
+      // The paths as the pop-up shows them, home as `~`: absolute, two of them overran 80 columns and the
+      // second was cut off (T06 drill).
+      const note = r.reason === 'ambiguous-repo' ? NOTES.ambiguousRepo(r.name, r.paths.map((p) => rootsLabel([p], env))) : r.note;
+      lv.update({ note });
       return;
     }
     let s;
@@ -1132,6 +1135,13 @@ async function runTui({
             getListView().handleInput(data);
             const r = routed;
             routed = null;
+            // A key the box took (or a submit, or a reset) never reaches the reducer, whose invariant is that
+            // every event but a chord's second half clears `armed` and the one-shot `note`. Without this, Ctrl+S,
+            // then typing, then one more Ctrl+S stopped the run on a single press (T06 drill).
+            if (r?.kind !== 'list' && (ui.armed || ui.note)) {
+              ui = { ...ui, armed: null, note: null };
+              if (r?.kind !== 'quit' && r?.kind !== 'submit') repaint();
+            }
             if (r?.kind === 'quit') return finish();
             if (r?.kind === 'submit') {
               submitBox(r.text);

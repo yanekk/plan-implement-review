@@ -14,7 +14,7 @@ past.
 
 **Status:** Planned 2026-09-26. Nothing built.
 **Last updated:** 2026-09-27
-**Next `pir-work` will:** T02 plan-box-rules: it heads the critical path.
+**Next `pir-work` will:** review T06 plan-box-drill.
 
 ## Tasks
 
@@ -28,10 +28,10 @@ done · ⛔ blocked, needs a human.
 | T03 | repo-scan | T02 | ✅ | |
 | T04 | list-view-box | T02 | ✅ | |
 | T05 | box-starts-plan | T03, T04 | ✅ | |
-| T06 | plan-box-drill | T01, T05 | ⬜ | |
+| T06 | plan-box-drill | T01, T05 | 🔍 | Drill driven at 80×12/80×24/120×40, kept as 8 `plan-rig.test.mjs` cases; 3 unit tests added, 2 updated. Fixed: box keys disarm a chord; ambiguous note paths with `~`. User decided: `⚠` line over the typed hint; refusal codes in words (DESIGN §2.5, §2.6, docs amended). No install: parallel build. |
 
-**Review queue:** *(empty)*
+**Review queue:** T06
 
 ## Blocked on the user
 
-Nothing.
+- `./install.sh` follows the person's merge of `pir/dashboard-plan-box` into `main`, with no run live; then confirm `~/.claude/pir-engine/src/shell/list-view.mjs` exists (DESIGN §5).

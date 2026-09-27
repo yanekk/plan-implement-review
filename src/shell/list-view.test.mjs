@@ -181,6 +181,17 @@ test('update with an armed chord shows the armed footer on a bare box', () => {
   assert.equal(lines[head - 1], 'no repo @x in ~/src — pick one from the list', 'the note sits above the head line');
 });
 
+// T06 drill: over a typed brief the typing hint hid the armed line, so a second Ctrl+S stopped a run with no
+// warning on screen (user, 2026-09-27: show it).
+test('an armed chord shows its ⚠ line over a typed box too; disarmed, the typing hint is back', () => {
+  const { v, type } = view();
+  type('@skaut a list');
+  v.update({ ui: { ...initialUi(), armed: { action: 'stop', slug: 'alpha' } } });
+  assert.equal(plain(v.render(80).at(-1)), '⚠ Ctrl+S again to stop alpha now — this kills its in-flight workers');
+  v.update({ ui: initialUi() });
+  assert.equal(plain(v.render(80).at(-1)), TYPED_HINT);
+});
+
 test('repos() is called once per typed stretch, and again after reset()', () => {
   const { v, calls, type } = view();
   v.render(80);

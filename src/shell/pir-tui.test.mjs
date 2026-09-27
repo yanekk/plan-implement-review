@@ -1508,7 +1508,7 @@ test('box: every §2.5 refusal starts nothing, keeps the text and shows the note
   const cases = [
     { keys: ['\x7f', 'hello there'], text: /^hello there/, note: 'start with @repo, then say what to plan' },
     { keys: ['nope x'], text: /^@nope x/, note: 'no repo @nope in ~/src, ~/other — pick one from the list' },
-    { keys: ['dup x'], text: /^@dup x/, note: '@dup is in more than one folder: /scratch/src/dup, /scratch/other/dup' },
+    { keys: ['dup x'], text: /^@dup x/, note: '@dup is in more than one folder: ~/src/dup, ~/other/dup' }, // home as ~, as the pop-up (T06)
     { keys: ['repo '], text: /^@repo/, note: 'say what to plan after @repo' },
   ];
   for (const c of cases) {
@@ -1526,13 +1526,13 @@ test('box: every §2.5 refusal starts nothing, keeps the text and shows the note
   }
 });
 
-test('box: startPlan refusing (no-main) or throwing both give the start-failed note, the text kept', async () => {
+test('box: startPlan refusing (no-main, in plain words) or throwing both give the start-failed note, the text kept', async () => {
   for (const plan of [() => ({ started: false, reason: 'no-main' }), () => { throw new Error('spawn failed'); }]) {
     const t = driveBox({ plan });
     await t.type('repo a brief');
     await t.key('\r');
     assert.equal(t.calls.length, 1);
-    const reason = plan.toString().includes('no-main') ? 'no-main' : 'spawn failed';
+    const reason = plan.toString().includes('no-main') ? 'it has no local main branch' : 'spawn failed';
     assert.ok(t.screen().includes(`Could not start planning in repo: ${reason}`), t.screen());
     assert.match(t.boxLine(), /^@repo a brief/);
     assert.doesNotMatch(t.screen(), /starting the planner/);
@@ -1603,4 +1603,36 @@ test('box: Ctrl+X twice removes the selected run, on a bare box and with text ty
     if (typed) { term.press('\x1b'); await settle(); }
     await done;
   }
+});
+
+// T06 drill: a key the box took never reached the reducer, so it did not disarm a half-pressed chord, and
+// Ctrl+X, a typed brief, then ONE Ctrl+X removed the run. Typing now disarms, and the next press only re-arms,
+// with its ⚠ line over the typed box (user, 2026-09-27).
+test('box: a typed key disarms a half-pressed chord; the next press only arms, and says so over the text', async () => {
+  const rows = [{ key: 'r__alpha', slug: 'alpha', repo: 'r', state: 'finished', progress: { done: 1, total: 1 }, workers: 0, record: { repo: 'r', slug: 'alpha' } }];
+  const removed = [];
+  const tty = fakeStream({ isTTY: true, columns: 100, rows: 30 });
+  const term = fakeTerminal(tty);
+  const done = openDashboard({
+    stdin: {}, stdout: tty, env: BOX_ENV, refreshMs: 60_000, now: () => NOW,
+    makeScreen: (opts) => createScreen({ ...opts, colour: false, terminal: term }),
+    load: () => buildDashboard(rows), scan: () => BOX_REPOS,
+    remove: (record) => removed.push(record.slug),
+    startPlan: () => assert.fail('nothing starts'),
+  });
+  const settle = () => new Promise((r) => setTimeout(r, 60));
+  const footer = () => drawnRows(tty.text()).filter((l) => l !== '').at(-1);
+  term.press('\x18'); await settle();
+  assert.match(footer(), /^⚠ Ctrl\+X again to remove alpha/, 'armed on the bare box');
+  for (const ch of 'repo a brief') term.press(ch);
+  await settle();
+  assert.equal(footer(), '↵ start planning · shift+↵ new line · esc clear', 'typing disarmed it');
+  term.press('\x18'); await settle();
+  assert.deepEqual(removed, [], 'one press after typing only arms');
+  assert.match(footer(), /^⚠ Ctrl\+X again to remove alpha/, 'and the ⚠ line shows over the typed box');
+  term.press('\x18'); await settle();
+  assert.deepEqual(removed, ['alpha']);
+  term.press('\x1b'); await settle();
+  term.press('\x1b'); await settle();
+  await done;
 });

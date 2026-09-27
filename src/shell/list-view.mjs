@@ -162,8 +162,11 @@ export function createListView({
     const noteText = state.note ?? state.ui?.note ?? null;
     const noteLine = noteText == null ? null : paint([span(noteText, state.note != null ? 'your-go' : 'dim')]);
 
+    // A half-pressed chord shows its ⚠ line even over a typed brief (user, 2026-09-27, T06 drill): the chords
+    // act on a typed box too (§2.3), and with the typing hint in its place the second press stopped a run
+    // with nothing on screen having said so.
     let hint;
-    if (!bare) hint = paint([span(TYPED_HINT, 'hint')]);
+    if (!bare && !state.ui?.armed) hint = paint([span(TYPED_HINT, 'hint')]);
     else {
       const footer = listFooter(state.ui, state.dashboard?.rows ?? []);
       // The suffix joins the plain key hint only, and only when it fits: an armed line is a warning, not a hint.
