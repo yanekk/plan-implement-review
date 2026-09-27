@@ -59,7 +59,7 @@ const DEFAULT_COLS = 80;
 // LABEL_MAX, plus the quotes and a space). REPO takes what the terminal has left, between REPO_MIN and
 // REPO_MAX: at 80 columns it gave up six to the label and TYPE (pir-plan-command §2.10), and a wider
 // terminal gives them back.
-const COL = { marker: 2, slug: 27, type: 6, state: 12, progress: 16, wk: 3 };
+const COL = { marker: 2, slug: 27, type: 6, state: 14, progress: 16, wk: 3 };
 const REPO_MIN = 12;
 const REPO_MAX = 24;
 function repoWidth(columns) {
@@ -92,7 +92,8 @@ export { readLogTail };
 // value uncoloured rather than being forced into one of the four.
 //
 // A planning run's row shows its display state (runDisplayState, pir-plan-command §2.10): planning and
-// reviewing green as running, `your go` amber bold (the colour of asking), the rest as a build's.
+// reviewing green as running, `your go` amber bold (the colour of asking), the rest as a build's. A running
+// build with a worker waiting on the person reads `asking you` in the same amber bold.
 function stateCell(state) {
   switch (state) {
     case 'running':
@@ -103,6 +104,8 @@ function stateCell(state) {
       return { text: '● reviewing', style: 'running' };
     case 'your-go':
       return { text: '● your go', style: 'your-go' };
+    case 'asking-you':
+      return { text: '● asking you', style: 'your-go' };
     case 'finished':
       return { text: '◌ finished', style: 'ended' };
     case 'crashed':
@@ -295,7 +298,8 @@ function countsLine(counts) {
     span(`${counts.crashed} crashed`, 'count-crash'),
   ];
   if (counts.stopped > 0) spans.push(span(` · ${counts.stopped} stopped`, 'dim'));
-  // Planning runs waiting on the person's go (pir-plan-command §2.10), amber like the row's state.
+  // Runs waiting on the person, amber like the row's state: a planning run's go (pir-plan-command §2.10)
+  // and a build with a worker asking.
   if (counts.waiting > 0) spans.push(span(' · ', 'dim'), span(`${counts.waiting} waiting for you`, 'your-go'));
   return spans;
 }

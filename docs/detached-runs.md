@@ -119,7 +119,12 @@ The snapshot is gitignored with the rest of the control folder (below).
 (done/total from the snapshot), and live-worker count. A planning row's state, progress and slug read
 differently — `planning`, `reviewing`, `your go`; `plan ✓ review …`; the brief's label in quotes before
 the plan has a name — and a `your go` row adds `· N waiting for you` to the counts line (see
-[planning-runs.md](planning-runs.md)). There is no process-number column — the person does not act on it.
+[planning-runs.md](planning-runs.md)). A running build with any task waiting on the person — a question
+or decision report, a permission request or a question set, by the same rule as the live view's `asking`
+tally (`askingCount` in `display.mjs`) — reads `asking you` in amber bold instead of `running`, and counts
+in that same `waiting for you` tally; it reads `running` again once every ask is answered. A task fixing a
+merge conflict asks nothing and does not count. This is a display state only (`runDisplayState` in
+`dashboard.mjs`): the run is still classified `running`, and every chord treats it so. There is no process-number column — the person does not act on it.
 Colour carries state and is never the only signal (glyphs carry the same state, so `NO_COLOR` and a
 colour-blind reader lose nothing): a running run is green, finished and stopped are dim, crashed is
 red; the progress bar is blue for a running run and red for a crashed one; the selected row is a dark
