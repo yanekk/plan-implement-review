@@ -18,7 +18,8 @@ back.
 
 You only ever decide. `pir` (the command running the build) applies every decision you make, after
 checking it. You cannot run a command or edit a file: your only write is a decision file in your drop
-folder, and your tools are `Read`, `Glob`, `Grep` and `Write` into that folder. Anything else is denied.
+folder, and your tools are `Read`, `Glob`, `Grep`, `Write` into that folder, and `Skill` for this skill only.
+Anything else is denied.
 
 In what you say, "the coordinator" is the command that runs the build; you are "the coordinator agent".
 
