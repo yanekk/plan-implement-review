@@ -14,7 +14,12 @@ Legend: 🐞 defect found · ✅ verified by hand with the user · 📌 worth kn
 
 | Date | | Finding |
 |---|---|---|
+| 2026-09-27 | 🔄 | Agent fence (T00): in `default` mode `EnterWorktree` (made a worktree and branch), `CronCreate` and `ListAgents` ran without `canUseTool`. User chose a `tools` allowlist (Read, Glob, Grep, Write, Skill), measured to hold; DESIGN §3.4 updated. T03 must pass `tools` through `startWorker`. |
+| 2026-09-27 | 📌 | CLI 2.1.283, `default` (T00 case 3): a Write to the absolute drop folder reached `canUseTool` ("Path is outside allowed working directories") and landed; a cwd Write was denied. Read/Glob/Grep in cwd and Skill without `allowed-tools` skip the gate. |
+| 2026-09-27 | 📌 | A cwd under `/tmp` reaches the CLI as `/private/tmp`; tool paths arrive in that form, so the gate must compare realpaths. |
+| 2026-09-27 | 📌 | CLI 2.1.283, `auto` (T00 case 2): `rm -rf ./scratch-dir` and `git reset --hard` ran with no `canUseTool` call; the classifier allowed both. The agent never sees them; plan unchanged (§2.4). |
+| 2026-09-27 | 📌 | CLI 2.1.283, `auto` (T00 case 1): `git push origin HEAD` under `permissions.ask ["Bash(git push:*)"]` reached `canUseTool` with no `matchedAskRule`, `decisionReason` or `defaultToNo`; without the rule it ran unasked. T01's settings match carries the ask bin alone. |
 | 2026-09-27 | 📌 | The runs list now reads `asking you` for a build while `askingCount` (`display.mjs`) is non-zero. T06 must make it count only person-held asks, or coordinator-held ones turn the run amber. |
 | 2026-09-27 | 📌 | SDK 0.3.282 custom tools (`createSdkMcpServer`, `tool()`) need peers `zod` ^4 and `@modelcontextprotocol/sdk` ^1.29, not installed here. Hence decision files (DESIGN §2.3). |
-| 2026-09-27 | 📌 | SDK 0.3.282 `CanUseTool` options carry `matchedAskRule {source, toolName, ruleContent}` for asks forced by a `permissions.ask` rule, and `defaultToNo`. Unmeasured on the real CLI until T00. |
+| 2026-09-27 | 📌 | SDK 0.3.282 `CanUseTool` options carry `matchedAskRule {source, toolName, ruleContent}` for asks forced by a `permissions.ask` rule, and `defaultToNo`. CLI 2.1.283 sent neither in T00's probes. |
 | 2026-09-27 | 🔄 | The person first wanted the agent to merge, then chose "leave merging to me": the agent prepares the branch and hands over (DESIGN §2.9). |

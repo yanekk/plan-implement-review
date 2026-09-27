@@ -12,7 +12,7 @@ write. **Whoever writes a cell also fixes the over-budget cell they walk past.**
 
 **Plan reviewed:** 2026-09-27 — 10 fixed, 4 decided with the user
 
-**Status:** Planned 2026-09-27. Nothing built. Precondition: `real-asking-state` merged into main.
+**Status:** T00 implemented, awaiting review.
 **Last updated:** 2026-09-27
 **Next `pir-work` will:** T00, the probe, once `real-asking-state` is merged into main (T00 checks it).
 
@@ -23,7 +23,7 @@ done · ⛔ blocked, needs a human.
 
 | # | Task | Depends on | State | Notes |
 |---|---|---|---|---|
-| T00 | coordinator-probe | — | ⬜ | |
+| T00 | coordinator-probe | — | 🔍 | Probed CLI 2.1.283: ask-rule prompt has no `matchedAskRule`; destructive commands never reach `canUseTool` in auto. Default-mode fence leaked (EnterWorktree, CronCreate, ListAgents); user chose `tools` allowlist, DESIGN §3.4 edited. Fixture adds a `gate` section beyond cases 1–2. No tests. |
 | T01 | coordinator-rulebook | T00 | ⬜ | |
 | T02 | coordinator-skill | — | ⬜ | |
 | T03 | coordinator-session | T01 | ⬜ | |
@@ -34,7 +34,7 @@ done · ⛔ blocked, needs a human.
 | T08 | docs | T02, T04, T05, T06 | ⬜ | |
 | T09 | live-coordinator-check | T07, T08 | ⬜ | |
 
-**Review queue:** *(empty)*
+**Review queue:** T00
 
 ## Blocked on the user
 
