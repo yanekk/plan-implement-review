@@ -25,7 +25,7 @@ done · ⛔ blocked, needs a human.
 |---|---|---|---|---|
 | T00 | coordinator-probe | — | ✅ | CLI 2.1.283: no `matchedAskRule`; destructive commands skip `canUseTool` in auto; deny list leaked, `tools` allowlist chosen (DESIGN §3.4). Review clean, no fix commit: re-checked precondition on main, fixture parses, SDK `tools` option exists, scratch and stray worktrees gone, npm test green. |
 | T01 | coordinator-rulebook | T00 | ⬜ | |
-| T02 | coordinator-skill | — | ⬜ | |
+| T02 | coordinator-skill | — | ✅ | |
 | T03 | coordinator-session | T01 | ⬜ | |
 | T04 | answer-first-routing | T03 | ⬜ | |
 | T05 | end-of-run-handoff | T04 | ⬜ | |
