@@ -245,8 +245,8 @@ What it tells you at a glance:
 `pir` on its own opens a dashboard of every run on the machine, across every repo: each run's
 type (`plan` or `work`), its state (running, finished, stopped, crashed; for a planning run
 planning, reviewing or your go), its progress and how many workers are live. A build with any worker
-waiting on you reads `asking you` in amber instead of `running`, so you can see from the list which
-runs need you; the counts line adds up those and every `your go` as `N waiting for you`. Under the
+waiting on you reads `asking you` in amber instead of `running`, and so does a planning run whose
+planner or reviewer is waiting on you, so you can see from the list which runs need you; the counts line adds up those and every `your go` as `N waiting for you`. Under the
 list is the new-plan box, for starting a planning run in any of your repos (above).
 
 | View | Keys |

@@ -123,7 +123,8 @@ the plan has a name — and a `your go` row adds `· N waiting for you` to the c
 or decision report, a permission request or a question set, by the same rule as the live view's `asking`
 tally (`askingCount` in `display.mjs`) — reads `asking you` in amber bold instead of `running`, and counts
 in that same `waiting for you` tally; it reads `running` again once every ask is answered. A task fixing a
-merge conflict asks nothing and does not count. This is a display state only (`runDisplayState` in
+merge conflict asks nothing and does not count. A running planning run reads `asking you` the same way while its
+planner or reviewer has a question set or permission request open ([planning-runs.md](planning-runs.md)). This is a display state only (`runDisplayState` in
 `dashboard.mjs`): the run is still classified `running`, and every chord treats it so. There is no process-number column — the person does not act on it.
 Colour carries state and is never the only signal (glyphs carry the same state, so `NO_COLOR` and a
 colour-blind reader lose nothing): a running run is green, finished and stopped are dim, crashed is

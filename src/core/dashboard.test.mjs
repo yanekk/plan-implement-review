@@ -661,6 +661,17 @@ test('runDisplayState: a running build with a worker waiting on the person reads
   assert.equal(runDisplayState(view({ state: 'running', snap: null })), 'running', 'no snapshot yet');
 });
 
+test('runDisplayState: a running planning run whose planner or reviewer is asking reads asking-you', () => {
+  const at = (state, step, steps) => runDisplayState({ ...planView({ state, step }), snap: { runState: { kind: 'plan', step, outcome: null, steps } } });
+  assert.equal(at('running', 'plan', [{ id: 'plan', phase: 'asking' }, { id: 'review', phase: 'pending' }]), 'asking-you', 'the planner asking');
+  assert.equal(at('running', 'review', [{ id: 'plan', phase: 'done' }, { id: 'review', phase: 'asking' }]), 'asking-you', 'the reviewer asking');
+  assert.equal(at('running', 'review', [{ id: 'plan', phase: 'done' }, { id: 'review', phase: 'reviewing' }]), 'reviewing', 'nothing asked');
+  assert.equal(at('stopped', 'review', [{ id: 'review', phase: 'asking' }]), 'stopped', 'only a running run is asking');
+  const { counts } = buildDashboard([{ ...planView({ step: 'review' }), snap: { runState: { kind: 'plan', step: 'review', outcome: null, steps: [{ id: 'review', phase: 'asking' }] } } }]);
+  assert.equal(counts.waiting, 1, 'counts in waiting for you');
+  assert.equal(counts.running, 0);
+});
+
 test('buildDashboard: an asking build counts in waiting beside your go, not in running', () => {
   const { rows, counts } = buildDashboard([
     view({ slug: 'a', state: 'running', snap: buildSnap({ phase: 'asking' }) }),

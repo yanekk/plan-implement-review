@@ -157,14 +157,14 @@ async function startRigPlan(t) {
   return { rig, dir, started, request };
 }
 
-test('end to end: a planning run lists as planning with its label, then as your go once planned and reviewed', async (t) => {
+test('end to end: a planning run whose planner asks lists as asking you with its label, then as your go once planned and reviewed', async (t) => {
   const { rig, dir, started, request } = await startRigPlan(t);
-  const planning = new RegExp(`"${esc(LABEL)}" +plan +● planning +repo +plan … +1`);
+  const planning = new RegExp(`"${esc(LABEL)}" +plan +● asking you +repo +plan … +1`);
   for (const [cols, rows] of SIZES) {
     const { screens, overflows } = await rig.driveScreen({ cols, rows, first: planning });
     const text = screens[0].rows.join('\n');
     assert.match(text, /SLUG +TYPE +STATE +REPO +PROGRESS +WK/, `${cols}×${rows}`);
-    assert.match(text, /1 run · 1 running · 0 finished · 0 crashed/);
+    assert.match(text, /1 run · 0 running · 0 finished · 0 crashed · 1 waiting for you/, 'the planner asking counts as waiting');
     assert.match(text, /Ctrl\+R resume/);
     assert.equal(overflows, 0, `${cols}×${rows}: nothing wraps`);
   }
@@ -189,7 +189,7 @@ test('end to end: Ctrl+S Ctrl+S stops a planning run mid-planner, and Ctrl+R Ctr
   const { rig, dir, started } = await startRigPlan(t);
   const screen = rig.openScreen({ cols: 80, rows: 24 });
   try {
-    await screen.waitFor(new RegExp(`"${esc(LABEL)}" +plan +● planning`));
+    await screen.waitFor(new RegExp(`"${esc(LABEL)}" +plan +● asking you`));
     screen.send('\x13');
     await screen.waitFor(/⚠ Ctrl\+S again to stop/);
     screen.send('\x13');
@@ -199,7 +199,7 @@ test('end to end: Ctrl+S Ctrl+S stops a planning run mid-planner, and Ctrl+R Ctr
     screen.send('\x12');
     await screen.waitFor(new RegExp(`⚠ Ctrl\\+R again to resume "${esc(LABEL)}"`));
     screen.send('\x12');
-    await screen.waitFor(new RegExp(`"${esc(LABEL)}" +plan +● planning +repo +plan …`), 20000);
+    await screen.waitFor(new RegExp(`"${esc(LABEL)}" +plan +● (planning|asking you) +repo +plan …`), 20000);
     const record = listRecords({ dir }).find((r) => r.slug === started.runId);
     assert.equal(record.finalState, null, 'the resumed run is live again');
     assert.notEqual(record.pid, started.pid, 'a new planning program');
@@ -220,7 +220,7 @@ test('end to end: opening a planning run shows its steps — plan asking, review
   const { rig } = await startRigPlan(t);
   for (const [cols, rows] of SIZES) {
     const { screens, overflows } = await rig.driveScreen({
-      cols, rows, first: /● planning/,
+      cols, rows, first: /● asking you/,
       keys: [{ keys: ENTER, until: /pick a step/ }],
     });
     const text = screens.at(-1).rows.join('\n');
@@ -235,7 +235,7 @@ test('end to end: opening a planning run shows its steps — plan asking, review
 
 // Drives one screen from the steps view through the planner's question to the go, at the given size.
 async function toTheGo(rig, screen) {
-  await screen.waitFor(/● planning/);
+  await screen.waitFor(/● asking you/);
   screen.send(ENTER);
   await screen.waitFor(/▎ ● plan +planner +asking you/);
   screen.send(RIGHT);
@@ -429,7 +429,7 @@ test('end to end at 120×40: the reviewer asking a permission reads `allow a com
     assert.match(steps, /▎ ● review +reviewer +asking you · allow a command\? +\d+:\d\d/);
     assert.match(steps, /● review — asking you; open it \(→\) to answer/);
     screen.send(LEFT);
-    await screen.waitFor(new RegExp(`${PLAN_RIG_SLUG} +plan +● reviewing +repo +plan ✓ review …`));
+    await screen.waitFor(new RegExp(`${PLAN_RIG_SLUG} +plan +● asking you +repo +plan ✓ review …`));
     screen.send(ENTER);
     await screen.waitFor(/▎ ● review/);
     screen.send(RIGHT);
@@ -514,7 +514,7 @@ test('end to end at 120×40: a planner stopped mid-question reads never answered
     await screen.waitFor(/this frame is stale/);
     screen.send(LEFT);
     await screen.waitFor(/SLUG/);
-    await chordTwice(screen, CTRL_R, /Ctrl\+R again to resume/, /● planning/);
+    await chordTwice(screen, CTRL_R, /Ctrl\+R again to resume/, /● (planning|asking you)/);
     screen.send(ENTER);
     await screen.waitFor(/pick a step/);
     screen.send(RIGHT);
@@ -888,14 +888,14 @@ test('end to end at 80×24: Ctrl+S Ctrl+S on a running row with a brief typed st
   const screen = rig.openScreen({ cols: 80, rows: 24 });
   const boxLine = (rows) => rows[rows.findIndex((l) => l.startsWith('new plan')) + 2];
   try {
-    await screen.waitFor(/▎ .*● planning/, 20000);
+    await screen.waitFor(/▎ .*● asking you/, 20000);
     screen.send(CTRL_S);
     assert.match(lastLine(await screen.waitFor(/⚠ Ctrl\+S again/)), /^⚠ Ctrl\+S again to stop plan-\w+ now/);
     await typeSettled(screen, 'repo', ' ', 'my brief');
     assert.equal(lastLine(await screen.waitFor()), TYPED, 'typing disarmed the stop');
     screen.send(CTRL_S);
     const armed = await screen.waitFor(/⚠ Ctrl\+S again/);
-    assert.match(armed.join('\n'), /▎ .*● planning/, 'one press after typing did not stop it');
+    assert.match(armed.join('\n'), /▎ .*● asking you/, 'one press after typing did not stop it');
     assert.match(lastLine(armed), /^⚠ Ctrl\+S again to stop plan-\w+ now/, 'the warning shows over the typed box');
     assert.equal(boxLine(armed).trimEnd(), '@repo my brief');
     screen.send(CTRL_S);

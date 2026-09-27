@@ -43,20 +43,28 @@ function planState(view) {
   return rs && rs.kind === 'plan' ? rs : null;
 }
 
+// planStepState(runState) → `planning` or `reviewing`, by the snapshot's step alone. The steps view's
+// header names the step with it even while that step is asking, since its rows and footer carry the ask.
+export function planStepState(rs) {
+  return rs && (rs.step === 'rename' || rs.step === 'review' || rs.step === 'done') ? 'reviewing' : 'planning';
+}
+
 // runDisplayState(view) → the STATE a row shows (§2.10).
 //   view = { state (classifyRun's), record ({ kind, go }), snap ({ runState: { kind:'plan', step, outcome } }) }
 // A build shows its classification unchanged, except that a running build with any task waiting on the
 // person reads `asking-you` (askingCount, the live view's own rule), so a question is visible from the
 // list without opening the run (user 2026-09-27). A planning run shows `planning` or `reviewing` while it runs
 // (by the snapshot's step: the rename between the two already has the planner done, so it reads
-// `reviewing`), `your-go` once finished `reviewed` with no go recorded (§2.8), `finished` for any other
+// `reviewing`), `asking-you` instead while either step's live session has a permission request or a
+// question set pending (planRunState's step phase `asking`, user 2026-09-27), `your-go` once finished `reviewed` with no go recorded (§2.8), `finished` for any other
 // finished outcome or a declined go, and `stopped`/`crashed` as classified. Any other classification (an
 // unreachable entry) passes through as it came.
 export function runDisplayState(view) {
   const state = view?.state;
   if (!isPlan(view)) return state === 'running' && askingCount(view?.snap?.runState) > 0 ? 'asking-you' : state;
   const rs = planState(view);
-  if (state === 'running') return rs && (rs.step === 'rename' || rs.step === 'review' || rs.step === 'done') ? 'reviewing' : 'planning';
+  if (state === 'running' && (rs?.steps ?? []).some((st) => st.phase === 'asking')) return 'asking-you';
+  if (state === 'running') return planStepState(rs);
   if (state === 'finished') return rs?.outcome === 'reviewed' && (view.record?.go ?? null) === null ? 'your-go' : 'finished';
   return state;
 }
