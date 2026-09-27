@@ -1971,3 +1971,17 @@ test('HALT closes the agent', (t) => {
   assert.equal(coordinator.pass().halted, true);
   assert.equal(closed, 1);
 });
+
+// Review T04: the agent's send lands after runPass read the park, so the task is still parked on that pass;
+// without the one-pass hold its worker flipped onto Remote Control (and the phone) for a pass.
+test('agent message: its worker is never on Remote Control, not even on the pass the agent answers', (t) => {
+  const run = agentRun(t, [{ num: 'T01' }], { T01: { question: 'JSON or YAML?' } });
+  const { coordinator } = run;
+  coordinator.pass();
+  coordinator.pass();
+  const w = run.implOf('T01');
+  run.decide({ kind: 'message', worker: w, text: 'JSON.', reason: 'design' });
+  const seen = [];
+  coordinator.drive({ onPass: () => seen.push(run.wanted().has(w)) });
+  assert.equal(seen.includes(true), false, JSON.stringify(seen));
+});

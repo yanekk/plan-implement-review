@@ -182,6 +182,11 @@ export function startCoordinator({
   let askRules = [];
   const held = new Map(); // itemKey → the item, while the agent holds it
   const seen = new Map(); // itemKey → the item, every item waiting last pass (briefed or not)
+  // Items the agent answered this pass. A `message` to a report park lands after runPass read the park, so
+  // the task stays parked until the next pass's resumeAnswered sees the coordinator send; counting the item
+  // as the agent's until then keeps its worker off Remote Control (DESIGN §2.5). One pass only: whatever is
+  // still waiting after it is the person's.
+  let justSettled = new Set();
 
   const briefItem = (item, workers) => {
     const t = state.tasks[item.task];
@@ -198,6 +203,7 @@ export function startCoordinator({
     const out = { passed: [], report: null, close: false };
     if (!agent) return out;
     const alive = agent.alive();
+    justSettled = new Set();
     // A dead agent never leaves a worker waiting on it: what it held is the person's (DESIGN §2.11).
     if (!alive) held.clear();
     const workers = platform.workers();
@@ -207,6 +213,7 @@ export function startCoordinator({
     const drained = alive ? agent.drain(items) : { passed: [], settled: [] };
     const settled = new Set((drained.settled ?? []).map(itemKey));
     for (const key of settled) held.delete(key);
+    justSettled = settled;
     for (const p of drained.passed ?? []) {
       held.delete(itemKey(p));
       out.passed.push(p);
@@ -395,7 +402,7 @@ export function startCoordinator({
     },
     // The keys of the items the agent holds now; empty while it is down, so every item is the person's.
     heldByAgent() {
-      return agent?.alive() ? new Set(held.keys()) : new Set();
+      return agent?.alive() ? new Set([...held.keys(), ...justSettled]) : new Set();
     },
   };
 }
