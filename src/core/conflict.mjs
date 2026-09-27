@@ -29,6 +29,7 @@ const COPY_START = '----- copy everything between these lines into the worker --
 const COPY_END = '----- end of the part to paste -----';
 
 export function buildConflictPrompt({
+  kind = 'task',
   task,
   slug,
   plan = null,
@@ -37,6 +38,7 @@ export function buildConflictPrompt({
   files = [],
   audience = 'person',
 } = {}) {
+  if (kind === 'main-sync') return mainSyncPrompt({ plan: plan ?? slug, files });
   if (audience === 'worker') return workerPrompt({ plan, taskBranch, featureBranch, files });
   const label = [task, slug].filter(Boolean).join(' ') || 'a task';
   const branchOn = taskBranch ? ` (${taskBranch})` : '';
@@ -116,6 +118,41 @@ function workerPrompt({ plan, taskBranch, featureBranch, files }) {
     `  2. git add the resolved file(s) and commit.`,
     `  3. Run ${testStepFor(plan)}.`,
     `  4. Signal done again (a fresh \`done\` report) so the run can merge your branch.`,
+    ``,
+  ].join('\n');
+}
+
+// The task label the main-sync worker reports under: it holds no task of the plan, so its `done` names
+// this instead of a T-number (pir-coordinator T05).
+export const MAIN_SYNC_TASK = 'main-sync';
+
+// kind 'main-sync' (pir-coordinator DESIGN §2.9, §3.3): at the end of the run pir merged `main` into the
+// feature branch in the feature worktree and it conflicted. The merge is left in progress there; a worker
+// spawned in that worktree finishes it, keeping both sides' intent, runs the plan's test block, commits
+// and reports `done`. It is only ever sent to a worker, so there is no person variant.
+function mainSyncPrompt({ plan, files }) {
+  const featureBranch = `pir/${plan || '{plan}'}`;
+  return [
+    `Every task of plan ${plan || '{plan}'} is built and reviewed. Before the branch is handed to the person, pir`,
+    `merged the current \`main\` into ${featureBranch}, here in this worktree, and the merge conflicts. The merge`,
+    `is in progress: do not abort it, reset or start over. Finish it.`,
+    ``,
+    `Conflicting file(s):`,
+    listFiles(files),
+    ``,
+    `Resolve each so the result keeps the intent of both sides: what main changed and what this plan built.`,
+    `If choosing between them needs a judgement, ask the person before you resolve it, as with any other`,
+    `decision.`,
+    ``,
+    `Then:`,
+    `  1. Resolve the conflict in the file(s) above.`,
+    `  2. git add the resolved file(s) and commit the merge (git commit --no-edit).`,
+    `  3. Run ${testStepFor(plan)}.`,
+    `     If they fail because of the merge, fix it and commit.`,
+    `  4. Report done: \`[pir:v1 kind=done task=${MAIN_SYNC_TASK}]\`, saying whether the tests pass.`,
+    ``,
+    `You are on ${featureBranch} itself, not a task branch: there is nothing to integrate afterwards, and you`,
+    `never merge into main or push.`,
     ``,
   ].join('\n');
 }

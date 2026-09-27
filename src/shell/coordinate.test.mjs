@@ -1985,3 +1985,298 @@ test('agent message: its worker is never on Remote Control, not even on the pass
   coordinator.drive({ onPass: () => seen.push(run.wanted().has(w)) });
   assert.equal(seen.includes(true), false, JSON.stringify(seen));
 });
+
+// --- pir-coordinator T05: the end of the run with the agent (DESIGN §2.9–§2.11) --------------------------
+//
+// The real startCoordinator and startCoordinatorAgent over the fake platform and worktree, stepped pass by
+// pass past the end gate. The test plays the agent by dropping decision files, and the person by merging
+// into the scratch repo's main by hand.
+
+import { renderFinished } from './coordinate.mjs';
+import { AGENT_UNAVAILABLE } from '../core/coordinator-report.mjs';
+
+const REPORT_REL = `plans/${SLUG}/REPORT.md`;
+const SECTIONS = { delivered: 'The greeting works.', checkByHand: 'Run it once.', risks: 'None known.' };
+
+function endRun(t, { rows = [{ num: 'T01' }], behaviors = {}, files = {}, runTests, worktree, controlDir, startAgent, control } = {}) {
+  const wt = worktree ?? createFakeWorktree({ progress: progressDoc(rows), files, slug: SLUG });
+  if (!worktree) t.after(() => wt.cleanup());
+  const platform = createFakePlatform({ behaviors });
+  const cdir = controlDir ?? mkdtempSync(join(tmpdir(), 'pir-t05-control-'));
+  if (!controlDir) t.after(() => rmSync(cdir, { recursive: true, force: true }));
+  const stub = stubSessions();
+  const clock = { t: Date.parse('2026-09-27T10:00:00Z') };
+  const coordinator = startCoordinator({
+    slug: SLUG, repo: REPO, platform, worktree: wt, runTests, control, now: () => clock.t,
+    startAgent: startAgent ?? (({ featurePath, askRules }) => startCoordinatorAgent({
+      controlDir: cdir, featurePath, repoRoot: featurePath, slug: SLUG, platform, askRules,
+      startWorker: stub.startWorker, claudePath: '/nonexistent/claude', skillsDir: cdir, now: () => clock.t,
+    })),
+  });
+  t.after(() => coordinator.closeAgent());
+  const decisions = join(cdir, 'coordinator', 'decisions');
+  let n = 0;
+  const decide = (obj) => {
+    mkdirSync(decisions, { recursive: true });
+    writeFileSync(join(decisions, `${Date.now()}-${String(++n).padStart(3, '0')}.json`), JSON.stringify(obj));
+  };
+  const told = () => stub.sessions.flatMap((s) => s.told.map((m) => m.text));
+  const until = (pred, max = 20) => {
+    for (let i = 0; i < max; i++) {
+      const r = coordinator.pass();
+      if (pred(r)) return r;
+    }
+    throw new Error(`not reached in ${max} passes; handoff ${JSON.stringify(coordinator.handoff)}`);
+  };
+  const report = () => wt.fileOn(`pir/${SLUG}`, REPORT_REL);
+  const reportCommits = () => git(wt.repo, ['log', '--format=%s', `pir/${SLUG}`, '--', REPORT_REL]).stdout.trim().split('\n').filter(Boolean);
+  const moveMain = (path, content) => {
+    writeFileSync(join(wt.repo, path), content);
+    git(wt.repo, ['add', '-A']);
+    git(wt.repo, ['commit', '-m', `main: ${path}`, '--no-edit']);
+    return git(wt.repo, ['rev-parse', 'main']).stdout.trim();
+  };
+  const toGate = () => assert.equal(coordinator.drive().reason, 'complete');
+  return { coordinator, platform, worktree: wt, controlDir: cdir, stub, decide, told, until, report, reportCommits, moveMain, toGate, clock };
+}
+
+test('end: main moved cleanly → merged in, tests, briefed, report committed on the feature branch, ready; the person merges → finished', (t) => {
+  let tests = 0;
+  const run = endRun(t, { runTests: () => ((tests += 1), { ok: true }) });
+  run.coordinator.pass(); // opens the feature branch
+  const mainSha = run.moveMain('other.txt', 'from main\n');
+  const mainBefore = run.worktree.mainCommitCount();
+  run.toGate();
+  assert.equal(tests, 1, 'the end gate');
+  assert.equal(run.coordinator.handoff.state, 'preparing');
+
+  run.until((r) => r.actions.some((a) => a.type === 'main-sync' && a.state === 'merged'));
+  run.until((r) => r.actions.some((a) => a.type === 'tests'));
+  assert.equal(tests, 2, 'the tests rerun after the merge');
+  run.until(() => run.told().some((m) => m.startsWith('Every task is done. Write the delivery report.')));
+  const brief = run.told().find((m) => m.startsWith('Every task is done'));
+  assert.match(brief, /main merged in cleanly/);
+  assert.match(brief, /Tests on the feature branch: green/);
+  const idle = run.coordinator.pass();
+  assert.equal(idle.handoff.state, 'preparing', 'waits for the report');
+  assert.equal(idle.complete, false);
+
+  run.decide({ kind: 'report', sections: SECTIONS });
+  const r = run.coordinator.pass();
+  assert.deepEqual(r.handoff, { state: 'ready', reportPath: REPORT_REL, mainSha });
+  assert.equal(r.complete, true);
+  assert.deepEqual(r.readyToMerge, { branch: `pir/${SLUG}` });
+  const text = run.report();
+  assert.equal(text.ok, true, 'REPORT.md is committed on the feature branch');
+  assert.match(text.stdout, /The greeting works\./);
+  assert.match(text.stdout, /## Decisions made for you\n\nNone\./);
+  assert.match(text.stdout, new RegExp(`Synced with \`main\` at \`${mainSha.slice(0, 12)}\` on 2026-09-27T10:00:00Z`));
+  assert.deepEqual(run.reportCommits(), [`report(${SLUG}): delivery report`]);
+  const handoff = run.told().at(-1);
+  assert.match(handoff, /git merge pir\/demo/);
+  assert.match(handoff, /The greeting works\./);
+  assert.equal(run.worktree.mainCommitCount(), mainBefore, 'the run never wrote main');
+  assert.equal(buildRunState({ passTasks: r.tasks, handoff: r.handoff }).handoff.state, 'ready');
+
+  assert.equal(run.coordinator.pass().finished, null, 'waits in ready');
+  git(run.worktree.repo, ['merge', '--no-edit', `pir/${SLUG}`]);
+  const end = run.coordinator.pass();
+  assert.equal(end.finished, 'merged');
+  assert.equal(run.coordinator.agent.alive(), false, 'the agent is closed');
+  assert.match(renderFinished({ by: 'merged', slug: SLUG }), /pir\/demo is in main/);
+});
+
+test('end: a conflicting main → a worker spawned in the feature worktree with the main-sync prompt; its done → tests → report', (t) => {
+  let tests = 0;
+  const run = endRun(t, { files: { 'work-T01.txt': 'base\n' }, runTests: () => ((tests += 1), { ok: true }) });
+  run.coordinator.pass();
+  run.moveMain('work-T01.txt', 'main side\n');
+  run.toGate();
+  run.until((r) => r.actions.some((a) => a.type === 'spawn' && a.task === 'main-sync'));
+  const spawn = run.platform.spawns.at(-1);
+  assert.equal(spawn.role, 'sync');
+  assert.equal(spawn.cwd, run.coordinator.state.feature.path);
+  assert.match(spawn.opening, /pir-worker skill/);
+  assert.match(spawn.opening, /merged the current `main` into pir\/demo/);
+  assert.match(spawn.opening, / {2}- work-T01\.txt/);
+  assert.equal(tests, 1);
+
+  run.until((r) => r.actions.some((a) => a.type === 'main-sync' && a.state === 'resolved'));
+  assert.equal(run.platform.closed.includes(spawn.id), true, 'the sync worker is closed');
+  run.until((r) => r.actions.some((a) => a.type === 'tests'));
+  assert.equal(tests, 2);
+  run.until(() => run.told().some((m) => m.startsWith('Every task is done')));
+  assert.match(run.told().find((m) => m.startsWith('Every task is done')), /a worker resolved the conflicts/);
+  run.decide({ kind: 'report', sections: SECTIONS });
+  assert.equal(run.until((r) => r.handoff.state !== 'preparing').handoff.state, 'ready');
+});
+
+test('end: the sync worker cannot resolve → merge abandoned, report says not ready, state red, no merge offered', (t) => {
+  const run = endRun(t, { files: { 'work-T01.txt': 'base\n' }, behaviors: { 'main-sync': { unresolved: true } } });
+  run.coordinator.pass();
+  run.moveMain('work-T01.txt', 'main side\n');
+  run.toGate();
+  run.until((r) => r.actions.some((a) => a.type === 'main-sync' && a.state === 'unresolved'));
+  assert.equal(run.worktree.syncPending(run.coordinator.state.feature.path), false, 'the feature branch is left clean');
+  run.until(() => run.told().some((m) => m.startsWith('Every task is done')));
+  run.decide({ kind: 'report', sections: SECTIONS });
+  const r = run.until((x) => x.handoff.state !== 'preparing');
+  assert.equal(r.handoff.state, 'red');
+  assert.equal(r.readyToMerge, null);
+  assert.match(run.report().stdout, /conflicted and was not resolved/);
+  assert.doesNotMatch(run.told().at(-1), /git merge/);
+});
+
+test('end: red tests after the sync → report with the red footer, handoff red, no merge offered', (t) => {
+  let tests = 0;
+  const run = endRun(t, { runTests: () => ((tests += 1), tests === 1 ? { ok: true } : { ok: false, reason: 'test exit 1', logPath: '/x/tests.log' }) });
+  run.coordinator.pass();
+  run.moveMain('other.txt', 'x\n');
+  run.toGate();
+  run.until(() => run.told().some((m) => m.startsWith('Every task is done')));
+  assert.match(run.told().find((m) => m.startsWith('Every task is done')), /Tests on the feature branch: red/);
+  run.decide({ kind: 'report', sections: SECTIONS });
+  const r = run.until((x) => x.handoff.state !== 'preparing');
+  assert.equal(r.handoff.state, 'red');
+  assert.equal(r.readyToMerge, null);
+  assert.deepEqual(r.testsReason, { reason: 'test exit 1', logPath: '/x/tests.log' });
+  assert.match(run.report().stdout, /Tests: red\. The branch is not ready to merge\./);
+  const handoff = run.told().at(-1);
+  assert.doesNotMatch(handoff, /git merge/);
+  assert.match(handoff, /No merge is offered/);
+  assert.equal(run.coordinator.pass().finished, null, 'a red run waits the same way');
+});
+
+test('end: close mid-build refused and the run carries on; main moves in ready → re-synced, footer updated, agent told; close → finished', (t) => {
+  const run = endRun(t);
+  run.coordinator.pass();
+  run.decide({ kind: 'close' });
+  run.coordinator.pass();
+  assert.ok(run.told().some((m) => /was not applied: the run is still building/.test(m)), 'refused, agent told why');
+  run.toGate();
+  run.until(() => run.told().some((m) => m.startsWith('Every task is done')));
+  run.decide({ kind: 'close' });
+  run.coordinator.pass();
+  assert.ok(run.told().filter((m) => /still building/.test(m)).length === 2, 'a close while preparing is refused too');
+  run.decide({ kind: 'report', sections: SECTIONS });
+  const ready = run.until((x) => x.handoff.state === 'ready');
+  const firstSha = ready.handoff.mainSha;
+
+  run.clock.t = Date.parse('2026-09-27T12:00:00Z');
+  const moved = run.moveMain('later.txt', 'another run merged first\n');
+  run.until((x) => x.handoff.state === 'ready' && x.handoff.mainSha === moved);
+  assert.notEqual(moved, firstSha);
+  const text = run.report().stdout;
+  assert.match(text, new RegExp(`at \`${moved.slice(0, 12)}\` on 2026-09-27T12:00:00Z`));
+  assert.match(text, /The greeting works\./, 'the agent\'s sections are kept');
+  assert.deepEqual(run.reportCommits(), [`report(${SLUG}): re-synced with main`, `report(${SLUG}): delivery report`]);
+  assert.match(run.told().at(-1), new RegExp(`main moved to ${moved.slice(0, 12)}`));
+  assert.equal(git(run.worktree.repo, ['merge-base', '--is-ancestor', moved, `pir/${SLUG}`]).ok, true);
+
+  run.decide({ kind: 'close' });
+  assert.equal(run.coordinator.pass().finished, 'closed');
+  assert.match(renderFinished({ by: 'closed', slug: SLUG, ready: true }), /git merge pir\/demo/);
+});
+
+test('end: a restart in ready → the report is not rewritten and the run returns to ready', (t) => {
+  const first = endRun(t);
+  first.toGate();
+  first.until(() => first.told().some((m) => m.startsWith('Every task is done')));
+  first.decide({ kind: 'report', sections: SECTIONS });
+  first.until((x) => x.handoff.state === 'ready');
+  const before = first.report().stdout;
+  first.coordinator.closeAgent();
+
+  const second = endRun(t, { worktree: first.worktree, controlDir: first.controlDir });
+  second.toGate();
+  const r = second.until((x) => x.handoff.state !== 'preparing');
+  assert.equal(r.handoff.state, 'ready');
+  assert.equal(r.handoff.reportPath, REPORT_REL);
+  assert.equal(second.report().stdout, before, 'the report is unchanged');
+  assert.deepEqual(second.reportCommits(), [`report(${SLUG}): delivery report`]);
+  assert.ok(!second.told().some((m) => m.startsWith('Every task is done')), 'the agent is not asked again');
+});
+
+// An agent object whose liveness and given-up state the test sets.
+function heldAgent({ up = true, givenUp = false, ledger = [] } = {}) {
+  const a = {
+    up, gone: givenUp, told: [],
+    alive: () => a.up && !a.gone,
+    givenUp: () => a.gone,
+    brief: () => false,
+    forget() {},
+    answeredElsewhere: () => true,
+    drain: () => ({ passed: [], settled: [] }),
+    tell(text) {
+      if (!a.alive()) return false;
+      a.told.push(text);
+      return true;
+    },
+    briefEnd(facts) {
+      return a.tell(`END ${facts.tests}`);
+    },
+    ledger: () => ledger,
+    record() {},
+    close: async () => {},
+    session: null,
+  };
+  return a;
+}
+
+const NOTABLE = [{ kind: 'answers', task: 'T01', item: 'JSON or YAML?', answer: 'JSON', reason: 'design', notable: true }];
+
+test('end: the agent given up before its report → REPORT.md with decisions, footer and the "not available" line; ready', (t) => {
+  const agent = heldAgent({ givenUp: true, ledger: NOTABLE });
+  const run = endRun(t, { startAgent: () => agent });
+  run.toGate();
+  const r = run.until((x) => x.handoff.state !== 'preparing');
+  assert.equal(r.handoff.state, 'ready');
+  const text = run.report().stdout;
+  assert.ok(text.includes(AGENT_UNAVAILABLE));
+  assert.match(text, /JSON or YAML\?/);
+  assert.match(text, /## Branch/);
+  assert.deepEqual(agent.told, [], 'nobody to tell');
+});
+
+test('end: an agent only restarting is waited for; one given up while its report is awaited → written without it', (t) => {
+  const agent = heldAgent({ up: false });
+  const run = endRun(t, { startAgent: () => agent });
+  run.toGate();
+  for (let i = 0; i < 4; i++) assert.equal(run.coordinator.pass().handoff.state, 'preparing');
+  assert.equal(run.report().ok, false, 'no report while it restarts');
+  agent.up = true;
+  run.until(() => agent.told.includes('END green'));
+  run.coordinator.pass();
+  assert.equal(run.report().ok, false, 'waits for its report');
+  agent.gone = true;
+  const r = run.until((x) => x.handoff.state !== 'preparing');
+  assert.equal(r.handoff.state, 'ready');
+  assert.ok(run.report().stdout.includes(AGENT_UNAVAILABLE));
+});
+
+test('end, agent off: today\'s end — no hand-off state, no report', (t) => {
+  const { coordinator, worktree } = setup(t, chain(1));
+  const r = coordinator.drive();
+  assert.equal(r.reason, 'complete');
+  assert.equal(coordinator.handoff, null);
+  assert.equal(coordinator.endOfRun, false);
+  assert.equal(worktree.fileOn(`pir/${SLUG}`, REPORT_REL).ok, false);
+  assert.equal(coordinator.pass().handoff, null, 'a further pass is today\'s pass, not the end sequence');
+});
+
+test('end: a restart after the person merged while pir was down → finished as merged, the branch not re-synced', (t) => {
+  const first = endRun(t);
+  first.toGate();
+  first.until(() => first.told().some((m) => m.startsWith('Every task is done')));
+  first.decide({ kind: 'report', sections: SECTIONS });
+  first.until((x) => x.handoff.state === 'ready');
+  first.coordinator.closeAgent();
+  git(first.worktree.repo, ['merge', '--no-ff', '--no-edit', `pir/${SLUG}`]);
+  const tip = git(first.worktree.repo, ['rev-parse', `pir/${SLUG}`]).stdout.trim();
+
+  const second = endRun(t, { worktree: first.worktree, controlDir: first.controlDir });
+  second.toGate();
+  const r = second.until((x) => x.finished !== null);
+  assert.equal(r.finished, 'merged');
+  assert.equal(git(first.worktree.repo, ['rev-parse', `pir/${SLUG}`]).stdout.trim(), tip, 'main was not merged back into the branch');
+});

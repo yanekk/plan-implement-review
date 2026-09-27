@@ -15,7 +15,7 @@ import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { readDecision, checkDecision } from '../core/coordinator-policy.mjs';
-import { briefFor, refusalFor, answeredElsewhereFor, openingFor, resumedFor } from '../core/coordinator-brief.mjs';
+import { briefFor, refusalFor, answeredElsewhereFor, openingFor, resumedFor, endBriefFor } from '../core/coordinator-brief.mjs';
 import { writeJsonAtomic } from './atomic-write.mjs';
 
 // DESIGN §3.4. The allowlist is what actually holds (T00); `disallowedTools` is the second fence.
@@ -404,6 +404,9 @@ export function startCoordinatorAgent({
       return session.sessionId;
     },
     alive,
+    // Given up for the rest of the run (DESIGN §2.11). Not alive and not given up is an agent restarting,
+    // which the end of the run waits for.
+    givenUp: () => givenUp,
     // The worker-proc Worker currently holding the session, for the screen and T04's routing; null once
     // given up before a launch.
     get session() {
@@ -428,6 +431,15 @@ export function startCoordinatorAgent({
     drain,
     tell,
     ledger,
+    // briefEnd(facts) → the end brief (DESIGN §2.9 step 2); true once it is in the agent's session.
+    briefEnd(facts) {
+      return tell(endBriefFor(facts));
+    },
+    // record(line) → append a line the command itself owns to the ledger: a task adopted into the plan
+    // while the agent was on (DESIGN §2.7), so the report lists it after a pir restart too.
+    record(line) {
+      if (line && typeof line === 'object') appendLedger(line);
+    },
     async close(opts) {
       closing = true;
       if (worker) await worker.close(opts);

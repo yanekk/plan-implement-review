@@ -92,3 +92,24 @@ test('the worker variant names the branches and files, has no copy markers, and 
 test('the person variant is the default and is unchanged by the audience switch', () => {
   assert.equal(buildConflictPrompt({ ...base, audience: 'person' }), buildConflictPrompt(base));
 });
+
+// ---- pir-coordinator T05: the main-sync prompt (DESIGN §3.3) ----
+import { MAIN_SYNC_TASK } from './conflict.mjs';
+
+test('main-sync prompt: the in-progress merge of main, the files, the plan\'s test lines, commit and done', () => {
+  const text = buildConflictPrompt({ kind: 'main-sync', slug: 'demo', plan: 'demo', files: ['src/a.mjs', 'README.md'], audience: 'worker' });
+  assert.match(text, /merged the current `main` into pir\/demo/);
+  assert.match(text, /The merge\nis in progress: do not abort it/);
+  assert.match(text, / {2}- src\/a\.mjs\n {2}- README\.md/);
+  assert.match(text, /the `test` lines at the top of plans\/demo\/DESIGN\.md/);
+  assert.match(text, /commit the merge/);
+  assert.match(text, new RegExp(`\\[pir:v1 kind=done task=${MAIN_SYNC_TASK}\\]`));
+  assert.match(text, /ask the person/);
+  assert.doesNotMatch(text, /----- copy/);
+});
+
+test('buildConflictPrompt without a kind is the task→feature prompt, unchanged', () => {
+  const args = { task: 'T03', slug: 'thing', plan: 'demo', taskBranch: 'pir/demo-T03', featureBranch: 'pir/demo', files: ['x'] };
+  assert.equal(buildConflictPrompt({ ...args, kind: 'task' }), buildConflictPrompt(args));
+  assert.equal(buildConflictPrompt({ ...args, kind: 'task', audience: 'worker' }), buildConflictPrompt({ ...args, audience: 'worker' }));
+});

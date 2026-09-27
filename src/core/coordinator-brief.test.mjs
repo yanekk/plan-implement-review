@@ -63,3 +63,41 @@ test('refusal, answered-elsewhere, opening and resumed texts', () => {
   assert.match(openingFor({ slug: 'demo', dropDir: '/d' }), /^Project rules: none/m);
   assert.match(resumedFor(), /restarted your session/);
 });
+
+// ---- T05: the end of the run ----
+import { endBriefFor, handoffFor, resyncedFor } from './coordinator-brief.mjs';
+
+test('endBriefFor: the task table, ledger, findings, unverified tasks, sync and tests, and the report shape', () => {
+  const text = endBriefFor({
+    tasks: [{ num: 'T01', name: 'probe', state: '✅' }],
+    ledger: [{ kind: 'answers', task: 'T01', item: 'JSON?', answer: 'JSON', reason: 'design', notable: true }],
+    findings: ['| 2026-09-27 | 🐞 | a bug |'],
+    unverified: ['T01'],
+    sync: { state: 'resolved', mainSha: 'abcdef1234567890', files: ['a.txt'] },
+    tests: 'green',
+  });
+  assert.match(text, /- T01 probe ✅/);
+  assert.match(text, /T01 answers \(notable\): JSON\? → JSON \(why: design\)/);
+  assert.match(text, /a bug/);
+  assert.match(text, /still unverified: T01\./);
+  assert.match(text, /a worker resolved the conflicts, main at abcdef123456 \(files: a\.txt\)/);
+  assert.match(text, /Tests on the feature branch: green\./);
+  assert.match(text, /"kind": "report"/);
+  assert.match(endBriefFor({}), /ledger\): none\./);
+});
+
+test('handoffFor: the report and the merge line when ready; no merge line when red', () => {
+  const ready = handoffFor({ slug: 'demo', reportPath: 'plans/demo/REPORT.md', ready: true, report: '# demo — delivery report' });
+  assert.match(ready, /plans\/demo\/REPORT\.md/);
+  assert.match(ready, /# demo — delivery report/);
+  assert.match(ready, /git merge pir\/demo/);
+  const red = handoffFor({ slug: 'demo', reportPath: 'plans/demo/REPORT.md', ready: false });
+  assert.doesNotMatch(red, /git merge/);
+  assert.match(red, /not ready to merge/);
+});
+
+test('resyncedFor: main moved, the new sha, green keeps the merge line, red and unresolved do not', () => {
+  assert.match(resyncedFor({ slug: 'demo', mainSha: 'abcdef1234567890', tests: 'green' }), /main moved to abcdef123456.*git merge pir\/demo/);
+  assert.doesNotMatch(resyncedFor({ slug: 'demo', mainSha: 'a', tests: 'red' }), /git merge/);
+  assert.match(resyncedFor({ slug: 'demo', mainSha: 'a', tests: 'red', unresolved: true }), /conflicted and was not resolved/);
+});

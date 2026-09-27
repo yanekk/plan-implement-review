@@ -356,6 +356,18 @@ test('exit: resumed with the stored session id; a fourth exit within an hour giv
     startWorker: () => assert.fail('a given-up agent is not started again'),
   });
   assert.equal(again.alive(), false);
+  assert.equal(again.givenUp(), true, 'given up, not restarting: the end of the run carries on without it (T05)');
+  assert.equal(again.briefEnd({ tests: 'green' }), false);
+});
+
+test('briefEnd sends the end brief; record appends a command-owned ledger line; givenUp is false while alive (T05)', async (t) => {
+  const s = scratch(t);
+  const { agent } = start(s, [{ await: 'user' }, { await: 'user' }], t);
+  assert.equal(agent.givenUp(), false);
+  assert.equal(agent.briefEnd({ tasks: [{ num: 'T01', name: 'a', state: '✅' }], tests: 'green' }), true);
+  assert.ok(told(agent).some((m) => m.startsWith('Every task is done. Write the delivery report.') && m.includes('- T01 a ✅')));
+  agent.record({ kind: 'adopt', task: 'T09', name: 'extra', notable: true });
+  assert.deepEqual(agent.ledger().map((l) => [l.kind, l.task, l.notable]), [['adopt', 'T09', true]]);
 });
 
 test('exits spread over more than an hour keep being resumed', async (t) => {

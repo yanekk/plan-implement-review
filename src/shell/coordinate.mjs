@@ -33,7 +33,12 @@ import { readEntry } from '../core/stream.mjs';
 import { parseRecord } from '../core/runrecord.mjs';
 import { parseTestBlock } from '../core/testblock.mjs';
 import { runLines, startLines } from './commands.mjs';
-import { runPass, createRunState } from './loop.mjs';
+import { runPass, createRunState, applyMessages, resumeAnswered } from './loop.mjs';
+import { buildConflictPrompt, MAIN_SYNC_TASK } from '../core/conflict.mjs';
+import { handoffFor, resyncedFor } from '../core/coordinator-brief.mjs';
+import {
+  notableDecisions, branchFooter, assembleReport, replaceFooter, endFacts, unverifiedTasks, findingRows,
+} from '../core/coordinator-report.mjs';
 import { createPlatform, resolveClaudePath } from './platform.mjs';
 import { createRenderer } from './render.mjs';
 import { drainDropFolder, waitForDrop } from './drop-folder.mjs';
@@ -153,6 +158,7 @@ export function startCoordinator({
   holdMerges = false,
   startAgent = null,
   lastWords = lastWordsOf,
+  now = () => Date.now(),
 } = {}) {
   if (!slug) throw new Error('startCoordinator: no slug');
   if (!repo) throw new Error('startCoordinator: no repo (worker names are built from it, DESIGN §2.8)');
@@ -188,10 +194,18 @@ export function startCoordinator({
   // still waiting after it is the person's.
   let justSettled = new Set();
 
+  // The end of the run (T05): on only when the run has an agent (startAgent given); with
+  // `--no-coordinator` the end is today's. `handoff` is null until the end gate has run.
+  const endOfRun = startAgent !== null;
+  let handoff = null;
+  let lastTasks = [];
+  const adopted = []; // tasks adopted into the plan while the agent was alive, for the report
+
   const briefItem = (item, workers) => {
     const t = state.tasks[item.task];
     const brief = { ...item };
-    if (t?.slug) brief.name = workerName({ repo, plan: slug, task: item.task, slug: t.slug, role: t.role ?? 'implement' });
+    if (t?.name) brief.name = t.name; // the main-sync worker, which holds no task of the plan
+    else if (t?.slug) brief.name = workerName({ repo, plan: slug, task: item.task, slug: t.slug, role: t.role ?? 'implement' });
     if (item.kind === 'report') {
       const words = lastWords(workers.find((w) => w.id === item.worker)?.logPath);
       if (words) brief.lastWords = words;
@@ -210,7 +224,9 @@ export function startCoordinator({
     const items = waitingItems(state.tasks, workers, { askRules });
     const now = new Map(items.map((i) => [itemKey(i), i]));
 
-    const drained = alive ? agent.drain(items) : { passed: [], settled: [] };
+    // A `close` is accepted only once the run waits in `ready to merge` (DESIGN §2.10).
+    const ready = handoff?.step === 'waiting';
+    const drained = alive ? agent.drain(items, { ready }) : { passed: [], settled: [] };
     const settled = new Set((drained.settled ?? []).map(itemKey));
     for (const key of settled) held.delete(key);
     justSettled = settled;
@@ -259,6 +275,7 @@ export function startCoordinator({
   }
 
   function pass() {
+    if (handoff) return endPass();
     const r = runPass(passOpts);
     const of = (type) => r.actions.filter((a) => a.type === type);
 
@@ -293,6 +310,17 @@ export function startCoordinator({
     // Ceiling accounting (DESIGN §2.4): if the plan has ready work it could not start because every
     // slot is taken, that is logged and reported, so a slow run reads as "throttled at the ceiling",
     // not "stuck". A task simply waits for a slot; nothing is dropped.
+    // A task adopted into the plan while the agent was on is a notable decision (DESIGN §2.7): only the
+    // agent or the person can have approved it. It goes in the ledger, so the report lists it after a
+    // pir restart too.
+    if (agent?.alive()) {
+      for (const a of of('adopt')) {
+        const name = r.tasks.find((t) => t.num === a.task)?.name ?? null;
+        adopted.push({ task: a.task, name });
+        agent.record?.({ kind: 'adopt', task: a.task, name, item: `new task ${a.task}${name ? ` (${name})` : ''}`, answer: 'adopted into the plan', reason: 'a worker added it with approval', notable: true });
+      }
+    }
+
     const assigned = new Set(Object.keys(state.tasks));
     const waiting = readyWaiting(r.tasks, assigned);
     const ceilingFull = !r.halted && r.liveAfter >= maxWorkers && waiting.length > 0;
@@ -300,7 +328,17 @@ export function startCoordinator({
       control.log(`ceiling full: ${r.liveAfter}/${maxWorkers} busy, waiting: ${waiting.join(', ')}`);
     }
 
+    // The end of the run with the agent (DESIGN §2.9): once the end gate has run, the next passes sync
+    // main, get the report written and wait in `ready to merge`. Without the agent the run ends here, as
+    // it always did.
+    if (r.complete && endOfRun) {
+      lastTasks = r.tasks;
+      handoff = { state: 'preparing', step: 'sync', gate: r.testsPassed ? 'green' : 'red', gateReason: r.testsReason ?? null, tests: null, sync: null, mainSha: null, reportPath: null, finished: null };
+    }
+
     return {
+      handoff: handoffView(),
+      finished: null,
       actions: r.actions,
       surfaces,
       spawned,
@@ -328,6 +366,263 @@ export function startCoordinator({
       tasks: r.tasks,
       // What the coordinator agent returned this pass: items it passed on, and its report / close
       // decisions for the end of the run (T05).
+      agent: routed,
+    };
+  }
+
+  // --- The end of the run with the agent on (pir-coordinator DESIGN §2.9–§2.11, T05) ---
+  //
+  // One step per pass, so the display stays live: sync main into the feature branch → (a conflict: a
+  // worker in the feature worktree finishes the merge) → tests → brief the agent → its `report` → REPORT.md
+  // committed → hand-off told → `ready to merge` (or `red`). Waiting there, each pass: main holds the tip
+  // (the person merged) or a `close` from the agent ends the run; main moved without it → re-sync, rewrite
+  // the report's footer, commit, tell the agent. A restart in `ready` finds REPORT.md already committed and
+  // takes the re-sync path, so the report is not rewritten.
+  function handoffView() {
+    if (!handoff) return null;
+    return { state: handoff.state, reportPath: handoff.reportPath, mainSha: handoff.mainSha };
+  }
+
+  const reportRel = join('plans', slug, 'REPORT.md');
+  const planFile = (name) => {
+    try {
+      return readFileSync(join(state.feature.path, 'plans', slug, name), 'utf8');
+    } catch {
+      return '';
+    }
+  };
+  const endRecord = (actions) => (type, extra = {}) => {
+    actions.push({ type, ...extra });
+    control?.log?.(`${type} ${extra.task ?? ''}`.trim());
+  };
+  const isoNow = () => new Date(now()).toISOString().replace(/\.\d+Z$/, 'Z');
+  const branchReady = () => handoff.tests === 'green' && handoff.sync?.state !== 'unresolved';
+  const footerNow = () =>
+    branchFooter({ mainSha: handoff.sync?.mainSha ?? null, tests: handoff.tests, syncedAt: isoNow(), unresolved: handoff.sync?.state === 'unresolved' });
+  const settle = () => {
+    handoff.state = branchReady() ? 'ready' : 'red';
+    handoff.mainSha = handoff.sync?.mainSha ?? handoff.mainSha;
+    handoff.step = 'waiting';
+  };
+
+  function spawnSyncWorker(files) {
+    const prompt = buildConflictPrompt({ kind: 'main-sync', slug, plan: slug, files, audience: 'worker' });
+    const name = `${repo} / ${slug} / ${MAIN_SYNC_TASK}`;
+    const id = platform.spawn({ cwd: state.feature.path, name, phase: 'sync', task: MAIN_SYNC_TASK, opening: mainSyncOpening(prompt) });
+    state.tasks[MAIN_SYNC_TASK] = { worktree: state.feature, workerId: id, role: 'sync', slug: MAIN_SYNC_TASK, name, phase: 'implementing' };
+    return id;
+  }
+
+  function endSync(rec) {
+    const existing = existsSync(join(state.feature.path, reportRel));
+    handoff.rewrite = existing;
+    // A restart after the person merged while pir was down: main already holds the tip. Syncing now would
+    // merge main back into the branch, move its tip past main, and wait in ready for a merge already done.
+    if (existing && worktree.mainContains(state.feature.branch)) {
+      handoff.reportPath = reportRel;
+      handoff.mainSha = worktree.mainTip?.() ?? handoff.mainSha;
+      handoff.tests ??= handoff.gate;
+      handoff.state = handoff.tests === 'green' ? 'ready' : 'red';
+      handoff.step = 'waiting';
+      finish('merged', rec);
+      return;
+    }
+    let res;
+    try {
+      res = worktree.syncMain(state.feature.path);
+    } catch (err) {
+      control?.log?.(`main-sync failed: ${err?.message ?? err}`);
+      handoff.sync = { state: 'unresolved', mainSha: worktree.mainTip?.() ?? null, files: [] };
+      handoff.tests = 'red';
+      handoff.step = existing ? 'footer' : 'brief';
+      return;
+    }
+    rec('main-sync', { state: res.state });
+    handoff.sync = { state: res.state, mainSha: res.mainSha, files: res.files ?? [] };
+    if (res.state === 'up-to-date') {
+      handoff.tests ??= handoff.gate;
+      if (existing) {
+        // A restart in `ready` (DESIGN §2.11): nothing moved, so the committed report stands as it is.
+        handoff.reportPath = reportRel;
+        settle();
+      } else handoff.step = 'brief';
+      return;
+    }
+    if (res.state === 'merged') {
+      handoff.step = 'tests';
+      return;
+    }
+    const id = spawnSyncWorker(res.files ?? []);
+    rec('spawn', { task: MAIN_SYNC_TASK, role: 'sync', workerId: id });
+    handoff.step = 'syncing';
+  }
+
+  function endSyncing(rec, listed) {
+    const t = state.tasks[MAIN_SYNC_TASK];
+    const live = t && listed.some((w) => w.id === t.workerId);
+    if (t && t.phase !== 'done' && live) return; // still resolving, or parked on a question
+    if (t) {
+      platform.close(t.workerId);
+      platform.remove?.(t.workerId);
+      state.closedIds.add(t.workerId);
+      delete state.tasks[MAIN_SYNC_TASK];
+    }
+    if (worktree.syncPending(state.feature.path)) {
+      // The worker reported done without finishing the merge, or exited: the conflict stands unresolved,
+      // the merge is abandoned so the branch is clean, and the report says the branch is not ready.
+      worktree.abortSync(state.feature.path);
+      handoff.sync.state = 'unresolved';
+      handoff.tests = 'red';
+      rec('main-sync', { state: 'unresolved' });
+      handoff.step = handoff.rewrite ? 'footer' : 'brief';
+      return;
+    }
+    handoff.sync.state = 'resolved';
+    rec('main-sync', { state: 'resolved' });
+    handoff.step = 'tests';
+  }
+
+  function endTests(rec) {
+    const res = (passOpts.runTests ?? (() => ({ ok: true })))(state.feature.path, { tasks: lastTasks });
+    handoff.tests = res.ok ? 'green' : 'red';
+    handoff.testsReason = res.ok ? null : { reason: res.reason ?? null, logPath: res.logPath ?? null };
+    rec('tests', { state: handoff.tests });
+    handoff.step = handoff.rewrite ? 'footer' : 'brief';
+  }
+
+  // A re-sync (main moved while waiting, or a restart in ready) rewrites only the report's footer.
+  function endFooter(rec) {
+    const path = join(state.feature.path, reportRel);
+    let text = '';
+    try {
+      text = readFileSync(path, 'utf8');
+    } catch {
+      // gone from the worktree: rewritten below with only the footer, as the branch had it
+    }
+    writeFileSync(path, replaceFooter(text, footerNow()));
+    worktree.commitFeature(`report(${slug}): re-synced with main`);
+    rec('report', { resync: true });
+    handoff.reportPath = reportRel;
+    settle();
+    if (agent?.alive()) agent.tell(resyncedFor({ slug, mainSha: handoff.sync?.mainSha, tests: handoff.tests, unresolved: handoff.sync?.state === 'unresolved' }));
+  }
+
+  function endBrief() {
+    if (agent?.alive()) {
+      const facts = endFacts({
+        tasks: parseProgress(planFile('PROGRESS.md')).tasks,
+        ledger: agent.ledger(),
+        findings: findingRows(planFile('FINDINGS.md')),
+        unverified: unverifiedTasks(planFile('PROGRESS.md')),
+        sync: handoff.sync,
+        tests: handoff.tests,
+      });
+      if (agent.briefEnd(facts)) handoff.step = 'report';
+      return;
+    }
+    // Given up, or never started: carry on without it (DESIGN §2.11). One merely restarting is waited for.
+    if (!agent || agent.givenUp?.()) endWrite(null);
+  }
+
+  function endWrite(sections) {
+    const ledger = agent ? agent.ledger() : [];
+    const text = assembleReport({ slug, sections, notable: notableDecisions(ledger, adopted), footer: footerNow() });
+    writeFileSync(join(state.feature.path, reportRel), text);
+    worktree.commitFeature(`report(${slug}): delivery report`);
+    control?.log?.(`report ${reportRel}`);
+    handoff.reportPath = reportRel;
+    settle();
+    if (agent?.alive()) agent.tell(handoffFor({ slug, reportPath: reportRel, ready: handoff.state === 'ready', report: text }));
+  }
+
+  function finish(by, rec) {
+    handoff.finished = by;
+    rec('finished', { by });
+    closeAgent();
+  }
+
+  function endPass() {
+    const actions = [];
+    const rec = endRecord(actions);
+    const halted = control?.isHalted?.() ?? false;
+    if (halted) {
+      const t = state.tasks[MAIN_SYNC_TASK];
+      if (t) platform.close(t.workerId);
+      closeAgent();
+      return endResult({ actions, halted: true, routed: { passed: [], report: null, close: false } });
+    }
+
+    // The main-sync worker's reports and answers, read the way the loop reads a task worker's: list()
+    // once (the fake's tick), then the inbox.
+    const listed = platform.list().filter((w) => !state.closedIds.has(w.id));
+    const messages = platform.inbox().filter((m) => m.task === MAIN_SYNC_TASK);
+    if (state.tasks[MAIN_SYNC_TASK]) {
+      applyMessages(state, messages, rec);
+      resumeAnswered(state, new Map(listed.map((w) => [w.id, w])), rec);
+    }
+    const routed = route();
+
+    switch (handoff.step) {
+      case 'sync':
+        endSync(rec);
+        break;
+      case 'syncing':
+        endSyncing(rec, listed);
+        break;
+      case 'tests':
+        endTests(rec);
+        break;
+      case 'footer':
+        endFooter(rec);
+        break;
+      case 'brief':
+        endBrief();
+        break;
+      case 'report':
+        if (routed.report) endWrite(routed.report);
+        else if (!agent || agent.givenUp?.()) endWrite(null);
+        break;
+      case 'waiting':
+        if (routed.close) finish('closed', rec);
+        else if (worktree.mainContains(state.feature.branch)) finish('merged', rec);
+        else if (worktree.mainTip() !== handoff.mainSha) {
+          // main moved without the feature tip: re-sync so the hand-off still merges cleanly (§2.10).
+          handoff.state = 'preparing';
+          handoff.rewrite = true;
+          endSync(rec);
+        }
+        break;
+      default:
+        break;
+    }
+    return endResult({ actions, halted: false, routed, listed });
+  }
+
+  function endResult({ actions, halted, routed, listed = [] }) {
+    const surfaces = actions.filter((a) => a.type === 'surface').map(renderSurface);
+    const live = listed.filter((w) => w.id === state.tasks[MAIN_SYNC_TASK]?.workerId).length;
+    const waitingNow = handoff.step === 'waiting';
+    return {
+      handoff: handoffView(),
+      finished: handoff.finished,
+      actions,
+      surfaces,
+      spawned: [],
+      reviewing: [],
+      completed: [],
+      restartSummary: null,
+      closed: [],
+      ceilingFull: false,
+      waiting: [],
+      live,
+      preparing: 0,
+      halted,
+      complete: waitingNow,
+      readyToMerge: waitingNow && handoff.state === 'ready' ? { branch: state.feature.branch } : null,
+      testsPassed: handoff.tests === null ? undefined : handoff.tests === 'green',
+      testsReason: handoff.tests === 'red' ? handoff.testsReason ?? handoff.gateReason ?? null : null,
+      done: waitingNow,
+      tasks: lastTasks,
       agent: routed,
     };
   }
@@ -401,10 +696,27 @@ export function startCoordinator({
       return agent;
     },
     // The keys of the items the agent holds now; empty while it is down, so every item is the person's.
+    // The end-of-run state (T05) — null until the end gate has run with the agent on.
+    get handoff() {
+      return handoffView();
+    },
+    endOfRun,
     heldByAgent() {
       return agent?.alive() ? new Set([...held.keys(), ...justSettled]) : new Set();
     },
   };
+}
+
+// mainSyncOpening(prompt) → the opening instruction of the end-of-run main-sync worker (T05). It runs
+// under the pir-worker contract for asking the person and dropping its report, but its instruction is the
+// main-sync prompt, not a stock skill: it holds no task of the plan.
+export function mainSyncOpening(prompt) {
+  return (
+    'You are a worker session in a parallel PIR run. Invoke the pir-worker skill and follow its contract for ' +
+    'asking the person and dropping reports, but your instruction is neither pir-implement nor pir-review: do not ' +
+    'run pir-work, do not pick a task, and carry out exactly this and nothing else.\n\n' +
+    prompt
+  );
 }
 
 // coordinatorEnabled(env) → whether this run has a coordinator agent (pir-coordinator DESIGN §2.1): on by
@@ -706,6 +1018,18 @@ export function renderHandoff({ readyToMerge, taskCount, slug, why } = {}) {
   );
 }
 
+// renderFinished({ by, slug, ready, reportPath }) → the line printed when a run with the agent ends
+// (pir-coordinator DESIGN §2.10): the person merged, or told the agent to close the run.
+export function renderFinished({ by, slug, ready = false, reportPath = null } = {}) {
+  const branch = `pir/${slug}`;
+  const report = reportPath ? ` The report is ${reportPath}.` : '';
+  if (by === 'merged') return `✔ ${branch} is in main. The run is finished.${report}`;
+  return (
+    `✔ run closed.${report}\n` +
+    (ready ? `${branch} is not merged; it is yours to merge when you want:\n\n  git merge ${branch}\n` : `${branch} is not merged and not ready to merge.`)
+  );
+}
+
 // --- The `node src/shell/coordinate.mjs {slug}` bin entry --------------------------------------
 //
 // The whole coordinator: refuse an unreviewed plan (DESIGN §2.1), otherwise stand up the real platform
@@ -973,6 +1297,7 @@ export function buildRunState({
   readyToMerge = false,
   testsReason = null,
   interrupted = false,
+  handoff = null,
 } = {}) {
   const tasks = passTasks.map((t) => {
     const done = t.state === DONE_GLYPH;
@@ -997,7 +1322,9 @@ export function buildRunState({
       ...workerFields(workers.filter((w) => w.task === t.num), { done, waiting: st ? waitingOn(st, activity) : null }),
     };
   });
-  return { branch, ceiling, complete, readyToMerge: !!readyToMerge, testsReason: testsReason ?? null, interrupted: !!interrupted, tasks };
+  // handoff is the end of the run with the agent on (pir-coordinator T05): { state: 'preparing'|'ready'|'red',
+  // reportPath, mainSha }, null otherwise.
+  return { branch, ceiling, complete, readyToMerge: !!readyToMerge, testsReason: testsReason ?? null, interrupted: !!interrupted, handoff: handoff ?? null, tasks };
 }
 
 // newTiming() / advanceTiming(timing, stateTasks, completed, now) — per-task timing for the display's
@@ -1412,9 +1739,12 @@ async function main(argv) {
         sinceByTask,
         stoppedAtByTask,
         doneMsByTask,
-        complete: r.complete,
-        readyToMerge: !!r.readyToMerge,
+        // With the agent on, the run is not handed off while it prepares (sync, report): the display must
+        // not offer the merge before REPORT.md is committed and the branch re-tested (T05).
+        complete: r.handoff ? r.handoff.state !== 'preparing' : r.complete,
+        readyToMerge: r.handoff ? r.handoff.state === 'ready' : !!r.readyToMerge,
         testsReason: r.testsReason,
+        handoff: r.handoff,
       });
       lastRunState = runState;
       // Feed the detached live view (DESIGN §2.4): write this pass's run state to the snapshot the
@@ -1423,8 +1753,22 @@ async function main(argv) {
       if (selfReport) writeRunSnapshot({ controlDir: control.dir, proc, runState });
       renderer.paint(buildDisplay(runState, { now: Date.now() }));
 
+      // The end of the run with the agent (pir-coordinator DESIGN §2.9, §2.10): the passes after the end
+      // gate sync main, get the report committed and wait in `ready to merge` until the person merges or
+      // tells the agent to close. The run's own waiting is not a stall.
+      if (coordinator.handoff) {
+        if (r.finished) {
+          finishRun('complete'); // merged or closed: `finished` (DESIGN §2.10)
+          renderer.close();
+          renderer.line('\n' + renderFinished({ by: r.finished, slug, ready: r.handoff?.state === 'ready', reportPath: r.handoff?.reportPath }));
+          return;
+        }
+        await waitForReport([inbox.reportsDir, personInbox.inboxDir], POLL_MS);
+        continue;
+      }
+
       if (r.complete) {
-        // The end of the run with the agent (sync, report, ready to merge) is T05's; until then it ends here.
+        // Without the agent the run ends here, as it did before it (DESIGN §2.1).
         coordinator.closeAgent();
         // The plan is done and the loop has run the feature-branch tests (§2.4). Hand the branch off: on
         // green, print the `git merge` command for the person to run; on red, print the failure and offer

@@ -26,7 +26,7 @@ import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { openScreen as openScreenRaw, driveScreen as driveScreenRaw } from './conversation-rig.mjs';
 import { writeClaudeShim } from './fake/claude-shim.mjs';
-import { PLANNER_MATCH, REVIEWER_MATCH, noPlanScript, plannerScript, reviewerScript, workerScripts } from './fake/sessions.mjs';
+import { COORDINATOR_MATCH, PLANNER_MATCH, REVIEWER_MATCH, coordinatorScript, noPlanScript, plannerScript, reviewerScript, workerScripts } from './fake/sessions.mjs';
 import { assistantText, canUseTool, initEvent, resultEvent, toolUse } from './fake/claude-stream.mjs';
 
 const SESSIONS = fileURLToPath(new URL('./fake/sessions.mjs', import.meta.url));
@@ -106,6 +106,7 @@ export function scriptSet(name = 'happy') {
     { match: PLANNER_MATCH, script: plannerSteps },
     { match: REVIEWER_MATCH, script: reviewerSteps },
     ...workerScripts(),
+    { match: COORDINATOR_MATCH, script: coordinatorScript() },
   ];
 }
 

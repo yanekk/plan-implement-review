@@ -518,3 +518,54 @@ test('the real worktree.mjs and the fake adopt identically on the same scratch i
   assert.deepEqual(realRes.added, ['T03']);
   assert.equal(realProgress, fakeProgress, 'the adopted feature PROGRESS.md is byte-identical');
 });
+
+// ---- pir-coordinator T05: bring main into the feature branch at the end of the run ----
+
+// A fake worktree with the feature branch open and `extra` committed on main afterwards.
+function syncFixture(t, { mainFile = null, featureFile = null } = {}) {
+  const w = createFakeWorktree({ progress: '# Progress\n', slug: SLUG, files: { 'shared.txt': 'base\n' } });
+  t.after(w.cleanup);
+  const f = w.openFeature(SLUG);
+  if (featureFile) {
+    writeFileSync(join(f.path, featureFile.path), featureFile.content);
+    w.commitFeature('feature work');
+  }
+  if (mainFile) {
+    writeFileSync(join(w.repo, mainFile.path), mainFile.content);
+    git(w.repo, ['add', '-A']);
+    git(w.repo, ['commit', '-m', 'main moved', '--no-edit']);
+  }
+  return { w, f, mainSha: git(w.repo, ['rev-parse', 'main']).stdout.trim() };
+}
+
+test('syncMain: up to date when main is already in the feature branch; main untouched', (t) => {
+  const { w, f, mainSha } = syncFixture(t);
+  const before = w.mainCommitCount();
+  assert.deepEqual(w.syncMain(f.path), { state: 'up-to-date', mainSha });
+  assert.equal(w.mainCommitCount(), before);
+  assert.equal(w.mainContains(f.branch), true, 'a fresh feature branch is main itself');
+});
+
+test('syncMain: a clean merge of a moved main; main still does not contain the feature tip', (t) => {
+  const { w, f, mainSha } = syncFixture(t, { mainFile: { path: 'other.txt', content: 'main\n' }, featureFile: { path: 'mine.txt', content: 'x\n' } });
+  const res = w.syncMain(f.path);
+  assert.deepEqual(res, { state: 'merged', mainSha });
+  assert.equal(readFileSync(join(f.path, 'other.txt'), 'utf8'), 'main\n');
+  assert.equal(git(f.path, ['merge-base', '--is-ancestor', mainSha, 'HEAD']).ok, true);
+  assert.equal(w.syncPending(f.path), false);
+  assert.equal(w.mainContains(f.branch), false);
+  assert.equal(w.syncMain(f.path).state, 'up-to-date', 'a second sync has nothing to do');
+  git(w.repo, ['merge', '--no-edit', f.branch]);
+  assert.equal(w.mainContains(f.branch), true, 'the person merged');
+});
+
+test('syncMain: a conflict is left in progress with its files; re-asked, it is the same conflict; abortSync cleans up', (t) => {
+  const { w, f, mainSha } = syncFixture(t, { mainFile: { path: 'shared.txt', content: 'main\n' }, featureFile: { path: 'shared.txt', content: 'feature\n' } });
+  assert.deepEqual(w.syncMain(f.path), { state: 'conflict', mainSha, files: ['shared.txt'] });
+  assert.equal(w.syncPending(f.path), true, 'the merge is left for a worker to finish');
+  assert.deepEqual(w.syncMain(f.path), { state: 'conflict', mainSha, files: ['shared.txt'] }, 'no second merge on top');
+  assert.equal(w.abortSync(f.path).ok, true);
+  assert.equal(w.syncPending(f.path), false);
+  assert.equal(readFileSync(join(f.path, 'shared.txt'), 'utf8'), 'feature\n');
+  assert.equal(w.mainTip(), mainSha);
+});
