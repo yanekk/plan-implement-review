@@ -101,7 +101,9 @@ wrong — you do two things and then **wait** (DESIGN §2.2):
    unspecified or ambiguous) or `kind: decision` (a real choice either way). Dropping the file does
    two things and no more: it keeps your slot counted while you are parked, and it prints your question
    in the live display so the person can see who is asking. Nothing reads that file and answers you —
-   it is not a message to anyone.
+   it is not a message to anyone. **Drop it every time you are about to end a turn waiting on the
+   person** — a follow-up question after they answered an earlier one included — because the earlier
+   report stopped counting the moment their answer arrived.
 2. **Ask the person, in this session, as your last turn before you park** — lay out what you are trying
    to do, the options and their costs, and your recommendation, the shape `CLAUDE.md` asks for. **When
    the answer is a choice between options, ask it with the AskUserQuestion tool** — options with a
