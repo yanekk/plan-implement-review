@@ -145,7 +145,7 @@ function footerLine(context, ui, rows = []) {
   return lineOf('↑↓ move · ↵ open · Ctrl+R resume · Ctrl+S stop · Ctrl+X remove · esc quit', 'hint');
 }
 
-// buildListFrame(dashboard, ui) → frame (DESIGN §2.3, §2.11).
+// buildListFrame(dashboard, ui, { columns, rows }) → frame (DESIGN §2.3, §2.11).
 //
 //   dashboard = { rows, counts } — buildDashboard's output (T04). rows are the resolved run views in the
 //               order the caller sorted them; counts is the tallies line's source.
@@ -158,45 +158,54 @@ function footerLine(context, ui, rows = []) {
 // 'selected' `▎` span, which paintLine (pir-view.mjs) turns into a full-width grey band when colour is on.
 //
 // `columns` is the terminal width; REPO widens with it (repoWidth), everything else is fixed.
-export function buildListFrame(dashboard, ui = initialUi(), { columns = DEFAULT_COLS } = {}) {
+//
+// `rows` (dashboard-plan-box §2.7, T04) is the line budget of the list block when the list sits above the
+// new-plan box (list-view.mjs). Given, the frame is the list block alone — no note and no footer, since
+// the list view draws those under and around the box — windowed to the budget by windowListBlock. Absent,
+// the frame is exactly today's: the non-TTY path has no box, so it keeps its footer and its get-started
+// line, which there still points at `pir start`.
+export function buildListFrame(dashboard, ui = initialUi(), { columns = DEFAULT_COLS, rows: budget } = {}) {
   const repoCol = repoWidth(columns);
   const { rows = [], counts = { running: 0, finished: 0, crashed: 0, stopped: 0, waiting: 0, total: 0 } } = dashboard ?? {};
-  const lines = [];
+  const title = [span('pir', 'head'), span('  runs on this machine', 'dim')];
+  const header = lineOf(
+    '  ' + pad('SLUG', COL.slug) + pad('TYPE', COL.type) + pad('STATE', COL.state) + pad('REPO', repoCol) + pad('PROGRESS', COL.progress) + 'WK',
+    'dim',
+  );
+  const rowLine = (v, i) => {
+    const selected = i === ui.sel;
+    // A run is "live" only while running; a non-running run's slug is dimmed so the eye lands on the
+    // active ones. The state colour lives on the state cell, separately, so both signals show at once.
+    const live = v.state === 'running';
+    // A planning run (pir-plan-command §2.10): TYPE `plan` magenta, its label dimmed in quotes until it has
+    // a slug, its display state, and its steps in PROGRESS. A record without `kind` is a build, `work`.
+    // isPlan is the rule runDisplayState uses, so TYPE, STATE and PROGRESS never disagree on a row.
+    const plan = isPlan(v);
+    const labelled = plan && !!v.record?.label;
+    const st = stateCell(v.display ?? v.state);
+    const prog = plan ? { text: planProgress(v.snap?.runState), style: v.state === 'crashed' ? 'bar-crash' : null } : progressCell(v.state, v.progress);
+    return [
+      span(selected ? '▎ ' : '  ', selected ? 'selected' : null), // the selected-row mark (paintLine)
+      span(pad(displayName(v), COL.slug), live && !labelled ? null : 'dim'),
+      span(pad(plan ? 'plan' : 'work', COL.type), plan ? 'type-plan' : 'type-work'),
+      span(pad(st.text, COL.state), st.style),
+      span(pad(v.repo, repoCol), 'dim'),
+      span(pad(prog.text, COL.progress), prog.style),
+      span(v.workers > 0 ? String(v.workers) : '·', 'dim'),
+    ];
+  };
 
-  lines.push([span('pir', 'head'), span('  runs on this machine', 'dim')]);
+  if (budget != null) return windowListBlock({ title, header, rows, rowLine, sel: ui.sel, counts: countsLine(counts), budget });
+
+  const lines = [];
+  lines.push(title);
   lines.push([]); // a blank spacer line
 
   if (rows.length === 0) {
     lines.push(lineOf('  No runs yet — start one with `pir start {slug}`', 'dim'));
   } else {
-    lines.push(
-      lineOf(
-        '  ' + pad('SLUG', COL.slug) + pad('TYPE', COL.type) + pad('STATE', COL.state) + pad('REPO', repoCol) + pad('PROGRESS', COL.progress) + 'WK',
-        'dim',
-      ),
-    );
-    rows.forEach((v, i) => {
-      const selected = i === ui.sel;
-      // A run is "live" only while running; a non-running run's slug is dimmed so the eye lands on the
-      // active ones. The state colour lives on the state cell, separately, so both signals show at once.
-      const live = v.state === 'running';
-      // A planning run (pir-plan-command §2.10): TYPE `plan` magenta, its label dimmed in quotes until it has
-      // a slug, its display state, and its steps in PROGRESS. A record without `kind` is a build, `work`.
-      // isPlan is the rule runDisplayState uses, so TYPE, STATE and PROGRESS never disagree on a row.
-      const plan = isPlan(v);
-      const labelled = plan && !!v.record?.label;
-      const st = stateCell(v.display ?? v.state);
-      const prog = plan ? { text: planProgress(v.snap?.runState), style: v.state === 'crashed' ? 'bar-crash' : null } : progressCell(v.state, v.progress);
-      lines.push([
-        span(selected ? '▎ ' : '  ', selected ? 'selected' : null), // the selected-row mark (paintLine)
-        span(pad(displayName(v), COL.slug), live && !labelled ? null : 'dim'),
-        span(pad(plan ? 'plan' : 'work', COL.type), plan ? 'type-plan' : 'type-work'),
-        span(pad(st.text, COL.state), st.style),
-        span(pad(v.repo, repoCol), 'dim'),
-        span(pad(prog.text, COL.progress), prog.style),
-        span(v.workers > 0 ? String(v.workers) : '·', 'dim'),
-      ]);
-    });
+    lines.push(header);
+    rows.forEach((v, i) => lines.push(rowLine(v, i)));
   }
 
   lines.push([]);
@@ -206,6 +215,68 @@ export function buildListFrame(dashboard, ui = initialUi(), { columns = DEFAULT_
   if (ui.note) lines.push(lineOf(ui.note, 'dim'));
   lines.push(footerLine('list', ui, rows));
   return lines;
+}
+
+// The get-started line under the box (dashboard-plan-box §2.7): the box is right below it, so it points there.
+export const EMPTY_LIST_BOX = '  No runs yet — type after @ below to plan something new';
+
+// windowListBlock → the list block cut to `budget` lines (dashboard-plan-box §2.7, user 2026-09-26).
+// The block is title, spacer, header, rows, spacer, counts, spacer. When it does not fit, the three spacers
+// go first (bottom one first), then the title; the header and the counts line always stay. The rows then
+// get what is left, at least one slot: they scroll so the selected row is visible, and a dim `↑ n more` /
+// `↓ n more` takes the first / last slot when rows are cut on that side and there is room for the marker
+// plus at least one row. With one slot only, it is the selected row and no marker shows.
+function windowListBlock({ title, header, rows, rowLine, sel, counts, budget }) {
+  const n = rows.length;
+  const need = Math.max(1, n); // the empty list's one line counts as one row that always shows
+  let keep = 4; // droppables still shown, dropped in the order sp3, sp2, sp1, title
+  while (keep > 0 && 2 + keep + need > budget) keep -= 1;
+  const slots = Math.max(1, budget - 2 - keep);
+  const has = (i) => keep > 3 - i; // 0: sp3, 1: sp2, 2: sp1, 3: title — dropped in that order
+
+  let body;
+  if (n === 0) body = [lineOf(EMPTY_LIST_BOX, 'dim')];
+  else {
+    const s = Math.min(Math.max(0, sel | 0), n - 1);
+    const w = rowWindow(n, s, slots);
+    body = [];
+    if (w.up > 0) body.push(lineOf(`  ↑ ${w.up} more`, 'dim'));
+    for (let i = w.start; i < w.end; i++) body.push(rowLine(rows[i], i));
+    if (w.down > 0) body.push(lineOf(`  ↓ ${w.down} more`, 'dim'));
+  }
+
+  const lines = [];
+  if (has(3)) lines.push(title);
+  if (has(2)) lines.push([]);
+  if (n > 0) lines.push(header);
+  lines.push(...body);
+  if (has(1)) lines.push([]);
+  lines.push(counts);
+  if (has(0)) lines.push([]);
+  return lines;
+}
+
+// rowWindow(n, sel, slots) → { start, end, up, down }: which rows show in `slots` lines, and how many are
+// hidden above and below. The window is stateless — centred on the selection and clamped to the ends — so
+// the pure frame needs no scroll offset carried between paints. Markers cost a slot each, so the widest
+// window whose markers still fit wins; one slot is always the selected row alone.
+export function rowWindow(n, sel, slots) {
+  if (n <= slots) return { start: 0, end: n, up: 0, down: 0 };
+  for (let v = slots; v >= 1; v--) {
+    const start = Math.min(Math.max(0, sel - Math.floor((v - 1) / 2)), n - v);
+    const up = start > 0 ? start : 0;
+    const down = start + v < n ? n - start - v : 0;
+    if (v + (up > 0) + (down > 0) <= slots) return { start, end: start + v, up, down };
+  }
+  // No marker fits beside a row: the slots are all rows, centred on the selection, and no marker shows.
+  const start = Math.min(Math.max(0, sel - Math.floor((slots - 1) / 2)), n - slots);
+  return { start, end: start + slots, up: 0, down: 0 };
+}
+
+// listFooter(ui, rows) → the list's footer line (the armed confirmation, or the key hint), for the list view
+// to draw under its box (dashboard-plan-box §2.6). The same line buildListFrame ends with.
+export function listFooter(ui, rows = []) {
+  return footerLine('list', ui ?? initialUi(), rows);
 }
 
 // The counts line (§2.3, §2.11): the total, then the running count green and the crashed count red, with

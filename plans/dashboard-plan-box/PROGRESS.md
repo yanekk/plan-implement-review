@@ -26,11 +26,11 @@ done · ⛔ blocked, needs a human.
 | T01 | drop-canonical-guard | — | ⬜ | |
 | T02 | plan-box-rules | — | ✅ | |
 | T03 | repo-scan | T02 | ⬜ | |
-| T04 | list-view-box | T02 | ⬜ | |
+| T04 | list-view-box | T02 | 🔍 | `list-view.mjs` + `buildListFrame` `rows` window, 22 tests. Deviations: new empty line only under the box; suffix skips armed line; box note amber over `ui.note`; two slots cut both ways show two rows, no marker; spacers/title drop whenever rows are cut; `editorTheme` lifted to pir-view; `home` option added. |
 | T05 | box-starts-plan | T03, T04 | ⬜ | |
 | T06 | plan-box-drill | T01, T05 | ⬜ | |
 
-**Review queue:** *(empty)*
+**Review queue:** T04
 
 ## Blocked on the user
 

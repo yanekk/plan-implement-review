@@ -12,7 +12,7 @@
 // refused. The box creates nothing: its caller starts the run with what it sends.
 
 import { Editor, getKeybindings, isKeyRelease, parseKey } from '@earendil-works/pi-tui';
-import { paintLine, SGR, RESET } from './pir-view.mjs';
+import { editorTheme, paintLine } from './pir-view.mjs';
 import { createScreen } from './pir-tui.mjs';
 
 const span = (text, style = null) => ({ text, style });
@@ -27,17 +27,7 @@ export const BRIEF_HINT = '↵ start planning · shift+↵ new line · esc cance
 // invalidate, focused) plus a read-only `text` for the tests. onSubmit(brief) gets the trimmed text, newlines
 // kept; it and onCancel() are each called at most once, and after either the box takes no more keys.
 export function createBriefBox({ repo, tui = STUB_HOST, colour = true, onSubmit = () => {}, onCancel = () => {} }) {
-  const style = (s, text) => (colour && SGR[s] ? `${SGR[s]}${text}${RESET}` : text);
-  const editor = new Editor(tui, {
-    borderColor: (s) => style('dim', s),
-    selectList: {
-      selectedPrefix: (s) => style('prompt', s),
-      selectedText: (s) => style('prompt', s),
-      description: (s) => style('dim', s),
-      scrollInfo: (s) => style('dim', s),
-      noMatch: (s) => style('dim', s),
-    },
-  });
+  const editor = new Editor(tui, editorTheme(colour));
   let done = false;
   let focused = false;
   editor.onSubmit = (text) => {
