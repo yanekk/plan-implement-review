@@ -10,11 +10,11 @@ touching the task you pick up, and append yours there.
 cell is an index for the next session; the account is the commit message you are about to
 write. **Whoever writes a cell also fixes the over-budget cell they walk past.**
 
-**Plan reviewed:** not yet — run `/pir-review-plan` before the first `/pir-work`
+**Plan reviewed:** 2026-09-27 — 10 fixed, 4 decided with the user
 
 **Status:** Planned 2026-09-27. Nothing built. Precondition: `real-asking-state` merged into main.
 **Last updated:** 2026-09-27
-**Next `pir-work` will:** refuse until the plan is reviewed; then T00, the probe, which gates T01 and T03.
+**Next `pir-work` will:** T00, the probe, once `real-asking-state` is merged into main (T00 checks it).
 
 ## Tasks
 

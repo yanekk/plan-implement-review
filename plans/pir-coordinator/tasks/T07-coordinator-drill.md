@@ -21,7 +21,7 @@ DESIGN §2.3 to §2.10 as seen on screen; `pir-e2e` drill.
 ## The flow to drive
 
 1. A run with three tasks and the agent on; the agent allows one permission (row never reads `asking you`).
-2. A reserved request: row `asking you` at once; the agent's note in its conversation.
+2. A reserved request: row `asking you` at once; the agent's pointer in its conversation.
 3. A pass: the pointer, then the person answers in the worker's conversation; row back to working.
 4. The person opens the agent, gives an instruction, sees it delivered.
 5. The run ends: `preparing` shows while the sync and report run, then `ready to merge` and the report path.

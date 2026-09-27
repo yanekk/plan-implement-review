@@ -135,13 +135,16 @@ auto mode or an allow rule lets through without a prompt is unchanged.
 
 ### 2.5 Passing a question on
 
-When the agent will not decide, it writes a `pass` decision with a reason and a suggestion. The
-command then (user 2026-09-27):
+When the agent will not decide, it writes a `pass` decision with a reason and a suggestion, and in the
+same turn says the pointer to the person in its own reply: which worker and task has a question, why it
+held back, what it would pick. The command then (user 2026-09-27):
 
 1. switches on that worker's Remote Control, so it is reachable from the phone;
-2. posts the pointer into the agent's own conversation log as a coordinator note: which worker and
-   task has a question, why the agent held back, what it would pick;
-3. marks the item as passed, so the row reads `asking you`.
+2. marks the item as passed, so the row reads `asking you`.
+
+Why the agent's own reply and not a note pir writes: pir's notes are lines in pir's conversation log and
+never enter the Claude session, which is what the phone shows (`platform.note`, checked at plan review
+2026-09-27). The agent's reply is in both (user, plan review 2026-09-27).
 
 The question itself stays where the worker asked it; nothing is copied or relayed. The person answers
 in the worker's conversation, in `pir` or on the phone. Once the item is answered, the worker's Remote
@@ -196,8 +199,10 @@ When every task is ✅ and the feature-branch tests pass (today's end gate), the
 4. The command assembles `plans/{slug}/REPORT.md` from the agent's sections, the rendered decisions
    section (§2.7) and a branch footer (main sha synced against, tests result), and commits it on the
    feature branch (`report({slug}): delivery report`). The report lands in main with the merge.
-5. Posts the hand-off into the agent's conversation: the report, and `git merge pir/{slug}` for the
-   person. The run enters `ready to merge`.
+5. Sends the agent a message holding the report and `git merge pir/{slug}` (or, red, why no merge is
+   offered), and the agent presents them to the person in its reply, for the same reason as the pointer
+   (§2.5). The report file itself is pir's assembly, so no decision can drop out of it. The run enters
+   `ready to merge`.
 
 The agent never merges into main and never pushes (user 2026-09-27). If the tests are red, at the end
 gate or after the sync, the report is still written, says so, and no merge is offered; the run waits
@@ -212,20 +217,31 @@ A run in `ready to merge` stays open, with its agent reachable in `pir` and on t
 - the command sees main contains the feature branch tip (`git merge-base --is-ancestor pir/{slug}
   main`), because the person merged.
 
-Either ends the run as `finished`. While it waits, if main moves without containing the feature tip,
+Either ends the run as `finished`. A `close` before the run is in `ready to merge` is refused and the
+agent told why; it tells the person the run is still building and that stopping is the dashboard's
+(user, plan review 2026-09-27). Why: a loosely worded message must not end an overnight build, and
+stopping a run stays in the person's hands. While it waits, if main moves without containing the feature tip,
 the command re-syncs as in §2.9 step 1, updates the report's branch footer, commits, and the agent tells
 the person. Why automatic: the promise of the hand-off is a merge that goes through cleanly, and the
 person merging another run first is the ordinary way that promise breaks.
 
 ### 2.11 The unhappy paths
 
-- The agent exits or crashes: the command resumes its session (stored session id) at most three times
-  an hour. While it is down, and after the third failure for the rest of the run, every waiting item
+- The agent exits or crashes: the command resumes its session (stored session id) after each of the
+  first three exits within an hour; a fourth exit within an hour gives it up for the rest of the run.
+  While it is down, and once given up, every waiting item
   goes to the person exactly as with `--no-coordinator`, and a coordinator note says so. A dead agent
   never leaves a worker waiting on it.
+- The agent is given up (§2.11 first bullet) when the end sequence needs its report, or while it waits
+  for it: the command carries on without it (user, plan review 2026-09-27). The sync and tests run as in
+  §2.9; `REPORT.md` holds the rendered decisions section and the branch footer, and one line in place of
+  the three agent sections saying the coordinator agent was not available to write them; the run enters
+  `ready to merge` and the merge line shows in `pir` only. An agent that is merely restarting is waited
+  for. Why not today's plain end: the clean-merge promise matters most when something has gone wrong.
 - The agent is slow: no timeout. The item waits, and the person can answer it at any time (§2.3).
 - A decision file will not parse, names an unknown worker or request, or has the wrong shape: it is
-  dropped and the agent is told why in one message. Nothing is guessed.
+  dropped and the agent is told why in one message. Nothing is guessed. A file that fails to parse is
+  left for one more pass first, since the agent's Write may still be landing (§3.5).
 - A decision for a reserved item (§2.4): refused, the item passed on with the agent's text as its note.
 - The agent tries a tool outside its allowance (§3.4): denied by the command, logged.
 - pir restarts mid-run: the agent's session is resumed by id; the ledger is durable in the control
@@ -279,7 +295,10 @@ assembly are pure, so every rule of §2 except the live session is tested in mil
 `reservedFor(request, askRules)` returns `null` or `{ kind: 'ask-rule' | 'destructive', why }`, from:
 
 - `request.matchedAskRule` present, or `request.defaultToNo` true;
-- a `permissions.ask` rule matching the request by `ruleMatches` (the matcher the grants use);
+- a `permissions.ask` rule matching the request by `ruleMatches` (the matcher the grants use), the rule
+  string parsed into `{ toolName, ruleContent }` first. `ruleMatches` refuses compound Bash commands,
+  which is right for a grant and wrong here, so a compound command is split on `&&`, `||`, `;`, `|` and
+  newlines and reserved if any part matches;
 - for `Bash`, a command matching `DESTRUCTIVE`: `rm` with `-r`/`-f` flags, `git push` with
   `--force`/`-f`/`--force-with-lease`, `git reset --hard`, `git clean -f`, `git branch -D`,
   `git checkout --`/`git restore` on paths, `git rebase`, `git filter-branch`, `DROP TABLE`/`DROP
@@ -301,7 +320,7 @@ worktree and its conversation at `control/conversations/coordinator-{n}.ndjson`.
 
 - `permissionMode: 'default'`, not `auto`, so no tool runs without passing the command's gate.
 - The gate (`decide`) allows `Read`, `Glob`, `Grep` under the repo, its worktrees and the installed
-  skills, and `Write` only to a path inside `control/coordinator/decisions/`; it denies everything
+  skills, `Skill` for `pir-coordinator` only (its opening instruction invokes it), and `Write` only to a path inside `control/coordinator/decisions/`; it denies everything
   else, without parking a request for the person. `disallowedTools` names Bash, Edit, NotebookEdit,
   WebFetch, WebSearch, Task and Agent as a second fence.
 - Remote Control on for the life of the session (§2.8).
@@ -317,10 +336,10 @@ All under the run's control folder (`plans/{slug}/.parallel/control/`, gitignore
 
 | Path | What | Crash mid-write |
 |---|---|---|
-| `coordinator/decisions/*.json` | the agent's decision files, one per decision, consumed and deleted | written temp-then-rename by the skill's one-liner, as reports are; a torn file never appears |
+| `coordinator/decisions/*.json` | the agent's decision files, one per decision, consumed and deleted | written by the agent's Write tool, which has no rename (the agent has no Bash); a file that fails to parse is retried on the next pass and refused only if it still fails |
 | `coordinator/ledger.jsonl` | one line per applied decision | one `appendFileSync` per line; a torn last line is skipped on read |
 | `coordinator/session.json` | `{ sessionId, restarts: [iso…] }` | `writeJsonAtomic` |
-| `conversations/coordinator-{n}.ndjson` | the agent's conversation, pointers and hand-off as notes | as for workers |
+| `conversations/coordinator-{n}.ndjson` | the agent's conversation; its pointers and hand-off are its own replies | as for workers |
 
 `clearTransientFeeds` leaves `coordinator/` alone except `decisions/`, which is cleared at startup
 like `reports/`.
@@ -433,6 +452,8 @@ All user decisions 2026-09-27 unless dated otherwise.
   becomes reachable on the phone only then; the agent never relays the question** (user, three
   points and a confirmation).
 - **The agent's conversation is reachable in `pir` and on the phone all run** (user).
+- **Pointer and hand-off are the agent's own replies, not pir notes** (user, plan review 2026-09-27):
+  pir's notes never reach the session the phone shows.
 - **The report lives in `pir` and as `plans/{slug}/REPORT.md` on the branch**, with four sections
   (user). The decisions section is rendered from the ledger (planner's choice, §2.7).
 - **The agent does not merge into main or push; it pre-resolves conflicts by merging main into the

@@ -17,6 +17,11 @@ DESIGN §1 success criteria, §5.1, §5.2, §5.3.
 - `src/shell/harness/fixtures/pir-coordinator.mjs` (new), registered in `fixtures.mjs`, with
   `coordinator: true`, and a project rules file `.claude/pir-coordinator.md` in the fixture repo.
 - `src/shell/harness/fixtures.test.mjs` if fixtures are enumerated there.
+- `src/shell/harness/answerer.mjs`, test: with the agent on, answer only items the run state shows held
+  by the person (today it answers every request at once and would race the agent); a scenario may type
+  a `deny` for a permission (today it always allows).
+- `src/shell/harness/scenario.mjs`, `run.mjs`, tests: a scenario step that commits to the scratch repo's
+  main once a named task has merged (no mid-run main commit exists today).
 
 ## Fixture
 
@@ -35,6 +40,8 @@ Two independent tasks at ceiling 2, harness timeout 20 min, scratch repo with
 ## Tests
 
 - [ ] The fixture parses and registers.
+- [ ] Answerer: an item held by the coordinator is left alone; a typed `deny` is sent as a deny.
+- [ ] The main-commit step fires once, after the named task's merge, in a fake run.
 
 ## Done when
 

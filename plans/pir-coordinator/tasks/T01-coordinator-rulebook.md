@@ -15,7 +15,8 @@ DESIGN §2.3 (decision kinds), §2.4, §2.11 (bad decisions), §3.3.
 ## Files
 
 - `src/core/coordinator-policy.mjs` (new), `src/core/coordinator-policy.test.mjs` (new).
-- `src/core/person-input.mjs`: export `ruleMatches` (no behaviour change).
+- `src/core/person-input.mjs`: export `ruleMatches` (no behaviour change). It takes a parsed
+  `{ toolName, ruleContent }`, and nothing parses the settings-file string form yet.
 
 ## Interface
 
@@ -23,6 +24,7 @@ DESIGN §2.3 (decision kinds), §2.4, §2.11 (bad decisions), §3.3.
 // request: the normalised request from stream.mjs readRequest, plus matchedAskRule/defaultToNo when present.
 // askRules: string[] from the project's .claude/settings.json permissions.ask (the shell reads the file).
 export const DESTRUCTIVE; // RegExp[] over a Bash command; DESIGN §3.3
+export function parseRule(text) // "Bash(git push:*)" → { toolName: 'Bash', ruleContent: 'git push:*' }; "Read" → { toolName: 'Read' }
 export function reservedFor(request, askRules = []) // → null | { kind: 'ask-rule'|'destructive', why: string }
 
 // A decision file, as the agent writes it:
@@ -35,7 +37,7 @@ export function reservedFor(request, askRules = []) // → null | { kind: 'ask-r
 export function readDecision(obj) // → { ok: true, decision } | { ok: false, error }
 
 // waiting: [{ worker, task, kind: 'permission'|'questions'|'report', requestId?, request?, reserved? }]
-export function checkDecision(decision, waiting) // → { ok: true, apply } | { ok: false, why, passOn: bool }
+export function checkDecision(decision, waiting, { ready = false } = {}) // → { ok: true, apply } | { ok: false, why, passOn: bool }
 ```
 
 `apply` is the decision normalised for the shell (`{ kind, worker, requestId, result | text, ledger }`),
@@ -47,6 +49,9 @@ item goes to the person with the agent's reason as its note.
 - [ ] `reservedFor`: each recorded case in `src/shell/fake/fixtures/coordinator-requests.json` (T00).
 - [ ] `matchedAskRule` present → ask-rule; `defaultToNo` → destructive; neither and no match → null.
 - [ ] A `Bash(git push:*)` ask rule matches `git push origin main`, not `git status`.
+- [ ] The same rule reserves `cd x && git push origin main` and `git status; git push` (each part is
+      matched, DESIGN §3.3), though `ruleMatches` alone refuses compound commands.
+- [ ] `parseRule`: with and without parentheses; a malformed string → null, never a match-all.
 - [ ] Each `DESTRUCTIVE` entry matches its command and does not match a near miss (`rm file.txt`,
       `git push`, `git reset --soft`, `git branch -d`, `select * from drops`).
 - [ ] Destructive matching inside a compound command (`cd x && rm -rf y`).
@@ -54,7 +59,8 @@ item goes to the person with the agent's reason as its note.
       `answers` not a map, empty `text` all refused with a named error.
 - [ ] `checkDecision`: unknown worker, unknown or already-gone requestId, kind mismatch (`answers` for a
       permission), `message` to a worker not report-parked, `permission` on a reserved item (passOn),
-      `pass` on anything waiting (ok), `report`/`close` pass through.
+      `pass` on anything waiting (ok), `report` passes through, `close` passes through only when the run
+      is in `ready to merge` (the caller says so) and is refused otherwise (DESIGN §2.10).
 
 ## Done when
 

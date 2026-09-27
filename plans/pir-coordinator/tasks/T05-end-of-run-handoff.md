@@ -12,12 +12,14 @@ or merges. With the agent off, the end is exactly today's.
 ## Design sections this implements
 
 DESIGN §2.7 (decisions section, adopted tasks notable), §2.9, §2.10, §2.11 (red, restart in ready,
-sync conflict unresolved), §3.3 (main-sync prompt), §3.5.
+sync conflict unresolved, agent given up at the end), §3.3 (main-sync prompt), §3.5.
 
 ## Files
 
 - `src/shell/worktree.mjs`, test: `syncMain(featurePath, { root })`, `mainContains(branch, { root })`.
 - `src/core/conflict.mjs`, test: `buildConflictPrompt({ kind: 'main-sync', slug, plan, files, audience: 'worker' })`.
+  Today it has no `kind` and is chosen by `audience`; `kind` defaults to the existing task→feature prompt,
+  whose output stays byte-identical.
 - `src/core/coordinator-report.mjs` (new), test.
 - `src/shell/coordinate.mjs`, `loop.mjs`, tests: the end sequence after the green end gate; the
   `ready to merge` state in the run state and snapshot; `finalState: 'finished'` on close or merge;
@@ -36,7 +38,8 @@ export function mainContains(branch, { root })  // → boolean (git merge-base -
 export function notableDecisions(ledgerLines, adoptedTasks) // → [{ question, answer, why, task }]
 export function decisionsSection(notable)                   // markdown; "None." when empty
 export function branchFooter({ mainSha, tests: 'green'|'red', syncedAt })
-export function assembleReport({ slug, sections, notable, footer }) // → REPORT.md text
+export function assembleReport({ slug, sections, notable, footer }) // → REPORT.md text; sections null →
+                                                                    //   one "agent not available" line in their place
 export function endFacts({ tasks, ledger, findings, unverified, sync, tests }) // → the end brief's facts
 
 // run state
@@ -46,8 +49,8 @@ runState.handoff = { state: 'preparing'|'ready'|'red', reportPath: 'plans/{slug}
 Sequence, one step per pass so the display stays live: end gate green → `syncMain` → (`conflict` →
 spawn a worker in the feature worktree with the main-sync prompt, wait for its `done`) → tests →
 `briefEnd` → wait for the `report` decision → `assembleReport`, write, `commitFeature` with
-`report({slug}): delivery report` → `say(handoffFor(…))` → `ready`. In `ready`, each pass: `mainContains`
-→ finish; main tip changed → back to `syncMain`, update the footer, commit, `say` it; a `close`
+`report({slug}): delivery report` → `tell(handoffFor(…))` → `ready`. In `ready`, each pass: `mainContains`
+→ finish; main tip changed → back to `syncMain`, update the footer, commit, `tell` the agent; a `close`
 decision → finish.
 
 `adoptedTasks` are rows `adoptNewTaskRows` adopted during the run while the agent was alive.
@@ -62,8 +65,10 @@ decision → finish.
       merges (fake main contains the tip) → `finished`.
 - [ ] Conflict: a worker spawned with the main-sync prompt; its `done` → tests → report.
 - [ ] Red tests after sync: report written with the red footer, `handoff.state: 'red'`, no merge offered.
-- [ ] `close` decision in `ready` → `finished`. Main moves in `ready` → re-sync, footer updated, agent says so.
+- [ ] `close` decision in `ready` → `finished`; a `close` mid-build → refused, agent told, run carries on. Main moves in `ready` → re-sync, footer updated, agent says so.
 - [ ] Restart in `ready`: report not rewritten, returns to `ready`.
+- [ ] Agent given up before or during the wait for its report: `REPORT.md` committed with decisions and
+      footer and the "not available" line, run reaches `ready`; an agent only restarting is waited for.
 - [ ] Agent off: today's `renderHandoff` end, unchanged tests.
 
 ## Done when

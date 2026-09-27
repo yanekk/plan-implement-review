@@ -38,7 +38,9 @@
       "Bash(test ! -f package-lock.json || npm ci)",
       "Bash(HOME=/tmp/pir-plan-command-home ./install.sh)",
       "Bash(claude auth status)",
-      "Bash(node src/shell/harness/run.mjs real-asking --into /tmp/real-asking-live)"
+      "Bash(node src/shell/harness/run.mjs real-asking --into /tmp/real-asking-live)",
+      "Bash(node src/shell/harness/run.mjs pir-coordinator --into /tmp/pir-coordinator-live)",
+      "Bash(rm -rf /tmp/pir-coordinator-live)"
     ],
     "ask": [
       "Bash(npm i @earendil-works/pi-tui@0.87.1)",

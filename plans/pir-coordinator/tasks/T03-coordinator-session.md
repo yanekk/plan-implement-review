@@ -11,7 +11,7 @@ T04's and T05's; this task makes it work against the fake platform.
 
 ## Design sections this implements
 
-DESIGN §2.3, §2.5 (pointer note, Remote Control on for a pass), §2.7 (ledger lines), §2.8, §2.11 (exit,
+DESIGN §2.3, §2.5 (Remote Control on for a pass), §2.7 (ledger lines), §2.8, §2.11 (exit,
 restart limit, bad files, denied tools), §3.4, §3.5.
 
 ## Files
@@ -21,8 +21,10 @@ restart limit, bad files, denied tools), §3.4, §3.5.
   the request is answered at once and logged `decided-by-gate`; `null` parks it as today.
 - `src/shell/coordinator-agent.mjs` (new), `coordinator-agent.test.mjs` (new).
 - `src/core/coordinator-brief.mjs` (new), `coordinator-brief.test.mjs` (new): every message text.
-- `src/shell/fake/claude-stream.mjs`: a scripted step that writes a decision file (a `Write` tool call
-  the fake performs), so the agent can be scripted like a worker.
+- `src/shell/fake/claude-stream.mjs`: none expected. Its existing `sh` step writes a decision file from
+  a script and `emit` shows the matching `Write` tool use; add a step only if those two cannot do it.
+- `src/shell/fake/platform.mjs`: add `remoteControl(id, on)` and `note(id, kind, fields)`, which the
+  real platform has and the fake lacks, recorded for assertions.
 - `src/shell/coordinate.mjs` `clearTransientFeeds`: clear `coordinator/decisions/`, keep the rest.
 
 ## Interface
@@ -44,7 +46,8 @@ CoordinatorAgent = {
   drain(waiting),              // reads decisions/, runs readDecision + checkDecision, applies via platform,
                                //   appends ledger lines, returns { passed: [{worker, requestId?, reason, suggestion}],
                                //   report?: sections, close?: true }
-  say(text),                   // a coordinator note in its own conversation (pointers, hand-off)
+  tell(text),                  // a `from: 'pir'` message into its session (hand-off, re-sync); the agent
+                               //   relays it to the person in its reply. Pointers are its own replies.
   ledger(),                    // parsed coordinator/ledger.jsonl
   close(),
 }
@@ -53,23 +56,24 @@ CoordinatorAgent = {
 export function briefFor(item)            // permission / questions / report-park, reserved variant
 export function refusalFor(why)
 export function answeredElsewhereFor(item)
-export function pointerFor(pass, task)    // "T05 has a question for you — <reason>. I'd pick: <suggestion>"
 export function openingFor({ slug, projectRulesPath, dropDir })
 ```
 
 The gate is `decide` from DESIGN §3.4: `Read`/`Glob`/`Grep` under `repoRoot`, its `.claude/worktrees/`,
-and `~/.claude/skills/`; `Write` whose `file_path` resolves inside `controlDir/coordinator/decisions/`;
+and `~/.claude/skills/`; `Skill` with skill `pir-coordinator`; `Write` whose `file_path` resolves inside `controlDir/coordinator/decisions/`;
 everything else `deny`. Paths are resolved (`path.resolve`) before comparing, so `..` cannot escape.
 
 ## Tests
 
-- [ ] Gate: each allowed tool and path allowed; Write outside the folder, Write via `..`, Bash, Edit denied.
+- [ ] Gate: each allowed tool and path allowed; Write outside the folder, Write via `..`, Bash, Edit,
+      `Skill` for another skill denied.
 - [ ] A scripted agent allows a permission → `platform.answer` called with `allowResult`, `from: 'coordinator'`,
       ledger line written.
 - [ ] Answers to a question set, a message to a report-parked worker: applied and ledgered.
 - [ ] A `permission` on a reserved item: refused, returned in `passed` with the agent's reason, agent told.
 - [ ] Malformed file, unknown worker, already-answered request: dropped, agent told, nothing applied.
-- [ ] `pass`: returned in `passed`, pointer note written via `say`.
+      A file that fails to parse is left for one pass and applied if it parses then (DESIGN §3.5).
+- [ ] `pass`: returned in `passed`; no note written (the pointer is the agent's reply, DESIGN §2.5).
 - [ ] Exit: resumed with the stored session id; a fourth exit within an hour → `alive()` false for good.
 - [ ] Restart: a second `startCoordinatorAgent` on the same control folder resumes the session and keeps
       the ledger.

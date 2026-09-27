@@ -37,7 +37,8 @@ held through the SDK `query()` with `canUseTool` logging every call:
    `canUseTool` is called at all (the classifier may allow or block without asking) and the fields.
 3. `permissionMode: 'default'`, `disallowedTools: ['Bash','Edit','NotebookEdit','WebFetch','WebSearch','Task','Agent']`,
    `canUseTool` allowing only `Read`/`Glob`/`Grep` and `Write` under an absolute folder outside cwd:
-   ask it to read a file, write a JSON file into that folder, write a file in cwd, and run `ls`.
+   ask it to invoke a skill, read a file, write a JSON file into that folder, write a file in cwd, and
+   run `ls`.
    Record which reach `canUseTool`, which land, and which are refused without reaching it.
 
 ## Tests

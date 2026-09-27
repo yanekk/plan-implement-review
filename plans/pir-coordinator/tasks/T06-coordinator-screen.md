@@ -23,7 +23,7 @@ DESIGN §2.5 (row labels), §2.8, §2.9 step 5, §2.10.
 - `src/shell/coordinate.mjs` `buildRunState`: carries `coordinator: { id, live, logPath }` and each
   task's holder.
 - `src/shell/pir-tui.mjs`, `conversation-view.mjs`, tests: open the coordinator's conversation; its
-  notes (pointers, hand-off) render as coordinator notes; typing sends to it through the inbox like a
+  pointers and hand-off are its own replies and pir's hand-off message, rendered as today; typing sends to it through the inbox like a
   worker message.
 - `src/shell/conversation-rig.mjs` or its tests: end-to-end cases below.
 
@@ -42,7 +42,7 @@ runState.handoff = { state, reportPath, mainSha } | null      // from T05
 - [ ] Display: holder coordinator → `asking coordinator`, person → `asking you`, footer counts person only.
 - [ ] Display: `handoff` ready, red, preparing; absent with the agent off.
 - [ ] Dashboard: `ready to merge` label; open-coordinator key; no coordinator → the key does nothing, with a note.
-- [ ] Conversation view renders a pointer note and the hand-off note.
+- [ ] Conversation view renders the agent's pointer reply, and pir's hand-off message with the reply.
 
 ## End to end (the worker drives this)
 

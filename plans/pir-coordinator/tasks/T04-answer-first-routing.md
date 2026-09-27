@@ -19,7 +19,9 @@ Control), §2.11 (agent down → person), §3.6.
 - `src/core/asking.mjs`, test: `waitingOn` also returns `holder: 'coordinator' | 'person'` given the set
   of items the agent holds, and the pure `waitingItems(stateTasks, workers)` list T01's `checkDecision`
   takes.
-- `src/shell/coordinate.mjs`, test: start the agent after the feature worktree opens (unless disabled);
+- `src/shell/coordinate.mjs`, test: start the agent after the feature worktree opens (unless disabled),
+  passing `askRules` read from `permissions.ask` in the feature worktree's `.claude/settings.json` (no
+  reader exists today; a missing file or key is `[]`);
   per pass brief new items, `drain`, record `passed`; `remoteWanted` becomes: workers whose item is held
   by the person, plus the agent's own session; the agent closed on teardown and on HALT.
 - `src/shell/loop.mjs`, test: `resumeAnswered` counts a `from: 'coordinator'` send as an answer, like
@@ -27,8 +29,9 @@ Control), §2.11 (agent down → person), §3.6.
 - `src/shell/pir.mjs`, `launch.mjs`, `index-store.mjs`, tests: `pir start {slug} [--no-coordinator]`;
   `startRun(slug, { coordinator })` records `coordinator: false` in the index record and sets
   `PARALLEL_COORDINATOR=0` for the child; `resumeRun` passes the recorded choice on.
-- `src/shell/harness/run.mjs`, `fixtures.mjs`, tests: fixtures run with `PARALLEL_COORDINATOR=0` unless
-  the fixture sets `coordinator: true`, so existing live drills are unchanged.
+- `src/shell/harness/scenario.mjs`, `run.mjs` (`seatbeltEnv`), tests: scenarios run with
+  `PARALLEL_COORDINATOR=0` unless the scenario sets `coordinator: true`, so existing live drills are
+  unchanged.
 
 ## Interface
 
@@ -58,7 +61,8 @@ person's. `heldByAgent` is keyed `${workerId}:${requestId ?? 'report'}`.
 - [ ] `PARALLEL_COORDINATOR=0`: no agent started, every existing coordinate/loop test unchanged.
 - [ ] `pir start x --no-coordinator` → record `coordinator: false`, child env set; resume keeps it;
       unknown flag refused with usage.
-- [ ] Harness fixture without `coordinator` runs with the agent off.
+- [ ] Harness scenario without `coordinator` runs with the agent off.
+- [ ] `askRules` read from the feature worktree's settings; absent file → `[]`.
 
 ## Done when
 

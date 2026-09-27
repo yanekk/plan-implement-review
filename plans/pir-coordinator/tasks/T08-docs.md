@@ -23,8 +23,8 @@ DESIGN §2 throughout, §2.6 (CLAUDE.md amendment), §8 (limits a reader would o
   conversation key, the `ready to merge` label), `branch-model.md` (main merged into the feature branch
   before the hand-off; `REPORT.md`).
 - `README.md`: the coordinator agent as a user-facing feature, with a link.
-- `CLAUDE.md` of this repo, and the method text `install.sh` appends to other projects if it is a
-  separate copy: "Who decides what" and the task-adding paragraph name the coordinator agent as the
+- `CLAUDE.md` of this repo, which is also the method text `install.sh` appends to other projects and
+  copies to `pir-install/PIR-CLAUDE.md` (no separate copy): "Who decides what" and the task-adding paragraph name the coordinator agent as the
   person's stand-in in a parallel run, within its reserved limits.
 - `skills/pir-worker/SKILL.md`: an answer to the worker's question may come from the coordinator agent
   on the person's behalf; approval to add a task likewise.
