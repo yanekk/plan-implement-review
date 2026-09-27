@@ -15,7 +15,7 @@ cell also fixes the over-budget cell they walk past.
 **Status:** Planned 2026-09-27 on main. Nothing built. Needs `pir/real-asking-state` merged to `main`
 first (DESIGN, Base); a trial merge conflicts in `coordinate.mjs` and `harness/run.mjs` (FINDINGS).
 **Last updated:** 2026-09-27
-**Next `pir-work` will:** implement T01 (T01, T02 and T04 have no dependency).
+**Next `pir-work` will:** implement T02 (T02 and T04 have no dependency).
 
 ## Tasks
 
@@ -24,14 +24,14 @@ done · ⛔ blocked, needs a human.
 
 | # | Task | Depends on | State | Notes |
 |---|---|---|---|---|
-| T01 | background-fold | — | 🔍 | `background` fold in `workerActivity`, `readEntry` kind `background`, fake `backgroundTasks()`; `wakeUp()` sends the shrunken list first. 11 tests. Deviations: `wakeUp` gained a third arg `still` (jobs left running); the fake-log test lives in `worker-proc.test.mjs`, which drives the fake through the SDK. |
+| T01 | background-fold | — | ✅ | Reviewed clean, no fix commit. `background` fold per DESIGN §2.2; `wakeUp` gained third arg `still`; fake-log test sits in `worker-proc.test.mjs`. Probed: six mutations of the fold each fail a test; `readEntry`'s new `background` kind breaks no other consumer; the one real-run log with a job shows no idle-and-empty moment before a wake-up. |
 | T02 | stopped-predicate | — | ⬜ | |
 | T03 | planning-steps-asking | T02 | ⬜ | |
 | T04 | worker-reports-every-ask | — | ⬜ | |
 | T05 | docs | T03, T04, T06 | ⬜ | |
 | T06 | stopped-asking-live | T01, T02 | ⬜ | |
 
-**Review queue:** T01
+**Review queue:** empty
 
 ## Blocked on the user
 
