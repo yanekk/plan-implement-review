@@ -17,7 +17,7 @@ import { recordPath, writeRecord } from './index-store.mjs';
 import { dropPersonInput } from './person-inbox.mjs';
 import { readSnapshot } from './snapshot-store.mjs';
 import { git, openPlanBranch } from './worktree.mjs';
-import { findControlDir, findSessionLog, nextPlanLogPath, parseArgs, planRunState, plannerChecks, reviewerChecks, rootOf, runPlanning, stepWorkedMs } from './plan-run.mjs';
+import { findControlDir, findSessionLog, nextPlanLogPath, parseArgs, planRunState, plannerChecks, reviewerChecks, rootOf, runPlanning, sessionAsking, stepWorkedMs, trackStoppedAt } from './plan-run.mjs';
 
 const PROGRAM = fileURLToPath(new URL('./plan-run.mjs', import.meta.url));
 const SESSIONS = fileURLToPath(new URL('./fake/sessions.mjs', import.meta.url));
@@ -686,6 +686,68 @@ test('planRunState: phases per step, the asking kind, the open session and its c
   assert.deepEqual(planRunState(st({ step: 'done', outcome: 'not-reviewed' })).steps.map((x) => x.phase), ['done', 'failed', 'pending']);
   assert.deepEqual(planRunState(st({ step: 'done', outcome: 'reviewed' })).steps.map((x) => x.phase), ['done', 'done', 'pending']);
   assert.equal(planRunState(st({ step: 'rename' })).steps[1].phase, 'pending');
+});
+
+// stopped-worker-asking T03 (DESIGN §2.3): a planning session that has stopped asks the person, through the
+// shared stoppedOnPerson, unless its step's report is already accepted.
+test('planRunState: a stopped planner or reviewer reads asking a question, until its report is accepted', () => {
+  const st = (over) => ({ ...initialPlanState({ id: ID }), ...over });
+  const sess = (step, activity, live = true) => ({ id: `${step}-1`, step, n: 1, live, activity });
+  const stopped = { state: 'idle', background: [] };
+
+  let rs = planRunState(st({}), { sessions: [sess('plan', stopped)], since: { plan: 5 }, stoppedAt: { plan: 9 } });
+  assert.equal(rs.steps[0].phase, 'asking');
+  assert.equal(rs.steps[0].asking, 'question');
+  assert.equal(rs.steps[0].stoppedAt, 9, 'the step clock stops');
+
+  rs = planRunState(st({}), { sessions: [sess('plan', { state: 'idle', background: ['b1'] })], stoppedAt: { plan: 9 } });
+  assert.equal(rs.steps[0].phase, 'planning', 'idle on its own background job');
+  assert.equal(rs.steps[0].asking, null);
+  assert.equal(rs.steps[0].stoppedAt, null);
+
+  rs = planRunState(st({ accepted: { kind: 'planned', plan: 'screen-time' } }), { sessions: [sess('plan', stopped)] });
+  assert.equal(rs.steps[0].phase, 'planning', 'an accepted planned waits on pir, not the person');
+
+  rs = planRunState(st({ step: 'review', slug: 's' }), { sessions: [sess('plan', { state: 'exited' }, false), sess('review', stopped)] });
+  assert.deepEqual(rs.steps.map((x) => x.phase), ['done', 'asking', 'pending']);
+  assert.equal(rs.steps[1].asking, 'question');
+  rs = planRunState(st({ step: 'review', slug: 's' }), { sessions: [sess('review', { state: 'busy', background: [] })] });
+  assert.equal(rs.steps[1].phase, 'reviewing');
+  rs = planRunState(st({ step: 'review', slug: 's', accepted: { kind: 'reviewed', plan: 's' } }), { sessions: [sess('review', stopped)] });
+  assert.equal(rs.steps[1].phase, 'reviewing', 'an accepted reviewed waits on pir');
+
+  // A pending request still names its kind, accepted report or not.
+  for (const kind of ['permission', 'questions']) {
+    rs = planRunState(st({ accepted: { kind: 'planned', plan: 'x' } }), { sessions: [sess('plan', { state: kind, background: [] })] });
+    assert.equal(rs.steps[0].asking, kind);
+  }
+  // An activity with no `background` listing is not stopped (today's reading).
+  rs = planRunState(st({}), { sessions: [sess('plan', { state: 'idle' })] });
+  assert.equal(rs.steps[0].phase, 'planning');
+  assert.equal(sessionAsking(st({}), null), null, 'no live session asks nothing');
+});
+
+test('trackStoppedAt: stamped when the stopped reading starts, kept while it holds, cleared when the next turn opens', () => {
+  const state = initialPlanState({ id: ID });
+  const view = (activity, live = true) => [{ step: 'plan', live, activity }];
+  let t = 100;
+  const now = () => t;
+  const at = {};
+  trackStoppedAt(state, view({ state: 'busy', background: [] }), at, now);
+  assert.deepEqual(at, {});
+  trackStoppedAt(state, view({ state: 'idle', background: [] }), at, now);
+  assert.deepEqual(at, { plan: 100 });
+  t = 200;
+  trackStoppedAt(state, view({ state: 'idle', background: [] }), at, now);
+  assert.deepEqual(at, { plan: 100 }, 'the first stamp holds');
+  trackStoppedAt(state, view({ state: 'busy', background: [] }), at, now);
+  assert.deepEqual(at, {}, 'cleared when the next turn opens');
+  trackStoppedAt(state, view({ state: 'permission' }), at, now);
+  assert.deepEqual(at, { plan: 200 }, 'a pending request stamps as before');
+  trackStoppedAt(state, view({ state: 'exited' }, false), at, now);
+  assert.deepEqual(at, { plan: 200 }, 'a session no longer live leaves the stamp alone');
+  trackStoppedAt({ ...state, accepted: { kind: 'planned', plan: 'x' } }, view({ state: 'idle', background: [] }), at, now);
+  assert.deepEqual(at, {}, 'idle after an accepted report is not asking');
 });
 
 test('nextPlanLogPath counts per step from the folder; rootOf; parseArgs', () => {

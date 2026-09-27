@@ -26,12 +26,12 @@ done · ⛔ blocked, needs a human.
 |---|---|---|---|---|
 | T01 | background-fold | — | ⬜ | |
 | T02 | stopped-predicate | — | ✅ | |
-| T03 | planning-steps-asking | T02 | ⬜ | |
+| T03 | planning-steps-asking | T02 | 🔍 | `sessionAsking` in plan-run.mjs reads a step asking by request kind or `stoppedOnPerson` with no `state.accepted`; row and clock share it. 2 tests. Deviation: the `stoppedAt` loop moved into exported `trackStoppedAt` so its stamp and clear are unit-tested, not driven through the program. |
 | T04 | worker-reports-every-ask | — | ✅ | |
 | T05 | docs | T03, T04, T06 | ⬜ | |
 | T06 | stopped-asking-live | T01, T02 | ⬜ | |
 
-**Review queue:** *(empty)*
+**Review queue:** T03
 
 ## Blocked on the user
 
