@@ -25,13 +25,13 @@ done · ⛔ blocked, needs a human.
 | # | Task | Depends on | State | Notes |
 |---|---|---|---|---|
 | T00 | remote-answer-probe | — | ⬜ | |
-| T01 | worker-contract | — | ⬜ | |
+| T01 | worker-contract | — | 🔍 | Skill `ask` sentence rewritten: no report before an `ask` action; pir shows the pending request itself. No test pins the wording; npm test green. Deviation: `./install.sh` not run, the task forbids it during a live parallel run; install after merge. |
 | T02 | waiting-predicate | — | ⬜ | |
 | T03 | answer-only-unpark | T00, T02 | ⬜ | |
 | T04 | docs | T01, T03 | ⬜ | |
 | T05 | live-asking-check | T04 | ⬜ | |
 
-**Review queue:** *(empty)*
+**Review queue:** T01
 
 ## Blocked on the user
 
