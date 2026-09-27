@@ -45,9 +45,11 @@ token and that token starts with `@`, and applies `@name `.
 - [ ] Typed `@sk` with `skaut` listed: `isShowingAutocomplete()` after the provider settles; Tab gives `@skaut `.
 - [ ] A 200-character brief at 80 columns wraps to three box lines and every line fits 80.
 - [ ] 30 runs at 80×12: the selected row is visible at top, middle and bottom selections; `↑ n more`/`↓ n more` counts are right.
+- [ ] Short screens (§2.7): spacer lines drop first, then the title; header and counts stay; with room for one row only, that row is the selected one and no marker shows.
 - [ ] `update` with an armed chord shows the armed footer line on a bare box.
 - [ ] `repos()` is called once per typed stretch, again after `reset()`.
 - [ ] Esc on a typed box calls neither `onQuit` nor `onListKey`, and the text is `@`.
+- [ ] Typing `@skaut` on a bare box gives `@skaut`, not `@@skaut` (`absorbAt`).
 
 ## Done when
 

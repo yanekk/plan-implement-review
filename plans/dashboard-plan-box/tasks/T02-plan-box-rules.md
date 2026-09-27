@@ -26,11 +26,12 @@ export function parseBoxText(text, repos, { roots }) →
     { ok: true, repo, brief }                                 // brief trimmed, newlines kept
   | { ok: false, reason: 'no-at'|'unknown-repo'|'ambiguous-repo'|'empty-brief', name?, paths?, note }
 export function startFailedNote(name, reason) → string        // 'Could not start planning in {name}: {reason}'
-export function headLine(text, repos, { roots }) → { text, style }   // §2.6: 'in {name}' | 'start with @repo' | '@x is not a repo in {roots}'
+export function headLine(text, repos, { roots }) → { text, style }   // §2.6: 'in {name}' | 'start with @repo' (dim bare, amber no name) | '@x is not a repo in {roots}'
 export function rankRepos(repos) → repos                      // mtimeMs desc, then name asc; a new array
 // key: pi-tui parseKey name ('up', 'enter', 'escape', 'ctrl+c', 'ctrl+s', 'shift+enter', 'a', …) or null for text
 export function routeBoxKey({ text, key, completing, newLine }) → 'list'|'box'|'reset'|'quit'|'submit'
 //   newLine: true when the data matches tui.input.newLine (the caller asks pi-tui's keybindings)
+export function absorbAt(text, data) → data                   // §2.3: text exactly '@' and data starts with '@' → data minus that '@'
 ```
 
 The note strings are exactly §2.5's table; they are exported so T04/T05 tests assert on the same text.
@@ -40,10 +41,12 @@ The note strings are exactly §2.5's table; they are exported so T04/T05 tests a
 - [ ] Every row of §2.3 on a bare box (both `@` and `''`) and on a typed one, with and without `completing`.
 - [ ] Ctrl+S/X/R go to the list whether bare or typed; Esc and Ctrl+C reset when typed, quit when bare.
 - [ ] Enter with `newLine` true is `box`, never `submit`.
+- [ ] `absorbAt`: `'@'` + `'@'` → `''`; `'@'` + `'@skaut x'` → `'skaut x'`; `''` + `'@'` and `'@s'` + `'@'` unchanged.
 - [ ] `parseBoxText`: each §2.5 row; exact-name only (`@ska` with `skaut` listed is `unknown-repo`); a
       multi-line brief keeps its newlines; `@skaut` alone and `@skaut   ` are `empty-brief`; a name
       followed by a newline then the brief parses; two repos named alike give `ambiguous-repo` with both paths.
-- [ ] `headLine` for bare, resolved, unknown.
+- [ ] `headLine` for bare, resolved, unknown, and no name (`hello`, `@ hello`: amber `start with @repo`).
+- [ ] `parseBoxText('@ a brief')` is `no-at`, as a text without `@` is.
 - [ ] `rankRepos`: newest first, equal mtimes by name, input not mutated.
 - [ ] `boundary.test.mjs` still passes with the new file.
 

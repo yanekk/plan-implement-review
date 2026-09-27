@@ -25,7 +25,8 @@ DESIGN §2 whole, §5 End to end; `pir-e2e` § drill.
 
 - [ ] Every interaction below was driven and passes, recorded in FINDINGS.md as worker-driven.
 - [ ] `npm test` green; `./install.sh` run once the code is on `main` with no run live, and the new
-      `list-view.mjs` present under `~/.claude/pir-engine/src/shell/`.
+      `list-view.mjs` present under `~/.claude/pir-engine/src/shell/`. Built in parallel (on a task branch):
+      no install; PROGRESS "Blocked on the user" says `./install.sh` follows the merge (DESIGN §5).
 
 ## End to end (the worker drives this)
 

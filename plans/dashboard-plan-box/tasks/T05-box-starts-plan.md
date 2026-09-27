@@ -26,7 +26,7 @@ DESIGN §2.3, §2.5, §3.3.
 runTui({ …, startPlan = startPlanRun, scan = scanRepos })
 // onSubmit(text): r = parseBoxText(text, repos, { roots }) → !r.ok: note = r.note
 //   → else s = startPlan(r.brief, { cwd: r.repo.path, env, kill, exec }) → started: reset box,
-//     ui = { ...initialUi(), view: 'watch', openSlug: `${s.record.repo}__${s.runId}`, openStep: 'plan' }
+//     ui = { ...initialUi(), view: 'watch', openSlug: s.runId, openKey: `${s.record.repo}__${s.runId}`, openStep: 'plan' }
 //   → refused or threw: note = startFailedNote(r.repo.name, reason)
 ```
 

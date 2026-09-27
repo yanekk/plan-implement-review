@@ -51,7 +51,8 @@ did not name). The text is **bare** when it is exactly `@` or empty.
 
 On a bare box the list keeps its whole key table (user): ↑↓ select, → and Enter open, Ctrl+S/X/R arm and
 confirm, Esc and Ctrl+C quit `pir`. No pop-up shows. Any other key (a printable character, a paste,
-Backspace) goes to the box.
+Backspace) goes to the box. An `@` typed, or a paste starting with `@`, into a box that is exactly `@` loses
+that leading `@`, so `@skaut …` typed out of habit reads the same as `skaut …` (user, 2026-09-26).
 
 Once the box is not bare:
 
@@ -93,26 +94,29 @@ starts nothing and sets the note, keeping the text, when:
 
 | Case | Note |
 |---|---|
-| the text does not start with `@` | `start with @repo, then say what to plan` |
+| the text does not start with `@`, or `@` is followed by whitespace (no name) | `start with @repo, then say what to plan` |
 | `name` is not exactly a listed repo's name | `no repo @{name} in {roots} — pick one from the list` |
 | two listed repos share `name` (two roots) | `@{name} is in more than one folder: {path}, {path}` |
 | the brief is empty | `say what to plan after @{name}` |
 | `startPlanRun` refuses or throws | `Could not start planning in {name}: {reason}` |
 
 A partial name is never completed on Enter (user, 2026-09-26, reversing an earlier yes to unique-prefix
-matching): only an exact name starts a run. `{roots}` is the roots as the person would type them (`~/src`).
+matching): only an exact name starts a run. A name in two roots is the one repo §2.4's list offers that Enter
+refuses; the pop-up shows both rows with their paths (user, 2026-09-27: never guess a folder, and it needs
+two roots to happen). `{roots}` is the roots as the person would type them (`~/src`).
 
 Otherwise the screen calls `startPlanRun(brief, { cwd: repo.path, env, … })`, the call `pir plan` makes,
-resets the box to `@`, and opens the run as `openPlanner` does: `{ view: 'watch', openSlug: '{repo}__{runId}',
-openStep: 'plan' }`, so the person lands in the planner's conversation once it has a session, exactly as
+resets the box to `@`, and opens the run as `openPlanner` does: `{ view: 'watch', openSlug: runId, openKey:
+'{repo}__{runId}', openStep: 'plan' }` (`findOpen` matches `openSlug` against the bare slug, and the key keeps a run
+id two repos share apart), so the person lands in the planner's conversation once it has a session, exactly as
 after `pir plan` (planning-runs.md § Where `pir plan` lands). ← steps back as it does there; back on the
 list, the box reads `@`.
 
 ### 2.6 What the head and hint lines say
 
 The head line is `new plan  in {name}` (dim) when the text names a listed repo, `new plan  start with
-@repo` (dim) when bare, and `new plan  @{name} is not a repo in {roots}` (amber, `your-go`) otherwise
-(prototype). On a bare box the hint is the list's existing footer (`footerLine('list', …)`, armed
+@repo` (dim) when bare, and `new plan  @{name} is not a repo in {roots}` (amber, `your-go`) when it names
+anything else, and `new plan  start with @repo` (amber) when there is no name at all (prototype). On a bare box the hint is the list's existing footer (`footerLine('list', …)`, armed
 confirmations included) with ` · type to plan (@repo)` appended when it fits the width; not bare, it is
 `↵ start planning · shift+↵ new line · esc clear`. Every line fits 80 columns, which the prototype's
 hint did not.
@@ -121,7 +125,9 @@ hint did not.
 
 The list rows scroll so the selected row is always visible (user). When rows are cut, a dim `↑ {n} more`
 line replaces the first visible row slot and `↓ {n} more` the last (planner), so the person knows the
-list goes on. The box grows as its text wraps (user); pi-tui's Editor already caps itself at 30% of the
+list goes on. When the list block does not fit, its three blank spacer lines go first, then the title line;
+the column header and the counts line stay (user, 2026-09-26: at 80×12 the full chrome left one run row).
+The markers show only when there is room for them and at least one run row; the selected row always shows. The box grows as its text wraps (user); pi-tui's Editor already caps itself at 30% of the
 terminal rows (minimum 5) and scrolls inside beyond that, which keeps the list at least partly visible.
 The empty-list line becomes `No runs yet — type after @ below to plan something new`.
 
@@ -207,7 +213,9 @@ Sizes: 80×24, 120×40, and 80×12 for a list taller than the screen. The throwa
 (`node plans/dashboard-plan-box/prototype/plan-box-mock.mjs`) is a non-binding reference.
 
 **After changing engine code, run `./install.sh`**, once the plan's code is on `main` and never while a
-run is live, because live sessions use the installed engine.
+run is live, because live sessions use the installed engine. Built in parallel, T06 ends on a task branch
+while the build is live, so it does not install: it writes under PROGRESS "Blocked on the user" that the
+install follows the person's merge, and any session they ask runs it (user, 2026-09-27).
 
 ### 5.1 What the test command cannot reach
 
