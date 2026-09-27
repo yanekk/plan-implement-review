@@ -115,9 +115,11 @@ the list and the `init` the worker is idle with nothing listed, so dropping the 
 open is absorbed by that turn, so it drops at that turn's `result`.
 
 Measured so far only for `task_type: local_bash` (13 sightings across 12 run logs, 2026-09-27). Whether a
-Monitor, a background subagent or another kind appears in the same list is unmeasured. If one does not,
-the only effect is a worker waiting on it reading `asking you`: the false-alarm direction the person
-accepted in §2.1, never a hidden question.
+Monitor, a background subagent or another kind appears in the same list is unmeasured; plan review found
+no Monitor or background subagent in 24 real logs. If one does not, the only effect is a worker waiting on
+it reading `asking you`: the false-alarm direction the person accepted in §2.1, never a hidden question.
+T06 measures a Monitor (plan review, user 2026-09-27), because `pir-worker` tells workers to use Monitor
+whenever they must background something, so a missing Monitor would false-alarm on the endorsed wait.
 
 ### 2.3 When a planning step is waiting on the person
 
@@ -265,7 +267,8 @@ All user decisions 2026-09-27 unless marked.
 - **No loop phase change and no un-park** (planning). The stopped reading is derived each pass from the
   activity, so an answer needs no bookkeeping: the next turn simply makes the worker busy.
 - **No probe task** (planning). The `background` signal is already in recorded logs, and the unmeasured
-  job kinds can only err towards a false alarm, which the person accepted.
+  job kinds can only err towards a false alarm, which the person accepted. Monitor is measured inside T06
+  instead (plan review), since the worker skill makes it the endorsed way to wait in the background.
 
 ## 8. Explicitly out of scope
 

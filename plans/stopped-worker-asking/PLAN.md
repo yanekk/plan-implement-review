@@ -76,6 +76,7 @@ T02 and T06 medium, T01, T03, T04 and T05 light.
 ## Open
 
 - No terminal-driving end-to-end test or drill: no screen is drawn or changed, only when an existing
-  label applies, asserted on the run state (DESIGN §4). Plan review may disagree.
-- Whether Monitor or background-subagent jobs appear in `background_tasks_changed` is unmeasured (DESIGN
-  §2.2). T06 could add a Monitor case if plan review wants it measured.
+  label applies, asserted on the run state (DESIGN §4). Plan review agreed: T06 reads the same status
+  snapshots the screen paints from.
+- Monitor jobs are measured in T06 (plan review, user 2026-09-27). Background subagents stay unmeasured
+  (DESIGN §2.2).

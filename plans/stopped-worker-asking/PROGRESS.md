@@ -10,10 +10,10 @@ touching the task you pick up, and append yours there.
 cell is an index for the next session; the account is the commit message. Whoever writes a
 cell also fixes the over-budget cell they walk past.
 
-**Plan reviewed:** not yet — run `/pir-review-plan stopped-worker-asking` before the first `/pir-work`
+**Plan reviewed:** 2026-09-27 — 3 fixed, 2 decided with the user
 
 **Status:** Planned 2026-09-27 on main. Nothing built. Needs `pir/real-asking-state` merged to `main`
-first (DESIGN, Base).
+first (DESIGN, Base); a trial merge conflicts in `coordinate.mjs` and `harness/run.mjs` (FINDINGS).
 **Last updated:** 2026-09-27
 **Next `pir-work` will:** implement T01 (T01, T02 and T04 have no dependency).
 

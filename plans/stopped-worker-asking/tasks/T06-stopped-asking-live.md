@@ -32,8 +32,11 @@ Two independent tasks at ceiling 2, harness timeout 15 min, `statusSnapshots: tr
   trailing full stop), again without a report, and ends its turn; then finishes. The task doc forbids the
   report on purpose, to prove the engine rule alone; T04's skill line would otherwise mask it.
 - T02: the worker starts a background `node -e "setTimeout(() => {}, 60000)"` (not `sleep`), says in one
-  line that it is waiting for the timer, ends its turn, and when woken writes its file and finishes. It
-  never asks the person.
+  line that it is waiting for the timer, ends its turn, and when woken writes its file. Then it starts a
+  Monitor on `node -e "setTimeout(() => console.log('done'), 45000)"`, says in one line that it is waiting
+  for the monitor, ends its turn, and when woken finishes. It never asks the person. The Monitor wait
+  measures whether a Monitor job appears in `background_tasks_changed` (plan review, user 2026-09-27):
+  pir-worker tells workers to use Monitor when they must background something.
 
 ## Tests
 
@@ -48,7 +51,13 @@ Two independent tasks at ceiling 2, harness timeout 15 min, `statusSnapshots: tr
 - [ ] Run captured. T01's rows (status snapshots): `asking` within one pass of each of its two asking
       turns ending, `building` within one pass of each reply; `remote_control` on after each asking turn
       ended, off after the reply.
+- [ ] The flow log has no `surface` line for T01. If the worker dropped a report anyway, the run proved
+      the report park, not the stopped rule: tighten the task doc and run again.
 - [ ] T02's rows never read `asking` during the timer; `building` through its wake-up turn.
+- [ ] T02's conversation log shows whether the Monitor's job was listed in `background_tasks_changed`,
+      and with which `task_type`; recorded in the FINDINGS row. If it was not listed, T02 read `asking`
+      during the monitor: stop and bring that to the user before T05, since the rule then misreads every
+      worker waiting on a Monitor.
 - [ ] The run hands off a green branch (`handedOffGreenBranch`) with ceiling 2 held.
 - [ ] FINDINGS.md has a dated worker-driven row with the transition times.
 
