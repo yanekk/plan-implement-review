@@ -24,7 +24,7 @@ done · ⛔ blocked, needs a human.
 
 | # | Task | Depends on | State | Notes |
 |---|---|---|---|---|
-| T01 | background-fold | — | ⬜ | |
+| T01 | background-fold | — | ✅ | |
 | T02 | stopped-predicate | — | ✅ | |
 | T03 | planning-steps-asking | T02 | ✅ | Review clean, no fix commit. `sessionAsking` shares `stoppedOnPerson`; `trackStoppedAt` extraction accepted. Probed: accepted cleared on reject, rename and resume; a rejection `send` opens the next turn in the fold at once, so no asking flash; accepted-while-busy closes before paint. |
 | T04 | worker-reports-every-ask | — | ✅ | |
