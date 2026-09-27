@@ -15,7 +15,7 @@ cell also fixes the over-budget cell they walk past.
 **Status:** Planned 2026-09-27 on main. Nothing built. Needs `pir/real-asking-state` merged to `main`
 first (DESIGN, Base); a trial merge conflicts in `coordinate.mjs` and `harness/run.mjs` (FINDINGS).
 **Last updated:** 2026-09-27
-**Next `pir-work` will:** implement T01 or T04 (no dependency); T03 is unblocked by T02.
+**Next `pir-work` will:** implement T01 or T03 (their dependencies are done).
 
 ## Tasks
 
