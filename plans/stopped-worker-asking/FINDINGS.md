@@ -17,6 +17,7 @@ Legend: 📌 fact learned · 🐞 bug found · ✅ verified by hand with the use
 
 | Date | | Finding |
 |---|---|---|
+| 2026-09-27 | ⚠️ | Feature branch red after T01+T02 merged: `loop.test.mjs` "parked: a person message injected into the still-open asking turn…" expects `row: null` after `RESULT`; the real fold now reads stopped → `question` (§2.1). Stale assertion, left for T06. |
 | 2026-09-27 | 📌 | Plan review: a trial merge of `pir/real-asking-state` into main conflicts in `src/shell/coordinate.mjs` and `src/shell/harness/run.mjs`, the files T02 and T06 edit. |
 | 2026-09-27 | 📌 | Plan review, 24 real logs: no Monitor or background-subagent job anywhere. A foreground Bash auto-backgrounded on timeout appears in `background_tasks_changed` but its `task_started` has `is_backgrounded:false`, so `conversation.mjs`'s background count misses it. |
 | 2026-09-27 | 📌 | Planning: `system/background_tasks_changed` carries the full running list, `[]` when the last job ends; only `task_type: local_bash` seen (13 sightings, 12 logs). 12 of 29 turns ended with a job running. Monitor and background subagents unmeasured. |
