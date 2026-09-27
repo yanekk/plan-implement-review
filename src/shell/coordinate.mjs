@@ -657,8 +657,11 @@ export function startCoordinator({
           // main moved without the feature tip: re-sync so the hand-off still merges cleanly (§2.10).
           handoff.state = 'preparing';
           handoff.rewrite = true;
-          // A re-sync whose tests turn red gets one fix attempt of its own (T10).
+          // A re-sync whose tests turn red gets one fix attempt of its own (T10). The last sequence's fix
+          // result is cleared too: the rewritten footer describes this sync, and a stale "stayed red" over
+          // "Tests: green" would contradict itself.
           handoff.fixUsed = false;
+          handoff.fix = null;
           endSync(rec);
         }
         break;

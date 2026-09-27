@@ -2256,6 +2256,22 @@ test('end: a restart mid-fix → the feature worktree is kept and a fresh fix wo
   assert.equal(second.worktree.fileOn(`pir/${SLUG}`, 'half-done.txt').ok, true, 'the earlier edit is kept and committed');
 });
 
+test('end: red after the fix; main moves in waiting and the re-sync is green → the footer does not keep the old fix line', (t) => {
+  let tests = 0;
+  const run = endRun(t, { runTests: () => ((tests += 1), tests <= 2 ? { ok: false, reason: 'red' } : { ok: true }) });
+  run.toGate();
+  run.until(() => run.told().some((m) => m.startsWith('Every task is done')));
+  run.decide({ kind: 'report', sections: SECTIONS });
+  run.until((x) => x.handoff.state === 'red');
+  assert.match(run.report().stdout, /stayed red/);
+  const moved = run.moveMain('later.txt', 'main fixed it\n');
+  run.until((x) => x.handoff.state === 'ready' && x.handoff.mainSha === moved);
+  const text = run.report().stdout;
+  assert.match(text, /Tests: green\./);
+  assert.doesNotMatch(text, /stayed red/, 'the footer describes this sync, not the earlier fix');
+  assert.equal(run.platform.spawns.filter((x) => x.task === 'tests-fix').length, 1);
+});
+
 test('end: close mid-build refused and the run carries on; main moves in ready → re-synced, footer updated, agent told; close → finished', (t) => {
   const run = endRun(t);
   run.coordinator.pass();
