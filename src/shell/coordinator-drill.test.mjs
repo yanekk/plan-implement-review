@@ -150,29 +150,32 @@ for (const [cols, rows] of SIZES) {
   });
 }
 
-test('coordinator drill with --no-coordinator at 80×24: every request is the person\'s and the end is today\'s', { timeout: 180000 }, async (t) => {
-  const rig = drillRig(t);
-  const screen = rig.openScreen({ cols: 80, rows: 24, args: ['start', DRILL_SLUG, '--no-coordinator'] });
-  try {
-    let s = (await screen.waitFor(/3 asking you/, 30000)).join('\n');
-    assert.match(s, /T01 +routine-ask +asking you · allow a command\?/);
-    assert.match(s, /T02 +reserved-ask +asking you · allow a command\?/);
-    assert.match(s, /T03 +passed-question +asking you · a question/);
-    assert.doesNotMatch(s, /coordinator/, 'no agent, no mention of one');
+// Both sizes, as the flow above (T07 review: the task names 80×24 and 120×40 for every step, step 6 too).
+for (const [cols, rows] of SIZES) {
+  test(`coordinator drill with --no-coordinator at ${cols}×${rows}: every request is the person's and the end is today's`, { timeout: 180000 }, async (t) => {
+    const rig = drillRig(t);
+    const screen = rig.openScreen({ cols, rows, args: ['start', DRILL_SLUG, '--no-coordinator'] });
+    try {
+      let s = (await screen.waitFor(/3 asking you/, 30000)).join('\n');
+      assert.match(s, /T01 +routine-ask +asking you · allow a command\?/);
+      assert.match(s, /T02 +reserved-ask +asking you · allow a command\?/);
+      assert.match(s, /T03 +passed-question +asking you · a question/);
+      assert.doesNotMatch(s, /coordinator/, 'no agent, no mention of one');
 
-    for (const [task, until, answered] of [['T01', /git status --short/, /→ allowed/], ['T02', /git push --force/, /→ allowed/], ['T03', /drill log be kept/, /→ Keep it/]]) {
-      await select(screen, task);
-      screen.send(RIGHT);
-      await screen.waitFor(until);
-      screen.send(ENTER);
-      await screen.waitFor(answered);
-      screen.send(LEFT);
-      await screen.waitFor(/pick a task/);
+      for (const [task, until, answered] of [['T01', /git status --short/, /→ allowed/], ['T02', /git push --force/, /→ allowed/], ['T03', /drill log be kept/, /→ Keep it/]]) {
+        await select(screen, task);
+        screen.send(RIGHT);
+        await screen.waitFor(until);
+        screen.send(ENTER);
+        await screen.waitFor(answered);
+        screen.send(LEFT);
+        await screen.waitFor(/pick a task/);
+      }
+      s = (await screen.waitFor(/git merge pir\/drill/, 90000)).join('\n');
+      assert.doesNotMatch(s, /ready to merge|preparing|REPORT\.md/, 'the end is today\'s: no hand-off, no report');
+      assert.equal(screen.overflows(), 0);
+    } finally {
+      await screen.close();
     }
-    s = (await screen.waitFor(/git merge pir\/drill/, 90000)).join('\n');
-    assert.doesNotMatch(s, /ready to merge|preparing|REPORT\.md/, 'the end is today\'s: no hand-off, no report');
-    assert.equal(screen.overflows(), 0);
-  } finally {
-    await screen.close();
-  }
-});
+  });
+}
