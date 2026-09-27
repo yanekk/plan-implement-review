@@ -33,10 +33,10 @@ done · ⛔ blocked, needs a human.
 | T07 | coordinator-drill | T06 | ✅ | |
 | T08 | docs | T02, T04, T05, T06 | ✅ | |
 | T09 | live-coordinator-check | T07, T08 | ⬜ | |
-| T10 | end-tests-fix | T05; blocks T09 | 🔍 | Red gate or red after sync spawns one `tests-fix` worker (role `fix`, `tests-red` prompt) in the feature worktree; tests rerun; footer and brief say what it did. 10 tests. Deviation: `./install.sh` not run, a parallel run is live (DESIGN §5); run it from the feature branch before T09. |
+| T10 | end-tests-fix | T05; blocks T09 | ✅ | Review: one fix — a re-sync kept the old fix result, so a green re-sync footer said "stayed red"; reproduced by test, cleared on re-sync. Probed restart in red ready, halt, crash, one-attempt counts, docs. Open: `./install.sh` not run (live run, DESIGN §5); run it from the feature branch before T09. |
 | T11 | end-helper-row | T06, T10; blocks T09 | ⬜ | |
 
-**Review queue:** T10
+**Review queue:** *(empty)*
 
 ## Blocked on the user
 
