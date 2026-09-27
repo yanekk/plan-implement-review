@@ -29,12 +29,12 @@ done · ⛔ blocked, needs a human.
 | T03 | coordinator-session | T01 | ✅ | |
 | T04 | answer-first-routing | T03 | ✅ | |
 | T05 | end-of-run-handoff | T04 | ✅ | |
-| T06 | coordinator-screen | T04, T05 | 🔍 | Row holder labels, agent hand-off footer, list state `ready to merge`, `c` opens the agent, inbox routes to it (`withAgent`), rig scenario `coordinator`; 8 tests, 2 e2e. Deviations: STATE widens to 17 only while a row is ready; red hand-off lists `running`; plan-rig end assertion updated; `./install.sh` not run (live run). |
+| T06 | coordinator-screen | T04, T05 | ✅ | Reviewed clean, no fix commit. Suite green; drove the coordinator scenario on the real screen at 80×24 and 120×40 (held, passed, agent conversation, typing, ready, list). Probed holder with mixed items, workerId on real task records, withAgent routing, old snapshots. `./install.sh` deferred (live run). Two wording nits in FINDINGS. |
 | T07 | coordinator-drill | T06 | ⬜ | |
 | T08 | docs | T02, T04, T05, T06 | ⬜ | |
 | T09 | live-coordinator-check | T07, T08 | ⬜ | |
 
-**Review queue:** T06
+**Review queue:** *(empty)*
 
 ## Blocked on the user
 
