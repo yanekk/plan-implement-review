@@ -9,7 +9,7 @@ import { tmpdir } from 'node:os';
 import { join, dirname, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { startWorker, workerOptions, writeWorkersFile } from './worker-proc.mjs';
-import { fakeClaudeSpawner, turn, canUseTool, initEvent, assistantText, resultEvent, REMOTE_CONTROL_RESPONSE } from './fake/claude-stream.mjs';
+import { fakeClaudeSpawner, turn, wakeUp, remoteInputTurn, canUseTool, initEvent, assistantText, resultEvent, REMOTE_CONTROL_RESPONSE } from './fake/claude-stream.mjs';
 import { workerActivity, allowResult } from '../core/stream.mjs';
 
 const SESSION = '11111111-1111-4111-8111-111111111111';
@@ -131,6 +131,17 @@ test('every SDK message is logged `in`, in order, before onEvent fires; the log 
   assert.deepEqual(seen, worker.entries(), 'onEvent saw every entry, in order');
   assert.deepEqual(worker.entries()[0], { t: worker.entries()[0].t, dir: 'out', from: 'pir', kind: 'message', text: 'begin' });
   assert.equal(workerActivity(logLines()).state, 'idle');
+});
+
+test('a wake-up and a Remote Control turn pass through the SDK and fold to their causes (real-asking-state T03)', async (t) => {
+  const { worker, logLines } = setup([{ await: 'user' }, ...turn('asked'), ...wakeUp(), ...remoteInputTurn()], t);
+  worker.send('begin', { from: 'pir' });
+  await waitFor(() => worker.entries().filter((e) => e.dir === 'in' && e.event.type === 'result').length === 3, 'three results');
+  await waitFor(() => worker.entries().some((e) => e.event?.type === 'command_lifecycle' && e.event.state === 'completed'), 'completed');
+  const a = workerActivity(logLines());
+  assert.deepEqual(a.turnCauses, ['pir', 'system', 'remote']);
+  assert.equal(a.remoteSends, 1);
+  assert.equal(a.state, 'idle');
 });
 
 test('a can_use_tool becomes a request entry and a pending request; answer sends the PermissionResult', async (t) => {

@@ -8,6 +8,9 @@ import { createFakePlatform } from './fake/platform.mjs';
 import { createFakeWorktree, git } from './fake/worktree.mjs';
 import { workerName } from '../core/naming.mjs';
 import { reconcileTaskRow, progressPathFor } from '../core/progress.mjs';
+import { workerActivity } from '../core/stream.mjs';
+import { waitingOn } from '../core/asking.mjs';
+import { remoteWanted } from './coordinate.mjs';
 
 // The dry-run seatbelt is on in the tests (DESIGN §5.2): the loop is handed fakes and a scratch
 // repo, so nothing here reaches a real agent or the real project.
@@ -636,6 +639,143 @@ test('a parked worker that asks with a question set in the same turn is resumed 
   assert.ok(r.actions.some((a) => a.type === 'resumed' && a.task === 'T01'));
 });
 
+// ---- Only an answer un-parks (real-asking-state DESIGN §2.2, T03). The worker's activity is folded
+// from real log entries, the Remote Control ones copied from T00's recording, so the loop is tested on
+// what the real CLI emits, not on a hand-made activity.
+const REMOTE_SAMPLE = readFileSync(new URL('../core/fixtures/remote-answer-sample.ndjson', import.meta.url), 'utf8')
+  .split('\n').filter(Boolean).map((l) => JSON.parse(l));
+// The recorded Remote Control turn: `command_lifecycle` queued/started, init, the reply, result, completed.
+const REMOTE_TURN = (() => {
+  const c = REMOTE_SAMPLE.filter((e) => e.case === '2-remote-typed');
+  return c.slice(c.findIndex((e) => e.event?.type === 'command_lifecycle'), c.findLastIndex((e) => e.event?.type === 'command_lifecycle') + 1);
+})();
+// The recorded wake-up: task_notification, then the turn it opened, up to its result.
+const WAKE_UP = (() => {
+  const c = REMOTE_SAMPLE.filter((e) => e.case === '5-wakeup-replay');
+  const from = c.findIndex((e) => e.event?.subtype === 'task_notification');
+  return c.slice(from, c.findIndex((e, i) => i > from && e.event?.type === 'result') + 1);
+})();
+const logIn = (event) => ({ dir: 'in', event });
+const INIT = logIn({ type: 'system', subtype: 'init', session_id: 's' });
+const SAY = logIn({ type: 'assistant', message: { content: [{ type: 'text', text: 'working' }] } });
+const RESULT = logIn({ type: 'result', subtype: 'success', result: '' });
+const SEND = (from) => ({ dir: 'out', from, kind: 'message', text: 'answer' });
+
+// parkedWorker(t) → { state, pass(...entries), log, platform }: T01 spawned, its opening turn open, and
+// its question report parked. `pass` appends entries to the worker's log, folds it, and runs one pass.
+function parkedWorker(t) {
+  const { platform, base } = setup(t, [{ num: 'T01' }], { behaviors: { T01: { question: 'which format?' } } });
+  const log = [SEND('pir'), INIT, SAY];
+  const list = platform.list.bind(platform);
+  let folding = false;
+  platform.list = () => list().map((w) => (folding && w.task === 'T01' ? { ...w, activity: workerActivity(log) } : w));
+  const state = createRunState();
+  runPass({ ...base, state }); // spawn T01
+  folding = true;
+  const pass = (...entries) => {
+    log.push(...entries);
+    return runPass({ ...base, state });
+  };
+  pass(); // T01 reports its question from inside its open turn
+  assert.equal(state.tasks.T01.phase, 'awaiting-answer');
+  return { state, pass, log, platform };
+}
+const resumedIn = (r) => r.actions.some((a) => a.type === 'resumed' && a.task === 'T01');
+const asking = (state, platform) => {
+  const w = platform.list().find((x) => x.task === 'T01' && x.live);
+  return { row: waitingOn(state.tasks.T01, w.activity), remote: remoteWanted([w], state.tasks).has(w.id) };
+};
+
+test('parked: a turn opened by a person send in pir resumes the task', (t) => {
+  const { state, pass } = parkedWorker(t);
+  pass(RESULT); // the asking turn ends
+  assert.equal(state.tasks.T01.phase, 'awaiting-answer');
+  const r = pass(SEND('person'), INIT);
+  assert.ok(resumedIn(r));
+  assert.equal(state.tasks.T01.phase, 'implementing');
+});
+
+test('parked: a turn opened by Remote Control input (recorded) resumes the task', (t) => {
+  const { state, pass } = parkedWorker(t);
+  pass(RESULT);
+  const r = pass(...REMOTE_TURN.slice(0, 3)); // queued, started, init: the turn has just opened
+  assert.ok(resumedIn(r));
+  assert.equal(state.tasks.T01.phase, 'implementing');
+});
+
+test('parked: a background wake-up (recorded) leaves the park, advances answerFrom, never moves askEnd', (t) => {
+  const { state, pass, platform } = parkedWorker(t);
+  pass(RESULT);
+  const { askEnd, answerFrom } = state.tasks.T01.decision;
+  assert.equal(askEnd, 1);
+  assert.equal(answerFrom, 1);
+  assert.deepEqual(asking(state, platform), { row: 'question', remote: true }, 'asking once the turn ended');
+
+  const r1 = pass(...WAKE_UP.slice(0, -1)); // the wake-up turn is open
+  assert.equal(resumedIn(r1), false);
+  assert.equal(state.tasks.T01.phase, 'awaiting-answer');
+  assert.deepEqual(asking(state, platform), { row: 'question', remote: true }, 'still asking during the wake-up');
+  assert.equal(state.tasks.T01.decision.answerFrom, 2);
+  assert.equal(state.tasks.T01.decision.askEnd, askEnd);
+
+  pass(WAKE_UP.at(-1)); // and ends
+  assert.equal(state.tasks.T01.phase, 'awaiting-answer');
+  assert.deepEqual(asking(state, platform), { row: 'question', remote: true }, 'still asking after it');
+  assert.equal(state.tasks.T01.decision.askEnd, askEnd);
+});
+
+test('parked: a wake-up turn, then a person turn: resumed on the second', (t) => {
+  const { state, pass } = parkedWorker(t);
+  pass(RESULT);
+  assert.equal(resumedIn(pass(...WAKE_UP)), false);
+  const r = pass(SEND('person'), INIT);
+  assert.ok(resumedIn(r));
+  assert.equal(state.tasks.T01.phase, 'implementing');
+});
+
+test('parked: a wake-up turn, then Remote Control input: resumed on the second', (t) => {
+  const { state, pass } = parkedWorker(t);
+  pass(RESULT);
+  assert.equal(resumedIn(pass(...WAKE_UP)), false);
+  assert.ok(resumedIn(pass(...REMOTE_TURN)));
+  assert.equal(state.tasks.T01.phase, 'implementing');
+});
+
+test('parked: a turn opened by a pir send or an unannounced opening is not an answer', (t) => {
+  const { state, pass } = parkedWorker(t);
+  pass(RESULT);
+  assert.equal(resumedIn(pass(SEND('pir'), INIT, RESULT)), false);
+  assert.equal(resumedIn(pass(INIT, SAY)), false);
+  assert.equal(state.tasks.T01.phase, 'awaiting-answer');
+  assert.equal(state.tasks.T01.decision.answerFrom, 3);
+});
+
+test('parked: a person message injected into the still-open asking turn resumes, and the row never turns asking', (t) => {
+  const { state, pass, platform } = parkedWorker(t);
+  const r = pass(SEND('person')); // typed in pir while the worker is still inside its asking turn
+  assert.ok(resumedIn(r));
+  assert.equal(state.tasks.T01.phase, 'implementing');
+  pass(RESULT); // that turn ends
+  assert.deepEqual(asking(state, platform), { row: null, remote: false });
+});
+
+test('parked: Remote Control input landing in the still-open asking turn resumes', (t) => {
+  const { state, pass } = parkedWorker(t);
+  const r = pass(logIn({ type: 'command_lifecycle', command_uuid: 'mid-turn', state: 'queued' }));
+  assert.ok(resumedIn(r));
+  assert.equal(state.tasks.T01.phase, 'implementing');
+});
+
+test('parked: a request answered on the phone with the turn open resumes (recorded answered-remotely)', (t) => {
+  const { state, pass } = parkedWorker(t);
+  const c = REMOTE_SAMPLE.filter((e) => e.case === '3-remote-picker-replay');
+  const req = c.find((e) => e.dir === 'request');
+  pass(req); // the worker asks with a picker inside the same turn
+  assert.equal(state.tasks.T01.phase, 'awaiting-answer');
+  const r = pass(c.find((e) => e.kind === 'answered-remotely'));
+  assert.ok(resumedIn(r));
+});
+
 test('a conflict fix pir sent is not resumed by the worker working on it', (t) => {
   const { platform, base } = setup(t, [{ num: 'T01' }]);
   const state = createRunState();
@@ -644,7 +784,7 @@ test('a conflict fix pir sent is not resumed by the worker working on it', (t) =
   t1.phase = 'awaiting-answer';
   t1.decision = { kind: 'conflict', text: 'merge conflict', sent: true };
   const list = platform.list.bind(platform);
-  platform.list = () => list().map((w) => ({ ...w, activity: { ...w.activity, turns: 5, open: true } }));
+  platform.list = () => list().map((w) => ({ ...w, activity: { ...w.activity, turns: 5, open: true, turnCauses: ['pir', 'person', 'remote'], personSends: 3, remoteSends: 2 } }));
   const actions = [runPass({ ...base, state }), runPass({ ...base, state })].flatMap((r) => r.actions);
   assert.equal(actions.some((a) => a.type === 'resumed'), false);
   assert.equal(t1.decision?.askEnd, undefined, 'a sent conflict is never tracked for an answer');

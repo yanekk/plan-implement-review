@@ -195,7 +195,16 @@ export function declineQuestionsResult(request, text) {
 const TURN_OPENERS = new Set(['init', 'text', 'tool-use']);
 const ANSWER_NOTES = new Set(['delivered-by-grant', 'answered-remotely']);
 
-// workerActivity(entries) → { state, open, pending, turns, lastEventAt, slashCommands }.
+// Why a turn opened (real-asking-state DESIGN §2.2), measured by T00 against Claude Code 2.1.283
+// (src/core/fixtures/remote-answer-sample.ndjson): input typed over Remote Control is announced by a
+// top-level `command_lifecycle` message (`queued`, then `started`) before the turn's `init`; a pir send
+// and a background wake-up never emit one. A wake-up follows `system:task_notification` after the last
+// `result`. The SDK `UserPromptSubmit` hook does not separate the three (its `source` is absent for all).
+const REMOTE_OPEN_STATES = new Set(['queued', 'started']);
+const SEND_CAUSES = { person: 'person', pir: 'pir' };
+
+// workerActivity(entries) → { state, open, pending, turns, lastEventAt, slashCommands, turnCauses,
+//                             personSends, remoteSends }.
 //   starting   nothing has been sent and the worker has not spoken
 //   busy       a turn is open: a message went in, or the worker began one, and no `result` came back
 //   idle       the last turn ended and nothing is pending
@@ -206,6 +215,11 @@ const ANSWER_NOTES = new Set(['delivered-by-grant', 'answered-remotely']);
 // `pending` holds the unanswered requests' events, oldest first. `turns` counts results. `open` is
 // whether a turn is under way, whatever a pending request makes `state` read.
 // `lastEventAt` is the last entry's `t`; this never reads a clock.
+// `turnCauses` holds one entry per turn opened, in order: 'person' / 'pir' (opened by an `out` send from
+// that sender), 'remote' (Remote Control input), 'system' (a background job's wake-up) or 'unknown'.
+// `personSends` counts the person's `out` sends; `remoteSends` counts Remote Control inputs (distinct
+// `command_lifecycle` command ids). Both count wherever the input landed, an open turn included, which is
+// how resumeAnswered hears an answer given while the asking turn is still running (DESIGN §2.2).
 export function workerActivity(entries) {
   let open = false;
   let started = false;
@@ -214,19 +228,30 @@ export function workerActivity(entries) {
   let slashCommands = [];
   const pending = new Map();
   let cancelled = null; // requests pending when the person interrupted, dropped at the turn's `result`
+  const turnCauses = [];
+  let nextCause = null; // what the next turn opened by the worker's own output was announced by
+  let personSends = 0;
+  const remoteCommands = new Set();
+  const openTurn = (cause) => {
+    if (!open) turnCauses.push(cause);
+    open = true;
+    started = true;
+    nextCause = null;
+  };
 
   for (const entry of entries) {
     if (isObject(entry) && Number.isFinite(entry.t)) lastEventAt = entry.t;
     for (const ev of readEntry(entry)) {
       switch (ev.kind) {
         case 'sent':
-          open = true;
-          started = true;
+          if (ev.from === 'person') personSends += 1;
+          openTurn(SEND_CAUSES[ev.from] ?? 'unknown');
           break;
         case 'result':
           open = false;
           started = true;
           turns += 1;
+          nextCause = null;
           if (cancelled) for (const id of cancelled) pending.delete(id);
           cancelled = null;
           break;
@@ -252,14 +277,22 @@ export function workerActivity(entries) {
             pending.clear();
             cancelled = null;
             open = false;
+            nextCause = null;
+          }
+          break;
+        case 'system':
+          if (ev.subtype === 'command_lifecycle' && REMOTE_OPEN_STATES.has(ev.event?.state)) {
+            // Typed while a turn runs, the input may be queued for the next turn or injected into this
+            // one (unprobed, T00 review); either way the person has spoken, so it is counted now.
+            if (typeof ev.event.command_uuid === 'string') remoteCommands.add(ev.event.command_uuid);
+            if (!open) nextCause = 'remote';
+          } else if (ev.subtype === 'task_notification' && !open && nextCause === null) {
+            nextCause = 'system';
           }
           break;
         default:
           if (ev.kind === 'init') slashCommands = ev.slashCommands;
-          if (TURN_OPENERS.has(ev.kind)) {
-            open = true;
-            started = true;
-          }
+          if (TURN_OPENERS.has(ev.kind)) openTurn(nextCause ?? 'unknown');
       }
     }
   }
@@ -270,5 +303,5 @@ export function workerActivity(entries) {
   else if (open) state = 'busy';
   else if (started) state = 'idle';
   else state = 'starting';
-  return { state, open, pending: waiting, turns, lastEventAt, slashCommands };
+  return { state, open, pending: waiting, turns, lastEventAt, slashCommands, turnCauses, personSends, remoteSends: remoteCommands.size };
 }
