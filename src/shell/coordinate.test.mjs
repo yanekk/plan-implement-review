@@ -1670,3 +1670,80 @@ test('taskActivity: a task with a tracked worker reads only that worker, never a
   assert.equal(rs.tasks[0].asking, 'question');
   assert.equal(taskActivity([other], 'T01', { phase: 'implementing' }), other.activity, 'an untracked task falls back to its live worker');
 });
+
+// --- stopped-worker-asking T02: a stopped implementer or reviewer reads asking, through waitingOn alone ---
+
+const building1 = (role = 'implement') => ({ T01: { role, phase: role === 'review' ? 'reviewing' : 'implementing', workerId: 'w1' } });
+const stoppedAct = (o = {}) => ({ state: 'idle', open: false, turns: 3, pending: [], background: [], ...o });
+const busyAct = (o = {}) => stoppedAct({ state: 'busy', open: true, ...o });
+
+test('displayPhaseFor: a stopped implementer or reviewer is asking; busy, or idle behind a job, is its role phase', () => {
+  assert.equal(displayPhaseFor(building1().T01, stoppedAct()), 'asking');
+  assert.equal(displayPhaseFor(building1('review').T01, stoppedAct()), 'asking');
+  assert.equal(displayPhaseFor(building1().T01, busyAct()), 'building');
+  assert.equal(displayPhaseFor(building1().T01, stoppedAct({ background: ['bg1'] })), 'building');
+  assert.equal(displayPhaseFor(building1('review').T01, stoppedAct({ background: ['bg1'] })), 'reviewing');
+  assert.equal(displayPhaseFor({ role: 'review', phase: 'done' }, stoppedAct()), 'merging', 'idle after `done` is the merge wait');
+  assert.equal(displayPhaseFor({ role: 'implement', phase: 'review-ready' }, stoppedAct()), 'building');
+});
+
+test('buildRunState: a stopped implementer reads asking a question with no text; its next turn reads building', () => {
+  const stateTasks = building1();
+  let rs = buildRunState({ passTasks: oneRow, stateTasks, workers: [liveWorker(stoppedAct())], branch: 'b', ceiling: 2 });
+  assert.equal(rs.tasks[0].phase, 'asking');
+  assert.equal(rs.tasks[0].asking, 'question');
+  assert.equal(rs.tasks[0].question, null, 'no report, no text');
+  assert.equal(rs.tasks[0].conflictSent, false);
+  rs = buildRunState({ passTasks: oneRow, stateTasks, workers: [liveWorker(busyAct({ turns: 3 }))], branch: 'b', ceiling: 2 });
+  assert.equal(rs.tasks[0].phase, 'building');
+  assert.equal(rs.tasks[0].asking, null);
+});
+
+test('buildRunState: a stopped reviewer reads asking; one idle behind a background job reads reviewing', () => {
+  const stateTasks = building1('review');
+  const w = (a) => [liveWorker(a, { role: 'review' })];
+  let rs = buildRunState({ passTasks: oneRow, stateTasks, workers: w(stoppedAct()), branch: 'b', ceiling: 2 });
+  assert.equal(rs.tasks[0].phase, 'asking');
+  assert.equal(rs.tasks[0].asking, 'question');
+  rs = buildRunState({ passTasks: oneRow, stateTasks, workers: w(stoppedAct({ background: ['bg1'] })), branch: 'b', ceiling: 2 });
+  assert.equal(rs.tasks[0].phase, 'reviewing');
+  assert.equal(rs.tasks[0].asking, null);
+});
+
+test('advanceTiming: the clock stops when the implementer stops and resumes when its next turn opens', () => {
+  const timing = newTiming();
+  const stateTasks = building1();
+  advanceTiming(timing, stateTasks, [], 1000, [liveWorker(busyAct({ turns: 0 }))]);
+  advanceTiming(timing, stateTasks, [], 4000, [liveWorker(stoppedAct({ background: ['bg1'] }))]);
+  assert.equal(timing.stoppedAtByTask.T01, undefined, 'idle behind its own job: the clock runs');
+  advanceTiming(timing, stateTasks, [], 5000, [liveWorker(stoppedAct())]);
+  assert.equal(timing.stoppedAtByTask.T01, 5000, 'stopped: the clock stops');
+  assert.equal(timing.sinceByTask.T01, 1000);
+  advanceTiming(timing, stateTasks, [], 65000, [liveWorker(busyAct({ turns: 3 }))]);
+  assert.equal(timing.stoppedAtByTask.T01, undefined);
+  assert.equal(timing.sinceByTask.T01, 61000, 'resumes at 4s: the 60s wait is left out');
+});
+
+test('remoteWanted: a stopped implementer is wanted; a busy one, or one idle behind a job, is not', () => {
+  const stateTasks = building1();
+  assert.deepEqual([...remoteWanted([liveWorker(stoppedAct())], stateTasks)], ['w1']);
+  assert.deepEqual([...remoteWanted([liveWorker(busyAct())], stateTasks)], []);
+  assert.deepEqual([...remoteWanted([liveWorker(stoppedAct({ background: ['bg1'] }))], stateTasks)], []);
+  assert.deepEqual([...remoteWanted([liveWorker(stoppedAct(), { id: 'w2' })], stateTasks)], [], 'not the worker holding the task');
+});
+
+test('an idle implementer whose activity has no `background` (the fake platform) keeps reading building', (t) => {
+  assert.equal(displayPhaseFor(building1().T01, { state: 'idle', pending: [] }), 'building');
+  // A whole fake-driven run: no row ever reads asking, since the fake's activity carries no `background`.
+  const { coordinator, platform } = setup(t, [{ num: 'T01' }, { num: 'T02' }]);
+  let painted = 0;
+  const result = coordinator.drive({
+    onPass: (r) => {
+      const rs = buildRunState({ passTasks: r.tasks, stateTasks: coordinator.state.tasks, workers: platform.workers(), branch: 'b', ceiling: 4 });
+      for (const row of rs.tasks) assert.notEqual(row.phase, 'asking', `${row.id} never asks`);
+      painted += rs.tasks.filter((row) => row.phase === 'building' || row.phase === 'reviewing').length;
+    },
+  });
+  assert.ok(painted > 0, 'the check saw working rows');
+  assert.equal(result.complete, true, JSON.stringify(result));
+});

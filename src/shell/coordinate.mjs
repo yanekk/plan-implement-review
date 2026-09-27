@@ -752,11 +752,14 @@ export function makePrepare({ design, setupDir, start = startLines } = {}) {
 // the display reads it as `fixing conflict` (conflictSent). A worker that has reported `done` is `merging` —
 // its review is finished and the loop is waiting for the session to go idle before it merges (loop.mjs 3d),
 // which can take up to AWAIT_IDLE_TIMEOUT_MS, so `reviewing` there would lie. Otherwise the role names it —
-// an implementer (or a `you` scribe) is `building`, a reviewer `reviewing`.
+// an implementer (or a `you` scribe) is `building`, a reviewer `reviewing`. An implementer or reviewer that
+// has stopped with nothing running is `asking` too (waitingOn's stopped clause, stopped-worker-asking §2.1):
+// the rule lives in waitingOn alone, so the row, the clock and Remote Control cannot read it differently.
 export function displayPhaseFor(t, activity) {
   if (!t) return null;
   if (t.phase === 'preparing') return 'preparing'; // setup running, no worker yet (DESIGN §2.4)
   if (t.phase === 'awaiting-answer' && (t.decision?.sent || waitingOn(t, activity))) return 'asking';
+  if ((t.phase === 'implementing' || t.phase === 'reviewing') && waitingOn(t, activity)) return 'asking';
   if (t.phase === 'done') return 'merging';
   if (t.role === 'review') return 'reviewing';
   return 'building';
