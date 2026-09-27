@@ -26,7 +26,7 @@ done · ⛔ blocked, needs a human.
 | T01 | drop-canonical-guard | — | ✅ | |
 | T02 | plan-box-rules | — | ✅ | |
 | T03 | repo-scan | T02 | ✅ | |
-| T04 | list-view-box | T02 | ⬜ | |
+| T04 | list-view-box | T02 | ✅ | |
 | T05 | box-starts-plan | T03, T04 | ⬜ | |
 | T06 | plan-box-drill | T01, T05 | ⬜ | |
 
