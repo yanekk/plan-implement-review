@@ -15,7 +15,7 @@ cell also fixes the over-budget cell they walk past.
 **Status:** Planned 2026-09-26 on main after `live-workers` and the Remote Control un-park (bda34a5,
 5b899df). Nothing built.
 **Last updated:** 2026-09-27
-**Next `pir-work` will:** review T03.
+**Next `pir-work` will:** implement T04.
 
 ## Tasks
 
@@ -27,11 +27,11 @@ done · ⛔ blocked, needs a human.
 | T00 | remote-answer-probe | — | ✅ | |
 | T01 | worker-contract | — | ✅ | |
 | T02 | waiting-predicate | — | ✅ | |
-| T03 | answer-only-unpark | T00, T02 | 🔍 | `workerActivity` gains `turnCauses`, `personSends`, `remoteSends` (keyed on `command_lifecycle`); `resumeAnswered` un-parks only on a person/remote turn or input since the park. 9 stream, 9 loop, 1 worker-proc tests. Deviations: `answerFrom` starts at `turnCauses.length`; `remoteSends` added for mid-turn phone input; `./install.sh` not run, barred during a live run (§5.3). |
+| T03 | answer-only-unpark | T00, T02 | ✅ | Review clean, no fix commit. Un-park only on a person/remote turn or person/Remote Control input since the park; wake-up, pir and unannounced turns advance `answerFrom`, `askEnd` fixed. Probed real-fixture shapes, mid-turn notifications, pir auto-grants, old decisions without counts. Deviations accepted. `./install.sh` deferred until the run ends (§5.3). |
 | T04 | docs | T01, T03 | ⬜ | |
 | T05 | live-asking-check | T04 | ⬜ | |
 
-**Review queue:** T03
+**Review queue:** empty
 
 ## Blocked on the user
 
