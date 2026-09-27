@@ -26,7 +26,7 @@ done · ⛔ blocked, needs a human.
 |---|---|---|---|---|
 | T01 | background-fold | — | ✅ | |
 | T02 | stopped-predicate | — | ✅ | |
-| T03 | planning-steps-asking | T02 | ⬜ | |
+| T03 | planning-steps-asking | T02 | ✅ | |
 | T04 | worker-reports-every-ask | — | ✅ | |
 | T05 | docs | T03, T04, T06 | ⬜ | |
 | T06 | stopped-asking-live | T01, T02 | ✅ | Review clean, no fix commit. Reviewer re-ran the live fixture: T01 `asking` on the first 5 s pass after both turns, no report or surface; T02 `building` through timer and Monitor (`local_bash`). Confirmed the `loop.test` change was red on the feature branch; probed the answerer hold's epoch clock. |

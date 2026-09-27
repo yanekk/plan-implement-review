@@ -32,6 +32,7 @@ import {
 import { parseProgress } from '../core/progress.mjs';
 import { parseTestBlock } from '../core/testblock.mjs';
 import { parseRecord } from '../core/runrecord.mjs';
+import { stoppedOnPerson } from '../core/asking.mjs';
 import { allowResult, workerActivity } from '../core/stream.mjs';
 import { writeJsonAtomic } from './atomic-write.mjs';
 import { drainDropFolder, waitForDrop } from './drop-folder.mjs';
@@ -59,6 +60,30 @@ const CHECKED_KINDS = new Set(['planned', 'reviewed']);
 
 // A pending request is the session asking the person (a permission prompt or a question set).
 const REQUEST_KINDS = new Set(['permission', 'questions']);
+
+// sessionAsking(state, live) → null | 'permission' | 'questions' | 'question' (stopped-worker-asking §2.3)
+//   What a step's live session is asking the person, read the same way by the row and by its clock. A
+//   pending request names its kind. A stopped session (stoppedOnPerson: idle, no background job) asks a
+//   plain-text 'question' only while no report of the current step is accepted: a planner idle after its
+//   accepted `planned` waits on pir's checks and close, not on the person. state.accepted is cleared at
+//   every step change, so when set it is always the current step's.
+export function sessionAsking(state, live) {
+  const activity = live?.activity;
+  if (REQUEST_KINDS.has(activity?.state)) return activity.state;
+  return live && stoppedOnPerson(activity) && !state.accepted ? 'question' : null;
+}
+
+// trackStoppedAt(state, views, stoppedAt, now) — the step clock's stop: for each live session, stamp
+// stoppedAt[step] on the first paint that reads it asking (either rule of sessionAsking), keep the stamp
+// while it stays asking, and clear it once it is not. Mutates and returns stoppedAt.
+export function trackStoppedAt(state, views, stoppedAt, now) {
+  for (const v of views) {
+    if (!v.live) continue;
+    if (sessionAsking(state, v)) stoppedAt[v.step] ??= now();
+    else delete stoppedAt[v.step];
+  }
+  return stoppedAt;
+}
 
 const ROLE = { plan: 'planner', review: 'reviewer' };
 
@@ -135,7 +160,7 @@ export function plannerChecks({ slug, worktree, root, repo, indexDir, git = gitR
 //   stoppedAt  { plan, review } — when that step's live session began asking the person (ms)
 //   took       { plan, review } — how long a finished step's sessions worked (ms, stepWorkedMs), or absent
 // Each step's phase: 'planning' | 'reviewing' while it is the current step (the dashboard tells a gone
-// process crashed by itself), 'asking' while its live session has a request pending, 'done', 'failed'
+// process crashed by itself), 'asking' while its live session asks the person (sessionAsking), 'done', 'failed'
 // for the step a no-plan or not-reviewed outcome ended, 'pending' before it starts. `build` is pending
 // here; the go and the build are read from the index (§2.8).
 export function planRunState(state, { label = null, sessions = [], since = {}, stoppedAt = {}, took = {} } = {}) {
@@ -144,7 +169,7 @@ export function planRunState(state, { label = null, sessions = [], since = {}, s
     const mine = sessions.filter((s) => s.step === id);
     const live = mine.filter((s) => s.live).at(-1) ?? null;
     const open = live ?? mine.at(-1) ?? null;
-    const asking = live && REQUEST_KINDS.has(live.activity?.state) ? live.activity.state : null;
+    const asking = sessionAsking(state, live);
     let phase;
     if (id === 'plan') {
       if (state.outcome === 'no-plan') phase = 'failed';
@@ -569,10 +594,7 @@ export async function runPlanning({ controlDir: givenControlDir, resume = false,
       id: s.id, step: s.step, n: s.n, logPath: s.logPath, cwd: worktreeNow(), live: s.live,
       activity: s.worker ? workerActivity(s.worker.entries()) : { state: 'exited' },
     }));
-    for (const v of views) {
-      if (v.live && REQUEST_KINDS.has(v.activity.state)) stoppedAt[v.step] ??= now();
-      else if (v.live) delete stoppedAt[v.step];
-    }
+    trackStoppedAt(state, views, stoppedAt, now);
     // A finished step's time, read once from its logs when none of its sessions is live any more; a
     // finished step does not change, so the logs are not re-read on every paint.
     for (const step of ['plan', 'review']) {
