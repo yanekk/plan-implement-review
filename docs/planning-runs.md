@@ -24,6 +24,39 @@ The pure rules — report parsing, slug and run-id rules, session names and the 
   {repo}`, the same text editor the conversation view uses, and the hint `↵ start planning · shift+↵ new
   line · esc cancel`. `shift+↵` or `ctrl+j` adds a line and `↵` sends. An empty or whitespace-only brief
   is not sent. `esc` (or `Ctrl+C`) cancels: nothing is created and `pir` exits 0 (`brief-box.mjs`).
+- **The new-plan box on the dashboard's runs list** starts one without leaving `pir` (§ The new-plan
+  box, below).
+
+### The new-plan box
+
+The runs list (`pir`) has a typing box pinned to its bottom (`src/shell/list-view.mjs`, the same editor
+as the brief box). Its text is `@` whenever the list opens, after a plan starts and after `esc`. The
+text reads as `@repo`, whitespace, then the brief; Enter calls `startPlanRun(brief, { cwd: repo })`,
+the call `pir plan` makes, resets the box to `@` and lands in the planner's conversation as below.
+
+- **Keys.** While the box is bare (`@` or empty) the list keeps every key it had: `↑↓`, `↵`/`→`,
+  `Ctrl+R/S/X` twice, `esc` and `Ctrl+C` quit. Any other key types into the box. An `@` typed (or a
+  paste starting with `@`) into a bare `@` is absorbed, so `@skaut` and `skaut` read the same. Once the
+  box has text: `↵` starts, `shift+↵` or `ctrl+j` adds a line, `esc` or `Ctrl+C` resets it to `@`
+  (a second `esc` then quits), `Ctrl+R/S/X` still act on the selected run, and the arrows move the
+  cursor. The routing is `routeBoxKey` in `src/core/planbox.mjs`.
+- **The repos.** Every git repo directly inside each root with a real `.git` folder (a linked
+  worktree is skipped) and a local `main`, most recently worked in first (`scanRepos` in
+  `src/shell/repo-scan.mjs`). The roots are `PIR_REPOS`, split on `:` with `~` expanded; unset, the
+  root is `~/src`. The scan runs when the box leaves bare, and again the next time. Typing after `@`
+  opens a pop-up of the repos whose name contains the text (at most five shown), each with its path;
+  `Tab` or `↵` picks one.
+- **The head line** above the box reads `new plan  in {repo}` for a listed repo, `start with @repo`
+  when bare, and, amber, `@{name} is not a repo in {roots}` or `start with @repo` otherwise.
+- **What Enter refuses** (nothing is started, the text stays, and a note says why): no `@name`
+  (`start with @repo, then say what to plan`); a name that is not exactly a listed repo's
+  (`no repo @{name} in {roots} — pick one from the list`; a partial name is never completed on Enter);
+  a name in two roots (`@{name} is in more than one folder: {path}, {path}`); no brief
+  (`say what to plan after @{name}`); and `startPlanRun` refusing or throwing
+  (`Could not start planning in {name}: {reason}`, e.g. `no-main`).
+
+The box is only on the runs list, not on a run's view or a conversation. On a terminal that is not a
+TTY the list is painted without it, as before.
 
 Before anything is created — before the brief box opens, for the bare form — `pir plan` refuses, with
 one line on stderr and exit 1:
@@ -52,7 +85,7 @@ Then `startPlanRun`:
 - writes the index entry `~/.pir/runs/{repo}__plan-{hex4}.json` with `kind: 'plan'`, `label` (the
   brief's first line, cut to 24 characters with `…`) and `go: null`.
 
-`pir` then lands directly in the planner's conversation (below).
+`pir` then lands directly in the planner's conversation (below), from the box as from `pir plan`.
 
 ## The two sessions
 

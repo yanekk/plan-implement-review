@@ -13,6 +13,9 @@
 //   - PIR_HOME and HOME both point at a scratch folder, so the index (indexDir) and anything else that
 //     reads the home folder never touch the person's real `~/.pir` or `~/.claude`. That home has a
 //     .gitconfig with an identity, because a scratch HOME has none and git refuses a commit without one.
+//   - PIR_REPOS is the rig's root, so the dashboard's new-plan box lists the scratch `repo` (its `home` and
+//     `bin` siblings are not git repos) and its scan never reads the person's real folders
+//     (dashboard-plan-box DESIGN §4, §5.2).
 //   - The fake's single-script variables are dropped, so an outer test's setting cannot leak in. A stale
 //     PARALLEL_ALLOW_HERE is dropped too, harmlessly: its guard is gone (dashboard-plan-box DESIGN §2.8).
 
@@ -107,7 +110,7 @@ export function scriptSet(name = 'happy') {
 }
 
 // The environment every program under the rig gets; see the header.
-function rigEnv({ home, shimDir, base }) {
+function rigEnv({ root, home, shimDir, base }) {
   const env = { ...base };
   for (const k of ['PARALLEL_ALLOW_HERE', 'PIR_FAKE_CLAUDE_SCRIPT', 'PIR_FAKE_CLAUDE_SCRIPTS', 'PIR_FAKE_CLAUDE_RECEIVED']) delete env[k];
   return {
@@ -115,6 +118,7 @@ function rigEnv({ home, shimDir, base }) {
     PATH: [shimDir, base.PATH ?? ''].filter(Boolean).join(':'),
     PIR_HOME: home,
     HOME: home,
+    PIR_REPOS: root,
     FORCE_COLOR: '0',
     NO_COLOR: '1',
   };
@@ -166,7 +170,7 @@ export function startPlanRig({ into = null, scripts = 'happy', keep = false, bas
   writeFileSync(scriptsFile, JSON.stringify(entries));
   const received = join(shimDir, 'fake-received.ndjson');
   writeClaudeShim(shimDir, { scriptsFile, received });
-  const env = rigEnv({ home, shimDir, base: baseEnv });
+  const env = rigEnv({ root, home, shimDir, base: baseEnv });
 
   let cleaned = false;
   function cleanup() {

@@ -57,6 +57,7 @@ test("the rig's env puts the shim first on PATH and every home in the scratch fo
   assert.match(readFileSync(claude, 'utf8'), /pir fake claude/);
   assert.ok(inside(rig.env.PIR_HOME, rig.root) && inside(rig.env.HOME, rig.root));
   assert.notEqual(realpathSync(rig.env.HOME), realpathSync(homedir()));
+  assert.equal(rig.env.PIR_REPOS, rig.root, "the box's scan lists the rig's repo and nothing of the person's");
   assert.equal(rig.env.PARALLEL_ALLOW_HERE, undefined);
   assert.equal(rig.env.PIR_FAKE_CLAUDE_SCRIPT, undefined);
   // The scratch home's identity lets git commit there.
@@ -634,4 +635,92 @@ test('end to end: a bare slug as the command, and `pir start` with no slug — t
   const none = run('start');
   assert.equal(none.status, 2);
   assert.match(none.stderr, /^usage: pir {17}the dashboard\n {7}pir plan \["brief"\] {2}plan something new\n {7}pir start \{slug\} {4}build a reviewed plan\n/);
+});
+
+// ---- dashboard-plan-box T05: the new-plan box on the runs list starts a planning run (DESIGN §2.3–§2.5). ----
+
+const TAB = '\t';
+
+for (const [cols, rows] of SIZES) {
+  test(`end to end at ${cols}×${rows}: \`pir\` → bare box → @re lists @repo; Tab; a brief; Enter lands in the planner's conversation`, async (t) => {
+    const rig = rigWithTeardown(t);
+    const screen = rig.openScreen({ cols, rows });
+    try {
+      const bare = (await screen.waitFor(/new plan {2}start with @repo/)).join('\n');
+      assert.match(bare, /No runs yet — type after @ below to plan something new/);
+      screen.send('@re'); // the habitual @ is absorbed into the box's own
+      const pop = (await screen.waitFor(/→ @repo +\S/)).join('\n');
+      assert.match(pop, /^@re\s*$/m, 'the box reads @re, not @@re');
+      screen.send(TAB);
+      await screen.waitFor(/new plan {2}in repo/);
+      screen.send(BRIEF);
+      await screen.waitFor(/↵ start planning · shift\+↵ new line · esc clear/);
+      screen.send(ENTER);
+      await screen.waitFor(/starting the planner…|pir ▸ Load the pir-plan skill/, 20000);
+      const conv = (await screen.waitFor(new RegExp(esc(PLAN_RIG_QUESTION)), 20000)).join('\n');
+      assert.match(conv, /^plan +worker \w+ · live/m, "the planner's conversation");
+      assert.match(conv, /pir ▸ Load the pir-plan skill/, "pir's first message");
+      assert.equal(screen.overflows(), 0);
+    } finally {
+      await screen.close();
+    }
+    const [record] = listRecords({ dir: indexDir({ env: rig.env }) });
+    assert.equal(realpathSync(record.repoPath), realpathSync(rig.repoDir), 'planned in the repo the box named');
+    assert.equal(readFileSync(join(record.controlDir, 'brief.md'), 'utf8'), BRIEF);
+  });
+}
+
+test('end to end at 80×24: `@nope x` Enter → the no-repo note, text kept; Esc → @; Esc → pir exits 0', async (t) => {
+  const rig = rigWithTeardown(t);
+  const screen = rig.openScreen({ cols: 80, rows: 24 });
+  let code;
+  try {
+    await screen.waitFor(/new plan {2}start with @repo/);
+    screen.send('nope x');
+    await screen.waitFor(/@nope is not a repo in/);
+    screen.send(ENTER);
+    const noted = (await screen.waitFor(/no repo @nope in/)).join('\n');
+    // The rig's root is a long temp path, so the note is cut at 80 columns; ~/src would fit.
+    assert.match(noted, /^no repo @nope in \/\S+/m);
+    assert.match(noted, /^@nope x\s*$/m, 'the text is kept');
+    screen.send('\x1b');
+    const reset = (await screen.waitFor(/new plan {2}start with @repo/)).join('\n');
+    assert.doesNotMatch(reset, /no repo @nope/);
+    assert.doesNotMatch(reset, /@nope x/);
+    assert.equal(screen.overflows(), 0);
+    screen.send('\x1b');
+    await assert.rejects(screen.waitFor(() => false, 5000), /pir exited before/, 'the second Esc quits pir');
+  } finally {
+    code = await screen.close();
+  }
+  assert.equal(code, 0);
+  assert.deepEqual(listRecords({ dir: indexDir({ env: rig.env }) }), [], 'nothing was started');
+});
+
+test('end to end at 120×40: on a bare box ↓ and → still open a listed run; ← comes back to the box at @', async (t) => {
+  const rig = startPlanRig();
+  t.after(() => rig.cleanup());
+  const dir = indexDir({ env: rig.env });
+  for (const slug of ['rig-run-a', 'rig-run-b']) {
+    writeRecord(
+      { version: 1, slug, repo: 'repo', repoPath: rig.repoDir, controlDir: join(rig.root, `control-${slug}`), pid: 2147483646,
+        startTime: 'Sat Sep 26 12:00:00 2026', startedAt: null, branch: `pir/${slug}`, finalState: 'finished', updatedAt: null },
+      { dir },
+    );
+  }
+  const screen = rig.openScreen({ cols: 120, rows: 40 });
+  try {
+    await screen.waitFor(/▎ rig-run-a/);
+    screen.send('\x1b[B');
+    await screen.waitFor(/▎ rig-run-b/);
+    screen.send('\x1b[C');
+    const opened = (await screen.waitFor((s) => /^rig-run-b/m.test(s) && !/new plan/.test(s))).join('\n');
+    assert.doesNotMatch(opened, /new plan/, 'the run view has no box');
+    screen.send(LEFT);
+    const back = (await screen.waitFor(/new plan {2}start with @repo/)).join('\n');
+    assert.match(back, /▎ rig-run-b/);
+    assert.equal(screen.overflows(), 0);
+  } finally {
+    await screen.close();
+  }
 });
