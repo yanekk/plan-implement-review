@@ -10,7 +10,7 @@ touching the task you pick up, and append yours there.
 cell is an index for the next session; the account is the commit message. Whoever writes a
 cell also fixes the over-budget cell they walk past.
 
-**Plan reviewed:** not yet — run `/pir-review-plan` before the first `/pir-work`
+**Plan reviewed:** 2026-09-27 — 10 fixed, 2 decided with the user
 
 **Status:** Planned 2026-09-27. Nothing built.
 **Last updated:** 2026-09-27

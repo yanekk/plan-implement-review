@@ -14,6 +14,7 @@ Legend: 🐞 defect found · ✅ verified by hand with the user · 📌 worth kn
 
 | Date | | Finding |
 |---|---|---|
+| 2026-09-27 | 📌 | Plan review: JSON POST to `https://ntfy.sh` with `sequence_id` and `click` accepted, and `PUT /{topic}/{seq}/clear` returned 200 with a `message_clear` event (throwaway topic). Messages are cached about 12 h. `uqr` 0.1.3 is 79 KB unpacked, not 92. |
 | 2026-09-27 | 📌 | Planning: ntfy docs name only Android and web for clearing (`PUT /{topic}/{seq}/clear`) and only Android for `ntfy://` links. iOS behaviour for both is unmeasured; T06 records it. |
 | 2026-09-27 | 📌 | Planning: `CLAUDE_CLIENT_PRESENCE_FILE` (skip mobile push while the file exists) is on code.claude.com's remote-control page and in the 2.1.283 binary. Unmeasured for a headless SDK worker. |
 | 2026-09-27 | 📌 | Planning: SDK `Options.env` replaces `process.env` rather than merging; pass `{ ...process.env, X }`. `enableRemoteControl` returns `session_url` like `https://claude.ai/code/session_…`. |

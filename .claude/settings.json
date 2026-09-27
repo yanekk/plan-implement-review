@@ -42,7 +42,12 @@
       "Bash(node src/shell/harness/run.mjs pir-coordinator --into /tmp/pir-coordinator-live)",
       "Bash(rm -rf /tmp/pir-coordinator-live)",
       "Bash(node src/shell/harness/run.mjs stopped-asking --into /tmp/stopped-asking-live)",
-      "Bash(rm -rf /tmp/stopped-asking-live)"
+      "Bash(rm -rf /tmp/stopped-asking-live)",
+      "Bash(npm i uqr@0.1.3)",
+      "Bash(rm -rf /tmp/pir-notify-t03)",
+      "Bash(PIR_HOME=/tmp/pir-notify-t03 node src/shell/pir.mjs notify)",
+      "Bash(PIR_NOTIFY_REMIND_MS=120000 node src/shell/harness/run.mjs notify-live --into /tmp/notify-live)",
+      "Bash(rm -rf /tmp/notify-live)"
     ],
     "ask": [
       "Bash(npm i @earendil-works/pi-tui@0.87.1)",

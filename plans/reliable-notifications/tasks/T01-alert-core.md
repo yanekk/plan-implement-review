@@ -22,7 +22,8 @@ DESIGN §2.1, §2.2, §2.3, §3.2.
 alertText({ plan, task, role, kind, decisionText, lastText, pending }) → { title, message }
   // kind: 'question' | 'questions' | 'permission'; pending: activity.pending (oldest first)
 reminderText(message) → string            // 'Still waiting: ' + message
-excerpt(text, max = 150) → string         // newlines folded, cut on code points, '…' when cut
+excerpt(text, max = 150) → string         // plainText, newlines folded, then clipText (both src/core/text.mjs):
+                                          // at most 150 code points, the last one '…' when cut
 newNotifyState() → { episodes: {}, counts: {} }
 notifyStep(state, views, now, { remindMs = 900_000, linkWaitMs = 20_000 } = {}) → { state, actions }
   // views: [{ id, waiting: kind|null, title, message, remote: 'wanted'|'off'|'refused', url }]

@@ -31,6 +31,8 @@ Collaborators are injected as the other verbs' are, so the tests never publish.
 ## Tests
 
 - [ ] First `pir notify`: writes a config with the injected topic, prints topic and QR, publishes once.
+- [ ] First `pir notify` with a failing publish: config still written, topic and QR printed, the error
+      and `pir notify test` named, exit 1 (DESIGN §2.4).
 - [ ] Second `pir notify`: same topic printed, no write, no publish.
 - [ ] `test` with no config: exit 1 and a line naming `pir notify`. With config and a failing publish:
       exit 1 with the error.
@@ -38,9 +40,13 @@ Collaborators are injected as the other verbs' are, so the tests never publish.
 - [ ] Corrupt config: `pir notify` says so and names `pir notify off`; exits 1; nothing overwritten.
 - [ ] Unknown `pir notify foo`: usage error.
 
+## Outside actions
+
+- `npm i uqr@0.1.3` and one test alert to a throwaway topic, both `worker` (DESIGN §5.3).
+
 ## Done when
 
 - [ ] Tests pass; `USAGE` lists `pir notify [test|off]`.
-- [ ] `node src/shell/pir.mjs notify` with `PIR_HOME=$(mktemp -d)` prints a scannable QR in the terminal
+- [ ] `PIR_HOME=/tmp/pir-notify-t03 node src/shell/pir.mjs notify` (after `rm -rf /tmp/pir-notify-t03`) prints a scannable QR in the terminal
       (the worker runs it and checks the output renders; it sends one real test alert to a throwaway
       topic, which is the §5.3 `worker` action).

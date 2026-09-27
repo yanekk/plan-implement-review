@@ -96,7 +96,10 @@ whether it is urgent. 150 characters of a question pass through ntfy.sh; nothing
 
 - `pir notify`: if no config, generate a topic (`pir-` + 24 random lowercase base32 characters from
   `crypto.randomBytes`), save it, print the topic, a QR code and the subscribe instructions, and send
-  a test alert. If a config exists, print the same for the existing topic and send nothing. Why not
+  a test alert. If the first test alert fails, the topic stays saved and printed, the
+  error is shown with `pir notify test` to retry once online, and the exit is non-zero. Why (user
+  2026-09-27, plan review): the phone may already have subscribed from the QR, and a new topic would strand
+  it. If a config exists, print the same for the existing topic and send nothing. Why not
   regenerate: re-running to see the QR again must not unsubscribe the phone.
 - `pir notify test`: send a test alert to the configured topic; report the HTTP result. Non-zero exit
   if not configured or the send failed.
@@ -126,7 +129,8 @@ to the user (PLAN, open decisions).
 
 ### 2.6 Unhappy paths
 
-- **ntfy unreachable or non-2xx**: retry after 5 s and 30 s. On the third failure note `notify-failed`
+- **ntfy unreachable, 5xx or 429**: retry after 5 s and 30 s; any other 4xx fails at once (a malformed
+  request will not improve). On the last failure note `notify-failed`
   once for that episode in the worker's conversation, with the status or error. The run never waits on
   or stops for a send. A failed clear is not retried and not noted. Why: the alert is a convenience on
   top of `pir`, which still shows `asking you`.
@@ -171,14 +175,17 @@ reminder reuses it.
 
 Each coordinator pass, after `syncRemote`: build views from `platform.workers()`, `coordinator.state.tasks`
 and `remoteWanted`; run `notifyStep`; for each action, read the config (none: drop the action), then
-fire the publish or clear without awaiting it, logging notes through `platform.note`. The loop polls
+fire the publish or clear without awaiting it, logging notes through `platform.note`. This runs whether or
+not `PARALLEL_REMOTE` is on. On every exit path the `notifyExit` clears are awaited, bounded at 2 s, before
+the process ends: the signal handlers call `process.exit` at once, and an unawaited request dies with it. The loop polls
 every `PARALLEL_POLL_MS` (5 s), so a permission request is seen within about 5 s; that is the alert's
 latency floor and is accepted.
 
 ### 3.4 Storage
 
 Config and marker only (§2.4, §2.5). Episode state lives in memory for the coordinator's life. Config is
-written to a temp file and renamed, so a crash mid-write leaves the old file or none.
+written through `writeFileAtomic` (`src/shell/atomic-write.mjs`, temp file and rename), so a crash
+mid-write leaves the old file or none.
 
 ## 4. Testing
 
@@ -204,7 +211,7 @@ the command because the shell sets `COLORTERM=truecolor`. For detail, run one fi
 `node --test src/core/notify.test.mjs`. **Setup** is `npm ci` when a lockfile exists; this worktree had no
 `node_modules` until it ran, and it left `git status` clean.
 
-**Dependencies.** One addition, approved by the user 2026-09-27: `uqr` 0.1.3 (MIT, 92 KB, no
+**Dependencies.** One addition, approved by the user 2026-09-27: `uqr` 0.1.3 (MIT, 79 KB unpacked, no
 dependencies) for the terminal QR code, as a regular dependency because `install.sh` omits dev ones.
 Nothing else. HTTP uses the global `fetch`.
 
@@ -231,8 +238,9 @@ Nothing else. HTTP uses the global `fetch`.
 
 | Action | Command (exact, wrapped) | Bin | Why this bin | Way back | Expected cost | Login check |
 |---|---|---|---|---|---|---|
-| Publish an alert to a pir-generated topic (a throwaway one in T03, the user's in T06) | `pir notify`, `pir notify test`; the T06 harness run | `worker` | Free, received only by whoever subscribed: nobody, or the user's own phone | Nothing to undo; the alert can be swiped away | none | none (anonymous ntfy.sh) |
-| Live harness run with real workers | `node src/shell/harness/run.mjs notify-live --into /tmp/notify-live` | `worker` | Same as prior live checks (real-asking-state T05); draws plan usage | Harness tears down; HALT file | plan usage, minutes | `claude` logged in |
+| Add the QR library (T03) | `npm i uqr@0.1.3` | `worker` | Free, local, the dependency the user approved; user 2026-09-27 at plan review | Remove it from `package.json` and the lockfile, `npm ci` | none | none |
+| Publish an alert to a pir-generated topic (a throwaway one in T03, the user's in T06) | `PIR_HOME=/tmp/pir-notify-t03 node src/shell/pir.mjs notify` (T03); the T06 harness run | `worker` | Free, received only by whoever subscribed: nobody, or the user's own phone | Nothing to undo; the alert can be swiped away | none | none (anonymous ntfy.sh) |
+| Live harness run with real workers | `PIR_NOTIFY_REMIND_MS=120000 node src/shell/harness/run.mjs notify-live --into /tmp/notify-live` | `worker` | Same as prior live checks (real-asking-state T05); draws plan usage | Harness tears down; HALT file | plan usage, minutes | `claude auth status` reads `loggedIn: true` |
 | Install ntfy, subscribe, look at the phone, tap the alert | on the iPhone | `person` | A device only the user holds | n/a | none | n/a |
 
 Credentials: none needed. ntfy.sh is anonymous; the topic name is the secret and never goes in a commit,

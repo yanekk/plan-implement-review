@@ -16,6 +16,8 @@ DESIGN §2.4 (config), §2.5 (marker), §2.6 (retries), §3.4.
 
 - `src/shell/ntfy.mjs` (new), `src/shell/ntfy.test.mjs` (new).
 - `src/shell/notify-config.mjs` (new), `src/shell/notify-config.test.mjs` (new).
+- `src/shell/atomic-write.mjs`, `src/shell/atomic-write.test.mjs`: `writeFileAtomic` gains a `mode` option
+  applied to the temp file before the rename. Reuse it; do not write a second temp-and-rename.
 
 ## Interface
 
@@ -30,9 +32,9 @@ clear({ server, topic, seq }, { fetch }) → Promise<{ ok, status|null, error? }
   // PUT {server}/{topic}/{seq}/clear, no retry.
 
 // notify-config.mjs
-notifyPaths(env = process.env) → { dir, config, presence }   // {PIR_HOME ?? HOME}/.pir/…
+notifyPaths(env = process.env) → { dir, config, presence }   // {PIR_HOME ?? HOME ?? homedir()}/.pir/…, as index-store
 readNotifyConfig(env) → { server, topic } | null | { corrupt: true }
-writeNotifyConfig(config, env)          // temp file + rename, mode 0600, creates dir
+writeNotifyConfig(config, env)          // writeFileAtomic with mode 0600, creates dir
 removeNotifyConfig(env)                 // config and presence marker; missing files are fine
 newTopic(randomBytes = crypto.randomBytes) → 'pir-' + 24 lowercase base32 chars
 ensurePresenceMarker(env) → path        // creates the empty marker if absent
@@ -41,9 +43,10 @@ ensurePresenceMarker(env) → path        // creates the empty marker if absent
 ## Tests
 
 - [ ] `publish` sends one JSON POST with the fields above; omits `click`/`sequence_id` when null.
-- [ ] Non-2xx then 2xx: retried once, returns ok. Three failures (throw or 5xx): returns the last error
-      after exactly the injected delays. A 4xx is not retried.
+- [ ] 5xx then 2xx: retried once, returns ok. Three failures (throw, 5xx or 429): returns the last error
+      after exactly the injected delays. Any other 4xx is not retried.
 - [ ] `clear` sends one PUT to the right path; a failure resolves `{ ok: false }`, never rejects.
+- [ ] `writeFileAtomic` with `mode` leaves that mode; without it, unchanged.
 - [ ] Config round-trips; file mode 0600; a crash between temp write and rename leaves the old file.
 - [ ] Unparseable file and a file with no topic both read `{ corrupt: true }`; missing reads `null`.
 - [ ] `newTopic` from fixed bytes gives a fixed, 28-char, `^pir-[a-z2-7]{24}$` result.
@@ -52,4 +55,4 @@ ensurePresenceMarker(env) → path        // creates the empty marker if absent
 ## Done when
 
 - [ ] Tests above pass under `npm test` with no request leaving the process.
-- [ ] No other file changed.
+- [ ] No other file changed beyond `atomic-write.mjs` and its test.

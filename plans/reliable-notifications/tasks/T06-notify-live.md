@@ -17,8 +17,9 @@ DESIGN §1 success criteria, §5.1, §5.3.
 - `src/shell/harness/fixtures/notify-live.mjs` (new), registered where fixtures are registered, with its
   fixture test. One task whose wording is unspecified so the worker drops a `question` report and parks
   (the `human-decision` T01 pattern). Harness timeout 30 min.
-- The harness run must read the user's real `~/.pir/notify.json`: if the harness sets `PIR_HOME` to a
-  scratch dir, the fixture copies the config file into it (never prints or commits the topic).
+- The harness run must read the user's real `~/.pir/notify.json`, so the scenario does not set
+  `statusSnapshots`: that is what makes the harness point `PIR_HOME` at a scratch folder
+  (`seatbeltEnv`), and without it the coordinator inherits `HOME`. Never print or commit the topic.
 
 ## Environment (the worker owns this)
 
@@ -34,7 +35,7 @@ The reminder is shortened to 2 minutes so the check does not wait 15.
 
 - From the bundle: the worker's log has `remote-control` with a url, then `notified` (`reminder: false`)
   within one pass of the task reading asking; `notified` (`reminder: true`) about 2 minutes later; no
-  third; a clear request after the answer (the flow log or a debug line T05 leaves). Record timestamps.
+  third; a clear after the answer (the flow-log line T05 writes per clear). Record timestamps.
 
 ## Outside actions
 
@@ -42,10 +43,11 @@ The reminder is shortened to 2 minutes so the check does not wait 15.
 
 ## Needs a person
 
-Before the run, if `~/.pir/notify.json` does not exist:
+Before the run, if `~/.pir/notify.json` does not exist (the installed `pir` has no `notify` verb until this
+plan is merged and `./install.sh` re-run, so the worker gives the path of its own worktree):
 
 ```
-pir notify
+node {worker's worktree}/src/shell/pir.mjs notify
 ```
 
 Expect: a QR code and a topic. Install ntfy from the App Store, subscribe to the topic (scan, or type it).
