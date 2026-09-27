@@ -2263,3 +2263,20 @@ test('end, agent off: today\'s end — no hand-off state, no report', (t) => {
   assert.equal(worktree.fileOn(`pir/${SLUG}`, REPORT_REL).ok, false);
   assert.equal(coordinator.pass().handoff, null, 'a further pass is today\'s pass, not the end sequence');
 });
+
+test('end: a restart after the person merged while pir was down → finished as merged, the branch not re-synced', (t) => {
+  const first = endRun(t);
+  first.toGate();
+  first.until(() => first.told().some((m) => m.startsWith('Every task is done')));
+  first.decide({ kind: 'report', sections: SECTIONS });
+  first.until((x) => x.handoff.state === 'ready');
+  first.coordinator.closeAgent();
+  git(first.worktree.repo, ['merge', '--no-ff', '--no-edit', `pir/${SLUG}`]);
+  const tip = git(first.worktree.repo, ['rev-parse', `pir/${SLUG}`]).stdout.trim();
+
+  const second = endRun(t, { worktree: first.worktree, controlDir: first.controlDir });
+  second.toGate();
+  const r = second.until((x) => x.finished !== null);
+  assert.equal(r.finished, 'merged');
+  assert.equal(git(first.worktree.repo, ['rev-parse', `pir/${SLUG}`]).stdout.trim(), tip, 'main was not merged back into the branch');
+});

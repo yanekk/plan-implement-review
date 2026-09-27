@@ -416,6 +416,17 @@ export function startCoordinator({
   function endSync(rec) {
     const existing = existsSync(join(state.feature.path, reportRel));
     handoff.rewrite = existing;
+    // A restart after the person merged while pir was down: main already holds the tip. Syncing now would
+    // merge main back into the branch, move its tip past main, and wait in ready for a merge already done.
+    if (existing && worktree.mainContains(state.feature.branch)) {
+      handoff.reportPath = reportRel;
+      handoff.mainSha = worktree.mainTip?.() ?? handoff.mainSha;
+      handoff.tests ??= handoff.gate;
+      handoff.state = handoff.tests === 'green' ? 'ready' : 'red';
+      handoff.step = 'waiting';
+      finish('merged', rec);
+      return;
+    }
     let res;
     try {
       res = worktree.syncMain(state.feature.path);

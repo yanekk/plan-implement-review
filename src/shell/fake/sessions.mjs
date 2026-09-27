@@ -27,6 +27,7 @@ export const PLANNER_MATCH = 'Load the pir-plan skill';
 export const REVIEWER_MATCH = 'Load the pir-review-plan skill';
 export const IMPLEMENT_MATCH = 'nothing else: pir-implement T\\d+';
 export const REVIEW_MATCH = 'nothing else: pir-review T\\d+';
+export const COORDINATOR_MATCH = 'Invoke the pir-coordinator skill';
 
 // The minimal plan's one task.
 export const FAKE_TASK = { num: 'T01', slug: 'first-task' };
@@ -110,6 +111,26 @@ export function workerScripts() {
   ];
 }
 
+// coordinatorScript() → steps for the run's coordinator agent (pir-coordinator T05). It says it is ready,
+// then answers the end brief with a `report` decision in its drop folder (the `Drop folder:` line of its
+// opening), and acknowledges the hand-off. It holds no worker's item: in the rigs using it, no worker asks
+// anything, so the next message it gets after its opening is the end brief. Without it the agent never
+// writes its report and a run with the agent on waits at the end for ever.
+export function coordinatorScript() {
+  return [
+    { await: 'user' },
+    { emit: initEvent() },
+    ...say('Coordinator ready.'),
+    { await: 'user' },
+    { emit: initEvent() },
+    { sh: run('coordinator-report') },
+    ...say('The delivery report is written.'),
+    { await: 'user' },
+    { emit: initEvent() },
+    ...say('The branch is ready for you to merge.'),
+  ];
+}
+
 // ---- The plan the fake planner writes. ----
 
 export function fakePlanFiles(slug) {
@@ -174,6 +195,14 @@ function cli([cmd, ...args]) {
     process.stdout.write(args[0] === 'pir-review' ? `${task} review: clean` : `${task}: fake implementation`);
   } else if (cmd === 'feature-branch') {
     process.stdout.write(`pir/${branchParts().slug}`);
+  } else if (cmd === 'coordinator-report') {
+    const dir = /^Drop folder: (.+)$/m.exec(process.env.FAKE_OPENING ?? '')?.[1];
+    if (!dir) throw new Error('no drop folder (the opening message named none)');
+    mkdirSync(dir, { recursive: true });
+    const sections = { delivered: 'The fake plan\'s one task.', checkByHand: 'Nothing.', risks: 'None.' };
+    const f = join(dir, `${Date.now()}-report.json`);
+    writeFileSync(`${f}.tmp`, JSON.stringify({ kind: 'report', sections }));
+    renameSync(`${f}.tmp`, f);
   } else if (cmd === 'worker-report') {
     const { slug, task } = branchParts();
     const main = dirname(resolve(git('rev-parse', '--git-common-dir')));
