@@ -2280,3 +2280,34 @@ test('end: a restart after the person merged while pir was down → finished as 
   assert.equal(r.finished, 'merged');
   assert.equal(git(first.worktree.repo, ['rev-parse', `pir/${SLUG}`]).stdout.trim(), tip, 'main was not merged back into the branch');
 });
+
+// --- pir-coordinator T06: the screen reads who holds a question, and the agent to open ------------
+
+test('buildRunState: a task whose items the agent holds carries holder coordinator; passed on, person; the agent rides in `coordinator`', () => {
+  const stateTasks = { T01: parkedTask('implement') };
+  const ended = [liveWorker({ state: 'idle', open: false, turns: 3, pending: [] })];
+  const agent = { id: 'sess-1', live: true, logPath: '/c/conversations/coordinator-1.ndjson' };
+
+  let rs = buildRunState({ passTasks: oneRow, stateTasks, workers: ended, branch: 'b', ceiling: 2, heldByAgent: new Set(['w1:report']), coordinator: agent });
+  assert.equal(rs.tasks[0].holder, 'coordinator');
+  assert.deepEqual(rs.coordinator, agent);
+  assert.equal(buildDisplay(rs, { now: 0 }).rows[0].label, 'asking coordinator · a question');
+
+  rs = buildRunState({ passTasks: oneRow, stateTasks, workers: ended, branch: 'b', ceiling: 2, heldByAgent: new Set(), coordinator: agent });
+  assert.equal(rs.tasks[0].holder, 'person', 'passed on: the person\'s');
+  assert.equal(buildDisplay(rs, { now: 0 }).rows[0].label, 'asking you · a question');
+
+  // A pending permission request is keyed by its request id.
+  const perm = [liveWorker({ state: 'permission', open: true, turns: 1, pending: [{ kind: 'permission', requestId: 'r9', toolName: 'Bash', input: { command: 'ls' } }] })];
+  const building = { T01: { role: 'implement', phase: 'implementing', workerId: 'w1' } };
+  rs = buildRunState({ passTasks: oneRow, stateTasks: building, workers: perm, branch: 'b', ceiling: 2, heldByAgent: new Set(['w1:r9']) });
+  assert.equal(rs.tasks[0].holder, 'coordinator');
+  assert.equal(buildDisplay(rs, { now: 0 }).rows[0].label, 'asking coordinator · allow a command?');
+
+  // With --no-coordinator: no agent, and whatever asks is the person's.
+  rs = buildRunState({ passTasks: oneRow, stateTasks, workers: ended, branch: 'b', ceiling: 2 });
+  assert.equal(rs.coordinator, null);
+  assert.equal(rs.tasks[0].holder, 'person');
+  const idle = buildRunState({ passTasks: oneRow, stateTasks: building, workers: [liveWorker({ state: 'busy', open: true, turns: 0, pending: [] })], branch: 'b', ceiling: 2 });
+  assert.equal('holder' in idle.tasks[0], false, 'a task nothing asks for keeps its old shape');
+});

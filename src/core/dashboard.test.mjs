@@ -670,3 +670,40 @@ test('buildDashboard: an asking build counts in waiting beside your go, not in r
   assert.deepEqual(rows.map((r) => r.display), ['asking-you', 'running', 'your-go']);
   assert.deepEqual(counts, { running: 1, finished: 0, crashed: 0, stopped: 0, waiting: 2, total: 3 });
 });
+
+// --- the coordinator agent (pir-coordinator T06, DESIGN §2.8, §2.10) ------------------------------
+
+test('runDisplayState: a build waiting in ready to merge reads ready-to-merge and counts as waiting; a coordinator-held question does not ask', () => {
+  const ready = view({ slug: 'r', state: 'running', snap: { runState: { tasks: [{ id: 'T01', done: true }], handoff: { state: 'ready', reportPath: 'plans/r/REPORT.md' } } } });
+  const red = view({ slug: 'd', state: 'running', snap: { runState: { tasks: [{ id: 'T01', done: true }], handoff: { state: 'red' } } } });
+  const held = view({ slug: 'h', state: 'running', snap: buildSnap({ phase: 'asking', holder: 'coordinator' }) });
+  const passed = view({ slug: 'p', state: 'running', snap: buildSnap({ phase: 'asking', holder: 'person' }) });
+  const merged = view({ slug: 'm', state: 'finished', snap: ready.snap });
+  const { rows, counts } = buildDashboard([ready, red, held, passed, merged]);
+  assert.deepEqual(rows.map((r) => r.display), ['ready-to-merge', 'running', 'running', 'asking-you', 'finished']);
+  assert.deepEqual(counts, { running: 2, finished: 1, crashed: 0, stopped: 0, waiting: 2, total: 5 });
+});
+
+test('dashboardReducer: `c` in a build\'s live view opens its coordinator agent\'s conversation; ← comes back; no agent → a note', () => {
+  const coordinator = { id: 'sess-1', live: true, logPath: '/c/conversations/coordinator-1.ndjson' };
+  const withAgent = [view({ slug: 'a', snap: { runState: { tasks: [{ id: 'T01' }], coordinator } } })];
+  const watch = { ...initialUi(), view: 'watch', openSlug: 'a', taskSel: 0 };
+
+  const opened = dashboardReducer(watch, { type: 'key', key: 'c' }, withAgent);
+  assert.equal(opened.intent, null);
+  assert.equal(opened.ui.view, 'worker');
+  assert.deepEqual(opened.ui.openWorker, { taskId: 'coordinator', workerId: 'sess-1', logPath: '/c/conversations/coordinator-1.ndjson', live: true });
+  const back = dashboardReducer(opened.ui, { type: 'back' }, withAgent);
+  assert.equal(back.ui.view, 'watch');
+  assert.equal(back.ui.openWorker, null);
+
+  const none = [view({ slug: 'a', snap: { runState: { tasks: [{ id: 'T01' }], coordinator: null } } })];
+  const refused = dashboardReducer({ ...watch, armed: { action: 'stop', slug: 'a', key: 'a' } }, { type: 'key', key: 'c' }, none);
+  assert.equal(refused.ui.view, 'watch', 'nothing opens');
+  assert.match(refused.ui.note, /no coordinator agent/);
+  assert.equal(refused.ui.armed, null, 'a stray key still cancels a pending confirm');
+
+  const list = dashboardReducer({ ...initialUi(), sel: 0 }, { type: 'key', key: 'c' }, withAgent);
+  assert.equal(list.ui.view, 'list', 'inert on the list');
+  assert.equal(list.ui.note, null);
+});

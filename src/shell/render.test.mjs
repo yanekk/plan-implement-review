@@ -379,3 +379,23 @@ test('the end gate running paints a ticking header and a testing footer, not the
   assert.equal(lines.at(-1), "⠧ all 1 task(s) merged · running the plan's setup and tests on pir/demo · 1:12");
   assert.ok(!lines.some((l) => l.startsWith('✓')), 'no finished header while the tests run');
 });
+
+// The coordinator agent (pir-coordinator T06): its held rows, and the end of a run with it.
+test('formatLines: `asking coordinator` rows and the agent hand-off lines (ready, red, preparing)', () => {
+  const t = (over) => ({ id: 'T01', slug: 'one', deps: [], done: false, phase: null, since: null, doneMs: null, question: null, ...over });
+  const held = formatLines(buildDisplay({ branch: 'pir/demo', ceiling: 2, tasks: [t({ phase: 'asking', holder: 'coordinator' })] }, { now: 0 }));
+  assert.match(held[1], /● T01 {2}one +asking coordinator · a question/);
+  assert.ok(!held.some((l) => /asking you/.test(l)), 'the person is not asked');
+
+  const done = [t({ done: true })];
+  const ready = formatLines(buildDisplay({ branch: 'pir/demo', ceiling: 2, complete: true, readyToMerge: true, tasks: done, handoff: { state: 'ready', reportPath: 'plans/demo/REPORT.md' } }, { now: 0 }));
+  assert.deepEqual(ready.slice(-2), ['✔ ready to merge · git merge pir/demo', '  report: plans/demo/REPORT.md']);
+
+  const red = formatLines(
+    buildDisplay({ branch: 'pir/demo', ceiling: 2, complete: true, tasks: done, testsReason: { reason: 'test `npm test` exited 1', logPath: '/c/tests.log' }, handoff: { state: 'red', reportPath: 'plans/demo/REPORT.md' } }, { now: 0 }),
+  );
+  assert.deepEqual(red.slice(-3), ['✗ not ready · tests red on pir/demo — no merge offered', '  test `npm test` exited 1 · output: /c/tests.log', '  report: plans/demo/REPORT.md']);
+
+  const prep = formatLines(buildDisplay({ branch: 'pir/demo', ceiling: 2, tasks: done, handoff: { state: 'preparing', reportPath: null } }, { now: 0 }), { spinnerChar: '*' });
+  assert.equal(prep.at(-1), '* all 1 task(s) merged · preparing the hand-off: syncing main, writing the report');
+});

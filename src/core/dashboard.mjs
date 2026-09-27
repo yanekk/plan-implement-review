@@ -47,14 +47,23 @@ function planState(view) {
 //   view = { state (classifyRun's), record ({ kind, go }), snap ({ runState: { kind:'plan', step, outcome } }) }
 // A build shows its classification unchanged, except that a running build with any task waiting on the
 // person reads `asking-you` (askingCount, the live view's own rule), so a question is visible from the
-// list without opening the run (user 2026-09-27). A planning run shows `planning` or `reviewing` while it runs
+// list without opening the run (user 2026-09-27), and one waiting in `ready to merge` at its end reads
+// `ready-to-merge` (pir-coordinator §2.10). A planning run shows `planning` or `reviewing` while it runs
 // (by the snapshot's step: the rename between the two already has the planner done, so it reads
 // `reviewing`), `your-go` once finished `reviewed` with no go recorded (§2.8), `finished` for any other
 // finished outcome or a declined go, and `stopped`/`crashed` as classified. Any other classification (an
 // unreachable entry) passes through as it came.
 export function runDisplayState(view) {
   const state = view?.state;
-  if (!isPlan(view)) return state === 'running' && askingCount(view?.snap?.runState) > 0 ? 'asking-you' : state;
+  if (!isPlan(view)) {
+    if (state !== 'running') return state;
+    const rs = view?.snap?.runState;
+    if (askingCount(rs) > 0) return 'asking-you';
+    // The end of a run with the coordinator agent (pir-coordinator §2.10): the branch is prepared, the
+    // report committed, and the run waits for the person to merge or close it.
+    if (rs?.handoff?.state === 'ready') return 'ready-to-merge';
+    return state;
+  }
   const rs = planState(view);
   if (state === 'running') return rs && (rs.step === 'rename' || rs.step === 'review' || rs.step === 'done') ? 'reviewing' : 'planning';
   if (state === 'finished') return rs?.outcome === 'reviewed' && (view.record?.go ?? null) === null ? 'your-go' : 'finished';
@@ -124,6 +133,7 @@ const TALLY = {
   stopped: 'stopped',
   'your-go': 'waiting',
   'asking-you': 'waiting',
+  'ready-to-merge': 'waiting',
 };
 
 // runKey(view) → the identity of one run. A slug alone is not unique: the same plan slug can run in two
@@ -166,6 +176,22 @@ export function noSessionNote(step) {
   if (step?.id === 'build') return 'build has no conversation here — the build shows its own tasks once it starts.';
   if (step?.id === 'review') return 'review has no session yet — the reviewer starts when the plan is written.';
   return 'plan has no session yet — the planner is starting.';
+}
+
+// The coordinator agent of the open build (pir-coordinator §2.8): the run state's `coordinator`, or null
+// with `--no-coordinator`, before it started, or for a planning run.
+export function openCoordinator(views, ui) {
+  const open = findOpen(views, ui);
+  if (!open || isPlan(open)) return null;
+  const c = open.snap?.runState?.coordinator;
+  return c?.id ? c : null;
+}
+
+// Why `c` opened nothing: the open run has no coordinator agent to show.
+export function noCoordinatorNote(views, ui) {
+  const open = findOpen(views, ui);
+  if (open && isPlan(open)) return 'a planning run has no coordinator agent.';
+  return 'this run has no coordinator agent — it was started with --no-coordinator, or the agent has not started yet.';
 }
 
 // goOpen(views, ui) → whether the open run is waiting for the person's go (§2.8): the watch view of a
@@ -216,6 +242,8 @@ export function noWorkerNote(task, tasks = []) {
 //           calls for.
 //     {type:'key', key:'enter'|'n'} while the open planning run waits for the go (goOpen): intent start
 //                                   or decline (pir-plan-command §2.8); otherwise Enter is `open` and `n` inert
+//     {type:'key', key:'c'}         in a build's live view: open its coordinator agent's conversation as the
+//                                   'worker' view (openWorker.taskId 'coordinator'), else a footer `note`
 //   intent = null | {type:'quit'} | {type:'stop', slug, key} | {type:'remove', slug, key} | {type:'resume', slug, key}
 //            | {type:'start', slug, key} | {type:'decline', slug, key}
 //           key is runKey of the target run; the caller resolves the run by it, never by slug alone.
@@ -236,6 +264,15 @@ export function dashboardReducer(ui, event, views = []) {
       return { ui: { ...ui, note: null, armed: null }, intent: { type, slug: open.slug, key: runKey(open) } };
     }
     event = event.key === 'enter' ? { type: 'open' } : { type: 'unbound' };
+  }
+  // `c` in a build's live view opens its coordinator agent's conversation (pir-coordinator §2.8), the way →
+  // opens a task's worker; ← comes back to the live view. With no agent it says so and opens nothing.
+  if (event?.type === 'key' && event.key === 'c') {
+    if (ui.view !== 'watch') return { ui: { ...ui, note: null, armed: null }, intent: null };
+    const c = openCoordinator(views, ui);
+    if (!c) return { ui: { ...ui, note: noCoordinatorNote(views, ui), armed: null }, intent: null };
+    const openWorker = { taskId: 'coordinator', workerId: c.id, logPath: c.logPath ?? null, live: !!c.live };
+    return { ui: { ...ui, view: 'worker', openWorker, note: null, armed: null }, intent: null };
   }
   // `note` is one-shot like `armed`: whatever the next event is, it clears.
   ui = { ...ui, note: null };

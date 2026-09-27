@@ -9,7 +9,7 @@ import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync } 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { startRig, driveScreen, createScreenModel, scenarioScript, RIG_TASK } from './conversation-rig.mjs';
+import { startRig, driveScreen, openScreen, createScreenModel, scenarioScript, RIG_TASK } from './conversation-rig.mjs';
 import { loadDashboard } from './pir-tui.mjs';
 import { indexDir, listRecords } from './index-store.mjs';
 import { dropPersonInput } from './person-inbox.mjs';
@@ -244,3 +244,57 @@ test('the driver walks the tour on the real pir screen', { timeout: 90000 }, asy
   const sent = logOf(rig).filter((e) => e.dir === 'out' && e.from === 'person').map((e) => e.kind);
   assert.deepEqual(sent, ['reply', 'reply', 'reply', 'reply', 'message', 'message', 'interrupt'], 'every answer the screen gave went through the inbox to the worker');
 });
+
+// pir-coordinator T06, end to end at 80×24 and 120×40: the coordinator agent holds T01's request, passes it
+// on with a pointer in its own conversation, takes what the person types, and the run ends in `ready to merge`.
+for (const [cols, rows] of [[80, 24], [120, 40]]) {
+  test(`the coordinator agent on the real pir screen at ${cols}×${rows}`, { timeout: 90000 }, async (t) => {
+    const env = scratchHome(t);
+    const rig = startRig({ env, scenario: 'coordinator', paceMs: 0, workMs: 300 });
+    t.after(() => rig.stop());
+    await waitFor(() => rig.platform.pending(rig.workerId)[0]?.requestId === 'perm-1', { what: 'T01 to ask' });
+    await waitFor(() => existsSync(rig.agent.logPath) && readFileSync(rig.agent.logPath, 'utf8').includes('pretend coordinator agent'), { what: 'the agent to greet' });
+    const ESC = '\x1b';
+    const screen = openScreen({ cols, rows, env: { ...process.env, ...env } });
+    try {
+      await screen.waitFor(/rig +work +● running/);
+      screen.send('\r');
+      let s = (await screen.waitFor(/asking coordinator · allow a command\?/)).join('\n');
+      assert.match(s, /T01 +coordinator +asking coordinator · allow a command\?/, 'the agent holds T01\'s request');
+      assert.doesNotMatch(s, /asking you/, 'nothing asks the person yet');
+      assert.match(s, /c coordinator/, 'the hint offers the agent');
+
+      rig.pass();
+      s = (await screen.waitFor(/T01 +coordinator +asking you · allow a command\?/)).join('\n');
+      assert.match(s, /● T01 coordinator — asking you; open it \(→\) to answer/);
+
+      screen.send('c');
+      s = (await screen.waitFor(/coordinator ▸ T01 wants to push its task branch/)).join('\n');
+      assert.match(s, /^coordinator {2}worker /m, 'the agent\'s conversation is open');
+
+      screen.send('where are we?');
+      await screen.waitFor(/where are we\?/);
+      screen.send('\r');
+      await screen.waitFor(/You said: where are we\?/, 20000);
+      const sent = readFileSync(rig.agent.logPath, 'utf8').trim().split('\n').map((l) => JSON.parse(l)).filter((e) => e.dir === 'out' && e.from === 'person');
+      assert.deepEqual(sent.map((e) => [e.kind, e.text]), [['message', 'where are we?']], 'delivered to the agent\'s session through the inbox');
+
+      screen.send(`${ESC}[D`);
+      await screen.waitFor(/c coordinator/);
+      rig.ready();
+      s = (await screen.waitFor(/ready to merge · git merge pir\/rig/)).join('\n');
+      assert.match(s, /report: plans\/rig\/REPORT\.md/);
+      assert.match(s, /T01 +coordinator +merged/);
+
+      screen.send(`${ESC}[D`);
+      s = (await screen.waitFor(/● ready to merge/)).join('\n');
+      assert.match(s, /rig +work +● ready to merge/, 'the dashboard row reads ready to merge');
+      assert.match(s, /1 waiting for you/);
+
+      for (const r of s.split('\n')) assert.ok([...r].length <= cols);
+      assert.equal(screen.overflows(), 0, 'no frame was clipped to fit the window');
+    } finally {
+      await screen.close();
+    }
+  });
+}

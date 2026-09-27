@@ -58,11 +58,24 @@ function askingKind(t) {
   return null;
 }
 
+// The coordinator agent holds a waiting item from its brief until it answers or passes it on
+// (pir-coordinator DESIGN §2.5): the row then reads `asking coordinator` and asks nothing of the person.
+// `holder` is buildRunState's; a snapshot without it (no agent, or written before it) is the person's.
+const COORDINATOR_LABEL = {
+  question: 'asking coordinator · a question',
+  questions: 'asking coordinator · a question',
+  permission: 'asking coordinator · allow a command?',
+};
+const heldByCoordinator = (t) => t.holder === 'coordinator';
+// The task waits on the person: something is asking and the coordinator agent does not hold it.
+const asksPerson = (t) => !!askingKind(t) && !heldByCoordinator(t);
+
 // askingCount(runState) → how many unfinished tasks wait on the person. The summary's `asking` tally and
 // the runs list's `asking you` state (dashboard.mjs) both read this, so the list row and the live view
-// never disagree on whether a run needs the person.
+// never disagree on whether a run needs the person. A task the coordinator agent holds is not counted:
+// the run must not turn amber for a question the person is not being asked (pir-coordinator §2.5).
 export function askingCount(runState) {
-  return (runState?.tasks ?? []).filter((t) => !t.done && askingKind(t)).length;
+  return (runState?.tasks ?? []).filter((t) => !t.done && asksPerson(t)).length;
 }
 
 // buildDisplay(runState, { now, spinnerFrame }) → { summary, rows, footer } (DESIGN §2.3).
@@ -70,6 +83,10 @@ export function askingCount(runState) {
 // runState (a pass's output, assembled by the shell):
 //   { branch, ceiling, complete?, readyToMerge?, testsReason?, testing?, interrupted?, tasks: [task…] }
 //   testsReason: { reason, logPath } from the red end gate, or null (green, unfinished, an old snapshot).
+//   handoff: null | { state:'preparing'|'ready'|'red', reportPath, mainSha } — the end of a run with the
+//            coordinator agent (pir-coordinator §2.9, §2.10); null with the agent off, where the footer is
+//            today's hand-off or red line.
+//   coordinator: null | { id, live, logPath } — the run's agent, for the screen to open; not read here.
 //   testing: { since:ms } while the end gate runs the plan's setup and test lines on the finished feature
 //            branch, else null. Every task is merged by then, so without it the screen reads as done for
 //            the minutes the suite takes (user 2026-09-25).
@@ -87,6 +104,9 @@ export function askingCount(runState) {
 //               `fixing-conflict` in the active style, counted as running, no footer.
 //     asking  — null | 'question' | 'permission' | 'questions' (live-workers §2.4): the kind of answer the
 //               task's worker wants. A pending request makes the row `asking` whatever its phase.
+//     holder  — null | 'coordinator' | 'person' (pir-coordinator §2.5): who holds the waiting items. A
+//               coordinator-held task reads `asking coordinator` (row kind `asking-coordinator`) and is
+//               left out of the asking tally and footer; absent or 'person' is today's `asking you`.
 //     worker  — null | { id, live, logPath }: the worker `pir` opens for this task, the live one else the
 //               latest (§2.11). workers — [{ id, role, n, logPath }], all of the task's in spawn order.
 //               Both ride through to status.json for the screen; this model does not read them.
@@ -95,7 +115,7 @@ export function askingCount(runState) {
 // is accepted for signature symmetry with the renderer but not used by the model: the spinner glyph is
 // the renderer's, the model carries `kind` (DESIGN §2.3).
 export function buildDisplay(runState, { now, spinnerFrame } = {}) {
-  const { branch, ceiling, complete = false, readyToMerge = false, testsReason = null, testing = null, interrupted = false, tasks = [] } =
+  const { branch, ceiling, complete = false, readyToMerge = false, testsReason = null, testing = null, interrupted = false, handoff = null, tasks = [] } =
     runState ?? {};
 
   const doneIds = new Set(tasks.filter((t) => t.done).map((t) => t.id));
@@ -123,7 +143,7 @@ export function buildDisplay(runState, { now, spinnerFrame } = {}) {
   // `branch` rides at the top level beside summary/rows/footer: the renderer shows the run's branch in
   // its header line on every paint, but the footer only carries a branch in some states (handoff, red),
   // so the summary line cannot source it from there. It is the one field added to the interface sketch.
-  return { branch: branch ?? null, summary, rows, footer: footerFor({ tasks, complete, readyToMerge, testsReason, testing, interrupted, branch, now }) };
+  return { branch: branch ?? null, summary, rows, footer: footerFor({ tasks, complete, readyToMerge, testsReason, testing, interrupted, handoff, branch, now }) };
 }
 
 // One row for one task. The order of the checks is the priority: a ✅ task is done however it got there;
@@ -142,6 +162,7 @@ function rowFor(t, { now, doneIds, ceilingFull }) {
     // The worker was sent the fix and is working on it: nothing for the person to do (§2.10).
     if (isFixingConflict(t)) return { ...base, kind: 'fixing-conflict', label: 'fixing conflict', elapsedMs };
     const asking = askingKind(t);
+    if (asking && heldByCoordinator(t)) return { ...base, kind: 'asking-coordinator', label: COORDINATOR_LABEL[asking], elapsedMs };
     if (asking) return { ...base, kind: 'asking', label: ASKING_LABEL[asking], elapsedMs };
     return { ...base, kind: t.phase, label: PHASE_LABEL[t.phase], elapsedMs };
   }
@@ -164,13 +185,24 @@ function rowFor(t, { now, doneIds, ceilingFull }) {
 // parked worker the person must answer, then the end-of-run hand-off (green) or failure (red), then the
 // end gate still running (`testing`), else the plain running line. `asking` beats `handoff`/`red` because a complete run has nothing asking, so the
 // two never contend; the order only makes the intent explicit.
-function footerFor({ tasks, complete, readyToMerge, testsReason, testing, interrupted, branch, now }) {
+function footerFor({ tasks, complete, readyToMerge, testsReason, testing, interrupted, handoff, branch, now }) {
   if (interrupted) return { kind: 'interrupted' };
 
-  // A worker fixing a conflict it was sent asks nothing, so it never takes the footer (§2.10).
-  const asking = tasks.find((t) => !t.done && askingKind(t));
+  // A worker fixing a conflict it was sent asks nothing, so it never takes the footer (§2.10); nor does a
+  // question the coordinator agent holds (pir-coordinator §2.5).
+  const asking = tasks.find((t) => !t.done && asksPerson(t));
   if (asking) {
     return { kind: 'asking', task: asking.id, slug: asking.slug, question: asking.question ?? '' };
+  }
+
+  // The end of a run with the coordinator agent (pir-coordinator §2.9, §2.10): preparing (main synced into
+  // the branch, the report being written), then ready to merge or red, each naming the committed report.
+  // The branch rides along for the merge line. Absent with the agent off, where today's footers follow.
+  if (handoff?.state === 'preparing' || handoff?.state === 'ready' || handoff?.state === 'red') {
+    const f = { kind: 'handoff', branch, state: handoff.state, reportPath: handoff.reportPath ?? null };
+    // Red says why, as today's red footer does (DESIGN §2.8), when the gate carried it.
+    if (handoff.state === 'red') return { ...f, reason: testsReason?.reason ?? null, logPath: testsReason?.logPath ?? null };
+    return f;
   }
 
   if (complete) {
