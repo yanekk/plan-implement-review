@@ -23,7 +23,7 @@ done · ⛔ blocked, needs a human.
 
 | # | Task | Depends on | State | Notes |
 |---|---|---|---|---|
-| T01 | drop-canonical-guard | — | ⬜ | |
+| T01 | drop-canonical-guard | — | ✅ | |
 | T02 | plan-box-rules | — | ✅ | |
 | T03 | repo-scan | T02 | ✅ | Reviewed: one fix, HOME with a trailing slash made rootsLabel show `/h/src` not `~/src` (failing test first, homeOf resolves HOME). Probed: the worktree test does defend the `.git`-file skip; unreadable fs and git failure skip cleanly. Criteria met; npm test green. |
 | T04 | list-view-box | T02 | ⬜ | |

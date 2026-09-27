@@ -349,17 +349,16 @@ for (const [label, setup, reason] of [
   });
 }
 
-test('startPlanRun pre-flight: the canonical checkout is refused unless PARALLEL_ALLOW_HERE=1', (t) => {
+// Replaces the old canonical-repo refusal test: that guard is gone (dashboard-plan-box DESIGN §2.8).
+test('startPlanRun: a checkout named plan-implement-review starts with no environment flag', (t) => {
   const s = gitRepo(t, { name: 'plan-implement-review' });
-  const before = footprint(s);
+  const env = { ...s.env };
+  delete env.PARALLEL_ALLOW_HERE;
   const { spawn, calls } = makeSpawn();
-  const r = startPlanRun('a brief', { cwd: s.root, spawn, exec: execAlive, env: s.env, random: seq('abcd') });
-  assert.deepEqual(r, { started: false, reason: 'canonical-repo' });
-  assert.equal(calls.length, 0);
-  assert.deepEqual(footprint(s), before);
-
-  const ok = startPlanRun('a brief', { cwd: s.root, spawn, exec: execAlive, env: { ...s.env, PARALLEL_ALLOW_HERE: '1' }, random: seq('abcd') });
-  assert.equal(ok.started, true, 'the same variable as a live build lets it through');
+  const r = startPlanRun('a brief', { cwd: s.root, spawn, exec: execAlive, env, random: seq('abcd') });
+  assert.equal(r.started, true, 'no repo-name refusal');
+  assert.equal(calls.length > 0, true, 'the planning program was spawned');
+  assert.deepEqual(planPreflight({ cwd: s.root }), { ok: true, root: s.root, repo: 'plan-implement-review' });
 });
 
 test('startPlanRun pre-flight order: not-a-repo before an empty brief; checks run before the brief', (t) => {

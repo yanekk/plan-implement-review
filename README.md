@@ -79,6 +79,9 @@ It builds on pir/screen-time.
 `↵` starts the build on the same branch, and the dashboard row turns from `plan` to `work`. `n` leaves
 it for later: `pir start screen-time` builds it whenever you like.
 
+`pir plan` and `pir start` work in any git repo with a local `main`, this project's own checkout
+included; there is no flag to set ([planning-runs.md](docs/planning-runs.md)).
+
 What that gets you:
 
 - **`main` stays clean.** The plan is written on its own branch, `pir/{slug}`, which the build then

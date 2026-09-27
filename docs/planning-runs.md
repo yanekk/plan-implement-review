@@ -32,12 +32,11 @@ one line on stderr and exit 1:
    or linked worktree of the repo;
 2. a repo with no local `main` branch. A planning run never creates or checks out `main`, because that
    would move the person's own checkout;
-3. the `plan-implement-review` checkout itself, unless `PARALLEL_ALLOW_HERE=1` — the same guard and
-   variable as a live build, since a planning run cuts branches as a build does;
-4. an empty brief (`pir plan ""`; the brief box never sends one).
+3. an empty brief (`pir plan ""`; the brief box never sends one).
 
-The first three are `planPreflight`; the fourth is checked by `startPlanRun`, still before anything is
-created.
+The first two are `planPreflight`; the third is checked by `startPlanRun`, still before anything is
+created. There is no repo-name check: planning works in any repo, the `plan-implement-review` checkout
+included, with no environment flag (the old canonical-repo refusal and `PARALLEL_ALLOW_HERE` are gone).
 
 Then `startPlanRun`:
 
