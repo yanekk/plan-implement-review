@@ -12,10 +12,9 @@ cell also fixes the over-budget cell they walk past.
 
 **Plan reviewed:** 2026-09-26 — 3 fixed, 4 decided with the user
 
-**Status:** Planned 2026-09-26 on main after `live-workers` and the Remote Control un-park (bda34a5,
-5b899df). Nothing built.
-**Last updated:** 2026-09-26
-**Next `pir-work` will:** implement T00 (T00, T01 and T02 have no dependency).
+**Status:** T00–T04 done; T05 built and live-checked with the user, awaiting review.
+**Last updated:** 2026-09-27
+**Next `pir-work` will:** review T05.
 
 ## Tasks
 
@@ -29,10 +28,10 @@ done · ⛔ blocked, needs a human.
 | T02 | waiting-predicate | — | ✅ | |
 | T03 | answer-only-unpark | T00, T02 | ✅ | |
 | T04 | docs | T01, T03 | ✅ | |
-| T05 | live-asking-check | T04 | ⬜ | |
+| T05 | live-asking-check | T04 | 🔍 | Fixture `real-asking`, `answerPending.afterWake`, capture `status.jsonl`; 6 new tests. Live run passed with the user's phone (FINDINGS). Deviation: added scenario flag `statusSnapshots` and `seatbeltEnv` `pirHome` (PIR_RUN=1), touching `scenario.mjs`, because the harness coordinator otherwise writes no status.json. |
 
-**Review queue:** *(empty)*
+**Review queue:** T05
 
 ## Blocked on the user
 
-Nothing yet. T00 and T05 need the person's phone for Remote Control answers.
+Nothing. T00 and T05 phone answers are recorded in FINDINGS.
