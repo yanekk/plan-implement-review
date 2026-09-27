@@ -24,7 +24,7 @@ done · ⛔ blocked, needs a human.
 
 | # | Task | Depends on | State | Notes |
 |---|---|---|---|---|
-| T00 | remote-answer-probe | — | ⬜ | |
+| T00 | remote-answer-probe | — | ✅ | |
 | T01 | worker-contract | — | ✅ | |
 | T02 | waiting-predicate | — | ✅ | |
 | T03 | answer-only-unpark | T00, T02 | ⬜ | |
