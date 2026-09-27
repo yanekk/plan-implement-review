@@ -26,7 +26,7 @@ done · ⛔ blocked, needs a human.
 | T00 | coordinator-probe | — | ✅ | |
 | T01 | coordinator-rulebook | T00 | ✅ | |
 | T02 | coordinator-skill | — | ✅ | |
-| T03 | coordinator-session | T01 | 🔍 | Gate in `startWorker`, `coordinator-agent.mjs`, `coordinator-brief.mjs`, fake platform `remoteControl`/`note`, decisions/ cleared; 29 new tests. Deviations: `tools` passed (FINDINGS T00); `drain(waiting, {ready})`; extra `remote`, `skillsDir`, `uuid`, `denyMessage`, `resumedFor()`; given-up survives a pir restart within the hour; `install.sh` not run, parallel run live (DESIGN §5). |
+| T03 | coordinator-session | T01 | ✅ | Review fixed two, reproduced by script, tests lock them: a ledger append after a torn line fused and lost the next decision; the gate allowed Glob `..` after a wildcard. Probed resume/give-up, same-drain duplicates, reserved pass-on. Implementer deviations accepted. `./install.sh` still owed, after the run (DESIGN §5). |
 | T04 | answer-first-routing | T03 | ⬜ | |
 | T05 | end-of-run-handoff | T04 | ⬜ | |
 | T06 | coordinator-screen | T04, T05 | ⬜ | |
@@ -34,7 +34,7 @@ done · ⛔ blocked, needs a human.
 | T08 | docs | T02, T04, T05, T06 | ⬜ | |
 | T09 | live-coordinator-check | T07, T08 | ⬜ | |
 
-**Review queue:** T03
+**Review queue:** empty
 
 ## Blocked on the user
 
