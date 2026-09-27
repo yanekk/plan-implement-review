@@ -59,6 +59,13 @@ test('rootsLabel shows HOME as ~ and joins with a comma', () => {
   assert.equal(rootsLabel(['/h', '/other', '/hx/src'], env), '~, /other, /hx/src');
 });
 
+test('a HOME with a trailing slash still shows as ~', () => {
+  const env = { HOME: '/h/' };
+  assert.deepEqual(repoRoots(env), ['/h/src']);
+  assert.equal(rootsLabel(repoRoots(env), env), '~/src');
+  assert.equal(rootsLabel(repoRoots({ ...env, PIR_REPOS: '~' }), env), '~');
+});
+
 test('scanRepos returns exactly the qualifying repos, ranked', (t) => {
   const home = scratchHome(t);
   const src = join(home, 'src');

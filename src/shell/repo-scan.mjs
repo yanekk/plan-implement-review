@@ -13,8 +13,9 @@ import { rankRepos } from '../core/planbox.mjs';
 
 // HOME comes from the env passed in, not os.homedir(): the plan rig points HOME at a scratch folder
 // and the scan must follow it. os.homedir() is only the fallback when the env has no HOME at all.
+// Normalised so a HOME with a trailing slash still matches the roots rootsLabel shows as `~`.
 function homeOf(env) {
-  return env.HOME || homedir();
+  return resolve(env.HOME || homedir());
 }
 
 // repoRoots(env) → absolute roots. PIR_REPOS split on ':', `~` expanded against env.HOME, empty
