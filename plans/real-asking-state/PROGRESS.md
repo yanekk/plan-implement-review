@@ -14,8 +14,8 @@ cell also fixes the over-budget cell they walk past.
 
 **Status:** Planned 2026-09-26 on main after `live-workers` and the Remote Control un-park (bda34a5,
 5b899df). Nothing built.
-**Last updated:** 2026-09-26
-**Next `pir-work` will:** implement T00 (T00, T01 and T02 have no dependency).
+**Last updated:** 2026-09-27
+**Next `pir-work` will:** implement T00 or T01 (no dependency); T03 needs T00.
 
 ## Tasks
 
@@ -26,12 +26,12 @@ done · ⛔ blocked, needs a human.
 |---|---|---|---|---|
 | T00 | remote-answer-probe | — | ⬜ | |
 | T01 | worker-contract | — | ⬜ | |
-| T02 | waiting-predicate | — | 🔍 | `core/asking.mjs` `waitingOn`; row, clock, Remote Control read it. 8 core + 6 coordinate tests. Deviation: `requestingTasks` removed; `advanceTiming`'s last argument is now `platform.workers()` (per-task activity via new `taskActivity`), since a set alone cannot tell a parked open turn from a wait. |
+| T02 | waiting-predicate | — | ✅ | `core/asking.mjs` `waitingOn` drives row, clock, Remote Control; `requestingTasks` removed, `advanceTiming` takes `platform.workers()` (accepted). Review: `taskActivity` fell back to another live worker when the tracked one was not live, un-asking a park the loop held; reproduced by a red test, fixed. Probed askEnd against `resumeAnswered`, conflict-sent, unseen worker. |
 | T03 | answer-only-unpark | T00, T02 | ⬜ | |
 | T04 | docs | T01, T03 | ⬜ | |
 | T05 | live-asking-check | T04 | ⬜ | |
 
-**Review queue:** T02
+**Review queue:** empty
 
 ## Blocked on the user
 
