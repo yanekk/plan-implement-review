@@ -44,10 +44,10 @@ per pass, unless halted, per task t with a live worker w (from platform.list()):
   parked:
     advance the cursor to obs.cursor; nothing else this pass (resumeAnswered owns the un-park)
   eligible = (t.phase === IMPLEMENTING || t.phase === REVIEWING || (t.phase === AWAITING && t.decision?.sent))
-             && w.state !== 'permission' && w.state !== 'questions'
+             && !waitingOn(t, w.activity)   // covers permission/questions and a stopped worker (DESIGN §2.4)
   a phase change (resumeAnswered's included) or a new worker id since last pass → fresh activity from
     this pass with the cursor at obs.cursor, nudges 0, stuck false
-  w.state was permission/questions last pass and is not now → lastActivityAt = now (clock restart, count kept)
+  waitingOn(t, w.activity) was non-null last pass and is null now → lastActivityAt = now (clock restart, count kept)
   { state, output, varied } = observeActivity(t.activity, { fingerprint, entries, reported }, { now, windowMs: nudgeMs })
   output → if (t.nudges > 0 || t.stuck) record('unstuck'); t.nudges = 0; t.stuck = false
   d = decideNudge({ now, eligible, lastActivityAt, lastNudgeAt, nudges, stuck, quietMs: nudgeMs, maxNudges: MAX_NUDGES })
@@ -80,6 +80,8 @@ Its self-test proves `platform.send(id, 'free text', …)` fails and both allowe
 - [ ] A worker whose `list()` state is `permission` or `questions` is never nudged, however long; once
       answered, its next nudge is a full quiet period later, and its count is what it was.
 - [ ] A worker that drops a `question` report is never nudged while parked, however long it waits.
+- [ ] An `implementing` worker idle with `background: []` (stopped, `waitingOn` → `question`) is never
+      nudged, however long; one idle with a job listed in `background` is nudged on schedule.
 - [ ] A task `resumeAnswered` returns to `implementing` starts a fresh stretch: nudges 0, its quiet
       clock from that pass, and entries logged while it was parked do not count as activity.
 - [ ] A conflict-sent worker (`decision.sent`), which `resumeAnswered` leaves parked, is nudged on

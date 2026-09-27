@@ -175,6 +175,12 @@ And never:
 - past `implemented`/`done` (`review-ready`, `done`). That is `force-idle`'s case, and its work is
   already reported.
 - while HALT is present. HALT means stop acting on workers; nothing is read or sent.
+- while `waitingOn(task, activity)` (`src/core/asking.mjs`) is non-null, whatever the reason: the row
+  reads `asking you`. Since `stopped-worker-asking` (DESIGN §2.5 there, user 2026-09-27) that includes an
+  `implementing`/`reviewing` worker idle with no background job running, which is how a worker that
+  asked in plain text and forgot its report now looks. A nudge would open a turn and flip the row and
+  Remote Control off and back on under the person. The clock restarts when `waitingOn` turns null, as
+  for an answered request.
 
 A phase change starts a fresh stretch: a new reviewer is a new worker with its own clock and a zero
 count, and a worker returning to work (below) restarts its clock at that pass. A worker is observed
@@ -443,6 +449,9 @@ anything it does next; the person can also open the worker in `pir` and tell it 
 
 ## 7. Decisions and rationale
 
+- **Never nudge a worker `waitingOn` reads as waiting on the person** (user, 2026-09-27, planning
+  `stopped-worker-asking`). Amended before any task was built; §2.4. The nudge now reaches only
+  wait-loops and workers idle behind a background job; the nudge text's report sentence stays, harmless.
 - **Deterministic nudge from the coordinator, no helper agent** (brief, PM, 2026-09-24). Cheapest thing
   that could work; a model-written nudge is a follow-up if the fixed one proves too blunt.
 - **Activity = real output or varied own actions; a repeated action is not activity** (user,
