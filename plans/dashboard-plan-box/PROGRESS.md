@@ -14,7 +14,7 @@ past.
 
 **Status:** Planned 2026-09-26. Nothing built.
 **Last updated:** 2026-09-27
-**Next `pir-work` will:** T02 plan-box-rules: it heads the critical path.
+**Next `pir-work` will:** T01 drop-canonical-guard or T03 repo-scan; T05 waits on T03.
 
 ## Tasks
 
@@ -26,11 +26,11 @@ done · ⛔ blocked, needs a human.
 | T01 | drop-canonical-guard | — | ⬜ | |
 | T02 | plan-box-rules | — | ✅ | |
 | T03 | repo-scan | T02 | ⬜ | |
-| T04 | list-view-box | T02 | 🔍 | `list-view.mjs` + `buildListFrame` `rows` window, 22 tests. Deviations: new empty line only under the box; suffix skips armed line; box note amber over `ui.note`; two slots cut both ways show two rows, no marker; spacers/title drop whenever rows are cut; `editorTheme` lifted to pir-view; `home` option added. |
+| T04 | list-view-box | T02 | ✅ | Review clean, no fix commit. Accepted the seven recorded deviations as readings of §2.6/§2.7. Probed: stale pop-up after backspace to bare (closes; Enter goes to list), tall pasted brief at 8/10/12 rows (fits from 10; 8 rows overflows by one, chrome alone exceeds it), unwindowed frame unchanged. |
 | T05 | box-starts-plan | T03, T04 | ⬜ | |
 | T06 | plan-box-drill | T01, T05 | ⬜ | |
 
-**Review queue:** T04
+**Review queue:** —
 
 ## Blocked on the user
 
