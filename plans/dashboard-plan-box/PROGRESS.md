@@ -23,7 +23,7 @@ done · ⛔ blocked, needs a human.
 
 | # | Task | Depends on | State | Notes |
 |---|---|---|---|---|
-| T01 | drop-canonical-guard | — | ⬜ | |
+| T01 | drop-canonical-guard | — | ✅ | |
 | T02 | plan-box-rules | — | ✅ | |
 | T03 | repo-scan | T02 | ⬜ | |
 | T04 | list-view-box | T02 | ✅ | Review clean, no fix commit. Accepted the seven recorded deviations as readings of §2.6/§2.7. Probed: stale pop-up after backspace to bare (closes; Enter goes to list), tall pasted brief at 8/10/12 rows (fits from 10; 8 rows overflows by one, chrome alone exceeds it), unwindowed frame unchanged. |

@@ -15,6 +15,7 @@ import { join } from 'node:path';
 import {
   coordinatorLaunchArgv,
   seatbeltEnv,
+  liveRunRefused,
   spawnCoordinator,
   coordinatorOutPath,
   controlDirFor,
@@ -80,15 +81,20 @@ test('coordinatorLaunchArgv throws without a slug', () => {
 
 // --- seatbeltEnv (DESIGN §5.2) -------------------------------------------------------------------
 
-test('seatbeltEnv sets PARALLEL_LIVE and the ceiling, and ALLOW_HERE only when asked', () => {
+test('seatbeltEnv sets PARALLEL_LIVE and the ceiling, and never PARALLEL_ALLOW_HERE', () => {
   assert.deepEqual(seatbeltEnv({ ceiling: 2 }), { PARALLEL_LIVE: '1', PARALLEL_MAX_WORKERS: '2' });
-  assert.deepEqual(seatbeltEnv({ ceiling: 1, allowHere: true }), {
-    PARALLEL_LIVE: '1',
-    PARALLEL_MAX_WORKERS: '1',
-    PARALLEL_ALLOW_HERE: '1',
-  });
+  // The old allowHere option is gone (dashboard-plan-box DESIGN §2.8); passing it does nothing.
+  assert.deepEqual(seatbeltEnv({ ceiling: 1, allowHere: true }), { PARALLEL_LIVE: '1', PARALLEL_MAX_WORKERS: '1' });
   assert.deepEqual(seatbeltEnv({}), { PARALLEL_LIVE: '1' });
   assert.deepEqual(seatbeltEnv({ ceiling: 2, holdMerges: true }), { PARALLEL_LIVE: '1', PARALLEL_MAX_WORKERS: '2', PARALLEL_HOLD_MERGES: '1' });
+});
+
+// --- The live launcher's paid-scenario guard (dashboard-plan-box DESIGN §2.8) ------------------------
+
+test('liveRunRefused: the canonical checkout is refused unless --into names a scratch dir', () => {
+  assert.equal(liveRunRefused({ cwd: '/src/plan-implement-review' }), true, 'refused with no --into');
+  assert.equal(liveRunRefused({ cwd: '/src/plan-implement-review', scratchDir: '/tmp/s' }), false, '--into lets it through');
+  assert.equal(liveRunRefused({ cwd: '/src/pir-scratch' }), false, 'any other checkout is fine');
 });
 
 // --- spawnCoordinator wraps the injected spawn (pid, kill, exited) -------------------------------

@@ -511,19 +511,6 @@ export function runawayVerdict({ liveCount, ceiling, overPasses = 0, overGrace =
   return { abort: liveCount > ceiling + 1 || over >= overGrace, over };
 }
 
-// --- The scratch-repo branch-safety guard (DESIGN §2.4, §5.2; ported from spawn-one-scratch.mjs, T12 P5) --
-//
-// The LIVE bin opens the feature branch off THIS checkout's main and writes task branches and
-// worktrees against it. The run never merges to main (§2.4), but it still cuts and mangles pir/{slug}
-// branches inside whatever repo it runs in — so never let a live run open them inside the canonical
-// project by accident: refuse when the main worktree's basename is the canonical repo unless
-// PARALLEL_ALLOW_HERE=1 (a same-named scratch clone). Pure predicate so it is tested directly. The
-// name is historical; it now guards the feature branch, not a promotion.
-const CANONICAL_REPO = 'plan-implement-review';
-export function canPromoteHere(repoName, { allowHere = false } = {}) {
-  return repoName !== CANONICAL_REPO || allowHere;
-}
-
 // --- The end-of-run hand-off (DESIGN §2.4, §2.8) ----------------------------------------------
 //
 // When the plan is complete, the run stops at the feature branch and hands it to the person to merge
@@ -960,19 +947,6 @@ async function main(argv) {
   }
 
   console.log('LIVE: spawning real workers (PARALLEL_LIVE=1).');
-
-  // Promotion guard (DESIGN §5.2; T12 Problem 5): never open+merge the feature branch inside the
-  // canonical project by accident. A scratch clone is named anything else; PARALLEL_ALLOW_HERE=1
-  // overrides for a same-named clone.
-  if (!canPromoteHere(repo, { allowHere: process.env.PARALLEL_ALLOW_HERE === '1' })) {
-    console.error(
-      `Refusing the LIVE run inside "${repo}" — this opens pir/${slug} off THIS repo's main and cuts\n` +
-        `task branches and worktrees against it. (It never merges to main; you do that by hand.) Still,\n` +
-        `run it in a throwaway clone instead (e.g. \`git clone . ../pir-scratch && cd ../pir-scratch\`).\n` +
-        `If this really is a scratch clone that happens to share the name, set PARALLEL_ALLOW_HERE=1.`,
-    );
-    process.exit(1);
-  }
 
   // Ensure a local `main` exists (DESIGN §2.9; T12 Problem 4): a scratch clone off a side branch has
   // only origin/main, and openFeature would throw on pass 1 without this.
