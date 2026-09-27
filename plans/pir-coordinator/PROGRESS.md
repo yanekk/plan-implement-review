@@ -27,7 +27,7 @@ done · ⛔ blocked, needs a human.
 | T01 | coordinator-rulebook | T00 | ✅ | |
 | T02 | coordinator-skill | — | ✅ | |
 | T03 | coordinator-session | T01 | ✅ | |
-| T04 | answer-first-routing | T03 | ⬜ | |
+| T04 | answer-first-routing | T03 | ✅ | |
 | T05 | end-of-run-handoff | T04 | ⬜ | |
 | T06 | coordinator-screen | T04, T05 | ⬜ | |
 | T07 | coordinator-drill | T06 | ⬜ | |
