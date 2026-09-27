@@ -14,7 +14,7 @@ past.
 
 **Status:** Planned 2026-09-26. Nothing built.
 **Last updated:** 2026-09-27
-**Next `pir-work` will:** T02 plan-box-rules: it heads the critical path.
+**Next `pir-work` will:** T04 list-view-box (T05 then waits on it).
 
 ## Tasks
 
@@ -25,12 +25,12 @@ done · ⛔ blocked, needs a human.
 |---|---|---|---|---|
 | T01 | drop-canonical-guard | — | ⬜ | |
 | T02 | plan-box-rules | — | ✅ | |
-| T03 | repo-scan | T02 | 🔍 | `src/shell/repo-scan.mjs`: repoRoots, rootsLabel, scanRepos (fs and git injectable). 9 tests over real `git init` repos. No deviations; added: HOME falls back to os.homedir() only when env has no HOME, relative PIR_REPOS entries resolve against cwd. |
+| T03 | repo-scan | T02 | ✅ | Reviewed: one fix, HOME with a trailing slash made rootsLabel show `/h/src` not `~/src` (failing test first, homeOf resolves HOME). Probed: the worktree test does defend the `.git`-file skip; unreadable fs and git failure skip cleanly. Criteria met; npm test green. |
 | T04 | list-view-box | T02 | ⬜ | |
 | T05 | box-starts-plan | T03, T04 | ⬜ | |
 | T06 | plan-box-drill | T01, T05 | ⬜ | |
 
-**Review queue:** T03
+**Review queue:** empty
 
 ## Blocked on the user
 
