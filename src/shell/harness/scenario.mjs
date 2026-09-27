@@ -101,7 +101,12 @@ export function defineScenario(spec = {}) {
     reply: kind === 'plan' ? reply : null,
     replyCap: kind === 'plan' ? replyCap : null,
     answerPending: answerPending
-      ? { typed: { ...(answerPending.typed ?? {}) }, say: { ...(answerPending.say ?? {}) }, afterWake: { ...(answerPending.afterWake ?? {}) } }
+      ? {
+          typed: { ...(answerPending.typed ?? {}) },
+          say: { ...(answerPending.say ?? {}) },
+          afterWake: { ...(answerPending.afterWake ?? {}) },
+          taskReplies: Object.fromEntries(Object.entries(answerPending.taskReplies ?? {}).map(([t, seq]) => [t, [...seq]])),
+        }
       : false,
     statusSnapshots: !!statusSnapshots,
   };

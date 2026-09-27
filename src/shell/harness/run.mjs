@@ -332,7 +332,7 @@ export async function teardownScenario({ controlDir, reap = (dir) => reapRecorde
 //   worktree     — injected for the restart runner's branch reads; default is the real one.
 //   install      — installFixture (injectable so a test need not re-seed real git every case).
 //   capture      — a createCapture instance (injectable); default is built from the injected runners.
-//   makeAnswerer — ({ controlDir, typed, say, log }) => { tick() }, the person's stand-in for an `answerPending`
+//   makeAnswerer — ({ controlDir, typed, say, afterWake, taskReplies, log }) => { tick() }, the person's stand-in for an `answerPending`
 //                  scenario (answerer.mjs, T18); injected so a test sees its ticks.
 //   timers, now  — injected clock/timers so a test drives time (DESIGN §3.1: the shell owns the clock).
 //   log          — where the runner prints progress (default console.log); the fact report is returned.
@@ -377,6 +377,7 @@ export async function runScenario({
         typed: spec.answerPending.typed,
         say: spec.answerPending.say,
         afterWake: spec.answerPending.afterWake,
+        taskReplies: spec.answerPending.taskReplies,
         log,
       })
     : null;

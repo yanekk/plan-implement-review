@@ -190,6 +190,76 @@ test('createAnswerer passes afterWake through to its inbox drops', () => {
   }
 });
 
+// --- A build implementer's reply sequence (stopped-worker-asking T06) -----------------------------
+
+const T1 = (t, event) => ({ t, dir: 'in', event: { session_id: 'w1', ...event } });
+const asks = (text, t) => T1(t, { type: 'assistant', message: { content: [{ type: 'text', text }] } });
+const turnEnds = (t) => T1(t, { type: 'result', subtype: 'success' });
+const opens = (t) => ({ ...init('w1'), t });
+const fromPerson = (text, t) => ({ t, dir: 'out', from: 'person', kind: 'message', text });
+const SEQ = { T01: ['Hello there', 'yes'] };
+const seqDrops = (entries, answered = new Set(), now = 1000, holdMs = 0, file = 'T01-implement-1.ndjson', taskReplies = SEQ) =>
+  pendingDrops([{ file, entries }], answered, {}, {}, null, {}, taskReplies, { now, holdMs });
+
+test('taskReplies: an implementer idle on its own text gets the next reply, once per turn, none after the sequence', () => {
+  const start = { t: 1, dir: 'out', from: 'pir', kind: 'message', text: 'pir-implement T01' };
+  const first = [start, opens(2), asks('Which wording?', 3), turnEnds(4)];
+  const d1 = seqDrops(first);
+  assert.deepEqual(d1, [{ to: 'w1', kind: 'message', text: 'Hello there', key: 'task-reply:T01:T01-implement-1.ndjson:1' }]);
+  assert.equal(validateDrop(d1[0]).ok, true, 'a valid person message');
+  const answered = new Set([d1[0].key]);
+  assert.deepEqual(seqDrops(first, answered), [], 'once per turn, however many ticks it stays idle');
+  // The reply opened a turn: nothing while it runs.
+  const replied = [...first, fromPerson('Hello there', 5), opens(6), asks('Writing it.', 7)];
+  assert.deepEqual(seqDrops(replied, answered), [], 'not while the turn is open');
+  // The follow-up asking turn ends: the second reply.
+  const second = [...replied, asks('Add a full stop?', 8), turnEnds(9)];
+  const d2 = seqDrops(second, answered);
+  assert.deepEqual(d2.map((d) => [d.text, d.key]), [['yes', 'task-reply:T01:T01-implement-1.ndjson:2']]);
+  answered.add(d2[0].key);
+  // A third idle turn on its own words: the sequence is spent.
+  const third = [...second, fromPerson('yes', 10), opens(11), asks('Done; reported implemented.', 12), turnEnds(13)];
+  assert.deepEqual(seqDrops(third, answered), [], 'nothing after the sequence is spent');
+});
+
+test('taskReplies: held until the turn has been over holdMs; never a reviewer, an exited worker, or a busy one', () => {
+  const idle = [{ t: 1, dir: 'out', from: 'pir', kind: 'message', text: 'pir-implement T01' }, opens(2), asks('Which wording?', 3), turnEnds(1000)];
+  assert.deepEqual(seqDrops(idle, new Set(), 10_000, 15_000), [], 'held: the turn ended 9 s ago');
+  assert.equal(seqDrops(idle, new Set(), 16_000, 15_000).length, 1, 'due once the hold has passed');
+  assert.deepEqual(seqDrops(idle, new Set(), 16_000, 0, 'T01-review-1.ndjson'), [], 'never a reviewer');
+  assert.deepEqual(seqDrops([...idle, { t: 1001, dir: 'note', kind: 'exited' }]), [], 'never an exited worker');
+  assert.deepEqual(seqDrops(idle.slice(0, 3)), [], 'never while its turn is open');
+  assert.deepEqual(seqDrops([...idle.slice(0, 3), T1(4, { type: 'assistant', message: { content: [{ type: 'tool_use', id: 'u', name: 'Bash', input: {} }] } }), turnEnds(5)]), [], 'not when a tool call came after its words');
+});
+
+test('taskReplies: a task with no entry gets nothing, and planning replies behave as before beside it', () => {
+  const t02 = [{ t: 1, dir: 'out', from: 'pir', kind: 'message', text: 'pir-implement T02' }, opens(2), asks('Waiting for the timer.', 3), turnEnds(4)];
+  assert.deepEqual(seqDrops(t02, new Set(), 1000, 0, 'T02-implement-1.ndjson'), [], 'T02 has no sequence');
+  const planLog = { file: 'plan-1.ndjson', entries: [{ t: 1, dir: 'out', from: 'pir', kind: 'message', text: 'plan' }, init('p1'), { t: 6, dir: 'in', event: { type: 'assistant', message: { content: [{ type: 'text', text: 'Which way?' }] } } }, { t: 7, dir: 'in', event: { type: 'result', subtype: 'success' } }] };
+  const drops = pendingDrops([planLog, { file: 'T02-implement-1.ndjson', entries: t02 }], new Set(), {}, {}, { text: 'Go.', cap: 1 }, {}, SEQ, { now: 1000, holdMs: 0 });
+  assert.deepEqual(drops, [{ to: 'p1', kind: 'message', text: 'Go.', key: 'reply:plan-1.ndjson:1' }]);
+});
+
+test('createAnswerer sends taskReplies through the inbox, after the hold, by its injected clock', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'answerer-seq-'));
+  try {
+    mkdirSync(join(dir, 'conversations'), { recursive: true });
+    const lines = [{ t: 1, dir: 'out', from: 'pir', kind: 'message', text: 'pir-implement T01' }, opens(2), asks('Which wording?', 3), turnEnds(1000)];
+    writeFileSync(join(dir, 'conversations', 'T01-implement-1.ndjson'), lines.map((l) => JSON.stringify(l)).join('\n') + '\n');
+    let clock = 5000;
+    const dropped = [];
+    const a = createAnswerer({ controlDir: dir, taskReplies: SEQ, now: () => clock, holdMs: 15_000, drop: (input) => (dropped.push(input), { ok: true }) });
+    a.tick();
+    assert.deepEqual(dropped, [], 'held');
+    clock = 17_000;
+    a.tick();
+    a.tick();
+    assert.deepEqual(dropped, [{ to: 'w1', kind: 'message', text: 'Hello there' }]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 // --- The canned reply to a planning session (pir-plan-command T17) -------------------------------
 
 const opening = { t: 1, dir: 'out', from: 'pir', kind: 'message', text: 'Load the pir-plan skill and run it.' };
