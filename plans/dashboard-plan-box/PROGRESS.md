@@ -12,9 +12,9 @@ past.
 
 **Plan reviewed:** 2026-09-27 — 4 fixed, 5 decided with the user
 
-**Status:** T02 implemented, awaiting review.
+**Status:** T02 reviewed ✅; T01 ready, T03 and T04 unblocked.
 **Last updated:** 2026-09-27
-**Next `pir-work` will:** review T02 plan-box-rules.
+**Next `pir-work` will:** implement T01 drop-canonical-guard.
 
 ## Tasks
 
@@ -24,13 +24,13 @@ done · ⛔ blocked, needs a human.
 | # | Task | Depends on | State | Notes |
 |---|---|---|---|---|
 | T01 | drop-canonical-guard | — | ⬜ | |
-| T02 | plan-box-rules | — | 🔍 | `src/core/planbox.mjs`, 51 tests. Adds `NOTES` export (§2.5 note builders). Bare box ignores `completing` (§2.3: no pop-up when bare). Typed box with pop-up open sends every key, chords included, to the box. `newLine` wins before any other rule. `←` on bare routes to the list. |
+| T02 | plan-box-rules | — | ✅ | `src/core/planbox.mjs`, `NOTES` export. Review fixed one defect: an LF Enter on a bare box went to the box, not the list (pi-tui reads LF as enter and newLine); reproduced by a red test, fixed, locked. Probed parseKey/newLine on real bytes, decodeKey parity, parse edges. |
 | T03 | repo-scan | T02 | ⬜ | |
 | T04 | list-view-box | T02 | ⬜ | |
 | T05 | box-starts-plan | T03, T04 | ⬜ | |
 | T06 | plan-box-drill | T01, T05 | ⬜ | |
 
-**Review queue:** T02
+**Review queue:** empty
 
 ## Blocked on the user
 
