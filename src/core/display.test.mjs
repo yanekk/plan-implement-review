@@ -328,3 +328,51 @@ test('the hand-off block with the agent: preparing, ready to merge with the repo
   ).footer;
   assert.equal(asking.kind, 'asking');
 });
+
+// --- end-of-run helper rows (pir-coordinator T11) --------------------------------------------------
+
+const helperRow = (over) => task({ id: 'tests-fix', slug: 'fix-red-tests', helper: true, phase: 'building', since: NOW - 5000, ...over });
+
+test('a helper row renders below the tasks; the summary counts only the plan tasks (T11)', () => {
+  const rs = { branch: 'pir/demo', ceiling: 2, tasks: [task({ id: 'T01', done: true, doneMs: 1000 }), task({ id: 'T02', done: true })], helpers: [helperRow()] };
+  const d = buildDisplay(rs, { now: NOW });
+  assert.deepEqual(d.rows.map((r) => r.id), ['T01', 'T02', 'tests-fix']);
+  assert.deepEqual(d.rows[2], { id: 'tests-fix', slug: 'fix-red-tests', kind: 'building', label: 'working', elapsedMs: 5000 });
+  assert.equal(d.summary.done, 2);
+  assert.equal(d.summary.total, 2, 'n/m done counts the plan tasks only');
+  assert.equal(d.summary.running, 0, 'the helper holds no slot under the ceiling');
+  assert.equal(d.summary.waiting, 0);
+});
+
+test('a helper whose question is the person\'s reads asking you, is counted, and takes the footer (T11)', () => {
+  const rs = {
+    branch: 'pir/demo',
+    ceiling: 2,
+    tasks: [task({ id: 'T01', done: true })],
+    helpers: [helperRow({ id: 'main-sync', slug: 'resolve-main-merge', asking: 'questions', holder: 'person', stoppedAt: NOW - 1000 })],
+    handoff: { state: 'preparing', reportPath: null, mainSha: null },
+  };
+  const d = buildDisplay(rs, { now: NOW });
+  const row = d.rows.find((r) => r.id === 'main-sync');
+  assert.equal(row.kind, 'asking');
+  assert.equal(row.label, 'asking you · a question');
+  assert.equal(row.elapsedMs, 4000, 'its clock stops while it waits on the person');
+  assert.equal(askingCount(rs), 1, 'the runs list turns amber for it');
+  assert.equal(d.summary.total, 1);
+  assert.deepEqual(d.footer, { kind: 'asking', task: 'main-sync', slug: 'resolve-main-merge', question: '' }, 'the asking pointer beats the preparing hand-off');
+});
+
+test('a helper whose question the agent holds reads asking coordinator and asks nothing of the person (T11)', () => {
+  const rs = { branch: 'pir/demo', ceiling: 2, tasks: [task({ id: 'T01', done: true })], helpers: [helperRow({ asking: 'questions', holder: 'coordinator' })], handoff: { state: 'preparing' } };
+  const d = buildDisplay(rs, { now: NOW });
+  assert.equal(d.rows[1].kind, 'asking-coordinator');
+  assert.equal(d.rows[1].label, 'asking coordinator · a question');
+  assert.equal(askingCount(rs), 0);
+  assert.equal(d.footer.kind, 'handoff');
+});
+
+test('a helper that reported done reads finishing while it is closed; with no helper the key is simply absent (T11)', () => {
+  const d = buildDisplay({ branch: 'b', ceiling: 1, tasks: [task({ done: true })], helpers: [helperRow({ phase: 'merging' })] }, { now: NOW });
+  assert.equal(d.rows[1].label, 'finishing');
+  assert.equal(buildDisplay({ branch: 'b', ceiling: 1, tasks: [task({ done: true })] }, { now: NOW }).rows.length, 1);
+});

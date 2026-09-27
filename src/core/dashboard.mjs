@@ -13,7 +13,7 @@
 // irreversible in the moment — stop kills in-flight work, remove drops the record — so the guard is
 // deliberate, not friction.
 
-import { askingCount } from './display.mjs';
+import { askingCount, rowEntries } from './display.mjs';
 
 // A run can be stopped only while running, and removed only while NOT running (DESIGN §2.6, §2.7): a
 // running run must be stopped before its record can be cleared. These two predicates are the whole of
@@ -162,13 +162,13 @@ function planSteps(view) {
   return STEP_IDS.map((id) => steps.find((s) => s.id === id) ?? { id, phase: 'pending', worker: null });
 }
 
-// openTasks(views, ui) → the open run's selectable rows, in the live view's row order: a build's tasks
-// (buildDisplay maps runState.tasks one row per task, in order), or [] when it has no snapshot yet; a
-// planning run's steps.
+// openTasks(views, ui) → the open run's selectable rows, in the live view's row order: a build's tasks,
+// then its end-of-run helpers while they run (rowEntries, which buildDisplay draws one row each, in order;
+// pir-coordinator T11), or [] when it has no snapshot yet; a planning run's steps.
 export function openTasks(views, ui) {
   const open = findOpen(views, ui);
   if (open && isPlan(open)) return planSteps(open);
-  return open?.snap?.runState?.tasks ?? [];
+  return rowEntries(open?.snap?.runState);
 }
 
 // Why a step row did not open (§2.11: a step with no session yet says so in the footer).

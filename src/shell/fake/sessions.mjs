@@ -200,6 +200,61 @@ export function drillScripts() {
   ];
 }
 
+// ---- The end-helper drill (pir-coordinator T11). ----
+//
+// A reviewed one-task plan whose test line fails until a file `fixed.txt` is committed, so the end gate is
+// red and the run spawns its tests-fix helper in the feature worktree. The helper asks the person one
+// question before it fixes anything; the agent (coordinatorReact) passes it on; once answered, the helper
+// commits the file and reports done, the tests go green and the run ends in `ready to merge`.
+export const HELPER_DRILL_SLUG = 'helper';
+export const HELPER_DRILL_QUESTION = 'The tests want fixed.txt. Should I add it?';
+// The tests-red prompt the helper is opened with (conflict.mjs testsRedPrompt).
+export const TESTS_FIX_MATCH = 'here in this worktree\\. Make it pass\\.';
+
+export function helperDrillScripts() {
+  const questions = [
+    {
+      question: HELPER_DRILL_QUESTION,
+      header: 'Test fix',
+      multiSelect: false,
+      options: [
+        { label: 'Add it', description: 'commit fixed.txt on the feature branch' },
+        { label: 'Leave it red', description: 'the run ends not ready' },
+      ],
+    },
+  ];
+  const fixer = [
+    { await: 'user' },
+    { emit: initEvent() },
+    { emit: assistantText('The plan\'s tests fail on the feature branch. One question before I fix them.') },
+    { emit: toolUse('toolu_fix-ask', 'AskUserQuestion', { questions }) },
+    { emit: canUseTool('fix-ask', 'AskUserQuestion', { questions }, { requires_user_interaction: true }) },
+    { await: 'control_response' },
+    { resultFor: 'fix-ask', allowed: 'ok' },
+    { sh: `echo ok > fixed.txt && ${GIT} add fixed.txt && ${GIT} commit -q -m "tests-fix: add fixed.txt"` },
+    { sh: run('helper-report', 'tests-fix', 'done') },
+    ...say('The tests pass now.'),
+  ];
+  return [
+    { match: TESTS_FIX_MATCH, script: fixer },
+    ...workerScripts(),
+    { match: COORDINATOR_MATCH, script: [{ react: run('coordinator-react') }] },
+  ];
+}
+
+export function helperDrillPlanFiles(slug = HELPER_DRILL_SLUG) {
+  const { num, slug: task } = FAKE_TASK;
+  return {
+    [`plans/${slug}/DESIGN.md`]: `---\nsetup: none\ntest:\n  - test -f fixed.txt\n---\n\n# ${slug} — Design\n\nThe end-helper drill's plan (src/shell/fake/sessions.mjs).\n`,
+    [`plans/${slug}/PLAN.md`]: `# ${slug} — Plan\n\n| # | Task | Depends on |\n|---|---|---|\n| ${num} | ${task} | — |\n`,
+    [`plans/${slug}/PROGRESS.md`]:
+      `# Progress\n\n**Plan reviewed:** yes — the drill's plan\n\n**Status:** Planned. Nothing built.\n\n` +
+      `## Tasks\n\n| # | Task | Depends on | State | Notes |\n|---|---|---|---|---|\n| ${num} | ${task} | — | ⬜ | |\n\n**Review queue:** *(empty)*\n`,
+    [`plans/${slug}/FINDINGS.md`]: '# Findings log\n\n| Date | | Finding |\n|---|---|---|\n',
+    [`plans/${slug}/tasks/${num}-${task}.md`]: `# ${num} — ${task}\n\n## Goal\n\nNothing; the fake builds it.\n`,
+  };
+}
+
 export function drillPlanFiles(slug = DRILL_SLUG) {
   const rows = DRILL_TASKS.map((t) => `| ${t.num} | ${t.slug} | ${t.deps.join(', ') || '—'} | ⬜ | |`).join('\n');
   const files = {
@@ -234,6 +289,10 @@ export function coordinatorReact(message, dropDir, { now = Date.now } = {}) {
   if (worker && /^A worker is asking permission/.test(message)) {
     drop({ kind: 'permission', worker, requestId, decision: 'allow', reason: 'a read-only git command' });
     return `Allowed ${task}'s request: a read-only git command.`;
+  }
+  if (worker && task === 'tests-fix' && /^A worker is asking a set of questions/.test(message)) {
+    drop({ kind: 'pass', worker, requestId, reason: 'how to fix the plan\'s tests is a judgement', suggestion: 'Add it' });
+    return `${task} asks how to make the plan's tests pass, and that is a judgement about the plan. Answer it in ${task}'s conversation; I would add the file.`;
   }
   if (worker && /^A worker is asking a set of questions/.test(message)) {
     drop({ kind: 'pass', worker, requestId, reason: 'the design does not say', suggestion: 'Keep it' });
@@ -331,6 +390,12 @@ function cli([cmd, ...args]) {
     const dir = /^Drop folder: (.+)$/m.exec(process.env.FAKE_OPENING ?? '')?.[1];
     if (!dir) throw new Error('no drop folder (the opening message named none)');
     process.stdout.write(coordinatorReact(process.env.FAKE_MESSAGE ?? '', dir) + '\n');
+  } else if (cmd === 'helper-report') {
+    // An end-of-run helper runs in the feature worktree, on pir/{slug} (coordinate.mjs spawnHelper).
+    const slug = /^pir\/(.+)$/.exec(git('branch', '--show-current'))?.[1];
+    if (!slug) throw new Error('not on a feature branch pir/{slug}');
+    const main = dirname(resolve(git('rev-parse', '--git-common-dir')));
+    dropReport(join(main, 'plans', slug, '.parallel', 'control', 'reports'), args[0], `[pir:v1 kind=${args[1]} task=${args[0]}]\n${args[1]}`);
   } else if (cmd === 'worker-report') {
     const { slug, task } = branchParts();
     const main = dirname(resolve(git('rev-parse', '--git-common-dir')));

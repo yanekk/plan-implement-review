@@ -782,6 +782,8 @@ export function startCoordinator({
 
 // The end-of-run helper workers' task labels (pir-coordinator T05, T10): each holds no task of the plan.
 const HELPERS = [MAIN_SYNC_TASK, TESTS_FIX_TASK];
+// What each helper does, as its row's slug: kebab like a task's, and within the row's 22-column slug field.
+const HELPER_SLUG = { [MAIN_SYNC_TASK]: 'resolve-main-merge', [TESTS_FIX_TASK]: 'fix-red-tests' };
 
 // mainSyncOpening(prompt) → the opening instruction of an end-of-run helper worker: main-sync (T05) or
 // tests-fix (T10). It runs under the pir-worker contract for asking the person and dropping its report,
@@ -1360,6 +1362,8 @@ function clockPhase(st, activity) {
 // workers is platform.workers(): every worker the run spawned, live or exited, in spawn order, each with
 // its activity. From it each task gets `asking` (the kind of answer wanted, live-workers §2.4), `worker`
 // (the one `pir` opens: the live one, else the latest, §2.11) and `workers` (all of the task's).
+// An end-of-run helper in stateTasks (main-sync, tests-fix) with a worker gets an entry of the same shape
+// in `helpers`, flagged `helper: true` (pir-coordinator T11); the key is absent while there is none.
 export function buildRunState({
   passTasks,
   stateTasks = {},
@@ -1377,35 +1381,44 @@ export function buildRunState({
   heldByAgent = new Set(),
   coordinator = null,
 } = {}) {
-  const tasks = passTasks.map((t) => {
-    const done = t.state === DONE_GLYPH;
-    const st = done ? null : stateTasks[t.num];
-    const activity = st ? taskActivity(workers, t.num, st) : undefined;
+  // One row entry: a plan task, or an end-of-run helper (`st` its state.tasks entry, keyed by its label).
+  const entryFor = ({ id, slug: rowSlug, deps, done }) => {
+    const st = done ? null : stateTasks[id];
+    const activity = st ? taskActivity(workers, id, st) : undefined;
     const phase = st ? displayPhaseFor(st, activity) : null;
     // Who holds the task's waiting items (pir-coordinator §2.5): the row reads `asking coordinator` while
     // the agent holds every one, `asking you` once one is the person's. waitingFor is the rule Remote
     // Control reads, so the row and the phone cannot disagree.
     const holder = st ? waitingFor(st, activity, { workerId: st.workerId, heldByAgent })?.holder ?? null : null;
     return {
-      id: t.num,
-      slug: t.name,
-      deps: t.deps,
+      id,
+      slug: rowSlug,
+      deps,
       done,
       phase,
-      since: phase ? sinceByTask[t.num] ?? null : null,
+      since: phase ? sinceByTask[id] ?? null : null,
       // Held only while the task waits on the person: an `asking` phase or a live worker's request.
-      stoppedAt: phase ? stoppedAtByTask[t.num] ?? null : null,
-      doneMs: done ? doneMsByTask[t.num] ?? null : null,
+      stoppedAt: phase ? stoppedAtByTask[id] ?? null : null,
+      doneMs: done ? doneMsByTask[id] ?? null : null,
       question: phase === 'asking' ? st.decision?.text ?? null : null,
       // A merge-conflict fix went to the live worker (loop.mjs 3d, live-workers §2.10): the row
       // reads `fixing conflict` and nothing is asked of the person. A later question from that worker
       // replaces the decision, so the flag drops and the row turns `asking you`.
       conflictSent: phase === 'asking' && !!st.decision?.sent,
-      ...workerFields(workers.filter((w) => w.task === t.num), { done, waiting: st ? waitingOn(st, activity) : null }),
+      ...workerFields(workers.filter((w) => w.task === id), { done, waiting: st ? waitingOn(st, activity) : null }),
       // Only on a task something is asking for, so a row with nothing waiting keeps its old shape.
       ...(holder ? { holder } : {}),
     };
-  });
+  };
+  const tasks = passTasks.map((t) => entryFor({ id: t.num, slug: t.name, deps: t.deps, done: t.state === DONE_GLYPH }));
+  // The end-of-run helpers (main-sync, tests-fix; pir-coordinator T11): a row each while it has a worker,
+  // read exactly like a task's, so the person can open it and answer a question the agent passed on. They
+  // are kept apart from `tasks` because they are no task of the plan: `n/m done` and the runs list's
+  // progress count the plan's tasks only.
+  const helpers = HELPERS.filter((label) => stateTasks[label]?.workerId).map((label) => ({
+    ...entryFor({ id: label, slug: HELPER_SLUG[label], deps: [], done: false }),
+    helper: true,
+  }));
   // handoff is the end of the run with the agent on (pir-coordinator T05): { state: 'preparing'|'ready'|'red',
   // reportPath, mainSha }, null otherwise.
   // coordinator is the run's agent for the screen to open (pir-coordinator §2.8): { id, live, logPath }, null
@@ -1420,6 +1433,7 @@ export function buildRunState({
     handoff: handoff ?? null,
     coordinator: coordinator ?? null,
     tasks,
+    ...(helpers.length ? { helpers } : {}),
   };
 }
 
@@ -1460,6 +1474,16 @@ export function advanceTiming(timing, stateTasks, completed, now, workers = []) 
   }
   for (const num of completed) {
     if (doneMsByTask[num] == null) doneMsByTask[num] = now - (startByTask[num] ?? now);
+  }
+  // A worker gone from state.tasks leaves no phase behind, so one spawned again under the same key (an
+  // end-of-run helper, whose label is reused by the next sync's fix worker, T11) starts a fresh clock
+  // instead of carrying on the last one's. startByTask is kept: a task's merged duration counts from it.
+  for (const num of Object.keys(phaseByTask)) {
+    if (stateTasks[num]) continue;
+    delete phaseByTask[num];
+    delete sinceByTask[num];
+    delete stoppedAtByTask[num];
+    delete resumeByTask[num];
   }
 }
 

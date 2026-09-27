@@ -21,7 +21,7 @@ import { join, resolve as resolvePath } from 'node:path';
 import { homedir } from 'node:os';
 import { readLogTail } from './commands.mjs';
 
-import { buildDisplay } from '../core/display.mjs';
+import { buildDisplay, rowEntries } from '../core/display.mjs';
 import { wrapLine } from '../core/text.mjs';
 import { buildDashboard, dashboardReducer, displayName, findOpen, goOpen, initialUi, isPlan, openTasks, planProgress, repinOpen, runKey } from '../core/dashboard.mjs';
 import { buildPlanDisplay } from '../core/plandisplay.mjs';
@@ -401,11 +401,12 @@ export function buildWatchFrame(view, { now, spinnerChar = SPINNER[0], ui = init
   } else {
     // A stale (non-running) frame freezes its spinner to a dot so it cannot read as still ticking.
     const spin = alive ? spinnerChar : '·';
-    // The block's lines 1..n are the task rows, in runState.tasks order (line 0 is the summary). The
+    // The block's lines 1..n are the task rows, in rowEntries order (line 0 is the summary): the plan's
+    // tasks, then any end-of-run helper (pir-coordinator T11). The
     // selected one carries the list's selected-row mark in place of its leading '  ' (painted as the grey
     // band, see paintLine), so this block is no longer byte-for-byte the coordinator's display, on purpose;
     // every other line is.
-    const taskCount = snap.runState?.tasks?.length ?? 0;
+    const taskCount = rowEntries(snap.runState).length;
     const selLine = taskCount > 0 ? 1 + Math.max(0, Math.min(ui.taskSel ?? 0, taskCount - 1)) : -1;
     watchDisplayLines(snap, { now, spinnerChar: spin }).forEach((l, i) => {
       if (i === selLine && l.text.startsWith('  ')) lines.push([span('▎ ', 'selected'), span(l.text.slice(2), l.style)]);
