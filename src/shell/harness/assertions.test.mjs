@@ -43,6 +43,10 @@ import {
   everyTaskDone,
   mainUntouched,
   indexRowIsWork,
+  agentAnswered,
+  reservedToPerson,
+  remoteOnlyAfterPass,
+  readyWithReport,
 } from './assertions.mjs';
 
 const REPO = 'pir-h';
@@ -1100,4 +1104,73 @@ test('loadPlanRun reads plan-run.json into the bundle, and a missing one reads n
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+// --- The coordinator agent's live check (pir-coordinator T09) ---------------------------------------
+
+const snap = (ts, tasks, extra = {}) => ({ ts, status: { runState: { tasks, ...extra } } });
+const agentLog = (task, events, role = 'implement') => ({ key: `${task}-${role}-1.ndjson`, task, role, events });
+
+test('agentAnswered: a coordinator answer and no asking-you snapshot passes; a person-held snapshot fails', () => {
+  const bundle = {
+    ledger: [{ t: '2026-01-01T00:01:00Z', kind: 'answers', task: 'T01', item: 'Name?', answer: { 'Name?': 'greet' } }],
+    transcripts: [agentLog('T01', [{ t: 1, dir: 'out', kind: 'reply', from: 'coordinator', requestId: 'q1' }])],
+    statuses: [
+      snap('2026-01-01T00:00:50Z', [{ id: 'T01', asking: 'questions', holder: 'coordinator' }]),
+      snap('2026-01-01T00:01:10Z', [{ id: 'T01', asking: null }]),
+    ],
+  };
+  assert.equal(agentAnswered('T01').check(bundle).pass, true);
+  const asked = { ...bundle, statuses: [...bundle.statuses, snap('2026-01-01T00:02:00Z', [{ id: 'T01', asking: 'questions', holder: 'person' }])] };
+  assert.equal(agentAnswered('T01').check(asked).pass, false);
+  assert.equal(agentAnswered('T01').check({ ...bundle, ledger: [{ ...bundle.ledger[0], kind: 'pass' }] }).pass, false, 'a pass is not an answer');
+  assert.equal(agentAnswered('T01').check({ ...bundle, transcripts: [] }).pass, false, 'the answer must reach the worker');
+});
+
+test('reservedToPerson: the person denied it after it read asking you, and the agent logged no permission for it', () => {
+  const events = [
+    { t: 1, dir: 'request', requestId: 'p1', toolName: 'Bash', input: { command: 'git push origin HEAD' } },
+    { t: 2, dir: 'out', kind: 'reply', from: 'person', requestId: 'p1', result: { behavior: 'deny' } },
+  ];
+  const bundle = {
+    ledger: [{ t: 'x', kind: 'pass', task: 'T02', requestId: 'p1' }],
+    transcripts: [agentLog('T02', events)],
+    statuses: [snap('2026-01-01T00:00:01Z', [{ id: 'T02', asking: 'permission', holder: 'person' }])],
+  };
+  assert.equal(reservedToPerson('T02', 'deny').check(bundle).pass, true);
+  assert.equal(reservedToPerson('T02', 'deny').check({ ...bundle, ledger: [{ kind: 'permission', task: 'T02', requestId: 'p1', answer: 'allow' }] }).pass, false);
+  assert.equal(reservedToPerson('T02', 'deny').check({ ...bundle, statuses: [] }).pass, false, 'it must have read asking you');
+  const byAgent = [events[0], { ...events[1], from: 'coordinator' }];
+  assert.equal(reservedToPerson('T02', 'deny').check({ ...bundle, transcripts: [agentLog('T02', byAgent)] }).pass, false);
+});
+
+test('remoteOnlyAfterPass: off at the pass and on after it passes; already on, or never on, fails', () => {
+  const tp = Date.parse('2026-01-01T00:10:00Z');
+  const rc = (t, on) => ({ t, dir: 'note', kind: 'remote-control', on });
+  const bundle = (notes) => ({
+    ledger: [{ t: '2026-01-01T00:10:00Z', kind: 'pass', task: 'T02', item: 'version() or getVersion()?', reason: 'public API' }],
+    transcripts: [agentLog('T02', notes)],
+  });
+  // On and off for the reserved push earlier, then on again after the pass.
+  assert.equal(remoteOnlyAfterPass('T02').check(bundle([rc(tp - 60000, true), rc(tp - 50000, false), rc(tp + 2000, true)])).pass, true);
+  assert.equal(remoteOnlyAfterPass('T02').check(bundle([rc(tp - 5000, true), rc(tp + 2000, true)])).pass, false);
+  assert.equal(remoteOnlyAfterPass('T02').check(bundle([])).pass, false);
+  assert.equal(remoteOnlyAfterPass('T02').check({ ledger: [], transcripts: [] }).pass, false, 'no pass at all');
+});
+
+test('readyWithReport: a main-sync row, then ready, the report on the branch and the finished line', () => {
+  const report = '# Report\n\n## Delivered\n\nx\n\n## Decisions made for you\n\nNone.\n\n## Branch\n\nsynced\n';
+  const bundle = {
+    statuses: [
+      snap('2026-01-01T00:20:00Z', [], { helpers: [{ id: 'main-sync', worker: { id: 'w9' } }], handoff: { state: 'preparing' } }),
+      snap('2026-01-01T00:22:00Z', [], { handoff: { state: 'ready', reportPath: 'plans/p/REPORT.md' } }),
+    ],
+    steps: { merged: { at: '2026-01-01T00:22:02Z', reportPath: 'plans/p/REPORT.md', report } },
+    coordinatorOut: '...\n✔ pir/p is in main. The run is finished. The report is plans/p/REPORT.md.\n',
+  };
+  assert.equal(readyWithReport().check(bundle).pass, true);
+  assert.equal(readyWithReport().check({ ...bundle, statuses: [bundle.statuses[1]] }).pass, false, 'no conflict met');
+  assert.equal(readyWithReport().check({ ...bundle, steps: { merged: null } }).pass, false);
+  assert.equal(readyWithReport().check({ ...bundle, steps: { merged: { ...bundle.steps.merged, report: '# Report\n' } } }).pass, false);
+  assert.equal(readyWithReport().check({ ...bundle, coordinatorOut: '' }).pass, false);
 });

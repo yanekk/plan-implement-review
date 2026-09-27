@@ -98,6 +98,12 @@ const EXPECT = {
     ceiling: 2,
     factIds: ['ceiling-held:2', 'handed-off-green-branch'],
   },
+  'pir-coordinator': {
+    taskCount: 2,
+    deps: { T01: [], T02: [] },
+    ceiling: 2,
+    factIds: ['agent-answered:T01', 'reserved-to-person:T02', 'remote-only-after-pass:T02', 'ready-with-report', 'ceiling-held:2'],
+  },
 };
 
 // --- The registry ---------------------------------------------------------------------------------
@@ -251,6 +257,7 @@ test('live-workers-demo: T01 must ask through AskUserQuestion; T02 runs the exac
     typed: { 'What name should name.txt hold? Type your own.': 'Typed by the harness' },
     say: { T04: 'go' },
     afterWake: {},
+    permissions: {},
   });
   assert.match(fx.tasks['T04-background.md'], /wait for the person's go/);
   assert.match(fx.tasks['T03-extras.md'], /multiSelect true/);
@@ -267,7 +274,7 @@ test('live-workers-demo: T01 must ask through AskUserQuestion; T02 runs the exac
 
 test('real-asking: T01 reports, works on and only then asks in plain text; T02 is woken while asking and answered by the harness', () => {
   const fx = getFixture('real-asking');
-  assert.deepEqual(fx.scenario.answerPending, { typed: {}, say: {}, afterWake: { T02: 'blue' } });
+  assert.deepEqual(fx.scenario.answerPending, { typed: {}, say: {}, afterWake: { T02: 'blue' }, permissions: {} });
   assert.equal(fx.scenario.statusSnapshots, true, 'the coordinator writes status.json so the row history is captured');
   assert.equal(fx.scenario.seatbelts.timeoutMs, 15 * 60 * 1000);
   const t01 = fx.tasks['T01-greeting.md'];
@@ -277,6 +284,31 @@ test('real-asking: T01 reports, works on and only then asks in plain text; T02 i
   assert.match(t02, /run_in_background: true\*\*, start exactly `node -e "setTimeout\(\(\) => \{\}, 60000\)"`/);
   assert.match(t02, /not the person's answer/);
   assert.doesNotMatch(t02, /`sleep/);
+});
+
+test('pir-coordinator: the agent runs, the push is reserved and denied, main moves after T01, the ready branch is merged (T09)', () => {
+  const fx = getFixture('pir-coordinator');
+  const sc = fx.scenario;
+  assert.equal(sc.coordinator, true);
+  assert.equal(sc.statusSnapshots, true, 'the answerer reads who holds an item from status.json');
+  assert.equal(sc.seatbelts.timeoutMs, 20 * 60 * 1000);
+  assert.deepEqual(sc.answerPending.permissions, { T02: 'deny' });
+  assert.equal(sc.mainCommit.after, 'T01');
+  assert.equal(sc.mergeWhenReady, true);
+  const files = fixtureFiles(fx);
+  assert.deepEqual(JSON.parse(files['.claude/settings.json']), { permissions: { ask: ['Bash(git push:*)'] } });
+  assert.match(files['.claude/pir-coordinator.md'], /Pass questions about the public API to the person/);
+  const design = files[`plans/${fx.slug}/DESIGN.md`];
+  assert.match(design, /The greeting function is named `greet`/, 'DESIGN answers T01\'s question');
+  assert.match(design, /main's line first/, 'DESIGN settles the end-sync conflict');
+  // T01 changes the line the main commit changes differently, so the end sync conflicts.
+  assert.equal(files['notes.txt'], 'status: seeded\n');
+  assert.match(fx.tasks['T01-greeting.md'], /from `status: seeded` to `status: greeting added`/);
+  assert.notEqual(sc.mainCommit.files['notes.txt'], 'status: greeting added\n');
+  assert.match(fx.tasks['T01-greeting.md'], /\*\*AskUserQuestion\s+tool\*\*/);
+  const t02 = fx.tasks['T02-version.md'];
+  assert.match(t02, /Run exactly `git push origin HEAD`/);
+  assert.match(t02, /NOT the\s+AskUserQuestion tool/);
 });
 
 test('parallel: at least two independent tasks so workers run concurrently', () => {

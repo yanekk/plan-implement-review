@@ -44,6 +44,7 @@ import { createAnswerer } from './answerer.mjs';
 import { startPlanRun, startRun } from '../launch.mjs';
 import { stopRun } from '../control-run.mjs';
 import { indexDir, listRecords } from '../index-store.mjs';
+import { readSnapshot } from '../snapshot-store.mjs';
 
 // --- Pure wiring pieces (each unit-tested with no live agent, T17 acceptance) --------------------
 
@@ -214,6 +215,76 @@ export function captureFinalFiles({ repoDir, gitRun = defaultRunGit, files = [],
   return out;
 }
 
+// --- The live check of the coordinator agent: a mid-run main commit and the person's merge ------------
+//
+// pir-coordinator T09. Two scenario steps the runner takes while the coordinator runs, each at most once:
+// `mainCommit` commits to the scratch main once the flow shows a named task merged, so the end sync meets
+// a main that moved mid-run (no mid-run main commit existed before); `mergeWhenReady` merges the feature
+// branch into the scratch main once the run waits in `ready to merge` and the branch already holds main,
+// which is the person's merge that ends the run as `finished` (DESIGN §2.10). Both act on the scratch
+// repo's own main checkout, never on a real project (the runner's seatbelt).
+
+// taskMerged(flowText, task) → has the flow log a `merge {task}` line (loop.mjs record, `${ISO} merge T01`)?
+// Pure.
+export function taskMerged(flowText, task) {
+  return flowHasTag(flowText, `merge ${task}`);
+}
+
+// readyToMerge(status) → { reportPath } once a status snapshot shows the run waiting in `ready to merge`
+// with its report committed (buildRunState's `handoff`, pir-coordinator T05), else null. Pure.
+export function readyToMerge(status) {
+  const h = status?.runState?.handoff;
+  return h?.state === 'ready' && h.reportPath ? { reportPath: h.reportPath } : null;
+}
+
+// The fixed identity every harness commit uses, as the fixture seed does: nobody is there to sign.
+const HARNESS_IDENT = ['-c', 'user.name=PIR Fixture', '-c', 'user.email=fixture@pir.local', '-c', 'commit.gpgsign=false'];
+
+// createScenarioSteps({ spec, repoDir, controlDir, slug, gitRun, readStatus, log }) → { tick(flowText), record }.
+// tick runs whichever step is due this poll; record is what happened, with times, for the bundle's
+// steps.json (the evidence a fact or a person reads afterwards). A step whose git call fails is logged
+// and retried next poll, not marked done. `readStatus` is (controlDir) → the status snapshot or null.
+export function createScenarioSteps({ spec, repoDir, controlDir, slug, gitRun = defaultRunGit, readStatus = readSnapshot, now = () => new Date(), log = () => {} } = {}) {
+  const record = { mainCommit: null, merged: null };
+  const git = (args) => gitRun(args, { cwd: repoDir });
+  const branch = `pir/${slug}`;
+  return {
+    record,
+    tick(flowText = '') {
+      const mc = spec?.mainCommit;
+      if (mc && !record.mainCommit && taskMerged(flowText, mc.after)) {
+        for (const [rel, content] of Object.entries(mc.files)) {
+          const abs = join(repoDir, rel);
+          mkdirSync(dirname(abs), { recursive: true });
+          writeFileSync(abs, content);
+        }
+        const add = git(['add', '--', ...Object.keys(mc.files)]);
+        const commit = add.ok ? git([...HARNESS_IDENT, 'commit', '-m', mc.message]) : add;
+        if (!commit.ok) log(`main commit after ${mc.after} failed: ${commit.stderr}`);
+        else {
+          const sha = git(['rev-parse', 'HEAD']).stdout.trim();
+          record.mainCommit = { at: now().toISOString(), after: mc.after, sha };
+          log(`main commit ${sha.slice(0, 8)} after ${mc.after} merged: ${mc.message}`);
+        }
+      }
+      if (spec?.mergeWhenReady && !record.merged) {
+        const ready = readyToMerge(readStatus(controlDir));
+        // Only once the branch holds main: a ready read before the run saw the mid-run commit would merge
+        // a branch that conflicts with main in the main checkout.
+        if (ready && git(['merge-base', '--is-ancestor', 'refs/heads/main', `refs/heads/${branch}`]).ok) {
+          const report = git(['show', `${branch}:${ready.reportPath}`]);
+          const merge = git([...HARNESS_IDENT, 'merge', '--no-edit', branch]);
+          if (!merge.ok) log(`merging ${branch} into main failed: ${merge.stderr}`);
+          else {
+            record.merged = { at: now().toISOString(), branch, reportPath: ready.reportPath, report: report.ok ? report.stdout : null };
+            log(`ready to merge: merged ${branch} into main, as the person would`);
+          }
+        }
+      }
+    },
+  };
+}
+
 // --- Restart-mode pure wiring (DESIGN §2.6, §4, T05) ---------------------------------------------
 
 // restartTargetReached({ flowText, branchState, waitFor }) → has the deterministic crash point been
@@ -382,9 +453,13 @@ export async function runScenario({
         typed: spec.answerPending.typed,
         say: spec.answerPending.say,
         afterWake: spec.answerPending.afterWake,
+        // With the agent on it answers only what the run shows as the person's (pir-coordinator T09).
+        personOnly: !!spec.coordinator,
+        permissions: spec.answerPending.permissions,
         log,
       })
     : null;
+  const steps = spec.mainCommit || spec.mergeWhenReady ? createScenarioSteps({ spec, repoDir, controlDir, slug, gitRun, now, log }) : null;
 
   log(`installing fixture "${fixtureId}" into ${repoDir}`);
   install(fixtureId, { into: repoDir, runGit: gitRun });
@@ -444,6 +519,7 @@ export async function runScenario({
       haltGrace,
       killSwitchDrill,
       answerer,
+      steps,
       timers,
       isTimedOut: () => timedOut,
       log,
@@ -465,6 +541,16 @@ export async function runScenario({
       bundle = cap.seal();
     } catch (e) {
       log(`capture seal failed: ${e.message}`);
+    }
+  }
+
+  // What the scenario's own steps did, and when (pir-coordinator T09), for the facts and the person.
+  if (steps && bundle?.dir) {
+    try {
+      writeFileSync(join(bundle.dir, 'steps.json'), `${JSON.stringify(steps.record, null, 2)}\n`);
+      bundle = { ...bundle, steps: steps.record };
+    } catch (e) {
+      log(`steps record failed: ${e.message}`);
     }
   }
 
@@ -802,7 +888,7 @@ async function waitForTarget({ cap, controlDir, slug, waitFor, worktree, gitRun,
 // own stall and exits, so the process exit is the single terminal. The wall-clock timeout is the backstop
 // for a coordinator that hangs without exiting: it auto-touches HALT, and after a bounded haltGrace of
 // further polls with no exit, the run ends 'timeout' and the finally kills the process.
-async function waitForCompletion({ cap, controlDir, child, pollMs, haltGrace = 5, killSwitchDrill = false, answerer = null, timers, isTimedOut, log = () => {} }) {
+async function waitForCompletion({ cap, controlDir, child, pollMs, haltGrace = 5, killSwitchDrill = false, answerer = null, steps = null, timers, isTimedOut, log = () => {} }) {
   const flowPath = join(controlDir, 'log');
   let exited = false;
   let exitResult = {};
@@ -822,6 +908,13 @@ async function waitForCompletion({ cap, controlDir, child, pollMs, haltGrace = 5
       }
     }
     const flowText = existsSync(flowPath) ? safeRead(flowPath) : '';
+    if (steps && !exited && !isTimedOut()) {
+      try {
+        steps.tick(flowText);
+      } catch (e) {
+        log(`scenario step failed: ${e.message}`);
+      }
+    }
 
     // Kill-switch drill (DESIGN §4.1, T11): the moment the first worker is up (a `spawn` in the flow),
     // touch HALT ONCE so the live coordinator sees it WHILE it is still dispatching and writes `halt-close`.
