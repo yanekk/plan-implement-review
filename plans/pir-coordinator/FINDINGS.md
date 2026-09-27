@@ -14,7 +14,11 @@ Legend: 🐞 defect found · ✅ verified by hand with the user · 📌 worth kn
 
 | Date | | Finding |
 |---|---|---|
-| 2026-09-27 | 🔄 | Agent fence (T00): in `default` mode `EnterWorktree` (made a worktree and branch), `CronCreate` and `ListAgents` ran without `canUseTool`. User chose a `tools` allowlist (Read, Glob, Grep, Write, Skill), measured to hold; DESIGN §3.4 updated. T03 must pass `tools` through `startWorker`. |
+| 2026-09-27 | 📌 | `pir start` usage text is pinned by tests and does not mention `--no-coordinator` (T04 left it). T08's docs and README must carry the flag. |
+| 2026-09-27 | 🐞 | The agent's session is not in `workers.json`, so a SIGKILLed coordinator leaves it running; `reapRecorded` never finds it. Teardown and HALT close it (T04). |
+| 2026-09-27 | 🐞 | `worker-proc` canUseTool logs no `matchedAskRule`, so `reservedFor` never sees it; the settings match alone carries the ask bin (T04). Harmless while CLI 2.1.283 sends none. |
+| 2026-09-27 | 📌 | `coordinator-agent.test.mjs` hung once under the full suite (a fake-claude child alive 11 min); passed alone and on rerun. Watch for a close/exit race under load. |
+| 2026-09-27 | 🔄 | Agent fence (T00): in `default` mode `EnterWorktree` (made a worktree and branch), `CronCreate` and `ListAgents` ran without `canUseTool`. User chose a `tools` allowlist (Read, Glob, Grep, Write, Skill), measured to hold; DESIGN §3.4 updated. T03 passes `tools` through `startWorker`. |
 | 2026-09-27 | 📌 | CLI 2.1.283, `default` (T00 case 3): a Write to the absolute drop folder reached `canUseTool` ("Path is outside allowed working directories") and landed; a cwd Write was denied. Read/Glob/Grep in cwd and Skill without `allowed-tools` skip the gate. |
 | 2026-09-27 | 📌 | A cwd under `/tmp` reaches the CLI as `/private/tmp`; tool paths arrive in that form, so the gate must compare realpaths. |
 | 2026-09-27 | 📌 | CLI 2.1.283, `auto` (T00 case 2): `rm -rf ./scratch-dir` and `git reset --hard` ran with no `canUseTool` call; the classifier allowed both. The agent never sees them; plan unchanged (§2.4). |

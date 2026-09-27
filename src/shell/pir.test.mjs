@@ -251,3 +251,28 @@ test('bin/pir is marked executable', () => {
   const mode = statSync(WRAPPER).mode;
   assert.ok(mode & 0o111, 'bin/pir must be executable so it runs once on PATH');
 });
+
+// --- pir start {slug} --no-coordinator (pir-coordinator T04, DESIGN §2.1) ------------------------
+
+test('[start, slug, --no-coordinator] → startRun with coordinator: false, in either order; plain start passes no option', () => {
+  const seen = [];
+  const deps = (r) => ({ startRun: (slug, opts) => { seen.push({ slug, opts }); return r; }, openWatch: () => {}, stderr: { write: () => {} } });
+  const ok = { started: true, pid: 1, record: {} };
+  assert.equal(run(['start', 'screen-time', '--no-coordinator'], deps(ok)), 0);
+  assert.equal(run(['start', '--no-coordinator', 'screen-time'], deps(ok)), 0);
+  assert.equal(run(['start', 'screen-time'], deps(ok)), 0);
+  assert.deepEqual(seen, [
+    { slug: 'screen-time', opts: { coordinator: false } },
+    { slug: 'screen-time', opts: { coordinator: false } },
+    { slug: 'screen-time', opts: undefined },
+  ]);
+});
+
+test('[start] an unknown flag, or a flag with no slug → usage, exit 2, nothing started', () => {
+  for (const argv of [['start', 'x', '--no-coordinatr'], ['start', 'x', '-n'], ['start', '--no-coordinator'], ['start', 'x', 'y', '--no-coordinator']]) {
+    const { calls, errs, deps } = harness({ started: true });
+    assert.equal(run(argv, deps), 2, argv.join(' '));
+    assert.deepEqual(calls.start, [], argv.join(' '));
+    assert.deepEqual(errs, [USAGE], argv.join(' '));
+  }
+});

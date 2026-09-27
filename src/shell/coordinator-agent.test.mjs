@@ -171,6 +171,16 @@ test('brief sends briefFor(item) once per item; answeredElsewhere tells the agen
   assert.equal(told(agent).at(-1), 'hand-off');
 });
 
+test('forget(item): a worker\'s next report park under the same key is briefed afresh (T04)', async (t) => {
+  const s = scratch(t);
+  const { agent } = start(s, [{ await: 'user' }], t);
+  const item = reportItem(s);
+  assert.equal(agent.brief(item), true);
+  assert.equal(agent.brief(item), false);
+  agent.forget(item);
+  assert.equal(agent.brief({ ...item, text: 'A second question' }), true);
+});
+
 // ---- Draining decisions ----
 
 test('a scripted agent allows a permission: platform.answer with allowResult from the coordinator, ledgered', async (t) => {
@@ -188,7 +198,7 @@ test('a scripted agent allows a permission: platform.answer with allowResult fro
   await waitFor(() => existsSync(file), 'the decision file');
 
   const out = agent.drain([item]);
-  assert.deepEqual(out, { passed: [] });
+  assert.deepEqual(out, { passed: [], settled: [{ worker: s.w1, requestId: 'r1' }] });
   assert.deepEqual(s.platform.answers, [{ to: s.w1, requestId: 'r1', result: allowResult(item.request), from: 'coordinator' }]);
   assert.deepEqual(readdirSync(s.decisionsDir), [], 'consumed');
   const [line] = agent.ledger();

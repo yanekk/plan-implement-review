@@ -27,14 +27,14 @@ done · ⛔ blocked, needs a human.
 | T01 | coordinator-rulebook | T00 | ✅ | |
 | T02 | coordinator-skill | — | ✅ | |
 | T03 | coordinator-session | T01 | ✅ | |
-| T04 | answer-first-routing | T03 | ⬜ | |
+| T04 | answer-first-routing | T03 | 🔍 | Agent briefed/drained per pass, held-set routing, RC, `--no-coordinator`, harness off by default; 35 tests. Deviations: holder via new `waitingFor` (waitingOn unchanged); `coordinator` send cause in stream.mjs; drain returns `settled`, agent `forget()`; usage text unchanged; row wording left to T06; install.sh not run from a task branch. |
 | T05 | end-of-run-handoff | T04 | ⬜ | |
 | T06 | coordinator-screen | T04, T05 | ⬜ | |
 | T07 | coordinator-drill | T06 | ⬜ | |
 | T08 | docs | T02, T04, T05, T06 | ⬜ | |
 | T09 | live-coordinator-check | T07, T08 | ⬜ | |
 
-**Review queue:** *(empty)*
+**Review queue:** T04
 
 ## Blocked on the user
 

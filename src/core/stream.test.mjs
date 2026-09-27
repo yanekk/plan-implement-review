@@ -423,3 +423,13 @@ test('a notification inside an open turn does not mark the next turn a wake-up',
 test('a person send after a notification opens the turn as `person`', () => {
   assert.deepEqual(workerActivity([sent(), init(), result(), notification(), personSent(), init()]).turnCauses, ['pir', 'person']);
 });
+
+// pir-coordinator T04: the coordinator agent's answer is a send `from: 'coordinator'`.
+const coordinatorSent = (text = 'use Y') => at({ dir: 'out', from: 'coordinator', kind: 'message', text });
+
+test('a coordinator send opens a `coordinator` turn and is counted apart from the person\'s', () => {
+  const a = workerActivity([sent(), init(), result(), coordinatorSent(), init()]);
+  assert.deepEqual(a.turnCauses, ['pir', 'coordinator']);
+  assert.equal(a.coordinatorSends, 1);
+  assert.equal(a.personSends, 0);
+});

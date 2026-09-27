@@ -248,3 +248,13 @@ test('labelFromBrief: an emoji at the cut is kept whole or dropped whole, never 
   assert.equal(cut, 'c'.repeat(23) + '…');
   assert.ok(!/[\uD800-\uDFFF]/.test(cut.replace(/[\uD800-\uDBFF][\uDC00-\uDFFF]/g, '')), 'no lone surrogate');
 });
+
+// pir-coordinator T04 (DESIGN §2.1): only a --no-coordinator run carries the field; absent reads as on.
+test('coordinator: false round-trips; absent or true writes and reads no field; a non-boolean is refused', () => {
+  const off = parseRecord(serializeRecord({ ...validRecord(), coordinator: false }));
+  assert.equal(off.coordinator, false);
+  assert.equal('coordinator' in parseRecord(serializeRecord(validRecord())), false);
+  assert.equal('coordinator' in parseRecord(serializeRecord({ ...validRecord(), coordinator: true })), false);
+  assert.equal(parseRecord(JSON.stringify({ ...validRecord(), coordinator: 'no' })), null);
+  assert.equal(parseRecord(JSON.stringify({ ...validRecord(), coordinator: true })).coordinator, undefined);
+});

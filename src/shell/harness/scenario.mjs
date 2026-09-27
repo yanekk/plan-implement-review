@@ -45,7 +45,9 @@ const KINDS = Object.freeze(['build', 'plan']);
 // still run to a hand-off unattended. A fourth, `holdMerges`, launches the coordinator with
 // PARALLEL_HOLD_MERGES=1 (dispatch.mjs) so a same-line clash is hit at the coordinator's own merge. A
 // fifth, `statusSnapshots` (real-asking-state T05), launches it as `pir` does (PIR_RUN=1, a scratch
-// PIR_HOME) so it writes control/status.json every pass and the capture can keep the row history.
+// PIR_HOME) so it writes control/status.json every pass and the capture can keep the row history. A
+// sixth, `coordinator` (pir-coordinator T04), runs the coordinator agent; without it the run is started
+// with PARALLEL_COORDINATOR=0, so a drill written before the agent existed is unchanged.
 export function defineScenario(spec = {}) {
   const {
     id,
@@ -58,6 +60,7 @@ export function defineScenario(spec = {}) {
     answerPending = false,
     holdMerges = false,
     statusSnapshots = false,
+    coordinator = false,
     kind = 'build',
     reply = null,
     replyCap = null,
@@ -104,5 +107,6 @@ export function defineScenario(spec = {}) {
       ? { typed: { ...(answerPending.typed ?? {}) }, say: { ...(answerPending.say ?? {}) }, afterWake: { ...(answerPending.afterWake ?? {}) } }
       : false,
     statusSnapshots: !!statusSnapshots,
+    coordinator: !!coordinator,
   };
 }

@@ -66,8 +66,13 @@ export function coordinatorLaunchArgv({ slug }) {
 // `pirHome` (a scenario's `statusSnapshots`, real-asking-state T05) sets PIR_RUN=1 so the coordinator
 // writes control/status.json each pass, as it does under `pir`, and points PIR_HOME at a scratch folder so
 // its index lookups never touch the person's own `pir` index.
-export function seatbeltEnv({ ceiling, holdMerges = false, pirHome = null } = {}) {
+//
+// `coordinator` is a scenario's own `coordinator: true` (pir-coordinator T04): without it the run starts
+// with PARALLEL_COORDINATOR=0, no coordinator agent, so every drill written before the agent existed runs
+// exactly as it did and pays for no extra session.
+export function seatbeltEnv({ ceiling, holdMerges = false, pirHome = null, coordinator = false } = {}) {
   const env = { PARALLEL_LIVE: '1' };
+  if (!coordinator) env.PARALLEL_COORDINATOR = '0';
   if (ceiling != null) env.PARALLEL_MAX_WORKERS = String(ceiling);
   if (holdMerges) env.PARALLEL_HOLD_MERGES = '1';
   if (pirHome) {
@@ -425,7 +430,7 @@ export async function runScenario({
     // The scratch PIR_HOME sits in the plan's .parallel/, which the scratch repo's .gitignore keeps out of
     // git, so the index it may hold never dirties the checkout the coordinator merges in.
     const pirHome = spec.statusSnapshots ? join(controlDir, '..', 'pir-home') : null;
-    const env = seatbeltEnv({ ceiling, holdMerges: spec.holdMerges, pirHome });
+    const env = seatbeltEnv({ ceiling, holdMerges: spec.holdMerges, pirHome, coordinator: spec.coordinator });
     log(`launching coordinator process: node ${argv.join(' ')}  (ceiling ${ceiling}, timeout ${timeout}ms)`);
     child = spawnCoordinator({ argv, cwd: repoDir, env, spawn, stdoutPath: coordinatorOutPath(controlDir) });
 
@@ -582,7 +587,7 @@ export async function runRestartScenario({
   let seededFeeds = false;
 
   const argv = coordinatorLaunchArgv({ slug });
-  const env = seatbeltEnv({ ceiling });
+  const env = seatbeltEnv({ ceiling, coordinator: spec.coordinator });
 
   let reason = 'error';
   let bundle = null;
@@ -880,9 +885,13 @@ function delay(timers, ms) {
 // planEnv({ baseEnv, pirHome, ceiling }) → the env both programs get. Pure. PARALLEL_ALLOW_HERE no
 // longer means anything (its guard is gone, dashboard-plan-box DESIGN §2.8), but an inherited one is
 // still dropped so an outer shell cannot leak a stale setting into a fixture's run.
-export function planEnv({ baseEnv = process.env, pirHome, ceiling } = {}) {
+export function planEnv({ baseEnv = process.env, pirHome, ceiling, coordinator = false } = {}) {
   const env = { ...baseEnv };
   delete env.PARALLEL_ALLOW_HERE;
+  // The build the go starts inherits this env (startRun spreads it), so it runs without the agent unless
+  // the scenario turns it on, as seatbeltEnv does for a build scenario.
+  if (coordinator) delete env.PARALLEL_COORDINATOR;
+  else env.PARALLEL_COORDINATOR = '0';
   if (pirHome) env.PIR_HOME = pirHome;
   if (ceiling != null) env.PARALLEL_MAX_WORKERS = String(ceiling);
   return env;
@@ -996,7 +1005,7 @@ export async function runPlanScenario({
   install(fixtureId, { into: repoDir, runGit: gitRun });
   const pirHome = join(repoDir, fixture.pirHome ?? '.pir-home');
   mkdirSync(pirHome, { recursive: true });
-  const env = planEnv({ baseEnv, pirHome, ceiling: seatbelts.ceiling });
+  const env = planEnv({ baseEnv, pirHome, ceiling: seatbelts.ceiling, coordinator: spec.coordinator });
   const dir = indexDir({ env });
   const mainHead = () => {
     const r = gitRun(['rev-parse', '--verify', '--quiet', 'refs/heads/main'], { cwd: repoDir });

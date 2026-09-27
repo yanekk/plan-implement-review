@@ -1687,3 +1687,287 @@ test('taskActivity: a task with a tracked worker reads only that worker, never a
   assert.equal(rs.tasks[0].asking, 'question');
   assert.equal(taskActivity([other], 'T01', { phase: 'implementing' }), other.activity, 'an untracked task falls back to its live worker');
 });
+
+// --- pir-coordinator T04: the coordinator agent answers first (DESIGN §2.3–§2.5, §2.11, §3.6) ------------
+//
+// A fake run: the real startCoordinator and the real startCoordinatorAgent (brief, drain, checks, ledger),
+// over the fake platform and worktree. The agent's session is an in-memory stand-in that records what pir
+// told it; the test plays the agent by dropping decision files into its folder between passes, exactly
+// as the real agent's Write does.
+
+import { startCoordinatorAgent } from './coordinator-agent.mjs';
+import { coordinatorEnabled, readAskRules } from './coordinate.mjs';
+import { waitingFor } from '../core/asking.mjs';
+
+// stubSession() → startWorker for the agent: a session that records every message sent into it and can be
+// made to exit, so no process and no fake `claude` is involved.
+function stubSessions() {
+  const sessions = [];
+  const startWorker = (opts) => {
+    const exitFns = [];
+    const s = {
+      id: opts.resume ?? opts.sessionId,
+      opts,
+      pid: null,
+      dead: false,
+      told: [],
+      send(text, { from = 'pir' } = {}) {
+        if (s.dead) return false;
+        s.told.push({ text, from });
+        return true;
+      },
+      note() {},
+      remoteControl: async () => {},
+      onExit: (fn) => exitFns.push(fn),
+      entries: () => [],
+      close: async () => {
+        s.dead = true;
+      },
+      exit() {
+        s.dead = true;
+        for (const fn of exitFns) fn({ code: 1 });
+      },
+    };
+    sessions.push(s);
+    return s;
+  };
+  return { sessions, startWorker, latest: () => sessions.at(-1) };
+}
+
+// agentRun(t, rows, behaviors, { files }) → a coordinator with the agent on, plus helpers to play the agent.
+function agentRun(t, rows, behaviors = {}, { files = {} } = {}) {
+  const worktree = createFakeWorktree({ progress: progressDoc(rows), files, slug: SLUG });
+  const platform = createFakePlatform({ behaviors });
+  t.after(() => worktree.cleanup());
+  const controlDir = mkdtempSync(join(tmpdir(), 'pir-t04-control-'));
+  t.after(() => rmSync(controlDir, { recursive: true, force: true }));
+  const stub = stubSessions();
+  const started = [];
+  const coordinator = startCoordinator({
+    slug: SLUG,
+    repo: REPO,
+    platform,
+    worktree,
+    startAgent: ({ featurePath, askRules }) => {
+      started.push({ featurePath, askRules });
+      return startCoordinatorAgent({
+        controlDir, featurePath, repoRoot: featurePath, slug: SLUG, platform, askRules,
+        startWorker: stub.startWorker, claudePath: '/nonexistent/claude', skillsDir: controlDir, now: () => Date.parse('2026-09-27T10:00:00Z'),
+      });
+    },
+  });
+  t.after(() => coordinator.closeAgent());
+  const decisions = join(controlDir, 'coordinator', 'decisions');
+  let n = 0;
+  const decide = (obj) => writeFileSync(join(decisions, `${String(++n).padStart(3, '0')}.json`), JSON.stringify(obj));
+  const told = () => stub.sessions.flatMap((s) => s.told.map((m) => m.text));
+  const wanted = () => remoteWanted(platform.workers(), coordinator.state.tasks, { heldByAgent: coordinator.heldByAgent() });
+  const implOf = (task) => platform.spawns.find((s) => s.task === task && s.role === 'implement')?.id;
+  return { coordinator, platform, worktree, controlDir, stub, started, decide, told, wanted, implOf };
+}
+
+test('agent answer: a permission request is briefed once, the agent allows it, the worker proceeds; no Remote Control for it', (t) => {
+  const run = agentRun(t, [{ num: 'T01' }], { T01: { requests: [{ toolName: 'Bash', input: { command: 'npm test' } }] } });
+  const { coordinator, platform } = run;
+  coordinator.pass();
+  const w = run.implOf('T01');
+  assert.equal(run.started.length, 1, 'the agent starts once the feature worktree is open');
+  assert.equal(run.started[0].featurePath, coordinator.state.feature.path);
+  const briefs = run.told().filter((m) => m.includes(`requestId: \`${w}-r1\``));
+  assert.equal(briefs.length, 1, 'briefed');
+  assert.match(briefs[0], /asking permission/);
+  assert.deepEqual([...coordinator.heldByAgent()], [`${w}:${w}-r1`]);
+  assert.equal(run.wanted().has(w), false, 'held by the agent: not reachable on the phone');
+
+  coordinator.pass(); // still waiting on the agent: not briefed again
+  assert.equal(run.told().filter((m) => m.includes(`requestId: \`${w}-r1\``)).length, 1, 'briefed once');
+
+  run.decide({ kind: 'permission', worker: w, requestId: `${w}-r1`, decision: 'allow', reason: 'the test command' });
+  const seenRemote = [];
+  const res = coordinator.drive({ onPass: () => seenRemote.push(run.wanted().has(w)) });
+  assert.equal(res.reason, 'complete');
+  assert.deepEqual(platform.answers.map((a) => [a.to, a.requestId, a.result.behavior, a.from]), [[w, `${w}-r1`, 'allow', 'coordinator']]);
+  assert.equal(seenRemote.includes(true), false, 'Remote Control was never wanted for that worker');
+  assert.equal(coordinator.agent.ledger().length, 1, 'ledgered');
+});
+
+test('agent reserved: a destructive request is briefed as the person\'s, Remote Control on at once, the row asking', (t) => {
+  const run = agentRun(t, [{ num: 'T01' }], { T01: { requests: [{ toolName: 'Bash', input: { command: 'rm -rf build' } }] } });
+  const { coordinator, platform } = run;
+  coordinator.pass();
+  const w = run.implOf('T01');
+  const brief = run.told().find((m) => m.includes(`${w}-r1`));
+  assert.match(brief, /This one is the person's/);
+  assert.deepEqual([...coordinator.heldByAgent()], [], 'never held by the agent');
+  assert.equal(run.wanted().has(w), true, 'reachable on the phone at once');
+  const row = buildRunState({ passTasks: [{ num: 'T01', name: slugOf('T01'), deps: [], state: '⬜' }], stateTasks: coordinator.state.tasks, workers: platform.workers() }).tasks[0];
+  assert.equal(row.asking, 'permission');
+  const act = platform.workers().find((x) => x.id === w).activity;
+  assert.equal(waitingFor(coordinator.state.tasks.T01, act, { heldByAgent: coordinator.heldByAgent() }).holder, 'person');
+
+  // A permission decision for it is refused and passed on, never applied.
+  run.decide({ kind: 'permission', worker: w, requestId: `${w}-r1`, decision: 'allow', reason: 'looks safe' });
+  coordinator.pass();
+  assert.deepEqual(platform.answers, [], 'the agent cannot allow a reserved request');
+  assert.ok(run.told().some((m) => /was not applied: this request is the person's/.test(m)));
+  assert.equal(run.wanted().has(w), true);
+});
+
+test('agent reserved by the project\'s ask rule, read from the feature worktree\'s .claude/settings.json', (t) => {
+  const settings = JSON.stringify({ permissions: { ask: ['Bash(git push:*)'] } });
+  const run = agentRun(t, [{ num: 'T01' }], { T01: { requests: [{ toolName: 'Bash', input: { command: 'git push origin HEAD' } }] } }, { files: { '.claude/settings.json': settings } });
+  run.coordinator.pass();
+  assert.deepEqual(run.started[0].askRules, ['Bash(git push:*)']);
+  const w = run.implOf('T01');
+  assert.match(run.told().find((m) => m.includes(`${w}-r1`)), /ask rule Bash\(git push:\*\)/);
+  assert.equal(run.wanted().has(w), true);
+});
+
+test('agent pass: Remote Control on for that worker only after the pass, off after the person\'s answer', (t) => {
+  const run = agentRun(t, [{ num: 'T01' }], { T01: { question: 'JSON or YAML?' } });
+  const { coordinator, platform } = run;
+  coordinator.pass(); // spawn
+  coordinator.pass(); // the worker parks on its report; briefed
+  const w = run.implOf('T01');
+  const brief = run.told().find((m) => m.includes('dropped a question'));
+  assert.ok(brief && brief.includes('JSON or YAML?'));
+  assert.equal(run.wanted().has(w), false, 'the agent holds it');
+
+  run.decide({ kind: 'pass', worker: w, reason: 'a format choice is the person\'s', suggestion: 'JSON' });
+  const r = coordinator.pass();
+  assert.deepEqual(r.agent.passed, [{ worker: w, reason: 'a format choice is the person\'s', suggestion: 'JSON' }]);
+  assert.equal(run.wanted().has(w), true, 'on once passed');
+  assert.equal(coordinator.state.tasks.T01.phase, 'awaiting-answer');
+
+  platform.send(w, 'YAML', { from: 'person' });
+  coordinator.pass();
+  assert.equal(run.wanted().has(w), false, 'off once the person answered');
+  assert.ok(!run.told().some((m) => m.startsWith('Already answered')), 'a passed item is not the agent\'s any more');
+});
+
+test('agent message: a report park answered by a coordinator `message` un-parks the task', (t) => {
+  const run = agentRun(t, [{ num: 'T01' }], { T01: { question: 'JSON or YAML?' } });
+  const { coordinator, platform } = run;
+  coordinator.pass();
+  coordinator.pass();
+  const w = run.implOf('T01');
+  run.decide({ kind: 'message', worker: w, text: 'JSON, per DESIGN §4.', reason: 'the design says so' });
+  const res = coordinator.drive();
+  assert.equal(res.reason, 'complete');
+  assert.deepEqual(platform.sent.filter((m) => m.to === w), [{ to: w, text: 'JSON, per DESIGN §4.', from: 'coordinator' }]);
+});
+
+test('person first: the person answers an item the agent holds — applied, the agent told, its late decision dropped', (t) => {
+  const run = agentRun(t, [{ num: 'T01' }], { T01: { requests: [{ toolName: 'Bash', input: { command: 'npm test' } }] } });
+  const { coordinator, platform } = run;
+  coordinator.pass();
+  const w = run.implOf('T01');
+  assert.equal(coordinator.heldByAgent().size, 1);
+
+  platform.answer(w, `${w}-r1`, { behavior: 'deny', message: 'not now' }, { from: 'person' });
+  run.decide({ kind: 'permission', worker: w, requestId: `${w}-r1`, decision: 'allow', reason: 'fine' });
+  coordinator.pass();
+  assert.deepEqual(platform.answers.map((a) => a.from), ['person'], 'only the person\'s answer reached the worker');
+  assert.ok(run.told().some((m) => m.startsWith('Already answered by the person') && m.includes(`${w}-r1`)));
+  assert.ok(run.told().some((m) => /was not applied: nothing is waiting from worker/.test(m)), 'the late decision refused');
+  assert.equal(coordinator.heldByAgent().size, 0);
+  assert.deepEqual(coordinator.agent.ledger(), []);
+});
+
+// A hand-held agent whose liveness the test sets: down, then back.
+function switchableAgent() {
+  const a = {
+    up: true,
+    briefs: [],
+    alive: () => a.up,
+    brief(item) {
+      if (!a.up) return false;
+      a.briefs.push(item);
+      return true;
+    },
+    drain: () => ({ passed: [], settled: [] }),
+    answeredElsewhere: () => true,
+    forget() {},
+    close: async () => {},
+    session: null,
+  };
+  return a;
+}
+
+test('agent down: items are the person\'s and Remote Control is as today; agent back: new items briefed', (t) => {
+  const worktree = createFakeWorktree({ progress: progressDoc([{ num: 'T01' }, { num: 'T02' }]), slug: SLUG });
+  t.after(() => worktree.cleanup());
+  const platform = createFakePlatform({
+    behaviors: { T01: { requests: [{ toolName: 'Bash', input: { command: 'npm test' } }] }, T02: { slow: 3, question: 'which?' } },
+  });
+  const agent = switchableAgent();
+  const coordinator = startCoordinator({ slug: SLUG, repo: REPO, platform, worktree, startAgent: () => agent });
+  const wanted = () => remoteWanted(platform.workers(), coordinator.state.tasks, { heldByAgent: coordinator.heldByAgent() });
+
+  agent.up = false;
+  coordinator.pass();
+  const w1 = platform.spawns.find((s) => s.task === 'T01').id;
+  assert.equal(agent.briefs.length, 0, 'nothing briefed while down');
+  assert.equal(wanted().has(w1), true, 'the person\'s, reachable as today');
+
+  agent.up = true;
+  for (let i = 0; i < 6 && !agent.briefs.some((b) => b.task === 'T02'); i++) coordinator.pass();
+  const w2 = platform.spawns.find((s) => s.task === 'T02').id;
+  assert.deepEqual(agent.briefs.map((b) => b.task), ['T02'], 'only the item that first waited with the agent up');
+  assert.equal(wanted().has(w1), true, 'T01 stays the person\'s');
+  assert.equal(wanted().has(w2), false, 'T02 is the agent\'s');
+
+  agent.up = false;
+  assert.equal(wanted().has(w2), true, 'down again: what it held is the person\'s at once');
+});
+
+test('no agent (PARALLEL_COORDINATOR=0 / --no-coordinator): nothing started, the run as before', (t) => {
+  assert.equal(coordinatorEnabled({}), true, 'on by default');
+  assert.equal(coordinatorEnabled({ PARALLEL_COORDINATOR: '0' }), false);
+  assert.equal(coordinatorEnabled({ PARALLEL_COORDINATOR: '1' }), true);
+  const { coordinator, platform } = setup(t, chain(2), { behaviors: { T01: { requests: [{ toolName: 'Bash', input: { command: 'ls' } }] } } });
+  coordinator.pass();
+  assert.equal(coordinator.agent, null);
+  const w = platform.spawns[0].id;
+  assert.equal(remoteWanted(platform.workers(), coordinator.state.tasks, { heldByAgent: coordinator.heldByAgent() }).has(w), true);
+  platform.answer(w, `${w}-r1`, { behavior: 'allow' }, { from: 'person' });
+  assert.equal(coordinator.drive().reason, 'complete');
+});
+
+test('remoteWanted: the agent\'s own session is wanted; a held item is not; an empty held set is today\'s rule', () => {
+  const act = { state: 'permission', pending: [{ kind: 'permission', requestId: 'r1', toolName: 'Bash', input: { command: 'ls' } }] };
+  const workers = [{ id: 'a', task: 'T01', live: true, activity: act }];
+  assert.deepEqual([...remoteWanted(workers, {})], ['a']);
+  assert.deepEqual([...remoteWanted(workers, {}, { heldByAgent: new Set(['a:r1']) })], []);
+  assert.deepEqual([...remoteWanted(workers, {}, { agentId: 'agent', heldByAgent: new Set(['a:r1']) })], ['agent']);
+});
+
+test('readAskRules: permissions.ask from the worktree\'s .claude/settings.json; a missing file, key or bad JSON is []', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'pir-t04-ask-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  assert.deepEqual(readAskRules(dir), []);
+  mkdirSync(join(dir, '.claude'));
+  writeFileSync(join(dir, '.claude', 'settings.json'), '{ nope');
+  assert.deepEqual(readAskRules(dir), []);
+  writeFileSync(join(dir, '.claude', 'settings.json'), JSON.stringify({ permissions: { allow: ['Bash(ls)'] } }));
+  assert.deepEqual(readAskRules(dir), []);
+  writeFileSync(join(dir, '.claude', 'settings.json'), JSON.stringify({ permissions: { ask: ['Bash(git push:*)', 7, 'Write'] } }));
+  assert.deepEqual(readAskRules(dir), ['Bash(git push:*)', 'Write']);
+});
+
+test('HALT closes the agent', (t) => {
+  const worktree = createFakeWorktree({ progress: progressDoc([{ num: 'T01' }]), slug: SLUG });
+  t.after(() => worktree.cleanup());
+  const platform = createFakePlatform();
+  const agent = switchableAgent();
+  let closed = 0;
+  agent.close = async () => {
+    closed += 1;
+  };
+  let halted = false;
+  const coordinator = startCoordinator({ slug: SLUG, repo: REPO, platform, worktree, startAgent: () => agent, control: { isHalted: () => halted, log: () => {} } });
+  coordinator.pass();
+  halted = true;
+  assert.equal(coordinator.pass().halted, true);
+  assert.equal(closed, 1);
+});

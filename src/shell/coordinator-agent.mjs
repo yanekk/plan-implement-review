@@ -279,8 +279,11 @@ export function startCoordinatorAgent({
     return true;
   }
 
+  // → { passed, settled, report?, close? }. `settled` holds every item this drain closed for the agent —
+  // answered by it, or found already answered and the agent told so here — as { worker, requestId? }, so
+  // the run never tells the agent a second time that the person answered it (T04).
   function drain(waiting = [], { ready = false } = {}) {
-    const out = { passed: [] };
+    const out = { passed: [], settled: [] };
     let files = [];
     try {
       files = readdirSync(decisionsDir).filter((f) => f.endsWith('.json')).sort();
@@ -356,6 +359,7 @@ export function startCoordinatorAgent({
       }
       const item = remaining.find((i) => sameItem(i, a)) ?? a;
       take(a);
+      out.settled.push(a.requestId !== undefined ? { worker: a.worker, requestId: a.requestId } : { worker: a.worker });
       if (apply(a)) {
         appendLedger(a.ledger);
       } else if (a.kind === 'message') {
@@ -412,6 +416,11 @@ export function startCoordinatorAgent({
       if (!tell(briefFor(item))) return false;
       briefed.set(key, item);
       return true;
+    },
+    // forget(item) → the item is no longer waiting, so the same key (a worker's next report park) is
+    // briefed afresh when it waits again (T04).
+    forget(item) {
+      if (item) briefed.delete(keyOf(item));
     },
     answeredElsewhere(item) {
       return tell(answeredElsewhereFor(item));
