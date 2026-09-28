@@ -15,7 +15,7 @@ cell also fixes the over-budget cell they walk past.
 **Status:** Planned 2026-09-27, redesigned 2026-09-28 for the coordinator agent, re-reviewed 2026-09-28.
 Nothing built.
 **Last updated:** 2026-09-28
-**Next `pir-work` will:** implement T01 (T01–T05 have no dependency).
+**Next `pir-work` will:** implement T09.
 
 ## Tasks
 
@@ -31,10 +31,10 @@ done · ⛔ blocked, needs a human.
 | T05 | why-yours | — | ✅ | |
 | T06 | notify-command | T02 | ✅ | |
 | T07 | coordinator-alerts | T01, T02, T04, T05 | ✅ | |
-| T08 | notify-live | T03, T06, T07 | 🔍 | Fixture `notify-live`, `realNotify` scenario option, 7 tests. Live run green, six facts; phone checks ✅ in FINDINGS. Icon not shown on iOS (ntfy: Android only); user kept it. Fact fix: log `t` is epoch ms. Branch pushed. |
+| T08 | notify-live | T03, T06, T07 | ✅ | Review clean, no fix commit. Live run green, phone checks ✅ in FINDINGS; icon Android-only by user's choice. Probed: fact checks on epoch-ms and ISO stamps, a throwing fact is caught by checkScenario, realNotify env keeps PIR_HOME scratch, topic absent from every commit. |
 | T09 | docs | T08 | ⬜ | |
 
-**Review queue:** T08
+**Review queue:** *(empty)*
 
 ## Blocked on the user
 
