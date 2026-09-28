@@ -403,3 +403,47 @@ for (const [cols, rows] of [[80, 24], [120, 40]]) {
     }
   });
 }
+
+// mouse-navigation T06, end to end at 80×24 and 120×40: the wheel scrolls a worker's conversation three
+// lines a notch, and a click in the typing box moves its caret. The tour's history fits a 120×40 screen,
+// so this runs the `long` scenario (300 steps), which has more than fits at both sizes.
+for (const [cols, rows] of [[80, 24], [120, 40]]) {
+  test(`the wheel scrolls a worker's conversation and a click moves the caret at ${cols}×${rows}`, { timeout: 90000 }, async (t) => {
+    const env = scratchHome(t);
+    const rig = startRig({ env, scenario: 'long', paceMs: 0, workMs: 300 });
+    t.after(() => rig.stop());
+    const screen = openScreen({ cols, rows, env: { ...process.env, ...env } });
+    try {
+      await screen.waitFor(/rig +work/);
+      screen.send('\r');
+      await screen.waitFor(/pick a task/);
+      screen.send('\x1b[C');
+      let s = await screen.waitFor(/That was 300 steps/, 30000);
+      assert.doesNotMatch(s.at(-1), /more below/);
+      const mid = Math.floor(rows / 2);
+
+      screen.send(mouseBytes.wheel(10, mid, 'up'));
+      screen.send(mouseBytes.wheel(10, mid, 'up'));
+      s = await screen.waitFor(/↓ 6 more below/);
+      assert.match(s.at(-1), /^↓ 6 more below · ↵ send/);
+      assert.doesNotMatch(s.join('\n'), /That was 300 steps/, 'the end scrolled out of view');
+      assert.match(s.join('\n'), /step 295 done/, 'earlier lines came into view');
+
+      screen.send(mouseBytes.wheel(10, mid, 'down'));
+      screen.send(mouseBytes.wheel(10, mid, 'down'));
+      s = await screen.waitFor((text) => !/more below/.test(text) && /That was 300 steps/.test(text));
+      assert.match(s.at(-1), /^↵ send · esc interrupt/);
+
+      screen.send('hello world');
+      s = await screen.waitFor(/hello world/);
+      const y = s.findIndex((l) => l.includes('hello world'));
+      const x = s[y].indexOf('hello') + 2;
+      screen.send(mouseBytes.click(x + 1, y + 1)); // the terminal counts from 1
+      screen.send('X');
+      await screen.waitFor(/heXllo world/);
+      assert.equal(screen.overflows(), 0, 'no frame was clipped to fit the window');
+    } finally {
+      await screen.close();
+    }
+  });
+}
