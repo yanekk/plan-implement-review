@@ -26,7 +26,7 @@ done · ⛔ blocked, needs a human.
 | T01 | mouse-rig | — | ✅ | |
 | T02 | row-hits | — | ✅ | |
 | T03 | hover-style | — | ✅ | |
-| T04 | mouse-on | T01 | ⬜ | |
+| T04 | mouse-on | T01 | ✅ | |
 | T05 | list-clicks | T02, T03, T04 | ⬜ | |
 | T06 | conversation-wheel | T04 | ⬜ | |
 | T07 | mouse-docs | T05, T06 | ⬜ | |
