@@ -1,4 +1,4 @@
-# T03 — notify-command
+# T06 — notify-command
 
 **Phase:** 2 · **Depends on:** T02 · **Weight:** light
 
@@ -9,7 +9,7 @@ gets subscribed, so its output is what the person follows with the phone in hand
 
 ## Design sections this implements
 
-DESIGN §2.4, §2.6 (corrupt config), §5 dependencies.
+DESIGN §2.6, §2.8 (corrupt config), §5 dependencies.
 
 ## Files
 
@@ -21,7 +21,7 @@ DESIGN §2.4, §2.6 (corrupt config), §5 dependencies.
 ```
 pir notify         → set up or show; prints topic, QR (uqr renderUnicodeCompact of https://ntfy.sh/{topic}),
                      steps: install ntfy, "Subscribe to topic", type or scan; sends a test alert on first setup
-pir notify test    → sends "pir test alert"; exit 0 on ok, 1 with the error otherwise
+pir notify test    → sends "pir test alert" (with notifyIcon()); exit 0 on ok, 1 with the error otherwise
 pir notify off     → removeNotifyConfig; prints that alerts are off
 run(argv, { env, stdout, publish, readNotifyConfig, writeNotifyConfig, removeNotifyConfig, newTopic, qr })
 ```
@@ -30,9 +30,10 @@ Collaborators are injected as the other verbs' are, so the tests never publish.
 
 ## Tests
 
-- [ ] First `pir notify`: writes a config with the injected topic, prints topic and QR, publishes once.
+- [ ] First `pir notify`: writes a config with the injected topic, prints topic and QR, publishes once,
+      with the icon.
 - [ ] First `pir notify` with a failing publish: config still written, topic and QR printed, the error
-      and `pir notify test` named, exit 1 (DESIGN §2.4).
+      and `pir notify test` named, exit 1 (DESIGN §2.6).
 - [ ] Second `pir notify`: same topic printed, no write, no publish.
 - [ ] `test` with no config: exit 1 and a line naming `pir notify`. With config and a failing publish:
       exit 1 with the error.
@@ -47,6 +48,6 @@ Collaborators are injected as the other verbs' are, so the tests never publish.
 ## Done when
 
 - [ ] Tests pass; `USAGE` lists `pir notify [test|off]`.
-- [ ] `PIR_HOME=/tmp/pir-notify-t03 node src/shell/pir.mjs notify` (after `rm -rf /tmp/pir-notify-t03`) prints a scannable QR in the terminal
-      (the worker runs it and checks the output renders; it sends one real test alert to a throwaway
-      topic, which is the §5.3 `worker` action).
+- [ ] `PIR_HOME=/tmp/pir-notify-t06 node src/shell/pir.mjs notify` (after `rm -rf /tmp/pir-notify-t06`)
+      prints a scannable QR in the terminal (the worker runs it and checks the output renders; it sends one
+      real test alert to a throwaway topic, which is the §5.3 `worker` action).

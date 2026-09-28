@@ -4,13 +4,13 @@
 
 ## Goal
 
-The two shell pieces that touch the outside: the ntfy HTTP client, with its retries, and the per-account
-config plus the presence marker. Both are small and injected, so the coordinator and `pir notify` can
-use them without reaching the network in tests.
+The two shell pieces that touch the outside: the ntfy HTTP client, with its retries and the icon, and the
+per-account config plus the presence marker. Both are small and injected, so the coordinator and
+`pir notify` can use them without reaching the network in tests.
 
 ## Design sections this implements
 
-DESIGN §2.4 (config), §2.5 (marker), §2.6 (retries), §3.4.
+DESIGN §2.5 (icon URL), §2.6 (config), §2.7 (marker), §2.8 (retries), §3.4.
 
 ## Files
 
@@ -23,16 +23,19 @@ DESIGN §2.4 (config), §2.5 (marker), §2.6 (retries), §3.4.
 
 ```
 // ntfy.mjs
-publish({ server, topic, title, message, click, seq, priority = 4, tags = ['bell'] },
+publish({ server, topic, title, message, click, seq, icon, priority = 4, tags = ['bell'] },
         { fetch = globalThis.fetch, delays = [5000, 30000], sleep } = {})
   → Promise<{ ok: true, status } | { ok: false, status|null, error }>
-  // JSON publish: POST {server} body { topic, title, message, click?, priority, tags, sequence_id? }.
+  // JSON publish: POST {server} body { topic, title, message, click?, icon?, priority, tags, sequence_id? }.
   // Why JSON: fetch rejects non-Latin-1 header values, and titles carry '·'.
 clear({ server, topic, seq }, { fetch }) → Promise<{ ok, status|null, error? }>
   // PUT {server}/{topic}/{seq}/clear, no retry.
 
 // notify-config.mjs
-notifyPaths(env = process.env) → { dir, config, presence }   // {PIR_HOME ?? HOME ?? homedir()}/.pir/…, as index-store
+DEFAULT_ICON = 'https://raw.githubusercontent.com/yanekk/plan-implement-review/main/assets/pir-notify-icon.png'
+notifyIcon(env = process.env) → env.PIR_NOTIFY_ICON || DEFAULT_ICON
+notifyPaths(env = process.env) → { dir, config, presence }
+  // {PIR_HOME ?? HOME ?? homedir()}/.pir/…, as index-store; config is env.PIR_NOTIFY_CONFIG when set
 readNotifyConfig(env) → { server, topic } | null | { corrupt: true }
 writeNotifyConfig(config, env)          // writeFileAtomic with mode 0600, creates dir
 removeNotifyConfig(env)                 // config and presence marker; missing files are fine
@@ -42,13 +45,15 @@ ensurePresenceMarker(env) → path        // creates the empty marker if absent
 
 ## Tests
 
-- [ ] `publish` sends one JSON POST with the fields above; omits `click`/`sequence_id` when null.
+- [ ] `publish` sends one JSON POST with the fields above; omits `click`, `icon`, `sequence_id` when null.
 - [ ] 5xx then 2xx: retried once, returns ok. Three failures (throw, 5xx or 429): returns the last error
       after exactly the injected delays. Any other 4xx is not retried.
 - [ ] `clear` sends one PUT to the right path; a failure resolves `{ ok: false }`, never rejects.
 - [ ] `writeFileAtomic` with `mode` leaves that mode; without it, unchanged.
 - [ ] Config round-trips; file mode 0600; a crash between temp write and rename leaves the old file.
 - [ ] Unparseable file and a file with no topic both read `{ corrupt: true }`; missing reads `null`.
+- [ ] `PIR_NOTIFY_CONFIG` moves only the config path, not the marker.
+- [ ] `notifyIcon` returns the default, or `PIR_NOTIFY_ICON` when set.
 - [ ] `newTopic` from fixed bytes gives a fixed, 28-char, `^pir-[a-z2-7]{24}$` result.
 - [ ] `removeNotifyConfig` removes both files and succeeds when neither exists.
 

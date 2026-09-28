@@ -10,11 +10,12 @@ touching the task you pick up, and append yours there.
 cell is an index for the next session; the account is the commit message. Whoever writes a
 cell also fixes the over-budget cell they walk past.
 
-**Plan reviewed:** 2026-09-27 — 10 fixed, 2 decided with the user
+**Plan reviewed:** not yet
 
-**Status:** Planned 2026-09-27. Nothing built.
-**Last updated:** 2026-09-27
-**Next `pir-work` will:** implement T01 (T01, T02 and T04 have no dependency).
+**Status:** Planned 2026-09-27, redesigned 2026-09-28 for the coordinator agent (the first review no longer
+applies). Nothing built.
+**Last updated:** 2026-09-28
+**Next `pir-work` will:** implement T01 (T01–T05 have no dependency).
 
 ## Tasks
 
@@ -25,14 +26,17 @@ done · ⛔ blocked, needs a human.
 |---|---|---|---|---|
 | T01 | alert-core | — | ⬜ | |
 | T02 | ntfy-sender | — | ⬜ | |
-| T03 | notify-command | T02 | ⬜ | |
+| T03 | notify-icon | — | ⬜ | |
 | T04 | worker-link-and-silence | — | ⬜ | |
-| T05 | coordinator-alerts | T01, T02, T04 | ⬜ | |
-| T06 | notify-live | T03, T05 | ⬜ | |
-| T07 | docs | T06 | ⬜ | |
+| T05 | why-yours | — | ⬜ | |
+| T06 | notify-command | T02 | ⬜ | |
+| T07 | coordinator-alerts | T01, T02, T04, T05 | ⬜ | |
+| T08 | notify-live | T03, T06, T07 | ⬜ | |
+| T09 | docs | T08 | ⬜ | |
 
 **Review queue:** *(empty)*
 
 ## Blocked on the user
 
-Nothing yet. T06 needs the user's iPhone with ntfy installed (DESIGN §5.3).
+Nothing yet. T08 needs the user's iPhone with ntfy installed and a yes to push the feature branch
+(DESIGN §5.3).
