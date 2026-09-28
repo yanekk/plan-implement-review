@@ -998,6 +998,115 @@ export function requestAnswered(task, kind) {
   });
 }
 
+// --- The coordinator agent's live check (pir-coordinator DESIGN §1 success criteria, T09) ----------
+//
+// Read from the bundle's ledger (the agent's applied decisions, `t` ISO), its status snapshots (each row's
+// `asking` and `holder`, `ts` ISO), the workers' conversation logs (`t` in ms) and the runner's steps.json.
+
+const msOf = (t) => (typeof t === 'number' ? t : Date.parse(t));
+const rowsOf = (status) => [...(status?.runState?.tasks ?? []), ...(status?.runState?.helpers ?? [])];
+const rowFor = (status, id) => rowsOf(status).find((r) => r?.id === id) ?? null;
+// A row asks the person when something waits and the agent does not hold it (display.mjs asksPerson).
+const asksPersonRow = (row) => !!row?.asking && row.holder !== 'coordinator';
+const ledgerFor = (bundle, task) => (bundle.ledger ?? []).filter((l) => l?.task === task);
+
+// agentAnswered(task) — the agent answered `task`'s question on its own: a non-pass ledger line for the
+// task, its reply reached the worker `from: 'coordinator'`, and no status snapshot ever showed the task's
+// row asking the person.
+export function agentAnswered(task) {
+  return fact(`agent-answered:${task}`, `The coordinator agent answered ${task}'s question, and ${task} never read \`asking you\``, (bundle) => {
+    const evidence = [];
+    const lines = ledgerFor(bundle, task);
+    for (const l of lines) evidence.push(`ledger ${l.t}: ${l.kind} ${task} — ${l.item} → ${JSON.stringify(l.answer)}`);
+    const answered = lines.filter((l) => l.kind !== 'pass');
+    if (answered.length === 0) return { pass: false, evidence, detail: `no ledger line answers ${task} (${lines.length} line(s), none an answer)` };
+    const replies = (bundle.transcripts ?? [])
+      .filter((t) => t.task === task)
+      .flatMap((t) => (t.events ?? []).filter((e) => e?.dir === 'out' && (e.kind === 'reply' || e.kind === 'message') && e.from === 'coordinator').map((e) => `${t.key}: ${e.kind} from coordinator`));
+    evidence.push(...replies);
+    if (replies.length === 0) return { pass: false, evidence, detail: `the ledger answers ${task} but no reply from the coordinator reached its worker` };
+    const asked = (bundle.statuses ?? []).filter((s) => asksPersonRow(rowFor(s.status, task)));
+    for (const s of asked.slice(0, 3)) evidence.push(`status ${s.ts}: ${task} asking you (${rowFor(s.status, task).asking})`);
+    if (asked.length > 0) return { pass: false, evidence, detail: `${task} read \`asking you\` in ${asked.length} snapshot(s)` };
+    if ((bundle.statuses ?? []).length === 0) return { pass: false, evidence, detail: 'no status snapshots in the bundle — cannot show the row never asked the person' };
+    return { pass: true, evidence, detail: `${answered.length} answer(s) by the agent; ${task} never read \`asking you\`` };
+  });
+}
+
+// reservedToPerson(task, decision) — `task`'s permission request was the person's: it read `asking you`, the
+// agent logged no permission decision for it, and the person's answer (the harness's `decision`) reached it.
+export function reservedToPerson(task, decision = 'deny') {
+  return fact(`reserved-to-person:${task}`, `${task}'s reserved permission reached the person, who answered it (${decision})`, (bundle) => {
+    const evidence = [];
+    const behavior = decision === 'deny' ? 'deny' : 'allow';
+    for (const t of (bundle.transcripts ?? []).filter((x) => x.task === task)) {
+      const events = t.events ?? [];
+      for (const r of events.filter((e) => e?.dir === 'request' && e.toolName !== 'AskUserQuestion')) {
+        evidence.push(`${t.key}: request ${r.requestId} ${r.toolName} ${JSON.stringify(r.input?.command ?? '')}`);
+        const reply = events.find((e) => e?.dir === 'out' && e.kind === 'reply' && e.requestId === r.requestId);
+        if (!reply) continue;
+        evidence.push(`${t.key}: reply ${r.requestId} from ${reply.from} ${reply.result?.behavior}`);
+        const agentLine = (bundle.ledger ?? []).find((l) => l?.kind === 'permission' && l.requestId === r.requestId);
+        if (agentLine) return { pass: false, evidence, detail: `the agent decided ${r.requestId} (${JSON.stringify(agentLine.answer)}), a reserved request` };
+        if (reply.from !== 'person' || reply.result?.behavior !== behavior) continue;
+        const shown = (bundle.statuses ?? []).some((s) => asksPersonRow(rowFor(s.status, task)) && rowFor(s.status, task).asking === 'permission');
+        if (!shown) return { pass: false, evidence, detail: `${task}'s permission was answered by the person but no snapshot showed it asking you` };
+        return { pass: true, evidence, detail: `${task}'s ${r.toolName} request read \`asking you\` and the person's ${behavior} reached it` };
+      }
+    }
+    return { pass: false, evidence, detail: `no permission request of ${task} was answered ${behavior} by the person` };
+  });
+}
+
+// remoteOnlyAfterPass(task) — the agent passed `task`'s question on, and the task's worker was reachable
+// on the phone only from then: its Remote Control was off at the pass and switched on at or after it.
+export function remoteOnlyAfterPass(task) {
+  return fact(`remote-only-after-pass:${task}`, `${task}'s passed question switched its Remote Control on only after the pass`, (bundle) => {
+    const evidence = [];
+    const pass = ledgerFor(bundle, task).find((l) => l.kind === 'pass');
+    if (!pass) return { pass: false, evidence, detail: `the agent never passed a question of ${task} on` };
+    const tp = msOf(pass.t);
+    evidence.push(`ledger ${pass.t}: pass ${task} — ${pass.item} (${pass.reason ?? 'no reason'})`);
+    const notes = (bundle.transcripts ?? [])
+      .filter((t) => t.task === task)
+      .flatMap((t) => (t.events ?? []).filter((e) => e?.dir === 'note' && e.kind === 'remote-control').map((e) => ({ key: t.key, t: msOf(e.t), on: !!e.on })))
+      .sort((a, b) => a.t - b.t);
+    for (const n of notes) evidence.push(`${n.key} ${new Date(n.t).toISOString()}: remote control ${n.on ? 'on' : 'off'}`);
+    const before = notes.filter((n) => n.t < tp).at(-1);
+    if (before?.on) return { pass: false, evidence, detail: `${task}'s Remote Control was already on when the agent passed its question` };
+    const after = notes.find((n) => n.t >= tp && n.on);
+    if (!after) return { pass: false, evidence, detail: `${task}'s Remote Control never switched on after the pass` };
+    return { pass: true, evidence, detail: `off at the pass, on ${Math.round((after.t - tp) / 1000)}s after it` };
+  });
+}
+
+// readyWithReport() — the end with the agent (DESIGN §2.9, §2.10): the end sync met a conflict (a main-sync
+// helper row appeared), the run then read \`ready to merge\` with a report path, REPORT.md was on the
+// feature branch when the runner merged it (steps.json), and the command saw the merge and finished.
+export function readyWithReport() {
+  return fact('ready-with-report', 'The run reached `ready to merge` with REPORT.md committed, after resolving the main-sync conflict', (bundle) => {
+    const evidence = [];
+    const statuses = bundle.statuses ?? [];
+    const sync = statuses.find((s) => rowFor(s.status, 'main-sync'));
+    if (!sync) return { pass: false, evidence, detail: 'no snapshot shows a main-sync worker — the end sync met no conflict' };
+    evidence.push(`status ${sync.ts}: main-sync worker row`);
+    const ready = statuses.find((s) => msOf(s.ts) >= msOf(sync.ts) && s.status?.runState?.handoff?.state === 'ready');
+    if (!ready) return { pass: false, evidence, detail: 'the run never read `ready to merge` after the main-sync conflict' };
+    evidence.push(`status ${ready.ts}: ready to merge, report ${ready.status.runState.handoff.reportPath}`);
+    const merged = bundle.steps?.merged;
+    if (!merged?.report) return { pass: false, evidence, detail: 'no REPORT.md was read from the feature branch at the merge' };
+    const heads = merged.report.split('\n').filter((l) => l.startsWith('## '));
+    evidence.push(`${merged.reportPath} at ${merged.at}: ${heads.join(' · ')}`);
+    if (!heads.includes('## Decisions made for you') || !heads.includes('## Branch')) {
+      return { pass: false, evidence, detail: 'REPORT.md lacks its decisions section or its branch footer' };
+    }
+    const finished = (bundle.coordinatorOut ?? '').split('\n').find((l) => l.includes('is in main. The run is finished.'));
+    if (!finished) return { pass: false, evidence, detail: 'the command did not finish on the merge (no "is in main" line in coordinator.out)' };
+    evidence.push(`coordinator.out: ${finished.trim()}`);
+    return { pass: true, evidence, detail: 'conflict resolved, ready to merge with REPORT.md committed, finished on the merge' };
+  });
+}
+
 // --- The plan-command facts (pir-plan-command DESIGN §1 success criteria, T17) --------------------
 //
 // A plan scenario starts from a repo with no plan, so what it must show is the whole of `pir plan`'s

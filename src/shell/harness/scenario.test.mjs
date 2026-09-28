@@ -42,9 +42,10 @@ test('defineScenario: holdMerges defaults off and is a boolean', () => {
 test('defineScenario: answerPending defaults off and normalises to { typed } (T18)', () => {
   const spec = (answerPending) => defineScenario({ id: 'a', fixture: 'f', facts: [noHelloEver()], answerPending }).answerPending;
   assert.equal(spec(undefined), false);
-  assert.deepEqual(spec(true), { typed: {}, say: {}, afterWake: {} });
-  assert.deepEqual(spec({ typed: { 'Q?': 'mine' }, say: { T04: 'go' } }), { typed: { 'Q?': 'mine' }, say: { T04: 'go' }, afterWake: {} });
-  assert.deepEqual(spec({ afterWake: { T02: 'blue' } }), { typed: {}, say: {}, afterWake: { T02: 'blue' } });
+  assert.deepEqual(spec(true), { typed: {}, say: {}, afterWake: {}, permissions: {} });
+  assert.deepEqual(spec({ typed: { 'Q?': 'mine' }, say: { T04: 'go' } }), { typed: { 'Q?': 'mine' }, say: { T04: 'go' }, afterWake: {}, permissions: {} });
+  assert.deepEqual(spec({ afterWake: { T02: 'blue' } }), { typed: {}, say: {}, afterWake: { T02: 'blue' }, permissions: {} });
+  assert.deepEqual(spec({ permissions: { T02: 'deny' } }).permissions, { T02: 'deny' });
 });
 
 test('defineScenario: statusSnapshots defaults off (real-asking-state T05)', () => {
@@ -69,4 +70,21 @@ test('defineScenario: kind defaults to build; a plan scenario carries its reply 
   assert.throws(() => defineScenario({ ...base, kind: 'nope' }), /kind must be one of/);
   assert.throws(() => defineScenario({ ...base, kind: 'plan', replyCap: 40 }), /needs a reply text/);
   assert.throws(() => defineScenario({ ...base, kind: 'plan', reply: 'Yes.', replyCap: 0 }), /positive whole replyCap/);
+});
+
+test('defineScenario: with the agent on, answerPending needs statusSnapshots (pir-coordinator T09)', () => {
+  const base = { id: 'a', fixture: 'f', facts: [noHelloEver()], coordinator: true, answerPending: true };
+  assert.throws(() => defineScenario(base), /needs statusSnapshots/);
+  assert.equal(defineScenario({ ...base, statusSnapshots: true }).coordinator, true);
+});
+
+test('defineScenario: mainCommit and mergeWhenReady default off and are checked (pir-coordinator T09)', () => {
+  const base = { id: 'a', fixture: 'f', facts: [noHelloEver()] };
+  assert.equal(defineScenario(base).mainCommit, null);
+  assert.equal(defineScenario(base).mergeWhenReady, false);
+  const s = defineScenario({ ...base, mainCommit: { after: 'T01', files: { 'a.txt': 'x\n' } }, mergeWhenReady: true });
+  assert.deepEqual(s.mainCommit, { after: 'T01', files: { 'a.txt': 'x\n' }, message: 'main: moved after T01 merged' });
+  assert.equal(s.mergeWhenReady, true);
+  assert.throws(() => defineScenario({ ...base, mainCommit: { files: { 'a.txt': 'x' } } }), /mainCommit needs/);
+  assert.throws(() => defineScenario({ ...base, mainCommit: { after: 'T01', files: {} } }), /mainCommit needs/);
 });
