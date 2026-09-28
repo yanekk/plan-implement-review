@@ -24,7 +24,7 @@ done · ⛔ blocked, needs a human.
 
 | # | Task | Depends on | State | Notes |
 |---|---|---|---|---|
-| T01 | alert-core | — | ⬜ | |
+| T01 | alert-core | — | ✅ | |
 | T02 | ntfy-sender | — | ✅ | |
 | T03 | notify-icon | — | ✅ | |
 | T04 | worker-link-and-silence | — | ✅ | |
