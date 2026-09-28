@@ -14,6 +14,8 @@ Legend: 🐞 defect found · ✅ verified by hand with the user · 📌 worth kn
 
 | Date | | Finding |
 |---|---|---|
+| 2026-09-28 | ✅ | T09 live run `run.mjs pir-coordinator` PASS: agent answered T01 from DESIGN; T02 push denied as the person's; T02 passed, Remote Control on after the pass; user answered on the phone and confirmed pointer and late appearance; main-sync conflict resolved; REPORT.md committed. |
+| 2026-09-28 | 📌 | T09: `capture.mjs` now copies `control/coordinator/ledger.jsonl` and reads `steps.json` into the bundle; not in the task's file list, needed for the facts. |
 | 2026-09-27 | 📌 | T11 drill: while the `tests-fix` helper runs, the footer still reads `preparing: syncing main, writing the report`. Wording not T11's; left. `./install.sh` still to run once the feature branch holds T11. |
 | 2026-09-27 | 📌 | T10: the `tests-fix` worker (role `fix`) sits in `state.tasks` beside `main-sync` (`HELPERS` in `coordinate.mjs`); T11's row must cover both. A restart in a red `ready` spawns a fresh fix attempt, then rewrites the footer. |
 | 2026-09-27 | 🔄 | T07: red tests at the end get one fix worker, like a main-sync conflict; still red after it ends `not ready` (user). Added T10 end-tests-fix, blocks T09. Replaces labelling the red end on the dashboard. |
