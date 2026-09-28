@@ -207,6 +207,13 @@ export function startCoordinator({
   // as the agent's until then keeps its worker off Remote Control (DESIGN §2.5). One pass only: whatever is
   // still waiting after it is the person's.
   let justSettled = new Set();
+  // itemKey → the item, for an item the agent passed on to the person (reliable-notifications T05). Only
+  // whyPerson reads it: the alert names why a question is the person's, and without this the routing
+  // forgets a pass the moment it lands. Released with the other maps.
+  const passed = new Map();
+  // itemKey → the order it was first seen waiting, so whyPerson can name a worker's oldest item's reason.
+  const firstSeen = new Map();
+  let seenCount = 0;
 
   // The end of the run (T05): on only when the run has an agent (startAgent given); with
   // `--no-coordinator` the end is today's. `handoff` is null until the end gate has run.
@@ -252,6 +259,7 @@ export function startCoordinator({
       timedOut.clear();
       reserved.clear();
       passedLate.clear();
+      passed.clear();
     }
     const release = (key) => {
       held.delete(key);
@@ -259,10 +267,15 @@ export function startCoordinator({
       timedOut.delete(key);
       reserved.delete(key);
       passedLate.delete(key);
+      passed.delete(key);
     };
     const workers = platform.workers();
     const items = waitingItems(state.tasks, workers, { askRules });
     const waitingNow = new Map(items.map((i) => [itemKey(i), i]));
+    for (const key of firstSeen.keys()) if (!waitingNow.has(key)) firstSeen.delete(key);
+    for (const key of waitingNow.keys()) if (!firstSeen.has(key)) firstSeen.set(key, seenCount++);
+    // A passed item is the person's decision to close; the agent is not told who closed it (T15).
+    for (const key of passed.keys()) if (!waitingNow.has(key)) passed.delete(key);
 
     // Briefed items (held, timed out or reserved) no longer waiting were closed without a decision of the
     // agent's (DESIGN §2.3, T15): the agent is told who closed each and the answer, once. Read before the
@@ -292,6 +305,7 @@ export function startCoordinator({
       heldAt.delete(itemKey(p));
       reserved.delete(itemKey(p));
       if (timedOut.has(itemKey(p))) passedLate.add(itemKey(p));
+      passed.set(itemKey(p), waitingNow.get(itemKey(p)) ?? p);
       out.passed.push(p);
       control?.log?.(`coordinator-pass ${waitingNow.get(itemKey(p))?.task ?? p.worker}`);
     }
@@ -326,6 +340,37 @@ export function startCoordinator({
     seen.clear();
     for (const [key, item] of waitingNow) seen.set(key, item);
     return out;
+  }
+
+  // whyPerson() → Map<workerId, 'passed'|'timeout'|'reserved'|'unavailable'|'off'> (reliable-notifications
+  // DESIGN §2.1, T05): for each live worker with a waiting item that is the person's (not in heldByAgent()),
+  // why, from its oldest such item. It reads the current waiting items against the maps route() left, and
+  // changes nothing. A worker waiting with no item (waitingOn without itemsOf) is absent: its reason is null.
+  function whyPerson() {
+    const out = new Map();
+    const alive = agent?.alive() ?? false;
+    const heldNow = alive ? new Set([...held.keys(), ...justSettled]) : new Set(); // as heldByAgent()
+    const items = waitingItems(state.tasks, platform.workers(), { askRules });
+    const order = (i) => firstSeen.get(itemKey(i)) ?? Infinity;
+    const byWorker = new Map();
+    for (const item of items) {
+      if (heldNow.has(itemKey(item))) continue;
+      const prev = byWorker.get(item.worker);
+      // The oldest by first-seen pass; an item not yet routed is newest; ties keep the listed order.
+      if (!prev || order(item) < order(prev)) byWorker.set(item.worker, item);
+    }
+    for (const [worker, item] of byWorker) out.set(worker, reasonOf(item, alive));
+    return out;
+  }
+  function reasonOf(item, alive) {
+    if (startAgent === null) return 'off';
+    if (!agent || !alive) return 'unavailable';
+    const key = itemKey(item);
+    if (timedOut.has(key)) return 'timeout';
+    if (item.reserved || reserved.has(key)) return 'reserved';
+    if (passed.has(key)) return 'passed';
+    // Never briefed (first waiting while the agent was down), its brief failed, or held when the agent died.
+    return 'unavailable';
   }
 
   // closeAgent({ immediate }) → the agent's session ended (teardown, HALT). `immediate` is teardownRun's:
@@ -847,6 +892,7 @@ export function startCoordinator({
     heldByAgent() {
       return agent?.alive() ? new Set([...held.keys(), ...justSettled]) : new Set();
     },
+    whyPerson,
     // agentView() → the agent for the run state (buildRunState's `coordinator`), with `holding`, how many
     // waiting items it holds, for its row (T12). Counted from `held`, not the agent's own `briefed` map,
     // which also keeps reserved and already-answered items; `justSettled` is answered, so not held.

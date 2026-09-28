@@ -2920,3 +2920,186 @@ test('T15 a timed-out item the person then answers gets the message; one the age
   assert.ok(msgs[0].includes(`${w1}-r1`));
   assert.match(msgs[0], /^Already answered by the person: allowed\./);
 });
+
+// --- whyPerson (reliable-notifications T05, DESIGN §2.1): why a waiting worker's question is the person's ---
+
+// A hand-played agent: the test queues its passes and settles, and sets whether it is up or its brief fails.
+function scriptedAgent() {
+  const a = {
+    up: true,
+    failBrief: false,
+    briefs: [],
+    toPass: [],
+    toSettle: [],
+    alive: () => a.up,
+    brief(item) {
+      if (!a.up || a.failBrief) return false;
+      a.briefs.push(item);
+      return true;
+    },
+    drain() {
+      const out = { passed: a.toPass.map((i) => ({ worker: i.worker, ...(i.requestId ? { requestId: i.requestId } : {}), reason: 'yours' })), settled: [...a.toSettle] };
+      a.toPass = [];
+      a.toSettle = [];
+      return out;
+    },
+    answeredElsewhere: () => true,
+    timedOut() {},
+    forget() {},
+    close: async () => {},
+    session: null,
+  };
+  return a;
+}
+
+const NPM_TEST = { toolName: 'Bash', input: { command: 'npm test' } };
+const RM_RF = { toolName: 'Bash', input: { command: 'rm -rf build' } };
+
+// whyRun(t, behaviors, opts) → a one-task run with the scripted agent (or `startAgent` as given) and a clock.
+function whyRun(t, behaviors, { startAgent, holdMs = 1000 } = {}) {
+  const worktree = createFakeWorktree({ progress: progressDoc([{ num: 'T01' }]), slug: SLUG });
+  t.after(() => worktree.cleanup());
+  const platform = createFakePlatform({ behaviors: { T01: behaviors } });
+  const agent = scriptedAgent();
+  const clock = { t: 0 };
+  const coordinator = startCoordinator({
+    slug: SLUG, repo: REPO, platform, worktree, holdMs, now: () => clock.t,
+    startAgent: startAgent === undefined ? () => agent : startAgent,
+  });
+  const w = () => platform.spawns.find((s) => s.task === 'T01' && s.role === 'implement')?.id;
+  const why = () => Object.fromEntries(coordinator.whyPerson());
+  const req = (n) => ({ worker: w(), requestId: `${w()}-r${n}` });
+  return { coordinator, platform, agent, clock, w, why, req };
+}
+
+test('whyPerson: a held item is absent; the agent\'s pass makes it `passed`; the person\'s answer removes it on the pass it closes', (t) => {
+  const run = whyRun(t, { requests: [NPM_TEST] });
+  run.coordinator.pass();
+  assert.deepEqual(run.why(), {}, 'held by the agent: not the person\'s');
+  run.agent.toPass.push(run.req(1));
+  run.coordinator.pass();
+  assert.deepEqual(run.why(), { [run.w()]: 'passed' });
+  run.platform.answer(run.w(), `${run.w()}-r1`, { behavior: 'allow' }, { from: 'person' });
+  run.coordinator.pass();
+  assert.deepEqual(run.why(), {}, 'answered: gone');
+});
+
+test('whyPerson: a report park the agent passes on is `passed`', (t) => {
+  const run = whyRun(t, { question: 'JSON or YAML?' });
+  run.coordinator.pass();
+  run.coordinator.pass();
+  assert.equal(run.agent.briefs.length, 1, 'the park is briefed');
+  assert.deepEqual(run.why(), {});
+  run.agent.toPass.push({ worker: run.w() });
+  run.coordinator.pass();
+  assert.deepEqual(run.why(), { [run.w()]: 'passed' });
+});
+
+test('whyPerson: an item the agent answered this pass is absent (justSettled), as heldByAgent() holds it', (t) => {
+  const run = whyRun(t, { requests: [NPM_TEST] });
+  run.coordinator.pass();
+  run.agent.toSettle.push(run.req(1)); // the scripted agent does not reach the worker, so it still waits this pass
+  run.coordinator.pass();
+  assert.equal(run.coordinator.heldByAgent().has(`${run.w()}:${run.w()}-r1`), true);
+  assert.deepEqual(run.why(), {});
+});
+
+test('whyPerson: reserved is `reserved` from the first pass, and stays so when the agent passes it on', (t) => {
+  const run = whyRun(t, { requests: [RM_RF] });
+  run.coordinator.pass();
+  assert.deepEqual(run.why(), { [run.w()]: 'reserved' });
+  run.agent.toPass.push(run.req(1));
+  run.coordinator.pass();
+  assert.deepEqual(run.why(), { [run.w()]: 'reserved' }, 'a pass of a reserved item keeps its reason');
+});
+
+test('whyPerson: the hold limit makes it `timeout`, and a late pass leaves it `timeout`', (t) => {
+  const run = whyRun(t, { requests: [NPM_TEST] }, { holdMs: 1000 });
+  run.coordinator.pass();
+  run.clock.t = 999;
+  run.coordinator.pass();
+  assert.deepEqual(run.why(), {}, 'still within the limit');
+  run.clock.t = 1000;
+  run.coordinator.pass();
+  assert.deepEqual(run.why(), { [run.w()]: 'timeout' });
+  run.agent.toPass.push(run.req(1));
+  run.coordinator.pass();
+  assert.deepEqual(run.why(), { [run.w()]: 'timeout' }, 'a late pass keeps `timeout`');
+});
+
+test('whyPerson: the agent dead makes a held item `unavailable` at once and after its next pass', (t) => {
+  const run = whyRun(t, { requests: [NPM_TEST] });
+  run.coordinator.pass();
+  assert.deepEqual(run.why(), {});
+  run.agent.up = false;
+  assert.deepEqual(run.why(), { [run.w()]: 'unavailable' }, 'no pass needed');
+  run.coordinator.pass();
+  assert.deepEqual(run.why(), { [run.w()]: 'unavailable' });
+  run.agent.up = true; // back: the item it held when it died is never re-briefed, so it stays the person's
+  run.coordinator.pass();
+  assert.deepEqual(run.why(), { [run.w()]: 'unavailable' });
+});
+
+test('whyPerson: an agent that failed to start makes every item `unavailable`', (t) => {
+  const run = whyRun(t, { requests: [NPM_TEST] }, { startAgent: () => { throw new Error('no claude'); } });
+  run.coordinator.pass();
+  assert.equal(run.coordinator.agent, null);
+  assert.deepEqual(run.why(), { [run.w()]: 'unavailable' });
+});
+
+test('whyPerson: an item first waiting while the agent is down stays `unavailable` once it is back', (t) => {
+  const run = whyRun(t, { requests: [NPM_TEST] });
+  run.agent.up = false;
+  run.coordinator.pass();
+  run.agent.up = true;
+  run.coordinator.pass();
+  assert.equal(run.agent.briefs.length, 0, 'never briefed');
+  assert.deepEqual(run.why(), { [run.w()]: 'unavailable' });
+});
+
+test('whyPerson: an item whose brief failed is `unavailable`', (t) => {
+  const run = whyRun(t, { requests: [NPM_TEST] });
+  run.agent.failBrief = true;
+  run.coordinator.pass();
+  assert.deepEqual(run.why(), { [run.w()]: 'unavailable' });
+});
+
+test('whyPerson: a run with no agent (startAgent null) is `off`', (t) => {
+  const run = whyRun(t, { requests: [NPM_TEST] }, { startAgent: null });
+  run.coordinator.pass();
+  assert.deepEqual(run.why(), { [run.w()]: 'off' });
+});
+
+test('whyPerson: a worker with two person items reports the older one\'s reason', (t) => {
+  const older = whyRun(t, { requests: [NPM_TEST, RM_RF] });
+  older.coordinator.pass();
+  assert.deepEqual(older.why(), { [older.w()]: 'reserved' }, 'r1 held, so r2 is the only person item');
+  older.agent.toPass.push(older.req(1));
+  older.coordinator.pass();
+  assert.deepEqual(older.why(), { [older.w()]: 'passed' }, 'r1 (passed) is older than r2 (reserved)');
+
+  const flipped = whyRun(t, { requests: [RM_RF, NPM_TEST] });
+  flipped.coordinator.pass();
+  flipped.agent.toPass.push(flipped.req(2));
+  flipped.coordinator.pass();
+  assert.deepEqual(flipped.why(), { [flipped.w()]: 'reserved' }, 'r1 (reserved) is older than r2 (passed)');
+});
+
+test('whyPerson: the oldest item is the first seen, not the first listed (a park before a later request)', (t) => {
+  // itemsOf lists a worker's requests before its report park, so a park passed on first and a reserved
+  // request raised after it would name `reserved` by listed order; the park is older, so it is `passed`.
+  const run = whyRun(t, { question: 'JSON or YAML?' });
+  let extra = null;
+  const workers = run.platform.workers;
+  run.platform.workers = () => workers().map((w) => (extra && w.id === run.w() && w.activity
+    ? { ...w, activity: { ...w.activity, pending: [extra, ...(w.activity.pending ?? [])] } }
+    : w));
+  run.coordinator.pass();
+  run.coordinator.pass();
+  run.agent.toPass.push({ worker: run.w() });
+  run.coordinator.pass();
+  assert.deepEqual(run.why(), { [run.w()]: 'passed' });
+  extra = { kind: 'permission', requestId: `${run.w()}-late`, ...RM_RF };
+  run.coordinator.pass();
+  assert.deepEqual(run.why(), { [run.w()]: 'passed' }, 'the park came first');
+});
