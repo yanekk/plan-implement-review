@@ -30,11 +30,11 @@ done · ⛔ blocked, needs a human.
 | T04 | worker-link-and-silence | — | ✅ | |
 | T05 | why-yours | — | ✅ | |
 | T06 | notify-command | T02 | ⬜ | |
-| T07 | coordinator-alerts | T01, T02, T04, T05 | ⬜ | |
+| T07 | coordinator-alerts | T01, T02, T04, T05 | 🔍 | notifyViews, runNotifyActions, notifyPass, endAlertPass wired into main; exit clears on every path; workerEnv to workers and agent; two notes. 18 tests in notify-wiring.test.mjs, 4 end-alert, 2 note. Deviations: notifyPass takes `plan`; runner takes `track`, no `now`; handoffView adds `unresolved` only when true; views skip non-waiting workers. |
 | T08 | notify-live | T03, T06, T07 | ⬜ | |
 | T09 | docs | T08 | ⬜ | |
 
-**Review queue:** *(empty)*
+**Review queue:** T07
 
 ## Blocked on the user
 

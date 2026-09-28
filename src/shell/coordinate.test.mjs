@@ -35,6 +35,7 @@ import {
   writeRunFinal,
   updateIndexFinalState,
   makePrepare,
+  endAlertPass,
 } from './coordinate.mjs';
 import { readSnapshot } from './snapshot-store.mjs';
 import { parseSnapshot, serializeSnapshot } from '../core/snapshot.mjs';
@@ -3102,4 +3103,94 @@ test('whyPerson: the oldest item is the first seen, not the first listed (a park
   extra = { kind: 'permission', requestId: `${run.w()}-late`, ...RM_RF };
   run.coordinator.pass();
   assert.deepEqual(run.why(), { [run.w()]: 'passed' }, 'the park came first');
+});
+
+// --- The end-of-run alert (reliable-notifications T07, DESIGN §2.4): once, when the run waits on the merge ---
+
+// alertSteps(run) → a pass that also runs endAlertPass as main does, recording every alert it would send.
+function alertSteps(run) {
+  const sends = [];
+  let sent = false;
+  const step = () => {
+    const r = run.coordinator.pass();
+    sent = endAlertPass({ r, coordinator: run.coordinator, slug: SLUG, sent, send: (a) => sends.push(a) });
+    return r;
+  };
+  const until = (pred, max = 20) => {
+    for (let i = 0; i < max; i++) {
+      const r = step();
+      if (pred(r)) return r;
+    }
+    throw new Error(`not reached in ${max} passes; handoff ${JSON.stringify(run.coordinator.handoff)}`);
+  };
+  return { sends, step, until };
+}
+
+test('end alert: sent once when the handoff first reads ready, with the agent\'s link; not again on a later pass or a re-sync', (t) => {
+  const run = endRun(t);
+  const a = alertSteps(run);
+  run.toGate();
+  a.until(() => run.told().some((m) => m.startsWith('Every task is done')));
+  assert.deepEqual(a.sends, [], 'nothing while preparing');
+  run.decide({ kind: 'report', sections: SECTIONS });
+  a.until((x) => x.handoff.state === 'ready');
+  assert.deepEqual(a.sends, [{
+    title: `${SLUG} · ready to merge`, message: `All 1 tasks merged. git merge pir/${SLUG}`, tags: ['tada'],
+    click: run.coordinator.agent.remoteUrl(),
+  }]);
+  a.step();
+  const moved = run.moveMain('later.txt', 'another run merged first\n');
+  a.until((x) => x.handoff.state === 'ready' && x.handoff.mainSha === moved);
+  assert.equal(a.sends.length, 1, 'the re-sync is the same wait');
+});
+
+test('end alert: red names the test reason; a re-sync that turns ready sends nothing more', (t) => {
+  let tests = 0;
+  const run = endRun(t, { runTests: () => ((tests += 1), tests <= 2 ? { ok: false, reason: 'test exit 1' } : { ok: true }) });
+  const a = alertSteps(run);
+  run.toGate();
+  a.until(() => run.told().some((m) => m.startsWith('Every task is done')));
+  run.decide({ kind: 'report', sections: SECTIONS });
+  a.until((x) => x.handoff.state === 'red');
+  assert.equal(a.sends.length, 1);
+  assert.equal(a.sends[0].title, `${SLUG} · not ready`);
+  assert.equal(a.sends[0].message, `Tests red on pir/${SLUG}: test exit 1`);
+  assert.deepEqual(a.sends[0].tags, ['warning']);
+  const moved = run.moveMain('later.txt', 'main fixed it\n');
+  a.until((x) => x.handoff.state === 'ready' && x.handoff.mainSha === moved);
+  assert.equal(a.sends.length, 1);
+});
+
+test('end alert: an unresolved main-sync sends the merge-with-main message; handoffView carries `unresolved`', (t) => {
+  const run = endRun(t, { files: { 'work-T01.txt': 'base\n' }, behaviors: { 'main-sync': { unresolved: true } } });
+  const a = alertSteps(run);
+  a.step();
+  run.moveMain('work-T01.txt', 'main side\n');
+  run.toGate();
+  a.until(() => run.told().some((m) => m.startsWith('Every task is done')));
+  run.decide({ kind: 'report', sections: SECTIONS });
+  const r = a.until((x) => x.handoff.state !== 'preparing');
+  assert.equal(r.handoff.unresolved, true);
+  assert.deepEqual(a.sends.map((x) => x.message), [`Merge with main unresolved on pir/${SLUG}`]);
+});
+
+test('end alert: not sent on a pass with r.finished (a restart finding main already merged)', (t) => {
+  const first = endRun(t);
+  first.toGate();
+  first.until(() => first.told().some((m) => m.startsWith('Every task is done')));
+  first.decide({ kind: 'report', sections: SECTIONS });
+  first.until((x) => x.handoff.state === 'ready');
+  first.coordinator.closeAgent();
+  git(first.worktree.repo, ['merge', '--no-ff', '--no-edit', `pir/${SLUG}`]);
+
+  const second = endRun(t, { worktree: first.worktree, controlDir: first.controlDir });
+  const a = alertSteps(second);
+  second.toGate();
+  const r = a.until((x) => x.finished !== null);
+  assert.equal(r.finished, 'merged');
+  assert.deepEqual(a.sends, []);
+  // And as a unit: a finished pass reading ready sends nothing.
+  const sends = [];
+  assert.equal(endAlertPass({ r: { finished: 'merged', handoff: { state: 'ready' }, tasks: [] }, slug: SLUG, send: (x) => sends.push(x) }), false);
+  assert.deepEqual(sends, []);
 });

@@ -368,6 +368,15 @@ function noteLines(note, width) {
     case 'sdk-error':
       text = `the worker's line failed: ${note.message ?? ''}`;
       break;
+    // What the phone was told (reliable-notifications DESIGN §2.8), so the person can see it in `pir`.
+    case 'notified':
+      text = note.reminder ? 'reminder sent to your phone' : 'alert sent to your phone';
+      break;
+    case 'notify-failed': {
+      const why = typeof note.error === 'string' && note.error !== '' ? note.error : note.status != null ? `HTTP ${note.status}` : 'unknown error';
+      text = `alert not sent: ${why}`;
+      break;
+    }
     default:
       text = note.note;
   }
