@@ -67,8 +67,17 @@ git remote: nothing is ever pushed.
 
 // The project rules the agent reads from the feature worktree (docs/coordinator-agent.md). The first rule
 // makes the agent hold T03 until the hold limit hands it to the person.
+//
+// The two other rules make the agent's opening turn and each naming answer take longer than the few seconds
+// between the workers' first asks (the first live run, 2026-09-28: T02 asked 4s before T01, and the agent had
+// answered T02 before T01's brief was sent), so both briefs reach it before either answer is applied.
 const rules = `# Coordinator rules for this project
 
+- At the start, before you say you are ready, read in full: DESIGN.md, PLAN.md, every task doc, and the
+  code that briefs you and applies your decisions: src/shell/coordinator-agent.mjs,
+  src/core/coordinator-policy.mjs and src/core/coordinator-brief.mjs.
+- Before you answer a naming question, Grep the repository for both candidate names and re-read
+  DESIGN.md's Decisions section; then decide.
 - For questions about the release date, write no decision and do not pass them on; wait. Once pir hands
   one to the person, give the pointer your skill asks for.
 - Everything DESIGN.md settles, answer from DESIGN.md.

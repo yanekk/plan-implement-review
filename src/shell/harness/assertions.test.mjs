@@ -1290,6 +1290,10 @@ test('pointersAt: a sentence sending the person to a task, not a description or 
   assert.deepEqual(pointersAt('T02 waits for you: the push is yours to decide.'), ['T02']);
   assert.deepEqual(pointersAt('T01 is asking the name; DESIGN settles it: greet.'), []);
   assert.deepEqual(pointersAt('T03 is already settled: the person answered it.'), []);
+  // The live run's opening (2026-09-28): the agent saying it will answer is not a pointer.
+  assert.deepEqual(pointersAt('Greeting task (T01) and farewell task (T02): the design settles both. I\'ll answer them myself.'), []);
+  assert.deepEqual(pointersAt('Release note task (T03): I won\'t answer it and I won\'t pass it on myself.'), []);
+  assert.deepEqual(pointersAt('T03 is asking the date. I would not answer it. Answer it in T03\'s conversation.'), ['T03']);
 });
 
 test('waitingAt: a request is waiting from its log time until its reply', () => {

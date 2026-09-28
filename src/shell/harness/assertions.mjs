@@ -1286,7 +1286,9 @@ export function pointersAt(text) {
   let last = null;
   for (const sentence of String(text ?? '').split(/(?<=[.!?])\s+|\n+/)) {
     const named = [...sentence.matchAll(/\bT\d{2,}\b/g)].map((m) => m[0]);
-    if (POINTER.test(sentence) && !CORRECTION.test(sentence)) {
+    // "I'll answer them myself", "I won't answer it" are the agent speaking of its own answering, not sending the person: its own answering is cut first.
+    const directed = sentence.replace(/\b(I|we)(['’]\w+)?(\s+\w+['’]?\w*){0,2}\s+answer\w*\b[^.;]*/gi, '');
+    if (POINTER.test(directed) && !CORRECTION.test(directed)) {
       for (const t of named.length ? named : last ? [last] : []) out.add(t);
     }
     if (named.length) last = named.at(-1);
