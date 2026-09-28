@@ -29,10 +29,10 @@ done · ⛔ blocked, needs a human.
 | T04 | mouse-on | T01 | ✅ | |
 | T05 | list-clicks | T02, T03, T04 | ✅ | |
 | T06 | conversation-wheel | T04 | ✅ | |
-| T07 | mouse-docs | T05, T06 | 🔍 | New `docs/detached-runs.md` § The mouse (per-screen click/hover/wheel table, keyboard-only list, drag-copy, `reset` after SIGKILL); pointers in human-flow, coordinator-agent, README. No tests, per doc. Added: the new-plan box's caret and `@repo` pop-up clicks (§2.6), not listed in the task doc. |
+| T07 | mouse-docs | T05, T06 | ✅ | Reviewed: every claim in `docs/detached-runs.md` § The mouse checked against the code (wheel ±3 lines, landing ignores mouse, exit signals, pbcopy/OSC 52, hover paint, left-only clicks). One defect: the wheel over the open `@repo` pop-up moves the pop-up, not the list; reproduced by probe, doc fixed. |
 | T08 | mouse-drill | T05, T06, T07 | ⬜ | |
 
-**Review queue:** T07
+**Review queue:** *(empty)*
 
 ## Blocked on the user
 
