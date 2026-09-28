@@ -48,7 +48,7 @@ git merge pir/{slug}       →  main                      the one step you run b
 
 `/pir-plan` and `/pir-review-plan` are slash commands inside Claude Code. `pir` is a shell command,
 installed on your PATH by `./install.sh`: `pir` alone opens the dashboard, `pir plan` plans, `pir start
-{slug}` builds. The old `pir {slug}` is gone; typed now, it tells you to use `pir start {slug}`.
+{slug}` builds, `pir notify` sets up alerts on your phone ([human-flow.md](docs/human-flow.md#phone-alerts--pir-notify)). The old `pir {slug}` is gone; typed now, it tells you to use `pir start {slug}`.
 
 How far the agents may go on their own outside the code — deploys, paid calls, anything other
 people see — is yours to set, action by action, in the plan. See
@@ -280,11 +280,20 @@ What it tells you at a glance:
   working. The same holds for the planner and plan reviewer in `pir plan`. See
   [human-flow.md](docs/human-flow.md#when-a-row-reads-asking-you).
 - **Or answer from your phone.** While a worker waits on you, its session is also opened to
-  Claude's Remote Control: the Claude app notifies you, and you can answer on claude.ai or your phone
-  instead of in `pir`. Once you have answered and the worker is back at work, it is closed again.
-  Notifications for a permission request or a plain question can lag behind those for a question
-  with choices. Start a run with `PARALLEL_REMOTE=0 pir start {slug}` to keep it off. See
+  Claude's Remote Control, so you can answer on claude.ai or your phone instead of in `pir`. Once you
+  have answered and the worker is back at work, it is closed again. Start a run with
+  `PARALLEL_REMOTE=0 pir start {slug}` to keep it off. See
   [human-flow.md](docs/human-flow.md#answering-away-from-the-terminal--remote-control).
+- **Get a phone alert.** Run `pir notify` once: it gives you a private topic for the free ntfy app
+  (iPhone or Android; type the topic into "Subscribe to topic") and sends a test alert. From then on,
+  whenever a question in a build becomes yours — the coordinator agent passed it on, did not answer
+  in time, it needs your yes, or there is no agent — your phone gets an alert saying which task, why,
+  and the start of the question; tapping it opens that worker's chat. One reminder follows after 15
+  minutes if it is still waiting, and it clears once answered. You also get one alert when the run is
+  ready to merge (or is not). Questions the agent answers never buzz you, planning sessions never
+  alert, and the Claude app's own push is silenced so you are not told twice. About 150 characters of
+  each question pass through ntfy.sh. `pir notify test` sends a test; `pir notify off` stops it all. See
+  [human-flow.md](docs/human-flow.md#phone-alerts--pir-notify).
 - **When it is done.** Once every task is merged, the run brings the latest `main` into the
   feature branch so your merge will go through cleanly, runs the tests, and commits a delivery report
   (`plans/{slug}/REPORT.md`): what was delivered, the decisions made for you, what to check by hand,

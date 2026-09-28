@@ -146,7 +146,9 @@ tests shorten it). The command tells the agent in one message, starting "Handed 
 agent answers it with its pointer, as for a pass. `control.log` gets `coordinator-timeout <task>` and
 the ledger a `timeout` line (the item, `heldForMs`), never notable. A timed-out item that keeps waiting
 is not held again; a new park by the same worker is a new item, briefed afresh. Reserved items have no
-limit: they are the person's from the start.
+limit: they are the person's from the start. With phone alerts set up, the timeout is when the person's
+phone is alerted, the message opening `Agent didn't answer in time: `; a reserved item alerts at once,
+opening `Needs your yes: `. A question the agent answers in time never alerts.
 
 **A late answer still counts while the person has not answered.** A `permission`, `answers` or
 `message` from the agent for a timed-out item is applied like any decision, its ledger line carrying
@@ -197,6 +199,9 @@ Control comes on, so the worker is reachable from the phone only from that momen
 where the worker asked it; the person opens the worker, in `pir` or on the phone, and answers there.
 Once answered, the worker's Remote Control goes off again, as for any worker
 ([human-flow.md](human-flow.md#answering-away-from-the-terminal--remote-control)).
+With phone alerts set up, the pass also sends the person an ntfy alert opening `Agent passed it on: `,
+whose tap opens the worker's chat, not the agent's
+([human-flow.md](human-flow.md#phone-alerts--pir-notify)).
 
 ## The agent's own conversation
 
@@ -226,7 +231,9 @@ of the run. Typing reaches it through the same `inbox/` as a worker's input. Its
 hand-off appear in this conversation.
 
 Its Remote Control is on for its whole session, so the person can reach it from claude.ai or the
-Claude app all run, unless the run was started with `PARALLEL_REMOTE=0`.
+Claude app all run, unless the run was started with `PARALLEL_REMOTE=0`. With phone alerts set up when it
+starts, its session is started with the Claude app's push silenced (`CLAUDE_CLIENT_PRESENCE_FILE`), as a
+build worker's is, so its pointers do not push a second time.
 
 ## Decision files
 
@@ -302,7 +309,10 @@ counted in `waiting for you`. A red branch (the tests still fail after the test-
 resolved)
 gets `✗ not ready · tests red on pir/{slug} — no merge offered` with the reason; the report is still
 written and says so, and the run waits the same way. While it prepares, the footer reads `all N
-task(s) merged · preparing: syncing main, writing the report`.
+task(s) merged · preparing: syncing main, writing the report`. With phone alerts set up, the first pass
+that reads ready or red sends one alert (`{slug} · ready to merge` or `{slug} · not ready`) whose tap
+opens the agent's chat; it is not repeated when `main` moves
+([human-flow.md](human-flow.md#phone-alerts--pir-notify)).
 
 **The helpers' rows.** While a test-fix or main-sync worker runs, it has a row below the agent's row (and so below the tasks), keyed by
 its label: `tests-fix  fix-red-tests` or `main-sync  resolve-main-merge` (`runState.helpers`, built by

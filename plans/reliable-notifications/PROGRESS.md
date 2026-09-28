@@ -32,9 +32,9 @@ done · ⛔ blocked, needs a human.
 | T06 | notify-command | T02 | ✅ | |
 | T07 | coordinator-alerts | T01, T02, T04, T05 | ✅ | |
 | T08 | notify-live | T03, T06, T07 | ✅ | |
-| T09 | docs | T08 | ⬜ | |
+| T09 | docs | T08 | 🔍 | Docs and README for phone alerts; `npm test` green, no new tests. Deviation: task said clear is Android-only; T08 saw it work on the iPhone, so docs say so. Setup leads with typing the topic (no QR scanner in iOS ntfy). Command list got `pir notify` in the prose line, not the step table. |
 
-**Review queue:** *(empty)*
+**Review queue:** T09
 
 ## Blocked on the user
 

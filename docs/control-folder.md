@@ -91,7 +91,9 @@ line (`worker-proc.mjs`):
 - `dir: "note"` — what pir observed: `delivered-by-grant`, `answered-remotely` (a request answered on
   claude.ai; see [human-flow.md](human-flow.md)), `remote-control` (switched `on`, with the session
   `url`, or off), `remote-control-failed`, `undelivered`, `exited` (with exit code and signal),
-  `sdk-error`.
+  `sdk-error`, `notified` (a phone alert sent, `reminder` true or false; the end-of-run alert's goes
+  in the agent's log) and `notify-failed` (a phone alert that failed after its retries, once per
+  question, with `status` and `error`; see [human-flow.md](human-flow.md#phone-alerts--pir-notify)).
 
 The `pir` screen reads the last 256 KB and follows appends (`log-follow.mjs`); a line that does not
 parse (a crash mid-append) is shown raw and never stops the reader. A worker's state — busy, idle,
