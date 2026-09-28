@@ -247,7 +247,7 @@ Every key above keeps its meaning; the mouse only adds these:
 | Live view (a build) | a task's row opens its worker; the coordinator agent's row opens its conversation; an end-of-run helper's row opens its worker | the row brightens | one `↑`/`↓` |
 | Steps (a planning run), go question included | a step's row opens its conversation | the row brightens | one `↑`/`↓` |
 | Conversation | in the typing box, moves the cursor there | — | scrolls the history three lines |
-| New-plan box | moves the cursor; on the `@repo` pop-up, picks that repo | — | moves the list, as anywhere on the list screen |
+| New-plan box | moves the cursor; on the `@repo` pop-up, picks that repo | — | moves the list, as anywhere on the list screen; over the open `@repo` pop-up it moves the pop-up's highlight instead |
 
 A click on a row is exactly selecting it and pressing `↵`: the selection lands on that row, so `←`
 comes back to it, and whatever `↵` would say instead of opening, the click says too (a task with no
