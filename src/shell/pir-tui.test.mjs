@@ -32,7 +32,7 @@ import { FrameView, SGR, SELECTED_BG, clipSpans } from './pir-view.mjs';
 import { visibleWidth } from '@earendil-works/pi-tui';
 import { buildDashboard, initialUi } from '../core/dashboard.mjs';
 import { buildDisplay } from '../core/display.mjs';
-import { formatLines } from './render.mjs';
+import { SGR as RENDER_SGR, formatLines } from './render.mjs';
 import { writeRecord, recordPath } from './index-store.mjs';
 import { writeSnapshot } from './snapshot-store.mjs';
 import { createDashboardPublisher } from './dashboard-publish.mjs';
@@ -561,12 +561,9 @@ test('↓ reaches every row when two repos share a slug, and stop acts on the se
 });
 
 test('FrameView paints a span in the same SGR sequence render.mjs\'s map produces, and plain with colour off', () => {
-  // render.mjs does not export its map, so read its five codes from its source: this is the proof the
-  // reused watch frame colours exactly as the coordinator paints it.
-  const src = readFileSync(new URL('./render.mjs', import.meta.url), 'utf8');
-  const block = src.slice(src.indexOf('const SGR = {'), src.indexOf('};', src.indexOf('const SGR = {')));
-  const renderMap = Object.fromEntries([...block.matchAll(/(\w+): '([^']*)'/g)].map(([, k, v]) => [k, v.replace(/\\x1b/g, '\x1b')]));
-  assert.deepEqual(Object.keys(renderMap).sort(), ['active', 'asking', 'done', 'idle', 'red']);
+  // The proof the reused watch frame colours exactly as the coordinator paints it: render.mjs's five
+  // row/footer codes are pir-view's.
+  const renderMap = Object.fromEntries(['active', 'asking', 'done', 'idle', 'red'].map((k) => [k, RENDER_SGR[k]]));
   for (const [style, code] of Object.entries(renderMap)) {
     assert.equal(SGR[style], code, `pir-view carries render.mjs's ${style} code unchanged`);
     const [line] = new FrameView(() => [[{ text: 'T05 work', style }]]).render(80);

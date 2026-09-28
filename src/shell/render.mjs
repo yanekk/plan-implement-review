@@ -27,6 +27,8 @@
 // after clipping: `formatLines` and the non-TTY path stay escape-free, and NO_COLOR (or a non-TTY) turns
 // it off, keeping the harness/pipe output plain text.
 
+import { paletteFor } from './palette.mjs';
+
 // The spinner frames, ticked one per paint (a real run paints once per pass / poll). A reduced-motion
 // terminal is a person's setting the renderer cannot read here; the frames are plain Braille dots.
 const SPINNER = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
@@ -64,14 +66,9 @@ const CLEAR = '\x1b[2J';
 // carries, so it is never the only signal — a colour-blind reader or a NO_COLOR terminal loses nothing.
 // The map is by the model's row/footer `kind`, resolved to one of these styles (T16, PM 2026-09-20):
 //   active (preparing/building/reviewing/merging) cyan · done green · asking amber+bold (the standout) ·
-//   idle dim · red/interrupted red. RESET closes every coloured span.
-const SGR = {
-  done: '\x1b[32m', // green
-  active: '\x1b[36m', // cyan
-  asking: '\x1b[1;33m', // bold amber — the parked pointer and its row stand out
-  idle: '\x1b[2m', // dim grey
-  red: '\x1b[31m', // failure / interrupted
-};
+//   idle dim · red/interrupted red. RESET closes every coloured span. The codes are palette.mjs's, the
+//   table the `pir` screen paints with too.
+export const SGR = paletteFor(process.env).sgr; // palette.mjs: Catppuccin Mocha on a 24-bit terminal, basic codes otherwise
 const RESET = '\x1b[0m';
 
 // Wrap already-clipped text in its colour when colour is on and the style resolves to a real code;

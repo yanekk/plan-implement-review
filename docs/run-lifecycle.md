@@ -221,6 +221,12 @@ line per task, a summary line, and a footer. This is the command's status — th
   no widths, and the plain content (`formatLines`) carries no escapes. It is off unless stdout is a
   colour TTY and `NO_COLOR` is unset (any value of `NO_COLOR` disables it); a non-TTY — a pipe or
   the test harness — is never coloured, so that output stays plain, escape-free text.
+- **The palette is Catppuccin Mocha** (`src/shell/palette.mjs`, shared by this renderer and the `pir`
+  screen). A terminal that says it shows 24-bit colour (`COLORTERM=truecolor` or `24bit`, or
+  `FORCE_COLOR=3`) gets Mocha's foreground colours with no background of its own, so the terminal's
+  background shows through; the selected row's band is Mocha's selection grey. Any other terminal
+  keeps the basic 16-colour codes. Each colour keeps its meaning in both — amber for asking, green,
+  red, cyan, dim — so the colour names in these docs hold either way.
 
 The footer names the current asking worker and how to reach it — `● Txx slug — asking you; open it (→)
 to answer` (`render.mjs`): the person opens the task's row in `pir` and answers in the worker's
