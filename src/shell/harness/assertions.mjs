@@ -1083,15 +1083,23 @@ export function remoteOnlyAfterPass(task) {
 // readyWithReport() — the end with the agent (DESIGN §2.9, §2.10): the end sync met a conflict (a main-sync
 // helper row appeared), the run then read \`ready to merge\` with a report path, REPORT.md was on the
 // feature branch when the runner merged it (steps.json), and the command saw the merge and finished.
-export function readyWithReport() {
-  return fact('ready-with-report', 'The run reached `ready to merge` with REPORT.md committed, after resolving the main-sync conflict', (bundle) => {
+// `conflict: false` (T14) drops the main-sync requirement, for a fixture whose main does not move.
+export function readyWithReport({ conflict = true } = {}) {
+  const label = conflict
+    ? 'The run reached `ready to merge` with REPORT.md committed, after resolving the main-sync conflict'
+    : 'The run reached `ready to merge` with REPORT.md committed';
+  return fact(conflict ? 'ready-with-report' : 'ready-with-report:no-conflict', label, (bundle) => {
     const evidence = [];
     const statuses = bundle.statuses ?? [];
-    const sync = statuses.find((s) => rowFor(s.status, 'main-sync'));
-    if (!sync) return { pass: false, evidence, detail: 'no snapshot shows a main-sync worker — the end sync met no conflict' };
-    evidence.push(`status ${sync.ts}: main-sync worker row`);
-    const ready = statuses.find((s) => msOf(s.ts) >= msOf(sync.ts) && s.status?.runState?.handoff?.state === 'ready');
-    if (!ready) return { pass: false, evidence, detail: 'the run never read `ready to merge` after the main-sync conflict' };
+    let since = -Infinity;
+    if (conflict) {
+      const sync = statuses.find((s) => rowFor(s.status, 'main-sync'));
+      if (!sync) return { pass: false, evidence, detail: 'no snapshot shows a main-sync worker — the end sync met no conflict' };
+      evidence.push(`status ${sync.ts}: main-sync worker row`);
+      since = msOf(sync.ts);
+    }
+    const ready = statuses.find((s) => msOf(s.ts) >= since && s.status?.runState?.handoff?.state === 'ready');
+    if (!ready) return { pass: false, evidence, detail: `the run never read \`ready to merge\`${conflict ? ' after the main-sync conflict' : ''}` };
     evidence.push(`status ${ready.ts}: ready to merge, report ${ready.status.runState.handoff.reportPath}`);
     const merged = bundle.steps?.merged;
     if (!merged?.report) return { pass: false, evidence, detail: 'no REPORT.md was read from the feature branch at the merge' };
@@ -1103,7 +1111,242 @@ export function readyWithReport() {
     const finished = (bundle.coordinatorOut ?? '').split('\n').find((l) => l.includes('is in main. The run is finished.'));
     if (!finished) return { pass: false, evidence, detail: 'the command did not finish on the merge (no "is in main" line in coordinator.out)' };
     evidence.push(`coordinator.out: ${finished.trim()}`);
-    return { pass: true, evidence, detail: 'conflict resolved, ready to merge with REPORT.md committed, finished on the merge' };
+    return { pass: true, evidence, detail: `${conflict ? 'conflict resolved, ' : ''}ready to merge with REPORT.md committed, finished on the merge` };
+  });
+}
+
+// --- Several briefs at once, the hold limit, and the agent's statements (pir-coordinator T14) ------
+//
+// These read the agent's own conversation log too: `coordinator-{n}.ndjson`, copied into the bundle with
+// every other log (capture.mjs snapshotConversations; its task is null). pir's messages to the agent are its
+// `out` entries `from: 'pir'`; the agent's replies are the text of its `in` assistant events. Every brief
+// and hand-over names its item on lines of their own (coordinator-brief.mjs header): `Task: T01`,
+// requestId: `…`.
+
+const isAgentLog = (t) => /^coordinator-\d+\.ndjson$/.test(t?.key ?? '');
+const agentLogsOf = (bundle) => (bundle.transcripts ?? []).filter(isAgentLog);
+const taskIn = (text) => /^Task: (T\d+)\s*$/m.exec(text ?? '')?.[1] ?? null;
+const requestIdIn = (text) => /^requestId: `([^`]+)`\s*$/m.exec(text ?? '')?.[1] ?? null;
+const BRIEF = /^A worker (is asking|dropped)/;
+const HANDED = /^Handed to the person/;
+const DECISION_KINDS = new Set(['permission', 'answers', 'message', 'pass']);
+
+// pirToAgent(bundle) → [{ t, text, key }] every message pir sent the agent, in time order. Pure.
+export function pirToAgent(bundle) {
+  return agentLogsOf(bundle)
+    .flatMap((l) => (l.events ?? []).filter((e) => e?.dir === 'out' && e.from === 'pir' && e.kind === 'message').map((e) => ({ t: msOf(e.t), text: String(e.text ?? ''), key: l.key })))
+    .sort((a, b) => a.t - b.t);
+}
+
+// agentReplies(bundle) → [{ t, text, key }] every piece of text the agent wrote, in time order. Pure.
+export function agentReplies(bundle) {
+  const out = [];
+  for (const l of agentLogsOf(bundle)) {
+    for (const e of l.events ?? []) {
+      if (e?.dir !== 'in' || e.event?.type !== 'assistant') continue;
+      const content = e.event.message?.content;
+      if (!Array.isArray(content)) continue;
+      const text = content.filter((p) => p?.type === 'text' && typeof p.text === 'string').map((p) => p.text).join('\n').trim();
+      if (text) out.push({ t: msOf(e.t), text, key: l.key });
+    }
+  }
+  return out.sort((a, b) => a.t - b.t);
+}
+
+const iso = (ms) => new Date(ms).toISOString();
+
+// briefsOverlapped(a, b) — the agent had both tasks' briefs before any decision for either was applied: the
+// later of the two first briefs was sent before the earliest ledger decision for either task.
+export function briefsOverlapped(a, b) {
+  return fact(`briefs-overlapped:${a}:${b}`, `${a}'s and ${b}'s briefs both reached the agent before its decision for either was applied`, (bundle) => {
+    const evidence = [];
+    const briefs = pirToAgent(bundle).filter((m) => BRIEF.test(m.text));
+    const first = {};
+    for (const task of [a, b]) {
+      const m = briefs.find((x) => taskIn(x.text) === task);
+      if (!m) return { pass: false, evidence, detail: `no brief for ${task} in the agent's conversation` };
+      first[task] = m.t;
+      evidence.push(`${m.key} ${iso(m.t)}: brief for ${task}`);
+    }
+    const decisions = (bundle.ledger ?? []).filter((l) => (l?.task === a || l?.task === b) && DECISION_KINDS.has(l.kind));
+    for (const l of decisions) evidence.push(`ledger ${l.t}: ${l.kind} ${l.task}`);
+    if (decisions.length === 0) return { pass: false, evidence, detail: `no decision of the agent's for ${a} or ${b} in the ledger` };
+    const lastBrief = Math.max(first[a], first[b]);
+    const firstDecision = Math.min(...decisions.map((l) => msOf(l.t)));
+    if (lastBrief >= firstDecision) {
+      return { pass: false, evidence, detail: `the second brief (${iso(lastBrief)}) came after the first decision was applied (${iso(firstDecision)}): no overlap` };
+    }
+    return { pass: true, evidence, detail: `both briefs in by ${iso(lastBrief)}, first decision applied ${Math.round((firstDecision - lastBrief) / 1000)}s later` };
+  });
+}
+
+// oneDecisionEach(tasks) — every item of each task the agent decided got exactly one ledger decision (items
+// keyed by requestId, a report park by the task), and each task got at least one.
+export function oneDecisionEach(tasks) {
+  return fact(`one-decision-each:${tasks.join(',')}`, `The agent decided ${tasks.join(' and ')} separately, one ledger line per item`, (bundle) => {
+    const evidence = [];
+    for (const task of tasks) {
+      const lines = ledgerFor(bundle, task).filter((l) => DECISION_KINDS.has(l.kind));
+      if (lines.length === 0) return { pass: false, evidence, detail: `no ledger decision for ${task}` };
+      const byItem = new Map();
+      for (const l of lines) {
+        const k = l.requestId ?? 'report';
+        byItem.set(k, [...(byItem.get(k) ?? []), l]);
+        evidence.push(`ledger ${l.t}: ${l.kind} ${task} ${k}`);
+      }
+      for (const [k, ls] of byItem) {
+        if (ls.length !== 1) return { pass: false, evidence, detail: `${task}'s item ${k} has ${ls.length} ledger decisions` };
+      }
+    }
+    return { pass: true, evidence, detail: `${tasks.join(', ')}: one decision per item` };
+  });
+}
+
+// timedOutToPerson(task, holdMs, { slackMs }) — the hold limit fired for real (DESIGN §2.11): the task's row
+// read `asking coordinator`, a `timeout` ledger line came at about `holdMs` (within `slackMs`), before any
+// answer to the item; the row then read `asking you`, the worker's Remote Control came on at or after the
+// timeout and was off before it; the agent was handed the item and replied naming the task; and the harness's
+// answer as the person reached the worker.
+export function timedOutToPerson(task, holdMs, { slackMs = 60000 } = {}) {
+  return fact(`timed-out-to-person:${task}`, `${task}'s held question went to the person after the ${Math.round(holdMs / 1000)}s hold limit, the agent gave its pointer, and the person's answer reached ${task}`, (bundle) => {
+    const evidence = [];
+    const timeout = ledgerFor(bundle, task).find((l) => l.kind === 'timeout');
+    if (!timeout) return { pass: false, evidence, detail: `no \`timeout\` ledger line for ${task}` };
+    const tt = msOf(timeout.t);
+    evidence.push(`ledger ${timeout.t}: timeout ${task} — held ${timeout.heldForMs} ms`);
+    if (!(timeout.heldForMs >= holdMs && timeout.heldForMs < holdMs + slackMs)) {
+      return { pass: false, evidence, detail: `held for ${timeout.heldForMs} ms, not about the ${holdMs} ms limit` };
+    }
+    const early = ledgerFor(bundle, task).find((l) => DECISION_KINDS.has(l.kind) && msOf(l.t) < tt);
+    if (early) return { pass: false, evidence, detail: `the agent decided ${task} (${early.kind}) before the timeout` };
+
+    const statuses = bundle.statuses ?? [];
+    const held = statuses.find((s) => rowFor(s.status, task)?.asking && rowFor(s.status, task).holder === 'coordinator');
+    if (!held) return { pass: false, evidence, detail: `no snapshot shows ${task} \`asking coordinator\`` };
+    evidence.push(`status ${held.ts}: ${task} asking coordinator`);
+    const youBefore = statuses.find((s) => msOf(s.ts) < tt && asksPersonRow(rowFor(s.status, task)));
+    if (youBefore) return { pass: false, evidence, detail: `${task} read \`asking you\` at ${youBefore.ts}, before the timeout` };
+    const you = statuses.find((s) => msOf(s.ts) >= tt && asksPersonRow(rowFor(s.status, task)));
+    if (!you) return { pass: false, evidence, detail: `${task} never read \`asking you\` after the timeout` };
+    evidence.push(`status ${you.ts}: ${task} asking you`);
+
+    const logs = (bundle.transcripts ?? []).filter((t) => t.task === task);
+    const events = logs.flatMap((t) => (t.events ?? []).map((e) => ({ ...e, key: t.key })));
+    const rc = events.filter((e) => e?.dir === 'note' && e.kind === 'remote-control').map((e) => ({ t: msOf(e.t), on: !!e.on })).sort((x, y) => x.t - y.t);
+    if (rc.filter((n) => n.t < tt).at(-1)?.on) return { pass: false, evidence, detail: `${task}'s Remote Control was on before the timeout` };
+    const on = rc.find((n) => n.t >= tt && n.on);
+    if (!on) return { pass: false, evidence, detail: `${task}'s Remote Control never came on after the timeout` };
+    evidence.push(`${iso(on.t)}: ${task} remote control on`);
+
+    const handed = pirToAgent(bundle).find((m) => HANDED.test(m.text) && taskIn(m.text) === task);
+    if (!handed) return { pass: false, evidence, detail: `the agent was never told ${task} was handed to the person` };
+    evidence.push(`${handed.key} ${iso(handed.t)}: hand-over message for ${task}`);
+    const pointer = agentReplies(bundle).find((r) => r.t > handed.t && r.text.includes(task));
+    if (!pointer) return { pass: false, evidence, detail: `no reply of the agent's names ${task} after the hand-over` };
+    evidence.push(`${pointer.key} ${iso(pointer.t)}: pointer "${pointer.text.slice(0, 120).replace(/\s+/g, ' ')}…"`);
+
+    const request = events.find((e) => e?.dir === 'request' && e.requestId === timeout.requestId) ?? events.find((e) => e?.dir === 'request');
+    if (!request) return { pass: false, evidence, detail: `no request in ${task}'s log` };
+    const reply = events.find((e) => e?.dir === 'out' && e.kind === 'reply' && e.requestId === request.requestId);
+    if (!reply) return { pass: false, evidence, detail: `${task}'s request ${request.requestId} was never answered` };
+    evidence.push(`${reply.key} ${iso(msOf(reply.t))}: reply ${request.requestId} from ${reply.from} ${reply.result?.behavior}`);
+    if (msOf(reply.t) < tt) return { pass: false, evidence, detail: `${task} was answered before the timeout` };
+    if (reply.from !== 'person' || reply.result?.behavior !== 'allow') return { pass: false, evidence, detail: `${task}'s answer came from ${reply.from} (${reply.result?.behavior}), not the person's` };
+    return { pass: true, evidence, detail: `held ${Math.round(timeout.heldForMs / 1000)}s, then the person's; pointer given, answered ${Math.round((msOf(reply.t) - tt) / 1000)}s after the timeout` };
+  });
+}
+
+// waitingAt(bundle, task, t) → true when `task`'s worker had an item waiting at `t`: a request logged at or
+// before `t` with no reply at or before `t`, or, for a task that never logged a request (a report park), a
+// status snapshot at or before `t` showing its row asking. Pure.
+export function waitingAt(bundle, task, t) {
+  const events = (bundle.transcripts ?? []).filter((x) => x.task === task).flatMap((x) => x.events ?? []);
+  const requests = events.filter((e) => e?.dir === 'request');
+  if (requests.length > 0) {
+    return requests.some((r) => {
+      if (msOf(r.t) > t) return false;
+      const closed = events.find((e) => ((e?.dir === 'out' && e.kind === 'reply') || (e?.dir === 'note' && (e.kind === 'answered-remotely' || e.kind === 'delivered-by-grant'))) && e.requestId === r.requestId);
+      return !closed || msOf(closed.t) > t;
+    });
+  }
+  const before = (bundle.statuses ?? []).filter((s) => msOf(s.ts) <= t).at(-1);
+  return !!rowFor(before?.status, task)?.asking;
+}
+
+// A sentence of the agent's that sends the person to an item: it names the task and tells them to answer it
+// or says it waits on them. "T01 is asking …" alone is a description, often of an item the agent is answering
+// itself, so it is not a pointer. A sentence saying the item is already settled is a correction, not a pointer.
+const POINTER = /(\b(please )?answer (it|this|that|them)\b|\banswer\b[^.]{0,60}\b(conversation|session|phone|row)\b|\bwaits? (for|on) you\b|\bneeds you\b|\byour (answer|call|decision|pick)\b|\bover to you\b|\byours to (answer|decide)\b)/i;
+const CORRECTION = /\b(already|settled|no longer|has been answered|was answered|been handled)\b/i;
+
+// pointersAt(text) → the task ids a reply points the person at, sentence by sentence. A pointer sentence that
+// names no task ("Answer it in its conversation.") points at the task named last before it. Pure.
+export function pointersAt(text) {
+  const out = new Set();
+  let last = null;
+  for (const sentence of String(text ?? '').split(/(?<=[.!?])\s+|\n+/)) {
+    const named = [...sentence.matchAll(/\bT\d{2,}\b/g)].map((m) => m[0]);
+    if (POINTER.test(sentence) && !CORRECTION.test(sentence)) {
+      for (const t of named.length ? named : last ? [last] : []) out.add(t);
+    }
+    if (named.length) last = named.at(-1);
+  }
+  return [...out];
+}
+
+// What a closing reply recorded in the worker's log should read like in pir's "already answered" message
+// (coordinator-brief.mjs closedWhy): who, and every answer given. → { who: RegExp, answers: string[] }.
+function expectedClosing(events, requestId) {
+  const reply = events.find((e) => e?.dir === 'out' && e.kind === 'reply' && e.requestId === requestId);
+  if (reply) {
+    const who = { person: /by the person/, coordinator: /by your own decision/, pir: /by pir|standing permission/ }[reply.from] ?? /./;
+    const r = reply.result ?? {};
+    const given = r.updatedInput?.answers;
+    const answers = r.behavior === 'allow' ? (given && typeof given === 'object' ? Object.values(given).map(String) : ['allowed']) : ['denied'];
+    return { who, answers, source: `reply from ${reply.from} ${r.behavior}` };
+  }
+  if (events.some((e) => e?.dir === 'note' && e.kind === 'answered-remotely' && e.requestId === requestId)) return { who: /on the phone/, answers: [], source: 'answered-remotely' };
+  if (events.some((e) => e?.dir === 'note' && e.kind === 'exited')) return { who: /closed with no answer/i, answers: [], source: 'worker exited' };
+  return null;
+}
+
+// statementsMatchRecord() — the mechanical half of checking the agent's words against the record (T14, after
+// T09's "you most likely answered it"): (1) no reply of the agent's points the person at an item that was not
+// waiting when the reply was written (pointersAt, waitingAt); (2) every "already answered" / "closed with no
+// answer" message pir sent the agent names who closed the item and the answer the worker's own log records.
+// The rest of what the agent said is read by the worker against the record and listed in the commit message.
+export function statementsMatchRecord() {
+  return fact('statements-match-record', "The agent's pointers and the answered-first facts it was sent match the record", (bundle) => {
+    const evidence = [];
+    const replies = agentReplies(bundle);
+    if (replies.length === 0) return { pass: false, evidence, detail: "no reply of the agent's in the bundle" };
+    let pointers = 0;
+    for (const r of replies) {
+      for (const task of pointersAt(r.text)) {
+        pointers += 1;
+        const ok = waitingAt(bundle, task, r.t);
+        evidence.push(`${r.key} ${iso(r.t)}: points at ${task} — ${ok ? 'waiting' : 'NOT waiting'}`);
+        if (!ok) return { pass: false, evidence, detail: `the agent pointed the person at ${task} at ${iso(r.t)}, when nothing of ${task} was waiting` };
+      }
+    }
+    let facts = 0;
+    for (const m of pirToAgent(bundle)) {
+      if (!/^(Already |Closed with no answer|No longer waiting)/.test(m.text)) continue;
+      facts += 1;
+      const task = taskIn(m.text);
+      const requestId = requestIdIn(m.text);
+      const events = (bundle.transcripts ?? []).filter((x) => x.task === task).flatMap((x) => x.events ?? []).filter((e) => msOf(e.t) <= m.t);
+      const first = m.text.split('\n')[0];
+      evidence.push(`${m.key} ${iso(m.t)}: told "${first}" (${task} ${requestId ?? 'report'})`);
+      if (!requestId) continue; // a report park's closing is quoted from the log itself (closingAnswer); nothing to compare here
+      const want = expectedClosing(events, requestId);
+      if (!want) return { pass: false, evidence, detail: `pir told the agent ${task}'s ${requestId} was closed, but the worker's log shows no close before ${iso(m.t)}` };
+      const missing = want.answers.filter((a) => !first.includes(a));
+      if (!want.who.test(first) || missing.length > 0) {
+        return { pass: false, evidence, detail: `pir's message on ${task}'s ${requestId} does not match the log (${want.source}${missing.length ? `; missing ${missing.join(', ')}` : ''})` };
+      }
+    }
+    return { pass: true, evidence, detail: `${pointers} pointer(s), each at a waiting item; ${facts} answered-first message(s), each matching the worker's log` };
   });
 }
 

@@ -42,9 +42,9 @@ test('defineScenario: holdMerges defaults off and is a boolean', () => {
 test('defineScenario: answerPending defaults off and normalises to { typed } (T18)', () => {
   const spec = (answerPending) => defineScenario({ id: 'a', fixture: 'f', facts: [noHelloEver()], answerPending }).answerPending;
   assert.equal(spec(undefined), false);
-  assert.deepEqual(spec(true), { typed: {}, say: {}, afterWake: {}, permissions: {} });
-  assert.deepEqual(spec({ typed: { 'Q?': 'mine' }, say: { T04: 'go' } }), { typed: { 'Q?': 'mine' }, say: { T04: 'go' }, afterWake: {}, permissions: {} });
-  assert.deepEqual(spec({ afterWake: { T02: 'blue' } }), { typed: {}, say: {}, afterWake: { T02: 'blue' }, permissions: {} });
+  assert.deepEqual(spec(true), { typed: {}, say: {}, afterWake: {}, permissions: {}, personDelayMs: 0 });
+  assert.deepEqual(spec({ typed: { 'Q?': 'mine' }, say: { T04: 'go' } }), { typed: { 'Q?': 'mine' }, say: { T04: 'go' }, afterWake: {}, permissions: {}, personDelayMs: 0 });
+  assert.deepEqual(spec({ afterWake: { T02: 'blue' } }), { typed: {}, say: {}, afterWake: { T02: 'blue' }, permissions: {}, personDelayMs: 0 });
   assert.deepEqual(spec({ permissions: { T02: 'deny' } }).permissions, { T02: 'deny' });
 });
 
@@ -87,4 +87,15 @@ test('defineScenario: mainCommit and mergeWhenReady default off and are checked 
   assert.equal(s.mergeWhenReady, true);
   assert.throws(() => defineScenario({ ...base, mainCommit: { files: { 'a.txt': 'x' } } }), /mainCommit needs/);
   assert.throws(() => defineScenario({ ...base, mainCommit: { after: 'T01', files: {} } }), /mainCommit needs/);
+});
+
+test('defineScenario: coordinatorHoldMs needs the agent and a positive whole ms; personDelayMs a whole ms (pir-coordinator T14)', () => {
+  const base = { id: 'a', fixture: 'f', facts: [noHelloEver()] };
+  assert.equal(defineScenario(base).coordinatorHoldMs, null);
+  assert.equal(defineScenario({ ...base, coordinator: true, coordinatorHoldMs: 180000 }).coordinatorHoldMs, 180000);
+  assert.throws(() => defineScenario({ ...base, coordinatorHoldMs: 180000 }), /coordinatorHoldMs needs the coordinator agent/);
+  assert.throws(() => defineScenario({ ...base, coordinator: true, coordinatorHoldMs: 0 }), /positive whole number/);
+  assert.throws(() => defineScenario({ ...base, coordinator: true, coordinatorHoldMs: 1.5 }), /positive whole number/);
+  assert.equal(defineScenario({ ...base, answerPending: { personDelayMs: 60000 } }).answerPending.personDelayMs, 60000);
+  assert.throws(() => defineScenario({ ...base, answerPending: { personDelayMs: -1 } }), /personDelayMs must be/);
 });

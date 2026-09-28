@@ -172,7 +172,9 @@ const repliesSent = (answered) => [...answered].filter((k) => String(k).startsWi
 // the program taken as alive (the runner only ticks while it runs), called as drop(input, controlDir);
 // injected so a test sees the drops without an inbox. `personOnly` (a run with the coordinator agent,
 // pir-coordinator T09) reads control/status.json each tick and answers only the requests of workers it shows
-// held by the person; `permissions` is pendingDrops'.
+// held by the person; `permissions` is pendingDrops'. `personDelayMs` (T14) holds each request's answer until
+// that long after this stand-in first found it answerable, as a person would take a minute to answer; `now`
+// (ms) is the clock it is measured on, injected so a test drives it.
 export function createAnswerer({
   controlDir,
   typed = {},
@@ -182,10 +184,13 @@ export function createAnswerer({
   holdReplies = () => false,
   personOnly = false,
   permissions = {},
+  personDelayMs = 0,
+  now = Date.now,
   drop = (input, dir) => dropPersonInput(dir, input, { coordinatorAlive: true }),
   log = () => {},
 } = {}) {
   const answered = new Set();
+  const firstSeen = new Map(); // requestId → ms this stand-in first found it answerable (personDelayMs)
   const dirNow = typeof controlDir === 'function' ? controlDir : () => controlDir;
   let capped = false;
   const readLogs = (controlRoot) => {
@@ -210,7 +215,13 @@ export function createAnswerer({
       const logs = readLogs(root);
       const withReplies = replies?.text && !holdReplies() ? replies : null;
       const onlyWorkers = personOnly ? personHeldWorkers(readSnapshot(root)) : null;
+      const t = now();
       for (const { key, ...d } of pendingDrops(logs, answered, typed, say, withReplies, afterWake, { onlyWorkers, permissions })) {
+        // Only a request (a key that is its requestId) waits out the delay; say/wake/reply keys carry a prefix.
+        if (personDelayMs > 0 && (d.kind === 'permission' || d.kind === 'answers')) {
+          if (!firstSeen.has(key)) firstSeen.set(key, t);
+          if (t - firstSeen.get(key) < personDelayMs) continue;
+        }
         const r = drop(d, root);
         if (!r?.ok) {
           log(`answerer: could not answer ${key}: ${r?.reason ?? 'unknown'}`);

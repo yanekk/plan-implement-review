@@ -103,6 +103,12 @@ test('seatbeltEnv sets PARALLEL_LIVE and the ceiling, and never PARALLEL_ALLOW_H
   assert.deepEqual(seatbeltEnv({ ceiling: 2, holdMerges: true }), { PARALLEL_LIVE: '1', PARALLEL_MAX_WORKERS: '2', PARALLEL_HOLD_MERGES: '1', ...OFF });
 });
 
+test('seatbeltEnv: a scenario\'s coordinatorHoldMs sets the agent\'s hold limit, only with the agent on (T14)', () => {
+  assert.deepEqual(seatbeltEnv({ ceiling: 3, coordinator: true, holdMs: 180000 }), { PARALLEL_LIVE: '1', PARALLEL_MAX_WORKERS: '3', PARALLEL_COORDINATOR_HOLD_MS: '180000' });
+  assert.equal(seatbeltEnv({ ceiling: 3, holdMs: 180000 }).PARALLEL_COORDINATOR_HOLD_MS, undefined);
+  assert.equal(seatbeltEnv({ ceiling: 3, coordinator: true }).PARALLEL_COORDINATOR_HOLD_MS, undefined);
+});
+
 test('seatbeltEnv: a scenario with `coordinator` runs the agent (no PARALLEL_COORDINATOR)', () => {
   assert.deepEqual(seatbeltEnv({ ceiling: 1, coordinator: true }), { PARALLEL_LIVE: '1', PARALLEL_MAX_WORKERS: '1' });
 });

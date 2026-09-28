@@ -104,6 +104,21 @@ const EXPECT = {
     ceiling: 2,
     factIds: ['agent-answered:T01', 'reserved-to-person:T02', 'remote-only-after-pass:T02', 'ready-with-report', 'ceiling-held:2'],
   },
+  'pir-coordinator-concurrent': {
+    taskCount: 3,
+    deps: { T01: [], T02: [], T03: [] },
+    ceiling: 3,
+    factIds: [
+      'briefs-overlapped:T01:T02',
+      'agent-answered:T01',
+      'agent-answered:T02',
+      'one-decision-each:T01,T02',
+      'timed-out-to-person:T03',
+      'statements-match-record',
+      'ready-with-report:no-conflict',
+      'ceiling-held:3',
+    ],
+  },
 };
 
 // --- The registry ---------------------------------------------------------------------------------
@@ -258,6 +273,7 @@ test('live-workers-demo: T01 must ask through AskUserQuestion; T02 runs the exac
     say: { T04: 'go' },
     afterWake: {},
     permissions: {},
+    personDelayMs: 0,
   });
   assert.match(fx.tasks['T04-background.md'], /wait for the person's go/);
   assert.match(fx.tasks['T03-extras.md'], /multiSelect true/);
@@ -274,7 +290,7 @@ test('live-workers-demo: T01 must ask through AskUserQuestion; T02 runs the exac
 
 test('real-asking: T01 reports, works on and only then asks in plain text; T02 is woken while asking and answered by the harness', () => {
   const fx = getFixture('real-asking');
-  assert.deepEqual(fx.scenario.answerPending, { typed: {}, say: {}, afterWake: { T02: 'blue' }, permissions: {} });
+  assert.deepEqual(fx.scenario.answerPending, { typed: {}, say: {}, afterWake: { T02: 'blue' }, permissions: {}, personDelayMs: 0 });
   assert.equal(fx.scenario.statusSnapshots, true, 'the coordinator writes status.json so the row history is captured');
   assert.equal(fx.scenario.seatbelts.timeoutMs, 15 * 60 * 1000);
   const t01 = fx.tasks['T01-greeting.md'];
@@ -309,6 +325,29 @@ test('pir-coordinator: the agent runs, the push is reserved and denied, main mov
   const t02 = fx.tasks['T02-version.md'];
   assert.match(t02, /Run exactly `git push origin HEAD`/);
   assert.match(t02, /NOT the\s+AskUserQuestion tool/);
+});
+
+test('pir-coordinator-concurrent: three askers at once, a 3-minute hold, the rules hold T03, the person waits a minute (T14)', () => {
+  const fx = getFixture('pir-coordinator-concurrent');
+  const sc = fx.scenario;
+  assert.equal(sc.coordinator, true);
+  assert.equal(sc.statusSnapshots, true);
+  assert.equal(sc.coordinatorHoldMs, 180000);
+  assert.equal(sc.answerPending.personDelayMs, 60000);
+  assert.equal(sc.seatbelts.timeoutMs, 20 * 60 * 1000);
+  assert.equal(sc.mainCommit, null, 'main does not move: no end-sync conflict');
+  assert.equal(sc.mergeWhenReady, true);
+  const files = fixtureFiles(fx);
+  assert.match(files['.claude/pir-coordinator.md'], /release date, write no decision and do not pass them on; wait/);
+  const design = files[`plans/${fx.slug}/DESIGN.md`];
+  assert.match(design, /greeting function is named `greet`/);
+  assert.match(design, /farewell function is named `farewell`/);
+  assert.match(design, /release date .* is deliberately \*\*not\*\* decided/s);
+  for (const name of ['T01-greeting.md', 'T02-farewell.md', 'T03-release.md']) {
+    assert.match(fx.tasks[name], /FIRST action.*\*\*AskUserQuestion tool\*\*/s, name);
+  }
+  // Different questions, so the agent decides two items, not one twice.
+  assert.notEqual(/"([^"]+)"/.exec(fx.tasks['T01-greeting.md'])[1], /"([^"]+)"/.exec(fx.tasks['T02-farewell.md'])[1]);
 });
 
 test('parallel: at least two independent tasks so workers run concurrently', () => {

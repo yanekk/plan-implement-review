@@ -47,6 +47,12 @@ import {
   reservedToPerson,
   remoteOnlyAfterPass,
   readyWithReport,
+  briefsOverlapped,
+  oneDecisionEach,
+  timedOutToPerson,
+  statementsMatchRecord,
+  pointersAt,
+  waitingAt,
 } from './assertions.mjs';
 
 const REPO = 'pir-h';
@@ -1173,4 +1179,150 @@ test('readyWithReport: a main-sync row, then ready, the report on the branch and
   assert.equal(readyWithReport().check({ ...bundle, steps: { merged: null } }).pass, false);
   assert.equal(readyWithReport().check({ ...bundle, steps: { merged: { ...bundle.steps.merged, report: '# Report\n' } } }).pass, false);
   assert.equal(readyWithReport().check({ ...bundle, coordinatorOut: '' }).pass, false);
+});
+
+test('readyWithReport({ conflict: false }): ready with the report passes with no main-sync row (T14)', () => {
+  const report = '# Report\n\n## Delivered\n\nx\n\n## Decisions made for you\n\nNone.\n\n## Branch\n\nsynced\n';
+  const bundle = {
+    statuses: [snap('2026-01-01T00:22:00Z', [], { handoff: { state: 'ready', reportPath: 'plans/p/REPORT.md' } })],
+    steps: { merged: { at: '2026-01-01T00:22:02Z', reportPath: 'plans/p/REPORT.md', report } },
+    coordinatorOut: '✔ pir/p is in main. The run is finished.\n',
+  };
+  assert.equal(readyWithReport({ conflict: false }).id, 'ready-with-report:no-conflict');
+  assert.equal(readyWithReport({ conflict: false }).check(bundle).pass, true);
+  assert.equal(readyWithReport().check(bundle).pass, false, 'the default still needs the conflict');
+  assert.equal(readyWithReport({ conflict: false }).check({ ...bundle, statuses: [] }).pass, false);
+});
+
+// --- Several briefs at once, the hold limit, the agent's statements (pir-coordinator T14) -----------
+//
+// A recorded run in miniature: T01 and T02 ask at 0:10 and 0:11, both briefs reach the agent before either
+// answer is applied; T03 asks at 0:12, is held, times out at 3:12, the agent gives its pointer at 3:20, the
+// person answers at 4:12 and the agent is told who answered and what.
+
+const T0 = Date.parse('2026-01-01T00:00:00Z');
+const at = (s) => T0 + s * 1000;
+const isoAt = (s) => new Date(at(s)).toISOString();
+const HOLD = 180000;
+const Q3 = 'Which release date should RELEASE.md announce?';
+const brief = (s, task, rid) => ({ t: at(s), dir: 'out', from: 'pir', kind: 'message', text: `A worker is asking a set of questions.\n\nWorker: \`w-${task}\`\nTask: ${task}\nrequestId: \`${rid}\`\n\nQuestion 1: …` });
+const said = (s, text) => ({ t: at(s), dir: 'in', event: { type: 'assistant', message: { content: [{ type: 'text', text }] } } });
+const pirSays = (s, text) => ({ t: at(s), dir: 'out', from: 'pir', kind: 'message', text });
+const coordLog = (events) => ({ key: 'coordinator-1.ndjson', task: null, role: null, events });
+
+function concurrentBundle() {
+  const agentEvents = [
+    brief(10.5, 'T01', 'q1'),
+    brief(11.5, 'T02', 'q2'),
+    brief(12.5, 'T03', 'q3'),
+    said(20, 'T01 is asking the greeting name; DESIGN settles it: greet. T02 likewise: farewell. T03 asks the release date, which the rules tell me to hold.'),
+    pirSays(192.5, `Handed to the person: you held this item for 3 minutes without a decision, so it is now the person's, as if you had passed it on.\n\nWorker: \`w-T03\`\nTask: T03\nrequestId: \`q3\`\n\nYou may still answer it …`),
+    said(200, "T03 (release) is asking which release date RELEASE.md announces. The plan leaves it open and the rules say to hold it. I would pick 2026-10-01. Answer it in T03's conversation."),
+    pirSays(253, `Already answered by the person: ${Q3} → 2026-10-01.\n\nWorker: \`w-T03\`\nTask: T03\nrequestId: \`q3\`\n\nDrop this item; …`),
+    said(260, 'Noted.'),
+  ];
+  const q = (s, rid) => ({ t: at(s), dir: 'request', requestId: rid, toolName: 'AskUserQuestion', input: {} });
+  const rep = (s, rid, from, answers) => ({ t: at(s), dir: 'out', kind: 'reply', from, requestId: rid, result: { behavior: 'allow', updatedInput: { answers } } });
+  const rc = (s, on) => ({ t: at(s), dir: 'note', kind: 'remote-control', on });
+  return {
+    ledger: [
+      { t: isoAt(25), kind: 'answers', task: 'T01', requestId: 'q1', item: 'name', answer: 'greet' },
+      { t: isoAt(26), kind: 'answers', task: 'T02', requestId: 'q2', item: 'name', answer: 'farewell' },
+      { t: isoAt(192.4), kind: 'timeout', task: 'T03', requestId: 'q3', item: Q3, heldForMs: 180200 },
+    ],
+    transcripts: [
+      coordLog(agentEvents),
+      agentLog('T01', [q(10, 'q1'), rep(25, 'q1', 'coordinator', { name: 'greet' })]),
+      agentLog('T02', [q(11, 'q2'), rep(26, 'q2', 'coordinator', { name: 'farewell' })]),
+      agentLog('T03', [q(12, 'q3'), rc(192.6, true), rep(252.5, 'q3', 'person', { [Q3]: '2026-10-01' }), rc(253, false)]),
+    ],
+    statuses: [
+      snap(isoAt(13), [{ id: 'T01', asking: 'questions', holder: 'coordinator' }, { id: 'T02', asking: 'questions', holder: 'coordinator' }, { id: 'T03', asking: 'questions', holder: 'coordinator' }]),
+      snap(isoAt(100), [{ id: 'T01', asking: null }, { id: 'T02', asking: null }, { id: 'T03', asking: 'questions', holder: 'coordinator' }]),
+      snap(isoAt(193), [{ id: 'T03', asking: 'questions', holder: 'person' }]),
+      snap(isoAt(254), [{ id: 'T03', asking: null }]),
+    ],
+  };
+}
+
+test('briefsOverlapped: both briefs before the first applied decision passes; a brief after it fails', () => {
+  const b = concurrentBundle();
+  assert.equal(briefsOverlapped('T01', 'T02').check(b).pass, true);
+  const late = { ...b, transcripts: [coordLog([brief(10.5, 'T01', 'q1'), brief(30, 'T02', 'q2')]), ...b.transcripts.slice(1)] };
+  const r = briefsOverlapped('T01', 'T02').check(late);
+  assert.equal(r.pass, false);
+  assert.match(r.detail, /no overlap/);
+  assert.equal(briefsOverlapped('T01', 'T02').check({ ...b, ledger: [] }).pass, false, 'no decision at all');
+  assert.equal(briefsOverlapped('T01', 'T09').check(b).pass, false, 'no brief for one task');
+});
+
+test('oneDecisionEach: one ledger decision per item passes; two for one item, or none for a task, fails', () => {
+  const b = concurrentBundle();
+  assert.equal(oneDecisionEach(['T01', 'T02']).check(b).pass, true);
+  assert.equal(oneDecisionEach(['T01', 'T02']).check({ ...b, ledger: [...b.ledger, { ...b.ledger[0], t: isoAt(40) }] }).pass, false);
+  assert.equal(oneDecisionEach(['T01', 'T02']).check({ ...b, ledger: b.ledger.slice(1) }).pass, false);
+  assert.equal(oneDecisionEach(['T03']).check(b).pass, false, 'a timeout line is not a decision');
+});
+
+test('timedOutToPerson: held, timed out at the limit, then asking you with Remote Control, pointer, the person\'s answer', () => {
+  const b = concurrentBundle();
+  const f = timedOutToPerson('T03', HOLD);
+  assert.equal(f.check(b).pass, true, f.check(b).detail);
+  const without = (pred) => ({ ...b, ledger: b.ledger.filter((l) => !pred(l)) });
+  assert.match(f.check(without((l) => l.kind === 'timeout')).detail, /no `timeout` ledger line/);
+  assert.match(f.check({ ...b, ledger: [...b.ledger.slice(0, 2), { ...b.ledger[2], heldForMs: 400000 }] }).detail, /not about the/);
+  assert.match(f.check({ ...b, ledger: [...b.ledger, { t: isoAt(100), kind: 'answers', task: 'T03', requestId: 'q3' }] }).detail, /before the timeout/);
+  const earlyYou = { ...b, statuses: [...b.statuses, snap(isoAt(150), [{ id: 'T03', asking: 'questions', holder: 'person' }])] };
+  assert.match(f.check(earlyYou).detail, /before the timeout/);
+  const withT03 = (events) => ({ ...b, transcripts: [...b.transcripts.slice(0, 3), agentLog('T03', events)] });
+  const t03 = b.transcripts[3].events;
+  assert.match(f.check(withT03(t03.filter((e) => e.kind !== 'remote-control'))).detail, /never came on/);
+  assert.match(f.check(withT03([{ ...t03[0] }, { ...t03[1], t: at(100) }, ...t03.slice(2)])).detail, /on before the timeout/);
+  assert.match(f.check(withT03([t03[0], t03[1], { ...t03[2], from: 'coordinator' }])).detail, /not the person's/);
+  assert.match(f.check(withT03(t03.slice(0, 2))).detail, /never answered/);
+  const noPointer = { ...b, transcripts: [coordLog(b.transcripts[0].events.filter((e) => !(e.dir === 'in' && e.t > at(192.5)))), ...b.transcripts.slice(1)] };
+  assert.match(f.check(noPointer).detail, /no reply of the agent's names T03/);
+});
+
+test('pointersAt: a sentence sending the person to a task, not a description or a correction', () => {
+  assert.deepEqual(pointersAt("T03 asks the date. I would pick Q4. Answer it in T03's conversation."), ['T03']);
+  assert.deepEqual(pointersAt('T03 asks the date. I would pick Q4. Answer it in its conversation.'), ['T03']);
+  assert.deepEqual(pointersAt('T02 waits for you: the push is yours to decide.'), ['T02']);
+  assert.deepEqual(pointersAt('T01 is asking the name; DESIGN settles it: greet.'), []);
+  assert.deepEqual(pointersAt('T03 is already settled: the person answered it.'), []);
+});
+
+test('waitingAt: a request is waiting from its log time until its reply', () => {
+  const b = concurrentBundle();
+  assert.equal(waitingAt(b, 'T03', at(11)), false, 'not asked yet');
+  assert.equal(waitingAt(b, 'T03', at(200)), true);
+  assert.equal(waitingAt(b, 'T03', at(252.5)), false, 'answered at that moment');
+  assert.equal(waitingAt(b, 'T09', at(200)), false, 'no such task');
+});
+
+test('statementsMatchRecord: pointers at waiting items and answered-first facts matching the log pass', () => {
+  const b = concurrentBundle();
+  const f = statementsMatchRecord();
+  assert.equal(f.check(b).pass, true, f.check(b).detail);
+  assert.match(f.check(b).detail, /1 pointer\(s\).*1 answered-first/);
+
+  // T09's case: a pointer written after the person had already answered.
+  const late = structuredClone(b);
+  late.transcripts[0].events.push(said(300, "T03 still needs you. Answer it in T03's conversation."));
+  assert.match(f.check(late).detail, /pointed the person at T03 .* nothing of T03 was waiting/);
+
+  // pir told the agent the wrong answer, or the wrong sender.
+  const wrong = structuredClone(b);
+  wrong.transcripts[0].events[6].text = wrong.transcripts[0].events[6].text.replace('2026-10-01', '2026-11-01');
+  assert.match(f.check(wrong).detail, /does not match the log.*missing 2026-10-01/);
+  const who = structuredClone(b);
+  who.transcripts[0].events[6].text = who.transcripts[0].events[6].text.replace('by the person', 'by pir');
+  assert.match(f.check(who).detail, /does not match the log/);
+
+  // Told it was answered before the worker's log shows any answer.
+  const early = structuredClone(b);
+  early.transcripts[0].events[6].t = at(250);
+  assert.match(f.check(early).detail, /shows no close/);
+
+  assert.equal(f.check({ ...b, transcripts: b.transcripts.slice(1) }).pass, false, 'no agent log');
 });
