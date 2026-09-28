@@ -26,7 +26,7 @@ done · ⛔ blocked, needs a human.
 |---|---|---|---|---|
 | T01 | alert-core | — | ⬜ | |
 | T02 | ntfy-sender | — | ⬜ | |
-| T03 | notify-icon | — | 🔍 | `notify-icon.mjs` encoder and drawing, 1015-byte PNG, 5 tests. Indigo #3B3FB6 with white 11×9-cell lowercase `pir`, 16 px cells, sized to fit a circular crop. Drill: legible at 256 and a sips 64×64 downscale. Extra: CRC check-value and wrong-size tests; `ICON_PATH`, colours exported. |
+| T03 | notify-icon | — | ✅ | Encoder, drawing and 1015-byte indigo/white `pir` PNG. Review: one fix, drawIcon below 16 px wrapped pixels into the row above (size 10) or threw RangeError (size 8), reproduced by calling it, now refused, test locks it. Probed PNG structure tests, byte-equal committed file, re-drilled 256 and 64×64: legible. Phone look is T08. |
 | T04 | worker-link-and-silence | — | ⬜ | |
 | T05 | why-yours | — | ⬜ | |
 | T06 | notify-command | T02 | ⬜ | |
@@ -34,7 +34,7 @@ done · ⛔ blocked, needs a human.
 | T08 | notify-live | T03, T06, T07 | ⬜ | |
 | T09 | docs | T08 | ⬜ | |
 
-**Review queue:** T03
+**Review queue:** *(empty)*
 
 ## Blocked on the user
 
