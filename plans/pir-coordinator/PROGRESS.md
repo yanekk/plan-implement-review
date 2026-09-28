@@ -38,7 +38,7 @@ done · ⛔ blocked, needs a human.
 | T11 | end-helper-row | T06, T10; blocks T09 | ✅ | |
 | T12 | coordinator-row | T06, T11 | ✅ | |
 | T13 | hold-timeout | T04, T12; blocks T14 | ✅ | |
-| T15 | answered-first-facts | T13; blocks T14 | ⬜ | Added 2026-09-28 with the user after T09: tell the agent who answered an item first and what, reserved items included; no generic refusal for known items. |
+| T15 | answered-first-facts | T13; blocks T14 | ✅ | |
 | T14 | live-concurrent-check | T12, T13, T15 | ⬜ | Added 2026-09-28 with the user: paid live run, two workers asking at once, the hold limit firing at 3 min, and the agent's statements checked against the record. |
 
 **Review queue:** *(empty)*
