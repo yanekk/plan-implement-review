@@ -15,7 +15,7 @@ write. **Whoever writes a cell also fixes the over-budget cell they walk past.**
 
 **Status:** T00–T11 ✅. Reopened 2026-09-28 for T12, T13, T15, T14 (in that order).
 **Last updated:** 2026-09-28
-**Next `pir-work` will:** implement T12, coordinator-row.
+**Next `pir-work` will:** implement T14, live-concurrent-check.
 
 ## Tasks
 
@@ -38,10 +38,10 @@ done · ⛔ blocked, needs a human.
 | T11 | end-helper-row | T06, T10; blocks T09 | ✅ | |
 | T12 | coordinator-row | T06, T11 | ✅ | |
 | T13 | hold-timeout | T04, T12; blocks T14 | ✅ | |
-| T15 | answered-first-facts | T13; blocks T14 | 🔍 | `closingAnswer` reads who closed an item from the worker log; `closedWhy` words it; reserved items tracked; late decisions refused with the facts. 20 tests. Deviations: closed items reported before the drain, so the T09 pass is refused with facts; fake platform keeps an in-memory log; README one sentence. `./install.sh` not run (task branch). |
+| T15 | answered-first-facts | T13; blocks T14 | ✅ | Review clean, no fix commit. Walked all nine tests; `npm test` green. Checked `closingAnswer` against the real worker-proc and platform log shapes (grant reply then note, exit resolves pending unlogged, interrupt), pre-drain reporting vs settled items, told-once across drain and loop. `./install.sh` deferred to the feature branch. |
 | T14 | live-concurrent-check | T12, T13, T15 | ⬜ | Added 2026-09-28 with the user: paid live run, two workers asking at once, the hold limit firing at 3 min, and the agent's statements checked against the record. |
 
-**Review queue:** T15
+**Review queue:** *(empty)*
 
 ## Blocked on the user
 
