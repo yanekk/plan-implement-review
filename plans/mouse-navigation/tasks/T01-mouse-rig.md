@@ -46,5 +46,6 @@ openScreen(...) gains modes() and boldAt(row, col), delegating to the model.
 ## Done when
 
 - [ ] The helpers and the two model queries exist, are exported, and have the tests above.
-- [ ] `openScreen` on today's `pir` reports `modes()` empty (mouse is off before T04), proving the reading.
+- [ ] `openScreen` on today's `pir` reports no mouse mode (1000, 1002, 1003, 1004, 1006) in `modes()` while 1049
+      (the alternate screen) is present, proving the reading; `modes()` is never empty while pi-tui runs.
 - [ ] `npm test` is green.

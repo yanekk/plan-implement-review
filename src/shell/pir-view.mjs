@@ -8,52 +8,20 @@
 
 import { sliceByColumn, visibleWidth } from '@earendil-works/pi-tui';
 
-// The style→colour (SGR) map. It carries TWO vocabularies. The first block is render.mjs's own row/footer
-// keys with render.mjs's exact codes, so the watch frame — whose lines come from render.mjs's styledLines
-// — colours byte-for-byte the way the coordinator paints it (§2.4). The second block is the list's §2.11
-// semantic colours: running green, crashed red, finished/stopped dim; the progress bar blue for a running
-// run, red for a crashed one, dim otherwise; the selected row's mark (see paintLine); the running/crashed counts
-// green/red; the faint key-hint footer; the amber-bold armed confirmation line.
-export const SGR = {
-  // render.mjs's live-view keys — kept identical so the reused watch frame matches the coordinator.
-  done: '\x1b[32m', // green
-  active: '\x1b[36m', // cyan
-  asking: '\x1b[1;33m', // bold amber
-  idle: '\x1b[2m', // dim
-  red: '\x1b[31m', // failure / interrupted
-  // the list's §2.11 keys.
-  head: '\x1b[1m', // the `pir` title, bold
-  running: '\x1b[32m', // a running run's state word, green
-  crashed: '\x1b[31m', // a crashed run's state word, red
-  ended: '\x1b[2m', // finished / stopped, dim
-  'bar-run': '\x1b[34m', // progress bar of a running run, blue
-  'bar-crash': '\x1b[31m', // progress bar of a crashed run, red
-  'bar-idle': '\x1b[2m', // progress bar otherwise, dim
-  selected: '\x1b[34m', // the selected row's `▎` mark, blue — drawn only with colour off (see paintLine)
-  'count-run': '\x1b[32m', // the running count, green
-  'count-crash': '\x1b[31m', // the crashed count, red
-  hint: '\x1b[2m', // the faint key-hint footer
-  armed: '\x1b[1;33m', // the armed stop/remove confirmation, amber and bold
-  dim: '\x1b[2m', // plain dim text (repo column, worker count, notes)
-  // the TYPE column and the planning run's `your go` (pir-plan-command §2.10), after the approved prototype.
-  'type-plan': '\x1b[35m', // TYPE `plan`, magenta
-  'type-work': '\x1b[34m', // TYPE `work`, blue
-  'your-go': '\x1b[1;33m', // a reviewed plan waiting on the person's go, and its count: amber bold, the colour of asking
-  // the conversation view's keys (core/conversation.mjs, live-workers §2.11), after the approved prototype:
-  // pir orange, the person green, the worker bold, a step magenta (red when it failed), a pending prompt amber.
-  pir: '\x1b[38;5;208m',
-  person: '\x1b[32m',
-  worker: '\x1b[1m',
-  step: '\x1b[35m',
-  'step-error': '\x1b[31m',
-  prompt: '\x1b[1;33m',
-  ok: '\x1b[32m',
-  bad: '\x1b[31m',
-};
+import { paletteFor } from './palette.mjs';
+
+// The style→colour (SGR) map, from palette.mjs: Catppuccin Mocha on a 24-bit terminal, the basic
+// 16-colour codes otherwise. It carries TWO vocabularies. The first is render.mjs's own row/footer keys,
+// from the same table render.mjs paints with, so the watch frame — whose lines come from render.mjs's
+// styledLines — colours byte-for-byte the way the coordinator paints it (§2.4). The second is the list's
+// §2.11 semantic colours and the conversation view's keys (the comments in palette.mjs name each one).
+const palette = paletteFor(process.env);
+export const SGR = palette.sgr;
 export const RESET = '\x1b[0m';
 
-// The selected row's band: a dark grey background (256-colour 236) across the full width (user 2026-09-26).
-export const SELECTED_BG = '\x1b[48;5;236m';
+// The selected row's band across the full width: a dark grey background (user 2026-09-26), Mocha's
+// selection colour on a 24-bit terminal.
+export const SELECTED_BG = palette.selectedBg;
 
 // Clip a line's spans to at most `width` terminal columns across the whole line, so a multi-span row
 // truncates as one line and never wraps. Counted in columns, not code points: a wide (CJK) character

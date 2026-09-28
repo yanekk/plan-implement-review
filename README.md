@@ -313,6 +313,11 @@ planner or reviewer is waiting on you; one waiting for your merge reads `ready t
 from the list which runs need you; the counts line adds up those and every `your go` as `N waiting for you`. Under the
 list is the new-plan box, for starting a planning run in any of your repos (above).
 
+Every `pir` screen is drawn in [Catppuccin Mocha](https://catppuccin.com) colours on your terminal's own
+background, when your terminal supports full colour (most modern ones say so via `COLORTERM=truecolor`);
+other terminals get the plain 16 colours, and `NO_COLOR` turns colour off. Details in
+[docs/run-lifecycle.md](docs/run-lifecycle.md).
+
 | View | Keys |
 |---|---|
 | Dashboard | `↑↓` move · `↵` open a run · `Ctrl+R` twice resume · `Ctrl+S` twice stop · `Ctrl+X` twice remove · `esc` quit |

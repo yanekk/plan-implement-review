@@ -8,7 +8,8 @@ test:
 # Mouse navigation in the `pir` dashboard — Design
 
 How parallel mode behaves is canonical in `/docs`. This file is build-time rationale for this plan.
-T07 carries the resulting behaviour into `docs/detached-runs.md`, `docs/human-flow.md` and the README.
+T07 carries the resulting behaviour into `docs/detached-runs.md`, `docs/human-flow.md`,
+`docs/coordinator-agent.md` and the README.
 
 ## 1. Purpose
 
@@ -22,7 +23,9 @@ and scroll with the wheel. The keyboard stays exactly as it is.
 - One click on a run in the list, a task in a build's live view or a step in a planning run's view
   opens it, as selecting it and pressing Enter does.
 - The row under the pointer is visibly brighter than its neighbours and distinct from the selected
-  row's grey band, in a plain terminal and inside tmux.
+  row's grey band, in a plain terminal. Under tmux, screen and zellij pir asks for pointer movement
+  (`?1003h`, pty-tested); whether a real multiplexer delivers it is unchecked (tmux and zellij are not
+  installed here; user at plan review, 2026-09-28).
 - The wheel scrolls a worker's conversation, and moves the selection in the run, task and step lists.
 - Dragging across text still copies it to the clipboard.
 - Every key does what it did before this plan, and quitting or crashing never leaves the person's shell
@@ -38,7 +41,9 @@ A left click on a row opens it at once (user): the run list's rows, a build's li
 planning run's step rows. A build's live-view rows are `openTasks`'s entries (`rowEntries`,
 pir-coordinator T11/T12): the plan's tasks, then, once its coordinator agent has started, a separator line
 and the agent's pinned row, then any end-of-run helper (main-sync, tests-fix) while it runs. It is exactly `select` of that row followed by `open`, through the same reducer path a
-key takes, so the selection lands on the clicked row and ← comes back to it. Whatever `open` does for
+key takes, so the selection lands on the clicked row and ← comes back to it. A double click is two clicks,
+each acting on the screen it lands on: on a run it opens the run, then opens the live-view row now under
+the pointer (user at plan review, 2026-09-28: every click counts, no suppression). Whatever `open` does for
 that row, the click does: a task with no worker shows the same "no worker" note → shows (user), the
 coordinator agent's row opens the agent's conversation as → on it and `c` do (or shows
 `noCoordinatorNote` when it has no session), a helper's row opens its worker, a planning step with no
@@ -70,7 +75,8 @@ stays lit until the pointer moves again inside it (planner; the same as Claude C
 Hover needs the terminal to report pointer movement (all-motion tracking, `?1003h`). pi-tui turns that
 off under tmux, screen and zellij because multiplexers can lag. The user wants hover everywhere, so pir
 re-enables it there after the screen starts (user, 2026-09-28; the spike does this and pi-tui's stop
-turns it off again).
+turns it off again). The spike ran outside any multiplexer and tmux is not installed on this machine, so
+only the request is proven (§5.1).
 
 ### 2.3 Wheel
 
@@ -103,7 +109,7 @@ another platform pi-tui's OSC 52 default stays.
 pi-tui's Editor already handles its own clicks: a click in the box moves the caret there, and a click on
 an entry of the new-plan box's `@repo` pop-up picks it. Both come for free once mouse events reach the
 box, and both are kept (user for the caret; planner for the pop-up, on the ground that it is picking from
-a list, which is what the mouse is for here; flagged for plan review). A click on a run while the
+a list, which is what the mouse is for here; confirmed by the user at plan review, 2026-09-28). A click on a run while the
 new-plan box holds text opens the run, and the text is still in the box when the person comes back
 (user), because the list view is built once and kept (`getListView`).
 
@@ -120,7 +126,9 @@ turns every mouse mode off on every exit it can see: a normal quit (pi-tui's sto
 - Clickable hints, buttons, a back button, or right-click actions (user: navigation stays on the keys).
 - Mouse answers to a worker's questions or permission prompts (user).
 - An off switch or an opt-in setting (user).
-- The brief box of bare `pir plan` beyond what the Editor does by itself (planner: it has no list).
+- The brief box of bare `pir plan` beyond what the Editor does by itself (planner: it has no list). The
+  mouse is on there through `createScreen`, but no task drills it (user at plan review, 2026-09-28: same
+  code path as the dashboard, small risk).
 
 ## 3. Architecture
 
@@ -239,7 +247,8 @@ install follows the person's merge.
 
 Whether the person's own terminal sends pointer moves, clicks and wheel events, and whether `pbcopy`
 reaches their clipboard. Both were verified by hand with the user in the spike on 2026-09-28 (FINDINGS);
-nothing in this plan changes them, so no task asks the person again.
+nothing in this plan changes them, so no task asks the person again. Whether a real tmux, screen or
+zellij forwards pointer moves to pir is also out of reach and stays unchecked (§1, user at plan review).
 
 ### 5.2 Seatbelts
 
@@ -251,6 +260,8 @@ nothing in this plan changes them, so no task asks the person again.
 | Exit restore (§2.7) | a failing pty test cannot leave the terminal it ran in reporting the mouse |
 
 ### 5.3 Outside the code — who acts
+
+Confirmed by the user at plan review, 2026-09-28; both rules are already in `.claude/settings.json` `allow`.
 
 | Action | Command | Bin | Why this bin | Way back | Cost |
 |---|---|---|---|---|---|

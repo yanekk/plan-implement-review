@@ -17,6 +17,9 @@ DESIGN §2.2, §3.4.
 - `src/shell/pir-view.mjs` — `paintLine`, `FrameView`
 - `src/shell/palette.mjs` — the lifted-dim hover colour, both tables
 - `src/shell/pir-tui.test.mjs` (where `paintLine` and `FrameView` are tested today)
+- `src/shell/palette.test.mjs` — the hover colour in both tables. The test command sets `NO_COLOR=1`, so
+  `pir-view.mjs`'s module-level `SGR` is the basic table under test; the 24-bit case is reachable only by
+  giving the paint a palette explicitly or testing the palette's own tables.
 
 ## Interface
 

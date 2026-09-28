@@ -45,8 +45,8 @@ defaultCopy(text) → Promise<true | string>   // execFile('pbcopy') with text o
 - [ ] `guarded.handleMouse` forwards to the mounted component when one is mounted, to `onMouse` otherwise, and returns their result
 - [ ] a handler returning undefined for press keeps selection working (drag still copies)
 - [ ] exit restore: emitting 'exit' on an injected emitter writes the mouse-off sequence once; after close() it writes nothing
-- [ ] pty: running `pir` reports modes 1000, 1003, 1006 on; after Esc they are all off
-- [ ] pty: SIGTERM to `pir` leaves every mode off in the screen model
+- [ ] pty: running `pir` reports modes 1000, 1003, 1006 on; after Esc none of 1000, 1002, 1003, 1004, 1006 is set
+- [ ] pty: SIGTERM to `pir` leaves none of those mouse modes set in the screen model
 
 ## Done when
 
@@ -58,5 +58,5 @@ defaultCopy(text) → Promise<true | string>   // execFile('pbcopy') with text o
 
 - suite: `conversation-rig.test.mjs` / `plan-rig.test.mjs` via T01's `modes()` · sizes: 80×24
 - [ ] start `pir`, read `modes()` → 1000, 1003, 1006 present
-- [ ] Esc → process exits, `modes()` empty
-- [ ] start again, SIGTERM → `modes()` empty
+- [ ] Esc → process exits, no mouse mode (1000, 1002, 1003, 1004, 1006) in `modes()` (other modes such as ?7 autowrap stay set)
+- [ ] start again, SIGTERM → no mouse mode in `modes()`
