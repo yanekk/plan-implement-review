@@ -1,7 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { BARE_TEXT, NOTES, absorbAt, headLine, isBare, parseBoxText, rankRepos, routeBoxKey, startFailedNote } from './planbox.mjs';
+import {
+  BARE_TEXT, COMMANDS, NOTES, absorbAt, completionContext, headLine, isBare, parseBoxText, rankRepos, routeBoxKey,
+  startBuildFailedNote, startFailedNote,
+} from './planbox.mjs';
 
 const ROOTS = '~/src';
 const SKAUT = { name: 'skaut', path: '/Users/p/src/skaut', mtimeMs: 300 };
@@ -108,110 +111,237 @@ test('absorbAt: anything else is unchanged', () => {
   assert.equal(absorbAt('@', 'x@y'), 'x@y');
 });
 
-// ─── parseBoxText (§2.5) ──────────────────────────────────────────────────────
+// ─── parseBoxText (box-commands §2.1, §2.4) ───────────────────────────────────
 
-test('parse: an exact name and a brief start a run', () => {
-  assert.deepEqual(parse('@skaut a packing list'), { ok: true, repo: SKAUT, brief: 'a packing list' });
+// A plansOf that records every call, so a test can assert when the scan is (not) read.
+function plansSpy(byRepo = { skaut: ['foo', 'foobar', 'packing'] }) {
+  const calls = [];
+  const fn = (repo) => {
+    calls.push(repo.name);
+    return (byRepo[repo.name] ?? []).map((slug) => ({ slug }));
+  };
+  return { fn, calls };
+}
+const parseWith = (text, plansOf, repos = REPOS) => parseBoxText(text, repos, { roots: ROOTS, plansOf });
+
+test('parse: /plan with a brief plans, the brief trimmed and its newlines kept', () => {
+  assert.deepEqual(parse('@skaut/plan a brief\nmore'), { ok: true, command: 'plan', repo: SKAUT, brief: 'a brief\nmore' });
+  assert.deepEqual(parse('@skaut/plan  line one\n\nline two  \n'), { ok: true, command: 'plan', repo: SKAUT, brief: 'line one\n\nline two' });
+  assert.deepEqual(parse('@skaut/plan\na packing list'), { ok: true, command: 'plan', repo: SKAUT, brief: 'a packing list' });
 });
 
-test('parse: no @ is no-at, with §2.5 row 1 note', () => {
-  const r = parse('a packing list');
-  assert.equal(r.ok, false);
-  assert.equal(r.reason, 'no-at');
-  assert.equal(r.note, 'start with @repo, then say what to plan');
+test('parse: /start with an offered slug starts that slug', () => {
+  const { fn, calls } = plansSpy();
+  assert.deepEqual(parseWith('@skaut/start foo', fn), { ok: true, command: 'start', repo: SKAUT, slug: 'foo' });
+  assert.deepEqual(parseWith('@skaut/start   foo  \n', fn), { ok: true, command: 'start', repo: SKAUT, slug: 'foo' });
+  assert.deepEqual(calls, ['skaut', 'skaut'], 'plansOf gets the resolved repo');
 });
 
-test('parse: @ followed by whitespace (no name) is no-at, as a text without @ is', () => {
-  assert.deepEqual(parse('@ a brief'), parse('a brief'));
-  assert.equal(parse('@ a brief').reason, 'no-at');
-  assert.equal(parse('@').reason, 'no-at');
-  assert.equal(parse('').reason, 'no-at');
-  assert.equal(parse(' @skaut x').reason, 'no-at');
+test('parse: no @name is no-at, §2.4 row 1', () => {
+  for (const text of ['a packing list', '@ a brief', '@', '', ' @skaut/plan x', '@/plan x']) {
+    const r = parse(text);
+    assert.equal(r.ok, false, JSON.stringify(text));
+    assert.equal(r.reason, 'no-at', JSON.stringify(text));
+    assert.equal(r.note, 'start with @repo/plan or @repo/start');
+  }
 });
 
-test('parse: an unlisted name is unknown-repo, with §2.5 row 2 note', () => {
-  const r = parse('@nope do it');
+test('parse: an unlisted name is unknown-repo, §2.4 row 2, exact names only', () => {
+  const r = parse('@nope/plan do it');
   assert.equal(r.reason, 'unknown-repo');
   assert.equal(r.name, 'nope');
   assert.equal(r.note, 'no repo @nope in ~/src — pick one from the list');
+  assert.equal(parse('@ska/plan x').reason, 'unknown-repo');
+  assert.equal(parse('@Skaut/plan x').reason, 'unknown-repo');
 });
 
-test('parse: exact names only — a prefix of a listed repo is unknown-repo', () => {
-  const r = parse('@ska a packing list');
-  assert.equal(r.reason, 'unknown-repo');
-  assert.equal(r.note, 'no repo @ska in ~/src — pick one from the list');
-  assert.equal(parse('@Skaut x').reason, 'unknown-repo'); // exact includes case
-});
-
-test('parse: two repos named alike are ambiguous-repo with both paths, §2.5 row 3 note', () => {
+test('parse: two repos named alike are ambiguous-repo with both paths, §2.4 row 3', () => {
   const other = { name: 'skaut', path: '/Users/p/work/skaut', mtimeMs: 1 };
-  const r = parse('@skaut a packing list', [SKAUT, other, PIR]);
+  const r = parse('@skaut/plan a packing list', [SKAUT, other, PIR]);
   assert.equal(r.reason, 'ambiguous-repo');
   assert.equal(r.name, 'skaut');
   assert.deepEqual(r.paths, [SKAUT.path, other.path]);
   assert.equal(r.note, '@skaut is in more than one folder: /Users/p/src/skaut, /Users/p/work/skaut');
 });
 
-test('parse: a listed name with no brief is empty-brief, §2.5 row 4 note', () => {
-  for (const text of ['@skaut', '@skaut   ', '@skaut\n\n  ']) {
+test('parse: no /command is no-command, §2.4 row 4 — the old `@name brief` form included', () => {
+  for (const text of ['@skaut brief', '@skaut', '@skaut/', '@skaut/ brief', '@skaut\nbrief']) {
     const r = parse(text);
-    assert.equal(r.reason, 'empty-brief', JSON.stringify(text));
+    assert.equal(r.reason, 'no-command', JSON.stringify(text));
     assert.equal(r.name, 'skaut');
-    assert.equal(r.note, 'say what to plan after @skaut');
+    assert.equal(r.note, 'pick a command: @skaut/plan or @skaut/start');
   }
 });
 
-test('parse: an unknown name with no brief is unknown-repo (table order)', () => {
+test('parse: any other command is unknown-command, §2.4 row 5, lower case exact', () => {
+  for (const cmd of ['Plan', 'START', 'bogus', 'pla', 'planx', 'plan/x']) {
+    const r = parse(`@skaut/${cmd} x`);
+    assert.equal(r.reason, 'unknown-command', cmd);
+    assert.equal(r.command, cmd);
+    assert.equal(r.note, `@skaut/${cmd} is not a command — use /plan or /start`);
+  }
+});
+
+test('parse: /plan with no brief is empty-brief, §2.4 row 6', () => {
+  for (const text of ['@skaut/plan', '@skaut/plan   ', '@skaut/plan\n\n  ']) {
+    const r = parse(text);
+    assert.equal(r.reason, 'empty-brief', JSON.stringify(text));
+    assert.equal(r.note, 'say what to plan after @skaut/plan');
+  }
+});
+
+test('parse: /start with no slug is no-slug, §2.4 row 7', () => {
+  for (const text of ['@skaut/start', '@skaut/start  ', '@skaut/start\n']) {
+    const r = parse(text);
+    assert.equal(r.reason, 'no-slug', JSON.stringify(text));
+    assert.equal(r.note, 'name a plan to build after @skaut/start');
+  }
+});
+
+test('parse: /start with more than one word is extra-words, §2.4 row 8, a newline then a word included', () => {
+  for (const text of ['@skaut/start foo bar', '@skaut/start foo\nbar', '@skaut/start foo\tbar']) {
+    const r = parse(text);
+    assert.equal(r.reason, 'extra-words', JSON.stringify(text));
+    assert.equal(r.note, '@skaut/start takes one plan name');
+  }
+});
+
+test('parse: /start with a slug plansOf does not offer, or a prefix of one, is unknown-slug, §2.4 row 9', () => {
+  const { fn } = plansSpy();
+  for (const slug of ['nope', 'fo', 'pack', 'Foo']) {
+    const r = parseWith(`@skaut/start ${slug}`, fn);
+    assert.equal(r.reason, 'unknown-slug', slug);
+    assert.equal(r.slug, slug);
+    assert.equal(r.note, `${slug} is not a reviewed, unfinished plan in skaut`);
+  }
+  assert.equal(parse('@skaut/start foo').reason, 'unknown-slug', 'no plansOf offers nothing');
+});
+
+test('parse: two rows that could both apply resolve to the earlier', () => {
+  assert.equal(parse('@nope/bogus').reason, 'unknown-repo');
   assert.equal(parse('@nope').reason, 'unknown-repo');
+  assert.equal(parse('@skaut/bogus').reason, 'unknown-command', 'not empty-brief or no-slug');
+  const other = { name: 'skaut', path: '/b/skaut', mtimeMs: 1 };
+  assert.equal(parse('@skaut', [SKAUT, other]).reason, 'ambiguous-repo');
 });
 
-test('parse: a multi-line brief keeps its newlines, trimmed at the ends', () => {
-  assert.deepEqual(parse('@skaut  line one\n\nline two  \n'), { ok: true, repo: SKAUT, brief: 'line one\n\nline two' });
+test('parse: plansOf is not read for /plan, before the repo resolves, or for no-slug/extra-words', () => {
+  const { fn, calls } = plansSpy();
+  for (const text of ['@skaut/plan x', '@skaut/plan', '@nope/start foo', '@skaut/start', '@skaut/start a b', 'x', '@skaut', '@skaut/bogus x']) {
+    parseWith(text, fn);
+  }
+  assert.deepEqual(calls, []);
 });
 
-test('parse: a name followed by a newline then the brief parses', () => {
-  assert.deepEqual(parse('@skaut\na packing list'), { ok: true, repo: SKAUT, brief: 'a packing list' });
-});
-
-test('startFailedNote: §2.5 row 5', () => {
+test('startFailedNote: §2.4 startPlanRun row, codes in plain words', () => {
   assert.equal(startFailedNote('skaut', 'no main branch'), 'Could not start planning in skaut: no main branch');
-});
-
-// T06 drill (user, 2026-09-27): startPlanRun's refusal codes read as plain words, each note within 80 columns.
-test("startFailedNote: startPlanRun's refusal codes in plain words", () => {
   assert.equal(startFailedNote('repo', 'no-main'), 'Could not start planning in repo: it has no local main branch');
   assert.equal(startFailedNote('repo', 'not-a-repo'), 'Could not start planning in repo: it is not a git repository');
   assert.equal(startFailedNote('repo', 'empty-brief'), 'Could not start planning in repo: the brief is empty');
   for (const code of ['no-main', 'not-a-repo', 'empty-brief']) assert.ok(startFailedNote('plan-implement-review', code).length <= 80, code);
 });
 
-test('NOTES are §2.5 verbatim', () => {
-  assert.equal(NOTES.noAt(), 'start with @repo, then say what to plan');
+test('startBuildFailedNote: §2.4 startRun row, codes in plain words, anything else as it came', () => {
+  assert.equal(startBuildFailedNote('skaut', 'foo', 'not-reviewed'), 'Could not start foo in skaut: it is not reviewed');
+  assert.equal(startBuildFailedNote('skaut', 'foo', 'no-plan'), 'Could not start foo in skaut: there is no such plan');
+  assert.equal(startBuildFailedNote('skaut', 'foo', 'no-test-block'), 'Could not start foo in skaut: no setup/test block');
+  assert.equal(startBuildFailedNote('skaut', 'foo', 'disk full'), 'Could not start foo in skaut: disk full');
+});
+
+test('NOTES are §2.4 verbatim', () => {
+  assert.equal(NOTES.noAt(), 'start with @repo/plan or @repo/start');
   assert.equal(NOTES.unknownRepo('x', '~/src'), 'no repo @x in ~/src — pick one from the list');
   assert.equal(NOTES.ambiguousRepo('x', ['/a/x', '/b/x']), '@x is in more than one folder: /a/x, /b/x');
-  assert.equal(NOTES.emptyBrief('x'), 'say what to plan after @x');
+  assert.equal(NOTES.noCommand('x'), 'pick a command: @x/plan or @x/start');
+  assert.equal(NOTES.unknownCommand('x', 'go'), '@x/go is not a command — use /plan or /start');
+  assert.equal(NOTES.emptyBrief('x'), 'say what to plan after @x/plan');
+  assert.equal(NOTES.noSlug('x'), 'name a plan to build after @x/start');
+  assert.equal(NOTES.extraWords('x'), '@x/start takes one plan name');
+  assert.equal(NOTES.unknownSlug('x', 'foo'), 'foo is not a reviewed, unfinished plan in x');
 });
 
-// ─── headLine (§2.6) ──────────────────────────────────────────────────────────
-
-test('headLine: bare is dim "start with @repo"', () => {
-  assert.deepEqual(head('@'), { text: 'start with @repo', style: 'dim' });
-  assert.deepEqual(head(''), { text: 'start with @repo', style: 'dim' });
+test('COMMANDS: plan above start, with their pop-up descriptions', () => {
+  assert.deepEqual(COMMANDS, [
+    { name: 'plan', description: 'plan something new' },
+    { name: 'start', description: 'build a reviewed plan' },
+  ]);
 });
 
-test('headLine: a listed name is dim "in {name}", brief or not', () => {
-  assert.deepEqual(head('@skaut'), { text: 'in skaut', style: 'dim' });
-  assert.deepEqual(head('@skaut a packing list'), { text: 'in skaut', style: 'dim' });
+// ─── completionContext (box-commands §2.2) ───────────────────────────────────
+
+test('completionContext: the three contexts at the end of the line', () => {
+  const at = (line) => completionContext(line, line.length);
+  assert.deepEqual(at('@'), { kind: 'repo', query: '' });
+  assert.deepEqual(at('@sk'), { kind: 'repo', query: 'sk' });
+  assert.deepEqual(at('@skaut/'), { kind: 'command', name: 'skaut', query: '' });
+  assert.deepEqual(at('@skaut/st'), { kind: 'command', name: 'skaut', query: 'st' });
+  assert.deepEqual(at('@skaut/start '), { kind: 'slug', name: 'skaut', query: '' });
+  assert.deepEqual(at('@skaut/start fo'), { kind: 'slug', name: 'skaut', query: 'fo' });
 });
 
-test('headLine: an unlisted name is amber "@x is not a repo in {roots}"', () => {
-  assert.deepEqual(head('@ska'), { text: '@ska is not a repo in ~/src', style: 'your-go' });
-  assert.deepEqual(head('@nope do it'), { text: '@nope is not a repo in ~/src', style: 'your-go' });
+test('completionContext: null outside them', () => {
+  const at = (line) => completionContext(line, line.length);
+  for (const line of ['@skaut/plan x', '@skaut/plan ', '@skaut/start foo bar', '@skaut/start foo ', '@skaut x', '@skaut ', 'hello', '', '@ x', '@skaut/Start ', '@skaut/st4']) {
+    assert.equal(at(line), null, JSON.stringify(line));
+  }
 });
 
-test('headLine: no name at all is amber "start with @repo"', () => {
-  assert.deepEqual(head('hello'), { text: 'start with @repo', style: 'your-go' });
-  assert.deepEqual(head('@ hello'), { text: 'start with @repo', style: 'your-go' });
+test('completionContext: reads only the text before the cursor', () => {
+  assert.deepEqual(completionContext('@skaut/plan a brief', 3), { kind: 'repo', query: 'sk' });
+  assert.deepEqual(completionContext('@skaut/plan a brief', 1), { kind: 'repo', query: '' });
+  assert.deepEqual(completionContext('@skaut/start foo bar', 15), { kind: 'slug', name: 'skaut', query: 'fo' });
+  assert.deepEqual(completionContext('@skaut/start foo', 9), { kind: 'command', name: 'skaut', query: 'st' });
+  assert.equal(completionContext('@skaut/plan a brief', 0), null);
+});
+
+// ─── headLine (box-commands §2.5) ────────────────────────────────────────────
+
+test('headLine: every §2.5 row', () => {
+  const { fn } = plansSpy({ skaut: ['foo'] });
+  const h = (text) => headLine(text, REPOS, { roots: ROOTS, plansOf: fn });
+  assert.deepEqual(h('@'), { text: 'start with @repo', style: 'dim' });
+  assert.deepEqual(h(''), { text: 'start with @repo', style: 'dim' });
+  assert.deepEqual(h('hello'), { text: 'start with @repo', style: 'your-go' });
+  assert.deepEqual(h('@ hello'), { text: 'start with @repo', style: 'your-go' });
+  assert.deepEqual(h('@ska'), { text: '@ska is not a repo in ~/src', style: 'your-go' });
+  assert.deepEqual(h('@nope/plan do it'), { text: '@nope is not a repo in ~/src', style: 'your-go' });
+  for (const t of ['@skaut', '@skaut a brief', '@skaut/']) assert.deepEqual(h(t), { text: 'in skaut — /plan or /start', style: 'dim' }, t);
+  assert.deepEqual(h('@skaut/bogus x'), { text: '/bogus is not a command — /plan or /start', style: 'your-go' });
+  assert.deepEqual(h('@skaut/plan'), { text: 'plan in skaut', style: 'dim' });
+  assert.deepEqual(h('@skaut/plan a packing list'), { text: 'plan in skaut', style: 'dim' });
+  assert.deepEqual(h('@skaut/start'), { text: 'build in skaut', style: 'dim' });
+  assert.deepEqual(h('@skaut/start foo'), { text: 'build in skaut', style: 'dim' });
+  assert.deepEqual(h('@plan-implement-review/start '), { text: 'nothing to build in plan-implement-review', style: 'your-go' });
+  assert.deepEqual(head('@skaut/start x'), { text: 'nothing to build in skaut', style: 'your-go' }, 'no plansOf offers nothing');
+});
+
+test('headLine: plansOf is read only in the /start rows', () => {
+  const { fn, calls } = plansSpy();
+  for (const t of ['@', '', 'x', '@nope/start', '@skaut', '@skaut/', '@skaut/bogus', '@skaut/plan x']) headLine(t, REPOS, { roots: ROOTS, plansOf: fn });
+  assert.deepEqual(calls, []);
+  headLine('@skaut/start', REPOS, { roots: ROOTS, plansOf: fn });
+  assert.deepEqual(calls, ['skaut']);
+});
+
+// ─── 80 columns (box-commands §2.5's last line) ──────────────────────────────
+
+test('every note and head line fits 80 columns at an 18-character repo name and slug', () => {
+  const name = 'r'.repeat(18);
+  const slug = 's'.repeat(18);
+  const repos = [{ name, path: `/Users/p/src/${name}`, mtimeMs: 1 }];
+  const notes = [
+    NOTES.noAt(), NOTES.unknownRepo(name, ROOTS), NOTES.noCommand(name), NOTES.unknownCommand(name, slug),
+    NOTES.emptyBrief(name), NOTES.noSlug(name), NOTES.extraWords(name), NOTES.unknownSlug(name, slug),
+    startBuildFailedNote(name, slug, 'not-reviewed'), startBuildFailedNote(name, slug, 'no-plan'),
+    startBuildFailedNote(name, slug, 'no-test-block'), startFailedNote(name, 'no-main'), startFailedNote(name, 'not-a-repo'),
+  ];
+  for (const n of notes) assert.ok(n.length <= 80, `${n.length}: ${n}`);
+  // The label `new` and two spaces precede the head words (§2.5).
+  const heads = [
+    [`@${name}`, () => []], [`@${slug}x`, () => []], [`@${name}/${slug}`, () => []], [`@${name}/plan x`, () => []],
+    [`@${name}/start`, () => [{ slug }]], [`@${name}/start`, () => []],
+  ].map(([t, plansOf]) => headLine(t, repos, { roots: ROOTS, plansOf }).text);
+  for (const h of heads) assert.ok(`new  ${h}`.length <= 80, h);
 });
 
 // ─── rankRepos (§2.4 ordering) ────────────────────────────────────────────────

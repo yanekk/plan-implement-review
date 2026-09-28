@@ -80,9 +80,9 @@ test('bare at 120 columns: the footer gains ` · type to plan (@repo)`; every li
 
 test('typed: the head names the repo, amber when it is not one, and the hint is the typing hint', async () => {
   const { v, type } = view();
-  type('@skaut a list');
+  type('@skaut/plan a list');
   let lines = v.render(80).map(plain);
-  assert.ok(lines.includes('new plan  in skaut'));
+  assert.ok(lines.includes('new plan  plan in skaut'));
   assert.equal(lines.at(-1), TYPED_HINT);
   v.reset();
   type('nope x');

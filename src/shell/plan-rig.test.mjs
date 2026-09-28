@@ -660,7 +660,10 @@ for (const [cols, rows] of SIZES) {
       const pop = (await screen.waitFor(/→ @repo +\S/)).join('\n');
       assert.match(pop, /^@re\s*$/m, 'the box reads @re, not @@re');
       screen.send(TAB);
-      await screen.waitFor(/new plan {2}in repo/);
+      await screen.waitFor(/new plan {2}in repo — \/plan or \/start/);
+      // A repo pick still writes `@repo ` until box-commands T03, so the command is typed by hand.
+      await typeSettled(screen, BS, '/plan ');
+      await screen.waitFor(/new plan {2}plan in repo/);
       screen.send(BRIEF);
       await screen.waitFor(/↵ start planning · shift\+↵ new line · esc clear/);
       screen.send(ENTER);
@@ -814,10 +817,10 @@ for (const [cols, rows, cap] of [[80, 12, 7], [80, 24, 9], [120, 40, 14]]) {
     const screen = rig.openScreen({ cols, rows });
     try {
       await screen.waitFor(/▎ rig-run-0/);
-      await typeSettled(screen, 'repo ', 'a very long brief that keeps going and going '.repeat(Math.ceil((cap * cols) / 40)).trim());
+      await typeSettled(screen, 'repo/plan ', 'a very long brief that keeps going and going '.repeat(Math.ceil((cap * cols) / 40)).trim());
       const shot = await screen.waitFor(/↓ \d+ more|↑ \d+ more/);
       const head = shot.findIndex((l) => l.startsWith('new plan'));
-      assert.equal(shot[head], 'new plan  in repo');
+      assert.equal(shot[head], 'new plan  plan in repo');
       assert.equal(shot.at(-1), TYPED);
       assert.equal(shot.length - 1 - (head + 1), cap, `the box is ${cap} lines\n${shot.join('\n')}`);
       assert.match(shot[head + 1], /─ ↑ \d+ more ─/, 'the box scrolled: the cursor at the end, its first lines cut');
@@ -839,14 +842,15 @@ test('end to end at 80×24: every §2.5 refusal starts nothing and shows its exa
   const env = { ...rig.env, PIR_REPOS: '~/src:~/work' };
   const screen = rig.openScreen({ cols: 80, rows: 24, env });
   const cases = [
-    { keys: [BS, 'hello'], note: 'start with @repo, then say what to plan', text: 'hello' },
-    { keys: [' hello'], note: 'start with @repo, then say what to plan', text: '@ hello' },
-    { keys: ['nope ', 'x'], note: 'no repo @nope in ~/src, ~/work — pick one from the list', text: '@nope x' },
-    { keys: ['twin', ' ', 'brief'], note: /^@twin is in more than one folder: (~\/src\/twin, ~\/work\/twin|~\/work\/twin, ~\/src\/twin)$/, text: '@twin brief' },
-    { keys: ['repo', ' '], note: 'say what to plan after @repo', text: '@repo' },
+    { keys: [BS, 'hello'], note: 'start with @repo/plan or @repo/start', text: 'hello' },
+    { keys: [' hello'], note: 'start with @repo/plan or @repo/start', text: '@ hello' },
+    { keys: ['nope/plan ', 'x'], note: 'no repo @nope in ~/src, ~/work — pick one from the list', text: '@nope/plan x' },
+    { keys: ['twin', '/plan ', 'brief'], note: /^@twin is in more than one folder: (~\/src\/twin, ~\/work\/twin|~\/work\/twin, ~\/src\/twin)$/, text: '@twin/plan brief' },
+    { keys: ['repo', ' ', 'brief'], note: 'pick a command: @repo/plan or @repo/start', text: '@repo brief' },
+    { keys: ['repo', '/plan', ' '], note: 'say what to plan after @repo/plan', text: '@repo/plan' },
     // startPlanRun's own refusal: `main` renamed between the pick and Enter.
-    { keys: ['repo', ' ', 'a brief'], before: () => execFileSync('git', ['branch', '-m', 'main', 'trunk'], { cwd: join(src, 'repo') }),
-      note: 'Could not start planning in repo: it has no local main branch', text: '@repo a brief' },
+    { keys: ['repo', '/plan ', 'a brief'], before: () => execFileSync('git', ['branch', '-m', 'main', 'trunk'], { cwd: join(src, 'repo') }),
+      note: 'Could not start planning in repo: it has no local main branch', text: '@repo/plan a brief' },
   ];
   try {
     await screen.waitFor(/new plan {2}start with @repo/);
@@ -880,8 +884,9 @@ test('end to end at 80×24: a repo named plan-implement-review under PIR_REPOS p
     await screen.waitFor(/new plan {2}start with @repo/);
     screen.send('plan-imp');
     await screen.waitFor(/→ @plan-implement-review +~\/src\/plan-implement-review/);
-    await typeSettled(screen, TAB, 'plan something here');
-    assert.equal(lastLine(await screen.waitFor(/new plan {2}in plan-implement-review/)), TYPED);
+    // A repo pick still writes `@name ` until box-commands T03, so the command is typed by hand.
+    await typeSettled(screen, TAB, BS, '/plan something here');
+    assert.equal(lastLine(await screen.waitFor(/new plan {2}plan in plan-implement-review/)), TYPED);
     screen.send(ENTER);
     await screen.waitFor(new RegExp(esc(PLAN_RIG_QUESTION)), 20000);
   } finally {
