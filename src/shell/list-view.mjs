@@ -73,7 +73,8 @@ function repoNamed(repos, name) {
 // The `prefix` handed back is the whole text before the cursor, which starts with `@`: pi-tui makes an Enter
 // pick fall through to submit when the prefix starts with `/` (editor.js, the select.confirm branch), and a
 // slug query could.
-export function boxCompletion({ currentRepos, plansOf = () => [], building = () => false, home = homedir() }) {
+// onPicked(kind) is told after each pick is written, so the view can reopen after a pick pi-tui made outside a key.
+export function boxCompletion({ currentRepos, plansOf = () => [], building = () => false, home = homedir(), onPicked = () => {} }) {
   const rowsFor = (ctx) => {
     if (ctx.kind === 'repo') {
       const q = ctx.query.toLowerCase();
@@ -111,28 +112,34 @@ export function boxCompletion({ currentRepos, plansOf = () => [], building = () 
     applyCompletion(lines, cursorLine, cursorCol, item) {
       const line = lines[0] ?? '';
       const ctx = completionContext(line, cursorCol);
-      const out = [...lines];
-      if (ctx?.kind === 'repo') {
-        // Keep whatever followed the name (`/plan brief` survives a changed repo); add `/` only if missing.
-        const after = line.slice(NAME_TOKEN.exec(line)[0].length);
-        out[0] = `@${item.value}` + (after.startsWith('/') ? after : '/' + after);
-        return { lines: out, cursorLine: 0, cursorCol: item.value.length + 2 };
-      }
-      if (ctx?.kind === 'command') {
-        const head = `@${ctx.name}/${item.value} `;
-        out[0] = head + line.slice(COMMAND_TOKEN.exec(line)[0].length).replace(/^[ \t]+/, '');
-        return { lines: out, cursorLine: 0, cursorCol: head.length };
-      }
-      if (ctx?.kind === 'slug') {
-        // Replace the whole word the cursor is in, including any part of it after the cursor; no space after.
-        const start = cursorCol - ctx.query.length;
-        const end = cursorCol + (/^\S*/.exec(line.slice(cursorCol))?.[0].length ?? 0);
-        out[0] = line.slice(0, start) + item.value + line.slice(end);
-        return { lines: out, cursorLine: 0, cursorCol: start + item.value.length };
-      }
-      return { lines, cursorLine, cursorCol };
+      const result = applyPick(lines, cursorLine, cursorCol, item, line, ctx);
+      if (ctx) onPicked(ctx.kind);
+      return result;
     },
   };
+
+  function applyPick(lines, cursorLine, cursorCol, item, line, ctx) {
+    const out = [...lines];
+    if (ctx?.kind === 'repo') {
+      // Keep whatever followed the name (`/plan brief` survives a changed repo); add `/` only if missing.
+      const after = line.slice(NAME_TOKEN.exec(line)[0].length);
+      out[0] = `@${item.value}` + (after.startsWith('/') ? after : '/' + after);
+      return { lines: out, cursorLine: 0, cursorCol: item.value.length + 2 };
+    }
+    if (ctx?.kind === 'command') {
+      const head = `@${ctx.name}/${item.value} `;
+      out[0] = head + line.slice(COMMAND_TOKEN.exec(line)[0].length).replace(/^[ \t]+/, '');
+      return { lines: out, cursorLine: 0, cursorCol: head.length };
+    }
+    if (ctx?.kind === 'slug') {
+      // Replace the whole word the cursor is in, including any part of it after the cursor; no space after.
+      const start = cursorCol - ctx.query.length;
+      const end = cursorCol + (/^\S*/.exec(line.slice(cursorCol))?.[0].length ?? 0);
+      out[0] = line.slice(0, start) + item.value + line.slice(end);
+      return { lines: out, cursorLine: 0, cursorCol: start + item.value.length };
+    }
+    return { lines, cursorLine, cursorCol };
+  }
 }
 
 // createListView({ tui, colour, repos, roots, dashboard, ui, onSubmit, onListKey, onQuit, home }) → a pi-tui
@@ -180,7 +187,17 @@ export function createListView({
     if (!plans.has(repo.path)) plans.set(repo.path, [...(plansOf(repo) ?? [])]);
     return plans.get(repo.path);
   };
-  editor.setAutocompleteProvider(boxCompletion({ currentRepos, plansOf: cachedPlansOf, building, home }));
+  // A lone Tab match pi-tui applies after its async lookup (a Tab pressed with no pop-up showing, editor.js
+  // runAutocompleteRequest), so the pick lands after toBox's reopen check has run. A repo or command pick made
+  // outside a key therefore reopens here, once pi-tui has written it (the microtask runs after its setCursorCol).
+  let inKey = false;
+  const onPicked = (kind) => {
+    if (inKey || kind === 'slug') return;
+    queueMicrotask(() => {
+      if (!editor.isShowingAutocomplete() && atContextEnd()) editor.tryTriggerAutocomplete();
+    });
+  };
+  editor.setAutocompleteProvider(boxCompletion({ currentRepos, plansOf: cachedPlansOf, building, home, onPicked }));
 
   // Back to bare drops both cached scans, so the next typed stretch scans again (§2.4).
   const settle = () => {
@@ -209,11 +226,14 @@ export function createListView({
     // Showing before and not now, with the text changed: a Tab or Enter pick (a typed key keeps it showing
     // while pi-tui re-queries).
     if (wasShowing && ctxBefore?.kind === 'slug') return;
+    if (atContextEnd()) editor.tryTriggerAutocomplete();
+  }
+
+  // The cursor ends the first line and the text there is in one of the three contexts (§2.2).
+  function atContextEnd() {
     const { line, col } = editor.getCursor();
     const first = editor.getLines()[0] ?? '';
-    if (line !== 0 || col !== first.length) return;
-    if (completionContext(first, col) === null) return;
-    editor.tryTriggerAutocomplete();
+    return line === 0 && col === first.length && completionContext(first, col) !== null;
   }
 
   function toBox(data) {
@@ -226,7 +246,12 @@ export function createListView({
     const wasShowing = editor.isShowingAutocomplete();
     const { line, col } = editor.getCursor();
     const ctxBefore = line === 0 ? completionContext(editor.getLines()[0] ?? '', col) : null;
-    editor.handleInput(d);
+    inKey = true;
+    try {
+      editor.handleInput(d);
+    } finally {
+      inKey = false;
+    }
     reopen({ before, wasShowing, ctxBefore });
   }
 

@@ -470,3 +470,30 @@ test('head label `new`; `/start` hint; the armed line still wins over it', async
   assert.equal(START_HINT, '↵ start the build · esc clear');
   await settle();
 });
+
+test('a Tab pick made while no pop-up shows still opens the next pop-up, and a slug Tab pick opens none', async () => {
+  // pi-tui applies a lone Tab match only after its async lookup, so the pick lands after the key is handled.
+  const { v, type } = view();
+  type('sk');
+  v.handleInput(TAB); // before the debounce has shown the repo pop-up
+  await settle();
+  assert.equal(v.text, '@skaut/');
+  await settle();
+  assert.ok(v.completing, 'the command pop-up opened after the Tab repo pick');
+  v.reset();
+  type('skaut/st');
+  v.handleInput(TAB);
+  await settle();
+  assert.equal(v.text, '@skaut/start ');
+  await settle();
+  assert.ok(v.completing, 'the slug pop-up opened after the Tab command pick');
+  v.reset();
+  type('skaut/start te');
+  await settle();
+  v.handleInput(ESC);
+  v.handleInput(TAB);
+  await settle();
+  assert.equal(v.text, '@skaut/start tents');
+  await settle();
+  assert.equal(v.completing, false, 'a slug pick reopens nothing');
+});
