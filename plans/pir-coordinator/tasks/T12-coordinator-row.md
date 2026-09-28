@@ -1,6 +1,6 @@
 # T12 — coordinator-row
 
-**Phase:** 3 · **Depends on:** T06, T11 · **Blocks:** — · **Weight:** light
+**Phase:** 3 · **Depends on:** T06, T11 · **Blocks:** T13, T14 · **Weight:** light
 
 Added after T09 with the person's approval (2026-09-28): the agent's conversation is reachable only by
 the `c` key, so it is the one conversation in a run the person cannot find by looking at the list.
@@ -50,9 +50,12 @@ states listed and the no-agent case may not.
 
 ## Files
 
-- `src/shell/coordinator-agent.mjs`: `view()` also returns `state` (`up` | `restarting` | `given-up`) and
-  `holding` (count of items the agent holds).
-- `src/shell/coordinate.mjs` `buildRunState`: carries the extended `coordinator` view unchanged.
+- `src/shell/coordinator-agent.mjs`: `view()` also returns `state` (`up` | `restarting` | `given-up`). It
+  returns the given-up state (with the last `coordinator-{n}.ndjson`, if any) also when the agent was given
+  up before any launch in this process (a pir restart inside the hour), where it returns null today.
+- `src/shell/coordinate.mjs`: `holding` is the size of `startCoordinator`'s `held` map (not `justSettled`),
+  added to the `coordinator` entry `buildRunState` carries. The agent module cannot count it: its `briefed`
+  map also holds reserved and already-answered items.
 - `src/core/display.mjs`: `rowEntries` and `buildDisplay` produce tasks, a separator entry, the agent's
   entry, then helpers; `askingCount` and the summary ignore the separator and the agent.
 - `src/shell/render.mjs`: draws the separator and the agent's row; column widths (T07/T11) unchanged for
@@ -60,7 +63,8 @@ states listed and the no-agent case may not.
 - `src/core/dashboard.mjs`, `src/shell/pir-tui.mjs`: ↑↓ skips the separator and reaches the agent's row;
   → on it opens the same view as `c` (`openWorker.taskId 'coordinator'`).
 - `src/shell/coordinator-drill.test.mjs` (T07's drill): an end-to-end case.
-- `docs/coordinator-agent.md` (§ The agent's own conversation, § The helpers' rows), `docs/human-flow.md`
+- `docs/coordinator-agent.md` (§ The agent's own conversation; the "The helpers' rows" paragraph in § The end
+  of the run), `docs/human-flow.md`
   if it lists the live view's rows, `README.md`.
 
 ## Tests

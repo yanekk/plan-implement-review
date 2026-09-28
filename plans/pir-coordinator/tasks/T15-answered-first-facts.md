@@ -27,6 +27,14 @@ DESIGN §2.3 (first answer wins, the agent is told), §2.4 (reserved items brief
 - The answer is read from the worker's conversation log (the `reply` or `message` event that closed the
   item: its `from` and its `result`), and stated in plain form: `allowed`, `denied` with its message, the
   chosen answers of a question set, or the text of a message.
+- Not every close has such an event (user, plan review 2026-09-28: say what is known). A phone answer is
+  logged only as note `answered-remotely` (`worker-proc.mjs`), a standing grant as `delivered-by-grant`,
+  and a worker that exits, is interrupted or is respawned closes its items with no answer. The message
+  says who closed it (the person on the phone, a standing permission, the worker stopped with no answer),
+  gives the answer when the worker's conversation shows it (the tool result or the Remote Control input
+  after the request), and otherwise says plainly the answer was not recorded. It never says "answered by
+  the person" for an item nobody answered. This replaces today's `answeredElsewhereFor`, which says
+  "Already answered by the person" for any held item that stops waiting.
 - A decision the agent writes for an item already answered this way is refused with the same facts
   ("already answered by the person: denied"), not the generic "unknown worker, or already answered". The
   generic wording stays only for a worker that truly never had an item.
@@ -34,6 +42,9 @@ DESIGN §2.3 (first answer wins, the agent is told), §2.4 (reserved items brief
   say in one line that it is already settled and how; otherwise say nothing about it. Never guess who
   answered.
 - A timed-out item (T13) that the person then answers gets the same message.
+- A `pass` is a decision of the agent's: an item it passed on that the person then answers is not reported
+  (user, plan review 2026-09-28), so its conversation stays quiet after each pass. A pass refused because
+  the item was already answered (the T09 case) is not a decision, and the item is reported.
 
 ## Files
 
@@ -55,6 +66,11 @@ DESIGN §2.3 (first answer wins, the agent is told), §2.4 (reserved items brief
       changes (row, tally, Remote Control).
 - [ ] Held question set answered by the person first: the message names the chosen answers.
 - [ ] Report park answered by the person's message: the message quotes the text.
+- [ ] Question answered on the phone (`src/core/fixtures/remote-answer-sample.ndjson`): named as the person
+      on the phone, with the answer if the log shows it, else "not recorded".
+- [ ] Request allowed by a standing grant: named as a standing permission, `allowed`.
+- [ ] Held item whose worker exits before any answer: the agent is told the worker stopped with no answer,
+      never "answered by the person".
 - [ ] A decision for a worker that never had an item still gets the generic refusal.
 - [ ] Each item is reported at most once, across passes.
 - [ ] Skill test: the skill names the rule and forbids guessing who answered.

@@ -19,10 +19,15 @@ DESIGN §2.3, §2.4, §2.11 (hold limit), §5.1, §5.2, §5.3.
 ## Files
 
 - `src/shell/harness/fixtures/pir-coordinator-concurrent.mjs` (new), registered in `fixtures.mjs`, with
-  `coordinator: true`, env `PARALLEL_COORDINATOR_HOLD_MS=60000`, and a project rules file
+  `coordinator: true`, env `PARALLEL_COORDINATOR_HOLD_MS=180000` (3 min: the limit applies to T01 and T02 too, and the agent
+  answers two briefs one after the other; user, plan review 2026-09-28), and a project rules file
   `.claude/pir-coordinator.md` in the fixture repo.
+- `src/shell/harness/scenario.mjs` and `run.mjs` (`seatbeltEnv`): a scenario field that sets
+  `PARALLEL_COORDINATOR_HOLD_MS` for the launched run. No scenario can set an env var today.
 - `src/shell/harness/fixtures.test.mjs` if fixtures are enumerated there.
-- `src/shell/harness/assertions.mjs`, test: checks read from the capture bundle (below).
+- `src/shell/harness/assertions.mjs`, test: checks read from the capture bundle (below). The existing
+  `agentAnswered` (T01, T02), `readyWithReport()` and `ceilingHeld(3)` are reused; new assertions cover only
+  the overlap, the timeout and the agent's statements.
 - `src/shell/harness/capture.mjs` only if the bundle lacks the agent's conversation log or the ledger's
   `timeout` lines.
 
@@ -33,9 +38,11 @@ Three independent tasks at ceiling 3, harness timeout 20 min, scratch repo:
 - T01 and T02: each asks, as the first action of its first turn, an AskUserQuestion the fixture's
   DESIGN.md answers (different questions). At ceiling 3 both workers start on the same pass, so the two
   briefs reach the agent together or while its turn for the other is running.
-- T03: asks, as its first action, a question about a topic the rules file tells the agent to hold ("For
-  questions about the release date, write no decision and do not pass them on; wait."). The project file
-  wins over the skill, so the agent holds it; after 60 s the hold limit hands it to the person, and the
+- T03: asks, as its first action and with the AskUserQuestion tool (the harness answerer answers question
+  sets and permission requests, never a plain-text park), a question about a topic the rules file tells the
+  agent to hold ("For questions about the release date, write no decision and do not pass them on; wait.
+  Once pir hands one to the person, give the pointer your skill asks for."). The project file wins over the
+  skill, so the agent holds it; after 3 min the hold limit hands it to the person, and the
   harness answerer (personOnly) answers it as the person.
 
 ## Tests
@@ -52,7 +59,7 @@ Three independent tasks at ceiling 3, harness timeout 20 min, scratch repo:
         repeated; a run without the overlap does not close this task.
   - [ ] T01 and T02 each answered by the agent, two separate ledger lines, neither ever `asking you` in a
         status snapshot.
-  - [ ] T03 `asking coordinator` for about 60 s, then `asking you` with Remote Control on, a `timeout`
+  - [ ] T03 `asking coordinator` for about 3 min, then `asking you` with Remote Control on, a `timeout`
         ledger line, the agent's pointer in its conversation after the hand-over message, and the
         harness's answer applied.
   - [ ] Every claim the agent makes in its replies about an item's state (who answered it, what was

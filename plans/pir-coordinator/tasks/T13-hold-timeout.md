@@ -1,6 +1,6 @@
 # T13 — hold-timeout
 
-**Phase:** 3 · **Depends on:** T04, T12 · **Blocks:** T14 · **Weight:** medium
+**Phase:** 3 · **Depends on:** T04, T12 · **Blocks:** T15, T14 · **Weight:** medium
 
 Added after T09 with the person's approval (2026-09-28). With no timeout (old DESIGN §2.11), an item the
 agent was briefed but never decided stays `asking coordinator` for ever: not amber, not counted, Remote
@@ -45,8 +45,9 @@ DESIGN §2.3, §2.5, §2.11, as amended 2026-09-28.
 
 - `src/shell/coordinate.mjs` `route()`: record when each item is held; on each pass move items past the
   limit out of `held` and tell the agent; accept late decisions for items that were held.
-- `src/shell/coordinator-agent.mjs`, `src/core/coordinator-policy.mjs` if the drain's acceptance check
-  lives there: a decision for a timed-out, still-waiting item is not refused.
+- `src/shell/coordinator-agent.mjs`: the drain marks a decision for a timed-out item `late: true` in its
+  ledger line. Accepting it needs no change: `route()` already passes every waiting item, held or not, to
+  `drain`, and `checkDecision` accepts a decision for any of them.
 - `src/core/coordinator-brief.mjs`: `timedOutFor(item, holdMs)`.
 - `skills/pir-coordinator/SKILL.md`: replace "You have no timeout" with the hold limit, what the
   hand-over message means, and that a pointer is still owed.

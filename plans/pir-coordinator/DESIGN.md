@@ -107,8 +107,10 @@ a person's message.
 The first answer wins. The person may answer any waiting item in `pir` or on the phone at any time; a
 decision that arrives for an item already answered is dropped and the agent is told "already
 answered by the person", with the answer (user 2026-09-28, T15). This holds for reserved items too,
-which the agent is briefed on for a note: it is told who answered and what, never left to guess. Why not lock the person out while the agent thinks: the person is the
-authority and must never wait on their own stand-in.
+which the agent is briefed on for a note: it is told who answered and what, never left to guess. Where
+pir did not record the answer (a phone answer, a standing grant) or nobody answered (the worker stopped),
+it is told exactly that (user, plan review 2026-09-28). Why not lock the person out while the agent
+thinks: the person is the authority and must never wait on their own stand-in.
 
 Why decision files and not custom tools: custom tools in the SDK need `zod` and
 `@modelcontextprotocol/sdk` as new dependencies; the drop folder reuses the report pattern the
@@ -440,7 +442,7 @@ T04, T05, T06 and T08 run it after their change, never while a parallel run is l
 | `perl -e 'alarm 900; exec @ARGV'` around the T00 probe | The probe dies at 15 min |
 | Scratch repo for T00 and T09 | Never the canonical checkout, never a real main |
 | Harness fixture at ceiling 2, harness timeout 20 min (T09) | Bounded paid run |
-| Harness fixture at ceiling 3, harness timeout 20 min, hold limit 60 s (T14) | Bounded paid run |
+| Harness fixture at ceiling 3, harness timeout 20 min, hold limit 3 min (T14; user, plan review 2026-09-28: room for two answers in a row) | Bounded paid run |
 | `HALT` | Stops every worker and the agent of a run |
 | The agent's gate (§3.4) | The agent cannot run a command or write outside its drop folder |
 | `--no-coordinator` | A run with no agent, exactly today's behaviour |
@@ -451,7 +453,7 @@ T04, T05, T06 and T08 run it after their change, never while a parallel run is l
 |---|---|---|---|---|---|
 | Probe session (T00) | `perl -e 'alarm 900; exec @ARGV' node <probe script>` in a scratch repo | `worker` | Minutes of model time, scratch only | Kill the pid; delete scratch | under a dollar |
 | Live harness run (T09) | `node src/shell/harness/run.mjs pir-coordinator --into <scratch>` | `worker` | Same bin earlier plans set for harness runs: bounded, scratch only | HALT; scratch deleted | a few dollars |
-| Live harness run (T14) | `node src/shell/harness/run.mjs pir-coordinator-concurrent --into <scratch>` | `worker` | As T09 (user asked for it 2026-09-28) | HALT; scratch deleted | a few dollars |
+| Live harness run (T14) | `node src/shell/harness/run.mjs pir-coordinator-concurrent --into <scratch>` | `worker` | As T09 (user asked for it 2026-09-28; confirmed at plan review 2026-09-28) | HALT; scratch deleted | a few dollars |
 | `./install.sh` | refresh the installed engine and skills | `worker` | Local, idempotent; never while a parallel run is live | Re-run from the previous commit | none |
 
 The person's part in T09 is their phone. Nothing here pushes, deploys or merges into a real main.

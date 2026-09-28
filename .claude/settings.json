@@ -42,7 +42,9 @@
       "Bash(node src/shell/harness/run.mjs pir-coordinator --into /tmp/pir-coordinator-live)",
       "Bash(rm -rf /tmp/pir-coordinator-live)",
       "Bash(node src/shell/harness/run.mjs stopped-asking --into /tmp/stopped-asking-live)",
-      "Bash(rm -rf /tmp/stopped-asking-live)"
+      "Bash(rm -rf /tmp/stopped-asking-live)",
+      "Bash(node src/shell/harness/run.mjs pir-coordinator-concurrent --into /tmp/pir-coordinator-concurrent)",
+      "Bash(rm -rf /tmp/pir-coordinator-concurrent)"
     ],
     "ask": [
       "Bash(npm i @earendil-works/pi-tui@0.87.1)",

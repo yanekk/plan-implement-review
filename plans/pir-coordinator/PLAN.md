@@ -80,6 +80,7 @@ At the end of phase 3 the feature is documented and seen working on a real run w
 
 ```
 T00 → T01 → T03 → T04 → T05 → T06 → T07 → T09
+T00 → T01 → T03 → T04 → T05 → T06 → T11 → T12 → T13 → T15 → T14   (longest, since 2026-09-28)
 ```
 
 T02 is off the path and can run at any time before T08. T08 runs beside T07.
@@ -88,7 +89,7 @@ Leaves: T09, T14. T12–T15 were added after T09 (2026-09-28): T12 → T13 → T
 
 ## Parallel width
 
-10 tasks · longest dependency chain 8 · up to 2 could run at once (`analyzeParallelism`). Serial by nature: each part plugs
+16 tasks · longest dependency chain 11 · up to 3 could run at once (`analyzeParallelism`, 2026-09-28). Serial by nature: each part plugs
 into the one before it.
 
 ## Rough sizing
@@ -96,8 +97,8 @@ into the one before it.
 | Weight | Tasks |
 |---|---|
 | **Heavy** | T04, T05 |
-| **Medium** | T00, T01, T03, T06, T07, T09 |
-| **Light** | T02, T08 |
+| **Medium** | T00, T01, T03, T06, T07, T09, T13, T14 |
+| **Light** | T02, T08, T12, T15 |
 
 T04 and T05 change the live run's pass loop and its end; both are where a restart or a race will
 surface something the fake did not script.
