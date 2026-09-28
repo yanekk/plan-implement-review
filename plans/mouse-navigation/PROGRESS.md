@@ -28,11 +28,11 @@ done · ⛔ blocked, needs a human.
 | T03 | hover-style | — | ✅ | |
 | T04 | mouse-on | T01 | ✅ | |
 | T05 | list-clicks | T02, T03, T04 | ⬜ | |
-| T06 | conversation-wheel | T04 | 🔍 | `handleMouse` in the conversation view (wheel ±3, box clicks to the Editor) and `withHeadLine` (head line ignored, y−1); `withHeadLine` exported for its test. 7 unit tests, 2 pty tests. Deviation: the pty case runs the rig's `long` scenario, not the tour, because the tour's history fits 120×40. |
+| T06 | conversation-wheel | T04 | ✅ | Review clean, no fix commit. Wheel ±3 and box clicks to the Editor; `withHeadLine` drops row 0, shifts y−1. Accepted deviation: pty case runs the `long` scenario, the tour fits 120×40. Probed a box click through a real `withHeadLine`-wrapped view (caret moved), the root's focus pass-through, scroll clamping; `npm test` green. |
 | T07 | mouse-docs | T05, T06 | ⬜ | |
 | T08 | mouse-drill | T05, T06, T07 | ⬜ | |
 
-**Review queue:** T06
+**Review queue:** empty
 
 ## Blocked on the user
 
