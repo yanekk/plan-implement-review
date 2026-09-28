@@ -2203,6 +2203,10 @@ async function main(argv) {
     // down after ~7h while the person slept. Waiting costs nothing: a pass is local file and `claude
     // agents` reads, and a parked worker's session makes no model calls until it is answered.
     for (;;) {
+      // A signal handler awaits the exit clears (up to 2 s) before process.exit, and this loop is still
+      // scheduled meanwhile. A pass after its teardown would dispatch fresh workers into the freed slots, to
+      // be orphaned by the exit a moment later, so park here for good: the handler ends the process.
+      if (signalled) await new Promise(() => {});
       personInbox.drain(); // the backstop for a drop the forwarder's watch missed
       const r = coordinator.pass();
       trackTiming(coordinator.state.tasks, r.completed);

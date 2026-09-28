@@ -356,6 +356,19 @@ test('main: notifyPass runs every pass, and every exit path awaits the exit clea
   assert.match(main, /endAlertSent = endAlertPass\(/);
 });
 
+// The signal handler awaits the exit clears before process.exit, so the loop is still scheduled during that
+// wait. A pass there would run after teardown closed every worker and could dispatch fresh ones into the
+// freed slots, orphaned by the exit a moment later. The loop must run no pass once a signal is handled.
+test('main: no pass runs after a signal, while the handler waits on the exit clears', () => {
+  const src = readFileSync(fileURLToPath(new URL('./coordinate.mjs', import.meta.url)), 'utf8');
+  const main = src.slice(src.indexOf('async function main(argv)'));
+  const loop = main.slice(main.indexOf('for (;;) {'));
+  const guard = loop.search(/if \(signalled\) await new Promise\(\(\) => \{\}\);/);
+  assert.ok(guard !== -1, 'the loop parks once a signal is being handled');
+  assert.ok(guard < loop.indexOf('coordinator.pass()'), 'before the pass, at the top of every iteration');
+  assert.match(main, /if \(signalled\) process\.exit\(130\);\n\s*signalled = true;\n\s*if \(selfReport/, 'the flag is set before teardown');
+});
+
 // ---- The session environment (DESIGN §2.7) ----
 
 test('workerEnv: null with no config or a corrupt one; the presence variable with one, and the marker exists after', (t) => {
