@@ -248,17 +248,51 @@ test('the screen model keeps which cells are bold, and colour parameters never r
   assert.equal(m.boldAt(1, 0), false);
 });
 
-test('today\'s pir switches the alternate screen on and no mouse mode', { timeout: 30000 }, async (t) => {
+// mouse-navigation T04: pir runs with mouse reporting on, and every exit it can see turns it off again.
+// Only the mouse modes are checked afterwards: pi-tui leaves others (?7 autowrap) set (FINDINGS).
+const MOUSE_MODES = [1000, 1002, 1003, 1004, 1006];
+const mouseModesOn = (modes) => MOUSE_MODES.filter((m) => modes.has(m));
+
+test('pir switches the alternate screen and mouse reporting on, with all-motion for hover', { timeout: 30000 }, async (t) => {
   const env = scratchHome(t);
   const screen = openScreen({ cols: 80, rows: 24, env: { ...process.env, ...env } });
   try {
     await screen.waitFor((text) => text.trim() !== '');
     const modes = screen.modes();
     assert.ok(modes.has(1049), `the alternate screen is on: ${[...modes]}`);
-    for (const m of [1000, 1002, 1003, 1004, 1006]) assert.ok(!modes.has(m), `mouse mode ${m} is off`);
+    for (const m of [1000, 1003, 1006]) assert.ok(modes.has(m), `mouse mode ${m} is on: ${[...modes]}`);
   } finally {
     await screen.close();
   }
+});
+
+test('Esc quits pir and leaves no mouse mode set', { timeout: 30000 }, async (t) => {
+  const env = scratchHome(t);
+  const screen = openScreen({ cols: 80, rows: 24, env: { ...process.env, ...env } });
+  let code;
+  try {
+    await screen.waitFor((text) => text.trim() !== '');
+    assert.ok(screen.modes().has(1000));
+    screen.send('\x1b');
+    await waitFor(() => mouseModesOn(screen.modes()).length === 0 && !screen.modes().has(1049), { what: 'the mouse modes and the alternate screen to be switched off' });
+  } finally {
+    code = await screen.close();
+  }
+  assert.equal(code, 0, 'pir quit on Esc by itself, before its input closed');
+  assert.deepEqual(mouseModesOn(screen.modes()), []);
+});
+
+// The rig's close() ends pir's input, and the pty relay then sends pir SIGTERM, the signal a `kill` sends.
+test('SIGTERM to pir leaves no mouse mode set, and pir exits 143 through its own handler', { timeout: 30000 }, async (t) => {
+  const env = scratchHome(t);
+  const screen = openScreen({ cols: 80, rows: 24, env: { ...process.env, ...env } });
+  await screen.waitFor((text) => text.trim() !== '');
+  assert.ok(screen.modes().has(1003), 'the mouse was on before the signal');
+  const code = await screen.close();
+  assert.equal(code, 143, 'exited 128 + SIGTERM from the restore handler, not killed by the signal');
+  const modes = screen.modes();
+  assert.deepEqual(mouseModesOn(modes), [], `no mouse mode is left set: ${[...modes]}`);
+  assert.ok(!modes.has(1049), 'and the alternate screen was left');
 });
 
 // The driver on the tour: open the rig's run from the dashboard, open its worker, answer everything, talk

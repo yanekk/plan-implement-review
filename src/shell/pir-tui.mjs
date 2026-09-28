@@ -18,7 +18,8 @@
 // unchanged alongside the list's), which keeps the watch frame byte-for-byte the coordinator's display.
 
 import { join, resolve as resolvePath } from 'node:path';
-import { homedir } from 'node:os';
+import { execFile } from 'node:child_process';
+import { constants as osConstants, homedir } from 'node:os';
 import { readLogTail } from './commands.mjs';
 
 import { buildDisplay, rowEntries } from '../core/display.mjs';
@@ -48,7 +49,8 @@ import { ProcessTerminal, TuiAltScreen, TUI_KEYBINDINGS, getKeybindings, isKeyRe
 const SPINNER = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 
 // The style→colour map and the span painter live in pir-view.mjs (FrameView, T11): pi-tui draws the
-// terminal, so this file writes no cursor-control escape of its own (DESIGN §2.11).
+// terminal, so this file writes no cursor-control escape of its own (DESIGN §2.11), except the mouse
+// modes createScreen asks for and the exit restore it writes when pi-tui's stop never runs (mouse-navigation).
 
 // A sensible width when a TTY does not report its dimensions (render.mjs's default).
 const DEFAULT_COLS = 80;
@@ -620,7 +622,39 @@ function withHeadLine(line, make, { host, colour }) {
 
 // --- The impure edge: painting a frame on a real terminal, and the input loop -----------------------
 
-// createScreen({ stream, colour, terminal }) → { paint(frame), close(), listen?(onInput, onError) }. The one
+// The mouse modes pi-tui enables (?1000 buttons, ?1002 button-motion, ?1003 all-motion, ?1004 focus, ?1006
+// SGR encoding), switched off in pi-tui's own order. MOUSE_OFF is what pi-tui's stop writes; the exit
+// restore writes it too, so a signal that never reaches that stop still leaves no mouse mode behind.
+const MOUSE_OFF = '\x1b[?1006l\x1b[?1004l\x1b[?1003l\x1b[?1002l\x1b[?1000l';
+const ALL_MOTION_ON = '\x1b[?1003h';
+// The whole exit restore: mouse off, autowrap back on (pi-tui turns it off), leave the alternate screen,
+// show the cursor. Raw mode needs nothing here: Node resets the TTY mode itself when the process exits.
+const EXIT_RESTORE = `${MOUSE_OFF}\x1b[?7h\x1b[?1049l\x1b[?25h`;
+const EXIT_SIGNALS = ['SIGTERM', 'SIGHUP', 'SIGINT'];
+
+// Whether pi-tui will have asked for button-motion only (no hover): it checks exactly these, on its own
+// reading of process.env (mouse-navigation §2.2, FINDINGS).
+export function underMultiplexer(env) {
+  const term = (env.TERM ?? '').toLowerCase();
+  return env.TMUX !== undefined || env.STY !== undefined || env.ZELLIJ !== undefined || term.startsWith('tmux') || term.startsWith('screen');
+}
+
+// defaultCopy(text) → Promise<true | string>. pi-tui's copySelection on macOS: pbcopy with the text on its
+// stdin, which reached the real clipboard in the spike, where pi-tui's default OSC 52 depends on the
+// terminal allowing it (mouse-navigation §2.5). A failure comes back as its message, which pi-tui flashes.
+// pbcopy decodes its stdin by the locale, and with no UTF-8 one (LANG unset: some ssh or cron shells) it
+// turns 'é ⠋ ✅' into mojibake; Node always writes UTF-8, so the locale is forced to match (reproduced by
+// hand, T04 review). `run` and `env` are injected so the test never touches the real clipboard.
+export function defaultCopy(text, { run = execFile, env = process.env } = {}) {
+  return new Promise((resolve) => {
+    const child = run('pbcopy', [], { env: { ...env, LC_ALL: 'en_US.UTF-8' } }, (err) => resolve(err ? `Copy failed: ${err.message}` : true));
+    child.stdin.on('error', () => {}); // an EPIPE from a pbcopy that failed to start is reported by execFile
+    child.stdin.end(text);
+  });
+}
+
+// createScreen({ stream, colour, terminal, copy, env, onExit, platform }) → { paint(frame), close(),
+// listen?(onInput, onError, onMouse) }. The one
 // impure piece. On a TTY it is a pi-tui alternate screen (TuiAltScreen) whose only component is a FrameView
 // over the latest frame: pi-tui enters and leaves the alternate screen, hides the cursor, clips each line
 // to the width, cuts the frame at the terminal's rows (from the top, as before) and repaints only the rows
@@ -629,17 +663,24 @@ function withHeadLine(line, make, { host, colour }) {
 // On a non-TTY there is no pi-tui at all: it appends plain text with no escapes, so a pipe or the test
 // harness reads it as text, and it has no `listen`, so runTui reads stdin itself.
 //
-// Two pi-tui defaults are switched off to keep the screen as it was (§2.11: any visible difference is a
-// bug): mouse capture, which would take the terminal's own text selection away; and, on close, printing
-// the last frame onto the main screen after leaving the alternate one (`preserveScreen`), so quitting
-// leaves the person's terminal exactly as it was before `pir`.
+// The mouse is on (mouse-navigation §2.7): pi-tui parses the reports, runs its own drag-to-select and copies
+// the selection on release through `copy` (pbcopy on macOS; elsewhere pi-tui's OSC 52), and hands every
+// event to the root's handleMouse, which forwards it to the mounted component or to listen's onMouse. On
+// close, pi-tui's last frame is not printed onto the main screen (`preserveScreen`), so quitting leaves the
+// person's terminal exactly as it was before `pir`.
+//
+// Mouse reporting left on after pir is gone makes the shell print escapes on every pointer move, so while
+// the screen is started it also restores the terminal on process `exit`, SIGTERM, SIGHUP and SIGINT, the
+// exits pi-tui's stop never sees (§2.7). SIGKILL cannot be caught.
 //
 // `terminal` is pi-tui's Terminal seam: ProcessTerminal (process.stdin/stdout) by default, a fake in tests.
-export function createScreen({ stream = process.stdout, colour, terminal } = {}) {
+// `copy`, `env`, `onExit` (the process, as an emitter with exit()) and `platform` are injected so tests
+// never touch the real clipboard, environment or process.
+export function createScreen({ stream = process.stdout, colour, terminal, copy = defaultCopy, env = process.env, onExit = process, platform = process.platform } = {}) {
   const isTTY = !!stream.isTTY;
   // Colour only on a TTY, and honour NO_COLOR (the de-facto standard), matching render.mjs so the two
   // agree on when the live view is coloured.
-  const useColour = isTTY && (colour ?? !('NO_COLOR' in process.env));
+  const useColour = isTTY && (colour ?? !('NO_COLOR' in env));
 
   if (!isTTY) {
     let mounted = null;
@@ -665,6 +706,7 @@ export function createScreen({ stream = process.stdout, colour, terminal } = {})
   let painting = false;
   let onInput = null;
   let onError = null;
+  let onMouse = null;
   const view = new FrameView(() => frame, { colour: useColour });
   // The conversation view (T13) is a pi-tui component of its own, with a typing box: while one is mounted
   // it is drawn in the frame's place and has the focus, so the box's cursor lands where the person types.
@@ -683,6 +725,27 @@ export function createScreen({ stream = process.stdout, colour, terminal } = {})
       }
     },
     invalidate() {},
+    // Every mouse event pi-tui parses lands here, the layout root (mouse-navigation §3.2). A mounted
+    // component takes it if it has a handler; a painted frame's events go to runTui's onMouse. Returning
+    // undefined (no handler, or a handler that declines) leaves pi-tui its text selection and its
+    // synthesised click, so nothing here handles a press.
+    handleMouse(ev) {
+      if (!mounted) return onMouse?.(ev);
+      const r = mounted.handleMouse?.(ev);
+      // pi-tui focuses the component its dispatch reached, which is this root, not the mounted one: a
+      // click in a mounted typing box (the Editor answers { focus: true }) would take the focus off the
+      // component and its cursor would vanish. A result naming its own target is passed through as is, so
+      // the focus is pointed back at the mounted component with the target this root would have had.
+      if (r?.focus && !('target' in r)) {
+        return {
+          ...r,
+          handled: true,
+          focusTarget: mounted,
+          target: { component: guarded, originX: ev.screenX - ev.x, originY: ev.screenY - ev.y, width: ev.width, height: ev.height },
+        };
+      }
+      return r;
+    },
   };
   // TuiAltScreen scrolls its own viewport on PgUp/PgDn, Home/End and Ctrl+↑/↓, and opens a transcript
   // search on Ctrl+Shift+F, in an input listener that runs before pir's and consumes the key. pir's frame
@@ -692,7 +755,12 @@ export function createScreen({ stream = process.stdout, colour, terminal } = {})
   const kb = getKeybindings();
   const unbound = Object.fromEntries(Object.keys(TUI_KEYBINDINGS).filter((id) => id.startsWith('tui.altScreen.')).map((id) => [id, []]));
   kb.setUserBindings({ ...kb.getUserBindings(), ...unbound });
-  const tui = new TuiAltScreen(terminal ?? new ProcessTerminal(), false, undefined, { mouse: false });
+  const term = terminal ?? new ProcessTerminal();
+  const tui = new TuiAltScreen(term, false, undefined, {
+    mouse: true,
+    wheelScrollLines: 3,
+    ...(platform === 'darwin' && copy ? { copySelection: copy } : {}),
+  });
   tui.setLayoutRoot(guarded);
   tui.addInputListener((data) => {
     if (!onInput) return undefined;
@@ -706,10 +774,36 @@ export function createScreen({ stream = process.stdout, colour, terminal } = {})
     tui.setFocus(mounted);
   }
 
+  // The exit restore (§2.7), armed while the screen is started and not closed. It writes synchronously
+  // (a TTY stdout write is synchronous in Node on POSIX), because nothing after an `exit` listener runs.
+  let restored = false;
+  function restore() {
+    if (restored || !started || closed) return;
+    restored = true;
+    term.write(EXIT_RESTORE);
+  }
+  const onProcessExit = () => restore();
+  const onSignal = (sig) => {
+    restore();
+    onExit.exit?.(128 + (osConstants.signals[sig] ?? 0));
+  };
+  function arm() {
+    onExit.on('exit', onProcessExit);
+    for (const sig of EXIT_SIGNALS) onExit.on(sig, onSignal);
+  }
+  function disarm() {
+    onExit.off('exit', onProcessExit);
+    for (const sig of EXIT_SIGNALS) onExit.off(sig, onSignal);
+  }
+
   function start() {
     if (started || closed) return;
     started = true;
+    arm();
     tui.start();
+    // pi-tui asks only for button-motion under a multiplexer (it can lag there); the person wants hover
+    // everywhere, so all-motion is asked for again after it (§2.2). pi-tui's stop turns ?1003 off itself.
+    if (underMultiplexer(env)) term.write(ALL_MOTION_ON);
   }
 
   return {
@@ -726,9 +820,10 @@ export function createScreen({ stream = process.stdout, colour, terminal } = {})
         painting = false;
       }
     },
-    listen(input, error) {
+    listen(input, error, mouse) {
       onInput = input;
       onError = error;
+      onMouse = mouse ?? null;
       start();
     },
     paint(next) {
@@ -746,7 +841,9 @@ export function createScreen({ stream = process.stdout, colour, terminal } = {})
     close() {
       if (closed) return;
       closed = true;
-      if (started) tui.stop({ preserveScreen: true });
+      if (!started) return;
+      disarm();
+      tui.stop({ preserveScreen: true });
     },
   };
 }
