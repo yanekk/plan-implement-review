@@ -1542,11 +1542,11 @@ function driveBox({ rows = () => [], plan = () => ({ started: true, runId: 'plan
   return { done, calls, type, key, screen, boxLine, term };
 }
 
-test('box: Enter on `@repo a brief` calls startPlan once, in the repo, with the brief, and lands on the planner', async () => {
+test('box: Enter on `@repo/plan a brief` calls startPlan once, in the repo, with the brief, and lands on the planner', async () => {
   const t = driveBox();
-  await t.type('repo a brief');
-  assert.match(t.boxLine(), /^@repo a brief/);
-  assert.match(t.screen(), /new plan {2}in repo/);
+  await t.type('repo/plan a brief');
+  assert.match(t.boxLine(), /^@repo\/plan a brief/);
+  assert.match(t.screen(), /new plan {2}plan in repo/);
   await t.key('\r');
   assert.equal(t.calls.length, 1, 'started once');
   assert.equal(t.calls[0].brief, 'a brief');
@@ -1559,10 +1559,11 @@ test('box: Enter on `@repo a brief` calls startPlan once, in the repo, with the 
 
 test('box: every §2.5 refusal starts nothing, keeps the text and shows the note', async () => {
   const cases = [
-    { keys: ['\x7f', 'hello there'], text: /^hello there/, note: 'start with @repo, then say what to plan' },
-    { keys: ['nope x'], text: /^@nope x/, note: 'no repo @nope in ~/src, ~/other — pick one from the list' },
-    { keys: ['dup x'], text: /^@dup x/, note: '@dup is in more than one folder: ~/src/dup, ~/other/dup' }, // home as ~, as the pop-up (T06)
-    { keys: ['repo '], text: /^@repo/, note: 'say what to plan after @repo' },
+    { keys: ['\x7f', 'hello there'], text: /^hello there/, note: 'start with @repo/plan or @repo/start' },
+    { keys: ['nope/plan x'], text: /^@nope\/plan x/, note: 'no repo @nope in ~/src, ~/other — pick one from the list' },
+    { keys: ['dup/plan x'], text: /^@dup\/plan x/, note: '@dup is in more than one folder: ~/src/dup, ~/other/dup' }, // home as ~, as the pop-up (T06)
+    { keys: ['repo x'], text: /^@repo x/, note: 'pick a command: @repo/plan or @repo/start' },
+    { keys: ['repo/plan '], text: /^@repo\/plan/, note: 'say what to plan after @repo/plan' },
   ];
   for (const c of cases) {
     const t = driveBox();
@@ -1582,12 +1583,12 @@ test('box: every §2.5 refusal starts nothing, keeps the text and shows the note
 test('box: startPlan refusing (no-main, in plain words) or throwing both give the start-failed note, the text kept', async () => {
   for (const plan of [() => ({ started: false, reason: 'no-main' }), () => { throw new Error('spawn failed'); }]) {
     const t = driveBox({ plan });
-    await t.type('repo a brief');
+    await t.type('repo/plan a brief');
     await t.key('\r');
     assert.equal(t.calls.length, 1);
     const reason = plan.toString().includes('no-main') ? 'it has no local main branch' : 'spawn failed';
     assert.ok(t.screen().includes(`Could not start planning in repo: ${reason}`), t.screen());
-    assert.match(t.boxLine(), /^@repo a brief/);
+    assert.match(t.boxLine(), /^@repo\/plan a brief/);
     assert.doesNotMatch(t.screen(), /starting the planner/);
     await t.key('\x1b');
     await t.key('\x1b');
@@ -1615,7 +1616,7 @@ test('box: on a bare box ↓ and → reach the list (open a run); ← back shows
 
 test('box: after a start and back out to the list, the box reads @ again', async () => {
   const t = driveBox();
-  await t.type('repo a brief');
+  await t.type('repo/plan a brief');
   await t.key('\r');
   assert.match(t.screen(), /starting the planner…/);
   await t.key('\x1b[D'); // gives up the wait: the steps view

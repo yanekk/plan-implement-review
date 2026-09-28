@@ -23,13 +23,13 @@ done · ⛔ blocked, needs a human.
 
 | # | Task | Depends on | State | Notes |
 |---|---|---|---|---|
-| T01 | box-grammar | — | ⬜ | |
+| T01 | box-grammar | — | 🔍 | parseBoxText two-command grammar, completionContext, headLine §2.5, startBuildFailedNote, new NOTES; 23 new planbox tests; shell tests retyped to `/plan`. Deviation: no-test-block reads `no setup/test block` (user 2026-09-28; DESIGN's words overran 80 columns). headLine on an ambiguous name reads plansOf of every match. |
 | T02 | plan-scan | — | ⬜ | |
 | T03 | box-completion | T01 | ⬜ | |
 | T04 | box-starts-build | T01, T02, T03 | ⬜ | |
 | T05 | box-commands-drill | T04 | ⬜ | |
 
-**Review queue:** *(empty)*
+**Review queue:** T01
 
 ## Blocked on the user
 
