@@ -11,6 +11,7 @@ Legend: 🐞 defect found · ✅ verified by hand with the user · 📌 worth kn
 
 | Date | | Finding |
 |---|---|---|
+| 2026-09-28 | 📌 | T01: one `npm test` run in six exited 1 with the dot reporter's output discarded, so the failing test is unknown; five reruns were green. Likely a timing test under load from parallel workers. Keep the output next time. |
 | 2026-09-28 | 📌 | Plan review: tmux and zellij are not installed here (only `/usr/bin/screen`), so real-multiplexer hover is unprovable. pi-tui sets non-mouse private modes (1049, 25, 7), so rig assertions check the mouse modes 1000/1002/1003/1004/1006, never an empty `modes()`. |
 | 2026-09-28 | 📌 | Plan amended after pir-coordinator merged (`7c59312`): live-view rows are `rowEntries` (tasks, separator, agent row, helpers); the separator is unselectable (`moveRow`), so no hit; `c` stays keyboard-only. Rig sets `coordinator-drill`, `end-helper` cover them. |
 | 2026-09-28 | ✅ | Spike `prototype/spike.mjs` run by the user in their own terminal: hover brightens rows and looks right; click opens, wheel moves, drag-copy pastes. Their terminal delivers pointer moves (`?1003h`) to pi-tui 0.87.1. |

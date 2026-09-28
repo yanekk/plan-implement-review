@@ -9,7 +9,7 @@ import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync } 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { startRig, driveScreen, openScreen, createScreenModel, scenarioScript, RIG_TASK } from './conversation-rig.mjs';
+import { startRig, driveScreen, openScreen, createScreenModel, scenarioScript, mouseBytes, RIG_TASK } from './conversation-rig.mjs';
 import { loadDashboard } from './pir-tui.mjs';
 import { indexDir, listRecords } from './index-store.mjs';
 import { dropPersonInput } from './person-inbox.mjs';
@@ -188,6 +188,77 @@ test('the screen model keeps a row the cursor is parked on, and drops colour, OS
   m.write('\x1b[4;1H');
   m.write('\x1b[3;1H\n');
   assert.equal(m.overflows(), past + 2, 'a row address below the grid and a line feed on the last row are counted');
+});
+
+// mouse-navigation T01: the bytes a terminal sends for the mouse under SGR (1006) reporting.
+test('mouseBytes emits the exact SGR sequences, every button included', () => {
+  assert.equal(mouseBytes.press(5, 3), '\x1b[<0;5;3M');
+  assert.equal(mouseBytes.press(5, 3, { button: 'middle' }), '\x1b[<1;5;3M');
+  assert.equal(mouseBytes.press(5, 3, { button: 'right' }), '\x1b[<2;5;3M');
+  assert.equal(mouseBytes.release(5, 3), '\x1b[<0;5;3m');
+  assert.equal(mouseBytes.release(5, 3, { button: 'right' }), '\x1b[<2;5;3m', 'SGR release keeps the button code');
+  assert.equal(mouseBytes.release(5, 3, { button: 'middle' }), '\x1b[<1;5;3m');
+  assert.equal(mouseBytes.click(12, 7), '\x1b[<0;12;7M\x1b[<0;12;7m');
+  assert.equal(mouseBytes.move(1, 1), '\x1b[<35;1;1M');
+  assert.equal(mouseBytes.drag(40, 20), '\x1b[<32;40;20M');
+  assert.equal(mouseBytes.wheel(10, 4, 'up'), '\x1b[<64;10;4M');
+  assert.equal(mouseBytes.wheel(10, 4, 'down'), '\x1b[<65;10;4M');
+  assert.throws(() => mouseBytes.press(1, 1, { button: 'side' }), /unknown mouse button/);
+  assert.throws(() => mouseBytes.wheel(1, 1, 'left'), /up or down/);
+});
+
+test('the screen model reads private modes: set, reset, several at once, and split across writes', () => {
+  const m = createScreenModel({ rows: 3, cols: 10 });
+  assert.deepEqual([...m.modes()], []);
+  m.write('\x1b[?1000h\x1b[?1003h');
+  assert.deepEqual([...m.modes()].sort(), [1000, 1003]);
+  m.write('\x1b[?1003l');
+  assert.deepEqual([...m.modes()], [1000]);
+  m.write('\x1b[?1000;1006h');
+  assert.deepEqual([...m.modes()].sort(), [1000, 1006]);
+  m.write('\x1b[?1006;1000l');
+  assert.deepEqual([...m.modes()], []);
+  m.write('\x1b[?10');
+  assert.deepEqual([...m.modes()], [], 'half a sequence sets nothing yet');
+  m.write('49hhi');
+  assert.deepEqual([...m.modes()], [1049], 'the pending path completes it');
+  m.write('\x1b[?2026$p\x1b[>1u\x1b[2 q');
+  assert.deepEqual([...m.modes()], [1049], 'a mode query, a Kitty keyboard push and a cursor style are not modes');
+  m.modes().add(7);
+  assert.deepEqual([...m.modes()], [1049], 'modes() hands out a copy');
+  assert.equal(m.rows()[0], 'hi', 'mode sequences draw nothing');
+});
+
+test('the screen model keeps which cells are bold, and colour parameters never read as bold', () => {
+  const m = createScreenModel({ rows: 4, cols: 12 });
+  m.write('\x1b[1;1Hab\x1b[1mcd\x1b[0mef');
+  assert.deepEqual([0, 1, 2, 3, 4, 5].map((c) => m.boldAt(0, c)), [false, false, true, true, false, false]);
+  m.write('\x1b[2;1H\x1b[1mxy\x1b[22mzw');
+  assert.deepEqual([0, 1, 2, 3].map((c) => m.boldAt(1, c)), [true, true, false, false], 'SGR 22 clears bold');
+  m.write('\x1b[3;1H\x1b[38;2;1;2;3mq\x1b[48;5;1mr\x1b[38;2;1;1;1;1ms\x1b[m');
+  assert.deepEqual([0, 1, 2].map((c) => m.boldAt(2, c)), [false, false, true], '38;2;r;g;b and 48;5;n are stepped over; a 1 after them is bold');
+  m.write('\x1b[4;1H\x1b[1;38;5;2mt\x1b[mu');
+  assert.deepEqual([m.boldAt(3, 0), m.boldAt(3, 1)], [true, false], 'bold with colour in one SGR, then an empty SGR resets');
+  m.write('\x1b[4;1H\x1b[1m\x1b[38:2::1:2:3mv\x1b[1;mw');
+  assert.deepEqual([m.boldAt(3, 0), m.boldAt(3, 1)], [true, false], 'a lone colon colour keeps bold; an empty parameter resets');
+  m.write('\x1b[1;3H\x1b[2K');
+  assert.equal(m.boldAt(0, 2), false, 'an erased cell is not bold');
+  assert.equal(m.boldAt(9, 99), false, 'off the grid is not bold');
+  m.write('\x1b[2J');
+  assert.equal(m.boldAt(1, 0), false);
+});
+
+test('today\'s pir switches the alternate screen on and no mouse mode', { timeout: 30000 }, async (t) => {
+  const env = scratchHome(t);
+  const screen = openScreen({ cols: 80, rows: 24, env: { ...process.env, ...env } });
+  try {
+    await screen.waitFor((text) => text.trim() !== '');
+    const modes = screen.modes();
+    assert.ok(modes.has(1049), `the alternate screen is on: ${[...modes]}`);
+    for (const m of [1000, 1002, 1003, 1004, 1006]) assert.ok(!modes.has(m), `mouse mode ${m} is off`);
+  } finally {
+    await screen.close();
+  }
 });
 
 // The driver on the tour: open the rig's run from the dashboard, open its worker, answer everything, talk
