@@ -25,14 +25,14 @@ done · ⛔ blocked, needs a human.
 |---|---|---|---|---|
 | T01 | mouse-rig | — | ⬜ | |
 | T02 | row-hits | — | ⬜ | |
-| T03 | hover-style | — | 🔍 | `paintLine` `{ hovered }` bolds, dim spans lifted; `FrameView` `getHoverY` paints a hit line only; 6 tests. Deviations: `paintLine` also takes `palette: { sgr, lift }` so tests reach 24-bit under NO_COLOR; lift lives in `hoverLiftFor`/`*_HOVER_LIFT`, not `paletteFor`, whose pinned shape is unchanged. |
+| T03 | hover-style | — | ✅ | Review clean, no fix commit. `paintLine` `{ hovered, palette }` and `FrameView` `getHoverY` per doc; deviations (`palette` seam, `hoverLiftFor`) accepted. Probed: no table code cancels bold, all five dim styles share the dim code on both tables, exact-byte tests fail if the dim branch, hit gate or selected precedence is removed. `palette` applies to the hover path only. |
 | T04 | mouse-on | T01 | ⬜ | |
 | T05 | list-clicks | T02, T03, T04 | ⬜ | |
 | T06 | conversation-wheel | T04 | ⬜ | |
 | T07 | mouse-docs | T05, T06 | ⬜ | |
 | T08 | mouse-drill | T05, T06, T07 | ⬜ | |
 
-**Review queue:** T03
+**Review queue:** —
 
 ## Blocked on the user
 
