@@ -71,9 +71,13 @@ export function coordinatorLaunchArgv({ slug }) {
 // `coordinator` is a scenario's own `coordinator: true` (pir-coordinator T04): without it the run starts
 // with PARALLEL_COORDINATOR=0, no coordinator agent, so every drill written before the agent existed runs
 // exactly as it did and pays for no extra session.
-export function seatbeltEnv({ ceiling, holdMerges = false, pirHome = null, coordinator = false } = {}) {
+//
+// `holdMs` is a scenario's `coordinatorHoldMs` (pir-coordinator T14): the agent's hold limit for the run,
+// passed as PARALLEL_COORDINATOR_HOLD_MS (coordinate.mjs holdLimitMs), so the live check sees it fire.
+export function seatbeltEnv({ ceiling, holdMerges = false, pirHome = null, coordinator = false, holdMs = null } = {}) {
   const env = { PARALLEL_LIVE: '1' };
   if (!coordinator) env.PARALLEL_COORDINATOR = '0';
+  if (coordinator && holdMs != null) env.PARALLEL_COORDINATOR_HOLD_MS = String(holdMs);
   if (ceiling != null) env.PARALLEL_MAX_WORKERS = String(ceiling);
   if (holdMerges) env.PARALLEL_HOLD_MERGES = '1';
   if (pirHome) {
@@ -456,6 +460,8 @@ export async function runScenario({
         // With the agent on it answers only what the run shows as the person's (pir-coordinator T09).
         personOnly: !!spec.coordinator,
         permissions: spec.answerPending.permissions,
+        personDelayMs: spec.answerPending.personDelayMs ?? 0,
+        now: () => now().getTime(),
         log,
       })
     : null;
@@ -505,7 +511,7 @@ export async function runScenario({
     // The scratch PIR_HOME sits in the plan's .parallel/, which the scratch repo's .gitignore keeps out of
     // git, so the index it may hold never dirties the checkout the coordinator merges in.
     const pirHome = spec.statusSnapshots ? join(controlDir, '..', 'pir-home') : null;
-    const env = seatbeltEnv({ ceiling, holdMerges: spec.holdMerges, pirHome, coordinator: spec.coordinator });
+    const env = seatbeltEnv({ ceiling, holdMerges: spec.holdMerges, pirHome, coordinator: spec.coordinator, holdMs: spec.coordinatorHoldMs });
     log(`launching coordinator process: node ${argv.join(' ')}  (ceiling ${ceiling}, timeout ${timeout}ms)`);
     child = spawnCoordinator({ argv, cwd: repoDir, env, spawn, stdoutPath: coordinatorOutPath(controlDir) });
 

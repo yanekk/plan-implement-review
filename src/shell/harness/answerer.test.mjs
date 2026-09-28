@@ -338,3 +338,38 @@ test('createAnswerer with personOnly leaves an item the coordinator holds alone,
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('createAnswerer with personDelayMs answers a person-held request only that long after it first found it (T14)', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'pir-answerer-'));
+  try {
+    mkdirSync(join(dir, 'conversations'), { recursive: true });
+    const write = (file, entries) => writeFileSync(join(dir, 'conversations', file), entries.map((e) => JSON.stringify(e)).join('\n') + '\n');
+    write('T03-implement-1.ndjson', [init('w3'), questions('q3')]);
+    const snap = (holder) => writeSnapshot(dir, { proc: { pid: 1 }, finalState: null, runState: { tasks: [{ id: 'T03', holder, worker: { id: 'w3' } }] } });
+    let clock = 1000;
+    const dropped = [];
+    const a = createAnswerer({ controlDir: dir, personOnly: true, personDelayMs: 60000, now: () => clock, drop: (input) => (dropped.push(input), { ok: true }) });
+
+    // Held by the agent: not answerable, so the delay has not started.
+    snap('coordinator');
+    a.tick();
+    clock += 120000;
+    a.tick();
+    assert.deepEqual(dropped, []);
+
+    // The hold limit hands it to the person: the delay starts now.
+    snap('person');
+    a.tick();
+    clock += 59999;
+    a.tick();
+    assert.deepEqual(dropped, [], 'not before the delay');
+    clock += 1;
+    a.tick();
+    assert.equal(dropped.length, 1);
+    assert.equal(dropped[0].requestId, 'q3');
+    a.tick();
+    assert.equal(dropped.length, 1, 'answered once');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
