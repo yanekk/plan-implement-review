@@ -2671,3 +2671,21 @@ test('hold limit: PARALLEL_COORDINATOR_HOLD_MS shortens it; absent, it is 5 minu
   assert.equal(dflt.handovers().length, 1);
   assert.match(dflt.handovers()[0], /for 5 minutes without/);
 });
+
+test('hold limit: a timed-out item passed late and then answered late keeps `late: true` on the answer (T13 review)', (t) => {
+  const run = holdRun(t, [{ num: 'T01' }], { T01: npmTest }, { holdMs: 60000 });
+  const { coordinator, clock, platform } = run;
+  const start = clock.t;
+  coordinator.pass();
+  const w = run.implOf('T01');
+  clock.t = start + 60000;
+  coordinator.pass();
+  run.decide({ kind: 'pass', worker: w, requestId: `${w}-r1`, reason: 'not mine to say', suggestion: 'allow' });
+  coordinator.pass();
+  run.decide({ kind: 'permission', worker: w, requestId: `${w}-r1`, decision: 'allow', reason: 'on reflection, the test command' });
+  coordinator.pass();
+  assert.deepEqual(platform.answers.map((a) => a.from), ['coordinator']);
+  const decided = coordinator.agent.ledger().filter((l) => l.kind === 'permission');
+  assert.equal(decided.length, 1);
+  assert.equal(decided[0].late, true);
+});

@@ -248,8 +248,10 @@ export function startCoordinator({
     for (const key of settled) release(key);
     justSettled = settled;
     for (const p of drained.passed ?? []) {
-      // A late pass of a timed-out item changes nothing on screen: it is the person's already (T13).
-      release(itemKey(p));
+      // A late pass of a timed-out item changes nothing on screen: it is the person's already (T13). It
+      // stays in `timedOut`, so a later decision for it is still ledgered `late: true`.
+      held.delete(itemKey(p));
+      heldAt.delete(itemKey(p));
       out.passed.push(p);
       control?.log?.(`coordinator-pass ${waitingNow.get(itemKey(p))?.task ?? p.worker}`);
     }
