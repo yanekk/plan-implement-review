@@ -27,14 +27,14 @@ done · ⛔ blocked, needs a human.
 | T01 | alert-core | — | ⬜ | |
 | T02 | ntfy-sender | — | ⬜ | |
 | T03 | notify-icon | — | ⬜ | |
-| T04 | worker-link-and-silence | — | 🔍 | worker `env`, `remoteUrl`, `remoteRefused`; platform `workerEnv`, `workers()` remote/url/lastText; agent `env`, `remoteUrl()`. 12 tests. Added: fake behaviours `remote: 'refused'`/`'stuck'` (stuck drives T07's 20 s path) and `lastText`; exported `lastAssistantText`, `FAKE_REMOTE_URL`. `remote` reads `off` while a switch-on is in flight. |
+| T04 | worker-link-and-silence | — | ✅ | Review clean, no fix commit. Worker `env`/`remoteUrl`/`remoteRefused`, platform `workerEnv` and workers() remote/url/lastText, agent `env`/`remoteUrl()`; fake adds `remote: 'refused'`/`'stuck'`, `lastText`. Probed: gutting the url assignment fails 3 tests, refused state survives switch-off, session_url absent leaves on with null url, plan-run.mjs no diff. |
 | T05 | why-yours | — | ⬜ | |
 | T06 | notify-command | T02 | ⬜ | |
 | T07 | coordinator-alerts | T01, T02, T04, T05 | ⬜ | |
 | T08 | notify-live | T03, T06, T07 | ⬜ | |
 | T09 | docs | T08 | ⬜ | |
 
-**Review queue:** T04
+**Review queue:** —
 
 ## Blocked on the user
 
