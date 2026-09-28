@@ -25,7 +25,7 @@ done · ⛔ blocked, needs a human.
 |---|---|---|---|---|
 | T01 | box-grammar | — | ✅ | |
 | T02 | plan-scan | — | ✅ | |
-| T03 | box-completion | T01 | ⬜ | |
+| T03 | box-completion | T01 | ✅ | |
 | T04 | box-starts-build | T01, T02, T03 | ⬜ | |
 | T05 | box-commands-drill | T04 | ⬜ | |
 
