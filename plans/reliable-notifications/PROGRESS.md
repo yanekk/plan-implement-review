@@ -26,8 +26,8 @@ done · ⛔ blocked, needs a human.
 |---|---|---|---|---|
 | T01 | alert-core | — | ✅ | `src/core/notify.mjs`, 45 tests. Implementer's choices (`(+N more)` kept whole, oldest question set, title fixed at start, reminder uses current url) accepted. Review fixed escape-only question text giving a bare `asks:`, reproduced and test-locked. Probed ids as UUIDs in the seq path, NaN and backward clocks, 190 cap. |
 | T02 | ntfy-sender | — | ⬜ | |
-| T03 | notify-icon | — | ⬜ | |
-| T04 | worker-link-and-silence | — | ⬜ | |
+| T03 | notify-icon | — | ✅ | |
+| T04 | worker-link-and-silence | — | ✅ | |
 | T05 | why-yours | — | ⬜ | |
 | T06 | notify-command | T02 | ⬜ | |
 | T07 | coordinator-alerts | T01, T02, T04, T05 | ⬜ | |
