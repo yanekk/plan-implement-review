@@ -14,7 +14,7 @@ cell also fixes the over-budget cell they walk past.
 
 **Status:** Planned 2026-09-28, amended the same day for the coordinator agent's rows (`7c59312`). Nothing built. The spike in `prototype/` was run by the user and approved.
 **Last updated:** 2026-09-28
-**Next `pir-work` will:** implement T01, the first ⬜ with no dependencies.
+**Next `pir-work` will:** implement T05 or T06, whose dependencies are ✅.
 
 ## Tasks
 
@@ -26,13 +26,13 @@ done · ⛔ blocked, needs a human.
 | T01 | mouse-rig | — | ✅ | |
 | T02 | row-hits | — | ✅ | |
 | T03 | hover-style | — | ✅ | |
-| T04 | mouse-on | T01 | 🔍 | createScreen: mouse on, pbcopy copy on darwin, multiplexer `?1003h`, exit/signal restore, root `handleMouse`, `listen` onMouse; 10 unit + 3 pty tests (old no-mouse pty test replaced). Deviations: restore also writes `?7h`; root re-points an Editor `focus` result at the mounted component; `platform` injected; runTui passes no onMouse yet (T05). |
+| T04 | mouse-on | T01 | ✅ | Reviewed: one fix, pbcopy garbled non-ASCII with no UTF-8 locale (reproduced by env -u LANG pbcopy, fixed with LC_ALL=en_US.UTF-8, test locks it). Deviations (?7h restore, Editor focus retarget, injected platform) checked against pi-tui dispatch. Pty drill at 80×24: drag copied, click and wheel harmless, Esc left no mouse mode. |
 | T05 | list-clicks | T02, T03, T04 | ⬜ | |
 | T06 | conversation-wheel | T04 | ⬜ | |
 | T07 | mouse-docs | T05, T06 | ⬜ | |
 | T08 | mouse-drill | T05, T06, T07 | ⬜ | |
 
-**Review queue:** T04
+**Review queue:** empty
 
 ## Blocked on the user
 
