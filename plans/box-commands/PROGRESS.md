@@ -23,7 +23,7 @@ done · ⛔ blocked, needs a human.
 
 | # | Task | Depends on | State | Notes |
 |---|---|---|---|---|
-| T01 | box-grammar | — | ⬜ | |
+| T01 | box-grammar | — | ✅ | |
 | T02 | plan-scan | — | ✅ | |
 | T03 | box-completion | T01 | ⬜ | |
 | T04 | box-starts-build | T01, T02, T03 | ⬜ | |
