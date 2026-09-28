@@ -642,7 +642,7 @@ test('end to end: a bare slug as the command, and `pir start` with no slug — t
   assert.match(bare.stderr, new RegExp(`^pir: unknown command '${PLAN_RIG_SLUG}'\\. To build a plan: pir start ${PLAN_RIG_SLUG}\\nusage: pir `));
   const none = run('start');
   assert.equal(none.status, 2);
-  assert.match(none.stderr, /^usage: pir {17}the dashboard\n {7}pir plan \["brief"\] {2}plan something new\n {7}pir start \{slug\} {4}build a reviewed plan\n/);
+  assert.match(none.stderr, /^usage: pir {20}the dashboard\n {7}pir plan \["brief"\] {5}plan something new\n {7}pir start \{slug\} {7}build a reviewed plan\n {7}pir notify \[test\|off\] {2}phone alerts: set up, test, turn off\n/);
 });
 
 // ---- dashboard-plan-box T05: the new-plan box on the runs list starts a planning run (DESIGN §2.3–§2.5). ----
