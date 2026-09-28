@@ -8,6 +8,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync, readFileSync, readdirSyn
 import { tmpdir } from 'node:os';
 import { join, dirname, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { query as sdkQuery } from '@anthropic-ai/claude-agent-sdk';
 import { startWorker, workerOptions, writeWorkersFile } from './worker-proc.mjs';
 import { fakeClaudeSpawner, turn, wakeUp, backgroundTasks, remoteInputTurn, canUseTool, initEvent, assistantText, resultEvent, REMOTE_CONTROL_RESPONSE } from './fake/claude-stream.mjs';
 import { workerActivity, allowResult } from '../core/stream.mjs';
@@ -496,4 +497,78 @@ test('worker-proc.mjs is the only module in src/ that imports the Agent SDK', ()
     .filter((f) => /from\s+['"]@anthropic-ai\/claude-agent-sdk/.test(readFileSync(join(src, f), 'utf8')))
     .map((f) => relative(src, join(src, f)));
   assert.deepEqual(importers, [join('shell', 'worker-proc.mjs')]);
+});
+
+// ---- reliable-notifications T04: the Remote Control link and the session environment ----
+
+test('remoteUrl is the session_url once Remote Control is on, and null once it is off', async (t) => {
+  const { worker } = setup([{ await: 'user' }, ...turn('ok')], t);
+  worker.send('go');
+  await waitFor(hasResult(worker), 'the turn');
+  assert.equal(worker.remoteUrl, null, 'null before any switch-on');
+  assert.equal(worker.remoteRefused, false);
+  await worker.remoteControl(true);
+  assert.equal(worker.remoteUrl, REMOTE_CONTROL_RESPONSE.session_url);
+  await worker.remoteControl(false);
+  assert.equal(worker.remoteUrl, null);
+  assert.equal(worker.remoteRefused, false);
+});
+
+test('a refused Remote Control leaves remoteRefused true and no link', async (t) => {
+  // An SDK without enableRemoteControl is one of the refusals syncRemote names; the real query otherwise.
+  const query = (args) => {
+    const q = sdkQuery(args);
+    q.enableRemoteControl = undefined;
+    return q;
+  };
+  const { worker } = setup([{ await: 'user' }, ...turn('ok')], t, { query });
+  worker.send('go');
+  await waitFor(hasResult(worker), 'the turn');
+  await worker.remoteControl(true);
+  assert.equal(worker.remoteRefused, true);
+  assert.equal(worker.remote, false);
+  assert.equal(worker.remoteUrl, null);
+  assert.ok(worker.entries().some((e) => e.kind === 'remote-control-failed'));
+});
+
+// spawnerSeeing(spawner) → the same spawner, recording the env the SDK handed each spawn.
+function spawnerSeeing(spawner) {
+  const envs = [];
+  const s = (o) => {
+    envs.push(o.env);
+    return spawner(o);
+  };
+  s.envs = envs;
+  return s;
+}
+
+test('startWorker with env: the spawned process gets exactly that environment', async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'pir-worker-proc-env-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const scriptPath = join(dir, 'script.json');
+  writeFileSync(scriptPath, JSON.stringify([{ await: 'user' }, ...turn('ok')]));
+  const spawner = spawnerSeeing(fakeClaudeSpawner({ script: scriptPath }));
+  const env = { ...process.env, CLAUDE_CLIENT_PRESENCE_FILE: '/tmp/presence' };
+  const worker = startWorker({ cwd: dir, sessionId: SESSION, name: NAME, logPath: join(dir, 'c.ndjson'), claudePath: CLAUDE, spawnProcess: spawner, env });
+  t.after(() => worker.close({ graceMs: 100, killMs: 300 }));
+  worker.send('go');
+  await waitFor(hasResult(worker), 'the turn');
+  assert.equal(spawner.envs[0].CLAUDE_CLIENT_PRESENCE_FILE, '/tmp/presence');
+  assert.equal(spawner.envs[0].PATH, process.env.PATH, 'the inherited environment is kept');
+  assert.equal(workerOptions({ cwd: '/w', sessionId: SESSION, name: NAME, env }).env, env);
+});
+
+test('startWorker without env inherits process.env and passes no env option', async (t) => {
+  assert.equal('env' in workerOptions({ cwd: '/w', sessionId: SESSION, name: NAME }), false);
+  const dir = mkdtempSync(join(tmpdir(), 'pir-worker-proc-env-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const scriptPath = join(dir, 'script.json');
+  writeFileSync(scriptPath, JSON.stringify([{ await: 'user' }, ...turn('ok')]));
+  const spawner = spawnerSeeing(fakeClaudeSpawner({ script: scriptPath }));
+  const worker = startWorker({ cwd: dir, sessionId: SESSION, name: NAME, logPath: join(dir, 'c.ndjson'), claudePath: CLAUDE, spawnProcess: spawner });
+  t.after(() => worker.close({ graceMs: 100, killMs: 300 }));
+  worker.send('go');
+  await waitFor(hasResult(worker), 'the turn');
+  assert.equal(spawner.envs[0].PATH, process.env.PATH);
+  assert.equal(spawner.envs[0].CLAUDE_CLIENT_PRESENCE_FILE, process.env.CLAUDE_CLIENT_PRESENCE_FILE);
 });

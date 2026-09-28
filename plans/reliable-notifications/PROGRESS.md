@@ -26,8 +26,8 @@ done · ⛔ blocked, needs a human.
 |---|---|---|---|---|
 | T01 | alert-core | — | ⬜ | |
 | T02 | ntfy-sender | — | ✅ | Reviewed: one fix, a network error now names its cause (Node fetch says only `fetch failed`), reproduced with real fetch on a closed port, test locks it. Probed real fetch against a local server: JSON POST, retry, PUT clear path, '·' rejected in headers. Deviations accepted: trailing `{ fs }`, missing server reads ntfy.sh, non-ENOENT read is corrupt. |
-| T03 | notify-icon | — | ⬜ | |
-| T04 | worker-link-and-silence | — | ⬜ | |
+| T03 | notify-icon | — | ✅ | |
+| T04 | worker-link-and-silence | — | ✅ | |
 | T05 | why-yours | — | ⬜ | |
 | T06 | notify-command | T02 | ⬜ | |
 | T07 | coordinator-alerts | T01, T02, T04, T05 | ⬜ | |

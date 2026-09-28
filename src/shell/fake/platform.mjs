@@ -91,6 +91,15 @@ function addTaskRows(cwd, task, plan, rows) {
 //                            `{ kind: 'questions', questions }`) with ids `${workerId}-r1`, … and does
 //                            not build until every one is answered through answer(); workers() shows the
 //                            unanswered ones as its `pending`, as the real fold does (pir-coordinator T04).
+//     { remote: 'refused' }  remoteControl(id, true) leaves the worker `refused`, as a refused
+//                            enableRemoteControl does; it stays refused. (reliable-notifications T04)
+//     { remote: 'stuck' }    remoteControl(id, true) never settles: the worker stays `off` with no link,
+//                            as a stuck bridge leaves it, so a test can drive the 20 s no-link alert.
+//     { lastText: "text" }   workers() reports it as the worker's `lastText` (the last assistant text the
+//                            real platform folds from the log); null without it. Read at each call, so a
+//                            test may change it mid-run.
+//   Otherwise remoteControl(id, true) turns the worker `on` with the url `FAKE_REMOTE_URL + id`, and
+//   remoteControl(id, false) turns it `off` with no url, as the real worker settles them.
 //
 // Each worker keeps an in-memory conversation log under its `logPath` (`logs`, read with readLog): a
 // `request` entry per scripted request at spawn, a `reply` per answer, a `message` per send, a `note` per
@@ -99,6 +108,8 @@ function addTaskRows(cwd, task, plan, rows) {
 //
 // The `resurrectClosed` behaviour of the `claude --bg` days (a closed session reappearing under its old
 // id as a stale registry entry) is gone with live-workers T05: a child that exited cannot come back.
+export const FAKE_REMOTE_URL = 'https://claude.ai/code/session_fake_';
+
 export function createFakePlatform({ behaviors = {} } = {}) {
   const workers = new Map(); // id → worker record
   const inboxQueue = []; // messages from workers to the coordinator, drained by inbox()
@@ -321,6 +332,8 @@ export function createFakePlatform({ behaviors = {} } = {}) {
         status: 'busy',
         pid: 10000 + nextId,
         busyHold: b.lingerBusy ?? 0,
+        remote: 'off',
+        url: null,
       };
       if (phase === 'implement' && Array.isArray(b.requests)) {
         w.requests = b.requests.map((r, i) => ({ kind: 'permission', ...r, requestId: `${id}-r${i + 1}` }));
@@ -385,7 +398,21 @@ export function createFakePlatform({ behaviors = {} } = {}) {
     // or unknown worker has no session to reach (platform.mjs).
     remoteControl(id, on) {
       remotes.push({ to: id, on: !!on });
-      return { ok: !!liveWorker(id) };
+      const w = liveWorker(id);
+      if (!w) return { ok: false };
+      const how = behaviors[w.task]?.remote;
+      if (w.remote === 'refused') return { ok: true }; // not retried, as worker-proc
+      if (on) {
+        if (how === 'refused') w.remote = 'refused';
+        else if (how !== 'stuck') {
+          w.remote = 'on';
+          w.url = FAKE_REMOTE_URL + id;
+        }
+      } else {
+        w.remote = 'off';
+        w.url = null;
+      }
+      return { ok: true };
     },
 
     // note(id, kind, fields) → { ok }. Recorded only; the real one writes a `note` into the worker's log,
@@ -436,7 +463,10 @@ export function createFakePlatform({ behaviors = {} } = {}) {
         const pending = isLive && w.requests?.length ? w.requests.map((r) => ({ ...r })) : [];
         const request = isLive ? pending[0]?.kind ?? behaviors[w.task]?.request ?? null : null;
         const state = request ?? (w.status === 'busy' ? 'busy' : 'idle');
-        return { id: w.id, task: w.task, role: w.role, n: w.n, logPath: w.logPath, cwd: w.cwd ?? null, live: isLive, activity: { state, pending } };
+        return {
+          id: w.id, task: w.task, role: w.role, n: w.n, logPath: w.logPath, cwd: w.cwd ?? null, live: isLive, activity: { state, pending },
+          remote: w.remote, url: w.url, lastText: behaviors[w.task]?.lastText ?? null,
+        };
       });
     },
 

@@ -17,6 +17,7 @@ import {
   createPlatform,
   nextLogPath,
   resolveClaudePath,
+  lastAssistantText,
 } from './platform.mjs';
 import { startWorker } from './worker-proc.mjs';
 import { fakeClaudeSpawner, turn, canUseTool, initEvent } from './fake/claude-stream.mjs';
@@ -178,8 +179,9 @@ function setupPlatform(t, scripts = {}, opts = {}) {
     writeFileSync(scriptPath, JSON.stringify(scripts[task] ?? [{ await: 'user' }, ...turn('ok')]));
     const received = join(dir, `received-${n}.ndjson`);
     const spawner = fakeClaudeSpawner({ script: scriptPath, received });
-    spawned.push({ task, role, cwd: o.cwd, received, spawner, opts: o });
-    return startWorker({ ...o, spawnProcess: spawner });
+    const seen = []; // the env the SDK handed each spawn
+    spawned.push({ task, role, cwd: o.cwd, received, spawner, opts: o, seen });
+    return startWorker({ ...o, spawnProcess: (so) => (seen.push(so.env), spawner(so)) });
   };
   const platform = createPlatform({ controlDir, transport: { drain: () => [] }, startWorker: start, claudePath: CLAUDE, ...opts });
   t.after(async () => {
@@ -403,4 +405,74 @@ test('platform.mjs calls no `claude agents`, `claude stop` or `claude rm`, and n
   };
   walk(shellDir);
   assert.deepEqual(offenders, []);
+});
+
+// ---- reliable-notifications T04: the worker's environment and the alert fields of workers() ----
+
+test('workerEnv returning a variable: the worker gets it on top of the inherited environment, read at each spawn', async (t) => {
+  let calls = 0;
+  const { platform, spawned } = setupPlatform(t, {}, {
+    workerEnv: () => {
+      calls += 1;
+      return { CLAUDE_CLIENT_PRESENCE_FILE: '/tmp/pir-presence' };
+    },
+  });
+  platform.spawn({ cwd: tmpdir(), name: NAME('T05'), phase: 'implement' });
+  platform.spawn({ cwd: tmpdir(), name: NAME('T06'), phase: 'implement' });
+  assert.equal(calls, 2, 'read at each spawn');
+  const { env } = spawned[0].opts;
+  assert.equal(env.CLAUDE_CLIENT_PRESENCE_FILE, '/tmp/pir-presence');
+  assert.equal(env.PATH, process.env.PATH, 'the inherited environment is kept');
+  // And the SDK hands it on to the process it spawns.
+  await waitFor(() => spawned[0].seen.length, 'the spawn');
+  assert.equal(spawned[0].seen[0].CLAUDE_CLIENT_PRESENCE_FILE, '/tmp/pir-presence');
+});
+
+test('workerEnv returning null, or none at all: no env is passed and the worker inherits', (t) => {
+  const a = setupPlatform(t, {}, { workerEnv: () => null });
+  a.platform.spawn({ cwd: tmpdir(), name: NAME('T05'), phase: 'implement' });
+  assert.equal('env' in a.spawned[0].opts, false);
+  const b = setupPlatform(t);
+  b.platform.spawn({ cwd: tmpdir(), name: NAME('T05'), phase: 'implement' });
+  assert.equal('env' in b.spawned[0].opts, false);
+});
+
+test('workers() carries remote, url and lastText: off / null / null at first, then the link and the last text', async (t) => {
+  const { platform } = setupPlatform(t, { T05: [{ await: 'user' }, ...turn('first'), { await: 'user' }, ...turn('Should X be Y?')] });
+  const id = platform.spawn({ cwd: tmpdir(), name: NAME('T05'), phase: 'implement' });
+  const [w] = platform.workers();
+  assert.deepEqual([w.remote, w.url, w.lastText], ['off', null, null]);
+  await waitFor(() => platform.workers()[0].lastText === 'first', 'the first text');
+  platform.send(id, 'more');
+  await waitFor(() => platform.workers()[0].lastText === 'Should X be Y?', 'the last text');
+  platform.remoteControl(id, true);
+  await waitFor(() => platform.workers()[0].remote === 'on', 'Remote Control on');
+  assert.match(platform.workers()[0].url, /^https:\/\/claude\.ai\/code\/session_/);
+  platform.remoteControl(id, false);
+  await waitFor(() => platform.workers()[0].remote === 'off', 'Remote Control off');
+  assert.equal(platform.workers()[0].url, null);
+});
+
+test('workers() reports a refused Remote Control as `refused`', (t) => {
+  // A stand-in worker: only the fields workers() reads. worker-proc's own test proves remoteRefused.
+  const stub = { pid: null, remote: false, remoteRefused: true, remoteUrl: null, entries: () => [], onEvent() {}, onExit() {}, send() { return true; } };
+  const dir = mkdtempSync(join(tmpdir(), 'pir-platform-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const platform = createPlatform({ controlDir: join(dir, 'control'), transport: { drain: () => [] }, startWorker: () => stub, claudePath: CLAUDE });
+  platform.spawn({ cwd: tmpdir(), name: NAME('T05'), phase: 'implement' });
+  assert.deepEqual(['remote', 'url', 'lastText'].map((k) => platform.workers()[0][k]), ['refused', null, null]);
+});
+
+test('lastAssistantText: the last assistant text block, skipping user text and tool use; null with none', () => {
+  const said = (...content) => ({ dir: 'in', event: { type: 'assistant', message: { content } } });
+  assert.equal(lastAssistantText([]), null);
+  assert.equal(lastAssistantText([{ dir: 'out', kind: 'message', from: 'pir', text: 'go' }]), null);
+  const entries = [
+    said({ type: 'text', text: 'one' }),
+    said({ type: 'text', text: 'two' }, { type: 'text', text: 'three' }),
+    said({ type: 'tool_use', id: 'x', name: 'Bash', input: {} }),
+    { dir: 'in', event: { type: 'user', message: { content: 'typed' } } },
+    'torn line {',
+  ];
+  assert.equal(lastAssistantText(entries), 'three');
 });
