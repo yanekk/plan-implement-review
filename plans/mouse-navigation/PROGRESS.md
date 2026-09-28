@@ -28,11 +28,11 @@ done · ⛔ blocked, needs a human.
 | T03 | hover-style | — | ✅ | |
 | T04 | mouse-on | T01 | ✅ | |
 | T05 | list-clicks | T02, T03, T04 | ⬜ | |
-| T06 | conversation-wheel | T04 | ⬜ | |
+| T06 | conversation-wheel | T04 | 🔍 | `handleMouse` in the conversation view (wheel ±3, box clicks to the Editor) and `withHeadLine` (head line ignored, y−1); `withHeadLine` exported for its test. 7 unit tests, 2 pty tests. Deviation: the pty case runs the rig's `long` scenario, not the tour, because the tour's history fits 120×40. |
 | T07 | mouse-docs | T05, T06 | ⬜ | |
 | T08 | mouse-drill | T05, T06, T07 | ⬜ | |
 
-**Review queue:** *(empty)*
+**Review queue:** T06
 
 ## Blocked on the user
 

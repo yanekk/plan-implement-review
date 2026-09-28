@@ -589,7 +589,7 @@ export function decodeKey(data) {
 // withHeadLine(line, make, { host, colour }) → the component `make(tui)` builds, headed by one line (§2.12:
 // the reviewer's conversation after following into it). The inner view is handed a terminal one row short,
 // so the line costs it a row of scrollback and the frame still fits. With no line, `make(host)` as it is.
-function withHeadLine(line, make, { host, colour }) {
+export function withHeadLine(line, make, { host, colour }) {
   if (!line) return make(host);
   const tui = {
     requestRender: (...a) => host.requestRender?.(...a),
@@ -606,6 +606,8 @@ function withHeadLine(line, make, { host, colour }) {
   return {
     render: (width) => [paintLine([span(line, 'ok')], Math.max(20, width | 0), colour), ...inner.render(width)],
     handleInput: (data) => inner.handleInput(data),
+    // The head line takes no mouse event; below it the inner view sees its own rows (mouse-navigation §2.3).
+    handleMouse: (ev) => (ev.y === 0 ? undefined : inner.handleMouse?.({ ...ev, y: ev.y - 1 })),
     invalidate: () => inner.invalidate(),
     get focused() {
       return inner.focused;
