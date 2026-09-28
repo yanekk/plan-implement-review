@@ -26,10 +26,10 @@ done · ⛔ blocked, needs a human.
 | T01 | box-grammar | — | ✅ | |
 | T02 | plan-scan | — | ✅ | |
 | T03 | box-completion | T01 | ✅ | |
-| T04 | box-starts-build | T01, T02, T03 | ⬜ | |
+| T04 | box-starts-build | T01, T02, T03 | 🔍 | runTui passes scanPlans and isBuilding to the list view; `/start` goes to startRun and lands in the build's live view. 7 unit, 5 rig tests; T03's BS workaround dropped. Deviations: submitBox is async; isBuilding exported and pure; the docs heading is now `The dashboard box`, anchors updated. |
 | T05 | box-commands-drill | T04 | ⬜ | |
 
-**Review queue:** *(empty)*
+**Review queue:** T04
 
 ## Blocked on the user
 

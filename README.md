@@ -81,12 +81,16 @@ It builds on pir/screen-time.
 `↵` starts the build on the same branch, and the dashboard row turns from `plan` to `work`. `n` leaves
 it for later: `pir start screen-time` builds it whenever you like.
 
-You can also start one from the dashboard without leaving `pir`: the box at the bottom of the runs
-list starts as `@`. Type the repo's name (a pop-up lists the git repos in `~/src`, or in the folders
-`PIR_REPOS` names), then the brief, and `↵` starts the planning run there and opens the planner, just
-as `pir plan` does. Only an exact repo name starts anything; otherwise the box says why and keeps what
-you typed. While the box holds only `@`, the dashboard's keys work as before
-([planning-runs.md](docs/planning-runs.md#the-new-plan-box)).
+You can also plan, or build a reviewed plan, from the dashboard without leaving `pir`: the box at the
+bottom of the runs list starts as `@`. Type the repo's name (a pop-up lists the git repos in `~/src`, or
+in the folders `PIR_REPOS` names) and pick it; a second pop-up offers `plan` and `start`.
+`@repo/plan` and a brief starts the planning run there and opens the planner, just as `pir plan` does.
+`@repo/start` lists that repo's reviewed, unfinished plans with their progress; pick one and `↵` starts
+its build and shows its live view, just as `pir start` does, or opens the build if it is already
+running. So `@sk`, `↵`, `↓`, `↵`, `↵`, `↵` builds a plan without typing its name. Only an exact repo name,
+command and plan name start anything; otherwise the box says why and keeps what you typed. While the box
+holds only `@`, the dashboard's keys work as before
+([planning-runs.md](docs/planning-runs.md#the-dashboard-box)).
 
 `pir plan` and `pir start` work in any git repo with a local `main`, this project's own checkout
 included; there is no flag to set ([planning-runs.md](docs/planning-runs.md)).
@@ -302,7 +306,7 @@ planning, reviewing or your go), its progress and how many workers are live. A b
 waiting on you reads `asking you` in amber instead of `running`, and so does a planning run whose
 planner or reviewer is waiting on you; one waiting for your merge reads `ready to merge`, so you can see
 from the list which runs need you; the counts line adds up those and every `your go` as `N waiting for you`. Under the
-list is the new-plan box, for starting a planning run in any of your repos (above).
+list is the box that plans something new, or builds a reviewed plan, in any of your repos (above).
 
 Every `pir` screen is drawn in [Catppuccin Mocha](https://catppuccin.com) colours on your terminal's own
 background, when your terminal supports full colour (most modern ones say so via `COLORTERM=truecolor`);
@@ -312,7 +316,7 @@ other terminals get the plain 16 colours, and `NO_COLOR` turns colour off. Detai
 | View | Keys |
 |---|---|
 | Dashboard | `↑↓` move · `↵` open a run · `Ctrl+R` twice resume · `Ctrl+S` twice stop · `Ctrl+X` twice remove · `esc` quit |
-| Dashboard, typing in the box | `@repo` then a brief · `↵` start planning · `shift+↵` new line · `esc` clear the box |
+| Dashboard, typing in the box | `@repo/plan` then a brief, or `@repo/start` then a plan · `↵` start planning or the build · `shift+↵` new line · `esc` clear the box · with a pop-up open, `↑↓` move, `Tab`/`↵` pick, `esc` close it |
 | Live view | `↑↓` pick a task or the coordinator agent's row · `→` open its conversation · `c` open the coordinator agent · `←` back to the dashboard · `Ctrl+S` twice stop this run · `esc` quit |
 | A planning run | `↑↓` pick a step · `→` open its conversation · `←` back · at the go, `↵` start or `n` not now |
 
