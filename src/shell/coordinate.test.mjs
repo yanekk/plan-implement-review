@@ -3084,3 +3084,22 @@ test('whyPerson: a worker with two person items reports the older one\'s reason'
   flipped.coordinator.pass();
   assert.deepEqual(flipped.why(), { [flipped.w()]: 'reserved' }, 'r1 (reserved) is older than r2 (passed)');
 });
+
+test('whyPerson: the oldest item is the first seen, not the first listed (a park before a later request)', (t) => {
+  // itemsOf lists a worker's requests before its report park, so a park passed on first and a reserved
+  // request raised after it would name `reserved` by listed order; the park is older, so it is `passed`.
+  const run = whyRun(t, { question: 'JSON or YAML?' });
+  let extra = null;
+  const workers = run.platform.workers;
+  run.platform.workers = () => workers().map((w) => (extra && w.id === run.w() && w.activity
+    ? { ...w, activity: { ...w.activity, pending: [extra, ...(w.activity.pending ?? [])] } }
+    : w));
+  run.coordinator.pass();
+  run.coordinator.pass();
+  run.agent.toPass.push({ worker: run.w() });
+  run.coordinator.pass();
+  assert.deepEqual(run.why(), { [run.w()]: 'passed' });
+  extra = { kind: 'permission', requestId: `${run.w()}-late`, ...RM_RF };
+  run.coordinator.pass();
+  assert.deepEqual(run.why(), { [run.w()]: 'passed' }, 'the park came first');
+});
