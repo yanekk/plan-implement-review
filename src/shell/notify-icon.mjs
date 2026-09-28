@@ -79,7 +79,9 @@ export function drawIcon(size = 256) {
   const cols = [...WORD].reduce((n, ch, i) => n + GLYPHS[ch][0].length + (i ? GAP : 0), 0);
   // One grid cell is size/16 pixels: the 11×9 word then fits inside the circle a launcher may crop
   // the square to (its corners sit about 0.89 of the radius from the centre at size 256).
-  const scale = Math.max(1, Math.floor(size / 16));
+  // Below 16 px the word (11 cells wide) no longer fits and a negative x would wrap into the row above.
+  if (!Number.isInteger(size) || size < 16) throw new Error(`icon size ${size} must be an integer >= 16`);
+  const scale = Math.floor(size / 16);
   const x0 = Math.floor((size - cols * scale) / 2);
   const y0 = Math.floor((size - rows * scale) / 2);
 

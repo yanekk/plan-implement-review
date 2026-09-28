@@ -76,3 +76,10 @@ test('the committed PNG equals a fresh encode and is under 20 KB', () => {
   assert.ok(committed.length < 20 * 1024, `${committed.length} bytes`);
   assert.ok(committed.equals(encodePng(drawIcon())), 'assets/pir-notify-icon.png is stale: run node src/shell/notify-icon.mjs');
 });
+
+test('drawIcon refuses a size too small to hold the word, rather than wrapping pixels', () => {
+  // Below 16 the cell is 1 px and the 11-cell word overhangs the frame; x < 0 used to wrap into
+  // the previous row silently (size 10) or throw a bare RangeError (size 8).
+  for (const s of [8, 10, 15]) assert.throws(() => drawIcon(s), /size/);
+  assert.equal(drawIcon(16).width, 16);
+});
