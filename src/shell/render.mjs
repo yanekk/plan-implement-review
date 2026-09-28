@@ -118,7 +118,15 @@ const ROW_STYLE = {
   done: 'done',
   waiting: 'idle',
   queued: 'idle',
+  // The coordinator agent's pinned row and the line above it (pir-coordinator T12): never amber, since it
+  // asks nothing of the person; given up reads idle.
+  agent: 'active',
+  'agent-given-up': 'idle',
+  separator: 'idle',
 };
+
+// The agent row's glyph, set apart from every task glyph (pir-coordinator T12).
+const AGENT_GLYPH = '◆';
 
 // The single source of truth for the display's line ordering AND each line's colour style: the summary
 // line, then one line per row, then the footer lines. Each entry is `{ text, style }` where `style` is a
@@ -131,11 +139,13 @@ export function styledLines(display, { spinnerChar = SPINNER[0] } = {}) {
   // The label column fits the longest label shown, so a long one (`asking coordinator · allow a command?`)
   // does not push its own row's clock out of line with the others (pir-coordinator T07 drill). Floor 24, the
   // width it always had; capped so one odd label cannot push every clock off a narrow window.
-  const labelWidth = Math.min(LABEL_MAX, Math.max(LABEL_MIN, ...rows.map((r) => [...(r.label ?? '')].length)));
+  // The agent's row and the separator (T12) have no clock and no id column, so they size neither column.
+  const cols = rows.filter((r) => !isPinned(r));
+  const labelWidth = Math.min(LABEL_MAX, Math.max(LABEL_MIN, ...cols.map((r) => [...(r.label ?? '')].length)));
   // The id column fits the longest id: 4 for a plan's `T01`, wider while an end-of-run helper's row
   // (`tests-fix`, pir-coordinator T11) is shown, so its slug still starts in the same column as the tasks'.
-  const idWidth = Math.max(ID_MIN, ...rows.map((r) => [...(r.id ?? '')].length));
-  for (const r of rows) out.push(rowLine(r, spinnerChar, labelWidth, idWidth));
+  const idWidth = Math.max(ID_MIN, ...cols.map((r) => [...(r.id ?? '')].length));
+  for (const r of rows) out.push(isPinned(r) ? pinnedLine(r, labelWidth, idWidth) : rowLine(r, spinnerChar, labelWidth, idWidth));
   for (const f of footerLines(footer, summary, spinnerChar)) out.push(f);
   return out;
 }
@@ -170,6 +180,9 @@ function summaryLine(summary, footer, branch, spinnerChar) {
 }
 
 const LABEL_MIN = 24;
+const SLUG_WIDTH = 22;
+// A row's clock with the space before it (` 12:05`), for the separator's span.
+const CLOCK_WIDTH = 6;
 const ID_MIN = 4;
 const LABEL_MAX = 40;
 
@@ -178,11 +191,24 @@ function rowLine(r, spinnerChar, labelWidth = LABEL_MIN, idWidth = ID_MIN) {
   // For an idle/queued row the glyph is a faint dot; keep the columns aligned enough to read.
   const g = r.kind === 'waiting' || r.kind === 'queued' ? '·' : glyph;
   const id = r.id.padEnd(idWidth);
-  const slug = (r.slug ?? '').padEnd(22);
+  const slug = (r.slug ?? '').padEnd(SLUG_WIDTH);
   const label = r.label.padEnd(labelWidth);
   const el = fmtElapsed(r.elapsedMs);
   const text = `  ${g} ${id} ${slug} ${label} ${el}`.replace(/\s+$/, '');
   return { text, style: ROW_STYLE[r.kind] ?? null };
+}
+
+const isPinned = (r) => r.kind === 'separator' || r.kind === 'agent' || r.kind === 'agent-given-up';
+
+// The separator and the coordinator agent's row (pir-coordinator T12). The separator spans a task row's
+// width up to the end of its label column; the agent's name sits where a task's id and slug do, so its
+// state lines up with the tasks' labels. Both keep the two-column lead, where the watch view paints its
+// selected-row mark.
+function pinnedLine(r, labelWidth, idWidth) {
+  const style = ROW_STYLE[r.kind] ?? null;
+  if (r.kind === 'separator') return { text: `  ${'─'.repeat(2 + idWidth + 1 + SLUG_WIDTH + 1 + labelWidth + CLOCK_WIDTH)}`, style };
+  const name = (r.slug ?? '').padEnd(idWidth + 1 + SLUG_WIDTH);
+  return { text: `  ${AGENT_GLYPH} ${name} ${r.label}`.replace(/\s+$/, ''), style };
 }
 
 // The footer, in the model's kinds. The parked-worker footer is a COMPACT single line (DESIGN §2.2,

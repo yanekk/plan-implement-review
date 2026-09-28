@@ -358,6 +358,24 @@ test('exit: resumed with the stored session id; a fourth exit within an hour giv
   assert.equal(again.alive(), false);
   assert.equal(again.givenUp(), true, 'given up, not restarting: the end of the run carries on without it (T05)');
   assert.equal(again.briefEnd({ tests: 'green' }), false);
+  assert.equal(agent.view().state, 'given-up');
+  // Given up before any launch in this process, it still has a row and the conversation it last had (T12).
+  const v = again.view();
+  assert.equal(v.state, 'given-up');
+  assert.equal(v.live, false);
+  assert.equal(v.id, id);
+  assert.equal(v.logPath, join(s.controlDir, 'conversations', 'coordinator-1.ndjson'));
+});
+
+test('view: up while alive, with its session and log; still up once the run closes it (T12)', async (t) => {
+  const s = scratch(t);
+  const { agent } = start(s, [{ await: 'user' }], t);
+  const v = agent.view();
+  assert.deepEqual(v, { id: agent.id, live: true, logPath: join(s.controlDir, 'conversations', 'coordinator-1.ndjson'), state: 'up' });
+  await agent.close({ graceMs: 100, killMs: 300 });
+  // The run's own end closed it: its last frame must not read `restarting`.
+  assert.equal(agent.view().state, 'up');
+  assert.equal(agent.view().live, false);
 });
 
 test('briefEnd sends the end brief; record appends a command-owned ledger line; givenUp is false while alive (T05)', async (t) => {

@@ -279,7 +279,7 @@ export function startRig({ into = null, scenario = 'tour', keep = false, env = p
         branch,
         ceiling: 1,
         sinceByTask: { [RIG_TASK]: since },
-        ...(agent ? { heldByAgent: held, coordinator: agent.view(), handoff, complete: !!handoff, readyToMerge: handoff?.state === 'ready' } : {}),
+        ...(agent ? { heldByAgent: held, coordinator: agent.view() && { ...agent.view(), holding: held.size }, handoff, complete: !!handoff, readyToMerge: handoff?.state === 'ready' } : {}),
       });
       writeRunSnapshot({ controlDir, proc, runState });
     } catch {

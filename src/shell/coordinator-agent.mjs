@@ -397,8 +397,12 @@ export function startCoordinatorAgent({
 
   // A run whose agent was already given up in the last hour stays given up across a pir restart.
   const t0 = now();
-  if (session.restarts.filter((iso) => t0 - Date.parse(iso) < RESTART_WINDOW_MS).length > MAX_RESTARTS) givenUp = true;
-  else launch();
+  if (session.restarts.filter((iso) => t0 - Date.parse(iso) < RESTART_WINDOW_MS).length > MAX_RESTARTS) {
+    givenUp = true;
+    // Its row still says so, and `c` / → still open the conversation it last had (T12).
+    const n = lastLogN(convDir);
+    if (n > 0) logPath = join(convDir, `coordinator-${n}.ndjson`);
+  } else launch();
 
   return {
     get id() {
@@ -417,10 +421,14 @@ export function startCoordinatorAgent({
     get logPath() {
       return logPath;
     },
-    // view() → { id, live, logPath } for the run state (buildRunState's `coordinator`), or null when it
-    // never launched.
+    // view() → { id, live, logPath, state } for the run state (buildRunState's `coordinator`), or null when
+    // it never launched and is not given up. `state` is what its row in the live view reads (T12): `up`,
+    // `restarting` (down, not given up; the end of the run waits for it) or `given-up`. An agent closed by
+    // the run's own end reads `up`: that frame is the run's last, and nothing restarts it.
     view() {
-      return logPath ? { id: session.sessionId, live: alive(), logPath } : null;
+      if (!logPath && !givenUp) return null;
+      const state = givenUp ? 'given-up' : alive() || closing ? 'up' : 'restarting';
+      return { id: session.sessionId, live: alive(), logPath, state };
     },
     brief(item) {
       if (!alive() || !item) return false;

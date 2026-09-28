@@ -51,9 +51,20 @@ function recordFrames(screen) {
 
 const rowOf = (text, task) => text.split('\n').find((l) => new RegExp(`^[▎ ] . ${task} `).test(l)) ?? null;
 
-// Move the run view's cursor (▎) to `task`; the list is at most three rows, so a bounded walk down then up finds it.
+// The coordinator agent's pinned row (T12): the separator line straight above it, and the row itself.
+const AGENT_ROW = /^[▎ ] ◆ coordinator agent +(on duty|holding \d+ questions?|restarting|given up · questions come to you)$/m;
+function assertAgentRow(text, what) {
+  const lines = text.split('\n');
+  const i = lines.findIndex((l) => AGENT_ROW.test(l));
+  assert.ok(i > 0, `the agent's row is on screen ${what}:\n${text}`);
+  assert.match(lines[i - 1], /^ {2}─{20,}$/, `the separator is straight above the agent's row ${what}:\n${text}`);
+  return lines[i];
+}
+
+// Move the run view's cursor (▎) to `task`; the view is at most six rows (three tasks, the separator, the
+// agent's row, a helper), so a bounded walk down then up finds it.
 async function select(screen, task) {
-  for (const key of [null, DOWN, DOWN, UP, UP, UP]) {
+  for (const key of [null, ...Array(6).fill(DOWN), ...Array(7).fill(UP)]) {
     if (key) {
       screen.send(key);
       await screen.waitFor();
@@ -77,6 +88,17 @@ for (const [cols, rows] of SIZES) {
       s = screen.text();
       assert.match(s, /2 asking you/, 'the header counts the two the person holds, not T01');
       assert.match(s, /c coordinator/, 'the hint offers the agent');
+      // T12: the agent's own row, below the tasks and a separator; T03 above it, nothing below it yet.
+      assertAgentRow(s, 'during the build');
+      assert.ok(s.indexOf(rowOf(s, 'T03')) < s.indexOf('◆ coordinator agent'), 'the tasks come first');
+
+      // T12: ↓ reaches the agent's row (stepping over the separator) and → opens its conversation.
+      await select(screen, 'coordinator');
+      screen.send(RIGHT);
+      s = (await screen.waitFor(/^coordinator +agent [0-9a-f]{8} · live/m)).join('\n');
+      screen.send(LEFT);
+      await screen.waitFor(/c coordinator/);
+      await select(screen, 'T01');
 
       // The agent's conversation: what it allowed, both pointers, each naming where to answer.
       screen.send('c');
@@ -124,6 +146,9 @@ for (const [cols, rows] of SIZES) {
       screen.send(LEFT);
       s = (await screen.waitFor(/● ready to merge/)).join('\n');
       assert.match(s, /drill +work +● ready to merge/, 'the dashboard row waits on the person');
+      screen.send(RIGHT);
+      s = (await screen.waitFor(/ready to merge · git merge pir\/drill/)).join('\n');
+      assert.match(assertAgentRow(s, 'in ready to merge'), /on duty$/, 'it holds nothing once every question is answered');
 
       rec.stop();
       // PIR_DRILL_DUMP=<prefix> writes every frame to <prefix>-{cols}x{rows}.txt, for judging them by eye.
@@ -132,9 +157,11 @@ for (const [cols, rows] of SIZES) {
       for (const f of rec.frames) {
         assert.doesNotMatch(rowOf(f, 'T01') ?? '', /asking you/, `T01's routine request never reached the person:\n${f}`);
         assert.doesNotMatch(rowOf(f, 'T02') ?? '', /asking coordinator/, `T02's force-push was never the agent's:\n${f}`);
+        assert.doesNotMatch(f, /◆ coordinator agent.*\d+:\d\d$/m, `the agent's row has no clock:\n${f}`);
         for (const r of f.split('\n')) assert.ok([...r].length <= cols, `a line wider than ${cols}: ${r}`);
       }
       assert.ok(rec.frames.some((f) => /T03 +passed-question +asking coordinator/.test(rowOf(f, 'T03') ?? '')), 'T03 was the agent\'s before it passed it');
+      assert.ok(rec.frames.some((f) => /◆ coordinator agent +holding [12] questions?$/m.test(f)), 'the agent\'s row counted what it held');
       assert.equal(screen.overflows(), 0, 'no frame was clipped to fit the window');
 
       // What the run left behind: the ledger names each decision, the report is on the feature branch.
@@ -161,6 +188,7 @@ for (const [cols, rows] of SIZES) {
       assert.match(s, /T02 +reserved-ask +asking you · allow a command\?/);
       assert.match(s, /T03 +passed-question +asking you · a question/);
       assert.doesNotMatch(s, /coordinator/, 'no agent, no mention of one');
+      assert.doesNotMatch(s, /─{10}|◆/, 'no separator and no agent row (T12)');
 
       for (const [task, until, answered] of [['T01', /git status --short/, /→ allowed/], ['T02', /git push --force/, /→ allowed/], ['T03', /drill log be kept/, /→ Keep it/]]) {
         await select(screen, task);
@@ -173,6 +201,7 @@ for (const [cols, rows] of SIZES) {
       }
       s = (await screen.waitFor(/git merge pir\/drill/, 90000)).join('\n');
       assert.doesNotMatch(s, /ready to merge|preparing|REPORT\.md/, 'the end is today\'s: no hand-off, no report');
+      assert.doesNotMatch(s, /─{10}|◆|coordinator/, 'no separator and no agent row at the end either (T12)');
       assert.equal(screen.overflows(), 0);
     } finally {
       await screen.close();
@@ -191,6 +220,10 @@ for (const [cols, rows] of SIZES) {
     const rec = recordFrames(screen);
     try {
       let s = (await screen.waitFor(/tests-fix +fix-red-tests +asking you · a question/, 60000)).join('\n');
+      // T12: while a helper runs, the agent's row sits between the tasks and the helper.
+      assertAgentRow(s, 'while a helper runs');
+      assert.ok(s.indexOf('◆ coordinator agent') < s.indexOf(rowOf(s, 'tests-fix')), 'the helper is below the agent');
+      assert.ok(s.indexOf(rowOf(s, 'T01')) < s.indexOf('◆ coordinator agent'), 'the task is above it');
       s = (await screen.waitFor(/● tests-fix fix-red-tests — asking you; open it \(→\) to answer/, 20000)).join('\n');
       assert.match(s, /1\/1 done/, 'the header counts the plan task only');
 
@@ -210,6 +243,7 @@ for (const [cols, rows] of SIZES) {
 
       s = (await screen.waitFor(/ready to merge · git merge pir\/helper/, 60000)).join('\n');
       assert.equal(rowOf(s, 'tests-fix'), null, 'the helper\'s row is gone once it has finished');
+      assertAgentRow(s, 'in ready to merge after the helper');
       assert.match(rowOf(s, 'T01') ?? '', /merged/);
 
       rec.stop();

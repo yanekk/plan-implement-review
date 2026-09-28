@@ -5,7 +5,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildDashboard, canResume, runKey, dashboardReducer, displayName, initialUi, noWorkerNote, planProgress, runDisplayState } from './dashboard.mjs';
+import { buildDashboard, canResume, runKey, dashboardReducer, displayName, initialUi, noWorkerNote, planProgress, runDisplayState, moveRow } from './dashboard.mjs';
 
 // One resolved run view in the shape the shell hands the model (state already from classifyRun, T01).
 const view = (over) => ({
@@ -728,4 +728,47 @@ test('in watch, ↓ reaches an end-of-run helper row below the tasks and → ope
 test('a run whose helper waits on the person reads asking-you in the list (T11)', () => {
   const run = view({ state: 'running', snap: { runState: { tasks: [task('T01', { done: true })], helpers: [task('main-sync', { helper: true, phase: 'asking', holder: 'person' })], handoff: { state: 'preparing' } } } });
   assert.equal(runDisplayState(run), 'asking-you');
+});
+
+// --- the coordinator agent's pinned row (pir-coordinator T12) ----------------------------------------
+
+test('in watch, ↑↓ step over the separator to the agent row; → on it opens the agent as `c` does (T12)', () => {
+  const coordinator = { id: 'sess-1', live: true, logPath: '/c/conversations/coordinator-1.ndjson', state: 'up', holding: 1 };
+  const helperWorker = { id: 'w-fix', live: true, logPath: '/c/conversations/w-fix.jsonl' };
+  const run = view({
+    slug: 'plan',
+    key: 'r1__plan',
+    snap: { runState: { tasks: [task('T01', { done: true }), task('T02', { phase: 'building', worker: LIVE })], coordinator, helpers: [task('tests-fix', { helper: true, phase: 'building', worker: helperWorker })] } },
+  });
+  // Rows: T01, T02, separator, agent, tests-fix.
+  let ui = watchingTasks({ sel: 0, taskSel: 1 });
+  ui = dashboardReducer(ui, { type: 'down' }, [run]).ui;
+  assert.equal(ui.taskSel, 3, '↓ from the last task skips the separator to the agent');
+  ui = dashboardReducer(ui, { type: 'down' }, [run]).ui;
+  assert.equal(ui.taskSel, 4, 'then the helper below it');
+  ui = dashboardReducer(ui, { type: 'up' }, [run]).ui;
+  assert.equal(ui.taskSel, 3);
+  const opened = dashboardReducer(ui, { type: 'open' }, [run]);
+  assert.equal(opened.ui.view, 'worker');
+  const viaC = dashboardReducer(watchingTasks({ sel: 0 }), { type: 'key', key: 'c' }, [run]);
+  assert.deepEqual(opened.ui.openWorker, viaC.ui.openWorker);
+  assert.deepEqual(opened.ui.openWorker, { taskId: 'coordinator', workerId: 'sess-1', logPath: '/c/conversations/coordinator-1.ndjson', live: true });
+  ui = dashboardReducer(ui, { type: 'up' }, [run]).ui;
+  assert.equal(ui.taskSel, 1, '↑ from the agent skips the separator back to the last task');
+
+  // With no helper the agent is the last row: ↓ stays on it.
+  const bare = view({ slug: 'plan', key: 'r1__plan', snap: { runState: { tasks: [task('T01', { done: true })], coordinator } } });
+  ui = watchingTasks({ sel: 0, taskSel: 0 });
+  for (let i = 0; i < 4; i++) ui = dashboardReducer(ui, { type: 'down' }, [bare]).ui;
+  assert.equal(ui.taskSel, 2);
+});
+
+test('moveRow never lands on a separator (T12)', () => {
+  const rows = [{ id: 'T01' }, { id: '──', separator: true }, { id: 'coordinator', agent: true }];
+  assert.equal(moveRow(rows, 0, 1), 2);
+  assert.equal(moveRow(rows, 2, -1), 0);
+  assert.equal(moveRow(rows, 2, 1), 2);
+  assert.equal(moveRow(rows, 0, -1), 0);
+  // A separator at an end (never drawn so, but a clamp must not stop on it): the move is refused.
+  assert.equal(moveRow([{ id: 'T01' }, { id: '──', separator: true }], 0, 1), 0);
 });

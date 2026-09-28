@@ -162,13 +162,22 @@ function planSteps(view) {
   return STEP_IDS.map((id) => steps.find((s) => s.id === id) ?? { id, phase: 'pending', worker: null });
 }
 
-// openTasks(views, ui) → the open run's selectable rows, in the live view's row order: a build's tasks,
-// then its end-of-run helpers while they run (rowEntries, which buildDisplay draws one row each, in order;
-// pir-coordinator T11), or [] when it has no snapshot yet; a planning run's steps.
+// openTasks(views, ui) → the open run's rows, in the live view's row order: a build's tasks, then the
+// separator and its coordinator agent's row once the agent has started (T12), then its end-of-run helpers
+// while they run (rowEntries, which buildDisplay draws one row each, in order; pir-coordinator T11), or []
+// when it has no snapshot yet; a planning run's steps. The separator is never selected (moveRow).
 export function openTasks(views, ui) {
   const open = findOpen(views, ui);
   if (open && isPlan(open)) return planSteps(open);
   return rowEntries(open?.snap?.runState);
+}
+
+// moveRow(rows, from, step) → the row index one ↑ or ↓ from `from`, clamped to the ends, stepping over the
+// separator above the coordinator agent's row (pir-coordinator T12), which is drawn but never selected.
+export function moveRow(rows, from, step) {
+  let i = clamp(from + step, rows.length);
+  if (rows[i]?.separator) i = clamp(i + step, rows.length);
+  return rows[i]?.separator ? from : i;
 }
 
 // Why a step row did not open (§2.11: a step with no session yet says so in the footer).
@@ -286,7 +295,7 @@ export function dashboardReducer(ui, event, views = []) {
       const step = event.type === 'down' ? 1 : -1;
       // In the live view the arrows move the task row, and the list's `sel` stays where it was.
       if (ui.view === 'watch') {
-        return { ui: { ...ui, taskSel: clamp((ui.taskSel ?? 0) + step, openTasks(views, ui).length), armed: null }, intent: null };
+        return { ui: { ...ui, taskSel: moveRow(openTasks(views, ui), ui.taskSel ?? 0, step), armed: null }, intent: null };
       }
       return { ui: { ...ui, sel: clamp(ui.sel + step, len), armed: null }, intent: null };
     }
@@ -299,6 +308,7 @@ export function dashboardReducer(ui, event, views = []) {
         if (!task) return { ui: { ...ui, armed: null }, intent: null };
         const w = task.worker;
         const plan = isPlan(findOpen(views, ui));
+        if (task.agent && !w?.id) return { ui: { ...ui, note: noCoordinatorNote(views, ui), armed: null }, intent: null };
         if (!w?.id) return { ui: { ...ui, note: plan ? noSessionNote(task) : noWorkerNote(task, tasks), armed: null }, intent: null };
         const openWorker = { taskId: task.id, workerId: w.id, logPath: w.logPath ?? null, live: !!w.live };
         return { ui: { ...ui, view: 'worker', openWorker, armed: null }, intent: null };

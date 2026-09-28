@@ -82,13 +82,43 @@ const asksPerson = (t) => !!askingKind(t) && !heldByCoordinator(t);
 // An end-of-run helper (main-sync, tests-fix) waiting on the person counts too: the run needs them, and
 // the list must say so, though the helper is no task of the plan (pir-coordinator T11).
 export function askingCount(runState) {
-  return rowEntries(runState).filter((t) => !t.done && asksPerson(t)).length;
+  return rowEntries(runState).filter((t) => !t.separator && !t.agent && !t.done && asksPerson(t)).length;
 }
 
-// rowEntries(runState) → every row the live view draws, in order: the plan's tasks, then the end-of-run
-// helpers (pir-coordinator T11). The watch view's ↑↓ walks the same list (dashboard.mjs openTasks).
+// rowEntries(runState) → every row the live view draws, in order: the plan's tasks, then — once the run's
+// coordinator agent has started — a separator and the agent's pinned row (pir-coordinator T12), then the
+// end-of-run helpers (T11). The watch view's ↑↓ walks the same list (dashboard.mjs openTasks), stepping
+// over the separator; → on the agent's entry opens its `worker`, the conversation `c` opens.
 export function rowEntries(runState) {
-  return [...(runState?.tasks ?? []), ...(runState?.helpers ?? [])];
+  const c = runState?.coordinator;
+  const agent = c ? [{ id: SEPARATOR_ID, separator: true }, agentEntry(c)] : [];
+  return [...(runState?.tasks ?? []), ...agent, ...(runState?.helpers ?? [])];
+}
+
+// The separator's and the agent's entry ids. Neither can collide with a task (`T01`) or a helper's label.
+export const SEPARATOR_ID = '──';
+export const AGENT_ID = 'coordinator';
+
+// The agent's entry from runState.coordinator. A snapshot written before T12 has no `state`: its `live`
+// says up or restarting.
+function agentEntry(c) {
+  return {
+    id: AGENT_ID,
+    agent: true,
+    state: c.state ?? (c.live ? 'up' : 'restarting'),
+    holding: Number.isInteger(c.holding) ? c.holding : 0,
+    worker: c.id ? { id: c.id, live: !!c.live, logPath: c.logPath ?? null } : null,
+  };
+}
+
+// The agent's row (pir-coordinator T12): what it is doing and how many waiting items it holds. No clock.
+// It is not a task: the summary, the asking tally and the footer never read it, and it never turns amber.
+function agentRow(t) {
+  const base = { id: t.id, slug: 'coordinator agent', agent: true, elapsedMs: null };
+  if (t.state === 'given-up') return { ...base, kind: 'agent-given-up', label: 'given up · questions come to you' };
+  if (t.state === 'restarting') return { ...base, kind: 'agent', label: 'restarting' };
+  const n = t.holding ?? 0;
+  return { ...base, kind: 'agent', label: n > 0 ? `holding ${n} question${n === 1 ? '' : 's'}` : 'on duty' };
 }
 
 // buildDisplay(runState, { now, spinnerFrame }) → { summary, rows, footer } (DESIGN §2.3).
@@ -99,7 +129,10 @@ export function rowEntries(runState) {
 //   handoff: null | { state:'preparing'|'ready'|'red', reportPath, mainSha } — the end of a run with the
 //            coordinator agent (pir-coordinator §2.9, §2.10); null with the agent off, where the footer is
 //            today's hand-off or red line.
-//   coordinator: null | { id, live, logPath } — the run's agent, for the screen to open; not read here.
+//   coordinator: null | { id, live, logPath, state?, holding? } — the run's agent (pir-coordinator T12):
+//            once set, the rows gain a separator (kind `separator`) and the agent's pinned row (kind `agent`,
+//            or `agent-given-up`), after the tasks and before the helpers. state: 'up'|'restarting'|'given-up';
+//            holding: the waiting items it holds. Neither row is counted in the summary or the asking tally.
 //   helpers: absent | [task…] — the end-of-run helper workers (main-sync, tests-fix) while they run, each
 //            shaped like a task with `helper: true` (pir-coordinator T11). Each is a row below the tasks,
 //            reading `working` or asking like a task's; the summary's done/total/running/waiting count the
@@ -141,7 +174,9 @@ export function buildDisplay(runState, { now, spinnerFrame } = {}) {
   const ceilingFull = ceiling != null && running >= ceiling;
 
   const helpers = runState?.helpers ?? [];
-  const rows = [...tasks, ...helpers].map((t) => rowFor(t, { now, doneIds, ceilingFull }));
+  const rows = rowEntries(runState).map((t) =>
+    t.separator ? { id: t.id, kind: 'separator', label: '', elapsedMs: null } : t.agent ? agentRow(t) : rowFor(t, { now, doneIds, ceilingFull }),
+  );
 
   const done = doneIds.size;
   const total = tasks.length;

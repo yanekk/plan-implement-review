@@ -777,6 +777,13 @@ export function startCoordinator({
     heldByAgent() {
       return agent?.alive() ? new Set([...held.keys(), ...justSettled]) : new Set();
     },
+    // agentView() → the agent for the run state (buildRunState's `coordinator`), with `holding`, how many
+    // waiting items it holds, for its row (T12). Counted from `held`, not the agent's own `briefed` map,
+    // which also keeps reserved and already-answered items; `justSettled` is answered, so not held.
+    agentView() {
+      const v = agent?.view?.();
+      return v ? { ...v, holding: v.state === 'up' && agent.alive() ? held.size : 0 } : null;
+    },
   };
 }
 
@@ -1421,8 +1428,8 @@ export function buildRunState({
   }));
   // handoff is the end of the run with the agent on (pir-coordinator T05): { state: 'preparing'|'ready'|'red',
   // reportPath, mainSha }, null otherwise.
-  // coordinator is the run's agent for the screen to open (pir-coordinator §2.8): { id, live, logPath }, null
-  // with `--no-coordinator` or when it never started.
+  // coordinator is the run's agent for the screen to open and its row (pir-coordinator §2.8, T12):
+  // { id, live, logPath, state, holding }, null with `--no-coordinator` or when it never started.
   return {
     branch,
     ceiling,
@@ -1802,7 +1809,7 @@ async function main(argv) {
     const since = Date.now();
     trackTiming({}, passTasks.map((t) => t.num)); // the last merge's duration, before the pass ends
     const runState = testingRunState(
-      buildRunState({ passTasks, workers: platform.workers(), branch, ceiling: CEILING, doneMsByTask, coordinator: coordinator.agent?.view?.() ?? null }),
+      buildRunState({ passTasks, workers: platform.workers(), branch, ceiling: CEILING, doneMsByTask, coordinator: coordinator.agentView() }),
       { since },
     );
     lastRunState = runState;
@@ -1873,7 +1880,7 @@ async function main(argv) {
         testsReason: r.testsReason,
         handoff: r.handoff,
         heldByAgent: coordinator.heldByAgent(),
-        coordinator: coordinator.agent?.view?.() ?? null,
+        coordinator: coordinator.agentView(),
       });
       lastRunState = runState;
       // Feed the detached live view (DESIGN §2.4): write this pass's run state to the snapshot the

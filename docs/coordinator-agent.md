@@ -165,8 +165,27 @@ Once answered, the worker's Remote Control goes off again, as for any worker
 
 ## The agent's own conversation
 
-The agent is one more conversation in the run. In the build's live view, **`c`** opens it in the
-conversation view; the watch footer names `c` only when the run has an agent. The person may type to
+The agent is one more conversation in the run. In the build's live view it has a **row of its own**,
+pinned below the tasks under a separator line and above any end-of-run helper row:
+
+```
+  ✔ T01  config-loader          merged                   4:00
+  ⠋ T02  api-routes             building                 2:00
+  ────────────────────────────────────────────────────────────────
+  ◆ coordinator agent           holding 1 question
+  ⠋ main-sync resolve-main-merge working                 0:03
+```
+
+The row says what the agent is doing: `on duty` (up, holding nothing), `holding N question(s)` (N counts
+every waiting item it holds: questions, question sets, permission requests, report parks), `restarting`
+(down, not yet given up; a resume starts at once, so this is rarely seen), or `given up · questions
+come to you` in the idle style ([When the agent fails](#when-the-agent-fails)). It has
+no clock, is never amber, and is not counted in `n/m done`, running, waiting or the `asking you` tally.
+It appears once the agent has started and stays to the end of the run, `ready to merge` included; with
+`--no-coordinator` there is neither separator nor row. `↑↓` steps over the separator onto it and `→` (or
+Enter) opens its conversation; **`c`** opens the same conversation from any row, and the watch footer
+names `c` only when the run has an agent. The state comes from the agent's `view().state`, the count
+from the command's `held` map (`agentView()` in `coordinate.mjs`, carried in `runState.coordinator`). The person may type to
 it there: ask where things stand, why it answered something, or give it an instruction for the rest
 of the run. Typing reaches it through the same `inbox/` as a worker's input. Its pointers and its
 hand-off appear in this conversation.
@@ -248,7 +267,7 @@ gets `✗ not ready · tests red on pir/{slug} — no merge offered` with the re
 written and says so, and the run waits the same way. While it prepares, the footer reads `all N
 task(s) merged · preparing: syncing main, writing the report`.
 
-**The helpers' rows.** While a test-fix or main-sync worker runs, it has a row below the tasks, keyed by
+**The helpers' rows.** While a test-fix or main-sync worker runs, it has a row below the agent's row (and so below the tasks), keyed by
 its label: `tests-fix  fix-red-tests` or `main-sync  resolve-main-merge` (`runState.helpers`, built by
 `buildRunState` from `state.tasks`). It reads like a task's row, `working` (then `finishing` once it has
 reported), `asking coordinator` or `asking you`, with its clock stopped while it asks. It is not counted in
