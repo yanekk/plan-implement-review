@@ -12,9 +12,9 @@ write. **Whoever writes a cell also fixes the over-budget cell they walk past.**
 
 **Plan reviewed:** 2026-09-27 — 10 fixed, 4 decided with the user
 
-**Status:** Planned 2026-09-27. Nothing built. Precondition: `real-asking-state` merged into main.
-**Last updated:** 2026-09-27
-**Next `pir-work` will:** T00, the probe, once `real-asking-state` is merged into main (T00 checks it).
+**Status:** T00–T11 ✅. Reopened 2026-09-28 for T12.
+**Last updated:** 2026-09-28
+**Next `pir-work` will:** implement T12, coordinator-row.
 
 ## Tasks
 
@@ -35,6 +35,7 @@ done · ⛔ blocked, needs a human.
 | T09 | live-coordinator-check | T07, T08 | ✅ | |
 | T10 | end-tests-fix | T05; blocks T09 | ✅ | |
 | T11 | end-helper-row | T06, T10; blocks T09 | ✅ | |
+| T12 | coordinator-row | T06, T11 | ⬜ | Added 2026-09-28 with the user after T09: pinned agent row under a separator. |
 
 **Review queue:** *(empty)*
 

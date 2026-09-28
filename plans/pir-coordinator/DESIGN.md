@@ -181,6 +181,11 @@ The person may ask it where things stand, give it an instruction for the rest of
 approve new tasks tonight"), or ask why it answered something. Its pointers (§2.5) and its hand-off
 (§2.9) appear there.
 
+It has its own pinned row in the live view (user 2026-09-28, T12): below the tasks and a separator
+line, above the end-of-run helpers, stating whether it is up, restarting or given up and how many
+items it holds. Selected with ↑↓ and opened with →; `c` stays as a shortcut. With the agent off there
+is no separator and no row.
+
 Its Remote Control is on for the whole run, unless `PARALLEL_REMOTE=0` switches Remote Control off for
 the run as today (user 2026-09-27).
 
