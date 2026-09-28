@@ -12,9 +12,9 @@ write. **Whoever writes a cell also fixes the over-budget cell they walk past.**
 
 **Plan reviewed:** 2026-09-27 — 10 fixed, 4 decided with the user
 
-**Status:** Planned 2026-09-27. Nothing built. Precondition: `real-asking-state` merged into main.
+**Status:** All tasks ✅ 2026-09-28. Feature branch ready for the person's merge.
 **Last updated:** 2026-09-28
-**Next `pir-work` will:** review T09.
+**Next `pir-work` will:** nothing; the plan is done.
 
 ## Tasks
 
@@ -32,11 +32,11 @@ done · ⛔ blocked, needs a human.
 | T06 | coordinator-screen | T04, T05 | ✅ | |
 | T07 | coordinator-drill | T06 | ✅ | |
 | T08 | docs | T02, T04, T05, T06 | ✅ | |
-| T09 | live-coordinator-check | T07, T08 | 🔍 | Fixture `pir-coordinator`, person-only answerer with deny, `mainCommit`/`mergeWhenReady` steps, 4 facts; live run PASS, phone half verified by user 2026-09-28. Deviations: runner merges the ready branch to end the run; capture copies the ledger (not listed). |
+| T09 | live-coordinator-check | T07, T08 | ✅ | Review clean, no fix commit. Live run PASS and phone half verified by user 2026-09-28 (FINDINGS). Probed exact `merge Txx` flow matching, status `holder`/`worker.id` shape the answerer reads, merge gated on branch holding main. Deviations accepted: runner merges the ready branch into scratch main; capture copies ledger and steps.json. |
 | T10 | end-tests-fix | T05; blocks T09 | ✅ | |
 | T11 | end-helper-row | T06, T10; blocks T09 | ✅ | |
 
-**Review queue:** T09
+**Review queue:** *(empty)*
 
 ## Blocked on the user
 
