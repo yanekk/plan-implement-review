@@ -62,6 +62,11 @@ const KINDS = Object.freeze(['build', 'plan']);
 // the agent's hold limit (DESIGN §2.11) fires within a run's budget; `answerPending.personDelayMs` has the
 // person's stand-in wait that long after it first sees a request held by the person before answering it, as a
 // person would, so the agent's pointer can land while the item still waits.
+//
+// One for the live check of phone alerts (reliable-notifications T08): `realNotify` launches the run with
+// PIR_NOTIFY_CONFIG on the person's own `~/.pir/notify.json` (run.mjs notifyEnv), because
+// `statusSnapshots` moves PIR_HOME to a scratch folder and would hide it. It sends real alerts, so it
+// needs the agent and the snapshots it is judged by.
 export function defineScenario(spec = {}) {
   const {
     id,
@@ -81,6 +86,7 @@ export function defineScenario(spec = {}) {
     mainCommit = null,
     mergeWhenReady = false,
     coordinatorHoldMs = null,
+    realNotify = false,
   } = spec;
 
   if (!id || typeof id !== 'string') {
@@ -116,6 +122,9 @@ export function defineScenario(spec = {}) {
   if (!Number.isInteger(personDelayMs) || personDelayMs < 0) {
     throw new Error(`defineScenario(${id}): answerPending.personDelayMs must be a whole number of ms, zero or more`);
   }
+  if (realNotify && (!coordinator || !statusSnapshots)) {
+    throw new Error(`defineScenario(${id}): realNotify needs the coordinator agent and statusSnapshots`);
+  }
   if (!EXPECTED_TERMINALS.includes(expectedTerminal)) {
     throw new Error(`defineScenario(${id}): expectedTerminal must be one of ${EXPECTED_TERMINALS.join(', ')}`);
   }
@@ -150,5 +159,6 @@ export function defineScenario(spec = {}) {
       : null,
     mergeWhenReady: !!mergeWhenReady,
     coordinatorHoldMs: coordinatorHoldMs ?? null,
+    realNotify: !!realNotify,
   };
 }
