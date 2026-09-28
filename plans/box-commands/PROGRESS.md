@@ -24,12 +24,12 @@ done · ⛔ blocked, needs a human.
 | # | Task | Depends on | State | Notes |
 |---|---|---|---|---|
 | T01 | box-grammar | — | ⬜ | |
-| T02 | plan-scan | — | ⬜ | |
+| T02 | plan-scan | — | 🔍 | core/buildable.mjs buildablePlan and shell/plan-scan.mjs scanPlans, 17 tests (6 core, 11 shell against real git). Extra beyond the doc: a plain non-repo folder still lists its working-tree plans, since planHome reads the tree before git; exec/fs failures swallowed. No deviations. |
 | T03 | box-completion | T01 | ⬜ | |
 | T04 | box-starts-build | T01, T02, T03 | ⬜ | |
 | T05 | box-commands-drill | T04 | ⬜ | |
 
-**Review queue:** *(empty)*
+**Review queue:** T02
 
 ## Blocked on the user
 
