@@ -172,3 +172,12 @@ test('docs index the coordinator agent page, and CLAUDE.md names the stand-in', 
   assert.match(claude, /the coordinator agent stands in for me/);
   assert.match(claude, /never answers an `ask`-bin action or a\s+destructive command/);
 });
+
+// T13: the hold limit replaced "no timeout"; the skill names it, the hand-over message and the pointer owed.
+test('the skill names the 5-minute hold limit and the hand-over, and no longer says there is no timeout', () => {
+  assert.doesNotMatch(SKILL, /no timeout/i);
+  assert.match(SKILL, /hold limit is 5 minutes/);
+  assert.match(SKILL, /Handed to the person/);
+  assert.match(SKILL, /Reply to it with the pointer/);
+  assert.match(SKILL, /may\s+still answer the item while the person has not/);
+});

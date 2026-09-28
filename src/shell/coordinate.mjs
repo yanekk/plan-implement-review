@@ -159,6 +159,7 @@ export function startCoordinator({
   startAgent = null,
   lastWords = lastWordsOf,
   now = () => Date.now(),
+  holdMs = holdLimitMs(),
 } = {}) {
   if (!slug) throw new Error('startCoordinator: no slug');
   if (!repo) throw new Error('startCoordinator: no repo (worker names are built from it, DESIGN §2.8)');
@@ -183,11 +184,17 @@ export function startCoordinator({
   // item is briefed for a note but is the person's from the start; an item that first waits while the
   // agent is down is the person's for good. The person may answer any item at any time: the first answer
   // wins and the agent is told. `held` is what the row, the clock and Remote Control read (heldByAgent).
+  //
+  // The hold limit (DESIGN §2.11, T13): an item held `holdMs` without a decision leaves `held` and is the
+  // person's as if passed on; the agent is told, and may still answer it until the person does. The time
+  // is the pass's `now()`, and a timed-out item that is still waiting is never held again.
   let agent = null;
   let agentTried = false;
   let askRules = [];
   const held = new Map(); // itemKey → the item, while the agent holds it
   const seen = new Map(); // itemKey → the item, every item waiting last pass (briefed or not)
+  const heldAt = new Map(); // itemKey → when the agent began holding it (the pass's now())
+  const timedOut = new Map(); // itemKey → the item, handed to the person by the hold limit, still waiting
   // Items the agent answered this pass. A `message` to a report park lands after runPass read the park, so
   // the task stays parked until the next pass's resumeAnswered sees the coordinator send; counting the item
   // as the agent's until then keeps its worker off Remote Control (DESIGN §2.5). One pass only: whatever is
@@ -217,44 +224,71 @@ export function startCoordinator({
     const out = { passed: [], report: null, close: false };
     if (!agent) return out;
     const alive = agent.alive();
+    const t = now();
     justSettled = new Set();
     // A dead agent never leaves a worker waiting on it: what it held is the person's (DESIGN §2.11).
-    if (!alive) held.clear();
+    if (!alive) {
+      held.clear();
+      heldAt.clear();
+      timedOut.clear();
+    }
+    const release = (key) => {
+      held.delete(key);
+      heldAt.delete(key);
+      timedOut.delete(key);
+    };
     const workers = platform.workers();
     const items = waitingItems(state.tasks, workers, { askRules });
-    const now = new Map(items.map((i) => [itemKey(i), i]));
+    const waitingNow = new Map(items.map((i) => [itemKey(i), i]));
 
     // A `close` is accepted only once the run waits in `ready to merge` (DESIGN §2.10).
     const ready = handoff?.step === 'waiting';
-    const drained = alive ? agent.drain(items, { ready }) : { passed: [], settled: [] };
+    const drained = alive ? agent.drain(items, { ready, late: new Set(timedOut.keys()) }) : { passed: [], settled: [] };
     const settled = new Set((drained.settled ?? []).map(itemKey));
-    for (const key of settled) held.delete(key);
+    for (const key of settled) release(key);
     justSettled = settled;
     for (const p of drained.passed ?? []) {
-      held.delete(itemKey(p));
+      // A late pass of a timed-out item changes nothing on screen: it is the person's already (T13).
+      release(itemKey(p));
       out.passed.push(p);
-      control?.log?.(`coordinator-pass ${now.get(itemKey(p))?.task ?? p.worker}`);
+      control?.log?.(`coordinator-pass ${waitingNow.get(itemKey(p))?.task ?? p.worker}`);
     }
     if (drained.report) out.report = drained.report;
     if (drained.close) out.close = true;
 
-    // Held items no longer waiting were answered by the person first (DESIGN §2.3): the agent drops them.
+    // Held (or timed-out) items no longer waiting were answered by the person first (DESIGN §2.3): the
+    // agent drops them.
+    for (const map of [held, timedOut]) {
+      for (const [key, item] of map) {
+        if (waitingNow.has(key) || settled.has(key)) continue;
+        release(key);
+        if (alive) agent.answeredElsewhere(item);
+      }
+    }
+    // The hold limit (T13): checked after the drain, so a decision landing on the pass the limit passes wins.
     for (const [key, item] of held) {
-      if (now.has(key) || settled.has(key)) continue;
+      const heldForMs = t - (heldAt.get(key) ?? t);
+      if (heldForMs < holdMs) continue;
       held.delete(key);
-      if (alive) agent.answeredElsewhere(item);
+      heldAt.delete(key);
+      timedOut.set(key, item);
+      control?.log?.(`coordinator-timeout ${item.task ?? item.worker}`);
+      agent.timedOut?.(item, { holdMs, heldForMs });
     }
     // An item gone from the wait is forgotten, so the same worker's next park is briefed afresh.
-    for (const [key, item] of seen) if (!now.has(key)) agent.forget?.(item);
+    for (const [key, item] of seen) if (!waitingNow.has(key)) agent.forget?.(item);
 
-    for (const [key, item] of now) {
+    for (const [key, item] of waitingNow) {
       if (seen.has(key) || settled.has(key)) continue;
       if (!alive) continue; // first waiting while the agent is down: the person's
       const briefed = agent.brief(briefItem(item, workers));
-      if (briefed && !item.reserved) held.set(key, item);
+      if (briefed && !item.reserved) {
+        held.set(key, item);
+        heldAt.set(key, t);
+      }
     }
     seen.clear();
-    for (const [key, item] of now) seen.set(key, item);
+    for (const [key, item] of waitingNow) seen.set(key, item);
     return out;
   }
 
@@ -802,6 +836,14 @@ export function mainSyncOpening(prompt) {
     'run pir-work, do not pick a task, and carry out exactly this and nothing else.\n\n' +
     prompt
   );
+}
+
+// holdLimitMs(env) → the coordinator agent's hold limit (pir-coordinator DESIGN §2.11, T13): 5 minutes,
+// or PARALLEL_COORDINATOR_HOLD_MS when it is a positive number (the live check and tests shorten it).
+export const DEFAULT_HOLD_MS = 5 * 60 * 1000;
+export function holdLimitMs(env = process.env) {
+  const v = Number(env?.PARALLEL_COORDINATOR_HOLD_MS);
+  return Number.isFinite(v) && v > 0 ? v : DEFAULT_HOLD_MS;
 }
 
 // coordinatorEnabled(env) → whether this run has a coordinator agent (pir-coordinator DESIGN §2.1): on by

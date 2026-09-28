@@ -210,7 +210,9 @@ stands in for you:
 
 - **It sees every question first.** When a worker asks a question or wants permission to run
   something, the agent reads the plan and either answers it for you or passes it on. While it is
-  deciding, the task's row reads `asking coordinator`, and nothing is asked of you yet.
+  deciding, the task's row reads `asking coordinator`, and nothing is asked of you yet. If it has not
+  decided within 5 minutes, the question comes to you as if it had passed it on; the agent may still
+  answer it until you do, and whichever answer comes first counts.
 - **When it passes a question on, it tells you why.** In its own conversation it says which worker
   is asking, why it held back, and what it would pick. Only then does the worker's row turn
   `asking you` and reach your phone, and you answer the worker directly, as always. The agent never

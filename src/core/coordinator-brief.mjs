@@ -72,6 +72,31 @@ export function answeredElsewhereFor(item) {
   return `Already answered by the person:\n\n${header(i)}\n\nDrop this item; any decision for it will be refused.`;
 }
 
+// holdWords(holdMs) → the hold limit in words: whole minutes as minutes, anything shorter or odd as
+// seconds (a test's or the live check's shortened limit reads true, not rounded to "0 minutes").
+export function holdWords(holdMs) {
+  const ms = Number.isFinite(holdMs) && holdMs > 0 ? holdMs : 0;
+  if (ms >= 60000 && ms % 60000 === 0) {
+    const m = ms / 60000;
+    return `${m} minute${m === 1 ? '' : 's'}`;
+  }
+  const s = Math.max(1, Math.round(ms / 1000));
+  return `${s} second${s === 1 ? '' : 's'}`;
+}
+
+// timedOutFor(item, holdMs) → the agent held an item for the hold limit without a decision, so it is the
+// person's now, exactly as if passed on (DESIGN §2.11, T13). The agent may still answer it, the first
+// answer winning, and owes the person a pointer either way (§2.5).
+export function timedOutFor(item, holdMs) {
+  const i = isObject(item) ? item : {};
+  return [
+    `Handed to the person: you held this item for ${holdWords(holdMs)} without a decision, so it is now the person's, as if you had passed it on.`,
+    header(i),
+    'You may still answer it while the person has not: the first answer wins, yours included. Or pass it on with a `pass` decision. ' +
+      'Either way, give the person the pointer in your reply now: which worker and task is asking, why you have not decided, and what you would pick.',
+  ].join('\n\n');
+}
+
 // openingFor({ slug, projectRulesPath, dropDir }) → the agent's opening instruction (DESIGN §3.4).
 export function openingFor({ slug, projectRulesPath = null, dropDir }) {
   return [

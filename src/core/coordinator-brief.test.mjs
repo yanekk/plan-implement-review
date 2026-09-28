@@ -2,7 +2,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { briefFor, refusalFor, answeredElsewhereFor, openingFor, resumedFor } from './coordinator-brief.mjs';
+import { briefFor, refusalFor, answeredElsewhereFor, openingFor, resumedFor, timedOutFor, holdWords } from './coordinator-brief.mjs';
 
 const permission = {
   worker: 'w-1', name: 'repo / plan / T04 / routing / implement', task: 'T04', kind: 'permission', requestId: 'req-1',
@@ -106,4 +106,26 @@ test('endBriefFor: says whether a test-fix worker ran and what came of it (T10)'
   assert.match(endBriefFor({ tests: 'green', fix: 'green' }), /red at the end; a worker fixed them/);
   assert.match(endBriefFor({ tests: 'red', fix: 'red' }), /tried to fix them and they stayed red/);
   assert.doesNotMatch(endBriefFor({ tests: 'green' }), /a worker fixed/);
+});
+
+// ---- T13: the hold limit ----
+
+test('timedOutFor: the item is the person\'s now, names it exactly, says a late answer still counts and a pointer is owed', () => {
+  const text = timedOutFor(permission, 300000);
+  assert.match(text, /^Handed to the person: you held this item for 5 minutes without a decision/);
+  assert.match(text, /^Worker: `w-1`$/m);
+  assert.match(text, /^requestId: `req-1`$/m);
+  assert.match(text, /^Task: T04$/m);
+  assert.match(text, /You may still answer it while the person has not: the first answer wins/);
+  assert.match(text, /`pass` decision/);
+  assert.match(text, /give the person the pointer in your reply now/);
+});
+
+test('holdWords: whole minutes as minutes, a shortened limit in seconds', () => {
+  assert.equal(holdWords(300000), '5 minutes');
+  assert.equal(holdWords(180000), '3 minutes');
+  assert.equal(holdWords(60000), '1 minute');
+  assert.equal(holdWords(90000), '90 seconds');
+  assert.equal(holdWords(1000), '1 second');
+  assert.equal(holdWords(250), '1 second');
 });

@@ -1735,7 +1735,7 @@ function stubSessions() {
 }
 
 // agentRun(t, rows, behaviors, { files }) → a coordinator with the agent on, plus helpers to play the agent.
-function agentRun(t, rows, behaviors = {}, { files = {} } = {}) {
+function agentRun(t, rows, behaviors = {}, { files = {}, now, holdMs, control } = {}) {
   const worktree = createFakeWorktree({ progress: progressDoc(rows), files, slug: SLUG });
   const platform = createFakePlatform({ behaviors });
   t.after(() => worktree.cleanup());
@@ -1748,6 +1748,9 @@ function agentRun(t, rows, behaviors = {}, { files = {} } = {}) {
     repo: REPO,
     platform,
     worktree,
+    ...(now ? { now } : {}),
+    ...(holdMs !== undefined ? { holdMs } : {}),
+    ...(control ? { control } : {}),
     startAgent: ({ featurePath, askRules }) => {
       started.push({ featurePath, askRules });
       return startCoordinatorAgent({
@@ -2474,4 +2477,197 @@ test('advanceTiming: a helper spawned again under its label starts a fresh clock
   assert.equal(timing.sinceByTask['tests-fix'], undefined);
   advanceTiming(timing, { 'tests-fix': { ...fix['tests-fix'], workerId: 'w2' } }, [], 500);
   assert.equal(timing.sinceByTask['tests-fix'], 500);
+});
+
+// --- pir-coordinator T13: the hold limit (DESIGN §2.11) --------------------------------------------------
+
+import { holdLimitMs, DEFAULT_HOLD_MS } from './coordinate.mjs';
+import { askingCount } from '../core/display.mjs';
+
+// holdRun(t, behaviors, opts) → agentRun on a hand-set clock, a hold limit, and a captured control.log.
+function holdRun(t, rows, behaviors, { holdMs = 60000, env } = {}) {
+  const clock = { t: 1_000_000 };
+  const logs = [];
+  const control = { isHalted: () => false, log: (l) => logs.push(l) };
+  const saved = process.env.PARALLEL_COORDINATOR_HOLD_MS;
+  if (env !== undefined) {
+    if (env === null) delete process.env.PARALLEL_COORDINATOR_HOLD_MS;
+    else process.env.PARALLEL_COORDINATOR_HOLD_MS = env;
+  }
+  let run;
+  try {
+    run = agentRun(t, rows, behaviors, { now: () => clock.t, ...(env === undefined ? { holdMs } : {}), control });
+  } finally {
+    if (saved === undefined) delete process.env.PARALLEL_COORDINATOR_HOLD_MS;
+    else process.env.PARALLEL_COORDINATOR_HOLD_MS = saved;
+  }
+  const rowOf = (task) =>
+    buildRunState({ passTasks: rows.map((r) => ({ num: r.num, name: slugOf(r.num), deps: [], state: '⬜' })), stateTasks: run.coordinator.state.tasks, workers: run.platform.workers(), heldByAgent: run.coordinator.heldByAgent() });
+  const handovers = () => run.told().filter((m) => m.startsWith('Handed to the person'));
+  const timeouts = () => run.coordinator.agent.ledger().filter((l) => l.kind === 'timeout');
+  return { ...run, clock, logs, rowOf, handovers, timeouts };
+}
+
+const npmTest = { requests: [{ toolName: 'Bash', input: { command: 'npm test' } }] };
+
+test('hold limit: held until holdMs − 1; at holdMs the item is the person\'s — row, tally, Remote Control, hand-over, ledger, log', (t) => {
+  const run = holdRun(t, [{ num: 'T01' }], { T01: npmTest }, { holdMs: 60000 });
+  const { coordinator, clock } = run;
+  const start = clock.t;
+  coordinator.pass();
+  const w = run.implOf('T01');
+  const key = `${w}:${w}-r1`;
+  assert.deepEqual([...coordinator.heldByAgent()], [key], 'briefed and held');
+
+  clock.t = start + 59999;
+  coordinator.pass();
+  assert.deepEqual([...coordinator.heldByAgent()], [key], 'still the agent\'s one ms before the limit');
+  assert.equal(run.rowOf('T01').tasks[0].holder, 'coordinator');
+  assert.equal(buildDisplay(run.rowOf('T01'), { now: 0 }).rows[0].label, 'asking coordinator · allow a command?');
+  assert.equal(run.wanted().has(w), false);
+  assert.deepEqual(run.handovers(), []);
+
+  clock.t = start + 60000;
+  coordinator.pass();
+  assert.deepEqual([...coordinator.heldByAgent()], [], 'no longer held');
+  const rs = run.rowOf('T01');
+  assert.equal(rs.tasks[0].holder, 'person');
+  assert.equal(buildDisplay(rs, { now: 0 }).rows[0].label, 'asking you · allow a command?');
+  assert.equal(askingCount(rs), 1, 'counted in the asking-you tally');
+  assert.equal(run.wanted().has(w), true, 'Remote Control on');
+  assert.equal(coordinator.agentView().holding, 0);
+  const [handover] = run.handovers();
+  assert.ok(handover.includes(`requestId: \`${w}-r1\``));
+  assert.match(handover, /for 1 minute without a decision/);
+  assert.deepEqual(run.timeouts().map((l) => [l.worker, l.requestId, l.task, l.heldForMs, l.notable, l.item]), [[w, `${w}-r1`, 'T01', 60000, false, 'Bash: npm test']]);
+  assert.ok(run.logs.includes('coordinator-timeout T01'));
+
+  // Never re-held and never timed out twice while it keeps waiting.
+  clock.t = start + 300000;
+  coordinator.pass();
+  assert.deepEqual([...coordinator.heldByAgent()], []);
+  assert.equal(run.handovers().length, 1);
+  assert.equal(run.timeouts().length, 1);
+  assert.equal(run.told().filter((m) => m.includes(`requestId: \`${w}-r1\``) && m.includes('asking permission')).length, 1, 'not briefed again');
+});
+
+test('hold limit: two items briefed in one pass, the agent answers one — only the other times out', (t) => {
+  const run = holdRun(t, [{ num: 'T01' }, { num: 'T02' }], { T01: npmTest, T02: { requests: [{ toolName: 'Bash', input: { command: 'npm run lint' } }] } }, { holdMs: 60000 });
+  const { coordinator, clock } = run;
+  const start = clock.t;
+  coordinator.pass();
+  const w1 = run.implOf('T01');
+  const w2 = run.implOf('T02');
+  assert.equal(coordinator.heldByAgent().size, 2, 'both briefed together');
+
+  clock.t = start + 30000;
+  run.decide({ kind: 'permission', worker: w1, requestId: `${w1}-r1`, decision: 'allow', reason: 'the test command' });
+  coordinator.pass();
+
+  clock.t = start + 60000;
+  coordinator.pass();
+  assert.equal(run.handovers().length, 1);
+  assert.ok(run.handovers()[0].includes(`requestId: \`${w2}-r1\``));
+  assert.deepEqual(run.timeouts().map((l) => l.worker), [w2]);
+  assert.deepEqual(run.logs.filter((l) => l.startsWith('coordinator-timeout')), ['coordinator-timeout T02']);
+  assert.equal(run.wanted().has(w2), true);
+  assert.equal(run.wanted().has(w1), false);
+});
+
+test('hold limit: a late decision while the person has not answered is applied, the row back to working, ledger `late: true`', (t) => {
+  const run = holdRun(t, [{ num: 'T01' }], { T01: npmTest }, { holdMs: 60000 });
+  const { coordinator, clock, platform } = run;
+  const start = clock.t;
+  coordinator.pass();
+  const w = run.implOf('T01');
+  clock.t = start + 60000;
+  coordinator.pass();
+  assert.equal(run.wanted().has(w), true, 'timed out: the person\'s');
+
+  clock.t = start + 90000;
+  run.decide({ kind: 'permission', worker: w, requestId: `${w}-r1`, decision: 'allow', reason: 'the test command' });
+  coordinator.pass();
+  assert.deepEqual(platform.answers.map((a) => [a.to, a.requestId, a.result.behavior, a.from]), [[w, `${w}-r1`, 'allow', 'coordinator']]);
+  assert.equal(run.wanted().has(w), false, 'Remote Control off after the answer');
+  assert.notEqual(run.rowOf('T01').tasks[0].holder, 'person', 'no longer asking you');
+  assert.equal(askingCount(run.rowOf('T01')), 0);
+  const decided = coordinator.agent.ledger().filter((l) => l.kind === 'permission');
+  assert.equal(decided.length, 1);
+  assert.equal(decided[0].late, true);
+  assert.ok(!run.told().some((m) => m.startsWith('Already answered')), 'the agent answered first: nothing to tell it');
+  assert.equal(coordinator.drive().reason, 'complete');
+});
+
+test('hold limit: a late decision after the person answered is refused; the agent is told the person answered', (t) => {
+  const run = holdRun(t, [{ num: 'T01' }], { T01: npmTest }, { holdMs: 60000 });
+  const { coordinator, clock, platform } = run;
+  const start = clock.t;
+  coordinator.pass();
+  const w = run.implOf('T01');
+  clock.t = start + 60000;
+  coordinator.pass();
+
+  platform.answer(w, `${w}-r1`, { behavior: 'deny', message: 'not now' }, { from: 'person' });
+  run.decide({ kind: 'permission', worker: w, requestId: `${w}-r1`, decision: 'allow', reason: 'fine' });
+  coordinator.pass();
+  assert.deepEqual(platform.answers.map((a) => a.from), ['person'], 'only the person\'s answer reached the worker');
+  assert.ok(run.told().some((m) => m.startsWith('Already answered by the person') && m.includes(`${w}-r1`)));
+  assert.ok(run.told().some((m) => /was not applied: nothing is waiting from worker/.test(m)), 'the late decision refused');
+  assert.equal(coordinator.agent.ledger().filter((l) => l.kind === 'permission').length, 0);
+});
+
+test('hold limit: a late pass of a timed-out item changes nothing on screen, is logged and ledgered late', (t) => {
+  const run = holdRun(t, [{ num: 'T01' }], { T01: npmTest }, { holdMs: 60000 });
+  const { coordinator, clock } = run;
+  const start = clock.t;
+  coordinator.pass();
+  const w = run.implOf('T01');
+  clock.t = start + 60000;
+  coordinator.pass();
+  run.decide({ kind: 'pass', worker: w, requestId: `${w}-r1`, reason: 'not mine to say', suggestion: 'allow' });
+  const r = coordinator.pass();
+  assert.equal(r.agent.passed.length, 1);
+  assert.equal(run.wanted().has(w), true, 'still the person\'s');
+  assert.equal(run.rowOf('T01').tasks[0].holder, 'person');
+  assert.ok(run.logs.includes('coordinator-pass T01'));
+  const passLine = coordinator.agent.ledger().find((l) => l.kind === 'pass');
+  assert.equal(passLine.late, true);
+});
+
+test('hold limit: a reserved item has no timeout handling and no hand-over message', (t) => {
+  const run = holdRun(t, [{ num: 'T01' }], { T01: { requests: [{ toolName: 'Bash', input: { command: 'rm -rf build' } }] } }, { holdMs: 60000 });
+  const { coordinator, clock } = run;
+  coordinator.pass();
+  clock.t += 600000;
+  coordinator.pass();
+  assert.deepEqual(run.handovers(), []);
+  assert.deepEqual(run.timeouts(), []);
+  assert.ok(!run.logs.some((l) => l.startsWith('coordinator-timeout')));
+});
+
+test('hold limit: PARALLEL_COORDINATOR_HOLD_MS shortens it; absent, it is 5 minutes', (t) => {
+  assert.equal(DEFAULT_HOLD_MS, 300000);
+  assert.equal(holdLimitMs({}), 300000);
+  assert.equal(holdLimitMs({ PARALLEL_COORDINATOR_HOLD_MS: '180000' }), 180000);
+  assert.equal(holdLimitMs({ PARALLEL_COORDINATOR_HOLD_MS: 'soon' }), 300000);
+  assert.equal(holdLimitMs({ PARALLEL_COORDINATOR_HOLD_MS: '0' }), 300000);
+
+  const short = holdRun(t, [{ num: 'T01' }], { T01: npmTest }, { env: '1000' });
+  const s0 = short.clock.t;
+  short.coordinator.pass();
+  short.clock.t = s0 + 1000;
+  short.coordinator.pass();
+  assert.equal(short.handovers().length, 1, 'the env var shortened it to 1 s');
+  assert.match(short.handovers()[0], /for 1 second without/);
+
+  const dflt = holdRun(t, [{ num: 'T01' }], { T01: npmTest }, { env: null });
+  const d0 = dflt.clock.t;
+  dflt.coordinator.pass();
+  dflt.clock.t = d0 + 299999;
+  dflt.coordinator.pass();
+  assert.equal(dflt.handovers().length, 0);
+  dflt.clock.t = d0 + 300000;
+  dflt.coordinator.pass();
+  assert.equal(dflt.handovers().length, 1);
+  assert.match(dflt.handovers()[0], /for 5 minutes without/);
 });
