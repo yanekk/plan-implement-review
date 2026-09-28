@@ -14,7 +14,7 @@ past.
 
 **Status:** Planned 2026-09-28. Nothing built.
 **Last updated:** 2026-09-28
-**Next `pir-work` will:** T01 box-grammar: it heads the critical path.
+**Next `pir-work` will:** T04 box-starts-build: T01–T03 are ✅.
 
 ## Tasks
 
@@ -25,11 +25,11 @@ done · ⛔ blocked, needs a human.
 |---|---|---|---|---|
 | T01 | box-grammar | — | ✅ | |
 | T02 | plan-scan | — | ✅ | |
-| T03 | box-completion | T01 | 🔍 | boxCompletion replaces repoCompletion; re-open rule in toBox; `new` label, START_HINT, new suffix. 13 new tests, 29 in file. Deviations: label change also edits `new plan` assertions in plan-rig.test and pir-tui.test; view exposes cached `plansOf` for T04's submit; command and slug filters case-insensitive. |
+| T03 | box-completion | T01 | ✅ | Reviewed: one fix. A Tab pick with no pop-up showing (after Esc, or inside the debounce) is applied late by pi-tui, so no command or slug pop-up followed; reproduced by script, fixed via onPicked, test locks it. Probed mid-line picks, `@sk brief`, Esc then Tab on a slug, recorded deviations; all fine. |
 | T04 | box-starts-build | T01, T02, T03 | ⬜ | |
 | T05 | box-commands-drill | T04 | ⬜ | |
 
-**Review queue:** T03
+**Review queue:** empty
 
 ## Blocked on the user
 
