@@ -125,6 +125,12 @@ const EXPECT = {
       'ceiling-held:3',
     ],
   },
+  'notify-live': {
+    taskCount: 2,
+    deps: { T01: [], T02: [] },
+    ceiling: 2,
+    factIds: ['agent-answered:T01', 'never-alerted:T01', 'remote-only-after-pass:T02', 'alerted-once:T02', 'ready-with-report:no-conflict', 'ceiling-held:2'],
+  },
 };
 
 // --- The registry ---------------------------------------------------------------------------------
@@ -371,6 +377,51 @@ test('pir-coordinator-concurrent: three askers at once, a 3-minute hold, the rul
   }
   // Different questions, so the agent decides two items, not one twice.
   assert.notEqual(/"([^"]+)"/.exec(fx.tasks['T01-greeting.md'])[1], /"([^"]+)"/.exec(fx.tasks['T02-farewell.md'])[1]);
+});
+
+test('notify-live: the agent runs, real alerts go to the person\'s topic, nobody stands in for the person, the run ends merged (T08)', () => {
+  const fx = getFixture('notify-live');
+  const sc = fx.scenario;
+  assert.equal(sc.coordinator, true);
+  assert.equal(sc.statusSnapshots, true);
+  assert.equal(sc.realNotify, true);
+  assert.equal(sc.answerPending, false, 'the person answers T02 on the phone');
+  assert.equal(sc.mainCommit, null);
+  assert.equal(sc.mergeWhenReady, true, 'the end alert fires and the run finishes');
+  assert.equal(sc.seatbelts.timeoutMs, 30 * 60 * 1000);
+  const files = fixtureFiles(fx);
+  assert.match(files['.claude/pir-coordinator.md'], /Pass questions about the public API to the person/);
+  assert.equal(files['.claude/settings.json'], undefined, 'no reserved request: T02 is the person\'s by a pass');
+  assert.match(files[`plans/${fx.slug}/DESIGN.md`], /The greeting function is named `greet`/);
+  assert.match(fx.tasks['T01-greeting.md'], /\*\*AskUserQuestion\s+tool\*\*/);
+  assert.match(fx.tasks['T02-version.md'], /drop a `question` report/);
+  assert.match(fx.tasks['T02-version.md'], /NOT the AskUserQuestion tool/);
+});
+
+test('notify-live facts: T01 never alerted; T02 alerted once after its link, one reminder at most (T08)', () => {
+  const sc = getFixture('notify-live').scenario;
+  const byId = Object.fromEntries(sc.facts.map((f) => [f.id, f]));
+  const note = (kind, t, extra = {}) => ({ dir: 'note', kind, t, ...extra });
+  const bundle = (t01, t02) => ({ transcripts: [{ key: 'T01-implement', task: 'T01', events: t01 }, { key: 'T02-implement', task: 'T02', events: t02 }] });
+  const link = note('remote-control', '2026-01-01T00:00:00Z', { on: true, url: 'https://claude.ai/code/session_x' });
+  const first = note('notified', '2026-01-01T00:00:01Z', { reminder: false });
+  const rem = note('notified', '2026-01-01T00:02:01Z', { reminder: true });
+
+  assert.equal(byId['never-alerted:T01'].check(bundle([], [])).pass, true);
+  assert.equal(byId['never-alerted:T01'].check(bundle([first], [])).pass, false);
+  assert.equal(byId['never-alerted:T01'].check({ transcripts: [] }).pass, false, 'no conversation proves nothing');
+
+  const once = byId['alerted-once:T02'];
+  assert.equal(once.check(bundle([], [link, first])).pass, true, 'no reminder: answered in time');
+  assert.equal(once.check(bundle([], [link, first, rem])).pass, true);
+  assert.match(once.check(bundle([], [link, first, rem])).detail, /reminder 120s later/);
+  assert.equal(once.check(bundle([], [link, first, rem, { ...rem, t: '2026-01-01T00:04:01Z' }])).pass, false, 'a second reminder');
+  assert.equal(once.check(bundle([], [link])).pass, false, 'no alert');
+  assert.equal(once.check(bundle([], [first, { ...link, t: '2026-01-01T00:00:05Z' }])).pass, false, 'alert before the link');
+  // A real conversation log stamps epoch ms (the live run 2026-09-28 read these as NaN before the fix).
+  const ms = (e) => ({ ...e, t: Date.parse(e.t) });
+  assert.equal(once.check(bundle([], [ms(link), ms(first), ms(rem)])).pass, true, 'epoch-ms stamps');
+  assert.equal(once.check(bundle([], [ms(first), { ...ms(link), t: Date.parse('2026-01-01T00:00:05Z') }])).pass, false, 'epoch ms, alert before the link');
 });
 
 test('parallel: at least two independent tasks so workers run concurrently', () => {

@@ -32,7 +32,7 @@ import { existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync, openSy
 import { join, basename, dirname } from 'node:path';
 import { execFileSync, spawn as nodeSpawn } from 'node:child_process';
 import { mkdtempSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { tmpdir, homedir } from 'node:os';
 
 import { getFixture, installFixture } from './fixtures.mjs';
 import { createCapture, bundleDirFor } from './capture.mjs';
@@ -85,6 +85,19 @@ export function seatbeltEnv({ ceiling, holdMerges = false, pirHome = null, coord
     env.PIR_HOME = pirHome;
   }
   return env;
+}
+
+// notifyEnv({ home, env }) → the env a `realNotify` scenario adds (reliable-notifications T08): the
+// person's own ntfy config, and the two undocumented knobs of the live check passed through from the
+// harness's own environment. PIR_NOTIFY_CONFIG is set explicitly because `statusSnapshots` points PIR_HOME
+// at a scratch folder, which would hide `~/.pir/notify.json`; the presence marker stays with that scratch
+// PIR_HOME. Only the path is handled here: the topic is never read, printed or logged by the harness.
+export function notifyEnv({ home, env = {} } = {}) {
+  if (!home) throw new Error('notifyEnv: no home dir');
+  const out = { PIR_NOTIFY_CONFIG: join(home, '.pir', 'notify.json') };
+  if (env.PIR_NOTIFY_REMIND_MS) out.PIR_NOTIFY_REMIND_MS = env.PIR_NOTIFY_REMIND_MS;
+  if (env.PIR_NOTIFY_ICON) out.PIR_NOTIFY_ICON = env.PIR_NOTIFY_ICON;
+  return out;
 }
 
 // spawnCoordinator({ argv, cwd, env, spawn, stdoutPath }) → a handle over the launched child process:
@@ -416,6 +429,8 @@ export async function teardownScenario({ controlDir, reap = (dir) => reapRecorde
 //                  scenario (answerer.mjs, T18); injected so a test sees its ticks.
 //   timers, now  — injected clock/timers so a test drives time (DESIGN §3.1: the shell owns the clock).
 //   log          — where the runner prints progress (default console.log); the fact report is returned.
+//   notifyHome, harnessEnv — for a `realNotify` scenario (T08): whose ~/.pir/notify.json the run reads, and
+//                  the environment PIR_NOTIFY_REMIND_MS / PIR_NOTIFY_ICON pass through from; injected for tests.
 export async function runScenario({
   fixtureId,
   scratchDir,
@@ -434,6 +449,8 @@ export async function runScenario({
   timers = { setTimeout, clearTimeout },
   now = () => new Date(),
   log = () => {},
+  notifyHome = homedir(),
+  harnessEnv = process.env,
 } = {}) {
   const fixture = getFixture(fixtureId); // throws loudly on a typo, naming the known ids
   const spec = fixture.scenario;
@@ -512,8 +529,11 @@ export async function runScenario({
     // The scratch PIR_HOME sits in the plan's .parallel/, which the scratch repo's .gitignore keeps out of
     // git, so the index it may hold never dirties the checkout the coordinator merges in.
     const pirHome = spec.statusSnapshots ? join(controlDir, '..', 'pir-home') : null;
-    const env = seatbeltEnv({ ceiling, holdMerges: spec.holdMerges, pirHome, coordinator: spec.coordinator, holdMs: spec.coordinatorHoldMs });
-    log(`launching coordinator process: node ${argv.join(' ')}  (ceiling ${ceiling}, timeout ${timeout}ms)`);
+    const env = {
+      ...seatbeltEnv({ ceiling, holdMerges: spec.holdMerges, pirHome, coordinator: spec.coordinator, holdMs: spec.coordinatorHoldMs }),
+      ...(spec.realNotify ? notifyEnv({ home: notifyHome, env: harnessEnv }) : {}),
+    };
+    log(`launching coordinator process: node ${argv.join(' ')}  (ceiling ${ceiling}, timeout ${timeout}ms${spec.realNotify ? ', real phone alerts' : ''})`);
     child = spawnCoordinator({ argv, cwd: repoDir, env, spawn, stdoutPath: coordinatorOutPath(controlDir) });
 
     // Wait for the run to reach a terminal: the coordinator process exits (hand-off or stall or halt), or
