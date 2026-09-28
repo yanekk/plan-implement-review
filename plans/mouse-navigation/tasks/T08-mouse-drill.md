@@ -32,6 +32,8 @@ DESIGN §2, §5 (install), §5.1.
 - suite: `plan-rig.test.mjs` · sizes: 80×24, 120×40, 80×12
 - [ ] list: hover each kind of row (running, crashed, finished dim), click to open, ← back, wheel through a long list
 - [ ] build live view: hover and click tasks with and without a worker; wheel the task selection
+- [ ] `coordinator-drill`: hover and click the agent's row, an `asking coordinator` task, and the separator (inert); wheel past the separator; the agent's conversation scrolls
+- [ ] `end-helper`: a helper's row hovers and opens its worker; a `ready to merge` run in the list hovers and opens
 - [ ] planning run: steps view and the go question; a click on a step never starts the build
 - [ ] conversation: wheel through history in a live and a read-only worker; click in the box
 - [ ] new-plan box: type a brief, click a run, ←, the brief is still there; click an `@repo` pop-up entry

@@ -23,14 +23,16 @@ DESIGN §2.1, §3.3, §3.4.
 
 ```
 line.hit = { kind: 'run', index }    // buildListFrame (both forms): index into dashboard.rows
-line.hit = { kind: 'task', index }   // buildWatchFrame: task rows 1..n of the render block; index into openTasks
+line.hit = { kind: 'task', index }   // buildWatchFrame: rows 1..n of the render block (rowEntries); index into openTasks;
+                                     // the separator line has none; the agent's and helpers' rows have one
 line.hit = { kind: 'step', index }   // buildPlanWatchFrame: step rows; index into buildPlanDisplay rows
 
 export function hitAt(frame, y) → { kind, index } | null   // frame[y]?.hit ?? null; y out of range → null
 
 dashboardReducer(ui, { type: 'select', index }, views)
   list view:  unchanged (sel = clamp(index))
-  watch view: taskSel = clamp(index, openTasks(views, ui).length), armed cleared, sel unchanged
+  watch view: taskSel = clamp(index, openTasks(views, ui).length), armed cleared, sel unchanged;
+              an index on the separator leaves taskSel where it was
   worker view: unchanged (inert, clears armed)
 ```
 
@@ -44,13 +46,18 @@ changes shape for existing callers.
 - [ ] list with a `rows` budget that windows (e.g. 20 runs, budget 8, sel 10): visible rows carry their
       true indices, the `↑ n more`/`↓ n more` lines carry none, and dropped spacer lines shift nothing
 - [ ] empty list: no line has a hit
+- [ ] build live view with a coordinator agent and a helper: the separator line has no hit; the agent's row
+      carries the index of its `openTasks` entry, and so does each helper's row
+- [ ] list with a `ready-to-merge` row (COL_READY widths): every run row still carries its index
 - [ ] build live view: task i's line carries `{ kind: 'task', index: i }`, the summary line and the stale/crash
       notes and log tail carry none; the selected task line keeps its `▎` span and its hit
 - [ ] planning steps view, with and without the go question: step i carries `{ kind: 'step', index: i }`;
       the question and `↵ start · n not now` lines carry none
 - [ ] `hitAt` returns null for negative y, y past the end, and a line without a hit
 - [ ] reducer: `select` in watch sets `taskSel`, clamps past the end and on an empty task list, clears `armed`;
-      `select` then `open` on a task with a worker yields the worker view; on a task without one, the note
+      `select` then `open` on a task with a worker yields the worker view; on a task without one, the note;
+      `select` on the agent's entry then `open` yields the worker view with `openWorker.taskId 'coordinator'`,
+      or `noCoordinatorNote` when it has no session; `select` on the separator changes nothing
 
 ## Done when
 

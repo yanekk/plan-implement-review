@@ -46,6 +46,8 @@ click reads the same lines the person sees.
 - [ ] fake terminal: click on run row i opens run i (ui.view 'watch', openKey of row i); sel is i after ←
 - [ ] click on the header, a `↑ n more` marker, the counts line, the hint line → nothing changes
 - [ ] click on a task row with a worker opens its conversation; without one, the no-worker note
+- [ ] click on the coordinator agent's row opens the agent's conversation (as `c` does); a click on the separator does nothing and it never hovers
+- [ ] wheel over the live view steps over the separator exactly as ↑/↓ do (`moveRow`)
 - [ ] click on a step row under the go question opens the step, and does not start the build
 - [ ] click cancels an armed Ctrl+S (armed null after); a pointer move does not
 - [ ] move over row i then row j: row j painted hovered, row i not; a move within one row does not repaint
@@ -67,4 +69,5 @@ click reads the same lines the person sees.
 - [ ] move the pointer over a run row → that row's text cells are bold, the others not
 - [ ] 80×12 with more runs than fit: wheel down past the window → the list scrolls, `↑ n more` appears
 - [ ] in a build's live view, click a task with a worker → its conversation shows
+- [ ] `coordinator-drill` run: click the agent's row → the agent's conversation; ← → the live view with that row selected
 - [ ] Ctrl+S, then a click on another run → no `⚠` line remains, nothing stopped

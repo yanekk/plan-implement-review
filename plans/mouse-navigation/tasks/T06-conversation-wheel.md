@@ -34,6 +34,7 @@ withHeadLine: handleMouse(ev) → ev.y === 0 ? undefined : inner.handleMouse?.({
 - [ ] wheel up once → scrolled back 3 lines, the `↓ 3 more below` hint shows; wheel down returns to the end
 - [ ] wheel down at the end stays at the end; wheel up at the top stays at the top
 - [ ] read-only view: the wheel scrolls; there is no box to click
+- [ ] the coordinator agent's conversation (`openWorker.taskId 'coordinator'`) scrolls the same way
 - [ ] a click in the box moves the caret; a click on the scrollback, the picker or the gate changes nothing
 - [ ] withHeadLine: a wheel on its head line is ignored; one below it reaches the inner view shifted by one
 

@@ -12,7 +12,7 @@ cell also fixes the over-budget cell they walk past.
 
 **Plan reviewed:** not yet — run `/pir-review-plan` before the first `/pir-work`
 
-**Status:** Planned 2026-09-28. Nothing built. The spike in `prototype/` was run by the user and approved.
+**Status:** Planned 2026-09-28, amended the same day for the coordinator agent's rows (`7c59312`). Nothing built. The spike in `prototype/` was run by the user and approved.
 **Last updated:** 2026-09-28
 **Next `pir-work` will:** stop until `/pir-review-plan mouse-navigation` has run; then T01, the first ⬜ with no dependencies.
 

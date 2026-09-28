@@ -16,6 +16,7 @@ DESIGN §2 (all), §2.7 (the `reset` recovery).
 
 - `docs/detached-runs.md` — the key table and the list/live-view description gain the mouse
 - `docs/human-flow.md` — where it describes moving around the dashboard
+- `docs/coordinator-agent.md` — one line where it says how the agent's conversation is opened (`c` or →): a click on its row too
 - `README.md` — a sentence and a link
 
 ## Tests
@@ -24,6 +25,6 @@ DESIGN §2 (all), §2.7 (the `reset` recovery).
 
 ## Done when
 
-- [ ] `docs/detached-runs.md` states click-opens, hover, the wheel per screen, the keyboard-only list, drag-copy with Option/Shift-drag, and `reset` after SIGKILL.
+- [ ] `docs/detached-runs.md` states click-opens (the coordinator agent's row included), hover, the wheel per screen, the keyboard-only list, drag-copy with Option/Shift-drag, and `reset` after SIGKILL.
 - [ ] `docs/human-flow.md` agrees with it, and the README mentions mouse navigation with a link.
 - [ ] Every statement matches the code as built by T04–T06.

@@ -34,12 +34,17 @@ All decisions in this section are the user's, 2026-09-28, unless marked (planner
 
 ### 2.1 Click opens
 
-A left click on a row opens it at once (user): the run list's rows, a build's task rows, and a planning
-run's step rows. It is exactly `select` of that row followed by `open`, through the same reducer path a
+A left click on a row opens it at once (user): the run list's rows, a build's live-view rows, and a
+planning run's step rows. A build's live-view rows are `openTasks`'s entries (`rowEntries`,
+pir-coordinator T11/T12): the plan's tasks, then, once its coordinator agent has started, a separator line
+and the agent's pinned row, then any end-of-run helper (main-sync, tests-fix) while it runs. It is exactly `select` of that row followed by `open`, through the same reducer path a
 key takes, so the selection lands on the clicked row and ← comes back to it. Whatever `open` does for
-that row, the click does: a task with no worker shows the same "no worker" note → shows (user), a
-planning step with no session shows its note, and a step row under the go question opens the step (it
-is `open`, not the go question's Enter).
+that row, the click does: a task with no worker shows the same "no worker" note → shows (user), the
+coordinator agent's row opens the agent's conversation as → on it and `c` do (or shows
+`noCoordinatorNote` when it has no session), a helper's row opens its worker, a planning step with no
+session shows its note, and a step row under the go question opens the step (it is `open`, not the go
+question's Enter). The separator above the agent's row is never selected by a key (`moveRow`), so it is
+not a row for the mouse either: no click, no hover (planner, following the keys).
 
 A click that is not on a row does nothing (user): the title, the column header, the `↑ n more` markers,
 blank lines, notes, the counts line and the hint line. A click on a row opens it whatever the modifier
@@ -72,13 +77,16 @@ turns it off again).
 In a worker's conversation, the wheel scrolls the history, three lines a notch, as PgUp/PgDn do a page
 (user; three is the planner's). In the run list, a build's task list and a planning run's steps, one
 notch is one ↑ or ↓ (user), wherever the pointer is on that screen, and it goes through the reducer as
-those keys do, so it clears an armed chord as they do. On the landing screen (`starting the planner…`)
+those keys do, so it clears an armed chord and steps over the agent's separator as they do. On the landing screen (`starting the planner…`)
 the wheel does nothing (planner).
 
 ### 2.4 What stays on the keyboard
 
 Going back, quitting, the go question (`↵ start · n not now`), a worker's question picker, the
-permission prompt (allow/refuse), and the Ctrl+R/S/X chords have no mouse action (user). The hint lines
+permission prompt (allow/refuse), the Ctrl+R/S/X chords and `c` (open the coordinator agent) have no
+mouse action (user; `c` added by the planner on 2026-09-28 when the coordinator agent landed, since it
+is a hint-line key and the agent's row is clickable anyway). The end-of-run hand-off (`ready to merge`)
+is a footer and a list state, not a control, so it has none either. The hint lines
 stay plain text: they are not buttons and do not hover. Every key keeps its current meaning (user).
 
 ### 2.5 Text selection and copy
@@ -152,6 +160,10 @@ line is still an array of spans, carrying one extra property, `hit`:
 line.hit = { kind: 'run' | 'task' | 'step', index }   // index into dashboard rows, openTasks, or plan rows
 ```
 
+A build's `task` hits index `openTasks` (= `rowEntries`), so the coordinator agent's row and the helpers'
+rows are `task` hits like any task, and `open` already tells them apart. The separator line carries no
+hit.
+
 `hitAt(frame, y)` returns `frame[y]?.hit ?? null`. The list view's list block starts at screen row 0,
 and a painted frame is cut from the top, so a frame line's index is its screen row. The conversation
 view has no row hits.
@@ -203,7 +215,8 @@ command never overwrites the person's clipboard. The real `pbcopy` path was chec
 **The test command** is `npm test` (`FORCE_COLOR=0 NO_COLOR=1 node --test --test-reporter=dot
 'src/**/*.test.mjs'`): dots on green, a failure in full. For detail, `node --test --test-reporter=spec
 <file>`. This shell exports `FORCE_COLOR=3`, which is why the command sets `FORCE_COLOR=0` itself.
-Measured green in a fresh worktree 2026-09-28, which `setup` left clean. **Setup** is `npm ci` of the
+Measured green in a fresh worktree 2026-09-28, before and after the pir-coordinator merge (`7c59312`),
+which `setup` left clean. **Setup** is `npm ci` of the
 committed lockfile.
 
 **Dependencies.** No new package: pi-tui already carries mouse parsing, selection and the Editor's click
@@ -211,7 +224,9 @@ handling. Any addition is the user's decision.
 
 **End to end.** The existing tooling carries it: `openScreen`/`driveScreen` (`conversation-rig.mjs`) run
 the real `pir.mjs` under a pty, and `startPlanRig` (`plan-rig.mjs`) stands up a scratch HOME, PIR_HOME
-and repo with the fake Claude first on `PATH`. T01 extends the screen model; no second rig is built.
+and repo with the fake Claude first on `PATH`. Its `coordinator-drill` script set stands up a build with
+a coordinator agent and its `end-helper` set one with an end-of-run helper (pir-coordinator T07, T11);
+those carry the agent's and helpers' rows. T01 extends the screen model; no second rig is built.
 Sizes: 80×24, 120×40, and 80×12 for a list taller than the screen. The spike in `prototype/`
 (`node plans/mouse-navigation/prototype/spike.mjs`) is a non-binding reference for the look.
 
@@ -246,6 +261,10 @@ nothing in this plan changes them, so no task asks the person again.
 
 User decisions, 2026-09-28: everything marked (user) above. In addition:
 
+- Amended 2026-09-28 after the pir-coordinator plan merged to `main` (`7c59312`): the live view's rows
+  became `rowEntries` (tasks, separator, the agent's pinned row, end-of-run helpers), `c` opens the agent,
+  and the list gained `ready to merge` with wider STATE. The mouse follows the keys on all of it (§2.1,
+  §2.3, §2.4); no user decision was needed.
 - The spike (`prototype/spike.mjs`) was run by the user in their own terminal on 2026-09-28: hover
   brightens rows and looks right, and click, wheel and drag-to-copy behave. It stands as the approved
   direction and replaces a T00: the only load-bearing unknown, whether the person's terminal delivers
