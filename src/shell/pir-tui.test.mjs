@@ -7,6 +7,7 @@
 // and feels right to a person moving and opening runs at a real terminal — is hand-verified (§5.1, T12).
 
 import { test } from 'node:test';
+import { EventEmitter } from 'node:events';
 import assert from 'node:assert/strict';
 import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -28,6 +29,7 @@ import {
   buildLandingFrame,
   FOLLOW_LINE,
   hitAt,
+  underMultiplexer,
 } from './pir-tui.mjs';
 import { FrameView, SGR, SELECTED_BG, HOVER_LIFT, clipSpans, paintLine } from './pir-view.mjs';
 import { BASIC_HOVER_LIFT, MOCHA_HOVER_LIFT, MOCHA_SGR } from './palette.mjs';
@@ -1874,4 +1876,201 @@ test('hitAt: null for a negative y, a y past the end, a non-integer y, and a lin
   assert.equal(hitAt(frame, 1.5), null);
   assert.equal(hitAt(frame, 0), null);
   assert.equal(hitAt(null, 0), null);
+});
+
+// --- the mouse (mouse-navigation T04, DESIGN §2.2, §2.5, §2.7, §3.2) ----------------------------------
+
+// A process stand-in for the exit restore: an emitter whose exit() is recorded instead of ending the tests.
+function fakeProcess() {
+  const p = new EventEmitter();
+  p.exits = [];
+  p.exit = (code) => p.exits.push(code);
+  return p;
+}
+
+// A TTY screen over the fake terminal with every outside effect injected: no clipboard, no real env, no
+// real process listeners. `copies` collects what the screen asked to copy.
+function mouseScreen({ env = {}, columns = 40, rows = 6, platform = 'darwin' } = {}) {
+  const tty = fakeStream({ isTTY: true, columns, rows });
+  const term = fakeTerminal(tty);
+  const proc = fakeProcess();
+  const copies = [];
+  const screen = createScreen({
+    stream: tty,
+    colour: false,
+    terminal: term,
+    env,
+    onExit: proc,
+    platform,
+    copy: async (text) => {
+      copies.push(text);
+      return true;
+    },
+  });
+  return { tty, term, proc, copies, screen };
+}
+
+const MOUSE_OFF = '\x1b[?1006l\x1b[?1004l\x1b[?1003l\x1b[?1002l\x1b[?1000l';
+const sgr = (code, col, row, end = 'M') => `\x1b[<${code};${col};${row}${end}`; // 1-based, as a terminal sends
+const flush = () => new Promise((r) => setImmediate(r));
+// The layout root pi-tui dispatches mouse events to (createScreen's `guarded`), read off pi-tui's own field.
+const rootOf = (screen) => screen.host.layoutRoot;
+
+test('mouse: the screen starts with mouse reporting on, all-motion included', (t) => {
+  if (underMultiplexer(process.env)) return t.skip('pi-tui reads the real env; this shell is under a multiplexer');
+  const { tty, screen } = mouseScreen();
+  screen.paint([[{ text: 'row', style: null }]]);
+  const out = tty.text();
+  for (const m of [1000, 1002, 1003, 1004, 1006]) assert.ok(out.includes(`\x1b[?${m}h`), `?${m}h is written`);
+  screen.close();
+});
+
+test('mouse: under a multiplexer, ?1003h is written again after pi-tui\'s button-motion enable', () => {
+  for (const env of [{ TMUX: '/tmp/tmux-1/default,1,0' }, { STY: '1.tty' }, { ZELLIJ: '0' }, { TERM: 'tmux-256color' }, { TERM: 'screen' }]) {
+    const { tty, screen } = mouseScreen({ env });
+    screen.paint([[{ text: 'row', style: null }]]);
+    const out = tty.text();
+    const buttonMotion = out.indexOf('\x1b[?1002h');
+    assert.ok(buttonMotion >= 0, `${JSON.stringify(env)}: pi-tui enabled button motion`);
+    assert.ok(out.indexOf('\x1b[?1003h', buttonMotion) > buttonMotion, `${JSON.stringify(env)}: ?1003h follows it`);
+    screen.close();
+  }
+  assert.equal(underMultiplexer({ TERM: 'xterm-256color' }), false);
+  assert.equal(underMultiplexer({}), false);
+});
+
+test('mouse: a drag across two lines then release copies that text through the injected copy', async () => {
+  const { term, copies, screen } = mouseScreen();
+  screen.listen(() => {}, (e) => assert.fail(e));
+  screen.paint([[{ text: 'alpha line', style: null }], [{ text: 'beta line', style: null }]]);
+  term.press(sgr(0, 1, 1)); // press on "a" of alpha
+  term.press(sgr(32, 3, 2)); // drag to row 2, column 3
+  term.press(sgr(0, 4, 2, 'm')); // release on "a" of beta
+  await flush();
+  assert.deepEqual(copies, ['alpha line\nbeta'], 'the selected text reached copy');
+  screen.close();
+});
+
+test('mouse: off macOS the copy function is not used (pi-tui keeps its OSC 52)', async () => {
+  const { tty, term, copies, screen } = mouseScreen({ platform: 'linux' });
+  screen.listen(() => {}, (e) => assert.fail(e));
+  screen.paint([[{ text: 'alpha line', style: null }]]);
+  term.press(sgr(0, 1, 1));
+  term.press(sgr(32, 5, 1));
+  term.press(sgr(0, 5, 1, 'm'));
+  await flush();
+  assert.deepEqual(copies, []);
+  assert.ok(tty.text().includes('\x1b]52;c;'), 'OSC 52 carries the selection instead');
+  screen.close();
+});
+
+test('mouse: a press and release in place with no handler copies nothing and throws nothing', async () => {
+  const { term, copies, screen } = mouseScreen();
+  const errors = [];
+  screen.listen(() => {}, (e) => errors.push(e));
+  screen.paint([[{ text: 'alpha line', style: null }]]);
+  term.press(sgr(0, 2, 1));
+  term.press(sgr(0, 2, 1, 'm'));
+  await flush();
+  assert.deepEqual(copies, []);
+  assert.deepEqual(errors, []);
+  screen.close();
+});
+
+test('mouse: the root forwards to the mounted component when one is mounted, to onMouse otherwise, and returns their result', () => {
+  const { term, screen } = mouseScreen();
+  const seen = [];
+  screen.listen(() => {}, () => {}, (ev) => (seen.push(['frame', ev.type, ev.x, ev.y]), { handled: true, render: false }));
+  screen.paint([[{ text: 'row', style: null }]]);
+  term.press(sgr(35, 3, 2)); // a hover move at column 3, row 2
+  assert.deepEqual(seen, [['frame', 'move', 2, 1]], 'a painted frame\'s move reaches onMouse, zero-based');
+
+  const component = { render: () => ['mounted'], invalidate() {}, handleMouse: (ev) => (seen.push(['mounted', ev.type]), { handled: true, render: false }) };
+  screen.mount(component);
+  screen.renderNow();
+  term.press(sgr(65, 1, 1)); // wheel down
+  assert.deepEqual(seen.at(-1), ['mounted', 'wheel'], 'a mounted component takes the event, onMouse does not');
+  assert.equal(seen.filter(([w]) => w === 'frame').length, 1);
+});
+
+test('mouse: the root\'s handleMouse returns the handler\'s own result, and points a focus request at the mounted component', () => {
+  const { screen } = mouseScreen();
+  screen.listen(() => {}, () => {}, () => 'from-onMouse');
+  screen.paint([[{ text: 'row', style: null }]]);
+  const ev = { type: 'click', button: 'left', x: 1, y: 0, screenX: 1, screenY: 0, width: 40, height: 6 };
+  const guarded = rootOf(screen);
+  assert.equal(guarded.handleMouse(ev), 'from-onMouse', 'with nothing mounted, onMouse\'s result comes back');
+
+  const plain = { handled: true };
+  const comp = { render: () => ['x'], invalidate() {}, handleMouse: () => plain };
+  screen.mount(comp);
+  assert.equal(guarded.handleMouse(ev), plain, 'a mounted handler\'s result comes back as is');
+
+  comp.handleMouse = () => ({ handled: true, focus: true });
+  const r = guarded.handleMouse(ev);
+  assert.equal(r.focusTarget, comp, 'a focus request is pointed at the mounted component, not the root');
+  assert.equal(r.target.component, guarded);
+  assert.deepEqual([r.target.originX, r.target.originY, r.target.width, r.target.height], [0, 0, 40, 6]);
+
+  comp.handleMouse = () => undefined;
+  assert.equal(guarded.handleMouse(ev), undefined, 'a declining handler stays undefined, leaving pi-tui its selection');
+  delete comp.handleMouse;
+  assert.equal(guarded.handleMouse(ev), undefined, 'a component with no handler declines');
+  screen.close();
+});
+
+test('mouse: a handler that returns undefined for press keeps selection working, and the click still reaches it', async () => {
+  const { term, copies, screen } = mouseScreen();
+  const types = [];
+  screen.listen(() => {}, () => {}, (ev) => {
+    types.push(ev.type);
+    return ev.type === 'click' ? { handled: true } : undefined;
+  });
+  screen.paint([[{ text: 'alpha line', style: null }], [{ text: 'beta line', style: null }]]);
+  term.press(sgr(0, 1, 1));
+  term.press(sgr(32, 5, 1));
+  term.press(sgr(0, 5, 1, 'm'));
+  await flush();
+  assert.deepEqual(copies, ['alpha'], 'the drag still copied (the release cell is included)');
+  assert.ok(!types.includes('click'), 'a drag is not a click');
+  term.press(sgr(0, 2, 2));
+  term.press(sgr(0, 2, 2, 'm'));
+  await flush();
+  assert.equal(types.filter((x) => x === 'click').length, 1, 'a press and release in place is a click');
+  assert.deepEqual(copies, ['alpha'], 'and copies nothing');
+  screen.close();
+});
+
+test('mouse: process exit writes the mouse-off restore once; after close() nothing is written', () => {
+  const { tty, proc, screen } = mouseScreen();
+  proc.emit('exit', 0);
+  assert.equal(tty.text(), '', 'a screen never started restores nothing');
+  screen.paint([[{ text: 'row', style: null }]]);
+  const before = tty.text().length;
+  proc.emit('exit', 0);
+  proc.emit('exit', 0);
+  const written = tty.text().slice(before);
+  assert.equal(written, `${MOUSE_OFF}\x1b[?7h\x1b[?1049l\x1b[?25h`, 'mouse off, autowrap on, alternate screen left, cursor shown');
+  assert.deepEqual(proc.exits, [], 'an exit listener does not call exit itself');
+
+  const other = mouseScreen();
+  other.screen.paint([[{ text: 'row', style: null }]]);
+  other.screen.close();
+  const after = other.tty.text().length;
+  other.proc.emit('exit', 0);
+  for (const sig of ['SIGTERM', 'SIGHUP', 'SIGINT']) other.proc.emit(sig, sig);
+  assert.equal(other.tty.text().length, after, 'nothing is written after close');
+  assert.deepEqual(other.proc.exits, []);
+  for (const ev of ['exit', 'SIGTERM', 'SIGHUP', 'SIGINT']) assert.equal(other.proc.listenerCount(ev), 0, `the ${ev} handler is removed on close`);
+});
+
+test('mouse: SIGTERM, SIGHUP and SIGINT restore the terminal and exit 128 + the signal number', () => {
+  for (const [sig, code] of [['SIGTERM', 143], ['SIGHUP', 129], ['SIGINT', 130]]) {
+    const { tty, proc, screen } = mouseScreen();
+    screen.paint([[{ text: 'row', style: null }]]);
+    const before = tty.text().length;
+    proc.emit(sig, sig);
+    assert.ok(tty.text().slice(before).startsWith(MOUSE_OFF), `${sig}: the mouse is turned off`);
+    assert.deepEqual(proc.exits, [code], `${sig}: exits ${code}`);
+  }
 });
