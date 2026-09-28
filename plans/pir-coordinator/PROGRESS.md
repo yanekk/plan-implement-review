@@ -13,9 +13,9 @@ write. **Whoever writes a cell also fixes the over-budget cell they walk past.**
 **Plan reviewed:** 2026-09-27 — 10 fixed, 4 decided with the user
 **Plan re-reviewed (T12–T15):** 2026-09-28 — 9 fixed, 4 decided with the user
 
-**Status:** T00–T13, T15 ✅; T14 🔍. Reopened 2026-09-28 for T12, T13, T15, T14.
+**Status:** T00–T15 ✅. Reopened 2026-09-28 for T12, T13, T15, T14; all done.
 **Last updated:** 2026-09-28
-**Next `pir-work` will:** review T14, live-concurrent-check.
+**Next `pir-work` will:** nothing; the plan is complete.
 
 ## Tasks
 
@@ -39,9 +39,9 @@ done · ⛔ blocked, needs a human.
 | T12 | coordinator-row | T06, T11 | ✅ | |
 | T13 | hold-timeout | T04, T12; blocks T14 | ✅ | |
 | T15 | answered-first-facts | T13; blocks T14 | ✅ | |
-| T14 | live-concurrent-check | T12, T13, T15 | 🔍 | Fixture `pir-coordinator-concurrent`, facts briefsOverlapped, oneDecisionEach, timedOutToPerson, statementsMatchRecord; 13 tests. Live run PASS on the second try. Deviations: answerer `personDelayMs` (60 s) so the pointer lands first; `readyWithReport({conflict:false})`; fixture rules slow the agent. |
+| T14 | live-concurrent-check | T12, T13, T15 | ✅ | Reviewed: re-ran all eight facts on the kept bundle `/tmp/t14-run2-bundle`, PASS; checked brief and closing prefixes against coordinator-brief.mjs and the ledger's requestId. One fix: FINDINGS live-run row relabelled 📌 from ✅, no person saw it. Deviations accepted. |
 
-**Review queue:** T14
+**Review queue:** *(empty)*
 
 ## Blocked on the user
 
