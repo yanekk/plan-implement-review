@@ -12,7 +12,7 @@ past.
 
 **Plan reviewed:** 2026-09-28 — 3 fixed, 2 decided with the user
 
-**Status:** Planned 2026-09-28. Nothing built.
+**Status:** Building. T02 ✅.
 **Last updated:** 2026-09-28
 **Next `pir-work` will:** T01 box-grammar: it heads the critical path.
 
@@ -24,12 +24,12 @@ done · ⛔ blocked, needs a human.
 | # | Task | Depends on | State | Notes |
 |---|---|---|---|---|
 | T01 | box-grammar | — | ⬜ | |
-| T02 | plan-scan | — | 🔍 | core/buildable.mjs buildablePlan and shell/plan-scan.mjs scanPlans, 17 tests (6 core, 11 shell against real git). Extra beyond the doc: a plain non-repo folder still lists its working-tree plans, since planHome reads the tree before git; exec/fs failures swallowed. No deviations. |
+| T02 | plan-scan | — | ✅ | Review clean, no fix commit. buildablePlan and scanPlans, 17 tests. Probed: gates match coordinate's readReviewGate and readTestBlockGate, boundary test scans buildable.mjs, tests fail if ✅ counting or working-tree precedence is gutted, live scan of this repo lists its five open plans correctly. |
 | T03 | box-completion | T01 | ⬜ | |
 | T04 | box-starts-build | T01, T02, T03 | ⬜ | |
 | T05 | box-commands-drill | T04 | ⬜ | |
 
-**Review queue:** T02
+**Review queue:** empty
 
 ## Blocked on the user
 
