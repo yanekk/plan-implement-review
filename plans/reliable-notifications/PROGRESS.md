@@ -28,13 +28,13 @@ done · ⛔ blocked, needs a human.
 | T02 | ntfy-sender | — | ⬜ | |
 | T03 | notify-icon | — | ✅ | |
 | T04 | worker-link-and-silence | — | ⬜ | |
-| T05 | why-yours | — | 🔍 | `passed` map and `whyPerson()` in `startCoordinator`; 11 tests. Deviations: a `firstSeen` order map picks the oldest item (items carry no time); `unavailable` is the fallback branch, not a separate remembered set. |
+| T05 | why-yours | — | ✅ | `passed` map and `whyPerson()` in `startCoordinator`. Review: code correct, both deviations (firstSeen order, `unavailable` fallback) accepted; the oldest-item test passed with firstSeen gutted, so added a park-before-request test that goes red without it. Probed agent death and return, late pass, reserved pass, justSettled. |
 | T06 | notify-command | T02 | ⬜ | |
 | T07 | coordinator-alerts | T01, T02, T04, T05 | ⬜ | |
 | T08 | notify-live | T03, T06, T07 | ⬜ | |
 | T09 | docs | T08 | ⬜ | |
 
-**Review queue:** T05
+**Review queue:** *(empty)*
 
 ## Blocked on the user
 
