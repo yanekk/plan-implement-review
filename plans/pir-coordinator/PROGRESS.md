@@ -36,7 +36,7 @@ done · ⛔ blocked, needs a human.
 | T09 | live-coordinator-check | T07, T08 | ✅ | |
 | T10 | end-tests-fix | T05; blocks T09 | ✅ | |
 | T11 | end-helper-row | T06, T10; blocks T09 | ✅ | |
-| T12 | coordinator-row | T06, T11 | ⬜ | Added 2026-09-28 with the user after T09: pinned agent row under a separator. |
+| T12 | coordinator-row | T06, T11 | ✅ | |
 | T13 | hold-timeout | T04, T12; blocks T14 | ⬜ | Added 2026-09-28 with the user: an item held 5 min without a decision becomes the person's; a late agent answer still counts until the person answers. |
 | T15 | answered-first-facts | T13; blocks T14 | ⬜ | Added 2026-09-28 with the user after T09: tell the agent who answered an item first and what, reserved items included; no generic refusal for known items. |
 | T14 | live-concurrent-check | T12, T13, T15 | ⬜ | Added 2026-09-28 with the user: paid live run, two workers asking at once, the hold limit firing at 3 min, and the agent's statements checked against the record. |
