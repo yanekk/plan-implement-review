@@ -12,9 +12,9 @@ past.
 
 **Plan reviewed:** 2026-09-28 — 3 fixed, 2 decided with the user
 
-**Status:** T01 done.
+**Status:** T01, T02 done.
 **Last updated:** 2026-09-28
-**Next `pir-work` will:** T02 plan-scan, or T03 box-completion (T01 done).
+**Next `pir-work` will:** T03 box-completion.
 
 ## Tasks
 
@@ -24,7 +24,7 @@ done · ⛔ blocked, needs a human.
 | # | Task | Depends on | State | Notes |
 |---|---|---|---|---|
 | T01 | box-grammar | — | ✅ | Review clean, no fix commit. Probed brief/slug whitespace and newlines, `@@name`, `@name/plan/x`, case, cursor slicing and col 0, plansOf call gating, 80 columns; npm test green. Deviations accepted: no-test-block note shortened (user 2026-09-28); ambiguous name on /start reads plansOf of every match. |
-| T02 | plan-scan | — | ⬜ | |
+| T02 | plan-scan | — | ✅ | |
 | T03 | box-completion | T01 | ⬜ | |
 | T04 | box-starts-build | T01, T02, T03 | ⬜ | |
 | T05 | box-commands-drill | T04 | ⬜ | |
