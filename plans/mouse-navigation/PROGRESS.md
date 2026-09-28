@@ -24,7 +24,7 @@ done · ⛔ blocked, needs a human.
 | # | Task | Depends on | State | Notes |
 |---|---|---|---|---|
 | T01 | mouse-rig | — | ⬜ | |
-| T02 | row-hits | — | 🔍 | Non-enumerable `hit` on row lines of `buildListFrame` (both forms), `buildWatchFrame` (rowEntries, separator skipped), `buildPlanWatchFrame`; `hitAt`; reducer `select` in watch sets `taskSel`, separator ignored. 12 tests (8 frame, 4 reducer). Deviation: `hitAt` also returns null for a non-integer y or a non-array frame. |
+| T02 | row-hits | — | ✅ | Reviewed clean, no fix commit. All nine test items present; npm test green. Probed: one display line per rowEntries entry, plan steps match openTasks order, worker view guarded before select. Mutation check: removing either separator guard turns its test red. Recorded deviation (null for non-integer y, non-array frame) is harmless. |
 | T03 | hover-style | — | ⬜ | |
 | T04 | mouse-on | T01 | ⬜ | |
 | T05 | list-clicks | T02, T03, T04 | ⬜ | |
@@ -32,7 +32,7 @@ done · ⛔ blocked, needs a human.
 | T07 | mouse-docs | T05, T06 | ⬜ | |
 | T08 | mouse-drill | T05, T06, T07 | ⬜ | |
 
-**Review queue:** T02
+**Review queue:** empty
 
 ## Blocked on the user
 
