@@ -6,6 +6,8 @@
 //                         (§2.13) and starts the run with what it sends.
 //   pir start {slug}    → start a detached build (startRun); if one is already running, open its live view
 //                         instead of starting a second — "start or open".
+//   pir notify [test|off] → phone alerts through ntfy: set up (topic, QR, test alert), send a test alert,
+//                         or turn them off (reliable-notifications DESIGN §2.6).
 //   pir <other>         → a usage error pointing at `pir start <other>`. The bare-slug form was removed, not
 //                         aliased, because `plan` and `start` would otherwise be indistinguishable from slugs
 //                         and a plan named `plan` would silently change meaning (user 2026-09-26).
@@ -21,6 +23,16 @@ import { startRun as startRunDefault, startPlanRun as startPlanRunDefault, planP
 import { testBlockRefusal } from './coordinate.mjs';
 import { openDashboard as openDashboardTui, openWatch as openWatchTui, openPlanner as openPlannerTui } from './pir-tui.mjs';
 import { openBriefBox as openBriefBoxTui } from './brief-box.mjs';
+import { renderUnicodeCompact } from 'uqr';
+import { publish as publishDefault } from './ntfy.mjs';
+import {
+  notifyIcon,
+  readNotifyConfig as readNotifyConfigDefault,
+  writeNotifyConfig as writeNotifyConfigDefault,
+  removeNotifyConfig as removeNotifyConfigDefault,
+  newTopic as newTopicDefault,
+  DEFAULT_SERVER,
+} from './notify-config.mjs';
 
 // The TUI hand-off points: the cross-repo dashboard and a single run's live view, both the raw-mode
 // loop in pir-tui.mjs. They are the defaults run() calls; injected spies replace them under `npm test`, so
@@ -31,9 +43,10 @@ export const openPlanner = openPlannerTui;
 export const openBriefBox = openBriefBoxTui;
 
 export const USAGE =
-  'usage: pir                 the dashboard\n' +
-  '       pir plan ["brief"]  plan something new\n' +
-  '       pir start {slug}    build a reviewed plan\n';
+  'usage: pir                    the dashboard\n' +
+  '       pir plan ["brief"]     plan something new\n' +
+  '       pir start {slug}       build a reviewed plan\n' +
+  '       pir notify [test|off]  phone alerts: set up, test, turn off\n';
 
 // startPlanRun's pre-flight refusals (DESIGN §2.2), one clean line each. Nothing was created on any of
 // them, so the message only has to say what to fix.
@@ -50,8 +63,9 @@ const PLAN_REFUSALS = {
 // above; the tests inject spies for all of them and a stderr sink shaped like process.stderr (a
 // .write(string)). The return is the process exit code — 0 when a view is opened (or the brief box was
 // cancelled), 1 for a refused start, 2 for a usage error — so a script can tell a refused run from a
-// running one. Bare `pir plan` returns it as a promise, because the code is known only once the person has
-// sent or cancelled the brief; every other path returns it at once.
+// running one. `pir notify` and `pir notify test` return it as a promise when they send. Bare `pir plan`
+// returns it as a promise, because the code is known only once the person has sent or cancelled the
+// brief. Every other path returns it at once.
 export function run(
   argv,
   {
@@ -63,6 +77,14 @@ export function run(
     openBriefBox: openBox = openBriefBox,
     planPreflight = planPreflightDefault,
     stderr = process.stderr,
+    stdout = process.stdout,
+    env = process.env,
+    publish = publishDefault,
+    readNotifyConfig = readNotifyConfigDefault,
+    writeNotifyConfig = writeNotifyConfigDefault,
+    removeNotifyConfig = removeNotifyConfigDefault,
+    newTopic = newTopicDefault,
+    qr = renderUnicodeCompact,
   } = {},
 ) {
   if (argv.length === 0) {
@@ -108,8 +130,103 @@ export function run(
     return startBuild(slugs[0], { startRun, openW, stderr, coordinator });
   }
 
+  if (verb === 'notify') {
+    const deps = { env, stdout, stderr, publish, readNotifyConfig, writeNotifyConfig, removeNotifyConfig, newTopic, qr };
+    if (rest.length === 0) return notifySetup(deps);
+    if (rest.length === 1 && rest[0] === 'test') return notifyTest(deps);
+    if (rest.length === 1 && rest[0] === 'off') return notifyOff(deps);
+    stderr.write(USAGE);
+    return 2;
+  }
+
   stderr.write(`pir: unknown command '${verb}'. To build a plan: pir start ${verb}\n${USAGE}`);
   return 2;
+}
+
+// --- pir notify (reliable-notifications DESIGN §2.6, §2.8) ------------------------------------------
+// Every path that sends returns a promise of the exit code; the others return it at once.
+
+const CORRUPT_CONFIG = () =>
+  'pir notify: the alert settings file is unreadable or has no topic.\n' +
+  'Run `pir notify off` to reset it, then `pir notify` to set up again.\n';
+
+// The test alert both `pir notify` and `pir notify test` send, icon included (DESIGN §2.5).
+// No retries: the person is at the terminal waiting on the answer, and the 5 s + 30 s back-off the
+// coordinator uses would look like a hang. A failure names `pir notify test` to try again.
+function sendTestAlert({ server, topic }, { env, publish }) {
+  return Promise.resolve(
+    publish({ server, topic, title: 'pir', message: 'pir test alert', icon: notifyIcon(env) }, { delays: [] }),
+  ).catch((err) => ({ ok: false, status: null, error: err?.message ?? String(err) }));
+}
+
+function printSetup({ server, topic }, { stdout, qr }) {
+  const url = `${String(server).replace(/\/+$/, '')}/${topic}`;
+  stdout.write(
+    `Your pir alert topic: ${topic}\n\n` +
+      `${qr(url)}\n\n` +
+      'On your phone:\n' +
+      '  1. Install the ntfy app (App Store or Google Play).\n' +
+      '  2. In ntfy, tap "Subscribe to topic".\n' +
+      `  3. Type the topic ${topic}, or scan the code above.\n\n` +
+      'Keep the topic to yourself: anyone who knows it can read your alerts.\n',
+  );
+}
+
+function notifySetup(deps) {
+  const { env, stdout, stderr, readNotifyConfig, writeNotifyConfig, newTopic } = deps;
+  const existing = readNotifyConfig(env);
+  if (existing?.corrupt) {
+    stderr.write(CORRUPT_CONFIG());
+    return 1;
+  }
+  if (existing) {
+    // Re-running only shows the QR again: a new topic would unsubscribe the phone (DESIGN §2.6).
+    printSetup(existing, deps);
+    stdout.write('\nAlerts are on. `pir notify test` sends a test alert; `pir notify off` turns them off.\n');
+    return 0;
+  }
+  const config = { server: DEFAULT_SERVER, topic: newTopic() };
+  writeNotifyConfig(config, env);
+  printSetup(config, deps);
+  return sendTestAlert(config, deps).then((r) => {
+    if (r.ok) {
+      stdout.write('\nSent a test alert. Once subscribed, `pir notify test` sends another.\n');
+      return 0;
+    }
+    // The topic stays saved: the phone may already have subscribed from the QR (DESIGN §2.6).
+    stderr.write(
+      `\npir notify: the test alert failed: ${r.error}\n` +
+        'Your topic is saved. Run `pir notify test` to try again once you are online.\n',
+    );
+    return 1;
+  });
+}
+
+function notifyTest(deps) {
+  const { env, stdout, stderr, readNotifyConfig } = deps;
+  const config = readNotifyConfig(env);
+  if (config?.corrupt) {
+    stderr.write(CORRUPT_CONFIG());
+    return 1;
+  }
+  if (!config) {
+    stderr.write('pir notify test: alerts are not set up. Run `pir notify` first.\n');
+    return 1;
+  }
+  return sendTestAlert(config, deps).then((r) => {
+    if (r.ok) {
+      stdout.write(`Sent a test alert (HTTP ${r.status}).\n`);
+      return 0;
+    }
+    stderr.write(`pir notify test: the test alert failed: ${r.error}\n`);
+    return 1;
+  });
+}
+
+function notifyOff({ env, stdout, removeNotifyConfig }) {
+  removeNotifyConfig(env);
+  stdout.write('Alerts are off. `pir notify` sets them up again with a new topic.\n');
+  return 0;
 }
 
 function planRefused(reason, stderr) {

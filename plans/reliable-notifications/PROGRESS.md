@@ -15,7 +15,7 @@ cell also fixes the over-budget cell they walk past.
 **Status:** Planned 2026-09-27, redesigned 2026-09-28 for the coordinator agent, re-reviewed 2026-09-28.
 Nothing built.
 **Last updated:** 2026-09-28
-**Next `pir-work` will:** implement T06 (T08 then waits on T06).
+**Next `pir-work` will:** implement T08 (needs the user's iPhone).
 
 ## Tasks
 
@@ -29,7 +29,7 @@ done · ⛔ blocked, needs a human.
 | T03 | notify-icon | — | ✅ | |
 | T04 | worker-link-and-silence | — | ✅ | |
 | T05 | why-yours | — | ✅ | |
-| T06 | notify-command | T02 | ⬜ | |
+| T06 | notify-command | T02 | ✅ | |
 | T07 | coordinator-alerts | T01, T02, T04, T05 | ✅ | Reviewed: one fix. The signal handler's 2 s wait for exit clears let a loop pass run after teardown and dispatch workers the exit orphaned; loop now parks once signalled, source test locks it. Probed handoff shape, helper titles, red-surface reason, exit paths. Deviations accepted: notifyPass takes `plan`, runner takes `track`. |
 | T08 | notify-live | T03, T06, T07 | ⬜ | |
 | T09 | docs | T08 | ⬜ | |
