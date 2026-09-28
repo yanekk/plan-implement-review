@@ -33,6 +33,7 @@ import {
   defaultCopy,
 } from './pir-tui.mjs';
 import { FrameView, SGR, SELECTED_BG, HOVER_LIFT, clipSpans, paintLine } from './pir-view.mjs';
+import { createScreenModel } from './conversation-rig.mjs';
 import { BASIC_HOVER_LIFT, MOCHA_HOVER_LIFT, MOCHA_SGR } from './palette.mjs';
 import { visibleWidth } from '@earendil-works/pi-tui';
 import { buildDashboard, initialUi } from '../core/dashboard.mjs';
@@ -2091,4 +2092,279 @@ test('defaultCopy: runs pbcopy with the text on stdin and a UTF-8 locale forced,
   assert.equal(ok, true);
   assert.deepEqual(calls[0], { cmd: 'pbcopy', args: [], env: { LANG: 'C', LC_ALL: 'en_US.UTF-8', HOME: '/h' }, text: 'é ⠋ ✅' });
   assert.equal(await defaultCopy('x', { run: fakeRun(true), env: {} }), 'Copy failed: spawn pbcopy ENOENT');
+});
+
+// --- clicks, hover and the wheel on the lists (mouse-navigation T05, DESIGN §2.1–§2.4, §2.6, §3.2, §3.5) ---
+
+// runTui on the pi-tui screen over the fake terminal, with every outside effect injected. `rows()` is re-read
+// on every refresh, key and mouse event. The mouse is sent as the SGR bytes a terminal sends, one sequence per
+// input call as pi-tui's own stdin splitter would hand them over.
+function driveMouse({ rows, columns = 100, height = 30, colour = false, extra = {} } = {}) {
+  const tty = fakeStream({ isTTY: true, columns, rows: height });
+  const term = fakeTerminal(tty);
+  const proc = fakeProcess();
+  const opened = [];
+  const done = openDashboard({
+    stdin: {},
+    stdout: tty,
+    env: BOX_ENV,
+    refreshMs: 60_000,
+    now: () => NOW,
+    makeScreen: (opts) => createScreen({ ...opts, colour, terminal: term, env: {}, onExit: proc, copy: async () => true }),
+    load: () => buildDashboard(rows()),
+    scan: () => BOX_REPOS,
+    startPlan: () => ({ started: true, runId: 'plan-ab12', record: { repo: 'repo' } }),
+    follow: (p, { onEntries }) => {
+      opened.push(p);
+      onEntries([JSON.stringify({ t: 1, dir: 'out', from: 'pir', kind: 'message', text: `Log ${p}.` })]);
+      return { stop() {} };
+    },
+    drop: () => ({ ok: true }),
+    ...extra,
+  });
+  const settle = () => new Promise((r) => setTimeout(r, 30));
+  const screen = () => drawnRows(tty.text());
+  const text = () => screen().join('\n');
+  const rowY = (re) => {
+    const y = screen().findIndex((l) => re.test(l));
+    assert.ok(y >= 0, `${re} is on screen:\n${text()}`);
+    return y;
+  };
+  const send = async (...seqs) => {
+    for (const s of seqs) term.press(s);
+    await settle();
+  };
+  // 1-based column and row, as the terminal counts them; y is the 0-based screen row.
+  const click = (y, x = 6) => send(sgr(0, x, y + 1), sgr(0, x, y + 1, 'm'));
+  const clickOn = (re, x) => click(rowY(re), x);
+  const move = (y, x = 6) => send(sgr(35, x, y + 1));
+  const wheel = (y, dir) => send(sgr(dir === 'up' ? 64 : 65, 6, y + 1));
+  const sel = () => screen().find((l) => l.startsWith('▎')) ?? '';
+  // Out of a conversation (← steps out; Esc is the conversation's), then Esc until pir has quit.
+  const quit = async () => {
+    for (let i = 0; i < 4 && term.onInput; i++) await send('\x1b[D', '\x1b');
+    assert.equal(term.onInput, null, `pir quit:\n${text()}`);
+    await done;
+  };
+  // Which screen rows have bold cells, read by the pty rig's screen model from everything written.
+  const boldRows = () => {
+    const m = createScreenModel({ rows: height, cols: columns });
+    m.write(tty.text());
+    return m.rows().map((l, y) => [...l].some((_, x) => m.boldAt(y, x)) ? y : -1).filter((y) => y >= 0);
+  };
+  return { tty, term, done, send, click, clickOn, move, wheel, screen, text, rowY, sel, quit, opened, boldRows, settle };
+}
+
+const runRow = (slug, over = {}) => ({ key: `r__${slug}`, slug, repo: 'r', state: 'finished', progress: { done: 1, total: 1 }, workers: 0, record: { repo: 'r', slug }, ...over });
+const THREE_RUNS = [runRow('alpha'), runRow('beta'), runRow('gamma')];
+
+test('mouse: a click on run row i opens run i; ← comes back to the list with row i selected', async () => {
+  const t = driveMouse({ rows: () => [...THREE_RUNS, tasksRun(T12_TASKS, { key: 'r__plan', repo: 'r' })] });
+  await t.clickOn(/^ {2}beta /);
+  assert.match(t.text(), /^beta/m, "beta's live view");
+  assert.doesNotMatch(t.text(), /new plan/, 'the list is gone');
+  await t.send('\x1b[D');
+  assert.match(t.sel(), /^▎ beta /, 'back on the list, beta selected');
+  await t.clickOn(/^ {2}plan /);
+  assert.match(t.sel(), /T01/, 'the build opens on its first task, as Enter does');
+  await t.quit();
+});
+
+test('mouse: a click on the title, the header, a `↑ n more` marker, the counts line or the hint line changes nothing', async () => {
+  const many = Array.from({ length: 9 }, (_, i) => runRow(`run-${i}`));
+  const t = driveMouse({ rows: () => many, height: 14 });
+  for (let i = 0; i < 6; i++) await t.send('\x1b[B');
+  const before = t.screen();
+  assert.ok(before.some((l) => /↑ \d+ more/.test(l)), `a marker shows:\n${before.join('\n')}`);
+  for (const re of [/^pir {2}runs/, /^ {2}SLUG/, /↑ \d+ more/, /↓ \d+ more/, /^9 runs · /, /^↑↓/]) {
+    if (!t.screen().some((l) => re.test(l))) continue; // the title may be cut at this height
+    await t.clickOn(re);
+    assert.deepEqual(t.screen(), before, `${re}: nothing changed`);
+  }
+  await t.quit();
+});
+
+test('mouse: a click on a task with a worker opens its conversation; without one, the no-worker note', async () => {
+  const t = driveMouse({ rows: () => [tasksRun(T12_TASKS)] });
+  await t.send('\r');
+  await t.clickOn(/T03 /);
+  assert.match(t.sel(), /T03/, 'the click selected T03');
+  assert.match(t.text(), /T03 has no worker yet — it starts when T02 is merged\./);
+  await t.clickOn(/T02 /);
+  assert.match(t.text(), /pir ▸ Log \/c\/w2\.jsonl\./, "T02's conversation");
+  await t.send('\x1b[D');
+  assert.match(t.sel(), /T02/, '← lands on the clicked task');
+  await t.quit();
+});
+
+const AGENT_STATE = (over = {}) => ({
+  branch: 'pir/plan',
+  ceiling: 2,
+  tasks: T12_TASKS,
+  coordinator: { id: 'agent-1', live: true, logPath: '/c/agent.jsonl', state: 'up', holding: 0 },
+  ...over,
+});
+
+test("mouse: a click on the coordinator agent's row opens its conversation as `c` does; the separator neither clicks nor hovers", async () => {
+  const rows = () => [tasksRun(T12_TASKS, { snap: { runState: AGENT_STATE() } })];
+  const lit = driveMouse({ rows, colour: true });
+  await lit.send('\r');
+  const agentY = lit.rowY(/◆ coordinator agent/);
+  await lit.move(agentY);
+  assert.ok(lit.boldRows().includes(agentY), "the agent's row hovers");
+  await lit.move(lit.rowY(/^ {2}─{10,}/));
+  assert.ok(!lit.boldRows().includes(lit.rowY(/^ {2}─{10,}/)), 'the separator never hovers');
+  await lit.quit();
+
+  const t = driveMouse({ rows });
+  await t.send('\r');
+  const before = t.screen();
+  await t.click(t.rowY(/^ {2}─{10,}/));
+  assert.deepEqual(t.screen(), before, 'a click on the separator does nothing');
+  await t.clickOn(/◆ coordinator agent/);
+  assert.match(t.text(), /pir ▸ Log \/c\/agent\.jsonl\./, "the agent's conversation");
+  await t.send('\x1b[D');
+  assert.match(t.sel(), /coordinator agent/, '← comes back with the agent row selected');
+  await t.quit();
+});
+
+test('mouse: the wheel over the live view steps over the separator exactly as ↑/↓ do', async () => {
+  const t = driveMouse({ rows: () => [tasksRun(T12_TASKS, { snap: { runState: AGENT_STATE() } })] });
+  await t.send('\r');
+  await t.send('\x1b[B', '\x1b[B');
+  assert.match(t.sel(), /T03/);
+  await t.wheel(0, 'down');
+  assert.match(t.sel(), /coordinator agent/, 'one notch down from T03 lands on the agent, past the separator');
+  await t.wheel(20, 'up');
+  assert.match(t.sel(), /T03/, 'one notch up, wherever the pointer is, comes back over it');
+  await t.quit();
+});
+
+test('mouse: a click on a step row under the go question opens the step and does not start the build', async () => {
+  const started = [];
+  const t = driveMouse({
+    rows: () => [stepsRun()],
+    extra: { readProgress: () => PROGRESS_3, start: async (slug) => (started.push(slug), { started: true }) },
+  });
+  await t.send('\r');
+  assert.match(t.text(), /Start the parallel build now\?/);
+  await t.clickOn(/^[▎ ] . review /);
+  assert.deepEqual(started, [], 'no build started');
+  assert.match(t.text(), /pir ▸ Log \/c\/review-1\.ndjson\./, "the review step's conversation");
+  await t.quit();
+});
+
+test('mouse: a click cancels an armed Ctrl+S; a pointer move does not', async () => {
+  const stopped = [];
+  const running = THREE_RUNS.map((r) => ({ ...r, state: 'running' }));
+  const t = driveMouse({ rows: () => running, extra: { stop: async (record) => stopped.push(record.slug) } });
+  await t.send('\x13');
+  assert.match(t.text(), /Ctrl\+S again to stop alpha/);
+  await t.move(t.rowY(/^ {2}beta /));
+  assert.match(t.text(), /Ctrl\+S again to stop alpha/, 'a move keeps it armed');
+  await t.clickOn(/^ {2}gamma /);
+  await t.send('\x1b[D');
+  assert.doesNotMatch(t.text(), /⚠/, 'the click disarmed it');
+  await t.send('\x13');
+  assert.deepEqual(stopped, [], 'the next Ctrl+S only arms again');
+  assert.match(t.text(), /Ctrl\+S again to stop gamma/);
+  await t.quit();
+});
+
+test('mouse: hover lights the row under the pointer only; a move within that row does not repaint', async () => {
+  const t = driveMouse({ rows: () => THREE_RUNS, colour: true });
+  const alphaY = t.rowY(/^ {2}alpha /); // the selected row: with colour its ▎ is blanked into the band
+  const betaY = t.rowY(/^ {2}beta /);
+  const gammaY = t.rowY(/^ {2}gamma /);
+  assert.deepEqual(t.boldRows().filter((y) => y >= betaY && y <= gammaY), [], 'nothing hovered yet');
+  await t.move(betaY);
+  assert.ok(t.boldRows().includes(betaY), 'beta hovered');
+  const written = t.tty.text().length;
+  await t.move(betaY, 20);
+  assert.equal(t.tty.text().length, written, 'a move along the same row paints nothing');
+  await t.move(gammaY);
+  const bold = t.boldRows();
+  assert.ok(bold.includes(gammaY) && !bold.includes(betaY), `gamma hovered, beta not (${bold})`);
+  await t.move(alphaY);
+  assert.ok(!t.boldRows().includes(gammaY), 'the selected row shows as its band; gamma is no longer lit');
+  await t.quit();
+});
+
+test('mouse: the wheel moves the list and the live view one row a notch, and does nothing on the landing screen', async () => {
+  const t = driveMouse({ rows: () => [...THREE_RUNS, tasksRun(T12_TASKS, { key: 'r__plan', repo: 'r' })] });
+  await t.wheel(3, 'down');
+  await t.wheel(3, 'down');
+  assert.match(t.sel(), /^▎ gamma /, 'list: two notches, two rows');
+  await t.wheel(3, 'down');
+  await t.send('\r');
+  await t.wheel(3, 'down');
+  await t.wheel(3, 'down');
+  assert.match(t.sel(), /T03/, 'live view: taskSel +2');
+  await t.quit();
+
+  const l = driveMouse({ rows: () => [] });
+  await l.send(...'repo a brief');
+  await l.send('\r');
+  const landing = l.screen();
+  assert.ok(landing.some((x) => /starting the planner…/.test(x)));
+  await l.wheel(2, 'down');
+  await l.click(2);
+  assert.deepEqual(l.screen(), landing, 'the landing screen takes no mouse');
+  await l.quit();
+});
+
+test('mouse: a click in the box moves its caret; a click on a pop-up entry picks it', async () => {
+  const t = driveMouse({ rows: () => THREE_RUNS });
+  await t.send(...'repo abc');
+  const head = t.rowY(/^new plan/);
+  await t.click(head + 2, 2); // column 2: just after the @
+  await t.send('Z');
+  assert.match(t.screen()[head + 2], /^@Zrepo abc/, 'typed where the click put the caret');
+
+  const p = driveMouse({ rows: () => THREE_RUNS });
+  await p.send('p');
+  await p.settle();
+  const entry = p.rowY(/@dup +~\/src\/dup/);
+  await p.click(entry, 8);
+  const h = p.rowY(/^new plan/);
+  assert.match(p.screen()[h + 2], /^@dup /, 'the clicked entry replaced @p');
+  await t.quit();
+  await p.quit();
+});
+
+test('mouse: with a brief typed, a click opens a run, and ← comes back to the brief still in the box', async () => {
+  const t = driveMouse({ rows: () => THREE_RUNS });
+  await t.send(...'repo half a brief');
+  await t.clickOn(/^ {2}beta /);
+  assert.match(t.text(), /^beta/m);
+  await t.send('\x1b[D');
+  const head = t.rowY(/^new plan/);
+  assert.match(t.screen()[head + 2], /^@repo half a brief/);
+  assert.match(t.sel(), /^▎ beta /);
+  await t.quit();
+});
+
+test('mouse: a double click on a run opens it, then opens the live-view row now under the pointer (§2.1)', async () => {
+  const t = driveMouse({ rows: () => [runRow('alpha'), tasksRun(T12_TASKS, { key: 'r__plan', repo: 'r' })] });
+  const y = t.rowY(/^ {2}plan /);
+  await t.send(sgr(0, 6, y + 1), sgr(0, 6, y + 1, 'm'), sgr(0, 6, y + 1), sgr(0, 6, y + 1, 'm'));
+  // The first click opened the run; the second landed on the live view's line at that row, T02, and opened it.
+  assert.match(t.text(), /pir ▸ Log \/c\/w2\.jsonl\./, "T02's conversation, opened by the second click");
+  await t.send('\x1b[D');
+  assert.match(t.sel(), /T02/);
+  await t.quit();
+});
+
+test('mouse: a right or middle click on a row does nothing, and a drag starting on a row does not open it', async () => {
+  const t = driveMouse({ rows: () => THREE_RUNS });
+  const y = t.rowY(/^ {2}beta /);
+  const before = t.screen();
+  await t.send(sgr(2, 6, y + 1), sgr(2, 6, y + 1, 'm'));
+  await t.send(sgr(1, 6, y + 1), sgr(1, 6, y + 1, 'm'));
+  await t.send(sgr(0, 6, y + 1), sgr(32, 12, y + 1), sgr(0, 12, y + 1, 'm'));
+  assert.match(t.text(), /new plan/, 'still the list');
+  assert.match(t.sel(), /^▎ alpha /, 'the selection did not move');
+  assert.deepEqual(t.screen().slice(1, y + 1), before.slice(1, y + 1), 'the rows are as they were');
+  assert.match(t.screen()[0], /Copied!/, 'the drag was a text selection, and copied');
+  await t.quit();
 });

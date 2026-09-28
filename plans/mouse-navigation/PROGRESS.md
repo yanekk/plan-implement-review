@@ -27,12 +27,12 @@ done · ⛔ blocked, needs a human.
 | T02 | row-hits | — | ✅ | |
 | T03 | hover-style | — | ✅ | |
 | T04 | mouse-on | T01 | ✅ | |
-| T05 | list-clicks | T02, T03, T04 | ⬜ | |
+| T05 | list-clicks | T02, T03, T04 | 🔍 | `dispatch` shared by keys and mouse; `onMouse`, `setHoverY`, list view `handleMouse`/`hoverY`. 17 unit, 6 pty tests. Deviations: a hit resolves by run key/task id against a fresh read; wheel and moves over the box go to `onListMouse(ev, frame)`; drill click test at 120×40 only. |
 | T06 | conversation-wheel | T04 | ⬜ | |
 | T07 | mouse-docs | T05, T06 | ⬜ | |
 | T08 | mouse-drill | T05, T06, T07 | ⬜ | |
 
-**Review queue:** *(empty)*
+**Review queue:** T05
 
 ## Blocked on the user
 
