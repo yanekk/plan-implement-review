@@ -155,3 +155,16 @@ test('a failed clear resolves { ok: false } once, never rejects and never retrie
   assert.deepEqual(r2, { ok: false, status: null, error: 'offline' });
   assert.equal(fThrow.calls.length, 1);
 });
+
+test('a network error names its cause, not only "fetch failed"', async () => {
+  const err = new TypeError('fetch failed', {
+    cause: Object.assign(new Error('getaddrinfo ENOTFOUND ntfy.sh'), { code: 'ENOTFOUND' }),
+  });
+  const r = await clear({ server: 'https://ntfy.sh', topic: 't', seq: 's' }, { fetch: fakeFetch([err]) });
+  assert.deepEqual(r, { ok: false, status: null, error: 'fetch failed: getaddrinfo ENOTFOUND ntfy.sh' });
+  const refused = new TypeError('fetch failed', {
+    cause: Object.assign(new Error('connect refused'), { code: 'ECONNREFUSED' }),
+  });
+  const r2 = await publish(FIELDS, { fetch: fakeFetch([refused]), sleep: recordingSleep(), delays: [] });
+  assert.equal(r2.error, 'fetch failed: ECONNREFUSED connect refused');
+});

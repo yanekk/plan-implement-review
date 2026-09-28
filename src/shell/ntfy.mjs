@@ -23,8 +23,19 @@ async function attempt(fetchFn, url, init) {
     if (res.ok) return { ok: true, status: res.status };
     return { ok: false, status: res.status, error: `HTTP ${res.status}` };
   } catch (err) {
-    return { ok: false, status: null, error: err?.message ?? String(err) };
+    return { ok: false, status: null, error: describe(err) };
   }
+}
+
+// Node's fetch throws a bare "fetch failed" for every network error and puts the reason (ENOTFOUND,
+// ECONNREFUSED, a sandbox DNS block) in `cause`; without it the notify-failed note names nothing.
+function describe(err) {
+  const msg = err?.message ?? String(err);
+  const cause = err?.cause;
+  if (!cause) return msg;
+  const why = cause.code && cause.message && !cause.message.includes(cause.code)
+    ? `${cause.code} ${cause.message}` : (cause.message ?? cause.code ?? String(cause));
+  return why ? `${msg}: ${why}` : msg;
 }
 
 // publish(fields, { fetch, delays, sleep }) → { ok: true, status } | { ok: false, status|null, error }.
