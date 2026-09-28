@@ -4,9 +4,9 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { visibleWidth } from '@earendil-works/pi-tui';
+import { Editor, visibleWidth } from '@earendil-works/pi-tui';
 
-import { createListView, rootsLabel, tildify, TYPED_HINT, BARE_HINT_SUFFIX } from './list-view.mjs';
+import { createListView, rootsLabel, tildify, TYPED_HINT, START_HINT, BARE_HINT_SUFFIX } from './list-view.mjs';
 import { buildDashboard, initialUi } from '../core/dashboard.mjs';
 
 const ESC = '\x1b';
@@ -30,8 +30,16 @@ const VIEWS = [
 ];
 const manyViews = (n) => Array.from({ length: n }, (_, i) => ({ slug: `run-${String(i).padStart(2, '0')}`, state: 'finished', repo: 'r', progress: { done: 1, total: 1 }, workers: 0 }));
 
+// skaut has two buildable plans, one of them building; shop has none (box-commands §2.2).
+const PLANS = {
+  '/home/p/src/skaut': [
+    { slug: 'tents', done: 3, total: 8 },
+    { slug: 'food', done: 0, total: 4 },
+  ],
+};
+
 function view({ rows = 24, columns = 80, views = VIEWS, ui = initialUi() } = {}) {
-  const calls = { submit: [], list: [], quit: 0, repos: 0 };
+  const calls = { submit: [], list: [], quit: 0, repos: 0, plansOf: [] };
   const tui = { requestRender() {}, terminal: { rows, columns } };
   const v = createListView({
     tui,
@@ -46,6 +54,11 @@ function view({ rows = 24, columns = 80, views = VIEWS, ui = initialUi() } = {})
     onSubmit: (t) => calls.submit.push(t),
     onListKey: (d) => calls.list.push(d),
     onQuit: () => (calls.quit += 1),
+    plansOf: (repo) => {
+      calls.plansOf.push(repo.name);
+      return PLANS[repo.path] ?? [];
+    },
+    building: (repo, slug) => repo.name === 'skaut' && slug === 'tents',
     home: HOME,
   });
   v.focused = true;
@@ -63,14 +76,14 @@ test('bare: the list, then head `start with @repo`, the box showing @, and the l
   assert.equal(lines.length, 24, 'the whole screen: the box pinned to the bottom');
   assert.match(lines[0], /pir {2}runs on this machine/);
   assert.match(lines.join('\n'), /▎ alpha/);
-  const head = lines.findIndex((l) => l.startsWith('new plan'));
-  assert.equal(lines[head], 'new plan  start with @repo');
+  const head = lines.findIndex((l) => l.startsWith('new  '));
+  assert.equal(lines[head], 'new  start with @repo');
   assert.match(lines[head + 2], /^@/, 'the box line under its top border shows @');
   assert.equal(lines.at(-1), '↑↓ move · ↵ open · Ctrl+R resume · Ctrl+S stop · Ctrl+X remove · esc quit', 'the footer, the suffix not fitting 80');
   assert.equal(v.text, '@');
 });
 
-test('bare at 120 columns: the footer gains ` · type to plan (@repo)`; every line fits the width', () => {
+test('bare at 120 columns: the footer gains ` · type @repo to plan or build`; every line fits the width', () => {
   const { v } = view({ columns: 120, rows: 40 });
   const lines = v.render(120);
   assert.ok(plain(lines.at(-1)).endsWith(BARE_HINT_SUFFIX));
@@ -82,20 +95,20 @@ test('typed: the head names the repo, amber when it is not one, and the hint is 
   const { v, type } = view();
   type('@skaut/plan a list');
   let lines = v.render(80).map(plain);
-  assert.ok(lines.includes('new plan  plan in skaut'));
+  assert.ok(lines.includes('new  plan in skaut'));
   assert.equal(lines.at(-1), TYPED_HINT);
   v.reset();
   type('nope x');
   lines = v.render(80).map(plain);
-  assert.ok(lines.includes('new plan  @nope is not a repo in ~/src'));
+  assert.ok(lines.includes('new  @nope is not a repo in ~/src'));
   v.reset();
   v.handleInput('\x7f'); // backspace to an empty, still bare, box
   type(' x');
-  assert.ok(v.render(80).map(plain).includes('new plan  start with @repo'), 'no name at all');
+  assert.ok(v.render(80).map(plain).includes('new  start with @repo'), 'no name at all');
   await settle();
 });
 
-test('typed `@sk` opens the pop-up once it settles; Tab gives `@skaut `', async () => {
+test('typed `@sk` opens the pop-up once it settles; Tab gives `@skaut/`', async () => {
   const { v, type } = view();
   type('sk');
   assert.equal(v.text, '@sk');
@@ -105,8 +118,7 @@ test('typed `@sk` opens the pop-up once it settles; Tab gives `@skaut `', async 
   assert.match(lines, /@skaut.*~\/src\/skaut/, 'the row shows the name and its path, home as ~');
   assert.doesNotMatch(lines, /@shop/, 'only names containing `sk`');
   v.handleInput(TAB);
-  assert.equal(v.text, '@skaut ');
-  assert.equal(v.completing, false);
+  assert.equal(v.text, '@skaut/');
 });
 
 test('the pop-up takes Enter to pick; nothing is submitted', async () => {
@@ -115,8 +127,9 @@ test('the pop-up takes Enter to pick; nothing is submitted', async () => {
   await settle();
   assert.ok(v.completing);
   v.handleInput(ENTER);
-  assert.equal(v.text, '@plan-implement-review ');
+  assert.equal(v.text, '@plan-implement-review/');
   assert.deepEqual(calls.submit, []);
+  await settle();
 });
 
 test('no pop-up on a bare box, nor once the cursor leaves the first token', async () => {
@@ -136,7 +149,7 @@ test('a 200-character brief at 80 columns wraps to three box lines, every line w
   assert.equal(v.text.length, 200);
   const lines = v.render(80);
   const p = lines.map(plain);
-  const head = p.findIndex((l) => l.startsWith('new plan'));
+  const head = p.findIndex((l) => l.startsWith('new  '));
   const boxLines = p.slice(head + 2, -2);
   assert.equal(boxLines.length, 3, 'three text lines between the borders');
   assert.ok(fitsWidth(lines, 80));
@@ -177,7 +190,7 @@ test('update with an armed chord shows the armed footer on a bare box', () => {
   assert.equal(plain(v.render(80).at(-1)), '⚠ Ctrl+S again to stop alpha now — this kills its in-flight workers');
   v.update({ note: 'no repo @x in ~/src — pick one from the list' });
   const lines = v.render(80).map(plain);
-  const head = lines.findIndex((l) => l.startsWith('new plan'));
+  const head = lines.findIndex((l) => l.startsWith('new  '));
   assert.equal(lines[head - 1], 'no repo @x in ~/src — pick one from the list', 'the note sits above the head line');
 });
 
@@ -256,4 +269,231 @@ test('tildify and rootsLabel write the home folder as ~', () => {
   assert.equal(tildify('/home/pa/src', HOME), '/home/pa/src');
   assert.equal(rootsLabel(['/home/p/src', '/work'], HOME), '~/src, /work');
   assert.equal(rootsLabel('~/src', HOME), '~/src');
+});
+
+// ---- box-commands T03: the pop-up walks the grammar (DESIGN §2.2, §2.5, §3.3) ----
+
+const DOWN = '\x1b[B';
+const BACKSPACE = '\x7f';
+const popup = (v) => v.render(80).map(plain).join('\n');
+
+test('`@sk` Enter → `@skaut/` and the command pop-up is showing, plan above start', async () => {
+  const { v, type, calls } = view();
+  type('sk');
+  await settle();
+  v.handleInput(ENTER);
+  assert.equal(v.text, '@skaut/');
+  await settle();
+  assert.ok(v.completing, 'the command pop-up reopened after the repo pick');
+  const shown = popup(v);
+  assert.match(shown, /plan +plan something new/);
+  assert.match(shown, /start +build a reviewed plan/);
+  assert.ok(shown.indexOf('plan something new') < shown.indexOf('build a reviewed plan'));
+  assert.deepEqual(calls.submit, []);
+});
+
+test('Tab on `start` → `@skaut/start ` and the slug pop-up lists the plans with progress and building', async () => {
+  const { v, type } = view();
+  type('skaut/');
+  await settle();
+  assert.ok(v.completing);
+  v.handleInput(DOWN);
+  v.handleInput(TAB);
+  assert.equal(v.text, '@skaut/start ');
+  await settle();
+  assert.ok(v.completing, 'the slug pop-up opened');
+  const shown = popup(v);
+  assert.match(shown, /food +0\/4 done/);
+  assert.match(shown, /tents +3\/8 done · building/);
+  assert.doesNotMatch(shown, /food.*building/);
+  assert.ok(shown.indexOf('food') < shown.indexOf('tents'), 'in slug order');
+});
+
+test('the `sk` ↵ ↓ ↵ ↵ path: a slug pick writes the slug, closes, and nothing reopens it', async () => {
+  const { v, type, calls } = view();
+  type('sk');
+  await settle();
+  v.handleInput(ENTER);
+  await settle();
+  v.handleInput(DOWN);
+  v.handleInput(ENTER);
+  assert.equal(v.text, '@skaut/start ');
+  await settle();
+  v.handleInput(ENTER);
+  assert.equal(v.text, '@skaut/start food', 'no trailing space');
+  assert.equal(v.completing, false);
+  v.render(80);
+  await settle();
+  v.render(80);
+  assert.equal(v.completing, false, 'not reopened after a render');
+  assert.deepEqual(calls.submit, []);
+  v.handleInput(ENTER);
+  assert.deepEqual(calls.submit, ['@skaut/start food'], 'a second Enter submits');
+});
+
+test('a `plan` pick writes `@skaut/plan ` and opens no pop-up', async () => {
+  const { v, type } = view();
+  type('skaut/');
+  await settle();
+  v.handleInput(ENTER);
+  assert.equal(v.text, '@skaut/plan ');
+  await settle();
+  assert.equal(v.completing, false);
+});
+
+test('typing `/` by hand after `@skaut` opens the command pop-up; `st` narrows it to start', async () => {
+  const { v, type } = view();
+  type('skaut');
+  await settle();
+  v.handleInput(ESC); // close the repo pop-up the name opened
+  assert.equal(v.completing, false);
+  type('/');
+  await settle();
+  assert.ok(v.completing, 'opened by the typed /');
+  type('st');
+  await settle();
+  assert.ok(v.completing);
+  const shown = popup(v);
+  assert.match(shown, /start +build a reviewed plan/);
+  assert.doesNotMatch(shown, /plan something new/);
+});
+
+test('a slug typed by hand narrows the slug pop-up; a deletion reopens it', async () => {
+  const { v, type } = view();
+  type('skaut/start ');
+  await settle();
+  assert.ok(v.completing);
+  type('te');
+  await settle();
+  assert.match(popup(v), /tents/);
+  assert.doesNotMatch(popup(v), /food/);
+  v.handleInput(ESC);
+  assert.equal(v.completing, false);
+  v.handleInput(BACKSPACE);
+  await settle();
+  assert.ok(v.completing, 'the deletion reopened it');
+  assert.equal(v.text, '@skaut/start t');
+});
+
+test('a repo pick on `@sk/plan brief` with the cursor in the name keeps `/plan brief`, no second `/`', async () => {
+  const { v, type } = view();
+  v.handleInput(PASTE('sk/plan brief'));
+  assert.equal(v.text, '@sk/plan brief');
+  for (let i = 0; i < '/plan brief'.length; i++) v.handleInput('\x1b[D'); // cursor back to after `@sk`
+  v.handleInput(TAB); // no pop-up open: pi-tui's own Tab completion, one match applied
+  await settle();
+  assert.equal(v.text, '@skaut/plan brief', 'one match: applied at once');
+  await settle();
+  assert.equal(v.completing, false, 'the cursor is mid-line: nothing pops over the brief');
+});
+
+test('a repo pick on `@sk brief` adds the `/` in front of what followed', async () => {
+  const { v } = view();
+  v.handleInput(PASTE('sk brief'));
+  for (let i = 0; i < ' brief'.length; i++) v.handleInput('\x1b[D');
+  v.handleInput(TAB);
+  await settle();
+  assert.equal(v.text, '@skaut/ brief');
+});
+
+test('Esc closes an open pop-up and it stays closed; Esc again resets to @', async () => {
+  const { v, type, calls } = view();
+  type('skaut/');
+  await settle();
+  assert.ok(v.completing);
+  v.handleInput(ESC);
+  assert.equal(v.completing, false);
+  assert.equal(v.text, '@skaut/');
+  v.render(80);
+  await settle();
+  v.render(80);
+  assert.equal(v.completing, false, 'stays closed');
+  v.handleInput(ESC);
+  assert.equal(v.text, '@');
+  assert.equal(calls.quit, 0);
+});
+
+test('a repo with no buildable plan opens no slug pop-up, and the head line says so', async () => {
+  const { v, type } = view();
+  type('shop/start ');
+  await settle();
+  assert.equal(v.completing, false);
+  assert.ok(v.render(80).map(plain).includes('new  nothing to build in shop'));
+});
+
+test('plansOf is called once per repo per typed stretch, and again after the box goes bare', async () => {
+  const { v, type, calls } = view();
+  type('skaut/plan a list');
+  v.render(80);
+  await settle();
+  assert.deepEqual(calls.plansOf, [], 'typing a brief never scans plans');
+  v.reset();
+  type('skaut/start ');
+  await settle();
+  v.render(80);
+  type('t');
+  await settle();
+  v.render(80);
+  assert.deepEqual(calls.plansOf, ['skaut']);
+  v.reset();
+  type('shop/start ');
+  await settle();
+  v.render(80);
+  assert.deepEqual(calls.plansOf, ['skaut', 'shop']);
+  for (let i = 0; i < 'shop/start '.length; i++) v.handleInput(BACKSPACE); // bare by hand
+  assert.equal(v.text, '@');
+  type('skaut/start ');
+  await settle();
+  v.render(80);
+  assert.deepEqual(calls.plansOf, ['skaut', 'shop', 'skaut']);
+  assert.equal(v.plansOf(REPOS[0]), v.plansOf(REPOS[0]), 'the view hands its cached scan to the caller');
+});
+
+test('pinning: pi-tui Editor still has tryTriggerAutocomplete (box-commands §3.3)', () => {
+  assert.equal(typeof Editor.prototype.tryTriggerAutocomplete, 'function');
+});
+
+test('head label `new`; `/start` hint; the armed line still wins over it', async () => {
+  const { v, type } = view();
+  type('skaut/start food');
+  await settle();
+  let lines = v.render(80).map(plain);
+  assert.ok(lines.includes('new  build in skaut'));
+  assert.equal(lines.at(-1), START_HINT);
+  v.update({ ui: { ...initialUi(), armed: { action: 'stop', slug: 'alpha' } } });
+  assert.equal(plain(v.render(80).at(-1)), '⚠ Ctrl+S again to stop alpha now — this kills its in-flight workers');
+  v.reset();
+  v.update({ ui: initialUi() });
+  type('skaut/plan x');
+  assert.equal(plain(v.render(80).at(-1)), TYPED_HINT);
+  assert.equal(BARE_HINT_SUFFIX, ' · type @repo to plan or build');
+  assert.equal(START_HINT, '↵ start the build · esc clear');
+  await settle();
+});
+
+test('a Tab pick made while no pop-up shows still opens the next pop-up, and a slug Tab pick opens none', async () => {
+  // pi-tui applies a lone Tab match only after its async lookup, so the pick lands after the key is handled.
+  const { v, type } = view();
+  type('sk');
+  v.handleInput(TAB); // before the debounce has shown the repo pop-up
+  await settle();
+  assert.equal(v.text, '@skaut/');
+  await settle();
+  assert.ok(v.completing, 'the command pop-up opened after the Tab repo pick');
+  v.reset();
+  type('skaut/st');
+  v.handleInput(TAB);
+  await settle();
+  assert.equal(v.text, '@skaut/start ');
+  await settle();
+  assert.ok(v.completing, 'the slug pop-up opened after the Tab command pick');
+  v.reset();
+  type('skaut/start te');
+  await settle();
+  v.handleInput(ESC);
+  v.handleInput(TAB);
+  await settle();
+  assert.equal(v.text, '@skaut/start tents');
+  await settle();
+  assert.equal(v.completing, false, 'a slug pick reopens nothing');
 });

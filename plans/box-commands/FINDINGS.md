@@ -14,6 +14,7 @@ Legend: 🐞 defect found · ✅ verified by hand with the user · 📌 worth kn
 
 | Date | | Finding |
 |---|---|---|
+| 2026-09-28 | 📌 | `plan-rig.test.mjs` still says a repo pick writes `@repo ` "until box-commands T03" and types BS before `/plan`; the BS now deletes the `/`. Tests pass; T04, which edits those cases, should drop the workaround (T03 review). |
 | 2026-09-28 | 🔄 | startRun's `no-test-block` note reads `Could not start {slug} in {name}: no setup/test block`, not DESIGN §2.4's `its DESIGN.md has no setup/test block`, which is 95 columns at 18-character names (user, T01). |
 | 2026-09-28 | 📌 | pi-tui 0.87.1 Editor: a pick closes the pop-up and nothing reopens it; `/` is dropped from trigger characters. `tryTriggerAutocomplete()` (TS-private) reopens it; a synthetic Tab auto-applies a single suggestion unseen. See DESIGN §3.3. |
 | 2026-09-28 | 📌 | A fresh worktree has no `node_modules`; `npm ci` then `npm test` green in about four minutes, `git status` clean. |

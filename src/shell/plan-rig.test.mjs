@@ -654,16 +654,16 @@ for (const [cols, rows] of SIZES) {
     const rig = rigWithTeardown(t);
     const screen = rig.openScreen({ cols, rows });
     try {
-      const bare = (await screen.waitFor(/new plan {2}start with @repo/)).join('\n');
+      const bare = (await screen.waitFor(/new {2}start with @repo/)).join('\n');
       assert.match(bare, /No runs yet — type after @ below to plan something new/);
       screen.send('@re'); // the habitual @ is absorbed into the box's own
       const pop = (await screen.waitFor(/→ @repo +\S/)).join('\n');
       assert.match(pop, /^@re\s*$/m, 'the box reads @re, not @@re');
       screen.send(TAB);
-      await screen.waitFor(/new plan {2}in repo — \/plan or \/start/);
+      await screen.waitFor(/new {2}in repo — \/plan or \/start/);
       // A repo pick still writes `@repo ` until box-commands T03, so the command is typed by hand.
       await typeSettled(screen, BS, '/plan ');
-      await screen.waitFor(/new plan {2}plan in repo/);
+      await screen.waitFor(/new {2}plan in repo/);
       screen.send(BRIEF);
       await screen.waitFor(/↵ start planning · shift\+↵ new line · esc clear/);
       screen.send(ENTER);
@@ -686,7 +686,7 @@ test('end to end at 80×24: `@nope x` Enter → the no-repo note, text kept; Esc
   const screen = rig.openScreen({ cols: 80, rows: 24 });
   let code;
   try {
-    await screen.waitFor(/new plan {2}start with @repo/);
+    await screen.waitFor(/new {2}start with @repo/);
     screen.send('nope x');
     await screen.waitFor(/@nope is not a repo in/);
     screen.send(ENTER);
@@ -695,7 +695,7 @@ test('end to end at 80×24: `@nope x` Enter → the no-repo note, text kept; Esc
     assert.match(noted, /^no repo @nope in \/\S+/m);
     assert.match(noted, /^@nope x\s*$/m, 'the text is kept');
     screen.send('\x1b');
-    const reset = (await screen.waitFor(/new plan {2}start with @repo/)).join('\n');
+    const reset = (await screen.waitFor(/new {2}start with @repo/)).join('\n');
     assert.doesNotMatch(reset, /no repo @nope/);
     assert.doesNotMatch(reset, /@nope x/);
     assert.equal(screen.overflows(), 0);
@@ -725,10 +725,10 @@ test('end to end at 120×40: on a bare box ↓ and → still open a listed run; 
     screen.send('\x1b[B');
     await screen.waitFor(/▎ rig-run-b/);
     screen.send('\x1b[C');
-    const opened = (await screen.waitFor((s) => /^rig-run-b/m.test(s) && !/new plan/.test(s))).join('\n');
-    assert.doesNotMatch(opened, /new plan/, 'the run view has no box');
+    const opened = (await screen.waitFor((s) => /^rig-run-b/m.test(s) && !/^new {2}/m.test(s))).join('\n');
+    assert.doesNotMatch(opened, /^new {2}/m, 'the run view has no box');
     screen.send(LEFT);
-    const back = (await screen.waitFor(/new plan {2}start with @repo/)).join('\n');
+    const back = (await screen.waitFor(/new {2}start with @repo/)).join('\n');
     assert.match(back, /▎ rig-run-b/);
     assert.equal(screen.overflows(), 0);
   } finally {
@@ -819,8 +819,8 @@ for (const [cols, rows, cap] of [[80, 12, 7], [80, 24, 9], [120, 40, 14]]) {
       await screen.waitFor(/▎ rig-run-0/);
       await typeSettled(screen, 'repo/plan ', 'a very long brief that keeps going and going '.repeat(Math.ceil((cap * cols) / 40)).trim());
       const shot = await screen.waitFor(/↓ \d+ more|↑ \d+ more/);
-      const head = shot.findIndex((l) => l.startsWith('new plan'));
-      assert.equal(shot[head], 'new plan  plan in repo');
+      const head = shot.findIndex((l) => l.startsWith('new  '));
+      assert.equal(shot[head], 'new  plan in repo');
       assert.equal(shot.at(-1), TYPED);
       assert.equal(shot.length - 1 - (head + 1), cap, `the box is ${cap} lines\n${shot.join('\n')}`);
       assert.match(shot[head + 1], /─ ↑ \d+ more ─/, 'the box scrolled: the cursor at the end, its first lines cut');
@@ -853,18 +853,18 @@ test('end to end at 80×24: every §2.5 refusal starts nothing and shows its exa
       note: 'Could not start planning in repo: it has no local main branch', text: '@repo/plan a brief' },
   ];
   try {
-    await screen.waitFor(/new plan {2}start with @repo/);
+    await screen.waitFor(/new {2}start with @repo/);
     for (const c of cases) {
       await typeSettled(screen, ...c.keys);
       c.before?.();
       screen.send(ENTER);
       const noted = await screen.waitFor((s) => s.split('\n').some((l) => (typeof c.note === 'string' ? l === c.note : c.note.test(l))));
-      const head = noted.findIndex((l) => l.startsWith('new plan'));
+      const head = noted.findIndex((l) => l.startsWith('new  '));
       assert.ok(typeof c.note === 'string' ? noted[head - 1] === c.note : c.note.test(noted[head - 1]), `the note, whole, above the head line: ${c.note}`);
       assert.equal(noted[head + 2].trimEnd(), c.text, 'the text is kept');
       screen.send('\x1b');
-      const reset = await screen.waitFor(/new plan {2}start with @repo/);
-      assert.equal(reset[reset.findIndex((l) => l.startsWith('new plan')) - 1], '', 'Esc cleared the note');
+      const reset = await screen.waitFor(/new {2}start with @repo/);
+      assert.equal(reset[reset.findIndex((l) => l.startsWith('new  ')) - 1], '', 'Esc cleared the note');
     }
     assert.equal(screen.overflows(), 0);
   } finally {
@@ -881,12 +881,12 @@ test('end to end at 80×24: a repo named plan-implement-review under PIR_REPOS p
   assert.equal(env.PARALLEL_ALLOW_HERE, undefined);
   const screen = rig.openScreen({ cols: 80, rows: 24, env });
   try {
-    await screen.waitFor(/new plan {2}start with @repo/);
+    await screen.waitFor(/new {2}start with @repo/);
     screen.send('plan-imp');
     await screen.waitFor(/→ @plan-implement-review +~\/src\/plan-implement-review/);
     // A repo pick still writes `@name ` until box-commands T03, so the command is typed by hand.
     await typeSettled(screen, TAB, BS, '/plan something here');
-    assert.equal(lastLine(await screen.waitFor(/new plan {2}plan in plan-implement-review/)), TYPED);
+    assert.equal(lastLine(await screen.waitFor(/new {2}plan in plan-implement-review/)), TYPED);
     screen.send(ENTER);
     await screen.waitFor(new RegExp(esc(PLAN_RIG_QUESTION)), 20000);
   } finally {
@@ -899,7 +899,7 @@ test('end to end at 80×24: a repo named plan-implement-review under PIR_REPOS p
 test('end to end at 80×24: Ctrl+S Ctrl+S on a running row with a brief typed stops it and keeps the brief; typing disarms a half-press', async (t) => {
   const { rig, dir } = await startRigPlan(t);
   const screen = rig.openScreen({ cols: 80, rows: 24 });
-  const boxLine = (rows) => rows[rows.findIndex((l) => l.startsWith('new plan')) + 2];
+  const boxLine = (rows) => rows[rows.findIndex((l) => l.startsWith('new  ')) + 2];
   try {
     await screen.waitFor(/▎ .*● asking you/, 20000);
     screen.send(CTRL_S);
@@ -930,11 +930,11 @@ test('end to end: §2.6 hint and head lines — bare at 80 is the list footer al
     const screen = rig.openScreen({ cols, rows });
     try {
       const bare = await screen.waitFor(/▎ rig-run-0/);
-      assert.ok(bare.includes('new plan  start with @repo'));
+      assert.ok(bare.includes('new  start with @repo'));
       const footer = '↑↓ move · ↵ open · Ctrl+R resume · Ctrl+S stop · Ctrl+X remove · esc quit';
-      assert.equal(bare.at(-1), cols >= 120 ? `${footer} · type to plan (@repo)` : footer);
+      assert.equal(bare.at(-1), cols >= 120 ? `${footer} · type @repo to plan or build` : footer);
       await typeSettled(screen, 'nope');
-      const typed = await screen.waitFor(/new plan {2}@nope is not a repo in /);
+      const typed = await screen.waitFor(/new {2}@nope is not a repo in /);
       assert.equal(typed.at(-1), TYPED);
       assert.equal(screen.overflows(), 0, `${cols}×${rows}`);
     } finally {

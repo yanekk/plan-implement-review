@@ -1536,7 +1536,7 @@ function driveBox({ rows = () => [], plan = () => ({ started: true, runId: 'plan
   // The box's own line: the one under the head line's top border.
   const boxLine = () => {
     const r = drawnRows(tty.text());
-    const head = r.findIndex((l) => l.startsWith('new plan'));
+    const head = r.findIndex((l) => l.startsWith('new  '));
     return head < 0 ? null : r[head + 2];
   };
   return { done, calls, type, key, screen, boxLine, term };
@@ -1546,7 +1546,7 @@ test('box: Enter on `@repo/plan a brief` calls startPlan once, in the repo, with
   const t = driveBox();
   await t.type('repo/plan a brief');
   assert.match(t.boxLine(), /^@repo\/plan a brief/);
-  assert.match(t.screen(), /new plan {2}plan in repo/);
+  assert.match(t.screen(), /new {2}plan in repo/);
   await t.key('\r');
   assert.equal(t.calls.length, 1, 'started once');
   assert.equal(t.calls[0].brief, 'a brief');
@@ -1651,7 +1651,7 @@ test('box: Ctrl+X twice removes the selected run, on a bare box and with text ty
     term.press('\x18'); await settle();
     assert.deepEqual(removed, ['alpha'], `removed (${typed ?? 'bare'})`);
     const r = drawnRows(tty.text());
-    const head = r.findIndex((l) => l.startsWith('new plan'));
+    const head = r.findIndex((l) => l.startsWith('new  '));
     assert.match(r[head + 2], typed ? /^@repo half a brief/ : /^@\s*$/, 'the box text is untouched');
     term.press('\x1b'); await settle();
     if (typed) { term.press('\x1b'); await settle(); }
