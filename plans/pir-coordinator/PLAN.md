@@ -1,6 +1,6 @@
 # Implementation plan
 
-13 tasks in 4 phases. Each has a file in [tasks/](tasks/) with its goal, the files it touches, the
+15 tasks in 4 phases. Each has a file in [tasks/](tasks/) with its goal, the files it touches, the
 interfaces it defines, and what "done" means.
 
 Track state in [PROGRESS.md](PROGRESS.md). Read [DESIGN.md](DESIGN.md) first.
@@ -68,6 +68,8 @@ T04 is the wirer for answering: it starts the agent in `coordinate.mjs`, briefs 
 | [T10](tasks/T10-end-tests-fix.md) | end-tests-fix | T05; blocks T09 |
 | [T11](tasks/T11-end-helper-row.md) | end-helper-row | T06, T10; blocks T09 |
 | [T12](tasks/T12-coordinator-row.md) | coordinator-row | T06, T11 |
+| [T13](tasks/T13-hold-timeout.md) | hold-timeout | T04, T12; blocks T14 |
+| [T14](tasks/T14-live-concurrent-check.md) | live-concurrent-check | T12, T13 |
 
 At the end of phase 3 the feature is documented and seen working on a real run with the person's phone.
 
@@ -81,7 +83,7 @@ T00 → T01 → T03 → T04 → T05 → T06 → T07 → T09
 
 T02 is off the path and can run at any time before T08. T08 runs beside T07.
 
-Leaves: T09, T12. T12 was added after T09 (2026-09-28).
+Leaves: T09, T14. T12–T14 were added after T09 (2026-09-28): T12 → T13 → T14. T13 follows T12 because both change the row display.
 
 ## Parallel width
 

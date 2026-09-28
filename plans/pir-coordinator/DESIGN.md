@@ -250,7 +250,11 @@ person merging another run first is the ordinary way that promise breaks.
   the three agent sections saying the coordinator agent was not available to write them; the run enters
   `ready to merge` and the merge line shows in `pir` only. An agent that is merely restarting is waited
   for. Why not today's plain end: the clean-merge promise matters most when something has gone wrong.
-- The agent is slow: no timeout. The item waits, and the person can answer it at any time (§2.3).
+- The agent is slow: a hold limit of 5 minutes (user 2026-09-28, T13; `PARALLEL_COORDINATOR_HOLD_MS`).
+  An item held that long without a decision becomes the person's as if passed on, and the agent is told.
+  A late decision from the agent is still applied while the person has not answered: the first answer
+  wins (user 2026-09-28). Why: the agent may drop one of several briefs that arrive together, and a held
+  item never turns the run amber, so without a limit nobody is prompted. Replaces "no timeout".
 - A decision file will not parse, names an unknown worker or request, or has the wrong shape: it is
   dropped and the agent is told why in one message. Nothing is guessed. A file that fails to parse is
   left for one more pass first, since the agent's Write may still be landing (§3.5).
@@ -426,6 +430,7 @@ T04, T05, T06 and T08 run it after their change, never while a parallel run is l
 | What the real CLI sends for an `ask`-rule and a destructive request, and whether the agent's allowance holds | Needs a real session (T00, `worker` bin) |
 | The agent answering real workers, passing one on, and the hand-off in a real run | Paid run (T09, `worker` bin) |
 | That a passed-on worker appears on the person's phone only then, and can be answered there | The person's phone (T09) |
+| The real agent answering two briefs that arrive together, and the hold limit firing | Paid run (T14, `worker` bin) |
 
 ### 5.2 Seatbelts
 
@@ -434,6 +439,7 @@ T04, T05, T06 and T08 run it after their change, never while a parallel run is l
 | `perl -e 'alarm 900; exec @ARGV'` around the T00 probe | The probe dies at 15 min |
 | Scratch repo for T00 and T09 | Never the canonical checkout, never a real main |
 | Harness fixture at ceiling 2, harness timeout 20 min (T09) | Bounded paid run |
+| Harness fixture at ceiling 3, harness timeout 20 min, hold limit 60 s (T14) | Bounded paid run |
 | `HALT` | Stops every worker and the agent of a run |
 | The agent's gate (§3.4) | The agent cannot run a command or write outside its drop folder |
 | `--no-coordinator` | A run with no agent, exactly today's behaviour |
@@ -444,6 +450,7 @@ T04, T05, T06 and T08 run it after their change, never while a parallel run is l
 |---|---|---|---|---|---|
 | Probe session (T00) | `perl -e 'alarm 900; exec @ARGV' node <probe script>` in a scratch repo | `worker` | Minutes of model time, scratch only | Kill the pid; delete scratch | under a dollar |
 | Live harness run (T09) | `node src/shell/harness/run.mjs pir-coordinator --into <scratch>` | `worker` | Same bin earlier plans set for harness runs: bounded, scratch only | HALT; scratch deleted | a few dollars |
+| Live harness run (T14) | `node src/shell/harness/run.mjs pir-coordinator-concurrent --into <scratch>` | `worker` | As T09 (user asked for it 2026-09-28) | HALT; scratch deleted | a few dollars |
 | `./install.sh` | refresh the installed engine and skills | `worker` | Local, idempotent; never while a parallel run is live | Re-run from the previous commit | none |
 
 The person's part in T09 is their phone. Nothing here pushes, deploys or merges into a real main.

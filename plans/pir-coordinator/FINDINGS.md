@@ -14,6 +14,7 @@ Legend: 🐞 defect found · ✅ verified by hand with the user · 📌 worth kn
 
 | Date | | Finding |
 |---|---|---|
+| 2026-09-28 | 🔄 | Added T13 hold-timeout (5 min, then the person's; late agent answer accepted until the person answers) and T14 live-concurrent-check (user). Only the fake agent, which is serial, has seen several briefs at once. DESIGN §2.11 amended. |
 | 2026-09-28 | 🔄 | Plan reopened after T09 (user): T12 coordinator-row, a pinned agent row under a separator, above the helpers, showing state and items held; nothing shown with `--no-coordinator`. DESIGN §2.8 amended. |
 | 2026-09-28 | ✅ | T09 live run `run.mjs pir-coordinator` PASS: agent answered T01 from DESIGN; T02 push denied as the person's; T02 passed, Remote Control on after the pass; user answered on the phone and confirmed pointer and late appearance; main-sync conflict resolved; REPORT.md committed. |
 | 2026-09-28 | 📌 | T09: `capture.mjs` now copies `control/coordinator/ledger.jsonl` and reads `steps.json` into the bundle; not in the task's file list, needed for the facts. |
