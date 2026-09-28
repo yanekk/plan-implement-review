@@ -25,7 +25,7 @@ done · ⛔ blocked, needs a human.
 | # | Task | Depends on | State | Notes |
 |---|---|---|---|---|
 | T01 | alert-core | — | ⬜ | |
-| T02 | ntfy-sender | — | 🔍 | ntfy.mjs publish/clear, notify-config.mjs, writeFileAtomic `mode` (chmod after write, umask-proof); 35 tests. Deviations: config functions take an optional trailing `{ fs }` for the crash test; a config missing `server` reads ntfy.sh; a non-ENOENT read error reads `{ corrupt: true }`. |
+| T02 | ntfy-sender | — | ✅ | Reviewed: one fix, a network error now names its cause (Node fetch says only `fetch failed`), reproduced with real fetch on a closed port, test locks it. Probed real fetch against a local server: JSON POST, retry, PUT clear path, '·' rejected in headers. Deviations accepted: trailing `{ fs }`, missing server reads ntfy.sh, non-ENOENT read is corrupt. |
 | T03 | notify-icon | — | ⬜ | |
 | T04 | worker-link-and-silence | — | ⬜ | |
 | T05 | why-yours | — | ⬜ | |
@@ -34,7 +34,7 @@ done · ⛔ blocked, needs a human.
 | T08 | notify-live | T03, T06, T07 | ⬜ | |
 | T09 | docs | T08 | ⬜ | |
 
-**Review queue:** T02
+**Review queue:** empty
 
 ## Blocked on the user
 
