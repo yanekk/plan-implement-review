@@ -50,6 +50,9 @@ import { reapRecorded } from './reap.mjs';
 import { planHome } from './plan-home.mjs';
 import { startCoordinatorAgent, withAgent, closingAnswer, readLogEntries } from './coordinator-agent.mjs';
 import { startWorker } from './worker-proc.mjs';
+import { alertText, endAlert, notifyStep, notifyExit, newNotifyState } from '../core/notify.mjs';
+import { publish as ntfyPublish, clear as ntfyClear } from './ntfy.mjs';
+import { readNotifyConfig, ensurePresenceMarker, notifyIcon } from './notify-config.mjs';
 
 const DONE_GLYPH = '✅';
 const READY_GLYPH = '⬜';
@@ -498,7 +501,12 @@ export function startCoordinator({
   // takes the re-sync path, so the report is not rewritten.
   function handoffView() {
     if (!handoff) return null;
-    return { state: handoff.state, reportPath: handoff.reportPath, mainSha: handoff.mainSha };
+    // `unresolved` (main-sync left unresolved) is what the end-of-run alert names as the red cause
+    // (reliable-notifications DESIGN §2.4). Only present when true, so the view's shape (and status.json)
+    // is unchanged for every other run.
+    const view = { state: handoff.state, reportPath: handoff.reportPath, mainSha: handoff.mainSha };
+    if (handoff.sync?.state === 'unresolved') view.unresolved = true;
+    return view;
   }
 
   const reportRel = join('plans', slug, 'REPORT.md');
@@ -1661,6 +1669,204 @@ export function testingRunState(runState, { since } = {}) {
   return { ...runState, complete: false, readyToMerge: false, testsReason: null, testing: { since: since ?? null } };
 }
 
+// --- Phone alerts in a build run (reliable-notifications DESIGN §2.1–§2.8, §3.3; T07) ----------------
+//
+// Each pass the shell turns the workers that are the person's into views, runs the pure episode machine
+// (src/core/notify.mjs) and fires what it returns without awaiting it. The config is read per action, so
+// `pir notify off` stops alerts in a run already going (§2.6). Only the exit sends are awaited, bounded.
+
+export const NOTIFY_EXIT_WAIT_MS = 2000;
+
+// workerEnv(env, { fs }) → { CLAUDE_CLIENT_PRESENCE_FILE } | null (DESIGN §2.7): with ntfy configured when a
+// build worker or the agent is spawned, the session is told the person is "present" so the Claude app
+// skips its own push; the marker file is made to exist. No config (or a corrupt one): null, today's env.
+export function workerEnv(env = process.env, { fs } = {}) {
+  const opts = fs ? { fs } : {};
+  const config = readNotifyConfig(env, opts);
+  if (!config || config.corrupt) return null;
+  return { CLAUDE_CLIENT_PRESENCE_FILE: ensurePresenceMarker(env, opts) };
+}
+
+// notifyViews({ plan, workers, stateTasks, heldByAgent, why, remoteOn }) → the episode machine's views
+// (DESIGN §3.2), one per live worker something is waiting on. `waiting` is read from exactly the predicate
+// remoteWanted and the row use (waitingFor(...).holder === 'person'), so the phone, Remote Control and
+// `asking you` cannot disagree (§2.1); a worker the agent holds gets `waiting: null`, which ends or never
+// starts its episode. A worker nothing waits on (working, or a non-holder of its task with no request)
+// has no view. `why` is coordinator.whyPerson(); `remoteOn` is false under PARALLEL_REMOTE=0.
+export function notifyViews({ plan, workers = [], stateTasks = {}, heldByAgent = new Set(), why = new Map(), remoteOn = true } = {}) {
+  const views = [];
+  for (const w of Array.isArray(workers) ? workers : []) {
+    if (!w?.live) continue;
+    const st = stateTasks[w.task];
+    const t = st?.workerId === w.id ? st : undefined;
+    const waiting = waitingFor(t, w.activity, { workerId: w.id, heldByAgent });
+    if (!waiting) continue;
+    const mine = waiting.holder === 'person';
+    // An end-of-run helper holds no task of the plan: its title is its label and what it does (§2.3).
+    const name = HELPERS.includes(w.task) ? `${w.task} ${HELPER_SLUG[w.task]}` : null;
+    const { title, message } = mine
+      ? alertText({
+          plan,
+          task: w.task,
+          role: w.role,
+          name,
+          why: why?.get?.(w.id) ?? null,
+          kind: waiting.kind,
+          decisionText: t?.decision?.text ?? null,
+          lastText: w.lastText ?? null,
+          pending: w.activity?.pending,
+        })
+      : { title: '', message: '' };
+    views.push({
+      id: w.id,
+      waiting: mine ? waiting.kind : null,
+      title,
+      message,
+      remote: w.remote === 'refused' ? 'refused' : remoteOn ? 'wanted' : 'off',
+      url: w.url ?? null,
+    });
+  }
+  return views;
+}
+
+// newNotifyTrack() → the runner's memory across passes: the sends still in flight by seq (a clear waits
+// for its send, §2.8) and the episodes whose failure was already noted (noted once per episode).
+export const newNotifyTrack = () => ({ inflight: new Map(), failedNoted: new Set() });
+
+// Never the topic in a log line or a note (DESIGN §5.3): an error string is scrubbed of it in case a
+// transport ever echoes the URL.
+const scrub = (text, topic) => (typeof text === 'string' && topic ? text.split(topic).join('…') : text);
+const statusOf = (res) => (res?.ok ? `ok ${res.status}` : `failed ${res?.error ?? (res?.status != null ? `HTTP ${res.status}` : 'unknown')}`);
+
+// runNotifyActions(actions, { readConfig, icon, publish, clear, note, log, track }) → Promise, settled when
+// every action has. `send` publishes (with the icon and the action's tags, default bell) and notes
+// `notified` on success or `notify-failed` once per episode on failure; `clear` waits for its episode's
+// send in flight, then clears once and notes nothing (§2.8). No config at the time of the action: dropped,
+// nothing noted or logged (§2.8). A send's note goes to `noteTo` when the action names one (the end alert:
+// the agent's conversation, or null for none), else to its worker. `publish`/`clear` never reject (ntfy.mjs).
+export function runNotifyActions(actions, { readConfig, icon, publish, clear, note, log, track = newNotifyTrack() } = {}) {
+  const usable = () => {
+    const c = readConfig?.();
+    return c && !c.corrupt && c.topic ? c : null;
+  };
+  const noteSafe = (id, kind, fields) => {
+    if (id == null) return;
+    try {
+      note?.(id, kind, fields);
+    } catch {
+      // a note is a courtesy; an exited worker's log refusing it must not break the run
+    }
+  };
+  const logSafe = (line) => {
+    try {
+      log?.(line);
+    } catch {
+      /* the flow log is best-effort */
+    }
+  };
+  const runs = [];
+  for (const a of Array.isArray(actions) ? actions : []) {
+    if (a?.type === 'send') {
+      const config = usable();
+      if (!config) continue;
+      const key = a.seq ?? a.id;
+      const noteTo = 'noteTo' in a ? a.noteTo : a.id;
+      const p = Promise.resolve(
+        publish({
+          server: config.server,
+          topic: config.topic,
+          title: a.title,
+          message: a.message,
+          click: a.click ?? null,
+          seq: a.seq ?? null,
+          icon,
+          ...(a.tags ? { tags: a.tags } : {}),
+        }),
+      ).then((res) => {
+        logSafe(`notify ${a.reminder ? 'reminder' : 'send'} ${a.id} ${a.seq ?? '-'} ${scrub(statusOf(res), config.topic)}`);
+        if (res?.ok) noteSafe(noteTo, 'notified', { reminder: !!a.reminder });
+        else if (!track.failedNoted.has(key)) {
+          track.failedNoted.add(key);
+          noteSafe(noteTo, 'notify-failed', { status: res?.status ?? null, error: scrub(res?.error ?? null, config.topic) });
+        }
+      });
+      if (a.seq != null) {
+        const entry = p.finally(() => {
+          if (track.inflight.get(a.seq) === entry) track.inflight.delete(a.seq);
+        });
+        track.inflight.set(a.seq, entry);
+      }
+      runs.push(p);
+    } else if (a?.type === 'clear') {
+      const before = track.inflight.get(a.seq) ?? Promise.resolve();
+      runs.push(
+        before.then(async () => {
+          const config = usable();
+          if (!config) return;
+          const res = await clear({ server: config.server, topic: config.topic, seq: a.seq });
+          logSafe(`notify clear ${a.id} ${a.seq} ${scrub(statusOf(res), config.topic)}`);
+        }),
+      );
+    }
+  }
+  return Promise.all(runs).then(() => undefined);
+}
+
+// notifyPass({ plan, platform, coordinator, notifyState, remote, now, run, stepOpts }) → notifyState. One
+// pass of the alerts: workers() → notifyViews → notifyStep → run(actions), not awaited. main calls it after
+// the REMOTE-gated syncRemote, every pass, whatever REMOTE is (§3.3). Extracted from main, which builds the
+// real platform and cannot be driven with the fake one.
+export function notifyPass({ plan, platform, coordinator, notifyState, remote = true, now, run, stepOpts = {} }) {
+  const views = notifyViews({
+    plan,
+    workers: platform.workers(),
+    stateTasks: coordinator.state.tasks,
+    heldByAgent: coordinator.heldByAgent(),
+    why: coordinator.whyPerson(),
+    remoteOn: remote,
+  });
+  const { state, actions } = notifyStep(notifyState, views, now, stepOpts);
+  if (actions.length) run(actions);
+  return state;
+}
+
+// endAlertPass({ r, coordinator, slug, sent, send }) → sent. With the agent, the one end-of-run alert
+// (DESIGN §2.4): fired the first pass the handoff reads `ready` or `red` (settle() sets it with `step:
+// 'waiting'`), never on a pass that finished the run (a restart finding main already holding the tip must
+// not announce a merge that is done), and never again for this process — a re-sync after main moves is the
+// same wait. The tap opens the agent's chat, where the report and the merge are presented.
+export function endAlertPass({ r, coordinator, slug, sent = false, send }) {
+  if (sent || r?.finished) return sent;
+  const state = r?.handoff?.state;
+  if (state !== 'ready' && state !== 'red') return sent;
+  const alert = endAlert({
+    slug,
+    ready: state === 'ready',
+    taskCount: Array.isArray(r.tasks) ? r.tasks.length : 0,
+    reason: r.testsReason?.reason ?? null,
+    unresolved: !!r.handoff.unresolved,
+  });
+  send({ ...alert, click: coordinator?.agent?.remoteUrl?.() ?? null });
+  return true;
+}
+
+// endAlertAction(alert, { noteTo }) → the runner's send for the end-of-run alert: no episode, no seq (it is
+// never cleared or reminded), its own tags, noted on the agent's conversation or nowhere.
+export function endAlertAction({ title, message, tags, click = null }, { noteTo = null } = {}) {
+  return { type: 'send', id: 'end', seq: null, title, message, click, reminder: false, tags, noteTo };
+}
+
+// withinMs(promise, ms) → resolves when the promise settles or `ms` pass, whichever is first. The timer is
+// unref'd so a bounded wait never holds the process open by itself.
+export function withinMs(promise, ms) {
+  let timer;
+  const cap = new Promise((resolve) => {
+    timer = setTimeout(resolve, ms);
+    timer.unref?.();
+  });
+  return Promise.race([Promise.resolve(promise).catch(() => {}), cap]).finally(() => clearTimeout(timer));
+}
+
 async function main(argv) {
   const slug = argv[0];
   if (!slug) {
@@ -1755,7 +1961,9 @@ async function main(argv) {
   // The person's input from the `pir` screen (live-workers DESIGN §2.5, T07): the grants are shared, so a
   // "do not ask again" the inbox records is what the platform consults on the worker's next request.
   const grants = createGrants();
-  const platform = createPlatform({ root, controlDir: control.dir, transport: inbox.transport, claudePath, grants });
+  // With ntfy configured, build workers start with the Claude app's own push silenced (DESIGN §2.7), read
+  // at each spawn so a `pir notify` mid-run reaches the next worker.
+  const platform = createPlatform({ root, controlDir: control.dir, transport: inbox.transport, claudePath, grants, workerEnv: () => workerEnv() });
   // The person may type to the coordinator agent in its own conversation (pir-coordinator §2.8): the inbox
   // forwards to it by id once it has started (currentAgent is set when the controller exists).
   let currentAgent = () => null;
@@ -1787,6 +1995,7 @@ async function main(argv) {
             startWorker,
             claudePath,
             remote: REMOTE,
+            env: () => workerEnv(),
           });
         };
   const coordinator = startCoordinator({ slug, repo, platform, worktree, maxWorkers, control, startAgent,
@@ -1910,12 +2119,46 @@ async function main(argv) {
     writeRunFinal({ controlDir: control.dir, proc, runState: lastRunState, reason, updateIndex, log: control.log });
   };
 
+  // Phone alerts (reliable-notifications DESIGN §3.3, T07). The runner notes through withAgent so the end
+  // alert can note on the agent's conversation. Retry waits are unref'd: a send still retrying must not
+  // hold the process open after the run has ended.
+  const notifyTrack = newNotifyTrack();
+  const notifyPlatform = withAgent(platform, () => currentAgent());
+  const unrefSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms).unref());
+  const runNotify = (actions) =>
+    runNotifyActions(actions, {
+      readConfig: () => readNotifyConfig(),
+      icon: notifyIcon(),
+      publish: (fields) => ntfyPublish(fields, { sleep: unrefSleep }),
+      clear: (fields) => ntfyClear(fields),
+      note: (id, kind, fields) => notifyPlatform.note(id, kind, fields),
+      log: control.log,
+      track: notifyTrack,
+    });
+  // PIR_NOTIFY_REMIND_MS shortens the reminder for the live check (T08); undocumented to users.
+  const remindMs = Number(process.env.PIR_NOTIFY_REMIND_MS);
+  const notifyStepOpts = remindMs > 0 ? { remindMs } : {};
+  let notifyState = newNotifyState();
+  let endAlertSent = false;
+  // The exit clears for every open episode (and the no-agent end alert, when given), awaited at most 2 s:
+  // every exit path ends the process soon after, and an unawaited request dies with it (§3.3).
+  const notifyExitNow = (extra = null) => {
+    const clears = notifyExit(notifyState);
+    notifyState = newNotifyState();
+    return withinMs(Promise.all([runNotify(clears), ...(extra ? [extra] : [])]), NOTIFY_EXIT_WAIT_MS);
+  };
+
   // A signal must close workers before we go (DESIGN §2.6). A detached stop is SIGTERM under PIR_RUN and
   // takes the stop path (leave worktrees, record `stopped`); every other signal is the classic teardown.
+  // The exit clears are awaited (bounded) before process.exit; a second signal during that wait exits now.
+  let signalled = false;
   for (const sig of ['SIGINT', 'SIGTERM']) {
-    process.on(sig, () => {
+    process.on(sig, async () => {
+      if (signalled) process.exit(130);
+      signalled = true;
       if (selfReport && sig === 'SIGTERM') stopDetached();
       else teardownOnce(`${sig} received`);
+      await notifyExitNow();
       process.exit(130);
     });
   }
@@ -1960,10 +2203,20 @@ async function main(argv) {
     // down after ~7h while the person slept. Waiting costs nothing: a pass is local file and `claude
     // agents` reads, and a parked worker's session makes no model calls until it is answered.
     for (;;) {
+      // A signal handler awaits the exit clears (up to 2 s) before process.exit, and this loop is still
+      // scheduled meanwhile. A pass after its teardown would dispatch fresh workers into the freed slots, to
+      // be orphaned by the exit a moment later, so park here for good: the handler ends the process.
+      if (signalled) await new Promise(() => {});
       personInbox.drain(); // the backstop for a drop the forwarder's watch missed
       const r = coordinator.pass();
       trackTiming(coordinator.state.tasks, r.completed);
       if (REMOTE) syncRemote(coordinator.state.tasks);
+      // Alerts run every pass, whatever REMOTE is (DESIGN §2.1); a fault in them never stops the run.
+      try {
+        notifyState = notifyPass({ plan: slug, platform, coordinator, notifyState, remote: REMOTE, now: Date.now(), run: runNotify, stepOpts: notifyStepOpts });
+      } catch (err) {
+        control.log(`notify pass failed: ${err?.message ?? err}`);
+      }
 
       // A restart's one-line reconciliation summary scrolls above the live block, so the run does not
       // look like a fresh start (DESIGN §2.8). Only ever set on the first pass of a run that adopted work.
@@ -1985,6 +2238,7 @@ async function main(argv) {
         // index entry both keep finalState:null.
         renderer.close(); // leave the alt screen so the notice lands on the normal screen (T15)
         renderer.line('\n=== HALTED by the kill switch — workers stopped, nothing merged ===');
+        await notifyExitNow();
         return; // the halt pass already closed every worker
       }
 
@@ -2020,10 +2274,19 @@ async function main(argv) {
       // gate sync main, get the report committed and wait in `ready to merge` until the person merges or
       // tells the agent to close. The run's own waiting is not a stall.
       if (coordinator.handoff) {
+        // The one end-of-run alert, the first pass the run waits on the person's merge (DESIGN §2.4).
+        endAlertSent = endAlertPass({
+          r,
+          coordinator,
+          slug,
+          sent: endAlertSent,
+          send: (alert) => runNotify([endAlertAction(alert, { noteTo: coordinator.agent?.id ?? null })]),
+        });
         if (r.finished) {
           finishRun('complete'); // merged or closed: `finished` (DESIGN §2.10)
           renderer.close();
           renderer.line('\n' + renderFinished({ by: r.finished, slug, ready: r.handoff?.state === 'ready', reportPath: r.handoff?.reportPath }));
+          await notifyExitNow();
           return;
         }
         await waitForReport([inbox.reportsDir, personInbox.inboxDir], POLL_MS);
@@ -2045,6 +2308,15 @@ async function main(argv) {
           slug,
           why: r.surfaces.find((s) => s.kind === 'red-feature')?.text,
         }));
+        // Without the agent the run ends on this pass, so its end alert is awaited, bounded (DESIGN §2.4).
+        const alert = endAlert({
+          slug,
+          ready: !!r.readyToMerge,
+          taskCount: r.tasks.length,
+          reason: r.surfaces.find((s) => s.kind === 'red-feature')?.text ?? null,
+          unresolved: false,
+        });
+        await notifyExitNow(runNotify([endAlertAction(alert)]));
         return;
       }
 
@@ -2056,6 +2328,7 @@ async function main(argv) {
         // Abnormal exit (T10): the runaway breaker records NO final status → crashed, not `finished`.
         renderer.line(`\nABORT: ${r.live} live workers over ceiling ${CEILING} for ${over} pass(es) — a runaway.`);
         teardownOnce('runaway');
+        await notifyExitNow();
         return;
       }
 
@@ -2068,6 +2341,7 @@ async function main(argv) {
         finishRun('stall'); // nothing left to do is a clean end — records `finished` (§2.2, T10).
         renderer.line('\n=== nothing left to do (no live workers, nothing to dispatch or hand off) ===');
         teardownOnce('stalled'); // a no-op when nothing is live; still safe
+        await notifyExitNow();
         return;
       }
 
@@ -2081,6 +2355,7 @@ async function main(argv) {
   } catch (e) {
     // Abnormal exit (T10): an uncaught error records NO final status → crashed.
     teardownOnce('error');
+    await notifyExitNow();
     throw e;
   } finally {
     personInbox.stop();

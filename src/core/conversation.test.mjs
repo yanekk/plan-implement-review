@@ -575,3 +575,33 @@ test('buildConversation: a request cancelled before a stop still reads cancelled
   assert.ok(text.includes('  → cancelled by the interrupt'));
   assert.ok(!text.includes('  → never answered'));
 });
+
+// ---- What the phone was told (reliable-notifications T07, DESIGN §2.8) ----
+
+test('the alert notes render dim: sent, reminder, and a failure by its error or status', () => {
+  const log = [
+    { t: t++, dir: 'note', kind: 'notified', reminder: false },
+    { t: t++, dir: 'note', kind: 'notified', reminder: true },
+    { t: t++, dir: 'note', kind: 'notify-failed', status: 500, error: 'HTTP 500' },
+    { t: t++, dir: 'note', kind: 'notify-failed', status: null, error: 'fetch failed: ENOTFOUND' },
+    { t: t++, dir: 'note', kind: 'notify-failed', status: 429 },
+  ];
+  const { lines } = buildConversation(log, { width: 200 });
+  assert.deepEqual(lines.map(textOf), [
+    '· alert sent to your phone',
+    '· reminder sent to your phone',
+    '· alert not sent: HTTP 500',
+    '· alert not sent: fetch failed: ENOTFOUND',
+    '· alert not sent: HTTP 429',
+  ]);
+  assert.ok(lines.every((l) => styleOf(l) === 'dim'));
+});
+
+test('an alert note answers nothing: a pending request stays pending after it (not an ANSWER_NOTES kind)', async () => {
+  const { workerActivity } = await import('./stream.mjs');
+  for (const kind of ['notified', 'notify-failed']) {
+    const log = [request('r1'), { t: t++, dir: 'note', kind, requestId: 'r1' }];
+    assert.deepEqual(workerActivity(log).pending.map((p) => p.requestId), ['r1'], kind);
+    assert.notEqual(buildConversation(log, { width: 80 }).pinned, null, `${kind}: the request is still pinned`);
+  }
+});
