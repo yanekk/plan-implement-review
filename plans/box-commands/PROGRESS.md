@@ -12,9 +12,9 @@ past.
 
 **Plan reviewed:** 2026-09-28 — 3 fixed, 2 decided with the user
 
-**Status:** Planned 2026-09-28. Nothing built.
+**Status:** T01 done.
 **Last updated:** 2026-09-28
-**Next `pir-work` will:** T01 box-grammar: it heads the critical path.
+**Next `pir-work` will:** T02 plan-scan, or T03 box-completion (T01 done).
 
 ## Tasks
 
@@ -23,13 +23,13 @@ done · ⛔ blocked, needs a human.
 
 | # | Task | Depends on | State | Notes |
 |---|---|---|---|---|
-| T01 | box-grammar | — | 🔍 | parseBoxText two-command grammar, completionContext, headLine §2.5, startBuildFailedNote, new NOTES; 23 new planbox tests; shell tests retyped to `/plan`. Deviation: no-test-block reads `no setup/test block` (user 2026-09-28; DESIGN's words overran 80 columns). headLine on an ambiguous name reads plansOf of every match. |
+| T01 | box-grammar | — | ✅ | Review clean, no fix commit. Probed brief/slug whitespace and newlines, `@@name`, `@name/plan/x`, case, cursor slicing and col 0, plansOf call gating, 80 columns; npm test green. Deviations accepted: no-test-block note shortened (user 2026-09-28); ambiguous name on /start reads plansOf of every match. |
 | T02 | plan-scan | — | ⬜ | |
 | T03 | box-completion | T01 | ⬜ | |
 | T04 | box-starts-build | T01, T02, T03 | ⬜ | |
 | T05 | box-commands-drill | T04 | ⬜ | |
 
-**Review queue:** T01
+**Review queue:** empty
 
 ## Blocked on the user
 
