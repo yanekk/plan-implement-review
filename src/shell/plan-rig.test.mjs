@@ -10,7 +10,8 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync 
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { startPlanRig, scriptSet, SCRIPT_SETS, PLAN_RIG_SLUG, PLAN_RIG_SLUG_2, PLAN_RIG_QUESTION, PLAN_RIG_REVIEW_ASK, PLAN_RIG_REVIEW_COMMAND } from './plan-rig.mjs';
-import { PLANNER_MATCH, REVIEWER_MATCH } from './fake/sessions.mjs';
+import { DRILL_SLUG, PLANNER_MATCH, REVIEWER_MATCH } from './fake/sessions.mjs';
+import { mouseBytes } from './conversation-rig.mjs';
 import { resumeInstruction } from '../core/planflow.mjs';
 import { indexDir, listRecords, writeRecord } from './index-store.mjs';
 import { startPlanRun } from './launch.mjs';
@@ -935,5 +936,134 @@ test('end to end: §2.6 hint and head lines — bare at 80 is the list footer al
     } finally {
       await screen.close();
     }
+  }
+});
+
+// --- the mouse on the real screen (mouse-navigation T05, DESIGN §2.1–§2.3): T01's SGR bytes to the real pir ---
+
+// The 0-based screen row whose text matches, and the 1-based terminal row a mouse report names it by.
+const rowOf = (rows, re) => {
+  const y = rows.findIndex((l) => re.test(l));
+  assert.ok(y >= 0, `${re} is on screen:\n${rows.join('\n')}`);
+  return y;
+};
+const clickRow = (screen, rows, re, col = 5) => screen.send(mouseBytes.click(col, rowOf(rows, re) + 1));
+
+for (const [cols, rows] of [[80, 24], [120, 40]]) {
+  test(`end to end at ${cols}×${rows}: a click on the second run opens its live view; ← is the list with that run selected`, async (t) => {
+    const rig = startPlanRig();
+    t.after(() => rig.cleanup());
+    seedRuns(rig, 3);
+    const screen = rig.openScreen({ cols, rows });
+    try {
+      const list = await screen.waitFor(/▎ rig-run-0/);
+      assert.ok([1000, 1002, 1003, 1006].every((m) => screen.modes().has(m)), 'mouse reporting is on');
+      clickRow(screen, list, /^ {2}rig-run-1 /);
+      const open = await screen.waitFor((x) => /^rig-run-1/m.test(x) && !/new plan/.test(x));
+      assert.ok(!open.some((l) => /rig-run-0/.test(l)), 'the live view of rig-run-1, not the list');
+      screen.send(LEFT);
+      const back = await screen.waitFor(/new plan/);
+      assert.ok(back.some((l) => l.startsWith('▎ rig-run-1 ')), `rig-run-1 selected:\n${back.join('\n')}`);
+      assert.equal(screen.overflows(), 0);
+    } finally {
+      await screen.close();
+    }
+  });
+}
+
+test('end to end at 80×24: the pointer over a run row makes that row\'s text bold and no other row\'s', async (t) => {
+  const rig = startPlanRig();
+  t.after(() => rig.cleanup());
+  seedRuns(rig, 3);
+  const { NO_COLOR: _off, ...env } = rig.env; // hover is painted with colour only (§2.2)
+  const screen = rig.openScreen({ cols: 80, rows: 24, env });
+  try {
+    const list = await screen.waitFor(/rig-run-2/);
+    const y1 = rowOf(list, /^ {2}rig-run-1 /);
+    const y2 = rowOf(list, /^ {2}rig-run-2 /);
+    const boldRun = (y) => [...'rig-run-'].every((_, i) => screen.boldAt(y, 2 + i));
+    assert.ok(!boldRun(y1) && !boldRun(y2), 'nothing hovered yet');
+    screen.send(mouseBytes.move(10, y2 + 1));
+    await screen.waitFor(() => boldRun(y2));
+    assert.ok(!boldRun(y1), 'rig-run-1 is not bold');
+    screen.send(mouseBytes.move(10, y1 + 1));
+    await screen.waitFor(() => boldRun(y1));
+    assert.ok(!boldRun(y2), 'the pointer left rig-run-2: not bold any more');
+  } finally {
+    await screen.close();
+  }
+});
+
+test('end to end at 80×12: the wheel down past the window scrolls the list, and `↑ n more` appears', async (t) => {
+  const rig = startPlanRig();
+  t.after(() => rig.cleanup());
+  seedRuns(rig, 9);
+  const screen = rig.openScreen({ cols: 80, rows: 12 });
+  try {
+    const first = await screen.waitFor(/▎ rig-run-0/);
+    assert.ok(!first.some((l) => /↑ \d+ more/.test(l)), 'no rows cut above at the start');
+    for (let i = 1; i <= 6; i++) {
+      screen.send(mouseBytes.wheel(10, 5, 'down'));
+      await screen.waitFor(new RegExp(`▎ rig-run-${i} `));
+    }
+    const shot = await screen.waitFor(/↑ \d+ more/);
+    assert.ok(shot.some((l) => l.startsWith('▎ rig-run-6 ')), 'one row a notch, and the selected row still shows');
+    assert.equal(screen.overflows(), 0);
+  } finally {
+    await screen.close();
+  }
+});
+
+test('end to end at 80×24: Ctrl+S, then a click on another run — no ⚠ line remains and nothing is stopped', async (t) => {
+  const { rig, dir } = await startRigPlan(t);
+  seedRuns(rig, 1);
+  const screen = rig.openScreen({ cols: 80, rows: 24 });
+  try {
+    await screen.waitFor(/▎ .*● asking you/, 20000);
+    screen.send(CTRL_S);
+    const armed = await screen.waitFor(/⚠ Ctrl\+S again/);
+    clickRow(screen, armed, /^ {2}rig-run-0 /);
+    await screen.waitFor((x) => /^rig-run-0/m.test(x) && !/new plan/.test(x));
+    screen.send(LEFT);
+    const back = await screen.waitFor(/new plan/);
+    assert.ok(!back.some((l) => l.includes('⚠')), `no ⚠ line:\n${back.join('\n')}`);
+  } finally {
+    await screen.close();
+  }
+  const planning = listRecords({ dir }).find((r) => r.kind === 'plan');
+  assert.equal(planning.finalState, null, 'the planning run was not stopped');
+});
+
+// The coordinator drill's build (pir-coordinator T07), stopped and removed at the end.
+function drillRig(t) {
+  const rig = startPlanRig({ scripts: 'coordinator-drill' });
+  t.after(async () => {
+    for (const record of listRecords({ dir: indexDir({ env: rig.env }) })) {
+      if (record.finalState === null) await stopRun(record).catch(() => {});
+    }
+    rig.cleanup();
+  });
+  return rig;
+}
+
+test('end to end at 120×40: in the drill\'s live view a click on a task with a worker opens it; a click on the agent\'s row opens the agent, and ← comes back to its row', { timeout: 120000 }, async (t) => {
+  const rig = drillRig(t);
+  const screen = rig.openScreen({ cols: 120, rows: 40, args: ['start', DRILL_SLUG] });
+  try {
+    let shot = await screen.waitFor(/T02 +reserved-ask +asking you · allow a command\?/, 30000);
+    shot = await screen.waitFor(/◆ coordinator agent/, 30000);
+    clickRow(screen, shot, /^[▎ ] . T02 /);
+    await screen.waitFor(/git push --force origin HEAD/);
+    screen.send(LEFT);
+    shot = await screen.waitFor(/◆ coordinator agent/);
+    assert.ok(shot.some((l) => /^▎ . T02 /.test(l)), `← lands on T02:\n${shot.join('\n')}`);
+    clickRow(screen, shot, /◆ coordinator agent/);
+    await screen.waitFor(/^coordinator +agent [0-9a-f]{8} · live/m);
+    screen.send(LEFT);
+    shot = await screen.waitFor(/◆ coordinator agent/);
+    assert.ok(shot.some((l) => /^▎ ◆ coordinator agent/.test(l)), `← lands on the agent's row:\n${shot.join('\n')}`);
+    assert.equal(screen.overflows(), 0);
+  } finally {
+    await screen.close();
   }
 });

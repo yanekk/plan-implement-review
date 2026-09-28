@@ -246,6 +246,11 @@ function withHit(line, kind, index) {
   return line;
 }
 
+// sameHit(a, b) → whether two hits name the same row (or are both no row).
+function sameHit(a, b) {
+  return (a?.kind ?? null) === (b?.kind ?? null) && (a?.index ?? null) === (b?.index ?? null);
+}
+
 // hitAt(frame, y) → the { kind, index } of the row painted on frame line y, or null for a line that is not
 // a row (title, header, markers, blanks, notes, counts, footer) or a y outside the frame. A frame line's
 // index is its screen row (§3.3), so y is the pointer's zero-based screen row.
@@ -709,7 +714,10 @@ export function createScreen({ stream = process.stdout, colour, terminal, copy =
   let onInput = null;
   let onError = null;
   let onMouse = null;
-  const view = new FrameView(() => frame, { colour: useColour });
+  // The screen row under the pointer (mouse-navigation §2.2, §3.5), set by runTui: the FrameView lives here,
+  // so runTui cannot hand it a getter of its own.
+  let hoverY = null;
+  const view = new FrameView(() => frame, { colour: useColour, getHoverY: () => hoverY });
   // The conversation view (T13) is a pi-tui component of its own, with a typing box: while one is mounted
   // it is drawn in the frame's place and has the focus, so the box's cursor lands where the person types.
   let mounted = null;
@@ -821,6 +829,9 @@ export function createScreen({ stream = process.stdout, colour, terminal, copy =
       } finally {
         painting = false;
       }
+    },
+    setHoverY(y) {
+      hoverY = Number.isInteger(y) ? y : null;
     },
     listen(input, error, mouse) {
       onInput = input;
@@ -1013,6 +1024,14 @@ async function runTui({
   // The task row is pinned the same way, by task id, and per run (by runKey): a refresh that adds or
   // removes task rows keeps the highlight on its task, and two runs of one slug keep separate selections.
   const selectedTask = new Map();
+  // The pointer's screen row (mouse-navigation §3.5): a paint concern, held beside `ui` and never in the
+  // reducer, so a pointer move does not count as an event that clears `armed`. It follows the screen row,
+  // not a run, so after a refresh or a click-open the row now under the pointer is the one lit (§2.2).
+  let hoverY = null;
+  // What the person sees now, so a click reads the lines they read (§3.3): the painted frame (null while
+  // the list view or a conversation is mounted; the list view hands its own block to onMouse) and the rows
+  // it was built from, which turn a hit's index into a run key or a task id before a fresh read.
+  let painted = null;
 
   const read = () => load({ dir, now: now(), kill, exec, fs });
 
@@ -1046,6 +1065,9 @@ async function runTui({
   let lastRepos = null;
   const repos = () => (lastRepos = scan({ env }));
   let listView = null;
+  // runTui's mouse handler, set once the input loop below is listening; the list view calls it for events
+  // outside its box.
+  let mouseHandler = null;
   // What the list view's last handleInput decided (its callbacks run synchronously inside it).
   let routed = null;
   function getListView() {
@@ -1059,6 +1081,7 @@ async function runTui({
         onSubmit: (text) => (routed = { kind: 'submit', text }),
         onListKey: (data) => (routed = { kind: 'list', data }),
         onQuit: () => (routed = { kind: 'quit' }),
+        onListMouse: (ev, frame) => mouseHandler?.(ev, frame),
       });
     }
     return listView;
@@ -1066,7 +1089,7 @@ async function runTui({
 
   function paintList(dash) {
     const lv = getListView();
-    lv.update({ dashboard: dash, ui });
+    lv.update({ dashboard: dash, ui, hoverY });
     screen.mount(lv);
     screen.renderNow();
   }
@@ -1207,6 +1230,7 @@ async function runTui({
 
     spin += 1;
     const spinnerChar = SPINNER[spin % SPINNER.length];
+    painted = null;
     if (ui.view === 'watch' && ui.openStep) {
       screen.paint(buildLandingFrame(findOpen(dash.rows, ui)));
     } else if (ui.view === 'worker') {
@@ -1217,11 +1241,16 @@ async function runTui({
       const logTail = view.state === 'crashed' ? readLogTail(view.record?.controlDir ? join(view.record.controlDir, 'run.log') : null, 5, fs ? { fs } : {}) : null;
       const columns = Math.max(20, stdout.columns || DEFAULT_COLS);
       const progress = goOpen(dash.rows, ui) && view.record ? goProgress(view) : null;
-      screen.paint(buildWatchFrame(view, { now: now(), spinnerChar, ui, columns, logTail, progress }));
+      const frame = buildWatchFrame(view, { now: now(), spinnerChar, ui, columns, logTail, progress });
+      painted = { frame, rows: dash.rows };
+      screen.paint(frame);
     } else if (boxed) {
+      painted = { frame: null, rows: dash.rows };
       paintList(dash);
     } else {
-      screen.paint(buildListFrame(dash, ui, { columns: Math.max(20, stdout.columns || DEFAULT_COLS) }));
+      const frame = buildListFrame(dash, ui, { columns: Math.max(20, stdout.columns || DEFAULT_COLS) });
+      painted = { frame, rows: dash.rows };
+      screen.paint(frame);
     }
     publish(dash);
   }
@@ -1327,36 +1356,96 @@ async function runTui({
             return repaint(dash);
           }
 
-          const wasWatching = ui.view === 'watch';
-          if (wasWatching) syncTask(dash);
           const event = key === 'enter' || key === 'n' || key === 'c' ? { type: 'key', key } : { type: key };
-          const { ui: nextUi, intent } = dashboardReducer(ui, event, dash.rows);
-          ui = nextUi;
-          // Pin the selection to whatever run the cursor is now on, so the next refresh keeps it there.
-          selectedKey = runKey(dash.rows[ui.sel]) ?? selectedKey;
-          if (wasWatching && ui.view === 'watch') {
-            // …and the task row likewise, to the task the cursor is now on in the open run. Only a move
-            // inside the live view re-pins it: opening a run starts its taskSel at 0, and repaint then
-            // restores the task that run last had selected.
-            const open = findOpen(dash.rows, ui);
-            const task = openTasks(dash.rows, ui)[ui.taskSel ?? 0];
-            if (task) selectedTask.set(runKey(open) ?? ui.openKey ?? ui.openSlug, task.id);
-          }
-          if (intent && intent.type !== 'quit') {
-            // One run action at a time. A stop returns only after it has reaped the run's sessions, and
-            // keys keep arriving meanwhile: the row can already read `stopped` (the program recorded it)
-            // while the reap is still going, and a resume fired then had its new session killed by that
-            // reap (pir-plan-command T11). So each action waits for the one before it, and then finds its
-            // run in a fresh read, not in the rows of the keypress that armed it.
-            const run = acting.then(() => act(intent));
-            acting = run.catch(() => {});
-            await run;
-          }
+          await dispatch(event, dash);
           repaint();
         } catch (err) {
           fail(err);
         }
       }
+
+      // dispatch(event, dash) — one reducer event and everything that follows it: the selection pins and the
+      // run action. The keys and the mouse both come through here, so a click and a key cannot drift apart
+      // (mouse-navigation §2.1). `dash` is a read already repinned (repinOpen) by the caller.
+      async function dispatch(event, dash) {
+        const wasWatching = ui.view === 'watch';
+        if (wasWatching) syncTask(dash);
+        const { ui: nextUi, intent } = dashboardReducer(ui, event, dash.rows);
+        ui = nextUi;
+        // Pin the selection to whatever run the cursor is now on, so the next refresh keeps it there.
+        selectedKey = runKey(dash.rows[ui.sel]) ?? selectedKey;
+        if (wasWatching && ui.view === 'watch') {
+          // …and the task row likewise, to the task the cursor is now on in the open run. Only a move
+          // inside the live view re-pins it: opening a run starts its taskSel at 0, and repaint then
+          // restores the task that run last had selected.
+          const open = findOpen(dash.rows, ui);
+          const task = openTasks(dash.rows, ui)[ui.taskSel ?? 0];
+          if (task) selectedTask.set(runKey(open) ?? ui.openKey ?? ui.openSlug, task.id);
+        }
+        if (intent && intent.type !== 'quit') {
+          // One run action at a time. A stop returns only after it has reaped the run's sessions, and
+          // keys keep arriving meanwhile: the row can already read `stopped` (the program recorded it)
+          // while the reap is still going, and a resume fired then had its new session killed by that
+          // reap (pir-plan-command T11). So each action waits for the one before it, and then finds its
+          // run in a fresh read, not in the rows of the keypress that armed it.
+          const run = acting.then(() => act(intent));
+          acting = run.catch(() => {});
+          await run;
+        }
+      }
+
+      // A hit's index is into the rows the frame was painted from; a fresh read may have moved them, so the
+      // hit is carried across by run key (the list) or by row id (a build's tasks, a planning run's steps).
+      // -1 when that row is gone.
+      function resolveHit(hit, dash) {
+        if (hit.kind === 'run') {
+          const key = runKey(painted?.rows?.[hit.index]);
+          return key == null ? -1 : dash.rows.findIndex((r) => runKey(r) === key);
+        }
+        const id = openTasks(painted?.rows ?? [], ui)[hit.index]?.id;
+        return id == null ? -1 : openTasks(dash.rows, ui).findIndex((t) => t.id === id);
+      }
+
+      function setHover(y) {
+        hoverY = y;
+        screen.setHoverY?.(y);
+        listView?.update({ hoverY: y });
+      }
+
+      // onMouse(ev, frame) — the painted frames' mouse (the live view, the steps view, the go question), and
+      // the list's rows through the list view's onListMouse, which passes its own list block as `frame`
+      // (mouse-navigation §2.1–§2.3, §3.2). Synchronous, as pi-tui's dispatch is: no event here produces a
+      // run action, so the reducer and the repaint are done before it returns. Press, drag and release are
+      // always declined (undefined), which leaves pi-tui its text selection and its synthesised click (§2.5).
+      function onMouse(ev, frame = painted?.frame) {
+        if (settled || !ev || ui.view === 'worker' || ui.openStep || !frame) return undefined;
+        if (ev.type === 'move') {
+          const changed = !sameHit(hitAt(frame, hoverY), hitAt(frame, ev.y));
+          setHover(ev.y);
+          return { handled: true, render: changed };
+        }
+        const wheel = ev.type === 'wheel' && ev.wheelDelta;
+        const hit = ev.type === 'click' && ev.button === 'left' ? hitAt(frame, ev.y) : null;
+        if (!wheel && !hit) return undefined;
+        try {
+          const dash = read();
+          ui = repinOpen(ui, dash.rows);
+          if (wheel) {
+            // One notch is one ↑ or ↓, whatever pi-tui's lines-per-notch (§2.3).
+            dispatch({ type: ev.wheelDelta < 0 ? 'up' : 'down' }, dash).catch(fail);
+          } else {
+            const index = resolveHit(hit, dash);
+            if (index < 0) return undefined;
+            dispatch({ type: 'select', index }, dash).catch(fail);
+            dispatch({ type: 'open' }, dash).catch(fail);
+          }
+          repaint();
+        } catch (err) {
+          fail(err);
+        }
+        return { handled: true };
+      }
+      mouseHandler = onMouse;
 
       renderSoon = () => {
         if (!settled && ui.view === 'worker' && conv && typeof screen.mount !== 'function') {
@@ -1368,7 +1457,7 @@ async function runTui({
         }
       };
       if (ownInput) stdin.on('data', onData);
-      else screen.listen(onData, fail);
+      else screen.listen(onData, fail, (ev) => onMouse(ev));
       refresh = setInterval(() => {
         try {
           repaint();
