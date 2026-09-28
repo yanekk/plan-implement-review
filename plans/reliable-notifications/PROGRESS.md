@@ -28,13 +28,13 @@ done · ⛔ blocked, needs a human.
 | T02 | ntfy-sender | — | ⬜ | |
 | T03 | notify-icon | — | ✅ | |
 | T04 | worker-link-and-silence | — | ⬜ | |
-| T05 | why-yours | — | ⬜ | |
+| T05 | why-yours | — | 🔍 | `passed` map and `whyPerson()` in `startCoordinator`; 11 tests. Deviations: a `firstSeen` order map picks the oldest item (items carry no time); `unavailable` is the fallback branch, not a separate remembered set. |
 | T06 | notify-command | T02 | ⬜ | |
 | T07 | coordinator-alerts | T01, T02, T04, T05 | ⬜ | |
 | T08 | notify-live | T03, T06, T07 | ⬜ | |
 | T09 | docs | T08 | ⬜ | |
 
-**Review queue:** *(empty)*
+**Review queue:** T05
 
 ## Blocked on the user
 
