@@ -2368,3 +2368,18 @@ test('mouse: a right or middle click on a row does nothing, and a drag starting 
   assert.match(t.screen()[0], /Copied!/, 'the drag was a text selection, and copied');
   await t.quit();
 });
+
+test('mouse: a click opens the run painted on that row even if a fresh read has reordered or dropped the rows', async () => {
+  let rows = THREE_RUNS;
+  const t = driveMouse({ rows: () => rows });
+  const betaY = t.rowY(/^ {2}beta /);
+  const gammaY = t.rowY(/^ {2}gamma /);
+  // The next read (the click's) sees a different list: beta has moved up and gamma is gone. Nothing repaints
+  // before the click, so the screen still shows the old order.
+  rows = [THREE_RUNS[1], THREE_RUNS[0]];
+  await t.click(gammaY);
+  assert.match(t.text(), /new plan/, 'a click on a run that is gone opens nothing');
+  await t.click(betaY);
+  assert.match(t.text(), /^beta/m, 'beta opened, not whatever now sits at its old index');
+  await t.quit();
+});
