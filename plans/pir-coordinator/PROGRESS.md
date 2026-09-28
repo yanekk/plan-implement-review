@@ -12,7 +12,7 @@ write. **Whoever writes a cell also fixes the over-budget cell they walk past.**
 
 **Plan reviewed:** 2026-09-27 — 10 fixed, 4 decided with the user
 
-**Status:** T00–T11 ✅. Reopened 2026-09-28 for T12, T13, T14.
+**Status:** T00–T11 ✅. Reopened 2026-09-28 for T12, T13, T15, T14 (in that order).
 **Last updated:** 2026-09-28
 **Next `pir-work` will:** implement T12, coordinator-row.
 
@@ -37,7 +37,8 @@ done · ⛔ blocked, needs a human.
 | T11 | end-helper-row | T06, T10; blocks T09 | ✅ | |
 | T12 | coordinator-row | T06, T11 | ⬜ | Added 2026-09-28 with the user after T09: pinned agent row under a separator. |
 | T13 | hold-timeout | T04, T12; blocks T14 | ⬜ | Added 2026-09-28 with the user: an item held 5 min without a decision becomes the person's; a late agent answer still counts until the person answers. |
-| T14 | live-concurrent-check | T12, T13 | ⬜ | Added 2026-09-28 with the user: paid live run, two workers asking at once plus the hold limit firing at 60 s. |
+| T15 | answered-first-facts | T13; blocks T14 | ⬜ | Added 2026-09-28 with the user after T09: tell the agent who answered an item first and what, reserved items included; no generic refusal for known items. |
+| T14 | live-concurrent-check | T12, T13, T15 | ⬜ | Added 2026-09-28 with the user: paid live run, two workers asking at once, the hold limit firing at 60 s, and the agent's statements checked against the record. |
 
 **Review queue:** *(empty)*
 

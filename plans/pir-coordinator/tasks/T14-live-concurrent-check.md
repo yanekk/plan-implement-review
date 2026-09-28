@@ -1,6 +1,6 @@
 # T14 — live-concurrent-check
 
-**Phase:** 3 · **Depends on:** T12, T13 · **Weight:** medium
+**Phase:** 3 · **Depends on:** T12, T13, T15 · **Weight:** medium
 
 Added after T09 with the person's approval (2026-09-28). T09 ran two tasks that could have asked at the
 same time, but nothing recorded whether they did; the fake agent handles one message at a time, so the
@@ -14,7 +14,7 @@ handing it to the person, who answers it.
 
 ## Design sections this implements
 
-DESIGN §2.3, §2.11 (hold limit), §5.1, §5.2, §5.3.
+DESIGN §2.3, §2.4, §2.11 (hold limit), §5.1, §5.2, §5.3.
 
 ## Files
 
@@ -42,7 +42,7 @@ Three independent tasks at ceiling 3, harness timeout 20 min, scratch repo:
 
 - [ ] The fixture parses and registers.
 - [ ] Assertions on a recorded bundle: overlap detection, one decision per item, a `timeout` ledger line
-      for T03 before any answer to it.
+      for T03 before any answer to it, and the agent's statements about items against the record.
 
 ## Done when
 
@@ -55,6 +55,14 @@ Three independent tasks at ceiling 3, harness timeout 20 min, scratch repo:
   - [ ] T03 `asking coordinator` for about 60 s, then `asking you` with Remote Control on, a `timeout`
         ledger line, the agent's pointer in its conversation after the hand-over message, and the
         harness's answer applied.
+  - [ ] Every claim the agent makes in its replies about an item's state (who answered it, what was
+        answered, that it is waiting, where to answer it) matches the record at that moment: the workers'
+        conversation logs, the ledger and the status snapshots (added 2026-09-28 after T09's agent told
+        the person "you most likely answered it" when the harness had). An assertion checks the mechanical
+        part: no reply points the person at an item that was not waiting when the reply was sent, and
+        every "already answered" the agent was sent names the answer the worker's log records. The worker
+        reads each remaining reply against the record and lists them in the commit message. Any mismatch
+        fails the task.
   - [ ] The run reaches `ready to merge` with `REPORT.md` committed.
 - [ ] FINDINGS.md has the dated row of what the run showed.
 

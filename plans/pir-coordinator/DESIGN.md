@@ -106,7 +106,8 @@ a person's message.
 
 The first answer wins. The person may answer any waiting item in `pir` or on the phone at any time; a
 decision that arrives for an item already answered is dropped and the agent is told "already
-answered by the person". Why not lock the person out while the agent thinks: the person is the
+answered by the person", with the answer (user 2026-09-28, T15). This holds for reserved items too,
+which the agent is briefed on for a note: it is told who answered and what, never left to guess. Why not lock the person out while the agent thinks: the person is the
 authority and must never wait on their own stand-in.
 
 Why decision files and not custom tools: custom tools in the SDK need `zod` and
