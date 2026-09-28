@@ -415,18 +415,18 @@ export function createScreenModel({ rows = 24, cols = 80 } = {}) {
   let overflows = 0;
   const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 
-  // SGR: only bold is kept. 38/48/58 take `5;n` or `2;r;g;b` after them; a colon form (`38:2::1:2:3`) is one
-  // parameter and parses as NaN, so it is skipped by itself.
-  function sgr(nums) {
-    if (!nums.length) nums = [0];
-    for (let i = 0; i < nums.length; i++) {
-      const p = Number.isFinite(nums[i]) ? nums[i] : null;
-      if (p === 0 || (p === null && nums.length === 1)) bold = false;
+  // SGR: only bold is kept, read from the raw `;`-separated parameters. An empty parameter is 0 (reset), as
+  // ECMA-48 has it, so `1;m` ends not bold. 38/48/58 take `5;n` or `2;r;g;b` after them; a colon form
+  // (`38:2::1:2:3`) is all one parameter and is stepped over by itself, never read as a reset.
+  function sgr(parts) {
+    for (let i = 0; i < parts.length; i++) {
+      if (parts[i].includes(':')) continue;
+      const p = parts[i] === '' ? 0 : Number(parts[i]);
+      if (p === 0 || p === 22) bold = false;
       else if (p === 1) bold = true;
-      else if (p === 22) bold = false;
       else if (p === 38 || p === 48 || p === 58) {
-        if (nums[i + 1] === 5) i += 2;
-        else if (nums[i + 1] === 2) i += 4;
+        if (parts[i + 1] === '5') i += 2;
+        else if (parts[i + 1] === '2') i += 4;
       }
     }
   }
@@ -465,7 +465,7 @@ export function createScreenModel({ rows = 24, cols = 80 } = {}) {
         break;
       }
       case 'm':
-        sgr(nums);
+        sgr(params.split(';'));
         break;
       default:
         break; // anything else leaves the cells alone

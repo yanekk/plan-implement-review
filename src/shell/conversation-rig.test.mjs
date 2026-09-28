@@ -239,6 +239,8 @@ test('the screen model keeps which cells are bold, and colour parameters never r
   assert.deepEqual([0, 1, 2].map((c) => m.boldAt(2, c)), [false, false, true], '38;2;r;g;b and 48;5;n are stepped over; a 1 after them is bold');
   m.write('\x1b[4;1H\x1b[1;38;5;2mt\x1b[mu');
   assert.deepEqual([m.boldAt(3, 0), m.boldAt(3, 1)], [true, false], 'bold with colour in one SGR, then an empty SGR resets');
+  m.write('\x1b[4;1H\x1b[1m\x1b[38:2::1:2:3mv\x1b[1;mw');
+  assert.deepEqual([m.boldAt(3, 0), m.boldAt(3, 1)], [true, false], 'a lone colon colour keeps bold; an empty parameter resets');
   m.write('\x1b[1;3H\x1b[2K');
   assert.equal(m.boldAt(0, 2), false, 'an erased cell is not bold');
   assert.equal(m.boldAt(9, 99), false, 'off the grid is not bold');
