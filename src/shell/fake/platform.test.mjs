@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createFakePlatform } from './platform.mjs';
+import { createFakePlatform, FAKE_REMOTE_URL } from './platform.mjs';
 import { createFakeWorktree } from './worktree.mjs';
 import { workerName } from '../../core/naming.mjs';
 
@@ -127,4 +127,27 @@ test('send / interrupt / answer take the worker id, record the call, and return 
   assert.deepEqual(platform.interrupt(id), { ok: false });
   assert.deepEqual(platform.answer(id, 'req-1', {}), { ok: false });
   assert.deepEqual(platform.send('nobody', 'x'), { ok: false });
+});
+
+// reliable-notifications T04: the alert fields workers() carries, so T07 can test against them.
+test('workers() rows carry remote, url and lastText; behaviours refuse, stick and set the text', () => {
+  const platform = createFakePlatform({ behaviors: { T02: { remote: 'refused' }, T03: { remote: 'stuck', lastText: 'Should X be Y?' } } });
+  const name = (task) => workerName({ repo: 'repo', plan: 'demo', task, slug: 's', role: 'implement' });
+  const a = platform.spawn({ cwd: '/wt/T01', name: name('T01'), phase: 'implement' });
+  const b = platform.spawn({ cwd: '/wt/T02', name: name('T02'), phase: 'implement' });
+  const c = platform.spawn({ cwd: '/wt/T03', name: name('T03'), phase: 'implement' });
+  const row = (id) => {
+    const w = platform.workers().find((x) => x.id === id);
+    return [w.remote, w.url, w.lastText];
+  };
+  assert.deepEqual(row(a), ['off', null, null], 'off, no link and no text before anything');
+  for (const id of [a, b, c]) platform.remoteControl(id, true);
+  assert.deepEqual(row(a), ['on', FAKE_REMOTE_URL + a, null]);
+  assert.deepEqual(row(b), ['refused', null, null]);
+  assert.deepEqual(row(c), ['off', null, 'Should X be Y?'], 'a stuck bridge leaves it off with no link');
+  for (const id of [a, b]) platform.remoteControl(id, false);
+  assert.deepEqual(row(a), ['off', null, null]);
+  assert.deepEqual(row(b), ['refused', null, null], 'a refusal is not retried');
+  platform.close(a);
+  assert.deepEqual(platform.remoteControl(a, true), { ok: false });
 });
