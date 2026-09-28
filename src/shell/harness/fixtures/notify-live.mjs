@@ -110,7 +110,9 @@ function notesOf(bundle, task, kind) {
     .flatMap((t) => (t.events ?? []).filter((e) => e?.dir === 'note' && e.kind === kind).map((e) => ({ key: t.key, ...e })));
 }
 
-const at = (e) => Date.parse(e.t);
+// A conversation log stamps `t` in epoch ms; an ISO string is taken too, as a canned bundle may carry one.
+const at = (e) => (typeof e.t === 'number' ? e.t : Date.parse(e.t));
+const iso = (e) => new Date(at(e)).toISOString();
 
 // neverAlerted(task) — `task`'s conversation carries no `notified` note: nothing about it reached the phone.
 export function neverAlerted(task) {
@@ -119,7 +121,7 @@ export function neverAlerted(task) {
     label: `${task} sent no alert to the phone`,
     check(bundle) {
       const sent = notesOf(bundle, task, 'notified');
-      const evidence = sent.map((e) => `${e.key} ${e.t}: notified ${JSON.stringify({ reminder: e.reminder })}`);
+      const evidence = sent.map((e) => `${e.key} ${iso(e)}: notified ${JSON.stringify({ reminder: e.reminder })}`);
       if (!(bundle.transcripts ?? []).some((t) => t.task === task)) return { pass: false, evidence, detail: `no conversation of ${task} in the bundle` };
       if (sent.length) return { pass: false, evidence, detail: `${task} alerted ${sent.length} time(s)` };
       return { pass: true, evidence, detail: `${task} has no \`notified\` note` };
@@ -138,8 +140,8 @@ export function alertedOnceThenReminded(task) {
       const sent = notesOf(bundle, task, 'notified').sort((a, b) => at(a) - at(b));
       const links = notesOf(bundle, task, 'remote-control').filter((e) => e.on && e.url);
       const evidence = [
-        ...links.map((e) => `${e.key} ${e.t}: remote-control on, url known`),
-        ...sent.map((e) => `${e.key} ${e.t}: notified ${JSON.stringify({ reminder: e.reminder })}`),
+        ...links.map((e) => `${e.key} ${iso(e)}: remote-control on, url known`),
+        ...sent.map((e) => `${e.key} ${iso(e)}: notified ${JSON.stringify({ reminder: e.reminder })}`),
       ];
       const first = sent.filter((e) => !e.reminder);
       const reminders = sent.filter((e) => e.reminder);

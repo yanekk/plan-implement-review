@@ -418,6 +418,10 @@ test('notify-live facts: T01 never alerted; T02 alerted once after its link, one
   assert.equal(once.check(bundle([], [link, first, rem, { ...rem, t: '2026-01-01T00:04:01Z' }])).pass, false, 'a second reminder');
   assert.equal(once.check(bundle([], [link])).pass, false, 'no alert');
   assert.equal(once.check(bundle([], [first, { ...link, t: '2026-01-01T00:00:05Z' }])).pass, false, 'alert before the link');
+  // A real conversation log stamps epoch ms (the live run 2026-09-28 read these as NaN before the fix).
+  const ms = (e) => ({ ...e, t: Date.parse(e.t) });
+  assert.equal(once.check(bundle([], [ms(link), ms(first), ms(rem)])).pass, true, 'epoch-ms stamps');
+  assert.equal(once.check(bundle([], [ms(first), { ...ms(link), t: Date.parse('2026-01-01T00:00:05Z') }])).pass, false, 'epoch ms, alert before the link');
 });
 
 test('parallel: at least two independent tasks so workers run concurrently', () => {

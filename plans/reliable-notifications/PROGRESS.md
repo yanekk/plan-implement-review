@@ -31,12 +31,11 @@ done · ⛔ blocked, needs a human.
 | T05 | why-yours | — | ✅ | |
 | T06 | notify-command | T02 | ✅ | |
 | T07 | coordinator-alerts | T01, T02, T04, T05 | ✅ | |
-| T08 | notify-live | T03, T06, T07 | ⬜ | |
+| T08 | notify-live | T03, T06, T07 | 🔍 | Fixture `notify-live`, `realNotify` scenario option, 7 tests. Live run green, six facts; phone checks ✅ in FINDINGS. Icon not shown on iOS (ntfy: Android only); user kept it. Fact fix: log `t` is epoch ms. Branch pushed. |
 | T09 | docs | T08 | ⬜ | |
 
-**Review queue:** *(empty)*
+**Review queue:** T08
 
 ## Blocked on the user
 
-Nothing yet. T08 needs the user's iPhone with ntfy installed and a yes to push the feature branch
-(DESIGN §5.3).
+Nothing.
