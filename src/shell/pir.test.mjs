@@ -62,7 +62,7 @@ const USAGE_TEXT =
   '       pir start {slug}       build a reviewed plan\n' +
   '       pir notify [test|off]  phone alerts: set up, test, turn off\n';
 
-test('the usage text is exactly the three verbs', () => {
+test('the usage text is exactly the four verbs', () => {
   assert.equal(USAGE, USAGE_TEXT);
 });
 
