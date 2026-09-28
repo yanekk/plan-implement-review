@@ -70,6 +70,13 @@ test('alertText: question with no text says is waiting for you', () => {
   assert.equal(alertText({ ...base, kind: 'question', decisionText: '  ', lastText: '' }).message, 'is waiting for you');
 });
 
+test('alertText: a question whose text is only escapes falls through, never a bare asks:', () => {
+  assert.equal(alertText({ ...base, kind: 'question', decisionText: '\x1b[0m', lastText: 'Proceed?' }).message, 'asks: Proceed?');
+  assert.equal(alertText({ ...base, kind: 'question', decisionText: '\x1b[0m\n' }).message, 'is waiting for you');
+  const pending = [{ kind: 'questions', requestId: 'r1', questions: [{ question: '\x1b[2K' }, { question: 'Size?' }] }];
+  assert.equal(alertText({ ...base, kind: 'questions', pending }).message, 'asks: Size? (+1 more)');
+});
+
 test('alertText: questions uses the first question, with (+N more)', () => {
   const pending = [{ kind: 'questions', requestId: 'r1', questions: [{ question: 'Colour?' }, { question: 'Size?' }, { question: 'Shape?' }] }];
   assert.equal(alertText({ ...base, kind: 'questions', pending }).message, 'asks: Colour? (+2 more)');

@@ -22,6 +22,9 @@ const FALLBACK = 'is waiting for you';
 
 const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 const nonBlank = (s) => typeof s === 'string' && s.trim() !== '';
+// Whether text still shows something once escapes and controls go: a worker's text that is only a colour
+// reset would otherwise become a bare `asks:` on the lock screen instead of falling through.
+const shows = (s) => typeof s === 'string' && plainText(s).trim() !== '';
 
 // excerpt(text, max) → at most `max` code points of `text` as plain characters on one line, the last one
 // `…` when cut. Escapes and control characters go (plainText) and newlines fold to one space, since a
@@ -39,7 +42,7 @@ function kindPart({ kind, decisionText, lastText, pending }) {
   if (kind === 'question') {
     // A report park's text is the question as the worker wrote it for the person; a worker that stopped
     // with no report asked in its last assistant text.
-    const text = nonBlank(decisionText) ? decisionText : nonBlank(lastText) ? lastText : null;
+    const text = shows(decisionText) ? decisionText : shows(lastText) ? lastText : null;
     return text === null ? FALLBACK : excerpt(`asks: ${text}`);
   }
   if (kind === 'questions') {
@@ -47,7 +50,7 @@ function kindPart({ kind, decisionText, lastText, pending }) {
     // count is that set's other questions.
     const req = list.find((p) => p?.kind === 'questions');
     const qs = Array.isArray(req?.questions) ? req.questions : [];
-    const first = qs.find((q) => nonBlank(q?.question));
+    const first = qs.find((q) => shows(q?.question));
     if (!first) return FALLBACK;
     const more = qs.length > 1 ? ` (+${qs.length - 1} more)` : '';
     return excerpt(`asks: ${first.question}`, EXCERPT_MAX - more.length) + more;
