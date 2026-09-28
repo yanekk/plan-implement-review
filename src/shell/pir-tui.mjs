@@ -189,7 +189,8 @@ export function buildListFrame(dashboard, ui = initialUi(), { columns = DEFAULT_
     '  ' + pad('SLUG', COL.slug) + pad('TYPE', COL.type) + pad('STATE', COL.state) + pad('REPO', repoCol) + pad('PROGRESS', COL.progress) + 'WK',
     'dim',
   );
-  const rowLine = (v, i) => {
+  const rowLine = (v, i) => withHit(rowSpans(v, i), 'run', i);
+  const rowSpans = (v, i) => {
     const selected = i === ui.sel;
     // A run is "live" only while running; a non-running run's slug is dimmed so the eye lands on the
     // active ones. The state colour lives on the state cell, separately, so both signals show at once.
@@ -232,6 +233,23 @@ export function buildListFrame(dashboard, ui = initialUi(), { columns = DEFAULT_
   if (ui.note) lines.push(lineOf(ui.note, 'dim'));
   lines.push(footerLine('list', ui, rows));
   return lines;
+}
+
+// withHit(line, kind, index) → the same span array, tagged with the row it paints (mouse-navigation §3.3),
+// so a click or a hover on that screen line knows which run, task or step it lands on. The property is
+// non-enumerable: whole-frame deepStrictEqual asserts compare own enumerable keys, and a frame's visible
+// text and shape stay exactly what they were for every existing caller.
+function withHit(line, kind, index) {
+  Object.defineProperty(line, 'hit', { value: { kind, index }, enumerable: false, configurable: true, writable: true });
+  return line;
+}
+
+// hitAt(frame, y) → the { kind, index } of the row painted on frame line y, or null for a line that is not
+// a row (title, header, markers, blanks, notes, counts, footer) or a y outside the frame. A frame line's
+// index is its screen row (§3.3), so y is the pointer's zero-based screen row.
+export function hitAt(frame, y) {
+  if (!Array.isArray(frame) || !Number.isInteger(y) || y < 0) return null;
+  return frame[y]?.hit ?? null;
 }
 
 // The get-started line under the box (dashboard-plan-box §2.7): the box is right below it, so it points there.
@@ -408,9 +426,13 @@ export function buildWatchFrame(view, { now, spinnerChar = SPINNER[0], ui = init
     // every other line is.
     const taskCount = rowEntries(snap.runState).length;
     const selLine = taskCount > 0 ? 1 + Math.max(0, Math.min(ui.taskSel ?? 0, taskCount - 1)) : -1;
+    // Line i (1..n) of the block is rowEntries[i - 1], so it carries that index as its hit (mouse-navigation
+    // §3.3); the separator line is never selected (moveRow), so it carries none.
+    const entries = rowEntries(snap.runState);
     watchDisplayLines(snap, { now, spinnerChar: spin }).forEach((l, i) => {
-      if (i === selLine && l.text.startsWith('  ')) lines.push([span('▎ ', 'selected'), span(l.text.slice(2), l.style)]);
-      else lines.push([span(l.text, l.style)]);
+      const line = i === selLine && l.text.startsWith('  ') ? [span('▎ ', 'selected'), span(l.text.slice(2), l.style)] : [span(l.text, l.style)];
+      const entry = i >= 1 && i <= taskCount ? entries[i - 1] : null;
+      lines.push(entry && !entry.separator ? withHit(line, 'task', i - 1) : line);
     });
     // The stale marker for a run that has ended (§2.4) — shown ONLY when there is a real frozen frame
     // above it. Red for crashed (something went wrong), dim for a clean finished/stopped end.
@@ -477,7 +499,7 @@ export function buildPlanWatchFrame(view, { now, spinnerChar = SPINNER[0], ui = 
   d.rows.forEach((r, i) => {
     const glyph = r.kind === 'active' ? (alive ? spinnerChar : '·') : STEP_GLYPH[r.kind];
     const text = `${glyph} ${r.id.padEnd(8)} ${r.role.padEnd(12)} ${r.text.padEnd(30)} ${fmtClock(r.clock)}`.replace(/\s+$/, '');
-    lines.push([span(i === sel ? '▎ ' : '  ', i === sel ? 'selected' : null), span(text, STEP_STYLE[r.kind] ?? null)]);
+    lines.push(withHit([span(i === sel ? '▎ ' : '  ', i === sel ? 'selected' : null), span(text, STEP_STYLE[r.kind] ?? null)], 'step', i));
   });
   lines.push([]);
 

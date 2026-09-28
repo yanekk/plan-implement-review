@@ -27,6 +27,7 @@ import {
   followStep,
   buildLandingFrame,
   FOLLOW_LINE,
+  hitAt,
 } from './pir-tui.mjs';
 import { FrameView, SGR, SELECTED_BG, clipSpans } from './pir-view.mjs';
 import { visibleWidth } from '@earendil-works/pi-tui';
@@ -1688,4 +1689,125 @@ test('box: a typed key disarms a half-pressed chord; the next press only arms, a
   term.press('\x1b'); await settle();
   term.press('\x1b'); await settle();
   await done;
+});
+
+// --- row hits (mouse-navigation T02, DESIGN §3.3) ---------------------------------------------------
+
+// Every line's hit, as [lineIndex, hit] pairs, so a test states exactly which lines are rows.
+const hitsOf = (frame) => frame.flatMap((l, y) => (l.hit ? [[y, l.hit]] : []));
+const lineWith = (frame, substr) => frame.findIndex((l) => l.map((s) => s.text).join('').includes(substr));
+
+test('list, no box: each run row carries its index; title, header, counts and footer carry none', () => {
+  const frame = buildListFrame(buildDashboard(VIEWS), initialUi());
+  const dash = buildDashboard(VIEWS);
+  const hits = hitsOf(frame);
+  assert.equal(hits.length, VIEWS.length);
+  for (const [y, hit] of hits) {
+    assert.equal(hit.kind, 'run');
+    assert.ok(frameText([frame[y]]).includes(dash.rows[hit.index].slug), `line ${y} paints row ${hit.index}`);
+  }
+  for (const s of ['runs on this machine', 'SLUG', '4 runs', 'esc quit']) assert.equal(frame[lineWith(frame, s)].hit, undefined, s);
+  assert.equal(hitAt(frame, lineWith(frame, 'SLUG')), null);
+  assert.deepEqual(hitAt(frame, hits[0][0]), { kind: 'run', index: 0 });
+  // The hit is not enumerable, so a whole-frame deepEqual against plain arrays still holds.
+  assert.deepEqual(Object.keys(frame[hits[0][0]]), frame[hits[0][0]].map((_, i) => String(i)));
+});
+
+test('list windowed by a budget: visible rows carry their true indices, markers and spacers none', () => {
+  const dash = buildDashboard(manyViews(20));
+  const frame = buildListFrame(dash, { ...initialUi(), sel: 10 }, { rows: 8 });
+  const hits = hitsOf(frame);
+  assert.ok(hits.length > 0);
+  for (const [y, hit] of hits) {
+    assert.equal(hit.kind, 'run');
+    assert.match(frameText([frame[y]]), new RegExp(`run-${String(hit.index).padStart(2, '0')}`), `line ${y} carries its true index`);
+  }
+  const indices = hits.map(([, h]) => h.index);
+  assert.ok(indices.includes(10), 'the selected row is hit-tagged');
+  assert.deepEqual(indices, [...indices].sort((a, b) => a - b).map((_, i) => indices[0] + i), 'consecutive rows');
+  for (const m of ['↑', '↓']) {
+    const y = lineWith(frame, `${m} `);
+    assert.ok(y >= 0, `the ${m} marker shows`);
+    assert.equal(hitAt(frame, y), null);
+  }
+  assert.equal(hitAt(frame, lineWith(frame, '20 runs')), null);
+});
+
+test('an empty list has no hit, in either form', () => {
+  assert.deepEqual(hitsOf(buildListFrame(buildDashboard([]), initialUi())), []);
+  assert.deepEqual(hitsOf(buildListFrame(buildDashboard([]), initialUi(), { rows: 8 })), []);
+});
+
+test('a list with a ready-to-merge row (wider columns) still tags every run row', () => {
+  const views = [
+    { slug: 'done-run', state: 'running', repo: 'r', progress: { done: 2, total: 2 }, workers: 0, snap: { runState: { tasks: [], handoff: { state: 'ready' } } } },
+    ...VIEWS,
+  ];
+  const dash = buildDashboard(views);
+  assert.ok(dash.rows.some((v) => v.display === 'ready-to-merge'), 'the fixture reads ready-to-merge');
+  const hits = hitsOf(buildListFrame(dash, initialUi()));
+  assert.deepEqual(hits.map(([, h]) => h.index), dash.rows.map((_, i) => i));
+});
+
+test('live view: task i carries { task, i }; summary, stale note and log tail carry none; the bar keeps its hit', () => {
+  const run = tasksRun(T12_TASKS, { state: 'crashed', record: { repo: 'repo', slug: 'plan', controlDir: '/c' } });
+  const frame = buildWatchFrame(run, { now: NOW, ui: { ...initialUi(), view: 'watch', taskSel: 1 }, logTail: ['boom'] });
+  const hits = hitsOf(frame);
+  assert.deepEqual(hits.map(([, h]) => h), T12_TASKS.map((_, i) => ({ kind: 'task', index: i })));
+  T12_TASKS.forEach((t, i) => assert.match(frameText([frame[hits[i][0]]]), new RegExp(t.id)));
+  const [selY] = hits[1];
+  assert.equal(frame[selY][0].text, '▎ ', 'the selected row keeps its bar');
+  assert.equal(frame[selY][0].style, 'selected');
+  assert.equal(hitAt(frame, 2), null, 'the summary line');
+  for (const s of ['this frame is stale', 'last lines of run.log', 'boom', 'full log']) assert.equal(hitAt(frame, lineWith(frame, s)), null, s);
+});
+
+test('live view with the coordinator agent and a helper: the separator has no hit, the agent and helper rows do', () => {
+  const runState = {
+    branch: 'pir/plan',
+    ceiling: 2,
+    tasks: T12_TASKS,
+    coordinator: { id: 's', live: true, logPath: null, state: 'up', holding: 0 },
+    helpers: [{ id: 'tests-fix', slug: 'fix-red-tests', helper: true, deps: [], done: false, phase: 'building', since: NOW - 3000, worker: { id: 'w-fix', live: true } }],
+  };
+  const run = tasksRun(T12_TASKS, { snap: { runState } });
+  const frame = buildWatchFrame(run, { now: NOW, ui: { ...initialUi(), view: 'watch', taskSel: 0 } });
+  // Entries: T01 T02 T03, separator (3), agent (4), tests-fix (5). Block line i+1 is entry i, block starts at 2.
+  const hits = hitsOf(frame);
+  assert.deepEqual(hits.map(([, h]) => h.index), [0, 1, 2, 4, 5]);
+  assert.equal(hitAt(frame, 2 + 1 + 3), null, 'the separator line');
+  assert.match(frameText([frame[2 + 1 + 4]]), /coordinator agent/);
+  assert.deepEqual(hitAt(frame, 2 + 1 + 4), { kind: 'task', index: 4 });
+  assert.match(frameText([frame[2 + 1 + 5]]), /tests-fix/);
+  assert.deepEqual(hitAt(frame, 2 + 1 + 5), { kind: 'task', index: 5 });
+});
+
+test('planning steps view: step i carries { step, i }; the go question and its keys carry none', () => {
+  const running = stepsRun({
+    state: 'running', outcome: null, step: 'plan',
+    steps: [
+      { id: 'plan', phase: 'asking', since: NOW - 60_000, stoppedAt: NOW - 20_000, asking: 'questions', worker: { id: 'p1', live: true } },
+      { id: 'review', phase: 'pending', worker: null },
+      { id: 'build', phase: 'pending', worker: null },
+    ],
+  });
+  for (const [frame, what] of [
+    [buildWatchFrame(running, { now: NOW, ui: { ...initialUi(), view: 'watch', taskSel: 0 } }), 'without the go'],
+    [buildWatchFrame(stepsRun(), { now: NOW, ui: { ...initialUi(), view: 'watch', taskSel: 2 }, progress: PROGRESS_3 }), 'with the go'],
+  ]) {
+    const hits = hitsOf(frame);
+    assert.deepEqual(hits.map(([, h]) => h), [0, 1, 2].map((index) => ({ kind: 'step', index })), what);
+    ['plan', 'review', 'build'].forEach((id, i) => assert.match(frameText([frame[hits[i][0]]]), new RegExp(id), what));
+  }
+  const go = buildWatchFrame(stepsRun(), { now: NOW, ui: { ...initialUi(), view: 'watch' }, progress: PROGRESS_3 });
+  for (const s of ['Start the parallel build now?', '↵ Start the build', '↵ start · n not now']) assert.equal(hitAt(go, lineWith(go, s)), null, s);
+});
+
+test('hitAt: null for a negative y, a y past the end, a non-integer y, and a line without a hit', () => {
+  const frame = buildListFrame(buildDashboard(VIEWS), initialUi());
+  assert.equal(hitAt(frame, -1), null);
+  assert.equal(hitAt(frame, frame.length), null);
+  assert.equal(hitAt(frame, 1.5), null);
+  assert.equal(hitAt(frame, 0), null);
+  assert.equal(hitAt(null, 0), null);
 });
