@@ -32,9 +32,9 @@ import {
   underMultiplexer,
   defaultCopy,
 } from './pir-tui.mjs';
-import { FrameView, SGR, SELECTED_BG, HOVER_LIFT, clipSpans, paintLine } from './pir-view.mjs';
+import { FrameView, SGR, SELECTED_BG, HOVER_ASKING, HOVER_LIFT, clipSpans, paintLine } from './pir-view.mjs';
 import { createScreenModel } from './conversation-rig.mjs';
-import { BASIC_HOVER_LIFT, MOCHA_HOVER_LIFT, MOCHA_SGR } from './palette.mjs';
+import { BASIC_HOVER_ASKING, BASIC_HOVER_LIFT, MOCHA_HOVER_ASKING, MOCHA_HOVER_LIFT, MOCHA_SGR } from './palette.mjs';
 import { visibleWidth } from '@earendil-works/pi-tui';
 import { buildDashboard, initialUi } from '../core/dashboard.mjs';
 import { buildDisplay } from '../core/display.mjs';
@@ -598,7 +598,7 @@ const RESET_RE = /\x1b\[0m/;
 
 // Hover (mouse-navigation §2.2, T03). The test command sets NO_COLOR, so SGR is the basic table; the
 // 24-bit case is reached by passing the Mocha table to paintLine explicitly.
-const MOCHA_PAL = { sgr: MOCHA_SGR, lift: MOCHA_HOVER_LIFT };
+const MOCHA_PAL = { sgr: MOCHA_SGR, lift: MOCHA_HOVER_LIFT, asking: MOCHA_HOVER_ASKING };
 
 test('paintLine: a hovered plain line gains bold, with its text and clipping unchanged', () => {
   const row = [{ text: 'alpha ', style: null }, { text: '● running', style: 'running' }, { text: ' tail', style: 'head' }];
@@ -619,6 +619,18 @@ test('paintLine: a hovered dim span is lifted — Mocha subtext1 bold on 24-bit,
   assert.equal(HOVER_LIFT, BASIC_HOVER_LIFT, 'the module paints with the basic lift under NO_COLOR');
   // A non-dim span keeps its colour, bold, on the 24-bit table too.
   assert.equal(paintLine([{ text: 'ok', style: 'running' }], 10, true, { hovered: true, palette: MOCHA_PAL }), `\x1b[1m${MOCHA_SGR.running}ok\x1b[0m`);
+});
+
+// T08 drill: a row asking the person is amber bold throughout, so bold alone showed no hover on it; the user
+// chose a brighter amber. `your-go` is the same amber and brightens the same way.
+test('paintLine: a hovered asking span turns the brighter amber, on both tables; other spans as before', () => {
+  assert.equal(HOVER_ASKING, BASIC_HOVER_ASKING, 'the module paints with the basic amber under NO_COLOR');
+  const row = [{ text: '  ● T02  ', style: 'asking' }, { text: '0:05', style: 'dim' }, { text: ' ok', style: 'running' }];
+  assert.equal(paintLine(row, 20, true, { hovered: true }), `${BASIC_HOVER_ASKING}  ● T02  \x1b[0m${BASIC_HOVER_LIFT}0:05\x1b[0m\x1b[1m${SGR.running} ok\x1b[0m`);
+  assert.equal(paintLine(row, 20, true, { hovered: true, palette: MOCHA_PAL }), `${MOCHA_HOVER_ASKING}  ● T02  \x1b[0m${MOCHA_HOVER_LIFT}0:05\x1b[0m\x1b[1m${MOCHA_SGR.running} ok\x1b[0m`);
+  assert.notEqual(paintLine(row, 20, true, { hovered: true }), paintLine(row, 20, true), 'hover shows on an asking row');
+  assert.equal(paintLine([{ text: 'go', style: 'your-go' }], 10, true, { hovered: true }), `${BASIC_HOVER_ASKING}go\x1b[0m`);
+  assert.equal(paintLine(row, 20, false, { hovered: true }), paintLine(row, 20, false), 'colour off: no hover');
 });
 
 test('paintLine: hovered and selected is exactly the selected band, byte for byte', () => {
@@ -2043,6 +2055,31 @@ test('mouse: a handler that returns undefined for press keeps selection working,
   screen.close();
 });
 
+// T08 drill: a double click on a row whose first click left the screen unchanged (a task with no worker)
+// became pi-tui's word selection, flashed `Copied!` and replaced the clipboard. A click the handler marks
+// `rowClick` resets pi-tui's double-click count, so the second is a click too (§2.1); an unmarked handled
+// click keeps pi-tui's word selection, which is what the control half shows.
+test('mouse: a double click on a row is two clicks and copies nothing; unmarked, the second is a word copy', async () => {
+  for (const [rowClick, clicks, copied] of [[true, 2, []], [false, 1, ['alpha']]]) {
+    const { term, copies, screen } = mouseScreen();
+    let n = 0;
+    screen.listen(() => {}, () => {}, (ev) => {
+      if (ev.type !== 'click') return undefined;
+      n++;
+      return rowClick ? { handled: true, rowClick: true } : { handled: true };
+    });
+    screen.paint([[{ text: 'alpha line', style: null }]]);
+    for (let i = 0; i < 2; i++) {
+      term.press(sgr(0, 2, 1));
+      term.press(sgr(0, 2, 1, 'm'));
+      await flush();
+    }
+    assert.equal(n, clicks, `rowClick ${rowClick}: clicks delivered`);
+    assert.deepEqual(copies, copied, `rowClick ${rowClick}: what was copied`);
+    screen.close();
+  }
+});
+
 test('mouse: process exit writes the mouse-off restore once; after close() nothing is written', () => {
   const { tty, proc, screen } = mouseScreen();
   proc.emit('exit', 0);
@@ -2052,7 +2089,7 @@ test('mouse: process exit writes the mouse-off restore once; after close() nothi
   proc.emit('exit', 0);
   proc.emit('exit', 0);
   const written = tty.text().slice(before);
-  assert.equal(written, `${MOUSE_OFF}\x1b[?7h\x1b[?1049l\x1b[?25h`, 'mouse off, autowrap on, alternate screen left, cursor shown');
+  assert.equal(written, `${MOUSE_OFF}\x1b[?2004l\x1b[?7h\x1b[?1049l\x1b[?25h`, 'mouse off, bracketed paste off, autowrap on, alternate screen left, cursor shown');
   assert.deepEqual(proc.exits, [], 'an exit listener does not call exit itself');
 
   const other = mouseScreen();

@@ -12,9 +12,9 @@ cell also fixes the over-budget cell they walk past.
 
 **Plan reviewed:** 2026-09-28 — 6 fixed, 6 decided with the user
 
-**Status:** Planned 2026-09-28, amended the same day for the coordinator agent's rows (`7c59312`). Nothing built. The spike in `prototype/` was run by the user and approved.
+**Status:** Planned 2026-09-28, amended the same day for the coordinator agent's rows (`7c59312`). T01–T07 done; T08 awaiting review. The spike in `prototype/` was run by the user and approved.
 **Last updated:** 2026-09-28
-**Next `pir-work` will:** implement T01, the first ⬜ with no dependencies.
+**Next `pir-work` will:** review T08.
 
 ## Tasks
 
@@ -30,10 +30,10 @@ done · ⛔ blocked, needs a human.
 | T05 | list-clicks | T02, T03, T04 | ✅ | |
 | T06 | conversation-wheel | T04 | ✅ | |
 | T07 | mouse-docs | T05, T06 | ✅ | |
-| T08 | mouse-drill | T05, T06, T07 | ⬜ | |
+| T08 | mouse-drill | T05, T06, T07 | 🔍 | Drill at three sizes, worker-driven. Fixed: SIGTERM restore adds `?2004l`; a double click on an unchanged row no longer copies (`rowClick` resets pi-tui `lastClick`); rig `pbcopy` shim. User chose brighter amber hover on asking rows. Rig `fgAt`. Eight new tests. Deviation: `./install.sh` not run (parallel), see Blocked. |
 
-**Review queue:** *(empty)*
+**Review queue:** T08
 
 ## Blocked on the user
 
-Nothing yet.
+- Run `./install.sh` once `pir/mouse-navigation` is merged to `main` and no run is live (T08, DESIGN §5).

@@ -261,7 +261,7 @@ cancels an armed `Ctrl+R/S/X` chord and steps over the separator; on the `starti
 screen it does nothing.
 
 Hover marks the row under the pointer, bold with its dim text lifted, so a click's target is visible
-before the click. The selected row keeps its grey band and shows no extra hover mark. Hover follows the
+before the click; a row already amber bold (`asking you`) turns a brighter amber instead. The selected row keeps its grey band and shows no extra hover mark. Hover follows the
 screen line, not the run: after a refresh reorders the list, the row now under the pointer is the lit
 one. The terminal does not report the pointer leaving the window, so the last row stays lit until the
 pointer moves inside it again. With colour off (`NO_COLOR`) there is no hover. Under tmux, screen or

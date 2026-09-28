@@ -8,7 +8,7 @@
 
 import { sliceByColumn, visibleWidth } from '@earendil-works/pi-tui';
 
-import { hoverLiftFor, paletteFor } from './palette.mjs';
+import { hoverAskingFor, hoverLiftFor, paletteFor } from './palette.mjs';
 
 // The style→colour (SGR) map, from palette.mjs: Catppuccin Mocha on a 24-bit terminal, the basic
 // 16-colour codes otherwise. It carries TWO vocabularies. The first is render.mjs's own row/footer keys,
@@ -25,6 +25,8 @@ export const SELECTED_BG = palette.selectedBg;
 
 // The hovered row's lift for dim spans (mouse-navigation §2.2), from the same table as SGR.
 export const HOVER_LIFT = hoverLiftFor(process.env);
+// The hovered row's brighter amber for an asking span, which bold alone cannot lift (T08).
+export const HOVER_ASKING = hoverAskingFor(process.env);
 const BOLD = '\x1b[1m';
 
 // Clip a line's spans to at most `width` terminal columns across the whole line, so a multi-span row
@@ -58,10 +60,10 @@ export function clipSpans(spans, width) {
 // keeps colour from being the only sign of the selection (docs/detached-runs.md).
 //
 // `hovered` marks the row under the pointer (mouse-navigation §2.2): every span bold, a dim span lifted
-// to HOVER_LIFT. The selected band wins over hover — two cues on one row read as noise — and with colour
+// to HOVER_LIFT, an asking (amber bold) span brightened to HOVER_ASKING. The selected band wins over hover — two cues on one row read as noise — and with colour
 // off there is no hover, since bold is painted only with colour. `palette` ({ sgr, lift }) defaults to
 // this terminal's table; the tests pass the 24-bit one, which NO_COLOR keeps out of the module-level SGR.
-export function paintLine(spans, width, colour = true, { hovered = false, palette: pal = { sgr: SGR, lift: HOVER_LIFT } } = {}) {
+export function paintLine(spans, width, colour = true, { hovered = false, palette: pal = { sgr: SGR, lift: HOVER_LIFT, asking: HOVER_ASKING } } = {}) {
   const cols = Math.max(1, width | 0);
   if (colour && spans[0]?.style === 'selected') return paintSelected(spans, cols);
   if (colour && hovered) return paintHovered(spans, cols, pal);
@@ -72,11 +74,12 @@ export function paintLine(spans, width, colour = true, { hovered = false, palett
 
 // A span "paints dim" when its code is the table's dim code — 'dim', 'ended', 'idle', 'hint', 'bar-idle'
 // on both tables — the same test paintSelected brightens by.
-function paintHovered(spans, cols, { sgr, lift }) {
+function paintHovered(spans, cols, { sgr, lift, asking }) {
   return clipSpans(spans, cols)
     .map(({ text, style }) => {
       const code = style ? sgr[style] : undefined;
       if (code && code === sgr.dim) return `${lift}${text}${RESET}`;
+      if (asking && code && code === sgr.asking) return `${asking}${text}${RESET}`;
       return `${BOLD}${code ?? ''}${text}${RESET}`;
     })
     .join('');

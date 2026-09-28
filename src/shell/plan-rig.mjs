@@ -16,11 +16,14 @@
 //   - PIR_REPOS is the rig's root, so the dashboard's new-plan box lists the scratch `repo` (its `home` and
 //     `bin` siblings are not git repos) and its scan never reads the person's real folders
 //     (dashboard-plan-box DESIGN §4, §5.2).
+//   - The shim folder also holds a `pbcopy` that writes what it is given to {root}/bin/clipboard.txt, so
+//     pir's copy-on-select (defaultCopy runs `pbcopy` by PATH on macOS, mouse-navigation §2.5) never
+//     reaches the person's real clipboard; a drag or a double click in a pty test did (T08 drill).
 //   - The fake's single-script variables are dropped, so an outer test's setting cannot leak in. A stale
 //     PARALLEL_ALLOW_HERE is dropped too, harmlessly: its guard is gone (dashboard-plan-box DESIGN §2.8).
 
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -138,12 +141,13 @@ function git(cwd, ...args) {
 }
 
 // startPlanRig({ into, scripts, keep }) → { root, repoDir, home, env, shimDir, scriptsFile, received,
-//   slug, cleanup(), openScreen(opts), driveScreen(opts) }
+//   clipboard, slug, cleanup(), openScreen(opts), driveScreen(opts) }
 //
 // `into` is an empty or new folder to build in (else a fresh temp folder); the rig lays out
 //   {root}/repo   a git repo on `main`: README.md and package.json (test `node -e 0`), one commit
 //   {root}/home   PIR_HOME and HOME
-//   {root}/bin    the `claude` shim, its scripts file and the fake's received log / resume progress
+//   {root}/bin    the `claude` shim, its scripts file and the fake's received log / resume progress, and
+//                 the `pbcopy` shim with `clipboard.txt`, the last text it was given (absent until a copy)
 // Worktrees a run adds sit under repo/.claude/worktrees, so removing the root removes them too.
 // cleanup() deletes the root unless `keep`; idempotent. It does not stop programs a test started: a test
 // that launches a run stops it first, as pir's own stop would.
@@ -189,6 +193,9 @@ export function startPlanRig({ into = null, scripts = 'happy', keep = false, bas
   writeFileSync(scriptsFile, JSON.stringify(entries));
   const received = join(shimDir, 'fake-received.ndjson');
   writeClaudeShim(shimDir, { scriptsFile, received });
+  const clipboard = join(shimDir, 'clipboard.txt');
+  writeFileSync(join(shimDir, 'pbcopy'), `#!/bin/sh\ncat > ${q(clipboard)}\n`);
+  chmodSync(join(shimDir, 'pbcopy'), 0o755);
   const env = rigEnv({ root, home, shimDir, base: baseEnv });
 
   let cleaned = false;
@@ -206,6 +213,7 @@ export function startPlanRig({ into = null, scripts = 'happy', keep = false, bas
     shimDir,
     scriptsFile,
     received,
+    clipboard,
     slug: scripts === 'taken-slug' ? PLAN_RIG_SLUG_2 : committedPlan ? committedPlan[0] : PLAN_RIG_SLUG,
     cleanup,
     openScreen: (opts = {}) => openScreenRaw({ cwd: repoDir, env, ...opts }),
