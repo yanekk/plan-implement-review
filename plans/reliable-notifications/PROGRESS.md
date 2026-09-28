@@ -13,9 +13,9 @@ cell also fixes the over-budget cell they walk past.
 **Plan reviewed:** 2026-09-28 — 8 fixed, 4 decided with the user (re-review after the redesign)
 
 **Status:** Planned 2026-09-27, redesigned 2026-09-28 for the coordinator agent, re-reviewed 2026-09-28.
-Nothing built.
+All nine tasks built and reviewed.
 **Last updated:** 2026-09-28
-**Next `pir-work` will:** implement T01 (T01–T05 have no dependency).
+**Next `pir-work` will:** nothing; the plan is complete.
 
 ## Tasks
 
@@ -32,9 +32,9 @@ done · ⛔ blocked, needs a human.
 | T06 | notify-command | T02 | ✅ | |
 | T07 | coordinator-alerts | T01, T02, T04, T05 | ✅ | |
 | T08 | notify-live | T03, T06, T07 | ✅ | |
-| T09 | docs | T08 | 🔍 | Docs and README for phone alerts; `npm test` green, no new tests. Deviation: task said clear is Android-only; T08 saw it work on the iPhone, so docs say so. Setup leads with typing the topic (no QR scanner in iOS ntfy). Command list got `pir notify` in the prose line, not the step table. |
+| T09 | docs | T08 | ✅ | Review clean, no fix commit. Every doc and README claim checked against notify.mjs, ntfy.mjs, notify-config.mjs, pir.mjs and coordinate.mjs (prefixes, 150 cut, 15 min reminder, 20 s link wait, 5 s/30 s retries, end-alert gating, presence env, planning excluded) and T08 FINDINGS. Anchors resolve. `npm test` green. Recorded deviations accepted. |
 
-**Review queue:** T09
+**Review queue:** *(empty)*
 
 ## Blocked on the user
 
