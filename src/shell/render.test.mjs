@@ -379,3 +379,117 @@ test('the end gate running paints a ticking header and a testing footer, not the
   assert.equal(lines.at(-1), "⠧ all 1 task(s) merged · running the plan's setup and tests on pir/demo · 1:12");
   assert.ok(!lines.some((l) => l.startsWith('✓')), 'no finished header while the tests run');
 });
+
+// The coordinator agent (pir-coordinator T06): its held rows, and the end of a run with it.
+test('formatLines: `asking coordinator` rows and the agent hand-off lines (ready, red, preparing)', () => {
+  const t = (over) => ({ id: 'T01', slug: 'one', deps: [], done: false, phase: null, since: null, doneMs: null, question: null, ...over });
+  const held = formatLines(buildDisplay({ branch: 'pir/demo', ceiling: 2, tasks: [t({ phase: 'asking', holder: 'coordinator' })] }, { now: 0 }));
+  assert.match(held[1], /● T01 {2}one +asking coordinator · a question/);
+  assert.ok(!held.some((l) => /asking you/.test(l)), 'the person is not asked');
+
+  const done = [t({ done: true })];
+  const ready = formatLines(buildDisplay({ branch: 'pir/demo', ceiling: 2, complete: true, readyToMerge: true, tasks: done, handoff: { state: 'ready', reportPath: 'plans/demo/REPORT.md' } }, { now: 0 }));
+  assert.deepEqual(ready.slice(-2), ['✔ ready to merge · git merge pir/demo', '  report: plans/demo/REPORT.md']);
+
+  const red = formatLines(
+    buildDisplay({ branch: 'pir/demo', ceiling: 2, complete: true, tasks: done, testsReason: { reason: 'test `npm test` exited 1', logPath: '/c/tests.log' }, handoff: { state: 'red', reportPath: 'plans/demo/REPORT.md' } }, { now: 0 }),
+  );
+  assert.deepEqual(red.slice(-3), ['✗ not ready · tests red on pir/demo — no merge offered', '  test `npm test` exited 1 · output: /c/tests.log', '  report: plans/demo/REPORT.md']);
+
+  const prep = formatLines(buildDisplay({ branch: 'pir/demo', ceiling: 2, tasks: done, handoff: { state: 'preparing', reportPath: null } }, { now: 0 }), { spinnerChar: '*' });
+  // Short enough to fit 80 columns whole; the T07 drill found the longer wording cut to `writing the repor`.
+  assert.equal(prep.at(-1), '* all 1 task(s) merged · preparing: syncing main, writing the report');
+  assert.ok(prep.at(-1).length <= 78, 'fits an 80-column window with the view\'s margin');
+});
+
+// pir-coordinator T07 drill: `asking coordinator · allow a command?` is 37 columns, past the 24 the label
+// column had, and pushed that row's clock one space after its label while the others stayed in line.
+test('every row\'s clock lines up when one label is longer than the column', () => {
+  const t = (id, over) => ({ id, slug: 'one', deps: [], done: false, phase: 'building', since: 0, doneMs: null, question: null, ...over });
+  const lines = formatLines(
+    buildDisplay({ branch: 'pir/demo', ceiling: 3, tasks: [t('T01', { phase: 'asking', holder: 'coordinator', asking: 'permission' }), t('T02'), t('T03', { phase: 'asking', holder: 'person', asking: 'questions' })] }, { now: 65000 }),
+    { spinnerChar: '*' },
+  );
+  const rows = lines.slice(1, 4);
+  assert.match(rows[0], /asking coordinator · allow a command\?/);
+  const clockAt = rows.map((r) => r.lastIndexOf('1:05'));
+  assert.ok(clockAt[0] > 0, rows.join('\n'));
+  assert.deepEqual(clockAt, [clockAt[0], clockAt[0], clockAt[0]], `the clocks line up:\n${rows.join('\n')}`);
+  // Short labels keep the column they always had.
+  const plain = formatLines(buildDisplay({ branch: 'pir/demo', ceiling: 1, tasks: [t('T01')] }, { now: 65000 }), { spinnerChar: '*' });
+  assert.equal(plain[1], `  * T01  ${'one'.padEnd(22)} ${'building'.padEnd(24)} 1:05`);
+});
+
+// An end-of-run helper's row (pir-coordinator T11): its id is wider than a task's, so the id column
+// widens with it and every row's slug still starts in one column; the footer points at it; nothing is
+// wider than 80 columns even with the longest label.
+test('a helper row lines up with the task rows and its asking footer names it (T11)', () => {
+  const d = buildDisplay(
+    {
+      branch: 'pir/demo',
+      ceiling: 2,
+      tasks: [{ id: 'T01', slug: 'stop-promoting', deps: [], done: true, doneMs: 6400 }],
+      helpers: [{ id: 'tests-fix', slug: 'fix-red-tests', helper: true, deps: [], done: false, phase: 'building', asking: 'permission', holder: 'coordinator', since: NOW - 3000 }],
+      handoff: { state: 'preparing' },
+    },
+    { now: NOW },
+  );
+  const lines = formatLines(d, { spinnerChar: '⠋' });
+  const t01 = lines.find((l) => l.includes('T01'));
+  const fix = lines.find((l) => l.includes('tests-fix'));
+  assert.equal(t01.indexOf('stop-promoting'), fix.indexOf('fix-red-tests'), 'slugs in one column');
+  assert.match(fix, /tests-fix fix-red-tests +asking coordinator · allow a command\? +0:03$/);
+  for (const l of lines) assert.ok([...l].length <= 80, `wider than 80: ${l}`);
+
+  const asking = formatLines(
+    buildDisplay({ branch: 'pir/demo', ceiling: 2, tasks: [{ id: 'T01', slug: 'x', deps: [], done: true }], helpers: [{ id: 'main-sync', slug: 'resolve-main-merge', helper: true, deps: [], done: false, phase: 'asking', holder: 'person' }] }, { now: NOW }),
+  );
+  assert.ok(asking.includes('● main-sync resolve-main-merge — asking you; open it (→) to answer'), asking.join('\n'));
+});
+
+// The coordinator agent's pinned row (pir-coordinator T12): a separator across the row width, then the
+// agent's row with its state where the tasks' labels are; neither widens the task columns.
+test('the separator and the agent row: order, width, alignment, no clock, style (T12)', () => {
+  const runState = {
+    branch: 'pir/demo',
+    ceiling: 2,
+    tasks: [
+      { id: 'T01', slug: 'config-loader', deps: [], done: true, doneMs: 240000 },
+      { id: 'T02', slug: 'api-routes', deps: [], done: false, phase: 'building', since: NOW - 120000 },
+    ],
+    coordinator: { id: 's', live: true, logPath: null, state: 'up', holding: 1 },
+    helpers: [{ id: 'main-sync', slug: 'resolve-main-merge', helper: true, deps: [], done: false, phase: 'building', since: NOW - 3000 }],
+  };
+  const lines = formatLines(buildDisplay(runState, { now: NOW }), { spinnerChar: '⠋' });
+  // summary, T01, T02, separator, agent, main-sync, blank footer
+  assert.match(lines[3], /^ {2}─+$/);
+  assert.equal(lines[4], `  ◆ ${'coordinator agent'.padEnd(9 + 1 + 22)} holding 1 question`);
+  assert.match(lines[5], /^ {2}⠋ main-sync resolve-main-merge/);
+  const t02 = lines[2];
+  assert.equal(lines[4].indexOf('holding'), t02.indexOf('building'), 'the state lines up with the task labels');
+  assert.equal([...lines[3]].length, [...lines[1]].length + 1, 'the separator spans a task row with a 4-column clock (+1 for a 5-column one)');
+  for (const l of lines) assert.ok([...l].length <= 80, `wider than 80: ${l}`);
+
+  // Given up: the idle style's wording, and its long label does not widen the task label column.
+  const gone = formatLines(buildDisplay({ ...runState, helpers: undefined, coordinator: { ...runState.coordinator, state: 'given-up', live: false } }, { now: NOW }), { spinnerChar: '⠋' });
+  assert.equal(gone[4], `  ◆ ${'coordinator agent'.padEnd(4 + 1 + 22)} given up · questions come to you`);
+  assert.equal(gone[2], `  ⠋ T02  ${'api-routes'.padEnd(22)} ${'building'.padEnd(24)} 2:00`);
+
+  // With no agent there is neither line.
+  const none = formatLines(buildDisplay({ ...runState, coordinator: null }, { now: NOW }), { spinnerChar: '⠋' });
+  assert.ok(!none.some((l) => l.includes('─') || l.includes('coordinator')), none.join('\n'));
+});
+
+test('the agent row and separator are painted in their styles on a colour TTY (T12)', () => {
+  const out = [];
+  const stream = { isTTY: true, columns: 80, rows: 24, write: (s) => out.push(s) };
+  const r = createRenderer({ stream, colour: true });
+  const base = { branch: 'b', ceiling: 1, tasks: [{ id: 'T01', slug: 'x', deps: [], done: true }] };
+  r.paint(buildDisplay({ ...base, coordinator: { id: 's', live: true, state: 'up', holding: 0 } }, { now: NOW }));
+  r.paint(buildDisplay({ ...base, coordinator: { id: 's', live: false, state: 'given-up' } }, { now: NOW }));
+  r.close();
+  const all = out.join('');
+  assert.match(all, /\x1b\[36m {2}◆ coordinator agent +on duty\x1b\[0m/, 'up: the active colour, never amber');
+  assert.match(all, /\x1b\[2m {2}◆ coordinator agent +given up · questions come to you\x1b\[0m/, 'given up: idle');
+  assert.match(all, /\x1b\[2m {2}─+\x1b\[0m/, 'the separator: idle');
+});

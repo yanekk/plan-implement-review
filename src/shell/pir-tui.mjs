@@ -21,9 +21,9 @@ import { join, resolve as resolvePath } from 'node:path';
 import { homedir } from 'node:os';
 import { readLogTail } from './commands.mjs';
 
-import { buildDisplay } from '../core/display.mjs';
+import { buildDisplay, rowEntries } from '../core/display.mjs';
 import { wrapLine } from '../core/text.mjs';
-import { buildDashboard, dashboardReducer, displayName, findOpen, goOpen, initialUi, isPlan, openTasks, planProgress, repinOpen, runKey } from '../core/dashboard.mjs';
+import { buildDashboard, dashboardReducer, displayName, findOpen, goOpen, initialUi, isPlan, openTasks, planProgress, repinOpen, runKey, moveRow } from '../core/dashboard.mjs';
 import { buildPlanDisplay } from '../core/plandisplay.mjs';
 import { styledLines } from './render.mjs';
 import { classifyRun } from '../core/runstate.mjs';
@@ -60,6 +60,10 @@ const DEFAULT_COLS = 80;
 // REPO_MAX: at 80 columns it gave up six to the label and TYPE (pir-plan-command §2.10), and a wider
 // terminal gives them back.
 const COL = { marker: 2, slug: 27, type: 6, state: 14, progress: 16, wk: 3 };
+const COL_BASE = COL;
+// While a row reads `● ready to merge` (pir-coordinator §2.10) STATE widens to fit it whole and SLUG gives
+// the three columns up; every other list keeps today's widths, so its rows cut labels where they always did.
+const COL_READY = { ...COL, slug: 24, state: 17 };
 const REPO_MIN = 12;
 const REPO_MAX = 24;
 function repoWidth(columns) {
@@ -106,6 +110,8 @@ function stateCell(state) {
       return { text: '● your go', style: 'your-go' };
     case 'asking-you':
       return { text: '● asking you', style: 'your-go' };
+    case 'ready-to-merge':
+      return { text: '● ready to merge', style: 'your-go' };
     case 'finished':
       return { text: '◌ finished', style: 'ended' };
     case 'crashed':
@@ -150,6 +156,8 @@ function footerLine(context, ui, rows = []) {
   // offer the stop; its note above says how it resumes, if it can (T14).
   if (context === 'steps-ended') return lineOf('↑↓ pick a step · → open it · ← back · esc quit', 'hint');
   if (context === 'watch') return lineOf('↑↓ pick a task · → open its worker · ← back · Ctrl+S Ctrl+S stop this run · esc quit', 'hint');
+  // A run with a coordinator agent offers `c` (pir-coordinator §2.8); the stop keeps its chord, shorter.
+  if (context === 'watch-agent') return lineOf('↑↓ task · → its worker · c coordinator · ← back · Ctrl+S Ctrl+S stop · esc quit', 'hint');
   return lineOf('↑↓ move · ↵ open · Ctrl+R resume · Ctrl+S stop · Ctrl+X remove · esc quit', 'hint');
 }
 
@@ -175,6 +183,7 @@ function footerLine(context, ui, rows = []) {
 export function buildListFrame(dashboard, ui = initialUi(), { columns = DEFAULT_COLS, rows: budget } = {}) {
   const repoCol = repoWidth(columns);
   const { rows = [], counts = { running: 0, finished: 0, crashed: 0, stopped: 0, waiting: 0, total: 0 } } = dashboard ?? {};
+  const COL = rows.some((v) => v.display === 'ready-to-merge') ? COL_READY : COL_BASE;
   const title = [span('pir', 'head'), span('  runs on this machine', 'dim')];
   const header = lineOf(
     '  ' + pad('SLUG', COL.slug) + pad('TYPE', COL.type) + pad('STATE', COL.state) + pad('REPO', repoCol) + pad('PROGRESS', COL.progress) + 'WK',
@@ -392,11 +401,12 @@ export function buildWatchFrame(view, { now, spinnerChar = SPINNER[0], ui = init
   } else {
     // A stale (non-running) frame freezes its spinner to a dot so it cannot read as still ticking.
     const spin = alive ? spinnerChar : '·';
-    // The block's lines 1..n are the task rows, in runState.tasks order (line 0 is the summary). The
+    // The block's lines 1..n are the task rows, in rowEntries order (line 0 is the summary): the plan's
+    // tasks, the separator and the coordinator agent's row (T12), then any end-of-run helper (T11). The
     // selected one carries the list's selected-row mark in place of its leading '  ' (painted as the grey
     // band, see paintLine), so this block is no longer byte-for-byte the coordinator's display, on purpose;
     // every other line is.
-    const taskCount = snap.runState?.tasks?.length ?? 0;
+    const taskCount = rowEntries(snap.runState).length;
     const selLine = taskCount > 0 ? 1 + Math.max(0, Math.min(ui.taskSel ?? 0, taskCount - 1)) : -1;
     watchDisplayLines(snap, { now, spinnerChar: spin }).forEach((l, i) => {
       if (i === selLine && l.text.startsWith('  ')) lines.push([span('▎ ', 'selected'), span(l.text.slice(2), l.style)]);
@@ -431,7 +441,7 @@ export function buildWatchFrame(view, { now, spinnerChar = SPINNER[0], ui = init
   lines.push([]);
   // Why the last → on a task row opened nothing (a task with no worker yet), dim above the hint.
   if (ui.note) note(ui.note, 'dim', '');
-  lines.push(footerLine('watch', ui));
+  lines.push(footerLine(snap?.runState?.coordinator?.id ? 'watch-agent' : 'watch', ui));
   return lines;
 }
 
@@ -539,6 +549,7 @@ const KEY_INTENTS = {
   right: 'open', // → opens the selected run, like Enter (user 2026-09-22)
   enter: 'enter', // opens, as → does, except on the go question, where it starts the build (§2.8)
   n: 'n', // `n` not now on the go question; unbound anywhere else
+  c: 'c', // a build's live view: open its coordinator agent's conversation (pir-coordinator §2.8)
   escape: 'quit',
   'ctrl+c': 'quit',
   'ctrl+s': 'ctrlS',
@@ -1016,6 +1027,8 @@ async function runTui({
     const idx = tasks.findIndex((t) => t.id === selectedTask.get(runId));
     if (idx >= 0) taskSel = idx;
     taskSel = Math.max(0, Math.min(taskSel, Math.max(0, tasks.length - 1)));
+    // The separator above the agent's row is never selected (T12): a clamp that lands on it moves off it.
+    if (tasks[taskSel]?.separator) taskSel = moveRow(tasks, taskSel, 1);
     ui = { ...ui, taskSel };
     if (tasks[taskSel]) selectedTask.set(runId, tasks[taskSel].id);
   }
@@ -1195,7 +1208,7 @@ async function runTui({
 
           const wasWatching = ui.view === 'watch';
           if (wasWatching) syncTask(dash);
-          const event = key === 'enter' || key === 'n' ? { type: 'key', key } : { type: key };
+          const event = key === 'enter' || key === 'n' || key === 'c' ? { type: 'key', key } : { type: key };
           const { ui: nextUi, intent } = dashboardReducer(ui, event, dash.rows);
           ui = nextUi;
           // Pin the selection to whatever run the cursor is now on, so the next refresh keeps it there.

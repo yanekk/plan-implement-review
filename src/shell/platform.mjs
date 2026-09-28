@@ -233,10 +233,13 @@ export function createPlatform({
   return {
     // spawn({ cwd, name, phase, note }) → id. The id is a uuid pir chose and passes as the session id,
     // so it is the worker's id everywhere (DESIGN §2.1). The opening instruction is the first user message.
-    spawn({ cwd, name, phase, note = null }) {
+    // `task` and `opening` are for a worker that holds no task of the plan — the end-of-run main-sync
+    // worker (pir-coordinator T05): its name does not parse to a task, so the label it reports under is
+    // given, and its opening instruction is the text given, not a stock skill's.
+    spawn({ cwd, name, phase, note = null, task: taskLabel = null, opening = null }) {
       if (!controlDir) throw new Error('spawn: the platform was built without a control folder');
-      const { task } = parseAgentName(name);
-      const text = openingInstruction(phase, task, note);
+      const task = taskLabel ?? parseAgentName(name).task;
+      const text = opening ?? openingInstruction(phase, task, note);
       claude ??= resolveClaudePath();
       const id = uuid();
       const logPath = nextLogPath(controlDir, task, phase);

@@ -1,6 +1,6 @@
 # Implementation plan
 
-10 tasks in 4 phases. Each has a file in [tasks/](tasks/) with its goal, the files it touches, the
+16 tasks in 4 phases. Each has a file in [tasks/](tasks/) with its goal, the files it touches, the
 interfaces it defines, and what "done" means.
 
 Track state in [PROGRESS.md](PROGRESS.md). Read [DESIGN.md](DESIGN.md) first.
@@ -65,6 +65,12 @@ T04 is the wirer for answering: it starts the agent in `coordinate.mjs`, briefs 
 | [T07](tasks/T07-coordinator-drill.md) | coordinator-drill | T06 |
 | [T08](tasks/T08-docs.md) | docs | T02, T04, T05, T06 |
 | [T09](tasks/T09-live-coordinator-check.md) | live-coordinator-check | T07, T08 |
+| [T10](tasks/T10-end-tests-fix.md) | end-tests-fix | T05; blocks T09 |
+| [T11](tasks/T11-end-helper-row.md) | end-helper-row | T06, T10; blocks T09 |
+| [T12](tasks/T12-coordinator-row.md) | coordinator-row | T06, T11 |
+| [T13](tasks/T13-hold-timeout.md) | hold-timeout | T04, T12; blocks T14 |
+| [T15](tasks/T15-answered-first-facts.md) | answered-first-facts | T13; blocks T14 |
+| [T14](tasks/T14-live-concurrent-check.md) | live-concurrent-check | T12, T13, T15 |
 
 At the end of phase 3 the feature is documented and seen working on a real run with the person's phone.
 
@@ -74,15 +80,16 @@ At the end of phase 3 the feature is documented and seen working on a real run w
 
 ```
 T00 → T01 → T03 → T04 → T05 → T06 → T07 → T09
+T00 → T01 → T03 → T04 → T05 → T06 → T11 → T12 → T13 → T15 → T14   (longest, since 2026-09-28)
 ```
 
 T02 is off the path and can run at any time before T08. T08 runs beside T07.
 
-Leaves: T09 only.
+Leaves: T09, T14. T12–T15 were added after T09 (2026-09-28): T12 → T13 → T15 → T14. T13 follows T12 because both change the row display; T15 follows T13 because both change `route()`.
 
 ## Parallel width
 
-10 tasks · longest dependency chain 8 · up to 2 could run at once (`analyzeParallelism`). Serial by nature: each part plugs
+16 tasks · longest dependency chain 11 · up to 3 could run at once (`analyzeParallelism`, 2026-09-28). Serial by nature: each part plugs
 into the one before it.
 
 ## Rough sizing
@@ -90,8 +97,8 @@ into the one before it.
 | Weight | Tasks |
 |---|---|
 | **Heavy** | T04, T05 |
-| **Medium** | T00, T01, T03, T06, T07, T09 |
-| **Light** | T02, T08 |
+| **Medium** | T00, T01, T03, T06, T07, T09, T13, T14 |
+| **Light** | T02, T08, T12, T15 |
 
 T04 and T05 change the live run's pass loop and its end; both are where a restart or a race will
 surface something the fake did not script.

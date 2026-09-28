@@ -47,7 +47,9 @@
       "Bash(rm -rf /tmp/pir-notify-t03)",
       "Bash(PIR_HOME=/tmp/pir-notify-t03 node src/shell/pir.mjs notify)",
       "Bash(PIR_NOTIFY_REMIND_MS=120000 node src/shell/harness/run.mjs notify-live --into /tmp/notify-live)",
-      "Bash(rm -rf /tmp/notify-live)"
+      "Bash(rm -rf /tmp/notify-live)",
+      "Bash(node src/shell/harness/run.mjs pir-coordinator-concurrent --into /tmp/pir-coordinator-concurrent)",
+      "Bash(rm -rf /tmp/pir-coordinator-concurrent)"
     ],
     "ask": [
       "Bash(npm i @earendil-works/pi-tui@0.87.1)",

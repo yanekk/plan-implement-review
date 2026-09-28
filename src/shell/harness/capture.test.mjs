@@ -359,3 +359,33 @@ test('no harness module calls `claude agents` or reads ~/.claude transcripts', (
     assert.doesNotMatch(src, /\.claude', 'projects'/, `${f} reads ~/.claude/projects`);
   }
 });
+
+// --- The coordinator agent's ledger (pir-coordinator T09) ---------------------------------------
+
+test('seal copies the coordinator agent\'s ledger, and loadBundle reads it and steps.json back', () => {
+  const ws = workspace();
+  try {
+    mkdirSync(join(ws.control, 'coordinator'), { recursive: true });
+    const lines = [
+      { t: '2026-01-01T00:01:00Z', kind: 'answers', task: 'T01', item: 'Name?', answer: { 'Name?': 'greet' } },
+      { t: '2026-01-01T00:02:00Z', kind: 'pass', task: 'T02', item: 'version()?' },
+    ];
+    writeFileSync(join(ws.control, 'coordinator', 'ledger.jsonl'), lines.map((l) => JSON.stringify(l)).join('\n') + '\n{torn');
+    const bundle = capture(ws, procs()).seal();
+    assert.deepEqual(bundle.ledger, lines, 'a torn last line is dropped');
+    assert.equal(bundle.steps, null, 'no steps.json yet');
+    writeFileSync(join(ws.bundle, 'steps.json'), JSON.stringify({ mainCommit: { after: 'T01' }, merged: null }));
+    assert.deepEqual(loadBundle(ws.bundle).steps, { mainCommit: { after: 'T01' }, merged: null });
+  } finally {
+    ws.cleanup();
+  }
+});
+
+test('a run without the agent seals an empty ledger', () => {
+  const ws = workspace();
+  try {
+    assert.deepEqual(capture(ws, procs()).seal().ledger, []);
+  } finally {
+    ws.cleanup();
+  }
+});

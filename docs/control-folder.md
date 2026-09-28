@@ -26,16 +26,19 @@ this page is the build's folder.
 | `HALT` | the kill-switch flag file. Its presence halts the run — see below. |
 | `log` | the event log: one ISO-timestamped line per coordinator action. |
 | `reports/` | the worker → coordinator report channel: one JSON file per worker report. |
-| `conversations/` | one append-only log per worker, `{Txx}-{role}-{n}.ndjson`: everything the worker said and everything sent to it. The coordinator writes it, the `pir` screen reads it (`worker-proc.mjs`). |
+| `conversations/` | one append-only log per worker, `{Txx}-{role}-{n}.ndjson` (and the coordinator agent's, `coordinator-{n}.ndjson`): everything the worker said and everything sent to it. The coordinator writes it, the `pir` screen reads it (`worker-proc.mjs`). |
 | `inbox/` | the person's input on its way to a worker: one JSON file per message, interrupt or answer, dropped by the `pir` screen and forwarded by the coordinator (`person-inbox.mjs`). |
 | `workers.json` | this coordinator's live workers, `[{ id, task, role, pid, startTime, cwd }]` (`cwd` the worktree each was spawned in), rewritten temp-then-rename on every spawn and exit (`writeWorkersFile` in `worker-proc.mjs`), so a stop or the next start can reap a worker the coordinator left behind (`reap.mjs`). |
+| `coordinator/` | the coordinator agent's state (see [coordinator-agent.md](coordinator-agent.md#storage)): `decisions/` holds the agent's decision files, one JSON per decision, consumed and deleted each pass; `ledger.jsonl` one line per applied decision and adopted task, the source of the report's "Decisions made for you"; `session.json` `{ sessionId, restarts }` for its resume. The agent's conversation is `conversations/coordinator-{n}.ndjson`. Absent in a run with `--no-coordinator`. |
 | `status.json`, `run.log` | the snapshot and output of a run started by `pir` (see [detached-runs.md](detached-runs.md)). |
 | `tests.log` | the output of the end-of-run gate on the feature branch: the plan's `setup` lines, then its `test` lines, each under a `$ <line>` header. Setup rewrites it and the tests append, so it is rewritten each time the gate runs (see [run-lifecycle.md](run-lifecycle.md)). A red end names this path. |
 | `setup/T{nn}.log` | the output of the plan's `setup` lines in task T{nn}'s fresh worktree, run before its implementer is spawned; rewritten per attempt. A failed setup's last 20 lines and this path go into the worker's opening instruction (see [run-lifecycle.md](run-lifecycle.md)). |
 
 There is no `outbox`, `answers`, or `surfaced`: those were the coordinator↔person↔worker relay of
 the old agentic coordinator, removed with it (DESIGN of `non-agentic-coordinator`, §2.2). The line
-down that replaced them is direct and passes through no model (below).
+down that replaced them is direct and passes through no model (below). The coordinator agent of
+`pir-coordinator` is not that relay: it answers on the person's behalf or passes an item on, and the
+person's own answers still go straight to the worker.
 
 ## Reports go up as files
 
@@ -105,10 +108,13 @@ records:
 - **Reaped first — `workers.json`.** Any worker a previous coordinator recorded that is still alive
   with its recorded start time is ended (SIGTERM, then SIGKILL after 3 s) before anything else runs
   (`reapRecorded` in `reap.mjs`). A different start time is a reused pid and is left alone.
-- **Cleared — `reports/` and `inbox/`.** Both are live-run buffers: a leftover report from the dead
-  run would be read as a fresh worker's signal, and a leftover input addressed to a previous run's
-  worker must never reach a new one. The clear runs on every startup, not only a detected restart,
-  because a genuine first start has them empty anyway.
+- **Cleared — `reports/`, `inbox/` and `coordinator/decisions/`.** All are live-run buffers: a leftover
+  report from the dead run would be read as a fresh worker's signal, a leftover input addressed to a
+  previous run's worker must never reach a new one, and a leftover decision names an item that no
+  longer waits. The clear runs on every startup, not only a detected restart, because a genuine first
+  start has them empty anyway.
+- **Preserved — the rest of `coordinator/`**: `ledger.jsonl` (the report is rendered from it) and
+  `session.json` (the agent's session is resumed from it).
 - **Preserved — `conversations/`**: the previous workers' conversations stay readable.
 - **Preserved — `log`** (the audit trail and the harness signal): never cleared; a `restart` marker
   line is appended to mark the boundary between runs.
@@ -136,13 +142,17 @@ or a dependency on a task that does not exist — and it parks no one, because t
 reviewed code merged and the run continues (see [run-lifecycle.md](run-lifecycle.md)). A `late-block` surface is informational
 the same way: an adopted task's `blocks` clause named a task that had already started, so the named
 task was built without the new work and the person decides whether it needs redoing (see
-[task-state.md](task-state.md)). This is the
+[task-state.md](task-state.md)). With the coordinator agent on, the log also carries `coordinator agent
+started` (or `coordinator agent failed to start: …`), `coordinator-pass Txx` when the agent passes an
+item on, and the end sequence's `main-sync` (or `main-sync failed: …`), `spawn main-sync` for a
+main-sync worker, `spawn tests-fix` and `tests-fix` for a test-fix worker, `tests`, `report plans/{slug}/REPORT.md` (a bare `report` for a footer rewrite) and
+`finished` lines (see [coordinator-agent.md](coordinator-agent.md)). This is the
 human-readable record of what a run did, and the durable signal the test harness reads.
 
 ## The kill switch
 
 `HALT` is a plain flag file. While it is present, the command dispatches nothing, delivers nothing,
-and merges nothing, and it closes every live worker — ends its input queue, then SIGTERM after 5 s and
+and merges nothing, and it closes every live worker and the coordinator agent — ends its input queue, then SIGTERM after 5 s and
 SIGKILL after 10 s if it has not exited (`platform.close`, `worker-proc.mjs`) — and kills every worker
 setup still running. It is hard-stop only; there is no pause or resume. A HALT-closed worker's
 conversation log, worktree, and branch are deliberately **left** for forensics — removal is reserved for workers that finished normally. `main` is untouched, because nothing in this system ever merges

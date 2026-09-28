@@ -44,6 +44,7 @@ import { createAnswerer } from './answerer.mjs';
 import { startPlanRun, startRun } from '../launch.mjs';
 import { stopRun } from '../control-run.mjs';
 import { indexDir, listRecords } from '../index-store.mjs';
+import { readSnapshot } from '../snapshot-store.mjs';
 
 // --- Pure wiring pieces (each unit-tested with no live agent, T17 acceptance) --------------------
 
@@ -66,8 +67,17 @@ export function coordinatorLaunchArgv({ slug }) {
 // `pirHome` (a scenario's `statusSnapshots`, real-asking-state T05) sets PIR_RUN=1 so the coordinator
 // writes control/status.json each pass, as it does under `pir`, and points PIR_HOME at a scratch folder so
 // its index lookups never touch the person's own `pir` index.
-export function seatbeltEnv({ ceiling, holdMerges = false, pirHome = null } = {}) {
+//
+// `coordinator` is a scenario's own `coordinator: true` (pir-coordinator T04): without it the run starts
+// with PARALLEL_COORDINATOR=0, no coordinator agent, so every drill written before the agent existed runs
+// exactly as it did and pays for no extra session.
+//
+// `holdMs` is a scenario's `coordinatorHoldMs` (pir-coordinator T14): the agent's hold limit for the run,
+// passed as PARALLEL_COORDINATOR_HOLD_MS (coordinate.mjs holdLimitMs), so the live check sees it fire.
+export function seatbeltEnv({ ceiling, holdMerges = false, pirHome = null, coordinator = false, holdMs = null } = {}) {
   const env = { PARALLEL_LIVE: '1' };
+  if (!coordinator) env.PARALLEL_COORDINATOR = '0';
+  if (coordinator && holdMs != null) env.PARALLEL_COORDINATOR_HOLD_MS = String(holdMs);
   if (ceiling != null) env.PARALLEL_MAX_WORKERS = String(ceiling);
   if (holdMerges) env.PARALLEL_HOLD_MERGES = '1';
   if (pirHome) {
@@ -209,6 +219,76 @@ export function captureFinalFiles({ repoDir, gitRun = defaultRunGit, files = [],
   return out;
 }
 
+// --- The live check of the coordinator agent: a mid-run main commit and the person's merge ------------
+//
+// pir-coordinator T09. Two scenario steps the runner takes while the coordinator runs, each at most once:
+// `mainCommit` commits to the scratch main once the flow shows a named task merged, so the end sync meets
+// a main that moved mid-run (no mid-run main commit existed before); `mergeWhenReady` merges the feature
+// branch into the scratch main once the run waits in `ready to merge` and the branch already holds main,
+// which is the person's merge that ends the run as `finished` (DESIGN §2.10). Both act on the scratch
+// repo's own main checkout, never on a real project (the runner's seatbelt).
+
+// taskMerged(flowText, task) → has the flow log a `merge {task}` line (loop.mjs record, `${ISO} merge T01`)?
+// Pure.
+export function taskMerged(flowText, task) {
+  return flowHasTag(flowText, `merge ${task}`);
+}
+
+// readyToMerge(status) → { reportPath } once a status snapshot shows the run waiting in `ready to merge`
+// with its report committed (buildRunState's `handoff`, pir-coordinator T05), else null. Pure.
+export function readyToMerge(status) {
+  const h = status?.runState?.handoff;
+  return h?.state === 'ready' && h.reportPath ? { reportPath: h.reportPath } : null;
+}
+
+// The fixed identity every harness commit uses, as the fixture seed does: nobody is there to sign.
+const HARNESS_IDENT = ['-c', 'user.name=PIR Fixture', '-c', 'user.email=fixture@pir.local', '-c', 'commit.gpgsign=false'];
+
+// createScenarioSteps({ spec, repoDir, controlDir, slug, gitRun, readStatus, log }) → { tick(flowText), record }.
+// tick runs whichever step is due this poll; record is what happened, with times, for the bundle's
+// steps.json (the evidence a fact or a person reads afterwards). A step whose git call fails is logged
+// and retried next poll, not marked done. `readStatus` is (controlDir) → the status snapshot or null.
+export function createScenarioSteps({ spec, repoDir, controlDir, slug, gitRun = defaultRunGit, readStatus = readSnapshot, now = () => new Date(), log = () => {} } = {}) {
+  const record = { mainCommit: null, merged: null };
+  const git = (args) => gitRun(args, { cwd: repoDir });
+  const branch = `pir/${slug}`;
+  return {
+    record,
+    tick(flowText = '') {
+      const mc = spec?.mainCommit;
+      if (mc && !record.mainCommit && taskMerged(flowText, mc.after)) {
+        for (const [rel, content] of Object.entries(mc.files)) {
+          const abs = join(repoDir, rel);
+          mkdirSync(dirname(abs), { recursive: true });
+          writeFileSync(abs, content);
+        }
+        const add = git(['add', '--', ...Object.keys(mc.files)]);
+        const commit = add.ok ? git([...HARNESS_IDENT, 'commit', '-m', mc.message]) : add;
+        if (!commit.ok) log(`main commit after ${mc.after} failed: ${commit.stderr}`);
+        else {
+          const sha = git(['rev-parse', 'HEAD']).stdout.trim();
+          record.mainCommit = { at: now().toISOString(), after: mc.after, sha };
+          log(`main commit ${sha.slice(0, 8)} after ${mc.after} merged: ${mc.message}`);
+        }
+      }
+      if (spec?.mergeWhenReady && !record.merged) {
+        const ready = readyToMerge(readStatus(controlDir));
+        // Only once the branch holds main: a ready read before the run saw the mid-run commit would merge
+        // a branch that conflicts with main in the main checkout.
+        if (ready && git(['merge-base', '--is-ancestor', 'refs/heads/main', `refs/heads/${branch}`]).ok) {
+          const report = git(['show', `${branch}:${ready.reportPath}`]);
+          const merge = git([...HARNESS_IDENT, 'merge', '--no-edit', branch]);
+          if (!merge.ok) log(`merging ${branch} into main failed: ${merge.stderr}`);
+          else {
+            record.merged = { at: now().toISOString(), branch, reportPath: ready.reportPath, report: report.ok ? report.stdout : null };
+            log(`ready to merge: merged ${branch} into main, as the person would`);
+          }
+        }
+      }
+    },
+  };
+}
+
 // --- Restart-mode pure wiring (DESIGN §2.6, §4, T05) ---------------------------------------------
 
 // restartTargetReached({ flowText, branchState, waitFor }) → has the deterministic crash point been
@@ -332,7 +412,7 @@ export async function teardownScenario({ controlDir, reap = (dir) => reapRecorde
 //   worktree     — injected for the restart runner's branch reads; default is the real one.
 //   install      — installFixture (injectable so a test need not re-seed real git every case).
 //   capture      — a createCapture instance (injectable); default is built from the injected runners.
-//   makeAnswerer — ({ controlDir, typed, say, log }) => { tick() }, the person's stand-in for an `answerPending`
+//   makeAnswerer — ({ controlDir, typed, say, afterWake, taskReplies, log }) => { tick() }, the person's stand-in for an `answerPending`
 //                  scenario (answerer.mjs, T18); injected so a test sees its ticks.
 //   timers, now  — injected clock/timers so a test drives time (DESIGN §3.1: the shell owns the clock).
 //   log          — where the runner prints progress (default console.log); the fact report is returned.
@@ -377,9 +457,16 @@ export async function runScenario({
         typed: spec.answerPending.typed,
         say: spec.answerPending.say,
         afterWake: spec.answerPending.afterWake,
+        taskReplies: spec.answerPending.taskReplies,
+        // With the agent on it answers only what the run shows as the person's (pir-coordinator T09).
+        personOnly: !!spec.coordinator,
+        permissions: spec.answerPending.permissions,
+        personDelayMs: spec.answerPending.personDelayMs ?? 0,
+        now: () => now().getTime(),
         log,
       })
     : null;
+  const steps = spec.mainCommit || spec.mergeWhenReady ? createScenarioSteps({ spec, repoDir, controlDir, slug, gitRun, now, log }) : null;
 
   log(`installing fixture "${fixtureId}" into ${repoDir}`);
   install(fixtureId, { into: repoDir, runGit: gitRun });
@@ -425,7 +512,7 @@ export async function runScenario({
     // The scratch PIR_HOME sits in the plan's .parallel/, which the scratch repo's .gitignore keeps out of
     // git, so the index it may hold never dirties the checkout the coordinator merges in.
     const pirHome = spec.statusSnapshots ? join(controlDir, '..', 'pir-home') : null;
-    const env = seatbeltEnv({ ceiling, holdMerges: spec.holdMerges, pirHome });
+    const env = seatbeltEnv({ ceiling, holdMerges: spec.holdMerges, pirHome, coordinator: spec.coordinator, holdMs: spec.coordinatorHoldMs });
     log(`launching coordinator process: node ${argv.join(' ')}  (ceiling ${ceiling}, timeout ${timeout}ms)`);
     child = spawnCoordinator({ argv, cwd: repoDir, env, spawn, stdoutPath: coordinatorOutPath(controlDir) });
 
@@ -439,6 +526,7 @@ export async function runScenario({
       haltGrace,
       killSwitchDrill,
       answerer,
+      steps,
       timers,
       isTimedOut: () => timedOut,
       log,
@@ -460,6 +548,16 @@ export async function runScenario({
       bundle = cap.seal();
     } catch (e) {
       log(`capture seal failed: ${e.message}`);
+    }
+  }
+
+  // What the scenario's own steps did, and when (pir-coordinator T09), for the facts and the person.
+  if (steps && bundle?.dir) {
+    try {
+      writeFileSync(join(bundle.dir, 'steps.json'), `${JSON.stringify(steps.record, null, 2)}\n`);
+      bundle = { ...bundle, steps: steps.record };
+    } catch (e) {
+      log(`steps record failed: ${e.message}`);
     }
   }
 
@@ -582,7 +680,7 @@ export async function runRestartScenario({
   let seededFeeds = false;
 
   const argv = coordinatorLaunchArgv({ slug });
-  const env = seatbeltEnv({ ceiling });
+  const env = seatbeltEnv({ ceiling, coordinator: spec.coordinator });
 
   let reason = 'error';
   let bundle = null;
@@ -797,7 +895,7 @@ async function waitForTarget({ cap, controlDir, slug, waitFor, worktree, gitRun,
 // own stall and exits, so the process exit is the single terminal. The wall-clock timeout is the backstop
 // for a coordinator that hangs without exiting: it auto-touches HALT, and after a bounded haltGrace of
 // further polls with no exit, the run ends 'timeout' and the finally kills the process.
-async function waitForCompletion({ cap, controlDir, child, pollMs, haltGrace = 5, killSwitchDrill = false, answerer = null, timers, isTimedOut, log = () => {} }) {
+async function waitForCompletion({ cap, controlDir, child, pollMs, haltGrace = 5, killSwitchDrill = false, answerer = null, steps = null, timers, isTimedOut, log = () => {} }) {
   const flowPath = join(controlDir, 'log');
   let exited = false;
   let exitResult = {};
@@ -817,6 +915,13 @@ async function waitForCompletion({ cap, controlDir, child, pollMs, haltGrace = 5
       }
     }
     const flowText = existsSync(flowPath) ? safeRead(flowPath) : '';
+    if (steps && !exited && !isTimedOut()) {
+      try {
+        steps.tick(flowText);
+      } catch (e) {
+        log(`scenario step failed: ${e.message}`);
+      }
+    }
 
     // Kill-switch drill (DESIGN §4.1, T11): the moment the first worker is up (a `spawn` in the flow),
     // touch HALT ONCE so the live coordinator sees it WHILE it is still dispatching and writes `halt-close`.
@@ -880,9 +985,13 @@ function delay(timers, ms) {
 // planEnv({ baseEnv, pirHome, ceiling }) → the env both programs get. Pure. PARALLEL_ALLOW_HERE no
 // longer means anything (its guard is gone, dashboard-plan-box DESIGN §2.8), but an inherited one is
 // still dropped so an outer shell cannot leak a stale setting into a fixture's run.
-export function planEnv({ baseEnv = process.env, pirHome, ceiling } = {}) {
+export function planEnv({ baseEnv = process.env, pirHome, ceiling, coordinator = false } = {}) {
   const env = { ...baseEnv };
   delete env.PARALLEL_ALLOW_HERE;
+  // The build the go starts inherits this env (startRun spreads it), so it runs without the agent unless
+  // the scenario turns it on, as seatbeltEnv does for a build scenario.
+  if (coordinator) delete env.PARALLEL_COORDINATOR;
+  else env.PARALLEL_COORDINATOR = '0';
   if (pirHome) env.PIR_HOME = pirHome;
   if (ceiling != null) env.PARALLEL_MAX_WORKERS = String(ceiling);
   return env;
@@ -996,7 +1105,7 @@ export async function runPlanScenario({
   install(fixtureId, { into: repoDir, runGit: gitRun });
   const pirHome = join(repoDir, fixture.pirHome ?? '.pir-home');
   mkdirSync(pirHome, { recursive: true });
-  const env = planEnv({ baseEnv, pirHome, ceiling: seatbelts.ceiling });
+  const env = planEnv({ baseEnv, pirHome, ceiling: seatbelts.ceiling, coordinator: spec.coordinator });
   const dir = indexDir({ env });
   const mainHead = () => {
     const r = gitRun(['rev-parse', '--verify', '--quiet', 'refs/heads/main'], { cwd: repoDir });

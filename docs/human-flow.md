@@ -5,6 +5,26 @@ guesses an underspecified requirement or a real choice — it escalates. The dif
 mode is only where the person answers: not at a `/pir-work` prompt, but in the blocked worker's own
 conversation, opened inside the `pir` screen.
 
+## Who answers first — the coordinator agent
+
+A build run started from `pir` has a **coordinator agent** by default (`pir start {slug}
+--no-coordinator` runs without one). It is the person's stand-in, and it sees every waiting item
+before the person does: a question or decision report, a permission request, a question set. While it
+holds one, the task's row reads `asking coordinator · …` in the working (cyan) style, the run does not
+count it as asking the person, and the worker stays off Remote Control. The agent either answers the
+worker on the person's behalf, through the same calls the person's answers use, or **passes it on**:
+it says a pointer to the person in its own conversation (which worker, why it held back, what it would
+pick), and only then does the row turn `asking you` and the worker's Remote Control come on. The person
+answers the worker directly, exactly as below; the agent never relays the question or the answer.
+
+Two kinds of request are always the person's, enforced by the command, not by the agent: an `ask`-bin
+action (a permission request matching a `permissions.ask` rule in `.claude/settings.json`) and a
+destructive command (`rm -rf`, a forced push, `git reset --hard` and the like). The agent may add a
+note to one, never answer it. The person may answer any waiting item at any time, held by the agent or
+not; the first answer wins. With the agent down, or with `--no-coordinator`, every item goes straight
+to the person as described in the rest of this page. The whole behaviour is in
+[coordinator-agent.md](coordinator-agent.md).
+
 ## Questions and decisions — the person answers the worker in `pir`
 
 When a worker cannot continue on its own, it pauses its task and does two things, then waits, doing
@@ -16,7 +36,8 @@ nothing further:
    [control-folder.md](control-folder.md).
 2. It **asks the person in its own conversation** and ends its turn, holding its worktree.
 
-On its next pass the command uses that report for two things: it keeps the parked worker's slot
+On its next pass the command uses that report for two things (with the coordinator agent on, it first
+briefs the agent, and the steps below apply once the agent passes the item on): it keeps the parked worker's slot
 counted under the ceiling (a parked worker is alive, not dead), and, once the worker has ended the
 turn it asked in, it marks the task's row **asking you** in the live display, with the question (see
 [When a row reads asking you](#when-a-row-reads-asking-you)), so the person can see who is asking and
@@ -36,13 +57,40 @@ to answer it are `pir` and, while it waits, claude.ai or the Claude app (below).
 ### When a row reads asking you
 
 A task is **waiting on the person** — its row reads `asking you`, its clock is stopped, and Remote
-Control is on (below) — when either holds (`waitingOn` in `src/core/asking.mjs`, the one predicate the
+Control is on (below) — when any of these holds, and the coordinator agent does not hold the item (a held
+item reads `asking coordinator`; its clock is stopped too, and Remote Control stays off) (`waitingOn` in `src/core/asking.mjs`, the one predicate the
 row, the clock and Remote Control all read, so they cannot disagree):
 
 - its live worker has a permission request or a question set pending (the row reads `asking you ·
   allow a command?` or `asking you · a question`), or
 - it is parked on its own `question` or `decision` report, and its worker is **not inside the asking
-  turn** — the turn it dropped the report in. The report is only a real park once that turn has ended.
+  turn** — the turn it dropped the report in. The report is only a real park once that turn has ended; or
+- it is building or reviewing and its worker has **stopped**: its last turn has ended, nothing is
+  pending, and no background job of its own is still running (`stoppedOnPerson` in `asking.mjs`). The
+  row reads `asking you · a question` even when the worker dropped no report.
+
+A worker in a run ends its turn only when it has finished (and then it has reported, which moved the
+task on), when it waits on its own background job, or when it waits on the person; with the first two
+ruled out, a stopped worker is waiting on the person. This catches a worker that asks in plain text
+and forgets the report, and a follow-up question asked after an earlier one was answered, when the
+earlier report no longer holds. A worker that stopped by mistake, with no question at all, reads
+`asking you` too: pir does not read the worker's words to tell the two apart, since guessing could hide
+a real question. The person opens it, finds nothing asked, and tells it to carry on. When the person
+answers, the worker's next turn opens and the row reads `building` or `reviewing` again; there is no
+park to lift.
+
+**A background job still running means not asking**, unless the worker dropped a report. A worker
+waiting on its own tests or build reads `building` or `reviewing` while the job runs, and when the job's
+wake-up turn ends with nothing left running, it reads `asking you`. A job waited on with Monitor counts
+the same way (measured 2026-09-27). The known miss: a worker that asks the person while a job of its
+own is still running, without a report, reads `building` until that job's wake-up turn ends. The
+worker contract closes it by telling workers to drop a fresh report every time they end a turn waiting
+on the person (`skills/pir-worker`). A worker whose background jobs pir cannot see (a listing without
+them, as in the test fakes) never reads stopped. Interrupting a worker ends its turn, so it then reads
+`asking you`: it is waiting for the person.
+
+A planner or plan reviewer in a `pir plan` run reads asking by the same stopped rule, until its report
+is accepted (see [planning-runs.md](planning-runs.md#reports-and-how-pir-checks-them)).
 
 A worker drops its report from inside a turn and then ends the turn with the question put to the
 person. While that turn is still open the worker is working, whatever it reported: the row reads plain
@@ -71,6 +119,7 @@ pass that sees one of these:
 | A turn opened by a message typed on claude.ai or the phone over Remote Control | yes |
 | A permission request or question set answered in `pir`, by a remembered grant, or over Remote Control (`answered-remotely`), with the turn still open | yes |
 | A turn opened by a background job's wake-up (`task_notification`) | no |
+| A message the coordinator agent sent on the person's behalf (`from: 'coordinator'`) | yes |
 | A turn opened by a message pir itself sent (`from: 'pir'`) | no |
 | A turn opened by anything else pir cannot recognise | no |
 
@@ -108,8 +157,9 @@ reports (`canUseTool` in `worker-proc.mjs`, logged as a `request` entry):
   questions are pinned one at a time as a picker: ↑↓ move. On a pick-one question Enter chooses the
   highlighted line and goes on; on a pick-any question space ticks and Enter goes on. The last
   question's Enter sends. Every question ends with an "Other" line that is a text field: move onto it,
-  or just start typing, and the text appears next to "Other:" (never in the typing box); Enter answers
-  with it. It replaces a pick-one choice and joins a pick-any question's ticks. To talk instead of
+  or just start typing, and the text appears next to "Other:" (never in the typing box), wrapped to as
+  many lines as it needs; ←/→ move the cursor within it, and ← goes back to the live view only once it
+  is empty. Enter answers with it. Option descriptions wrap too, never cut short. It replaces a pick-one choice and joins a pick-any question's ticks. To talk instead of
   answering, Esc interrupts the worker, which cancels the question.
 
 These keys work only while the typing box is empty. A request left unanswered simply waits: nothing
@@ -118,7 +168,7 @@ times it out.
 ## Answering away from the terminal — Remote Control
 
 While a worker waits on the person — a question or decision report whose asking turn has ended, a
-permission request, or a question set ([When a row reads asking you](#when-a-row-reads-asking-you)) — its session is switched to Claude's Remote Control, so the person is notified in the
+stopped worker, a permission request, or a question set ([When a row reads asking you](#when-a-row-reads-asking-you)) — its session is switched to Claude's Remote Control, so the person is notified in the
 Claude app and can answer from claude.ai or the phone as well as from `pir`. Each pass the command
 works out which live workers are waiting (`remoteWanted` in `coordinate.mjs`) and switches each worker
 on or off to match (`remoteControl` in `worker-proc.mjs`, which uses the SDK's undocumented
@@ -169,7 +219,8 @@ request already reads `asking you · allow a command?`, and in auto mode the pro
 report dropped in advance would leave the row asking while the worker works (`skills/pir-worker`). The person opens the
 worker in `pir` and presses Enter (allow) or `n` there, so one approval is the whole exchange. A `person` action
 is only a login, a device or a judgement, raised like any other question. An action with no row is
-treated as `ask`.
+treated as `ask`. The coordinator agent never answers an `ask` action: a request under an `ask` rule is always
+the person's (see [Who answers first](#who-answers-first--the-coordinator-agent)).
 
 ## Merge conflicts
 
@@ -212,6 +263,17 @@ the same reason and path show in the live display's footer and in the `pir` view
 finished run, which says the branch is not ready to merge instead of offering `git merge` (see
 [run-lifecycle.md](run-lifecycle.md), [detached-runs.md](detached-runs.md)). The person fixes the
 feature branch and merges it themselves.
+
+With the coordinator agent on there is a third place: at the end of the run the command merges the
+current `main` into the feature branch, so the person's merge goes through cleanly. If that conflicts,
+a **main-sync worker** is spawned in the feature worktree to finish the merge, test and report `done`;
+its questions go to the agent first like any worker's. Red tests at the end get the same treatment: one
+**test-fix worker** in the feature worktree, one attempt, and the branch is handed over red only if the
+tests still fail after it. While either runs it has a row of its own below the agent's row, `main-sync` or
+`tests-fix`, which reads like a task's (`working`, `asking coordinator`, `asking you`) but is not counted
+in `n/m done`. A question the agent passes on from it is answered as for any task: select its row, open
+it (→ or Enter) and answer in its conversation, in `pir` or on the phone (see
+[coordinator-agent.md](coordinator-agent.md#the-end-of-the-run)).
 
 ## The test command is the block
 

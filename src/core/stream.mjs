@@ -65,6 +65,12 @@ function readMessage(m, entry) {
           permissionMode: str(m.permissionMode),
         }];
       }
+      // The full list of background jobs still running, re-sent whenever it changes and `[]` when the
+      // last one ends (Claude Code 2.1.283; stopped-worker-asking DESIGN §2.2).
+      if (m.subtype === 'background_tasks_changed') {
+        const tasks = Array.isArray(m.tasks) ? m.tasks : [];
+        return [{ kind: 'background', ids: tasks.filter(isObject).map((t) => t.task_id).filter((id) => typeof id === 'string') }];
+      }
       return [{ kind: 'system', subtype: str(m.subtype), event: m }];
     case 'assistant':
       return blocks(m).flatMap((b) => {
@@ -201,10 +207,12 @@ const ANSWER_NOTES = new Set(['delivered-by-grant', 'answered-remotely']);
 // and a background wake-up never emit one. A wake-up follows `system:task_notification` after the last
 // `result`. The SDK `UserPromptSubmit` hook does not separate the three (its `source` is absent for all).
 const REMOTE_OPEN_STATES = new Set(['queued', 'started']);
-const SEND_CAUSES = { person: 'person', pir: 'pir' };
+// The coordinator agent's answer reaches a worker as a send `from: 'coordinator'` and answers it exactly as
+// the person's does (pir-coordinator DESIGN §2.3), so it is a cause of its own, never `unknown`.
+const SEND_CAUSES = { person: 'person', pir: 'pir', coordinator: 'coordinator' };
 
 // workerActivity(entries) → { state, open, pending, turns, lastEventAt, slashCommands, turnCauses,
-//                             personSends, remoteSends }.
+//                             personSends, remoteSends, background, coordinatorSends }.
 //   starting   nothing has been sent and the worker has not spoken
 //   busy       a turn is open: a message went in, or the worker began one, and no `result` came back
 //   idle       the last turn ended and nothing is pending
@@ -217,9 +225,15 @@ const SEND_CAUSES = { person: 'person', pir: 'pir' };
 // `lastEventAt` is the last entry's `t`; this never reads a clock.
 // `turnCauses` holds one entry per turn opened, in order: 'person' / 'pir' (opened by an `out` send from
 // that sender), 'remote' (Remote Control input), 'system' (a background job's wake-up) or 'unknown'.
-// `personSends` counts the person's `out` sends; `remoteSends` counts Remote Control inputs (distinct
+// `personSends` counts the person's `out` sends, `coordinatorSends` the coordinator agent's; `remoteSends` counts Remote Control inputs (distinct
 // `command_lifecycle` command ids). Both count wherever the input landed, an open turn included, which is
 // how resumeAnswered hears an answer given while the asking turn is still running (DESIGN §2.2).
+// `background` holds the ids of the worker's background jobs still running (stopped-worker-asking DESIGN
+// §2.2): those in the latest `background_tasks_changed`, plus any that left the list since the last turn
+// opened or ended. A job that ends while the worker is idle is held until its wake-up turn opens, because
+// the CLI sends the shrunken list, then the notification, then the turn's `init` (fixture case 5), and in
+// that gap the worker would otherwise read as stopped with nothing running. One that ends inside an open
+// turn is held to that turn's `result`. `[]` before any such event; a `resumed` note clears it.
 export function workerActivity(entries) {
   let open = false;
   let started = false;
@@ -231,9 +245,15 @@ export function workerActivity(entries) {
   const turnCauses = [];
   let nextCause = null; // what the next turn opened by the worker's own output was announced by
   let personSends = 0;
+  let coordinatorSends = 0;
   const remoteCommands = new Set();
+  let listed = [];
+  const held = new Set(); // ids that left the list since the last turn opened or ended
   const openTurn = (cause) => {
-    if (!open) turnCauses.push(cause);
+    if (!open) {
+      turnCauses.push(cause);
+      held.clear();
+    }
     open = true;
     started = true;
     nextCause = null;
@@ -245,6 +265,7 @@ export function workerActivity(entries) {
       switch (ev.kind) {
         case 'sent':
           if (ev.from === 'person') personSends += 1;
+          if (ev.from === 'coordinator') coordinatorSends += 1;
           openTurn(SEND_CAUSES[ev.from] ?? 'unknown');
           break;
         case 'result':
@@ -252,6 +273,7 @@ export function workerActivity(entries) {
           started = true;
           turns += 1;
           nextCause = null;
+          held.clear();
           if (cancelled) for (const id of cancelled) pending.delete(id);
           cancelled = null;
           break;
@@ -278,8 +300,17 @@ export function workerActivity(entries) {
             cancelled = null;
             open = false;
             nextCause = null;
+            listed = [];
+            held.clear();
           }
           break;
+        case 'background': {
+          const now = new Set(ev.ids);
+          for (const id of listed) if (!now.has(id)) held.add(id);
+          for (const id of now) held.delete(id);
+          listed = [...now];
+          break;
+        }
         case 'system':
           if (ev.subtype === 'command_lifecycle' && REMOTE_OPEN_STATES.has(ev.event?.state)) {
             // Typed while a turn runs, the input may be queued for the next turn or injected into this
@@ -303,5 +334,8 @@ export function workerActivity(entries) {
   else if (open) state = 'busy';
   else if (started) state = 'idle';
   else state = 'starting';
-  return { state, open, pending: waiting, turns, lastEventAt, slashCommands, turnCauses, personSends, remoteSends: remoteCommands.size };
+  return {
+    state, open, pending: waiting, turns, lastEventAt, slashCommands, turnCauses, personSends,
+    remoteSends: remoteCommands.size, background: [...listed, ...held], coordinatorSends,
+  };
 }

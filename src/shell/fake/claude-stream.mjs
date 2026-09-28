@@ -52,6 +52,13 @@
 //                             workMs (a tool step), then replies. An interrupt during the work ends the
 //                             turn as the real CLI does (`[Request interrupted by user]`, then a result
 //                             `error_during_execution`). Never returns; stdin EOF still exits.
+//   {"react": "<command>"}    from here on, answer every user message by running `/bin/sh -c <command>`
+//                             (as `sh`, with FAKE_MESSAGE set to the message's text) and replying with
+//                             its stdout: init, the assistant text, a success result. A session that must
+//                             answer whatever arrives, in whatever order (the coordinator agent of the
+//                             pir-coordinator T07 drill), decides in the command. A non-zero exit replies
+//                             with an error result carrying the stderr tail and keeps reacting. Never
+//                             returns; stdin EOF still exits.
 //   {"sh": "<command>"}       run `/bin/sh -c <command>` in the session's cwd and wait for it. Its env
 //                             adds FAKE_CWD (that cwd) and FAKE_OPENING (the text of the first user
 //                             message). A non-zero exit emits an error result carrying the stderr tail
@@ -74,7 +81,8 @@
 // script that interrupts a turn with an ask open emits that line itself after `{"await":"interrupt"}`.
 //
 // Helpers for scripts: `turn(text)` is the `init`, assistant text and `result` of one plain turn;
-// `wakeUp()` is a background job's notification and the turn it opens; `remoteInputTurn()` is a turn
+// `backgroundTasks(ids)` is the running-jobs list; `wakeUp()` is a background job's end, its notification
+// and the turn it opens; `remoteInputTurn()` is a turn
 // opened by input typed over Remote Control;
 // `canUseTool(requestId, toolName, input)` is the control request of one permission ask. Both are
 // exported so a test builds its script from the same shapes the recording holds.
@@ -159,8 +167,21 @@ export function taskNotification(taskId = 'bgfake') {
   };
 }
 
-export function wakeUp(text = 'The background job finished.', taskId = 'bgfake') {
-  return [{ emit: taskNotification(taskId) }, ...turn(text)];
+// The list of background jobs still running, which the CLI re-sends whole whenever it changes and sends
+// as `[]` when the last one ends (stopped-worker-asking DESIGN §2.2). A script emits `backgroundTasks(['bgfake'])`
+// when its job starts; `wakeUp()` emits the shrunken list when it ends.
+export function backgroundTasks(ids = []) {
+  return {
+    type: 'system', subtype: 'background_tasks_changed',
+    tasks: ids.map((id) => ({ task_id: id, task_type: 'local_bash', description: `fake job ${id}` })),
+    session_id: '{{session}}', uuid: '00000000-0000-4000-8000-000000000009',
+  };
+}
+
+// The job's end in the order the real CLI sends it (fixture case 5): the shrunken list, the notification,
+// then the wake-up turn. `still` names the jobs that keep running.
+export function wakeUp(text = 'The background job finished.', taskId = 'bgfake', still = []) {
+  return [{ emit: backgroundTasks(still) }, { emit: taskNotification(taskId) }, ...turn(text)];
 }
 
 // Input typed over Remote Control, as the real CLI announces it (T00): `command_lifecycle` `queued` and
@@ -402,6 +423,7 @@ async function main() {
       if (step.await === 'control_response' && r?.request_id) responses.set(r.request_id, r.response ?? {});
     } else if ('resultFor' in step) out(resultFor(step, responses.get(step.resultFor) ?? {}));
     else if ('chat' in step) await chat(step.chat ?? {}, { out, take, takeWithin, queues });
+    else if ('react' in step) await react(fill(step.react), { out, take, opening: () => opening ?? '' });
     else if ('sleep' in step) await new Promise((r) => setTimeout(r, step.sleep));
     else if ('exit' in step) process.exit(step.exit);
     else if ('onEof' in step) {
@@ -418,22 +440,44 @@ function readJson(path) {
   return JSON.parse(readFileSync(path, 'utf8'));
 }
 
-// runSh(command, opening) → { code, stderr }. Asynchronous, so control requests are still acked while a
-// long command runs. stdout is discarded: a session's shell output is not part of its stream.
-function runSh(command, opening) {
+// runSh(command, opening, { env, stdout }) → { code, stderr, stdout }. Asynchronous, so control requests
+// are still acked while a long command runs. stdout is discarded unless asked for (a `react` step's reply):
+// a session's shell output is not part of its stream.
+function runSh(command, opening, { env = {}, stdout: keep = false } = {}) {
   return new Promise((resolve) => {
     const cwd = process.cwd();
     const child = spawn('/bin/sh', ['-c', command], {
       cwd,
-      env: { ...process.env, FAKE_CWD: cwd, FAKE_OPENING: opening },
-      stdio: ['ignore', 'ignore', 'pipe'],
+      env: { ...process.env, FAKE_CWD: cwd, FAKE_OPENING: opening, ...env },
+      stdio: ['ignore', keep ? 'pipe' : 'ignore', 'pipe'],
     });
     let stderr = '';
+    let stdout = '';
     child.stderr.setEncoding('utf8');
     child.stderr.on('data', (d) => (stderr = (stderr + d).slice(-8192)));
-    child.on('error', (e) => resolve({ code: 127, stderr: String(e.message) }));
-    child.on('close', (code, signal) => resolve({ code: code ?? (signal ? 128 : 1), stderr }));
+    if (keep) {
+      child.stdout.setEncoding('utf8');
+      child.stdout.on('data', (d) => (stdout += d));
+    }
+    child.on('error', (e) => resolve({ code: 127, stderr: String(e.message), stdout }));
+    child.on('close', (code, signal) => resolve({ code: code ?? (signal ? 128 : 1), stderr, stdout }));
   });
+}
+
+// The react step: one turn per user message, for ever, the reply being what the command printed.
+async function react(command, { out, take, opening }) {
+  for (;;) {
+    const msg = await take('user');
+    out(initEvent());
+    const r = await runSh(command, opening(), { env: { FAKE_MESSAGE: userText(msg) }, stdout: true });
+    if (r.code !== 0) {
+      out({ ...resultEvent('error_during_execution'), errors: [`react exited ${r.code}: ${r.stderr.slice(-2000)}`] });
+      continue;
+    }
+    const reply = r.stdout.trim() || '(nothing to say)';
+    out(assistantText(reply));
+    out(resultEvent('success', reply));
+  }
 }
 
 // The tool_result for an answered `canUseTool`. An allowed AskUserQuestion reads back its answers in

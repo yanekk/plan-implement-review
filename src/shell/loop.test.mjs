@@ -695,6 +695,21 @@ test('parked: a turn opened by a person send in pir resumes the task', (t) => {
   assert.equal(state.tasks.T01.phase, 'implementing');
 });
 
+test('parked: a coordinator agent `message` un-parks the task like the person\'s (pir-coordinator T04)', (t) => {
+  const { state, pass } = parkedWorker(t);
+  pass(RESULT); // the asking turn ends
+  assert.equal(state.tasks.T01.phase, 'awaiting-answer');
+  const r = pass(SEND('coordinator'), INIT);
+  assert.ok(resumedIn(r));
+  assert.equal(state.tasks.T01.phase, 'implementing');
+});
+
+test('parked: a coordinator message injected into the still-open asking turn resumes too', (t) => {
+  const { state, pass } = parkedWorker(t);
+  assert.ok(resumedIn(pass(SEND('coordinator'))));
+  assert.equal(state.tasks.T01.phase, 'implementing');
+});
+
 test('parked: a turn opened by Remote Control input (recorded) resumes the task', (t) => {
   const { state, pass } = parkedWorker(t);
   pass(RESULT);
@@ -750,13 +765,17 @@ test('parked: a turn opened by a pir send or an unannounced opening is not an an
   assert.equal(state.tasks.T01.decision.answerFrom, 3);
 });
 
-test('parked: a person message injected into the still-open asking turn resumes, and the row never turns asking', (t) => {
+test('parked: a person message injected into the still-open asking turn resumes; the row is off asking until that turn ends', (t) => {
   const { state, pass, platform } = parkedWorker(t);
   const r = pass(SEND('person')); // typed in pir while the worker is still inside its asking turn
   assert.ok(resumedIn(r));
   assert.equal(state.tasks.T01.phase, 'implementing');
-  pass(RESULT); // that turn ends
   assert.deepEqual(asking(state, platform), { row: null, remote: false });
+  // That turn ends with nothing running: the worker has stopped, so it reads asking again by the stopped
+  // clause (stopped-worker-asking DESIGN §2.1), not by the spent report park.
+  pass(RESULT);
+  assert.equal(state.tasks.T01.phase, 'implementing', 'no re-park');
+  assert.deepEqual(asking(state, platform), { row: 'question', remote: true });
 });
 
 test('parked: Remote Control input landing in the still-open asking turn resumes', (t) => {

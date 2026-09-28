@@ -223,6 +223,7 @@ export function createConversationView({
     // Typing lands on the picker's Other line, never in the box (user 2026-09-26, T18 drill): a plain
     // printable key or paste is text; on the Other line space and backspace edit it.
     let event = { up: 'up', down: 'down', space: 'toggle', enter: 'next', backspace: 'backspace' }[key];
+    if ((key === 'left' || key === 'right') && onOther(p)) event = key;
     if (key === 'space' && onOther(p)) event = { type: 'char', text: ' ' };
     else if (!event && typeof data === 'string' && /^[^\x00-\x1f\x7f]+$/.test(data)) event = { type: 'char', text: data };
     if (!event) return false;
@@ -230,6 +231,13 @@ export function createConversationView({
     prompt = r.picker;
     if (r.send && send({ kind: 'answers', requestId: p.requestId, answers: r.send.answers }, 'your answers')) answered.add(p.requestId);
     return true;
+  }
+
+  // The pinned question's Other line holds text: it is the box being typed in, so ←/→ move its caret and
+  // ← goes back only once it is emptied (user 2026-09-27), as with the box itself.
+  function typingOther() {
+    const p = livePrompt();
+    return p?.kind === 'questions' && onOther(p) && p.questions[p.q].other !== '';
   }
 
   function handleInput(data) {
@@ -251,7 +259,7 @@ export function createConversationView({
         if (empty) interrupt();
         else editor.setText('');
       } else if (key === 'tab' && !completing) full = !full;
-      else if (key === 'left' && empty) return onBack();
+      else if (key === 'left' && empty && !typingOther()) return onBack();
       else if (empty && !completing && promptKey(key, data)) {
         /* the pinned prompt took it */
       } else {
@@ -285,7 +293,10 @@ export function createConversationView({
     const out = [];
 
     const where = m.readOnly ? (m.ended ? 'exited, read only' : 'finished, read only') : 'live';
-    out.push(paint([span(`${taskId}`, 'head'), span(`  worker ${String(worker?.workerId ?? '?').slice(0, 8)} · ${where}`, 'dim'), span(`  · ${run?.slug ?? ''}`, 'dim')], w));
+    // The coordinator agent is not a worker (pir-coordinator DESIGN §2.1); calling it one on its own header
+    // misled in the T07 drill.
+    const who = taskId === 'coordinator' ? 'agent' : 'worker';
+    out.push(paint([span(`${taskId}`, 'head'), span(`  ${who} ${String(worker?.workerId ?? '?').slice(0, 8)} · ${where}`, 'dim'), span(`  · ${run?.slug ?? ''}`, 'dim')], w));
     out.push(paint([span('─'.repeat(w), 'dim')], w));
 
     const bottom = [];

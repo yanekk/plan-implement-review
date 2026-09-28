@@ -20,7 +20,7 @@ import { query as sdkQuery } from '@anthropic-ai/claude-agent-sdk';
 import { spawn } from 'node:child_process';
 import { appendFileSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { readEntry, userMessage } from '../core/stream.mjs';
+import { readEntry, userMessage, allowResult, denyResult } from '../core/stream.mjs';
 import { terminate } from './terminate.mjs';
 import { writeJsonAtomic } from './atomic-write.mjs';
 
@@ -42,11 +42,18 @@ const STDERR_TAIL = 4096;
 // (plans/resume-dead-worker T02 defines the same interface). A
 // resumed session keeps its id and transcript, but Claude Code keys a saved session by its project
 // folder, so `cwd` must be the one it first ran in.
-export function workerOptions({ cwd, sessionId, resume, name, claudePath, canUseTool, spawnProcess }) {
+//
+// `permissionMode`, `tools` and `disallowedTools` are the coordinator agent's (pir-coordinator DESIGN
+// §3.4): a worker passes none and gets exactly the options above. `tools` is an allowlist: every other
+// built-in tool is absent from the session, which T00 measured to hold where a deny list did not
+// (`EnterWorktree`, `CronCreate` and `ListAgents` ran in `default` mode without reaching `canUseTool`).
+export function workerOptions({ cwd, sessionId, resume, name, claudePath, canUseTool, spawnProcess, permissionMode, tools, disallowedTools }) {
   return {
     cwd,
     ...(resume ? { resume } : { sessionId }),
-    permissionMode: 'auto',
+    permissionMode: permissionMode ?? 'auto',
+    ...(tools ? { tools } : {}),
+    ...(disallowedTools ? { disallowedTools } : {}),
     pathToClaudeCodeExecutable: claudePath,
     extraArgs: { name },
     canUseTool,
@@ -101,6 +108,11 @@ function inputQueue() {
 }
 
 // startWorker(...) → Worker. See the task interface (T04) for each method.
+//
+// `decide(toolName, input) → 'allow' | 'deny' | null` is a gate in front of the parking (pir-coordinator
+// DESIGN §3.4): a verdict answers the request at once, from `pir`, and logs it `decided-by-gate`; null
+// parks it for an answer as before. A gate that throws denies: it exists to fence a session in, so its
+// own failure must not open the fence. `denyMessage(toolName, input)` words a gate's refusal.
 export function startWorker({
   cwd,
   sessionId: freshId,
@@ -111,6 +123,11 @@ export function startWorker({
   query = sdkQuery,
   spawnProcess = spawnAdapter,
   now = Date.now,
+  permissionMode,
+  tools,
+  disallowedTools,
+  decide = null,
+  denyMessage = (toolName) => `${toolName} is not allowed in this session.`,
 }) {
   mkdirSync(dirname(logPath), { recursive: true });
   // A resumed session runs under the id it was saved with; every message pir sends carries that id.
@@ -166,6 +183,22 @@ export function startWorker({
       defaultToNo: opts.defaultToNo === true,
       suppressAlwaysAllowRule: opts.suppressAlwaysAllowRule === true,
     });
+    if (decide) {
+      let verdict;
+      try {
+        verdict = decide(toolName, input);
+      } catch {
+        verdict = 'deny';
+      }
+      if (verdict === 'allow' || verdict === 'deny') {
+        const request = { toolName, input };
+        const result = verdict === 'allow' ? allowResult(request) : denyResult(request, denyMessage(toolName, input));
+        // Logged as a reply so the activity fold never shows it pending, then noted for whoever audits.
+        log({ dir: 'out', from: 'pir', kind: 'reply', requestId, result });
+        note('decided-by-gate', { requestId, toolName, verdict });
+        return Promise.resolve(result);
+      }
+    }
     return new Promise((resolve) => {
       if (exitInfo) return resolve({ behavior: 'deny', message: 'The worker has exited.' });
       const p = { entry, resolve, interrupted: false };
@@ -235,7 +268,7 @@ export function startWorker({
 
   const q = query({
     prompt: queue,
-    options: workerOptions({ cwd, sessionId, resume, name, claudePath, canUseTool, spawnProcess: spawnWrapped }),
+    options: workerOptions({ cwd, sessionId, resume, name, claudePath, canUseTool, spawnProcess: spawnWrapped, permissionMode, tools, disallowedTools }),
   });
 
   const startedAt = now();

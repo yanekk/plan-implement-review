@@ -29,7 +29,11 @@ import {
   seedStaleFeeds,
   snapshotControlFeeds,
   runRestartScenario,
+  taskMerged,
+  readyToMerge,
+  createScenarioSteps,
 } from './run.mjs';
+import { writeSnapshot } from '../snapshot-store.mjs';
 import { reapRecorded } from '../reap.mjs';
 
 function workspace() {
@@ -82,18 +86,31 @@ test('coordinatorLaunchArgv throws without a slug', () => {
 // --- seatbeltEnv (DESIGN §5.2) -------------------------------------------------------------------
 
 test('seatbeltEnv sets PARALLEL_LIVE and the ceiling, and never PARALLEL_ALLOW_HERE', () => {
-  assert.deepEqual(seatbeltEnv({ ceiling: 2 }), { PARALLEL_LIVE: '1', PARALLEL_MAX_WORKERS: '2' });
+  // Every scenario runs without the coordinator agent unless it sets `coordinator` (pir-coordinator T04).
+  const OFF = { PARALLEL_COORDINATOR: '0' };
+  assert.deepEqual(seatbeltEnv({ ceiling: 2 }), { PARALLEL_LIVE: '1', PARALLEL_MAX_WORKERS: '2', ...OFF });
   // The old allowHere option is gone (dashboard-plan-box DESIGN §2.8); passing it does nothing.
-  assert.deepEqual(seatbeltEnv({ ceiling: 1, allowHere: true }), { PARALLEL_LIVE: '1', PARALLEL_MAX_WORKERS: '1' });
-  assert.deepEqual(seatbeltEnv({}), { PARALLEL_LIVE: '1' });
+  assert.deepEqual(seatbeltEnv({ ceiling: 1, allowHere: true }), { PARALLEL_LIVE: '1', PARALLEL_MAX_WORKERS: '1', ...OFF });
+  assert.deepEqual(seatbeltEnv({}), { PARALLEL_LIVE: '1', ...OFF });
   // statusSnapshots (real-asking-state T05): run as `pir` does, with a scratch index home.
   assert.deepEqual(seatbeltEnv({ ceiling: 2, pirHome: '/tmp/x/pir-home' }), {
     PARALLEL_LIVE: '1',
+    ...OFF,
     PARALLEL_MAX_WORKERS: '2',
     PIR_RUN: '1',
     PIR_HOME: '/tmp/x/pir-home',
   });
-  assert.deepEqual(seatbeltEnv({ ceiling: 2, holdMerges: true }), { PARALLEL_LIVE: '1', PARALLEL_MAX_WORKERS: '2', PARALLEL_HOLD_MERGES: '1' });
+  assert.deepEqual(seatbeltEnv({ ceiling: 2, holdMerges: true }), { PARALLEL_LIVE: '1', PARALLEL_MAX_WORKERS: '2', PARALLEL_HOLD_MERGES: '1', ...OFF });
+});
+
+test('seatbeltEnv: a scenario\'s coordinatorHoldMs sets the agent\'s hold limit, only with the agent on (T14)', () => {
+  assert.deepEqual(seatbeltEnv({ ceiling: 3, coordinator: true, holdMs: 180000 }), { PARALLEL_LIVE: '1', PARALLEL_MAX_WORKERS: '3', PARALLEL_COORDINATOR_HOLD_MS: '180000' });
+  assert.equal(seatbeltEnv({ ceiling: 3, holdMs: 180000 }).PARALLEL_COORDINATOR_HOLD_MS, undefined);
+  assert.equal(seatbeltEnv({ ceiling: 3, coordinator: true }).PARALLEL_COORDINATOR_HOLD_MS, undefined);
+});
+
+test('seatbeltEnv: a scenario with `coordinator` runs the agent (no PARALLEL_COORDINATOR)', () => {
+  assert.deepEqual(seatbeltEnv({ ceiling: 1, coordinator: true }), { PARALLEL_LIVE: '1', PARALLEL_MAX_WORKERS: '1' });
 });
 
 // --- The live launcher's paid-scenario guard (dashboard-plan-box DESIGN §2.8) ------------------------
@@ -379,6 +396,8 @@ test('runScenario installs, launches the coordinator process, captures, seals on
     assert.equal(child.opts.cwd, into);
     assert.equal(child.opts.env.PARALLEL_LIVE, '1');
     assert.equal(child.opts.env.PARALLEL_MAX_WORKERS, '1'); // the single fixture's ceiling
+    // A scenario without `coordinator` runs with the agent off (pir-coordinator T04).
+    assert.equal(child.opts.env.PARALLEL_COORDINATOR, '0');
 
     // It reached the completed terminal (the process exited) and produced a real, dated bundle.
     assert.equal(result.reason, 'completed');
@@ -766,6 +785,103 @@ test('runRestartScenario installs once, launches, SIGKILLs the process at 🔍, 
     // The report ran the restart scenario's declared facts (the wiring produced a verdict).
     const ids = result.report.facts.map((f) => f.id);
     assert.deepEqual(ids, ['resumed-not-rebuilt:T02', 'no-rebuild-from:T01', 'feeds-cleared', 'leftover-sessions-reaped:1']);
+  } finally {
+    ws.cleanup();
+  }
+});
+
+// --- The coordinator agent's live check: the mid-run main commit and the person's merge (T09) --------
+
+test('taskMerged reads a `merge {task}` flow line, not another task\'s', () => {
+  const flow = '2026-01-01T00:00:00Z spawn T01\n2026-01-01T00:01:00Z merge T012\n2026-01-01T00:02:00Z merge T02\n';
+  assert.equal(taskMerged(flow, 'T02'), true);
+  assert.equal(taskMerged(flow, 'T01'), false);
+});
+
+test('readyToMerge is set only once the run waits ready with its report committed', () => {
+  const at = (handoff) => ({ runState: { handoff } });
+  assert.deepEqual(readyToMerge(at({ state: 'ready', reportPath: 'plans/x/REPORT.md' })), { reportPath: 'plans/x/REPORT.md' });
+  assert.equal(readyToMerge(at({ state: 'preparing', reportPath: null })), null);
+  assert.equal(readyToMerge(at({ state: 'red', reportPath: 'plans/x/REPORT.md' })), null);
+  assert.equal(readyToMerge(null), null);
+});
+
+test('runScenario: the main-commit step fires once, after the named task merges, in a fake run', async () => {
+  const ws = workspace();
+  try {
+    const into = join(ws.dir, 'scratch-repo');
+    const control = controlDirFor(into, 'pir-coordinator');
+    const spawn = fakeSpawner();
+    const p = fakeProcs([]);
+    const calls = [];
+    const gitRun = (args) => {
+      calls.push(args);
+      if (args[0] === 'rev-parse') return { ok: true, stdout: 'abc12345def\n' };
+      if (args[0] === 'merge-base') return { ok: false, stdout: '' };
+      return { ok: true, stdout: '' };
+    };
+    const commits = () => calls.filter((a) => a.includes('commit'));
+    let polls = 0;
+    let commitsBeforeMerge = null;
+    const readWorkers = () => {
+      polls += 1;
+      if (polls === 2) {
+        commitsBeforeMerge = commits().length;
+        writeFileSync(join(control, 'log'), '2026-01-01T00:00:00Z spawn T01\n2026-01-01T00:05:00Z merge T01\n');
+      }
+      if (polls === 5) spawn.children[0].exit(0);
+      return [];
+    };
+    const result = await runScenario({
+      fixtureId: 'pir-coordinator',
+      scratchDir: into,
+      install: installFake({ into, controlLog: '2026-01-01T00:00:00Z spawn T01\n', slug: 'pir-coordinator' }),
+      spawn,
+      readWorkers,
+      procs: p,
+      gitRun,
+      pollMs: 1,
+    });
+    assert.equal(commitsBeforeMerge, 0, 'nothing was committed before T01 merged');
+    assert.equal(commits().length, 1, 'one commit to main, however many polls followed');
+    assert.equal(readFileSync(join(into, 'notes.txt'), 'utf8'), 'status: main moved on\n');
+    const recorded = JSON.parse(readFileSync(join(result.bundleDir, 'steps.json'), 'utf8'));
+    assert.equal(recorded.mainCommit.after, 'T01');
+    assert.equal(recorded.mainCommit.sha, 'abc12345def');
+    assert.equal(recorded.merged, null, 'the run never read ready, so nothing was merged');
+  } finally {
+    ws.cleanup();
+  }
+});
+
+test('createScenarioSteps merges once the run is ready and the branch holds main, and keeps the report', () => {
+  const ws = workspace();
+  try {
+    const control = join(ws.dir, 'control');
+    mkdirSync(control, { recursive: true });
+    const calls = [];
+    let holdsMain = false;
+    const gitRun = (args) => {
+      calls.push(args);
+      if (args[0] === 'merge-base') return { ok: holdsMain, stdout: '' };
+      if (args[0] === 'show') return { ok: true, stdout: '# Report\n\n## Decisions made for you\n' };
+      return { ok: true, stdout: '' };
+    };
+    const spec = { mergeWhenReady: true };
+    const steps = createScenarioSteps({ spec, repoDir: ws.dir, controlDir: control, slug: 'x', gitRun });
+    const merges = () => calls.filter((a) => a.includes('merge') && a[0] !== 'merge-base');
+    steps.tick('');
+    assert.equal(merges().length, 0, 'no status yet');
+    writeSnapshot(control, { proc: { pid: 1 }, finalState: null, runState: { tasks: [], handoff: { state: 'ready', reportPath: 'plans/x/REPORT.md', mainSha: 'm' } } });
+    steps.tick('');
+    assert.equal(merges().length, 0, 'ready, but the branch does not hold main yet');
+    holdsMain = true;
+    steps.tick('');
+    steps.tick('');
+    assert.equal(merges().length, 1, 'merged once');
+    assert.ok(merges()[0].includes('pir/x'));
+    assert.equal(steps.record.merged.reportPath, 'plans/x/REPORT.md');
+    assert.match(steps.record.merged.report, /Decisions made for you/);
   } finally {
     ws.cleanup();
   }

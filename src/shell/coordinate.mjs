@@ -28,11 +28,17 @@ import { basename, dirname, join } from 'node:path';
 import { parseProgress, reconcileTaskRow, progressPathFor } from '../core/progress.mjs';
 import { workerName, isWorkerOf } from '../core/naming.mjs';
 import { buildDisplay } from '../core/display.mjs';
-import { waitingOn } from '../core/asking.mjs';
+import { waitingOn, waitingFor, waitingItems, itemKey } from '../core/asking.mjs';
+import { readEntry } from '../core/stream.mjs';
 import { parseRecord } from '../core/runrecord.mjs';
 import { parseTestBlock } from '../core/testblock.mjs';
 import { runLines, startLines } from './commands.mjs';
-import { runPass, createRunState } from './loop.mjs';
+import { runPass, createRunState, applyMessages, resumeAnswered } from './loop.mjs';
+import { buildConflictPrompt, MAIN_SYNC_TASK, TESTS_FIX_TASK } from '../core/conflict.mjs';
+import { handoffFor, resyncedFor } from '../core/coordinator-brief.mjs';
+import {
+  notableDecisions, branchFooter, assembleReport, replaceFooter, endFacts, unverifiedTasks, findingRows,
+} from '../core/coordinator-report.mjs';
 import { createPlatform, resolveClaudePath } from './platform.mjs';
 import { createRenderer } from './render.mjs';
 import { drainDropFolder, waitForDrop } from './drop-folder.mjs';
@@ -42,6 +48,8 @@ import { updateRecord } from './index-store.mjs';
 import { createWorktree } from './worktree.mjs';
 import { reapRecorded } from './reap.mjs';
 import { planHome } from './plan-home.mjs';
+import { startCoordinatorAgent, withAgent, closingAnswer, readLogEntries } from './coordinator-agent.mjs';
+import { startWorker } from './worker-proc.mjs';
 
 const DONE_GLYPH = '✅';
 const READY_GLYPH = '⬜';
@@ -132,8 +140,10 @@ function readyWaiting(tasks, assignedNums) {
     .map((t) => t.num);
 }
 
-// startCoordinator({ slug, repo, platform, worktree, maxWorkers, control, runTests }) → the controller
-// the skill drives. `platform` and `worktree` are injected (the fakes in tests, the real CLI+git in
+// startCoordinator({ slug, repo, platform, worktree, maxWorkers, control, runTests, startAgent }) → the
+// controller the bin drives. `startAgent({ featurePath, askRules })` → a CoordinatorAgent
+// (coordinator-agent.mjs), called once the feature worktree is open; null runs without one (DESIGN §2.1,
+// `--no-coordinator` / PARALLEL_COORDINATOR=0), which is exactly the run as it was before the agent. `platform` and `worktree` are injected (the fakes in tests, the real CLI+git in
 // the bin); `repo` is the repo name the worker/coordinator names are built from (DESIGN §2.8); control
 // and runTests default the same way runPass defaults them (never halted, tests green).
 export function startCoordinator({
@@ -146,6 +156,11 @@ export function startCoordinator({
   runTests,
   prepare,
   holdMerges = false,
+  startAgent = null,
+  lastWords = lastWordsOf,
+  readLog = readLogEntries,
+  now = () => Date.now(),
+  holdMs = holdLimitMs(),
 } = {}) {
   if (!slug) throw new Error('startCoordinator: no slug');
   if (!repo) throw new Error('startCoordinator: no repo (worker names are built from it, DESIGN §2.8)');
@@ -163,9 +178,191 @@ export function startCoordinator({
   // reaching ✅, and know when the run is done or blocked. There is no auto/you distinction any more,
   // so nothing is a hands-on worker the user must go drive (§2.5) — a task that needs the person is an
   // ordinary worker that parks and asks, which surfaces like any other question.
+  // --- The coordinator agent in front of the person (pir-coordinator DESIGN §2.3–§2.5, §2.11, §3.6) ---
+  //
+  // Every waiting item is briefed to the agent the first pass it is waiting (waitingItems uses the same
+  // predicate as the row), and it is the agent's from then until it is answered or passed on. A reserved
+  // item is briefed for a note but is the person's from the start; an item that first waits while the
+  // agent is down is the person's for good. The person may answer any item at any time: the first answer
+  // wins and the agent is told. `held` is what the row, the clock and Remote Control read (heldByAgent).
+  //
+  // The hold limit (DESIGN §2.11, T13): an item held `holdMs` without a decision leaves `held` and is the
+  // person's as if passed on; the agent is told, and may still answer it until the person does. The time
+  // is the pass's `now()`, and a timed-out item that is still waiting is never held again.
+  let agent = null;
+  let agentTried = false;
+  let askRules = [];
+  const held = new Map(); // itemKey → the item, while the agent holds it
+  const seen = new Map(); // itemKey → the item, every item waiting last pass (briefed or not)
+  const heldAt = new Map(); // itemKey → when the agent began holding it (the pass's now())
+  const timedOut = new Map(); // itemKey → the item, handed to the person by the hold limit, still waiting
+  // itemKey → the item, for a reserved item the agent was briefed on for a note (T15). Never held: the row,
+  // the tally and Remote Control do not read it. Kept only so the agent is told who answered it and what.
+  const reserved = new Map();
+  // Keys of timed-out items the agent then passed on: a pass is a decision of its own, so the person's later
+  // answer is not reported (T15). They stay in `timedOut` so a later decision is still ledgered `late`.
+  const passedLate = new Set();
+  // Items the agent answered this pass. A `message` to a report park lands after runPass read the park, so
+  // the task stays parked until the next pass's resumeAnswered sees the coordinator send; counting the item
+  // as the agent's until then keeps its worker off Remote Control (DESIGN §2.5). One pass only: whatever is
+  // still waiting after it is the person's.
+  let justSettled = new Set();
+
+  // The end of the run (T05): on only when the run has an agent (startAgent given); with
+  // `--no-coordinator` the end is today's. `handoff` is null until the end gate has run.
+  const endOfRun = startAgent !== null;
+  let handoff = null;
+  let lastTasks = [];
+  const adopted = []; // tasks adopted into the plan while the agent was alive, for the report
+
+  const briefItem = (item, workers) => {
+    const t = state.tasks[item.task];
+    const brief = { ...item };
+    if (t?.name) brief.name = t.name; // an end-of-run helper (main-sync, tests-fix), which holds no task of the plan
+    else if (t?.slug) brief.name = workerName({ repo, plan: slug, task: item.task, slug: t.slug, role: t.role ?? 'implement' });
+    if (item.kind === 'report') {
+      const words = lastWords(workers.find((w) => w.id === item.worker)?.logPath);
+      if (words) brief.lastWords = words;
+    }
+    return brief;
+  };
+
+  // The log a worker's item is read from, live or exited (platform.workers() lists both).
+  const logOf = (worker, workers) => workers.find((w) => w.id === worker)?.logPath ?? platform.logPathOf?.(worker) ?? null;
+  // closedOf(item, workers) → how the item stopped waiting (closingAnswer), read from the worker's log. A
+  // report park is read from `since`, the log's length when it was first seen.
+  const closedOf = (item, workers) => {
+    try {
+      return closingAnswer(readLog(logOf(item.worker, workers)), item, { since: item.since ?? 0 });
+    } catch {
+      return { by: 'unknown' };
+    }
+  };
+
+  function route() {
+    const out = { passed: [], report: null, close: false };
+    if (!agent) return out;
+    const alive = agent.alive();
+    const t = now();
+    justSettled = new Set();
+    // A dead agent never leaves a worker waiting on it: what it held is the person's (DESIGN §2.11).
+    if (!alive) {
+      held.clear();
+      heldAt.clear();
+      timedOut.clear();
+      reserved.clear();
+      passedLate.clear();
+    }
+    const release = (key) => {
+      held.delete(key);
+      heldAt.delete(key);
+      timedOut.delete(key);
+      reserved.delete(key);
+      passedLate.delete(key);
+    };
+    const workers = platform.workers();
+    const items = waitingItems(state.tasks, workers, { askRules });
+    const waitingNow = new Map(items.map((i) => [itemKey(i), i]));
+
+    // Briefed items (held, timed out or reserved) no longer waiting were closed without a decision of the
+    // agent's (DESIGN §2.3, T15): the agent is told who closed each and the answer, once. Read before the
+    // drain, so a late decision for one (the T09 `pass`) is refused with the same facts. An item the agent
+    // answered or passed on left these maps on the pass it did so, so it is never reported.
+    for (const map of [held, timedOut, reserved]) {
+      for (const [key, item] of map) {
+        if (waitingNow.has(key)) continue;
+        const quiet = passedLate.has(key);
+        release(key);
+        if (alive && !quiet) agent.answeredElsewhere(item, closedOf(item, workers));
+      }
+    }
+
+    // A `close` is accepted only once the run waits in `ready to merge` (DESIGN §2.10).
+    const ready = handoff?.step === 'waiting';
+    const drained = alive
+      ? agent.drain(items, { ready, late: new Set(timedOut.keys()), closedOf: (i) => closedOf(i, workers) })
+      : { passed: [], settled: [] };
+    const settled = new Set((drained.settled ?? []).map(itemKey));
+    for (const key of settled) release(key);
+    justSettled = settled;
+    for (const p of drained.passed ?? []) {
+      // A late pass of a timed-out item changes nothing on screen: it is the person's already (T13). It
+      // stays in `timedOut`, so a later decision for it is still ledgered `late: true`.
+      held.delete(itemKey(p));
+      heldAt.delete(itemKey(p));
+      reserved.delete(itemKey(p));
+      if (timedOut.has(itemKey(p))) passedLate.add(itemKey(p));
+      out.passed.push(p);
+      control?.log?.(`coordinator-pass ${waitingNow.get(itemKey(p))?.task ?? p.worker}`);
+    }
+    if (drained.report) out.report = drained.report;
+    if (drained.close) out.close = true;
+
+    // The hold limit (T13): checked after the drain, so a decision landing on the pass the limit passes wins.
+    for (const [key, item] of held) {
+      const heldForMs = t - (heldAt.get(key) ?? t);
+      if (heldForMs < holdMs) continue;
+      held.delete(key);
+      heldAt.delete(key);
+      timedOut.set(key, item);
+      control?.log?.(`coordinator-timeout ${item.task ?? item.worker}`);
+      agent.timedOut?.(item, { holdMs, heldForMs });
+    }
+    // An item gone from the wait is forgotten, so the same worker's next park is briefed afresh.
+    for (const [key, item] of seen) if (!waitingNow.has(key)) agent.forget?.(item);
+
+    for (const [key, item] of waitingNow) {
+      if (seen.has(key) || settled.has(key)) continue;
+      if (!alive) continue; // first waiting while the agent is down: the person's
+      // A report park has no requestId to find its answer by: the log's length now marks where to read from.
+      if (item.kind === 'report') item.since = readLog(logOf(item.worker, workers)).length;
+      const briefed = agent.brief(briefItem(item, workers));
+      if (briefed && item.reserved) reserved.set(key, item);
+      else if (briefed) {
+        held.set(key, item);
+        heldAt.set(key, t);
+      }
+    }
+    seen.clear();
+    for (const [key, item] of waitingNow) seen.set(key, item);
+    return out;
+  }
+
+  // closeAgent({ immediate }) → the agent's session ended (teardown, HALT). `immediate` is teardownRun's:
+  // called from a signal handler just before process.exit, so the SIGTERM goes now, as platform.close does.
+  function closeAgent({ immediate = false } = {}) {
+    if (!agent) return;
+    const a = agent;
+    const pid = a.session?.pid ?? null;
+    a.close(immediate ? { graceMs: 0 } : undefined).catch(() => {});
+    if (immediate && pid) {
+      try {
+        process.kill(pid, 'SIGTERM');
+      } catch {
+        // already gone
+      }
+    }
+  }
+
   function pass() {
+    if (handoff) return endPass();
     const r = runPass(passOpts);
     const of = (type) => r.actions.filter((a) => a.type === type);
+
+    // Started once the feature worktree is open, so its settings and plan files are the current ones.
+    if (startAgent && !agentTried && state.feature) {
+      agentTried = true;
+      askRules = readAskRules(state.feature.path);
+      try {
+        agent = startAgent({ featurePath: state.feature.path, askRules });
+        control?.log?.('coordinator agent started');
+      } catch (err) {
+        // A run without its agent is today's run: every item is the person's.
+        control?.log?.(`coordinator agent failed to start: ${err?.message ?? err}`);
+      }
+    }
+    if (r.halted) closeAgent();
+    const routed = r.halted ? { passed: [], report: null, close: false } : route();
 
     const surfaces = of('surface').map(renderSurface);
     const spawned = of('spawn').map((a) => ({ task: a.task, role: a.role, slug: a.slug }));
@@ -183,6 +380,17 @@ export function startCoordinator({
     // Ceiling accounting (DESIGN §2.4): if the plan has ready work it could not start because every
     // slot is taken, that is logged and reported, so a slow run reads as "throttled at the ceiling",
     // not "stuck". A task simply waits for a slot; nothing is dropped.
+    // A task adopted into the plan while the agent was on is a notable decision (DESIGN §2.7): only the
+    // agent or the person can have approved it. It goes in the ledger, so the report lists it after a
+    // pir restart too.
+    if (agent?.alive()) {
+      for (const a of of('adopt')) {
+        const name = r.tasks.find((t) => t.num === a.task)?.name ?? null;
+        adopted.push({ task: a.task, name });
+        agent.record?.({ kind: 'adopt', task: a.task, name, item: `new task ${a.task}${name ? ` (${name})` : ''}`, answer: 'adopted into the plan', reason: 'a worker added it with approval', notable: true });
+      }
+    }
+
     const assigned = new Set(Object.keys(state.tasks));
     const waiting = readyWaiting(r.tasks, assigned);
     const ceilingFull = !r.halted && r.liveAfter >= maxWorkers && waiting.length > 0;
@@ -190,7 +398,19 @@ export function startCoordinator({
       control.log(`ceiling full: ${r.liveAfter}/${maxWorkers} busy, waiting: ${waiting.join(', ')}`);
     }
 
+    // The end of the run with the agent (DESIGN §2.9): once the end gate has run, the next passes sync
+    // main, get the report written and wait in `ready to merge`. Without the agent the run ends here, as
+    // it always did.
+    if (r.complete && endOfRun) {
+      lastTasks = r.tasks;
+      // A red gate gets its one test-fix worker before the sync (T10, user 2026-09-27).
+      const gate = r.testsPassed ? 'green' : 'red';
+      handoff = { state: 'preparing', step: gate === 'red' ? 'fix' : 'sync', gate, gateReason: r.testsReason ?? null, tests: null, testsReason: null, sync: null, mainSha: null, reportPath: null, finished: null, fix: null, fixUsed: false, fixAfter: null };
+    }
+
     return {
+      handoff: handoffView(),
+      finished: null,
       actions: r.actions,
       surfaces,
       spawned,
@@ -216,6 +436,337 @@ export function startCoordinator({
       testsReason: r.testsReason ?? null,
       done: r.complete,
       tasks: r.tasks,
+      // What the coordinator agent returned this pass: items it passed on, and its report / close
+      // decisions for the end of the run (T05).
+      agent: routed,
+    };
+  }
+
+  // --- The end of the run with the agent on (pir-coordinator DESIGN §2.9–§2.11, T05) ---
+  //
+  // One step per pass, so the display stays live: (a red gate: one test-fix worker, T10) → sync main into
+  // the feature branch → (a conflict: a worker in the feature worktree finishes the merge) → tests (red, and
+  // no fix worker yet this sequence: one now) → brief the agent → its `report` → REPORT.md
+  // committed → hand-off told → `ready to merge` (or `red`). Waiting there, each pass: main holds the tip
+  // (the person merged) or a `close` from the agent ends the run; main moved without it → re-sync, rewrite
+  // the report's footer, commit, tell the agent. A restart in `ready` finds REPORT.md already committed and
+  // takes the re-sync path, so the report is not rewritten.
+  function handoffView() {
+    if (!handoff) return null;
+    return { state: handoff.state, reportPath: handoff.reportPath, mainSha: handoff.mainSha };
+  }
+
+  const reportRel = join('plans', slug, 'REPORT.md');
+  const planFile = (name) => {
+    try {
+      return readFileSync(join(state.feature.path, 'plans', slug, name), 'utf8');
+    } catch {
+      return '';
+    }
+  };
+  const endRecord = (actions) => (type, extra = {}) => {
+    actions.push({ type, ...extra });
+    control?.log?.(`${type} ${extra.task ?? ''}`.trim());
+  };
+  const isoNow = () => new Date(now()).toISOString().replace(/\.\d+Z$/, 'Z');
+  const branchReady = () => handoff.tests === 'green' && handoff.sync?.state !== 'unresolved';
+  const fixResult = () => (handoff.fix === 'green' || handoff.fix === 'red' ? handoff.fix : null);
+  const footerNow = () =>
+    branchFooter({ mainSha: handoff.sync?.mainSha ?? null, tests: handoff.tests, syncedAt: isoNow(), unresolved: handoff.sync?.state === 'unresolved', fix: fixResult() });
+  const settle = () => {
+    handoff.state = branchReady() ? 'ready' : 'red';
+    handoff.mainSha = handoff.sync?.mainSha ?? handoff.mainSha;
+    handoff.step = 'waiting';
+  };
+
+  // An end-of-run helper worker (main-sync, tests-fix): spawned in the feature worktree under its task
+  // label, held in state.tasks under that label so its reports and parks are read like a task worker's.
+  function spawnHelper(label, role, prompt) {
+    const name = `${repo} / ${slug} / ${label}`;
+    const id = platform.spawn({ cwd: state.feature.path, name, phase: role, task: label, opening: mainSyncOpening(prompt) });
+    state.tasks[label] = { worktree: state.feature, workerId: id, role, slug: label, name, phase: 'implementing' };
+    return id;
+  }
+
+  // helperFinished(label, listed) → true once the helper has reported done or is gone (closed and dropped
+  // from state.tasks), false while it still works or waits on a question.
+  function helperFinished(label, listed) {
+    const t = state.tasks[label];
+    const live = t && listed.some((w) => w.id === t.workerId);
+    if (t && t.phase !== 'done' && live) return false;
+    if (t) {
+      platform.close(t.workerId);
+      platform.remove?.(t.workerId);
+      state.closedIds.add(t.workerId);
+      delete state.tasks[label];
+    }
+    return true;
+  }
+
+  function spawnSyncWorker(files) {
+    return spawnHelper(MAIN_SYNC_TASK, 'sync', buildConflictPrompt({ kind: 'main-sync', slug, plan: slug, files, audience: 'worker' }));
+  }
+
+  // The one test-fix worker of an end sequence (T10, DESIGN §2.9 step 1, user 2026-09-27). `after` is
+  // where the sequence goes once it is done: 'sync' from a red gate, else the report (brief or footer).
+  function startFix(rec, after, reason) {
+    handoff.fixUsed = true;
+    handoff.fixAfter = after;
+    handoff.fix = 'running';
+    const prompt = buildConflictPrompt({ kind: 'tests-red', slug, plan: slug, testsReason: reason?.reason ?? null, logPath: reason?.logPath ?? null, audience: 'worker' });
+    const id = spawnHelper(TESTS_FIX_TASK, 'fix', prompt);
+    rec('spawn', { task: TESTS_FIX_TASK, role: 'fix', workerId: id });
+    handoff.step = 'fixing';
+  }
+
+  function endFix(rec) {
+    // A restart after the person merged while pir was down: nothing to fix, endSync finishes it as merged.
+    if (existsSync(join(state.feature.path, reportRel)) && worktree.mainContains(state.feature.branch)) {
+      handoff.step = 'sync';
+      return;
+    }
+    startFix(rec, 'sync', handoff.gateReason);
+  }
+
+  function endFixing(rec, listed) {
+    if (!helperFinished(TESTS_FIX_TASK, listed)) return;
+    runEndTests();
+    handoff.fix = handoff.tests;
+    rec('tests-fix', { state: handoff.fix });
+    rec('tests', { state: handoff.tests });
+    handoff.step = handoff.fixAfter === 'sync' ? 'sync' : handoff.rewrite ? 'footer' : 'brief';
+  }
+
+  function endSync(rec) {
+    const existing = existsSync(join(state.feature.path, reportRel));
+    handoff.rewrite = existing;
+    // A restart after the person merged while pir was down: main already holds the tip. Syncing now would
+    // merge main back into the branch, move its tip past main, and wait in ready for a merge already done.
+    if (existing && worktree.mainContains(state.feature.branch)) {
+      handoff.reportPath = reportRel;
+      handoff.mainSha = worktree.mainTip?.() ?? handoff.mainSha;
+      handoff.tests ??= handoff.gate;
+      handoff.state = handoff.tests === 'green' ? 'ready' : 'red';
+      handoff.step = 'waiting';
+      finish('merged', rec);
+      return;
+    }
+    let res;
+    try {
+      res = worktree.syncMain(state.feature.path);
+    } catch (err) {
+      control?.log?.(`main-sync failed: ${err?.message ?? err}`);
+      handoff.sync = { state: 'unresolved', mainSha: worktree.mainTip?.() ?? null, files: [] };
+      handoff.tests = 'red';
+      handoff.step = existing ? 'footer' : 'brief';
+      return;
+    }
+    rec('main-sync', { state: res.state });
+    handoff.sync = { state: res.state, mainSha: res.mainSha, files: res.files ?? [] };
+    if (res.state === 'up-to-date') {
+      handoff.tests ??= handoff.gate;
+      if (existing && handoff.fix) {
+        // A restart in a red `ready`, and this sequence's fix worker ran: its result goes in the footer.
+        handoff.step = 'footer';
+      } else if (existing) {
+        // A restart in `ready` (DESIGN §2.11): nothing moved, so the committed report stands as it is.
+        handoff.reportPath = reportRel;
+        settle();
+      } else handoff.step = 'brief';
+      return;
+    }
+    if (res.state === 'merged') {
+      handoff.step = 'tests';
+      return;
+    }
+    const id = spawnSyncWorker(res.files ?? []);
+    rec('spawn', { task: MAIN_SYNC_TASK, role: 'sync', workerId: id });
+    handoff.step = 'syncing';
+  }
+
+  function endSyncing(rec, listed) {
+    if (!helperFinished(MAIN_SYNC_TASK, listed)) return; // still resolving, or parked on a question
+    if (worktree.syncPending(state.feature.path)) {
+      // The worker reported done without finishing the merge, or exited: the conflict stands unresolved,
+      // the merge is abandoned so the branch is clean, and the report says the branch is not ready.
+      worktree.abortSync(state.feature.path);
+      handoff.sync.state = 'unresolved';
+      handoff.tests = 'red';
+      rec('main-sync', { state: 'unresolved' });
+      handoff.step = handoff.rewrite ? 'footer' : 'brief';
+      return;
+    }
+    handoff.sync.state = 'resolved';
+    rec('main-sync', { state: 'resolved' });
+    handoff.step = 'tests';
+  }
+
+  function runEndTests() {
+    const res = (passOpts.runTests ?? (() => ({ ok: true })))(state.feature.path, { tasks: lastTasks });
+    handoff.tests = res.ok ? 'green' : 'red';
+    handoff.testsReason = res.ok ? null : { reason: res.reason ?? null, logPath: res.logPath ?? null };
+    return res;
+  }
+
+  function endTests(rec) {
+    runEndTests();
+    rec('tests', { state: handoff.tests });
+    // Red after the sync, and this sequence has had no fix worker yet: its one attempt (T10).
+    if (handoff.tests === 'red' && !handoff.fixUsed) {
+      startFix(rec, 'report', handoff.testsReason);
+      return;
+    }
+    handoff.step = handoff.rewrite ? 'footer' : 'brief';
+  }
+
+  // A re-sync (main moved while waiting, or a restart in ready) rewrites only the report's footer.
+  function endFooter(rec) {
+    const path = join(state.feature.path, reportRel);
+    let text = '';
+    try {
+      text = readFileSync(path, 'utf8');
+    } catch {
+      // gone from the worktree: rewritten below with only the footer, as the branch had it
+    }
+    writeFileSync(path, replaceFooter(text, footerNow()));
+    worktree.commitFeature(`report(${slug}): re-synced with main`);
+    rec('report', { resync: true });
+    handoff.reportPath = reportRel;
+    settle();
+    if (agent?.alive()) agent.tell(resyncedFor({ slug, mainSha: handoff.sync?.mainSha, tests: handoff.tests, unresolved: handoff.sync?.state === 'unresolved' }));
+  }
+
+  function endBrief() {
+    if (agent?.alive()) {
+      const facts = endFacts({
+        tasks: parseProgress(planFile('PROGRESS.md')).tasks,
+        ledger: agent.ledger(),
+        findings: findingRows(planFile('FINDINGS.md')),
+        unverified: unverifiedTasks(planFile('PROGRESS.md')),
+        sync: handoff.sync,
+        tests: handoff.tests,
+        fix: fixResult(),
+      });
+      if (agent.briefEnd(facts)) handoff.step = 'report';
+      return;
+    }
+    // Given up, or never started: carry on without it (DESIGN §2.11). One merely restarting is waited for.
+    if (!agent || agent.givenUp?.()) endWrite(null);
+  }
+
+  function endWrite(sections) {
+    const ledger = agent ? agent.ledger() : [];
+    const text = assembleReport({ slug, sections, notable: notableDecisions(ledger, adopted), footer: footerNow() });
+    writeFileSync(join(state.feature.path, reportRel), text);
+    worktree.commitFeature(`report(${slug}): delivery report`);
+    control?.log?.(`report ${reportRel}`);
+    handoff.reportPath = reportRel;
+    settle();
+    if (agent?.alive()) agent.tell(handoffFor({ slug, reportPath: reportRel, ready: handoff.state === 'ready', report: text }));
+  }
+
+  function finish(by, rec) {
+    handoff.finished = by;
+    rec('finished', { by });
+    closeAgent();
+  }
+
+  function endPass() {
+    const actions = [];
+    const rec = endRecord(actions);
+    const halted = control?.isHalted?.() ?? false;
+    if (halted) {
+      for (const label of HELPERS) {
+        const t = state.tasks[label];
+        if (t) platform.close(t.workerId);
+      }
+      closeAgent();
+      return endResult({ actions, halted: true, routed: { passed: [], report: null, close: false } });
+    }
+
+    // The helper workers' reports and answers (main-sync, tests-fix), read the way the loop reads a task
+    // worker's: list() once (the fake's tick), then the inbox.
+    const listed = platform.list().filter((w) => !state.closedIds.has(w.id));
+    const messages = platform.inbox().filter((m) => HELPERS.includes(m.task));
+    if (HELPERS.some((label) => state.tasks[label])) {
+      applyMessages(state, messages, rec);
+      resumeAnswered(state, new Map(listed.map((w) => [w.id, w])), rec);
+    }
+    const routed = route();
+
+    switch (handoff.step) {
+      case 'fix':
+        endFix(rec);
+        break;
+      case 'fixing':
+        endFixing(rec, listed);
+        break;
+      case 'sync':
+        endSync(rec);
+        break;
+      case 'syncing':
+        endSyncing(rec, listed);
+        break;
+      case 'tests':
+        endTests(rec);
+        break;
+      case 'footer':
+        endFooter(rec);
+        break;
+      case 'brief':
+        endBrief();
+        break;
+      case 'report':
+        if (routed.report) endWrite(routed.report);
+        else if (!agent || agent.givenUp?.()) endWrite(null);
+        break;
+      case 'waiting':
+        if (routed.close) finish('closed', rec);
+        else if (worktree.mainContains(state.feature.branch)) finish('merged', rec);
+        else if (worktree.mainTip() !== handoff.mainSha) {
+          // main moved without the feature tip: re-sync so the hand-off still merges cleanly (§2.10).
+          handoff.state = 'preparing';
+          handoff.rewrite = true;
+          // A re-sync whose tests turn red gets one fix attempt of its own (T10). The last sequence's fix
+          // result is cleared too: the rewritten footer describes this sync, and a stale "stayed red" over
+          // "Tests: green" would contradict itself.
+          handoff.fixUsed = false;
+          handoff.fix = null;
+          endSync(rec);
+        }
+        break;
+      default:
+        break;
+    }
+    return endResult({ actions, halted: false, routed, listed });
+  }
+
+  function endResult({ actions, halted, routed, listed = [] }) {
+    const surfaces = actions.filter((a) => a.type === 'surface').map(renderSurface);
+    const live = listed.filter((w) => HELPERS.some((label) => w.id === state.tasks[label]?.workerId)).length;
+    const waitingNow = handoff.step === 'waiting';
+    return {
+      handoff: handoffView(),
+      finished: handoff.finished,
+      actions,
+      surfaces,
+      spawned: [],
+      reviewing: [],
+      completed: [],
+      restartSummary: null,
+      closed: [],
+      ceilingFull: false,
+      waiting: [],
+      live,
+      preparing: 0,
+      halted,
+      complete: waitingNow,
+      readyToMerge: waitingNow && handoff.state === 'ready' ? { branch: state.feature.branch } : null,
+      testsPassed: handoff.tests === null ? undefined : handoff.tests === 'green',
+      testsReason: handoff.tests === 'red' ? handoff.testsReason ?? handoff.gateReason ?? null : null,
+      done: waitingNow,
+      tasks: lastTasks,
+      agent: routed,
     };
   }
 
@@ -277,7 +828,100 @@ export function startCoordinator({
     return { reason: 'maxPasses', passes: maxPasses, complete: false };
   }
 
-  return { state, pass, defer, drive };
+  return {
+    state,
+    pass,
+    defer,
+    drive,
+    closeAgent,
+    // The agent, or null (not started, disabled, or failed to start).
+    get agent() {
+      return agent;
+    },
+    // The keys of the items the agent holds now; empty while it is down, so every item is the person's.
+    // The end-of-run state (T05) — null until the end gate has run with the agent on.
+    get handoff() {
+      return handoffView();
+    },
+    endOfRun,
+    heldByAgent() {
+      return agent?.alive() ? new Set([...held.keys(), ...justSettled]) : new Set();
+    },
+    // agentView() → the agent for the run state (buildRunState's `coordinator`), with `holding`, how many
+    // waiting items it holds, for its row (T12). Counted from `held`, not the agent's own `briefed` map,
+    // which also keeps reserved and already-answered items; `justSettled` is answered, so not held.
+    agentView() {
+      const v = agent?.view?.();
+      return v ? { ...v, holding: v.state === 'up' && agent.alive() ? held.size : 0 } : null;
+    },
+  };
+}
+
+// The end-of-run helper workers' task labels (pir-coordinator T05, T10): each holds no task of the plan.
+const HELPERS = [MAIN_SYNC_TASK, TESTS_FIX_TASK];
+// What each helper does, as its row's slug: kebab like a task's, and within the row's 22-column slug field.
+const HELPER_SLUG = { [MAIN_SYNC_TASK]: 'resolve-main-merge', [TESTS_FIX_TASK]: 'fix-red-tests' };
+
+// mainSyncOpening(prompt) → the opening instruction of an end-of-run helper worker: main-sync (T05) or
+// tests-fix (T10). It runs under the pir-worker contract for asking the person and dropping its report,
+// but its instruction is the helper's prompt, not a stock skill: it holds no task of the plan.
+export function mainSyncOpening(prompt) {
+  return (
+    'You are a worker session in a parallel PIR run. Invoke the pir-worker skill and follow its contract for ' +
+    'asking the person and dropping reports, but your instruction is neither pir-implement nor pir-review: do not ' +
+    'run pir-work, do not pick a task, and carry out exactly this and nothing else.\n\n' +
+    prompt
+  );
+}
+
+// holdLimitMs(env) → the coordinator agent's hold limit (pir-coordinator DESIGN §2.11, T13): 5 minutes,
+// or PARALLEL_COORDINATOR_HOLD_MS when it is a positive number (the live check and tests shorten it).
+export const DEFAULT_HOLD_MS = 5 * 60 * 1000;
+export function holdLimitMs(env = process.env) {
+  const v = Number(env?.PARALLEL_COORDINATOR_HOLD_MS);
+  return Number.isFinite(v) && v > 0 ? v : DEFAULT_HOLD_MS;
+}
+
+// coordinatorEnabled(env) → whether this run has a coordinator agent (pir-coordinator DESIGN §2.1): on by
+// default; PARALLEL_COORDINATOR=0 (set by `pir start --no-coordinator`, and by the harness for a scenario
+// that does not ask for the agent) turns it off, and the run is exactly as it was before the agent.
+export function coordinatorEnabled(env = process.env) {
+  return env.PARALLEL_COORDINATOR !== '0';
+}
+
+// readAskRules(featurePath) → the `permissions.ask` strings of the feature worktree's
+// `.claude/settings.json` (pir-coordinator DESIGN §2.4: the plan review writes the §5.3 bins there). A
+// missing or unreadable file, or no such key, is []: nothing is reserved by rule, and the rest of the
+// rulebook (destructive commands, the SDK's flags) still holds.
+export function readAskRules(featurePath) {
+  try {
+    const ask = JSON.parse(readFileSync(join(featurePath, '.claude', 'settings.json'), 'utf8'))?.permissions?.ask;
+    return Array.isArray(ask) ? ask.filter((r) => typeof r === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
+// lastWordsOf(logPath) → the worker's last assistant text in its conversation log, for a report park's
+// brief (DESIGN §2.3), or null. Read on the pass the park is first briefed, never after.
+export function lastWordsOf(logPath) {
+  if (typeof logPath !== 'string' || !existsSync(logPath)) return null;
+  let last = null;
+  try {
+    for (const line of readFileSync(logPath, 'utf8').split('\n')) {
+      if (!line.trim()) continue;
+      let entry;
+      try {
+        entry = JSON.parse(line);
+      } catch {
+        continue;
+      }
+      for (const ev of readEntry(entry)) if (ev.kind === 'text' && ev.role === 'assistant' && ev.text.trim()) last = ev.text;
+    }
+  } catch {
+    return null;
+  }
+  return last;
 }
 
 // --- The worker up-channel: the reports drop-dir the bin drains directly (DESIGN §2.2, §3.5) --
@@ -537,6 +1181,18 @@ export function renderHandoff({ readyToMerge, taskCount, slug, why } = {}) {
   );
 }
 
+// renderFinished({ by, slug, ready, reportPath }) → the line printed when a run with the agent ends
+// (pir-coordinator DESIGN §2.10): the person merged, or told the agent to close the run.
+export function renderFinished({ by, slug, ready = false, reportPath = null } = {}) {
+  const branch = `pir/${slug}`;
+  const report = reportPath ? ` The report is ${reportPath}.` : '';
+  if (by === 'merged') return `✔ ${branch} is in main. The run is finished.${report}`;
+  return (
+    `✔ run closed.${report}\n` +
+    (ready ? `${branch} is not merged; it is yours to merge when you want:\n\n  git merge ${branch}\n` : `${branch} is not merged and not ready to merge.`)
+  );
+}
+
 // --- The `node src/shell/coordinate.mjs {slug}` bin entry --------------------------------------
 //
 // The whole coordinator: refuse an unreviewed plan (DESIGN §2.1), otherwise stand up the real platform
@@ -635,8 +1291,10 @@ export function clearTransientFeeds(controlDir) {
   const cleared = [];
 
   // inbox/ is the person's input to workers (live-workers DESIGN §2.5, T07): an input addressed to a
-  // previous run's worker must never reach a new one, so it is cleared with reports/.
-  for (const feed of ['reports', 'inbox']) {
+  // previous run's worker must never reach a new one, so it is cleared with reports/. The coordinator
+  // agent's decisions/ are the same kind of feed, naming workers and requests of a run that is gone
+  // (pir-coordinator DESIGN §3.5); the rest of coordinator/ (ledger.jsonl, session.json) is durable.
+  for (const feed of ['reports', 'inbox', join('coordinator', 'decisions')]) {
     const feedDir = join(controlDir, feed);
     try {
       if (!existsSync(feedDir)) continue;
@@ -752,11 +1410,14 @@ export function makePrepare({ design, setupDir, start = startLines } = {}) {
 // the display reads it as `fixing conflict` (conflictSent). A worker that has reported `done` is `merging` —
 // its review is finished and the loop is waiting for the session to go idle before it merges (loop.mjs 3d),
 // which can take up to AWAIT_IDLE_TIMEOUT_MS, so `reviewing` there would lie. Otherwise the role names it —
-// an implementer (or a `you` scribe) is `building`, a reviewer `reviewing`.
+// an implementer (or a `you` scribe) is `building`, a reviewer `reviewing`. An implementer or reviewer that
+// has stopped with nothing running is `asking` too (waitingOn's stopped clause, stopped-worker-asking §2.1):
+// the rule lives in waitingOn alone, so the row, the clock and Remote Control cannot read it differently.
 export function displayPhaseFor(t, activity) {
   if (!t) return null;
   if (t.phase === 'preparing') return 'preparing'; // setup running, no worker yet (DESIGN §2.4)
   if (t.phase === 'awaiting-answer' && (t.decision?.sent || waitingOn(t, activity))) return 'asking';
+  if ((t.phase === 'implementing' || t.phase === 'reviewing') && waitingOn(t, activity)) return 'asking';
   if (t.phase === 'done') return 'merging';
   if (t.role === 'review') return 'reviewing';
   return 'building';
@@ -789,6 +1450,8 @@ function clockPhase(st, activity) {
 // workers is platform.workers(): every worker the run spawned, live or exited, in spawn order, each with
 // its activity. From it each task gets `asking` (the kind of answer wanted, live-workers §2.4), `worker`
 // (the one `pir` opens: the live one, else the latest, §2.11) and `workers` (all of the task's).
+// An end-of-run helper in stateTasks (main-sync, tests-fix) with a worker gets an entry of the same shape
+// in `helpers`, flagged `helper: true` (pir-coordinator T11); the key is absent while there is none.
 export function buildRunState({
   passTasks,
   stateTasks = {},
@@ -802,31 +1465,64 @@ export function buildRunState({
   readyToMerge = false,
   testsReason = null,
   interrupted = false,
+  handoff = null,
+  heldByAgent = new Set(),
+  coordinator = null,
 } = {}) {
-  const tasks = passTasks.map((t) => {
-    const done = t.state === DONE_GLYPH;
-    const st = done ? null : stateTasks[t.num];
-    const activity = st ? taskActivity(workers, t.num, st) : undefined;
+  // One row entry: a plan task, or an end-of-run helper (`st` its state.tasks entry, keyed by its label).
+  const entryFor = ({ id, slug: rowSlug, deps, done }) => {
+    const st = done ? null : stateTasks[id];
+    const activity = st ? taskActivity(workers, id, st) : undefined;
     const phase = st ? displayPhaseFor(st, activity) : null;
+    // Who holds the task's waiting items (pir-coordinator §2.5): the row reads `asking coordinator` while
+    // the agent holds every one, `asking you` once one is the person's. waitingFor is the rule Remote
+    // Control reads, so the row and the phone cannot disagree.
+    const holder = st ? waitingFor(st, activity, { workerId: st.workerId, heldByAgent })?.holder ?? null : null;
     return {
-      id: t.num,
-      slug: t.name,
-      deps: t.deps,
+      id,
+      slug: rowSlug,
+      deps,
       done,
       phase,
-      since: phase ? sinceByTask[t.num] ?? null : null,
+      since: phase ? sinceByTask[id] ?? null : null,
       // Held only while the task waits on the person: an `asking` phase or a live worker's request.
-      stoppedAt: phase ? stoppedAtByTask[t.num] ?? null : null,
-      doneMs: done ? doneMsByTask[t.num] ?? null : null,
+      stoppedAt: phase ? stoppedAtByTask[id] ?? null : null,
+      doneMs: done ? doneMsByTask[id] ?? null : null,
       question: phase === 'asking' ? st.decision?.text ?? null : null,
       // A merge-conflict fix went to the live worker (loop.mjs 3d, live-workers §2.10): the row
       // reads `fixing conflict` and nothing is asked of the person. A later question from that worker
       // replaces the decision, so the flag drops and the row turns `asking you`.
       conflictSent: phase === 'asking' && !!st.decision?.sent,
-      ...workerFields(workers.filter((w) => w.task === t.num), { done, waiting: st ? waitingOn(st, activity) : null }),
+      ...workerFields(workers.filter((w) => w.task === id), { done, waiting: st ? waitingOn(st, activity) : null }),
+      // Only on a task something is asking for, so a row with nothing waiting keeps its old shape.
+      ...(holder ? { holder } : {}),
     };
-  });
-  return { branch, ceiling, complete, readyToMerge: !!readyToMerge, testsReason: testsReason ?? null, interrupted: !!interrupted, tasks };
+  };
+  const tasks = passTasks.map((t) => entryFor({ id: t.num, slug: t.name, deps: t.deps, done: t.state === DONE_GLYPH }));
+  // The end-of-run helpers (main-sync, tests-fix; pir-coordinator T11): a row each while it has a worker,
+  // read exactly like a task's, so the person can open it and answer a question the agent passed on. They
+  // are kept apart from `tasks` because they are no task of the plan: `n/m done` and the runs list's
+  // progress count the plan's tasks only.
+  const helpers = HELPERS.filter((label) => stateTasks[label]?.workerId).map((label) => ({
+    ...entryFor({ id: label, slug: HELPER_SLUG[label], deps: [], done: false }),
+    helper: true,
+  }));
+  // handoff is the end of the run with the agent on (pir-coordinator T05): { state: 'preparing'|'ready'|'red',
+  // reportPath, mainSha }, null otherwise.
+  // coordinator is the run's agent for the screen to open and its row (pir-coordinator §2.8, T12):
+  // { id, live, logPath, state, holding }, null with `--no-coordinator` or when it never started.
+  return {
+    branch,
+    ceiling,
+    complete,
+    readyToMerge: !!readyToMerge,
+    testsReason: testsReason ?? null,
+    interrupted: !!interrupted,
+    handoff: handoff ?? null,
+    coordinator: coordinator ?? null,
+    tasks,
+    ...(helpers.length ? { helpers } : {}),
+  };
 }
 
 // newTiming() / advanceTiming(timing, stateTasks, completed, now) — per-task timing for the display's
@@ -867,20 +1563,35 @@ export function advanceTiming(timing, stateTasks, completed, now, workers = []) 
   for (const num of completed) {
     if (doneMsByTask[num] == null) doneMsByTask[num] = now - (startByTask[num] ?? now);
   }
+  // A worker gone from state.tasks leaves no phase behind, so one spawned again under the same key (an
+  // end-of-run helper, whose label is reused by the next sync's fix worker, T11) starts a fresh clock
+  // instead of carrying on the last one's. startByTask is kept: a task's merged duration counts from it.
+  for (const num of Object.keys(phaseByTask)) {
+    if (stateTasks[num]) continue;
+    delete phaseByTask[num];
+    delete sinceByTask[num];
+    delete stoppedAtByTask[num];
+    delete resumeByTask[num];
+  }
 }
 
-// remoteWanted(workers, stateTasks) → the ids of the live workers waiting on the person (waitingOn),
-// whose sessions the run makes reachable over Remote Control (claude.ai and the Claude app, so the person
-// is notified and can answer away from the terminal). A park counts only for the worker holding the task,
-// and only once its asking turn has ended; a conflict fix pir sent asks the person nothing. Every other
-// live worker has Remote Control off.
-export function remoteWanted(workers, stateTasks = {}) {
+// remoteWanted(workers, stateTasks, { agentId, heldByAgent }) → the ids of the live workers waiting on the
+// person (waitingOn), whose sessions the run makes reachable over Remote Control (claude.ai and the Claude
+// app, so the person is notified and can answer away from the terminal). A park counts only for the worker
+// holding the task, and only once its asking turn has ended; a conflict fix pir sent asks the person
+// nothing. A worker whose every waiting item the coordinator agent holds is not the person's yet
+// (pir-coordinator DESIGN §2.5): it becomes reachable once the agent passes an item on, or when the item
+// is reserved. The agent's own session is wanted for the whole run (DESIGN §2.8). Every other live worker
+// has Remote Control off.
+export function remoteWanted(workers, stateTasks = {}, { agentId = null, heldByAgent = new Set() } = {}) {
   const ids = new Set();
   for (const w of workers) {
     if (!w.live) continue;
     const t = stateTasks[w.task];
-    if (waitingOn(t?.workerId === w.id ? t : undefined, w.activity)) ids.add(w.id);
+    const waiting = waitingFor(t?.workerId === w.id ? t : undefined, w.activity, { workerId: w.id, heldByAgent });
+    if (waiting?.holder === 'person') ids.add(w.id);
   }
+  if (agentId) ids.add(agentId);
   return ids;
 }
 
@@ -999,14 +1710,40 @@ async function main(argv) {
   // "do not ask again" the inbox records is what the platform consults on the worker's next request.
   const grants = createGrants();
   const platform = createPlatform({ root, controlDir: control.dir, transport: inbox.transport, claudePath, grants });
-  const personInbox = startPersonInbox({ controlDir: control.dir, platform, grants, log: control.log });
+  // The person may type to the coordinator agent in its own conversation (pir-coordinator §2.8): the inbox
+  // forwards to it by id once it has started (currentAgent is set when the controller exists).
+  let currentAgent = () => null;
+  const personInbox = startPersonInbox({ controlDir: control.dir, platform: withAgent(platform, () => currentAgent()), grants, log: control.log });
   const worktree = createWorktree({ root });
   // No DESIGN.md reads as '': makePrepare sees no block and runs no setup.
   const design = planHome(slug, { root }).read('DESIGN.md') ?? '';
   const prepare = makePrepare({ design, setupDir: join(control.dir, 'setup') });
   // Set once the display state below exists; runTests calls it before the suite blocks the pass.
   let showTesting = () => {};
-  const coordinator = startCoordinator({ slug, repo, platform, worktree, maxWorkers, control,
+  // Remote Control follows the person being waited on (remoteWanted): on while a worker waits, off once
+  // it is answered and working again. On unless PARALLEL_REMOTE=0 (user 2026-09-26): it puts a session in
+  // the person's claude.ai account and may notify their phone, which not everyone wants.
+  const REMOTE = process.env.PARALLEL_REMOTE !== '0';
+  // The coordinator agent (pir-coordinator DESIGN §2.1): on unless `pir start --no-coordinator`, which
+  // the launcher passes as PARALLEL_COORDINATOR=0. Its project rules are `.claude/pir-coordinator.md`.
+  const startAgent = !coordinatorEnabled(process.env)
+      ? null
+      : ({ featurePath, askRules }) => {
+          const rules = join(featurePath, '.claude', 'pir-coordinator.md');
+          return startCoordinatorAgent({
+            controlDir: control.dir,
+            featurePath,
+            repoRoot: root,
+            slug,
+            projectRulesPath: existsSync(rules) ? rules : null,
+            platform,
+            askRules,
+            startWorker,
+            claudePath,
+            remote: REMOTE,
+          });
+        };
+  const coordinator = startCoordinator({ slug, repo, platform, worktree, maxWorkers, control, startAgent,
     runTests: (featurePath, { tasks } = {}) => {
       showTesting(tasks ?? []);
       return runFeatureTests(featurePath, { slug, root, logPath: join(control.dir, 'tests.log') });
@@ -1016,6 +1753,7 @@ async function main(argv) {
     // live run reaches the coordinator-side conflict deterministically. No person has a reason to.
     holdMerges: process.env.PARALLEL_HOLD_MERGES === '1',
   });
+  currentAgent = () => coordinator.agent;
   const renderer = createRenderer({ stream: process.stdout });
 
   console.log(`ceiling: ${maxWorkers}   control: ${control.dir}`);
@@ -1086,7 +1824,10 @@ async function main(argv) {
   // halt (both of which the loop already handled). This is the orphan-guard: a stall, a
   // Ctrl-C or an error must not leave a paid session running (DESIGN §2.6). Idempotent (close is safe
   // twice). A re-run reaps whatever a second Ctrl-C during teardown left behind (§2.6, §2.8).
-  const teardown = () => teardownRun({ platform, state: coordinator.state, repo, slug, control });
+  const teardown = () => {
+    coordinator.closeAgent({ immediate: true });
+    return teardownRun({ platform, state: coordinator.state, repo, slug, control });
+  };
   let tornDown = false;
   const teardownOnce = (why) => {
     if (tornDown) return;
@@ -1106,6 +1847,7 @@ async function main(argv) {
     if (tornDown) return;
     tornDown = true;
     renderer.close();
+    coordinator.closeAgent({ immediate: true });
     const { closed } = teardownRun({ platform, state: coordinator.state, repo, slug, control });
     writeRunFinal({ controlDir: control.dir, proc, runState: lastRunState, reason: 'stop', updateIndex, log: control.log });
     renderer.line(
@@ -1147,19 +1889,20 @@ async function main(argv) {
   showTesting = (passTasks) => {
     const since = Date.now();
     trackTiming({}, passTasks.map((t) => t.num)); // the last merge's duration, before the pass ends
-    const runState = testingRunState(buildRunState({ passTasks, workers: platform.workers(), branch, ceiling: CEILING, doneMsByTask }), { since });
+    const runState = testingRunState(
+      buildRunState({ passTasks, workers: platform.workers(), branch, ceiling: CEILING, doneMsByTask, coordinator: coordinator.agentView() }),
+      { since },
+    );
     lastRunState = runState;
     if (selfReport) writeRunSnapshot({ controlDir: control.dir, proc, runState });
     renderer.paint(buildDisplay(runState, { now: since }));
   };
 
-  // Remote Control follows the person being waited on (remoteWanted): on while a worker waits, off once
-  // it is answered and working again. On unless PARALLEL_REMOTE=0 (user 2026-09-26): it puts a session in
-  // the person's claude.ai account and may notify their phone, which not everyone wants.
-  const REMOTE = process.env.PARALLEL_REMOTE !== '0';
+  // The agent's own Remote Control is its session's, switched on when it starts (coordinator-agent.mjs);
+  // only the workers are synced here, each on once an item of its is the person's.
   const syncRemote = (stateTasks) => {
     const workers = platform.workers();
-    const wanted = remoteWanted(workers, stateTasks);
+    const wanted = remoteWanted(workers, stateTasks, { heldByAgent: coordinator.heldByAgent() });
     for (const w of workers) if (w.live) platform.remoteControl(w.id, wanted.has(w.id));
   };
 
@@ -1211,9 +1954,14 @@ async function main(argv) {
         sinceByTask,
         stoppedAtByTask,
         doneMsByTask,
-        complete: r.complete,
-        readyToMerge: !!r.readyToMerge,
+        // With the agent on, the run is not handed off while it prepares (sync, report): the display must
+        // not offer the merge before REPORT.md is committed and the branch re-tested (T05).
+        complete: r.handoff ? r.handoff.state !== 'preparing' : r.complete,
+        readyToMerge: r.handoff ? r.handoff.state === 'ready' : !!r.readyToMerge,
         testsReason: r.testsReason,
+        handoff: r.handoff,
+        heldByAgent: coordinator.heldByAgent(),
+        coordinator: coordinator.agentView(),
       });
       lastRunState = runState;
       // Feed the detached live view (DESIGN §2.4): write this pass's run state to the snapshot the
@@ -1222,7 +1970,23 @@ async function main(argv) {
       if (selfReport) writeRunSnapshot({ controlDir: control.dir, proc, runState });
       renderer.paint(buildDisplay(runState, { now: Date.now() }));
 
+      // The end of the run with the agent (pir-coordinator DESIGN §2.9, §2.10): the passes after the end
+      // gate sync main, get the report committed and wait in `ready to merge` until the person merges or
+      // tells the agent to close. The run's own waiting is not a stall.
+      if (coordinator.handoff) {
+        if (r.finished) {
+          finishRun('complete'); // merged or closed: `finished` (DESIGN §2.10)
+          renderer.close();
+          renderer.line('\n' + renderFinished({ by: r.finished, slug, ready: r.handoff?.state === 'ready', reportPath: r.handoff?.reportPath }));
+          return;
+        }
+        await waitForReport([inbox.reportsDir, personInbox.inboxDir], POLL_MS);
+        continue;
+      }
+
       if (r.complete) {
+        // Without the agent the run ends here, as it did before it (DESIGN §2.1).
+        coordinator.closeAgent();
         // The plan is done and the loop has run the feature-branch tests (§2.4). Hand the branch off: on
         // green, print the `git merge` command for the person to run; on red, print the failure and offer
         // no merge (§2.8). The run never merges to main itself. The complete pass has no live workers, so

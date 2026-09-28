@@ -1047,6 +1047,23 @@ test('a stale report is gone after the clear, so it cannot route to a fresh work
   assert.equal(readdirSync(join(dir, 'reports')).filter((n) => n.endsWith('.json')).length, 0, 'the stale reports are gone');
 });
 
+test('clearTransientFeeds clears coordinator/decisions/ and keeps ledger.jsonl and session.json (pir-coordinator T03)', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'pir-control-coord-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const coord = join(dir, 'coordinator');
+  mkdirSync(join(coord, 'decisions'), { recursive: true });
+  writeFileSync(join(coord, 'decisions', '1-a.json'), '{"kind":"close"}');
+  writeFileSync(join(coord, 'ledger.jsonl'), '{"kind":"permission"}\n');
+  writeFileSync(join(coord, 'session.json'), '{"sessionId":"s","restarts":[]}');
+
+  const { cleared } = clearTransientFeeds(dir);
+
+  assert.deepEqual(readdirSync(join(coord, 'decisions')), [], 'a dead run\'s decisions are gone');
+  assert.equal(readFileSync(join(coord, 'ledger.jsonl'), 'utf8'), '{"kind":"permission"}\n', 'the ledger is durable');
+  assert.ok(existsSync(join(coord, 'session.json')), 'the session record is durable');
+  assert.deepEqual(cleared, ['coordinator/decisions/']);
+});
+
 // A reap that finds nothing, so the hygiene tests below never read a real process table.
 const noReap = async () => ({ reaped: [], skipped: [] });
 
@@ -1669,4 +1686,1237 @@ test('taskActivity: a task with a tracked worker reads only that worker, never a
   assert.equal(rs.tasks[0].phase, 'asking', 'the untracked worker\'s open turn does not un-ask the park');
   assert.equal(rs.tasks[0].asking, 'question');
   assert.equal(taskActivity([other], 'T01', { phase: 'implementing' }), other.activity, 'an untracked task falls back to its live worker');
+});
+
+// --- stopped-worker-asking T02: a stopped implementer or reviewer reads asking, through waitingOn alone ---
+
+const building1 = (role = 'implement') => ({ T01: { role, phase: role === 'review' ? 'reviewing' : 'implementing', workerId: 'w1' } });
+const stoppedAct = (o = {}) => ({ state: 'idle', open: false, turns: 3, pending: [], background: [], ...o });
+const busyAct = (o = {}) => stoppedAct({ state: 'busy', open: true, ...o });
+
+test('displayPhaseFor: a stopped implementer or reviewer is asking; busy, or idle behind a job, is its role phase', () => {
+  assert.equal(displayPhaseFor(building1().T01, stoppedAct()), 'asking');
+  assert.equal(displayPhaseFor(building1('review').T01, stoppedAct()), 'asking');
+  assert.equal(displayPhaseFor(building1().T01, busyAct()), 'building');
+  assert.equal(displayPhaseFor(building1().T01, stoppedAct({ background: ['bg1'] })), 'building');
+  assert.equal(displayPhaseFor(building1('review').T01, stoppedAct({ background: ['bg1'] })), 'reviewing');
+  assert.equal(displayPhaseFor({ role: 'review', phase: 'done' }, stoppedAct()), 'merging', 'idle after `done` is the merge wait');
+  assert.equal(displayPhaseFor({ role: 'implement', phase: 'review-ready' }, stoppedAct()), 'building');
+});
+
+test('buildRunState: a stopped implementer reads asking a question with no text; its next turn reads building', () => {
+  const stateTasks = building1();
+  let rs = buildRunState({ passTasks: oneRow, stateTasks, workers: [liveWorker(stoppedAct())], branch: 'b', ceiling: 2 });
+  assert.equal(rs.tasks[0].phase, 'asking');
+  assert.equal(rs.tasks[0].asking, 'question');
+  assert.equal(rs.tasks[0].question, null, 'no report, no text');
+  assert.equal(rs.tasks[0].conflictSent, false);
+  rs = buildRunState({ passTasks: oneRow, stateTasks, workers: [liveWorker(busyAct({ turns: 3 }))], branch: 'b', ceiling: 2 });
+  assert.equal(rs.tasks[0].phase, 'building');
+  assert.equal(rs.tasks[0].asking, null);
+});
+
+test('buildRunState: a stopped reviewer reads asking; one idle behind a background job reads reviewing', () => {
+  const stateTasks = building1('review');
+  const w = (a) => [liveWorker(a, { role: 'review' })];
+  let rs = buildRunState({ passTasks: oneRow, stateTasks, workers: w(stoppedAct()), branch: 'b', ceiling: 2 });
+  assert.equal(rs.tasks[0].phase, 'asking');
+  assert.equal(rs.tasks[0].asking, 'question');
+  rs = buildRunState({ passTasks: oneRow, stateTasks, workers: w(stoppedAct({ background: ['bg1'] })), branch: 'b', ceiling: 2 });
+  assert.equal(rs.tasks[0].phase, 'reviewing');
+  assert.equal(rs.tasks[0].asking, null);
+});
+
+test('advanceTiming: the clock stops when the implementer stops and resumes when its next turn opens', () => {
+  const timing = newTiming();
+  const stateTasks = building1();
+  advanceTiming(timing, stateTasks, [], 1000, [liveWorker(busyAct({ turns: 0 }))]);
+  advanceTiming(timing, stateTasks, [], 4000, [liveWorker(stoppedAct({ background: ['bg1'] }))]);
+  assert.equal(timing.stoppedAtByTask.T01, undefined, 'idle behind its own job: the clock runs');
+  advanceTiming(timing, stateTasks, [], 5000, [liveWorker(stoppedAct())]);
+  assert.equal(timing.stoppedAtByTask.T01, 5000, 'stopped: the clock stops');
+  assert.equal(timing.sinceByTask.T01, 1000);
+  advanceTiming(timing, stateTasks, [], 65000, [liveWorker(busyAct({ turns: 3 }))]);
+  assert.equal(timing.stoppedAtByTask.T01, undefined);
+  assert.equal(timing.sinceByTask.T01, 61000, 'resumes at 4s: the 60s wait is left out');
+});
+
+test('remoteWanted: a stopped implementer is wanted; a busy one, or one idle behind a job, is not', () => {
+  const stateTasks = building1();
+  assert.deepEqual([...remoteWanted([liveWorker(stoppedAct())], stateTasks)], ['w1']);
+  assert.deepEqual([...remoteWanted([liveWorker(busyAct())], stateTasks)], []);
+  assert.deepEqual([...remoteWanted([liveWorker(stoppedAct({ background: ['bg1'] }))], stateTasks)], []);
+  assert.deepEqual([...remoteWanted([liveWorker(stoppedAct(), { id: 'w2' })], stateTasks)], [], 'not the worker holding the task');
+});
+
+test('an idle implementer whose activity has no `background` (the fake platform) keeps reading building', (t) => {
+  assert.equal(displayPhaseFor(building1().T01, { state: 'idle', pending: [] }), 'building');
+  // A whole fake-driven run: no row ever reads asking, since the fake's activity carries no `background`.
+  const { coordinator, platform } = setup(t, [{ num: 'T01' }, { num: 'T02' }]);
+  let painted = 0;
+  const result = coordinator.drive({
+    onPass: (r) => {
+      const rs = buildRunState({ passTasks: r.tasks, stateTasks: coordinator.state.tasks, workers: platform.workers(), branch: 'b', ceiling: 4 });
+      for (const row of rs.tasks) assert.notEqual(row.phase, 'asking', `${row.id} never asks`);
+      painted += rs.tasks.filter((row) => row.phase === 'building' || row.phase === 'reviewing').length;
+    },
+  });
+  assert.ok(painted > 0, 'the check saw working rows');
+  assert.equal(result.complete, true, JSON.stringify(result));
+});
+
+// --- pir-coordinator T04: the coordinator agent answers first (DESIGN §2.3–§2.5, §2.11, §3.6) ------------
+//
+// A fake run: the real startCoordinator and the real startCoordinatorAgent (brief, drain, checks, ledger),
+// over the fake platform and worktree. The agent's session is an in-memory stand-in that records what pir
+// told it; the test plays the agent by dropping decision files into its folder between passes, exactly
+// as the real agent's Write does.
+
+import { startCoordinatorAgent } from './coordinator-agent.mjs';
+import { coordinatorEnabled, readAskRules } from './coordinate.mjs';
+import { waitingFor } from '../core/asking.mjs';
+
+// stubSession() → startWorker for the agent: a session that records every message sent into it and can be
+// made to exit, so no process and no fake `claude` is involved.
+function stubSessions() {
+  const sessions = [];
+  const startWorker = (opts) => {
+    const exitFns = [];
+    const s = {
+      id: opts.resume ?? opts.sessionId,
+      opts,
+      pid: null,
+      dead: false,
+      told: [],
+      send(text, { from = 'pir' } = {}) {
+        if (s.dead) return false;
+        s.told.push({ text, from });
+        return true;
+      },
+      note() {},
+      remoteControl: async () => {},
+      onExit: (fn) => exitFns.push(fn),
+      entries: () => [],
+      close: async () => {
+        s.dead = true;
+      },
+      exit() {
+        s.dead = true;
+        for (const fn of exitFns) fn({ code: 1 });
+      },
+    };
+    sessions.push(s);
+    return s;
+  };
+  return { sessions, startWorker, latest: () => sessions.at(-1) };
+}
+
+// agentRun(t, rows, behaviors, { files }) → a coordinator with the agent on, plus helpers to play the agent.
+function agentRun(t, rows, behaviors = {}, { files = {}, now, holdMs, control } = {}) {
+  const worktree = createFakeWorktree({ progress: progressDoc(rows), files, slug: SLUG });
+  const platform = createFakePlatform({ behaviors });
+  t.after(() => worktree.cleanup());
+  const controlDir = mkdtempSync(join(tmpdir(), 'pir-t04-control-'));
+  t.after(() => rmSync(controlDir, { recursive: true, force: true }));
+  const stub = stubSessions();
+  const started = [];
+  const coordinator = startCoordinator({
+    slug: SLUG,
+    repo: REPO,
+    platform,
+    worktree,
+    ...(now ? { now } : {}),
+    ...(holdMs !== undefined ? { holdMs } : {}),
+    ...(control ? { control } : {}),
+    readLog: (p) => platform.readLog(p),
+    startAgent: ({ featurePath, askRules }) => {
+      started.push({ featurePath, askRules });
+      return startCoordinatorAgent({
+        controlDir, featurePath, repoRoot: featurePath, slug: SLUG, platform, askRules,
+        startWorker: stub.startWorker, claudePath: '/nonexistent/claude', skillsDir: controlDir, now: () => Date.parse('2026-09-27T10:00:00Z'),
+      });
+    },
+  });
+  t.after(() => coordinator.closeAgent());
+  const decisions = join(controlDir, 'coordinator', 'decisions');
+  let n = 0;
+  const decide = (obj) => writeFileSync(join(decisions, `${String(++n).padStart(3, '0')}.json`), JSON.stringify(obj));
+  const told = () => stub.sessions.flatMap((s) => s.told.map((m) => m.text));
+  const wanted = () => remoteWanted(platform.workers(), coordinator.state.tasks, { heldByAgent: coordinator.heldByAgent() });
+  const implOf = (task) => platform.spawns.find((s) => s.task === task && s.role === 'implement')?.id;
+  return { coordinator, platform, worktree, controlDir, stub, started, decide, told, wanted, implOf };
+}
+
+test('agent answer: a permission request is briefed once, the agent allows it, the worker proceeds; no Remote Control for it', (t) => {
+  const run = agentRun(t, [{ num: 'T01' }], { T01: { requests: [{ toolName: 'Bash', input: { command: 'npm test' } }] } });
+  const { coordinator, platform } = run;
+  coordinator.pass();
+  const w = run.implOf('T01');
+  assert.equal(run.started.length, 1, 'the agent starts once the feature worktree is open');
+  assert.equal(run.started[0].featurePath, coordinator.state.feature.path);
+  const briefs = run.told().filter((m) => m.includes(`requestId: \`${w}-r1\``));
+  assert.equal(briefs.length, 1, 'briefed');
+  assert.match(briefs[0], /asking permission/);
+  assert.deepEqual([...coordinator.heldByAgent()], [`${w}:${w}-r1`]);
+  assert.equal(run.wanted().has(w), false, 'held by the agent: not reachable on the phone');
+
+  coordinator.pass(); // still waiting on the agent: not briefed again
+  assert.equal(run.told().filter((m) => m.includes(`requestId: \`${w}-r1\``)).length, 1, 'briefed once');
+
+  run.decide({ kind: 'permission', worker: w, requestId: `${w}-r1`, decision: 'allow', reason: 'the test command' });
+  const seenRemote = [];
+  const res = coordinator.drive({ onPass: () => seenRemote.push(run.wanted().has(w)) });
+  assert.equal(res.reason, 'complete');
+  assert.deepEqual(platform.answers.map((a) => [a.to, a.requestId, a.result.behavior, a.from]), [[w, `${w}-r1`, 'allow', 'coordinator']]);
+  assert.equal(seenRemote.includes(true), false, 'Remote Control was never wanted for that worker');
+  assert.equal(coordinator.agent.ledger().length, 1, 'ledgered');
+});
+
+test('agent reserved: a destructive request is briefed as the person\'s, Remote Control on at once, the row asking', (t) => {
+  const run = agentRun(t, [{ num: 'T01' }], { T01: { requests: [{ toolName: 'Bash', input: { command: 'rm -rf build' } }] } });
+  const { coordinator, platform } = run;
+  coordinator.pass();
+  const w = run.implOf('T01');
+  const brief = run.told().find((m) => m.includes(`${w}-r1`));
+  assert.match(brief, /This one is the person's/);
+  assert.deepEqual([...coordinator.heldByAgent()], [], 'never held by the agent');
+  assert.equal(run.wanted().has(w), true, 'reachable on the phone at once');
+  const row = buildRunState({ passTasks: [{ num: 'T01', name: slugOf('T01'), deps: [], state: '⬜' }], stateTasks: coordinator.state.tasks, workers: platform.workers() }).tasks[0];
+  assert.equal(row.asking, 'permission');
+  const act = platform.workers().find((x) => x.id === w).activity;
+  assert.equal(waitingFor(coordinator.state.tasks.T01, act, { heldByAgent: coordinator.heldByAgent() }).holder, 'person');
+
+  // A permission decision for it is refused and passed on, never applied.
+  run.decide({ kind: 'permission', worker: w, requestId: `${w}-r1`, decision: 'allow', reason: 'looks safe' });
+  coordinator.pass();
+  assert.deepEqual(platform.answers, [], 'the agent cannot allow a reserved request');
+  assert.ok(run.told().some((m) => /was not applied: this request is the person's/.test(m)));
+  assert.equal(run.wanted().has(w), true);
+});
+
+test('agent reserved by the project\'s ask rule, read from the feature worktree\'s .claude/settings.json', (t) => {
+  const settings = JSON.stringify({ permissions: { ask: ['Bash(git push:*)'] } });
+  const run = agentRun(t, [{ num: 'T01' }], { T01: { requests: [{ toolName: 'Bash', input: { command: 'git push origin HEAD' } }] } }, { files: { '.claude/settings.json': settings } });
+  run.coordinator.pass();
+  assert.deepEqual(run.started[0].askRules, ['Bash(git push:*)']);
+  const w = run.implOf('T01');
+  assert.match(run.told().find((m) => m.includes(`${w}-r1`)), /ask rule Bash\(git push:\*\)/);
+  assert.equal(run.wanted().has(w), true);
+});
+
+test('agent pass: Remote Control on for that worker only after the pass, off after the person\'s answer', (t) => {
+  const run = agentRun(t, [{ num: 'T01' }], { T01: { question: 'JSON or YAML?' } });
+  const { coordinator, platform } = run;
+  coordinator.pass(); // spawn
+  coordinator.pass(); // the worker parks on its report; briefed
+  const w = run.implOf('T01');
+  const brief = run.told().find((m) => m.includes('dropped a question'));
+  assert.ok(brief && brief.includes('JSON or YAML?'));
+  assert.equal(run.wanted().has(w), false, 'the agent holds it');
+
+  run.decide({ kind: 'pass', worker: w, reason: 'a format choice is the person\'s', suggestion: 'JSON' });
+  const r = coordinator.pass();
+  assert.deepEqual(r.agent.passed, [{ worker: w, reason: 'a format choice is the person\'s', suggestion: 'JSON' }]);
+  assert.equal(run.wanted().has(w), true, 'on once passed');
+  assert.equal(coordinator.state.tasks.T01.phase, 'awaiting-answer');
+
+  platform.send(w, 'YAML', { from: 'person' });
+  coordinator.pass();
+  assert.equal(run.wanted().has(w), false, 'off once the person answered');
+  assert.ok(!run.told().some((m) => m.startsWith('Already answered')), 'a passed item is not the agent\'s any more');
+});
+
+test('agent message: a report park answered by a coordinator `message` un-parks the task', (t) => {
+  const run = agentRun(t, [{ num: 'T01' }], { T01: { question: 'JSON or YAML?' } });
+  const { coordinator, platform } = run;
+  coordinator.pass();
+  coordinator.pass();
+  const w = run.implOf('T01');
+  run.decide({ kind: 'message', worker: w, text: 'JSON, per DESIGN §4.', reason: 'the design says so' });
+  const res = coordinator.drive();
+  assert.equal(res.reason, 'complete');
+  assert.deepEqual(platform.sent.filter((m) => m.to === w), [{ to: w, text: 'JSON, per DESIGN §4.', from: 'coordinator' }]);
+});
+
+test('person first: the person answers an item the agent holds — applied, the agent told, its late decision dropped', (t) => {
+  const run = agentRun(t, [{ num: 'T01' }], { T01: { requests: [{ toolName: 'Bash', input: { command: 'npm test' } }] } });
+  const { coordinator, platform } = run;
+  coordinator.pass();
+  const w = run.implOf('T01');
+  assert.equal(coordinator.heldByAgent().size, 1);
+
+  platform.answer(w, `${w}-r1`, { behavior: 'deny', message: 'not now' }, { from: 'person' });
+  run.decide({ kind: 'permission', worker: w, requestId: `${w}-r1`, decision: 'allow', reason: 'fine' });
+  coordinator.pass();
+  assert.deepEqual(platform.answers.map((a) => a.from), ['person'], 'only the person\'s answer reached the worker');
+  assert.ok(run.told().some((m) => m.startsWith('Already answered by the person: denied (not now).') && m.includes(`${w}-r1`)));
+  assert.ok(run.told().some((m) => /was not applied: already answered by the person: denied \(not now\)/.test(m)), 'the late decision refused with the facts');
+  assert.equal(coordinator.heldByAgent().size, 0);
+  assert.deepEqual(coordinator.agent.ledger(), []);
+});
+
+// A hand-held agent whose liveness the test sets: down, then back.
+function switchableAgent() {
+  const a = {
+    up: true,
+    briefs: [],
+    alive: () => a.up,
+    brief(item) {
+      if (!a.up) return false;
+      a.briefs.push(item);
+      return true;
+    },
+    drain: () => ({ passed: [], settled: [] }),
+    answeredElsewhere: () => true,
+    forget() {},
+    close: async () => {},
+    session: null,
+  };
+  return a;
+}
+
+test('agent down: items are the person\'s and Remote Control is as today; agent back: new items briefed', (t) => {
+  const worktree = createFakeWorktree({ progress: progressDoc([{ num: 'T01' }, { num: 'T02' }]), slug: SLUG });
+  t.after(() => worktree.cleanup());
+  const platform = createFakePlatform({
+    behaviors: { T01: { requests: [{ toolName: 'Bash', input: { command: 'npm test' } }] }, T02: { slow: 3, question: 'which?' } },
+  });
+  const agent = switchableAgent();
+  const coordinator = startCoordinator({ slug: SLUG, repo: REPO, platform, worktree, startAgent: () => agent });
+  const wanted = () => remoteWanted(platform.workers(), coordinator.state.tasks, { heldByAgent: coordinator.heldByAgent() });
+
+  agent.up = false;
+  coordinator.pass();
+  const w1 = platform.spawns.find((s) => s.task === 'T01').id;
+  assert.equal(agent.briefs.length, 0, 'nothing briefed while down');
+  assert.equal(wanted().has(w1), true, 'the person\'s, reachable as today');
+
+  agent.up = true;
+  for (let i = 0; i < 6 && !agent.briefs.some((b) => b.task === 'T02'); i++) coordinator.pass();
+  const w2 = platform.spawns.find((s) => s.task === 'T02').id;
+  assert.deepEqual(agent.briefs.map((b) => b.task), ['T02'], 'only the item that first waited with the agent up');
+  assert.equal(wanted().has(w1), true, 'T01 stays the person\'s');
+  assert.equal(wanted().has(w2), false, 'T02 is the agent\'s');
+
+  agent.up = false;
+  assert.equal(wanted().has(w2), true, 'down again: what it held is the person\'s at once');
+});
+
+test('no agent (PARALLEL_COORDINATOR=0 / --no-coordinator): nothing started, the run as before', (t) => {
+  assert.equal(coordinatorEnabled({}), true, 'on by default');
+  assert.equal(coordinatorEnabled({ PARALLEL_COORDINATOR: '0' }), false);
+  assert.equal(coordinatorEnabled({ PARALLEL_COORDINATOR: '1' }), true);
+  const { coordinator, platform } = setup(t, chain(2), { behaviors: { T01: { requests: [{ toolName: 'Bash', input: { command: 'ls' } }] } } });
+  coordinator.pass();
+  assert.equal(coordinator.agent, null);
+  const w = platform.spawns[0].id;
+  assert.equal(remoteWanted(platform.workers(), coordinator.state.tasks, { heldByAgent: coordinator.heldByAgent() }).has(w), true);
+  platform.answer(w, `${w}-r1`, { behavior: 'allow' }, { from: 'person' });
+  assert.equal(coordinator.drive().reason, 'complete');
+});
+
+test('remoteWanted: the agent\'s own session is wanted; a held item is not; an empty held set is today\'s rule', () => {
+  const act = { state: 'permission', pending: [{ kind: 'permission', requestId: 'r1', toolName: 'Bash', input: { command: 'ls' } }] };
+  const workers = [{ id: 'a', task: 'T01', live: true, activity: act }];
+  assert.deepEqual([...remoteWanted(workers, {})], ['a']);
+  assert.deepEqual([...remoteWanted(workers, {}, { heldByAgent: new Set(['a:r1']) })], []);
+  assert.deepEqual([...remoteWanted(workers, {}, { agentId: 'agent', heldByAgent: new Set(['a:r1']) })], ['agent']);
+});
+
+test('readAskRules: permissions.ask from the worktree\'s .claude/settings.json; a missing file, key or bad JSON is []', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'pir-t04-ask-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  assert.deepEqual(readAskRules(dir), []);
+  mkdirSync(join(dir, '.claude'));
+  writeFileSync(join(dir, '.claude', 'settings.json'), '{ nope');
+  assert.deepEqual(readAskRules(dir), []);
+  writeFileSync(join(dir, '.claude', 'settings.json'), JSON.stringify({ permissions: { allow: ['Bash(ls)'] } }));
+  assert.deepEqual(readAskRules(dir), []);
+  writeFileSync(join(dir, '.claude', 'settings.json'), JSON.stringify({ permissions: { ask: ['Bash(git push:*)', 7, 'Write'] } }));
+  assert.deepEqual(readAskRules(dir), ['Bash(git push:*)', 'Write']);
+});
+
+test('HALT closes the agent', (t) => {
+  const worktree = createFakeWorktree({ progress: progressDoc([{ num: 'T01' }]), slug: SLUG });
+  t.after(() => worktree.cleanup());
+  const platform = createFakePlatform();
+  const agent = switchableAgent();
+  let closed = 0;
+  agent.close = async () => {
+    closed += 1;
+  };
+  let halted = false;
+  const coordinator = startCoordinator({ slug: SLUG, repo: REPO, platform, worktree, startAgent: () => agent, control: { isHalted: () => halted, log: () => {} } });
+  coordinator.pass();
+  halted = true;
+  assert.equal(coordinator.pass().halted, true);
+  assert.equal(closed, 1);
+});
+
+// Review T04: the agent's send lands after runPass read the park, so the task is still parked on that pass;
+// without the one-pass hold its worker flipped onto Remote Control (and the phone) for a pass.
+test('agent message: its worker is never on Remote Control, not even on the pass the agent answers', (t) => {
+  const run = agentRun(t, [{ num: 'T01' }], { T01: { question: 'JSON or YAML?' } });
+  const { coordinator } = run;
+  coordinator.pass();
+  coordinator.pass();
+  const w = run.implOf('T01');
+  run.decide({ kind: 'message', worker: w, text: 'JSON.', reason: 'design' });
+  const seen = [];
+  coordinator.drive({ onPass: () => seen.push(run.wanted().has(w)) });
+  assert.equal(seen.includes(true), false, JSON.stringify(seen));
+});
+
+// --- pir-coordinator T05: the end of the run with the agent (DESIGN §2.9–§2.11) --------------------------
+//
+// The real startCoordinator and startCoordinatorAgent over the fake platform and worktree, stepped pass by
+// pass past the end gate. The test plays the agent by dropping decision files, and the person by merging
+// into the scratch repo's main by hand.
+
+import { renderFinished } from './coordinate.mjs';
+import { AGENT_UNAVAILABLE } from '../core/coordinator-report.mjs';
+
+const REPORT_REL = `plans/${SLUG}/REPORT.md`;
+const SECTIONS = { delivered: 'The greeting works.', checkByHand: 'Run it once.', risks: 'None known.' };
+
+function endRun(t, { rows = [{ num: 'T01' }], behaviors = {}, files = {}, runTests, worktree, controlDir, startAgent, control } = {}) {
+  const wt = worktree ?? createFakeWorktree({ progress: progressDoc(rows), files, slug: SLUG });
+  if (!worktree) t.after(() => wt.cleanup());
+  const platform = createFakePlatform({ behaviors });
+  const cdir = controlDir ?? mkdtempSync(join(tmpdir(), 'pir-t05-control-'));
+  if (!controlDir) t.after(() => rmSync(cdir, { recursive: true, force: true }));
+  const stub = stubSessions();
+  const clock = { t: Date.parse('2026-09-27T10:00:00Z') };
+  const coordinator = startCoordinator({
+    slug: SLUG, repo: REPO, platform, worktree: wt, runTests, control, now: () => clock.t,
+    startAgent: startAgent ?? (({ featurePath, askRules }) => startCoordinatorAgent({
+      controlDir: cdir, featurePath, repoRoot: featurePath, slug: SLUG, platform, askRules,
+      startWorker: stub.startWorker, claudePath: '/nonexistent/claude', skillsDir: cdir, now: () => clock.t,
+    })),
+  });
+  t.after(() => coordinator.closeAgent());
+  const decisions = join(cdir, 'coordinator', 'decisions');
+  let n = 0;
+  const decide = (obj) => {
+    mkdirSync(decisions, { recursive: true });
+    writeFileSync(join(decisions, `${Date.now()}-${String(++n).padStart(3, '0')}.json`), JSON.stringify(obj));
+  };
+  const told = () => stub.sessions.flatMap((s) => s.told.map((m) => m.text));
+  const until = (pred, max = 20) => {
+    for (let i = 0; i < max; i++) {
+      const r = coordinator.pass();
+      if (pred(r)) return r;
+    }
+    throw new Error(`not reached in ${max} passes; handoff ${JSON.stringify(coordinator.handoff)}`);
+  };
+  const report = () => wt.fileOn(`pir/${SLUG}`, REPORT_REL);
+  const reportCommits = () => git(wt.repo, ['log', '--format=%s', `pir/${SLUG}`, '--', REPORT_REL]).stdout.trim().split('\n').filter(Boolean);
+  const moveMain = (path, content) => {
+    writeFileSync(join(wt.repo, path), content);
+    git(wt.repo, ['add', '-A']);
+    git(wt.repo, ['commit', '-m', `main: ${path}`, '--no-edit']);
+    return git(wt.repo, ['rev-parse', 'main']).stdout.trim();
+  };
+  const toGate = () => assert.equal(coordinator.drive().reason, 'complete');
+  return { coordinator, platform, worktree: wt, controlDir: cdir, stub, decide, told, until, report, reportCommits, moveMain, toGate, clock };
+}
+
+test('end: main moved cleanly → merged in, tests, briefed, report committed on the feature branch, ready; the person merges → finished', (t) => {
+  let tests = 0;
+  const run = endRun(t, { runTests: () => ((tests += 1), { ok: true }) });
+  run.coordinator.pass(); // opens the feature branch
+  const mainSha = run.moveMain('other.txt', 'from main\n');
+  const mainBefore = run.worktree.mainCommitCount();
+  run.toGate();
+  assert.equal(tests, 1, 'the end gate');
+  assert.equal(run.coordinator.handoff.state, 'preparing');
+
+  run.until((r) => r.actions.some((a) => a.type === 'main-sync' && a.state === 'merged'));
+  run.until((r) => r.actions.some((a) => a.type === 'tests'));
+  assert.equal(tests, 2, 'the tests rerun after the merge');
+  run.until(() => run.told().some((m) => m.startsWith('Every task is done. Write the delivery report.')));
+  const brief = run.told().find((m) => m.startsWith('Every task is done'));
+  assert.match(brief, /main merged in cleanly/);
+  assert.match(brief, /Tests on the feature branch: green/);
+  const idle = run.coordinator.pass();
+  assert.equal(idle.handoff.state, 'preparing', 'waits for the report');
+  assert.equal(idle.complete, false);
+
+  run.decide({ kind: 'report', sections: SECTIONS });
+  const r = run.coordinator.pass();
+  assert.deepEqual(r.handoff, { state: 'ready', reportPath: REPORT_REL, mainSha });
+  assert.equal(r.complete, true);
+  assert.deepEqual(r.readyToMerge, { branch: `pir/${SLUG}` });
+  const text = run.report();
+  assert.equal(text.ok, true, 'REPORT.md is committed on the feature branch');
+  assert.match(text.stdout, /The greeting works\./);
+  assert.match(text.stdout, /## Decisions made for you\n\nNone\./);
+  assert.match(text.stdout, new RegExp(`Synced with \`main\` at \`${mainSha.slice(0, 12)}\` on 2026-09-27T10:00:00Z`));
+  assert.deepEqual(run.reportCommits(), [`report(${SLUG}): delivery report`]);
+  const handoff = run.told().at(-1);
+  assert.match(handoff, /git merge pir\/demo/);
+  assert.match(handoff, /The greeting works\./);
+  assert.equal(run.worktree.mainCommitCount(), mainBefore, 'the run never wrote main');
+  assert.equal(buildRunState({ passTasks: r.tasks, handoff: r.handoff }).handoff.state, 'ready');
+
+  assert.equal(run.coordinator.pass().finished, null, 'waits in ready');
+  git(run.worktree.repo, ['merge', '--no-edit', `pir/${SLUG}`]);
+  const end = run.coordinator.pass();
+  assert.equal(end.finished, 'merged');
+  assert.equal(run.coordinator.agent.alive(), false, 'the agent is closed');
+  assert.match(renderFinished({ by: 'merged', slug: SLUG }), /pir\/demo is in main/);
+});
+
+test('end: a conflicting main → a worker spawned in the feature worktree with the main-sync prompt; its done → tests → report', (t) => {
+  let tests = 0;
+  const run = endRun(t, { files: { 'work-T01.txt': 'base\n' }, runTests: () => ((tests += 1), { ok: true }) });
+  run.coordinator.pass();
+  run.moveMain('work-T01.txt', 'main side\n');
+  run.toGate();
+  run.until((r) => r.actions.some((a) => a.type === 'spawn' && a.task === 'main-sync'));
+  const spawn = run.platform.spawns.at(-1);
+  assert.equal(spawn.role, 'sync');
+  assert.equal(spawn.cwd, run.coordinator.state.feature.path);
+  assert.match(spawn.opening, /pir-worker skill/);
+  assert.match(spawn.opening, /merged the current `main` into pir\/demo/);
+  assert.match(spawn.opening, / {2}- work-T01\.txt/);
+  assert.equal(tests, 1);
+
+  run.until((r) => r.actions.some((a) => a.type === 'main-sync' && a.state === 'resolved'));
+  assert.equal(run.platform.closed.includes(spawn.id), true, 'the sync worker is closed');
+  run.until((r) => r.actions.some((a) => a.type === 'tests'));
+  assert.equal(tests, 2);
+  run.until(() => run.told().some((m) => m.startsWith('Every task is done')));
+  assert.match(run.told().find((m) => m.startsWith('Every task is done')), /a worker resolved the conflicts/);
+  run.decide({ kind: 'report', sections: SECTIONS });
+  assert.equal(run.until((r) => r.handoff.state !== 'preparing').handoff.state, 'ready');
+});
+
+test('end: the sync worker cannot resolve → merge abandoned, report says not ready, state red, no merge offered', (t) => {
+  const run = endRun(t, { files: { 'work-T01.txt': 'base\n' }, behaviors: { 'main-sync': { unresolved: true } } });
+  run.coordinator.pass();
+  run.moveMain('work-T01.txt', 'main side\n');
+  run.toGate();
+  run.until((r) => r.actions.some((a) => a.type === 'main-sync' && a.state === 'unresolved'));
+  assert.equal(run.worktree.syncPending(run.coordinator.state.feature.path), false, 'the feature branch is left clean');
+  run.until(() => run.told().some((m) => m.startsWith('Every task is done')));
+  run.decide({ kind: 'report', sections: SECTIONS });
+  const r = run.until((x) => x.handoff.state !== 'preparing');
+  assert.equal(r.handoff.state, 'red');
+  assert.equal(r.readyToMerge, null);
+  assert.match(run.report().stdout, /conflicted and was not resolved/);
+  assert.doesNotMatch(run.told().at(-1), /git merge/);
+});
+
+test('end: red tests after the sync → one fix worker; still red after its done → report with the red footer, handoff red, no merge offered', (t) => {
+  let tests = 0;
+  const run = endRun(t, { runTests: () => ((tests += 1), tests === 1 ? { ok: true } : { ok: false, reason: 'test exit 1', logPath: '/x/tests.log' }) });
+  run.coordinator.pass();
+  run.moveMain('other.txt', 'x\n');
+  run.toGate();
+  run.until((r) => r.actions.some((a) => a.type === 'spawn' && a.task === 'tests-fix'));
+  assert.equal(tests, 2, 'the red run after the sync');
+  const spawn = run.platform.spawns.at(-1);
+  assert.match(spawn.opening, /test block fails on pir\/demo/);
+  assert.match(spawn.opening, /test exit 1/);
+  run.until((r) => r.actions.some((a) => a.type === 'tests-fix'));
+  assert.equal(tests, 3, 'rerun after the fix worker\'s done');
+  run.until(() => run.told().some((m) => m.startsWith('Every task is done')));
+  const brief = run.told().find((m) => m.startsWith('Every task is done'));
+  assert.match(brief, /Tests on the feature branch: red/);
+  assert.match(brief, /a worker tried to fix them and they stayed red/);
+  run.decide({ kind: 'report', sections: SECTIONS });
+  const r = run.until((x) => x.handoff.state !== 'preparing');
+  assert.equal(r.handoff.state, 'red');
+  assert.equal(r.readyToMerge, null);
+  assert.deepEqual(r.testsReason, { reason: 'test exit 1', logPath: '/x/tests.log' });
+  assert.match(run.report().stdout, /Tests: red\. The branch is not ready to merge\./);
+  assert.match(run.report().stdout, /stayed red/);
+  assert.equal(run.platform.spawns.filter((x) => x.task === 'tests-fix').length, 1, 'one attempt only');
+  const handoff = run.told().at(-1);
+  assert.doesNotMatch(handoff, /git merge/);
+  assert.match(handoff, /No merge is offered/);
+  assert.equal(run.coordinator.pass().finished, null, 'a red run waits the same way');
+});
+
+// --- pir-coordinator T10: red tests at the end get one fix worker -----------------------------------
+
+test('end: a red gate → a tests-fix worker in the feature worktree with the tests-red prompt; its done with tests green → ready', (t) => {
+  let tests = 0;
+  const run = endRun(t, { runTests: () => ((tests += 1), tests === 1 ? { ok: false, reason: 'test exit 1', logPath: '/x/gate.log' } : { ok: true }) });
+  run.toGate();
+  assert.equal(run.coordinator.handoff.state, 'preparing');
+  const s = run.until((r) => r.actions.some((a) => a.type === 'spawn' && a.task === 'tests-fix'));
+  assert.equal(s.actions.some((a) => a.type === 'main-sync'), false, 'before the sync');
+  const spawn = run.platform.spawns.at(-1);
+  assert.equal(spawn.role, 'fix');
+  assert.equal(spawn.cwd, run.coordinator.state.feature.path);
+  assert.match(spawn.opening, /pir-worker skill/);
+  assert.match(spawn.opening, /\/x\/gate\.log/);
+  assert.match(spawn.opening, /kind=done task=tests-fix/);
+  run.until((r) => r.actions.some((a) => a.type === 'tests-fix' && a.state === 'green'));
+  assert.equal(run.platform.closed.includes(spawn.id), true, 'the fix worker is closed');
+  assert.equal(run.worktree.fileOn(`pir/${SLUG}`, 'tests-fix.txt').ok, true, 'its fix is on the feature branch');
+  run.until(() => run.told().some((m) => m.startsWith('Every task is done')));
+  assert.match(run.told().find((m) => m.startsWith('Every task is done')), /a worker fixed them/);
+  run.decide({ kind: 'report', sections: SECTIONS });
+  const r = run.until((x) => x.handoff.state !== 'preparing');
+  assert.equal(r.handoff.state, 'ready');
+  assert.deepEqual(r.readyToMerge, { branch: `pir/${SLUG}` });
+  assert.match(run.report().stdout, /a worker fixed them\.\nTests: green\./);
+  assert.equal(tests, 2, 'the gate, then the rerun after the fix; up-to-date main needs no third');
+});
+
+test('end: gate red, fix leaves it red, sync merges main, red again → still one fix worker', (t) => {
+  let tests = 0;
+  const run = endRun(t, { runTests: () => ((tests += 1), { ok: false, reason: 'still failing' }) });
+  run.coordinator.pass();
+  run.moveMain('other.txt', 'x\n');
+  run.toGate();
+  run.until((r) => r.actions.some((a) => a.type === 'tests-fix' && a.state === 'red'));
+  run.until((r) => r.actions.some((a) => a.type === 'main-sync' && a.state === 'merged'));
+  run.until(() => run.told().some((m) => m.startsWith('Every task is done')));
+  assert.equal(tests, 3, 'gate, after the fix, after the sync');
+  assert.equal(run.platform.spawns.filter((x) => x.task === 'tests-fix').length, 1);
+  run.decide({ kind: 'report', sections: SECTIONS });
+  assert.equal(run.until((x) => x.handoff.state !== 'preparing').handoff.state, 'red');
+});
+
+test('end: an unresolved sync → no fix worker', (t) => {
+  let tests = 0;
+  const run = endRun(t, { files: { 'work-T01.txt': 'base\n' }, behaviors: { 'main-sync': { unresolved: true } }, runTests: () => ((tests += 1), { ok: true }) });
+  run.coordinator.pass();
+  run.moveMain('work-T01.txt', 'main side\n');
+  run.toGate();
+  run.until(() => run.told().some((m) => m.startsWith('Every task is done')));
+  assert.equal(run.platform.spawns.some((x) => x.task === 'tests-fix'), false);
+  assert.equal(tests, 1);
+});
+
+test('end, agent off: a red gate spawns no fix worker — today\'s red end', (t) => {
+  const { coordinator, platform } = setup(t, chain(1), { runTests: () => ({ ok: false, reason: 'red' }) });
+  const r = coordinator.drive();
+  assert.equal(r.reason, 'complete');
+  assert.equal(r.testsPassed, false);
+  coordinator.pass();
+  assert.equal(platform.spawns.some((x) => x.task === 'tests-fix'), false);
+  assert.equal(coordinator.handoff, null);
+});
+
+test('end: a question from the fix worker is briefed to the agent; its answer lets it finish', (t) => {
+  let tests = 0;
+  const run = endRun(t, { behaviors: { 'tests-fix': { question: 'Is the timeout in T03 meant to be 5 s?' } }, runTests: () => ((tests += 1), tests === 1 ? { ok: false } : { ok: true }) });
+  run.toGate();
+  run.until(() => run.told().some((m) => m.includes('Is the timeout in T03 meant to be 5 s?')));
+  const w = run.platform.spawns.find((x) => x.task === 'tests-fix').id;
+  assert.match(run.told().find((m) => m.includes('Is the timeout')), /tests-fix/);
+  assert.equal(run.coordinator.handoff.state, 'preparing');
+  run.decide({ kind: 'message', worker: w, text: 'Yes, 5 s.', reason: 'DESIGN says so' });
+  run.until((r) => r.actions.some((a) => a.type === 'tests-fix' && a.state === 'green'));
+});
+
+test('end: a restart mid-fix → the feature worktree is kept and a fresh fix worker is spawned in it', (t) => {
+  let tests = 0;
+  const first = endRun(t, { behaviors: { 'tests-fix': { crash: true } }, runTests: () => ((tests += 1), { ok: false, reason: 'red' }) });
+  first.toGate();
+  first.until((r) => r.actions.some((a) => a.type === 'spawn' && a.task === 'tests-fix'));
+  const featurePath = first.coordinator.state.feature.path;
+  writeFileSync(join(featurePath, 'half-done.txt'), 'an edit the first fix worker left\n');
+  first.coordinator.closeAgent();
+
+  // The restart's gate runs over the half-done edit and is still red; the respawned worker finishes it.
+  let again = 0;
+  const second = endRun(t, { worktree: first.worktree, controlDir: first.controlDir, runTests: () => ((again += 1), again === 1 ? { ok: false } : { ok: true }) });
+  second.toGate();
+  second.until((r) => r.actions.some((a) => a.type === 'spawn' && a.task === 'tests-fix'));
+  const spawn = second.platform.spawns.find((x) => x.task === 'tests-fix');
+  assert.equal(spawn.cwd, second.coordinator.state.feature.path);
+  assert.equal(second.coordinator.state.feature.path, featurePath, 'the kept feature worktree');
+  assert.match(spawn.opening, /An earlier session may have left edits here/);
+  second.until((r) => r.actions.some((a) => a.type === 'tests-fix' && a.state === 'green'));
+  assert.equal(second.worktree.fileOn(`pir/${SLUG}`, 'half-done.txt').ok, true, 'the earlier edit is kept and committed');
+});
+
+test('end: red after the fix; main moves in waiting and the re-sync is green → the footer does not keep the old fix line', (t) => {
+  let tests = 0;
+  const run = endRun(t, { runTests: () => ((tests += 1), tests <= 2 ? { ok: false, reason: 'red' } : { ok: true }) });
+  run.toGate();
+  run.until(() => run.told().some((m) => m.startsWith('Every task is done')));
+  run.decide({ kind: 'report', sections: SECTIONS });
+  run.until((x) => x.handoff.state === 'red');
+  assert.match(run.report().stdout, /stayed red/);
+  const moved = run.moveMain('later.txt', 'main fixed it\n');
+  run.until((x) => x.handoff.state === 'ready' && x.handoff.mainSha === moved);
+  const text = run.report().stdout;
+  assert.match(text, /Tests: green\./);
+  assert.doesNotMatch(text, /stayed red/, 'the footer describes this sync, not the earlier fix');
+  assert.equal(run.platform.spawns.filter((x) => x.task === 'tests-fix').length, 1);
+});
+
+test('end: close mid-build refused and the run carries on; main moves in ready → re-synced, footer updated, agent told; close → finished', (t) => {
+  const run = endRun(t);
+  run.coordinator.pass();
+  run.decide({ kind: 'close' });
+  run.coordinator.pass();
+  assert.ok(run.told().some((m) => /was not applied: the run is still building/.test(m)), 'refused, agent told why');
+  run.toGate();
+  run.until(() => run.told().some((m) => m.startsWith('Every task is done')));
+  run.decide({ kind: 'close' });
+  run.coordinator.pass();
+  assert.ok(run.told().filter((m) => /still building/.test(m)).length === 2, 'a close while preparing is refused too');
+  run.decide({ kind: 'report', sections: SECTIONS });
+  const ready = run.until((x) => x.handoff.state === 'ready');
+  const firstSha = ready.handoff.mainSha;
+
+  run.clock.t = Date.parse('2026-09-27T12:00:00Z');
+  const moved = run.moveMain('later.txt', 'another run merged first\n');
+  run.until((x) => x.handoff.state === 'ready' && x.handoff.mainSha === moved);
+  assert.notEqual(moved, firstSha);
+  const text = run.report().stdout;
+  assert.match(text, new RegExp(`at \`${moved.slice(0, 12)}\` on 2026-09-27T12:00:00Z`));
+  assert.match(text, /The greeting works\./, 'the agent\'s sections are kept');
+  assert.deepEqual(run.reportCommits(), [`report(${SLUG}): re-synced with main`, `report(${SLUG}): delivery report`]);
+  assert.match(run.told().at(-1), new RegExp(`main moved to ${moved.slice(0, 12)}`));
+  assert.equal(git(run.worktree.repo, ['merge-base', '--is-ancestor', moved, `pir/${SLUG}`]).ok, true);
+
+  run.decide({ kind: 'close' });
+  assert.equal(run.coordinator.pass().finished, 'closed');
+  assert.match(renderFinished({ by: 'closed', slug: SLUG, ready: true }), /git merge pir\/demo/);
+});
+
+test('end: a restart in ready → the report is not rewritten and the run returns to ready', (t) => {
+  const first = endRun(t);
+  first.toGate();
+  first.until(() => first.told().some((m) => m.startsWith('Every task is done')));
+  first.decide({ kind: 'report', sections: SECTIONS });
+  first.until((x) => x.handoff.state === 'ready');
+  const before = first.report().stdout;
+  first.coordinator.closeAgent();
+
+  const second = endRun(t, { worktree: first.worktree, controlDir: first.controlDir });
+  second.toGate();
+  const r = second.until((x) => x.handoff.state !== 'preparing');
+  assert.equal(r.handoff.state, 'ready');
+  assert.equal(r.handoff.reportPath, REPORT_REL);
+  assert.equal(second.report().stdout, before, 'the report is unchanged');
+  assert.deepEqual(second.reportCommits(), [`report(${SLUG}): delivery report`]);
+  assert.ok(!second.told().some((m) => m.startsWith('Every task is done')), 'the agent is not asked again');
+});
+
+// An agent object whose liveness and given-up state the test sets.
+function heldAgent({ up = true, givenUp = false, ledger = [] } = {}) {
+  const a = {
+    up, gone: givenUp, told: [],
+    alive: () => a.up && !a.gone,
+    givenUp: () => a.gone,
+    brief: () => false,
+    forget() {},
+    answeredElsewhere: () => true,
+    drain: () => ({ passed: [], settled: [] }),
+    tell(text) {
+      if (!a.alive()) return false;
+      a.told.push(text);
+      return true;
+    },
+    briefEnd(facts) {
+      return a.tell(`END ${facts.tests}`);
+    },
+    ledger: () => ledger,
+    record() {},
+    close: async () => {},
+    session: null,
+  };
+  return a;
+}
+
+const NOTABLE = [{ kind: 'answers', task: 'T01', item: 'JSON or YAML?', answer: 'JSON', reason: 'design', notable: true }];
+
+test('end: the agent given up before its report → REPORT.md with decisions, footer and the "not available" line; ready', (t) => {
+  const agent = heldAgent({ givenUp: true, ledger: NOTABLE });
+  const run = endRun(t, { startAgent: () => agent });
+  run.toGate();
+  const r = run.until((x) => x.handoff.state !== 'preparing');
+  assert.equal(r.handoff.state, 'ready');
+  const text = run.report().stdout;
+  assert.ok(text.includes(AGENT_UNAVAILABLE));
+  assert.match(text, /JSON or YAML\?/);
+  assert.match(text, /## Branch/);
+  assert.deepEqual(agent.told, [], 'nobody to tell');
+});
+
+test('end: an agent only restarting is waited for; one given up while its report is awaited → written without it', (t) => {
+  const agent = heldAgent({ up: false });
+  const run = endRun(t, { startAgent: () => agent });
+  run.toGate();
+  for (let i = 0; i < 4; i++) assert.equal(run.coordinator.pass().handoff.state, 'preparing');
+  assert.equal(run.report().ok, false, 'no report while it restarts');
+  agent.up = true;
+  run.until(() => agent.told.includes('END green'));
+  run.coordinator.pass();
+  assert.equal(run.report().ok, false, 'waits for its report');
+  agent.gone = true;
+  const r = run.until((x) => x.handoff.state !== 'preparing');
+  assert.equal(r.handoff.state, 'ready');
+  assert.ok(run.report().stdout.includes(AGENT_UNAVAILABLE));
+});
+
+test('end, agent off: today\'s end — no hand-off state, no report', (t) => {
+  const { coordinator, worktree } = setup(t, chain(1));
+  const r = coordinator.drive();
+  assert.equal(r.reason, 'complete');
+  assert.equal(coordinator.handoff, null);
+  assert.equal(coordinator.endOfRun, false);
+  assert.equal(worktree.fileOn(`pir/${SLUG}`, REPORT_REL).ok, false);
+  assert.equal(coordinator.pass().handoff, null, 'a further pass is today\'s pass, not the end sequence');
+});
+
+test('end: a restart after the person merged while pir was down → finished as merged, the branch not re-synced', (t) => {
+  const first = endRun(t);
+  first.toGate();
+  first.until(() => first.told().some((m) => m.startsWith('Every task is done')));
+  first.decide({ kind: 'report', sections: SECTIONS });
+  first.until((x) => x.handoff.state === 'ready');
+  first.coordinator.closeAgent();
+  git(first.worktree.repo, ['merge', '--no-ff', '--no-edit', `pir/${SLUG}`]);
+  const tip = git(first.worktree.repo, ['rev-parse', `pir/${SLUG}`]).stdout.trim();
+
+  const second = endRun(t, { worktree: first.worktree, controlDir: first.controlDir });
+  second.toGate();
+  const r = second.until((x) => x.finished !== null);
+  assert.equal(r.finished, 'merged');
+  assert.equal(git(first.worktree.repo, ['rev-parse', `pir/${SLUG}`]).stdout.trim(), tip, 'main was not merged back into the branch');
+});
+
+// --- pir-coordinator T06: the screen reads who holds a question, and the agent to open ------------
+
+test('buildRunState: a task whose items the agent holds carries holder coordinator; passed on, person; the agent rides in `coordinator`', () => {
+  const stateTasks = { T01: parkedTask('implement') };
+  const ended = [liveWorker({ state: 'idle', open: false, turns: 3, pending: [] })];
+  const agent = { id: 'sess-1', live: true, logPath: '/c/conversations/coordinator-1.ndjson' };
+
+  let rs = buildRunState({ passTasks: oneRow, stateTasks, workers: ended, branch: 'b', ceiling: 2, heldByAgent: new Set(['w1:report']), coordinator: agent });
+  assert.equal(rs.tasks[0].holder, 'coordinator');
+  assert.deepEqual(rs.coordinator, agent);
+  assert.equal(buildDisplay(rs, { now: 0 }).rows[0].label, 'asking coordinator · a question');
+
+  rs = buildRunState({ passTasks: oneRow, stateTasks, workers: ended, branch: 'b', ceiling: 2, heldByAgent: new Set(), coordinator: agent });
+  assert.equal(rs.tasks[0].holder, 'person', 'passed on: the person\'s');
+  assert.equal(buildDisplay(rs, { now: 0 }).rows[0].label, 'asking you · a question');
+
+  // A pending permission request is keyed by its request id.
+  const perm = [liveWorker({ state: 'permission', open: true, turns: 1, pending: [{ kind: 'permission', requestId: 'r9', toolName: 'Bash', input: { command: 'ls' } }] })];
+  const building = { T01: { role: 'implement', phase: 'implementing', workerId: 'w1' } };
+  rs = buildRunState({ passTasks: oneRow, stateTasks: building, workers: perm, branch: 'b', ceiling: 2, heldByAgent: new Set(['w1:r9']) });
+  assert.equal(rs.tasks[0].holder, 'coordinator');
+  assert.equal(buildDisplay(rs, { now: 0 }).rows[0].label, 'asking coordinator · allow a command?');
+
+  // With --no-coordinator: no agent, and whatever asks is the person's.
+  rs = buildRunState({ passTasks: oneRow, stateTasks, workers: ended, branch: 'b', ceiling: 2 });
+  assert.equal(rs.coordinator, null);
+  assert.equal(rs.tasks[0].holder, 'person');
+  const idle = buildRunState({ passTasks: oneRow, stateTasks: building, workers: [liveWorker({ state: 'busy', open: true, turns: 0, pending: [] })], branch: 'b', ceiling: 2 });
+  assert.equal('holder' in idle.tasks[0], false, 'a task nothing asks for keeps its old shape');
+});
+
+// --- end-of-run helper rows (pir-coordinator T11) ---------------------------------------------------
+
+test('buildRunState: an end-of-run helper with a worker gets a row entry in `helpers`, asking like a task (T11)', () => {
+  const passTasks = [{ num: 'T01', name: 'one', deps: [], state: '✅' }];
+  const stateTasks = { 'tests-fix': { worktree: {}, workerId: 'wf', role: 'fix', slug: 'tests-fix', name: 'r / p / tests-fix', phase: 'implementing' } };
+  const asking = { state: 'questions', open: true, turns: 1, pending: [{ kind: 'questions', requestId: 'q1' }] };
+  const workers = [{ id: 'wf', task: 'tests-fix', role: 'fix', live: true, logPath: '/c/wf.jsonl', cwd: '/f', activity: asking }];
+  const held = buildRunState({ passTasks, stateTasks, workers, branch: 'b', ceiling: 2, sinceByTask: { 'tests-fix': 10 }, heldByAgent: new Set(['wf:q1']) });
+  assert.equal(held.tasks.length, 1, 'the plan rows are untouched');
+  const [h] = held.helpers;
+  assert.equal(h.id, 'tests-fix');
+  assert.equal(h.slug, 'fix-red-tests');
+  assert.equal(h.helper, true);
+  assert.equal(h.asking, 'questions');
+  assert.equal(h.holder, 'coordinator');
+  assert.equal(h.since, 10);
+  assert.deepEqual(h.worker, { id: 'wf', live: true, logPath: '/c/wf.jsonl', cwd: '/f' });
+
+  const passed = buildRunState({ passTasks, stateTasks, workers, branch: 'b', ceiling: 2 });
+  assert.equal(passed.helpers[0].holder, 'person', 'passed on: the person\'s');
+  assert.equal(buildDisplay(passed, { now: 20 }).footer.task, 'tests-fix');
+
+  const sync = buildRunState({ passTasks, stateTasks: { 'main-sync': { ...stateTasks['tests-fix'], role: 'sync', workerId: 'ws' } }, workers: [], branch: 'b', ceiling: 2 });
+  assert.equal(sync.helpers[0].slug, 'resolve-main-merge');
+  assert.equal(sync.helpers[0].phase, 'building');
+  assert.equal('helpers' in buildRunState({ passTasks, stateTasks: {}, branch: 'b', ceiling: 2 }), false, 'no helper, no key');
+});
+
+test('advanceTiming: a helper spawned again under its label starts a fresh clock (T11)', () => {
+  const timing = newTiming();
+  const fix = { 'tests-fix': { workerId: 'w1', role: 'fix', phase: 'implementing' } };
+  advanceTiming(timing, fix, [], 100);
+  assert.equal(timing.sinceByTask['tests-fix'], 100);
+  advanceTiming(timing, {}, [], 200); // the first fix worker closed and dropped
+  assert.equal(timing.sinceByTask['tests-fix'], undefined);
+  advanceTiming(timing, { 'tests-fix': { ...fix['tests-fix'], workerId: 'w2' } }, [], 500);
+  assert.equal(timing.sinceByTask['tests-fix'], 500);
+});
+
+// --- pir-coordinator T13: the hold limit (DESIGN §2.11) --------------------------------------------------
+
+import { holdLimitMs, DEFAULT_HOLD_MS } from './coordinate.mjs';
+import { askingCount } from '../core/display.mjs';
+
+// holdRun(t, behaviors, opts) → agentRun on a hand-set clock, a hold limit, and a captured control.log.
+function holdRun(t, rows, behaviors, { holdMs = 60000, env } = {}) {
+  const clock = { t: 1_000_000 };
+  const logs = [];
+  const control = { isHalted: () => false, log: (l) => logs.push(l) };
+  const saved = process.env.PARALLEL_COORDINATOR_HOLD_MS;
+  if (env !== undefined) {
+    if (env === null) delete process.env.PARALLEL_COORDINATOR_HOLD_MS;
+    else process.env.PARALLEL_COORDINATOR_HOLD_MS = env;
+  }
+  let run;
+  try {
+    run = agentRun(t, rows, behaviors, { now: () => clock.t, ...(env === undefined ? { holdMs } : {}), control });
+  } finally {
+    if (saved === undefined) delete process.env.PARALLEL_COORDINATOR_HOLD_MS;
+    else process.env.PARALLEL_COORDINATOR_HOLD_MS = saved;
+  }
+  const rowOf = (task) =>
+    buildRunState({ passTasks: rows.map((r) => ({ num: r.num, name: slugOf(r.num), deps: [], state: '⬜' })), stateTasks: run.coordinator.state.tasks, workers: run.platform.workers(), heldByAgent: run.coordinator.heldByAgent() });
+  const handovers = () => run.told().filter((m) => m.startsWith('Handed to the person'));
+  const timeouts = () => run.coordinator.agent.ledger().filter((l) => l.kind === 'timeout');
+  return { ...run, clock, logs, rowOf, handovers, timeouts };
+}
+
+const npmTest = { requests: [{ toolName: 'Bash', input: { command: 'npm test' } }] };
+
+test('hold limit: held until holdMs − 1; at holdMs the item is the person\'s — row, tally, Remote Control, hand-over, ledger, log', (t) => {
+  const run = holdRun(t, [{ num: 'T01' }], { T01: npmTest }, { holdMs: 60000 });
+  const { coordinator, clock } = run;
+  const start = clock.t;
+  coordinator.pass();
+  const w = run.implOf('T01');
+  const key = `${w}:${w}-r1`;
+  assert.deepEqual([...coordinator.heldByAgent()], [key], 'briefed and held');
+
+  clock.t = start + 59999;
+  coordinator.pass();
+  assert.deepEqual([...coordinator.heldByAgent()], [key], 'still the agent\'s one ms before the limit');
+  assert.equal(run.rowOf('T01').tasks[0].holder, 'coordinator');
+  assert.equal(buildDisplay(run.rowOf('T01'), { now: 0 }).rows[0].label, 'asking coordinator · allow a command?');
+  assert.equal(run.wanted().has(w), false);
+  assert.deepEqual(run.handovers(), []);
+
+  clock.t = start + 60000;
+  coordinator.pass();
+  assert.deepEqual([...coordinator.heldByAgent()], [], 'no longer held');
+  const rs = run.rowOf('T01');
+  assert.equal(rs.tasks[0].holder, 'person');
+  assert.equal(buildDisplay(rs, { now: 0 }).rows[0].label, 'asking you · allow a command?');
+  assert.equal(askingCount(rs), 1, 'counted in the asking-you tally');
+  assert.equal(run.wanted().has(w), true, 'Remote Control on');
+  assert.equal(coordinator.agentView().holding, 0);
+  const [handover] = run.handovers();
+  assert.ok(handover.includes(`requestId: \`${w}-r1\``));
+  assert.match(handover, /for 1 minute without a decision/);
+  assert.deepEqual(run.timeouts().map((l) => [l.worker, l.requestId, l.task, l.heldForMs, l.notable, l.item]), [[w, `${w}-r1`, 'T01', 60000, false, 'Bash: npm test']]);
+  assert.ok(run.logs.includes('coordinator-timeout T01'));
+
+  // Never re-held and never timed out twice while it keeps waiting.
+  clock.t = start + 300000;
+  coordinator.pass();
+  assert.deepEqual([...coordinator.heldByAgent()], []);
+  assert.equal(run.handovers().length, 1);
+  assert.equal(run.timeouts().length, 1);
+  assert.equal(run.told().filter((m) => m.includes(`requestId: \`${w}-r1\``) && m.includes('asking permission')).length, 1, 'not briefed again');
+});
+
+test('hold limit: two items briefed in one pass, the agent answers one — only the other times out', (t) => {
+  const run = holdRun(t, [{ num: 'T01' }, { num: 'T02' }], { T01: npmTest, T02: { requests: [{ toolName: 'Bash', input: { command: 'npm run lint' } }] } }, { holdMs: 60000 });
+  const { coordinator, clock } = run;
+  const start = clock.t;
+  coordinator.pass();
+  const w1 = run.implOf('T01');
+  const w2 = run.implOf('T02');
+  assert.equal(coordinator.heldByAgent().size, 2, 'both briefed together');
+
+  clock.t = start + 30000;
+  run.decide({ kind: 'permission', worker: w1, requestId: `${w1}-r1`, decision: 'allow', reason: 'the test command' });
+  coordinator.pass();
+
+  clock.t = start + 60000;
+  coordinator.pass();
+  assert.equal(run.handovers().length, 1);
+  assert.ok(run.handovers()[0].includes(`requestId: \`${w2}-r1\``));
+  assert.deepEqual(run.timeouts().map((l) => l.worker), [w2]);
+  assert.deepEqual(run.logs.filter((l) => l.startsWith('coordinator-timeout')), ['coordinator-timeout T02']);
+  assert.equal(run.wanted().has(w2), true);
+  assert.equal(run.wanted().has(w1), false);
+});
+
+test('hold limit: a late decision while the person has not answered is applied, the row back to working, ledger `late: true`', (t) => {
+  const run = holdRun(t, [{ num: 'T01' }], { T01: npmTest }, { holdMs: 60000 });
+  const { coordinator, clock, platform } = run;
+  const start = clock.t;
+  coordinator.pass();
+  const w = run.implOf('T01');
+  clock.t = start + 60000;
+  coordinator.pass();
+  assert.equal(run.wanted().has(w), true, 'timed out: the person\'s');
+
+  clock.t = start + 90000;
+  run.decide({ kind: 'permission', worker: w, requestId: `${w}-r1`, decision: 'allow', reason: 'the test command' });
+  coordinator.pass();
+  assert.deepEqual(platform.answers.map((a) => [a.to, a.requestId, a.result.behavior, a.from]), [[w, `${w}-r1`, 'allow', 'coordinator']]);
+  assert.equal(run.wanted().has(w), false, 'Remote Control off after the answer');
+  assert.notEqual(run.rowOf('T01').tasks[0].holder, 'person', 'no longer asking you');
+  assert.equal(askingCount(run.rowOf('T01')), 0);
+  const decided = coordinator.agent.ledger().filter((l) => l.kind === 'permission');
+  assert.equal(decided.length, 1);
+  assert.equal(decided[0].late, true);
+  assert.ok(!run.told().some((m) => m.startsWith('Already answered')), 'the agent answered first: nothing to tell it');
+  assert.equal(coordinator.drive().reason, 'complete');
+});
+
+test('hold limit: a late decision after the person answered is refused; the agent is told the person answered', (t) => {
+  const run = holdRun(t, [{ num: 'T01' }], { T01: npmTest }, { holdMs: 60000 });
+  const { coordinator, clock, platform } = run;
+  const start = clock.t;
+  coordinator.pass();
+  const w = run.implOf('T01');
+  clock.t = start + 60000;
+  coordinator.pass();
+
+  platform.answer(w, `${w}-r1`, { behavior: 'deny', message: 'not now' }, { from: 'person' });
+  run.decide({ kind: 'permission', worker: w, requestId: `${w}-r1`, decision: 'allow', reason: 'fine' });
+  coordinator.pass();
+  assert.deepEqual(platform.answers.map((a) => a.from), ['person'], 'only the person\'s answer reached the worker');
+  assert.ok(run.told().some((m) => m.startsWith('Already answered by the person: denied (not now).') && m.includes(`${w}-r1`)));
+  assert.ok(run.told().some((m) => /was not applied: already answered by the person: denied \(not now\)/.test(m)), 'the late decision refused with the facts');
+  assert.equal(coordinator.agent.ledger().filter((l) => l.kind === 'permission').length, 0);
+});
+
+test('hold limit: a late pass of a timed-out item changes nothing on screen, is logged and ledgered late', (t) => {
+  const run = holdRun(t, [{ num: 'T01' }], { T01: npmTest }, { holdMs: 60000 });
+  const { coordinator, clock } = run;
+  const start = clock.t;
+  coordinator.pass();
+  const w = run.implOf('T01');
+  clock.t = start + 60000;
+  coordinator.pass();
+  run.decide({ kind: 'pass', worker: w, requestId: `${w}-r1`, reason: 'not mine to say', suggestion: 'allow' });
+  const r = coordinator.pass();
+  assert.equal(r.agent.passed.length, 1);
+  assert.equal(run.wanted().has(w), true, 'still the person\'s');
+  assert.equal(run.rowOf('T01').tasks[0].holder, 'person');
+  assert.ok(run.logs.includes('coordinator-pass T01'));
+  const passLine = coordinator.agent.ledger().find((l) => l.kind === 'pass');
+  assert.equal(passLine.late, true);
+});
+
+test('hold limit: a reserved item has no timeout handling and no hand-over message', (t) => {
+  const run = holdRun(t, [{ num: 'T01' }], { T01: { requests: [{ toolName: 'Bash', input: { command: 'rm -rf build' } }] } }, { holdMs: 60000 });
+  const { coordinator, clock } = run;
+  coordinator.pass();
+  clock.t += 600000;
+  coordinator.pass();
+  assert.deepEqual(run.handovers(), []);
+  assert.deepEqual(run.timeouts(), []);
+  assert.ok(!run.logs.some((l) => l.startsWith('coordinator-timeout')));
+});
+
+test('hold limit: PARALLEL_COORDINATOR_HOLD_MS shortens it; absent, it is 5 minutes', (t) => {
+  assert.equal(DEFAULT_HOLD_MS, 300000);
+  assert.equal(holdLimitMs({}), 300000);
+  assert.equal(holdLimitMs({ PARALLEL_COORDINATOR_HOLD_MS: '180000' }), 180000);
+  assert.equal(holdLimitMs({ PARALLEL_COORDINATOR_HOLD_MS: 'soon' }), 300000);
+  assert.equal(holdLimitMs({ PARALLEL_COORDINATOR_HOLD_MS: '0' }), 300000);
+
+  const short = holdRun(t, [{ num: 'T01' }], { T01: npmTest }, { env: '1000' });
+  const s0 = short.clock.t;
+  short.coordinator.pass();
+  short.clock.t = s0 + 1000;
+  short.coordinator.pass();
+  assert.equal(short.handovers().length, 1, 'the env var shortened it to 1 s');
+  assert.match(short.handovers()[0], /for 1 second without/);
+
+  const dflt = holdRun(t, [{ num: 'T01' }], { T01: npmTest }, { env: null });
+  const d0 = dflt.clock.t;
+  dflt.coordinator.pass();
+  dflt.clock.t = d0 + 299999;
+  dflt.coordinator.pass();
+  assert.equal(dflt.handovers().length, 0);
+  dflt.clock.t = d0 + 300000;
+  dflt.coordinator.pass();
+  assert.equal(dflt.handovers().length, 1);
+  assert.match(dflt.handovers()[0], /for 5 minutes without/);
+});
+
+test('hold limit: a timed-out item passed late and then answered late keeps `late: true` on the answer (T13 review)', (t) => {
+  const run = holdRun(t, [{ num: 'T01' }], { T01: npmTest }, { holdMs: 60000 });
+  const { coordinator, clock, platform } = run;
+  const start = clock.t;
+  coordinator.pass();
+  const w = run.implOf('T01');
+  clock.t = start + 60000;
+  coordinator.pass();
+  run.decide({ kind: 'pass', worker: w, requestId: `${w}-r1`, reason: 'not mine to say', suggestion: 'allow' });
+  coordinator.pass();
+  run.decide({ kind: 'permission', worker: w, requestId: `${w}-r1`, decision: 'allow', reason: 'on reflection, the test command' });
+  coordinator.pass();
+  assert.deepEqual(platform.answers.map((a) => a.from), ['coordinator']);
+  const decided = coordinator.agent.ledger().filter((l) => l.kind === 'permission');
+  assert.equal(decided.length, 1);
+  assert.equal(decided[0].late, true);
+});
+
+// ---- T15: the agent is told who answered an item first, and what ----
+
+const closedMsgs = (run) => run.told().filter((m) => /^(Already |Closed with no answer|No longer waiting)/.test(m));
+const rmBuild = { requests: [{ toolName: 'Bash', input: { command: 'rm -rf build' } }] };
+
+test('T15 reserved: the person denies before the agent\'s note — one message naming the person and `denied`; the late pass refused with the same facts; row, tally, Remote Control unchanged', (t) => {
+  const run = holdRun(t, [{ num: 'T01' }], { T01: rmBuild });
+  const { coordinator, platform } = run;
+  coordinator.pass();
+  const w = run.implOf('T01');
+  assert.match(run.told().find((m) => m.includes(`${w}-r1`)), /This one is the person's/);
+  const before = { held: [...coordinator.heldByAgent()], remote: run.wanted().has(w), holder: run.rowOf('T01').tasks[0].holder, asking: askingCount(run.rowOf('T01')) };
+  assert.deepEqual(before, { held: [], remote: true, holder: 'person', asking: 1 }, 'the person\'s from the start');
+
+  // The T09 case: the person denies, then the agent's note lands.
+  platform.answer(w, `${w}-r1`, { behavior: 'deny', message: 'not on this branch' }, { from: 'person' });
+  run.decide({ kind: 'pass', worker: w, requestId: `${w}-r1`, reason: 'deleting build output', suggestion: 'deny' });
+  const r = coordinator.pass();
+  const msgs = closedMsgs(run);
+  assert.equal(msgs.length, 1, 'told once');
+  assert.match(msgs[0], /^Already answered by the person: denied \(not on this branch\)\./);
+  assert.ok(msgs[0].includes(`${w}-r1`));
+  assert.ok(run.told().some((m) => /was not applied: already answered by the person: denied \(not on this branch\)\./.test(m)), 'the pass refused with the facts');
+  assert.ok(!run.told().some((m) => /unknown worker, or already answered/.test(m)), 'never the generic refusal');
+  assert.deepEqual(r.agent?.passed ?? [], [], 'a refused pass is not a pass');
+  assert.deepEqual([...coordinator.heldByAgent()], [], 'never held');
+  assert.equal(coordinator.agent.ledger().filter((l) => l.kind === 'pass').length, 0);
+
+  for (let i = 0; i < 3; i++) coordinator.pass();
+  assert.equal(closedMsgs(run).length, 1, 'at most once across passes');
+});
+
+test('T15 reserved: an item the agent passed on and the person then answers is not reported', (t) => {
+  const run = holdRun(t, [{ num: 'T01' }], { T01: rmBuild });
+  const { coordinator, platform } = run;
+  coordinator.pass();
+  const w = run.implOf('T01');
+  run.decide({ kind: 'pass', worker: w, requestId: `${w}-r1`, reason: 'deleting build output', suggestion: 'deny' });
+  coordinator.pass();
+  platform.answer(w, `${w}-r1`, { behavior: 'deny' }, { from: 'person' });
+  coordinator.pass();
+  coordinator.pass();
+  assert.deepEqual(closedMsgs(run), [], 'a pass is a decision of the agent\'s: its conversation stays quiet');
+});
+
+test('T15 held question set answered by the person first: the message names the chosen answers', (t) => {
+  const questions = [{ question: 'Format?', options: [{ label: 'JSON' }, { label: 'YAML' }] }];
+  const run = holdRun(t, [{ num: 'T01' }], { T01: { requests: [{ kind: 'questions', questions }] } });
+  const { coordinator, platform } = run;
+  coordinator.pass();
+  const w = run.implOf('T01');
+  assert.deepEqual([...coordinator.heldByAgent()], [`${w}:${w}-r1`]);
+  platform.answer(w, `${w}-r1`, { behavior: 'allow', updatedInput: { questions, answers: { 'Format?': 'YAML' } } }, { from: 'person' });
+  coordinator.pass();
+  const msgs = closedMsgs(run);
+  assert.equal(msgs.length, 1);
+  assert.match(msgs[0], /^Already answered by the person: Format\? → YAML\./);
+});
+
+test('T15 report park answered by the person\'s message: the message quotes the text', (t) => {
+  const run = holdRun(t, [{ num: 'T01' }], { T01: { question: 'JSON or YAML?' } });
+  const { coordinator, platform } = run;
+  coordinator.pass(); // spawn
+  coordinator.pass(); // parked, briefed, held
+  const w = run.implOf('T01');
+  assert.deepEqual([...coordinator.heldByAgent()], [`${w}:report`]);
+  platform.send(w, 'YAML, and no trailing newline.', { from: 'person' });
+  coordinator.pass();
+  coordinator.pass();
+  const msgs = closedMsgs(run);
+  assert.equal(msgs.length, 1);
+  assert.match(msgs[0], /^Already answered by the person: "YAML, and no trailing newline\."\./);
+});
+
+test('T15 answered on the phone: named as the person on the phone, with the answer when the log shows it, else "not recorded"', (t) => {
+  const run = holdRun(t, [{ num: 'T01' }, { num: 'T02' }], { T01: npmTest, T02: npmTest });
+  const { coordinator, platform } = run;
+  coordinator.pass();
+  const [w1, w2] = [run.implOf('T01'), run.implOf('T02')];
+  // What worker-proc logs for a Remote Control answer: the note, then the tool's result (the recorded probe).
+  const phone = (w, result) => {
+    platform._workers.get(w).requests.splice(0);
+    platform.appendLog(w, { dir: 'note', kind: 'answered-remotely', requestId: `${w}-r1`, toolName: 'Bash' });
+    if (result) platform.appendLog(w, { dir: 'in', event: { type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'toolu_1', content: 'ok', is_error: false }] } } });
+  };
+  phone(w1, true);
+  phone(w2, false);
+  coordinator.pass();
+  const msgs = closedMsgs(run);
+  assert.equal(msgs.length, 2);
+  assert.match(msgs.find((m) => m.includes(`${w1}-r1`)), /^Already answered by the person on the phone \(Remote Control\): allowed\./);
+  assert.match(msgs.find((m) => m.includes(`${w2}-r1`)), /^Already answered by the person on the phone \(Remote Control\): the answer was not recorded\./);
+});
+
+test('T15 allowed by a standing grant: named as a standing permission, `allowed`', (t) => {
+  const run = holdRun(t, [{ num: 'T01' }], { T01: npmTest });
+  const { coordinator, platform } = run;
+  coordinator.pass();
+  const w = run.implOf('T01');
+  // person-inbox allowCoveredPending: pir answers, then notes the grant.
+  platform.answer(w, `${w}-r1`, { behavior: 'allow', updatedInput: { command: 'npm test' } }, { from: 'pir' });
+  platform.note(w, 'delivered-by-grant', { requestId: `${w}-r1`, toolName: 'Bash' });
+  coordinator.pass();
+  const msgs = closedMsgs(run);
+  assert.equal(msgs.length, 1);
+  assert.match(msgs[0], /^Already allowed by a standing permission the person gave earlier: allowed\./);
+});
+
+test('T15 held item whose worker exits before any answer: told the worker stopped with no answer, never "answered by the person"', (t) => {
+  const run = holdRun(t, [{ num: 'T01' }], { T01: npmTest });
+  const { coordinator, platform } = run;
+  coordinator.pass();
+  const w = run.implOf('T01');
+  platform.close(w);
+  run.decide({ kind: 'permission', worker: w, requestId: `${w}-r1`, decision: 'allow', reason: 'late' });
+  coordinator.pass();
+  const msgs = closedMsgs(run);
+  assert.equal(msgs.length, 1);
+  assert.match(msgs[0], /^Closed with no answer: the worker exited before anyone answered\./);
+  assert.ok(!run.told().some((m) => /answered by the person/.test(m)));
+  assert.ok(run.told().some((m) => /was not applied: closed with no answer: the worker exited/.test(m)), 'the late decision refused with the facts');
+});
+
+test('T15 a decision for a worker that never had an item still gets the generic refusal', (t) => {
+  const run = holdRun(t, [{ num: 'T01' }], { T01: npmTest });
+  run.coordinator.pass();
+  run.decide({ kind: 'permission', worker: 'ghost', requestId: 'r9', decision: 'allow', reason: 'x' });
+  run.coordinator.pass();
+  assert.ok(run.told().some((m) => /was not applied: nothing is waiting from worker "ghost" \(unknown worker, or already answered\)/.test(m)));
+  assert.deepEqual(closedMsgs(run), []);
+});
+
+test('T15 a timed-out item the person then answers gets the message; one the agent passed after the timeout does not', (t) => {
+  const run = holdRun(t, [{ num: 'T01' }, { num: 'T02' }], { T01: npmTest, T02: npmTest }, { holdMs: 60000 });
+  const { coordinator, clock, platform } = run;
+  const start = clock.t;
+  coordinator.pass();
+  const [w1, w2] = [run.implOf('T01'), run.implOf('T02')];
+  clock.t = start + 60000;
+  coordinator.pass();
+  assert.equal(run.handovers().length, 2, 'both timed out');
+  run.decide({ kind: 'pass', worker: w2, requestId: `${w2}-r1`, reason: 'the person\'s call', suggestion: 'allow' });
+  coordinator.pass();
+  platform.answer(w1, `${w1}-r1`, { behavior: 'allow', updatedInput: {} }, { from: 'person' });
+  platform.answer(w2, `${w2}-r1`, { behavior: 'allow', updatedInput: {} }, { from: 'person' });
+  coordinator.pass();
+  coordinator.pass();
+  const msgs = closedMsgs(run);
+  assert.equal(msgs.length, 1);
+  assert.ok(msgs[0].includes(`${w1}-r1`));
+  assert.match(msgs[0], /^Already answered by the person: allowed\./);
 });

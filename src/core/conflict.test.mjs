@@ -92,3 +92,42 @@ test('the worker variant names the branches and files, has no copy markers, and 
 test('the person variant is the default and is unchanged by the audience switch', () => {
   assert.equal(buildConflictPrompt({ ...base, audience: 'person' }), buildConflictPrompt(base));
 });
+
+// ---- pir-coordinator T05: the main-sync prompt (DESIGN §3.3) ----
+import { MAIN_SYNC_TASK } from './conflict.mjs';
+
+test('main-sync prompt: the in-progress merge of main, the files, the plan\'s test lines, commit and done', () => {
+  const text = buildConflictPrompt({ kind: 'main-sync', slug: 'demo', plan: 'demo', files: ['src/a.mjs', 'README.md'], audience: 'worker' });
+  assert.match(text, /merged the current `main` into pir\/demo/);
+  assert.match(text, /The merge\nis in progress: do not abort it/);
+  assert.match(text, / {2}- src\/a\.mjs\n {2}- README\.md/);
+  assert.match(text, /the `test` lines at the top of plans\/demo\/DESIGN\.md/);
+  assert.match(text, /commit the merge/);
+  assert.match(text, new RegExp(`\\[pir:v1 kind=done task=${MAIN_SYNC_TASK}\\]`));
+  assert.match(text, /ask the person/);
+  assert.doesNotMatch(text, /----- copy/);
+});
+
+test('buildConflictPrompt without a kind is the task→feature prompt, unchanged', () => {
+  const args = { task: 'T03', slug: 'thing', plan: 'demo', taskBranch: 'pir/demo-T03', featureBranch: 'pir/demo', files: ['x'] };
+  assert.equal(buildConflictPrompt({ ...args, kind: 'task' }), buildConflictPrompt(args));
+  assert.equal(buildConflictPrompt({ ...args, kind: 'task', audience: 'worker' }), buildConflictPrompt({ ...args, audience: 'worker' }));
+});
+
+// ---- pir-coordinator T10: the tests-red prompt ----
+import { TESTS_FIX_TASK } from './conflict.mjs';
+
+test('tests-red prompt: the failing branch, the reason and log, fix only the cause, the plan\'s test lines, commit and done', () => {
+  const text = buildConflictPrompt({ kind: 'tests-red', slug: 'demo', plan: 'demo', testsReason: 'test exit 1:\n  3 failing', logPath: '/c/tests.log', audience: 'worker' });
+  assert.equal(TESTS_FIX_TASK, 'tests-fix');
+  assert.match(text, /the plan's test block fails on pir\/demo/);
+  assert.match(text, /What failed: test exit 1: 3 failing/);
+  assert.match(text, /Full output: \/c\/tests\.log/);
+  assert.match(text, /do not change what any task delivered beyond what the fix needs/);
+  assert.match(text, /plans\/demo\/DESIGN\.md/);
+  assert.match(text, /\[pir:v1 kind=done task=tests-fix\]/);
+  assert.match(text, /\[pir:v1 kind=question task=tests-fix\]/);
+  assert.match(text, /never merge into main or push/);
+  const bare = buildConflictPrompt({ kind: 'tests-red', slug: 'demo', audience: 'worker' });
+  assert.doesNotMatch(bare, /What failed|Full output/);
+});

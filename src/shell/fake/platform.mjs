@@ -84,8 +84,18 @@ function addTaskRows(cwd, task, plan, rows) {
 //                            closed-but-still-listed worker (loop.mjs closedIds).
 //     { slow: N }            the implementer spends N extra ticks building before it commits, so a
 //                            test can hold one task mid-build while another finishes (holdMerges).
+//     keyed 'tests-fix'      the end-of-run test-fix worker (role 'fix', T10): { crash } or { question }.
 //     { request: kind }      the task's live workers show a pending 'permission' or 'questions' request
 //                            in workers() (not in list(): the loop's pass is unchanged). T09.
+//     { requests: [req…] }   the implementer raises these requests (each `{ kind?, toolName, input }` or
+//                            `{ kind: 'questions', questions }`) with ids `${workerId}-r1`, … and does
+//                            not build until every one is answered through answer(); workers() shows the
+//                            unanswered ones as its `pending`, as the real fold does (pir-coordinator T04).
+//
+// Each worker keeps an in-memory conversation log under its `logPath` (`logs`, read with readLog): a
+// `request` entry per scripted request at spawn, a `reply` per answer, a `message` per send, a `note` per
+// note, and an `exited` note when it crashes or is closed — the entries pir-coordinator T15 reads to tell
+// the agent who closed an item. `appendLog(id, entry)` adds any other entry (a phone answer, a tool result).
 //
 // The `resurrectClosed` behaviour of the `claude --bg` days (a closed session reappearing under its old
 // id as a stale registry entry) is gone with live-workers T05: a child that exited cannot come back.
@@ -99,9 +109,19 @@ export function createFakePlatform({ behaviors = {} } = {}) {
   const sent = []; // every send: { to, text, from }, for test introspection
   const interrupts = []; // every interrupt: { to, from }
   const answers = []; // every answer: { to, requestId, result, from }
+  const remotes = []; // every remoteControl: { to, on }
+  const notes = []; // every note: { to, kind, fields }
   let nextId = 0;
   const all = []; // every worker record in spawn order, kept after close, for workers()
   const counters = new Map(); // `${task}-${role}` → n, the conversation-log counter (DESIGN §2.3)
+  const logs = new Map(); // logPath → the worker's log entries, as the real worker-proc writes them
+  const logFor = (id) => {
+    const w = all.find((x) => x.id === id);
+    if (!w) return null;
+    if (!logs.has(w.logPath)) logs.set(w.logPath, []);
+    return logs.get(w.logPath);
+  };
+  const appendLog = (id, entry) => logFor(id)?.push(entry);
 
   function emit(w, kind, text = '') {
     inboxQueue.push({ from: w.name, task: w.task, kind, text });
@@ -120,6 +140,7 @@ export function createFakePlatform({ behaviors = {} } = {}) {
     const implContent = cr ? cr.mine : `work ${w.task}\n`;
 
     if (w.role === 'implement') {
+      if (w.requests?.length) return; // waiting on an answer to its own request
       if (w.stage === 'fresh') {
         if (b.slow && (w.slowed ?? 0) < b.slow) {
           w.slowed = (w.slowed ?? 0) + 1;
@@ -128,6 +149,7 @@ export function createFakePlatform({ behaviors = {} } = {}) {
         if (b.crash) {
           w.live = false;
           w.stage = 'dead';
+          appendLog(w.id, { dir: 'note', kind: 'exited', code: 1, signal: null });
           return;
         }
         if (b.question) {
@@ -188,6 +210,55 @@ export function createFakePlatform({ behaviors = {} } = {}) {
       return;
     }
 
+    if (w.role === 'sync') {
+      // The end-of-run main-sync worker (pir-coordinator T05), spawned in the feature worktree with a merge
+      // of main in progress. It resolves each conflicted file to `resolve[file]` (else keeps the feature's
+      // side), commits the merge and reports done. `unresolved: true` reports done without resolving;
+      // `crash: true` exits first.
+      if (w.stage !== 'fresh') return;
+      if (b.crash) {
+        w.live = false;
+        w.stage = 'dead';
+        return;
+      }
+      if (!b.unresolved) {
+        const files = git(w.cwd, ['diff', '--name-only', '--diff-filter=U']).stdout.split('\n').filter(Boolean);
+        for (const f of files) {
+          if (b.resolve?.[f] !== undefined) writeFileSync(join(w.cwd, f), b.resolve[f]);
+          else git(w.cwd, ['checkout', '--ours', '--', f]);
+        }
+        git(w.cwd, ['add', '-A']);
+        git(w.cwd, ['commit', '--no-edit', '-m', 'resolve main sync']);
+      }
+      emit(w, 'done');
+      w.stage = 'done';
+      return;
+    }
+
+    if (w.role === 'fix') {
+      // The end-of-run test-fix worker (pir-coordinator T10), spawned in the feature worktree when the
+      // tests are red. It commits `tests-fix.txt` and reports done. `crash: true` exits first;
+      // `question: "text"` parks with that question until answered, then fixes.
+      if (w.stage === 'fresh') {
+        if (b.crash) {
+          w.live = false;
+          w.stage = 'dead';
+          return;
+        }
+        if (b.question) {
+          emit(w, 'question', b.question);
+          w.stage = 'awaiting';
+          return;
+        }
+      } else if (!(w.stage === 'awaiting' && w.answered)) return;
+      writeFileSync(join(w.cwd, 'tests-fix.txt'), 'fixed\n');
+      git(w.cwd, ['add', '-A']);
+      git(w.cwd, ['commit', '--no-edit', '-m', 'fix the red tests']);
+      emit(w, 'done');
+      w.stage = 'done';
+      return;
+    }
+
     if (w.role === 'verify') {
       if (w.stage === 'fresh') {
         // A hands-on worker: the person ran the live steps; the worker records the finding and marks
@@ -232,14 +303,15 @@ export function createFakePlatform({ behaviors = {} } = {}) {
     // `note` is the text appended to the opening instruction (DESIGN §2.4), recorded for tests.
     // The name is built by the loop with naming.mjs; the task is recovered from it here so list()
     // reports it and the loop can rebuild assignments from names alone (DESIGN §2.8).
-    spawn({ cwd, name, phase, note = null }) {
+    spawn({ cwd, name, phase, note = null, task: taskLabel = null, opening = null }) {
       const parsed = parseAgentName(name);
-      const b = behaviors[parsed.task] ?? {};
+      const task = taskLabel ?? parsed.task;
+      const b = behaviors[task] ?? {};
       const id = `w${++nextId}`;
       const w = {
         id,
         name,
-        task: parsed.task,
+        task,
         plan: parsed.plan,
         cwd,
         role: phase,
@@ -250,13 +322,19 @@ export function createFakePlatform({ behaviors = {} } = {}) {
         pid: 10000 + nextId,
         busyHold: b.lingerBusy ?? 0,
       };
-      const key = `${parsed.task}-${phase}`;
+      if (phase === 'implement' && Array.isArray(b.requests)) {
+        w.requests = b.requests.map((r, i) => ({ kind: 'permission', ...r, requestId: `${id}-r${i + 1}` }));
+      }
+      const key = `${task}-${phase}`;
       w.n = (counters.get(key) ?? 0) + 1;
       counters.set(key, w.n);
       w.logPath = `conversations/${key}-${w.n}.ndjson`;
       workers.set(id, w);
       all.push(w);
-      spawns.push({ id, name, task: parsed.task, role: phase, cwd, note });
+      for (const r of w.requests ?? []) {
+        appendLog(id, { dir: 'request', requestId: r.requestId, toolName: r.kind === 'questions' ? 'AskUserQuestion' : r.toolName, input: r.kind === 'questions' ? { questions: r.questions } : r.input });
+      }
+      spawns.push({ id, name, task, role: phase, cwd, note, opening });
       return id;
     },
 
@@ -267,6 +345,7 @@ export function createFakePlatform({ behaviors = {} } = {}) {
       sent.push({ to: id, text, from });
       const w = liveWorker(id);
       if (!w) return { ok: false };
+      appendLog(id, { dir: 'out', from, kind: 'message', text });
       if (w.stage === 'awaiting') w.answered = true;
       // A worker parked on a coordinator-hit merge conflict (it had already reported done, so it is a
       // review-role session at stage 'done') receives the user's decision and moves to resolve it on
@@ -289,7 +368,32 @@ export function createFakePlatform({ behaviors = {} } = {}) {
     // permission requests, so there is never one pending to resolve beyond a live worker accepting it.
     answer(id, requestId, result, { from = 'person' } = {}) {
       answers.push({ to: id, requestId, result, from });
+      const w = liveWorker(id);
+      if (!w) return { ok: false };
+      // A scripted request (`requests`) is answered once, like the real one: a second answer finds
+      // nothing pending and is refused.
+      if (w.requests) {
+        const at = w.requests.findIndex((r) => r.requestId === requestId);
+        if (at === -1) return { ok: false };
+        w.requests.splice(at, 1);
+      }
+      appendLog(id, { dir: 'out', from, kind: 'reply', requestId, result });
+      return { ok: true };
+    },
+
+    // remoteControl(id, on) → { ok }. Recorded only, as the real platform's is fire-and-forget; a closed
+    // or unknown worker has no session to reach (platform.mjs).
+    remoteControl(id, on) {
+      remotes.push({ to: id, on: !!on });
       return { ok: !!liveWorker(id) };
+    },
+
+    // note(id, kind, fields) → { ok }. Recorded only; the real one writes a `note` into the worker's log,
+    // live or exited, so any id this fake ever spawned takes one.
+    note(id, kind, fields = {}) {
+      notes.push({ to: id, kind, fields });
+      appendLog(id, { ...fields, dir: 'note', kind });
+      return { ok: all.some((w) => w.id === id) };
     },
 
     // list() → live workers with their state. Advances every live worker one tick first (see header).
@@ -329,9 +433,10 @@ export function createFakePlatform({ behaviors = {} } = {}) {
     workers() {
       return all.map((w) => {
         const isLive = !!liveWorker(w.id);
-        const request = isLive ? behaviors[w.task]?.request ?? null : null;
+        const pending = isLive && w.requests?.length ? w.requests.map((r) => ({ ...r })) : [];
+        const request = isLive ? pending[0]?.kind ?? behaviors[w.task]?.request ?? null : null;
         const state = request ?? (w.status === 'busy' ? 'busy' : 'idle');
-        return { id: w.id, task: w.task, role: w.role, n: w.n, logPath: w.logPath, cwd: w.cwd ?? null, live: isLive, activity: { state, pending: [] } };
+        return { id: w.id, task: w.task, role: w.role, n: w.n, logPath: w.logPath, cwd: w.cwd ?? null, live: isLive, activity: { state, pending } };
       });
     },
 
@@ -345,6 +450,7 @@ export function createFakePlatform({ behaviors = {} } = {}) {
       closed.push(id);
       closeOpts.push({ id, ...opts });
       const w = workers.get(id);
+      if (w) appendLog(id, { dir: 'note', kind: 'exited', code: 0, signal: null });
       const linger = w ? behaviors[w.task]?.lingerClosed ?? 0 : 0;
       if (w && linger > 0) {
         w.stage = 'closed'; // no further advance; list() ages it out over `linger` ticks
@@ -370,6 +476,12 @@ export function createFakePlatform({ behaviors = {} } = {}) {
       return inboxQueue.splice(0, inboxQueue.length);
     },
 
+    // readLog(logPath) → the entries logged for that worker so far (a copy); [] for a log never written.
+    readLog(logPath) {
+      return (logs.get(logPath) ?? []).slice();
+    },
+    appendLog,
+
     // --- test introspection ---
     spawns,
     closed,
@@ -378,6 +490,8 @@ export function createFakePlatform({ behaviors = {} } = {}) {
     sent,
     interrupts,
     answers,
+    remotes,
+    notes,
     _workers: workers,
   };
 }

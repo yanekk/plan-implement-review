@@ -408,3 +408,47 @@ test('startup hygiene empties inbox/ like reports/', async (t) => {
   assert.deepEqual(readdirSync(inboxDirOf(control.dir)), []);
   assert.deepEqual(clearTransientFeeds(control.dir).cleared, ['inbox/'], 'no reports/ folder, only inbox/');
 });
+
+// pir-coordinator T06: the person types to the coordinator agent in its own conversation. The agent is not
+// one of the platform's workers, so the inbox forwards through withAgent, which routes its id to its session.
+test('a message the person drops for the coordinator agent reaches its session; other ids still reach the platform', async () => {
+  const { withAgent } = await import('./coordinator-agent.mjs');
+  const controlDir = mkdtempSync(join(tmpdir(), 'pir-inbox-agent-'));
+  try {
+    const sent = [];
+    const session = {
+      send: (text, { from }) => (sent.push({ to: 'agent', text, from }), true),
+      interrupt: async () => true,
+      answer: () => false,
+      pending: () => [],
+      note: () => {},
+    };
+    let agent = null;
+    const platform = {
+      send: (id, text, { from }) => (sent.push({ to: id, text, from }), { ok: true }),
+      interrupt: () => ({ ok: true }),
+      answer: () => ({ ok: false }),
+      pending: () => [],
+      note: () => ({ ok: true }),
+      logPathOf: (id) => (id === 'w1' ? '/c/conversations/w1.ndjson' : null),
+    };
+    const inbox = startPersonInbox({ controlDir, platform: withAgent(platform, () => agent), watch: () => ({ close() {} }) });
+    try {
+      assert.equal(dropPersonInput(controlDir, { to: 'sess-1', kind: 'message', text: 'where are we?' }, { coordinatorAlive: true }).ok, true);
+      assert.deepEqual(inbox.drain().map((o) => o.outcome), ['undelivered'], 'before the agent has started, its id is unknown');
+
+      agent = { id: 'sess-1', session, logPath: '/c/conversations/coordinator-1.ndjson', alive: () => true };
+      dropPersonInput(controlDir, { to: 'sess-1', kind: 'message', text: 'where are we?' }, { coordinatorAlive: true });
+      dropPersonInput(controlDir, { to: 'w1', kind: 'message', text: 'hi worker' }, { coordinatorAlive: true });
+      const out = inbox.drain();
+      assert.deepEqual(out.map((o) => [o.to, o.outcome]).sort(), [['sess-1', 'delivered'], ['w1', 'delivered']]);
+      assert.equal(sent.length, 2);
+      assert.deepEqual(sent.find((m) => m.to === 'agent'), { to: 'agent', text: 'where are we?', from: 'person' }, 'into the agent\'s session');
+      assert.deepEqual(sent.find((m) => m.to === 'w1'), { to: 'w1', text: 'hi worker', from: 'person' }, 'a worker still through the platform');
+    } finally {
+      inbox.stop();
+    }
+  } finally {
+    rmSync(controlDir, { recursive: true, force: true });
+  }
+});

@@ -111,7 +111,7 @@ const questions = (over = {}) =>
     ...over,
   });
 
-const KEY = { enter: '\r', esc: '\x1b', left: '\x1b[D', up: '\x1b[A', down: '\x1b[B', tab: '\t', ctrlC: '\x03', pgUp: '\x1b[5~', pgDn: '\x1b[6~', space: ' ' };
+const KEY = { enter: '\r', esc: '\x1b', left: '\x1b[D', right: '\x1b[C', up: '\x1b[A', down: '\x1b[B', tab: '\t', ctrlC: '\x03', pgUp: '\x1b[5~', pgDn: '\x1b[6~', space: ' ' };
 
 function makeView({ log = [init(), opening], live = true, alive = true, rows = 30, drop } = {}) {
   const drops = [];
@@ -253,6 +253,24 @@ test('typing with a question set pending lands next to "Other:", not in the box 
 });
 
 
+
+test('on a typed Other answer ←/→ move its caret; ← goes back only once it is emptied (user 2026-09-27)', () => {
+  const t = makeView({ log: [init(), opening, questions()] });
+  t.type('Grn');
+  t.v.handleInput(KEY.left);
+  t.v.handleInput(KEY.left);
+  assert.equal(t.backs(), 0, '← moved the caret, it did not go back');
+  t.type('r');
+  t.v.handleInput(KEY.right);
+  t.type('e');
+  assert.match(t.text(), /Other: Grre▏n/);
+  for (let i = 0; i < 4; i += 1) t.v.handleInput('\x7f');
+  assert.match(t.text(), /Other: ▏n/);
+  t.v.handleInput(KEY.right);
+  t.v.handleInput('\x7f');
+  t.v.handleInput(KEY.left);
+  assert.equal(t.backs(), 1, 'with the answer emptied, ← goes back');
+});
 
 test('text already in the box when a question arrives moves onto its Other line on Enter', () => {
   const t = makeView({ log: [init(), opening] });
@@ -534,4 +552,40 @@ test('hasEnded: an exit ends the log until a `resumed` note, and an exit after i
   assert.equal(hasEnded([note('sdk-error')]), true);
   assert.equal(hasEnded([note('exited'), note('resumed')]), false);
   assert.equal(hasEnded([note('exited'), note('resumed'), { dir: 'in' }, note('exited')]), true);
+});
+
+// pir-coordinator T06 (DESIGN §2.5, §2.8, §2.9): the coordinator agent's conversation is a worker's view with
+// taskId `coordinator`. Its pointer is its own reply; the hand-off is pir's message and the agent's reply.
+test('the coordinator agent\'s conversation shows its pointer reply, pir\'s hand-off message and its reply, and takes typing', () => {
+  const drops = [];
+  let push = null;
+  const v = createConversationView({
+    run: { slug: 'demo', controlDir: '/nowhere' },
+    worker: { taskId: 'coordinator', workerId: 'sess-1', logPath: '/nowhere/conversations/coordinator-1.ndjson', live: true },
+    follow: (_p, { onEntries }) => {
+      push = (...es) => onEntries(es.map((e) => JSON.stringify(e)));
+      return { stop() {} };
+    },
+    drop: (_dir, input) => (drops.push(input), { ok: true }),
+    alive: () => true,
+    tui: { requestRender() {}, terminal: { rows: 30 } },
+    colour: false,
+  });
+  push(
+    init(),
+    entry({ dir: 'out', from: 'pir', kind: 'message', text: 'Invoke the pir-coordinator skill for plan demo.' }),
+    said('T01 (layout) has a question I will not decide: it picks the public API name. I would pick `render`. Answer it in T01\'s conversation.'),
+    entry({ dir: 'out', from: 'pir', kind: 'message', text: 'The run is ready to merge. Report: plans/demo/REPORT.md. Merge with: git merge pir/demo' }),
+    said('All five tasks are built and the branch is ready: git merge pir/demo. The report is plans/demo/REPORT.md.'),
+  );
+  const text = () => v.render(80).map((l) => stripTerminalSequences(l)).join('\n');
+  assert.match(text(), /^coordinator {2}agent sess-1/m, "headed as the coordinator agent, not a worker (T07 drill)");
+  assert.match(text(), /coordinator ▸ T01 \(layout\) has a question I will not decide/);
+  assert.match(text(), /pir ▸ The run is ready to merge\. Report: plans\/demo\/REPORT\.md\./);
+  assert.match(text(), /coordinator ▸ All five tasks are built and the branch is ready: git merge\s+pir\/demo\./);
+
+  [...'where are we?'].forEach((c) => v.handleInput(c));
+  v.handleInput('\r');
+  assert.deepEqual(drops, [{ to: 'sess-1', kind: 'message', text: 'where are we?' }]);
+  v.dispose();
 });

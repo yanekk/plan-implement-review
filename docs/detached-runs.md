@@ -20,14 +20,16 @@ deprecated foreground launcher `pir-coordinate` was removed in `plans/live-worke
 | `pir` | open the dashboard: one row per run across every repo on the machine, and the new-plan box under it |
 | `pir plan` | open the brief box, then start a planning run ([planning-runs.md](planning-runs.md)) |
 | `pir plan <words…>` | start a planning run with the words, joined by one space, as the brief |
-| `pir start {slug}` | start the build of a reviewed plan detached, and drop straight into its live view |
+| `pir start {slug}` | start the build of a reviewed plan detached, with its coordinator agent, and drop straight into its live view |
+| `pir start {slug} --no-coordinator` | the same, without a coordinator agent: every question goes to the person and the run ends at the plain hand-off ([coordinator-agent.md](coordinator-agent.md)) |
 | `pir <anything else>` | `pir: unknown command '<arg>'. To build a plan: pir start <arg>` and the usage, exit 2 |
 
 `pir start {slug}` is start-or-open: if the slug is already running, it opens that run's live view
 instead of starting a second one (a live planning run of that slug included: its steps view opens). If
 the slug is stopped, crashed or finished, it starts it, and the coordinator resumes from committed work
 (recovery is re-running the slug — [restart-recovery.md](restart-recovery.md)). `pir start` with no slug
-or more than one is a usage error.
+or more than one is a usage error, and so is any flag other than `--no-coordinator` (which may come
+before or after the slug). The usage text itself does not list `--no-coordinator`.
 
 Exit codes: 0 a view opened (or the brief box was cancelled), 1 a refused start, 2 a usage error, so a
 script can tell a refused run from a running one.
@@ -48,7 +50,9 @@ repos is two independent runs. A run is in exactly one of four states, decided b
 
 - **running** — its recorded process is alive and is the one we started.
 - **finished** — it ended cleanly and recorded a `finished` final status: a green hand-off, a red
-  feature branch (all tasks built, the feature tests fail), or nothing left to do. A red branch is
+  feature branch (all tasks built, the feature tests fail), or nothing left to do. With the coordinator
+  agent on, the hand-off does not end the run: it waits in `ready to merge`, still `running`, and is
+  `finished` once the person merges the feature branch or tells the agent to close the run. A red branch is
   still `finished` — the run did its job and the red code is the person's to fix and merge.
 - **stopped** — the person stopped it (below), which records a `stopped` final status.
 - **crashed** — its recorded process is gone and it recorded no final status. This covers a true
@@ -77,7 +81,10 @@ repos never collides). The entry is a pointer plus what is needed to classify th
 the repo: the slug, the repo and its path, the control-folder path, the process number and launch
 time, and the final status once set. It also carries `kind` — `plan` for a planning run, `work` for a
 build, absent read as `work` — and, for a planning run, its `label` before the rename and `go`, the
-person's answer to the go question ([planning-runs.md](planning-runs.md)). A build writes its record
+person's answer to the go question ([planning-runs.md](planning-runs.md)). A build started with
+`--no-coordinator` carries `coordinator: false`, so a resume from the dashboard (`Ctrl+R Ctrl+R`)
+starts it without the agent again; the field is absent otherwise, and absent reads as on. `pir start
+{slug}` typed again takes the flag as typed, not from the record. A build writes its record
 under the same key as the planning run it came from, so one plan is one row. `~/.pir/` is outside any repo and is never committed.
 
 `pir` reads every index entry to enumerate the runs, then reads each run's snapshot for live detail.
@@ -110,7 +117,10 @@ src/shell/coordinate.mjs {slug}`, as the tests and harness do) without it writes
 touches no index entry. Each task in the snapshot's run state also carries the worker its row opens
 (id, whether live, conversation-log path), the ids, roles and log paths of this coordinator's workers
 for the task, and what kind of answer it is asking for (`asking`: a question, a permission, a question
-set) (`buildRunState` in `coordinate.mjs`).
+set) and, with a coordinator agent, who holds that item (`holder`: `coordinator` or `person`)
+(`buildRunState` in `coordinate.mjs`). The run state also carries `coordinator` (`{ id, live,
+logPath }`, the agent the `c` key opens; null without one) and, at the end, `handoff` (`{ state:
+'preparing' | 'ready' | 'red', reportPath, mainSha }`).
 The snapshot is gitignored with the rest of the control folder (below).
 
 ## The dashboard and the live view
@@ -123,7 +133,12 @@ the plan has a name — and a `your go` row adds `· N waiting for you` to the c
 or decision report, a permission request or a question set, by the same rule as the live view's `asking`
 tally (`askingCount` in `display.mjs`) — reads `asking you` in amber bold instead of `running`, and counts
 in that same `waiting for you` tally; it reads `running` again once every ask is answered. A task fixing a
-merge conflict asks nothing and does not count. This is a display state only (`runDisplayState` in
+merge conflict asks nothing and does not count, and neither does a task whose item the coordinator agent
+holds (`asking coordinator`): the run turns amber only once the agent passes an item on or an item is
+reserved for the person. A running planning run reads `asking you` the same way while its planner or
+reviewer has a question set or permission request open ([planning-runs.md](planning-runs.md)). A build
+waiting at its end with a green hand-off reads `● ready to merge` in amber and counts in `waiting for you`;
+the STATE column widens to fit it only while such a row is listed. A red hand-off reads `running`. This is a display state only (`runDisplayState` in
 `dashboard.mjs`): the run is still classified `running`, and every chord treats it so. There is no process-number column — the person does not act on it.
 Colour carries state and is never the only signal (glyphs carry the same state, so `NO_COLOR` and a
 colour-blind reader lose nothing): a running run is green, finished and stopped are dim, crashed is
@@ -146,7 +161,9 @@ coordinator's own model (`buildDisplay`) and renderer (`src/shell/render.mjs`), 
 snapshot changes. Finished, stopped and crashed runs are openable too — their last frame is exactly
 what a person opens the dashboard to see — shown marked stale, with the note that re-starting the slug
 resumes it. A finished run's stale note offers `Hand-off: git merge pir/{slug}` only when its last
-frame was green. A red one — complete but not ready to merge — shows the red footer (the reason and
+frame was green. A run with the coordinator agent shows its end in the live frame's footer while it
+waits: `✔ ready to merge · git merge pir/{slug}` with `report: plans/{slug}/REPORT.md`, or `✗ not
+ready · tests red on pir/{slug} — no merge offered` (see [coordinator-agent.md](coordinator-agent.md#ready-to-merge)). A red one — complete but not ready to merge — shows the red footer (the reason and
 the log path, from `runState.testsReason`) and a stale note saying it is not ready to merge and to fix
 the branch, with no merge line; a finished run with no snapshot at all points at `run.log` rather than
 guess (`buildWatchFrame` in `src/shell/pir-tui.mjs`). A crashed run that never wrote a snapshot shows
@@ -162,7 +179,10 @@ The run's live view has a selectable task row (the same grey band). ↑↓ move 
 that task's worker in a third view, the worker's **conversation** (`src/shell/conversation-view.mjs`,
 drawn with `@earendil-works/pi-tui`; the rules for what each line says are in
 `src/core/conversation.mjs`). A task with no worker yet says so in the footer instead. The view opens
-the task's live worker; with none live, its latest one, read-only, with no typing box.
+the task's live worker; with none live, its latest one, read-only, with no typing box. In a build with a
+coordinator agent, `c` opens the agent's conversation in the same view, and the person types to it as
+to a worker; with no agent, `c` leaves a note in the footer
+([coordinator-agent.md](coordinator-agent.md#the-agents-own-conversation)).
 
 The view reads the worker's conversation log from the control folder (the last 256 KB, then every
 append; `log-follow.mjs`), so a closed `pir` loses nothing and two open screens agree. By default each
@@ -195,11 +215,11 @@ The keys, as built, are shown in the footer of each view:
 |---|---|
 | List, box bare (`@`) | `↑↓` move · `↵` or `→` open the selected run · `Ctrl+R Ctrl+R` resume · `Ctrl+S Ctrl+S` stop · `Ctrl+X Ctrl+X` remove · `esc` quit · any other key types into the box |
 | List, box typed in | `↵` start planning · `shift+↵` or `ctrl+j` new line · `esc` or `Ctrl+C` reset the box to `@` · `Ctrl+R/S/X` twice as above · arrows move the cursor · while the repo pop-up is open, `↑↓` pick and `Tab`/`↵` choose |
-| Watch | `↑↓` pick a task · `→` or `↵` open its worker · `←` back to the list · `Ctrl+S Ctrl+S` stop this run · `esc` quit |
+| Watch | `↑↓` pick a task · `→` or `↵` open its worker · `c` open the coordinator agent (only in a run that has one) · `←` back to the list · `Ctrl+S Ctrl+S` stop this run · `esc` quit |
 | Steps (a planning run) | `↑↓` pick a step · `→` or `↵` open its conversation · `←` back to the list · `Ctrl+S Ctrl+S` stop this run (while it runs) · `esc` quit |
 | The go question | `↵` start the build · `n` not now · `←` back to the list · `esc` quit, leaving the question in place |
 | Brief box (`pir plan`) | typing · `↵` start planning · `shift+↵` or `ctrl+j` new line · `esc` or `Ctrl+C` cancel |
-| Conversation | typing, `↵` send · `esc` interrupt the worker · `Ctrl+C` clear the box, or interrupt when it is empty · `←` with an empty box back to the live view · `Tab` one line per step ⇄ full detail · `↵`/`n`/`a` answer a pending permission, and `↑↓` `space` `↵` drive a pending question set (one `↵` answers a pick-one question), both only while the box is empty, and typing while a question set is pending goes to its Other line · `PgUp`/`PgDn` scroll |
+| Conversation | typing, `↵` send · `esc` interrupt the worker · `Ctrl+C` clear the box, or interrupt when it is empty · `←` with an empty box back to the live view · `Tab` one line per step ⇄ full detail · `↵`/`n`/`a` answer a pending permission, and `↑↓` `space` `↵` drive a pending question set (one `↵` answers a pick-one question), both only while the box is empty, and typing while a question set is pending goes to its Other line, where `←`/`→` move the cursor and `←` goes back only once the line is empty · `PgUp`/`PgDn` scroll |
 
 `←` steps back one view; `esc` quits `pir` outright from the list and the live view, but in the
 conversation view it interrupts the worker, as in Claude's own screen: the open turn ends at once, and
@@ -287,7 +307,7 @@ the ordinary one, stop the misbehaving run and re-start the slug.
 
 Stopping a run ends it now; it does not wait for the current unit of work to reach a safe point.
 `stopRun` (`src/shell/control-run.mjs`) signals the coordinator to stop (SIGTERM); on that signal the
-coordinator closes its in-flight workers, records a `stopped` final status, releases keep-awake, and
+coordinator closes its in-flight workers and its coordinator agent, records a `stopped` final status, releases keep-awake, and
 exits, leaving the task worktrees in place for the next start to reconcile from git. In-flight work is
 cheap to redo, and a fast, predictable stop is worth more than salvaging a half-built task.
 

@@ -101,7 +101,9 @@ wrong — you do two things and then **wait** (DESIGN §2.2):
    unspecified or ambiguous) or `kind: decision` (a real choice either way). Dropping the file does
    two things and no more: it keeps your slot counted while you are parked, and it prints your question
    in the live display so the person can see who is asking. Nothing reads that file and answers you —
-   it is not a message to anyone.
+   it is not a message to anyone. **Drop it every time you are about to end a turn waiting on the
+   person** — a follow-up question after they answered an earlier one included — because the earlier
+   report stopped counting the moment their answer arrived.
 2. **Ask the person, in this session, as your last turn before you park** — lay out what you are trying
    to do, the options and their costs, and your recommendation, the shape `CLAUDE.md` asks for. **When
    the answer is a choice between options, ask it with the AskUserQuestion tool** — options with a
@@ -115,12 +117,23 @@ wrong — you do two things and then **wait** (DESIGN §2.2):
    in your own session and you continue from it. Those are the only places the person reaches you
    (live-workers DESIGN §2.4, §2.7; `docs/human-flow.md`).
 
-   **The person is the only one who answers you — address them, and no one else.** Nothing else in the
-   run answers your questions, so never say — to the person, or in your own session — that you
-   are "waiting" on anything to come back or that anything "will reply". The report you dropped in step 1
-   is only a signal that you are stuck; it is not a question anything answers. The words a watching person
-   reads must name *them* as the one who answers, here, in this session. Do not poll a channel and do not
-   expect a routed answer (DESIGN §2.2).
+   **Address the person, and no one else.** Nothing relays your question to anyone, so never say — to
+   the person, or in your own session — that you are "waiting" on anything to come back or that
+   anything "will reply". The report you dropped in step 1 is only a signal that you are stuck; it is
+   not a question anything answers. The words a watching person reads must name *them* as the one who
+   answers, here, in this session. Do not poll a channel and do not expect a routed answer (DESIGN §2.2).
+
+   **The answer may come from the coordinator agent, on the person's behalf.** A build run by `pir`
+   usually has a *coordinator agent*: the person's stand-in, which sees your question, question set or
+   permission request before the person does and may answer it for them (pir-coordinator DESIGN §2.3,
+   §2.6; `docs/coordinator-agent.md`). Its answer arrives in this session exactly as the person's would
+   — a picked option, an allowed or refused request, or a message — and **counts as the person's**: act
+   on it, do not re-ask it, and do not ask the person to confirm it. That includes a yes to adding a
+   task (§ When you find a task the plan is missing) and a settled design question. If the agent passes
+   your question on, you hear nothing and keep waiting; the person answers you here. You still ask the
+   person, exactly as above: never write to the agent, never name it as the one who will answer, and
+   never ask it anything separately. An `ask`-bin action and a destructive command are never answered
+   by the agent; they always wait for the person.
 
 Then wait. Do any independent work that does not depend on the answer while you wait; stop dead only on
 what the answer blocks. Never guess to get unblocked; an underspecified requirement is exactly what the
@@ -150,7 +163,8 @@ The flow:
 1. **Propose it as a decision, and wait.** Escalate through the path above (§ When a stock skill
    would "ask the user and wait"): drop a `decision` report — the existing kind, no new one — lay the
    case to the person in this session (what the task is, why the plan needs it, what it depends on),
-   and wait for their answer here. **Never add a task without a yes.** An unrequested task is the
+   and wait for their answer here. **Never add a task without a yes** — the person's, or the
+   coordinator agent's given on their behalf. An unrequested task is the
    "what" that is the person's, not yours.
 2. **On approval, on your own task branch, ADD ONLY** — four additions, and no edit to any existing
    task's row or doc:

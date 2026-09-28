@@ -107,7 +107,7 @@ function taskInAdoptError(text) {
 // at mergeTask is logged by its own record('surface') in 3d; this closes the worker-raised path so
 // both an operator and the harness see every escalation. The log line stays `surface {task}` (no
 // kind on disk), so the facts still key on the task, not a kind (see this file's header note).
-function applyMessages(state, messages, record) {
+export function applyMessages(state, messages, record) {
   for (const m of messages) {
     const t = state.tasks[m.task];
     if (!t) continue;
@@ -136,19 +136,22 @@ function applyMessages(state, messages, record) {
 // (`answerFrom`, an index into the fold's `turnCauses`), and the person's input counts so far
 // (`personSends`, `remoteSends`). Then any of these un-parks, and the task returns to its role's phase:
 //   - a turn opened at or after `answerFrom` by the person: a `from: 'person'` send, or Remote Control
-//     input. A turn opened by anything else (a background job's wake-up, a pir send, an unrecognised
+//     input; or by the coordinator agent, a `from: 'coordinator'` send (pir-coordinator DESIGN §2.3).
+//     A turn opened by anything else (a background job's wake-up, a pir send, an unrecognised
 //     opening) answered nothing: `answerFrom` moves past it and the park stands, so the row keeps
 //     telling the person the question is open and Remote Control is not toggled under them;
-//   - a person send or Remote Control input counted since the park was first seen, wherever it landed:
+//   - a person send, coordinator send or Remote Control input counted since the park was first seen, wherever it landed:
 //     an early reply injected into the still-open asking turn is an answer too;
 //   - a request seen pending while parked (`asked`) now answered with the turn still open: the worker
 //     asked with a question set inside the same turn (seen live, human-decision fixture 2026-09-26).
 // A listing without `turnCauses` (some test fakes) keeps the older reading: any turn after the asking
 // one un-parks. A conflict fix pir itself sent (`sent`) is not a question to the person and is left to
 // its `done` report.
-const ANSWER_CAUSES = new Set(['person', 'remote']);
+// A coordinator agent's `message` answers a report park exactly as the person's does (pir-coordinator
+// DESIGN §2.3), so its sends count alongside the person's.
+const ANSWER_CAUSES = new Set(['person', 'remote', 'coordinator']);
 
-function resumeAnswered(state, liveById, record) {
+export function resumeAnswered(state, liveById, record) {
   for (const [num, t] of Object.entries(state.tasks)) {
     if (t.phase !== AWAITING || !t.decision || t.decision.sent) continue;
     const act = liveById.get(t.workerId)?.activity;
@@ -157,6 +160,7 @@ function resumeAnswered(state, liveById, record) {
     const causes = Array.isArray(act.turnCauses) ? act.turnCauses : null;
     const personSends = act.personSends ?? 0;
     const remoteSends = act.remoteSends ?? 0;
+    const coordinatorSends = act.coordinatorSends ?? 0;
     if (act.pending?.length) d.asked = true;
     if (d.askEnd === undefined) {
       d.askEnd = act.turns + (act.open ? 1 : 0);
@@ -166,10 +170,14 @@ function resumeAnswered(state, liveById, record) {
       d.answerFrom = causes ? causes.length : d.askEnd;
       d.personSends = personSends;
       d.remoteSends = remoteSends;
+      d.coordinatorSends = coordinatorSends;
       continue;
     }
     const answeredInTurn = d.asked && !act.pending?.length && act.open;
-    const spokeSince = personSends > (d.personSends ?? Infinity) || remoteSends > (d.remoteSends ?? Infinity);
+    const spokeSince =
+      personSends > (d.personSends ?? Infinity) ||
+      remoteSends > (d.remoteSends ?? Infinity) ||
+      coordinatorSends > (d.coordinatorSends ?? Infinity);
     let answerTurn = false;
     if (causes) {
       for (let i = d.answerFrom ?? d.askEnd; i < causes.length; i++) {

@@ -63,6 +63,42 @@ function clipSpans(spans, width) {
   return out;
 }
 
+// Word-wrap a line of spans to `width` code points, keeping each character's style. Continuation lines
+// are indented by `indent` columns; no break is taken inside the first `keep` characters (a prompt's
+// `❯ ( ) Other: ` head), so the head stays on one line. A word longer than the room hard-breaks.
+function wrapSpans(spans, width, { indent = 0, keep = 0 } = {}) {
+  const chars = [];
+  for (const raw of spans) for (const ch of plainText(raw.text).replace(/\n/g, ' ')) chars.push({ ch, style: raw.style });
+  const rows = [];
+  let start = 0;
+  do {
+    const room = Math.max(1, width - (rows.length ? indent : 0));
+    let end = Math.min(start + room, chars.length);
+    if (end < chars.length && chars[end].ch !== ' ') {
+      for (let i = end; i > Math.max(start, keep); i--) {
+        if (chars[i - 1].ch === ' ') {
+          end = i;
+          break;
+        }
+      }
+    }
+    const row = chars.slice(start, end);
+    while (row.length && row[row.length - 1].ch === ' ' && end < chars.length) row.pop();
+    rows.push(row);
+    start = end;
+    while (start < chars.length && chars[start].ch === ' ') start += 1;
+  } while (start < chars.length);
+  return rows.map((row, i) => {
+    const out = [];
+    for (const c of row) {
+      const last = out[out.length - 1];
+      if (last && last.style === c.style) last.text += c.ch;
+      else out.push(span(c.ch, c.style));
+    }
+    return i && indent ? [span(' '.repeat(indent), null), ...out] : out;
+  });
+}
+
 // Wrap `text` (which may hold newlines) under a prefix: the first line starts with the prefix, the rest
 // are indented to line up under the text. Wrapped, never truncated: a message is read in full.
 function wrapped(prefix, text, style, width) {
@@ -381,13 +417,14 @@ export function gateReducer(gate, key) {
 // pickerFor(request) → the picker for a pending question set (a stream.mjs `questions` event). Every
 // question ends with an "Other" line (cursor index options.length) that is itself a text field: the
 // person's own answer is typed there, next to "Other:", never in the box (user 2026-09-26, T18 drill).
+// `caret` is the Other text's cursor, in code points; ←/→ move it (user 2026-09-27).
 export function pickerFor(request) {
   return {
     kind: 'questions',
     requestId: request.requestId,
     q: 0,
     cursor: 0,
-    questions: (request.questions ?? []).map((qn) => ({ ...qn, picks: [], other: '' })),
+    questions: (request.questions ?? []).map((qn) => ({ ...qn, picks: [], other: '', caret: 0 })),
   };
 }
 
@@ -395,6 +432,12 @@ export function pickerFor(request) {
 export function onOther(picker) {
   const qn = picker?.questions?.[picker.q];
   return !!qn && picker.cursor === qn.options.length;
+}
+
+// The Other text's caret, clamped to the text; a question without one (an older state) sits at the end.
+function caretOf(qn) {
+  const n = [...qn.other].length;
+  return Number.isInteger(qn.caret) ? Math.max(0, Math.min(n, qn.caret)) : n;
 }
 
 // The answer to one question: its picked labels in option order, then the Other text, joined ", ".
@@ -411,7 +454,8 @@ function answerOf(qn) {
 //   toggle     space on an option: a single-select question replaces its pick, a multi-select one ticks.
 //   char {text}  typing: it lands on the Other line, moving the cursor there first if it was on an option,
 //              so typed text is only ever the person's own answer (their option 1).
-//   backspace  on the Other line, deletes the last character.
+//   backspace  on the Other line, deletes the character before the caret.
+//   left/right on the Other line, moves the caret within the text.
 //   next       Enter: answers and moves on, sending on the last question. A single-select question takes
 //              the line under the cursor (an option, or the Other text); a multi-select one its ticks plus
 //              any Other text. With no answer it does nothing.
@@ -447,11 +491,24 @@ export function pickerReducer(picker, event) {
     case 'char': {
       const text = typeof event.text === 'string' ? event.text : '';
       if (!text) return { picker, send: null };
-      return { picker: withQuestion({ ...picker, cursor: other }, { other: qn.other + text }), send: null };
+      const chars = [...qn.other];
+      // Typed from an option, the text goes at the end of what is already there.
+      const at = picker.cursor === other ? caretOf(qn) : chars.length;
+      chars.splice(at, 0, ...text);
+      return { picker: withQuestion({ ...picker, cursor: other }, { other: chars.join(''), caret: at + [...text].length }), send: null };
     }
     case 'backspace': {
-      if (picker.cursor !== other || !qn.other) return { picker, send: null };
-      return { picker: withQuestion(picker, { other: [...qn.other].slice(0, -1).join('') }), send: null };
+      const at = caretOf(qn);
+      if (picker.cursor !== other || at === 0) return { picker, send: null };
+      const chars = [...qn.other];
+      chars.splice(at - 1, 1);
+      return { picker: withQuestion(picker, { other: chars.join(''), caret: at - 1 }), send: null };
+    }
+    case 'left':
+    case 'right': {
+      if (picker.cursor !== other) return { picker, send: null };
+      const at = caretOf(qn) + (event.type === 'left' ? -1 : 1);
+      return { picker: withQuestion(picker, { caret: Math.max(0, Math.min([...qn.other].length, at)) }), send: null };
     }
     case 'next': {
       if (qn.multiSelect) return advance(picker);
@@ -488,19 +545,27 @@ export function promptLines(prompt, { width = 80, taskId = 'worker' } = {}) {
       const on = qn.picks.includes(i);
       const box = qn.multiSelect ? (on ? '[x]' : '[ ]') : on ? '(•)' : '( )';
       const cursor = i === prompt.cursor ? '❯ ' : '  ';
-      const spans = [span(`  ${cursor}${box} ${o.label}`, on ? 'ok' : i === prompt.cursor ? 'prompt' : null)];
+      const head = `  ${cursor}${box} `;
+      const spans = [span(`${head}${o.label}`, on ? 'ok' : i === prompt.cursor ? 'prompt' : null)];
       if (o.description) spans.push(span(`  ${o.description}`, 'dim'));
-      out.push(clipSpans(spans, w));
+      // Wrapped, not clipped: a description is what the person decides on (user 2026-09-27).
+      out.push(...wrapSpans(spans, w, { indent: head.length, keep: head.length }));
     });
     // The Other line is a text field: the typed answer sits next to "Other:", with a caret while the cursor
     // is on it (user 2026-09-26, T18 drill).
     const here = onOther(prompt);
     const own = qn.other !== '';
     const otherBox = qn.multiSelect ? (own ? '[x]' : '[ ]') : own && !qn.picks.length ? '(•)' : '( )';
-    const otherSpans = [span(`  ${here ? '❯ ' : '  '}${otherBox} Other: `, own ? 'ok' : here ? 'prompt' : null), span(qn.other, 'ok')];
-    if (here) otherSpans.push(span('▏', 'prompt'));
-    else if (!own) otherSpans.push(span('type your own answer', 'dim'));
-    out.push(clipSpans(otherSpans, w));
+    // Wrapped, not clipped, so the whole answer stays in view while it is typed (user 2026-09-27).
+    const otherHead = `  ${here ? '❯ ' : '  '}${otherBox} Other: `;
+    const otherSpans = [span(otherHead, own ? 'ok' : here ? 'prompt' : null)];
+    if (here) {
+      const chars = [...qn.other];
+      const at = caretOf(qn);
+      otherSpans.push(span(chars.slice(0, at).join(''), 'ok'), span('▏', 'prompt'), span(chars.slice(at).join(''), 'ok'));
+    } else otherSpans.push(own ? span(qn.other, 'ok') : span('type your own answer', 'dim'));
+    const otherIndent = `  ❯ ${otherBox} `.length;
+    out.push(...wrapSpans(otherSpans.filter((s) => s.text !== ''), w, { indent: otherIndent, keep: otherHead.length }));
     const last = prompt.q === total - 1;
     const hint = here
       ? `type your answer here · ↵ ${last ? 'send' : 'next question'} · ↑↓ leave it`

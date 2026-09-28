@@ -598,3 +598,58 @@ test('startRun on a branch-home unreviewed plan → not-reviewed with where: bra
   assert.deepEqual(startRun('demo', { cwd: s.root, spawn, exec: execAlive, kill: dead, env: s.env }), { started: false, reason: 'not-reviewed', where: 'branch' });
   assert.equal(calls.length, 0);
 });
+
+// --- --no-coordinator (pir-coordinator T04, DESIGN §2.1) ---------------------------------------------
+
+test('startRun coordinator: false → PARALLEL_COORDINATOR=0 for the child and coordinator: false in the index record', () => {
+  const root = scratchRepo('demo', REVIEWED);
+  const home = scratchHome();
+  const { fs } = makeFs();
+  try {
+    const off = makeSpawn();
+    const r = startRun('demo', { cwd: root, spawn: off.spawn, exec: execAlive, kill: () => {}, fs, now: fixedNow, env: { PIR_HOME: home }, coordinator: false });
+    assert.equal(off.calls[0].opts.env.PARALLEL_COORDINATOR, '0');
+    assert.equal(r.record.coordinator, false);
+    const [stored] = listRecords({ dir: indexDir({ env: { PIR_HOME: home } }) });
+    assert.equal(stored.coordinator, false, 'kept in the index entry on disk');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test('startRun by default → no PARALLEL_COORDINATOR set by pir, and no coordinator field in the record', () => {
+  const root = scratchRepo('demo', REVIEWED);
+  const home = scratchHome();
+  const { fs } = makeFs();
+  try {
+    const on = makeSpawn();
+    const r = startRun('demo', { cwd: root, spawn: on.spawn, exec: execAlive, kill: () => {}, fs, now: fixedNow, env: { PIR_HOME: home } });
+    assert.equal(on.calls[0].opts.env.PARALLEL_COORDINATOR, undefined);
+    assert.equal('coordinator' in r.record, false);
+    const [stored] = listRecords({ dir: indexDir({ env: { PIR_HOME: home } }) });
+    assert.equal('coordinator' in stored, false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test('resumeRun keeps a work record\'s --no-coordinator choice', (t) => {
+  const s = gitRepo(t);
+  mkdirSync(join(s.root, 'plans', 'demo'), { recursive: true });
+  writeFileSync(join(s.root, 'plans', 'demo', 'PROGRESS.md'), REVIEWED);
+  writeFileSync(join(s.root, 'plans', 'demo', 'DESIGN.md'), VALID_DESIGN);
+  const base = { kind: 'work', label: null, slug: 'demo', branch: 'pir/demo', controlDir: join(s.root, 'plans', 'demo', '.parallel', 'control'), finalState: 'stopped' };
+  const { fs } = makeFs();
+
+  const off = makeSpawn();
+  assert.deepEqual(resumeRun(planRecord(s, { ...base, coordinator: false }), { spawn: off.spawn, exec: execAlive, kill: dead, fs, env: s.env }), { resumed: true, pid: CHILD_PID });
+  assert.equal(off.calls[0].opts.env.PARALLEL_COORDINATOR, '0');
+  const [stored] = listRecords({ dir: indexDir({ env: s.env }) }).filter((r) => r.slug === 'demo');
+  assert.equal(stored.coordinator, false, 'the resumed run records the choice again');
+
+  const on = makeSpawn();
+  resumeRun(planRecord(s, base), { spawn: on.spawn, exec: execAlive, kill: dead, fs, env: s.env });
+  assert.equal(on.calls[0].opts.env.PARALLEL_COORDINATOR, undefined);
+});

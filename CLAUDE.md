@@ -75,14 +75,27 @@ thing I am here for.
 **Adding a task while a parallel run is going is the one thing a worker may change about the
 plan — and only by asking me first.** In parallel mode (and only there), a worker that finds
 the plan is missing a task raises it with me in its own session like any other decision, and
-only once I approve does it write the new task down on its branch; the coordinator then adopts
+only once I approve (or the coordinator agent approves on my behalf, below) does it write the new
+task down on its branch; the coordinator then adopts
 it at merge and dispatches it by its dependencies. A worker may **add** a task this way, never
 edit, split, re-order or re-depend one that already exists — editing a task another worker may
 be building right now is the dangerous case, so it is barred at the machine boundary. With my
 yes, the new task may name existing tasks that must wait for it (a `blocks` clause on its own row):
 that adds a wait to them without editing them, and it is how the coordinator learns the order. This is
-the only break in "the plan is mine": the addition still passes through me before it lands. How
-the adoption works is in `/docs` (`task-state.md`, `branch-model.md`).
+the only break in "the plan is mine": the addition still passes through me, or my stand-in, before
+it lands. How the adoption works is in `/docs` (`task-state.md`, `branch-model.md`).
+
+**In a parallel build, the coordinator agent stands in for me.** A build run by `pir` has a
+*coordinator agent* (unless it was started with `--no-coordinator`): a session that sees every
+worker's question and permission request before I do. Within its limits its answer counts as mine.
+It may answer what the plan settles, settle a question the design leaves open, approve going against
+a design rule, and approve a worker adding a task. It never answers an `ask`-bin action or a
+destructive command: those always reach me, and the command enforces it. Anything it will not decide
+it passes on to me, and I answer the worker directly. Every decision beyond routine is listed in the
+run's `plans/{slug}/REPORT.md`. A worker asks exactly as it would ask me, in its own session, and acts
+on the answer whoever gave it; it never asks the agent separately, and it still never invents a rule
+itself. Classic sessions and planning sessions have no stand-in. How it works is in
+`/docs/coordinator-agent.md`.
 
 ### How to ask me
 
@@ -188,7 +201,7 @@ This keeps commits matched to tasks, keeps the review boundary meaningful, and s
 session sprawling into a rewrite. The findings log exists for exactly this.
 
 **The one sanctioned break from strict scope** is a parallel-mode worker adding a task with my
-in-session approval (see `Who decides what`) — it commits the new task's row and doc on its own
+in-session approval, or the coordinator agent's on my behalf (see `Who decides what`) — it commits the new task's row and doc on its own
 branch, and the coordinator adopts it at merge. That is a deliberate addition to the plan, not
 scope creep, and it stands alongside the worktree carve-out under `Where sessions run` as a rule
 that binds parallel mode only. Everything else you merely notice still goes in the findings log
@@ -298,7 +311,9 @@ task, in worktrees — so the rule above ("main checkout, main branch, always; s
 yourself in a worktree") binds the **classic single-stream flow only**. A worker driven by
 `pir-implement` in its own task-branch worktree is where it is meant to be and does not halt;
 the command merges each task into the feature branch and, when the plan is green, hands you
-`git merge pir/{slug}` to run by hand — it never merges to `main` itself. If you are a classic
+`git merge pir/{slug}` to run by hand — with the coordinator agent on, after merging `main` into the
+feature branch and committing a delivery report there. Neither the command nor the agent ever merges
+to `main`. If you are a classic
 session, the base rule still binds you in full.
 
 **Planning sessions run by `pir plan` are the same exception.** `pir plan` runs the planner and
