@@ -634,9 +634,11 @@ export function withHeadLine(line, make, { host, colour }) {
 // restore writes it too, so a signal that never reaches that stop still leaves no mouse mode behind.
 const MOUSE_OFF = '\x1b[?1006l\x1b[?1004l\x1b[?1003l\x1b[?1002l\x1b[?1000l';
 const ALL_MOTION_ON = '\x1b[?1003h';
-// The whole exit restore: mouse off, autowrap back on (pi-tui turns it off), leave the alternate screen,
-// show the cursor. Raw mode needs nothing here: Node resets the TTY mode itself when the process exits.
-const EXIT_RESTORE = `${MOUSE_OFF}\x1b[?7h\x1b[?1049l\x1b[?25h`;
+// The whole exit restore: mouse off, bracketed paste off (pi-tui's terminal turns it on at start and off only
+// in its own stop, so a SIGTERM left it on: T08 drill), autowrap back on (pi-tui turns it off), leave the
+// alternate screen, show the cursor. Raw mode needs nothing here: Node resets the TTY mode itself when the
+// process exits.
+const EXIT_RESTORE = `${MOUSE_OFF}\x1b[?2004l\x1b[?7h\x1b[?1049l\x1b[?25h`;
 const EXIT_SIGNALS = ['SIGTERM', 'SIGHUP', 'SIGINT'];
 
 // Whether pi-tui will have asked for button-motion only (no hover): it checks exactly these, on its own
@@ -740,8 +742,15 @@ export function createScreen({ stream = process.stdout, colour, terminal, copy =
     // undefined (no handler, or a handler that declines) leaves pi-tui its text selection and its
     // synthesised click, so nothing here handles a press.
     handleMouse(ev) {
-      if (!mounted) return onMouse?.(ev);
-      const r = mounted.handleMouse?.(ev);
+      const r = mounted ? mounted.handleMouse?.(ev) : onMouse?.(ev);
+      // A click that opened a row (runTui marks it `rowClick`) must not count towards pi-tui's double click.
+      // pi-tui counts two presses on the same word within 500 ms as a double click and turns the second into
+      // a word selection, copied on release: where the first click left the screen unchanged under the
+      // pointer (a task with no worker, a step with no session) a double click flashed `Copied!` and
+      // replaced the clipboard instead of being the second click §2.1 says it is (T08 drill). pi-tui keeps
+      // that count in `lastClick` (0.87.1) and offers no call to reset it.
+      if (ev?.type === 'click' && r?.rowClick) tui.lastClick = undefined;
+      if (!mounted) return r;
       // pi-tui focuses the component its dispatch reached, which is this root, not the mounted one: a
       // click in a mounted typing box (the Editor answers { focus: true }) would take the focus off the
       // component and its cursor would vanish. A result naming its own target is passed through as is, so
@@ -1443,7 +1452,8 @@ async function runTui({
         } catch (err) {
           fail(err);
         }
-        return { handled: true };
+        // rowClick: createScreen resets pi-tui's double-click count on it, so the next click is a click too.
+        return wheel ? { handled: true } : { handled: true, rowClick: true };
       }
       mouseHandler = onMouse;
 

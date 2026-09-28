@@ -400,13 +400,19 @@ sys.exit(os.waitstatus_to_exitcode(status) & 0xff)
 // Two attributes are kept besides the text (mouse-navigation T01), so a test can see whether mouse
 // reporting is on and which row is hovered: modes() is the set of DEC private modes currently set
 // (`CSI ? N h` adds N, `CSI ? N l` removes it, several `;`-separated at once), and boldAt(row, col) —
-// 0-based, the same indexing as rows() — is whether that cell was drawn with SGR 1 in force. Colour is still
-// dropped; 38/48/58 colour parameters are stepped over so a `1` inside `38;2;1;2;3` is never read as bold.
+// 0-based, the same indexing as rows() — is whether that cell was drawn with SGR 1 in force; 38/48/58 colour
+// parameters are stepped over so a `1` inside `38;2;1;2;3` is never read as bold. fgAt(row, col) (T08) is the
+// foreground the cell was drawn in, as its SGR parameters ('33', '93', '38;5;n', '38;2;r;g;b'), or null for
+// the default, so a test can tell a hovered asking row's brighter amber from its plain amber. Background is
+// dropped.
 export function createScreenModel({ rows = 24, cols = 80 } = {}) {
   const blank = () => Array.from({ length: cols }, () => ' ');
   const plain = () => Array.from({ length: cols }, () => false);
   let grid = Array.from({ length: rows }, blank);
   let bolds = Array.from({ length: rows }, plain);
+  const none = () => Array.from({ length: cols }, () => null);
+  let fgs = Array.from({ length: rows }, none);
+  let fg = null;
   let r = 0;
   let c = 0;
   let bold = false;
@@ -422,11 +428,15 @@ export function createScreenModel({ rows = 24, cols = 80 } = {}) {
     for (let i = 0; i < parts.length; i++) {
       if (parts[i].includes(':')) continue;
       const p = parts[i] === '' ? 0 : Number(parts[i]);
-      if (p === 0 || p === 22) bold = false;
+      if (p === 0) (bold = false), (fg = null);
+      else if (p === 22) bold = false;
       else if (p === 1) bold = true;
+      else if (p === 39) fg = null;
+      else if ((p >= 30 && p <= 37) || (p >= 90 && p <= 97)) fg = String(p);
       else if (p === 38 || p === 48 || p === 58) {
-        if (parts[i + 1] === '5') i += 2;
-        else if (parts[i + 1] === '2') i += 4;
+        const n = parts[i + 1] === '5' ? 2 : parts[i + 1] === '2' ? 4 : 0;
+        if (p === 38 && n) fg = parts.slice(i, i + n + 1).join(';');
+        i += n;
       }
     }
   }
@@ -455,13 +465,13 @@ export function createScreenModel({ rows = 24, cols = 80 } = {}) {
       case 'G': c = clamp(n(0, 1) - 1, 0, cols - 1); break;
       case 'K': {
         const mode = n(0, 0);
-        for (let i = 0; i < cols; i++) if (mode === 2 || (mode === 0 && i >= c) || (mode === 1 && i <= c)) (grid[r][i] = ' '), (bolds[r][i] = false);
+        for (let i = 0; i < cols; i++) if (mode === 2 || (mode === 0 && i >= c) || (mode === 1 && i <= c)) (grid[r][i] = ' '), (bolds[r][i] = false), (fgs[r][i] = null);
         break;
       }
       case 'J': {
         const mode = n(0, 0);
-        if (mode === 2 || mode === 3) (grid = Array.from({ length: rows }, blank)), (bolds = Array.from({ length: rows }, plain));
-        else if (mode === 0) for (let y = r; y < rows; y++) for (let i = y === r ? c : 0; i < cols; i++) (grid[y][i] = ' '), (bolds[y][i] = false);
+        if (mode === 2 || mode === 3) (grid = Array.from({ length: rows }, blank)), (bolds = Array.from({ length: rows }, plain)), (fgs = Array.from({ length: rows }, none));
+        else if (mode === 0) for (let y = r; y < rows; y++) for (let i = y === r ? c : 0; i < cols; i++) (grid[y][i] = ' '), (bolds[y][i] = false), (fgs[y][i] = null);
         break;
       }
       case 'm':
@@ -506,6 +516,7 @@ export function createScreenModel({ rows = 24, cols = 80 } = {}) {
           overflows += 1;
           grid = [...grid.slice(1), blank()];
           bolds = [...bolds.slice(1), plain()];
+          fgs = [...fgs.slice(1), none()];
         }
         else r += 1;
       } else if (ch === '\b') c = Math.max(0, c - 1);
@@ -515,7 +526,8 @@ export function createScreenModel({ rows = 24, cols = 80 } = {}) {
         if (w > 0 && c + w <= cols) {
           grid[r][c] = cp;
           bolds[r][c] = bold;
-          if (w === 2) (grid[r][c + 1] = ''), (bolds[r][c + 1] = bold);
+          fgs[r][c] = fg;
+          if (w === 2) (grid[r][c + 1] = ''), (bolds[r][c + 1] = bold), (fgs[r][c + 1] = fg);
           c += w;
         } else if (w > 0) overflows += 1;
         i += cp.length;
@@ -531,11 +543,12 @@ export function createScreenModel({ rows = 24, cols = 80 } = {}) {
     overflows: () => overflows,
     modes: () => new Set(modes),
     boldAt: (row, col) => bolds[row]?.[col] ?? false,
+    fgAt: (row, col) => fgs[row]?.[col] ?? null,
   };
 }
 
 // openScreen({ cols, rows, args, cwd, env, settleMs }) → { send(bytes), waitFor(until, limit) → rows, text(),
-// close() → exit code, overflows(), modes(), boldAt(row, col) }. Runs `node pir.mjs ...args` under a pty of cols×rows and keeps its
+// close() → exit code, overflows(), modes(), boldAt(row, col), fgAt(row, col) }. Runs `node pir.mjs ...args` under a pty of cols×rows and keeps its
 // screen. waitFor holds until output has been quiet for settleMs and `until` (a RegExp or a function of the
 // screen text; none means any frame) holds, and throws, with the screen, on the deadline or if pir exits
 // first. close() ends pir by closing its input. Interactive, so a live drill can decide its next key from
@@ -588,6 +601,7 @@ export function openScreen({ cols = 100, rows = 30, args = [], cwd = process.cwd
     overflows: () => model.overflows(),
     modes: () => model.modes(),
     boldAt: (row, col) => model.boldAt(row, col),
+    fgAt: (row, col) => model.fgAt(row, col),
   };
 }
 

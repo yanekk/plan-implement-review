@@ -248,6 +248,19 @@ test('the screen model keeps which cells are bold, and colour parameters never r
   assert.equal(m.boldAt(1, 0), false);
 });
 
+// T08: the foreground each cell was drawn in, so a pty test can see the hovered asking row's brighter amber.
+test('the screen model keeps each cell\'s foreground: basic, 256 and 24-bit codes, reset by 0 and 39', () => {
+  const m = createScreenModel({ rows: 3, cols: 12 });
+  m.write('\x1b[1;1Ha\x1b[1;33mb\x1b[0mc\x1b[93md\x1b[39me');
+  assert.deepEqual([0, 1, 2, 3, 4].map((c) => m.fgAt(0, c)), [null, '33', null, '93', null]);
+  m.write('\x1b[2;1H\x1b[1;38;2;252;241;215mf\x1b[48;5;236mg\x1b[38;5;2mh\x1b[mi');
+  assert.deepEqual([0, 1, 2, 3].map((c) => m.fgAt(1, c)), ['38;2;252;241;215', '38;2;252;241;215', '38;5;2', null], 'a background leaves the foreground');
+  assert.equal(m.boldAt(1, 0), true, 'bold is still read with a colour in the same SGR');
+  m.write('\x1b[2;1H\x1b[2K');
+  assert.equal(m.fgAt(1, 0), null, 'an erased cell has no colour');
+  assert.equal(m.fgAt(9, 99), null, 'off the grid');
+});
+
 // mouse-navigation T04: pir runs with mouse reporting on, and every exit it can see turns it off again.
 // Only the mouse modes are checked afterwards: pi-tui leaves others (?7 autowrap) set (FINDINGS).
 const MOUSE_MODES = [1000, 1002, 1003, 1004, 1006];

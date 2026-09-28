@@ -119,6 +119,18 @@ export const MOCHA_SELECTED_BG = bg(MOCHA.selected);
 export const BASIC_HOVER_LIFT = '\x1b[1m';
 export const MOCHA_HOVER_LIFT = fg(MOCHA.subtext1, true);
 
+// The hovered asking row (user, T08 drill 2026-09-28): a row asking the person is amber bold throughout, so
+// bold alone changed nothing under the pointer; its amber brightens instead. The basic table steps to the
+// bright yellow; Mocha to its yellow halfway to white (#f9e2af → #fcf1d7). Every span painted in the asking
+// code takes it, `your-go` included, since it is the same amber.
+export const BASIC_HOVER_ASKING = '\x1b[1;93m';
+export const MOCHA_HOVER_ASKING = fg('#fcf1d7', true);
+
+// hoverAskingFor(env) → the hovered asking amber for the table paletteFor(env) picks, as hoverLiftFor.
+export function hoverAskingFor(env) {
+  return truecolour(env) ? MOCHA_HOVER_ASKING : BASIC_HOVER_ASKING;
+}
+
 // hoverLiftFor(env) → the hover lift for the table paletteFor(env) picks. Kept out of paletteFor's
 // result so that object's shape — pinned by its tests and read by render.mjs — is unchanged.
 export function hoverLiftFor(env) {

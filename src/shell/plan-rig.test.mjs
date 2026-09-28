@@ -1067,3 +1067,91 @@ test('end to end at 120×40: in the drill\'s live view a click on a task with a 
     await screen.close();
   }
 });
+
+// ---- mouse-navigation T08: the drill, kept as end-to-end tests. Each case is an interaction the drill drove
+// through the real `pir` under a pty and found wrong; what it judged is in FINDINGS.md (worker-driven, 2026-09-28).
+
+// SIGTERM left bracketed paste (?2004) on: pi-tui's terminal turns it off only in its own stop, and the
+// exit restore did not write it (§2.7). openScreen's close() is a SIGTERM (the pty relay sends it on EOF).
+test('end to end at 80×24: after SIGTERM, and after esc, no mouse mode, bracketed paste or the alternate screen is left on', async (t) => {
+  const rig = startPlanRig();
+  t.after(() => rig.cleanup());
+  seedRuns(rig, 1);
+  const LEFT_ON = [1000, 1002, 1003, 1004, 1006, 2004, 1049];
+  for (const how of ['SIGTERM', 'esc']) {
+    const screen = rig.openScreen({ cols: 80, rows: 24 });
+    await screen.waitFor(/rig-run-0/);
+    assert.ok(LEFT_ON.every((m) => screen.modes().has(m)), `${how}: all on while pir runs`);
+    if (how === 'esc') {
+      screen.send('\x1b');
+      await until(() => !screen.modes().has(1049), 'pir to leave the alternate screen on esc');
+    }
+    const code = await screen.close();
+    assert.equal(code, how === 'esc' ? 0 : 143, `${how}: exit code`);
+    assert.deepEqual(LEFT_ON.filter((m) => screen.modes().has(m)), [], `${how}: nothing left on`);
+  }
+});
+
+// A double click on a row whose first click leaves the screen unchanged under the pointer (a step with no
+// session shows a note) became pi-tui's word selection: `Copied!` and the clipboard replaced (§2.1: two
+// clicks). The rig's `pbcopy` shim is the clipboard here, so the person's real one is never written.
+test('end to end at 80×24: a double click on a step with no session shows its note and copies nothing', async (t) => {
+  const { rig } = await startRigPlan(t);
+  const screen = rig.openScreen({ cols: 80, rows: 24 });
+  try {
+    const list = await screen.waitFor(/● asking you/);
+    clickRow(screen, list, /asking you/);
+    const steps = await screen.waitFor(/○ review +reviewer/);
+    const y = rowOf(steps, /○ review +reviewer/) + 1;
+    screen.send(mouseBytes.click(8, y) + mouseBytes.click(8, y));
+    const after = await screen.waitFor(/review has no session yet/);
+    await new Promise((r) => setTimeout(r, 300)); // a copy is asynchronous: give pbcopy time to have run
+    assert.ok(!after.join('\n').includes('Copied!'), `no Copied! flash:\n${after.join('\n')}`);
+    assert.ok(!existsSync(rig.clipboard), 'nothing was copied');
+  } finally {
+    await screen.close();
+  }
+});
+
+// A drag across rows is a text selection, never a click (§2.5): nothing opens, and the copy reaches the
+// rig's pbcopy shim, which is where the person's clipboard would have been written before the shim.
+test('end to end at 80×24: a drag across two run rows opens nothing and copies their text through pbcopy', async (t) => {
+  const rig = startPlanRig();
+  t.after(() => rig.cleanup());
+  seedRuns(rig, 2);
+  const screen = rig.openScreen({ cols: 80, rows: 24 });
+  try {
+    const list = await screen.waitFor(/rig-run-1/);
+    const a = rowOf(list, /rig-run-0 /) + 1;
+    const b = rowOf(list, /rig-run-1 /) + 1;
+    screen.send(mouseBytes.press(3, a) + mouseBytes.drag(10, a) + mouseBytes.drag(11, b) + mouseBytes.release(11, b));
+    await until(() => existsSync(rig.clipboard) && readFileSync(rig.clipboard, 'utf8'), 'the copy through the pbcopy shim');
+    const shot = await screen.waitFor(/new plan/);
+    assert.ok(shot.some((l) => /runs on this machine/.test(l)), 'still the list: nothing opened');
+    assert.match(readFileSync(rig.clipboard, 'utf8'), /^rig-run-0 +work +◌ finished[^\n]*\n {2}rig-run-1$/);
+  } finally {
+    await screen.close();
+  }
+});
+
+// An asking row is amber bold throughout, so bold alone showed no hover on it; the user chose a brighter
+// amber (FINDINGS 2026-09-28). The basic table is forced (no COLORTERM), so the codes are 33 → 93.
+test('end to end at 120×40: the pointer over an asking task turns its amber brighter, and only that row\'s', { timeout: 120000 }, async (t) => {
+  const rig = drillRig(t);
+  const { NO_COLOR: _off, COLORTERM: _ct, ...env } = rig.env;
+  const screen = rig.openScreen({ cols: 120, rows: 40, args: ['start', DRILL_SLUG], env });
+  try {
+    await screen.waitFor(/T03 +passed-question +asking you/, 30000);
+    const shot = await screen.waitFor(/T02 +reserved-ask +asking you/, 30000);
+    const y2 = rowOf(shot, /^ {2}● T02 /);
+    const y3 = rowOf(shot, /^ {2}● T03 /);
+    const idAt = (y) => screen.fgAt(y, 4); // the `T` of the task id
+    assert.deepEqual([idAt(y2), idAt(y3)], ['33', '33'], 'both asking rows amber before the pointer comes');
+    screen.send(mouseBytes.move(30, y2 + 1));
+    await screen.waitFor(() => idAt(y2) === '93');
+    assert.equal(idAt(y3), '33', 'the other asking row keeps its amber');
+    assert.ok(screen.boldAt(y2, 4), 'still bold');
+  } finally {
+    await screen.close();
+  }
+});
