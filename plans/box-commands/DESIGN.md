@@ -22,8 +22,9 @@ starts both kinds of run from where they already watch runs, without remembering
 
 ### Success criteria
 
-- `@sk`, Enter, Enter, then Enter on the highlighted plan, then Enter starts that plan's build in `skaut`
-  and shows its live view, with nothing typed but the three letters.
+- `@sk`, Enter, ↓, Enter, then Enter on the highlighted plan, then Enter starts that plan's build in `skaut`
+  and shows its live view, with nothing typed but the three letters (user, plan review 2026-09-28: `plan`
+  stays above `start` in the command pop-up, as in the prototype, so one ↓ reaches `start`).
 - `@skaut/plan a packing list` and Enter starts planning exactly as `@skaut a packing list` does today.
 - Nothing starts from a text that did not name its repo, its command and its argument exactly: every
   other text starts nothing and the note under the list says why.
@@ -166,7 +167,7 @@ never relax the test.
 | `src/core/planbox.mjs` (T01) | pure | the grammar (`parseBoxText`), `completionContext`, `COMMANDS`, the notes, `headLine`, `startBuildFailedNote` |
 | `src/core/buildable.mjs` (new, T02) | pure | `buildablePlan({ progress, design })` |
 | `src/shell/plan-scan.mjs` (new, T02) | shell | `scanPlans(repoPath, { exec, fs })` |
-| `src/shell/list-view.mjs` (T03) | shell | the three-context completion provider, the re-open rule, slug rows |
+| `src/shell/list-view.mjs` (T03) | shell | the three-context completion provider, the re-open rule, slug rows, the `new` label and hints |
 | `src/shell/pir-tui.mjs` (T04) | shell | `runTui` passes the plan scan and the running test in, and routes `/start` to `startRun` |
 
 The grammar and the context decision are pure so every §2.1–§2.5 row is tested in milliseconds; the list
@@ -246,6 +247,8 @@ Nothing this plan needs. How the flow feels is judged by the T05 drill against t
 |---|---|---|---|---|---|
 | Install the locked packages | `test ! -f package-lock.json \|\| npm ci` | `worker` | exact locked versions only | delete `node_modules` | none |
 | Refresh the installed engine | `./install.sh`, once the code is on `main`, no run live | `worker` | local and idempotent | re-run from the previous commit | none |
+
+Both rows confirmed by the user at plan review, 2026-09-28; both are already in `.claude/settings.json`'s allow list.
 
 ## 6. Decisions and rationale
 

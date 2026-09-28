@@ -29,6 +29,7 @@ boxCompletion({ currentRepos, plansOf, building, home }) → pi-tui Autocomplete
 //   command rows { value, label: value, description } from COMMANDS             → applies `@name/{cmd} `
 //   slug    rows { value: slug, label: slug, description: '3/8 done' | '3/8 done · building' } → applies the slug
 
+head line label 'new plan' → 'new' (DESIGN §2.5)
 TYPED_HINT (unchanged), START_HINT = '↵ start the build · esc clear', BARE_HINT_SUFFIX = ' · type @repo to plan or build'
 ```
 
@@ -47,7 +48,7 @@ of the first line (DESIGN §3.3). Not after Esc, not after a slug pick.
 - [ ] A repo with no buildable plan opens no slug pop-up.
 - [ ] `plansOf` called once per repo per typed stretch; again after the box goes bare.
 - [ ] Pinning test: `Editor.prototype.tryTriggerAutocomplete` is a function (a pi-tui upgrade that drops it fails here).
-- [ ] The `/start` hint and the new bare suffix; the armed-chord line still wins.
+- [ ] The head line's label reads `new`; the `/start` hint and the new bare suffix; the armed-chord line still wins.
 
 ## Done when
 

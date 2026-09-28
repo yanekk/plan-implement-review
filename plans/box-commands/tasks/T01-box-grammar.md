@@ -15,6 +15,9 @@ DESIGN §2.1, §2.2 (the context table), §2.4 (the notes and their order), §2.
 ## Files
 
 - `src/core/planbox.mjs`, `src/core/planbox.test.mjs`
+- `src/shell/list-view.test.mjs`, `src/shell/pir-tui.test.mjs`, `src/shell/plan-rig.test.mjs`: only the assertions
+  and typed keys that used the old `@name brief` grammar, its notes or its head line (a repo pick still writes
+  `@name ` until T03, so those tests type `/plan` by hand)
 
 ## Interface
 
@@ -61,4 +64,4 @@ NOTES gains: noCommand(name), unknownCommand(name, cmd), emptyBrief(name) (now n
 ## Done when
 
 - [ ] `parseBoxText`, `completionContext` and `headLine` cover every §2.1, §2.2, §2.4 and §2.5 row, each with a test.
-- [ ] `npm test` green (list-view and pir-tui tests that asserted the old grammar are updated to the new one, nothing else).
+- [ ] `npm test` green (list-view, pir-tui and plan-rig tests that asserted the old grammar are updated to the new one, nothing else).

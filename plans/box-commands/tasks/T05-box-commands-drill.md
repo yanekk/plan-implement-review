@@ -31,7 +31,7 @@ DESIGN §2 whole, §5 End to end; `pir-e2e` § drill.
 ## End to end (the worker drives this)
 
 - suite: `plan-rig.test.mjs` · sizes: 80×24, 120×40
-- [ ] The success-criteria path of DESIGN §1: three letters and Enters only, from `@` to the build's live view.
+- [ ] The success-criteria path of DESIGN §1: three letters, one ↓ and Enters only, from `@` to the build's live view.
 - [ ] Every §2.4 refusal, each with its exact note, the text kept.
 - [ ] Every §2.5 head line, and the hint on bare, typed `/plan`, typed `/start` and with a chord armed.
 - [ ] Esc with each pop-up open, then Esc again; the pop-up never reopens on its own after Esc or a slug pick.

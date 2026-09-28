@@ -41,7 +41,7 @@ row); read `dashboard.mjs` for its shape rather than assuming the planning run's
 - [ ] With a fake `start`: Enter on `@repo/start foo` calls it once with `cwd` the repo path and slug `foo`; `startPlan` not called.
 - [ ] `alreadyRunning` lands in the live view the same as `started`; each refusal and a throw give the §2.4 note, text kept.
 - [ ] Enter on `@repo/plan a brief` calls `startPlan` exactly as before; `@repo a brief` calls neither and gives the no-command note.
-- [ ] `building` is true for a row running that slug in that repo and false for the same slug in another repo.
+- [ ] `building` is true for a build row running that slug in that repo, false for the same slug in another repo, and false for a planning run (`isPlan`) of that slug.
 - [ ] Two repos with the same slug: the landing opens the one in the chosen repo.
 
 ## Done when
