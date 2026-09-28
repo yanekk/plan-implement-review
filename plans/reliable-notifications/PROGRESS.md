@@ -15,7 +15,7 @@ cell also fixes the over-budget cell they walk past.
 **Status:** Planned 2026-09-27, redesigned 2026-09-28 for the coordinator agent, re-reviewed 2026-09-28.
 Nothing built.
 **Last updated:** 2026-09-28
-**Next `pir-work` will:** review T01.
+**Next `pir-work` will:** implement T02.
 
 ## Tasks
 
@@ -24,7 +24,7 @@ done · ⛔ blocked, needs a human.
 
 | # | Task | Depends on | State | Notes |
 |---|---|---|---|---|
-| T01 | alert-core | — | 🔍 | `src/core/notify.mjs`, 44 tests. Choices: `(+N more)` kept whole, question cut to 150 minus its length; `questions` reads the oldest question set; title fixed at episode start like the message; reminder `click` is the current url; silent episodes still advance `n`; excerpt trims. |
+| T01 | alert-core | — | ✅ | `src/core/notify.mjs`, 45 tests. Implementer's choices (`(+N more)` kept whole, oldest question set, title fixed at start, reminder uses current url) accepted. Review fixed escape-only question text giving a bare `asks:`, reproduced and test-locked. Probed ids as UUIDs in the seq path, NaN and backward clocks, 190 cap. |
 | T02 | ntfy-sender | — | ⬜ | |
 | T03 | notify-icon | — | ⬜ | |
 | T04 | worker-link-and-silence | — | ⬜ | |
@@ -34,7 +34,7 @@ done · ⛔ blocked, needs a human.
 | T08 | notify-live | T03, T06, T07 | ⬜ | |
 | T09 | docs | T08 | ⬜ | |
 
-**Review queue:** T01
+**Review queue:** empty
 
 ## Blocked on the user
 
