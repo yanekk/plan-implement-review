@@ -93,3 +93,6 @@ so they never run at once. T08 waits on the person and draws plan usage for two 
 - If the icon does not show on the iPhone, or the user wants a different look, the user decides: redo the
   drawing (a T03 follow-up) or drop the icon.
 - What the QR does on iOS (T08) may change only T09's wording and T06's printed steps.
+- Where the icon lives for good (user 2026-09-28, plan re-review): for now the default URL is the pushed
+  feature branch's copy (DESIGN §2.5), so that branch stays on GitHub. Moving it is one constant in
+  `notify-config.mjs`. Does not block any task.

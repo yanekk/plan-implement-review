@@ -32,10 +32,12 @@ clear({ server, topic, seq }, { fetch }) → Promise<{ ok, status|null, error? }
   // PUT {server}/{topic}/{seq}/clear, no retry.
 
 // notify-config.mjs
-DEFAULT_ICON = 'https://raw.githubusercontent.com/yanekk/plan-implement-review/main/assets/pir-notify-icon.png'
+DEFAULT_ICON = 'https://raw.githubusercontent.com/yanekk/plan-implement-review/pir/reliable-notifications/assets/pir-notify-icon.png'
+  // temporary: the pushed feature branch's copy (DESIGN §2.5)
 notifyIcon(env = process.env) → env.PIR_NOTIFY_ICON || DEFAULT_ICON
 notifyPaths(env = process.env) → { dir, config, presence }
-  // {PIR_HOME ?? HOME ?? homedir()}/.pir/…, as index-store; config is env.PIR_NOTIFY_CONFIG when set
+  // dir is dirname(indexDir({ env })) from index-store.mjs ({PIR_HOME ?? HOME ?? homedir()}/.pir), reused
+  // rather than re-derived; config is env.PIR_NOTIFY_CONFIG when set
 readNotifyConfig(env) → { server, topic } | null | { corrupt: true }
 writeNotifyConfig(config, env)          // writeFileAtomic with mode 0600, creates dir
 removeNotifyConfig(env)                 // config and presence marker; missing files are fine

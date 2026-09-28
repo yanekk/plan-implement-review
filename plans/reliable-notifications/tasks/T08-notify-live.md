@@ -39,7 +39,8 @@ touch /tmp/notify-live/plans/notify-live/.parallel/control/HALT 2>/dev/null; rm 
 
 Before the push, `curl -sI` the icon URL is expected to 404; after, 200. The reminder is shortened to 2
 minutes so the check does not wait 15. After the check, say the way back for the pushed branch
-(`git push origin --delete pir/reliable-notifications`) and leave it unless the user asks.
+(`git push origin --delete pir/reliable-notifications`) and leave it: the default icon URL points at this
+branch (DESIGN §2.5), so deleting it takes the icon offline. Say that when naming the way back.
 
 ## Automated checks (the worker runs these)
 

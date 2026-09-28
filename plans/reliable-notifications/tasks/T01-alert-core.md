@@ -27,7 +27,8 @@ alertText({ plan, task, role, name, why, kind, decisionText, lastText, pending }
 reminderText(message) → string            // 'Still waiting: ' + message
 excerpt(text, max = 150) → string         // plainText, newlines folded, then clipText (both src/core/text.mjs):
                                           // at most 150 code points, the last one '…' when cut
-endAlert({ slug, ready, taskCount, reason }) → { title, message, tags }   // DESIGN §2.4
+endAlert({ slug, ready, taskCount, reason, unresolved }) → { title, message, tags }   // DESIGN §2.4;
+  // red: unresolved → the merge-with-main message, else tests red with the reason when there is one
 newNotifyState() → { episodes: {}, counts: {} }
 notifyStep(state, views, now, { remindMs = 900_000, linkWaitMs = 20_000 } = {}) → { state, actions }
   // views: [{ id, waiting: kind|null, title, message, remote: 'wanted'|'off'|'refused', url }]
@@ -45,7 +46,8 @@ The input state is not mutated.
       `question`, a report-less `question` from `lastText`, and the `is waiting for you` fallback.
 - [ ] Each reason's prefix, and none for `off` and `null`; the prefix is outside the 150-code-point cut.
 - [ ] A helper's title uses `name`.
-- [ ] `endAlert`: ready and red titles, messages and tags; a long red reason is cut to 150.
+- [ ] `endAlert`: ready and red titles, messages and tags; a long red reason is cut to 150; `unresolved`
+      gives `Merge with main unresolved on pir/{slug}`; red with no reason drops the `: `.
 - [ ] `excerpt`: exactly 150, 151, multi-line, emoji (code points, not UTF-16 units), empty.
 - [ ] First alert waits for the link while `remote: 'wanted'` and `url: null`; sends with `click` once
       `url` appears; sends without it at `linkWaitMs`; sends at once when `remote` is `off` or `refused`.

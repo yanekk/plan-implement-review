@@ -55,9 +55,9 @@ A worker becomes the person's for one of these reasons, which the alert names (�
 
 | Reason | When | Source in `startCoordinator` |
 |---|---|---|
-| `passed` | the agent wrote a `pass`, or a `permission` for a reserved item that the command turned into a pass | a new `passed` map, released like `held` |
+| `passed` | the agent wrote a `pass` for an item that is not reserved | a new `passed` map, released like `held` |
 | `timeout` | the agent held the item past the hold limit (5 min) | `timedOut` (a late pass keeps `timeout`) |
-| `reserved` | an `ask`-bin or destructive request, the person's from the first pass | `reserved`, or `item.reserved` |
+| `reserved` | an `ask`-bin or destructive request, the person's from the first pass, including one the agent tried to decide and the command turned into a pass (user 2026-09-28, plan re-review: it was always the person's) | `reserved`, or `item.reserved` |
 | `unavailable` | the run has an agent but it is down, restarting, given up or failed to start, or the brief failed | agent null or not alive, or an item never briefed |
 | `off` | the run has no agent (`--no-coordinator`, `PARALLEL_COORDINATOR=0`) | `startAgent === null` |
 | `null` | a worker waiting with no item (an implementer that stopped with no report; `itemsOf` yields nothing) | none |
@@ -130,9 +130,13 @@ question pass through ntfy.sh and nothing else does.
 One alert when the run starts waiting on the person's merge (user 2026-09-28):
 
 - **With the agent**: on the pass `settle()` first sets `handoff.step = 'waiting'` in this coordinator
-  process. Ready: title `{slug} · ready to merge`, message `All {n} tasks merged. git merge pir/{slug}`.
-  Red: title `{slug} · not ready`, message `Tests red on pir/{slug}: ` + the reason, cut to 150 code
-  points. Click: the agent's Remote Control `session_url` when known, since the agent presents the report
+  process, read in the shell as the pass's `handoff.state` turning `ready` or `red` (§3.3); not on a pass
+  that also finishes the run. Ready: title `{slug} · ready to merge`, message `All {n} tasks merged. git merge pir/{slug}`.
+  Red: title `{slug} · not ready`, message by cause (user 2026-09-28, plan re-review: the alert names what
+  failed). Main-sync left unresolved: `Merge with main unresolved on pir/{slug}`. Otherwise: `Tests red on
+  pir/{slug}: ` + the reason, cut to 150 code points, or `Tests red on pir/{slug}` when there is none. The
+  shell learns the cause from `handoffView()`, which gains `unresolved` (`handoff.sync?.state ===
+  'unresolved'`). Click: the agent's Remote Control `session_url` when known, since the agent presents the report
   and the merge there.
 - **Without the agent**: on the pass `r.complete` ends the run, same titles and messages (red reason from
   the `red-feature` surface), no click. The send is awaited, bounded at 2 s, before the process returns,
@@ -144,9 +148,12 @@ One alert when the run starts waiting on the person's merge (user 2026-09-28):
 ### 2.5 The icon
 
 - Every alert, test alerts included, carries `icon` (ntfy's JSON field): a PNG pir serves from GitHub,
-  default `https://raw.githubusercontent.com/yanekk/plan-implement-review/main/assets/pir-notify-icon.png`.
-  `PIR_NOTIFY_ICON` overrides the URL; it exists for the live check (T08), which points it at the pushed
-  feature branch's copy, and is not documented to users.
+  default `https://raw.githubusercontent.com/yanekk/plan-implement-review/pir/reliable-notifications/assets/pir-notify-icon.png`, the pushed feature branch's copy.
+  Temporary (user 2026-09-28, plan re-review): local `main` is far ahead of GitHub's, so a URL on `main`
+  would serve nothing until the user pushes it; the feature branch is pushed in T08 anyway. The branch
+  must therefore stay on GitHub after the merge, and where the icon lives for good is an open decision
+  (PLAN). `PIR_NOTIFY_ICON` overrides the URL, for the live check and for that later move; it is not
+  documented to users.
 - The PNG is drawn by a worker (user 2026-09-28): a plain square, the letters `pir` on a solid colour,
   256×256, under 20 KB, produced by a committed script with no new dependency (`node:zlib` deflate and a
   hand-written PNG encoder), so a redo is a code change reviewed like any other. The person judges it on
@@ -230,7 +237,8 @@ Unchanged: `src/core` is pure and `src/core/boundary.test.mjs` forbids `node:fs`
 
 ```
 // view per live build worker, built each pass by the shell:
-//   { id, waiting: kind|null, why: reason|null, title, excerptInput, remote: 'wanted'|'off'|'refused', url }
+//   { id, waiting: kind|null, title, message, remote: 'wanted'|'off'|'refused', url }
+//   (title and message come from alertText, which applies the §2.1 reason and the §2.3 excerpt)
 notifyStep(state, views, now, { remindMs = 900_000, linkWaitMs = 20_000 }) → { state, actions }
 // actions: { type: 'send', id, seq, title, message, click|null, reminder: bool }
 //          { type: 'clear', id, seq }
@@ -239,7 +247,7 @@ notifyStep(state, views, now, { remindMs = 900_000, linkWaitMs = 20_000 }) → {
 `state` is `{ episodes: { [workerId]: { n, startedAt, sentAt|null, reminded: bool, seq, message } },
 counts }`. A worker absent from `views` ends its episode. `notifyExit(state)` returns the clears for every
 episode with `sentAt`. The message (prefix and excerpt) is fixed when the episode starts; the reminder
-reuses it. The end-of-run alert is not an episode: `endAlert({ slug, ready, taskCount, reason })` returns
+reuses it. The end-of-run alert is not an episode: `endAlert({ slug, ready, taskCount, reason, unresolved })` returns
 its title, message and tags, and the shell sends it once.
 
 ### 3.3 Data flow
@@ -248,7 +256,10 @@ Each coordinator pass, after the (REMOTE-gated) `syncRemote`: build views from `
 `coordinator.state.tasks`, `coordinator.heldByAgent()` and `coordinator.whyPerson()`; run `notifyStep`;
 for each action, read the config (none: drop the action), then fire the publish or clear without
 awaiting it, logging notes through `platform.note`. This runs whether or not `PARALLEL_REMOTE` is on.
-When `coordinator.handoff` first reads `step: 'waiting'`, fire the end-of-run alert. On every exit path
+When the pass result's `handoff.state` first reads `ready` or `red` (`settle()` sets it together with
+`step: 'waiting'`; `coordinator.handoff` is `handoffView()`, which carries `state` but not `step`), fire the
+end-of-run alert, unless the same pass finished the run (`r.finished`: a restart that found `main` already
+holding the tip must not announce a merge that is done). The red reason is `r.testsReason?.reason`. On every exit path
 the `notifyExit` clears (and the no-agent end alert) are awaited, bounded at 2 s, before the process ends:
 the signal handlers call `process.exit` at once, and an unawaited request dies with it. The loop polls
 every `PARALLEL_POLL_MS` (5 s), so a hand-off is seen within about 5 s; that is the alert's latency floor
@@ -320,10 +331,14 @@ Nothing else. HTTP uses the global `fetch`; the icon uses `node:zlib`.
 |---|---|---|---|---|---|---|
 | Add the QR library (T06) | `npm i uqr@0.1.3` | `worker` | Free, local, the dependency the user approved; user 2026-09-27 at plan review | Remove it from `package.json` and the lockfile, `npm ci` | none | none |
 | Publish an alert to a pir-generated topic (a throwaway one in T06, the user's in T08) | `PIR_HOME=/tmp/pir-notify-t06 node src/shell/pir.mjs notify` (T06); the T08 harness run | `worker` | Free, received only by whoever subscribed: nobody, or the user's own phone | Nothing to undo; the alert can be swiped away | none | none (anonymous ntfy.sh) |
-| Push the feature branch so the icon is online (T08) | `git push origin pir/reliable-notifications` | `ask` | Public repo: other people can see the branch (user 2026-09-28) | `git push origin --delete pir/reliable-notifications` | none | `gh auth status` |
+| Push the feature branch so the icon is online (T08) | `git push origin pir/reliable-notifications` | `ask` | Public repo: other people can see the branch (user 2026-09-28) | `git push origin --delete pir/reliable-notifications`, which also takes the default icon offline (§2.5) | none | `gh auth status` |
 | Live harness run with real workers and the agent | `PIR_NOTIFY_REMIND_MS=120000 PIR_NOTIFY_ICON=https://raw.githubusercontent.com/yanekk/plan-implement-review/pir/reliable-notifications/assets/pir-notify-icon.png node src/shell/harness/run.mjs notify-live --into /tmp/notify-live` | `worker` | Same as prior live checks (pir-coordinator T09); draws plan usage | Harness tears down; HALT file | plan usage, minutes | `claude auth status` reads `loggedIn: true` |
 | Remove the live run's scratch folder | `rm -rf /tmp/notify-live` | `worker` | A scratch folder the harness made | none needed | none | none |
+| Remove T06's scratch folder | `rm -rf /tmp/pir-notify-t06` | `worker` | A scratch folder T06's own check made | none needed | none | none |
+| Check whether the icon is online (T08) | `curl -sI https://raw.githubusercontent.com/yanekk/plan-implement-review/pir/reliable-notifications/assets/pir-notify-icon.png` | `worker` | Read-only request to a public URL | nothing changed | none | none |
 | Install ntfy, subscribe, look at the phone, tap the alert, answer | on the iPhone | `person` | A device only the user holds | n/a | none | n/a |
+
+Bins approved by the user as listed, 2026-09-28 at plan re-review; the rules are in `.claude/settings.json`.
 
 Credentials: none for ntfy.sh, which is anonymous; the topic name is the secret and never goes in a
 commit, a log line, or a FINDINGS row. The push uses the user's existing GitHub login.
@@ -343,7 +358,8 @@ pushes again. Deleting `~/.pir/notify.json` by hand does the same except the mar
   later. This reverses the first version's out-of-scope line for that one event.
 - **A custom icon, drawn by a worker and served from GitHub** (user 2026-09-28): ntfy lists `icon` for
   Android, iOS and web; it needs a public URL. The live check pushes the feature branch once (`ask`) so
-  the icon is online before the merge.
+  the icon is online before the merge. For now the default URL is that branch's copy, not `main`'s,
+  because GitHub's `main` lags the local one (user 2026-09-28, plan re-review; §2.5).
 - **The reason is recorded in `startCoordinator`, not derived in core**: the maps that know it (`held`,
   `timedOut`, `reserved`) live there; a pass leaves every map today, so a `passed` map is added.
 - **Tap opens the worker's chat for questions, the agent's for the end**: where each is acted on.

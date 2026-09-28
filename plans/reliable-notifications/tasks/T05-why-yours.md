@@ -23,13 +23,14 @@ DESIGN §2.1 (the reason table), §3.4.
 
 ```
 coordinator.whyPerson() → Map<workerId, 'passed'|'timeout'|'reserved'|'unavailable'|'off'>
-  // one entry per worker that has at least one waiting item which is the person's, from its oldest such item:
+  // one entry per worker that has at least one waiting item which is the person's (its key not in
+  // heldByAgent(), so an item the agent answered this pass, justSettled, is not), from its oldest such item:
   //   startAgent null                                   → 'off'
   //   agent null (failed to start) or not alive         → 'unavailable'
   //   key in timedOut (a late pass included)            → 'timeout'
   //   item.reserved, or key in reserved                 → 'reserved'
   //   key in passed                                     → 'passed'
-  //   waiting, not held, never briefed                  → 'unavailable'
+  //   any other person item (never briefed, its brief failed, or held when the agent died) → 'unavailable'
   // a worker with no item (waitingOn without itemsOf) is absent: its reason is null.
 ```
 
@@ -38,7 +39,7 @@ It only reads the maps; it changes nothing the row, the tally or Remote Control 
 ## Tests
 
 - [ ] One case per reason through `startCoordinator` with the fake platform and a fake agent: pass,
-      reserved `permission` turned into a pass, hold-limit timeout, a late pass of a timed-out item stays
+      reserved `permission` turned into a pass (stays `reserved`), hold-limit timeout, a late pass of a timed-out item stays
       `timeout`, reserved, agent dead, agent failed to start, first waiting while down, `startAgent` null.
 - [ ] A held item is absent; an answered item leaves the map on the pass it closes.
 - [ ] A worker with two person items reports the older one's reason.

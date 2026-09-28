@@ -15,7 +15,7 @@ DESIGN §2.1–§2.8, §3.3.
 
 ## Files
 
-- `src/shell/coordinate.mjs`: views after `syncRemote`, `notifyStep`, the action runner, the end-of-run
+- `src/shell/coordinate.mjs`: `handoffView()` gains `unresolved`; views after `syncRemote`, `notifyStep`, the action runner, the end-of-run
   alert, `notifyExit` on every exit path, `workerEnv` passed to `createPlatform` and `env` to
   `startCoordinatorAgent`.
 - `src/core/conversation.mjs`, its test: `noteLines` cases `notified` and `notify-failed`.
@@ -33,8 +33,11 @@ notifyPass({ platform, coordinator, notifyState, remote, now, run }) → notifyS
   // one pass: workers() → notifyViews → notifyStep → run(actions). main calls it after the REMOTE-gated
   // syncRemote, every pass, whatever REMOTE is. Extracted because main() builds the real platform and
   // cannot be driven with the fake one.
-endAlertPass({ coordinator, slug, sent, send }) → sent
-  // fires endAlert once when coordinator.handoff?.step === 'waiting' first; click = agent.remoteUrl()
+endAlertPass({ r, coordinator, slug, sent, send }) → sent
+  // fires endAlert once when r.handoff?.state first reads 'ready' or 'red' (handoffView carries state, not
+  // step; settle() sets both), never on a pass with r.finished; red reason r.testsReason?.reason;
+  // unresolved r.handoff.unresolved (handoffView gains it: handoff.sync?.state === 'unresolved');
+  // click = coordinator.agent?.remoteUrl()
 // Without the agent: the r.complete branch sends endAlert and awaits it, bounded 2 s, before returning.
 // log: control.log, one line per publish and clear with worker id (or `end`), seq and status; never the topic.
 // notes: platform.note(id, 'notified', { reminder })        → '· alert sent to your phone' / '· reminder sent …'
@@ -59,10 +62,15 @@ else `wanted`. `lastText` for a report-less question is the `lastText` field of 
       agent answers yields nothing; the same question passed on yields one send with the fake url as
       `click` and the `passed` prefix; answered yields one clear; `remote: false` yields a send with no
       click, immediately.
-- [ ] End alert: sent once when the handoff first reads waiting (ready and red), not again on a later pass
-      or a re-sync; without the agent, sent and awaited on the complete pass.
+- [ ] End alert: sent once when the handoff first reads ready or red, not again on a later pass or a
+      re-sync, and not on a pass with `r.finished` (a restart finding main already merged); an unresolved
+      main-sync sends the merge-with-main message; without the
+      agent, sent and awaited on the complete pass.
 - [ ] Exit clears sent open episodes and waits at most 2 s for them; a source check that `main` runs
-      `notifyPass` on every pass and the exit clears on the signal, halt, stall and error paths.
+      `notifyPass` on every pass and the exit clears on every exit path: the signal handlers (classic
+      teardown and the detached stop), halt, runaway, stall, error, the no-agent complete and the agent's
+      `r.finished`. The signal handlers currently call `process.exit` at once, so they await the clears
+      (bounded 2 s) before exiting.
 - [ ] The flow-log lines name worker, seq and status and never the topic.
 - [ ] `workerEnv` returns null with no config and the variable with one; the marker file exists after;
       the agent is started with the same.
