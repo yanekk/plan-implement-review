@@ -24,7 +24,7 @@ done · ⛔ blocked, needs a human.
 | # | Task | Depends on | State | Notes |
 |---|---|---|---|---|
 | T01 | mouse-rig | — | ⬜ | |
-| T02 | row-hits | — | ⬜ | |
+| T02 | row-hits | — | ✅ | |
 | T03 | hover-style | — | ✅ | |
 | T04 | mouse-on | T01 | ⬜ | |
 | T05 | list-clicks | T02, T03, T04 | ⬜ | |
