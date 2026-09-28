@@ -11,6 +11,7 @@ Legend: 🐞 defect found · ✅ verified by hand with the user · 📌 worth kn
 
 | Date | | Finding |
 |---|---|---|
+| 2026-09-28 | 📌 | T07 review: over the open `@repo` pop-up the wheel moves the pop-up's highlight (pi-tui `SelectList`), not the run list as §2.3's "wherever the pointer is" implies. Reproduced by a list-view probe; docs now say so, code left alone. |
 | 2026-09-28 | 🐞 | T04 review: `pbcopy` decodes stdin by locale; with `LANG` unset it garbled `é ⠋ ✅`. `defaultCopy` now forces `LC_ALL=en_US.UTF-8`. The exit/signal restore row was dropped: `createScreen` and its tests now enforce it. |
 | 2026-09-28 | 📌 | T01: one `npm test` run in six exited 1 with the dot reporter's output discarded, so the failing test is unknown; five reruns were green. Likely a timing test under load from parallel workers. Keep the output next time. |
 | 2026-09-28 | 📌 | Plan review: tmux and zellij are not installed here (only `/usr/bin/screen`), so real-multiplexer hover is unprovable. pi-tui sets non-mouse private modes (1049, 25, 7), so rig assertions check the mouse modes 1000/1002/1003/1004/1006, never an empty `modes()`. |

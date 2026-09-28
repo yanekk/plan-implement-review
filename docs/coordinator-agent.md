@@ -218,7 +218,7 @@ come to you` in the idle style ([When the agent fails](#when-the-agent-fails)). 
 no clock, is never amber, and is not counted in `n/m done`, running, waiting or the `asking you` tally.
 It appears once the agent has started and stays to the end of the run, `ready to merge` included; with
 `--no-coordinator` there is neither separator nor row. `↑↓` steps over the separator onto it and `→` (or
-Enter) opens its conversation; **`c`** opens the same conversation from any row, and the watch footer
+Enter, or a click on the row) opens its conversation; **`c`** opens the same conversation from any row, and the watch footer
 names `c` only when the run has an agent. The state comes from the agent's `view().state`, the count
 from the command's `held` map (`agentView()` in `coordinate.mjs`, carried in `runState.coordinator`). The person may type to
 it there: ask where things stand, why it answered something, or give it an instruction for the rest
