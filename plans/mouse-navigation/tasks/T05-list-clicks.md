@@ -32,6 +32,9 @@ runTui:
     landing screen (ui.openStep), worker view, anything else → undefined
     press / drag / release → undefined, always (keeps text selection, DESIGN §3.2)
 
+createScreen (T04) gains setHoverY(y): its FrameView is built with getHoverY (T03) reading that value;
+  runTui calls it on every hover change, since the FrameView lives inside createScreen, not runTui
+
 createListView({ …, onListMouse })
   handleMouse(ev): ev.y inside the box rows → editor.handleMouse({ ...ev, y: ev.y - boxTop });
                    else → onListMouse(ev) with the list block's frame, so hitAt works on it

@@ -18,8 +18,7 @@ Phase 1  ▸  T01 T02 T03          rig, row hits, hover paint          no visibl
 Phase 2  ▸  T04 T05 T06 T07 T08  mouse on, lists, conversation, docs, drill
 ```
 
-**Precondition.** T03 edits `src/shell/palette.mjs`, which exists in the working tree but was not
-committed when this plan was written (2026-09-28). It must be on `main` before T03 starts.
+**Palette.** T03 edits `src/shell/palette.mjs`, committed on `main` at plan review (`4af5c63`).
 
 ## Phase 1 — Headless
 

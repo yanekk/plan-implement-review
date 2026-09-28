@@ -38,7 +38,9 @@ dashboardReducer(ui, { type: 'select', index }, views)
 
 Only row lines carry `hit`. Title, header, blank lines, `↑/↓ n more` markers, summary, notes, counts,
 footer and the go question's lines do not. `hit` is a property on the span array, so no builder output
-changes shape for existing callers.
+changes shape for existing callers. It is non-enumerable (`Object.defineProperty`): `assert.deepStrictEqual`
+compares an array's own enumerable keys, and `pir-tui.test.mjs` compares whole frames that way (42 asserts),
+so an enumerable `hit` would fail them and break the "existing tests unchanged" rule below.
 
 ## Tests
 
