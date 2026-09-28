@@ -27,12 +27,12 @@ done · ⛔ blocked, needs a human.
 | T02 | row-hits | — | ✅ | |
 | T03 | hover-style | — | ✅ | |
 | T04 | mouse-on | T01 | ✅ | |
-| T05 | list-clicks | T02, T03, T04 | 🔍 | `dispatch` shared by keys and mouse; `onMouse`, `setHoverY`, list view `handleMouse`/`hoverY`. 17 unit, 6 pty tests. Deviations: a hit resolves by run key/task id against a fresh read; wheel and moves over the box go to `onListMouse(ev, frame)`; drill click test at 120×40 only. |
+| T05 | list-clicks | T02, T03, T04 | ✅ | Review clean of defects. Added a test locking the recorded deviation (click resolved by run key against a reordered read; red when gutted). Probed pi-tui's render flag, list-view box routing, async dispatch ordering, landing and worker guards. Accepted deviations: box wheel/moves go to the list; coordinator drill at 120×40 only. |
 | T06 | conversation-wheel | T04 | ⬜ | |
 | T07 | mouse-docs | T05, T06 | ⬜ | |
 | T08 | mouse-drill | T05, T06, T07 | ⬜ | |
 
-**Review queue:** T05
+**Review queue:** —
 
 ## Blocked on the user
 
