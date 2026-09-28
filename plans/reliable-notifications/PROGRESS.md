@@ -30,7 +30,7 @@ done · ⛔ blocked, needs a human.
 | T04 | worker-link-and-silence | — | ✅ | |
 | T05 | why-yours | — | ✅ | |
 | T06 | notify-command | T02 | ✅ | |
-| T07 | coordinator-alerts | T01, T02, T04, T05 | ⬜ | |
+| T07 | coordinator-alerts | T01, T02, T04, T05 | ✅ | |
 | T08 | notify-live | T03, T06, T07 | ⬜ | |
 | T09 | docs | T08 | ⬜ | |
 
