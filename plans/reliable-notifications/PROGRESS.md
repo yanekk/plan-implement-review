@@ -29,12 +29,12 @@ done · ⛔ blocked, needs a human.
 | T03 | notify-icon | — | ✅ | |
 | T04 | worker-link-and-silence | — | ✅ | |
 | T05 | why-yours | — | ⬜ | |
-| T06 | notify-command | T02 | 🔍 | `notify`, `notify test`, `notify off` in pir.mjs; uqr 0.1.3 added; 13 tests. Real run: QR drew, throwaway-topic alert HTTP 200. Deviations: test alerts publish without retries (`delays: []`), failing at once, not after 35 s; USAGE column widened, so plan-rig.test's pinned usage regex updated. |
+| T06 | notify-command | T02 | ✅ | Review clean bar one cosmetic fix (usage test title said three verbs). Probed: real `notify`/`test`/`off`/`test`-after-off on scratch PIR_HOME (throwaway topic HTTP 200, 0600 file), install.sh `npm ci` picks up uqr, retry-free test alert accepted as a how-deviation. QR scan on the phone stays T08's. |
 | T07 | coordinator-alerts | T01, T02, T04, T05 | ⬜ | |
 | T08 | notify-live | T03, T06, T07 | ⬜ | |
 | T09 | docs | T08 | ⬜ | |
 
-**Review queue:** T06
+**Review queue:** —
 
 ## Blocked on the user
 

@@ -14,6 +14,7 @@ Legend: 🐞 defect found · ✅ verified by hand with the user · 📌 worth kn
 
 | Date | | Finding |
 |---|---|---|
+| 2026-09-28 | 📌 | T06 review: uqr's compact QR draws light modules as `█` with a 1-module quiet zone, so it reads correctly on a dark terminal and inverted on a light one. T08 should scan it from the terminal the user actually uses. |
 | 2026-09-28 | 📌 | T06: `uqr` is now a third runtime package, but `install.sh` and `src/shell/deps.test.mjs` still say "two runtime packages" and deps.test does not import it. Left alone (scope). |
 | 2026-09-28 | 📌 | Plan re-review: local `main` is 305 commits ahead of `origin/main`, so the default icon URL (GitHub `main`) serves nothing until `main` is pushed. `gh auth status` and `claude auth status` both logged in; `ntfy.sh/v1/health` 200. |
 | 2026-09-28 | 🔄 | Redesign: alerts now fire when a question is the person's (agent pass, timeout, reserved, agent down or off), plus one end-of-run alert and an icon. Branch synced with main first (`sync main into pir/reliable-notifications`). |
