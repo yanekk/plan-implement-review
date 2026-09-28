@@ -65,6 +65,9 @@ export function serializeRecord(record) {
     finalState: record.finalState ?? null,
     updatedAt: record.updatedAt ?? null,
   };
+  // Written only when the run was started with --no-coordinator (pir-coordinator DESIGN §2.1): absent reads
+  // as on, so every entry written before the coordinator agent existed means what it did.
+  if (record.coordinator === false) canonical.coordinator = false;
   return JSON.stringify(canonical, null, 2) + '\n';
 }
 
@@ -118,6 +121,7 @@ export function parseRecord(text) {
   if (label === INVALID) return null;
   const go = data.go ?? null;
   if (go !== null && !GO_VALUES.has(go)) return null;
+  if (data.coordinator !== undefined && typeof data.coordinator !== 'boolean') return null;
 
   return {
     version: RECORD_VERSION,
@@ -134,6 +138,8 @@ export function parseRecord(text) {
     branch: data.branch,
     finalState,
     updatedAt,
+    // Only a run started with --no-coordinator carries the field; absent is on.
+    ...(data.coordinator === false ? { coordinator: false } : {}),
   };
 }
 

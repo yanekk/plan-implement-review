@@ -13,7 +13,7 @@
 // irreversible in the moment — stop kills in-flight work, remove drops the record — so the guard is
 // deliberate, not friction.
 
-import { askingCount } from './display.mjs';
+import { askingCount, rowEntries } from './display.mjs';
 
 // A run can be stopped only while running, and removed only while NOT running (DESIGN §2.6, §2.7): a
 // running run must be stopped before its record can be cleared. These two predicates are the whole of
@@ -53,7 +53,8 @@ export function planStepState(rs) {
 //   view = { state (classifyRun's), record ({ kind, go }), snap ({ runState: { kind:'plan', step, outcome } }) }
 // A build shows its classification unchanged, except that a running build with any task waiting on the
 // person reads `asking-you` (askingCount, the live view's own rule), so a question is visible from the
-// list without opening the run (user 2026-09-27). A planning run shows `planning` or `reviewing` while it runs
+// list without opening the run (user 2026-09-27), and one waiting in `ready to merge` at its end reads
+// `ready-to-merge` (pir-coordinator §2.10). A planning run shows `planning` or `reviewing` while it runs
 // (by the snapshot's step: the rename between the two already has the planner done, so it reads
 // `reviewing`), `asking-you` instead while either step's live session has a permission request or a
 // question set pending (planRunState's step phase `asking`, user 2026-09-27), `your-go` once finished `reviewed` with no go recorded (§2.8), `finished` for any other
@@ -61,7 +62,15 @@ export function planStepState(rs) {
 // unreachable entry) passes through as it came.
 export function runDisplayState(view) {
   const state = view?.state;
-  if (!isPlan(view)) return state === 'running' && askingCount(view?.snap?.runState) > 0 ? 'asking-you' : state;
+  if (!isPlan(view)) {
+    if (state !== 'running') return state;
+    const rs = view?.snap?.runState;
+    if (askingCount(rs) > 0) return 'asking-you';
+    // The end of a run with the coordinator agent (pir-coordinator §2.10): the branch is prepared, the
+    // report committed, and the run waits for the person to merge or close it.
+    if (rs?.handoff?.state === 'ready') return 'ready-to-merge';
+    return state;
+  }
   const rs = planState(view);
   if (state === 'running' && (rs?.steps ?? []).some((st) => st.phase === 'asking')) return 'asking-you';
   if (state === 'running') return planStepState(rs);
@@ -132,6 +141,7 @@ const TALLY = {
   stopped: 'stopped',
   'your-go': 'waiting',
   'asking-you': 'waiting',
+  'ready-to-merge': 'waiting',
 };
 
 // runKey(view) → the identity of one run. A slug alone is not unique: the same plan slug can run in two
@@ -160,13 +170,22 @@ function planSteps(view) {
   return STEP_IDS.map((id) => steps.find((s) => s.id === id) ?? { id, phase: 'pending', worker: null });
 }
 
-// openTasks(views, ui) → the open run's selectable rows, in the live view's row order: a build's tasks
-// (buildDisplay maps runState.tasks one row per task, in order), or [] when it has no snapshot yet; a
-// planning run's steps.
+// openTasks(views, ui) → the open run's rows, in the live view's row order: a build's tasks, then the
+// separator and its coordinator agent's row once the agent has started (T12), then its end-of-run helpers
+// while they run (rowEntries, which buildDisplay draws one row each, in order; pir-coordinator T11), or []
+// when it has no snapshot yet; a planning run's steps. The separator is never selected (moveRow).
 export function openTasks(views, ui) {
   const open = findOpen(views, ui);
   if (open && isPlan(open)) return planSteps(open);
-  return open?.snap?.runState?.tasks ?? [];
+  return rowEntries(open?.snap?.runState);
+}
+
+// moveRow(rows, from, step) → the row index one ↑ or ↓ from `from`, clamped to the ends, stepping over the
+// separator above the coordinator agent's row (pir-coordinator T12), which is drawn but never selected.
+export function moveRow(rows, from, step) {
+  let i = clamp(from + step, rows.length);
+  if (rows[i]?.separator) i = clamp(i + step, rows.length);
+  return rows[i]?.separator ? from : i;
 }
 
 // Why a step row did not open (§2.11: a step with no session yet says so in the footer).
@@ -174,6 +193,22 @@ export function noSessionNote(step) {
   if (step?.id === 'build') return 'build has no conversation here — the build shows its own tasks once it starts.';
   if (step?.id === 'review') return 'review has no session yet — the reviewer starts when the plan is written.';
   return 'plan has no session yet — the planner is starting.';
+}
+
+// The coordinator agent of the open build (pir-coordinator §2.8): the run state's `coordinator`, or null
+// with `--no-coordinator`, before it started, or for a planning run.
+export function openCoordinator(views, ui) {
+  const open = findOpen(views, ui);
+  if (!open || isPlan(open)) return null;
+  const c = open.snap?.runState?.coordinator;
+  return c?.id ? c : null;
+}
+
+// Why `c` opened nothing: the open run has no coordinator agent to show.
+export function noCoordinatorNote(views, ui) {
+  const open = findOpen(views, ui);
+  if (open && isPlan(open)) return 'a planning run has no coordinator agent.';
+  return 'this run has no coordinator agent — it was started with --no-coordinator, or the agent has not started yet.';
 }
 
 // goOpen(views, ui) → whether the open run is waiting for the person's go (§2.8): the watch view of a
@@ -224,6 +259,8 @@ export function noWorkerNote(task, tasks = []) {
 //           calls for.
 //     {type:'key', key:'enter'|'n'} while the open planning run waits for the go (goOpen): intent start
 //                                   or decline (pir-plan-command §2.8); otherwise Enter is `open` and `n` inert
+//     {type:'key', key:'c'}         in a build's live view: open its coordinator agent's conversation as the
+//                                   'worker' view (openWorker.taskId 'coordinator'), else a footer `note`
 //   intent = null | {type:'quit'} | {type:'stop', slug, key} | {type:'remove', slug, key} | {type:'resume', slug, key}
 //            | {type:'start', slug, key} | {type:'decline', slug, key}
 //           key is runKey of the target run; the caller resolves the run by it, never by slug alone.
@@ -245,6 +282,15 @@ export function dashboardReducer(ui, event, views = []) {
     }
     event = event.key === 'enter' ? { type: 'open' } : { type: 'unbound' };
   }
+  // `c` in a build's live view opens its coordinator agent's conversation (pir-coordinator §2.8), the way →
+  // opens a task's worker; ← comes back to the live view. With no agent it says so and opens nothing.
+  if (event?.type === 'key' && event.key === 'c') {
+    if (ui.view !== 'watch') return { ui: { ...ui, note: null, armed: null }, intent: null };
+    const c = openCoordinator(views, ui);
+    if (!c) return { ui: { ...ui, note: noCoordinatorNote(views, ui), armed: null }, intent: null };
+    const openWorker = { taskId: 'coordinator', workerId: c.id, logPath: c.logPath ?? null, live: !!c.live };
+    return { ui: { ...ui, view: 'worker', openWorker, note: null, armed: null }, intent: null };
+  }
   // `note` is one-shot like `armed`: whatever the next event is, it clears.
   ui = { ...ui, note: null };
   if (ui.view === 'worker') {
@@ -257,7 +303,7 @@ export function dashboardReducer(ui, event, views = []) {
       const step = event.type === 'down' ? 1 : -1;
       // In the live view the arrows move the task row, and the list's `sel` stays where it was.
       if (ui.view === 'watch') {
-        return { ui: { ...ui, taskSel: clamp((ui.taskSel ?? 0) + step, openTasks(views, ui).length), armed: null }, intent: null };
+        return { ui: { ...ui, taskSel: moveRow(openTasks(views, ui), ui.taskSel ?? 0, step), armed: null }, intent: null };
       }
       return { ui: { ...ui, sel: clamp(ui.sel + step, len), armed: null }, intent: null };
     }
@@ -270,6 +316,7 @@ export function dashboardReducer(ui, event, views = []) {
         if (!task) return { ui: { ...ui, armed: null }, intent: null };
         const w = task.worker;
         const plan = isPlan(findOpen(views, ui));
+        if (task.agent && !w?.id) return { ui: { ...ui, note: noCoordinatorNote(views, ui), armed: null }, intent: null };
         if (!w?.id) return { ui: { ...ui, note: plan ? noSessionNote(task) : noWorkerNote(task, tasks), armed: null }, intent: null };
         const openWorker = { taskId: task.id, workerId: w.id, logPath: w.logPath ?? null, live: !!w.live };
         return { ui: { ...ui, view: 'worker', openWorker, armed: null }, intent: null };

@@ -106,8 +106,11 @@ a person's message.
 
 The first answer wins. The person may answer any waiting item in `pir` or on the phone at any time; a
 decision that arrives for an item already answered is dropped and the agent is told "already
-answered by the person". Why not lock the person out while the agent thinks: the person is the
-authority and must never wait on their own stand-in.
+answered by the person", with the answer (user 2026-09-28, T15). This holds for reserved items too,
+which the agent is briefed on for a note: it is told who answered and what, never left to guess. Where
+pir did not record the answer (a phone answer, a standing grant) or nobody answered (the worker stopped),
+it is told exactly that (user, plan review 2026-09-28). Why not lock the person out while the agent
+thinks: the person is the authority and must never wait on their own stand-in.
 
 Why decision files and not custom tools: custom tools in the SDK need `zod` and
 `@modelcontextprotocol/sdk` as new dependencies; the drop folder reuses the report pattern the
@@ -181,6 +184,11 @@ The person may ask it where things stand, give it an instruction for the rest of
 approve new tasks tonight"), or ask why it answered something. Its pointers (§2.5) and its hand-off
 (§2.9) appear there.
 
+It has its own pinned row in the live view (user 2026-09-28, T12): below the tasks and a separator
+line, above the end-of-run helpers, stating whether it is up, restarting or given up and how many
+items it holds. Selected with ↑↓ and opened with →; `c` stays as a shortcut. With the agent off there
+is no separator and no row.
+
 Its Remote Control is on for the whole run, unless `PARALLEL_REMOTE=0` switches Remote Control off for
 the run as today (user 2026-09-27).
 
@@ -192,8 +200,15 @@ When every task is ✅ and the feature-branch tests pass (today's end gate), the
    reruns the tests. If it conflicts, it spawns a worker with the main-sync conflict prompt (§3.3) in
    the feature worktree; that worker resolves, runs the tests and reports `done`, and its questions
    route through the agent like any worker's (user 2026-09-27).
+   Red tests get a fix worker the same way (T10, user 2026-09-27): if the end gate is red, before the
+   sync, or the tests rerun after a clean or resolved sync are red, it spawns one worker in the feature
+   worktree with the tests-red prompt (`buildConflictPrompt` kind `tests-red`, label `tests-fix`); it
+   fixes the cause, runs the test block, commits and reports `done`, and the tests rerun. One attempt per
+   end sequence, whichever fires first; a re-sync while in `ready to merge` gets one of its own; an
+   `unresolved` sync gets none. Still red after it: the run ends red as below. Why: a red end otherwise
+   sat as `running` waiting on the person (T07 drill), and a fix is ordinary worker work.
 2. Briefs the agent with the run's facts: the task table, the ledger, open FINDINGS rows, tasks with a
-   hand-verification half unchecked, the sync result and the tests.
+   hand-verification half unchecked, the sync result, the tests, and whether a fix worker ran.
 3. The agent drops a `report` decision holding the markdown for three sections: what was delivered
    (and what was not), what to check by hand, risks and follow-ups (user 2026-09-27).
 4. The command assembles `plans/{slug}/REPORT.md` from the agent's sections, the rendered decisions
@@ -238,7 +253,11 @@ person merging another run first is the ordinary way that promise breaks.
   the three agent sections saying the coordinator agent was not available to write them; the run enters
   `ready to merge` and the merge line shows in `pir` only. An agent that is merely restarting is waited
   for. Why not today's plain end: the clean-merge promise matters most when something has gone wrong.
-- The agent is slow: no timeout. The item waits, and the person can answer it at any time (§2.3).
+- The agent is slow: a hold limit of 5 minutes (user 2026-09-28, T13; `PARALLEL_COORDINATOR_HOLD_MS`).
+  An item held that long without a decision becomes the person's as if passed on, and the agent is told.
+  A late decision from the agent is still applied while the person has not answered: the first answer
+  wins (user 2026-09-28). Why: the agent may drop one of several briefs that arrive together, and a held
+  item never turns the run amber, so without a limit nobody is prompted. Replaces "no timeout".
 - A decision file will not parse, names an unknown worker or request, or has the wrong shape: it is
   dropped and the agent is told why in one message. Nothing is guessed. A file that fails to parse is
   left for one more pass first, since the agent's Write may still be landing (§3.5).
@@ -249,8 +268,10 @@ person merging another run first is the ordinary way that promise breaks.
   respawned) and new ones are briefed afresh.
 - pir restarts a run in `ready to merge`: reconciliation finds every task ✅ and `REPORT.md` committed;
   the command re-checks the sync and returns to `ready to merge` without rewriting the report.
-- The main-sync conflict worker cannot resolve, or the tests stay red: its question passes through the
-  agent, which may pass it on; the report says the branch is not ready.
+- The main-sync conflict worker cannot resolve, or the tests stay red after the one test-fix worker
+  (§2.9 step 1, user 2026-09-27): its question passes through the agent, which may pass it on; the
+  report says the branch is not ready. A restart mid-fix keeps the feature worktree with what the worker
+  left; the gate reruns and, still red, a fresh test-fix worker is spawned, as for main-sync.
 - The main checkout has uncommitted changes: irrelevant, since the sync happens in the feature worktree
   and main is never written.
 - The agent's context grows over a long run: Claude Code compacts it. The durable memory is the plan
@@ -318,7 +339,14 @@ run the test block, commit, and report `done`. It reuses the existing worker aud
 The agent is started through `startWorker` (`worker-proc.mjs`), like a worker, with cwd the feature
 worktree and its conversation at `control/conversations/coordinator-{n}.ndjson`. Differences:
 
-- `permissionMode: 'default'`, not `auto`, so no tool runs without passing the command's gate.
+- `tools: ['Read', 'Glob', 'Grep', 'Write', 'Skill']`, an allowlist: every other built-in tool is absent
+  from the session. Why (T00, user 2026-09-27): in `default` mode `EnterWorktree`, `CronCreate` and
+  `ListAgents` ran without reaching `canUseTool`, so a deny list plus the gate did not hold; the
+  allowlist was measured to hold. MCP connector tools stay listed but reach the gate, which denies them.
+- `permissionMode: 'default'`, not `auto`, so no tool runs without passing the command's gate. Measured
+  exceptions (T00): `Read`/`Glob`/`Grep` inside cwd, and `Skill` for a skill that declares no
+  `allowed-tools`, run without reaching the gate. Both only read, so this stands; `pir-coordinator` must
+  declare no `allowed-tools`.
 - The gate (`decide`) allows `Read`, `Glob`, `Grep` under the repo, its worktrees and the installed
   skills, `Skill` for `pir-coordinator` only (its opening instruction invokes it), and `Write` only to a path inside `control/coordinator/decisions/`; it denies everything
   else, without parking a request for the person. `disallowedTools` names Bash, Edit, NotebookEdit,
@@ -327,8 +355,9 @@ worktree and its conversation at `control/conversations/coordinator-{n}.ndjson`.
 - Its opening instruction: invoke the `pir-coordinator` skill for plan `{slug}`, the project rules path
   if the file exists, its drop folder path.
 
-T00 measures that this allowance holds on 2.1.283 (default mode prompts for what the gate must see,
-an absolute-path Write lands, the fences deny).
+T00 measured this allowance on 2.1.283: with the allowlist, an absolute-path Write into the drop folder
+reaches the gate and lands, a Write in cwd, a Read outside cwd, an MCP tool and a Skill declaring
+`allowed-tools` reach the gate and are denied (fixture `coordinator-requests.json`, `gate`).
 
 ### 3.5 Storage
 
@@ -404,6 +433,7 @@ T04, T05, T06 and T08 run it after their change, never while a parallel run is l
 | What the real CLI sends for an `ask`-rule and a destructive request, and whether the agent's allowance holds | Needs a real session (T00, `worker` bin) |
 | The agent answering real workers, passing one on, and the hand-off in a real run | Paid run (T09, `worker` bin) |
 | That a passed-on worker appears on the person's phone only then, and can be answered there | The person's phone (T09) |
+| The real agent answering two briefs that arrive together, and the hold limit firing | Paid run (T14, `worker` bin) |
 
 ### 5.2 Seatbelts
 
@@ -412,6 +442,7 @@ T04, T05, T06 and T08 run it after their change, never while a parallel run is l
 | `perl -e 'alarm 900; exec @ARGV'` around the T00 probe | The probe dies at 15 min |
 | Scratch repo for T00 and T09 | Never the canonical checkout, never a real main |
 | Harness fixture at ceiling 2, harness timeout 20 min (T09) | Bounded paid run |
+| Harness fixture at ceiling 3, harness timeout 20 min, hold limit 3 min (T14; user, plan review 2026-09-28: room for two answers in a row) | Bounded paid run |
 | `HALT` | Stops every worker and the agent of a run |
 | The agent's gate (§3.4) | The agent cannot run a command or write outside its drop folder |
 | `--no-coordinator` | A run with no agent, exactly today's behaviour |
@@ -422,6 +453,7 @@ T04, T05, T06 and T08 run it after their change, never while a parallel run is l
 |---|---|---|---|---|---|
 | Probe session (T00) | `perl -e 'alarm 900; exec @ARGV' node <probe script>` in a scratch repo | `worker` | Minutes of model time, scratch only | Kill the pid; delete scratch | under a dollar |
 | Live harness run (T09) | `node src/shell/harness/run.mjs pir-coordinator --into <scratch>` | `worker` | Same bin earlier plans set for harness runs: bounded, scratch only | HALT; scratch deleted | a few dollars |
+| Live harness run (T14) | `node src/shell/harness/run.mjs pir-coordinator-concurrent --into <scratch>` | `worker` | As T09 (user asked for it 2026-09-28; confirmed at plan review 2026-09-28) | HALT; scratch deleted | a few dollars |
 | `./install.sh` | refresh the installed engine and skills | `worker` | Local, idempotent; never while a parallel run is live | Re-run from the previous commit | none |
 
 The person's part in T09 is their phone. Nothing here pushes, deploys or merges into a real main.

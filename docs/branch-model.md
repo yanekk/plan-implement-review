@@ -4,7 +4,9 @@ The whole plan runs on a single **feature branch**, `pir/{plan}`, cut from `main
 starts. Workers cut **task branches**, `pir/{plan}-T{nn}`, from the feature branch, and their
 finished work merges back into it. `main` never receives the plan from the command: when every task
 is done and the feature branch is green, the command **hands the person a `git merge` to run by
-hand**. All of the branch work is in `src/shell/worktree.mjs`.
+hand**. With the coordinator agent on, it first merges `main` into the feature branch and commits a
+delivery report there, so that merge goes through cleanly (below). All of the branch work is in
+`src/shell/worktree.mjs`.
 
 ```
 main ──●                                                            (the command never merges here;
@@ -88,10 +90,21 @@ the agent-name separator is a different `/`, below.)
 - **Worker integrates the feature branch** (`integrate`): before it signals done, a worker merges
   the current feature branch into its task branch, so at merge time its only change to shared files
   is its own task's work. Never auto-resolves; a conflict is the worker's to resolve or escalate.
+- **`main` → feature branch** (`syncMain`), with the coordinator agent on only: at the end of the
+  run, in the feature worktree, the command merges the current `main` into `pir/{slug}` (`sync main
+  into pir/{slug}`, a `--no-ff` merge) and reruns the tests if anything merged. A conflict is left in
+  progress for a **main-sync worker**, spawned in the feature worktree, to finish; if it cannot, the
+  merge is aborted and the branch is marked not ready. The same sync runs again whenever `main` moves
+  while the run waits in `ready to merge`. The person's checkout of `main` is never written. The
+  command then commits `plans/{slug}/REPORT.md` on the feature branch (`report({slug}): delivery
+  report`, and `report({slug}): re-synced with main` for a footer rewrite), so the report lands in
+  `main` with the person's merge (see [coordinator-agent.md](coordinator-agent.md#the-end-of-the-run)).
 - **Feature branch → `main`**: not a command action. When the feature branch is green, the command
-  prints `git merge pir/{slug}` and exits; the person runs that merge in their own checkout, in their
-  own time. Merging the finished plan to `main` is the one irreversible act in the system, and it
-  belongs to the person, not an automated command. A red feature branch gets no `git merge` line.
+  offers `git merge pir/{slug}`; the person runs that merge in their own checkout, in their own time.
+  Without the agent the command prints it and exits; with the agent it waits in `ready to merge` until
+  it sees `main` contains the feature tip, or the person closes the run. Merging the finished plan to
+  `main` is the one irreversible act in the system, and it belongs to the person, not an automated
+  command or the coordinator agent. A red feature branch gets no `git merge` line.
 
 Every commit-creating git call the command makes forces `commit.gpgsign=false` per-invocation,
 because the automated run has no one to type a passphrase. It does not change the repo's config, so
@@ -123,6 +136,11 @@ role:
   hands-on path. `{slug}` is the task's kebab name (see [task-state.md](task-state.md)). `{repo}` is
   the basename of the main checkout.
 - **The command has no agent name at all**, because it is a plain process, not a Claude session.
+- **The coordinator agent:** `{repo} / {plan} / coordinator agent`. It is not one of the workers the
+  loop lists, so `isWorkerOf` and `parseAgentName` never see it.
+- **The main-sync worker** at the end of a run: `{repo} / {plan} / main-sync`, in the feature worktree.
+- **The test-fix worker** at the end of a run whose tests are red: `{repo} / {plan} / tests-fix`, in the
+  feature worktree; it commits its fix on `pir/{slug}` itself.
 
 The name is passed to the worker's `claude` as `--name` (the SDK's `extraArgs`, `worker-proc.mjs`).
 It is a label, not a handle: the command addresses a worker by the session id it chose itself when it

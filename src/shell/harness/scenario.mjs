@@ -45,7 +45,23 @@ const KINDS = Object.freeze(['build', 'plan']);
 // still run to a hand-off unattended. A fourth, `holdMerges`, launches the coordinator with
 // PARALLEL_HOLD_MERGES=1 (dispatch.mjs) so a same-line clash is hit at the coordinator's own merge. A
 // fifth, `statusSnapshots` (real-asking-state T05), launches it as `pir` does (PIR_RUN=1, a scratch
-// PIR_HOME) so it writes control/status.json every pass and the capture can keep the row history.
+// PIR_HOME) so it writes control/status.json every pass and the capture can keep the row history. A
+// sixth, `coordinator` (pir-coordinator T04), runs the coordinator agent; without it the run is started
+// with PARALLEL_COORDINATOR=0, so a drill written before the agent existed is unchanged. With the agent on,
+// `answerPending` answers only what the run shows held by the person, so the scenario must also take
+// `statusSnapshots` (the status.json it reads); `answerPending.permissions` ({ <task>: 'deny' }) types a
+// deny on that task's permission requests instead of the default allow.
+//
+// Two steps for the live check of the agent (pir-coordinator T09): `mainCommit` ({ after, files, message })
+// commits `files` to the scratch repo's main once the flow log shows task `after` merged, once, so the end
+// sync meets a main that moved mid-run; `mergeWhenReady` merges the feature branch into the scratch main
+// once the run waits in `ready to merge`, the person's merge that ends the run (DESIGN §2.10).
+//
+// Two for the live check of several briefs at once and the hold limit (pir-coordinator T14):
+// `coordinatorHoldMs` (a positive whole number of ms) launches the run with PARALLEL_COORDINATOR_HOLD_MS, so
+// the agent's hold limit (DESIGN §2.11) fires within a run's budget; `answerPending.personDelayMs` has the
+// person's stand-in wait that long after it first sees a request held by the person before answering it, as a
+// person would, so the agent's pointer can land while the item still waits.
 export function defineScenario(spec = {}) {
   const {
     id,
@@ -58,9 +74,13 @@ export function defineScenario(spec = {}) {
     answerPending = false,
     holdMerges = false,
     statusSnapshots = false,
+    coordinator = false,
     kind = 'build',
     reply = null,
     replyCap = null,
+    mainCommit = null,
+    mergeWhenReady = false,
+    coordinatorHoldMs = null,
   } = spec;
 
   if (!id || typeof id !== 'string') {
@@ -82,6 +102,19 @@ export function defineScenario(spec = {}) {
   }
   if (kind === 'plan' && (typeof reply !== 'string' || !reply.trim() || !Number.isInteger(replyCap) || replyCap < 1)) {
     throw new Error(`defineScenario(${id}): a plan scenario needs a reply text and a positive whole replyCap`);
+  }
+  if (coordinator && answerPending && !statusSnapshots) {
+    throw new Error(`defineScenario(${id}): with the coordinator agent, answerPending needs statusSnapshots (it reads who holds an item)`);
+  }
+  if (mainCommit && (!/^T\d+$/.test(mainCommit.after ?? '') || !mainCommit.files || Object.keys(mainCommit.files).length === 0)) {
+    throw new Error(`defineScenario(${id}): mainCommit needs a task id \`after\` and at least one file`);
+  }
+  if (coordinatorHoldMs != null && (!coordinator || !Number.isInteger(coordinatorHoldMs) || coordinatorHoldMs <= 0)) {
+    throw new Error(`defineScenario(${id}): coordinatorHoldMs needs the coordinator agent and a positive whole number of ms`);
+  }
+  const personDelayMs = answerPending ? (answerPending.personDelayMs ?? 0) : 0;
+  if (!Number.isInteger(personDelayMs) || personDelayMs < 0) {
+    throw new Error(`defineScenario(${id}): answerPending.personDelayMs must be a whole number of ms, zero or more`);
   }
   if (!EXPECTED_TERMINALS.includes(expectedTerminal)) {
     throw new Error(`defineScenario(${id}): expectedTerminal must be one of ${EXPECTED_TERMINALS.join(', ')}`);
@@ -106,8 +139,16 @@ export function defineScenario(spec = {}) {
           say: { ...(answerPending.say ?? {}) },
           afterWake: { ...(answerPending.afterWake ?? {}) },
           taskReplies: Object.fromEntries(Object.entries(answerPending.taskReplies ?? {}).map(([t, seq]) => [t, [...seq]])),
+          permissions: { ...(answerPending.permissions ?? {}) },
+          personDelayMs,
         }
       : false,
     statusSnapshots: !!statusSnapshots,
+    coordinator: !!coordinator,
+    mainCommit: mainCommit
+      ? { after: mainCommit.after, files: { ...mainCommit.files }, message: mainCommit.message ?? `main: moved after ${mainCommit.after} merged` }
+      : null,
+    mergeWhenReady: !!mergeWhenReady,
+    coordinatorHoldMs: coordinatorHoldMs ?? null,
   };
 }

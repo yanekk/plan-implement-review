@@ -218,6 +218,59 @@ export function commitFeature({ root = process.cwd(), featurePath, plan, message
   return { ok: res.ok };
 }
 
+// ---- End of run: bring main into the feature branch (pir-coordinator DESIGN §2.9, §2.10, T05) ----
+//
+// The run hands the person a branch that merges cleanly, so before the hand-off (and again whenever main
+// moves while the run waits) the current `main` is merged INTO the feature branch, in the feature
+// worktree. main itself is only read, never written. A conflict is left in progress for a worker to
+// finish (the main-sync prompt, core/conflict.mjs), so it is not aborted here.
+
+const mainShaOf = (root) => git(root, ['rev-parse', '--verify', '--quiet', 'refs/heads/main']).stdout.trim() || null;
+const merging = (cwd) => git(cwd, ['rev-parse', '-q', '--verify', 'MERGE_HEAD']).ok;
+
+// syncMain(featurePath, { root }) → { state: 'up-to-date'|'merged'|'conflict', mainSha, files? }.
+// A merge already in progress (a restart while a main-sync worker was resolving) is reported as the
+// conflict it still is, with its unmerged files, rather than a second merge being started on top of it.
+export function syncMain(featurePath, { root = process.cwd() } = {}) {
+  const mainSha = mainShaOf(root);
+  if (!mainSha) throw new Error('syncMain: the repo has no local main');
+  if (merging(featurePath)) return { state: 'conflict', mainSha, files: unmergedFiles(featurePath) };
+  if (git(featurePath, ['merge-base', '--is-ancestor', mainSha, 'HEAD']).ok) return { state: 'up-to-date', mainSha };
+  const branch = git(featurePath, ['symbolic-ref', '--short', 'HEAD']).stdout.trim() || 'the feature branch';
+  const res = git(featurePath, [...NOSIGN, 'merge', '--no-ff', '-m', `sync main into ${branch}`, mainSha]);
+  if (res.ok) return { state: 'merged', mainSha };
+  if (!merging(featurePath)) {
+    // git refused before merging anything (an untracked file in the way): nothing is left in progress,
+    // and a worker told to finish a merge would find none. Surfaced as an error the caller reports.
+    throw new Error(`syncMain: git merge main failed: ${res.stderr.trim()}`);
+  }
+  return { state: 'conflict', mainSha, files: unmergedFiles(featurePath) };
+}
+
+// mainContains(branch, { root }) → whether main already holds `branch`'s tip: the person merged it
+// (DESIGN §2.10: `git merge-base --is-ancestor pir/{slug} main`).
+export function mainContains(branch, { root = process.cwd() } = {}) {
+  return git(root, ['merge-base', '--is-ancestor', `refs/heads/${branch}`, 'refs/heads/main']).ok;
+}
+
+// mainTip({ root }) → main's current sha, or null.
+export function mainTip({ root = process.cwd() } = {}) {
+  return mainShaOf(root);
+}
+
+// syncPending(featurePath) → whether a main-sync merge is still in progress in the feature worktree:
+// the worker that was to finish it reported done without committing, or exited.
+export function syncPending(featurePath) {
+  return merging(featurePath);
+}
+
+// abortSync(featurePath) → abandon an unfinished main-sync merge, so the feature branch is left at its
+// last clean commit (DESIGN §2.11: the conflict could not be resolved; the report says so).
+export function abortSync(featurePath) {
+  if (merging(featurePath)) git(featurePath, ['merge', '--abort']);
+  return { ok: !merging(featurePath) };
+}
+
 // Tear down a worktree and its branch (DESIGN §2.3 close, §2.9, §6). `--force` twice, not once: a
 // single `--force` removes a dirty worktree but git refuses a LOCKED one ("cannot remove a locked
 // working tree; use 'remove -f -f'"), and a lock is exactly the abandoned-worker state this must
@@ -267,6 +320,11 @@ export function createWorktree({ root = process.cwd() } = {}) {
     remove: (target) => remove(target, { root }),
     taskBranchState: (plan, task) => taskBranchState(plan, task, { root }),
     taskWorktreeHandle: (plan, task) => taskWorktreeHandle(plan, task, { root }),
+    syncMain: (featurePath) => syncMain(featurePath, { root }),
+    mainContains: (branch) => mainContains(branch, { root }),
+    mainTip: () => mainTip({ root }),
+    syncPending: (featurePath) => syncPending(featurePath),
+    abortSync: (featurePath) => abortSync(featurePath),
     get feature() {
       return feature;
     },

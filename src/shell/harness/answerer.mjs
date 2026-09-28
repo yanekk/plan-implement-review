@@ -16,13 +16,15 @@ import { join } from 'node:path';
 
 import { readEntry, workerActivity } from '../../core/stream.mjs';
 import { dropPersonInput } from '../person-inbox.mjs';
+import { readSnapshot } from '../snapshot-store.mjs';
 import { parseLog, parseLogName, logSessionId } from './capture.mjs';
 
 // answerFor(request, typed) → the inbox drop (without `to`) that answers one pending request, or null for
 // a request this stand-in cannot answer (a question with no options and nothing to type). The answer to a
-// question is its labels joined ", ", as the picker sends them (§2.7). Pure.
-export function answerFor(request, typed = {}) {
-  if (request?.kind === 'permission') return { kind: 'permission', requestId: request.requestId, decision: 'allow' };
+// question is its labels joined ", ", as the picker sends them (§2.7). `decision` is what a permission gets:
+// `allow` unless the scenario types a `deny` for that task (pir-coordinator T09). Pure.
+export function answerFor(request, typed = {}, { decision = 'allow' } = {}) {
+  if (request?.kind === 'permission') return { kind: 'permission', requestId: request.requestId, decision };
   if (request?.kind === 'questions') {
     const answers = {};
     for (const q of request.questions ?? []) {
@@ -60,18 +62,25 @@ export function answerFor(request, typed = {}) {
 // been over for `holdMs` by the log's own clock (`now` against the last entry's `t`), so the coordinator
 // gets several passes to paint the row `asking you` before the answer takes it off. Key
 // `task-reply:<task>:<log>:<turn>`.
-export function pendingDrops(logs, answered = new Set(), typed = {}, say = {}, replies = null, afterWake = {}, taskReplies = {}, { now = Infinity, holdMs = 0 } = {}) {
+// Two more options of the last argument serve the run with the coordinator agent (pir-coordinator T09):
+// `onlyWorkers` (a Set of worker ids, or null for every worker) limits the answered requests to the workers
+// whose waiting items the run shows held by the person (personHeldWorkers), so this stand-in never races the
+// agent for an item the agent holds; `permissions` ({ <task>: 'allow'|'deny' }) is the decision typed on that
+// task's permission requests, `allow` when the task is not named.
+export function pendingDrops(logs, answered = new Set(), typed = {}, say = {}, replies = null, afterWake = {}, taskReplies = {}, { now = Infinity, holdMs = 0, onlyWorkers = null, permissions = {} } = {}) {
   const out = [];
   for (const { file, entries } of logs) {
     const to = logSessionId(entries);
     if (!to) continue;
     const activity = workerActivity(entries);
+    const name = parseLogName(file);
+    const decision = (name && permissions[name.task]) || 'allow';
     for (const request of activity.pending) {
       if (answered.has(request.requestId)) continue;
-      const drop = answerFor(request, typed);
+      if (onlyWorkers && !onlyWorkers.has(to)) continue;
+      const drop = answerFor(request, typed, { decision });
       if (drop) out.push({ to, ...drop, key: request.requestId });
     }
-    const name = parseLogName(file);
     const text = name && name.role === 'implement' ? say[name.task] : undefined;
     const exited = entries.some((e) => e?.dir === 'note' && e.kind === 'exited');
     if (text && !exited && activity.state === 'idle' && !answered.has(`say:${name.task}`)) {
@@ -163,9 +172,23 @@ export function dueReplies(logs, answered = new Set()) {
   return out;
 }
 
+// personHeldWorkers(status) → the Set of worker ids whose waiting items the run shows held by the person:
+// every task and end-of-run helper row of control/status.json whose `holder` is 'person' (buildRunState,
+// pir-coordinator §2.5). A row held by the agent, or with nothing waiting, is not in it; a missing or
+// unreadable status gives an empty Set, so nothing is answered until the run has said whose an item is.
+// Pure.
+export function personHeldWorkers(status) {
+  const run = status?.runState ?? status ?? {};
+  const rows = [...(run.tasks ?? []), ...(run.helpers ?? [])];
+  const ids = new Set();
+  for (const row of rows) if (row?.holder === 'person' && row.worker?.id) ids.add(row.worker.id);
+  return ids;
+}
+
 const repliesSent = (answered) => [...answered].filter((k) => String(k).startsWith('reply:')).length;
 
-// createAnswerer({ controlDir, typed, say, afterWake, taskReplies, replies, holdReplies, drop, log, now, holdMs }) → { tick(), capReached() }.
+// createAnswerer({ controlDir, typed, say, afterWake, taskReplies, replies, holdReplies, personOnly, permissions,
+//   personDelayMs, drop, log, now, holdMs }) → { tick(), capReached() }.
 // Reads every conversation log of the run, answers what is pending, and remembers what it answered.
 // `controlDir` is a path or a function returning one, called every tick: a planning run's control folder
 // moves at the rename (pir-plan-command DESIGN §2.6), so the plan scenario passes the index record's
@@ -174,6 +197,10 @@ const repliesSent = (answered) => [...answered].filter((k) => String(k).startsWi
 // capReached() is true once a reply was due and the cap had been spent. `drop` is dropPersonInput with
 // the program taken as alive (the runner only ticks while it runs), called as drop(input, controlDir);
 // injected so a test sees the drops without an inbox. `now` (epoch ms) and `holdMs` time the taskReplies hold.
+// `personOnly` (a run with the coordinator agent, pir-coordinator T09) reads control/status.json each tick and
+// answers only the requests of workers it shows held by the person; `permissions` is pendingDrops'.
+// `personDelayMs` (T14) holds each request's answer until that long after this stand-in first found it
+// answerable, as a person would take a minute to answer, measured on `now`.
 export const TASK_REPLY_HOLD_MS = 15_000;
 
 export function createAnswerer({
@@ -184,12 +211,16 @@ export function createAnswerer({
   taskReplies = {},
   replies = null,
   holdReplies = () => false,
+  personOnly = false,
+  permissions = {},
+  personDelayMs = 0,
   now = () => Date.now(),
   holdMs = TASK_REPLY_HOLD_MS,
   drop = (input, dir) => dropPersonInput(dir, input, { coordinatorAlive: true }),
   log = () => {},
 } = {}) {
   const answered = new Set();
+  const firstSeen = new Map(); // requestId → ms this stand-in first found it answerable (personDelayMs)
   const dirNow = typeof controlDir === 'function' ? controlDir : () => controlDir;
   let capped = false;
   const readLogs = (controlRoot) => {
@@ -213,7 +244,14 @@ export function createAnswerer({
       if (!root) return written;
       const logs = readLogs(root);
       const withReplies = replies?.text && !holdReplies() ? replies : null;
-      for (const { key, ...d } of pendingDrops(logs, answered, typed, say, withReplies, afterWake, taskReplies, { now: now(), holdMs })) {
+      const onlyWorkers = personOnly ? personHeldWorkers(readSnapshot(root)) : null;
+      const t = now();
+      for (const { key, ...d } of pendingDrops(logs, answered, typed, say, withReplies, afterWake, taskReplies, { now: t, holdMs, onlyWorkers, permissions })) {
+        // Only a request (a key that is its requestId) waits out the delay; say/wake/reply keys carry a prefix.
+        if (personDelayMs > 0 && (d.kind === 'permission' || d.kind === 'answers')) {
+          if (!firstSeen.has(key)) firstSeen.set(key, t);
+          if (t - firstSeen.get(key) < personDelayMs) continue;
+        }
         const r = drop(d, root);
         if (!r?.ok) {
           log(`answerer: could not answer ${key}: ${r?.reason ?? 'unknown'}`);
@@ -221,7 +259,7 @@ export function createAnswerer({
         }
         answered.add(key);
         written.push(d);
-        const verb = d.kind === 'permission' ? 'allowed' : d.kind === 'message' ? `said "${d.text}" as` : 'answered';
+        const verb = d.kind === 'permission' ? (d.decision === 'deny' ? 'denied' : 'allowed') : d.kind === 'message' ? `said "${d.text}" as` : 'answered';
         log(`answerer: ${verb} ${key} for ${d.to}`);
       }
       if (withReplies && repliesSent(answered) >= (withReplies.cap ?? Infinity) && dueReplies(logs, answered).length > 0) {

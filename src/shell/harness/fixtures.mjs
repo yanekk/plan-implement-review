@@ -5,7 +5,8 @@
 // a single task, a concurrent pair, a review queue, a clean merge, a merge conflict, a worker that parks
 // on the person, a crash-and-restart, a stop-and-restart mid-review and mid-implement, and a worker
 // introducing a task the coordinator adopts and dispatches, and the real asking state (a report dropped
-// mid-work, a wake-up while parked). The old `hands-on` and `blog-app` fixtures
+// mid-work, a wake-up while parked), and the coordinator agent answering, passing on and handing over
+// (pir-coordinator), and several of its briefs at once with the hold limit firing (pir-coordinator-concurrent). The old `hands-on` and `blog-app` fixtures
 // exercised the `you`/hands-on model, which was removed with the down-channel (DESIGN §2.5, T05); they
 // went with it.
 //
@@ -56,6 +57,8 @@ import liveWorkersDemo from './fixtures/live-workers-demo.mjs';
 import planCommand from './fixtures/plan-command.mjs';
 import realAsking from './fixtures/real-asking.mjs';
 import stoppedAsking from './fixtures/stopped-asking.mjs';
+import pirCoordinator from './fixtures/pir-coordinator.mjs';
+import pirCoordinatorConcurrent from './fixtures/pir-coordinator-concurrent.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -89,6 +92,8 @@ const FIXTURES = Object.freeze({
   [planCommand.id]: planCommand,
   [realAsking.id]: realAsking,
   [stoppedAsking.id]: stoppedAsking,
+  [pirCoordinator.id]: pirCoordinator,
+  [pirCoordinatorConcurrent.id]: pirCoordinatorConcurrent,
 });
 
 // listFixtures() → the fixture ids, in registry order.

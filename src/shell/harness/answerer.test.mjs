@@ -8,7 +8,8 @@ import { mkdtempSync, mkdirSync, writeFileSync, readdirSync, readFileSync, rmSyn
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { answerFor, pendingDrops, createAnswerer } from './answerer.mjs';
+import { answerFor, pendingDrops, createAnswerer, personHeldWorkers } from './answerer.mjs';
+import { writeSnapshot } from '../snapshot-store.mjs';
 import { validateDrop } from '../../core/person-input.mjs';
 
 const init = (sid) => ({ t: 1, dir: 'in', event: { type: 'system', subtype: 'init', session_id: sid } });
@@ -336,6 +337,108 @@ test('createAnswerer reads the control folder each tick, and holds replies while
     hold = false;
     assert.equal(a.tick().length, 1);
     assert.deepEqual(seen, [after], 'dropped under the folder the run has now');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// --- With the coordinator agent on (pir-coordinator T09) -------------------------------------------
+
+test('answerFor types a deny when the scenario says so, and the drop validates', () => {
+  const d = answerFor({ kind: 'permission', requestId: 'r1' }, {}, { decision: 'deny' });
+  assert.deepEqual(d, { kind: 'permission', requestId: 'r1', decision: 'deny' });
+  assert.equal(validateDrop({ to: 'w', ...d }).ok, true);
+});
+
+test('pendingDrops denies a named task\'s permission and allows the rest', () => {
+  const logs = [
+    { file: 'T01-implement-1.ndjson', entries: [init('w1'), permission('p1')] },
+    { file: 'T02-implement-1.ndjson', entries: [init('w2'), permission('p2', 'git push origin HEAD')] },
+  ];
+  const drops = pendingDrops(logs, new Set(), {}, {}, null, {}, {}, { permissions: { T02: 'deny' } });
+  assert.deepEqual(drops.map((d) => [d.to, d.decision]), [['w1', 'allow'], ['w2', 'deny']]);
+});
+
+test('personHeldWorkers reads the person-held rows, tasks and helpers, from a status snapshot', () => {
+  const status = {
+    runState: {
+      tasks: [
+        { id: 'T01', holder: 'coordinator', worker: { id: 'w1' } },
+        { id: 'T02', holder: 'person', worker: { id: 'w2' } },
+        { id: 'T03', worker: { id: 'w3' } },
+      ],
+      helpers: [{ id: 'main-sync', holder: 'person', worker: { id: 'w9' } }],
+    },
+  };
+  assert.deepEqual([...personHeldWorkers(status)].sort(), ['w2', 'w9']);
+  assert.equal(personHeldWorkers(null).size, 0);
+});
+
+test('createAnswerer with personOnly leaves an item the coordinator holds alone, and answers the person\'s', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'pir-answerer-'));
+  try {
+    mkdirSync(join(dir, 'conversations'), { recursive: true });
+    const write = (file, entries) => writeFileSync(join(dir, 'conversations', file), entries.map((e) => JSON.stringify(e)).join('\n') + '\n');
+    write('T01-implement-1.ndjson', [init('w1'), questions('q1')]);
+    write('T02-implement-1.ndjson', [init('w2'), permission('p2', 'git push origin HEAD')]);
+    const dropped = [];
+    const a = createAnswerer({ controlDir: dir, personOnly: true, permissions: { T02: 'deny' }, drop: (input) => (dropped.push(input), { ok: true }) });
+
+    // No status yet: whose the items are is unknown, so nothing is answered.
+    a.tick();
+    assert.deepEqual(dropped, []);
+
+    const snap = (tasks) => writeSnapshot(dir, { proc: { pid: 1 }, finalState: null, runState: { tasks } });
+    snap([
+      { id: 'T01', holder: 'coordinator', worker: { id: 'w1' } },
+      { id: 'T02', holder: 'person', worker: { id: 'w2' } },
+    ]);
+    a.tick();
+    assert.deepEqual(dropped, [{ to: 'w2', kind: 'permission', requestId: 'p2', decision: 'deny' }]);
+
+    // Once the agent passes T01's question on, it is the person's and the stand-in answers it.
+    snap([
+      { id: 'T01', holder: 'person', worker: { id: 'w1' } },
+      { id: 'T02', holder: 'person', worker: { id: 'w2' } },
+    ]);
+    a.tick();
+    assert.equal(dropped.length, 2);
+    assert.equal(dropped[1].requestId, 'q1');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('createAnswerer with personDelayMs answers a person-held request only that long after it first found it (T14)', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'pir-answerer-'));
+  try {
+    mkdirSync(join(dir, 'conversations'), { recursive: true });
+    const write = (file, entries) => writeFileSync(join(dir, 'conversations', file), entries.map((e) => JSON.stringify(e)).join('\n') + '\n');
+    write('T03-implement-1.ndjson', [init('w3'), questions('q3')]);
+    const snap = (holder) => writeSnapshot(dir, { proc: { pid: 1 }, finalState: null, runState: { tasks: [{ id: 'T03', holder, worker: { id: 'w3' } }] } });
+    let clock = 1000;
+    const dropped = [];
+    const a = createAnswerer({ controlDir: dir, personOnly: true, personDelayMs: 60000, now: () => clock, drop: (input) => (dropped.push(input), { ok: true }) });
+
+    // Held by the agent: not answerable, so the delay has not started.
+    snap('coordinator');
+    a.tick();
+    clock += 120000;
+    a.tick();
+    assert.deepEqual(dropped, []);
+
+    // The hold limit hands it to the person: the delay starts now.
+    snap('person');
+    a.tick();
+    clock += 59999;
+    a.tick();
+    assert.deepEqual(dropped, [], 'not before the delay');
+    clock += 1;
+    a.tick();
+    assert.equal(dropped.length, 1);
+    assert.equal(dropped[0].requestId, 'q3');
+    a.tick();
+    assert.equal(dropped.length, 1, 'answered once');
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

@@ -3,7 +3,7 @@
 // worker behaves like a live one, so the conversation view (T13) can be driven end to end with no paid
 // worker. Nothing here calls a model: the worker is the real Agent SDK talking to fake/claude-stream.mjs.
 //
-//   node src/shell/conversation-rig.mjs [--into <scratch>] [--scenario tour|long] [--keep]
+//   node src/shell/conversation-rig.mjs [--into <scratch>] [--scenario tour|long|coordinator] [--keep]
 //
 // It stays in the foreground until Ctrl+C, SIGTERM (pir's Ctrl+S stop sends one to the run's pid) or a
 // HALT file in the run's control folder. While it runs, open the screen from another terminal:
@@ -30,6 +30,10 @@
 //         turn working for `workMs` so Esc can interrupt it. `init.slash_commands` carries `context` and
 //         the four terminal commands, which the box must not offer (§2.9).
 //   long  the same opening, then enough tool steps to put the log over 256 KB (§2.14), then chat.
+//   coordinator  (pir-coordinator T06) T01 asks one permission, held by the run's coordinator agent (the
+//         real coordinator-agent session on its own fake script, `c` in the live view opens it). The
+//         command passes it on after 10 s (the row turns `asking you`, the agent says its pointer) and
+//         reaches `ready to merge` after 30 s; a test pulls rig.pass() and rig.ready() itself.
 //
 // Teardown on exit: the worker closed, the inbox stopped, the index record removed, and the scratch
 // folder deleted unless --keep.
@@ -50,6 +54,8 @@ import { indexDir, removeRecord, writeRecord } from './index-store.mjs';
 import { createGrants, startPersonInbox } from './person-inbox.mjs';
 import { createPlatform } from './platform.mjs';
 import { startWorker } from './worker-proc.mjs';
+import { startCoordinatorAgent, withAgent } from './coordinator-agent.mjs';
+import { handoffFor } from '../core/coordinator-brief.mjs';
 
 export const RIG_SLUG = 'rig';
 export const RIG_TASK = 'T01';
@@ -150,7 +156,35 @@ export function scenarioScript(name = 'tour', { paceMs = 300, workMs = 4000 } = 
       { chat: { workMs, init: RIG_INIT } },
     ];
   }
-  throw new Error(`unknown scenario "${name}" (tour, long)`);
+  if (name === 'coordinator') {
+    // The task's worker asks for one permission and waits; the coordinator agent holds it (agentScript).
+    return [
+      ...opening,
+      { emit: assistantText('I need to push the task branch; asking for permission.') },
+      ...ask('perm-1', 'Bash', { command: 'git push origin pir/rig-T01', description: 'Push the task branch' }, { description: 'Push the task branch' }, 'Everything up-to-date'),
+      { emit: assistantText('Pushed. Type me a message.') },
+      { emit: resultEvent('success', 'pushed') },
+      { chat: { workMs, init: RIG_INIT } },
+    ];
+  }
+  throw new Error(`unknown scenario "${name}" (tour, long, coordinator)`);
+}
+
+// The coordinator scenario's agent (pir-coordinator T06): the real coordinator-agent session on the fake. It
+// greets on its opening instruction, answers the rig's brief of T01's request with the pointer (DESIGN §2.5:
+// the pointer is its own reply), then answers every message, the person's and pir's hand-off alike.
+export const RIG_POINTER = "T01 wants to push its task branch, and pushing is yours: it's an ask-bin action. Answer it in T01's conversation; I would allow it.";
+export function agentScript({ workMs = 4000 } = {}) {
+  const say = (text) => [{ emit: assistantText(text) }, { emit: resultEvent('success', text) }];
+  return [
+    { await: 'user' },
+    { emit: RIG_INIT },
+    ...say("I'm the rig's pretend coordinator agent. I answer what I can and point you at what I can't."),
+    { await: 'user' },
+    { emit: RIG_INIT },
+    ...say(RIG_POINTER),
+    { chat: { workMs, init: RIG_INIT } },
+  ];
 }
 
 // The one-task plan: reviewed and with a test block, so `pir start rig` from the scratch repo passes its
@@ -170,6 +204,11 @@ function writePlan(repoRoot, scenario) {
 //   { repoRoot, repo, slug, controlDir, workerId, logPath, received, platform, pid, stop() }
 // `env` supplies PIR_HOME (the index folder, indexDir's rule), so a test points the index at a scratch
 // folder. stop() is the teardown, idempotent; it resolves once the worker has exited.
+//
+// The `coordinator` scenario (pir-coordinator T06) also starts the run's coordinator agent, holding T01's
+// request, and returns three levers the real run pulls on its own: pass() — the agent passes the request on
+// (it is briefed and replies with its pointer; the row turns `asking you`); ready() — every task merged, the
+// report committed and the run waiting in `ready to merge`; and agent, the CoordinatorAgent itself.
 export function startRig({ into = null, scenario = 'tour', keep = false, env = process.env, paceMs, workMs, snapshotMs = 500 } = {}) {
   const script = scenarioScript(scenario, { paceMs, workMs });
   let repoRoot;
@@ -205,14 +244,43 @@ export function startRig({ into = null, scenario = 'tour', keep = false, env = p
   });
   const workerId = platform.spawn({ cwd: repoRoot, name: `${repo} / ${RIG_SLUG} / ${RIG_TASK} / ${scenario} / implement`, phase: 'implement' });
   const logPath = platform.logPathOf(workerId);
-  const inbox = startPersonInbox({ controlDir, platform, grants });
+  // The coordinator agent, as the run starts it (coordinate.mjs), on its own fake script.
+  let agent = null;
+  if (scenario === 'coordinator') {
+    const agentScriptPath = join(controlDir, 'fake-agent-script.json');
+    writeFileSync(agentScriptPath, JSON.stringify(agentScript({ workMs })));
+    const agentSpawn = fakeClaudeSpawner({ script: agentScriptPath, received: join(controlDir, 'fake-agent-received.ndjson') });
+    agent = startCoordinatorAgent({
+      controlDir,
+      featurePath: repoRoot,
+      repoRoot,
+      slug: RIG_SLUG,
+      platform,
+      startWorker: (opts) => startWorker({ ...opts, spawnProcess: agentSpawn }),
+      claudePath: 'claude-fake',
+      remote: false,
+    });
+  }
+  const inbox = startPersonInbox({ controlDir, platform: withAgent(platform, () => agent), grants });
 
   const proc = { pid: process.pid, startTime, slug: RIG_SLUG, repo, branch, startedAt };
   const since = Date.now();
   const passTasks = [{ num: RIG_TASK, name: scenario, deps: [], state: '⬜' }];
+  // The coordinator scenario's run: T01's request is the agent's until pass(), and the end is ready().
+  const held = new Set(agent ? [`${workerId}:perm-1`] : []);
+  let handoff = null;
   const snapshot = () => {
     try {
-      const runState = buildRunState({ passTasks, stateTasks: { [RIG_TASK]: { role: 'implement', phase: 'running' } }, workers: platform.workers(), branch, ceiling: 1, sinceByTask: { [RIG_TASK]: since } });
+      const stateTasks = { [RIG_TASK]: { role: 'implement', phase: 'running', ...(agent ? { workerId } : {}) } };
+      const runState = buildRunState({
+        passTasks,
+        stateTasks,
+        workers: platform.workers(),
+        branch,
+        ceiling: 1,
+        sinceByTask: { [RIG_TASK]: since },
+        ...(agent ? { heldByAgent: held, coordinator: agent.view() && { ...agent.view(), holding: held.size }, handoff, complete: !!handoff, readyToMerge: handoff?.state === 'ready' } : {}),
+      });
       writeRunSnapshot({ controlDir, proc, runState });
     } catch {
       // a failed write is retried on the next tick
@@ -228,6 +296,9 @@ export function startRig({ into = null, scenario = 'tour', keep = false, env = p
       clearInterval(timer);
       inbox.stop();
       removeRecord({ repo, slug: RIG_SLUG }, { dir });
+      const agentPid = agent?.session?.pid ?? null;
+      if (agent) await agent.close({ graceMs: 0 }).catch(() => {});
+      if (agentPid) await waitPid(agentPid);
       const rec = platform.workers().find((w) => w.id === workerId);
       // A pretend worker has nothing to finish, so it gets its SIGTERM now rather than after the 5 s grace.
       if (rec?.live) platform.close(workerId, { immediate: true });
@@ -237,8 +308,38 @@ export function startRig({ into = null, scenario = 'tour', keep = false, env = p
     return stopping;
   }
 
+  // The agent passes T01's request on (DESIGN §2.5): briefed now, it answers with its pointer, and the
+  // request is the person's, so the row reads `asking you`.
+  function pass() {
+    const request = platform.pending(workerId).find((r) => r.requestId === 'perm-1') ?? null;
+    agent.brief({ worker: workerId, task: RIG_TASK, kind: 'permission', requestId: 'perm-1', request, name: `${repo} / ${RIG_SLUG} / ${RIG_TASK} / ${scenario} / implement` });
+    held.clear();
+    snapshot();
+  }
+  // The end of the run (DESIGN §2.9, §2.10): the task merged, REPORT.md committed, the agent told, the run
+  // waiting in `ready to merge`.
+  function ready() {
+    passTasks[0] = { ...passTasks[0], state: '✅' };
+    handoff = { state: 'ready', reportPath: `plans/${RIG_SLUG}/REPORT.md`, mainSha: '0000000' };
+    agent.tell(handoffFor({ slug: RIG_SLUG, reportPath: handoff.reportPath, ready: true }));
+    snapshot();
+  }
+
   const pid = platform.list().find((w) => w.id === workerId)?.pid ?? null;
-  return { repoRoot, repo, slug: RIG_SLUG, controlDir, workerId, logPath, received, platform, pid, stop };
+  return { repoRoot, repo, slug: RIG_SLUG, controlDir, workerId, logPath, received, platform, pid, stop, agent, ...(agent ? { pass, ready } : {}) };
+}
+
+async function waitPid(pid, { timeoutMs = 15000 } = {}) {
+  const until = Date.now() + timeoutMs;
+  for (;;) {
+    try {
+      process.kill(pid, 0);
+    } catch {
+      return;
+    }
+    if (Date.now() > until) return;
+    await new Promise((r) => setTimeout(r, 50));
+  }
 }
 
 // Resolves once the worker has left platform.list(), which it does the moment its process has exited.
@@ -481,7 +582,7 @@ function parseArgs(argv) {
     if (a === '--into') opts.into = argv[++i];
     else if (a === '--scenario') opts.scenario = argv[++i];
     else if (a === '--keep') opts.keep = true;
-    else throw new Error(`unknown argument ${a}\nusage: conversation-rig.mjs [--into <scratch>] [--scenario tour|long] [--keep]`);
+    else throw new Error(`unknown argument ${a}\nusage: conversation-rig.mjs [--into <scratch>] [--scenario tour|long|coordinator] [--keep]`);
   }
   return opts;
 }
@@ -505,6 +606,10 @@ async function main(argv) {
   process.on('SIGINT', () => finish('Ctrl+C'));
   process.on('SIGTERM', () => finish('SIGTERM'));
   const halt = setInterval(() => existsSync(join(rig.controlDir, 'HALT')) && finish('HALT'), 500);
+  if (rig.pass) {
+    setTimeout(() => (console.log('the coordinator agent passes T01 on'), rig.pass()), 10000).unref();
+    setTimeout(() => (console.log('the run is ready to merge'), rig.ready()), 30000).unref();
+  }
   void halt;
 }
 

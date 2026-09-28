@@ -96,6 +96,10 @@ const BUNDLE_FILES = {
   gitLog: 'git-log.txt',
   coordinatorOut: 'coordinator.out',
   conversations: 'conversations',
+  // The coordinator agent's ledger, one line per applied decision (pir-coordinator §2.7), and what the
+  // scenario's own steps did (run.mjs createScenarioSteps). Both absent on a run without them.
+  ledger: 'ledger.jsonl',
+  steps: 'steps.json',
 };
 
 function defaultRunGit(args, { cwd } = {}) {
@@ -303,6 +307,7 @@ export function createCapture({
       copyIfPresent(join(controlDir, 'log'), join(dir, BUNDLE_FILES.flow));
       copyIfPresent(join(controlDir, 'coordinator.out'), join(dir, BUNDLE_FILES.coordinatorOut));
       copyIfPresent(join(controlDir, 'workers.json'), join(dir, BUNDLE_FILES.workers));
+      copyIfPresent(join(controlDir, 'coordinator', 'ledger.jsonl'), join(dir, BUNDLE_FILES.ledger));
     }
 
     writeFileSync(join(dir, BUNDLE_FILES.run), `${JSON.stringify({ repo: repo ?? null, plan: slug ?? null })}\n`);
@@ -405,5 +410,18 @@ export function loadBundle(dir) {
   // null, not '', when absent: a missing hand-off record must read differently from an empty one.
   const coordinatorOut = readTextOr(join(dir, BUNDLE_FILES.coordinatorOut), null);
 
-  return { dir, name: basename(dir), flow, flowText, timeline, statuses, workers, run, manifest, gitLog, coordinatorOut };
+  const ledger = readTextOr(join(dir, BUNDLE_FILES.ledger))
+    .split('\n')
+    .filter((l) => l.trim() !== '')
+    .map((l) => {
+      try {
+        return JSON.parse(l);
+      } catch {
+        return null;
+      }
+    })
+    .filter(Boolean);
+  const steps = readJsonOr(join(dir, BUNDLE_FILES.steps), null, isObj);
+
+  return { dir, name: basename(dir), flow, flowText, timeline, statuses, workers, run, manifest, gitLog, coordinatorOut, ledger, steps };
 }

@@ -45,9 +45,21 @@ const DEFAULT_FS = { mkdirSync, openSync };
 // the coordinator is spawned with this as its cwd so it finds the same plan (the coordinator re-derives
 // its own root from cwd). The engine's own coordinate.mjs is resolved from THIS file's location, never
 // as a path under cwd — `pir` is the installed engine driving a run in whatever repo it is called from.
+//
+// `coordinator: false` is `pir start {slug} --no-coordinator` (pir-coordinator DESIGN §2.1): the child gets
+// PARALLEL_COORDINATOR=0 and the index record keeps `coordinator: false`, so resumeRun passes it on.
 export function startRun(
   slug,
-  { cwd = process.cwd(), spawn = realSpawn, exec, kill, fs = DEFAULT_FS, now = () => new Date(), env = process.env } = {},
+  {
+    cwd = process.cwd(),
+    spawn = realSpawn,
+    exec,
+    kill,
+    fs = DEFAULT_FS,
+    now = () => new Date(),
+    env = process.env,
+    coordinator = true,
+  } = {},
 ) {
   const repoRoot = cwd;
   const repo = basename(repoRoot);
@@ -113,7 +125,7 @@ export function startRun(
     cwd: repoRoot,
     detached: true,
     stdio: ['ignore', logFd, logFd],
-    env: { ...env, PARALLEL_LIVE: '1', PIR_RUN: '1' },
+    env: { ...env, PARALLEL_LIVE: '1', PIR_RUN: '1', ...(coordinator ? {} : { PARALLEL_COORDINATOR: '0' }) },
   });
   child.unref();
 
@@ -132,6 +144,7 @@ export function startRun(
     branch,
     finalState: null,
     updatedAt: null,
+    ...(coordinator ? {} : { coordinator: false }),
   };
   writeRecord(record, { dir });
 
@@ -296,7 +309,9 @@ export function resumeRun(
   if (state === 'running') return { resumed: false, reason: 'already-running' };
 
   if (record.kind !== 'plan') {
-    const r = startRun(record.slug, { cwd: record.repoPath, spawn, exec, kill, fs, now, env });
+    // The run's coordinator choice is kept across a resume (pir-coordinator DESIGN §2.1).
+    const choice = record.coordinator === false ? { coordinator: false } : {};
+    const r = startRun(record.slug, { cwd: record.repoPath, spawn, exec, kill, fs, now, env, ...choice });
     return r.started ? { resumed: true, pid: r.pid } : { resumed: false, reason: r.reason };
   }
 

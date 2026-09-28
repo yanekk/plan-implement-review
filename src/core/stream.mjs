@@ -207,10 +207,12 @@ const ANSWER_NOTES = new Set(['delivered-by-grant', 'answered-remotely']);
 // and a background wake-up never emit one. A wake-up follows `system:task_notification` after the last
 // `result`. The SDK `UserPromptSubmit` hook does not separate the three (its `source` is absent for all).
 const REMOTE_OPEN_STATES = new Set(['queued', 'started']);
-const SEND_CAUSES = { person: 'person', pir: 'pir' };
+// The coordinator agent's answer reaches a worker as a send `from: 'coordinator'` and answers it exactly as
+// the person's does (pir-coordinator DESIGN §2.3), so it is a cause of its own, never `unknown`.
+const SEND_CAUSES = { person: 'person', pir: 'pir', coordinator: 'coordinator' };
 
 // workerActivity(entries) → { state, open, pending, turns, lastEventAt, slashCommands, turnCauses,
-//                             personSends, remoteSends, background }.
+//                             personSends, remoteSends, background, coordinatorSends }.
 //   starting   nothing has been sent and the worker has not spoken
 //   busy       a turn is open: a message went in, or the worker began one, and no `result` came back
 //   idle       the last turn ended and nothing is pending
@@ -223,7 +225,7 @@ const SEND_CAUSES = { person: 'person', pir: 'pir' };
 // `lastEventAt` is the last entry's `t`; this never reads a clock.
 // `turnCauses` holds one entry per turn opened, in order: 'person' / 'pir' (opened by an `out` send from
 // that sender), 'remote' (Remote Control input), 'system' (a background job's wake-up) or 'unknown'.
-// `personSends` counts the person's `out` sends; `remoteSends` counts Remote Control inputs (distinct
+// `personSends` counts the person's `out` sends, `coordinatorSends` the coordinator agent's; `remoteSends` counts Remote Control inputs (distinct
 // `command_lifecycle` command ids). Both count wherever the input landed, an open turn included, which is
 // how resumeAnswered hears an answer given while the asking turn is still running (DESIGN §2.2).
 // `background` holds the ids of the worker's background jobs still running (stopped-worker-asking DESIGN
@@ -243,6 +245,7 @@ export function workerActivity(entries) {
   const turnCauses = [];
   let nextCause = null; // what the next turn opened by the worker's own output was announced by
   let personSends = 0;
+  let coordinatorSends = 0;
   const remoteCommands = new Set();
   let listed = [];
   const held = new Set(); // ids that left the list since the last turn opened or ended
@@ -262,6 +265,7 @@ export function workerActivity(entries) {
       switch (ev.kind) {
         case 'sent':
           if (ev.from === 'person') personSends += 1;
+          if (ev.from === 'coordinator') coordinatorSends += 1;
           openTurn(SEND_CAUSES[ev.from] ?? 'unknown');
           break;
         case 'result':
@@ -332,6 +336,6 @@ export function workerActivity(entries) {
   else state = 'starting';
   return {
     state, open, pending: waiting, turns, lastEventAt, slashCommands, turnCauses, personSends,
-    remoteSends: remoteCommands.size, background: [...listed, ...held],
+    remoteSends: remoteCommands.size, background: [...listed, ...held], coordinatorSends,
   };
 }

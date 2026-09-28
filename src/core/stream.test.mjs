@@ -518,3 +518,13 @@ test('recorded T01 sample: the background job is listed while its turn ends, [] 
   assert.equal(beforeWake.state, 'idle');
   assert.equal(beforeWake.background.length, 1, 'held between the shrunken list and the wake-up init');
 });
+
+// pir-coordinator T04: the coordinator agent's answer is a send `from: 'coordinator'`.
+const coordinatorSent = (text = 'use Y') => at({ dir: 'out', from: 'coordinator', kind: 'message', text });
+
+test('a coordinator send opens a `coordinator` turn and is counted apart from the person\'s', () => {
+  const a = workerActivity([sent(), init(), result(), coordinatorSent(), init()]);
+  assert.deepEqual(a.turnCauses, ['pir', 'coordinator']);
+  assert.equal(a.coordinatorSends, 1);
+  assert.equal(a.personSends, 0);
+});

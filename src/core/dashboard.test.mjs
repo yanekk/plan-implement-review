@@ -5,7 +5,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildDashboard, canResume, runKey, dashboardReducer, displayName, initialUi, noWorkerNote, planProgress, runDisplayState } from './dashboard.mjs';
+import { buildDashboard, canResume, runKey, dashboardReducer, displayName, initialUi, noWorkerNote, planProgress, runDisplayState, moveRow } from './dashboard.mjs';
 
 // One resolved run view in the shape the shell hands the model (state already from classifyRun, T01).
 const view = (over) => ({
@@ -680,4 +680,106 @@ test('buildDashboard: an asking build counts in waiting beside your go, not in r
   ]);
   assert.deepEqual(rows.map((r) => r.display), ['asking-you', 'running', 'your-go']);
   assert.deepEqual(counts, { running: 1, finished: 0, crashed: 0, stopped: 0, waiting: 2, total: 3 });
+});
+
+// --- the coordinator agent (pir-coordinator T06, DESIGN §2.8, §2.10) ------------------------------
+
+test('runDisplayState: a build waiting in ready to merge reads ready-to-merge and counts as waiting; a coordinator-held question does not ask', () => {
+  const ready = view({ slug: 'r', state: 'running', snap: { runState: { tasks: [{ id: 'T01', done: true }], handoff: { state: 'ready', reportPath: 'plans/r/REPORT.md' } } } });
+  const red = view({ slug: 'd', state: 'running', snap: { runState: { tasks: [{ id: 'T01', done: true }], handoff: { state: 'red' } } } });
+  const held = view({ slug: 'h', state: 'running', snap: buildSnap({ phase: 'asking', holder: 'coordinator' }) });
+  const passed = view({ slug: 'p', state: 'running', snap: buildSnap({ phase: 'asking', holder: 'person' }) });
+  const merged = view({ slug: 'm', state: 'finished', snap: ready.snap });
+  const { rows, counts } = buildDashboard([ready, red, held, passed, merged]);
+  assert.deepEqual(rows.map((r) => r.display), ['ready-to-merge', 'running', 'running', 'asking-you', 'finished']);
+  assert.deepEqual(counts, { running: 2, finished: 1, crashed: 0, stopped: 0, waiting: 2, total: 5 });
+});
+
+test('dashboardReducer: `c` in a build\'s live view opens its coordinator agent\'s conversation; ← comes back; no agent → a note', () => {
+  const coordinator = { id: 'sess-1', live: true, logPath: '/c/conversations/coordinator-1.ndjson' };
+  const withAgent = [view({ slug: 'a', snap: { runState: { tasks: [{ id: 'T01' }], coordinator } } })];
+  const watch = { ...initialUi(), view: 'watch', openSlug: 'a', taskSel: 0 };
+
+  const opened = dashboardReducer(watch, { type: 'key', key: 'c' }, withAgent);
+  assert.equal(opened.intent, null);
+  assert.equal(opened.ui.view, 'worker');
+  assert.deepEqual(opened.ui.openWorker, { taskId: 'coordinator', workerId: 'sess-1', logPath: '/c/conversations/coordinator-1.ndjson', live: true });
+  const back = dashboardReducer(opened.ui, { type: 'back' }, withAgent);
+  assert.equal(back.ui.view, 'watch');
+  assert.equal(back.ui.openWorker, null);
+
+  const none = [view({ slug: 'a', snap: { runState: { tasks: [{ id: 'T01' }], coordinator: null } } })];
+  const refused = dashboardReducer({ ...watch, armed: { action: 'stop', slug: 'a', key: 'a' } }, { type: 'key', key: 'c' }, none);
+  assert.equal(refused.ui.view, 'watch', 'nothing opens');
+  assert.match(refused.ui.note, /no coordinator agent/);
+  assert.equal(refused.ui.armed, null, 'a stray key still cancels a pending confirm');
+
+  const list = dashboardReducer({ ...initialUi(), sel: 0 }, { type: 'key', key: 'c' }, withAgent);
+  assert.equal(list.ui.view, 'list', 'inert on the list');
+  assert.equal(list.ui.note, null);
+});
+
+// --- end-of-run helper rows (pir-coordinator T11) ----------------------------------------------------
+
+test('in watch, ↓ reaches an end-of-run helper row below the tasks and → opens its conversation (T11)', () => {
+  const helperWorker = { id: 'w-fix', live: true, logPath: '/c/conversations/w-fix.jsonl' };
+  const run = view({
+    slug: 'plan',
+    key: 'r1__plan',
+    snap: { runState: { tasks: [task('T01', { done: true }), task('T02', { done: true })], helpers: [task('tests-fix', { helper: true, phase: 'asking', worker: helperWorker })] } },
+  });
+  let ui = watchingTasks({ sel: 0 });
+  for (let i = 0; i < 5; i++) ui = dashboardReducer(ui, { type: 'down' }, [run]).ui;
+  assert.equal(ui.taskSel, 2, 'the helper is the third row');
+  const r = dashboardReducer(ui, { type: 'open' }, [run]);
+  assert.equal(r.ui.view, 'worker');
+  assert.deepEqual(r.ui.openWorker, { taskId: 'tests-fix', workerId: 'w-fix', logPath: '/c/conversations/w-fix.jsonl', live: true });
+});
+
+test('a run whose helper waits on the person reads asking-you in the list (T11)', () => {
+  const run = view({ state: 'running', snap: { runState: { tasks: [task('T01', { done: true })], helpers: [task('main-sync', { helper: true, phase: 'asking', holder: 'person' })], handoff: { state: 'preparing' } } } });
+  assert.equal(runDisplayState(run), 'asking-you');
+});
+
+// --- the coordinator agent's pinned row (pir-coordinator T12) ----------------------------------------
+
+test('in watch, ↑↓ step over the separator to the agent row; → on it opens the agent as `c` does (T12)', () => {
+  const coordinator = { id: 'sess-1', live: true, logPath: '/c/conversations/coordinator-1.ndjson', state: 'up', holding: 1 };
+  const helperWorker = { id: 'w-fix', live: true, logPath: '/c/conversations/w-fix.jsonl' };
+  const run = view({
+    slug: 'plan',
+    key: 'r1__plan',
+    snap: { runState: { tasks: [task('T01', { done: true }), task('T02', { phase: 'building', worker: LIVE })], coordinator, helpers: [task('tests-fix', { helper: true, phase: 'building', worker: helperWorker })] } },
+  });
+  // Rows: T01, T02, separator, agent, tests-fix.
+  let ui = watchingTasks({ sel: 0, taskSel: 1 });
+  ui = dashboardReducer(ui, { type: 'down' }, [run]).ui;
+  assert.equal(ui.taskSel, 3, '↓ from the last task skips the separator to the agent');
+  ui = dashboardReducer(ui, { type: 'down' }, [run]).ui;
+  assert.equal(ui.taskSel, 4, 'then the helper below it');
+  ui = dashboardReducer(ui, { type: 'up' }, [run]).ui;
+  assert.equal(ui.taskSel, 3);
+  const opened = dashboardReducer(ui, { type: 'open' }, [run]);
+  assert.equal(opened.ui.view, 'worker');
+  const viaC = dashboardReducer(watchingTasks({ sel: 0 }), { type: 'key', key: 'c' }, [run]);
+  assert.deepEqual(opened.ui.openWorker, viaC.ui.openWorker);
+  assert.deepEqual(opened.ui.openWorker, { taskId: 'coordinator', workerId: 'sess-1', logPath: '/c/conversations/coordinator-1.ndjson', live: true });
+  ui = dashboardReducer(ui, { type: 'up' }, [run]).ui;
+  assert.equal(ui.taskSel, 1, '↑ from the agent skips the separator back to the last task');
+
+  // With no helper the agent is the last row: ↓ stays on it.
+  const bare = view({ slug: 'plan', key: 'r1__plan', snap: { runState: { tasks: [task('T01', { done: true })], coordinator } } });
+  ui = watchingTasks({ sel: 0, taskSel: 0 });
+  for (let i = 0; i < 4; i++) ui = dashboardReducer(ui, { type: 'down' }, [bare]).ui;
+  assert.equal(ui.taskSel, 2);
+});
+
+test('moveRow never lands on a separator (T12)', () => {
+  const rows = [{ id: 'T01' }, { id: '──', separator: true }, { id: 'coordinator', agent: true }];
+  assert.equal(moveRow(rows, 0, 1), 2);
+  assert.equal(moveRow(rows, 2, -1), 0);
+  assert.equal(moveRow(rows, 2, 1), 2);
+  assert.equal(moveRow(rows, 0, -1), 0);
+  // A separator at an end (never drawn so, but a clamp must not stop on it): the move is refused.
+  assert.equal(moveRow([{ id: 'T01' }, { id: '──', separator: true }], 0, 1), 0);
 });

@@ -332,3 +332,55 @@ test('workerScripts: the implementer marks 🔍 and reports implemented; the rev
   assert.equal(wg('status', '--porcelain'), '');
   assert.match(reports(rep).map((x) => x.text).join('\n'), /^\[pir:v1 kind=done task=T01\]/m);
 });
+
+// ---- pir-coordinator T07: the `react` step and the drill's reacting agent ----
+
+test('react answers every message with what its command printed, given FAKE_MESSAGE, and keeps going after a failure', async (t) => {
+  const dir = scratch(t);
+  const scripts = writeScripts(dir, [{
+    match: '.',
+    script: [{ react: 'case "$FAKE_MESSAGE" in fail*) echo nope >&2; exit 3;; *) printf "got: %s" "$FAKE_MESSAGE";; esac' }],
+  }]);
+  const f = runFake(t, { env: { PIR_FAKE_CLAUDE_SCRIPTS: scripts }, args: [`--session-id=${S1}`], cwd: dir });
+  const results = () => f.lines.filter((l) => l.type === 'result');
+  f.user('first');
+  await waitFor(() => results().length === 1, 'the first reply');
+  f.user('fail now');
+  await waitFor(() => results().length === 2, 'the failed turn');
+  f.user('third');
+  await waitFor(() => results().length === 3, 'the third reply');
+  assert.deepEqual(f.texts(), ['got: first', 'got: third']);
+  assert.equal(results()[1].is_error, true);
+  assert.match(results()[1].errors[0], /react exited 3: nope/);
+  assert.equal(f.lines.filter((l) => l.type === 'system' && l.subtype === 'init').length, 3, 'each turn opens with init');
+});
+
+test('coordinatorReact answers the real briefs: allow a routine request, pass a reserved one and a question, report at the end', async (t) => {
+  const { briefFor, endBriefFor, handoffFor } = await import('../../core/coordinator-brief.mjs');
+  const { readDecision } = await import('../../core/coordinator-policy.mjs');
+  const { coordinatorReact, DRILL_ROUTINE, DRILL_RESERVED, DRILL_QUESTION } = await import('./sessions.mjs');
+  const drop = scratch(t);
+  const decisions = () => readdirSync(drop).filter((n) => n.endsWith('.json')).sort().map((n) => JSON.parse(readFileSync(join(drop, n), 'utf8')));
+  let n = 0;
+  const react = (msg) => coordinatorReact(msg, drop, { now: () => ++n });
+
+  let reply = react(briefFor({ worker: 'w1', task: 'T01', kind: 'permission', requestId: 'r1', request: { toolName: 'Bash', input: DRILL_ROUTINE } }));
+  assert.match(reply, /^Allowed T01's request/);
+  reply = react(briefFor({ worker: 'w2', task: 'T02', kind: 'permission', requestId: 'r2', request: { toolName: 'Bash', input: DRILL_RESERVED }, reserved: { kind: 'destructive', why: 'x' } }));
+  assert.match(reply, /Answer it in T02's conversation/);
+  reply = react(briefFor({ worker: 'w3', task: 'T03', kind: 'questions', requestId: 'r3', request: { questions: [{ question: DRILL_QUESTION, options: [{ label: 'Keep it' }] }] } }));
+  assert.match(reply, /Answer it in T03's conversation/);
+  const d = decisions();
+  assert.deepEqual(d.map((x) => [x.kind, x.worker, x.requestId, x.decision]), [['permission', 'w1', 'r1', 'allow'], ['pass', 'w2', 'r2', undefined], ['pass', 'w3', 'r3', undefined]]);
+  for (const x of d) assert.equal(readDecision(x).ok, true, `a well-formed decision: ${JSON.stringify(x)}`);
+
+  const { DRILL_REPORT_DELAY_MS } = await import('./sessions.mjs');
+  const t0 = Date.now();
+  assert.equal(react(endBriefFor({ tasks: [], ledger: [], tests: 'green', sync: { state: 'merged' } })), 'The delivery report is written.');
+  assert.ok(Date.now() - t0 >= DRILL_REPORT_DELAY_MS - 50, 'it waits first, so `preparing` is on screen long enough to be seen');
+  assert.equal(decisions().at(-1).kind, 'report');
+  assert.equal(readDecision(decisions().at(-1)).ok, true);
+  assert.equal(react(handoffFor({ slug: 'drill', reportPath: 'plans/drill/REPORT.md', ready: true })), 'The branch is ready. Merge it yourself with: git merge pir/drill');
+  assert.equal(react('where are we?'), 'Noted: where are we?');
+  assert.equal(decisions().length, 4, 'a hand-off or a person\'s message writes no decision');
+});

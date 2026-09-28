@@ -41,6 +41,7 @@ const GLYPH = {
   merging: null,
   'fixing-conflict': null, // working, so it spins like the other active rows
   asking: '●',
+  'asking-coordinator': '●', // held by the coordinator agent: the asking dot, in the active colour
   done: '✔',
   waiting: '·',
   queued: '·',
@@ -111,10 +112,21 @@ const ROW_STYLE = {
   merging: 'active',
   'fixing-conflict': 'active', // the worker was sent the fix and is working (live-workers §2.10)
   asking: 'asking',
+  // The coordinator agent holds the question (pir-coordinator §2.5): nothing for the person yet, so it is
+  // not the amber standout.
+  'asking-coordinator': 'active',
   done: 'done',
   waiting: 'idle',
   queued: 'idle',
+  // The coordinator agent's pinned row and the line above it (pir-coordinator T12): never amber, since it
+  // asks nothing of the person; given up reads idle.
+  agent: 'active',
+  'agent-given-up': 'idle',
+  separator: 'idle',
 };
+
+// The agent row's glyph, set apart from every task glyph (pir-coordinator T12).
+const AGENT_GLYPH = '◆';
 
 // The single source of truth for the display's line ordering AND each line's colour style: the summary
 // line, then one line per row, then the footer lines. Each entry is `{ text, style }` where `style` is a
@@ -124,7 +136,16 @@ const ROW_STYLE = {
 export function styledLines(display, { spinnerChar = SPINNER[0] } = {}) {
   const { summary, rows, footer, branch } = display;
   const out = [summaryLine(summary, footer, branch, spinnerChar)];
-  for (const r of rows) out.push(rowLine(r, spinnerChar));
+  // The label column fits the longest label shown, so a long one (`asking coordinator · allow a command?`)
+  // does not push its own row's clock out of line with the others (pir-coordinator T07 drill). Floor 24, the
+  // width it always had; capped so one odd label cannot push every clock off a narrow window.
+  // The agent's row and the separator (T12) have no clock and no id column, so they size neither column.
+  const cols = rows.filter((r) => !isPinned(r));
+  const labelWidth = Math.min(LABEL_MAX, Math.max(LABEL_MIN, ...cols.map((r) => [...(r.label ?? '')].length)));
+  // The id column fits the longest id: 4 for a plan's `T01`, wider while an end-of-run helper's row
+  // (`tests-fix`, pir-coordinator T11) is shown, so its slug still starts in the same column as the tasks'.
+  const idWidth = Math.max(ID_MIN, ...cols.map((r) => [...(r.id ?? '')].length));
+  for (const r of rows) out.push(isPinned(r) ? pinnedLine(r, labelWidth, idWidth) : rowLine(r, spinnerChar, labelWidth, idWidth));
   for (const f of footerLines(footer, summary, spinnerChar)) out.push(f);
   return out;
 }
@@ -158,16 +179,36 @@ function summaryLine(summary, footer, branch, spinnerChar) {
   return { text: `${spinnerChar} ${branch || 'run'} · ${parts.join(' · ')}${ceiling}`, style: null };
 }
 
-function rowLine(r, spinnerChar) {
+const LABEL_MIN = 24;
+const SLUG_WIDTH = 22;
+// A row's clock with the space before it (` 12:05`), for the separator's span.
+const CLOCK_WIDTH = 6;
+const ID_MIN = 4;
+const LABEL_MAX = 40;
+
+function rowLine(r, spinnerChar, labelWidth = LABEL_MIN, idWidth = ID_MIN) {
   const glyph = GLYPH[r.kind] === null || GLYPH[r.kind] === undefined ? spinnerChar : GLYPH[r.kind];
   // For an idle/queued row the glyph is a faint dot; keep the columns aligned enough to read.
   const g = r.kind === 'waiting' || r.kind === 'queued' ? '·' : glyph;
-  const id = r.id.padEnd(4);
-  const slug = (r.slug ?? '').padEnd(22);
-  const label = r.label.padEnd(24);
+  const id = r.id.padEnd(idWidth);
+  const slug = (r.slug ?? '').padEnd(SLUG_WIDTH);
+  const label = r.label.padEnd(labelWidth);
   const el = fmtElapsed(r.elapsedMs);
   const text = `  ${g} ${id} ${slug} ${label} ${el}`.replace(/\s+$/, '');
   return { text, style: ROW_STYLE[r.kind] ?? null };
+}
+
+const isPinned = (r) => r.kind === 'separator' || r.kind === 'agent' || r.kind === 'agent-given-up';
+
+// The separator and the coordinator agent's row (pir-coordinator T12). The separator spans a task row's
+// width up to the end of its label column; the agent's name sits where a task's id and slug do, so its
+// state lines up with the tasks' labels. Both keep the two-column lead, where the watch view paints its
+// selected-row mark.
+function pinnedLine(r, labelWidth, idWidth) {
+  const style = ROW_STYLE[r.kind] ?? null;
+  if (r.kind === 'separator') return { text: `  ${'─'.repeat(2 + idWidth + 1 + SLUG_WIDTH + 1 + labelWidth + CLOCK_WIDTH)}`, style };
+  const name = (r.slug ?? '').padEnd(idWidth + 1 + SLUG_WIDTH);
+  return { text: `  ${AGENT_GLYPH} ${name} ${r.label}`.replace(/\s+$/, ''), style };
 }
 
 // The footer, in the model's kinds. The parked-worker footer is a COMPACT single line (DESIGN §2.2,
@@ -186,6 +227,7 @@ function footerLines(footer, summary, spinnerChar = SPINNER[0]) {
       return [blank, { text: `● ${who} — asking you; open it (→) to answer`, style: 'asking' }];
     }
     case 'handoff':
+      if (footer.state) return agentHandoffLines(footer, summary, spinnerChar);
       return [
         blank,
         { text: `✔ all ${summary.total} task(s) green on ${footer.branch} · tests pass. Yours to merge:`, style: 'done' },
@@ -209,6 +251,24 @@ function footerLines(footer, summary, spinnerChar = SPINNER[0]) {
     default:
       return [blank];
   }
+}
+
+// The end of a run with the coordinator agent (pir-coordinator §2.9, §2.10): preparing while main is merged
+// in and the report written, then `ready to merge` with the merge line, or `not ready` red, each naming the
+// committed REPORT.md. The merge itself stays the person's.
+function agentHandoffLines(footer, summary, spinnerChar) {
+  const blank = { text: '', style: null };
+  const report = footer.reportPath ? [{ text: `  report: ${footer.reportPath}`, style: 'idle' }] : [];
+  if (footer.state === 'ready') {
+    return [blank, { text: `✔ ready to merge · git merge ${footer.branch}`, style: 'done' }, ...report];
+  }
+  if (footer.state === 'red') {
+    const lines = [blank, { text: `✗ not ready · tests red on ${footer.branch} — no merge offered`, style: 'red' }];
+    const why = [footer.reason, footer.logPath && `output: ${footer.logPath}`].filter(Boolean).join(' · ');
+    if (why) lines.push({ text: `  ${why}`, style: 'red' });
+    return [...lines, ...report];
+  }
+  return [blank, { text: `${spinnerChar} all ${summary.total} task(s) merged · preparing: syncing main, writing the report`, style: 'active' }];
 }
 
 // createRenderer({ stream }) → { paint(display), line(text), close() } (DESIGN §2.3, T15).
