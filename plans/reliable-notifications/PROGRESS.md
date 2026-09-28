@@ -24,10 +24,10 @@ done · ⛔ blocked, needs a human.
 
 | # | Task | Depends on | State | Notes |
 |---|---|---|---|---|
-| T01 | alert-core | — | ⬜ | |
-| T02 | ntfy-sender | — | ⬜ | |
+| T01 | alert-core | — | ✅ | |
+| T02 | ntfy-sender | — | ✅ | |
 | T03 | notify-icon | — | ✅ | |
-| T04 | worker-link-and-silence | — | ⬜ | |
+| T04 | worker-link-and-silence | — | ✅ | |
 | T05 | why-yours | — | ✅ | `passed` map and `whyPerson()` in `startCoordinator`. Review: code correct, both deviations (firstSeen order, `unavailable` fallback) accepted; the oldest-item test passed with firstSeen gutted, so added a park-before-request test that goes red without it. Probed agent death and return, late pass, reserved pass, justSettled. |
 | T06 | notify-command | T02 | ⬜ | |
 | T07 | coordinator-alerts | T01, T02, T04, T05 | ⬜ | |

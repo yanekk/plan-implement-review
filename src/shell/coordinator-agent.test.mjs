@@ -10,7 +10,7 @@ import { join } from 'node:path';
 import { startWorker as realStartWorker } from './worker-proc.mjs';
 import { startCoordinatorAgent, gateFor, AGENT_TOOLS, closingAnswer, readLogEntries } from './coordinator-agent.mjs';
 import { createFakePlatform } from './fake/platform.mjs';
-import { fakeClaudeSpawner, initEvent, toolUse, resultEvent } from './fake/claude-stream.mjs';
+import { fakeClaudeSpawner, initEvent, toolUse, resultEvent, turn, REMOTE_CONTROL_RESPONSE } from './fake/claude-stream.mjs';
 import { allowResult } from '../core/stream.mjs';
 
 const CLAUDE = '/nonexistent/claude';
@@ -557,4 +557,51 @@ test('readLogEntries: a missing file is [], a torn line is skipped', (t) => {
   const p = join(dir, 'a.ndjson');
   writeFileSync(p, '{"dir":"note","kind":"exited"}\n{"dir":"out"');
   assert.deepEqual(readLogEntries(p), [{ dir: 'note', kind: 'exited' }]);
+});
+
+// ---- reliable-notifications T04: the agent's environment and its Remote Control link ----
+
+test('env: the agent gets the variable over the inherited environment, read again on a resume', async (t) => {
+  const s = scratch(t);
+  let calls = 0;
+  const env = () => {
+    calls += 1;
+    return { CLAUDE_CLIENT_PRESENCE_FILE: `/tmp/presence-${calls}` };
+  };
+  const seen = [];
+  const startSeeing = (o) => {
+    seen.push(o.env);
+    return realStartWorker({ ...o, spawnProcess: fakeClaudeSpawner({ script: writeScript(s.dir) }) });
+  };
+  const first = start(s, [{ await: 'user' }], t, { env, startWorker: startSeeing });
+  await first.agent.close({ graceMs: 100, killMs: 300 });
+  const second = start(s, [{ await: 'user' }], t, { env, startWorker: startSeeing });
+  assert.equal(second.agent.id, first.agent.id, 'the second start is a resume');
+  assert.equal(calls, 2);
+  assert.deepEqual(seen.map((e) => e.CLAUDE_CLIENT_PRESENCE_FILE), ['/tmp/presence-1', '/tmp/presence-2']);
+  assert.equal(seen[1].PATH, process.env.PATH, 'the inherited environment is kept');
+});
+
+test('env returning null, or none: the agent inherits and gets no env option', async (t) => {
+  const s = scratch(t);
+  const seen = [];
+  const startSeeing = (o) => {
+    seen.push('env' in o);
+    return realStartWorker({ ...o, spawnProcess: fakeClaudeSpawner({ script: writeScript(s.dir) }) });
+  };
+  const a = start(s, [{ await: 'user' }], t, { env: () => null, startWorker: startSeeing });
+  await a.agent.close({ graceMs: 100, killMs: 300 });
+  start(s, [{ await: 'user' }], t, { startWorker: startSeeing });
+  assert.deepEqual(seen, [false, false]);
+});
+
+test('remoteUrl() reads the agent session\'s Remote Control link; null with Remote Control off', async (t) => {
+  const s = scratch(t);
+  const { agent } = start(s, [{ await: 'user' }, ...turn('ok')], t);
+  await waitFor(() => agent.remoteUrl(), 'the agent\'s link');
+  assert.equal(agent.remoteUrl(), REMOTE_CONTROL_RESPONSE.session_url);
+  const s2 = scratch(t);
+  const off = start(s2, [{ await: 'user' }, ...turn('ok')], t, { remote: false });
+  await waitFor(() => off.agent.session.entries().some((e) => e.dir === 'in'), 'the agent to start');
+  assert.equal(off.agent.remoteUrl(), null);
 });
