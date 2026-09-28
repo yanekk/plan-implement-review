@@ -254,6 +254,22 @@ test('checkDecision refuses an unknown worker and an unknown or already-answered
   assert.equal(late.passOn, false);
 });
 
+test('checkDecision refuses a decision for an item known closed with those facts; the generic refusal stays for the rest (T15)', () => {
+  const answered = new Map([['w1:p1', 'already answered by the person: denied'], ['w3:report', 'closed with no answer: the worker exited before anyone answered']]);
+  const late = checkDecision(dec({ kind: 'pass', worker: 'w1', requestId: 'p1', reason: 'note', suggestion: 'deny' }), [RESERVED], { answered });
+  assert.deepEqual(late, { ok: false, why: 'already answered by the person: denied', passOn: false });
+  const noWorker = checkDecision(dec({ kind: 'permission', worker: 'w1', requestId: 'p1', decision: 'allow', reason: 'x' }), [], { answered });
+  assert.equal(noWorker.why, 'already answered by the person: denied');
+  const park = checkDecision(dec({ kind: 'message', worker: 'w3', text: 'JSON', reason: 'x' }), [], { answered });
+  assert.equal(park.why, 'closed with no answer: the worker exited before anyone answered');
+  // A worker that never had an item: the generic refusal.
+  const ghost = checkDecision(dec({ kind: 'permission', worker: 'ghost', requestId: 'p1', decision: 'allow', reason: 'x' }), WAITING, { answered });
+  assert.match(ghost.why, /nothing is waiting from worker "ghost" \(unknown worker, or already answered\)/);
+  // Still waiting (a later item under the same key): checked as usual, the old facts ignored.
+  const again = checkDecision(dec({ kind: 'message', worker: 'w3', text: 'JSON', reason: 'x' }), [REPORT], { answered });
+  assert.equal(again.ok, true);
+});
+
 test('checkDecision refuses a kind mismatch', () => {
   const r = checkDecision(dec({ kind: 'answers', worker: 'w1', requestId: 'p1', answers: { q: 'a' }, reason: 'x' }), WAITING);
   assert.equal(r.ok, false);

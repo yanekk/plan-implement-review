@@ -104,9 +104,29 @@ message. A worker cannot tell the agent's answer from the person's. A `message` 
 exactly as the person's message does (`resumeAnswered` in `loop.mjs` counts a coordinator send as an
 answer). A `deny` carries the agent's reason to the worker.
 
-**The first answer wins.** The person may answer any item at any time, in `pir` or on the phone, held
-or not. When the person answers an item the agent holds, the agent is told "already answered by the
-person" and a late decision for it is refused.
+**The first answer wins, and the agent is told who and what.** The person may answer any item at any
+time, in `pir` or on the phone, held or not. Every item the agent was briefed on, reserved ones included,
+that stops waiting without a decision of the agent's is reported to it once, on the pass the command
+sees it gone: who closed it and the answer, read from the worker's conversation log
+(`closingAnswer` in `src/shell/coordinator-agent.mjs`, worded by `closedWhy` in
+`src/core/coordinator-brief.mjs`):
+
+| How it closed | The agent is told |
+|---|---|
+| The person answered in `pir` | "Already answered by the person:" `allowed`, `denied (message)`, the chosen answers, or the quoted message |
+| The person answered on the phone | "Already answered by the person on the phone (Remote Control):" the answer when the log shows it (a permission whose tool ran is `allowed`; a question set's result names the answers; a typed reply only when the CLI replayed it), else "the answer was not recorded" |
+| A standing permission covered it | "Already allowed by a standing permission the person gave earlier: allowed" |
+| The worker exited, was interrupted or restarted | "Closed with no answer: the worker exited before anyone answered" (never "answered by the person") |
+| Nothing in the log says | "No longer waiting; pir did not record who closed it or the answer" |
+
+A decision the agent then writes for that item is refused with the same words, not the generic
+"nothing is waiting from worker … (unknown worker, or already answered)", which stays for a worker that
+never had an item. An item the agent passed on (a `pass`, or a `permission` for a reserved item, which
+is passed on with its note) is not reported when the person later answers it: the pass was the agent's
+decision. A pass refused because the item was already closed is not a decision, and the item is
+reported. The skill tells the agent to correct its own pointer in one line if it had sent the person to
+answer the item, and otherwise to say nothing, and never to guess who answered. The row, the tally and
+Remote Control do not change for any of this.
 
 **Who gets which item:**
 
@@ -131,8 +151,8 @@ limit: they are the person's from the start.
 **A late answer still counts while the person has not answered.** A `permission`, `answers` or
 `message` from the agent for a timed-out item is applied like any decision, its ledger line carrying
 `late: true`; the row goes back to working and Remote Control goes off. A late `pass` changes nothing on
-screen and is ledgered `late: true`. If the person answered first, the agent is told "already answered
-by the person" and its decision is refused.
+screen and is ledgered `late: true`, and the person's later answer to that item is not reported. If the
+person answered first, the agent is told who answered and what, as above, and its decision is refused.
 
 ## What always goes to the person
 

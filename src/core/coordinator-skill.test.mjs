@@ -181,3 +181,16 @@ test('the skill names the 5-minute hold limit and the hand-over, and no longer s
   assert.match(SKILL, /Reply to it with the pointer/);
   assert.match(SKILL, /may\s+still answer the item while the person has not/);
 });
+
+// T15: an item closed without the agent — who and what, a one-line correction only when its pointer sent the
+// person there, never a guess.
+test('the skill says the agent is told who closed an item and what, corrects its pointer in one line, never guesses', () => {
+  assert.match(SKILL, /An item closed without you/);
+  assert.match(SKILL, /reserved ones included/);
+  assert.match(SKILL, /who closed it and what the answer was/);
+  assert.match(SKILL, /If your own last reply sent the person to answer\s+it, say in one line that it is already settled and how/);
+  assert.match(SKILL, /otherwise say nothing about it/);
+  assert.match(SKILL, /Never guess who answered/);
+  assert.match(SKILL, /An item you passed on is not reported/);
+  assert.match(SKILL, /Closed with no answer/);
+});

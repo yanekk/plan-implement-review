@@ -8,7 +8,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync, readFileSync, readdirSyn
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { startWorker as realStartWorker } from './worker-proc.mjs';
-import { startCoordinatorAgent, gateFor, AGENT_TOOLS } from './coordinator-agent.mjs';
+import { startCoordinatorAgent, gateFor, AGENT_TOOLS, closingAnswer, readLogEntries } from './coordinator-agent.mjs';
 import { createFakePlatform } from './fake/platform.mjs';
 import { fakeClaudeSpawner, initEvent, toolUse, resultEvent } from './fake/claude-stream.mjs';
 import { allowResult } from '../core/stream.mjs';
@@ -169,11 +169,13 @@ test('brief sends briefFor(item) once per item; answeredElsewhere tells the agen
   const item = permissionItem(s);
   assert.equal(agent.brief(item), true);
   assert.equal(agent.brief(item), false, 'an item is briefed once');
-  assert.equal(agent.answeredElsewhere(item), true);
+  assert.equal(agent.answeredElsewhere(item, { by: 'person', answer: 'denied' }), true);
+  assert.equal(agent.answeredElsewhere(item, { by: 'person', answer: 'denied' }), false, 'told once per item (T15)');
   const texts = told(agent);
   assert.match(texts[1], /asking permission/);
   assert.match(texts[1], /`r1`/);
-  assert.match(texts[2], /Already answered by the person/);
+  assert.match(texts[2], /^Already answered by the person: denied\./);
+  assert.equal(texts.length, 3);
   assert.equal(agent.tell('hand-off'), true);
   assert.equal(told(agent).at(-1), 'hand-off');
 });
@@ -276,9 +278,15 @@ test('an answer the platform finds no longer pending: agent told it was answered
   const { agent } = start(s, [{ await: 'user' }], t);
   s.platform.answer = () => ({ ok: false });
   drop(s, '1-a.json', { kind: 'permission', worker: s.w1, requestId: 'r1', decision: 'allow', reason: 'x' });
-  agent.drain([permissionItem(s)]);
+  const seen = [];
+  agent.drain([permissionItem(s)], { closedOf: (i) => (seen.push(i.requestId), { by: 'person', answer: 'denied' }) });
   assert.equal(agent.ledger().length, 0);
-  assert.match(told(agent).at(-1), /Already answered by the person/);
+  assert.deepEqual(seen, ['r1'], 'the closing answer is looked up for that item');
+  assert.match(told(agent).at(-1), /^Already answered by the person: denied\./);
+  // A second decision for it is refused with the same facts (T15).
+  drop(s, '2-b.json', { kind: 'permission', worker: s.w1, requestId: 'r1', decision: 'deny', reason: 'y' });
+  agent.drain([]);
+  assert.match(told(agent).at(-1), /2-b\.json was not applied: already answered by the person: denied\./);
 });
 
 test('a file that fails to parse is left for one pass and applied if it parses then; refused if it still fails', async (t) => {
@@ -470,3 +478,83 @@ function writeScript(dir) {
   writeFileSync(p, JSON.stringify([{ await: 'user' }]));
   return p;
 }
+
+// ---- Who closed an item (T15) ----
+
+// The recorded Remote Control probe (2026-09-27): each case is one worker's log.
+const REMOTE_SAMPLE = readLogEntries(join(import.meta.dirname, '..', 'core', 'fixtures', 'remote-answer-sample.ndjson'));
+const sampleCase = (name) => REMOTE_SAMPLE.filter((e) => e.case === name);
+const reqItem = (entries, kind) => {
+  const r = entries.find((e) => e.dir === 'request');
+  return { worker: 'w', task: 'T01', kind, requestId: r.requestId };
+};
+
+test('closingAnswer: a reply names its sender and the answer — denied with its message, allowed, the chosen answers', () => {
+  const req = { dir: 'request', requestId: 'r1', toolName: 'Bash', input: { command: 'git push' } };
+  const item = { worker: 'w', kind: 'permission', requestId: 'r1' };
+  const deny = [req, { dir: 'out', from: 'person', kind: 'reply', requestId: 'r1', result: { behavior: 'deny', message: 'not now' } }];
+  assert.deepEqual(closingAnswer(deny, item), { by: 'person', answer: 'denied (not now)' });
+  const bare = [req, { dir: 'out', from: 'person', kind: 'reply', requestId: 'r1', result: { behavior: 'deny', message: 'The person refused.' } }];
+  assert.deepEqual(closingAnswer(bare, item), { by: 'person', answer: 'denied' });
+  const allow = [req, { dir: 'out', from: 'person', kind: 'reply', requestId: 'r1', result: { behavior: 'allow', updatedInput: {} } }];
+  assert.deepEqual(closingAnswer(allow, item), { by: 'person', answer: 'allowed' });
+  const q = [
+    { dir: 'request', requestId: 'q1', toolName: 'AskUserQuestion', input: {} },
+    { dir: 'out', from: 'person', kind: 'reply', requestId: 'q1', result: { behavior: 'allow', updatedInput: { answers: { 'Format?': 'JSON', 'Size?': 'L' } } } },
+  ];
+  assert.deepEqual(closingAnswer(q, { worker: 'w', kind: 'questions', requestId: 'q1' }), { by: 'person', answer: 'Format? → JSON; Size? → L' });
+});
+
+test('closingAnswer: a standing grant is named as one; an exit, an interrupt or a restart closes with no answer', () => {
+  const req = { dir: 'request', requestId: 'r1', toolName: 'Bash', input: {} };
+  const item = { worker: 'w', kind: 'permission', requestId: 'r1' };
+  const grant = [req, { dir: 'out', from: 'pir', kind: 'reply', requestId: 'r1', result: { behavior: 'allow' } }, { dir: 'note', kind: 'delivered-by-grant', requestId: 'r1', toolName: 'Bash' }];
+  assert.deepEqual(closingAnswer(grant, item), { by: 'grant', answer: 'allowed' });
+  assert.deepEqual(closingAnswer([req, { dir: 'note', kind: 'exited', code: 1 }], item), { by: 'stopped', how: 'exited' });
+  assert.deepEqual(closingAnswer([req, { dir: 'out', from: 'person', kind: 'interrupt' }], item), { by: 'stopped', how: 'interrupted' });
+  assert.deepEqual(closingAnswer([req, { dir: 'note', kind: 'resumed' }], item), { by: 'stopped', how: 'restarted' });
+  assert.deepEqual(closingAnswer([req], item), { by: 'unknown' });
+  assert.deepEqual(closingAnswer([], item), { by: 'unknown' });
+  // Another request's reply does not close this one.
+  assert.deepEqual(closingAnswer([req, { dir: 'out', from: 'person', kind: 'reply', requestId: 'r2', result: { behavior: 'allow' } }], item), { by: 'unknown' });
+});
+
+test('closingAnswer: a report park is read from `since` — the person\'s message quoted, an exit with no answer', () => {
+  const item = { worker: 'w', kind: 'report' };
+  const log = [
+    { dir: 'out', from: 'person', kind: 'message', text: 'an earlier answer' },
+    { dir: 'in', event: { type: 'result', subtype: 'success', result: 'Which format?' } },
+    { dir: 'out', from: 'person', kind: 'message', text: ' YAML, please. ' },
+  ];
+  assert.deepEqual(closingAnswer(log, item, { since: 2 }), { by: 'person', answer: '"YAML, please."' });
+  assert.deepEqual(closingAnswer([...log.slice(0, 2), { dir: 'note', kind: 'exited', code: 0 }], item, { since: 2 }), { by: 'stopped', how: 'exited' });
+  assert.deepEqual(closingAnswer(log.slice(0, 2), item, { since: 2 }), { by: 'unknown' });
+  // A conflict fix pir sent is not an answer.
+  assert.deepEqual(closingAnswer([{ dir: 'out', from: 'pir', kind: 'message', text: 'resolve it' }], item), { by: 'unknown' });
+});
+
+test('closingAnswer on the recorded phone answers: named as the phone, with the answer when the log shows it, else none', () => {
+  const picker = sampleCase('3-remote-picker-replay');
+  assert.deepEqual(closingAnswer(picker, reqItem(picker, 'questions')), { by: 'phone', answer: 'Which colour do you prefer? → Green' });
+  const perm = sampleCase('4-remote-permission-replay');
+  assert.deepEqual(closingAnswer(perm, reqItem(perm, 'permission')), { by: 'phone', answer: 'allowed' });
+  // A report park answered by typing on the phone: the typed text is in the log only when the CLI replays it.
+  const at = (entries) => entries.findIndex((e) => e.kind === 'remote-control' && e.on === true);
+  const typed = sampleCase('2-remote-typed');
+  assert.deepEqual(closingAnswer(typed, { worker: 'w', kind: 'report' }, { since: at(typed) }), { by: 'phone' });
+  const replayed = sampleCase('2-remote-typed-replay');
+  assert.deepEqual(closingAnswer(replayed, { worker: 'w', kind: 'report' }, { since: at(replayed) }), { by: 'phone', answer: '"Green"' });
+  // Typed in pir instead: the person's own message.
+  const pirTyped = sampleCase('1-pir-typed');
+  assert.deepEqual(closingAnswer(pirTyped, { worker: 'w', kind: 'report' }, { since: at(pirTyped) }), { by: 'person', answer: '"My favourite colour is teal."' });
+});
+
+test('readLogEntries: a missing file is [], a torn line is skipped', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'pir-t15-log-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  assert.deepEqual(readLogEntries(join(dir, 'none.ndjson')), []);
+  assert.deepEqual(readLogEntries(null), []);
+  const p = join(dir, 'a.ndjson');
+  writeFileSync(p, '{"dir":"note","kind":"exited"}\n{"dir":"out"');
+  assert.deepEqual(readLogEntries(p), [{ dir: 'note', kind: 'exited' }]);
+});

@@ -92,6 +92,11 @@ function addTaskRows(cwd, task, plan, rows) {
 //                            not build until every one is answered through answer(); workers() shows the
 //                            unanswered ones as its `pending`, as the real fold does (pir-coordinator T04).
 //
+// Each worker keeps an in-memory conversation log under its `logPath` (`logs`, read with readLog): a
+// `request` entry per scripted request at spawn, a `reply` per answer, a `message` per send, a `note` per
+// note, and an `exited` note when it crashes or is closed — the entries pir-coordinator T15 reads to tell
+// the agent who closed an item. `appendLog(id, entry)` adds any other entry (a phone answer, a tool result).
+//
 // The `resurrectClosed` behaviour of the `claude --bg` days (a closed session reappearing under its old
 // id as a stale registry entry) is gone with live-workers T05: a child that exited cannot come back.
 export function createFakePlatform({ behaviors = {} } = {}) {
@@ -109,6 +114,14 @@ export function createFakePlatform({ behaviors = {} } = {}) {
   let nextId = 0;
   const all = []; // every worker record in spawn order, kept after close, for workers()
   const counters = new Map(); // `${task}-${role}` → n, the conversation-log counter (DESIGN §2.3)
+  const logs = new Map(); // logPath → the worker's log entries, as the real worker-proc writes them
+  const logFor = (id) => {
+    const w = all.find((x) => x.id === id);
+    if (!w) return null;
+    if (!logs.has(w.logPath)) logs.set(w.logPath, []);
+    return logs.get(w.logPath);
+  };
+  const appendLog = (id, entry) => logFor(id)?.push(entry);
 
   function emit(w, kind, text = '') {
     inboxQueue.push({ from: w.name, task: w.task, kind, text });
@@ -136,6 +149,7 @@ export function createFakePlatform({ behaviors = {} } = {}) {
         if (b.crash) {
           w.live = false;
           w.stage = 'dead';
+          appendLog(w.id, { dir: 'note', kind: 'exited', code: 1, signal: null });
           return;
         }
         if (b.question) {
@@ -317,6 +331,9 @@ export function createFakePlatform({ behaviors = {} } = {}) {
       w.logPath = `conversations/${key}-${w.n}.ndjson`;
       workers.set(id, w);
       all.push(w);
+      for (const r of w.requests ?? []) {
+        appendLog(id, { dir: 'request', requestId: r.requestId, toolName: r.kind === 'questions' ? 'AskUserQuestion' : r.toolName, input: r.kind === 'questions' ? { questions: r.questions } : r.input });
+      }
       spawns.push({ id, name, task, role: phase, cwd, note, opening });
       return id;
     },
@@ -328,6 +345,7 @@ export function createFakePlatform({ behaviors = {} } = {}) {
       sent.push({ to: id, text, from });
       const w = liveWorker(id);
       if (!w) return { ok: false };
+      appendLog(id, { dir: 'out', from, kind: 'message', text });
       if (w.stage === 'awaiting') w.answered = true;
       // A worker parked on a coordinator-hit merge conflict (it had already reported done, so it is a
       // review-role session at stage 'done') receives the user's decision and moves to resolve it on
@@ -359,6 +377,7 @@ export function createFakePlatform({ behaviors = {} } = {}) {
         if (at === -1) return { ok: false };
         w.requests.splice(at, 1);
       }
+      appendLog(id, { dir: 'out', from, kind: 'reply', requestId, result });
       return { ok: true };
     },
 
@@ -373,6 +392,7 @@ export function createFakePlatform({ behaviors = {} } = {}) {
     // live or exited, so any id this fake ever spawned takes one.
     note(id, kind, fields = {}) {
       notes.push({ to: id, kind, fields });
+      appendLog(id, { ...fields, dir: 'note', kind });
       return { ok: all.some((w) => w.id === id) };
     },
 
@@ -430,6 +450,7 @@ export function createFakePlatform({ behaviors = {} } = {}) {
       closed.push(id);
       closeOpts.push({ id, ...opts });
       const w = workers.get(id);
+      if (w) appendLog(id, { dir: 'note', kind: 'exited', code: 0, signal: null });
       const linger = w ? behaviors[w.task]?.lingerClosed ?? 0 : 0;
       if (w && linger > 0) {
         w.stage = 'closed'; // no further advance; list() ages it out over `linger` ticks
@@ -454,6 +475,12 @@ export function createFakePlatform({ behaviors = {} } = {}) {
     inbox() {
       return inboxQueue.splice(0, inboxQueue.length);
     },
+
+    // readLog(logPath) → the entries logged for that worker so far (a copy); [] for a log never written.
+    readLog(logPath) {
+      return (logs.get(logPath) ?? []).slice();
+    },
+    appendLog,
 
     // --- test introspection ---
     spawns,

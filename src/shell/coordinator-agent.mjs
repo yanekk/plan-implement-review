@@ -15,7 +15,8 @@ import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { readDecision, checkDecision, describeItem } from '../core/coordinator-policy.mjs';
-import { briefFor, refusalFor, answeredElsewhereFor, openingFor, resumedFor, endBriefFor, timedOutFor, holdWords } from '../core/coordinator-brief.mjs';
+import { briefFor, refusalFor, answeredElsewhereFor, closedWhy, openingFor, resumedFor, endBriefFor, timedOutFor, holdWords } from '../core/coordinator-brief.mjs';
+import { readEntry, DEFAULT_REFUSAL } from '../core/stream.mjs';
 import { writeJsonAtomic } from './atomic-write.mjs';
 
 // DESIGN §3.4. The allowlist is what actually holds (T00); `disallowedTools` is the second fence.
@@ -141,6 +142,135 @@ function readJson(path) {
   }
 }
 
+// ---- Who closed an item, and with what (DESIGN §2.3, T15) ----
+//
+// An item the agent was briefed on can stop waiting without a decision of its own: the person answered in
+// pir or on the phone, a standing grant allowed it, or the worker stopped. The agent is told which, and the
+// answer when the worker's conversation log shows it, so it never has to guess who answered.
+
+// readLogEntries(logPath) → the parsed entries of a conversation log; [] when it is missing or unreadable.
+// A line that does not parse (a torn last line) is skipped.
+export function readLogEntries(logPath) {
+  if (typeof logPath !== 'string' || !existsSync(logPath)) return [];
+  const out = [];
+  try {
+    for (const line of readFileSync(logPath, 'utf8').split('\n')) {
+      if (!line.trim()) continue;
+      try {
+        out.push(JSON.parse(line));
+      } catch {
+        // a torn line
+      }
+    }
+  } catch {
+    return [];
+  }
+  return out;
+}
+
+const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
+const BY_SENDER = { person: 'person', coordinator: 'coordinator', pir: 'pir' };
+// Remote Control input opening (stream.mjs REMOTE_OPEN_STATES): the person typed on claude.ai or the phone.
+const REMOTE_OPEN = new Set(['queued', 'started']);
+
+// What a reply's result said, in the plain form the agent is told.
+function describeResult(item, result) {
+  const r = isObj(result) ? result : {};
+  if (item.kind === 'questions') {
+    if (r.behavior === 'allow') {
+      const given = isObj(r.updatedInput?.answers) ? r.updatedInput.answers : {};
+      const pairs = Object.entries(given).map(([q, a]) => `${q} → ${a}`);
+      return pairs.length ? pairs.join('; ') : 'answered, with no answers recorded';
+    }
+    return `replied in text instead: ${r.message ?? ''}`.trim();
+  }
+  if (r.behavior === 'allow') return 'allowed';
+  return typeof r.message === 'string' && r.message.trim() && r.message !== DEFAULT_REFUSAL ? `denied (${r.message.trim()})` : 'denied';
+}
+
+// The answer a phone (Remote Control) answer left in the log: the tool's result, since the CLI logs no
+// reply for it (worker-proc.mjs `answered-remotely`). A permission whose tool ran cleanly was allowed; a
+// question set's result names the chosen answers. Anything else is not recorded: an error result may be
+// a denial or a failed tool, and saying either would be a guess.
+function remoteAnswer(list, from, item, toolUseId) {
+  for (let i = from; i < list.length; i++) {
+    for (const ev of readEntry(list[i])) {
+      if (ev.kind !== 'tool-result' || (toolUseId && ev.toolUseId !== toolUseId)) continue;
+      if (item.kind === 'questions') {
+        const pairs = [...ev.text.matchAll(/"([^"]*)"="([^"]*)"/g)].map((m) => `${m[1]} → ${m[2]}`);
+        return pairs.length ? pairs.join('; ') : null;
+      }
+      return ev.isError ? null : 'allowed';
+    }
+  }
+  return null;
+}
+
+// closingAnswer(entries, item, { since }) → { by, answer?, how? }: how the item stopped waiting, read from
+// the worker's conversation log. `by` is 'person' | 'phone' | 'grant' | 'pir' | 'coordinator' | 'stopped'
+// | 'unknown'; `answer` is set only when the log shows it; `how` ('exited' | 'interrupted' | 'restarted')
+// only for 'stopped'. A request is found by its requestId; a report park has none, so it is read from
+// `since`, the log's length when the park was first seen.
+export function closingAnswer(entries, item, { since = 0 } = {}) {
+  const list = Array.isArray(entries) ? entries : [];
+  const i0 = isObj(item) ? item : {};
+  const noteOf = (e, kind) => isObj(e) && e.dir === 'note' && e.kind === kind;
+  const stoppedBy = (e) => {
+    if (noteOf(e, 'exited')) return 'exited';
+    if (noteOf(e, 'resumed')) return 'restarted';
+    return null;
+  };
+
+  if (i0.requestId !== undefined) {
+    const id = i0.requestId;
+    const at = list.findIndex((e) => isObj(e) && e.dir === 'request' && e.requestId === id);
+    let toolUseId = null;
+    for (let i = (at === -1 ? list.length : at) - 1; i >= 0 && toolUseId === null; i--) {
+      for (const ev of readEntry(list[i])) if (ev.kind === 'tool-use' && ev.name === list[at]?.toolName) toolUseId = ev.toolUseId;
+    }
+    for (let i = at + 1; i < list.length; i++) {
+      const e = list[i];
+      if (!isObj(e)) continue;
+      if (e.dir === 'out' && e.kind === 'reply' && e.requestId === id) {
+        const grant = e.from === 'pir' && list.slice(i + 1).some((n) => noteOf(n, 'delivered-by-grant') && n.requestId === id);
+        if (grant) return { by: 'grant', answer: 'allowed' };
+        return { by: BY_SENDER[e.from] ?? 'unknown', answer: describeResult(i0, e.result) };
+      }
+      if (noteOf(e, 'delivered-by-grant') && e.requestId === id) return { by: 'grant', answer: 'allowed' };
+      if (noteOf(e, 'answered-remotely') && e.requestId === id) {
+        const answer = remoteAnswer(list, i + 1, i0, toolUseId);
+        return answer ? { by: 'phone', answer } : { by: 'phone' };
+      }
+      if (e.dir === 'out' && e.kind === 'interrupt') return { by: 'stopped', how: 'interrupted' };
+      const how = stoppedBy(e);
+      if (how) return { by: 'stopped', how };
+    }
+    return { by: 'unknown' };
+  }
+
+  for (let i = Math.max(0, since | 0); i < list.length; i++) {
+    const e = list[i];
+    if (!isObj(e)) continue;
+    if (e.dir === 'out' && e.kind === 'message' && (e.from === 'person' || e.from === 'coordinator')) {
+      return { by: e.from, answer: `"${String(e.text ?? '').trim()}"` };
+    }
+    for (const ev of readEntry(e)) {
+      if (ev.kind === 'system' && ev.subtype === 'command_lifecycle' && REMOTE_OPEN.has(ev.event?.state)) {
+        // The typed text reaches the log only as a replayed user message, when the CLI replays it.
+        for (let j = i + 1; j < list.length; j++) {
+          const typed = readEntry(list[j]).find((x) => x.kind === 'text' && x.role === 'user' && !x.synthetic && x.text.trim());
+          if (typed) return { by: 'phone', answer: `"${typed.text.trim()}"` };
+          if (readEntry(list[j]).some((x) => x.kind === 'result')) break;
+        }
+        return { by: 'phone' };
+      }
+    }
+    const how = stoppedBy(e);
+    if (how) return { by: 'stopped', how };
+  }
+  return { by: 'unknown' };
+}
+
 // startCoordinatorAgent(...) → CoordinatorAgent. See tasks/T03-coordinator-session.md for the interface.
 // `remote` is false when PARALLEL_REMOTE=0 switched Remote Control off for the run (DESIGN §2.8);
 // `skillsDir` and `uuid` are injectable for tests.
@@ -187,6 +317,10 @@ export function startCoordinatorAgent({
   let givenUp = false;
   let closing = false;
   const briefed = new Map(); // item key → item, every item briefed this run
+  // item key → why a decision for it is refused (closedWhy): the items it was told were closed without a
+  // decision of its own (T15), so a late decision is refused with the same facts, not the generic "unknown
+  // worker". Cleared for a key when that key is briefed again (a worker's next report park).
+  const answered = new Map();
   const unparsed = new Set(); // decision files that failed to parse once (DESIGN §3.5)
 
   function launch() {
@@ -284,8 +418,9 @@ export function startCoordinatorAgent({
   // answered by it, or found already answered and the agent told so here — as { worker, requestId? }, so
   // the run never tells the agent a second time that the person answered it (T04). `late` is the keys of
   // the items the hold limit already handed to the person (T13): a decision for one is applied as any
-  // other, first answer winning, and its ledger line carries `late: true`.
-  function drain(waiting = [], { ready = false, late = new Set() } = {}) {
+  // other, first answer winning, and its ledger line carries `late: true`. `closedOf(item)` → how an item
+  // found answered between the snapshot and the apply was closed (closingAnswer), for the message (T15).
+  function drain(waiting = [], { ready = false, late = new Set(), closedOf = () => ({ by: 'unknown' }) } = {}) {
     const out = { passed: [], settled: [] };
     const ledgerFor = (a) => (late.has(keyOf(a)) ? { ...a.ledger, late: true } : a.ledger);
     let files = [];
@@ -329,7 +464,7 @@ export function startCoordinatorAgent({
         tell(refusalFor(read.error, file));
         continue;
       }
-      const checked = checkDecision(read.decision, remaining, { ready });
+      const checked = checkDecision(read.decision, remaining, { ready, answered });
       if (!checked.ok) {
         if (checked.passOn) {
           // A permission for a reserved item: the item goes to the person with the agent's text as its note.
@@ -369,11 +504,19 @@ export function startCoordinatorAgent({
       } else if (a.kind === 'message') {
         tell(refusalFor(`worker ${a.worker} could not be reached; it has exited`, file));
       } else {
-        // Not pending any more: the person answered it between the pass's snapshot and now.
-        tell(answeredElsewhereFor(item));
+        // Not pending any more: someone answered it between the pass's snapshot and now.
+        told(item, closedOf(item));
       }
     }
     return out;
+  }
+
+  // Tell the agent an item was closed without it, once per item, and remember the facts for the refusal.
+  function told(item, closed) {
+    const key = keyOf(item);
+    if (answered.has(key)) return false;
+    answered.set(key, closedWhy(closed));
+    return tell(answeredElsewhereFor(item, closed));
   }
 
   function drop(path) {
@@ -439,6 +582,7 @@ export function startCoordinatorAgent({
       if (briefed.has(key)) return false;
       if (!tell(briefFor(item))) return false;
       briefed.set(key, item);
+      answered.delete(key);
       return true;
     },
     // forget(item) → the item is no longer waiting, so the same key (a worker's next report park) is
@@ -446,8 +590,11 @@ export function startCoordinatorAgent({
     forget(item) {
       if (item) briefed.delete(keyOf(item));
     },
-    answeredElsewhere(item) {
-      return tell(answeredElsewhereFor(item));
+    // answeredElsewhere(item, closed) → the item stopped waiting without a decision of the agent's (DESIGN
+    // §2.3, T15): the agent is told who closed it and the answer (`closed` from closingAnswer), once per
+    // item. → true once told.
+    answeredElsewhere(item, closed = { by: 'unknown' }) {
+      return item ? told(item, closed) : false;
     },
     // timedOut(item, { holdMs, heldForMs }) → the agent held the item for the hold limit without a decision
     // and it is the person's now (DESIGN §2.11, T13): the agent is told, and the ledger gets one `timeout`
