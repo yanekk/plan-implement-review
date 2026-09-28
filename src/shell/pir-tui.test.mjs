@@ -30,6 +30,7 @@ import {
   FOLLOW_LINE,
   hitAt,
   underMultiplexer,
+  defaultCopy,
 } from './pir-tui.mjs';
 import { FrameView, SGR, SELECTED_BG, HOVER_LIFT, clipSpans, paintLine } from './pir-view.mjs';
 import { BASIC_HOVER_LIFT, MOCHA_HOVER_LIFT, MOCHA_SGR } from './palette.mjs';
@@ -2073,4 +2074,21 @@ test('mouse: SIGTERM, SIGHUP and SIGINT restore the terminal and exit 128 + the 
     assert.ok(tty.text().slice(before).startsWith(MOUSE_OFF), `${sig}: the mouse is turned off`);
     assert.deepEqual(proc.exits, [code], `${sig}: exits ${code}`);
   }
+});
+
+// T04 review: pbcopy reads its stdin by the locale, so a shell with no UTF-8 locale garbled non-ASCII text.
+test('defaultCopy: runs pbcopy with the text on stdin and a UTF-8 locale forced, and reports a failure as its message', async () => {
+  const calls = [];
+  const fakeRun = (fail) => (cmd, args, opts, cb) => {
+    const stdin = new EventEmitter();
+    stdin.end = (text) => {
+      calls.push({ cmd, args, env: opts.env, text });
+      setImmediate(() => cb(fail ? new Error('spawn pbcopy ENOENT') : null));
+    };
+    return { stdin };
+  };
+  const ok = await defaultCopy('é ⠋ ✅', { run: fakeRun(false), env: { LANG: 'C', LC_ALL: 'C', HOME: '/h' } });
+  assert.equal(ok, true);
+  assert.deepEqual(calls[0], { cmd: 'pbcopy', args: [], env: { LANG: 'C', LC_ALL: 'en_US.UTF-8', HOME: '/h' }, text: 'é ⠋ ✅' });
+  assert.equal(await defaultCopy('x', { run: fakeRun(true), env: {} }), 'Copy failed: spawn pbcopy ENOENT');
 });

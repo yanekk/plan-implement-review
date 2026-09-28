@@ -642,9 +642,12 @@ export function underMultiplexer(env) {
 // defaultCopy(text) → Promise<true | string>. pi-tui's copySelection on macOS: pbcopy with the text on its
 // stdin, which reached the real clipboard in the spike, where pi-tui's default OSC 52 depends on the
 // terminal allowing it (mouse-navigation §2.5). A failure comes back as its message, which pi-tui flashes.
-export function defaultCopy(text) {
+// pbcopy decodes its stdin by the locale, and with no UTF-8 one (LANG unset: some ssh or cron shells) it
+// turns 'é ⠋ ✅' into mojibake; Node always writes UTF-8, so the locale is forced to match (reproduced by
+// hand, T04 review). `run` and `env` are injected so the test never touches the real clipboard.
+export function defaultCopy(text, { run = execFile, env = process.env } = {}) {
   return new Promise((resolve) => {
-    const child = execFile('pbcopy', (err) => resolve(err ? `Copy failed: ${err.message}` : true));
+    const child = run('pbcopy', [], { env: { ...env, LC_ALL: 'en_US.UTF-8' } }, (err) => resolve(err ? `Copy failed: ${err.message}` : true));
     child.stdin.on('error', () => {}); // an EPIPE from a pbcopy that failed to start is reported by execFile
     child.stdin.end(text);
   });
