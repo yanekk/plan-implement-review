@@ -29,7 +29,8 @@ import {
   FOLLOW_LINE,
   hitAt,
 } from './pir-tui.mjs';
-import { FrameView, SGR, SELECTED_BG, clipSpans } from './pir-view.mjs';
+import { FrameView, SGR, SELECTED_BG, HOVER_LIFT, clipSpans, paintLine } from './pir-view.mjs';
+import { BASIC_HOVER_LIFT, MOCHA_HOVER_LIFT, MOCHA_SGR } from './palette.mjs';
 import { visibleWidth } from '@earendil-works/pi-tui';
 import { buildDashboard, initialUi } from '../core/dashboard.mjs';
 import { buildDisplay } from '../core/display.mjs';
@@ -590,6 +591,69 @@ test('FrameView paints the selected row as a full-width grey band with dim text 
   assert.ok(!other.includes(SELECTED_BG), 'an unselected row has no band');
 });
 const RESET_RE = /\x1b\[0m/;
+
+// Hover (mouse-navigation §2.2, T03). The test command sets NO_COLOR, so SGR is the basic table; the
+// 24-bit case is reached by passing the Mocha table to paintLine explicitly.
+const MOCHA_PAL = { sgr: MOCHA_SGR, lift: MOCHA_HOVER_LIFT };
+
+test('paintLine: a hovered plain line gains bold, with its text and clipping unchanged', () => {
+  const row = [{ text: 'alpha ', style: null }, { text: '● running', style: 'running' }, { text: ' tail', style: 'head' }];
+  const hovered = paintLine(row, 12, true, { hovered: true });
+  assert.equal(hovered, `\x1b[1malpha \x1b[0m\x1b[1m${SGR.running}● runn\x1b[0m`);
+  assert.equal(hovered.replace(/\x1b\[[0-9;]*m/g, ''), paintLine(row, 12, false), 'same text, same clip');
+  assert.equal(visibleWidth(hovered), visibleWidth(paintLine(row, 12)), 'same width as unhovered');
+  assert.equal(paintLine(row, 12, true, { hovered: false }), paintLine(row, 12), 'hovered false paints as before');
+});
+
+test('paintLine: a hovered dim span is lifted — Mocha subtext1 bold on 24-bit, plain bold without dim on basic', () => {
+  for (const style of ['dim', 'ended', 'idle', 'hint', 'bar-idle']) {
+    const row = [{ text: 'x', style }];
+    assert.equal(paintLine(row, 10, true, { hovered: true }), `${BASIC_HOVER_LIFT}x\x1b[0m`, `basic ${style}`);
+    assert.ok(!paintLine(row, 10, true, { hovered: true }).includes('\x1b[2m'), `basic ${style} loses the faint attribute`);
+    assert.equal(paintLine(row, 10, true, { hovered: true, palette: MOCHA_PAL }), '\x1b[1;38;2;186;194;222mx\x1b[0m', `24-bit ${style}`);
+  }
+  assert.equal(HOVER_LIFT, BASIC_HOVER_LIFT, 'the module paints with the basic lift under NO_COLOR');
+  // A non-dim span keeps its colour, bold, on the 24-bit table too.
+  assert.equal(paintLine([{ text: 'ok', style: 'running' }], 10, true, { hovered: true, palette: MOCHA_PAL }), `\x1b[1m${MOCHA_SGR.running}ok\x1b[0m`);
+});
+
+test('paintLine: hovered and selected is exactly the selected band, byte for byte', () => {
+  const row = [{ text: '▎ ', style: 'selected' }, { text: 'alpha ', style: 'dim' }, { text: '● running', style: 'running' }];
+  assert.equal(paintLine(row, 20, true, { hovered: true }), paintLine(row, 20, true));
+  assert.equal(paintLine(row, 20, false, { hovered: true }), paintLine(row, 20, false));
+});
+
+test('paintLine: with colour off a hovered line equals the unhovered one', () => {
+  const row = [{ text: 'alpha ', style: 'dim' }, { text: 'b', style: 'head' }];
+  assert.equal(paintLine(row, 20, false, { hovered: true }), paintLine(row, 20, false));
+  assert.equal(paintLine(row, 20, false, { hovered: true }), 'alpha b');
+});
+
+test('FrameView paints only the hovered line, and only when that line has a hit; a null hover paints as before', () => {
+  const hit = (spans, h) => Object.assign(spans, { hit: h });
+  const frame = [
+    [{ text: 'title', style: 'head' }],
+    hit([{ text: 'run one', style: 'dim' }], { kind: 'run', index: 0 }),
+    hit([{ text: 'run two', style: null }], { kind: 'run', index: 1 }),
+    [{ text: 'a note', style: 'dim' }],
+  ];
+  let hoverY = null;
+  const view = new FrameView(() => frame, { getHoverY: () => hoverY });
+  const before = new FrameView(() => frame).render(40);
+  assert.deepEqual(view.render(40), before, 'null hover paints as a view without hover');
+  hoverY = 2;
+  const lit = view.render(40);
+  assert.equal(lit[2], '\x1b[1mrun two\x1b[0m', 'the hovered row is bold');
+  assert.deepEqual([lit[0], lit[1], lit[3]], [before[0], before[1], before[3]], 'every other line is unchanged');
+  hoverY = 3;
+  assert.deepEqual(view.render(40), before, 'a line with no hit does not light up');
+  hoverY = 0;
+  assert.deepEqual(view.render(40), before, 'nor does the title');
+  hoverY = 9;
+  assert.deepEqual(view.render(40), before, 'a hover past the frame paints nothing');
+  hoverY = 1;
+  assert.deepEqual(new FrameView(() => frame, { colour: false, getHoverY: () => 1 }).render(40), new FrameView(() => frame, { colour: false }).render(40), 'colour off: no hover');
+});
 
 test('FrameView clips a line to the width across spans, never wraps, and counts wide characters as two', () => {
   const view = new FrameView(() => [[{ text: '漢字', style: 'done' }, { text: 'abcdef', style: null }], [{ text: 'x'.repeat(50) }]]);

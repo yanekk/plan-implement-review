@@ -32,6 +32,7 @@ const MOCHA = {
   orange: '#fab387',
   dim: '#7f849c',
   selected: '#313244',
+  subtext1: '#bac2de',
 };
 
 // The basic table: the codes pir painted before the palette, one per style.
@@ -110,6 +111,19 @@ export const MOCHA_SGR = {
 };
 
 export const MOCHA_SELECTED_BG = bg(MOCHA.selected);
+
+// The hover lift (mouse-navigation §2.2): the code a dim span paints in on the row under the pointer, so
+// a finished or stopped run brightens too. Bold throughout, since the hovered row's text is bold. Mocha
+// lifts the dim grey to subtext1, the next step up its greys; the basic table has no lighter grey than
+// plain text, so the lift there is plain bold — the faint attribute dropped.
+export const BASIC_HOVER_LIFT = '\x1b[1m';
+export const MOCHA_HOVER_LIFT = fg(MOCHA.subtext1, true);
+
+// hoverLiftFor(env) → the hover lift for the table paletteFor(env) picks. Kept out of paletteFor's
+// result so that object's shape — pinned by its tests and read by render.mjs — is unchanged.
+export function hoverLiftFor(env) {
+  return truecolour(env) ? MOCHA_HOVER_LIFT : BASIC_HOVER_LIFT;
+}
 
 // truecolour(env) → whether this terminal says it shows 24-bit colour and colour has not been turned off.
 export function truecolour(env) {

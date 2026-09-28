@@ -8,7 +8,7 @@
 
 import { sliceByColumn, visibleWidth } from '@earendil-works/pi-tui';
 
-import { paletteFor } from './palette.mjs';
+import { hoverLiftFor, paletteFor } from './palette.mjs';
 
 // The style→colour (SGR) map, from palette.mjs: Catppuccin Mocha on a 24-bit terminal, the basic
 // 16-colour codes otherwise. It carries TWO vocabularies. The first is render.mjs's own row/footer keys,
@@ -22,6 +22,10 @@ export const RESET = '\x1b[0m';
 // The selected row's band across the full width: a dark grey background (user 2026-09-26), Mocha's
 // selection colour on a 24-bit terminal.
 export const SELECTED_BG = palette.selectedBg;
+
+// The hovered row's lift for dim spans (mouse-navigation §2.2), from the same table as SGR.
+export const HOVER_LIFT = hoverLiftFor(process.env);
+const BOLD = '\x1b[1m';
 
 // Clip a line's spans to at most `width` terminal columns across the whole line, so a multi-span row
 // truncates as one line and never wraps. Counted in columns, not code points: a wide (CJK) character
@@ -44,18 +48,37 @@ export function clipSpans(spans, width) {
   return out;
 }
 
-// paintLine(spans, width, colour) → one terminal string: the spans clipped to `width` columns, each in its
-// colour. FrameView paints every frame line this way; the conversation view (T13) paints its own lines with it.
+// paintLine(spans, width, colour, { hovered }) → one terminal string: the spans clipped to `width` columns,
+// each in its colour. FrameView paints every frame line this way; the conversation view (T13) paints its
+// own lines with it.
 //
 // A line whose first span is styled 'selected' is the selected row. With colour it paints as a dark grey
 // band across the whole width, the `▎` mark blanked, and dim text brightened: dim on grey is barely
 // legible (user 2026-09-26). With colour off the band cannot show, so the `▎` mark is drawn as text, which
 // keeps colour from being the only sign of the selection (docs/detached-runs.md).
-export function paintLine(spans, width, colour = true) {
+//
+// `hovered` marks the row under the pointer (mouse-navigation §2.2): every span bold, a dim span lifted
+// to HOVER_LIFT. The selected band wins over hover — two cues on one row read as noise — and with colour
+// off there is no hover, since bold is painted only with colour. `palette` ({ sgr, lift }) defaults to
+// this terminal's table; the tests pass the 24-bit one, which NO_COLOR keeps out of the module-level SGR.
+export function paintLine(spans, width, colour = true, { hovered = false, palette: pal = { sgr: SGR, lift: HOVER_LIFT } } = {}) {
   const cols = Math.max(1, width | 0);
   if (colour && spans[0]?.style === 'selected') return paintSelected(spans, cols);
+  if (colour && hovered) return paintHovered(spans, cols, pal);
   return clipSpans(spans, cols)
     .map(({ text, style }) => (colour && style && SGR[style] ? `${SGR[style]}${text}${RESET}` : text))
+    .join('');
+}
+
+// A span "paints dim" when its code is the table's dim code — 'dim', 'ended', 'idle', 'hint', 'bar-idle'
+// on both tables — the same test paintSelected brightens by.
+function paintHovered(spans, cols, { sgr, lift }) {
+  return clipSpans(spans, cols)
+    .map(({ text, style }) => {
+      const code = style ? sgr[style] : undefined;
+      if (code && code === sgr.dim) return `${lift}${text}${RESET}`;
+      return `${BOLD}${code ?? ''}${text}${RESET}`;
+    })
     .join('');
 }
 
@@ -73,15 +96,21 @@ function paintSelected(spans, cols) {
 
 export class FrameView {
   // getLines() → the frame to paint now. colour off paints the bare text (NO_COLOR, or a caller that
-  // decided the stream cannot take colour).
-  constructor(getLines, { colour = true } = {}) {
+  // decided the stream cannot take colour). getHoverY() → the screen row under the pointer, or null; a
+  // frame line's index is its screen row (a painted frame is cut from the top, mouse-navigation §3.3).
+  constructor(getLines, { colour = true, getHoverY = () => null } = {}) {
     this.getLines = getLines;
     this.colour = colour;
+    this.getHoverY = getHoverY;
   }
 
   render(width) {
     const cols = Math.max(1, width | 0);
-    return (this.getLines() ?? []).map((spans) => paintLine(spans, cols, this.colour));
+    const hoverY = this.getHoverY();
+    // Only a line a click would open (one carrying a `hit`) lights up under the pointer (§2.2).
+    return (this.getLines() ?? []).map((spans, y) =>
+      paintLine(spans, cols, this.colour, { hovered: y === hoverY && Boolean(spans?.hit) }),
+    );
   }
 
   // Nothing is cached between renders: every render reads the current frame.

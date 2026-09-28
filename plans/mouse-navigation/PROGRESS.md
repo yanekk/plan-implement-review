@@ -25,7 +25,7 @@ done · ⛔ blocked, needs a human.
 |---|---|---|---|---|
 | T01 | mouse-rig | — | ⬜ | |
 | T02 | row-hits | — | ✅ | Reviewed clean, no fix commit. All nine test items present; npm test green. Probed: one display line per rowEntries entry, plan steps match openTasks order, worker view guarded before select. Mutation check: removing either separator guard turns its test red. Recorded deviation (null for non-integer y, non-array frame) is harmless. |
-| T03 | hover-style | — | ⬜ | |
+| T03 | hover-style | — | ✅ | |
 | T04 | mouse-on | T01 | ⬜ | |
 | T05 | list-clicks | T02, T03, T04 | ⬜ | |
 | T06 | conversation-wheel | T04 | ⬜ | |
