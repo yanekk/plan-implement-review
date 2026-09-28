@@ -53,3 +53,33 @@ test('a fixed tempPath is used as given', (t) => {
   assert.equal(wrote, tempPath);
   assert.deepEqual(readdirSync(dir), ['status.json']);
 });
+
+test('mode is applied to the temp file before the rename, and the target keeps it', (t) => {
+  const dir = scratch(t);
+  const target = join(dir, 'secret.json');
+  let modeAtRename;
+  const fs = {
+    ...nodeFs,
+    renameSync: (from, to) => {
+      modeAtRename = nodeFs.statSync(from).mode & 0o777;
+      nodeFs.renameSync(from, to);
+    },
+  };
+  writeFileAtomic(target, 'x', { fs, mode: 0o600 });
+  assert.equal(modeAtRename, 0o600);
+  assert.equal(nodeFs.statSync(target).mode & 0o777, 0o600);
+  // A wider mode is also honoured exactly, not narrowed by the umask.
+  writeFileAtomic(target, 'y', { mode: 0o644 });
+  assert.equal(nodeFs.statSync(target).mode & 0o777, 0o644);
+});
+
+test('without mode, the write does not chmod and the file gets the default mode', (t) => {
+  const dir = scratch(t);
+  const target = join(dir, 'plain.json');
+  let chmodded = false;
+  const fs = { ...nodeFs, chmodSync: (...a) => ((chmodded = true), nodeFs.chmodSync(...a)) };
+  writeFileAtomic(target, 'x', { fs });
+  assert.equal(chmodded, false);
+  const umask = process.umask();
+  assert.equal(nodeFs.statSync(target).mode & 0o777, 0o666 & ~umask);
+});
