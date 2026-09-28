@@ -273,7 +273,9 @@ export function closingAnswer(entries, item, { since = 0 } = {}) {
 
 // startCoordinatorAgent(...) → CoordinatorAgent. See tasks/T03-coordinator-session.md for the interface.
 // `remote` is false when PARALLEL_REMOTE=0 switched Remote Control off for the run (DESIGN §2.8);
-// `skillsDir` and `uuid` are injectable for tests.
+// `skillsDir` and `uuid` are injectable for tests. `env() → object | null` is platform.mjs's `workerEnv`
+// contract (reliable-notifications DESIGN §2.7), read at each launch, a resume included: an object is merged
+// over `process.env` as the session's environment; null leaves it inheriting.
 export function startCoordinatorAgent({
   controlDir,
   featurePath,
@@ -288,6 +290,7 @@ export function startCoordinatorAgent({
   remote = true,
   skillsDir = join(homedir(), '.claude', 'skills'),
   uuid = randomUUID,
+  env = null,
 }) {
   const coordDir = join(controlDir, 'coordinator');
   const decisionsDir = join(coordDir, 'decisions');
@@ -332,7 +335,9 @@ export function startCoordinatorAgent({
     const n = lastLogN(convDir);
     // A resumed session continues its own conversation file; a fresh one starts the next.
     logPath = join(convDir, `coordinator-${resume ? Math.max(n, 1) : n + 1}.ndjson`);
+    const extra = env?.() ?? null;
     worker = startWorker({
+      ...(extra ? { env: { ...process.env, ...extra } } : {}),
       cwd: featurePath,
       ...(resume ? { resume: session.sessionId } : { sessionId: session.sessionId }),
       name,
@@ -562,6 +567,11 @@ export function startCoordinatorAgent({
     // given up before a launch.
     get session() {
       return worker;
+    },
+    // remoteUrl() → the agent's Remote Control link, for the end-of-run alert's tap (reliable-notifications
+    // DESIGN §2.4); null while it is off, not yet known, or the agent has no session.
+    remoteUrl() {
+      return worker?.remoteUrl ?? null;
     },
     // The agent's conversation log, for the screen to open (pir-coordinator §2.8); null before a launch.
     get logPath() {

@@ -23,7 +23,7 @@ import { randomUUID } from 'node:crypto';
 import { readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { parseAgentName } from '../core/naming.mjs';
-import { allowResult, workerActivity } from '../core/stream.mjs';
+import { allowResult, workerActivity, readEntry } from '../core/stream.mjs';
 import { startTimeOf as startTimeOfReal } from './identity.mjs';
 import { startWorker as realStartWorker, writeWorkersFile } from './worker-proc.mjs';
 
@@ -174,6 +174,24 @@ function logCounter(logPath) {
   return m ? Number(m[1]) : null;
 }
 
+// lastAssistantText(entries) → the worker's last assistant text in its log, or null when it has said
+// nothing yet. The alert for a question parked without a report quotes it (reliable-notifications DESIGN
+// §2.3). Read backwards: the log only grows, and the last text is near its end.
+export function lastAssistantText(entries) {
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const texts = readEntry(entries[i]).filter((ev) => ev.kind === 'text' && ev.role === 'assistant' && ev.text);
+    if (texts.length) return texts.at(-1).text;
+  }
+  return null;
+}
+
+// remoteState(worker) → 'on' | 'off' | 'refused', the worker's Remote Control as workers() reports it.
+// 'off' covers a switch-on still in flight: its link is not known yet.
+function remoteState(worker) {
+  if (worker.remoteRefused) return 'refused';
+  return worker.remote ? 'on' : 'off';
+}
+
 // A worker waiting on the person — a permission request or a question set — is parked, not busy
 // (DESIGN §2.4), exactly as a question report parks it; so is one whose last turn has ended. `starting`
 // (nothing said yet, the opening instruction not yet taken) counts as busy: it has work in hand.
@@ -188,6 +206,12 @@ const NOT_BUSY = new Set(['idle', 'permission', 'questions']);
 // is checked against that worker's grants first, and one they cover is allowed by pir at once and logged
 // `delivered-by-grant`, so it never shows as pending. `root` is kept for callers that pass it; nothing
 // here needs the repo any more.
+//
+// `workerEnv() → object | null` is called at each spawn (reliable-notifications DESIGN §2.7): an object is
+// merged over `process.env` and becomes the worker's whole environment (the SDK's `Options.env` replaces
+// rather than merges); null leaves the worker inheriting `process.env`, exactly as without it. Read per
+// spawn, so `pir notify` or `pir notify off` during a run applies to the workers spawned after it.
+// Planning sessions (plan-run.mjs) call startWorker directly and never get it.
 export function createPlatform({
   controlDir = null,
   transport,
@@ -196,6 +220,7 @@ export function createPlatform({
   claudePath = null,
   startTimeOf = startTimeOfReal,
   grants = null,
+  workerEnv = null,
 } = {}) {
   const messaging = createMessaging({ transport });
   const live = new Map(); // id → record, while the child has not exited
@@ -243,7 +268,9 @@ export function createPlatform({
       claude ??= resolveClaudePath();
       const id = uuid();
       const logPath = nextLogPath(controlDir, task, phase);
-      const worker = startWorker({ cwd, sessionId: id, name, logPath, claudePath: claude });
+      const extra = workerEnv?.() ?? null;
+      const env = extra ? { ...process.env, ...extra } : null;
+      const worker = startWorker({ cwd, sessionId: id, name, logPath, claudePath: claude, ...(env ? { env } : {}) });
       const rec = { id, worker, name, cwd, task, role: phase, logPath, pid: worker.pid, startTime: null };
       rec.startTime = rec.pid ? startTimeOf(rec.pid) : null;
       live.set(id, rec);
@@ -345,20 +372,29 @@ export function createPlatform({
     },
 
     // workers() → every worker this platform spawned, live or exited, in spawn order, each with its
-    // activity folded from its log: { id, task, role, n, logPath, cwd, live, activity }. Read-only, unlike the
-    // loop's list(), so the run state can call it for the screen without touching the pass (live-workers
-    // T09). `n` is the log's counter (DESIGN §2.3), so it continues a restarted run's count.
+    // activity folded from its log: { id, task, role, n, logPath, cwd, live, activity, remote, url, lastText }.
+    // Read-only, unlike the loop's list(), so the run state can call it for the screen without touching the
+    // pass (live-workers T09). `n` is the log's counter (DESIGN §2.3), so it continues a restarted run's
+    // count. `remote` ('on' | 'off' | 'refused'), `url` (the Remote Control link, null unless on) and
+    // `lastText` (the last assistant text, null before any) are what the phone alert needs
+    // (reliable-notifications DESIGN §2.2, §2.3).
     workers() {
-      return [...order].map((rec) => ({
-        id: rec.id,
-        task: rec.task,
-        role: rec.role,
-        n: logCounter(rec.logPath),
-        logPath: rec.logPath,
-        cwd: rec.cwd ?? null,
-        live: live.has(rec.id),
-        activity: workerActivity(rec.worker.entries()),
-      }));
+      return [...order].map((rec) => {
+        const entries = rec.worker.entries();
+        return {
+          id: rec.id,
+          task: rec.task,
+          role: rec.role,
+          n: logCounter(rec.logPath),
+          logPath: rec.logPath,
+          cwd: rec.cwd ?? null,
+          live: live.has(rec.id),
+          activity: workerActivity(entries),
+          remote: remoteState(rec.worker),
+          url: rec.worker.remoteUrl ?? null,
+          lastText: lastAssistantText(entries),
+        };
+      });
     },
 
     // pending(id) → the worker's unanswered requests, as core/stream.mjs reads them (`kind` permission or
