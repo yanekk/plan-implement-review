@@ -23,7 +23,7 @@ done · ⛔ blocked, needs a human.
 
 | # | Task | Depends on | State | Notes |
 |---|---|---|---|---|
-| T01 | mouse-rig | — | ⬜ | |
+| T01 | mouse-rig | — | ✅ | |
 | T02 | row-hits | — | ✅ | |
 | T03 | hover-style | — | ✅ | |
 | T04 | mouse-on | T01 | ⬜ | |
