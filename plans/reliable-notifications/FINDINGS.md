@@ -14,6 +14,7 @@ Legend: 🐞 defect found · ✅ verified by hand with the user · 📌 worth kn
 
 | Date | | Finding |
 |---|---|---|
+| 2026-09-28 | 📌 | T06: `uqr` is now a third runtime package, but `install.sh` and `src/shell/deps.test.mjs` still say "two runtime packages" and deps.test does not import it. Left alone (scope). |
 | 2026-09-28 | 📌 | Plan re-review: local `main` is 305 commits ahead of `origin/main`, so the default icon URL (GitHub `main`) serves nothing until `main` is pushed. `gh auth status` and `claude auth status` both logged in; `ntfy.sh/v1/health` 200. |
 | 2026-09-28 | 🔄 | Redesign: alerts now fire when a question is the person's (agent pass, timeout, reserved, agent down or off), plus one end-of-run alert and an icon. Branch synced with main first (`sync main into pir/reliable-notifications`). |
 | 2026-09-28 | 📌 | Planning: ntfy publish docs list `icon` (JPEG or PNG by URL, cached 24 h) for Android, iOS and web. Unmeasured on the iPhone; T08 records it. |
