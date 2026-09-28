@@ -27,7 +27,7 @@ done · ⛔ blocked, needs a human.
 | T01 | alert-core | — | ⬜ | |
 | T02 | ntfy-sender | — | ⬜ | |
 | T03 | notify-icon | — | ✅ | |
-| T04 | worker-link-and-silence | — | ⬜ | |
+| T04 | worker-link-and-silence | — | ✅ | |
 | T05 | why-yours | — | ⬜ | |
 | T06 | notify-command | T02 | ⬜ | |
 | T07 | coordinator-alerts | T01, T02, T04, T05 | ⬜ | |
