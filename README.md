@@ -233,7 +233,8 @@ stands in for you:
 
 You can give it project rules in `.claude/pir-coordinator.md` in your repo, in plain words ("never
 approve anything touching payments"). You can answer any question yourself at any time, even one
-the agent is holding; the first answer wins. `pir start {slug} --no-coordinator` runs a build without
+the agent is holding; the first answer wins, and the agent is told who answered and what, so it
+never tells you something is still waiting when you already settled it. `pir start {slug} --no-coordinator` runs a build without
 it, with every question coming to you. If the agent crashes repeatedly, questions come to you as if
 it were off. Details and known limits are in
 [docs/coordinator-agent.md](docs/coordinator-agent.md).

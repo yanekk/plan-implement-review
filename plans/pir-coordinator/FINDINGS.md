@@ -14,6 +14,7 @@ Legend: 🐞 defect found · ✅ verified by hand with the user · 📌 worth kn
 
 | Date | | Finding |
 |---|---|---|
+| 2026-09-28 | 📌 | T15: a phone answer to a permission reads `allowed` only when the tool ran cleanly; an error result reads "not recorded" (denial or failed tool). A report park's reply typed before pir saw the park also reads "not recorded". |
 | 2026-09-28 | 📌 | T12 drill: the live view's hint still reads `↑↓ task · → its worker` though ↑↓ now also reaches the agent's row; pinned by tests, left. The separator's width follows the label column, so it changes as labels do. |
 | 2026-09-28 | 📌 | T12: the agent row's `restarting` is almost never drawn: `onExit` resumes synchronously, so `up` is false only inside that call; a failed resume goes straight to `given-up`. |
 | 2026-09-28 | 📌 | Plan re-review: a phone answer logs only note `answered-remotely` {requestId, toolName}, a grant `delivered-by-grant`; neither carries the result. Today `answeredElsewhereFor` says "answered by the person" even when the worker just exited. T15 amended. |

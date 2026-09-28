@@ -48,7 +48,7 @@ import { updateRecord } from './index-store.mjs';
 import { createWorktree } from './worktree.mjs';
 import { reapRecorded } from './reap.mjs';
 import { planHome } from './plan-home.mjs';
-import { startCoordinatorAgent, withAgent } from './coordinator-agent.mjs';
+import { startCoordinatorAgent, withAgent, closingAnswer, readLogEntries } from './coordinator-agent.mjs';
 import { startWorker } from './worker-proc.mjs';
 
 const DONE_GLYPH = '✅';
@@ -158,6 +158,7 @@ export function startCoordinator({
   holdMerges = false,
   startAgent = null,
   lastWords = lastWordsOf,
+  readLog = readLogEntries,
   now = () => Date.now(),
   holdMs = holdLimitMs(),
 } = {}) {
@@ -195,6 +196,12 @@ export function startCoordinator({
   const seen = new Map(); // itemKey → the item, every item waiting last pass (briefed or not)
   const heldAt = new Map(); // itemKey → when the agent began holding it (the pass's now())
   const timedOut = new Map(); // itemKey → the item, handed to the person by the hold limit, still waiting
+  // itemKey → the item, for a reserved item the agent was briefed on for a note (T15). Never held: the row,
+  // the tally and Remote Control do not read it. Kept only so the agent is told who answered it and what.
+  const reserved = new Map();
+  // Keys of timed-out items the agent then passed on: a pass is a decision of its own, so the person's later
+  // answer is not reported (T15). They stay in `timedOut` so a later decision is still ledgered `late`.
+  const passedLate = new Set();
   // Items the agent answered this pass. A `message` to a report park lands after runPass read the park, so
   // the task stays parked until the next pass's resumeAnswered sees the coordinator send; counting the item
   // as the agent's until then keeps its worker off Remote Control (DESIGN §2.5). One pass only: whatever is
@@ -220,6 +227,18 @@ export function startCoordinator({
     return brief;
   };
 
+  // The log a worker's item is read from, live or exited (platform.workers() lists both).
+  const logOf = (worker, workers) => workers.find((w) => w.id === worker)?.logPath ?? platform.logPathOf?.(worker) ?? null;
+  // closedOf(item, workers) → how the item stopped waiting (closingAnswer), read from the worker's log. A
+  // report park is read from `since`, the log's length when it was first seen.
+  const closedOf = (item, workers) => {
+    try {
+      return closingAnswer(readLog(logOf(item.worker, workers)), item, { since: item.since ?? 0 });
+    } catch {
+      return { by: 'unknown' };
+    }
+  };
+
   function route() {
     const out = { passed: [], report: null, close: false };
     if (!agent) return out;
@@ -231,19 +250,38 @@ export function startCoordinator({
       held.clear();
       heldAt.clear();
       timedOut.clear();
+      reserved.clear();
+      passedLate.clear();
     }
     const release = (key) => {
       held.delete(key);
       heldAt.delete(key);
       timedOut.delete(key);
+      reserved.delete(key);
+      passedLate.delete(key);
     };
     const workers = platform.workers();
     const items = waitingItems(state.tasks, workers, { askRules });
     const waitingNow = new Map(items.map((i) => [itemKey(i), i]));
 
+    // Briefed items (held, timed out or reserved) no longer waiting were closed without a decision of the
+    // agent's (DESIGN §2.3, T15): the agent is told who closed each and the answer, once. Read before the
+    // drain, so a late decision for one (the T09 `pass`) is refused with the same facts. An item the agent
+    // answered or passed on left these maps on the pass it did so, so it is never reported.
+    for (const map of [held, timedOut, reserved]) {
+      for (const [key, item] of map) {
+        if (waitingNow.has(key)) continue;
+        const quiet = passedLate.has(key);
+        release(key);
+        if (alive && !quiet) agent.answeredElsewhere(item, closedOf(item, workers));
+      }
+    }
+
     // A `close` is accepted only once the run waits in `ready to merge` (DESIGN §2.10).
     const ready = handoff?.step === 'waiting';
-    const drained = alive ? agent.drain(items, { ready, late: new Set(timedOut.keys()) }) : { passed: [], settled: [] };
+    const drained = alive
+      ? agent.drain(items, { ready, late: new Set(timedOut.keys()), closedOf: (i) => closedOf(i, workers) })
+      : { passed: [], settled: [] };
     const settled = new Set((drained.settled ?? []).map(itemKey));
     for (const key of settled) release(key);
     justSettled = settled;
@@ -252,21 +290,14 @@ export function startCoordinator({
       // stays in `timedOut`, so a later decision for it is still ledgered `late: true`.
       held.delete(itemKey(p));
       heldAt.delete(itemKey(p));
+      reserved.delete(itemKey(p));
+      if (timedOut.has(itemKey(p))) passedLate.add(itemKey(p));
       out.passed.push(p);
       control?.log?.(`coordinator-pass ${waitingNow.get(itemKey(p))?.task ?? p.worker}`);
     }
     if (drained.report) out.report = drained.report;
     if (drained.close) out.close = true;
 
-    // Held (or timed-out) items no longer waiting were answered by the person first (DESIGN §2.3): the
-    // agent drops them.
-    for (const map of [held, timedOut]) {
-      for (const [key, item] of map) {
-        if (waitingNow.has(key) || settled.has(key)) continue;
-        release(key);
-        if (alive) agent.answeredElsewhere(item);
-      }
-    }
     // The hold limit (T13): checked after the drain, so a decision landing on the pass the limit passes wins.
     for (const [key, item] of held) {
       const heldForMs = t - (heldAt.get(key) ?? t);
@@ -283,8 +314,11 @@ export function startCoordinator({
     for (const [key, item] of waitingNow) {
       if (seen.has(key) || settled.has(key)) continue;
       if (!alive) continue; // first waiting while the agent is down: the person's
+      // A report park has no requestId to find its answer by: the log's length now marks where to read from.
+      if (item.kind === 'report') item.since = readLog(logOf(item.worker, workers)).length;
       const briefed = agent.brief(briefItem(item, workers));
-      if (briefed && !item.reserved) {
+      if (briefed && item.reserved) reserved.set(key, item);
+      else if (briefed) {
         held.set(key, item);
         heldAt.set(key, t);
       }

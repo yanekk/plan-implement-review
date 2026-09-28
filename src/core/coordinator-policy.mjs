@@ -190,17 +190,20 @@ const bad = (error) => ({ ok: false, error });
 // Which waiting-item kind each worker-addressed decision answers.
 const ANSWERS_ITEM = { permission: 'permission', answers: 'questions', message: 'report' };
 
-// checkDecision(decision, waiting, { ready }) → { ok: true, apply } | { ok: false, why, passOn }
+// checkDecision(decision, waiting, { ready, answered }) → { ok: true, apply } | { ok: false, why, passOn }
 //   decision: a normalised decision from readDecision.
 //   waiting:  [{ worker, task, kind: 'permission'|'questions'|'report', requestId?, request?, reserved?, text? }]
 //             — every item waiting now, as the shell sees it this pass. An item already answered by the
 //             person is not in it, so a late decision for it is refused as not waiting (first answer wins).
 //   ready:    the run is in `ready to merge` (the caller knows; this module has no run state).
+//   answered: Map of item key (`${worker}:${requestId ?? 'report'}`) → why, for items the agent was told
+//             were closed without it (T15). A decision for one that is no longer waiting is refused with
+//             those facts; the generic "unknown worker, or already answered" stays for everything else.
 // `apply` is everything the shell needs to act, with the worker's result already built:
 //   { kind, worker, task, requestId?, result | text | suggestion | sections, ledger }
 // `passOn` is true only for a `permission` on a reserved item: that item goes to the person with the
 // agent's reason as its note, rather than being dropped.
-export function checkDecision(decision, waiting, { ready = false } = {}) {
+export function checkDecision(decision, waiting, { ready = false, answered = new Map() } = {}) {
   if (!isObject(decision)) return refuse('not a decision');
   const items = Array.isArray(waiting) ? waiting.filter(isObject) : [];
 
@@ -212,6 +215,9 @@ export function checkDecision(decision, waiting, { ready = false } = {}) {
   }
 
   const mine = items.filter((i) => i.worker === decision.worker);
+  const key = `${decision.worker}:${decision.requestId ?? 'report'}`;
+  const waitingNow = decision.requestId !== undefined ? mine.some((i) => i.requestId === decision.requestId) : mine.some((i) => i.kind === 'report');
+  if (!waitingNow && answered instanceof Map && nonEmpty(answered.get(key))) return refuse(answered.get(key));
   if (mine.length === 0) return refuse(`nothing is waiting from worker ${JSON.stringify(decision.worker)} (unknown worker, or already answered)`);
 
   let item;

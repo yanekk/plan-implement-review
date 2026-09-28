@@ -66,10 +66,45 @@ export function refusalFor(why, file = null) {
   return `${which} was not applied: ${why}. Nothing was done with it. Write a new file if you still mean to decide, or pass the item on.`;
 }
 
-// answeredElsewhereFor(item) → the person answered first (DESIGN §2.3): the agent drops the item.
-export function answeredElsewhereFor(item) {
+// closedWhy(closed) → how an item stopped waiting without a decision of the agent's, as one clause (DESIGN
+// §2.3, T15). `closed` is closingAnswer's { by, answer?, how? }. Says who closed it and the answer when the
+// log showed it, says plainly when the answer was not recorded, and never says "answered by the person"
+// for an item nobody answered.
+export function closedWhy(closed) {
+  const c = isObject(closed) ? closed : {};
+  const answer = nonEmpty(c.answer) ? c.answer : null;
+  switch (c.by) {
+    case 'person':
+      return `already answered by the person: ${answer ?? 'the answer was not recorded'}`;
+    case 'phone':
+      return `already answered by the person on the phone (Remote Control): ${answer ?? 'the answer was not recorded'}`;
+    case 'grant':
+      return `already allowed by a standing permission the person gave earlier: ${answer ?? 'allowed'}`;
+    case 'coordinator':
+      return `already answered by your own decision: ${answer ?? 'the answer was not recorded'}`;
+    case 'pir':
+      return `already answered by pir: ${answer ?? 'the answer was not recorded'}`;
+    case 'stopped': {
+      const how = { interrupted: 'was interrupted', restarted: 'was restarted' }[c.how] ?? 'exited';
+      return `closed with no answer: the worker ${how} before anyone answered`;
+    }
+    default:
+      return 'no longer waiting; pir did not record who closed it or the answer';
+  }
+}
+
+// answeredElsewhereFor(item, closed) → the item stopped waiting without a decision of the agent's (DESIGN
+// §2.3, T15): who closed it and what the answer was, once. The agent drops the item, and speaks of it only
+// to correct its own pointer (skills/pir-coordinator/SKILL.md).
+export function answeredElsewhereFor(item, closed) {
   const i = isObject(item) ? item : {};
-  return `Already answered by the person:\n\n${header(i)}\n\nDrop this item; any decision for it will be refused.`;
+  const why = closedWhy(closed);
+  return [
+    `${why[0].toUpperCase()}${why.slice(1)}.`,
+    header(i),
+    'Drop this item; any decision for it will be refused. If your last reply sent the person to answer it, say in one line ' +
+      'that it is already settled and how; otherwise say nothing about it. Never guess who answered.',
+  ].join('\n\n');
 }
 
 // holdWords(holdMs) → the hold limit in words: whole minutes as minutes, anything shorter or odd as

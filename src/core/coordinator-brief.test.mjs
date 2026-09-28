@@ -2,7 +2,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { briefFor, refusalFor, answeredElsewhereFor, openingFor, resumedFor, timedOutFor, holdWords } from './coordinator-brief.mjs';
+import { briefFor, refusalFor, answeredElsewhereFor, closedWhy, openingFor, resumedFor, timedOutFor, holdWords } from './coordinator-brief.mjs';
 
 const permission = {
   worker: 'w-1', name: 'repo / plan / T04 / routing / implement', task: 'T04', kind: 'permission', requestId: 'req-1',
@@ -51,8 +51,8 @@ test('a reserved item is briefed as the person\'s, asking for a note, never as a
 test('refusal, answered-elsewhere, opening and resumed texts', () => {
   assert.match(refusalFor('unknown worker', '1-a.json'), /Your decision file 1-a\.json was not applied: unknown worker\./);
   assert.match(refusalFor('x'), /^Your decision was not applied: x\./);
-  const elsewhere = answeredElsewhereFor(permission);
-  assert.match(elsewhere, /Already answered by the person/);
+  const elsewhere = answeredElsewhereFor(permission, { by: 'person', answer: 'denied (not now)' });
+  assert.match(elsewhere, /^Already answered by the person: denied \(not now\)\./);
   assert.match(elsewhere, /`w-1`/);
   assert.match(elsewhere, /`req-1`/);
   const opening = openingFor({ slug: 'demo', projectRulesPath: '/r/.claude/pir-coordinator.md', dropDir: '/c/coordinator/decisions' });
@@ -62,6 +62,24 @@ test('refusal, answered-elsewhere, opening and resumed texts', () => {
   assert.match(opening, /^Drop folder: \/c\/coordinator\/decisions$/m);
   assert.match(openingFor({ slug: 'demo', dropDir: '/d' }), /^Project rules: none/m);
   assert.match(resumedFor(), /restarted your session/);
+});
+
+test('closedWhy (T15): who closed an item and the answer; "not recorded" when the log lacks it; never "the person" for a stop', () => {
+  assert.equal(closedWhy({ by: 'person', answer: 'denied' }), 'already answered by the person: denied');
+  assert.equal(closedWhy({ by: 'person', answer: 'Which format? → JSON' }), 'already answered by the person: Which format? → JSON');
+  assert.equal(closedWhy({ by: 'phone', answer: 'allowed' }), 'already answered by the person on the phone (Remote Control): allowed');
+  assert.equal(closedWhy({ by: 'phone' }), 'already answered by the person on the phone (Remote Control): the answer was not recorded');
+  assert.equal(closedWhy({ by: 'grant', answer: 'allowed' }), 'already allowed by a standing permission the person gave earlier: allowed');
+  assert.equal(closedWhy({ by: 'stopped', how: 'exited' }), 'closed with no answer: the worker exited before anyone answered');
+  assert.equal(closedWhy({ by: 'stopped', how: 'interrupted' }), 'closed with no answer: the worker was interrupted before anyone answered');
+  assert.equal(closedWhy({ by: 'stopped', how: 'restarted' }), 'closed with no answer: the worker was restarted before anyone answered');
+  assert.equal(closedWhy({ by: 'unknown' }), 'no longer waiting; pir did not record who closed it or the answer');
+  assert.equal(closedWhy(undefined), 'no longer waiting; pir did not record who closed it or the answer');
+  for (const c of [{ by: 'stopped', how: 'exited' }, { by: 'unknown' }]) assert.doesNotMatch(closedWhy(c), /by the person/);
+  const stopped = answeredElsewhereFor(permission, { by: 'stopped', how: 'exited' });
+  assert.match(stopped, /^Closed with no answer: the worker exited before anyone answered\./);
+  assert.doesNotMatch(stopped, /answered by the person/);
+  assert.match(stopped, /say in one line that it is already settled and how; otherwise say nothing about it\. Never guess who answered\./);
 });
 
 // ---- T05: the end of the run ----

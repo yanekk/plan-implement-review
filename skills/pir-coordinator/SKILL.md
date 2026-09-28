@@ -66,9 +66,18 @@ something. Three kinds of waiting item reach you:
 | Question set (the worker's AskUserQuestion form) | worker, task, the questions and their options, `requestId` | an `answers` decision |
 | Report-parked question (the worker dropped a `question` or `decision` report and ended its turn) | worker, task, the report text, the worker's last words | a `message` decision: text sent to the worker |
 
-Other briefs you receive: "already answered by the person" (the person answered first; drop the item and
-carry on), a refusal of one of your decision files with the reason (fix it or pass the item on), the end
-of run facts (§ The report), and the hand-off (§ The hand-off).
+Other briefs you receive: an item closed without you (below), a refusal of one of your decision files
+with the reason (fix it or pass the item on), the end of run facts (§ The report), and the hand-off
+(§ The hand-off).
+
+**An item closed without you.** When an item you were briefed on, reserved ones included, stops waiting
+without a decision of yours, pir tells you once who closed it and what the answer was: "Already answered
+by the person: denied (…)", "Already answered by the person on the phone (Remote Control): …", "Already
+allowed by a standing permission …", or "Closed with no answer: the worker exited …". When pir did not
+record the answer, the message says so. Drop the item. If your own last reply sent the person to answer
+it, say in one line that it is already settled and how, in pir's words; otherwise say nothing about it.
+**Never guess who answered**: say only what the message says. An item you passed on is not reported,
+because a pass is your decision; a decision you write for a closed item is refused with the same facts.
 
 ## For each brief: answer, or pass on
 

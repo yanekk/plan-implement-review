@@ -1751,6 +1751,7 @@ function agentRun(t, rows, behaviors = {}, { files = {}, now, holdMs, control } 
     ...(now ? { now } : {}),
     ...(holdMs !== undefined ? { holdMs } : {}),
     ...(control ? { control } : {}),
+    readLog: (p) => platform.readLog(p),
     startAgent: ({ featurePath, askRules }) => {
       started.push({ featurePath, askRules });
       return startCoordinatorAgent({
@@ -1871,8 +1872,8 @@ test('person first: the person answers an item the agent holds — applied, the 
   run.decide({ kind: 'permission', worker: w, requestId: `${w}-r1`, decision: 'allow', reason: 'fine' });
   coordinator.pass();
   assert.deepEqual(platform.answers.map((a) => a.from), ['person'], 'only the person\'s answer reached the worker');
-  assert.ok(run.told().some((m) => m.startsWith('Already answered by the person') && m.includes(`${w}-r1`)));
-  assert.ok(run.told().some((m) => /was not applied: nothing is waiting from worker/.test(m)), 'the late decision refused');
+  assert.ok(run.told().some((m) => m.startsWith('Already answered by the person: denied (not now).') && m.includes(`${w}-r1`)));
+  assert.ok(run.told().some((m) => /was not applied: already answered by the person: denied \(not now\)/.test(m)), 'the late decision refused with the facts');
   assert.equal(coordinator.heldByAgent().size, 0);
   assert.deepEqual(coordinator.agent.ledger(), []);
 });
@@ -2611,8 +2612,8 @@ test('hold limit: a late decision after the person answered is refused; the agen
   run.decide({ kind: 'permission', worker: w, requestId: `${w}-r1`, decision: 'allow', reason: 'fine' });
   coordinator.pass();
   assert.deepEqual(platform.answers.map((a) => a.from), ['person'], 'only the person\'s answer reached the worker');
-  assert.ok(run.told().some((m) => m.startsWith('Already answered by the person') && m.includes(`${w}-r1`)));
-  assert.ok(run.told().some((m) => /was not applied: nothing is waiting from worker/.test(m)), 'the late decision refused');
+  assert.ok(run.told().some((m) => m.startsWith('Already answered by the person: denied (not now).') && m.includes(`${w}-r1`)));
+  assert.ok(run.told().some((m) => /was not applied: already answered by the person: denied \(not now\)/.test(m)), 'the late decision refused with the facts');
   assert.equal(coordinator.agent.ledger().filter((l) => l.kind === 'permission').length, 0);
 });
 
@@ -2688,4 +2689,157 @@ test('hold limit: a timed-out item passed late and then answered late keeps `lat
   const decided = coordinator.agent.ledger().filter((l) => l.kind === 'permission');
   assert.equal(decided.length, 1);
   assert.equal(decided[0].late, true);
+});
+
+// ---- T15: the agent is told who answered an item first, and what ----
+
+const closedMsgs = (run) => run.told().filter((m) => /^(Already |Closed with no answer|No longer waiting)/.test(m));
+const rmBuild = { requests: [{ toolName: 'Bash', input: { command: 'rm -rf build' } }] };
+
+test('T15 reserved: the person denies before the agent\'s note — one message naming the person and `denied`; the late pass refused with the same facts; row, tally, Remote Control unchanged', (t) => {
+  const run = holdRun(t, [{ num: 'T01' }], { T01: rmBuild });
+  const { coordinator, platform } = run;
+  coordinator.pass();
+  const w = run.implOf('T01');
+  assert.match(run.told().find((m) => m.includes(`${w}-r1`)), /This one is the person's/);
+  const before = { held: [...coordinator.heldByAgent()], remote: run.wanted().has(w), holder: run.rowOf('T01').tasks[0].holder, asking: askingCount(run.rowOf('T01')) };
+  assert.deepEqual(before, { held: [], remote: true, holder: 'person', asking: 1 }, 'the person\'s from the start');
+
+  // The T09 case: the person denies, then the agent's note lands.
+  platform.answer(w, `${w}-r1`, { behavior: 'deny', message: 'not on this branch' }, { from: 'person' });
+  run.decide({ kind: 'pass', worker: w, requestId: `${w}-r1`, reason: 'deleting build output', suggestion: 'deny' });
+  const r = coordinator.pass();
+  const msgs = closedMsgs(run);
+  assert.equal(msgs.length, 1, 'told once');
+  assert.match(msgs[0], /^Already answered by the person: denied \(not on this branch\)\./);
+  assert.ok(msgs[0].includes(`${w}-r1`));
+  assert.ok(run.told().some((m) => /was not applied: already answered by the person: denied \(not on this branch\)\./.test(m)), 'the pass refused with the facts');
+  assert.ok(!run.told().some((m) => /unknown worker, or already answered/.test(m)), 'never the generic refusal');
+  assert.deepEqual(r.agent?.passed ?? [], [], 'a refused pass is not a pass');
+  assert.deepEqual([...coordinator.heldByAgent()], [], 'never held');
+  assert.equal(coordinator.agent.ledger().filter((l) => l.kind === 'pass').length, 0);
+
+  for (let i = 0; i < 3; i++) coordinator.pass();
+  assert.equal(closedMsgs(run).length, 1, 'at most once across passes');
+});
+
+test('T15 reserved: an item the agent passed on and the person then answers is not reported', (t) => {
+  const run = holdRun(t, [{ num: 'T01' }], { T01: rmBuild });
+  const { coordinator, platform } = run;
+  coordinator.pass();
+  const w = run.implOf('T01');
+  run.decide({ kind: 'pass', worker: w, requestId: `${w}-r1`, reason: 'deleting build output', suggestion: 'deny' });
+  coordinator.pass();
+  platform.answer(w, `${w}-r1`, { behavior: 'deny' }, { from: 'person' });
+  coordinator.pass();
+  coordinator.pass();
+  assert.deepEqual(closedMsgs(run), [], 'a pass is a decision of the agent\'s: its conversation stays quiet');
+});
+
+test('T15 held question set answered by the person first: the message names the chosen answers', (t) => {
+  const questions = [{ question: 'Format?', options: [{ label: 'JSON' }, { label: 'YAML' }] }];
+  const run = holdRun(t, [{ num: 'T01' }], { T01: { requests: [{ kind: 'questions', questions }] } });
+  const { coordinator, platform } = run;
+  coordinator.pass();
+  const w = run.implOf('T01');
+  assert.deepEqual([...coordinator.heldByAgent()], [`${w}:${w}-r1`]);
+  platform.answer(w, `${w}-r1`, { behavior: 'allow', updatedInput: { questions, answers: { 'Format?': 'YAML' } } }, { from: 'person' });
+  coordinator.pass();
+  const msgs = closedMsgs(run);
+  assert.equal(msgs.length, 1);
+  assert.match(msgs[0], /^Already answered by the person: Format\? → YAML\./);
+});
+
+test('T15 report park answered by the person\'s message: the message quotes the text', (t) => {
+  const run = holdRun(t, [{ num: 'T01' }], { T01: { question: 'JSON or YAML?' } });
+  const { coordinator, platform } = run;
+  coordinator.pass(); // spawn
+  coordinator.pass(); // parked, briefed, held
+  const w = run.implOf('T01');
+  assert.deepEqual([...coordinator.heldByAgent()], [`${w}:report`]);
+  platform.send(w, 'YAML, and no trailing newline.', { from: 'person' });
+  coordinator.pass();
+  coordinator.pass();
+  const msgs = closedMsgs(run);
+  assert.equal(msgs.length, 1);
+  assert.match(msgs[0], /^Already answered by the person: "YAML, and no trailing newline\."\./);
+});
+
+test('T15 answered on the phone: named as the person on the phone, with the answer when the log shows it, else "not recorded"', (t) => {
+  const run = holdRun(t, [{ num: 'T01' }, { num: 'T02' }], { T01: npmTest, T02: npmTest });
+  const { coordinator, platform } = run;
+  coordinator.pass();
+  const [w1, w2] = [run.implOf('T01'), run.implOf('T02')];
+  // What worker-proc logs for a Remote Control answer: the note, then the tool's result (the recorded probe).
+  const phone = (w, result) => {
+    platform._workers.get(w).requests.splice(0);
+    platform.appendLog(w, { dir: 'note', kind: 'answered-remotely', requestId: `${w}-r1`, toolName: 'Bash' });
+    if (result) platform.appendLog(w, { dir: 'in', event: { type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'toolu_1', content: 'ok', is_error: false }] } } });
+  };
+  phone(w1, true);
+  phone(w2, false);
+  coordinator.pass();
+  const msgs = closedMsgs(run);
+  assert.equal(msgs.length, 2);
+  assert.match(msgs.find((m) => m.includes(`${w1}-r1`)), /^Already answered by the person on the phone \(Remote Control\): allowed\./);
+  assert.match(msgs.find((m) => m.includes(`${w2}-r1`)), /^Already answered by the person on the phone \(Remote Control\): the answer was not recorded\./);
+});
+
+test('T15 allowed by a standing grant: named as a standing permission, `allowed`', (t) => {
+  const run = holdRun(t, [{ num: 'T01' }], { T01: npmTest });
+  const { coordinator, platform } = run;
+  coordinator.pass();
+  const w = run.implOf('T01');
+  // person-inbox allowCoveredPending: pir answers, then notes the grant.
+  platform.answer(w, `${w}-r1`, { behavior: 'allow', updatedInput: { command: 'npm test' } }, { from: 'pir' });
+  platform.note(w, 'delivered-by-grant', { requestId: `${w}-r1`, toolName: 'Bash' });
+  coordinator.pass();
+  const msgs = closedMsgs(run);
+  assert.equal(msgs.length, 1);
+  assert.match(msgs[0], /^Already allowed by a standing permission the person gave earlier: allowed\./);
+});
+
+test('T15 held item whose worker exits before any answer: told the worker stopped with no answer, never "answered by the person"', (t) => {
+  const run = holdRun(t, [{ num: 'T01' }], { T01: npmTest });
+  const { coordinator, platform } = run;
+  coordinator.pass();
+  const w = run.implOf('T01');
+  platform.close(w);
+  run.decide({ kind: 'permission', worker: w, requestId: `${w}-r1`, decision: 'allow', reason: 'late' });
+  coordinator.pass();
+  const msgs = closedMsgs(run);
+  assert.equal(msgs.length, 1);
+  assert.match(msgs[0], /^Closed with no answer: the worker exited before anyone answered\./);
+  assert.ok(!run.told().some((m) => /answered by the person/.test(m)));
+  assert.ok(run.told().some((m) => /was not applied: closed with no answer: the worker exited/.test(m)), 'the late decision refused with the facts');
+});
+
+test('T15 a decision for a worker that never had an item still gets the generic refusal', (t) => {
+  const run = holdRun(t, [{ num: 'T01' }], { T01: npmTest });
+  run.coordinator.pass();
+  run.decide({ kind: 'permission', worker: 'ghost', requestId: 'r9', decision: 'allow', reason: 'x' });
+  run.coordinator.pass();
+  assert.ok(run.told().some((m) => /was not applied: nothing is waiting from worker "ghost" \(unknown worker, or already answered\)/.test(m)));
+  assert.deepEqual(closedMsgs(run), []);
+});
+
+test('T15 a timed-out item the person then answers gets the message; one the agent passed after the timeout does not', (t) => {
+  const run = holdRun(t, [{ num: 'T01' }, { num: 'T02' }], { T01: npmTest, T02: npmTest }, { holdMs: 60000 });
+  const { coordinator, clock, platform } = run;
+  const start = clock.t;
+  coordinator.pass();
+  const [w1, w2] = [run.implOf('T01'), run.implOf('T02')];
+  clock.t = start + 60000;
+  coordinator.pass();
+  assert.equal(run.handovers().length, 2, 'both timed out');
+  run.decide({ kind: 'pass', worker: w2, requestId: `${w2}-r1`, reason: 'the person\'s call', suggestion: 'allow' });
+  coordinator.pass();
+  platform.answer(w1, `${w1}-r1`, { behavior: 'allow', updatedInput: {} }, { from: 'person' });
+  platform.answer(w2, `${w2}-r1`, { behavior: 'allow', updatedInput: {} }, { from: 'person' });
+  coordinator.pass();
+  coordinator.pass();
+  const msgs = closedMsgs(run);
+  assert.equal(msgs.length, 1);
+  assert.ok(msgs[0].includes(`${w1}-r1`));
+  assert.match(msgs[0], /^Already answered by the person: allowed\./);
 });
