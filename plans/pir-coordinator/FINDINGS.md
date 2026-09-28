@@ -14,6 +14,9 @@ Legend: 🐞 defect found · ✅ verified by hand with the user · 📌 worth kn
 
 | Date | | Finding |
 |---|---|---|
+| 2026-09-28 | ✅ | T14 live run `run.mjs pir-coordinator-concurrent` PASS (second run): T01 and T02 briefed in one pass, both answered 10 s later; T03 held 181 s, handed over, pointer given, harness answered as the person; every agent statement matched the record. |
+| 2026-09-28 | 🐞 | T14: the agent told the person "after 5 minutes" while `PARALLEL_COORDINATOR_HOLD_MS` set 3; the skill says 5 and the agent is never told the run's limit. User: note it, not a T14 failure. |
+| 2026-09-28 | 📌 | T14 first run: workers' first asks spread 4 s and pir briefs per pass, so the agent answered T02 before T01's brief. The fixture's rules now lengthen its opening and each answer. |
 | 2026-09-28 | 📌 | T15: a phone answer to a permission reads `allowed` only when the tool ran cleanly; an error result reads "not recorded" (denial or failed tool). A report park's reply typed before pir saw the park also reads "not recorded". |
 | 2026-09-28 | 📌 | T12 drill: the live view's hint still reads `↑↓ task · → its worker` though ↑↓ now also reaches the agent's row; pinned by tests, left. The separator's width follows the label column, so it changes as labels do. |
 | 2026-09-28 | 📌 | T12: the agent row's `restarting` is almost never drawn: `onExit` resumes synchronously, so `up` is false only inside that call; a failed resume goes straight to `given-up`. |

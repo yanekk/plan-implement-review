@@ -13,9 +13,9 @@ write. **Whoever writes a cell also fixes the over-budget cell they walk past.**
 **Plan reviewed:** 2026-09-27 — 10 fixed, 4 decided with the user
 **Plan re-reviewed (T12–T15):** 2026-09-28 — 9 fixed, 4 decided with the user
 
-**Status:** T00–T11 ✅. Reopened 2026-09-28 for T12, T13, T15, T14 (in that order).
+**Status:** T00–T13, T15 ✅; T14 🔍. Reopened 2026-09-28 for T12, T13, T15, T14.
 **Last updated:** 2026-09-28
-**Next `pir-work` will:** implement T12, coordinator-row.
+**Next `pir-work` will:** review T14, live-concurrent-check.
 
 ## Tasks
 
@@ -39,9 +39,9 @@ done · ⛔ blocked, needs a human.
 | T12 | coordinator-row | T06, T11 | ✅ | |
 | T13 | hold-timeout | T04, T12; blocks T14 | ✅ | |
 | T15 | answered-first-facts | T13; blocks T14 | ✅ | |
-| T14 | live-concurrent-check | T12, T13, T15 | ⬜ | Added 2026-09-28 with the user: paid live run, two workers asking at once, the hold limit firing at 3 min, and the agent's statements checked against the record. |
+| T14 | live-concurrent-check | T12, T13, T15 | 🔍 | Fixture `pir-coordinator-concurrent`, facts briefsOverlapped, oneDecisionEach, timedOutToPerson, statementsMatchRecord; 13 tests. Live run PASS on the second try. Deviations: answerer `personDelayMs` (60 s) so the pointer lands first; `readyWithReport({conflict:false})`; fixture rules slow the agent. |
 
-**Review queue:** *(empty)*
+**Review queue:** T14
 
 ## Blocked on the user
 
