@@ -14,8 +14,8 @@ import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readdirSync
 import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { readDecision, checkDecision } from '../core/coordinator-policy.mjs';
-import { briefFor, refusalFor, answeredElsewhereFor, openingFor, resumedFor, endBriefFor } from '../core/coordinator-brief.mjs';
+import { readDecision, checkDecision, describeItem } from '../core/coordinator-policy.mjs';
+import { briefFor, refusalFor, answeredElsewhereFor, openingFor, resumedFor, endBriefFor, timedOutFor, holdWords } from '../core/coordinator-brief.mjs';
 import { writeJsonAtomic } from './atomic-write.mjs';
 
 // DESIGN §3.4. The allowlist is what actually holds (T00); `disallowedTools` is the second fence.
@@ -282,9 +282,12 @@ export function startCoordinatorAgent({
 
   // → { passed, settled, report?, close? }. `settled` holds every item this drain closed for the agent —
   // answered by it, or found already answered and the agent told so here — as { worker, requestId? }, so
-  // the run never tells the agent a second time that the person answered it (T04).
-  function drain(waiting = [], { ready = false } = {}) {
+  // the run never tells the agent a second time that the person answered it (T04). `late` is the keys of
+  // the items the hold limit already handed to the person (T13): a decision for one is applied as any
+  // other, first answer winning, and its ledger line carries `late: true`.
+  function drain(waiting = [], { ready = false, late = new Set() } = {}) {
     const out = { passed: [], settled: [] };
+    const ledgerFor = (a) => (late.has(keyOf(a)) ? { ...a.ledger, late: true } : a.ledger);
     let files = [];
     try {
       files = readdirSync(decisionsDir).filter((f) => f.endsWith('.json')).sort();
@@ -355,14 +358,14 @@ export function startCoordinatorAgent({
         if (a.requestId !== undefined) passed.requestId = a.requestId;
         out.passed.push(passed);
         take(a);
-        appendLedger(a.ledger);
+        appendLedger(ledgerFor(a));
         continue;
       }
       const item = remaining.find((i) => sameItem(i, a)) ?? a;
       take(a);
       out.settled.push(a.requestId !== undefined ? { worker: a.worker, requestId: a.requestId } : { worker: a.worker });
       if (apply(a)) {
-        appendLedger(a.ledger);
+        appendLedger(ledgerFor(a));
       } else if (a.kind === 'message') {
         tell(refusalFor(`worker ${a.worker} could not be reached; it has exited`, file));
       } else {
@@ -445,6 +448,16 @@ export function startCoordinatorAgent({
     },
     answeredElsewhere(item) {
       return tell(answeredElsewhereFor(item));
+    },
+    // timedOut(item, { holdMs, heldForMs }) → the agent held the item for the hold limit without a decision
+    // and it is the person's now (DESIGN §2.11, T13): the agent is told, and the ledger gets one `timeout`
+    // line, never notable, so the report's decisions section is unchanged. → true once the agent was told.
+    timedOut(item, { holdMs, heldForMs } = {}) {
+      if (!item) return false;
+      const line = { kind: 'timeout', worker: item.worker, task: item.task, item: describeItem(item), answer: `handed to the person after ${holdWords(holdMs)} without a decision`, heldForMs, notable: false };
+      if (item.requestId !== undefined) line.requestId = item.requestId;
+      appendLedger(line);
+      return tell(timedOutFor(item, holdMs));
     },
     drain,
     tell,

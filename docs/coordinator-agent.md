@@ -117,7 +117,22 @@ person" and a late decision for it is refused.
 - When the agent dies, every item it holds becomes the person's at once. A dead agent never leaves a
   worker waiting on it.
 
-There is no timeout. A slow agent leaves the item waiting, and the person can answer it meanwhile.
+**The hold limit.** An item the agent holds for 5 minutes without a decision becomes the person's, as
+if the agent had passed it on: the row reads `asking you`, it counts in the `asking you` tally and the
+footer points at it, the runs list turns amber, and the worker's Remote Control comes on. The limit is
+counted from the pass that briefed and held the item, on the pass's own clock, and
+`PARALLEL_COORDINATOR_HOLD_MS` overrides it (a positive number of milliseconds; the live check and the
+tests shorten it). The command tells the agent in one message, starting "Handed to the person", and the
+agent answers it with its pointer, as for a pass. `control.log` gets `coordinator-timeout <task>` and
+the ledger a `timeout` line (the item, `heldForMs`), never notable. A timed-out item that keeps waiting
+is not held again; a new park by the same worker is a new item, briefed afresh. Reserved items have no
+limit: they are the person's from the start.
+
+**A late answer still counts while the person has not answered.** A `permission`, `answers` or
+`message` from the agent for a timed-out item is applied like any decision, its ledger line carrying
+`late: true`; the row goes back to working and Remote Control goes off. A late `pass` changes nothing on
+screen and is ledgered `late: true`. If the person answered first, the agent is told "already answered
+by the person" and its decision is refused.
 
 ## What always goes to the person
 
@@ -215,7 +230,9 @@ packages; the drop folder reuses the pattern workers already use for reports.
 
 The command, not the agent, keeps `plans/{slug}/.parallel/control/coordinator/ledger.jsonl`: one line
 per applied decision (`answers`, `permission`, `message`, `pass`) with the item, the answer, the
-agent's reason and its `notable` flag. Every task adopted into the plan at merge while the agent was
+agent's reason and its `notable` flag, and `late: true` on a decision for an item the hold limit had
+already handed to the person. The hold limit adds one `timeout` line per item it hands over, with
+`heldForMs`, never notable. Every task adopted into the plan at merge while the agent was
 alive is written as a notable `adopt` line, since only the agent or the person can have approved it.
 The ledger is durable across a pir restart. A torn last line is skipped on read, and the next append
 starts a fresh line after it.
@@ -314,6 +331,9 @@ run finished.
   `REPORT.md` committed, re-checks the sync, and returns to `ready to merge` without rewriting the
   report (only the footer, if `main` moved). If the person merged while pir was down, the run finishes
   as merged.
+- **It is slow, or drops a brief.** Several briefs arriving together is the likely way the agent drops
+  one. The hold limit ([Answer first](#answer-first)) hands any item held 5 minutes without a decision
+  to the person, so a held item never waits unseen.
 - **A misbehaving agent.** Stop the run and resume it with `pir start {slug} --no-coordinator`. Every
   decision it made is in the ledger, and it can never have touched `main`.
 

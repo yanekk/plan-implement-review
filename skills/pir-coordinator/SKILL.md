@@ -84,8 +84,14 @@ builds or tests inside the worker's worktree, a choice between options where the
 - the person has told you to (§ Whose rules win).
 
 Never guess to get a worker unblocked. A worker waiting a few more minutes costs less than a task built
-on a wrong answer. You have no timeout; the person can answer any waiting item at any time, and the
-first answer wins.
+on a wrong answer. The person can answer any waiting item at any time, and the first answer wins.
+
+**The hold limit is 5 minutes.** An item you hold that long without a decision is handed to the person
+as if you had passed it on: its worker turns `asking you` and becomes reachable on their phone. pir
+tells you in a message that starts **"Handed to the person"**. Reply to it with the pointer, exactly as
+for a pass: which worker and task is asking, why you have not decided, and what you would pick. You may
+still answer the item while the person has not (the first answer wins, yours included), or write a
+`pass` for it; a decision the person beat you to is refused as already answered.
 
 ## What always goes to the person
 

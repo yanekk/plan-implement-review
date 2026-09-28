@@ -317,6 +317,36 @@ test('pass: returned in passed and ledgered; no note written and nothing sent to
   assert.deepEqual(agent.ledger().map((l) => l.kind), ['pass', 'pass']);
 });
 
+test('late (T13): a decision or pass for a timed-out item is applied as any other, its ledger line `late: true`', async (t) => {
+  const s = scratch(t);
+  const { agent } = start(s, [{ await: 'user' }], t);
+  drop(s, '1-a.json', { kind: 'answers', worker: s.w1, requestId: 'r2', answers: { 'Colour?': 'Red' }, reason: 'the design says red' });
+  drop(s, '2-b.json', { kind: 'pass', worker: s.w2, reason: 'a user would see it', suggestion: 'no' });
+  const out = agent.drain([questionsItem(s), reportItem(s)], { late: new Set([`${s.w1}:r2`, `${s.w2}:report`]) });
+  assert.deepEqual(out.settled, [{ worker: s.w1, requestId: 'r2' }]);
+  assert.equal(s.platform.answers[0].from, 'coordinator', 'applied');
+  assert.deepEqual(agent.ledger().map((l) => [l.kind, l.late]), [['answers', true], ['pass', true]]);
+
+  // Not late: no `late` key at all, so a line from before T13 and one held in time read the same.
+  drop(s, '3-c.json', { kind: 'permission', worker: s.w1, requestId: 'r1', decision: 'allow', reason: 'tests' });
+  agent.drain([permissionItem(s)], { late: new Set([`${s.w2}:report`]) });
+  assert.equal('late' in agent.ledger().at(-1), false);
+});
+
+test('timedOut (T13): tells the agent the item is the person\'s and ledgers one `timeout` line, not notable', async (t) => {
+  const s = scratch(t);
+  const { agent } = start(s, [{ await: 'user' }], t, { now: () => Date.parse('2026-09-28T10:00:00Z') });
+  assert.equal(agent.timedOut(permissionItem(s), { holdMs: 300000, heldForMs: 300004 }), true);
+  await waitFor(() => told(agent).some((m) => m.startsWith('Handed to the person')), 'the hand-over');
+  const msg = told(agent).find((m) => m.startsWith('Handed to the person'));
+  assert.match(msg, /for 5 minutes without a decision/);
+  assert.match(msg, /^requestId: `r1`$/m);
+  assert.deepEqual(agent.ledger(), [{
+    t: '2026-09-28T10:00:00.000Z', kind: 'timeout', worker: s.w1, task: 'T05', item: 'Bash: npm test',
+    answer: 'handed to the person after 5 minutes without a decision', heldForMs: 300004, notable: false, requestId: 'r1',
+  }]);
+});
+
 test('report and close: returned; close refused unless the run is ready to merge', async (t) => {
   const s = scratch(t);
   const { agent } = start(s, [{ await: 'user' }], t);
