@@ -25,11 +25,11 @@ done · ⛔ blocked, needs a human.
 |---|---|---|---|---|
 | T01 | box-grammar | — | ✅ | |
 | T02 | plan-scan | — | ✅ | |
-| T03 | box-completion | T01 | ⬜ | |
+| T03 | box-completion | T01 | 🔍 | boxCompletion replaces repoCompletion; re-open rule in toBox; `new` label, START_HINT, new suffix. 13 new tests, 29 in file. Deviations: label change also edits `new plan` assertions in plan-rig.test and pir-tui.test; view exposes cached `plansOf` for T04's submit; command and slug filters case-insensitive. |
 | T04 | box-starts-build | T01, T02, T03 | ⬜ | |
 | T05 | box-commands-drill | T04 | ⬜ | |
 
-**Review queue:** *(empty)*
+**Review queue:** T03
 
 ## Blocked on the user
 
