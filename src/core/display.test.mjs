@@ -5,7 +5,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { askingCount, buildDisplay } from './display.mjs';
+import { askingCount, buildDisplay, rowEntries } from './display.mjs';
 
 // A base clock, so `now − since` is a round number in the assertions.
 const NOW = 1_000_000;
@@ -375,4 +375,56 @@ test('a helper that reported done reads finishing while it is closed; with no he
   const d = buildDisplay({ branch: 'b', ceiling: 1, tasks: [task({ done: true })], helpers: [helperRow({ phase: 'merging' })] }, { now: NOW });
   assert.equal(d.rows[1].label, 'finishing');
   assert.equal(buildDisplay({ branch: 'b', ceiling: 1, tasks: [task({ done: true })] }, { now: NOW }).rows.length, 1);
+});
+
+// --- the coordinator agent's pinned row (pir-coordinator T12) -------------------------------------
+
+const agent = (over) => ({ id: 'sess-1', live: true, logPath: '/c/conversations/coordinator-1.ndjson', state: 'up', holding: 0, ...over });
+
+test('with an agent the rows are tasks, separator, agent, helpers; with none, no separator and no agent row (T12)', () => {
+  const tasks = [task({ id: 'T01', done: true }), task({ id: 'T02', phase: 'building', since: NOW - 1000 })];
+  const helpers = [helperRow({ id: 'main-sync', slug: 'resolve-main-merge' })];
+  const d = buildDisplay({ branch: 'b', ceiling: 2, tasks, helpers, coordinator: agent() }, { now: NOW });
+  assert.deepEqual(d.rows.map((r) => r.kind), ['done', 'building', 'separator', 'agent', 'building']);
+  assert.deepEqual(d.rows.map((r) => r.id), ['T01', 'T02', '──', 'coordinator', 'main-sync']);
+  assert.deepEqual(d.rows[3], { id: 'coordinator', slug: 'coordinator agent', agent: true, elapsedMs: null, kind: 'agent', label: 'on duty' });
+  assert.deepEqual(rowEntries({ tasks, helpers, coordinator: agent() }).map((e) => e.id), ['T01', 'T02', '──', 'coordinator', 'main-sync']);
+
+  for (const coordinator of [null, undefined]) {
+    const none = buildDisplay({ branch: 'b', ceiling: 2, tasks, helpers, coordinator }, { now: NOW });
+    assert.deepEqual(none.rows.map((r) => r.id), ['T01', 'T02', 'main-sync']);
+    assert.deepEqual(rowEntries({ tasks, helpers, coordinator }).map((e) => e.id), ['T01', 'T02', 'main-sync']);
+  }
+});
+
+test('the agent row states what it does and how much it holds (T12)', () => {
+  const label = (c) => buildDisplay({ branch: 'b', ceiling: 1, tasks: [task()], coordinator: agent(c) }, { now: NOW }).rows[2];
+  assert.equal(label({ holding: 0 }).label, 'on duty');
+  assert.equal(label({ holding: 1 }).label, 'holding 1 question');
+  assert.equal(label({ holding: 2 }).label, 'holding 2 questions');
+  assert.equal(label({ state: 'restarting', live: false }).label, 'restarting');
+  const gone = label({ state: 'given-up', live: false });
+  assert.equal(gone.label, 'given up · questions come to you');
+  assert.equal(gone.kind, 'agent-given-up');
+  // A snapshot written before T12 has no state or holding: its `live` decides.
+  assert.equal(label({ state: undefined, holding: undefined }).label, 'on duty');
+  assert.equal(label({ state: undefined, holding: undefined, live: false }).label, 'restarting');
+  for (const c of [{ holding: 3 }, { state: 'given-up' }]) assert.equal(label(c).elapsedMs, null, 'no clock');
+});
+
+test('the summary, askingCount and the footer are unchanged by the agent row (T12)', () => {
+  const tasks = [
+    task({ id: 'T01', done: true }),
+    task({ id: 'T02', phase: 'asking', since: NOW - 3000, holder: 'person' }),
+    task({ id: 'T03', phase: 'building', since: NOW - 3000, asking: 'permission', holder: 'coordinator' }),
+    task({ id: 'T04', deps: ['T02'] }),
+  ];
+  const without = { branch: 'b', ceiling: 3, tasks };
+  for (const coordinator of [agent({ holding: 1 }), agent({ state: 'given-up', live: false })]) {
+    const withAgent = { ...without, coordinator };
+    assert.deepEqual(buildDisplay(withAgent, { now: NOW }).summary, buildDisplay(without, { now: NOW }).summary);
+    assert.deepEqual(buildDisplay(withAgent, { now: NOW }).footer, buildDisplay(without, { now: NOW }).footer);
+    assert.equal(askingCount(withAgent), askingCount(without));
+    assert.equal(askingCount(withAgent), 1);
+  }
 });

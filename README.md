@@ -221,9 +221,11 @@ stands in for you:
 - **It may decide more than routine answers.** It may approve a worker adding a task, settle a
   question the design leaves open, or approve going against a design rule. Every such decision is
   listed in the delivery report under "Decisions made for you".
-- **You can talk to it.** Press `c` in a run's live view to open its conversation, in `pir` or on
-  your phone: ask where things stand, or tell it something for the rest of the run ("don't approve
-  new tasks tonight").
+- **You can see it and talk to it.** It has its own row in a run's live view, under a line below the
+  tasks, saying whether it is on duty, how many questions it is holding, or that it has given up and
+  questions now come to you. Select that row and press `→` (or press `c` anywhere in the live view) to
+  open its conversation, in `pir` or on your phone: ask where things stand, or tell it something for the
+  rest of the run ("don't approve new tasks tonight").
 - **It cannot touch anything.** It can only read the plan and write its decisions; the program
   checks each one and applies it. It never merges into `main` and never pushes.
 
@@ -299,7 +301,7 @@ list is the new-plan box, for starting a planning run in any of your repos (abov
 |---|---|
 | Dashboard | `↑↓` move · `↵` open a run · `Ctrl+R` twice resume · `Ctrl+S` twice stop · `Ctrl+X` twice remove · `esc` quit |
 | Dashboard, typing in the box | `@repo` then a brief · `↵` start planning · `shift+↵` new line · `esc` clear the box |
-| Live view | `↑↓` pick a task · `→` open its worker · `c` open the coordinator agent · `←` back to the dashboard · `Ctrl+S` twice stop this run · `esc` quit |
+| Live view | `↑↓` pick a task or the coordinator agent's row · `→` open its conversation · `c` open the coordinator agent · `←` back to the dashboard · `Ctrl+S` twice stop this run · `esc` quit |
 | A planning run | `↑↓` pick a step · `→` open its conversation · `←` back · at the go, `↵` start or `n` not now |
 
 Another program can follow what the dashboard has open: start it as

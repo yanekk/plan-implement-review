@@ -23,7 +23,7 @@ import { readLogTail } from './commands.mjs';
 
 import { buildDisplay, rowEntries } from '../core/display.mjs';
 import { wrapLine } from '../core/text.mjs';
-import { buildDashboard, dashboardReducer, displayName, findOpen, goOpen, initialUi, isPlan, openTasks, planProgress, repinOpen, runKey } from '../core/dashboard.mjs';
+import { buildDashboard, dashboardReducer, displayName, findOpen, goOpen, initialUi, isPlan, openTasks, planProgress, repinOpen, runKey, moveRow } from '../core/dashboard.mjs';
 import { buildPlanDisplay } from '../core/plandisplay.mjs';
 import { styledLines } from './render.mjs';
 import { classifyRun } from '../core/runstate.mjs';
@@ -402,7 +402,7 @@ export function buildWatchFrame(view, { now, spinnerChar = SPINNER[0], ui = init
     // A stale (non-running) frame freezes its spinner to a dot so it cannot read as still ticking.
     const spin = alive ? spinnerChar : '·';
     // The block's lines 1..n are the task rows, in rowEntries order (line 0 is the summary): the plan's
-    // tasks, then any end-of-run helper (pir-coordinator T11). The
+    // tasks, the separator and the coordinator agent's row (T12), then any end-of-run helper (T11). The
     // selected one carries the list's selected-row mark in place of its leading '  ' (painted as the grey
     // band, see paintLine), so this block is no longer byte-for-byte the coordinator's display, on purpose;
     // every other line is.
@@ -1027,6 +1027,8 @@ async function runTui({
     const idx = tasks.findIndex((t) => t.id === selectedTask.get(runId));
     if (idx >= 0) taskSel = idx;
     taskSel = Math.max(0, Math.min(taskSel, Math.max(0, tasks.length - 1)));
+    // The separator above the agent's row is never selected (T12): a clamp that lands on it moves off it.
+    if (tasks[taskSel]?.separator) taskSel = moveRow(tasks, taskSel, 1);
     ui = { ...ui, taskSel };
     if (tasks[taskSel]) selectedTask.set(runId, tasks[taskSel].id);
   }

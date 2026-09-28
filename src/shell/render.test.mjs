@@ -446,3 +446,50 @@ test('a helper row lines up with the task rows and its asking footer names it (T
   );
   assert.ok(asking.includes('● main-sync resolve-main-merge — asking you; open it (→) to answer'), asking.join('\n'));
 });
+
+// The coordinator agent's pinned row (pir-coordinator T12): a separator across the row width, then the
+// agent's row with its state where the tasks' labels are; neither widens the task columns.
+test('the separator and the agent row: order, width, alignment, no clock, style (T12)', () => {
+  const runState = {
+    branch: 'pir/demo',
+    ceiling: 2,
+    tasks: [
+      { id: 'T01', slug: 'config-loader', deps: [], done: true, doneMs: 240000 },
+      { id: 'T02', slug: 'api-routes', deps: [], done: false, phase: 'building', since: NOW - 120000 },
+    ],
+    coordinator: { id: 's', live: true, logPath: null, state: 'up', holding: 1 },
+    helpers: [{ id: 'main-sync', slug: 'resolve-main-merge', helper: true, deps: [], done: false, phase: 'building', since: NOW - 3000 }],
+  };
+  const lines = formatLines(buildDisplay(runState, { now: NOW }), { spinnerChar: '⠋' });
+  // summary, T01, T02, separator, agent, main-sync, blank footer
+  assert.match(lines[3], /^ {2}─+$/);
+  assert.equal(lines[4], `  ◆ ${'coordinator agent'.padEnd(9 + 1 + 22)} holding 1 question`);
+  assert.match(lines[5], /^ {2}⠋ main-sync resolve-main-merge/);
+  const t02 = lines[2];
+  assert.equal(lines[4].indexOf('holding'), t02.indexOf('building'), 'the state lines up with the task labels');
+  assert.equal([...lines[3]].length, [...lines[1]].length + 1, 'the separator spans a task row with a 4-column clock (+1 for a 5-column one)');
+  for (const l of lines) assert.ok([...l].length <= 80, `wider than 80: ${l}`);
+
+  // Given up: the idle style's wording, and its long label does not widen the task label column.
+  const gone = formatLines(buildDisplay({ ...runState, helpers: undefined, coordinator: { ...runState.coordinator, state: 'given-up', live: false } }, { now: NOW }), { spinnerChar: '⠋' });
+  assert.equal(gone[4], `  ◆ ${'coordinator agent'.padEnd(4 + 1 + 22)} given up · questions come to you`);
+  assert.equal(gone[2], `  ⠋ T02  ${'api-routes'.padEnd(22)} ${'building'.padEnd(24)} 2:00`);
+
+  // With no agent there is neither line.
+  const none = formatLines(buildDisplay({ ...runState, coordinator: null }, { now: NOW }), { spinnerChar: '⠋' });
+  assert.ok(!none.some((l) => l.includes('─') || l.includes('coordinator')), none.join('\n'));
+});
+
+test('the agent row and separator are painted in their styles on a colour TTY (T12)', () => {
+  const out = [];
+  const stream = { isTTY: true, columns: 80, rows: 24, write: (s) => out.push(s) };
+  const r = createRenderer({ stream, colour: true });
+  const base = { branch: 'b', ceiling: 1, tasks: [{ id: 'T01', slug: 'x', deps: [], done: true }] };
+  r.paint(buildDisplay({ ...base, coordinator: { id: 's', live: true, state: 'up', holding: 0 } }, { now: NOW }));
+  r.paint(buildDisplay({ ...base, coordinator: { id: 's', live: false, state: 'given-up' } }, { now: NOW }));
+  r.close();
+  const all = out.join('');
+  assert.match(all, /\x1b\[36m {2}◆ coordinator agent +on duty\x1b\[0m/, 'up: the active colour, never amber');
+  assert.match(all, /\x1b\[2m {2}◆ coordinator agent +given up · questions come to you\x1b\[0m/, 'given up: idle');
+  assert.match(all, /\x1b\[2m {2}─+\x1b\[0m/, 'the separator: idle');
+});
