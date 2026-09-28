@@ -74,7 +74,8 @@
 // script that interrupts a turn with an ask open emits that line itself after `{"await":"interrupt"}`.
 //
 // Helpers for scripts: `turn(text)` is the `init`, assistant text and `result` of one plain turn;
-// `wakeUp()` is a background job's notification and the turn it opens; `remoteInputTurn()` is a turn
+// `backgroundTasks(ids)` is the running-jobs list; `wakeUp()` is a background job's end, its notification
+// and the turn it opens; `remoteInputTurn()` is a turn
 // opened by input typed over Remote Control;
 // `canUseTool(requestId, toolName, input)` is the control request of one permission ask. Both are
 // exported so a test builds its script from the same shapes the recording holds.
@@ -159,8 +160,21 @@ export function taskNotification(taskId = 'bgfake') {
   };
 }
 
-export function wakeUp(text = 'The background job finished.', taskId = 'bgfake') {
-  return [{ emit: taskNotification(taskId) }, ...turn(text)];
+// The list of background jobs still running, which the CLI re-sends whole whenever it changes and sends
+// as `[]` when the last one ends (stopped-worker-asking DESIGN §2.2). A script emits `backgroundTasks(['bgfake'])`
+// when its job starts; `wakeUp()` emits the shrunken list when it ends.
+export function backgroundTasks(ids = []) {
+  return {
+    type: 'system', subtype: 'background_tasks_changed',
+    tasks: ids.map((id) => ({ task_id: id, task_type: 'local_bash', description: `fake job ${id}` })),
+    session_id: '{{session}}', uuid: '00000000-0000-4000-8000-000000000009',
+  };
+}
+
+// The job's end in the order the real CLI sends it (fixture case 5): the shrunken list, the notification,
+// then the wake-up turn. `still` names the jobs that keep running.
+export function wakeUp(text = 'The background job finished.', taskId = 'bgfake', still = []) {
+  return [{ emit: backgroundTasks(still) }, { emit: taskNotification(taskId) }, ...turn(text)];
 }
 
 // Input typed over Remote Control, as the real CLI announces it (T00): `command_lifecycle` `queued` and

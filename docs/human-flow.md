@@ -36,13 +36,39 @@ to answer it are `pir` and, while it waits, claude.ai or the Claude app (below).
 ### When a row reads asking you
 
 A task is **waiting on the person** — its row reads `asking you`, its clock is stopped, and Remote
-Control is on (below) — when either holds (`waitingOn` in `src/core/asking.mjs`, the one predicate the
+Control is on (below) — when any of these holds (`waitingOn` in `src/core/asking.mjs`, the one predicate the
 row, the clock and Remote Control all read, so they cannot disagree):
 
 - its live worker has a permission request or a question set pending (the row reads `asking you ·
   allow a command?` or `asking you · a question`), or
 - it is parked on its own `question` or `decision` report, and its worker is **not inside the asking
-  turn** — the turn it dropped the report in. The report is only a real park once that turn has ended.
+  turn** — the turn it dropped the report in. The report is only a real park once that turn has ended; or
+- it is building or reviewing and its worker has **stopped**: its last turn has ended, nothing is
+  pending, and no background job of its own is still running (`stoppedOnPerson` in `asking.mjs`). The
+  row reads `asking you · a question` even when the worker dropped no report.
+
+A worker in a run ends its turn only when it has finished (and then it has reported, which moved the
+task on), when it waits on its own background job, or when it waits on the person; with the first two
+ruled out, a stopped worker is waiting on the person. This catches a worker that asks in plain text
+and forgets the report, and a follow-up question asked after an earlier one was answered, when the
+earlier report no longer holds. A worker that stopped by mistake, with no question at all, reads
+`asking you` too: pir does not read the worker's words to tell the two apart, since guessing could hide
+a real question. The person opens it, finds nothing asked, and tells it to carry on. When the person
+answers, the worker's next turn opens and the row reads `building` or `reviewing` again; there is no
+park to lift.
+
+**A background job still running means not asking**, unless the worker dropped a report. A worker
+waiting on its own tests or build reads `building` or `reviewing` while the job runs, and when the job's
+wake-up turn ends with nothing left running, it reads `asking you`. A job waited on with Monitor counts
+the same way (measured 2026-09-27). The known miss: a worker that asks the person while a job of its
+own is still running, without a report, reads `building` until that job's wake-up turn ends. The
+worker contract closes it by telling workers to drop a fresh report every time they end a turn waiting
+on the person (`skills/pir-worker`). A worker whose background jobs pir cannot see (a listing without
+them, as in the test fakes) never reads stopped. Interrupting a worker ends its turn, so it then reads
+`asking you`: it is waiting for the person.
+
+A planner or plan reviewer in a `pir plan` run reads asking by the same stopped rule, until its report
+is accepted (see [planning-runs.md](planning-runs.md#reports-and-how-pir-checks-them)).
 
 A worker drops its report from inside a turn and then ends the turn with the question put to the
 person. While that turn is still open the worker is working, whatever it reported: the row reads plain
@@ -119,7 +145,7 @@ times it out.
 ## Answering away from the terminal — Remote Control
 
 While a worker waits on the person — a question or decision report whose asking turn has ended, a
-permission request, or a question set ([When a row reads asking you](#when-a-row-reads-asking-you)) — its session is switched to Claude's Remote Control, so the person is notified in the
+stopped worker, a permission request, or a question set ([When a row reads asking you](#when-a-row-reads-asking-you)) — its session is switched to Claude's Remote Control, so the person is notified in the
 Claude app and can answer from claude.ai or the phone as well as from `pir`. Each pass the command
 works out which live workers are waiting (`remoteWanted` in `coordinate.mjs`) and switches each worker
 on or off to match (`remoteControl` in `worker-proc.mjs`, which uses the SDK's undocumented

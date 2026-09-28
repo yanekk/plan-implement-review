@@ -53,7 +53,14 @@ export function answerFor(request, typed = {}) {
 // `afterWake` ({ <task>: <text> }) answers a report-parked implementer with a plain message, but only once
 // a background job has woken it and that wake-up turn has ended (real-asking-state T05): the live check
 // needs the row seen `asking you` through the wake-up before the answer takes it off. Key `wake:<task>`.
-export function pendingDrops(logs, answered = new Set(), typed = {}, say = {}, replies = null, afterWake = {}) {
+//
+// `taskReplies` ({ <task>: [text, …] }) gives a build task's implementer the next reply in its sequence each
+// time it ends a turn idle on its own words (replyTurn), once per turn, and nothing once the sequence is
+// spent (stopped-worker-asking T06: a plain-text ask with no report). The reply waits until the turn has
+// been over for `holdMs` by the log's own clock (`now` against the last entry's `t`), so the coordinator
+// gets several passes to paint the row `asking you` before the answer takes it off. Key
+// `task-reply:<task>:<log>:<turn>`.
+export function pendingDrops(logs, answered = new Set(), typed = {}, say = {}, replies = null, afterWake = {}, taskReplies = {}, { now = Infinity, holdMs = 0 } = {}) {
   const out = [];
   for (const { file, entries } of logs) {
     const to = logSessionId(entries);
@@ -74,6 +81,11 @@ export function pendingDrops(logs, answered = new Set(), typed = {}, say = {}, r
     if (wakeText && !exited && wokenAndIdle(activity) && !answered.has(`wake:${name.task}`)) {
       out.push({ to, kind: 'message', text: wakeText, key: `wake:${name.task}` });
     }
+    const sequence = name && name.role === 'implement' ? taskReplies[name.task] : undefined;
+    if (Array.isArray(sequence)) {
+      const drop = dueTaskReply(file, entries, name.task, sequence, answered, now, holdMs);
+      if (drop) out.push({ to, ...drop });
+    }
   }
   if (replies?.text) {
     let sent = repliesSent(answered);
@@ -84,6 +96,21 @@ export function pendingDrops(logs, answered = new Set(), typed = {}, say = {}, r
     }
   }
   return out;
+}
+
+// dueTaskReply(file, entries, task, sequence, answered, now, holdMs) → { kind, text, key } or null: the next
+// unsent text of `sequence` when the implementer is due a reply for this turn and has been idle `holdMs`.
+// The index is how many of this task's replies were already sent, over every log of the task. Pure.
+function dueTaskReply(file, entries, task, sequence, answered, now, holdMs) {
+  const turn = replyTurn(entries);
+  if (turn == null) return null;
+  const key = `task-reply:${task}:${file}:${turn}`;
+  if (answered.has(key)) return null;
+  const sent = [...answered].filter((k) => String(k).startsWith(`task-reply:${task}:`)).length;
+  if (sent >= sequence.length) return null;
+  const lastT = entries.reduce((m, e) => (typeof e?.t === 'number' && e.t > m ? e.t : m), -Infinity);
+  if (now - lastT < holdMs) return null;
+  return { kind: 'message', text: sequence[sent], key };
 }
 
 // wokenAndIdle(activity) → true once a turn opened by a background job's wake-up (turn cause 'system',
@@ -138,7 +165,7 @@ export function dueReplies(logs, answered = new Set()) {
 
 const repliesSent = (answered) => [...answered].filter((k) => String(k).startsWith('reply:')).length;
 
-// createAnswerer({ controlDir, typed, say, afterWake, replies, holdReplies, drop, log }) → { tick(), capReached() }.
+// createAnswerer({ controlDir, typed, say, afterWake, taskReplies, replies, holdReplies, drop, log, now, holdMs }) → { tick(), capReached() }.
 // Reads every conversation log of the run, answers what is pending, and remembers what it answered.
 // `controlDir` is a path or a function returning one, called every tick: a planning run's control folder
 // moves at the rename (pir-plan-command DESIGN §2.6), so the plan scenario passes the index record's
@@ -146,14 +173,19 @@ const repliesSent = (answered) => [...answered].filter((k) => String(k).startsWi
 // while a session's report is being acted on, so a finished planner is not talked into another turn).
 // capReached() is true once a reply was due and the cap had been spent. `drop` is dropPersonInput with
 // the program taken as alive (the runner only ticks while it runs), called as drop(input, controlDir);
-// injected so a test sees the drops without an inbox.
+// injected so a test sees the drops without an inbox. `now` (epoch ms) and `holdMs` time the taskReplies hold.
+export const TASK_REPLY_HOLD_MS = 15_000;
+
 export function createAnswerer({
   controlDir,
   typed = {},
   say = {},
   afterWake = {},
+  taskReplies = {},
   replies = null,
   holdReplies = () => false,
+  now = () => Date.now(),
+  holdMs = TASK_REPLY_HOLD_MS,
   drop = (input, dir) => dropPersonInput(dir, input, { coordinatorAlive: true }),
   log = () => {},
 } = {}) {
@@ -181,7 +213,7 @@ export function createAnswerer({
       if (!root) return written;
       const logs = readLogs(root);
       const withReplies = replies?.text && !holdReplies() ? replies : null;
-      for (const { key, ...d } of pendingDrops(logs, answered, typed, say, withReplies, afterWake)) {
+      for (const { key, ...d } of pendingDrops(logs, answered, typed, say, withReplies, afterWake, taskReplies, { now: now(), holdMs })) {
         const r = drop(d, root);
         if (!r?.ok) {
           log(`answerer: could not answer ${key}: ${r?.reason ?? 'unknown'}`);

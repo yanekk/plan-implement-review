@@ -98,6 +98,12 @@ const EXPECT = {
     ceiling: 2,
     factIds: ['ceiling-held:2', 'handed-off-green-branch'],
   },
+  'stopped-asking': {
+    taskCount: 2,
+    deps: { T01: [], T02: [] },
+    ceiling: 2,
+    factIds: ['ceiling-held:2', 'handed-off-green-branch'],
+  },
 };
 
 // --- The registry ---------------------------------------------------------------------------------
@@ -251,6 +257,7 @@ test('live-workers-demo: T01 must ask through AskUserQuestion; T02 runs the exac
     typed: { 'What name should name.txt hold? Type your own.': 'Typed by the harness' },
     say: { T04: 'go' },
     afterWake: {},
+    taskReplies: {},
   });
   assert.match(fx.tasks['T04-background.md'], /wait for the person's go/);
   assert.match(fx.tasks['T03-extras.md'], /multiSelect true/);
@@ -267,7 +274,7 @@ test('live-workers-demo: T01 must ask through AskUserQuestion; T02 runs the exac
 
 test('real-asking: T01 reports, works on and only then asks in plain text; T02 is woken while asking and answered by the harness', () => {
   const fx = getFixture('real-asking');
-  assert.deepEqual(fx.scenario.answerPending, { typed: {}, say: {}, afterWake: { T02: 'blue' } });
+  assert.deepEqual(fx.scenario.answerPending, { typed: {}, say: {}, afterWake: { T02: 'blue' }, taskReplies: {} });
   assert.equal(fx.scenario.statusSnapshots, true, 'the coordinator writes status.json so the row history is captured');
   assert.equal(fx.scenario.seatbelts.timeoutMs, 15 * 60 * 1000);
   const t01 = fx.tasks['T01-greeting.md'];
@@ -277,6 +284,22 @@ test('real-asking: T01 reports, works on and only then asks in plain text; T02 i
   assert.match(t02, /run_in_background: true\*\*, start exactly `node -e "setTimeout\(\(\) => \{\}, 60000\)"`/);
   assert.match(t02, /not the person's answer/);
   assert.doesNotMatch(t02, /`sleep/);
+});
+
+test('stopped-asking: T01 asks twice in plain text with no report and is answered by the harness; T02 waits on a timer then a Monitor', () => {
+  const fx = getFixture('stopped-asking');
+  assert.deepEqual(fx.scenario.answerPending, { typed: {}, say: {}, afterWake: {}, taskReplies: { T01: ['Hello there', 'yes'] } });
+  assert.equal(fx.scenario.statusSnapshots, true, 'the coordinator writes status.json so the row history is captured');
+  assert.equal(fx.scenario.seatbelts.timeoutMs, 15 * 60 * 1000);
+  const t01 = fx.tasks['T01-greeting.md'];
+  assert.match(t01, /do NOT drop any report of kind `question` or `decision`/);
+  assert.match(t01, /do NOT use the AskUserQuestion tool/);
+  assert.match(t01, /\(1\) ask the person, in plain text[\s\S]*\(3\) Then ask the person one follow-up, in plain text: whether to add a trailing full stop/);
+  const t02 = fx.tasks['T02-timer.md'];
+  assert.match(t02, /run_in_background: true\*\*, start exactly `node -e "setTimeout\(\(\) => \{\}, 60000\)"`/);
+  assert.match(t02, /\*\*Monitor tool\*\* on exactly `node -e "setTimeout\(\(\) => console\.log\('done'\), 45000\)"`/);
+  assert.match(t02, /never ask the person anything/);
+  assert.doesNotMatch(t02 + t01, /`sleep/);
 });
 
 test('parallel: at least two independent tasks so workers run concurrently', () => {

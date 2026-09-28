@@ -423,3 +423,98 @@ test('a notification inside an open turn does not mark the next turn a wake-up',
 test('a person send after a notification opens the turn as `person`', () => {
   assert.deepEqual(workerActivity([sent(), init(), result(), notification(), personSent(), init()]).turnCauses, ['pir', 'person']);
 });
+
+// ---- Background jobs still running (stopped-worker-asking DESIGN §2.2, T01) ----
+
+const listed = (...ids) => inMsg({ type: 'system', subtype: 'background_tasks_changed', tasks: ids.map((task_id) => ({ task_id, task_type: 'local_bash' })) });
+const resumedNote = () => at({ dir: 'note', kind: 'resumed' });
+const bg = (log) => workerActivity(log).background;
+
+test('readEntry: background_tasks_changed yields the running ids, non-strings dropped', () => {
+  const evs = readEntry({ dir: 'in', event: { type: 'system', subtype: 'background_tasks_changed', tasks: [{ task_id: 'a' }, { task_id: 7 }, null, { task_id: 'b' }] } });
+  assert.deepEqual(evs, [{ kind: 'background', ids: ['a', 'b'] }]);
+  assert.deepEqual(readEntry({ dir: 'in', event: { type: 'system', subtype: 'background_tasks_changed' } }), [{ kind: 'background', ids: [] }]);
+});
+
+test('background: [] when the log never lists a job', () => {
+  assert.deepEqual(bg([]), []);
+  assert.deepEqual(bg([sent(), init(), result()]), []);
+});
+
+test('background: a job listed when the turn ends stays listed, state idle', () => {
+  const a = workerActivity([sent(), init(), listed('j1'), result()]);
+  assert.deepEqual(a.background, ['j1']);
+  assert.equal(a.state, 'idle');
+});
+
+test('background: a job that ends while idle is held until the wake-up turn opens, then dropped', () => {
+  const log = [sent(), init(), listed('j1'), result(), listed()];
+  assert.deepEqual(bg(log), ['j1'], 'left the list, no turn yet');
+  log.push(notification());
+  assert.deepEqual(bg(log), ['j1'], 'the notification alone does not drop it');
+  log.push(init());
+  let a = workerActivity(log);
+  assert.deepEqual(a.background, []);
+  assert.equal(a.state, 'busy');
+  log.push(result());
+  a = workerActivity(log);
+  assert.deepEqual(a.background, []);
+  assert.equal(a.state, 'idle');
+});
+
+test('background: a job that ends inside an open turn is held to that turn\'s result', () => {
+  const log = [sent(), init(), listed('j1'), listed()];
+  assert.deepEqual(bg(log), ['j1']);
+  log.push(inMsg({ type: 'assistant', message: { content: [{ type: 'text', text: 'still working' }] } }));
+  assert.deepEqual(bg(log), ['j1'], 'more output in the same turn does not drop it');
+  log.push(result());
+  assert.deepEqual(bg(log), []);
+});
+
+test('background: of two jobs, one ending and its wake-up turn running leaves the other listed', () => {
+  const log = [sent(), init(), listed('j1', 'j2'), result(), listed('j2'), notification(), init(), result()];
+  const a = workerActivity(log);
+  assert.deepEqual(a.background, ['j2']);
+  assert.equal(a.state, 'idle');
+});
+
+test('background: a job listed again after leaving is not counted twice', () => {
+  assert.deepEqual(bg([sent(), init(), listed('j1'), result(), listed(), listed('j1')]), ['j1']);
+});
+
+test('background: a resumed note clears it, listed and held alike', () => {
+  assert.deepEqual(bg([sent(), init(), listed('j1', 'j2'), result(), listed('j2'), resumedNote()]), []);
+});
+
+test('recorded case 5: the timer is held while the worker is idle before its wake-up, [] after', () => {
+  const log = remoteCase('5-wakeup-replay');
+  const isList = (e) => e.event?.subtype === 'background_tasks_changed';
+  const firstList = log.findIndex(isList);
+  const shrunk = log.findIndex((e) => isList(e) && e.event.tasks.length === 0);
+  const wakeInit = log.findIndex((e, i) => i > shrunk && e.event?.subtype === 'init');
+  assert.ok(firstList >= 0 && shrunk > firstList && wakeInit > shrunk, 'the recording holds the sequence');
+  const idleBefore = log.findIndex((e, i) => i > firstList && e.event?.type === 'result');
+  for (let i = idleBefore; i < wakeInit; i += 1) {
+    const a = workerActivity(log.slice(0, i + 1));
+    assert.equal(a.state, 'idle', `entry ${i}`);
+    assert.deepEqual(a.background, ['bgmiijerv'], `entry ${i}: held while idle before the wake-up`);
+  }
+  const woke = workerActivity(log.slice(0, wakeInit + 1));
+  assert.equal(woke.state, 'busy');
+  assert.deepEqual(woke.background, []);
+  const end = workerActivity(log);
+  assert.equal(end.state, 'idle');
+  assert.deepEqual(end.background, []);
+});
+
+test('recorded T01 sample: the background job is listed while its turn ends, [] after the wake-up', () => {
+  const a = workerActivity(sample);
+  assert.equal(a.state, 'idle');
+  assert.equal(a.turns, 6);
+  assert.deepEqual(a.pending, []);
+  assert.deepEqual(a.background, []);
+  const lastInit = sample.findLastIndex((e) => e.event?.subtype === 'init');
+  const beforeWake = workerActivity(sample.slice(0, lastInit));
+  assert.equal(beforeWake.state, 'idle');
+  assert.equal(beforeWake.background.length, 1, 'held between the shrunken list and the wake-up init');
+});

@@ -42,9 +42,13 @@ test('defineScenario: holdMerges defaults off and is a boolean', () => {
 test('defineScenario: answerPending defaults off and normalises to { typed } (T18)', () => {
   const spec = (answerPending) => defineScenario({ id: 'a', fixture: 'f', facts: [noHelloEver()], answerPending }).answerPending;
   assert.equal(spec(undefined), false);
-  assert.deepEqual(spec(true), { typed: {}, say: {}, afterWake: {} });
-  assert.deepEqual(spec({ typed: { 'Q?': 'mine' }, say: { T04: 'go' } }), { typed: { 'Q?': 'mine' }, say: { T04: 'go' }, afterWake: {} });
-  assert.deepEqual(spec({ afterWake: { T02: 'blue' } }), { typed: {}, say: {}, afterWake: { T02: 'blue' } });
+  assert.deepEqual(spec(true), { typed: {}, say: {}, afterWake: {}, taskReplies: {} });
+  assert.deepEqual(spec({ typed: { 'Q?': 'mine' }, say: { T04: 'go' } }), { typed: { 'Q?': 'mine' }, say: { T04: 'go' }, afterWake: {}, taskReplies: {} });
+  assert.deepEqual(spec({ afterWake: { T02: 'blue' } }), { typed: {}, say: {}, afterWake: { T02: 'blue' }, taskReplies: {} });
+  const seq = ['a', 'b'];
+  const normal = spec({ taskReplies: { T01: seq } });
+  assert.deepEqual(normal.taskReplies, { T01: ['a', 'b'] });
+  assert.notEqual(normal.taskReplies.T01, seq, 'the sequence is copied, not shared');
 });
 
 test('defineScenario: statusSnapshots defaults off (real-asking-state T05)', () => {
