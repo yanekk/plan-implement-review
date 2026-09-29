@@ -25,7 +25,7 @@
 // shadows them (FINDINGS 2026-09-26), which is why T18 installs the two planning skills first.
 
 import { defineScenario } from '../scenario.mjs';
-import { everyTaskDone, handedOffGreenBranch, indexRowIsWork, mainUntouched, planReviewedOnBranch } from '../assertions.mjs';
+import { baseUntouched, everyTaskDone, handedOffGreenBranch, indexRowIsWork, planReviewedOnBranch } from '../assertions.mjs';
 
 const id = 'plan-command';
 const title = '`pir plan` — plan, review, go and build from a repo with no plan';
@@ -68,7 +68,7 @@ const scenario = defineScenario({
   seatbelts: { ceiling: 2, timeoutMs: 90 * 60_000 },
   reply: REPLY,
   replyCap: 40,
-  facts: [planReviewedOnBranch(), everyTaskDone(), handedOffGreenBranch(), mainUntouched(), indexRowIsWork()],
+  facts: [planReviewedOnBranch(), everyTaskDone(), handedOffGreenBranch(), baseUntouched(), indexRowIsWork()],
 });
 
 export default { id, slug: null, title, files, carrySource: false, pirHome: PIR_HOME_DIR, brief: BRIEF, scenario };

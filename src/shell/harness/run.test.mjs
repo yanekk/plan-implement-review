@@ -860,7 +860,7 @@ test('readyToMerge is set only once the run waits ready with its report committe
   assert.equal(readyToMerge(null), null);
 });
 
-test('runScenario: the main-commit step fires once, after the named task merges, in a fake run', async () => {
+test('runScenario: the base-commit step fires once, after the named task merges, in a fake run', async () => {
   const ws = workspace();
   try {
     const into = join(ws.dir, 'scratch-repo');
@@ -897,18 +897,18 @@ test('runScenario: the main-commit step fires once, after the named task merges,
       pollMs: 1,
     });
     assert.equal(commitsBeforeMerge, 0, 'nothing was committed before T01 merged');
-    assert.equal(commits().length, 1, 'one commit to main, however many polls followed');
+    assert.equal(commits().length, 1, 'one commit to the base, however many polls followed');
     assert.equal(readFileSync(join(into, 'notes.txt'), 'utf8'), 'status: main moved on\n');
     const recorded = JSON.parse(readFileSync(join(result.bundleDir, 'steps.json'), 'utf8'));
-    assert.equal(recorded.mainCommit.after, 'T01');
-    assert.equal(recorded.mainCommit.sha, 'abc12345def');
+    assert.equal(recorded.baseCommit.after, 'T01');
+    assert.equal(recorded.baseCommit.sha, 'abc12345def');
     assert.equal(recorded.merged, null, 'the run never read ready, so nothing was merged');
   } finally {
     ws.cleanup();
   }
 });
 
-test('createScenarioSteps merges once the run is ready and the branch holds main, and keeps the report', () => {
+test('createScenarioSteps merges once the run is ready and the branch holds the base, and keeps the report', () => {
   const ws = workspace();
   try {
     const control = join(ws.dir, 'control');

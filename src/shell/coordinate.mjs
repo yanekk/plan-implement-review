@@ -173,7 +173,7 @@ export function startCoordinator({
   // while the run waits for the person's merge the remote is fetched every `watchMs`. Compared against
   // `now()`, so a test steps them without waiting.
   retryMs = 60_000,
-  watchMs = 300_000,
+  watchMs = DEFAULT_BASE_WATCH_MS,
 } = {}) {
   if (!slug) throw new Error('startCoordinator: no slug');
   const RUN_BASE = base;
@@ -1039,6 +1039,15 @@ export const DEFAULT_HOLD_MS = 5 * 60 * 1000;
 export function holdLimitMs(env = process.env) {
   const v = Number(env?.PARALLEL_COORDINATOR_HOLD_MS);
   return Number.isFinite(v) && v > 0 ? v : DEFAULT_HOLD_MS;
+}
+
+// baseWatchMs(env) → how often the wait for the person's merge fetches the remote (base-branch DESIGN §2.8):
+// 5 minutes, or PARALLEL_BASE_WATCH_MS when it is a positive number. A test lever only: the harness's
+// dev-base scenario merges on the remote and must see it within its budget (base-branch T09).
+export const DEFAULT_BASE_WATCH_MS = 5 * 60 * 1000;
+export function baseWatchMs(env = process.env) {
+  const v = Number(env?.PARALLEL_BASE_WATCH_MS);
+  return Number.isFinite(v) && v > 0 ? v : DEFAULT_BASE_WATCH_MS;
 }
 
 // coordinatorEnabled(env) → whether this run has a coordinator agent (pir-coordinator DESIGN §2.1): on by
@@ -2130,7 +2139,7 @@ async function main(argv) {
             env: () => workerEnv(),
           });
         };
-  const coordinator = startCoordinator({ slug, repo, platform, worktree, maxWorkers, control, startAgent, base,
+  const coordinator = startCoordinator({ slug, repo, platform, worktree, maxWorkers, control, startAgent, base, watchMs: baseWatchMs(),
     runTests: (featurePath, { tasks } = {}) => {
       showTesting(tasks ?? []);
       return runFeatureTests(featurePath, { slug, root, logPath: join(control.dir, 'tests.log') });
