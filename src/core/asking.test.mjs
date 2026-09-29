@@ -157,3 +157,42 @@ test('waitingFor: waitingOn\'s kind plus the holder; an unkeyable item is the pe
   assert.deepEqual(waitingFor(undefined, act({ state: 'permission', pending: [] }), { workerId: 'w' }), { kind: 'permission', holder: 'person' });
   assert.equal(waitingFor({ phase: 'implementing' }, act({ open: true })), null);
 });
+
+// ---- visible-helpers T01: a running helper never makes its parent read asking (DESIGN §2.7) ----
+
+import { readFileSync } from 'node:fs';
+import { workerActivity } from './stream.mjs';
+
+const helperLog = readFileSync(new URL('./fixtures/helper-sample.ndjson', import.meta.url), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
+const HELPER_CALL = 'toolu_01DkrWKh5q7BdwWzubBcNeKW';
+let tick = 1;
+const hIn = (event) => ({ t: tick++, dir: 'in', event });
+const helperSays = (text) => hIn({ type: 'assistant', message: { content: [{ type: 'text', text }] }, parent_tool_use_id: HELPER_CALL });
+const bgList = (...ids) => hIn({ type: 'system', subtype: 'background_tasks_changed', tasks: ids.map((task_id) => ({ task_id })) });
+
+test('waitingOn: a parent idle while its background helper talks is working, not asking', () => {
+  const log = [
+    { t: tick++, dir: 'out', from: 'pir', kind: 'message', text: 'go' },
+    hIn({ type: 'system', subtype: 'init', session_id: 's' }),
+    bgList('h1'),
+    hIn({ type: 'result', subtype: 'success', result: '' }),
+    helperSays('reading files'),
+    helperSays('still reading'),
+  ];
+  const activityWhileHelperRuns = workerActivity(log);
+  assert.equal(activityWhileHelperRuns.state, 'idle', 'helper frames do not reopen the parent turn');
+  assert.equal(stoppedOnPerson(activityWhileHelperRuns), false);
+  assert.equal(waitingOn({ phase: 'implementing' }, activityWhileHelperRuns), null);
+});
+
+test('recorded plan-0339: not stopped while the helper runs; stopped once it ended and the parent stopped', () => {
+  const interruptAt = helperLog.findIndex((e) => e.dir === 'out' && e.kind === 'interrupt');
+  const running = workerActivity(helperLog.slice(0, interruptAt));
+  assert.equal(stoppedOnPerson(running), false);
+  assert.notEqual(waitingOn({ phase: 'implementing' }, running), 'question');
+  const resultAt = helperLog.findIndex((e, i) => i > interruptAt && e.event?.type === 'result');
+  assert.equal(stoppedOnPerson(workerActivity(helperLog.slice(0, resultAt + 1))), true);
+  const end = workerActivity(helperLog);
+  assert.equal(stoppedOnPerson(end), true, 'the later "I\'m waiting" stop, with nothing running');
+  assert.equal(waitingOn({ phase: 'implementing' }, end), 'question');
+});
