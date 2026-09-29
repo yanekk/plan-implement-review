@@ -1,0 +1,12 @@
+# Findings log
+
+What the build taught. Newest first, forty words a row, counted. Whoever appends, compacts (over 60
+rows or 15 KB). Never drop a ✅ row or its date, or a term someone would grep for.
+
+Legend: 🐞 defect found · ✅ verified by hand with the user · 📌 worth knowing · 🔄 a decision the user changed.
+
+| Date | | Finding |
+|---|---|---|
+| 2026-09-29 | 📌 | In `pir plan`, text the planner wrote just before an AskUserQuestion did not reach the person; they asked for the task list again. Put anything the person must read inside the question text. |
+| 2026-09-29 | 📌 | Probe, Claude Code 2.1.284: a helper's `canUseTool` carries `agentID` = its `task_id` and arrives before the helper's tool_use frame. A foreground helper sends `task_started` with `is_backgrounded: false`. |
+| 2026-09-29 | 📌 | plan-0339 (`finisher`): Esc killed the planner's background helper (`task_updated killed`, `task_notification stopped`); the model saw only "Request interrupted" and later claimed to be waiting for it. Log excerpt in `evidence/`. |
