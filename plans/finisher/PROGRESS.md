@@ -24,7 +24,7 @@ done · ⛔ blocked, needs a human.
 | # | Task | Depends on | State | Notes |
 |---|---|---|---|---|
 | T00 | prove-the-fence | — | ⬜ | |
-| T01 | finisher-policy | — | ⬜ | |
+| T01 | finisher-policy | — | ✅ | |
 | T02 | finisher-brief | — | ⬜ | |
 | T03 | finisher-skill-and-rules | T01 | ⬜ | |
 | T04 | finisher-session | T00, T01, T02 | ⬜ | |
