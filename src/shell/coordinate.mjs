@@ -41,7 +41,7 @@ import {
 } from '../core/coordinator-report.mjs';
 import { createPlatform, resolveClaudePath } from './platform.mjs';
 import { createRenderer } from './render.mjs';
-import { drainDropFolder, waitForDrop } from './drop-folder.mjs';
+import { createWaker, drainDropFolder, waitForDrop } from './drop-folder.mjs';
 import { createGrants, startPersonInbox } from './person-inbox.mjs';
 import { writeSnapshot } from './snapshot-store.mjs';
 import { updateRecord } from './index-store.mjs';
@@ -53,6 +53,11 @@ import { startWorker } from './worker-proc.mjs';
 import { alertText, endAlert, notifyStep, notifyExit, newNotifyState } from '../core/notify.mjs';
 import { publish as ntfyPublish, clear as ntfyClear } from './ntfy.mjs';
 import { readNotifyConfig, ensurePresenceMarker, notifyIcon } from './notify-config.mjs';
+
+// The least time between two passes' starts (fast-tests DESIGN §2.2): wakes inside it coalesce into one pass
+// at its end, so a flood of worker output cannot run passes back to back. Below the `pir` screen's 500 ms
+// refresh, so the spacing is never what a person sees. A constant: nobody has a reason to tune it.
+export const PASS_MIN_GAP_MS = 250;
 
 const DONE_GLYPH = '✅';
 const READY_GLYPH = '⬜';
@@ -1204,10 +1209,30 @@ export function updateIndexFinalState({
 // consecutive passes; more than one over, or an overage that persists, is a real runaway. Pure so the
 // bin's safety net is tested without a live process. `liveCount` is THIS run's workers only (the
 // caller filters with isWorkerOf), so the coordinator's own session never trips it.
-export function runawayVerdict({ liveCount, ceiling, overPasses = 0, overGrace = 3 }) {
-  if (liveCount <= ceiling) return { abort: false, over: 0 };
+//
+// Since passes wake on activity (fast-tests DESIGN §2.6) they can run 250 ms apart, and a hand-off takes
+// seconds, so a pass count alone would abort it within a second. The single-over grace therefore also needs
+// the overage to have held for `minHeldMs` (grace × the backstop period) since the first pass it held on:
+// `overSince` is that pass's time, carried by the caller like `over`, and `now` is this pass's. Both
+// default to a zero hold, which is the pass-count-only verdict. More than one over still aborts at once.
+export function runawayVerdict({ liveCount, ceiling, overPasses = 0, overGrace = 3, overSince = null, now = 0, minHeldMs = 0 }) {
+  if (liveCount <= ceiling) return { abort: false, over: 0, overSince: null };
   const over = overPasses + 1;
-  return { abort: liveCount > ceiling + 1 || over >= overGrace, over };
+  const since = overSince ?? now;
+  const held = over >= overGrace && now - since >= minHeldMs;
+  return { abort: liveCount > ceiling + 1 || held, over, overSince: since };
+}
+
+// stallVerdict({ quiet, idlePasses, idleSince, now, grace, minHeldMs }) → { stalled, idle, idleSince }.
+// `quiet` is this pass doing nothing productive with nothing live. The run is declared stalled once that
+// has held for `grace` consecutive passes AND for `minHeldMs` (grace × the backstop period) since the first
+// quiet pass (fast-tests DESIGN §2.6), so wake-driven passes a quarter-second apart never end a run early.
+// Any pass that is not quiet resets both.
+export function stallVerdict({ quiet, idlePasses = 0, idleSince = null, now = 0, grace = 3, minHeldMs = 0 }) {
+  if (!quiet) return { stalled: false, idle: 0, idleSince: null };
+  const idle = idlePasses + 1;
+  const since = idleSince ?? now;
+  return { stalled: idle >= grace && now - since >= minHeldMs, idle, idleSince: since };
 }
 
 // --- The end-of-run hand-off (DESIGN §2.4, §2.8) ----------------------------------------------
@@ -1435,7 +1460,8 @@ function red(half, r) {
 // such a plan from running at all) — gives null, so the loop spawns in the dispatching pass as before.
 // Otherwise each call starts the setup lines in the background in that worktree, logging to
 // `{setupDir}/T{nn}.log`, rewritten per attempt; the loop polls the handle once per pass.
-export function makePrepare({ design, setupDir, start = startLines } = {}) {
+// `onSettled` is passed to each start, so a setup finishing wakes the loop (fast-tests DESIGN §2.1).
+export function makePrepare({ design, setupDir, start = startLines, onSettled = () => {} } = {}) {
   const block = parseTestBlock(design);
   if (!block.ok || block.setup.length === 0) return null;
   return (num, worktreePath) => {
@@ -1444,7 +1470,7 @@ export function makePrepare({ design, setupDir, start = startLines } = {}) {
     } catch {
       /* startLines runs without a log when it cannot open one */
     }
-    return start(block.setup, { cwd: worktreePath, logPath: join(setupDir, `${num}.log`) });
+    return start(block.setup, { cwd: worktreePath, logPath: join(setupDir, `${num}.log`), onSettled });
   };
 }
 
@@ -1963,15 +1989,19 @@ async function main(argv) {
   const grants = createGrants();
   // With ntfy configured, build workers start with the Claude app's own push silenced (DESIGN §2.7), read
   // at each spawn so a `pir notify` mid-run reaches the next worker.
-  const platform = createPlatform({ root, controlDir: control.dir, transport: inbox.transport, claudePath, grants, workerEnv: () => workerEnv() });
+  // The loop's one wake-up (fast-tests DESIGN §2.1, §2.2): built before everything that feeds it. Anything
+  // the next pass would act on or show calls wake(), and passes are spaced PASS_MIN_GAP_MS apart.
+  const waker = createWaker({ minGapMs: PASS_MIN_GAP_MS });
+  const wake = () => waker.wake();
+  const platform = createPlatform({ root, controlDir: control.dir, transport: inbox.transport, claudePath, grants, onActivity: wake, workerEnv: () => workerEnv() });
   // The person may type to the coordinator agent in its own conversation (pir-coordinator §2.8): the inbox
   // forwards to it by id once it has started (currentAgent is set when the controller exists).
   let currentAgent = () => null;
-  const personInbox = startPersonInbox({ controlDir: control.dir, platform: withAgent(platform, () => currentAgent()), grants, log: control.log });
+  const personInbox = startPersonInbox({ controlDir: control.dir, platform: withAgent(platform, () => currentAgent()), grants, log: control.log, onActivity: wake });
   const worktree = createWorktree({ root });
   // No DESIGN.md reads as '': makePrepare sees no block and runs no setup.
   const design = planHome(slug, { root }).read('DESIGN.md') ?? '';
-  const prepare = makePrepare({ design, setupDir: join(control.dir, 'setup') });
+  const prepare = makePrepare({ design, setupDir: join(control.dir, 'setup'), onSettled: wake });
   // Set once the display state below exists; runTests calls it before the suite blocks the pass.
   let showTesting = () => {};
   // Remote Control follows the person being waited on (remoteWanted): on while a worker waits, off once
@@ -1995,6 +2025,7 @@ async function main(argv) {
             startWorker,
             claudePath,
             remote: REMOTE,
+            onActivity: wake,
             env: () => workerEnv(),
           });
         };
@@ -2022,6 +2053,10 @@ async function main(argv) {
   const CEILING = maxWorkers;
   const OVER_GRACE = Number(process.env.PARALLEL_OVER_GRACE ?? 3);
   const STALL_GRACE = 3; // consecutive quiet passes with nothing live before the run is declared done
+  // Both graces keep their wall-clock meaning under wake-driven passes (fast-tests DESIGN §2.6): each also
+  // needs grace × POLL_MS since the first pass its condition held on.
+  const OVER_HOLD_MS = OVER_GRACE * POLL_MS;
+  const STALL_HOLD_MS = STALL_GRACE * POLL_MS;
   const branch = `pir/${slug}`;
 
   // Detached self-reporting (DESIGN §2.4, §2.6, §3.5; T10). PIR_RUN is set only by the `pir` launcher
@@ -2196,7 +2231,9 @@ async function main(argv) {
   };
 
   let over = 0;
+  let overSince = null;
   let idle = 0;
+  let idleSince = null;
   try {
     // No pass cap: the run's only ends are the hand-off, a halt, the runaway breaker, a stall, or a signal.
     // A worker parked on a question waits for the person indefinitely — a cap here used to tear the run
@@ -2289,7 +2326,7 @@ async function main(argv) {
           await notifyExitNow();
           return;
         }
-        await waitForReport([inbox.reportsDir, personInbox.inboxDir], POLL_MS);
+        await waker.wait([inbox.reportsDir, personInbox.inboxDir], POLL_MS);
         continue;
       }
 
@@ -2322,8 +2359,9 @@ async function main(argv) {
 
       // Runaway breaker (DESIGN §5.2). Count THIS run's workers only — a foreign session sharing the
       // git-dir must not trip it. r.live is already that count (loop.mjs filters), so reuse it.
-      const verdict = runawayVerdict({ liveCount: r.live, ceiling: CEILING, overPasses: over, overGrace: OVER_GRACE });
+      const verdict = runawayVerdict({ liveCount: r.live, ceiling: CEILING, overPasses: over, overGrace: OVER_GRACE, overSince, now: Date.now(), minHeldMs: OVER_HOLD_MS });
       over = verdict.over;
+      overSince = verdict.overSince;
       if (verdict.abort) {
         // Abnormal exit (T10): the runaway breaker records NO final status → crashed, not `finished`.
         renderer.line(`\nABORT: ${r.live} live workers over ceiling ${CEILING} for ${over} pass(es) — a runaway.`);
@@ -2336,8 +2374,10 @@ async function main(argv) {
       // tasks ✅ and handed off, or everything deferred). A parked worker (live > 0) is NOT a stall — it
       // waits for the person's answer, so the loop keeps polling for it.
       const productive = r.actions.some((a) => ['spawn', 'review', 'merge', 'close'].includes(a.type));
-      idle = !productive && r.live === 0 ? idle + 1 : 0;
-      if (idle >= STALL_GRACE) {
+      const stall = stallVerdict({ quiet: !productive && r.live === 0, idlePasses: idle, idleSince, now: Date.now(), grace: STALL_GRACE, minHeldMs: STALL_HOLD_MS });
+      idle = stall.idle;
+      idleSince = stall.idleSince;
+      if (stall.stalled) {
         finishRun('stall'); // nothing left to do is a clean end — records `finished` (§2.2, T10).
         renderer.line('\n=== nothing left to do (no live workers, nothing to dispatch or hand off) ===');
         teardownOnce('stalled'); // a no-op when nothing is live; still safe
@@ -2349,8 +2389,10 @@ async function main(argv) {
       // report into reports/ and the person's input lands in inbox/, so watch both and wake the moment a
       // file lands: a forwarded answer changes what the next pass shows. POLL_MS is only a backstop for a
       // missed fs.watch event. Only these two folders are watched, never the control dir at large, so the
-      // bin's OWN writes this pass (the flow log) cannot wake it into a busy spin.
-      await waitForReport([inbox.reportsDir, personInbox.inboxDir], POLL_MS);
+      // bin's OWN writes this pass (the flow log) cannot wake it into a busy spin. Everything else that is
+      // not a drop (a worker's request, output, turn end or exit, the agent's decisions, a setup settling)
+      // calls waker.wake() (fast-tests DESIGN §2.1); a wake that landed during this pass returns at once.
+      await waker.wait([inbox.reportsDir, personInbox.inboxDir], POLL_MS);
     }
   } catch (e) {
     // Abnormal exit (T10): an uncaught error records NO final status → crashed.

@@ -12,9 +12,9 @@ cell also fixes the over-budget cell they walk past.
 
 **Plan reviewed:** 2026-09-29 — 3 fixed, 2 decided with the user
 
-**Status:** Planned 2026-09-29. Nothing built.
+**Status:** T01 implemented, awaiting review.
 **Last updated:** 2026-09-29
-**Next `pir-work` will:** implement T01, the first task with no dependencies and the head of the critical path.
+**Next `pir-work` will:** review T01.
 
 ## Tasks
 
@@ -23,14 +23,14 @@ done · ⛔ blocked, needs a human.
 
 | # | Task | Depends on | State | Notes |
 |---|---|---|---|---|
-| T01 | wake-on-activity | — | ⬜ | |
+| T01 | wake-on-activity | — | 🔍 | Waker moved to drop-folder with 250 ms gap; hooks in platform, agent, inbox, startLines; stall/runaway graces also need grace×POLL_MS. 12 new tests. Deviations: agent watches decisions/ itself; onSettled also on kill; fake agent pauses 1.5 s before passing a question (drills assumed 5 s lag); idle stall now ~15 s. Drill file 205→121 s under load. |
 | T02 | end-sequence-no-wait | T01 | ⬜ | |
 | T03 | split-coordinator-drill | — | ⬜ | |
 | T04 | split-plan-rig | — | ⬜ | |
 | T05 | split-conversation-rig | — | ⬜ | |
 | T06 | suite-timing-proof | T01, T02, T03, T04, T05 | ⬜ | |
 
-**Review queue:** *(empty)*
+**Review queue:** T01
 
 ## Blocked on the user
 
