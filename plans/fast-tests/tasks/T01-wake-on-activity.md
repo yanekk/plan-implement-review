@@ -66,6 +66,11 @@ export function wakesLoop(entry)
 // startLines(lines, { …, onSettled = () => {} }): called once when the handle's result is set (ok or not).
 ```
 
+In `main()`, the stall count (`STALL_GRACE`) and the runaway grace (`OVER_GRACE`, `runawayVerdict`) keep
+their wall-clock meaning (DESIGN §2.6): each fires only once its condition has held for at least grace ×
+`POLL_MS` since the first pass it held on, as well as for grace passes. Otherwise a review hand-off, which
+holds ceiling + 1 while the implementer exits, aborts as a runaway within a second of wake-driven passes.
+
 In `main()`: `const waker = createWaker({ minGapMs: PASS_MIN_GAP_MS })` with `PASS_MIN_GAP_MS = 250`, built
 before the platform so `onActivity: () => waker.wake()` can be passed to it; `plan-run.mjs` keeps
 `minGapMs` 0 so its behaviour is unchanged.
@@ -83,13 +88,18 @@ before the platform so `onActivity: () => waker.wake()` can be passed to it; `pl
 - [ ] coordinator agent: its worker's event and a decision file landing each call onActivity
 - [ ] person inbox: a watch-triggered drain that forwarded calls onActivity; an empty drain does not
 - [ ] startLines: onSettled fires once on success, once on a failing line, once on a spawn error
+- [ ] runawayVerdict (or its caller): ceiling + 1 over three passes inside grace × POLL_MS does not abort;
+      held past grace × POLL_MS it does; ceiling + 2 still aborts at once
+- [ ] stall: three quiet wake-driven passes inside grace × POLL_MS do not end the run
 - [ ] plan-run: its existing tests still pass on the moved waker
 
 ## Done when
 
 - [ ] Every event in DESIGN §2.1's table reaches `waker.wake()` in `coordinate.mjs main()`, each covered
       by a unit test above.
+- [ ] A review hand-off with passes 250 ms apart is not aborted as a runaway, and a run is not declared
+      stalled before STALL_GRACE × POLL_MS of quiet (the two grace tests above).
 - [ ] `npm test` is green, and the coordinator drill file(s) are measurably faster at the default
-      `PARALLEL_POLL_MS` (before and after times in the commit, quiet machine per DESIGN §5).
+      `PARALLEL_POLL_MS` (before and after times in the commit, taken back to back, quiet or under load per DESIGN §5 Measuring time).
 - [ ] The three docs lines and the README sentence describe the loop waking on activity with the 5 s
       timer as a backstop.

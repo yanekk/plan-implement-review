@@ -35,4 +35,5 @@ same signatures they have in the file today.
 - [ ] The sorted test-name lists before and after are identical, and both are quoted in the commit (or
       their diff is shown empty).
 - [ ] `npm test` is green and no test body or assertion changed (only `import`s and file placement).
-- [ ] No new file takes longer alone than the longest test of the original file plus 10 %, quiet machine.
+- [ ] No new file takes longer alone than the longest test of the original file plus 10 %, quiet machine
+      (or under load per DESIGN §5 Measuring time).

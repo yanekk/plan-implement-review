@@ -33,4 +33,4 @@ No product interface.
 
 - [ ] The sorted test-name lists before and after are identical, shown in the commit.
 - [ ] `npm test` is green and no test body or assertion changed.
-- [ ] No new file takes longer than 40 s alone, quiet machine, with the per-file times in the commit.
+- [ ] No new file takes longer than 40 s alone, quiet machine (or under load per DESIGN §5 Measuring time), with the per-file times in the commit.

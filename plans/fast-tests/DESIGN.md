@@ -127,6 +127,12 @@ reliable, and the number and its measurement go in § Environment.
 - A worker floods its log: passes run at most every 250 ms (§2.2).
 - The coordinator is signalled while waiting: unchanged. The signal handler parks the loop; a wake after
   that runs no pass because the loop checks `signalled` first.
+- The two pass-counted graces keep their wall-clock meaning. `STALL_GRACE` (3 quiet passes with nothing
+  live) and `OVER_GRACE` (`runawayVerdict`, 3 passes at ceiling + 1) were sized for passes 5 s apart; the
+  over-ceiling grace exists because a review hand-off holds ceiling + 1 while the implementer exits
+  (`coordinate.mjs` ~1202), which takes seconds. Passes 250 ms apart would abort that hand-off as a runaway
+  and end a run as stalled within a second. Rule: each grace also needs its condition to have held for
+  grace × `POLL_MS` of wall time, measured from the first pass it held on; a wake-driven pass never shortens it.
 - 1:30 is missed after T06's hardening: T06 stops and brings the person a trim task as a decision (§8), it
   does not trim on its own.
 
@@ -136,7 +142,7 @@ reliable, and the number and its measurement go in § Environment.
 
 `src/core/` is pure and `boundary.test.mjs` scans it for forbidden imports; if that test fails, move the
 code, never relax the test. This plan adds one pure function, `wakesLoop(entry)` in `src/core/stream.mjs`
-(which entries wake the loop, §2.1), and a pure `endProgressed(before, after)` if T02 needs one. Everything
+(which entries wake the loop, §2.1), and a pure `passProgressed({ stepBefore, stateBefore, handoff, actions })` if T02 needs one. Everything
 else here is shell: the waker, the platform hooks, the loop wiring and the test files.
 
 ### 3.2 Modules touched
@@ -183,6 +189,12 @@ measurement. A timing claim in this plan is made on a quiet machine: before and 
 `ps -eo command | grep -c '[n]ode --test'` shows no `node --test` process but the run's own. A run that
 overlapped a foreign one does not count, in either direction.
 
+In a parallel build T01–T05 run side by side, so their machine is rarely quiet (user 2026-09-29). For those
+tasks a timing taken under load counts when it meets its target, since load only slows a run. One that
+misses is retaken in a quiet window, waiting up to 30 minutes; if none comes, the task records it as not
+measured, with the foreign process count, and T06's quiet runs are the binding check. A before/after
+comparison (T01, T02) is taken back to back in the same window. T06 has no such allowance.
+
 **Dependencies.** No new package.
 
 **End to end.** The existing rigs carry everything: `plan-rig.mjs` (`startPlanRig`, the real `pir.mjs`
@@ -221,6 +233,9 @@ the person's merge.
 - User, 2026-09-29: the per-step waits (the `pir` screen's 500 ms redraw, `pir-tui.mjs` ~1015; the rigs'
   250 ms settle; the fake agent's `DRILL_REPORT_DELAY_MS` 3 s, `fake/sessions.mjs` ~159) are left alone.
   If T06 misses 1:30, a trim task comes to the user as a decision.
+- User, 2026-09-29: T01–T05 time under load when the machine is busy; a timing under load counts if it
+  meets the target, a miss is retaken quiet or left to T06 (§5 Measuring time). Serialising them for clean
+  timings would cost most of the build's parallelism.
 - Planner, from the code survey: reuse `plan-run.mjs`'s `createWaker` (it already wakes on worker
   `onEvent`/`onExit`) rather than write a second waker; move it to `drop-folder.mjs` beside `waitForDrop`,
   which it wraps.

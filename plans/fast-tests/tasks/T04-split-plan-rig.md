@@ -37,4 +37,4 @@ signatures they have in the file today. A `for` loop that generates tests stays 
 - [ ] The sorted test-name lists before and after are identical, shown in the commit.
 - [ ] `npm test` is green and no test body or assertion changed (only `import`s and file placement; the
       fixed `pause()` calls are T06's, not this task's).
-- [ ] No new file takes longer than 50 s alone, quiet machine, with the per-file times in the commit.
+- [ ] No new file takes longer than 50 s alone, quiet machine (or under load per DESIGN §5 Measuring time), with the per-file times in the commit.

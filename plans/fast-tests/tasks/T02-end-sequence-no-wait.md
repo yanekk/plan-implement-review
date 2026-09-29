@@ -44,4 +44,5 @@ three quiet backstop periods.
 - [ ] `PARALLEL_POLL_MS=60000 node --test 'src/shell/coordinator-drill*.test.mjs'` is green (the glob
       matches the file before or after T03's split).
 - [ ] `npm test` is green.
-- [ ] The commit gives the drill times at the default backstop before and after, quiet machine.
+- [ ] The commit gives the drill times at the default backstop before and after, taken back to back, quiet or
+      under load per DESIGN §5 Measuring time.
