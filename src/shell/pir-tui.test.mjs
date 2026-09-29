@@ -27,6 +27,7 @@ import {
   followStep,
   buildLandingFrame,
   FOLLOW_LINE,
+  isBuilding,
 } from './pir-tui.mjs';
 import { FrameView, SGR, SELECTED_BG, clipSpans } from './pir-view.mjs';
 import { visibleWidth } from '@earendil-works/pi-tui';
@@ -1689,4 +1690,159 @@ test('box: a typed key disarms a half-pressed chord; the next press only arms, a
   term.press('\x1b'); await settle();
   term.press('\x1b'); await settle();
   await done;
+});
+
+// --- `/start` starts, or opens, a build (box-commands T04, DESIGN §2.2, §2.4) ----------------------------
+
+const BUILD_REPOS = [
+  { name: 'repo', path: '/scratch/src/repo', mtimeMs: 2 },
+  { name: 'other', path: '/scratch/other/other', mtimeMs: 1 },
+];
+const PLANS = { '/scratch/src/repo': [{ slug: 'foo', done: 0, total: 3 }], '/scratch/other/other': [{ slug: 'foo', done: 1, total: 2 }] };
+const buildRow = (repo, slug, { state = 'running', kind } = {}) => ({
+  key: `${repo}__${slug}`, slug, repo, state, progress: { done: 0, total: 3 }, workers: 0,
+  record: { repo, slug, ...(kind ? { kind } : {}) },
+});
+
+// runTui with a fake startRun and plan scan beside the fake startPlan. `build` is what the fake start returns.
+function driveStart({ rows = () => [], build = (slug, opts) => ({ started: true, record: { repo: opts.cwd.split('/').at(-1), slug } }) } = {}) {
+  const tty = fakeStream({ isTTY: true, columns: 100, rows: 30 });
+  const term = fakeTerminal(tty);
+  const starts = [];
+  const plans = [];
+  const scanned = [];
+  const done = openDashboard({
+    stdin: {}, stdout: tty, env: BOX_ENV, refreshMs: 60_000, now: () => NOW,
+    makeScreen: (opts) => createScreen({ ...opts, colour: false, terminal: term }),
+    load: () => buildDashboard(rows()),
+    scan: () => BUILD_REPOS,
+    scanBuildable: (path) => (scanned.push(path), PLANS[path] ?? []),
+    start: (slug, opts) => {
+      starts.push({ slug, opts });
+      return build(slug, opts);
+    },
+    startPlan: (brief, opts) => {
+      plans.push({ brief, opts });
+      return { started: true, runId: 'plan-ab12', record: { repo: 'repo' } };
+    },
+  });
+  const settle = () => new Promise((r) => setTimeout(r, 60));
+  const type = async (s) => { for (const ch of s) term.press(ch); await settle(); };
+  const key = async (k) => { term.press(k); await settle(); };
+  const screen = () => drawnRows(tty.text()).join('\n');
+  const boxLine = () => {
+    const r = drawnRows(tty.text());
+    const head = r.findIndex((l) => l.startsWith('new  '));
+    return head < 0 ? null : r[head + 2];
+  };
+  const quit = async () => { await key('\x1b'); await done; };
+  return { done, starts, plans, scanned, type, key, screen, boxLine, quit };
+}
+
+test('box: Enter on `@repo/start foo` calls startRun once in the repo with the slug, never startPlan, and opens its live view', async () => {
+  const t = driveStart({ rows: () => [buildRow('repo', 'foo')] });
+  await t.type('repo/start foo');
+  await t.key('\r'); // the slug pop-up is open on `foo`: this Enter picks
+  assert.equal(t.starts.length, 0, 'a pick never submits');
+  await t.key('\r');
+  assert.equal(t.starts.length, 1, 'started once');
+  assert.equal(t.starts[0].slug, 'foo');
+  assert.equal(t.starts[0].opts.cwd, '/scratch/src/repo');
+  assert.equal(t.starts[0].opts.env, BOX_ENV);
+  assert.equal(t.plans.length, 0, 'startPlan not called');
+  assert.equal(t.boxLine(), null, 'the live view has no box');
+  assert.match(t.screen(), /^foo {2}● running {2}· repo/m, "the build's live view");
+  await t.key('\x1b[D');
+  assert.match(t.boxLine(), /^@\s*$/, 'back on the list, the box reads @');
+  await t.quit();
+});
+
+test('box: alreadyRunning opens the live view as started does', async () => {
+  const t = driveStart({ rows: () => [buildRow('repo', 'foo')], build: () => ({ started: false, reason: 'already-running', alreadyRunning: true }) });
+  await t.type('repo/start foo');
+  await t.key('\r');
+  await t.key('\r');
+  assert.equal(t.starts.length, 1);
+  assert.match(t.screen(), /^foo {2}● running {2}· repo/m);
+  await t.quit();
+});
+
+test('box: each startRun refusal and a throw give the §2.4 note, the text kept', async () => {
+  const cases = [
+    [() => ({ started: false, reason: 'not-reviewed' }), 'Could not start foo in repo: it is not reviewed'],
+    [() => ({ started: false, reason: 'no-plan' }), 'Could not start foo in repo: there is no such plan'],
+    [() => ({ started: false, reason: 'no-test-block' }), 'Could not start foo in repo: no setup/test block'],
+    [() => ({ started: false, reason: 'weird' }), 'Could not start foo in repo: weird'],
+    [() => { throw new Error('spawn failed'); }, 'Could not start foo in repo: spawn failed'],
+  ];
+  for (const [build, note] of cases) {
+    const t = driveStart({ build });
+    await t.type('repo/start foo');
+    await t.key('\r');
+    await t.key('\r');
+    assert.equal(t.starts.length, 1);
+    assert.ok(t.screen().includes(note), `${note}\n${t.screen()}`);
+    assert.match(t.boxLine(), /^@repo\/start foo/, 'the text is kept');
+    await t.key('\x1b');
+    await t.quit();
+  }
+});
+
+test('box: `@repo/plan a brief` still calls startPlan only; `@repo a brief` and an unknown slug call neither', async () => {
+  const p = driveStart();
+  await p.type('repo/plan a brief');
+  await p.key('\r');
+  assert.equal(p.plans.length, 1);
+  assert.equal(p.plans[0].brief, 'a brief');
+  assert.equal(p.plans[0].opts.cwd, '/scratch/src/repo');
+  assert.equal(p.starts.length, 0);
+  assert.deepEqual(p.scanned, [], 'a brief never pays for the plan scan');
+  assert.match(p.screen(), /starting the planner…/);
+  await p.quit();
+
+  for (const [typed, note] of [['repo a brief', 'pick a command: @repo/plan or @repo/start'], ['repo/start nope', 'nope is not a reviewed, unfinished plan in repo']]) {
+    const t = driveStart();
+    await t.type(typed);
+    await t.key('\r');
+    assert.equal(t.plans.length + t.starts.length, 0, `${typed}: nothing started`);
+    assert.ok(t.screen().includes(note), `${typed}: ${t.screen()}`);
+    assert.ok(t.boxLine().startsWith('@' + typed), 'the text is kept');
+    await t.key('\x1b');
+    await t.quit();
+  }
+});
+
+test('box: two repos with the same slug: the landing opens the one in the chosen repo', async () => {
+  const t = driveStart({ rows: () => [buildRow('repo', 'foo'), buildRow('other', 'foo')] });
+  await t.type('other/start foo');
+  await t.key('\r');
+  await t.key('\r');
+  assert.equal(t.starts[0].opts.cwd, '/scratch/other/other');
+  assert.match(t.screen(), /^foo {2}● running {2}· other/m);
+  assert.doesNotMatch(t.screen(), /· repo/);
+  await t.quit();
+});
+
+test('box: the slug pop-up says · building for the build running in that repo only', async () => {
+  const t = driveStart({ rows: () => [buildRow('repo', 'foo')] });
+  await t.type('repo/start ');
+  assert.match(t.screen(), /→ foo +0\/3 done · building/);
+  await t.key('\x1b');
+  await t.key('\x1b');
+  await t.type('other/start ');
+  assert.match(t.screen(), /foo +1\/2 done/);
+  assert.doesNotMatch(t.screen(), /building/);
+  await t.key('\x1b'); // closes the pop-up
+  await t.key('\x1b'); // resets the box
+  await t.quit();
+});
+
+test('isBuilding: a running build of that slug in that repo; not another repo, not a planning run, not a stopped build', () => {
+  const repo = { name: 'repo', path: '/scratch/src/repo' };
+  assert.equal(isBuilding([buildRow('repo', 'foo')], repo, 'foo'), true);
+  assert.equal(isBuilding([buildRow('other', 'foo')], repo, 'foo'), false, 'same slug, another repo');
+  assert.equal(isBuilding([buildRow('repo', 'foo', { kind: 'plan' })], repo, 'foo'), false, 'a planning run');
+  assert.equal(isBuilding([buildRow('repo', 'foo', { state: 'stopped' })], repo, 'foo'), false, 'not running');
+  assert.equal(isBuilding([buildRow('repo', 'bar')], repo, 'foo'), false, 'another slug');
+  assert.equal(isBuilding([], repo, 'foo'), false);
 });
