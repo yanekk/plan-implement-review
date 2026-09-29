@@ -3,7 +3,7 @@
 // worker behaves like a live one, so the conversation view (T13) can be driven end to end with no paid
 // worker. Nothing here calls a model: the worker is the real Agent SDK talking to fake/claude-stream.mjs.
 //
-//   node src/shell/conversation-rig.mjs [--into <scratch>] [--scenario tour|long|coordinator] [--keep]
+//   node src/shell/conversation-rig.mjs [--into <scratch>] [--scenario tour|long|coordinator|helpers] [--keep]
 //
 // It stays in the foreground until Ctrl+C, SIGTERM (pir's Ctrl+S stop sends one to the run's pid) or a
 // HALT file in the run's control folder. While it runs, open the screen from another terminal:
@@ -34,6 +34,10 @@
 //         real coordinator-agent session on its own fake script, `c` in the live view opens it). The
 //         command passes it on after 10 s (the row turns `asking you`, the agent says its pointer) and
 //         reaches `ready to merge` after 30 s; a test pulls rig.pass() and rig.ready() itself.
+//   helpers  (visible-helpers T02) the worker starts two background helpers, A "Survey the code" and B
+//         "Check the tests", which report progress and steps of their own every `stepMs`; A asks a
+//         permission (its `agentId`) and waits; B finishes; the worker ends its turn while A keeps going;
+//         an interrupt kills A (no `result`: the worker was idle), then a reply to every typed message.
 //
 // Teardown on exit: the worker closed, the inbox stopped, the index record removed, and the scratch
 // folder deleted unless --keep.
@@ -48,7 +52,10 @@ import { basename, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { visibleWidth } from '@earendil-works/pi-tui';
 import { buildRunState, writeRunSnapshot } from './coordinate.mjs';
-import { fakeClaudeSpawner, initEvent, assistantText, resultEvent, canUseTool, toolUse, toolResult } from './fake/claude-stream.mjs';
+import {
+  fakeClaudeSpawner, initEvent, assistantText, resultEvent, canUseTool, toolUse, toolResult,
+  agentCall, agentLaunched, backgroundAgents, taskStarted, taskProgress, taskUpdated, agentNotification, helperFrame,
+} from './fake/claude-stream.mjs';
 import { startTimeOf } from './identity.mjs';
 import { indexDir, removeRecord, writeRecord } from './index-store.mjs';
 import { createGrants, startPersonInbox } from './person-inbox.mjs';
@@ -108,9 +115,10 @@ const QUESTIONS = [
   },
 ];
 
-// scenarioScript(name, { paceMs, workMs }) → the fake's script (fake/claude-stream.mjs). paceMs spaces the
-// opening steps so a person sees them arrive; workMs is how long each chat reply works before answering.
-export function scenarioScript(name = 'tour', { paceMs = 300, workMs = 4000 } = {}) {
+// scenarioScript(name, { paceMs, workMs, stepMs }) → the fake's script (fake/claude-stream.mjs). paceMs spaces
+// the opening steps so a person sees them arrive; workMs is how long each chat reply works before answering;
+// stepMs is how often a helper of the helpers scenario reports a step.
+export function scenarioScript(name = 'tour', { paceMs = 300, workMs = 4000, stepMs = 700 } = {}) {
   const pace = paceMs ? [{ sleep: paceMs }] : [];
   const opening = [
     { emit: RIG_INIT },
@@ -167,7 +175,81 @@ export function scenarioScript(name = 'tour', { paceMs = 300, workMs = 4000 } = 
       { chat: { workMs, init: RIG_INIT } },
     ];
   }
-  throw new Error(`unknown scenario "${name}" (tour, long, coordinator)`);
+  if (name === 'helpers') return helpersScript({ stepMs, workMs });
+  throw new Error(`unknown scenario "${name}" (tour, long, coordinator, helpers)`);
+}
+
+// The helpers scenario's two helpers, with ids shaped like the real ones (plan-0339).
+export const HELPER_A = { taskId: 'a0fake00000000a01', callId: 'toolu_agentA', description: 'Survey the code', subagentType: 'Explore' };
+export const HELPER_B = { taskId: 'a0fake00000000b02', callId: 'toolu_agentB', description: 'Check the tests', subagentType: 'general-purpose' };
+export const HELPER_PERMISSION = 'helperA-perm';
+
+// The helpers scenario (visible-helpers T02, DESIGN §2.1), in the order its task doc gives. Every shape
+// comes from fake/claude-stream.mjs, which copies plan-0339's log. A helper's steps keep counting across
+// the script: `usage.tool_uses` and `usage.duration_ms` only grow, as a real helper's do.
+function helpersScript({ stepMs = 700, workMs = 4000 }) {
+  const count = new Map([[HELPER_A.taskId, 0], [HELPER_B.taskId, 0]]);
+  const files = ['src/shell/worker-proc.mjs', 'src/core/runstate.mjs', 'src/shell/conversation-view.mjs', 'src/shell/platform.mjs', 'src/core/progress.mjs'];
+  // One helper step: a progress event, the helper's tool use and its result.
+  const work = (agent) => {
+    const n = count.get(agent.taskId) + 1;
+    count.set(agent.taskId, n);
+    const file = files[(n - 1) % files.length];
+    const id = `toolu_${agent === HELPER_A ? 'a' : 'b'}${n}`;
+    return [
+      taskProgress(agent, `Reading ${file}`, { toolUses: n, durationMs: n * stepMs, lastTool: 'Read' }),
+      helperFrame(agent, toolUse(id, 'Read', { file_path: file })),
+      helperFrame(agent, toolResult(id, `// ${file}, as the pretend helper read it`)),
+    ];
+  };
+  const emits = (list) => list.map((e) => ({ emit: e }));
+  const pause = stepMs ? [{ sleep: stepMs }] : [];
+  const round = (agent) => [...emits(work(agent)), ...pause];
+  const start = (agent, running) => [
+    { emit: agentCall(agent) },
+    { emit: backgroundAgents(running) },
+    { emit: taskStarted(agent) },
+    { emit: agentLaunched(agent) },
+    ...pause,
+  ];
+  const permInput = { command: 'git log --oneline -5', description: 'Read the recent history' };
+  // Built in the order it runs, because work() numbers each helper's steps as it is called.
+  const script = [
+    { emit: RIG_INIT },
+    { await: 'user' },
+    { emit: assistantText("I'm the pretend worker of the helpers rig. I'll start two helpers to look around while I wait.") },
+    ...start(HELPER_A, [HELPER_A]),
+    ...start(HELPER_B, [HELPER_A, HELPER_B]),
+    ...round(HELPER_A),
+    ...round(HELPER_B),
+    { emit: helperFrame(HELPER_A, assistantText('The worker process and the run state look like the places to start.')) },
+    ...round(HELPER_A),
+    ...round(HELPER_B),
+    ...round(HELPER_A),
+    // A's ask reaches canUseTool before its tool_use frame (DESIGN §2.1), so the frame follows the answer.
+    { emit: canUseTool(HELPER_PERMISSION, 'Bash', permInput, { agentId: HELPER_A.taskId, description: permInput.description }) },
+    { await: 'control_response' },
+    { emit: helperFrame(HELPER_A, toolUse(`toolu_${HELPER_PERMISSION}`, 'Bash', permInput)) },
+    { resultFor: HELPER_PERMISSION, parent: HELPER_A.callId, allowed: 'a1b2c3d T01: the pretend change' },
+    ...round(HELPER_B),
+    { emit: helperFrame(HELPER_B, assistantText('Every test file I read passes; nothing to report.')) },
+    { emit: taskUpdated(HELPER_B, 'completed') },
+    { emit: agentNotification(HELPER_B, 'completed') },
+    { emit: backgroundAgents([HELPER_A]) },
+    { emit: assistantText('Check the tests is done. Survey the code is still working; I will wait for it.') },
+    { emit: resultEvent('success', 'waiting for Survey the code') },
+  ];
+  // A's steps while the worker is idle: 200 rounds, far longer than any drill waits before Esc.
+  const idleRounds = Array.from({ length: 200 }, () => work(HELPER_A));
+  return [
+    ...script,
+    { repeat: idleRounds, everyMs: stepMs || 50, until: 'interrupt' },
+    // The interrupt kills A in the order plan-0339 logged it; the worker was idle, so no result follows.
+    { emit: backgroundAgents([]) },
+    { emit: taskUpdated(HELPER_A, 'killed') },
+    { emit: agentNotification(HELPER_A, 'stopped') },
+    { chat: { workMs, init: RIG_INIT } },
+  ];
 }
 
 // The coordinator scenario's agent (pir-coordinator T06): the real coordinator-agent session on the fake. It
@@ -200,7 +282,7 @@ function writePlan(repoRoot, scenario) {
   writeFileSync(join(plan, 'tasks', `${RIG_TASK}-${scenario}.md`), `# ${RIG_TASK} — ${scenario}\n\nThe rig's pretend task.\n`);
 }
 
-// startRig({ into, scenario, keep, env, paceMs, workMs, snapshotMs }) → the running rig:
+// startRig({ into, scenario, keep, env, paceMs, workMs, stepMs, snapshotMs }) → the running rig:
 //   { repoRoot, repo, slug, controlDir, workerId, logPath, received, platform, pid, stop() }
 // `env` supplies PIR_HOME (the index folder, indexDir's rule), so a test points the index at a scratch
 // folder. stop() is the teardown, idempotent; it resolves once the worker has exited.
@@ -209,8 +291,8 @@ function writePlan(repoRoot, scenario) {
 // request, and returns three levers the real run pulls on its own: pass() — the agent passes the request on
 // (it is briefed and replies with its pointer; the row turns `asking you`); ready() — every task merged, the
 // report committed and the run waiting in `ready to merge`; and agent, the CoordinatorAgent itself.
-export function startRig({ into = null, scenario = 'tour', keep = false, env = process.env, paceMs, workMs, snapshotMs = 500 } = {}) {
-  const script = scenarioScript(scenario, { paceMs, workMs });
+export function startRig({ into = null, scenario = 'tour', keep = false, env = process.env, paceMs, workMs, stepMs, snapshotMs = 500 } = {}) {
+  const script = scenarioScript(scenario, { paceMs, workMs, stepMs });
   let repoRoot;
   if (into) {
     repoRoot = resolve(into);
@@ -659,7 +741,7 @@ function parseArgs(argv) {
     if (a === '--into') opts.into = argv[++i];
     else if (a === '--scenario') opts.scenario = argv[++i];
     else if (a === '--keep') opts.keep = true;
-    else throw new Error(`unknown argument ${a}\nusage: conversation-rig.mjs [--into <scratch>] [--scenario tour|long|coordinator] [--keep]`);
+    else throw new Error(`unknown argument ${a}\nusage: conversation-rig.mjs [--into <scratch>] [--scenario tour|long|coordinator|helpers] [--keep]`);
   }
   return opts;
 }

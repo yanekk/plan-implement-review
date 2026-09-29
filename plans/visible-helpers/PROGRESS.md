@@ -17,7 +17,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | # | Task | Depends on | State | Notes |
 |---|---|---|---|---|
 | T01 | helper-fold | — | ✅ | |
-| T02 | helper-rig-scenario | — | ⬜ | |
+| T02 | helper-rig-scenario | — | ✅ | |
 | T03 | helper-lines | T01, T02 | ⬜ | |
 | T04 | interrupt-gate | T01 | ✅ | Review: one fix. An idle-parent interrupt's window stayed open through the next turn, so a helper the agent stopped itself was reported as interrupt-stopped; reproduced by a hand-built log, now closed at the next `out message`, test locks it. Recorded deviations accepted. Probed gate rows, reported-id ordering, raw lines. |
 | T05 | interrupt-gate-view | T02, T03, T04 | ⬜ | |

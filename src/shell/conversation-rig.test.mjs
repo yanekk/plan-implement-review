@@ -420,6 +420,81 @@ for (const [cols, rows] of [[80, 24], [120, 40]]) {
   });
 }
 
+// visible-helpers T02: the helpers scenario on the real pir screen. The run is listed running, and T01's
+// conversation opens on the worker's opening message and its first helper's Agent step. What the screen
+// then makes of the helpers is T03's and T05's to test on this same scenario.
+test('the helpers scenario drives the real pir screen', { timeout: 60000 }, async (t) => {
+  const env = scratchHome(t);
+  const rig = startRig({ env, scenario: 'helpers', stepMs: 100, workMs: 300 });
+  t.after(() => rig.stop());
+  const screen = openScreen({ cols: 100, rows: 30, env: { ...process.env, ...env } });
+  try {
+    await screen.waitFor(/rig +work +● running/);
+    screen.send('\r');
+    await screen.waitFor(/pick a task/);
+    screen.send('\x1b[C');
+    const s = (await screen.waitFor(/⎿ Agent Survey the code/)).join('\n');
+    assert.match(s, /I'm the pretend worker of the helpers rig/, 'the opening message is on screen');
+    assert.match(s, new RegExp(`^T01  worker ${rig.workerId.slice(0, 8)} · live`, 'm'), 'T01\'s conversation is the one open');
+    assert.equal(screen.overflows(), 0);
+  } finally {
+    await screen.close();
+  }
+});
+
+test('the helpers scenario runs its script in order: two helpers, A asks, B ends, A killed by an idle interrupt, then chat', { timeout: 30000 }, async (t) => {
+  const env = scratchHome(t);
+  const rig = startRig({ env, scenario: 'helpers', stepMs: 20, workMs: 200 });
+  t.after(() => rig.stop());
+  const drop = (input) => assert.deepEqual(dropPersonInput(rig.controlDir, { to: rig.workerId, ...input }, { coordinatorAlive: true }), { ok: true });
+  const sys = (subtype) => events(rig).filter((e) => e.type === 'system' && e.subtype === subtype);
+  const A = 'a0fake00000000a01';
+  const B = 'a0fake00000000b02';
+
+  await waitFor(() => rig.platform.pending(rig.workerId)[0]?.requestId === 'helperA-perm', { what: 'helper A to ask' });
+  const started = sys('task_started');
+  assert.deepEqual(started.map((e) => [e.task_id, e.tool_use_id, e.description, e.task_type, e.is_backgrounded]), [
+    [A, 'toolu_agentA', 'Survey the code', 'local_agent', true],
+    [B, 'toolu_agentB', 'Check the tests', 'local_agent', true],
+  ]);
+  const helperFrames = events(rig).filter((e) => e.parent_tool_use_id);
+  assert.ok(helperFrames.some((e) => e.parent_tool_use_id === 'toolu_agentA' && e.message.content[0].type === 'text'), 'a helper text frame');
+  assert.ok(helperFrames.some((e) => e.parent_tool_use_id === 'toolu_agentB'), 'B has frames of its own');
+  assert.ok(!events(rig).some((e) => e.type === 'user' && e.parent_tool_use_id === 'toolu_agentA' && e.message.content[0]?.tool_use_id === 'toolu_helperA-perm'), 'A\'s asked-for step has no result before the answer');
+
+  drop({ kind: 'permission', requestId: 'helperA-perm', decision: 'allow' });
+  await waitFor(() => events(rig).some((e) => e.type === 'result' && e.result === 'waiting for Survey the code'), { what: 'the parent to end its turn' });
+  const ask = events(rig).find((e) => e.type === 'user' && e.message.content[0]?.tool_use_id === 'toolu_helperA-perm');
+  assert.equal(ask.parent_tool_use_id, 'toolu_agentA', 'the asked-for step\'s result is A\'s');
+  assert.deepEqual(sys('task_updated').map((e) => [e.task_id, e.patch.status]), [[B, 'completed']]);
+  assert.deepEqual(sys('task_notification').map((e) => [e.task_id, e.status]), [[B, 'completed']]);
+  assert.deepEqual(sys('background_tasks_changed').at(-1).tasks.map((x) => x.task_id), [A], 'the list shrank to A');
+
+  // A keeps progressing while the parent is idle, its counts growing.
+  const progressOfA = () => sys('task_progress').filter((e) => e.task_id === A);
+  const before = progressOfA().length;
+  await waitFor(() => progressOfA().length >= before + 3, { what: 'A to keep working while the parent is idle' });
+  const uses = progressOfA().map((e) => e.usage.tool_uses);
+  assert.deepEqual(uses, [...uses].sort((a, b) => a - b), 'tool_uses only grows');
+
+  // The parent is idle here, its `result` sent; how pir reads a worker whose helper still works is T01's.
+  const results = events(rig).filter((e) => e.type === 'result').length;
+  drop({ kind: 'interrupt' });
+  await waitFor(() => sys('task_notification').some((e) => e.task_id === A), { what: 'A to be killed' });
+  assert.deepEqual([sys('task_updated').at(-1).task_id, sys('task_updated').at(-1).patch.status], [A, 'killed']);
+  assert.equal(sys('task_notification').at(-1).status, 'stopped');
+  assert.deepEqual(sys('background_tasks_changed').at(-1).tasks, []);
+  const stopped = progressOfA().length;
+  await new Promise((r) => setTimeout(r, 150));
+  assert.equal(progressOfA().length, stopped, 'A reports nothing after its kill');
+  assert.equal(events(rig).filter((e) => e.type === 'result').length, results, 'no result follows an interrupt of an idle parent');
+
+  drop({ kind: 'message', text: 'is it still running?' });
+  await waitFor(() => events(rig).some((e) => e.type === 'result' && e.result === 'Done with "is it still running?".'), { what: 'the chat reply' });
+  const got = readFileSync(rig.received, 'utf8');
+  assert.match(got, /is it still running\?/, 'the fake records the text the model received');
+});
+
 // mouse-navigation T06, end to end at 80×24 and 120×40: the wheel scrolls a worker's conversation three
 // lines a notch, and a click in the typing box moves its caret. The tour's history fits a 120×40 screen,
 // so this runs the `long` scenario (300 steps), which has more than fits at both sizes.
