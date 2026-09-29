@@ -31,7 +31,7 @@ done · ⛔ blocked, needs a human.
 | T05 | finisher-handover | T04 | ✅ | |
 | T06 | finisher-alerts | T05 | ✅ | |
 | T07 | finisher-row | T05 | ✅ | |
-| T08 | finisher-docs | T03, T05, T06, T07 | ⬜ | |
+| T08 | finisher-docs | T03, T05, T06, T07 | ✅ | |
 | T09 | finisher-drill | T03, T06, T07 | ⬜ | |
 | T10 | finisher-live | T08, T09 | ⬜ | |
 
