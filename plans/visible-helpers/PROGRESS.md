@@ -18,7 +18,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 |---|---|---|---|---|
 | T01 | helper-fold | — | ✅ | |
 | T02 | helper-rig-scenario | — | ✅ | |
-| T03 | helper-lines | T01, T02 | ✅ | Review clean, no fix commit. Suite green incl. rig e2e 80×24, 120×40. Probed: gate/picker reducers keep the helper name across keys, nested helper and its background command hidden, helper line placed when task_started precedes or follows the Agent call. Deviations accepted: `1 step` singular (person), `statusParts` export, `settleMs: 100`. |
+| T03 | helper-lines | T01, T02 | ✅ | Review: one fix. Rig e2e read the step count as `N steps` and failed when A sat at `1 step`; reproduced by a full-suite run, regex now `steps?`, passed 5 reruns. Probed: reducers keep the helper name, nested helper hidden, line placement in either event order. Deviations accepted: `1 step`, `statusParts` export, `settleMs: 100`. |
 | T04 | interrupt-gate | T01 | ✅ | |
 | T05 | interrupt-gate-view | T02, T03, T04 | ⬜ | |
 | T06 | helpers-drill | T03, T05 | ⬜ | |

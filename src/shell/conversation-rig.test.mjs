@@ -466,7 +466,7 @@ for (const [cols, rows] of [[80, 24], [120, 40]]) {
       assert.doesNotMatch(s, /The worker process and the run state/, 'none of a helper\'s words either');
       screen.send('\r');
 
-      s = (await screen.waitFor(/helper finished · Check the tests · \d+ steps[\s\S]*◌ 1 helper running/)).join('\n');
+      s = (await screen.waitFor(/helper finished · Check the tests · \d+ steps?[\s\S]*◌ 1 helper running/)).join('\n');
       assert.match(s, /→ allowed/, 'Enter allowed the helper\'s request');
       assert.match(s, /⚑ helper "Survey the code" wants to use Bash/, 'the answered request still names the helper');
       assert.doesNotMatch(s, /⎿ (Read|Bash git log)/);
@@ -478,8 +478,8 @@ for (const [cols, rows] of [[80, 24], [120, 40]]) {
         const now = lineOfA(text);
         return now && now !== first;
       })).join('\n');
-      const [, n1] = first.match(/(\d+) steps/);
-      const [, n2] = lineOfA(s).match(/(\d+) steps/);
+      const [, n1] = first.match(/(\d+) steps?\b/);
+      const [, n2] = lineOfA(s).match(/(\d+) steps?\b/);
       assert.ok(Number(n2) > Number(n1), `the step count grew: ${first} → ${lineOfA(s)}`);
 
       screen.send('\t');
