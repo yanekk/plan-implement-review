@@ -7,7 +7,7 @@ Sixty words to a Notes cell, counted; the account is the commit message.
 
 **Status:** Planned 2026-09-29. Nothing built.
 **Last updated:** 2026-09-29
-**Next `pir-work` will:** implement T01 (helper-fold), the lowest-numbered task with no dependencies.
+**Next `pir-work` will:** review T06 (helpers-drill).
 
 ## Tasks
 
@@ -21,10 +21,10 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T03 | helper-lines | T01, T02 | ✅ | |
 | T04 | interrupt-gate | T01 | ✅ | |
 | T05 | interrupt-gate-view | T02, T03, T04 | ✅ | |
-| T06 | helpers-drill | T03, T05 | ⬜ | |
+| T06 | helpers-drill | T03, T05 | 🔍 | Drill driven at 80×24, 120×40, 60×20 plus a tour pass; all held but one. Fix: a running helper's step text shortens so count and time stay on screen (person's choice, departs from DESIGN §2.2's plain clip). One unit test, the rig helper-line test gains 60×20. |
 | T07 | docs | T06 | ⬜ | |
 
-**Review queue:** empty
+**Review queue:** T06
 
 ## Blocked on the user
 

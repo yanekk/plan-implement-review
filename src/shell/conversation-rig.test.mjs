@@ -444,8 +444,9 @@ test('the helpers scenario drives the real pir screen', { timeout: 60000 }, asyn
 
 // visible-helpers T03, end to end at 80×24 and 120×40 (DESIGN §2.2–§2.4): one updating line per helper, the
 // helpers' steps only on Tab and labelled, a helper's permission named after it, and the status line
-// naming the helper still running once the parent's turn has ended.
-for (const [cols, rows] of [[80, 24], [120, 40]]) {
+// naming the helper still running once the parent's turn has ended. 60×20 is the T06 drill's narrow size,
+// where the step text is shortened so A's step count and time stay on screen (person, 2026-09-29).
+for (const [cols, rows] of [[80, 24], [120, 40], [60, 20]]) {
   test(`the helpers scenario draws one line per helper on the real pir screen at ${cols}×${rows}`, { timeout: 60000 }, async (t) => {
     const env = scratchHome(t);
     // A helper reports a step every stepMs and each one repaints, so the driver's quiet time must be shorter.
@@ -474,6 +475,7 @@ for (const [cols, rows] of [[80, 24], [120, 40]]) {
       // A keeps working while the parent is idle: its line's step and count move on a later frame.
       const first = lineOfA(s);
       assert.ok(first, `A's line is on screen:\n${s}`);
+      assert.match(first, / · \d+ steps? · \d+s$/, 'the step count and time end the line at every size');
       s = (await screen.waitFor((text) => {
         const now = lineOfA(text);
         return now && now !== first;
