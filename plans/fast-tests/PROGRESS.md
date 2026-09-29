@@ -26,11 +26,11 @@ done · ⛔ blocked, needs a human.
 | T01 | wake-on-activity | — | ⬜ | |
 | T02 | end-sequence-no-wait | T01 | ⬜ | |
 | T03 | split-coordinator-drill | — | ⬜ | |
-| T04 | split-plan-rig | — | 🔍 | 8 files by section plus plan-rig-helpers.mjs; 61 names identical; alone 20–47 s under load. Split mechanically by script, no body retyped. box-commands T05 section split over two files (its `for` loop is 43 s). Deviation: brief-box.test.mjs comment repointed to the new file name. |
+| T04 | split-plan-rig | — | ✅ | Review clean, no fix commit. Multiset diff of old vs new lines: only header comments added, no body changed; no cross-file shared state or hooks; 61 pass together in 43 s; npm test green. Minor: ndjson sits in helpers but one file uses it. brief-box comment repoint accepted. |
 | T05 | split-conversation-rig | — | ⬜ | |
 | T06 | suite-timing-proof | T01, T02, T03, T04, T05 | ⬜ | |
 
-**Review queue:** T04
+**Review queue:** —
 
 ## Blocked on the user
 
