@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { helpersOf, runningHelpers, helperOfFrame } from './helpers.mjs';
+import { helpersOf, runningHelpers, helperOfFrame, interruptGate, gateWarning, stoppedByInterrupt, helpersNote } from './helpers.mjs';
 
 // Cut from plans/visible-helpers/evidence/plan-0339-helper.ndjson: the planner starts a background Explore
 // helper, asks a question while it runs, the person interrupts, Claude kills the helper, and a later turn
@@ -154,4 +154,85 @@ test('a helper\'s own helper is not listed: it rolls up into the outer one (DESI
   // The CLI may yield the inner task_started before the helper frame holding its Agent call.
   const reordered = [log[0], log[1], log[3], log[2]];
   assert.deepEqual(helpersOf(reordered).map((h) => h.id), ['outer']);
+});
+
+// ---- The interrupt rules (T04, DESIGN §2.5, §2.6, §2.8) ----
+
+const interrupt = () => at({ dir: 'out', from: 'person', kind: 'interrupt' });
+const result = () => at({ dir: 'in', event: { type: 'result', subtype: 'success', result: '' } });
+const message = (text, helpersStopped) => at({ dir: 'out', from: 'person', kind: 'message', text, ...(helpersStopped ? { helpersStopped } : {}) });
+const H1 = { id: 'h1', description: 'Survey the code' };
+const H2 = { id: 'h2', description: 'Check the tests' };
+
+test('interruptGate: every row of the table', () => {
+  for (const key of ['escape', 'ctrl+c-empty']) {
+    assert.deepEqual(interruptGate(null, key, []), { gate: null, send: true }, `${key}, nothing running: interrupt at once`);
+    assert.deepEqual(interruptGate(null, key, [H1, H2]), { gate: { armed: true, helpers: [H1, H2] }, send: false }, `${key}, helpers running: arm`);
+    const armed = { armed: true, helpers: [H1] };
+    assert.deepEqual(interruptGate(armed, key, [H1]), { gate: null, send: true }, `${key} while armed: send`);
+    assert.deepEqual(interruptGate(armed, key, []), { gate: null, send: true }, `${key} while armed, helper ended since: still send`);
+  }
+  assert.deepEqual(interruptGate({ armed: true, helpers: [H1] }, 'other', [H1]), { gate: null, send: false }, 'other key disarms');
+  assert.deepEqual(interruptGate(null, 'other', [H1]), { gate: null, send: false });
+  assert.deepEqual(interruptGate(null, 'escape', undefined), { gate: null, send: true }, 'no running list reads as none');
+});
+
+test('gateWarning: singular and plural, start order kept; nothing when not armed', () => {
+  assert.equal(gateWarning({ armed: true, helpers: [H1] }), 'esc again to interrupt · this also stops 1 helper: Survey the code');
+  assert.equal(gateWarning({ armed: true, helpers: [H1, H2] }), 'esc again to interrupt · this also stops 2 helpers: Survey the code; Check the tests');
+  assert.equal(gateWarning({ armed: true, helpers: [H2, H1] }), 'esc again to interrupt · this also stops 2 helpers: Check the tests; Survey the code');
+  assert.equal(gateWarning(null), '');
+});
+
+test('stoppedByInterrupt on the recording: the helper the interrupt killed, until a message reports it', () => {
+  assert.deepEqual(stoppedByInterrupt(sample).map((h) => h.id), [HELPER]);
+  assert.deepEqual(stoppedByInterrupt(lines).map((h) => h.id), [HELPER], 'raw lines read the same');
+  assert.deepEqual(stoppedByInterrupt(sample.slice(0, endIndex)), [], 'not yet ended');
+  assert.deepEqual(stoppedByInterrupt([...sample, message('go on', [HELPER])]), []);
+  assert.deepEqual(stoppedByInterrupt([...lines, JSON.stringify(message('go on', [HELPER]))]), [], 'reported in a raw line');
+  assert.deepEqual(stoppedByInterrupt([...sample, message('go on', ['someone-else'])]).map((h) => h.id), [HELPER]);
+});
+
+test('stoppedByInterrupt leaves out a helper that completed after an interrupt, or that the agent stopped itself', () => {
+  assert.deepEqual(stoppedByInterrupt([started('h', 'c'), interrupt(), updated('h', 'completed'), result()]), []);
+  assert.deepEqual(stoppedByInterrupt([started('h', 'c'), interrupt(), updated('h', 'failed'), result()]), []);
+  assert.deepEqual(stoppedByInterrupt([started('h', 'c'), updated('h', 'stopped'), result()]), [], 'no interrupt before it');
+  assert.deepEqual(stoppedByInterrupt([started('h', 'c'), interrupt(), result(), updated('h', 'stopped')]), [], 'after the interrupt\'s result');
+});
+
+test('stoppedByInterrupt: two interrupts, one helper stopped by each, no message between → both, in start order', () => {
+  const log = [started('h1', 'c1'), started('h2', 'c2'), interrupt(), updated('h2', 'killed'), result(), interrupt(), notified('h1', 'stopped'), result()];
+  assert.deepEqual(stoppedByInterrupt(log).map((h) => h.id), ['h1', 'h2']);
+});
+
+test('stoppedByInterrupt: an interrupt of an idle parent (no result after it) whose helper ends killed is included', () => {
+  const log = [started('h', 'c'), result(), interrupt(), updated('h', 'killed'), notified('h', 'stopped')];
+  assert.deepEqual(stoppedByInterrupt(log).map((x) => x.id), ['h']);
+});
+
+test('stoppedByInterrupt: a helper a resumed note ended is not included, even inside an interrupt window', () => {
+  assert.deepEqual(stoppedByInterrupt([started('h', 'c'), resumed()]), []);
+  assert.deepEqual(stoppedByInterrupt([started('h', 'c'), interrupt(), resumed()]), []);
+});
+
+test('stoppedByInterrupt: a message sent before the helper ended does not count as reporting it', () => {
+  const log = [started('h', 'c'), message('first', ['h']), interrupt(), updated('h', 'killed')];
+  assert.deepEqual(stoppedByInterrupt(log).map((x) => x.id), ['h']);
+});
+
+test('helpersNote: singular, plural, empty → null, a double quote kept as written', () => {
+  assert.equal(helpersNote([]), null);
+  assert.equal(helpersNote(undefined), null);
+  assert.equal(helpersNote([H1]), '[pir] Before this message, the person\'s interrupt stopped your helper: "Survey the code". It will not report back. Start it again or do the work yourself if it is still needed.');
+  assert.equal(helpersNote([H1, H2]), '[pir] Before this message, the person\'s interrupt stopped your helpers: "Survey the code", "Check the tests". They will not report back. Start them again or do the work yourself if it is still needed.');
+  const note = helpersNote([{ id: 'q', description: 'Find "mainTip" callers' }]);
+  assert.ok(note.includes('"Find "mainTip" callers"'), note);
+  assert.ok(!note.includes('\\'), 'no escaping backslashes');
+});
+
+test('stoppedByInterrupt: an idle-parent interrupt\'s window closes at the person\'s next message, so a helper the agent stops itself in the new turn is not included', () => {
+  // Nothing was running, so the interrupt went at once and no result followed it (§2.1); the next turn
+  // then starts a helper and stops it itself before its own result.
+  const log = [result(), interrupt(), message('go on'), started('h', 'c'), updated('h', 'stopped'), result()];
+  assert.deepEqual(stoppedByInterrupt(log), []);
 });
