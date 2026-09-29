@@ -25,7 +25,7 @@ done · ⛔ blocked, needs a human.
 |---|---|---|---|---|
 | T00 | prove-the-fence | — | ⬜ | |
 | T01 | finisher-policy | — | ⬜ | |
-| T02 | finisher-brief | — | ⬜ | |
+| T02 | finisher-brief | — | 🔍 | `finisher-brief.mjs`, 10 tests. Adds `rulesSourceWords` export and clips free text so messages stay under 1500 chars. Deviation: no `finisherStuckAfterRestart` (DESIGN §3.2 lists it; T01 `afterRestart` owns that summary, `finisherResumed` quotes it). |
 | T03 | finisher-skill-and-rules | T01 | ⬜ | |
 | T04 | finisher-session | T00, T01, T02 | ⬜ | |
 | T05 | finisher-handover | T04 | ⬜ | |
@@ -35,7 +35,7 @@ done · ⛔ blocked, needs a human.
 | T09 | finisher-drill | T03, T06, T07 | ⬜ | |
 | T10 | finisher-live | T08, T09 | ⬜ | |
 
-**Review queue:** *(empty)*
+**Review queue:** T02
 
 ## Blocked on the user
 
