@@ -837,6 +837,9 @@ export function startCoordinator({
     if (finisher.goGiven()) return; // after a go only done or close end the run
     if (worktree.mainContains(state.feature.branch)) finish('merged', rec);
     else if (worktree.mainTip() !== handoff.mainSha) {
+      // The old go is void from this pass, not from the re-sync's end, which may be minutes of sync or fix
+      // worker away (review T05).
+      finisher.resyncing();
       handoff.resynced = true;
       resync(rec);
     }

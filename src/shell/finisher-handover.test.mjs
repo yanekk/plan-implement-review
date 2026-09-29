@@ -320,7 +320,10 @@ test('main moving in awaiting-go re-syncs as today, then sends the finisher back
   run.coordinator.pass();
   const req = run.toAwaitingGo();
   const mainSha = run.moveMain('other.txt', 'from main\n');
-  const r = run.until((x) => x.handoff.state === 'ready' && run.coordinator.finisher?.phase() === 'preparing');
+  const told = () => run.fins.latest().told.some((m) => m.text.startsWith(`main moved to ${mainSha.slice(0, 12)}`));
+  const r = run.until((x) => x.handoff.state === 'ready' && told());
+  assert.equal(run.coordinator.finisher.phase(), 'preparing');
+  assert.equal(run.fins.latest().told.filter((m) => m.text.startsWith('main moved to')).length, 1, 'told once, when settled');
   assert.equal(r.handoff.mainSha, mainSha);
   assert.deepEqual(run.reportCommits(), [`report(${SLUG}): re-synced with main`, `report(${SLUG}): delivery report`]);
   assert.ok(run.fins.latest().told.some((m) => m.text.startsWith(`main moved to ${mainSha.slice(0, 12)}`)));
@@ -505,4 +508,31 @@ test('renderFinished: the finisher\'s done line, and the give-up fallback with t
   const gave = renderFinished({ by: 'finisher-gave-up', slug: SLUG, reportPath: REPORT_REL });
   assert.match(gave, /could not go on/);
   assert.match(gave, /\n\n {2}git merge pir\/demo\n$/);
+});
+
+test('main moving in awaiting-go: a Go on the old question answered while the re-sync runs does not count (review T05)', (t) => {
+  const run = finRun(t);
+  run.toReady();
+  run.coordinator.pass();
+  const req = run.toAwaitingGo();
+  const mainSha = run.moveMain('other.txt', 'from main\n');
+  run.coordinator.pass(); // main moved: the re-sync starts, and spans passes
+  assert.equal(run.coordinator.handoff.state, 'preparing', 'the re-sync is under way');
+  assert.equal(run.coordinator.finisher.phase(), 'preparing', 'look-only from the pass main moved');
+  run.go(req);
+  const fin = run.fins.latest();
+  assert.equal(fin.opts.decide('Bash', { command: 'git merge pir/demo' }), 'deny', 'no step runs on a go for the old plan');
+  // A fresh ready and a fresh go question while the branch is still being re-synced: still no go.
+  run.status(READY);
+  const req2 = fin.ask(GOQ);
+  fin.opts.decide('Read', { file_path: join(run.worktree.repo, 'README.md') });
+  run.go(req2);
+  assert.equal(fin.opts.decide('Bash', { command: 'git merge pir/demo' }), 'deny', 'no go counts mid-re-sync');
+  assert.notEqual(run.coordinator.finisher.phase(), 'finishing');
+  // Settled: told once, back to preparing, and a go for the fresh ready counts again.
+  run.until((x) => x.handoff.state === 'ready' && fin.told.some((m) => m.text.startsWith(`main moved to ${mainSha.slice(0, 12)}`)));
+  assert.equal(run.coordinator.finisher.phase(), 'preparing');
+  run.go(run.toAwaitingGo());
+  run.coordinator.pass();
+  assert.equal(run.coordinator.finisher.phase(), 'finishing');
 });
