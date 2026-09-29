@@ -114,7 +114,7 @@ const questions = (over = {}) =>
 
 const KEY = { enter: '\r', esc: '\x1b', left: '\x1b[D', right: '\x1b[C', up: '\x1b[A', down: '\x1b[B', tab: '\t', ctrlC: '\x03', pgUp: '\x1b[5~', pgDn: '\x1b[6~', space: ' ' };
 
-function makeView({ log = [init(), opening], live = true, alive = true, rows = 30, drop } = {}) {
+function makeView({ log = [init(), opening], live = true, alive = true, rows = 30, drop, colour = false } = {}) {
   const drops = [];
   let backs = 0;
   let push = null;
@@ -136,7 +136,7 @@ function makeView({ log = [init(), opening], live = true, alive = true, rows = 3
     alive: () => alive,
     onBack: () => (backs += 1),
     tui: { requestRender() {}, terminal: { rows } },
-    colour: false,
+    colour,
   });
   const type = (s) => [...s].forEach((c) => v.handleInput(c));
   const screen = () => v.render(80).map((l) => stripTerminalSequences(l));
@@ -692,6 +692,170 @@ test('mouse: the permission gate and the question picker take no clicks', () => 
     assert.equal(JSON.stringify(t.v.state.prompt), before, 'the prompt did not move');
     assert.deepEqual(t.drops, [], 'nothing was answered');
   }
+});
+
+// ---- group lines (group-commands T02, DESIGN §2.4–§2.7) ----
+
+const use = (id, name, input) => entry({ dir: 'in', event: { type: 'assistant', message: { content: [{ type: 'tool_use', id, name, input } ] } } });
+const result = (id, content, isError = false) => entry({ dir: 'in', event: { type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: id, content, is_error: isError }] } } });
+// Four finished steps, the Bash one failed, then a message: one group line.
+const groupLog = (prefix = 'g') => [
+  use(`${prefix}1`, 'Read', { file_path: 'src/a.mjs' }), result(`${prefix}1`, 'a'),
+  use(`${prefix}2`, 'Grep', { pattern: 'x' }), result(`${prefix}2`, 'hit'),
+  use(`${prefix}3`, 'Bash', { command: 'npm test' }), result(`${prefix}3`, '1 failing', true),
+  use(`${prefix}4`, 'Edit', { file_path: 'src/a.mjs' }), result(`${prefix}4`, 'updated'),
+];
+const GROUP = /▸ Read 1 file, searched 1 time, ran 1 shell command, edited 1 file · 1 failed/;
+const rowOf = (t, re) => t.screen().findIndex((l) => re.test(l));
+
+test('group click: a left click on a folded group line opens it; another click folds it', () => {
+  const t = makeView({ log: [init(), opening, ...groupLog(), said('all done')] });
+  const y = rowOf(t, GROUP);
+  assert.ok(y >= 2, t.text());
+  assert.deepEqual(t.v.handleMouse(mouse('click', { y })), { handled: true, rowClick: true });
+  const s = t.screen();
+  assert.match(s[y], /^ {2}▾ Read 1 file/, 'the marker turned');
+  assert.match(s[y + 1], /^ {4}⎿ Read src\/a\.mjs/);
+  assert.match(s[y + 3], /^ {4}⎿ Bash npm test/);
+  assert.match(s[y + 4], /^ {4}⎿ Edit/);
+  assert.match(s[y + 5], /all done/);
+  assert.deepEqual(t.v.state.open, ['g1']);
+  assert.deepEqual(t.v.handleMouse(mouse('click', { y })), { handled: true, rowClick: true });
+  assert.match(t.screen()[y], GROUP);
+  assert.doesNotMatch(t.text(), /⎿/);
+  assert.deepEqual(t.v.state.open, []);
+});
+
+test('group click: a message, a running step, the header, a blank row and the box are not group lines', () => {
+  const t = makeView({ log: [init(), opening, ...groupLog(), said('all done'), use('run1', 'Bash', { command: 'sleep 9' })], rows: 30 });
+  t.type('hello');
+  const s = t.screen();
+  const rows = [0, 1, rowOf(t, /all done/), rowOf(t, /⎿ Bash sleep 9/), rowOf(t, /Build T05/), s.findIndex((l, i) => i > 2 && l === '')];
+  for (const y of rows) {
+    assert.ok(y >= 0, `row found: ${rows}`);
+    assert.equal(t.v.handleMouse(mouse('click', { x: 4, y })), undefined, `row ${y}: ${s[y]}`);
+  }
+  const boxY = s.findIndex((l) => l.includes('hello'));
+  const r = t.v.handleMouse(mouse('click', { x: 3, y: boxY }));
+  assert.ok(r?.handled && !r.rowClick, 'the box row is still the Editor\'s');
+  assert.deepEqual(t.v.state.open, [], 'nothing was toggled');
+  assert.match(t.text(), GROUP);
+});
+
+test('group click: press, drag, release and a right click on a group line are declined and toggle nothing', () => {
+  const t = makeView({ log: [init(), opening, ...groupLog()] });
+  const y = rowOf(t, GROUP);
+  for (const type of ['press', 'drag', 'release']) assert.equal(t.v.handleMouse(mouse(type, { y })), undefined, type);
+  for (const button of ['right', 'middle']) assert.equal(t.v.handleMouse(mouse('click', { y, button })), undefined, button);
+  assert.deepEqual(t.v.state.open, []);
+  assert.match(t.screen()[y], GROUP);
+});
+
+test('group click: works in a read-only view', () => {
+  const t = makeView({ log: [init(), opening, ...groupLog()], live: false });
+  const y = rowOf(t, GROUP);
+  assert.deepEqual(t.v.handleMouse(mouse('click', { y })), { handled: true, rowClick: true });
+  assert.match(t.screen()[y], /▾ Read 1 file/);
+});
+
+test('group hover: the group line under the pointer is bold with colour on; off it, or with colour off, it is plain', () => {
+  const t = makeView({ log: [init(), opening, ...groupLog(), said('all done')], colour: true });
+  const raw = () => t.v.render(80);
+  const y = rowOf(t, GROUP);
+  const msg = rowOf(t, /all done/);
+  assert.ok(!raw()[y].includes('\x1b[1m'), 'plain before the pointer comes');
+  assert.deepEqual(t.v.handleMouse(mouse('move', { y })), { handled: true });
+  assert.ok(raw()[y].includes('\x1b[1m'), 'bold under the pointer');
+  t.v.handleMouse(mouse('move', { y: msg }));
+  assert.ok(!raw()[y].includes('\x1b[1m'), 'plain once the pointer leaves');
+  assert.equal(raw()[msg], t.v.render(80)[msg]);
+  const before = raw()[msg];
+  t.v.handleMouse(mouse('move', { y: msg }));
+  assert.equal(raw()[msg], before, 'a message line under the pointer is not hovered');
+  const off = makeView({ log: [init(), opening, ...groupLog()], colour: false });
+  const oy = rowOf(off, GROUP);
+  const plain = off.v.render(80)[oy];
+  off.v.handleMouse(mouse('move', { y: oy }));
+  assert.equal(off.v.render(80)[oy], plain, 'no hover with colour off');
+});
+
+test('group click: following the end, opening the last group scrolls just enough to show its steps', () => {
+  const log = [init(), opening, ...Array.from({ length: 30 }, (_, i) => said(`line ${i}`)), ...groupLog()];
+  const t = makeView({ log, rows: 16 });
+  const s = t.screen();
+  const y = rowOf(t, GROUP);
+  assert.equal(t.v.state.scrollBack, 0);
+  t.v.handleMouse(mouse('click', { y }));
+  const after = t.screen();
+  assert.match(after.join('\n'), /▾ Read 1 file/, 'the group line is still on screen');
+  assert.match(after.join('\n'), /⎿ Edit src\/a\.mjs/, 'its last step is visible');
+  assert.equal(t.v.state.scrollBack, 0, 'still following the end');
+  assert.ok(after.findIndex((l) => /▾ Read 1 file/.test(l)) < y, 'it moved up just enough');
+  assert.notDeepEqual(after, s);
+});
+
+test('group click: an open group taller than the screen keeps its line at the top, never above it', () => {
+  const many = [];
+  for (let i = 0; i < 30; i++) many.push(use(`m${i}`, 'Read', { file_path: `f${i}` }), result(`m${i}`, 'x'));
+  const t = makeView({ log: [init(), opening, ...Array.from({ length: 30 }, (_, i) => said(`line ${i}`)), ...many], rows: 16 });
+  const y = rowOf(t, /▸ Read 30 files/);
+  t.v.handleMouse(mouse('click', { y }));
+  assert.match(t.screen()[2], /▾ Read 30 files/, 'the clicked line is the top scrollback row');
+});
+
+test('group click: scrolled up, the clicked line stays on its row, opening and folding', () => {
+  const log = [init(), opening, ...Array.from({ length: 10 }, (_, i) => said(`early ${i}`)), ...groupLog('a'), said('between'), ...Array.from({ length: 40 }, (_, i) => said(`line ${i}`))];
+  const t = makeView({ log, rows: 20 });
+  for (let i = 0; i < 3; i++) t.v.handleInput(KEY.pgUp);
+  let y = rowOf(t, GROUP);
+  for (let i = 0; i < 5 && (y < 4 || y > 12); i++) {
+    t.v.handleMouse(wheel(y < 4 ? 'up' : 'down'));
+    y = rowOf(t, GROUP);
+  }
+  assert.ok(y >= 4 && y <= 12, `the group sits mid-screen: ${y}\n${t.text()}`);
+  assert.ok(t.v.state.scrollBack > 0);
+  t.v.handleMouse(mouse('click', { y }));
+  const s = t.screen();
+  assert.match(s[y], /▾ Read 1 file/, 'same row after opening');
+  assert.match(s[y + 1], /⎿ Read src\/a\.mjs/);
+  t.v.handleMouse(mouse('click', { y }));
+  assert.match(t.screen()[y], GROUP, 'same row after folding');
+});
+
+test('group click: Tab shows full detail with no group lines; Tab back keeps the group open', () => {
+  const t = makeView({ log: [init(), opening, ...groupLog()] });
+  t.v.handleMouse(mouse('click', { y: rowOf(t, GROUP) }));
+  t.v.handleInput(KEY.tab);
+  assert.doesNotMatch(t.text(), /^ {2}[▸▾] /m);
+  assert.match(t.text(), /⎿ Bash npm test/);
+  for (let y = 0; y < 30; y++) assert.equal(t.v.handleMouse(mouse('click', { y }))?.rowClick, undefined, `row ${y} is not clickable in full detail`);
+  t.v.handleInput(KEY.tab);
+  assert.match(t.text(), /▾ Read 1 file/);
+  assert.deepEqual(t.v.state.open, ['g1']);
+});
+
+test('group arrival: scrolled up, a running step folding into its group does not move the top line (§2.7)', () => {
+  const log = [init(), opening, ...Array.from({ length: 40 }, (_, i) => said(`line ${i}`)), ...groupLog(), use('late', 'Bash', { command: 'npm run slow' })];
+  const t = makeView({ log, rows: 20 });
+  t.v.handleInput(KEY.pgUp);
+  const before = t.screen().slice(2, 8);
+  assert.ok(t.v.state.scrollBack > 0);
+  t.push(result('late', 'ok'));
+  assert.deepEqual(t.screen().slice(2, 8), before, 'the lines being read did not move');
+  t.v.handleInput(KEY.pgDn);
+  t.v.handleInput(KEY.pgDn);
+  assert.match(t.text(), /ran 2 shell commands/, 'the step joined the count');
+  assert.doesNotMatch(t.text(), /⎿ Bash npm run slow/);
+});
+
+test('group click: a new view for the same worker starts with every group folded', () => {
+  const log = [init(), opening, ...groupLog()];
+  const a = makeView({ log });
+  a.v.handleMouse(mouse('click', { y: rowOf(a, GROUP) }));
+  assert.deepEqual(a.v.state.open, ['g1']);
+  const b = makeView({ log });
+  assert.deepEqual(b.v.state.open, []);
+  assert.match(b.text(), GROUP);
 });
 
 test('withHeadLine: a wheel on its head line is ignored; one below it reaches the inner view shifted by one', () => {

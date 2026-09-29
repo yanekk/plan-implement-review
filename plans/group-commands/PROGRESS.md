@@ -14,7 +14,7 @@ cell also fixes the over-budget cell they walk past.
 
 **Status:** Planned 2026-09-29. Nothing built. The prototype in `prototype/` was approved by the user.
 **Last updated:** 2026-09-29
-**Next `pir-work` will:** implement T01, the only task with no dependencies.
+**Next `pir-work` will:** review T02.
 
 ## Tasks
 
@@ -24,10 +24,10 @@ done · ⛔ blocked, needs a human.
 | # | Task | Depends on | State | Notes |
 |---|---|---|---|---|
 | T01 | group-steps-core | — | ✅ | |
-| T02 | group-steps-view | T01 | ⬜ | |
+| T02 | group-steps-view | T01 | 🔍 | Open set, click toggle with §2.5 placement, hover, signed §2.7 offset in conversation-view; `startRig` gets a `pbcopy` shim (`shimDir`, `clipboard`), the rig command prints PATH-prefixed open commands. 11 unit tests, 2 pty tests (80×24, 120×40). Deviation: shim sits in `control/bin` of the rig repo; `tour` sufficed, no new scenario. |
 | T03 | group-steps-drill | T01, T02 | ⬜ | |
 
-**Review queue:** *(empty)*
+**Review queue:** T02
 
 ## Blocked on the user
 

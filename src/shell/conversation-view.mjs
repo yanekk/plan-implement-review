@@ -115,6 +115,13 @@ export function createConversationView({
   let status = null; // a one-shot { text, style } line
   let focused = false;
   let box = null; // { top, rows } — where the last paint put the typing box; null when there is none
+  // group-commands §2.4: the groups the person opened, by id (a group's first toolUseId, stable as the log
+  // grows). It lives as long as this view, so leaving the conversation forgets it; Tab keeps it (§2.6).
+  const open = new Set();
+  let openVersion = 0;
+  let toggling = false; // the next rebuild is a click's, placed by §2.5, not counted as arrival (§2.7)
+  let hoverY = null; // the view-relative row under the pointer
+  let painted = null; // { top, lines } — the scrollback lines the last paint showed, from row `top` down
 
   const paint = (spans, width) => paintLine(spans, width, colour);
   const style = (s, text) => (colour && SGR[s] ? `${SGR[s]}${text}${RESET}` : text);
@@ -146,15 +153,17 @@ export function createConversationView({
     : null;
 
   function model(width) {
-    const key = `${version}|${width}|${full}`;
+    const key = `${version}|${width}|${full}|${openVersion}`;
     if (built?.key === key) return built;
     const activity = workerActivity(entries);
     const ended = hasEnded(entries);
     const readOnly = !editor || ended;
-    const conv = buildConversation(entries, { full, width, taskId, readOnly });
+    const conv = buildConversation(entries, { full, width, taskId, readOnly, open });
     // Scrolled up, new lines at the end must not move what the person is reading: the offset from the end
-    // grows by what arrived. Following the end (0), it stays 0.
-    if (scrollBack > 0 && built && built.width === width && built.full === full) scrollBack += Math.max(0, conv.lines.length - built.conv.lines.length);
+    // moves by the change in length. Signed (group-commands §2.7): a running step folding into its group's
+    // count takes a line away at the end, and that must not nudge the text either. Following the end (0),
+    // it stays 0. A click's own rebuild is placed by placeAfterToggle instead.
+    if (!toggling && scrollBack > 0 && built && built.width === width && built.full === full) scrollBack = Math.max(0, scrollBack + conv.lines.length - built.conv.lines.length);
     built = { key, conv, activity, ended, readOnly, width, full };
     // Keep the person's half-driven prompt while the same request is pinned; a new one starts fresh.
     const pinned = conv.pinned;
@@ -275,7 +284,7 @@ export function createConversationView({
 
   // mouse-navigation §2.3, §2.6. The wheel scrolls the history as PgUp/PgDn do, ±3 lines a notch (pi-tui's
   // wheelDelta is negative for up, and up scrolls back). A click on the typing box's rows goes to the Editor,
-  // shifted to its own rows, which moves the caret or picks from its pop-up. Everything else is declined:
+  // shifted to its own rows, which moves the caret or picks from its pop-up. Bar a group line (below), the rest is declined:
   // press, drag and release must stay unhandled or pi-tui loses its text selection (§2.5), and the pinned
   // picker and permission gate are keyboard-only (§2.4).
   function handleMouse(ev) {
@@ -285,7 +294,59 @@ export function createConversationView({
       return { handled: true };
     }
     if (editor && box && ev.y >= box.top && ev.y < box.top + box.rows) return editor.handleMouse({ ...ev, y: ev.y - box.top });
+    // group-commands §2.4: the pointer brightens a group line, and a left click opens or folds it. Only a
+    // move and a click are taken; press, drag and release stay declined for pi-tui's selection, and
+    // rowClick makes pir-tui reset pi-tui's double-click count, so two quick clicks open and fold.
+    if (ev.type === 'move') {
+      const changed = hitAt(hoverY)?.id !== hitAt(ev.y)?.id;
+      hoverY = Number.isInteger(ev.y) ? ev.y : null;
+      if (changed) tui.requestRender();
+      return { handled: true };
+    }
+    if (ev.type === 'click' && ev.button === 'left') {
+      const hit = hitAt(ev.y);
+      if (hit?.kind !== 'group') return undefined;
+      toggleGroup(hit.id, ev.y - painted.top);
+      tui.requestRender();
+      return { handled: true, rowClick: true };
+    }
     return undefined;
+  }
+
+  // hitAt(y) → the hit of the scrollback line the last paint put on view row y, or null. The row → line
+  // mapping is the last render's own slice (group-commands §3.2), so the painted line and the hit are one.
+  function hitAt(y) {
+    if (!painted || !Number.isInteger(y)) return null;
+    return painted.lines[y - painted.top]?.hit ?? null;
+  }
+
+  // Open or fold group `id`, whose line was on scrollback row `row`, and place the scroll offset after
+  // group-commands §2.5: the clicked line stays on its row; opening scrolls just enough to show the last
+  // opened step, never past the clicked line at the top; folding is clamped at the end of the history.
+  function toggleGroup(id, row) {
+    const before = model(lastWidth); // any lines that arrived since the paint are counted as arrival first
+    const at = before.conv.lines.findIndex((l) => l.hit?.id === id);
+    if (at < 0) return;
+    if (open.has(id)) open.delete(id);
+    else open.add(id);
+    openVersion += 1;
+    toggling = true;
+    let after;
+    try {
+      after = model(lastWidth);
+    } finally {
+      toggling = false;
+    }
+    const lines = after.conv.lines;
+    const idx = lines.findIndex((l) => l.hit?.id === id);
+    const height = lastHeight ?? 1;
+    let start = idx - row;
+    const added = lines.length - before.conv.lines.length;
+    if (added > 0) {
+      const last = idx + added; // the opened steps sit right under the group line
+      if (last > start + height - 1) start = Math.min(idx, last - height + 1);
+    }
+    scrollBack = Math.max(0, lines.length - Math.max(0, start) - height);
   }
 
   // Every state's hint fits one line at 80 columns (user 2026-09-26, T20): `Tab detail` names the key both
@@ -338,7 +399,9 @@ export function createConversationView({
     const lines = worker?.logPath ? m.conv.lines : [[span('  no conversation log was recorded for this worker', 'dim')]];
     scrollBack = Math.min(scrollBack, Math.max(0, lines.length - height));
     const end = lines.length - scrollBack;
-    const shown = lines.slice(Math.max(0, end - height), end).map((l) => paint(l, w));
+    const visible = lines.slice(Math.max(0, end - height), end);
+    painted = { top: out.length, lines: visible };
+    const shown = visible.map((l, i) => paintLine(l, w, colour, { hovered: out.length + i === hoverY && Boolean(l.hit) }));
     while (shown.length < height) shown.push('');
     // Painted after the offset settled, so the count is the one this frame shows (T20 review).
     const more = scrollBack > 0 ? `↓ ${scrollBack} more below · ` : '';
@@ -367,7 +430,7 @@ export function createConversationView({
     },
     // For the tests: what the view holds right now.
     get state() {
-      return { text: editor?.getText() ?? null, prompt, status, full, scrollBack, entries: entries.length, readOnly: model(lastWidth).readOnly };
+      return { text: editor?.getText() ?? null, prompt, status, full, scrollBack, entries: entries.length, readOnly: model(lastWidth).readOnly, open: [...open] };
     },
   };
 }
