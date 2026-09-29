@@ -7,7 +7,7 @@ lives in [FINDINGS.md](FINDINGS.md). Sixty words to a Notes cell, counted.
 
 **Status:** Planned, not started.
 **Last updated:** 2026-09-29
-**Next `pir-work` will:** T01 base-core, the first task with no dependencies on the critical path.
+**Next `pir-work` will:** T05 plan-start or T06 build-start, both now unblocked.
 
 ## Tasks
 
@@ -16,7 +16,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | # | Task | Depends on | State | Notes |
 |---|---|---|---|---|
 | T01 | base-core | — | ✅ | |
-| T02 | base-git | T01 | 🔍 | `base-branch.mjs` + 31 tests, real git and bare remotes; `.pir/settings.json` here and in the three helpers. Deviations: added `local: 'create-refused'` (mirrors ff-refused); one 30 s deadline spans ls-remote and fetch; fake worktree's settings name its `base` option; plan-rig test's file list updated. |
+| T02 | base-git | T01 | ✅ | Reviewed: one fix. A --single-branch clone never got its local base created (`git branch --track` refused); reproduced with a real clone, now `--no-track` plus the two tracking config keys, test locks it. Deviations create-refused and one shared 30 s deadline accepted. Probed timeout with orphaned grandchildren, ff-refused paths, helper settings. |
 | T03 | branch-cuts | — | ✅ | |
 | T04 | base-text | — | ✅ | |
 | T05 | plan-start | T01, T02, T03 | ⬜ | |
@@ -26,7 +26,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T09 | dev-base-drill | T05, T07 | ⬜ | |
 | T10 | docs-and-readme | T08, T09 | ⬜ | |
 
-**Review queue:** T02
+**Review queue:** —
 
 ## Blocked on the user
 
