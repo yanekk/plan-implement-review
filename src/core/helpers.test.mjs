@@ -139,3 +139,19 @@ test('helperOfFrame on the recording: the helper\'s frames resolve to it', () =>
   const hs = helpersOf(sample);
   assert.equal(helperOfFrame(hs, AGENT_CALL, sample).id, HELPER);
 });
+
+test('a helper\'s own helper is not listed: it rolls up into the outer one (DESIGN §2.1)', () => {
+  const log = [
+    agentCall('outerCall'),
+    started('outer', 'outerCall'),
+    agentCall('innerCall', 'outerCall'),
+    started('inner', 'innerCall'),
+    progress('inner', 'innerCall', 'inner step', 4, 400),
+  ];
+  assert.deepEqual(helpersOf(log).map((h) => h.id), ['outer']);
+  assert.deepEqual(runningHelpers(log).map((h) => h.id), ['outer']);
+  assert.equal(helpersOf(log)[0].step, '', 'the inner helper\'s progress is not the outer one\'s');
+  // The CLI may yield the inner task_started before the helper frame holding its Agent call.
+  const reordered = [log[0], log[1], log[3], log[2]];
+  assert.deepEqual(helpersOf(reordered).map((h) => h.id), ['outer']);
+});

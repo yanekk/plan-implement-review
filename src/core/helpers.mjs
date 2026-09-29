@@ -23,11 +23,18 @@ const END_STATES = { completed: 'finished', failed: 'failed', killed: 'stopped',
 // (pir-plan-command §2.14) is a new process: every helper still running then died with the old one, so it
 // ends as 'stopped' at the note's index. A helper seen only in frames (a log cut mid-helper) is not listed:
 // without its task_started there is nothing to name it by (DESIGN §2.8). An end event whose status is not
-// one of the four is ignored rather than guessed at.
+// one of the four is ignored rather than guessed at. A helper's own helper (nested) is not listed: its
+// Agent call sits in a helper frame, and it rolls up into the outermost helper, whose line it shares
+// (DESIGN §2.1). The calls are collected over the whole log first, so the order in which the CLI yields
+// the inner call's frame and its task_started does not matter.
 export function helpersOf(entries) {
   const helpers = [];
   const byId = new Map();
   const list = Array.isArray(entries) ? entries : [];
+  const callsInHelpers = new Set();
+  for (const entry of list) {
+    for (const ev of readEntry(entry)) if (ev.kind === 'tool-use' && ev.helper && ev.toolUseId) callsInHelpers.add(ev.toolUseId);
+  }
   list.forEach((entry, index) => {
     for (const ev of readEntry(entry)) {
       if (ev.kind === 'note' && ev.note === 'resumed') {
@@ -39,7 +46,7 @@ export function helpersOf(entries) {
       const id = typeof m.task_id === 'string' ? m.task_id : null;
       if (!id) continue;
       if (ev.subtype === 'task_started') {
-        if (m.task_type !== 'local_agent' || byId.has(id)) continue;
+        if (m.task_type !== 'local_agent' || byId.has(id) || callsInHelpers.has(m.tool_use_id)) continue;
         const h = {
           id,
           toolUseId: typeof m.tool_use_id === 'string' ? m.tool_use_id : '',
