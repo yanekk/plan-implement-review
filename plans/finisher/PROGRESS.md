@@ -12,9 +12,9 @@ past.
 
 **Plan reviewed:** 2026-09-29 — 11 fixed, 2 decided with the user
 
-**Status:** T00 done; T01, T02 ready.
+**Status:** T00, T01 done; T02, T03 ready.
 **Last updated:** 2026-09-29
-**Next `pir-work` will:** implement T01 finisher-policy.
+**Next `pir-work` will:** implement T02 finisher-brief.
 
 ## Tasks
 
@@ -24,7 +24,7 @@ done · ⛔ blocked, needs a human.
 | # | Task | Depends on | State | Notes |
 |---|---|---|---|---|
 | T00 | prove-the-fence | — | ✅ | Fence is a `PreToolUse` hook returning `ask`; DESIGN §3.3 and 5 FINDINGS rows. Review clean, no fix commit: re-probed on 2.1.284 — without the hook allow-ruled `git merge` ran unseen; with it the merge reached `canUseTool`, was denied, branch unmoved. `npm test` green. |
-| T01 | finisher-policy | — | ⬜ | |
+| T01 | finisher-policy | — | ✅ | |
 | T02 | finisher-brief | — | ⬜ | |
 | T03 | finisher-skill-and-rules | T01 | ⬜ | |
 | T04 | finisher-session | T00, T01, T02 | ⬜ | |

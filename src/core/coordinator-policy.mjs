@@ -75,7 +75,7 @@ export function commandParts(command) {
 // with its first word's directory cut (`/bin/rm` → `rm`). A wrapper (`nohup`, `env`, `sudo`, `xargs`,
 // `time`), a keyword (`then`, `{`) or a quoted `sh -c` body therefore cannot carry a reserved command
 // past the match (review T01). It over-matches (`echo git push`), which is the person's side.
-function commandTails(parts) {
+export function commandTails(parts) {
   const tails = new Set();
   for (const part of parts) {
     const words = part.replace(/["'\\]/g, '').split(' ').filter(Boolean);
