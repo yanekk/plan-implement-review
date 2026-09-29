@@ -31,11 +31,11 @@ done · ⛔ blocked, needs a human.
 | T05 | finisher-handover | T04 | ✅ | |
 | T06 | finisher-alerts | T05 | ✅ | |
 | T07 | finisher-row | T05 | ✅ | |
-| T08 | finisher-docs | T03, T05, T06, T07 | ⬜ | |
+| T08 | finisher-docs | T03, T05, T06, T07 | 🔍 | New `docs/finisher.md`, each behaviour naming its function; coordinator-agent, human-flow, control-folder, docs README and README updated. Deviation: also edited run-lifecycle, detached-runs, branch-model and restart-recovery, which said a green run ends in `ready to merge` (done-when 3). Docs only; no tests. |
 | T09 | finisher-drill | T03, T06, T07 | ⬜ | |
 | T10 | finisher-live | T08, T09 | ⬜ | |
 
-**Review queue:** *(empty)*
+**Review queue:** T08
 
 ## Blocked on the user
 

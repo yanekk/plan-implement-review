@@ -4,7 +4,8 @@ A build run can have a **coordinator agent**: one Claude session `pir` holds bes
 the person's stand-in. It sees every worker question and permission request before the person does,
 and either answers it on the person's behalf or passes it on with a pointer. When every task is
 done it writes the delivery report's sections and hands the person a feature branch that merges
-into `main` cleanly. It never merges into `main` and never pushes.
+into `main` cleanly. On a green branch it is then closed and the **finisher** takes over the merge
+([finisher.md](finisher.md)). It never merges into `main` and never pushes.
 
 Naming: "the coordinator agent" is this session. "The coordinator" alone is still the command
 (`src/shell/coordinate.mjs`), a plain program that runs the build. The agent is not a relay: a
@@ -221,7 +222,9 @@ every waiting item it holds: questions, question sets, permission requests, repo
 (down, not yet given up; a resume starts at once, so this is rarely seen), or `given up · questions
 come to you` in the idle style ([When the agent fails](#when-the-agent-fails)). It has
 no clock, is never amber, and is not counted in `n/m done`, running, waiting or the `asking you` tally.
-It appears once the agent has started and stays to the end of the run, `ready to merge` included; with
+It appears once the agent has started and stays until the finisher replaces it on a green branch, whose
+row then takes its place ([finisher.md](finisher.md#on-screen)), or to the end of a run that does not
+reach the finisher (a red branch, a finisher that failed to start or gave up); with
 `--no-coordinator` there is neither separator nor row. `↑↓` steps over the separator onto it and `→` (or
 Enter, or a click on the row) opens its conversation; **`c`** opens the same conversation from any row, and the watch footer
 names `c` only when the run has an agent. The state comes from the agent's `view().state`, the count
@@ -248,7 +251,7 @@ drains the folder in name order and deletes each file it reads:
   a second decision for an item answered earlier in the same drain is refused. The agent is told why
   in one message and nothing is guessed.
 - A `message` to a worker that has exited is refused with that reason.
-- A `close` is refused unless the run waits in `ready to merge` (below).
+- A `close` is refused unless the run waits at its end (below).
 
 Why files and not custom tools: custom SDK tools need `zod` and `@modelcontextprotocol/sdk` as new
 packages; the drop folder reuses the pattern workers already use for reports.
@@ -298,10 +301,19 @@ feature-branch tests have run, the command takes one step per pass, so the live 
    whether a test-fix worker fixed the tests or left them red, and the tests result). The decisions section is rendered by the command from the ledger's notable
    lines and adoptions, not written by the agent, so no decision can drop out of it. The report reaches
    `main` with the person's merge.
-5. **Hand-off.** The command sends the agent the report and `git merge pir/{slug}`, or, on red, the
-   reason no merge is offered; the agent presents them to the person in its reply. The run then waits.
+5. **Hand-off.** On a green branch the command sends the agent the report and tells it that the
+   finisher takes over, with no merge line (`handoffFor` with `finisher: true`); the agent presents the
+   report in its reply, and on the next pass the command closes the agent and starts the **finisher**,
+   which prepares the merge and the project's after-merge steps and carries them out after the person's
+   go ([finisher.md](finisher.md)). On red the agent is sent the report and the reason no merge is
+   offered, presents them, and the run waits.
 
 ### Ready to merge
+
+A green run reaches this wait only when the finisher cannot take it: it failed to start or gave up
+([finisher.md](finisher.md#when-it-fails)), and the run falls back to the wait below with the merge line
+printed once. A red run always waits here. Otherwise the finisher's own phases replace it
+([finisher.md](finisher.md#on-screen)).
 
 The live view's footer reads `✔ ready to merge · git merge pir/{slug}` with `report:
 plans/{slug}/REPORT.md` under it, and the dashboard lists the run as `● ready to merge` in amber,
@@ -311,7 +323,8 @@ gets `✗ not ready · tests red on pir/{slug} — no merge offered` with the re
 written and says so, and the run waits the same way. While it prepares, the footer reads `all N
 task(s) merged · preparing: syncing main, writing the report`. With phone alerts set up, the first pass
 that reads ready or red sends one alert (`{slug} · ready to merge` or `{slug} · not ready`) whose tap
-opens the agent's chat; it is not repeated when `main` moves
+opens the agent's chat; it is not repeated when `main` moves. A run the finisher takes over sends no
+`ready to merge` alert: the finisher's `ready for your go` replaces it
 ([human-flow.md](human-flow.md#phone-alerts--pir-notify)).
 
 **The helpers' rows.** While a test-fix or main-sync worker runs, it has a row below the agent's row (and so below the tasks), keyed by
@@ -323,7 +336,7 @@ footer, so the runs list reads `asking you` for it. `↑↓` reaches it and `→
 question the agent passes on from it is answered in `pir` like a task's, or on the phone. The row goes
 when the worker is closed.
 
-The run stays open, its agent reachable in `pir` and on the phone, until:
+A run waiting here stays open, its agent reachable in `pir` and on the phone (while it has one), until:
 
 - **the person merges**: the command sees `main` contains the feature tip (`git merge-base
   --is-ancestor pir/{slug} main`); or
@@ -334,7 +347,8 @@ Either ends the run as `finished`, prints `✔ pir/{slug} is in main. The run is
 run is still building is refused; the skill has the agent tell the person that stopping a run is the
 dashboard's.
 
-**`main` moving while it waits.** When `main` moves without containing the feature tip (the person
+**`main` moving while it waits.** (The finisher's own handling is in
+[finisher.md](finisher.md#the-end-of-the-run).) When `main` moves without containing the feature tip (the person
 merged another run first), the command merges `main` in again as in step 1, rewrites only the report's
 `## Branch` footer, commits it (`report({slug}): re-synced with main`), and tells the agent, which tells
 the person in one line.
@@ -351,12 +365,14 @@ run finished.
   restart inside the hour. While it is down or given up, every waiting item goes to the person as with
   `--no-coordinator`.
 - **Given up at the end.** The sync and the tests still run; `REPORT.md` holds a line saying the agent
-  was not available to write its three sections, then the decisions section and the footer; the run
-  enters `ready to merge` and the merge line shows in `pir` only. An agent that is only restarting is
+  was not available to write its three sections, then the decisions section and the footer; a green run
+  is then handed to the finisher as usual, a red one waits with no merge offered. An agent that is only restarting is
   waited for.
 - **pir restarts mid-run.** The agent's session is resumed by id and told it was restarted; the ledger
   is kept. Items pending at the restart are lost with their workers, which are respawned, and new items
   are briefed afresh.
+- **pir restarts a run that reached the finisher.** The agent is not started; the finisher is resumed
+  ([finisher.md](finisher.md#when-it-fails)).
 - **pir restarts a run in `ready to merge`.** Reconciliation finds every task `✅`; the command finds
   `REPORT.md` committed, re-checks the sync, and returns to `ready to merge` without rewriting the
   report (only the footer, if `main` moved). If the person merged while pir was down, the run finishes
