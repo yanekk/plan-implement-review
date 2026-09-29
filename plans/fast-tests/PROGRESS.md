@@ -27,10 +27,10 @@ done · ⛔ blocked, needs a human.
 | T02 | end-sequence-no-wait | T01 | ⬜ | |
 | T03 | split-coordinator-drill | — | ⬜ | |
 | T04 | split-plan-rig | — | ⬜ | |
-| T05 | split-conversation-rig | — | 🔍 | Split into `conversation-rig.test.mjs` (15 tests, 16 s), `-80x24` and `-120x40` (3 each, 27 s, 26 s, under load). Sorted 21 names identical. Deviation: the three size loops became `define…Test([cols, rows])` functions in `conversation-rig-helpers.mjs`, bodies byte-identical, so each size gets a file. |
+| T05 | split-conversation-rig | — | ✅ | Three files: `conversation-rig.test.mjs` (15 tests), `-80x24`, `-120x40` (3 each) via `define…Test([cols, rows])` in `conversation-rig-helpers.mjs`. Review clean, no fix commit: re-ran sorted names (21, identical), line-multiset diff shows only loop headers, exports and imports changed, per-file 16/28/27 s under load, `npm test` green.
 | T06 | suite-timing-proof | T01, T02, T03, T04, T05 | ⬜ | |
 
-**Review queue:** T05
+**Review queue:** —
 
 ## Blocked on the user
 
