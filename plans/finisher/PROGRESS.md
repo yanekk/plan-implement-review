@@ -32,10 +32,10 @@ done · ⛔ blocked, needs a human.
 | T06 | finisher-alerts | T05 | ✅ | |
 | T07 | finisher-row | T05 | ✅ | |
 | T08 | finisher-docs | T03, T05, T06, T07 | ⬜ | |
-| T09 | finisher-drill | T03, T06, T07 | ⬜ | |
+| T09 | finisher-drill | T03, T06, T07 | 🔍 | Rig scenarios `finisher-notyet`, `finisher-stuck`, `finisher-reserved` and a pretend phone (`rig.alerts()`, through `notifyPass`). Six new pty tests plus alert checks on T07's: all five cases driven at both sizes, worker-driven, no defect. Deviation: added `finisher-notyet`, not in the doc; the fake cannot branch on an answer. User kept the reminder after `Not yet`. |
 | T10 | finisher-live | T08, T09 | ⬜ | |
 
-**Review queue:** *(empty)*
+**Review queue:** T09
 
 ## Blocked on the user
 

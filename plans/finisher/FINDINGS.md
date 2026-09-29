@@ -11,6 +11,8 @@ Legend: 🐞 defect found · ✅ verified by hand with the user · 📌 worth kn
 
 | Date | | Finding |
 |---|---|---|
+| 2026-09-29 | 📌 | T09 drill, worker-driven, 80×24 and 120×40: go, `Not yet` then go, stuck then a second go, and a reserved request after the go read as §2.11 says; alerts match §2.9. User kept the 15-minute reminder after `Not yet`. |
+| 2026-09-29 | 📌 | T09 drill: a stuck finisher lists as `● asking you` on the dashboard, not `ready for your go`; its conversation ends `· the worker exited (code 0)`, calling the finisher a worker. Left as is. |
 | 2026-09-29 | 🔄 | T07: the live-view footer while the finisher is on is one line per phase, each naming `c`: `◆ finisher preparing · c to watch`, `finishing · c to watch`, `stuck · c to review and say go`, `asking you · c to answer` (user, 2026-09-29). T08 carries it to docs. |
 | 2026-09-29 | 📌 | T06 review: a `ready` re-written while `awaiting-go` keeps the first alert's text, so the 15-minute reminder can name the old step count. Only a re-sync (back to `preparing`) starts a new alert. Left as is. |
 | 2026-09-29 | 📌 | T05 review: after a `red` or `gave-up` fallback, `finisher/state.json` stays, so a pir restart starts no coordinator agent (`priorFinisher`) and the run waits without one. Left as is. |
