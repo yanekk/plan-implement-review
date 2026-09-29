@@ -16,6 +16,7 @@ import { runningHelpers, stoppedByInterrupt, helpersNote, interruptGate, gateWar
 import { dropPersonInput } from './person-inbox.mjs';
 import { followLog } from './log-follow.mjs';
 import { paintLine, SGR, RESET } from './pir-view.mjs';
+import { wrapLine } from '../core/text.mjs';
 
 const span = (text, style = null) => ({ text, style });
 
@@ -345,19 +346,21 @@ export function createConversationView({
     const bottom = [];
     const p = m.readOnly ? null : prompt;
     // The armed Esc warning takes the status line's place (visible-helpers DESIGN §2.5); under a pinned
-    // prompt, which has no status line, it goes below the prompt.
+    // prompt, which has no status line, it goes below the prompt. It wraps rather than clips: it exists to
+    // name every helper the interrupt would stop, and two already overflow 80 columns (user 2026-09-29).
     const warning = m.readOnly ? '' : gateWarning(escGate);
+    const warningLines = warning ? wrapLine(warning, w).map((l) => paint([span(l, 'prompt')], w)) : [];
     if (p && answered.has(p.requestId)) bottom.push(paint([span('⚑ answer sent — waiting for pir to deliver it', 'prompt')], w));
     else if (p) for (const l of promptLines(p, { width: w, taskId })) bottom.push(paint(l, w));
     else if (!m.readOnly) {
       // A worker waiting on background work is not idle (user 2026-09-26, T18 drill): say how much is running.
       // Its helpers are named apart from its background commands (visible-helpers DESIGN §2.2).
       const parts = statusParts(m.conv);
-      if (warning) bottom.push(paint([span(warning, 'prompt')], w));
+      if (warning) bottom.push(...warningLines);
       else if (m.activity.state === 'busy') bottom.push(paint([span('● working…', 'active'), ...(parts ? [span(` · ${parts}`, 'dim')] : [])], w));
       else if (parts) bottom.push(paint([span(`◌ ${parts}`, 'dim')], w));
     }
-    if (warning && p) bottom.push(paint([span(warning, 'prompt')], w));
+    if (warning && p) bottom.push(...warningLines);
     if (status) bottom.push(paint([span(status.text, status.style)], w));
     const boxAt = bottom.length;
     if (!m.readOnly) bottom.push(...editor.render(w));

@@ -798,6 +798,17 @@ test('armed with a question pinned, Esc again sends the interrupt; the warning s
   assert.deepEqual(t.drops, [{ to: 'w-1', kind: 'interrupt' }]);
 });
 
+test('the warning wraps rather than clips, so every helper it would stop is named at 80 columns', () => {
+  const t = makeView({ log: [init(), opening, hStart('h1', 'c1', 'Survey end-of-run machinery'), hStart('h2', 'c2', 'Check the tests'), hResult()] });
+  t.v.handleInput(KEY.esc);
+  const lines = t.screen();
+  assert.equal(lines.length, 30, 'the view still fills exactly the terminal');
+  for (const l of lines) assert.ok([...l].length <= 80, l);
+  const shown = lines.join(' ').replace(/\s+/g, ' ');
+  assert.match(shown, /this also stops 2 helpers: Survey end-of-run machinery; Check the tests/);
+  assert.deepEqual(t.drops, []);
+});
+
 test('a helper that ended between the two presses: the second Esc still interrupts', () => {
   const t = makeView({ log: [init(), opening, hStart('h1', 'c1', 'Survey the code'), hResult()] });
   t.v.handleInput(KEY.esc);
