@@ -16,7 +16,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | # | Task | Depends on | State | Notes |
 |---|---|---|---|---|
 | T01 | base-core | — | ✅ | |
-| T02 | base-git | T01 | ⬜ | |
+| T02 | base-git | T01 | ✅ | |
 | T03 | branch-cuts | — | ✅ | |
 | T04 | base-text | — | ✅ | |
 | T05 | plan-start | T01, T02, T03 | ⬜ | |
