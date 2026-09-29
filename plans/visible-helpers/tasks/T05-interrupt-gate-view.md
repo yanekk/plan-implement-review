@@ -18,6 +18,9 @@ DESIGN §2.5, §2.6, §3.3.
 - `src/shell/conversation-view.mjs`: Esc and Ctrl+C-on-empty go through `interruptGate`; the armed
   warning is drawn in the status line (`gateWarning`, style `prompt`); `submit` of a typed message adds
   `preface` and `helpersStopped` from `stoppedByInterrupt` / `helpersNote`.
+- `src/core/person-input.mjs`: `validateDrop` keeps a `message` drop's `preface` (a string) and
+  `helpersStopped` (an array of strings) when present; today it strips every field its kind does not
+  define. `src/core/person-input.test.mjs`.
 - `src/shell/person-inbox.mjs`: a `message` drop passes `preface` and `helpersStopped` to
   `platform.send`.
 - `src/shell/platform.mjs`, `src/shell/plan-run.mjs` (its platform `send`), `src/shell/coordinator-agent.mjs`
@@ -52,6 +55,8 @@ A drop from an older `pir` with neither field behaves exactly as today.
 - [ ] View: after an interrupt that stopped a helper, submitting "continue" drops `preface` and
       `helpersStopped`; a second message drops neither.
 - [ ] View: a permission refusal with text and question answers never carry the fields.
+- [ ] `validateDrop`: a message with both fields keeps them; one without is unchanged; a non-string
+      `preface` is refused.
 - [ ] Inbox, platform, plan-run, coordinator-agent: the options reach `worker.send`.
 - [ ] worker-proc: the logged entry has `text` unchanged plus both fields; the queued user message is
       preface, blank line, text; without `preface` the message is the text alone.

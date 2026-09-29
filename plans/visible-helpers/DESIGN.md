@@ -8,7 +8,8 @@ test:
 # Visible helpers — Design
 
 How parallel mode behaves is canonical in `/docs`. This file is build-time rationale for this plan; T07
-carries the resulting behaviour into `docs/human-flow.md` and `README.md`. It never edits a finished
+carries the resulting behaviour into `docs/human-flow.md`, `docs/detached-runs.md` (§ The conversation
+view) and `README.md`. It never edits a finished
 plan's DESIGN.md.
 
 ## 1. Purpose
@@ -64,7 +65,13 @@ session (Claude Code 2.1.284, 2026-09-29):
 - It ends with `task_updated` `patch.status` in `completed | failed | killed | stopped` and then
   `task_notification` with `status`. An interrupt of the parent kills every running helper: plan-0339
   shows `task_updated killed` and `task_notification stopped` two milliseconds after the `out
-  interrupt`.
+  interrupt`. The plan review's probe (Claude Code 2.1.284, 2026-09-29) showed the same when the parent
+  was idle, between turns, with a background helper running: both ends within 5 ms, and no `result`
+  follows an interrupt sent while the parent is idle.
+- A background command a helper starts (Bash `run_in_background`) gets its own `task_started` with
+  `is_backgrounded: true` and a non-`local_agent` type; the same probe showed the interrupt kill it too.
+  Its `task_started` carries `tool_use_id` (the helper's Bash call, whose tool_use frame has the
+  helper's `parent_tool_use_id`) but no `parent_tool_use_id` of its own.
 
 A helper spawned by a helper (nested) has frames whose `parent_tool_use_id` is the inner Agent call.
 They roll up into the outermost helper, whose line and label they share, because the person asked to
@@ -93,6 +100,13 @@ line), replacing today's `↳ running in the background: …` and `↳ … in th
 - A helper whose `task_started` was never seen (a log that begins mid-run) gets no line; its frames are
   still kept out of the default view by `parent_tool_use_id`.
 
+The status line above the typing box names running helpers apart from background commands (person,
+plan review 2026-09-29): `◌ 2 helpers running` while the parent is idle, `● working… · 1 helper running`
+during a turn, and with both, `◌ 2 helpers running · 1 running in the background`. The command part
+keeps today's wording. Helpers of both kinds count, background and foreground. Why: today helpers count in
+`N running in the background`; taking them out with nothing in their place would make an idle agent
+with busy helpers look idle, the thing that line exists to prevent (live-workers T18 drill).
+
 Why one line at its start and not a line at its end too: the person chose "one line that updates as it
 works". The end is still visible where it matters, through the Esc warning (§2.5) and the note under
 the person's next message (§2.6).
@@ -107,15 +121,21 @@ occurred, each prefixed so it cannot be read as the parent's:
 - the helper's tool steps: the ordinary step line with `helper ` before the `⎿`, e.g.
   `  helper ⎿ Read src/core/notify.mjs  159`.
 
+A background command a helper started (§2.1) is the helper's too: its `running in the background` /
+`… in the background` lines are left out of the default view and drawn in `full` with `helper ` before
+the `↳`. It is recognised by its `task_started.tool_use_id` being the id of a tool_use in a helper frame.
+It is not counted in the status line's `running in the background`.
+
 Why hide them by default: in plan-0339 a busy helper produced 20 step lines in a minute between the
 parent's own lines, and one of its sentences read as `worker ▸`. The person chose the one-line view.
 
 ### 2.4 A helper's permission request
 
-A request entry with an `agentId` is the helper's. Its head names the helper instead of the parent:
-`? helper "Survey end-of-run machinery" asks …` in place of `? {taskId} asks …`, both in the pinned
-gate and in the answered request drawn in the scrollback. An `agentId` that matches no helper seen in
-the log reads `? a helper asks …`. Everything else about the gate (keys, grants, arming) is unchanged,
+A request entry with an `agentId` is the helper's. Its head names the helper where it names the parent
+today: a permission reads `⚑ helper "Survey end-of-run machinery" wants to use Bash` in place of
+`⚑ {taskId} wants to use Bash`, and a question set `? helper "…" asks you 1 question` in place of
+`? {taskId} asks you 1 question`, both in the pinned prompt and in the answered request drawn in the
+scrollback. An `agentId` that matches no helper seen in the log reads `a helper` in the same place. Everything else about the gate (keys, grants, arming) is unchanged,
 and the row still reads `asking you · allow a command?`, because the person must still answer it.
 
 `worker-proc.mjs` logs `agentId: opts.agentID` on the request entry when present. Nothing else in the
@@ -144,7 +164,8 @@ makes sure they know it will happen.
 ### 2.6 The note on the next message
 
 A helper counts as stopped by an interrupt when its end (`killed` or `stopped`) arrives after an `out
-interrupt` and before the `result` that closes that turn. When the person next sends a message from the
+interrupt` and before the next `result`. An interrupt sent while the parent is idle is followed by no
+`result` (§2.1), so its window runs to the next turn's `result`; the ends arrive within milliseconds. When the person next sends a message from the
 conversation view, pir attaches a note naming every helper stopped by an interrupt that no earlier
 message has already reported:
 
@@ -186,6 +207,7 @@ state `permission` or `questions`, as it must.
 | A `task_notification` with no `task_updated` before it, or the reverse | Either end event ends the helper; the first status seen wins |
 | Two helpers | Two lines; the warning and the note list both, in start order |
 | Esc pressed while a question is pinned and a helper runs | Warning first; the second Esc interrupts and cancels the question, as today |
+| Esc pressed while the parent is idle and a helper runs | Warning first; the second Esc stops the helper; no `result` follows (§2.1) |
 | Read-only view (the worker has exited) | Lines as recorded; no warning (Esc sends nothing today); no note |
 | A helper's own permission request after the parent's `result` | Pinned and labelled as the helper's; the row reads `asking you · allow a command?` |
 
@@ -209,7 +231,8 @@ paints the warning.
 | `src/shell/conversation-rig.mjs` | rig | scenario `helpers` (T02) |
 | `src/core/conversation.mjs` | pure | helper line, detail labels, request head, note line (T03, T05) |
 | `src/shell/worker-proc.mjs` | shell | logs `agentId` on requests (T03); `send(text, { from, preface, helpersStopped })` (T05) |
-| `src/shell/conversation-view.mjs` | shell | the Esc/Ctrl+C gate and the note on submit (T05) |
+| `src/shell/conversation-view.mjs` | shell | the status line's helper count (T03); the Esc/Ctrl+C gate and the note on submit (T05) |
+| `src/core/person-input.mjs` | pure | `validateDrop` keeps a message's `preface` and `helpersStopped` (T05) |
 | `src/shell/person-inbox.mjs`, `src/shell/platform.mjs` (`send`), `src/shell/coordinator-agent.mjs` (its `send` wrapper), `src/shell/plan-run.mjs` (its platform `send`) | shell | pass `preface` and `helpersStopped` through (T05) |
 
 ### 3.3 Data flow
@@ -260,7 +283,8 @@ forces colour, and the test script sets `FORCE_COLOR=0 NO_COLOR=1` itself.
 |---|---|---|---|---|---|
 | `./install.sh` | refresh the installed engine and skills after the plan merges | `worker` | Local, idempotent; never while a run is live | Re-run from the previous commit | none |
 
-Nothing in this plan needs the person's hands.
+Nothing in this plan needs the person's hands. Table confirmed by the person at plan review, 2026-09-29;
+`Bash(./install.sh)` is already under `permissions.allow` in `.claude/settings.json`.
 
 ## 6. Recovery
 
@@ -283,11 +307,18 @@ code ignores. To back the change out, revert the task commits and run `./install
 - Attribution by `agentID`, not by frame order, because the probe showed the request arriving before
   the helper's tool_use frame (§2.1).
 - Nested helpers roll up into the outermost one (§2.1).
+- The status line names running helpers apart from background commands (person, plan review
+  2026-09-29), §2.2.
+- A phone alert and the coordinator agent's view of a helper's permission request keep naming the agent,
+  not the helper (person, plan review 2026-09-29), §8.
 
 ## 8. Explicitly out of scope
 
 - A helper line or count on the run's list row, the dashboard or Remote Control (person's choice).
 - A warning for an interrupt sent from Remote Control or the phone: it never passes through pir's view.
 - A note for input typed over Remote Control, for the same reason.
-- Background Bash commands and monitors: unchanged, even though an interrupt may stop them too.
+- Background Bash commands and monitors the parent started: unchanged, even though an interrupt may stop
+  them too.
+- Naming the helper in a phone alert (`pir notify`) or in the coordinator agent's view of a request: both
+  keep naming the agent (person, plan review 2026-09-29).
 - Stopping a single helper from pir (the SDK's `stopTask`): not asked for.

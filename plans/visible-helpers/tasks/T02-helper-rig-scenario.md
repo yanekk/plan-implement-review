@@ -38,8 +38,9 @@ until T01 lands it, `plans/visible-helpers/evidence/plan-0339-helper.ndjson`:
 4. Helper A makes a permission request (`agentId` = A's task id) and awaits the reply.
 5. Helper B ends `completed` (`task_updated`, `task_notification`, a shrunken `background_tasks_changed`).
 6. The parent ends its turn with a line of text and `result success`, while A keeps progressing.
-7. On `{"await":"interrupt"}`: A ends `killed`/`stopped`, `background_tasks_changed []`, the parent's
-   `result error_during_execution`.
+7. On `{"await":"interrupt"}`: A ends `killed`/`stopped`, `background_tasks_changed []`, and no
+   `result`: the parent was idle, and the real CLI sends none after an idle interrupt (DESIGN §2.1,
+   plan-review probe 2026-09-29).
 8. Then `chat`: every later user message gets a reply, so T05 can see what text the model received
    (the fake's `PIR_FAKE_CLAUDE_RECEIVED` file).
 

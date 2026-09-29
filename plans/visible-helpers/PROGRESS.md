@@ -3,7 +3,7 @@
 Update this whenever a task changes state. What the build taught lives in [FINDINGS.md](FINDINGS.md).
 Sixty words to a Notes cell, counted; the account is the commit message.
 
-**Plan reviewed:** not yet — run `/pir-review-plan visible-helpers` before the first `/pir-work`
+**Plan reviewed:** 2026-09-29 — 6 fixed, 4 decided with the user
 
 **Status:** Planned 2026-09-29. Nothing built.
 **Last updated:** 2026-09-29

@@ -41,7 +41,7 @@ line reaches the screen with no new call site; `worker-proc.mjs`'s `canUseTool` 
 requests are logged. T05 wires T04 into `conversation-view.mjs` (already mounted by `pir-tui.mjs`) and
 the existing drop → `person-inbox.mjs` → `platform.send` → `worker.send` path, in all three hosts
 (`platform.mjs`, `plan-run.mjs`, `coordinator-agent.mjs`). T05 follows T03 because both edit
-`conversation.mjs`.
+`conversation.mjs` and `conversation-view.mjs`.
 
 ## Phase 3 — Check and document
 
@@ -61,6 +61,7 @@ T06 reaches every build task: T03 → T01, T02; T05 → T02, T03, T04. T07 is th
 | The log's helper frames and events are read | T01 (`stream.mjs`, `helpers.mjs`) | T03 (`buildConversation`), T05 (`conversation-view.mjs`) |
 | One line per helper; details on Tab | T03 | T03 (`buildConversation`, already painted) |
 | A helper's request names it | T03 (`conversation.mjs`) | T03 (`worker-proc.mjs` logs `agentId`) |
+| The status line names running helpers | T03 (`buildConversation`'s `helpers`) | T03 (`conversation-view.mjs`) |
 | Esc warns | T04 (`interruptGate`, `gateWarning`) | T05 (`conversation-view.mjs`) |
 | The next message carries the note | T04 (`stoppedByInterrupt`, `helpersNote`) | T05 (view, inbox, platforms, `worker-proc.mjs`) |
 | Not `asking` while a helper runs | already `background` (stopped-worker-asking) | T01 (turn-opener fix and regression tests) |

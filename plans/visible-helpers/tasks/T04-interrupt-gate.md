@@ -37,8 +37,9 @@ export function interruptGate(gate, key, running) {}
 export function gateWarning(gate) {}
 
 // stoppedByInterrupt(entries) → Helper[] ended 'stopped' by an interrupt (end index after an `out
-// interrupt` and before that turn's `result`) and not listed in the `helpersStopped` of any later
-// `out message` entry. Start order. A helper stopped by a `resumed` note is not included.
+// interrupt` and before the next `result`; an interrupt of an idle parent has no `result`, DESIGN §2.6)
+// and not listed in the `helpersStopped` of any later `out message` entry. Start order. A helper stopped
+// by a `resumed` note is not included.
 export function stoppedByInterrupt(entries) {}
 
 // helpersNote(helpers) → null when empty, else DESIGN §2.6's text:
@@ -57,6 +58,7 @@ export function helpersNote(helpers) {}
 - [ ] A helper that ended `completed` after an interrupt, or `stopped` with no interrupt before it
       (the agent stopped it itself): not included.
 - [ ] Two interrupts, one helper stopped by each, no message between: both, in start order.
+- [ ] An interrupt of an idle parent (no `result` after it) whose helper ends `killed`: included.
 - [ ] `resumed` note: a helper it ended is not included.
 - [ ] `helpersNote` singular, plural, empty → null; a description with a double quote is kept readable.
 
