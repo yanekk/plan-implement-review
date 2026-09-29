@@ -146,8 +146,9 @@ export function gateWarning(gate) {
 // stoppedByInterrupt(entries) → the helpers an interrupt stopped that no message has reported yet, in
 // start order (DESIGN §2.6). A helper counts when it ended 'stopped' (killed or stopped) after an `out
 // interrupt` and before the next `result`. An interrupt sent while the parent is idle gets no `result`
-// of its own (§2.1), so its window runs on to the next turn's `result`; the ends arrive within
-// milliseconds of the interrupt, so nothing the agent stopped by itself later is swept in. A helper ended
+// of its own (§2.1), so its window runs on towards the next turn's `result`; the ends arrive within
+// milliseconds of the interrupt. The person's next `out message` closes the window too: it opens a new
+// turn, and a helper the agent stops itself in that turn was not stopped by the interrupt. A helper ended
 // by a `resumed` note died with the old process, not by the person's interrupt, and is left out (§2.8).
 // "Reported" is read off the log: the `helpersStopped` ids of any `out message` after the helper ended.
 export function stoppedByInterrupt(entries) {
@@ -163,7 +164,7 @@ export function stoppedByInterrupt(entries) {
     for (const ev of readEntry(entry)) {
       if (ev.kind === 'interrupt') here = open = true;
       else if (ev.kind === 'note' && ev.note === 'resumed') resumedAt.add(index);
-      else if (ev.kind === 'result' && !ev.helper) open = false;
+      else if ((ev.kind === 'result' && !ev.helper) || ev.kind === 'sent') open = false;
     }
     inWindow[index] = here;
   });

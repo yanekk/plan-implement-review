@@ -229,3 +229,10 @@ test('helpersNote: singular, plural, empty → null, a double quote kept as writ
   assert.ok(note.includes('"Find "mainTip" callers"'), note);
   assert.ok(!note.includes('\\'), 'no escaping backslashes');
 });
+
+test('stoppedByInterrupt: an idle-parent interrupt\'s window closes at the person\'s next message, so a helper the agent stops itself in the new turn is not included', () => {
+  // Nothing was running, so the interrupt went at once and no result followed it (§2.1); the next turn
+  // then starts a helper and stops it itself before its own result.
+  const log = [result(), interrupt(), message('go on'), started('h', 'c'), updated('h', 'stopped'), result()];
+  assert.deepEqual(stoppedByInterrupt(log), []);
+});
