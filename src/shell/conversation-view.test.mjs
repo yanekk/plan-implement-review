@@ -871,3 +871,20 @@ test('withHeadLine: a wheel on its head line is ignored; one below it reaches th
   const bare = withHeadLine('following T05', () => ({ render: () => [], handleInput() {}, invalidate() {}, dispose() {} }), { host, colour: false });
   assert.equal(bare.handleMouse(wheel('up', { y: 2 })), undefined, 'an inner view without a handler declines');
 });
+
+test('group hover: the pointer moving from a group line straight into the typing box drops the hover', () => {
+  // Idle (the turn ended), so no `● working…` row stands between the scrollback and the box, and enough
+  // history that the group line is the last scrollback row.
+  const turnEnd = entry({ dir: 'in', event: { type: 'result', subtype: 'success' } });
+  const t = makeView({ log: [init(), opening, ...Array.from({ length: 20 }, (_, i) => said(`line ${i}`)), ...groupLog(), turnEnd], colour: true, rows: 12 });
+  const raw = () => t.v.render(80);
+  const s = t.screen();
+  const y = rowOf(t, GROUP);
+  assert.ok(y >= 0, t.text());
+  t.v.handleMouse(mouse('move', { y }));
+  assert.ok(raw()[y].includes('\x1b[1m'), 'bold under the pointer');
+  const boxY = y + 1;
+  assert.match(s[boxY], /─/, `the box sits right under the group line:\n${s.join('\n')}`);
+  t.v.handleMouse(mouse('move', { y: boxY }));
+  assert.ok(!raw()[y].includes('\x1b[1m'), 'plain once the pointer is in the box');
+});

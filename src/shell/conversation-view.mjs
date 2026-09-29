@@ -293,16 +293,18 @@ export function createConversationView({
       tui.requestRender();
       return { handled: true };
     }
-    if (editor && box && ev.y >= box.top && ev.y < box.top + box.rows) return editor.handleMouse({ ...ev, y: ev.y - box.top });
     // group-commands §2.4: the pointer brightens a group line, and a left click opens or folds it. Only a
     // move and a click are taken; press, drag and release stay declined for pi-tui's selection, and
     // rowClick makes pir-tui reset pi-tui's double-click count, so two quick clicks open and fold.
+    // The hover follows every move, the box's too: the box sits right under the last scrollback row, and a
+    // move into it that skipped this would leave the group line above it lit (T02 review).
     if (ev.type === 'move') {
       const changed = hitAt(hoverY)?.id !== hitAt(ev.y)?.id;
       hoverY = Number.isInteger(ev.y) ? ev.y : null;
       if (changed) tui.requestRender();
-      return { handled: true };
     }
+    if (editor && box && ev.y >= box.top && ev.y < box.top + box.rows) return editor.handleMouse({ ...ev, y: ev.y - box.top });
+    if (ev.type === 'move') return { handled: true };
     if (ev.type === 'click' && ev.button === 'left') {
       const hit = hitAt(ev.y);
       if (hit?.kind !== 'group') return undefined;
