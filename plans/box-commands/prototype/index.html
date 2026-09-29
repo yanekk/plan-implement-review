@@ -1,0 +1,74 @@
+<!doctype html>
+<!-- box-commands prototype: a throwaway mock of the runs list's command box. Non-binding reference. -->
+<html><head><meta charset="utf-8"><title>pir — box commands mock</title>
+<style>
+body{background:#1e1e1e;color:#ddd;font:14px/1.35 Menlo,monospace;margin:0;padding:24px}
+#term{width:80ch;border:1px solid #444;padding:6px 10px;white-space:pre;position:relative;background:#111}
+.dim{color:#888}.amber{color:#e5a50a}.head{color:#fff;font-weight:bold}.hint{color:#6a9}
+.sel{background:#264f78}
+#box{display:flex}#caret{background:#ddd;color:#111}
+#pop{margin-left:2ch}
+.note{color:#e5a50a}
+p.help{color:#aaa;font-family:sans-serif;max-width:80ch}
+</style></head><body>
+<p class="help">Click the box, then type. Keys: letters type, ↑↓ move in the list, Tab or Enter picks, Esc closes the list or clears the box, Backspace deletes, Enter on a full line "starts". Fake data: repos <b>skaut</b>, <b>plan-implement-review</b>, <b>scouts-web</b>.</p>
+<div id="term" tabindex="0"></div>
+<script>
+const repos=[{name:'skaut',path:'~/src/skaut'},{name:'plan-implement-review',path:'~/src/plan-implement-review'},{name:'scouts-web',path:'~/src/scouts-web'}];
+const plans={skaut:[{slug:'packing-list',d:'3/8 done'},{slug:'badge-tracker',d:'0/5 done · building'}],'plan-implement-review':[{slug:'box-commands',d:'0/6 done'}],'scouts-web':[]};
+const cmds=[{v:'plan',d:'plan something new'},{v:'start',d:'build a reviewed plan'}];
+let text='@',sel=0,popOpen=false,note=null,started=null;
+const term=document.getElementById('term');
+function parse(t){const m=/^@([^\s/]*)(\/(\S*))?(\s+([\s\S]*))?$/.exec(t);return m?{repo:m[1],hasSlash:!!m[2],cmd:m[3]??null,rest:m[5]??'',space:!!m[4]}:null}
+function suggestions(){if(text==='@'||text==='')return null;const p=parse(text);if(!p)return null;
+ if(!p.hasSlash&&!p.space)return {kind:'repo',items:repos.filter(r=>r.name.includes(p.repo)).map(r=>({v:r.name,d:r.path}))};
+ if(p.hasSlash&&!p.space)return {kind:'cmd',items:cmds.filter(c=>c.v.startsWith(p.cmd))};
+ if(p.cmd==='start'&&!/\s/.test(p.rest.trim()))return {kind:'slug',items:(plans[p.repo]||[]).filter(s=>s.slug.includes(p.rest.trim())).map(s=>({v:s.slug,d:s.d}))};
+ return null}
+function apply(item,kind){const p=parse(text);
+ if(kind==='repo')text='@'+item.v+'/';
+ else if(kind==='cmd')text='@'+p.repo+'/'+item.v+' ';
+ else text='@'+p.repo+'/start '+item.v;
+ sel=0;popOpen=kind!=='slug';}
+function head(){const p=parse(text);if(text==='@'||text==='')return['dim','start with @repo'];
+ if(!p)return['amber','start with @repo'];const known=repos.some(r=>r.name===p.repo);
+ if(!known)return['amber','@'+p.repo+' is not a repo in ~/src'];
+ if(p.cmd==='plan')return['dim','plan in '+p.repo];
+ if(p.cmd==='start'){const n=(plans[p.repo]||[]).length;return n?['dim','build in '+p.repo]:['amber','no reviewed plan left to build in '+p.repo]}
+ return['dim','in '+p.repo+' — /plan or /start']}
+function hint(){if(text==='@'||text==='')return '↑↓ select · ↵ open · ^S stop · esc quit · type to plan or build (@repo)';
+ const p=parse(text);if(p&&p.cmd==='start')return '↵ start the build · esc clear';return '↵ start planning · shift+↵ new line · esc clear'}
+function submit(){const p=parse(text);
+ if(!p||!p.repo)return note='start with @repo/plan or @repo/start';
+ if(!repos.some(r=>r.name===p.repo))return note='no repo @'+p.repo+' in ~/src — pick one from the list';
+ if(!p.cmd)return note='pick a command: @'+p.repo+'/plan or @'+p.repo+'/start';
+ if(p.cmd==='plan'){if(!p.rest.trim())return note='say what to plan after @'+p.repo+'/plan';started='planning run in '+p.repo+': "'+p.rest.trim()+'" → planner conversation opens';}
+ else if(p.cmd==='start'){const s=p.rest.trim();if(!s)return note='name a plan to build after @'+p.repo+'/start';
+  if(!(plans[p.repo]||[]).some(x=>x.slug===s))return note='no reviewed plan left to build called '+s+' in '+p.repo;started='build of '+s+' in '+p.repo+' → its live view opens';}
+ else return note='@'+p.repo+'/'+p.cmd+' is not a command — use /plan or /start';
+ text='@';note=null;}
+function esc(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;')}
+function render(){const s=popOpen?suggestions():null;const rows=[];
+ rows.push('<span class="head">pir</span>  <span class="dim">runs</span>');rows.push('');
+ rows.push('  REPO                 PLAN            STATE');
+ rows.push('▸ skaut                badge-tracker   <span class="hint">building 2/5</span>');
+ rows.push('  plan-implement-review dashboard-plan-box <span class="dim">done</span>');
+ for(let i=0;i<6;i++)rows.push('');
+ if(started)rows.push('<span class="dim">(mock) started '+esc(started)+'</span>');
+ if(note)rows.push('<span class="note">'+esc(note)+'</span>');
+ const [hs,ht]=head();rows.push('<span class="head">new</span>  <span class="'+hs+'">'+esc(ht)+'</span>');
+ rows.push('─'.repeat(80));rows.push('> '+esc(text)+'<span id="caret"> </span>');
+ if(s&&s.items.length){s.items.slice(0,5).forEach((it,i)=>rows.push('<span id="pop" class="'+(i===sel?'sel':'')+'">  '+esc((s.kind==='repo'?'@':'')+it.v).padEnd(26)+'<span class="dim">'+esc(it.d)+'</span></span>'))}
+ rows.push('─'.repeat(80));rows.push('<span class="hint">'+esc(hint())+'</span>');
+ term.innerHTML=rows.join('\n');}
+term.addEventListener('keydown',e=>{const s=popOpen?suggestions():null;const has=s&&s.items.length;
+ if(e.key==='ArrowDown'&&has){sel=(sel+1)%Math.min(5,s.items.length)}
+ else if(e.key==='ArrowUp'&&has){sel=(sel+Math.min(5,s.items.length)-1)%Math.min(5,s.items.length)}
+ else if((e.key==='Tab'||e.key==='Enter')&&has){apply(s.items[sel],s.kind);}
+ else if(e.key==='Enter'){submit();popOpen=false}
+ else if(e.key==='Escape'){if(has)popOpen=false;else{text='@';note=null}}
+ else if(e.key==='Backspace'){text=text.slice(0,-1);popOpen=true;sel=0}
+ else if(e.key.length===1){if(text==='@'&&e.key==='@')return;text+=e.key;popOpen=true;sel=0;started=null}
+ else return;e.preventDefault();render();});
+render();term.focus();
+</script></body></html>

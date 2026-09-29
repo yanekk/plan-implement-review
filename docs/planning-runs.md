@@ -24,40 +24,76 @@ The pure rules — report parsing, slug and run-id rules, session names and the 
   {repo}`, the same text editor the conversation view uses, and the hint `↵ start planning · shift+↵ new
   line · esc cancel`. `shift+↵` or `ctrl+j` adds a line and `↵` sends. An empty or whitespace-only brief
   is not sent. `esc` (or `Ctrl+C`) cancels: nothing is created and `pir` exits 0 (`brief-box.mjs`).
-- **The new-plan box on the dashboard's runs list** starts one without leaving `pir` (§ The new-plan
-  box, below).
+- **The dashboard box** on the runs list starts one without leaving `pir`, as `@repo/plan <brief>`
+  (§ The dashboard box, below).
 
-### The new-plan box
+### The dashboard box
 
 The runs list (`pir`) has a typing box pinned to its bottom (`src/shell/list-view.mjs`, the same editor
-as the brief box). Its text is `@` whenever the list opens, after a plan starts and after `esc`. The
-text reads as `@repo`, whitespace, then the brief; Enter calls `startPlanRun(brief, { cwd: repo })`,
-the call `pir plan` makes, resets the box to `@` and lands in the planner's conversation as below.
+as the brief box). It is a small command line with two commands, one to plan and one to build. Its text
+is `@` whenever the list opens, after a run starts from it and after `esc`.
 
+- **The grammar** (`parseBoxText` in `src/core/planbox.mjs`). The first line reads `@name`, `/`, the
+  command, then whitespace and the argument (the rest of the text, trimmed; a brief keeps its newlines).
+  The commands are exactly `plan` and `start`, lower case:
+  - `@name/plan <brief>` calls `startPlanRun(brief, { cwd: repo })`, the call `pir plan` makes, resets
+    the box to `@` and lands in the planner's conversation as below.
+  - `@name/start <slug>` calls `startRun(slug, { cwd: repo })`, the call `pir start` makes (coordinator
+    agent on), and on `started` or an already-running build resets the box to `@` and opens that
+    build's live view, as `pir start` does. `←` steps back to the list.
+
+  The old form `@name <brief>`, with no command, starts nothing. `pir plan`, `pir start` and the brief box
+  are unchanged.
 - **Keys.** While the box is bare (`@` or empty) the list keeps every key it had: `↑↓`, `↵`/`→`,
   `Ctrl+R/S/X` twice, `esc` and `Ctrl+C` quit. Any other key types into the box. An `@` typed (or a
   paste starting with `@`) into a bare `@` is absorbed, so `@skaut` and `skaut` read the same. Once the
-  box has text: `↵` starts, `shift+↵` or `ctrl+j` adds a line, `esc` or `Ctrl+C` resets it to `@`
+  box has text: `↵` submits, `shift+↵` or `ctrl+j` adds a line, `esc` or `Ctrl+C` resets it to `@`
   (a second `esc` then quits), `Ctrl+R/S/X` still act on the selected run, and the arrows move the
-  cursor. The hint line under the box is `↵ start planning · shift+↵ new line · esc clear`, except
-  while a chord is half-pressed: then it shows the chord's `⚠ … again to …` warning, as on a bare box.
-  A key typed into the box cancels a half-pressed chord, like any other key. The routing is
-  `routeBoxKey` in `src/core/planbox.mjs`.
+  cursor. With a pop-up open, `↑↓` move in it, `Tab` or `↵` picks (never submits) and `esc` closes it,
+  keeping the text. The hint line under the box is `↵ start the build · esc clear` for a `/start`
+  text and `↵ start planning · shift+↵ new line · esc clear` for any other, except while a chord is
+  half-pressed: then it shows the chord's `⚠ … again to …` warning, as on a bare box. A key typed into
+  the box cancels a half-pressed chord, like any other key. The routing is `routeBoxKey` in
+  `src/core/planbox.mjs`.
+- **The pop-up** (at most five rows) guides each step, decided from the first line before the cursor
+  (`completionContext`):
+  - after `@`: the repos whose name contains the typed part, each with its path; a pick writes `@name/`
+    and opens the command pop-up. A repo pick keeps whatever followed the name.
+  - after `@name/`: `plan` (`plan something new`) and `start` (`build a reviewed plan`), in that order; a
+    pick writes the command and one space, and `start` opens the plan pop-up.
+  - after `@name/start `: the repo's buildable plans whose slug contains the typed part, by slug, each
+    with `{done}/{total} done`, and ` · building` when a build of that slug in that repo is running now. A
+    pick writes the slug and closes; a second `↵` starts it.
+
+  The pop-up reopens by itself only after a typed character, a deletion or a repo or command pick, and
+  only with the cursor at the end of the first line; not after `esc`, a slug pick or a cursor move.
 - **The repos.** Every git repo directly inside each root with a real `.git` folder (a linked
   worktree is skipped) and a local `main`, most recently worked in first (`scanRepos` in
   `src/shell/repo-scan.mjs`). The roots are `PIR_REPOS`, split on `:` with `~` expanded; unset, the
-  root is `~/src`. The scan runs when the box leaves bare, and again the next time. Typing after `@`
-  opens a pop-up of the repos whose name contains the text (at most five shown), each with its path;
-  `Tab` or `↵` picks one.
-- **The head line** above the box reads `new plan  in {repo}` for a listed repo, `start with @repo`
-  when bare, and, amber, `@{name} is not a repo in {roots}` or `start with @repo` otherwise.
-- **What Enter refuses** (nothing is started, the text stays, and a note says why): no `@name`
-  (`start with @repo, then say what to plan`); a name that is not exactly a listed repo's
+  root is `~/src`. The scan runs when the box leaves bare, and is reused until it is bare again.
+- **The buildable plans** (`scanPlans` in `src/shell/plan-scan.mjs`, the rule in
+  `src/core/buildable.mjs`) are the plans `pir start` would build or resume: found where `pir start` looks
+  (every `plans/{slug}/` with a PROGRESS.md in the working tree, and every local `pir/{slug}` branch
+  holding one, the working tree winning), reviewed, with a valid setup/test block in DESIGN.md, and with
+  at least one task and one task not ✅. A plan whose build is running is listed too; `↵` opens it.
+  The scan runs the first time a repo's plans are needed and is reused until the box is bare again.
+- **The head line** above the box reads `new` and then: `start with @repo` (bare, dim; amber once typed
+  with no name), `@{name} is not a repo in {roots}` (amber), `in {name} — /plan or /start`,
+  `/{command} is not a command — /plan or /start` (amber), `plan in {name}`, `build in {name}`, or
+  `nothing to build in {name}` (amber, a repo with no buildable plan; no plan pop-up opens).
+- **What Enter refuses** (nothing is started, the text stays, and a note says why), first match wins:
+  no `@name` (`start with @repo/plan or @repo/start`); a name that is not exactly a listed repo's
   (`no repo @{name} in {roots} — pick one from the list`; a partial name is never completed on Enter);
   a name in two roots (`@{name} is in more than one folder: {path}, {path}`, home written as `~`); no
-  brief (`say what to plan after @{name}`); and `startPlanRun` refusing or throwing
-  (`Could not start planning in {name}: {reason}`; a refusal code in words, e.g. `it has no local
-  main branch`, a thrown error by its message).
+  command (`pick a command: @{name}/plan or @{name}/start`); another command
+  (`@{name}/{command} is not a command — use /plan or /start`); `/plan` with no brief
+  (`say what to plan after @{name}/plan`); `/start` with no slug (`name a plan to build after
+  @{name}/start`) or more than one word (`@{name}/start takes one plan name`); a slug that is not
+  exactly one the pop-up offers (`{slug} is not a reviewed, unfinished plan in {name}`);
+  `startPlanRun` refusing or throwing (`Could not start planning in {name}: {reason}`); and `startRun`
+  refusing or throwing (`Could not start {slug} in {name}: {reason}`). A refusal code is put in words
+  (`it has no local main branch`, `it is not reviewed`, `there is no such plan`, `no setup/test block`),
+  a thrown error by its message.
 
 The box is only on the runs list, not on a run's view or a conversation. On a terminal that is not a
 TTY the list is painted without it, as before.

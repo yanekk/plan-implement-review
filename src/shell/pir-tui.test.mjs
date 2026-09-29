@@ -28,6 +28,7 @@ import {
   followStep,
   buildLandingFrame,
   FOLLOW_LINE,
+  isBuilding,
   hitAt,
   underMultiplexer,
   defaultCopy,
@@ -1564,7 +1565,7 @@ test('buildListFrame with rows windows 30 runs, with ↑/↓ n more, the selecte
 test('the empty list above the box points at the box; without rows it still points at pir start', () => {
   const dash = buildDashboard([]);
   assert.match(frameText(buildListFrame(dash, initialUi(), { rows: 20 })), new RegExp(EMPTY_LIST_BOX.trim()));
-  assert.equal(EMPTY_LIST_BOX.trim(), 'No runs yet — type after @ below to plan something new');
+  assert.equal(EMPTY_LIST_BOX.trim(), 'No runs yet — type after @ below to plan or build');
   assert.match(frameText(buildListFrame(dash, initialUi())), /start one with `pir start \{slug\}`/);
 });
 
@@ -1617,17 +1618,17 @@ function driveBox({ rows = () => [], plan = () => ({ started: true, runId: 'plan
   // The box's own line: the one under the head line's top border.
   const boxLine = () => {
     const r = drawnRows(tty.text());
-    const head = r.findIndex((l) => l.startsWith('new plan'));
+    const head = r.findIndex((l) => l.startsWith('new  '));
     return head < 0 ? null : r[head + 2];
   };
   return { done, calls, type, key, screen, boxLine, term };
 }
 
-test('box: Enter on `@repo a brief` calls startPlan once, in the repo, with the brief, and lands on the planner', async () => {
+test('box: Enter on `@repo/plan a brief` calls startPlan once, in the repo, with the brief, and lands on the planner', async () => {
   const t = driveBox();
-  await t.type('repo a brief');
-  assert.match(t.boxLine(), /^@repo a brief/);
-  assert.match(t.screen(), /new plan {2}in repo/);
+  await t.type('repo/plan a brief');
+  assert.match(t.boxLine(), /^@repo\/plan a brief/);
+  assert.match(t.screen(), /new {2}plan in repo/);
   await t.key('\r');
   assert.equal(t.calls.length, 1, 'started once');
   assert.equal(t.calls[0].brief, 'a brief');
@@ -1640,10 +1641,11 @@ test('box: Enter on `@repo a brief` calls startPlan once, in the repo, with the 
 
 test('box: every §2.5 refusal starts nothing, keeps the text and shows the note', async () => {
   const cases = [
-    { keys: ['\x7f', 'hello there'], text: /^hello there/, note: 'start with @repo, then say what to plan' },
-    { keys: ['nope x'], text: /^@nope x/, note: 'no repo @nope in ~/src, ~/other — pick one from the list' },
-    { keys: ['dup x'], text: /^@dup x/, note: '@dup is in more than one folder: ~/src/dup, ~/other/dup' }, // home as ~, as the pop-up (T06)
-    { keys: ['repo '], text: /^@repo/, note: 'say what to plan after @repo' },
+    { keys: ['\x7f', 'hello there'], text: /^hello there/, note: 'start with @repo/plan or @repo/start' },
+    { keys: ['nope/plan x'], text: /^@nope\/plan x/, note: 'no repo @nope in ~/src, ~/other — pick one from the list' },
+    { keys: ['dup/plan x'], text: /^@dup\/plan x/, note: '@dup is in more than one folder: ~/src/dup, ~/other/dup' }, // home as ~, as the pop-up (T06)
+    { keys: ['repo x'], text: /^@repo x/, note: 'pick a command: @repo/plan or @repo/start' },
+    { keys: ['repo/plan '], text: /^@repo\/plan/, note: 'say what to plan after @repo/plan' },
   ];
   for (const c of cases) {
     const t = driveBox();
@@ -1663,12 +1665,12 @@ test('box: every §2.5 refusal starts nothing, keeps the text and shows the note
 test('box: startPlan refusing (no-main, in plain words) or throwing both give the start-failed note, the text kept', async () => {
   for (const plan of [() => ({ started: false, reason: 'no-main' }), () => { throw new Error('spawn failed'); }]) {
     const t = driveBox({ plan });
-    await t.type('repo a brief');
+    await t.type('repo/plan a brief');
     await t.key('\r');
     assert.equal(t.calls.length, 1);
     const reason = plan.toString().includes('no-main') ? 'it has no local main branch' : 'spawn failed';
     assert.ok(t.screen().includes(`Could not start planning in repo: ${reason}`), t.screen());
-    assert.match(t.boxLine(), /^@repo a brief/);
+    assert.match(t.boxLine(), /^@repo\/plan a brief/);
     assert.doesNotMatch(t.screen(), /starting the planner/);
     await t.key('\x1b');
     await t.key('\x1b');
@@ -1696,7 +1698,7 @@ test('box: on a bare box ↓ and → reach the list (open a run); ← back shows
 
 test('box: after a start and back out to the list, the box reads @ again', async () => {
   const t = driveBox();
-  await t.type('repo a brief');
+  await t.type('repo/plan a brief');
   await t.key('\r');
   assert.match(t.screen(), /starting the planner…/);
   await t.key('\x1b[D'); // gives up the wait: the steps view
@@ -1731,7 +1733,7 @@ test('box: Ctrl+X twice removes the selected run, on a bare box and with text ty
     term.press('\x18'); await settle();
     assert.deepEqual(removed, ['alpha'], `removed (${typed ?? 'bare'})`);
     const r = drawnRows(tty.text());
-    const head = r.findIndex((l) => l.startsWith('new plan'));
+    const head = r.findIndex((l) => l.startsWith('new  '));
     assert.match(r[head + 2], typed ? /^@repo half a brief/ : /^@\s*$/, 'the box text is untouched');
     term.press('\x1b'); await settle();
     if (typed) { term.press('\x1b'); await settle(); }
@@ -1769,6 +1771,161 @@ test('box: a typed key disarms a half-pressed chord; the next press only arms, a
   term.press('\x1b'); await settle();
   term.press('\x1b'); await settle();
   await done;
+});
+
+// --- `/start` starts, or opens, a build (box-commands T04, DESIGN §2.2, §2.4) ----------------------------
+
+const BUILD_REPOS = [
+  { name: 'repo', path: '/scratch/src/repo', mtimeMs: 2 },
+  { name: 'other', path: '/scratch/other/other', mtimeMs: 1 },
+];
+const PLANS = { '/scratch/src/repo': [{ slug: 'foo', done: 0, total: 3 }], '/scratch/other/other': [{ slug: 'foo', done: 1, total: 2 }] };
+const buildRow = (repo, slug, { state = 'running', kind } = {}) => ({
+  key: `${repo}__${slug}`, slug, repo, state, progress: { done: 0, total: 3 }, workers: 0,
+  record: { repo, slug, ...(kind ? { kind } : {}) },
+});
+
+// runTui with a fake startRun and plan scan beside the fake startPlan. `build` is what the fake start returns.
+function driveStart({ rows = () => [], build = (slug, opts) => ({ started: true, record: { repo: opts.cwd.split('/').at(-1), slug } }) } = {}) {
+  const tty = fakeStream({ isTTY: true, columns: 100, rows: 30 });
+  const term = fakeTerminal(tty);
+  const starts = [];
+  const plans = [];
+  const scanned = [];
+  const done = openDashboard({
+    stdin: {}, stdout: tty, env: BOX_ENV, refreshMs: 60_000, now: () => NOW,
+    makeScreen: (opts) => createScreen({ ...opts, colour: false, terminal: term }),
+    load: () => buildDashboard(rows()),
+    scan: () => BUILD_REPOS,
+    scanBuildable: (path) => (scanned.push(path), PLANS[path] ?? []),
+    start: (slug, opts) => {
+      starts.push({ slug, opts });
+      return build(slug, opts);
+    },
+    startPlan: (brief, opts) => {
+      plans.push({ brief, opts });
+      return { started: true, runId: 'plan-ab12', record: { repo: 'repo' } };
+    },
+  });
+  const settle = () => new Promise((r) => setTimeout(r, 60));
+  const type = async (s) => { for (const ch of s) term.press(ch); await settle(); };
+  const key = async (k) => { term.press(k); await settle(); };
+  const screen = () => drawnRows(tty.text()).join('\n');
+  const boxLine = () => {
+    const r = drawnRows(tty.text());
+    const head = r.findIndex((l) => l.startsWith('new  '));
+    return head < 0 ? null : r[head + 2];
+  };
+  const quit = async () => { await key('\x1b'); await done; };
+  return { done, starts, plans, scanned, type, key, screen, boxLine, quit };
+}
+
+test('box: Enter on `@repo/start foo` calls startRun once in the repo with the slug, never startPlan, and opens its live view', async () => {
+  const t = driveStart({ rows: () => [buildRow('repo', 'foo')] });
+  await t.type('repo/start foo');
+  await t.key('\r'); // the slug pop-up is open on `foo`: this Enter picks
+  assert.equal(t.starts.length, 0, 'a pick never submits');
+  await t.key('\r');
+  assert.equal(t.starts.length, 1, 'started once');
+  assert.equal(t.starts[0].slug, 'foo');
+  assert.equal(t.starts[0].opts.cwd, '/scratch/src/repo');
+  assert.equal(t.starts[0].opts.env, BOX_ENV);
+  assert.equal(t.plans.length, 0, 'startPlan not called');
+  assert.equal(t.boxLine(), null, 'the live view has no box');
+  assert.match(t.screen(), /^foo {2}● running {2}· repo/m, "the build's live view");
+  await t.key('\x1b[D');
+  assert.match(t.boxLine(), /^@\s*$/, 'back on the list, the box reads @');
+  await t.quit();
+});
+
+test('box: alreadyRunning opens the live view as started does', async () => {
+  const t = driveStart({ rows: () => [buildRow('repo', 'foo')], build: () => ({ started: false, reason: 'already-running', alreadyRunning: true }) });
+  await t.type('repo/start foo');
+  await t.key('\r');
+  await t.key('\r');
+  assert.equal(t.starts.length, 1);
+  assert.match(t.screen(), /^foo {2}● running {2}· repo/m);
+  await t.quit();
+});
+
+test('box: each startRun refusal and a throw give the §2.4 note, the text kept', async () => {
+  const cases = [
+    [() => ({ started: false, reason: 'not-reviewed' }), 'Could not start foo in repo: it is not reviewed'],
+    [() => ({ started: false, reason: 'no-plan' }), 'Could not start foo in repo: there is no such plan'],
+    [() => ({ started: false, reason: 'no-test-block' }), 'Could not start foo in repo: no setup/test block'],
+    [() => ({ started: false, reason: 'weird' }), 'Could not start foo in repo: weird'],
+    [() => { throw new Error('spawn failed'); }, 'Could not start foo in repo: spawn failed'],
+  ];
+  for (const [build, note] of cases) {
+    const t = driveStart({ build });
+    await t.type('repo/start foo');
+    await t.key('\r');
+    await t.key('\r');
+    assert.equal(t.starts.length, 1);
+    assert.ok(t.screen().includes(note), `${note}\n${t.screen()}`);
+    assert.match(t.boxLine(), /^@repo\/start foo/, 'the text is kept');
+    await t.key('\x1b');
+    await t.quit();
+  }
+});
+
+test('box: `@repo/plan a brief` still calls startPlan only; `@repo a brief` and an unknown slug call neither', async () => {
+  const p = driveStart();
+  await p.type('repo/plan a brief');
+  await p.key('\r');
+  assert.equal(p.plans.length, 1);
+  assert.equal(p.plans[0].brief, 'a brief');
+  assert.equal(p.plans[0].opts.cwd, '/scratch/src/repo');
+  assert.equal(p.starts.length, 0);
+  assert.deepEqual(p.scanned, [], 'a brief never pays for the plan scan');
+  assert.match(p.screen(), /starting the planner…/);
+  await p.quit();
+
+  for (const [typed, note] of [['repo a brief', 'pick a command: @repo/plan or @repo/start'], ['repo/start nope', 'nope is not a reviewed, unfinished plan in repo']]) {
+    const t = driveStart();
+    await t.type(typed);
+    await t.key('\r');
+    assert.equal(t.plans.length + t.starts.length, 0, `${typed}: nothing started`);
+    assert.ok(t.screen().includes(note), `${typed}: ${t.screen()}`);
+    assert.ok(t.boxLine().startsWith('@' + typed), 'the text is kept');
+    await t.key('\x1b');
+    await t.quit();
+  }
+});
+
+test('box: two repos with the same slug: the landing opens the one in the chosen repo', async () => {
+  const t = driveStart({ rows: () => [buildRow('repo', 'foo'), buildRow('other', 'foo')] });
+  await t.type('other/start foo');
+  await t.key('\r');
+  await t.key('\r');
+  assert.equal(t.starts[0].opts.cwd, '/scratch/other/other');
+  assert.match(t.screen(), /^foo {2}● running {2}· other/m);
+  assert.doesNotMatch(t.screen(), /· repo/);
+  await t.quit();
+});
+
+test('box: the slug pop-up says · building for the build running in that repo only', async () => {
+  const t = driveStart({ rows: () => [buildRow('repo', 'foo')] });
+  await t.type('repo/start ');
+  assert.match(t.screen(), /→ foo +0\/3 done · building/);
+  await t.key('\x1b');
+  await t.key('\x1b');
+  await t.type('other/start ');
+  assert.match(t.screen(), /foo +1\/2 done/);
+  assert.doesNotMatch(t.screen(), /building/);
+  await t.key('\x1b'); // closes the pop-up
+  await t.key('\x1b'); // resets the box
+  await t.quit();
+});
+
+test('isBuilding: a running build of that slug in that repo; not another repo, not a planning run, not a stopped build', () => {
+  const repo = { name: 'repo', path: '/scratch/src/repo' };
+  assert.equal(isBuilding([buildRow('repo', 'foo')], repo, 'foo'), true);
+  assert.equal(isBuilding([buildRow('other', 'foo')], repo, 'foo'), false, 'same slug, another repo');
+  assert.equal(isBuilding([buildRow('repo', 'foo', { kind: 'plan' })], repo, 'foo'), false, 'a planning run');
+  assert.equal(isBuilding([buildRow('repo', 'foo', { state: 'stopped' })], repo, 'foo'), false, 'not running');
+  assert.equal(isBuilding([buildRow('repo', 'bar')], repo, 'foo'), false, 'another slug');
+  assert.equal(isBuilding([], repo, 'foo'), false);
 });
 
 // --- row hits (mouse-navigation T02, DESIGN §3.3) ---------------------------------------------------
@@ -2199,7 +2356,7 @@ test('mouse: a click on run row i opens run i; ← comes back to the list with r
   const t = driveMouse({ rows: () => [...THREE_RUNS, tasksRun(T12_TASKS, { key: 'r__plan', repo: 'r' })] });
   await t.clickOn(/^ {2}beta /);
   assert.match(t.text(), /^beta/m, "beta's live view");
-  assert.doesNotMatch(t.text(), /new plan/, 'the list is gone');
+  assert.doesNotMatch(t.text(), /^new  /m, 'the list is gone');
   await t.send('\x1b[D');
   assert.match(t.sel(), /^▎ beta /, 'back on the list, beta selected');
   await t.clickOn(/^ {2}plan /);
@@ -2340,7 +2497,7 @@ test('mouse: the wheel moves the list and the live view one row a notch, and doe
   await t.quit();
 
   const l = driveMouse({ rows: () => [] });
-  await l.send(...'repo a brief');
+  await l.send(...'repo/plan a brief');
   await l.send('\r');
   const landing = l.screen();
   assert.ok(landing.some((x) => /starting the planner…/.test(x)));
@@ -2353,7 +2510,7 @@ test('mouse: the wheel moves the list and the live view one row a notch, and doe
 test('mouse: a click in the box moves its caret; a click on a pop-up entry picks it', async () => {
   const t = driveMouse({ rows: () => THREE_RUNS });
   await t.send(...'repo abc');
-  const head = t.rowY(/^new plan/);
+  const head = t.rowY(/^new  /);
   await t.click(head + 2, 2); // column 2: just after the @
   await t.send('Z');
   assert.match(t.screen()[head + 2], /^@Zrepo abc/, 'typed where the click put the caret');
@@ -2363,8 +2520,8 @@ test('mouse: a click in the box moves its caret; a click on a pop-up entry picks
   await p.settle();
   const entry = p.rowY(/@dup +~\/src\/dup/);
   await p.click(entry, 8);
-  const h = p.rowY(/^new plan/);
-  assert.match(p.screen()[h + 2], /^@dup /, 'the clicked entry replaced @p');
+  const h = p.rowY(/^new  /);
+  assert.match(p.screen()[h + 2], /^@dup\//, 'the clicked entry replaced @p');
   await t.quit();
   await p.quit();
 });
@@ -2375,7 +2532,7 @@ test('mouse: with a brief typed, a click opens a run, and ← comes back to the 
   await t.clickOn(/^ {2}beta /);
   assert.match(t.text(), /^beta/m);
   await t.send('\x1b[D');
-  const head = t.rowY(/^new plan/);
+  const head = t.rowY(/^new  /);
   assert.match(t.screen()[head + 2], /^@repo half a brief/);
   assert.match(t.sel(), /^▎ beta /);
   await t.quit();
@@ -2399,7 +2556,7 @@ test('mouse: a right or middle click on a row does nothing, and a drag starting 
   await t.send(sgr(2, 6, y + 1), sgr(2, 6, y + 1, 'm'));
   await t.send(sgr(1, 6, y + 1), sgr(1, 6, y + 1, 'm'));
   await t.send(sgr(0, 6, y + 1), sgr(32, 12, y + 1), sgr(0, 12, y + 1, 'm'));
-  assert.match(t.text(), /new plan/, 'still the list');
+  assert.match(t.text(), /^new  /m, 'still the list');
   assert.match(t.sel(), /^▎ alpha /, 'the selection did not move');
   assert.deepEqual(t.screen().slice(1, y + 1), before.slice(1, y + 1), 'the rows are as they were');
   assert.match(t.screen()[0], /Copied!/, 'the drag was a text selection, and copied');
@@ -2415,7 +2572,7 @@ test('mouse: a click opens the run painted on that row even if a fresh read has 
   // before the click, so the screen still shows the old order.
   rows = [THREE_RUNS[1], THREE_RUNS[0]];
   await t.click(gammaY);
-  assert.match(t.text(), /new plan/, 'a click on a run that is gone opens nothing');
+  assert.match(t.text(), /^new  /m, 'a click on a run that is gone opens nothing');
   await t.click(betaY);
   assert.match(t.text(), /^beta/m, 'beta opened, not whatever now sits at its old index');
   await t.quit();

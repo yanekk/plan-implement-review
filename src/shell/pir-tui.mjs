@@ -17,7 +17,7 @@
 // are painted with render.mjs's exact style→colour mapping (pir-view.mjs's SGR map carries render's keys
 // unchanged alongside the list's), which keeps the watch frame byte-for-byte the coordinator's display.
 
-import { join, resolve as resolvePath } from 'node:path';
+import { basename, join, resolve as resolvePath } from 'node:path';
 import { execFile } from 'node:child_process';
 import { constants as osConstants, homedir } from 'node:os';
 import { readLogTail } from './commands.mjs';
@@ -40,7 +40,8 @@ import { createConversationView } from './conversation-view.mjs';
 import { createDashboardPublisher } from './dashboard-publish.mjs';
 import { createListView } from './list-view.mjs';
 import { repoRoots, rootsLabel, scanRepos } from './repo-scan.mjs';
-import { NOTES, parseBoxText, startFailedNote } from '../core/planbox.mjs';
+import { NOTES, parseBoxText, startBuildFailedNote, startFailedNote } from '../core/planbox.mjs';
+import { scanPlans } from './plan-scan.mjs';
 import { ProcessTerminal, TuiAltScreen, TUI_KEYBINDINGS, getKeybindings, isKeyRelease, parseKey } from '@earendil-works/pi-tui';
 
 // The spinner frames, one per refresh (a poll tick). The SAME Braille frames render.mjs uses, so a live
@@ -260,7 +261,8 @@ export function hitAt(frame, y) {
 }
 
 // The get-started line under the box (dashboard-plan-box §2.7): the box is right below it, so it points there.
-export const EMPTY_LIST_BOX = '  No runs yet — type after @ below to plan something new';
+// 'plan or build' since the box also builds (user, box-commands T05 drill, 2026-09-29).
+export const EMPTY_LIST_BOX = '  No runs yet — type after @ below to plan or build';
 
 // windowListBlock → the list block cut to `budget` lines (dashboard-plan-box §2.7, user 2026-09-26).
 // The block is title, spacer, header, rows, spacer, counts, spacer. When it does not fit, the three spacers
@@ -985,6 +987,14 @@ export function buildLandingFrame(view) {
   ];
 }
 
+// isBuilding(rows, repo, slug) → whether the dashboard rows hold a build (not a planning run) of that slug, in
+// that repo, running now: the slug pop-up's ` · building` (box-commands §2.2, §3.4). The repo is matched as
+// startRun records it, the folder's basename, since two repos can share a slug.
+export function isBuilding(rows, repo, slug) {
+  const name = basename(repo?.path ?? '');
+  return (rows ?? []).some((r) => !isPlan(r) && r.state === 'running' && r.slug === slug && r.repo === name);
+}
+
 // runTui — the input/paint loop (DESIGN §2.3, §2.4, §5.1). It paints a first frame, then repaints on every
 // keypress (through dashboardReducer, T04) and on a short refresh poll (§2.4: watch the snapshot by
 // polling, the safe default). A pi-tui screen owns the keyboard (raw mode included) and hands keys over
@@ -1017,6 +1027,7 @@ async function runTui({
   publisher = null,
   startPlan = startPlanRun,
   scan = scanRepos,
+  scanBuildable = scanPlans,
   initial = initialUi(),
 } = {}) {
   const dir = indexDir({ env });
@@ -1074,6 +1085,9 @@ async function runTui({
   let lastRepos = null;
   const repos = () => (lastRepos = scan({ env }));
   let listView = null;
+  // The rows of the latest read, for the slug pop-up's ` · building` (isBuilding).
+  let lastRows = [];
+  const building = (repo, slug) => isBuilding(lastRows, repo, slug);
   // runTui's mouse handler, set once the input loop below is listening; the list view calls it for events
   // outside its box.
   let mouseHandler = null;
@@ -1087,6 +1101,10 @@ async function runTui({
         repos,
         roots: rootsText,
         home: resolvePath(env.HOME || homedir()),
+        // The list view caches this per repo until the box is bare again (§2.3). Only the path is passed:
+        // runTui's `exec` is the process probe's, not the git runner scanPlans takes.
+        plansOf: (repo) => scanBuildable(repo.path),
+        building,
         onSubmit: (text) => (routed = { kind: 'submit', text }),
         onListKey: (data) => (routed = { kind: 'list', data }),
         onQuit: () => (routed = { kind: 'quit' }),
@@ -1098,17 +1116,20 @@ async function runTui({
 
   function paintList(dash) {
     const lv = getListView();
+    lastRows = dash.rows;
     lv.update({ dashboard: dash, ui, hoverY });
     screen.mount(lv);
     screen.renderNow();
   }
 
-  // Enter on a box that is not bare (§2.5): a refusal keeps the text and says why; a start resets the box and
-  // lands in the planner's conversation exactly as `pir plan` does (openPlanner's ui, with the run's key, since
-  // a run id alone could repeat across repos).
-  function submitBox(text) {
+  // Enter on a box that is not bare (box-commands §2.4): a refusal keeps the text and says why. `/plan` resets
+  // the box and lands in the planner's conversation exactly as `pir plan` does (openPlanner's ui, with the run's
+  // key, since a run id alone could repeat across repos). `/start` starts or opens the build through startRun,
+  // the call `pir start` makes, and lands in its live view as `pir start` does.
+  async function submitBox(text) {
     const lv = getListView();
-    const r = parseBoxText(text, lastRepos ?? repos(), { roots: rootsText });
+    // The same cached plan scan the slug pop-up listed from, so Enter accepts exactly what it offered.
+    const r = parseBoxText(text, lastRepos ?? repos(), { roots: rootsText, plansOf: lv.plansOf });
     if (!r.ok) {
       // The paths as the pop-up shows them, home as `~`: absolute, two of them overran 80 columns and the
       // second was cut off (T06 drill).
@@ -1116,6 +1137,7 @@ async function runTui({
       lv.update({ note });
       return;
     }
+    if (r.command === 'start') return submitStart(lv, r);
     let s;
     try {
       s = startPlan(r.brief, { cwd: r.repo.path, env, kill, exec });
@@ -1130,6 +1152,27 @@ async function runTui({
     lv.reset();
     lastRepos = null;
     ui = { ...initialUi(), view: 'watch', openSlug: s.runId, openKey: `${s.record?.repo}__${s.runId}`, openStep: 'plan' };
+  }
+
+  // `/start`: started and already-running both open the run's live view (§2.4, "start or open"). The key is the
+  // build row's runKey, `{repo}__{slug}` with the repo as startRun records it (its folder's basename), so two
+  // repos holding the same slug open the chosen one. The coordinator agent is on, as bare `pir start`.
+  async function submitStart(lv, r) {
+    let s;
+    try {
+      s = await start(r.slug, { cwd: r.repo.path, env, kill, exec });
+    } catch (err) {
+      lv.update({ note: startBuildFailedNote(r.repo.name, r.slug, err?.message ?? String(err)) });
+      return;
+    }
+    if (!s?.started && !s?.alreadyRunning) {
+      lv.update({ note: startBuildFailedNote(r.repo.name, r.slug, s?.reason ?? 'unknown') });
+      return;
+    }
+    lv.reset();
+    lastRepos = null;
+    const repo = s.record?.repo ?? basename(r.repo.path);
+    ui = { ...initialUi(), view: 'watch', openSlug: r.slug, openKey: `${repo}__${r.slug}` };
   }
 
   function closeConv() {
@@ -1340,7 +1383,7 @@ async function runTui({
             }
             if (r?.kind === 'quit') return finish();
             if (r?.kind === 'submit') {
-              submitBox(r.text);
+              await submitBox(r.text);
               return repaint();
             }
             if (r?.kind !== 'list') return; // the box took it and asked pi-tui for a render itself
