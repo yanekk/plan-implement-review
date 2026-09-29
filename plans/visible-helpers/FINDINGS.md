@@ -7,6 +7,7 @@ Legend: 🐞 defect found · ✅ verified by hand with the user · 📌 worth kn
 
 | Date | | Finding |
 |---|---|---|
+| 2026-09-29 | 📌 | T07: `./install.sh` deferred to after the plan merges (§5.3: never while a run is live). `docs/detached-runs.md` says a background command survives Esc; DESIGN §8 says an interrupt may stop it too. Unchecked, left as is. |
 | 2026-09-29 | 🔄 | T06 drill: the person chose to shorten a running helper's step text so its step count and time stay visible; DESIGN §2.2 said clip at the edge. Tested in `conversation.test.mjs` and the rig at 60×20. T07 documents it. |
 | 2026-09-29 | 📌 | T06 drill, worker-driven, helpers rig at 80×24, 120×40, 60×20: helper lines, Tab, helper permission, Esc/Ctrl+C warning listing two helpers, stopped line, note, list row (`asking you · allow a command?` only while A asks), tour. All held but one, fixed above. |
 | 2026-09-29 | 🔄 | T05 review: the person chose to wrap the Esc warning, not clip it; at 80 columns two helpers overflowed and the second name was lost. |

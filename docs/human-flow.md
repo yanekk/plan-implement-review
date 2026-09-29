@@ -89,7 +89,11 @@ the same way (measured 2026-09-27). The known miss: a worker that asks the perso
 own is still running, without a report, reads `building` until that job's wake-up turn ends. The
 worker contract closes it by telling workers to drop a fresh report every time they end a turn waiting
 on the person (`skills/pir-worker`). A worker whose background jobs pir cannot see (a listing without
-them, as in the test fakes) never reads stopped. Interrupting a worker ends its turn, so it then reads
+them, as in the test fakes) never reads stopped. **A running helper counts as work in progress** (a
+[helper](#helpers) is an agent the worker started with Claude's Agent tool): a background helper is
+one of the worker's background jobs, and a foreground one keeps its turn open, so a worker whose helper
+is still running does not read `asking you` by the stopped rule (a pending request or a report still does), and a helper's own output
+never opens a turn of the worker. Interrupting a worker ends its turn, so it then reads
 `asking you`: it is waiting for the person.
 
 A planner or plan reviewer in a `pir plan` run reads asking by the same stopped rule, until its report
@@ -163,10 +167,72 @@ reports (`canUseTool` in `worker-proc.mjs`, logged as a `request` entry):
   or just start typing, and the text appears next to "Other:" (never in the typing box), wrapped to as
   many lines as it needs; ←/→ move the cursor within it, and ← goes back to the live view only once it
   is empty. Enter answers with it. Option descriptions wrap too, never cut short. It replaces a pick-one choice and joins a pick-any question's ticks. To talk instead of
-  answering, Esc interrupts the worker, which cancels the question.
+  answering, Esc interrupts the worker, which cancels the question (while a helper runs, the first Esc
+only warns; see [Helpers](#helpers)).
 
 These keys work only while the typing box is empty. A request left unanswered simply waits: nothing
 times it out.
+
+### Helpers
+
+A worker, a planner, a plan reviewer or the coordinator agent can start **helpers**: agents of its
+own, started with Claude's Agent tool, in the background or the foreground (`plans/visible-helpers`).
+In the conversation each helper is one line under the step that started it, updating as it works:
+
+```
+  ↳ helper · Survey end-of-run machinery · Reading src/shell/worker-proc.mjs · 9 steps · 21s
+  ↳ helper finished · Survey end-of-run machinery · 20 steps · 1m 12s
+```
+
+It ends as `finished`, `stopped` or `failed`. The helper's own words and steps are not drawn in the
+default view, so none of them reads as the worker's; Tab's full detail shows them in place, labelled
+`helper ▸ ` and `helper ⎿`. The line above the typing box counts running helpers apart from background
+commands (`◌ 2 helpers running · 1 running in the background`). The line's detail is in
+[detached-runs.md](detached-runs.md#the-conversation-view).
+
+**A helper's permission request or question set names the helper.** Its head reads
+`⚑ helper "Survey end-of-run machinery" wants to use Bash` or `? helper "…" asks you 1 question` where
+a worker's reads `⚑ T05 wants to use Bash`, in the pinned prompt and in the answered request in the
+scrollback; a request from a helper pir has not seen start reads `a helper`. The keys, grants and the
+risky-request double press are the same, and the row reads `asking you · allow a command?` as for any
+request (`agentId` on the logged request, from the SDK's `agentID`).
+
+**Esc warns before it stops helpers.** An interrupt stops every helper the worker has running, and
+the worker is told only that it was interrupted. So in the conversation view, while any helper runs,
+the first Esc (or Ctrl+C on an empty box) sends nothing and shows, in place of the status line and
+wrapped if it is long:
+
+```
+esc again to interrupt · this also stops 2 helpers: Survey end-of-run machinery; Check the tests
+```
+
+A second Esc or Ctrl+C interrupts, even if the helpers have ended in between. Any other key cancels
+the warning and then does what it normally does. With no helper running, Esc interrupts at once. A
+pending question or permission is cancelled by the interrupt as before, only after the warning. The
+warning is a state, not a timer: left alone it stays until the next key.
+
+**The next message tells the worker which helpers the interrupt stopped.** When the person next types
+a message in the conversation view, pir puts a note in front of it, in the same message, naming every
+helper an interrupt stopped that no earlier message has reported:
+
+```
+[pir] Before this message, the person's interrupt stopped your helpers: "Survey end-of-run machinery".
+They will not report back. Start them again or do the work yourself if it is still needed.
+```
+
+(With one helper it reads `your helper … It will not report back. Start it again …`.) The conversation
+shows the person's words as sent and the note under them as a `pir ▸` line. The note is attached, not
+sent on its own, because a message on its own would start a turn and the worker would carry on with
+work the person had just interrupted. Only a typed message carries it: a permission reply, a refusal
+with text or question answers do not. A helper that died because the worker's process was restarted
+(a `resumed` note) is not reported as stopped by the person.
+
+Limits (visible-helpers DESIGN §8): input typed over Remote Control or from the phone does not pass
+through pir's view, so an interrupt sent there gets no warning and a message sent there carries no
+note. The run's list row, the dashboard and Remote Control show no helper line or count; the row keeps
+reading the worker's own state. A phone alert (`pir notify`) and the coordinator agent's view of a
+helper's permission request name the worker or planner, not the helper. What a model does with the
+note (restart the helper or do the work itself) is its own choice and is not tested.
 
 ## Answering away from the terminal — Remote Control
 
