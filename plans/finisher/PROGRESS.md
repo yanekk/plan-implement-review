@@ -28,7 +28,7 @@ done · ⛔ blocked, needs a human.
 | T02 | finisher-brief | — | ✅ | |
 | T03 | finisher-skill-and-rules | T01 | ✅ | |
 | T04 | finisher-session | T00, T01, T02 | ✅ | |
-| T05 | finisher-handover | T04 | ⬜ | |
+| T05 | finisher-handover | T04 | ✅ | |
 | T06 | finisher-alerts | T05 | ⬜ | |
 | T07 | finisher-row | T05 | ⬜ | |
 | T08 | finisher-docs | T03, T05, T06, T07 | ⬜ | |
