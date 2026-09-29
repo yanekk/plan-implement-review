@@ -452,3 +452,43 @@ test('a message the person drops for the coordinator agent reaches its session; 
     rmSync(controlDir, { recursive: true, force: true });
   }
 });
+
+// fast-tests T01 (DESIGN §2.1): the forwarder wakes the coordinator loop once it has forwarded something.
+test('onActivity: a watch-triggered drain that forwarded calls it; an empty drain, an invalid drop and the loop\'s own drain() do not', async (t) => {
+  const controlDir = mkdtempSync(join(tmpdir(), 'pir-inbox-activity-'));
+  t.after(() => rmSync(controlDir, { recursive: true, force: true }));
+  const sent = [];
+  const platform = {
+    send: (id, text) => (sent.push({ id, text }), { ok: true }),
+    interrupt: () => ({ ok: true }),
+    answer: () => ({ ok: false }),
+    pending: () => [],
+    note: () => ({ ok: true }),
+    logPathOf: (id) => (id === 'w1' ? '/c/w1.ndjson' : null),
+  };
+  const watch = manualWatch();
+  let calls = 0;
+  const inbox = startPersonInbox({ controlDir, platform, watch, onActivity: () => (calls += 1) });
+  t.after(() => inbox.stop());
+  const settle = () => new Promise((r) => setTimeout(r, 20));
+  await settle();
+
+  watch.fire();
+  await settle();
+  assert.equal(calls, 0, 'a watch event with nothing to drain');
+
+  writeFileSync(join(inboxDirOf(controlDir), '1-bad.json'), '{not json');
+  watch.fire();
+  await settle();
+  assert.equal(calls, 0, 'an invalid drop is only deleted');
+
+  dropPersonInput(controlDir, { to: 'w1', kind: 'message', text: 'go on' }, { coordinatorAlive: true });
+  watch.fire();
+  await waitFor(() => sent.length === 1, 'the forward');
+  await settle();
+  assert.equal(calls, 1, 'one wake for the forwarded input');
+
+  dropPersonInput(controlDir, { to: 'w1', kind: 'message', text: 'again' }, { coordinatorAlive: true });
+  assert.equal(inbox.drain().length, 1, 'the loop drains it inside its pass');
+  assert.equal(calls, 1, 'the loop\'s own drain never wakes the loop');
+});

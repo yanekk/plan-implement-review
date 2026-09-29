@@ -605,3 +605,77 @@ test('remoteUrl() reads the agent session\'s Remote Control link; null with Remo
   await waitFor(() => off.agent.session.entries().some((e) => e.dir === 'in'), 'the agent to start');
   assert.equal(off.agent.remoteUrl(), null);
 });
+
+// ---- fast-tests T01: the agent wakes the coordinator loop (DESIGN §2.1) ----
+
+// A hand-driven agent session: emit(entry) plays a log entry, exit() plays the process exiting.
+function stubAgentSessions() {
+  const made = [];
+  const startWorker = () => {
+    const ev = [];
+    const ex = [];
+    const w = {
+      pid: null,
+      send: () => true,
+      note: () => {},
+      remoteControl: async () => {},
+      onEvent: (fn) => ev.push(fn),
+      onExit: (fn) => ex.push(fn),
+      entries: () => [],
+      pending: () => [],
+      close: async () => {},
+      emit: (entry) => ev.forEach((fn) => fn(entry)),
+      exit: () => ex.splice(0).forEach((fn) => fn({ code: 1 })),
+    };
+    made.push(w);
+    return w;
+  };
+  return { made, startWorker };
+}
+
+test('onActivity: the agent session\'s entries (not its notes) and its exit call it', (t) => {
+  const s = scratch(t);
+  const stub = stubAgentSessions();
+  let calls = 0;
+  const agent = startCoordinatorAgent({
+    controlDir: s.controlDir, featurePath: s.featurePath, repoRoot: s.repoRoot, slug: 'demo',
+    platform: s.platform, askRules: [], claudePath: CLAUDE, skillsDir: s.skillsDir,
+    startWorker: stub.startWorker, onActivity: () => (calls += 1), watch: () => ({ close() {}, on() {} }),
+  });
+  s.closers.push(() => agent.close());
+  const [w] = stub.made;
+  w.emit({ dir: 'in', event: { type: 'result', subtype: 'success', result: '' } });
+  assert.equal(calls, 1, 'its turn ending');
+  w.emit({ dir: 'request', requestId: 'r1', toolName: 'Write', input: {} });
+  assert.equal(calls, 2, 'its request');
+  w.emit({ dir: 'note', kind: 'remote-control', on: true });
+  assert.equal(calls, 2, 'a note does not wake');
+  w.exit();
+  assert.equal(calls, 3, 'its exit');
+  assert.equal(stub.made.length, 2, 'and the exit handling (a resume) ran first');
+  stub.made[1].emit({ dir: 'in', event: { type: 'result', subtype: 'success', result: '' } });
+  assert.equal(calls, 4, 'the resumed session is hooked too');
+});
+
+test('onActivity: a decision file landing in decisions/ calls it (a real watch); the drain removing it does not', async (t) => {
+  const s = scratch(t);
+  const stub = stubAgentSessions();
+  let calls = 0;
+  const agent = startCoordinatorAgent({
+    controlDir: s.controlDir, featurePath: s.featurePath, repoRoot: s.repoRoot, slug: 'demo',
+    platform: s.platform, askRules: [], claudePath: CLAUDE, skillsDir: s.skillsDir,
+    startWorker: stub.startWorker, onActivity: () => (calls += 1),
+  });
+  s.closers.push(() => agent.close());
+  await new Promise((r) => setTimeout(r, 50)); // let the watch settle before the write
+  writeFileSync(join(s.decisionsDir, '001.json.tmp'), '{}');
+  await new Promise((r) => setTimeout(r, 100));
+  assert.equal(calls, 0, 'a name that is not a decision does not wake');
+  drop(s, '002.json', { worker: s.w1, requestId: 'r1', kind: 'permission', decision: 'allow' });
+  await waitFor(() => calls >= 1, 'the wake for the decision file');
+  const woke = calls;
+  agent.drain([]);
+  assert.deepEqual(readdirSync(s.decisionsDir).filter((f) => f.endsWith('.json')), [], 'the drain consumed it');
+  await new Promise((r) => setTimeout(r, 100));
+  assert.equal(calls, woke, 'the unlink is not a decision landing');
+});

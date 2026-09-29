@@ -17,6 +17,8 @@ import {
   renderHandoff,
   runFeatureTests,
   runawayVerdict,
+  stallVerdict,
+  PASS_MIN_GAP_MS,
   gitRun,
   clearTransientFeeds,
   startupControlHygiene,
@@ -674,10 +676,65 @@ test('the coordinator exports no canonical-repo guard', async () => {
 });
 
 test('runawayVerdict tolerates a transient CEILING+1 handoff but aborts a real runaway (P5, T12)', () => {
-  assert.deepEqual(runawayVerdict({ liveCount: 2, ceiling: 2, overPasses: 5 }), { abort: false, over: 0 }, 'at/under ceiling never aborts and resets the counter');
-  assert.deepEqual(runawayVerdict({ liveCount: 3, ceiling: 2, overPasses: 0 }), { abort: false, over: 1 }, 'one over on its first pass is a review handoff, tolerated');
+  assert.deepEqual(runawayVerdict({ liveCount: 2, ceiling: 2, overPasses: 5 }), { abort: false, over: 0, overSince: null }, 'at/under ceiling never aborts and resets the counter');
+  assert.deepEqual(runawayVerdict({ liveCount: 3, ceiling: 2, overPasses: 0 }), { abort: false, over: 1, overSince: 0 }, 'one over on its first pass is a review handoff, tolerated');
   assert.equal(runawayVerdict({ liveCount: 3, ceiling: 2, overPasses: 2, overGrace: 3 }).abort, true, 'one over that persists to the grace limit aborts');
   assert.equal(runawayVerdict({ liveCount: 5, ceiling: 2, overPasses: 0 }).abort, true, 'more than one over the ceiling aborts at once — a real runaway');
+});
+
+// fast-tests T01 (DESIGN §2.6): with passes woken 250 ms apart, the graces still mean grace × POLL_MS.
+// runaway(liveCounts, times) folds the verdict over passes at the given times, as main() carries it.
+const POLL = 5000;
+const runaway = (liveCounts, times) => {
+  let over = 0;
+  let overSince = null;
+  let v;
+  for (let i = 0; i < times.length; i++) {
+    v = runawayVerdict({ liveCount: liveCounts[i], ceiling: 2, overPasses: over, overGrace: 3, overSince, now: times[i], minHeldMs: 3 * POLL });
+    over = v.over;
+    overSince = v.overSince;
+    if (v.abort) return { ...v, at: times[i] };
+  }
+  return v;
+};
+
+test('runawayVerdict: ceiling + 1 over three wake-driven passes inside grace × POLL_MS does not abort; held past it does; ceiling + 2 aborts at once', () => {
+  const gap = PASS_MIN_GAP_MS;
+  assert.equal(gap, 250);
+  assert.equal(runaway([3, 3, 3], [0, gap, 2 * gap]).abort, false, 'a review hand-off with passes 250 ms apart');
+  const many = Array.from({ length: 40 }, (_, i) => i * gap); // 40 passes over 9.75 s
+  assert.equal(runaway(many.map(() => 3), many).abort, false, 'many passes, still under 15 s');
+  const held = runaway([3, 3, 3, 3], [0, gap, 2 * gap, 3 * POLL]);
+  assert.equal(held.abort, true, 'held for grace × POLL_MS');
+  assert.equal(held.at, 3 * POLL);
+  assert.equal(runaway([3, 3, 3], [0, 10_000, 14_999]).abort, false, 'one millisecond short');
+  assert.equal(runaway([4], [0]).abort, true, 'ceiling + 2 on the first pass');
+  assert.equal(runaway([3, 4], [0, gap]).abort, true, 'ceiling + 2 inside the grace');
+  // Dropping back to the ceiling resets the clock as well as the count.
+  const reset = runaway([3, 3, 2, 3, 3, 3], [0, 14_000, 14_500, 15_000, 15_250, 15_500]);
+  assert.equal(reset.abort, false, 'a fresh overage starts its own clock');
+  assert.equal(reset.overSince, 15_000);
+});
+
+test('stallVerdict: three quiet wake-driven passes inside grace × POLL_MS do not end the run; quiet for grace × POLL_MS does', () => {
+  const fold = (quiets, times) => {
+    let idle = 0;
+    let idleSince = null;
+    let v;
+    for (let i = 0; i < times.length; i++) {
+      v = stallVerdict({ quiet: quiets[i], idlePasses: idle, idleSince, now: times[i], grace: 3, minHeldMs: 3 * POLL });
+      idle = v.idle;
+      idleSince = v.idleSince;
+      if (v.stalled) return { ...v, at: times[i] };
+    }
+    return v;
+  };
+  assert.equal(fold([true, true, true], [0, 250, 500]).stalled, false, 'three quiet passes a quarter-second apart');
+  assert.equal(fold([true, true, true, true], [0, 5000, 10_000, 15_000]).stalled, true, 'quiet across three backstop periods');
+  assert.equal(fold([true, true], [0, 20_000]).stalled, false, 'long enough, but only two passes');
+  assert.equal(fold([true, true, false, true, true, true], [0, 10_000, 14_000, 15_000, 20_000, 25_000]).stalled, false, 'a productive pass resets the clock');
+  assert.deepEqual(stallVerdict({ quiet: false, idlePasses: 5, idleSince: 3 }), { stalled: false, idle: 0, idleSince: null });
+  assert.equal(stallVerdict({ quiet: true, idlePasses: 2 }).stalled, true, 'no hold given: the pass count alone, as before');
 });
 
 // --- 16. The up-channel is a file drop the bin drains directly, no agent (DESIGN §2.2) -------------
@@ -1434,7 +1491,10 @@ test('makePrepare starts the setup lines in the worktree, logging to control/set
     start: (lines, opts) => (calls.push({ lines, opts }), 'handle'),
   });
   assert.equal(prepare('T03', '/wt/T03'), 'handle');
-  assert.deepEqual(calls, [{ lines: ['cd server && npm ci'], opts: { cwd: '/wt/T03', logPath: join(dir, 'setup', 'T03.log') } }]);
+  assert.equal(calls.length, 1);
+  const { onSettled, ...opts } = calls[0].opts;
+  assert.deepEqual({ lines: calls[0].lines, opts }, { lines: ['cd server && npm ci'], opts: { cwd: '/wt/T03', logPath: join(dir, 'setup', 'T03.log') } });
+  assert.equal(typeof onSettled, 'function', 'the settle hook is passed to every start (fast-tests T01)');
   assert.ok(existsSync(join(dir, 'setup')), 'the setup log folder is created');
 });
 
@@ -1796,6 +1856,7 @@ function stubSessions() {
       },
       note() {},
       remoteControl: async () => {},
+      onEvent: () => {},
       onExit: (fn) => exitFns.push(fn),
       entries: () => [],
       close: async () => {

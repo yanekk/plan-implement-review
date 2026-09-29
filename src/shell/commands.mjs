@@ -132,10 +132,21 @@ export function runLines(lines, { cwd, logPath = null, append = false, env = pro
 //                   reason: 'killed' }.
 // Each line is spawned detached, in its own process group, so kill() can signal the group: `npm ci`
 // forks children that a signal to the shell alone would orphan.
-export function startLines(lines, { cwd, logPath = null, env = process.env, spawn = nodeSpawn } = {}) {
+// `onSettled()` is called once, the moment the result is set (ok, failed, spawn error or killed), so the
+// coordinator loop polls the handle at once instead of on its 5 s backstop (fast-tests DESIGN §2.1). No
+// lines settles at once, inside this call. A throwing hook is swallowed: the result is already set.
+export function startLines(lines, { cwd, logPath = null, env = process.env, spawn = nodeSpawn, onSettled = () => {} } = {}) {
   let result = null;
+  const settled = () => {
+    try {
+      onSettled();
+    } catch {
+      /* the result stands; the loop's backstop polls it */
+    }
+  };
   if (lines.length === 0) {
     result = { ok: true, logPath: null };
+    settled();
     return { poll: () => result, kill() {} };
   }
   const childEnv = scrubEnv(env);
@@ -148,6 +159,7 @@ export function startLines(lines, { cwd, logPath = null, env = process.env, spaw
     result = r;
     child = null;
     closeLog(fd);
+    settled();
   };
 
   const startAt = (i) => {
