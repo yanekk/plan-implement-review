@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { alertText, reminderText, excerpt, endAlert, newNotifyState, notifyStep, notifyExit } from './notify.mjs';
+import { alertText, reminderText, excerpt, endAlert, holdAlert, newNotifyState, notifyStep, notifyExit } from './notify.mjs';
 
 const cp = (s) => [...s].length;
 const base = { plan: 'screen-time', task: 'T04', role: 'implement' };
@@ -354,4 +354,14 @@ test('endAlert: a dev base names dev and never main; the default is main', () =>
   for (const a of [ready, red]) assert.doesNotMatch(`${a.title} ${a.message}`, /\bmain\b/);
   assert.equal(endAlert({ slug: 'demo', ready: false, unresolved: true }).message, 'Merge with main unresolved on pir/demo');
   assert.equal(endAlert({ slug: 'demo', ready: true, taskCount: 3 }).message, 'All 3 tasks merged. git switch main && git merge pir/demo');
+});
+
+// base-branch T07 (DESIGN §2.8): the one alert of a held end-of-run sync names its reason.
+test('holdAlert: `{slug} · waiting` over the hold\'s reason; a missing text still says the run is held', () => {
+  assert.deepEqual(holdAlert({ slug: 'demo', hold: { reason: 'diverged', text: 'your dev and origin/dev have split apart' } }), {
+    title: 'demo · waiting',
+    message: 'your dev and origin/dev have split apart',
+    tags: ['hourglass'],
+  });
+  assert.equal(holdAlert({ slug: 'demo', hold: { reason: 'fetch-failed' } }).message, 'the end of the run is held');
 });

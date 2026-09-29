@@ -126,9 +126,13 @@ function agentRow(t) {
 // runState (a pass's output, assembled by the shell):
 //   { branch, ceiling, complete?, readyToMerge?, testsReason?, testing?, interrupted?, tasks: [task…] }
 //   testsReason: { reason, logPath } from the red end gate, or null (green, unfinished, an old snapshot).
-//   handoff: null | { state:'preparing'|'ready'|'red', reportPath, mainSha } — the end of a run with the
-//            coordinator agent (pir-coordinator §2.9, §2.10); null with the agent off, where the footer is
-//            today's hand-off or red line.
+//   handoff: null | { state:'preparing'|'ready'|'red', reportPath, baseSha, base, hold, lastWatch,
+//            lastWatchFailure } — the end of a run with the coordinator agent (pir-coordinator §2.9, §2.10);
+//            null with the agent off, where the footer is today's hand-off or red line. `hold` is null or
+//            { reason, text, since, nextTry }: the base could not be prepared (base-branch DESIGN §2.8), and
+//            the preparing footer carries it so the live view shows why.
+//   base:    the run's base branch (base-branch DESIGN §2.9), carried on the hand-off and interrupted
+//            footers for the merge line; absent in an old snapshot, where the renderer reads `main`.
 //   coordinator: null | { id, live, logPath, state?, holding? } — the run's agent (pir-coordinator T12):
 //            once set, the rows gain a separator (kind `separator`) and the agent's pinned row (kind `agent`,
 //            or `agent-given-up`), after the tasks and before the helpers. state: 'up'|'restarting'|'given-up';
@@ -168,6 +172,7 @@ function agentRow(t) {
 export function buildDisplay(runState, { now, spinnerFrame } = {}) {
   const { branch, ceiling, complete = false, readyToMerge = false, testsReason = null, testing = null, interrupted = false, handoff = null, tasks = [] } =
     runState ?? {};
+  const base = runState?.base ?? handoff?.base ?? null;
 
   const doneIds = new Set(tasks.filter((t) => t.done).map((t) => t.id));
   const running = tasks.filter((t) => !t.done && (ACTIVE_PHASES.has(t.phase) || isRequest(t))).length;
@@ -197,7 +202,7 @@ export function buildDisplay(runState, { now, spinnerFrame } = {}) {
   // `branch` rides at the top level beside summary/rows/footer: the renderer shows the run's branch in
   // its header line on every paint, but the footer only carries a branch in some states (handoff, red),
   // so the summary line cannot source it from there. It is the one field added to the interface sketch.
-  return { branch: branch ?? null, summary, rows, footer: footerFor({ tasks: [...tasks, ...helpers], complete, readyToMerge, testsReason, testing, interrupted, handoff, branch, now }) };
+  return { branch: branch ?? null, summary, rows, footer: footerFor({ tasks: [...tasks, ...helpers], complete, readyToMerge, testsReason, testing, interrupted, handoff, branch, base, now }) };
 }
 
 // One row for one task. The order of the checks is the priority: a ✅ task is done however it got there;
@@ -241,8 +246,9 @@ function rowFor(t, { now, doneIds, ceilingFull }) {
 // parked worker the person must answer, then the end-of-run hand-off (green) or failure (red), then the
 // end gate still running (`testing`), else the plain running line. `asking` beats `handoff`/`red` because a complete run has nothing asking, so the
 // two never contend; the order only makes the intent explicit.
-function footerFor({ tasks, complete, readyToMerge, testsReason, testing, interrupted, handoff, branch, now }) {
-  if (interrupted) return { kind: 'interrupted' };
+function footerFor({ tasks, complete, readyToMerge, testsReason, testing, interrupted, handoff, branch, base, now }) {
+  const named = base ? { base } : {};
+  if (interrupted) return { kind: 'interrupted', ...named };
 
   // A worker fixing a conflict it was sent asks nothing, so it never takes the footer (§2.10); nor does a
   // question the coordinator agent holds (pir-coordinator §2.5).
@@ -251,18 +257,20 @@ function footerFor({ tasks, complete, readyToMerge, testsReason, testing, interr
     return { kind: 'asking', task: asking.id, slug: asking.slug, question: asking.question ?? '' };
   }
 
-  // The end of a run with the coordinator agent (pir-coordinator §2.9, §2.10): preparing (main synced into
+  // The end of a run with the coordinator agent (pir-coordinator §2.9, §2.10): preparing (the base synced into
   // the branch, the report being written), then ready to merge or red, each naming the committed report.
   // The branch rides along for the merge line. Absent with the agent off, where today's footers follow.
   if (handoff?.state === 'preparing' || handoff?.state === 'ready' || handoff?.state === 'red') {
-    const f = { kind: 'handoff', branch, state: handoff.state, reportPath: handoff.reportPath ?? null };
+    const f = { kind: 'handoff', branch, ...named, state: handoff.state, reportPath: handoff.reportPath ?? null };
+    // A held sync names its reason in the preparing line (base-branch DESIGN §2.8).
+    if (handoff.state === 'preparing' && handoff.hold) return { ...f, hold: { reason: handoff.hold.reason, text: handoff.hold.text } };
     // Red says why, as today's red footer does (DESIGN §2.8), when the gate carried it.
     if (handoff.state === 'red') return { ...f, reason: testsReason?.reason ?? null, logPath: testsReason?.logPath ?? null };
     return f;
   }
 
   if (complete) {
-    if (readyToMerge) return { kind: 'handoff', branch };
+    if (readyToMerge) return { kind: 'handoff', branch, ...named };
     // The red footer says why and where the output is (DESIGN §2.8); both null for a snapshot written
     // before the gate carried them.
     return { kind: 'red', branch, reason: testsReason?.reason ?? null, logPath: testsReason?.logPath ?? null };

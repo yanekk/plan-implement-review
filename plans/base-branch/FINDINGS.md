@@ -5,6 +5,7 @@ hand with the user · 📌 worth knowing · 🔄 a decision the user changed.
 
 | Date | | Finding |
 |---|---|---|
+| 2026-09-29 | 📌 | The end sync's `prepareBase` runs synchronously in the coordinator loop: an unreachable remote that times out rather than refuses blocks the pass and live view up to 30 s on every hold retry (60 s) and every watch (5 min). Accepted in T07 review. |
 | 2026-09-29 | 📌 | `slugTaken` reads the local base only. When the local `dev` is dirty and behind `origin/dev` (not moved, §2.3), a plan only on `origin/dev` is missed, though the plan branch contains it. Reproduced in T05 review; left for the user. |
 | 2026-09-29 | 📌 | The dashboard box calls `startPlanRun` synchronously, so a slow fetch freezes the screen up to 30 s with no note. §2.6 asks for a synchronous fetch; a "fetching…" note first would help. Seen in T05 review. |
 | 2026-09-29 | 📌 | Bare `pir plan` runs `planPreflight` (fetch included) before the brief box and again in `startPlanRun`, so a slow remote is waited on twice. Harmless; passing the first result through would remove it. |

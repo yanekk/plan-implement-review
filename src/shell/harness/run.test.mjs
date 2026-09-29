@@ -926,7 +926,7 @@ test('createScenarioSteps merges once the run is ready and the branch holds main
     const merges = () => calls.filter((a) => a.includes('merge') && a[0] !== 'merge-base');
     steps.tick('');
     assert.equal(merges().length, 0, 'no status yet');
-    writeSnapshot(control, { proc: { pid: 1 }, finalState: null, runState: { tasks: [], handoff: { state: 'ready', reportPath: 'plans/x/REPORT.md', mainSha: 'm' } } });
+    writeSnapshot(control, { proc: { pid: 1 }, finalState: null, runState: { tasks: [], handoff: { state: 'ready', reportPath: 'plans/x/REPORT.md', baseSha: 'm' } } });
     steps.tick('');
     assert.equal(merges().length, 0, 'ready, but the branch does not hold main yet');
     holdsMain = true;

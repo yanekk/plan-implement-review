@@ -169,7 +169,7 @@ test('a stale/final run renders its last frame with a stale marker (§2.4)', () 
     { slug: 'gamma', state: 'finished', repo: 'repoC', snap, record: { pid: 9, branch: 'pir/gamma' } },
     { now: NOW },
   );
-  assert.match(frameText(finished), /finished · this frame is stale.*git merge pir\/gamma/s, 'a finished run shows the hand-off');
+  assert.match(frameText(finished), /finished · this frame is stale.*git switch main && git merge\s+pir\/gamma/s, 'a finished run shows the hand-off');
   assert.equal(findSpan(finished, 'this frame is stale').style, 'ended', 'a finished run\'s marker is dim');
 
   const stopped = buildWatchFrame(
@@ -191,7 +191,11 @@ test('a finished red frame says not ready to merge and never offers `git merge`;
   assert.match(red, /test `make test` exited 2 · output: \/p\/tests\.log/, 'the footer above carries the reason');
 
   const green = frameFor({ branch: 'pir/gamma', ceiling: 2, complete: true, readyToMerge: true, tasks });
-  assert.match(green, /finished · this frame is stale\. Hand-off: git merge pir\/gamma/);
+  assert.match(green, /finished · this frame is stale\. Hand-off: git switch main && git merge pir\/gamma/);
+  // A dev run's snapshot carries its base (base-branch T07): the stale line and the footer both switch to dev.
+  const dev = frameFor({ branch: 'pir/gamma', base: 'dev', ceiling: 2, complete: true, readyToMerge: true, tasks });
+  assert.match(dev, /finished · this frame is stale\. Hand-off: git switch dev && git merge pir\/gamma/);
+  assert.doesNotMatch(dev, /\bmain\b/);
 });
 
 test('a finished run with no snapshot does not guess green: no merge offer, it points at run.log (DESIGN §2.8)', () => {

@@ -51,7 +51,8 @@ import { reapRecorded } from './reap.mjs';
 import { planHome } from './plan-home.mjs';
 import { startCoordinatorAgent, withAgent, closingAnswer, readLogEntries } from './coordinator-agent.mjs';
 import { startWorker } from './worker-proc.mjs';
-import { alertText, endAlert, notifyStep, notifyExit, newNotifyState } from '../core/notify.mjs';
+import { alertText, endAlert, holdAlert, notifyStep, notifyExit, newNotifyState } from '../core/notify.mjs';
+import { holdText } from '../core/basebranch.mjs';
 import { publish as ntfyPublish, clear as ntfyClear } from './ntfy.mjs';
 import { readNotifyConfig, ensurePresenceMarker, notifyIcon } from './notify-config.mjs';
 
@@ -168,6 +169,11 @@ export function startCoordinator({
   // The run's base branch (base-branch DESIGN §2.5): the bin passes the one it resolved at start and the
   // end of the run syncs with it. The default serves only the tests that drive a `main` scratch repo.
   base = 'main',
+  // The end-of-run sync's two clocks (base-branch DESIGN §2.8): a held sync retries every `retryMs`, and
+  // while the run waits for the person's merge the remote is fetched every `watchMs`. Compared against
+  // `now()`, so a test steps them without waiting.
+  retryMs = 60_000,
+  watchMs = 300_000,
 } = {}) {
   if (!slug) throw new Error('startCoordinator: no slug');
   const RUN_BASE = base;
@@ -459,7 +465,14 @@ export function startCoordinator({
       lastTasks = r.tasks;
       // A red gate gets its one test-fix worker before the sync (T10, user 2026-09-27).
       const gate = r.testsPassed ? 'green' : 'red';
-      handoff = { state: 'preparing', step: gate === 'red' ? 'fix' : 'sync', gate, gateReason: r.testsReason ?? null, tests: null, testsReason: null, sync: null, mainSha: null, reportPath: null, finished: null, fix: null, fixUsed: false, fixAfter: null };
+      handoff = {
+        state: 'preparing', step: gate === 'red' ? 'fix' : 'sync', gate, gateReason: r.testsReason ?? null, tests: null, testsReason: null,
+        sync: null, baseSha: null, reportPath: null, finished: null, fix: null, fixUsed: false, fixAfter: null,
+        // The base-branch sync (base-branch DESIGN §2.8): the hold while the base cannot be prepared, the
+        // remote it was fetched from, the local base's tip at the last sync (a move of it re-syncs), and
+        // the watch clock while waiting for the merge.
+        hold: null, remote: null, localSeen: null, watchFrom: null, lastWatch: null, lastWatchFailure: null,
+      };
     }
 
     return {
@@ -510,7 +523,16 @@ export function startCoordinator({
     // `unresolved` (main-sync left unresolved) is what the end-of-run alert names as the red cause
     // (reliable-notifications DESIGN §2.4). Only present when true, so the view's shape (and status.json)
     // is unchanged for every other run.
-    const view = { state: handoff.state, reportPath: handoff.reportPath, mainSha: handoff.mainSha };
+    const view = {
+      state: handoff.state,
+      reportPath: handoff.reportPath,
+      baseSha: handoff.baseSha,
+      base: RUN_BASE,
+      // Why the run is held in `preparing` (base-branch DESIGN §2.8), or null; the live view shows its text.
+      hold: handoff.hold ? { ...handoff.hold } : null,
+      lastWatch: handoff.lastWatch,
+      lastWatchFailure: handoff.lastWatchFailure,
+    };
     if (handoff.sync?.state === 'unresolved') view.unresolved = true;
     return view;
   }
@@ -531,12 +553,44 @@ export function startCoordinator({
   const branchReady = () => handoff.tests === 'green' && handoff.sync?.state !== 'unresolved';
   const fixResult = () => (handoff.fix === 'green' || handoff.fix === 'red' ? handoff.fix : null);
   const footerNow = () =>
-    branchFooter({ baseSha: handoff.sync?.baseSha ?? null, tests: handoff.tests, syncedAt: isoNow(), unresolved: handoff.sync?.state === 'unresolved', fix: fixResult() });
+    branchFooter({ baseSha: handoff.sync?.baseSha ?? null, base: RUN_BASE, tests: handoff.tests, syncedAt: isoNow(), unresolved: handoff.sync?.state === 'unresolved', fix: fixResult() });
   const settle = () => {
     handoff.state = branchReady() ? 'ready' : 'red';
-    handoff.mainSha = handoff.sync?.baseSha ?? handoff.mainSha;
+    handoff.baseSha = handoff.sync?.baseSha ?? handoff.baseSha;
     handoff.step = 'waiting';
+    // The first remote check of the wait is one watch interval from now.
+    handoff.watchFrom = now();
   };
+
+  // prepareRunBase(mode) → prepareBase's result for the run's base (base-branch DESIGN §2.3). A worktree
+  // without prepareBase (a hand-built stub) has no remote to ask, so its local base is the answer. A throw
+  // is held like an unreachable remote: the run waits and retries rather than dying at its last step.
+  const prepareRunBase = (mode) => {
+    try {
+      if (worktree.prepareBase) return worktree.prepareBase(RUN_BASE, { mode });
+      const sha = worktree.baseTip({ ref: RUN_BASE_REF });
+      return sha ? { ok: true, sha, remote: null, local: 'keep' } : { ok: false, reason: 'no-base-branch', remote: null };
+    } catch (err) {
+      return { ok: false, reason: 'fetch-failed', remote: handoff.remote, error: String(err?.message ?? err) };
+    }
+  };
+  const trackingRef = () => (handoff.remote ? `refs/remotes/${handoff.remote}/${RUN_BASE}` : null);
+
+  // holdSync(prep, rec) → the base could not be prepared (fetch-failed, diverged): stay in `preparing`
+  // with the reason, retry after retryMs (DESIGN §2.8). `since` is kept while the reason stays the same,
+  // so the view and the one alert per reason see one hold, not a new one every minute.
+  function holdSync(prep, rec) {
+    const t = now();
+    const same = handoff.hold?.reason === prep.reason;
+    if (prep.remote) handoff.remote = prep.remote;
+    handoff.hold = { reason: prep.reason, text: holdText(prep, { base: RUN_BASE }), since: same ? handoff.hold.since : t, nextTry: t + retryMs };
+    handoff.state = 'preparing';
+    handoff.step = 'sync';
+    if (!same) {
+      rec('base-hold', { reason: prep.reason });
+      if (prep.error) control?.log?.(`base-hold ${prep.reason}: ${prep.error}`);
+    }
+  }
 
   // An end-of-run helper worker (main-sync, tests-fix): spawned in the feature worktree under its task
   // label, held in state.tasks under that label so its reports and parks are read like a task worker's.
@@ -563,7 +617,7 @@ export function startCoordinator({
   }
 
   function spawnSyncWorker(files) {
-    return spawnHelper(MAIN_SYNC_TASK, 'sync', buildConflictPrompt({ kind: 'main-sync', slug, plan: slug, files, audience: 'worker' }));
+    return spawnHelper(MAIN_SYNC_TASK, 'sync', buildConflictPrompt({ kind: 'main-sync', slug, plan: slug, files, base: RUN_BASE, audience: 'worker' }));
   }
 
   // The one test-fix worker of an end sequence (T10, DESIGN §2.9 step 1, user 2026-09-27). `after` is
@@ -599,23 +653,41 @@ export function startCoordinator({
   function endSync(rec) {
     const existing = existsSync(join(state.feature.path, reportRel));
     handoff.rewrite = existing;
-    // A restart after the person merged while pir was down: main already holds the tip. Syncing now would
-    // merge main back into the branch, move its tip past main, and wait in ready for a merge already done.
-    if (existing && worktree.baseContains(state.feature.branch, { refs: [RUN_BASE_REF] })) {
+    // A restart after the person merged while pir was down: the base already holds the tip. Syncing now
+    // would merge the base back into the branch, move its tip past the base, and wait in ready for a merge
+    // already done.
+    const mergedInto = (refs) => {
+      if (!existing || !worktree.baseContains(state.feature.branch, { refs })) return false;
       handoff.reportPath = reportRel;
-      handoff.mainSha = worktree.baseTip?.({ ref: RUN_BASE_REF }) ?? handoff.mainSha;
+      handoff.baseSha = worktree.baseTip?.({ ref: refs[0] }) ?? handoff.baseSha;
+      handoff.hold = null;
       handoff.tests ??= handoff.gate;
       handoff.state = handoff.tests === 'green' ? 'ready' : 'red';
       handoff.step = 'waiting';
       finish('merged', rec);
+      return true;
+    };
+    if (mergedInto([RUN_BASE_REF])) return;
+    // Held: nothing until the retry interval has passed (DESIGN §2.8).
+    if (handoff.hold && now() < handoff.hold.nextTry) return;
+    // Never merge a base this sync did not just try to fetch (DESIGN §2.8, §2.3).
+    const prep = prepareRunBase('start');
+    if (!prep.ok) {
+      holdSync(prep, rec);
       return;
     }
+    if (handoff.hold) rec('base-hold', { reason: null });
+    handoff.hold = null;
+    if (prep.remote) handoff.remote = prep.remote;
+    // The merge may have been done on the remote only (a pull request merged on GitHub): its copy holds it.
+    if (mergedInto([prep.sha])) return;
+    handoff.localSeen = worktree.baseTip({ ref: RUN_BASE_REF });
     let res;
     try {
-      res = worktree.syncBase(state.feature.path, { baseSha: worktree.baseTip({ ref: RUN_BASE_REF }), base: RUN_BASE });
+      res = worktree.syncBase(state.feature.path, { baseSha: prep.sha, base: RUN_BASE });
     } catch (err) {
       control?.log?.(`main-sync failed: ${err?.message ?? err}`);
-      handoff.sync = { state: 'unresolved', baseSha: worktree.baseTip?.({ ref: RUN_BASE_REF }) ?? null, files: [] };
+      handoff.sync = { state: 'unresolved', baseSha: prep.sha, files: [] };
       handoff.tests = 'red';
       handoff.step = existing ? 'footer' : 'brief';
       return;
@@ -688,11 +760,11 @@ export function startCoordinator({
       // gone from the worktree: rewritten below with only the footer, as the branch had it
     }
     writeFileSync(path, replaceFooter(text, footerNow()));
-    worktree.commitFeature(`report(${slug}): re-synced with main`);
+    worktree.commitFeature(`report(${slug}): re-synced with ${RUN_BASE}`);
     rec('report', { resync: true });
     handoff.reportPath = reportRel;
     settle();
-    if (agent?.alive()) agent.tell(resyncedFor({ slug, baseSha: handoff.sync?.baseSha, tests: handoff.tests, unresolved: handoff.sync?.state === 'unresolved' }));
+    if (agent?.alive()) agent.tell(resyncedFor({ slug, baseSha: handoff.sync?.baseSha, base: RUN_BASE, tests: handoff.tests, unresolved: handoff.sync?.state === 'unresolved' }));
   }
 
   function endBrief() {
@@ -705,6 +777,7 @@ export function startCoordinator({
         sync: handoff.sync,
         tests: handoff.tests,
         fix: fixResult(),
+        base: RUN_BASE,
       });
       if (agent.briefEnd(facts)) handoff.step = 'report';
       return;
@@ -721,13 +794,50 @@ export function startCoordinator({
     control?.log?.(`report ${reportRel}`);
     handoff.reportPath = reportRel;
     settle();
-    if (agent?.alive()) agent.tell(handoffFor({ slug, reportPath: reportRel, ready: handoff.state === 'ready', report: text }));
+    if (agent?.alive()) agent.tell(handoffFor({ slug, reportPath: reportRel, ready: handoff.state === 'ready', report: text, base: RUN_BASE }));
   }
 
   function finish(by, rec) {
     handoff.finished = by;
     rec('finished', { by });
     closeAgent();
+  }
+
+  // The wait for the person's merge (base-branch DESIGN §2.8). Each pass reads the local base; every
+  // watchMs the remote is fetched too (moving nothing but its remote-tracking ref), so a merge done on
+  // GitHub is seen. A base that moved to a commit without the tip re-syncs; a failed fetch is only noted.
+  function endWait(rec) {
+    const t = now();
+    let watched = null;
+    if (handoff.watchFrom == null) handoff.watchFrom = t;
+    if (t - handoff.watchFrom >= watchMs) {
+      handoff.watchFrom = t;
+      watched = prepareRunBase('watch');
+      if (watched.remote) handoff.remote = watched.remote;
+      if (!watched.ok && watched.reason === 'fetch-failed') handoff.lastWatchFailure = t;
+      else handoff.lastWatch = t;
+    }
+    const refs = [RUN_BASE_REF, trackingRef()].filter(Boolean);
+    if (worktree.baseContains(state.feature.branch, { refs })) {
+      finish('merged', rec);
+      return;
+    }
+    // Moved: the local base is not where the last sync left it, or the remote's newer copy is not what was
+    // merged. Compared with the local tip at the sync, not the merged commit, since that may be the
+    // remote's copy while the local branch stays behind it (a checked-out base with changes, §2.3).
+    const localMoved = worktree.baseTip({ ref: RUN_BASE_REF }) !== handoff.localSeen;
+    const remoteMoved = !!watched?.ok && watched.sha !== handoff.baseSha;
+    if (!localMoved && !remoteMoved) return;
+    // The base moved without the feature tip: re-sync so the hand-off still merges cleanly (§2.10).
+    handoff.state = 'preparing';
+    handoff.rewrite = true;
+    // A re-sync whose tests turn red gets one fix attempt of its own (T10). The last sequence's fix
+    // result is cleared too: the rewritten footer describes this sync, and a stale "stayed red" over
+    // "Tests: green" would contradict itself.
+    handoff.fixUsed = false;
+    handoff.fix = null;
+    handoff.step = 'sync';
+    endSync(rec);
   }
 
   function endPass() {
@@ -781,18 +891,7 @@ export function startCoordinator({
         break;
       case 'waiting':
         if (routed.close) finish('closed', rec);
-        else if (worktree.baseContains(state.feature.branch, { refs: [RUN_BASE_REF] })) finish('merged', rec);
-        else if (worktree.baseTip({ ref: RUN_BASE_REF }) !== handoff.mainSha) {
-          // main moved without the feature tip: re-sync so the hand-off still merges cleanly (§2.10).
-          handoff.state = 'preparing';
-          handoff.rewrite = true;
-          // A re-sync whose tests turn red gets one fix attempt of its own (T10). The last sequence's fix
-          // result is cleared too: the rewritten footer describes this sync, and a stale "stayed red" over
-          // "Tests: green" would contradict itself.
-          handoff.fixUsed = false;
-          handoff.fix = null;
-          endSync(rec);
-        }
+        else endWait(rec);
         break;
       default:
         break;
@@ -1526,6 +1625,7 @@ export function buildRunState({
   handoff = null,
   heldByAgent = new Set(),
   coordinator = null,
+  base = null,
 } = {}) {
   // One row entry: a plan task, or an end-of-run helper (`st` its state.tasks entry, keyed by its label).
   const entryFor = ({ id, slug: rowSlug, deps, done }) => {
@@ -1566,7 +1666,9 @@ export function buildRunState({
     helper: true,
   }));
   // handoff is the end of the run with the agent on (pir-coordinator T05): { state: 'preparing'|'ready'|'red',
-  // reportPath, mainSha }, null otherwise.
+  // reportPath, baseSha, base, hold, lastWatch, lastWatchFailure }, null otherwise (base-branch DESIGN §2.8).
+  // base is the run's base branch (base-branch DESIGN §2.9), for the hand-off footers and a stale frame's
+  // hand-off line; absent when not given, so a snapshot without it reads `main` as before.
   // coordinator is the run's agent for the screen to open and its row (pir-coordinator §2.8, T12):
   // { id, live, logPath, state, holding }, null with `--no-coordinator` or when it never started.
   return {
@@ -1578,6 +1680,7 @@ export function buildRunState({
     interrupted: !!interrupted,
     handoff: handoff ?? null,
     coordinator: coordinator ?? null,
+    ...(base ? { base } : {}),
     tasks,
     ...(helpers.length ? { helpers } : {}),
   };
@@ -1849,9 +1952,27 @@ export function endAlertPass({ r, coordinator, slug, sent = false, send }) {
     taskCount: Array.isArray(r.tasks) ? r.tasks.length : 0,
     reason: r.testsReason?.reason ?? null,
     unresolved: !!r.handoff.unresolved,
+    base: r.handoff.base ?? 'main',
   });
   send({ ...alert, click: coordinator?.agent?.remoteUrl?.() ?? null });
   return true;
+}
+
+// holdAlertPass({ r, slug, sentReason, send }) → the reason last alerted, or null. A held end sync
+// (base-branch DESIGN §2.8) sends one alert when the hold begins, none on its retries, and a new one only
+// when its reason changes; once the hold clears, a later hold alerts again.
+export function holdAlertPass({ r, slug, sentReason = null, send }) {
+  const hold = r?.finished ? null : r?.handoff?.hold ?? null;
+  if (!hold) return null;
+  if (hold.reason === sentReason) return sentReason;
+  send(holdAlert({ slug, hold }));
+  return hold.reason;
+}
+
+// holdAlertAction(alert, { noteTo }) → the runner's send for a hold alert: like the end alert, never
+// cleared or reminded, under its own id.
+export function holdAlertAction(alert, opts = {}) {
+  return { ...endAlertAction(alert, opts), id: 'hold' };
 }
 
 // endAlertAction(alert, { noteTo }) → the runner's send for the end-of-run alert: no episode, no seq (it is
@@ -2084,7 +2205,7 @@ async function main(argv) {
   // The last run state painted, so an exit path (a signal, a stall, completion) can write it as the final
   // snapshot. Seeded with an empty-but-valid run state so a stop arriving before the first pass still
   // writes a snapshot parseSnapshot accepts.
-  let lastRunState = buildRunState({ passTasks: [], branch, ceiling: CEILING, interrupted: true });
+  let lastRunState = buildRunState({ passTasks: [], branch, base, ceiling: CEILING, interrupted: true });
 
   // Tear down every live worker of this run on any exit that is not a clean hand-off or a kill-switch
   // halt (both of which the loop already handled). This is the orphan-guard: a stall, a
@@ -2151,6 +2272,7 @@ async function main(argv) {
   const notifyStepOpts = remindMs > 0 ? { remindMs } : {};
   let notifyState = newNotifyState();
   let endAlertSent = false;
+  let holdAlertReason = null; // the reason of the last hold alert sent, null while no hold (base-branch §2.8)
   // The exit clears for every open episode (and the no-agent end alert, when given), awaited at most 2 s:
   // every exit path ends the process soon after, and an unawaited request dies with it (§3.3).
   const notifyExitNow = (extra = null) => {
@@ -2190,7 +2312,7 @@ async function main(argv) {
     const since = Date.now();
     trackTiming({}, passTasks.map((t) => t.num)); // the last merge's duration, before the pass ends
     const runState = testingRunState(
-      buildRunState({ passTasks, workers: platform.workers(), branch, ceiling: CEILING, doneMsByTask, coordinator: coordinator.agentView() }),
+      buildRunState({ passTasks, workers: platform.workers(), branch, base, ceiling: CEILING, doneMsByTask, coordinator: coordinator.agentView() }),
       { since },
     );
     lastRunState = runState;
@@ -2261,6 +2383,7 @@ async function main(argv) {
         stateTasks: coordinator.state.tasks,
         workers: platform.workers(),
         branch,
+        base,
         ceiling: CEILING,
         sinceByTask,
         stoppedAtByTask,
@@ -2282,7 +2405,7 @@ async function main(argv) {
       renderer.paint(buildDisplay(runState, { now: Date.now() }));
 
       // The end of the run with the agent (pir-coordinator DESIGN §2.9, §2.10): the passes after the end
-      // gate sync main, get the report committed and wait in `ready to merge` until the person merges or
+      // gate sync the base, get the report committed and wait in `ready to merge` until the person merges or
       // tells the agent to close. The run's own waiting is not a stall.
       if (coordinator.handoff) {
         // The one end-of-run alert, the first pass the run waits on the person's merge (DESIGN §2.4).
@@ -2293,10 +2416,17 @@ async function main(argv) {
           sent: endAlertSent,
           send: (alert) => runNotify([endAlertAction(alert, { noteTo: coordinator.agent?.id ?? null })]),
         });
+        // A held end sync alerts once per reason (base-branch DESIGN §2.8): the diverged case needs the person.
+        holdAlertReason = holdAlertPass({
+          r,
+          slug,
+          sentReason: holdAlertReason,
+          send: (alert) => runNotify([holdAlertAction(alert, { noteTo: coordinator.agent?.id ?? null })]),
+        });
         if (r.finished) {
           finishRun('complete'); // merged or closed: `finished` (DESIGN §2.10)
           renderer.close();
-          renderer.line('\n' + renderFinished({ by: r.finished, slug, ready: r.handoff?.state === 'ready', reportPath: r.handoff?.reportPath }));
+          renderer.line('\n' + renderFinished({ by: r.finished, slug, base, ready: r.handoff?.state === 'ready', reportPath: r.handoff?.reportPath }));
           await notifyExitNow();
           return;
         }
@@ -2317,6 +2447,7 @@ async function main(argv) {
           readyToMerge: r.readyToMerge,
           taskCount: r.tasks.length,
           slug,
+          base,
           why: r.surfaces.find((s) => s.kind === 'red-feature')?.text,
         }));
         // Without the agent the run ends on this pass, so its end alert is awaited, bounded (DESIGN §2.4).
@@ -2326,6 +2457,7 @@ async function main(argv) {
           taskCount: r.tasks.length,
           reason: r.surfaces.find((s) => s.kind === 'red-feature')?.text ?? null,
           unresolved: false,
+          base,
         });
         await notifyExitNow(runNotify([endAlertAction(alert)]));
         return;
