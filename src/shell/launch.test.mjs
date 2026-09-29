@@ -296,22 +296,29 @@ function g(cwd, ...args) {
 }
 
 // A repo named `name` with one commit on `branch`, under a realpath'd temp dir so paths compare equal
-// to what git reports (/var → /private/var on macOS).
-function gitRepo(t, { name = 'proj', branch = 'main' } = {}) {
-  const base = realpathSync(mkdtempSync(join(tmpdir(), 'pir-planlaunch-')));
-  t.after(() => rmSync(base, { recursive: true, force: true }));
-  const root = join(base, name);
+// to what git reports (/var → /private/var on macOS). The commit carries .pir/settings.json naming
+// `base` (default: `branch`), as every repo pir plans in now needs (base-branch DESIGN §2.1); `base:
+// null` leaves the file out. $PIR_HOME and $HOME point into the scratch dir, so the user settings file
+// read is never the person's real one (base-branch DESIGN §5.2).
+function gitRepo(t, { name = 'proj', branch = 'main', base: baseName = branch } = {}) {
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), 'pir-planlaunch-')));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const root = join(dir, name);
   mkdirSync(root);
   g(root, 'init', '-q', '-b', branch);
   g(root, 'config', 'user.email', 't08@test.local');
   g(root, 'config', 'user.name', 'T08');
   g(root, 'config', 'commit.gpgsign', 'false');
   writeFileSync(join(root, 'README.md'), 'x\n');
+  if (baseName !== null) {
+    mkdirSync(join(root, '.pir'));
+    writeFileSync(join(root, '.pir', 'settings.json'), JSON.stringify({ baseBranch: baseName }) + '\n');
+  }
   g(root, 'add', '-A');
   g(root, 'commit', '-q', '-m', 'init');
-  const home = join(base, 'home');
+  const home = join(dir, 'home');
   mkdirSync(home);
-  return { base, root, home, env: { PIR_HOME: home, KEEP: 'yes' } };
+  return { base: dir, root, home, env: { PIR_HOME: home, HOME: home, KEEP: 'yes' } };
 }
 
 const branchesOf = (root) => g(root, 'for-each-ref', '--format=%(refname:short)', 'refs/heads').trim().split('\n').sort();
@@ -332,22 +339,117 @@ function seq(...values) {
   return () => values[Math.min(i++, values.length - 1)];
 }
 
-for (const [label, setup, reason] of [
+// A bare repository beside the scratch repo, registered as its `origin`: the remote every git test uses
+// instead of the network (base-branch DESIGN §4).
+function addBareRemote(s, name = 'origin') {
+  const bare = join(s.base, `${name}.git`);
+  g(s.base, 'init', '-q', '--bare', bare);
+  g(s.root, 'remote', 'add', name, bare);
+  return bare;
+}
+
+// Commit one file on `branch` of the bare remote, through a throwaway clone, so the remote is ahead.
+function pushAhead(s, bare, branch, file = 'ahead.txt') {
+  const clone = join(s.base, `clone-${file}`);
+  g(s.base, 'clone', '-q', '-b', branch, bare, clone);
+  for (const [k, v] of [['user.email', 't05@test.local'], ['user.name', 'T05'], ['commit.gpgsign', 'false']]) g(clone, 'config', k, v);
+  writeFileSync(join(clone, file), 'ahead\n');
+  g(clone, 'add', '-A');
+  g(clone, 'commit', '-q', '-m', `ahead: ${file}`);
+  g(clone, 'push', '-q', 'origin', branch);
+  return g(clone, 'rev-parse', 'HEAD').trim();
+}
+
+for (const [label, setup, reason, opts = {}] of [
   ['outside a git repo', (s) => ({ cwd: s.base }), 'not-a-repo'],
-  ['a repo with no local main', (s) => { g(s.root, 'branch', '-m', 'main', 'trunk'); return {}; }, 'no-main'],
   ['an empty brief', () => ({ brief: '  \n\t ' }), 'empty-brief'],
+  ['a repo with no settings, even with main', () => ({}), 'no-base-setting', { base: null }],
+  ['a settings file that is not JSON', (s) => { writeFileSync(join(s.root, '.pir', 'settings.json'), '{oops'); return {}; }, 'bad-settings'],
+  ['a user settings file naming a bad branch', (s) => {
+    mkdirSync(join(s.home, '.pir', 'proj'), { recursive: true });
+    writeFileSync(join(s.home, '.pir', 'proj', 'settings.json'), '{"baseBranch": "a..b"}');
+    return {};
+  }, 'bad-settings'],
+  ['a base branch that exists nowhere, no remote', () => ({}), 'no-base-branch', { base: 'dev' }],
+  ['a base branch missing locally and on the remote', (s) => { addBareRemote(s); return {}; }, 'no-base-branch', { base: 'dev' }],
+  ['an unreachable remote', (s) => { g(s.root, 'remote', 'add', 'origin', join(s.base, 'gone.git')); return {}; }, 'fetch-failed'],
+  ['a local base split from the remote', (s) => {
+    const bare = addBareRemote(s);
+    g(s.root, 'push', '-q', 'origin', 'main');
+    pushAhead(s, bare, 'main');
+    writeFileSync(join(s.root, 'local.txt'), 'local\n');
+    g(s.root, 'add', '-A');
+    g(s.root, 'commit', '-q', '-m', 'local only');
+    return {};
+  }, 'diverged'],
 ]) {
   test(`startPlanRun pre-flight: ${label} → ${reason}, nothing created`, (t) => {
-    const s = gitRepo(t);
+    const s = gitRepo(t, opts);
     const extra = setup(s);
     const before = footprint(s);
     const { spawn, calls } = makeSpawn();
     const r = startPlanRun(extra.brief ?? 'a brief', { cwd: extra.cwd ?? s.root, spawn, exec: execAlive, env: s.env, random: seq('abcd') });
-    assert.deepEqual(r, { started: false, reason });
+    assert.equal(r.started, false);
+    assert.equal(r.reason, reason);
+    if (!['not-a-repo', 'empty-brief'].includes(reason)) assert.match(r.message, /^pir: /, 'a base refusal carries the §2.9 text');
     assert.equal(calls.length, 0, 'nothing spawned');
     assert.deepEqual(footprint(s), before, 'no branch, worktree, folder or index entry');
   });
 }
+
+test('startPlanRun refusal texts name the cause and the fix (§2.9)', (t) => {
+  const none = gitRepo(t, { base: null });
+  const r1 = startPlanRun('b', { cwd: none.root, spawn: makeSpawn().spawn, env: none.env });
+  assert.equal(r1.message, 'pir: no base branch is set for proj. Add .pir/settings.json with {"baseBranch": "<branch>"} (committed, for everyone), or ~/.pir/proj/settings.json (this machine only).');
+  const nodev = gitRepo(t, { base: 'dev' });
+  const r2 = startPlanRun('b', { cwd: nodev.root, spawn: makeSpawn().spawn, env: nodev.env });
+  assert.equal(r2.message, 'pir: the base branch dev (set in .pir/settings.json) does not exist locally, and this repo has no remote.');
+  assert.equal(r2.base, 'dev');
+  const gone = gitRepo(t);
+  g(gone.root, 'remote', 'add', 'origin', join(gone.base, 'gone.git'));
+  const r3 = startPlanRun('b', { cwd: gone.root, spawn: makeSpawn().spawn, env: gone.env });
+  assert.match(r3.message, /^pir: could not fetch main from origin: .+\. Nothing was created; try again when origin is reachable\.$/);
+  assert.equal(r3.remote, 'origin');
+});
+
+test('startPlanRun in a dev-only repo whose remote dev is ahead: cut at the remote sha, pirBase and baseBranch dev', (t) => {
+  const s = gitRepo(t, { branch: 'dev' });
+  const bare = addBareRemote(s);
+  g(s.root, 'push', '-q', 'origin', 'dev');
+  const ahead = pushAhead(s, bare, 'dev');
+  assert.notEqual(g(s.root, 'rev-parse', 'dev').trim(), ahead, 'the local dev is behind before the start');
+
+  const { spawn } = makeSpawn();
+  const r = startPlanRun('a brief', { cwd: s.root, spawn, exec: execAlive, env: s.env, now: fixedNow, random: seq('d0d0') });
+  assert.equal(r.started, true);
+  assert.equal(g(s.root, 'rev-parse', 'pir/plan-d0d0').trim(), ahead, 'cut from the remote newest dev');
+  assert.equal(g(s.root, 'config', '--get', 'branch.pir/plan-d0d0.pirBase').trim(), 'dev');
+  assert.equal(r.record.baseBranch, 'dev');
+  assert.equal(listRecords({ dir: join(s.home, '.pir', 'runs') })[0].baseBranch, 'dev');
+  // dev is checked out and clean in the person's checkout, so it moved forward (§2.3).
+  assert.equal(g(s.root, 'rev-parse', 'dev').trim(), ahead);
+  assert.equal(g(s.root, 'symbolic-ref', '--short', 'HEAD').trim(), 'dev', 'the person stays on their branch');
+});
+
+test('startPlanRun in a repo with no remote and a local dev plans from the local dev, no fetch', (t) => {
+  const s = gitRepo(t, { branch: 'dev' });
+  const head = g(s.root, 'rev-parse', 'dev').trim();
+  const r = startPlanRun('a brief', { cwd: s.root, spawn: makeSpawn().spawn, exec: execAlive, env: s.env, random: seq('e0e0') });
+  assert.equal(r.started, true);
+  assert.equal(g(s.root, 'rev-parse', 'pir/plan-e0e0').trim(), head);
+  assert.equal(r.record.baseBranch, 'dev');
+  assert.deepEqual(g(s.root, 'for-each-ref', '--format=%(refname)', 'refs/remotes').trim(), '', 'nothing fetched');
+});
+
+test('startPlanRun: the user settings file overrides the repo file (§2.1)', (t) => {
+  const s = gitRepo(t);
+  g(s.root, 'branch', 'dev');
+  mkdirSync(join(s.home, '.pir', 'proj'), { recursive: true });
+  writeFileSync(join(s.home, '.pir', 'proj', 'settings.json'), '{"baseBranch": "dev"}');
+  const r = startPlanRun('a brief', { cwd: s.root, spawn: makeSpawn().spawn, exec: execAlive, env: s.env, random: seq('f0f0') });
+  assert.equal(r.record.baseBranch, 'dev');
+  assert.equal(g(s.root, 'config', '--get', 'branch.pir/plan-f0f0.pirBase').trim(), 'dev');
+});
 
 // Replaces the old canonical-repo refusal test: that guard is gone (dashboard-plan-box DESIGN §2.8).
 test('startPlanRun: a checkout named plan-implement-review starts with no environment flag', (t) => {
@@ -358,7 +460,8 @@ test('startPlanRun: a checkout named plan-implement-review starts with no enviro
   const r = startPlanRun('a brief', { cwd: s.root, spawn, exec: execAlive, env, random: seq('abcd') });
   assert.equal(r.started, true, 'no repo-name refusal');
   assert.equal(calls.length > 0, true, 'the planning program was spawned');
-  assert.deepEqual(planPreflight({ cwd: s.root }), { ok: true, root: s.root, repo: 'plan-implement-review' });
+  const pre = planPreflight({ cwd: s.root, env: s.env });
+  assert.deepEqual([pre.ok, pre.root, pre.repo, pre.base], [true, s.root, 'plan-implement-review', 'main']);
 });
 
 test('startPlanRun pre-flight order: not-a-repo before an empty brief; checks run before the brief', (t) => {
@@ -366,7 +469,7 @@ test('startPlanRun pre-flight order: not-a-repo before an empty brief; checks ru
   const { spawn } = makeSpawn();
   assert.equal(startPlanRun('', { cwd: s.base, spawn, env: s.env }).reason, 'not-a-repo');
   g(s.root, 'branch', '-m', 'main', 'trunk');
-  assert.equal(startPlanRun('', { cwd: s.root, spawn, env: s.env }).reason, 'no-main');
+  assert.equal(startPlanRun('', { cwd: s.root, spawn, env: s.env }).reason, 'no-base-branch');
 });
 
 test('startPlanRun: a clean start creates branch, worktree, control folder, index record, and spawns', (t) => {
@@ -433,10 +536,12 @@ test('startPlanRun: a clean start creates branch, worktree, control folder, inde
     startTime: LSTART,
     startedAt: '2026-09-22T08:27:37.000Z',
     branch: 'pir/plan-3f9a',
+    baseBranch: 'main',
     finalState: null,
     updatedAt: null,
   });
   assert.deepEqual(r.record, records[0]);
+  assert.equal(g(s.root, 'config', '--get', 'branch.pir/plan-3f9a.pirBase').trim(), 'main', 'pirBase recorded');
 
   // Nothing tracked changed in the person's checkout.
   assert.equal(g(s.root, 'status', '--porcelain', '--untracked-files=no'), '');
@@ -449,7 +554,9 @@ test('startPlanRun from a subfolder and from a linked worktree: root is the main
   g(s.root, 'worktree', 'add', '-q', '-b', 'side', linked);
 
   for (const [cwd, hex] of [[join(s.root, 'deep', 'er'), 'aaa1'], [linked, 'aaa2']]) {
-    assert.deepEqual(planPreflight({ cwd, env: s.env }), { ok: true, root: s.root, repo: 'proj' });
+    const pre = planPreflight({ cwd, env: s.env });
+    assert.deepEqual([pre.ok, pre.root, pre.repo, pre.base, pre.remote], [true, s.root, 'proj', 'main', null]);
+    assert.equal(pre.baseSha, g(s.root, 'rev-parse', 'main').trim());
     const { spawn, calls } = makeSpawn();
     const r = startPlanRun('brief', { cwd, spawn, exec: execAlive, env: s.env, random: seq(hex) });
     assert.equal(r.record.repoPath, s.root);

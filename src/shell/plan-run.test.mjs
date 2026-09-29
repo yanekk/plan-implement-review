@@ -17,7 +17,7 @@ import { recordPath, writeRecord } from './index-store.mjs';
 import { dropPersonInput } from './person-inbox.mjs';
 import { readSnapshot } from './snapshot-store.mjs';
 import { git, openPlanBranch } from './worktree.mjs';
-import { findControlDir, findSessionLog, nextPlanLogPath, parseArgs, planRunState, plannerChecks, reviewerChecks, rootOf, runPlanning, sessionAsking, stepWorkedMs, trackStoppedAt } from './plan-run.mjs';
+import { findControlDir, findSessionLog, nextPlanLogPath, parseArgs, planRunBase, planRunState, plannerChecks, reviewerChecks, rootOf, runPlanning, sessionAsking, stepWorkedMs, trackStoppedAt } from './plan-run.mjs';
 
 const PROGRAM = fileURLToPath(new URL('./plan-run.mjs', import.meta.url));
 const SESSIONS = fileURLToPath(new URL('./fake/sessions.mjs', import.meta.url));
@@ -599,7 +599,7 @@ test('plannerChecks: each §2.5 failure has its reason, and a clean valid plan p
     throw new Error(`unexpected git ${args}`);
   };
   let taken = null;
-  const base = { worktree: '/w', root: '/r', repo: 'r', indexDir: '/i', git, slugTaken: () => taken };
+  const base = { worktree: '/w', root: '/r', repo: 'r', indexDir: '/i', base: 'main', git, slugTaken: () => taken };
   assert.deepEqual(plannerChecks({ ...base, slug: 'ok-plan' }), { ok: true, reason: null });
   assert.match(plannerChecks({ ...base, slug: 'Bad_Name' }).reason, /kebab-case/);
   assert.match(plannerChecks({ ...base, slug: 'plan-00ff' }).reason, /plan-xxxx/);
@@ -608,9 +608,56 @@ test('plannerChecks: each §2.5 failure has its reason, and a clean valid plan p
     taken = why;
     assert.match(plannerChecks({ ...base, slug: 'ok-plan' }).reason, text);
   }
+  taken = 'base-plan';
+  assert.match(plannerChecks({ ...base, base: 'dev', slug: 'ok-plan' }).reason, /already on dev/, 'the run base is named');
   taken = null;
+  const noBase = plannerChecks({ ...base, base: undefined, baseError: 'pir: no base branch is set for r.', slug: 'ok-plan' });
+  assert.equal(noBase.ok, false);
+  assert.match(noBase.reason, /cannot be checked: the run has no base branch\. pir: no base branch is set for r\./);
   dirty = '?? stray.txt';
   assert.match(plannerChecks({ ...base, slug: 'ok-plan' }).reason, /uncommitted changes/);
+});
+
+// base-branch T05: the slug check reads the run's base from the plan branch's pirBase, against real git.
+test('planRunBase + plannerChecks: a plan committed on dev takes the slug in a dev-based run; settings are the fallback', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'pir-plan-run-base-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const root = join(dir, 'repo');
+  git(dir, ['init', '-q', '-b', 'dev', 'repo']);
+  for (const [k, v] of [['user.email', 't05@test.local'], ['user.name', 'T05'], ['commit.gpgsign', 'false']]) git(root, ['config', k, v]);
+  mkdirSync(join(root, 'plans', 'taken'), { recursive: true });
+  writeFileSync(join(root, 'plans', 'taken', 'PROGRESS.md'), '# P\n');
+  writeFileSync(join(root, '.gitignore'), '.claude/\n');
+  git(root, ['add', '-A']);
+  git(root, ['commit', '-q', '-m', 'a plan on dev']);
+  const { path: worktree, branch } = openPlanBranch(ID, { root, base: 'dev' });
+  for (const slug of ['taken', 'fresh']) {
+    mkdirSync(join(worktree, 'plans', slug), { recursive: true });
+    for (const f of ['PROGRESS.md', 'PLAN.md', 'DESIGN.md']) writeFileSync(join(worktree, 'plans', slug, f), `# ${f}\n`);
+  }
+  git(worktree, ['add', '-A']);
+  git(worktree, ['commit', '-q', '-m', 'the plans']);
+  const env = { HOME: dir, PIR_HOME: dir };
+
+  assert.deepEqual(planRunBase({ worktree, root, env }), { ok: true, base: 'dev' });
+  const check = (slug, rb) => plannerChecks({ slug, worktree, root, repo: 'repo', indexDir: join(dir, 'idx'), base: rb.base, baseError: rb.message });
+  const rb = planRunBase({ worktree, root, env });
+  assert.match(check('taken', rb).reason, /a plan plans\/taken is already on dev/);
+  assert.deepEqual(check('fresh', rb), { ok: true, reason: null });
+
+  // A branch cut before pirBase existed: no settings → the §2.9 text; with settings → read and recorded.
+  git(root, ['config', '--unset', `branch.${branch}.pirBase`]);
+  const none = planRunBase({ worktree, root, env });
+  assert.equal(none.ok, false);
+  assert.match(none.message, /^pir: no base branch is set for repo\./);
+  assert.match(check('fresh', none).reason, /cannot be checked/);
+  mkdirSync(join(dir, '.pir', 'repo'), { recursive: true });
+  writeFileSync(join(dir, '.pir', 'repo', 'settings.json'), '{"baseBranch": "dev"}');
+  assert.deepEqual(planRunBase({ worktree, root, env }), { ok: true, base: 'dev' });
+  assert.equal(git(root, ['config', '--get', `branch.${branch}.pirBase`]).stdout.trim(), 'dev', 'recorded on the branch');
+  // Once recorded, a changed setting no longer moves the run (§2.5).
+  writeFileSync(join(dir, '.pir', 'repo', 'settings.json'), '{"baseBranch": "main"}');
+  assert.deepEqual(planRunBase({ worktree, root, env }), { ok: true, base: 'dev' });
 });
 
 test('reviewerChecks: each §2.7 failure has its reason, and a clean reviewed plan passes', () => {

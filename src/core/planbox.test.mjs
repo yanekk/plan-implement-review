@@ -235,10 +235,27 @@ test('parse: plansOf is not read for /plan, before the repo resolves, or for no-
 
 test('startFailedNote: §2.4 startPlanRun row, codes in plain words', () => {
   assert.equal(startFailedNote('skaut', 'no main branch'), 'Could not start planning in skaut: no main branch');
-  assert.equal(startFailedNote('repo', 'no-main'), 'Could not start planning in repo: it has no local main branch');
   assert.equal(startFailedNote('repo', 'not-a-repo'), 'Could not start planning in repo: it is not a git repository');
   assert.equal(startFailedNote('repo', 'empty-brief'), 'Could not start planning in repo: the brief is empty');
-  for (const code of ['no-main', 'not-a-repo', 'empty-brief']) assert.ok(startFailedNote('plan-implement-review', code).length <= 80, code);
+  for (const code of ['not-a-repo', 'empty-brief']) assert.ok(startFailedNote('plan-implement-review', code).length <= 80, code);
+});
+
+test('startFailedNote: the base-branch refusals in short form (base-branch §2.9), naming base and remote when known', () => {
+  const d = { base: 'dev', remote: 'origin' };
+  assert.equal(startFailedNote('repo', 'no-base-setting', {}), 'Could not start planning in repo: no base branch is set');
+  assert.equal(startFailedNote('repo', 'bad-settings', {}), 'Could not start planning in repo: its pir settings are broken');
+  assert.equal(startFailedNote('repo', 'no-base-branch', d), 'Could not start planning in repo: dev does not exist');
+  assert.equal(startFailedNote('repo', 'fetch-failed', d), "Could not start planning in repo: can't reach origin");
+  assert.equal(startFailedNote('repo', 'diverged', d), 'Could not start planning in repo: dev split from origin/dev');
+  // Without the detail each still reads, and the detail argument is optional.
+  assert.equal(startFailedNote('repo', 'no-base-branch'), 'Could not start planning in repo: its base branch is missing');
+  assert.equal(startFailedNote('repo', 'fetch-failed', null), "Could not start planning in repo: can't reach its remote");
+  assert.equal(startFailedNote('repo', 'diverged', {}), 'Could not start planning in repo: base and remote split apart');
+  for (const code of ['no-base-setting', 'bad-settings', 'no-base-branch', 'fetch-failed', 'diverged']) {
+    assert.ok(startFailedNote('plan-implement-review', code, d).length <= 80, code);
+    assert.ok(startFailedNote('plan-implement-review', code).length <= 80, code);
+  }
+  assert.equal(startFailedNote('repo', 'toString'), 'Could not start planning in repo: toString', 'an inherited name is not a code');
 });
 
 test('startBuildFailedNote: §2.4 startRun row, codes in plain words, anything else as it came', () => {
@@ -333,7 +350,8 @@ test('every note and head line fits 80 columns at an 18-character repo name and 
     NOTES.noAt(), NOTES.unknownRepo(name, ROOTS), NOTES.noCommand(name), NOTES.unknownCommand(name, slug),
     NOTES.emptyBrief(name), NOTES.noSlug(name), NOTES.extraWords(name), NOTES.unknownSlug(name, slug),
     startBuildFailedNote(name, slug, 'not-reviewed'), startBuildFailedNote(name, slug, 'no-plan'),
-    startBuildFailedNote(name, slug, 'no-test-block'), startFailedNote(name, 'no-main'), startFailedNote(name, 'not-a-repo'),
+    startBuildFailedNote(name, slug, 'no-test-block'), startFailedNote(name, 'not-a-repo'),
+    ...['no-base-setting', 'bad-settings', 'no-base-branch', 'fetch-failed', 'diverged'].map((c) => startFailedNote(name, c, { base: 'dev', remote: 'origin' })),
   ];
   for (const n of notes) assert.ok(n.length <= 80, `${n.length}: ${n}`);
   // The label `new` and two spaces precede the head words (§2.5).

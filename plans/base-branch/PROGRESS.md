@@ -19,14 +19,14 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T02 | base-git | T01 | ✅ | |
 | T03 | branch-cuts | — | ✅ | |
 | T04 | base-text | — | ✅ | |
-| T05 | plan-start | T01, T02, T03 | ⬜ | |
+| T05 | plan-start | T01, T02, T03 | 🔍 | Preflight resolves settings, prepares base, cuts at its sha; pirBase, record.baseBranch; §2.9 texts; scan lists every repo; ~30 tests incl. rig. Deviations: preflight also returns `file`; refusals carry base/remote; `startFailedNote` takes detail; new `planRunBase` (pirBase, settings fallback) feeds `plannerChecks` `base`. Short box texts are my wording, see commit. |
 | T06 | build-start | T01, T02, T03 | ⬜ | |
 | T07 | end-sync | T04, T06 | ⬜ | |
 | T08 | skills-and-rules | — | ✅ | |
 | T09 | dev-base-drill | T05, T07 | ⬜ | |
 | T10 | docs-and-readme | T08, T09 | ⬜ | |
 
-**Review queue:** *(empty)*
+**Review queue:** T05
 
 ## Blocked on the user
 

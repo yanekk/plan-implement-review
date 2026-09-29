@@ -38,15 +38,23 @@ export const NOTES = {
 // startPlanRun's refusal codes in plain words, short enough that the note fits 80 columns (user, 2026-09-27,
 // T06 drill: the raw `no-main` read as an internal code). A reason not listed, e.g. a thrown error's message,
 // is shown as it came.
+// The base-branch refusals (base-branch DESIGN §2.9) are the short form of the §2.9 text: the cause
+// only, since `pir plan` in the repo prints the full text with the fix. `d` is startPlanRun's result,
+// which names the base and the remote when it knows them.
 const START_REFUSALS = {
-  'not-a-repo': 'it is not a git repository',
-  'no-main': 'it has no local main branch',
-  'empty-brief': 'the brief is empty',
+  'not-a-repo': () => 'it is not a git repository',
+  'empty-brief': () => 'the brief is empty',
+  'no-base-setting': () => 'no base branch is set',
+  'bad-settings': () => 'its pir settings are broken',
+  'no-base-branch': (d) => (d.base ? `${d.base} does not exist` : 'its base branch is missing'),
+  'fetch-failed': (d) => (d.remote ? `can't reach ${d.remote}` : "can't reach its remote"),
+  diverged: (d) => (d.base && d.remote ? `${d.base} split from ${d.remote}/${d.base}` : 'base and remote split apart'),
 };
 
-// §2.4's `startPlanRun` row: startPlanRun refused or threw.
-export function startFailedNote(name, reason) {
-  return `Could not start planning in ${name}: ${START_REFUSALS[reason] ?? reason}`;
+// §2.4's `startPlanRun` row: startPlanRun refused or threw. detail is the refusal ({ base, remote }).
+export function startFailedNote(name, reason, detail = {}) {
+  const short = Object.hasOwn(START_REFUSALS, reason) ? START_REFUSALS[reason](detail ?? {}) : reason;
+  return `Could not start planning in ${name}: ${short}`;
 }
 
 // startRun's refusal codes in plain words (box-commands DESIGN §2.4); anything else as it came.

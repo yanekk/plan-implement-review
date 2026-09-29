@@ -5,7 +5,8 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, statSync, mkdtempSync, rmSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
+import { readFileSync, statSync, mkdtempSync, rmSync, writeFileSync, mkdirSync, existsSync, realpathSync } from 'node:fs';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -101,17 +102,19 @@ test('[plan] → a multi-line brief sent from the box reaches startPlanRun with 
 });
 
 test('[plan] → a pre-flight refusal prints before any box opens, exit 1', () => {
-  const { calls, errs, deps } = harness(undefined, undefined, { preflight: { ok: false, reason: 'no-main' } });
+  const message = 'pir: no base branch is set for shop. Add …';
+  const { calls, errs, deps } = harness(undefined, undefined, { preflight: { ok: false, reason: 'no-base-setting', message } });
   assert.equal(run(['plan'], deps), 1, 'refused at once, not as a promise');
-  assert.deepEqual(errs, ["pir plan: this repo has no local 'main' branch — a plan is cut from main\n"]);
+  assert.deepEqual(errs, [`${message}\n`], 'the §2.9 text, as the pre-flight worded it');
   assert.deepEqual(calls.order, ['preflight']);
   assert.deepEqual(calls.plan, []);
 });
 
 test('[plan] → a start refused after the box closes prints its line and exits 1', async () => {
-  const { calls, errs, deps } = harness(undefined, { started: false, reason: 'no-main' }, { box: 'a brief' });
+  const message = 'pir: could not fetch dev from origin: fatal: nope. Nothing was created; try again when origin is reachable.';
+  const { calls, errs, deps } = harness(undefined, { started: false, reason: 'fetch-failed', message }, { box: 'a brief' });
   assert.equal(await run(['plan'], deps), 1);
-  assert.deepEqual(errs, ["pir plan: this repo has no local 'main' branch — a plan is cut from main\n"]);
+  assert.deepEqual(errs, [`${message}\n`]);
   assert.deepEqual(calls.planner, []);
 });
 
@@ -135,7 +138,6 @@ test('[plan, "quoted brief"] → the brief passed as it is', () => {
 
 for (const [reason, message] of [
   ['not-a-repo', 'pir plan: not inside a git repository — run it from the repo you want to plan in\n'],
-  ['no-main', "pir plan: this repo has no local 'main' branch — a plan is cut from main\n"],
   ['empty-brief', 'pir plan: the brief is empty — say what to plan, e.g. pir plan "a daily screen budget"\n'],
   ['something-new', 'pir plan: cannot start: something-new\n'],
   // The canonical-repo refusal is gone (dashboard-plan-box DESIGN §2.8): no dedicated message is left.
@@ -443,4 +445,29 @@ test('[notify] the default QR renders the ntfy URL with uqr', async (t) => {
   delete h.deps.qr;
   assert.equal(await run(['notify'], h.deps), 0);
   assert.match(h.text(), /[█▀▄]{10}/, 'a block-character QR is drawn');
+});
+
+// The real `pir plan` against the real engine, in a scratch repo with no .pir/settings.json (base-branch
+// T05): the §2.9 text on stderr, a non-zero exit, and the repo left exactly as it was. HOME and PIR_HOME
+// point at the scratch folder, so neither the person's real settings nor their run index is read.
+test('pir plan in a repo without settings prints the §2.9 refusal and exits 1, creating nothing', (t) => {
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), 'pir-nosettings-')));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const root = join(dir, 'shop');
+  mkdirSync(root);
+  const git = (...args) => execFileSync('git', args, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+  git('init', '-q', '-b', 'main');
+  git('-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'commit.gpgsign=false', 'commit', '-q', '--allow-empty', '-m', 'init');
+  const pirPath = fileURLToPath(new URL('./pir.mjs', import.meta.url));
+  const r = spawnSync('node', [pirPath, 'plan', 'a brief'], {
+    cwd: root,
+    encoding: 'utf8',
+    env: { ...process.env, HOME: dir, PIR_HOME: dir },
+    timeout: 20000,
+  });
+  assert.equal(r.status, 1, r.stderr);
+  assert.equal(r.stderr, 'pir: no base branch is set for shop. Add .pir/settings.json with {\"baseBranch\": \"<branch>\"} (committed, for everyone), or ~/.pir/shop/settings.json (this machine only).\n');
+  assert.equal(git('for-each-ref', '--format=%(refname)', 'refs/heads').trim(), 'refs/heads/main', 'no branch cut');
+  assert.equal(existsSync(join(root, 'plans')), false, 'no control folder');
+  assert.equal(existsSync(join(dir, '.pir', 'runs')), false, 'no index record');
 });

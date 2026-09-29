@@ -1662,13 +1662,13 @@ test('box: every §2.5 refusal starts nothing, keeps the text and shows the note
   }
 });
 
-test('box: startPlan refusing (no-main, in plain words) or throwing both give the start-failed note, the text kept', async () => {
-  for (const plan of [() => ({ started: false, reason: 'no-main' }), () => { throw new Error('spawn failed'); }]) {
+test('box: startPlan refusing (no-base-setting, in plain words) or throwing both give the start-failed note, the text kept', async () => {
+  for (const plan of [() => ({ started: false, reason: 'no-base-setting', message: 'pir: no base branch is set for repo. …' }), () => { throw new Error('spawn failed'); }]) {
     const t = driveBox({ plan });
     await t.type('repo/plan a brief');
     await t.key('\r');
     assert.equal(t.calls.length, 1);
-    const reason = plan.toString().includes('no-main') ? 'it has no local main branch' : 'spawn failed';
+    const reason = plan.toString().includes('no-base-setting') ? 'no base branch is set' : 'spawn failed';
     assert.ok(t.screen().includes(`Could not start planning in repo: ${reason}`), t.screen());
     assert.match(t.boxLine(), /^@repo\/plan a brief/);
     assert.doesNotMatch(t.screen(), /starting the planner/);
@@ -1676,6 +1676,16 @@ test('box: startPlan refusing (no-main, in plain words) or throwing both give th
     await t.key('\x1b');
     await t.done;
   }
+});
+
+test('box: a refusal naming its base and remote shows them in the note (base-branch §2.9 short form)', async () => {
+  const t = driveBox({ plan: () => ({ started: false, reason: 'diverged', base: 'dev', remote: 'origin' }) });
+  await t.type('repo/plan a brief');
+  await t.key('\r');
+  assert.ok(t.screen().includes('Could not start planning in repo: dev split from origin/dev'), t.screen());
+  await t.key('\x1b');
+  await t.key('\x1b');
+  await t.done;
 });
 
 test('box: on a bare box ↓ and → reach the list (open a run); ← back shows the box at @', async () => {
