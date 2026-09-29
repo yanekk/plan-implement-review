@@ -52,10 +52,14 @@ const KINDS = Object.freeze(['build', 'plan']);
 // `statusSnapshots` (the status.json it reads); `answerPending.permissions` ({ <task>: 'deny' }) types a
 // deny on that task's permission requests instead of the default allow.
 //
-// Two steps for the live check of the agent (pir-coordinator T09): `mainCommit` ({ after, files, message })
-// commits `files` to the scratch repo's main once the flow log shows task `after` merged, once, so the end
-// sync meets a main that moved mid-run; `mergeWhenReady` merges the feature branch into the scratch main
-// once the run waits in `ready to merge`, the person's merge that ends the run (DESIGN §2.10).
+// Two steps for the live check of the agent (pir-coordinator T09): `baseCommit` ({ after, files, message })
+// commits `files` to the scratch repo's base branch once the flow log shows task `after` merged, once, so
+// the end sync meets a base that moved mid-run; `mergeWhenReady` merges the feature branch into the scratch
+// base once the run waits in `ready to merge`, the person's merge that ends the run (DESIGN §2.10). The base
+// is the fixture's (`main` unless it names another, base-branch T09). `mergeWhenReady: 'remote'` makes that
+// merge on the fixture's bare remote only, as a merge done on GitHub, so the run must see it through its
+// watch fetch (base-branch DESIGN §2.8); `baseWatchMs` shortens that watch's interval
+// (PARALLEL_BASE_WATCH_MS) so a scenario sees it within its budget.
 //
 // Two for the live check of several briefs at once and the hold limit (pir-coordinator T14):
 // `coordinatorHoldMs` (a positive whole number of ms) launches the run with PARALLEL_COORDINATOR_HOLD_MS, so
@@ -83,8 +87,9 @@ export function defineScenario(spec = {}) {
     kind = 'build',
     reply = null,
     replyCap = null,
-    mainCommit = null,
+    baseCommit = null,
     mergeWhenReady = false,
+    baseWatchMs = null,
     coordinatorHoldMs = null,
     realNotify = false,
   } = spec;
@@ -112,8 +117,14 @@ export function defineScenario(spec = {}) {
   if (coordinator && answerPending && !statusSnapshots) {
     throw new Error(`defineScenario(${id}): with the coordinator agent, answerPending needs statusSnapshots (it reads who holds an item)`);
   }
-  if (mainCommit && (!/^T\d+$/.test(mainCommit.after ?? '') || !mainCommit.files || Object.keys(mainCommit.files).length === 0)) {
-    throw new Error(`defineScenario(${id}): mainCommit needs a task id \`after\` and at least one file`);
+  if (baseCommit && (!/^T\d+$/.test(baseCommit.after ?? '') || !baseCommit.files || Object.keys(baseCommit.files).length === 0)) {
+    throw new Error(`defineScenario(${id}): baseCommit needs a task id \`after\` and at least one file`);
+  }
+  if (![false, true, 'remote'].includes(mergeWhenReady)) {
+    throw new Error(`defineScenario(${id}): mergeWhenReady is true, 'remote' or off`);
+  }
+  if (baseWatchMs != null && (!Number.isInteger(baseWatchMs) || baseWatchMs <= 0)) {
+    throw new Error(`defineScenario(${id}): baseWatchMs needs a positive whole number of ms`);
   }
   if (coordinatorHoldMs != null && (!coordinator || !Number.isInteger(coordinatorHoldMs) || coordinatorHoldMs <= 0)) {
     throw new Error(`defineScenario(${id}): coordinatorHoldMs needs the coordinator agent and a positive whole number of ms`);
@@ -154,10 +165,11 @@ export function defineScenario(spec = {}) {
       : false,
     statusSnapshots: !!statusSnapshots,
     coordinator: !!coordinator,
-    mainCommit: mainCommit
-      ? { after: mainCommit.after, files: { ...mainCommit.files }, message: mainCommit.message ?? `main: moved after ${mainCommit.after} merged` }
+    baseCommit: baseCommit
+      ? { after: baseCommit.after, files: { ...baseCommit.files }, message: baseCommit.message ?? `base: moved after ${baseCommit.after} merged` }
       : null,
-    mergeWhenReady: !!mergeWhenReady,
+    mergeWhenReady,
+    baseWatchMs: baseWatchMs ?? null,
     coordinatorHoldMs: coordinatorHoldMs ?? null,
     realNotify: !!realNotify,
   };

@@ -110,7 +110,7 @@ test('runPlanScenario stops a planning run that outlives the wall clock, as pir 
   assert.equal(r.ok, false);
   assert.deepEqual(stops, [4242]);
   assert.equal(builds.length, 0);
-  assert.ok(r.report.facts.every((f) => f.pass === false || f.id === 'main-untouched'), 'nothing was planned or built');
+  assert.ok(r.report.facts.every((f) => f.pass === false || f.id === 'base-untouched'), 'nothing was planned or built');
 });
 
 test('runPlanScenario stops the planning run once the reply cap is spent and a session still waits', async (t) => {

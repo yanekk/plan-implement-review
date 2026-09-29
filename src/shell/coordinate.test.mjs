@@ -2610,7 +2610,7 @@ test('advanceTiming: a helper spawned again under its label starts a fresh clock
 
 // --- pir-coordinator T13: the hold limit (DESIGN §2.11) --------------------------------------------------
 
-import { holdLimitMs, DEFAULT_HOLD_MS } from './coordinate.mjs';
+import { holdLimitMs, DEFAULT_HOLD_MS, baseWatchMs, DEFAULT_BASE_WATCH_MS } from './coordinate.mjs';
 import { askingCount } from '../core/display.mjs';
 
 // holdRun(t, behaviors, opts) → agentRun on a hand-set clock, a hold limit, and a captured control.log.
@@ -3533,4 +3533,12 @@ test('e2e 80×24: origin unreachable at the end → `preparing: can\'t reach ori
     for (const line of f.split('\n')) assert.ok([...line].length <= 80, `fits 80 columns: ${JSON.stringify(line)}`);
     assert.doesNotMatch(f, /\bmain\b/, 'nothing names main in a dev run');
   }
+});
+
+test('baseWatchMs: 5 minutes, or PARALLEL_BASE_WATCH_MS when it is a positive number (base-branch T09)', () => {
+  assert.equal(DEFAULT_BASE_WATCH_MS, 300000);
+  assert.equal(baseWatchMs({}), 300000);
+  assert.equal(baseWatchMs({ PARALLEL_BASE_WATCH_MS: '1500' }), 1500);
+  assert.equal(baseWatchMs({ PARALLEL_BASE_WATCH_MS: '0' }), 300000);
+  assert.equal(baseWatchMs({ PARALLEL_BASE_WATCH_MS: 'soon' }), 300000);
 });

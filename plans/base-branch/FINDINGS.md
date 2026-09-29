@@ -5,6 +5,8 @@ hand with the user · 📌 worth knowing · 🔄 a decision the user changed.
 
 | Date | | Finding |
 |---|---|---|
+| 2026-09-29 | 📌 | T09 drill, worker-driven at 80×24 and 120×40, dev-only `pir plan` to ready: every line naming a branch said dev (preparing, the ready offer, the agent's brief, the report footer). The go screen names only pir/{slug}. Nothing fixed. |
+| 2026-09-29 | 📌 | `node src/shell/harness/real-fetch-check.mjs`, run by the T09 worker: fetched main from github.com/yanekk/plan-implement-review over https in 2.2 s, created the local main at 00960213d4c2, matching `git ls-remote`. DNS worked in this session. |
 | 2026-09-29 | 📌 | The end sync's `prepareBase` runs synchronously in the coordinator loop: an unreachable remote that times out rather than refuses blocks the pass and live view up to 30 s on every hold retry (60 s) and every watch (5 min). Accepted in T07 review. |
 | 2026-09-29 | 📌 | `slugTaken` reads the local base only. When the local `dev` is dirty and behind `origin/dev` (not moved, §2.3), a plan only on `origin/dev` is missed, though the plan branch contains it. Reproduced in T05 review; left for the user. |
 | 2026-09-29 | 📌 | The dashboard box calls `startPlanRun` synchronously, so a slow fetch freezes the screen up to 30 s with no note. §2.6 asks for a synchronous fetch; a "fetching…" note first would help. Seen in T05 review. |

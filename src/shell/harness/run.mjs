@@ -28,7 +28,7 @@
 // unboundedly. On any exit the runner kills the coordinator process, whose own teardown closes its
 // workers, then reaps any worker still recorded in workers.json (live-workers §2.12, T06).
 
-import { existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync, openSync, closeSync, copyFileSync, cpSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync, openSync, closeSync, copyFileSync, cpSync, rmSync } from 'node:fs';
 import { join, basename, dirname } from 'node:path';
 import { execFileSync, spawn as nodeSpawn } from 'node:child_process';
 import { mkdtempSync } from 'node:fs';
@@ -74,12 +74,17 @@ export function coordinatorLaunchArgv({ slug }) {
 //
 // `holdMs` is a scenario's `coordinatorHoldMs` (pir-coordinator T14): the agent's hold limit for the run,
 // passed as PARALLEL_COORDINATOR_HOLD_MS (coordinate.mjs holdLimitMs), so the live check sees it fire.
-export function seatbeltEnv({ ceiling, holdMerges = false, pirHome = null, coordinator = false, holdMs = null } = {}) {
+//
+// `baseWatchMs` is a scenario's own (base-branch T09): PARALLEL_BASE_WATCH_MS, the end-of-run watch of the
+// remote, as planEnv sets it for a plan scenario; without it a build scenario that merges on the remote
+// would wait the 5-minute default.
+export function seatbeltEnv({ ceiling, holdMerges = false, pirHome = null, coordinator = false, holdMs = null, baseWatchMs = null } = {}) {
   const env = { PARALLEL_LIVE: '1' };
   if (!coordinator) env.PARALLEL_COORDINATOR = '0';
   if (coordinator && holdMs != null) env.PARALLEL_COORDINATOR_HOLD_MS = String(holdMs);
   if (ceiling != null) env.PARALLEL_MAX_WORKERS = String(ceiling);
   if (holdMerges) env.PARALLEL_HOLD_MERGES = '1';
+  if (baseWatchMs != null) env.PARALLEL_BASE_WATCH_MS = String(baseWatchMs);
   if (pirHome) {
     env.PIR_RUN = '1';
     env.PIR_HOME = pirHome;
@@ -232,14 +237,18 @@ export function captureFinalFiles({ repoDir, gitRun = defaultRunGit, files = [],
   return out;
 }
 
-// --- The live check of the coordinator agent: a mid-run main commit and the person's merge ------------
+// --- The live check of the coordinator agent: a mid-run base commit and the person's merge ------------
 //
 // pir-coordinator T09. Two scenario steps the runner takes while the coordinator runs, each at most once:
-// `mainCommit` commits to the scratch main once the flow shows a named task merged, so the end sync meets
-// a main that moved mid-run (no mid-run main commit existed before); `mergeWhenReady` merges the feature
-// branch into the scratch main once the run waits in `ready to merge` and the branch already holds main,
-// which is the person's merge that ends the run as `finished` (DESIGN §2.10). Both act on the scratch
-// repo's own main checkout, never on a real project (the runner's seatbelt).
+// `baseCommit` commits to the scratch base branch once the flow shows a named task merged, so the end sync
+// meets a base that moved mid-run; `mergeWhenReady` merges the feature branch into the scratch base once the
+// run waits in `ready to merge` and the branch already holds the base, which is the person's merge that
+// ends the run as `finished` (DESIGN §2.10). Both act on the scratch repo, never on a real project (the
+// runner's seatbelt). The base is the fixture's, `main` unless it names another (base-branch T09).
+//
+// `mergeWhenReady: 'remote'` (base-branch T09) makes that merge on the scratch repo's `origin` only, through
+// a throwaway clone, as a merge done on GitHub would be: the local base never moves, so the run can only
+// finish by seeing the remote's copy in its watch fetch (base-branch DESIGN §2.8).
 
 // taskMerged(flowText, task) → has the flow log a `merge {task}` line (loop.mjs record, `${ISO} merge T01`)?
 // Pure.
@@ -257,44 +266,74 @@ export function readyToMerge(status) {
 // The fixed identity every harness commit uses, as the fixture seed does: nobody is there to sign.
 const HARNESS_IDENT = ['-c', 'user.name=PIR Fixture', '-c', 'user.email=fixture@pir.local', '-c', 'commit.gpgsign=false'];
 
-// createScenarioSteps({ spec, repoDir, controlDir, slug, gitRun, readStatus, log }) → { tick(flowText), record }.
+// createScenarioSteps({ spec, repoDir, controlDir, slug, base, gitRun, readStatus, log }) → { tick(flowText), record }.
 // tick runs whichever step is due this poll; record is what happened, with times, for the bundle's
 // steps.json (the evidence a fact or a person reads afterwards). A step whose git call fails is logged
 // and retried next poll, not marked done. `readStatus` is (controlDir) → the status snapshot or null.
-export function createScenarioSteps({ spec, repoDir, controlDir, slug, gitRun = defaultRunGit, readStatus = readSnapshot, now = () => new Date(), log = () => {} } = {}) {
-  const record = { mainCommit: null, merged: null };
-  const git = (args) => gitRun(args, { cwd: repoDir });
+export function createScenarioSteps({ spec, repoDir, controlDir, slug, base = 'main', gitRun = defaultRunGit, readStatus = readSnapshot, now = () => new Date(), log = () => {} } = {}) {
+  const record = { baseCommit: null, merged: null };
+  const git = (args, cwd = repoDir) => gitRun(args, { cwd });
   const branch = `pir/${slug}`;
+  const onRemote = spec?.mergeWhenReady === 'remote';
+  // The ref the feature branch must already hold before the person merges: the base the run last synced
+  // with. For a merge on the remote that is the remote's copy the run fetched.
+  const heldRef = onRemote ? `refs/remotes/origin/${base}` : `refs/heads/${base}`;
+
+  // mergeOnRemote() → the git result of merging the feature branch into origin's base through a
+  // throwaway clone, pushed back; the clone is removed whatever happened.
+  function mergeOnRemote() {
+    const url = git(['config', '--get', 'remote.origin.url']);
+    if (!url.ok) return url;
+    const clone = mkdtempSync(join(tmpdir(), 'pir-harness-remote-merge-'));
+    try {
+      const steps = [
+        () => git(['clone', '-q', '--branch', base, url.stdout.trim(), clone]),
+        () => git(['fetch', '-q', repoDir, `refs/heads/${branch}`], clone),
+        () => git([...HARNESS_IDENT, 'merge', '--no-edit', 'FETCH_HEAD'], clone),
+        () => git(['push', '-q', 'origin', base], clone),
+      ];
+      let r = { ok: true };
+      for (const step of steps) {
+        r = step();
+        if (!r.ok) break;
+      }
+      return r;
+    } finally {
+      rmSync(clone, { recursive: true, force: true });
+    }
+  }
+
   return {
     record,
     tick(flowText = '') {
-      const mc = spec?.mainCommit;
-      if (mc && !record.mainCommit && taskMerged(flowText, mc.after)) {
-        for (const [rel, content] of Object.entries(mc.files)) {
+      const bc = spec?.baseCommit;
+      if (bc && !record.baseCommit && taskMerged(flowText, bc.after)) {
+        for (const [rel, content] of Object.entries(bc.files)) {
           const abs = join(repoDir, rel);
           mkdirSync(dirname(abs), { recursive: true });
           writeFileSync(abs, content);
         }
-        const add = git(['add', '--', ...Object.keys(mc.files)]);
-        const commit = add.ok ? git([...HARNESS_IDENT, 'commit', '-m', mc.message]) : add;
-        if (!commit.ok) log(`main commit after ${mc.after} failed: ${commit.stderr}`);
+        const add = git(['add', '--', ...Object.keys(bc.files)]);
+        const commit = add.ok ? git([...HARNESS_IDENT, 'commit', '-m', bc.message]) : add;
+        if (!commit.ok) log(`${base} commit after ${bc.after} failed: ${commit.stderr}`);
         else {
           const sha = git(['rev-parse', 'HEAD']).stdout.trim();
-          record.mainCommit = { at: now().toISOString(), after: mc.after, sha };
-          log(`main commit ${sha.slice(0, 8)} after ${mc.after} merged: ${mc.message}`);
+          record.baseCommit = { at: now().toISOString(), after: bc.after, sha };
+          log(`${base} commit ${sha.slice(0, 8)} after ${bc.after} merged: ${bc.message}`);
         }
       }
       if (spec?.mergeWhenReady && !record.merged) {
         const ready = readyToMerge(readStatus(controlDir));
-        // Only once the branch holds main: a ready read before the run saw the mid-run commit would merge
-        // a branch that conflicts with main in the main checkout.
-        if (ready && git(['merge-base', '--is-ancestor', 'refs/heads/main', `refs/heads/${branch}`]).ok) {
+        // Only once the branch holds the base: a ready read before the run saw the mid-run commit would
+        // merge a branch that conflicts with the base.
+        if (ready && git(['merge-base', '--is-ancestor', heldRef, `refs/heads/${branch}`]).ok) {
           const report = git(['show', `${branch}:${ready.reportPath}`]);
-          const merge = git([...HARNESS_IDENT, 'merge', '--no-edit', branch]);
-          if (!merge.ok) log(`merging ${branch} into main failed: ${merge.stderr}`);
+          const merge = onRemote ? mergeOnRemote() : git([...HARNESS_IDENT, 'merge', '--no-edit', branch]);
+          const into = onRemote ? `origin's ${base}` : base;
+          if (!merge.ok) log(`merging ${branch} into ${into} failed: ${merge.stderr}`);
           else {
-            record.merged = { at: now().toISOString(), branch, reportPath: ready.reportPath, report: report.ok ? report.stdout : null };
-            log(`ready to merge: merged ${branch} into main, as the person would`);
+            record.merged = { at: now().toISOString(), branch, into, reportPath: ready.reportPath, report: report.ok ? report.stdout : null };
+            log(`ready to merge: merged ${branch} into ${into}, as the person would`);
           }
         }
       }
@@ -483,7 +522,7 @@ export async function runScenario({
         log,
       })
     : null;
-  const steps = spec.mainCommit || spec.mergeWhenReady ? createScenarioSteps({ spec, repoDir, controlDir, slug, gitRun, now, log }) : null;
+  const steps = spec.baseCommit || spec.mergeWhenReady ? createScenarioSteps({ spec, repoDir, controlDir, slug, base: fixture.base ?? 'main', gitRun, now, log }) : null;
 
   log(`installing fixture "${fixtureId}" into ${repoDir}`);
   install(fixtureId, { into: repoDir, runGit: gitRun });
@@ -530,7 +569,7 @@ export async function runScenario({
     // git, so the index it may hold never dirties the checkout the coordinator merges in.
     const pirHome = spec.statusSnapshots ? join(controlDir, '..', 'pir-home') : null;
     const env = {
-      ...seatbeltEnv({ ceiling, holdMerges: spec.holdMerges, pirHome, coordinator: spec.coordinator, holdMs: spec.coordinatorHoldMs }),
+      ...seatbeltEnv({ ceiling, holdMerges: spec.holdMerges, pirHome, coordinator: spec.coordinator, holdMs: spec.coordinatorHoldMs, baseWatchMs: spec.baseWatchMs }),
       ...(spec.realNotify ? notifyEnv({ home: notifyHome, env: harnessEnv }) : {}),
     };
     log(`launching coordinator process: node ${argv.join(' ')}  (ceiling ${ceiling}, timeout ${timeout}ms${spec.realNotify ? ', real phone alerts' : ''})`);
@@ -1005,7 +1044,7 @@ function delay(timers, ms) {
 // planEnv({ baseEnv, pirHome, ceiling }) → the env both programs get. Pure. PARALLEL_ALLOW_HERE no
 // longer means anything (its guard is gone, dashboard-plan-box DESIGN §2.8), but an inherited one is
 // still dropped so an outer shell cannot leak a stale setting into a fixture's run.
-export function planEnv({ baseEnv = process.env, pirHome, ceiling, coordinator = false } = {}) {
+export function planEnv({ baseEnv = process.env, pirHome, ceiling, coordinator = false, baseWatchMs = null } = {}) {
   const env = { ...baseEnv };
   delete env.PARALLEL_ALLOW_HERE;
   // The build the go starts inherits this env (startRun spreads it), so it runs without the agent unless
@@ -1014,6 +1053,10 @@ export function planEnv({ baseEnv = process.env, pirHome, ceiling, coordinator =
   else env.PARALLEL_COORDINATOR = '0';
   if (pirHome) env.PIR_HOME = pirHome;
   if (ceiling != null) env.PARALLEL_MAX_WORKERS = String(ceiling);
+  // The end-of-run watch of the remote (base-branch DESIGN §2.8) every baseWatchMs instead of 5 minutes,
+  // for a scenario whose person merges on the remote; an inherited setting is dropped otherwise.
+  if (baseWatchMs != null) env.PARALLEL_BASE_WATCH_MS = String(baseWatchMs);
+  else delete env.PARALLEL_BASE_WATCH_MS;
   return env;
 }
 
@@ -1125,13 +1168,24 @@ export async function runPlanScenario({
   install(fixtureId, { into: repoDir, runGit: gitRun });
   const pirHome = join(repoDir, fixture.pirHome ?? '.pir-home');
   mkdirSync(pirHome, { recursive: true });
-  const env = planEnv({ baseEnv, pirHome, ceiling: seatbelts.ceiling, coordinator: spec.coordinator });
+  const env = planEnv({ baseEnv, pirHome, ceiling: seatbelts.ceiling, coordinator: spec.coordinator, baseWatchMs: spec.baseWatchMs });
   const dir = indexDir({ env });
-  const mainHead = () => {
-    const r = gitRun(['rev-parse', '--verify', '--quiet', 'refs/heads/main'], { cwd: repoDir });
+  // The run's base is the fixture's (base-branch T09), `main` unless it names another. Its local head is
+  // read at both ends; a fixture with a remote also has the remote's head read before anything runs, the
+  // commit pir must start from (base-branch DESIGN §2.3).
+  const base = fixture.base ?? 'main';
+  const baseHead = () => {
+    const r = gitRun(['rev-parse', '--verify', '--quiet', `refs/heads/${base}`], { cwd: repoDir });
     return r.ok ? r.stdout.trim() : null;
   };
-  const mainBefore = mainHead();
+  const remoteHead = () => {
+    if (!fixture.remote) return null;
+    const r = gitRun(['ls-remote', '--heads', 'origin', `refs/heads/${base}`], { cwd: repoDir });
+    return r.ok ? (r.stdout.trim().split(/\s/)[0] || null) : null;
+  };
+  const baseBefore = baseHead();
+  const remoteBefore = remoteHead();
+  let steps = null;
 
   // One wall-clock timeout over planning and build. During the build it touches HALT; the planning loop
   // reads the flag itself and stops the planning program.
@@ -1239,6 +1293,8 @@ export async function runPlanScenario({
           });
           // A build worker that asks gets the same answer the planner got; no canned replies here.
           const buildAnswerer = makeAnswerer({ controlDir: buildControl, typed: { '*': spec.reply }, log });
+          // The person's merge at the end (base-branch T09), as a build scenario takes it.
+          if (spec.baseCommit || spec.mergeWhenReady) steps = createScenarioSteps({ spec, repoDir, controlDir: buildControl, slug, base, gitRun, now, log });
           reason = await waitForCompletion({
             cap,
             controlDir: buildControl,
@@ -1246,6 +1302,7 @@ export async function runPlanScenario({
             pollMs,
             haltGrace,
             answerer: buildAnswerer,
+            steps,
             timers,
             isTimedOut: () => timedOut,
             log,
@@ -1296,12 +1353,22 @@ export async function runPlanScenario({
         slug,
         outcome: planState?.outcome ?? null,
         planFinalState: planRecord?.finalState ?? null,
-        mainBefore,
-        mainAfter: mainHead(),
+        base,
+        baseBefore,
+        baseAfter: baseHead(),
+        remoteBefore,
+        remoteAfter: remoteHead(),
+        // Was the planning branch cut from (a commit holding) the remote's head at the start? null with no
+        // remote to have been cut from.
+        cutFromRemote: remoteBefore && slug ? gitRun(['merge-base', '--is-ancestor', remoteBefore, `refs/heads/pir/${slug}`], { cwd: repoDir }).ok : null,
         progress: shown.ok ? shown.stdout : null,
         records: listRecords({ dir }).filter((r) => r.repo === repo),
       };
       writeFileSync(join(bundle.dir, 'plan-run.json'), `${JSON.stringify(planRun, null, 2)}\n`);
+      if (steps) {
+        writeFileSync(join(bundle.dir, 'steps.json'), `${JSON.stringify(steps.record, null, 2)}\n`);
+        bundle = { ...bundle, steps: steps.record };
+      }
       // The planning conversations, for a person reading the bundle after the scratch is gone.
       const conv = planControl ? join(planControl, 'conversations') : null;
       if (conv && existsSync(conv)) cpSync(conv, join(bundle.dir, 'plan-conversations'), { recursive: true });
