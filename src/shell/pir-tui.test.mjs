@@ -2497,7 +2497,7 @@ test('mouse: the wheel moves the list and the live view one row a notch, and doe
   await t.quit();
 
   const l = driveMouse({ rows: () => [] });
-  await l.send(...'repo a brief');
+  await l.send(...'repo/plan a brief');
   await l.send('\r');
   const landing = l.screen();
   assert.ok(landing.some((x) => /starting the planner…/.test(x)));
@@ -2521,7 +2521,7 @@ test('mouse: a click in the box moves its caret; a click on a pop-up entry picks
   const entry = p.rowY(/@dup +~\/src\/dup/);
   await p.click(entry, 8);
   const h = p.rowY(/^new  /);
-  assert.match(p.screen()[h + 2], /^@dup /, 'the clicked entry replaced @p');
+  assert.match(p.screen()[h + 2], /^@dup\//, 'the clicked entry replaced @p');
   await t.quit();
   await p.quit();
 });

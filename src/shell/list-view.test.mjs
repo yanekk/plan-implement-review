@@ -6,7 +6,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { Editor, visibleWidth } from '@earendil-works/pi-tui';
 
-import { createListView, rootsLabel, tildify, TYPED_HINT, START_HINT, BARE_HINT_SUFFIX } from './list-view.mjs';
+import { createListView, rootsLabel, tildify, HEAD_LABEL, TYPED_HINT, START_HINT, BARE_HINT_SUFFIX } from './list-view.mjs';
 import { buildDashboard, initialUi } from '../core/dashboard.mjs';
 
 const ESC = '\x1b';
