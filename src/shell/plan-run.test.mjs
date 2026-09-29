@@ -50,7 +50,7 @@ function setup(t, scripts, { indexEntry = true } = {}) {
   writeFileSync(join(root, '.gitignore'), 'plans/*/.parallel/\n.claude/\n');
   git(root, ['add', '-A']);
   git(root, ['commit', '-q', '-m', 'init']);
-  const { path: worktree } = openPlanBranch(ID, { root });
+  const { path: worktree } = openPlanBranch(ID, { root, base: 'main' });
   const controlDir = join(root, 'plans', ID, '.parallel', 'plan');
   mkdirSync(controlDir, { recursive: true });
   writeFileSync(join(controlDir, 'brief.md'), BRIEF);
@@ -604,7 +604,7 @@ test('plannerChecks: each §2.5 failure has its reason, and a clean valid plan p
   assert.match(plannerChecks({ ...base, slug: 'Bad_Name' }).reason, /kebab-case/);
   assert.match(plannerChecks({ ...base, slug: 'plan-00ff' }).reason, /plan-xxxx/);
   assert.match(plannerChecks({ ...base, slug: 'other' }).reason, /PROGRESS\.md, plans\/other\/PLAN\.md, plans\/other\/DESIGN\.md are not committed/);
-  for (const [why, text] of [['branch', /branch pir\/ok-plan/], ['main-plan', /already on main/], ['index', /pir run named ok-plan/]]) {
+  for (const [why, text] of [['branch', /branch pir\/ok-plan/], ['base-plan', /already on main/], ['index', /pir run named ok-plan/]]) {
     taken = why;
     assert.match(plannerChecks({ ...base, slug: 'ok-plan' }).reason, text);
   }

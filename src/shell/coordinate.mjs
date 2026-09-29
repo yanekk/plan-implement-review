@@ -54,6 +54,11 @@ import { alertText, endAlert, notifyStep, notifyExit, newNotifyState } from '../
 import { publish as ntfyPublish, clear as ntfyClear } from './ntfy.mjs';
 import { readNotifyConfig, ensurePresenceMarker, notifyIcon } from './notify-config.mjs';
 
+// worktree.mjs names no base branch (base-branch T03). Until the run's recorded base is wired in (T06
+// start, T07 end of run), the coordinator keeps cutting from and syncing with the local `main`, as before.
+const RUN_BASE = 'main';
+const RUN_BASE_REF = `refs/heads/${RUN_BASE}`;
+
 const DONE_GLYPH = '✅';
 const READY_GLYPH = '⬜';
 const BLOCKED_GLYPH = '⛔';
@@ -574,7 +579,7 @@ export function startCoordinator({
 
   function endFix(rec) {
     // A restart after the person merged while pir was down: nothing to fix, endSync finishes it as merged.
-    if (existsSync(join(state.feature.path, reportRel)) && worktree.mainContains(state.feature.branch)) {
+    if (existsSync(join(state.feature.path, reportRel)) && worktree.baseContains(state.feature.branch, { refs: [RUN_BASE_REF] })) {
       handoff.step = 'sync';
       return;
     }
@@ -595,9 +600,9 @@ export function startCoordinator({
     handoff.rewrite = existing;
     // A restart after the person merged while pir was down: main already holds the tip. Syncing now would
     // merge main back into the branch, move its tip past main, and wait in ready for a merge already done.
-    if (existing && worktree.mainContains(state.feature.branch)) {
+    if (existing && worktree.baseContains(state.feature.branch, { refs: [RUN_BASE_REF] })) {
       handoff.reportPath = reportRel;
-      handoff.mainSha = worktree.mainTip?.() ?? handoff.mainSha;
+      handoff.mainSha = worktree.baseTip?.({ ref: RUN_BASE_REF }) ?? handoff.mainSha;
       handoff.tests ??= handoff.gate;
       handoff.state = handoff.tests === 'green' ? 'ready' : 'red';
       handoff.step = 'waiting';
@@ -606,16 +611,16 @@ export function startCoordinator({
     }
     let res;
     try {
-      res = worktree.syncMain(state.feature.path);
+      res = worktree.syncBase(state.feature.path, { baseSha: worktree.baseTip({ ref: RUN_BASE_REF }), base: RUN_BASE });
     } catch (err) {
       control?.log?.(`main-sync failed: ${err?.message ?? err}`);
-      handoff.sync = { state: 'unresolved', mainSha: worktree.mainTip?.() ?? null, files: [] };
+      handoff.sync = { state: 'unresolved', mainSha: worktree.baseTip?.({ ref: RUN_BASE_REF }) ?? null, files: [] };
       handoff.tests = 'red';
       handoff.step = existing ? 'footer' : 'brief';
       return;
     }
     rec('main-sync', { state: res.state });
-    handoff.sync = { state: res.state, mainSha: res.mainSha, files: res.files ?? [] };
+    handoff.sync = { state: res.state, mainSha: res.baseSha, files: res.files ?? [] };
     if (res.state === 'up-to-date') {
       handoff.tests ??= handoff.gate;
       if (existing && handoff.fix) {
@@ -775,8 +780,8 @@ export function startCoordinator({
         break;
       case 'waiting':
         if (routed.close) finish('closed', rec);
-        else if (worktree.mainContains(state.feature.branch)) finish('merged', rec);
-        else if (worktree.mainTip() !== handoff.mainSha) {
+        else if (worktree.baseContains(state.feature.branch, { refs: [RUN_BASE_REF] })) finish('merged', rec);
+        else if (worktree.baseTip({ ref: RUN_BASE_REF }) !== handoff.mainSha) {
           // main moved without the feature tip: re-sync so the hand-off still merges cleanly (§2.10).
           handoff.state = 'preparing';
           handoff.rewrite = true;
@@ -1968,7 +1973,7 @@ async function main(argv) {
   // forwards to it by id once it has started (currentAgent is set when the controller exists).
   let currentAgent = () => null;
   const personInbox = startPersonInbox({ controlDir: control.dir, platform: withAgent(platform, () => currentAgent()), grants, log: control.log });
-  const worktree = createWorktree({ root });
+  const worktree = createWorktree({ root, base: RUN_BASE });
   // No DESIGN.md reads as '': makePrepare sees no block and runs no setup.
   const design = planHome(slug, { root }).read('DESIGN.md') ?? '';
   const prepare = makePrepare({ design, setupDir: join(control.dir, 'setup') });

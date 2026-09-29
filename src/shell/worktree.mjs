@@ -1,9 +1,14 @@
 // The real git plumbing behind the T05 fake (src/shell/fake/worktree.mjs), operating on the real
 // project's git instead of a scratch repo. It implements the branch model of DESIGN §2.9: one
-// feature branch `pir/{plan}` cut from `main` in its own worktree (the coordinator works there, so
-// the user's main checkout stays on `main`); task branches `pir/{plan}-T{nn}` cut from the feature
-// branch and merged back into it, serialized; and `main` never touched — the finished feature branch
-// is handed to the person to merge by hand (DESIGN §2.4). It is the recovery half of the machine
+// feature branch `pir/{plan}` cut from the run's base branch in its own worktree (the coordinator
+// works there, so the user's own checkout is not moved); task branches `pir/{plan}-T{nn}` cut from the
+// feature branch and merged back into it, serialized; and the base never written — the finished
+// feature branch is handed to the person to merge by hand (DESIGN §2.4).
+//
+// Nothing here names a base branch (base-branch T03): every cut, sync and "has the person merged"
+// check takes the base and the commit as arguments, and the base a branch was cut from is recorded on
+// it as `branch.<branch>.pirBase` in git config (base-branch DESIGN §2.5), which `git branch -m`
+// carries along to the renamed branch. It is the recovery half of the machine
 // (DESIGN §6) and is built before any live agent, so a runaway or abandoned worker can always be
 // torn down.
 //
@@ -49,26 +54,67 @@ export function git(cwd, args) {
   }
 }
 
-// The primary (main) worktree of the repo: `git worktree list --porcelain` names it first, wherever
-// it is called from. Feature and task worktrees are created relative to it; it is the checkout sitting
-// on `main`, which the run leaves untouched (the person merges the feature branch by hand, DESIGN §2.4).
-function mainWorktree(root) {
+// The primary worktree of the repo: `git worktree list --porcelain` names it first, wherever it is
+// called from. Feature and task worktrees are created relative to it; it is the person's own checkout,
+// which the run leaves untouched (the person merges the feature branch by hand, DESIGN §2.4).
+function primaryWorktree(root) {
   const out = git(root, ['worktree', 'list', '--porcelain']).stdout;
   const first = out.split('\n').find((l) => l.startsWith('worktree '));
   if (!first) throw new Error(`not a git repo: ${root}`);
   return first.slice('worktree '.length).trim();
 }
 
-// Where coordinator-created worktrees live: <main>/.claude/worktrees, the same place Claude Code
+// Where coordinator-created worktrees live: <primary>/.claude/worktrees, the same place Claude Code
 // puts its own linked worktrees in this repo (this very session runs from one). A registered
 // worktree directory is excluded from the parent repo's status by git itself, so nothing here shows
-// up as an untracked file on `main`.
+// up as an untracked file in the person's checkout.
 function worktreesBase(root) {
-  return join(mainWorktree(root), '.claude', 'worktrees');
+  return join(primaryWorktree(root), '.claude', 'worktrees');
 }
 
 function branchExists(root, branch) {
   return git(root, ['rev-parse', '--verify', '--quiet', `refs/heads/${branch}`]).ok;
+}
+
+// The commit a ref names, or null. `^{commit}` so a tag or a tree-ish that is not a commit is refused
+// here rather than by a later `git branch`.
+function commitOf(root, ref) {
+  return git(root, ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`]).stdout.trim() || null;
+}
+
+function noBaseBranch(from) {
+  const e = new Error(`no-base-branch: ${from} does not resolve to a commit`);
+  e.code = 'no-base-branch';
+  return e;
+}
+
+// Create `branch` at the commit `from` names (default: the tip of the local `base`) and record the
+// base on it. Resolved to a sha first, so the branch is cut from exactly the commit the caller chose
+// (base-branch DESIGN §2.3 hands a prepared sha, which may be ahead of the local base). Both are
+// checked before anything is created, so a refusal leaves the repo as it was. `pirBase` is written
+// after the branch: a crash between the two leaves a branch without it, which DESIGN §2.5's fallback
+// handles.
+function cutBranch(root, branch, { base, from }, who) {
+  if (!base) throw new Error(`${who}: no base branch given for ${branch}`);
+  const ref = from ?? `refs/heads/${base}`;
+  const sha = commitOf(root, ref);
+  if (!sha) throw noBaseBranch(ref);
+  const r = git(root, ['branch', branch, sha]);
+  if (!r.ok) throw new Error(`${who}: could not create ${branch}: ${r.stderr}`);
+  recordRunBase(root, branch, base);
+}
+
+// recordRunBase(root, branch, base) — `git config branch.<branch>.pirBase <base>` (DESIGN §2.5).
+export function recordRunBase(root, branch, base) {
+  const r = git(root, ['config', `branch.${branch}.pirBase`, base]);
+  if (!r.ok) throw new Error(`recordRunBase: could not record ${base} on ${branch}: ${r.stderr}`);
+}
+
+// readRunBase(root, branch) → the base recorded on `branch`, or null (a branch cut before pirBase
+// existed, or none at all: `git config --get` exits 1 for a missing key).
+export function readRunBase(root, branch) {
+  const r = git(root, ['config', '--get', `branch.${branch}.pirBase`]);
+  return (r.ok && r.stdout.trim()) || null;
 }
 
 // The registered worktree path checked out on `branch`, or null. Porcelain records are separated by
@@ -105,23 +151,21 @@ function featureOfTaskBranch(taskBranch) {
 
 // Open (or re-open) the feature branch for a plan in its own worktree. Reuses both branch and
 // worktree if they already exist, so a coordinator restart lands on the same feature worktree rather
-// than a duplicate. The `git branch ... main` cuts the branch off main WITHOUT switching the user's
-// checkout; `git worktree add` checks it out in a linked worktree, leaving main where it was.
-export function openFeature(plan, { root = process.cwd() } = {}) {
+// than a duplicate; a reused branch keeps the pirBase it has. A new branch is cut from `from` (default
+// the local `base`) WITHOUT switching the user's checkout; `git worktree add` checks it out in a
+// linked worktree, leaving the person's checkout where it was.
+export function openFeature(plan, { root = process.cwd(), base, from } = {}) {
   const branch = featureBranchOf(plan);
   const existing = worktreeForBranch(root, branch);
   if (existing) return { path: existing, branch };
-  if (!branchExists(root, branch)) {
-    const r = git(root, ['branch', branch, 'main']);
-    if (!r.ok) throw new Error(`openFeature: could not create ${branch}: ${r.stderr}`);
-  }
+  if (!branchExists(root, branch)) cutBranch(root, branch, { base, from }, 'openFeature');
   const path = join(worktreesBase(root), `pir-${plan}`);
   const add = git(root, ['worktree', 'add', path, branch]);
   if (!add.ok) throw new Error(`openFeature: worktree add failed: ${add.stderr}`);
   return { path, branch };
 }
 
-// Create a task worktree on `pir/{plan}-T{nn}` cut from the FEATURE branch (not main), so the worker
+// Create a task worktree on `pir/{plan}-T{nn}` cut from the FEATURE branch (not the base), so the worker
 // starts from siblings already merged into the feature branch. Reuses an existing branch/worktree
 // for the same restart-safety as openFeature.
 export function createTask(plan, task, { root = process.cwd() } = {}) {
@@ -218,53 +262,55 @@ export function commitFeature({ root = process.cwd(), featurePath, plan, message
   return { ok: res.ok };
 }
 
-// ---- End of run: bring main into the feature branch (pir-coordinator DESIGN §2.9, §2.10, T05) ----
+// ---- End of run: bring the base into the feature branch (pir-coordinator DESIGN §2.9, §2.10, T05) ----
 //
-// The run hands the person a branch that merges cleanly, so before the hand-off (and again whenever main
-// moves while the run waits) the current `main` is merged INTO the feature branch, in the feature
-// worktree. main itself is only read, never written. A conflict is left in progress for a worker to
-// finish (the main-sync prompt, core/conflict.mjs), so it is not aborted here.
+// The run hands the person a branch that merges cleanly, so before the hand-off (and again whenever the
+// base moves while the run waits) the base commit is merged INTO the feature branch, in the feature
+// worktree. The base itself is only read, never written. Which commit is merged is the caller's choice
+// (base-branch DESIGN §2.8: the prepared base, possibly the remote's newer copy), so it arrives as a sha.
+// A conflict is left in progress for a worker to finish (the main-sync prompt, core/conflict.mjs), so it
+// is not aborted here.
 
-const mainShaOf = (root) => git(root, ['rev-parse', '--verify', '--quiet', 'refs/heads/main']).stdout.trim() || null;
 const merging = (cwd) => git(cwd, ['rev-parse', '-q', '--verify', 'MERGE_HEAD']).ok;
 
-// syncMain(featurePath, { root }) → { state: 'up-to-date'|'merged'|'conflict', mainSha, files? }.
-// A merge already in progress (a restart while a main-sync worker was resolving) is reported as the
-// conflict it still is, with its unmerged files, rather than a second merge being started on top of it.
-export function syncMain(featurePath, { root = process.cwd() } = {}) {
-  const mainSha = mainShaOf(root);
-  if (!mainSha) throw new Error('syncMain: the repo has no local main');
-  if (merging(featurePath)) return { state: 'conflict', mainSha, files: unmergedFiles(featurePath) };
-  if (git(featurePath, ['merge-base', '--is-ancestor', mainSha, 'HEAD']).ok) return { state: 'up-to-date', mainSha };
+// syncBase(featurePath, { baseSha, base }) → { state: 'up-to-date'|'merged'|'conflict', baseSha, files? }.
+// `base` is the branch name, used only in the merge message. A merge already in progress (a restart
+// while a main-sync worker was resolving) is reported as the conflict it still is, with its unmerged
+// files, rather than a second merge being started on top of it.
+export function syncBase(featurePath, { baseSha, base } = {}) {
+  if (!baseSha) throw new Error(`syncBase: no commit of ${base ?? 'the base branch'} to merge`);
+  if (merging(featurePath)) return { state: 'conflict', baseSha, files: unmergedFiles(featurePath) };
+  if (git(featurePath, ['merge-base', '--is-ancestor', baseSha, 'HEAD']).ok) return { state: 'up-to-date', baseSha };
   const branch = git(featurePath, ['symbolic-ref', '--short', 'HEAD']).stdout.trim() || 'the feature branch';
-  const res = git(featurePath, [...NOSIGN, 'merge', '--no-ff', '-m', `sync main into ${branch}`, mainSha]);
-  if (res.ok) return { state: 'merged', mainSha };
+  const res = git(featurePath, [...NOSIGN, 'merge', '--no-ff', '-m', `sync ${base} into ${branch}`, baseSha]);
+  if (res.ok) return { state: 'merged', baseSha };
   if (!merging(featurePath)) {
     // git refused before merging anything (an untracked file in the way): nothing is left in progress,
     // and a worker told to finish a merge would find none. Surfaced as an error the caller reports.
-    throw new Error(`syncMain: git merge main failed: ${res.stderr.trim()}`);
+    throw new Error(`syncBase: git merge ${base} failed: ${res.stderr.trim()}`);
   }
-  return { state: 'conflict', mainSha, files: unmergedFiles(featurePath) };
+  return { state: 'conflict', baseSha, files: unmergedFiles(featurePath) };
 }
 
-// mainContains(branch, { root }) → whether main already holds `branch`'s tip: the person merged it
-// (DESIGN §2.10: `git merge-base --is-ancestor pir/{slug} main`).
-export function mainContains(branch, { root = process.cwd() } = {}) {
-  return git(root, ['merge-base', '--is-ancestor', `refs/heads/${branch}`, 'refs/heads/main']).ok;
+// baseContains(branch, { root, refs }) → whether ANY of `refs` already holds `branch`'s tip: the person
+// merged it (DESIGN §2.10: `git merge-base --is-ancestor pir/{slug} <base>`). Several refs because a
+// merge done on the remote shows up only in the remote-tracking copy (base-branch DESIGN §2.8).
+export function baseContains(branch, { root = process.cwd(), refs = [] } = {}) {
+  return refs.some((ref) => git(root, ['merge-base', '--is-ancestor', `refs/heads/${branch}`, ref]).ok);
 }
 
-// mainTip({ root }) → main's current sha, or null.
-export function mainTip({ root = process.cwd() } = {}) {
-  return mainShaOf(root);
+// baseTip({ root, ref }) → the commit `ref` names, or null.
+export function baseTip({ root = process.cwd(), ref } = {}) {
+  return ref ? commitOf(root, ref) : null;
 }
 
-// syncPending(featurePath) → whether a main-sync merge is still in progress in the feature worktree:
+// syncPending(featurePath) → whether a base-sync merge is still in progress in the feature worktree:
 // the worker that was to finish it reported done without committing, or exited.
 export function syncPending(featurePath) {
   return merging(featurePath);
 }
 
-// abortSync(featurePath) → abandon an unfinished main-sync merge, so the feature branch is left at its
+// abortSync(featurePath) → abandon an unfinished base-sync merge, so the feature branch is left at its
 // last clean commit (DESIGN §2.11: the conflict could not be resolved; the report says so).
 export function abortSync(featurePath) {
   if (merging(featurePath)) git(featurePath, ['merge', '--abort']);
@@ -308,11 +354,12 @@ export function taskWorktreeHandle(plan, task, { root = process.cwd() } = {}) {
 
 // The stateful drop-in the coordinator loop injects in T08, mirroring the fake's createFakeWorktree.
 // It binds every operation to one repo root and remembers the feature worktree opened this run, so
-// commitFeature (message-only, as the loop calls it) knows where to commit.
-export function createWorktree({ root = process.cwd() } = {}) {
+// commitFeature (message-only, as the loop calls it) knows where to commit. `base`/`from` are what
+// openFeature cuts a new feature branch from: the loop calls openFeature(plan) with the plan alone.
+export function createWorktree({ root = process.cwd(), base, from } = {}) {
   let feature = null;
   return {
-    openFeature: (plan) => (feature = openFeature(plan, { root })),
+    openFeature: (plan, opts = {}) => (feature = openFeature(plan, { base, from, ...opts, root })),
     createTask: (plan, task) => createTask(plan, task, { root }),
     integrate: (path) => integrate(path),
     mergeTask: (taskBranch) => mergeTask(taskBranch, { root, featurePath: feature?.path }),
@@ -320,9 +367,9 @@ export function createWorktree({ root = process.cwd() } = {}) {
     remove: (target) => remove(target, { root }),
     taskBranchState: (plan, task) => taskBranchState(plan, task, { root }),
     taskWorktreeHandle: (plan, task) => taskWorktreeHandle(plan, task, { root }),
-    syncMain: (featurePath) => syncMain(featurePath, { root }),
-    mainContains: (branch) => mainContains(branch, { root }),
-    mainTip: () => mainTip({ root }),
+    syncBase: (featurePath, opts) => syncBase(featurePath, opts),
+    baseContains: (branch, opts) => baseContains(branch, { ...opts, root }),
+    baseTip: (opts) => baseTip({ ...opts, root }),
     syncPending: (featurePath) => syncPending(featurePath),
     abortSync: (featurePath) => abortSync(featurePath),
     get feature() {
@@ -336,27 +383,18 @@ export function createWorktree({ root = process.cwd() } = {}) {
 // A planning run works on a temporary branch pir/{runId} (runId = plan-{hex4}) in its own worktree,
 // renamed to pir/{slug} once the planner has named the plan. The renamed worktree lands exactly on the
 // build's feature worktree path, so openFeature later reuses it. Nothing here runs `checkout` in the
-// main worktree: unlike the coordinator's ensureMain, a planning run must never move the person's own
-// checkout (DESIGN §2.2 pre-flight 2). No call here creates a commit, so NOSIGN is not needed.
+// primary worktree: unlike the coordinator's ensureMain, a planning run must never move the person's
+// own checkout (DESIGN §2.2 pre-flight 2). No call here creates a commit, so NOSIGN is not needed.
 
-function noMain() {
-  const e = new Error('no-main');
-  e.code = 'no-main';
-  return e;
-}
-
-// Cut pir/{runId} from local main and check it out in <main>/.claude/worktrees/pir-{runId}. Reuses
-// the branch and worktree when they already exist, as openFeature does, so a relaunch is harmless.
-export function openPlanBranch(runId, { root = process.cwd() } = {}) {
+// Cut pir/{runId} from `from` (default the local `base`), record pirBase, and check it out in
+// <primary>/.claude/worktrees/pir-{runId}. Throws code 'no-base-branch' when `from` does not resolve,
+// before anything is created. Reuses the branch and worktree when they already exist, as openFeature
+// does, so a relaunch is harmless.
+export function openPlanBranch(runId, { root = process.cwd(), base, from } = {}) {
   const branch = featureBranchOf(runId);
   const existing = worktreeForBranch(root, branch);
   if (existing) return { path: existing, branch };
-  if (!branchExists(root, branch)) {
-    // Checked before anything is created, so a repo without main is left exactly as it was.
-    if (!branchExists(root, 'main')) throw noMain();
-    const r = git(root, ['branch', branch, 'refs/heads/main']);
-    if (!r.ok) throw new Error(`openPlanBranch: could not create ${branch}: ${r.stderr}`);
-  }
+  if (!branchExists(root, branch)) cutBranch(root, branch, { base, from }, 'openPlanBranch');
   const path = join(worktreesBase(root), `pir-${runId}`);
   const add = git(root, ['worktree', 'add', path, branch]);
   if (!add.ok) throw new Error(`openPlanBranch: worktree add failed: ${add.stderr}`);
@@ -364,11 +402,13 @@ export function openPlanBranch(runId, { root = process.cwd() } = {}) {
 }
 
 // Why a slug cannot be taken for a new plan, or null when it is free (DESIGN §2.5): a branch
-// pir/{slug}, a plan already committed on main, or a dashboard index entry. The index lives outside
-// git, so its lookup is injected (indexHas(slug) → boolean) and this stays a git-only function.
-export function slugTaken(slug, { root = process.cwd(), indexHas = () => false } = {}) {
+// pir/{slug}, a plan already committed on the run's base branch, or a dashboard index entry. The index
+// lives outside git, so its lookup is injected (indexHas(slug) → boolean) and this stays a git-only
+// function.
+export function slugTaken(slug, { root = process.cwd(), base, indexHas = () => false } = {}) {
+  if (!base) throw new Error('slugTaken: no base branch given');
   if (branchExists(root, featureBranchOf(slug))) return 'branch';
-  if (git(root, ['cat-file', '-e', `refs/heads/main:${progressPathFor(slug)}`]).ok) return 'main-plan';
+  if (git(root, ['cat-file', '-e', `refs/heads/${base}:${progressPathFor(slug)}`]).ok) return 'base-plan';
   if (indexHas(slug)) return 'index';
   return null;
 }

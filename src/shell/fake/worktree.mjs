@@ -27,7 +27,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, existsSync
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { progressPathFor, parseProgress, adoptNewTaskRows } from '../../core/progress.mjs';
-import { syncMain, mainContains, mainTip, syncPending, abortSync } from '../worktree.mjs';
+import { syncBase, baseContains, baseTip, syncPending, abortSync, recordRunBase } from '../worktree.mjs';
 
 // Run one git command in cwd. Returns { ok, stdout, stderr, status } rather than throwing, so a
 // non-zero exit (a merge conflict, a missing ref) is a value the caller inspects, not an
@@ -56,14 +56,16 @@ function configure(repo) {
 //              both touch to force a real merge conflict in a test.
 //   slug     — the plan slug, so PROGRESS.md is placed at plans/{slug}/PROGRESS.md exactly where the
 //              loop and worker read it (progressPathFor). Must match the plan passed to openFeature.
+//   base     — the scratch repo's one branch, which openFeature cuts from and records as pirBase
+//              (base-branch T03). Defaults to `main`, which every existing test's fixture assumes.
 // The repo is created under a fresh temp dir; call cleanup() to remove it.
-export function createFakeWorktree({ progress, files = {}, slug = 'demo' } = {}) {
+export function createFakeWorktree({ progress, files = {}, slug = 'demo', base = 'main' } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'pir-fake-'));
   const repo = join(dir, 'repo');
   const progressRel = progressPathFor(slug);
   const events = [];
 
-  git(dir, ['init', '-b', 'main', 'repo']);
+  git(dir, ['init', '-b', base, 'repo']);
   configure(repo);
   mkdirSync(join(repo, dirname(progressRel)), { recursive: true });
   writeFileSync(join(repo, progressRel), progress ?? '');
@@ -76,10 +78,12 @@ export function createFakeWorktree({ progress, files = {}, slug = 'demo' } = {})
 
   let feature = null;
 
-  function openFeature(plan) {
+  // Mirrors the real openFeature's signature: cut from `from` (default the base) and record pirBase.
+  function openFeature(plan, { from } = {}) {
     const branch = `pir/${plan}`;
     const path = join(dir, 'wt-feature');
-    git(repo, ['branch', branch, 'main']);
+    // A reused branch (a restart) keeps the pirBase it already has.
+    if (git(repo, ['branch', branch, from ?? base]).ok) recordRunBase(repo, branch, base);
     git(repo, ['worktree', 'add', path, branch]);
     configure(path);
     feature = { path, branch };
@@ -243,9 +247,9 @@ export function createFakeWorktree({ progress, files = {}, slug = 'demo' } = {})
     taskBranchState,
     taskWorktreeHandle,
     // The end-of-run sync (pir-coordinator T05) is the real module's git, bound to the scratch repo.
-    syncMain: (featurePath) => syncMain(featurePath, { root: repo }),
-    mainContains: (branch) => mainContains(branch, { root: repo }),
-    mainTip: () => mainTip({ root: repo }),
+    syncBase: (featurePath, opts) => syncBase(featurePath, opts),
+    baseContains: (branch, opts) => baseContains(branch, { ...opts, root: repo }),
+    baseTip: (opts) => baseTip({ ...opts, root: repo }),
     syncPending: (featurePath) => syncPending(featurePath),
     abortSync: (featurePath) => abortSync(featurePath),
     // introspection
