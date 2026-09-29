@@ -25,7 +25,8 @@ import { startTimeOf, resolveLiveness } from './identity.mjs';
 import { indexDir, listRecords, recordPath, updateRecord, writeRecord } from './index-store.mjs';
 import { planHome } from './plan-home.mjs';
 import { openPlanBranch, cutFeatureBranch } from './worktree.mjs';
-import { resolveRunBase } from './base-branch.mjs';
+import { prepareBase as prepareBaseReal, resolveBaseSetting, resolveRunBase } from './base-branch.mjs';
+import { refusalText } from '../core/basebranch.mjs';
 import { writeFileAtomic, writeJsonAtomic } from './atomic-write.mjs';
 import { classifyRun } from '../core/runstate.mjs';
 import { initialPlanState, runIdFrom } from '../core/planflow.mjs';
@@ -196,11 +197,17 @@ function gitOk(cwd, args) {
   }
 }
 
-// planPreflight({ cwd }) → { ok: true, root, repo } | { ok: false, reason: 'not-a-repo'|'no-main' }
-// DESIGN §2.2 steps 1–2, in order, touching nothing. There is no repo-name check: the canonical-repo
-// guard was removed (dashboard-plan-box DESIGN §2.8), so planning works in any checkout. The brief (step 4) is the caller's: the brief box
-// runs this before the person has typed one (§2.13).
-export function planPreflight({ cwd = process.cwd() } = {}) {
+// planPreflight({ cwd, env, prepareBase }) → { ok: true, root, repo, base, baseSha, remote, file }
+//   | { ok: false, reason, message?, base?, remote? }       (file: the settings file that named the base)
+//   reason: 'not-a-repo'|'no-base-setting'|'bad-settings'|'no-base-branch'|'fetch-failed'|'diverged'
+// pir-plan-command DESIGN §2.2 steps 1–2 and base-branch DESIGN §2.6, in order. There is no repo-name
+// check: the canonical-repo guard was removed (dashboard-plan-box DESIGN §2.8), so planning works in any
+// checkout. The brief is the caller's: bare `pir plan` runs this before the person has typed one
+// (§2.13). A base refusal carries `message`, the §2.9 refusal text, and creates nothing; the only
+// changes a pre-flight may leave are the remote-tracking ref the fetch updated and a local base branch
+// §2.3 created or moved forward, both safe (base-branch §2.6). The fetch runs here, synchronously in
+// pir's own process, so a refusal reaches the person before the detached planning program starts.
+export function planPreflight({ cwd = process.cwd(), env = process.env, prepareBase = prepareBaseReal } = {}) {
   // 1. Inside a work tree. The root is the MAIN worktree, whichever folder or linked worktree `pir plan`
   // was typed in: `git worktree list` names the main one first from anywhere in the repo.
   const inside = gitOk(cwd, ['rev-parse', '--is-inside-work-tree']);
@@ -210,10 +217,23 @@ export function planPreflight({ cwd = process.cwd() } = {}) {
   const root = first.slice('worktree '.length).trim();
   const repo = basename(root);
 
-  // 2. A local main. Never created here: a `checkout -B main` would move the person's checkout.
-  if (!gitOk(root, ['rev-parse', '--verify', '--quiet', 'refs/heads/main']).ok) return { ok: false, reason: 'no-main' };
+  // 2. The base branch, stated in the settings (base-branch §2.1, §2.2), never guessed.
+  const setting = resolveBaseSetting(root, { env });
+  if (!setting.ok) return { ok: false, reason: setting.reason, message: refusalText(setting, { repo }) };
+  const base = setting.base;
 
-  return { ok: true, root, repo };
+  // 3. The newest commit of that base (§2.3). Never checks anything out: the person's checkout stays put.
+  const prep = prepareBase(root, base, { env });
+  if (!prep.ok) {
+    return {
+      ok: false,
+      reason: prep.reason,
+      message: refusalText(prep, { repo, base, file: setting.file }),
+      base,
+      remote: prep.remote ?? null,
+    };
+  }
+  return { ok: true, root, repo, base, baseSha: prep.sha, remote: prep.remote ?? null, file: setting.file };
 }
 
 function defaultRandom() {
@@ -251,17 +271,29 @@ function keepAwake(pid, spawn) {
 
 // startPlanRun(brief, { cwd, spawn, exec, fs, now, env, random }) →
 //   { started: true, runId, pid, record, controlDir }
-//   | { started: false, reason: 'not-a-repo'|'no-main'|'empty-brief' }
+//   | { started: false, reason: 'not-a-repo'|'empty-brief'|<a planPreflight base reason>, message?, base?, remote? }
 // `random()` returns four lowercase hex characters. `fs` is node:fs-shaped (existsSync, mkdirSync,
 // openSync, closeSync, writeFileSync, renameSync) and defaults to the real one.
 export function startPlanRun(
   brief,
-  { cwd = process.cwd(), spawn = realSpawn, exec, fs = nodeFs, now = () => new Date(), env = process.env, random = defaultRandom } = {},
+  {
+    cwd = process.cwd(),
+    spawn = realSpawn,
+    exec,
+    fs = nodeFs,
+    now = () => new Date(),
+    env = process.env,
+    random = defaultRandom,
+    prepareBase = prepareBaseReal,
+  } = {},
 ) {
-  const pre = planPreflight({ cwd });
-  if (!pre.ok) return { started: false, reason: pre.reason };
+  const pre = planPreflight({ cwd, env, prepareBase });
+  if (!pre.ok) {
+    const { ok, ...refusal } = pre;
+    return { started: false, ...refusal };
+  }
   if (typeof brief !== 'string' || brief.trim() === '') return { started: false, reason: 'empty-brief' };
-  const { root, repo } = pre;
+  const { root, repo, base, baseSha } = pre;
   const dir = indexDir({ env });
 
   let runId = null;
@@ -273,11 +305,15 @@ export function startPlanRun(
 
   let branch;
   try {
-    // The base is still `main` until T05 resolves it from the repo's settings (base-branch T03).
-    ({ branch } = openPlanBranch(runId, { root, base: 'main' }));
+    // Cut from the commit the pre-flight chose, not the local base's tip: that may be behind the
+    // remote's (base-branch §2.3, §2.6). openPlanBranch records pirBase on the new branch (§2.5).
+    ({ branch } = openPlanBranch(runId, { root, base, from: baseSha }));
   } catch (err) {
-    // main vanished between the pre-flight and here: the same refusal, still nothing created.
-    if (err && err.code === 'no-base-branch') return { started: false, reason: 'no-main' };
+    // The chosen commit vanished between the pre-flight and here: still nothing created.
+    if (err && err.code === 'no-base-branch') {
+      const refusal = { reason: 'no-base-branch', remote: pre.remote };
+      return { started: false, ...refusal, base, message: refusalText(refusal, { repo, base, file: pre.file }) };
+    }
     throw err;
   }
 
@@ -302,6 +338,7 @@ export function startPlanRun(
     startTime: startTimeOf(child.pid, { exec }),
     startedAt: now().toISOString(),
     branch,
+    baseBranch: base,
     finalState: null,
     updatedAt: null,
   };

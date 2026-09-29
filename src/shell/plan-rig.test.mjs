@@ -399,15 +399,34 @@ test('end to end at 80×24: `pir plan` then esc → back to the shell, exit 0, n
   assert.ok(!existsSync(join(rig.repoDir, 'plans')), 'no plans/ folder');
 });
 
-test('end to end: `pir plan` in a repo without main → the refusal line, and no box', (t) => {
-  const rig = rigWithTeardown(t);
-  git(rig.repoDir, 'branch', '-m', 'main', 'trunk');
-  const pir = fileURLToPath(new URL('./pir.mjs', import.meta.url));
-  const r = spawnSync(process.execPath, [pir, 'plan'], { cwd: rig.repoDir, env: rig.env, encoding: 'utf8', timeout: 10000 });
-  assert.equal(r.status, 1);
-  assert.equal(r.stderr, "pir plan: this repo has no local 'main' branch — a plan is cut from main\n");
-  assert.doesNotMatch(r.stdout, /esc cancel|new plan in/);
-});
+// base-branch §2.9: each refusal reachable from `pir plan` prints its text, opens no box and leaves the
+// repo as it was. The rig's HOME/PIR_HOME are scratch, so no real user settings file is read.
+for (const [label, setup, text] of [
+  ['a base branch that exists nowhere', (rig) => git(rig.repoDir, 'branch', '-m', 'main', 'trunk'),
+    'pir: the base branch main (set in .pir/settings.json) does not exist locally, and this repo has no remote.\n'],
+  ['no settings', (rig) => rmSync(join(rig.repoDir, '.pir'), { recursive: true }),
+    'pir: no base branch is set for repo. Add .pir/settings.json with {"baseBranch": "<branch>"} (committed, for everyone), or ~/.pir/repo/settings.json (this machine only).\n'],
+  ['a broken user settings file', (rig) => {
+    mkdirSync(join(rig.home, '.pir', 'repo'), { recursive: true });
+    writeFileSync(join(rig.home, '.pir', 'repo', 'settings.json'), '[]');
+  }, (rig) => `pir: ${join(rig.home, '.pir', 'repo', 'settings.json')} is not usable: it is not a JSON object.\n`],
+  ['an unreachable remote', (rig) => git(rig.repoDir, 'remote', 'add', 'origin', join(rig.root, 'gone.git')), /^pir: could not fetch main from origin: .+\. Nothing was created; try again when origin is reachable\.\n$/],
+]) {
+  test(`end to end: \`pir plan\` with ${label} → the §2.9 refusal line, no box, nothing created`, (t) => {
+    const rig = rigWithTeardown(t);
+    setup(rig);
+    const heads = git(rig.repoDir, 'for-each-ref', '--format=%(refname)', 'refs/heads');
+    const pir = fileURLToPath(new URL('./pir.mjs', import.meta.url));
+    const r = spawnSync(process.execPath, [pir, 'plan'], { cwd: rig.repoDir, env: rig.env, encoding: 'utf8', timeout: 20000 });
+    assert.equal(r.status, 1);
+    if (text instanceof RegExp) assert.match(r.stderr, text);
+    else assert.equal(r.stderr, typeof text === 'function' ? text(rig) : text);
+    assert.doesNotMatch(r.stdout, /esc cancel|new plan in/);
+    assert.equal(git(rig.repoDir, 'for-each-ref', '--format=%(refname)', 'refs/heads'), heads, 'no branch created');
+    assert.ok(!existsSync(join(rig.repoDir, 'plans')), 'no plans/ folder');
+    assert.deepEqual(listRecords({ dir: indexDir({ env: rig.env }) }), [], 'no run recorded');
+  });
+}
 
 // ---- T14: the drill (DESIGN §2.8, §2.10–§2.14, §2.16). One test per defect the drill fixed, and the
 // drill paths the earlier tasks' tests did not already drive. ----
@@ -759,10 +778,17 @@ function seedRuns(rig, n) {
 }
 
 // A git repo on `main` with one commit, for the box's scan.
-function makeRepo(path) {
+// A repo with one commit on `branch`, carrying .pir/settings.json naming `base` (default `branch`), as
+// every repo pir plans in needs (base-branch DESIGN §2.1); `base: null` leaves the settings out.
+function makeRepo(path, { branch = 'main', base = branch } = {}) {
   mkdirSync(path, { recursive: true });
-  execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: path });
-  execFileSync('git', ['-c', 'user.name=pir rig', '-c', 'user.email=rig@pir.invalid', 'commit', '-q', '--allow-empty', '-m', 'rig'], { cwd: path });
+  execFileSync('git', ['init', '-q', '-b', branch], { cwd: path });
+  if (base !== null) {
+    mkdirSync(join(path, '.pir'));
+    writeFileSync(join(path, '.pir', 'settings.json'), JSON.stringify({ baseBranch: base }) + '\n');
+    execFileSync('git', ['add', '-A'], { cwd: path });
+  }
+  execFileSync('git', ['-c', 'user.name=pir rig', '-c', 'user.email=rig@pir.invalid', '-c', 'commit.gpgsign=false', 'commit', '-q', '--allow-empty', '-m', 'rig'], { cwd: path });
 }
 
 // Type text one stretch at a time, letting the screen settle between, as a person does: the @ pop-up is
@@ -840,6 +866,7 @@ test('end to end at 80×24: every §2.5 refusal starts nothing and shows its exa
   const src = join(rig.home, 'src');
   const work = join(rig.home, 'work');
   for (const p of [join(src, 'repo'), join(src, 'twin'), join(work, 'twin')]) makeRepo(p);
+  makeRepo(join(src, 'nobase'), { base: null });
   const env = { ...rig.env, PIR_REPOS: '~/src:~/work' };
   const screen = rig.openScreen({ cols: 80, rows: 24, env });
   const cases = [
@@ -849,9 +876,11 @@ test('end to end at 80×24: every §2.5 refusal starts nothing and shows its exa
     { keys: ['twin', '/plan ', 'brief'], note: /^@twin is in more than one folder: (~\/src\/twin, ~\/work\/twin|~\/work\/twin, ~\/src\/twin)$/, text: '@twin/plan brief' },
     { keys: ['repo', ' ', 'brief'], note: 'pick a command: @repo/plan or @repo/start', text: '@repo brief' },
     { keys: ['repo', '/plan', ' '], note: 'say what to plan after @repo/plan', text: '@repo/plan' },
-    // startPlanRun's own refusal: `main` renamed between the pick and Enter.
+    // startPlanRun's own refusals (base-branch §2.9 short form): a repo with no settings is listed and
+    // refused on pick; a settings file naming `main` after `main` was renamed between the pick and Enter.
+    { keys: ['nobase', '/plan ', 'a brief'], note: 'Could not start planning in nobase: no base branch is set', text: '@nobase/plan a brief' },
     { keys: ['repo', '/plan ', 'a brief'], before: () => execFileSync('git', ['branch', '-m', 'main', 'trunk'], { cwd: join(src, 'repo') }),
-      note: 'Could not start planning in repo: it has no local main branch', text: '@repo/plan a brief' },
+      note: 'Could not start planning in repo: main does not exist', text: '@repo/plan a brief' },
   ];
   try {
     await screen.waitFor(/new {2}start with @repo/);
@@ -896,6 +925,34 @@ test('end to end at 80×24: a repo named plan-implement-review under PIR_REPOS p
   const [record] = listRecords({ dir: indexDir({ env: rig.env }) });
   assert.equal(realpathSync(record.repoPath), realpathSync(pir), 'planned in the plan-implement-review checkout');
 });
+
+// base-branch T05: a repo with only `dev` and settings naming it plans from the box, at both sizes.
+for (const [cols, rows] of [[80, 24], [120, 40]]) {
+  test(`end to end at ${cols}×${rows}: @devrepo/plan in a dev-only repo opens the planner's conversation, cut from dev`, async (t) => {
+    const rig = rigWithTeardown(t);
+    const dev = join(rig.home, 'src', 'devrepo');
+    makeRepo(dev, { branch: 'dev' });
+    const devHead = execFileSync('git', ['rev-parse', 'dev'], { cwd: dev, encoding: 'utf8' }).trim();
+    const env = { ...rig.env, PIR_REPOS: '~/src' };
+    const screen = rig.openScreen({ cols, rows, env });
+    try {
+      await screen.waitFor(/new {2}start with @repo/);
+      await typeSettled(screen, 'devrepo', '/plan ', 'a brief');
+      screen.send(ENTER);
+      await screen.waitFor(new RegExp(esc(PLAN_RIG_QUESTION)), 20000);
+      assert.equal(screen.overflows(), 0);
+    } finally {
+      await screen.close();
+    }
+    const [record] = listRecords({ dir: indexDir({ env: rig.env }) });
+    assert.equal(realpathSync(record.repoPath), realpathSync(dev));
+    assert.equal(record.baseBranch, 'dev');
+    const branch = record.branch;
+    assert.equal(execFileSync('git', ['config', '--get', `branch.${branch}.pirBase`], { cwd: dev, encoding: 'utf8' }).trim(), 'dev');
+    assert.equal(execFileSync('git', ['merge-base', '--is-ancestor', devHead, branch], { cwd: dev }).length, 0, 'the plan branch grows from dev');
+    assert.equal(execFileSync('git', ['for-each-ref', '--format=%(refname:short)', 'refs/heads/main'], { cwd: dev, encoding: 'utf8' }), '', 'no main was invented');
+  });
+}
 
 test('end to end at 80×24: Ctrl+S Ctrl+S on a running row with a brief typed stops it and keeps the brief; typing disarms a half-press', async (t) => {
   const { rig, dir } = await startRigPlan(t);
