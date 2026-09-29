@@ -32,9 +32,13 @@ and the skills, and it is unchanged. Parallel mode is an added way to run the **
 plan**: a single **coordinator command** — a plain program, not a session the person
 talks to — spawns many **worker** sessions at once, each in its own worktree, so independent tasks
 build and review concurrently. The plan runs on one **feature branch** with a **task branch** per
-task. It never merges to `main`: the command stops at a green feature branch and hands the person a
-`git merge` to run by hand. With the coordinator agent on (the default), it first merges `main` into
-the feature branch, commits a delivery report, and waits in `ready to merge` until the person merges
+task. The feature branch is cut from the repo's **base branch** (`dev`, `main`, …), which the repo
+names in `.pir/settings.json` or the person in `~/.pir/{repo}/settings.json`; with neither, `pir`
+refuses to plan or build. `pir` fetches the base from the remote before cutting from it and before the
+end-of-run sync, and moves the person's local copy forward only when that is safe. It never merges into
+the base and never pushes: the command stops at a green feature branch and hands the person `git switch
+{base} && git merge pir/{slug}` to run by hand. With the coordinator agent on (the default), it first
+merges the base into the feature branch, commits a delivery report, and waits in `ready to merge` until the person merges
 or closes the run. A project opts into parallel mode per run; nothing about the classic
 flow changes.
 
@@ -61,7 +65,7 @@ and it had no conversation view. `install.sh` removes an installed copy it finds
   workers, holds a live line to each one, prints a live status display, and hands the person the
   finished feature branch to merge. It has no agent name and never appears in `claude agents`. It
   starts the run's coordinator agent, briefs it, and checks and applies its decisions. It never merges
-  to `main` and never writes product code. Run by hand, it is dry by default and only
+  into the base branch and never writes product code. Run by hand, it is dry by default and only
   spawns real workers under `PARALLEL_LIVE=1`; `pir` always sets it (see
   [run-lifecycle.md](run-lifecycle.md)).
 - **Workers** — `claude` processes the command starts as its own **child processes**, one per task
@@ -95,7 +99,7 @@ and it had no conversation view. `install.sh` removes an installed copy it finds
   decision files; the command checks and applies them, and keeps `ask`-bin actions and destructive
   commands for the person in code (`src/core/coordinator-policy.mjs`). Its base definition is the
   `pir-coordinator` skill; a project may add `.claude/pir-coordinator.md`. It never merges into
-  `main` and never pushes (see [coordinator-agent.md](coordinator-agent.md)).
+  the base branch and never pushes (see [coordinator-agent.md](coordinator-agent.md)).
 - **The planning program** (`src/shell/plan-run.mjs`) — the detached program behind `pir plan`. It
   holds one planning session at a time through the same worker line, checks each report against git,
   renames the run's branch, worktree and control folder once the plan has a name, and records the
@@ -107,8 +111,8 @@ and it had no conversation view. `install.sh` removes an installed copy it finds
 
 - [run-lifecycle.md](run-lifecycle.md) — a run start to finish, the pass, and the live display.
 - [task-state.md](task-state.md) — `PROGRESS.md` as the state, the glyphs, the task slug.
-- [branch-model.md](branch-model.md) — feature branch, task branches, worktrees, the hand-off (no
-  promotion), agent names.
+- [branch-model.md](branch-model.md) — the base branch (settings, fetch, `pirBase`), feature branch,
+  task branches, worktrees, the hand-off (no promotion), agent names.
 - [control-folder.md](control-folder.md) — the per-run `.parallel/control/` folder.
 - [human-flow.md](human-flow.md) — questions, question sets and permission requests answered in the
   `pir` screen, merge conflicts, the kill switch, the worker ceiling.
@@ -116,7 +120,7 @@ and it had no conversation view. `install.sh` removes an installed copy it finds
 - [detached-runs.md](detached-runs.md) — the `pir` front-end: start a run detached, the cross-repo
   dashboard to watch, stop, clear and resume runs, and a worker's conversation view.
 - [coordinator-agent.md](coordinator-agent.md) — the coordinator agent: answer first, what is reserved
-  for the person, passing on, its conversation, the ledger, the end-of-run main sync, `REPORT.md` and
+  for the person, passing on, its conversation, the ledger, the end-of-run base sync and its hold, `REPORT.md` and
   `ready to merge`, `--no-coordinator`.
 - [planning-runs.md](planning-runs.md) — `pir plan`: the planner and the plan reviewer run inside `pir`,
   the rename, the go that starts the build, resume.

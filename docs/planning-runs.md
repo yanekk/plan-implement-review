@@ -3,12 +3,13 @@
 `pir plan` moves the front half of the method into `pir`. It runs the planner (`/pir-plan`) and then
 a fresh plan reviewer (`/pir-review-plan`) as sessions `pir` holds, answered in `pir`'s own screen,
 on a side branch in its own worktree. When the plan is reviewed, `pir` asks whether to start the
-parallel build on that same branch. `main` is never written: the plan reaches `main` with its code,
-through the person's own `git merge pir/{slug}` at the end of the build.
+parallel build on that same branch. The repo's base branch (the one its settings name, see
+[branch-model.md](branch-model.md#the-base-branch)) is never written: the plan reaches it with its code,
+through the person's own `git switch {base} && git merge pir/{slug}` at the end of the build.
 
 The planning conversation is the one in the `pir-plan` and `pir-review-plan` skills, unchanged in
 substance; `pir` only hosts it. The skills' "Run by pir plan" sections say what differs for a session
-`pir` holds (below). A plan made by hand with `/pir-plan` on `main` still builds with `pir start
+`pir` holds (below). A plan made by hand with `/pir-plan` on the base branch still builds with `pir start
 {slug}` exactly as before; see [detached-runs.md](detached-runs.md).
 
 The pure rules — report parsing, slug and run-id rules, session names and the step machine
@@ -68,7 +69,8 @@ is `@` whenever the list opens, after a run starts from it and after `esc`.
   The pop-up reopens by itself only after a typed character, a deletion or a repo or command pick, and
   only with the cursor at the end of the first line; not after `esc`, a slug pick or a cursor move.
 - **The repos.** Every git repo directly inside each root with a real `.git` folder (a linked
-  worktree is skipped) and a local `main`, most recently worked in first (`scanRepos` in
+  worktree is skipped), most recently worked in first. There is no branch or settings check and no
+  network call: a repo pir cannot start in is still listed, and picking it shows why (`scanRepos` in
   `src/shell/repo-scan.mjs`). The roots are `PIR_REPOS`, split on `:` with `~` expanded; unset, the
   root is `~/src`. The scan runs when the box leaves bare, and is reused until it is bare again.
 - **The buildable plans** (`scanPlans` in `src/shell/plan-scan.mjs`, the rule in
@@ -92,8 +94,10 @@ is `@` whenever the list opens, after a run starts from it and after `esc`.
   exactly one the pop-up offers (`{slug} is not a reviewed, unfinished plan in {name}`);
   `startPlanRun` refusing or throwing (`Could not start planning in {name}: {reason}`); and `startRun`
   refusing or throwing (`Could not start {slug} in {name}: {reason}`). A refusal code is put in words
-  (`it has no local main branch`, `it is not reviewed`, `there is no such plan`, `no setup/test block`),
-  a thrown error by its message.
+  (`no base branch is set`, `its pir settings are broken`, `dev does not exist`, `can't reach origin`,
+  `dev split from origin/dev`; `it is not reviewed`, `there is no such plan`, `no setup/test block`), a
+  thrown error by its message. `startRun`'s base refusals are shown as their bare code
+  (`no-base-setting`, …); `pir start {slug}` prints the full text.
 
 The box is only on the runs list, not on a run's view or a conversation. On a terminal that is not a
 TTY the list is painted without it, as before.
@@ -103,11 +107,18 @@ one line on stderr and exit 1:
 
 1. outside a git work tree. The repo root is the **main** worktree, so `pir plan` works from any folder
    or linked worktree of the repo;
-2. a repo with no local `main` branch. A planning run never creates or checks out `main`, because that
-   would move the person's own checkout;
-3. an empty brief (`pir plan ""`; the brief box never sends one).
+2. a repo with no base branch set, or a broken settings file (`no-base-setting`, `bad-settings`; see
+   [branch-model.md](branch-model.md#the-base-branch));
+3. a base that cannot be prepared: missing locally and on the remote (`no-base-branch`), a remote that
+   cannot be reached or fetched within 30 seconds (`fetch-failed`), or a local base split from the
+   remote's (`diverged`). pir fetches the base here, in its own process and before anything detached
+   starts, so the refusal reaches the person directly. It may create the local base from the remote's
+   copy or fast-forward it when safe, but it never checks anything out, so the person's own checkout
+   does not move;
+4. an empty brief (`pir plan ""`; the brief box never sends one).
 
-The first two are `planPreflight`; the third is checked by `startPlanRun`, still before anything is
+The first three are `planPreflight` (the bare form runs it before the brief box and again in
+`startPlanRun`, so a slow remote is waited on twice); the fourth is checked by `startPlanRun`, still before anything is
 created. There is no repo-name check: planning works in any repo, the `plan-implement-review` checkout
 included, with no environment flag (the old canonical-repo refusal and `PARALLEL_ALLOW_HERE` are gone).
 
@@ -115,15 +126,16 @@ Then `startPlanRun`:
 
 - draws a **run id** `plan-{hex4}` (four random hex characters), redrawn while branch `pir/plan-{hex4}`,
   index entry `{repo}__plan-{hex4}` or folder `plans/plan-{hex4}/` already exists;
-- cuts branch `pir/plan-{hex4}` from local `main`, checked out in worktree
-  `.claude/worktrees/pir-plan-{hex4}` (`openPlanBranch` in `worktree.mjs`);
+- cuts branch `pir/plan-{hex4}` from the prepared base commit, checked out in worktree
+  `.claude/worktrees/pir-plan-{hex4}`, and records `branch.pir/plan-{hex4}.pirBase` (`openPlanBranch` in
+  `worktree.mjs`); the rename to `pir/{slug}` carries it;
 - creates the control folder `<main>/plans/plan-{hex4}/.parallel/plan/` and writes `brief.md` and
   `state.json` there (below);
 - spawns the planning program detached, exactly as a build's coordinator is spawned: its own session and
   process group, output to `run.log` in the control folder, `PIR_RUN=1`, and `caffeinate -i -w {pid}`
   holding the Mac awake for its lifetime;
 - writes the index entry `~/.pir/runs/{repo}__plan-{hex4}.json` with `kind: 'plan'`, `label` (the
-  brief's first line, cut to 24 characters with `…`) and `go: null`.
+  brief's first line, cut to 24 characters with `…`), `baseBranch` and `go: null`.
 
 `pir` then lands directly in the planner's conversation (below), from the box as from `pir plan`.
 
@@ -150,8 +162,8 @@ Answering the planner in `pir` is the same act as answering a worker (see
   brief.
 
 The skills, when told they are run by `pir plan`: run on the `pir/…` branch in its worktree without
-halting on the "main checkout, main branch" rule; the planner checks a proposed slug is free before
-writing anything (no `plans/{slug}/` on `main`, no branch `pir/{slug}`, not of the form `plan-xxxx`);
+halting on the "main checkout, base branch" rule; the planner checks a proposed slug is free before
+writing anything (no `plans/{slug}/` on the base, read from `pirBase` on its branch, no branch `pir/{slug}`, not of the form `plan-xxxx`);
 the prototype, when there is one, is written to `plans/{slug}/prototype/index.html` and opened with
 `open`, because a headless session has no Artifact tool; both commit everything and leave the worktree
 clean; and each ends by dropping its report instead of naming the next command to type.
@@ -184,7 +196,7 @@ A report is a claim; `pir` checks it against git before acting (`plannerChecks`,
 
 - **`planned`**: `plans/{slug}/PROGRESS.md`, `PLAN.md` and `DESIGN.md` are committed at the branch
   head; the slug is kebab-case and not of the form `plan-{hex4}`; it is free (no branch `pir/{slug}`, no
-  `plans/{slug}/PROGRESS.md` on `main`, no index entry `{repo}__{slug}`); the worktree is clean.
+  `plans/{slug}/PROGRESS.md` on the run's local base (`slugTaken`), no index entry `{repo}__{slug}`); the worktree is clean.
 - **`reviewed`**: on the committed branch tree, `plans/{slug}/PROGRESS.md` reads reviewed by the same
   gate a build uses, `DESIGN.md` opens with a valid setup/test block, and the worktree is clean.
 
@@ -279,7 +291,7 @@ on.
 
 The question is derived from files, not held by a waiting process, so it survives a reboot. `pir start
 {slug}` builds a waiting or declined plan too; it is the same call. The build reads the plan from the
-committed branch until it is merged to `main` (see [run-lifecycle.md](run-lifecycle.md)).
+committed branch until it is merged into the base (see [run-lifecycle.md](run-lifecycle.md)).
 
 ## Stop, remove, resume
 
@@ -313,11 +325,11 @@ independent; their run ids differ, and a slug collision is caught by the `planne
 <pid> -o lstart=` equals its `startTime`, then the program's pid from
 `~/.pir/runs/{repo}__{id|slug}.json`. An unwanted plan branch: `git worktree remove --force
 .claude/worktrees/pir-{name}` then `git branch -D pir/{name}`. `pir` itself never deletes a branch, and
-none of this touches `main`.
+none of this touches the base branch.
 
 ## Known limitations
 
-- **Classic `/pir-work` cannot build a plan that lives only on `pir/{slug}`.** Merge it to `main` first,
+- **Classic `/pir-work` cannot build a plan that lives only on `pir/{slug}`.** Merge it into the base first,
   or build it with `pir start {slug}`.
 - **Editing a reviewed plan before the go** is not a `pir` action: resume a session, or edit the branch
   by hand.
