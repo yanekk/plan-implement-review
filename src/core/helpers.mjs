@@ -112,3 +112,87 @@ export function helperOfFrame(helpers, parentToolUseId, entries) {
   }
   return found;
 }
+
+// ---- The interrupt rules (DESIGN §2.5, §2.6, §2.8). T05 wires them into the view and the send path. ----
+
+const INTERRUPT_KEYS = new Set(['escape', 'ctrl+c-empty']);
+
+// interruptGate(gate, key, running) → { gate, send } (DESIGN §2.5). `gate` is the view's armed state,
+// null or { armed: true, helpers }; `running` is runningHelpers(entries) when the key is pressed. The
+// first interrupt key with helpers running arms the warning and sends nothing; a second one sends, even
+// if every helper has ended since, because the person has confirmed it. Any other key disarms and sends
+// nothing, and the view then handles that key as usual (gateReducer's "any other key disarms"). Armed
+// state, not a timer: the core reads no clock, and a warning left alone does nothing.
+export function interruptGate(gate, key, running) {
+  if (!INTERRUPT_KEYS.has(key)) return { gate: null, send: false };
+  if (gate?.armed) return { gate: null, send: true };
+  const helpers = Array.isArray(running) ? running : [];
+  if (helpers.length === 0) return { gate: null, send: true };
+  return { gate: { armed: true, helpers }, send: false };
+}
+
+// A helper's name in the warning and the note. The description is what the person saw on the helper
+// line; the id stands in only for a task_started that carried none.
+const nameOf = (h) => (h?.description ? h.description : String(h?.id ?? ''));
+
+// gateWarning(gate) → the text drawn where the status line is while the warning is armed; '' when not.
+export function gateWarning(gate) {
+  const helpers = gate?.armed && Array.isArray(gate.helpers) ? gate.helpers : [];
+  if (helpers.length === 0) return '';
+  const noun = helpers.length === 1 ? 'helper' : 'helpers';
+  return `esc again to interrupt · this also stops ${helpers.length} ${noun}: ${helpers.map(nameOf).join('; ')}`;
+}
+
+// stoppedByInterrupt(entries) → the helpers an interrupt stopped that no message has reported yet, in
+// start order (DESIGN §2.6). A helper counts when it ended 'stopped' (killed or stopped) after an `out
+// interrupt` and before the next `result`. An interrupt sent while the parent is idle gets no `result`
+// of its own (§2.1), so its window runs on to the next turn's `result`; the ends arrive within
+// milliseconds of the interrupt, so nothing the agent stopped by itself later is swept in. A helper ended
+// by a `resumed` note died with the old process, not by the person's interrupt, and is left out (§2.8).
+// "Reported" is read off the log: the `helpersStopped` ids of any `out message` after the helper ended.
+export function stoppedByInterrupt(entries) {
+  const list = Array.isArray(entries) ? entries : [];
+  const inWindow = [];
+  const resumedAt = new Set();
+  const reported = []; // [index, ids]
+  let open = false;
+  list.forEach((entry, index) => {
+    const raw = parsed(entry);
+    if (raw?.dir === 'out' && raw.kind === 'message' && Array.isArray(raw.helpersStopped)) reported.push([index, raw.helpersStopped]);
+    let here = open;
+    for (const ev of readEntry(entry)) {
+      if (ev.kind === 'interrupt') here = open = true;
+      else if (ev.kind === 'note' && ev.note === 'resumed') resumedAt.add(index);
+      else if (ev.kind === 'result' && !ev.helper) open = false;
+    }
+    inWindow[index] = here;
+  });
+  return helpersOf(list).filter((h) => h.state === 'stopped'
+    && inWindow[h.endedAt]
+    && !resumedAt.has(h.endedAt)
+    && !reported.some(([index, ids]) => index > h.endedAt && ids.includes(h.id)));
+}
+
+// The log keeps entries as parsed objects or as raw lines; the `helpersStopped` field on an `out
+// message` is read off the entry itself, since readEntry's `sent` event does not carry it.
+function parsed(entry) {
+  if (typeof entry !== 'string') return isObject(entry) ? entry : null;
+  try {
+    const v = JSON.parse(entry);
+    return isObject(v) ? v : null;
+  } catch {
+    return null;
+  }
+}
+
+// helpersNote(helpers) → null when there is nothing to report, else the note pir puts before the
+// person's next message (DESIGN §2.6). Descriptions are quoted verbatim, an inner double quote included:
+// the model and the person both read it as prose, and escaping it would only add noise.
+export function helpersNote(helpers) {
+  const list = Array.isArray(helpers) ? helpers : [];
+  if (list.length === 0) return null;
+  const names = list.map((h) => `"${nameOf(h)}"`).join(', ');
+  return list.length === 1
+    ? `[pir] Before this message, the person's interrupt stopped your helper: ${names}. It will not report back. Start it again or do the work yourself if it is still needed.`
+    : `[pir] Before this message, the person's interrupt stopped your helpers: ${names}. They will not report back. Start them again or do the work yourself if it is still needed.`;
+}
