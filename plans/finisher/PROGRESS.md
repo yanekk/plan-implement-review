@@ -12,9 +12,9 @@ past.
 
 **Plan reviewed:** 2026-09-29 — 11 fixed, 2 decided with the user
 
-**Status:** T00 implemented, awaiting review.
+**Status:** T00 done; T01, T02 ready.
 **Last updated:** 2026-09-29
-**Next `pir-work` will:** review T00 prove-the-fence.
+**Next `pir-work` will:** implement T01 finisher-policy.
 
 ## Tasks
 
@@ -23,7 +23,7 @@ done · ⛔ blocked, needs a human.
 
 | # | Task | Depends on | State | Notes |
 |---|---|---|---|---|
-| T00 | prove-the-fence | — | 🔍 | Probed with real sessions: a `PreToolUse` hook fences every tool, allow-ruled `git merge` and sub-agents included; `ask` routes to `canUseTool`. DESIGN §3.3 rewritten, 5 FINDINGS rows. No code, no tests (throwaway probe, deleted). Extra: sub-agent check. Q3/Q4 not measured since Q2 held. |
+| T00 | prove-the-fence | — | ✅ | Fence is a `PreToolUse` hook returning `ask`; DESIGN §3.3 and 5 FINDINGS rows. Review clean, no fix commit: re-probed on 2.1.284 — without the hook allow-ruled `git merge` ran unseen; with it the merge reached `canUseTool`, was denied, branch unmoved. `npm test` green. |
 | T01 | finisher-policy | — | ⬜ | |
 | T02 | finisher-brief | — | ⬜ | |
 | T03 | finisher-skill-and-rules | T01 | ⬜ | |
@@ -35,7 +35,7 @@ done · ⛔ blocked, needs a human.
 | T09 | finisher-drill | T03, T06, T07 | ⬜ | |
 | T10 | finisher-live | T08, T09 | ⬜ | |
 
-**Review queue:** T00
+**Review queue:** empty
 
 ## Blocked on the user
 
