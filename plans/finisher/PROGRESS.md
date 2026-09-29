@@ -28,14 +28,14 @@ done · ⛔ blocked, needs a human.
 | T02 | finisher-brief | — | ✅ | |
 | T03 | finisher-skill-and-rules | T01 | ✅ | |
 | T04 | finisher-session | T00, T01, T02 | ✅ | |
-| T05 | finisher-handover | T04 | ⬜ | |
+| T05 | finisher-handover | T04 | 🔍 | Hand-over, phase-driven end, fallback and restart in coordinate.mjs; 21 tests in finisher-handover.test.mjs; drill end adapted. Deviations: handoffFor gains `finisher` (ready:false reads red); red re-sync closes the finisher (user 2026-09-29); `priorFinisher` option for restart. Harness run with the agent not run, unverified (user: left for T10). |
 | T06 | finisher-alerts | T05 | ⬜ | |
 | T07 | finisher-row | T05 | ⬜ | |
 | T08 | finisher-docs | T03, T05, T06, T07 | ⬜ | |
 | T09 | finisher-drill | T03, T06, T07 | ⬜ | |
 | T10 | finisher-live | T08, T09 | ⬜ | |
 
-**Review queue:** *(empty)*
+**Review queue:** T05
 
 ## Blocked on the user
 

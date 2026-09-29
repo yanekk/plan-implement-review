@@ -192,9 +192,19 @@ export function endBriefFor(facts) {
 
 // handoffFor({ slug, reportPath, ready, report }) → the hand-off message (DESIGN §2.9 step 5): the report
 // and the merge command, or, red, why no merge is offered. The agent presents it to the person in its reply.
-export function handoffFor({ slug, reportPath, ready, report = null }) {
+// `finisher`: a ready branch the finisher takes over (finisher DESIGN §2.1): no merge line, because the
+// merge is the finisher's after the person's go, and the agent is closed on pir's next pass.
+export function handoffFor({ slug, reportPath, ready, report = null, finisher = false }) {
   const parts = [`The delivery report is committed on pir/${slug} as ${reportPath}.`];
   if (nonEmpty(report)) parts.push(`The report:\n\n${report.trim()}`);
+  if (ready && finisher) {
+    parts.push(
+      'The branch is ready to merge. pir now closes you and starts the finisher, which prepares the merge and the ' +
+        "project's after-merge steps and asks the person for their go. Do not offer a merge command.",
+      'Present the report to the person in your reply, in one short turn.',
+    );
+    return parts.join('\n\n');
+  }
   if (ready) {
     parts.push(`The branch is ready to merge. The person merges it themselves:\n\n  git merge pir/${slug}`);
   } else {
