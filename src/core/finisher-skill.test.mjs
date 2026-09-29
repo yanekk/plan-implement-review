@@ -11,7 +11,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { readStatus, isGoAnswer } from './finisher-policy.mjs';
+import { readStatus, isGoAnswer, isLookOnly, checkStatus, afterRestart } from './finisher-policy.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const SKILL = readFileSync(join(ROOT, 'skills/pir-finisher/SKILL.md'), 'utf8');
@@ -142,4 +142,27 @@ test('this repo\'s rules merge, run ./install.sh and compare the installed engin
   assert.ok(REPO_RULES.includes('diff -rq src ~/.claude/pir-engine/src'));
   assert.ok(REPO_RULES.includes('~/.claude/skills/'));
   assert.match(REPO_RULES, /skills\/pir-\*/);
+});
+
+// Review T03: the skill must not tell the finisher to do what pir will refuse. Two paths it names are
+// reachable only through T01's code, so the check is against that code, not against the prose.
+
+test('every concrete look the skill asks for before the go is on the look-only list', () => {
+  const check = section(SKILL, 'What to check');
+  const commands = [...check.matchAll(/`((?:git|gh|command|node|npm|diff|ls|cat|<tool>)(?=\s)[^`]*)`/g)].map((m) =>
+    m[1].replaceAll('<main checkout>', '/main').replaceAll('{slug}', 'demo').replaceAll('<tool>', 'gh'));
+  assert.ok(commands.length >= 4, `found ${commands.length} commands`);
+  for (const c of commands) assert.ok(isLookOnly(c), `What to check asks for a refused command: ${c}`);
+});
+
+test('after a restart mid-finish the skill does not ask for a status pir refuses in that phase', () => {
+  const { phase } = afterRestart('finishing');
+  assert.equal(phase, 'stuck');
+  const restart = section(SKILL, 'If you are restarted');
+  assert.ok(restart);
+  for (const kind of ['stuck', 'ready']) {
+    if (checkStatus({ kind }, phase).ok) continue;
+    assert.doesNotMatch(restart, new RegExp(`write (a|an|a fresh) \`${kind}\` status`), `${kind} is refused in ${phase}`);
+  }
+  assert.match(restart, /ask the go question again/);
 });

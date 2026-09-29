@@ -49,8 +49,8 @@ Before you write your ready status, check:
    not stash, switch or clean anything; whether to go anyway is the person's call.
 3. **Conflicts**: `git merge-tree --write-tree main pir/{slug}` in the main checkout, to see whether the
    merge would conflict without merging.
-4. **Tools**: every tool the rules name is installed (`command -v <tool>`, `<tool> --version`), and any
-   login they need is in place (`gh auth status`, for example). A login you lack is a step for the
+4. **Tools**: every tool the rules name is installed (`command -v <tool>`), and any login they need is
+   in place (`gh auth status`, for example). A login you lack is a step for the
    person.
 5. **The report**: read `plans/{slug}/REPORT.md`, so your summary can say what is being delivered and
    anything it flags to check by hand.
@@ -117,9 +117,14 @@ words as the reason. You may do this in any phase.
 
 ## If you are restarted
 
-`pir` tells you when your session was restarted. If you were in the middle of the steps, you are back to
-looking only: check what is already done, write a `stuck` status that says so with the remaining steps,
-and ask the go question again. If a go question was open, ask it again.
+`pir` tells you when your session was restarted. If you were in the middle of the steps, `pir` has already
+put you back to looking only and recorded that you stopped mid-finish, and it accepts no new `ready` or
+`stuck` status from you in that state. So write no status: check what is already done, tell the person in
+your reply what is done and the exact steps that remain, and ask the go question again. Otherwise your
+phase is unchanged; if a go question was open, ask it again.
+
+While you are stuck the same holds: a fresh `ready` or `stuck` is refused, so if your steps change, put
+the new ones in your reply before you ask the go question again.
 
 ## Talking to the person
 
