@@ -14,7 +14,7 @@ cell also fixes the over-budget cell they walk past.
 
 **Status:** Planned 2026-09-29. Nothing built. The prototype in `prototype/` was approved by the user.
 **Last updated:** 2026-09-29
-**Next `pir-work` will:** review T02.
+**Next `pir-work` will:** implement T03.
 
 ## Tasks
 
@@ -24,10 +24,10 @@ done · ⛔ blocked, needs a human.
 | # | Task | Depends on | State | Notes |
 |---|---|---|---|---|
 | T01 | group-steps-core | — | ✅ | |
-| T02 | group-steps-view | T01 | 🔍 | Open set, click toggle with §2.5 placement, hover, signed §2.7 offset in conversation-view; `startRig` gets a `pbcopy` shim (`shimDir`, `clipboard`), the rig command prints PATH-prefixed open commands. 11 unit tests, 2 pty tests (80×24, 120×40). Deviation: shim sits in `control/bin` of the rig repo; `tour` sufficed, no new scenario. |
+| T02 | group-steps-view | T01 | ✅ | Reviewed clean bar one fix: a move into the typing box left the group line above it bold; reproduced by a unit test, fixed, test locks it. Probed stale paint vs click, placement arithmetic, e2e double-click and drag assertions, shim seatbelt. Recorded deviations (shim in `control/bin`, `tour` only) accepted. |
 | T03 | group-steps-drill | T01, T02 | ⬜ | |
 
-**Review queue:** T02
+**Review queue:** empty
 
 ## Blocked on the user
 
