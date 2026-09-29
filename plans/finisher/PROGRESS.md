@@ -23,7 +23,7 @@ done · ⛔ blocked, needs a human.
 
 | # | Task | Depends on | State | Notes |
 |---|---|---|---|---|
-| T00 | prove-the-fence | — | ⬜ | |
+| T00 | prove-the-fence | — | ✅ | |
 | T01 | finisher-policy | — | ✅ | |
 | T02 | finisher-brief | — | ⬜ | |
 | T03 | finisher-skill-and-rules | T01 | ⬜ | |
