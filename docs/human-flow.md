@@ -194,13 +194,13 @@ commands (`◌ 2 helpers running · 1 running in the background`). The line's de
 `⚑ helper "Survey end-of-run machinery" wants to use Bash` or `? helper "…" asks you 1 question` where
 a worker's reads `⚑ T05 wants to use Bash`, in the pinned prompt and in the answered request in the
 scrollback; a request from a helper pir has not seen start reads `a helper`. The keys, grants and the
-risky-request double press are the same, and the row reads `asking you · allow a command?` as for any
-request (`agentId` on the logged request, from the SDK's `agentID`).
+risky-request double press are the same, and the row reads `asking you · allow a command?` (a question
+set: `asking you · a question`) as for the worker's own request (`agentId` on the logged request, from the SDK's `agentID`).
 
 **Esc warns before it stops helpers.** An interrupt stops every helper the worker has running, and
 the worker is told only that it was interrupted. So in the conversation view, while any helper runs,
-the first Esc (or Ctrl+C on an empty box) sends nothing and shows, in place of the status line and
-wrapped if it is long:
+the first Esc (or Ctrl+C on an empty box) sends nothing and shows, in place of the status line (under
+the pinned prompt when a question or permission is pending) and wrapped if it is long:
 
 ```
 esc again to interrupt · this also stops 2 helpers: Survey end-of-run machinery; Check the tests
@@ -216,8 +216,7 @@ a message in the conversation view, pir puts a note in front of it, in the same 
 helper an interrupt stopped that no earlier message has reported:
 
 ```
-[pir] Before this message, the person's interrupt stopped your helpers: "Survey end-of-run machinery".
-They will not report back. Start them again or do the work yourself if it is still needed.
+[pir] Before this message, the person's interrupt stopped your helpers: "Survey end-of-run machinery", "Check the tests". They will not report back. Start them again or do the work yourself if it is still needed.
 ```
 
 (With one helper it reads `your helper … It will not report back. Start it again …`.) The conversation
