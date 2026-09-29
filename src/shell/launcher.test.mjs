@@ -6,7 +6,9 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, readdirSync, statSync, existsSync } from 'node:fs';
+import { readFileSync, readdirSync, statSync, existsSync, mkdtempSync, writeFileSync, chmodSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
@@ -166,4 +168,35 @@ test('install.sh puts the engine runtime packages beside the installed src/', ()
   assert.match(install, /\n    install_engine_deps\n/, 'install_engine calls the package install');
   assert.match(install, /report_engine_deps\n\s*exit 0/, 'the --global closing reports a failed install');
   assert.match(install, /MSG\nreport_engine_deps\n?$/, 'the project closing reports it too');
+});
+
+// --- install.sh run for real, into a scratch HOME (finisher T03) --------------------------------------
+// The one test here that executes install.sh. npm is stubbed on PATH so the engine's package install
+// neither needs the network nor takes a minute; everything else install.sh does lands under the scratch
+// HOME. The default finishing rules are seeded only when absent (finisher DESIGN §2.2).
+
+test('install.sh into a scratch HOME installs pir-finisher and seeds the default rules once, keeping an edit', () => {
+  const home = mkdtempSync(join(tmpdir(), 'pir-install-home-'));
+  const stubs = mkdtempSync(join(tmpdir(), 'pir-install-bin-'));
+  try {
+    writeFileSync(join(stubs, 'npm'), '#!/bin/sh\nexit 0\n');
+    chmodSync(join(stubs, 'npm'), 0o755);
+    const env = { ...process.env, HOME: home, PATH: `${stubs}:${process.env.PATH}` };
+    const run = () => execFileSync('bash', [INSTALL], { env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+
+    const first = run();
+    assert.ok(existsSync(join(home, '.claude/skills/pir-finisher/SKILL.md')), 'the finisher skill is installed');
+    assert.ok(existsSync(join(home, '.claude/pir-engine/rules/default/on-finish.md')), 'the engine carries the built-in rules');
+    const seeded = join(home, '.pir/default/rules/on-finish.md');
+    assert.equal(readFileSync(seeded, 'utf8'), readFileSync(join(REPO, 'rules/default/on-finish.md'), 'utf8'));
+    assert.match(first, /seeded .*on-finish\.md/);
+
+    writeFileSync(seeded, '# my own rules\n');
+    const second = run();
+    assert.equal(readFileSync(seeded, 'utf8'), '# my own rules\n', 'a second install leaves the edit in place');
+    assert.match(second, /kept your .*on-finish\.md/);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+    rmSync(stubs, { recursive: true, force: true });
+  }
 });

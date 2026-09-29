@@ -11,6 +11,7 @@ Legend: 🐞 defect found · ✅ verified by hand with the user · 📌 worth kn
 
 | Date | | Finding |
 |---|---|---|
+| 2026-09-29 | 📌 | T03 review: `checkStatus` accepts neither `ready` nor `stuck` in phase `stuck`, so a finisher restarted mid-finish, or revising steps while stuck, cannot record new steps; they appear only in its reply. T04/T05 may want pir to record them. |
 | 2026-09-29 | 🐞 | T01 review: an expansion in a git part (`$(…)`, `${X:=…}`, `$'…'`, `{a,b}`) smuggled `--output` or `-c` past `isLookOnly`; `git log $(echo --output=/tmp/x)` wrote the file. Now refused. Unquoted globs still expand to existing filenames. |
 | 2026-09-29 | 📌 | T04: a go counts only for a go question first seen after the latest accepted ready/stuck; one asked just before `ready` but drained in the same pass still counts. `defaultToNo` in `finishing` now parks (finisher-agent `decide`). |
 | 2026-09-29 | 📌 | T00 Q5: an `AskUserQuestion` sent on by the hook's `ask` and answered through `startWorker`'s `answer` with `answersResult` logs a `reply` whose `result.updatedInput.answers` is `{"Pick one?":"Blue"}`; the tool result carried the chosen label. |
