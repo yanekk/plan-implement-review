@@ -434,7 +434,9 @@ test('the helpers scenario drives the real pir screen', { timeout: 60000 }, asyn
     screen.send('\r');
     await screen.waitFor(/pick a task/);
     screen.send('\x1b[C');
-    const s = (await screen.waitFor(/⎿ Agent Survey the code/)).join('\n');
+    // The Agent step folds into its group (group-commands §2.1), and the helper's line follows it.
+    const s = (await screen.waitFor(/↳ helper · Survey the code/)).join('\n');
+    assert.match(s, /▸ Ran 1 agent\n +↳ helper · Survey the code/, 'the helper line sits under its Agent step\'s group');
     assert.match(s, /I'm the pretend worker of the helpers rig/, 'the opening message is on screen');
     assert.match(s, new RegExp(`^T01  worker ${rig.workerId.slice(0, 8)} · live`, 'm'), 'T01\'s conversation is the one open');
     assert.equal(screen.overflows(), 0);

@@ -694,10 +694,16 @@ test('a running helper\'s step text is shortened first, so its step count and ti
 });
 
 test('on the plan-0339 log the default view has one helper line and none of the helper\'s steps or words', () => {
-  const { lines, background, helpers } = buildConversation(HELPER_SAMPLE, { width: 100, taskId: 'plan' });
+  // Folded, the helper line follows the group its Agent step closes; the helper's hidden frames end no group.
+  const folded = all(buildConversation(HELPER_SAMPLE, { width: 100, taskId: 'plan' }).lines);
+  const group = folded.indexOf('  ▸ Ran 1 agent');
+  assert.equal(folded[group + 1], '  ↳ helper stopped · Survey end-of-run machinery · 20 steps · 52s', 'directly under its group');
+  // Every group open, so the parent's steps can be read one by one (group-commands DESIGN §4).
+  const ids = buildConversation(HELPER_SAMPLE, { width: 100, taskId: 'plan' }).lines.filter((l) => l.hit).map((l) => l.hit.id);
+  const { lines, background, helpers } = buildConversation(HELPER_SAMPLE, { width: 100, taskId: 'plan', open: new Set(ids) });
   const text = all(lines);
   assert.deepEqual(helperLines(lines), ['  ↳ helper stopped · Survey end-of-run machinery · 20 steps · 52s']);
-  const agentStep = text.findIndex((l) => l.startsWith('  ⎿ Agent Survey end-of-run machinery'));
+  const agentStep = text.findIndex((l) => l.startsWith('    ⎿ Agent Survey end-of-run machinery'));
   assert.equal(text[agentStep + 1], '  ↳ helper stopped · Survey end-of-run machinery · 20 steps · 52s', 'directly under its Agent step');
   assert.ok(!text.some((l) => /Now notify\.mjs endAlert/.test(l)), 'the helper\'s sentence is hidden');
   assert.ok(!text.some((l) => /⎿ (Read|Bash (git log|ls &&|grep))/.test(l)), 'the helper\'s steps are hidden');
@@ -705,7 +711,7 @@ test('on the plan-0339 log the default view has one helper line and none of the 
   assert.equal(background, 0);
   assert.equal(helpers, 0);
   // The parent's own lines, in order.
-  const order = [/^pir ▸ Load the pir-plan skill/, /^  ⎿ Agent /, /^  ⎿ AskUserQuestion/, /^you ▸ ⎋ interrupted/, /^you ▸ continue/, /^plan ▸ I'll go with the finisher/, /^  ⎿ AskUserQuestion/, /^  ⎿ Bash ls node_modules/, /^you ▸ ⎋ interrupted/, /^plan ▸ The requirements are agreed/];
+  const order = [/^pir ▸ Load the pir-plan skill/, /^ +⎿ Agent /, /^ +⎿ AskUserQuestion/, /^you ▸ ⎋ interrupted/, /^you ▸ continue/, /^plan ▸ I'll go with the finisher/, /^ +⎿ AskUserQuestion/, /^ +⎿ Bash ls node_modules/, /^you ▸ ⎋ interrupted/, /^plan ▸ The requirements are agreed/];
   let at = -1;
   for (const re of order) {
     const next = text.findIndex((l, i) => i > at && re.test(l));
