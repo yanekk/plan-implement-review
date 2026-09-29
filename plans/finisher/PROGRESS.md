@@ -24,7 +24,7 @@ done · ⛔ blocked, needs a human.
 | # | Task | Depends on | State | Notes |
 |---|---|---|---|---|
 | T00 | prove-the-fence | — | ⬜ | |
-| T01 | finisher-policy | — | ⬜ | |
+| T01 | finisher-policy | — | 🔍 | `src/core/finisher-policy.mjs`, 17 tests; `commandTails` exported. Deviations: `git branch --list <pattern>` accepted (listing, never creates); leading `VAR=` refused (`GIT_EXTERNAL_DIFF`); unknown phase denies all; no `nextPhase` (DESIGN §3.2), `checkStatus().next` carries it per task doc. |
 | T02 | finisher-brief | — | ⬜ | |
 | T03 | finisher-skill-and-rules | T01 | ⬜ | |
 | T04 | finisher-session | T00, T01, T02 | ⬜ | |
@@ -35,7 +35,7 @@ done · ⛔ blocked, needs a human.
 | T09 | finisher-drill | T03, T06, T07 | ⬜ | |
 | T10 | finisher-live | T08, T09 | ⬜ | |
 
-**Review queue:** *(empty)*
+**Review queue:** T01
 
 ## Blocked on the user
 
