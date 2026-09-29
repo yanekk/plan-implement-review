@@ -2577,3 +2577,40 @@ test('mouse: a click opens the run painted on that row even if a fresh read has 
   assert.match(t.text(), /^beta/m, 'beta opened, not whatever now sits at its old index');
   await t.quit();
 });
+
+// The finisher (finisher DESIGN §2.11, T07): the list row reads `● ready for your go` amber bold, whole,
+// counted as waiting; the live view's hint offers `c finisher`.
+test('the list frame: a run whose finisher waits for the go reads `● ready for your go` amber bold and counts as waiting (T07)', () => {
+  const finisher = { id: 'f', logPath: '/c/f.ndjson', state: 'awaiting-go', phase: 'awaiting-go', asking: true };
+  const ready = { key: 'shop__checkout', slug: 'checkout', state: 'running', repo: 'shop', progress: { done: 4, total: 4 }, workers: 0, snap: { runState: { branch: 'pir/checkout', ceiling: 2, tasks: [], handoff: { state: 'ready' }, finisher } } };
+  for (const columns of [80, 120]) {
+    const frame = buildListFrame(buildDashboard([ready, ...VIEWS]), initialUi(), { columns });
+    const text = frameText(frame);
+    assert.match(text, /checkout +work +● ready for your go +shop +▰+ 4\/4 +·/, 'the whole state fits its column');
+    assert.equal(findSpan(frame, '● ready for your go').style, 'your-go', 'amber bold');
+    assert.match(text, /1 waiting for you/);
+    for (const l of text.split('\n')) assert.ok([...l].length <= columns, `wider than ${columns}: ${l}`);
+  }
+});
+
+test('the live view with the finisher: its row in the agent\'s place, the footer naming c, the hint `c finisher` (T07)', () => {
+  const finisher = { id: 'f', logPath: '/c/f.ndjson', state: 'awaiting-go', phase: 'awaiting-go', asking: true };
+  const run = tasksRun([T12_TASKS[0]], { snap: { runState: { branch: 'pir/plan', ceiling: 2, complete: true, readyToMerge: true, handoff: { state: 'ready' }, coordinator: null, finisher, tasks: [T12_TASKS[0]] } } });
+  const text = frameText(buildWatchFrame(run, { now: NOW, ui: { ...initialUi(), view: 'watch', openSlug: 'plan', taskSel: 0 } }));
+  assert.match(text, /◆ finisher +waiting for your go/);
+  assert.match(text, /◆ finisher ready · c to review and say go/);
+  assert.match(text, /c finisher/);
+  assert.doesNotMatch(text, /c coordinator|git merge/);
+});
+
+test('a run the finisher ended: the stale note offers no merge (T07)', () => {
+  const tasks = [{ id: 'T01', slug: 'a', deps: [], done: true, phase: null, since: null, doneMs: 100, question: null }];
+  const runState = { branch: 'pir/gamma', ceiling: 2, complete: true, readyToMerge: true, handoff: { state: 'ready' }, coordinator: null, finisher: { id: 'f', state: 'done', phase: 'done', asking: false }, tasks };
+  const text = frameText(buildWatchFrame(
+    { slug: 'gamma', state: 'finished', repo: 'repoC', snap: { version: 1, proc: {}, finalState: 'finished', runState }, record: { pid: 9, branch: 'pir/gamma' } },
+    { now: NOW, columns: 200 },
+  ));
+  assert.ok(!/git merge/.test(text), text);
+  assert.match(text, /finished · this frame is stale\. The finisher is done\./);
+  assert.match(text, /◆ finisher +done/);
+});

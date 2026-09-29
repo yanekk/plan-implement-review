@@ -463,3 +463,53 @@ for (const [cols, rows] of [[80, 24], [120, 40]]) {
     }
   });
 }
+
+// finisher T07, end to end at 80×24 and 120×40: the run waits at its end on the finisher. The list reads
+// `● ready for your go`, the live view pins the finisher's row in amber with the footer naming `c`, `c` opens
+// its conversation with the ready summary, the steps and the go question, and `Go` there takes the row
+// through `finishing` to `done` and the run to `finished`.
+for (const [cols, rows] of [[80, 24], [120, 40]]) {
+  test(`the finisher on the real pir screen at ${cols}×${rows}`, { timeout: 90000 }, async (t) => {
+    const env = scratchHome(t);
+    const rig = startRig({ env, scenario: 'finisher', paceMs: 0, workMs: 300, finishingMs: 5000 });
+    t.after(() => rig.stop());
+    await waitFor(() => rig.finisher.view().state === 'awaiting-go', { what: 'the finisher to be ready', timeoutMs: 15000 });
+    const ESC = '\x1b';
+    const screen = openScreen({ cols, rows, env: { ...process.env, ...env } });
+    try {
+      let s = (await screen.waitFor(/rig +work +● ready for your go/)).join('\n');
+      assert.match(s, /1 waiting for you/, 'the dashboard counts it as waiting');
+
+      screen.send('\r');
+      s = (await screen.waitFor(/◆ finisher +waiting for your go/)).join('\n');
+      assert.match(s, /◆ finisher ready · c to review and say go/, 'the footer names c');
+      assert.match(s, /c finisher/, 'the hint offers the finisher');
+      assert.doesNotMatch(s, /git merge|coordinator agent/, 'no merge line and no agent row beside the finisher');
+      // The amber itself is the renderer's (render.test.mjs); the suite runs with NO_COLOR, so none is drawn here.
+
+      screen.send('c');
+      s = (await screen.waitFor(/Ready to finish\? 2 steps from project rules/)).join('\n');
+      assert.match(s, /^finisher {2}agent /m, 'the finisher\'s conversation is open');
+      assert.match(s, /main has not moved/, 'the ready summary');
+      assert.match(s, /merge pir\/rig/, 'the steps');
+
+      screen.send('\r'); // one Enter picks the highlighted option, Go
+      await screen.waitFor(/Ready to finish\? 2 steps from project rules → Go/);
+      screen.send(`${ESC}[D`);
+      s = (await screen.waitFor(/◆ finisher +finishing/)).join('\n');
+      assert.match(s, /◆ finisher finishing · c to watch/);
+      s = (await screen.waitFor(/◆ finisher +done/, 20000)).join('\n');
+      s = (await screen.waitFor(/finished · this frame is stale\. The finisher is done\./, 20000)).join('\n');
+      assert.doesNotMatch(s, /git merge/);
+
+      screen.send(`${ESC}[D`);
+      s = (await screen.waitFor(/rig +work +◌ finished/)).join('\n');
+      for (const r of s.split('\n')) assert.ok([...r].length <= cols);
+      assert.equal(screen.overflows(), 0, 'no frame was clipped to fit the window');
+      const sent = rig.finisher.ledger().map((l) => l.kind);
+      assert.ok(sent.includes('go'), `the person's Go reached the finisher: ${sent}`);
+    } finally {
+      await screen.close();
+    }
+  });
+}
