@@ -34,7 +34,7 @@ When the procedure below says "ask the user and wait", you drop a report file so
 are asking, then ask the person in this session — with AskUserQuestion when the answer is a choice
 between options — and wait for them to answer it here, from `pir` (DESIGN §2.2,
 `pir-worker` contract). **With no argument, everything below is classic mode, unchanged**: both
-guards and the "main checkout, main branch" rule stand.
+guards and the "main checkout, base branch" rule stand.
 
 ## The procedure
 

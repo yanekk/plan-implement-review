@@ -528,11 +528,13 @@ above still binds you, the person answers you in `pir`'s screen (or over Remote 
 rules below replace only the parts that assumed a session the person opened themselves. Where a
 stage above and this section disagree, this section wins.
 
-**Where you run.** You are in a worktree on a `pir/…` side branch cut from `main`, not in the main
-checkout. `CLAUDE.md § Where sessions run` ("main checkout, main branch, always; stop if you find
-yourself in a worktree") does not bind a planning session run by `pir plan`, exactly as it does not
-bind a build worker. Do not stop, do not switch to `main`, and do not rename, merge or delete the
-branch or the worktree: `pir` renames them to your slug after you report. A project installed before
+**Where you run.** You are in a worktree on a `pir/…` side branch cut from the run's base branch (the
+branch the repo's `.pir/settings.json`, or the person's own override, names; `pir` records it as
+`branch.<your branch>.pirBase` in git config), not in the main checkout.
+`CLAUDE.md § Where sessions run` ("main checkout, base branch, always; stop if you find yourself in a
+worktree") does not bind a planning session run by `pir plan`, exactly as it does not bind a build
+worker. Do not stop, do not switch to the base branch, and do not rename, merge or delete the branch or
+the worktree: `pir` renames them to your slug after you report. A project installed before
 this carve-out has an older `CLAUDE.md` without it; this section is the carve-out there. Do not create or edit a file under `.git` yourself (no Write or Edit there, no redirect into it),
 because Claude Code never auto-approves such a write and your session would stall on it. Git's own
 commands are fine: `git commit`.
@@ -540,8 +542,10 @@ commands are fine: `git commit`.
 **Choosing the slug (Stage 1).** Before you write any file, check the slug you and the person agreed
 is free, and choose another with them if it is not:
 
-- no `plans/{slug}/` on `main`: `git ls-tree -d main plans/{slug}` prints nothing (check `main`
-  itself, not only your worktree, since `main` may have moved since your branch was cut);
+- no `plans/{slug}/` on the run's base branch:
+  `git ls-tree -d "$(git config branch.$(git branch --show-current).pirBase)" plans/{slug}` prints
+  nothing (check the base branch itself, not only your worktree, since it may have moved since your
+  branch was cut);
 - no branch `pir/{slug}`: `git branch --list pir/{slug}` prints nothing;
 - it is kebab-case (`^[a-z0-9]+(-[a-z0-9]+)*$`) and not of the form `plan-{hex4}` (`plan-` and four
   hex characters), which is the name `pir` gives a run before it has a slug.

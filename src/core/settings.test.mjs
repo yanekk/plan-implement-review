@@ -90,3 +90,10 @@ test('automode: merging twice is a no-op', () => {
   const twice = mergeUserAutoMode(once);
   assert.deepEqual(twice, once);
 });
+
+test('automode: the rule names the base branch, not main (base-branch T08, DESIGN §2.10)', () => {
+  // One rule is installed user-wide for every repo, and a repo's base may be dev rather than main.
+  assert.match(PIR_AUTOMODE_RULE, /never the repository's base branch \(the branch the run was cut from, such as main or dev\)/);
+  assert.match(PIR_AUTOMODE_RULE, /never a branch another worker holds/);
+  assert.doesNotMatch(PIR_AUTOMODE_RULE, /never main\b/);
+});
