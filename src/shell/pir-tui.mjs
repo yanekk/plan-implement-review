@@ -1146,7 +1146,7 @@ async function runTui({
       return;
     }
     if (!s?.started) {
-      lv.update({ note: startFailedNote(r.repo.name, s?.reason ?? 'unknown') });
+      lv.update({ note: startFailedNote(r.repo.name, s?.reason ?? 'unknown', s) });
       return;
     }
     lv.reset();

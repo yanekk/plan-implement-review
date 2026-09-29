@@ -49,10 +49,10 @@ export const USAGE =
   '       pir notify [test|off]  phone alerts: set up, test, turn off\n';
 
 // startPlanRun's pre-flight refusals (DESIGN §2.2), one clean line each. Nothing was created on any of
-// them, so the message only has to say what to fix.
+// them, so the message only has to say what to fix. A base-branch refusal (no-base-setting, bad-settings,
+// no-base-branch, fetch-failed, diverged) carries its own §2.9 text in `message` (base-branch T05).
 const PLAN_REFUSALS = {
   'not-a-repo': 'pir plan: not inside a git repository — run it from the repo you want to plan in\n',
-  'no-main': "pir plan: this repo has no local 'main' branch — a plan is cut from main\n",
   'empty-brief': 'pir plan: the brief is empty — say what to plan, e.g. pir plan "a daily screen budget"\n',
 };
 
@@ -98,7 +98,7 @@ export function run(
     if (rest.length === 0) {
       // The pre-flight first, so the person never writes a brief that is then refused (§2.13).
       const pre = planPreflight();
-      if (!pre.ok) return planRefused(pre.reason, stderr);
+      if (!pre.ok) return planRefused(pre, stderr);
       let code = 0; // a cancelled box: nothing was created, and that is not a failure
       return Promise.resolve(
         openBox({
@@ -229,8 +229,10 @@ function notifyOff({ env, stdout, removeNotifyConfig }) {
   return 0;
 }
 
-function planRefused(reason, stderr) {
-  stderr.write(PLAN_REFUSALS[reason] ?? `pir plan: cannot start${reason ? `: ${reason}` : ''}\n`);
+// refusal is a planPreflight or startPlanRun result: { reason, message? }.
+function planRefused({ reason, message } = {}, stderr) {
+  const text = PLAN_REFUSALS[reason] ?? (message ? `${message}\n` : `pir plan: cannot start${reason ? `: ${reason}` : ''}\n`);
+  stderr.write(text);
   return 1;
 }
 
@@ -240,7 +242,7 @@ function planRefused(reason, stderr) {
 function startPlan(brief, { startPlanRun, openP, stderr }) {
   const r = startPlanRun(brief);
   if (r.started) return { code: 0, opened: openP(r.runId) };
-  return { code: planRefused(r.reason, stderr), opened: null };
+  return { code: planRefused(r, stderr), opened: null };
 }
 
 function startBuild(slug, { startRun, openW, stderr, coordinator = true }) {

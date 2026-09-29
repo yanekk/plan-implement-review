@@ -43,7 +43,15 @@ import { resolveClaudePath } from './platform.mjs';
 import { reapRecorded } from './reap.mjs';
 import { writeSnapshot as writeSnapshotReal } from './snapshot-store.mjs';
 import { startWorker as startWorkerReal, writeWorkersFile } from './worker-proc.mjs';
-import { git as gitReal, renamePlanBranch as renamePlanBranchReal, slugTaken as slugTakenReal } from './worktree.mjs';
+import {
+  git as gitReal,
+  readRunBase,
+  recordRunBase,
+  renamePlanBranch as renamePlanBranchReal,
+  slugTaken as slugTakenReal,
+} from './worktree.mjs';
+import { resolveBaseSetting } from './base-branch.mjs';
+import { refusalText } from '../core/basebranch.mjs';
 
 // The wait between loop turns when nothing wakes it. A report, a person's input or any entry in the
 // session's log wakes it at once; this is only the backstop for a missed watch event.
@@ -117,10 +125,33 @@ export function nextPlanLogPath(controlDir, step, { readdir = readdirSync } = {}
   return join(dir, `${prefix}-${max + 1}.ndjson`);
 }
 
-// plannerChecks({ slug, worktree, root, repo, indexDir, git, slugTaken }) → { ok, reason } — the §2.5
-// checks of a `planned` claim, all on the committed tree of the plan branch. The reason is sent to the
-// planner as is, so each one says what failed and what to do.
-export function plannerChecks({ slug, worktree, root, repo, indexDir, git = gitReal, slugTaken = slugTakenReal }) {
+// planRunBase({ worktree, root, env }) → { ok: true, base } | { ok: false, message } — the planning run's
+// base branch (base-branch DESIGN §2.5, §2.6): the pirBase recorded on the branch checked out in the
+// run's worktree, never the settings again, so a setting changed mid-run cannot move it. A branch cut
+// before pirBase existed takes its base from the settings, as a fresh start would, and records it then;
+// with no usable settings it gets the §2.9 refusal text.
+export function planRunBase({ worktree, root, env = process.env }) {
+  const branch = gitReal(worktree, ['branch', '--show-current']).stdout.trim();
+  const recorded = branch ? readRunBase(root, branch) : null;
+  if (recorded) return { ok: true, base: recorded };
+  const setting = resolveBaseSetting(root, { env });
+  if (!setting.ok) return { ok: false, message: refusalText(setting, { repo: basename(root) }) };
+  if (branch) {
+    try {
+      recordRunBase(root, branch, setting.base);
+    } catch {
+      // Unrecorded, the next check resolves it the same way; nothing is lost.
+    }
+  }
+  return { ok: true, base: setting.base };
+}
+
+// plannerChecks({ slug, worktree, root, repo, indexDir, base, git, slugTaken }) → { ok, reason } — the
+// §2.5 checks of a `planned` claim, all on the committed tree of the plan branch. The reason is sent to
+// the planner as is, so each one says what failed and what to do. `base` is the run's base branch
+// (planRunBase), where the slug check looks for a plan already committed; `baseError` is planRunBase's
+// refusal when it has none.
+export function plannerChecks({ slug, worktree, root, repo, indexDir, base, baseError, git = gitReal, slugTaken = slugTakenReal }) {
   const again = 'commit, and drop the `planned` report again';
   const rename = `Choose another name with the person, rename the plans/${slug} folder to it, ${again}.`;
   if (!isValidSlug(slug)) {
@@ -136,8 +167,9 @@ export function plannerChecks({ slug, worktree, root, repo, indexDir, git = gitR
   if (missing.length) {
     return { ok: false, reason: `${missing.join(', ')} ${missing.length === 1 ? 'is' : 'are'} not committed on this branch. Write ${missing.length === 1 ? 'it' : 'them'}, ${again}.` };
   }
-  // The base is still `main` until T05 reads it from the plan branch's pirBase (base-branch T03).
-  const base = 'main';
+  if (!base) {
+    return { ok: false, reason: `The name "${slug}" cannot be checked: the run has no base branch. ${baseError ?? 'No base branch is set.'} Tell the person; they fix it, then drop the \`planned\` report again.` };
+  }
   const taken = slugTaken(slug, { root, base, indexHas: (s) => existsSync(recordPath(repo, s, { dir: indexDir })) });
   if (taken) {
     const why = {
@@ -726,10 +758,13 @@ export async function runPlanning({ controlDir: givenControlDir, resume = false,
       const checked = claim && CHECKED_KINDS.has(claim.kind) ? claim : recheck ? state.accepted : null;
       if (checked) {
         const worktree = worktreeNow();
-        const checks =
-          checked.kind === 'planned'
-            ? plannerChecks({ slug: checked.plan, worktree, root, repo, indexDir, git, slugTaken })
-            : reviewerChecks({ slug: checked.plan, worktree, git });
+        let checks;
+        if (checked.kind === 'planned') {
+          const rb = planRunBase({ worktree, root, env });
+          checks = plannerChecks({ slug: checked.plan, worktree, root, repo, indexDir, base: rb.base, baseError: rb.message, git, slugTaken });
+        } else {
+          checks = reviewerChecks({ slug: checked.plan, worktree, git });
+        }
         facts = { ...facts, checks, reports: claim ? reports : [...reports, checked] };
         log(`checks for ${checked.kind} ${checked.plan}: ${checks.ok ? 'ok' : checks.reason}`);
       }
