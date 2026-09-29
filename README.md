@@ -87,7 +87,7 @@ What `pir` then does with it:
   base missing entirely is created from the remote's copy.
 - **It stops rather than guess.** A remote it cannot reach, or a local base that has split from the
   remote's, refuses the start with the cause and the fix, and nothing is created. At the end of a run
-  the same problems hold the run in `preparing` and retry every minute, with one phone alert, instead
+  the same problems hold the run in `preparing` and retry every minute (one phone alert, if you set them up) instead
   of handing you a merge built on the wrong commit. A repo with no remote simply uses its local base.
 - **A run keeps the base it started with.** Changing the setting mid-build does not move a running
   build.
