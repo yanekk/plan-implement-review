@@ -656,7 +656,25 @@ test('the helper line in each state, with and without progress, clipped at 40 co
   const clipped = helperLines(narrow.lines);
   assert.equal(clipped.length, 1, 'clipped, never wrapped');
   assert.equal([...clipped[0]].length, 40);
-  assert.ok(clipped[0].endsWith('…'));
+  assert.ok(clipped[0].endsWith('…'), 'no room for any step text: the whole line is clipped at the edge');
+});
+
+// T06 drill (person, 2026-09-29): at 60 columns the step text used to push the count and time off the edge.
+test('a running helper\'s step text is shortened first, so its step count and time stay on screen', () => {
+  const base = [use('ag', 'Agent', { description: 'Survey the code' }), hStart('h1', 'ag', 'Survey the code'), res('ag', 'Async agent launched')];
+  const at = (width, step) => helperLines(buildConversation([...base, hProgress('h1', 'ag', step, 9, 21_000)], { width }).lines)[0];
+  assert.equal(at(60, 'Reading src/shell/conversation-view.mjs'), '  ↳ helper · Survey the code · Reading src/… · 9 steps · 21s');
+  assert.equal([...at(60, 'Reading src/shell/conversation-view.mjs')].length, 60);
+  const fits = '  ↳ helper · Survey the code · Reading src/shell/conversation-view.mjs · 9 steps · 21s';
+  assert.equal(at(90, 'Reading src/shell/conversation-view.mjs'), fits, 'a line that fits is untouched');
+  const long = at(80, `Reading ${'a/'.repeat(40)}x.mjs`);
+  assert.match(long, /^  ↳ helper · Survey the code · Reading a\/a\/.*… · 9 steps · 21s$/);
+  assert.equal([...long].length, 80);
+  assert.equal(at(80, 'line one\nline two'), '  ↳ helper · Survey the code · line one line two · 9 steps · 21s', 'a newline in a step reads as a space');
+  // Two columns of room is the least that shortens; with less, the whole line is clipped at the edge.
+  const tight = '  ↳ helper · Survey the code ·  · 9 steps · 21s'.length + 2;
+  assert.equal(at(tight, 'Reading x.mjs'), '  ↳ helper · Survey the code · R… · 9 steps · 21s');
+  assert.ok(at(tight - 1, 'Reading x.mjs').endsWith('…'));
 });
 
 test('on the plan-0339 log the default view has one helper line and none of the helper\'s steps or words', () => {

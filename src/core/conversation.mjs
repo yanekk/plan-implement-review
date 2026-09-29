@@ -314,15 +314,23 @@ export function helperTime(ms) {
 //   running  `  ↳ helper · Survey the code · Reading x.mjs · 9 steps · 21s`
 //   ended    `  ↳ helper finished · Survey the code · 20 steps · 1m 12s`
 // Steps and time are the last progress event's, so the core reads no clock.
+// A running helper's step text is shortened first, so its step count and time, the signs it is alive,
+// stay on screen at any width that holds them (person, T06 drill 2026-09-29); past that the whole line is
+// clipped at the edge like any status line.
 export function helperLine(h, width) {
+  const w = Math.max(1, width | 0);
   const time = helperTime(h.durationMs);
   // `1 step`, not `1 steps` (person, T03 2026-09-29).
   const tail = `${h.steps} step${h.steps === 1 ? '' : 's'}${time ? ` · ${time}` : ''}`;
-  const text = h.state === 'running'
-    ? `  ↳ helper · ${h.description} · ${h.step || 'starting'} · ${tail}`
-    : `  ↳ helper ${h.state} · ${h.description} · ${tail}`;
   const style = h.state === 'stopped' || h.state === 'failed' ? 'bad' : 'dim';
-  return clipSpans([span(text, style)], Math.max(1, width | 0)); // clipSpans flattens a newline in a step to a space
+  if (h.state !== 'running') return clipSpans([span(`  ↳ helper ${h.state} · ${h.description} · ${tail}`, style)], w);
+  const flat = (t) => plainText(t).replace(/\n/g, ' ');
+  const head = `  ↳ helper · ${flat(h.description)} · `;
+  const end = ` · ${tail}`;
+  const step = flat(h.step || 'starting');
+  const room = w - [...head].length - [...end].length;
+  const shown = room >= 2 ? clipText(step, room) : step; // under two columns the step would be a bare `…`
+  return clipSpans([span(`${head}${shown}${end}`, style)], w);
 }
 
 // helperOf(agentId, helpers) → the name a helper's request is drawn with (DESIGN §2.4): `{ description }`
