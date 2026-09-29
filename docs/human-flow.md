@@ -207,7 +207,7 @@ off there too.
 
 pir tells the person's phone, through ntfy (a free push service with an iPhone and Android app, no
 account; the topic name is the only secret), when a question in a build run becomes theirs and when
-the run waits on their merge. It is off until set up, per account, not per project.
+the run waits on their merge or their go. It is off until set up, per account, not per project.
 
 **Setting up.** `pir notify` makes a random topic (`pir-` and 24 random characters), saves it in
 `~/.pir/notify.json` (mode 0600), prints it with a QR code and the steps, and sends a test alert. In the
@@ -245,7 +245,7 @@ other. Planning sessions (`pir plan`) never alert, and their Claude app push is 
   to work too (2026-09-28).
 - **Icon.** Every alert carries pir's icon by URL. ntfy shows it on Android only; the iPhone shows its
   default (seen 2026-09-28).
-- **The Claude app is silenced.** With alerts set up when a build worker or the agent starts, pir sets
+- **The Claude app is silenced.** With alerts set up when a build worker, the agent or the finisher starts, pir sets
   `CLAUDE_CLIENT_PRESENCE_FILE` in its session to `~/.pir/presence` and makes that file exist, so the
   Claude app does not push a second time (seen silent on the iPhone, 2026-09-28). Remote Control is
   untouched. `pir notify off` deletes the file, so running sessions push through the Claude app again.
@@ -263,7 +263,26 @@ on pir/{slug}: ` and the reason, or `Merge with main unresolved on pir/{slug}`. 
 opens the agent's chat, where the report and the merge are presented (seen 2026-09-28), and it is noted
 `notified` in the agent's conversation. Without the agent it is sent as the run ends, without a link.
 It has no reminder and is not cleared; `main` moving and the branch re-synced does not send it again,
-but restarting pir into `ready to merge` does.
+but restarting pir into `ready to merge` does. A green run the finisher takes over sends no `ready to
+merge` alert; the finisher's own alerts below replace it. A red run, a run without the agent, and a run
+whose finisher failed to start still send it.
+
+**The finisher's alerts.** On a run the finisher takes over ([finisher.md](finisher.md#phone-alerts)),
+the phone gets, keyed `finisher` in the same episode machine as a worker's question (so reminder, clear
+and retry behave the same, and `control.log` reads `notify send finisher …`):
+
+- `{slug} · ready for your go` when it enters `awaiting-go`: `{n} step(s) from project rules` (or `your
+  rules`, `default rules`) and the first step. One reminder after 15 minutes; cleared when the phase
+  leaves it.
+- `{slug} · finisher stuck` when it enters `stuck`: its summary, cut to 150 characters. One reminder;
+  cleared when it leaves `stuck`. `awaiting-go` to `stuck` is a new alert.
+- `{slug} · finisher` when a request parks for the person in another phase (a reserved action after the
+  go), worded as for a worker (`Needs your yes: wants to run …`).
+- `{slug} · finished` with its done summary, once, as the run ends.
+- `{slug} · finisher gave up` with `Merge by hand: git merge pir/{slug}`, once, when it gives up.
+
+Each tap opens the finisher's chat through its Remote Control link, which is on for its whole session;
+the gave-up alert carries no link, since that session is gone.
 
 ## A task that needs the person is an ordinary worker that asks
 
