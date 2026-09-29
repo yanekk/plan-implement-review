@@ -213,6 +213,9 @@ function seedGit(dir, runGit, date) {
   ];
   const init = runGit(['init', '-b', 'main'], { cwd: dir });
   if (!init.ok) throw new Error(`fixture seed: git init failed: ${init.stderr}`);
+  // The seeded repo names its base, as pir requires (base-branch DESIGN §2.1, §5).
+  mkdirSync(join(dir, '.pir'), { recursive: true });
+  writeFileSync(join(dir, '.pir', 'settings.json'), JSON.stringify({ baseBranch: 'main' }) + '\n');
   runGit(['add', '-A'], { cwd: dir });
   const env = { GIT_AUTHOR_DATE: date, GIT_COMMITTER_DATE: date };
   const commit = runGit([...ident, 'commit', '-m', 'fixture: scratch plan seed', '--no-edit'], { cwd: dir, env });
