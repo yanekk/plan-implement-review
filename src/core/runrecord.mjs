@@ -68,6 +68,9 @@ export function serializeRecord(record) {
   // Written only when the run was started with --no-coordinator (pir-coordinator DESIGN §2.1): absent reads
   // as on, so every entry written before the coordinator agent existed means what it did.
   if (record.coordinator === false) canonical.coordinator = false;
+  // The run's base branch (plans/base-branch DESIGN §2.5): a display copy, never the source of truth,
+  // which is `branch.<pir-branch>.pirBase` in git config. Absent on a record written before it existed.
+  if (typeof record.baseBranch === 'string' && record.baseBranch !== '') canonical.baseBranch = record.baseBranch;
   return JSON.stringify(canonical, null, 2) + '\n';
 }
 
@@ -122,6 +125,7 @@ export function parseRecord(text) {
   const go = data.go ?? null;
   if (go !== null && !GO_VALUES.has(go)) return null;
   if (data.coordinator !== undefined && typeof data.coordinator !== 'boolean') return null;
+  if (data.baseBranch !== undefined && (typeof data.baseBranch !== 'string' || data.baseBranch === '')) return null;
 
   return {
     version: RECORD_VERSION,
@@ -140,6 +144,8 @@ export function parseRecord(text) {
     updatedAt,
     // Only a run started with --no-coordinator carries the field; absent is on.
     ...(data.coordinator === false ? { coordinator: false } : {}),
+    // Only a record written since plans/base-branch carries it; absent stays absent.
+    ...(data.baseBranch !== undefined ? { baseBranch: data.baseBranch } : {}),
   };
 }
 
