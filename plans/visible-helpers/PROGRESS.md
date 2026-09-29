@@ -7,7 +7,7 @@ Sixty words to a Notes cell, counted; the account is the commit message.
 
 **Status:** Planned 2026-09-29. Nothing built.
 **Last updated:** 2026-09-29
-**Next `pir-work` will:** implement T01 (helper-fold), the lowest-numbered task with no dependencies.
+**Next `pir-work` will:** implement T06 (helpers-drill).
 
 ## Tasks
 
@@ -20,11 +20,11 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T02 | helper-rig-scenario | — | ✅ | |
 | T03 | helper-lines | T01, T02 | ✅ | |
 | T04 | interrupt-gate | T01 | ✅ | |
-| T05 | interrupt-gate-view | T02, T03, T04 | 🔍 | Esc/Ctrl+C gate and warning in the view; note carried drop→inbox→platform→worker, drawn as `pir ▸`. 14 tests plus rig e2e at 80×24, 120×40. Deviations: plan-run.mjs unchanged, it already passed opts; the warning replaces the status line, and sits below a pinned prompt; withAgent test lives in person-inbox.test. |
+| T05 | interrupt-gate-view | T02, T03, T04 | ✅ | Review: one fix, the Esc warning clipped the second helper's name at 80 columns; now wraps (person's choice), test locks it. Probed Ctrl+C/autocomplete disarm paths, coordinator-agent and plan-run pass-through, undelivered sends; PgUp not disarming logged. Rig e2e green at 80×24, 120×40. |
 | T06 | helpers-drill | T03, T05 | ⬜ | |
 | T07 | docs | T06 | ⬜ | |
 
-**Review queue:** T05
+**Review queue:** empty
 
 ## Blocked on the user
 
