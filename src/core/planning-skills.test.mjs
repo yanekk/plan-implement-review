@@ -71,7 +71,9 @@ for (const [name, text] of Object.entries(SKILLS)) {
 
 test('pir-plan: the slug check, the prototype file and no next-session hand-over (§2.15)', () => {
   const s = runByPirPlan(SKILLS['pir-plan']);
-  assert.match(s, /git ls-tree -d main plans\/\{slug\}/);
+  // The slug is checked against the run's own base branch, read from pirBase, never a fixed `main`.
+  assert.ok(s.includes('git ls-tree -d "$(git config branch.$(git branch --show-current).pirBase)" plans/{slug}'));
+  assert.doesNotMatch(s, /ls-tree -d main/);
   assert.match(s, /git branch --list pir\/\{slug\}/);
   assert.match(s, /plan-\{hex4\}/);
   assert.match(s, /plans\/\{slug\}\/prototype\/index\.html/);
