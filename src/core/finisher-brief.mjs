@@ -140,3 +140,14 @@ export function finisherNotGo(answer) {
     `a reply, then wait. Ask the go question again only when they ask you to: ${GO_QUESTION}.`
   );
 }
+
+// finisherStaleGo(phase) → the person answered `Go`, but not to a go question pir can count (DESIGN §2.7):
+// it was asked before a `ready`, or before the steps were re-prepared or main moved, or the phase does not
+// take a go. The finisher sees `Go` in the question's result, so it is told plainly the fence is still shut.
+export function finisherStaleGo(phase) {
+  return (
+    `That Go does not count: the question was not asked after your latest \`ready\` or \`stuck\` status, or your phase ` +
+    `(${phase ?? 'unknown'}) does not take a go. Nothing is approved and you may still only look. Write a \`ready\` status ` +
+    `if you have not, then ask the go question again: ${GO_QUESTION}.`
+  );
+}

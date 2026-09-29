@@ -4,6 +4,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
+  finisherStaleGo,
   finisherOpening, finisherResumed, finisherRefusal, finisherResynced, finisherGateRefusal, finisherNotGo, rulesSourceWords,
 } from './finisher-brief.mjs';
 
@@ -108,6 +109,14 @@ test('not-go quotes the answer, keeps the fence shut and says to wait', () => {
   assert.match(finisherNotGo(''), /answered something other than Go/);
 });
 
+test('finisherStaleGo: the Go did not count; the fence is shut and the question must be asked again (T04)', () => {
+  const text = finisherStaleGo('preparing');
+  assert.match(text, /does not count/);
+  assert.match(text, /\(preparing\)/);
+  assert.match(text, /may still only look/);
+  assert.match(text, /header `Go`, options `Go` and `Not yet`/);
+});
+
 test('every message is plain text under 1500 characters, even with long inputs', () => {
   const long = 'x'.repeat(5000);
   const texts = [
@@ -117,6 +126,7 @@ test('every message is plain text under 1500 characters, even with long inputs',
     finisherResynced({ mainSha: long }),
     ...PHASES.map((phase) => finisherGateRefusal('WebFetch', phase)),
     finisherNotGo(long),
+    ...[...PHASES, undefined].map((phase) => finisherStaleGo(phase)),
   ];
   for (const t of texts) {
     assert.equal(typeof t, 'string');
