@@ -7,6 +7,7 @@ Legend: 🐞 defect found · ✅ verified by hand with the user · 📌 worth kn
 
 | Date | | Finding |
 |---|---|---|
+| 2026-09-29 | 📌 | T02 review: the `helpers` rig emits A's idle progress for only 200 rounds (~140 s at `stepMs` 700), then A sits frozen but running; the CLI has no `--step-ms`. Its system events reuse fixed `uuid`s. T06 may need longer. |
 | 2026-09-29 | 🐞 | T01 review: `helpersOf` listed a nested helper (its Agent call in a helper frame) as a second helper; fixed, it now rolls up per DESIGN §2.1. The T01 doc's "one per local_agent task_started" means top-level only. |
 | 2026-09-29 | 📌 | Plan-review probe, Claude Code 2.1.284: an interrupt while the parent is idle kills its background helper and the helper's own background Bash (`task_updated killed`, `task_notification stopped`) and emits no `result`. That Bash's `task_started` has no `parent_tool_use_id`. |
 | 2026-09-29 | 📌 | In `pir plan`, text the planner wrote just before an AskUserQuestion did not reach the person; they asked for the task list again. Put anything the person must read inside the question text. |
