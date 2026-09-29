@@ -5,6 +5,8 @@ hand with the user · 📌 worth knowing · 🔄 a decision the user changed.
 
 | Date | | Finding |
 |---|---|---|
+| 2026-09-29 | 📌 | `slugTaken` reads the local base only. When the local `dev` is dirty and behind `origin/dev` (not moved, §2.3), a plan only on `origin/dev` is missed, though the plan branch contains it. Reproduced in T05 review; left for the user. |
+| 2026-09-29 | 📌 | The dashboard box calls `startPlanRun` synchronously, so a slow fetch freezes the screen up to 30 s with no note. §2.6 asks for a synchronous fetch; a "fetching…" note first would help. Seen in T05 review. |
 | 2026-09-29 | 📌 | Bare `pir plan` runs `planPreflight` (fetch included) before the brief box and again in `startPlanRun`, so a slow remote is waited on twice. Harmless; passing the first result through would remove it. |
 | 2026-09-29 | 📌 | `validBranchName` accepts a base named exactly `pir`, which git cannot hold beside `pir/*` branches (ref directory clash), so cutting `pir/plan-*` would fail with a git error. §2.2 refuses only `pir/`. Left for the user. |
 | 2026-09-29 | 📌 | T03 renamed `syncMain`/`mainContains`/`mainTip` to `syncBase`/`baseContains`/`baseTip`; `docs/branch-model.md` and `docs/coordinator-agent.md` still name the old functions. For T10. |
