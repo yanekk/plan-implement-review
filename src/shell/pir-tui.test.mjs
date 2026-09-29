@@ -1484,7 +1484,7 @@ test('buildListFrame with rows windows 30 runs, with ↑/↓ n more, the selecte
 test('the empty list above the box points at the box; without rows it still points at pir start', () => {
   const dash = buildDashboard([]);
   assert.match(frameText(buildListFrame(dash, initialUi(), { rows: 20 })), new RegExp(EMPTY_LIST_BOX.trim()));
-  assert.equal(EMPTY_LIST_BOX.trim(), 'No runs yet — type after @ below to plan something new');
+  assert.equal(EMPTY_LIST_BOX.trim(), 'No runs yet — type after @ below to plan or build');
   assert.match(frameText(buildListFrame(dash, initialUi())), /start one with `pir start \{slug\}`/);
 });
 

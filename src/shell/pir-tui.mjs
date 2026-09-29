@@ -236,7 +236,8 @@ export function buildListFrame(dashboard, ui = initialUi(), { columns = DEFAULT_
 }
 
 // The get-started line under the box (dashboard-plan-box §2.7): the box is right below it, so it points there.
-export const EMPTY_LIST_BOX = '  No runs yet — type after @ below to plan something new';
+// 'plan or build' since the box also builds (user, box-commands T05 drill, 2026-09-29).
+export const EMPTY_LIST_BOX = '  No runs yet — type after @ below to plan or build';
 
 // windowListBlock → the list block cut to `budget` lines (dashboard-plan-box §2.7, user 2026-09-26).
 // The block is title, spacer, header, rows, spacer, counts, spacer. When it does not fit, the three spacers

@@ -144,7 +144,7 @@ Colour carries state and is never the only signal (glyphs carry the same state, 
 colour-blind reader lose nothing): a running run is green, finished and stopped are dim, crashed is
 red; the progress bar is blue for a running run and red for a crashed one; the selected row is a dark
 grey band across the full width, its dim text brightened (with colour off it is marked `▎` instead); an armed stop/remove confirmation is amber and bold. The colours are Catppuccin Mocha on a 24-bit terminal and the basic 16 otherwise (`run-lifecycle.md`, the palette). With no runs at all, the list is
-replaced by one line — `No runs yet — type after @ below to plan something new` — so a first open
+replaced by one line — `No runs yet — type after @ below to plan or build` — so a first open
 does not read as broken.
 
 Below the list sits the **dashboard box**, a small command line whose text starts as `@`: `@repo/plan`
