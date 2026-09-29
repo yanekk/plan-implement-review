@@ -26,11 +26,11 @@ done · ⛔ blocked, needs a human.
 | T01 | wake-on-activity | — | ⬜ | |
 | T02 | end-sequence-no-wait | T01 | ⬜ | |
 | T03 | split-coordinator-drill | — | ⬜ | |
-| T04 | split-plan-rig | — | ⬜ | |
+| T04 | split-plan-rig | — | 🔍 | 8 files by section plus plan-rig-helpers.mjs; 61 names identical; alone 20–47 s under load. Split mechanically by script, no body retyped. box-commands T05 section split over two files (its `for` loop is 43 s). Deviation: brief-box.test.mjs comment repointed to the new file name. |
 | T05 | split-conversation-rig | — | ⬜ | |
 | T06 | suite-timing-proof | T01, T02, T03, T04, T05 | ⬜ | |
 
-**Review queue:** *(empty)*
+**Review queue:** T04
 
 ## Blocked on the user
 
