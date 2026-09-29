@@ -26,7 +26,7 @@ done · ⛔ blocked, needs a human.
 | T01 | wake-on-activity | — | ⬜ | |
 | T02 | end-sequence-no-wait | T01 | ⬜ | |
 | T03 | split-coordinator-drill | — | ⬜ | |
-| T04 | split-plan-rig | — | ⬜ | |
+| T04 | split-plan-rig | — | ✅ | |
 | T05 | split-conversation-rig | — | ✅ | |
 | T06 | suite-timing-proof | T01, T02, T03, T04, T05 | ⬜ | |
 
