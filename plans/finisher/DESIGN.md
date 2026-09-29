@@ -47,7 +47,9 @@ Everything before it is looking; everything after it is doing.
 
 On a build run with the coordinator agent on, when the end sequence settles `ready` (green tests, main
 synced, `REPORT.md` committed; `docs/coordinator-agent.md § The end of the run`), pir closes the
-coordinator agent and starts the finisher on the next pass. A run that settles `red`, and a run started
+coordinator agent and starts the finisher on the next pass. The agent is not told to present
+`git merge pir/{slug}` for a run the finisher takes over (`handoffFor` with `ready` would say it); the
+merge line is printed only if the finisher falls back (§2.12) or the run is closed (§2.8). A run that settles `red`, and a run started
 with `--no-coordinator`, end exactly as they do today. The finisher only ever sees a branch that is
 ready, so it never has to decide whether broken work ships (user, 2026-09-29). `--no-coordinator`
 stays the agent-free escape hatch (user, 2026-09-29).
@@ -116,9 +118,12 @@ In `preparing`, `awaiting-go` and `stuck` pir allows (user, 2026-09-29):
   `--show-current` or `--contains`, `git remote -v`, `git worktree list`, `git ls-files`, `git ls-tree`,
   `git cat-file`, `ls`, `cat`, `head`, `tail`, `wc`, `grep`, `diff`, `cmp`, `shasum`, `test`, `[`,
   `which`, `command -v`, `pwd`, `echo`, `node --version`, `npm --version`, `gh auth status`,
-  `gh pr list`, `gh pr view`. A command is split with `commandParts` from
-  `coordinator-policy.mjs`; any redirection (`>`, `>>`, `tee`), any `$(...)` or backtick body that is
-  not itself look-only, or any part off the list is denied;
+  `gh pr list`, `gh pr view`, and `cd <path>`. Each `git` entry may carry a leading `-C <path>`, because
+  the finisher runs in the feature worktree and must look at the person's main checkout; `-c`, `--output`
+  and `--ext-diff` are never allowed, because they run or write something. A command is split with
+  `commandParts` from `coordinator-policy.mjs`, which cuts redirects, so redirects are checked on the raw
+  command first; any redirection (`>`, `>>`, `tee`), process substitution, any `$(...)` or backtick body
+  that is not itself look-only (a nested one is refused outright), or any part off the list is denied;
 - `Write` only into `control/finisher/status/`;
 - `Skill` for `pir-finisher` only;
 - `AskUserQuestion`, which is parked for the person (§2.7).
@@ -205,14 +210,15 @@ answer to it does not open the fence; the finisher's instructions say to write `
 - `done` status: pir records it, ends the run as `finished` (`by: 'finisher'`), prints `✔ finished:
   {first line of the summary}` and closes the finisher.
 - `close` status: ends as `finished` (`by: 'closed'`) with the merge line still offered, as today.
-- The person merges by hand while the finisher waits or works: the existing `mainContains` check
-  still runs each pass. In `preparing`, `awaiting-go` or `stuck` it ends the run as `merged` and closes
-  the finisher. In `finishing` it does not end the run, because the finisher's own merge is exactly what
-  makes it true and its later steps (install) still have to run; the run ends on its `done`.
-- `main` moving while the finisher is in `preparing`, `awaiting-go` or `stuck` (another run merged): pir
-  re-syncs as today, rewrites the report footer, and tells the finisher in one message to re-check and
+- The person merges by hand while the finisher waits: the existing `mainContains` check still runs each
+  pass. Until the first go it ends the run as `merged` and closes the finisher. Once any go has been
+  given (`state.json` `goGiven: true`) it no longer ends the run, in any phase: the finisher's own merge
+  is what makes it true, and a `stuck` after that merge (the install failed) must still reach the person
+  and wait for a new go. After a go the run ends only on `done` or `close` (user, 2026-09-29).
+- `main` moving while the finisher is in `preparing` or `awaiting-go`, or in `stuck` before any go
+  (another run merged): pir re-syncs as today, rewrites the report footer, and tells the finisher in one message to re-check and
   write a fresh `ready`; the phase returns to `preparing`, so a go given for the old plan of steps no
-  longer counts. In `finishing`, the finisher's own merge moves `main`, so no re-sync is done.
+  longer counts. After a go, the finisher's own merge moves `main`, so no re-sync is done.
 - HALT, a stop from the dashboard, or a pir teardown close the finisher like any worker.
 
 ### 2.9 Phone alerts
@@ -312,8 +318,9 @@ recognition, status shapes, the rules-file choice given an `exists` function) an
 - `rules/default/on-finish.md` and `.pir/rules/on-finish.md` (T03).
 - `src/shell/finisher-agent.mjs` (T04): the session, its gate, the status drain, go detection, the
   ledger, `state.json`, resume. Started through `worker-proc`'s `startWorker`, like the coordinator
-  agent; shares `canonical`/`within` path helpers by importing them from `coordinator-agent.mjs`
-  (exported there by T04), not by copying them.
+  agent. The Read/Glob/Grep/Write/Skill path checks are the coordinator agent's `gateFor` (exported
+  there by T04, with the skill name as a parameter), not a second copy; `finisherVerdict` takes its
+  answer as `fileVerdict` and adds the phase and the Bash rules.
 - `src/shell/coordinate.mjs` (T05): the `waiting` step hands over to the finisher; phase-driven end.
 - `src/core/notify.mjs` and the `runNotify` wiring in `coordinate.mjs` (T06): the finisher alerts.
 - `src/core/display.mjs`, `src/shell/pir-tui.mjs`, `src/shell/list-view.mjs` (T07): the row, `c`, the
@@ -335,7 +342,10 @@ Code 2.1.284 with SDK 0.3.282, and T04 builds on the answer:
 3. `--settings` with a `permissions.deny` or a `defaultMode` that overrides the allows.
 
 The fence has to hold for a command an allow rule covers; T00 proves it with `git merge` and an
-allow rule, both in a scratch repo.
+allow rule, both in a scratch repo. It must also hold for the tools the coordinator agent's T00 saw run in
+`default` mode without reaching `canUseTool` (`EnterWorktree`, `CronCreate`, `ListAgents`); any tool the
+chosen fence does not see is left out of the session's `tools` allowlist, since it would otherwise act
+before the go.
 
 ### 3.4 Data flow
 
@@ -357,7 +367,7 @@ Under the run's gitignored control folder:
 | Path | What |
 |---|---|
 | `finisher/status/*.json` | the finisher's status files; consumed and deleted, cleared at startup |
-| `finisher/state.json` | `{ phase, rules, rulesSource, lastReady }`; durable, atomic write |
+| `finisher/state.json` | `{ phase, goGiven, rules, rulesSource, lastReady }`; durable, atomic write |
 | `finisher/session.json` | `{ sessionId, restarts }`; as the coordinator agent's |
 | `finisher/ledger.jsonl` | one line per status, go and not-yet; torn last line skipped on read |
 | `conversations/finisher-{n}.ndjson` | its conversation |
@@ -425,9 +435,13 @@ rig is planned.
 
 | Action | Command (exact, wrapped) | Bin | Why this bin | Way back | Expected cost | Login check |
 |---|---|---|---|---|---|---|
+| Real Claude session for the fence probe (T00) | `perl -e 'alarm 300; exec @ARGV' node <probe in a temp folder>` | worker | draws plan limits only, no paid API; a scratch repo | delete `/tmp/pir-finisher-fence` and the probe | one short session | `claude auth status` |
 | Real finisher session in the live check | `perl -e 'alarm 900; exec @ARGV' node src/shell/harness/run.mjs finisher-live --into /tmp/pir-finisher-live` | worker | draws plan limits only, no paid API; a scratch repo | delete `/tmp/pir-finisher-live` | one short session | `claude auth status` |
-| ntfy alert during the live check | sent by pir itself | worker | the person's own topic, already set up | none needed | free | `pir notify test` |
+| ntfy alert during the live check | sent by pir itself | worker | the person's own topic, already set up | none needed | free | `test -f ~/.pir/notify.json` (`pir notify test` sends a real push, so it is not the check) |
 | Refreshing the installed engine during the build | `./install.sh` | worker | already allowed; CLAUDE.md requires it after engine changes | re-run on the previous commit | free | none |
+
+Approved by the user at plan review, 2026-09-29, as proposed; no `ask` rows. The scratch teardowns
+(`rm -rf /tmp/pir-finisher-fence`, `rm -rf /tmp/pir-finisher-live`) are local and in `permissions.allow`.
 
 The finisher's own actions at runtime (merge, install, a PR) are not build actions of this plan; they
 are the person's rules, fenced by §2.4–§2.5 and started by the person's go.
@@ -456,6 +470,9 @@ are the person's rules, fenced by §2.4–§2.5 and started by the person's go.
   the person's. Chosen over "listed commands only".
 - **2026-09-29, user: a failed step stops, explains, proposes, waits for a new go.** pir drops the
   phase to look-only so this is enforced.
+- **2026-09-29, user (plan review): after a go, only `done` or `close` end the run.** A merge seen in
+  `main` ends it only before the first go; otherwise a failure after the finisher's own merge would end the
+  run as `merged` and the remaining steps would be skipped unseen.
 - **2026-09-29, user: rules lookup repo, then `~/.pir/{repo}/rules/`, then `~/.pir/default/rules/`.**
   The user first chose "personal wins", then changed it to repo first and moved both home paths under
   `~/.pir/{name}/rules/`.

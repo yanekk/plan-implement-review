@@ -27,14 +27,17 @@ export const PHASES = ['preparing', 'awaiting-go', 'finishing', 'stuck', 'done']
 export const LOOK_ONLY;                       // DESIGN §2.4 list, as matchers over one command part
 
 export function isLookOnly(command) → boolean
-// every part from commandParts is on LOOK_ONLY; any `>`/`>>`/`tee`, or a $() / backtick body that is
-// not itself look-only, → false
+// every part from commandParts is on LOOK_ONLY (a git entry may lead with `-C <path>`; `cd <path>` is
+// on it); redirects are checked on the raw command first, since commandParts cuts them. Any `>`/`>>`/
+// `tee`, `<(`/`>(`, a nested or non-look-only $() / backtick body, `git -c`, `--output`, `--ext-diff`
+// → false
 
-export function finisherVerdict({ phase, toolName, input, askRules, paths }) → 'allow' | 'deny' | 'person'
-// paths: { readRoots: string[], statusDir: string } already canonical; the shell canonicalises input
-// paths before calling (pure side reads no fs).
-// look-only phases: Read/Glob/Grep under readRoots → allow; Bash look-only → allow; Write strictly
-//   inside statusDir → allow; Skill pir-finisher → allow; AskUserQuestion → 'person'; else deny.
+export function finisherVerdict({ phase, toolName, input, askRules, fileVerdict }) → 'allow' | 'deny' | 'person'
+// fileVerdict: 'allow' | 'deny', the coordinator agent's `gateFor` answer for Read/Glob/Grep/Write/Skill
+// (roots, status folder and skill `pir-finisher`), computed by the shell (T04), which owns the path
+// canonicalising; this module does no path checks of its own (DESIGN §3.2).
+// look-only phases: Read/Glob/Grep/Write/Skill → fileVerdict; Bash look-only → allow;
+//   AskUserQuestion → 'person'; else deny.
 // finishing: reservedFor(request, askRules) → 'person'; AskUserQuestion → 'person'; else allow.
 // done: deny everything.
 
@@ -49,7 +52,7 @@ export function isGoAnswer({ phase, toolName, input, answers }) → boolean
 // §2.7: phase awaiting-go|stuck, AskUserQuestion with one question whose header === 'Go',
 // answers[thatQuestion] === 'Go'
 
-export function afterRestart(phase) → { phase, stuckSummary | null }
+export function afterRestart(phase) → { phase, stuckSummary | null }   // goGiven is kept as stored
 // finishing → stuck with the §2.12 summary; others unchanged; unknown/missing → preparing
 
 export function chooseRules({ featurePath, home, repo, engineDir, exists }) → { path, source }
@@ -60,9 +63,11 @@ export function chooseRules({ featurePath, home, repo, engineDir, exists }) → 
 
 - [ ] `isLookOnly`: every LOOK_ONLY entry accepted; `git merge`, `git commit`, `git push`, `rm`, `npm i`,
       `./install.sh` rejected; `git status > x`, `cat a | tee b`, `ls; git merge x`, `echo $(git merge x)`,
-      `` echo `rm -rf /` `` rejected; `git branch -D x`, `git branch newname` rejected, `git branch --list` accepted.
-- [ ] `finisherVerdict` for every phase × {Read, Glob, Grep, Bash look-only, Bash acting, Write in
-      statusDir, Write elsewhere, Edit, Skill pir-finisher, Skill other, AskUserQuestion, WebFetch}.
+      `` echo `rm -rf /` `` rejected; `git branch -D x`, `git branch newname` rejected, `git branch --list` accepted;
+      `git -C /repo status`, `cd /repo && git status` accepted; `git -C /repo merge x`, `git -c core.pager=x log`,
+      `git log --output=f`, `git diff --ext-diff`, `diff <(ls) x`, `echo $(echo $(rm x))` rejected.
+- [ ] `finisherVerdict` for every phase × {Read, Glob, Grep, Write, Skill with fileVerdict allow and deny,
+      Bash look-only, Bash acting, Edit, AskUserQuestion, WebFetch}.
 - [ ] finishing: `rm -rf build` → person; an askRules match → person; `git merge pir/x` → allow.
 - [ ] `readStatus`: each valid shape; missing kind, empty steps, non-string step, unknown kind refused.
 - [ ] `checkStatus`: the whole accepted-in-phase table, including `done` refused outside finishing.

@@ -21,8 +21,13 @@ DESIGN §2.1, §2.8, §2.12.
   `finish(by)`; `renderFinished` gains `by: 'finisher'` and `'finisher-gave-up'` wording; `runState`
   carries `finisher` (the `view()`), and `coordinator` is null once the agent is closed for the finisher.
 - `src/shell/coordinate.test.mjs` (and the end-sequence tests that live beside it).
-- `src/shell/control-run.mjs` / startup clearing: `finisher/status/` cleared at startup like
-  `coordinator/decisions/`.
+- `src/shell/coordinate.mjs` startup clearing (the `reports`/`inbox`/`coordinator/decisions` feed loop):
+  `finisher/status/` cleared at startup the same way.
+- `src/shell/coordinate.mjs` main wiring: `currentAgent()` returns the finisher once it replaces the agent,
+  so `withAgent` routes the person's replies and messages from `pir`'s conversation view (the go included)
+  and the notifier's notes to the finisher's session.
+- `endWrite`: `handoffFor` is not told `ready` (no `git merge` line) when the finisher will take over
+  (DESIGN §2.1).
 
 ## Interface
 
@@ -33,9 +38,9 @@ each pass with finisher 'on': drain()
   accepted done   → finish('finisher')
   accepted close  → finish('closed')
   given up        → handoff.finisher = 'fallback' (today's ready-to-merge wait)
-mainContains(branch): phase in {preparing, awaiting-go, stuck} or fallback → finish('merged');
-                      phase finishing → ignored (the run ends on done)
-mainTip moved, phase not finishing → today's re-sync, then finisher.resynced(mainSha)
+mainContains(branch): no go given yet, or fallback → finish('merged');
+                      goGiven() → ignored in every phase (the run ends on done or close)
+mainTip moved, no go given yet → today's re-sync, then finisher.resynced(mainSha)
 ```
 
 ## Tests
@@ -44,7 +49,9 @@ mainTip moved, phase not finishing → today's re-sync, then finisher.resynced(m
 - [ ] Red end, and `--no-coordinator`: no finisher; behaviour identical to today (existing tests green).
 - [ ] `done` ends the run `finished` with the done summary printed.
 - [ ] `close` ends it `finished` with the merge line offered.
-- [ ] Hand merge in `awaiting-go` ends it `merged`; in `finishing` it does not.
+- [ ] Hand merge in `awaiting-go` ends it `merged`; in `finishing`, and in `stuck` after a go, it does not.
+- [ ] The person's `Go` answered in `pir`'s conversation view reaches the finisher through `withAgent`.
+- [ ] With the finisher taking over, the agent's hand-off message carries no `git merge` line.
 - [ ] `main` moving in `awaiting-go` re-syncs and sends the finisher back to `preparing`.
 - [ ] Finisher fails to start → today's `ready to merge`, `finisher failed to start` in the log.
 - [ ] Given up → `ready to merge` fallback; the person can still merge by hand to finish.

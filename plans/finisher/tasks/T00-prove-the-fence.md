@@ -32,8 +32,10 @@ and `Bash(touch:*)` (and with the user's own `~/.claude/settings.json` as it is)
    commands? (Expected: no. This is the problem, confirm it.)
 2. The same plus an SDK `hooks: { PreToolUse: [{ hooks: [callback] }] }` whose callback returns a deny
    decision for Bash: is the callback called for the allow-ruled commands, and does its deny stop them?
-   Does it fire for `Read`, `Write`, `AskUserQuestion` too? Can it return "ask" so the request then
-   reaches `canUseTool` (so reserved requests can be parked for the person)?
+   Does it fire for `Read`, `Write`, `AskUserQuestion` too, and for `EnterWorktree`, `CronCreate` and
+   `ListAgents`, which the coordinator agent's T00 saw skip `canUseTool` in `default` mode? Can it return
+   "ask" for an allow-ruled command (`touch`) so the request then reaches `canUseTool` rather than the
+   allow rule (so reserved requests can be parked for the person)?
 3. If 2 fails: `settingSources: []` (or `['local']`): does `canUseTool` then see the commands, and does
    the session still load the repo's `CLAUDE.md` and the user's skills (`Skill` of `pir-finisher`-like
    installed skill)?
@@ -44,8 +46,9 @@ and `Bash(touch:*)` (and with the user's own `~/.claude/settings.json` as it is)
 ## Done when
 
 - [ ] FINDINGS.md has a dated row for each question answered, with the SDK option shape that worked.
-- [ ] DESIGN §3.3 names the one fence T04 must use, and whether the `decide` gate is still needed for
-      non-Bash tools.
+- [ ] DESIGN §3.3 names the one fence T04 must use, whether the `decide` gate is still needed for
+      non-Bash tools, and which tools (if any) the fence does not see and so T04 must leave out of
+      `tools`.
 - [ ] The probe and the scratch repo are deleted; nothing else in the repo changed.
 
 ## Environment (the worker owns this)
@@ -57,5 +60,5 @@ rm -rf /tmp/pir-finisher-fence    # teardown, confirm it is gone
 
 ## Outside actions
 
-- A real Claude session for the probe: draws plan limits, no paid API — `worker` (wrap it in
+- A real Claude session for the probe — `worker` (DESIGN §5.3 row "fence probe"; wrap it in
   `perl -e 'alarm 300; exec @ARGV' node <probe>`).

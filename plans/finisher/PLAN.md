@@ -76,6 +76,7 @@ Main path, builder and wirer per step:
 | finisher knows what to do | T03 (skill) | T02 (`finisherOpening` names it) + T04 (sends it) |
 | look-only fence, act after go | T01 (`finisherVerdict`) | T04 (session hook/gate per T00) |
 | status files, go detection | T01 (`readStatus`, `isGoAnswer`) | T04 (drain, log watch) |
+| the person's go from `pir`'s conversation view reaches the finisher | T04 (`id`, `session`, `logPath`) | T05 (`currentAgent()` → finisher, through `withAgent`) |
 | run ends | T05 | T05 |
 | alerts | T06 (`notify.mjs`) | T06 (`runNotify` in `coordinate.mjs`) |
 | row, `c`, runs list | T07 | T07 (`display.mjs`, `pir-tui.mjs`, `list-view.mjs`, `buildRunState`) |

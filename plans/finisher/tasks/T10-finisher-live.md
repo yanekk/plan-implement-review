@@ -14,7 +14,8 @@ DESIGN §2.7 (the phone path), §2.9, §5.1.
 
 ## Files
 
-- `src/shell/harness/`: a `finisher-live` scenario: a scratch repo `/tmp/pir-finisher-live` with a
+- `src/shell/harness/fixtures/finisher-live.mjs` (new), registered in `src/shell/harness/fixtures.mjs`,
+  with its checks in `src/shell/harness/assertions.mjs` beside the coordinator agent's live check: a scratch repo `/tmp/pir-finisher-live` with a
   one-task plan whose build is already green, a `.pir/rules/on-finish.md` saying "merge into main and
   write a file FINISHED in the main checkout", and the run started with the agent on.
 

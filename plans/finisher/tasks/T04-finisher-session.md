@@ -16,8 +16,10 @@ DESIGN §2.3–§2.7, §2.10, §2.12, §3.3, §3.5.
 ## Files
 
 - `src/shell/finisher-agent.mjs` (new), `src/shell/finisher-agent.test.mjs` (new)
-- `src/shell/coordinator-agent.mjs`: export `canonical`, `within`, `strictlyWithin` and the
-  session-file/restart helpers for reuse (no behaviour change).
+- `src/shell/coordinator-agent.mjs`: export `gateFor` with the allowed skill name as a parameter
+  (default `pir-coordinator`), plus `canonical`, `within` and the session-file/restart helpers, for reuse
+  (no behaviour change). The finisher's Read/Glob/Grep/Write/Skill checks are `gateFor` over its read
+  roots and status folder, passed to `finisherVerdict` as `fileVerdict` (DESIGN §3.2).
 - `src/shell/worker-proc.mjs`: only if T00's fence needs an option `startWorker` does not pass yet
   (e.g. `hooks` or `settingSources`); `decide` may return `'person'` meaning park (today `null`).
 - `src/shell/fake/claude-stream.mjs`: only if the fake must honour the new option for the tests.
@@ -29,10 +31,11 @@ export function startFinisher({
   controlDir, featurePath, repoRoot, slug, mainCheckout, rules /* { path, source } */,
   reportPath, askRules, platform, startWorker, claudePath, now, remote, skillsDir, engineDir, uuid, env,
 }) → {
-  id, session,                    // as the coordinator agent's
-  alive(), givenUp(), close(opts),
+  id, session, logPath,           // as the coordinator agent's; withAgent (T05) and `c` (T07) read these
+  alive(), givenUp(), close(opts), remoteUrl(),   // remoteUrl for the alert's tap (T06)
   drain() → { accepted: Status[], refused: { file, why }[], go: null | { by: 'person'|'phone' } },
-  phase(), view() → { state: phase|'restarting'|'given-up', summary, steps, rulesSource, asking: bool },
+  phase(), goGiven(),
+  view() → { id, logPath, state: phase|'restarting'|'given-up', summary, steps, rulesSource, asking: bool },
   tell(text), resynced(mainSha),  // resynced: phase → preparing and a finisherResynced message
 }
 ```
@@ -45,6 +48,8 @@ requests and apply `isGoAnswer` (a `reply` from pir, or `answered-remotely` + th
 
 Name: `${basename(repoRoot)} / ${slug} / finisher`. Log files `conversations/finisher-{n}.ndjson`.
 Remote Control on for the whole session unless `remote` is false. Presence env as for the agent.
+Started with the `tools` allowlist T00 settled: every tool the finisher needs in either phase, and none the
+fence does not see (DESIGN §3.3). A go sets `goGiven` in `state.json` for good (DESIGN §2.8).
 
 ## Tests
 
@@ -58,6 +63,7 @@ Remote Control on for the whole session unless `remote` is false. Presence env a
 - [ ] `stuck` → look-only again; a Bash `git merge` then denied.
 - [ ] Exit in `finishing` → resumed, phase `stuck`, resumed message carries the summary.
 - [ ] Four exits within an hour → given up.
+- [ ] A go sets `goGiven`; it survives `stuck`, a finisher restart and a pir restart.
 - [ ] Restart of pir with `state.json` present → phase kept per `afterRestart`.
 
 ## Done when
