@@ -389,7 +389,7 @@ test('formatLines: `asking coordinator` rows and the agent hand-off lines (ready
 
   const done = [t({ done: true })];
   const ready = formatLines(buildDisplay({ branch: 'pir/demo', ceiling: 2, complete: true, readyToMerge: true, tasks: done, handoff: { state: 'ready', reportPath: 'plans/demo/REPORT.md' } }, { now: 0 }));
-  assert.deepEqual(ready.slice(-2), ['✔ ready to merge · git merge pir/demo', '  report: plans/demo/REPORT.md']);
+  assert.deepEqual(ready.slice(-2), ['✔ ready to merge · git switch main && git merge pir/demo', '  report: plans/demo/REPORT.md']);
 
   const red = formatLines(
     buildDisplay({ branch: 'pir/demo', ceiling: 2, complete: true, tasks: done, testsReason: { reason: 'test `npm test` exited 1', logPath: '/c/tests.log' }, handoff: { state: 'red', reportPath: 'plans/demo/REPORT.md' } }, { now: 0 }),
@@ -492,4 +492,31 @@ test('the agent row and separator are painted in their styles on a colour TTY (T
   assert.match(all, /\x1b\[36m {2}◆ coordinator agent +on duty\x1b\[0m/, 'up: the active colour, never amber');
   assert.match(all, /\x1b\[2m {2}◆ coordinator agent +given up · questions come to you\x1b\[0m/, 'given up: idle');
   assert.match(all, /\x1b\[2m {2}─+\x1b\[0m/, 'the separator: idle');
+});
+
+// base-branch T04 (DESIGN §2.8, §2.9): the hand-off, preparing and ^C lines name the footer's base; a footer
+// without one (today's display) reads main. display.mjs puts `base` and `hold` on the footer (T07).
+test('formatLines: the footer lines name the base, switch to it before merging, and show a hold', () => {
+  const done = [{ id: 'T01', slug: 'one', deps: [], done: true, phase: null, since: null, doneMs: null, question: null }];
+  const withFooter = (input, extra) => {
+    const d = buildDisplay({ branch: 'pir/demo', ceiling: 2, tasks: done, ...input }, { now: 0 });
+    return formatLines({ ...d, footer: { ...d.footer, ...extra } }, { spinnerChar: '*' });
+  };
+  const noAgent = withFooter({ complete: true, readyToMerge: true }, { base: 'dev' });
+  assert.equal(noAgent.at(-1), '    git switch dev && git merge pir/demo');
+  assert.equal(withFooter({ complete: true, readyToMerge: true }, {}).at(-1), '    git switch main && git merge pir/demo');
+
+  const ready = withFooter({ complete: true, readyToMerge: true, handoff: { state: 'ready', reportPath: null } }, { base: 'dev' });
+  assert.equal(ready.at(-1), '✔ ready to merge · git switch dev && git merge pir/demo');
+
+  const prep = withFooter({ handoff: { state: 'preparing', reportPath: null } }, { base: 'dev' });
+  assert.equal(prep.at(-1), '* all 1 task(s) merged · preparing: syncing dev, writing the report');
+  const held = withFooter({ handoff: { state: 'preparing', reportPath: null } }, { base: 'dev', hold: { reason: 'fetch-failed', text: "can't reach origin, retrying" } });
+  assert.equal(held.at(-1), "* all 1 task(s) merged · preparing: can't reach origin, retrying");
+
+  const stop = withFooter({ interrupted: true }, { base: 'dev' });
+  assert.equal(stop.at(-1), '^C — closing workers… dev is untouched. Re-run to resume from committed work.');
+  assert.equal(withFooter({ interrupted: true }, {}).at(-1), '^C — closing workers… main is untouched. Re-run to resume from committed work.');
+
+  for (const lines of [noAgent, ready, prep, held, stop]) assert.ok(!lines.some((l) => /\bmain\b/.test(l)), lines.join('\n'));
 });

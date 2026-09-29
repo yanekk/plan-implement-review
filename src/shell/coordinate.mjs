@@ -525,10 +525,10 @@ export function startCoordinator({
   const branchReady = () => handoff.tests === 'green' && handoff.sync?.state !== 'unresolved';
   const fixResult = () => (handoff.fix === 'green' || handoff.fix === 'red' ? handoff.fix : null);
   const footerNow = () =>
-    branchFooter({ mainSha: handoff.sync?.mainSha ?? null, tests: handoff.tests, syncedAt: isoNow(), unresolved: handoff.sync?.state === 'unresolved', fix: fixResult() });
+    branchFooter({ baseSha: handoff.sync?.baseSha ?? null, tests: handoff.tests, syncedAt: isoNow(), unresolved: handoff.sync?.state === 'unresolved', fix: fixResult() });
   const settle = () => {
     handoff.state = branchReady() ? 'ready' : 'red';
-    handoff.mainSha = handoff.sync?.mainSha ?? handoff.mainSha;
+    handoff.mainSha = handoff.sync?.baseSha ?? handoff.mainSha;
     handoff.step = 'waiting';
   };
 
@@ -609,13 +609,13 @@ export function startCoordinator({
       res = worktree.syncMain(state.feature.path);
     } catch (err) {
       control?.log?.(`main-sync failed: ${err?.message ?? err}`);
-      handoff.sync = { state: 'unresolved', mainSha: worktree.mainTip?.() ?? null, files: [] };
+      handoff.sync = { state: 'unresolved', baseSha: worktree.mainTip?.() ?? null, files: [] };
       handoff.tests = 'red';
       handoff.step = existing ? 'footer' : 'brief';
       return;
     }
     rec('main-sync', { state: res.state });
-    handoff.sync = { state: res.state, mainSha: res.mainSha, files: res.files ?? [] };
+    handoff.sync = { state: res.state, baseSha: res.mainSha, files: res.files ?? [] };
     if (res.state === 'up-to-date') {
       handoff.tests ??= handoff.gate;
       if (existing && handoff.fix) {
@@ -686,7 +686,7 @@ export function startCoordinator({
     rec('report', { resync: true });
     handoff.reportPath = reportRel;
     settle();
-    if (agent?.alive()) agent.tell(resyncedFor({ slug, mainSha: handoff.sync?.mainSha, tests: handoff.tests, unresolved: handoff.sync?.state === 'unresolved' }));
+    if (agent?.alive()) agent.tell(resyncedFor({ slug, baseSha: handoff.sync?.baseSha, tests: handoff.tests, unresolved: handoff.sync?.state === 'unresolved' }));
   }
 
   function endBrief() {
@@ -914,7 +914,7 @@ export function startCoordinator({
 // The end-of-run helper workers' task labels (pir-coordinator T05, T10): each holds no task of the plan.
 const HELPERS = [MAIN_SYNC_TASK, TESTS_FIX_TASK];
 // What each helper does, as its row's slug: kebab like a task's, and within the row's 22-column slug field.
-const HELPER_SLUG = { [MAIN_SYNC_TASK]: 'resolve-main-merge', [TESTS_FIX_TASK]: 'fix-red-tests' };
+const HELPER_SLUG = { [MAIN_SYNC_TASK]: 'resolve-base-merge', [TESTS_FIX_TASK]: 'fix-red-tests' };
 
 // mainSyncOpening(prompt) → the opening instruction of an end-of-run helper worker: main-sync (T05) or
 // tests-fix (T10). It runs under the pir-worker contract for asking the person and dropping its report,
@@ -1216,16 +1216,17 @@ export function runawayVerdict({ liveCount, ceiling, overPasses = 0, overGrace =
 // by hand — the one irreversible act, the merge to main, is the person's `what`, not the program's
 // (CLAUDE.md, §2.4). renderHandoff builds the line(s) main() prints from the loop's complete result.
 // Pure, so the green/red wording is asserted without running the bin (DESIGN §2.3's pure-display
-// stance). On green it hands over `git merge pir/{slug}`; on red it names the failure and offers NO
-// merge line, because telling the person a red branch is ready would be a lie the tests caught (§2.8).
-// `why` is the red gate's reason and log path (loop.mjs 3f), printed so the person can tell a failing
-// suite from a command that never ran.
-export function renderHandoff({ readyToMerge, taskCount, slug, why } = {}) {
+// stance). On green it hands over `git switch {base} && git merge pir/{slug}` (switching first, so it is
+// right whichever branch the person has checked out; base-branch DESIGN §2.9); on red it names the
+// failure and offers NO merge line, because telling the person a red branch is ready would be a lie the
+// tests caught (§2.8). `why` is the red gate's reason and log path (loop.mjs 3f), printed so the person
+// can tell a failing suite from a command that never ran.
+export function renderHandoff({ readyToMerge, taskCount, slug, why, base = 'main' } = {}) {
   const branch = `pir/${slug}`;
   if (readyToMerge) {
     return (
       `✔ all ${taskCount} task(s) green on ${branch} · tests pass. Yours to merge:\n\n` +
-      `  git merge ${branch}\n`
+      `  git switch ${base} && git merge ${branch}\n`
     );
   }
   return (
@@ -1235,15 +1236,15 @@ export function renderHandoff({ readyToMerge, taskCount, slug, why } = {}) {
   );
 }
 
-// renderFinished({ by, slug, ready, reportPath }) → the line printed when a run with the agent ends
+// renderFinished({ by, slug, ready, reportPath, base }) → the line printed when a run with the agent ends
 // (pir-coordinator DESIGN §2.10): the person merged, or told the agent to close the run.
-export function renderFinished({ by, slug, ready = false, reportPath = null } = {}) {
+export function renderFinished({ by, slug, ready = false, reportPath = null, base = 'main' } = {}) {
   const branch = `pir/${slug}`;
   const report = reportPath ? ` The report is ${reportPath}.` : '';
-  if (by === 'merged') return `✔ ${branch} is in main. The run is finished.${report}`;
+  if (by === 'merged') return `✔ ${branch} is in ${base}. The run is finished.${report}`;
   return (
     `✔ run closed.${report}\n` +
-    (ready ? `${branch} is not merged; it is yours to merge when you want:\n\n  git merge ${branch}\n` : `${branch} is not merged and not ready to merge.`)
+    (ready ? `${branch} is not merged; it is yours to merge when you want:\n\n  git switch ${base} && git merge ${branch}\n` : `${branch} is not merged and not ready to merge.`)
   );
 }
 

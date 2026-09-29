@@ -81,14 +81,15 @@ export const reminderText = (message) => `Still waiting: ${message}`;
 
 // endAlert(...) → { title, message, tags } for the one alert when the run waits on the person's merge
 // (§2.4). Red names what failed: an unresolved main-sync outranks the test reason, since the tests never
-// ran against main.
-export function endAlert({ slug, ready, taskCount, reason, unresolved } = {}) {
+// ran against the base. `base` is the run's base branch (base-branch DESIGN §2.9), default `main`; the
+// ready line switches to it first so the command is right whichever branch is checked out.
+export function endAlert({ slug, ready, taskCount, reason, unresolved, base = 'main' } = {}) {
   if (ready) {
-    return { title: `${slug} · ready to merge`, message: `All ${taskCount} tasks merged. git merge pir/${slug}`, tags: ['tada'] };
+    return { title: `${slug} · ready to merge`, message: `All ${taskCount} tasks merged. git switch ${base} && git merge pir/${slug}`, tags: ['tada'] };
   }
   const cut = excerpt(reason ?? '');
   let message;
-  if (unresolved) message = `Merge with main unresolved on pir/${slug}`;
+  if (unresolved) message = `Merge with ${base} unresolved on pir/${slug}`;
   else if (cut !== '') message = `Tests red on pir/${slug}: ${cut}`;
   else message = `Tests red on pir/${slug}`;
   return { title: `${slug} · not ready`, message, tags: ['warning'] };

@@ -454,7 +454,7 @@ test('handedOffGreenBranch passes when a task merged, nothing was promoted, and 
   const r = handedOffGreenBranch().check(b);
   assert.equal(r.pass, true, r.detail);
   assert.ok(r.evidence.includes('git log: no promotion merge into main'));
-  assert.ok(r.evidence.includes('coordinator.out: git merge pir/scratch'));
+  assert.ok(r.evidence.includes('coordinator.out: git switch main && git merge pir/scratch'));
 });
 
 // declared-test-command T10: the flow and git look the same for a red finish as a green one, so a run

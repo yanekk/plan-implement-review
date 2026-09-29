@@ -545,9 +545,15 @@ export function handedOffGreenBranch() {
     // The merge line must follow `Yours to merge:` (renderHandoff, blank line between). A bare
     // `git merge pir/{plan}` also appears in the conflict-resolution prompt printed mid-run, so a run that
     // conflicted and then stalled would otherwise read as green.
+    // The offer switches to the run's base first (base-branch DESIGN §2.9: `git switch {base} && git merge
+    // pir/{plan}`); any base is accepted here, since which base a run used is not this fact's question.
     const mergeLine = `git merge pir/${plan}`;
+    const isOffer = (l) => {
+      const t = l?.trim() ?? '';
+      return t === mergeLine || (t.startsWith('git switch ') && t.endsWith(` && ${mergeLine}`));
+    };
     const nextNonBlank = (i) => outLines.slice(i + 1).find((l) => l.trim() !== '');
-    const offerAt = outLines.findLastIndex((l, i) => l.includes('Yours to merge:') && nextNonBlank(i)?.trim() === mergeLine.trim());
+    const offerAt = outLines.findLastIndex((l, i) => l.includes('Yours to merge:') && isOffer(nextNonBlank(i)));
     const green = offerAt === -1 ? null : nextNonBlank(offerAt);
     if (!green) {
       return { pass: false, evidence, detail: `coordinator.out has no \`${mergeLine.trim()}\` hand-off line — the run did not hand off a green branch` };
