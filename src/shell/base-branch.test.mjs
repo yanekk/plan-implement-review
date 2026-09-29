@@ -8,7 +8,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { resolveBaseSetting, pickRemote, prepareBase, defaultGit } from './base-branch.mjs';
+import { resolveBaseSetting, pickRemote, prepareBase, defaultGit, resolveRunBase } from './base-branch.mjs';
 
 const ID = ['-c', 'user.name=pir test', '-c', 'user.email=test@pir.invalid', '-c', 'commit.gpgsign=false'];
 function git(cwd, ...args) {
@@ -387,4 +387,80 @@ test('a network call that times out is fetch-failed, naming the timeout', () => 
   const r = prepareBase('/nowhere', 'dev', { git: fake, env: {}, timeoutMs: 30000 });
   assert.equal(r.reason, 'fetch-failed');
   assert.match(r.error, /timed out after 30 s/);
+});
+
+// --- resolveRunBase: which base a build runs on (T06, DESIGN §2.5, §2.7) --------------------------------
+
+function prepareSpy(result) {
+  const calls = [];
+  const prepare = (root, base, opts) => {
+    calls.push({ root, base, mode: opts?.mode });
+    return typeof result === 'function' ? result(root, base, opts) : result;
+  };
+  return { prepare, calls };
+}
+
+function repoSettings(w, base) {
+  mkdirSync(join(w.repo, '.pir'), { recursive: true });
+  writeFileSync(join(w.repo, '.pir', 'settings.json'), JSON.stringify({ baseBranch: base }));
+}
+
+test('resolveRunBase: pir/{slug} with pirBase → that base, no settings read, no prepare', (t) => {
+  const w = world(t);
+  git(w.repo, 'branch', '-q', 'pir/demo', 'HEAD');
+  git(w.repo, 'config', 'branch.pir/demo.pirBase', 'dev');
+  repoSettings(w, 'stage');
+  const p = prepareSpy({ ok: true, sha: 'x' });
+  assert.deepEqual(resolveRunBase(w.repo, 'demo', { env: w.env, prepare: p.prepare }), { ok: true, base: 'dev', baseSha: null, existing: true });
+  assert.equal(p.calls.length, 0);
+});
+
+test('resolveRunBase: pir/{slug} without pirBase → the settings base, recorded, no prepare', (t) => {
+  const w = world(t);
+  git(w.repo, 'branch', '-q', 'pir/demo', 'HEAD');
+  repoSettings(w, 'dev');
+  const p = prepareSpy({ ok: true, sha: 'x' });
+  assert.deepEqual(resolveRunBase(w.repo, 'demo', { env: w.env, prepare: p.prepare }), { ok: true, base: 'dev', baseSha: null, existing: true });
+  assert.equal(git(w.repo, 'config', '--get', 'branch.pir/demo.pirBase'), 'dev');
+  assert.equal(p.calls.length, 0);
+});
+
+test('resolveRunBase: pir/{slug} without pirBase and no settings → refused, nothing recorded', (t) => {
+  const w = world(t);
+  git(w.repo, 'branch', '-q', 'pir/demo', 'HEAD');
+  const r = resolveRunBase(w.repo, 'demo', { env: w.env });
+  assert.equal(r.ok, false);
+  assert.equal(r.reason, 'no-base-setting');
+  assert.match(r.message, /^pir: no base branch is set for repo\./);
+  assert.throws(() => git(w.repo, 'config', '--get', 'branch.pir/demo.pirBase'));
+});
+
+test('resolveRunBase: no pir/{slug} → the settings base prepared in start mode, its sha returned', (t) => {
+  const w = world(t);
+  repoSettings(w, 'dev');
+  const tip = w.push('b.txt');
+  const r = resolveRunBase(w.repo, 'demo', { env: w.env });
+  assert.deepEqual(r, { ok: true, base: 'dev', baseSha: tip, existing: false });
+  assert.equal(sha(w.repo, 'dev'), tip, 'prepareBase created the local dev from the remote');
+  const p = prepareSpy({ ok: true, sha: 'abc' });
+  resolveRunBase(w.repo, 'demo', { env: w.env, prepare: p.prepare });
+  assert.deepEqual(p.calls, [{ root: w.repo, base: 'dev', mode: 'start' }]);
+});
+
+test('resolveRunBase: a prepare refusal comes back with its §2.9 text naming the settings file', (t) => {
+  const w = world(t);
+  repoSettings(w, 'nope');
+  const r = resolveRunBase(w.repo, 'demo', { env: w.env });
+  assert.equal(r.ok, false);
+  assert.equal(r.reason, 'no-base-branch');
+  assert.equal(r.message, 'pir: the base branch nope (set in .pir/settings.json) exists neither locally nor on origin.');
+});
+
+test('resolveRunBase: a broken settings file is refused naming it', (t) => {
+  const w = world(t);
+  mkdirSync(join(w.repo, '.pir'), { recursive: true });
+  writeFileSync(join(w.repo, '.pir', 'settings.json'), '[1]');
+  const r = resolveRunBase(w.repo, 'demo', { env: w.env });
+  assert.equal(r.reason, 'bad-settings');
+  assert.match(r.message, /^pir: \.pir\/settings\.json is not usable: /);
 });

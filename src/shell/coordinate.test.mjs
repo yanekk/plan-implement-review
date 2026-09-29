@@ -2,22 +2,21 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, renameSync, rmSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 import {
   startCoordinator,
+  parseCoordinateArgs,
   readReviewGate,
   readTestBlockGate,
   testBlockRefusal,
   createReportInbox,
   teardownRun,
-  ensureMain,
   renderHandoff,
   runFeatureTests,
   runawayVerdict,
-  gitRun,
   clearTransientFeeds,
   startupControlHygiene,
   fileControl,
@@ -509,26 +508,77 @@ test('teardownRun closes every live worker of the run at once (immediate SIGTERM
   assert.ok(platform.removed.includes(parkedId), 'teardown calls remove on a finish path');
 });
 
-// --- 16. P4/P5: the ported bin guards (ensureMain, promotion guard, runaway breaker) ---------------
+// --- 16. P4/P5: the ported bin guards (the run's base, promotion guard, runaway breaker) ---------------
+//
+// The old guard that created a local `main` at HEAD is gone (base-branch T06, DESIGN §2.7): the bin resolves the
+// run's base instead, and a missing local base is created from the remote's copy by prepareBase.
 
-test('ensureMain creates a local main at HEAD when a checkout has none, and is a no-op otherwise (P4, T12)', (t) => {
-  const dir = mkdtempSync(join(tmpdir(), 'pir-nomain-'));
-  t.after(() => rmSync(dir, { recursive: true, force: true }));
-  const g = (args) => gitRun(dir, args);
-  g(['init', '-b', 'side']);
-  g(['config', 'user.email', 'x@test.local']);
-  g(['config', 'user.name', 'PIR Test']);
-  g(['config', 'commit.gpgsign', 'false']);
-  writeFileSync(join(dir, 'f.txt'), 'hi');
-  g(['add', '-A']);
-  g(['commit', '-m', 'init', '--no-edit']);
+test('parseCoordinateArgs: slug, --base and --base-sha; bad shapes refused', () => {
+  assert.deepEqual(parseCoordinateArgs(['demo']), { ok: true, slug: 'demo', base: null, baseSha: null });
+  assert.deepEqual(parseCoordinateArgs(['demo', '--base', 'dev']), { ok: true, slug: 'demo', base: 'dev', baseSha: null });
+  assert.deepEqual(parseCoordinateArgs(['demo', '--base', 'dev', '--base-sha', 'abc']), { ok: true, slug: 'demo', base: 'dev', baseSha: 'abc' });
+  assert.deepEqual(parseCoordinateArgs(['--base', 'dev', 'demo']), { ok: true, slug: 'demo', base: 'dev', baseSha: null });
+  assert.equal(parseCoordinateArgs([]).ok, false);
+  assert.equal(parseCoordinateArgs(['demo', '--base']).ok, false);
+  assert.equal(parseCoordinateArgs(['demo', '--base', '--base-sha', 'x']).ok, false);
+  assert.equal(parseCoordinateArgs(['demo', '--base-sha', 'abc']).ok, false, 'a commit with no base name');
+  assert.equal(parseCoordinateArgs(['demo', '--frob']).ok, false);
+  assert.equal(parseCoordinateArgs(['demo', 'extra']).ok, false);
+});
 
-  assert.equal(g(['rev-parse', '--verify', '--quiet', 'refs/heads/main']).ok, false, 'a side-branch clone has no local main');
-  const res = ensureMain(dir);
-  assert.equal(res.created, true);
-  assert.equal(res.from, 'side');
-  assert.equal(g(['rev-parse', '--verify', '--quiet', 'refs/heads/main']).ok, true, 'main now exists at HEAD');
-  assert.equal(ensureMain(dir).created, false, 'a second call is a no-op — main already exists');
+// The bin on its LIVE path, seatbelted: PATH holds only `git`, so even a regression past the base check
+// stops at "no `claude` on PATH" before any worker could spawn, and PIR_HOME is a scratch folder.
+function runBinLiveSeatbelted(root, args, home) {
+  const bin = fileURLToPath(new URL('./coordinate.mjs', import.meta.url));
+  const onlyGit = join(home, 'bin');
+  mkdirSync(onlyGit, { recursive: true });
+  const gitPath = execFileSync('/bin/sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim();
+  writeFileSync(join(onlyGit, 'git'), `#!/bin/sh\nexec ${gitPath} "$@"\n`, { mode: 0o755 });
+  const env = { PATH: `${onlyGit}:/bin`, HOME: home, PIR_HOME: home, PARALLEL_LIVE: '1', PARALLEL_MAX_WORKERS: '1' };
+  return spawnSync(process.execPath, [bin, ...args], { cwd: root, env, encoding: 'utf8', timeout: 30000 });
+}
+
+test('the coordinator bin started without --base resolves the base itself: no settings → the §2.9 refusal, nothing created', (t) => {
+  const { root, g } = scratchGitPlan('---\nsetup: none\ntest:\n  - true\n---\n# Design\n');
+  const home = mkdtempSync(join(tmpdir(), 'pir-bin-home-'));
+  t.after(() => {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(home, { recursive: true, force: true });
+  });
+  const r = runBinLiveSeatbelted(root, ['demo'], home);
+  assert.equal(r.status, 1, r.stdout + r.stderr);
+  assert.match(r.stderr, /pir: no base branch is set for pir-bin-\w+\. Add \.pir\/settings\.json with \{"baseBranch": "<branch>"\}/);
+  assert.ok(!/no `claude` on PATH/.test(r.stderr), 'refused at the base, before anything else');
+  assert.equal(String(g('branch', '--list', 'pir/*')).trim(), '', 'no feature branch cut');
+  assert.equal(existsSync(join(root, 'plans', 'demo', '.parallel')), false, 'no control folder written');
+});
+
+test('the coordinator bin started without --base resolves the settings base the same way as pir start', (t) => {
+  const { root, g } = scratchGitPlan('---\nsetup: none\ntest:\n  - true\n---\n# Design\n');
+  const home = mkdtempSync(join(tmpdir(), 'pir-bin-home-'));
+  t.after(() => {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(home, { recursive: true, force: true });
+  });
+  g('branch', '-m', 'main', 'dev');
+  mkdirSync(join(home, '.pir', basename(root)), { recursive: true });
+  writeFileSync(join(home, '.pir', basename(root), 'settings.json'), '{"baseBranch": "dev"}');
+  const r = runBinLiveSeatbelted(root, ['demo'], home);
+  assert.match(r.stdout, /base branch: dev/, r.stdout + r.stderr);
+  // The seatbelt: with no claude on PATH the live run stops right after, before any spawn.
+  assert.match(r.stderr, /no `claude` on PATH/);
+
+  // And a base passed in is taken as given, with no settings read at all.
+  rmSync(join(home, '.pir', basename(root)), { recursive: true, force: true });
+  const passed = runBinLiveSeatbelted(root, ['demo', '--base', 'dev'], home);
+  assert.match(passed.stdout, /base branch: dev/, passed.stdout + passed.stderr);
+});
+
+test('the main-at-HEAD guard is gone: nothing under src/ names it', () => {
+  const srcDir = fileURLToPath(new URL('..', import.meta.url));
+  // Spelled in two halves so this test does not itself name it.
+  const out = spawnSync('grep', ['-rl', 'ensure' + 'Main', srcDir], { encoding: 'utf8' });
+  assert.deepEqual(out.stdout.split('\n').filter(Boolean), []);
 });
 
 test('renderHandoff: a green plan hands off `git merge pir/{slug}`; a red one prints the failure with no merge line (DESIGN §2.4, §2.8)', () => {

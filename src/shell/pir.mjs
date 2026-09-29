@@ -271,6 +271,13 @@ function startBuild(slug, { startRun, openW, stderr, coordinator = true }) {
     return 1;
   }
 
+  // A base-branch refusal (no settings, broken settings, base missing, fetch failed, diverged) carries
+  // its own §2.9 text naming the cause and the fix (base-branch DESIGN §2.7, §2.9).
+  if (r.message) {
+    stderr.write(`${r.message}\n`);
+    return 1;
+  }
+
   // Any other refusal reason startRun grows later still surfaces rather than silently opening a view.
   stderr.write(`cannot start '${slug}'${r.reason ? `: ${r.reason}` : ''}\n`);
   return 1;

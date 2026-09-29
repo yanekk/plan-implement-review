@@ -24,8 +24,8 @@ import { readReviewGate, readTestBlockGate } from './coordinate.mjs';
 import { startTimeOf, resolveLiveness } from './identity.mjs';
 import { indexDir, listRecords, recordPath, updateRecord, writeRecord } from './index-store.mjs';
 import { planHome } from './plan-home.mjs';
-import { openPlanBranch } from './worktree.mjs';
-import { prepareBase as prepareBaseReal, resolveBaseSetting } from './base-branch.mjs';
+import { openPlanBranch, cutFeatureBranch } from './worktree.mjs';
+import { prepareBase as prepareBaseReal, resolveBaseSetting, resolveRunBase } from './base-branch.mjs';
 import { refusalText } from '../core/basebranch.mjs';
 import { writeFileAtomic, writeJsonAtomic } from './atomic-write.mjs';
 import { classifyRun } from '../core/runstate.mjs';
@@ -41,6 +41,8 @@ const DEFAULT_FS = { mkdirSync, openSync };
 //   { started:true, pid, record } | { started:false, reason, alreadyRunning? }
 //   { started:false, reason:'no-test-block', detail }   // detail: the parser's reason
 //   reason: 'no-plan' | 'not-reviewed' | 'no-test-block' | 'already-running'
+//   { started:false, reason, message }   // a base-branch refusal (base-branch DESIGN §2.9): reason is
+//     'no-base-setting' | 'bad-settings' | 'no-base-branch' | 'fetch-failed' | 'diverged', message the text
 //
 // cwd is the target repo's root: `pir` is invoked from inside the repo whose plan is being run, so its
 // basename is the repo name the index entry and the coordinator's worker names share (DESIGN §2.8), and
@@ -61,6 +63,7 @@ export function startRun(
     now = () => new Date(),
     env = process.env,
     coordinator = true,
+    resolveBase = resolveRunBase,
   } = {},
 ) {
   const repoRoot = cwd;
@@ -108,6 +111,15 @@ export function startRun(
   // The caller opens the live view instead of starting a second run (DESIGN §2.5).
   if (running()) return { started: false, reason: 'already-running', alreadyRunning: true };
 
+  // 4: the run's base (base-branch DESIGN §2.5, §2.7). An existing pir/{slug} keeps the base it records;
+  // a hand-made plan's build resolves the settings, prepares the base (the fetch runs here, bounded, so a
+  // refusal reaches the person rather than a detached run.log) and has its feature branch cut now, from
+  // the prepared commit, with pirBase recorded. The coordinator is told the base and holds it.
+  const runBase = resolveBase(repoRoot, slug, { env });
+  if (!runBase.ok) return { started: false, reason: runBase.reason, message: runBase.message };
+  const { base, baseSha } = runBase;
+  if (!runBase.existing) cutFeatureBranch(slug, { root: repoRoot, base, from: baseSha });
+
   // Launch. The coordinator path is the engine's own sibling coordinate.mjs, resolved from this file's
   // URL — NOT the bare relative 'src/shell/coordinate.mjs', which would look under the target repo's
   // cwd rather than the installed engine.
@@ -123,7 +135,7 @@ export function startRun(
   // lets the parent (`pir`) exit into the TUI without waiting on the child. PIR_RUN switches the
   // coordinator into its self-reporting/snapshot mode (DESIGN §3.5); PARALLEL_LIVE is the live seatbelt
   // that lets it actually spawn workers (DESIGN §5.2).
-  const child = spawn('node', [coordinatorPath, slug], {
+  const child = spawn('node', [coordinatorPath, slug, '--base', base, ...(baseSha ? ['--base-sha', baseSha] : [])], {
     cwd: repoRoot,
     detached: true,
     stdio: ['ignore', logFd, logFd],
@@ -144,6 +156,7 @@ export function startRun(
     startTime,
     startedAt: now().toISOString(),
     branch,
+    baseBranch: base,
     finalState: null,
     updatedAt: null,
     ...(coordinator ? {} : { coordinator: false }),
@@ -351,7 +364,8 @@ export function resumeRun(
     // The run's coordinator choice is kept across a resume (pir-coordinator DESIGN §2.1).
     const choice = record.coordinator === false ? { coordinator: false } : {};
     const r = startRun(record.slug, { cwd: record.repoPath, spawn, exec, kill, fs, now, env, ...choice });
-    return r.started ? { resumed: true, pid: r.pid } : { resumed: false, reason: r.reason };
+    // startRun reads the base from pir/{slug}'s pirBase, so a resumed build keeps the base it started on.
+    return r.started ? { resumed: true, pid: r.pid } : { resumed: false, reason: r.reason, ...(r.message ? { message: r.message } : {}) };
   }
 
   const child = spawnDetached([planRunPath(), '--control', record.controlDir, '--resume'], {

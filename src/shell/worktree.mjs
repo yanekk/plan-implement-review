@@ -166,6 +166,16 @@ export function openFeature(plan, { root = process.cwd(), base, from } = {}) {
   return { path, branch };
 }
 
+// Cut pir/{plan} from `from` (default the local `base`) and record pirBase, without a worktree
+// (base-branch DESIGN §2.7): `pir start` cuts a hand-made plan's feature branch before the detached
+// coordinator starts, and the coordinator's openFeature then reuses the branch. A branch that already
+// exists is left exactly as it is. Returns the branch name.
+export function cutFeatureBranch(plan, { root = process.cwd(), base, from } = {}) {
+  const branch = featureBranchOf(plan);
+  if (!branchExists(root, branch)) cutBranch(root, branch, { base, from }, 'cutFeatureBranch');
+  return branch;
+}
+
 // Create a task worktree on `pir/{plan}-T{nn}` cut from the FEATURE branch (not the base), so the worker
 // starts from siblings already merged into the feature branch. Reuses an existing branch/worktree
 // for the same restart-safety as openFeature.
@@ -384,7 +394,7 @@ export function createWorktree({ root = process.cwd(), base, from } = {}) {
 // A planning run works on a temporary branch pir/{runId} (runId = plan-{hex4}) in its own worktree,
 // renamed to pir/{slug} once the planner has named the plan. The renamed worktree lands exactly on the
 // build's feature worktree path, so openFeature later reuses it. Nothing here runs `checkout` in the
-// primary worktree: unlike the coordinator's ensureMain, a planning run must never move the person's
+// primary worktree: a planning run must never move the person's
 // own checkout (DESIGN §2.2 pre-flight 2). No call here creates a commit, so NOSIGN is not needed.
 
 // Cut pir/{runId} from `from` (default the local `base`), record pirBase, and check it out in

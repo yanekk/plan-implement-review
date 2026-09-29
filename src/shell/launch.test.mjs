@@ -70,6 +70,10 @@ function makeFs() {
 
 const fixedNow = () => new Date('2026-09-22T08:27:37.000Z');
 
+// scratchRepo is not a git repo, so the tests that start from it inject the run's base (base-branch T06);
+// the base resolution itself is tested against real git below.
+const stubBase = () => ({ ok: true, base: 'main', baseSha: null, existing: true });
+
 test('pre-flight: an absent plan → no-plan, and nothing is spawned', () => {
   const root = scratchRepo('demo', undefined); // no PROGRESS.md at all → readReviewGate reports missing
   const home = scratchHome();
@@ -204,6 +208,7 @@ test('pre-flight: a finished existing run does NOT block a start (re-running res
       fs,
       now: fixedNow,
       env: { PIR_HOME: home },
+      resolveBase: stubBase,
     });
     assert.equal(r.started, true);
     assert.equal(calls.length, 2, 'the coordinator and caffeinate are both spawned');
@@ -219,7 +224,7 @@ test('happy path: coordinator spawned detached, PIR_RUN/PARALLEL_LIVE set, stdio
   const { fs, calls: fsCalls } = makeFs();
   const { spawn, calls, unrefs } = makeSpawn();
   try {
-    const r = startRun('demo', { cwd: root, spawn, exec: execAlive, kill: () => {}, fs, now: fixedNow, env: { PIR_HOME: home } });
+    const r = startRun('demo', { cwd: root, spawn, exec: execAlive, kill: () => {}, fs, now: fixedNow, env: { PIR_HOME: home }, resolveBase: stubBase });
     assert.equal(r.started, true);
     assert.equal(r.pid, CHILD_PID);
 
@@ -251,7 +256,7 @@ test('the index entry written carries the child pid and the captured start time'
   const { fs } = makeFs();
   const { spawn } = makeSpawn();
   try {
-    const r = startRun('demo', { cwd: root, spawn, exec: execAlive, kill: () => {}, fs, now: fixedNow, env: { PIR_HOME: home } });
+    const r = startRun('demo', { cwd: root, spawn, exec: execAlive, kill: () => {}, fs, now: fixedNow, env: { PIR_HOME: home }, resolveBase: stubBase });
     assert.equal(r.record.pid, CHILD_PID);
     assert.equal(r.record.startTime, LSTART);
     assert.equal(r.record.repo, basename(root));
@@ -272,7 +277,7 @@ test('keep-awake: caffeinate -i -w {pid} spawned detached and unref\'d', () => {
   const { fs } = makeFs();
   const { spawn, calls, unrefs } = makeSpawn();
   try {
-    startRun('demo', { cwd: root, spawn, exec: execAlive, kill: () => {}, fs, now: fixedNow, env: { PIR_HOME: home } });
+    startRun('demo', { cwd: root, spawn, exec: execAlive, kill: () => {}, fs, now: fixedNow, env: { PIR_HOME: home }, resolveBase: stubBase });
     const caff = calls[1];
     assert.equal(caff.cmd, 'caffeinate');
     assert.deepEqual(caff.args, ['-i', '-w', String(CHILD_PID)]);
@@ -319,6 +324,13 @@ function gitRepo(t, { name = 'proj', branch = 'main', base: baseName = branch } 
   const home = join(dir, 'home');
   mkdirSync(home);
   return { base: dir, root, home, env: { PIR_HOME: home, HOME: home, KEEP: 'yes' } };
+}
+
+// The person's own settings file for this scratch repo (base-branch DESIGN §2.1), under its PIR_HOME.
+function userBase(s, base) {
+  const dir = join(s.home, '.pir', basename(s.root));
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, 'settings.json'), JSON.stringify({ baseBranch: base }));
 }
 
 const branchesOf = (root) => g(root, 'for-each-ref', '--format=%(refname:short)', 'refs/heads').trim().split('\n').sort();
@@ -639,6 +651,7 @@ test('resumeRun on a plan record: plan-run.mjs --resume on its control folder; i
 
 test('resumeRun on a work record calls startRun (pir start {slug})', (t) => {
   const s = gitRepo(t);
+  userBase(s, 'main');
   mkdirSync(join(s.root, 'plans', 'demo'), { recursive: true });
   writeFileSync(join(s.root, 'plans', 'demo', 'PROGRESS.md'), REVIEWED);
   writeFileSync(join(s.root, 'plans', 'demo', 'DESIGN.md'), VALID_DESIGN);
@@ -714,7 +727,7 @@ test('startRun coordinator: false → PARALLEL_COORDINATOR=0 for the child and c
   const { fs } = makeFs();
   try {
     const off = makeSpawn();
-    const r = startRun('demo', { cwd: root, spawn: off.spawn, exec: execAlive, kill: () => {}, fs, now: fixedNow, env: { PIR_HOME: home }, coordinator: false });
+    const r = startRun('demo', { cwd: root, spawn: off.spawn, exec: execAlive, kill: () => {}, fs, now: fixedNow, env: { PIR_HOME: home }, coordinator: false, resolveBase: stubBase });
     assert.equal(off.calls[0].opts.env.PARALLEL_COORDINATOR, '0');
     assert.equal(r.record.coordinator, false);
     const [stored] = listRecords({ dir: indexDir({ env: { PIR_HOME: home } }) });
@@ -731,7 +744,7 @@ test('startRun by default → no PARALLEL_COORDINATOR set by pir, and no coordin
   const { fs } = makeFs();
   try {
     const on = makeSpawn();
-    const r = startRun('demo', { cwd: root, spawn: on.spawn, exec: execAlive, kill: () => {}, fs, now: fixedNow, env: { PIR_HOME: home } });
+    const r = startRun('demo', { cwd: root, spawn: on.spawn, exec: execAlive, kill: () => {}, fs, now: fixedNow, env: { PIR_HOME: home }, resolveBase: stubBase });
     assert.equal(on.calls[0].opts.env.PARALLEL_COORDINATOR, undefined);
     assert.equal('coordinator' in r.record, false);
     const [stored] = listRecords({ dir: indexDir({ env: { PIR_HOME: home } }) });
@@ -744,6 +757,7 @@ test('startRun by default → no PARALLEL_COORDINATOR set by pir, and no coordin
 
 test('resumeRun keeps a work record\'s --no-coordinator choice', (t) => {
   const s = gitRepo(t);
+  userBase(s, 'main');
   mkdirSync(join(s.root, 'plans', 'demo'), { recursive: true });
   writeFileSync(join(s.root, 'plans', 'demo', 'PROGRESS.md'), REVIEWED);
   writeFileSync(join(s.root, 'plans', 'demo', 'DESIGN.md'), VALID_DESIGN);
@@ -759,4 +773,150 @@ test('resumeRun keeps a work record\'s --no-coordinator choice', (t) => {
   const on = makeSpawn();
   resumeRun(planRecord(s, base), { spawn: on.spawn, exec: execAlive, kill: dead, fs, env: s.env });
   assert.equal(on.calls[0].opts.env.PARALLEL_COORDINATOR, undefined);
+});
+
+// --- The build's base branch (base-branch T06, DESIGN §2.5, §2.7) -------------------------------------
+//
+// Real git: a scratch repo whose only branch is `dev`, and a local bare repository as its remote, so the
+// fetch, the ancestry check and the cut run for real without touching the network.
+
+const idArgs = ['-c', 'user.name=t06', '-c', 'user.email=t06@test.local', '-c', 'commit.gpgsign=false'];
+const gi = (cwd, ...args) => g(cwd, ...idArgs, ...args).trim();
+
+// {base}/remote.git (bare, dev), {base}/other (pushes to it), and s.root: a clone on `dev` holding a
+// reviewed hand-made plan on dev, whose .pir/settings.json names `dev`.
+function devWorld(t, { settings = { baseBranch: 'dev' } } = {}) {
+  const base = realpathSync(mkdtempSync(join(tmpdir(), 'pir-t06-')));
+  t.after(() => rmSync(base, { recursive: true, force: true }));
+  const remote = join(base, 'remote.git');
+  const other = join(base, 'other');
+  const root = join(base, 'proj');
+  const home = join(base, 'home');
+  mkdirSync(home);
+  gi(base, 'init', '-q', '--bare', '-b', 'dev', remote);
+  gi(base, 'init', '-q', '-b', 'dev', other);
+  mkdirSync(join(other, 'plans', 'demo'), { recursive: true });
+  writeFileSync(join(other, 'plans', 'demo', 'PROGRESS.md'), REVIEWED);
+  writeFileSync(join(other, 'plans', 'demo', 'DESIGN.md'), VALID_DESIGN);
+  if (settings) {
+    mkdirSync(join(other, '.pir'));
+    writeFileSync(join(other, '.pir', 'settings.json'), JSON.stringify(settings));
+  }
+  gi(other, 'add', '-A');
+  gi(other, 'commit', '-q', '-m', 'plan');
+  gi(other, 'remote', 'add', 'origin', remote);
+  gi(other, 'push', '-q', 'origin', 'dev');
+  gi(base, 'clone', '-q', remote, root);
+  const push = (name) => {
+    writeFileSync(join(other, name), name);
+    gi(other, 'add', '-A');
+    gi(other, 'commit', '-q', '-m', name);
+    gi(other, 'push', '-q', 'origin', 'dev');
+    return gi(other, 'rev-parse', 'HEAD');
+  };
+  return { base, root, home, remote, env: { ...process.env, PIR_HOME: home }, push };
+}
+
+const startDev = (s, spawn, extra = {}) =>
+  startRun('demo', { cwd: s.root, spawn, exec: execAlive, kill: dead, fs: makeFs().fs, now: fixedNow, env: s.env, ...extra });
+const pirBaseOf = (root, branch = 'pir/demo') => {
+  try {
+    return gi(root, 'config', '--get', `branch.${branch}.pirBase`);
+  } catch {
+    return null;
+  }
+};
+
+test('pir start of a hand-made plan in a dev repo with the remote ahead: feature cut from the remote sha, pirBase=dev', (t) => {
+  const s = devWorld(t);
+  const ahead = s.push('b.txt');
+  assert.notEqual(gi(s.root, 'rev-parse', 'dev'), ahead, 'the local dev is behind the remote');
+  const { spawn, calls } = makeSpawn();
+  const r = startDev(s, spawn);
+  assert.equal(r.started, true, JSON.stringify(r));
+  assert.equal(gi(s.root, 'rev-parse', 'pir/demo'), ahead, 'cut from the newest remote commit');
+  assert.equal(pirBaseOf(s.root), 'dev');
+  assert.deepEqual(calls[0].args.slice(1), ['demo', '--base', 'dev', '--base-sha', ahead], 'the coordinator is told its base');
+  assert.equal(r.record.baseBranch, 'dev');
+  const [stored] = listRecords({ dir: indexDir({ env: s.env }) });
+  assert.equal(stored.baseBranch, 'dev', 'the index record carries a copy of the base');
+});
+
+test('an existing pir/{slug} with pirBase=dev keeps dev though the settings now say stage, and nothing is fetched', (t) => {
+  const s = devWorld(t);
+  gi(s.root, 'branch', 'pir/demo', 'dev');
+  gi(s.root, 'config', 'branch.pir/demo.pirBase', 'dev');
+  const tip = gi(s.root, 'rev-parse', 'pir/demo');
+  writeFileSync(join(s.root, '.pir', 'settings.json'), JSON.stringify({ baseBranch: 'stage' }));
+  // A fetch would now fail: the remote is gone. A start that fetched would be refused fetch-failed.
+  rmSync(s.remote, { recursive: true, force: true });
+  const { spawn, calls } = makeSpawn();
+  const r = startDev(s, spawn);
+  assert.equal(r.started, true, JSON.stringify(r));
+  assert.deepEqual(calls[0].args.slice(1), ['demo', '--base', 'dev'], 'no --base-sha: the branch is already cut');
+  assert.equal(r.record.baseBranch, 'dev');
+  assert.equal(gi(s.root, 'rev-parse', 'pir/demo'), tip, 'the branch is not moved');
+  assert.equal(pirBaseOf(s.root), 'dev');
+});
+
+test('an existing pir/{slug} without pirBase takes its base from the settings and records it, without a fetch', (t) => {
+  const s = devWorld(t);
+  gi(s.root, 'branch', 'pir/demo', 'dev');
+  rmSync(s.remote, { recursive: true, force: true });
+  const { spawn, calls } = makeSpawn();
+  const r = startDev(s, spawn);
+  assert.equal(r.started, true, JSON.stringify(r));
+  assert.equal(pirBaseOf(s.root), 'dev', 'pirBase recorded now');
+  assert.deepEqual(calls[0].args.slice(1), ['demo', '--base', 'dev']);
+});
+
+test('no settings and no pir/{slug}: refused with the §2.9 text, nothing created, nothing spawned', (t) => {
+  const s = devWorld(t, { settings: null });
+  const before = g(s.root, 'for-each-ref', '--format=%(refname) %(objectname)');
+  const { spawn, calls } = makeSpawn();
+  const r = startDev(s, spawn);
+  assert.equal(r.started, false);
+  assert.equal(r.reason, 'no-base-setting');
+  assert.equal(
+    r.message,
+    'pir: no base branch is set for proj. Add .pir/settings.json with {"baseBranch": "<branch>"} (committed, for everyone), or ~/.pir/proj/settings.json (this machine only).',
+  );
+  assert.equal(calls.length, 0, 'no process spawned');
+  assert.equal(g(s.root, 'for-each-ref', '--format=%(refname) %(objectname)'), before, 'no branch created or moved');
+  assert.equal(listRecords({ dir: indexDir({ env: s.env }) }).length, 0, 'no index record');
+});
+
+test('an unreachable remote on a fresh start: refused fetch-failed, no pir/{slug}, nothing spawned', (t) => {
+  const s = devWorld(t);
+  rmSync(s.remote, { recursive: true, force: true });
+  const { spawn, calls } = makeSpawn();
+  const r = startDev(s, spawn);
+  assert.equal(r.reason, 'fetch-failed');
+  assert.match(r.message, /^pir: could not fetch dev from origin: .*Nothing was created; try again when origin is reachable\.$/);
+  assert.equal(calls.length, 0);
+  assert.equal(pirBaseOf(s.root), null);
+  assert.throws(() => gi(s.root, 'rev-parse', '--verify', '--quiet', 'refs/heads/pir/demo'), 'no feature branch cut');
+});
+
+test('resumeRun of a work record keeps its base, whatever the settings say now', (t) => {
+  const s = devWorld(t);
+  const { spawn } = makeSpawn();
+  assert.equal(startDev(s, spawn).started, true);
+  writeFileSync(join(s.root, '.pir', 'settings.json'), JSON.stringify({ baseBranch: 'stage' }));
+  const [rec] = listRecords({ dir: indexDir({ env: s.env }) });
+  const again = makeSpawn();
+  const r = resumeRun({ ...rec, finalState: 'stopped' }, { spawn: again.spawn, exec: execAlive, kill: dead, fs: makeFs().fs, env: s.env });
+  assert.deepEqual(r, { resumed: true, pid: CHILD_PID });
+  assert.deepEqual(again.calls[0].args.slice(1), ['demo', '--base', 'dev']);
+  assert.equal(pirBaseOf(s.root), 'dev');
+});
+
+test('resumeRun passes a base-branch refusal on with its message', (t) => {
+  const s = devWorld(t, { settings: null });
+  const rec = { version: 1, kind: 'work', slug: 'demo', repo: 'proj', repoPath: s.root, controlDir: join(s.root, 'plans', 'demo', '.parallel', 'control'),
+    pid: 9001, startTime: LSTART, startedAt: '2026-09-29T00:00:00.000Z', branch: 'pir/demo', finalState: 'stopped', updatedAt: null };
+  const r = resumeRun(rec, { spawn: makeSpawn().spawn, exec: execAlive, kill: dead, fs: makeFs().fs, env: s.env });
+  assert.equal(r.resumed, false);
+  assert.equal(r.reason, 'no-base-setting');
+  assert.match(r.message, /no base branch is set for proj/);
 });
