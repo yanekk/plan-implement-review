@@ -1,0 +1,53 @@
+<!doctype html>
+<!-- Throwaway mock for plans/group-commands (pir-plan Stage 2). Not a spec: the vibe of grouped steps. -->
+<html><head><meta charset="utf-8"><title>group-commands mock</title>
+<style>
+body{background:#111;color:#ccc;font:14px/1.45 Menlo,monospace;margin:24px}
+#term{width:88ch;border:1px solid #444;padding:10px 14px;min-height:420px;white-space:pre}
+.worker{color:#7fd6d6}.pir{color:#c9a0ff}.person{color:#9fd49f}.step{color:#bbb}.err{color:#ff6b6b}.dim{color:#777}
+.group{cursor:pointer}.group:hover{font-weight:bold;color:#fff}.group:hover .dim{color:#aaa}
+#hint{color:#777;margin-top:6px}button{margin:10px 6px 0 0}
+p{max-width:88ch;color:#999}
+</style></head><body>
+<p>Mock: a worker's conversation. Press <b>Play</b> to watch steps arrive (each shows while running, then folds into the group).
+Click a <b>Ran …</b> line to unfold/fold it. Press <b>Tab</b> (the key) for full detail.</p>
+<div id="term"></div>
+<div id="hint">esc interrupt · ← back · Tab detail · PgUp/PgDn</div>
+<button onclick="play()">Play</button><button onclick="showAll()">Jump to end</button>
+<script>
+const script=[
+ {k:'msg',cls:'pir',t:'pir ▸ pir-implement T03'},
+ {k:'msg',cls:'worker',t:'T03 ▸ Reading the task and the code it touches.'},
+ {k:'step',tool:'Read',arg:'plans/x/tasks/T03-parser.md',out:'## Done when'},
+ {k:'step',tool:'Read',arg:'src/core/parser.mjs',out:'export function parse(s) {'},
+ {k:'step',tool:'Grep',arg:'parseLine',out:'3 files'},
+ {k:'step',tool:'Bash',arg:'git log --oneline -5',out:'a1b2c3d T02 review: clean'},
+ {k:'msg',cls:'worker',t:'T03 ▸ Writing the parser change and its tests.'},
+ {k:'step',tool:'Edit',arg:'src/core/parser.mjs',out:'updated'},
+ {k:'step',tool:'Bash',arg:'npm test',out:'✖ 1 failing',err:true},
+ {k:'step',tool:'Edit',arg:'src/core/parser.mjs',out:'updated'},
+ {k:'step',tool:'Bash',arg:'npm test',out:'ℹ pass 412'},
+ {k:'msg',cls:'worker',t:'T03 ▸ Done, tests green.'},
+];
+const VERB={Bash:['Ran','shell command','shell commands'],Read:['read','file','files'],Edit:['edited','file','files'],Grep:['searched','time','times']};
+let shown=0,done=new Set(),open=new Set(),full=false;
+function label(steps){const order=[],n={};let f=0;for(const s of steps){if(!(s.tool in n)){n[s.tool]=0;order.push(s.tool)}n[s.tool]++;if(s.err)f++}
+ const parts=order.map((t,i)=>{const [v,one,many]=VERB[t];const vv=i===0?v[0].toUpperCase()+v.slice(1):v.toLowerCase();return `${vv} ${n[t]} ${n[t]===1?one:many}`});
+ return {text:parts.join(', '),failed:f}}
+function render(){const out=[];let run=[],gid=0;
+ const flush=()=>{if(!run.length)return;const fin=run.filter(s=>done.has(s.i)),live=run.filter(s=>!done.has(s.i));
+  if(fin.length){const id=gid,{text,failed}=label(fin);const isOpen=open.has(id);
+   out.push(`<span class="group" onclick="tog(${id})"><span class="step">  ${isOpen?'▾':'▸'} ${text}</span>${failed?`<span class="err"> · ${failed} failed</span>`:''}</span>`);
+   if(isOpen)for(const s of fin)out.push(`<span class="${s.err?'err':'step'}">      ⎿ ${s.tool} ${s.arg}</span><span class="dim">  ${s.out}</span>`);}
+  for(const s of live)out.push(`<span class="step">  ⎿ ${s.tool} ${s.arg}</span>`);gid++;run=[]};
+ script.slice(0,shown).forEach((e,i)=>{if(e.k==='step'){ if(full){out.push(`<span class="${e.err?'err':'step'}">  ⎿ ${e.tool} ${e.arg}</span>`);if(done.has(i))out.push(`<span class="dim">      ${e.out}</span>`)} else run.push({...e,i}); }
+  else{flush();out.push(`<span class="${e.cls}">${e.t}</span>`)}});
+ flush();document.getElementById('term').innerHTML=out.join('\n')}
+function tog(id){open.has(id)?open.delete(id):open.add(id);render()}
+function tick(){if(shown>0&&script[shown-1].k==='step'&&!done.has(shown-1)){done.add(shown-1);render();return true}
+ if(shown<script.length){shown++;render();return true}return false}
+let timer;function play(){clearInterval(timer);shown=0;done=new Set();open=new Set();render();timer=setInterval(()=>{if(!tick())clearInterval(timer)},700)}
+function showAll(){clearInterval(timer);shown=script.length;script.forEach((e,i)=>e.k==='step'&&done.add(i));render()}
+document.addEventListener('keydown',e=>{if(e.key==='Tab'){e.preventDefault();full=!full;render()}});
+render();
+</script></body></html>
