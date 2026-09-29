@@ -7,7 +7,7 @@
 import { spawnSync } from 'node:child_process';
 import * as nodeFs from 'node:fs';
 import { basename, join } from 'node:path';
-import { parseSettings, effectiveBase, decideBase } from '../core/basebranch.mjs';
+import { parseSettings, effectiveBase, decideBase, refusalText } from '../core/basebranch.mjs';
 
 export const REPO_SETTINGS = join('.pir', 'settings.json');
 export const DEFAULT_FETCH_TIMEOUT_MS = 30000;
@@ -194,4 +194,38 @@ export function prepareBase(root, base, { mode = 'start', timeoutMs = DEFAULT_FE
     ? git(['merge', '--ff-only', '--quiet', d.use], { cwd: checkout.path })
     : git(['branch', '-f', base, d.use], { cwd: root });
   return done(r.status === 0 ? 'ff' : 'ff-refused');
+}
+
+// resolveRunBase(root, slug, { env, prepare, git }) →
+//   { ok: true, base, baseSha: string|null, existing: bool } | { ok: false, reason, message }
+// Which base a build of `slug` runs on (DESIGN §2.5, §2.7), decided before anything is spawned so a
+// refusal reaches the person:
+//   - pir/{slug} exists and records pirBase → that base, no fetch. The branch is already cut, the
+//     settings may have changed since, and the run remembers its base, not the settings.
+//   - pir/{slug} exists without pirBase (cut before pirBase existed) → the settings' base, recorded on
+//     the branch now; still no fetch, since there is nothing left to cut.
+//   - no pir/{slug} (a plan made by hand on the base branch) → the settings' base, prepared (§2.3):
+//     baseSha is the commit to cut the feature branch from. Nothing is cut here; the caller cuts.
+// `message` is the §2.9 refusal text, ready to print.
+export function resolveRunBase(root, slug, { env = process.env, prepare = prepareBase, git = defaultGit } = {}) {
+  const branch = `pir/${slug}`;
+  const exists = git(['rev-parse', '--verify', '--quiet', `refs/heads/${branch}`], { cwd: root }).status === 0;
+  if (exists) {
+    const recorded = git(['config', '--get', `branch.${branch}.pirBase`], { cwd: root });
+    const base = recorded.status === 0 ? recorded.stdout.trim() : '';
+    if (base) return { ok: true, base, baseSha: null, existing: true };
+  }
+  const setting = resolveBaseSetting(root, { env });
+  if (!setting.ok) return { ok: false, reason: setting.reason, message: refusalText(setting, { repo: setting.repo }) };
+  const { base, file } = setting;
+  if (exists) {
+    const r = git(['config', `branch.${branch}.pirBase`, base], { cwd: root });
+    if (r.status !== 0) throw new Error(`resolveRunBase: could not record ${base} on ${branch}: ${r.stderr.trim()}`);
+    return { ok: true, base, baseSha: null, existing: true };
+  }
+  const prepared = prepare(root, base, { mode: 'start', env });
+  if (!prepared.ok) {
+    return { ok: false, reason: prepared.reason, message: refusalText(prepared, { repo: basename(root), base, file }) };
+  }
+  return { ok: true, base, baseSha: prepared.sha, existing: false };
 }
