@@ -445,6 +445,13 @@ a rough sense of where the weight is — heavy / medium / light, not hours.
 **Checkpoint.** Show the user the phase table and the one-line-per-task list, in plain
 English, and get an explicit yes. This is the last cheap moment to move something.
 
+**Print the full task list in the same message that asks for the yes.** Every task, one line
+each: its number, its name, what it delivers in plain words, and what it waits on. Not a count,
+not "the tasks we discussed", not a pointer to a file the user has not opened, and not a list
+shown several messages earlier: planners have repeatedly asked for approval without the list on
+screen, and a yes to a list the user cannot see approves nothing. If the list changes after
+feedback, print it again in full before asking again.
+
 **Report the plan's parallel width too**, in plain English, so the user sees before a line is
 built whether the plan is wide enough to be worth running many tasks at once or is serial by
 nature. Three numbers over the task graph: the total tasks, the longest dependency chain, and the
