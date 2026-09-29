@@ -16,6 +16,7 @@ import { BARE_TEXT, COMMANDS, absorbAt, completionContext, headLine, isBare, rou
 import { initialUi } from '../core/dashboard.mjs';
 import { buildListFrame, listFooter } from './pir-tui.mjs';
 import { editorTheme, paintLine } from './pir-view.mjs';
+import { typeInto } from './paste.mjs';
 
 const span = (text, style = null) => ({ text, style });
 
@@ -257,7 +258,7 @@ export function createListView({
     const ctxBefore = line === 0 ? completionContext(editor.getLines()[0] ?? '', col) : null;
     inKey = true;
     try {
-      editor.handleInput(d);
+      typeInto(editor, d);
     } finally {
       inKey = false;
     }
@@ -275,7 +276,9 @@ export function createListView({
     });
     if (route === 'quit') return onQuit();
     if (route === 'list') return onListKey(s);
-    if (route === 'submit') return onSubmit(editor.getText());
+    // Expanded: a large paste sits in the box as a `[paste #1 +40 lines]` marker (paste.mjs), and the
+    // marker alone is not the brief.
+    if (route === 'submit') return onSubmit(editor.getExpandedText());
     if (route === 'reset') reset();
     else toBox(s);
     settle();

@@ -88,7 +88,9 @@ in the folders `PIR_REPOS` names) and pick it; a second pop-up offers `plan` and
 `@repo/start` lists that repo's reviewed, unfinished plans with their progress; pick one and `↵` starts
 its build and shows its live view, just as `pir start` does, or opens the build if it is already
 running. So `@sk`, `↵`, `↓`, `↵`, `↵`, `↵` builds a plan without typing its name. Only an exact repo name,
-command and plan name start anything; otherwise the box says why and keeps what you typed. While the box
+command and plan name start anything; otherwise the box says why and keeps what you typed. A long brief
+can be pasted: it shows as a short `[paste #1 +40 lines]` marker, the whole text is what gets sent, and
+pasting it a second time opens it out in the box for editing. While the box
 holds only `@`, the dashboard's keys work as before
 ([planning-runs.md](docs/planning-runs.md#the-dashboard-box)).
 

@@ -13,6 +13,7 @@
 
 import { Editor, getKeybindings, isKeyRelease, parseKey } from '@earendil-works/pi-tui';
 import { editorTheme, paintLine } from './pir-view.mjs';
+import { typeInto } from './paste.mjs';
 import { createScreen } from './pir-tui.mjs';
 
 const span = (text, style = null) => ({ text, style });
@@ -49,7 +50,7 @@ export function createBriefBox({ repo, tui = STUB_HOST, colour = true, onSubmit 
     // A lone LF parses as enter too, but it is ctrl+j, the new-line key: only a real submit is held back.
     const kb = getKeybindings();
     if (kb.matches(data, 'tui.input.submit') && !kb.matches(data, 'tui.input.newLine') && editor.getText().trim() === '') return;
-    editor.handleInput(data);
+    typeInto(editor, data);
     tui.requestRender();
   }
 

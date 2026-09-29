@@ -15,6 +15,7 @@ import { readEntry, workerActivity } from '../core/stream.mjs';
 import { dropPersonInput } from './person-inbox.mjs';
 import { followLog } from './log-follow.mjs';
 import { paintLine, SGR, RESET } from './pir-view.mjs';
+import { typeInto } from './paste.mjs';
 
 const span = (text, style = null) => ({ text, style });
 
@@ -276,7 +277,7 @@ export function createConversationView({
         // Any other key disarms an armed permission gate (§2.6) and goes to the box.
         const p = livePrompt();
         if (p?.kind === 'permission' && p.armed) prompt = gateReducer(p, 'other').gate;
-        editor.handleInput(data);
+        typeInto(editor, data);
       }
     }
     tui.requestRender();
