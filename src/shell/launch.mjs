@@ -259,10 +259,11 @@ export function startPlanRun(
 
   let branch;
   try {
-    ({ branch } = openPlanBranch(runId, { root }));
+    // The base is still `main` until T05 resolves it from the repo's settings (base-branch T03).
+    ({ branch } = openPlanBranch(runId, { root, base: 'main' }));
   } catch (err) {
     // main vanished between the pre-flight and here: the same refusal, still nothing created.
-    if (err && err.code === 'no-main') return { started: false, reason: 'no-main' };
+    if (err && err.code === 'no-base-branch') return { started: false, reason: 'no-main' };
     throw err;
   }
 

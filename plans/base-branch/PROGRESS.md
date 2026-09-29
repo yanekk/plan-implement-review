@@ -17,7 +17,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 |---|---|---|---|---|
 | T01 | base-core | — | ✅ | Review clean, no fix commit. Every §2.3 row, §2.2 rule and §2.9 text tested; `npm test` green. Probed: `validBranchName` against real `git check-ref-format --branch` on 61 names, differing only on `@` and NBSP (stricter, safe); fetch error after reach, missing checkout, runrecord bad values. Deviations (`@`, `HEAD`, bare `holdText`) accepted. |
 | T02 | base-git | T01 | ⬜ | |
-| T03 | branch-cuts | — | ⬜ | |
+| T03 | branch-cuts | — | ✅ | |
 | T04 | base-text | — | ⬜ | |
 | T05 | plan-start | T01, T02, T03 | ⬜ | |
 | T06 | build-start | T01, T02, T03 | ⬜ | |
