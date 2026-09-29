@@ -25,9 +25,9 @@ done · ⛔ blocked, needs a human.
 |---|---|---|---|---|
 | T01 | wake-on-activity | — | ✅ | Review clean, no fix commit. npm test green (4:18, quiet). Probed waker gap/abort/coalescing, onSettled once on kill vs exit, decisions watcher ignoring unlink and temp names, graces now ~15 s idle as specified, self-wake from pass sends bounded by the gap, no PARALLEL_OVER_GRACE user. Drill-under-60 s backstop left to T02/T06. |
 | T02 | end-sequence-no-wait | T01 | ⬜ | |
-| T03 | split-coordinator-drill | — | ⬜ | |
-| T04 | split-plan-rig | — | ⬜ | |
-| T05 | split-conversation-rig | — | ⬜ | |
+| T03 | split-coordinator-drill | — | ✅ | |
+| T04 | split-plan-rig | — | ✅ | |
+| T05 | split-conversation-rig | — | ✅ | |
 | T06 | suite-timing-proof | T01, T02, T03, T04, T05 | ⬜ | |
 
 **Review queue:** empty
