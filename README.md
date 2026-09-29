@@ -608,6 +608,12 @@ green run is a few lines and the exit code carries the result. Colour is forced 
 (`FORCE_COLOR=0`) because a green dot run should be plain text on any machine — including
 this one, where `FORCE_COLOR=3` is set in the environment.
 
+On a quiet machine the whole suite takes a little over a minute. Most of that is the end-to-end
+tests that drive the real `pir` screen through a pseudo-terminal, so those are split across
+several files (`plan-rig-*`, `coordinator-drill-*`, `conversation-rig-*`): the runner runs
+files side by side, one process each, and the slowest file sets the finish. A second test run
+on the same machine at the same time slows both.
+
 To see a full line per test while debugging, turn the reporter verbose:
 
 ```
