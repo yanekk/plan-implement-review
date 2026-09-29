@@ -25,7 +25,7 @@ done · ⛔ blocked, needs a human.
 |---|---|---|---|---|
 | T01 | group-steps-core | — | ✅ | |
 | T02 | group-steps-view | T01 | ✅ | |
-| T03 | group-steps-drill | T01, T02 | ⬜ | |
+| T03 | group-steps-drill | T01, T02 | ✅ | |
 
 **Review queue:** *(empty)*
 
