@@ -144,7 +144,7 @@ function git(cwd, ...args) {
 //   clipboard, slug, cleanup(), openScreen(opts), driveScreen(opts) }
 //
 // `into` is an empty or new folder to build in (else a fresh temp folder); the rig lays out
-//   {root}/repo   a git repo on `main`: README.md and package.json (test `node -e 0`), one commit
+//   {root}/repo   a git repo on `main`: README.md, package.json (test `node -e 0`) and .pir/settings.json naming `main`, one commit
 //   {root}/home   PIR_HOME and HOME
 //   {root}/bin    the `claude` shim, its scripts file and the fake's received log / resume progress, and
 //                 the `pbcopy` shim with `clipboard.txt`, the last text it was given (absent until a copy)
@@ -171,6 +171,9 @@ export function startPlanRig({ into = null, scripts = 'happy', keep = false, bas
 
   git(repoDir, 'init', '-q', '-b', 'main');
   writeFileSync(join(repoDir, 'README.md'), '# rig\n\nA scratch repo for the planning rig.\n');
+  // pir refuses a repo that names no base branch (base-branch DESIGN §2.1, §5).
+  mkdirSync(join(repoDir, '.pir'));
+  writeFileSync(join(repoDir, '.pir', 'settings.json'), JSON.stringify({ baseBranch: 'main' }) + '\n');
   writeFileSync(join(repoDir, 'package.json'), JSON.stringify({ name: 'pir-plan-rig', private: true, scripts: { test: 'node -e 0' } }, null, 2) + '\n');
   // Worktrees live inside the repo; ignoring them keeps `main`'s checkout clean (FINDINGS 2026-09-26).
   writeFileSync(join(repoDir, '.git', 'info', 'exclude'), '.claude/worktrees/\n');

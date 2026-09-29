@@ -16,7 +16,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | # | Task | Depends on | State | Notes |
 |---|---|---|---|---|
 | T01 | base-core | — | ✅ | |
-| T02 | base-git | T01 | ⬜ | |
+| T02 | base-git | T01 | 🔍 | `base-branch.mjs` + 31 tests, real git and bare remotes; `.pir/settings.json` here and in the three helpers. Deviations: added `local: 'create-refused'` (mirrors ff-refused); one 30 s deadline spans ls-remote and fetch; fake worktree's settings name its `base` option; plan-rig test's file list updated. |
 | T03 | branch-cuts | — | ✅ | |
 | T04 | base-text | — | ✅ | |
 | T05 | plan-start | T01, T02, T03 | ⬜ | |
@@ -26,7 +26,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T09 | dev-base-drill | T05, T07 | ⬜ | |
 | T10 | docs-and-readme | T08, T09 | ⬜ | |
 
-**Review queue:** *(empty)*
+**Review queue:** T02
 
 ## Blocked on the user
 
