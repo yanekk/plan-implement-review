@@ -548,7 +548,7 @@ export function createScreenModel({ rows = 24, cols = 80 } = {}) {
 }
 
 // openScreen({ cols, rows, args, cwd, env, settleMs }) → { send(bytes), waitFor(until, limit) → rows, text(),
-// close() → exit code, overflows(), modes(), boldAt(row, col), fgAt(row, col) }. Runs `node pir.mjs ...args` under a pty of cols×rows and keeps its
+// close() → exit code, exited() → whether pir has exited by itself, overflows(), modes(), boldAt(row, col), fgAt(row, col) }. Runs `node pir.mjs ...args` under a pty of cols×rows and keeps its
 // screen. waitFor holds until output has been quiet for settleMs and `until` (a RegExp or a function of the
 // screen text; none means any frame) holds, and throws, with the screen, on the deadline or if pir exits
 // first. close() ends pir by closing its input. Interactive, so a live drill can decide its next key from
@@ -598,6 +598,7 @@ export function openScreen({ cols = 100, rows = 30, args = [], cwd = process.cwd
       clearTimeout(timer);
       return child.exitCode;
     },
+    exited: () => gone,
     overflows: () => model.overflows(),
     modes: () => model.modes(),
     boldAt: (row, col) => model.boldAt(row, col),

@@ -288,6 +288,9 @@ test('Esc quits pir and leaves no mouse mode set', { timeout: 30000 }, async (t)
     assert.ok(screen.modes().has(1000));
     screen.send('\x1b');
     await waitFor(() => mouseModesOn(screen.modes()).length === 0 && !screen.modes().has(1049), { what: 'the mouse modes and the alternate screen to be switched off' });
+    // The restore is written a moment before pir's process exits, with its signal handlers already off. Closing
+    // the input in that gap SIGTERMs it (exit 241 under a loaded full suite), so wait for the exit itself.
+    await waitFor(() => screen.exited(), { what: 'pir to exit on Esc by itself' });
   } finally {
     code = await screen.close();
   }
