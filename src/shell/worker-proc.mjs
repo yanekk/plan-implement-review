@@ -188,6 +188,8 @@ export function startWorker({
       description: opts.description,
       defaultToNo: opts.defaultToNo === true,
       suppressAlwaysAllowRule: opts.suppressAlwaysAllowRule === true,
+      // A helper's request names the helper (visible-helpers DESIGN §2.4): the SDK's agentID is its task_id.
+      ...(typeof opts.agentID === 'string' ? { agentId: opts.agentID } : {}),
     });
     if (decide) {
       let verdict;

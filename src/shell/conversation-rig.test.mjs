@@ -442,6 +442,57 @@ test('the helpers scenario drives the real pir screen', { timeout: 60000 }, asyn
   }
 });
 
+// visible-helpers T03, end to end at 80×24 and 120×40 (DESIGN §2.2–§2.4): one updating line per helper, the
+// helpers' steps only on Tab and labelled, a helper's permission named after it, and the status line
+// naming the helper still running once the parent's turn has ended.
+for (const [cols, rows] of [[80, 24], [120, 40]]) {
+  test(`the helpers scenario draws one line per helper on the real pir screen at ${cols}×${rows}`, { timeout: 60000 }, async (t) => {
+    const env = scratchHome(t);
+    // A helper reports a step every stepMs and each one repaints, so the driver's quiet time must be shorter.
+    const rig = startRig({ env, scenario: 'helpers', stepMs: 400, workMs: 300 });
+    t.after(() => rig.stop());
+    const screen = openScreen({ cols, rows, env: { ...process.env, ...env }, settleMs: 100 });
+    const lineOfA = (s) => s.match(/↳ helper · Survey the code · .*/)?.[0] ?? null;
+    try {
+      await screen.waitFor(/rig +work +● running/);
+      screen.send('\r');
+      await screen.waitFor(/pick a task/);
+      screen.send('\x1b[C');
+      let s = (await screen.waitFor(/↳ helper · Survey the code · [\s\S]*↳ helper · Check the tests · /)).join('\n');
+      assert.doesNotMatch(s, /running in the background/, 'no background line for a helper');
+
+      s = (await screen.waitFor(/⚑ helper "Survey the code" wants to use Bash[\s\S]*↵ allow/)).join('\n');
+      assert.doesNotMatch(s, /⎿ Read/, 'none of the helpers\' steps in the default view');
+      assert.doesNotMatch(s, /The worker process and the run state/, 'none of a helper\'s words either');
+      screen.send('\r');
+
+      s = (await screen.waitFor(/helper finished · Check the tests · \d+ steps?[\s\S]*◌ 1 helper running/)).join('\n');
+      assert.match(s, /→ allowed/, 'Enter allowed the helper\'s request');
+      assert.match(s, /⚑ helper "Survey the code" wants to use Bash/, 'the answered request still names the helper');
+      assert.doesNotMatch(s, /⎿ (Read|Bash git log)/);
+
+      // A keeps working while the parent is idle: its line's step and count move on a later frame.
+      const first = lineOfA(s);
+      assert.ok(first, `A's line is on screen:\n${s}`);
+      s = (await screen.waitFor((text) => {
+        const now = lineOfA(text);
+        return now && now !== first;
+      })).join('\n');
+      const [, n1] = first.match(/(\d+) steps?\b/);
+      const [, n2] = lineOfA(s).match(/(\d+) steps?\b/);
+      assert.ok(Number(n2) > Number(n1), `the step count grew: ${first} → ${lineOfA(s)}`);
+
+      screen.send('\t');
+      s = (await screen.waitFor(/helper ⎿ Read/)).join('\n');
+      assert.doesNotMatch(s, /^\s*⎿ Read/m, 'every helper step is labelled');
+      for (const r of s.split('\n')) assert.ok([...r].length <= cols);
+      assert.equal(screen.overflows(), 0, 'no frame was clipped to fit the window');
+    } finally {
+      await screen.close();
+    }
+  });
+}
+
 test('the helpers scenario runs its script in order: two helpers, A asks, B ends, A killed by an idle interrupt, then chat', { timeout: 30000 }, async (t) => {
   const env = scratchHome(t);
   const rig = startRig({ env, scenario: 'helpers', stepMs: 20, workMs: 200 });

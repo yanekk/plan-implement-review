@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
-import { buildConversation, gateFor, gateReducer, pickerFor, pickerReducer, promptLines, mainArg, onOther } from './conversation.mjs';
+import { buildConversation, gateFor, gateReducer, pickerFor, pickerReducer, promptLines, mainArg, onOther, helperTime } from './conversation.mjs';
 
 const SAMPLE = readFileSync(fileURLToPath(new URL('./fixtures/stream-sample.ndjson', import.meta.url)), 'utf8')
   .split('\n')
@@ -364,6 +364,7 @@ test('canAlwaysAllow is false with no addRules suggestion or with suppressAlways
     canAlwaysAllow: true,
     confirmAllow: true,
     armed: false,
+    helper: null,
   });
   // a without canAlwaysAllow is just another key.
   assert.equal(gateReducer(gateFor(request('r', 'Bash', {}, { suggestions: [] })), 'a').send, null);
@@ -604,4 +605,155 @@ test('an alert note answers nothing: a pending request stays pending after it (n
     assert.deepEqual(workerActivity(log).pending.map((p) => p.requestId), ['r1'], kind);
     assert.notEqual(buildConversation(log, { width: 80 }).pinned, null, `${kind}: the request is still pinned`);
   }
+});
+
+// ---- Helpers (visible-helpers T03; DESIGN §2.2–§2.4) ----
+
+const HELPER_SAMPLE = readFileSync(fileURLToPath(new URL('./fixtures/helper-sample.ndjson', import.meta.url)), 'utf8')
+  .split('\n')
+  .filter((l) => l.trim() !== '');
+const inHelper = (callId, entry) => ({ ...entry, event: { ...entry.event, parent_tool_use_id: callId } });
+const hStart = (id, callId, description, background = true) =>
+  sys({ subtype: 'task_started', task_id: id, tool_use_id: callId, description, subagent_type: 'Explore', task_type: 'local_agent', is_backgrounded: background });
+const hProgress = (id, callId, description, toolUses, durationMs) =>
+  sys({ subtype: 'task_progress', task_id: id, tool_use_id: callId, description, usage: { tool_uses: toolUses, duration_ms: durationMs } });
+const hEnd = (id, status) => [sys({ subtype: 'task_updated', task_id: id, patch: { status } }), sys({ subtype: 'task_notification', task_id: id, status })];
+const helperLines = (lines) => all(lines).filter((l) => l.startsWith('  ↳ helper'));
+
+test('helperTime: seconds under a minute, minutes and seconds from one; nothing without a duration', () => {
+  assert.equal(helperTime(59_999), '59s');
+  assert.equal(helperTime(60_000), '1m 0s');
+  assert.equal(helperTime(72_400), '1m 12s');
+  assert.equal(helperTime(null), '');
+});
+
+test('the helper line in each state, with and without progress, clipped at 40 columns', () => {
+  const base = [use('ag', 'Agent', { description: 'Survey the code' }), hStart('h1', 'ag', 'Survey the code'), res('ag', 'Async agent launched')];
+  const line = (extra) => buildConversation([...base, ...extra], { width: 200 });
+  let conv = line([]);
+  assert.deepEqual(helperLines(conv.lines), ['  ↳ helper · Survey the code · starting · 0 steps']);
+  assert.equal(conv.helpers, 1);
+  assert.equal(conv.background, 0, 'a helper is not background work');
+  conv = line([hProgress('h1', 'ag', 'Reading a.mjs', 1, 2_000)]);
+  assert.deepEqual(helperLines(conv.lines), ['  ↳ helper · Survey the code · Reading a.mjs · 1 step · 2s'], 'one step is singular');
+  conv = line([hProgress('h1', 'ag', 'Reading a.mjs', 9, 21_000)]);
+  assert.deepEqual(helperLines(conv.lines), ['  ↳ helper · Survey the code · Reading a.mjs · 9 steps · 21s']);
+  assert.equal(conv.lines.find((l) => textOf(l).startsWith('  ↳ helper'))[0].style, 'dim');
+  conv = line([hProgress('h1', 'ag', 'Reading a.mjs', 20, 59_000)]);
+  assert.match(helperLines(conv.lines)[0], /· 59s$/);
+  conv = line([hProgress('h1', 'ag', 'Reading a.mjs', 20, 60_000)]);
+  assert.match(helperLines(conv.lines)[0], /· 1m 0s$/);
+  for (const [status, word, style] of [['completed', 'finished', 'dim'], ['killed', 'stopped', 'bad'], ['stopped', 'stopped', 'bad'], ['failed', 'failed', 'bad']]) {
+    conv = line([hProgress('h1', 'ag', 'Reading a.mjs', 20, 72_000), ...hEnd('h1', status)]);
+    const l = conv.lines.find((x) => textOf(x).startsWith('  ↳ helper'));
+    assert.equal(textOf(l), `  ↳ helper ${word} · Survey the code · 20 steps · 1m 12s`, status);
+    assert.equal(l[0].style, style, status);
+    assert.equal(conv.helpers, 0);
+  }
+  conv = line([...hEnd('h1', 'failed')]);
+  assert.deepEqual(helperLines(conv.lines), ['  ↳ helper failed · Survey the code · 0 steps'], 'ended before any progress: no time');
+  const narrow = buildConversation([...base, hProgress('h1', 'ag', 'Reading a very long file name.mjs', 9, 21_000)], { width: 40 });
+  const clipped = helperLines(narrow.lines);
+  assert.equal(clipped.length, 1, 'clipped, never wrapped');
+  assert.equal([...clipped[0]].length, 40);
+  assert.ok(clipped[0].endsWith('…'));
+});
+
+test('on the plan-0339 log the default view has one helper line and none of the helper\'s steps or words', () => {
+  const { lines, background, helpers } = buildConversation(HELPER_SAMPLE, { width: 100, taskId: 'plan' });
+  const text = all(lines);
+  assert.deepEqual(helperLines(lines), ['  ↳ helper stopped · Survey end-of-run machinery · 20 steps · 52s']);
+  const agentStep = text.findIndex((l) => l.startsWith('  ⎿ Agent Survey end-of-run machinery'));
+  assert.equal(text[agentStep + 1], '  ↳ helper stopped · Survey end-of-run machinery · 20 steps · 52s', 'directly under its Agent step');
+  assert.ok(!text.some((l) => /Now notify\.mjs endAlert/.test(l)), 'the helper\'s sentence is hidden');
+  assert.ok(!text.some((l) => /⎿ (Read|Bash (git log|ls &&|grep))/.test(l)), 'the helper\'s steps are hidden');
+  assert.ok(!text.some((l) => /running in the background/.test(l)), 'the old background line for a helper is gone');
+  assert.equal(background, 0);
+  assert.equal(helpers, 0);
+  // The parent's own lines, in order.
+  const order = [/^pir ▸ Load the pir-plan skill/, /^  ⎿ Agent /, /^  ⎿ AskUserQuestion/, /^you ▸ ⎋ interrupted/, /^you ▸ continue/, /^plan ▸ I'll go with the finisher/, /^  ⎿ AskUserQuestion/, /^  ⎿ Bash ls node_modules/, /^you ▸ ⎋ interrupted/, /^plan ▸ The requirements are agreed/];
+  let at = -1;
+  for (const re of order) {
+    const next = text.findIndex((l, i) => i > at && re.test(l));
+    assert.ok(next > at, `${re} after line ${at}`);
+    at = next;
+  }
+});
+
+test('on the plan-0339 log the detail view draws the helper\'s steps and words labelled, in log order', () => {
+  const text = all(buildConversation(HELPER_SAMPLE, { full: true, width: 200, taskId: 'plan' }).lines);
+  const helperish = text.filter((l) => /^(  helper ⎿|helper ▸)/.test(l));
+  assert.deepEqual(helperish.map((l) => l.replace(/^(  helper ⎿ \w+|helper ▸).*$/, '$1')), [
+    '  helper ⎿ Bash', '  helper ⎿ Bash', '  helper ⎿ Read', 'helper ▸', '  helper ⎿ Bash',
+  ]);
+  assert.ok(text.includes('helper ▸ Now notify.mjs endAlert, index-store, and the naming module.'));
+  assert.ok(!text.some((l) => /^plan ▸ Now notify/.test(l)), 'never as the parent\'s');
+  const styled = buildConversation(HELPER_SAMPLE, { full: true, width: 200, taskId: 'plan' }).lines.find((l) => textOf(l).startsWith('helper ▸'));
+  assert.equal(styleOf(styled), 'dim');
+});
+
+test('a foreground helper gets the same line under its Agent step', () => {
+  const { lines } = buildConversation([
+    use('ag', 'Agent', { description: 'Check the tests' }),
+    hStart('h2', 'ag', 'Check the tests', false),
+    hProgress('h2', 'ag', 'Running npm test', 3, 8000),
+    inHelper('ag', use('x1', 'Bash', { command: 'npm test' })),
+    inHelper('ag', res('x1', 'ok')),
+  ], { width: 100 });
+  assert.deepEqual(all(lines), ['  ⎿ Agent Check the tests', '  ↳ helper · Check the tests · Running npm test · 3 steps · 8s']);
+});
+
+test('a helper whose Agent call is not in the log gets its line where it started; one never started gets none', () => {
+  const { lines } = buildConversation([
+    hStart('h1', 'gone', 'Survey'),
+    inHelper('gone', say('reading')),
+    inHelper('nostart', say('from a helper we never saw start')),
+  ], { width: 100 });
+  assert.deepEqual(all(lines), ['  ↳ helper · Survey · starting · 0 steps']);
+});
+
+test('the parent\'s background commands keep their two lines; a helper\'s own has none by default, `helper ↳` in full', () => {
+  const log = [
+    use('ag', 'Agent', { description: 'Survey' }),
+    hStart('h1', 'ag', 'Survey'),
+    use('b1', 'Bash', { command: 'node slow.js', run_in_background: true }),
+    bgStart('t1', 'b1', 'parent slow command'),
+    inHelper('ag', use('hb', 'Bash', { command: 'node helper.js', run_in_background: true })),
+    bgStart('t2', 'hb', 'helper slow command'),
+    ...bgEnd('t1'),
+    ...bgEnd('t2'),
+  ];
+  const text = all(buildConversation(log).lines);
+  assert.ok(text.includes('  ↳ running in the background: parent slow command'));
+  assert.ok(text.includes('  ↳ finished in the background: parent slow command'));
+  assert.ok(!text.some((l) => /helper slow command/.test(l)));
+  const full = all(buildConversation(log, { full: true }).lines);
+  assert.ok(full.includes('  helper ↳ running in the background: helper slow command'));
+  assert.ok(full.includes('  helper ↳ finished in the background: helper slow command'));
+  assert.ok(full.includes('  ↳ running in the background: parent slow command'));
+  assert.equal(buildConversation(log.slice(0, 6)).background, 1, 'only the parent\'s command counts');
+});
+
+test('a helper\'s permission request names the helper, pinned and answered; unknown agentId reads `a helper`', () => {
+  const base = [use('ag', 'Agent', { description: 'Survey the code' }), hStart('h1', 'ag', 'Survey the code')];
+  const ask = request('p1', 'Bash', { command: 'git log' }, { agentId: 'h1' });
+  let conv = buildConversation([...base, ask], { taskId: 'T05' });
+  assert.equal(conv.pinned.helper.description, 'Survey the code');
+  assert.equal(textOf(promptLines(conv.pinned, { taskId: 'T05' })[0]), '⚑ helper "Survey the code" wants to use Bash');
+  conv = buildConversation([...base, ask, reply('p1', { behavior: 'allow', updatedInput: {} })], { taskId: 'T05' });
+  const text = all(conv.lines);
+  assert.ok(text.includes('⚑ helper "Survey the code" wants to use Bash'));
+  assert.ok(text.includes('  → allowed'));
+
+  const qs = request('q1', 'AskUserQuestion', { questions: [QUESTIONS.questions[0]] }, { agentId: 'h1' });
+  conv = buildConversation([...base, qs], { taskId: 'T05' });
+  assert.match(textOf(promptLines(conv.pinned, { taskId: 'T05' })[0]), /^\? helper "Survey the code" asks you 1 question/);
+  conv = buildConversation([...base, qs, reply('q1', { behavior: 'allow', updatedInput: { answers: { 'Which colour?': 'red' } } })], { taskId: 'T05' });
+  assert.ok(all(conv.lines).includes('? helper "Survey the code" asks you 1 question'));
+
+  conv = buildConversation([...base, request('p2', 'Bash', { command: 'ls' }, { agentId: 'nobody' })], { taskId: 'T05' });
+  assert.equal(textOf(promptLines(conv.pinned, { taskId: 'T05' })[0]), '⚑ a helper wants to use Bash');
+  conv = buildConversation([...base, request('p3', 'Bash', { command: 'ls' })], { taskId: 'T05' });
+  assert.equal(conv.pinned.helper, null);
+  assert.equal(textOf(promptLines(conv.pinned, { taskId: 'T05' })[0]), '⚑ T05 wants to use Bash');
 });
