@@ -121,6 +121,9 @@ export function startFinisher({
     state.phase = next;
     generation++;
   };
+  // True from the pass pir sees main move until its re-sync is done (resyncing → resynced): the branch is
+  // being changed under the finisher, so no go counts, whatever question it answers (DESIGN §2.8).
+  let held = false;
 
   let pendingResume = null; // { phase, stuckSummary } for the next resumed brief
   if (existed) {
@@ -333,7 +336,7 @@ export function startFinisher({
     questions.delete(requestId);
     if (!q || out.go) return;
     const phase = state.phase;
-    const fresh = q.generation === generation;
+    const fresh = q.generation === generation && !held;
     if (fresh && isGoAnswer({ phase, toolName: 'AskUserQuestion', input: q.input, answers })) {
       setPhase('finishing');
       state.goGiven = true;
@@ -450,7 +453,28 @@ export function startFinisher({
     tell,
     // resynced(mainSha) → main moved before any go (DESIGN §2.8): back to preparing, the old steps and any
     // go for them void, the finisher told. → false (nothing done) once a go was given, or in `finishing`/`done`.
+    // resyncing() → main moved and pir starts re-syncing the branch (review T05): the phase drops to
+    // preparing at once, voiding any open go question, and no go counts until resynced() — a Go tapped on
+    // the old question while the re-sync runs would otherwise start the merge on a branch still changing.
+    // Silent: the finisher is told once, by resynced(), when the branch is settled.
+    resyncing() {
+      const p = state.phase;
+      const takes = p === 'preparing' || p === 'awaiting-go' || (p === 'stuck' && !state.goGiven);
+      if (!takes) return false;
+      held = true;
+      setPhase('preparing');
+      saveState();
+      appendLedger({ kind: 'resyncing', from: p, to: 'preparing' });
+      return true;
+    },
     resynced(mainSha) {
+      // What the finisher did while held is judged while still held, so a go asked and answered during the
+      // re-sync is stale rather than counted by the next drain; its statuses are voided just below.
+      if (held) {
+        drainStatuses(carry, { pass: false });
+        scanLog(carry);
+        held = false;
+      }
       const p = state.phase;
       const takes = p === 'preparing' || p === 'awaiting-go' || (p === 'stuck' && !state.goGiven);
       if (!takes) return false;

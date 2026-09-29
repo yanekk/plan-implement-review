@@ -11,6 +11,9 @@ Legend: 🐞 defect found · ✅ verified by hand with the user · 📌 worth kn
 
 | Date | | Finding |
 |---|---|---|
+| 2026-09-29 | 📌 | T05 review: after a `red` or `gave-up` fallback, `finisher/state.json` stays, so a pir restart starts no coordinator agent (`priorFinisher`) and the run waits without one. Left as is. |
+| 2026-09-29 | 🔄 | T05: main moving before a go and the re-sync turning red closes the finisher; the run waits red as today and never hands over again (user, 2026-09-29). Not in DESIGN §2.8; T08 carries it to `docs/finisher.md`. |
+| 2026-09-29 | 📌 | T05: the done-when harness run with the agent reaching the finisher was not run; the user left the live check to T10. The drills' fake has no `pir-finisher` script, so the finisher idles there; T09 adds one. |
 | 2026-09-29 | 📌 | T03 review: `checkStatus` accepts neither `ready` nor `stuck` in phase `stuck`, so a finisher restarted mid-finish, or revising steps while stuck, cannot record new steps; they appear only in its reply. T04/T05 may want pir to record them. |
 | 2026-09-29 | 🐞 | T01 review: an expansion in a git part (`$(…)`, `${X:=…}`, `$'…'`, `{a,b}`) smuggled `--output` or `-c` past `isLookOnly`; `git log $(echo --output=/tmp/x)` wrote the file. Now refused. Unquoted globs still expand to existing filenames. |
 | 2026-09-29 | 📌 | T04: a go counts only for a go question first seen after the latest accepted ready/stuck; one asked just before `ready` but drained in the same pass still counts. `defaultToNo` in `finishing` now parks (finisher-agent `decide`). |

@@ -9,7 +9,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { startPlanRig } from './plan-rig.mjs';
 import { indexDir, listRecords } from './index-store.mjs';
@@ -139,16 +139,21 @@ for (const [cols, rows] of SIZES) {
       assert.match(s, /report: plans\/drill\/REPORT\.md/);
       for (const task of ['T01', 'T02', 'T03']) assert.match(rowOf(s, task) ?? '', /merged/, `${task} merged`);
 
-      screen.send('c');
-      s = (await screen.waitFor(said('The branch is ready. Merge it yourself with: git merge pir/drill'), 20000)).join('\n');
-      screen.send(LEFT);
-      await screen.waitFor(/c coordinator/);
+      assert.match(assertAgentRow(s, 'in ready to merge'), /on duty$/, 'it holds nothing once every question is answered');
+
+      // finisher T05: the pass after ready closes the agent and starts the finisher. The agent's hand-off
+      // carries no merge line, and its row and `c` go with it. (The finisher's own row is T07's.)
+      s = (await screen.waitFor((x) => !AGENT_ROW.test(x) && !/c coordinator/.test(x), 30000)).join('\n');
+      const conv = join(rig.repoDir, 'plans', DRILL_SLUG, '.parallel', 'control', 'conversations');
+      const agentLog = readdirSync(conv).filter((f) => f.startsWith('coordinator-')).map((f) => readFileSync(join(conv, f), 'utf8')).join('\n');
+      assert.match(agentLog, /The branch is ready\. The finisher takes the merge from here\./);
+      assert.doesNotMatch(agentLog, /Merge it yourself/);
+      assert.ok(readdirSync(conv).some((f) => f.startsWith('finisher-')), 'the finisher was started');
       screen.send(LEFT);
       s = (await screen.waitFor(/● ready to merge/)).join('\n');
       assert.match(s, /drill +work +● ready to merge/, 'the dashboard row waits on the person');
       screen.send(RIGHT);
-      s = (await screen.waitFor(/ready to merge · git merge pir\/drill/)).join('\n');
-      assert.match(assertAgentRow(s, 'in ready to merge'), /on duty$/, 'it holds nothing once every question is answered');
+      await screen.waitFor(/ready to merge · git merge pir\/drill/);
 
       rec.stop();
       // PIR_DRILL_DUMP=<prefix> writes every frame to <prefix>-{cols}x{rows}.txt, for judging them by eye.
