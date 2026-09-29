@@ -12,9 +12,9 @@ cell also fixes the over-budget cell they walk past.
 
 **Plan reviewed:** 2026-09-29 — 3 fixed, 2 decided with the user
 
-**Status:** T01–T05 ✅, T06 🔍.
+**Status:** T01–T06 ✅. Plan built; awaiting the person's merge and `./install.sh`.
 **Last updated:** 2026-09-29
-**Next `pir-work` will:** review T06.
+**Next `pir-work` will:** nothing; every task is ✅.
 
 ## Tasks
 
@@ -28,9 +28,9 @@ done · ⛔ blocked, needs a human.
 | T03 | split-coordinator-drill | — | ✅ | |
 | T04 | split-plan-rig | — | ✅ | |
 | T05 | split-conversation-rig | — | ✅ | |
-| T06 | suite-timing-proof | T01, T02, T03, T04, T05 | 🔍 | Ten quiet `npm test` runs green, 68.7–70.4 s. Test names vs plan base 375bf1d: none lost, 17 added by T01/T02. Drills green at `PARALLEL_POLL_MS=60000`. No concurrency flag. README updated. Deviation: the four `pause()` calls kept; each guards a pop-up staying closed, which no screen condition can wait on. |
+| T06 | suite-timing-proof | T01, T02, T03, T04, T05 | ✅ | Ten quiet runs 68.7–70.4 s; no concurrency flag. Four `pause()` calls kept, each guarding a pop-up staying closed. Review clean, no fix commit: quiet rerun 68 s, drills green at `PARALLEL_POLL_MS=60000`, own name diff vs 375bf1d 0 removed, 17 added by T01/T02. |
 
-**Review queue:** T06
+**Review queue:** *(empty)*
 
 ## Blocked on the user
 
