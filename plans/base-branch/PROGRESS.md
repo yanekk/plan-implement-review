@@ -21,7 +21,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T04 | base-text | — | ✅ | |
 | T05 | plan-start | T01, T02, T03 | ✅ | |
 | T06 | build-start | T01, T02, T03 | ✅ | |
-| T07 | end-sync | T04, T06 | ⬜ | |
+| T07 | end-sync | T04, T06 | ✅ | |
 | T08 | skills-and-rules | — | ✅ | |
 | T09 | dev-base-drill | T05, T07 | ⬜ | |
 | T10 | docs-and-readme | T08, T09 | ⬜ | |
