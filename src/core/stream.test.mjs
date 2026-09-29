@@ -89,6 +89,13 @@ test('out entries read as sent, reply and interrupt, with the sender', () => {
   assert.deepEqual(readEntry(interrupt()), [{ kind: 'interrupt', from: 'person' }]);
 });
 
+// visible-helpers T05 (DESIGN §2.6): the logged note and its helper ids ride on the `sent` event.
+test('a sent message with a preface carries it and helpersStopped; one without has neither', () => {
+  const e = at({ dir: 'out', from: 'person', kind: 'message', text: 'continue', preface: '[pir] note', helpersStopped: ['h1'] });
+  assert.deepEqual(readEntry(e), [{ kind: 'sent', from: 'person', text: 'continue', preface: '[pir] note', helpersStopped: ['h1'] }]);
+  assert.deepEqual(Object.keys(readEntry(sent('hi'))[0]), ['kind', 'from', 'text']);
+});
+
 test('a note keeps its kind and fields', () => {
   assert.deepEqual(readEntry({ t: 1, dir: 'note', kind: 'exited', code: 0 }), [{ kind: 'note', note: 'exited', code: 0 }]);
 });

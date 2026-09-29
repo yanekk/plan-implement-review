@@ -41,7 +41,22 @@ export function validateDrop(obj) {
   switch (obj.kind) {
     case 'message':
       if (!nonEmpty(obj.text)) return fail('a message needs non-empty `text`');
-      return ok({ ...base, text: obj.text });
+      {
+        const input = { ...base, text: obj.text };
+        // The note naming helpers an interrupt stopped, which the view attaches to the person's next
+        // message (visible-helpers DESIGN §2.6). A drop from an older `pir` has neither field.
+        if (obj.preface !== undefined) {
+          if (typeof obj.preface !== 'string') return fail('`preface` must be a string');
+          input.preface = obj.preface;
+        }
+        if (obj.helpersStopped !== undefined) {
+          if (!Array.isArray(obj.helpersStopped) || !obj.helpersStopped.every((id) => typeof id === 'string')) {
+            return fail('`helpersStopped` must be an array of strings');
+          }
+          input.helpersStopped = [...obj.helpersStopped];
+        }
+        return ok(input);
+      }
     case 'interrupt':
       return ok(base);
     case 'permission': {

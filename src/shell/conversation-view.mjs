@@ -12,6 +12,7 @@
 import { Editor, CombinedAutocompleteProvider, isKeyRelease, parseKey } from '@earendil-works/pi-tui';
 import { buildConversation, gateReducer, pickerReducer, promptLines, onOther } from '../core/conversation.mjs';
 import { readEntry, workerActivity } from '../core/stream.mjs';
+import { runningHelpers, stoppedByInterrupt, helpersNote, interruptGate, gateWarning } from '../core/helpers.mjs';
 import { dropPersonInput } from './person-inbox.mjs';
 import { followLog } from './log-follow.mjs';
 import { paintLine, SGR, RESET } from './pir-view.mjs';
@@ -122,6 +123,7 @@ export function createConversationView({
   let prompt = null; // the pinned request's gate or picker, as the person has driven it
   const answered = new Set(); // requestIds this view dropped an answer for, until the log shows the reply
   let status = null; // a one-shot { text, style } line
+  let escGate = null; // the armed Esc warning while helpers run (visible-helpers DESIGN §2.5); null when not armed
   let focused = false;
   let box = null; // { top, rows } — where the last paint put the typing box; null when there is none
 
@@ -193,6 +195,15 @@ export function createConversationView({
     if (send({ kind: 'interrupt' }, 'the interrupt')) status = { text: 'interrupt sent', style: 'dim' };
   }
 
+  // Esc, or Ctrl+C on an empty box: with helpers running, the first press only arms a warning naming them
+  // and the second interrupts (visible-helpers DESIGN §2.5). The running list is read when the key is
+  // pressed, so a helper that has ended since is not named.
+  function interruptKey(key) {
+    const r = interruptGate(escGate, key, runningHelpers(entries));
+    escGate = r.gate;
+    if (r.send) interrupt();
+  }
+
   // The box's Enter. Typed text refuses a pending permission with the text (§2.6) or is a message. Text
   // already in the box when a question set arrives moves onto the question's Other line to be confirmed
   // there (user 2026-09-26: typed text only ever answers). A drop that fails puts the text back in the box.
@@ -205,7 +216,13 @@ export function createConversationView({
     }
     let ok;
     if (p?.kind === 'permission') ok = send({ kind: 'permission', requestId: p.requestId, decision: 'deny', text }, 'your reply');
-    else ok = send({ kind: 'message', text }, 'your message');
+    else {
+      // Only a typed message carries the note naming helpers an interrupt stopped; a reply to a request
+      // does not (visible-helpers DESIGN §2.6). The log is the record of what was already reported.
+      const stopped = stoppedByInterrupt(entries);
+      const preface = helpersNote(stopped);
+      ok = send(preface ? { kind: 'message', text, preface, helpersStopped: stopped.map((h) => h.id) } : { kind: 'message', text }, 'your message');
+    }
     if (!ok) {
       editor.setText(text);
       return;
@@ -264,11 +281,12 @@ export function createConversationView({
     } else {
       const empty = editor.getText() === '';
       const completing = editor.isShowingAutocomplete();
-      if (key === 'escape' && !completing) interrupt();
-      else if (key === 'ctrl+c') {
-        if (empty) interrupt();
-        else editor.setText('');
-      } else if (key === 'tab' && !completing) full = !full;
+      const gateKey = key === 'escape' && !completing ? 'escape' : key === 'ctrl+c' && empty ? 'ctrl+c-empty' : null;
+      // Any other key disarms the Esc warning and then does what it always does (§2.5, gateReducer's rule).
+      if (!gateKey) escGate = null;
+      if (gateKey) interruptKey(gateKey);
+      else if (key === 'ctrl+c') editor.setText('');
+      else if (key === 'tab' && !completing) full = !full;
       else if (key === 'left' && empty && !typingOther()) return onBack();
       else if (empty && !completing && promptKey(key, data)) {
         /* the pinned prompt took it */
@@ -326,15 +344,20 @@ export function createConversationView({
 
     const bottom = [];
     const p = m.readOnly ? null : prompt;
+    // The armed Esc warning takes the status line's place (visible-helpers DESIGN §2.5); under a pinned
+    // prompt, which has no status line, it goes below the prompt.
+    const warning = m.readOnly ? '' : gateWarning(escGate);
     if (p && answered.has(p.requestId)) bottom.push(paint([span('⚑ answer sent — waiting for pir to deliver it', 'prompt')], w));
     else if (p) for (const l of promptLines(p, { width: w, taskId })) bottom.push(paint(l, w));
     else if (!m.readOnly) {
       // A worker waiting on background work is not idle (user 2026-09-26, T18 drill): say how much is running.
       // Its helpers are named apart from its background commands (visible-helpers DESIGN §2.2).
       const parts = statusParts(m.conv);
-      if (m.activity.state === 'busy') bottom.push(paint([span('● working…', 'active'), ...(parts ? [span(` · ${parts}`, 'dim')] : [])], w));
+      if (warning) bottom.push(paint([span(warning, 'prompt')], w));
+      else if (m.activity.state === 'busy') bottom.push(paint([span('● working…', 'active'), ...(parts ? [span(` · ${parts}`, 'dim')] : [])], w));
       else if (parts) bottom.push(paint([span(`◌ ${parts}`, 'dim')], w));
     }
+    if (warning && p) bottom.push(paint([span(warning, 'prompt')], w));
     if (status) bottom.push(paint([span(status.text, status.style)], w));
     const boxAt = bottom.length;
     if (!m.readOnly) bottom.push(...editor.render(w));
@@ -377,7 +400,7 @@ export function createConversationView({
     },
     // For the tests: what the view holds right now.
     get state() {
-      return { text: editor?.getText() ?? null, prompt, status, full, scrollBack, entries: entries.length, readOnly: model(lastWidth).readOnly };
+      return { text: editor?.getText() ?? null, prompt, status, warning: gateWarning(escGate), full, scrollBack, entries: entries.length, readOnly: model(lastWidth).readOnly };
     },
   };
 }

@@ -345,13 +345,19 @@ export function startWorker({
     },
     startedAt,
 
-    send(text, { from = 'pir' } = {}) {
+    // `preface` is pir's note naming the helpers an interrupt stopped (visible-helpers DESIGN §2.6): the model
+    // reads it first, a blank line, then the person's text, in one user message. The log keeps `text` as the
+    // person typed it and the note beside it, so the conversation draws both and never repeats a helper.
+    send(text, { from = 'pir', preface, helpersStopped } = {}) {
       if (exitInfo || queue.closed) {
         undelivered('message', { from, text });
         return false;
       }
-      log({ dir: 'out', from, kind: 'message', text });
-      queue.push(userMessage(text, sessionId));
+      const extra = {};
+      if (typeof preface === 'string' && preface) extra.preface = preface;
+      if (Array.isArray(helpersStopped)) extra.helpersStopped = helpersStopped;
+      log({ dir: 'out', from, kind: 'message', text, ...extra });
+      queue.push(userMessage(extra.preface ? `${extra.preface}\n\n${text}` : text, sessionId));
       return true;
     },
 

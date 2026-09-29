@@ -118,7 +118,13 @@ export function startPersonInbox({ controlDir, platform, grants = createGrants()
     const { to, kind } = input;
     // An id this coordinator never spawned has no conversation log to note it in; the run log has it.
     if (platform.logPathOf(to) == null) return { outcome: 'undelivered', reason: 'no such worker in this run' };
-    if (kind === 'message') return delivered(platform.send(to, input.text, { from: 'person' }), 'the worker has exited');
+    if (kind === 'message') {
+      // The helper note rides along only when the view attached one (visible-helpers DESIGN §2.6).
+      const opts = { from: 'person' };
+      if (input.preface !== undefined) opts.preface = input.preface;
+      if (input.helpersStopped !== undefined) opts.helpersStopped = input.helpersStopped;
+      return delivered(platform.send(to, input.text, opts), 'the worker has exited');
+    }
     if (kind === 'interrupt') return delivered(platform.interrupt(to, { from: 'person' }), 'the worker has exited');
 
     const request = platform.pending(to).find((r) => r.requestId === input.requestId);
