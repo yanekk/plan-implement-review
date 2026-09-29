@@ -11,6 +11,7 @@ Legend: 🐞 defect found · ✅ verified by hand with the user · 📌 worth kn
 
 | Date | | Finding |
 |---|---|---|
+| 2026-09-29 | 🔄 | T07: the live-view footer while the finisher is on is one line per phase, each naming `c`: `◆ finisher preparing · c to watch`, `finishing · c to watch`, `stuck · c to review and say go`, `asking you · c to answer` (user, 2026-09-29). T08 carries it to docs. |
 | 2026-09-29 | 📌 | T05 review: after a `red` or `gave-up` fallback, `finisher/state.json` stays, so a pir restart starts no coordinator agent (`priorFinisher`) and the run waits without one. Left as is. |
 | 2026-09-29 | 🔄 | T05: main moving before a go and the re-sync turning red closes the finisher; the run waits red as today and never hands over again (user, 2026-09-29). Not in DESIGN §2.8; T08 carries it to `docs/finisher.md`. |
 | 2026-09-29 | 📌 | T05: the done-when harness run with the agent reaching the finisher was not run; the user left the live check to T10. The drills' fake has no `pir-finisher` script, so the finisher idles there; T09 adds one. |

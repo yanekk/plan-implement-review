@@ -142,18 +142,24 @@ for (const [cols, rows] of SIZES) {
       assert.match(assertAgentRow(s, 'in ready to merge'), /on duty$/, 'it holds nothing once every question is answered');
 
       // finisher T05: the pass after ready closes the agent and starts the finisher. The agent's hand-off
-      // carries no merge line, and its row and `c` go with it. (The finisher's own row is T07's.)
+      // carries no merge line, and its row and `c` go with it. finisher T07: the finisher's row takes the
+      // agent's place and the footer points at `c`. The drill's fake has no finisher script (T09 adds it),
+      // so it stays `preparing`.
       s = (await screen.waitFor((x) => !AGENT_ROW.test(x) && !/c coordinator/.test(x), 30000)).join('\n');
+      s = (await screen.waitFor(/◆ finisher +preparing/, 30000)).join('\n');
+      assert.match(s, /◆ finisher preparing · c to watch/);
+      assert.match(s, /c finisher/);
+      assert.doesNotMatch(s, /git merge/, 'no merge line beside the finisher');
       const conv = join(rig.repoDir, 'plans', DRILL_SLUG, '.parallel', 'control', 'conversations');
       const agentLog = readdirSync(conv).filter((f) => f.startsWith('coordinator-')).map((f) => readFileSync(join(conv, f), 'utf8')).join('\n');
       assert.match(agentLog, /The branch is ready\. The finisher takes the merge from here\./);
       assert.doesNotMatch(agentLog, /Merge it yourself/);
       assert.ok(readdirSync(conv).some((f) => f.startsWith('finisher-')), 'the finisher was started');
       screen.send(LEFT);
-      s = (await screen.waitFor(/● ready to merge/)).join('\n');
-      assert.match(s, /drill +work +● ready to merge/, 'the dashboard row waits on the person');
+      s = (await screen.waitFor(/drill +work +● running/)).join('\n');
+      assert.doesNotMatch(s, /ready to merge/, 'the finisher is working, not waiting on the person');
       screen.send(RIGHT);
-      await screen.waitFor(/ready to merge · git merge pir\/drill/);
+      await screen.waitFor(/◆ finisher +preparing/);
 
       rec.stop();
       // PIR_DRILL_DUMP=<prefix> writes every frame to <prefix>-{cols}x{rows}.txt, for judging them by eye.

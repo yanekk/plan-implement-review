@@ -30,12 +30,12 @@ done · ⛔ blocked, needs a human.
 | T04 | finisher-session | T00, T01, T02 | ✅ | |
 | T05 | finisher-handover | T04 | ✅ | |
 | T06 | finisher-alerts | T05 | ⬜ | |
-| T07 | finisher-row | T05 | ⬜ | |
+| T07 | finisher-row | T05 | 🔍 | Finisher row, per-phase footer, list `● ready for your go`, `c`/→ open it, rig scenario `finisher` e2e at 80×24 and 120×40; 13 tests. Deviations: footer outside `awaiting-go` per user (FINDINGS); finished stale note `The finisher is done.`; conversation header says `agent`; coordinator drill's end expects the finisher row; coordinate.mjs untouched (T05 did it). |
 | T08 | finisher-docs | T03, T05, T06, T07 | ⬜ | |
 | T09 | finisher-drill | T03, T06, T07 | ⬜ | |
 | T10 | finisher-live | T08, T09 | ⬜ | |
 
-**Review queue:** *(empty)*
+**Review queue:** T07
 
 ## Blocked on the user
 
