@@ -12,9 +12,9 @@ past.
 
 **Plan reviewed:** 2026-09-28 — 3 fixed, 2 decided with the user
 
-**Status:** Planned 2026-09-28. Nothing built.
+**Status:** All five tasks ✅ on `pir/box-commands`; install follows the merge to main.
 **Last updated:** 2026-09-29
-**Next `pir-work` will:** T01 box-grammar: it heads the critical path.
+**Next `pir-work` will:** nothing; the plan is built. `./install.sh` after the merge (Blocked).
 
 ## Tasks
 
@@ -27,9 +27,9 @@ done · ⛔ blocked, needs a human.
 | T02 | plan-scan | — | ✅ | |
 | T03 | box-completion | T01 | ✅ | |
 | T04 | box-starts-build | T01, T02, T03 | ✅ | |
-| T05 | box-commands-drill | T04 | 🔍 | Drill driven at 80×24 and 120×40, all as designed; 8 plan-rig tests keep it. One user decision: empty-list line says `plan or build` (pir-tui, docs/detached-runs.md). No install: task branch, see Blocked. |
+| T05 | box-commands-drill | T04 | ✅ | Drill at 80×24 and 120×40, 8 plan-rig tests; user decided empty-list line `plan or build`. Review clean, no fix commit: npm test green; probed by breaking the slug-pick and Esc no-reopen guards in list-view, both caught by the new Esc test. Install follows the merge, see Blocked. |
 
-**Review queue:** T05
+**Review queue:** *(empty)*
 
 ## Blocked on the user
 
