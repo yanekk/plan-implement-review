@@ -34,8 +34,14 @@ export function readEntry(entry) {
   }
   if (!isObject(entry) || typeof entry.dir !== 'string') return [{ kind: 'raw', raw: entry }];
   switch (entry.dir) {
-    case 'in':
-      return readMessage(entry.event, entry);
+    case 'in': {
+      // A helper's frames (Agent tool) carry the parent's Agent call id as `parent_tool_use_id`; the
+      // parent's own carry null (visible-helpers DESIGN §2.1). Every event from such a frame is tagged,
+      // so the fold and the view never take a helper's words for the parent's.
+      const evs = readMessage(entry.event, entry);
+      const helper = isObject(entry.event) ? entry.event.parent_tool_use_id : null;
+      return typeof helper === 'string' && helper ? evs.map((ev) => (ev.kind === 'raw' ? ev : { ...ev, helper })) : evs;
+    }
     case 'request':
       return readRequest(entry);
     case 'out':
@@ -116,10 +122,13 @@ function resultText(content) {
 }
 
 // One `canUseTool` call, as pir recorded it (DESIGN §2.3). AskUserQuestion is a question set
-// (DESIGN §2.7); every other tool is a permission request (DESIGN §2.6).
+// (DESIGN §2.7); every other tool is a permission request (DESIGN §2.6). A helper's request carries
+// `agentId` (the SDK's `agentID`, the helper's task_id), which attributes it: it reaches canUseTool before
+// the helper's own tool_use frame, so frame order cannot (visible-helpers DESIGN §2.1).
 function readRequest(entry) {
   if (typeof entry.requestId !== 'string' || typeof entry.toolName !== 'string') return [{ kind: 'raw', raw: entry }];
   const input = isObject(entry.input) ? entry.input : {};
+  const agent = typeof entry.agentId === 'string' ? { agentId: entry.agentId } : {};
   if (entry.toolName === ASK_TOOL) {
     const questions = (Array.isArray(input.questions) ? input.questions : []).filter(isObject).map((q) => ({
       question: str(q.question),
@@ -127,7 +136,7 @@ function readRequest(entry) {
       multiSelect: q.multiSelect === true,
       options: (Array.isArray(q.options) ? q.options : []).filter(isObject).map((o) => ({ label: str(o.label), description: str(o.description) })),
     }));
-    return [{ kind: 'questions', requestId: entry.requestId, questions, input }];
+    return [{ kind: 'questions', requestId: entry.requestId, questions, input, ...agent }];
   }
   return [{
     kind: 'permission',
@@ -139,6 +148,7 @@ function readRequest(entry) {
     suggestions: Array.isArray(entry.suggestions) ? entry.suggestions : [],
     defaultToNo: entry.defaultToNo === true,
     suppressAlwaysAllowRule: entry.suppressAlwaysAllowRule === true,
+    ...agent,
   }];
 }
 
@@ -197,7 +207,9 @@ export function declineQuestionsResult(request, text) {
 
 // Worker events that mean the worker itself has a turn under way. `init` opens every turn (T00) and a
 // background job's notification opens one with nothing sent (T01 probe); assistant output covers a
-// log whose `init` was lost. A tool_result, rate limit or task event alone does not.
+// log whose `init` was lost. A tool_result, rate limit or task event alone does not, and neither does
+// anything a helper said (an event with `helper`): a background helper keeps talking after the parent's
+// `result`, and taking that for the parent re-opened a turn that never ran (visible-helpers DESIGN §2.7).
 const TURN_OPENERS = new Set(['init', 'text', 'tool-use']);
 const ANSWER_NOTES = new Set(['delivered-by-grant', 'answered-remotely']);
 
@@ -323,7 +335,7 @@ export function workerActivity(entries) {
           break;
         default:
           if (ev.kind === 'init') slashCommands = ev.slashCommands;
-          if (TURN_OPENERS.has(ev.kind)) openTurn(nextCause ?? 'unknown');
+          if (TURN_OPENERS.has(ev.kind) && !ev.helper) openTurn(nextCause ?? 'unknown');
       }
     }
   }
