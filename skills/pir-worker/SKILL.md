@@ -37,7 +37,7 @@ find it at all.** The branch is the only source; a folder listing is a guess tha
 while one plan is present. (A T18 worker inferred `single` from `ls plans/`; on the first green live run
 the reviewer still ran `ls plans/` alongside the branch — harmless there, but the wrong habit.)
 
-## Where you run: your task branch, not main
+## Where you run: your task branch, never the base branch
 
 You are in a fresh worktree on branch `pir/{plan}-T{nn}`, cut from the feature branch `pir/{plan}`
 (DESIGN §2.9). Commit your work there as normal.
@@ -49,10 +49,11 @@ it from `git rev-parse --show-toplevel`, never by assuming the repo's own top-le
 hand-building the path, or you will read and edit the wrong checkout. (A T18 reviewer `Read` the plan-branch `PROGRESS.md` instead of its
 worktree copy for exactly this reason and had to self-correct.)
 
-**`CLAUDE.md § Where sessions run` — "main checkout, main branch, always; stop if you find yourself
+**`CLAUDE.md § Where sessions run` — "main checkout, base branch, always; stop if you find yourself
 in a worktree" — does NOT bind you.** That rule is for the classic single-stream flow. Parallel mode
 replaces it with the feature-branch model (DESIGN §2.9), and you are *supposed* to be in a task-branch
-worktree. Do not stop on contact with it, do not try to switch to `main`, and do not fold your
+worktree. Do not stop on contact with it, do not try to switch to the base branch (the
+branch the run was cut from, named in the repo's `.pir/settings.json`), and do not fold your
 worktree back — that is handled for you. Just work on your task branch and commit there.
 
 ## Before you start, look for work an earlier worker left on this branch
@@ -319,7 +320,7 @@ before you signal done (DESIGN §2.5, §2.9):
 - When it integrates cleanly, drop a report — `[pir:v1 kind=done task=Txx]`.
 
 Your task branch is then merged into the feature branch, you are closed, and the next task is
-dispatched. Nothing you do reaches `main`; the whole feature branch is promoted once, at the end.
+dispatched. Nothing you do reaches the base branch; the whole feature branch is promoted once, at the end.
 
 ## If a later merge of your branch conflicts, the person resolves it with you — re-signal
 
