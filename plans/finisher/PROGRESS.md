@@ -26,7 +26,7 @@ done · ⛔ blocked, needs a human.
 | T00 | prove-the-fence | — | ⬜ | |
 | T01 | finisher-policy | — | ✅ | |
 | T02 | finisher-brief | — | ⬜ | |
-| T03 | finisher-skill-and-rules | T01 | ⬜ | |
+| T03 | finisher-skill-and-rules | T01 | 🔍 | Skill, `rules/default/on-finish.md`, `.pir/rules/on-finish.md`; install.sh installs the skill, copies `rules/` into the engine, seeds `~/.pir/default/rules/` when absent. 12 tests. Deviation: the install test stubs `npm` on PATH so it runs offline. `./install.sh` run from this branch. |
 | T04 | finisher-session | T00, T01, T02 | ⬜ | |
 | T05 | finisher-handover | T04 | ⬜ | |
 | T06 | finisher-alerts | T05 | ⬜ | |
@@ -35,7 +35,7 @@ done · ⛔ blocked, needs a human.
 | T09 | finisher-drill | T03, T06, T07 | ⬜ | |
 | T10 | finisher-live | T08, T09 | ⬜ | |
 
-**Review queue:** *(empty)*
+**Review queue:** T03
 
 ## Blocked on the user
 
