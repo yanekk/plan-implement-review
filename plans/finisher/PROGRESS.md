@@ -24,7 +24,7 @@ done · ⛔ blocked, needs a human.
 | # | Task | Depends on | State | Notes |
 |---|---|---|---|---|
 | T00 | prove-the-fence | — | ⬜ | |
-| T01 | finisher-policy | — | ⬜ | |
+| T01 | finisher-policy | — | ✅ | |
 | T02 | finisher-brief | — | ✅ | `finisher-brief.mjs`, 10 tests. No `finisherStuckAfterRestart`: T01 `afterRestart` owns that text (accepted). Review fixed, each reproduced and test-locked: finishing refusal now says write `stuck` (§2.12); no `..` after a reason ending in a full stop; resume no longer claims `preparing` for an unknown phase. Probed long inputs, all phases. |
 | T03 | finisher-skill-and-rules | T01 | ⬜ | |
 | T04 | finisher-session | T00, T01, T02 | ⬜ | |
