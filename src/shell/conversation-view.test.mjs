@@ -4,7 +4,7 @@ import { mkdtempSync, readdirSync, readFileSync, writeFileSync, appendFileSync, 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { stripTerminalSequences } from '@earendil-works/pi-tui';
-import { createConversationView, hasEnded, slashCommandsOf, slashProvider } from './conversation-view.mjs';
+import { carryPending, createConversationView, hasEnded, slashCommandsOf, slashProvider } from './conversation-view.mjs';
 import { followLog } from './log-follow.mjs';
 import { dropPersonInput } from './person-inbox.mjs';
 import { withHeadLine } from './pir-tui.mjs';
@@ -78,6 +78,37 @@ test('followLog: a character split across two appends is decoded whole', () => {
   f.check();
   f.stop();
   assert.deepEqual(got, ['żółw']);
+});
+
+test('followLog: carry gets the lines before the cut and the tail, and its lines lead the first batch only', () => {
+  const p = join(tmp(), 'c.ndjson');
+  const lines = Array.from({ length: 100 }, (_, i) => `line-${String(i).padStart(3, '0')}-${'x'.repeat(40)}`);
+  writeFileSync(p, lines.join('\n') + '\n');
+  const got = [];
+  const calls = [];
+  const carry = (skipped, tail) => {
+    calls.push({ skipped, tail });
+    return [skipped[0]];
+  };
+  const f = followLog(p, { tailBytes: 1000, carry, onEntries: (l) => got.push(l), watch: null, pollMs: 60_000 });
+  appendFileSync(p, 'after\n');
+  f.check();
+  f.stop();
+  assert.equal(calls.length, 1, 'carried once, at open');
+  assert.deepEqual([...calls[0].skipped, ...calls[0].tail], lines, 'skipped and tail are the whole file, cut at a line boundary');
+  assert.deepEqual(got[0], [lines[0], ...calls[0].tail], 'the carried line leads the tail');
+  assert.deepEqual(got[1], ['after'], 'an append carries nothing');
+});
+
+test('followLog: a file that fits the tail is not cut, and carry is never called', () => {
+  const p = join(tmp(), 'c.ndjson');
+  writeFileSync(p, 'one\ntwo\n');
+  let called = false;
+  const got = [];
+  const f = followLog(p, { carry: () => ((called = true), []), onEntries: (l) => got.push(...l), watch: null, pollMs: 60_000 });
+  f.stop();
+  assert.equal(called, false);
+  assert.deepEqual(got, ['one', 'two']);
 });
 
 // ---- the view ----
@@ -887,4 +918,38 @@ test('group hover: the pointer moving from a group line straight into the typing
   assert.match(s[boxY], /─/, `the box sits right under the group line:\n${s.join('\n')}`);
   t.v.handleMouse(mouse('move', { y: boxY }));
   assert.ok(!raw()[y].includes('\x1b[1m'), 'plain once the pointer is in the box');
+});
+
+// plan-0077: a planner asked a question set, then its helpers wrote ~420 KB in eight minutes; the row read
+// `asking you` from the whole log while the view, opened on the last 256 KB, showed no question.
+test('a question asked before the tail the view opens on is still pinned; one answered back there is not', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'pir-carry-'));
+  const logPath = join(dir, 'plan-1.ndjson');
+  const answered = entry({ dir: 'request', requestId: 'r0', toolName: 'Bash', input: { command: 'ls' } });
+  const reply = entry({ dir: 'out', from: 'person', kind: 'reply', requestId: 'r0', result: { behavior: 'allow', updatedInput: {} } });
+  const filler = Array.from({ length: 200 }, (_, i) => said(`helper output ${i} ${'x'.repeat(200)}`));
+  const log = [init(), opening, answered, reply, questions(), ...filler];
+  writeFileSync(logPath, log.map((e) => JSON.stringify(e)).join('\n') + '\n');
+  const v = createConversationView({
+    run: { slug: 'plan', controlDir: dir },
+    worker: { taskId: 'plan', workerId: 'w-1', logPath, live: true },
+    tui: { requestRender() {}, terminal: { rows: 30 } },
+    colour: false,
+    followOptions: { tailBytes: 8000, watch: null, pollMs: 60_000 },
+  });
+  const text = v.render(80).map((l) => stripTerminalSequences(l)).join('\n');
+  v.dispose();
+  assert.doesNotMatch(text, /helper output 0 /, 'the view opened on the tail, not the whole log');
+  assert.match(text, /Which colour\? \(pick one\)/, 'the unanswered question is pinned');
+  assert.doesNotMatch(text, /wants to use Bash/, 'the request answered before the tail is not brought back');
+});
+
+test('carryPending: only still-pending requests come back; one an interrupt cancelled does not', () => {
+  const q = JSON.stringify(questions({ requestId: 'q9' }));
+  const p = JSON.stringify(permission({ requestId: 'p9' }));
+  const interrupt = JSON.stringify(entry({ dir: 'out', from: 'person', kind: 'interrupt' }));
+  const result = JSON.stringify(entry({ dir: 'in', event: { type: 'result', subtype: 'error_during_execution' } }));
+  assert.deepEqual(carryPending([q, JSON.stringify(said('hi'))], [JSON.stringify(said('more'))]), [q]);
+  assert.deepEqual(carryPending([q], [interrupt, result]), [], 'cancelled by an interrupt in the tail');
+  assert.deepEqual(carryPending([q, p, 'not json'], []), [q, p], 'both pending, in log order; a bad line is skipped');
 });

@@ -96,7 +96,9 @@ line (`worker-proc.mjs`):
   in the agent's log) and `notify-failed` (a phone alert that failed after its retries, once per
   question, with `status` and `error`; see [human-flow.md](human-flow.md#phone-alerts--pir-notify)).
 
-The `pir` screen reads the last 256 KB and follows appends (`log-follow.mjs`); a line that does not
+The `pir` screen reads the last 256 KB and follows appends (`log-follow.mjs`), and brings back any
+request still pending from before that tail, judged on the whole log, so a question pushed out by a busy
+log stays pinned (`carryPending` in `conversation-view.mjs`); a line that does not
 parse (a crash mid-append) is shown raw and never stops the reader. A worker's state — busy, idle,
 waiting on a permission, waiting on a question set — is derived from this log (`workerActivity` in
 `src/core/stream.mjs`). The logs are kept across a restart, and a new worker for the same task gets
