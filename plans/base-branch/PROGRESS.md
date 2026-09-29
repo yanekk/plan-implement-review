@@ -7,7 +7,7 @@ lives in [FINDINGS.md](FINDINGS.md). Sixty words to a Notes cell, counted.
 
 **Status:** In progress.
 **Last updated:** 2026-09-29
-**Next `pir-work` will:** T01 base-core, the first task with no dependencies on the critical path.
+**Next `pir-work` will:** T02 base-git, now unblocked by T01.
 
 ## Tasks
 
@@ -15,7 +15,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 
 | # | Task | Depends on | State | Notes |
 |---|---|---|---|---|
-| T01 | base-core | — | 🔍 | `basebranch.mjs` (six functions) plus runrecord `baseBranch`; 24 new tests. Deviations: `@`, `HEAD` and a leading `/` also refused, as git does; `.lock` checked per component, as git does; `holdText` returns the reason without the `preparing:`/`waiting:` prefix, so T07 can prefix either. |
+| T01 | base-core | — | ✅ | Review clean, no fix commit. Every §2.3 row, §2.2 rule and §2.9 text tested; `npm test` green. Probed: `validBranchName` against real `git check-ref-format --branch` on 61 names, differing only on `@` and NBSP (stricter, safe); fetch error after reach, missing checkout, runrecord bad values. Deviations (`@`, `HEAD`, bare `holdText`) accepted. |
 | T02 | base-git | T01 | ⬜ | |
 | T03 | branch-cuts | — | ⬜ | |
 | T04 | base-text | — | ⬜ | |
@@ -26,7 +26,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T09 | dev-base-drill | T05, T07 | ⬜ | |
 | T10 | docs-and-readme | T08, T09 | ⬜ | |
 
-**Review queue:** T01
+**Review queue:** *(empty)*
 
 ## Blocked on the user
 
