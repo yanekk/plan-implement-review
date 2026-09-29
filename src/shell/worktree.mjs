@@ -36,6 +36,7 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { progressPathFor, parseProgress, adoptNewTaskRows } from '../core/progress.mjs';
+import { prepareBase } from './base-branch.mjs';
 
 // gpgsign is forced off on every commit-creating call (merge, commit). An automated
 // coordinator has no one to type a passphrase, and a repo with commit.gpgsign=true set globally
@@ -381,6 +382,8 @@ export function createWorktree({ root = process.cwd(), base, from } = {}) {
     syncBase: (featurePath, opts) => syncBase(featurePath, opts),
     baseContains: (branch, opts) => baseContains(branch, { ...opts, root }),
     baseTip: (opts) => baseTip({ ...opts, root }),
+    // The end-of-run sync prepares the base before merging it (base-branch DESIGN §2.8).
+    prepareBase: (base, opts) => prepareBase(root, base, opts),
     syncPending: (featurePath) => syncPending(featurePath),
     abortSync: (featurePath) => abortSync(featurePath),
     get feature() {

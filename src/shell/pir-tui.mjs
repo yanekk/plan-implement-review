@@ -461,7 +461,9 @@ export function buildWatchFrame(view, { now, spinnerChar = SPINNER[0], ui = init
         // A complete run that is not ready to merge ended red (DESIGN §2.8): its footer above already shows
         // the reason and log path, so the stale note must not offer the merge.
         const red = !!snap.runState?.complete && !snap.runState?.readyToMerge;
-        const end = red ? `Not ready to merge — fix ${branch}, see the output above.` : `Hand-off: git merge ${branch}`;
+        // The run's base rides in the snapshot (base-branch DESIGN §2.9); one written before it reads `main`.
+        const base = snap.runState?.base ?? snap.runState?.handoff?.base ?? 'main';
+        const end = red ? `Not ready to merge — fix ${branch}, see the output above.` : `Hand-off: git switch ${base} && git merge ${branch}`;
         note(`— finished · this frame is stale. ${end}`, 'ended', '');
       } else if (state === 'stopped') {
         note(`— stopped · this frame is stale. \`pir start ${slug}\` resumes from committed work.`, 'ended', '');

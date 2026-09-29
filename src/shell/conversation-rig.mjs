@@ -320,7 +320,7 @@ export function startRig({ into = null, scenario = 'tour', keep = false, env = p
   // waiting in `ready to merge`.
   function ready() {
     passTasks[0] = { ...passTasks[0], state: '✅' };
-    handoff = { state: 'ready', reportPath: `plans/${RIG_SLUG}/REPORT.md`, mainSha: '0000000' };
+    handoff = { state: 'ready', reportPath: `plans/${RIG_SLUG}/REPORT.md`, baseSha: '0000000', base: 'main', hold: null, lastWatch: null, lastWatchFailure: null };
     agent.tell(handoffFor({ slug: RIG_SLUG, reportPath: handoff.reportPath, ready: true }));
     snapshot();
   }

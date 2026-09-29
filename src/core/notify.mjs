@@ -95,6 +95,14 @@ export function endAlert({ slug, ready, taskCount, reason, unresolved, base = 'm
   return { title: `${slug} · not ready`, message, tags: ['warning'] };
 }
 
+// holdAlert({ slug, hold }) → { title, message, tags } for the one alert when the end-of-run sync is held
+// (base-branch DESIGN §2.8): the base could not be fetched, or the local and remote bases split apart.
+// `hold.text` is holdText's short reason, read on the lock screen as `{slug} · waiting` over the reason.
+export function holdAlert({ slug, hold } = {}) {
+  const reason = excerpt(hold?.text ?? '');
+  return { title: `${slug ?? ''} · waiting`, message: reason === '' ? 'the end of the run is held' : reason, tags: ['hourglass'] };
+}
+
 // ---- The episode machine (§2.1, §2.2, §3.2) ----
 //
 // An episode is one continuous stretch in which a worker is the person's. Its title and message are fixed

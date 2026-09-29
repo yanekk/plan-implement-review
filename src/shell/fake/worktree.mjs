@@ -28,6 +28,7 @@ import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { progressPathFor, parseProgress, adoptNewTaskRows } from '../../core/progress.mjs';
 import { syncBase, baseContains, baseTip, syncPending, abortSync, recordRunBase } from '../worktree.mjs';
+import { prepareBase } from '../base-branch.mjs';
 
 // Run one git command in cwd. Returns { ok, stdout, stderr, status } rather than throwing, so a
 // non-zero exit (a merge conflict, a missing ref) is a value the caller inspects, not an
@@ -253,6 +254,9 @@ export function createFakeWorktree({ progress, files = {}, slug = 'demo', base =
     syncBase: (featurePath, opts) => syncBase(featurePath, opts),
     baseContains: (branch, opts) => baseContains(branch, { ...opts, root: repo }),
     baseTip: (opts) => baseTip({ ...opts, root: repo }),
+    // The real preparation over the scratch repo: a test gives it a remote with `git remote add` (a local
+    // bare repo, or a missing path for an unreachable one), and without one it uses the local base.
+    prepareBase: (base, opts) => prepareBase(repo, base, opts),
     syncPending: (featurePath) => syncPending(featurePath),
     abortSync: (featurePath) => abortSync(featurePath),
     // introspection
