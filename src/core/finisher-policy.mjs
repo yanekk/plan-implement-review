@@ -120,13 +120,42 @@ function gitWords(w) {
   return out;
 }
 
+// True when the shell would expand something in this part before the command sees it: a `$` outside
+// single quotes (a variable, `${X:=…}`, `$'…'`, `$_`, or the `$SUBSTITUTED` left by `flatten`) or an
+// unquoted brace expansion (`{a,b}`, `{a..b}`). Its value can be any word, so it can carry a git option
+// the word check never sees: `git log $(echo --output=/tmp/x)` wrote /tmp/x (review T01). `@{u}` and
+// `HEAD@{1}` have no comma or `..` inside the braces, so bash leaves them alone and so does this.
+function expands(part) {
+  let quote = null;
+  for (let i = 0; i < part.length; i++) {
+    const c = part[i];
+    if (quote === "'") {
+      if (c === "'") quote = null;
+    } else if (c === '\\') i++;
+    else if (c === '$') return true;
+    else if (quote === '"') {
+      if (c === '"') quote = null;
+    } else if (c === "'" || c === '"') quote = c;
+    else if (c === '{') {
+      const end = part.indexOf('}', i + 1);
+      const body = end < 0 ? '' : part.slice(i + 1, end);
+      if (body.includes(',') || body.includes('..')) return true;
+    }
+  }
+  return false;
+}
+
+// A git part is judged on its words only when nothing in it expands; any other look-only command keeps
+// its expansions, since none of them has an option that writes or runs something (DESIGN §2.4 list).
 const partIsLookOnly = (part) => {
   const w = gitWords(words(part));
-  return !!w && w.length > 0 && LOOK_ONLY.some((e) => e.match(w));
+  if (!w || w.length === 0) return false;
+  if (w[0] === 'git' && expands(part)) return false;
+  return LOOK_ONLY.some((e) => e.match(w));
 };
 
 // Scan the raw command, quote-aware, before `commandParts` cuts redirects away. Returns the command with
-// every `$(…)`/backtick body replaced by a plain word once that body has itself been found look-only, or
+// every `$(…)`/backtick body replaced by the word `$SUBSTITUTED` once that body has itself been found look-only, or
 // null when the command redirects output, uses process substitution, or substitutes anything nested or
 // not look-only.
 function flatten(command) {
@@ -163,7 +192,7 @@ function flatten(command) {
       if (depth !== 0) return null;
       const body = command.slice(i + 2, j - 1);
       if (/[()]/.test(body) || !checkLine(body, false)) return null; // nested, arithmetic or acting
-      out += 'SUBSTITUTED';
+      out += '$SUBSTITUTED';
       i = j - 1;
       continue;
     }
@@ -172,7 +201,7 @@ function flatten(command) {
       if (j < 0) return null;
       const body = command.slice(i + 1, j);
       if (/[()]/.test(body) || !checkLine(body, false)) return null;
-      out += 'SUBSTITUTED';
+      out += '$SUBSTITUTED';
       i = j;
       continue;
     }

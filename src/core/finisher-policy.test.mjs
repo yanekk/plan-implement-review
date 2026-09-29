@@ -99,6 +99,22 @@ test('isLookOnly: git -C is allowed, other git global options and writing option
   }
 });
 
+// Review T01: a git option can arrive through an expansion the word check never sees, and it runs as
+// written (`git log $(echo --output=/tmp/x) -1` wrote /tmp/x, reproduced 2026-09-29). Any unquoted `$`,
+// substitution or brace expansion in a git part is refused; other look-only commands keep them.
+test('isLookOnly: a git option smuggled in through an expansion is rejected', () => {
+  for (const cmd of ['git log $(echo --output=/tmp/x) -1', 'git diff `echo --ext-diff`',
+    'git -C $(echo /repo -c core.pager=x) log', 'git log ${X:=--output=/tmp/x}', "git log $'--output=/tmp/x'",
+    'echo --output=/tmp/x; git log $_', 'git log {--output=/tmp/x,-1}', 'git diff --ext-{diff,diff}',
+    'git log {--output=/tmp/x..y}', 'git branch --list $(echo -D) x', 'git log "$(echo --output=/tmp/x)"']) {
+    assert.equal(isLookOnly(cmd), false, cmd);
+  }
+  for (const cmd of ['ls $(pwd)', 'cat "$(git rev-parse --show-toplevel)/a"', 'git rev-parse HEAD@{1}',
+    'git log main@{upstream}..HEAD', "git log --grep='$x'", 'cd $HOME && git status']) {
+    assert.equal(isLookOnly(cmd), true, cmd);
+  }
+});
+
 // ---- finisherVerdict ----
 
 const TOOLS = {
