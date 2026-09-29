@@ -27,7 +27,7 @@ done · ⛔ blocked, needs a human.
 | T02 | end-sequence-no-wait | T01 | ⬜ | |
 | T03 | split-coordinator-drill | — | ⬜ | |
 | T04 | split-plan-rig | — | ✅ | Review clean, no fix commit. Multiset diff of old vs new lines: only header comments added, no body changed; no cross-file shared state or hooks; 61 pass together in 43 s; npm test green. Minor: ndjson sits in helpers but one file uses it. brief-box comment repoint accepted. |
-| T05 | split-conversation-rig | — | ⬜ | |
+| T05 | split-conversation-rig | — | ✅ | |
 | T06 | suite-timing-proof | T01, T02, T03, T04, T05 | ⬜ | |
 
 **Review queue:** —
