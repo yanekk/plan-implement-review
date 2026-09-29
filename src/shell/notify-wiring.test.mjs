@@ -12,7 +12,7 @@ import { fileURLToPath } from 'node:url';
 
 import {
   notifyViews, runNotifyActions, newNotifyTrack, notifyPass, endAlertAction, withinMs, workerEnv,
-  NOTIFY_EXIT_WAIT_MS, remoteWanted, startCoordinator,
+  NOTIFY_EXIT_WAIT_MS, remoteWanted, startCoordinator, endAlertPass, finisherOneShot,
 } from './coordinate.mjs';
 import { newNotifyState, notifyExit } from '../core/notify.mjs';
 import { createFakePlatform, FAKE_REMOTE_URL } from './fake/platform.mjs';
@@ -344,7 +344,7 @@ test('main: notifyPass runs every pass, and every exit path awaits the exit clea
   const paths = {
     signal: /process\.on\(sig, async \(\) => \{[\s\S]*?await notifyExitNow\(\);\n\s*process\.exit\(130\);/,
     halt: /HALTED by the kill switch[^\n]*\n\s*await notifyExitNow\(\);\n\s*return;/,
-    finished: /renderFinished\([^\n]*\n\s*await notifyExitNow\(\);\n\s*return;/,
+    finished: /renderFinished\([^\n]*\n[\s\S]*?await notifyExitNow\(done\);\n\s*return;/,
     noAgentComplete: /await notifyExitNow\(runNotify\(\[endAlertAction\(alert\)\]\)\);\n\s*return;/,
     runaway: /teardownOnce\('runaway'\);\n\s*await notifyExitNow\(\);\n\s*return;/,
     stall: /teardownOnce\('stalled'\);[^\n]*\n\s*await notifyExitNow\(\);\n\s*return;/,
@@ -391,4 +391,108 @@ test('main: build workers and the agent are started with the same workerEnv', ()
   const main = src.slice(src.indexOf('async function main(argv)'));
   assert.match(main, /createPlatform\(\{[^\n]*workerEnv: \(\) => workerEnv\(\) \}\)/);
   assert.match(main, /startCoordinatorAgent\(\{[\s\S]*?env: \(\) => workerEnv\(\),\n\s*\}\)/);
+});
+
+// ---- The finisher's alerts (finisher DESIGN §2.9, §2.12; T06) ----
+
+// A stand-in coordinator for notifyPass: no workers, and a finisher whose view and parked requests the test
+// sets, shaped as finisher-agent.mjs's Finisher.
+function finisherRun({ phase = 'awaiting-go', pending = [], url = 'https://claude.ai/code/session_fin', refused = false } = {}) {
+  const f = {
+    id: 'fin-1',
+    phase,
+    pending,
+    alive: () => true,
+    remoteUrl: () => url,
+    session: { pending: () => f.pending, remoteRefused: refused },
+  };
+  const coordinator = {
+    state: { tasks: {} },
+    heldByAgent: () => new Set(),
+    whyPerson: () => new Map(),
+    get finisher() {
+      return f;
+    },
+    finisherView: () => ({ state: f.phase, phase: f.phase, summary: 'A step failed: install.sh exited 1', steps: ['git merge pir/demo', './install.sh'], rulesSource: 'project', asking: f.pending.length > 0 }),
+  };
+  const platform = { workers: () => [] };
+  const s = fakeSender();
+  const track = newNotifyTrack();
+  let notifyState = newNotifyState();
+  const runs = [];
+  const run = (actions) => runs.push(runNotifyActions(actions, s.opts({ track })));
+  const pass = async (now) => {
+    notifyState = notifyPass({ plan: SLUG, platform, coordinator, notifyState, remote: true, now, run, stepOpts: { remindMs: 900_000 } });
+    await Promise.all(runs);
+  };
+  return { f, s, pass };
+}
+
+const GO_Q = { kind: 'questions', requestId: 'q1', questions: [{ question: 'Go?', header: 'Go' }] };
+
+test('finisher: ready → one alert with its link, noted on its conversation; a reminder at 15 min; cleared on finishing', async () => {
+  const r = finisherRun({ pending: [GO_Q] });
+  await r.pass(0);
+  assert.deepEqual(r.s.published.map((p) => [p.title, p.message, p.click, p.seq]), [
+    ['demo · ready for your go', '2 steps from project rules: git merge pir/demo', 'https://claude.ai/code/session_fin', 'pir-finisher-1'],
+  ]);
+  assert.deepEqual(r.s.notes, [{ id: 'fin-1', kind: 'notified', fields: { reminder: false } }]);
+  await r.pass(900_000);
+  assert.equal(r.s.published[1].message, 'Still waiting: 2 steps from project rules: git merge pir/demo');
+  r.f.phase = 'finishing';
+  r.f.pending = [];
+  await r.pass(900_001);
+  assert.deepEqual(r.s.cleared.map((c) => c.seq), ['pir-finisher-1']);
+  assert.deepEqual(r.s.logs, ['notify send finisher pir-finisher-1 ok 200', 'notify reminder finisher pir-finisher-1 ok 200', 'notify clear finisher pir-finisher-1 ok 200']);
+  assert.ok(r.s.logs.every((l) => !l.includes(TOPIC)));
+});
+
+test('finisher: stuck → `finisher stuck` with the summary; a reserved request in finishing → `Needs your yes`', async () => {
+  const r = finisherRun({ phase: 'stuck', pending: [GO_Q] });
+  await r.pass(0);
+  assert.deepEqual(r.s.published.map((p) => [p.title, p.message]), [['demo · finisher stuck', 'A step failed: install.sh exited 1']]);
+  r.f.phase = 'finishing';
+  r.f.pending = [{ kind: 'permission', requestId: 'r1', toolName: 'Bash', input: { command: 'git push origin main' } }];
+  await r.pass(10);
+  assert.deepEqual(r.s.cleared.map((c) => c.seq), ['pir-finisher-1']);
+  assert.deepEqual(r.s.published.slice(1).map((p) => [p.title, p.message, p.seq]), [['demo · finisher', 'Needs your yes: wants to run Bash git push origin main', 'pir-finisher-2']]);
+});
+
+test('finisher: `pir notify off` (no config) sends nothing, read per send', async () => {
+  const s = fakeSender();
+  await runNotifyActions([finisherOneShot({ title: 'demo · finished', message: 'm', tags: ['tada'] })], s.opts({ readConfig: () => null }));
+  assert.deepEqual([s.published, s.logs, s.notes], [[], [], []]);
+  const on = fakeSender();
+  await runNotifyActions([finisherOneShot({ title: 'demo · finished', message: 'm', tags: ['tada'] }, { click: 'https://f' })], on.opts());
+  assert.deepEqual(on.published.map((p) => [p.title, p.seq, p.tags, p.click]), [['demo · finished', null, ['tada'], 'https://f']]);
+  assert.deepEqual(on.logs, ['notify send finisher - ok 200']);
+});
+
+test('endAlertPass with the finisher: no `ready to merge`; red still `not ready`; gave up and failed to start', () => {
+  const r = (handoff, over = {}) => ({ handoff, tasks: [{}, {}], testsReason: null, ...over });
+  const sent = [];
+  const fin = [];
+  const call = (rr, sentBefore = false) => endAlertPass({ r: rr, coordinator: null, slug: 'demo', sent: sentBefore, send: (a) => sent.push(a), takesOver: true, sendFinisher: (a) => fin.push(a) });
+  assert.equal(call(r({ state: 'ready' })), false);
+  assert.equal(call(r({ state: 'ready', finisher: 'on' })), false);
+  assert.deepEqual([sent, fin], [[], []]);
+  assert.equal(call(r({ state: 'red', finisher: 'fallback', fallback: 'red' }, { testsReason: { reason: 'T03 failed' } })), true);
+  assert.deepEqual(sent.map((a) => [a.title, a.message]), [['demo · not ready', 'Tests red on pir/demo: T03 failed']]);
+  assert.equal(call(r({ state: 'ready', finisher: 'fallback', fallback: 'gave-up' })), true);
+  assert.deepEqual(fin.map((a) => [a.title, a.message]), [['demo · finisher gave up', 'Merge by hand: git merge pir/demo']]);
+  assert.equal(call(r({ state: 'ready', finisher: 'fallback', fallback: 'gave-up' }), true), true, 'sent once');
+  assert.equal(fin.length, 1);
+  assert.equal(call(r({ state: 'ready', finisher: 'fallback', fallback: 'failed' })), true);
+  assert.equal(sent.at(-1).title, 'demo · ready to merge');
+  // Without the finisher, today's alert is unchanged.
+  const plain = [];
+  endAlertPass({ r: r({ state: 'ready' }), coordinator: null, slug: 'demo', send: (a) => plain.push(a) });
+  assert.equal(plain[0].title, 'demo · ready to merge');
+});
+
+test('main: the end alert knows the finisher takes over, and the done alert is sent with the exit', () => {
+  const src = readFileSync(fileURLToPath(new URL('./coordinate.mjs', import.meta.url)), 'utf8');
+  const main = src.slice(src.indexOf('async function main(argv)'));
+  assert.match(main, /takesOver: startFinisher !== null,/);
+  assert.match(main, /r\.finished === 'finisher'\n\s*\? runNotify\(\[finisherOneShot\(finisherAlert\(\{ slug, phase: 'done', summary: lastFinisherSummary \}\), \{ click: lastFinisherUrl \}\)\]\)/);
 });
