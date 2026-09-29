@@ -336,8 +336,10 @@ All under the run's gitignored control folder ([control-folder.md](control-folde
   status `pir` records. The go question it asks still opens `finishing`.
 - **A re-prepared `ready` keeps the first alert's text**, so the 15-minute reminder may name the old step
   count. Only a re-sync (back to `preparing`) starts a new alert.
-- **After a fallback, a `pir` restart starts no coordinator agent**: `finisher/state.json` stays, so
-  the run waits (red, or in `ready to merge`) without one.
+- **After a fallback, a `pir` restart starts no coordinator agent**: `finisher/state.json` stays. A red
+  branch then waits without one. A green branch is handed over again (`handOver`): the finisher is
+  resumed, and one that gave up within the last hour gives up again at once and the run falls back to
+  `ready to merge`.
 - **The finisher's session is not in `workers.json`**, like the coordinator agent's: a coordinator that
   is SIGKILLed leaves it running. Its `claude` process carries `--name '{repo} / {slug} / finisher'`,
   so `ps -ax -o pid,command | grep '/ finisher'` finds it for a `kill`.

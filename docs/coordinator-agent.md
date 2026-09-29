@@ -374,9 +374,11 @@ run finished.
 - **pir restarts a run that reached the finisher.** The agent is not started; the finisher is resumed
   ([finisher.md](finisher.md#when-it-fails)).
 - **pir restarts a run in `ready to merge`.** Reconciliation finds every task `✅`; the command finds
-  `REPORT.md` committed, re-checks the sync, and returns to `ready to merge` without rewriting the
+  `REPORT.md` committed, re-checks the sync, and returns to its wait without rewriting the
   report (only the footer, if `main` moved). If the person merged while pir was down, the run finishes
-  as merged.
+  as merged. A green branch is then handed to the finisher, even one whose finisher had fallen back;
+  it waits in `ready to merge` again only if the finisher falls back again
+  ([finisher.md](finisher.md#known-limitations)).
 - **It is slow, or drops a brief.** Several briefs arriving together is the likely way the agent drops
   one. The hold limit ([Answer first](#answer-first)) hands any item held 5 minutes without a decision
   to the person, so a held item never waits unseen.
