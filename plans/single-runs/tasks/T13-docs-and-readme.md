@@ -17,7 +17,7 @@ All of DESIGN §2, as the code now does it; CLAUDE.md § The README follows ever
 - `docs/single-runs.md` (new): starting one, the settings keys, the steps, red rounds and the baseline, the reports, the screen, alerts, stop/resume/remove, known limitations
 - `docs/README.md`, `docs/planning-runs.md` (§ The dashboard box: `/single`, its texts), `docs/control-folder.md` (`.parallel/single/`), `docs/detached-runs.md` (TYPE `single`, its states)
 - `README.md`: a short section "Small changes without a plan — `@repo/single`", what it does for the user, the settings lines to add, a link to `docs/single-runs.md`; the workflow table gains the row
-- `CLAUDE.md`: the command table gains `@repo/single {prompt}` in `pir`
+- `CLAUDE.md`: the command table gains `@repo/single {prompt}` in `pir`; § Where sessions run gains single-run sessions beside the `pir plan` carve-out (a builder or reviewer in its run's worktree does not halt), since `install.sh` ships this file to other projects
 
 ## Outside actions
 
@@ -30,6 +30,6 @@ All of DESIGN §2, as the code now does it; CLAUDE.md § The README follows ever
 
 ## Done when
 
-- [ ] the docs describe what the code does today, including its limits (no shell command, no base sync)
+- [ ] the docs describe what the code does today, including its limits (no shell command, no base sync, no time limit on a test run)
 - [ ] `./install.sh` run and `grep -q single ~/.claude/pir-engine/src/core/planbox.mjs` succeeds, `~/.claude/skills/pir-single/SKILL.md` exists
 - [ ] `npm test` green

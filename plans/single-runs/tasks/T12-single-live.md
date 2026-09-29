@@ -15,7 +15,7 @@ DESIGN §5.1 (first row), §5.2, §5.3 (the live-run row).
 ## Files
 
 - `src/shell/harness/fixtures/single-run-live.mjs` (new), registered in `src/shell/harness/fixtures.mjs`
-- `src/shell/harness/run.mjs` if it needs a path that starts a single run instead of a build
+- `src/shell/harness/run.mjs`: a `kind: 'single'` scenario runner beside `runPlanScenario` (today it starts only builds and planning runs)
 - `src/shell/harness/fixtures.test.mjs` (the fixture is well-formed; no live run in `npm test`)
 
 ## Interface

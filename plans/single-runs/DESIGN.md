@@ -159,7 +159,10 @@ The program (`single-run.mjs`) executes the pure decision `decideSingleStep` (§
    builder, whose working directory must not move under it.
 5. **review.** A fresh reviewer session is held in the renamed worktree. It reads the change against
    the prompt, fixes what it finds, commits, and reports `reviewed`. Its checks are the worktree being
-   clean. Then the tests run as in step 3, and red goes back to the reviewer.
+   clean. Then the tests run as in step 3, and red goes back to the reviewer, except when the head is
+   still the one step 3 tested green and the tree is clean: the reviewer changed nothing, so that result
+   stands and the step is done (user, 2026-09-29, plan review: a second run of the same commit proves
+   nothing and costs a full test run).
 6. **done.** Green after review: the reviewer is closed and the run finishes with outcome `ready`. The
    row reads `ready to merge`, the steps view shows `git switch {base} && git merge pir/{name}`
    (base-branch's hand-off text), and the end alert is sent (§2.10).
@@ -239,7 +242,8 @@ binds: work only in the run's worktree on its branch; keep the change to what th
 so and ask rather than widen it; commit before reporting; after reporting, wait for pir's word and
 change nothing until it arrives; never merge, rebase, push or touch the base branch; the builder checks
 its name is free (the planner's three checks, with `single-{hex4}` also refused) before reporting;
-`dropped` only after the person agreed in the conversation.
+`dropped` only after the person agreed in the conversation, for a change too big or one with nothing
+to do (§2.12).
 
 ### 2.7 Reports and checks
 
@@ -248,8 +252,9 @@ Dropped into the reports folder in the planning report format (planning-runs § 
 ```
 [pir:v1 kind=built single={name}]      the builder committed the change; {name} is the branch name
 [pir:v1 kind=reviewed single={name}]   the reviewer is done, fixes committed
-[pir:v1 kind=dropped single=-]         the person agreed to call it off, or it is too big for a
-                                       single run (the body says which and recommends /plan)
+[pir:v1 kind=dropped single=-]         the person agreed to call it off: it is too big for a single
+                                       run (the body recommends /plan), or there is nothing to change
+                                       (the body says what was found)
 ```
 
 A report is a claim checked against git (`singleChecks` in `single-run.mjs`):
@@ -273,7 +278,8 @@ The dashboard lists single runs beside plans and builds (`src/core/dashboard.mjs
 - **STATE**: `building` (setup and build working), `testing` (pir's tests or the baseline running),
   `reviewing`, `asking you` (amber, bold) while the live session has a request or a question set
   pending or has stopped on the person, `ready to merge` (amber, bold) for a finished `ready` run whose
-  branch is not yet in the base, `merged` once it is, `finished` for `dropped`, `stopped`, `crashed`.
+  branch is not yet in the base, `merged` once it is, `finished` for `dropped`; `stopped` and `crashed`
+  as for any run.
   `asking you` and `ready to merge` count in `N waiting for you`.
 - **PROGRESS**: `build …`, `build · tests …`, `build ✓ review …`, `build ✓ review · tests …`,
   `build ✓ review ✓`, `build ✗` (dropped in build), `build ✓ review ✗` (dropped in review). A red round
@@ -339,6 +345,11 @@ is not resumable.
   as for a build without the coordinator agent. pir does not sync the base into a single run's branch.
 - **The builder decides it is too big**: it tells the person and recommends `/plan`; with their
   agreement it reports `dropped` (§2.7).
+- **Nothing to change** (already done, or what the prompt describes is not there): the builder tells the
+  person what it found; with their agreement it reports `dropped` (user, 2026-09-29, plan review).
+- **A test run that never ends**: no time limit, as for a build's tests; the row reads `testing` with
+  its clock running and the person stops the run. A known limitation, named in the docs (user,
+  2026-09-29, plan review: no per-repo guess at how long is too long).
 - **The baseline worktree cannot be created or its setup fails**: the baseline line says the starting
   point could not be tested (§2.5); the round goes on.
 
@@ -452,8 +463,9 @@ restarts, a rename sub-step is read from disk as planning does, a send may repea
 | Deliberately absent | no TypeScript, no bundler, no test framework beyond `node:test` |
 
 **The test command.** `npm test`, the block at the top. It runs `FORCE_COLOR=0 NO_COLOR=1 node --test
---test-reporter=dot 'src/**/*.test.mjs'` and ends with a TESTS PASSED/FAILED line. Measured green on
-this machine 2026-09-29, about 5 minutes. `COLORTERM=truecolor` is set in this shell; colour is off
+--test-reporter=dot 'src/**/*.test.mjs'` and ends with a TESTS PASSED/FAILED line (main's `b39a53f`,
+which reaches this branch with the start-condition merge). Measured green on this machine 2026-09-29,
+about 5 minutes; green again in a fresh copy at plan review. `COLORTERM=truecolor` is set in this shell; colour is off
 because the script sets `FORCE_COLOR=0` itself. For detail while debugging, run one file with
 `node --test --test-reporter=spec path/to/file.test.mjs`.
 
@@ -492,6 +504,8 @@ no second rig. Sizes: 80×24 and 120×40. It is in `npm test`.
 | Real single run for the live check (T12) | `perl -e 'alarm 1200; exec @ARGV' node src/shell/harness/run.mjs single-run-live --into /tmp/pir-single-live` | worker | draws plan limits only, no paid API; a scratch repo | delete `/tmp/pir-single-live` | two short sessions | `claude auth status` |
 | Scratch teardown | `rm -rf /tmp/pir-single-live` | worker | local scratch only | none needed | none | none |
 | Refresh the installed engine and skills | `./install.sh` | worker | CLAUDE.md requires it after engine or skill changes; local, idempotent | re-run on the previous commit | none | none |
+
+The user approved these bins as they stand at plan review, 2026-09-29, the live run left in `worker`.
 
 Credentials: the Claude Code login this machine already uses (`claude auth status`, measured as in
 earlier plans); headless sessions draw on plan limits (checked 2026-09-25). No paid API, nothing others

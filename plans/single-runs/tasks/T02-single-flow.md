@@ -53,6 +53,7 @@ singleProgress(runState) → string                                      // DESI
 - [ ] first red → runBaseline, then send redMessage round 1 with the baseline line; later reds reuse the baseline
 - [ ] rounds 1–3 plain; round 4 and 5 carry the past-limit line; rounds counted per step (review starts at 0)
 - [ ] reviewed report → check → tests → green → closeWhenIdle → finish ready
+- [ ] reviewed with the head step 3 tested green and a clean tree → no runTests; closeWhenIdle → finish ready
 - [ ] dropped in build and in review → closeWhenIdle → finish dropped
 - [ ] a report of the other step's kind is ignored; session exits with no report → exitCrashed
 - [ ] resume: half-done rename finished first; `running: 'tests'` restarts the tests; otherwise resumeSession with the step's last session id

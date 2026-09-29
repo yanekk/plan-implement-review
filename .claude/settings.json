@@ -51,7 +51,9 @@
       "Bash(PIR_HOME=/tmp/pir-notify-t06 node src/shell/pir.mjs notify)",
       "Bash(PIR_NOTIFY_REMIND_MS=120000 PIR_NOTIFY_ICON=https://raw.githubusercontent.com/yanekk/plan-implement-review/pir/reliable-notifications/assets/pir-notify-icon.png node src/shell/harness/run.mjs notify-live --into /tmp/notify-live)",
       "Bash(curl -sI https://raw.githubusercontent.com/yanekk/plan-implement-review/pir/reliable-notifications/assets/pir-notify-icon.png)",
-      "Bash(gh auth status)"
+      "Bash(gh auth status)",
+      "Bash(perl -e 'alarm 1200; exec @ARGV' node src/shell/harness/run.mjs single-run-live --into /tmp/pir-single-live)",
+      "Bash(rm -rf /tmp/pir-single-live)"
     ],
     "ask": [
       "Bash(npm i @earendil-works/pi-tui@0.87.1)",

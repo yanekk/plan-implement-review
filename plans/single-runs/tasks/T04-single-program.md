@@ -51,6 +51,7 @@ With real git in temp repos, the fake Claude through the holder, and real `sh` t
 - [ ] dropped → outcome dropped, branch kept
 - [ ] setup failing at the start → builder instruction carries the setup note
 - [ ] session edits after reporting (head moves) → tests run again
+- [ ] reviewer commits nothing → no second test run, outcome ready
 - [ ] stop during a test run → the command's process is gone, state stopped; resume restarts the tests
 - [ ] crash mid-rename → resume finishes it; leftover baseline worktree removed on resume
 - [ ] while tests run the step's phase is testing, never asking

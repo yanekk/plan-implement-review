@@ -27,7 +27,7 @@ recommend `/plan` if it is too big); the builder (understand, change, commit wit
 and the prompt, fix what has one right answer, ask the person about the rest, commit
 `single({name}) review: <what>`, drop `reviewed`); after reporting (wait for pir's word, change
 nothing; on red fix and report again; past the limit stop and ask); dropping (only with the person's
-agreement); never merge, rebase, push or touch the base; the drop command, in the form the planning
+agreement: too big, recommend `/plan`; or nothing to change, say what was found); never merge, rebase, push or touch the base; the drop command, in the form the planning
 skills use, with `from: "builder"` or `"reviewer"` and the header `[pir:v1 kind=… single=…]`.
 
 ## Tests
