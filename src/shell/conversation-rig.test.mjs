@@ -358,7 +358,8 @@ test('the driver walks the tour on the real pir screen', { timeout: 90000 }, asy
   const opened = screens[2].rows;
   assert.match(opened[0], new RegExp(`^T01  worker ${rig.workerId.slice(0, 8)} · live`), 'the header names the worker');
   const text = (i) => screens[i].rows.join('\n');
-  assert.match(text(2), /⎿ Bash npm test/, 'the tool steps are in the scrollback, the failed one included');
+  // group-commands §4: the four opening steps fold into one group line, flagged with the failed npm test.
+  assert.match(text(2), /▸ Read 1 file, searched 1 time, ran 1 shell command, edited 1 file · 1 failed/, 'the tool steps are in the scrollback, the failed one included');
   assert.match(text(13), /Which name should the rig command have\? → pir-rig/);
   assert.match(text(screens.length - 1), /T01/, '← returned to the run\'s live view');
 
@@ -645,6 +646,10 @@ for (const [cols, rows] of [[80, 24], [120, 40]]) {
       await screen.waitFor(/pick a task/);
       screen.send('\x1b[C');
       let s = await screen.waitFor(/That was 300 steps/, 30000);
+      // group-commands §4: the 300 steps fold into one group line by default, so the history to scroll is
+      // full detail's (Tab), every result line drawn.
+      screen.send('\t');
+      s = await screen.waitFor(/step 300 done/);
       assert.doesNotMatch(s.at(-1), /more below/);
       const mid = Math.floor(rows / 2);
 
@@ -652,8 +657,8 @@ for (const [cols, rows] of [[80, 24], [120, 40]]) {
       screen.send(mouseBytes.wheel(10, mid, 'up'));
       s = await screen.waitFor(/↓ 6 more below/);
       assert.match(s.at(-1), /^↓ 6 more below · ↵ send/);
-      assert.doesNotMatch(s.join('\n'), /That was 300 steps/, 'the end scrolled out of view');
-      assert.match(s.join('\n'), /step 295 done/, 'earlier lines came into view');
+      assert.doesNotMatch(s.join('\n'), /That was 300 steps|step 300 done/, 'the end scrolled out of view');
+      assert.match(s.join('\n'), /line \d+ of a long result/, 'earlier lines came into view');
 
       screen.send(mouseBytes.wheel(10, mid, 'down'));
       screen.send(mouseBytes.wheel(10, mid, 'down'));
@@ -667,6 +672,102 @@ for (const [cols, rows] of [[80, 24], [120, 40]]) {
       screen.send(mouseBytes.click(x + 1, y + 1)); // the terminal counts from 1
       screen.send('X');
       await screen.waitFor(/heXllo world/);
+      assert.equal(screen.overflows(), 0, 'no frame was clipped to fit the window');
+    } finally {
+      await screen.close();
+    }
+  });
+}
+
+// group-commands T02, end to end at 80×24 and 120×40: the tour's four opening steps fold into one group
+// line as they finish; a click opens and folds it, two quick clicks are an open and a fold (never a word
+// selection), a drag across it still copies, and Tab still shows full detail. Colour is on (NO_COLOR and
+// COLORTERM dropped: the basic table), so the failed step's error style and the hover can be read. The
+// rig's `pbcopy` shim is first on pir's PATH: a copy lands in its clipboard.txt, never the real clipboard.
+const OPENING_GROUP = /▸ Read 1 file, searched 1 time, ran 1 shell command, edited 1 file · 1 failed/;
+for (const [cols, rows] of [[80, 24], [120, 40]]) {
+  test(`group lines fold the steps and a click opens them at ${cols}×${rows}`, { timeout: 120000 }, async (t) => {
+    const home = scratchHome(t);
+    const rig = startRig({ env: home, paceMs: 1500, workMs: 300 });
+    t.after(() => rig.stop());
+    const { NO_COLOR: _nc, COLORTERM: _ct, ...base } = process.env;
+    const env = { ...base, ...home, PATH: `${rig.shimDir}:${process.env.PATH}` };
+    const screen = openScreen({ cols, rows, env });
+    const rowOf = (s, re) => s.findIndex((l) => re.test(l));
+    const settle = () => new Promise((r) => setTimeout(r, 600));
+    try {
+      await screen.waitFor(/rig +work/);
+      screen.send('\r');
+      await screen.waitFor(/pick a task/);
+      screen.send('\x1b[C');
+
+      // A running step is on its own line; once finished it joins the group's count.
+      let s = await screen.waitFor(/^ {2}⎿ (Read|Grep|Bash|Edit) /m, 20000);
+      const running = s.find((l) => /^ {2}⎿ /.test(l));
+      if (!/⎿ Read/.test(running)) assert.match(s.join('\n'), /▸ Read 1 file/, `the finished Read is counted beside the running step:\n${s.join('\n')}`);
+      s = await screen.waitFor(OPENING_GROUP, 30000);
+      assert.doesNotMatch(s.join('\n'), /⎿ (Read plans|Grep create|Bash npm test|Edit src)/, 'no finished step is left on its own line');
+
+      // Hover brightens the group line.
+      let y = rowOf(s, OPENING_GROUP);
+      const x = s[y].indexOf('▸') + 3; // 1-based column of the label's first letter
+      assert.ok(!screen.boldAt(y, x), 'plain before the pointer comes');
+      screen.send(mouseBytes.move(x, y + 1));
+      await screen.waitFor(() => screen.boldAt(y, x));
+
+      // Click: open, four indented steps, the failed Bash one in the error style; click again: folded.
+      screen.send(mouseBytes.click(x, y + 1));
+      s = await screen.waitFor(/▾ Read 1 file/);
+      y = rowOf(s, /▾ Read 1 file/);
+      assert.match(s[y + 1], /^ {4}⎿ Read plans\/rig/);
+      assert.match(s[y + 2], /^ {4}⎿ Grep createConversationView/);
+      assert.match(s[y + 3], /^ {4}⎿ Bash npm test/);
+      assert.match(s[y + 4], /^ {4}⎿ Edit src\/shell\/conversation-view\.mjs/);
+      assert.equal(screen.fgAt(y + 3, 6), '31', 'the failed step is in the error style');
+      assert.equal(screen.fgAt(y + 1, 6), '35', 'a passed one in the step style');
+      screen.send(mouseBytes.click(x, y + 1));
+      s = await screen.waitFor(OPENING_GROUP);
+      assert.doesNotMatch(s.join('\n'), /▾ Read 1 file/);
+
+      // Allow the push, refuse `rm -rf build/`: its group reads refused, not failed.
+      await screen.waitFor(/↵ allow · n refuse/);
+      screen.send('\r');
+      // The request, pinned: the running `⎿ Bash rm -rf build/` line shows first, and an `n` then is typing.
+      s = await screen.waitFor(/⚑ T01 wants to use Bash\s*\n\s*rm -rf build\/[\s\S]*↵ allow · n refuse/);
+      screen.send('n');
+      s = await screen.waitFor(/▸ Ran 1 shell command · 1 refused/);
+      assert.doesNotMatch(s.join('\n'), /▸ Ran 1 shell command · 1 failed/);
+
+      // Two quick clicks: an open and a fold, and no word selection copied.
+      y = rowOf(s, OPENING_GROUP);
+      screen.send(mouseBytes.click(x, y + 1) + mouseBytes.click(x, y + 1));
+      await settle();
+      s = await screen.waitFor(OPENING_GROUP);
+      assert.equal(existsSync(rig.clipboard), false, 'nothing was copied');
+
+      // A drag across the group line copies its text into the shim, and toggles nothing.
+      y = rowOf(s, OPENING_GROUP);
+      screen.send(mouseBytes.press(x, y + 1) + mouseBytes.drag(x + 10, y + 1) + mouseBytes.release(x + 10, y + 1));
+      await waitFor(() => existsSync(rig.clipboard) && readFileSync(rig.clipboard, 'utf8').length > 0, { what: 'the drag to copy' });
+      assert.match(readFileSync(rig.clipboard, 'utf8'), /Read 1 file/);
+      await settle();
+      assert.match(screen.text(), OPENING_GROUP, 'the drag did not open the group');
+
+      // Tab: full detail, every step and its result lines; Tab back: grouped again.
+      // Full detail is long: at 80×24 the npm test step is above the screen, so PgUp to it.
+      screen.send('\t');
+      await screen.waitFor(/⎿ Bash rm -rf build\/\s*\n\s*The person refused\./);
+      const npmTest = /⎿ Bash npm test\s*\n\s*✖ conversation-view/;
+      for (let i = 0; i < 6 && !npmTest.test(screen.text()); i++) {
+        screen.send('\x1b[5~');
+        await settle();
+      }
+      s = await screen.waitFor(npmTest);
+      assert.match(s.join('\n'), /expected 80, got 90/);
+      assert.doesNotMatch(s.join('\n'), /^ {2}[▸▾] /m);
+      screen.send('\t\x1b[6~\x1b[6~\x1b[6~');
+      await screen.waitFor(OPENING_GROUP);
+      for (const r of screen.text().split('\n')) assert.ok([...r].length <= cols);
       assert.equal(screen.overflows(), 0, 'no frame was clipped to fit the window');
     } finally {
       await screen.close();

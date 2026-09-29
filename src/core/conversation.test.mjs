@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
-import { buildConversation, gateFor, gateReducer, pickerFor, pickerReducer, promptLines, mainArg, onOther, helperTime } from './conversation.mjs';
+import { buildConversation, gateFor, gateReducer, pickerFor, pickerReducer, promptLines, mainArg, onOther, helperTime, stepKind, groupLabel } from './conversation.mjs';
 
 const SAMPLE = readFileSync(fileURLToPath(new URL('./fixtures/stream-sample.ndjson', import.meta.url)), 'utf8')
   .split('\n')
@@ -81,7 +81,7 @@ test('a skill body Claude injects (isSynthetic user text) is not drawn; an inter
     res('s1', 'Launching skill: pir-worker'),
     userText('Base directory for this skill: /x\n\n# worker\n\nline after line', { isSynthetic: true }),
     userText('[Request interrupted by user for tool use]'),
-  ]);
+  ], { open: new Set(['s1']) });
   const text = all(lines).join('\n');
   assert.doesNotMatch(text, /Base directory|# worker|line after line/);
   assert.match(text, /⎿ Skill pir-worker/);
@@ -135,22 +135,26 @@ test('a background command that fails is drawn as failed; a foreground task and 
   assert.equal(conv.background, 0);
 });
 
-test('one tool use renders as exactly one line by default, regardless of result length', () => {
+// group-commands §4: a step line is now drawn inside an open group, two columns deeper.
+test('one tool use in an open group renders as exactly one step line, regardless of result length', () => {
   const body = Array.from({ length: 50 }, (_, i) => `line ${i + 1}`).join('\n');
-  const { lines } = buildConversation([use('u1', 'Bash', { command: 'npm test\n--verbose' }), res('u1', `${body}\n\n`)], { width: 80, taskId: 'T05' });
-  assert.equal(lines.length, 1);
-  assert.equal(textOf(lines[0]), '  ⎿ Bash npm test  line 50');
-  assert.deepEqual(lines[0].map((s) => s.style), ['step', 'dim']);
+  const { lines } = buildConversation([use('u1', 'Bash', { command: 'npm test\n--verbose' }), res('u1', `${body}\n\n`)], { width: 80, taskId: 'T05', open: new Set(['u1']) });
+  assert.equal(lines.length, 2);
+  assert.equal(textOf(lines[0]), '  ▾ Ran 1 shell command');
+  assert.equal(textOf(lines[1]), '    ⎿ Bash npm test  line 50');
+  assert.deepEqual(lines[1].map((s) => s.style), ['step', 'dim']);
 });
 
 test('a step line is truncated to width by code point and never splits a surrogate pair', () => {
-  const { lines } = buildConversation([use('u1', 'Bash', { command: `echo ${'😀'.repeat(60)}` }), res('u1', 'ok')], { width: 30 });
-  const text = textOf(lines[0]);
+  const { lines } = buildConversation([use('u1', 'Bash', { command: `echo ${'😀'.repeat(60)}` }), res('u1', 'ok')], { width: 30, open: new Set(['u1']) });
+  const text = textOf(lines[1]);
   assert.equal([...text].length, 30);
   assert.ok(text.endsWith('…'));
   assert.ok(!/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/.test(text), 'no lone high surrogate');
   const exact = buildConversation([use('u1', 'Read', { file_path: 'a'.repeat(19) })], { width: 30 }).lines[0];
-  assert.equal(textOf(exact), `  ⎿ Read ${'a'.repeat(19)}`, 'a line that fits exactly is not clipped');
+  assert.equal(textOf(exact), `  ⎿ Read ${'a'.repeat(19)}`, 'a running line that fits is not clipped');
+  const openExact = buildConversation([use('u1', 'Read', { file_path: 'a'.repeat(19) }), res('u1', '')], { width: 30, open: new Set(['u1']) }).lines[1];
+  assert.equal(textOf(openExact), `    ⎿ Read ${'a'.repeat(19)}`, 'an open step that fits exactly is not clipped');
 });
 
 test('a step with no result yet shows just the step; the main argument follows the tool', () => {
@@ -168,8 +172,8 @@ test('a step with no result yet shows just the step; the main argument follows t
 });
 
 test('a failing tool result styles the step line step-error', () => {
-  const { lines } = buildConversation([use('u1', 'Bash', { command: 'false' }), res('u1', 'exit 1', true)], { width: 80 });
-  assert.equal(styleOf(lines[0]), 'step-error');
+  const { lines } = buildConversation([use('u1', 'Bash', { command: 'false' }), res('u1', 'exit 1', true)], { width: 80, open: new Set(['u1']) });
+  assert.equal(styleOf(lines[1]), 'step-error');
   const full = buildConversation([use('u1', 'Bash', { command: 'false' }), res('u1', 'exit 1', true)], { width: 80, full: true });
   assert.equal(styleOf(full.lines[0]), 'step-error');
 });
@@ -185,7 +189,8 @@ test('full mode shows every result line; toggling changes nothing else', () => {
   const full = buildConversation(entries, { width: 80, taskId: 'T05', full: true }).lines;
   assert.deepEqual(all(full), ['pir ▸ go', '  ⎿ Bash npm test', '      one', '      two', '      three', 'T05 ▸ done']);
   assert.deepEqual(full.slice(2, 5).map(styleOf), ['dim', 'dim', 'dim']);
-  const withoutSteps = (lines) => all(lines).filter((l) => !l.startsWith('  ⎿') && !l.startsWith('      '));
+  const withoutSteps = (lines) => all(lines).filter((l) => !l.startsWith('  ⎿') && !l.startsWith('  ▸') && !l.startsWith('      '));
+  assert.deepEqual(all(brief), ['pir ▸ go', '  ▸ Ran 1 shell command', 'T05 ▸ done']);
   assert.deepEqual(withoutSteps(full), withoutSteps(brief));
 });
 
@@ -320,18 +325,29 @@ test('raw and system entries never crash the builder; notes, known and unknown, 
 
 // ---- The committed sample (T01) ----
 
-test("T01's sample gives one line per step and every message", () => {
-  const { lines, pinned } = buildConversation(SAMPLE, { width: 100, taskId: 'T05' });
+test("T01's sample gives one group line per run of steps, one step line each when open, and every message", () => {
+  const folded = buildConversation(SAMPLE, { width: 100, taskId: 'T05' }).lines;
+  // The sample predates `toolUseId` on requests and its requestIds are not tool-use ids, so the refused rm
+  // reads failed, as its isError says (group-commands §2.2).
+  assert.deepEqual(all(folded).filter((l) => l.startsWith('  ▸ ')), [
+    '  ▸ Ran 1 shell command',
+    '  ▸ Asked 1 question set',
+    '  ▸ Ran 1 shell command · 1 failed',
+    '  ▸ Ran 1 shell command',
+  ]);
+  const ids = new Set(folded.filter((l) => l.hit).map((l) => l.hit.id));
+  assert.equal(ids.size, 4);
+  const { lines, pinned } = buildConversation(SAMPLE, { width: 100, taskId: 'T05', open: ids });
   assert.equal(pinned, null);
   const text = all(lines);
-  const steps = text.filter((l) => l.startsWith('  ⎿ '));
-  assert.deepEqual(steps.map((l) => l.split('  ').slice(0, 2).join('  ')), [
-    '  ⎿ Bash echo probe-one > probe.txt',
-    '  ⎿ AskUserQuestion',
-    '  ⎿ Bash rm probe.txt',
-    '  ⎿ Bash sleep 4 && echo bg-done',
+  const steps = text.filter((l) => l.startsWith('    ⎿ '));
+  assert.deepEqual(steps.map((l) => l.split('  ').slice(0, 3).join('  ')), [
+    '    ⎿ Bash echo probe-one > probe.txt',
+    '    ⎿ AskUserQuestion',
+    '    ⎿ Bash rm probe.txt',
+    '    ⎿ Bash sleep 4 && echo bg-done',
   ]);
-  assert.equal(lines.find((l) => textOf(l).startsWith('  ⎿ Bash rm'))[0].style, 'step-error');
+  assert.equal(lines.find((l) => textOf(l).startsWith('    ⎿ Bash rm'))[0].style, 'step-error');
   // Every message sent, and every worker reply, appears.
   for (const e of SAMPLE.map((l) => JSON.parse(l))) {
     if (e.dir === 'out' && e.kind === 'message') assert.ok(text.join(' ').includes(e.text.split(' ').slice(0, 5).join(' ')), e.text);
@@ -343,7 +359,7 @@ test("T01's sample gives one line per step and every message", () => {
   assert.ok(text.includes('  → refused'));
   assert.ok(text.includes('  Which fruits? → apple, pear'));
   assert.equal(text.at(-1), '· the worker exited');
-  assert.ok(!text.some((l) => l.includes('failed')), 'the interrupted turn is not a failure');
+  assert.ok(!text.some((l) => l.includes('the turn failed')), 'the interrupted turn is not a failure');
 });
 
 // ---- The permission gate ----
@@ -542,10 +558,10 @@ test('terminal escapes and control characters in worker text and tool output nev
   const dirty = '\x1b[31mFAIL\x1b[0m a\tb\x1b[2J 50%\r100%';
   const log = [use('u1', 'Bash\x1b[2J', { command: 'npm\x1b[1m test' }), res('u1', dirty), say('hi \x1b]0;title\x07there'), request('r1', 'Bash\x1b[2J')];
   for (const full of [false, true]) {
-    const { lines, pinned } = buildConversation(log, { width: 80, taskId: 'T05', full });
+    const { lines, pinned } = buildConversation(log, { width: 80, taskId: 'T05', full, open: new Set(['u1']) });
     const painted = [...lines, ...promptLines(pinned, { width: 80, taskId: 'T05' })];
     for (const l of painted) for (const s of l) assert.ok(!/[\x00-\x1f\x7f-\x9f]/.test(s.text), JSON.stringify(s.text));
-    if (!full) assert.equal(textOf(lines[0]), '  ⎿ Bash npm test  100%');
+    if (!full) assert.equal(textOf(lines[1]), '    ⎿ Bash npm test  100%');
     assert.ok(all(lines).includes('T05 ▸ hi there'));
   }
 });
@@ -789,4 +805,264 @@ test('a sent message with a preface draws `you ▸ {text}` then the note as a `p
   const narrow = all(buildConversation(log, { width: 60, taskId: 'T05' }).lines);
   assert.ok(narrow[1].startsWith('pir ▸ [pir] Before this message'));
   assert.ok(narrow.length > 3, 'the note wraps like any message');
+});
+
+// ---- Grouped steps (group-commands T01; DESIGN §2.1–§2.6) ----
+
+const groupLinesOf = (lines) => lines.filter((l) => l.hit);
+const step = (id, name, input = {}, result = 'ok', isError = false) => [use(id, name, input), res(id, result, isError)];
+
+test('four consecutive finished steps fold into one group line, capitalised only on the first word', () => {
+  const { lines } = buildConversation([
+    ...step('a', 'Read', { file_path: '/x' }),
+    ...step('b', 'Grep', { pattern: 'x' }),
+    ...step('c', 'Bash', { command: 'ls' }),
+    ...step('d', 'Edit', { file_path: '/x' }),
+  ]);
+  assert.deepEqual(all(lines), ['  ▸ Read 1 file, searched 1 time, ran 1 shell command, edited 1 file']);
+  assert.deepEqual(lines[0].map((s) => s.style), ['step']);
+});
+
+test('one finished Bash reads Ran 1 shell command; two read Ran 2 shell commands', () => {
+  assert.deepEqual(all(buildConversation(step('a', 'Bash')).lines), ['  ▸ Ran 1 shell command']);
+  assert.deepEqual(all(buildConversation([...step('a', 'Bash'), ...step('b', 'Bash')]).lines), ['  ▸ Ran 2 shell commands']);
+});
+
+test('every kind in the §2.2 table, singular and plural; shared phrases share a count; an unknown tool keeps its name', () => {
+  const table = [
+    ['Bash', 'ran 1 shell command', 'ran 2 shell commands'],
+    ['Read', 'read 1 file', 'read 2 files'],
+    ['Write', 'wrote 1 file', 'wrote 2 files'],
+    ['Edit', 'edited 1 file', 'edited 2 files'],
+    ['MultiEdit', 'edited 1 file', 'edited 2 files'],
+    ['NotebookEdit', 'edited 1 file', 'edited 2 files'],
+    ['Grep', 'searched 1 time', 'searched 2 times'],
+    ['Glob', 'searched 1 time', 'searched 2 times'],
+    ['WebFetch', 'fetched 1 page', 'fetched 2 pages'],
+    ['WebSearch', 'searched the web 1 time', 'searched the web 2 times'],
+    ['Task', 'ran 1 agent', 'ran 2 agents'],
+    ['Agent', 'ran 1 agent', 'ran 2 agents'],
+    ['Skill', 'loaded 1 skill', 'loaded 2 skills'],
+    ['TodoWrite', 'updated the to-do list 1 time', 'updated the to-do list 2 times'],
+    ['AskUserQuestion', 'asked 1 question set', 'asked 2 question sets'],
+    ['Monitor', 'started 1 monitor', 'started 2 monitors'],
+    ['mcp__x__y', 'used mcp__x__y 1 time', 'used mcp__x__y 2 times'],
+  ];
+  const cap = (s) => s[0].toUpperCase() + s.slice(1);
+  for (const [name, one, two] of table) {
+    assert.equal(groupLabel([{ name }]).text, cap(one), name);
+    assert.equal(groupLabel([{ name }, { name }]).text, cap(two), name);
+    assert.deepEqual(all(buildConversation(step('a', name)).lines), [`  ▸ ${cap(one)}`], name);
+  }
+  assert.equal(groupLabel([{ name: 'Edit' }, { name: 'MultiEdit' }]).text, 'Edited 2 files');
+  assert.equal(groupLabel([{ name: 'Grep' }, { name: 'Glob' }]).text, 'Searched 2 times');
+  assert.equal(groupLabel([{ name: 'Bash' }, { name: 'Task' }]).text, 'Ran 1 shell command, ran 1 agent', 'same verb, different kind');
+  assert.deepEqual(stepKind('mcp__x__y'), { key: 'tool:mcp__x__y', verb: 'used mcp__x__y', one: 'time', many: 'times' });
+  assert.equal(stepKind('Edit').key, stepKind('MultiEdit').key);
+  assert.equal(stepKind('toString').verb, 'used toString', 'an inherited property name is still an unknown tool');
+  assert.deepEqual(groupLabel([]), { text: '', failed: 0, refused: 0 });
+});
+
+test('kinds are listed in the order each first appeared', () => {
+  const { lines } = buildConversation([...step('a', 'Bash'), ...step('b', 'Read'), ...step('c', 'Bash')]);
+  assert.deepEqual(all(lines), ['  ▸ Ran 2 shell commands, read 1 file']);
+});
+
+test('a failed step adds a step-error suffix that survives clipping; the label is cut first', () => {
+  const log = [...step('a', 'Read'), ...step('b', 'Grep'), ...step('c', 'Bash', { command: 'false' }, 'exit 1', true), ...step('d', 'Edit')];
+  const wide = buildConversation(log).lines[0];
+  assert.equal(textOf(wide), '  ▸ Read 1 file, searched 1 time, ran 1 shell command, edited 1 file · 1 failed');
+  assert.deepEqual(wide.map((s) => s.style), ['step', 'step-error']);
+  const narrow = buildConversation(log, { width: 30 }).lines[0];
+  assert.equal([...textOf(narrow)].length, 30);
+  assert.equal(narrow[0].text, '  ▸ Read 1 file, s…');
+  assert.deepEqual(narrow.slice(1), [{ text: ' · 1 failed', style: 'step-error' }]);
+  assert.equal(groupLabel([{ name: 'Bash', isError: true }, { name: 'Bash' }]).failed, 1);
+});
+
+test('a refused request reads refused, dim, not failed: permission with or without a message, and a question set answered in text', () => {
+  const deny = (message) => ({ behavior: 'deny', message });
+  const refusedBash = (id, message) => [
+    use(id, 'Bash', { command: 'rm x' }),
+    request(`r-${id}`, 'Bash', { command: 'rm x' }, { toolUseId: id }),
+    reply(`r-${id}`, deny(message)),
+    res(id, message ?? 'refused', true),
+  ];
+  for (const message of [undefined, 'not that file']) {
+    const { lines } = buildConversation(refusedBash('a', message));
+    const line = groupLinesOf(lines)[0];
+    assert.equal(textOf(line), '  ▸ Ran 1 shell command · 1 refused');
+    assert.deepEqual(line.map((s) => s.style), ['step', 'dim']);
+  }
+  const asked = [
+    use('q', 'AskUserQuestion', QUESTIONS),
+    request('r-q', 'AskUserQuestion', QUESTIONS, { toolUseId: 'q' }),
+    reply('r-q', deny('just pick red')),
+    res('q', 'just pick red', true),
+  ];
+  assert.equal(textOf(groupLinesOf(buildConversation(asked).lines)[0]), '  ▸ Asked 1 question set · 1 refused');
+  assert.deepEqual(groupLabel([{ name: 'Bash', isError: true, refused: true }]), { text: 'Ran 1 shell command', failed: 0, refused: 1 });
+});
+
+test('a failure and a refusal in one group: failed first, then refused, both kept at a narrow width', () => {
+  // An answered request draws in the scrollback and so ends its group; its step's result arrives before
+  // the reply here, so both steps are in the group ahead of the request's lines.
+  const log = [
+    ...step('f', 'Bash', { command: 'false' }, 'exit 1', true),
+    use('a', 'Bash', { command: 'rm x' }),
+    res('a', 'refused', true),
+    request('ra', 'Bash', { command: 'rm x' }, { toolUseId: 'a' }),
+    reply('ra', { behavior: 'deny' }),
+  ];
+  const line = groupLinesOf(buildConversation(log).lines)[0];
+  assert.equal(textOf(line), '  ▸ Ran 2 shell commands · 1 failed · 1 refused');
+  assert.deepEqual(line.map((s) => s.style), ['step', 'step-error', 'dim']);
+  const narrow = groupLinesOf(buildConversation(log, { width: 30 }).lines)[0];
+  assert.equal([...textOf(narrow)].length, 30);
+  assert.deepEqual(narrow.slice(1).map((s) => s.text), [' · 1 failed', ' · 1 refused']);
+});
+
+test('a request is tied to its step by toolUseId, else by a requestId equal to it; untied, the step reads failed', () => {
+  const refused = (reqExtra, requestId) => [
+    use('tu1', 'Bash', { command: 'rm x' }),
+    res('tu1', 'refused', true),
+    request(requestId, 'Bash', { command: 'rm x' }, reqExtra),
+    reply(requestId, { behavior: 'deny' }),
+  ];
+  const label = (log) => textOf(groupLinesOf(buildConversation(log).lines)[0]);
+  assert.equal(label(refused({ toolUseId: 'tu1' }, 'req-9')), '  ▸ Ran 1 shell command · 1 refused', 'by toolUseId');
+  assert.equal(label(refused({}, 'tu1')), '  ▸ Ran 1 shell command · 1 refused', 'an old log: by requestId');
+  assert.equal(label(refused({}, 'req-9')), '  ▸ Ran 1 shell command · 1 failed', 'tied to no step: failed');
+  assert.equal(label(refused({ toolUseId: 'other' }, 'tu1')), '  ▸ Ran 1 shell command · 1 failed', 'a toolUseId wins over the requestId');
+  const allowed = [use('tu1', 'Bash'), res('tu1', 'boom', true), request('r', 'Bash', {}, { toolUseId: 'tu1' }), reply('r', { behavior: 'allow', updatedInput: {} })];
+  assert.equal(label(allowed), '  ▸ Ran 1 shell command · 1 failed', 'an allowed step that then fails is failed');
+  // Open, the refused step keeps today's step-error one-liner.
+  const open = buildConversation(refused({ toolUseId: 'tu1' }, 'req-9'), { open: new Set(['tu1']) }).lines;
+  assert.equal(textOf(open[1]), '    ⎿ Bash rm x  refused');
+  assert.equal(styleOf(open[1]), 'step-error');
+});
+
+test('every §2.1 breaker between two steps makes two groups', () => {
+  const sysEv = (event) => ({ t: t++, dir: 'in', event: { type: 'system', ...event } });
+  const breakers = {
+    'worker text': [say('thinking')],
+    'person sent': [out('person', 'hi')],
+    'pir sent': [out('pir', 'go on')],
+    'a drawn permission': [request('rp', 'Bash'), reply('rp', { behavior: 'allow', updatedInput: {} })],
+    'a drawn question set': [request('rq', 'AskUserQuestion', QUESTIONS), reply('rq', { behavior: 'allow', updatedInput: { answers: {} } })],
+    interrupt: [{ t: t++, dir: 'out', from: 'person', kind: 'interrupt' }],
+    'failed result': [done('error_max_turns')],
+    note: [{ t: t++, dir: 'note', kind: 'exited', code: 0 }],
+    'background start': [sysEv({ subtype: 'task_started', task_id: 'bg1', tool_use_id: 'a', description: 'slow', is_backgrounded: true })],
+    'raw line': ['not json {'],
+  };
+  for (const [name, between] of Object.entries(breakers)) {
+    const { lines } = buildConversation([...step('a', 'Bash'), ...between, ...step('b', 'Bash')]);
+    assert.deepEqual(groupLinesOf(lines).map((l) => l.hit.id), ['a', 'b'], name);
+    assert.ok(lines.indexOf(groupLinesOf(lines)[0]) < lines.indexOf(groupLinesOf(lines)[1]) - 1, `${name} drew something between`);
+  }
+  // A background end: the task started earlier, behind a message, and ends between two steps.
+  const endLog = [
+    use('z', 'Bash', { command: 'slow', run_in_background: true }),
+    sysEv({ subtype: 'task_started', task_id: 'bg2', tool_use_id: 'z', description: 'slow', is_backgrounded: true }),
+    res('z', 'running'),
+    say('started'),
+    ...step('a', 'Bash'),
+    sysEv({ subtype: 'task_updated', task_id: 'bg2', patch: { status: 'completed' } }),
+    sysEv({ subtype: 'task_notification', task_id: 'bg2', status: 'completed' }),
+    ...step('b', 'Bash'),
+  ];
+  const ended = buildConversation(endLog).lines;
+  assert.deepEqual(groupLinesOf(ended).map((l) => l.hit.id), ['z', 'a', 'b']);
+  assert.ok(all(ended).includes('  ↳ finished in the background: slow'));
+});
+
+test('events that draw nothing between steps keep them in one group', () => {
+  const userText = (text, extra = {}) => ({ t: t++, dir: 'in', event: { type: 'user', message: { role: 'user', content: [{ type: 'text', text }] }, ...extra } });
+  const silent = {
+    'tool results': [],
+    init: [{ t: t++, dir: 'in', event: { type: 'system', subtype: 'init', session_id: 's' } }],
+    'synthetic text': [userText('skill body', { isSynthetic: true })],
+    'empty text': [say('  ')],
+    'success result': [done()],
+    'non-background system event': [{ t: t++, dir: 'in', event: { type: 'system', subtype: 'rate_limit_event' } }],
+  };
+  for (const [name, between] of Object.entries(silent)) {
+    const log = name === 'tool results'
+      ? [use('a', 'Bash'), use('b', 'Read'), res('a', 'ok'), res('b', 'ok')]
+      : [...step('a', 'Bash'), ...between, ...step('b', 'Read')];
+    assert.deepEqual(all(buildConversation(log).lines), ['  ▸ Ran 1 shell command, read 1 file'], name);
+  }
+  // The pinned request is drawn below the scrollback, not in it.
+  const pinnedLog = [...step('a', 'Bash'), use('b', 'Read'), request('rb', 'Read', { file_path: '/x' })];
+  const pinned = buildConversation(pinnedLog);
+  assert.equal(pinned.pinned.requestId, 'rb');
+  assert.deepEqual(all(pinned.lines), ['  ▸ Ran 1 shell command', '  ⎿ Read'], 'one group: the running Read after its line');
+  assert.deepEqual(groupLinesOf(pinned.lines).map((l) => l.hit.id), ['a']);
+});
+
+test('a running step has its own line, joins the count once its result arrives', () => {
+  const alone = buildConversation([use('a', 'Bash', { command: 'npm test' })]).lines;
+  assert.deepEqual(all(alone), ['  ⎿ Bash npm test'], 'no group line while every step runs');
+  assert.equal(groupLinesOf(alone).length, 0);
+  const log = [...step('a', 'Bash', { command: 'ls' }), use('b', 'Bash', { command: 'npm test' })];
+  assert.deepEqual(all(buildConversation(log).lines), ['  ▸ Ran 1 shell command', '  ⎿ Bash npm test']);
+  const later = buildConversation([...log, res('b', 'ok')]).lines;
+  assert.deepEqual(all(later), ['  ▸ Ran 2 shell commands']);
+});
+
+test('parallel tool uses: a running step before a finished one is drawn after the group line', () => {
+  const { lines } = buildConversation([use('a', 'Bash', { command: 'slow' }), use('b', 'Read', { file_path: '/x' }), res('b', 'ok')]);
+  assert.deepEqual(all(lines), ['  ▸ Read 1 file', '  ⎿ Bash slow']);
+  assert.deepEqual(lines[0].hit, { kind: 'group', id: 'a' }, 'the id is the first step, running or not');
+});
+
+test('an open group draws ▾ and one indented step line per finished step, running lines after', () => {
+  const log = [
+    ...step('a', 'Read', { file_path: '/x/y.mjs' }, 'one\ntwo'),
+    ...step('b', 'Bash', { command: 'false' }, 'exit 1', true),
+    use('c', 'Bash', { command: 'npm test' }),
+  ];
+  const { lines } = buildConversation(log, { open: new Set(['a']) });
+  assert.deepEqual(all(lines), [
+    '  ▾ Read 1 file, ran 1 shell command · 1 failed',
+    '    ⎿ Read /x/y.mjs  two',
+    '    ⎿ Bash false  exit 1',
+    '  ⎿ Bash npm test',
+  ]);
+  assert.deepEqual(lines[1].map((s) => s.style), ['step', 'dim']);
+  assert.equal(styleOf(lines[2]), 'step-error');
+  assert.equal(styleOf(lines[3]), 'step');
+  assert.deepEqual(all(buildConversation(log, { open: new Set(['b']) }).lines)[0], '  ▸ Read 1 file, ran 1 shell command · 1 failed', 'an id that is not a group opens nothing');
+});
+
+test('hit is on group lines only, and a group keeps its id as the log grows', () => {
+  const first = [out('pir', 'go'), ...step('a', 'Bash')];
+  const check = (log, ids) => {
+    const { lines } = buildConversation(log);
+    assert.deepEqual(groupLinesOf(lines).map((l) => l.hit), ids.map((id) => ({ kind: 'group', id })));
+    for (const l of lines) if (!textOf(l).startsWith('  ▸ ')) assert.equal(l.hit, undefined, textOf(l));
+  };
+  check(first, ['a']);
+  check([...first, ...step('b', 'Read')], ['a']);
+  check([...first, ...step('b', 'Read'), use('c', 'Bash')], ['a']);
+  check([...first, ...step('b', 'Read'), use('c', 'Bash'), say('done'), ...step('d', 'Edit')], ['a', 'd']);
+  const opened = buildConversation([...first, ...step('b', 'Read')], { open: new Set(['a']) }).lines;
+  assert.deepEqual(opened.filter((l) => l.hit).length, 1, 'open step lines carry no hit');
+});
+
+test('full mode is unchanged: identical to the output before grouping, no group lines, no hits', () => {
+  const snapshot = JSON.parse(readFileSync(fileURLToPath(new URL('./fixtures/stream-sample.full-lines.json', import.meta.url)), 'utf8'));
+  for (const w of [40, 100]) {
+    const { lines } = buildConversation(SAMPLE, { width: w, taskId: 'T05', full: true, open: new Set(['toolu_01872VZK1V56qz21PomU1BX5']) });
+    assert.deepEqual(lines.map((l) => [...l]), snapshot[w], `width ${w}`);
+    assert.ok(lines.every((l) => l.hit === undefined));
+  }
+  const log = [...step('a', 'Read'), ...step('b', 'Bash', { command: 'ls' }, 'x\ny'), use('c', 'Edit', { file_path: '/z' })];
+  assert.deepEqual(all(buildConversation(log, { full: true }).lines), ['  ⎿ Read', '      ok', '  ⎿ Bash ls', '      x', '      y', '  ⎿ Edit /z']);
+});
+
+test('read-only: a step that never got a result stays its own line', () => {
+  const log = [...step('a', 'Read'), use('b', 'Bash', { command: 'npm test' }), { t: t++, dir: 'note', kind: 'exited', signal: 'SIGKILL' }];
+  assert.deepEqual(all(buildConversation(log, { readOnly: true }).lines), ['  ▸ Read 1 file', '  ⎿ Bash npm test', '· the worker exited (signal SIGKILL)']);
 });

@@ -46,7 +46,10 @@ is `@` whenever the list opens, after a run starts from it and after `esc`.
   are unchanged.
 - **Keys.** While the box is bare (`@` or empty) the list keeps every key it had: `↑↓`, `↵`/`→`,
   `Ctrl+R/S/X` twice, `esc` and `Ctrl+C` quit. Any other key types into the box. An `@` typed (or a
-  paste starting with `@`) into a bare `@` is absorbed, so `@skaut` and `skaut` read the same. Once the
+  paste starting with `@`) into a bare `@` is absorbed, so `@skaut` and `skaut` read the same. A paste over
+  10 lines or 1000 characters shows as a `[paste #1 +40 lines]` marker (pi-tui's), `↵` submits the pasted
+  text in its place, and pasting the same text again expands the marker in the box, in every pir typing box
+  (`paste.mjs`). Once the
   box has text: `↵` submits, `shift+↵` or `ctrl+j` adds a line, `esc` or `Ctrl+C` resets it to `@`
   (a second `esc` then quits), `Ctrl+R/S/X` still act on the selected run, and the arrows move the
   cursor. With a pop-up open, `↑↓` move in it, `Tab` or `↵` picks (never submits) and `esc` closes it,

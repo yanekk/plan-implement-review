@@ -88,7 +88,9 @@ in the folders `PIR_REPOS` names) and pick it; a second pop-up offers `plan` and
 `@repo/start` lists that repo's reviewed, unfinished plans with their progress; pick one and `↵` starts
 its build and shows its live view, just as `pir start` does, or opens the build if it is already
 running. So `@sk`, `↵`, `↓`, `↵`, `↵`, `↵` builds a plan without typing its name. Only an exact repo name,
-command and plan name start anything; otherwise the box says why and keeps what you typed. While the box
+command and plan name start anything; otherwise the box says why and keeps what you typed. A long brief
+can be pasted: it shows as a short `[paste #1 +40 lines]` marker, the whole text is what gets sent, and
+pasting it a second time opens it out in the box for editing. While the box
 holds only `@`, the dashboard's keys work as before
 ([planning-runs.md](docs/planning-runs.md#the-dashboard-box)).
 
@@ -337,7 +339,16 @@ other terminals get the plain 16 colours, and `NO_COLOR` turns colour off. Detai
 | Live view | `↑↓` pick a task or the coordinator agent's row · `→` open its conversation · `c` open the coordinator agent · `←` back to the dashboard · `Ctrl+S` twice stop this run · `esc` quit |
 | A planning run | `↑↓` pick a step · `→` open its conversation · `←` back · at the go, `↵` start or `n` not now |
 
+In a worker's conversation, the tool steps it runs between two messages fold into one line that counts
+them, such as `▸ Ran 2 shell commands, read 3 files`, so the messages stay readable. A step still
+running shows on its own line until it finishes; a group with a failed step says `· 1 failed` in red,
+and one with a request you (or the coordinator agent) turned down says `· 1 refused`. Click a group to
+see its steps, click again to fold it; `Tab` still shows every step with its full output. Groups you
+opened fold again when you leave the conversation. Details in
+[detached-runs.md](docs/detached-runs.md#the-conversation-view).
+
 The mouse works too: click a run, a task, the coordinator agent's row or a planning step to open it,
+or a group of steps in a conversation to open or fold it,
 see the row under the pointer brighten before you click, and use the wheel to move through a list or
 scroll a conversation. Going back, quitting, answering questions and the stop/remove chords stay on the
 keys. Dragging across text still copies it (hold Option in iTerm2, or Shift in most other terminals,

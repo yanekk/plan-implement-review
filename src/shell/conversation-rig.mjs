@@ -10,6 +10,8 @@
 //
 //   node src/shell/pir.mjs            the dashboard: the rig's run is listed `running`
 //   cd <scratch> && node <repo>/src/shell/pir.mjs start rig     straight into the run's live view
+//   (the command prints both with its `pbcopy` shim first on PATH: use them as printed, so a drag or a
+//   double click writes the shim's clipboard.txt, never the person's clipboard)
 //
 // then → on task T01 opens its worker's conversation.
 //
@@ -46,7 +48,7 @@
 // no npm package, DESIGN §5), sends keys and returns the screen as text after each one.
 
 import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -283,7 +285,10 @@ function writePlan(repoRoot, scenario) {
 }
 
 // startRig({ into, scenario, keep, env, paceMs, workMs, stepMs, snapshotMs }) → the running rig:
-//   { repoRoot, repo, slug, controlDir, workerId, logPath, received, platform, pid, stop() }
+//   { repoRoot, repo, slug, controlDir, workerId, logPath, received, platform, pid, shimDir, clipboard, stop() }
+// shimDir holds a `pbcopy` that writes what it is given to `clipboard` (absent until a copy), as
+// plan-rig.mjs's does (group-commands DESIGN §5.2). startRig does not launch pir, so whoever does puts
+// shimDir first on pir's PATH: a drag or a double click then never reaches the person's real clipboard.
 // `env` supplies PIR_HOME (the index folder, indexDir's rule), so a test points the index at a scratch
 // folder. stop() is the teardown, idempotent; it resolves once the worker has exited.
 //
@@ -308,6 +313,11 @@ export function startRig({ into = null, scenario = 'tour', keep = false, env = p
   const scriptPath = join(controlDir, 'fake-script.json');
   writeFileSync(scriptPath, JSON.stringify(script));
   const received = join(controlDir, 'fake-received.ndjson');
+  const shimDir = join(controlDir, 'bin');
+  mkdirSync(shimDir);
+  const clipboard = join(shimDir, 'clipboard.txt');
+  writeFileSync(join(shimDir, 'pbcopy'), `#!/bin/sh\ncat > '${clipboard.replace(/'/g, `'\\''`)}'\n`);
+  chmodSync(join(shimDir, 'pbcopy'), 0o755);
 
   const dir = indexDir({ env });
   const branch = `pir/${RIG_SLUG}`;
@@ -408,7 +418,7 @@ export function startRig({ into = null, scenario = 'tour', keep = false, env = p
   }
 
   const pid = platform.list().find((w) => w.id === workerId)?.pid ?? null;
-  return { repoRoot, repo, slug: RIG_SLUG, controlDir, workerId, logPath, received, platform, pid, stop, agent, ...(agent ? { pass, ready } : {}) };
+  return { repoRoot, repo, slug: RIG_SLUG, controlDir, workerId, logPath, received, platform, pid, shimDir, clipboard, stop, agent, ...(agent ? { pass, ready } : {}) };
 }
 
 async function waitPid(pid, { timeoutMs = 15000 } = {}) {
@@ -750,8 +760,11 @@ async function main(argv) {
   const opts = parseArgs(argv);
   const rig = startRig(opts);
   console.log(`rig running: scenario ${opts.scenario}, run "${rig.slug}" in ${rig.repoRoot}`);
-  console.log(`open it:     node ${PIR}              (the dashboard)`);
-  console.log(`         or  cd ${rig.repoRoot} && node ${PIR} ${rig.slug}`);
+  // The pbcopy shim first on PATH, so a drag or double click in the drill never writes the real clipboard.
+  const path = `PATH=${rig.shimDir}:$PATH`;
+  console.log(`open it:     ${path} node ${PIR}              (the dashboard)`);
+  console.log(`         or  cd ${rig.repoRoot} && ${path} node ${PIR} ${rig.slug}`);
+  console.log(`copies land in ${rig.clipboard}, not the clipboard`);
   console.log('stop it:     Ctrl+C here, Ctrl+S twice in pir, or touch its control/HALT');
   let done = false;
   const finish = async (why) => {

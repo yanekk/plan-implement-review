@@ -162,6 +162,18 @@ test('an AskUserQuestion request becomes questions, any other tool becomes permi
   assert.equal(flagged.reason, 'This command requires approval');
 });
 
+// group-commands T01 (DESIGN §2.2): the request's toolUseId, so a refused step can be told from a failed one.
+test('a request carries its toolUseId onto the permission and questions events; absent, no field', () => {
+  const perm = readEntry(at({ dir: 'request', requestId: 'r', toolUseId: 'toolu_1', toolName: 'Bash', input: {} }))[0];
+  assert.equal(perm.toolUseId, 'toolu_1');
+  const q = readEntry(at({ dir: 'request', requestId: 'r', toolUseId: 'toolu_2', toolName: 'AskUserQuestion', input: { questions: [] } }))[0];
+  assert.equal(q.toolUseId, 'toolu_2');
+  for (const tool of ['Bash', 'AskUserQuestion']) {
+    assert.ok(!('toolUseId' in readEntry(request('r', tool))[0]), `${tool}: no toolUseId logged, no field`);
+    assert.ok(!('toolUseId' in readEntry(at({ dir: 'request', requestId: 'r', toolUseId: 7, toolName: tool, input: {} }))[0]), `${tool}: not a string`);
+  }
+});
+
 // ---- result builders, against the shapes the probe sent and Claude accepted ----
 
 const permReq = sample.find((e) => e.dir === 'request' && e.toolName === 'Bash');

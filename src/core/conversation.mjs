@@ -122,15 +122,20 @@ function senderPrefix(from, taskId) {
 
 // ---- The conversation. ----
 
-// buildConversation(entries, { full, width, taskId, readOnly }) → { lines, pinned, background, helpers }.
+// buildConversation(entries, { full, width, taskId, readOnly, open }) → { lines, pinned, background, helpers }.
+// Default mode folds each run of consecutive tool steps into one group line (group-commands DESIGN §2.1–
+// §2.4); `open` is a Set of group ids (a group's first toolUseId) drawn unfolded. Each group line carries
+// `line.hit = { kind: 'group', id }` so the view can click it; no other line has a hit. Full mode draws
+// every step with its whole result and no groups (§2.6).
 // `background` counts the running background commands and monitors the parent started; `helpers` counts its
 // running helpers (visible-helpers DESIGN §2.2). A helper's own frames and its background commands are left
-// out of the default view and drawn labelled `helper` in `full` (DESIGN §2.3).
+// out of the default view and drawn labelled `helper` in `full` (DESIGN §2.3). A helper's line, like any
+// `↳` line, ends the group its Agent step closes (group-commands §2.1).
 // `pinned` is the oldest pending request as a fresh prompt (gateFor / pickerFor), kept out of `lines`;
 // the view keeps its own prompt state and paints it with promptLines. Once answered, a request is drawn
 // in `lines` where it was asked, with its answer. A read-only view (a worker no longer live) pins
 // nothing and shows an unanswered request as never answered.
-export function buildConversation(entries, { full = false, width = 80, taskId = 'worker', readOnly = false } = {}) {
+export function buildConversation(entries, { full = false, width = 80, taskId = 'worker', readOnly = false, open = new Set() } = {}) {
   // A raw log line (a string) is parsed once here, so pass 1 can read a reply's `result` off the entry;
   // one that does not parse stays a string and readEntry keeps it as `raw`.
   const list = (Array.isArray(entries) ? entries : []).map((e) => {
@@ -168,9 +173,11 @@ export function buildConversation(entries, { full = false, width = 80, taskId = 
   const lost = new Set(); // requestIds still pending at a `resumed` note: they died with the old process
   const toolNames = new Map(); // toolUseId → tool name, so a background task knows it is a Monitor
   const background = new Map(); // task_id → { description, tool, ended } for work moved to the background
+  const requests = []; // every permission and questions event, to tie a refusal to its step (§2.2)
   list.forEach((entry, i) => {
     for (const ev of readEntry(entry)) {
       if (ev.kind === 'tool-use') toolNames.set(ev.toolUseId, ev.name);
+      if (ev.kind === 'permission' || ev.kind === 'questions') requests.push(ev);
       if (ev.kind === 'system') {
         const task = backgroundEvent(ev);
         // A helper (local_agent) is not background work: it has its own line (DESIGN §2.2).
@@ -200,51 +207,78 @@ export function buildConversation(entries, { full = false, width = 80, taskId = 
     return { by: 'interrupt' };
   };
 
-  // Pass 2: the scrollback, oldest first.
+  // A step whose request was answered no is refused, not failed (§2.2): a permission refused, or a question
+  // set answered in text instead. Tied by the request's toolUseId; a log written before it was recorded
+  // ties by a requestId equal to the step's toolUseId.
+  const refusedSteps = new Set();
+  for (const req of requests) {
+    const answer = answers.get(req.requestId);
+    if (answer?.result.behavior === 'deny') refusedSteps.add(req.toolUseId ?? req.requestId);
+  }
+
+  // Pass 2: the scrollback, oldest first. Every drawn line goes through `emit`, which first closes the
+  // open group of steps: a line drawn between two steps is exactly what ends a group (§2.1), and an event
+  // that draws nothing (a tool result, init, the pinned request) leaves the group open.
   const lines = [];
+  let group = null; // { id, steps: [{ use, result }] } — the run of steps not yet drawn
+  const flush = () => {
+    if (!group) return;
+    lines.push(...groupLines(group, { width: w, open: open instanceof Set && open.has(group.id), refusedSteps }));
+    group = null;
+  };
+  const emit = (drawn) => {
+    if (!drawn.length) return;
+    flush();
+    lines.push(...drawn);
+  };
   let interrupted = false; // an interrupt since the last result: its error_during_execution is expected
   for (const entry of list) {
     for (const ev of readEntry(entry)) {
       switch (ev.kind) {
         case 'sent': {
           const { prefix, style } = senderPrefix(ev.from, taskId);
-          lines.push(...wrapped(prefix, ev.text, style, w));
+          emit(wrapped(prefix, ev.text, style, w));
           // The model read the note first; the person reads it under their own words (visible-helpers §2.6).
-          if (ev.preface) lines.push(...wrapped('pir ▸ ', ev.preface, 'pir', w));
+          if (ev.preface) emit(wrapped('pir ▸ ', ev.preface, 'pir', w));
           break;
         }
         case 'text': {
           if (!ev.text.trim() || ev.synthetic) break; // a skill body Claude injected: hundreds of lines nobody said
           if (ev.helper) {
             // A helper's words: never in the default view, labelled in full so they cannot read as the parent's.
-            if (full) lines.push(...wrapped(ev.role === 'assistant' ? 'helper ▸ ' : '  helper ', ev.text, 'dim', w));
+            if (full) emit(wrapped(ev.role === 'assistant' ? 'helper ▸ ' : '  helper ', ev.text, 'dim', w));
             break;
           }
-          if (ev.role === 'assistant') lines.push(...wrapped(`${taskId} ▸ `, ev.text, 'worker', w));
-          else lines.push(...wrapped('  ', ev.text, 'dim', w)); // e.g. `[Request interrupted by user]`
+          if (ev.role === 'assistant') emit(wrapped(`${taskId} ▸ `, ev.text, 'worker', w));
+          else emit(wrapped('  ', ev.text, 'dim', w)); // e.g. `[Request interrupted by user]`
           break;
         }
         case 'tool-use': {
           if (ev.helper) {
-            if (full) lines.push(...stepLines(ev, results.get(ev.toolUseId), { full, width: w, label: 'helper ' }));
+            // Only in full, where there are no groups; by default a helper's step draws nothing and so ends no group.
+            if (full) emit(stepLines(ev, results.get(ev.toolUseId), { full, width: w, label: 'helper ' }));
             break;
           }
-          lines.push(...stepLines(ev, results.get(ev.toolUseId), { full, width: w }));
+          if (full) emit(stepLines(ev, results.get(ev.toolUseId), { full, width: w }));
+          else {
+            group ??= { id: ev.toolUseId, steps: [] };
+            group.steps.push({ use: ev, result: results.get(ev.toolUseId) });
+          }
           const h = helperByCall.get(ev.toolUseId);
           if (h && !drawnHelpers.has(h.id)) {
             drawnHelpers.add(h.id);
-            lines.push(helperLine(h, w));
+            emit([helperLine(h, w)]);
           }
           break;
         }
         case 'permission':
         case 'questions':
           if (pinnedRequest && ev.requestId === pinnedRequest.requestId) break;
-          lines.push(...requestLines(ev, resolution(ev.requestId), { width: w, taskId, helpers }));
+          emit(requestLines(ev, resolution(ev.requestId), { width: w, taskId, helpers }));
           break;
         case 'interrupt': {
           const { prefix, style } = senderPrefix(ev.from || 'person', taskId);
-          lines.push([span(`${prefix}⎋ interrupted the worker`, style)]);
+          emit([[span(`${prefix}⎋ interrupted the worker`, style)]]);
           interrupted = true;
           break;
         }
@@ -252,14 +286,14 @@ export function buildConversation(entries, { full = false, width = 80, taskId = 
           const expected = interrupted && ev.subtype === 'error_during_execution';
           interrupted = false;
           if (expected || (!ev.isError && ev.subtype === 'success')) break;
-          lines.push(...wrapped('✕ ', `the turn failed (${ev.subtype || 'error'})${ev.text ? `: ${ev.text}` : ''}`, 'bad', w));
+          emit(wrapped('✕ ', `the turn failed (${ev.subtype || 'error'})${ev.text ? `: ${ev.text}` : ''}`, 'bad', w));
           break;
         }
         case 'note':
-          lines.push(...noteLines(ev, w));
+          emit(noteLines(ev, w));
           break;
         case 'raw':
-          lines.push([span('· an unreadable log line', 'dim')]);
+          emit([[span('· an unreadable log line', 'dim')]]);
           break;
         case 'system': {
           // Background work (user 2026-09-26, T18 drill): one line when a command or a monitor moves to the
@@ -272,7 +306,7 @@ export function buildConversation(entries, { full = false, width = 80, taskId = 
             const h = helperById.get(task.id);
             if (h && !drawnHelpers.has(h.id) && !parentCalls.has(h.toolUseId)) {
               drawnHelpers.add(h.id);
-              lines.push(helperLine(h, w));
+              emit([helperLine(h, w)]);
             }
             break;
           }
@@ -282,10 +316,10 @@ export function buildConversation(entries, { full = false, width = 80, taskId = 
           if (known.ofHelper && !full) break;
           const lead = known.ofHelper ? '  helper ↳ ' : '  ↳ ';
           const what = known.description || (known.tool === 'Monitor' ? 'a monitor' : 'a command');
-          if (task.started) lines.push(...wrapped(lead, `${known.tool === 'Monitor' ? 'monitor started' : 'running in the background'}: ${what}`, 'dim', w));
+          if (task.started) emit(wrapped(lead, `${known.tool === 'Monitor' ? 'monitor started' : 'running in the background'}: ${what}`, 'dim', w));
           else if (task.ended && task.notification) {
             const verb = task.ended === 'completed' ? (known.tool === 'Monitor' ? 'monitor ended' : 'finished in the background') : `${task.ended} in the background`;
-            lines.push(...wrapped(lead, `${verb}: ${what}`, task.ended === 'completed' ? 'dim' : 'bad', w));
+            emit(wrapped(lead, `${verb}: ${what}`, task.ended === 'completed' ? 'dim' : 'bad', w));
           }
           break;
         }
@@ -295,6 +329,7 @@ export function buildConversation(entries, { full = false, width = 80, taskId = 
       }
     }
   }
+  flush();
 
   let pinned = null;
   if (pinnedRequest) pinned = pinnedRequest.kind === 'questions' ? pickerFor(pinnedRequest, helpers) : gateFor(pinnedRequest, helpers);
@@ -367,13 +402,89 @@ function backgroundEvent(ev) {
   return { id: e.task_id, ended: status, notification: e.subtype === 'task_notification' };
 }
 
-// One tool use. Default: exactly one line, `⎿ <Tool> <main arg>  <last result line>`, clipped to width.
-// Full: the step line alone, then every result line indented, all wrapped. A failed result styles the
-// step `step-error`. `label` ('helper ') goes before the `⎿` of a helper's step (DESIGN §2.3).
-function stepLines(use, result, { full, width, label = '' }) {
+// ---- Groups of steps (group-commands DESIGN §2.1–§2.4). ----
+
+// What a tool's steps are counted as on a group line (§2.2). Tools sharing a phrase share a key, so an Edit
+// and a MultiEdit read `edited 2 files`. An unknown tool keeps its own name.
+const KINDS = {
+  Bash: ['shell', 'ran', 'shell command', 'shell commands'],
+  Read: ['read', 'read', 'file', 'files'],
+  Write: ['write', 'wrote', 'file', 'files'],
+  Edit: ['edit', 'edited', 'file', 'files'],
+  MultiEdit: ['edit', 'edited', 'file', 'files'],
+  NotebookEdit: ['edit', 'edited', 'file', 'files'],
+  Grep: ['search', 'searched', 'time', 'times'],
+  Glob: ['search', 'searched', 'time', 'times'],
+  WebFetch: ['fetch', 'fetched', 'page', 'pages'],
+  WebSearch: ['web', 'searched the web', 'time', 'times'],
+  Task: ['agent', 'ran', 'agent', 'agents'],
+  Agent: ['agent', 'ran', 'agent', 'agents'],
+  Skill: ['skill', 'loaded', 'skill', 'skills'],
+  TodoWrite: ['todo', 'updated the to-do list', 'time', 'times'],
+  AskUserQuestion: ['ask', 'asked', 'question set', 'question sets'],
+  Monitor: ['monitor', 'started', 'monitor', 'monitors'],
+};
+
+// stepKind(toolName) → { key, verb, one, many }.
+export function stepKind(toolName) {
+  const name = plainText(String(toolName ?? ''));
+  const known = Object.hasOwn(KINDS, name) ? KINDS[name] : null;
+  if (known) {
+    const [key, verb, one, many] = known;
+    return { key, verb, one, many };
+  }
+  return { key: `tool:${name}`, verb: `used ${name}`, one: 'time', many: 'times' };
+}
+
+// groupLabel(finishedSteps) → { text, failed, refused }. `finishedSteps` is [{ name, isError, refused }] in
+// log order; kinds are listed in the order each first appeared, first letter capitalised. A refused step
+// counts in `refused`, never in `failed`.
+export function groupLabel(finishedSteps) {
+  const counts = new Map(); // key → { kind, n }, insertion order = first appearance
+  let failed = 0;
+  let refused = 0;
+  for (const step of finishedSteps ?? []) {
+    const kind = stepKind(step.name);
+    const c = counts.get(kind.key) ?? counts.set(kind.key, { kind, n: 0 }).get(kind.key);
+    c.n += 1;
+    if (step.refused) refused += 1;
+    else if (step.isError) failed += 1;
+  }
+  const text = [...counts.values()].map(({ kind, n }) => `${kind.verb} ${n} ${n === 1 ? kind.one : kind.many}`).join(', ');
+  return { text: text ? text[0].toUpperCase() + text.slice(1) : '', failed, refused };
+}
+
+// One group: its line (only when a step in it has finished), its finished steps under it when open, then
+// its running steps on their own lines in the order they were used (§2.3, §2.4).
+function groupLines(group, { width, open, refusedSteps }) {
+  const finished = group.steps.filter((s) => s.result);
+  const running = group.steps.filter((s) => !s.result);
+  const out = [];
+  if (finished.length) {
+    const label = groupLabel(finished.map((s) => ({ name: s.use.name, isError: s.result.isError === true, refused: refusedSteps.has(s.use.toolUseId) })));
+    const suffix = [];
+    if (label.failed) suffix.push(span(` · ${label.failed} failed`, 'step-error'));
+    if (label.refused) suffix.push(span(` · ${label.refused} refused`, 'dim'));
+    // The suffixes are never clipped: the label is cut first, so a failure shows at any width.
+    const room = Math.max(1, width - suffix.reduce((n, s) => n + [...s.text].length, 0));
+    const head = `  ${open ? '▾' : '▸'} ${plainText(label.text)}`;
+    const line = [span([...head].length <= room ? head : clipText(head, room), 'step'), ...suffix];
+    line.hit = { kind: 'group', id: group.id };
+    out.push(line);
+    if (open) for (const s of finished) out.push(...stepLines(s.use, s.result, { full: false, width, indent: '    ' }));
+  }
+  for (const s of running) out.push(...stepLines(s.use, null, { full: false, width }));
+  return out;
+}
+
+// One tool use. Default: exactly one line, `⎿ <Tool> <main arg>  <last result line>`, clipped to width;
+// `indent` is what precedes the `⎿` (an open group's steps sit two columns deeper). Full: the step line
+// alone, then every result line indented, all wrapped. A failed result styles the step `step-error`.
+// `label` ('helper ') goes before the `⎿` of a helper's step (visible-helpers DESIGN §2.3).
+function stepLines(use, result, { full, width, indent = '  ', label = '' }) {
   const style = result?.isError ? 'step-error' : 'step';
   const arg = firstLine(mainArg(use.name, use.input));
-  const head = `  ${label}⎿ ${use.name}${arg ? ` ${arg}` : ''}`;
+  const head = `${indent}${label}⎿ ${use.name}${arg ? ` ${arg}` : ''}`;
   if (!full) {
     const last = result ? lastLine(plainText(result.text)) : '';
     const spans = [span(head, style)];
