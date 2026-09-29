@@ -29,13 +29,13 @@ done · ⛔ blocked, needs a human.
 | T03 | finisher-skill-and-rules | T01 | ✅ | |
 | T04 | finisher-session | T00, T01, T02 | ✅ | |
 | T05 | finisher-handover | T04 | ✅ | |
-| T06 | finisher-alerts | T05 | ⬜ | |
+| T06 | finisher-alerts | T05 | 🔍 | `finisherAlert`, `finisherNotifyView`, keyed episodes in `notifyStep`, `finisherOneShot`, `endAlertPass` `takesOver`; 13 tests. Deviations: gave-up message `Merge by hand: git merge pir/{slug}` (unspecified); failed-to-start still sends `ready to merge`; a question parked outside awaiting-go/stuck alerts as `{slug} · finisher`. |
 | T07 | finisher-row | T05 | ⬜ | |
 | T08 | finisher-docs | T03, T05, T06, T07 | ⬜ | |
 | T09 | finisher-drill | T03, T06, T07 | ⬜ | |
 | T10 | finisher-live | T08, T09 | ⬜ | |
 
-**Review queue:** *(empty)*
+**Review queue:** T06
 
 ## Blocked on the user
 
