@@ -54,7 +54,7 @@ import { startCoordinatorAgent, withAgent, closingAnswer, readLogEntries, readJs
 import { startFinisher as startFinisherSession } from './finisher-agent.mjs';
 import { chooseRules } from '../core/finisher-policy.mjs';
 import { startWorker } from './worker-proc.mjs';
-import { alertText, endAlert, notifyStep, notifyExit, newNotifyState } from '../core/notify.mjs';
+import { alertText, endAlert, notifyStep, notifyExit, newNotifyState, finisherAlert, finisherNotifyView } from '../core/notify.mjs';
 import { publish as ntfyPublish, clear as ntfyClear } from './ntfy.mjs';
 import { readNotifyConfig, ensurePresenceMarker, notifyIcon } from './notify-config.mjs';
 
@@ -1992,9 +1992,40 @@ export function notifyPass({ plan, platform, coordinator, notifyState, remote = 
     why: coordinator.whyPerson(),
     remoteOn: remote,
   });
+  const fin = finisherViewFor(plan, coordinator, remote);
+  if (fin) views.push(fin);
   const { state, actions } = notifyStep(notifyState, views, now, stepOpts);
-  if (actions.length) run(actions);
+  // The finisher's episodes are keyed `finisher` (the flow log's `notify send finisher …`); their notes go
+  // to its conversation, found by its session id through withAgent.
+  const finisherId = coordinator.finisher?.id ?? null;
+  if (actions.length) run(actions.map((a) => (a.id === 'finisher' && a.type === 'send' ? { ...a, noteTo: finisherId } : a)));
   return state;
+}
+
+// finisherViewFor(plan, coordinator, remote) → the finisher's notify view (finisher DESIGN §2.9), or null
+// while no finisher is the run's. Its link is its Remote Control URL, waited for 20 s as for a worker.
+function finisherViewFor(plan, coordinator, remote) {
+  const f = coordinator.finisher;
+  if (!f) return null;
+  let pending = [];
+  try {
+    pending = f.alive?.() ? f.session?.pending?.() ?? [] : [];
+  } catch {
+    pending = [];
+  }
+  return finisherNotifyView({
+    slug: plan,
+    view: coordinator.finisherView?.() ?? null,
+    pending,
+    url: f.remoteUrl?.() ?? null,
+    remote: f.session?.remoteRefused ? 'refused' : remote ? 'wanted' : 'off',
+  });
+}
+
+// finisherOneShot(alert, { click, noteTo }) → the runner's send for the finisher's done or gave-up alert
+// (finisher DESIGN §2.9, §2.12): no episode and no reminder, logged under `finisher`.
+export function finisherOneShot({ title, message, tags }, { click = null, noteTo = null } = {}) {
+  return { type: 'send', id: 'finisher', seq: null, title, message, click, reminder: false, ...(tags ? { tags } : {}), noteTo };
 }
 
 // endAlertPass({ r, coordinator, slug, sent, send }) → sent. With the agent, the one end-of-run alert
@@ -2002,10 +2033,19 @@ export function notifyPass({ plan, platform, coordinator, notifyState, remote = 
 // 'waiting'`), never on a pass that finished the run (a restart finding main already holding the tip must
 // not announce a merge that is done), and never again for this process — a re-sync after main moves is the
 // same wait. The tap opens the agent's chat, where the report and the merge are presented.
-export function endAlertPass({ r, coordinator, slug, sent = false, send }) {
+//
+// With the finisher (`takesOver`, finisher DESIGN §2.9, §2.12): a green run sends no `ready to merge`, the
+// finisher's own ready alert replaces it; a finisher that gave up sends `{slug} · finisher gave up` instead;
+// one that failed to start falls back to today's wait and so to today's alert. A red run is unchanged.
+export function endAlertPass({ r, coordinator, slug, sent = false, send, takesOver = false, sendFinisher = null }) {
   if (sent || r?.finished) return sent;
   const state = r?.handoff?.state;
+  if (takesOver && r?.handoff?.fallback === 'gave-up') {
+    sendFinisher?.(finisherAlert({ slug, phase: 'gave-up' }));
+    return true;
+  }
   if (state !== 'ready' && state !== 'red') return sent;
+  if (takesOver && state === 'ready' && r?.handoff?.fallback !== 'failed') return sent;
   const alert = endAlert({
     slug,
     ready: state === 'ready',
@@ -2392,6 +2432,7 @@ async function main(argv) {
   let idle = 0;
   let fallbackPrinted = false;
   let lastFinisherSummary = null;
+  let lastFinisherUrl = null;
   try {
     // No pass cap: the run's only ends are the hand-off, a halt, the runaway breaker, a stall, or a signal.
     // A worker parked on a question waits for the person indefinitely — a cap here used to tear the run
@@ -2406,6 +2447,8 @@ async function main(argv) {
       const r = coordinator.pass();
       // The done summary, kept from the pass's view: the pass that ends the run closes the finisher.
       if (r.finisher?.summary) lastFinisherSummary = r.finisher.summary;
+      // Its link too, for the done alert's tap: that pass closes the session, and a closed session has none.
+      lastFinisherUrl = coordinator.finisher?.remoteUrl?.() ?? lastFinisherUrl;
       trackTiming(coordinator.state.tasks, r.completed);
       if (REMOTE) syncRemote(coordinator.state.tasks);
       // Alerts run every pass, whatever REMOTE is (DESIGN §2.1); a fault in them never stops the run.
@@ -2479,6 +2522,8 @@ async function main(argv) {
           slug,
           sent: endAlertSent,
           send: (alert) => runNotify([endAlertAction(alert, { noteTo: coordinator.agent?.id ?? null })]),
+          takesOver: startFinisher !== null,
+          sendFinisher: (alert) => runNotify([finisherOneShot(alert)]),
         });
         // The finisher could not start or gave up: the merge line scrolls above the live block once, and the
         // run waits in today's ready to merge (finisher DESIGN §2.12). Not for a branch that turned red.
@@ -2490,7 +2535,11 @@ async function main(argv) {
           finishRun('complete'); // merged, closed or the finisher's done: `finished` (DESIGN §2.10)
           renderer.close();
           renderer.line('\n' + renderFinished({ by: r.finished, slug, ready: r.handoff?.state === 'ready', reportPath: r.handoff?.reportPath, summary: lastFinisherSummary }));
-          await notifyExitNow();
+          // The finisher's done alert (finisher DESIGN §2.9): one-shot, awaited with the exit clears, bounded.
+          const done = r.finished === 'finisher'
+            ? runNotify([finisherOneShot(finisherAlert({ slug, phase: 'done', summary: lastFinisherSummary }), { click: lastFinisherUrl })])
+            : null;
+          await notifyExitNow(done);
           return;
         }
         await waitForReport([inbox.reportsDir, personInbox.inboxDir], POLL_MS);

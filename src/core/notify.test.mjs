@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { alertText, reminderText, excerpt, endAlert, newNotifyState, notifyStep, notifyExit } from './notify.mjs';
+import { alertText, reminderText, excerpt, endAlert, newNotifyState, notifyStep, notifyExit, finisherAlert, finisherNotifyView } from './notify.mjs';
 
 const cp = (s) => [...s].length;
 const base = { plan: 'screen-time', task: 'T04', role: 'implement' };
@@ -343,4 +343,107 @@ test('notifyExit clears sent episodes only', () => {
   assert.deepEqual(notifyExit(r.state), [{ type: 'clear', id: 'w1', seq: 'pir-w1-1' }]);
   assert.deepEqual(notifyExit(newNotifyState()), []);
   assert.deepEqual(notifyExit(undefined), []);
+});
+
+// ---- The finisher (finisher DESIGN §2.9, §2.12; T06) ----
+
+const fview = (over = {}) => ({ state: 'awaiting-go', phase: 'awaiting-go', summary: 'All clear.', steps: ['git -C /repo merge pir/demo', './install.sh'], rulesSource: 'project', asking: true, ...over });
+const goQ = { kind: 'questions', requestId: 'q1', questions: [{ question: 'Go with 2 steps from project rules?', header: 'Go' }] };
+
+test('finisherAlert: ready names the step count and the rules source, then the first step', () => {
+  assert.deepEqual(finisherAlert({ slug: 'demo', phase: 'awaiting-go', steps: ['git merge pir/demo', 'x'], rulesSource: 'project' }),
+    { title: 'demo · ready for your go', message: '2 steps from project rules: git merge pir/demo' });
+  assert.equal(finisherAlert({ slug: 'd', phase: 'awaiting-go', steps: ['a'], rulesSource: 'yours' }).message, '1 step from your rules: a');
+  assert.equal(finisherAlert({ slug: 'd', phase: 'awaiting-go', steps: ['a'], rulesSource: 'default' }).message, '1 step from default rules: a');
+  assert.equal(finisherAlert({ slug: 'd', phase: 'awaiting-go', steps: ['a'], rulesSource: 'built-in' }).message, '1 step from default rules: a');
+  assert.equal(finisherAlert({ slug: 'd', phase: 'awaiting-go', steps: [], rulesSource: 'project' }).message, '0 steps from project rules');
+});
+
+test('finisherAlert: a long first step is cut, the count and source survive, the whole within 150', () => {
+  const { message } = finisherAlert({ slug: 'd', phase: 'awaiting-go', steps: ['x'.repeat(400)], rulesSource: 'project' });
+  assert.ok(message.startsWith('1 step from project rules: xxx'));
+  assert.ok(message.endsWith('…'));
+  assert.equal(cp(message), 150);
+});
+
+test('finisherAlert: stuck cuts the summary to 150; done is `finished`; gave up names the merge; others null', () => {
+  const stuck = finisherAlert({ slug: 'demo', phase: 'stuck', summary: 'install failed\n' + 'y'.repeat(300) });
+  assert.equal(stuck.title, 'demo · finisher stuck');
+  assert.equal(cp(stuck.message), 150);
+  assert.ok(stuck.message.startsWith('install failed y'));
+  assert.deepEqual(finisherAlert({ slug: 'demo', phase: 'done', summary: 'Merged and installed.' }),
+    { title: 'demo · finished', message: 'Merged and installed.', tags: ['tada'] });
+  assert.deepEqual(finisherAlert({ slug: 'demo', phase: 'gave-up' }),
+    { title: 'demo · finisher gave up', message: 'Merge by hand: git merge pir/demo', tags: ['warning'] });
+  assert.equal(finisherAlert({ slug: 'demo', phase: 'preparing' }), null);
+  assert.equal(finisherAlert({ slug: 'demo', phase: 'finishing' }), null);
+});
+
+test('finisherNotifyView: awaiting-go and stuck are keyed episodes; preparing, finishing and done with nothing parked have none', () => {
+  const ready = finisherNotifyView({ slug: 'demo', view: fview(), pending: [goQ], url: 'https://claude.ai/code/session_f' });
+  assert.deepEqual(ready, { id: 'finisher', remote: 'wanted', url: 'https://claude.ai/code/session_f', waiting: 'awaiting-go', key: 'awaiting-go',
+    title: 'demo · ready for your go', message: '2 steps from project rules: git -C /repo merge pir/demo' });
+  const stuck = finisherNotifyView({ slug: 'demo', view: fview({ phase: 'stuck', state: 'stuck', summary: 'boom' }), pending: [goQ] });
+  assert.equal(stuck.key, 'stuck');
+  assert.equal(stuck.title, 'demo · finisher stuck');
+  assert.equal(stuck.message, 'boom');
+  for (const phase of ['preparing', 'finishing', 'done']) {
+    assert.equal(finisherNotifyView({ slug: 'demo', view: fview({ phase, state: phase, asking: false }), pending: [] }), null, phase);
+  }
+  assert.equal(finisherNotifyView({ slug: 'demo', view: fview({ state: 'given-up' }) }), null);
+  assert.equal(finisherNotifyView({ slug: 'demo', view: null }), null);
+});
+
+test('finisherNotifyView: a reserved request in finishing gets the `Needs your yes` wording, titled finisher', () => {
+  const pending = [{ kind: 'permission', requestId: 'r1', toolName: 'Bash', input: { command: 'git push origin main' } }];
+  const v = finisherNotifyView({ slug: 'demo', view: fview({ phase: 'finishing', state: 'finishing' }), pending, remote: 'off' });
+  assert.deepEqual(v, { id: 'finisher', remote: 'off', url: null, waiting: 'permission', key: 'asking',
+    title: 'demo · finisher', message: 'Needs your yes: wants to run Bash git push origin main' });
+  // A question it parks outside awaiting-go/stuck is the person's too, with no reason prefix.
+  const q = finisherNotifyView({ slug: 'demo', view: fview({ phase: 'preparing', state: 'preparing' }), pending: [goQ] });
+  assert.equal(q.title, 'demo · finisher');
+  assert.equal(q.message, 'asks: Go with 2 steps from project rules?');
+});
+
+test('notifyStep with the finisher: ready once, a reminder at 15 min, cleared on finishing; stuck is a new episode', () => {
+  const o = { remindMs: 900_000, linkWaitMs: 20_000 };
+  const at = (phase, pending = [goQ]) => finisherNotifyView({ slug: 'demo', view: fview({ phase, state: phase }), pending, url: 'https://f' });
+  let r = notifyStep(newNotifyState(), [at('awaiting-go')], 0, o);
+  assert.deepEqual(r.actions, [{ type: 'send', id: 'finisher', seq: 'pir-finisher-1', title: 'demo · ready for your go', message: '2 steps from project rules: git -C /repo merge pir/demo', click: 'https://f', reminder: false }]);
+  r = notifyStep(r.state, [at('awaiting-go')], 899_999, o);
+  assert.deepEqual(r.actions, []);
+  r = notifyStep(r.state, [at('awaiting-go')], 900_000, o);
+  assert.deepEqual(r.actions.map((a) => [a.type, a.seq, a.reminder, a.message.startsWith('Still waiting: 2 steps')]), [['send', 'pir-finisher-1', true, true]]);
+  r = notifyStep(r.state, [at('awaiting-go')], 2_000_000, o);
+  assert.deepEqual(r.actions, [], 'one reminder only');
+  // go → finishing with nothing parked: the ready alert is cleared
+  const fin = at('finishing', []);
+  assert.equal(fin, null);
+  r = notifyStep(r.state, [], 2_000_001, o);
+  assert.deepEqual(r.actions, [{ type: 'clear', id: 'finisher', seq: 'pir-finisher-1' }]);
+  // a step failed → stuck: a new alert, its own reminder, cleared on the next go
+  r = notifyStep(r.state, [at('stuck')], 3_000_000, o);
+  assert.deepEqual(r.actions.map((a) => [a.type, a.seq, a.title]), [['send', 'pir-finisher-2', 'demo · finisher stuck']]);
+  r = notifyStep(r.state, [at('stuck')], 3_900_000, o);
+  assert.equal(r.actions[0].reminder, true);
+  r = notifyStep(r.state, [], 3_900_001, o);
+  assert.deepEqual(r.actions, [{ type: 'clear', id: 'finisher', seq: 'pir-finisher-2' }]);
+});
+
+test('notifyStep: a view whose key changes mid-episode clears the old alert and sends the new one', () => {
+  const o = { remindMs: 900_000, linkWaitMs: 20_000 };
+  const at = (phase, url = 'https://f') => finisherNotifyView({ slug: 'demo', view: fview({ phase, state: phase }), pending: [goQ], url });
+  let r = notifyStep(newNotifyState(), [at('awaiting-go')], 0, o);
+  r = notifyStep(r.state, [at('stuck')], 10, o);
+  assert.deepEqual(r.actions.map((a) => [a.type, a.seq]), [['clear', 'pir-finisher-1'], ['send', 'pir-finisher-2']]);
+  // An episode never sent (still waiting for its link) is not cleared; the next one waits its own 20 s.
+  let h = notifyStep(newNotifyState(), [at('awaiting-go', null)], 0, o);
+  h = notifyStep(h.state, [at('stuck', null)], 10, o);
+  assert.deepEqual(h.actions, []);
+  h = notifyStep(h.state, [at('stuck', null)], 20_010, o);
+  assert.deepEqual(h.actions.map((a) => [a.type, a.seq, a.click]), [['send', 'pir-finisher-2', null]]);
+  // Workers carry no key: a change of message mid-episode stays one episode (unchanged behaviour).
+  let w = notifyStep(newNotifyState(), [view()], 0, opts);
+  w = notifyStep(w.state, [view({ waiting: 'permission', message: 'other' })], 10, opts);
+  assert.deepEqual(w.actions, []);
 });
