@@ -332,20 +332,32 @@ The coordinator agent is fenced by having no Bash at all. The finisher needs Bas
 `~/.claude/settings.json` and this repo's `.claude/settings.json` both allow `Bash(git merge:*)`, and
 the repo also allows `Bash(./install.sh)`. In `permissionMode: 'default'` an allow rule answers a
 request before `canUseTool` is called, so the `decide` gate alone would never see those commands.
-The fence must therefore sit before the settings' rules. T00 measures which of these holds on Claude
-Code 2.1.284 with SDK 0.3.282, and T04 builds on the answer:
+The fence must therefore sit before the settings' rules.
 
-1. an SDK `PreToolUse` hook callback, which runs for every tool call before permission rules and can
-   return a deny (expected);
-2. starting the session with `settingSources` that exclude `user` and `project` settings, keeping
-   CLAUDE.md through another route;
-3. `--settings` with a `permissions.deny` or a `defaultMode` that overrides the allows.
+**The fence is an SDK `PreToolUse` hook callback** (T00, measured 2026-09-29 on Claude Code 2.1.284,
+SDK 0.3.282, `permissionMode: 'default'`, a scratch repo whose `.claude/settings.json` allowed
+`Bash(git merge:*)` and `Bash(touch:*)`). Passed as `options.hooks = { PreToolUse: [{ hooks: [cb] }] }`,
+with no `matcher`, the callback ran for every tool call before the settings' rules: `Bash` (both
+allow-ruled commands), `Read`, `Write`, `AskUserQuestion`, `EnterWorktree`, `CronCreate`, `ListAgents`,
+`ToolSearch`, `Agent`, and a `Bash` call made by a sub-agent the session spawned. Its return decides:
 
-The fence has to hold for a command an allow rule covers; T00 proves it with `git merge` and an
-allow rule, both in a scratch repo. It must also hold for the tools the coordinator agent's T00 saw run in
-`default` mode without reaching `canUseTool` (`EnterWorktree`, `CronCreate`, `ListAgents`); any tool the
-chosen fence does not see is left out of the session's `tools` allowlist, since it would otherwise act
-before the go.
+- `{ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason } }`
+  refuses the call; nothing ran (`git merge` left the branch unmoved). The model reads
+  `PreToolUse:<Tool> hook error: <reason>` as the tool result.
+- `permissionDecision: 'ask'` sends the call on to `canUseTool` even when an allow rule covers it
+  (`touch` and `git merge` both reached it), so `decide` and the park-for-the-person path work
+  unchanged, and an `AskUserQuestion` answered there returned `updatedInput.answers` as before.
+- `{}` (no decision) falls through to the settings' rules, so an allow-ruled command then runs
+  unseen. The finisher's hook therefore never returns `{}` for a tool that can act.
+
+T04 therefore installs a hook that returns `ask` for every call, in every phase, and keeps the
+policy of §2.4 and §2.5 where it is, in `decide` behind `canUseTool`: the hook's only job is to stop
+the settings' allow rules from answering first. The hook takes no input from the finisher's words.
+Measured in `permissionMode: 'default'` only, which T04 uses; `auto` was not measured. `startWorker`
+does not pass `hooks` today, so T04 adds that option. No tool was found that the
+hook does not see, so no tool must be left out of `tools` for the fence's sake; T04 still passes a
+`tools` allowlist as least privilege. The two fallbacks this section once listed (`settingSources`
+without `user`/`project`, and a `--settings` deny) were not measured, since the hook held.
 
 ### 3.4 Data flow
 
