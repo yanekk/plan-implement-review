@@ -14,7 +14,7 @@ past.
 
 **Status:** Planned 2026-09-29. Nothing built.
 **Last updated:** 2026-09-29
-**Next `pir-work` will:** T00 prove-the-fence: it gates T04's session options.
+**Next `pir-work` will:** T08 finisher-docs; then T10 finisher-live.
 
 ## Tasks
 
@@ -32,10 +32,10 @@ done · ⛔ blocked, needs a human.
 | T06 | finisher-alerts | T05 | ✅ | |
 | T07 | finisher-row | T05 | ✅ | |
 | T08 | finisher-docs | T03, T05, T06, T07 | ⬜ | |
-| T09 | finisher-drill | T03, T06, T07 | 🔍 | Rig scenarios `finisher-notyet`, `finisher-stuck`, `finisher-reserved` and a pretend phone (`rig.alerts()`, through `notifyPass`). Six new pty tests plus alert checks on T07's: all five cases driven at both sizes, worker-driven, no defect. Deviation: added `finisher-notyet`, not in the doc; the fake cannot branch on an answer. User kept the reminder after `Not yet`. |
+| T09 | finisher-drill | T03, T06, T07 | ✅ | Rig scenarios `finisher-notyet`, `finisher-stuck`, `finisher-reserved`, pretend phone `rig.alerts()`; six pty tests, both sizes, worker-driven. Review clean, no fix commit: suite green, re-drove stuck at 80×24, checked the rig's alert pass mirrors coordinate.mjs (sync publish, done after clear). Unrecorded-deviation check: `finisher-notyet` noted. |
 | T10 | finisher-live | T08, T09 | ⬜ | |
 
-**Review queue:** T09
+**Review queue:** empty
 
 ## Blocked on the user
 
