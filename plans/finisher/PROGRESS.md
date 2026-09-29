@@ -14,7 +14,7 @@ past.
 
 **Status:** Planned 2026-09-29. Nothing built.
 **Last updated:** 2026-09-29
-**Next `pir-work` will:** review T04.
+**Next `pir-work` will:** implement T03 or T05.
 
 ## Tasks
 
@@ -27,7 +27,7 @@ done · ⛔ blocked, needs a human.
 | T01 | finisher-policy | — | ✅ | |
 | T02 | finisher-brief | — | ✅ | |
 | T03 | finisher-skill-and-rules | T01 | ⬜ | |
-| T04 | finisher-session | T00, T01, T02 | 🔍 | `startFinisher` in finisher-agent.mjs, 22 tests; hooks option in worker-proc and the fake. Deviations: added `finisherStaleGo` brief; a go counts only for a question seen since the latest ready/stuck/resync (commit); `defaultToNo` in finishing parks; `pirHome` param; `Not yet` sends nothing. |
+| T04 | finisher-session | T00, T01, T02 | ✅ | Review: a step right after the Go was judged in awaiting-go until the next pass and denied; reproduced with the fake, fixed (decide drains first, result carried to drain()), two tests lock it. Implementer deviations accepted (generation-scoped go, `finisherStaleGo`, `defaultToNo` parks). Probed refactor parity, person/phone answer paths, restart budget. |
 | T05 | finisher-handover | T04 | ⬜ | |
 | T06 | finisher-alerts | T05 | ⬜ | |
 | T07 | finisher-row | T05 | ⬜ | |
@@ -35,7 +35,7 @@ done · ⛔ blocked, needs a human.
 | T09 | finisher-drill | T03, T06, T07 | ⬜ | |
 | T10 | finisher-live | T08, T09 | ⬜ | |
 
-**Review queue:** T04
+**Review queue:** empty
 
 ## Blocked on the user
 
