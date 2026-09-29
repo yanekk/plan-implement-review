@@ -12,7 +12,7 @@ past.
 
 **Plan reviewed:** 2026-09-29 — 11 fixed, 2 decided with the user
 
-**Status:** Planned 2026-09-29. Nothing built.
+**Status:** Building. T01 done.
 **Last updated:** 2026-09-29
 **Next `pir-work` will:** T00 prove-the-fence: it gates T04's session options.
 
@@ -24,7 +24,7 @@ done · ⛔ blocked, needs a human.
 | # | Task | Depends on | State | Notes |
 |---|---|---|---|---|
 | T00 | prove-the-fence | — | ⬜ | |
-| T01 | finisher-policy | — | 🔍 | `src/core/finisher-policy.mjs`, 17 tests; `commandTails` exported. Deviations: `git branch --list <pattern>` accepted (listing, never creates); leading `VAR=` refused (`GIT_EXTERNAL_DIFF`); unknown phase denies all; no `nextPhase` (DESIGN §3.2), `checkStatus().next` carries it per task doc. |
+| T01 | finisher-policy | — | ✅ | `src/core/finisher-policy.mjs`, 18 tests. Review fixed a fence hole, reproduced on disk: an expansion in a git part (`$(…)`, `${X:=…}`, `$'…'`, brace lists) carried `--output`/`-c` past `isLookOnly`; test locks it. Probed quoting, heredocs, `$_`, option abbreviation (git refuses). Implementer's deviations accepted. |
 | T02 | finisher-brief | — | ⬜ | |
 | T03 | finisher-skill-and-rules | T01 | ⬜ | |
 | T04 | finisher-session | T00, T01, T02 | ⬜ | |
@@ -35,7 +35,7 @@ done · ⛔ blocked, needs a human.
 | T09 | finisher-drill | T03, T06, T07 | ⬜ | |
 | T10 | finisher-live | T08, T09 | ⬜ | |
 
-**Review queue:** T01
+**Review queue:** empty
 
 ## Blocked on the user
 
