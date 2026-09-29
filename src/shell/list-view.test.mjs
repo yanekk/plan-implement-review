@@ -257,3 +257,75 @@ test('tildify and rootsLabel write the home folder as ~', () => {
   assert.equal(rootsLabel(['/home/p/src', '/work'], HOME), '~/src, /work');
   assert.equal(rootsLabel('~/src', HOME), '~/src');
 });
+
+// --- the mouse (mouse-navigation T05, DESIGN §2.2, §2.6, §3.2) ------------------------------------------
+
+function mouseView(opts = {}) {
+  const got = [];
+  const tui = { requestRender() {}, terminal: { rows: opts.rows ?? 24, columns: 80 } };
+  const v = createListView({
+    tui,
+    colour: opts.colour ?? false,
+    repos: () => REPOS,
+    roots: '~/src',
+    dashboard: buildDashboard(VIEWS),
+    home: HOME,
+    onListMouse: (ev, frame) => (got.push({ ev, frame }), opts.answer ?? { handled: true }),
+  });
+  v.focused = true;
+  return { v, got };
+}
+const ev = (type, y, x = 3, extra = {}) => ({ type, button: type === 'wheel' ? 'none' : 'left', x, y, screenX: x, screenY: y, width: 80, height: 24, ...extra });
+
+test('mouse: an event on the list block reaches onListMouse with the block, whose run rows carry their hits', () => {
+  const { v, got } = mouseView();
+  const lines = v.render(80).map(plain);
+  const alphaY = lines.findIndex((l) => /alpha/.test(l));
+  const r = v.handleMouse(ev('click', alphaY));
+  assert.deepEqual(r, { handled: true }, "onListMouse's answer is the component's");
+  assert.equal(got.length, 1);
+  assert.equal(got[0].ev.y, alphaY, 'screen coordinates, unshifted');
+  assert.deepEqual(got[0].frame[alphaY].hit, { kind: 'run', index: 0 }, 'the frame is the list block as drawn');
+  assert.equal(got[0].frame[0].hit, undefined, 'the title is no row');
+});
+
+test('mouse: a click in the box goes to the Editor, shifted to its rows, and never to onListMouse', () => {
+  const { v, got } = mouseView();
+  for (const ch of '@shop abc'.slice(1)) v.handleInput(ch);
+  const lines = v.render(80).map(plain);
+  const head = lines.findIndex((l) => l.startsWith('new plan'));
+  const r = v.handleMouse(ev('click', head + 2, 1));
+  assert.ok(r?.handled && r.focus, 'the Editor took the click and asks for the focus');
+  assert.equal(got.length, 0);
+  v.handleInput('Z');
+  assert.equal(v.text, '@Zshop abc', 'the caret moved to where the click was');
+  // Press, drag and release are left alone, in the box as on the list, so text selection keeps working.
+  for (const type of ['press', 'drag', 'release']) assert.equal(v.handleMouse(ev(type, head + 2, 1)), undefined, type);
+});
+
+test('mouse: a wheel or a pointer move over the box is still the list\'s; the hint line is the list\'s too', () => {
+  const { v, got } = mouseView();
+  const lines = v.render(80).map(plain);
+  const head = lines.findIndex((l) => l.startsWith('new plan'));
+  v.handleMouse(ev('wheel', head + 2, 3, { wheelDelta: 3 }));
+  v.handleMouse(ev('move', head + 2));
+  v.handleMouse(ev('click', lines.length - 1));
+  assert.deepEqual(got.map((g) => [g.ev.type, g.ev.y]), [['wheel', head + 2], ['move', head + 2], ['click', lines.length - 1]]);
+  assert.equal(got[2].frame[lines.length - 1], undefined, 'no list line there, so no hit');
+});
+
+test('mouse: update({ hoverY }) paints that list row hovered, only a row with a hit, never the box', () => {
+  const { v } = mouseView({ colour: true });
+  const plainLines = v.render(80);
+  const betaY = plainLines.map(plain).findIndex((l) => /beta/.test(l));
+  v.update({ hoverY: betaY });
+  const lit = v.render(80);
+  assert.notEqual(lit[betaY], plainLines[betaY], 'beta repainted');
+  assert.ok(lit[betaY].includes('\x1b[1m'), 'bold');
+  assert.equal(plain(lit[betaY]), plain(plainLines[betaY]), 'the same text');
+  lit.forEach((l, y) => y !== betaY && assert.equal(l, plainLines[y], `line ${y} unchanged`));
+  v.update({ hoverY: 0 });
+  assert.deepEqual(v.render(80), plainLines, 'the title does not hover');
+  v.update({ hoverY: null });
+  assert.deepEqual(v.render(80), plainLines);
+});

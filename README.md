@@ -325,6 +325,14 @@ other terminals get the plain 16 colours, and `NO_COLOR` turns colour off. Detai
 | Live view | `↑↓` pick a task or the coordinator agent's row · `→` open its conversation · `c` open the coordinator agent · `←` back to the dashboard · `Ctrl+S` twice stop this run · `esc` quit |
 | A planning run | `↑↓` pick a step · `→` open its conversation · `←` back · at the go, `↵` start or `n` not now |
 
+The mouse works too: click a run, a task, the coordinator agent's row or a planning step to open it,
+see the row under the pointer brighten before you click, and use the wheel to move through a list or
+scroll a conversation. Going back, quitting, answering questions and the stop/remove chords stay on the
+keys. Dragging across text still copies it (hold Option in iTerm2, or Shift in most other terminals,
+for your terminal's own selection instead). If a `pir` killed with `kill -9` leaves your shell printing
+odd characters when you move the mouse, type `reset`. Details in
+[detached-runs.md](docs/detached-runs.md#the-mouse).
+
 Another program can follow what the dashboard has open: start it as
 `PIR_DASHBOARD_STATE=/abs/path.json pir` and it keeps that file naming the open run or worker and its
 folder, which is how a cockpit that shows `pir` in a pane points its diff viewer and terminals at the

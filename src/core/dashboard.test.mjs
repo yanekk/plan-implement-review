@@ -783,3 +783,61 @@ test('moveRow never lands on a separator (T12)', () => {
   // A separator at an end (never drawn so, but a clamp must not stop on it): the move is refused.
   assert.equal(moveRow([{ id: 'T01' }, { id: '──', separator: true }], 0, 1), 0);
 });
+
+// --- a click's select in the live view (mouse-navigation T02, DESIGN §2.1) ---------------------------
+
+test('select in watch sets taskSel, clamps, clears armed, and leaves the list sel alone', () => {
+  let ui = { ...watchingTasks({ taskSel: 0 }), armed: { action: 'stop', key: 'r1__plan' } };
+  ui = dashboardReducer(ui, { type: 'select', index: 2 }, TASKED).ui;
+  assert.equal(ui.taskSel, 2);
+  assert.equal(ui.armed, null, 'a click clears an armed chord as a key does');
+  assert.equal(ui.sel, 1, 'the list selection stays');
+  assert.equal(dashboardReducer(ui, { type: 'select', index: 99 }, TASKED).ui.taskSel, 5, 'past the end clamps to the last task');
+  const empty = [withTasks({ slug: 'plan', key: 'r1__plan' }, [])];
+  assert.equal(dashboardReducer(watchingTasks({ sel: 0, taskSel: 0 }), { type: 'select', index: 3 }, empty).ui.taskSel, 0, 'an empty task list pins 0');
+});
+
+test('select then open: a task with a worker opens it, one without shows the note', () => {
+  let ui = dashboardReducer(watchingTasks({ taskSel: 0 }), { type: 'select', index: 1 }, TASKED).ui;
+  const opened = dashboardReducer(ui, { type: 'open' }, TASKED).ui;
+  assert.equal(opened.view, 'worker');
+  assert.equal(opened.openWorker.taskId, 'T02');
+  ui = dashboardReducer(watchingTasks({ taskSel: 0 }), { type: 'select', index: 3 }, TASKED).ui;
+  const noted = dashboardReducer(ui, { type: 'open' }, TASKED).ui;
+  assert.equal(noted.view, 'watch');
+  assert.equal(noted.note, noWorkerNote(task('T04'), TASKED[0].snap.runState.tasks));
+});
+
+test('select on the agent row then open opens the agent; with no session, the note; the separator changes nothing', () => {
+  const coordinator = { id: 'sess-1', live: true, logPath: '/c/conversations/coordinator-1.ndjson', state: 'up', holding: 0 };
+  const helperWorker = { id: 'w-fix', live: true, logPath: '/c/conversations/w-fix.jsonl' };
+  const runWith = (c) => [view({ slug: 'plan', key: 'r1__plan', snap: { runState: { tasks: [task('T01', { done: true })], coordinator: c, helpers: [task('tests-fix', { helper: true, phase: 'building', worker: helperWorker })] } } })];
+  // Rows: T01, separator, agent, tests-fix.
+  const run = runWith(coordinator);
+  let ui = dashboardReducer(watchingTasks({ sel: 0, taskSel: 0 }), { type: 'select', index: 2 }, run).ui;
+  assert.equal(ui.taskSel, 2);
+  const opened = dashboardReducer(ui, { type: 'open' }, run).ui;
+  assert.equal(opened.view, 'worker');
+  assert.equal(opened.openWorker.taskId, 'coordinator');
+  const helper = dashboardReducer(dashboardReducer(watchingTasks({ sel: 0 }), { type: 'select', index: 3 }, run).ui, { type: 'open' }, run).ui;
+  assert.equal(helper.openWorker.taskId, 'tests-fix', 'a helper row opens its worker');
+
+  const noSession = runWith({ live: false, state: 'restarting' });
+  ui = dashboardReducer(watchingTasks({ sel: 0, taskSel: 0 }), { type: 'select', index: 2 }, noSession).ui;
+  const refused = dashboardReducer(ui, { type: 'open' }, noSession).ui;
+  assert.equal(refused.view, 'watch');
+  assert.match(refused.note, /no coordinator agent/);
+
+  const before = { ...watchingTasks({ sel: 0, taskSel: 3 }), armed: { action: 'stop', key: 'r1__plan' } };
+  const sep = dashboardReducer(before, { type: 'select', index: 1 }, run).ui;
+  assert.equal(sep.taskSel, 3, 'a select on the separator leaves taskSel where it was');
+  assert.equal(sep.sel, 0);
+});
+
+test('select in the worker view stays inert', () => {
+  const ui = { ...watchingTasks({ taskSel: 1 }), view: 'worker', openWorker: { taskId: 'T02' } };
+  const next = dashboardReducer(ui, { type: 'select', index: 0 }, TASKED).ui;
+  assert.equal(next.view, 'worker');
+  assert.equal(next.taskSel, 1);
+  assert.equal(next.sel, 1);
+});

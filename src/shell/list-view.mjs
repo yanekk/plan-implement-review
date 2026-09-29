@@ -85,6 +85,9 @@ export function repoCompletion(currentRepos, home = homedir()) {
 //   onSubmit(text)  — routeBoxKey said 'submit'; the caller parses and starts (T05).
 //   onListKey(data) — routeBoxKey said 'list'; the caller runs the list's decodeKey/reducer path with it.
 //   onQuit()        — 'quit'.
+//   onListMouse(ev, frame) — a mouse event outside the box (and a wheel or pointer move the box did not take),
+//                     with the list block's last-rendered lines as `frame`, so hitAt reads the lines on screen
+//                     (mouse-navigation §3.2). Its result is this component's result.
 //   home            — the folder written as `~` (the person's home; a test passes its own).
 export function createListView({
   tui = STUB_HOST,
@@ -96,6 +99,7 @@ export function createListView({
   onSubmit = () => {},
   onListKey = () => {},
   onQuit = () => {},
+  onListMouse = () => undefined,
   home = homedir(),
 } = {}) {
   const editor = new Editor(tui, editorTheme(colour), { autocompleteMaxVisible: POPUP_ROWS });
@@ -103,7 +107,12 @@ export function createListView({
   // Editor must not clear the person's text on its own.
   editor.disableSubmit = true;
   editor.setText(BARE_TEXT);
-  let state = { dashboard, ui, note: null };
+  let state = { dashboard, ui, note: null, hoverY: null };
+  // What the last render drew, for the mouse: the list block's lines (unpainted, carrying their row hits;
+  // the block starts at screen row 0) and the rows the box took, from its top border down.
+  let lastList = [];
+  let boxTop = -1;
+  let boxRows = 0;
   let cached = null;
   let focused = false;
 
@@ -178,15 +187,38 @@ export function createListView({
     const box = editor.render(w);
     const termRows = tui.terminal?.rows || 24;
     const budget = Math.max(0, termRows - box.length - 2 - (noteLine ? 1 : 0));
-    const list = buildListFrame(state.dashboard, state.ui ?? initialUi(), { columns: w, rows: budget }).map(paint);
+    const block = buildListFrame(state.dashboard, state.ui ?? initialUi(), { columns: w, rows: budget });
+    // Only a row a click would open lights up under the pointer (§2.2); the selected band wins (paintLine).
+    const list = block.map((spans, y) => paintLine(spans, w, colour, { hovered: y === state.hoverY && Boolean(spans.hit) }));
     while (list.length < budget) list.push('');
+    lastList = block;
+    boxTop = list.length + (noteLine ? 1 : 0) + 1;
+    boxRows = box.length;
 
     return [...list, ...(noteLine ? [noteLine] : []), paint([span('new plan', 'head'), span('  ' + head.text, head.style)]), ...box, hint];
+  }
+
+  // A click in the box moves the Editor's caret, and one on the @repo pop-up picks the entry: the Editor does
+  // both itself, given the event in its own rows (§2.6). Everything else — the list's rows, and a wheel or a
+  // pointer move the box does not take — is the caller's: the wheel moves the list wherever the pointer is
+  // (§2.3), and a move over the box still clears the hovered list row.
+  function handleMouse(ev) {
+    if (!ev) return undefined;
+    if (boxTop >= 0 && ev.y >= boxTop && ev.y < boxTop + boxRows) {
+      const r = editor.handleMouse({ ...ev, y: ev.y - boxTop });
+      if (r) {
+        settle();
+        return r;
+      }
+      if (ev.type !== 'wheel' && ev.type !== 'move') return undefined;
+    }
+    return onListMouse(ev, lastList);
   }
 
   return {
     render,
     handleInput,
+    handleMouse,
     invalidate() {
       editor.invalidate();
     },
@@ -203,6 +235,7 @@ export function createListView({
         dashboard: 'dashboard' in next ? next.dashboard : state.dashboard,
         ui: 'ui' in next ? next.ui : state.ui,
         note: 'note' in next ? next.note : state.note,
+        hoverY: 'hoverY' in next ? next.hoverY : state.hoverY,
       };
     },
     get text() {

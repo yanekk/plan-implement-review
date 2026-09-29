@@ -7,6 +7,7 @@
 // and feels right to a person moving and opening runs at a real terminal — is hand-verified (§5.1, T12).
 
 import { test } from 'node:test';
+import { EventEmitter } from 'node:events';
 import assert from 'node:assert/strict';
 import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -27,8 +28,13 @@ import {
   followStep,
   buildLandingFrame,
   FOLLOW_LINE,
+  hitAt,
+  underMultiplexer,
+  defaultCopy,
 } from './pir-tui.mjs';
-import { FrameView, SGR, SELECTED_BG, clipSpans } from './pir-view.mjs';
+import { FrameView, SGR, SELECTED_BG, HOVER_ASKING, HOVER_LIFT, clipSpans, paintLine } from './pir-view.mjs';
+import { createScreenModel } from './conversation-rig.mjs';
+import { BASIC_HOVER_ASKING, BASIC_HOVER_LIFT, MOCHA_HOVER_ASKING, MOCHA_HOVER_LIFT, MOCHA_SGR } from './palette.mjs';
 import { visibleWidth } from '@earendil-works/pi-tui';
 import { buildDashboard, initialUi } from '../core/dashboard.mjs';
 import { buildDisplay } from '../core/display.mjs';
@@ -589,6 +595,81 @@ test('FrameView paints the selected row as a full-width grey band with dim text 
   assert.ok(!other.includes(SELECTED_BG), 'an unselected row has no band');
 });
 const RESET_RE = /\x1b\[0m/;
+
+// Hover (mouse-navigation §2.2, T03). The test command sets NO_COLOR, so SGR is the basic table; the
+// 24-bit case is reached by passing the Mocha table to paintLine explicitly.
+const MOCHA_PAL = { sgr: MOCHA_SGR, lift: MOCHA_HOVER_LIFT, asking: MOCHA_HOVER_ASKING };
+
+test('paintLine: a hovered plain line gains bold, with its text and clipping unchanged', () => {
+  const row = [{ text: 'alpha ', style: null }, { text: '● running', style: 'running' }, { text: ' tail', style: 'head' }];
+  const hovered = paintLine(row, 12, true, { hovered: true });
+  assert.equal(hovered, `\x1b[1malpha \x1b[0m\x1b[1m${SGR.running}● runn\x1b[0m`);
+  assert.equal(hovered.replace(/\x1b\[[0-9;]*m/g, ''), paintLine(row, 12, false), 'same text, same clip');
+  assert.equal(visibleWidth(hovered), visibleWidth(paintLine(row, 12)), 'same width as unhovered');
+  assert.equal(paintLine(row, 12, true, { hovered: false }), paintLine(row, 12), 'hovered false paints as before');
+});
+
+test('paintLine: a hovered dim span is lifted — Mocha subtext1 bold on 24-bit, plain bold without dim on basic', () => {
+  for (const style of ['dim', 'ended', 'idle', 'hint', 'bar-idle']) {
+    const row = [{ text: 'x', style }];
+    assert.equal(paintLine(row, 10, true, { hovered: true }), `${BASIC_HOVER_LIFT}x\x1b[0m`, `basic ${style}`);
+    assert.ok(!paintLine(row, 10, true, { hovered: true }).includes('\x1b[2m'), `basic ${style} loses the faint attribute`);
+    assert.equal(paintLine(row, 10, true, { hovered: true, palette: MOCHA_PAL }), '\x1b[1;38;2;186;194;222mx\x1b[0m', `24-bit ${style}`);
+  }
+  assert.equal(HOVER_LIFT, BASIC_HOVER_LIFT, 'the module paints with the basic lift under NO_COLOR');
+  // A non-dim span keeps its colour, bold, on the 24-bit table too.
+  assert.equal(paintLine([{ text: 'ok', style: 'running' }], 10, true, { hovered: true, palette: MOCHA_PAL }), `\x1b[1m${MOCHA_SGR.running}ok\x1b[0m`);
+});
+
+// T08 drill: a row asking the person is amber bold throughout, so bold alone showed no hover on it; the user
+// chose a brighter amber. `your-go` is the same amber and brightens the same way.
+test('paintLine: a hovered asking span turns the brighter amber, on both tables; other spans as before', () => {
+  assert.equal(HOVER_ASKING, BASIC_HOVER_ASKING, 'the module paints with the basic amber under NO_COLOR');
+  const row = [{ text: '  ● T02  ', style: 'asking' }, { text: '0:05', style: 'dim' }, { text: ' ok', style: 'running' }];
+  assert.equal(paintLine(row, 20, true, { hovered: true }), `${BASIC_HOVER_ASKING}  ● T02  \x1b[0m${BASIC_HOVER_LIFT}0:05\x1b[0m\x1b[1m${SGR.running} ok\x1b[0m`);
+  assert.equal(paintLine(row, 20, true, { hovered: true, palette: MOCHA_PAL }), `${MOCHA_HOVER_ASKING}  ● T02  \x1b[0m${MOCHA_HOVER_LIFT}0:05\x1b[0m\x1b[1m${MOCHA_SGR.running} ok\x1b[0m`);
+  assert.notEqual(paintLine(row, 20, true, { hovered: true }), paintLine(row, 20, true), 'hover shows on an asking row');
+  assert.equal(paintLine([{ text: 'go', style: 'your-go' }], 10, true, { hovered: true }), `${BASIC_HOVER_ASKING}go\x1b[0m`);
+  assert.equal(paintLine(row, 20, false, { hovered: true }), paintLine(row, 20, false), 'colour off: no hover');
+});
+
+test('paintLine: hovered and selected is exactly the selected band, byte for byte', () => {
+  const row = [{ text: '▎ ', style: 'selected' }, { text: 'alpha ', style: 'dim' }, { text: '● running', style: 'running' }];
+  assert.equal(paintLine(row, 20, true, { hovered: true }), paintLine(row, 20, true));
+  assert.equal(paintLine(row, 20, false, { hovered: true }), paintLine(row, 20, false));
+});
+
+test('paintLine: with colour off a hovered line equals the unhovered one', () => {
+  const row = [{ text: 'alpha ', style: 'dim' }, { text: 'b', style: 'head' }];
+  assert.equal(paintLine(row, 20, false, { hovered: true }), paintLine(row, 20, false));
+  assert.equal(paintLine(row, 20, false, { hovered: true }), 'alpha b');
+});
+
+test('FrameView paints only the hovered line, and only when that line has a hit; a null hover paints as before', () => {
+  const hit = (spans, h) => Object.assign(spans, { hit: h });
+  const frame = [
+    [{ text: 'title', style: 'head' }],
+    hit([{ text: 'run one', style: 'dim' }], { kind: 'run', index: 0 }),
+    hit([{ text: 'run two', style: null }], { kind: 'run', index: 1 }),
+    [{ text: 'a note', style: 'dim' }],
+  ];
+  let hoverY = null;
+  const view = new FrameView(() => frame, { getHoverY: () => hoverY });
+  const before = new FrameView(() => frame).render(40);
+  assert.deepEqual(view.render(40), before, 'null hover paints as a view without hover');
+  hoverY = 2;
+  const lit = view.render(40);
+  assert.equal(lit[2], '\x1b[1mrun two\x1b[0m', 'the hovered row is bold');
+  assert.deepEqual([lit[0], lit[1], lit[3]], [before[0], before[1], before[3]], 'every other line is unchanged');
+  hoverY = 3;
+  assert.deepEqual(view.render(40), before, 'a line with no hit does not light up');
+  hoverY = 0;
+  assert.deepEqual(view.render(40), before, 'nor does the title');
+  hoverY = 9;
+  assert.deepEqual(view.render(40), before, 'a hover past the frame paints nothing');
+  hoverY = 1;
+  assert.deepEqual(new FrameView(() => frame, { colour: false, getHoverY: () => 1 }).render(40), new FrameView(() => frame, { colour: false }).render(40), 'colour off: no hover');
+});
 
 test('FrameView clips a line to the width across spans, never wraps, and counts wide characters as two', () => {
   const view = new FrameView(() => [[{ text: '漢字', style: 'done' }, { text: 'abcdef', style: null }], [{ text: 'x'.repeat(50) }]]);
@@ -1688,4 +1769,654 @@ test('box: a typed key disarms a half-pressed chord; the next press only arms, a
   term.press('\x1b'); await settle();
   term.press('\x1b'); await settle();
   await done;
+});
+
+// --- row hits (mouse-navigation T02, DESIGN §3.3) ---------------------------------------------------
+
+// Every line's hit, as [lineIndex, hit] pairs, so a test states exactly which lines are rows.
+const hitsOf = (frame) => frame.flatMap((l, y) => (l.hit ? [[y, l.hit]] : []));
+const lineWith = (frame, substr) => frame.findIndex((l) => l.map((s) => s.text).join('').includes(substr));
+
+test('list, no box: each run row carries its index; title, header, counts and footer carry none', () => {
+  const frame = buildListFrame(buildDashboard(VIEWS), initialUi());
+  const dash = buildDashboard(VIEWS);
+  const hits = hitsOf(frame);
+  assert.equal(hits.length, VIEWS.length);
+  for (const [y, hit] of hits) {
+    assert.equal(hit.kind, 'run');
+    assert.ok(frameText([frame[y]]).includes(dash.rows[hit.index].slug), `line ${y} paints row ${hit.index}`);
+  }
+  for (const s of ['runs on this machine', 'SLUG', '4 runs', 'esc quit']) assert.equal(frame[lineWith(frame, s)].hit, undefined, s);
+  assert.equal(hitAt(frame, lineWith(frame, 'SLUG')), null);
+  assert.deepEqual(hitAt(frame, hits[0][0]), { kind: 'run', index: 0 });
+  // The hit is not enumerable, so a whole-frame deepEqual against plain arrays still holds.
+  assert.deepEqual(Object.keys(frame[hits[0][0]]), frame[hits[0][0]].map((_, i) => String(i)));
+});
+
+test('list windowed by a budget: visible rows carry their true indices, markers and spacers none', () => {
+  const dash = buildDashboard(manyViews(20));
+  const frame = buildListFrame(dash, { ...initialUi(), sel: 10 }, { rows: 8 });
+  const hits = hitsOf(frame);
+  assert.ok(hits.length > 0);
+  for (const [y, hit] of hits) {
+    assert.equal(hit.kind, 'run');
+    assert.match(frameText([frame[y]]), new RegExp(`run-${String(hit.index).padStart(2, '0')}`), `line ${y} carries its true index`);
+  }
+  const indices = hits.map(([, h]) => h.index);
+  assert.ok(indices.includes(10), 'the selected row is hit-tagged');
+  assert.deepEqual(indices, [...indices].sort((a, b) => a - b).map((_, i) => indices[0] + i), 'consecutive rows');
+  for (const m of ['↑', '↓']) {
+    const y = lineWith(frame, `${m} `);
+    assert.ok(y >= 0, `the ${m} marker shows`);
+    assert.equal(hitAt(frame, y), null);
+  }
+  assert.equal(hitAt(frame, lineWith(frame, '20 runs')), null);
+});
+
+test('an empty list has no hit, in either form', () => {
+  assert.deepEqual(hitsOf(buildListFrame(buildDashboard([]), initialUi())), []);
+  assert.deepEqual(hitsOf(buildListFrame(buildDashboard([]), initialUi(), { rows: 8 })), []);
+});
+
+test('a list with a ready-to-merge row (wider columns) still tags every run row', () => {
+  const views = [
+    { slug: 'done-run', state: 'running', repo: 'r', progress: { done: 2, total: 2 }, workers: 0, snap: { runState: { tasks: [], handoff: { state: 'ready' } } } },
+    ...VIEWS,
+  ];
+  const dash = buildDashboard(views);
+  assert.ok(dash.rows.some((v) => v.display === 'ready-to-merge'), 'the fixture reads ready-to-merge');
+  const hits = hitsOf(buildListFrame(dash, initialUi()));
+  assert.deepEqual(hits.map(([, h]) => h.index), dash.rows.map((_, i) => i));
+});
+
+test('live view: task i carries { task, i }; summary, stale note and log tail carry none; the bar keeps its hit', () => {
+  const run = tasksRun(T12_TASKS, { state: 'crashed', record: { repo: 'repo', slug: 'plan', controlDir: '/c' } });
+  const frame = buildWatchFrame(run, { now: NOW, ui: { ...initialUi(), view: 'watch', taskSel: 1 }, logTail: ['boom'] });
+  const hits = hitsOf(frame);
+  assert.deepEqual(hits.map(([, h]) => h), T12_TASKS.map((_, i) => ({ kind: 'task', index: i })));
+  T12_TASKS.forEach((t, i) => assert.match(frameText([frame[hits[i][0]]]), new RegExp(t.id)));
+  const [selY] = hits[1];
+  assert.equal(frame[selY][0].text, '▎ ', 'the selected row keeps its bar');
+  assert.equal(frame[selY][0].style, 'selected');
+  assert.equal(hitAt(frame, 2), null, 'the summary line');
+  for (const s of ['this frame is stale', 'last lines of run.log', 'boom', 'full log']) assert.equal(hitAt(frame, lineWith(frame, s)), null, s);
+});
+
+test('live view with the coordinator agent and a helper: the separator has no hit, the agent and helper rows do', () => {
+  const runState = {
+    branch: 'pir/plan',
+    ceiling: 2,
+    tasks: T12_TASKS,
+    coordinator: { id: 's', live: true, logPath: null, state: 'up', holding: 0 },
+    helpers: [{ id: 'tests-fix', slug: 'fix-red-tests', helper: true, deps: [], done: false, phase: 'building', since: NOW - 3000, worker: { id: 'w-fix', live: true } }],
+  };
+  const run = tasksRun(T12_TASKS, { snap: { runState } });
+  const frame = buildWatchFrame(run, { now: NOW, ui: { ...initialUi(), view: 'watch', taskSel: 0 } });
+  // Entries: T01 T02 T03, separator (3), agent (4), tests-fix (5). Block line i+1 is entry i, block starts at 2.
+  const hits = hitsOf(frame);
+  assert.deepEqual(hits.map(([, h]) => h.index), [0, 1, 2, 4, 5]);
+  assert.equal(hitAt(frame, 2 + 1 + 3), null, 'the separator line');
+  assert.match(frameText([frame[2 + 1 + 4]]), /coordinator agent/);
+  assert.deepEqual(hitAt(frame, 2 + 1 + 4), { kind: 'task', index: 4 });
+  assert.match(frameText([frame[2 + 1 + 5]]), /tests-fix/);
+  assert.deepEqual(hitAt(frame, 2 + 1 + 5), { kind: 'task', index: 5 });
+});
+
+test('planning steps view: step i carries { step, i }; the go question and its keys carry none', () => {
+  const running = stepsRun({
+    state: 'running', outcome: null, step: 'plan',
+    steps: [
+      { id: 'plan', phase: 'asking', since: NOW - 60_000, stoppedAt: NOW - 20_000, asking: 'questions', worker: { id: 'p1', live: true } },
+      { id: 'review', phase: 'pending', worker: null },
+      { id: 'build', phase: 'pending', worker: null },
+    ],
+  });
+  for (const [frame, what] of [
+    [buildWatchFrame(running, { now: NOW, ui: { ...initialUi(), view: 'watch', taskSel: 0 } }), 'without the go'],
+    [buildWatchFrame(stepsRun(), { now: NOW, ui: { ...initialUi(), view: 'watch', taskSel: 2 }, progress: PROGRESS_3 }), 'with the go'],
+  ]) {
+    const hits = hitsOf(frame);
+    assert.deepEqual(hits.map(([, h]) => h), [0, 1, 2].map((index) => ({ kind: 'step', index })), what);
+    ['plan', 'review', 'build'].forEach((id, i) => assert.match(frameText([frame[hits[i][0]]]), new RegExp(id), what));
+  }
+  const go = buildWatchFrame(stepsRun(), { now: NOW, ui: { ...initialUi(), view: 'watch' }, progress: PROGRESS_3 });
+  for (const s of ['Start the parallel build now?', '↵ Start the build', '↵ start · n not now']) assert.equal(hitAt(go, lineWith(go, s)), null, s);
+});
+
+test('hitAt: null for a negative y, a y past the end, a non-integer y, and a line without a hit', () => {
+  const frame = buildListFrame(buildDashboard(VIEWS), initialUi());
+  assert.equal(hitAt(frame, -1), null);
+  assert.equal(hitAt(frame, frame.length), null);
+  assert.equal(hitAt(frame, 1.5), null);
+  assert.equal(hitAt(frame, 0), null);
+  assert.equal(hitAt(null, 0), null);
+});
+
+// --- the mouse (mouse-navigation T04, DESIGN §2.2, §2.5, §2.7, §3.2) ----------------------------------
+
+// A process stand-in for the exit restore: an emitter whose exit() is recorded instead of ending the tests.
+function fakeProcess() {
+  const p = new EventEmitter();
+  p.exits = [];
+  p.exit = (code) => p.exits.push(code);
+  return p;
+}
+
+// A TTY screen over the fake terminal with every outside effect injected: no clipboard, no real env, no
+// real process listeners. `copies` collects what the screen asked to copy.
+function mouseScreen({ env = {}, columns = 40, rows = 6, platform = 'darwin' } = {}) {
+  const tty = fakeStream({ isTTY: true, columns, rows });
+  const term = fakeTerminal(tty);
+  const proc = fakeProcess();
+  const copies = [];
+  const screen = createScreen({
+    stream: tty,
+    colour: false,
+    terminal: term,
+    env,
+    onExit: proc,
+    platform,
+    copy: async (text) => {
+      copies.push(text);
+      return true;
+    },
+  });
+  return { tty, term, proc, copies, screen };
+}
+
+const MOUSE_OFF = '\x1b[?1006l\x1b[?1004l\x1b[?1003l\x1b[?1002l\x1b[?1000l';
+const sgr = (code, col, row, end = 'M') => `\x1b[<${code};${col};${row}${end}`; // 1-based, as a terminal sends
+const flush = () => new Promise((r) => setImmediate(r));
+// The layout root pi-tui dispatches mouse events to (createScreen's `guarded`), read off pi-tui's own field.
+const rootOf = (screen) => screen.host.layoutRoot;
+
+test('mouse: the screen starts with mouse reporting on, all-motion included', (t) => {
+  if (underMultiplexer(process.env)) return t.skip('pi-tui reads the real env; this shell is under a multiplexer');
+  const { tty, screen } = mouseScreen();
+  screen.paint([[{ text: 'row', style: null }]]);
+  const out = tty.text();
+  for (const m of [1000, 1002, 1003, 1004, 1006]) assert.ok(out.includes(`\x1b[?${m}h`), `?${m}h is written`);
+  screen.close();
+});
+
+test('mouse: under a multiplexer, ?1003h is written again after pi-tui\'s button-motion enable', () => {
+  for (const env of [{ TMUX: '/tmp/tmux-1/default,1,0' }, { STY: '1.tty' }, { ZELLIJ: '0' }, { TERM: 'tmux-256color' }, { TERM: 'screen' }]) {
+    const { tty, screen } = mouseScreen({ env });
+    screen.paint([[{ text: 'row', style: null }]]);
+    const out = tty.text();
+    const buttonMotion = out.indexOf('\x1b[?1002h');
+    assert.ok(buttonMotion >= 0, `${JSON.stringify(env)}: pi-tui enabled button motion`);
+    assert.ok(out.indexOf('\x1b[?1003h', buttonMotion) > buttonMotion, `${JSON.stringify(env)}: ?1003h follows it`);
+    screen.close();
+  }
+  assert.equal(underMultiplexer({ TERM: 'xterm-256color' }), false);
+  assert.equal(underMultiplexer({}), false);
+});
+
+test('mouse: a drag across two lines then release copies that text through the injected copy', async () => {
+  const { term, copies, screen } = mouseScreen();
+  screen.listen(() => {}, (e) => assert.fail(e));
+  screen.paint([[{ text: 'alpha line', style: null }], [{ text: 'beta line', style: null }]]);
+  term.press(sgr(0, 1, 1)); // press on "a" of alpha
+  term.press(sgr(32, 3, 2)); // drag to row 2, column 3
+  term.press(sgr(0, 4, 2, 'm')); // release on "a" of beta
+  await flush();
+  assert.deepEqual(copies, ['alpha line\nbeta'], 'the selected text reached copy');
+  screen.close();
+});
+
+test('mouse: off macOS the copy function is not used (pi-tui keeps its OSC 52)', async () => {
+  const { tty, term, copies, screen } = mouseScreen({ platform: 'linux' });
+  screen.listen(() => {}, (e) => assert.fail(e));
+  screen.paint([[{ text: 'alpha line', style: null }]]);
+  term.press(sgr(0, 1, 1));
+  term.press(sgr(32, 5, 1));
+  term.press(sgr(0, 5, 1, 'm'));
+  await flush();
+  assert.deepEqual(copies, []);
+  assert.ok(tty.text().includes('\x1b]52;c;'), 'OSC 52 carries the selection instead');
+  screen.close();
+});
+
+test('mouse: a press and release in place with no handler copies nothing and throws nothing', async () => {
+  const { term, copies, screen } = mouseScreen();
+  const errors = [];
+  screen.listen(() => {}, (e) => errors.push(e));
+  screen.paint([[{ text: 'alpha line', style: null }]]);
+  term.press(sgr(0, 2, 1));
+  term.press(sgr(0, 2, 1, 'm'));
+  await flush();
+  assert.deepEqual(copies, []);
+  assert.deepEqual(errors, []);
+  screen.close();
+});
+
+test('mouse: the root forwards to the mounted component when one is mounted, to onMouse otherwise, and returns their result', () => {
+  const { term, screen } = mouseScreen();
+  const seen = [];
+  screen.listen(() => {}, () => {}, (ev) => (seen.push(['frame', ev.type, ev.x, ev.y]), { handled: true, render: false }));
+  screen.paint([[{ text: 'row', style: null }]]);
+  term.press(sgr(35, 3, 2)); // a hover move at column 3, row 2
+  assert.deepEqual(seen, [['frame', 'move', 2, 1]], 'a painted frame\'s move reaches onMouse, zero-based');
+
+  const component = { render: () => ['mounted'], invalidate() {}, handleMouse: (ev) => (seen.push(['mounted', ev.type]), { handled: true, render: false }) };
+  screen.mount(component);
+  screen.renderNow();
+  term.press(sgr(65, 1, 1)); // wheel down
+  assert.deepEqual(seen.at(-1), ['mounted', 'wheel'], 'a mounted component takes the event, onMouse does not');
+  assert.equal(seen.filter(([w]) => w === 'frame').length, 1);
+});
+
+test('mouse: the root\'s handleMouse returns the handler\'s own result, and points a focus request at the mounted component', () => {
+  const { screen } = mouseScreen();
+  screen.listen(() => {}, () => {}, () => 'from-onMouse');
+  screen.paint([[{ text: 'row', style: null }]]);
+  const ev = { type: 'click', button: 'left', x: 1, y: 0, screenX: 1, screenY: 0, width: 40, height: 6 };
+  const guarded = rootOf(screen);
+  assert.equal(guarded.handleMouse(ev), 'from-onMouse', 'with nothing mounted, onMouse\'s result comes back');
+
+  const plain = { handled: true };
+  const comp = { render: () => ['x'], invalidate() {}, handleMouse: () => plain };
+  screen.mount(comp);
+  assert.equal(guarded.handleMouse(ev), plain, 'a mounted handler\'s result comes back as is');
+
+  comp.handleMouse = () => ({ handled: true, focus: true });
+  const r = guarded.handleMouse(ev);
+  assert.equal(r.focusTarget, comp, 'a focus request is pointed at the mounted component, not the root');
+  assert.equal(r.target.component, guarded);
+  assert.deepEqual([r.target.originX, r.target.originY, r.target.width, r.target.height], [0, 0, 40, 6]);
+
+  comp.handleMouse = () => undefined;
+  assert.equal(guarded.handleMouse(ev), undefined, 'a declining handler stays undefined, leaving pi-tui its selection');
+  delete comp.handleMouse;
+  assert.equal(guarded.handleMouse(ev), undefined, 'a component with no handler declines');
+  screen.close();
+});
+
+test('mouse: a handler that returns undefined for press keeps selection working, and the click still reaches it', async () => {
+  const { term, copies, screen } = mouseScreen();
+  const types = [];
+  screen.listen(() => {}, () => {}, (ev) => {
+    types.push(ev.type);
+    return ev.type === 'click' ? { handled: true } : undefined;
+  });
+  screen.paint([[{ text: 'alpha line', style: null }], [{ text: 'beta line', style: null }]]);
+  term.press(sgr(0, 1, 1));
+  term.press(sgr(32, 5, 1));
+  term.press(sgr(0, 5, 1, 'm'));
+  await flush();
+  assert.deepEqual(copies, ['alpha'], 'the drag still copied (the release cell is included)');
+  assert.ok(!types.includes('click'), 'a drag is not a click');
+  term.press(sgr(0, 2, 2));
+  term.press(sgr(0, 2, 2, 'm'));
+  await flush();
+  assert.equal(types.filter((x) => x === 'click').length, 1, 'a press and release in place is a click');
+  assert.deepEqual(copies, ['alpha'], 'and copies nothing');
+  screen.close();
+});
+
+// T08 drill: a double click on a row whose first click left the screen unchanged (a task with no worker)
+// became pi-tui's word selection, flashed `Copied!` and replaced the clipboard. A click the handler marks
+// `rowClick` resets pi-tui's double-click count, so the second is a click too (§2.1); an unmarked handled
+// click keeps pi-tui's word selection, which is what the control half shows.
+test('mouse: a double click on a row is two clicks and copies nothing; unmarked, the second is a word copy', async () => {
+  for (const [rowClick, clicks, copied] of [[true, 2, []], [false, 1, ['alpha']]]) {
+    const { term, copies, screen } = mouseScreen();
+    let n = 0;
+    screen.listen(() => {}, () => {}, (ev) => {
+      if (ev.type !== 'click') return undefined;
+      n++;
+      return rowClick ? { handled: true, rowClick: true } : { handled: true };
+    });
+    screen.paint([[{ text: 'alpha line', style: null }]]);
+    for (let i = 0; i < 2; i++) {
+      term.press(sgr(0, 2, 1));
+      term.press(sgr(0, 2, 1, 'm'));
+      await flush();
+    }
+    assert.equal(n, clicks, `rowClick ${rowClick}: clicks delivered`);
+    assert.deepEqual(copies, copied, `rowClick ${rowClick}: what was copied`);
+    screen.close();
+  }
+});
+
+test('mouse: process exit writes the mouse-off restore once; after close() nothing is written', () => {
+  const { tty, proc, screen } = mouseScreen();
+  proc.emit('exit', 0);
+  assert.equal(tty.text(), '', 'a screen never started restores nothing');
+  screen.paint([[{ text: 'row', style: null }]]);
+  const before = tty.text().length;
+  proc.emit('exit', 0);
+  proc.emit('exit', 0);
+  const written = tty.text().slice(before);
+  assert.equal(written, `${MOUSE_OFF}\x1b[?2004l\x1b[?7h\x1b[?1049l\x1b[?25h`, 'mouse off, bracketed paste off, autowrap on, alternate screen left, cursor shown');
+  assert.deepEqual(proc.exits, [], 'an exit listener does not call exit itself');
+
+  const other = mouseScreen();
+  other.screen.paint([[{ text: 'row', style: null }]]);
+  other.screen.close();
+  const after = other.tty.text().length;
+  other.proc.emit('exit', 0);
+  for (const sig of ['SIGTERM', 'SIGHUP', 'SIGINT']) other.proc.emit(sig, sig);
+  assert.equal(other.tty.text().length, after, 'nothing is written after close');
+  assert.deepEqual(other.proc.exits, []);
+  for (const ev of ['exit', 'SIGTERM', 'SIGHUP', 'SIGINT']) assert.equal(other.proc.listenerCount(ev), 0, `the ${ev} handler is removed on close`);
+});
+
+test('mouse: SIGTERM, SIGHUP and SIGINT restore the terminal and exit 128 + the signal number', () => {
+  for (const [sig, code] of [['SIGTERM', 143], ['SIGHUP', 129], ['SIGINT', 130]]) {
+    const { tty, proc, screen } = mouseScreen();
+    screen.paint([[{ text: 'row', style: null }]]);
+    const before = tty.text().length;
+    proc.emit(sig, sig);
+    assert.ok(tty.text().slice(before).startsWith(MOUSE_OFF), `${sig}: the mouse is turned off`);
+    assert.deepEqual(proc.exits, [code], `${sig}: exits ${code}`);
+  }
+});
+
+// T04 review: pbcopy reads its stdin by the locale, so a shell with no UTF-8 locale garbled non-ASCII text.
+test('defaultCopy: runs pbcopy with the text on stdin and a UTF-8 locale forced, and reports a failure as its message', async () => {
+  const calls = [];
+  const fakeRun = (fail) => (cmd, args, opts, cb) => {
+    const stdin = new EventEmitter();
+    stdin.end = (text) => {
+      calls.push({ cmd, args, env: opts.env, text });
+      setImmediate(() => cb(fail ? new Error('spawn pbcopy ENOENT') : null));
+    };
+    return { stdin };
+  };
+  const ok = await defaultCopy('é ⠋ ✅', { run: fakeRun(false), env: { LANG: 'C', LC_ALL: 'C', HOME: '/h' } });
+  assert.equal(ok, true);
+  assert.deepEqual(calls[0], { cmd: 'pbcopy', args: [], env: { LANG: 'C', LC_ALL: 'en_US.UTF-8', HOME: '/h' }, text: 'é ⠋ ✅' });
+  assert.equal(await defaultCopy('x', { run: fakeRun(true), env: {} }), 'Copy failed: spawn pbcopy ENOENT');
+});
+
+// --- clicks, hover and the wheel on the lists (mouse-navigation T05, DESIGN §2.1–§2.4, §2.6, §3.2, §3.5) ---
+
+// runTui on the pi-tui screen over the fake terminal, with every outside effect injected. `rows()` is re-read
+// on every refresh, key and mouse event. The mouse is sent as the SGR bytes a terminal sends, one sequence per
+// input call as pi-tui's own stdin splitter would hand them over.
+function driveMouse({ rows, columns = 100, height = 30, colour = false, extra = {} } = {}) {
+  const tty = fakeStream({ isTTY: true, columns, rows: height });
+  const term = fakeTerminal(tty);
+  const proc = fakeProcess();
+  const opened = [];
+  const done = openDashboard({
+    stdin: {},
+    stdout: tty,
+    env: BOX_ENV,
+    refreshMs: 60_000,
+    now: () => NOW,
+    makeScreen: (opts) => createScreen({ ...opts, colour, terminal: term, env: {}, onExit: proc, copy: async () => true }),
+    load: () => buildDashboard(rows()),
+    scan: () => BOX_REPOS,
+    startPlan: () => ({ started: true, runId: 'plan-ab12', record: { repo: 'repo' } }),
+    follow: (p, { onEntries }) => {
+      opened.push(p);
+      onEntries([JSON.stringify({ t: 1, dir: 'out', from: 'pir', kind: 'message', text: `Log ${p}.` })]);
+      return { stop() {} };
+    },
+    drop: () => ({ ok: true }),
+    ...extra,
+  });
+  const settle = () => new Promise((r) => setTimeout(r, 30));
+  const screen = () => drawnRows(tty.text());
+  const text = () => screen().join('\n');
+  const rowY = (re) => {
+    const y = screen().findIndex((l) => re.test(l));
+    assert.ok(y >= 0, `${re} is on screen:\n${text()}`);
+    return y;
+  };
+  const send = async (...seqs) => {
+    for (const s of seqs) term.press(s);
+    await settle();
+  };
+  // 1-based column and row, as the terminal counts them; y is the 0-based screen row.
+  const click = (y, x = 6) => send(sgr(0, x, y + 1), sgr(0, x, y + 1, 'm'));
+  const clickOn = (re, x) => click(rowY(re), x);
+  const move = (y, x = 6) => send(sgr(35, x, y + 1));
+  const wheel = (y, dir) => send(sgr(dir === 'up' ? 64 : 65, 6, y + 1));
+  const sel = () => screen().find((l) => l.startsWith('▎')) ?? '';
+  // Out of a conversation (← steps out; Esc is the conversation's), then Esc until pir has quit.
+  const quit = async () => {
+    for (let i = 0; i < 4 && term.onInput; i++) await send('\x1b[D', '\x1b');
+    assert.equal(term.onInput, null, `pir quit:\n${text()}`);
+    await done;
+  };
+  // Which screen rows have bold cells, read by the pty rig's screen model from everything written.
+  const boldRows = () => {
+    const m = createScreenModel({ rows: height, cols: columns });
+    m.write(tty.text());
+    return m.rows().map((l, y) => [...l].some((_, x) => m.boldAt(y, x)) ? y : -1).filter((y) => y >= 0);
+  };
+  return { tty, term, done, send, click, clickOn, move, wheel, screen, text, rowY, sel, quit, opened, boldRows, settle };
+}
+
+const runRow = (slug, over = {}) => ({ key: `r__${slug}`, slug, repo: 'r', state: 'finished', progress: { done: 1, total: 1 }, workers: 0, record: { repo: 'r', slug }, ...over });
+const THREE_RUNS = [runRow('alpha'), runRow('beta'), runRow('gamma')];
+
+test('mouse: a click on run row i opens run i; ← comes back to the list with row i selected', async () => {
+  const t = driveMouse({ rows: () => [...THREE_RUNS, tasksRun(T12_TASKS, { key: 'r__plan', repo: 'r' })] });
+  await t.clickOn(/^ {2}beta /);
+  assert.match(t.text(), /^beta/m, "beta's live view");
+  assert.doesNotMatch(t.text(), /new plan/, 'the list is gone');
+  await t.send('\x1b[D');
+  assert.match(t.sel(), /^▎ beta /, 'back on the list, beta selected');
+  await t.clickOn(/^ {2}plan /);
+  assert.match(t.sel(), /T01/, 'the build opens on its first task, as Enter does');
+  await t.quit();
+});
+
+test('mouse: a click on the title, the header, a `↑ n more` marker, the counts line or the hint line changes nothing', async () => {
+  const many = Array.from({ length: 9 }, (_, i) => runRow(`run-${i}`));
+  const t = driveMouse({ rows: () => many, height: 14 });
+  for (let i = 0; i < 6; i++) await t.send('\x1b[B');
+  const before = t.screen();
+  assert.ok(before.some((l) => /↑ \d+ more/.test(l)), `a marker shows:\n${before.join('\n')}`);
+  for (const re of [/^pir {2}runs/, /^ {2}SLUG/, /↑ \d+ more/, /↓ \d+ more/, /^9 runs · /, /^↑↓/]) {
+    if (!t.screen().some((l) => re.test(l))) continue; // the title may be cut at this height
+    await t.clickOn(re);
+    assert.deepEqual(t.screen(), before, `${re}: nothing changed`);
+  }
+  await t.quit();
+});
+
+test('mouse: a click on a task with a worker opens its conversation; without one, the no-worker note', async () => {
+  const t = driveMouse({ rows: () => [tasksRun(T12_TASKS)] });
+  await t.send('\r');
+  await t.clickOn(/T03 /);
+  assert.match(t.sel(), /T03/, 'the click selected T03');
+  assert.match(t.text(), /T03 has no worker yet — it starts when T02 is merged\./);
+  await t.clickOn(/T02 /);
+  assert.match(t.text(), /pir ▸ Log \/c\/w2\.jsonl\./, "T02's conversation");
+  await t.send('\x1b[D');
+  assert.match(t.sel(), /T02/, '← lands on the clicked task');
+  await t.quit();
+});
+
+const AGENT_STATE = (over = {}) => ({
+  branch: 'pir/plan',
+  ceiling: 2,
+  tasks: T12_TASKS,
+  coordinator: { id: 'agent-1', live: true, logPath: '/c/agent.jsonl', state: 'up', holding: 0 },
+  ...over,
+});
+
+test("mouse: a click on the coordinator agent's row opens its conversation as `c` does; the separator neither clicks nor hovers", async () => {
+  const rows = () => [tasksRun(T12_TASKS, { snap: { runState: AGENT_STATE() } })];
+  const lit = driveMouse({ rows, colour: true });
+  await lit.send('\r');
+  const agentY = lit.rowY(/◆ coordinator agent/);
+  await lit.move(agentY);
+  assert.ok(lit.boldRows().includes(agentY), "the agent's row hovers");
+  await lit.move(lit.rowY(/^ {2}─{10,}/));
+  assert.ok(!lit.boldRows().includes(lit.rowY(/^ {2}─{10,}/)), 'the separator never hovers');
+  await lit.quit();
+
+  const t = driveMouse({ rows });
+  await t.send('\r');
+  const before = t.screen();
+  await t.click(t.rowY(/^ {2}─{10,}/));
+  assert.deepEqual(t.screen(), before, 'a click on the separator does nothing');
+  await t.clickOn(/◆ coordinator agent/);
+  assert.match(t.text(), /pir ▸ Log \/c\/agent\.jsonl\./, "the agent's conversation");
+  await t.send('\x1b[D');
+  assert.match(t.sel(), /coordinator agent/, '← comes back with the agent row selected');
+  await t.quit();
+});
+
+test('mouse: the wheel over the live view steps over the separator exactly as ↑/↓ do', async () => {
+  const t = driveMouse({ rows: () => [tasksRun(T12_TASKS, { snap: { runState: AGENT_STATE() } })] });
+  await t.send('\r');
+  await t.send('\x1b[B', '\x1b[B');
+  assert.match(t.sel(), /T03/);
+  await t.wheel(0, 'down');
+  assert.match(t.sel(), /coordinator agent/, 'one notch down from T03 lands on the agent, past the separator');
+  await t.wheel(20, 'up');
+  assert.match(t.sel(), /T03/, 'one notch up, wherever the pointer is, comes back over it');
+  await t.quit();
+});
+
+test('mouse: a click on a step row under the go question opens the step and does not start the build', async () => {
+  const started = [];
+  const t = driveMouse({
+    rows: () => [stepsRun()],
+    extra: { readProgress: () => PROGRESS_3, start: async (slug) => (started.push(slug), { started: true }) },
+  });
+  await t.send('\r');
+  assert.match(t.text(), /Start the parallel build now\?/);
+  await t.clickOn(/^[▎ ] . review /);
+  assert.deepEqual(started, [], 'no build started');
+  assert.match(t.text(), /pir ▸ Log \/c\/review-1\.ndjson\./, "the review step's conversation");
+  await t.quit();
+});
+
+test('mouse: a click cancels an armed Ctrl+S; a pointer move does not', async () => {
+  const stopped = [];
+  const running = THREE_RUNS.map((r) => ({ ...r, state: 'running' }));
+  const t = driveMouse({ rows: () => running, extra: { stop: async (record) => stopped.push(record.slug) } });
+  await t.send('\x13');
+  assert.match(t.text(), /Ctrl\+S again to stop alpha/);
+  await t.move(t.rowY(/^ {2}beta /));
+  assert.match(t.text(), /Ctrl\+S again to stop alpha/, 'a move keeps it armed');
+  await t.clickOn(/^ {2}gamma /);
+  await t.send('\x1b[D');
+  assert.doesNotMatch(t.text(), /⚠/, 'the click disarmed it');
+  await t.send('\x13');
+  assert.deepEqual(stopped, [], 'the next Ctrl+S only arms again');
+  assert.match(t.text(), /Ctrl\+S again to stop gamma/);
+  await t.quit();
+});
+
+test('mouse: hover lights the row under the pointer only; a move within that row does not repaint', async () => {
+  const t = driveMouse({ rows: () => THREE_RUNS, colour: true });
+  const alphaY = t.rowY(/^ {2}alpha /); // the selected row: with colour its ▎ is blanked into the band
+  const betaY = t.rowY(/^ {2}beta /);
+  const gammaY = t.rowY(/^ {2}gamma /);
+  assert.deepEqual(t.boldRows().filter((y) => y >= betaY && y <= gammaY), [], 'nothing hovered yet');
+  await t.move(betaY);
+  assert.ok(t.boldRows().includes(betaY), 'beta hovered');
+  const written = t.tty.text().length;
+  await t.move(betaY, 20);
+  assert.equal(t.tty.text().length, written, 'a move along the same row paints nothing');
+  await t.move(gammaY);
+  const bold = t.boldRows();
+  assert.ok(bold.includes(gammaY) && !bold.includes(betaY), `gamma hovered, beta not (${bold})`);
+  await t.move(alphaY);
+  assert.ok(!t.boldRows().includes(gammaY), 'the selected row shows as its band; gamma is no longer lit');
+  await t.quit();
+});
+
+test('mouse: the wheel moves the list and the live view one row a notch, and does nothing on the landing screen', async () => {
+  const t = driveMouse({ rows: () => [...THREE_RUNS, tasksRun(T12_TASKS, { key: 'r__plan', repo: 'r' })] });
+  await t.wheel(3, 'down');
+  await t.wheel(3, 'down');
+  assert.match(t.sel(), /^▎ gamma /, 'list: two notches, two rows');
+  await t.wheel(3, 'down');
+  await t.send('\r');
+  await t.wheel(3, 'down');
+  await t.wheel(3, 'down');
+  assert.match(t.sel(), /T03/, 'live view: taskSel +2');
+  await t.quit();
+
+  const l = driveMouse({ rows: () => [] });
+  await l.send(...'repo a brief');
+  await l.send('\r');
+  const landing = l.screen();
+  assert.ok(landing.some((x) => /starting the planner…/.test(x)));
+  await l.wheel(2, 'down');
+  await l.click(2);
+  assert.deepEqual(l.screen(), landing, 'the landing screen takes no mouse');
+  await l.quit();
+});
+
+test('mouse: a click in the box moves its caret; a click on a pop-up entry picks it', async () => {
+  const t = driveMouse({ rows: () => THREE_RUNS });
+  await t.send(...'repo abc');
+  const head = t.rowY(/^new plan/);
+  await t.click(head + 2, 2); // column 2: just after the @
+  await t.send('Z');
+  assert.match(t.screen()[head + 2], /^@Zrepo abc/, 'typed where the click put the caret');
+
+  const p = driveMouse({ rows: () => THREE_RUNS });
+  await p.send('p');
+  await p.settle();
+  const entry = p.rowY(/@dup +~\/src\/dup/);
+  await p.click(entry, 8);
+  const h = p.rowY(/^new plan/);
+  assert.match(p.screen()[h + 2], /^@dup /, 'the clicked entry replaced @p');
+  await t.quit();
+  await p.quit();
+});
+
+test('mouse: with a brief typed, a click opens a run, and ← comes back to the brief still in the box', async () => {
+  const t = driveMouse({ rows: () => THREE_RUNS });
+  await t.send(...'repo half a brief');
+  await t.clickOn(/^ {2}beta /);
+  assert.match(t.text(), /^beta/m);
+  await t.send('\x1b[D');
+  const head = t.rowY(/^new plan/);
+  assert.match(t.screen()[head + 2], /^@repo half a brief/);
+  assert.match(t.sel(), /^▎ beta /);
+  await t.quit();
+});
+
+test('mouse: a double click on a run opens it, then opens the live-view row now under the pointer (§2.1)', async () => {
+  const t = driveMouse({ rows: () => [runRow('alpha'), tasksRun(T12_TASKS, { key: 'r__plan', repo: 'r' })] });
+  const y = t.rowY(/^ {2}plan /);
+  await t.send(sgr(0, 6, y + 1), sgr(0, 6, y + 1, 'm'), sgr(0, 6, y + 1), sgr(0, 6, y + 1, 'm'));
+  // The first click opened the run; the second landed on the live view's line at that row, T02, and opened it.
+  assert.match(t.text(), /pir ▸ Log \/c\/w2\.jsonl\./, "T02's conversation, opened by the second click");
+  await t.send('\x1b[D');
+  assert.match(t.sel(), /T02/);
+  await t.quit();
+});
+
+test('mouse: a right or middle click on a row does nothing, and a drag starting on a row does not open it', async () => {
+  const t = driveMouse({ rows: () => THREE_RUNS });
+  const y = t.rowY(/^ {2}beta /);
+  const before = t.screen();
+  await t.send(sgr(2, 6, y + 1), sgr(2, 6, y + 1, 'm'));
+  await t.send(sgr(1, 6, y + 1), sgr(1, 6, y + 1, 'm'));
+  await t.send(sgr(0, 6, y + 1), sgr(32, 12, y + 1), sgr(0, 12, y + 1, 'm'));
+  assert.match(t.text(), /new plan/, 'still the list');
+  assert.match(t.sel(), /^▎ alpha /, 'the selection did not move');
+  assert.deepEqual(t.screen().slice(1, y + 1), before.slice(1, y + 1), 'the rows are as they were');
+  assert.match(t.screen()[0], /Copied!/, 'the drag was a text selection, and copied');
+  await t.quit();
+});
+
+test('mouse: a click opens the run painted on that row even if a fresh read has reordered or dropped the rows', async () => {
+  let rows = THREE_RUNS;
+  const t = driveMouse({ rows: () => rows });
+  const betaY = t.rowY(/^ {2}beta /);
+  const gammaY = t.rowY(/^ {2}gamma /);
+  // The next read (the click's) sees a different list: beta has moved up and gamma is gone. Nothing repaints
+  // before the click, so the screen still shows the old order.
+  rows = [THREE_RUNS[1], THREE_RUNS[0]];
+  await t.click(gammaY);
+  assert.match(t.text(), /new plan/, 'a click on a run that is gone opens nothing');
+  await t.click(betaY);
+  assert.match(t.text(), /^beta/m, 'beta opened, not whatever now sits at its old index');
+  await t.quit();
 });

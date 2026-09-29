@@ -46,9 +46,12 @@ correlate several at once. The footer reads `● Txx slug — asking you; open i
 whole run reads `asking you` in amber bold while any of its workers waits on the person, so the question
 is visible without opening the run (see [detached-runs.md](detached-runs.md)).
 
-The person **selects the task's row in the run's live view, opens its worker (→ or Enter), and
-answers in the worker's conversation, in plain English** (see [detached-runs.md](detached-runs.md)
-for the view and its keys). The answer is dropped into the control folder's `inbox/` and forwarded
+The person **selects the task's row in the run's live view, opens its worker (→ or Enter, or one
+click on the row), and answers in the worker's conversation, in plain English** (see
+[detached-runs.md](detached-runs.md) for the view and its keys, and
+[The mouse](detached-runs.md#the-mouse) for what a click, hover and the wheel do on each screen). The
+answer itself stays on the keyboard: a question picker and a permission prompt take no mouse action,
+and the wheel only scrolls the conversation. The answer is dropped into the control folder's `inbox/` and forwarded
 to the worker at once (see [control-folder.md](control-folder.md)); the worker un-parks and
 continues. The command does not read or relay the answer: it only carries it. A worker is not a
 `claude agents` session any more — it appears in that list, but cannot be attached to — so the places
