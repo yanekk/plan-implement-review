@@ -36,5 +36,6 @@ One thing worth doing after you merge: **reinstall pir** (run `./install.sh` in 
 
 ## Branch
 
-Synced with `main` at `bce0c78c1483` on 2026-09-29T04:11:44Z.
+Synced with `main` at `1dbac86185e2` on 2026-09-29T04:29:05Z.
+The tests were red at the end; a worker fixed them.
 Tests: green.
