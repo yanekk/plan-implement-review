@@ -25,7 +25,7 @@ done · ⛔ blocked, needs a human.
 |---|---|---|---|---|
 | T00 | prove-the-fence | — | ⬜ | |
 | T01 | finisher-policy | — | ⬜ | |
-| T02 | finisher-brief | — | 🔍 | `finisher-brief.mjs`, 10 tests. Adds `rulesSourceWords` export and clips free text so messages stay under 1500 chars. Deviation: no `finisherStuckAfterRestart` (DESIGN §3.2 lists it; T01 `afterRestart` owns that summary, `finisherResumed` quotes it). |
+| T02 | finisher-brief | — | ✅ | `finisher-brief.mjs`, 10 tests. No `finisherStuckAfterRestart`: T01 `afterRestart` owns that text (accepted). Review fixed, each reproduced and test-locked: finishing refusal now says write `stuck` (§2.12); no `..` after a reason ending in a full stop; resume no longer claims `preparing` for an unknown phase. Probed long inputs, all phases. |
 | T03 | finisher-skill-and-rules | T01 | ⬜ | |
 | T04 | finisher-session | T00, T01, T02 | ⬜ | |
 | T05 | finisher-handover | T04 | ⬜ | |
@@ -35,7 +35,7 @@ done · ⛔ blocked, needs a human.
 | T09 | finisher-drill | T03, T06, T07 | ⬜ | |
 | T10 | finisher-live | T08, T09 | ⬜ | |
 
-**Review queue:** T02
+**Review queue:** empty
 
 ## Blocked on the user
 
