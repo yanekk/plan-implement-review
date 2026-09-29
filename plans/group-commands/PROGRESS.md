@@ -14,7 +14,7 @@ cell also fixes the over-budget cell they walk past.
 
 **Status:** Planned 2026-09-29. Nothing built. The prototype in `prototype/` was approved by the user.
 **Last updated:** 2026-09-29
-**Next `pir-work` will:** implement T01, the only task with no dependencies.
+**Next `pir-work` will:** review T03.
 
 ## Tasks
 
@@ -25,10 +25,10 @@ done · ⛔ blocked, needs a human.
 |---|---|---|---|---|
 | T01 | group-steps-core | — | ✅ | |
 | T02 | group-steps-view | T01 | ✅ | |
-| T03 | group-steps-drill | T01, T02 | ⬜ | |
+| T03 | group-steps-drill | T01, T02 | 🔍 | Drill run worker-driven at 80×24 and 120×40 (plus a 9-kind label at 80): arrival, flags, click placement at end and scrolled up, hover, drag, Tab, ← refold, prototype wording all as DESIGN §2; no defects, so no fixes or tests. Docs and README updated. |
 
-**Review queue:** *(empty)*
+**Review queue:** T03
 
 ## Blocked on the user
 
-Nothing yet.
+- After the person merges `pir/group-commands` into `main`, with no run live: `./install.sh` to make the grouped view live (DESIGN §5).
