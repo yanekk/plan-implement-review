@@ -14,7 +14,7 @@ DESIGN §2 throughout, §8.
 
 ## Files
 
-- `docs/branch-model.md` (the base branch section: settings, fetch, pirBase; every `main` that means the base), `docs/planning-runs.md`, `docs/run-lifecycle.md`, `docs/coordinator-agent.md` (end of run: fetch, hold, watch), `docs/restart-recovery.md`, `docs/human-flow.md`, `docs/control-folder.md`, `docs/README.md`
+- `docs/branch-model.md` (the base branch section: settings, fetch, pirBase; every `main` that means the base), `docs/planning-runs.md`, `docs/run-lifecycle.md`, `docs/coordinator-agent.md` (end of run: fetch, hold, watch), `docs/restart-recovery.md`, `docs/detached-runs.md` (start pre-flight, "unreviewed plan on `main`"), `docs/human-flow.md`, `docs/control-folder.md`, `docs/README.md`
 - `README.md`: requirements line (a settings file instead of "a local `main`"), a short "Base branch" section with the two files, the refusal, the fetch and fast-forward behaviour, and a link to `docs/branch-model.md`
 
 ## Done when

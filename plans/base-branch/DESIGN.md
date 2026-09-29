@@ -29,7 +29,8 @@ from the newest copy of it rather than whatever the local clone last saw.
 - A repo with no settings, a broken settings file, an unreachable remote, or a local base that has split
   from the remote's is refused before anything is created, with a message naming the cause and the fix.
 - A repo with no remote plans and builds from its local base branch, with no fetch and no warning.
-- No user-visible text says `main` unless the base branch is `main`.
+- No user-visible text says `main` unless the base branch is `main`, apart from the kept helper label
+  `main-sync` (§2.9).
 
 ### Stance
 
@@ -139,8 +140,8 @@ new file, and dies with the branch. It is written with `git config`, never by ed
 The run index record gains a `baseBranch` field, a copy for display and for a resume that has not reached
 git yet. It is never the source of truth.
 
-A feature branch with no `pirBase` (cut before this change) takes its base from the settings, as a fresh
-start would, and records it then; with no settings it is refused like a fresh start.
+A planning or feature branch with no `pirBase` (cut before this change) takes its base from the settings,
+as a fresh start would, and records it then; with no settings it is refused like a fresh start.
 
 ### 2.6 Starting a planning run
 
@@ -154,9 +155,11 @@ The slug check (`slugTaken`) looks for a plan committed on the run's base branch
 planner skill's own check (`git ls-tree -d <base> plans/{slug}`) reads the base from `pirBase` on its
 branch.
 
-The dashboard's repo list (`@` pop-up) lists a repo only when its effective settings name a base branch
-that exists locally or as a remote-tracking ref. This keeps the list's existing promise that `↵` on a
-listed repo starts a run; the scan does no network call.
+The dashboard's repo list (`@` pop-up) lists every git repo under the scan roots, with or without settings
+or a `main`. Picking one that pir cannot start in (no settings, broken settings, base missing) shows the
+short §2.9 reason in the box and starts nothing (user, 2026-09-29, plan review: a repo silently vanishing
+from the list after the upgrade, with no hint why, is worse than a refusal on pick). The scan does no
+network call and reads no settings.
 
 The fetch runs in `pir`'s own process, synchronously, before the detached planning program starts, so a
 refusal reaches the person directly. It is bounded by §2.4's timeout.
@@ -185,7 +188,9 @@ prepares the base (§2.3) and merges the commit it chose.
 - `fetch-failed` or `diverged` holds the run in `preparing` with the reason visible in the live view and
   the status snapshot (`preparing: can't reach origin, retrying`, `preparing: your dev and origin/dev have
   split apart`), and retries every 60 seconds. No hand-off is given until it succeeds; nothing is lost and
-  it continues on its own (user, 2026-09-29). A worker is not spawned for either: neither is a conflict a
+  it continues on its own (user, 2026-09-29). When a hold begins, pir sends one alert through the existing
+  notifications naming the reason (`{slug} · waiting: your dev and origin/dev have split apart`); retries
+  send nothing, and a new alert goes only if the hold's reason changes (user, 2026-09-29, plan review). A worker is not spawned for either: neither is a conflict a
   session can resolve.
 - While the run waits in `ready to merge`, each pass checks whether the local base contains the feature
   tip, and every 5 minutes it fetches (without moving anything but the remote-tracking ref) and checks
@@ -203,7 +208,8 @@ dev, writing the report`, the coordinator agent's brief and the delivery report 
 `dev` at {sha}`), the finished line (`✔ pir/{slug} is in dev. The run is finished.`), and the hand-off,
 which becomes `git switch {base} && git merge pir/{slug}` so it is right whichever branch the person has
 checked out. The internal helper label `main-sync` and its agent name are kept, because a restart after
-the upgrade must still recognise a helper worker recorded under that name; only its prose changes.
+the upgrade must still recognise a helper worker recorded under that name; only its prose changes, and its row slug `resolve-main-merge` (display only, `HELPER_SLUG`) becomes
+`resolve-base-merge`.
 
 The refusals (`src/core/basebranch.mjs`, `refusalText`):
 
@@ -389,6 +395,10 @@ settings. A local base branch pir created that the person did not want: `git bra
 - The run remembers its base, the plan files do not (user, 2026-09-29). Stored as `branch.<b>.pirBase`
   because `git branch -m` carries it.
 - One base per repo, not per plan (user, 2026-09-29: "fixed names, pick one").
+- The `@` list shows repos without settings and refuses on pick (user, 2026-09-29, plan review), over
+  hiding them.
+- A hold at the end of a run sends one alert (user, 2026-09-29, plan review), over showing it only on
+  screen: `diverged` needs the person and would otherwise wait unseen.
 - Chosen by the planner, shown at the playback, not objected to: the 5-minute fetch while waiting for the
   merge; the hand-off `git switch {base} && git merge pir/{slug}`; no `pir-install` prompt for the setting.
 - Survey of what exists (2026-09-29): nothing reads a per-repo pir setting, `origin/HEAD` or

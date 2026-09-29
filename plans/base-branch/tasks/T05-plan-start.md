@@ -7,7 +7,8 @@
 Wire the base into starting a planning run. `pir plan`, the brief box and the dashboard's `@repo/plan`
 resolve the settings, prepare the base, cut the planning branch from the prepared commit, record `pirBase`
 and the run record's `baseBranch`, and refuse with §2.9's text before anything is created. The repo list
-shows repos by their configured base, and the slug check reads the run's base.
+lists every git repo (no `main` or settings filter; a pick pir cannot start shows the short reason), and
+the slug check reads the run's base.
 
 ## Design sections this implements
 
@@ -24,7 +25,7 @@ DESIGN §2.1, §2.6, §2.9, §2.11.
 planPreflight({ cwd, env }) → { ok: true, root, repo, base, baseSha, remote }
   | { ok: false, reason: 'not-a-repo'|'no-base-setting'|'bad-settings'|'no-base-branch'|'fetch-failed'|'diverged', message }
 startPlanRun(brief, …) → as today, reason set widened as above; record.baseBranch = base
-scanRepos(…)  // lists a repo when resolveBaseSetting is ok and refs/heads/<base> or refs/remotes/*/<base> exists
+scanRepos(…)  // lists every repo whose .git is a directory; the refs/heads/main check is dropped
 ```
 
 `message` is `refusalText(...)`; `pir.mjs` prints it, the dashboard box shows the planbox short form.
@@ -36,7 +37,7 @@ scanRepos(…)  // lists a repo when resolveBaseSetting is ok and refs/heads/<ba
 - [ ] unreachable remote → fetch-failed, nothing created
 - [ ] repo with no remote and local dev → plans from local dev
 - [ ] slug check: a plan committed on dev makes the slug taken in a dev-based run
-- [ ] repo-scan: lists a dev repo with settings; skips a main repo without settings; lists a repo whose base exists only as a remote-tracking ref
+- [ ] repo-scan: lists a dev-only repo, a repo without settings and a repo with no `main`
 - [ ] `pir plan` in a repo without settings prints the §2.9 text and exits non-zero (pir.test)
 
 ## End to end (the worker drives this)

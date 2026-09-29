@@ -14,7 +14,7 @@ DESIGN §2.9.
 
 ## Files
 
-- `src/core/conflict.mjs` (main-sync and tests-fix prompts), `src/core/coordinator-brief.mjs` (SYNC_WORDS, hand-off, `resyncedFor`), `src/core/coordinator-report.mjs` (`branchFooter`), `src/core/notify.mjs`, `src/shell/render.mjs` (preparing line, ^C line), `src/shell/coordinate.mjs` (`renderHandoff`, `renderFinished` only)
+- `src/core/conflict.mjs` (main-sync and tests-fix prompts), `src/core/coordinator-brief.mjs` (SYNC_WORDS, `handoffFor`, `resyncedFor`), `src/core/coordinator-report.mjs` (`branchFooter`), `src/core/notify.mjs` (`endAlert`: ready and red messages), `src/shell/render.mjs` (the no-agent `handoff` footer, the agent `ready to merge` line, preparing line, ^C line), `src/shell/coordinate.mjs` (`renderHandoff`, `renderFinished`, `HELPER_SLUG` only)
 - their tests
 
 ## Interface
@@ -27,7 +27,9 @@ resyncedFor({ slug, baseSha, base = 'main', tests, unresolved })
 renderHandoff({ branch, base = 'main', … })   // prints `git switch {base} && git merge {branch}`
 renderFinished({ branch, base = 'main', … })  // `✔ {branch} is in {base}. The run is finished.`
 render preparing line: `preparing: syncing {base}, writing the report`, or the hold text when a hold is given
-notify end-of-run red: `Merge with {base} unresolved on pir/{slug}`
+notify end-of-run red: `Merge with {base} unresolved on pir/{slug}`; ready: `… git switch {base} && git merge pir/{slug}`
+render: every `git merge {branch}` line (no-agent footer, agent ready line) becomes `git switch {base} && git merge {branch}`; the footer object carries `base`
+HELPER_SLUG[MAIN_SYNC_TASK] = 'resolve-base-merge'   // display only; the label and agent name stay main-sync
 ```
 
 Rename `mainSha` fields to `baseSha` in these modules and their callers in one go; the `main-sync` label
@@ -42,6 +44,6 @@ and `MAIN_SYNC_TASK` stay (DESIGN §2.9).
 
 ## Done when
 
-- [ ] `grep -n "\bmain\b"` in these modules finds only the kept `main-sync` label and comments
+- [ ] `grep -nw main` in these modules finds only the kept `main-sync` label (`MAIN_SYNC_TASK`), `main()` entry functions and comments
 - [ ] existing text tests pass with the default base
 - [ ] `npm test` green

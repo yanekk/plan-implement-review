@@ -28,6 +28,6 @@ DESIGN §2.1, §2.6 (planner slug check), §2.10.
 
 ## Done when
 
-- [ ] `grep -nw main skills/*/SKILL.md CLAUDE.md` finds only "main checkout" in the primary-worktree sense
+- [ ] `grep -nw main skills/*/SKILL.md CLAUDE.md` finds no use meaning the branch; "main checkout", "main path", `main.swift` and "main thread" stay
 - [ ] CLAUDE.md says where the base branch is set and that pir refuses without it
 - [ ] `npm test` green

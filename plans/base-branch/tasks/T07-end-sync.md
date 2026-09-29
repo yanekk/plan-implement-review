@@ -16,7 +16,9 @@ DESIGN §2.8, §2.9.
 ## Files
 
 - `src/shell/coordinate.mjs` (`endSync`, `endSyncing`, the waiting step, the hand-off and finished calls, `re-synced with {base}` commit message)
-- `src/core/display.mjs` and the status snapshot (`handoff.hold`, `handoff.lastWatchFailure`), `src/shell/render.mjs` (show the hold)
+- `src/core/notify.mjs` (`holdAlert({ slug, hold })`), the coordinator's notify pass in `coordinate.mjs`
+- `src/core/display.mjs` and the status snapshot (`handoff.hold`, `handoff.lastWatchFailure`, `base` on both hand-off footer kinds), `src/shell/render.mjs` (show the hold)
+- `src/shell/pir-tui.mjs` (stale-frame `Hand-off:` line names the base, read from the snapshot), `src/shell/conversation-rig.mjs` (fake handoff `mainSha` → `baseSha`)
 - `src/shell/coordinate.test.mjs`, `src/core/display.test.mjs`, `src/shell/render.test.mjs`
 
 ## Interface
@@ -43,6 +45,7 @@ waiting: each pass baseContains(tip, { refs: [refs/heads/<base>] }); every watch
 - [ ] waiting: base moved without the tip → re-sync as today, commit `report({slug}): re-synced with dev`
 - [ ] hand-off and finished lines name dev in a dev run
 - [ ] render shows the hold text in the preparing line
+- [ ] a hold sends one alert naming its reason; retries send none; a change fetch-failed → diverged sends a second
 
 ## End to end (the worker drives this)
 
@@ -51,6 +54,6 @@ waiting: each pass baseContains(tip, { refs: [refs/heads/<base>] }); every watch
 
 ## Done when
 
-- [ ] the end of a run never merges a base it did not just try to fetch, and never hands off while held
+- [ ] the end of a run never merges a base it did not just try to fetch, and never hands off while held; a hold alerts the person once per reason
 - [ ] every hold, watch and re-sync case above has a test
 - [ ] `npm test` green

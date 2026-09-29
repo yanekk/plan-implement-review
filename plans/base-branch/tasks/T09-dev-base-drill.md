@@ -15,7 +15,7 @@ DESIGN §1 success criteria, §2.6–§2.9, §4, §5.1.
 
 ## Files
 
-- `src/shell/harness/run.mjs`, `assertions.mjs` (`main-untouched` → `base-untouched`, promotion checks, the finished-line match), `fixtures.mjs`, `fixtures/pir-coordinator.mjs`, `scenario.mjs`, `src/shell/fake/platform.mjs`: take the base from the fixture, default `main`
+- `src/shell/harness/run.mjs`, `assertions.mjs` (`main-untouched` → `base-untouched`, promotion checks, the finished-line match), `fixtures.mjs`, `fixtures/pir-coordinator.mjs`, `fixtures/plan-command.mjs` (uses `mainUntouched`), `scenario.mjs`, `src/shell/fake/platform.mjs`: take the base from the fixture, default `main`
 - a new fixture `src/shell/harness/fixtures/dev-base.mjs` and its scenario test
 - `src/shell/plan-rig.mjs` option to seed a dev-only repo with a bare remote; a rig test
 - `src/shell/harness/real-fetch-check.mjs` (new): clones nothing, inits a temp repo with this repo's public https origin as `origin`, runs `prepareBase(root, 'main')` (which creates the local main from the remote), prints the sha and the `local` action, deletes the temp dir

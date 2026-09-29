@@ -63,7 +63,7 @@ live view's preparing and hand-off lines).
 | Fetch and choose the commit | T01 (decideBase), T02 (prepareBase) | T05, T06, T07 (end) |
 | Cut the branch, record pirBase | T03 | T05 (openPlanBranch), T06 (openFeature) |
 | Run record baseBranch | T01 | T05, T06 |
-| Repo list by base | T05 | T05 (`repo-scan.mjs`) |
+| Repo list, refusal on pick | T05 | T05 (`repo-scan.mjs`, the box's preflight) |
 | End-of-run sync, hold, watch | T03 (syncBase, baseContains), T02 | T07 (`coordinate.mjs`) |
 | Texts naming the base | T04 | T07 (end), T05/T06 (refusals via `refusalText`) |
 | Sessions' rules | T08 | installed by `./install.sh` after merge |
@@ -96,5 +96,4 @@ than the survey found.
 
 ## Decisions still open
 
-None blocking. For the plan review: whether a repo whose settings are missing should still be listed in
-the dashboard's `@` pop-up (planned: not listed, keeping the list's "↵ works" promise, DESIGN §2.6).
+None. The `@` list question was settled at plan review: listed, refused on pick (DESIGN §2.6).
