@@ -246,6 +246,21 @@ test('local missing, remote has it → local created tracking the remote', (t) =
   assert.equal(git(w.repo, 'config', '--get', 'branch.dev.merge'), 'refs/heads/dev');
 });
 
+test('local missing in a single-branch clone → still created, tracking the remote', (t) => {
+  // A --single-branch clone's fetch refspec covers only its one branch, and `git branch --track`
+  // refuses a start point outside every refspec; the branch must still be created and tracked.
+  const w = world(t);
+  git(w.other, 'push', '-q', 'origin', 'dev:main');
+  const single = join(w.tmp, 'single');
+  git(w.tmp, 'clone', '-q', '--single-branch', '-b', 'main', w.remote, single);
+  const tip = w.push('b.txt');
+  const r = prepareBase(single, 'dev', { env: w.env });
+  assert.deepEqual(r, { ok: true, sha: tip, remote: 'origin', local: 'create' });
+  assert.equal(sha(single, 'dev'), tip);
+  assert.equal(git(single, 'config', '--get', 'branch.dev.remote'), 'origin');
+  assert.equal(git(single, 'config', '--get', 'branch.dev.merge'), 'refs/heads/dev');
+});
+
 test('local equal to the remote → kept', (t) => {
   const w = world(t);
   git(w.repo, 'branch', '-q', 'dev', 'origin/dev');

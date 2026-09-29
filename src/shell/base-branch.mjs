@@ -178,8 +178,13 @@ export function prepareBase(root, base, { mode = 'start', timeoutMs = DEFAULT_FE
   if (mode === 'watch' || d.local === 'keep') return done('keep');
 
   if (d.local === 'create') {
-    const r = git(['branch', '--track', base, `${remote}/${base}`], { cwd: root });
-    return done(r.status === 0 ? 'create' : 'create-refused');
+    // Not `git branch --track`: it refuses a start point no fetch refspec covers, which is every base
+    // other than the cloned one in a --single-branch clone. Tracking is just these two config keys.
+    const r = git(['branch', '--no-track', base, d.use], { cwd: root });
+    if (r.status !== 0) return done('create-refused');
+    git(['config', `branch.${base}.remote`, remote], { cwd: root });
+    git(['config', `branch.${base}.merge`, localRef], { cwd: root });
+    return done('create');
   }
   // d.local === 'ff'. `git branch -f` refuses a branch checked out anywhere, so a checkout that
   // appeared since findCheckout is refused, not trampled; a clean checkout moves with --ff-only in
