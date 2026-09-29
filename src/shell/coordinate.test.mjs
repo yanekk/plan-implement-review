@@ -18,6 +18,8 @@ import {
   runFeatureTests,
   runawayVerdict,
   stallVerdict,
+  passProgressed,
+  PRODUCTIVE_ACTIONS,
   PASS_MIN_GAP_MS,
   gitRun,
   clearTransientFeeds,
@@ -735,6 +737,24 @@ test('stallVerdict: three quiet wake-driven passes inside grace × POLL_MS do no
   assert.equal(fold([true, true, false, true, true, true], [0, 10_000, 14_000, 15_000, 20_000, 25_000]).stalled, false, 'a productive pass resets the clock');
   assert.deepEqual(stallVerdict({ quiet: false, idlePasses: 5, idleSince: 3 }), { stalled: false, idle: 0, idleSince: null });
   assert.equal(stallVerdict({ quiet: true, idlePasses: 2 }).stalled, true, 'no hold given: the pass count alone, as before');
+});
+
+test('passProgressed: a step change, a state change, and each productive action kind → true', () => {
+  const same = { stepBefore: 'sync', stateBefore: 'preparing' };
+  assert.equal(passProgressed({ ...same, handoff: { step: 'tests', state: 'preparing' }, actions: [] }), true, 'step moved');
+  assert.equal(passProgressed({ ...same, handoff: { step: 'sync', state: 'ready' }, actions: [] }), true, 'state moved');
+  assert.equal(passProgressed({ stepBefore: null, stateBefore: null, handoff: { step: 'sync', state: 'preparing' }, actions: [] }), true, 'the end gate opened the hand-off');
+  assert.deepEqual(PRODUCTIVE_ACTIONS, ['spawn', 'review', 'merge', 'close']);
+  for (const type of PRODUCTIVE_ACTIONS) {
+    assert.equal(passProgressed({ handoff: null, actions: [{ type: 'await-idle' }, { type, task: 'T01' }] }), true, type);
+  }
+});
+
+test('passProgressed: no change and only non-productive actions → false', () => {
+  assert.equal(passProgressed({ stepBefore: 'waiting', stateBefore: 'ready', handoff: { step: 'waiting', state: 'ready' }, actions: [] }), false);
+  assert.equal(passProgressed({ handoff: null, actions: [{ type: 'await-idle' }, { type: 'surface' }] }), false, 'before the end gate');
+  assert.equal(passProgressed({ handoff: { step: null, state: null } }), false, 'a view with nulls is no change');
+  assert.equal(passProgressed(), false);
 });
 
 // --- 16. The up-channel is a file drop the bin drains directly, no agent (DESIGN §2.2) -------------

@@ -877,7 +877,7 @@ export function startCoordinator({
       if (r.halted) return { reason: 'halted', passes: p, complete: false };
       // A running setup is work in flight, not a parked worker: without this a 60 s `npm ci` would end
       // drive() as `parked` after two passes (DESIGN §2.4).
-      const productive = r.actions.some((a) => ['spawn', 'review', 'merge', 'close'].includes(a.type)) || r.preparing > 0;
+      const productive = r.actions.some((a) => PRODUCTIVE_ACTIONS.includes(a.type)) || r.preparing > 0;
       idle = productive ? 0 : idle + 1;
       if (idle >= 2) {
         return { reason: r.live > 0 ? 'parked' : 'stalled', passes: p, complete: false };
@@ -900,6 +900,11 @@ export function startCoordinator({
     // The end-of-run state (T05) — null until the end gate has run with the agent on.
     get handoff() {
       return handoffView();
+    },
+    // The end-of-run step endPass runs next, or null before the end gate. Kept out of handoffView so the
+    // view's shape (and status.json) is unchanged; main() compares it across a pass (passProgressed).
+    get handoffStep() {
+      return handoff?.step ?? null;
     },
     endOfRun,
     heldByAgent() {
@@ -1233,6 +1238,22 @@ export function stallVerdict({ quiet, idlePasses = 0, idleSince = null, now = 0,
   const idle = idlePasses + 1;
   const since = idleSince ?? now;
   return { stalled: idle >= grace && now - since >= minHeldMs, idle, idleSince: since };
+}
+
+// The action kinds main() and drive() call productive: a pass that took one did real work.
+export const PRODUCTIVE_ACTIONS = ['spawn', 'review', 'merge', 'close'];
+
+// passProgressed({ stepBefore, stateBefore, handoff, actions }) → boolean (fast-tests DESIGN §2.3).
+// True when the pass moved the end of the run (`handoff.step` or `handoff.state` differ from before it) or
+// took a productive action. The pass after such a pass often has work (endPass advances one step per pass;
+// the --no-coordinator run's end gate is the pass after the last merge), yet nothing external wakes the
+// loop for it, so main() wakes itself. A pass that changed nothing returns false and does not wake, so an
+// idle run still sleeps on the backstop and STALL_GRACE keeps meaning quiet backstop periods.
+// `handoff` is { step, state } after the pass, or null before the end gate has run.
+export function passProgressed({ stepBefore = null, stateBefore = null, handoff = null, actions = [] } = {}) {
+  if ((handoff?.step ?? null) !== stepBefore) return true;
+  if ((handoff?.state ?? null) !== stateBefore) return true;
+  return actions.some((a) => PRODUCTIVE_ACTIONS.includes(a.type));
 }
 
 // --- The end-of-run hand-off (DESIGN §2.4, §2.8) ----------------------------------------------
@@ -2245,7 +2266,14 @@ async function main(argv) {
       // be orphaned by the exit a moment later, so park here for good: the handler ends the process.
       if (signalled) await new Promise(() => {});
       personInbox.drain(); // the backstop for a drop the forwarder's watch missed
+      const stepBefore = coordinator.handoffStep;
+      const stateBefore = coordinator.handoff?.state ?? null;
       const r = coordinator.pass();
+      // A pass that moved the run on wakes the loop once, so the next step runs after the pass gap rather
+      // than the backstop (fast-tests DESIGN §2.3). The flag it sets is consumed by this pass's closing wait.
+      if (passProgressed({ stepBefore, stateBefore, handoff: { step: coordinator.handoffStep, state: coordinator.handoff?.state ?? null }, actions: r.actions })) {
+        waker.wake();
+      }
       trackTiming(coordinator.state.tasks, r.completed);
       if (REMOTE) syncRemote(coordinator.state.tasks);
       // Alerts run every pass, whatever REMOTE is (DESIGN §2.1); a fault in them never stops the run.
@@ -2373,7 +2401,7 @@ async function main(argv) {
       // Stall detection: a pass that did nothing AND has nothing live is the run genuinely finished (all
       // tasks ✅ and handed off, or everything deferred). A parked worker (live > 0) is NOT a stall — it
       // waits for the person's answer, so the loop keeps polling for it.
-      const productive = r.actions.some((a) => ['spawn', 'review', 'merge', 'close'].includes(a.type));
+      const productive = r.actions.some((a) => PRODUCTIVE_ACTIONS.includes(a.type));
       const stall = stallVerdict({ quiet: !productive && r.live === 0, idlePasses: idle, idleSince, now: Date.now(), grace: STALL_GRACE, minHeldMs: STALL_HOLD_MS });
       idle = stall.idle;
       idleSince = stall.idleSince;
