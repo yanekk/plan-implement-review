@@ -14,7 +14,7 @@ past.
 
 **Status:** Planned 2026-09-29. Nothing built.
 **Last updated:** 2026-09-29
-**Next `pir-work` will:** T00 prove-the-fence: it gates T04's session options.
+**Next `pir-work` will:** T04 finisher-session: T00, T01, T02 are done.
 
 ## Tasks
 
@@ -23,9 +23,9 @@ done · ⛔ blocked, needs a human.
 
 | # | Task | Depends on | State | Notes |
 |---|---|---|---|---|
-| T00 | prove-the-fence | — | ⬜ | |
+| T00 | prove-the-fence | — | ✅ | |
 | T01 | finisher-policy | — | ✅ | |
-| T02 | finisher-brief | — | ⬜ | |
+| T02 | finisher-brief | — | ✅ | |
 | T03 | finisher-skill-and-rules | T01 | ✅ | Reviewed: two fixes, reproduced by red tests against T01 code. Skill asked for `<tool> --version` (refused by `isLookOnly`) and, after a restart mid-finish, a `stuck` status `checkStatus` refuses in `stuck`. Probed install idempotence, engine `rules/` copy, repo-rules diff exceptions. Installed skill predates the fix until next `./install.sh`. |
 | T04 | finisher-session | T00, T01, T02 | ⬜ | |
 | T05 | finisher-handover | T04 | ⬜ | |
