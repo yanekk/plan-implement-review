@@ -14,7 +14,7 @@ past.
 
 **Status:** Planned 2026-09-29. Nothing built.
 **Last updated:** 2026-09-29
-**Next `pir-work` will:** T00 prove-the-fence: it gates T04's session options.
+**Next `pir-work` will:** review T04.
 
 ## Tasks
 
@@ -27,7 +27,7 @@ done · ⛔ blocked, needs a human.
 | T01 | finisher-policy | — | ✅ | |
 | T02 | finisher-brief | — | ✅ | |
 | T03 | finisher-skill-and-rules | T01 | ⬜ | |
-| T04 | finisher-session | T00, T01, T02 | ⬜ | |
+| T04 | finisher-session | T00, T01, T02 | 🔍 | `startFinisher` in finisher-agent.mjs, 22 tests; hooks option in worker-proc and the fake. Deviations: added `finisherStaleGo` brief; a go counts only for a question seen since the latest ready/stuck/resync (commit); `defaultToNo` in finishing parks; `pirHome` param; `Not yet` sends nothing. |
 | T05 | finisher-handover | T04 | ⬜ | |
 | T06 | finisher-alerts | T05 | ⬜ | |
 | T07 | finisher-row | T05 | ⬜ | |
@@ -35,7 +35,7 @@ done · ⛔ blocked, needs a human.
 | T09 | finisher-drill | T03, T06, T07 | ⬜ | |
 | T10 | finisher-live | T08, T09 | ⬜ | |
 
-**Review queue:** *(empty)*
+**Review queue:** T04
 
 ## Blocked on the user
 
