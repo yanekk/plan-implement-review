@@ -50,6 +50,9 @@ test('resumed mentions the skill and the Go header for every phase that can stil
   assert.match(finisherResumed({ phase: 'awaiting-go' }), /lost with the restart: ask it again/);
   assert.match(finisherResumed({ phase: 'done' }), /nothing left/);
   assert.match(finisherResumed(), /preparing/);
+  const odd = finisherResumed({ phase: 'finishing' });
+  assert.doesNotMatch(odd, /preparing/);
+  assert.match(odd, /Your phase is finishing\. Tell the person/);
 });
 
 test('resumed after finishing carries the stuck summary and says a fresh go is needed', () => {
@@ -65,6 +68,7 @@ test('resumed after finishing carries the stuck summary and says a fresh go is n
 test('refusal names the file and why; nothing changed', () => {
   assert.match(finisherRefusal('`done` is accepted in finishing only', '17-a.json'), /^Your status file 17-a\.json was refused: `done` is accepted in finishing only\. Nothing changed\./);
   assert.match(finisherRefusal('not JSON'), /^Your status file was refused: not JSON\./);
+  assert.doesNotMatch(finisherRefusal('not JSON.', 'a.json'), /\.\./);
 });
 
 test('resynced names the new main, returns to preparing and voids the old steps and go', () => {
@@ -88,7 +92,11 @@ test('gate refusal differs between look-only phases and done, and names the tool
   assert.match(done, /phase is done, and nothing more may run/);
   assert.doesNotMatch(done, /Allowed:/);
   for (const phase of ['preparing', 'stuck']) assert.match(finisherGateRefusal('Bash', phase), new RegExp(`phase is ${phase}, so you may only look`));
-  assert.match(finisherGateRefusal(undefined, 'finishing'), /^that tool was refused by pir in phase finishing/);
+  const finishing = finisherGateRefusal(undefined, 'finishing');
+  assert.match(finishing, /^that tool was refused\. Do not work around it/);
+  assert.match(finishing, /`stuck` status/);
+  assert.match(finishing, GO);
+  assert.match(finisherGateRefusal('Edit', 'weird'), /^Edit was refused by pir in phase weird/);
 });
 
 test('not-go quotes the answer, keeps the fence shut and says to wait', () => {

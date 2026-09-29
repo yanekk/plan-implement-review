@@ -70,11 +70,15 @@ export function finisherResumed({ phase, stuckSummary = null } = {}) {
     );
   } else if (phase === 'done') {
     parts.push('Your phase is done; there is nothing left for you to do.');
-  } else {
+  } else if (phase === 'preparing' || phase == null) {
     parts.push(
       'Your phase is preparing; you may only look. Finish checking, write a `ready` status, then ask the go question: ' +
         `${GO_QUESTION}.`,
     );
+  } else {
+    // afterRestart never resumes into `finishing`, so any other phase here is a caller bug: name it as it
+    // is rather than claim `preparing`, and send the finisher to the person.
+    parts.push(`Your phase is ${clip(phase, 40)}. Tell the person what you were doing and ask what to do; take no step until they answer.`);
   }
   return parts.join('\n\n');
 }
@@ -83,7 +87,9 @@ export function finisherResumed({ phase, stuckSummary = null } = {}) {
 // the wrong kind for the phase. Nothing changed.
 export function finisherRefusal(why, file = null) {
   const which = nonEmpty(file) ? `Your status file ${file}` : 'Your status file';
-  return `${which} was refused: ${clip(why, 500)}. Nothing changed. Write a new status file if you still mean it.`;
+  // A reason that already ends in a full stop (checkStatus's own wording may) must not print `..`.
+  const reason = clip(why, 500).replace(/[.\s]+$/, '');
+  return `${which} was refused: ${reason}. Nothing changed. Write a new status file if you still mean it.`;
 }
 
 // finisherResynced({ mainSha }) → main moved before any go and pir re-synced the branch (DESIGN §2.8).
@@ -100,8 +106,9 @@ export function finisherResynced({ mainSha } = {}) {
 const LOOK_ONLY_PHASES = new Set(['preparing', 'awaiting-go', 'stuck']);
 
 // finisherGateRefusal(toolName, phase) → why the gate denied a tool call, and what the finisher may do
-// in this phase (DESIGN §2.4). Only look-only phases and `done` deny; in `finishing` nothing is denied
-// (a reserved request is parked for the person instead), so that phase gets a neutral line.
+// in this phase (DESIGN §2.4). Only look-only phases and `done` deny by the gate; in `finishing` the only
+// refusal is the person denying a parked reserved request, which the finisher turns into a `stuck`
+// (DESIGN §2.12), so that phase says exactly that.
 export function finisherGateRefusal(toolName, phase) {
   const tool = nonEmpty(toolName) ? toolName : 'that tool';
   if (phase === 'done') {
@@ -113,6 +120,12 @@ export function finisherGateRefusal(toolName, phase) {
       'Grep; Bash commands made only of look-only parts (git status, log, diff, show, merge-tree and the like, ls, cat, ' +
       'grep, diff), with no redirection or command substitution; Write into the status folder only; the pir-finisher skill; ' +
       'and AskUserQuestion. If the steps need it, list it in your status and let the go approve it.'
+    );
+  }
+  if (phase === 'finishing') {
+    return (
+      `${tool} was refused. Do not work around it. Stop, write a \`stuck\` status with what is done, what is not and the ` +
+      `steps you would run next, then ask the go question again: ${GO_QUESTION}.`
     );
   }
   return `${tool} was refused by pir in phase ${phase ?? 'unknown'}. Say so to the person and ask what to do.`;
