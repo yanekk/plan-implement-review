@@ -25,12 +25,12 @@ done · ⛔ blocked, needs a human.
 |---|---|---|---|---|
 | T01 | wake-on-activity | — | ⬜ | |
 | T02 | end-sequence-no-wait | T01 | ⬜ | |
-| T03 | split-coordinator-drill | — | 🔍 | Six files, one per drill × size, plus `coordinator-drill-helpers.mjs`. Sorted names identical, 6 tests. File set 205 s → 47 s under load. Deviation: the three drill bodies moved verbatim into exported `coordinatorDrill`/`noCoordinatorDrill`/`endHelperDrill(cols, rows)` in the helper module; `drillRig` etc. stay unexported since no file imports them. |
+| T03 | split-coordinator-drill | — | ✅ | Six files, one per drill × size, plus `coordinator-drill-helpers.mjs` exporting the three drills. Review clean, no fix commit: helper diffed against the old file (only loop headers changed), sorted names identical, npm test green, slowest files alone 46.4 s under light load against the 51.4 s limit. |
 | T04 | split-plan-rig | — | ⬜ | |
 | T05 | split-conversation-rig | — | ⬜ | |
 | T06 | suite-timing-proof | T01, T02, T03, T04, T05 | ⬜ | |
 
-**Review queue:** T03
+**Review queue:** —
 
 ## Blocked on the user
 
