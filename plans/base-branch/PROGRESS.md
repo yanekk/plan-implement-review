@@ -20,13 +20,13 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T03 | branch-cuts | — | ✅ | |
 | T04 | base-text | — | ✅ | |
 | T05 | plan-start | T01, T02, T03 | ⬜ | |
-| T06 | build-start | T01, T02, T03 | 🔍 | `resolveRunBase`; startRun resolves, cuts `pir/{slug}`, passes `--base`/`--base-sha`, records `baseBranch`; coordinator parses them or resolves itself; `ensureMain` gone. 21 tests. Deviations: new `cutFeatureBranch` in worktree.mjs (cut without worktree); `startCoordinator({ base })` defaults `main` for tests; bin resolves only on the live path, dry run unchanged. |
+| T06 | build-start | T01, T02, T03 | ✅ | Review clean, no fix commit. `resolveRunBase`, cut via `cutFeatureBranch`, `--base`/`--base-sha`, `baseBranch` record, `ensureMain` gone; deviations accepted. Probed: RUN_BASE scoping after the move into startCoordinator, every startRun caller (pir, tui, harness), a checked-out behind base, a spawn failing after the cut (restart reuses the branch with pirBase). npm test green. |
 | T07 | end-sync | T04, T06 | ⬜ | |
 | T08 | skills-and-rules | — | ✅ | |
 | T09 | dev-base-drill | T05, T07 | ⬜ | |
 | T10 | docs-and-readme | T08, T09 | ⬜ | |
 
-**Review queue:** T06
+**Review queue:** empty
 
 ## Blocked on the user
 
