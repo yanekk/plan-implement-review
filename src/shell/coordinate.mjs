@@ -46,6 +46,7 @@ import { createGrants, startPersonInbox } from './person-inbox.mjs';
 import { writeSnapshot } from './snapshot-store.mjs';
 import { updateRecord } from './index-store.mjs';
 import { createWorktree } from './worktree.mjs';
+import { resolveRunBase } from './base-branch.mjs';
 import { reapRecorded } from './reap.mjs';
 import { planHome } from './plan-home.mjs';
 import { startCoordinatorAgent, withAgent, closingAnswer, readLogEntries } from './coordinator-agent.mjs';
@@ -53,11 +54,6 @@ import { startWorker } from './worker-proc.mjs';
 import { alertText, endAlert, notifyStep, notifyExit, newNotifyState } from '../core/notify.mjs';
 import { publish as ntfyPublish, clear as ntfyClear } from './ntfy.mjs';
 import { readNotifyConfig, ensurePresenceMarker, notifyIcon } from './notify-config.mjs';
-
-// worktree.mjs names no base branch (base-branch T03). Until the run's recorded base is wired in (T06
-// start, T07 end of run), the coordinator keeps cutting from and syncing with the local `main`, as before.
-const RUN_BASE = 'main';
-const RUN_BASE_REF = `refs/heads/${RUN_BASE}`;
 
 const DONE_GLYPH = '✅';
 const READY_GLYPH = '⬜';
@@ -169,8 +165,13 @@ export function startCoordinator({
   readLog = readLogEntries,
   now = () => Date.now(),
   holdMs = holdLimitMs(),
+  // The run's base branch (base-branch DESIGN §2.5): the bin passes the one it resolved at start and the
+  // end of the run syncs with it. The default serves only the tests that drive a `main` scratch repo.
+  base = 'main',
 } = {}) {
   if (!slug) throw new Error('startCoordinator: no slug');
+  const RUN_BASE = base;
+  const RUN_BASE_REF = `refs/heads/${base}`;
   if (!repo) throw new Error('startCoordinator: no repo (worker names are built from it, DESIGN §2.8)');
   if (!platform || !worktree) throw new Error('startCoordinator: platform and worktree must be injected');
 
@@ -1270,36 +1271,33 @@ function gitStdout(cwd, args) {
   }
 }
 
-// A git runner that reports success/failure (unlike gitStdout, which swallows it), so ensureMain can
-// tell "no local main" from "the checkout is broken". Injected into ensureMain so a test drives it
-// against a scratch repo.
-export function gitRun(cwd, args) {
-  try {
-    const stdout = execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] });
-    return { ok: true, stdout, stderr: '' };
-  } catch (e) {
-    return { ok: false, stdout: e.stdout ?? '', stderr: e.stderr ?? String(e) };
+// parseCoordinateArgs(argv) → { ok: true, slug, base: string|null, baseSha: string|null } | { ok: false, error }
+// `{slug} [--base <branch> [--base-sha <sha>]]`: `pir start` passes the base it resolved (and, for a
+// feature branch it just cut, the commit), so the coordinator never re-reads the settings (base-branch
+// DESIGN §2.7). A --base-sha without --base is refused: a commit with no branch name is not a base.
+export function parseCoordinateArgs(argv = []) {
+  let slug = null;
+  let base = null;
+  let baseSha = null;
+  for (let i = 0; i < argv.length; i += 1) {
+    const a = argv[i];
+    if (a === '--base' || a === '--base-sha') {
+      const v = argv[i + 1];
+      if (!v || v.startsWith('--')) return { ok: false, error: `${a} needs a value` };
+      if (a === '--base') base = v;
+      else baseSha = v;
+      i += 1;
+    } else if (a.startsWith('--')) {
+      return { ok: false, error: `unknown option ${a}` };
+    } else if (slug === null) {
+      slug = a;
+    } else {
+      return { ok: false, error: `unexpected argument ${a}` };
+    }
   }
-}
-
-// Ensure a checkout has a local `main` (DESIGN §2.9; T12 Problem 4). worktree.mjs cuts the feature
-// branch with `git branch pir/{plan} main` — `main` hardcoded, as the real project always has one — so
-// a local main must exist for openFeature to branch off it (the run never merges back to main, §2.4;
-// main is only the base the feature branch is cut from). A scratch clone taken off a side branch has
-// only origin/main and no local `main`, so pass 1 throws "not a valid object name: 'main'" (the drill
-// created one by hand). When there is no local main, create it at the current HEAD and check it out; a
-// checkout that already has main is left exactly as it is. Runs only on the LIVE path, which the
-// branch-safety guard confines to a scratch checkout, so pointing main at HEAD is safe (mirrors
-// ensureMainCheckedOut, verified with the user 2026-09-09). `-B main HEAD` pins main to the exact
-// commit, never a same-named origin/main.
-export function ensureMain(root, { git = gitRun } = {}) {
-  if (git(root, ['rev-parse', '--verify', '--quiet', 'refs/heads/main']).ok) {
-    return { created: false };
-  }
-  const from = git(root, ['rev-parse', '--abbrev-ref', 'HEAD']).stdout.trim();
-  const r = git(root, ['checkout', '-B', 'main', 'HEAD']);
-  if (!r.ok) throw new Error(`ensureMain: could not create a local main at HEAD: ${r.stderr}`);
-  return { created: true, from };
+  if (!slug) return { ok: false, error: null };
+  if (baseSha && !base) return { ok: false, error: '--base-sha needs --base' };
+  return { ok: true, slug, base, baseSha };
 }
 
 // The main (primary) worktree of the repo, whose basename is the repo name the agent names are built
@@ -1874,11 +1872,12 @@ export function withinMs(promise, ms) {
 }
 
 async function main(argv) {
-  const slug = argv[0];
-  if (!slug) {
-    console.error('usage: node src/shell/coordinate.mjs {slug}');
+  const args = parseCoordinateArgs(argv);
+  if (!args.ok) {
+    console.error(`${args.error ? `${args.error}\n` : ''}usage: node src/shell/coordinate.mjs {slug} [--base <branch> [--base-sha <sha>]]`);
     process.exit(2);
   }
+  const { slug } = args;
 
   const root = mainWorktree(process.cwd()) || process.cwd();
   const repo = basename(root);
@@ -1930,10 +1929,16 @@ async function main(argv) {
 
   console.log('LIVE: spawning real workers (PARALLEL_LIVE=1).');
 
-  // Ensure a local `main` exists (DESIGN §2.9; T12 Problem 4): a scratch clone off a side branch has
-  // only origin/main, and openFeature would throw on pass 1 without this.
-  const mained = ensureMain(root);
-  if (mained.created) console.log(`prepared a local main at HEAD (checkout was on "${mained.from}", which had none).`);
+  // The run's base (base-branch DESIGN §2.5, §2.7). `pir start` resolved it before spawning this and
+  // passes it in; a coordinator started by hand resolves it here the same way, refusing before anything
+  // is created. A missing local base is created from the remote's copy by prepareBase, never at HEAD.
+  const runBase = args.base ? { ok: true, base: args.base, baseSha: args.baseSha } : resolveRunBase(root, slug);
+  if (!runBase.ok) {
+    console.error(runBase.message);
+    process.exit(1);
+  }
+  const { base, baseSha } = runBase;
+  console.log(`base branch: ${base}`);
 
   const control = fileControl(root, slug);
 
@@ -1974,7 +1979,7 @@ async function main(argv) {
   // forwards to it by id once it has started (currentAgent is set when the controller exists).
   let currentAgent = () => null;
   const personInbox = startPersonInbox({ controlDir: control.dir, platform: withAgent(platform, () => currentAgent()), grants, log: control.log });
-  const worktree = createWorktree({ root, base: RUN_BASE });
+  const worktree = createWorktree({ root, base, ...(baseSha ? { from: baseSha } : {}) });
   // No DESIGN.md reads as '': makePrepare sees no block and runs no setup.
   const design = planHome(slug, { root }).read('DESIGN.md') ?? '';
   const prepare = makePrepare({ design, setupDir: join(control.dir, 'setup') });
@@ -2004,7 +2009,7 @@ async function main(argv) {
             env: () => workerEnv(),
           });
         };
-  const coordinator = startCoordinator({ slug, repo, platform, worktree, maxWorkers, control, startAgent,
+  const coordinator = startCoordinator({ slug, repo, platform, worktree, maxWorkers, control, startAgent, base,
     runTests: (featurePath, { tasks } = {}) => {
       showTesting(tasks ?? []);
       return runFeatureTests(featurePath, { slug, root, logPath: join(control.dir, 'tests.log') });

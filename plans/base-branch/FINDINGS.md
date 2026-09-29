@@ -5,6 +5,7 @@ hand with the user · 📌 worth knowing · 🔄 a decision the user changed.
 
 | Date | | Finding |
 |---|---|---|
+| 2026-09-29 | 📌 | The dashboard's start and resume notes (`pir-tui.mjs`, `Could not start {slug}: {reason}`) show the bare reason code, e.g. `no-base-setting`, not startRun's `message` with the fix. `pir start` prints the full text. Outside T06's files. |
 | 2026-09-29 | 📌 | `validBranchName` accepts a base named exactly `pir`, which git cannot hold beside `pir/*` branches (ref directory clash), so cutting `pir/plan-*` would fail with a git error. §2.2 refuses only `pir/`. Left for the user. |
 | 2026-09-29 | 📌 | T03 renamed `syncMain`/`mainContains`/`mainTip` to `syncBase`/`baseContains`/`baseTip`; `docs/branch-model.md` and `docs/coordinator-agent.md` still name the old functions. For T10. |
 | 2026-09-29 | 📌 | `plan-rig.test.mjs` "end to end at 120×40: still in the planner's conversation" fails occasionally under full `npm test` (reviewer row not yet ✔); passes alone and on re-run. Seen four times (T01, T08, T03 review, T04). Timing flake, not investigated. |

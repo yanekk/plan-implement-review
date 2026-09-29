@@ -210,6 +210,15 @@ test('[start] no-test-block → the refusal naming the parser reason and /pir-re
   ]);
 });
 
+test('[start] a base-branch refusal → its §2.9 text on stderr, exit 1, no watch (base-branch T06)', () => {
+  const message = 'pir: no base branch is set for shop. Add .pir/settings.json with {"baseBranch": "<branch>"} (committed, for everyone), or ~/.pir/shop/settings.json (this machine only).';
+  const { calls, errs, deps } = harness({ started: false, reason: 'no-base-setting', message });
+  const code = run(['start', 'screen-time'], deps);
+  assert.equal(code, 1);
+  assert.deepEqual(calls.watch, []);
+  assert.deepEqual(errs, [`${message}\n`]);
+});
+
 for (const argv of [['start'], ['start', 'a', 'b']]) {
   test(`${JSON.stringify(argv)} → usage on stderr, exit 2`, () => {
     const { calls, errs, deps } = harness();
