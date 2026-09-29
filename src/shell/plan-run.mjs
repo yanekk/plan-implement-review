@@ -136,11 +136,13 @@ export function plannerChecks({ slug, worktree, root, repo, indexDir, git = gitR
   if (missing.length) {
     return { ok: false, reason: `${missing.join(', ')} ${missing.length === 1 ? 'is' : 'are'} not committed on this branch. Write ${missing.length === 1 ? 'it' : 'them'}, ${again}.` };
   }
-  const taken = slugTaken(slug, { root, indexHas: (s) => existsSync(recordPath(repo, s, { dir: indexDir })) });
+  // The base is still `main` until T05 reads it from the plan branch's pirBase (base-branch T03).
+  const base = 'main';
+  const taken = slugTaken(slug, { root, base, indexHas: (s) => existsSync(recordPath(repo, s, { dir: indexDir })) });
   if (taken) {
     const why = {
       branch: `a branch pir/${slug} already exists`,
-      'main-plan': `a plan plans/${slug} is already on main`,
+      'base-plan': `a plan plans/${slug} is already on ${base}`,
       index: `a pir run named ${slug} already exists`,
     }[taken] ?? `it is in use (${taken})`;
     return { ok: false, reason: `The name "${slug}" is taken: ${why}. ${rename}` };

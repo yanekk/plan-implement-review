@@ -17,12 +17,12 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 |---|---|---|---|---|
 | T01 | base-core | — | ⬜ | |
 | T02 | base-git | T01 | ⬜ | |
-| T03 | branch-cuts | — | ⬜ | |
+| T03 | branch-cuts | — | ✅ | |
 | T04 | base-text | — | ✅ | Reviewed clean, no fix commit. `base` param (default main) on prompts, brief, footer, alert, render, hand-off; switch-first merge line. Recorded deviations accepted. Probed: remaining `main` hits all owned by T03/T06/T07 (`syncMain`, `ensureMain`, re-sync commit, `handoff.mainSha`, pir-tui stale line); harness and live-drill parsers still match the new line. |
 | T05 | plan-start | T01, T02, T03 | ⬜ | |
 | T06 | build-start | T01, T02, T03 | ⬜ | |
 | T07 | end-sync | T04, T06 | ⬜ | |
-| T08 | skills-and-rules | — | ⬜ | |
+| T08 | skills-and-rules | — | ✅ | |
 | T09 | dev-base-drill | T05, T07 | ⬜ | |
 | T10 | docs-and-readme | T08, T09 | ⬜ | |
 
