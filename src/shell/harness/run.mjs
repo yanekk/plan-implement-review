@@ -74,12 +74,17 @@ export function coordinatorLaunchArgv({ slug }) {
 //
 // `holdMs` is a scenario's `coordinatorHoldMs` (pir-coordinator T14): the agent's hold limit for the run,
 // passed as PARALLEL_COORDINATOR_HOLD_MS (coordinate.mjs holdLimitMs), so the live check sees it fire.
-export function seatbeltEnv({ ceiling, holdMerges = false, pirHome = null, coordinator = false, holdMs = null } = {}) {
+//
+// `baseWatchMs` is a scenario's own (base-branch T09): PARALLEL_BASE_WATCH_MS, the end-of-run watch of the
+// remote, as planEnv sets it for a plan scenario; without it a build scenario that merges on the remote
+// would wait the 5-minute default.
+export function seatbeltEnv({ ceiling, holdMerges = false, pirHome = null, coordinator = false, holdMs = null, baseWatchMs = null } = {}) {
   const env = { PARALLEL_LIVE: '1' };
   if (!coordinator) env.PARALLEL_COORDINATOR = '0';
   if (coordinator && holdMs != null) env.PARALLEL_COORDINATOR_HOLD_MS = String(holdMs);
   if (ceiling != null) env.PARALLEL_MAX_WORKERS = String(ceiling);
   if (holdMerges) env.PARALLEL_HOLD_MERGES = '1';
+  if (baseWatchMs != null) env.PARALLEL_BASE_WATCH_MS = String(baseWatchMs);
   if (pirHome) {
     env.PIR_RUN = '1';
     env.PIR_HOME = pirHome;
@@ -564,7 +569,7 @@ export async function runScenario({
     // git, so the index it may hold never dirties the checkout the coordinator merges in.
     const pirHome = spec.statusSnapshots ? join(controlDir, '..', 'pir-home') : null;
     const env = {
-      ...seatbeltEnv({ ceiling, holdMerges: spec.holdMerges, pirHome, coordinator: spec.coordinator, holdMs: spec.coordinatorHoldMs }),
+      ...seatbeltEnv({ ceiling, holdMerges: spec.holdMerges, pirHome, coordinator: spec.coordinator, holdMs: spec.coordinatorHoldMs, baseWatchMs: spec.baseWatchMs }),
       ...(spec.realNotify ? notifyEnv({ home: notifyHome, env: harnessEnv }) : {}),
     };
     log(`launching coordinator process: node ${argv.join(' ')}  (ceiling ${ceiling}, timeout ${timeout}ms${spec.realNotify ? ', real phone alerts' : ''})`);

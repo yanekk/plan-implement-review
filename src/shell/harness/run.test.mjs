@@ -111,6 +111,11 @@ test('seatbeltEnv: a scenario\'s coordinatorHoldMs sets the agent\'s hold limit,
   assert.equal(seatbeltEnv({ ceiling: 3, coordinator: true }).PARALLEL_COORDINATOR_HOLD_MS, undefined);
 });
 
+test('seatbeltEnv: a build scenario\'s baseWatchMs shortens the remote watch, as planEnv does for a plan scenario (base-branch T09 review)', () => {
+  assert.equal(seatbeltEnv({ ceiling: 2, baseWatchMs: 1000 }).PARALLEL_BASE_WATCH_MS, '1000');
+  assert.equal(seatbeltEnv({ ceiling: 2 }).PARALLEL_BASE_WATCH_MS, undefined);
+});
+
 test('seatbeltEnv: a scenario with `coordinator` runs the agent (no PARALLEL_COORDINATOR)', () => {
   assert.deepEqual(seatbeltEnv({ ceiling: 1, coordinator: true }), { PARALLEL_LIVE: '1', PARALLEL_MAX_WORKERS: '1' });
 });
