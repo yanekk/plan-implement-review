@@ -403,7 +403,7 @@ for (const [cols, rows] of [[80, 24], [120, 40]]) {
       screen.send(`${ESC}[D`);
       await screen.waitFor(/c coordinator/);
       rig.ready();
-      s = (await screen.waitFor(/ready to merge · git merge pir\/rig/)).join('\n');
+      s = (await screen.waitFor(/ready to merge · git switch main && git merge pir\/rig/)).join('\n');
       assert.match(s, /report: plans\/rig\/REPORT\.md/);
       assert.match(s, /T01 +coordinator +merged/);
 

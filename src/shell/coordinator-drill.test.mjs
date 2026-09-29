@@ -135,7 +135,7 @@ for (const [cols, rows] of SIZES) {
 
       // 5. The end: preparing while main is synced and the report written, then ready to merge.
       s = (await screen.waitFor(/preparing: syncing main, writing the report\n/, 60000)).join('\n');
-      s = (await screen.waitFor(/ready to merge · git merge pir\/drill/, 60000)).join('\n');
+      s = (await screen.waitFor(/ready to merge · git switch main && git merge pir\/drill/, 60000)).join('\n');
       assert.match(s, /report: plans\/drill\/REPORT\.md/);
       for (const task of ['T01', 'T02', 'T03']) assert.match(rowOf(s, task) ?? '', /merged/, `${task} merged`);
 
@@ -147,7 +147,7 @@ for (const [cols, rows] of SIZES) {
       s = (await screen.waitFor(/● ready to merge/)).join('\n');
       assert.match(s, /drill +work +● ready to merge/, 'the dashboard row waits on the person');
       screen.send(RIGHT);
-      s = (await screen.waitFor(/ready to merge · git merge pir\/drill/)).join('\n');
+      s = (await screen.waitFor(/ready to merge · git switch main && git merge pir\/drill/)).join('\n');
       assert.match(assertAgentRow(s, 'in ready to merge'), /on duty$/, 'it holds nothing once every question is answered');
 
       rec.stop();
@@ -241,7 +241,7 @@ for (const [cols, rows] of SIZES) {
       await screen.waitFor(/→ Add it/);
       screen.send(LEFT);
 
-      s = (await screen.waitFor(/ready to merge · git merge pir\/helper/, 60000)).join('\n');
+      s = (await screen.waitFor(/ready to merge · git switch main && git merge pir\/helper/, 60000)).join('\n');
       assert.equal(rowOf(s, 'tests-fix'), null, 'the helper\'s row is gone once it has finished');
       assertAgentRow(s, 'in ready to merge after the helper');
       assert.match(rowOf(s, 'T01') ?? '', /merged/);

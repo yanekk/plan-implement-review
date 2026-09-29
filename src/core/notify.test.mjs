@@ -153,7 +153,7 @@ test('reminderText prefixes Still waiting', () => {
 test('endAlert: ready', () => {
   assert.deepEqual(endAlert({ slug: 'screen-time', ready: true, taskCount: 9 }), {
     title: 'screen-time · ready to merge',
-    message: 'All 9 tasks merged. git merge pir/screen-time',
+    message: 'All 9 tasks merged. git switch main && git merge pir/screen-time',
     tags: ['tada'],
   });
 });
@@ -343,4 +343,15 @@ test('notifyExit clears sent episodes only', () => {
   assert.deepEqual(notifyExit(r.state), [{ type: 'clear', id: 'w1', seq: 'pir-w1-1' }]);
   assert.deepEqual(notifyExit(newNotifyState()), []);
   assert.deepEqual(notifyExit(undefined), []);
+});
+
+// base-branch T04 (DESIGN §2.9): the end alert names the run's base; the hand-off switches to it first.
+test('endAlert: a dev base names dev and never main; the default is main', () => {
+  const ready = endAlert({ slug: 'demo', ready: true, taskCount: 3, base: 'dev' });
+  assert.equal(ready.message, 'All 3 tasks merged. git switch dev && git merge pir/demo');
+  const red = endAlert({ slug: 'demo', ready: false, unresolved: true, base: 'dev' });
+  assert.equal(red.message, 'Merge with dev unresolved on pir/demo');
+  for (const a of [ready, red]) assert.doesNotMatch(`${a.title} ${a.message}`, /\bmain\b/);
+  assert.equal(endAlert({ slug: 'demo', ready: false, unresolved: true }).message, 'Merge with main unresolved on pir/demo');
+  assert.equal(endAlert({ slug: 'demo', ready: true, taskCount: 3 }).message, 'All 3 tasks merged. git switch main && git merge pir/demo');
 });
