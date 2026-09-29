@@ -5,7 +5,7 @@ lives in [FINDINGS.md](FINDINGS.md). Sixty words to a Notes cell, counted.
 
 **Plan reviewed:** 2026-09-29 — 9 fixed, 3 decided with the user
 
-**Status:** Planned, not started.
+**Status:** In progress.
 **Last updated:** 2026-09-29
 **Next `pir-work` will:** T01 base-core, the first task with no dependencies on the critical path.
 
@@ -15,7 +15,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 
 | # | Task | Depends on | State | Notes |
 |---|---|---|---|---|
-| T01 | base-core | — | ⬜ | |
+| T01 | base-core | — | 🔍 | `basebranch.mjs` (six functions) plus runrecord `baseBranch`; 24 new tests. Deviations: `@`, `HEAD` and a leading `/` also refused, as git does; `.lock` checked per component, as git does; `holdText` returns the reason without the `preparing:`/`waiting:` prefix, so T07 can prefix either. |
 | T02 | base-git | T01 | ⬜ | |
 | T03 | branch-cuts | — | ⬜ | |
 | T04 | base-text | — | ⬜ | |
@@ -26,7 +26,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T09 | dev-base-drill | T05, T07 | ⬜ | |
 | T10 | docs-and-readme | T08, T09 | ⬜ | |
 
-**Review queue:** *(empty)*
+**Review queue:** T01
 
 ## Blocked on the user
 
