@@ -25,7 +25,7 @@ You act as product manager: you own *what* gets built and why. The sessions own 
 pir plan "what to build"   →  pir/{slug} branch        planned, then read back by a fresh session,
                                                         all answered in pir's screen
     ↵ at "Start the build?" →  pir/{slug} branch, green every task built and reviewed in parallel
-git merge pir/{slug}       →  main                      the one step you run by hand
+git merge pir/{slug}       →  {base}                    the one step you run by hand, on {base}
 ```
 
 `pir plan` runs the two planning steps for you, one after the other, as sessions inside `pir` (see
@@ -36,8 +36,11 @@ slash commands inside Claude Code, and then start the build:
 /pir-plan                  →  plans/{slug}/            a reviewed-ready plan, split into tasks
 /pir-review-plan {slug}    →  plan marked reviewed      fresh eyes before a line is built
 pir start {slug}           →  pir/{slug} branch, green  every task built and reviewed in parallel
-git merge pir/{slug}       →  main                      the one step you run by hand
+git merge pir/{slug}       →  {base}                    the one step you run by hand, on {base}
 ```
+
+`{base}` is the repo's base branch, `main` or `dev` or whichever the repo names; `pir` needs it set
+once per repo ([below](#one-setting-per-repo-the-base-branch)).
 
 | Step | What it does |
 |---|---|
@@ -56,6 +59,42 @@ people see — is yours to set, action by action, in the plan. See
 
 (The same plan can also be built one task per session, by typing `/pir-work {slug}` repeatedly —
 the original single-stream flow, still supported.)
+
+## One setting per repo: the base branch
+
+Before `pir plan` or `pir start` will run in a repo, the repo must say which branch work starts from
+and goes back to: its **base branch**. In most repos that is `main`; in one with fixed `dev`, `stage`
+and `prod` branches it is usually `dev`. Commit it once, for everyone who clones the repo:
+
+```sh
+mkdir -p .pir && echo '{"baseBranch": "dev"}' > .pir/settings.json
+```
+
+To point only your own machine elsewhere, put the same line in `~/.pir/{repo}/settings.json`
+(`{repo}` being the repo's folder name); it wins over the repo's file. With neither, `pir` refuses and
+tells you the line to add. It never guesses, not even `main`, because building off a branch nobody
+chose is the mistake this setting exists to prevent. A broken file is refused by name.
+
+What `pir` then does with it:
+
+- **It starts from the newest copy.** Before it cuts a plan's branch, and again before the end-of-run
+  sync, `pir` fetches the base from the remote (`origin`, or the branch's own upstream), so work starts
+  from what your team pushed, not from whatever your clone last saw. It only reads from the remote; it
+  never pushes.
+- **It moves your local copy forward only when that is safe.** If your local base is behind, `pir`
+  fast-forwards it, unless it is checked out with uncommitted changes, in which case it leaves it alone
+  and still uses the remote's newer commit. A local base that is ahead keeps its extra commits. A local
+  base missing entirely is created from the remote's copy.
+- **It stops rather than guess.** A remote it cannot reach, or a local base that has split from the
+  remote's, refuses the start with the cause and the fix, and nothing is created. At the end of a run
+  the same problems hold the run in `preparing` and retry every minute, with one phone alert, instead
+  of handing you a merge built on the wrong commit. A repo with no remote simply uses its local base.
+- **A run keeps the base it started with.** Changing the setting mid-build does not move a running
+  build.
+- **Everything it says names your base**, `dev` included: the hand-off is `git switch dev && git merge
+  pir/{slug}`.
+
+The detail is in [docs/branch-model.md](docs/branch-model.md#the-base-branch).
 
 ## Planning inside `pir` — `pir plan`
 
@@ -92,13 +131,15 @@ command and plan name start anything; otherwise the box says why and keeps what 
 holds only `@`, the dashboard's keys work as before
 ([planning-runs.md](docs/planning-runs.md#the-dashboard-box)).
 
-`pir plan` and `pir start` work in any git repo with a local `main`, this project's own checkout
-included; there is no flag to set ([planning-runs.md](docs/planning-runs.md)).
+`pir plan` and `pir start` work in any git repo whose base branch is set
+([above](#one-setting-per-repo-the-base-branch)), this project's own checkout included; there is no
+other flag to set ([planning-runs.md](docs/planning-runs.md)).
 
 What that gets you:
 
-- **`main` stays clean.** The plan is written on its own branch, `pir/{slug}`, which the build then
-  uses as its feature branch; the plan reaches `main` with its code, in your one `git merge`. `pir`
+- **Your base branch stays clean.** The plan is written on its own branch, `pir/{slug}`, which the
+  build then uses as its feature branch; the plan reaches the base with its code, in your one `git
+  merge`. `pir`
   never deletes a branch.
 - **Nothing to carry between sessions.** No slug to copy, no second session to open for the review.
 - **It survives the terminal closing.** Like a build, it runs in the background. The dashboard shows
@@ -109,7 +150,7 @@ What that gets you:
   same keys resume a stopped build.
 
 Limits: a plan that lives only on its branch cannot be built one task per session with `/pir-work`
-until you merge it to `main`, and editing a reviewed plan before the go means resuming a session or
+until you merge it into the base, and editing a reviewed plan before the go means resuming a session or
 editing the branch by hand. The full behaviour is in [docs/planning-runs.md](docs/planning-runs.md).
 
 ## You set how much the agents do on their own
@@ -233,7 +274,7 @@ stands in for you:
   open its conversation, in `pir` or on your phone: ask where things stand, or tell it something for the
   rest of the run ("don't approve new tasks tonight").
 - **It cannot touch anything.** It can only read the plan and write its decisions; the program
-  checks each one and applies it. It never merges into `main` and never pushes.
+  checks each one and applies it. It never merges into your base branch and never pushes.
 
 You can give it project rules in `.claude/pir-coordinator.md` in your repo, in plain words ("never
 approve anything touching payments"). You can answer any question yourself at any time, even one
@@ -298,15 +339,15 @@ What it tells you at a glance:
   alert, and the Claude app's own push is silenced so you are not told twice. About 150 characters of
   each question pass through ntfy.sh. `pir notify test` sends a test; `pir notify off` stops it all. See
   [human-flow.md](docs/human-flow.md#phone-alerts--pir-notify).
-- **When it is done.** Once every task is merged, the run brings the latest `main` into the
-  feature branch so your merge will go through cleanly, runs the tests, and commits a delivery report
+- **When it is done.** Once every task is merged, the run fetches the latest base branch and
+  merges it into the feature branch so your merge will go through cleanly, runs the tests, and commits a delivery report
   (`plans/{slug}/REPORT.md`): what was delivered, the decisions made for you, what to check by hand,
-  and the risks. The coordinator agent shows you the report and the `git merge pir/{slug}` to run, and
+  and the risks. The coordinator agent shows you the report and the `git switch {base} && git merge pir/{slug}` to run, and
   the run waits in `ready to merge` until you merge or tell the agent to close it. If the tests fail
-  at the end, one worker is sent in to make them pass, as it is for a clash with `main`; if they still
+  at the end, one worker is sent in to make them pass, as it is for a clash with the base; if they still
   fail after that one attempt, the report says so and no merge is offered. That worker shows as a row
   of its own below the tasks (`tests-fix` or `main-sync`) while it runs, and if it asks you something
-  you open that row and answer it like any task's. It never merges to `main` itself. See
+  you open that row and answer it like any task's. It never merges into the base itself. See
   [coordinator-agent.md](docs/coordinator-agent.md#the-end-of-the-run).
 
 `pir` on its own opens a dashboard of every run on the machine, across every repo: each run's
@@ -523,14 +564,14 @@ $ pir start screen-time
     → you close the terminal to go to lunch; the run keeps going
 $ pir
     → the dashboard shows screen-time running, 8/10 done; ↵ reopens its live view
-    → last task merged; main is merged into pir/screen-time and the tests pass
+    → last task merged; main is fetched and merged into pir/screen-time; tests pass
     → REPORT.md is committed; the coordinator agent shows you the report and:
-        ✔ ready to merge · git merge pir/screen-time
+        ✔ ready to merge · git switch main && git merge pir/screen-time
     → you run the merge; the run sees it and finishes
 ```
 
-A task is never reviewed by the worker that built it, and nothing lands on `main` until you merge
-it.
+A task is never reviewed by the worker that built it, and nothing lands on your base branch until you
+merge it.
 
 ## Rules worth remembering
 
@@ -551,9 +592,9 @@ session. The ones that bite most often:
 - **Outside the code, the agents go only as far as you allowed.** Each live action sits in the
   `worker`, `ask` or `person` bin you approved at plan review, enforced as a permission rule; an
   action with no bin is `ask`.
-- **`main` is yours.** A run builds on its own feature branch, one branch and worktree per
-  task, and hands you the final `git merge`. Nothing merges to `main` without you, the coordinator
-  agent included.
+- **Your base branch is yours.** A run builds on its own feature branch, one branch and worktree
+  per task, and hands you the final `git merge`. Nothing merges into the base without you, the
+  coordinator agent included, and nothing is ever pushed.
 
 ## Layout of this repo
 

@@ -25,8 +25,8 @@ without per-task typing.
    there — the hand-made plan, read exactly as before — else the **committed** tree of branch
    `pir/{slug}`, read with `git show`, which is where `pir plan` leaves a reviewed plan until the person
    merges it. The branch is read committed, not from its worktree, because a worktree may hold
-   uncommitted edits no build would see. Main comes first so a narrow re-review committed on `main`
-   while its build runs is still what the build reads. Dispatch reads `PROGRESS.md` from the feature
+   uncommitted edits no build would see. The main checkout comes first so a narrow re-review committed
+   there while its build runs is still what the build reads. Dispatch reads `PROGRESS.md` from the feature
    worktree, as always.
 2. It then **refuses a plan whose `DESIGN.md` has no valid setup/test block** — the front-matter
    block the file opens with, declaring the plan's `setup` lines and its `test` lines:
@@ -55,10 +55,15 @@ without per-task typing.
    `pir` always sets it, so a dry run is only reachable by running `coordinate.mjs` by hand.
    See [restart-recovery.md](restart-recovery.md) and the seatbelts in
    `plans/non-agentic-coordinator/DESIGN.md § 5.2`.
-4. On the first pass the command opens the **feature branch** `pir/{plan}` off `main`, in its own
-   worktree, and works there (a plan made by `pir plan` already has that branch and worktree, and the
-   command reuses them) — the person's main checkout stays on `main` (`openFeature` in
-   `worktree.mjs`). See [branch-model.md](branch-model.md). On the same pass, unless the run was
+4. On the first pass the command opens the **feature branch** `pir/{plan}` off the run's **base
+   branch**, in its own worktree, and works there (a plan made by `pir plan` already has that branch and
+   worktree, and the command reuses them) — the person's main checkout stays on whatever branch they
+   left it (`openFeature` in `worktree.mjs`). The base is settled before the command starts: `pir start`
+   reads it from the branch's recorded `pirBase` when `pir/{slug}` exists, and otherwise resolves the
+   repo's settings, fetches and prepares the base, cuts `pir/{slug}` from it and records `pirBase`, then
+   passes `--base <name> --base-sha <sha>` to the command. A command started by hand without them
+   resolves them the same way itself (`resolveRunBase` in `base-branch.mjs`). A missing local base is
+   created from the remote's copy, never at HEAD. See [branch-model.md](branch-model.md). On the same pass, unless the run was
    started with `--no-coordinator`, it starts the run's **coordinator agent** in the feature worktree
    (see [coordinator-agent.md](coordinator-agent.md)).
 5. Still on the first pass, before dispatching, the command **reconciles each task from its own
@@ -150,7 +155,7 @@ A pass does, in order:
   `bad-plan-change` surface, and [task-state.md](task-state.md) for the adoption rule).
 - **Complete.** When every task is `✅` and no worker is live, the pass reports a `complete` flag;
   the command runs the plan's declared lines on the feature branch and reports the result. It never
-  merges to `main` — see **End** below. `runFeatureTests` (`coordinate.mjs`) reads the setup/test
+  merges into the base — see **End** below. `runFeatureTests` (`coordinate.mjs`) reads the setup/test
   block from the plan's home (`planHome`, above: the main checkout's `plans/{slug}/DESIGN.md`, else the
   committed `pir/{slug}`) — not the feature worktree's copy, which may predate a review pass that added
   the block — and runs the `setup` lines, then the `test` lines, in
@@ -251,14 +256,16 @@ spinner and clock from it.
 ## End
 
 With the coordinator agent on (the default), reaching the end gate does not end the run. The command
-gives red tests one attempt by a test-fix worker in the feature worktree, merges the current `main`
-into the feature branch (a conflict is finished by a main-sync worker), reruns the tests if anything
+gives red tests one attempt by a test-fix worker in the feature worktree, prepares the run's base
+(fetching it from the remote) and merges it into the feature branch (a conflict is finished by a main-sync worker), reruns the tests if anything
 merged (red there, and no fix attempt yet, gets the one attempt then), has the agent write the delivery report's sections, commits
 `plans/{slug}/REPORT.md` on the feature branch, and waits in **ready to merge**: the footer reads
-`✔ ready to merge · git merge pir/{slug}` and names the report, or `✗ not ready · tests red …` on red.
-The run stays open until the person merges `pir/{slug}` into `main` (the command sees `main` contains
-its tip) or tells the agent to close it; either ends it as `finished`. If `main` moves meanwhile, the
-branch is re-synced and the report's footer rewritten. The command still never merges into `main`. The
+`✔ ready to merge · git switch {base} && git merge pir/{slug}` and names the report, or `✗ not ready · tests red …` on red.
+The run stays open until the person merges `pir/{slug}` into the base (the command sees the local base,
+or the remote's copy it fetches every 5 minutes, contains its tip) or tells the agent to close it; either
+ends it as `finished`. If the base moves meanwhile, the branch is re-synced and the report's footer
+rewritten. A base that cannot be fetched or has split from the remote's holds the run in `preparing`
+and retries every minute. The command still never merges into the base. The
 steps, the report and the failure paths are in [coordinator-agent.md](coordinator-agent.md#the-end-of-the-run).
 
 With phone alerts set up, reaching ready to merge (or red) sends one end-of-run alert, on the first pass
@@ -270,13 +277,13 @@ A run ends in one of three ways. With the agent on, the first is the ready-to-me
 without it (`pir start {slug} --no-coordinator`), it is:
 
 - **Handed off** — every task reached `✅`, the feature branch is green, and the command prints the
-  branch and the one line `git merge pir/{slug}` for the person to run by hand (`renderHandoff` in
-  `coordinate.mjs`). `main` is untouched; merging it is the person's step, not the command's (see
+  branch and the one line `git switch {base} && git merge pir/{slug}` for the person to run by hand (`renderHandoff` in
+  `coordinate.mjs`). The base is untouched; merging into it is the person's step, not the command's (see
   [branch-model.md](branch-model.md)). A **red** feature branch prints the failure and the branch
   and offers no `git merge` line — the command never tells the person a red branch is ready. The red
   line names which half failed, the failing line and its exit code (or the parser's reason when the
   block is invalid) and the path to `tests.log`.
-- **Halted** — the `HALT` flag closed every worker (and the coordinator agent); nothing merged, `main` is untouched. To
+- **Halted** — the `HALT` flag closed every worker (and the coordinator agent); nothing merged, the base is untouched. To
   continue, the person removes `HALT` and re-runs the command (see
   [restart-recovery.md](restart-recovery.md)).
 - **Quiet** — every remaining worker is parked on a person's decision, or there is nothing left to

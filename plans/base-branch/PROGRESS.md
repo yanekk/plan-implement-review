@@ -24,9 +24,9 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T07 | end-sync | T04, T06 | ✅ | |
 | T08 | skills-and-rules | — | ✅ | |
 | T09 | dev-base-drill | T05, T07 | ✅ | |
-| T10 | docs-and-readme | T08, T09 | ⬜ | |
+| T10 | docs-and-readme | T08, T09 | 🔍 | Docs only, npm test green. branch-model.md gains a base-branch section (settings, fetch table, pirBase, refusals); nine other docs say base, not main. README gains a base-branch section and hand-off lines. Deviation: planning-runs documents the known startRun bare-code note and double preflight (FINDINGS) as today's behaviour. |
 
-**Review queue:** *(empty)*
+**Review queue:** T10
 
 ## Blocked on the user
 
