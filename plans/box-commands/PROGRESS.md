@@ -27,7 +27,7 @@ done · ⛔ blocked, needs a human.
 | T02 | plan-scan | — | ✅ | |
 | T03 | box-completion | T01 | ✅ | |
 | T04 | box-starts-build | T01, T02, T03 | ✅ | |
-| T05 | box-commands-drill | T04 | ⬜ | |
+| T05 | box-commands-drill | T04 | ✅ | |
 
 **Review queue:** *(empty)*
 
