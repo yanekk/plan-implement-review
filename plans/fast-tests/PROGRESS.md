@@ -24,13 +24,13 @@ done · ⛔ blocked, needs a human.
 | # | Task | Depends on | State | Notes |
 |---|---|---|---|---|
 | T01 | wake-on-activity | — | ✅ | |
-| T02 | end-sequence-no-wait | T01 | ⬜ | |
+| T02 | end-sequence-no-wait | T01 | 🔍 | main() wakes after a pass that progressed (`passProgressed`, `PRODUCTIVE_ACTIONS`, `handoffStep` getter). 2 unit tests, 1 real-bin stall test (`coordinate-stall.test.mjs`). Drills green at `PARALLEL_POLL_MS=60000`. Deviation: `passProgressed` sits beside `stallVerdict` in `shell/coordinate.mjs`, not `src/core/`, since the run-state helpers live there. |
 | T03 | split-coordinator-drill | — | ✅ | |
 | T04 | split-plan-rig | — | ✅ | |
 | T05 | split-conversation-rig | — | ✅ | |
 | T06 | suite-timing-proof | T01, T02, T03, T04, T05 | ⬜ | |
 
-**Review queue:** *(empty)*
+**Review queue:** T02
 
 ## Blocked on the user
 

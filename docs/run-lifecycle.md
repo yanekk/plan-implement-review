@@ -80,7 +80,10 @@ sleeps on a 5 s backstop timer (`PARALLEL_POLL_MS`). What wakes it (one waker, `
 except a `note` (a permission request or question set, output, a turn ending; `wakesLoop` in
 `src/core/stream.mjs`); a worker exiting; the coordinator agent's own log entries, its exit and a decision
 file landing in `coordinator/decisions/`; the person's input being forwarded; and a worker setup
-finishing. A wake that arrives while a pass is running makes the next wait return at once, so none is
+finishing. The loop also wakes itself after a pass that made progress (it spawned, handed to review,
+merged or closed a worker, or moved the end of the run a step; `passProgressed` in `coordinate.mjs`), since
+the pass after it often has work that nothing else would wake it for. A quiet pass does not, so an idle run
+still sleeps on the backstop. A wake that arrives while a pass is running makes the next wait return at once, so none is
 lost. Passes start at least 250 ms apart (`PASS_MIN_GAP_MS`); wakes inside that gap are served by the one
 pass at its end. The timer is only a backstop for a missed filesystem event: correctness never depends
 on a wake. The two pass-counted graces keep their wall-clock meaning: the run ends as stalled only after
