@@ -13,7 +13,7 @@ const ledger = [
   { kind: 'adopt', task: 'T09', name: 'extra-probe', item: 'new task T09 (extra-probe)', answer: 'adopted into the plan', reason: 'x', notable: true },
 ];
 const sections = { delivered: 'The export works.', checkByHand: 'Open the file.', risks: 'None known.' };
-const footer = branchFooter({ mainSha: 'abcdef1234567890', tests: 'green', syncedAt: '2026-09-27T10:00:00Z' });
+const footer = branchFooter({ baseSha: 'abcdef1234567890', tests: 'green', syncedAt: '2026-09-27T10:00:00Z' });
 
 test('notableDecisions: the flagged lines and adopted tasks, routine lines left out, an adoption listed once', () => {
   const n = notableDecisions(ledger, [{ task: 'T09', name: 'extra-probe' }, { task: 'T10', name: 'late' }]);
@@ -35,14 +35,14 @@ test('branchFooter: the sha, the time and the tests; red and unresolved say not 
   assert.match(footer, /Synced with `main` at `abcdef123456` on 2026-09-27T10:00:00Z\./);
   assert.match(footer, /Tests: green\./);
   assert.doesNotMatch(footer, /not ready/);
-  assert.match(branchFooter({ mainSha: 'abc', tests: 'red' }), /Tests: red\. The branch is not ready to merge\./);
-  assert.match(branchFooter({ mainSha: 'abc', tests: 'red', unresolved: true }), /conflicted and was not resolved/);
+  assert.match(branchFooter({ baseSha: 'abc', tests: 'red' }), /Tests: red\. The branch is not ready to merge\./);
+  assert.match(branchFooter({ baseSha: 'abc', tests: 'red', unresolved: true }), /conflicted and was not resolved/);
 });
 
 test('branchFooter: whether a test-fix worker ran and whether it made the tests green (T10)', () => {
-  assert.match(branchFooter({ mainSha: 'abc', tests: 'green', fix: 'green' }), /a worker fixed them\.\nTests: green\./);
-  assert.match(branchFooter({ mainSha: 'abc', tests: 'red', fix: 'red' }), /tried to fix them and they stayed red\.\nTests: red/);
-  assert.doesNotMatch(branchFooter({ mainSha: 'abc', tests: 'green' }), /worker/);
+  assert.match(branchFooter({ baseSha: 'abc', tests: 'green', fix: 'green' }), /a worker fixed them\.\nTests: green\./);
+  assert.match(branchFooter({ baseSha: 'abc', tests: 'red', fix: 'red' }), /tried to fix them and they stayed red\.\nTests: red/);
+  assert.doesNotMatch(branchFooter({ baseSha: 'abc', tests: 'green' }), /worker/);
 });
 
 test('assembleReport: four sections in order, then the footer', () => {
@@ -65,7 +65,7 @@ test('assembleReport: no agent → one line in place of its three sections; deci
 
 test('replaceFooter: swaps the last Branch section only; appends one when missing', () => {
   const text = assembleReport({ slug: 'demo', sections, notable: [], footer });
-  const next = branchFooter({ mainSha: '9999999999999', tests: 'red', syncedAt: 'later' });
+  const next = branchFooter({ baseSha: '9999999999999', tests: 'red', syncedAt: 'later' });
   const out = replaceFooter(text, next);
   assert.equal(out.split(FOOTER_HEADING).length, 2, 'one footer');
   assert.match(out, /`999999999999`/);
@@ -82,14 +82,28 @@ test('unverifiedTasks and findingRows read the plan files', () => {
 });
 
 test('endFacts normalises the facts for the brief', () => {
-  const f = endFacts({ tasks: [{ num: 'T01', name: 'a', state: '✅', deps: [] }], ledger, findings: ['| r |', ''], unverified: ['T01'], sync: { state: 'merged', mainSha: 'abc' }, tests: 'green' });
+  const f = endFacts({ tasks: [{ num: 'T01', name: 'a', state: '✅', deps: [] }], ledger, findings: ['| r |', ''], unverified: ['T01'], sync: { state: 'merged', baseSha: 'abc' }, tests: 'green' });
   assert.deepEqual(f.tasks, [{ num: 'T01', name: 'a', state: '✅' }]);
   assert.equal(f.ledger.length, 3);
   assert.deepEqual(f.findings, ['| r |']);
-  assert.deepEqual(f.sync, { state: 'merged', mainSha: 'abc', files: [] });
+  assert.deepEqual(f.sync, { state: 'merged', baseSha: 'abc', files: [] });
   assert.equal(f.tests, 'green');
   assert.equal(endFacts({}).tests, 'red');
   assert.equal(endFacts({}).fix, null);
   assert.equal(endFacts({ fix: 'green' }).fix, 'green');
   assert.equal(endFacts({ fix: 'running' }).fix, null);
+});
+
+// base-branch T04 (DESIGN §2.9): the footer and the end facts name the run's base, default main.
+test('branchFooter and endFacts with a dev base say dev and never main; the default is main', () => {
+  const synced = branchFooter({ baseSha: 'abcdef1234567890', base: 'dev', tests: 'green', syncedAt: 'now' });
+  assert.match(synced, /Synced with `dev` at `abcdef123456` on now\./);
+  const unresolved = branchFooter({ baseSha: 'abc', base: 'dev', tests: 'red', unresolved: true });
+  assert.match(unresolved, /Merging `dev` \(`abc`\) into this branch conflicted/);
+  for (const f of [synced, unresolved]) assert.doesNotMatch(f, /\bmain\b/);
+  assert.match(branchFooter({ baseSha: 'abc', tests: 'green' }), /Synced with `main` at `abc`\./);
+
+  assert.equal(endFacts({ base: 'dev' }).base, 'dev');
+  assert.equal(endFacts({}).base, 'main');
+  assert.deepEqual(endFacts({ sync: { state: 'merged', baseSha: 'abc' } }).sync, { state: 'merged', baseSha: 'abc', files: [] });
 });

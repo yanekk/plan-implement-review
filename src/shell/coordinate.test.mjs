@@ -2542,7 +2542,7 @@ test('buildRunState: an end-of-run helper with a worker gets a row entry in `hel
   assert.equal(buildDisplay(passed, { now: 20 }).footer.task, 'tests-fix');
 
   const sync = buildRunState({ passTasks, stateTasks: { 'main-sync': { ...stateTasks['tests-fix'], role: 'sync', workerId: 'ws' } }, workers: [], branch: 'b', ceiling: 2 });
-  assert.equal(sync.helpers[0].slug, 'resolve-main-merge');
+  assert.equal(sync.helpers[0].slug, 'resolve-base-merge');
   assert.equal(sync.helpers[0].phase, 'building');
   assert.equal('helpers' in buildRunState({ passTasks, stateTasks: {}, branch: 'b', ceiling: 2 }), false, 'no helper, no key');
 });
@@ -3135,7 +3135,7 @@ test('end alert: sent once when the handoff first reads ready, with the agent\'s
   run.decide({ kind: 'report', sections: SECTIONS });
   a.until((x) => x.handoff.state === 'ready');
   assert.deepEqual(a.sends, [{
-    title: `${SLUG} · ready to merge`, message: `All 1 tasks merged. git merge pir/${SLUG}`, tags: ['tada'],
+    title: `${SLUG} · ready to merge`, message: `All 1 tasks merged. git switch main && git merge pir/${SLUG}`, tags: ['tada'],
     click: run.coordinator.agent.remoteUrl(),
   }]);
   a.step();
@@ -3193,4 +3193,17 @@ test('end alert: not sent on a pass with r.finished (a restart finding main alre
   const sends = [];
   assert.equal(endAlertPass({ r: { finished: 'merged', handoff: { state: 'ready' }, tasks: [] }, slug: SLUG, send: (x) => sends.push(x) }), false);
   assert.deepEqual(sends, []);
+});
+
+// base-branch T04 (DESIGN §2.9): the printed hand-off and finished lines name the base, and the merge
+// command switches to it first; the default base is main.
+test('renderHandoff and renderFinished name the base branch; the default is main', () => {
+  const green = renderHandoff({ readyToMerge: true, taskCount: 2, slug: 'demo', base: 'dev' });
+  assert.match(green, /\n {2}git switch dev && git merge pir\/demo\n$/);
+  assert.match(renderHandoff({ readyToMerge: true, taskCount: 2, slug: 'demo' }), /\n {2}git switch main && git merge pir\/demo\n$/);
+  assert.equal(renderFinished({ by: 'merged', slug: 'demo', base: 'dev' }), '✔ pir/demo is in dev. The run is finished.');
+  assert.equal(renderFinished({ by: 'merged', slug: 'demo' }), '✔ pir/demo is in main. The run is finished.');
+  const closed = renderFinished({ by: 'closed', slug: 'demo', ready: true, base: 'dev' });
+  assert.match(closed, /\n {2}git switch dev && git merge pir\/demo\n$/);
+  for (const t of [green, closed]) assert.doesNotMatch(t, /\bmain\b/);
 });

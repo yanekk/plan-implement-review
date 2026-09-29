@@ -39,9 +39,10 @@ export function buildConflictPrompt({
   testsReason = null,
   logPath = null,
   audience = 'person',
+  base = 'main',
 } = {}) {
-  if (kind === 'main-sync') return mainSyncPrompt({ plan: plan ?? slug, files });
-  if (kind === 'tests-red') return testsRedPrompt({ plan: plan ?? slug, testsReason, logPath });
+  if (kind === 'main-sync') return mainSyncPrompt({ plan: plan ?? slug, files, base });
+  if (kind === 'tests-red') return testsRedPrompt({ plan: plan ?? slug, testsReason, logPath, base });
   if (audience === 'worker') return workerPrompt({ plan, taskBranch, featureBranch, files });
   const label = [task, slug].filter(Boolean).join(' ') || 'a task';
   const branchOn = taskBranch ? ` (${taskBranch})` : '';
@@ -129,21 +130,22 @@ function workerPrompt({ plan, taskBranch, featureBranch, files }) {
 // this instead of a T-number (pir-coordinator T05).
 export const MAIN_SYNC_TASK = 'main-sync';
 
-// kind 'main-sync' (pir-coordinator DESIGN §2.9, §3.3): at the end of the run pir merged `main` into the
+// kind 'main-sync' (pir-coordinator DESIGN §2.9, §3.3): at the end of the run pir merged the run's base
+// branch (`base`, base-branch DESIGN §2.9; the kind keeps its old name) into the
 // feature branch in the feature worktree and it conflicted. The merge is left in progress there; a worker
 // spawned in that worktree finishes it, keeping both sides' intent, runs the plan's test block, commits
 // and reports `done`. It is only ever sent to a worker, so there is no person variant.
-function mainSyncPrompt({ plan, files }) {
+function mainSyncPrompt({ plan, files, base }) {
   const featureBranch = `pir/${plan || '{plan}'}`;
   return [
     `Every task of plan ${plan || '{plan}'} is built and reviewed. Before the branch is handed to the person, pir`,
-    `merged the current \`main\` into ${featureBranch}, here in this worktree, and the merge conflicts. The merge`,
+    `merged the current \`${base}\` into ${featureBranch}, here in this worktree, and the merge conflicts. The merge`,
     `is in progress: do not abort it, reset or start over. Finish it.`,
     ``,
     `Conflicting file(s):`,
     listFiles(files),
     ``,
-    `Resolve each so the result keeps the intent of both sides: what main changed and what this plan built.`,
+    `Resolve each so the result keeps the intent of both sides: what ${base} changed and what this plan built.`,
     `If choosing between them needs a judgement, ask the person before you resolve it, as with any other`,
     `decision.`,
     ``,
@@ -155,7 +157,7 @@ function mainSyncPrompt({ plan, files }) {
     `  4. Report done: \`[pir:v1 kind=done task=${MAIN_SYNC_TASK}]\`, saying whether the tests pass.`,
     ``,
     `You are on ${featureBranch} itself, not a task branch: there is nothing to integrate afterwards, and you`,
-    `never merge into main or push.`,
+    `never merge into ${base} or push.`,
     ``,
   ].join('\n');
 }
@@ -164,11 +166,11 @@ function mainSyncPrompt({ plan, files }) {
 export const TESTS_FIX_TASK = 'tests-fix';
 
 // kind 'tests-red' (pir-coordinator T10, DESIGN §2.9 step 1, user 2026-09-27): every task is ✅ but the
-// plan's test block fails on the feature branch, at the end gate or after main was merged in. A worker
+// plan's test block fails on the feature branch, at the end gate or after the base was merged in. A worker
 // spawned in the feature worktree gets one attempt to make it pass, the way a main-sync conflict gets a
 // worker. It is only ever sent to a worker. `testsReason` is the gate's one-line reason, `logPath` where
 // the full output was written; either may be missing.
-function testsRedPrompt({ plan, testsReason, logPath }) {
+function testsRedPrompt({ plan, testsReason, logPath, base }) {
   const featureBranch = `pir/${plan || '{plan}'}`;
   const why = [];
   if (testsReason) why.push(`  What failed: ${String(testsReason).replace(/\s+/g, ' ').trim()}`);
@@ -192,7 +194,7 @@ function testsRedPrompt({ plan, testsReason, logPath }) {
     `     cannot make them pass, report \`[pir:v1 kind=question task=${TESTS_FIX_TASK}]\` and ask the person.`,
     ``,
     `You are on ${featureBranch} itself, not a task branch: there is nothing to integrate afterwards, and you`,
-    `never merge into main or push. pir reruns the tests after your done; you get one attempt.`,
+    `never merge into ${base} or push. pir reruns the tests after your done; you get one attempt.`,
     ``,
   ].join('\n');
 }
