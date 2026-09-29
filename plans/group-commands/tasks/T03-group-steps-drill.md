@@ -28,13 +28,13 @@ DESIGN §2 as a whole; §1 success criteria; `CLAUDE.md § The README follows ev
 ## Done when
 
 - [ ] The drill below was run at both sizes and its result is written in the commit message and one PROGRESS note line.
-- [ ] `docs/detached-runs.md` and `README.md` describe grouping, the per-kind label, `· N failed`, click to open and fold, hover, and Tab's full detail, and say only what the code does.
+- [ ] `docs/detached-runs.md` and `README.md` describe grouping, the per-kind label, `· N failed`, `· N refused`, click to open and fold, hover, and Tab's full detail, and say only what the code does.
 - [ ] `npm test` is green; under PROGRESS "Blocked on the user" the `./install.sh` refresh after the merge is noted (DESIGN §5).
 
 ## End to end (the worker drives this)
 
 - suite: `src/shell/conversation-rig.test.mjs` for any fix; the drill itself by driving `pir` under the rig (`node src/shell/conversation-rig.mjs`, or `openScreen` scripted) against the fake Claude · sizes: 80×24, 120×40
-- [ ] Watch the `tour` opening arrive: each step shows while running and folds when done; the count grows; the failed step flags the group.
+- [ ] Watch the `tour` opening arrive: each step shows while running and folds when done; the count grows; the failed step flags the group; a refused request's step reads refused.
 - [ ] Open and fold groups with clicks while following the end and while scrolled up; the clicked line stays put, the steps come into view.
 - [ ] Hover over group lines and other lines; only group lines brighten.
 - [ ] Drag to copy across a group line and a message (only with T02's `pbcopy` shim on `PATH`, never the real clipboard).

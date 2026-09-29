@@ -24,7 +24,8 @@ worker, an end-of-run helper, the coordinator agent, and the planner and plan re
 
 - Between two messages, finished steps take one line, whatever their number.
 - A step still running is visible on its own line until it finishes, then joins the count.
-- A failed step is never silent: its group line says `· N failed` in red.
+- A failed step is never silent: its group line says `· N failed` in red. A step the person refused says
+  `· N refused`, not failed.
 - One click on a group line shows its steps; another click hides them. Dragging to copy text still works.
 - Tab still shows full detail with every step and its output, as before this plan.
 
@@ -77,6 +78,17 @@ If any finished step in the group failed (`isError` on its result), the line end
 one screen row, clipped at the width like a step line; the failed suffix is never clipped: the label is
 cut first, so a failure stays visible at any width.
 
+A step whose request was answered no is **refused**, not failed (user 2026-09-29, plan review): a refused
+permission, including a typed reply that refuses, and a question set answered in text instead, whoever
+answered (the person, the coordinator agent, pir's own rule). Claude records its result as `isError`, but
+the person chose it, and red "failed" read as something that broke. It counts in its kind as usual and adds
+` · N refused` in the `dim` style after any failed suffix (` · 1 failed · 1 refused`), never clipped
+either; it is not counted as failed. The step is tied to its request by the request's `toolUseId`, which
+`worker-proc.mjs` records on the log's `request` entry from the SDK's `canUseTool` `toolUseID` (today
+it logs only `requestId`). A request without one (a log written before this plan) is tied when its
+`requestId` equals the step's `toolUseId`; otherwise its step reads failed, as its `isError` says. Open,
+a refused step's one-liner keeps today's `step-error` style: the `→ refused` line below says why.
+
 The line starts `  ▸ ` while the group is folded and `  ▾ ` while it is open (planner; approved with the
 prototype). The marker shows the line is clickable, which colour-off terminals need since they get no
 hover.
@@ -102,6 +114,9 @@ release stay declined so text selection keeps working (mouse-navigation §2.5, d
 mouse). The click answers `{ handled: true, rowClick: true }`, so pi-tui's double-click count is reset and
 two quick clicks are an open and a fold, never a word selection. A click on any other scrollback line does
 nothing, as before this plan. Right and middle clicks do nothing. Clicks work in read-only views too.
+
+The key hint line is unchanged: it names no click (user 2026-09-29, plan review), because it is full at
+80 columns and the marker, the hover and the docs already show a group line opens.
 
 The group line brightens under the pointer, as every clickable row in `pir` does (mouse-navigation §2.2:
 hover applies to rows a click acts on), through `paintLine`'s `hovered`. With colour off there is no hover.
@@ -159,7 +174,8 @@ slice (header rows, `end`, `height`), so the painted line and the hit line are o
 
 | Module | Side | Change |
 |---|---|---|
-| `src/core/conversation.mjs` | pure | grouping, labels, `open`, `hit` (T01) |
+| `src/core/conversation.mjs` | pure | grouping, labels, `open`, `hit`, refused (T01) |
+| `src/shell/worker-proc.mjs` | shell | logs `toolUseId` on each `request` entry (T01, §2.2) |
 | `src/shell/conversation-view.mjs` | shell | open set, click and hover, §2.5 and §2.7 scroll (T02) |
 | `src/shell/conversation-rig.mjs` | shell, test rig | reused; a scenario is added only if the `tour` one cannot show a case (T02) |
 | `docs/detached-runs.md`, `README.md` | docs | T03 |
@@ -167,7 +183,7 @@ slice (header rows, `end`, `height`), so the painted line and the hit line are o
 ## 4. Testing
 
 - Pure (T01): `buildConversation` over hand-built logs: every §2.1 breaker, every §2.2 kind and plural,
-  the failed suffix and its clipping at narrow widths, running steps before and after their result, open
+  the failed and refused suffixes and their clipping at narrow widths, running steps before and after their result, open
   and folded, full mode unchanged, `hit` on group lines only, id stability as entries are appended.
 - View (T02): `createConversationView` with synthetic mouse events in `conversation-view.test.mjs`: click
   toggles, clicks elsewhere and press/drag/release declined, `rowClick`, hover painting, §2.5 placement,
@@ -223,7 +239,8 @@ mouse-navigation spike (2026-09-28); this plan uses the same events.
 
 ### 5.3 Outside the code — who acts
 
-Both rules are already in `.claude/settings.json` `allow`.
+Both rules are already in `.claude/settings.json` `allow`. The user approved the table as is at plan review,
+2026-09-29.
 
 | Action | Command | Bin | Why this bin | Way back | Cost |
 |---|---|---|---|---|---|
@@ -236,6 +253,8 @@ Both rules are already in `.claude/settings.json` `allow`.
   step folds and flags its group; a click opens and folds one group; Tab keeps full detail and unfolds
   everything there; the open set is forgotten on leaving the conversation. The read-back of §2 was
   confirmed the same day.
+- User, 2026-09-29 at plan review: a step whose request was answered no reads `· N refused`, not failed
+  (§2.2); the reviewer found Claude records a refusal as `isError`, which the plan would have shown in red.
 - Prototype approved by the user 2026-09-29 (`prototype/index.html`), with the `▸`/`▾` markers.
 - Planner, from the code survey: extend `stepLines`/`buildConversation` rather than add a second
   renderer, so full detail and the grouped view come from one place; reuse pi-tui's click synthesis, the

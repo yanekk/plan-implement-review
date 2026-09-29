@@ -19,7 +19,7 @@ DESIGN §2.4 (click, hover, `rowClick`, read-only, forgetting on leave), §2.5 (
 - `src/shell/conversation-view.mjs`
 - `src/shell/conversation-view.test.mjs`
 - `src/shell/conversation-rig.test.mjs`
-- `src/shell/conversation-rig.mjs`: the `pbcopy` shim (DESIGN §5.2), and a scenario only if `tour` cannot show a case below (add one;
+- `src/shell/conversation-rig.mjs`: the `pbcopy` shim (DESIGN §5.2; `startRig` returns `shimDir` and `clipboard`), and a scenario only if `tour` cannot show a case below (add one;
   do not change `tour`'s existing steps, other tests read them)
 
 ## Interface
@@ -73,8 +73,9 @@ Unit (`conversation-view.test.mjs`, synthetic `handleMouse` events as the existi
 - suite: `src/shell/conversation-rig.test.mjs` (`startRig` `tour`, `openScreen`, `mouseBytes`) · sizes: 80×24, 120×40
 - [ ] Open T01's conversation while the opening steps are paced → a running `⎿` line is visible, then after it finishes the screen shows `▸ Read 1 file` and later `▸ Read 1 file, searched 1 time, ran 1 shell command, edited 1 file · 1 failed`, no leftover `⎿` lines for them.
 - [ ] Click that group line → `▾` and four indented `⎿` lines, the Bash one in the error style; click again → folded.
+- [ ] After the tour's `rm -rf build/` request is refused, its step's group line reads `▸ Ran 1 shell command · 1 refused`, not failed.
 - [ ] Two quick clicks on it → open then folded, and the `pbcopy` shim's `clipboard.txt` was not written (no word selection).
 - [ ] A drag across the group line → the text lands in the shim's `clipboard.txt`, group not toggled.
-- [ ] Seatbelt: `startRig` has no `pbcopy` shim, so a copy would reach the person's real clipboard. Before any drag or double click, put a `pbcopy` shim first on the pir process's `PATH`, as `plan-rig.mjs` does (its `shimDir`), in `startRig` itself so the T03 drill has it too; never run these against the real `pbcopy`.
+- [ ] Seatbelt: `startRig` has no `pbcopy` shim, so a copy would reach the person's real clipboard. `startRig` does not launch pir (the test passes `env` to `openScreen`/`driveScreen`), so `startRig` writes the shim into its scratch folder, as `plan-rig.mjs` does (its `shimDir`, `clipboard.txt`), and returns `shimDir` and `clipboard`; the rig command (`node src/shell/conversation-rig.mjs`) and every drag or double-click test put `shimDir` first on pir's `PATH`, so the T03 drill has it too. Never run these against the real `pbcopy`.
 - [ ] Tab → full detail shows `⎿ Bash npm test` and its result lines; Tab back → grouped.
 - [ ] The existing assertion that the failed step is in the scrollback (`conversation-rig.test.mjs`, "the tool steps are in the scrollback") is rewritten to the grouped form (`· 1 failed`) or an opened group.
