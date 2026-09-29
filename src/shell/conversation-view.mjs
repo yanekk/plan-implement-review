@@ -114,6 +114,7 @@ export function createConversationView({
   const answered = new Set(); // requestIds this view dropped an answer for, until the log shows the reply
   let status = null; // a one-shot { text, style } line
   let focused = false;
+  let box = null; // { top, rows } — where the last paint put the typing box; null when there is none
 
   const paint = (spans, width) => paintLine(spans, width, colour);
   const style = (s, text) => (colour && SGR[s] ? `${SGR[s]}${text}${RESET}` : text);
@@ -272,6 +273,21 @@ export function createConversationView({
     tui.requestRender();
   }
 
+  // mouse-navigation §2.3, §2.6. The wheel scrolls the history as PgUp/PgDn do, ±3 lines a notch (pi-tui's
+  // wheelDelta is negative for up, and up scrolls back). A click on the typing box's rows goes to the Editor,
+  // shifted to its own rows, which moves the caret or picks from its pop-up. Everything else is declined:
+  // press, drag and release must stay unhandled or pi-tui loses its text selection (§2.5), and the pinned
+  // picker and permission gate are keyboard-only (§2.4).
+  function handleMouse(ev) {
+    if (ev.type === 'wheel' && ev.wheelDelta) {
+      scroll(-ev.wheelDelta);
+      tui.requestRender();
+      return { handled: true };
+    }
+    if (editor && box && ev.y >= box.top && ev.y < box.top + box.rows) return editor.handleMouse({ ...ev, y: ev.y - box.top });
+    return undefined;
+  }
+
   // Every state's hint fits one line at 80 columns (user 2026-09-26, T20): `Tab detail` names the key both
   // ways, and with a request pending the scroll key is only `PgUp/PgDn`.
   // Scrolled up, `↓ N more below · ` leads the hint, so the live hints shed a phrase to keep it within 80
@@ -310,6 +326,7 @@ export function createConversationView({
       else if (bg) bottom.push(paint([span(`◌ ${bg}`, 'dim')], w));
     }
     if (status) bottom.push(paint([span(status.text, status.style)], w));
+    const boxAt = bottom.length;
     if (!m.readOnly) bottom.push(...editor.render(w));
 
     const height = Math.max(1, rows - out.length - bottom.length - 1); // the last 1 is the hint line
@@ -325,6 +342,7 @@ export function createConversationView({
     while (shown.length < height) shown.push('');
     // Painted after the offset settled, so the count is the one this frame shows (T20 review).
     const more = scrollBack > 0 ? `↓ ${scrollBack} more below · ` : '';
+    box = m.readOnly ? null : { top: out.length + shown.length + boxAt, rows: bottom.length - boxAt };
     out.push(...shown, ...bottom, paint([span(more + hint(m, scrollBack > 0), 'hint')], w));
     return out.slice(0, rows);
   }
@@ -332,6 +350,7 @@ export function createConversationView({
   return {
     render,
     handleInput,
+    handleMouse,
     invalidate() {
       built = null;
       editor?.invalidate();

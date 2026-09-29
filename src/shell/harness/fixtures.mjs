@@ -6,7 +6,7 @@
 // on the person, a crash-and-restart, a stop-and-restart mid-review and mid-implement, and a worker
 // introducing a task the coordinator adopts and dispatches, and the real asking state (a report dropped
 // mid-work, a wake-up while parked), and the coordinator agent answering, passing on and handing over
-// (pir-coordinator), and several of its briefs at once with the hold limit firing (pir-coordinator-concurrent). The old `hands-on` and `blog-app` fixtures
+// (pir-coordinator), and several of its briefs at once with the hold limit firing (pir-coordinator-concurrent), and real phone alerts for a passed question and the end of the run (notify-live). The old `hands-on` and `blog-app` fixtures
 // exercised the `you`/hands-on model, which was removed with the down-channel (DESIGN §2.5, T05); they
 // went with it.
 //
@@ -59,6 +59,7 @@ import realAsking from './fixtures/real-asking.mjs';
 import stoppedAsking from './fixtures/stopped-asking.mjs';
 import pirCoordinator from './fixtures/pir-coordinator.mjs';
 import pirCoordinatorConcurrent from './fixtures/pir-coordinator-concurrent.mjs';
+import notifyLive from './fixtures/notify-live.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -94,6 +95,7 @@ const FIXTURES = Object.freeze({
   [stoppedAsking.id]: stoppedAsking,
   [pirCoordinator.id]: pirCoordinator,
   [pirCoordinatorConcurrent.id]: pirCoordinatorConcurrent,
+  [notifyLive.id]: notifyLive,
 });
 
 // listFixtures() → the fixture ids, in registry order.

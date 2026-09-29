@@ -307,8 +307,16 @@ export function dashboardReducer(ui, event, views = []) {
       }
       return { ui: { ...ui, sel: clamp(ui.sel + step, len), armed: null }, intent: null };
     }
-    case 'select':
+    case 'select': {
+      // In the live view a click selects a task row (mouse-navigation §2.1): `taskSel` moves and the list's
+      // `sel` stays. The separator is never selected by a key (moveRow), so a select on it changes nothing.
+      if (ui.view === 'watch') {
+        const tasks = openTasks(views, ui);
+        const i = clamp(event.index, tasks.length);
+        return { ui: { ...ui, taskSel: tasks[i]?.separator ? ui.taskSel : i, armed: null }, intent: null };
+      }
       return { ui: { ...ui, sel: clamp(event.index, len), armed: null }, intent: null };
+    }
     case 'open': {
       if (ui.view === 'watch') {
         const tasks = openTasks(views, ui);

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { BASIC_SGR, BASIC_SELECTED_BG, MOCHA_SGR, MOCHA_SELECTED_BG, paletteFor, truecolour } from './palette.mjs';
+import { BASIC_HOVER_ASKING, BASIC_HOVER_LIFT, MOCHA_HOVER_ASKING, hoverAskingFor, BASIC_SGR, BASIC_SELECTED_BG, MOCHA_HOVER_LIFT, MOCHA_SGR, MOCHA_SELECTED_BG, hoverLiftFor, paletteFor, truecolour } from './palette.mjs';
 
 test('a terminal that says it shows 24-bit colour gets Mocha; any other keeps the basic codes', () => {
   assert.equal(truecolour({ COLORTERM: 'truecolor' }), true);
@@ -29,4 +29,24 @@ test('Mocha paints Catppuccin Mocha foregrounds and never a page background', ()
 
 test('the bold standouts stay bold in Mocha', () => {
   for (const style of ['asking', 'armed', 'your-go', 'prompt', 'head', 'worker']) assert.match(MOCHA_SGR[style], /^\x1b\[1[;m]/, style);
+});
+
+test('the hover lift: Mocha subtext1 bold on 24-bit, plain bold on the basic table, never faint', () => {
+  assert.equal(MOCHA_HOVER_LIFT, '\x1b[1;38;2;186;194;222m', 'Mocha subtext1 #bac2de, bold');
+  assert.equal(BASIC_HOVER_LIFT, '\x1b[1m', 'the basic table has no lighter grey than plain: bold, the faint dropped');
+  assert.notEqual(MOCHA_HOVER_LIFT, MOCHA_SGR.dim, 'the lift is not the dim it lifts');
+  assert.equal(hoverLiftFor({ COLORTERM: 'truecolor' }), MOCHA_HOVER_LIFT);
+  assert.equal(hoverLiftFor({ TERM: 'xterm' }), BASIC_HOVER_LIFT);
+  assert.equal(hoverLiftFor({ COLORTERM: 'truecolor', NO_COLOR: '1' }), BASIC_HOVER_LIFT, 'follows paletteFor: NO_COLOR keeps the basic table');
+});
+
+// T08 drill, the user's choice: an asking row is already amber bold, so hover brightens its amber.
+test('the hovered asking amber: brighter than asking on both tables, still bold, and follows paletteFor', () => {
+  assert.equal(BASIC_HOVER_ASKING, '\x1b[1;93m', 'bold bright yellow on the basic table');
+  assert.equal(MOCHA_HOVER_ASKING, '\x1b[1;38;2;252;241;215m', 'Mocha yellow halfway to white, bold');
+  assert.notEqual(BASIC_HOVER_ASKING, BASIC_SGR.asking);
+  assert.notEqual(MOCHA_HOVER_ASKING, MOCHA_SGR.asking);
+  assert.equal(hoverAskingFor({ COLORTERM: 'truecolor' }), MOCHA_HOVER_ASKING);
+  assert.equal(hoverAskingFor({ TERM: 'xterm' }), BASIC_HOVER_ASKING);
+  assert.equal(hoverAskingFor({ COLORTERM: 'truecolor', NO_COLOR: '1' }), BASIC_HOVER_ASKING);
 });

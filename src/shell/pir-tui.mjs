@@ -18,7 +18,8 @@
 // unchanged alongside the list's), which keeps the watch frame byte-for-byte the coordinator's display.
 
 import { basename, join, resolve as resolvePath } from 'node:path';
-import { homedir } from 'node:os';
+import { execFile } from 'node:child_process';
+import { constants as osConstants, homedir } from 'node:os';
 import { readLogTail } from './commands.mjs';
 
 import { buildDisplay, rowEntries } from '../core/display.mjs';
@@ -49,7 +50,8 @@ import { ProcessTerminal, TuiAltScreen, TUI_KEYBINDINGS, getKeybindings, isKeyRe
 const SPINNER = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 
 // The style→colour map and the span painter live in pir-view.mjs (FrameView, T11): pi-tui draws the
-// terminal, so this file writes no cursor-control escape of its own (DESIGN §2.11).
+// terminal, so this file writes no cursor-control escape of its own (DESIGN §2.11), except the mouse
+// modes createScreen asks for and the exit restore it writes when pi-tui's stop never runs (mouse-navigation).
 
 // A sensible width when a TTY does not report its dimensions (render.mjs's default).
 const DEFAULT_COLS = 80;
@@ -190,7 +192,8 @@ export function buildListFrame(dashboard, ui = initialUi(), { columns = DEFAULT_
     '  ' + pad('SLUG', COL.slug) + pad('TYPE', COL.type) + pad('STATE', COL.state) + pad('REPO', repoCol) + pad('PROGRESS', COL.progress) + 'WK',
     'dim',
   );
-  const rowLine = (v, i) => {
+  const rowLine = (v, i) => withHit(rowSpans(v, i), 'run', i);
+  const rowSpans = (v, i) => {
     const selected = i === ui.sel;
     // A run is "live" only while running; a non-running run's slug is dimmed so the eye lands on the
     // active ones. The state colour lives on the state cell, separately, so both signals show at once.
@@ -233,6 +236,28 @@ export function buildListFrame(dashboard, ui = initialUi(), { columns = DEFAULT_
   if (ui.note) lines.push(lineOf(ui.note, 'dim'));
   lines.push(footerLine('list', ui, rows));
   return lines;
+}
+
+// withHit(line, kind, index) → the same span array, tagged with the row it paints (mouse-navigation §3.3),
+// so a click or a hover on that screen line knows which run, task or step it lands on. The property is
+// non-enumerable: whole-frame deepStrictEqual asserts compare own enumerable keys, and a frame's visible
+// text and shape stay exactly what they were for every existing caller.
+function withHit(line, kind, index) {
+  Object.defineProperty(line, 'hit', { value: { kind, index }, enumerable: false, configurable: true, writable: true });
+  return line;
+}
+
+// sameHit(a, b) → whether two hits name the same row (or are both no row).
+function sameHit(a, b) {
+  return (a?.kind ?? null) === (b?.kind ?? null) && (a?.index ?? null) === (b?.index ?? null);
+}
+
+// hitAt(frame, y) → the { kind, index } of the row painted on frame line y, or null for a line that is not
+// a row (title, header, markers, blanks, notes, counts, footer) or a y outside the frame. A frame line's
+// index is its screen row (§3.3), so y is the pointer's zero-based screen row.
+export function hitAt(frame, y) {
+  if (!Array.isArray(frame) || !Number.isInteger(y) || y < 0) return null;
+  return frame[y]?.hit ?? null;
 }
 
 // The get-started line under the box (dashboard-plan-box §2.7): the box is right below it, so it points there.
@@ -410,9 +435,13 @@ export function buildWatchFrame(view, { now, spinnerChar = SPINNER[0], ui = init
     // every other line is.
     const taskCount = rowEntries(snap.runState).length;
     const selLine = taskCount > 0 ? 1 + Math.max(0, Math.min(ui.taskSel ?? 0, taskCount - 1)) : -1;
+    // Line i (1..n) of the block is rowEntries[i - 1], so it carries that index as its hit (mouse-navigation
+    // §3.3); the separator line is never selected (moveRow), so it carries none.
+    const entries = rowEntries(snap.runState);
     watchDisplayLines(snap, { now, spinnerChar: spin }).forEach((l, i) => {
-      if (i === selLine && l.text.startsWith('  ')) lines.push([span('▎ ', 'selected'), span(l.text.slice(2), l.style)]);
-      else lines.push([span(l.text, l.style)]);
+      const line = i === selLine && l.text.startsWith('  ') ? [span('▎ ', 'selected'), span(l.text.slice(2), l.style)] : [span(l.text, l.style)];
+      const entry = i >= 1 && i <= taskCount ? entries[i - 1] : null;
+      lines.push(entry && !entry.separator ? withHit(line, 'task', i - 1) : line);
     });
     // The stale marker for a run that has ended (§2.4) — shown ONLY when there is a real frozen frame
     // above it. Red for crashed (something went wrong), dim for a clean finished/stopped end.
@@ -479,7 +508,7 @@ export function buildPlanWatchFrame(view, { now, spinnerChar = SPINNER[0], ui = 
   d.rows.forEach((r, i) => {
     const glyph = r.kind === 'active' ? (alive ? spinnerChar : '·') : STEP_GLYPH[r.kind];
     const text = `${glyph} ${r.id.padEnd(8)} ${r.role.padEnd(12)} ${r.text.padEnd(30)} ${fmtClock(r.clock)}`.replace(/\s+$/, '');
-    lines.push([span(i === sel ? '▎ ' : '  ', i === sel ? 'selected' : null), span(text, STEP_STYLE[r.kind] ?? null)]);
+    lines.push(withHit([span(i === sel ? '▎ ' : '  ', i === sel ? 'selected' : null), span(text, STEP_STYLE[r.kind] ?? null)], 'step', i));
   });
   lines.push([]);
 
@@ -567,7 +596,7 @@ export function decodeKey(data) {
 // withHeadLine(line, make, { host, colour }) → the component `make(tui)` builds, headed by one line (§2.12:
 // the reviewer's conversation after following into it). The inner view is handed a terminal one row short,
 // so the line costs it a row of scrollback and the frame still fits. With no line, `make(host)` as it is.
-function withHeadLine(line, make, { host, colour }) {
+export function withHeadLine(line, make, { host, colour }) {
   if (!line) return make(host);
   const tui = {
     requestRender: (...a) => host.requestRender?.(...a),
@@ -584,6 +613,8 @@ function withHeadLine(line, make, { host, colour }) {
   return {
     render: (width) => [paintLine([span(line, 'ok')], Math.max(20, width | 0), colour), ...inner.render(width)],
     handleInput: (data) => inner.handleInput(data),
+    // The head line takes no mouse event; below it the inner view sees its own rows (mouse-navigation §2.3).
+    handleMouse: (ev) => (ev.y === 0 ? undefined : inner.handleMouse?.({ ...ev, y: ev.y - 1 })),
     invalidate: () => inner.invalidate(),
     get focused() {
       return inner.focused;
@@ -600,7 +631,41 @@ function withHeadLine(line, make, { host, colour }) {
 
 // --- The impure edge: painting a frame on a real terminal, and the input loop -----------------------
 
-// createScreen({ stream, colour, terminal }) → { paint(frame), close(), listen?(onInput, onError) }. The one
+// The mouse modes pi-tui enables (?1000 buttons, ?1002 button-motion, ?1003 all-motion, ?1004 focus, ?1006
+// SGR encoding), switched off in pi-tui's own order. MOUSE_OFF is what pi-tui's stop writes; the exit
+// restore writes it too, so a signal that never reaches that stop still leaves no mouse mode behind.
+const MOUSE_OFF = '\x1b[?1006l\x1b[?1004l\x1b[?1003l\x1b[?1002l\x1b[?1000l';
+const ALL_MOTION_ON = '\x1b[?1003h';
+// The whole exit restore: mouse off, bracketed paste off (pi-tui's terminal turns it on at start and off only
+// in its own stop, so a SIGTERM left it on: T08 drill), autowrap back on (pi-tui turns it off), leave the
+// alternate screen, show the cursor. Raw mode needs nothing here: Node resets the TTY mode itself when the
+// process exits.
+const EXIT_RESTORE = `${MOUSE_OFF}\x1b[?2004l\x1b[?7h\x1b[?1049l\x1b[?25h`;
+const EXIT_SIGNALS = ['SIGTERM', 'SIGHUP', 'SIGINT'];
+
+// Whether pi-tui will have asked for button-motion only (no hover): it checks exactly these, on its own
+// reading of process.env (mouse-navigation §2.2, FINDINGS).
+export function underMultiplexer(env) {
+  const term = (env.TERM ?? '').toLowerCase();
+  return env.TMUX !== undefined || env.STY !== undefined || env.ZELLIJ !== undefined || term.startsWith('tmux') || term.startsWith('screen');
+}
+
+// defaultCopy(text) → Promise<true | string>. pi-tui's copySelection on macOS: pbcopy with the text on its
+// stdin, which reached the real clipboard in the spike, where pi-tui's default OSC 52 depends on the
+// terminal allowing it (mouse-navigation §2.5). A failure comes back as its message, which pi-tui flashes.
+// pbcopy decodes its stdin by the locale, and with no UTF-8 one (LANG unset: some ssh or cron shells) it
+// turns 'é ⠋ ✅' into mojibake; Node always writes UTF-8, so the locale is forced to match (reproduced by
+// hand, T04 review). `run` and `env` are injected so the test never touches the real clipboard.
+export function defaultCopy(text, { run = execFile, env = process.env } = {}) {
+  return new Promise((resolve) => {
+    const child = run('pbcopy', [], { env: { ...env, LC_ALL: 'en_US.UTF-8' } }, (err) => resolve(err ? `Copy failed: ${err.message}` : true));
+    child.stdin.on('error', () => {}); // an EPIPE from a pbcopy that failed to start is reported by execFile
+    child.stdin.end(text);
+  });
+}
+
+// createScreen({ stream, colour, terminal, copy, env, onExit, platform }) → { paint(frame), close(),
+// listen?(onInput, onError, onMouse) }. The one
 // impure piece. On a TTY it is a pi-tui alternate screen (TuiAltScreen) whose only component is a FrameView
 // over the latest frame: pi-tui enters and leaves the alternate screen, hides the cursor, clips each line
 // to the width, cuts the frame at the terminal's rows (from the top, as before) and repaints only the rows
@@ -609,17 +674,24 @@ function withHeadLine(line, make, { host, colour }) {
 // On a non-TTY there is no pi-tui at all: it appends plain text with no escapes, so a pipe or the test
 // harness reads it as text, and it has no `listen`, so runTui reads stdin itself.
 //
-// Two pi-tui defaults are switched off to keep the screen as it was (§2.11: any visible difference is a
-// bug): mouse capture, which would take the terminal's own text selection away; and, on close, printing
-// the last frame onto the main screen after leaving the alternate one (`preserveScreen`), so quitting
-// leaves the person's terminal exactly as it was before `pir`.
+// The mouse is on (mouse-navigation §2.7): pi-tui parses the reports, runs its own drag-to-select and copies
+// the selection on release through `copy` (pbcopy on macOS; elsewhere pi-tui's OSC 52), and hands every
+// event to the root's handleMouse, which forwards it to the mounted component or to listen's onMouse. On
+// close, pi-tui's last frame is not printed onto the main screen (`preserveScreen`), so quitting leaves the
+// person's terminal exactly as it was before `pir`.
+//
+// Mouse reporting left on after pir is gone makes the shell print escapes on every pointer move, so while
+// the screen is started it also restores the terminal on process `exit`, SIGTERM, SIGHUP and SIGINT, the
+// exits pi-tui's stop never sees (§2.7). SIGKILL cannot be caught.
 //
 // `terminal` is pi-tui's Terminal seam: ProcessTerminal (process.stdin/stdout) by default, a fake in tests.
-export function createScreen({ stream = process.stdout, colour, terminal } = {}) {
+// `copy`, `env`, `onExit` (the process, as an emitter with exit()) and `platform` are injected so tests
+// never touch the real clipboard, environment or process.
+export function createScreen({ stream = process.stdout, colour, terminal, copy = defaultCopy, env = process.env, onExit = process, platform = process.platform } = {}) {
   const isTTY = !!stream.isTTY;
   // Colour only on a TTY, and honour NO_COLOR (the de-facto standard), matching render.mjs so the two
   // agree on when the live view is coloured.
-  const useColour = isTTY && (colour ?? !('NO_COLOR' in process.env));
+  const useColour = isTTY && (colour ?? !('NO_COLOR' in env));
 
   if (!isTTY) {
     let mounted = null;
@@ -645,7 +717,11 @@ export function createScreen({ stream = process.stdout, colour, terminal } = {})
   let painting = false;
   let onInput = null;
   let onError = null;
-  const view = new FrameView(() => frame, { colour: useColour });
+  let onMouse = null;
+  // The screen row under the pointer (mouse-navigation §2.2, §3.5), set by runTui: the FrameView lives here,
+  // so runTui cannot hand it a getter of its own.
+  let hoverY = null;
+  const view = new FrameView(() => frame, { colour: useColour, getHoverY: () => hoverY });
   // The conversation view (T13) is a pi-tui component of its own, with a typing box: while one is mounted
   // it is drawn in the frame's place and has the focus, so the box's cursor lands where the person types.
   let mounted = null;
@@ -663,6 +739,34 @@ export function createScreen({ stream = process.stdout, colour, terminal } = {})
       }
     },
     invalidate() {},
+    // Every mouse event pi-tui parses lands here, the layout root (mouse-navigation §3.2). A mounted
+    // component takes it if it has a handler; a painted frame's events go to runTui's onMouse. Returning
+    // undefined (no handler, or a handler that declines) leaves pi-tui its text selection and its
+    // synthesised click, so nothing here handles a press.
+    handleMouse(ev) {
+      const r = mounted ? mounted.handleMouse?.(ev) : onMouse?.(ev);
+      // A click that opened a row (runTui marks it `rowClick`) must not count towards pi-tui's double click.
+      // pi-tui counts two presses on the same word within 500 ms as a double click and turns the second into
+      // a word selection, copied on release: where the first click left the screen unchanged under the
+      // pointer (a task with no worker, a step with no session) a double click flashed `Copied!` and
+      // replaced the clipboard instead of being the second click §2.1 says it is (T08 drill). pi-tui keeps
+      // that count in `lastClick` (0.87.1) and offers no call to reset it.
+      if (ev?.type === 'click' && r?.rowClick) tui.lastClick = undefined;
+      if (!mounted) return r;
+      // pi-tui focuses the component its dispatch reached, which is this root, not the mounted one: a
+      // click in a mounted typing box (the Editor answers { focus: true }) would take the focus off the
+      // component and its cursor would vanish. A result naming its own target is passed through as is, so
+      // the focus is pointed back at the mounted component with the target this root would have had.
+      if (r?.focus && !('target' in r)) {
+        return {
+          ...r,
+          handled: true,
+          focusTarget: mounted,
+          target: { component: guarded, originX: ev.screenX - ev.x, originY: ev.screenY - ev.y, width: ev.width, height: ev.height },
+        };
+      }
+      return r;
+    },
   };
   // TuiAltScreen scrolls its own viewport on PgUp/PgDn, Home/End and Ctrl+↑/↓, and opens a transcript
   // search on Ctrl+Shift+F, in an input listener that runs before pir's and consumes the key. pir's frame
@@ -672,7 +776,12 @@ export function createScreen({ stream = process.stdout, colour, terminal } = {})
   const kb = getKeybindings();
   const unbound = Object.fromEntries(Object.keys(TUI_KEYBINDINGS).filter((id) => id.startsWith('tui.altScreen.')).map((id) => [id, []]));
   kb.setUserBindings({ ...kb.getUserBindings(), ...unbound });
-  const tui = new TuiAltScreen(terminal ?? new ProcessTerminal(), false, undefined, { mouse: false });
+  const term = terminal ?? new ProcessTerminal();
+  const tui = new TuiAltScreen(term, false, undefined, {
+    mouse: true,
+    wheelScrollLines: 3,
+    ...(platform === 'darwin' && copy ? { copySelection: copy } : {}),
+  });
   tui.setLayoutRoot(guarded);
   tui.addInputListener((data) => {
     if (!onInput) return undefined;
@@ -686,10 +795,36 @@ export function createScreen({ stream = process.stdout, colour, terminal } = {})
     tui.setFocus(mounted);
   }
 
+  // The exit restore (§2.7), armed while the screen is started and not closed. It writes synchronously
+  // (a TTY stdout write is synchronous in Node on POSIX), because nothing after an `exit` listener runs.
+  let restored = false;
+  function restore() {
+    if (restored || !started || closed) return;
+    restored = true;
+    term.write(EXIT_RESTORE);
+  }
+  const onProcessExit = () => restore();
+  const onSignal = (sig) => {
+    restore();
+    onExit.exit?.(128 + (osConstants.signals[sig] ?? 0));
+  };
+  function arm() {
+    onExit.on('exit', onProcessExit);
+    for (const sig of EXIT_SIGNALS) onExit.on(sig, onSignal);
+  }
+  function disarm() {
+    onExit.off('exit', onProcessExit);
+    for (const sig of EXIT_SIGNALS) onExit.off(sig, onSignal);
+  }
+
   function start() {
     if (started || closed) return;
     started = true;
+    arm();
     tui.start();
+    // pi-tui asks only for button-motion under a multiplexer (it can lag there); the person wants hover
+    // everywhere, so all-motion is asked for again after it (§2.2). pi-tui's stop turns ?1003 off itself.
+    if (underMultiplexer(env)) term.write(ALL_MOTION_ON);
   }
 
   return {
@@ -706,9 +841,13 @@ export function createScreen({ stream = process.stdout, colour, terminal } = {})
         painting = false;
       }
     },
-    listen(input, error) {
+    setHoverY(y) {
+      hoverY = Number.isInteger(y) ? y : null;
+    },
+    listen(input, error, mouse) {
       onInput = input;
       onError = error;
+      onMouse = mouse ?? null;
       start();
     },
     paint(next) {
@@ -726,7 +865,9 @@ export function createScreen({ stream = process.stdout, colour, terminal } = {})
     close() {
       if (closed) return;
       closed = true;
-      if (started) tui.stop({ preserveScreen: true });
+      if (!started) return;
+      disarm();
+      tui.stop({ preserveScreen: true });
     },
   };
 }
@@ -903,6 +1044,14 @@ async function runTui({
   // The task row is pinned the same way, by task id, and per run (by runKey): a refresh that adds or
   // removes task rows keeps the highlight on its task, and two runs of one slug keep separate selections.
   const selectedTask = new Map();
+  // The pointer's screen row (mouse-navigation §3.5): a paint concern, held beside `ui` and never in the
+  // reducer, so a pointer move does not count as an event that clears `armed`. It follows the screen row,
+  // not a run, so after a refresh or a click-open the row now under the pointer is the one lit (§2.2).
+  let hoverY = null;
+  // What the person sees now, so a click reads the lines they read (§3.3): the painted frame (null while
+  // the list view or a conversation is mounted; the list view hands its own block to onMouse) and the rows
+  // it was built from, which turn a hit's index into a run key or a task id before a fresh read.
+  let painted = null;
 
   const read = () => load({ dir, now: now(), kill, exec, fs });
 
@@ -939,6 +1088,9 @@ async function runTui({
   // The rows of the latest read, for the slug pop-up's ` · building` (isBuilding).
   let lastRows = [];
   const building = (repo, slug) => isBuilding(lastRows, repo, slug);
+  // runTui's mouse handler, set once the input loop below is listening; the list view calls it for events
+  // outside its box.
+  let mouseHandler = null;
   // What the list view's last handleInput decided (its callbacks run synchronously inside it).
   let routed = null;
   function getListView() {
@@ -956,6 +1108,7 @@ async function runTui({
         onSubmit: (text) => (routed = { kind: 'submit', text }),
         onListKey: (data) => (routed = { kind: 'list', data }),
         onQuit: () => (routed = { kind: 'quit' }),
+        onListMouse: (ev, frame) => mouseHandler?.(ev, frame),
       });
     }
     return listView;
@@ -964,7 +1117,7 @@ async function runTui({
   function paintList(dash) {
     const lv = getListView();
     lastRows = dash.rows;
-    lv.update({ dashboard: dash, ui });
+    lv.update({ dashboard: dash, ui, hoverY });
     screen.mount(lv);
     screen.renderNow();
   }
@@ -1129,6 +1282,7 @@ async function runTui({
 
     spin += 1;
     const spinnerChar = SPINNER[spin % SPINNER.length];
+    painted = null;
     if (ui.view === 'watch' && ui.openStep) {
       screen.paint(buildLandingFrame(findOpen(dash.rows, ui)));
     } else if (ui.view === 'worker') {
@@ -1139,11 +1293,16 @@ async function runTui({
       const logTail = view.state === 'crashed' ? readLogTail(view.record?.controlDir ? join(view.record.controlDir, 'run.log') : null, 5, fs ? { fs } : {}) : null;
       const columns = Math.max(20, stdout.columns || DEFAULT_COLS);
       const progress = goOpen(dash.rows, ui) && view.record ? goProgress(view) : null;
-      screen.paint(buildWatchFrame(view, { now: now(), spinnerChar, ui, columns, logTail, progress }));
+      const frame = buildWatchFrame(view, { now: now(), spinnerChar, ui, columns, logTail, progress });
+      painted = { frame, rows: dash.rows };
+      screen.paint(frame);
     } else if (boxed) {
+      painted = { frame: null, rows: dash.rows };
       paintList(dash);
     } else {
-      screen.paint(buildListFrame(dash, ui, { columns: Math.max(20, stdout.columns || DEFAULT_COLS) }));
+      const frame = buildListFrame(dash, ui, { columns: Math.max(20, stdout.columns || DEFAULT_COLS) });
+      painted = { frame, rows: dash.rows };
+      screen.paint(frame);
     }
     publish(dash);
   }
@@ -1249,36 +1408,97 @@ async function runTui({
             return repaint(dash);
           }
 
-          const wasWatching = ui.view === 'watch';
-          if (wasWatching) syncTask(dash);
           const event = key === 'enter' || key === 'n' || key === 'c' ? { type: 'key', key } : { type: key };
-          const { ui: nextUi, intent } = dashboardReducer(ui, event, dash.rows);
-          ui = nextUi;
-          // Pin the selection to whatever run the cursor is now on, so the next refresh keeps it there.
-          selectedKey = runKey(dash.rows[ui.sel]) ?? selectedKey;
-          if (wasWatching && ui.view === 'watch') {
-            // …and the task row likewise, to the task the cursor is now on in the open run. Only a move
-            // inside the live view re-pins it: opening a run starts its taskSel at 0, and repaint then
-            // restores the task that run last had selected.
-            const open = findOpen(dash.rows, ui);
-            const task = openTasks(dash.rows, ui)[ui.taskSel ?? 0];
-            if (task) selectedTask.set(runKey(open) ?? ui.openKey ?? ui.openSlug, task.id);
-          }
-          if (intent && intent.type !== 'quit') {
-            // One run action at a time. A stop returns only after it has reaped the run's sessions, and
-            // keys keep arriving meanwhile: the row can already read `stopped` (the program recorded it)
-            // while the reap is still going, and a resume fired then had its new session killed by that
-            // reap (pir-plan-command T11). So each action waits for the one before it, and then finds its
-            // run in a fresh read, not in the rows of the keypress that armed it.
-            const run = acting.then(() => act(intent));
-            acting = run.catch(() => {});
-            await run;
-          }
+          await dispatch(event, dash);
           repaint();
         } catch (err) {
           fail(err);
         }
       }
+
+      // dispatch(event, dash) — one reducer event and everything that follows it: the selection pins and the
+      // run action. The keys and the mouse both come through here, so a click and a key cannot drift apart
+      // (mouse-navigation §2.1). `dash` is a read already repinned (repinOpen) by the caller.
+      async function dispatch(event, dash) {
+        const wasWatching = ui.view === 'watch';
+        if (wasWatching) syncTask(dash);
+        const { ui: nextUi, intent } = dashboardReducer(ui, event, dash.rows);
+        ui = nextUi;
+        // Pin the selection to whatever run the cursor is now on, so the next refresh keeps it there.
+        selectedKey = runKey(dash.rows[ui.sel]) ?? selectedKey;
+        if (wasWatching && ui.view === 'watch') {
+          // …and the task row likewise, to the task the cursor is now on in the open run. Only a move
+          // inside the live view re-pins it: opening a run starts its taskSel at 0, and repaint then
+          // restores the task that run last had selected.
+          const open = findOpen(dash.rows, ui);
+          const task = openTasks(dash.rows, ui)[ui.taskSel ?? 0];
+          if (task) selectedTask.set(runKey(open) ?? ui.openKey ?? ui.openSlug, task.id);
+        }
+        if (intent && intent.type !== 'quit') {
+          // One run action at a time. A stop returns only after it has reaped the run's sessions, and
+          // keys keep arriving meanwhile: the row can already read `stopped` (the program recorded it)
+          // while the reap is still going, and a resume fired then had its new session killed by that
+          // reap (pir-plan-command T11). So each action waits for the one before it, and then finds its
+          // run in a fresh read, not in the rows of the keypress that armed it.
+          const run = acting.then(() => act(intent));
+          acting = run.catch(() => {});
+          await run;
+        }
+      }
+
+      // A hit's index is into the rows the frame was painted from; a fresh read may have moved them, so the
+      // hit is carried across by run key (the list) or by row id (a build's tasks, a planning run's steps).
+      // -1 when that row is gone.
+      function resolveHit(hit, dash) {
+        if (hit.kind === 'run') {
+          const key = runKey(painted?.rows?.[hit.index]);
+          return key == null ? -1 : dash.rows.findIndex((r) => runKey(r) === key);
+        }
+        const id = openTasks(painted?.rows ?? [], ui)[hit.index]?.id;
+        return id == null ? -1 : openTasks(dash.rows, ui).findIndex((t) => t.id === id);
+      }
+
+      function setHover(y) {
+        hoverY = y;
+        screen.setHoverY?.(y);
+        listView?.update({ hoverY: y });
+      }
+
+      // onMouse(ev, frame) — the painted frames' mouse (the live view, the steps view, the go question), and
+      // the list's rows through the list view's onListMouse, which passes its own list block as `frame`
+      // (mouse-navigation §2.1–§2.3, §3.2). Synchronous, as pi-tui's dispatch is: no event here produces a
+      // run action, so the reducer and the repaint are done before it returns. Press, drag and release are
+      // always declined (undefined), which leaves pi-tui its text selection and its synthesised click (§2.5).
+      function onMouse(ev, frame = painted?.frame) {
+        if (settled || !ev || ui.view === 'worker' || ui.openStep || !frame) return undefined;
+        if (ev.type === 'move') {
+          const changed = !sameHit(hitAt(frame, hoverY), hitAt(frame, ev.y));
+          setHover(ev.y);
+          return { handled: true, render: changed };
+        }
+        const wheel = ev.type === 'wheel' && ev.wheelDelta;
+        const hit = ev.type === 'click' && ev.button === 'left' ? hitAt(frame, ev.y) : null;
+        if (!wheel && !hit) return undefined;
+        try {
+          const dash = read();
+          ui = repinOpen(ui, dash.rows);
+          if (wheel) {
+            // One notch is one ↑ or ↓, whatever pi-tui's lines-per-notch (§2.3).
+            dispatch({ type: ev.wheelDelta < 0 ? 'up' : 'down' }, dash).catch(fail);
+          } else {
+            const index = resolveHit(hit, dash);
+            if (index < 0) return undefined;
+            dispatch({ type: 'select', index }, dash).catch(fail);
+            dispatch({ type: 'open' }, dash).catch(fail);
+          }
+          repaint();
+        } catch (err) {
+          fail(err);
+        }
+        // rowClick: createScreen resets pi-tui's double-click count on it, so the next click is a click too.
+        return wheel ? { handled: true } : { handled: true, rowClick: true };
+      }
+      mouseHandler = onMouse;
 
       renderSoon = () => {
         if (!settled && ui.view === 'worker' && conv && typeof screen.mount !== 'function') {
@@ -1290,7 +1510,7 @@ async function runTui({
         }
       };
       if (ownInput) stdin.on('data', onData);
-      else screen.listen(onData, fail);
+      else screen.listen(onData, fail, (ev) => onMouse(ev));
       refresh = setInterval(() => {
         try {
           repaint();

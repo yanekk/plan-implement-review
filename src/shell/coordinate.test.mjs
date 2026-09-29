@@ -35,6 +35,7 @@ import {
   writeRunFinal,
   updateIndexFinalState,
   makePrepare,
+  endAlertPass,
 } from './coordinate.mjs';
 import { readSnapshot } from './snapshot-store.mjs';
 import { parseSnapshot, serializeSnapshot } from '../core/snapshot.mjs';
@@ -2919,4 +2920,277 @@ test('T15 a timed-out item the person then answers gets the message; one the age
   assert.equal(msgs.length, 1);
   assert.ok(msgs[0].includes(`${w1}-r1`));
   assert.match(msgs[0], /^Already answered by the person: allowed\./);
+});
+
+// --- whyPerson (reliable-notifications T05, DESIGN §2.1): why a waiting worker's question is the person's ---
+
+// A hand-played agent: the test queues its passes and settles, and sets whether it is up or its brief fails.
+function scriptedAgent() {
+  const a = {
+    up: true,
+    failBrief: false,
+    briefs: [],
+    toPass: [],
+    toSettle: [],
+    alive: () => a.up,
+    brief(item) {
+      if (!a.up || a.failBrief) return false;
+      a.briefs.push(item);
+      return true;
+    },
+    drain() {
+      const out = { passed: a.toPass.map((i) => ({ worker: i.worker, ...(i.requestId ? { requestId: i.requestId } : {}), reason: 'yours' })), settled: [...a.toSettle] };
+      a.toPass = [];
+      a.toSettle = [];
+      return out;
+    },
+    answeredElsewhere: () => true,
+    timedOut() {},
+    forget() {},
+    close: async () => {},
+    session: null,
+  };
+  return a;
+}
+
+const NPM_TEST = { toolName: 'Bash', input: { command: 'npm test' } };
+const RM_RF = { toolName: 'Bash', input: { command: 'rm -rf build' } };
+
+// whyRun(t, behaviors, opts) → a one-task run with the scripted agent (or `startAgent` as given) and a clock.
+function whyRun(t, behaviors, { startAgent, holdMs = 1000 } = {}) {
+  const worktree = createFakeWorktree({ progress: progressDoc([{ num: 'T01' }]), slug: SLUG });
+  t.after(() => worktree.cleanup());
+  const platform = createFakePlatform({ behaviors: { T01: behaviors } });
+  const agent = scriptedAgent();
+  const clock = { t: 0 };
+  const coordinator = startCoordinator({
+    slug: SLUG, repo: REPO, platform, worktree, holdMs, now: () => clock.t,
+    startAgent: startAgent === undefined ? () => agent : startAgent,
+  });
+  const w = () => platform.spawns.find((s) => s.task === 'T01' && s.role === 'implement')?.id;
+  const why = () => Object.fromEntries(coordinator.whyPerson());
+  const req = (n) => ({ worker: w(), requestId: `${w()}-r${n}` });
+  return { coordinator, platform, agent, clock, w, why, req };
+}
+
+test('whyPerson: a held item is absent; the agent\'s pass makes it `passed`; the person\'s answer removes it on the pass it closes', (t) => {
+  const run = whyRun(t, { requests: [NPM_TEST] });
+  run.coordinator.pass();
+  assert.deepEqual(run.why(), {}, 'held by the agent: not the person\'s');
+  run.agent.toPass.push(run.req(1));
+  run.coordinator.pass();
+  assert.deepEqual(run.why(), { [run.w()]: 'passed' });
+  run.platform.answer(run.w(), `${run.w()}-r1`, { behavior: 'allow' }, { from: 'person' });
+  run.coordinator.pass();
+  assert.deepEqual(run.why(), {}, 'answered: gone');
+});
+
+test('whyPerson: a report park the agent passes on is `passed`', (t) => {
+  const run = whyRun(t, { question: 'JSON or YAML?' });
+  run.coordinator.pass();
+  run.coordinator.pass();
+  assert.equal(run.agent.briefs.length, 1, 'the park is briefed');
+  assert.deepEqual(run.why(), {});
+  run.agent.toPass.push({ worker: run.w() });
+  run.coordinator.pass();
+  assert.deepEqual(run.why(), { [run.w()]: 'passed' });
+});
+
+test('whyPerson: an item the agent answered this pass is absent (justSettled), as heldByAgent() holds it', (t) => {
+  const run = whyRun(t, { requests: [NPM_TEST] });
+  run.coordinator.pass();
+  run.agent.toSettle.push(run.req(1)); // the scripted agent does not reach the worker, so it still waits this pass
+  run.coordinator.pass();
+  assert.equal(run.coordinator.heldByAgent().has(`${run.w()}:${run.w()}-r1`), true);
+  assert.deepEqual(run.why(), {});
+});
+
+test('whyPerson: reserved is `reserved` from the first pass, and stays so when the agent passes it on', (t) => {
+  const run = whyRun(t, { requests: [RM_RF] });
+  run.coordinator.pass();
+  assert.deepEqual(run.why(), { [run.w()]: 'reserved' });
+  run.agent.toPass.push(run.req(1));
+  run.coordinator.pass();
+  assert.deepEqual(run.why(), { [run.w()]: 'reserved' }, 'a pass of a reserved item keeps its reason');
+});
+
+test('whyPerson: the hold limit makes it `timeout`, and a late pass leaves it `timeout`', (t) => {
+  const run = whyRun(t, { requests: [NPM_TEST] }, { holdMs: 1000 });
+  run.coordinator.pass();
+  run.clock.t = 999;
+  run.coordinator.pass();
+  assert.deepEqual(run.why(), {}, 'still within the limit');
+  run.clock.t = 1000;
+  run.coordinator.pass();
+  assert.deepEqual(run.why(), { [run.w()]: 'timeout' });
+  run.agent.toPass.push(run.req(1));
+  run.coordinator.pass();
+  assert.deepEqual(run.why(), { [run.w()]: 'timeout' }, 'a late pass keeps `timeout`');
+});
+
+test('whyPerson: the agent dead makes a held item `unavailable` at once and after its next pass', (t) => {
+  const run = whyRun(t, { requests: [NPM_TEST] });
+  run.coordinator.pass();
+  assert.deepEqual(run.why(), {});
+  run.agent.up = false;
+  assert.deepEqual(run.why(), { [run.w()]: 'unavailable' }, 'no pass needed');
+  run.coordinator.pass();
+  assert.deepEqual(run.why(), { [run.w()]: 'unavailable' });
+  run.agent.up = true; // back: the item it held when it died is never re-briefed, so it stays the person's
+  run.coordinator.pass();
+  assert.deepEqual(run.why(), { [run.w()]: 'unavailable' });
+});
+
+test('whyPerson: an agent that failed to start makes every item `unavailable`', (t) => {
+  const run = whyRun(t, { requests: [NPM_TEST] }, { startAgent: () => { throw new Error('no claude'); } });
+  run.coordinator.pass();
+  assert.equal(run.coordinator.agent, null);
+  assert.deepEqual(run.why(), { [run.w()]: 'unavailable' });
+});
+
+test('whyPerson: an item first waiting while the agent is down stays `unavailable` once it is back', (t) => {
+  const run = whyRun(t, { requests: [NPM_TEST] });
+  run.agent.up = false;
+  run.coordinator.pass();
+  run.agent.up = true;
+  run.coordinator.pass();
+  assert.equal(run.agent.briefs.length, 0, 'never briefed');
+  assert.deepEqual(run.why(), { [run.w()]: 'unavailable' });
+});
+
+test('whyPerson: an item whose brief failed is `unavailable`', (t) => {
+  const run = whyRun(t, { requests: [NPM_TEST] });
+  run.agent.failBrief = true;
+  run.coordinator.pass();
+  assert.deepEqual(run.why(), { [run.w()]: 'unavailable' });
+});
+
+test('whyPerson: a run with no agent (startAgent null) is `off`', (t) => {
+  const run = whyRun(t, { requests: [NPM_TEST] }, { startAgent: null });
+  run.coordinator.pass();
+  assert.deepEqual(run.why(), { [run.w()]: 'off' });
+});
+
+test('whyPerson: a worker with two person items reports the older one\'s reason', (t) => {
+  const older = whyRun(t, { requests: [NPM_TEST, RM_RF] });
+  older.coordinator.pass();
+  assert.deepEqual(older.why(), { [older.w()]: 'reserved' }, 'r1 held, so r2 is the only person item');
+  older.agent.toPass.push(older.req(1));
+  older.coordinator.pass();
+  assert.deepEqual(older.why(), { [older.w()]: 'passed' }, 'r1 (passed) is older than r2 (reserved)');
+
+  const flipped = whyRun(t, { requests: [RM_RF, NPM_TEST] });
+  flipped.coordinator.pass();
+  flipped.agent.toPass.push(flipped.req(2));
+  flipped.coordinator.pass();
+  assert.deepEqual(flipped.why(), { [flipped.w()]: 'reserved' }, 'r1 (reserved) is older than r2 (passed)');
+});
+
+test('whyPerson: the oldest item is the first seen, not the first listed (a park before a later request)', (t) => {
+  // itemsOf lists a worker's requests before its report park, so a park passed on first and a reserved
+  // request raised after it would name `reserved` by listed order; the park is older, so it is `passed`.
+  const run = whyRun(t, { question: 'JSON or YAML?' });
+  let extra = null;
+  const workers = run.platform.workers;
+  run.platform.workers = () => workers().map((w) => (extra && w.id === run.w() && w.activity
+    ? { ...w, activity: { ...w.activity, pending: [extra, ...(w.activity.pending ?? [])] } }
+    : w));
+  run.coordinator.pass();
+  run.coordinator.pass();
+  run.agent.toPass.push({ worker: run.w() });
+  run.coordinator.pass();
+  assert.deepEqual(run.why(), { [run.w()]: 'passed' });
+  extra = { kind: 'permission', requestId: `${run.w()}-late`, ...RM_RF };
+  run.coordinator.pass();
+  assert.deepEqual(run.why(), { [run.w()]: 'passed' }, 'the park came first');
+});
+
+// --- The end-of-run alert (reliable-notifications T07, DESIGN §2.4): once, when the run waits on the merge ---
+
+// alertSteps(run) → a pass that also runs endAlertPass as main does, recording every alert it would send.
+function alertSteps(run) {
+  const sends = [];
+  let sent = false;
+  const step = () => {
+    const r = run.coordinator.pass();
+    sent = endAlertPass({ r, coordinator: run.coordinator, slug: SLUG, sent, send: (a) => sends.push(a) });
+    return r;
+  };
+  const until = (pred, max = 20) => {
+    for (let i = 0; i < max; i++) {
+      const r = step();
+      if (pred(r)) return r;
+    }
+    throw new Error(`not reached in ${max} passes; handoff ${JSON.stringify(run.coordinator.handoff)}`);
+  };
+  return { sends, step, until };
+}
+
+test('end alert: sent once when the handoff first reads ready, with the agent\'s link; not again on a later pass or a re-sync', (t) => {
+  const run = endRun(t);
+  const a = alertSteps(run);
+  run.toGate();
+  a.until(() => run.told().some((m) => m.startsWith('Every task is done')));
+  assert.deepEqual(a.sends, [], 'nothing while preparing');
+  run.decide({ kind: 'report', sections: SECTIONS });
+  a.until((x) => x.handoff.state === 'ready');
+  assert.deepEqual(a.sends, [{
+    title: `${SLUG} · ready to merge`, message: `All 1 tasks merged. git merge pir/${SLUG}`, tags: ['tada'],
+    click: run.coordinator.agent.remoteUrl(),
+  }]);
+  a.step();
+  const moved = run.moveMain('later.txt', 'another run merged first\n');
+  a.until((x) => x.handoff.state === 'ready' && x.handoff.mainSha === moved);
+  assert.equal(a.sends.length, 1, 'the re-sync is the same wait');
+});
+
+test('end alert: red names the test reason; a re-sync that turns ready sends nothing more', (t) => {
+  let tests = 0;
+  const run = endRun(t, { runTests: () => ((tests += 1), tests <= 2 ? { ok: false, reason: 'test exit 1' } : { ok: true }) });
+  const a = alertSteps(run);
+  run.toGate();
+  a.until(() => run.told().some((m) => m.startsWith('Every task is done')));
+  run.decide({ kind: 'report', sections: SECTIONS });
+  a.until((x) => x.handoff.state === 'red');
+  assert.equal(a.sends.length, 1);
+  assert.equal(a.sends[0].title, `${SLUG} · not ready`);
+  assert.equal(a.sends[0].message, `Tests red on pir/${SLUG}: test exit 1`);
+  assert.deepEqual(a.sends[0].tags, ['warning']);
+  const moved = run.moveMain('later.txt', 'main fixed it\n');
+  a.until((x) => x.handoff.state === 'ready' && x.handoff.mainSha === moved);
+  assert.equal(a.sends.length, 1);
+});
+
+test('end alert: an unresolved main-sync sends the merge-with-main message; handoffView carries `unresolved`', (t) => {
+  const run = endRun(t, { files: { 'work-T01.txt': 'base\n' }, behaviors: { 'main-sync': { unresolved: true } } });
+  const a = alertSteps(run);
+  a.step();
+  run.moveMain('work-T01.txt', 'main side\n');
+  run.toGate();
+  a.until(() => run.told().some((m) => m.startsWith('Every task is done')));
+  run.decide({ kind: 'report', sections: SECTIONS });
+  const r = a.until((x) => x.handoff.state !== 'preparing');
+  assert.equal(r.handoff.unresolved, true);
+  assert.deepEqual(a.sends.map((x) => x.message), [`Merge with main unresolved on pir/${SLUG}`]);
+});
+
+test('end alert: not sent on a pass with r.finished (a restart finding main already merged)', (t) => {
+  const first = endRun(t);
+  first.toGate();
+  first.until(() => first.told().some((m) => m.startsWith('Every task is done')));
+  first.decide({ kind: 'report', sections: SECTIONS });
+  first.until((x) => x.handoff.state === 'ready');
+  first.coordinator.closeAgent();
+  git(first.worktree.repo, ['merge', '--no-ff', '--no-edit', `pir/${SLUG}`]);
+
+  const second = endRun(t, { worktree: first.worktree, controlDir: first.controlDir });
+  const a = alertSteps(second);
+  second.toGate();
+  const r = a.until((x) => x.finished !== null);
+  assert.equal(r.finished, 'merged');
+  assert.deepEqual(a.sends, []);
+  // And as a unit: a finished pass reading ready sends nothing.
+  const sends = [];
+  assert.equal(endAlertPass({ r: { finished: 'merged', handoff: { state: 'ready' }, tasks: [] }, slug: SLUG, send: (x) => sends.push(x) }), false);
+  assert.deepEqual(sends, []);
 });

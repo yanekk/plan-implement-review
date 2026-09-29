@@ -154,7 +154,9 @@ start` does. A pop-up guides each step: the repos, then the two commands, then t
 unfinished plans with their progress (the rules, the lists and the refusals are in
 [planning-runs.md](planning-runs.md#the-dashboard-box)).
 While the box is bare the list's keys work as before. A list longer than the rows the box leaves
-scrolls to keep the selected run visible, with `↑ n more` / `↓ n more` where rows are cut. On a non-TTY
+scrolls to keep the selected run visible, with `↑ n more` / `↓ n more` where rows are cut. A click on
+a run opens it, the row under the pointer brightens, and the wheel moves the selection
+([The mouse](#the-mouse)). On a non-TTY
 the list is painted as before, without the box, and its empty line still points at `pir start {slug}`.
 
 Opening a build shows the **same** live task display the coordinator paints in the foreground — the
@@ -178,8 +180,8 @@ Opening a planning run shows its **steps view** instead — one row each for `pl
 
 ### The conversation view
 
-The run's live view has a selectable task row (the same grey band). ↑↓ move it, and → or Enter opens
-that task's worker in a third view, the worker's **conversation** (`src/shell/conversation-view.mjs`,
+The run's live view has a selectable task row (the same grey band). ↑↓ move it, and → or Enter (or a
+click on the row, [The mouse](#the-mouse)) opens that task's worker in a third view, the worker's **conversation** (`src/shell/conversation-view.mjs`,
 drawn with `@earendil-works/pi-tui`; the rules for what each line says are in
 `src/core/conversation.mjs`). A task with no worker yet says so in the footer instead. The view opens
 the task's live worker; with none live, its latest one, read-only, with no typing box. In a build with a
@@ -212,7 +214,8 @@ is sent, the view says so, and the typed text stays in the box.
 
 ### Key bindings
 
-The keys, as built, are shown in the footer of each view:
+The keys, as built, are shown in the footer of each view (the mouse adds clicks, hover and the wheel on
+top of them; see [The mouse](#the-mouse)):
 
 | View | Keys |
 |---|---|
@@ -235,6 +238,54 @@ is no confirm on quit. Stop and remove are the destructive actions, and they are
 §2.3, §2.4 and §2.11 still describe that older model; the footers and this table are the built truth.
 The whole screen moved onto pi-tui in `plans/live-workers` T11; the list and live view look as they
 did before.)
+
+### The mouse
+
+The dashboard also takes the mouse, always, with no setting to switch it off (`plans/mouse-navigation`).
+Every key above keeps its meaning; the mouse only adds these:
+
+| Where | Click (left) | Hover | Wheel, one notch |
+|---|---|---|---|
+| List | a run's row opens it | the run's row brightens | one `↑`/`↓` |
+| Live view (a build) | a task's row opens its worker; the coordinator agent's row opens its conversation; an end-of-run helper's row opens its worker | the row brightens | one `↑`/`↓` |
+| Steps (a planning run), go question included | a step's row opens its conversation | the row brightens | one `↑`/`↓` |
+| Conversation | in the typing box, moves the cursor there | — | scrolls the history three lines |
+| New-plan box | moves the cursor; on the `@repo` pop-up, picks that repo | — | moves the list, as anywhere on the list screen; over the open `@repo` pop-up it moves the pop-up's highlight instead |
+
+A click on a row is exactly selecting it and pressing `↵`: the selection lands on that row, so `←`
+comes back to it, and whatever `↵` would say instead of opening, the click says too (a task with no
+worker yet shows the footer note; `noCoordinatorNote` when the agent has no session). A click on a
+step under the go question opens the step; it never answers the go question. A double click is two
+clicks, each on the screen it lands on: on a run it opens the run, then opens the live-view row now
+under the pointer. A click anywhere else does nothing: the title, the column header, the `↑ n more`
+markers, the separator above the agent's row (which `↑↓` also steps over), notes, the counts line and
+the hint line. Right and middle clicks do nothing. The wheel goes through the same path as `↑↓`, so it
+cancels an armed `Ctrl+R/S/X` chord and steps over the separator; on the `starting the planner…`
+screen it does nothing.
+
+Hover marks the row under the pointer, bold with its dim text lifted, so a click's target is visible
+before the click; a row already amber bold (`asking you`) turns a brighter amber instead. The selected row keeps its grey band and shows no extra hover mark. Hover follows the
+screen line, not the run: after a refresh reorders the list, the row now under the pointer is the lit
+one. The terminal does not report the pointer leaving the window, so the last row stays lit until the
+pointer moves inside it again. With colour off (`NO_COLOR`) there is no hover. Under tmux, screen or
+zellij, pi-tui asks the terminal only for pointer movement with a button held; `pir` asks for all
+pointer movement again (`?1003h`), so hover is requested there too, but whether a real multiplexer
+passes it through has not been checked.
+
+**Keyboard only.** Going back (`←`), quitting (`esc`), the go question (`↵ start · n not now`), a
+worker's question picker, a permission prompt (allow/refuse), the `Ctrl+R/S/X` chords and `c` have no
+mouse action. The hint lines and the `ready to merge` footer are text, not buttons, and do not hover.
+
+**Copying text.** With mouse reporting on, the terminal no longer selects text by itself; `pir` does.
+Drag across any text to highlight it, and it is copied to the clipboard when the button is released
+(through `pbcopy` on macOS; elsewhere through the terminal's OSC 52 clipboard sequence). A drag that
+starts on a row selects text and does not open the row. For the terminal's own selection instead, hold
+Option while dragging in iTerm2, or Shift in Ghostty and most other terminals.
+
+**A terminal left in mouse mode.** `pir` switches mouse reporting off on every exit it can see: a
+normal quit, an error, and SIGTERM, SIGHUP and SIGINT. A `pir` killed with SIGKILL (`kill -9`) cannot
+do that, and the shell it leaves behind prints escape codes on every pointer move; type `reset` and
+press `↵` in that shell to recover.
 
 Two dashboards open at once are both readers of the same files; either can stop or remove a run, and
 the other repaints from the changed state on its next read. The dashboard holds no authority a second

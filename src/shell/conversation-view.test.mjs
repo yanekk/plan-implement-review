@@ -7,6 +7,7 @@ import { stripTerminalSequences } from '@earendil-works/pi-tui';
 import { createConversationView, hasEnded, slashCommandsOf, slashProvider } from './conversation-view.mjs';
 import { followLog } from './log-follow.mjs';
 import { dropPersonInput } from './person-inbox.mjs';
+import { withHeadLine } from './pir-tui.mjs';
 
 // ---- followLog ----
 
@@ -588,4 +589,119 @@ test('the coordinator agent\'s conversation shows its pointer reply, pir\'s hand
   v.handleInput('\r');
   assert.deepEqual(drops, [{ to: 'sess-1', kind: 'message', text: 'where are we?' }]);
   v.dispose();
+});
+
+// ---- the mouse (mouse-navigation T06, DESIGN §2.3, §2.6) ----
+
+// A pi-tui TuiMouseEvent as the view receives it: y is the view's own row, wheelDelta ±3 a notch (T04).
+const mouse = (type, { x = 10, y = 5, width = 80, height = 30, wheelDelta, button = 'left' } = {}) => ({
+  type, button, x, y, width, height, screenX: x, screenY: y, ...(wheelDelta === undefined ? {} : { wheelDelta }),
+});
+const wheel = (dir, over) => mouse('wheel', { ...over, wheelDelta: dir === 'up' ? -3 : 3, button: dir === 'up' ? 'wheelUp' : 'wheelDown' });
+const longLog = () => [init(), opening, ...Array.from({ length: 60 }, (_, i) => said(`step ${i}`))];
+
+test('mouse: a wheel notch up scrolls back 3 lines and shows the count; down returns to the end', () => {
+  const t = makeView({ log: longLog(), rows: 20 });
+  t.screen();
+  assert.deepEqual(t.v.handleMouse(wheel('up')), { handled: true });
+  assert.match(t.screen().at(-1), /^↓ 3 more below · /);
+  assert.equal(t.v.state.scrollBack, 3);
+  t.v.handleMouse(wheel('up'));
+  assert.match(t.screen().at(-1), /^↓ 6 more below · /);
+  t.v.handleMouse(wheel('down'));
+  t.v.handleMouse(wheel('down'));
+  assert.doesNotMatch(t.screen().at(-1), /more below/);
+  assert.match(t.text(), /step 59/);
+});
+
+test('mouse: wheel down at the end stays at the end; wheel up at the top stays at the top', () => {
+  const t = makeView({ log: longLog(), rows: 20 });
+  t.screen();
+  t.v.handleMouse(wheel('down'));
+  assert.equal(t.v.state.scrollBack, 0);
+  assert.doesNotMatch(t.screen().at(-1), /more below/);
+  for (let i = 0; i < 40; i++) {
+    t.v.handleMouse(wheel('up'));
+    t.screen();
+  }
+  const top = t.screen();
+  assert.match(top.join('\n'), /pir ▸ Build T05\./, 'the start of the history is on screen');
+  t.v.handleMouse(wheel('up'));
+  assert.deepEqual(t.screen(), top, 'one more notch up changes nothing');
+});
+
+test('mouse: a read-only view scrolls with the wheel and has no box to click', () => {
+  const t = makeView({ log: longLog(), live: false, rows: 20 });
+  const s = t.screen();
+  t.v.handleMouse(wheel('up'));
+  assert.match(t.screen().at(-1), /^↓ 3 more below · ← back/);
+  for (let y = 0; y < s.length; y++) assert.equal(t.v.handleMouse(mouse('click', { y })), undefined, `row ${y} takes no click`);
+  assert.equal(t.v.state.text, null);
+});
+
+test('mouse: the coordinator agent\'s conversation scrolls the same way', () => {
+  let push = null;
+  const v = createConversationView({
+    run: { slug: 'demo', controlDir: '/nowhere' },
+    worker: { taskId: 'coordinator', workerId: 'sess-1', logPath: '/nowhere/conversations/coordinator-1.ndjson', live: true },
+    follow: (_p, { onEntries }) => {
+      push = (...es) => onEntries(es.map((e) => JSON.stringify(e)));
+      return { stop() {} };
+    },
+    drop: () => ({ ok: true }),
+    alive: () => true,
+    tui: { requestRender() {}, terminal: { rows: 20 } },
+    colour: false,
+  });
+  push(...longLog());
+  const last = () => stripTerminalSequences(v.render(80).at(-1));
+  last();
+  v.handleMouse(wheel('up'));
+  assert.match(last(), /^↓ 3 more below · /);
+  v.handleMouse(wheel('down'));
+  assert.doesNotMatch(last(), /more below/);
+  v.dispose();
+});
+
+test('mouse: a click in the box moves the caret; a click on the scrollback changes nothing', () => {
+  const t = makeView({ rows: 20 });
+  t.type('hello world');
+  const s = t.screen();
+  const y = s.findIndex((l) => l.includes('hello world'));
+  const x = s[y].indexOf('hello') + 2;
+  const r = t.v.handleMouse(mouse('click', { x, y }));
+  assert.ok(r?.handled && r.focus, 'the Editor took the click');
+  t.type('X');
+  assert.equal(t.v.state.text, 'heXllo world', 'the caret moved to where the click landed');
+  assert.equal(t.v.handleMouse(mouse('click', { x: 4, y: 3 })), undefined, 'the scrollback takes no click');
+  for (const type of ['press', 'drag', 'release']) assert.equal(t.v.handleMouse(mouse(type, { x, y })), undefined, `${type} stays pi-tui's selection`);
+  t.type('Y');
+  assert.equal(t.v.state.text, 'heXYllo world');
+});
+
+test('mouse: the permission gate and the question picker take no clicks', () => {
+  for (const request of [permission(), questions()]) {
+    const t = makeView({ log: [init(), opening, request], rows: 30 });
+    const s = t.screen();
+    const pinned = s.map((l, y) => [l, y]).filter(([l]) => /⚑|Red|Blue|↵ allow/.test(l));
+    assert.ok(pinned.length > 0, 'the request is pinned on screen');
+    const before = JSON.stringify(t.v.state.prompt);
+    for (const [, y] of pinned) assert.equal(t.v.handleMouse(mouse('click', { x: 4, y })), undefined, `row ${y}`);
+    assert.equal(JSON.stringify(t.v.state.prompt), before, 'the prompt did not move');
+    assert.deepEqual(t.drops, [], 'nothing was answered');
+  }
+});
+
+test('withHeadLine: a wheel on its head line is ignored; one below it reaches the inner view shifted by one', () => {
+  const got = [];
+  const host = { requestRender() {}, terminal: { rows: 24, columns: 80 } };
+  const v = withHeadLine('following T05', () => ({ render: () => [], handleInput() {}, invalidate() {}, dispose() {}, handleMouse: (ev) => (got.push(ev), { handled: true }) }), { host, colour: false });
+  assert.equal(v.handleMouse(wheel('up', { y: 0 })), undefined);
+  assert.deepEqual(got, []);
+  assert.deepEqual(v.handleMouse(wheel('up', { y: 4 })), { handled: true });
+  assert.equal(got.length, 1);
+  assert.equal(got[0].y, 3);
+  assert.equal(got[0].wheelDelta, -3);
+  const bare = withHeadLine('following T05', () => ({ render: () => [], handleInput() {}, invalidate() {}, dispose() {} }), { host, colour: false });
+  assert.equal(bare.handleMouse(wheel('up', { y: 2 })), undefined, 'an inner view without a handler declines');
 });

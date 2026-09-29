@@ -103,3 +103,11 @@ test('defineScenario: coordinatorHoldMs needs the agent and a positive whole ms;
   assert.equal(defineScenario({ ...base, answerPending: { personDelayMs: 60000 } }).answerPending.personDelayMs, 60000);
   assert.throws(() => defineScenario({ ...base, answerPending: { personDelayMs: -1 } }), /personDelayMs must be/);
 });
+
+test('defineScenario: realNotify needs the agent and statusSnapshots (reliable-notifications T08)', () => {
+  const base = { id: 'a', fixture: 'f', facts: [noHelloEver()] };
+  assert.equal(defineScenario(base).realNotify, false);
+  assert.equal(defineScenario({ ...base, coordinator: true, statusSnapshots: true, realNotify: true }).realNotify, true);
+  assert.throws(() => defineScenario({ ...base, statusSnapshots: true, realNotify: true }), /realNotify needs/);
+  assert.throws(() => defineScenario({ ...base, coordinator: true, realNotify: true }), /realNotify needs/);
+});

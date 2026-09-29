@@ -61,7 +61,8 @@ press that moves is a text selection (§2.5), never a click, so starting a drag 
 ### 2.2 Hover
 
 The row under the pointer is painted brighter (user): its text bold, and its dim spans lifted to a
-lighter colour so a finished or stopped run brightens too. A hovered row that is also the selected row
+lighter colour so a finished or stopped run brightens too. An amber-bold span (an `asking you` row) turns a
+brighter amber, since bold alone changed nothing on it (user, T08 drill, 2026-09-28). A hovered row that is also the selected row
 paints as the selected band only, because the band already marks it and two cues on one row read as
 noise (planner). Hover applies only to rows a click would open (§2.1). The look was confirmed by the user
 in the spike, 2026-09-28 (FINDINGS).

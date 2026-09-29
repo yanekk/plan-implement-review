@@ -143,6 +143,8 @@ Answering the planner in `pir` is the same act as answering a worker (see
 - **Remote Control is on for the whole session**, not only while it waits on the person as for a build
   worker: a planning session is a conversation with the person from start to finish, so it can be
   followed on claude.ai or the phone throughout. `PARALLEL_REMOTE=0` turns it off, as for a build.
+- **No phone alerts.** Planning sessions never send pir's ntfy alert and their Claude app push is left
+  as it is, since the person plans at the computer ([human-flow.md](human-flow.md#phone-alerts--pir-notify)).
 - **Opening instructions** name the skill, say the session is run by `pir plan`, and give the reports
   folder (the session cannot derive it: the folder moves at the rename). The planner's also carries the
   brief.

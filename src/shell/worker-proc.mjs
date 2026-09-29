@@ -47,13 +47,18 @@ const STDERR_TAIL = 4096;
 // §3.4): a worker passes none and gets exactly the options above. `tools` is an allowlist: every other
 // built-in tool is absent from the session, which T00 measured to hold where a deny list did not
 // (`EnterWorktree`, `CronCreate` and `ListAgents` ran in `default` mode without reaching `canUseTool`).
-export function workerOptions({ cwd, sessionId, resume, name, claudePath, canUseTool, spawnProcess, permissionMode, tools, disallowedTools }) {
+//
+// `env` is the session's whole environment (reliable-notifications DESIGN §2.7). The SDK's `Options.env`
+// replaces `process.env` rather than merging over it, so a caller passes `{ ...process.env, X }`; absent,
+// the SDK inherits `process.env` as before and the options carry no `env` key.
+export function workerOptions({ cwd, sessionId, resume, name, claudePath, canUseTool, spawnProcess, permissionMode, tools, disallowedTools, env }) {
   return {
     cwd,
     ...(resume ? { resume } : { sessionId }),
     permissionMode: permissionMode ?? 'auto',
     ...(tools ? { tools } : {}),
     ...(disallowedTools ? { disallowedTools } : {}),
+    ...(env ? { env } : {}),
     pathToClaudeCodeExecutable: claudePath,
     extraArgs: { name },
     canUseTool,
@@ -128,6 +133,7 @@ export function startWorker({
   disallowedTools,
   decide = null,
   denyMessage = (toolName) => `${toolName} is not allowed in this session.`,
+  env = null,
 }) {
   mkdirSync(dirname(logPath), { recursive: true });
   // A resumed session runs under the id it was saved with; every message pir sends carries that id.
@@ -268,7 +274,7 @@ export function startWorker({
 
   const q = query({
     prompt: queue,
-    options: workerOptions({ cwd, sessionId, resume, name, claudePath, canUseTool, spawnProcess: spawnWrapped, permissionMode, tools, disallowedTools }),
+    options: workerOptions({ cwd, sessionId, resume, name, claudePath, canUseTool, spawnProcess: spawnWrapped, permissionMode, tools, disallowedTools, env }),
   });
 
   const startedAt = now();
@@ -298,6 +304,10 @@ export function startWorker({
   let remoteOn = false;
   let remoteWant = false;
   let remoteRefused = false;
+  // The session_url of the last successful switch-on, for the phone alert's tap (reliable-notifications
+  // DESIGN §2.2); null while off, and cleared by any switch-off, even a failed one, since the session is
+  // going regardless.
+  let remoteUrl = null;
   let remoteSync = null;
   function syncRemote() {
     remoteSync ??= (async () => {
@@ -308,10 +318,14 @@ export function startWorker({
             if (typeof q.enableRemoteControl !== 'function') throw new Error('this SDK has no enableRemoteControl');
             const r = await q.enableRemoteControl(on, on ? name : undefined);
             remoteOn = on;
+            remoteUrl = on ? r?.session_url ?? null : null;
             note('remote-control', on ? { on, url: r?.session_url ?? null } : { on });
           } catch (err) {
             if (on) remoteRefused = true;
-            else remoteOn = false; // the session is going regardless; nothing to retry
+            else {
+              remoteOn = false; // the session is going regardless; nothing to retry
+              remoteUrl = null;
+            }
             note('remote-control-failed', { on, message: String(err?.message ?? err) });
           }
         }
@@ -383,6 +397,17 @@ export function startWorker({
 
     get remote() {
       return remoteOn;
+    },
+
+    // The worker's Remote Control link (`https://claude.ai/code/session_…`) while it is on; null before the
+    // first switch-on settles and once it is switched off.
+    get remoteUrl() {
+      return remoteUrl;
+    },
+
+    // Remote Control was refused for this worker and will not be retried (see syncRemote).
+    get remoteRefused() {
+      return remoteRefused;
     },
 
     note,

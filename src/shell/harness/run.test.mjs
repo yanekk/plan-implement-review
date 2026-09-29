@@ -15,6 +15,7 @@ import { join } from 'node:path';
 import {
   coordinatorLaunchArgv,
   seatbeltEnv,
+  notifyEnv,
   liveRunRefused,
   spawnCoordinator,
   coordinatorOutPath,
@@ -34,6 +35,7 @@ import {
   createScenarioSteps,
 } from './run.mjs';
 import { writeSnapshot } from '../snapshot-store.mjs';
+import { getFixture } from './fixtures.mjs';
 import { reapRecorded } from '../reap.mjs';
 
 function workspace() {
@@ -649,6 +651,58 @@ test('runScenario runs a statusSnapshots fixture as pir does and hands the answe
   } finally {
     ws.cleanup();
   }
+});
+
+// --- realNotify: the person's own ntfy config for the live check (reliable-notifications T08) ---------
+
+test('notifyEnv points at {home}/.pir/notify.json and passes only the two live-check knobs through', () => {
+  assert.deepEqual(notifyEnv({ home: '/Users/p' }), { PIR_NOTIFY_CONFIG: '/Users/p/.pir/notify.json' });
+  assert.deepEqual(
+    notifyEnv({ home: '/Users/p', env: { PIR_NOTIFY_REMIND_MS: '120000', PIR_NOTIFY_ICON: 'https://x/i.png', PIR_HOME: '/elsewhere', OTHER: '1' } }),
+    { PIR_NOTIFY_CONFIG: '/Users/p/.pir/notify.json', PIR_NOTIFY_REMIND_MS: '120000', PIR_NOTIFY_ICON: 'https://x/i.png' },
+  );
+  assert.throws(() => notifyEnv({}), /no home dir/);
+});
+
+async function launchEnvOf(fixtureId, opts = {}) {
+  const ws = workspace();
+  try {
+    const into = join(ws.dir, 'scratch-repo');
+    const spawn = fakeSpawner();
+    await runScenario({
+      fixtureId,
+      scratchDir: into,
+      install: installFake({ into, controlLog: '2026-01-01T00:00:00Z spawn T01\n', slug: getFixture(fixtureId).slug }),
+      spawn,
+      readWorkers: () => (spawn.children[0].exit(0), []),
+      procs: fakeProcs([]),
+      gitRun: () => ({ ok: true, stdout: '' }),
+      makeAnswerer: () => ({ tick: () => {} }),
+      pollMs: 1,
+      ...opts,
+    });
+    return { env: spawn.children[0].opts.env, controlDir: controlDirFor(into, getFixture(fixtureId).slug) };
+  } finally {
+    ws.cleanup();
+  }
+}
+
+test('runScenario: a realNotify fixture reads the person\'s config while PIR_HOME stays scratch (T08)', async () => {
+  const { env, controlDir } = await launchEnvOf('notify-live', {
+    notifyHome: '/Users/p',
+    harnessEnv: { PIR_NOTIFY_REMIND_MS: '120000', PIR_NOTIFY_ICON: 'https://x/i.png' },
+  });
+  assert.equal(env.PIR_NOTIFY_CONFIG, '/Users/p/.pir/notify.json');
+  assert.equal(env.PIR_NOTIFY_REMIND_MS, '120000');
+  assert.equal(env.PIR_NOTIFY_ICON, 'https://x/i.png');
+  assert.equal(env.PIR_HOME, join(controlDir, '..', 'pir-home'), 'the index and the presence marker stay scratch');
+  assert.equal(env.PIR_RUN, '1');
+  assert.equal(env.PARALLEL_COORDINATOR, undefined, 'the agent runs');
+});
+
+test('runScenario: a fixture without realNotify sets no notify config (T08)', async () => {
+  const { env } = await launchEnvOf('pir-coordinator', { notifyHome: '/Users/p', harnessEnv: { PIR_NOTIFY_REMIND_MS: '1' } });
+  assert.notEqual(env.PIR_NOTIFY_CONFIG, '/Users/p/.pir/notify.json');
 });
 
 test('runScenario builds no answerer for a fixture that does not declare answerPending', async () => {

@@ -178,6 +178,13 @@ After each pass the command switches Remote Control on for every live worker wai
 while a parked worker's asking turn is still open, and while the coordinator agent holds the item) and off for every other, unless the run was started with `PARALLEL_REMOTE=0` (see
 [human-flow.md](human-flow.md)); a closing worker switches it off before its input queue ends.
 
+Then, whatever `PARALLEL_REMOTE` says, the command runs the phone alerts: it builds a view of every live
+worker that is the person's by the same predicate, runs the pure episode machine (`notifyStep` in
+`src/core/notify.mjs`), and fires the sends, reminders and clears it returns without awaiting them
+(`notifyPass` and `runNotifyActions` in `coordinate.mjs`). With no `~/.pir/notify.json` nothing is sent.
+On every exit path the clears for open alerts are awaited, bounded at 2 s. See
+[human-flow.md](human-flow.md#phone-alerts--pir-notify).
+
 ## The live status display
 
 While it runs, the command prints a `docker compose up`-style display that updates in place: one
@@ -253,6 +260,11 @@ The run stays open until the person merges `pir/{slug}` into `main` (the command
 its tip) or tells the agent to close it; either ends it as `finished`. If `main` moves meanwhile, the
 branch is re-synced and the report's footer rewritten. The command still never merges into `main`. The
 steps, the report and the failure paths are in [coordinator-agent.md](coordinator-agent.md#the-end-of-the-run).
+
+With phone alerts set up, reaching ready to merge (or red) sends one end-of-run alert, on the first pass
+that reads it and never on a pass that also finishes the run (`endAlertPass`). Without the agent the
+end alert goes on the pass that ends the run, awaited at most 2 s before the process returns (see
+[human-flow.md](human-flow.md#phone-alerts--pir-notify)).
 
 A run ends in one of three ways. With the agent on, the first is the ready-to-merge end above;
 without it (`pir start {slug} --no-coordinator`), it is:

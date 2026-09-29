@@ -5,11 +5,13 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, statSync } from 'node:fs';
+import { readFileSync, statSync, mkdtempSync, rmSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
 import { run, USAGE } from './pir.mjs';
+import { readNotifyConfig, notifyPaths, DEFAULT_ICON } from './notify-config.mjs';
 
 // A set of spies for run's collaborators: startRun and startPlanRun return whatever the test wants, the
 // TUI hand-offs record their calls, and stderr is a sink shaped like process.stderr.
@@ -55,11 +57,12 @@ function harness(startResult, planResult, { box = 'cancel', preflight = { ok: tr
 }
 
 const USAGE_TEXT =
-  'usage: pir                 the dashboard\n' +
-  '       pir plan ["brief"]  plan something new\n' +
-  '       pir start {slug}    build a reviewed plan\n';
+  'usage: pir                    the dashboard\n' +
+  '       pir plan ["brief"]     plan something new\n' +
+  '       pir start {slug}       build a reviewed plan\n' +
+  '       pir notify [test|off]  phone alerts: set up, test, turn off\n';
 
-test('the usage text is exactly the three verbs', () => {
+test('the usage text is exactly the four verbs', () => {
   assert.equal(USAGE, USAGE_TEXT);
 });
 
@@ -275,4 +278,169 @@ test('[start] an unknown flag, or a flag with no slug → usage, exit 2, nothing
     assert.deepEqual(calls.start, [], argv.join(' '));
     assert.deepEqual(errs, [USAGE], argv.join(' '));
   }
+});
+
+// --- pir notify (reliable-notifications T06, DESIGN §2.6, §2.8) ------------------------------------
+// The real config functions on a scratch PIR_HOME; publish, the topic and the QR are injected, so no test
+// reaches ntfy.sh or depends on randomness.
+
+function notifyHarness(t, { results = [{ ok: true, status: 200 }], topics = ['pir-first', 'pir-second'], env: extra = {} } = {}) {
+  const home = mkdtempSync(join(tmpdir(), 'pir-notify-cmd-'));
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+  const env = { PIR_HOME: home, ...extra };
+  const sent = [];
+  const out = [];
+  const errs = [];
+  let topicIx = 0;
+  const deps = {
+    env,
+    stdout: { write: (s) => out.push(s) },
+    stderr: { write: (s) => errs.push(s) },
+    publish: async (fields, opts) => {
+      sent.push({ fields, opts });
+      return results[Math.min(sent.length - 1, results.length - 1)];
+    },
+    newTopic: () => topics[topicIx++],
+    qr: (url) => `[QR ${url}]`,
+  };
+  return { env, sent, out, errs, deps, text: () => out.join(''), errText: () => errs.join('') };
+}
+
+test('[notify] first run: saves the injected topic, prints topic, QR and steps, sends one test alert with the icon', async (t) => {
+  const h = notifyHarness(t);
+  const code = await run(['notify'], h.deps);
+  assert.equal(code, 0);
+  assert.deepEqual(readNotifyConfig(h.env), { server: 'https://ntfy.sh', topic: 'pir-first' });
+  assert.equal(statSync(notifyPaths(h.env).config).mode & 0o777, 0o600);
+  const text = h.text();
+  assert.match(text, /pir-first/);
+  assert.match(text, /\[QR https:\/\/ntfy\.sh\/pir-first\]/);
+  assert.match(text, /Install the ntfy app/);
+  assert.match(text, /Subscribe to topic/);
+  assert.match(text, /Sent a test alert/);
+  assert.equal(h.sent.length, 1);
+  assert.deepEqual(h.sent[0].fields, {
+    server: 'https://ntfy.sh', topic: 'pir-first', title: 'pir', message: 'pir test alert', icon: DEFAULT_ICON,
+  });
+  assert.deepEqual(h.sent[0].opts, { delays: [] }, 'no retry back-off while the person waits at the terminal');
+  assert.equal(h.errText(), '');
+});
+
+test('[notify] PIR_NOTIFY_ICON reaches the test alert', async (t) => {
+  const h = notifyHarness(t, { env: { PIR_NOTIFY_ICON: 'https://e.test/i.png' } });
+  assert.equal(await run(['notify'], h.deps), 0);
+  assert.equal(h.sent[0].fields.icon, 'https://e.test/i.png');
+});
+
+test('[notify] first run with a failing publish: config kept, topic and QR printed, error and `pir notify test` named, exit 1', async (t) => {
+  const h = notifyHarness(t, { results: [{ ok: false, status: null, error: 'fetch failed: ENOTFOUND ntfy.sh' }] });
+  const code = await run(['notify'], h.deps);
+  assert.equal(code, 1);
+  assert.equal(readNotifyConfig(h.env).topic, 'pir-first');
+  assert.match(h.text(), /pir-first/);
+  assert.match(h.text(), /\[QR https:\/\/ntfy\.sh\/pir-first\]/);
+  assert.match(h.errText(), /fetch failed: ENOTFOUND ntfy\.sh/);
+  assert.match(h.errText(), /pir notify test/);
+});
+
+test('[notify] a publish that throws is still a failure with the message, not a crash', async (t) => {
+  const h = notifyHarness(t);
+  h.deps.publish = async () => { throw new Error('boom'); };
+  assert.equal(await run(['notify'], h.deps), 1);
+  assert.match(h.errText(), /boom/);
+});
+
+test('[notify] second run: the same topic printed, no write, no publish', async (t) => {
+  const h = notifyHarness(t);
+  assert.equal(await run(['notify'], h.deps), 0);
+  const before = readFileSync(notifyPaths(h.env).config, 'utf8');
+  h.out.length = 0;
+  let wrote = 0;
+  const code = await run(['notify'], { ...h.deps, writeNotifyConfig: () => { wrote += 1; } });
+  assert.equal(code, 0);
+  assert.equal(wrote, 0);
+  assert.equal(h.sent.length, 1, 'only the first run published');
+  assert.equal(readFileSync(notifyPaths(h.env).config, 'utf8'), before);
+  assert.match(h.text(), /pir-first/);
+  assert.match(h.text(), /\[QR https:\/\/ntfy\.sh\/pir-first\]/);
+  assert.match(h.text(), /Alerts are on/);
+});
+
+test('[notify test] no config: exit 1, a line naming `pir notify`, nothing sent', async (t) => {
+  const h = notifyHarness(t);
+  assert.equal(await run(['notify', 'test'], h.deps), 1);
+  assert.equal(h.sent.length, 0);
+  assert.match(h.errText(), /pir notify/);
+});
+
+test('[notify test] with config: sends the test alert with the icon; ok → exit 0 with the HTTP status', async (t) => {
+  const h = notifyHarness(t);
+  await run(['notify'], h.deps);
+  h.out.length = 0;
+  assert.equal(await run(['notify', 'test'], h.deps), 0);
+  assert.equal(h.sent.length, 2);
+  assert.deepEqual(h.sent[1].fields, h.sent[0].fields);
+  assert.match(h.text(), /HTTP 200/);
+});
+
+test('[notify test] with config and a failing publish: exit 1 with the error', async (t) => {
+  const h = notifyHarness(t, { results: [{ ok: true, status: 200 }, { ok: false, status: 503, error: 'HTTP 503' }] });
+  await run(['notify'], h.deps);
+  assert.equal(await run(['notify', 'test'], h.deps), 1);
+  assert.match(h.errText(), /HTTP 503/);
+});
+
+test('[notify off] removes config and marker, says alerts are off; a later notify makes a new topic', async (t) => {
+  const h = notifyHarness(t);
+  await run(['notify'], h.deps);
+  writeFileSync(notifyPaths(h.env).presence, '');
+  h.out.length = 0;
+  assert.equal(run(['notify', 'off'], h.deps), 0);
+  assert.match(h.text(), /Alerts are off/);
+  assert.equal(readNotifyConfig(h.env), null);
+  assert.equal(existsSync(notifyPaths(h.env).presence), false);
+  assert.equal(await run(['notify'], h.deps), 0);
+  assert.equal(readNotifyConfig(h.env).topic, 'pir-second');
+  assert.equal(h.sent.at(-1).fields.topic, 'pir-second');
+});
+
+test('[notify off] with nothing set up still succeeds', async (t) => {
+  const h = notifyHarness(t);
+  assert.equal(run(['notify', 'off'], h.deps), 0);
+});
+
+test('[notify] corrupt config: says so, names `pir notify off`, exit 1, nothing overwritten or sent', async (t) => {
+  const h = notifyHarness(t);
+  const { dir, config } = notifyPaths(h.env);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(config, '{not json');
+  assert.equal(await run(['notify'], h.deps), 1);
+  assert.equal(readFileSync(config, 'utf8'), '{not json');
+  assert.equal(h.sent.length, 0);
+  assert.match(h.errText(), /pir notify off/);
+  // `test` on a corrupt config says the same rather than "not set up".
+  h.errs.length = 0;
+  assert.equal(await run(['notify', 'test'], h.deps), 1);
+  assert.equal(h.sent.length, 0);
+  assert.match(h.errText(), /pir notify off/);
+  // And `off` is the way out.
+  assert.equal(run(['notify', 'off'], h.deps), 0);
+  assert.equal(readNotifyConfig(h.env), null);
+});
+
+test('[notify] an unknown or extra argument → usage, exit 2, nothing touched', async (t) => {
+  for (const argv of [['notify', 'foo'], ['notify', 'test', 'x'], ['notify', 'off', 'now'], ['notify', '--test']]) {
+    const h = notifyHarness(t);
+    assert.equal(run(argv, h.deps), 2, argv.join(' '));
+    assert.deepEqual(h.errs, [USAGE], argv.join(' '));
+    assert.equal(h.sent.length, 0);
+    assert.equal(readNotifyConfig(h.env), null);
+  }
+});
+
+test('[notify] the default QR renders the ntfy URL with uqr', async (t) => {
+  const h = notifyHarness(t);
+  delete h.deps.qr;
+  assert.equal(await run(['notify'], h.deps), 0);
+  assert.match(h.text(), /[█▀▄]{10}/, 'a block-character QR is drawn');
 });

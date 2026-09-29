@@ -46,9 +46,12 @@ correlate several at once. The footer reads `● Txx slug — asking you; open i
 whole run reads `asking you` in amber bold while any of its workers waits on the person, so the question
 is visible without opening the run (see [detached-runs.md](detached-runs.md)).
 
-The person **selects the task's row in the run's live view, opens its worker (→ or Enter), and
-answers in the worker's conversation, in plain English** (see [detached-runs.md](detached-runs.md)
-for the view and its keys). The answer is dropped into the control folder's `inbox/` and forwarded
+The person **selects the task's row in the run's live view, opens its worker (→ or Enter, or one
+click on the row), and answers in the worker's conversation, in plain English** (see
+[detached-runs.md](detached-runs.md) for the view and its keys, and
+[The mouse](detached-runs.md#the-mouse) for what a click, hover and the wheel do on each screen). The
+answer itself stays on the keyboard: a question picker and a permission prompt take no mouse action,
+and the wheel only scrolls the conversation. The answer is dropped into the control folder's `inbox/` and forwarded
 to the worker at once (see [control-folder.md](control-folder.md)); the worker un-parks and
 continues. The command does not read or relay the answer: it only carries it. A worker is not a
 `claude agents` session any more — it appears in that list, but cannot be attached to — so the places
@@ -168,8 +171,10 @@ times it out.
 ## Answering away from the terminal — Remote Control
 
 While a worker waits on the person — a question or decision report whose asking turn has ended, a
-stopped worker, a permission request, or a question set ([When a row reads asking you](#when-a-row-reads-asking-you)) — its session is switched to Claude's Remote Control, so the person is notified in the
-Claude app and can answer from claude.ai or the phone as well as from `pir`. Each pass the command
+stopped worker, a permission request, or a question set ([When a row reads asking you](#when-a-row-reads-asking-you)) — its session is switched to Claude's Remote Control, so the person
+can answer from claude.ai or the phone as well as from `pir`. What tells the person's phone is pir's
+own alert through ntfy, when it is set up ([Phone alerts](#phone-alerts--pir-notify), below); Remote
+Control is only the way to reply. Each pass the command
 works out which live workers are waiting (`remoteWanted` in `coordinate.mjs`) and switches each worker
 on or off to match (`remoteControl` in `worker-proc.mjs`, which uses the SDK's undocumented
 `enableRemoteControl`; the CLI's `--remote-control` flag and `/remote-control` are refused for a
@@ -188,12 +193,77 @@ off there too.
   to a question report goes straight into the worker and its text is **not** in pir's log: the
   conversation view shows the worker's response, not what was typed. pir still sees that the person
   spoke, from the `command_lifecycle` message that announces it, and un-parks the task (above).
-- **Notifications.** All three kinds notify the Claude app; for a permission request or a question
-  report the notification was seen to arrive later than for a question set (2026-09-26).
+- **Notifications.** With phone alerts set up, pir sends the alert itself and the Claude app is kept
+  silent for build workers and the agent (below). Without them, the Claude app's own push is the only
+  one: all three kinds push, but for a permission request or a question report it was seen to arrive
+  later than for a question set (2026-09-26), and pir cannot make it push or repeat.
 - **Opt out** with `PARALLEL_REMOTE=0` when starting the run (`PARALLEL_REMOTE=0 pir start {slug}`): no
-  session then appears in the person's claude.ai account. A refusal — Remote Control disabled by
+  session then appears in the person's claude.ai account, and phone alerts still come, without a link.
+  A refusal — Remote Control disabled by
   managed settings, no claude.ai login — is logged `remote-control-failed` in that worker's
   conversation once, and the worker is still answered in `pir` as usual.
+
+### Phone alerts — `pir notify`
+
+pir tells the person's phone, through ntfy (a free push service with an iPhone and Android app, no
+account; the topic name is the only secret), when a question in a build run becomes theirs and when
+the run waits on their merge. It is off until set up, per account, not per project.
+
+**Setting up.** `pir notify` makes a random topic (`pir-` and 24 random characters), saves it in
+`~/.pir/notify.json` (mode 0600), prints it with a QR code and the steps, and sends a test alert. In the
+ntfy app, tap "Subscribe to topic" and type the topic: the iOS ntfy app has no QR scanner, and the phone
+camera opens the code as a web link (seen 2026-09-28). If the test alert fails the topic stays saved,
+and the command exits non-zero naming `pir notify test`. Running `pir notify` again shows the same topic
+and QR and sends nothing, so the phone stays subscribed. `pir notify test` sends a test alert;
+`pir notify off` deletes the settings and stops alerts at once, in runs already going too (the settings
+are read at each send). A later `pir notify` makes a new topic. An unreadable settings file sends nothing,
+and `pir notify` says to reset it with `pir notify off`.
+
+**When a question alerts.** A worker's alert is driven by the same test as its `asking you` row and its
+Remote Control (`waitingFor(...).holder === 'person'`), so the three always agree. A question the
+coordinator agent answers never alerts. One alert goes out each time a worker becomes the person's,
+for any reason: the agent passed it on, the agent held it past the hold limit, it is an `ask`-bin or
+destructive request, the agent is down or failed, or the run has no agent. The same worker asking again
+later is a new alert; two workers asking at once give two. End-of-run helper workers alert like any
+other. Planning sessions (`pir plan`) never alert, and their Claude app push is left as it is.
+
+- **Timing.** The alert is sent as soon as the worker's Remote Control link is known, so tapping it
+  opens that worker's chat in the Claude app (seen on the iPhone, 2026-09-28). It goes without a link
+  under `PARALLEL_REMOTE=0`, when Remote Control was refused, or after 20 s with no link. The loop polls
+  every 5 s, so an alert follows the question by a few seconds; a question held by the agent alerts
+  only when the hold limit (5 minutes) hands it over.
+- **Wording.** Title `{plan} · {task} {role}` (a helper: `{plan} · main-sync resolve-main-merge`). The
+  message opens with why it is the person's — `Agent passed it on: `, `Agent didn't answer in time: `,
+  `Needs your yes: `, `Agent unavailable: `, or nothing when the run has no agent — then `asks: ` and
+  the question (the first of a question set, with `(+N more)`), or `wants to run ` and the tool and its
+  command for a permission request, cut to 150 characters. Those 150 characters pass through ntfy.sh.
+- **Reminder.** One, 15 minutes after the alert if the question is still the person's, prefixed
+  `Still waiting: `. It shares the first alert's sequence id, so a phone that supports updates replaces
+  the first alert with it rather than stacking them. Never more than one.
+- **Clear.** When the question is answered, or the worker stops waiting, or the run exits, pir clears
+  the alert from the phone. ntfy documents this for Android and the web app; on the iPhone it was seen
+  to work too (2026-09-28).
+- **Icon.** Every alert carries pir's icon by URL. ntfy shows it on Android only; the iPhone shows its
+  default (seen 2026-09-28).
+- **The Claude app is silenced.** With alerts set up when a build worker or the agent starts, pir sets
+  `CLAUDE_CLIENT_PRESENCE_FILE` in its session to `~/.pir/presence` and makes that file exist, so the
+  Claude app does not push a second time (seen silent on the iPhone, 2026-09-28). Remote Control is
+  untouched. `pir notify off` deletes the file, so running sessions push through the Claude app again.
+- **In `pir`.** A worker's conversation shows `alert sent to your phone` or `reminder sent to your
+  phone` (note `notified`), or once per question `alert not sent: …` (note `notify-failed`) after ntfy
+  failed. A send that cannot reach ntfy, or gets a 5xx or 429, is retried after 5 s and 30 s; another
+  4xx fails at once. The run never waits for an alert, and `asking you` in `pir` is unaffected.
+  `control.log` gets a `notify send|reminder|clear …` line per request, never the topic.
+- **Restart.** Alerts are remembered only while the coordinator runs; after a restart a worker already
+  asking gets a fresh alert.
+
+**The end-of-run alert.** One alert when the run starts waiting on the person's merge: `{plan} · ready
+to merge` with `All {n} tasks merged. git merge pir/{slug}`, or `{plan} · not ready` with `Tests red
+on pir/{slug}: ` and the reason, or `Merge with main unresolved on pir/{slug}`. With the agent its tap
+opens the agent's chat, where the report and the merge are presented (seen 2026-09-28), and it is noted
+`notified` in the agent's conversation. Without the agent it is sent as the run ends, without a link.
+It has no reminder and is not cleared; `main` moving and the branch re-synced does not send it again,
+but restarting pir into `ready to merge` does.
 
 ## A task that needs the person is an ordinary worker that asks
 

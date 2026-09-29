@@ -23,14 +23,14 @@ done · ⛔ blocked, needs a human.
 
 | # | Task | Depends on | State | Notes |
 |---|---|---|---|---|
-| T01 | mouse-rig | — | ⬜ | |
-| T02 | row-hits | — | ⬜ | |
-| T03 | hover-style | — | ⬜ | |
-| T04 | mouse-on | T01 | ⬜ | |
-| T05 | list-clicks | T02, T03, T04 | ⬜ | |
-| T06 | conversation-wheel | T04 | ⬜ | |
-| T07 | mouse-docs | T05, T06 | ⬜ | |
-| T08 | mouse-drill | T05, T06, T07 | ⬜ | |
+| T01 | mouse-rig | — | ✅ | |
+| T02 | row-hits | — | ✅ | |
+| T03 | hover-style | — | ✅ | |
+| T04 | mouse-on | T01 | ✅ | |
+| T05 | list-clicks | T02, T03, T04 | ✅ | |
+| T06 | conversation-wheel | T04 | ✅ | |
+| T07 | mouse-docs | T05, T06 | ✅ | |
+| T08 | mouse-drill | T05, T06, T07 | ✅ | |
 
 **Review queue:** *(empty)*
 
