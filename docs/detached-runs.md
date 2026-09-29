@@ -189,8 +189,8 @@ coordinator agent, `c` opens the agent's conversation in the same view, and the 
 to a worker; with no agent, `c` leaves a note in the footer
 ([coordinator-agent.md](coordinator-agent.md#the-agents-own-conversation)).
 
-The view reads the worker's conversation log from the control folder (the last 256 KB, then every
-append; `log-follow.mjs`), so a closed `pir` loses nothing and two open screens agree. Messages from pir, from the person and from the worker are marked and coloured
+The view reads the worker's conversation log from the control folder (the last 256 KB plus any request
+still pending from before it, then every append; `log-follow.mjs`), so a closed `pir` loses nothing and two open screens agree. Messages from pir, from the person and from the worker are marked and coloured
 differently. A pending permission request or question set is highlighted and pinned above the typing
 box (see [human-flow.md](human-flow.md)). Text Claude injects itself (a loaded skill's body, marked
 `isSynthetic`) is not drawn.

@@ -1,6 +1,6 @@
 // The conversation view: the third view of the `pir` screen, one worker's conversation (plans/live-workers
-// DESIGN §2.5–§2.9, §2.11, §2.14; T13). It reads the worker's log (log-follow.mjs: the last 256 KB, then
-// every append), paints core/conversation.mjs's lines, and turns the person's keys into inbox drops
+// DESIGN §2.5–§2.9, §2.11, §2.14; T13). It reads the worker's log (log-follow.mjs: the last 256 KB, plus any
+// still-pending request from before it, then every append), paints core/conversation.mjs's lines, and turns the person's keys into inbox drops
 // (person-inbox.mjs's dropPersonInput). Every rule about what a line says is core's; this file decides
 // only layout and which key does what, after §2.11's key table.
 //
@@ -79,6 +79,21 @@ function parseLine(line) {
   }
 }
 
+// carryPending(skipped, tail) → the skipped lines that are requests still pending across the whole log,
+// for followLog's `carry`. The view opens on the log's last 256 KB, and a helper's or a long command's
+// output can push a question the person has not answered out of it within a minute (plan-0077: the row
+// read `asking you` from the full log while the view showed no question). Pending is judged on the whole
+// log, the way the row judges it, so a request answered or cancelled anywhere is not brought back.
+export function carryPending(skipped, tail) {
+  const skippedEntries = skipped.map(parseLine);
+  const pending = new Set(workerActivity([...skippedEntries, ...tail.map(parseLine)]).pending.map((r) => r.requestId));
+  if (!pending.size) return [];
+  return skipped.filter((_, i) => {
+    const e = skippedEntries[i];
+    return e?.dir === 'request' && pending.has(e.requestId);
+  });
+}
+
 // Why the view says nothing went: dropPersonInput's `not-running`, or its own words.
 function refusal(reason, what) {
   if (reason === 'not-running') return `the run is not running — ${what} was not sent`;
@@ -144,6 +159,7 @@ export function createConversationView({
 
   const follower = worker?.logPath
     ? follow(worker.logPath, {
+        carry: carryPending,
         ...followOptions,
         onEntries(lines) {
           for (const l of lines) entries.push(parseLine(l));
