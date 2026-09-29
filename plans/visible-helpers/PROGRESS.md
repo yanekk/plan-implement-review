@@ -17,7 +17,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | # | Task | Depends on | State | Notes |
 |---|---|---|---|---|
 | T01 | helper-fold | — | ✅ | |
-| T02 | helper-rig-scenario | — | ⬜ | |
+| T02 | helper-rig-scenario | — | ✅ | |
 | T03 | helper-lines | T01, T02 | ⬜ | |
 | T04 | interrupt-gate | T01 | ⬜ | |
 | T05 | interrupt-gate-view | T02, T03, T04 | ⬜ | |
