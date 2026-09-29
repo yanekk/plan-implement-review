@@ -24,7 +24,7 @@ done · ⛔ blocked, needs a human.
 | # | Task | Depends on | State | Notes |
 |---|---|---|---|---|
 | T01 | wake-on-activity | — | ✅ | |
-| T02 | end-sequence-no-wait | T01 | ⬜ | |
+| T02 | end-sequence-no-wait | T01 | ✅ | |
 | T03 | split-coordinator-drill | — | ✅ | |
 | T04 | split-plan-rig | — | ✅ | |
 | T05 | split-conversation-rig | — | ✅ | |
