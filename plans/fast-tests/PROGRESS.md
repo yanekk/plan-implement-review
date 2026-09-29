@@ -26,8 +26,8 @@ done · ⛔ blocked, needs a human.
 | T01 | wake-on-activity | — | ⬜ | |
 | T02 | end-sequence-no-wait | T01 | ⬜ | |
 | T03 | split-coordinator-drill | — | ✅ | Six files, one per drill × size, plus `coordinator-drill-helpers.mjs` exporting the three drills. Review clean, no fix commit: helper diffed against the old file (only loop headers changed), sorted names identical, npm test green, slowest files alone 46.4 s under light load against the 51.4 s limit. |
-| T04 | split-plan-rig | — | ⬜ | |
-| T05 | split-conversation-rig | — | ⬜ | |
+| T04 | split-plan-rig | — | ✅ | |
+| T05 | split-conversation-rig | — | ✅ | |
 | T06 | suite-timing-proof | T01, T02, T03, T04, T05 | ⬜ | |
 
 **Review queue:** —
