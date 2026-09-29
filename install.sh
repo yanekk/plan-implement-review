@@ -26,7 +26,7 @@ SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MARKER="Appended by plan-implement-review"
 DEST="$HOME/.claude/skills"
 ENGINE_DEST="$HOME/.claude/pir-engine"
-SKILLS=(pir-plan pir-review-plan pir-work pir-implement pir-review pir-install pir-worker pir-e2e pir-coordinator)
+SKILLS=(pir-plan pir-review-plan pir-work pir-implement pir-review pir-install pir-worker pir-e2e pir-coordinator pir-finisher)
 # The user-facing launchers, installed onto the PATH by install_launcher. pir (T13) starts a run
 # detached and opens the cross-repo dashboard; it is the only one since pir-coordinate was sunset
 # (live-workers §2.13).
@@ -130,7 +130,25 @@ install_engine() {
     mkdir -p "$ENGINE_DEST"
     cp -R "$SRC/src" "$ENGINE_DEST/src"
     echo "  refreshed $ENGINE_DEST/src (parallel coordinator engine)"
+    # The finisher's built-in rules live beside src/: pir falls back to
+    # {engine}/rules/default/on-finish.md when no rules file exists (finisher DESIGN §2.2).
+    cp -R "$SRC/rules" "$ENGINE_DEST/rules"
+    echo "  refreshed $ENGINE_DEST/rules (the finisher's built-in rules)"
+    seed_default_rules
     install_engine_deps
+}
+
+# Seed the person's default finishing rules only when absent, so their edits survive a reinstall
+# (finisher DESIGN §2.2). Never overwritten; to take a newer default, delete the file and re-run.
+PIR_DEFAULT_RULES="$HOME/.pir/default/rules/on-finish.md"
+seed_default_rules() {
+    if [[ -e "$PIR_DEFAULT_RULES" ]]; then
+        echo "  kept your $PIR_DEFAULT_RULES"
+        return 0
+    fi
+    mkdir -p "$(dirname "$PIR_DEFAULT_RULES")"
+    cp "$SRC/rules/default/on-finish.md" "$PIR_DEFAULT_RULES"
+    echo "  seeded $PIR_DEFAULT_RULES (the finisher's default rules)"
 }
 
 # The engine's two runtime packages (pi-tui, the Agent SDK; live-workers DESIGN §5) go in a
