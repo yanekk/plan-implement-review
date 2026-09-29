@@ -544,8 +544,9 @@ is free, and choose another with them if it is not:
 
 - no `plans/{slug}/` on the run's base branch:
   `git ls-tree -d "$(git config branch.$(git branch --show-current).pirBase)" plans/{slug}` prints
-  nothing (check the base branch itself, not only your worktree, since it may have moved since your
-  branch was cut);
+  nothing and exits 0 (check the base branch itself, not only your worktree, since it may have moved
+  since your branch was cut). A `fatal: Not a valid object name` exit means `pirBase` is unset on your
+  branch, not that the slug is free: tell the person and stop;
 - no branch `pir/{slug}`: `git branch --list pir/{slug}` prints nothing;
 - it is kebab-case (`^[a-z0-9]+(-[a-z0-9]+)*$`) and not of the form `plan-{hex4}` (`plan-` and four
   hex characters), which is the name `pir` gives a run before it has a slug.
