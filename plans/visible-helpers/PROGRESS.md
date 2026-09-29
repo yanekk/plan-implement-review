@@ -19,7 +19,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T01 | helper-fold | — | ✅ | |
 | T02 | helper-rig-scenario | — | ✅ | |
 | T03 | helper-lines | T01, T02 | ⬜ | |
-| T04 | interrupt-gate | T01 | ⬜ | |
+| T04 | interrupt-gate | T01 | ✅ | |
 | T05 | interrupt-gate-view | T02, T03, T04 | ⬜ | |
 | T06 | helpers-drill | T03, T05 | ⬜ | |
 | T07 | docs | T06 | ⬜ | |
