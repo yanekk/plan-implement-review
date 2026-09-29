@@ -5,6 +5,7 @@ hand with the user · 📌 worth knowing · 🔄 a decision the user changed.
 
 | Date | | Finding |
 |---|---|---|
+| 2026-09-29 | 📌 | The end sync's `prepareBase` runs synchronously in the coordinator loop: an unreachable remote that times out rather than refuses blocks the pass and live view up to 30 s on every hold retry (60 s) and every watch (5 min). Accepted in T07 review. |
 | 2026-09-29 | 📌 | The dashboard's start and resume notes (`pir-tui.mjs`, `Could not start {slug}: {reason}`) show the bare reason code, e.g. `no-base-setting`, not startRun's `message` with the fix. `pir start` prints the full text. Outside T06's files. |
 | 2026-09-29 | 📌 | `validBranchName` accepts a base named exactly `pir`, which git cannot hold beside `pir/*` branches (ref directory clash), so cutting `pir/plan-*` would fail with a git error. §2.2 refuses only `pir/`. Left for the user. |
 | 2026-09-29 | 📌 | T03 renamed `syncMain`/`mainContains`/`mainTip` to `syncBase`/`baseContains`/`baseTip`; `docs/branch-model.md` and `docs/coordinator-agent.md` still name the old functions. For T10. |
