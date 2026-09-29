@@ -12,9 +12,9 @@ past.
 
 **Plan reviewed:** 2026-09-28 — 3 fixed, 2 decided with the user
 
-**Status:** Planned 2026-09-28. Nothing built.
-**Last updated:** 2026-09-28
-**Next `pir-work` will:** T01 box-grammar: it heads the critical path.
+**Status:** T01–T04 done; T05 drill left.
+**Last updated:** 2026-09-29
+**Next `pir-work` will:** T05 box-commands-drill.
 
 ## Tasks
 
@@ -26,10 +26,10 @@ done · ⛔ blocked, needs a human.
 | T01 | box-grammar | — | ✅ | |
 | T02 | plan-scan | — | ✅ | |
 | T03 | box-completion | T01 | ✅ | |
-| T04 | box-starts-build | T01, T02, T03 | 🔍 | runTui passes scanPlans and isBuilding to the list view; `/start` goes to startRun and lands in the build's live view. 7 unit, 5 rig tests; T03's BS workaround dropped. Deviations: submitBox is async; isBuilding exported and pure; the docs heading is now `The dashboard box`, anchors updated. |
+| T04 | box-starts-build | T01, T02, T03 | ✅ | Review clean, no fix commit. Probed: breaking openKey or the alreadyRunning branch fails the unit tests; a pty drill at 80×24 walked @re to the live view and back with no overflow and no stray process; docs anchors checked. Deviations accepted: async submitBox, exported isBuilding, heading `The dashboard box`. |
 | T05 | box-commands-drill | T04 | ⬜ | |
 
-**Review queue:** T04
+**Review queue:** *(empty)*
 
 ## Blocked on the user
 
