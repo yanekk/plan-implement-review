@@ -12,9 +12,9 @@ cell also fixes the over-budget cell they walk past.
 
 **Plan reviewed:** 2026-09-29 — 1 fixed, 3 decided with the user
 
-**Status:** T01 built, awaiting review. The prototype in `prototype/` was approved by the user.
+**Status:** T01 reviewed ✅. The prototype in `prototype/` was approved by the user.
 **Last updated:** 2026-09-29
-**Next `pir-work` will:** review T01.
+**Next `pir-work` will:** implement T02.
 
 ## Tasks
 
@@ -23,11 +23,11 @@ done · ⛔ blocked, needs a human.
 
 | # | Task | Depends on | State | Notes |
 |---|---|---|---|---|
-| T01 | group-steps-core | — | 🔍 | Grouping, labels, refused, `open`, `hit` in conversation.mjs; `toolUseId` on requests. 17 new tests. Deviations: new fixture `stream-sample.full-lines.json` snapshots pre-change full mode; rig wheel test presses Tab (300 steps now fold); refused needs reply `behavior: 'deny'`. |
+| T01 | group-steps-core | — | ✅ | Review clean, no fix commit. Checked every listed test asserts its case, full-mode snapshot, SDK `toolUseID` in sdk.d.ts, painter clips over-wide suffixes. Probed parallel uses with a pinned request (id stable) and interrupt-cancelled permission (reads failed, logged in FINDINGS). Deviations accepted: full-lines fixture, rig wheel test uses Tab. |
 | T02 | group-steps-view | T01 | ⬜ | |
 | T03 | group-steps-drill | T01, T02 | ⬜ | |
 
-**Review queue:** T01
+**Review queue:** empty
 
 ## Blocked on the user
 
