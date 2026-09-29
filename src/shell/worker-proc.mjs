@@ -181,6 +181,7 @@ export function startWorker({
     const entry = log({
       dir: 'request',
       requestId,
+      toolUseId: opts.toolUseID, // ties a refusal to its step (group-commands DESIGN §2.2)
       toolName,
       input,
       suggestions: opts.suggestions ?? [],
