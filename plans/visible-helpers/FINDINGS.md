@@ -7,6 +7,8 @@ Legend: 🐞 defect found · ✅ verified by hand with the user · 📌 worth kn
 
 | Date | | Finding |
 |---|---|---|
+| 2026-09-29 | 🔄 | T05 review: the person chose to wrap the Esc warning, not clip it; at 80 columns two helpers overflowed and the second name was lost. |
+| 2026-09-29 | 📌 | T05 review: PgUp/PgDn and the mouse wheel leave the Esc warning armed, as they leave the permission gate armed; DESIGN §2.5 says any other key disarms. Left as is: the warning stays on screen. |
 | 2026-09-29 | 🔄 | T03: the person chose `1 step`, not `1 steps`, on the helper line. |
 | 2026-09-29 | 📌 | T03: the parent's `⎿ Agent` step line shows the tool result's last line, which is Claude's "agentId: … (internal ID - do not mention to user…)" text. Unchanged here. |
 | 2026-09-29 | 📌 | T03: `openScreen.waitFor` needs output quiet for `settleMs`; a running helper repaints every `stepMs`, so e2e on the `helpers` rig needs `settleMs` below `stepMs` (used 100 vs 400). |

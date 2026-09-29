@@ -757,3 +757,18 @@ test('a helper\'s permission request names the helper, pinned and answered; unkn
   assert.equal(conv.pinned.helper, null);
   assert.equal(textOf(promptLines(conv.pinned, { taskId: 'T05' })[0]), '⚑ T05 wants to use Bash');
 });
+
+// visible-helpers T05 (DESIGN §2.6): the note pir put before the person's message is drawn under it.
+test('a sent message with a preface draws `you ▸ {text}` then the note as a `pir ▸` line; without one, no note', () => {
+  const note = '[pir] Before this message, the person\'s interrupt stopped your helper: "Survey the code". It will not report back. Start it again or do the work yourself if it is still needed.';
+  const log = [
+    { t: t++, dir: 'out', from: 'person', kind: 'message', text: 'continue', preface: note, helpersStopped: ['h1'] },
+    out('person', 'again'),
+  ];
+  const { lines } = buildConversation(log, { width: 400, taskId: 'T05' });
+  assert.deepEqual(all(lines), ['you ▸ continue', `pir ▸ ${note}`, 'you ▸ again']);
+  assert.equal(styleOf(lines[1]), 'pir');
+  const narrow = all(buildConversation(log, { width: 60, taskId: 'T05' }).lines);
+  assert.ok(narrow[1].startsWith('pir ▸ [pir] Before this message'));
+  assert.ok(narrow.length > 3, 'the note wraps like any message');
+});

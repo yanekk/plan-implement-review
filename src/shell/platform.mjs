@@ -337,10 +337,11 @@ export function createPlatform({
     // send(id, text, { from }) → { ok }. A user message into the worker's input queue, taken into the
     // open turn if one is running (DESIGN §2.2). A dead worker logs it `undelivered`; an unknown id has
     // no log to write to.
-    send(id, text, { from = 'pir' } = {}) {
+    // `preface` and `helpersStopped` carry the note naming helpers an interrupt stopped (visible-helpers §2.6).
+    send(id, text, { from = 'pir', preface, helpersStopped } = {}) {
       const rec = recordOf(id);
       if (!rec) return { ok: false };
-      return { ok: rec.worker.send(text, { from }) };
+      return { ok: rec.worker.send(text, { from, preface, helpersStopped }) };
     },
 
     // interrupt(id, { from }) → { ok }. The SDK's interrupt() (DESIGN §2.8); its acknowledgement arrives

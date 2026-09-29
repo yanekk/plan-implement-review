@@ -209,6 +209,8 @@ export function buildConversation(entries, { full = false, width = 80, taskId = 
         case 'sent': {
           const { prefix, style } = senderPrefix(ev.from, taskId);
           lines.push(...wrapped(prefix, ev.text, style, w));
+          // The model read the note first; the person reads it under their own words (visible-helpers §2.6).
+          if (ev.preface) lines.push(...wrapped('pir ▸ ', ev.preface, 'pir', w));
           break;
         }
         case 'text': {

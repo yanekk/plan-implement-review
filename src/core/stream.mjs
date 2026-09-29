@@ -155,8 +155,13 @@ function readRequest(entry) {
 // Something pir sent the worker (DESIGN §2.2, §2.6–§2.8).
 function readOut(entry) {
   switch (entry.kind) {
-    case 'message':
-      return [{ kind: 'sent', from: str(entry.from), text: str(entry.text) }];
+    case 'message': {
+      const ev = { kind: 'sent', from: str(entry.from), text: str(entry.text) };
+      // The note pir put before the person's text, and the helpers it names (visible-helpers DESIGN §2.6).
+      if (typeof entry.preface === 'string' && entry.preface) ev.preface = entry.preface;
+      if (Array.isArray(entry.helpersStopped)) ev.helpersStopped = entry.helpersStopped.filter((id) => typeof id === 'string');
+      return [ev];
+    }
     case 'interrupt':
       return [{ kind: 'interrupt', from: str(entry.from) }];
     case 'reply':
