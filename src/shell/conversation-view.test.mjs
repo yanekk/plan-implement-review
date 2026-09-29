@@ -349,13 +349,15 @@ test('a live worker whose log says it exited turns read-only', () => {
   assert.deepEqual(t.drops, []);
 });
 
-test('Tab switches between one line per step and full detail', () => {
+test('Tab switches between grouped steps and full detail', () => {
   const use = entry({ dir: 'in', event: { type: 'assistant', message: { content: [{ type: 'tool_use', id: 'tu1', name: 'Bash', input: { command: 'npm test' } }] } } });
   const res = entry({ dir: 'in', event: { type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'tu1', content: 'first out\n209 passed' }] } } });
   const t = makeView({ log: [init(), opening, use, res] });
-  assert.match(t.text(), /⎿ Bash npm test {2}209 passed/);
-  assert.doesNotMatch(t.text(), /first out/);
+  // group-commands §4: the default view folds the step into its group line; full detail shows it whole.
+  assert.match(t.text(), /▸ Ran 1 shell command/);
+  assert.doesNotMatch(t.text(), /⎿ Bash|first out/);
   t.v.handleInput(KEY.tab);
+  assert.match(t.text(), /⎿ Bash npm test/);
   assert.match(t.text(), /first out/);
   assert.equal(t.v.state.full, true);
   assert.match(t.screen().at(-1), /Tab detail/, 'the hint names the key, the same both ways');

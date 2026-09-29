@@ -120,6 +120,9 @@ function resultText(content) {
 function readRequest(entry) {
   if (typeof entry.requestId !== 'string' || typeof entry.toolName !== 'string') return [{ kind: 'raw', raw: entry }];
   const input = isObject(entry.input) ? entry.input : {};
+  // The tool use the request is about (group-commands DESIGN §2.2), so a refusal can be told from a failure.
+  // Logs written before it was recorded have none, and the event then carries no field.
+  const tie = typeof entry.toolUseId === 'string' ? { toolUseId: entry.toolUseId } : {};
   if (entry.toolName === ASK_TOOL) {
     const questions = (Array.isArray(input.questions) ? input.questions : []).filter(isObject).map((q) => ({
       question: str(q.question),
@@ -127,11 +130,12 @@ function readRequest(entry) {
       multiSelect: q.multiSelect === true,
       options: (Array.isArray(q.options) ? q.options : []).filter(isObject).map((o) => ({ label: str(o.label), description: str(o.description) })),
     }));
-    return [{ kind: 'questions', requestId: entry.requestId, questions, input }];
+    return [{ kind: 'questions', requestId: entry.requestId, ...tie, questions, input }];
   }
   return [{
     kind: 'permission',
     requestId: entry.requestId,
+    ...tie,
     toolName: entry.toolName,
     input,
     description: str(entry.description),

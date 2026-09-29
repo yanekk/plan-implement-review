@@ -358,7 +358,8 @@ test('the driver walks the tour on the real pir screen', { timeout: 90000 }, asy
   const opened = screens[2].rows;
   assert.match(opened[0], new RegExp(`^T01  worker ${rig.workerId.slice(0, 8)} · live`), 'the header names the worker');
   const text = (i) => screens[i].rows.join('\n');
-  assert.match(text(2), /⎿ Bash npm test/, 'the tool steps are in the scrollback, the failed one included');
+  // group-commands §4: the four opening steps fold into one group line, flagged with the failed npm test.
+  assert.match(text(2), /▸ Read 1 file, searched 1 time, ran 1 shell command, edited 1 file · 1 failed/, 'the tool steps are in the scrollback, the failed one included');
   assert.match(text(13), /Which name should the rig command have\? → pir-rig/);
   assert.match(text(screens.length - 1), /T01/, '← returned to the run\'s live view');
 
@@ -435,6 +436,10 @@ for (const [cols, rows] of [[80, 24], [120, 40]]) {
       await screen.waitFor(/pick a task/);
       screen.send('\x1b[C');
       let s = await screen.waitFor(/That was 300 steps/, 30000);
+      // group-commands §4: the 300 steps fold into one group line by default, so the history to scroll is
+      // full detail's (Tab), every result line drawn.
+      screen.send('\t');
+      s = await screen.waitFor(/step 300 done/);
       assert.doesNotMatch(s.at(-1), /more below/);
       const mid = Math.floor(rows / 2);
 
@@ -442,8 +447,8 @@ for (const [cols, rows] of [[80, 24], [120, 40]]) {
       screen.send(mouseBytes.wheel(10, mid, 'up'));
       s = await screen.waitFor(/↓ 6 more below/);
       assert.match(s.at(-1), /^↓ 6 more below · ↵ send/);
-      assert.doesNotMatch(s.join('\n'), /That was 300 steps/, 'the end scrolled out of view');
-      assert.match(s.join('\n'), /step 295 done/, 'earlier lines came into view');
+      assert.doesNotMatch(s.join('\n'), /That was 300 steps|step 300 done/, 'the end scrolled out of view');
+      assert.match(s.join('\n'), /line \d+ of a long result/, 'earlier lines came into view');
 
       screen.send(mouseBytes.wheel(10, mid, 'down'));
       screen.send(mouseBytes.wheel(10, mid, 'down'));
