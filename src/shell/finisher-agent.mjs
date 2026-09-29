@@ -136,6 +136,14 @@ export function startFinisher({
 
   // ---- The gate ----
   function decide(toolName, input, opts = {}) {
+    // The finisher acts on a Go the moment its question returns, while pir's next drain may be a pass
+    // (up to POLL_MS, and a phone answer wakes nothing) away; judged on the stale phase, its first step
+    // would be denied (review T04). So a drain runs here first, statuses before the log as in drain(), so a
+    // question is never filed under steps a waiting `ready` replaces; what it finds is carried to drain().
+    if ((state.phase === 'awaiting-go' || state.phase === 'stuck') && toolName !== 'AskUserQuestion') {
+      drainStatuses(carry, { pass: false });
+      scanLog(carry);
+    }
     const phase = state.phase;
     const fileVerdict = FILE_TOOLS.has(toolName) ? fileGate(toolName, input) : undefined;
     const verdict = finisherVerdict({ phase, toolName, input, askRules, fileVerdict });
@@ -265,7 +273,8 @@ export function startFinisher({
     appendLedger(line);
   }
 
-  function drainStatuses(out) {
+  // `pass: false` (from decide) leaves a file that does not parse alone: only pir's passes count its retry.
+  function drainStatuses(out, { pass = true } = {}) {
     let files = [];
     try {
       files = readdirSync(statusDir).filter((f) => f.endsWith('.json')).sort();
@@ -285,6 +294,7 @@ export function startFinisher({
         obj = JSON.parse(raw);
       } catch {
         // The Write tool has no rename, so the file may still be landing: left one more pass (DESIGN §2.6).
+        if (!pass) continue;
         if (!unparsed.has(file)) {
           unparsed.add(file);
           continue;
@@ -378,8 +388,11 @@ export function startFinisher({
     if (worker) step(worker);
   }
 
+  // What a scan from `decide` found between drains; the next drain reports it.
+  let carry = { accepted: [], refused: [], go: null };
   function drain() {
-    const out = { accepted: [], refused: [], go: null };
+    const out = carry;
+    carry = { accepted: [], refused: [], go: null };
     drainStatuses(out);
     scanLog(out);
     return out;

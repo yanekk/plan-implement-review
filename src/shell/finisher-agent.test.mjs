@@ -454,3 +454,43 @@ test('resynced: false in finishing and in stuck after a go', async (t) => {
   assert.equal(fin.resynced('abc'), false);
   assert.equal(fin.phase(), 'stuck');
 });
+
+// ---- The go between passes (review T04) ----
+
+test('go: a step the finisher takes straight after the Go, before the next drain, is judged in finishing', async (t) => {
+  const s = scratch(t);
+  const { fin } = start(s, askThen([
+    { tool: { id: 'm5', name: 'Bash', input: { command: 'git -C /repo merge pir/demo' }, allowRuled: true } },
+    { await: 'user' },
+  ]), t);
+  const req = await toAwaitingGo(s, fin);
+  fin.session.answer(req.requestId, goReply('Go'), { from: 'person' });
+  // No drain: pir's pass may be seconds away, and the finisher acts on the Go at once.
+  await waitFor(() => gateNotes(fin).find((n) => n.requestId === 'm5'), 'merge decided');
+  assert.equal(gateNotes(fin).find((n) => n.requestId === 'm5').verdict, 'allow');
+  assert.equal(fin.phase(), 'finishing');
+  // The next drain still reports the go, once.
+  assert.deepEqual(fin.drain().go, { by: 'person' });
+  assert.equal(fin.drain().go, null);
+  assert.equal(fin.ledger().filter((l) => l.kind === 'go').length, 1);
+});
+
+test('go between passes: a waiting ready is applied before the log, and a torn status is not refused early', async (t) => {
+  const s = scratch(t);
+  const { fin } = start(s, askThen([
+    { tool: { id: 'l1', name: 'Bash', input: { command: 'git status' } } },
+    { tool: { id: 'l2', name: 'Bash', input: { command: 'git status' } } },
+    { await: 'user' },
+  ]), t);
+  const req = await toAwaitingGo(s, fin);
+  status(s, '2-ready.json', { ...READY, steps: ['re-prepared'] });
+  status(s, '3-torn.json', '{"kind": "st');
+  fin.session.answer(req.requestId, goReply('Not yet'), { from: 'person' });
+  await waitFor(() => gateNotes(fin).filter((n) => n.requestId?.startsWith('l')).length === 2, 'two looks decided');
+  assert.deepEqual(fin.view().steps, ['re-prepared'], 'the ready was applied by the gate');
+  assert.ok(existsSync(join(s.statusDir, '3-torn.json')), 'two gate checks are not two passes');
+  const out = fin.drain();
+  assert.deepEqual(out.accepted.map((x) => x.steps), [['re-prepared']], 'reported by the next drain');
+  assert.deepEqual(out.refused, []);
+  assert.equal(fin.drain().refused.length, 1, 'refused on the second pass');
+});
