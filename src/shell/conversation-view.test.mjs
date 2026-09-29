@@ -4,7 +4,7 @@ import { mkdtempSync, readdirSync, readFileSync, writeFileSync, appendFileSync, 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { stripTerminalSequences } from '@earendil-works/pi-tui';
-import { createConversationView, hasEnded, slashCommandsOf, slashProvider } from './conversation-view.mjs';
+import { createConversationView, hasEnded, slashCommandsOf, slashProvider, statusParts } from './conversation-view.mjs';
 import { followLog } from './log-follow.mjs';
 import { dropPersonInput } from './person-inbox.mjs';
 import { withHeadLine } from './pir-tui.mjs';
@@ -542,6 +542,26 @@ test('the status line counts background work: alone when the worker waits, besid
   assert.match(t.text(), /◌ 1 running in the background/);
   t.push(end('b'));
   assert.doesNotMatch(t.text(), /running in the background$/m);
+});
+
+// visible-helpers T03 (DESIGN §2.2): helpers are named apart from background commands on the status line.
+test('the status line names running helpers apart from background commands, idle and busy', () => {
+  const helper = (id, callId, description) => entry({ dir: 'in', event: { type: 'system', subtype: 'task_started', task_id: id, tool_use_id: callId, task_type: 'local_agent', description, is_backgrounded: true } });
+  const bg = (id, description) => entry({ dir: 'in', event: { type: 'system', subtype: 'task_started', task_id: id, description, is_backgrounded: true, task_type: 'local_bash' } });
+  const end = (id) => entry({ dir: 'in', event: { type: 'system', subtype: 'task_notification', task_id: id, status: 'completed' } });
+  const result = () => entry({ dir: 'in', event: { type: 'result', subtype: 'success' } });
+  const t = makeView({ log: [init(), opening, helper('h1', 'c1', 'Survey'), helper('h2', 'c2', 'Tests'), result()] });
+  assert.match(t.text(), /^◌ 2 helpers running$/m);
+  t.push(end('h2'));
+  t.push(said('still going'));
+  assert.match(t.text(), /^● working… · 1 helper running$/m);
+  t.push(bg('b1', 'slow'));
+  assert.match(t.text(), /^● working… · 1 helper running · 1 running in the background$/m);
+  t.push(result());
+  assert.match(t.text(), /^◌ 1 helper running · 1 running in the background$/m);
+  t.push(end('h1'));
+  assert.match(t.text(), /^◌ 1 running in the background$/m, 'no helper: today\'s text');
+  assert.equal(statusParts({ helpers: 0, background: 0 }), '');
 });
 
 // T14: a planning session resumed into the log it exited in is live again; only an exit after the last

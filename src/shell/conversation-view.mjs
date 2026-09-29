@@ -56,6 +56,15 @@ export function slashProvider(names) {
   };
 }
 
+// statusParts(conv) → what the status line above the box says is running (visible-helpers DESIGN §2.2):
+// `2 helpers running · 1 running in the background`, either part alone, or '' when nothing runs.
+export function statusParts({ helpers = 0, background = 0 } = {}) {
+  const parts = [];
+  if (helpers) parts.push(`${helpers} helper${helpers === 1 ? '' : 's'} running`);
+  if (background) parts.push(`${background} running in the background`);
+  return parts.join(' · ');
+}
+
 // Parse one log line; one that does not parse stays a string, which core reads as `raw` (§2.3).
 // hasEnded(entries) → whether the log's session is over: it exited (or the SDK failed) and was not
 // resumed since. A resumed planning session appends to the log it exited in (pir-plan-command §2.14), so
@@ -321,9 +330,10 @@ export function createConversationView({
     else if (p) for (const l of promptLines(p, { width: w, taskId })) bottom.push(paint(l, w));
     else if (!m.readOnly) {
       // A worker waiting on background work is not idle (user 2026-09-26, T18 drill): say how much is running.
-      const bg = m.conv.background ? `${m.conv.background} running in the background` : '';
-      if (m.activity.state === 'busy') bottom.push(paint([span('● working…', 'active'), ...(bg ? [span(` · ${bg}`, 'dim')] : [])], w));
-      else if (bg) bottom.push(paint([span(`◌ ${bg}`, 'dim')], w));
+      // Its helpers are named apart from its background commands (visible-helpers DESIGN §2.2).
+      const parts = statusParts(m.conv);
+      if (m.activity.state === 'busy') bottom.push(paint([span('● working…', 'active'), ...(parts ? [span(` · ${parts}`, 'dim')] : [])], w));
+      else if (parts) bottom.push(paint([span(`◌ ${parts}`, 'dim')], w));
     }
     if (status) bottom.push(paint([span(status.text, status.style)], w));
     const boxAt = bottom.length;
