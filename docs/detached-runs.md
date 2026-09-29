@@ -51,8 +51,10 @@ repos is two independent runs. A run is in exactly one of four states, decided b
 - **running** — its recorded process is alive and is the one we started.
 - **finished** — it ended cleanly and recorded a `finished` final status: a green hand-off, a red
   feature branch (all tasks built, the feature tests fail), or nothing left to do. With the coordinator
-  agent on, the hand-off does not end the run: it waits in `ready to merge`, still `running`, and is
-  `finished` once the person merges the feature branch or tells the agent to close the run. A red branch is
+  agent on, the hand-off does not end the run: a green one is handed to the finisher, still `running`,
+  and is `finished` once the finisher is done after the person's go
+  ([finisher.md](finisher.md)); a red one, or one whose finisher could not go on, waits in `ready to
+  merge`, still `running`, and is `finished` once the person merges the feature branch or closes the run. A red branch is
   still `finished` — the run did its job and the red code is the person's to fix and merge.
 - **stopped** — the person stopped it (below), which records a `stopped` final status.
 - **crashed** — its recorded process is gone and it recorded no final status. This covers a true
@@ -137,8 +139,11 @@ merge conflict asks nothing and does not count, and neither does a task whose it
 holds (`asking coordinator`): the run turns amber only once the agent passes an item on or an item is
 reserved for the person. A running planning run reads `asking you` the same way while its planner or
 reviewer has a question set or permission request open ([planning-runs.md](planning-runs.md)). A build
-waiting at its end with a green hand-off reads `● ready to merge` in amber and counts in `waiting for you`;
-the STATE column widens to fit it only while such a row is listed. A red hand-off reads `running`. This is a display state only (`runDisplayState` in
+waiting for the finisher's go reads `● ready for your go` in amber and counts in `waiting for you`; a
+stuck finisher, or one holding a request, reads `asking you`, and one in its other phases `running`
+([finisher.md](finisher.md#on-screen)). A build waiting at its end in `ready to merge` (the finisher
+could not go on) reads `● ready to merge` in amber and counts in `waiting for you`;
+the STATE column widens to fit either only while such a row is listed. A red hand-off reads `running`. This is a display state only (`runDisplayState` in
 `dashboard.mjs`): the run is still classified `running`, and every chord treats it so. There is no process-number column — the person does not act on it.
 Colour carries state and is never the only signal (glyphs carry the same state, so `NO_COLOR` and a
 colour-blind reader lose nothing): a running run is green, finished and stopped are dim, crashed is
@@ -166,8 +171,9 @@ coordinator's own model (`buildDisplay`) and renderer (`src/shell/render.mjs`), 
 snapshot changes. Finished, stopped and crashed runs are openable too — their last frame is exactly
 what a person opens the dashboard to see — shown marked stale, with the note that re-starting the slug
 resumes it. A finished run's stale note offers `Hand-off: git merge pir/{slug}` only when its last
-frame was green. A run with the coordinator agent shows its end in the live frame's footer while it
-waits: `✔ ready to merge · git merge pir/{slug}` with `report: plans/{slug}/REPORT.md`, or `✗ not
+frame was green and no finisher ended it (then it reads `The finisher is done.`). While the finisher is
+on it owns the footer (`◆ finisher ready · c to review and say go`, one line per phase,
+[finisher.md](finisher.md#on-screen)). A run waiting in `ready to merge` shows its end in the live frame's footer: `✔ ready to merge · git merge pir/{slug}` with `report: plans/{slug}/REPORT.md`, or `✗ not
 ready · tests red on pir/{slug} — no merge offered` (see [coordinator-agent.md](coordinator-agent.md#ready-to-merge)). A red one — complete but not ready to merge — shows the red footer (the reason and
 the log path, from `runState.testsReason`) and a stale note saying it is not ready to merge and to fix
 the branch, with no merge line; a finished run with no snapshot at all points at `run.log` rather than
@@ -186,7 +192,8 @@ drawn with `@earendil-works/pi-tui`; the rules for what each line says are in
 `src/core/conversation.mjs`). A task with no worker yet says so in the footer instead. The view opens
 the task's live worker; with none live, its latest one, read-only, with no typing box. In a build with a
 coordinator agent, `c` opens the agent's conversation in the same view, and the person types to it as
-to a worker; with no agent, `c` leaves a note in the footer
+to a worker; once the finisher has replaced the agent, `c` opens the finisher's instead, and the hint
+reads `c finisher`; with no agent, `c` leaves a note in the footer
 ([coordinator-agent.md](coordinator-agent.md#the-agents-own-conversation)).
 
 The view reads the worker's conversation log from the control folder (the last 256 KB, then every
@@ -221,7 +228,7 @@ top of them; see [The mouse](#the-mouse)):
 |---|---|
 | List, box bare (`@`) | `↑↓` move · `↵` or `→` open the selected run · `Ctrl+R Ctrl+R` resume · `Ctrl+S Ctrl+S` stop · `Ctrl+X Ctrl+X` remove · `esc` quit · any other key types into the box |
 | List, box typed in | `@repo/plan <brief>` or `@repo/start <plan>` · `↵` start planning or start the build · `shift+↵` or `ctrl+j` new line · `esc` or `Ctrl+C` reset the box to `@` · `Ctrl+R/S/X` twice as above · arrows move the cursor · while a pop-up (repo, command or plan) is open, `↑↓` move, `Tab`/`↵` pick and `esc` closes it |
-| Watch | `↑↓` pick a task · `→` or `↵` open its worker · `c` open the coordinator agent (only in a run that has one) · `←` back to the list · `Ctrl+S Ctrl+S` stop this run · `esc` quit |
+| Watch | `↑↓` pick a task · `→` or `↵` open its worker · `c` open the coordinator agent, or the finisher once it has taken over (only in a run that has one) · `←` back to the list · `Ctrl+S Ctrl+S` stop this run · `esc` quit |
 | Steps (a planning run) | `↑↓` pick a step · `→` or `↵` open its conversation · `←` back to the list · `Ctrl+S Ctrl+S` stop this run (while it runs) · `esc` quit |
 | The go question | `↵` start the build · `n` not now · `←` back to the list · `esc` quit, leaving the question in place |
 | Brief box (`pir plan`) | typing · `↵` start planning · `shift+↵` or `ctrl+j` new line · `esc` or `Ctrl+C` cancel |
