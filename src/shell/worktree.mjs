@@ -16,7 +16,8 @@
 //   - Module-level functions (openFeature/createTask/integrate/mergeTask/remove) are the
 //     T06.md interface, stateless — each derives every path it needs from git, so they can be
 //     called directly. The hand-verify snippet in T06.md does exactly this: `m.openFeature('demo')`.
-//   - createWorktree({ root }) returns the same methods bound to one repo root, plus a stateful
+//   - createWorktree({ root, base, from }) returns the same methods bound to one repo root (and the
+//     base/commit a new feature branch is cut from), plus a stateful
 //     commitFeature(message). It is the drop-in the coordinator loop injects in T08, mirroring the
 //     fake's createFakeWorktree(...). commitFeature (the reconcile commit, added for the loop —
 //     FINDINGS 2026-09-08) is not in the T06.md interface and cannot be stateless: the loop calls it
