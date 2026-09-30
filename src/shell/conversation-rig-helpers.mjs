@@ -320,8 +320,9 @@ export function defineFinisherDrillTests([cols, rows]) {
       await openFinisher(screen, cols);
       screen.send(`${ESC}[B`); // down to Not yet
       screen.send('\r');
-      let s = (await screen.waitFor(/project rules → Not yet/)).join('\n');
-      assert.match(s, /Not yet, then\. Nothing has changed/);
+      // The screen draws the picked answer itself, a frame before the finisher's reply can arrive: wait for
+      // the frame that holds both, not the first one with the answer (it failed on a loaded machine).
+      let s = (await screen.waitFor((text) => /project rules → Not yet/.test(text) && /Not yet, then\. Nothing has changed/.test(text))).join('\n');
       assert.equal(rig.finisher.phase(), 'awaiting-go', 'a Not yet is not a go');
       await waitFor(() => rig.finisher.ledger().some((l) => l.kind === 'not-yet'), { what: 'the Not yet in the ledger (the next pass drains it)' });
       assert.equal(rig.finisher.phase(), 'awaiting-go', 'still no go once it is drained');
