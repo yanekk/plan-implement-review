@@ -41,7 +41,7 @@ export const PLAN_RIG_SLUG_2 = 'rig-plan-two';
 export const PLAN_RIG_QUESTION = 'Which way should the plan go?';
 export const PLAN_RIG_REVIEW_ASK = 'Is the name rig-plan fine before I mark it reviewed?';
 export const PLAN_RIG_REVIEW_COMMAND = 'git log --oneline -3';
-export const SCRIPT_SETS = ['happy', 'no-plan', 'taken-slug', 'crash-planner', 'reviewer-asks']; // planning sets; 'coordinator-drill' and 'end-helper' plan nothing
+export const SCRIPT_SETS = ['happy', 'no-plan', 'taken-slug', 'crash-planner', 'reviewer-asks', 'usage']; // planning sets; 'coordinator-drill' and 'end-helper' plan nothing
 
 const q = (s) => `'${String(s).replaceAll("'", `'\\''`)}'`;
 const GIT_ID = ['-c', 'user.name=pir rig', '-c', 'user.email=rig@pir.invalid'];
@@ -53,6 +53,37 @@ function reportStep(steps) {
   const i = steps.findIndex((s) => typeof s.sh === 'string' && s.sh.includes('kind=planned'));
   if (i < 0) throw new Error('plannerScript has no `planned` report step');
   return i;
+}
+
+// usageEvent({ fiveHour, sevenDay, uuid }) → the `rate_limit_event` a session on a claude.ai subscription
+// receives (api-service DESIGN §2.3), for a script's `emit` step. The five-hour `resetsAt` is fixed and
+// was already in the past when this was written, so no real session can ever produce this reading: a test
+// tells the fake's numbers from the person's by it (api-usage-e2e.test.mjs).
+export const USAGE_RESETS = Object.freeze({ fiveHour: 1790334600, sevenDay: 1790830800 });
+export function usageEvent({ fiveHour = 0.2, sevenDay = 0.11, uuid = '00000000-0000-4000-8000-0000000000aa' } = {}) {
+  return {
+    type: 'rate_limit_event', session_id: '{{session}}', uuid,
+    rate_limit_info: {
+      status: 'allowed', rateLimitType: 'five_hour', resetsAt: USAGE_RESETS.fiveHour,
+      unifiedWindows: {
+        five_hour: { utilization: fiveHour, resetsAt: USAGE_RESETS.fiveHour },
+        seven_day: { utilization: sevenDay, resetsAt: USAGE_RESETS.sevenDay },
+      },
+    },
+  };
+}
+
+// withUsageEvent(entries, match, event) → entries whose `match` session emits the usage event right after
+// its first init, which is where a real session's first reading arrives: before it has done anything. So a
+// test sees the reading as soon as the session starts, without playing the run to its end (api-service T08).
+export function withUsageEvent(entries, match, event = usageEvent()) {
+  if (!entries.some((e) => e.match === match)) throw new Error(`withUsageEvent: no entry matches "${match}"`);
+  return entries.map((e) => {
+    if (e.match !== match) return e;
+    const at = e.script.findIndex((st) => st.emit?.type === 'system' && st.emit.subtype === 'init');
+    if (at < 0) throw new Error(`withUsageEvent: the "${match}" script emits no init`);
+    return { ...e, script: [...e.script.slice(0, at + 1), { emit: event }, ...e.script.slice(at + 1)] };
+  });
 }
 
 // scriptSet(name) → the [{ match, script }] entries of a PIR_FAKE_CLAUDE_SCRIPTS file:
@@ -67,6 +98,8 @@ function reportStep(steps) {
 //   reviewer-asks  as happy, but the reviewer first asks permission to run PLAN_RIG_REVIEW_COMMAND, then
 //                  asks PLAN_RIG_REVIEW_ASK in plain words and waits for the person's reply before it
 //                  reviews (T14): a live reviewer to answer, and to stop and resume mid-review
+//   usage          as happy, but the planner receives one usage event as it starts (usageEvent), so the
+//                  planning run writes the rig home's .pir/usage.json (api-service T08)
 //   coordinator-drill  no planning: startPlanRig commits the reviewed three-task plan DRILL_SLUG on `main`,
 //                  whose implementers each ask one thing and whose coordinator agent reacts to whatever
 //                  it is sent (pir-coordinator T07; fake/sessions.mjs drillScripts)
@@ -76,6 +109,7 @@ function reportStep(steps) {
 export function scriptSet(name = 'happy') {
   if (name === 'coordinator-drill') return drillScripts();
   if (name === 'end-helper') return helperDrillScripts();
+  if (name === 'usage') return withUsageEvent(scriptSet('happy'), PLANNER_MATCH);
   const planner = plannerScript({ slug: PLAN_RIG_SLUG, question: PLAN_RIG_QUESTION });
   let reviewed = PLAN_RIG_SLUG;
   let plannerSteps;

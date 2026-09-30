@@ -7,6 +7,7 @@ Legend: 🐞 defect found · ✅ verified by hand with the user · 📌 worth kn
 
 | Date | | Finding |
 |---|---|---|
+| 2026-09-30 | 📌 | T08: a before-and-after mtime check of the real `~/.pir/usage.json` would fail during any live run once this is installed. The test refuses only the fake reading, known by five-hour `resets_at` 1790334600 (`USAGE_RESETS` in `plan-rig.mjs`). |
 | 2026-09-30 | 🐞 | T09 review: a signal (Ctrl-C, a command timeout) ended the check before its teardown and left `com.pir.api-service.check` loaded. Reproduced on the real launchd, fixed, tests lock it. Reviewer's two full runs exited 0; `launchctl print` exited 113 after each. |
 | 2026-09-30 | 📌 | T09, worker-driven: `node src/shell/harness/service-live-check.mjs` exited 0. On 0.2 s; `kill -9` after 11 s up, back in 0.1 s; killed again at once, back in 10.1 s; refresh 0.2 s; off 0.1 s. `launchctl print` of `com.pir.api-service.check` then exited 113. |
 | 2026-09-30 | 📌 | T09: no `backgroundtaskmanagement` line in the system log during the check, so macOS showed no background-item notice. The plist sat outside the login-item folder, so this does not predict the real install. Inferred from the log, not the screen. |
