@@ -5,9 +5,9 @@ lives in [FINDINGS.md](FINDINGS.md). Sixty words to a Notes cell, counted.
 
 **Plan reviewed:** 2026-09-29 — 3 fixed, 4 decided with the user
 
-**Status:** Building. T01 implemented, awaiting review.
+**Status:** Building. T01 reviewed and done.
 **Last updated:** 2026-09-30
-**Next `pir-work` will:** review T01 settings-commands.
+**Next `pir-work` will:** implement T02 single-flow.
 
 ## Tasks
 
@@ -15,7 +15,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 
 | # | Task | Depends on | State | Notes |
 |---|---|---|---|---|
-| T01 | settings-commands | — | 🔍 | `parseSettings` takes `setup`/`test`; `effectiveCommands`, `commandsRefusalText`, `resolveSettings` added, `resolveBaseSetting` built on it. 16 new tests. Deviations: a whitespace-only command line is rejected too. Three tests outside the file list pin the helpers' settings text and were updated. `no-commands` text is one line, naming only missing keys (user, 2026-09-30). |
+| T01 | settings-commands | — | ✅ | Reviewed: no defect. One test added: a malformed `setup`/`test` now also refuses a plan or build start, which nothing pinned. Probed odd shapes, duplicate and `__proto__` keys, multi-line entries, and the other settings writers. Deviations stand: whitespace-only lines rejected; one-line `no-commands` text (user, 2026-09-30). `npm test` green on the third run; two pty timing flakes under load. |
 | T02 | single-flow | — | ⬜ | |
 | T03 | held-sessions | — | ⬜ | |
 | T04 | single-program | T02, T03 | ⬜ | |
@@ -29,7 +29,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T12 | single-live | T07, T11 | ⬜ | |
 | T13 | docs-and-readme | T12 | ⬜ | |
 
-**Review queue:** T01
+**Review queue:** empty
 
 ## Blocked on the user
 
