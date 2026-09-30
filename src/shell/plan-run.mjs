@@ -3,8 +3,9 @@
 //   node src/shell/plan-run.mjs --control <dir> [--resume]
 //
 // `pir plan` (startPlanRun, T08) cuts the plan branch, writes <dir>/brief.md and <dir>/state.json, and
-// spawns this program detached. It holds one Claude session at a time through the build's worker line
-// (startWorker, startPersonInbox, workers.json), reads the session's report files, runs the git checks
+// spawns this program detached. It holds one Claude session at a time through the shared holder
+// (held-session.mjs: startWorker, workers.json, the grants; startPersonInbox on its platform), reads the
+// session's report files, runs the git checks
 // a report claims, and hands everything to core/planflow's decidePlanStep, whose actions it executes in
 // order. It decides nothing itself: every branch below is either an action of decidePlanStep or the
 // plumbing that feeds it facts.
@@ -18,7 +19,6 @@
 // change of what the screen would show, and the final status to the snapshot and the index entry. Without
 // it neither is touched, so a bare run in a test leaves no dashboard trace.
 
-import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmdirSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import {
@@ -32,17 +32,14 @@ import {
 import { parseProgress } from '../core/progress.mjs';
 import { parseTestBlock } from '../core/testblock.mjs';
 import { parseRecord } from '../core/runrecord.mjs';
-import { stoppedOnPerson } from '../core/asking.mjs';
-import { allowResult, workerActivity } from '../core/stream.mjs';
 import { writeJsonAtomic } from './atomic-write.mjs';
-import { createWaker, drainDropFolder } from './drop-folder.mjs';
-import { startTimeOf as startTimeOfReal } from './identity.mjs';
+import { drainDropFolder } from './drop-folder.mjs';
+import { STOP_CLOSE, createSessionHolder, nextSessionLogPath, sessionAsking, trackStoppedAt } from './held-session.mjs';
 import { indexDir as indexDirOf, recordPath, removeRecord, renameRecord, updateRecord } from './index-store.mjs';
-import { createGrants, startPersonInbox } from './person-inbox.mjs';
+import { startPersonInbox } from './person-inbox.mjs';
 import { resolveClaudePath } from './platform.mjs';
 import { reapRecorded } from './reap.mjs';
 import { writeSnapshot as writeSnapshotReal } from './snapshot-store.mjs';
-import { startWorker as startWorkerReal, writeWorkersFile } from './worker-proc.mjs';
 import {
   git as gitReal,
   readRunBase,
@@ -53,45 +50,19 @@ import {
 import { resolveBaseSetting } from './base-branch.mjs';
 import { refusalText } from '../core/basebranch.mjs';
 
+// The session helpers moved to held-session.mjs with the holder; they stay exported here for the
+// planning run's callers. nextPlanLogPath is nextSessionLogPath: a planning step's name is its log prefix.
+export { findSessionLog, sessionAsking, stepWorkedMs, trackStoppedAt } from './held-session.mjs';
+export const nextPlanLogPath = nextSessionLogPath;
+
 // The wait between loop turns when nothing wakes it. A report, a person's input or any entry in the
 // session's log wakes it at once; this is only the backstop for a missed watch event.
 const POLL_MS = 5000;
-
-// A stop has 4 s before `pir` sends SIGKILL (DESIGN §2.16), so the session gets 1 s to go on its own
-// input closing and 3 s after its SIGTERM; the reap covers anything left.
-const STOP_CLOSE = { graceMs: 1000, killMs: 3000 };
 
 // The report kinds each step acts on (DESIGN §2.4). Only `planned` and `reviewed` claims need the git
 // checks; `no-plan` and `not-reviewed` end the run on the session's word.
 const STEP_KINDS = { plan: ['planned', 'no-plan'], review: ['reviewed', 'not-reviewed'] };
 const CHECKED_KINDS = new Set(['planned', 'reviewed']);
-
-// A pending request is the session asking the person (a permission prompt or a question set).
-const REQUEST_KINDS = new Set(['permission', 'questions']);
-
-// sessionAsking(state, live) → null | 'permission' | 'questions' | 'question' (stopped-worker-asking §2.3)
-//   What a step's live session is asking the person, read the same way by the row and by its clock. A
-//   pending request names its kind. A stopped session (stoppedOnPerson: idle, no background job) asks a
-//   plain-text 'question' only while no report of the current step is accepted: a planner idle after its
-//   accepted `planned` waits on pir's checks and close, not on the person. state.accepted is cleared at
-//   every step change, so when set it is always the current step's.
-export function sessionAsking(state, live) {
-  const activity = live?.activity;
-  if (REQUEST_KINDS.has(activity?.state)) return activity.state;
-  return live && stoppedOnPerson(activity) && !state.accepted ? 'question' : null;
-}
-
-// trackStoppedAt(state, views, stoppedAt, now) — the step clock's stop: for each live session, stamp
-// stoppedAt[step] on the first paint that reads it asking (either rule of sessionAsking), keep the stamp
-// while it stays asking, and clear it once it is not. Mutates and returns stoppedAt.
-export function trackStoppedAt(state, views, stoppedAt, now) {
-  for (const v of views) {
-    if (!v.live) continue;
-    if (sessionAsking(state, v)) stoppedAt[v.step] ??= now();
-    else delete stoppedAt[v.step];
-  }
-  return stoppedAt;
-}
 
 const ROLE = { plan: 'planner', review: 'reviewer' };
 
@@ -102,27 +73,6 @@ export const reportsDirOf = (controlDir) => join(controlDir, 'reports');
 // (DESIGN §2.2, §2.6), so the root is four levels up whichever name it sits under.
 export function rootOf(controlDir) {
   return resolve(controlDir, '..', '..', '..', '..');
-}
-
-// nextPlanLogPath(controlDir, step) → conversations/plan-{n}.ndjson or review-{n}.ndjson, n one past the
-// highest there (DESIGN §2.3), counted from the folder so a second session of a step never overwrites
-// the first one's conversation.
-export function nextPlanLogPath(controlDir, step, { readdir = readdirSync } = {}) {
-  const prefix = step === 'plan' ? 'plan' : 'review';
-  const dir = join(controlDir, 'conversations');
-  let names = [];
-  try {
-    names = readdir(dir);
-  } catch {
-    names = [];
-  }
-  const re = new RegExp(`^${prefix}-(\\d+)\\.ndjson$`);
-  let max = 0;
-  for (const n of names) {
-    const m = re.exec(n);
-    if (m) max = Math.max(max, Number(m[1]));
-  }
-  return join(dir, `${prefix}-${max + 1}.ndjson`);
 }
 
 // planRunBase({ worktree, root, env }) → { ok: true, base } | { ok: false, message } — the planning run's
@@ -264,86 +214,6 @@ export function findControlDir(controlDir, { readdir = readdirSync, exists = exi
   return controlDir;
 }
 
-// stepWorkedMs(logs) → how long a finished step's sessions worked, in ms, from their conversation logs'
-// `t` stamps, or null when no log has two stamps. A resumed session appends to the log it exited in
-// after a `resumed` note, so each log is cut into segments at those notes and the time between a stop
-// and its resume is not counted, as the task rows' clocks do not count time nobody was working (T14,
-// user 2026-09-26: a finished step shows how long it took, as the prototype does). Pure: `logs` is one
-// array of parsed entries per log.
-export function stepWorkedMs(logs) {
-  let total = 0;
-  let any = false;
-  for (const entries of logs) {
-    let first = null;
-    let last = null;
-    const close = () => {
-      if (first != null && last != null && last > first) {
-        total += last - first;
-        any = true;
-      }
-      first = last = null;
-    };
-    for (const e of entries) {
-      if (e?.dir === 'note' && e.kind === 'resumed') close();
-      if (!Number.isFinite(e?.t)) continue;
-      first ??= e.t;
-      last = e.t;
-    }
-    close();
-  }
-  return any ? total : null;
-}
-
-// A conversation log's entries, the lines that parse; a missing log reads as none.
-function readLogEntries(path) {
-  let text = '';
-  try {
-    text = readFileSync(path, 'utf8');
-  } catch {
-    return [];
-  }
-  const out = [];
-  for (const line of text.split('\n')) {
-    if (!line.trim()) continue;
-    try {
-      out.push(JSON.parse(line));
-    } catch {
-      // a torn last line of a killed session: skipped
-    }
-  }
-  return out;
-}
-
-// findSessionLog(controlDir, step, sessionId) → the conversation log a session wrote, or null: the
-// highest-n plan-{n} / review-{n} log whose `init` carries that session id. A resumed session appends
-// to it, so the person reads one conversation (DESIGN §2.3, §2.14).
-export function findSessionLog(controlDir, step, sessionId, { readdir = readdirSync, readFile = readFileSync } = {}) {
-  const prefix = step === 'plan' ? 'plan' : 'review';
-  const dir = join(controlDir, 'conversations');
-  let names = [];
-  try {
-    names = readdir(dir);
-  } catch {
-    return null;
-  }
-  const re = new RegExp(`^${prefix}-(\\d+)\\.ndjson$`);
-  const logs = names
-    .map((name) => ({ name, n: Number(re.exec(name)?.[1] ?? NaN) }))
-    .filter((l) => Number.isFinite(l.n))
-    .sort((a, b) => b.n - a.n);
-  const needle = `"session_id":${JSON.stringify(sessionId)}`;
-  for (const l of logs) {
-    let text = '';
-    try {
-      text = readFile(join(dir, l.name), 'utf8');
-    } catch {
-      continue;
-    }
-    if (text.includes(needle)) return { logPath: join(dir, l.name), n: l.n };
-  }
-  return null;
-}
-
 // reviewerChecks({ slug, worktree, git }) → { ok, reason } — the §2.7 checks of a `reviewed` claim, on
 // the committed tree of the plan branch: the review gate reads reviewed as the build will read it
 // (readReviewGate), the setup/test block parses as the build's pre-flight will parse it, and the
@@ -379,8 +249,6 @@ export async function runPlanning({ controlDir: givenControlDir, resume = false,
     now = Date.now,
     log = (line) => process.stdout.write(`${new Date(now()).toISOString()} ${line}\n`),
     signal,
-    startWorker = startWorkerReal,
-    startTimeOf = startTimeOfReal,
     reap = reapRecorded,
     git = gitReal,
     slugTaken = slugTakenReal,
@@ -388,7 +256,6 @@ export async function runPlanning({ controlDir: givenControlDir, resume = false,
     writeSnapshot = writeSnapshotReal,
     updateRecord: updateRecordFn = updateRecord,
     watch,
-    uuid = randomUUID,
     pollMs = POLL_MS,
   } = deps;
 
@@ -452,121 +319,31 @@ export async function runPlanning({ controlDir: givenControlDir, resume = false,
     log(`reap failed: ${err?.message ?? err}`);
   }
 
-  // ---- The sessions this program holds, and the platform the person inbox forwards through. ----
+  // ---- The sessions this program holds, through the shared holder (held-session.mjs). ----
+  // controlDir, reportsDir, brief and state are read at each spawn: the rename moves the first two and
+  // the reviewer's instruction names the slug the planner chose. startWorker, startTimeOf and uuid are
+  // passed only when a test swaps them, so the holder's own defaults stand otherwise.
+  const holder = createSessionHolder({
+    controlDir: () => controlDir,
+    cwd: worktreeNow,
+    taskLabel: 'plan',
+    roleOf: (step) => ROLE[step],
+    nameOf: (step) => planSessionName({ repo, plan: indexKey(), step }),
+    instructionOf: (step) => (step === 'plan' ? plannerInstruction({ reportsDir, brief }) : reviewerInstruction({ reportsDir, slug: state.slug })),
+    remote,
+    claudePath,
+    log,
+    now,
+    ...(deps.uuid ? { uuid: deps.uuid } : {}),
+    ...(deps.startWorker ? { startWorker: deps.startWorker } : {}),
+    ...(deps.startTimeOf ? { startTimeOf: deps.startTimeOf } : {}),
+  });
   // A session from an earlier program (a resume) is listed closed, with its log, so the screen can still
-  // open its conversation; a resumed one is taken up again in the same record.
-  const sessions = []; // { id, step, n, logPath, worker, live, startTime }
-  for (const step of ['plan', 'review']) {
-    for (const id of state.sessions?.[step] ?? []) {
-      const found = findSessionLog(controlDir, step, id);
-      sessions.push({ id, step, n: found?.n ?? null, logPath: found?.logPath ?? null, worker: null, live: false, startTime: null });
-    }
-  }
-  let current = null;
-  const since = {};
+  // open its conversation.
+  holder.load(state.sessions, ['plan', 'review']);
+  const { platform, waker, grants, since } = holder;
   const stoppedAt = {};
   const took = {};
-  // Wakes on a drop in either folder, any entry in the live session's log, its exit, or a stop; the
-  // shared waker (drop-folder.mjs) with no pass gap, so this loop behaves as it always has.
-  const waker = createWaker();
-  const grants = createGrants();
-  const byId = (id) => sessions.find((s) => s.id === id) ?? null;
-  const workerOf = (id) => byId(id)?.worker ?? null;
-
-  const writeWorkers = () => {
-    try {
-      writeWorkersFile(
-        controlDir,
-        sessions.filter((s) => s.live).map((s) => ({ id: s.id, task: 'plan', role: ROLE[s.step], pid: s.worker.pid, startTime: s.startTime, cwd: worktreeNow() })),
-      );
-    } catch (err) {
-      log(`workers.json write failed: ${err?.message ?? err}`);
-    }
-  };
-
-  const platform = {
-    send: (id, text, opts) => ({ ok: !!workerOf(id)?.send(text, opts) }),
-    interrupt: (id, opts) => {
-      const w = workerOf(id);
-      if (!w) return { ok: false };
-      w.interrupt(opts).catch(() => {});
-      return { ok: byId(id).live };
-    },
-    answer: (id, requestId, result, opts) => ({ ok: !!workerOf(id)?.answer(requestId, result, opts) }),
-    pending: (id) => (byId(id)?.live ? byId(id).worker.pending() : []),
-    note: (id, kind, fields) => {
-      const w = workerOf(id);
-      if (!w) return { ok: false };
-      w.note(kind, fields);
-      return { ok: true };
-    },
-    logPathOf: (id) => byId(id)?.logPath ?? null,
-  };
-
-  // spawn(step, resumeSessionId?) → a fresh session with its opening instruction, or the step's last
-  // session reopened (§2.14): same id, same worktree, the same log after a `resumed` note, and no
-  // opening instruction; decidePlanStep's next action sends it resumeInstruction().
-  const spawn = (step, resumeSessionId = null) => {
-    const prior = resumeSessionId ? byId(resumeSessionId) : null;
-    const id = resumeSessionId ?? uuid();
-    let logPath = prior?.logPath ?? null;
-    if (!logPath) logPath = nextPlanLogPath(controlDir, step);
-    const n = prior?.n ?? Number(/-(\d+)\.ndjson$/.exec(logPath)[1]);
-    const name = planSessionName({ repo, plan: indexKey(), step });
-    const cwd = worktreeNow();
-    const worker = resumeSessionId
-      ? startWorker({ cwd, resume: id, name, logPath, claudePath })
-      : startWorker({ cwd, sessionId: id, name, logPath, claudePath });
-    const rec = prior ?? { id, step, n, logPath, worker: null, live: false, startTime: null };
-    Object.assign(rec, { n, logPath, worker, live: true });
-    rec.startTime = worker.pid ? startTimeOf(worker.pid) : null;
-    if (!prior) sessions.push(rec);
-    current = rec;
-    since[step] = now();
-    worker.onEvent((entry) => {
-      // The same grants as a build worker (DESIGN §2.3): a request a "do not ask again" covers is
-      // allowed by pir at once. A question set is never answered by a grant.
-      if (entry.dir === 'request' && entry.toolName !== 'AskUserQuestion') {
-        const request = { toolName: entry.toolName, input: entry.input };
-        if (grants.decide(id, request) === 'allow-by-grant') {
-          queueMicrotask(() => {
-            if (worker.answer(entry.requestId, allowResult(request), { from: 'pir' })) {
-              worker.note('delivered-by-grant', { requestId: entry.requestId, toolName: entry.toolName });
-            }
-          });
-        }
-      }
-      waker.wake();
-    });
-    worker.onExit(() => {
-      if (rec.worker === worker) rec.live = false;
-      writeWorkers();
-      waker.wake();
-    });
-    writeWorkers();
-    if (resumeSessionId) worker.note('resumed', { sessionId: id });
-    else worker.send(step === 'plan' ? plannerInstruction({ reportsDir, brief }) : reviewerInstruction({ reportsDir, slug: state.slug }), { from: 'pir' });
-    // On for the session's whole life, a resumed one included (DESIGN §2.3); close() switches it off first.
-    if (remote) worker.remoteControl(true).catch(() => {});
-    log(`${ROLE[step]} ${resumeSessionId ? 'resumed' : 'started'}: session ${id}, log ${logPath}`);
-    return rec;
-  };
-
-  const closeCurrent = async (opts) => {
-    const rec = current;
-    current = null;
-    if (!rec) return;
-    await rec.worker.close(opts).catch(() => {});
-    rec.live = false;
-    writeWorkers();
-    log(`${ROLE[rec.step]} closed: session ${rec.id}`);
-  };
-
-  const activityOf = (rec) => {
-    if (!rec) return 'none';
-    if (!rec.live) return 'exited';
-    return workerActivity(rec.worker.entries()).state;
-  };
 
   // ---- The snapshot and the index (PIR_RUN only). ----
   const record = () => {
@@ -589,21 +366,15 @@ export async function runPlanning({ controlDir: givenControlDir, resume = false,
     startedAt: new Date(now()).toISOString(),
   };
   const runState = () => {
-    const views = sessions.map((s) => ({
-      // Every session runs in the one planning worktree, named as it is now, so a planner whose folder
-      // the rename moved still names where its work is.
-      id: s.id, step: s.step, n: s.n, logPath: s.logPath, cwd: worktreeNow(), live: s.live,
-      activity: s.worker ? workerActivity(s.worker.entries()) : { state: 'exited' },
-    }));
+    const views = holder.views();
     trackStoppedAt(state, views, stoppedAt, now);
     // A finished step's time, read once from its logs when none of its sessions is live any more; a
     // finished step does not change, so the logs are not re-read on every paint.
     for (const step of ['plan', 'review']) {
-      if (step in took || sessions.some((x) => x.step === step && x.live)) continue;
+      if (step in took || holder.sessions.some((x) => x.step === step && x.live)) continue;
       const finished = step === 'plan' ? state.step !== 'plan' || state.outcome === 'no-plan' : state.outcome === 'reviewed' || state.outcome === 'not-reviewed';
       if (!finished) continue;
-      const paths = [...new Set(sessions.filter((x) => x.step === step && x.logPath).map((x) => x.logPath))];
-      took[step] = stepWorkedMs(paths.map(readLogEntries));
+      took[step] = holder.workedMs(step);
     }
     // The label names the run only until it has a slug (§2.6 step 4 clears it in the index).
     return planRunState(state, { label: state.slug && state.renamed?.index ? null : label, sessions: views, since, stoppedAt, took });
@@ -671,13 +442,11 @@ export async function runPlanning({ controlDir: givenControlDir, resume = false,
           if (err?.code !== 'ENOENT') log(`left ${dir} in place: ${err?.code ?? err?.message ?? err}`);
         }
       }
-      const oldPrefix = from + '/';
-      for (const s of sessions) if (s.logPath?.startsWith(oldPrefix)) s.logPath = join(to, s.logPath.slice(oldPrefix.length));
       controlDir = to;
       statePath = statePathOf(to);
       reportsDir = reportsDirOf(to);
       personInbox = startPersonInbox({ controlDir, platform, grants, watch, log });
-      writeWorkers();
+      holder.controlMoved(from, to);
       log(`moved the control folder to ${to}`);
     } else if (substep === 'index') {
       if (hasRecord(slug)) {
@@ -700,7 +469,7 @@ export async function runPlanning({ controlDir: givenControlDir, resume = false,
         // pir's SIGKILL, and a program killed before it records reads as crashed. A session that outlives
         // us is reaped from workers.json. The snapshot is written again once the session is closed.
         recordFinal('stopped');
-        await closeCurrent(STOP_CLOSE);
+        await holder.closeCurrent(STOP_CLOSE);
         paint('stopped');
         log('stopped');
         return 0;
@@ -711,7 +480,8 @@ export async function runPlanning({ controlDir: givenControlDir, resume = false,
         .map((r) => parsePlanReport(r?.text))
         .filter(Boolean);
       for (const r of reports) log(`report: ${r.kind} plan=${r.plan ?? '-'}`);
-      const activity = activityOf(current);
+      const current = holder.current();
+      const activity = holder.activity(current);
 
       // The checks run for the claim decidePlanStep will act on: the last report of the current step this
       // call, or, when the session has gone quiet on a claim accepted earlier, that claim again, so a
@@ -772,12 +542,12 @@ export async function runPlanning({ controlDir: givenControlDir, resume = false,
       for (const a of actions) {
         if (a.type === 'spawn') {
           if (renaming) saveState(next);
-          spawn(a.step, a.resumeSessionId ?? null);
+          holder.spawn(a.step, a.resumeSessionId ?? null);
           spawned = true;
         } else if (a.type === 'send') {
-          if (!current?.worker.send(a.text, { from: 'pir' })) log('a message to the session was not delivered');
+          if (!holder.current()?.worker.send(a.text, { from: 'pir' })) log('a message to the session was not delivered');
         } else if (a.type === 'close') {
-          await closeCurrent();
+          await holder.closeCurrent();
         } else if (a.type === 'rename') {
           renameStep(a.substep);
           saveState({ ...state, renamed: { ...state.renamed, [a.substep]: true } });
@@ -799,7 +569,7 @@ export async function runPlanning({ controlDir: givenControlDir, resume = false,
     }
   } catch (err) {
     log(`error: ${err?.stack ?? err}`);
-    await closeCurrent(STOP_CLOSE);
+    await holder.closeCurrent(STOP_CLOSE);
     return 1;
   } finally {
     personInbox.stop();
