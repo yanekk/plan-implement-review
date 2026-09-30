@@ -211,10 +211,11 @@ export function startPlanRig({ into = null, scripts = 'happy', keep = false, bas
 
   git(repoDir, 'init', '-q', '-b', base);
   writeFileSync(join(repoDir, 'README.md'), '# rig\n\nA scratch repo for the planning rig.\n');
-  // pir refuses a repo that names no base branch (base-branch DESIGN §2.1, §5).
+  // pir refuses a repo that names no base branch (base-branch DESIGN §2.1, §5), and a single run in one
+  // that names no setup/test commands (single-runs DESIGN §2.2): no setup, a test that passes.
   if (settings) {
     mkdirSync(join(repoDir, '.pir'));
-    writeFileSync(join(repoDir, '.pir', 'settings.json'), JSON.stringify({ baseBranch: base }) + '\n');
+    writeFileSync(join(repoDir, '.pir', 'settings.json'), JSON.stringify({ baseBranch: base, setup: [], test: ['true'] }) + '\n');
   }
   writeFileSync(join(repoDir, 'package.json'), JSON.stringify({ name: 'pir-plan-rig', private: true, scripts: { test: 'node -e 0' } }, null, 2) + '\n');
   // Worktrees live inside the repo; ignoring them keeps the base's checkout clean (FINDINGS 2026-09-26).
