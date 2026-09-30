@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { isAlive, startTimeOf, resolveLiveness } from './identity.mjs';
+import { isAlive, startTimeOf, resolveLiveness, createLivenessCache } from './identity.mjs';
 import { classifyRun } from '../core/runstate.mjs';
 
 // The shape `ps -o lstart` returns (FINDINGS 2026-09-22). The exact value never matters — only
@@ -94,4 +94,53 @@ test('smoke — real ps/kill against this very process reports it alive with a l
   assert.equal(alive, true);
   assert.equal(typeof liveStartTime, 'string');
   assert.ok(liveStartTime.length > 0, 'a live process must have a non-empty launch time');
+});
+
+// createLivenessCache — the dashboard's per-read liveness: kill every time, ps at most once per ttl.
+function livenessRig({ ttlMs = 5000 } = {}) {
+  const r = { t: 0, alive: true, lstart: LSTART, ps: 0 };
+  r.resolve = createLivenessCache({
+    kill: () => { if (!r.alive) killThrowing('ESRCH')(); },
+    exec: () => { r.ps += 1; return r.lstart == null ? { ok: false, stdout: '' } : { ok: true, stdout: r.lstart + '\n' }; },
+    now: () => r.t,
+    ttlMs,
+  });
+  return r;
+}
+
+test('createLivenessCache — repeated reads inside the ttl run ps once', () => {
+  const r = livenessRig();
+  for (let i = 0; i < 10; i++) assert.deepEqual(r.resolve(42), { alive: true, liveStartTime: LSTART });
+  assert.equal(r.ps, 1);
+});
+
+test('createLivenessCache — a read at the ttl asks ps again and sees a reused number', () => {
+  const r = livenessRig();
+  r.resolve(42);
+  r.lstart = 'Wed Sep 23 09:00:00 2026';
+  r.t = 4999;
+  assert.equal(r.resolve(42).liveStartTime, LSTART);
+  r.t = 5000;
+  assert.equal(r.resolve(42).liveStartTime, 'Wed Sep 23 09:00:00 2026');
+  assert.equal(r.ps, 2);
+});
+
+test('createLivenessCache — a number seen dead is forgotten, so its reuse is read afresh', () => {
+  const r = livenessRig();
+  r.resolve(42);
+  r.alive = false;
+  assert.deepEqual(r.resolve(42), { alive: false, liveStartTime: null });
+  r.alive = true;
+  r.lstart = 'Wed Sep 23 09:00:00 2026';
+  assert.equal(r.resolve(42).liveStartTime, 'Wed Sep 23 09:00:00 2026');
+  assert.equal(r.ps, 2);
+});
+
+test('createLivenessCache — a failed ps read is not cached', () => {
+  const r = livenessRig();
+  r.lstart = null;
+  assert.deepEqual(r.resolve(42), { alive: true, liveStartTime: null });
+  r.lstart = LSTART;
+  assert.equal(r.resolve(42).liveStartTime, LSTART);
+  assert.equal(r.ps, 2);
 });

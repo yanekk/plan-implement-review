@@ -28,7 +28,7 @@ import { buildDashboard, dashboardReducer, displayName, findOpen, goOpen, initia
 import { buildPlanDisplay } from '../core/plandisplay.mjs';
 import { styledLines } from './render.mjs';
 import { classifyRun } from '../core/runstate.mjs';
-import { resolveLiveness } from './identity.mjs';
+import { resolveLiveness, createLivenessCache } from './identity.mjs';
 import { indexDir, listRecords } from './index-store.mjs';
 import { readSnapshot } from './snapshot-store.mjs';
 import { stopRun, removeRun } from './control-run.mjs';
@@ -67,6 +67,8 @@ const COL_BASE = COL;
 // While a row reads `● ready to merge` (pir-coordinator §2.10) STATE widens to fit it whole and SLUG gives
 // the three columns up; every other list keeps today's widths, so its rows cut labels where they always did.
 const COL_READY = { ...COL, slug: 24, state: 17 };
+// `● ready for your go` (finisher DESIGN §2.11) is three characters longer still; SLUG gives them up.
+const COL_GO = { ...COL, slug: 21, state: 20 };
 const REPO_MIN = 12;
 const REPO_MAX = 24;
 function repoWidth(columns) {
@@ -115,6 +117,9 @@ function stateCell(state) {
       return { text: '● asking you', style: 'your-go' };
     case 'ready-to-merge':
       return { text: '● ready to merge', style: 'your-go' };
+    // The finisher waits for the person's go (finisher DESIGN §2.11), in place of `ready to merge`.
+    case 'ready-for-your-go':
+      return { text: '● ready for your go', style: 'your-go' };
     case 'finished':
       return { text: '◌ finished', style: 'ended' };
     case 'crashed':
@@ -161,6 +166,8 @@ function footerLine(context, ui, rows = []) {
   if (context === 'watch') return lineOf('↑↓ pick a task · → open its worker · ← back · Ctrl+S Ctrl+S stop this run · esc quit', 'hint');
   // A run with a coordinator agent offers `c` (pir-coordinator §2.8); the stop keeps its chord, shorter.
   if (context === 'watch-agent') return lineOf('↑↓ task · → its worker · c coordinator · ← back · Ctrl+S Ctrl+S stop · esc quit', 'hint');
+  // Once the finisher replaces the agent (finisher DESIGN §2.11), `c` opens the finisher.
+  if (context === 'watch-finisher') return lineOf('↑↓ task · → its worker · c finisher · ← back · Ctrl+S Ctrl+S stop · esc quit', 'hint');
   return lineOf('↑↓ move · ↵ open · Ctrl+R resume · Ctrl+S stop · Ctrl+X remove · esc quit', 'hint');
 }
 
@@ -186,7 +193,7 @@ function footerLine(context, ui, rows = []) {
 export function buildListFrame(dashboard, ui = initialUi(), { columns = DEFAULT_COLS, rows: budget } = {}) {
   const repoCol = repoWidth(columns);
   const { rows = [], counts = { running: 0, finished: 0, crashed: 0, stopped: 0, waiting: 0, total: 0 } } = dashboard ?? {};
-  const COL = rows.some((v) => v.display === 'ready-to-merge') ? COL_READY : COL_BASE;
+  const COL = rows.some((v) => v.display === 'ready-for-your-go') ? COL_GO : rows.some((v) => v.display === 'ready-to-merge') ? COL_READY : COL_BASE;
   const title = [span('pir', 'head'), span('  runs on this machine', 'dim')];
   const header = lineOf(
     '  ' + pad('SLUG', COL.slug) + pad('TYPE', COL.type) + pad('STATE', COL.state) + pad('REPO', repoCol) + pad('PROGRESS', COL.progress) + 'WK',
@@ -461,7 +468,12 @@ export function buildWatchFrame(view, { now, spinnerChar = SPINNER[0], ui = init
         // A complete run that is not ready to merge ended red (DESIGN §2.8): its footer above already shows
         // the reason and log path, so the stale note must not offer the merge.
         const red = !!snap.runState?.complete && !snap.runState?.readyToMerge;
-        const end = red ? `Not ready to merge — fix ${branch}, see the output above.` : `Hand-off: git merge ${branch}`;
+        // A run the finisher ended has had its merge done for the person (finisher DESIGN §2.8), so the
+        // stale note must not offer it again (same rule as the finisher's footer, user 2026-09-29, T07).
+        const byFinisher = snap.runState?.finisher?.state === 'done';
+        // The run's base rides in the snapshot (base-branch DESIGN §2.9); one written before it reads `main`.
+        const base = snap.runState?.base ?? snap.runState?.handoff?.base ?? 'main';
+        const end = red ? `Not ready to merge — fix ${branch}, see the output above.` : byFinisher ? 'The finisher is done.' : `Hand-off: git switch ${base} && git merge ${branch}`;
         note(`— finished · this frame is stale. ${end}`, 'ended', '');
       } else if (state === 'stopped') {
         note(`— stopped · this frame is stale. \`pir start ${slug}\` resumes from committed work.`, 'ended', '');
@@ -472,7 +484,7 @@ export function buildWatchFrame(view, { now, spinnerChar = SPINNER[0], ui = init
   lines.push([]);
   // Why the last → on a task row opened nothing (a task with no worker yet), dim above the hint.
   if (ui.note) note(ui.note, 'dim', '');
-  lines.push(footerLine(snap?.runState?.coordinator?.id ? 'watch-agent' : 'watch', ui));
+  lines.push(footerLine(snap?.runState?.finisher?.id ? 'watch-finisher' : snap?.runState?.coordinator?.id ? 'watch-agent' : 'watch', ui));
   return lines;
 }
 
@@ -872,16 +884,18 @@ export function createScreen({ stream = process.stdout, colour, terminal, copy =
   };
 }
 
-// loadDashboard({ dir, now, kill, exec, fs }) → { rows, counts }. The read half of a refresh (DESIGN §3.4):
+// loadDashboard({ dir, now, kill, exec, fs, liveness }) → { rows, counts }. The read half of a refresh (DESIGN §3.4):
 // enumerate every index entry (T06), resolve each run's liveness (T05) and classify it (T01), read its
 // snapshot (T07) for the progress/worker detail, then project the lot through buildDashboard (T04). Each
 // row carries its record and snapshot alongside the fields the list needs, so the loop can act (stop/remove)
 // and paint the watch view from the same read. Rows are sorted by repo then slug for a stable list order,
 // since listRecords returns them in no guaranteed order.
-export function loadDashboard({ dir = indexDir(), now = Date.now(), kill, exec, fs } = {}) {
+// `liveness` (pid → { alive, liveStartTime }) defaults to an uncached resolveLiveness; runTui passes its
+// createLivenessCache so a keypress does not spawn a `ps` per run.
+export function loadDashboard({ dir = indexDir(), now = Date.now(), kill, exec, fs, liveness = (pid) => resolveLiveness(pid, { kill, exec }) } = {}) {
   const records = listRecords({ dir, fs });
   const views = records.map((record) => {
-    const { alive, liveStartTime } = resolveLiveness(record.pid, { kill, exec });
+    const { alive, liveStartTime } = liveness(record.pid);
     const state = classifyRun({
       recordedStartTime: record.startTime,
       finalState: record.finalState,
@@ -1053,7 +1067,8 @@ async function runTui({
   // it was built from, which turn a hit's index into a run key or a task id before a fresh read.
   let painted = null;
 
-  const read = () => load({ dir, now: now(), kill, exec, fs });
+  const liveness = createLivenessCache({ kill, exec, now });
+  const read = () => load({ dir, now: now(), kill, exec, fs, liveness });
 
   // The open worker's conversation view (T13), created on entering the 'worker' view and disposed on
   // leaving it. It takes every key while it is open: its own table (§2.11) replaces Esc-quits and
@@ -1146,7 +1161,7 @@ async function runTui({
       return;
     }
     if (!s?.started) {
-      lv.update({ note: startFailedNote(r.repo.name, s?.reason ?? 'unknown') });
+      lv.update({ note: startFailedNote(r.repo.name, s?.reason ?? 'unknown', s) });
       return;
     }
     lv.reset();

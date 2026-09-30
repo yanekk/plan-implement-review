@@ -309,15 +309,24 @@ test('the hand-off block with the agent: preparing, ready to merge with the repo
   const done = [task({ done: true })];
   const at = (handoff, over = {}) => buildDisplay({ branch: 'pir/demo', ceiling: 4, tasks: done, handoff, ...over }, { now: NOW }).footer;
 
-  assert.deepEqual(at({ state: 'preparing', reportPath: null, mainSha: null }), { kind: 'handoff', branch: 'pir/demo', state: 'preparing', reportPath: null });
+  assert.deepEqual(at({ state: 'preparing', reportPath: null, baseSha: null }), { kind: 'handoff', branch: 'pir/demo', state: 'preparing', reportPath: null });
   assert.deepEqual(
-    at({ state: 'ready', reportPath: 'plans/demo/REPORT.md', mainSha: 'abc' }, { complete: true, readyToMerge: true }),
+    at({ state: 'ready', reportPath: 'plans/demo/REPORT.md', baseSha: 'abc' }, { complete: true, readyToMerge: true }),
     { kind: 'handoff', branch: 'pir/demo', state: 'ready', reportPath: 'plans/demo/REPORT.md' },
   );
   assert.deepEqual(
-    at({ state: 'red', reportPath: 'plans/demo/REPORT.md', mainSha: 'abc' }, { complete: true, testsReason: { reason: 'test `npm test` exited 1', logPath: '/c/tests.log' } }),
+    at({ state: 'red', reportPath: 'plans/demo/REPORT.md', baseSha: 'abc' }, { complete: true, testsReason: { reason: 'test `npm test` exited 1', logPath: '/c/tests.log' } }),
     { kind: 'handoff', branch: 'pir/demo', state: 'red', reportPath: 'plans/demo/REPORT.md', reason: 'test `npm test` exited 1', logPath: '/c/tests.log' },
   );
+  // A held sync (base-branch T07, DESIGN §2.8) puts its reason on the preparing footer; the base rides on
+  // the hand-off footers, from the run state or the hand-off.
+  const hold = { reason: 'fetch-failed', text: "can't reach origin, retrying", since: 1, nextTry: 2 };
+  assert.deepEqual(at({ state: 'preparing', reportPath: null, base: 'dev', hold }), {
+    kind: 'handoff', branch: 'pir/demo', base: 'dev', state: 'preparing', reportPath: null, hold: { reason: 'fetch-failed', text: "can't reach origin, retrying" },
+  });
+  assert.equal(at({ state: 'ready', reportPath: null, base: 'dev', hold: null }, { complete: true, readyToMerge: true }).hold, undefined);
+  assert.equal(at(null, { complete: true, readyToMerge: true, base: 'dev' }).base, 'dev');
+  assert.equal(at(null, { interrupted: true, base: 'dev' }).base, 'dev');
   // With --no-coordinator there is no handoff, and the footers are today's.
   assert.deepEqual(at(null, { complete: true, readyToMerge: true }), { kind: 'handoff', branch: 'pir/demo' });
   assert.deepEqual(at(null, { complete: true, readyToMerge: false }), { kind: 'red', branch: 'pir/demo', reason: null, logPath: null });
@@ -350,7 +359,7 @@ test('a helper whose question is the person\'s reads asking you, is counted, and
     ceiling: 2,
     tasks: [task({ id: 'T01', done: true })],
     helpers: [helperRow({ id: 'main-sync', slug: 'resolve-main-merge', asking: 'questions', holder: 'person', stoppedAt: NOW - 1000 })],
-    handoff: { state: 'preparing', reportPath: null, mainSha: null },
+    handoff: { state: 'preparing', reportPath: null, baseSha: null },
   };
   const d = buildDisplay(rs, { now: NOW });
   const row = d.rows.find((r) => r.id === 'main-sync');
@@ -427,4 +436,85 @@ test('the summary, askingCount and the footer are unchanged by the agent row (T1
     assert.equal(askingCount(withAgent), askingCount(without));
     assert.equal(askingCount(withAgent), 1);
   }
+});
+
+// --- the finisher's row (finisher DESIGN §2.11, T07) ---------------------------------------------
+
+// The finisher's view() as runState.finisher carries it (finisher-agent.mjs). Overrides win.
+const fin = (over) => ({
+  id: 'sess-f', logPath: '/c/finisher.jsonl', state: 'preparing', phase: 'preparing', goGiven: false,
+  summary: null, steps: [], rulesSource: 'repo', asking: false, ...over,
+});
+const doneRun = (over) => ({
+  branch: 'pir/p', ceiling: 2, complete: true, readyToMerge: true, coordinator: null,
+  handoff: { state: 'ready', reportPath: 'plans/p/REPORT.md', baseSha: 'abc' },
+  tasks: [task({ id: 'T01', done: true }), task({ id: 'T02', done: true })],
+  ...over,
+});
+
+test('the finisher row takes the agent\'s pinned place, with words for each phase and no clock (T07)', () => {
+  const words = {
+    preparing: ['preparing', 'finisher'],
+    'awaiting-go': ['waiting for your go', 'finisher-asking'],
+    finishing: ['finishing', 'finisher'],
+    stuck: ['stuck · needs you', 'finisher-asking'],
+    done: ['done', 'finisher-done'],
+    restarting: ['restarting', 'finisher-idle'],
+    'given-up': ['given up', 'finisher-idle'],
+  };
+  for (const [state, [label, kind]] of Object.entries(words)) {
+    const d = buildDisplay(doneRun({ finisher: fin({ state }) }), { now: NOW });
+    assert.deepEqual(d.rows.map((r) => r.id), ['T01', 'T02', '──', 'finisher'], state);
+    assert.deepEqual(d.rows[3], { id: 'finisher', slug: 'finisher', finisher: true, kind, label, elapsedMs: null }, state);
+    assert.equal(d.summary.done, 2, 'not counted in n/m done');
+    assert.equal(d.summary.total, 2);
+    assert.equal(d.summary.running, 0);
+  }
+  // Both in the snapshot: the finisher replaces the agent.
+  const both = rowEntries(doneRun({ coordinator: { id: 'a', live: true, state: 'up', holding: 0 }, finisher: fin() }));
+  assert.deepEqual(both.map((e) => e.id), ['T01', 'T02', '──', 'finisher']);
+  assert.deepEqual(both[3].worker, { id: 'sess-f', live: true, logPath: '/c/finisher.jsonl' });
+  assert.equal(rowEntries(doneRun({ finisher: fin({ state: 'restarting' }) }))[3].worker.live, false);
+});
+
+test('a parked request reads asking you in preparing and finishing; the go question does not change awaiting-go or stuck (T07)', () => {
+  const row = (f) => buildDisplay(doneRun({ finisher: fin(f) }), { now: NOW }).rows[3];
+  assert.equal(row({ state: 'finishing', asking: true }).label, 'asking you');
+  assert.equal(row({ state: 'finishing', asking: true }).kind, 'finisher-asking');
+  assert.equal(row({ state: 'preparing', asking: true }).label, 'asking you');
+  assert.equal(row({ state: 'awaiting-go', asking: true }).label, 'waiting for your go');
+  assert.equal(row({ state: 'stuck', asking: true }).label, 'stuck · needs you');
+  assert.equal(row({ state: 'done', asking: true }).label, 'done');
+});
+
+test('awaiting-go, stuck and a request count in the asking tally; the other phases do not (T07)', () => {
+  const count = (f) => askingCount(doneRun({ finisher: fin(f) }));
+  assert.equal(count({ state: 'awaiting-go' }), 1);
+  assert.equal(count({ state: 'stuck' }), 1);
+  assert.equal(count({ state: 'finishing', asking: true }), 1);
+  for (const state of ['preparing', 'finishing', 'done', 'restarting', 'given-up']) assert.equal(count({ state }), 0, state);
+  assert.equal(buildDisplay(doneRun({ finisher: fin({ state: 'awaiting-go' }) }), { now: NOW }).summary.asking, 1);
+});
+
+test('the footer names the finisher in every phase and points at c; no merge line beside it (T07)', () => {
+  const footer = (f) => buildDisplay(doneRun({ finisher: fin(f) }), { now: NOW }).footer;
+  assert.deepEqual(footer({ state: 'awaiting-go' }), { kind: 'finisher', state: 'awaiting-go', asks: true, text: '◆ finisher ready · c to review and say go' });
+  assert.equal(footer({ state: 'preparing' }).text, '◆ finisher preparing · c to watch');
+  assert.equal(footer({ state: 'finishing' }).text, '◆ finisher finishing · c to watch');
+  assert.equal(footer({ state: 'stuck' }).text, '◆ finisher stuck · c to review and say go');
+  assert.equal(footer({ state: 'finishing', asking: true }).text, '◆ finisher asking you · c to answer');
+  assert.equal(footer({ state: 'done' }).text, '◆ finisher done');
+  // A task asking still takes the footer first; an interrupt beats both.
+  const asking = doneRun({ finisher: fin({ state: 'awaiting-go' }), tasks: [task({ id: 'T01', phase: 'asking', since: NOW })] });
+  assert.equal(buildDisplay(asking, { now: NOW }).footer.kind, 'asking');
+  assert.equal(buildDisplay({ ...asking, interrupted: true }, { now: NOW }).footer.kind, 'interrupted');
+});
+
+test('a snapshot written before this plan (no finisher) renders as today (T07)', () => {
+  const old = doneRun({ coordinator: { id: 'a', live: true, state: 'up', holding: 0 } });
+  const d = buildDisplay(old, { now: NOW });
+  assert.deepEqual(d.rows.map((r) => r.id), ['T01', 'T02', '──', 'coordinator']);
+  assert.deepEqual(d.footer, { kind: 'handoff', branch: 'pir/p', state: 'ready', reportPath: 'plans/p/REPORT.md' });
+  assert.equal(askingCount(old), 0);
+  assert.equal(buildDisplay({ ...old, finisher: null }, { now: NOW }).footer.kind, 'handoff');
 });

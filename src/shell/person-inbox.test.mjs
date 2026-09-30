@@ -130,6 +130,30 @@ test('a message reaches the worker as a user message, logged from the person', a
   assert.match(s.runLog.at(-1), /message for .*: delivered/);
 });
 
+// visible-helpers T05 (DESIGN §2.6, §3.3): the note naming helpers an interrupt stopped rides the drop, the
+// inbox, the platform and the worker: the model reads note, blank line, text; the log keeps them apart.
+test('a message with a preface reaches the model as preface, blank line, text; the log keeps text and both fields', async (t) => {
+  const s = setup(t, { T01: [{ await: 'user' }, ...turn('one'), { await: 'user' }, ...turn('two'), { await: 'user' }, ...turn('three')] });
+  const id = s.spawn();
+  await waitFor(() => s.platform.list()[0]?.state === 'idle', 'the first turn');
+  const preface = '[pir] Before this message, the person\'s interrupt stopped your helper: "Survey the code".';
+  assert.deepEqual(s.drop({ to: id, kind: 'message', text: 'continue', preface, helpersStopped: ['h1'] }), { ok: true });
+  assert.deepEqual(s.inbox.drain().map((o) => o.outcome), ['delivered']);
+  await waitFor(() => s.lines(0).filter((m) => m.type === 'user').length === 2, 'the message at the fake');
+  assert.equal(s.lines(0).filter((m) => m.type === 'user')[1].message.content, `${preface}\n\ncontinue`);
+  const out = s.logOf(id).filter((e) => e.dir === 'out').at(-1);
+  assert.deepEqual([out.from, out.kind, out.text, out.preface, out.helpersStopped], ['person', 'message', 'continue', preface, ['h1']]);
+
+  await waitFor(() => s.platform.list()[0]?.state === 'idle', 'the second turn');
+  s.drop({ to: id, kind: 'message', text: 'again' });
+  s.inbox.drain();
+  await waitFor(() => s.lines(0).filter((m) => m.type === 'user').length === 3, 'the plain message at the fake');
+  assert.equal(s.lines(0).filter((m) => m.type === 'user')[2].message.content, 'again');
+  const plain = s.logOf(id).filter((e) => e.dir === 'out').at(-1);
+  assert.equal('preface' in plain, false);
+  assert.equal('helpersStopped' in plain, false);
+});
+
 test('an interrupt reaches the worker as the interrupt control request', async (t) => {
   const s = setup(t, { T01: [{ await: 'user' }, { emit: initEvent() }, { await: 'interrupt' }, { emit: resultEvent('error_during_execution') }] });
   const id = s.spawn();
@@ -417,7 +441,7 @@ test('a message the person drops for the coordinator agent reaches its session; 
   try {
     const sent = [];
     const session = {
-      send: (text, { from }) => (sent.push({ to: 'agent', text, from }), true),
+      send: (text, opts) => (sent.push(opts.preface ? { to: 'agent', text, from: opts.from, opts } : { to: 'agent', text, from: opts.from }), true),
       interrupt: async () => true,
       answer: () => false,
       pending: () => [],
@@ -425,7 +449,7 @@ test('a message the person drops for the coordinator agent reaches its session; 
     };
     let agent = null;
     const platform = {
-      send: (id, text, { from }) => (sent.push({ to: id, text, from }), { ok: true }),
+      send: (id, text, opts) => (sent.push(opts.preface ? { to: id, text, from: opts.from, opts } : { to: id, text, from: opts.from }), { ok: true }),
       interrupt: () => ({ ok: true }),
       answer: () => ({ ok: false }),
       pending: () => [],
@@ -445,10 +469,58 @@ test('a message the person drops for the coordinator agent reaches its session; 
       assert.equal(sent.length, 2);
       assert.deepEqual(sent.find((m) => m.to === 'agent'), { to: 'agent', text: 'where are we?', from: 'person' }, 'into the agent\'s session');
       assert.deepEqual(sent.find((m) => m.to === 'w1'), { to: 'w1', text: 'hi worker', from: 'person' }, 'a worker still through the platform');
+
+      // visible-helpers T05: the helper note reaches the agent's session and a worker alike.
+      sent.length = 0;
+      dropPersonInput(controlDir, { to: 'sess-1', kind: 'message', text: 'continue', preface: 'note', helpersStopped: ['h1'] }, { coordinatorAlive: true });
+      dropPersonInput(controlDir, { to: 'w1', kind: 'message', text: 'continue', preface: 'note', helpersStopped: ['h2'] }, { coordinatorAlive: true });
+      inbox.drain();
+      assert.deepEqual(sent.find((m) => m.to === 'agent').opts, { from: 'person', preface: 'note', helpersStopped: ['h1'] });
+      assert.deepEqual(sent.find((m) => m.to === 'w1').opts, { from: 'person', preface: 'note', helpersStopped: ['h2'] });
     } finally {
       inbox.stop();
     }
   } finally {
     rmSync(controlDir, { recursive: true, force: true });
   }
+});
+
+// fast-tests T01 (DESIGN §2.1): the forwarder wakes the coordinator loop once it has forwarded something.
+test('onActivity: a watch-triggered drain that forwarded calls it; an empty drain, an invalid drop and the loop\'s own drain() do not', async (t) => {
+  const controlDir = mkdtempSync(join(tmpdir(), 'pir-inbox-activity-'));
+  t.after(() => rmSync(controlDir, { recursive: true, force: true }));
+  const sent = [];
+  const platform = {
+    send: (id, text) => (sent.push({ id, text }), { ok: true }),
+    interrupt: () => ({ ok: true }),
+    answer: () => ({ ok: false }),
+    pending: () => [],
+    note: () => ({ ok: true }),
+    logPathOf: (id) => (id === 'w1' ? '/c/w1.ndjson' : null),
+  };
+  const watch = manualWatch();
+  let calls = 0;
+  const inbox = startPersonInbox({ controlDir, platform, watch, onActivity: () => (calls += 1) });
+  t.after(() => inbox.stop());
+  const settle = () => new Promise((r) => setTimeout(r, 20));
+  await settle();
+
+  watch.fire();
+  await settle();
+  assert.equal(calls, 0, 'a watch event with nothing to drain');
+
+  writeFileSync(join(inboxDirOf(controlDir), '1-bad.json'), '{not json');
+  watch.fire();
+  await settle();
+  assert.equal(calls, 0, 'an invalid drop is only deleted');
+
+  dropPersonInput(controlDir, { to: 'w1', kind: 'message', text: 'go on' }, { coordinatorAlive: true });
+  watch.fire();
+  await waitFor(() => sent.length === 1, 'the forward');
+  await settle();
+  assert.equal(calls, 1, 'one wake for the forwarded input');
+
+  dropPersonInput(controlDir, { to: 'w1', kind: 'message', text: 'again' }, { coordinatorAlive: true });
+  assert.equal(inbox.drain().length, 1, 'the loop drains it inside its pass');
+  assert.equal(calls, 1, 'the loop\'s own drain never wakes the loop');
 });

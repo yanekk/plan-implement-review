@@ -157,6 +157,11 @@ export const DRILL_ROUTINE = { command: 'git status --short', description: 'Chec
 export const DRILL_RESERVED = { command: 'git push --force origin HEAD', description: 'Force-push the task branch' };
 export const DRILL_QUESTION = 'Should the drill log be kept after the run?';
 export const DRILL_REPORT_DELAY_MS = 3000;
+// How long the fake agent thinks before it passes a question set on. A real agent takes seconds; the drills
+// assert the row read `asking coordinator` while the agent held it, and since the loop wakes on the
+// agent's decision file (fast-tests T01) an instant pass would be off the screen before the `pir` screen's
+// 500 ms refresh could show it.
+export const DRILL_PASS_DELAY_MS = 1500;
 
 // drillScripts() → [{ match, script }]: the three implementers (before the generic entries, since the
 // fake takes the first match), the generic implement/review workers, and the reacting agent.
@@ -291,10 +296,12 @@ export function coordinatorReact(message, dropDir, { now = Date.now } = {}) {
     return `Allowed ${task}'s request: a read-only git command.`;
   }
   if (worker && task === 'tests-fix' && /^A worker is asking a set of questions/.test(message)) {
+    execFileSync('sleep', [String(DRILL_PASS_DELAY_MS / 1000)]);
     drop({ kind: 'pass', worker, requestId, reason: 'how to fix the plan\'s tests is a judgement', suggestion: 'Add it' });
     return `${task} asks how to make the plan's tests pass, and that is a judgement about the plan. Answer it in ${task}'s conversation; I would add the file.`;
   }
   if (worker && /^A worker is asking a set of questions/.test(message)) {
+    execFileSync('sleep', [String(DRILL_PASS_DELAY_MS / 1000)]);
     drop({ kind: 'pass', worker, requestId, reason: 'the design does not say', suggestion: 'Keep it' });
     return `${task} asks whether the drill log should be kept, and the design does not say. Answer it in ${task}'s conversation; I would keep it.`;
   }
@@ -309,6 +316,8 @@ export function coordinatorReact(message, dropDir, { now = Date.now } = {}) {
   }
   const merge = /git merge (pir\/\S+)/.exec(message);
   if (/^The delivery report is committed/.test(message)) {
+    // A ready branch the finisher takes over carries no merge line (finisher T05).
+    if (/starts the finisher/.test(message)) return 'The branch is ready. The finisher takes the merge from here.';
     return merge ? `The branch is ready. Merge it yourself with: git merge ${merge[1]}` : 'The branch is not ready to merge; the report says why.';
   }
   return `Noted: ${message.split('\n')[0].slice(0, 120)}`;

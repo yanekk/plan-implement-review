@@ -9,6 +9,7 @@
 import { test } from 'node:test';
 import { EventEmitter } from 'node:events';
 import assert from 'node:assert/strict';
+import { createLivenessCache } from './identity.mjs';
 import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -169,7 +170,7 @@ test('a stale/final run renders its last frame with a stale marker (§2.4)', () 
     { slug: 'gamma', state: 'finished', repo: 'repoC', snap, record: { pid: 9, branch: 'pir/gamma' } },
     { now: NOW },
   );
-  assert.match(frameText(finished), /finished · this frame is stale.*git merge pir\/gamma/s, 'a finished run shows the hand-off');
+  assert.match(frameText(finished), /finished · this frame is stale.*git switch main && git merge\s+pir\/gamma/s, 'a finished run shows the hand-off');
   assert.equal(findSpan(finished, 'this frame is stale').style, 'ended', 'a finished run\'s marker is dim');
 
   const stopped = buildWatchFrame(
@@ -191,7 +192,11 @@ test('a finished red frame says not ready to merge and never offers `git merge`;
   assert.match(red, /test `make test` exited 2 · output: \/p\/tests\.log/, 'the footer above carries the reason');
 
   const green = frameFor({ branch: 'pir/gamma', ceiling: 2, complete: true, readyToMerge: true, tasks });
-  assert.match(green, /finished · this frame is stale\. Hand-off: git merge pir\/gamma/);
+  assert.match(green, /finished · this frame is stale\. Hand-off: git switch main && git merge pir\/gamma/);
+  // A dev run's snapshot carries its base (base-branch T07): the stale line and the footer both switch to dev.
+  const dev = frameFor({ branch: 'pir/gamma', base: 'dev', ceiling: 2, complete: true, readyToMerge: true, tasks });
+  assert.match(dev, /finished · this frame is stale\. Hand-off: git switch dev && git merge pir\/gamma/);
+  assert.doesNotMatch(dev, /\bmain\b/);
 });
 
 test('a finished run with no snapshot does not guess green: no merge offer, it points at run.log (DESIGN §2.8)', () => {
@@ -398,6 +403,45 @@ test('loadDashboard classifies each run and reads its snapshot for progress and 
 
   // Tidy the scratch index entry so a re-run does not accrete files (the control dirs are OS temp).
   writeFileSync(recordPath('my-repo', 'demo', { dir }), '', { flag: 'w' });
+});
+
+// The dashboard reads every run on each keypress and tick; with the loop's liveness cache a live run costs
+// one `ps` per ttl, not one per read (identity.mjs createLivenessCache).
+test('loadDashboard with a liveness cache asks ps once across reads; without one, once per read', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'pir-index-'));
+  const controlDir = mkdtempSync(join(tmpdir(), 'pir-control-'));
+  const record = {
+    version: 1, slug: 'demo', repo: 'my-repo', repoPath: '/x/my-repo', controlDir, pid: 4242,
+    startTime: 'Tue Sep 22 08:27:37 2026', startedAt: null, branch: 'pir/demo', finalState: null, updatedAt: null,
+  };
+  writeRecord(record, { dir });
+  let ps = 0;
+  const kill = () => {};
+  const exec = () => ((ps += 1), { ok: true, stdout: `${record.startTime}\n` });
+
+  const liveness = createLivenessCache({ kill, exec, now: () => NOW });
+  for (let i = 0; i < 5; i++) assert.equal(loadDashboard({ dir, now: NOW, kill, exec, liveness }).rows[0].state, 'running');
+  assert.equal(ps, 1, 'five cached reads, one ps');
+
+  ps = 0;
+  for (let i = 0; i < 5; i++) loadDashboard({ dir, now: NOW, kill, exec });
+  assert.equal(ps, 5, 'the default stays uncached');
+});
+
+test('the dashboard loop hands every read the same liveness cache', async () => {
+  const stdin = { setRawMode: () => {}, on: () => {}, off: () => {}, resume: () => {}, pause: () => {} };
+  const given = [];
+  const makeScreen = () => ({
+    paint: () => {
+      throw new Error('stop after the first read');
+    },
+    close: () => {},
+  });
+  const load = (opts) => (given.push(opts.liveness), buildDashboard([]));
+  await assert.rejects(openDashboard({ stdin, stdout: {}, makeScreen, load }), /stop after the first read/);
+  assert.ok(given.length >= 1, 'the loop read the dashboard');
+  assert.equal(typeof given[0], 'function', 'a liveness resolver is passed to the read');
+  assert.ok(given.every((g) => g === given[0]), 'one cache for the life of the loop');
 });
 
 test('the watch view wraps a long run.log path so it survives painting at a narrow width (regression)', () => {
@@ -1662,13 +1706,13 @@ test('box: every §2.5 refusal starts nothing, keeps the text and shows the note
   }
 });
 
-test('box: startPlan refusing (no-main, in plain words) or throwing both give the start-failed note, the text kept', async () => {
-  for (const plan of [() => ({ started: false, reason: 'no-main' }), () => { throw new Error('spawn failed'); }]) {
+test('box: startPlan refusing (no-base-setting, in plain words) or throwing both give the start-failed note, the text kept', async () => {
+  for (const plan of [() => ({ started: false, reason: 'no-base-setting', message: 'pir: no base branch is set for repo. …' }), () => { throw new Error('spawn failed'); }]) {
     const t = driveBox({ plan });
     await t.type('repo/plan a brief');
     await t.key('\r');
     assert.equal(t.calls.length, 1);
-    const reason = plan.toString().includes('no-main') ? 'it has no local main branch' : 'spawn failed';
+    const reason = plan.toString().includes('no-base-setting') ? 'no base branch is set' : 'spawn failed';
     assert.ok(t.screen().includes(`Could not start planning in repo: ${reason}`), t.screen());
     assert.match(t.boxLine(), /^@repo\/plan a brief/);
     assert.doesNotMatch(t.screen(), /starting the planner/);
@@ -1676,6 +1720,16 @@ test('box: startPlan refusing (no-main, in plain words) or throwing both give th
     await t.key('\x1b');
     await t.done;
   }
+});
+
+test('box: a refusal naming its base and remote shows them in the note (base-branch §2.9 short form)', async () => {
+  const t = driveBox({ plan: () => ({ started: false, reason: 'diverged', base: 'dev', remote: 'origin' }) });
+  await t.type('repo/plan a brief');
+  await t.key('\r');
+  assert.ok(t.screen().includes('Could not start planning in repo: dev split from origin/dev'), t.screen());
+  await t.key('\x1b');
+  await t.key('\x1b');
+  await t.done;
 });
 
 test('box: on a bare box ↓ and → reach the list (open a run); ← back shows the box at @', async () => {
@@ -2576,4 +2630,41 @@ test('mouse: a click opens the run painted on that row even if a fresh read has 
   await t.click(betaY);
   assert.match(t.text(), /^beta/m, 'beta opened, not whatever now sits at its old index');
   await t.quit();
+});
+
+// The finisher (finisher DESIGN §2.11, T07): the list row reads `● ready for your go` amber bold, whole,
+// counted as waiting; the live view's hint offers `c finisher`.
+test('the list frame: a run whose finisher waits for the go reads `● ready for your go` amber bold and counts as waiting (T07)', () => {
+  const finisher = { id: 'f', logPath: '/c/f.ndjson', state: 'awaiting-go', phase: 'awaiting-go', asking: true };
+  const ready = { key: 'shop__checkout', slug: 'checkout', state: 'running', repo: 'shop', progress: { done: 4, total: 4 }, workers: 0, snap: { runState: { branch: 'pir/checkout', ceiling: 2, tasks: [], handoff: { state: 'ready' }, finisher } } };
+  for (const columns of [80, 120]) {
+    const frame = buildListFrame(buildDashboard([ready, ...VIEWS]), initialUi(), { columns });
+    const text = frameText(frame);
+    assert.match(text, /checkout +work +● ready for your go +shop +▰+ 4\/4 +·/, 'the whole state fits its column');
+    assert.equal(findSpan(frame, '● ready for your go').style, 'your-go', 'amber bold');
+    assert.match(text, /1 waiting for you/);
+    for (const l of text.split('\n')) assert.ok([...l].length <= columns, `wider than ${columns}: ${l}`);
+  }
+});
+
+test('the live view with the finisher: its row in the agent\'s place, the footer naming c, the hint `c finisher` (T07)', () => {
+  const finisher = { id: 'f', logPath: '/c/f.ndjson', state: 'awaiting-go', phase: 'awaiting-go', asking: true };
+  const run = tasksRun([T12_TASKS[0]], { snap: { runState: { branch: 'pir/plan', ceiling: 2, complete: true, readyToMerge: true, handoff: { state: 'ready' }, coordinator: null, finisher, tasks: [T12_TASKS[0]] } } });
+  const text = frameText(buildWatchFrame(run, { now: NOW, ui: { ...initialUi(), view: 'watch', openSlug: 'plan', taskSel: 0 } }));
+  assert.match(text, /◆ finisher +waiting for your go/);
+  assert.match(text, /◆ finisher ready · c to review and say go/);
+  assert.match(text, /c finisher/);
+  assert.doesNotMatch(text, /c coordinator|git merge/);
+});
+
+test('a run the finisher ended: the stale note offers no merge (T07)', () => {
+  const tasks = [{ id: 'T01', slug: 'a', deps: [], done: true, phase: null, since: null, doneMs: 100, question: null }];
+  const runState = { branch: 'pir/gamma', ceiling: 2, complete: true, readyToMerge: true, handoff: { state: 'ready' }, coordinator: null, finisher: { id: 'f', state: 'done', phase: 'done', asking: false }, tasks };
+  const text = frameText(buildWatchFrame(
+    { slug: 'gamma', state: 'finished', repo: 'repoC', snap: { version: 1, proc: {}, finalState: 'finished', runState }, record: { pid: 9, branch: 'pir/gamma' } },
+    { now: NOW, columns: 200 },
+  ));
+  assert.ok(!/git merge/.test(text), text);
+  assert.match(text, /finished · this frame is stale\. The finisher is done\./);
+  assert.match(text, /◆ finisher +done/);
 });

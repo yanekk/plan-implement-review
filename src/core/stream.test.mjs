@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
   readEntry, workerActivity, userMessage, allowResult, denyResult, answersResult, declineQuestionsResult,
-  DEFAULT_REFUSAL,
+  DEFAULT_REFUSAL, wakesLoop,
 } from './stream.mjs';
 
 // The committed recording: one real SDK-driven conversation (T01 probe, Claude Code 2.1.282, SDK
@@ -87,6 +87,13 @@ test('out entries read as sent, reply and interrupt, with the sender', () => {
   assert.deepEqual(readEntry(sent('hi')), [{ kind: 'sent', from: 'pir', text: 'hi' }]);
   assert.deepEqual(readEntry(reply('r1', 'deny')), [{ kind: 'reply', requestId: 'r1', behavior: 'deny', from: 'person' }]);
   assert.deepEqual(readEntry(interrupt()), [{ kind: 'interrupt', from: 'person' }]);
+});
+
+// visible-helpers T05 (DESIGN §2.6): the logged note and its helper ids ride on the `sent` event.
+test('a sent message with a preface carries it and helpersStopped; one without has neither', () => {
+  const e = at({ dir: 'out', from: 'person', kind: 'message', text: 'continue', preface: '[pir] note', helpersStopped: ['h1'] });
+  assert.deepEqual(readEntry(e), [{ kind: 'sent', from: 'person', text: 'continue', preface: '[pir] note', helpersStopped: ['h1'] }]);
+  assert.deepEqual(Object.keys(readEntry(sent('hi'))[0]), ['kind', 'from', 'text']);
 });
 
 test('a note keeps its kind and fields', () => {
@@ -539,4 +546,94 @@ test('a coordinator send opens a `coordinator` turn and is counted apart from th
   assert.deepEqual(a.turnCauses, ['pir', 'coordinator']);
   assert.equal(a.coordinatorSends, 1);
   assert.equal(a.personSends, 0);
+});
+
+// ---- visible-helpers T01: a helper's frames are tagged and never open a parent turn ----
+
+// Cut from plans/visible-helpers/evidence/plan-0339-helper.ndjson (see helpers.test.mjs).
+const helperSample = readFileSync(new URL('./fixtures/helper-sample.ndjson', import.meta.url), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
+const AGENT_CALL = 'toolu_01DkrWKh5q7BdwWzubBcNeKW';
+const HELPER_ID = 'a84a4013ffcebe5e4';
+const helperFrame = (content, type = 'assistant') => inMsg({ type, message: { content }, parent_tool_use_id: AGENT_CALL });
+
+test('readEntry: every event from a helper frame carries `helper`; the parent\'s frames carry none', () => {
+  const frames = helperSample.filter((e) => e.dir === 'in' && (e.event.type === 'assistant' || e.event.type === 'user'));
+  const ofHelper = frames.filter((e) => e.event.parent_tool_use_id);
+  const ofParent = frames.filter((e) => !e.event.parent_tool_use_id);
+  assert.ok(ofHelper.some((e) => e.event.type === 'assistant') && ofHelper.some((e) => e.event.type === 'user'), 'fixture holds both');
+  assert.ok(ofParent.length > 0);
+  for (const e of ofHelper) {
+    const evs = readEntry(e);
+    assert.ok(evs.length > 0 || e.event.message.content.every((b) => b.type === 'thinking'));
+    for (const ev of evs) assert.equal(ev.helper, AGENT_CALL);
+  }
+  for (const e of ofParent) for (const ev of readEntry(e)) assert.equal('helper' in ev, false);
+  // A system frame with a null parent_tool_use_id (task_progress) is the parent's reading of the helper.
+  for (const ev of readEntry(helperSample.find((e) => e.event?.subtype === 'task_progress'))) assert.equal('helper' in ev, false);
+  const [empty] = readEntry({ dir: 'in', event: { type: 'assistant', message: { content: [{ type: 'text', text: 'x' }] }, parent_tool_use_id: '' } });
+  assert.equal('helper' in empty, false, 'an empty id is not a helper');
+});
+
+test('readEntry: a request entry with agentId yields it; one without has no field', () => {
+  const [perm] = readEntry({ dir: 'request', requestId: 'r1', toolName: 'Bash', input: { command: 'ls' }, agentId: HELPER_ID });
+  assert.equal(perm.kind, 'permission');
+  assert.equal(perm.agentId, HELPER_ID);
+  const [q] = readEntry({ dir: 'request', requestId: 'r2', toolName: 'AskUserQuestion', input: { questions: [] }, agentId: HELPER_ID });
+  assert.equal(q.kind, 'questions');
+  assert.equal(q.agentId, HELPER_ID);
+  const [plain] = readEntry({ dir: 'request', requestId: 'r3', toolName: 'Bash', input: {} });
+  assert.equal('agentId' in plain, false);
+  const [notString] = readEntry({ dir: 'request', requestId: 'r4', toolName: 'Bash', input: {}, agentId: 7 });
+  assert.equal('agentId' in notString, false);
+});
+
+test('workerActivity: helper frames after the parent\'s result open no turn and add no cause', () => {
+  const base = [sent(), init(), result()];
+  const log = [...base, helperFrame([{ type: 'text', text: 'found it' }]), helperFrame([{ type: 'tool_use', id: 'tu1', name: 'Read', input: {} }]),
+    helperFrame([{ type: 'tool_result', tool_use_id: 'tu1', content: 'ok' }], 'user')];
+  const a = workerActivity(log);
+  assert.equal(a.open, false);
+  assert.equal(a.state, 'idle');
+  assert.deepEqual(a.turnCauses, workerActivity(base).turnCauses);
+  assert.equal(a.turns, 1);
+});
+
+test('workerActivity: helper frames inside a parent turn leave it busy only because the parent opened it', () => {
+  const a = workerActivity([sent(), init(), helperFrame([{ type: 'text', text: 'x' }])]);
+  assert.equal(a.state, 'busy');
+  assert.deepEqual(a.turnCauses, ['pir']);
+});
+
+test('workerActivity: a helper\'s pending request still makes the state permission after the parent\'s result', () => {
+  const a = workerActivity([sent(), init(), result(), at({ dir: 'request', requestId: 'r1', toolName: 'Bash', input: {}, agentId: HELPER_ID })]);
+  assert.equal(a.state, 'permission');
+  assert.equal(a.open, false);
+});
+
+test('recorded plan-0339: background holds the helper until the interrupt\'s result, then [] and idle', () => {
+  const interruptAt = helperSample.findIndex((e) => e.dir === 'out' && e.kind === 'interrupt');
+  const resultAt = helperSample.findIndex((e, i) => i > interruptAt && e.event?.type === 'result');
+  const before = workerActivity(helperSample.slice(0, interruptAt));
+  assert.deepEqual(before.background, [HELPER_ID]);
+  assert.equal(before.state, 'questions', 'the parent\'s question is pinned while the helper runs');
+  const after = workerActivity(helperSample.slice(0, resultAt + 1));
+  assert.deepEqual(after.background, []);
+  assert.equal(after.state, 'idle');
+  const end = workerActivity(helperSample);
+  assert.deepEqual(end.background, []);
+  assert.equal(end.state, 'idle');
+});
+
+// ---- wakesLoop (fast-tests T01, DESIGN §2.1) ----
+
+test('wakesLoop: a note does not wake the loop; a request, output, a turn end, pir/person input do; a non-object does not', () => {
+  assert.equal(wakesLoop(at({ dir: 'note', kind: 'remote-control', on: true })), false, 'the pass writes notes itself');
+  assert.equal(wakesLoop(request('r1')), true, 'a permission request');
+  assert.equal(wakesLoop(result()), true, 'a turn ending (result)');
+  assert.equal(wakesLoop(inMsg({ type: 'assistant', message: { content: [{ type: 'text', text: 'hi' }] } })), true, 'streaming text');
+  assert.equal(wakesLoop(sent()), true, 'an out message');
+  assert.equal(wakesLoop(reply('r1')), true, 'an out reply');
+  for (const v of [null, undefined, 'a raw line', 42, ['dir', 'in']]) assert.equal(wakesLoop(v), false, `not an entry: ${JSON.stringify(v)}`);
+  // Every real entry in the recording except its notes wakes.
+  for (const e of sample) assert.equal(wakesLoop(e), e.dir !== 'note');
 });

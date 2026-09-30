@@ -181,3 +181,47 @@ test('startLines: kill() stops the line and its children, and the result is kill
   h.kill();
   assert.deepEqual(h.poll(), { ok: false, reason: 'killed' }, 'a second kill changes nothing');
 });
+
+// fast-tests T01 (DESIGN §2.1): a setup settling wakes the coordinator loop through onSettled.
+test('startLines: onSettled fires once on success, once on a failing line, once on a spawn error, once on kill', async (t) => {
+  const { dir, logPath } = scratch(t);
+  const count = () => {
+    const c = { n: 0 };
+    c.fn = () => (c.n += 1);
+    return c;
+  };
+
+  const ok = count();
+  const h1 = startLines(['true', 'echo hi'], { cwd: dir, logPath, onSettled: ok.fn });
+  assert.equal(ok.n, 0, 'not while running');
+  await settle(h1);
+  assert.equal(ok.n, 1, 'once, when the last line exits 0');
+
+  const bad = count();
+  await settle(startLines(['false', 'echo never'], { cwd: dir, logPath, onSettled: bad.fn }));
+  assert.equal(bad.n, 1, 'once on the failing line');
+
+  const err = count();
+  const spawn = () => {
+    throw Object.assign(new Error('nope'), { code: 'ENOENT' });
+  };
+  const h3 = startLines(['true'], { cwd: dir, logPath: null, spawn, onSettled: err.fn });
+  assert.equal(h3.poll().ok, false);
+  assert.equal(err.n, 1, 'once on a spawn error');
+
+  const killed = count();
+  const h4 = startLines(['sleep 30'], { cwd: dir, logPath, onSettled: killed.fn });
+  h4.kill();
+  h4.kill();
+  await new Promise((r) => setTimeout(r, 50)); // the killed child's exit event must not fire it again
+  assert.equal(killed.n, 1, 'once on kill, and not again on the exit that follows');
+
+  const none = count();
+  startLines([], { cwd: dir, onSettled: none.fn });
+  assert.equal(none.n, 1, 'no lines settles at once');
+
+  const throwing = startLines(['true'], { cwd: dir, onSettled: () => {
+    throw new Error('boom');
+  } });
+  assert.equal((await settle(throwing)).ok, true, 'a throwing hook does not change the result');
+});

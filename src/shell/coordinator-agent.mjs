@@ -10,13 +10,13 @@
 // exceptions reaches `canUseTool`, and the `decide` gate below, which answers every request itself and
 // never parks one for the person.
 
-import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, realpathSync, statSync, unlinkSync } from 'node:fs';
+import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, realpathSync, statSync, unlinkSync, watch as fsWatch } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { readDecision, checkDecision, describeItem } from '../core/coordinator-policy.mjs';
 import { briefFor, refusalFor, answeredElsewhereFor, closedWhy, openingFor, resumedFor, endBriefFor, timedOutFor, holdWords } from '../core/coordinator-brief.mjs';
-import { readEntry, DEFAULT_REFUSAL } from '../core/stream.mjs';
+import { readEntry, DEFAULT_REFUSAL, wakesLoop } from '../core/stream.mjs';
 import { writeJsonAtomic } from './atomic-write.mjs';
 
 // DESIGN §3.4. The allowlist is what actually holds (T00); `disallowedTools` is the second fence.
@@ -24,13 +24,14 @@ export const AGENT_TOOLS = ['Read', 'Glob', 'Grep', 'Write', 'Skill'];
 export const AGENT_DISALLOWED = ['Bash', 'Edit', 'NotebookEdit', 'WebFetch', 'WebSearch', 'Task', 'Agent'];
 
 // DESIGN §2.11: resumed after each of the first three exits within an hour; the fourth gives it up.
-const RESTART_WINDOW_MS = 60 * 60 * 1000;
-const MAX_RESTARTS = 3;
+// Shared with the finisher (finisher DESIGN §2.12), which keeps the same budget.
+export const RESTART_WINDOW_MS = 60 * 60 * 1000;
+export const MAX_RESTARTS = 3;
 
 // canonical(p) → the real path of `p`, whether or not it exists yet: the nearest existing ancestor is
 // resolved through realpath and the rest appended. A cwd under /tmp reaches the CLI as /private/tmp
 // (FINDINGS 2026-09-27), and a Write's target does not exist yet, so both sides are compared this way.
-function canonical(p) {
+export function canonical(p) {
   let head = resolve(p);
   const rest = [];
   for (;;) {
@@ -45,7 +46,7 @@ function canonical(p) {
   }
 }
 
-const within = (p, root) => p === root || p.startsWith(root.endsWith(sep) ? root : root + sep);
+export const within = (p, root) => p === root || p.startsWith(root.endsWith(sep) ? root : root + sep);
 const strictlyWithin = (p, root) => p !== root && within(p, root);
 
 // A `..` after the first glob segment (`**/../../etc/*`) is outside what the prefix check sees, so a
@@ -67,10 +68,12 @@ function globPrefix(pattern) {
   return keep.join('/') || (pattern.startsWith('/') ? '/' : '.');
 }
 
-// gateFor({ cwd, readRoots, decisionsDir }) → decide(toolName, input) → 'allow' | 'deny' (DESIGN §3.4).
-// Never null: nothing the agent asks for is parked for the person. Every path is resolved against the
-// agent's cwd and canonicalised before comparing, so neither `..` nor a symlinked /tmp can escape.
-export function gateFor({ cwd, readRoots, decisionsDir }) {
+// gateFor({ cwd, readRoots, decisionsDir, skill }) → decide(toolName, input) → 'allow' | 'deny' (DESIGN
+// §3.4). Never null: nothing the agent asks for is parked for the person. Every path is resolved against
+// the agent's cwd and canonicalised before comparing, so neither `..` nor a symlinked /tmp can escape.
+// `skill` is the one skill it may invoke; the finisher passes `pir-finisher` and its status folder as
+// `decisionsDir` (finisher DESIGN §3.2).
+export function gateFor({ cwd, readRoots, decisionsDir, skill = 'pir-coordinator' }) {
   const roots = readRoots.map(canonical);
   const drop = canonical(decisionsDir);
   const readable = (p) => {
@@ -99,7 +102,7 @@ export function gateFor({ cwd, readRoots, decisionsDir }) {
         return 'allow';
       }
       case 'Skill':
-        return i.skill === 'pir-coordinator' ? 'allow' : 'deny';
+        return i.skill === skill ? 'allow' : 'deny';
       case 'Write': {
         if (!str(i.file_path)) return 'deny';
         const target = canonical(isAbsolute(i.file_path) ? i.file_path : resolve(cwd, i.file_path));
@@ -120,12 +123,13 @@ const gateRefusal = (toolName) =>
 const sameItem = (a, b) =>
   a.worker === b.worker && (b.requestId !== undefined ? a.requestId === b.requestId : a.kind === 'report');
 
-// The conversation log's counter: the highest `coordinator-{n}.ndjson` already there.
-function lastLogN(dir) {
+// The conversation log's counter: the highest `{prefix}-{n}.ndjson` already there.
+export function lastLogN(dir, prefix = 'coordinator') {
   let n = 0;
+  const re = new RegExp(`^${prefix}-(\\d+)\\.ndjson$`);
   try {
     for (const f of readdirSync(dir)) {
-      const m = /^coordinator-(\d+)\.ndjson$/.exec(f);
+      const m = re.exec(f);
       if (m) n = Math.max(n, Number(m[1]));
     }
   } catch {
@@ -134,12 +138,72 @@ function lastLogN(dir) {
   return n;
 }
 
-function readJson(path) {
+export function readJson(path) {
   try {
     return JSON.parse(readFileSync(path, 'utf8'));
   } catch {
     return null;
   }
+}
+
+// ---- The session file and the restart budget (DESIGN §2.11), shared with the finisher ----
+
+// loadSession(path) → { sessionId, restarts }: the stored session, or a blank one.
+export function loadSession(path) {
+  const stored = readJson(path);
+  return {
+    sessionId: typeof stored?.sessionId === 'string' ? stored.sessionId : null,
+    restarts: Array.isArray(stored?.restarts) ? stored.restarts.filter((x) => typeof x === 'string') : [],
+  };
+}
+
+// countExit(session, t) → the session's restarts with this exit added and those older than the window
+// dropped; the caller stores it and gives up once `overBudget`.
+export const countExit = (session, t) =>
+  [...session.restarts, new Date(t).toISOString()].filter((iso) => t - Date.parse(iso) < RESTART_WINDOW_MS);
+
+// overBudget(restarts, t) → more exits within the last hour than the budget: given up.
+export const overBudget = (restarts, t) => restarts.filter((iso) => t - Date.parse(iso) < RESTART_WINDOW_MS).length > MAX_RESTARTS;
+
+// appendJsonLine(path, line) → one ledger line, writing the missing newline first when the file ends in a
+// torn line (DESIGN §3.5): appending straight after it would fuse the new line onto it and lose both on
+// read (review T03). A ledger that cannot be written must not take the pass down.
+export function appendJsonLine(path, line) {
+  let fd;
+  let torn = false;
+  try {
+    const { size } = statSync(path);
+    if (size > 0) {
+      fd = openSync(path, 'r');
+      const b = Buffer.alloc(1);
+      readSync(fd, b, 0, 1, size - 1);
+      torn = b[0] !== 0x0a;
+    }
+  } catch {
+    // no file yet
+  } finally {
+    if (fd !== undefined) closeSync(fd);
+  }
+  try {
+    appendFileSync(path, (torn ? '\n' : '') + JSON.stringify(line) + '\n');
+  } catch {
+    // the ledger is a record; the pass goes on
+  }
+}
+
+// readJsonLines(path) → every line that parses; a torn last line is skipped (DESIGN §3.5).
+export function readJsonLines(path) {
+  if (!existsSync(path)) return [];
+  const lines = [];
+  for (const l of readFileSync(path, 'utf8').split('\n')) {
+    if (!l.trim()) continue;
+    try {
+      lines.push(JSON.parse(l));
+    } catch {
+      // a torn line
+    }
+  }
+  return lines;
 }
 
 // ---- Who closed an item, and with what (DESIGN §2.3, T15) ----
@@ -276,6 +340,11 @@ export function closingAnswer(entries, item, { since = 0 } = {}) {
 // `skillsDir` and `uuid` are injectable for tests. `env() → object | null` is platform.mjs's `workerEnv`
 // contract (reliable-notifications DESIGN §2.7), read at each launch, a resume included: an object is merged
 // over `process.env` as the session's environment; null leaves it inheriting.
+// `onActivity()` is the coordinator loop's wake-up (fast-tests DESIGN §2.1): called on the agent session's
+// log entries that wakesLoop accepts, on its exit, and when a decision file lands in decisions/. The folder
+// is watched here, by a watcher that lives as long as the agent, rather than added to the dirs the loop
+// waits on: the loop's wait re-arms its watch after every pass, and a decision written in between would
+// wait out the backstop; a standing watcher sees it whenever it lands. `watch` is injectable for the tests.
 export function startCoordinatorAgent({
   controlDir,
   featurePath,
@@ -291,6 +360,8 @@ export function startCoordinatorAgent({
   skillsDir = join(homedir(), '.claude', 'skills'),
   uuid = randomUUID,
   env = null,
+  onActivity = () => {},
+  watch = fsWatch,
 }) {
   const coordDir = join(controlDir, 'coordinator');
   const decisionsDir = join(coordDir, 'decisions');
@@ -298,6 +369,42 @@ export function startCoordinatorAgent({
   const ledgerPath = join(coordDir, 'ledger.jsonl');
   const convDir = join(controlDir, 'conversations');
   mkdirSync(decisionsDir, { recursive: true });
+  const activity = () => {
+    try {
+      onActivity();
+    } catch {
+      /* the loop's backstop still runs the next pass */
+    }
+  };
+  // Only a decision file wakes the loop: the drain's own unlink and the agent's Write temp-names do not,
+  // or each drain would schedule a pass that has nothing to read. A watcher that fails at start or later
+  // leaves the loop's backstop to pick decisions up, as before.
+  const landed = (name) => {
+    if (typeof name !== 'string' || name === '') {
+      try {
+        return readdirSync(decisionsDir).some((f) => f.endsWith('.json'));
+      } catch {
+        return false;
+      }
+    }
+    return name.endsWith('.json') && existsSync(join(decisionsDir, name));
+  };
+  let decisionsWatcher = null;
+  try {
+    decisionsWatcher = watch(decisionsDir, (_event, name) => {
+      if (landed(name == null ? null : String(name))) activity();
+    });
+    decisionsWatcher.unref?.();
+    decisionsWatcher.on?.('error', () => {
+      try {
+        decisionsWatcher.close();
+      } catch {
+        /* already closed */
+      }
+    });
+  } catch {
+    decisionsWatcher = null;
+  }
 
   const decide = gateFor({
     cwd: featurePath,
@@ -307,11 +414,7 @@ export function startCoordinatorAgent({
   const name = `${basename(repoRoot)} / ${slug} / coordinator agent`;
 
   // A stored session is resumed: after a pir restart the agent keeps its conversation (DESIGN §2.11).
-  const stored = readJson(sessionPath);
-  const session = {
-    sessionId: typeof stored?.sessionId === 'string' ? stored.sessionId : null,
-    restarts: Array.isArray(stored?.restarts) ? stored.restarts.filter((x) => typeof x === 'string') : [],
-  };
+  const session = loadSession(sessionPath);
   const saveSession = () => writeJsonAtomic(sessionPath, session);
 
   let worker = null;
@@ -351,7 +454,13 @@ export function startCoordinatorAgent({
     });
     up = true;
     const w = worker;
-    w.onExit((info) => onExit(w, info));
+    w.onEvent((entry) => {
+      if (wakesLoop(entry)) activity();
+    });
+    w.onExit((info) => {
+      onExit(w, info);
+      activity();
+    });
     if (resume) w.send(resumedFor(), { from: 'pir' });
     else w.send(openingFor({ slug, projectRulesPath, dropDir: decisionsDir }), { from: 'pir' });
     if (remote) w.remoteControl(true).catch(() => {});
@@ -362,7 +471,7 @@ export function startCoordinatorAgent({
     up = false;
     if (closing) return;
     const t = now();
-    session.restarts = [...session.restarts, new Date(t).toISOString()].filter((iso) => t - Date.parse(iso) < RESTART_WINDOW_MS);
+    session.restarts = countExit(session, t);
     saveSession();
     if (session.restarts.length > MAX_RESTARTS) {
       // Given up for the rest of the run: every waiting item goes to the person (DESIGN §2.11).
@@ -384,31 +493,7 @@ export function startCoordinatorAgent({
   const keyOf = (item) => `${item.worker}:${item.requestId ?? 'report'}`;
   const tell = (text) => (alive() ? worker.send(text, { from: 'pir' }) : false);
 
-  // A torn last line (DESIGN §3.5) has no newline; appending straight after it would fuse the new line
-  // onto it and lose both on read, so a missing newline is written first (review T03).
-  const endsTorn = () => {
-    let fd;
-    try {
-      const { size } = statSync(ledgerPath);
-      if (size === 0) return false;
-      fd = openSync(ledgerPath, 'r');
-      const b = Buffer.alloc(1);
-      readSync(fd, b, 0, 1, size - 1);
-      return b[0] !== 0x0a;
-    } catch {
-      return false;
-    } finally {
-      if (fd !== undefined) closeSync(fd);
-    }
-  };
-
-  const appendLedger = (line) => {
-    try {
-      appendFileSync(ledgerPath, (endsTorn() ? '\n' : '') + JSON.stringify({ t: new Date(now()).toISOString(), ...line }) + '\n');
-    } catch {
-      // a ledger that cannot be written must not take the pass down; the answer was still applied
-    }
-  };
+  const appendLedger = (line) => appendJsonLine(ledgerPath, { t: new Date(now()).toISOString(), ...line });
 
   // Apply one checked decision through the platform. → true when it reached the worker.
   function apply(a) {
@@ -532,23 +617,11 @@ export function startCoordinatorAgent({
     }
   }
 
-  function ledger() {
-    if (!existsSync(ledgerPath)) return [];
-    const lines = [];
-    for (const l of readFileSync(ledgerPath, 'utf8').split('\n')) {
-      if (!l.trim()) continue;
-      try {
-        lines.push(JSON.parse(l));
-      } catch {
-        // a torn last line (DESIGN §3.5)
-      }
-    }
-    return lines;
-  }
+  const ledger = () => readJsonLines(ledgerPath);
 
   // A run whose agent was already given up in the last hour stays given up across a pir restart.
   const t0 = now();
-  if (session.restarts.filter((iso) => t0 - Date.parse(iso) < RESTART_WINDOW_MS).length > MAX_RESTARTS) {
+  if (overBudget(session.restarts, t0)) {
     givenUp = true;
     // Its row still says so, and `c` / → still open the conversation it last had (T12).
     const n = lastLogN(convDir);
@@ -630,6 +703,11 @@ export function startCoordinatorAgent({
     },
     async close(opts) {
       closing = true;
+      try {
+        decisionsWatcher?.close();
+      } catch {
+        /* already closed */
+      }
       if (worker) await worker.close(opts);
     },
   };
@@ -650,7 +728,7 @@ export function withAgent(platform, getAgent) {
     ...platform,
     send(id, text, opts = {}) {
       const a = sessionFor(id);
-      return a ? { ok: a.session.send(text, { from: opts.from ?? 'person' }) } : platform.send(id, text, opts);
+      return a ? { ok: a.session.send(text, { ...opts, from: opts.from ?? 'person' }) } : platform.send(id, text, opts);
     },
     interrupt(id, opts = {}) {
       const a = sessionFor(id);

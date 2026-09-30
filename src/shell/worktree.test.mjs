@@ -53,13 +53,13 @@ const countWorktrees = (repo, branch) =>
 test('openFeature: branch off main, own worktree, checkout stays on main, second call reuses', (t) => {
   const s = scratchRepo();
   t.after(s.cleanup);
-  const f = openFeature('demo', { root: s.repo });
+  const f = openFeature('demo', { root: s.repo, base: 'main' });
   assert.equal(f.branch, 'pir/demo');
   assert.ok(existsSync(f.path), 'the feature worktree exists on disk');
   assert.equal(headOf(f.path), 'pir/demo', 'the worktree is on the feature branch');
   assert.equal(headOf(s.repo), 'main', "the user's main checkout was not switched");
 
-  const again = openFeature('demo', { root: s.repo });
+  const again = openFeature('demo', { root: s.repo, base: 'main' });
   assert.equal(again.path, f.path, 'a second call returns the same worktree');
   assert.equal(countWorktrees(s.repo, 'pir/demo'), 1, 'no duplicate feature worktree');
 });
@@ -67,12 +67,12 @@ test('openFeature: branch off main, own worktree, checkout stays on main, second
 test('openFeature: a restart with the branch present but its worktree gone re-adds the worktree', (t) => {
   const s = scratchRepo();
   t.after(s.cleanup);
-  const f = openFeature('demo', { root: s.repo });
+  const f = openFeature('demo', { root: s.repo, base: 'main' });
   git(s.repo, ['worktree', 'remove', '--force', f.path]); // simulate a killed coordinator's leak
   assert.ok(branchExists(s.repo, 'pir/demo'), 'the branch survives');
   assert.equal(countWorktrees(s.repo, 'pir/demo'), 0, 'the worktree is gone');
 
-  const reopened = openFeature('demo', { root: s.repo });
+  const reopened = openFeature('demo', { root: s.repo, base: 'main' });
   assert.equal(reopened.branch, 'pir/demo');
   assert.ok(existsSync(reopened.path), 'the feature worktree is back');
   assert.equal(countWorktrees(s.repo, 'pir/demo'), 1);
@@ -81,7 +81,7 @@ test('openFeature: a restart with the branch present but its worktree gone re-ad
 test('createTask: worktree on pir/{plan}-T{nn} cut from the FEATURE branch, not main', (t) => {
   const s = scratchRepo();
   t.after(s.cleanup);
-  const f = openFeature('demo', { root: s.repo });
+  const f = openFeature('demo', { root: s.repo, base: 'main' });
   // A commit that exists only on the feature branch: if the task branch is cut from it, the file
   // is present in the task worktree; if cut from main, it is not.
   writeFileSync(join(f.path, 'feature-only.txt'), 'from the feature branch\n');
@@ -96,7 +96,7 @@ test('createTask: worktree on pir/{plan}-T{nn} cut from the FEATURE branch, not 
 test('integrate: brings a diverged feature branch into the task branch cleanly', (t) => {
   const s = scratchRepo();
   t.after(s.cleanup);
-  const f = openFeature('demo', { root: s.repo });
+  const f = openFeature('demo', { root: s.repo, base: 'main' });
   const w = createTask('demo', 'T01', { root: s.repo });
   // The feature branch moves after the task branch was cut.
   writeFileSync(join(f.path, 'sibling.txt'), 'a sibling merged first\n');
@@ -111,7 +111,7 @@ test('integrate: brings a diverged feature branch into the task branch cleanly',
 test('integrate: reports the conflicting files and leaves the task worktree clean', (t) => {
   const s = scratchRepo({ 'shared.txt': 'base\n' });
   t.after(s.cleanup);
-  const f = openFeature('demo', { root: s.repo });
+  const f = openFeature('demo', { root: s.repo, base: 'main' });
   const w = createTask('demo', 'T01', { root: s.repo });
   // Both the feature branch and the task branch edit the same line of the same file.
   writeFileSync(join(f.path, 'shared.txt'), 'feature version\n');
@@ -128,7 +128,7 @@ test('integrate: reports the conflicting files and leaves the task worktree clea
 test('mergeTask: a clean task branch lands on the feature branch and main does not move', (t) => {
   const s = scratchRepo();
   t.after(s.cleanup);
-  const f = openFeature('demo', { root: s.repo });
+  const f = openFeature('demo', { root: s.repo, base: 'main' });
   const w = createTask('demo', 'T01', { root: s.repo });
   writeFileSync(join(w.path, 'work-T01.txt'), 'work\n');
   git(w.path, ['add', '-A']);
@@ -144,7 +144,7 @@ test('mergeTask: a clean task branch lands on the feature branch and main does n
 test("mergeTask: keeps the feature's PROGRESS.md and drops the task branch's row edit (DESIGN §2.5)", (t) => {
   const s = scratchRepo();
   t.after(s.cleanup);
-  const f = openFeature('demo', { root: s.repo });
+  const f = openFeature('demo', { root: s.repo, base: 'main' });
   const w = createTask('demo', 'T01', { root: s.repo });
   writeFileSync(join(w.path, PROGRESS_REL), '# Progress\n\n| T01 | one | auto | — | ✅ | worker wrote this |\n');
   writeFileSync(join(w.path, 'work-T01.txt'), 'work\n');
@@ -160,7 +160,7 @@ test("mergeTask: keeps the feature's PROGRESS.md and drops the task branch's row
 test('mergeTask: reports a real code conflict without touching main', (t) => {
   const s = scratchRepo({ 'shared.txt': 'base\n' });
   t.after(s.cleanup);
-  const f = openFeature('demo', { root: s.repo });
+  const f = openFeature('demo', { root: s.repo, base: 'main' });
   const t1 = createTask('demo', 'T01', { root: s.repo });
   const t2 = createTask('demo', 'T02', { root: s.repo });
   writeFileSync(join(t1.path, 'shared.txt'), 'from T01\n');
@@ -180,7 +180,7 @@ test('mergeTask: reports a real code conflict without touching main', (t) => {
 test('two mergeTask calls run one after another, both landing on the feature branch', (t) => {
   const s = scratchRepo();
   t.after(s.cleanup);
-  openFeature('demo', { root: s.repo });
+  openFeature('demo', { root: s.repo, base: 'main' });
   const t1 = createTask('demo', 'T01', { root: s.repo });
   const t2 = createTask('demo', 'T02', { root: s.repo });
   writeFileSync(join(t1.path, 'a.txt'), 'a\n');
@@ -200,7 +200,7 @@ test('two mergeTask calls run one after another, both landing on the feature bra
 test('the plan assembles on the feature branch and main is never touched — there is no promote (DESIGN §2.4)', (t) => {
   const s = scratchRepo();
   t.after(s.cleanup);
-  openFeature('demo', { root: s.repo });
+  openFeature('demo', { root: s.repo, base: 'main' });
   const w = createTask('demo', 'T01', { root: s.repo });
   writeFileSync(join(w.path, 'work-T01.txt'), 'work\n');
   git(w.path, ['add', '-A']);
@@ -216,7 +216,7 @@ test('the plan assembles on the feature branch and main is never touched — the
 test('remove: deletes the worktree and branch, including one with uncommitted changes', (t) => {
   const s = scratchRepo();
   t.after(s.cleanup);
-  openFeature('demo', { root: s.repo });
+  openFeature('demo', { root: s.repo, base: 'main' });
   const w = createTask('demo', 'T01', { root: s.repo });
   writeFileSync(join(w.path, 'dirty.txt'), 'uncommitted, simulating an abandoned worker\n');
   assert.ok(branchExists(s.repo, 'pir/demo-T01'));
@@ -229,7 +229,7 @@ test('remove: deletes the worktree and branch, including one with uncommitted ch
 test('remove: tears down a LOCKED worktree, the state claude rm cannot clear (FINDINGS)', (t) => {
   const s = scratchRepo();
   t.after(s.cleanup);
-  openFeature('demo', { root: s.repo });
+  openFeature('demo', { root: s.repo, base: 'main' });
   const w = createTask('demo', 'T01', { root: s.repo });
   // A locked worktree is the abandoned-worker case remove must recover from; git refuses a single
   // --force on it ("cannot remove a locked working tree"). This test fails if remove drops to one.
@@ -243,7 +243,7 @@ test('remove: tears down a LOCKED worktree, the state claude rm cannot clear (FI
 test('createWorktree factory: drives the loop path open → create → merge → commitFeature → remove; main untouched', (t) => {
   const s = scratchRepo();
   t.after(s.cleanup);
-  const wt = createWorktree({ root: s.repo });
+  const wt = createWorktree({ root: s.repo, base: 'main' });
   const f = wt.openFeature('demo');
   const w = wt.createTask('demo', 'T01');
   writeFileSync(join(w.path, 'work-T01.txt'), 'work\n');
@@ -294,7 +294,7 @@ function commitRow(path, num, state) {
 test('taskBranchState returns the committed glyph for 🔍/✅/🟡/⬜ branches', (t) => {
   const s = scratchRepo();
   t.after(s.cleanup);
-  openFeature('demo', { root: s.repo });
+  openFeature('demo', { root: s.repo, base: 'main' });
   const cases = [['T01', '🔍'], ['T02', '✅'], ['T03', '🟡'], ['T04', '⬜']];
   for (const [num, glyph] of cases) commitRow(createTask('demo', num, { root: s.repo }).path, num, glyph);
   for (const [num, glyph] of cases) {
@@ -305,14 +305,14 @@ test('taskBranchState returns the committed glyph for 🔍/✅/🟡/⬜ branches
 test('taskBranchState: a task number with no branch at all → null, no throw', (t) => {
   const s = scratchRepo();
   t.after(s.cleanup);
-  openFeature('demo', { root: s.repo });
+  openFeature('demo', { root: s.repo, base: 'main' });
   assert.equal(taskBranchState('demo', 'T99', { root: s.repo }), null);
 });
 
 test('taskBranchState: a branch that exists but has no PROGRESS.md on it → null', (t) => {
   const s = scratchRepo();
   t.after(s.cleanup);
-  openFeature('demo', { root: s.repo });
+  openFeature('demo', { root: s.repo, base: 'main' });
   const w = createTask('demo', 'T01', { root: s.repo });
   rmSync(join(w.path, PROGRESS_REL));
   git(w.path, ['add', '-A']);
@@ -323,7 +323,7 @@ test('taskBranchState: a branch that exists but has no PROGRESS.md on it → nul
 test('taskBranchState: a table with no row for that task number → null', (t) => {
   const s = scratchRepo();
   t.after(s.cleanup);
-  openFeature('demo', { root: s.repo });
+  openFeature('demo', { root: s.repo, base: 'main' });
   const w = createTask('demo', 'T01', { root: s.repo });
   commitRow(w.path, 'T02', '🔍'); // the table lists T02, we ask about T01
   assert.equal(taskBranchState('demo', 'T01', { root: s.repo }), null);
@@ -332,7 +332,7 @@ test('taskBranchState: a table with no row for that task number → null', (t) =
 test('taskWorktreeHandle returns { path, branch } for a checked-out task, null when none is registered', (t) => {
   const s = scratchRepo();
   t.after(s.cleanup);
-  openFeature('demo', { root: s.repo });
+  openFeature('demo', { root: s.repo, base: 'main' });
   assert.equal(taskWorktreeHandle('demo', 'T01', { root: s.repo }), null);
   const w = createTask('demo', 'T01', { root: s.repo });
   const h = taskWorktreeHandle('demo', 'T01', { root: s.repo });
@@ -343,7 +343,7 @@ test('taskWorktreeHandle returns { path, branch } for a checked-out task, null w
 test('taskBranchState reads without modifying the branch tip or the worktree', (t) => {
   const s = scratchRepo();
   t.after(s.cleanup);
-  openFeature('demo', { root: s.repo });
+  openFeature('demo', { root: s.repo, base: 'main' });
   const w = createTask('demo', 'T01', { root: s.repo });
   commitRow(w.path, 'T01', '🔍');
   const tipBefore = git(s.repo, ['rev-parse', 'pir/demo-T01']).stdout.trim();
@@ -378,7 +378,7 @@ const ADOPT_TABLE = [
 // ADOPT_TABLE. Returns the created task worktree/branch. The task branch then commits whatever the
 // scenario needs before mergeTask folds it back.
 function featureWithTable(repo, task = 'T02') {
-  const f = openFeature('demo', { root: repo });
+  const f = openFeature('demo', { root: repo, base: 'main' });
   writeFileSync(join(f.path, PROGRESS_REL), ADOPT_TABLE);
   git(f.path, ['add', '-A']);
   git(f.path, ['commit', '-m', 'seed full table', '--no-edit']);
@@ -466,7 +466,7 @@ test('mergeTask on a branch that edits an existing row still merges the code, re
 test('mergeTask: a non-PROGRESS.md code conflict still returns { conflict, files } and leaves the feature branch clean', (t) => {
   const s = scratchRepo({ 'shared.txt': 'base\n' });
   t.after(s.cleanup);
-  const f = openFeature('demo', { root: s.repo });
+  const f = openFeature('demo', { root: s.repo, base: 'main' });
   const t1 = createTask('demo', 'T01', { root: s.repo });
   const t2 = createTask('demo', 'T02', { root: s.repo });
   writeFileSync(join(t1.path, 'shared.txt'), 'from T01\n');
@@ -538,34 +538,40 @@ function syncFixture(t, { mainFile = null, featureFile = null } = {}) {
   return { w, f, mainSha: git(w.repo, ['rev-parse', 'main']).stdout.trim() };
 }
 
-test('syncMain: up to date when main is already in the feature branch; main untouched', (t) => {
+// The coordinator's calls until T07 wires the recorded base: the local main, by name.
+const MAIN = ['refs/heads/main'];
+const sync = (w, path) => w.syncBase(path, { baseSha: w.baseTip({ ref: MAIN[0] }), base: 'main' });
+const toBase = ({ state, mainSha, files }) => ({ state, baseSha: mainSha, ...(files ? { files } : {}) });
+
+test('syncBase: up to date when main is already in the feature branch; main untouched', (t) => {
   const { w, f, mainSha } = syncFixture(t);
   const before = w.mainCommitCount();
-  assert.deepEqual(w.syncMain(f.path), { state: 'up-to-date', mainSha });
+  assert.deepEqual(sync(w, f.path), toBase({ state: 'up-to-date', mainSha }));
   assert.equal(w.mainCommitCount(), before);
-  assert.equal(w.mainContains(f.branch), true, 'a fresh feature branch is main itself');
+  assert.equal(w.baseContains(f.branch, { refs: MAIN }), true, 'a fresh feature branch is main itself');
 });
 
-test('syncMain: a clean merge of a moved main; main still does not contain the feature tip', (t) => {
+test('syncBase: a clean merge of a moved main; main still does not contain the feature tip', (t) => {
   const { w, f, mainSha } = syncFixture(t, { mainFile: { path: 'other.txt', content: 'main\n' }, featureFile: { path: 'mine.txt', content: 'x\n' } });
-  const res = w.syncMain(f.path);
-  assert.deepEqual(res, { state: 'merged', mainSha });
+  const res = sync(w, f.path);
+  assert.deepEqual(res, toBase({ state: 'merged', mainSha }));
+  assert.equal(git(f.path, ['log', '-1', '--format=%s']).stdout.trim(), 'sync main into pir/demo', 'the base-named merge message');
   assert.equal(readFileSync(join(f.path, 'other.txt'), 'utf8'), 'main\n');
   assert.equal(git(f.path, ['merge-base', '--is-ancestor', mainSha, 'HEAD']).ok, true);
   assert.equal(w.syncPending(f.path), false);
-  assert.equal(w.mainContains(f.branch), false);
-  assert.equal(w.syncMain(f.path).state, 'up-to-date', 'a second sync has nothing to do');
+  assert.equal(w.baseContains(f.branch, { refs: MAIN }), false);
+  assert.equal(sync(w, f.path).state, 'up-to-date', 'a second sync has nothing to do');
   git(w.repo, ['merge', '--no-edit', f.branch]);
-  assert.equal(w.mainContains(f.branch), true, 'the person merged');
+  assert.equal(w.baseContains(f.branch, { refs: MAIN }), true, 'the person merged');
 });
 
-test('syncMain: a conflict is left in progress with its files; re-asked, it is the same conflict; abortSync cleans up', (t) => {
+test('syncBase: a conflict is left in progress with its files; re-asked, it is the same conflict; abortSync cleans up', (t) => {
   const { w, f, mainSha } = syncFixture(t, { mainFile: { path: 'shared.txt', content: 'main\n' }, featureFile: { path: 'shared.txt', content: 'feature\n' } });
-  assert.deepEqual(w.syncMain(f.path), { state: 'conflict', mainSha, files: ['shared.txt'] });
+  assert.deepEqual(sync(w, f.path), toBase({ state: 'conflict', mainSha, files: ['shared.txt'] }));
   assert.equal(w.syncPending(f.path), true, 'the merge is left for a worker to finish');
-  assert.deepEqual(w.syncMain(f.path), { state: 'conflict', mainSha, files: ['shared.txt'] }, 'no second merge on top');
+  assert.deepEqual(sync(w, f.path), toBase({ state: 'conflict', mainSha, files: ['shared.txt'] }), 'no second merge on top');
   assert.equal(w.abortSync(f.path).ok, true);
   assert.equal(w.syncPending(f.path), false);
   assert.equal(readFileSync(join(f.path, 'shared.txt'), 'utf8'), 'feature\n');
-  assert.equal(w.mainTip(), mainSha);
+  assert.equal(w.baseTip({ ref: MAIN[0] }), mainSha);
 });

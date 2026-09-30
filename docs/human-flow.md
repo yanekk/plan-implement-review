@@ -89,7 +89,11 @@ the same way (measured 2026-09-27). The known miss: a worker that asks the perso
 own is still running, without a report, reads `building` until that job's wake-up turn ends. The
 worker contract closes it by telling workers to drop a fresh report every time they end a turn waiting
 on the person (`skills/pir-worker`). A worker whose background jobs pir cannot see (a listing without
-them, as in the test fakes) never reads stopped. Interrupting a worker ends its turn, so it then reads
+them, as in the test fakes) never reads stopped. **A running helper counts as work in progress** (a
+[helper](#helpers) is an agent the worker started with Claude's Agent tool): a background helper is
+one of the worker's background jobs, and a foreground one keeps its turn open, so a worker whose helper
+is still running does not read `asking you` by the stopped rule (a pending request or a report still does), and a helper's own output
+never opens a turn of the worker. Interrupting a worker ends its turn, so it then reads
 `asking you`: it is waiting for the person.
 
 A planner or plan reviewer in a `pir plan` run reads asking by the same stopped rule, until its report
@@ -163,10 +167,71 @@ reports (`canUseTool` in `worker-proc.mjs`, logged as a `request` entry):
   or just start typing, and the text appears next to "Other:" (never in the typing box), wrapped to as
   many lines as it needs; ←/→ move the cursor within it, and ← goes back to the live view only once it
   is empty. Enter answers with it. Option descriptions wrap too, never cut short. It replaces a pick-one choice and joins a pick-any question's ticks. To talk instead of
-  answering, Esc interrupts the worker, which cancels the question.
+  answering, Esc interrupts the worker, which cancels the question (while a helper runs, the first Esc
+only warns; see [Helpers](#helpers)).
 
 These keys work only while the typing box is empty. A request left unanswered simply waits: nothing
 times it out.
+
+### Helpers
+
+A worker, a planner, a plan reviewer or the coordinator agent can start **helpers**: agents of its
+own, started with Claude's Agent tool, in the background or the foreground (`plans/visible-helpers`).
+In the conversation each helper is one line under the step that started it, updating as it works:
+
+```
+  ↳ helper · Survey end-of-run machinery · Reading src/shell/worker-proc.mjs · 9 steps · 21s
+  ↳ helper finished · Survey end-of-run machinery · 20 steps · 1m 12s
+```
+
+It ends as `finished`, `stopped` or `failed`. The helper's own words and steps are not drawn in the
+default view, so none of them reads as the worker's; Tab's full detail shows them in place, labelled
+`helper ▸ ` and `helper ⎿`. The line above the typing box counts running helpers apart from background
+commands (`◌ 2 helpers running · 1 running in the background`). The line's detail is in
+[detached-runs.md](detached-runs.md#the-conversation-view).
+
+**A helper's permission request or question set names the helper.** Its head reads
+`⚑ helper "Survey end-of-run machinery" wants to use Bash` or `? helper "…" asks you 1 question` where
+a worker's reads `⚑ T05 wants to use Bash`, in the pinned prompt and in the answered request in the
+scrollback; a request from a helper pir has not seen start reads `a helper`. The keys, grants and the
+risky-request double press are the same, and the row reads `asking you · allow a command?` (a question
+set: `asking you · a question`) as for the worker's own request (`agentId` on the logged request, from the SDK's `agentID`).
+
+**Esc warns before it stops helpers.** An interrupt stops every helper the worker has running, and
+the worker is told only that it was interrupted. So in the conversation view, while any helper runs,
+the first Esc (or Ctrl+C on an empty box) sends nothing and shows, in place of the status line (under
+the pinned prompt when a question or permission is pending) and wrapped if it is long:
+
+```
+esc again to interrupt · this also stops 2 helpers: Survey end-of-run machinery; Check the tests
+```
+
+A second Esc or Ctrl+C interrupts, even if the helpers have ended in between. Any other key cancels
+the warning and then does what it normally does. With no helper running, Esc interrupts at once. A
+pending question or permission is cancelled by the interrupt as before, only after the warning. The
+warning is a state, not a timer: left alone it stays until the next key.
+
+**The next message tells the worker which helpers the interrupt stopped.** When the person next types
+a message in the conversation view, pir puts a note in front of it, in the same message, naming every
+helper an interrupt stopped that no earlier message has reported:
+
+```
+[pir] Before this message, the person's interrupt stopped your helpers: "Survey end-of-run machinery", "Check the tests". They will not report back. Start them again or do the work yourself if it is still needed.
+```
+
+(With one helper it reads `your helper … It will not report back. Start it again …`.) The conversation
+shows the person's words as sent and the note under them as a `pir ▸` line. The note is attached, not
+sent on its own, because a message on its own would start a turn and the worker would carry on with
+work the person had just interrupted. Only a typed message carries it: a permission reply, a refusal
+with text or question answers do not. A helper that died because the worker's process was restarted
+(a `resumed` note) is not reported as stopped by the person.
+
+Limits (visible-helpers DESIGN §8): input typed over Remote Control or from the phone does not pass
+through pir's view, so an interrupt sent there gets no warning and a message sent there carries no
+note. The run's list row, the dashboard and Remote Control show no helper line or count; the row keeps
+reading the worker's own state. A phone alert (`pir notify`) and the coordinator agent's view of a
+helper's permission request name the worker or planner, not the helper. What a model does with the
+note (restart the helper or do the work itself) is its own choice and is not tested.
 
 ## Answering away from the terminal — Remote Control
 
@@ -207,7 +272,7 @@ off there too.
 
 pir tells the person's phone, through ntfy (a free push service with an iPhone and Android app, no
 account; the topic name is the only secret), when a question in a build run becomes theirs and when
-the run waits on their merge. It is off until set up, per account, not per project.
+the run waits on their merge or their go. It is off until set up, per account, not per project.
 
 **Setting up.** `pir notify` makes a random topic (`pir-` and 24 random characters), saves it in
 `~/.pir/notify.json` (mode 0600), prints it with a QR code and the steps, and sends a test alert. In the
@@ -229,10 +294,11 @@ other. Planning sessions (`pir plan`) never alert, and their Claude app push is 
 
 - **Timing.** The alert is sent as soon as the worker's Remote Control link is known, so tapping it
   opens that worker's chat in the Claude app (seen on the iPhone, 2026-09-28). It goes without a link
-  under `PARALLEL_REMOTE=0`, when Remote Control was refused, or after 20 s with no link. The loop polls
-  every 5 s, so an alert follows the question by a few seconds; a question held by the agent alerts
+  under `PARALLEL_REMOTE=0`, when Remote Control was refused, or after 20 s with no link. The loop wakes
+  on the worker's question (5 s is only its backstop timer), so an alert follows the question within
+  about a second; a question held by the agent alerts
   only when the hold limit (5 minutes) hands it over.
-- **Wording.** Title `{plan} · {task} {role}` (a helper: `{plan} · main-sync resolve-main-merge`). The
+- **Wording.** Title `{plan} · {task} {role}` (a helper: `{plan} · main-sync resolve-base-merge`). The
   message opens with why it is the person's — `Agent passed it on: `, `Agent didn't answer in time: `,
   `Needs your yes: `, `Agent unavailable: `, or nothing when the run has no agent — then `asks: ` and
   the question (the first of a question set, with `(+N more)`), or `wants to run ` and the tool and its
@@ -245,7 +311,7 @@ other. Planning sessions (`pir plan`) never alert, and their Claude app push is 
   to work too (2026-09-28).
 - **Icon.** Every alert carries pir's icon by URL. ntfy shows it on Android only; the iPhone shows its
   default (seen 2026-09-28).
-- **The Claude app is silenced.** With alerts set up when a build worker or the agent starts, pir sets
+- **The Claude app is silenced.** With alerts set up when a build worker, the agent or the finisher starts, pir sets
   `CLAUDE_CLIENT_PRESENCE_FILE` in its session to `~/.pir/presence` and makes that file exist, so the
   Claude app does not push a second time (seen silent on the iPhone, 2026-09-28). Remote Control is
   untouched. `pir notify off` deletes the file, so running sessions push through the Claude app again.
@@ -258,12 +324,38 @@ other. Planning sessions (`pir plan`) never alert, and their Claude app push is 
   asking gets a fresh alert.
 
 **The end-of-run alert.** One alert when the run starts waiting on the person's merge: `{plan} · ready
-to merge` with `All {n} tasks merged. git merge pir/{slug}`, or `{plan} · not ready` with `Tests red
-on pir/{slug}: ` and the reason, or `Merge with main unresolved on pir/{slug}`. With the agent its tap
+to merge` with `All {n} tasks merged. git switch {base} && git merge pir/{slug}`, or `{plan} · not ready` with `Tests red
+on pir/{slug}: ` and the reason, or `Merge with {base} unresolved on pir/{slug}`. With the agent its tap
 opens the agent's chat, where the report and the merge are presented (seen 2026-09-28), and it is noted
 `notified` in the agent's conversation. Without the agent it is sent as the run ends, without a link.
-It has no reminder and is not cleared; `main` moving and the branch re-synced does not send it again,
-but restarting pir into `ready to merge` does.
+It has no reminder and is not cleared; the base moving and the branch re-synced does not send it again,
+but restarting pir into `ready to merge` does. A green run the finisher takes over sends no `ready to
+merge` alert; the finisher's own alerts below replace it. A red run, a run without the agent, and a run
+whose finisher failed to start still send it.
+
+**The finisher's alerts.** On a run the finisher takes over ([finisher.md](finisher.md#phone-alerts)),
+the phone gets, keyed `finisher` in the same episode machine as a worker's question (so reminder, clear
+and retry behave the same, and `control.log` reads `notify send finisher …`):
+
+- `{slug} · ready for your go` when it enters `awaiting-go`: `{n} step(s) from project rules` (or `your
+  rules`, `default rules`) and the first step. One reminder after 15 minutes; cleared when the phase
+  leaves it.
+- `{slug} · finisher stuck` when it enters `stuck`: its summary, cut to 150 characters. One reminder;
+  cleared when it leaves `stuck`. `awaiting-go` to `stuck` is a new alert.
+- `{slug} · finisher` when a request parks for the person in another phase (a reserved action after the
+  go), worded as for a worker (`Needs your yes: wants to run …`).
+- `{slug} · finished` with its done summary, once, as the run ends.
+- `{slug} · finisher gave up` with `Merge by hand: git switch {base} && git merge pir/{slug}`, once, when it gives up.
+
+Each tap opens the finisher's chat through its Remote Control link, which is on for its whole session;
+the gave-up alert carries no link, since that session is gone.
+
+**The hold alert.** When the end-of-run sync is held because the base cannot be fetched or the local
+base has split from the remote's (see
+[coordinator-agent.md](coordinator-agent.md#the-end-of-the-run)), one alert goes when the hold begins:
+`{plan} · waiting` over the reason (`your dev and origin/dev have split apart`). The minute-by-minute
+retries send nothing; a new alert goes only if the hold's reason changes, or a later hold begins after
+this one cleared.
 
 ## A task that needs the person is an ordinary worker that asks
 
@@ -334,8 +426,8 @@ finished run, which says the branch is not ready to merge instead of offering `g
 [run-lifecycle.md](run-lifecycle.md), [detached-runs.md](detached-runs.md)). The person fixes the
 feature branch and merges it themselves.
 
-With the coordinator agent on there is a third place: at the end of the run the command merges the
-current `main` into the feature branch, so the person's merge goes through cleanly. If that conflicts,
+With the coordinator agent on there is a third place: at the end of the run the command fetches the
+run's base branch and merges it into the feature branch, so the person's merge goes through cleanly. If that conflicts,
 a **main-sync worker** is spawned in the feature worktree to finish the merge, test and report `done`;
 its questions go to the agent first like any worker's. Red tests at the end get the same treatment: one
 **test-fix worker** in the feature worktree, one attempt, and the branch is handed over red only if the

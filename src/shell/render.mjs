@@ -120,6 +120,12 @@ const ROW_STYLE = {
   agent: 'active',
   'agent-given-up': 'idle',
   separator: 'idle',
+  // The finisher's row in the agent's place (finisher DESIGN §2.11): amber while it waits on the person
+  // (the go, stuck, a request), green once done, idle while down.
+  finisher: 'active',
+  'finisher-asking': 'asking',
+  'finisher-done': 'done',
+  'finisher-idle': 'idle',
 };
 
 // The agent row's glyph, set apart from every task glyph (pir-coordinator T12).
@@ -195,7 +201,7 @@ function rowLine(r, spinnerChar, labelWidth = LABEL_MIN, idWidth = ID_MIN) {
   return { text, style: ROW_STYLE[r.kind] ?? null };
 }
 
-const isPinned = (r) => r.kind === 'separator' || r.kind === 'agent' || r.kind === 'agent-given-up';
+const isPinned = (r) => r.kind === 'separator' || r.kind === 'agent' || r.kind === 'agent-given-up' || !!r.finisher;
 
 // The separator and the coordinator agent's row (pir-coordinator T12). The separator spans a task row's
 // width up to the end of its label column; the agent's name sits where a task's id and slug do, so its
@@ -214,6 +220,9 @@ function pinnedLine(r, labelWidth, idWidth) {
 // multi-paragraph question in the live frame would only bloat the bounded region and is exactly what made
 // the streaming worst while a worker was parked. The model still carries `question` for anything that
 // wants it; the live display does not draw it.
+//
+// `footer.base` is the run's base branch (base-branch DESIGN §2.9), carried on the hand-off and interrupted
+// kinds; a footer without it (an old snapshot, or before the base is passed) reads `main`, today's text.
 function footerLines(footer, summary, spinnerChar = SPINNER[0]) {
   const blank = { text: '', style: null };
   switch (footer?.kind) {
@@ -228,7 +237,7 @@ function footerLines(footer, summary, spinnerChar = SPINNER[0]) {
       return [
         blank,
         { text: `✔ all ${summary.total} task(s) green on ${footer.branch} · tests pass. Yours to merge:`, style: 'done' },
-        { text: `    git merge ${footer.branch}`, style: 'done' },
+        { text: `    ${mergeLine(footer)}`, style: 'done' },
       ];
     case 'red': {
       const lines = [blank, { text: `✗ ${summary.total} task(s) built on ${footer.branch}, but its tests fail — not ready to merge.`, style: 'red' }];
@@ -243,21 +252,25 @@ function footerLines(footer, summary, spinnerChar = SPINNER[0]) {
       const text = `${spinnerChar} all ${summary.total} task(s) merged · running the plan's setup and tests on ${footer.branch}${el ? ` · ${el}` : ''}`;
       return [blank, { text, style: 'active' }];
     }
+    case 'finisher':
+      // The finisher once it is the run's session (finisher DESIGN §2.11): one line per phase, pointing at
+      // `c`; amber while it waits on the person. It does the merge, so no merge line is drawn.
+      return [blank, { text: footer.text, style: footer.asks ? 'asking' : footer.state === 'done' ? 'done' : 'active' }];
     case 'interrupted':
-      return [blank, { text: '^C — closing workers… main is untouched. Re-run to resume from committed work.', style: 'red' }];
+      return [blank, { text: `^C — closing workers… ${baseOf(footer)} is untouched. Re-run to resume from committed work.`, style: 'red' }];
     default:
       return [blank];
   }
 }
 
-// The end of a run with the coordinator agent (pir-coordinator §2.9, §2.10): preparing while main is merged
-// in and the report written, then `ready to merge` with the merge line, or `not ready` red, each naming the
+// The end of a run with the coordinator agent (pir-coordinator §2.9, §2.10): preparing while the base is
+// merged in and the report written (or, held, the hold's reason: base-branch DESIGN §2.8), then `ready to merge` with the merge line, or `not ready` red, each naming the
 // committed REPORT.md. The merge itself stays the person's.
 function agentHandoffLines(footer, summary, spinnerChar) {
   const blank = { text: '', style: null };
   const report = footer.reportPath ? [{ text: `  report: ${footer.reportPath}`, style: 'idle' }] : [];
   if (footer.state === 'ready') {
-    return [blank, { text: `✔ ready to merge · git merge ${footer.branch}`, style: 'done' }, ...report];
+    return [blank, { text: `✔ ready to merge · ${mergeLine(footer)}`, style: 'done' }, ...report];
   }
   if (footer.state === 'red') {
     const lines = [blank, { text: `✗ not ready · tests red on ${footer.branch} — no merge offered`, style: 'red' }];
@@ -265,8 +278,13 @@ function agentHandoffLines(footer, summary, spinnerChar) {
     if (why) lines.push({ text: `  ${why}`, style: 'red' });
     return [...lines, ...report];
   }
-  return [blank, { text: `${spinnerChar} all ${summary.total} task(s) merged · preparing: syncing main, writing the report`, style: 'active' }];
+  const doing = footer.hold?.text ? footer.hold.text : `syncing ${baseOf(footer)}, writing the report`;
+  return [blank, { text: `${spinnerChar} all ${summary.total} task(s) merged · preparing: ${doing}`, style: 'active' }];
 }
+
+const baseOf = (footer) => footer?.base || 'main';
+// The person's merge command switches to the base first, so it is right whichever branch is checked out.
+const mergeLine = (footer) => `git switch ${baseOf(footer)} && git merge ${footer.branch}`;
 
 // createRenderer({ stream }) → { paint(display), line(text), close() } (DESIGN §2.3, T15).
 //   paint(display) — on a TTY, enter the alternate screen on the first paint (hiding the cursor), then

@@ -82,22 +82,90 @@ const asksPerson = (t) => !!askingKind(t) && !heldByCoordinator(t);
 // An end-of-run helper (main-sync, tests-fix) waiting on the person counts too: the run needs them, and
 // the list must say so, though the helper is no task of the plan (pir-coordinator T11).
 export function askingCount(runState) {
-  return rowEntries(runState).filter((t) => !t.separator && !t.agent && !t.done && asksPerson(t)).length;
+  return rowEntries(runState).filter((t) => !t.separator && !t.agent && !t.done && (t.finisher ? finisherAsks(t) : asksPerson(t))).length;
 }
 
 // rowEntries(runState) → every row the live view draws, in order: the plan's tasks, then — once the run's
 // coordinator agent has started — a separator and the agent's pinned row (pir-coordinator T12), then the
 // end-of-run helpers (T11). The watch view's ↑↓ walks the same list (dashboard.mjs openTasks), stepping
 // over the separator; → on the agent's entry opens its `worker`, the conversation `c` opens.
+// Once the finisher is the run's session (finisher DESIGN §2.11) its row takes the agent's pinned place;
+// the agent is closed by then, and a snapshot carrying both still shows the finisher alone.
 export function rowEntries(runState) {
+  const f = runState?.finisher;
   const c = runState?.coordinator;
-  const agent = c ? [{ id: SEPARATOR_ID, separator: true }, agentEntry(c)] : [];
+  const pinned = f ? finisherEntry(f) : c ? agentEntry(c) : null;
+  const agent = pinned ? [{ id: SEPARATOR_ID, separator: true }, pinned] : [];
   return [...(runState?.tasks ?? []), ...agent, ...(runState?.helpers ?? [])];
 }
 
-// The separator's and the agent's entry ids. Neither can collide with a task (`T01`) or a helper's label.
+// The separator's, the agent's and the finisher's entry ids. None can collide with a task (`T01`) or a
+// helper's label.
 export const SEPARATOR_ID = '──';
 export const AGENT_ID = 'coordinator';
+export const FINISHER_ID = 'finisher';
+
+// The finisher's entry from runState.finisher (finisher-agent.mjs view()). `state` is its phase, or
+// `restarting` / `given-up`; `request` is a request parked for the person (its view's `asking`), named
+// apart from a task's `asking`, which says what kind of answer is wanted.
+function finisherEntry(f) {
+  const state = f.state ?? f.phase ?? 'preparing';
+  const live = state !== 'restarting' && state !== 'given-up';
+  return {
+    id: FINISHER_ID,
+    finisher: true,
+    state,
+    request: !!f.asking,
+    worker: f.id ? { id: f.id, live, logPath: f.logPath ?? null } : null,
+  };
+}
+
+// The finisher's words per state (finisher DESIGN §2.11), with whether it waits on the person. The go
+// question is itself a parked request, so `awaiting-go` and `stuck` name the row whatever `request` says;
+// a request reads `asking you` in the other phases (a reserved action after the go). No clock: its phases
+// are the run's end, not work to time.
+const FINISHER_WORDS = {
+  preparing: 'preparing',
+  'awaiting-go': 'waiting for your go',
+  finishing: 'finishing',
+  stuck: 'stuck · needs you',
+  done: 'done',
+  restarting: 'restarting',
+  'given-up': 'given up',
+};
+function finisherLabel(t) {
+  if (t.state === 'awaiting-go' || t.state === 'stuck') return { label: FINISHER_WORDS[t.state], asks: true };
+  if (t.request && (t.state === 'preparing' || t.state === 'finishing')) return { label: 'asking you', asks: true };
+  return { label: FINISHER_WORDS[t.state] ?? String(t.state), asks: false };
+}
+const finisherAsks = (t) => finisherLabel(t).asks;
+
+// The finisher's row: amber (`finisher-asking`) while it waits on the person and counted in the asking
+// tally; `finisher-done` once done; idle while down; else the active colour.
+function finisherRow(t) {
+  const { label, asks } = finisherLabel(t);
+  const kind = asks ? 'finisher-asking' : t.state === 'done' ? 'finisher-done' : t.state === 'restarting' || t.state === 'given-up' ? 'finisher-idle' : 'finisher';
+  return { id: t.id, slug: 'finisher', finisher: true, kind, label, elapsedMs: null };
+}
+
+// The footer while the finisher is on (finisher DESIGN §2.11; the other phases' lines decided by the user
+// 2026-09-29, T07): one line per phase, each pointing at `c`.
+const FINISHER_FOOTER = {
+  preparing: 'preparing · c to watch',
+  'awaiting-go': 'ready · c to review and say go',
+  finishing: 'finishing · c to watch',
+  stuck: 'stuck · c to review and say go',
+  done: 'done',
+  restarting: 'restarting',
+  'given-up': 'given up',
+};
+function finisherFooter(f) {
+  const t = finisherEntry(f);
+  const { asks } = finisherLabel(t);
+  const asking = asks && t.state !== 'awaiting-go' && t.state !== 'stuck';
+  const text = asking ? 'asking you · c to answer' : FINISHER_FOOTER[t.state] ?? String(t.state);
+  return { kind: 'finisher', state: t.state, asks, text: `◆ finisher ${text}` };
+}
 
 // The agent's entry from runState.coordinator. A snapshot written before T12 has no `state`: its `live`
 // says up or restarting.
@@ -126,13 +194,22 @@ function agentRow(t) {
 // runState (a pass's output, assembled by the shell):
 //   { branch, ceiling, complete?, readyToMerge?, testsReason?, testing?, interrupted?, tasks: [task…] }
 //   testsReason: { reason, logPath } from the red end gate, or null (green, unfinished, an old snapshot).
-//   handoff: null | { state:'preparing'|'ready'|'red', reportPath, mainSha } — the end of a run with the
-//            coordinator agent (pir-coordinator §2.9, §2.10); null with the agent off, where the footer is
-//            today's hand-off or red line.
+//   handoff: null | { state:'preparing'|'ready'|'red', reportPath, baseSha, base, hold, lastWatch,
+//            lastWatchFailure } — the end of a run with the coordinator agent (pir-coordinator §2.9, §2.10);
+//            null with the agent off, where the footer is today's hand-off or red line. `hold` is null or
+//            { reason, text, since, nextTry }: the base could not be prepared (base-branch DESIGN §2.8), and
+//            the preparing footer carries it so the live view shows why.
+//   base:    the run's base branch (base-branch DESIGN §2.9), carried on the hand-off and interrupted
+//            footers for the merge line; absent in an old snapshot, where the renderer reads `main`.
 //   coordinator: null | { id, live, logPath, state?, holding? } — the run's agent (pir-coordinator T12):
 //            once set, the rows gain a separator (kind `separator`) and the agent's pinned row (kind `agent`,
 //            or `agent-given-up`), after the tasks and before the helpers. state: 'up'|'restarting'|'given-up';
 //            holding: the waiting items it holds. Neither row is counted in the summary or the asking tally.
+//   finisher: absent | { id, logPath, state, phase, goGiven, summary, steps, rulesSource, asking } — the
+//            finisher's view() once it replaces the agent (finisher DESIGN §2.11): its pinned row (kinds
+//            `finisher`, `finisher-asking`, `finisher-done`, `finisher-idle`) takes the agent's place, and it
+//            owns the footer (kind `finisher`) unless a task asks. Waiting for the go, stuck, or holding a
+//            request, it counts in the asking tally; never in done/total/running/waiting.
 //   helpers: absent | [task…] — the end-of-run helper workers (main-sync, tests-fix) while they run, each
 //            shaped like a task with `helper: true` (pir-coordinator T11). Each is a row below the tasks,
 //            reading `working` or asking like a task's; the summary's done/total/running/waiting count the
@@ -168,6 +245,7 @@ function agentRow(t) {
 export function buildDisplay(runState, { now, spinnerFrame } = {}) {
   const { branch, ceiling, complete = false, readyToMerge = false, testsReason = null, testing = null, interrupted = false, handoff = null, tasks = [] } =
     runState ?? {};
+  const base = runState?.base ?? handoff?.base ?? null;
 
   const doneIds = new Set(tasks.filter((t) => t.done).map((t) => t.id));
   const running = tasks.filter((t) => !t.done && (ACTIVE_PHASES.has(t.phase) || isRequest(t))).length;
@@ -175,7 +253,7 @@ export function buildDisplay(runState, { now, spinnerFrame } = {}) {
 
   const helpers = runState?.helpers ?? [];
   const rows = rowEntries(runState).map((t) =>
-    t.separator ? { id: t.id, kind: 'separator', label: '', elapsedMs: null } : t.agent ? agentRow(t) : rowFor(t, { now, doneIds, ceilingFull }),
+    t.separator ? { id: t.id, kind: 'separator', label: '', elapsedMs: null } : t.agent ? agentRow(t) : t.finisher ? finisherRow(t) : rowFor(t, { now, doneIds, ceilingFull }),
   );
 
   const done = doneIds.size;
@@ -197,7 +275,7 @@ export function buildDisplay(runState, { now, spinnerFrame } = {}) {
   // `branch` rides at the top level beside summary/rows/footer: the renderer shows the run's branch in
   // its header line on every paint, but the footer only carries a branch in some states (handoff, red),
   // so the summary line cannot source it from there. It is the one field added to the interface sketch.
-  return { branch: branch ?? null, summary, rows, footer: footerFor({ tasks: [...tasks, ...helpers], complete, readyToMerge, testsReason, testing, interrupted, handoff, branch, now }) };
+  return { branch: branch ?? null, summary, rows, footer: footerFor({ tasks: [...tasks, ...helpers], complete, readyToMerge, testsReason, testing, interrupted, handoff, finisher: runState?.finisher ?? null, branch, base, now }) };
 }
 
 // One row for one task. The order of the checks is the priority: a ✅ task is done however it got there;
@@ -241,8 +319,9 @@ function rowFor(t, { now, doneIds, ceilingFull }) {
 // parked worker the person must answer, then the end-of-run hand-off (green) or failure (red), then the
 // end gate still running (`testing`), else the plain running line. `asking` beats `handoff`/`red` because a complete run has nothing asking, so the
 // two never contend; the order only makes the intent explicit.
-function footerFor({ tasks, complete, readyToMerge, testsReason, testing, interrupted, handoff, branch, now }) {
-  if (interrupted) return { kind: 'interrupted' };
+function footerFor({ tasks, complete, readyToMerge, testsReason, testing, interrupted, handoff, finisher, branch, base, now }) {
+  const named = base ? { base } : {};
+  if (interrupted) return { kind: 'interrupted', ...named };
 
   // A worker fixing a conflict it was sent asks nothing, so it never takes the footer (§2.10); nor does a
   // question the coordinator agent holds (pir-coordinator §2.5).
@@ -251,18 +330,24 @@ function footerFor({ tasks, complete, readyToMerge, testsReason, testing, interr
     return { kind: 'asking', task: asking.id, slug: asking.slug, question: asking.question ?? '' };
   }
 
-  // The end of a run with the coordinator agent (pir-coordinator §2.9, §2.10): preparing (main synced into
+  // The finisher, once it is the run's session (finisher DESIGN §2.11): it does the merge, so the hand-off's
+  // merge line must not show beside it.
+  if (finisher) return finisherFooter(finisher);
+
+  // The end of a run with the coordinator agent (pir-coordinator §2.9, §2.10): preparing (the base synced into
   // the branch, the report being written), then ready to merge or red, each naming the committed report.
   // The branch rides along for the merge line. Absent with the agent off, where today's footers follow.
   if (handoff?.state === 'preparing' || handoff?.state === 'ready' || handoff?.state === 'red') {
-    const f = { kind: 'handoff', branch, state: handoff.state, reportPath: handoff.reportPath ?? null };
+    const f = { kind: 'handoff', branch, ...named, state: handoff.state, reportPath: handoff.reportPath ?? null };
+    // A held sync names its reason in the preparing line (base-branch DESIGN §2.8).
+    if (handoff.state === 'preparing' && handoff.hold) return { ...f, hold: { reason: handoff.hold.reason, text: handoff.hold.text } };
     // Red says why, as today's red footer does (DESIGN §2.8), when the gate carried it.
     if (handoff.state === 'red') return { ...f, reason: testsReason?.reason ?? null, logPath: testsReason?.logPath ?? null };
     return f;
   }
 
   if (complete) {
-    if (readyToMerge) return { kind: 'handoff', branch };
+    if (readyToMerge) return { kind: 'handoff', branch, ...named };
     // The red footer says why and where the output is (DESIGN §2.8); both null for a snapshot written
     // before the gate carried them.
     return { kind: 'red', branch, reason: testsReason?.reason ?? null, logPath: testsReason?.logPath ?? null };

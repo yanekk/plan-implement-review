@@ -111,6 +111,11 @@ test('seatbeltEnv: a scenario\'s coordinatorHoldMs sets the agent\'s hold limit,
   assert.equal(seatbeltEnv({ ceiling: 3, coordinator: true }).PARALLEL_COORDINATOR_HOLD_MS, undefined);
 });
 
+test('seatbeltEnv: a build scenario\'s baseWatchMs shortens the remote watch, as planEnv does for a plan scenario (base-branch T09 review)', () => {
+  assert.equal(seatbeltEnv({ ceiling: 2, baseWatchMs: 1000 }).PARALLEL_BASE_WATCH_MS, '1000');
+  assert.equal(seatbeltEnv({ ceiling: 2 }).PARALLEL_BASE_WATCH_MS, undefined);
+});
+
 test('seatbeltEnv: a scenario with `coordinator` runs the agent (no PARALLEL_COORDINATOR)', () => {
   assert.deepEqual(seatbeltEnv({ ceiling: 1, coordinator: true }), { PARALLEL_LIVE: '1', PARALLEL_MAX_WORKERS: '1' });
 });
@@ -860,7 +865,7 @@ test('readyToMerge is set only once the run waits ready with its report committe
   assert.equal(readyToMerge(null), null);
 });
 
-test('runScenario: the main-commit step fires once, after the named task merges, in a fake run', async () => {
+test('runScenario: the base-commit step fires once, after the named task merges, in a fake run', async () => {
   const ws = workspace();
   try {
     const into = join(ws.dir, 'scratch-repo');
@@ -897,18 +902,18 @@ test('runScenario: the main-commit step fires once, after the named task merges,
       pollMs: 1,
     });
     assert.equal(commitsBeforeMerge, 0, 'nothing was committed before T01 merged');
-    assert.equal(commits().length, 1, 'one commit to main, however many polls followed');
+    assert.equal(commits().length, 1, 'one commit to the base, however many polls followed');
     assert.equal(readFileSync(join(into, 'notes.txt'), 'utf8'), 'status: main moved on\n');
     const recorded = JSON.parse(readFileSync(join(result.bundleDir, 'steps.json'), 'utf8'));
-    assert.equal(recorded.mainCommit.after, 'T01');
-    assert.equal(recorded.mainCommit.sha, 'abc12345def');
+    assert.equal(recorded.baseCommit.after, 'T01');
+    assert.equal(recorded.baseCommit.sha, 'abc12345def');
     assert.equal(recorded.merged, null, 'the run never read ready, so nothing was merged');
   } finally {
     ws.cleanup();
   }
 });
 
-test('createScenarioSteps merges once the run is ready and the branch holds main, and keeps the report', () => {
+test('createScenarioSteps merges once the run is ready and the branch holds the base, and keeps the report', () => {
   const ws = workspace();
   try {
     const control = join(ws.dir, 'control');
@@ -926,7 +931,7 @@ test('createScenarioSteps merges once the run is ready and the branch holds main
     const merges = () => calls.filter((a) => a.includes('merge') && a[0] !== 'merge-base');
     steps.tick('');
     assert.equal(merges().length, 0, 'no status yet');
-    writeSnapshot(control, { proc: { pid: 1 }, finalState: null, runState: { tasks: [], handoff: { state: 'ready', reportPath: 'plans/x/REPORT.md', mainSha: 'm' } } });
+    writeSnapshot(control, { proc: { pid: 1 }, finalState: null, runState: { tasks: [], handoff: { state: 'ready', reportPath: 'plans/x/REPORT.md', baseSha: 'm' } } });
     steps.tick('');
     assert.equal(merges().length, 0, 'ready, but the branch does not hold main yet');
     holdsMain = true;
@@ -939,4 +944,64 @@ test('createScenarioSteps merges once the run is ready and the branch holds main
   } finally {
     ws.cleanup();
   }
+});
+
+test('createScenarioSteps with watchFinisher looks once when the finisher waits for the go, and again with the ledger at the end (finisher T10)', () => {
+  const ws = workspace();
+  try {
+    const control = join(ws.dir, 'control');
+    mkdirSync(control, { recursive: true });
+    let mainSha = 'seed1234';
+    let inMain = false;
+    const calls = [];
+    const gitRun = (args) => {
+      calls.push(args);
+      if (args[0] === 'rev-parse') return { ok: true, stdout: `${mainSha}\n` };
+      if (args[0] === 'merge-base') return { ok: inMain, stdout: '' };
+      if (args[0] === 'branch') return { ok: true, stdout: `${inMain ? 'release' : 'main'}\n` };
+      if (args[0] === 'for-each-ref') return { ok: true, stdout: inMain ? 'pir/x\nrelease\nmain\n' : 'pir/x\npir/x-T01\n' };
+      return { ok: true, stdout: '' };
+    };
+    const steps = createScenarioSteps({ spec: { watchFinisher: true }, repoDir: ws.dir, controlDir: control, slug: 'x', base: 'release', gitRun });
+    const status = (phase) =>
+      writeSnapshot(control, { proc: { pid: 1 }, finalState: null, runState: { tasks: [], handoff: { state: 'ready' }, finisher: { phase } } });
+    steps.tick('');
+    assert.equal(steps.record.finisher.baseAtStart, 'seed1234');
+    assert.equal(steps.record.finisher.checkoutAtStart, 'main');
+    assert.equal(steps.record.finisher.base, 'release');
+    assert.equal(steps.record.finisher.beforeGo, null, 'no finisher yet');
+    status('preparing');
+    steps.tick('');
+    assert.equal(steps.record.finisher.beforeGo, null, 'preparing is not waiting for the go');
+    status('awaiting-go');
+    steps.tick('');
+    const b = steps.record.finisher.beforeGo;
+    assert.deepEqual(
+      { phase: b.phase, baseMoved: b.baseMoved, branchInBase: b.branchInBase, checkout: b.checkout, strays: b.strays, finishedFile: b.finishedFile },
+      { phase: 'awaiting-go', baseMoved: false, branchInBase: false, checkout: 'main', strays: [], finishedFile: false },
+    );
+    assert.ok(calls.some((a) => a[0] === 'merge-base' && a.includes('refs/heads/pir/x') && a.at(-1) === 'refs/heads/release'), 'asks whether the branch is in the run\'s base');
+    // The finisher's go and work: main moves, FINISHED appears. A later look does not replace the first.
+    mainSha = 'merged99';
+    inMain = true;
+    writeFileSync(join(ws.dir, 'FINISHED'), 'finished\n');
+    steps.tick('');
+    assert.equal(steps.record.finisher.beforeGo.baseSha, 'seed1234');
+    mkdirSync(join(control, 'finisher'), { recursive: true });
+    writeFileSync(join(control, 'finisher', 'ledger.jsonl'), '{"t":"2026-01-01T00:01:00.000Z","kind":"go","by":"phone"}\nnot json\n{"kind":"status","status":"done"}\n');
+    steps.final();
+    const a = steps.record.finisher.afterRun;
+    assert.deepEqual({ baseMoved: a.baseMoved, branchInBase: a.branchInBase, finishedFile: a.finishedFile }, { baseMoved: true, branchInBase: true, finishedFile: true });
+    assert.deepEqual(a.strays, ['main'], 'a branch other than the base and pir\'s own that holds the build is a stray');
+    assert.equal(a.checkout, 'release');
+    assert.deepEqual(a.ledger.map((l) => l.kind), ['go', 'status'], 'a cut line is skipped');
+  } finally {
+    ws.cleanup();
+  }
+});
+
+test('createScenarioSteps without watchFinisher keeps its old record and final() does nothing', () => {
+  const steps = createScenarioSteps({ spec: { mergeWhenReady: true }, repoDir: '/nonexistent', controlDir: '/nonexistent', slug: 'x', gitRun: () => ({ ok: false, stdout: '' }) });
+  steps.final();
+  assert.deepEqual(steps.record, { baseCommit: null, merged: null });
 });

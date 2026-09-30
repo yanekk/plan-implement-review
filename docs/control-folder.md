@@ -26,10 +26,11 @@ this page is the build's folder.
 | `HALT` | the kill-switch flag file. Its presence halts the run — see below. |
 | `log` | the event log: one ISO-timestamped line per coordinator action. |
 | `reports/` | the worker → coordinator report channel: one JSON file per worker report. |
-| `conversations/` | one append-only log per worker, `{Txx}-{role}-{n}.ndjson` (and the coordinator agent's, `coordinator-{n}.ndjson`): everything the worker said and everything sent to it. The coordinator writes it, the `pir` screen reads it (`worker-proc.mjs`). |
+| `conversations/` | one append-only log per worker, `{Txx}-{role}-{n}.ndjson` (and the coordinator agent's, `coordinator-{n}.ndjson`, and the finisher's, `finisher-{n}.ndjson`): everything the worker said and everything sent to it. The coordinator writes it, the `pir` screen reads it (`worker-proc.mjs`). |
 | `inbox/` | the person's input on its way to a worker: one JSON file per message, interrupt or answer, dropped by the `pir` screen and forwarded by the coordinator (`person-inbox.mjs`). |
 | `workers.json` | this coordinator's live workers, `[{ id, task, role, pid, startTime, cwd }]` (`cwd` the worktree each was spawned in), rewritten temp-then-rename on every spawn and exit (`writeWorkersFile` in `worker-proc.mjs`), so a stop or the next start can reap a worker the coordinator left behind (`reap.mjs`). |
 | `coordinator/` | the coordinator agent's state (see [coordinator-agent.md](coordinator-agent.md#storage)): `decisions/` holds the agent's decision files, one JSON per decision, consumed and deleted each pass; `ledger.jsonl` one line per applied decision and adopted task, the source of the report's "Decisions made for you"; `session.json` `{ sessionId, restarts }` for its resume. The agent's conversation is `conversations/coordinator-{n}.ndjson`. Absent in a run with `--no-coordinator`. |
+| `finisher/` | the finisher's state (see [finisher.md](finisher.md#storage)), present once a green run with the agent reached it: `status/` holds its status files, one JSON per status, consumed and deleted each pass; `state.json` its phase, whether the go was given, the rules file used and its last steps, written atomically; `session.json` `{ sessionId, restarts }` for its resume; `ledger.jsonl` one line per status, go, not-yet and re-sync. Its conversation is `conversations/finisher-{n}.ndjson`. A present `state.json` at startup means the run reached the finisher: it is resumed and the coordinator agent is not started. |
 | `status.json`, `run.log` | the snapshot and output of a run started by `pir` (see [detached-runs.md](detached-runs.md)). |
 | `tests.log` | the output of the end-of-run gate on the feature branch: the plan's `setup` lines, then its `test` lines, each under a `$ <line>` header. Setup rewrites it and the tests append, so it is rewritten each time the gate runs (see [run-lifecycle.md](run-lifecycle.md)). A red end names this path. |
 | `setup/T{nn}.log` | the output of the plan's `setup` lines in task T{nn}'s fresh worktree, run before its implementer is spawned; rewritten per attempt. A failed setup's last 20 lines and this path go into the worker's opening instruction (see [run-lifecycle.md](run-lifecycle.md)). |
@@ -73,7 +74,8 @@ What travels down, all of it appended to the worker's conversation log with who 
   `inbox/`, temp-then-rename (`dropPersonInput`), and only while the run is `running` as the
   dashboard's `classifyRun` decides it; otherwise nothing is written and the view says the run is not
   running. The command watches the folder and forwards each drop the moment it lands, outside the
-  5 s pass, with a drain at each pass as a backstop (`startPersonInbox`). A drop for a worker that is
+  pass, then wakes the loop so the next pass shows it, with a drain at each pass as a backstop
+  (`startPersonInbox`). A drop for a worker that is
   gone, or answering a request that is no longer pending, is logged as an `undelivered` note in that
   worker's conversation, so a lost answer is never silent. Every drop also gets a line in `log`.
 
@@ -95,7 +97,9 @@ line (`worker-proc.mjs`):
   in the agent's log) and `notify-failed` (a phone alert that failed after its retries, once per
   question, with `status` and `error`; see [human-flow.md](human-flow.md#phone-alerts--pir-notify)).
 
-The `pir` screen reads the last 256 KB and follows appends (`log-follow.mjs`); a line that does not
+The `pir` screen reads the last 256 KB and follows appends (`log-follow.mjs`), and brings back any
+request still pending from before that tail, judged on the whole log, so a question pushed out by a busy
+log stays pinned (`carryPending` in `conversation-view.mjs`); a line that does not
 parse (a crash mid-append) is shown raw and never stops the reader. A worker's state — busy, idle,
 waiting on a permission, waiting on a question set — is derived from this log (`workerActivity` in
 `src/core/stream.mjs`). The logs are kept across a restart, and a new worker for the same task gets
@@ -110,13 +114,15 @@ records:
 - **Reaped first — `workers.json`.** Any worker a previous coordinator recorded that is still alive
   with its recorded start time is ended (SIGTERM, then SIGKILL after 3 s) before anything else runs
   (`reapRecorded` in `reap.mjs`). A different start time is a reused pid and is left alone.
-- **Cleared — `reports/`, `inbox/` and `coordinator/decisions/`.** All are live-run buffers: a leftover
+- **Cleared — `reports/`, `inbox/`, `coordinator/decisions/` and `finisher/status/`.** All are live-run buffers: a leftover
   report from the dead run would be read as a fresh worker's signal, a leftover input addressed to a
   previous run's worker must never reach a new one, and a leftover decision names an item that no
   longer waits. The clear runs on every startup, not only a detected restart, because a genuine first
   start has them empty anyway.
 - **Preserved — the rest of `coordinator/`**: `ledger.jsonl` (the report is rendered from it) and
   `session.json` (the agent's session is resumed from it).
+- **Preserved — the rest of `finisher/`**: `state.json` (the phase survives the restart; `finishing`
+  drops to `stuck`), `session.json` and `ledger.jsonl`.
 - **Preserved — `conversations/`**: the previous workers' conversations stay readable.
 - **Preserved — `log`** (the audit trail and the harness signal): never cleared; a `restart` marker
   line is appended to mark the boundary between runs.
@@ -146,19 +152,24 @@ the same way: an adopted task's `blocks` clause named a task that had already st
 task was built without the new work and the person decides whether it needs redoing (see
 [task-state.md](task-state.md)). With the coordinator agent on, the log also carries `coordinator agent
 started` (or `coordinator agent failed to start: …`), `coordinator-pass Txx` when the agent passes an
-item on, and the end sequence's `main-sync` (or `main-sync failed: …`), `spawn main-sync` for a
+item on, and the end sequence's `base-hold` when the base cannot be prepared and again when the hold
+clears (with `base-hold {reason}: {git's error}` when git gave one), `main-sync` for the merge of the
+run's base, whatever it is called (or `main-sync failed: …`), `spawn main-sync` for a
 main-sync worker, `spawn tests-fix` and `tests-fix` for a test-fix worker, `tests`, `report plans/{slug}/REPORT.md` (a bare `report` for a footer rewrite) and
-`finished` lines (see [coordinator-agent.md](coordinator-agent.md)). This is the
+`finished` lines (see [coordinator-agent.md](coordinator-agent.md)), and for the finisher `finisher
+rules: <path> (<source>)`, `finisher started` or `finisher resumed`, `finisher failed to start: …`,
+`finisher gave up`, `finisher-fallback` and `coordinator agent not started: the finisher is resumed`
+(see [finisher.md](finisher.md)). This is the
 human-readable record of what a run did, and the durable signal the test harness reads.
 
 ## The kill switch
 
 `HALT` is a plain flag file. While it is present, the command dispatches nothing, delivers nothing,
-and merges nothing, and it closes every live worker and the coordinator agent — ends its input queue, then SIGTERM after 5 s and
+and merges nothing, and it closes every live worker, the coordinator agent and the finisher — ends its input queue, then SIGTERM after 5 s and
 SIGKILL after 10 s if it has not exited (`platform.close`, `worker-proc.mjs`) — and kills every worker
 setup still running. It is hard-stop only; there is no pause or resume. A HALT-closed worker's
-conversation log, worktree, and branch are deliberately **left** for forensics — removal is reserved for workers that finished normally. `main` is untouched, because nothing in this system ever merges
-to `main` (see [branch-model.md](branch-model.md)). To continue, the person removes the flag and
+conversation log, worktree, and branch are deliberately **left** for forensics — removal is reserved for workers that finished normally. The base branch is untouched, because nothing in this system ever
+merges into it (see [branch-model.md](branch-model.md)). To continue, the person removes the flag and
 re-runs the command (see [restart-recovery.md](restart-recovery.md)).
 
 The person raises it directly — `touch plans/{slug}/.parallel/control/HALT` — and the command prints

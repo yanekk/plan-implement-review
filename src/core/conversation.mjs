@@ -12,6 +12,7 @@
 import { readEntry, workerActivity, DEFAULT_REFUSAL } from './stream.mjs';
 import { grantFrom } from './person-input.mjs';
 import { wrapLine, clipText, plainText } from './text.mjs';
+import { helpersOf } from './helpers.mjs';
 
 const span = (text, style = null) => ({ text, style });
 const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
@@ -121,11 +122,15 @@ function senderPrefix(from, taskId) {
 
 // ---- The conversation. ----
 
-// buildConversation(entries, { full, width, taskId, readOnly, open }) → { lines, pinned, background }.
+// buildConversation(entries, { full, width, taskId, readOnly, open }) → { lines, pinned, background, helpers }.
 // Default mode folds each run of consecutive tool steps into one group line (group-commands DESIGN §2.1–
 // §2.4); `open` is a Set of group ids (a group's first toolUseId) drawn unfolded. Each group line carries
 // `line.hit = { kind: 'group', id }` so the view can click it; no other line has a hit. Full mode draws
 // every step with its whole result and no groups (§2.6).
+// `background` counts the running background commands and monitors the parent started; `helpers` counts its
+// running helpers (visible-helpers DESIGN §2.2). A helper's own frames and its background commands are left
+// out of the default view and drawn labelled `helper` in `full` (DESIGN §2.3). A helper's line, like any
+// `↳` line, ends the group its Agent step closes (group-commands §2.1).
 // `pinned` is the oldest pending request as a fresh prompt (gateFor / pickerFor), kept out of `lines`;
 // the view keeps its own prompt state and paints it with promptLines. Once answered, a request is drawn
 // in `lines` where it was asked, with its answer. A read-only view (a worker no longer live) pins
@@ -143,6 +148,23 @@ export function buildConversation(entries, { full = false, width = 80, taskId = 
   });
   const w = Math.max(10, width | 0);
 
+  // The helpers (T01's fold) and the tool calls made inside a helper: a background command whose
+  // task_started.tool_use_id is one of those is the helper's, not the parent's (DESIGN §2.3). Collected over
+  // the whole log first, so the order of the call's frame and its task_started does not matter.
+  const helpers = helpersOf(list);
+  const helperByCall = new Map(helpers.map((h) => [h.toolUseId, h]));
+  const callsInHelpers = new Set();
+  const parentCalls = new Set(); // the parent's own tool_use ids: a helper line is drawn under its Agent step
+  for (const entry of list) {
+    for (const ev of readEntry(entry)) {
+      if (ev.kind !== 'tool-use') continue;
+      if (ev.helper) callsInHelpers.add(ev.toolUseId);
+      else parentCalls.add(ev.toolUseId);
+    }
+  }
+  const helperById = new Map(helpers.map((h) => [h.id, h]));
+  const drawnHelpers = new Set();
+
   // Pass 1: what each tool use returned, and how each request was resolved.
   const results = new Map(); // toolUseId → tool-result event
   const answers = new Map(); // requestId → { result, from } from the reply entry
@@ -158,7 +180,10 @@ export function buildConversation(entries, { full = false, width = 80, taskId = 
       if (ev.kind === 'permission' || ev.kind === 'questions') requests.push(ev);
       if (ev.kind === 'system') {
         const task = backgroundEvent(ev);
-        if (task?.started) background.set(task.id, { description: task.description, tool: toolNames.get(task.toolUseId) ?? '', ended: null });
+        // A helper (local_agent) is not background work: it has its own line (DESIGN §2.2).
+        if (task?.started && !task.helper) {
+          background.set(task.id, { description: task.description, tool: toolNames.get(task.toolUseId) ?? '', ended: null, ofHelper: callsInHelpers.has(task.toolUseId) });
+        }
         else if (task?.ended && background.has(task.id)) background.get(task.id).ended ??= task.ended;
       }
       if (ev.kind === 'tool-result') results.set(ev.toolUseId, ev);
@@ -213,25 +238,43 @@ export function buildConversation(entries, { full = false, width = 80, taskId = 
         case 'sent': {
           const { prefix, style } = senderPrefix(ev.from, taskId);
           emit(wrapped(prefix, ev.text, style, w));
+          // The model read the note first; the person reads it under their own words (visible-helpers §2.6).
+          if (ev.preface) emit(wrapped('pir ▸ ', ev.preface, 'pir', w));
           break;
         }
         case 'text': {
           if (!ev.text.trim() || ev.synthetic) break; // a skill body Claude injected: hundreds of lines nobody said
+          if (ev.helper) {
+            // A helper's words: never in the default view, labelled in full so they cannot read as the parent's.
+            if (full) emit(wrapped(ev.role === 'assistant' ? 'helper ▸ ' : '  helper ', ev.text, 'dim', w));
+            break;
+          }
           if (ev.role === 'assistant') emit(wrapped(`${taskId} ▸ `, ev.text, 'worker', w));
           else emit(wrapped('  ', ev.text, 'dim', w)); // e.g. `[Request interrupted by user]`
           break;
         }
-        case 'tool-use':
+        case 'tool-use': {
+          if (ev.helper) {
+            // Only in full, where there are no groups; by default a helper's step draws nothing and so ends no group.
+            if (full) emit(stepLines(ev, results.get(ev.toolUseId), { full, width: w, label: 'helper ' }));
+            break;
+          }
           if (full) emit(stepLines(ev, results.get(ev.toolUseId), { full, width: w }));
           else {
             group ??= { id: ev.toolUseId, steps: [] };
             group.steps.push({ use: ev, result: results.get(ev.toolUseId) });
           }
+          const h = helperByCall.get(ev.toolUseId);
+          if (h && !drawnHelpers.has(h.id)) {
+            drawnHelpers.add(h.id);
+            emit([helperLine(h, w)]);
+          }
           break;
+        }
         case 'permission':
         case 'questions':
           if (pinnedRequest && ev.requestId === pinnedRequest.requestId) break;
-          emit(requestLines(ev, resolution(ev.requestId), { width: w, taskId }));
+          emit(requestLines(ev, resolution(ev.requestId), { width: w, taskId, helpers }));
           break;
         case 'interrupt': {
           const { prefix, style } = senderPrefix(ev.from || 'person', taskId);
@@ -257,13 +300,26 @@ export function buildConversation(entries, { full = false, width = 80, taskId = 
           // background and one when it ends, so a worker waiting on it does not look idle. The monitor's
           // own events never reach pir (Claude hands them to the model only), so only its start and end show.
           const task = backgroundEvent(ev);
+          // A helper whose Agent call is not in the log (a log cut between the call and its start) gets its
+          // line where it started instead.
+          if (task?.started && task.helper) {
+            const h = helperById.get(task.id);
+            if (h && !drawnHelpers.has(h.id) && !parentCalls.has(h.toolUseId)) {
+              drawnHelpers.add(h.id);
+              emit([helperLine(h, w)]);
+            }
+            break;
+          }
           const known = task && background.get(task.id);
           if (!known) break;
+          // A helper's background command is the helper's: hidden by default, labelled in full (DESIGN §2.3).
+          if (known.ofHelper && !full) break;
+          const lead = known.ofHelper ? '  helper ↳ ' : '  ↳ ';
           const what = known.description || (known.tool === 'Monitor' ? 'a monitor' : 'a command');
-          if (task.started) emit(wrapped('  ↳ ', `${known.tool === 'Monitor' ? 'monitor started' : 'running in the background'}: ${what}`, 'dim', w));
+          if (task.started) emit(wrapped(lead, `${known.tool === 'Monitor' ? 'monitor started' : 'running in the background'}: ${what}`, 'dim', w));
           else if (task.ended && task.notification) {
             const verb = task.ended === 'completed' ? (known.tool === 'Monitor' ? 'monitor ended' : 'finished in the background') : `${task.ended} in the background`;
-            emit(wrapped('  ↳ ', `${verb}: ${what}`, task.ended === 'completed' ? 'dim' : 'bad', w));
+            emit(wrapped(lead, `${verb}: ${what}`, task.ended === 'completed' ? 'dim' : 'bad', w));
           }
           break;
         }
@@ -276,10 +332,55 @@ export function buildConversation(entries, { full = false, width = 80, taskId = 
   flush();
 
   let pinned = null;
-  if (pinnedRequest) pinned = pinnedRequest.kind === 'questions' ? pickerFor(pinnedRequest) : gateFor(pinnedRequest);
-  // How many background commands and monitors are still running: started and not yet ended.
-  const running = [...background.values()].filter((b) => !b.ended).length;
-  return { lines, pinned, background: running };
+  if (pinnedRequest) pinned = pinnedRequest.kind === 'questions' ? pickerFor(pinnedRequest, helpers) : gateFor(pinnedRequest, helpers);
+  // How many background commands and monitors the parent started are still running: started, not ended.
+  const running = [...background.values()].filter((b) => !b.ended && !b.ofHelper).length;
+  return { lines, pinned, background: running, helpers: helpers.filter((h) => h.state === 'running').length };
+}
+
+// A helper's duration as the line shows it: `42s` under a minute, `1m 12s` from one minute (DESIGN §2.2).
+export function helperTime(ms) {
+  if (!Number.isFinite(ms)) return '';
+  const total = Math.max(0, Math.floor(ms / 1000));
+  return total < 60 ? `${total}s` : `${Math.floor(total / 60)}m ${total % 60}s`;
+}
+
+// helperLine(helper, width) → the helper's one line (DESIGN §2.2), clipped, never wrapped: it is a status.
+//   running  `  ↳ helper · Survey the code · Reading x.mjs · 9 steps · 21s`
+//   ended    `  ↳ helper finished · Survey the code · 20 steps · 1m 12s`
+// Steps and time are the last progress event's, so the core reads no clock.
+// A running helper's step text is shortened first, so its step count and time, the signs it is alive,
+// stay on screen at any width that holds them (person, T06 drill 2026-09-29); past that the whole line is
+// clipped at the edge like any status line.
+export function helperLine(h, width) {
+  const w = Math.max(1, width | 0);
+  const time = helperTime(h.durationMs);
+  // `1 step`, not `1 steps` (person, T03 2026-09-29).
+  const tail = `${h.steps} step${h.steps === 1 ? '' : 's'}${time ? ` · ${time}` : ''}`;
+  const style = h.state === 'stopped' || h.state === 'failed' ? 'bad' : 'dim';
+  if (h.state !== 'running') return clipSpans([span(`  ↳ helper ${h.state} · ${h.description} · ${tail}`, style)], w);
+  const flat = (t) => plainText(t).replace(/\n/g, ' ');
+  const head = `  ↳ helper · ${flat(h.description)} · `;
+  const end = ` · ${tail}`;
+  const step = flat(h.step || 'starting');
+  const room = w - [...head].length - [...end].length;
+  const shown = room >= 2 ? clipText(step, room) : step; // under two columns the step would be a bare `…`
+  return clipSpans([span(`${head}${shown}${end}`, style)], w);
+}
+
+// helperOf(agentId, helpers) → the name a helper's request is drawn with (DESIGN §2.4): `{ description }`
+// for a helper seen in the log, `{ description: '' }` (read `a helper`) for an agentId matching none, and
+// null for the parent's own request.
+function helperOf(agentId, helpers) {
+  if (typeof agentId !== 'string' || !agentId) return null;
+  const h = (Array.isArray(helpers) ? helpers : []).find((x) => x.id === agentId);
+  return { description: h?.description ?? '' };
+}
+
+// Who a request is from, as its head names it: the task id, or the helper that asked (DESIGN §2.4).
+function askerOf(prompt, taskId) {
+  if (!prompt?.helper) return taskId;
+  return prompt.helper.description ? `helper "${prompt.helper.description}"` : 'a helper';
 }
 
 // backgroundEvent(ev) → { id, started, toolUseId, description } | { id, ended, notification } | null, for
@@ -287,10 +388,13 @@ export function buildConversation(entries, { full = false, width = 80, taskId = 
 // `task_started` with `is_backgrounded: true` when a Bash command or a Monitor goes to the background;
 // `task_updated` with a terminal `patch.status`, then `task_notification` with `status`, when it ends.
 // Anything else (a foreground task, rate limits, thinking tokens) is null.
+// A helper's start (`task_type: 'local_agent'`, background or not) carries `helper: true`; its end is
+// read by T01's fold, not here.
 function backgroundEvent(ev) {
   const e = ev?.event;
   if (!isObject(e) || typeof e.task_id !== 'string') return null;
   if (e.subtype === 'task_started') {
+    if (e.task_type === 'local_agent') return { id: e.task_id, started: true, helper: true };
     return e.is_backgrounded === true ? { id: e.task_id, started: true, toolUseId: e.tool_use_id, description: typeof e.description === 'string' ? e.description : '' } : null;
   }
   const status = e.subtype === 'task_notification' ? e.status : e.subtype === 'task_updated' ? e.patch?.status : null;
@@ -376,10 +480,11 @@ function groupLines(group, { width, open, refusedSteps }) {
 // One tool use. Default: exactly one line, `⎿ <Tool> <main arg>  <last result line>`, clipped to width;
 // `indent` is what precedes the `⎿` (an open group's steps sit two columns deeper). Full: the step line
 // alone, then every result line indented, all wrapped. A failed result styles the step `step-error`.
-function stepLines(use, result, { full, width, indent = '  ' }) {
+// `label` ('helper ') goes before the `⎿` of a helper's step (visible-helpers DESIGN §2.3).
+function stepLines(use, result, { full, width, indent = '  ', label = '' }) {
   const style = result?.isError ? 'step-error' : 'step';
   const arg = firstLine(mainArg(use.name, use.input));
-  const head = `${indent}⎿ ${use.name}${arg ? ` ${arg}` : ''}`;
+  const head = `${indent}${label}⎿ ${use.name}${arg ? ` ${arg}` : ''}`;
   if (!full) {
     const last = result ? lastLine(plainText(result.text)) : '';
     const spans = [span(head, style)];
@@ -400,8 +505,8 @@ function lastLine(text) {
 }
 
 // A request drawn in the scrollback: answered, cancelled, never answered, or waiting behind the pinned one.
-function requestLines(req, res, { width, taskId }) {
-  const out = req.kind === 'questions' ? questionsHead(req, taskId, width) : gateHead(gateFor(req), taskId, width);
+function requestLines(req, res, { width, taskId, helpers }) {
+  const out = req.kind === 'questions' ? questionsHead(pickerFor(req, helpers), taskId, width) : gateHead(gateFor(req, helpers), taskId, width);
   const answer = (text, style) => out.push(...wrapped('  → ', text, style, width));
   switch (res.by) {
     case 'reply': {
@@ -437,16 +542,16 @@ function requestLines(req, res, { width, taskId }) {
 }
 
 function gateHead(gate, taskId, width) {
-  const out = [[span(plainText(`⚑ ${taskId} wants to use ${gate.tool}`), 'prompt')]];
+  const out = [[span(plainText(`⚑ ${askerOf(gate, taskId)} wants to use ${gate.tool}`), 'prompt')]];
   if (gate.summary) out.push(...wrapped('  ', gate.summary, null, width));
   if (gate.description) out.push(...wrapped('  ', `(${gate.description})`, 'dim', width));
   if (gate.reason) out.push(...wrapped('  ', gate.reason, 'dim', width));
   return out;
 }
 
-function questionsHead(req, taskId, width) {
-  const n = req.questions.length;
-  return wrapped('', `? ${taskId} asks you ${n} question${n === 1 ? '' : 's'}`, 'prompt', width);
+function questionsHead(picker, taskId, width) {
+  const n = picker.questions.length;
+  return wrapped('', `? ${askerOf(picker, taskId)} asks you ${n} question${n === 1 ? '' : 's'}`, 'prompt', width);
 }
 
 // Notes pir wrote into the log (DESIGN §2.3), drawn dim. An unknown kind shows its name.
@@ -495,8 +600,9 @@ function noteLines(note, width) {
 
 // gateFor(request) → the gate for a pending permission request (a stream.mjs `permission` event, or the
 // log's `request` entry: both carry the same fields). `a` is offered exactly when core's grantFrom
-// would record a grant, so the key never promises a "don't ask again" the inbox then drops.
-export function gateFor(request) {
+// would record a grant, so the key never promises a "don't ask again" the inbox then drops. `helpers`
+// (helpersOf) names the helper a request with `agentId` came from (visible-helpers DESIGN §2.4).
+export function gateFor(request, helpers = []) {
   const tool = request.toolName ?? '';
   return {
     kind: 'permission',
@@ -508,6 +614,7 @@ export function gateFor(request) {
     canAlwaysAllow: grantFrom(request) !== null,
     confirmAllow: request.defaultToNo === true,
     armed: false,
+    helper: helperOf(request.agentId, helpers),
   };
 }
 
@@ -535,10 +642,11 @@ export function gateReducer(gate, key) {
 // question ends with an "Other" line (cursor index options.length) that is itself a text field: the
 // person's own answer is typed there, next to "Other:", never in the box (user 2026-09-26, T18 drill).
 // `caret` is the Other text's cursor, in code points; ←/→ move it (user 2026-09-27).
-export function pickerFor(request) {
+export function pickerFor(request, helpers = []) {
   return {
     kind: 'questions',
     requestId: request.requestId,
+    helper: helperOf(request.agentId, helpers),
     q: 0,
     cursor: 0,
     questions: (request.questions ?? []).map((qn) => ({ ...qn, picks: [], other: '', caret: 0 })),
@@ -654,7 +762,7 @@ export function promptLines(prompt, { width = 80, taskId = 'worker' } = {}) {
   if (prompt?.kind === 'questions') {
     const total = prompt.questions.length;
     const tabs = prompt.questions.map((x, i) => `[${x.header || i + 1}${answerOf(x) ? ' ✔' : ''}]`).join(' ');
-    const out = wrapped('', `? ${taskId} asks you ${total} question${total === 1 ? '' : 's'}  ${tabs}`, 'prompt', w);
+    const out = wrapped('', `? ${askerOf(prompt, taskId)} asks you ${total} question${total === 1 ? '' : 's'}  ${tabs}`, 'prompt', w);
     const qn = prompt.questions[prompt.q];
     if (!qn) return out;
     out.push(...wrapped('  ', `${qn.question} (${qn.multiSelect ? 'pick any' : 'pick one'})`, null, w));

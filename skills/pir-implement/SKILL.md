@@ -23,16 +23,16 @@ Two base rules bend in this mode, and only in it:
 
 - **The "reached without `pir-work` → stop" guard does not fire.** The named task IS the
   deliberate choice; it is your instruction.
-- **`CLAUDE.md § Where sessions run` — "main checkout, main branch, always; stop if you find
+- **`CLAUDE.md § Where sessions run` — "main checkout, base branch, always; stop if you find
   yourself in a worktree" — does NOT bind you.** A parallel-mode worker runs in its own
   task-branch worktree by design (DESIGN §2.9); do not stop on contact with it and do not switch
-  to `main`. The `pir-worker` contract skill is your standing rulebook here — chiefly: when the
+  to the base branch. The `pir-worker` contract skill is your standing rulebook here — chiefly: when the
   procedure below says "ask the user and wait", you drop a report file so the run sees you are
   asking, then ask the person in this session — with AskUserQuestion when the answer is a choice
   between options — and wait for them to answer it here, from `pir` (DESIGN §2.2).
 
 **With no argument, everything below is classic mode, unchanged**: the guard stands and the
-"main checkout, main branch" rule stands in full.
+"main checkout, base branch" rule stands in full.
 
 The shared rules in `CLAUDE.md` apply in full and are not repeated here — scope, commit
 messages, where sessions run (as carved out just above for parallel mode), and above all

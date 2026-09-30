@@ -10,7 +10,7 @@
 //       it with a pointer; only then does T02's Remote Control switch on, and the person answers T02 on the
 //       phone (remoteOnlyAfterPass; the phone answer is the person's hand-verification).
 //   Once T01 has merged, the runner commits to the scratch main a change to the line of notes.txt T01
-//   edited (mainCommit), so the end sync meets a conflict and a main-sync worker resolves it. The run then
+//   edited (baseCommit), so the end sync meets a conflict and a main-sync worker resolves it. The run then
 //   commits REPORT.md and waits in `ready to merge`; the runner merges the feature branch into the scratch
 //   main as the person would (mergeWhenReady), and the command finishes (readyWithReport).
 //
@@ -140,7 +140,7 @@ const scenario = defineScenario({
   statusSnapshots: true,
   // The person's stand-in answers only what status.json shows as the person's; T02's push it denies.
   answerPending: { permissions: { T02: 'deny' } },
-  mainCommit: { after: 'T01', files: { 'notes.txt': NOTES_MAIN }, message: 'main: notes.txt moved on while the run built' },
+  baseCommit: { after: 'T01', files: { 'notes.txt': NOTES_MAIN }, message: 'main: notes.txt moved on while the run built' },
   mergeWhenReady: true,
   facts: [agentAnswered('T01'), reservedToPerson('T02', 'deny'), remoteOnlyAfterPass('T02'), readyWithReport(), ceilingHeld(2)],
 });

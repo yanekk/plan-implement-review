@@ -381,6 +381,72 @@ test('coordinatorReact answers the real briefs: allow a routine request, pass a 
   assert.equal(decisions().at(-1).kind, 'report');
   assert.equal(readDecision(decisions().at(-1)).ok, true);
   assert.equal(react(handoffFor({ slug: 'drill', reportPath: 'plans/drill/REPORT.md', ready: true })), 'The branch is ready. Merge it yourself with: git merge pir/drill');
+  assert.equal(react(handoffFor({ slug: 'drill', reportPath: 'plans/drill/REPORT.md', ready: true, finisher: true })), 'The branch is ready. The finisher takes the merge from here.');
   assert.equal(react('where are we?'), 'Noted: where are we?');
   assert.equal(decisions().length, 4, 'a hand-off or a person\'s message writes no decision');
+});
+
+// visible-helpers T02: a helper's permission ask carries its task id as the wire's `request.agent_id`; the
+// real SDK must hand it to canUseTool as `opts.agentID` (DESIGN §2.1), or pir cannot name the helper.
+// The same script checks the `repeat … until interrupt` step and a helper's `resultFor` with `parent`.
+test('a permission step with agentId reaches the real SDK canUseTool as opts.agentID', async (t) => {
+  const { query } = await import('@anthropic-ai/claude-agent-sdk');
+  const { fakeClaudeSpawner, canUseTool, initEvent, taskProgress } = await import('./claude-stream.mjs');
+  const dir = scratch(t);
+  const agent = { taskId: 'a0fake00000000a01', callId: 'toolu_agentA', description: 'Survey the code' };
+  const script = [
+    { emit: initEvent() },
+    { await: 'user' },
+    { emit: canUseTool('perm-a', 'Bash', { command: 'ls' }, { agentId: agent.taskId }) },
+    { await: 'control_response' },
+    { resultFor: 'perm-a', parent: agent.callId, allowed: 'listed' },
+    { emit: resultEvent('success', 'idle') },
+    { repeat: [[taskProgress(agent, 'Reading one', { toolUses: 1, durationMs: 10 })], [taskProgress(agent, 'Reading two', { toolUses: 2, durationMs: 20 })]], everyMs: 20, until: 'interrupt' },
+    { emit: assistantText('after the interrupt') },
+    { emit: resultEvent('success', 'done') },
+  ];
+  const scriptPath = join(dir, 'script.json');
+  writeFileSync(scriptPath, JSON.stringify(script));
+  const seen = [];
+  let release;
+  const released = new Promise((r) => (release = r));
+  async function* prompt() {
+    yield { type: 'user', message: { role: 'user', content: 'go' }, parent_tool_use_id: null, session_id: '' };
+    await released;
+  }
+  const q = query({
+    prompt: prompt(),
+    options: {
+      cwd: dir,
+      pathToClaudeCodeExecutable: 'claude-fake',
+      spawnClaudeCodeProcess: fakeClaudeSpawner({ script: scriptPath }),
+      canUseTool: async (toolName, input, opts) => {
+        seen.push({ toolName, agentID: opts.agentID, toolUseID: opts.toolUseID });
+        return { behavior: 'allow', updatedInput: input };
+      },
+    },
+  });
+  t.after(() => {
+    release();
+    q.close?.();
+  });
+  const events = [];
+  let interrupted = false;
+  for await (const e of q) {
+    events.push(e);
+    if (e.type === 'result' && e.result === 'idle' && !interrupted) {
+      interrupted = true;
+      // Let at least one round out before the interrupt ends the repeat.
+      await new Promise((r) => setTimeout(r, 60));
+      await q.interrupt();
+    }
+    if (e.type === 'result' && e.result === 'done') break;
+  }
+  assert.deepEqual(seen, [{ toolName: 'Bash', agentID: 'a0fake00000000a01', toolUseID: 'toolu_perm-a' }]);
+  const result = events.find((e) => e.type === 'user' && e.message.content?.[0]?.tool_use_id === 'toolu_perm-a');
+  assert.equal(result.parent_tool_use_id, 'toolu_agentA', 'resultFor with parent is the helper\'s frame');
+  const progress = events.filter((e) => e.subtype === 'task_progress').map((e) => e.description);
+  assert.ok(progress.length >= 1 && progress.length <= 2, `the repeat emitted rounds until the interrupt: ${progress}`);
+  assert.equal(progress[0], 'Reading one');
+  assert.ok(events.some((e) => e.type === 'assistant' && e.message.content[0].text === 'after the interrupt'), 'the script went on past the repeat');
 });

@@ -2,7 +2,7 @@
 // §2.9, §2.11). Pure: text and objects in, text out. The coordinator agent writes three sections; the
 // command renders the rest itself — the "Decisions made for you" section from the ledger, and the branch
 // footer from the sync — so no decision can drop out of the report and the footer can be rewritten when
-// main moves without asking the agent again.
+// the base branch moves without asking the agent again.
 
 const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 const nonEmpty = (v) => typeof v === 'string' && v.trim() !== '';
@@ -66,17 +66,18 @@ export function decisionsSection(notable = []) {
   return `${head}${items.join('\n')}\n`;
 }
 
-// branchFooter({ mainSha, tests, syncedAt, unresolved, fix }) → the footer: which main the branch was synced
-// against, when, and the tests result. Red or unresolved says the branch is not ready to merge. `fix` is
+// branchFooter({ baseSha, base, tests, syncedAt, unresolved, fix }) → the footer: which commit of the base
+// branch (`base`, default `main`; base-branch DESIGN §2.9) the branch was synced against, when, and the
+// tests result. Red or unresolved says the branch is not ready to merge. `fix` is
 // the end-of-run test-fix worker's result (T10): null when none ran, else 'green' | 'red' after it.
-export function branchFooter({ mainSha, tests, syncedAt, unresolved = false, fix = null } = {}) {
-  const sha = nonEmpty(mainSha) ? `\`${mainSha.slice(0, 12)}\`` : 'an unknown commit';
+export function branchFooter({ baseSha, base = 'main', tests, syncedAt, unresolved = false, fix = null } = {}) {
+  const sha = nonEmpty(baseSha) ? `\`${baseSha.slice(0, 12)}\`` : 'an unknown commit';
   const when = nonEmpty(syncedAt) ? ` on ${syncedAt}` : '';
   const lines = [`${FOOTER_HEADING}\n`];
   if (unresolved) {
-    lines.push(`Merging \`main\` (${sha}) into this branch conflicted and was not resolved${when}. The branch is not ready to merge.`);
+    lines.push(`Merging \`${base}\` (${sha}) into this branch conflicted and was not resolved${when}. The branch is not ready to merge.`);
   } else {
-    lines.push(`Synced with \`main\` at ${sha}${when}.`);
+    lines.push(`Synced with \`${base}\` at ${sha}${when}.`);
   }
   if (fix === 'green') lines.push('The tests were red at the end; a worker fixed them.');
   else if (fix === 'red') lines.push('The tests were red at the end; a worker tried to fix them and they stayed red.');
@@ -105,7 +106,7 @@ function section(title, body) {
   return `## ${title}\n\n${nonEmpty(body) ? body.trim() : 'None.'}\n`;
 }
 
-// replaceFooter(text, footer) → the report with its branch footer replaced (DESIGN §2.10: main moved and
+// replaceFooter(text, footer) → the report with its branch footer replaced (DESIGN §2.10: the base moved and
 // the branch was re-synced). The footer is the last `## Branch` section; a report without one gets it
 // appended.
 export function replaceFooter(text, footer) {
@@ -140,19 +141,20 @@ export function findingRows(findingsText) {
   return rows;
 }
 
-// endFacts({ tasks, ledger, findings, unverified, sync, tests }) → the end brief's facts, normalised
+// endFacts({ tasks, ledger, findings, unverified, sync, tests, base }) → the end brief's facts, normalised
 // (DESIGN §2.9 step 2). tasks are parsed PROGRESS rows ({ num, name, state }); ledger the ledger lines;
-// findings the FINDINGS rows; unverified task ids; sync { state, mainSha, files? }; tests 'green'|'red';
-// fix null when no test-fix worker ran (T10), else its result 'green'|'red'.
-export function endFacts({ tasks = [], ledger = [], findings = [], unverified = [], sync = null, tests = 'red', fix = null } = {}) {
+// findings the FINDINGS rows; unverified task ids; sync { state, baseSha, files? }; tests 'green'|'red';
+// fix null when no test-fix worker ran (T10), else its result 'green'|'red'; base the run's base branch.
+export function endFacts({ tasks = [], ledger = [], findings = [], unverified = [], sync = null, tests = 'red', fix = null, base = 'main' } = {}) {
   return {
+    base: nonEmpty(base) ? base : 'main',
     tasks: (Array.isArray(tasks) ? tasks : []).filter(isObject).map((t) => ({ num: t.num, name: t.name ?? '', state: t.state ?? '' })),
     ledger: (Array.isArray(ledger) ? ledger : []).filter(isObject).map((l) => ({
       kind: l.kind, task: l.task ?? null, item: oneLine(l.item), answer: oneLine(l.answer), reason: oneLine(l.reason), notable: l.notable === true,
     })),
     findings: (Array.isArray(findings) ? findings : []).filter(nonEmpty),
     unverified: (Array.isArray(unverified) ? unverified : []).filter(nonEmpty),
-    sync: isObject(sync) ? { state: sync.state ?? 'unknown', mainSha: sync.mainSha ?? null, files: Array.isArray(sync.files) ? sync.files : [] } : { state: 'unknown', mainSha: null, files: [] },
+    sync: isObject(sync) ? { state: sync.state ?? 'unknown', baseSha: sync.baseSha ?? null, files: Array.isArray(sync.files) ? sync.files : [] } : { state: 'unknown', baseSha: null, files: [] },
     tests: tests === 'green' ? 'green' : 'red',
     fix: fix === 'green' || fix === 'red' ? fix : null,
   };

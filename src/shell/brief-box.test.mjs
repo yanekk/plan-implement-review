@@ -1,5 +1,5 @@
 // The brief box (pir-plan-command §2.13, T13): the component alone, keys in, callbacks out, no terminal.
-// The box on a real terminal, reached through `pir plan`, is plan-rig.test.mjs's.
+// The box on a real terminal, reached through `pir plan`, is plan-rig-brief-box.test.mjs's.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

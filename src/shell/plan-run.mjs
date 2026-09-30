@@ -35,7 +35,7 @@ import { parseRecord } from '../core/runrecord.mjs';
 import { stoppedOnPerson } from '../core/asking.mjs';
 import { allowResult, workerActivity } from '../core/stream.mjs';
 import { writeJsonAtomic } from './atomic-write.mjs';
-import { drainDropFolder, waitForDrop } from './drop-folder.mjs';
+import { createWaker, drainDropFolder } from './drop-folder.mjs';
 import { startTimeOf as startTimeOfReal } from './identity.mjs';
 import { indexDir as indexDirOf, recordPath, removeRecord, renameRecord, updateRecord } from './index-store.mjs';
 import { createGrants, startPersonInbox } from './person-inbox.mjs';
@@ -43,7 +43,15 @@ import { resolveClaudePath } from './platform.mjs';
 import { reapRecorded } from './reap.mjs';
 import { writeSnapshot as writeSnapshotReal } from './snapshot-store.mjs';
 import { startWorker as startWorkerReal, writeWorkersFile } from './worker-proc.mjs';
-import { git as gitReal, renamePlanBranch as renamePlanBranchReal, slugTaken as slugTakenReal } from './worktree.mjs';
+import {
+  git as gitReal,
+  readRunBase,
+  recordRunBase,
+  renamePlanBranch as renamePlanBranchReal,
+  slugTaken as slugTakenReal,
+} from './worktree.mjs';
+import { resolveBaseSetting } from './base-branch.mjs';
+import { refusalText } from '../core/basebranch.mjs';
 
 // The wait between loop turns when nothing wakes it. A report, a person's input or any entry in the
 // session's log wakes it at once; this is only the backstop for a missed watch event.
@@ -117,10 +125,33 @@ export function nextPlanLogPath(controlDir, step, { readdir = readdirSync } = {}
   return join(dir, `${prefix}-${max + 1}.ndjson`);
 }
 
-// plannerChecks({ slug, worktree, root, repo, indexDir, git, slugTaken }) → { ok, reason } — the §2.5
-// checks of a `planned` claim, all on the committed tree of the plan branch. The reason is sent to the
-// planner as is, so each one says what failed and what to do.
-export function plannerChecks({ slug, worktree, root, repo, indexDir, git = gitReal, slugTaken = slugTakenReal }) {
+// planRunBase({ worktree, root, env }) → { ok: true, base } | { ok: false, message } — the planning run's
+// base branch (base-branch DESIGN §2.5, §2.6): the pirBase recorded on the branch checked out in the
+// run's worktree, never the settings again, so a setting changed mid-run cannot move it. A branch cut
+// before pirBase existed takes its base from the settings, as a fresh start would, and records it then;
+// with no usable settings it gets the §2.9 refusal text.
+export function planRunBase({ worktree, root, env = process.env }) {
+  const branch = gitReal(worktree, ['branch', '--show-current']).stdout.trim();
+  const recorded = branch ? readRunBase(root, branch) : null;
+  if (recorded) return { ok: true, base: recorded };
+  const setting = resolveBaseSetting(root, { env });
+  if (!setting.ok) return { ok: false, message: refusalText(setting, { repo: basename(root) }) };
+  if (branch) {
+    try {
+      recordRunBase(root, branch, setting.base);
+    } catch {
+      // Unrecorded, the next check resolves it the same way; nothing is lost.
+    }
+  }
+  return { ok: true, base: setting.base };
+}
+
+// plannerChecks({ slug, worktree, root, repo, indexDir, base, git, slugTaken }) → { ok, reason } — the
+// §2.5 checks of a `planned` claim, all on the committed tree of the plan branch. The reason is sent to
+// the planner as is, so each one says what failed and what to do. `base` is the run's base branch
+// (planRunBase), where the slug check looks for a plan already committed; `baseError` is planRunBase's
+// refusal when it has none.
+export function plannerChecks({ slug, worktree, root, repo, indexDir, base, baseError, git = gitReal, slugTaken = slugTakenReal }) {
   const again = 'commit, and drop the `planned` report again';
   const rename = `Choose another name with the person, rename the plans/${slug} folder to it, ${again}.`;
   if (!isValidSlug(slug)) {
@@ -136,11 +167,14 @@ export function plannerChecks({ slug, worktree, root, repo, indexDir, git = gitR
   if (missing.length) {
     return { ok: false, reason: `${missing.join(', ')} ${missing.length === 1 ? 'is' : 'are'} not committed on this branch. Write ${missing.length === 1 ? 'it' : 'them'}, ${again}.` };
   }
-  const taken = slugTaken(slug, { root, indexHas: (s) => existsSync(recordPath(repo, s, { dir: indexDir })) });
+  if (!base) {
+    return { ok: false, reason: `The name "${slug}" cannot be checked: the run has no base branch. ${baseError ?? 'No base branch is set.'} Tell the person; they fix it, then drop the \`planned\` report again.` };
+  }
+  const taken = slugTaken(slug, { root, base, indexHas: (s) => existsSync(recordPath(repo, s, { dir: indexDir })) });
   if (taken) {
     const why = {
       branch: `a branch pir/${slug} already exists`,
-      'main-plan': `a plan plans/${slug} is already on main`,
+      'base-plan': `a plan plans/${slug} is already on ${base}`,
       index: `a pir run named ${slug} already exists`,
     }[taken] ?? `it is in use (${taken})`;
     return { ok: false, reason: `The name "${slug}" is taken: ${why}. ${rename}` };
@@ -202,41 +236,6 @@ export function planRunState(state, { label = null, sessions = [], since = {}, s
       stepRow('review'),
       { id: 'build', phase: 'pending', since: null, stoppedAt: null, tookMs: null, asking: null, worker: null, workers: [] },
     ],
-  };
-}
-
-// A wake-up the loop waits on: a drop in either folder, any entry in the live session's log, the
-// session's exit, a stop, or the backstop timeout.
-function createWaker() {
-  let pending = null;
-  let early = false;
-  return {
-    wake() {
-      if (pending) {
-        const r = pending;
-        pending = null;
-        r();
-      } else {
-        early = true;
-      }
-    },
-    async wait(dirs, ms, { watch, signal } = {}) {
-      if (early || signal?.aborted) {
-        early = false;
-        return;
-      }
-      const ac = new AbortController();
-      const onAbort = () => ac.abort();
-      signal?.addEventListener('abort', onAbort, { once: true });
-      await Promise.race([
-        waitForDrop(dirs, ms, { signal: ac.signal, unref: true, ...(watch ? { watch } : {}) }),
-        new Promise((r) => (pending = r)),
-      ]);
-      pending = null;
-      early = false;
-      ac.abort();
-      signal?.removeEventListener('abort', onAbort);
-    },
   };
 }
 
@@ -467,6 +466,8 @@ export async function runPlanning({ controlDir: givenControlDir, resume = false,
   const since = {};
   const stoppedAt = {};
   const took = {};
+  // Wakes on a drop in either folder, any entry in the live session's log, its exit, or a stop; the
+  // shared waker (drop-folder.mjs) with no pass gap, so this loop behaves as it always has.
   const waker = createWaker();
   const grants = createGrants();
   const byId = (id) => sessions.find((s) => s.id === id) ?? null;
@@ -724,10 +725,13 @@ export async function runPlanning({ controlDir: givenControlDir, resume = false,
       const checked = claim && CHECKED_KINDS.has(claim.kind) ? claim : recheck ? state.accepted : null;
       if (checked) {
         const worktree = worktreeNow();
-        const checks =
-          checked.kind === 'planned'
-            ? plannerChecks({ slug: checked.plan, worktree, root, repo, indexDir, git, slugTaken })
-            : reviewerChecks({ slug: checked.plan, worktree, git });
+        let checks;
+        if (checked.kind === 'planned') {
+          const rb = planRunBase({ worktree, root, env });
+          checks = plannerChecks({ slug: checked.plan, worktree, root, repo, indexDir, base: rb.base, baseError: rb.message, git, slugTaken });
+        } else {
+          checks = reviewerChecks({ slug: checked.plan, worktree, git });
+        }
         facts = { ...facts, checks, reports: claim ? reports : [...reports, checked] };
         log(`checks for ${checked.kind} ${checked.plan}: ${checks.ok ? 'ok' : checks.reason}`);
       }
@@ -791,7 +795,7 @@ export async function runPlanning({ controlDir: givenControlDir, resume = false,
       paint();
       // A fresh session's id is recorded by the next call; take it at once rather than after a wait.
       if (spawned) continue;
-      await waker.wait([reportsDir, personInbox.inboxDir], pollMs, { watch, signal });
+      await waker.wait([reportsDir, personInbox.inboxDir], pollMs, { watch, signal, unref: true });
     }
   } catch (err) {
     log(`error: ${err?.stack ?? err}`);

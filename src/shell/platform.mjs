@@ -23,7 +23,7 @@ import { randomUUID } from 'node:crypto';
 import { readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { parseAgentName } from '../core/naming.mjs';
-import { allowResult, workerActivity, readEntry } from '../core/stream.mjs';
+import { allowResult, workerActivity, readEntry, wakesLoop } from '../core/stream.mjs';
 import { startTimeOf as startTimeOfReal } from './identity.mjs';
 import { startWorker as realStartWorker, writeWorkersFile } from './worker-proc.mjs';
 
@@ -212,6 +212,11 @@ const NOT_BUSY = new Set(['idle', 'permission', 'questions']);
 // rather than merges); null leaves the worker inheriting `process.env`, exactly as without it. Read per
 // spawn, so `pir notify` or `pir notify off` during a run applies to the workers spawned after it.
 // Planning sessions (plan-run.mjs) call startWorker directly and never get it.
+//
+// `onActivity()` is the coordinator loop's wake-up (fast-tests DESIGN §2.1): called on every log entry of
+// every worker that wakesLoop accepts (a request, output, a turn's end; never a note) and on each exit,
+// after the bookkeeping, so a worker's question reaches the person's screen without waiting out the 5 s
+// backstop.
 export function createPlatform({
   controlDir = null,
   transport,
@@ -221,6 +226,7 @@ export function createPlatform({
   startTimeOf = startTimeOfReal,
   grants = null,
   workerEnv = null,
+  onActivity = () => {},
 } = {}) {
   const messaging = createMessaging({ transport });
   const live = new Map(); // id → record, while the child has not exited
@@ -236,6 +242,16 @@ export function createPlatform({
       writeWorkersFile(controlDir, [...live.values()]);
     } catch {
       // A failed write must not throw out of an exit listener or a pass; the next spawn or exit rewrites it.
+    }
+  };
+
+  // The coordinator loop's wake-up (fast-tests DESIGN §2.1). A throwing hook must never break a grant's
+  // answer, workers.json or worker-proc's exit path (whose exit listeners are not guarded).
+  const activity = () => {
+    try {
+      onActivity();
+    } catch {
+      /* the loop's backstop still runs the next pass */
     }
   };
 
@@ -276,10 +292,14 @@ export function createPlatform({
       live.set(id, rec);
       order.push(rec);
       if (grants) worker.onEvent((entry) => answerByGrant(id, worker, entry));
+      worker.onEvent((entry) => {
+        if (wakesLoop(entry)) activity();
+      });
       worker.onExit(() => {
         live.delete(id);
         gone.set(id, rec);
         writeWorkers();
+        activity(); // after the bookkeeping, so the pass it wakes already sees the worker gone
       });
       writeWorkers();
       worker.send(text, { from: 'pir' });
@@ -337,10 +357,11 @@ export function createPlatform({
     // send(id, text, { from }) → { ok }. A user message into the worker's input queue, taken into the
     // open turn if one is running (DESIGN §2.2). A dead worker logs it `undelivered`; an unknown id has
     // no log to write to.
-    send(id, text, { from = 'pir' } = {}) {
+    // `preface` and `helpersStopped` carry the note naming helpers an interrupt stopped (visible-helpers §2.6).
+    send(id, text, { from = 'pir', preface, helpersStopped } = {}) {
       const rec = recordOf(id);
       if (!rec) return { ok: false };
-      return { ok: rec.worker.send(text, { from }) };
+      return { ok: rec.worker.send(text, { from, preface, helpersStopped }) };
     },
 
     // interrupt(id, { from }) → { ok }. The SDK's interrupt() (DESIGN §2.8); its acknowledgement arrives

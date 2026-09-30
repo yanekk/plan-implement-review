@@ -72,7 +72,6 @@ test('scanRepos returns exactly the qualifying repos, ranked', (t) => {
   const alpha = repo(src, 'alpha');
   const beta = repo(src, 'beta');
   const gamma = repo(src, 'gamma');
-  repo(src, 'masteronly', 'master'); // no local main
   mkdirSync(join(src, 'plain')); // no .git
   writeFileSync(join(src, 'afile'), 'x'); // a file in the root
   // A linked worktree of alpha: its .git is a file.
@@ -99,10 +98,9 @@ test('the newest of index, HEAD and logs/HEAD decides; a repo missing all three 
   touch(c, 1_000_000);
   utimesSync(join(a, '.git', 'logs', 'HEAD'), 5_000_000, 5_000_000); // only one file newer
   utimesSync(join(b, '.git', 'index'), 4_000_000, 4_000_000);
-  // c: remove all three files; HEAD's absence breaks git, so fake the git call.
+  // c: remove all three files; the scan runs no git, so a repo git itself would reject still lists.
   for (const f of ['index', 'HEAD', 'logs/HEAD']) rmSync(join(c, '.git', f), { force: true });
-  const exec = () => '';
-  const got = scanRepos({ env: { HOME: home }, exec });
+  const got = scanRepos({ env: { HOME: home } });
   assert.deepEqual(got.map((r) => [r.name, r.mtimeMs]), [
     ['a', 5_000_000_000],
     ['b', 4_000_000_000],
@@ -126,20 +124,20 @@ test('a missing root is skipped; PIR_REPOS roots are all scanned', (t) => {
   assert.deepEqual(scanRepos({ env: { HOME: join(home, 'absent') } }), []);
 });
 
-test('a repo whose git call fails is skipped, the rest still listed', (t) => {
+// base-branch DESIGN §2.6: every git repo is listed, whatever its branches or settings. A pick pir
+// cannot start in is refused with the short reason at Enter, not hidden here.
+test('scanRepos lists a dev-only repo, a repo without settings and a repo with no main', (t) => {
   const home = scratchHome(t);
   const src = join(home, 'src');
-  const good = repo(src, 'good');
-  const bad = repo(src, 'bad');
-  const calls = [];
-  const exec = (cmd, args, opts) => {
-    calls.push([cmd, args, opts.cwd]);
-    if (opts.cwd === bad) throw new Error('git exploded');
-    return '';
-  };
-  const got = scanRepos({ env: { HOME: home }, exec });
-  assert.deepEqual(got.map((r) => r.path), [good]);
-  assert.ok(calls.every(([cmd, args]) => cmd === 'git' && args.join(' ') === 'rev-parse --verify --quiet refs/heads/main'));
+  const devOnly = repo(src, 'devonly', 'dev');
+  mkdirSync(join(devOnly, '.pir'));
+  writeFileSync(join(devOnly, '.pir', 'settings.json'), '{"baseBranch": "dev"}');
+  repo(src, 'nosettings'); // main, no .pir/settings.json
+  repo(src, 'masteronly', 'master'); // no main, no settings
+  const empty = join(src, 'empty'); // git init, no commit at all: no branch exists
+  mkdirSync(empty);
+  git(empty, 'init', '-q');
+  assert.deepEqual(scanRepos({ env: { HOME: home } }).map((r) => r.name).sort(), ['devonly', 'empty', 'masteronly', 'nosettings']);
 });
 
 test('an unreadable filesystem never throws', () => {
@@ -151,5 +149,5 @@ test('an unreadable filesystem never throws', () => {
       throw new Error('EACCES');
     },
   };
-  assert.deepEqual(scanRepos({ env: { HOME: '/h' }, fs, exec: () => '' }), []);
+  assert.deepEqual(scanRepos({ env: { HOME: '/h' }, fs }), []);
 });

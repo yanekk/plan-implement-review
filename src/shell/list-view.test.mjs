@@ -255,6 +255,18 @@ test('on a bare box the list keys go to the list; Enter on a typed box submits t
   assert.equal(v.text, '@skaut a list\ntwo', 'the box keeps its text; the caller resets it on a start');
 });
 
+// A paste over 10 lines sits in the box as pi-tui's `[paste #1 +N lines]` marker; the submit must carry the
+// pasted text, not the marker (user 2026-09-29: the planner was handed a brief of just the marker).
+test('Enter on a box holding a large paste submits the pasted text, not its marker', () => {
+  const { v, calls, type } = view();
+  const brief = Array.from({ length: 12 }, (_, i) => `line ${i + 1}`).join('\n');
+  type('skaut/plan ');
+  v.handleInput(PASTE(brief));
+  assert.match(v.text, /^@skaut\/plan \[paste #1 \+12 lines\]$/);
+  v.handleInput(ENTER);
+  assert.deepEqual(calls.submit, [`@skaut/plan ${brief}`]);
+});
+
 test('typing or pasting `@skaut` on a bare box gives `@skaut`, not `@@skaut`', () => {
   const a = view();
   a.type('@skaut');

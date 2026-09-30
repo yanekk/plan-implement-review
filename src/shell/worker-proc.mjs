@@ -51,7 +51,11 @@ const STDERR_TAIL = 4096;
 // `env` is the session's whole environment (reliable-notifications DESIGN §2.7). The SDK's `Options.env`
 // replaces `process.env` rather than merging over it, so a caller passes `{ ...process.env, X }`; absent,
 // the SDK inherits `process.env` as before and the options carry no `env` key.
-export function workerOptions({ cwd, sessionId, resume, name, claudePath, canUseTool, spawnProcess, permissionMode, tools, disallowedTools, env }) {
+//
+// `hooks` is the SDK's hook map, passed through unchanged (finisher DESIGN §3.3): the finisher's
+// PreToolUse hook answers `ask` for every call so the settings' allow rules cannot answer before
+// `canUseTool` does (T00). Absent, the options carry no `hooks` key.
+export function workerOptions({ cwd, sessionId, resume, name, claudePath, canUseTool, spawnProcess, permissionMode, tools, disallowedTools, env, hooks }) {
   return {
     cwd,
     ...(resume ? { resume } : { sessionId }),
@@ -59,6 +63,7 @@ export function workerOptions({ cwd, sessionId, resume, name, claudePath, canUse
     ...(tools ? { tools } : {}),
     ...(disallowedTools ? { disallowedTools } : {}),
     ...(env ? { env } : {}),
+    ...(hooks ? { hooks } : {}),
     pathToClaudeCodeExecutable: claudePath,
     extraArgs: { name },
     canUseTool,
@@ -117,7 +122,10 @@ function inputQueue() {
 // `decide(toolName, input) → 'allow' | 'deny' | null` is a gate in front of the parking (pir-coordinator
 // DESIGN §3.4): a verdict answers the request at once, from `pir`, and logs it `decided-by-gate`; null
 // parks it for an answer as before. A gate that throws denies: it exists to fence a session in, so its
-// own failure must not open the fence. `denyMessage(toolName, input)` words a gate's refusal.
+// own failure must not open the fence. `denyMessage(toolName, input)` words a gate's refusal. Any other
+// verdict (`null`, or the finisher's `'person'`) parks the request for the person. The gate's third
+// argument is what the CLI said about the request, `{ defaultToNo, reason, suggestions }`, so a gate can
+// park a request an `ask` rule matched (finisher T04).
 export function startWorker({
   cwd,
   sessionId: freshId,
@@ -134,6 +142,7 @@ export function startWorker({
   decide = null,
   denyMessage = (toolName) => `${toolName} is not allowed in this session.`,
   env = null,
+  hooks = null,
 }) {
   mkdirSync(dirname(logPath), { recursive: true });
   // A resumed session runs under the id it was saved with; every message pir sends carries that id.
@@ -189,11 +198,13 @@ export function startWorker({
       description: opts.description,
       defaultToNo: opts.defaultToNo === true,
       suppressAlwaysAllowRule: opts.suppressAlwaysAllowRule === true,
+      // A helper's request names the helper (visible-helpers DESIGN §2.4): the SDK's agentID is its task_id.
+      ...(typeof opts.agentID === 'string' ? { agentId: opts.agentID } : {}),
     });
     if (decide) {
       let verdict;
       try {
-        verdict = decide(toolName, input);
+        verdict = decide(toolName, input, { defaultToNo: opts.defaultToNo === true, reason: opts.decisionReason, suggestions: opts.suggestions ?? [] });
       } catch {
         verdict = 'deny';
       }
@@ -275,7 +286,7 @@ export function startWorker({
 
   const q = query({
     prompt: queue,
-    options: workerOptions({ cwd, sessionId, resume, name, claudePath, canUseTool, spawnProcess: spawnWrapped, permissionMode, tools, disallowedTools, env }),
+    options: workerOptions({ cwd, sessionId, resume, name, claudePath, canUseTool, spawnProcess: spawnWrapped, permissionMode, tools, disallowedTools, env, hooks }),
   });
 
   const startedAt = now();
@@ -344,13 +355,19 @@ export function startWorker({
     },
     startedAt,
 
-    send(text, { from = 'pir' } = {}) {
+    // `preface` is pir's note naming the helpers an interrupt stopped (visible-helpers DESIGN §2.6): the model
+    // reads it first, a blank line, then the person's text, in one user message. The log keeps `text` as the
+    // person typed it and the note beside it, so the conversation draws both and never repeats a helper.
+    send(text, { from = 'pir', preface, helpersStopped } = {}) {
       if (exitInfo || queue.closed) {
         undelivered('message', { from, text });
         return false;
       }
-      log({ dir: 'out', from, kind: 'message', text });
-      queue.push(userMessage(text, sessionId));
+      const extra = {};
+      if (typeof preface === 'string' && preface) extra.preface = preface;
+      if (Array.isArray(helpersStopped)) extra.helpersStopped = helpersStopped;
+      log({ dir: 'out', from, kind: 'message', text, ...extra });
+      queue.push(userMessage(extra.preface ? `${extra.preface}\n\n${text}` : text, sessionId));
       return true;
     },
 

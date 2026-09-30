@@ -152,16 +152,25 @@ export function resumedFor() {
 
 // ---- The end of the run (DESIGN §2.9, §2.10, T05) ----
 
-const SYNC_WORDS = {
-  'up-to-date': 'the branch already held the current main',
-  merged: 'main merged in cleanly',
-  resolved: 'main merged in; a worker resolved the conflicts',
-  unresolved: 'merging main conflicted and was NOT resolved',
-  unknown: 'unknown',
-};
+// syncWords(base) → how the end brief names each sync state, naming the run's base branch (base-branch
+// DESIGN §2.9: no user-visible text says `main` unless the base is `main`).
+export function syncWords(base = 'main') {
+  return {
+    'up-to-date': `the branch already held the current ${base}`,
+    merged: `${base} merged in cleanly`,
+    resolved: `${base} merged in; a worker resolved the conflicts`,
+    unresolved: `merging ${base} conflicted and was NOT resolved`,
+    unknown: 'unknown',
+  };
+}
+
+// mergeLine(base, slug) → the command the person runs to take the branch. It switches to the base first,
+// so it is right whichever branch the person has checked out (base-branch DESIGN §2.9).
+export const mergeLine = (base, slug) => `git switch ${base} && git merge pir/${slug}`;
 
 // endBriefFor(facts) → the end brief (DESIGN §2.9 step 2): the run's facts, from coordinator-report's
-// endFacts, and what to write back — one `report` decision with three markdown sections.
+// endFacts (its `base` names the branch synced with, default `main`), and what to write back — one
+// `report` decision with three markdown sections.
 export function endBriefFor(facts) {
   const f = isObject(facts) ? facts : {};
   const tasks = Array.isArray(f.tasks) ? f.tasks : [];
@@ -169,6 +178,7 @@ export function endBriefFor(facts) {
   const findings = Array.isArray(f.findings) ? f.findings : [];
   const unverified = Array.isArray(f.unverified) ? f.unverified : [];
   const sync = isObject(f.sync) ? f.sync : {};
+  const base = nonEmpty(f.base) ? f.base : 'main';
   const parts = ['Every task is done. Write the delivery report.'];
   parts.push(['Tasks:', ...tasks.map((t) => `- ${t.num} ${t.name ?? ''} ${t.state ?? ''}`.trimEnd())].join('\n'));
   parts.push(
@@ -179,7 +189,7 @@ export function endBriefFor(facts) {
   parts.push(findings.length ? ['FINDINGS rows:', ...findings].join('\n') : 'FINDINGS rows: none.');
   parts.push(`Tasks with a hand-checked half still unverified: ${unverified.length ? unverified.join(', ') : 'none'}.`);
   const files = Array.isArray(sync.files) && sync.files.length ? ` (files: ${sync.files.join(', ')})` : '';
-  parts.push(`Sync with main: ${SYNC_WORDS[sync.state] ?? sync.state ?? 'unknown'}${sync.mainSha ? `, main at ${String(sync.mainSha).slice(0, 12)}` : ''}${files}.`);
+  parts.push(`Sync with ${base}: ${syncWords(base)[sync.state] ?? sync.state ?? 'unknown'}${sync.baseSha ? `, ${base} at ${String(sync.baseSha).slice(0, 12)}` : ''}${files}.`);
   parts.push(`Tests on the feature branch: ${f.tests === 'green' ? 'green' : 'red'}.`);
   if (f.fix === 'green') parts.push('The tests were red at the end; a worker fixed them.');
   else if (f.fix === 'red') parts.push('The tests were red at the end; a worker tried to fix them and they stayed red.');
@@ -190,28 +200,38 @@ export function endBriefFor(facts) {
   return parts.join('\n\n');
 }
 
-// handoffFor({ slug, reportPath, ready, report }) → the hand-off message (DESIGN §2.9 step 5): the report
+// handoffFor({ slug, reportPath, ready, report, base }) → the hand-off message (DESIGN §2.9 step 5): the report
 // and the merge command, or, red, why no merge is offered. The agent presents it to the person in its reply.
-export function handoffFor({ slug, reportPath, ready, report = null }) {
+// `finisher`: a ready branch the finisher takes over (finisher DESIGN §2.1): no merge line, because the
+// merge is the finisher's after the person's go, and the agent is closed on pir's next pass.
+export function handoffFor({ slug, reportPath, ready, report = null, base = 'main', finisher = false }) {
   const parts = [`The delivery report is committed on pir/${slug} as ${reportPath}.`];
   if (nonEmpty(report)) parts.push(`The report:\n\n${report.trim()}`);
+  if (ready && finisher) {
+    parts.push(
+      'The branch is ready to merge. pir now closes you and starts the finisher, which prepares the merge and the ' +
+        "project's after-merge steps and asks the person for their go. Do not offer a merge command.",
+      'Present the report to the person in your reply, in one short turn.',
+    );
+    return parts.join('\n\n');
+  }
   if (ready) {
-    parts.push(`The branch is ready to merge. The person merges it themselves:\n\n  git merge pir/${slug}`);
+    parts.push(`The branch is ready to merge. The person merges it themselves:\n\n  ${mergeLine(base, slug)}`);
   } else {
-    parts.push('The branch is not ready to merge: its tests are red or main could not be merged in, as the report says. No merge is offered.');
+    parts.push(`The branch is not ready to merge: its tests are red or ${base} could not be merged in, as the report says. No merge is offered.`);
   }
   parts.push('Present the report and this to the person in your reply. The run now waits until they merge, or tell you to close it.');
   return parts.join('\n\n');
 }
 
-// resyncedFor({ slug, mainSha, tests, unresolved }) → main moved while the run waited and pir re-synced
+// resyncedFor({ slug, baseSha, base, tests, unresolved }) → the base moved while the run waited and pir re-synced
 // the branch (DESIGN §2.10); the report's footer is updated. The agent tells the person in one line.
-export function resyncedFor({ slug, mainSha, tests, unresolved = false }) {
-  const sha = nonEmpty(mainSha) ? String(mainSha).slice(0, 12) : 'its new tip';
+export function resyncedFor({ slug, baseSha, base = 'main', tests, unresolved = false }) {
+  const sha = nonEmpty(baseSha) ? String(baseSha).slice(0, 12) : 'its new tip';
   const what = unresolved
     ? `merging it into pir/${slug} conflicted and was not resolved, so the branch is not ready to merge`
     : tests === 'green'
-      ? `pir/${slug} now holds it and its tests are green; the merge command is unchanged: git merge pir/${slug}`
+      ? `pir/${slug} now holds it and its tests are green; the merge command is unchanged: ${mergeLine(base, slug)}`
       : `pir/${slug} now holds it but its tests are red, so no merge is offered`;
-  return `main moved to ${sha} while the run waited, and pir re-synced the branch: ${what}. The report's branch footer is updated. Tell the person in one line.`;
+  return `${base} moved to ${sha} while the run waited, and pir re-synced the branch: ${what}. The report's branch footer is updated. Tell the person in one line.`;
 }

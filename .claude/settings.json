@@ -53,7 +53,12 @@
       "Bash(curl -sI https://raw.githubusercontent.com/yanekk/plan-implement-review/pir/reliable-notifications/assets/pir-notify-icon.png)",
       "Bash(gh auth status)",
       "Bash(perl -e 'alarm 1200; exec @ARGV' node src/shell/harness/run.mjs single-run-live --into /tmp/pir-single-live)",
-      "Bash(rm -rf /tmp/pir-single-live)"
+      "Bash(rm -rf /tmp/pir-single-live)",
+      "Bash(perl -e 'alarm 300; exec @ARGV' node:*)",
+      "Bash(rm -rf /tmp/pir-finisher-fence)",
+      "Bash(rm -rf /tmp/pir-finisher-live)",
+      "Bash(test -f ~/.pir/notify.json)",
+      "Bash(node src/shell/harness/real-fetch-check.mjs)"
     ],
     "ask": [
       "Bash(npm i @earendil-works/pi-tui@0.87.1)",

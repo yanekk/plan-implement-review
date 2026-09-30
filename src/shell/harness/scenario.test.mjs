@@ -82,15 +82,26 @@ test('defineScenario: with the agent on, answerPending needs statusSnapshots (pi
   assert.equal(defineScenario({ ...base, statusSnapshots: true }).coordinator, true);
 });
 
-test('defineScenario: mainCommit and mergeWhenReady default off and are checked (pir-coordinator T09)', () => {
+test('defineScenario: baseCommit and mergeWhenReady default off and are checked (pir-coordinator T09)', () => {
   const base = { id: 'a', fixture: 'f', facts: [noHelloEver()] };
-  assert.equal(defineScenario(base).mainCommit, null);
+  assert.equal(defineScenario(base).baseCommit, null);
   assert.equal(defineScenario(base).mergeWhenReady, false);
-  const s = defineScenario({ ...base, mainCommit: { after: 'T01', files: { 'a.txt': 'x\n' } }, mergeWhenReady: true });
-  assert.deepEqual(s.mainCommit, { after: 'T01', files: { 'a.txt': 'x\n' }, message: 'main: moved after T01 merged' });
+  const s = defineScenario({ ...base, baseCommit: { after: 'T01', files: { 'a.txt': 'x\n' } }, mergeWhenReady: true });
+  assert.deepEqual(s.baseCommit, { after: 'T01', files: { 'a.txt': 'x\n' }, message: 'base: moved after T01 merged' });
   assert.equal(s.mergeWhenReady, true);
-  assert.throws(() => defineScenario({ ...base, mainCommit: { files: { 'a.txt': 'x' } } }), /mainCommit needs/);
-  assert.throws(() => defineScenario({ ...base, mainCommit: { after: 'T01', files: {} } }), /mainCommit needs/);
+  assert.throws(() => defineScenario({ ...base, baseCommit: { files: { 'a.txt': 'x' } } }), /baseCommit needs/);
+  assert.throws(() => defineScenario({ ...base, baseCommit: { after: 'T01', files: {} } }), /baseCommit needs/);
+});
+
+test("defineScenario: mergeWhenReady 'remote' and baseWatchMs are kept and checked (base-branch T09)", () => {
+  const base = { id: 'a', fixture: 'f', facts: [noHelloEver()] };
+  assert.equal(defineScenario(base).baseWatchMs, null);
+  const s = defineScenario({ ...base, mergeWhenReady: 'remote', baseWatchMs: 2000 });
+  assert.equal(s.mergeWhenReady, 'remote');
+  assert.equal(s.baseWatchMs, 2000);
+  assert.throws(() => defineScenario({ ...base, mergeWhenReady: 'github' }), /mergeWhenReady/);
+  assert.throws(() => defineScenario({ ...base, baseWatchMs: 0 }), /baseWatchMs/);
+  assert.throws(() => defineScenario({ ...base, baseWatchMs: 1.5 }), /baseWatchMs/);
 });
 
 test('defineScenario: coordinatorHoldMs needs the agent and a positive whole ms; personDelayMs a whole ms (pir-coordinator T14)', () => {
@@ -110,4 +121,14 @@ test('defineScenario: realNotify needs the agent and statusSnapshots (reliable-n
   assert.equal(defineScenario({ ...base, coordinator: true, statusSnapshots: true, realNotify: true }).realNotify, true);
   assert.throws(() => defineScenario({ ...base, statusSnapshots: true, realNotify: true }), /realNotify needs/);
   assert.throws(() => defineScenario({ ...base, coordinator: true, realNotify: true }), /realNotify needs/);
+});
+
+test('defineScenario: watchFinisher needs the agent and statusSnapshots, and not mergeWhenReady (finisher T10)', () => {
+  const base = { id: 'a', fixture: 'f', facts: [noHelloEver()] };
+  const on = { ...base, coordinator: true, statusSnapshots: true };
+  assert.equal(defineScenario(base).watchFinisher, false);
+  assert.equal(defineScenario({ ...on, watchFinisher: true }).watchFinisher, true);
+  assert.throws(() => defineScenario({ ...base, statusSnapshots: true, watchFinisher: true }), /watchFinisher needs/);
+  assert.throws(() => defineScenario({ ...base, coordinator: true, watchFinisher: true }), /watchFinisher needs/);
+  assert.throws(() => defineScenario({ ...on, mergeWhenReady: true, watchFinisher: true }), /not mergeWhenReady/);
 });

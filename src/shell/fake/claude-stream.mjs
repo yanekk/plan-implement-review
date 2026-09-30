@@ -47,6 +47,14 @@
 //                             `{"await":"control_response"}`): allowed, the text, or for AskUserQuestion
 //                             the answers as Claude words them; refused, an error result carrying pir's
 //                             message. The tool_use id is `toolu_<requestId>`, as `canUseTool` builds it.
+//                             With `"parent": "<tool_use id>"` the result is a helper's: its
+//                             `parent_tool_use_id` is that Agent call (visible-helpers DESIGN §2.1).
+//   {"repeat": [[<object>, …], …], "everyMs": <ms>, "until": "interrupt"}  emit each round's objects in
+//                             turn, one round every everyMs, until an interrupt control request arrives;
+//                             once the rounds run out, just wait for it. What a background helper does
+//                             while its parent sits idle between turns (visible-helpers T02): it keeps
+//                             reporting progress until the person interrupts, which the script's next
+//                             steps answer. An interrupt already queued ends it before the first round.
 //   {"chat": {"workMs": <ms>, "init": <object>}}  from here on, answer every user message the way a
 //                             worker replies to the person: a turn that says what it was sent, works for
 //                             workMs (a tool step), then replies. An interrupt during the work ends the
@@ -64,6 +72,17 @@
 //                             message). A non-zero exit emits an error result carrying the stderr tail
 //                             and ends the script there (the fake then idles until EOF), so a resume
 //                             re-runs the failed step.
+//   {"tool": {"id": "<requestId>", "name": "<Tool>", "input": {...}, "allowRuled": <bool>, "request": {...}}}  one tool call
+//                             as the real CLI handles it in `default` mode (finisher T00, DESIGN §3.3):
+//                             the tool_use, then every PreToolUse hook callback the SDK registered at
+//                             `initialize` (a `hook_callback` control request, its reply awaited). A hook
+//                             `deny` ends it with the error result `PreToolUse:<Tool> hook error: <reason>`;
+//                             `allow` runs it; `ask` sends it to `can_use_tool` whatever the rules say. With
+//                             no hook decision the settings decide: `allowRuled` runs it unseen, otherwise
+//                             `can_use_tool` asks, pir's reply is awaited and its tool_result emitted. A
+//                             run tool's result is `ran <name>`. `request` adds fields to the
+//                             `can_use_tool` request (`default_to_no`, `decision_reason`). Each outcome is recorded in the received
+//                             file as {"tool": id, "outcome": "hook-deny" | "ran" | "asked"}.
 // In `emit` and `sh` steps `{{reportsDir}}` is replaced with the path after `Reports folder: ` in the
 // opening message (pir-plan-command DESIGN §2.3), which is how a scripted session finds where to drop
 // its report.
@@ -84,7 +103,9 @@
 // `backgroundTasks(ids)` is the running-jobs list; `wakeUp()` is a background job's end, its notification
 // and the turn it opens; `remoteInputTurn()` is a turn
 // opened by input typed over Remote Control;
-// `canUseTool(requestId, toolName, input)` is the control request of one permission ask. Both are
+// `canUseTool(requestId, toolName, input)` is the control request of one permission ask; `extra.agentId`
+// makes it a helper's ask, written as the wire's `request.agent_id`, which the SDK hands `canUseTool` as
+// `opts.agentID` (visible-helpers DESIGN §2.1). Both are
 // exported so a test builds its script from the same shapes the recording holds.
 
 import { appendFileSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
@@ -130,7 +151,8 @@ export function turn(text) {
 }
 
 // One permission ask, the shape of the recording's `can_use_tool` (T01 wire sample).
-export function canUseTool(requestId, toolName, input, extra = {}) {
+export function canUseTool(requestId, toolName, input, { agentId, ...extra } = {}) {
+  if (agentId) extra = { ...extra, agent_id: agentId };
   return {
     type: 'control_request', request_id: requestId,
     request: {
@@ -198,6 +220,67 @@ export function remoteInputTurn(text = 'Thanks, carrying on.', commandUuid = 'cm
     ...turn(text),
     { emit: commandLifecycle('completed', commandUuid) },
   ];
+}
+
+// ---- Helpers: sessions a worker starts with its Agent tool (visible-helpers DESIGN §2.1). Every shape is
+// copied from plans/visible-helpers/evidence/plan-0339-helper.ndjson (Claude Code 2.1.284). `agent` below
+// is { taskId, callId, description, subagentType }: the helper's task id, the parent's Agent call id.
+
+// The parent's Agent tool_use that starts a helper, and the tool_result the CLI returns at once for a
+// background one.
+export function agentCall(agent, prompt = `Pretend helper: ${agent.description}`) {
+  return toolUse(agent.callId, 'Agent', { description: agent.description, subagent_type: agent.subagentType ?? 'Explore', prompt, run_in_background: true });
+}
+
+export function agentLaunched(agent) {
+  return {
+    ...toolResult(agent.callId, `Async agent launched successfully.\nagentId: ${agent.taskId} (internal ID - do not mention to user.)`),
+    tool_use_result: { isAsync: true, status: 'async_launched', agentId: agent.taskId, description: agent.description, outputFile: `/fake/tasks/${agent.taskId}.output`, canReadOutputFile: true },
+  };
+}
+
+// The running-jobs list naming helpers (`local_agent`), as background_tasks_changed re-sends it whole.
+export function backgroundAgents(agents = []) {
+  return {
+    type: 'system', subtype: 'background_tasks_changed',
+    tasks: agents.map((a) => ({ task_id: a.taskId, task_type: 'local_agent', description: a.description })),
+    session_id: '{{session}}', uuid: '00000000-0000-4000-8000-00000000000a',
+  };
+}
+
+export function taskStarted(agent, { backgrounded = true } = {}) {
+  return {
+    type: 'system', subtype: 'task_started', task_id: agent.taskId, tool_use_id: agent.callId, description: agent.description,
+    subagent_type: agent.subagentType ?? 'Explore', is_backgrounded: backgrounded, spawn_depth: 1, task_type: 'local_agent',
+    prompt: `Pretend helper: ${agent.description}`, session_id: '{{session}}', uuid: '00000000-0000-4000-8000-00000000000b',
+  };
+}
+
+export function taskProgress(agent, description, { toolUses, durationMs, lastTool = 'Read' }) {
+  return {
+    type: 'system', subtype: 'task_progress', task_id: agent.taskId, tool_use_id: agent.callId, description,
+    subagent_type: agent.subagentType ?? 'Explore', usage: { total_tokens: 1000 * toolUses, tool_uses: toolUses, duration_ms: durationMs },
+    last_tool_name: lastTool, session_id: '{{session}}', uuid: '00000000-0000-4000-8000-00000000000c',
+  };
+}
+
+// A helper's end: task_updated with its status, then task_notification. The CLI reports a kill as
+// `killed` in the patch and `stopped` in the notification (plan-0339, 2026-09-29).
+export function taskUpdated(agent, status, endTime = 1790663110161) {
+  return { type: 'system', subtype: 'task_updated', task_id: agent.taskId, patch: { status, end_time: endTime }, session_id: '{{session}}', uuid: '00000000-0000-4000-8000-00000000000d' };
+}
+
+export function agentNotification(agent, status) {
+  return {
+    type: 'system', subtype: 'task_notification', task_id: agent.taskId, tool_use_id: agent.callId, status,
+    output_file: `/fake/tasks/${agent.taskId}.output`, summary: agent.description, session_id: '{{session}}', uuid: '00000000-0000-4000-8000-00000000000e',
+  };
+}
+
+// helperFrame(agent, frame) → one of the helper's own assistant or user frames: `parent_tool_use_id` is the
+// parent's Agent call, and the CLI adds the helper's type and description.
+export function helperFrame(agent, frame) {
+  return { ...frame, parent_tool_use_id: agent.callId, subagent_type: agent.subagentType ?? 'Explore', task_description: agent.description };
 }
 
 // The user text block the CLI emits when a turn is interrupted (T01 probe).
@@ -330,6 +413,7 @@ async function main() {
       waiters[kind].push(w);
     });
   const responses = new Map(); // request_id → the PermissionResult pir sent for it
+  let preToolUse = []; // the PreToolUse hook callback ids the SDK registered at `initialize`
 
   process.on('SIGTERM', () => {
     record({ signal: 'SIGTERM' });
@@ -361,6 +445,9 @@ async function main() {
       }
       if (msg.type === 'control_request') {
         const subtype = msg.request?.subtype;
+        if (subtype === 'initialize') {
+          preToolUse = (msg.request.hooks?.PreToolUse ?? []).flatMap((m) => m?.hookCallbackIds ?? []);
+        }
         const response =
           subtype === 'initialize' ? INITIALIZE_RESPONSE
           : subtype === 'interrupt' ? { still_queued: [] }
@@ -421,8 +508,25 @@ async function main() {
       const msg = await take(step.await);
       const r = msg?.response;
       if (step.await === 'control_response' && r?.request_id) responses.set(r.request_id, r.response ?? {});
-    } else if ('resultFor' in step) out(resultFor(step, responses.get(step.resultFor) ?? {}));
-    else if ('chat' in step) await chat(step.chat ?? {}, { out, take, takeWithin, queues });
+    } else if ('resultFor' in step) {
+      const r = resultFor(step, responses.get(step.resultFor) ?? {});
+      out(step.parent ? { ...r, parent_tool_use_id: step.parent } : r);
+    } else if ('tool' in step) await runTool(step.tool, { out, take, record, responses, hooks: preToolUse });
+    else if ('repeat' in step) {
+      let stopped = false;
+      for (const round of step.repeat) {
+        if (await takeWithin('interrupt', 0)) {
+          stopped = true;
+          break;
+        }
+        for (const e of round) out(e);
+        if (await takeWithin('interrupt', step.everyMs ?? 700)) {
+          stopped = true;
+          break;
+        }
+      }
+      if (!stopped) await take('interrupt');
+    } else if ('chat' in step) await chat(step.chat ?? {}, { out, take, takeWithin, queues });
     else if ('react' in step) await react(fill(step.react), { out, take, opening: () => opening ?? '' });
     else if ('sleep' in step) await new Promise((r) => setTimeout(r, step.sleep));
     else if ('exit' in step) process.exit(step.exit);
@@ -478,6 +582,50 @@ async function react(command, { out, take, opening }) {
     out(assistantText(reply));
     out(resultEvent('success', reply));
   }
+}
+
+// The tool step: one tool call through the hooks, the settings' rules and `can_use_tool`, in the order
+// T00 measured on the real CLI (finisher DESIGN §3.3).
+let hookSeq = 0;
+async function runTool({ id, name, input = {}, allowRuled = false, request = {} }, { out, take, record, responses, hooks }) {
+  const toolUseId = `toolu_${id}`;
+  out(toolUse(toolUseId, name, input));
+  let decision = null;
+  let reason = '';
+  for (const callbackId of hooks) {
+    const requestId = `hook_req_${++hookSeq}`;
+    out({
+      type: 'control_request', request_id: requestId,
+      request: {
+        subtype: 'hook_callback', callback_id: callbackId, tool_use_id: toolUseId,
+        input: { hook_event_name: 'PreToolUse', session_id: '{{session}}', tool_name: name, tool_input: input, tool_use_id: toolUseId },
+      },
+    });
+    const reply = await take('control_response');
+    const hso = reply?.response?.response?.hookSpecificOutput;
+    const d = hso?.permissionDecision;
+    if (d === 'deny' || (d && decision === null) || (d === 'ask' && decision === 'allow')) {
+      decision = d;
+      reason = hso.permissionDecisionReason ?? '';
+    }
+    if (decision === 'deny') break;
+  }
+  if (decision === 'deny') {
+    record({ tool: id, outcome: 'hook-deny' });
+    out(toolResult(toolUseId, `PreToolUse:${name} hook error: ${reason}`, true));
+    return;
+  }
+  if (decision === 'allow' || (decision === null && allowRuled)) {
+    record({ tool: id, outcome: 'ran' });
+    out(toolResult(toolUseId, `ran ${name}`));
+    return;
+  }
+  record({ tool: id, outcome: 'asked' });
+  out(canUseTool(id, name, input, request));
+  const msg = await take('control_response');
+  const r = msg?.response;
+  if (r?.request_id) responses.set(r.request_id, r.response ?? {});
+  out(resultFor({ resultFor: id, allowed: `ran ${name}` }, responses.get(id) ?? {}));
 }
 
 // The tool_result for an answered `canUseTool`. An allowed AskUserQuestion reads back its answers in

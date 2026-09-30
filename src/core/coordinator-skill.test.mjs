@@ -109,13 +109,14 @@ test('every pass says the pointer in the reply: worker and task, why, what it wo
   assert.match(s, /what you\s+would pick/);
 });
 
-test('the hand-off is presented to the person, and the agent never merges into main or pushes', () => {
+test('the hand-off is presented to the person, and the agent never merges into the base branch or pushes', () => {
   const s = section(SKILL, 'The hand-off');
   assert.ok(s);
   assert.match(s, /Present them to the\s+person in your reply/);
-  assert.ok(s.includes('git merge pir/{slug}'));
-  assert.match(s, /never merge into main and you never push/);
-  assert.match(section(SKILL, 'What you may decide'), /Never tell a worker to merge into `main`, and never tell a worker to push/);
+  assert.ok(s.includes('git switch {base} && git merge pir/{slug}'));
+  assert.match(s, /never merge into the base branch and you never push/);
+  assert.match(section(SKILL, 'What you may decide'), /Never tell a worker to merge into the base branch[^]*never tell a\s+worker to push/);
+  assert.doesNotMatch(SKILL, /\bmain\b(?! checkout)/, 'the skill names the base branch, never `main`');
 });
 
 test('close only on the person\'s word and only once ready to merge', () => {

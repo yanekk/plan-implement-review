@@ -30,8 +30,13 @@ is refused before anything is reconciled (see [run-lifecycle.md](run-lifecycle.m
   and a branch whose worktree folder is gone gets its folder recreated rather than being skipped.
 - **Completed work.** Any task already merged into the feature branch reads `✅` in the feature
   branch's `PROGRESS.md`, so a re-run does not rebuild it — the feature branch is the durable record
-  of what has actually landed. `main` is untouched (nothing ever merges to `main`), so an
-  interrupted run leaves `main` exactly as it was.
+  of what has actually landed. The base branch is never merged into (pir at most fast-forwards it
+  when safe), so an interrupted run leaves it with nothing of the plan.
+- **The run's base.** The feature branch records its base in git config (`branch.pir/{slug}.pirBase`),
+  and a re-run reads it from there, not from the settings, so changing `.pir/settings.json` mid-build
+  does not move a running build. A restart does not fetch at the start; the end-of-run sync does. A
+  feature branch cut before `pirBase` existed takes the settings' base on its next start and records it
+  (see [branch-model.md](branch-model.md#the-run-remembers-its-base)).
 - **In-flight task work, adopted from each task branch.** A task built (`🔍`) or built and reviewed
   (`✅`) on its own task branch but not yet merged is picked up at that stage, not re-dispatched from
   scratch. A task only partly built is resumed on its branch, commits and uncommitted edits intact.
@@ -44,11 +49,18 @@ is refused before anything is reconciled (see [run-lifecycle.md](run-lifecycle.m
   afresh. An agent given up (four exits within an hour) stays given up across a re-run inside that
   hour. A re-run keeps the run's `--no-coordinator` choice (see
   [coordinator-agent.md](coordinator-agent.md#when-the-agent-fails)).
+- **A run that reached the finisher.** A stored `finisher/state.json` means the finisher had taken
+  over: the coordinator agent is not started, and the finisher is resumed by id at the end, with its
+  phase kept, except that `finishing` drops to `stuck` and waits for a fresh go
+  ([finisher.md](finisher.md#when-it-fails)). A run the finisher had already merged does not end as
+  merged: it waits for the finisher's `done` or `close`.
 - **A run waiting in `ready to merge`.** Reconciliation finds every task `✅` and the end gate runs
   again; the command then finds `REPORT.md` already committed on the feature branch, re-checks the
-  sync with `main`, and returns to `ready to merge` without rewriting the report (only its `## Branch`
-  footer, if `main` moved). If the person merged the feature branch while pir was down, the run ends as
-  merged instead of syncing `main` back in.
+  sync with the base (fetching it), and returns to its wait without rewriting the report (only its `## Branch`
+  footer, if the base moved). If the person merged the feature branch while pir was down, the run ends
+  as merged instead of syncing the base back in. With the agent on, a green branch is then handed to the
+  finisher, even one whose finisher had fallen back; the run waits in `ready to merge` again only if the
+  finisher falls back again ([finisher.md](finisher.md#known-limitations)).
 
 ## Reconciliation — git is the ground truth
 
@@ -213,15 +225,21 @@ When a re-run is not what is wanted, the pieces are all inspectable and removabl
 - **A coordinator agent that misbehaves:** stop the run from the dashboard and start it again with
   `pir start {slug} --no-coordinator`; the run carries on with every question going to the person.
   Every decision the agent made is in `plans/{slug}/.parallel/control/coordinator/ledger.jsonl`, and it
-  can never have touched `main`. A coordinator agent session left running by a SIGKILLed coordinator is
+  can never have touched the base branch. A coordinator agent session left running by a SIGKILLed coordinator is
   not in `workers.json`; its `claude` process carries `--name '{repo} / {slug} / coordinator agent'`,
   so `ps -ax -o pid,command | grep 'coordinator agent'` finds it for a `kill`.
 - **A confused or runaway run:** create the `HALT` flag (`touch
   plans/{slug}/.parallel/control/HALT`). All dispatch and delivery stop and every worker is closed;
-  `main` is untouched. Remove the flag and re-run to continue.
+  the base branch is untouched. Remove the flag and re-run to continue.
 - **Inspecting what reconciliation will see:** `git show pir/{slug}-T{nn}:plans/{slug}/PROGRESS.md`
   is the exact read it makes — the committed glyph in that row is the action it will pick.
-- **A bad merge on the feature branch:** it is a normal `git` recovery on `pir/{plan}`; `main` is not
-  involved, since nothing merges to `main`.
-- **Abandon the whole plan:** delete the feature branch `pir/{plan}` and its task branches. `main`
-  never received anything, so there is nothing to revert.
+- **A bad merge on the feature branch:** it is a normal `git` recovery on `pir/{plan}`; the base branch is
+  not involved, since nothing merges into it.
+- **A run on the wrong base:** `git config branch.pir/{slug}.pirBase <base>` sets the recorded base,
+  or `git config --unset branch.pir/{slug}.pirBase` makes the next start re-read the settings. A local
+  base branch pir created from the remote's copy that is not wanted: `git branch -d <base>`.
+- **A start refused over the base** (`no-base-setting`, `bad-settings`, `no-base-branch`,
+  `fetch-failed`, `diverged`): nothing was created; fix the cause the message names and start again
+  (see [branch-model.md](branch-model.md#what-the-person-sees)).
+- **Abandon the whole plan:** delete the feature branch `pir/{plan}` and its task branches. The base
+  branch never received anything, so there is nothing to revert.

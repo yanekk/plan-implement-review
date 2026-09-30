@@ -131,14 +131,29 @@ const EXPECT = {
     ceiling: 2,
     factIds: ['agent-answered:T01', 'never-alerted:T01', 'remote-only-after-pass:T02', 'alerted-once:T02', 'ready-with-report:no-conflict', 'ceiling-held:2'],
   },
+  'finisher-live': {
+    taskCount: 1,
+    deps: { T01: [] },
+    ceiling: 1,
+    factIds: ['finisher-waited-for-go', 'finisher-finished-on-phone-go', 'finisher-alerted'],
+    state: '✅', // the build is already green: the run starts at its end
+  },
+  'finisher-live-branch': {
+    taskCount: 1,
+    deps: { T01: [] },
+    ceiling: 1,
+    factIds: ['finisher-waited-for-go', 'finisher-finished-on-phone-go', 'finisher-alerted'],
+    state: '✅',
+  },
 };
 
 // --- The registry ---------------------------------------------------------------------------------
 
-// The fixtures that seed no plan (pir-plan-command T17): checked on their own below, not by the loops.
-const PLANLESS = ['plan-command'];
+// The fixtures that seed no plan (pir-plan-command T17; dev-base, base-branch T09): a planning run writes
+// it. Checked on their own, not by the loops.
+const PLANLESS = ['plan-command', 'dev-base'];
 
-test('listFixtures returns exactly the DESIGN §4.1 fixtures, and the plan-command one', () => {
+test('listFixtures returns exactly the DESIGN §4.1 fixtures, and the planless ones', () => {
   assert.deepEqual(new Set(listFixtures()), new Set([...Object.keys(EXPECT), ...PLANLESS]));
   assert.equal(listFixtures().length, Object.keys(EXPECT).length + PLANLESS.length);
 });
@@ -175,7 +190,7 @@ for (const id of Object.keys(EXPECT)) {
     assert.equal(tasks.length, want.taskCount);
     for (const t of tasks) {
       assert.deepEqual(t.deps, want.deps[t.num], `${id} ${t.num} deps`);
-      assert.equal(t.state, '⬜', `${id} ${t.num} starts unbuilt`);
+      assert.equal(t.state, want.state ?? '⬜', `${id} ${t.num} starts ${want.state ? 'as declared' : 'unbuilt'}`);
     }
   });
 
@@ -338,7 +353,7 @@ test('pir-coordinator: the agent runs, the push is reserved and denied, main mov
   assert.equal(sc.statusSnapshots, true, 'the answerer reads who holds an item from status.json');
   assert.equal(sc.seatbelts.timeoutMs, 20 * 60 * 1000);
   assert.deepEqual(sc.answerPending.permissions, { T02: 'deny' });
-  assert.equal(sc.mainCommit.after, 'T01');
+  assert.equal(sc.baseCommit.after, 'T01');
   assert.equal(sc.mergeWhenReady, true);
   const files = fixtureFiles(fx);
   assert.deepEqual(JSON.parse(files['.claude/settings.json']), { permissions: { ask: ['Bash(git push:*)'] } });
@@ -349,7 +364,7 @@ test('pir-coordinator: the agent runs, the push is reserved and denied, main mov
   // T01 changes the line the main commit changes differently, so the end sync conflicts.
   assert.equal(files['notes.txt'], 'status: seeded\n');
   assert.match(fx.tasks['T01-greeting.md'], /from `status: seeded` to `status: greeting added`/);
-  assert.notEqual(sc.mainCommit.files['notes.txt'], 'status: greeting added\n');
+  assert.notEqual(sc.baseCommit.files['notes.txt'], 'status: greeting added\n');
   assert.match(fx.tasks['T01-greeting.md'], /\*\*AskUserQuestion\s+tool\*\*/);
   const t02 = fx.tasks['T02-version.md'];
   assert.match(t02, /Run exactly `git push origin HEAD`/);
@@ -364,7 +379,7 @@ test('pir-coordinator-concurrent: three askers at once, a 3-minute hold, the rul
   assert.equal(sc.coordinatorHoldMs, 180000);
   assert.equal(sc.answerPending.personDelayMs, 60000);
   assert.equal(sc.seatbelts.timeoutMs, 20 * 60 * 1000);
-  assert.equal(sc.mainCommit, null, 'main does not move: no end-sync conflict');
+  assert.equal(sc.baseCommit, null, 'main does not move: no end-sync conflict');
   assert.equal(sc.mergeWhenReady, true);
   const files = fixtureFiles(fx);
   assert.match(files['.claude/pir-coordinator.md'], /release date, write no decision and do not pass them on; wait/);
@@ -386,7 +401,7 @@ test('notify-live: the agent runs, real alerts go to the person\'s topic, nobody
   assert.equal(sc.statusSnapshots, true);
   assert.equal(sc.realNotify, true);
   assert.equal(sc.answerPending, false, 'the person answers T02 on the phone');
-  assert.equal(sc.mainCommit, null);
+  assert.equal(sc.baseCommit, null);
   assert.equal(sc.mergeWhenReady, true, 'the end alert fires and the run finishes');
   assert.equal(sc.seatbelts.timeoutMs, 30 * 60 * 1000);
   const files = fixtureFiles(fx);
@@ -422,6 +437,99 @@ test('notify-live facts: T01 never alerted; T02 alerted once after its link, one
   const ms = (e) => ({ ...e, t: Date.parse(e.t) });
   assert.equal(once.check(bundle([], [ms(link), ms(first), ms(rem)])).pass, true, 'epoch-ms stamps');
   assert.equal(once.check(bundle([], [ms(first), { ...ms(link), t: Date.parse('2026-01-01T00:00:05Z') }])).pass, false, 'epoch ms, alert before the link');
+});
+
+test('finisher-live: a green one-task plan, repo rules to merge and write FINISHED, the agent on, nobody standing in for the person (finisher T10)', () => {
+  const fx = getFixture('finisher-live');
+  const sc = fx.scenario;
+  assert.equal(sc.coordinator, true);
+  assert.equal(sc.statusSnapshots, true);
+  assert.equal(sc.realNotify, true);
+  assert.equal(sc.watchFinisher, true);
+  assert.equal(sc.answerPending, false, 'the person gives the go on the phone');
+  assert.equal(sc.mergeWhenReady, false, 'the finisher merges, not the runner');
+  assert.ok(sc.seatbelts.timeoutMs < 900 * 1000, 'inside the 900 s alarm the run is launched under');
+  const { tasks } = parseProgress(fx.progress);
+  assert.deepEqual(tasks.map((t) => t.state), ['✅'], 'the build is already green: no worker is spawned');
+  const files = fixtureFiles(fx);
+  assert.match(files['.pir/rules/on-finish.md'], /merge --no-edit pir\/\{slug\}/);
+  assert.match(files['.pir/rules/on-finish.md'], /`FINISHED` at the root of the main checkout/);
+  assert.match(files['greet.mjs'], /export function greet/);
+});
+
+test('finisher-live installs over real git with the rules and the built task on main', () => {
+  const into = mkdtempSync(join(tmpdir(), 'pir-finisher-live-fx-'));
+  try {
+    installFixture('finisher-live', { into, skillsDir: null, srcDir: null });
+    const tracked = execFileSync('git', ['ls-files'], { cwd: into, encoding: 'utf8' }).split('\n');
+    for (const f of ['.pir/rules/on-finish.md', 'greet.mjs', 'greet.test.mjs', 'plans/finisher-live/PROGRESS.md']) assert.ok(tracked.includes(f), f);
+    assert.ok(!tracked.includes('FINISHED'));
+  } finally {
+    rmSync(into, { recursive: true, force: true });
+  }
+});
+
+test('finisher-live-branch: the same check on a run based on release, the checkout parked on main, the rules naming main', () => {
+  const fx = getFixture('finisher-live-branch');
+  assert.equal(fx.base, 'release');
+  assert.equal(fx.parkOn, 'main');
+  assert.equal(fx.scenario.watchFinisher, true);
+  assert.equal(fx.scenario.answerPending, false);
+  assert.ok(fx.scenario.seatbelts.timeoutMs < 900 * 1000);
+  assert.match(fixtureFiles(fx)['.pir/rules/on-finish.md'], /into `main`/, 'the rules name another branch than the target');
+  assert.equal(getFixture('finisher-live').base, undefined, 'the first live check stays on main');
+
+  const into = mkdtempSync(join(tmpdir(), 'pir-finisher-live-branch-fx-'));
+  try {
+    const res = installFixture('finisher-live-branch', { into, skillsDir: null, srcDir: null });
+    assert.equal(res.base, 'release');
+    assert.equal(res.parkedOn, 'main');
+    const git = (...args) => execFileSync('git', args, { cwd: into, encoding: 'utf8' }).trim();
+    assert.equal(git('branch', '--show-current'), 'main', 'the main checkout sits on main');
+    assert.equal(git('rev-parse', 'main'), git('rev-parse', 'release'), 'both at the seed');
+    assert.equal(git('show', 'release:.pir/settings.json'), '{"baseBranch":"release"}');
+    assert.equal(git('status', '--porcelain'), '');
+  } finally {
+    rmSync(into, { recursive: true, force: true });
+  }
+});
+
+test('finisher-live facts read the runner\'s looks, the ledger, the flow log and coordinator.out (finisher T10)', () => {
+  const byId = Object.fromEntries(getFixture('finisher-live').scenario.facts.map((f) => [f.id, f]));
+  const before = { at: '2026-01-01T00:00:10Z', phase: 'awaiting-go', baseSha: 'seed', baseMoved: false, branchInBase: false, checkout: 'main', strays: [], finishedFile: false };
+  const ledger = [{ t: '2026-01-01T00:01:00.000Z', kind: 'go', by: 'phone', from: 'awaiting-go', to: 'finishing' }];
+  const after = { at: '2026-01-01T00:02:00Z', baseSha: 'merged', baseMoved: true, branchInBase: true, checkout: 'release', strays: [], finishedFile: true, ledger };
+  const flowText = '2026-01-01T00:00:20.000Z notify send finisher 7 ok 200\n2026-01-01T00:01:30.000Z notify send finisher - ok 200\n';
+  const bundle = (o = {}) => ({
+    steps: { finisher: { base: 'release', baseAtStart: 'seed', checkoutAtStart: 'main', beforeGo: before, afterRun: after, ...o } },
+    coordinatorOut: '✔ finished: merged and wrote FINISHED. The report is plans/finisher-live/REPORT.md.\n',
+    flowText,
+  });
+
+  const waited = byId['finisher-waited-for-go'];
+  assert.equal(waited.check(bundle()).pass, true);
+  assert.equal(waited.check(bundle({ beforeGo: null })).pass, false, 'never waited');
+  assert.equal(waited.check(bundle({ beforeGo: { ...before, baseMoved: true } })).pass, false, 'the base moved before the go');
+  assert.equal(waited.check(bundle({ beforeGo: { ...before, checkout: 'release' } })).pass, false, 'switched before the go');
+  assert.equal(waited.check(bundle({ beforeGo: { ...before, strays: ['main'] } })).pass, false, 'merged into another branch before the go');
+  assert.equal(waited.check(bundle({ beforeGo: { ...before, finishedFile: true } })).pass, false, 'FINISHED before the go');
+  assert.equal(waited.check({}).pass, false, 'no record');
+
+  const done = byId['finisher-finished-on-phone-go'];
+  assert.equal(done.check(bundle()).pass, true);
+  assert.equal(done.check(bundle({ afterRun: { ...after, ledger: [{ ...ledger[0], by: 'person' }] } })).pass, false, 'a go from pir, not the phone');
+  assert.equal(done.check(bundle({ afterRun: { ...after, ledger: [] } })).pass, false, 'no go');
+  assert.equal(done.check(bundle({ afterRun: { ...after, branchInBase: false } })).pass, false, 'not merged');
+  assert.equal(done.check(bundle({ afterRun: { ...after, strays: ['main'] } })).pass, false, 'merged into main as well as the target');
+  assert.equal(done.check(bundle({ afterRun: { ...after, checkout: 'main' } })).pass, false, 'the checkout was not left on the target');
+  assert.equal(done.check(bundle({ afterRun: { ...after, finishedFile: false } })).pass, false, 'no FINISHED');
+  assert.equal(done.check({ ...bundle(), coordinatorOut: '✔ pir/finisher-live is in main. The run is finished.\n' }).pass, false, 'ended by a hand merge');
+
+  const alerted = byId['finisher-alerted'];
+  assert.equal(alerted.check(bundle()).pass, true);
+  assert.equal(alerted.check({ ...bundle(), flowText: flowText.split('\n')[0] }).pass, false, 'no finished alert');
+  assert.equal(alerted.check({ ...bundle(), flowText: flowText.split('\n')[1] }).pass, false, 'no ready alert');
+  assert.equal(alerted.check({ ...bundle(), flowText: flowText.replaceAll('ok 200', 'failed HTTP 500') }).pass, false, 'failed sends do not count');
 });
 
 test('parallel: at least two independent tasks so workers run concurrently', () => {
@@ -649,7 +757,7 @@ test('plan-command: a plan scenario with the §5.2 seatbelts and the plan-comman
   assert.match(fx.brief, /^Add a slugify\(text\) function to src\/slug\.mjs: .*at most three tasks\.$/);
   assert.deepEqual(
     s.facts.map((f) => f.id),
-    ['plan-reviewed-on-branch', 'every-task-done', 'handed-off-green-branch', 'main-untouched', 'index-row-is-work'],
+    ['plan-reviewed-on-branch', 'every-task-done', 'handed-off-green-branch', 'base-untouched', 'index-row-is-work'],
   );
   assert.ok(!Object.keys(fixtureFiles(fx)).some((p) => p.startsWith('plans/')), 'no plan is laid down');
 });

@@ -140,19 +140,59 @@ function git(cwd, ...args) {
   return execFileSync('git', [...GIT_ID, ...args], { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
 }
 
-// startPlanRig({ into, scripts, keep }) → { root, repoDir, home, env, shimDir, scriptsFile, received,
-//   clipboard, slug, cleanup(), openScreen(opts), driveScreen(opts) }
+// withReportHold(entries, ms) → entries whose coordinator agent waits `ms` before it writes the delivery
+// report, so the live view's `preparing: syncing {base}, writing the report` stays on screen long enough to
+// be read (base-branch T09); the fake would otherwise write it between two frames.
+function withReportHold(entries, ms) {
+  return entries.map((e) => {
+    if (e.match !== COORDINATOR_MATCH) return e;
+    const at = e.script.findIndex((st) => typeof st.sh === 'string' && st.sh.includes('coordinator-report'));
+    return at < 0 ? e : { ...e, script: [...e.script.slice(0, at), { sleep: ms }, ...e.script.slice(at)] };
+  });
+}
+
+// seedRemote(root, repoDir, base) → { path, ahead }: a local bare repository at {root}/origin.git as the
+// repo's `origin`, holding the repo's base, then one commit (CHANGELOG.md) pushed to the remote's base
+// through a throwaway clone, so the remote is ahead of the local copy (base-branch DESIGN §2.3, §4: a
+// file-path remote exercises the same fetch code as a network one, with no network). No upstream is set:
+// the remote is picked as `origin` (§2.4).
+function seedRemote(root, repoDir, base) {
+  const path = join(root, 'origin.git');
+  const clone = join(root, 'origin-clone');
+  git(root, 'init', '-q', '--bare', '-b', base, path);
+  git(repoDir, 'remote', 'add', 'origin', path);
+  git(repoDir, 'push', '-q', 'origin', `refs/heads/${base}:refs/heads/${base}`);
+  git(root, 'clone', '-q', '--branch', base, path, clone);
+  writeFileSync(join(clone, 'CHANGELOG.md'), `# Changelog\n\n- ${base} moved on the remote\n`);
+  git(clone, 'add', '-A');
+  git(clone, 'commit', '-q', '-m', `${base}: moved on the remote`);
+  git(clone, 'push', '-q', 'origin', base);
+  const ahead = git(clone, 'rev-parse', 'HEAD');
+  rmSync(clone, { recursive: true, force: true });
+  return { path, ahead };
+}
+
+// startPlanRig({ into, scripts, keep, base, remoteAhead, settings, holdReportMs }) → { root, repoDir, home,
+//   env, shimDir, scriptsFile, received, clipboard, slug, base, remote, cleanup(), openScreen(opts),
+//   driveScreen(opts) }
+//
+// `base` (default `main`) is the only branch the repo has and the one its settings name; `remoteAhead`
+// gives it an `origin` whose base is one commit ahead (`remote` is then { path, ahead }, else null);
+// `settings: false` leaves .pir/settings.json out, for the no-base-setting refusal; `holdReportMs` has the
+// coordinator agent wait that long before its report (withReportHold). All four are base-branch T09's.
 //
 // `into` is an empty or new folder to build in (else a fresh temp folder); the rig lays out
-//   {root}/repo   a git repo on `main`: README.md and package.json (test `node -e 0`), one commit
+//   {root}/repo   a git repo on the base branch: README.md, package.json (test `node -e 0`) and
+//                 .pir/settings.json naming the base, one commit
+//   {root}/origin.git  the bare remote, with `remoteAhead` only
 //   {root}/home   PIR_HOME and HOME
 //   {root}/bin    the `claude` shim, its scripts file and the fake's received log / resume progress, and
 //                 the `pbcopy` shim with `clipboard.txt`, the last text it was given (absent until a copy)
 // Worktrees a run adds sit under repo/.claude/worktrees, so removing the root removes them too.
 // cleanup() deletes the root unless `keep`; idempotent. It does not stop programs a test started: a test
 // that launches a run stops it first, as pir's own stop would.
-export function startPlanRig({ into = null, scripts = 'happy', keep = false, baseEnv = process.env } = {}) {
-  const entries = scriptSet(scripts);
+export function startPlanRig({ into = null, scripts = 'happy', keep = false, baseEnv = process.env, base = 'main', remoteAhead = false, settings = true, holdReportMs = 0 } = {}) {
+  const entries = holdReportMs > 0 ? withReportHold(scriptSet(scripts), holdReportMs) : scriptSet(scripts);
   let root;
   if (into) {
     root = resolve(into);
@@ -169,10 +209,15 @@ export function startPlanRig({ into = null, scripts = 'happy', keep = false, bas
   mkdirSync(shimDir);
   writeFileSync(join(home, '.gitconfig'), '[user]\n\tname = pir rig\n\temail = rig@pir.invalid\n');
 
-  git(repoDir, 'init', '-q', '-b', 'main');
+  git(repoDir, 'init', '-q', '-b', base);
   writeFileSync(join(repoDir, 'README.md'), '# rig\n\nA scratch repo for the planning rig.\n');
+  // pir refuses a repo that names no base branch (base-branch DESIGN §2.1, §5).
+  if (settings) {
+    mkdirSync(join(repoDir, '.pir'));
+    writeFileSync(join(repoDir, '.pir', 'settings.json'), JSON.stringify({ baseBranch: base }) + '\n');
+  }
   writeFileSync(join(repoDir, 'package.json'), JSON.stringify({ name: 'pir-plan-rig', private: true, scripts: { test: 'node -e 0' } }, null, 2) + '\n');
-  // Worktrees live inside the repo; ignoring them keeps `main`'s checkout clean (FINDINGS 2026-09-26).
+  // Worktrees live inside the repo; ignoring them keeps the base's checkout clean (FINDINGS 2026-09-26).
   writeFileSync(join(repoDir, '.git', 'info', 'exclude'), '.claude/worktrees/\n');
   git(repoDir, 'add', '-A');
   git(repoDir, 'commit', '-q', '-m', 'rig: scratch repo');
@@ -188,6 +233,7 @@ export function startPlanRig({ into = null, scripts = 'happy', keep = false, bas
   }
   // A taken slug by its branch (DESIGN §2.5), which leaves `main` at its one commit.
   if (scripts === 'taken-slug') git(repoDir, 'branch', `pir/${PLAN_RIG_SLUG}`);
+  const remote = remoteAhead ? seedRemote(root, repoDir, base) : null;
 
   const scriptsFile = join(shimDir, 'fake-scripts.json');
   writeFileSync(scriptsFile, JSON.stringify(entries));
@@ -215,6 +261,8 @@ export function startPlanRig({ into = null, scripts = 'happy', keep = false, bas
     received,
     clipboard,
     slug: scripts === 'taken-slug' ? PLAN_RIG_SLUG_2 : committedPlan ? committedPlan[0] : PLAN_RIG_SLUG,
+    base,
+    remote,
     cleanup,
     openScreen: (opts = {}) => openScreenRaw({ cwd: repoDir, env, ...opts }),
     driveScreen: (opts = {}) => driveScreenRaw({ cwd: repoDir, env, ...opts }),

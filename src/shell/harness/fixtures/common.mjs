@@ -131,3 +131,7 @@ plans/*/.parallel/
 `,
   };
 }
+
+// The folder a fixture's bare remote is made in (fixtures.mjs seedRemote, base-branch T09), inside the
+// scratch repo so it is removed with it. A fixture with a remote must name it in its .gitignore.
+export const REMOTE_DIR = '.pir-origin.git';

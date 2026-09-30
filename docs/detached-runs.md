@@ -51,8 +51,10 @@ repos is two independent runs. A run is in exactly one of four states, decided b
 - **running** — its recorded process is alive and is the one we started.
 - **finished** — it ended cleanly and recorded a `finished` final status: a green hand-off, a red
   feature branch (all tasks built, the feature tests fail), or nothing left to do. With the coordinator
-  agent on, the hand-off does not end the run: it waits in `ready to merge`, still `running`, and is
-  `finished` once the person merges the feature branch or tells the agent to close the run. A red branch is
+  agent on, the hand-off does not end the run: a green one is handed to the finisher, still `running`,
+  and is `finished` once the finisher is done after the person's go
+  ([finisher.md](finisher.md)); a red one, or one whose finisher could not go on, waits in `ready to
+  merge`, still `running`, and is `finished` once the person merges the feature branch or closes the run. A red branch is
   still `finished` — the run did its job and the red code is the person's to fix and merge.
 - **stopped** — the person stopped it (below), which records a `stopped` final status.
 - **crashed** — its recorded process is gone and it recorded no final status. This covers a true
@@ -66,6 +68,9 @@ its process's exact launch time (`ps -p {pid} -o lstart=`) at start; a process t
 whose launch time no longer matches is a different process on a reused number, so the run is crashed.
 Liveness and launch time come from the shell (`src/shell/identity.mjs`); the classifier reads no
 clock and no process, so the reused-number rule is tested exhaustively without a live process.
+The dashboard, which reads every run on each keypress and refresh tick, checks liveness every time but
+re-reads a live process's launch time at most every 5 s (and afresh once it has seen the number dead), so
+its displayed state can trail a reused number by that long; stop and remove always re-check uncached.
 
 Task state is **not** here. It stays in `PROGRESS.md` on the feature branch, owned by the coordinator
 ([task-state.md](task-state.md)). The state files this front-end reads describe the process, never
@@ -81,7 +86,8 @@ repos never collides). The entry is a pointer plus what is needed to classify th
 the repo: the slug, the repo and its path, the control-folder path, the process number and launch
 time, and the final status once set. It also carries `kind` — `plan` for a planning run, `work` for a
 build, absent read as `work` — and, for a planning run, its `label` before the rename and `go`, the
-person's answer to the go question ([planning-runs.md](planning-runs.md)). A build started with
+person's answer to the go question ([planning-runs.md](planning-runs.md)). Both kinds carry `baseBranch`, the run's base branch, a copy for display; the base a run
+actually uses is the one recorded on its branch in git config ([branch-model.md](branch-model.md#the-run-remembers-its-base)). A build started with
 `--no-coordinator` carries `coordinator: false`, so a resume from the dashboard (`Ctrl+R Ctrl+R`)
 starts it without the agent again; the field is absent otherwise, and absent reads as on. `pir start
 {slug}` typed again takes the flag as typed, not from the record. A build writes its record
@@ -137,8 +143,11 @@ merge conflict asks nothing and does not count, and neither does a task whose it
 holds (`asking coordinator`): the run turns amber only once the agent passes an item on or an item is
 reserved for the person. A running planning run reads `asking you` the same way while its planner or
 reviewer has a question set or permission request open ([planning-runs.md](planning-runs.md)). A build
-waiting at its end with a green hand-off reads `● ready to merge` in amber and counts in `waiting for you`;
-the STATE column widens to fit it only while such a row is listed. A red hand-off reads `running`. This is a display state only (`runDisplayState` in
+waiting for the finisher's go reads `● ready for your go` in amber and counts in `waiting for you`; a
+stuck finisher, or one holding a request, reads `asking you`, and one in its other phases `running`
+([finisher.md](finisher.md#on-screen)). A build waiting at its end in `ready to merge` (the finisher
+could not go on) reads `● ready to merge` in amber and counts in `waiting for you`;
+the STATE column widens to fit either only while such a row is listed. A red hand-off reads `running`. This is a display state only (`runDisplayState` in
 `dashboard.mjs`): the run is still classified `running`, and every chord treats it so. There is no process-number column — the person does not act on it.
 Colour carries state and is never the only signal (glyphs carry the same state, so `NO_COLOR` and a
 colour-blind reader lose nothing): a running run is green, finished and stopped are dim, crashed is
@@ -166,8 +175,9 @@ coordinator's own model (`buildDisplay`) and renderer (`src/shell/render.mjs`), 
 snapshot changes. Finished, stopped and crashed runs are openable too — their last frame is exactly
 what a person opens the dashboard to see — shown marked stale, with the note that re-starting the slug
 resumes it. A finished run's stale note offers `Hand-off: git merge pir/{slug}` only when its last
-frame was green. A run with the coordinator agent shows its end in the live frame's footer while it
-waits: `✔ ready to merge · git merge pir/{slug}` with `report: plans/{slug}/REPORT.md`, or `✗ not
+frame was green and no finisher ended it (then it reads `The finisher is done.`). While the finisher is
+on it owns the footer (`◆ finisher ready · c to review and say go`, one line per phase,
+[finisher.md](finisher.md#on-screen)). A run waiting in `ready to merge` shows its end in the live frame's footer: `✔ ready to merge · git merge pir/{slug}` with `report: plans/{slug}/REPORT.md`, or `✗ not
 ready · tests red on pir/{slug} — no merge offered` (see [coordinator-agent.md](coordinator-agent.md#ready-to-merge)). A red one — complete but not ready to merge — shows the red footer (the reason and
 the log path, from `runState.testsReason`) and a stale note saying it is not ready to merge and to fix
 the branch, with no merge line; a finished run with no snapshot at all points at `run.log` rather than
@@ -186,11 +196,12 @@ drawn with `@earendil-works/pi-tui`; the rules for what each line says are in
 `src/core/conversation.mjs`). A task with no worker yet says so in the footer instead. The view opens
 the task's live worker; with none live, its latest one, read-only, with no typing box. In a build with a
 coordinator agent, `c` opens the agent's conversation in the same view, and the person types to it as
-to a worker; with no agent, `c` leaves a note in the footer
+to a worker; once the finisher has replaced the agent, `c` opens the finisher's instead, and the hint
+reads `c finisher`; with no agent, `c` leaves a note in the footer
 ([coordinator-agent.md](coordinator-agent.md#the-agents-own-conversation)).
 
-The view reads the worker's conversation log from the control folder (the last 256 KB, then every
-append; `log-follow.mjs`), so a closed `pir` loses nothing and two open screens agree. Messages from pir, from the person and from the worker are marked and coloured
+The view reads the worker's conversation log from the control folder (the last 256 KB plus any request
+still pending from before it, then every append; `log-follow.mjs`), so a closed `pir` loses nothing and two open screens agree. Messages from pir, from the person and from the worker are marked and coloured
 differently. A pending permission request or question set is highlighted and pinned above the typing
 box (see [human-flow.md](human-flow.md)). Text Claude injects itself (a loaded skill's body, marked
 `isSynthetic`) is not drawn.
@@ -234,6 +245,34 @@ when it ends (`running in the background: …`, `finished in the background: …
 worker waiting on it does not look idle. A Monitor's own events never reach pir (Claude hands them to
 the model only); the person sees the worker's reply to each.
 
+A **helper** (an agent the session started with Claude's Agent tool, in the background or the
+foreground) is not drawn as background work. It gets exactly one line, under the step that started it
+(inside the `▸ … ran N agents` group that step closes, or the running `⎿ Agent` line), which updates
+as it works and ends as finished, stopped or failed
+(`plans/visible-helpers`; `helperLine` in `src/core/conversation.mjs`, the fold in `src/core/helpers.mjs`):
+
+```
+  ↳ helper · Survey end-of-run machinery · Reading src/shell/worker-proc.mjs · 9 steps · 21s
+  ↳ helper finished · Survey end-of-run machinery · 20 steps · 1m 12s
+  ↳ helper stopped · Survey end-of-run machinery · 20 steps · 1m 2s
+```
+
+The step text is the helper's latest step (`starting` before its first); steps and time are as of its
+last progress report, which arrives every few seconds while it works, so the line does not tick on its
+own. Stopped and failed read in the error colour. When the line is too wide, the step text is
+shortened first so the step count and time stay on screen; past that the line is clipped at the edge,
+never wrapped. A helper nested inside a helper shares its outer helper's line. A helper whose start is
+not in the log (a log that begins mid-run) gets no line. None of a helper's own words, tool steps or
+background commands appear in the default view; Tab's full detail draws them where they happened,
+labelled so they cannot be read as the worker's: its text after `helper ▸ `, its steps as
+`helper ⎿ Read src/core/notify.mjs`, its background commands as `helper ↳ …`. A helper's permission
+request or question set names the helper (see [human-flow.md](human-flow.md#helpers)).
+
+Running helpers are counted apart from background commands in the line above the box:
+`◌ 2 helpers running` while the worker is idle, `● working… · 1 helper running` during a turn, and
+`◌ 2 helpers running · 1 running in the background` with both. Background and foreground helpers both
+count; a helper's own background commands are not counted.
+
 What the person types is sent to the worker as a message, taken into its turn even if it is busy. A
 slash command is sent the same way and its reply comes back as worker text; the box autocompletes the
 worker's own slash commands, minus the four that do not work over the line (`/doctor`, `/color`,
@@ -250,16 +289,18 @@ top of them; see [The mouse](#the-mouse)):
 |---|---|
 | List, box bare (`@`) | `↑↓` move · `↵` or `→` open the selected run · `Ctrl+R Ctrl+R` resume · `Ctrl+S Ctrl+S` stop · `Ctrl+X Ctrl+X` remove · `esc` quit · any other key types into the box |
 | List, box typed in | `@repo/plan <brief>` or `@repo/start <plan>` · `↵` start planning or start the build · `shift+↵` or `ctrl+j` new line · `esc` or `Ctrl+C` reset the box to `@` · `Ctrl+R/S/X` twice as above · arrows move the cursor · while a pop-up (repo, command or plan) is open, `↑↓` move, `Tab`/`↵` pick and `esc` closes it |
-| Watch | `↑↓` pick a task · `→` or `↵` open its worker · `c` open the coordinator agent (only in a run that has one) · `←` back to the list · `Ctrl+S Ctrl+S` stop this run · `esc` quit |
+| Watch | `↑↓` pick a task · `→` or `↵` open its worker · `c` open the coordinator agent, or the finisher once it has taken over (only in a run that has one) · `←` back to the list · `Ctrl+S Ctrl+S` stop this run · `esc` quit |
 | Steps (a planning run) | `↑↓` pick a step · `→` or `↵` open its conversation · `←` back to the list · `Ctrl+S Ctrl+S` stop this run (while it runs) · `esc` quit |
 | The go question | `↵` start the build · `n` not now · `←` back to the list · `esc` quit, leaving the question in place |
 | Brief box (`pir plan`) | typing · `↵` start planning · `shift+↵` or `ctrl+j` new line · `esc` or `Ctrl+C` cancel |
-| Conversation | typing, `↵` send · `esc` interrupt the worker · `Ctrl+C` clear the box, or interrupt when it is empty · `←` with an empty box back to the live view · `Tab` grouped steps ⇄ full detail (every step with its whole result; open groups stay open on the way back) · `↵`/`n`/`a` answer a pending permission, and `↑↓` `space` `↵` drive a pending question set (one `↵` answers a pick-one question), both only while the box is empty, and typing while a question set is pending goes to its Other line, where `←`/`→` move the cursor and `←` goes back only once the line is empty · `PgUp`/`PgDn` scroll |
+| Conversation | typing, `↵` send · `esc` interrupt the worker · `Ctrl+C` clear the box, or interrupt when it is empty · while helpers run, the first `esc` (or `Ctrl+C` on an empty box) only shows `esc again to interrupt · this also stops N helpers: …` and a second interrupts; any other key cancels the warning and does what it normally does · `←` with an empty box back to the live view · `Tab` grouped steps ⇄ full detail (every step with its whole result; open groups stay open on the way back) · `↵`/`n`/`a` answer a pending permission, and `↑↓` `space` `↵` drive a pending question set (one `↵` answers a pick-one question), both only while the box is empty, and typing while a question set is pending goes to its Other line, where `←`/`→` move the cursor and `←` goes back only once the line is empty · `PgUp`/`PgDn` scroll |
 
 `←` steps back one view; `esc` quits `pir` outright from the list and the live view, but in the
 conversation view it interrupts the worker, as in Claude's own screen: the open turn ends at once, and
 the person then types a new instruction. A command the worker had moved to the background keeps
-running. Quitting the dashboard stops nothing and loses nothing — every run keeps running — so there
+running. Its helpers do not: Claude stops every running helper on an interrupt, so while any runs the
+first `esc` only warns and names them, and the second interrupts (see
+[human-flow.md](human-flow.md#helpers)). Quitting the dashboard stops nothing and loses nothing — every run keeps running — so there
 is no confirm on quit. Stop and remove are the destructive actions, and they are the ones guarded
 (below). The read-only conversation view takes only `←`, scrolling and `Tab`.
 
@@ -370,13 +411,25 @@ coordinator enforce), its `DESIGN.md` opens with a valid setup/test block (the c
 **home** (`planHome` in `src/shell/plan-home.mjs`): the main checkout's `plans/{slug}/` when it has a
 `PROGRESS.md`, else the committed tree of branch `pir/{slug}`, where `pir plan` leaves a reviewed plan
 (see [run-lifecycle.md](run-lifecycle.md)). No plan in either place is refused as `no plan '{slug}'`.
-An unreviewed plan on `main` is refused with the same pointer to `/pir-review-plan`; one that lives
+An unreviewed plan in the main checkout is refused with the same pointer to `/pir-review-plan`; one that lives
 only on its branch is refused with `'{slug}' is not reviewed — resume its planning run in pir
 (Ctrl+R)`; a plan without a valid block is refused as `no-test-block`, and `pir` prints the
 coordinator's own message — the parser's reason, that the plan counts as not reviewed, and
 `/pir-review-plan {slug}` as the fix. The review gate is checked first, so an unreviewed plan reports
-that, not the block. Either way nothing is spawned — a pre-flight failure that only surfaced after
-detaching would show a crashed run instead of a clean error.
+that, not the block.
+
+Last, the pre-flight settles the run's **base branch** (`resolveRunBase` in `src/shell/base-branch.mjs`;
+see [branch-model.md](branch-model.md#the-base-branch)). If `pir/{slug}` exists (a plan made by `pir
+plan`, or a restart), its base is the one it records in `branch.pir/{slug}.pirBase`, with no fetch. If
+it does not (a plan made by hand on the base branch), `pir start` reads the repo's settings, fetches and
+prepares the base, cuts `pir/{slug}` from the prepared commit and records `pirBase`, all before the
+coordinator is spawned. No settings, broken settings, a base missing locally and on the remote, a remote
+that cannot be reached, or a local base split from the remote's is refused with the full message naming
+the cause and the fix. The coordinator is spawned with `--base <name>` (and `--base-sha <sha>` for a
+branch it just cut), and the run record gains `baseBranch`, a copy for display.
+
+Either way nothing is spawned on a refusal — a pre-flight failure that only surfaced after detaching
+would show a crashed run instead of a clean error.
 
 On a clean pre-flight the spawn detaches the coordinator from the terminal — a new session and process
 group, its stdout and stderr to `run.log` in the control folder, and the parent returns at once. A

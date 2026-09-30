@@ -1,6 +1,8 @@
 // The conversation-view rig (T19): a pretend run the real `pir` screen can open, and a pty driver that
 // works that screen with keys. Every worker here is the real Agent SDK on fake/claude-stream.mjs; no test
 // runs the real `claude` or pays for a model.
+// The pty tests at each screen size are in conversation-rig-80x24.test.mjs, conversation-rig-120x40.test.mjs
+// and conversation-rig-60x20.test.mjs (fast-tests T05), so node --test runs them side by side with this file.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -15,24 +17,8 @@ import { indexDir, listRecords } from './index-store.mjs';
 import { dropPersonInput } from './person-inbox.mjs';
 
 const RIG = fileURLToPath(new URL('./conversation-rig.mjs', import.meta.url));
+import { scratchHome, waitFor, logOf } from './conversation-rig-helpers.mjs';
 
-function scratchHome(t) {
-  const home = mkdtempSync(join(tmpdir(), 'pir-rig-home-'));
-  t.after(() => rmSync(home, { recursive: true, force: true }));
-  return { PIR_HOME: home };
-}
-
-async function waitFor(fn, { timeoutMs = 10000, what = 'the condition' } = {}) {
-  const until = Date.now() + timeoutMs;
-  for (;;) {
-    const v = fn();
-    if (v) return v;
-    if (Date.now() > until) throw new Error(`timed out waiting for ${what}`);
-    await new Promise((r) => setTimeout(r, 25));
-  }
-}
-
-const logOf = (rig) => readFileSync(rig.logPath, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
 const events = (rig) => logOf(rig).filter((e) => e.dir === 'in').map((e) => e.event);
 const toolResultOf = (rig, id) =>
   events(rig)
@@ -367,200 +353,79 @@ test('the driver walks the tour on the real pir screen', { timeout: 90000 }, asy
   assert.deepEqual(sent, ['reply', 'reply', 'reply', 'reply', 'message', 'message', 'interrupt'], 'every answer the screen gave went through the inbox to the worker');
 });
 
-// pir-coordinator T06, end to end at 80×24 and 120×40: the coordinator agent holds T01's request, passes it
-// on with a pointer in its own conversation, takes what the person types, and the run ends in `ready to merge`.
-for (const [cols, rows] of [[80, 24], [120, 40]]) {
-  test(`the coordinator agent on the real pir screen at ${cols}×${rows}`, { timeout: 90000 }, async (t) => {
-    const env = scratchHome(t);
-    const rig = startRig({ env, scenario: 'coordinator', paceMs: 0, workMs: 300 });
-    t.after(() => rig.stop());
-    await waitFor(() => rig.platform.pending(rig.workerId)[0]?.requestId === 'perm-1', { what: 'T01 to ask' });
-    await waitFor(() => existsSync(rig.agent.logPath) && readFileSync(rig.agent.logPath, 'utf8').includes('pretend coordinator agent'), { what: 'the agent to greet' });
-    const ESC = '\x1b';
-    const screen = openScreen({ cols, rows, env: { ...process.env, ...env } });
-    try {
-      await screen.waitFor(/rig +work +● running/);
-      screen.send('\r');
-      let s = (await screen.waitFor(/asking coordinator · allow a command\?/)).join('\n');
-      assert.match(s, /T01 +coordinator +asking coordinator · allow a command\?/, 'the agent holds T01\'s request');
-      assert.doesNotMatch(s, /asking you/, 'nothing asks the person yet');
-      assert.match(s, /c coordinator/, 'the hint offers the agent');
+// visible-helpers T02: the helpers scenario on the real pir screen. The run is listed running, and T01's
+// conversation opens on the worker's opening message and its first helper's Agent step. What the screen
+// then makes of the helpers is T03's and T05's to test on this same scenario.
+test('the helpers scenario drives the real pir screen', { timeout: 60000 }, async (t) => {
+  const env = scratchHome(t);
+  const rig = startRig({ env, scenario: 'helpers', stepMs: 100, workMs: 300 });
+  t.after(() => rig.stop());
+  const screen = openScreen({ cols: 100, rows: 30, env: { ...process.env, ...env } });
+  try {
+    await screen.waitFor(/rig +work +● running/);
+    screen.send('\r');
+    await screen.waitFor(/pick a task/);
+    screen.send('\x1b[C');
+    // The Agent step folds into its group (group-commands §2.1), and the helper's line follows it.
+    const s = (await screen.waitFor(/↳ helper · Survey the code/)).join('\n');
+    assert.match(s, /▸ Ran 1 agent\n +↳ helper · Survey the code/, 'the helper line sits under its Agent step\'s group');
+    assert.match(s, /I'm the pretend worker of the helpers rig/, 'the opening message is on screen');
+    assert.match(s, new RegExp(`^T01  worker ${rig.workerId.slice(0, 8)} · live`, 'm'), 'T01\'s conversation is the one open');
+    assert.equal(screen.overflows(), 0);
+  } finally {
+    await screen.close();
+  }
+});
 
-      rig.pass();
-      s = (await screen.waitFor(/T01 +coordinator +asking you · allow a command\?/)).join('\n');
-      assert.match(s, /● T01 coordinator — asking you; open it \(→\) to answer/);
+test('the helpers scenario runs its script in order: two helpers, A asks, B ends, A killed by an idle interrupt, then chat', { timeout: 30000 }, async (t) => {
+  const env = scratchHome(t);
+  const rig = startRig({ env, scenario: 'helpers', stepMs: 20, workMs: 200 });
+  t.after(() => rig.stop());
+  const drop = (input) => assert.deepEqual(dropPersonInput(rig.controlDir, { to: rig.workerId, ...input }, { coordinatorAlive: true }), { ok: true });
+  const sys = (subtype) => events(rig).filter((e) => e.type === 'system' && e.subtype === subtype);
+  const A = 'a0fake00000000a01';
+  const B = 'a0fake00000000b02';
 
-      screen.send('c');
-      s = (await screen.waitFor(/coordinator ▸ T01 wants to push its task branch/)).join('\n');
-      assert.match(s, /^coordinator {2}agent /m, 'the agent\'s conversation is open');
+  await waitFor(() => rig.platform.pending(rig.workerId)[0]?.requestId === 'helperA-perm', { what: 'helper A to ask' });
+  const started = sys('task_started');
+  assert.deepEqual(started.map((e) => [e.task_id, e.tool_use_id, e.description, e.task_type, e.is_backgrounded]), [
+    [A, 'toolu_agentA', 'Survey the code', 'local_agent', true],
+    [B, 'toolu_agentB', 'Check the tests', 'local_agent', true],
+  ]);
+  const helperFrames = events(rig).filter((e) => e.parent_tool_use_id);
+  assert.ok(helperFrames.some((e) => e.parent_tool_use_id === 'toolu_agentA' && e.message.content[0].type === 'text'), 'a helper text frame');
+  assert.ok(helperFrames.some((e) => e.parent_tool_use_id === 'toolu_agentB'), 'B has frames of its own');
+  assert.ok(!events(rig).some((e) => e.type === 'user' && e.parent_tool_use_id === 'toolu_agentA' && e.message.content[0]?.tool_use_id === 'toolu_helperA-perm'), 'A\'s asked-for step has no result before the answer');
 
-      screen.send('where are we?');
-      await screen.waitFor(/where are we\?/);
-      screen.send('\r');
-      await screen.waitFor(/You said: where are we\?/, 20000);
-      const sent = readFileSync(rig.agent.logPath, 'utf8').trim().split('\n').map((l) => JSON.parse(l)).filter((e) => e.dir === 'out' && e.from === 'person');
-      assert.deepEqual(sent.map((e) => [e.kind, e.text]), [['message', 'where are we?']], 'delivered to the agent\'s session through the inbox');
+  drop({ kind: 'permission', requestId: 'helperA-perm', decision: 'allow' });
+  await waitFor(() => events(rig).some((e) => e.type === 'result' && e.result === 'waiting for Survey the code'), { what: 'the parent to end its turn' });
+  const ask = events(rig).find((e) => e.type === 'user' && e.message.content[0]?.tool_use_id === 'toolu_helperA-perm');
+  assert.equal(ask.parent_tool_use_id, 'toolu_agentA', 'the asked-for step\'s result is A\'s');
+  assert.deepEqual(sys('task_updated').map((e) => [e.task_id, e.patch.status]), [[B, 'completed']]);
+  assert.deepEqual(sys('task_notification').map((e) => [e.task_id, e.status]), [[B, 'completed']]);
+  assert.deepEqual(sys('background_tasks_changed').at(-1).tasks.map((x) => x.task_id), [A], 'the list shrank to A');
 
-      screen.send(`${ESC}[D`);
-      await screen.waitFor(/c coordinator/);
-      rig.ready();
-      s = (await screen.waitFor(/ready to merge · git merge pir\/rig/)).join('\n');
-      assert.match(s, /report: plans\/rig\/REPORT\.md/);
-      assert.match(s, /T01 +coordinator +merged/);
+  // A keeps progressing while the parent is idle, its counts growing.
+  const progressOfA = () => sys('task_progress').filter((e) => e.task_id === A);
+  const before = progressOfA().length;
+  await waitFor(() => progressOfA().length >= before + 3, { what: 'A to keep working while the parent is idle' });
+  const uses = progressOfA().map((e) => e.usage.tool_uses);
+  assert.deepEqual(uses, [...uses].sort((a, b) => a - b), 'tool_uses only grows');
 
-      screen.send(`${ESC}[D`);
-      s = (await screen.waitFor(/● ready to merge/)).join('\n');
-      assert.match(s, /rig +work +● ready to merge/, 'the dashboard row reads ready to merge');
-      assert.match(s, /1 waiting for you/);
+  // The parent is idle here, its `result` sent; how pir reads a worker whose helper still works is T01's.
+  const results = events(rig).filter((e) => e.type === 'result').length;
+  drop({ kind: 'interrupt' });
+  await waitFor(() => sys('task_notification').some((e) => e.task_id === A), { what: 'A to be killed' });
+  assert.deepEqual([sys('task_updated').at(-1).task_id, sys('task_updated').at(-1).patch.status], [A, 'killed']);
+  assert.equal(sys('task_notification').at(-1).status, 'stopped');
+  assert.deepEqual(sys('background_tasks_changed').at(-1).tasks, []);
+  const stopped = progressOfA().length;
+  await new Promise((r) => setTimeout(r, 150));
+  assert.equal(progressOfA().length, stopped, 'A reports nothing after its kill');
+  assert.equal(events(rig).filter((e) => e.type === 'result').length, results, 'no result follows an interrupt of an idle parent');
 
-      for (const r of s.split('\n')) assert.ok([...r].length <= cols);
-      assert.equal(screen.overflows(), 0, 'no frame was clipped to fit the window');
-    } finally {
-      await screen.close();
-    }
-  });
-}
-
-// mouse-navigation T06, end to end at 80×24 and 120×40: the wheel scrolls a worker's conversation three
-// lines a notch, and a click in the typing box moves its caret. The tour's history fits a 120×40 screen,
-// so this runs the `long` scenario (300 steps), which has more than fits at both sizes.
-for (const [cols, rows] of [[80, 24], [120, 40]]) {
-  test(`the wheel scrolls a worker's conversation and a click moves the caret at ${cols}×${rows}`, { timeout: 90000 }, async (t) => {
-    const env = scratchHome(t);
-    const rig = startRig({ env, scenario: 'long', paceMs: 0, workMs: 300 });
-    t.after(() => rig.stop());
-    const screen = openScreen({ cols, rows, env: { ...process.env, ...env } });
-    try {
-      await screen.waitFor(/rig +work/);
-      screen.send('\r');
-      await screen.waitFor(/pick a task/);
-      screen.send('\x1b[C');
-      let s = await screen.waitFor(/That was 300 steps/, 30000);
-      // group-commands §4: the 300 steps fold into one group line by default, so the history to scroll is
-      // full detail's (Tab), every result line drawn.
-      screen.send('\t');
-      s = await screen.waitFor(/step 300 done/);
-      assert.doesNotMatch(s.at(-1), /more below/);
-      const mid = Math.floor(rows / 2);
-
-      screen.send(mouseBytes.wheel(10, mid, 'up'));
-      screen.send(mouseBytes.wheel(10, mid, 'up'));
-      s = await screen.waitFor(/↓ 6 more below/);
-      assert.match(s.at(-1), /^↓ 6 more below · ↵ send/);
-      assert.doesNotMatch(s.join('\n'), /That was 300 steps|step 300 done/, 'the end scrolled out of view');
-      assert.match(s.join('\n'), /line \d+ of a long result/, 'earlier lines came into view');
-
-      screen.send(mouseBytes.wheel(10, mid, 'down'));
-      screen.send(mouseBytes.wheel(10, mid, 'down'));
-      s = await screen.waitFor((text) => !/more below/.test(text) && /That was 300 steps/.test(text));
-      assert.match(s.at(-1), /^↵ send · esc interrupt/);
-
-      screen.send('hello world');
-      s = await screen.waitFor(/hello world/);
-      const y = s.findIndex((l) => l.includes('hello world'));
-      const x = s[y].indexOf('hello') + 2;
-      screen.send(mouseBytes.click(x + 1, y + 1)); // the terminal counts from 1
-      screen.send('X');
-      await screen.waitFor(/heXllo world/);
-      assert.equal(screen.overflows(), 0, 'no frame was clipped to fit the window');
-    } finally {
-      await screen.close();
-    }
-  });
-}
-
-// group-commands T02, end to end at 80×24 and 120×40: the tour's four opening steps fold into one group
-// line as they finish; a click opens and folds it, two quick clicks are an open and a fold (never a word
-// selection), a drag across it still copies, and Tab still shows full detail. Colour is on (NO_COLOR and
-// COLORTERM dropped: the basic table), so the failed step's error style and the hover can be read. The
-// rig's `pbcopy` shim is first on pir's PATH: a copy lands in its clipboard.txt, never the real clipboard.
-const OPENING_GROUP = /▸ Read 1 file, searched 1 time, ran 1 shell command, edited 1 file · 1 failed/;
-for (const [cols, rows] of [[80, 24], [120, 40]]) {
-  test(`group lines fold the steps and a click opens them at ${cols}×${rows}`, { timeout: 120000 }, async (t) => {
-    const home = scratchHome(t);
-    const rig = startRig({ env: home, paceMs: 1500, workMs: 300 });
-    t.after(() => rig.stop());
-    const { NO_COLOR: _nc, COLORTERM: _ct, ...base } = process.env;
-    const env = { ...base, ...home, PATH: `${rig.shimDir}:${process.env.PATH}` };
-    const screen = openScreen({ cols, rows, env });
-    const rowOf = (s, re) => s.findIndex((l) => re.test(l));
-    const settle = () => new Promise((r) => setTimeout(r, 600));
-    try {
-      await screen.waitFor(/rig +work/);
-      screen.send('\r');
-      await screen.waitFor(/pick a task/);
-      screen.send('\x1b[C');
-
-      // A running step is on its own line; once finished it joins the group's count.
-      let s = await screen.waitFor(/^ {2}⎿ (Read|Grep|Bash|Edit) /m, 20000);
-      const running = s.find((l) => /^ {2}⎿ /.test(l));
-      if (!/⎿ Read/.test(running)) assert.match(s.join('\n'), /▸ Read 1 file/, `the finished Read is counted beside the running step:\n${s.join('\n')}`);
-      s = await screen.waitFor(OPENING_GROUP, 30000);
-      assert.doesNotMatch(s.join('\n'), /⎿ (Read plans|Grep create|Bash npm test|Edit src)/, 'no finished step is left on its own line');
-
-      // Hover brightens the group line.
-      let y = rowOf(s, OPENING_GROUP);
-      const x = s[y].indexOf('▸') + 3; // 1-based column of the label's first letter
-      assert.ok(!screen.boldAt(y, x), 'plain before the pointer comes');
-      screen.send(mouseBytes.move(x, y + 1));
-      await screen.waitFor(() => screen.boldAt(y, x));
-
-      // Click: open, four indented steps, the failed Bash one in the error style; click again: folded.
-      screen.send(mouseBytes.click(x, y + 1));
-      s = await screen.waitFor(/▾ Read 1 file/);
-      y = rowOf(s, /▾ Read 1 file/);
-      assert.match(s[y + 1], /^ {4}⎿ Read plans\/rig/);
-      assert.match(s[y + 2], /^ {4}⎿ Grep createConversationView/);
-      assert.match(s[y + 3], /^ {4}⎿ Bash npm test/);
-      assert.match(s[y + 4], /^ {4}⎿ Edit src\/shell\/conversation-view\.mjs/);
-      assert.equal(screen.fgAt(y + 3, 6), '31', 'the failed step is in the error style');
-      assert.equal(screen.fgAt(y + 1, 6), '35', 'a passed one in the step style');
-      screen.send(mouseBytes.click(x, y + 1));
-      s = await screen.waitFor(OPENING_GROUP);
-      assert.doesNotMatch(s.join('\n'), /▾ Read 1 file/);
-
-      // Allow the push, refuse `rm -rf build/`: its group reads refused, not failed.
-      await screen.waitFor(/↵ allow · n refuse/);
-      screen.send('\r');
-      // The request, pinned: the running `⎿ Bash rm -rf build/` line shows first, and an `n` then is typing.
-      s = await screen.waitFor(/⚑ T01 wants to use Bash\s*\n\s*rm -rf build\/[\s\S]*↵ allow · n refuse/);
-      screen.send('n');
-      s = await screen.waitFor(/▸ Ran 1 shell command · 1 refused/);
-      assert.doesNotMatch(s.join('\n'), /▸ Ran 1 shell command · 1 failed/);
-
-      // Two quick clicks: an open and a fold, and no word selection copied.
-      y = rowOf(s, OPENING_GROUP);
-      screen.send(mouseBytes.click(x, y + 1) + mouseBytes.click(x, y + 1));
-      await settle();
-      s = await screen.waitFor(OPENING_GROUP);
-      assert.equal(existsSync(rig.clipboard), false, 'nothing was copied');
-
-      // A drag across the group line copies its text into the shim, and toggles nothing.
-      y = rowOf(s, OPENING_GROUP);
-      screen.send(mouseBytes.press(x, y + 1) + mouseBytes.drag(x + 10, y + 1) + mouseBytes.release(x + 10, y + 1));
-      await waitFor(() => existsSync(rig.clipboard) && readFileSync(rig.clipboard, 'utf8').length > 0, { what: 'the drag to copy' });
-      assert.match(readFileSync(rig.clipboard, 'utf8'), /Read 1 file/);
-      await settle();
-      assert.match(screen.text(), OPENING_GROUP, 'the drag did not open the group');
-
-      // Tab: full detail, every step and its result lines; Tab back: grouped again.
-      // Full detail is long: at 80×24 the npm test step is above the screen, so PgUp to it.
-      screen.send('\t');
-      await screen.waitFor(/⎿ Bash rm -rf build\/\s*\n\s*The person refused\./);
-      const npmTest = /⎿ Bash npm test\s*\n\s*✖ conversation-view/;
-      for (let i = 0; i < 6 && !npmTest.test(screen.text()); i++) {
-        screen.send('\x1b[5~');
-        await settle();
-      }
-      s = await screen.waitFor(npmTest);
-      assert.match(s.join('\n'), /expected 80, got 90/);
-      assert.doesNotMatch(s.join('\n'), /^ {2}[▸▾] /m);
-      screen.send('\t\x1b[6~\x1b[6~\x1b[6~');
-      await screen.waitFor(OPENING_GROUP);
-      for (const r of screen.text().split('\n')) assert.ok([...r].length <= cols);
-      assert.equal(screen.overflows(), 0, 'no frame was clipped to fit the window');
-    } finally {
-      await screen.close();
-    }
-  });
-}
+  drop({ kind: 'message', text: 'is it still running?' });
+  await waitFor(() => events(rig).some((e) => e.type === 'result' && e.result === 'Done with "is it still running?".'), { what: 'the chat reply' });
+  const got = readFileSync(rig.received, 'utf8');
+  assert.match(got, /is it still running\?/, 'the fake records the text the model received');
+});
