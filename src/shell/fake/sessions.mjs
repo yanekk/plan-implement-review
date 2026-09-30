@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // Canned scripts for every Claude session of a planning run and the build it starts (pir-plan-command
-// DESIGN §4, §5 End to end). Each returns steps for the fake (claude-stream.mjs); put them in a
-// PIR_FAKE_CLAUDE_SCRIPTS file behind writeClaudeShim, keyed by the opening message:
+// DESIGN §4, §5 End to end), and for the builder and reviewer of a single run (single-runs T08). Each
+// returns steps for the fake (claude-stream.mjs); put them in a PIR_FAKE_CLAUDE_SCRIPTS file behind
+// writeClaudeShim, keyed by the opening message:
 //
 //   [{ match: PLANNER_MATCH, script: plannerScript({ slug, question }) },
 //    { match: REVIEWER_MATCH, script: reviewerScript({ slug }) },
@@ -28,6 +29,10 @@ export const REVIEWER_MATCH = 'Load the pir-review-plan skill';
 export const IMPLEMENT_MATCH = 'nothing else: pir-implement T\\d+';
 export const REVIEW_MATCH = 'nothing else: pir-review T\\d+';
 export const COORDINATOR_MATCH = 'Invoke the pir-coordinator skill';
+// A single run's two sessions (single-runs DESIGN §2.6, singleflow.mjs builderInstruction and
+// reviewerInstruction). Both load the same skill, so the role is what tells them apart.
+export const BUILDER_MATCH = 'Load the pir-single skill and run it as the builder';
+export const SINGLE_REVIEWER_MATCH = 'Load the pir-single skill and run it as the reviewer of pir/';
 
 // The minimal plan's one task.
 export const FAKE_TASK = { num: 'T01', slug: 'first-task' };
@@ -132,6 +137,83 @@ export function coordinatorScript() {
     { await: 'user' },
     { emit: initEvent() },
     ...say('The branch is ready for you to merge.'),
+  ];
+}
+
+// ---- A single run's builder and reviewer (single-runs T08, DESIGN §2.4–§2.7). ----
+//
+// They drop their reports with `single-report`, not `{{reportsDir}}`: the fake reads that path to the end
+// of its line, and a single run's opening goes on after it (`. Starting point: …`).
+
+// The file whose presence makes the rig's test line fail (plan-rig.mjs writes `test ! -f red.txt` into
+// the scratch repo's settings), so a script turns pir's tests red by committing it and green by removing it.
+export const SINGLE_RED_FILE = 'red.txt';
+
+const singleReport = (kind, name, body) => ({ sh: run('single-report', kind, name, body) });
+const nextTurn = () => [{ await: 'user' }, { emit: initEvent() }];
+
+// singleBuilderScript({ name, question, takenName, red, dropAsk }) → steps. With nothing but `name` the
+// builder commits a change and reports `built` under that name. The options each add one detour:
+//   question   asks the person that one AskUserQuestion before it builds
+//   takenName  reports `built` under that name first, and under `name` once pir's check message arrives
+//   red        its first commit also adds SINGLE_RED_FILE; on pir's red message it removes the file in a
+//              second commit and reports again
+//   dropAsk    asks that in plain words, waits for the person's reply, then reports `dropped` and builds
+//              nothing
+export function singleBuilderScript({ name, question = null, takenName = null, red = false, dropAsk = null }) {
+  const steps = [{ await: 'user' }, { emit: initEvent() }, { emit: assistantText('I read the change that was asked for.') }];
+  if (dropAsk) {
+    return [
+      ...steps,
+      ...say(dropAsk),
+      ...nextTurn(),
+      singleReport('dropped', '-', 'Too big for a single run: use /plan.'),
+      ...say('Dropped, as agreed.'),
+    ];
+  }
+  if (question) {
+    const questions = [
+      {
+        question,
+        header: 'Scope',
+        multiSelect: false,
+        options: [
+          { label: 'Only the first', description: 'as the change says' },
+          { label: 'Both files', description: 'a wider change' },
+        ],
+      },
+    ];
+    steps.push(
+      { emit: toolUse('toolu_single-ask-1', 'AskUserQuestion', { questions }) },
+      { emit: canUseTool('single-ask-1', 'AskUserQuestion', { questions }, { requires_user_interaction: true }) },
+      { await: 'control_response' },
+      { resultFor: 'single-ask-1' },
+    );
+  }
+  steps.push({ sh: `echo fixed >> change.txt${red ? ` && echo red > ${q(SINGLE_RED_FILE)}` : ''} && ${GIT} add -A && ${GIT} commit -q -m ${q('fix: the fake change')}` });
+  if (takenName) steps.push(singleReport('built', takenName, 'The change is committed.'), ...say(`Reported built as ${takenName}.`), ...nextTurn());
+  steps.push(singleReport('built', name, 'The change is committed.'), ...say(`The change is committed; reported built as ${name}.`));
+  if (red) {
+    steps.push(
+      ...nextTurn(),
+      { sh: `${GIT} rm -q ${q(SINGLE_RED_FILE)} && ${GIT} commit -q -m ${q('fix: make the tests pass')}` },
+      singleReport('built', name, 'Fixed and committed.'),
+      ...say('The tests should pass now; reported built again.'),
+    );
+  }
+  return steps;
+}
+
+// singleReviewerScript({ name }) → steps: commits one fix of its own and reports `reviewed`, so pir tests
+// the branch a second time (a reviewer that commits nothing keeps the build's result, DESIGN §2.4 step 5).
+export function singleReviewerScript({ name }) {
+  return [
+    { await: 'user' },
+    { emit: initEvent() },
+    { emit: assistantText(`Reading the change on pir/${name}.`) },
+    { sh: `echo reviewed >> review.txt && ${GIT} add -A && ${GIT} commit -q -m ${q('review: a fix')}` },
+    singleReport('reviewed', name, 'Reviewed; one fix committed.'),
+    ...say(`pir/${name} is reviewed.`),
   ];
 }
 
@@ -379,6 +461,10 @@ function cli([cmd, ...args]) {
     writeFileSync(file, text.replace(/\*\*Plan reviewed:\*\* not yet.*/, '**Plan reviewed:** yes — read back by the fake reviewer'));
   } else if (cmd === 'report') {
     dropReport(args[0], args[1], args[2]);
+  } else if (cmd === 'single-report') {
+    // The folder is cut out of the opening up to `. Starting point:`, which follows it on the same line.
+    const dir = /Reports folder: (.+?)\. Starting point: /.exec(process.env.FAKE_OPENING ?? '')?.[1];
+    dropReport(dir, 'single', `[pir:v1 kind=${args[0]} single=${args[1]}]\n${args[2] ?? args[0]}`);
   } else if (cmd === 'mark') {
     const { slug, task } = branchParts();
     setRowState(`plans/${slug}/PROGRESS.md`, task, args[0]);

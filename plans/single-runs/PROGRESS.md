@@ -23,7 +23,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T05 | single-launch | T01, T02 | ✅ | |
 | T06 | single-alerts | T04 | ✅ | No defect. Review added 2 tests, reproduced green: red rounds send no alert until the builder stops past the limit; a reviewer's alert carries the run name after the rename; a session exiting while asking is cleared. Probed the `coordinate.mjs` import (no cycle) and `workerEnv`'s single definition. The three recorded deviations stand. `npm test` green on the second run. |
 | T07 | single-skill | T02 | ✅ | |
-| T08 | single-rig | T04, T05 | ⬜ | |
+| T08 | single-rig | T04, T05 | ✅ | |
 | T09 | box-single | T05, T08 | ⬜ | |
 | T10 | single-row | T04, T08 | ⬜ | |
 | T11 | single-drill | T06, T09, T10 | ⬜ | |
