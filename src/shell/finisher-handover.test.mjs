@@ -70,6 +70,8 @@ function stubSessions() {
       },
       interrupt: async () => {},
       remoteControl: async () => {},
+      // The agent session subscribes to its events for the loop's wake-up (fast-tests T01); unused here.
+      onEvent: () => {},
       onExit: (fn) => exitFns.push(fn),
       entries: () => entries.slice(),
       close: async () => {
