@@ -235,6 +235,34 @@ when it ends (`running in the background: …`, `finished in the background: …
 worker waiting on it does not look idle. A Monitor's own events never reach pir (Claude hands them to
 the model only); the person sees the worker's reply to each.
 
+A **helper** (an agent the session started with Claude's Agent tool, in the background or the
+foreground) is not drawn as background work. It gets exactly one line, under the step that started it
+(inside the `▸ … ran N agents` group that step closes, or the running `⎿ Agent` line), which updates
+as it works and ends as finished, stopped or failed
+(`plans/visible-helpers`; `helperLine` in `src/core/conversation.mjs`, the fold in `src/core/helpers.mjs`):
+
+```
+  ↳ helper · Survey end-of-run machinery · Reading src/shell/worker-proc.mjs · 9 steps · 21s
+  ↳ helper finished · Survey end-of-run machinery · 20 steps · 1m 12s
+  ↳ helper stopped · Survey end-of-run machinery · 20 steps · 1m 2s
+```
+
+The step text is the helper's latest step (`starting` before its first); steps and time are as of its
+last progress report, which arrives every few seconds while it works, so the line does not tick on its
+own. Stopped and failed read in the error colour. When the line is too wide, the step text is
+shortened first so the step count and time stay on screen; past that the line is clipped at the edge,
+never wrapped. A helper nested inside a helper shares its outer helper's line. A helper whose start is
+not in the log (a log that begins mid-run) gets no line. None of a helper's own words, tool steps or
+background commands appear in the default view; Tab's full detail draws them where they happened,
+labelled so they cannot be read as the worker's: its text after `helper ▸ `, its steps as
+`helper ⎿ Read src/core/notify.mjs`, its background commands as `helper ↳ …`. A helper's permission
+request or question set names the helper (see [human-flow.md](human-flow.md#helpers)).
+
+Running helpers are counted apart from background commands in the line above the box:
+`◌ 2 helpers running` while the worker is idle, `● working… · 1 helper running` during a turn, and
+`◌ 2 helpers running · 1 running in the background` with both. Background and foreground helpers both
+count; a helper's own background commands are not counted.
+
 What the person types is sent to the worker as a message, taken into its turn even if it is busy. A
 slash command is sent the same way and its reply comes back as worker text; the box autocompletes the
 worker's own slash commands, minus the four that do not work over the line (`/doctor`, `/color`,
@@ -255,12 +283,14 @@ top of them; see [The mouse](#the-mouse)):
 | Steps (a planning run) | `↑↓` pick a step · `→` or `↵` open its conversation · `←` back to the list · `Ctrl+S Ctrl+S` stop this run (while it runs) · `esc` quit |
 | The go question | `↵` start the build · `n` not now · `←` back to the list · `esc` quit, leaving the question in place |
 | Brief box (`pir plan`) | typing · `↵` start planning · `shift+↵` or `ctrl+j` new line · `esc` or `Ctrl+C` cancel |
-| Conversation | typing, `↵` send · `esc` interrupt the worker · `Ctrl+C` clear the box, or interrupt when it is empty · `←` with an empty box back to the live view · `Tab` grouped steps ⇄ full detail (every step with its whole result; open groups stay open on the way back) · `↵`/`n`/`a` answer a pending permission, and `↑↓` `space` `↵` drive a pending question set (one `↵` answers a pick-one question), both only while the box is empty, and typing while a question set is pending goes to its Other line, where `←`/`→` move the cursor and `←` goes back only once the line is empty · `PgUp`/`PgDn` scroll |
+| Conversation | typing, `↵` send · `esc` interrupt the worker · `Ctrl+C` clear the box, or interrupt when it is empty · while helpers run, the first `esc` (or `Ctrl+C` on an empty box) only shows `esc again to interrupt · this also stops N helpers: …` and a second interrupts; any other key cancels the warning and does what it normally does · `←` with an empty box back to the live view · `Tab` grouped steps ⇄ full detail (every step with its whole result; open groups stay open on the way back) · `↵`/`n`/`a` answer a pending permission, and `↑↓` `space` `↵` drive a pending question set (one `↵` answers a pick-one question), both only while the box is empty, and typing while a question set is pending goes to its Other line, where `←`/`→` move the cursor and `←` goes back only once the line is empty · `PgUp`/`PgDn` scroll |
 
 `←` steps back one view; `esc` quits `pir` outright from the list and the live view, but in the
 conversation view it interrupts the worker, as in Claude's own screen: the open turn ends at once, and
 the person then types a new instruction. A command the worker had moved to the background keeps
-running. Quitting the dashboard stops nothing and loses nothing — every run keeps running — so there
+running. Its helpers do not: Claude stops every running helper on an interrupt, so while any runs the
+first `esc` only warns and names them, and the second interrupts (see
+[human-flow.md](human-flow.md#helpers)). Quitting the dashboard stops nothing and loses nothing — every run keeps running — so there
 is no confirm on quit. Stop and remove are the destructive actions, and they are the ones guarded
 (below). The read-only conversation view takes only `←`, scrolling and `Tab`.
 

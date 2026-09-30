@@ -134,6 +134,22 @@ test('every SDK message is logged `in`, in order, before onEvent fires; the log 
   assert.equal(workerActivity(logLines()).state, 'idle');
 });
 
+// visible-helpers T05 (DESIGN §2.6): the note goes to the model first; the log keeps the person's text as typed.
+test('send with a preface queues preface, blank line, text and logs text unchanged plus both fields; without one, the text alone', async (t) => {
+  const { worker, logLines, receivedLines } = setup([{ await: 'user' }, ...turn('one'), { await: 'user' }, ...turn('two')], t);
+  assert.equal(worker.send('continue', { from: 'person', preface: '[pir] note', helpersStopped: ['h1'] }), true);
+  await waitFor(hasResult(worker), 'the first result');
+  assert.equal(worker.send('again', { from: 'person' }), true);
+  await waitFor(() => worker.entries().filter((e) => e.dir === 'in' && e.event.type === 'result').length === 2, 'two results');
+  const outs = logLines().filter((e) => e.dir === 'out').map(({ t: _t, ...e }) => e);
+  assert.deepEqual(outs, [
+    { dir: 'out', from: 'person', kind: 'message', text: 'continue', preface: '[pir] note', helpersStopped: ['h1'] },
+    { dir: 'out', from: 'person', kind: 'message', text: 'again' },
+  ]);
+  const users = receivedLines().filter((l) => l.line).map((l) => JSON.parse(l.line)).filter((m) => m.type === 'user');
+  assert.deepEqual(users.map((m) => m.message.content), ['[pir] note\n\ncontinue', 'again']);
+});
+
 test('a wake-up and a Remote Control turn pass through the SDK and fold to their causes (real-asking-state T03)', async (t) => {
   const { worker, logLines } = setup([{ await: 'user' }, ...turn('asked'), ...wakeUp(), ...remoteInputTurn()], t);
   worker.send('begin', { from: 'pir' });
@@ -212,6 +228,26 @@ test('a can_use_tool becomes a request entry and a pending request; answer sends
   assert.equal(last.kind, 'undelivered');
   assert.equal(last.requestId, 'req-1');
   assert.equal(workerActivity(worker.entries()).state, 'idle');
+});
+
+// visible-helpers T03 (DESIGN §2.4): a helper's request carries the SDK's agentID, logged as agentId.
+test('a can_use_tool from a helper logs agentId; the parent\'s logs no such field', async (t) => {
+  const { worker } = setup([
+    { await: 'user' }, { emit: initEvent() },
+    { emit: canUseTool('h-1', 'Bash', { command: 'git log' }, { agentId: 'a0helper' }) },
+    { emit: canUseTool('p-1', 'Bash', { command: 'ls' }) },
+    { await: 'control_response' }, { await: 'control_response' }, { emit: resultEvent('success', 'ok') },
+  ], t);
+  worker.send('go');
+  await waitFor(() => worker.pending().length === 2, 'both requests');
+  const [helper, parent] = worker.entries().filter((e) => e.dir === 'request');
+  assert.equal(helper.requestId, 'h-1');
+  assert.equal(helper.agentId, 'a0helper');
+  assert.equal(parent.requestId, 'p-1');
+  assert.equal('agentId' in parent, false);
+  assert.equal(worker.pending()[0].agentId, 'a0helper', 'the pending request carries it too');
+  for (const r of worker.pending()) worker.answer(r.requestId, allowResult(r), { from: 'person' });
+  await waitFor(hasResult(worker), 'the turn to finish');
 });
 
 // pir-coordinator T03: the gate and the extra SDK options, for the coordinator agent's session.

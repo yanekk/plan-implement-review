@@ -316,6 +316,18 @@ test('send reaches a live worker as a user message logged with its sender; inter
   assert.deepEqual(outs, [['pir', 'message'], ['pir', 'message'], ['person', 'interrupt']]);
 });
 
+// visible-helpers T05 (DESIGN §3.3): send passes the helper note through to the worker.
+test('send passes `preface` and `helpersStopped` to the worker, which queues the note before the text', async (t) => {
+  const { platform, received, logOf } = setupPlatform(t, { T05: [{ await: 'user' }, ...turn('one'), { await: 'user' }, ...turn('two')] });
+  const id = platform.spawn({ cwd: tmpdir(), name: NAME('T05'), phase: 'implement' });
+  await waitFor(() => platform.list()[0]?.status === 'idle', 'the first turn');
+  assert.deepEqual(platform.send(id, 'continue', { from: 'person', preface: '[pir] note', helpersStopped: ['h1'] }), { ok: true });
+  await waitFor(() => userLines(received(0)).length === 2, 'the second message at the fake');
+  assert.equal(userLines(received(0))[1].message.content, '[pir] note\n\ncontinue');
+  const out = logOf(id).filter((e) => e.dir === 'out').at(-1);
+  assert.deepEqual([out.text, out.preface, out.helpersStopped], ['continue', '[pir] note', ['h1']]);
+});
+
 test('workers.json lists exactly the live children after each spawn and exit, with a start time', async (t) => {
   const { platform, workersFile } = setupPlatform(t, {
     T05: [{ await: 'user' }, ...turn('a')],

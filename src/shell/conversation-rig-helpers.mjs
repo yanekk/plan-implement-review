@@ -26,6 +26,8 @@ export async function waitFor(fn, { timeoutMs = 10000, what = 'the condition' } 
   }
 }
 
+export const logOf = (rig) => readFileSync(rig.logPath, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+
 // pir-coordinator T06, end to end at 80×24 and 120×40: the coordinator agent holds T01's request, passes it
 // on with a pointer in its own conversation, takes what the person types, and the run ends in `ready to merge`.
 export function defineCoordinatorAgentTest([cols, rows]) {
@@ -217,6 +219,141 @@ export function defineGroupLinesTest([cols, rows]) {
       screen.send('\t\x1b[6~\x1b[6~\x1b[6~');
       await screen.waitFor(OPENING_GROUP);
       for (const r of screen.text().split('\n')) assert.ok([...r].length <= cols);
+      assert.equal(screen.overflows(), 0, 'no frame was clipped to fit the window');
+    } finally {
+      await screen.close();
+    }
+  });
+}
+
+// visible-helpers T03, end to end at 80×24 and 120×40 (DESIGN §2.2–§2.4): one updating line per helper, the
+// helpers' steps only on Tab and labelled, a helper's permission named after it, and the status line
+// naming the helper still running once the parent's turn has ended. 60×20 is the T06 drill's narrow size,
+// where the step text is shortened so A's step count and time stay on screen (person, 2026-09-29).
+export function defineHelperLinesTest([cols, rows]) {
+  test(`the helpers scenario draws one line per helper on the real pir screen at ${cols}×${rows}`, { timeout: 60000 }, async (t) => {
+    const env = scratchHome(t);
+    // A helper reports a step every stepMs and each one repaints, so the driver's quiet time must be shorter.
+    const rig = startRig({ env, scenario: 'helpers', stepMs: 400, workMs: 300 });
+    t.after(() => rig.stop());
+    const screen = openScreen({ cols, rows, env: { ...process.env, ...env }, settleMs: 100 });
+    const lineOfA = (s) => s.match(/↳ helper · Survey the code · .*/)?.[0] ?? null;
+    try {
+      await screen.waitFor(/rig +work +● running/);
+      screen.send('\r');
+      await screen.waitFor(/pick a task/);
+      screen.send('\x1b[C');
+      let s = (await screen.waitFor(/↳ helper · Survey the code · [\s\S]*↳ helper · Check the tests · /)).join('\n');
+      assert.doesNotMatch(s, /running in the background/, 'no background line for a helper');
+
+      s = (await screen.waitFor(/⚑ helper "Survey the code" wants to use Bash[\s\S]*↵ allow/)).join('\n');
+      assert.doesNotMatch(s, /⎿ Read/, 'none of the helpers\' steps in the default view');
+      assert.doesNotMatch(s, /The worker process and the run state/, 'none of a helper\'s words either');
+      screen.send('\r');
+
+      s = (await screen.waitFor(/helper finished · Check the tests · \d+ steps?[\s\S]*◌ 1 helper running/)).join('\n');
+      assert.match(s, /→ allowed/, 'Enter allowed the helper\'s request');
+      assert.match(s, /⚑ helper "Survey the code" wants to use Bash/, 'the answered request still names the helper');
+      assert.doesNotMatch(s, /⎿ (Read|Bash git log)/);
+
+      // A keeps working while the parent is idle: its line's step and count move on a later frame.
+      const first = lineOfA(s);
+      assert.ok(first, `A's line is on screen:\n${s}`);
+      assert.match(first, / · \d+ steps? · \d+s$/, 'the step count and time end the line at every size');
+      s = (await screen.waitFor((text) => {
+        const now = lineOfA(text);
+        return now && now !== first;
+      })).join('\n');
+      const [, n1] = first.match(/(\d+) steps?\b/);
+      const [, n2] = lineOfA(s).match(/(\d+) steps?\b/);
+      assert.ok(Number(n2) > Number(n1), `the step count grew: ${first} → ${lineOfA(s)}`);
+
+      screen.send('\t');
+      s = (await screen.waitFor(/helper ⎿ Read/)).join('\n');
+      assert.doesNotMatch(s, /^\s*⎿ Read/m, 'every helper step is labelled');
+      for (const r of s.split('\n')) assert.ok([...r].length <= cols);
+      assert.equal(screen.overflows(), 0, 'no frame was clipped to fit the window');
+    } finally {
+      await screen.close();
+    }
+  });
+}
+
+// visible-helpers T05, end to end at 80×24 and 120×40 (DESIGN §2.5, §2.6): Esc while a helper runs warns and
+// sends nothing, another key disarms, a second Esc interrupts and stops the helper, and the person's next
+// message carries pir's note naming it, to the model before the text and on screen under the message.
+export function defineEscWarnsTest([cols, rows]) {
+  test(`Esc warns before stopping a helper, and the next message carries the note, at ${cols}×${rows}`, { timeout: 90000 }, async (t) => {
+    const env = scratchHome(t);
+    const rig = startRig({ env, scenario: 'helpers', stepMs: 400, workMs: 300 });
+    t.after(() => rig.stop());
+    const screen = openScreen({ cols, rows, env: { ...process.env, ...env }, settleMs: 100 });
+    const ESC = '\x1b';
+    const WARNING = 'esc again to interrupt · this also stops 1 helper: Survey the code';
+    const wire = () =>
+      (existsSync(rig.received) ? readFileSync(rig.received, 'utf8') : '')
+        .split('\n')
+        .filter(Boolean)
+        .map((l) => JSON.parse(l))
+        .filter((x) => x.line)
+        .map((x) => JSON.parse(x.line));
+    const interrupts = () => wire().filter((m) => m.type === 'control_request' && m.request?.subtype === 'interrupt').length;
+    const userTexts = () => wire().filter((m) => m.type === 'user').map((m) => m.message.content);
+    try {
+      await screen.waitFor(/rig +work +● running/);
+      screen.send('\r');
+      await screen.waitFor(/pick a task/);
+      screen.send(`${ESC}[C`);
+      await screen.waitFor(/⚑ helper "Survey the code" wants to use Bash[\s\S]*↵ allow/);
+      screen.send('\r');
+      await screen.waitFor(/helper finished · Check the tests[\s\S]*◌ 1 helper running/);
+
+      // First Esc: the warning on the status line, and nothing reaches the worker.
+      screen.send(ESC);
+      let s = (await screen.waitFor((text) => text.includes(WARNING))).join('\n');
+      assert.ok(s.split('\n').some((r) => r.trim() === WARNING), `the warning is the status line:\n${s}`);
+      await new Promise((r) => setTimeout(r, 300));
+      assert.equal(interrupts(), 0, 'the fake received no interrupt');
+
+      // Another key disarms and does what it always does.
+      screen.send('x');
+      s = (await screen.waitFor((text) => !text.includes(WARNING) && /◌ 1 helper running/.test(text))).join('\n');
+      assert.match(s, /^\S*\s*x\s*\S*$/m, `x is in the box:\n${s}`);
+      assert.equal(interrupts(), 0);
+
+      // Clear, then Esc, Esc: interrupted, and A reads stopped.
+      screen.send('\x03');
+      await screen.waitFor((text) => !/^\S*\s*x\s*\S*$/m.test(text));
+      screen.send(ESC);
+      await screen.waitFor((text) => text.includes(WARNING));
+      screen.send(ESC);
+      s = (await screen.waitFor(/you ▸ ⎋ interrupted the worker[\s\S]*/)).join('\n');
+      s = (await screen.waitFor(/↳ helper stopped · Survey the code/)).join('\n');
+      await waitFor(() => interrupts() === 1, { what: 'the interrupt at the fake' });
+
+      // The next message: the note under it on screen, and note, blank line, text at the model.
+      screen.send('continue');
+      await screen.waitFor(/continue/);
+      screen.send('\r');
+      s = (await screen.waitFor(/you ▸ continue\n\s*pir ▸ \[pir\] Before this message, the person's interrupt stopped your/, 20000)).join('\n');
+      assert.match(s.replace(/\s+/g, ' '), /"Survey the code"/, 'the note names the helper');
+      await waitFor(() => userTexts().some((c) => c.endsWith('\n\ncontinue')), { what: 'the note and the text at the fake' });
+      const noted = userTexts().find((c) => c.endsWith('\n\ncontinue'));
+      assert.match(noted, /^\[pir\] Before this message, the person's interrupt stopped your helper: "Survey the code"\. It will not report back\./);
+      // The fake echoes the whole user message, note and all.
+      await screen.waitFor(/T01 ▸ Done with "\[pir\] Before this message[\s\S]*continue"\./, 20000);
+
+      // The one after carries no note.
+      screen.send('again');
+      await screen.waitFor(/again/);
+      screen.send('\r');
+      s = (await screen.waitFor(/you ▸ again/, 20000)).join('\n');
+      await waitFor(() => userTexts().includes('again'), { what: 'the plain message at the fake' });
+      assert.doesNotMatch(s, /you ▸ again\n\s*pir ▸/, 'no note under the second message');
+      const outs = logOf(rig).filter((e) => e.dir === 'out' && e.from === 'person' && e.kind === 'message');
+      assert.deepEqual(outs.map((e) => [e.text, e.helpersStopped ?? null]), [['continue', ['a0fake00000000a01']], ['again', null]]);
+
+      for (const r of s.split('\n')) assert.ok([...r].length <= cols);
       assert.equal(screen.overflows(), 0, 'no frame was clipped to fit the window');
     } finally {
       await screen.close();

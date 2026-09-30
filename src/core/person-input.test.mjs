@@ -266,3 +266,22 @@ test('decidePermission: no grants → ask', () => {
   assert.equal(decidePermission([], bashReq('ls')), 'ask');
   assert.equal(decidePermission(undefined, bashReq('ls')), 'ask');
 });
+
+// visible-helpers T05 (DESIGN §2.6): a typed message may carry the note naming helpers an interrupt stopped.
+test('validateDrop: a message keeps `preface` and `helpersStopped`; one without is unchanged; bad types are refused', () => {
+  const full = { to: 'w1', kind: 'message', text: 'continue', preface: '[pir] Before this message…', helpersStopped: ['h1', 'h2'] };
+  assert.deepEqual(validateDrop(full), { ok: true, input: full });
+  assert.deepEqual(validateDrop({ to: 'w1', kind: 'message', text: 'hi', extra: 1 }), { ok: true, input: { to: 'w1', kind: 'message', text: 'hi' } });
+  for (const bad of [
+    { to: 'w1', kind: 'message', text: 'hi', preface: 5 },
+    { to: 'w1', kind: 'message', text: 'hi', preface: null },
+    { to: 'w1', kind: 'message', text: 'hi', helpersStopped: 'h1' },
+    { to: 'w1', kind: 'message', text: 'hi', helpersStopped: ['h1', 2] },
+  ]) {
+    const v = validateDrop(bad);
+    assert.equal(v.ok, false, JSON.stringify(bad));
+    assert.equal(typeof v.error, 'string');
+  }
+  // Only a message carries them: an interrupt drop is stripped to its own fields, as every kind is.
+  assert.deepEqual(validateDrop({ to: 'w1', kind: 'interrupt', preface: 'x' }), { ok: true, input: { to: 'w1', kind: 'interrupt' } });
+});

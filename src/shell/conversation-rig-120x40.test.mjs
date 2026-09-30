@@ -2,8 +2,12 @@
 // conversation-rig.test.mjs so node --test runs each screen size in its own process, side by side.
 // The test bodies are in conversation-rig-helpers.mjs.
 
-import { defineCoordinatorAgentTest, defineWheelTest, defineGroupLinesTest } from './conversation-rig-helpers.mjs';
+import {
+  defineCoordinatorAgentTest, defineWheelTest, defineGroupLinesTest, defineHelperLinesTest, defineEscWarnsTest,
+} from './conversation-rig-helpers.mjs';
 
 defineCoordinatorAgentTest([120, 40]);
 defineWheelTest([120, 40]);
 defineGroupLinesTest([120, 40]);
+defineHelperLinesTest([120, 40]);
+defineEscWarnsTest([120, 40]);

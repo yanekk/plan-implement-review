@@ -206,6 +206,24 @@ test('planner: planned with DESIGN.md missing → the planner hears which file, 
   assert.equal(indexOf(s).finalState, null, 'no index write without PIR_RUN');
 });
 
+// visible-helpers T05 (DESIGN §3.3): a person's message with the helper note, dropped for a planning
+// session, reaches it through plan-run's platform with the note before the text; the log keeps them apart.
+test('planner: a message with a preface is forwarded with the note first; the log keeps text and both fields', async (t) => {
+  const script = [{ await: 'user' }, { emit: initEvent() }, { emit: assistantText('Thinking.') }, { emit: resultEvent('success', 'Thinking.') }, { chat: { workMs: 10 } }];
+  const s = setup(t, [{ match: PLANNER_MATCH, script }]);
+  const run = start(s);
+  t.after(() => run.stop.abort());
+  await waitFor(() => planLog(s).some((e) => e.dir === 'in' && e.event.type === 'result'), 'the first turn');
+  const sessionId = workersOf(s)[0].id;
+  assert.deepEqual(dropPersonInput(s.controlDir, { to: sessionId, kind: 'message', text: 'continue', preface: '[pir] note', helpersStopped: ['h1'] }, { coordinatorAlive: true }), { ok: true });
+  const out = await waitFor(() => planLog(s).find((e) => e.dir === 'out' && e.from === 'person' && e.kind === 'message'), 'the message in the log');
+  assert.deepEqual([out.text, out.preface, out.helpersStopped], ['continue', '[pir] note', ['h1']]);
+  const users = () => readFileSync(s.received, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l)).filter((x) => x.line).map((x) => JSON.parse(x.line)).filter((m) => m.type === 'user');
+  await waitFor(() => users().some((m) => m.message.content === '[pir] note\n\ncontinue'), 'the note and the text at the fake');
+  run.stop.abort();
+  assert.equal(await run.done, 0);
+});
+
 test('planner: an accepted planned, then an uncommitted edit before idle → re-checked at idle, not closed', async (t) => {
   const slug = 'edited-after';
   const script = quickPlanner(slug);

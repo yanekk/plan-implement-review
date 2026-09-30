@@ -704,7 +704,7 @@ export function withAgent(platform, getAgent) {
     ...platform,
     send(id, text, opts = {}) {
       const a = sessionFor(id);
-      return a ? { ok: a.session.send(text, { from: opts.from ?? 'person' }) } : platform.send(id, text, opts);
+      return a ? { ok: a.session.send(text, { ...opts, from: opts.from ?? 'person' }) } : platform.send(id, text, opts);
     },
     interrupt(id, opts = {}) {
       const a = sessionFor(id);

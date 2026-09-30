@@ -4,7 +4,7 @@ import { mkdtempSync, readdirSync, readFileSync, writeFileSync, appendFileSync, 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { stripTerminalSequences } from '@earendil-works/pi-tui';
-import { carryPending, createConversationView, hasEnded, slashCommandsOf, slashProvider } from './conversation-view.mjs';
+import { carryPending, createConversationView, hasEnded, slashCommandsOf, slashProvider, statusParts } from './conversation-view.mjs';
 import { followLog } from './log-follow.mjs';
 import { dropPersonInput } from './person-inbox.mjs';
 import { withHeadLine } from './pir-tui.mjs';
@@ -577,6 +577,26 @@ test('the status line counts background work: alone when the worker waits, besid
   assert.doesNotMatch(t.text(), /running in the background$/m);
 });
 
+// visible-helpers T03 (DESIGN §2.2): helpers are named apart from background commands on the status line.
+test('the status line names running helpers apart from background commands, idle and busy', () => {
+  const helper = (id, callId, description) => entry({ dir: 'in', event: { type: 'system', subtype: 'task_started', task_id: id, tool_use_id: callId, task_type: 'local_agent', description, is_backgrounded: true } });
+  const bg = (id, description) => entry({ dir: 'in', event: { type: 'system', subtype: 'task_started', task_id: id, description, is_backgrounded: true, task_type: 'local_bash' } });
+  const end = (id) => entry({ dir: 'in', event: { type: 'system', subtype: 'task_notification', task_id: id, status: 'completed' } });
+  const result = () => entry({ dir: 'in', event: { type: 'result', subtype: 'success' } });
+  const t = makeView({ log: [init(), opening, helper('h1', 'c1', 'Survey'), helper('h2', 'c2', 'Tests'), result()] });
+  assert.match(t.text(), /^◌ 2 helpers running$/m);
+  t.push(end('h2'));
+  t.push(said('still going'));
+  assert.match(t.text(), /^● working… · 1 helper running$/m);
+  t.push(bg('b1', 'slow'));
+  assert.match(t.text(), /^● working… · 1 helper running · 1 running in the background$/m);
+  t.push(result());
+  assert.match(t.text(), /^◌ 1 helper running · 1 running in the background$/m);
+  t.push(end('h1'));
+  assert.match(t.text(), /^◌ 1 running in the background$/m, 'no helper: today\'s text');
+  assert.equal(statusParts({ helpers: 0, background: 0 }), '');
+});
+
 // T14: a planning session resumed into the log it exited in is live again; only an exit after the last
 // `resumed` note ends it.
 test('hasEnded: an exit ends the log until a `resumed` note, and an exit after it ends it again', () => {
@@ -901,6 +921,136 @@ test('withHeadLine: a wheel on its head line is ignored; one below it reaches th
   assert.equal(got[0].wheelDelta, -3);
   const bare = withHeadLine('following T05', () => ({ render: () => [], handleInput() {}, invalidate() {}, dispose() {} }), { host, colour: false });
   assert.equal(bare.handleMouse(wheel('up', { y: 2 })), undefined, 'an inner view without a handler declines');
+});
+
+// ---- visible-helpers T05 (DESIGN §2.5, §2.6): the Esc warning while helpers run, and the note on the next message. ----
+
+const hStart = (id, callId, description) => entry({ dir: 'in', event: { type: 'system', subtype: 'task_started', task_id: id, tool_use_id: callId, task_type: 'local_agent', description, is_backgrounded: true } });
+const hEnd = (id, status) => entry({ dir: 'in', event: { type: 'system', subtype: 'task_notification', task_id: id, status } });
+const hResult = () => entry({ dir: 'in', event: { type: 'result', subtype: 'success' } });
+const outInterrupt = () => entry({ dir: 'out', from: 'person', kind: 'interrupt' });
+const WARNING = 'esc again to interrupt · this also stops 1 helper: Survey the code';
+
+test('Esc with no helper running drops an interrupt at once, with no warning', () => {
+  const t = makeView({ log: [init(), opening, hStart('h1', 'c1', 'Survey the code'), hEnd('h1', 'completed'), hResult()] });
+  t.v.handleInput(KEY.esc);
+  assert.deepEqual(t.drops, [{ to: 'w-1', kind: 'interrupt' }]);
+  assert.equal(t.v.state.warning, '');
+});
+
+test('Esc with a helper running drops nothing and shows the warning on the status line; Esc again interrupts', () => {
+  const t = makeView({ log: [init(), opening, hStart('h1', 'c1', 'Survey the code'), hResult()] });
+  assert.match(t.text(), /^◌ 1 helper running$/m);
+  t.v.handleInput(KEY.esc);
+  assert.deepEqual(t.drops, []);
+  assert.equal(t.v.state.warning, WARNING);
+  const lines = t.screen();
+  assert.ok(lines.includes(WARNING), 'the warning is its own line');
+  assert.doesNotMatch(t.text(), /^◌ 1 helper running$/m, 'the warning takes the status line\'s place');
+  t.v.handleInput(KEY.esc);
+  assert.deepEqual(t.drops, [{ to: 'w-1', kind: 'interrupt' }]);
+  assert.equal(t.v.state.warning, '');
+  assert.match(t.text(), /interrupt sent/);
+});
+
+test('armed, then a typed character: the warning goes, the character is in the box, nothing is dropped', () => {
+  const t = makeView({ log: [init(), opening, hStart('h1', 'c1', 'Survey the code'), hResult()] });
+  t.v.handleInput(KEY.esc);
+  t.type('x');
+  assert.equal(t.v.state.warning, '');
+  assert.equal(t.v.state.text, 'x');
+  assert.deepEqual(t.drops, []);
+  assert.doesNotMatch(t.text(), /esc again to interrupt/);
+  t.v.handleInput(KEY.ctrlC);
+  assert.equal(t.v.state.text, '', 'Ctrl+C with text still clears the box');
+  t.v.handleInput(KEY.esc);
+  assert.deepEqual(t.drops, [], 'the first Esc after disarming warns again');
+  assert.equal(t.v.state.warning, WARNING);
+});
+
+test('Ctrl+C on an empty box behaves as Esc while helpers run; Ctrl+C with text only clears the box and disarms', () => {
+  const t = makeView({ log: [init(), opening, hStart('h1', 'c1', 'Survey the code'), hResult()] });
+  t.v.handleInput(KEY.ctrlC);
+  assert.equal(t.v.state.warning, WARNING);
+  assert.deepEqual(t.drops, []);
+  t.v.handleInput(KEY.ctrlC);
+  assert.deepEqual(t.drops, [{ to: 'w-1', kind: 'interrupt' }]);
+  t.type('draft');
+  t.v.handleInput(KEY.ctrlC);
+  assert.equal(t.v.state.text, '');
+  assert.equal(t.drops.length, 1);
+  // Esc then Ctrl+C on the empty box: either key confirms.
+  t.v.handleInput(KEY.esc);
+  t.v.handleInput(KEY.ctrlC);
+  assert.equal(t.drops.length, 2);
+});
+
+test('armed with a question pinned, Esc again sends the interrupt; the warning shows under the pinned prompt', () => {
+  const t = makeView({ log: [init(), opening, hStart('h1', 'c1', 'Survey the code'), questions()] });
+  t.v.handleInput(KEY.esc);
+  assert.deepEqual(t.drops, []);
+  assert.ok(t.screen().includes(WARNING));
+  assert.match(t.text(), /Which colour\?/, 'the question stays pinned');
+  t.v.handleInput(KEY.esc);
+  assert.deepEqual(t.drops, [{ to: 'w-1', kind: 'interrupt' }]);
+});
+
+test('the warning wraps rather than clips, so every helper it would stop is named at 80 columns', () => {
+  const t = makeView({ log: [init(), opening, hStart('h1', 'c1', 'Survey end-of-run machinery'), hStart('h2', 'c2', 'Check the tests'), hResult()] });
+  t.v.handleInput(KEY.esc);
+  const lines = t.screen();
+  assert.equal(lines.length, 30, 'the view still fills exactly the terminal');
+  for (const l of lines) assert.ok([...l].length <= 80, l);
+  const shown = lines.join(' ').replace(/\s+/g, ' ');
+  assert.match(shown, /this also stops 2 helpers: Survey end-of-run machinery; Check the tests/);
+  assert.deepEqual(t.drops, []);
+});
+
+test('a helper that ended between the two presses: the second Esc still interrupts', () => {
+  const t = makeView({ log: [init(), opening, hStart('h1', 'c1', 'Survey the code'), hResult()] });
+  t.v.handleInput(KEY.esc);
+  t.push(hEnd('h1', 'completed'));
+  t.v.handleInput(KEY.esc);
+  assert.deepEqual(t.drops, [{ to: 'w-1', kind: 'interrupt' }]);
+});
+
+test('a read-only view shows no warning and drops nothing on Esc', () => {
+  const t = makeView({ live: false, log: [init(), opening, hStart('h1', 'c1', 'Survey the code')] });
+  t.v.handleInput(KEY.esc);
+  assert.deepEqual(t.drops, []);
+  assert.doesNotMatch(t.text(), /esc again/);
+});
+
+test('after an interrupt that stopped a helper, the next message carries the note and the ids; the one after carries neither', () => {
+  const t = makeView({ log: [init(), opening, hStart('h1', 'c1', 'Survey the code'), hResult(), outInterrupt(), hEnd('h1', 'stopped')] });
+  t.type('continue');
+  t.v.handleInput(KEY.enter);
+  const d = t.drops.at(-1);
+  assert.equal(d.text, 'continue');
+  assert.deepEqual(d.helpersStopped, ['h1']);
+  assert.match(d.preface, /^\[pir\] Before this message, the person's interrupt stopped your helper: "Survey the code"\./);
+  // The worker logs the message with both fields; the view reads that back as already reported.
+  t.push(entry({ dir: 'out', from: 'person', kind: 'message', text: 'continue', preface: d.preface, helpersStopped: ['h1'] }));
+  t.type('again');
+  t.v.handleInput(KEY.enter);
+  assert.deepEqual(t.drops.at(-1), { to: 'w-1', kind: 'message', text: 'again' });
+});
+
+test('a permission refusal with text and question answers never carry the note', () => {
+  const stopped = [init(), opening, hStart('h1', 'c1', 'Survey the code'), hResult(), outInterrupt(), hEnd('h1', 'stopped')];
+  const t = makeView({ log: [...stopped, permission()] });
+  t.type('stop, not that');
+  t.v.handleInput(KEY.enter);
+  assert.deepEqual(t.drops, [{ to: 'w-1', kind: 'permission', requestId: 'r1', decision: 'deny', text: 'stop, not that' }]);
+
+  const q = makeView({ log: [...stopped, questions()] });
+  q.v.handleInput(KEY.enter); // Red
+  q.v.handleInput(KEY.space); // S
+  q.v.handleInput(KEY.enter);
+  const d = q.drops.at(-1);
+  assert.equal(d.kind, 'answers');
+  assert.equal(d.preface, undefined);
+  assert.equal(d.helpersStopped, undefined);
 });
 
 test('group hover: the pointer moving from a group line straight into the typing box drops the hover', () => {
