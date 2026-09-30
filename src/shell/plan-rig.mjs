@@ -29,7 +29,8 @@ import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { openScreen as openScreenRaw, driveScreen as driveScreenRaw } from './conversation-rig.mjs';
 import { writeClaudeShim } from './fake/claude-shim.mjs';
-import { COORDINATOR_MATCH, DRILL_SLUG, HELPER_DRILL_SLUG, PLANNER_MATCH, REVIEWER_MATCH, coordinatorScript, drillPlanFiles, drillScripts, helperDrillPlanFiles, helperDrillScripts, noPlanScript, plannerScript, reviewerScript, workerScripts } from './fake/sessions.mjs';
+import { BUILDER_MATCH, COORDINATOR_MATCH, DRILL_SLUG, HELPER_DRILL_SLUG, PLANNER_MATCH, REVIEWER_MATCH, SINGLE_RED_FILE, SINGLE_REVIEWER_MATCH, coordinatorScript, drillPlanFiles, drillScripts, helperDrillPlanFiles, helperDrillScripts, noPlanScript, plannerScript, reviewerScript, singleBuilderScript, singleReviewerScript, workerScripts } from './fake/sessions.mjs';
+import { startSingleRun } from './launch.mjs';
 import { assistantText, canUseTool, initEvent, resultEvent, toolUse } from './fake/claude-stream.mjs';
 
 const SESSIONS = fileURLToPath(new URL('./fake/sessions.mjs', import.meta.url));
@@ -42,6 +43,16 @@ export const PLAN_RIG_QUESTION = 'Which way should the plan go?';
 export const PLAN_RIG_REVIEW_ASK = 'Is the name rig-plan fine before I mark it reviewed?';
 export const PLAN_RIG_REVIEW_COMMAND = 'git log --oneline -3';
 export const SCRIPT_SETS = ['happy', 'no-plan', 'taken-slug', 'crash-planner', 'reviewer-asks']; // planning sets; 'coordinator-drill' and 'end-helper' plan nothing
+
+// Single runs (single-runs T08). The fake builder names its branch SINGLE_RIG_NAME in every single set;
+// 'single-taken' has it name SINGLE_RIG_TAKEN first, which startPlanRig takes by its branch.
+export const SINGLE_RIG_NAME = 'rig-fix';
+export const SINGLE_RIG_TAKEN = 'rig-taken';
+export const SINGLE_RIG_QUESTION = 'Should the fix also cover the second file?';
+export const SINGLE_RIG_DROP_ASK = 'This is too big for a single run. Shall I drop it, so you can plan it with /plan?';
+export const SINGLE_SCRIPT_SETS = ['single-happy', 'single-red', 'single-asks', 'single-dropped', 'single-taken'];
+// The scratch repo's one test line, which a script turns red by committing SINGLE_RED_FILE.
+export const SINGLE_RIG_TEST_LINE = `test ! -f ${SINGLE_RED_FILE}`;
 
 const q = (s) => `'${String(s).replaceAll("'", `'\\''`)}'`;
 const GIT_ID = ['-c', 'user.name=pir rig', '-c', 'user.email=rig@pir.invalid'];
@@ -73,9 +84,34 @@ function reportStep(steps) {
 //   end-helper     no planning: startPlanRig commits the reviewed one-task plan HELPER_DRILL_SLUG, whose
 //                  tests are red at the end until its tests-fix helper, after asking the person one
 //                  question the agent passes on, commits the fix (pir-coordinator T11; helperDrillScripts)
+//
+// The single-run sets (single-runs T08) script the builder and reviewer of `@repo/single`, and carry the
+// `happy` planning entries after them, so one rig can also plan:
+//   single-happy    the builder commits and reports built SINGLE_RIG_NAME; the reviewer commits a fix and
+//                   reports reviewed
+//   single-red      the builder's first commit turns the repo's test line red; on pir's red message its
+//                   second commit turns it green
+//   single-asks     the builder asks SINGLE_RIG_QUESTION (a question set) before it builds
+//   single-dropped  the builder asks SINGLE_RIG_DROP_ASK in plain words and reports dropped once the
+//                   person replies
+//   single-taken    the builder first names SINGLE_RIG_TAKEN, which is taken, then SINGLE_RIG_NAME
 export function scriptSet(name = 'happy') {
   if (name === 'coordinator-drill') return drillScripts();
   if (name === 'end-helper') return helperDrillScripts();
+  if (SINGLE_SCRIPT_SETS.includes(name)) {
+    const builder = {
+      'single-happy': {},
+      'single-red': { red: true },
+      'single-asks': { question: SINGLE_RIG_QUESTION },
+      'single-dropped': { dropAsk: SINGLE_RIG_DROP_ASK },
+      'single-taken': { takenName: SINGLE_RIG_TAKEN },
+    }[name];
+    return [
+      { match: BUILDER_MATCH, script: singleBuilderScript({ name: SINGLE_RIG_NAME, ...builder }) },
+      { match: SINGLE_REVIEWER_MATCH, script: singleReviewerScript({ name: SINGLE_RIG_NAME }) },
+      ...scriptSet('happy'),
+    ];
+  }
   const planner = plannerScript({ slug: PLAN_RIG_SLUG, question: PLAN_RIG_QUESTION });
   let reviewed = PLAN_RIG_SLUG;
   let plannerSteps;
@@ -95,7 +131,7 @@ export function scriptSet(name = 'happy') {
       ...planner.slice(-2).map((s) => JSON.parse(JSON.stringify(s).replaceAll(PLAN_RIG_SLUG, PLAN_RIG_SLUG_2))),
     ];
   } else if (name === 'reviewer-asks') plannerSteps = planner;
-  else throw new Error(`unknown script set "${name}" (${SCRIPT_SETS.join(', ')})`);
+  else throw new Error(`unknown script set "${name}" (${[...SCRIPT_SETS, ...SINGLE_SCRIPT_SETS].join(', ')})`);
   let reviewerSteps = reviewerScript({ slug: reviewed });
   if (name === 'reviewer-asks') {
     // reviewerScript is: await, init, a line, then the work; the asks go between the line and the work.
@@ -183,7 +219,8 @@ function seedRemote(root, repoDir, base) {
 //
 // `into` is an empty or new folder to build in (else a fresh temp folder); the rig lays out
 //   {root}/repo   a git repo on the base branch: README.md, package.json (test `node -e 0`) and
-//                 .pir/settings.json naming the base, one commit
+//                 .pir/settings.json naming the base, no setup and the test line SINGLE_RIG_TEST_LINE,
+//                 one commit
 //   {root}/origin.git  the bare remote, with `remoteAhead` only
 //   {root}/home   PIR_HOME and HOME
 //   {root}/bin    the `claude` shim, its scripts file and the fake's received log / resume progress, and
@@ -212,10 +249,11 @@ export function startPlanRig({ into = null, scripts = 'happy', keep = false, bas
   git(repoDir, 'init', '-q', '-b', base);
   writeFileSync(join(repoDir, 'README.md'), '# rig\n\nA scratch repo for the planning rig.\n');
   // pir refuses a repo that names no base branch (base-branch DESIGN §2.1, §5), and a single run in one
-  // that names no setup/test commands (single-runs DESIGN §2.2): no setup, a test that passes.
+  // that names no setup/test commands (single-runs DESIGN §2.2): no setup, and a test line that passes
+  // until a script commits SINGLE_RED_FILE.
   if (settings) {
     mkdirSync(join(repoDir, '.pir'));
-    writeFileSync(join(repoDir, '.pir', 'settings.json'), JSON.stringify({ baseBranch: base, setup: [], test: ['true'] }) + '\n');
+    writeFileSync(join(repoDir, '.pir', 'settings.json'), JSON.stringify({ baseBranch: base, setup: [], test: [SINGLE_RIG_TEST_LINE] }) + '\n');
   }
   writeFileSync(join(repoDir, 'package.json'), JSON.stringify({ name: 'pir-plan-rig', private: true, scripts: { test: 'node -e 0' } }, null, 2) + '\n');
   // Worktrees live inside the repo; ignoring them keeps the base's checkout clean (FINDINGS 2026-09-26).
@@ -234,6 +272,7 @@ export function startPlanRig({ into = null, scripts = 'happy', keep = false, bas
   }
   // A taken slug by its branch (DESIGN §2.5), which leaves `main` at its one commit.
   if (scripts === 'taken-slug') git(repoDir, 'branch', `pir/${PLAN_RIG_SLUG}`);
+  if (scripts === 'single-taken') git(repoDir, 'branch', `pir/${SINGLE_RIG_TAKEN}`);
   const remote = remoteAhead ? seedRemote(root, repoDir, base) : null;
 
   const scriptsFile = join(shimDir, 'fake-scripts.json');
@@ -268,4 +307,11 @@ export function startPlanRig({ into = null, scripts = 'happy', keep = false, bas
     openScreen: (opts = {}) => openScreenRaw({ cwd: repoDir, env, ...opts }),
     driveScreen: (opts = {}) => driveScreenRaw({ cwd: repoDir, env, ...opts }),
   };
+}
+
+// startSingle(rig, prompt, opts) → startSingleRun's result: a single run started in the rig's scratch repo
+// with the rig's environment, as the dashboard box starts one (single-runs DESIGN §2.3), for a test that
+// does not go through the box. The program it spawns is detached; the test stops it, as for a planning run.
+export function startSingle(rig, prompt, opts = {}) {
+  return startSingleRun(prompt, { cwd: rig.repoDir, env: rig.env, ...opts });
 }

@@ -23,14 +23,14 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T05 | single-launch | T01, T02 | ✅ | |
 | T06 | single-alerts | T04 | ⬜ | |
 | T07 | single-skill | T02 | ✅ | |
-| T08 | single-rig | T04, T05 | ⬜ | |
+| T08 | single-rig | T04, T05 | 🔍 | 8 tests in new `plan-rig-single.test.mjs` (`plan-rig.test.mjs` was split earlier). Every rig repo's test line is now `test ! -f red.txt`; `plan-rig-dev-only.test.mjs` pin updated. Added `SINGLE_RIG_TAKEN`, `SINGLE_RIG_DROP_ASK`, `SINGLE_SCRIPT_SETS`, `SINGLE_RIG_TEST_LINE`. Sets run through the detached program via `startSingle`, not in-process `runSingle`. Screen test asserts the snapshot until T10. |
 | T09 | box-single | T05, T08 | ⬜ | |
 | T10 | single-row | T04, T08 | ⬜ | |
 | T11 | single-drill | T06, T09, T10 | ⬜ | |
 | T12 | single-live | T07, T11 | ⬜ | |
 | T13 | docs-and-readme | T12 | ⬜ | |
 
-**Review queue:** *(empty)*
+**Review queue:** T08
 
 ## Blocked on the user
 
