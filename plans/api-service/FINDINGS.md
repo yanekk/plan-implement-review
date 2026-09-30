@@ -7,6 +7,8 @@ Legend: 🐞 defect found · ✅ verified by hand with the user · 📌 worth kn
 
 | Date | | Finding |
 |---|---|---|
+| 2026-09-30 | 📌 | T04 review: worker sessions inherit `PIR_RUN=1` and the real `HOME`. A plain `node` script a worker runs with the fake claude emitting a `rate_limit_event` would write the real `~/.pir/usage.json`; only `node --test` or a scratch home stops it. T08, T10. |
+| 2026-09-30 | 📌 | T04: `writeFileAtomic` leaves its `.tmp` behind when the rename fails. If `usage.json` is ever a folder, each reading adds one `.tmp` to `.pir`, silently. Not handled; nothing removes them. |
 | 2026-09-30 | 📌 | T06 review: `serviceOn`, `serviceOff` and `serviceRefresh` reject when a write fails (an unwritable `~/Library/LaunchAgents`). `service-ctl.mjs` `main` prints one line and exits 1; T07's `pir service` calls them directly and needs its own catch. |
 | 2026-09-30 | 📌 | T06: `installedEngine` compares strings. Node resolves symlinks in the running script's path, so with `~/.claude` a symlink `service-ctl.mjs` sees another `scriptPath` and `on` and `refresh` refuse with `run the installed pir`. Not handled. |
 | 2026-09-30 | 📌 | T06: the `SPECIFIER` scan followed into `index-store.mjs` fails on a comment there (`from` before a quoted phrase). `service-ctl.test.mjs` strips comments before matching; T05's import-graph test needs the same. |
