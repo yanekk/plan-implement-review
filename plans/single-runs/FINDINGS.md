@@ -7,6 +7,8 @@ Legend: 🐞 defect found · ✅ verified by hand with the user · 📌 worth kn
 
 | Date | | Finding |
 |---|---|---|
+| 2026-09-30 | 📌 | T10: `resumeRun` does not refuse a finished single record; it spawns `single-run.mjs --resume` as it does for a plan record. Not offering resume on `ready` and `dropped` rows is `canResume`'s job (DESIGN §2.11). |
+| 2026-09-30 | 📌 | T09: `startSingleRun`'s `bad-settings` refusal carries `file` and `why` beside `message` (added in T05 review, also on `planPreflight`). Word the box's `its pir settings are broken: {why}` from `why`; `message` is `refusalText`'s full line. |
 | 2026-09-30 | 📌 | T13: `README.md`'s skills tree (near `pir-finisher/`) lists every skill folder; `pir-single/` is not in it, and T13's file list does not name that tree. Found in T07 review. |
 | 2026-09-30 | 🐞 | T04, needs a decision: tests that leave a file git does not ignore make every green run read dirty, so `decideSingleStep` reruns the tests without end and tells nobody. DESIGN §2.4 step 3 names no exit. Found in T02 review. |
 | 2026-09-30 | 📌 | T04: a commit the session makes after a green result without reporting is not seen by `decideSingleStep`; the step closes at the idle gate on the tested head. In review that ends `ready` with an untested commit. |
@@ -18,7 +20,7 @@ Legend: 🐞 defect found · ✅ verified by hand with the user · 📌 worth kn
 | 2026-09-30 | 📌 | T03 did not run `./install.sh`: from a task worktree it would put unreviewed code into the engine the live run uses. The engine is installed once `pir/single-runs` is merged. |
 | 2026-09-30 | 📌 | A malformed `setup` or `test` makes the whole settings file `bad-settings`, so a plan or build start refuses on it, not only a single run. Follows from the shared `parseSettings`; pinned by a test in T01 review. T13 documents it. |
 | 2026-09-30 | 📌 | `commandsRefusalText` for `no-commands` is one line and names only the missing keys, first sentence included (`has no test commands`). Decided with the user in T01; the task doc gave only the both-missing text. |
-| 2026-09-30 | 📌 | The pty end-to-end tests (`plan-rig-planning-drill`, `plan-rig-brief-box`, `plan-rig-mouse`, `conversation-rig`) fail on timing when sibling workers load the machine; each passes alone. `the helpers scenario drives the real pir screen` failed in six full runs during T07 review, one without T07. |
+| 2026-09-30 | 📌 | The pty end-to-end tests (`plan-rig-planning-drill`, `plan-rig-brief-box`, `plan-rig-mouse`, `conversation-rig`) fail on timing when sibling workers push the load average past 30; each passes alone. `the helpers scenario drives the real pir screen` fails most often, on code without T05 or T07. |
 | 2026-09-30 | 📌 | Orphaned `coordinate.mjs helper` (pid 85261) and fake sessions from worktree `pir-reliable-notifications-T03` have run since 2026-09-28. Not this plan's; left alone. |
 | 2026-09-29 | 📌 | Planned on `main` before base-branch landed; its settings files, `prepareBase` and hand-off text are cited by that plan's task-doc names. Read the merged code first. |
 | 2026-09-29 | 📌 | `npm test` takes about 5 minutes on this machine, which is why the baseline test run happens only on the first red (DESIGN §2.5). |
