@@ -6,8 +6,9 @@
 // Reading = { observedAt: number /* ms */, fiveHour: Window | null, sevenDay: Window | null }
 // Window  = { utilization: number /* >= 0 */, resetsAt: number /* epoch seconds, > 0 */ }
 //
-// Nothing here throws on any input. The run must never suffer for the service, and the service must
-// never fail on a bad file, so every malformed value reads as "no reading" instead.
+// readingFromEvent and parseReading take input this code did not make, and throw on none of it. The
+// run must never suffer for the service, and the service must never fail on a bad file, so every
+// malformed value reads as "no reading" instead. serializeReading takes a Reading and nothing else.
 
 // How far ahead of the service's clock a file's `observed_at` may be and still count (§2.5). The
 // cockpit keeps the newer of this reading and its own, so a stamp from the future would beat every
@@ -86,8 +87,9 @@ export function parseReading(text, now) {
   if (!isObject(data) || data.version !== VERSION) return null;
   const observedAt = data.observed_at;
   if (!isTime(observedAt)) return null;
-  // Written as a positive test so a `now` that is not a number fails closed, not open.
-  if (!(observedAt <= now + FUTURE_SLACK_MS)) return null;
+  // A `now` that is not a finite number fails closed. The comparison alone does not: `+` coerces, so
+  // null adds as 0 and a numeric string concatenates with the slack, and either lets a file through.
+  if (!Number.isFinite(now) || observedAt > now + FUTURE_SLACK_MS) return null;
   const fiveHour = parsedWindow(data.five_hour);
   const sevenDay = parsedWindow(data.seven_day);
   if (fiveHour === undefined || sevenDay === undefined) return null;

@@ -249,6 +249,16 @@ test('parseReading: a clock that is not a number reads as no reading', () => {
   for (const now of [undefined, NaN, null, 'soon']) assert.equal(parseReading(file(), now), null);
 });
 
+test('parseReading: a clock that coerces to a number still reads as no reading', () => {
+  // `observed_at <= now + slack` alone lets these through: null and [] add as 0, true as 1, and a
+  // numeric string concatenates with the slack into a far larger number than the clock it names.
+  const old = file({ observed_at: 1 });
+  for (const now of [null, true, [], '5', Infinity]) assert.equal(parseReading(old, now), null);
+  const ahead = file({ observed_at: T + 10 * FUTURE_SLACK_MS });
+  assert.equal(parseReading(ahead, T), null);
+  assert.equal(parseReading(ahead, String(T)), null);
+});
+
 // ---- usageBody ----
 
 test('usageBody: no reading → observed_at and rate_limits both null', () => {
