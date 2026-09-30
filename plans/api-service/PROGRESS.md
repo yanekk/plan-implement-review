@@ -19,7 +19,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T02 | api-core | — | ✅ | |
 | T03 | service-core | — | ✅ | |
 | T04 | usage-report | T01, T02 | ⬜ | |
-| T05 | api-service | T01, T02 | ⬜ | |
+| T05 | api-service | T01, T02 | 🔍 | Server, `api.json` upkeep, file cache; 29 tests. Deviations: `main(opts)` exported so a child test forces the port; cache key adds inode; `TEST_REAL` refuses an explicit port too; `api.json` writes are best effort; imports shell `atomic-write.mjs`, `index-store.mjs` (§3.4) beyond §2.6's core-only; import walk skips whole-line comments. See commit. |
 | T06 | service-ctl | T02, T03 | ⬜ | |
 | T07 | service-command | T06 | ⬜ | |
 | T08 | usage-e2e | T04, T05 | ⬜ | |
@@ -27,7 +27,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T10 | live-usage-check | T08 | ⬜ | |
 | T11 | docs-and-readme | T07, T09, T10 | ⬜ | |
 
-**Review queue:** *(empty)*
+**Review queue:** T05
 
 ## Blocked on the user
 
