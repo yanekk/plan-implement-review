@@ -137,6 +137,20 @@ export function redMessage({ sha, reason, round, logPath, tail, baseline, base, 
   return lines.join('\n');
 }
 
+// leftoverMessage({ sha, dirty }) → the message a session gets when the tests passed on its commit but
+// the worktree is not clean afterwards (§2.4 step 3). `dirty` is the `git status --porcelain` listing;
+// an empty one drops its lines.
+export function leftoverMessage({ sha, dirty }) {
+  const lines = [`pir ran the tests on your commit ${sha7(sha)} and they passed, but the worktree is not clean afterwards:`];
+  const listing = String(dirty ?? '').replace(/\n+$/, '');
+  if (listing.trim()) lines.push(listing);
+  lines.push(
+    'If these are your edits, commit them. If the tests made them, make git ignore them (.gitignore) and ' +
+      'commit that. Then report again.',
+  );
+  return lines.join('\n');
+}
+
 // initialSingleState({ id, prompt, base, baseSha, commands }) → the state.json of a fresh run (§3.5).
 // The prompt is not stored: `prompt.md` beside the state holds it. Beyond the §3.5 fields the state
 // carries two the decision must remember between calls:
@@ -215,8 +229,9 @@ function rejectionText(report, failures) {
 //   live:        false when the shell holds no session
 //   exited:      the live session's process has exited
 //   sessionId:   the id of the live session, once the shell knows it (recorded in state.sessions[step])
-//   commandDone: { kind: 'setup'|'tests'|'baseline', ok, half, reason, logPath, tail, head, clean } for a
-//                command run that finished; head and clean are the worktree's at the end of a test run
+//   commandDone: { kind: 'setup'|'tests'|'baseline', ok, half, reason, logPath, tail, head, clean, dirty }
+//                for a command run that finished; head, clean and dirty (the `git status --porcelain`
+//                listing) are the worktree's at the end of a test run
 //   renamed:     { branch, worktree, control, index } — the rename sub-steps already done on disk
 // }
 //
@@ -355,10 +370,17 @@ export function decideSingleStep(state, facts = {}) {
       } else if (done.ok) {
         if (done.head === head && done.clean) {
           s.tested = { head, ok: true };
-        } else {
-          // Green, but the session went on editing: the result is not about what is there now.
+        } else if (done.head !== head) {
+          // Green, but the session went on committing: the result is not about what is there now.
           s.tested = null;
           if (s.accepted) s.accepted = { ...s.accepted, head: done.head };
+        } else {
+          // Green on this commit, but the tree is dirty: the session edited without committing, or the
+          // tests left files git does not ignore. A rerun would end the same way for ever, so the session
+          // is told and the step waits for a new report (user, 2026-09-30).
+          s.tested = null;
+          s.accepted = null;
+          say(leftoverMessage({ sha: head, dirty: done.dirty ?? '' }));
         }
       } else {
         s.rounds[step] += 1;
