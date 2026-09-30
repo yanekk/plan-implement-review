@@ -7,6 +7,7 @@ Legend: 🐞 defect found · ✅ verified by hand with the user · 📌 worth kn
 
 | Date | | Finding |
 |---|---|---|
+| 2026-09-30 | 📌 | T06 review: `serviceOn`, `serviceOff` and `serviceRefresh` reject when a write fails (an unwritable `~/Library/LaunchAgents`). `service-ctl.mjs` `main` prints one line and exits 1; T07's `pir service` calls them directly and needs its own catch. |
 | 2026-09-30 | 📌 | T06: `installedEngine` compares strings. Node resolves symlinks in the running script's path, so with `~/.claude` a symlink `service-ctl.mjs` sees another `scriptPath` and `on` and `refresh` refuse with `run the installed pir`. Not handled. |
 | 2026-09-30 | 📌 | T06: the `SPECIFIER` scan followed into `index-store.mjs` fails on a comment there (`from` before a quoted phrase). `service-ctl.test.mjs` strips comments before matching; T05's import-graph test needs the same. |
 | 2026-09-30 | 📌 | `homeKind` compares strings. The real home spelled `/users/me`, `/Users/me/.` or through a symlink reads `scratch`, so the test-runner guard does not fire. T04, T05 and T06 should pass `env` and `os.userInfo().homedir` unaltered. |
