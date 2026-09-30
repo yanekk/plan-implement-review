@@ -17,7 +17,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 |---|---|---|---|---|
 | T01 | usage-core | — | ⬜ | |
 | T02 | api-core | — | ⬜ | |
-| T03 | service-core | — | ⬜ | |
+| T03 | service-core | — | 🔍 | `servicePlan`, `plistText`, `statusText`, `ageText`; 37 tests, plists checked with `plutil`. Deviations: `port-held` names the port in `facts.url`, 47717 without one. `text` has no trailing newline; `detail` is trimmed. Unknown state throws. `observed_at` not a number reads as no reading. A plan with steps has `code` 0. |
 | T04 | usage-report | T01, T02 | ⬜ | |
 | T05 | api-service | T01, T02 | ⬜ | |
 | T06 | service-ctl | T02, T03 | ⬜ | |
