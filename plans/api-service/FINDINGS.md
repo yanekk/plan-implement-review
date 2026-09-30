@@ -7,6 +7,7 @@ Legend: 🐞 defect found · ✅ verified by hand with the user · 📌 worth kn
 
 | Date | | Finding |
 |---|---|---|
+| 2026-09-30 | 📌 | T05 review: the service imports shell `atomic-write.mjs` and `index-store.mjs`, as §3.4 prescribes, though DESIGN §2.6 says built-ins and `src/core/` only. What holds is no npm package, enforced by the graph test. T11 should document it that way. |
 | 2026-09-30 | 📌 | T05: a comment in `index-store.mjs` holds the word `from` then a quoted phrase, so the boundary `SPECIFIER` pattern reports a bare import. T05's graph walk drops whole-line comments first; T06's walk reaches the same file through `indexDir`. |
 | 2026-09-30 | 📌 | `homeKind` compares strings. The real home spelled `/users/me`, `/Users/me/.` or through a symlink reads `scratch`, so the test-runner guard does not fire. T04, T05 and T06 should pass `env` and `os.userInfo().homedir` unaltered. |
 | 2026-09-30 | 📌 | `npm test` fails on pty drill tests (`plan-rig-*`, `coordinator-drill`, helpers) when several workers run the suite at once: load 40 on 10 cores, a different set each run. Green at load 5. Rerun when quiet before suspecting the code. |
