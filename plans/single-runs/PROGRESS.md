@@ -25,7 +25,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T07 | single-skill | T02 | ✅ | |
 | T08 | single-rig | T04, T05 | ✅ | |
 | T09 | box-single | T05, T08 | ✅ | |
-| T10 | single-row | T04, T08 | ⬜ | |
+| T10 | single-row | T04, T08 | ✅ | |
 | T11 | single-drill | T06, T09, T10 | ⬜ | |
 | T12 | single-live | T07, T11 | ⬜ | |
 | T13 | docs-and-readme | T12 | ⬜ | |
