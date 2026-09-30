@@ -12,6 +12,7 @@ import { query as sdkQuery } from '@anthropic-ai/claude-agent-sdk';
 import { startWorker, workerOptions, writeWorkersFile } from './worker-proc.mjs';
 import { fakeClaudeSpawner, turn, wakeUp, backgroundTasks, remoteInputTurn, canUseTool, initEvent, assistantText, resultEvent, REMOTE_CONTROL_RESPONSE } from './fake/claude-stream.mjs';
 import { workerActivity, allowResult } from '../core/stream.mjs';
+import { defaultUsageReporter } from './usage-report.mjs';
 
 const SESSION = '11111111-1111-4111-8111-111111111111';
 const NAME = 'plan-implement-review / live-workers / T04 / worker-process / implement';
@@ -608,4 +609,85 @@ test('startWorker without env inherits process.env and passes no env option', as
   await waitFor(hasResult(worker), 'the turn');
   assert.equal(spawner.envs[0].PATH, process.env.PATH);
   assert.equal(spawner.envs[0].CLAUDE_CLIENT_PRESENCE_FILE, process.env.CLAUDE_CLIENT_PRESENCE_FILE);
+});
+
+// ---- api-service T04: usage readings are handed to `reportUsage` (DESIGN §2.4) ----
+
+const usageEvent = (utilization) => ({
+  type: 'rate_limit_event',
+  rate_limit_info: {
+    status: 'allowed',
+    unifiedWindows: { five_hour: { utilization, resetsAt: 1790673000 }, seven_day: { utilization: 0.77, resetsAt: 1790830800 } },
+  },
+});
+
+// One turn with two usage events in it, as a real session on a subscription yields them.
+const usageTurn = () => [
+  { await: 'user' },
+  { emit: initEvent() },
+  { emit: usageEvent(0.5) },
+  { emit: assistantText('ok') },
+  { emit: usageEvent(0.6) },
+  { emit: resultEvent('success', 'ok') },
+];
+
+test('reportUsage is called with every SDK message and the t of its log entry, after the entry is logged', async (t) => {
+  const calls = [];
+  let tick = 1000;
+  let logPathSeen;
+  const reportUsage = (message, at) => {
+    const onDisk = readFileSync(logPathSeen, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+    calls.push({ message, at, loggedFirst: onDisk.at(-1).t === at && onDisk.at(-1).dir === 'in' });
+  };
+  // A clock that moves on every read: each entry has its own t, so a wrong t cannot pass by chance.
+  const { worker, logPath, logLines } = setup(usageTurn(), t, { reportUsage, now: () => (tick += 7) });
+  logPathSeen = logPath;
+  worker.send('go');
+  await waitFor(hasResult(worker), 'the turn');
+
+  const ins = logLines().filter((e) => e.dir === 'in');
+  assert.deepEqual(calls.map((c) => c.message), ins.map((e) => e.event), 'every message, in order');
+  assert.deepEqual(calls.map((c) => c.at), ins.map((e) => e.t), 'each with the t of its own log entry');
+  assert.ok(calls.every((c) => c.loggedFirst), 'the entry is on disk before the reporter runs');
+
+  const usage = calls.filter((c) => c.message.type === 'rate_limit_event');
+  assert.equal(usage.length, 2, 'both usage events reach the reporter');
+  assert.deepEqual(usage.map((c) => c.message.rate_limit_info.unifiedWindows.five_hour.utilization), [0.5, 0.6]);
+  assert.equal(new Set(usage.map((c) => c.at)).size, 2);
+});
+
+test('a reportUsage that throws leaves the log, the listeners and the exit untouched', async (t) => {
+  let thrown = 0;
+  const reportUsage = () => {
+    thrown += 1;
+    throw new Error('reporter broke');
+  };
+  const { worker, logLines } = setup([...usageTurn(), { exit: 0 }], t, { reportUsage });
+  const seen = [];
+  worker.onEvent((e) => seen.push(e));
+  const gone = exited(worker);
+  worker.send('go');
+  assert.deepEqual(await gone, { code: 0, signal: null });
+
+  assert.ok(thrown >= 5, `the reporter was called for every message (${thrown})`);
+  const ins = worker.entries().filter((e) => e.dir === 'in').map((e) => e.event.type);
+  assert.deepEqual(ins, ['system', 'rate_limit_event', 'assistant', 'rate_limit_event', 'result']);
+  assert.deepEqual(logLines(), worker.entries(), 'file and memory agree');
+  assert.deepEqual(seen, worker.entries(), 'listeners saw every entry');
+  assert.equal(worker.entries().some((e) => e.kind === 'sdk-error'), false, 'not mistaken for an SDK failure');
+  assert.equal(worker.entries().at(-1).kind, 'exited');
+  assert.equal(workerActivity(logLines().slice(0, -1)).state, 'idle');
+});
+
+test('startWorker with no reportUsage under the test runner reports nothing: the default is null here', async (t) => {
+  // The default is usageReporterFromEnv(process.env). This process runs under `node --test` with no
+  // scratch home of its own, so it is off whatever PIR_RUN says and no test here can write the real
+  // ~/.pir/usage.json. A scratch home set by mistake would turn it on, so that is checked too.
+  assert.equal(defaultUsageReporter(), null);
+  const { dir, worker } = setup(usageTurn(), t);
+  worker.send('go');
+  await waitFor(hasResult(worker), 'the turn');
+  assert.equal(worker.entries().filter((e) => e.dir === 'in' && e.event.type === 'rate_limit_event').length, 2, 'the events arrived');
+  const written = readdirSync(dir, { recursive: true }).filter((f) => String(f).endsWith('usage.json') || String(f).endsWith('.tmp'));
+  assert.deepEqual(written, []);
 });
