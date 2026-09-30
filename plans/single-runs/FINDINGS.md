@@ -7,6 +7,7 @@ Legend: 🐞 defect found · ✅ verified by hand with the user · 📌 worth kn
 
 | Date | | Finding |
 |---|---|---|
+| 2026-09-30 | 📌 | T09 review drill, worker-driven, both sizes: broken JSON and no-base notes, a 200-character prompt, ← and → from the builder's conversation. No overflow. T10: before the rename the conversation header and the list row show `single-{hex4}`, not the quoted label. |
 | 2026-09-30 | 🔄 | A box note wider than the screen wraps at a word, up to three lines (`NOTE_ROWS`, list-view.mjs), for every note (user, T09). DESIGN §2.1's `no setup/test commands` note is 84 characters at a 4-letter repo name. |
 | 2026-09-30 | 📌 | T09 drill, worker-driven: `@repo/single` in the rig at 80×24 and 120×40: pop-up, Tab, refusals, the builder's question answered, the follow. No overflow. `starting the builder…` passed too fast to see; it is unit-tested. |
 | 2026-09-30 | 📌 | T10: pir-tui reads a single run's steps itself (`isSingleRun`, `openSteps`) for the landing and the follow. Fold them into `isSingle` and `openTasks`. Until then `←` from the builder's conversation shows the build's live view. |
