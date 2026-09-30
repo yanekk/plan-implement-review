@@ -7,7 +7,7 @@ lives in [FINDINGS.md](FINDINGS.md). Sixty words to a Notes cell, counted.
 
 **Status:** Planned, not started.
 **Last updated:** 2026-09-30
-**Next `pir-work` will:** T01 usage-core, the first task with no dependencies on the critical path.
+**Next `pir-work` will:** review T10 live-usage-check.
 
 ## Tasks
 
@@ -24,10 +24,10 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T07 | service-command | T06 | ✅ | |
 | T08 | usage-e2e | T04, T05 | ✅ | |
 | T09 | launchd-check | T05, T06 | ✅ | |
-| T10 | live-usage-check | T08 | ⬜ | |
+| T10 | live-usage-check | T08 | 🔍 | Fixture `usage-live`, `usage-live-check.mjs`, 19 tests. Live check passed once, worker-driven (FINDINGS). Deviations: refuses an existing `--into`; stops a still-running harness by HALT before any kill; same-millisecond newest events either match; expected numbers computed without `core/usage.mjs`; options beyond the interface injected for tests. |
 | T11 | docs-and-readme | T07, T09, T10 | ⬜ | |
 
-**Review queue:** *(empty)*
+**Review queue:** T10
 
 ## Blocked on the user
 
