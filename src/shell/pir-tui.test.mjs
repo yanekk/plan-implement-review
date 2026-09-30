@@ -23,12 +23,14 @@ import {
   loadDashboard,
   openDashboard,
   openPlanner,
+  openBuilder,
   openWatch,
   readLogTail,
   landStep,
   followStep,
   buildLandingFrame,
   FOLLOW_LINE,
+  SINGLE_FOLLOW_LINE,
   isBuilding,
   hitAt,
   underMultiplexer,
@@ -1631,10 +1633,12 @@ const BOX_ENV = { HOME: '/scratch', PIR_HOME: '/scratch/.pir', PIR_REPOS: '/scra
 
 // runTui on the pi-tui screen (the list view mounted) with a fake startPlan and scan. `rows()` is re-read on
 // every refresh and keypress; `plan` is what the fake startPlan does with (brief, opts).
-function driveBox({ rows = () => [], plan = () => ({ started: true, runId: 'plan-ab12', record: { repo: 'repo' } }) } = {}) {
+// `single` is what the fake startSingle does with (prompt, opts); its calls are `singles`.
+function driveBox({ rows = () => [], plan = () => ({ started: true, runId: 'plan-ab12', record: { repo: 'repo' } }), single = () => ({ started: true, runId: 'single-ab12', record: { repo: 'repo' } }), extra = {} } = {}) {
   const tty = fakeStream({ isTTY: true, columns: 100, rows: 30 });
   const term = fakeTerminal(tty);
   const calls = [];
+  const singles = [];
   const done = openDashboard({
     stdin: {},
     stdout: tty,
@@ -1648,6 +1652,11 @@ function driveBox({ rows = () => [], plan = () => ({ started: true, runId: 'plan
       calls.push({ brief, opts });
       return plan(brief, opts);
     },
+    startSingle: (prompt, opts) => {
+      singles.push({ prompt, opts });
+      return single(prompt, opts);
+    },
+    ...extra,
   });
   const settle = () => new Promise((r) => setTimeout(r, 60)); // the @ pop-up is debounced, then async
   const type = async (s) => {
@@ -1665,7 +1674,7 @@ function driveBox({ rows = () => [], plan = () => ({ started: true, runId: 'plan
     const head = r.findIndex((l) => l.startsWith('new  '));
     return head < 0 ? null : r[head + 2];
   };
-  return { done, calls, type, key, screen, boxLine, term };
+  return { done, calls, singles, type, key, screen, boxLine, term, settle };
 }
 
 test('box: Enter on `@repo/plan a brief` calls startPlan once, in the repo, with the brief, and lands on the planner', async () => {
@@ -1683,12 +1692,191 @@ test('box: Enter on `@repo/plan a brief` calls startPlan once, in the repo, with
   await t.done;
 });
 
+// --- `@repo/single <change>` from the box (single-runs T09, DESIGN §2.1, §2.8) --------------------------
+
+// A single run as the list's loader reads it: the index record, and the snapshot once the program wrote one.
+// Before the rename it goes by its run id and carries its label; after, by the builder's name.
+const singleStep = (id, worker = null, phase = worker ? 'building' : 'pending') => ({ id, phase, since: 0, stoppedAt: null, asking: null, worker });
+function singleRun({ name = null, steps = null, state = 'running' } = {}) {
+  const slug = name ?? 'single-ab12';
+  return {
+    key: `repo__${slug}`, slug, state, repo: 'repo', progress: { done: 0, total: 0 }, workers: 0,
+    record: { kind: 'single', label: name ? null : 'Fix the typo', go: null, repo: 'repo', slug, repoPath: '/scratch/src/repo', branch: `pir/${slug}`, controlDir: `/c/${slug}`, pid: 42, startTime: 't0' },
+    snap: steps ? { runState: { kind: 'single', label: 'Fix the typo', name, step: 'build', outcome: null, steps } } : null,
+  };
+}
+const BUILDER = { id: 'b1', live: true, logPath: '/c/build-1.ndjson' };
+const SINGLE_REVIEWER = { id: 'r1', live: true, logPath: '/c/review-1.ndjson' };
+const singleUi = { ...initialUi(), view: 'watch', openSlug: 'single-ab12', openKey: 'repo__single-ab12', openStep: 'build' };
+
+test("landStep: a single run waits while the builder has no session, then opens its conversation on the build row", () => {
+  assert.equal(landStep(singleUi, [singleRun()]), singleUi, 'no snapshot yet: unchanged');
+  const pending = [singleRun({ steps: [singleStep('build'), singleStep('review'), singleStep('merge')] })];
+  assert.equal(landStep(singleUi, pending), singleUi, 'no session yet: unchanged');
+  const ready = [singleRun({ steps: [singleStep('build', BUILDER), singleStep('review'), singleStep('merge')] })];
+  const ui = landStep(singleUi, ready);
+  assert.equal(ui.view, 'worker');
+  assert.deepEqual(ui.openWorker, { taskId: 'build', workerId: 'b1', logPath: '/c/build-1.ndjson', live: true });
+  assert.deepEqual([ui.taskSel, ui.openStep], [0, null]);
+});
+
+test("followStep: a single run's builder conversation open and a new review session → the reviewer's, headed by the builder line", () => {
+  const ui = { ...initialUi(), view: 'worker', openSlug: 'single-ab12', openKey: 'repo__single-ab12', taskSel: 0, openWorker: { taskId: 'build', workerId: 'b1', logPath: '/c/build-1.ndjson', live: true } };
+  const before = [singleRun({ steps: [singleStep('build', BUILDER), singleStep('review'), singleStep('merge')] })];
+  assert.equal(followStep(ui, before, null), null, 'no reviewer yet');
+  // The reviewer starts after the rename: the run is found under the builder's name.
+  const after = [singleRun({ name: 'rig-fix', steps: [singleStep('build', { ...BUILDER, live: false }, 'done'), singleStep('review', SINGLE_REVIEWER, 'reviewing'), singleStep('merge')] })];
+  const renamed = { ...ui, openSlug: 'rig-fix', openKey: 'repo__rig-fix' };
+  const next = followStep(renamed, after, null);
+  assert.equal(next.view, 'worker');
+  assert.deepEqual(next.openWorker, { taskId: 'review', workerId: 'r1', logPath: '/c/review-1.ndjson', live: true, headLine: SINGLE_FOLLOW_LINE });
+  assert.equal(next.taskSel, 1);
+  assert.equal(SINGLE_FOLLOW_LINE, 'the builder finished; the reviewer has started');
+  assert.equal(followStep(renamed, after, 'r1'), null, 'a reviewer already there when the builder was opened does not move it');
+  assert.equal(followStep({ ...renamed, view: 'watch' }, after, null), null, 'the steps view is never moved');
+  assert.equal(followStep({ ...renamed, openWorker: { taskId: 'review', workerId: 'r1' } }, after, null), null, "nor the reviewer's own conversation");
+  // The two kinds keep their own first step: a planning run is not followed from a step called `build`.
+  const plan = [landingRun([planStep('plan', { id: 'p1' }), planStep('review', { id: 'r1', live: true }), planStep('build')])];
+  assert.equal(followStep({ ...initialUi(), view: 'worker', openSlug: 'csv-export', openWorker: { taskId: 'build', workerId: 'x' } }, plan, null), null);
+});
+
+test('buildLandingFrame: a single run by its label and branch, `building`, and the builder line', () => {
+  const text = frameText(buildLandingFrame(singleRun(), 'build'));
+  assert.match(text, /^"Fix the typo" · building · pir\/single-ab12/);
+  assert.match(text, /^ {2}starting the builder…$/m);
+  assert.doesNotMatch(text, /planner|planning/);
+  assert.match(text, /← the run's steps · esc quit/);
+  assert.match(frameText(buildLandingFrame(undefined, 'build')), /starting the builder…/, 'a run not yet listed');
+});
+
+test('openBuilder: starting the builder…, then ← gives up the wait', async () => {
+  let onData = null;
+  const frames = [];
+  const done = openBuilder('single-ab12', {
+    stdin: { on: (_e, fn) => (onData = fn), off: () => {} },
+    stdout: { columns: 80 },
+    refreshMs: 60_000,
+    makeScreen: () => ({ paint: (f) => frames.push(frameText(f)), close: () => {} }),
+    load: () => buildDashboard([singleRun()]),
+  });
+  assert.match(frames.at(-1), /starting the builder…/);
+  await onData('\x1b[B'); // other keys do nothing while waiting
+  assert.match(frames.at(-1), /starting the builder…/);
+  await onData('\x1b[D');
+  // The run's steps view (T10), which names the same wait on its build row; the landing's own hint is gone.
+  assert.match(frames.at(-1), /pick a step/);
+  assert.match(frames.at(-1), /^▎ \S build +builder +starting the builder…$/m);
+  assert.doesNotMatch(frames.at(-1), /← the run's steps/);
+  await onData('\x1b');
+  await done;
+});
+
+// The conversation's log, faked as driveMouse fakes it: one line naming the file it was opened on.
+const fakeLog = {
+  follow: (p, { onEntries }) => {
+    onEntries([JSON.stringify({ t: 1, dir: 'out', from: 'pir', kind: 'message', text: `Log ${p}.` })]);
+    return { stop() {} };
+  },
+  drop: () => ({ ok: true }),
+};
+
+test("box: Enter on `@repo/single fix the typo` calls startSingleRun once, resets the box, and lands in the builder's conversation", async () => {
+  let rows = [];
+  const t = driveBox({ rows: () => rows, single: () => ((rows = [singleRun()]), { started: true, runId: 'single-ab12', record: { repo: 'repo' } }), extra: fakeLog });
+  await t.type('repo/single');
+  await t.key('\x1b'); // close the command pop-up the letters opened
+  await t.type(' fix the typo');
+  assert.match(t.boxLine(), /^@repo\/single fix the typo/);
+  assert.match(t.screen(), /new {2}change in repo/);
+  assert.match(t.screen(), /↵ start the change · shift\+↵ new line · esc clear/);
+  await t.key('\r');
+  assert.equal(t.singles.length, 1, 'started once');
+  assert.equal(t.singles[0].prompt, 'fix the typo');
+  assert.equal(t.singles[0].opts.cwd, '/scratch/src/repo');
+  assert.equal(t.singles[0].opts.env, BOX_ENV);
+  assert.equal(t.calls.length, 0, 'startPlan not called');
+  assert.match(t.screen(), /^"Fix the typo" · building · pir\/single-ab12/m);
+  assert.match(t.screen(), /starting the builder…/);
+  assert.equal(t.boxLine(), null, 'the landing has no box');
+  // The program names the builder: the next read lands in its conversation.
+  rows = [singleRun({ steps: [singleStep('build', BUILDER), singleStep('review'), singleStep('merge')] })];
+  await t.key('\x1b[B');
+  assert.match(t.screen(), /^build +worker b1/m, "the builder's conversation");
+  assert.match(t.screen(), /Log \/c\/build-1\.ndjson\./);
+  assert.doesNotMatch(t.screen(), /starting the builder…/);
+  await t.key('\x1b[D'); // ← the run's steps
+  await t.key('\x1b[D'); // ← the list
+  assert.match(t.boxLine(), /^@\s*$/, 'back on the list, the box reads @');
+  await t.key('\x1b');
+  await t.done;
+});
+
+test("box: the reviewer starting while the builder's conversation is open moves the view into it, headed by the builder line", async () => {
+  let rows = [singleRun({ steps: [singleStep('build', BUILDER), singleStep('review'), singleStep('merge')] })];
+  const t = driveBox({ rows: () => rows, extra: { ...fakeLog, refreshMs: 20 } });
+  await t.type('repo/single');
+  await t.key('\x1b');
+  await t.type(' fix the typo');
+  await t.key('\r');
+  await t.settle();
+  assert.match(t.screen(), /^build +worker b1/m);
+  assert.doesNotMatch(t.screen(), /the builder finished/);
+  // The rename, then the reviewer: the run is now listed under the builder's name, by the same program.
+  rows = [singleRun({ name: 'rig-fix', steps: [singleStep('build', { ...BUILDER, live: false }, 'done'), singleStep('review', SINGLE_REVIEWER, 'reviewing'), singleStep('merge')] })];
+  await t.settle();
+  const shown = t.screen().split('\n');
+  assert.equal(shown[0], 'the builder finished; the reviewer has started');
+  assert.match(t.screen(), /^review +worker r1/m, "the reviewer's conversation");
+  assert.match(t.screen(), /Log \/c\/review-1\.ndjson\./);
+  await t.key('\x1b[D');
+  await t.key('\x1b[D');
+  await t.key('\x1b');
+  await t.done;
+});
+
+test('box: `@repo/single` with no prompt starts nothing, keeps the text and shows the note', async () => {
+  const t = driveBox();
+  await t.type('repo/single');
+  await t.key('\x1b');
+  await t.key('\r');
+  assert.equal(t.singles.length + t.calls.length, 0, 'nothing started');
+  assert.ok(t.screen().includes('say what to change after @repo/single'), t.screen());
+  assert.match(t.boxLine(), /^@repo\/single\s*$/);
+  await t.key('\x1b');
+  await t.key('\x1b');
+  await t.done;
+});
+
+test('box: each startSingleRun refusal and a throw give the §2.1 note, the text kept', async () => {
+  const cases = [
+    [() => ({ started: false, reason: 'no-commands', message: 'repo has no setup/test commands for a single run. …' }), 'Could not start the change in repo: no setup/test commands in its .pir/settings.json'],
+    [() => ({ started: false, reason: 'bad-settings', file: '/x/.pir/settings.json', why: 'it is not valid JSON', message: '…' }), 'Could not start the change in repo: its pir settings are broken: it is not valid JSON'],
+    [() => ({ started: false, reason: 'diverged', base: 'dev', remote: 'origin' }), 'Could not start the change in repo: dev split from origin/dev'],
+    [() => ({ started: false, reason: 'weird' }), 'Could not start the change in repo: weird'],
+    [() => { throw new Error('spawn failed'); }, 'Could not start the change in repo: spawn failed'],
+  ];
+  for (const [single, note] of cases) {
+    const t = driveBox({ single });
+    await t.type('repo/single');
+    await t.key('\x1b');
+    await t.type(' fix it');
+    await t.key('\r');
+    assert.equal(t.singles.length, 1);
+    assert.ok(t.screen().includes(note), `${note}\n${t.screen()}`);
+    assert.match(t.boxLine(), /^@repo\/single fix it/, 'the text is kept');
+    assert.doesNotMatch(t.screen(), /starting the builder/);
+    await t.key('\x1b');
+    await t.key('\x1b');
+    await t.done;
+  }
+});
+
 test('box: every §2.5 refusal starts nothing, keeps the text and shows the note', async () => {
   const cases = [
-    { keys: ['\x7f', 'hello there'], text: /^hello there/, note: 'start with @repo/plan or @repo/start' },
+    { keys: ['\x7f', 'hello there'], text: /^hello there/, note: 'start with @repo/plan, /start or /single' },
     { keys: ['nope/plan x'], text: /^@nope\/plan x/, note: 'no repo @nope in ~/src, ~/other — pick one from the list' },
     { keys: ['dup/plan x'], text: /^@dup\/plan x/, note: '@dup is in more than one folder: ~/src/dup, ~/other/dup' }, // home as ~, as the pop-up (T06)
-    { keys: ['repo x'], text: /^@repo x/, note: 'pick a command: @repo/plan or @repo/start' },
+    { keys: ['repo x'], text: /^@repo x/, note: 'pick a command: @repo/plan, /start or /single' },
     { keys: ['repo/plan '], text: /^@repo\/plan/, note: 'say what to plan after @repo/plan' },
   ];
   for (const c of cases) {
@@ -1935,7 +2123,7 @@ test('box: `@repo/plan a brief` still calls startPlan only; `@repo a brief` and 
   assert.match(p.screen(), /starting the planner…/);
   await p.quit();
 
-  for (const [typed, note] of [['repo a brief', 'pick a command: @repo/plan or @repo/start'], ['repo/start nope', 'nope is not a reviewed, unfinished plan in repo']]) {
+  for (const [typed, note] of [['repo a brief', 'pick a command: @repo/plan, /start or /single'], ['repo/start nope', 'nope is not a reviewed, unfinished plan in repo']]) {
     const t = driveStart();
     await t.type(typed);
     await t.key('\r');

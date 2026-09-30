@@ -83,7 +83,7 @@ test('end to end at 80×24: `@repo a brief` → the no-command note; `@repo/star
   const { rig, dir } = buildRig(t);
   const screen = rig.openScreen({ cols: 80, rows: 24 });
   try {
-    for (const [typed, note] of [['repo a brief', 'pick a command: @repo/plan or @repo/start'], ['repo/start nope', 'nope is not a reviewed, unfinished plan in repo']]) {
+    for (const [typed, note] of [['repo a brief', 'pick a command: @repo/plan, /start or /single'], ['repo/start nope', 'nope is not a reviewed, unfinished plan in repo']]) {
       await screen.waitFor(/new {2}start with @repo/);
       await typeSettled(screen, ...typed.split(/(?<=[/ ])/));
       screen.send(ENTER);

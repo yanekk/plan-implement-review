@@ -35,7 +35,7 @@ import { resolveLiveness, createLivenessCache } from './identity.mjs';
 import { indexDir, listRecords } from './index-store.mjs';
 import { readSnapshot } from './snapshot-store.mjs';
 import { stopRun, removeRun } from './control-run.mjs';
-import { resumeRun, startPlanRun, startRun } from './launch.mjs';
+import { resumeRun, startPlanRun, startRun, startSingleRun } from './launch.mjs';
 import { updateRecord } from './index-store.mjs';
 import { planHome } from './plan-home.mjs';
 import { FrameView, paintLine } from './pir-view.mjs';
@@ -43,7 +43,7 @@ import { createConversationView } from './conversation-view.mjs';
 import { createDashboardPublisher } from './dashboard-publish.mjs';
 import { createListView } from './list-view.mjs';
 import { repoRoots, rootsLabel, scanRepos } from './repo-scan.mjs';
-import { NOTES, parseBoxText, startBuildFailedNote, startFailedNote } from '../core/planbox.mjs';
+import { NOTES, parseBoxText, startBuildFailedNote, startFailedNote, startSingleFailedNote } from '../core/planbox.mjs';
 import { scanPlans } from './plan-scan.mjs';
 import { ProcessTerminal, TuiAltScreen, TUI_KEYBINDINGS, getKeybindings, isKeyRelease, parseKey } from '@earendil-works/pi-tui';
 
@@ -1103,15 +1103,22 @@ export function openPlanner(key, deps = {}) {
   return runTui({ ...deps, initial: { ...initialUi(), view: 'watch', openSlug: key, openStep: 'plan' } });
 }
 
+// openBuilder(key, deps) — as openPlanner, for a single run (single-runs DESIGN §2.1, §2.8): the run's watch
+// view told to open its `build` step's conversation once the snapshot names the builder's session. Until then
+// the view says `starting the builder…`.
+export function openBuilder(key, deps = {}) {
+  return runTui({ ...deps, initial: { ...initialUi(), view: 'watch', openSlug: key, openStep: 'build' } });
+}
+
 // The step's session as the 'worker' view opens it (dashboardReducer's `open` on a step row), or null.
 function stepWorker(step) {
   const w = step?.worker;
   return w?.id ? { taskId: step.id, workerId: w.id, logPath: w.logPath ?? null, live: !!w.live } : null;
 }
 
-// landStep(ui, views) → ui (§2.12). While `ui.openStep` names a step of the open planning run, the view waits
-// for that step's session; once the snapshot names it, the ui is that session's conversation, the step row
-// selected. Any other ui passes through unchanged.
+// landStep(ui, views) → ui (§2.12). While `ui.openStep` names a step of the open planning or single run, the
+// view waits for that step's session; once the snapshot names it, the ui is that session's conversation, the
+// step row selected. Any other ui passes through unchanged.
 export function landStep(ui, views) {
   if (!ui?.openStep || ui.view !== 'watch') return ui;
   const steps = openTasks(views, ui);
@@ -1121,29 +1128,51 @@ export function landStep(ui, views) {
   return { ...ui, view: 'worker', openWorker, taskSel: i, openStep: null };
 }
 
-// followStep(ui, views, seenReviewId) → ui with the reviewer's conversation open, or null for no move (§2.12).
-// Only a person in the planner's conversation is moved, and only when the review step gains a session that
-// was not there when that conversation opened (`seenReviewId`): reopening a finished run's planner must not
-// bounce the person into its old reviewer. The steps view and the list are never moved.
+// followStep(ui, views, seenReviewId) → ui with the reviewer's conversation open, or null for no move (§2.12;
+// single-runs DESIGN §2.8 for a single run, whose first step is its builder's).
+// Only a person in the planner's (builder's) conversation is moved, and only when the review step gains a
+// session that was not there when that conversation opened (`seenReviewId`): reopening a finished run's
+// planner must not bounce the person into its old reviewer. The steps view and the list are never moved.
 export const FOLLOW_LINE = 'the planner finished; the reviewer has started';
+export const SINGLE_FOLLOW_LINE = 'the builder finished; the reviewer has started';
+
+// followFrom(view) → the step a run's reviewer follows and the line that heads the move, or null for a build.
+function followFrom(view) {
+  if (isPlan(view)) return { step: 'plan', line: FOLLOW_LINE };
+  if (isSingle(view)) return { step: 'build', line: SINGLE_FOLLOW_LINE };
+  return null;
+}
+
 export function followStep(ui, views, seenReviewId = null) {
-  if (ui?.view !== 'worker' || ui.openWorker?.taskId !== 'plan') return null;
-  if (!isPlan(findOpen(views, ui))) return null;
+  if (ui?.view !== 'worker') return null;
+  const from = followFrom(findOpen(views, ui));
+  if (!from || ui.openWorker?.taskId !== from.step) return null;
   const steps = openTasks(views, ui);
   const i = steps.findIndex((s) => s.id === 'review');
   const openWorker = stepWorker(steps[i]);
   if (!openWorker || openWorker.workerId === seenReviewId) return null;
-  return { ...ui, openWorker: { ...openWorker, headLine: FOLLOW_LINE }, taskSel: i };
+  return { ...ui, openWorker: { ...openWorker, headLine: from.line }, taskSel: i };
 }
 
-// buildLandingFrame(view) → the frame shown while `pir plan` waits for the planner's session. FrameView clips
-// each line to the terminal's width, as it does every frame.
-export function buildLandingFrame(view) {
+// The landing frame's words by the step it waits on: the state the row reads while that step works, and the
+// line (pir-plan-command §2.12; single-runs DESIGN §2.1 for the builder).
+const LANDING = {
+  plan: { state: 'planning', line: 'starting the planner…' },
+  build: { state: 'building', line: 'starting the builder…' },
+};
+
+// buildLandingFrame(view, step) → the frame shown while `pir plan` waits for the planner's session, or the box's
+// `/single` for the builder's (step `build`). FrameView clips each line to the terminal's width, as it does
+// every frame. A run not yet renamed goes by its label in quotes, whichever kind it is.
+export function buildLandingFrame(view, step = 'plan') {
   const branch = view?.record?.branch;
+  const { state, line } = LANDING[step] ?? LANDING.plan;
+  const label = view?.record?.label;
+  const name = label ? `"${label}"` : view ? displayName(view) : '';
   return [
-    [span(view ? displayName(view) : '', 'head'), span(` · planning${branch ? ` · ${branch}` : ''}`, 'dim')],
+    [span(name, 'head'), span(` · ${state}${branch ? ` · ${branch}` : ''}`, 'dim')],
     [],
-    lineOf('  starting the planner…', 'dim'),
+    lineOf(`  ${line}`, 'dim'),
     [],
     lineOf("← the run's steps · esc quit", 'hint'),
   ];
@@ -1191,6 +1220,7 @@ async function runTui({
   follow,
   publisher = null,
   startPlan = startPlanRun,
+  startSingle = startSingleRun,
   scan = scanRepos,
   scanBuildable = scanPlans,
   initial = initialUi(),
@@ -1291,7 +1321,8 @@ async function runTui({
   // Enter on a box that is not bare (box-commands §2.4): a refusal keeps the text and says why. `/plan` resets
   // the box and lands in the planner's conversation exactly as `pir plan` does (openPlanner's ui, with the run's
   // key, since a run id alone could repeat across repos). `/start` starts or opens the build through startRun,
-  // the call `pir start` makes, and lands in its live view as `pir start` does.
+  // the call `pir start` makes, and lands in its live view as `pir start` does. `/single` starts a single run
+  // and lands in its builder's conversation as `/plan` lands in the planner's (single-runs DESIGN §2.1).
   async function submitBox(text) {
     const lv = getListView();
     // The same cached plan scan the slug pop-up listed from, so Enter accepts exactly what it offered.
@@ -1304,6 +1335,7 @@ async function runTui({
       return;
     }
     if (r.command === 'start') return submitStart(lv, r);
+    if (r.command === 'single') return submitSingle(lv, r);
     let s;
     try {
       s = startPlan(r.brief, { cwd: r.repo.path, env, kill, exec });
@@ -1318,6 +1350,25 @@ async function runTui({
     lv.reset();
     lastRepos = null;
     ui = { ...initialUi(), view: 'watch', openSlug: s.runId, openKey: `${s.record?.repo}__${s.runId}`, openStep: 'plan' };
+  }
+
+  // `/single`: a refusal keeps the text and says why; a start resets the box and waits for the builder's
+  // session under the run's key, as `/plan` does for the planner's.
+  function submitSingle(lv, r) {
+    let s;
+    try {
+      s = startSingle(r.prompt, { cwd: r.repo.path, env, kill, exec });
+    } catch (err) {
+      lv.update({ note: startSingleFailedNote(r.repo.name, err?.message ?? String(err)) });
+      return;
+    }
+    if (!s?.started) {
+      lv.update({ note: startSingleFailedNote(r.repo.name, s?.reason ?? 'unknown', s) });
+      return;
+    }
+    lv.reset();
+    lastRepos = null;
+    ui = { ...initialUi(), view: 'watch', openSlug: s.runId, openKey: `${s.record?.repo}__${s.runId}`, openStep: 'build' };
   }
 
   // `/start`: started and already-running both open the run's live view (§2.4, "start or open"). The key is the
@@ -1444,7 +1495,8 @@ async function runTui({
     syncTask(dash);
 
     // `pir plan` lands in the planner's conversation once it has a session (§2.12), and a person still in it
-    // when the reviewer starts follows into the reviewer's.
+    // when the reviewer starts follows into the reviewer's. A single run's builder is landed in and followed
+    // from the same way.
     // The step row is re-pinned to the step now open, so ← from its conversation lands on that row.
     const moved = (next) => {
       ui = next;
@@ -1455,7 +1507,7 @@ async function runTui({
     if (landed !== ui) moved(landed);
     // The planner's conversation about to be built: note the reviewer already there, before followStep reads
     // it, so opening a finished run's planner does not bounce the person into its old reviewer.
-    if (!conv && ui.view === 'worker' && ui.openWorker?.taskId === 'plan') {
+    if (!conv && ui.view === 'worker' && ui.openWorker?.taskId === followFrom(findOpen(dash.rows, ui))?.step) {
       seenReviewId = stepWorker(openTasks(dash.rows, ui).find((st) => st.id === 'review'))?.workerId ?? null;
     }
     const followed = followStep(ui, dash.rows, seenReviewId);
@@ -1465,7 +1517,7 @@ async function runTui({
     const spinnerChar = SPINNER[spin % SPINNER.length];
     painted = null;
     if (ui.view === 'watch' && ui.openStep) {
-      screen.paint(buildLandingFrame(findOpen(dash.rows, ui)));
+      screen.paint(buildLandingFrame(findOpen(dash.rows, ui), ui.openStep));
     } else if (ui.view === 'worker') {
       paintConv(dash);
     } else if (ui.view === 'watch') {

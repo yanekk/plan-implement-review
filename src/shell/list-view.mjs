@@ -11,7 +11,7 @@
 // out. What a list key or a submit then does is the caller's (T05's runTui), through the callbacks.
 
 import { homedir } from 'node:os';
-import { Editor, getKeybindings, isKeyRelease, parseKey } from '@earendil-works/pi-tui';
+import { Editor, getKeybindings, isKeyRelease, parseKey, wrapTextWithAnsi } from '@earendil-works/pi-tui';
 import { BARE_TEXT, COMMANDS, absorbAt, completionContext, headLine, isBare, routeBoxKey } from '../core/planbox.mjs';
 import { initialUi } from '../core/dashboard.mjs';
 import { buildListFrame, listFooter } from './pir-tui.mjs';
@@ -25,6 +25,7 @@ const STUB_HOST = { requestRender() {}, terminal: { rows: 24, columns: 80 } };
 
 export const TYPED_HINT = '↵ start planning · shift+↵ new line · esc clear';
 export const START_HINT = '↵ start the build · esc clear';
+export const SINGLE_HINT = '↵ start the change · shift+↵ new line · esc clear';
 export const BARE_HINT_SUFFIX = ' · type @repo to plan or build';
 
 // The head line's label (box-commands §2.5): `new plan` no longer fits a box that also builds.
@@ -32,6 +33,14 @@ export const HEAD_LABEL = 'new';
 
 // A typed box whose command is `start` (§2.1): its hint is START_HINT (§2.5).
 const START_TEXT = /^@[^\s/]+\/start(?:\s|$)/;
+// …and one whose command is `single` (single-runs DESIGN §2.1): its hint is SINGLE_HINT.
+const SINGLE_TEXT = /^@[^\s/]+\/single(?:\s|$)/;
+const typedHint = (text) => (START_TEXT.test(text) ? START_HINT : SINGLE_TEXT.test(text) ? SINGLE_HINT : TYPED_HINT);
+
+// A note wider than the screen wraps at a word, onto at most this many lines (user, 2026-09-30, single-runs
+// T09: `Could not start the change in {name}: no setup/test commands in its .pir/settings.json` was cut off
+// at 80 columns, and the box is the only place that says it). Each line costs the list a row while it shows.
+const NOTE_ROWS = 3;
 
 // At most five rows show in the pop-up at once (§2.4).
 const POPUP_ROWS = 5;
@@ -294,13 +303,15 @@ export function createListView({
 
     const head = headLine(text, bare ? [] : currentRepos(), { roots: label, plansOf: cachedPlansOf });
     const noteText = state.note ?? state.ui?.note ?? null;
-    const noteLine = noteText == null ? null : paint([span(noteText, state.note != null ? 'your-go' : 'dim')]);
+    const noteStyle = state.note != null ? 'your-go' : 'dim';
+    // paint clips the last line, should a note need more than NOTE_ROWS.
+    const noteLines = noteText == null ? [] : wrapTextWithAnsi(noteText, w).slice(0, NOTE_ROWS).map((l) => paint([span(l, noteStyle)]));
 
     // A half-pressed chord shows its ⚠ line even over a typed brief (user, 2026-09-27, T06 drill): the chords
     // act on a typed box too (§2.3), and with the typing hint in its place the second press stopped a run
     // with nothing on screen having said so.
     let hint;
-    if (!bare && !state.ui?.armed) hint = paint([span(START_TEXT.test(text) ? START_HINT : TYPED_HINT, 'hint')]);
+    if (!bare && !state.ui?.armed) hint = paint([span(typedHint(text), 'hint')]);
     else {
       const footer = listFooter(state.ui, state.dashboard?.rows ?? []);
       // The suffix joins the plain key hint only, and only when it fits: an armed line is a warning, not a hint.
@@ -311,16 +322,16 @@ export function createListView({
 
     const box = editor.render(w);
     const termRows = tui.terminal?.rows || 24;
-    const budget = Math.max(0, termRows - box.length - 2 - (noteLine ? 1 : 0));
+    const budget = Math.max(0, termRows - box.length - 2 - noteLines.length);
     const block = buildListFrame(state.dashboard, state.ui ?? initialUi(), { columns: w, rows: budget });
     // Only a row a click would open lights up under the pointer (§2.2); the selected band wins (paintLine).
     const list = block.map((spans, y) => paintLine(spans, w, colour, { hovered: y === state.hoverY && Boolean(spans.hit) }));
     while (list.length < budget) list.push('');
     lastList = block;
-    boxTop = list.length + (noteLine ? 1 : 0) + 1;
+    boxTop = list.length + noteLines.length + 1;
     boxRows = box.length;
 
-    return [...list, ...(noteLine ? [noteLine] : []), paint([span(HEAD_LABEL, 'head'), span('  ' + head.text, head.style)]), ...box, hint];
+    return [...list, ...noteLines, paint([span(HEAD_LABEL, 'head'), span('  ' + head.text, head.style)]), ...box, hint];
   }
 
   // A click in the box moves the Editor's caret, and one on the @repo pop-up picks the entry: the Editor does

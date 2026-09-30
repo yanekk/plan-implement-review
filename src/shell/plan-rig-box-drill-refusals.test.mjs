@@ -37,9 +37,9 @@ test('end to end at 80×24: every box-commands §2.4 refusal not covered above s
   const { rig, dir } = buildRig(t);
   const screen = rig.openScreen({ cols: 80, rows: 24 });
   const cases = [
-    { keys: ['repo'], note: 'pick a command: @repo/plan or @repo/start', text: '@repo' },
-    { keys: ['repo/'], note: 'pick a command: @repo/plan or @repo/start', text: '@repo/' },
-    { keys: ['repo/', 'foo', ' x'], note: '@repo/foo is not a command — use /plan or /start', text: '@repo/foo x' },
+    { keys: ['repo'], note: 'pick a command: @repo/plan, /start or /single', text: '@repo' },
+    { keys: ['repo/'], note: 'pick a command: @repo/plan, /start or /single', text: '@repo/' },
+    { keys: ['repo/', 'foo', ' x'], note: '@repo/foo is not a command — use /plan, /start or /single', text: '@repo/foo x' },
     { keys: ['repo/start', ' '], note: 'name a plan to build after @repo/start', text: '@repo/start' },
     { keys: ['repo/start ', DRILL_SLUG, ' more'], note: '@repo/start takes one plan name', text: `@repo/start ${DRILL_SLUG} more` },
     // An exact name, never a prefix (§2.4).
