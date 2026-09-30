@@ -18,10 +18,10 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T01 | usage-core | — | ✅ | |
 | T02 | api-core | — | ✅ | |
 | T03 | service-core | — | ✅ | |
-| T04 | usage-report | T01, T02 | ⬜ | |
+| T04 | usage-report | T01, T02 | ✅ | |
 | T05 | api-service | T01, T02 | ✅ | Reviewed. Two defects reproduced and fixed, each with a test: a failed `api.json` rename left a temp file per reassert tick; the address test passed on a `0.0.0.0` bind. Probed an unwritable home, malformed and absolute-form requests, `api.json` as a directory. Deviations accepted; shell imports follow §3.4. Done-when curl and SIGINT check run by the reviewer. |
-| T06 | service-ctl | T02, T03 | ⬜ | |
-| T07 | service-command | T06 | ⬜ | |
+| T06 | service-ctl | T02, T03 | ✅ | |
+| T07 | service-command | T06 | ✅ | |
 | T08 | usage-e2e | T04, T05 | ⬜ | |
 | T09 | launchd-check | T05, T06 | ⬜ | |
 | T10 | live-usage-check | T08 | ⬜ | |
