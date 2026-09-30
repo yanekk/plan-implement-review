@@ -555,6 +555,104 @@ test('stop while the builder works, then --resume: the same session is reopened 
   ]);
 });
 
+// A command line that hangs, its pid on record, until the gate file exists; `then` is what it does once
+// the gate is there.
+const gated = (p, then = 'exit 0') => `if [ -f ${q(join(p.dir, 'gate'))} ]; then ${then}; fi; echo $$ > ${q(join(p.dir, 'pid'))}; exec sleep 60`;
+const pidIn = (s) => waitFor(() => existsSync(join(s.dir, 'pid')) && Number(readFileSync(join(s.dir, 'pid'), 'utf8').trim()), 'the command line running');
+
+test('stop during the setup run: its process is gone, no session was started; --resume runs the setup again and goes on to ready', async (t) => {
+  const name = 'stopped-setup';
+  const s = setup(
+    t,
+    [
+      { match: BUILDER_MATCH, script: builder(name) },
+      { match: REVIEWER_MATCH, script: reviewer(name) },
+    ],
+    { commands: (p) => ({ setup: [gated(p)], test: ['true'] }) },
+  );
+  const first = start(s);
+  const pid = await pidIn(s);
+  first.stop.abort();
+  assert.equal(await first.done, 0);
+  await waitFor(() => gone(pid), 'the setup process to go');
+  assert.equal(existsSync(commandFileOf(s.controlDir)), false);
+  assert.deepEqual([stateIn(s.controlDir).step, stateIn(s.controlDir).running], ['setup', 'setup']);
+  assert.equal(existsSync(s.received), false, 'no session before the setup is done');
+
+  writeFileSync(join(s.dir, 'gate'), '');
+  const run = start(s, { resume: true });
+  assert.equal(await run.done, 0, run.lines.join('\n'));
+  const moved = controlAfter(s, name);
+  assert.equal(stateIn(moved).outcome, 'ready');
+  assert.equal(run.lines.filter((l) => l === 'setup run started').length, 1);
+  assert.doesNotMatch(pirTexts(convLog(moved, 'build'))[0], /setup step failed/, 'the killed setup run left no note');
+});
+
+test('stop during the baseline run: its process and its worktree are gone; --resume runs it again and the red message reaches the reopened builder', async (t) => {
+  const name = 'stopped-baseline';
+  // Red in the run's worktree (the change is there); on the starting point it hangs until the gate.
+  const s = setup(t, [{ match: BUILDER_MATCH, script: builder(name, { after: [...turn(...say('Looking into it.'))] }) }], {
+    commands: (p) => ({ setup: [], test: [`if [ -f change.txt ]; then exit 1; fi; ${gated(p, 'exit 1')}`] }),
+  });
+  const first = start(s);
+  const pid = await pidIn(s);
+  assert.ok(existsSync(basePath(s)), 'the baseline runs in its own worktree');
+  first.stop.abort();
+  assert.equal(await first.done, 0);
+  await waitFor(() => gone(pid), 'the baseline process to go');
+  assert.equal(existsSync(basePath(s)), false, 'the baseline worktree is gone');
+  assert.equal(worktreeCount(s), 2);
+  assert.equal(existsSync(commandFileOf(s.controlDir)), false);
+  assert.deepEqual(workersIn(s.controlDir), []);
+  const stopped = stateIn(s.controlDir);
+  assert.deepEqual([stopped.step, stopped.running, stopped.baseline, stopped.rounds.build], ['build', 'baseline', null, 1]);
+
+  writeFileSync(join(s.dir, 'gate'), '');
+  const run = start(s, { resume: true, env: { PIR_RUN: '1' } });
+  t.after(() => run.stop.abort());
+  const texts = await waitFor(() => (pirTexts(convLog(s.controlDir, 'build')).length === 3 ? pirTexts(convLog(s.controlDir, 'build')) : null), 'the red message');
+  assert.equal(texts[1], resumeInstruction());
+  assert.match(texts[2], /Round 1 of 3\.\nThey also fail on the untouched starting point/);
+  assert.equal(existsSync(basePath(s)), false);
+  assert.equal(worktreeCount(s), 2);
+  const st = stateIn(s.controlDir);
+  assert.deepEqual([st.running, st.baseline.half, st.rounds.build, st.sessions.build.length], [null, 'test', 1, 1]);
+  assert.equal(existsSync(join(s.controlDir, 'conversations', 'build-2.ndjson')), false, 'the same builder, reopened');
+  run.stop.abort();
+  assert.equal(await run.done, 0);
+});
+
+test('stop while the reviewer works, then --resume from the renamed folder: the same reviewer is reopened and the run ends ready', async (t) => {
+  const name = 'resumed-reviewer';
+  const s = setup(t, (p) => [
+    { match: BUILDER_MATCH, script: builder(name) },
+    { match: REVIEWER_MATCH, script: [...opening(), ...say('Reading the change.'), until(`[ -f ${q(join(p.dir, 'gate'))} ]`), report('reviewed', name), ...say('Reported reviewed.')] },
+  ]);
+  const moved = controlAfter(s, name);
+  const first = start(s, { env: { PIR_RUN: '1' } });
+  await waitFor(() => convLog(moved, 'review').some((e) => e.dir === 'in' && e.event.type === 'result'), 'the reviewer at work');
+  await waitFor(() => stateIn(moved).sessions.review.length === 1, 'the reviewer id in state.json');
+  const reviewerId = stateIn(moved).sessions.review[0];
+  first.stop.abort();
+  assert.equal(await first.done, 0);
+  assert.equal(indexOf(s, name).finalState, 'stopped');
+  assert.deepEqual(workersIn(moved), []);
+
+  writeFileSync(join(s.dir, 'gate'), '');
+  const run = start(s, { resume: true, controlDir: moved, env: { PIR_RUN: '1' } });
+  assert.equal(await run.done, 0, run.lines.join('\n'));
+  const st = stateIn(moved);
+  assert.deepEqual([st.outcome, st.sessions.review], ['ready', [reviewerId]]);
+  assert.equal(argvs(s).length, 3, 'builder, reviewer, the reviewer reopened: the builder is never resumed');
+  assert.equal(existsSync(join(moved, 'conversations', 'review-2.ndjson')), false);
+  assert.deepEqual(pirTexts(convLog(moved, 'review')), [
+    reviewerInstruction({ reportsDir: join(moved, 'reports'), name, base: 'main', baseSha: s.baseSha, prompt: PROMPT }),
+    resumeInstruction(),
+  ]);
+  assert.equal(indexOf(s, name).finalState, 'finished');
+  assert.deepEqual(testLogs(moved), ['tests-1.log'], 'the reviewer changed nothing');
+});
+
 test('crash mid-rename with a baseline worktree and its test line left behind, then --resume: both go, the rename completes, a fresh reviewer finishes', async (t) => {
   const name = 'half-renamed';
   const s = setup(t, [{ match: REVIEWER_MATCH, script: reviewer(name) }]);
@@ -685,6 +783,14 @@ test('singleChecks against real git: the commit count is taken from the starting
   git(s.worktree, ['commit', '-q', '-m', 'change']);
   assert.deepEqual(singleChecks(args), { ok: true });
   assert.match(singleChecks({ ...args, name: ID }).failures[0], /cannot be the branch name/);
+
+  // A removed run leaves its control folder behind (removeRun keeps state.json), and once its branch is
+  // deleted nothing else holds the name. The rename would then split this run's folder in two.
+  mkdirSync(join(s.root, 'plans', 'fix-typo', '.parallel', 'single'), { recursive: true });
+  assert.deepEqual(singleChecks(args).failures, [
+    'The name "fix-typo" is taken: a folder plans/fix-typo/.parallel/single is left from an earlier run. Choose another name, then drop the `built` report again.',
+  ]);
+  assert.deepEqual(singleChecks({ ...args, name: 'fix-readme-typo' }), { ok: true });
 });
 
 test('singleRunState: phases per step, testing over the stopped rule, a pending request still asks', () => {

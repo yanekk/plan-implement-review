@@ -125,12 +125,18 @@ export function singleChecks({ kind, name, run, worktree, root, repo, indexDir, 
         `"${name}" cannot be the branch name: it must be kebab-case (a-z, 0-9, single hyphens) and not of the form single-xxxx or plan-xxxx. Choose another name, then ${again}.`,
       );
     } else {
-      const taken = slugTaken(name, { root, base: run.base, indexHas: (s) => existsSync(recordPath(repo, s, { dir: indexDir })) });
+      // Beyond slugTaken's three: a control folder under the name. Removing a run keeps its state.json
+      // (control-run.mjs removeRun), and once its branch is deleted nothing else holds the name; the
+      // rename would read that folder as this run's already moved and leave this run's split over two.
+      const taken =
+        slugTaken(name, { root, base: run.base, indexHas: (s) => existsSync(recordPath(repo, s, { dir: indexDir })) }) ??
+        (existsSync(join(root, 'plans', name, '.parallel', 'single')) ? 'control' : null);
       if (taken) {
         const why = {
           branch: `a branch pir/${name} already exists`,
           'base-plan': `a plan plans/${name} is already on ${run.base}`,
           index: `a pir run named ${name} already exists`,
+          control: `a folder plans/${name}/.parallel/single is left from an earlier run`,
         }[taken] ?? `it is in use (${taken})`;
         failures.push(`The name "${name}" is taken: ${why}. Choose another name, then ${again}.`);
       }
