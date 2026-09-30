@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { alertText, reminderText, excerpt, endAlert, holdAlert, newNotifyState, notifyStep, notifyExit, finisherAlert, finisherNotifyView } from './notify.mjs';
+import { alertText, reminderText, excerpt, endAlert, singleEndAlert, holdAlert, newNotifyState, notifyStep, notifyExit, finisherAlert, finisherNotifyView } from './notify.mjs';
 
 const cp = (s) => [...s].length;
 const base = { plan: 'screen-time', task: 'T04', role: 'implement' };
@@ -177,6 +177,16 @@ test('endAlert: a long red reason is cut to 150', () => {
 test('endAlert: red with no reason drops the colon', () => {
   assert.equal(endAlert({ slug: 's', ready: false }).message, 'Tests red on pir/s');
   assert.equal(endAlert({ slug: 's', ready: false, reason: '  ' }).message, 'Tests red on pir/s');
+});
+
+// ---- singleEndAlert (single-runs DESIGN §2.10) ----
+
+test('singleEndAlert: the name, the merge command on the run base, the tada tag', () => {
+  assert.deepEqual(singleEndAlert({ name: 'fix-typo', base: 'dev' }), {
+    title: 'fix-typo · ready to merge',
+    message: 'git switch dev && git merge pir/fix-typo',
+    tags: ['tada'],
+  });
 });
 
 test('endAlert: unresolved main-sync outranks the test reason', () => {
