@@ -12,11 +12,14 @@
 //
 //   node src/shell/harness/service-live-check.mjs      prints each line, exits 0 or 1
 //
-// The way back, if the process is cut off before its teardown: the `remove it with` line below.
+// SIGINT, SIGTERM and SIGHUP stop the steps and run the same teardown. Only a kill that cannot be
+// caught (SIGKILL, a power cut) leaves the job loaded; the next run then refuses and prints the
+// `remove it with` line below, which is the way back.
 
 import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { apiFiles } from '../../core/api.mjs';
 import { httpGet, realLaunchctl, serviceOff, serviceOn, serviceRefresh } from '../service-ctl.mjs';
@@ -35,7 +38,12 @@ const POLL_MS = 100;
 
 const SERVICE_SCRIPT = fileURLToPath(new URL('../api-service.mjs', import.meta.url));
 
-const realSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+// Node's default for these is to end the process at once, which skips every `finally`: the job would
+// stay loaded, restarted for ever by KeepAlive, with its folder in place (seen at T09 review).
+const INTERRUPTS = ['SIGINT', 'SIGTERM', 'SIGHUP'];
+
+// Abortable, so an interrupted 11 s wait ends at once and its timer does not hold the process open.
+const realSleep = (ms, { signal } = {}) => delay(ms, undefined, { signal });
 const realKill = (pid) => process.kill(pid, 'SIGKILL');
 const secs = (ms) => `${(ms / 1000).toFixed(1)} s`;
 const firstLine = (text) => String(text ?? '').split('\n')[0];
@@ -48,10 +56,11 @@ function parse(text) {
   }
 }
 
-// serviceLiveCheck({ launchctl, get, kill, sleep, now, tmp, uid, env, log }) → { ok, lines, dir }.
+// serviceLiveCheck({ launchctl, get, kill, sleep, now, tmp, uid, env, signals, log }) → { ok, lines, dir }.
 // `lines` is what was printed, in order; `dir` is where the temp folder was (null when the check
 // refused to start), so a caller can see it is gone. It never rejects for a failed step: the step's
 // line says what failed, the later steps are skipped and the teardown runs whatever happened.
+// `signals` is where the interrupt signals are listened for (the process; an emitter in tests).
 export async function serviceLiveCheck({
   launchctl = realLaunchctl,
   get = httpGet,
@@ -61,6 +70,7 @@ export async function serviceLiveCheck({
   tmp = tmpdir(),
   uid = process.getuid?.(),
   env = process.env,
+  signals = process,
   log = () => {},
 } = {}) {
   // A test that forgot its fake would register a real launchd job (DESIGN §1: no test does).
@@ -85,6 +95,31 @@ export async function serviceLiveCheck({
     return { ok: false, lines, dir: null };
   }
 
+  // From here on something exists that must be removed, so a signal no longer ends the process: it
+  // fails the step in hand and the teardown below runs. A further signal changes nothing, which is
+  // what keeps the teardown itself from being cut short.
+  let interruptedBy = null;
+  const stop = new AbortController();
+  const onSignal = (name) => {
+    interruptedBy ??= name;
+    stop.abort();
+  };
+  for (const name of INTERRUPTS) signals.on(name, onSignal);
+  const checkInterrupt = () => {
+    if (interruptedBy) throw new Error(`interrupted by ${interruptedBy}`);
+  };
+  // Every wait inside a step. The teardown uses `sleep` itself: it must wait even after a signal.
+  const pause = async (ms) => {
+    checkInterrupt();
+    try {
+      await sleep(ms, { signal: stop.signal });
+    } catch (err) {
+      // The abort is ours; anything else is the sleep's own failure.
+      if (!interruptedBy) throw err;
+    }
+    checkInterrupt();
+  };
+
   const dir = mkdtempSync(join(tmp, 'pir-service-check-'));
   const { discovery } = apiFiles(join(dir, '.pir'));
   const opts = {
@@ -97,7 +132,7 @@ export async function serviceLiveCheck({
     scriptPath: SERVICE_SCRIPT,
     launchctl,
     get,
-    sleep,
+    sleep: pause,
     now,
     uid,
   };
@@ -121,7 +156,7 @@ export async function serviceLiveCheck({
       const found = await probe();
       if (found) return { found, ms: now() - start };
       if (now() - start >= limitMs) throw new Error(failure);
-      await sleep(POLL_MS);
+      await pause(POLL_MS);
     }
   };
   const newPid = (oldPid, limitMs) =>
@@ -163,7 +198,7 @@ export async function serviceLiveCheck({
     }],
     ['2 kill -9 after 11 s up', async () => {
       const wait = MIN_UP_MS - (now() - upSince);
-      if (wait > 0) await sleep(wait);
+      if (wait > 0) await pause(wait);
       return killAndReturn(FAST_RESTART_MS);
     }],
     // At once: the instance is seconds old, so launchd holds the restart back (the throttle).
@@ -194,6 +229,8 @@ export async function serviceLiveCheck({
         continue;
       }
       try {
+        // A signal that landed between two waits: no step starts after it.
+        checkInterrupt();
         say(`${name}: ${await run()}`);
       } catch (err) {
         ok = false;
@@ -214,6 +251,7 @@ export async function serviceLiveCheck({
       gone = !loaded();
     } finally {
       rmSync(dir, { recursive: true, force: true });
+      for (const name of INTERRUPTS) signals.off(name, onSignal);
     }
     if (gone) {
       say(`teardown: ${CHECK_LABEL} not loaded, temp folder removed`);

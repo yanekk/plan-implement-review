@@ -4,6 +4,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { EventEmitter } from 'node:events';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -237,6 +238,66 @@ test('a label that will not boot out fails the check, names the way back, and th
   assert.equal(r.ok, false);
   assert.equal(r.lines.at(-2), `teardown: FAILED: ${CHECK_LABEL} is still loaded; remove it with: launchctl bootout ${TARGET}`);
   assert.equal(r.lines.at(-1), 'service-live-check: FAILED');
+  assert.equal(existsSync(r.dir), false);
+});
+
+// Reproduced on the real launchd at T09 review: SIGTERM six seconds in killed the check before its
+// `finally`, and the job stayed loaded and running with its folder in place.
+test('a signal during the 11 s wait fails that step and the teardown still runs: nothing is killed', async (t) => {
+  const w = world(t);
+  const signals = new EventEmitter();
+  const sleep = w.sleep;
+  let sent = false;
+  w.opts.sleep = async (ms) => {
+    // The long wait of step 2 is the only sleep this long; the signal lands while it is pending.
+    if (ms > 5_000 && !sent) {
+      sent = true;
+      signals.emit('SIGTERM', 'SIGTERM');
+    }
+    await sleep(ms);
+  };
+  const r = await serviceLiveCheck({ ...w.opts, signals });
+
+  assert.equal(r.ok, false);
+  assert.match(r.lines[0], /^1 on: api\.json written/);
+  assert.deepEqual(r.lines.slice(1), [
+    '2 kill -9 after 11 s up: FAILED: interrupted by SIGTERM',
+    '3 kill -9 again at once: skipped',
+    '4 refresh: skipped',
+    '5 off: skipped',
+    `teardown: ${CHECK_LABEL} not loaded, temp folder removed`,
+    'service-live-check: FAILED',
+  ]);
+  assert.deepEqual(w.kills, []);
+  assert.deepEqual(w.events, ['bootstrap', 'bootout']);
+  assert.equal(w.loaded, false);
+  assert.equal(existsSync(r.dir), false);
+  // The check leaves no handler behind on the emitter it was given.
+  for (const name of ['SIGINT', 'SIGTERM', 'SIGHUP']) assert.equal(signals.listenerCount(name), 0, name);
+});
+
+test('a signal that lands outside a wait stops the check before the next step, and is held during the teardown', async (t) => {
+  const w = world(t);
+  const signals = new EventEmitter();
+  const get = w.get;
+  w.opts.get = async (url) => {
+    if (url.endsWith('/v1/usage')) signals.emit('SIGINT', 'SIGINT');
+    return get(url);
+  };
+  const launchctl = w.launchctl;
+  w.opts.launchctl = (args) => {
+    // A second signal while the job is being removed must not cut the removal short.
+    if (args[0] === 'bootout') signals.emit('SIGTERM', 'SIGTERM');
+    return launchctl(args);
+  };
+  const r = await serviceLiveCheck({ ...w.opts, signals });
+
+  assert.equal(r.ok, false);
+  assert.match(r.lines[0], /^1 on: api\.json written/);
+  assert.equal(r.lines[1], '2 kill -9 after 11 s up: FAILED: interrupted by SIGINT');
+  assert.equal(r.lines.at(-2), `teardown: ${CHECK_LABEL} not loaded, temp folder removed`);
+  assert.deepEqual(w.kills, []);
+  assert.equal(w.loaded, false);
   assert.equal(existsSync(r.dir), false);
 });
 
