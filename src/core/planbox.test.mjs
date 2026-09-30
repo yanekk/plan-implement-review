@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 
 import {
   BARE_TEXT, COMMANDS, NOTES, absorbAt, completionContext, headLine, isBare, parseBoxText, rankRepos, routeBoxKey,
-  startBuildFailedNote, startFailedNote,
+  startBuildFailedNote, startFailedNote, startSingleFailedNote,
 } from './planbox.mjs';
 
 const ROOTS = '~/src';
@@ -142,7 +142,7 @@ test('parse: no @name is no-at, §2.4 row 1', () => {
     const r = parse(text);
     assert.equal(r.ok, false, JSON.stringify(text));
     assert.equal(r.reason, 'no-at', JSON.stringify(text));
-    assert.equal(r.note, 'start with @repo/plan or @repo/start');
+    assert.equal(r.note, 'start with @repo/plan, /start or /single');
   }
 });
 
@@ -169,16 +169,16 @@ test('parse: no /command is no-command, §2.4 row 4 — the old `@name brief` fo
     const r = parse(text);
     assert.equal(r.reason, 'no-command', JSON.stringify(text));
     assert.equal(r.name, 'skaut');
-    assert.equal(r.note, 'pick a command: @skaut/plan or @skaut/start');
+    assert.equal(r.note, 'pick a command: @skaut/plan, /start or /single');
   }
 });
 
 test('parse: any other command is unknown-command, §2.4 row 5, lower case exact', () => {
-  for (const cmd of ['Plan', 'START', 'bogus', 'pla', 'planx', 'plan/x']) {
+  for (const cmd of ['Plan', 'START', 'bogus', 'pla', 'planx', 'plan/x', 'Single', 'sin', 'singles']) {
     const r = parse(`@skaut/${cmd} x`);
     assert.equal(r.reason, 'unknown-command', cmd);
     assert.equal(r.command, cmd);
-    assert.equal(r.note, `@skaut/${cmd} is not a command — use /plan or /start`);
+    assert.equal(r.note, `@skaut/${cmd} is not a command — use /plan, /start or /single`);
   }
 });
 
@@ -187,6 +187,19 @@ test('parse: /plan with no brief is empty-brief, §2.4 row 6', () => {
     const r = parse(text);
     assert.equal(r.reason, 'empty-brief', JSON.stringify(text));
     assert.equal(r.note, 'say what to plan after @skaut/plan');
+  }
+});
+
+test('parse: /single with a prompt starts a single run, the prompt trimmed and its newlines kept (single-runs §2.1)', () => {
+  assert.deepEqual(parse('@skaut/single fix it'), { ok: true, command: 'single', repo: SKAUT, prompt: 'fix it' });
+  assert.deepEqual(parse('@skaut/single   fix it  \n'), { ok: true, command: 'single', repo: SKAUT, prompt: 'fix it' });
+  assert.deepEqual(parse('@skaut/single fix the typo\n\nand nothing else'), { ok: true, command: 'single', repo: SKAUT, prompt: 'fix the typo\n\nand nothing else' });
+  assert.deepEqual(parse('@skaut/single\nfix it'), { ok: true, command: 'single', repo: SKAUT, prompt: 'fix it' });
+});
+
+test('parse: /single with no prompt is empty-prompt (single-runs §2.1)', () => {
+  for (const text of ['@skaut/single', '@skaut/single   ', '@skaut/single\n\n  ']) {
+    assert.deepEqual(parse(text), { ok: false, reason: 'empty-prompt', name: 'skaut', command: 'single', note: 'say what to change after @skaut/single' }, JSON.stringify(text));
   }
 });
 
@@ -227,7 +240,7 @@ test('parse: two rows that could both apply resolve to the earlier', () => {
 
 test('parse: plansOf is not read for /plan, before the repo resolves, or for no-slug/extra-words', () => {
   const { fn, calls } = plansSpy();
-  for (const text of ['@skaut/plan x', '@skaut/plan', '@nope/start foo', '@skaut/start', '@skaut/start a b', 'x', '@skaut', '@skaut/bogus x']) {
+  for (const text of ['@skaut/plan x', '@skaut/plan', '@nope/start foo', '@skaut/start', '@skaut/start a b', 'x', '@skaut', '@skaut/bogus x', '@skaut/single x', '@skaut/single']) {
     parseWith(text, fn);
   }
   assert.deepEqual(calls, []);
@@ -265,22 +278,46 @@ test('startBuildFailedNote: §2.4 startRun row, codes in plain words, anything e
   assert.equal(startBuildFailedNote('skaut', 'foo', 'disk full'), 'Could not start foo in skaut: disk full');
 });
 
+test('startSingleFailedNote: every refusal reason in words (single-runs §2.1), anything else as it came', () => {
+  const d = { base: 'dev', remote: 'origin' };
+  const note = (reason, detail) => startSingleFailedNote('repo', reason, detail);
+  assert.equal(note('no-commands', {}), 'Could not start the change in repo: no setup/test commands in its .pir/settings.json');
+  assert.equal(note('bad-settings', { why: 'it is not valid JSON' }), 'Could not start the change in repo: its pir settings are broken: it is not valid JSON');
+  assert.equal(note('bad-settings', {}), 'Could not start the change in repo: its pir settings are broken');
+  assert.equal(note('empty-prompt'), 'Could not start the change in repo: the change is empty');
+  // The base-branch refusals and not-a-repo, worded as they are for /plan.
+  assert.equal(note('not-a-repo'), 'Could not start the change in repo: it is not a git repository');
+  assert.equal(note('no-base-setting', {}), 'Could not start the change in repo: no base branch is set');
+  assert.equal(note('no-base-branch', d), 'Could not start the change in repo: dev does not exist');
+  assert.equal(note('fetch-failed', d), "Could not start the change in repo: can't reach origin");
+  assert.equal(note('diverged', d), 'Could not start the change in repo: dev split from origin/dev');
+  assert.equal(note('fetch-failed', null), "Could not start the change in repo: can't reach its remote");
+  for (const code of ['not-a-repo', 'no-base-setting', 'no-base-branch', 'fetch-failed', 'diverged']) {
+    assert.equal(note(code, d).slice('Could not start the change in repo: '.length), startFailedNote('repo', code, d).slice('Could not start planning in repo: '.length), code);
+  }
+  assert.equal(note('spawn failed'), 'Could not start the change in repo: spawn failed');
+  assert.equal(note('empty-brief'), 'Could not start the change in repo: empty-brief', "a /plan code is not a single run's");
+  assert.equal(note('toString'), 'Could not start the change in repo: toString', 'an inherited name is not a code');
+});
+
 test('NOTES are §2.4 verbatim', () => {
-  assert.equal(NOTES.noAt(), 'start with @repo/plan or @repo/start');
+  assert.equal(NOTES.noAt(), 'start with @repo/plan, /start or /single');
   assert.equal(NOTES.unknownRepo('x', '~/src'), 'no repo @x in ~/src — pick one from the list');
   assert.equal(NOTES.ambiguousRepo('x', ['/a/x', '/b/x']), '@x is in more than one folder: /a/x, /b/x');
-  assert.equal(NOTES.noCommand('x'), 'pick a command: @x/plan or @x/start');
-  assert.equal(NOTES.unknownCommand('x', 'go'), '@x/go is not a command — use /plan or /start');
+  assert.equal(NOTES.noCommand('x'), 'pick a command: @x/plan, /start or /single');
+  assert.equal(NOTES.unknownCommand('x', 'go'), '@x/go is not a command — use /plan, /start or /single');
   assert.equal(NOTES.emptyBrief('x'), 'say what to plan after @x/plan');
+  assert.equal(NOTES.emptyPrompt('x'), 'say what to change after @x/single');
   assert.equal(NOTES.noSlug('x'), 'name a plan to build after @x/start');
   assert.equal(NOTES.extraWords('x'), '@x/start takes one plan name');
   assert.equal(NOTES.unknownSlug('x', 'foo'), 'foo is not a reviewed, unfinished plan in x');
 });
 
-test('COMMANDS: plan above start, with their pop-up descriptions', () => {
+test('COMMANDS: plan, start, single in that order, with their pop-up descriptions', () => {
   assert.deepEqual(COMMANDS, [
     { name: 'plan', description: 'plan something new' },
     { name: 'start', description: 'build a reviewed plan' },
+    { name: 'single', description: 'change something small' },
   ]);
 });
 
@@ -294,11 +331,13 @@ test('completionContext: the three contexts at the end of the line', () => {
   assert.deepEqual(at('@skaut/st'), { kind: 'command', name: 'skaut', query: 'st' });
   assert.deepEqual(at('@skaut/start '), { kind: 'slug', name: 'skaut', query: '' });
   assert.deepEqual(at('@skaut/start fo'), { kind: 'slug', name: 'skaut', query: 'fo' });
+  assert.deepEqual(at('@skaut/sin'), { kind: 'command', name: 'skaut', query: 'sin' });
+  assert.deepEqual(at('@skaut/single'), { kind: 'command', name: 'skaut', query: 'single' });
 });
 
 test('completionContext: null outside them', () => {
   const at = (line) => completionContext(line, line.length);
-  for (const line of ['@skaut/plan x', '@skaut/plan ', '@skaut/start foo bar', '@skaut/start foo ', '@skaut x', '@skaut ', 'hello', '', '@ x', '@skaut/Start ', '@skaut/st4']) {
+  for (const line of ['@skaut/plan x', '@skaut/plan ', '@skaut/single ', '@skaut/single fix', '@skaut/start foo bar', '@skaut/start foo ', '@skaut x', '@skaut ', 'hello', '', '@ x', '@skaut/Start ', '@skaut/st4']) {
     assert.equal(at(line), null, JSON.stringify(line));
   }
 });
@@ -322,10 +361,11 @@ test('headLine: every §2.5 row', () => {
   assert.deepEqual(h('@ hello'), { text: 'start with @repo', style: 'your-go' });
   assert.deepEqual(h('@ska'), { text: '@ska is not a repo in ~/src', style: 'your-go' });
   assert.deepEqual(h('@nope/plan do it'), { text: '@nope is not a repo in ~/src', style: 'your-go' });
-  for (const t of ['@skaut', '@skaut a brief', '@skaut/']) assert.deepEqual(h(t), { text: 'in skaut — /plan or /start', style: 'dim' }, t);
-  assert.deepEqual(h('@skaut/bogus x'), { text: '/bogus is not a command — /plan or /start', style: 'your-go' });
+  for (const t of ['@skaut', '@skaut a brief', '@skaut/']) assert.deepEqual(h(t), { text: 'in skaut — /plan, /start or /single', style: 'dim' }, t);
+  assert.deepEqual(h('@skaut/bogus x'), { text: '/bogus is not a command — /plan, /start or /single', style: 'your-go' });
   assert.deepEqual(h('@skaut/plan'), { text: 'plan in skaut', style: 'dim' });
   assert.deepEqual(h('@skaut/plan a packing list'), { text: 'plan in skaut', style: 'dim' });
+  for (const t of ['@skaut/single', '@skaut/single fix the typo', '@skaut/single fix\nit']) assert.deepEqual(h(t), { text: 'change in skaut', style: 'dim' }, t);
   assert.deepEqual(h('@skaut/start'), { text: 'build in skaut', style: 'dim' });
   assert.deepEqual(h('@skaut/start foo'), { text: 'build in skaut', style: 'dim' });
   assert.deepEqual(h('@plan-implement-review/start '), { text: 'nothing to build in plan-implement-review', style: 'your-go' });
@@ -334,7 +374,7 @@ test('headLine: every §2.5 row', () => {
 
 test('headLine: plansOf is read only in the /start rows', () => {
   const { fn, calls } = plansSpy();
-  for (const t of ['@', '', 'x', '@nope/start', '@skaut', '@skaut/', '@skaut/bogus', '@skaut/plan x']) headLine(t, REPOS, { roots: ROOTS, plansOf: fn });
+  for (const t of ['@', '', 'x', '@nope/start', '@skaut', '@skaut/', '@skaut/bogus', '@skaut/plan x', '@skaut/single x']) headLine(t, REPOS, { roots: ROOTS, plansOf: fn });
   assert.deepEqual(calls, []);
   headLine('@skaut/start', REPOS, { roots: ROOTS, plansOf: fn });
   assert.deepEqual(calls, ['skaut']);
@@ -342,21 +382,26 @@ test('headLine: plansOf is read only in the /start rows', () => {
 
 // ─── 80 columns (box-commands §2.5's last line) ──────────────────────────────
 
+// A note wider than the screen wraps in the list view (user, 2026-09-30, single-runs T09), so the three that
+// can overrun at these lengths are left out here: startSingleRun's no-commands and bad-settings-with-a-cause
+// rows, whose words are single-runs DESIGN §2.1's, and the unknown-command row for a mistyped command of 14
+// letters or more.
 test('every note and head line fits 80 columns at an 18-character repo name and slug', () => {
   const name = 'r'.repeat(18);
   const slug = 's'.repeat(18);
   const repos = [{ name, path: `/Users/p/src/${name}`, mtimeMs: 1 }];
   const notes = [
-    NOTES.noAt(), NOTES.unknownRepo(name, ROOTS), NOTES.noCommand(name), NOTES.unknownCommand(name, slug),
-    NOTES.emptyBrief(name), NOTES.noSlug(name), NOTES.extraWords(name), NOTES.unknownSlug(name, slug),
+    NOTES.noAt(), NOTES.unknownRepo(name, ROOTS), NOTES.noCommand(name), NOTES.unknownCommand(name, 'singlee'),
+    NOTES.emptyBrief(name), NOTES.emptyPrompt(name), NOTES.noSlug(name), NOTES.extraWords(name), NOTES.unknownSlug(name, slug),
     startBuildFailedNote(name, slug, 'not-reviewed'), startBuildFailedNote(name, slug, 'no-plan'),
     startBuildFailedNote(name, slug, 'no-test-block'), startFailedNote(name, 'not-a-repo'),
     ...['no-base-setting', 'bad-settings', 'no-base-branch', 'fetch-failed', 'diverged'].map((c) => startFailedNote(name, c, { base: 'dev', remote: 'origin' })),
+    ...['not-a-repo', 'empty-prompt', 'no-base-setting', 'bad-settings', 'no-base-branch', 'fetch-failed', 'diverged'].map((c) => startSingleFailedNote(name, c, { base: 'dev', remote: 'origin' })),
   ];
   for (const n of notes) assert.ok(n.length <= 80, `${n.length}: ${n}`);
   // The label `new` and two spaces precede the head words (§2.5).
   const heads = [
-    [`@${name}`, () => []], [`@${slug}x`, () => []], [`@${name}/${slug}`, () => []], [`@${name}/plan x`, () => []],
+    [`@${name}`, () => []], [`@${slug}x`, () => []], [`@${name}/${slug}`, () => []], [`@${name}/plan x`, () => []], [`@${name}/single x`, () => []],
     [`@${name}/start`, () => [{ slug }]], [`@${name}/start`, () => []],
   ].map(([t, plansOf]) => headLine(t, repos, { roots: ROOTS, plansOf }).text);
   for (const h of heads) assert.ok(`new  ${h}`.length <= 80, h);

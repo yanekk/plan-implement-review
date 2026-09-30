@@ -133,7 +133,7 @@ for (const [cols, rows] of SIZES) {
       const pop = (await screen.waitFor(/→ @repo +\S/)).join('\n');
       assert.match(pop, /^@re\s*$/m, 'the box reads @re, not @@re');
       screen.send(TAB);
-      await screen.waitFor(/new {2}in repo — \/plan or \/start/);
+      await screen.waitFor(/new {2}in repo — \/plan, \/start or \/single/);
       // A repo pick writes `@repo/` and opens the command pop-up (box-commands §2.2); the command is typed.
       await typeSettled(screen, 'plan ');
       await screen.waitFor(/new {2}plan in repo/);
@@ -163,9 +163,11 @@ test('end to end at 80×24: `@nope x` Enter → the no-repo note, text kept; Esc
     screen.send('nope x');
     await screen.waitFor(/@nope is not a repo in/);
     screen.send(ENTER);
-    const noted = (await screen.waitFor(/no repo @nope in/)).join('\n');
-    // The rig's root is a long temp path, so the note is cut at 80 columns; ~/src would fit.
-    assert.match(noted, /^no repo @nope in \/\S+/m);
+    const shown = await screen.waitFor(/no repo @nope in/);
+    const noted = shown.join('\n');
+    // The rig's root is a long temp path, so the note wraps at 80 columns (single-runs T09); ~/src would fit.
+    const head = shown.findIndex((l) => l.startsWith('new  '));
+    assert.match(shown.slice(head - 3, head).join(' '), /^no repo @nope in \/\S+ — pick one from the list$/, 'the note, whole');
     assert.match(noted, /^@nope x\s*$/m, 'the text is kept');
     screen.send('\x1b');
     const reset = (await screen.waitFor(/new {2}start with @repo/)).join('\n');

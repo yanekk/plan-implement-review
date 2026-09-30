@@ -6,7 +6,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { Editor, visibleWidth } from '@earendil-works/pi-tui';
 
-import { createListView, rootsLabel, tildify, HEAD_LABEL, TYPED_HINT, START_HINT, BARE_HINT_SUFFIX } from './list-view.mjs';
+import { createListView, rootsLabel, tildify, HEAD_LABEL, TYPED_HINT, START_HINT, SINGLE_HINT, BARE_HINT_SUFFIX } from './list-view.mjs';
 import { buildDashboard, initialUi } from '../core/dashboard.mjs';
 
 const ESC = '\x1b';
@@ -192,6 +192,41 @@ test('update with an armed chord shows the armed footer on a bare box', () => {
   const lines = v.render(80).map(plain);
   const head = lines.findIndex((l) => l.startsWith('new  '));
   assert.equal(lines[head - 1], 'no repo @x in ~/src — pick one from the list', 'the note sits above the head line');
+});
+
+// single-runs T09: the design's `no setup/test commands` note is 84 characters at a 4-letter repo name and was
+// cut off at 80 columns (user, 2026-09-30: wrap it).
+test('a note wider than the screen wraps at a word above the head line, every line within the width, and the list gives up the row', () => {
+  const note = 'Could not start the change in repo: no setup/test commands in its .pir/settings.json';
+  const { v } = view({ rows: 12, views: manyViews(30) });
+  const rowsShown = (lines) => lines.filter((l) => /run-\d\d/.test(l)).length;
+  v.update({ note: 'a short note' });
+  const short = v.render(80).map(plain);
+  v.update({ note });
+  const lines = v.render(80).map(plain);
+  const head = lines.findIndex((l) => l.startsWith('new  '));
+  assert.deepEqual(lines.slice(head - 2, head), ['Could not start the change in repo: no setup/test commands in its', '.pir/settings.json']);
+  assert.ok(fitsWidth(lines, 80));
+  assert.equal(lines.length, 12, 'still the whole screen, no more');
+  assert.equal(rowsShown(lines), rowsShown(short) - 1, 'the second note line took one list row');
+  assert.equal(v.render(120).map(plain).filter((l) => l === note).length, 1, 'one line where it fits');
+  // A note that would need more than three lines stops at three.
+  v.update({ note: 'word '.repeat(80).trim() });
+  const long = v.render(80).map(plain);
+  assert.equal(long.filter((l) => l.startsWith('word word')).length, 3);
+  assert.ok(fitsWidth(long, 80));
+});
+
+test('mouse: under a two-line note a click in the box still reaches the Editor', () => {
+  const { v, got } = mouseView();
+  v.update({ note: 'Could not start the change in repo: no setup/test commands in its .pir/settings.json' });
+  const lines = v.render(80).map(plain);
+  const boxY = lines.findIndex((l) => l.startsWith('new  ')) + 2;
+  assert.equal(lines[boxY].trimEnd(), '@');
+  v.handleMouse(ev('click', boxY));
+  assert.deepEqual(got, [], 'the box took it');
+  v.handleMouse(ev('click', boxY - 3));
+  assert.equal(got.length, 1, 'a note line is not the box');
 });
 
 // T06 drill: over a typed brief the typing hint hid the armed line, so a second Ctrl+S stopped a run with no
@@ -459,6 +494,62 @@ test('plansOf is called once per repo per typed stretch, and again after the box
   v.render(80);
   assert.deepEqual(calls.plansOf, ['skaut', 'shop', 'skaut']);
   assert.equal(v.plansOf(REPOS[0]), v.plansOf(REPOS[0]), 'the view hands its cached scan to the caller');
+});
+
+// ---- single-runs T09: the third command (DESIGN §2.1). ----
+
+test('the command pop-up lists plan, start, single in that order; `s` narrows it to start and single', async () => {
+  const { v, type } = view();
+  type('skaut/');
+  await settle();
+  const rows = v.render(80).map(plain).filter((l) => /^(→| ) (plan|start|single) /.test(l));
+  assert.deepEqual(rows.map((l) => l.replace(/ +/g, ' ').trim()), ['→ plan plan something new', 'start build a reviewed plan', 'single change something small']);
+  type('s');
+  await settle();
+  const shown = popup(v);
+  assert.match(shown, /start +build a reviewed plan/);
+  assert.match(shown, /single +change something small/);
+  assert.doesNotMatch(shown, /plan something new/);
+});
+
+test('a `single` pick writes `@skaut/single ` and opens no pop-up; Tab on `@skaut/sin` does the same', async () => {
+  const { v, type } = view();
+  type('skaut/');
+  await settle();
+  v.handleInput(DOWN);
+  v.handleInput(DOWN);
+  v.handleInput(ENTER);
+  assert.equal(v.text, '@skaut/single ');
+  await settle();
+  assert.equal(v.completing, false);
+  v.reset();
+  type('skaut/sin');
+  v.handleInput(TAB); // a lone match, before the debounce has shown the pop-up
+  await settle();
+  assert.equal(v.text, '@skaut/single ');
+  await settle();
+  assert.equal(v.completing, false);
+});
+
+test('`/single` text: the head reads `change in skaut`, the hint is the single hint, and Enter submits the whole text', async () => {
+  const { v, type, calls } = view();
+  type('skaut/single');
+  await settle();
+  v.handleInput(ESC); // close the command pop-up the letters opened
+  let lines = v.render(80).map(plain);
+  assert.ok(lines.includes('new  change in skaut'), lines.join('\n'));
+  assert.equal(lines.at(-1), SINGLE_HINT);
+  type(' fix the typo');
+  lines = v.render(80).map(plain);
+  assert.equal(lines.at(-1), SINGLE_HINT);
+  assert.equal(SINGLE_HINT, '↵ start the change · shift+↵ new line · esc clear');
+  v.handleInput(ENTER);
+  assert.deepEqual(calls.submit, ['@skaut/single fix the typo']);
+  // A command that only starts with `single` keeps the typing hint.
+  v.reset();
+  type('skaut/singles x');
+  assert.equal(plain(v.render(80).at(-1)), TYPED_HINT);
+  await settle();
 });
 
 test('pinning: pi-tui Editor still has tryTriggerAutocomplete (box-commands §3.3)', () => {

@@ -22,8 +22,8 @@ for (const [cols, rows] of SIZES) {
     const cases = [
       { keys: [BS, 'hi'], head: 'start with @repo', hint: TYPED },
       { keys: ['nope'], head: /^@nope is not a repo in \//, hint: TYPED },
-      { keys: ['repo'], head: 'in repo — /plan or /start' },
-      { keys: ['repo/', 'bogus'], head: '/bogus is not a command — /plan or /start' },
+      { keys: ['repo'], head: 'in repo — /plan, /start or /single' },
+      { keys: ['repo/', 'bogus'], head: '/bogus is not a command — /plan, /start or /single' },
       { keys: ['repo/plan ', 'x'], head: 'plan in repo', hint: TYPED },
       { keys: ['repo/start '], head: 'build in repo', hint: START_HINT },
     ];
