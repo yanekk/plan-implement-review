@@ -16,7 +16,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 
 | # | Task | Depends on | State | Notes |
 |---|---|---|---|---|
-| T01 | settings-commands | — | ⬜ | |
+| T01 | settings-commands | — | ✅ | |
 | T02 | single-flow | — | ⬜ | |
 | T03 | held-sessions | — | ⬜ | |
 | T04 | single-program | T02, T03 | ⬜ | |
