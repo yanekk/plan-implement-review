@@ -7,7 +7,7 @@ lives in [FINDINGS.md](FINDINGS.md). Sixty words to a Notes cell, counted.
 
 **Status:** Planned, not started. The build waits for `pir/base-branch` to be merged into `main` and
 `main` into `pir/single-runs`.
-**Last updated:** 2026-09-29
+**Last updated:** 2026-09-30
 **Next `pir-work` will:** T02 single-flow, the first task on the critical path.
 
 ## Tasks
@@ -17,7 +17,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | # | Task | Depends on | State | Notes |
 |---|---|---|---|---|
 | T01 | settings-commands | — | ⬜ | |
-| T02 | single-flow | — | ⬜ | |
+| T02 | single-flow | — | 🔍 | `singleflow.mjs` and `kind: 'single'`; 64 tests. Deviations: facts gain `head` (with a passed check) and `sessionId`; state gains `pending` and `red`; no `done` step, a finished run keeps its step; `initialSingleState` does not store the prompt; spawn `note` is the raw setup result; a setup note is its own paragraph. Detail in the commit. |
 | T03 | held-sessions | — | ⬜ | |
 | T04 | single-program | T02, T03 | ⬜ | |
 | T05 | single-launch | T01, T02 | ⬜ | |
@@ -30,7 +30,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T12 | single-live | T07, T11 | ⬜ | |
 | T13 | docs-and-readme | T12 | ⬜ | |
 
-**Review queue:** *(empty)*
+**Review queue:** T02
 
 ## Blocked on the user
 

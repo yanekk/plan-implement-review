@@ -193,6 +193,12 @@ test('round trip of a plan record with a label and go declined', () => {
   assert.deepEqual(parseRecord(serializeRecord(r)), r);
 });
 
+test('round trip of a single-run record with its label and base branch', () => {
+  const r = { ...validRecord(), kind: 'single', label: 'fix the typo in the REA…', go: null, baseBranch: 'main' };
+  assert.deepEqual(parseRecord(serializeRecord(r)), r);
+  assert.equal(JSON.parse(serializeRecord(r)).kind, 'single');
+});
+
 test('serializeRecord writes kind, label and go, defaulting an absent kind to work', () => {
   const r = validRecord();
   delete r.kind;

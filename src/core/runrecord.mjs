@@ -30,10 +30,11 @@ const FINAL_STATES = new Set(['finished', 'stopped']);
 const REQUIRED_STRINGS = ['slug', 'repo', 'repoPath', 'controlDir', 'startTime', 'branch'];
 
 // What kind of run an entry points at (plans/pir-plan-command DESIGN §2.10, §3.5): a planning run
-// (`pir plan`) or a build (`pir start`). Absent reads `work`, so every entry written before planning
+// (`pir plan`), a build (`pir start`) or a single run (`@repo/single`, plans/single-runs DESIGN §2.3).
+// Absent reads `work`, so every entry written before planning
 // runs existed reads exactly as it did. An unknown value is a parse failure, not a silent `work`: a
 // newer writer's kind the dashboard does not know must not be shown as a build it can resume.
-const KINDS = new Set(['plan', 'work']);
+const KINDS = new Set(['plan', 'work', 'single']);
 
 // The person's go decision on a reviewed plan (§2.8). null is "not decided"; the only recorded
 // decision is `declined` — a start is recorded by the build overwriting the entry as `kind: 'work'`.
