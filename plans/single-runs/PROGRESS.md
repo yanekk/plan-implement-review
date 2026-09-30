@@ -8,7 +8,7 @@ lives in [FINDINGS.md](FINDINGS.md). Sixty words to a Notes cell, counted.
 **Status:** Planned, not started. The build waits for `pir/base-branch` to be merged into `main` and
 `main` into `pir/single-runs`.
 **Last updated:** 2026-09-30
-**Next `pir-work` will:** T02 single-flow, the first task on the critical path.
+**Next `pir-work` will:** T01 settings-commands and T03 held-sessions; T04, T05 and T07 wait on them or are open now that T02 is ✅.
 
 ## Tasks
 
@@ -17,7 +17,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | # | Task | Depends on | State | Notes |
 |---|---|---|---|---|
 | T01 | settings-commands | — | ⬜ | |
-| T02 | single-flow | — | 🔍 | `singleflow.mjs` and `kind: 'single'`; 64 tests. Deviations: facts gain `head` (with a passed check) and `sessionId`; state gains `pending` and `red`; no `done` step, a finished run keeps its step; `initialSingleState` does not store the prompt; spawn `note` is the raw setup result; a setup note is its own paragraph. Detail in the commit. |
+| T02 | single-flow | — | ✅ | `singleflow.mjs` and `kind: 'single'`; 66 tests. Review fixed two defects, reproduced by probe and locked by tests: a `dropped` drained with another report or a command result lost to it. Probed a 20 000-run random walk of `decideSingleStep` for invariants: clean after the fix. Implementer's deviations reviewed and kept: facts `head`, `sessionId`; state `pending`, `red`; no `done` step. |
 | T03 | held-sessions | — | ⬜ | |
 | T04 | single-program | T02, T03 | ⬜ | |
 | T05 | single-launch | T01, T02 | ⬜ | |
@@ -30,7 +30,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T12 | single-live | T07, T11 | ⬜ | |
 | T13 | docs-and-readme | T12 | ⬜ | |
 
-**Review queue:** T02
+**Review queue:** *(empty)*
 
 ## Blocked on the user
 

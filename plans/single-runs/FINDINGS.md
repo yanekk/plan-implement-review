@@ -7,6 +7,9 @@ Legend: 🐞 defect found · ✅ verified by hand with the user · 📌 worth kn
 
 | Date | | Finding |
 |---|---|---|
+| 2026-09-30 | 🐞 | T04, needs a decision: tests that leave a file git does not ignore make every green run read dirty, so `decideSingleStep` reruns the tests without end and tells nobody. DESIGN §2.4 step 3 names no exit. Found in T02 review. |
+| 2026-09-30 | 📌 | T04: a commit the session makes after a green result without reporting is not seen by `decideSingleStep`; the step closes at the idle gate on the tested head. In review that ends `ready` with an untested commit. |
+| 2026-09-30 | 📌 | T04: `facts.exited` and `facts.live` must describe the session held now. After a `resumeSession` that a `send` forced, a stale `exited: true` on the next call reads as a crash (`exitCrashed`). |
 | 2026-09-30 | 🐞 | `npm test` pty drills (`plan-rig-*`, coordinator drill) fail on timing when several workers run the suite at once (load 25 to 40); each file passes alone. T02 saw 1 then 5 such failures. |
 | 2026-09-30 | 📌 | T04: `finish` can arrive with tests still running (`dropped` mid-run), so the shell kills the command. A passed check needs `facts.head` or `decideSingleStep` throws. A dropped report's body stays in `state.accepted.body` for T10's footer. |
 | 2026-09-30 | 📌 | T04: the spawn `note` is the raw failed setup result. `formatSetupNote` ends by pointing at `plans/{slug}/DESIGN.md`, which a single run lacks; its last line needs single-run wording (settings files) the design has not given. |
