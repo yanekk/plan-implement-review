@@ -61,9 +61,10 @@ const USAGE_TEXT =
   'usage: pir                    the dashboard\n' +
   '       pir plan ["brief"]     plan something new\n' +
   '       pir start {slug}       build a reviewed plan\n' +
-  '       pir notify [test|off]  phone alerts: set up, test, turn off\n';
+  '       pir notify [test|off]  phone alerts: set up, test, turn off\n' +
+  '       pir service [on|off]   the local API service: state, start, stop\n';
 
-test('the usage text is exactly the four verbs', () => {
+test('the usage text is exactly the five verbs', () => {
   assert.equal(USAGE, USAGE_TEXT);
 });
 
@@ -454,6 +455,130 @@ test('[notify] the default QR renders the ntfy URL with uqr', async (t) => {
   delete h.deps.qr;
   assert.equal(await run(['notify'], h.deps), 0);
   assert.match(h.text(), /[█▀▄]{10}/, 'a block-character QR is drawn');
+});
+
+// --- pir service (api-service T07, DESIGN §2.7) ------------------------------------------------------
+// The three collaborators are spies: what they return is printed and becomes the exit code. Nothing here
+// reaches launchctl, the port or a login item.
+
+function serviceHarness({ results = {}, env = { PIR_HOME: '/scratch/home' } } = {}) {
+  const calls = [];
+  const out = [];
+  const errs = [];
+  const spy = (name) => async (opts) => {
+    calls.push({ name, opts });
+    const r = results[name] ?? { text: `${name} text`, code: 0 };
+    if (r instanceof Error) throw r;
+    return r;
+  };
+  const deps = {
+    env,
+    stdout: { write: (s) => out.push(s) },
+    stderr: { write: (s) => errs.push(s) },
+    serviceOn: spy('on'),
+    serviceOff: spy('off'),
+    serviceStatus: spy('status'),
+    openDashboard: () => calls.push({ name: 'dashboard' }),
+  };
+  return { env, calls, out, errs, deps };
+}
+
+test('[service] → serviceStatus; its text and a newline on stdout, its code returned', async () => {
+  const running = 'pir service: running at http://127.0.0.1:47717 (pid 4711)\nlast usage reading 2 min ago: 5-hour 97%, weekly 77%';
+  const h = serviceHarness({ results: { status: { text: running, code: 0 } } });
+  const result = run(['service'], h.deps);
+  assert.ok(result instanceof Promise, 'the code comes back as a promise');
+  assert.equal(await result, 0);
+  assert.deepEqual(h.out, [`${running}\n`]);
+  assert.deepEqual(h.errs, []);
+  assert.deepEqual(h.calls, [{ name: 'status', opts: { env: h.env } }], 'only the status check ran, with run\'s env');
+});
+
+test('[service] a state other than running → its code, the text still on stdout', async () => {
+  const off = 'pir service: off\nturn it on with: pir service on';
+  const h = serviceHarness({ results: { status: { text: off, code: 1 } } });
+  assert.equal(await run(['service'], h.deps), 1);
+  assert.deepEqual(h.out, [`${off}\n`]);
+  assert.deepEqual(h.errs, []);
+});
+
+test('[service on] and [service off] → the matching collaborator, text printed, code returned', async () => {
+  const results = {
+    on: { text: 'pir service: macOS would not register it: Bootstrap failed: 5: Input/output error\ntry: pir service off, then pir service on', code: 1 },
+    off: { text: 'pir service: off', code: 0 },
+  };
+  for (const word of ['on', 'off']) {
+    const h = serviceHarness({ results });
+    assert.equal(await run(['service', word], h.deps), results[word].code, word);
+    assert.deepEqual(h.out, [`${results[word].text}\n`], word);
+    assert.deepEqual(h.errs, [], word);
+    assert.deepEqual(h.calls, [{ name: word, opts: { env: h.env } }], word);
+  }
+});
+
+test('[service] an unknown or extra argument → usage on stderr, exit 2, no collaborator called', () => {
+  for (const argv of [['service', 'restart'], ['service', 'on', 'extra'], ['service', 'off', 'now'], ['service', 'status'], ['service', 'refresh'], ['service', '--on']]) {
+    const h = serviceHarness();
+    assert.equal(run(argv, h.deps), 2, argv.join(' '));
+    assert.deepEqual(h.errs, [USAGE], argv.join(' '));
+    assert.deepEqual(h.out, [], argv.join(' '));
+    assert.deepEqual(h.calls, [], argv.join(' '));
+  }
+});
+
+// serviceOn and serviceOff reject when a write fails (FINDINGS 2026-09-30, T06 review). The person gets
+// the line `node service-ctl.mjs` prints for the same failure, not a stack trace.
+test('[service] a collaborator that rejects, or throws → one line on stderr, exit 1', async () => {
+  const denied = new Error("EACCES: permission denied, open '/Users/me/Library/LaunchAgents/com.pir.api-service.plist.tmp'");
+  for (const word of ['on', 'off']) {
+    const h = serviceHarness({ results: { [word]: denied } });
+    assert.equal(await run(['service', word], h.deps), 1, word);
+    assert.deepEqual(h.errs, [`pir service: ${denied.message}\n`], word);
+    assert.deepEqual(h.out, [], word);
+  }
+  const h = serviceHarness();
+  h.deps.serviceStatus = () => {
+    throw new Error('a scratch item needs its own label and plistPath');
+  };
+  assert.equal(await run(['service'], h.deps), 1);
+  assert.deepEqual(h.errs, ['pir service: a scratch item needs its own label and plistPath\n']);
+});
+
+test('the usage text names pir service [on|off]', () => {
+  assert.match(USAGE, /^ {7}pir service \[on\|off\] {3}the local API service: state, start, stop$/m);
+});
+
+// The real verb against the real service-ctl, on a scratch home: the home rule (DESIGN §2.8) keeps it
+// from launchctl, the fixed port and the login item, so this is safe under the test runner. Off macOS
+// every form prints the one needs-macOS line instead.
+test('pir service on a scratch home prints a §2.7 text; on is skipped and changes nothing', (t) => {
+  const home = realpathSync(mkdtempSync(join(tmpdir(), 'pir-service-cmd-')));
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+  const pirPath = fileURLToPath(new URL('./pir.mjs', import.meta.url));
+  const pir = (...args) =>
+    spawnSync('node', [pirPath, 'service', ...args], {
+      encoding: 'utf8',
+      env: { ...process.env, HOME: home, PIR_HOME: home },
+      timeout: 20000,
+    });
+  const mac = process.platform === 'darwin';
+  const needsMac = 'pir service needs macOS (launchd)\n';
+
+  const status = pir();
+  assert.equal(status.stderr, '');
+  assert.equal(status.stdout, mac ? 'pir service: registered but not answering\ntry: pir service off, then pir service on\n' : needsMac);
+  assert.equal(status.status, 1);
+
+  const on = pir('on');
+  assert.equal(on.stderr, '');
+  assert.equal(on.stdout, mac ? 'skipped the API service (not the real home)\n' : needsMac);
+  assert.equal(existsSync(join(home, 'Library')), false, 'no plist written');
+  assert.equal(existsSync(join(home, '.pir')), false, 'no marker, no discovery file');
+
+  const bad = pir('restart');
+  assert.equal(bad.status, 2);
+  assert.equal(bad.stdout, '');
+  assert.equal(bad.stderr, USAGE);
 });
 
 // The real `pir plan` against the real engine, in a scratch repo with no .pir/settings.json (base-branch

@@ -8,6 +8,7 @@
 //                         instead of starting a second — "start or open".
 //   pir notify [test|off] → phone alerts through ntfy: set up (topic, QR, test alert), send a test alert,
 //                         or turn them off (reliable-notifications DESIGN §2.6).
+//   pir service [on|off] → the local API service: its state, start it, stop it (api-service DESIGN §2.7).
 //   pir <other>         → a usage error pointing at `pir start <other>`. The bare-slug form was removed, not
 //                         aliased, because `plan` and `start` would otherwise be indistinguishable from slugs
 //                         and a plan named `plan` would silently change meaning (user 2026-09-26).
@@ -33,6 +34,11 @@ import {
   newTopic as newTopicDefault,
   DEFAULT_SERVER,
 } from './notify-config.mjs';
+import {
+  serviceOn as serviceOnDefault,
+  serviceOff as serviceOffDefault,
+  serviceStatus as serviceStatusDefault,
+} from './service-ctl.mjs';
 
 // The TUI hand-off points: the cross-repo dashboard and a single run's live view, both the raw-mode
 // loop in pir-tui.mjs. They are the defaults run() calls; injected spies replace them under `npm test`, so
@@ -46,7 +52,8 @@ export const USAGE =
   'usage: pir                    the dashboard\n' +
   '       pir plan ["brief"]     plan something new\n' +
   '       pir start {slug}       build a reviewed plan\n' +
-  '       pir notify [test|off]  phone alerts: set up, test, turn off\n';
+  '       pir notify [test|off]  phone alerts: set up, test, turn off\n' +
+  '       pir service [on|off]   the local API service: state, start, stop\n';
 
 // startPlanRun's pre-flight refusals (DESIGN §2.2), one clean line each. Nothing was created on any of
 // them, so the message only has to say what to fix. A base-branch refusal (no-base-setting, bad-settings,
@@ -63,7 +70,8 @@ const PLAN_REFUSALS = {
 // above; the tests inject spies for all of them and a stderr sink shaped like process.stderr (a
 // .write(string)). The return is the process exit code — 0 when a view is opened (or the brief box was
 // cancelled), 1 for a refused start, 2 for a usage error — so a script can tell a refused run from a
-// running one. `pir notify` and `pir notify test` return it as a promise when they send. Bare `pir plan`
+// running one. `pir notify` and `pir notify test` return it as a promise when they send, and every form
+// of `pir service` returns it as a promise. Bare `pir plan`
 // returns it as a promise, because the code is known only once the person has sent or cancelled the
 // brief. Every other path returns it at once.
 export function run(
@@ -85,6 +93,9 @@ export function run(
     removeNotifyConfig = removeNotifyConfigDefault,
     newTopic = newTopicDefault,
     qr = renderUnicodeCompact,
+    serviceOn = serviceOnDefault,
+    serviceOff = serviceOffDefault,
+    serviceStatus = serviceStatusDefault,
   } = {},
 ) {
   if (argv.length === 0) {
@@ -135,6 +146,14 @@ export function run(
     if (rest.length === 0) return notifySetup(deps);
     if (rest.length === 1 && rest[0] === 'test') return notifyTest(deps);
     if (rest.length === 1 && rest[0] === 'off') return notifyOff(deps);
+    stderr.write(USAGE);
+    return 2;
+  }
+
+  if (verb === 'service') {
+    if (rest.length === 0) return service(serviceStatus, { env, stdout, stderr });
+    if (rest.length === 1 && rest[0] === 'on') return service(serviceOn, { env, stdout, stderr });
+    if (rest.length === 1 && rest[0] === 'off') return service(serviceOff, { env, stdout, stderr });
     stderr.write(USAGE);
     return 2;
   }
@@ -227,6 +246,28 @@ function notifyOff({ env, stdout, removeNotifyConfig }) {
   removeNotifyConfig(env);
   stdout.write('Alerts are off. `pir notify` sets them up again with a new topic.\n');
   return 0;
+}
+
+// --- pir service (api-service DESIGN §2.7) ----------------------------------------------------------
+// The wording and the exit code are service-ctl's: 0 from the bare form only when the service answers.
+// `env` is passed on so a scratch PIR_HOME decides the home here as it does for every other verb.
+//
+// The catch is needed because `on` and `off` reject when a write fails (an unwritable
+// ~/Library/LaunchAgents, say); the line and the code match what `node service-ctl.mjs` prints for the
+// same failure, so the person reads one wording whichever door they came through.
+function service(action, { env, stdout, stderr }) {
+  return Promise.resolve()
+    .then(() => action({ env }))
+    .then(
+      ({ text, code }) => {
+        stdout.write(`${text}\n`);
+        return code;
+      },
+      (err) => {
+        stderr.write(`pir service: ${err?.message ?? err}\n`);
+        return 1;
+      },
+    );
 }
 
 // refusal is a planPreflight or startPlanRun result: { reason, message? }.
