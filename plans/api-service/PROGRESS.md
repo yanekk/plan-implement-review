@@ -23,11 +23,11 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T06 | service-ctl | T02, T03 | ✅ | |
 | T07 | service-command | T06 | ✅ | |
 | T08 | usage-e2e | T04, T05 | ⬜ | |
-| T09 | launchd-check | T05, T06 | 🔍 | `harness/service-live-check.mjs`, 10 tests. Real run exited 0, label not loaded after (FINDINGS, worker-driven). Deviations: `serviceLiveCheck` also takes `now`, `uid`, `env`, and `main` is exported, for the fake clock; with no `launchctl` injected it refuses under `NODE_TEST_CONTEXT`; the teardown fails the check if the label stays loaded. |
+| T09 | launchd-check | T05, T06 | ✅ | Reviewed. One defect: a signal ended the check before its teardown and left the scratch job loaded; reproduced on the real launchd, fixed, two tests lock it. Reviewer reran the real check twice: exit 0, label not loaded after. Probed the refusal, the stale-pid kill guard and the teardown order. Background-item notice inferred from the log only. |
 | T10 | live-usage-check | T08 | ⬜ | |
 | T11 | docs-and-readme | T07, T09, T10 | ⬜ | |
 
-**Review queue:** T09
+**Review queue:** empty
 
 ## Blocked on the user
 
