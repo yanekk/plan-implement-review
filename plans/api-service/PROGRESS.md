@@ -25,7 +25,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T08 | usage-e2e | T04, T05 | ✅ | |
 | T09 | launchd-check | T05, T06 | ✅ | |
 | T10 | live-usage-check | T08 | ✅ | |
-| T11 | docs-and-readme | T07, T09, T10 | ⬜ | |
+| T11 | docs-and-readme | T07, T09, T10 | ✅ | |
 
 **Review queue:** *(empty)*
 
