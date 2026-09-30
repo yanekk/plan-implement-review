@@ -18,7 +18,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T01 | usage-core | — | ✅ | |
 | T02 | api-core | — | ✅ | |
 | T03 | service-core | — | ✅ | |
-| T04 | usage-report | T01, T02 | ⬜ | |
+| T04 | usage-report | T01, T02 | ✅ | |
 | T05 | api-service | T01, T02 | ⬜ | |
 | T06 | service-ctl | T02, T03 | ✅ | |
 | T07 | service-command | T06 | ⬜ | |
