@@ -20,7 +20,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T02 | single-flow | — | ✅ | |
 | T03 | held-sessions | — | ✅ | |
 | T04 | single-program | T02, T03 | ⬜ | |
-| T05 | single-launch | T01, T02 | ⬜ | |
+| T05 | single-launch | T01, T02 | ✅ | |
 | T06 | single-alerts | T04 | ⬜ | |
 | T07 | single-skill | T02 | ✅ | |
 | T08 | single-rig | T04, T05 | ⬜ | |
