@@ -4,6 +4,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync, readFileSync, readdirSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname, relative } from 'node:path';
@@ -690,4 +691,48 @@ test('startWorker with no reportUsage under the test runner reports nothing: the
   assert.equal(worker.entries().filter((e) => e.dir === 'in' && e.event.type === 'rate_limit_event').length, 2, 'the events arrived');
   const written = readdirSync(dir, { recursive: true }).filter((f) => String(f).endsWith('usage.json') || String(f).endsWith('.tmp'));
   assert.deepEqual(written, []);
+});
+
+test('a PIR_RUN=1 process on a scratch home saves the newest reading with no reportUsage passed: the default is wired', (t) => {
+  // The three tests above pass with the default parameter replaced by null (review, by mutation). The
+  // default is computed once from process.env, so only a process of its own can show it switched on.
+  // The scratch PIR_HOME is what lets the child write although it inherits NODE_TEST_CONTEXT (§2.8).
+  const home = mkdtempSync(join(tmpdir(), 'pir-worker-proc-home-'));
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+  const scriptPath = join(home, 'script.json');
+  const logPath = join(home, 'conversations', 'T04-implement-1.ndjson');
+  writeFileSync(scriptPath, JSON.stringify(usageTurn()));
+  const url = (rel) => JSON.stringify(new URL(rel, import.meta.url).href);
+  // The child closes its worker before it exits, so no write can land after the home is removed.
+  const code = `
+    const { startWorker } = await import(${url('./worker-proc.mjs')});
+    const { fakeClaudeSpawner } = await import(${url('./fake/claude-stream.mjs')});
+    const worker = startWorker({
+      cwd: ${JSON.stringify(home)}, sessionId: ${JSON.stringify(SESSION)}, name: ${JSON.stringify(NAME)},
+      logPath: ${JSON.stringify(logPath)}, claudePath: ${JSON.stringify(CLAUDE)},
+      spawnProcess: fakeClaudeSpawner({ script: ${JSON.stringify(scriptPath)} }),
+    });
+    worker.send('go');
+    const start = Date.now();
+    while (!worker.entries().some((e) => e.dir === 'in' && e.event.type === 'result')) {
+      if (Date.now() - start > 20000) throw new Error('timed out waiting for the turn');
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    await worker.close({ graceMs: 100, killMs: 300 });
+  `;
+  execFileSync(process.execPath, ['--input-type=module', '-e', code], {
+    cwd: dirname(fileURLToPath(import.meta.url)),
+    env: { ...process.env, PIR_RUN: '1', PIR_HOME: home },
+    timeout: 60_000,
+  });
+
+  const log = readFileSync(logPath, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+  const last = log.filter((e) => e.dir === 'in' && e.event.type === 'rate_limit_event').at(-1);
+  assert.deepEqual(JSON.parse(readFileSync(join(home, '.pir', 'usage.json'), 'utf8')), {
+    version: 1,
+    observed_at: last.t,
+    five_hour: { utilization: 0.6, resets_at: 1790673000 },
+    seven_day: { utilization: 0.77, resets_at: 1790830800 },
+  });
+  assert.deepEqual(readdirSync(join(home, '.pir')), ['usage.json']);
 });
