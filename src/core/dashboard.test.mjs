@@ -1065,6 +1065,21 @@ test('a single run opens on its steps: build, review, merge; → opens a step\'s
   assert.match(singleNoSessionNote({ id: 'review' }), /^review has no session yet — the reviewer starts when/);
 });
 
+test('a dropped single run: → on the review step it never reached says the run was dropped, not that a reviewer is coming', () => {
+  const views = [singleView({ state: 'finished', over: { outcome: 'dropped' }, sessions: [sSession('build', 'exited', false)] })];
+  let ui = dashboardReducer(initialUi(), { type: 'open' }, views).ui;
+  ui = dashboardReducer(ui, { type: 'down' }, views).ui;
+  const review = dashboardReducer(ui, { type: 'open' }, views).ui;
+  assert.deepEqual([review.view, review.note], ['watch', 'review has no session — the run was dropped before the reviewer started.']);
+  ui = dashboardReducer(ui, { type: 'down' }, views).ui;
+  assert.equal(dashboardReducer(ui, { type: 'open' }, views).ui.note, 'merge has no conversation — the run was dropped, so there is nothing to merge.');
+  // A stopped run is resumable: its reviewer may still start, and its merge is still to come.
+  const stopped = [singleView({ state: 'stopped', sessions: [sSession('build', 'exited', false)] })];
+  let s = dashboardReducer(initialUi(), { type: 'open' }, stopped).ui;
+  s = dashboardReducer(s, { type: 'down' }, stopped).ui;
+  assert.match(dashboardReducer(s, { type: 'open' }, stopped).ui.note, /^review has no session yet/);
+});
+
 test('an open single run is followed through its rename by the program behind it', () => {
   const before = [singleView({ sessions: [sSession('build', 'busy')] })];
   const ui = dashboardReducer(initialUi(), { type: 'open' }, before).ui;

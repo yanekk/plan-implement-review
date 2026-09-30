@@ -252,9 +252,11 @@ export function noSessionNote(step) {
   return 'plan has no session yet — the planner is starting.';
 }
 
-// The same for a single run's step rows (single-runs DESIGN §2.8).
-export function singleNoSessionNote(step) {
-  if (step?.id === 'merge') return 'merge has no conversation — the merge is yours to run by hand.';
+// The same for a single run's step rows (single-runs DESIGN §2.8). A dropped run is final: its reviewer
+// will never start and nothing is handed over to merge, so neither row may promise what is not coming.
+export function singleNoSessionNote(step, { dropped = false } = {}) {
+  if (step?.id === 'merge') return dropped ? 'merge has no conversation — the run was dropped, so there is nothing to merge.' : 'merge has no conversation — the merge is yours to run by hand.';
+  if (step?.id === 'review' && dropped) return 'review has no session — the run was dropped before the reviewer started.';
   if (step?.id === 'review') return 'review has no session yet — the reviewer starts when the change is built and its tests pass.';
   return 'build has no session yet — the builder is starting.';
 }
@@ -402,7 +404,7 @@ export function dashboardReducer(ui, event, views = []) {
         const open = findOpen(views, ui);
         if ((task.agent || task.finisher) && !w?.id) return { ui: { ...ui, note: noCoordinatorNote(views, ui), armed: null }, intent: null };
         if (!w?.id) {
-          const note = isSingle(open) ? singleNoSessionNote(task) : isPlan(open) ? noSessionNote(task) : noWorkerNote(task, tasks);
+          const note = isSingle(open) ? singleNoSessionNote(task, { dropped: singleState(open)?.outcome === 'dropped' }) : isPlan(open) ? noSessionNote(task) : noWorkerNote(task, tasks);
           return { ui: { ...ui, note, armed: null }, intent: null };
         }
         const openWorker = { taskId: task.id, workerId: w.id, logPath: w.logPath ?? null, live: !!w.live };
