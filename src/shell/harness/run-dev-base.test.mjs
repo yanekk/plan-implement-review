@@ -27,7 +27,7 @@ test('installFixture(dev-base) seeds a repo with only dev, settings naming dev, 
   const r = installFixture('dev-base', { into: dir });
   assert.equal(r.base, 'dev');
   assert.equal(git(dir, 'branch', '--format=%(refname:short)'), 'dev', 'dev is the only branch');
-  assert.equal(git(dir, 'show', 'dev:.pir/settings.json'), '{"baseBranch":"dev"}');
+  assert.equal(git(dir, 'show', 'dev:.pir/settings.json'), '{"baseBranch":"dev","setup":[],"test":["true"]}');
   assert.equal(r.remote.path, join(dir, REMOTE_DIR));
   const remoteDev = git(dir, 'ls-remote', '--heads', 'origin', 'refs/heads/dev').split(/\s/)[0];
   assert.equal(remoteDev, r.remote.ahead);

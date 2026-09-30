@@ -5,10 +5,9 @@ lives in [FINDINGS.md](FINDINGS.md). Sixty words to a Notes cell, counted.
 
 **Plan reviewed:** 2026-09-29 — 3 fixed, 4 decided with the user
 
-**Status:** Planned, not started. The build waits for `pir/base-branch` to be merged into `main` and
-`main` into `pir/single-runs`.
-**Last updated:** 2026-09-29
-**Next `pir-work` will:** T02 single-flow, the first task on the critical path.
+**Status:** Building. T01 implemented, awaiting review.
+**Last updated:** 2026-09-30
+**Next `pir-work` will:** review T01 settings-commands.
 
 ## Tasks
 
@@ -16,7 +15,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 
 | # | Task | Depends on | State | Notes |
 |---|---|---|---|---|
-| T01 | settings-commands | — | ⬜ | |
+| T01 | settings-commands | — | 🔍 | `parseSettings` takes `setup`/`test`; `effectiveCommands`, `commandsRefusalText`, `resolveSettings` added, `resolveBaseSetting` built on it. 16 new tests. Deviations: a whitespace-only command line is rejected too. Three tests outside the file list pin the helpers' settings text and were updated. `no-commands` text is one line, naming only missing keys (user, 2026-09-30). |
 | T02 | single-flow | — | ⬜ | |
 | T03 | held-sessions | — | ⬜ | |
 | T04 | single-program | T02, T03 | ⬜ | |
@@ -30,7 +29,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T12 | single-live | T07, T11 | ⬜ | |
 | T13 | docs-and-readme | T12 | ⬜ | |
 
-**Review queue:** *(empty)*
+**Review queue:** T01
 
 ## Blocked on the user
 

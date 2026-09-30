@@ -217,9 +217,10 @@ const SEED_IDENT = ['-c', 'user.name=PIR Fixture', '-c', 'user.email=fixture@pir
 function seedGit(dir, runGit, date, base = 'main') {
   const init = runGit(['init', '-b', base], { cwd: dir });
   if (!init.ok) throw new Error(`fixture seed: git init failed: ${init.stderr}`);
-  // The seeded repo names its base, as pir requires (base-branch DESIGN §2.1, §5).
+  // The seeded repo names its base, as pir requires (base-branch DESIGN §2.1, §5), and the setup/test
+  // commands a single run needs (single-runs DESIGN §2.2): no setup, a test that passes.
   mkdirSync(join(dir, '.pir'), { recursive: true });
-  writeFileSync(join(dir, '.pir', 'settings.json'), JSON.stringify({ baseBranch: base }) + '\n');
+  writeFileSync(join(dir, '.pir', 'settings.json'), JSON.stringify({ baseBranch: base, setup: [], test: ['true'] }) + '\n');
   runGit(['add', '-A'], { cwd: dir });
   const env = { GIT_AUTHOR_DATE: date, GIT_COMMITTER_DATE: date };
   const commit = runGit([...SEED_IDENT, 'commit', '-m', 'fixture: scratch plan seed', '--no-edit'], { cwd: dir, env });

@@ -6,9 +6,11 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { resolveBaseSetting, pickRemote, prepareBase, defaultGit, resolveRunBase } from './base-branch.mjs';
+import { dirname, join } from 'node:path';
+import { resolveSettings, resolveBaseSetting, pickRemote, prepareBase, defaultGit, resolveRunBase } from './base-branch.mjs';
+import { effectiveBase, effectiveCommands } from '../core/basebranch.mjs';
 
 const ID = ['-c', 'user.name=pir test', '-c', 'user.email=test@pir.invalid', '-c', 'commit.gpgsign=false'];
 function git(cwd, ...args) {
@@ -121,6 +123,55 @@ test('resolveBaseSetting: an unreadable settings path (a folder) is bad-settings
   const r = resolveBaseSetting(w.root, { env: w.env });
   assert.equal(r.reason, 'bad-settings');
   assert.equal(r.file, '.pir/settings.json');
+});
+
+// --- resolveSettings (single-runs T01, DESIGN §2.2) -----------------------------------------------------
+
+test('resolveSettings: reads both files, unmerged, with the paths a person can open', (t) => {
+  const w = settingsWorld(t);
+  w.writeRepo('{"baseBranch": "dev", "setup": ["npm ci"], "test": ["npm test"]}');
+  w.writeUser('{"test": ["npm run quick"]}');
+  const s = resolveSettings(w.root, { env: w.env });
+  assert.deepEqual(s, {
+    repo: { ok: true, settings: { baseBranch: 'dev', setup: ['npm ci'], test: ['npm test'] } },
+    user: { ok: true, settings: { test: ['npm run quick'] } },
+    repoFile: '.pir/settings.json',
+    userFile: w.userFile,
+  });
+  assert.deepEqual(effectiveCommands(s), { ok: true, setup: ['npm ci'], test: ['npm run quick'] });
+  assert.deepEqual(effectiveBase(s), { ok: true, base: 'dev', file: '.pir/settings.json' });
+});
+
+test('resolveSettings: absent files read as empty settings', (t) => {
+  const w = settingsWorld(t);
+  const s = resolveSettings(w.root, { env: w.env });
+  assert.deepEqual(s.repo, { ok: true, settings: {} });
+  assert.deepEqual(s.user, { ok: true, settings: {} });
+  assert.deepEqual(effectiveCommands(s), { ok: false, reason: 'no-commands', missing: ['setup', 'test'] });
+});
+
+test('resolveSettings: a broken key is bad-settings naming its file, even with a good other file', (t) => {
+  const w = settingsWorld(t);
+  w.writeRepo('{"baseBranch": "dev", "setup": [], "test": []}');
+  w.writeUser('{"test": ["npm test"]}');
+  assert.deepEqual(effectiveCommands(resolveSettings(w.root, { env: w.env })), {
+    ok: false, reason: 'bad-settings', file: '.pir/settings.json', why: '"test" must be a non-empty list of commands',
+  });
+  w.writeRepo('{"baseBranch": "dev", "setup": [], "test": ["npm test"]}');
+  w.writeUser('{"setup": "npm ci"}');
+  assert.deepEqual(effectiveCommands(resolveSettings(w.root, { env: w.env })), {
+    ok: false, reason: 'bad-settings', file: w.userFile, why: '"setup" must be a list of commands',
+  });
+});
+
+test("this repo's own .pir/settings.json parses and yields npm test", (t) => {
+  // Two levels up from src/shell. A scratch PIR_HOME keeps the person's own user file out of it.
+  const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
+  const home = mkdtempSync(join(tmpdir(), 'pir-own-set-'));
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+  const s = resolveSettings(repoRoot, { env: { PIR_HOME: home } });
+  assert.deepEqual(effectiveCommands(s), { ok: true, setup: ['test ! -f package-lock.json || npm ci'], test: ['npm test'] });
+  assert.equal(effectiveBase(s).base, 'main');
 });
 
 // --- pickRemote ---------------------------------------------------------------------------------------
