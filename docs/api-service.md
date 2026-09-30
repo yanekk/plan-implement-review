@@ -4,7 +4,8 @@ pir keeps one small program running on the machine that answers a read-only REST
 `127.0.0.1`. Its first data endpoint says how much of the 5-hour and weekly Claude subscription limit
 is used. The numbers come from pir's own sessions: every session a run holds receives them from
 Claude as it works, the run saves each one to a file, and the service answers from that file. Any
-local program can read them; nothing on pir's side reads them back.
+local program can read them. On pir's side only `pir service` reads them back, to print the last
+reading; the dashboard does not show them.
 
 The run and the service never talk to each other. A run writes a file and knows nothing of the
 service; the service reads a file and knows nothing of runs. A run is therefore never slowed or failed
@@ -379,7 +380,8 @@ that forgot to set a scratch home writes nothing and binds nothing.
 
 On a scratch home `on`, `off` and the installer's step print the `skipped` line above, exit 0 and
 never call `launchctl`. The bare `pir service` asks the service named in that home's `api.json`, if
-there is one.
+there is one; with none it reads `registered but not answering`, though nothing is registered
+there.
 
 No test in the suite writes the real `~/.pir/usage.json`, binds port 47717, runs the real `launchctl`
 or registers a login item: tests use a temp folder as the home, a port chosen by the system and an

@@ -450,7 +450,8 @@ test('docs/api-service.md: the ages and the unknown windows read as the code wor
   const flat = DOC.replace(/\s+/g, ' ');
   for (const ms of [0, 12 * minute, 3 * 60 * minute, 24 * 60 * minute, 4 * 24 * 60 * minute]) {
     assert.ok(flat.includes(`\`${ageText(ms)}\``), `the page does not give the age ${ageText(ms)}`);
-  }  const unknown = statusText(
+  }
+  const unknown = statusText(
     { state: 'running', url: DOC_URL, pid: 1, usage: { observed_at: 1, rate_limits: { five_hour: null, seven_day: null } } },
     1,
   ).text;

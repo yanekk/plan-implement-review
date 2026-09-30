@@ -451,8 +451,9 @@ curl -s "$(jq -r .url ~/.pir/api.json)/v1/usage"
   and before the first one it answers with empty values. A run that was already going when you
   installed this reports once it is stopped and started again.
 - **The limits.** macOS only. Only on a Claude subscription login: an API key, Bedrock or Vertex
-  yields no numbers. Any program on your Mac can read it. `pir` itself does not display the numbers
-  anywhere, and no reader ships with it.
+  yields no numbers. Any program on your Mac can read it. Apart from the line `pir service`
+  prints, `pir` does not display the numbers: the dashboard does not show them, and no reader ships
+  with it.
 - **What has been checked.** macOS starting and restarting the service, and real sessions feeding it,
   were each run once under a temporary test setup. The first real install, and the service being up
   after logging out and in, have not been seen yet.
