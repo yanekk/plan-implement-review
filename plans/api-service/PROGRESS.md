@@ -18,7 +18,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T01 | usage-core | — | ✅ | |
 | T02 | api-core | — | ✅ | |
 | T03 | service-core | — | ✅ | |
-| T04 | usage-report | T01, T02 | 🔍 | `usage-report.mjs` and the `reportUsage` default on `startWorker`, called after each `in` entry is logged. 13 tests: 10 in `usage-report.test.mjs`, 3 wiring. Deviation: the `osHome` default and `defaultUsageReporter` catch a throwing `userInfo()` and turn the reporter off, so `startWorker` cannot fail on its default. |
+| T04 | usage-report | T01, T02 | ✅ | `usage-report.mjs` and the `reportUsage` default on `startWorker`, called after each `in` entry is logged. Review: one fix. No test held the default parameter (`null` there passed all, found by mutation); added a child-process test on a scratch home. Gate, log order and `t` tests read and hold. Deviation accepted: guarded `osHome` lookup. 14 tests. |
 | T05 | api-service | T01, T02 | ⬜ | |
 | T06 | service-ctl | T02, T03 | ⬜ | |
 | T07 | service-command | T06 | ⬜ | |
@@ -27,7 +27,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T10 | live-usage-check | T08 | ⬜ | |
 | T11 | docs-and-readme | T07, T09, T10 | ⬜ | |
 
-**Review queue:** T04
+**Review queue:** empty
 
 ## Blocked on the user
 

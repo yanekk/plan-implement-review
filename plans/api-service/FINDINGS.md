@@ -7,6 +7,7 @@ Legend: 🐞 defect found · ✅ verified by hand with the user · 📌 worth kn
 
 | Date | | Finding |
 |---|---|---|
+| 2026-09-30 | 📌 | T04 review: worker sessions inherit `PIR_RUN=1` and the real `HOME`. A plain `node` script a worker runs with the fake claude emitting a `rate_limit_event` would write the real `~/.pir/usage.json`; only `node --test` or a scratch home stops it. T08, T10. |
 | 2026-09-30 | 📌 | T04: `writeFileAtomic` leaves its `.tmp` behind when the rename fails. If `usage.json` is ever a folder, each reading adds one `.tmp` to `.pir`, silently. Not handled; nothing removes them. |
 | 2026-09-30 | 📌 | `homeKind` compares strings. The real home spelled `/users/me`, `/Users/me/.` or through a symlink reads `scratch`, so the test-runner guard does not fire. T04, T05 and T06 should pass `env` and `os.userInfo().homedir` unaltered. |
 | 2026-09-30 | 📌 | `npm test` fails on pty drill tests (`plan-rig-*`, `coordinator-drill`, helpers) when several workers run the suite at once: load 40 on 10 cores, a different set each run. Green at load 5. Rerun when quiet before suspecting the code. |
