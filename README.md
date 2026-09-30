@@ -11,7 +11,7 @@ sessions at once. Four ideas carry the whole method:
 - **You set the autonomy.** Inside the code the agents work on their own; outside it they go only
   as far as you allowed, action by action. During a build a coordinator agent stands in for you,
   answering the routine questions and passing on the rest, so an overnight run keeps moving. At the
-  end a finisher prepares the merge into `main` and your project's after-merge steps, and runs them
+  end a finisher prepares the merge into your base branch and your project's after-merge steps, and runs them
   after one `Go` from you, in `pir` or on your phone.
 - **Every step starts with a clean slate.** Each task is sized to fit one session, and each session
   is closed when its step is done, so no worker ever works from a long, stale conversation
@@ -27,7 +27,7 @@ You act as product manager: you own *what* gets built and why. The sessions own 
 pir plan "what to build"   →  pir/{slug} branch        planned, then read back by a fresh session,
                                                         all answered in pir's screen
     ↵ at "Start the build?" →  pir/{slug} branch, green every task built and reviewed in parallel
-Go, to the finisher        →  main                      your one go: it merges and runs your after-merge steps
+Go, to the finisher        →  {base}                    your one go: it merges and runs your after-merge steps
 ```
 
 `pir plan` runs the two planning steps for you, one after the other, as sessions inside `pir` (see
@@ -38,7 +38,7 @@ slash commands inside Claude Code, and then start the build:
 /pir-plan                  →  plans/{slug}/            a reviewed-ready plan, split into tasks
 /pir-review-plan {slug}    →  plan marked reviewed      fresh eyes before a line is built
 pir start {slug}           →  pir/{slug} branch, green  every task built and reviewed in parallel
-Go, to the finisher        →  main                      your one go: it merges and runs your after-merge steps
+Go, to the finisher        →  {base}                    your one go: it merges and runs your after-merge steps
 ```
 
 `{base}` is the repo's base branch, `main` or `dev` or whichever the repo names; `pir` needs it set
@@ -49,7 +49,7 @@ once per repo ([below](#one-setting-per-repo-the-base-branch)).
 | `pir plan ["brief"]` | Run the planning and the plan review below inside `pir`, on a branch of their own, answered in `pir`'s screen; when the plan is reviewed, ask whether to start the build. |
 | `/pir-plan` | Brainstorm the requirements, confirm the direction with a throwaway mock when the thing has a feel to it, probe the tech on the actual machine, survey what the codebase already does so nothing gets built twice, settle the architecture, split the work into session-sized tasks with their dependencies, write it all to `plans/{slug}/`. Writes no product code. |
 | `/pir-review-plan {slug}` | Read the finished plan back with fresh eyes, before a line of it is built. Fixes what has one right answer, brings everything else to you as a decision, applies what you decide, marks the plan reviewed. Runs once. |
-| `pir start {slug}` | Run the reviewed plan in parallel, from a terminal inside the repo. Starts a coordinator in the background that builds every task whose dependencies are done, each in its own worker session, has a different worker review it, and merges it into the plan's feature branch — then drops you into a live view of every task. A coordinator agent answers the workers' routine questions for you, and at the end a finisher merges into `main` after your `Go`; `--no-coordinator` runs without either. |
+| `pir start {slug}` | Run the reviewed plan in parallel, from a terminal inside the repo. Starts a coordinator in the background that builds every task whose dependencies are done, each in its own worker session, has a different worker review it, and merges it into the plan's feature branch — then drops you into a live view of every task. A coordinator agent answers the workers' routine questions for you, and at the end a finisher merges into the base branch after your `Go`; `--no-coordinator` runs without either. |
 
 `/pir-plan` and `/pir-review-plan` are slash commands inside Claude Code. `pir` is a shell command,
 installed on your PATH by `./install.sh`: `pir` alone opens the dashboard, `pir plan` plans, `pir start
@@ -143,7 +143,7 @@ What that gets you:
 
 - **Your base branch stays clean.** The plan is written on its own branch, `pir/{slug}`, which the
   build then uses as its feature branch; the plan reaches the base with its code, in the one merge you
-  say go to or run yourself. `pir`
+  say go to. `pir`
   never deletes a branch.
 - **Nothing to carry between sessions.** No slug to copy, no second session to open for the review.
 - **It survives the terminal closing.** Like a build, it runs in the background. The dashboard shows
@@ -295,15 +295,20 @@ The agent is closed and a **finisher** takes over: an AI session that prepares t
 once you say go.
 
 - **It looks first and touches nothing.** It reads your finishing rules and turns them into exact
-  steps, checks that your main checkout is clean and on `main`, whether the merge would conflict, and
-  that the tools and logins the steps need are there. Until you say go, the program itself lets it only
+  steps, checks that your main checkout is clean and which branch it is on, whether the merge would
+  conflict, and that the tools and logins the steps need are there. Until you say go, the program itself lets it only
   read, whatever your Claude Code settings would otherwise allow.
 - **It asks you once.** Its row in the live view reads `waiting for your go` in amber, your phone gets
   `{plan} · ready for your go` with the number of steps and the first one, and the dashboard lists the
   run as `ready for your go`. Press `c` in the live view (or tap the alert) to open its conversation:
   it shows what it checked and the steps, and asks one question with two answers, `Go` and `Not yet`.
   Only picking `Go` there starts it; a typed "go" does not.
-- **Then it finishes.** It merges the build's branch into `main` and runs your after-merge steps. An
+- **It merges where the build came from.** The target is the base branch the run was cut from, `main`
+  or `dev` or whichever, fixed when the run began. If your main checkout is clean but on another
+  branch, switching it to the target is the first step you see before you say go, and it stays there
+  afterwards. If it has unsaved changes the finisher tells you and tidies nothing. If your rules file
+  names a different branch to merge into, the run's target still wins and the finisher tells you so.
+- **Then it finishes.** It merges the build's branch into the target and runs your after-merge steps. An
   action you put in the `ask` bin, or a destructive command, still stops for your yes. When it is done
   the run ends and your phone gets `{plan} · finished`.
 - **If a step fails, it stops.** It goes back to reading only, tells you what is done and what is not,
@@ -314,23 +319,23 @@ once you say go.
 
 You can still merge by hand before you say go; the run sees it and ends. Tell the finisher "close the
 run" to end it without finishing. A red build, and a build started with `--no-coordinator`, never get a
-finisher. Nor, for now, does a build in a repo whose base branch is not `main`: the finisher merges
-into `main` only, so there the run shows the merge command and waits for you to merge by hand.
+finisher.
 
 **Your finishing rules** are a plain-English file, `on-finish.md`. The finisher uses the first of these
 that exists, and names which one in what it shows you:
 
-1. `.pir/rules/on-finish.md` in your repo, committed on `main`: the project's own rules, for everyone
+1. `.pir/rules/on-finish.md` in your repo, committed on the base branch: the project's own rules, for everyone
    who builds it;
 2. `~/.pir/{repo}/rules/on-finish.md`, where `{repo}` is the repo folder's name: your own rules for
    that repo;
 3. `~/.pir/default/rules/on-finish.md`: your default for every repo. `./install.sh` puts one there the
-   first time, and never overwrites your edits. It only merges and checks that `main` has the branch.
+   first time, and never overwrites your edits (a copy you never edited is refreshed when the default
+   changes). It only merges and checks that the target branch has the build.
 
 Write it as instructions to a careful colleague, for example:
 
 ```markdown
-1. Merge pir/{slug} into main in my main checkout, and confirm main contains the branch tip.
+1. Merge pir/{slug} into the target branch in my main checkout, and confirm it contains the branch tip.
 2. Run `npm run build` in the main checkout.
 3. Run `./install.sh` from the main checkout and check the installed copy matches.
 Do not push and do not open a pull request.
@@ -672,8 +677,8 @@ session. The ones that bite most often:
   `worker`, `ask` or `person` bin you approved at plan review, enforced as a permission rule; an
   action with no bin is `ask`.
 - **Your base branch is yours.** A run builds on its own feature branch, one branch and worktree
-  per task, and the finisher merges into it only after your `Go` (without the coordinator agent, or
-  on a base other than `main`, you get the `git merge` to run yourself). Nothing merges into the base without you, the coordinator
+  per task, and the finisher merges into it only after your `Go` (without the coordinator agent,
+  you get the `git merge` to run yourself). Nothing merges into the base without you, the coordinator
   agent included, and `pir` itself never pushes.
 
 ## Layout of this repo

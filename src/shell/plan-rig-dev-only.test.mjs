@@ -29,7 +29,7 @@ test('startPlanRig({ base: dev, remoteAhead }) builds a dev-only repo whose orig
 });
 
 for (const [cols, rows] of SIZES) {
-  test(`end to end at ${cols}×${rows}: \`pir plan\` in a dev-only repo plans from origin/dev, syncs with dev and hands off on dev; no line says main`, { timeout: 120000 }, async (t) => {
+  test(`end to end at ${cols}×${rows}: \`pir plan\` in a dev-only repo plans from origin/dev, syncs with dev and hands over to the finisher on dev; no line says main`, { timeout: 120000 }, async (t) => {
     const rig = rigWithTeardown(t, DEV_RIG);
     const staleDev = git(rig.repoDir, 'rev-parse', 'dev');
     const screen = rig.openScreen({ cols, rows, args: ['plan', BRIEF] });
@@ -46,8 +46,11 @@ for (const [cols, rows] of SIZES) {
       screen.send(ENTER);
       const preparing = (await screen.waitFor(/preparing: syncing dev, writing the report/, 60000)).join('\n');
       assert.doesNotMatch(preparing, /syncing main/);
-      const done = (await screen.waitFor(new RegExp(`✔ ready to merge · git switch dev && git merge pir/${PLAN_RIG_SLUG}`), 60000)).join('\n');
-      assert.match(done, new RegExp(`report: plans/${PLAN_RIG_SLUG}/REPORT\\.md`));
+      // A dev-based run hands over to the finisher as a main-based one does (user, 2026-09-30). The `ready
+      // to merge` frame lasts one pass gap, so the end waited for is the finisher's row.
+      const done = (await screen.waitFor(/◆ finisher +preparing/, 60000)).join('\n');
+      assert.match(done, /T01 +first-task +merged/);
+      assert.doesNotMatch(done, /git merge/, 'no merge line beside the finisher');
       assert.equal(screen.overflows(), 0);
     } finally {
       clearInterval(sampler);

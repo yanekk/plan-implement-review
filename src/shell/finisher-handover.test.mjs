@@ -93,8 +93,8 @@ const GOQ = { questions: [{ question: 'Finish demo? 1 step from project rules', 
 const READY = { kind: 'ready', rules: '/r/on-finish.md', summary: 'All clean.', steps: ['git merge pir/demo'] };
 
 // finRun(t, opts) → a run with the agent and the finisher on, and helpers to play both.
-function finRun(t, { worktree, controlDir, runTests, startFinisher, finisherStubs, control, agentStubs } = {}) {
-  const wt = worktree ?? createFakeWorktree({ progress: progressDoc([{ num: 'T01' }]), slug: SLUG });
+function finRun(t, { worktree, controlDir, runTests, startFinisher, finisherStubs, control, agentStubs, base = 'main' } = {}) {
+  const wt = worktree ?? createFakeWorktree({ progress: progressDoc([{ num: 'T01' }]), slug: SLUG, base });
   if (!worktree) t.after(() => wt.cleanup());
   const platform = createFakePlatform({});
   const cdir = controlDir ?? mkdtempSync(join(tmpdir(), 'pir-fin-t05-'));
@@ -105,16 +105,16 @@ function finRun(t, { worktree, controlDir, runTests, startFinisher, finisherStub
   const logs = [];
   const started = [];
   const coordinator = startCoordinator({
-    slug: SLUG, repo: REPO, platform, worktree: wt, runTests, now: () => clock.t,
+    slug: SLUG, repo: REPO, platform, worktree: wt, runTests, base, now: () => clock.t,
     control: control ?? { isHalted: () => false, log: (l) => logs.push(l) },
     startAgent: ({ featurePath, askRules }) => startCoordinatorAgent({
       controlDir: cdir, featurePath, repoRoot: featurePath, slug: SLUG, platform, askRules,
       startWorker: agents.startWorker, claudePath: '/nonexistent/claude', skillsDir: cdir, now: () => clock.t,
     }),
-    startFinisher: startFinisher ?? (({ featurePath, askRules, reportPath }) => {
-      started.push({ featurePath, askRules, reportPath });
+    startFinisher: startFinisher ?? (({ featurePath, askRules, reportPath, base: runBase }) => {
+      started.push({ featurePath, askRules, reportPath, base: runBase });
       return startFinisherSession({
-        controlDir: cdir, featurePath, repoRoot: wt.repo, slug: SLUG,
+        controlDir: cdir, featurePath, repoRoot: wt.repo, slug: SLUG, base: runBase,
         rules: { path: join(featurePath, '.pir', 'rules', 'on-finish.md'), source: 'project' },
         reportPath: join(featurePath, reportPath), askRules, startWorker: fins.startWorker, claudePath: '/nonexistent/claude',
         remote: false, skillsDir: cdir, engineDir: cdir, pirHome: cdir, now: () => clock.t,
@@ -146,8 +146,8 @@ function finRun(t, { worktree, controlDir, runTests, startFinisher, finisherStub
   const moveMain = (path, content) => {
     writeFileSync(join(wt.repo, path), content);
     git(wt.repo, ['add', '-A']);
-    git(wt.repo, ['commit', '-m', `main: ${path}`, '--no-edit']);
-    return git(wt.repo, ['rev-parse', 'main']).stdout.trim();
+    git(wt.repo, ['commit', '-m', `${base}: ${path}`, '--no-edit']);
+    return git(wt.repo, ['rev-parse', base]).stdout.trim();
   };
   const mergeByHand = () => git(wt.repo, ['merge', '--no-ff', '--no-edit', `pir/${SLUG}`]);
   // Built, reported and waiting in ready (the pass that settles it), with the agent still on.
@@ -187,6 +187,7 @@ test('green end with the agent: ready, then the next pass closes the agent and s
   const r = run.coordinator.pass();
   assert.equal(run.started.length, 1, 'the finisher started');
   assert.deepEqual(run.started[0].reportPath, REPORT_REL);
+  assert.equal(run.started[0].base, 'main', 'the run\'s base is handed to the finisher');
   assert.equal(run.coordinator.agent.alive(), false, 'the agent is closed');
   assert.equal(r.handoff.finisher, 'on');
   assert.equal(r.finished, null);
@@ -314,6 +315,30 @@ test('the person\'s Go answered in pir\'s conversation view reaches the finisher
   assert.equal(fin.phase(), 'finishing');
   assert.equal(fin.goGiven(), true);
   assert.deepEqual(fin.ledger().filter((l) => l.kind === 'go').map((l) => l.by), ['person']);
+});
+
+// A run cut from another branch gets the same finisher, told that branch as its target (user, 2026-09-30).
+test('a run whose base is dev: the finisher starts, is told dev as its target, and follows dev moving', (t) => {
+  const run = finRun(t, { base: 'dev' });
+  run.toReady();
+  const r = run.coordinator.pass();
+  assert.equal(r.handoff.finisher, 'on');
+  assert.equal(run.started.length, 1);
+  assert.equal(run.started[0].base, 'dev');
+  const opening = run.fins.latest().told[0].text;
+  assert.match(opening, /^Target branch: dev$/m);
+  assert.doesNotMatch(opening, /\bmain\b(?! checkout)/i);
+
+  run.toAwaitingGo();
+  const devSha = run.moveMain('other.txt', 'from dev\n');
+  const told = () => run.fins.latest().told.some((m) => m.text.startsWith(`dev moved to ${devSha.slice(0, 12)}`));
+  run.until((x) => x.handoff.state === 'ready' && told());
+  assert.equal(run.coordinator.finisher.phase(), 'preparing');
+  assert.equal(run.coordinator.finisher.ledger().at(-1).base, 'dev');
+
+  assert.ok(run.mergeByHand().ok);
+  const end = run.until((x) => x.finished !== null);
+  assert.equal(end.finished, 'merged', 'a hand merge into dev before any go still ends the run');
 });
 
 test('main moving in awaiting-go re-syncs as today, then sends the finisher back to preparing', (t) => {

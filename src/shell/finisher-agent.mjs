@@ -53,13 +53,15 @@ function answersFromResult(text) {
 
 // startFinisher(...) → Finisher. See plans/finisher/tasks/T04-finisher-session.md for the interface.
 // `rules` is chooseRules' { path, source }. `pirHome` (default ~/.pir) and `skillsDir`/`engineDir` are
-// read roots before the go (DESIGN §2.4); all are injectable for tests, as are `uuid` and `now`.
+// read roots before the go (DESIGN §2.4); all are injectable for tests, as are `uuid` and `now`. `base` is
+// the run's recorded base branch, passed on every start: the finisher is told it as its target branch.
 export function startFinisher({
   controlDir,
   featurePath,
   repoRoot,
   slug,
   mainCheckout = repoRoot,
+  base,
   rules,
   reportPath,
   askRules = [],
@@ -114,14 +116,14 @@ export function startFinisher({
 
   // A go counts only for a question first seen in the current generation (DESIGN §2.7, §2.8): every
   // accepted ready or stuck, every re-sync and every go starts a new one, so a Go to a question asked
-  // before the steps it approves (or before main moved) opens nothing. In memory: a go question does not
+  // before the steps it approves (or before the base moved) opens nothing. In memory: a go question does not
   // outlive its process, so a pir restart starts afresh.
   let generation = 0;
   const setPhase = (next) => {
     state.phase = next;
     generation++;
   };
-  // True from the pass pir sees main move until its re-sync is done (resyncing → resynced): the branch is
+  // True from the pass pir sees the base move until its re-sync is done (resyncing → resynced): the branch is
   // being changed under the finisher, so no go counts, whatever question it answers (DESIGN §2.8).
   let held = false;
 
@@ -194,11 +196,11 @@ export function startFinisher({
     if (resume) {
       const r = pendingResume ?? { phase: state.phase, stuckSummary: null };
       pendingResume = null;
-      w.send(finisherResumed(r), { from: 'pir' });
+      w.send(finisherResumed({ ...r, base }), { from: 'pir' });
     } else {
       w.send(
         finisherOpening({
-          slug, branch: `pir/${slug}`, rulesPath: state.rules, rulesSource: state.rulesSource,
+          slug, branch: `pir/${slug}`, base, rulesPath: state.rules, rulesSource: state.rulesSource,
           statusDir, reportPath, mainCheckout,
         }),
         { from: 'pir' },
@@ -451,9 +453,9 @@ export function startFinisher({
       };
     },
     tell,
-    // resynced(mainSha) → main moved before any go (DESIGN §2.8): back to preparing, the old steps and any
+    // resynced(baseSha) → the base moved before any go (DESIGN §2.8): back to preparing, the old steps and any
     // go for them void, the finisher told. → false (nothing done) once a go was given, or in `finishing`/`done`.
-    // resyncing() → main moved and pir starts re-syncing the branch (review T05): the phase drops to
+    // resyncing() → the base moved and pir starts re-syncing the branch (review T05): the phase drops to
     // preparing at once, voiding any open go question, and no go counts until resynced() — a Go tapped on
     // the old question while the re-sync runs would otherwise start the merge on a branch still changing.
     // Silent: the finisher is told once, by resynced(), when the branch is settled.
@@ -467,7 +469,7 @@ export function startFinisher({
       appendLedger({ kind: 'resyncing', from: p, to: 'preparing' });
       return true;
     },
-    resynced(mainSha) {
+    resynced(baseSha) {
       // What the finisher did while held is judged while still held, so a go asked and answered during the
       // re-sync is stale rather than counted by the next drain; its statuses are voided just below.
       if (held) {
@@ -480,8 +482,8 @@ export function startFinisher({
       if (!takes) return false;
       setPhase('preparing');
       saveState();
-      appendLedger({ kind: 'resync', from: p, to: 'preparing', mainSha: mainSha ?? null });
-      tell(finisherResynced({ mainSha }));
+      appendLedger({ kind: 'resync', from: p, to: 'preparing', base, baseSha: baseSha ?? null });
+      tell(finisherResynced({ base, baseSha }));
       return true;
     },
     ledger: () => readJsonLines(ledgerPath),

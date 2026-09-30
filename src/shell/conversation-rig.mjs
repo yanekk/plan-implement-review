@@ -482,6 +482,7 @@ export function startRig({ into = null, scenario = 'tour', keep = false, env = p
       featurePath: repoRoot,
       repoRoot,
       slug: RIG_SLUG,
+      base: 'main',
       rules: { path: join(repoRoot, '.pir', 'rules', 'on-finish.md'), source: 'project' },
       reportPath: `plans/${RIG_SLUG}/REPORT.md`,
       askRules: [],

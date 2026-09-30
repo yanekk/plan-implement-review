@@ -108,10 +108,34 @@ test('look only until the go, in words, and what to check', () => {
   assert.match(look, /no dry runs/);
   const check = section(SKILL, 'What to check');
   assert.ok(check);
-  for (const needle of ['rules file', 'status --porcelain', 'branch --show-current', 'git merge-tree --write-tree', 'command -v', 'REPORT.md']) {
+  for (const needle of ['rules file', 'status --porcelain', 'branch --show-current', 'worktree list', 'merge-tree --write-tree <target> pir/{slug}', 'command -v', 'REPORT.md']) {
     assert.ok(check.includes(needle), `What to check names ${needle}`);
   }
-  assert.match(check, /do\s+not stash, switch or clean anything/);
+  assert.match(check, /Before the go, do not stash, switch or\s+clean anything/);
+});
+
+// The target is the run's, told in the opening instruction (user, 2026-09-30): the skill names no branch
+// of its own, the run's target wins over a rules file, and a clean checkout elsewhere is switched as a
+// listed step.
+test('the target branch comes from the opening instruction, wins over the rules, and is switched to as a listed step', () => {
+  assert.match(section(SKILL, 'Your opening instruction'), /\*\*target branch\*\*: the branch this run was cut from/);
+  const s = section(SKILL, 'The target branch');
+  assert.ok(s);
+  assert.match(s, /does not come from the\s+rules file/);
+  assert.match(s, /still merge into the target branch, and say in your ready summary/);
+  assert.ok(s.includes('git -C <main checkout> switch <target>'));
+  assert.match(s, /first step/);
+  assert.match(s, /do not list a step that switches back/);
+  assert.match(s, /List no step that stashes or cleans/);
+  assert.match(s, /checked out in another worktree/);
+  assert.match(s, /The merge runs only with the main checkout on the target branch/);
+  // `main` appears only as an example of a target or of what an older rules file may say, never as the
+  // branch to merge into.
+  for (const line of SKILL.split('\n')) {
+    if (!/`main`/.test(line)) continue;
+    assert.match(line, /\(`main`, `dev`, whichever the run has\)|an older rules file may say `main`/, `the skill names main as the target: ${line}`);
+  }
+  assert.doesNotMatch(SKILL, /into `main`|on\s+`main`|--is-ancestor pir\/\{slug\} main/);
 });
 
 test('after the go: a failure stops, writes stuck with a proposal and asks again; success writes done; close on the person\'s word', () => {
@@ -130,10 +154,12 @@ test('the skill asks for plain English with the person', () => {
   assert.match(section(SKILL, 'Talking to the person'), /plain English, no jargon/);
 });
 
-test('the default rules merge into main in the main checkout and confirm the tip', () => {
+test('the default rules merge into the run\'s target branch in the main checkout and confirm the tip', () => {
   assert.ok(DEFAULT_RULES.includes('merge pir/{slug}'));
   assert.match(DEFAULT_RULES, /main checkout/);
-  assert.ok(DEFAULT_RULES.includes('git -C <main checkout> merge-base --is-ancestor pir/{slug} main'));
+  assert.match(DEFAULT_RULES, /into the target branch/);
+  assert.ok(DEFAULT_RULES.includes('git -C <main checkout> merge-base --is-ancestor pir/{slug} <target>'));
+  for (const rules of [DEFAULT_RULES, REPO_RULES]) assert.doesNotMatch(rules, /`main`|\} main\b/, 'no rules file names a branch');
 });
 
 test('this repo\'s rules merge, run ./install.sh and compare the installed engine and skills', () => {
@@ -150,7 +176,7 @@ test('this repo\'s rules merge, run ./install.sh and compare the installed engin
 test('every concrete look the skill asks for before the go is on the look-only list', () => {
   const check = section(SKILL, 'What to check');
   const commands = [...check.matchAll(/`((?:git|gh|command|node|npm|diff|ls|cat|<tool>)(?=\s)[^`]*)`/g)].map((m) =>
-    m[1].replaceAll('<main checkout>', '/main').replaceAll('{slug}', 'demo').replaceAll('<tool>', 'gh'));
+    m[1].replaceAll('<main checkout>', '/main').replaceAll('<target>', 'dev').replaceAll('{slug}', 'demo').replaceAll('<tool>', 'gh'));
   assert.ok(commands.length >= 4, `found ${commands.length} commands`);
   for (const c of commands) assert.ok(isLookOnly(c), `What to check asks for a refused command: ${c}`);
 });

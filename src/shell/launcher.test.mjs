@@ -175,7 +175,24 @@ test('install.sh puts the engine runtime packages beside the installed src/', ()
 // neither needs the network nor takes a minute; everything else install.sh does lands under the scratch
 // HOME. The default finishing rules are seeded only when absent (finisher DESIGN §2.2).
 
-test('install.sh into a scratch HOME installs pir-finisher and seeds the default rules once, keeping an edit', () => {
+// The default rules as first shipped (T03), byte for byte: install.sh knows this text by its sha256.
+const FIRST_DEFAULT_RULES = [
+  "# Finishing rules (default)",
+  "",
+  "pir's default rules for finishing a parallel build run. Copied here by `install.sh` only when this file",
+  "did not exist, so your edits survive a reinstall. For one repository, put your own in",
+  "`.pir/rules/on-finish.md` in the repo or in `~/.pir/{repo}/rules/on-finish.md`; the first that exists wins.",
+  "",
+  "1. In the person's main checkout, merge the build's branch into `main`:",
+  "   `git -C <main checkout> merge pir/{slug}`.",
+  "2. Confirm `main` now contains the branch tip:",
+  "   `git -C <main checkout> merge-base --is-ancestor pir/{slug} main` succeeds.",
+  "",
+  "Nothing else: no push, no pull request, no install.",
+  '',
+].join('\n');
+
+test('install.sh into a scratch HOME installs pir-finisher, seeds the default rules once, keeps an edit and refreshes an unedited old default', () => {
   const home = mkdtempSync(join(tmpdir(), 'pir-install-home-'));
   const stubs = mkdtempSync(join(tmpdir(), 'pir-install-bin-'));
   try {
@@ -195,6 +212,12 @@ test('install.sh into a scratch HOME installs pir-finisher and seeds the default
     const second = run();
     assert.equal(readFileSync(seeded, 'utf8'), '# my own rules\n', 'a second install leaves the edit in place');
     assert.match(second, /kept your .*on-finish\.md/);
+
+    // A copy still identical to the first shipped default (it named `main`) was never edited: replaced.
+    writeFileSync(seeded, FIRST_DEFAULT_RULES);
+    const third = run();
+    assert.equal(readFileSync(seeded, 'utf8'), readFileSync(join(REPO, 'rules/default/on-finish.md'), 'utf8'));
+    assert.match(third, /refreshed .*on-finish\.md \(it was an older default, unedited\)/);
   } finally {
     rmSync(home, { recursive: true, force: true });
     rmSync(stubs, { recursive: true, force: true });

@@ -34,12 +34,15 @@ export function rulesSourceWords(source) {
 
 // finisherOpening(...) → the finisher's opening instruction (DESIGN §2.1, §2.2, §2.7). It names every
 // path the session needs so it never has to guess one: the rules file and its source, the branch, the
-// person's main checkout (where the merge happens), the report and the status folder.
-export function finisherOpening({ slug, branch, rulesPath, rulesSource, statusDir, reportPath, mainCheckout }) {
+// target branch, the person's main checkout (where the merge happens), the report and the status folder.
+// `base` is the run's recorded base (`pirBase`): the target is a fact of the run, so it is stated here
+// rather than left to the rules file, which may name another branch.
+export function finisherOpening({ slug, branch, base, rulesPath, rulesSource, statusDir, reportPath, mainCheckout }) {
   return [
-    `Invoke the pir-finisher skill and follow it. You are the finisher of the parallel build of plan \`${slug}\`: its branch is ready to merge.`,
+    `Invoke the pir-finisher skill and follow it. You are the finisher of the parallel build of plan \`${slug}\`: its branch is ready to merge into \`${base}\`.`,
     `Plan: ${slug}`,
     `Branch: ${branch}`,
+    `Target branch: ${base}`,
     `Rules file: ${rulesPath}`,
     `Rules source: ${rulesSourceWords(rulesSource)}`,
     `Main checkout: ${mainCheckout}`,
@@ -51,12 +54,13 @@ export function finisherOpening({ slug, branch, rulesPath, rulesSource, statusDi
   ].join('\n');
 }
 
-// finisherResumed({ phase, stuckSummary }) → sent into a resumed session after it exited or pir
+// finisherResumed({ phase, stuckSummary, base }) → sent into a resumed session after it exited or pir
 // restarted (DESIGN §2.12). A go question that was open is lost with the old process, so it is asked
 // again; a restart mid-finish never carries the go over (afterRestart moved `finishing` to `stuck`, and
-// `stuckSummary` is its text).
-export function finisherResumed({ phase, stuckSummary = null } = {}) {
+// `stuckSummary` is its text). The target is restated: the opening that named it may be far behind.
+export function finisherResumed({ phase, stuckSummary = null, base = null } = {}) {
   const parts = ['pir restarted your session. You are still the finisher; follow the pir-finisher skill.'];
+  if (nonEmpty(base)) parts[0] += ` The target branch is still \`${base}\`.`;
   if (phase === 'stuck' && nonEmpty(stuckSummary)) {
     parts.push(
       `Your phase is now stuck: ${clip(stuckSummary, 500)}`,
@@ -92,12 +96,13 @@ export function finisherRefusal(why, file = null) {
   return `${which} was refused: ${reason}. Nothing changed. Write a new status file if you still mean it.`;
 }
 
-// finisherResynced({ mainSha }) → main moved before any go and pir re-synced the branch (DESIGN §2.8).
-// The phase is back to preparing, so the old plan of steps and any go given for it no longer count.
-export function finisherResynced({ mainSha } = {}) {
-  const sha = nonEmpty(mainSha) ? String(mainSha).slice(0, 12) : 'a new tip';
+// finisherResynced({ base, baseSha }) → the target branch moved before any go and pir re-synced the branch
+// (DESIGN §2.8). The phase is back to preparing, so the old plan of steps and any go given for it no longer count.
+export function finisherResynced({ base, baseSha } = {}) {
+  const sha = nonEmpty(baseSha) ? String(baseSha).slice(0, 12) : 'a new tip';
+  const name = nonEmpty(base) ? base : 'The target branch';
   return (
-    `main moved to ${sha} and pir merged it into the branch. Your phase is back to preparing: the steps you wrote ` +
+    `${name} moved to ${sha} and pir merged it into the branch. Your phase is back to preparing: the steps you wrote ` +
     'no longer count, and neither would a go given for them. Re-check, write a fresh `ready` status, and ask the go ' +
     `question again: ${GO_QUESTION}.`
   );
@@ -142,7 +147,7 @@ export function finisherNotGo(answer) {
 }
 
 // finisherStaleGo(phase) → the person answered `Go`, but not to a go question pir can count (DESIGN §2.7):
-// it was asked before a `ready`, or before the steps were re-prepared or main moved, or the phase does not
+// it was asked before a `ready`, or before the steps were re-prepared or the base moved, or the phase does not
 // take a go. The finisher sees `Go` in the question's result, so it is told plainly the fence is still shut.
 export function finisherStaleGo(phase) {
   return (

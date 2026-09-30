@@ -53,7 +53,7 @@ import { reapRecorded } from './reap.mjs';
 import { planHome } from './plan-home.mjs';
 import { startCoordinatorAgent, withAgent, closingAnswer, readLogEntries, readJson } from './coordinator-agent.mjs';
 import { startFinisher as startFinisherSession } from './finisher-agent.mjs';
-import { chooseRules, finisherServes } from '../core/finisher-policy.mjs';
+import { chooseRules } from '../core/finisher-policy.mjs';
 import { startWorker } from './worker-proc.mjs';
 import { alertText, endAlert, holdAlert, notifyStep, notifyExit, newNotifyState, finisherAlert, finisherNotifyView } from '../core/notify.mjs';
 import { holdText } from '../core/basebranch.mjs';
@@ -250,12 +250,11 @@ export function startCoordinator({
   const endOfRun = startAgent !== null;
   let handoff = null;
   // The finisher (finisher DESIGN §2.1, §2.8, §2.12, T05): `startFinisher({ featurePath, askRules,
-  // reportPath })` → a Finisher (finisher-agent.mjs), called once the end sequence settles `ready`; only
+  // reportPath, base })` → a Finisher (finisher-agent.mjs), called once the end sequence settles `ready`; only
   // with the agent on. `priorFinisher()` → the stored `finisher/state.json` of this run, or null: present
   // means pir restarted over a finisher, which is resumed instead of the agent. `handoff.finisher` is
-  // null | 'starting' | 'on' | 'fallback' (today's ready-to-merge wait, for good). A run whose base is not
-  // `main` has none (finisherServes): the finisher merges into `main` by name.
-  const withFinisher = endOfRun && startFinisher !== null && finisherServes(RUN_BASE);
+  // null | 'starting' | 'on' | 'fallback' (today's ready-to-merge wait, for good).
+  const withFinisher = endOfRun && startFinisher !== null;
   const prior = withFinisher ? priorFinisher() ?? null : null;
   let finisher = null;
   let agentClosedForFinisher = false;
@@ -877,7 +876,7 @@ export function startCoordinator({
     agentClosedForFinisher = true;
     handoff.finisher = 'starting';
     try {
-      finisher = startFinisher({ featurePath: state.feature.path, askRules, reportPath: reportRel });
+      finisher = startFinisher({ featurePath: state.feature.path, askRules, reportPath: reportRel, base: RUN_BASE });
     } catch (err) {
       control?.log?.(`finisher failed to start: ${err?.message ?? err}`);
       fallBack('failed', rec);
@@ -901,7 +900,7 @@ export function startCoordinator({
   }
 
   // Each pass with the finisher on (DESIGN §2.8): its statuses end the run; a hand merge ends it only
-  // before the first go; main moving before a go re-syncs as today, then sends it back to preparing.
+  // before the first go; the base moving before a go re-syncs as today, then sends it back to preparing.
   function finisherWaiting(rec) {
     if (handoff.resynced) {
       handoff.resynced = false;
@@ -2410,12 +2409,12 @@ async function main(argv) {
             env: () => workerEnv(),
           });
         };
-  // The finisher (finisher DESIGN §2.1, §2.2): only with the agent on, and only on a `main` base
-  // (finisherServes). Its rules are the first of the project's, the person's for this repo and the default
-  // that exists, else the engine's own copy.
-  const startFinisher = !startAgent || !finisherServes(base)
+  // The finisher (finisher DESIGN §2.1, §2.2): only with the agent on. Its rules are the first of the
+  // project's, the person's for this repo and the default that exists, else the engine's own copy. `base`
+  // is the run's recorded base (`pirBase`), the one branch it merges into, whatever the rules file names.
+  const startFinisher = !startAgent
     ? null
-    : ({ featurePath, askRules, reportPath }) => {
+    : ({ featurePath, askRules, reportPath, base }) => {
         const rules = chooseRules({ featurePath, home: homedir(), repo: root, engineDir: ENGINE_DIR, exists: existsSync });
         control.log(`finisher rules: ${rules.path} (${rules.source})`);
         return startFinisherSession({
@@ -2424,6 +2423,7 @@ async function main(argv) {
           repoRoot: root,
           slug,
           mainCheckout: root,
+          base,
           rules,
           reportPath: join(featurePath, reportPath),
           askRules,

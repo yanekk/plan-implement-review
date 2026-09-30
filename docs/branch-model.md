@@ -7,8 +7,8 @@ when the run starts. The base branch is the one the repo names in its settings (
 branch never receives the plan from the command: when every task is done and the feature branch is
 green, the command **hands the person `git switch {base} && git merge pir/{slug}` to run by hand**.
 With the coordinator agent on, it first merges the base into the feature branch and commits a delivery
-report there, so that merge goes through cleanly, and, when the base is `main`, hands a green branch to
-the finisher, which merges it only after the person's go (below). The branch work is in
+report there, so that merge goes through cleanly, and hands a green branch to the finisher, which
+merges it only after the person's go (below). The branch work is in
 `src/shell/worktree.mjs`; choosing and preparing the base is in `src/shell/base-branch.mjs` and the pure
 `src/core/basebranch.mjs`.
 
@@ -198,10 +198,10 @@ the agent-name separator is a different `/`, below.)
   the base with the merge (see [coordinator-agent.md](coordinator-agent.md#the-end-of-the-run)).
 - **Feature branch → base**: never a command action. Without the agent the command prints
   `git switch {base} && git merge pir/{slug}` for a green branch and exits; the person runs that merge
-  in their own checkout. With the agent and `main` as the base, a green branch is handed to the **finisher**, which prepares
+  in their own checkout. With the agent, a green branch is handed to the **finisher**, which prepares
   the merge (and the project's after-merge steps) looking only, asks the person one go question, and runs
   `git -C <main checkout> merge pir/{slug}` only after the person answers `Go`
-  ([finisher.md](finisher.md)). On any other base, or if the finisher cannot start or gives up, the run waits
+  ([finisher.md](finisher.md)). If the finisher cannot start or gives up, the run falls back to waiting
   in `ready to merge` until it sees the base contains the feature tip (the local base, or the remote's
   copy, fetched every 5 minutes so a merge done on GitHub is seen), or the person closes the run.
   Merging the finished plan into the base is the one irreversible act in the system, and it happens only

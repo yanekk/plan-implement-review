@@ -55,7 +55,7 @@ function start(s, script, t, opts = {}) {
   const calls = [];
   const fin = startFinisher({
     controlDir: s.controlDir, featurePath: s.featurePath, repoRoot: s.repoRoot, slug: 'demo',
-    mainCheckout: s.repoRoot, rules: { path: join(s.featurePath, '.pir', 'rules', 'on-finish.md'), source: 'project' },
+    mainCheckout: s.repoRoot, base: 'dev', rules: { path: join(s.featurePath, '.pir', 'rules', 'on-finish.md'), source: 'project' },
     reportPath: join(s.repoRoot, 'plans', 'demo', 'REPORT.md'), askRules: [], claudePath: CLAUDE,
     skillsDir: s.skillsDir, engineDir: s.engineDir, pirHome: s.pirHome, remote: false,
     startWorker: (o) => {
@@ -434,8 +434,10 @@ test('resynced: before any go, back to preparing and told; after a go nothing ch
   const req = await toAwaitingGo(s, fin);
   assert.equal(fin.resynced('abcdef1234567890'), true);
   assert.equal(fin.phase(), 'preparing');
-  assert.match(told(fin).at(-1), /main moved to abcdef123456/);
+  assert.match(told(fin).at(-1), /^dev moved to abcdef123456/);
   assert.equal(fin.ledger().at(-1).kind, 'resync');
+  assert.equal(fin.ledger().at(-1).base, 'dev');
+  assert.equal(fin.ledger().at(-1).baseSha, 'abcdef1234567890');
   // The old question is void even once a fresh ready arrives.
   status(s, '2-ready.json', READY);
   fin.drain();

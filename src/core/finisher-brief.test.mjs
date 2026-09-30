@@ -9,17 +9,20 @@ import {
 } from './finisher-brief.mjs';
 
 const base = {
-  slug: 'demo', branch: 'pir/demo', rulesPath: '/r/.pir/rules/on-finish.md', rulesSource: 'project',
+  slug: 'demo', branch: 'pir/demo', base: 'dev', rulesPath: '/r/.pir/rules/on-finish.md', rulesSource: 'project',
   statusDir: '/r/plans/demo/.parallel/control/finisher/status', reportPath: 'plans/demo/REPORT.md', mainCheckout: '/r',
 };
 const PHASES = ['preparing', 'awaiting-go', 'finishing', 'stuck', 'done'];
 const GO = /header `Go`, options `Go` and `Not yet`/;
 
-test('the opening names the skill, plan, branch, rules file, main checkout, report and status folder, and the go question', () => {
+test('the opening names the skill, plan, branch, target branch, rules file, main checkout, report and status folder, and the go question', () => {
   const text = finisherOpening(base);
   assert.match(text, /pir-finisher skill/);
   assert.match(text, /^Plan: demo$/m);
   assert.match(text, /^Branch: pir\/demo$/m);
+  assert.match(text, /^Target branch: dev$/m);
+  assert.match(text, /ready to merge into `dev`/);
+  assert.doesNotMatch(text, /\bmain\b(?! checkout)/i, 'names no branch but the run\'s');
   assert.match(text, /^Rules file: \/r\/\.pir\/rules\/on-finish\.md$/m);
   assert.match(text, /^Main checkout: \/r$/m);
   assert.match(text, /^Report: plans\/demo\/REPORT\.md$/m);
@@ -72,9 +75,14 @@ test('refusal names the file and why; nothing changed', () => {
   assert.doesNotMatch(finisherRefusal('not JSON.', 'a.json'), /\.\./);
 });
 
-test('resynced names the new main, returns to preparing and voids the old steps and go', () => {
-  const text = finisherResynced({ mainSha: '0123456789abcdef0123' });
-  assert.match(text, /main moved to 0123456789ab /);
+test('resumed restates the run\'s target branch when given one', () => {
+  assert.match(finisherResumed({ phase: 'awaiting-go', base: 'dev' }), /The target branch is still `dev`\./);
+  assert.doesNotMatch(finisherResumed({ phase: 'awaiting-go' }), /target branch/);
+});
+
+test('resynced names the run\'s base and its new tip, returns to preparing and voids the old steps and go', () => {
+  const text = finisherResynced({ base: 'dev', baseSha: '0123456789abcdef0123' });
+  assert.match(text, /^dev moved to 0123456789ab /);
   assert.match(text, /back to preparing/);
   assert.match(text, /no longer count/);
   assert.match(text, /fresh `ready` status/);
@@ -123,7 +131,7 @@ test('every message is plain text under 1500 characters, even with long inputs',
     ...['project', 'yours', 'default', 'built-in'].map((s) => finisherOpening({ ...base, rulesSource: s })),
     ...PHASES.map((phase) => finisherResumed({ phase, stuckSummary: long })),
     finisherRefusal(long, '1-a.json'),
-    finisherResynced({ mainSha: long }),
+    finisherResynced({ base: 'dev', baseSha: long }),
     ...PHASES.map((phase) => finisherGateRefusal('WebFetch', phase)),
     finisherNotGo(long),
     ...[...PHASES, undefined].map((phase) => finisherStaleGo(phase)),

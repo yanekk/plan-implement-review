@@ -11,7 +11,7 @@ Legend: 🐞 defect found · ✅ verified by hand with the user · 📌 worth kn
 
 | Date | | Finding |
 |---|---|---|
-| 2026-09-30 | 🔄 | Main-sync with base-branch: only a run whose base is `main` gets a finisher (`finisherServes`); other bases keep the `ready to merge` hand merge (user). Follow-up plan: teach the skill, briefs and default rules the base. |
+| 2026-09-30 | 🔄 | The finisher serves any base (user): `pir` passes the run's `pirBase` as `Target branch`, the skill switches a clean checkout as a listed step, the target wins over the rules file. `finisherServes` removed; `install.sh` refreshes an unedited old default. |
 | 2026-09-30 | 📌 | `docs/detached-runs.md` still says `handoff.mainSha` and `git merge pir/{slug}`; the code has `baseSha` and `git switch {base} && git merge`. Stale on main since base-branch, left alone. |
 | 2026-09-30 | 📌 | T10 review: the live bundle sat in the scratch control folder and went with teardown. The finisher's transcript under `~/.claude/projects/-private-tmp-pir-finisher-live--…` confirms the PASS: no merge before the Go answer (05:24:40Z), merge and FINISHED after. |
 | 2026-09-30 | 📌 | T10 review: `finisherWaitedForGo` looks once, the first poll in `awaiting-go`. A change to main between that look and the go would not fail it. Left as is. |

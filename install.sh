@@ -139,10 +139,31 @@ install_engine() {
 }
 
 # Seed the person's default finishing rules only when absent, so their edits survive a reinstall
-# (finisher DESIGN §2.2). Never overwritten; to take a newer default, delete the file and re-run.
+# (finisher DESIGN §2.2). An edited file is never overwritten; to take a newer default, delete it and
+# re-run. A file still byte-identical to a default an older pir shipped was never edited, so it is
+# replaced: the first shipped default named `main` as the branch to merge into, which the finisher now
+# reports as a mismatch on every run whose base is another branch.
 PIR_DEFAULT_RULES="$HOME/.pir/default/rules/on-finish.md"
+# sha256 of every default this repo has shipped before the current one.
+SUPERSEDED_DEFAULT_RULES=(
+    5d2883ce0680ba5e8846ce2cb4805fe3a1e59bdbc78ba798a2394b2fe2f83cd0
+)
+sha256_of() {
+    if command -v shasum >/dev/null 2>&1; then shasum -a 256 "$1" | cut -d' ' -f1
+    elif command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | cut -d' ' -f1
+    fi
+}
 seed_default_rules() {
     if [[ -e "$PIR_DEFAULT_RULES" ]]; then
+        local have old
+        have="$(sha256_of "$PIR_DEFAULT_RULES")"
+        for old in "${SUPERSEDED_DEFAULT_RULES[@]}"; do
+            if [[ -n "$have" && "$have" == "$old" ]]; then
+                cp "$SRC/rules/default/on-finish.md" "$PIR_DEFAULT_RULES"
+                echo "  refreshed $PIR_DEFAULT_RULES (it was an older default, unedited)"
+                return 0
+            fi
+        done
         echo "  kept your $PIR_DEFAULT_RULES"
         return 0
     fi

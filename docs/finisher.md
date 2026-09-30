@@ -3,7 +3,8 @@
 A build run with the coordinator agent on no longer ends at `ready to merge`. When the branch is
 ready, `pir` closes the coordinator agent and starts the **finisher**: one more Claude session it
 holds, which reads the project's finishing rules, prepares every step without running any of it, asks
-the person one fixed question, and after their `Go` carries the steps out: the merge into `main`, and
+the person one fixed question, and after their `Go` carries the steps out: the merge into the run's base
+branch, and
 whatever the project does after a merge (an install, a check). The run then ends. The person never has
 to leave `pir` or their phone to finish a build.
 
@@ -22,9 +23,9 @@ look-only list, status shapes, go recognition, the rules-file choice), `src/core
 
 ## When it comes in
 
-On a build run with the coordinator agent on and `main` as its base branch
-([Known limitations](#known-limitations)), when the end sequence settles `ready` (green tests, `main`
-merged into the feature branch, `REPORT.md` committed; [coordinator-agent.md](coordinator-agent.md#the-end-of-the-run)),
+On a build run with the coordinator agent on, whatever its base branch, when the end sequence settles
+`ready` (green tests, the base merged into the feature branch, `REPORT.md` committed;
+[coordinator-agent.md](coordinator-agent.md#the-end-of-the-run)),
 the agent is told the report is committed and that the finisher takes over, with no merge line
 (`handoffFor` with `finisher: true` in `coordinator-brief.mjs`). On the next pass `pir` closes the agent
 and starts the finisher (`handOver` in `coordinate.mjs`, from the `waiting` step of `endPass`). The
@@ -42,6 +43,33 @@ The finisher's session is named `{repo} / {slug} / finisher`, runs in the featur
 `permissionMode: 'default'`, and its Remote Control is on for its whole session (unless
 `PARALLEL_REMOTE=0`), since everything it asks is the person's.
 
+## The target branch
+
+The finisher merges `pir/{slug}` into one branch: the run's base, the branch the run was cut from. `pir`
+recorded it when the run began (`branch.pir/{slug}.pirBase`,
+[branch-model.md](branch-model.md#the-base-branch)) and hands it to the finisher at every start
+(`startFinisher({ …, base })` from `handOver`, `RUN_BASE` in `coordinate.mjs`). The opening instruction
+carries it as `Target branch: {base}`, the re-sync message names it, and the resumed brief restates it. It is the same branch `pir`
+watches to end the run, so the target is never read from the settings files again and never from the rules
+file.
+
+What the skill tells the finisher to do with it:
+
+- **The rules file names another branch** for the merge (a rules file written before this may say
+  `main`): the merge still goes into the target, and the ready summary says which branch the rules named
+  and which one is used. Anything else the rules say about other branches is followed as written.
+- **The main checkout is clean and on another branch**: `git -C <main checkout> switch {base}` is the
+  first listed step, the summary names the branch the checkout leaves, and the checkout stays on the
+  target afterwards. Nothing is switched before the go: `git switch` is not look-only.
+- **The main checkout is not clean**: the summary says so and no step stashes or cleans. If it is also
+  on another branch, the summary says the switch would carry the changes across or be refused, and
+  recommends `Not yet`. Whether to go is the person's.
+- **The target is checked out in another worktree**: the switch would be refused; the summary says so
+  and names the worktree.
+
+The merge runs only with the main checkout on the target: after a switch step the finisher checks
+`branch --show-current` before merging, and a mismatch is a failed step.
+
 ## The rules file
 
 The finisher follows exactly one rules file, the first that exists of (`chooseRules` in
@@ -55,18 +83,20 @@ The finisher follows exactly one rules file, the first that exists of (`chooseRu
 | – | `{engine}/rules/default/on-finish.md` | `built-in` | default rules |
 
 `{repo}` is the basename of the repo's root, the name `pir` uses in session names. The project file is
-read from the feature worktree, where `main` has just been merged in, so a rules file committed on `main`
-is seen. Only one file is used, so the person can always say which rules ran: the file and its source
+read from the feature worktree, where the base has just been merged in, so a rules file committed on the
+base is seen. Only one file is used, so the person can always say which rules ran: the file and its source
 are in the finisher's opening instruction (`finisherOpening`), in its ready summary, and in `control.log`
 (`finisher rules: <path> (<source>)`).
 
 `install.sh` copies the engine's `rules/` next to its `src/`, and seeds
 `~/.pir/default/rules/on-finish.md` from `rules/default/on-finish.md` only when that file does not
-exist, so the person's edits survive a reinstall. The fourth row is the fallback when none of the three
+exist, so the person's edits survive a reinstall. A file still byte-identical to a default an older `pir`
+shipped (`SUPERSEDED_DEFAULT_RULES` in `install.sh`, by sha256) was never edited and is replaced with the
+current one. The fourth row is the fallback when none of the three
 exists (install never ran here, or the default was deleted); the opening instruction then tells the
-finisher to say so in its ready summary. The default rules merge `pir/{slug}` into `main` in the
-person's main checkout and confirm `main` then contains the branch tip; nothing else, no push, no pull
-request.
+finisher to say so in its ready summary. The default rules merge `pir/{slug}` into the target branch in
+the person's main checkout and confirm the target then contains the branch tip; nothing else, no push, no
+pull request. They name no branch.
 
 The rules are free prose, like `.claude/pir-coordinator.md`. The finisher turns them into concrete
 steps; `pir` does not parse them. This repository's own `.pir/rules/on-finish.md` merges, runs
@@ -163,7 +193,7 @@ the scan in `finisher-agent.mjs`):
   'person'`), or an `answered-remotely` request whose tool result names `"…"="Go"` (the phone);
 - the question was first seen after the latest accepted `ready` or `stuck`, the latest re-sync and the
   latest restart, so a `Go` never approves steps it was not asked about;
-- `main` is not being re-synced into the branch at that moment.
+- the base is not being re-synced into the branch at that moment.
 
 A `Go` that does not count (asked in `preparing`, before the steps it would approve, or during a
 re-sync) is recorded `stale-go` and the finisher is told it opened nothing (`finisherStaleGo`); it
@@ -225,7 +255,7 @@ Each pass with the finisher on, `finisherWaiting` in `coordinate.mjs`:
 - **HALT, a stop from the dashboard, or a `pir` teardown** close the finisher like the agent
   (`closeFinisher`, `closeAll`).
 
-After a go, the finisher's own merge moves `main`, so no re-sync is done.
+After a go, the finisher's own merge moves the base, so no re-sync is done.
 
 ## When it fails
 
@@ -244,15 +274,16 @@ After a go, the finisher's own merge moves `main`, so no re-sync is done.
   the coordinator agent is not started (`coordinator agent not started: the finisher is resumed`), and
   the finisher is resumed by id at the hand-over and told it was restarted. `finishing` becomes `stuck`
   as above. A restart after the finisher's own merge (`goGiven`) does not end the run as `merged`; one
-  that died between `done` and the run's end ends it at once. If `main` moved while `pir` was down, the
+  that died between `done` and the run's end ends it at once. If the base moved while `pir` was down, the
   re-sync's result voids the old steps as above.
-- **The person's main checkout is dirty or not on `main`.** The finisher says so in its ready summary,
-  with the steps it would still need; it never stashes, switches or cleans. Whether to go is the
-  person's; a merge onto a dirty checkout fails safely in git, and that is a `stuck`.
+- **The person's main checkout is dirty, or not on the target branch.** See
+  [The target branch](#the-target-branch): a clean checkout is switched as a listed step; a dirty one is
+  reported and never stashed or cleaned. Whether to go is the person's; a switch or merge git refuses on
+  a dirty checkout fails safely, and that is a `stuck`.
 - **A step fails after the go.** The finisher stops, writes `stuck` with what is done and a proposal
   (retry, a fix, or an undo), asks the go question again, and waits in look-only.
 - **Two runs finish at once in one repo.** Each has its own finisher. When the first merges, the second
-  sees `main` move and goes back to `preparing`.
+  sees the base move and goes back to `preparing`.
 
 ## Phone alerts
 
@@ -304,10 +335,11 @@ failed to start reads `ready to merge` again.
 
 `pir` appends to `control/finisher/ledger.jsonl` one line per accepted status (`status`: kind, phase
 before and after, summary, steps), per refused status (`refused`), per go (`go`, `by: 'person'` or
-`'phone'`), per `Not yet` (`not-yet`), per stale go (`stale-go`), per re-sync (`resyncing`, `resync`),
+`'phone'`), per `Not yet` (`not-yet`), per stale go (`stale-go`), per re-sync (`resyncing`, and `resync`
+with `base` and `baseSha`),
 per restart that changed the phase (`restart`) and one on giving up (`given-up`). It is durable across
 restarts; a torn last line is skipped on read. `REPORT.md` is not rewritten: it describes the build, and
-the finisher's work is in `main`'s history and this ledger. `control.log` gets `finisher rules: …`,
+the finisher's work is in the base's history and this ledger. `control.log` gets `finisher rules: …`,
 `finisher started` or `finisher resumed`, `finisher-fallback`, `finisher gave up`, and the `finished`
 line.
 
@@ -325,11 +357,14 @@ All under the run's gitignored control folder ([control-folder.md](control-folde
 
 ## Known limitations
 
-- **Only a run whose base branch is `main` gets a finisher** (`finisherServes` in
-  `src/core/finisher-policy.mjs`). Its skill, its messages and the default rules name `main` as the
-  branch to merge into. A run on any other base ends as it does without one: it waits in `ready to
-  merge` for the person's `git switch {base} && git merge pir/{slug}`
-  ([coordinator-agent.md](coordinator-agent.md#ready-to-merge)).
+- **The merge happens in the person's main checkout only.** A target branch checked out in another
+  worktree is reported, not merged there: the person frees the branch or merges by hand.
+- **The target wins over the rules by instruction, not by code.** `pir` tells the finisher the target and
+  the skill tells it what to do when the rules disagree; `pir` does not parse the steps. A merge into
+  another branch would leave the run waiting, since only the target is watched.
+- **An edited default rules file that names `main`** is kept by `install.sh`. On a run with another base
+  the finisher merges into the target and reports the mismatch in every ready summary until the file is
+  changed.
 - **A repo named `default`**, or matching another name `pir` keeps directly in `~/.pir/`, shares that
   folder with `pir`'s own files: `~/.pir/default/rules/on-finish.md` is then both the default and that
   repo's own rules. Accepted (user, 2026-09-29).
