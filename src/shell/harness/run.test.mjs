@@ -958,13 +958,17 @@ test('createScenarioSteps with watchFinisher looks once when the finisher waits 
       calls.push(args);
       if (args[0] === 'rev-parse') return { ok: true, stdout: `${mainSha}\n` };
       if (args[0] === 'merge-base') return { ok: inMain, stdout: '' };
+      if (args[0] === 'branch') return { ok: true, stdout: `${inMain ? 'release' : 'main'}\n` };
+      if (args[0] === 'for-each-ref') return { ok: true, stdout: inMain ? 'pir/x\nrelease\nmain\n' : 'pir/x\npir/x-T01\n' };
       return { ok: true, stdout: '' };
     };
-    const steps = createScenarioSteps({ spec: { watchFinisher: true }, repoDir: ws.dir, controlDir: control, slug: 'x', gitRun });
+    const steps = createScenarioSteps({ spec: { watchFinisher: true }, repoDir: ws.dir, controlDir: control, slug: 'x', base: 'release', gitRun });
     const status = (phase) =>
       writeSnapshot(control, { proc: { pid: 1 }, finalState: null, runState: { tasks: [], handoff: { state: 'ready' }, finisher: { phase } } });
     steps.tick('');
-    assert.equal(steps.record.finisher.mainAtStart, 'seed1234');
+    assert.equal(steps.record.finisher.baseAtStart, 'seed1234');
+    assert.equal(steps.record.finisher.checkoutAtStart, 'main');
+    assert.equal(steps.record.finisher.base, 'release');
     assert.equal(steps.record.finisher.beforeGo, null, 'no finisher yet');
     status('preparing');
     steps.tick('');
@@ -972,19 +976,24 @@ test('createScenarioSteps with watchFinisher looks once when the finisher waits 
     status('awaiting-go');
     steps.tick('');
     const b = steps.record.finisher.beforeGo;
-    assert.deepEqual({ phase: b.phase, mainMoved: b.mainMoved, branchInMain: b.branchInMain, finishedFile: b.finishedFile }, { phase: 'awaiting-go', mainMoved: false, branchInMain: false, finishedFile: false });
-    assert.ok(calls.some((a) => a[0] === 'merge-base' && a.includes('refs/heads/pir/x') && a.at(-1) === 'refs/heads/main'), 'asks whether the branch is in main');
+    assert.deepEqual(
+      { phase: b.phase, baseMoved: b.baseMoved, branchInBase: b.branchInBase, checkout: b.checkout, strays: b.strays, finishedFile: b.finishedFile },
+      { phase: 'awaiting-go', baseMoved: false, branchInBase: false, checkout: 'main', strays: [], finishedFile: false },
+    );
+    assert.ok(calls.some((a) => a[0] === 'merge-base' && a.includes('refs/heads/pir/x') && a.at(-1) === 'refs/heads/release'), 'asks whether the branch is in the run\'s base');
     // The finisher's go and work: main moves, FINISHED appears. A later look does not replace the first.
     mainSha = 'merged99';
     inMain = true;
     writeFileSync(join(ws.dir, 'FINISHED'), 'finished\n');
     steps.tick('');
-    assert.equal(steps.record.finisher.beforeGo.mainSha, 'seed1234');
+    assert.equal(steps.record.finisher.beforeGo.baseSha, 'seed1234');
     mkdirSync(join(control, 'finisher'), { recursive: true });
     writeFileSync(join(control, 'finisher', 'ledger.jsonl'), '{"t":"2026-01-01T00:01:00.000Z","kind":"go","by":"phone"}\nnot json\n{"kind":"status","status":"done"}\n');
     steps.final();
     const a = steps.record.finisher.afterRun;
-    assert.deepEqual({ mainMoved: a.mainMoved, branchInMain: a.branchInMain, finishedFile: a.finishedFile }, { mainMoved: true, branchInMain: true, finishedFile: true });
+    assert.deepEqual({ baseMoved: a.baseMoved, branchInBase: a.branchInBase, finishedFile: a.finishedFile }, { baseMoved: true, branchInBase: true, finishedFile: true });
+    assert.deepEqual(a.strays, ['main'], 'a branch other than the base and pir\'s own that holds the build is a stray');
+    assert.equal(a.checkout, 'release');
     assert.deepEqual(a.ledger.map((l) => l.kind), ['go', 'status'], 'a cut line is skipped');
   } finally {
     ws.cleanup();

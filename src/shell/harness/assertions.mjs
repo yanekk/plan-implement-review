@@ -1538,41 +1538,51 @@ export function indexRowIsWork() {
 const finisherSteps = (bundle) => bundle.steps?.finisher ?? null;
 const goLine = (ledger) => (ledger ?? []).find((l) => l?.kind === 'go') ?? null;
 
-// finisherWaitedForGo() — the finisher reached `awaiting-go` and, at that moment, main had not moved, the
-// feature branch was not in main and the rules' FINISHED file was absent: it looked and touched nothing.
+// finisherWaitedForGo() — the finisher reached `awaiting-go` and, at that moment, the run's base had not
+// moved, the feature branch was in no branch but pir's own, the main checkout was on the branch it started on
+// and the rules' FINISHED file was absent: it looked and touched nothing.
 export function finisherWaitedForGo() {
-  return fact('finisher-waited-for-go', 'The finisher waited for the go with main unmoved and FINISHED absent', (bundle) => {
+  return fact('finisher-waited-for-go', 'The finisher waited for the go with the base unmoved, nothing switched and FINISHED absent', (bundle) => {
     const fin = finisherSteps(bundle);
     const b = fin?.beforeGo;
-    const evidence = b ? [`${b.at}: phase ${b.phase}, main ${String(b.mainSha).slice(0, 8)} (start ${String(fin.mainAtStart).slice(0, 8)}), branch in main ${b.branchInMain}, FINISHED ${b.finishedFile}`] : [];
+    const base = fin?.base ?? 'main';
+    const evidence = b
+      ? [`${b.at}: phase ${b.phase}, ${base} ${String(b.baseSha).slice(0, 8)} (start ${String(fin.baseAtStart).slice(0, 8)}), branch in ${base} ${b.branchInBase}, checkout on ${b.checkout} (start ${fin.checkoutAtStart}), FINISHED ${b.finishedFile}`]
+      : [];
     if (!fin) return { pass: false, evidence, detail: 'no finisher record in steps.json (was the scenario run with watchFinisher?)' };
     if (!b) return { pass: false, evidence, detail: 'the finisher never waited for the go (no status showed it in awaiting-go)' };
     if (b.phase !== 'awaiting-go') return { pass: false, evidence, detail: `the look was taken in phase ${b.phase}` };
-    if (b.mainMoved || b.branchInMain) return { pass: false, evidence, detail: 'main moved before the go' };
+    if (b.baseMoved || b.branchInBase) return { pass: false, evidence, detail: `${base} moved before the go` };
+    if ((b.strays ?? []).length) return { pass: false, evidence, detail: `the branch was merged into ${b.strays.join(', ')} before the go` };
+    if ((b.checkout ?? null) !== (fin.checkoutAtStart ?? null)) return { pass: false, evidence, detail: `the main checkout was switched to ${b.checkout} before the go` };
     if (b.finishedFile) return { pass: false, evidence, detail: 'FINISHED was written before the go' };
-    return { pass: true, evidence, detail: 'awaiting-go, main unmoved, FINISHED absent' };
+    return { pass: true, evidence, detail: `awaiting-go, ${base} unmoved, checkout not switched, FINISHED absent` };
   });
 }
 
-// finisherFinishedOnPhoneGo() — after the run the feature branch is in main and FINISHED is in the main
-// checkout, the ledger holds a go `by: 'phone'`, and the run ended on the finisher's done (`✔ finished:` in
-// coordinator.out, not the hand merge's `is in main`).
+// finisherFinishedOnPhoneGo() — after the run the feature branch is in the run's base and in no other branch,
+// the main checkout is on the base, FINISHED is in the main checkout, the ledger holds a go `by: 'phone'`,
+// and the run ended on the finisher's done (`✔ finished:` in coordinator.out, not the hand merge's line).
 export function finisherFinishedOnPhoneGo() {
-  return fact('finisher-finished-on-phone-go', 'After a go from the phone the finisher merged, wrote FINISHED, and ended the run', (bundle) => {
-    const a = finisherSteps(bundle)?.afterRun;
+  return fact('finisher-finished-on-phone-go', 'After a go from the phone the finisher merged into the run\'s base only, wrote FINISHED, and ended the run', (bundle) => {
+    const fin = finisherSteps(bundle);
+    const a = fin?.afterRun;
+    const base = fin?.base ?? 'main';
     const evidence = [];
     if (!a) return { pass: false, evidence, detail: 'no look after the run in steps.json' };
-    evidence.push(`${a.at}: main ${String(a.mainSha).slice(0, 8)}, branch in main ${a.branchInMain}, FINISHED ${a.finishedFile}`);
+    evidence.push(`${a.at}: ${base} ${String(a.baseSha).slice(0, 8)}, branch in ${base} ${a.branchInBase}, also in [${(a.strays ?? []).join(', ')}], checkout on ${a.checkout}, FINISHED ${a.finishedFile}`);
     const go = goLine(a.ledger);
     if (go) evidence.push(`ledger ${go.t}: go by ${go.by}, ${go.from} → ${go.to}`);
     const finished = (bundle.coordinatorOut ?? '').split('\n').find((l) => l.startsWith('✔ finished:'));
     if (finished) evidence.push(`coordinator.out: ${finished.trim()}`);
     if (!go) return { pass: false, evidence, detail: 'the ledger has no go line' };
     if (go.by !== 'phone') return { pass: false, evidence, detail: `the go came by ${go.by}, not the phone` };
-    if (!a.branchInMain) return { pass: false, evidence, detail: 'the feature branch is not in main' };
+    if (!a.branchInBase) return { pass: false, evidence, detail: `the feature branch is not in ${base}` };
+    if ((a.strays ?? []).length) return { pass: false, evidence, detail: `the feature branch was also merged into ${a.strays.join(', ')}` };
+    if (a.checkout != null && a.checkout !== base) return { pass: false, evidence, detail: `the main checkout was left on ${a.checkout}, not ${base}` };
     if (!a.finishedFile) return { pass: false, evidence, detail: 'FINISHED is not in the main checkout' };
     if (!finished) return { pass: false, evidence, detail: 'the run did not end on the finisher\'s done (no "✔ finished:" line in coordinator.out)' };
-    return { pass: true, evidence, detail: 'go by phone, branch in main, FINISHED present, run finished by the finisher' };
+    return { pass: true, evidence, detail: `go by phone, branch in ${base} only, FINISHED present, run finished by the finisher` };
   });
 }
 
