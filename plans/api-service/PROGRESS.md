@@ -23,7 +23,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T06 | service-ctl | T02, T03 | ✅ | |
 | T07 | service-command | T06 | ✅ | |
 | T08 | usage-e2e | T04, T05 | ✅ | Review: one fix. `startService` left its child running when the start timed out, hanging the test process; reproduced, fixed. Both deviations accepted: fixture `real-asking` with fake workers, and the real-home test refusing only a fake reading (FINDINGS). Null-default check repeated, both run tests fail. Six concurrent runs green; `npm test` green in 1:39. |
-| T09 | launchd-check | T05, T06 | ⬜ | |
+| T09 | launchd-check | T05, T06 | ✅ | |
 | T10 | live-usage-check | T08 | ⬜ | |
 | T11 | docs-and-readme | T07, T09, T10 | ⬜ | |
 
