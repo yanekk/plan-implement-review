@@ -5,9 +5,9 @@ lives in [FINDINGS.md](FINDINGS.md). Sixty words to a Notes cell, counted.
 
 **Plan reviewed:** 2026-09-30 — 10 fixed, 8 decided with the user
 
-**Status:** Planned, not started.
+**Status:** In progress.
 **Last updated:** 2026-09-30
-**Next `pir-work` will:** T01 usage-core, the first task with no dependencies on the critical path.
+**Next `pir-work` will:** review T02 api-core.
 
 ## Tasks
 
@@ -16,7 +16,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | # | Task | Depends on | State | Notes |
 |---|---|---|---|---|
 | T01 | usage-core | — | ⬜ | |
-| T02 | api-core | — | ⬜ | |
+| T02 | api-core | — | 🔍 | `src/core/api.mjs`: `homeKind`, `portFor`, `apiFiles`, `discoveryRecord`, `healthBody`, `route`; 29 tests. Deviations: `homeKind` is `test-real` when `osHome` is not a string (doc silent). `route` answers 500 when the body is undefined or not serialisable (doc names only a throw). `apiFiles` strips one trailing slash. |
 | T03 | service-core | — | ⬜ | |
 | T04 | usage-report | T01, T02 | ⬜ | |
 | T05 | api-service | T01, T02 | ⬜ | |
@@ -27,7 +27,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T10 | live-usage-check | T08 | ⬜ | |
 | T11 | docs-and-readme | T07, T09, T10 | ⬜ | |
 
-**Review queue:** *(empty)*
+**Review queue:** T02
 
 ## Blocked on the user
 
