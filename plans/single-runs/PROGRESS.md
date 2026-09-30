@@ -21,7 +21,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T03 | held-sessions | — | ✅ | |
 | T04 | single-program | T02, T03 | ✅ | |
 | T05 | single-launch | T01, T02 | ✅ | |
-| T06 | single-alerts | T04 | ⬜ | |
+| T06 | single-alerts | T04 | ✅ | |
 | T07 | single-skill | T02 | ✅ | |
 | T08 | single-rig | T04, T05 | ✅ | |
 | T09 | box-single | T05, T08 | ✅ | `/single` in the box. Review clean, no fix commit: every DESIGN §2.1 text asserted, `npm test` green, rig at both sizes. Probed by drill: broken JSON and no-base refusals, a 200-character prompt, ← from the builder. Deviations accepted: notes wrap to 3 lines (user); `startSingleFailedNote` third argument; pir-tui reads single steps itself until T10; header `building`. |

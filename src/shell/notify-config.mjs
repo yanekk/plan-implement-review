@@ -109,3 +109,15 @@ export function ensurePresenceMarker(env = process.env, { fs = nodeFs } = {}) {
   }
   return presence;
 }
+
+// workerEnv(env, { fs }) → { CLAUDE_CLIENT_PRESENCE_FILE } | null (DESIGN §2.7): with ntfy configured when a
+// session is spawned (a build worker, the agent, a single run's builder or reviewer), the session is told
+// the person is "present" so the Claude app skips its own push; the marker file is made to exist. No config
+// (or a corrupt one): null, today's env. Here rather than in coordinate.mjs so the build and the single
+// program share one definition (single-runs DESIGN §2.10).
+export function workerEnv(env = process.env, { fs } = {}) {
+  const opts = fs ? { fs } : {};
+  const config = readNotifyConfig(env, opts);
+  if (!config || config.corrupt) return null;
+  return { CLAUDE_CLIENT_PRESENCE_FILE: ensurePresenceMarker(env, opts) };
+}

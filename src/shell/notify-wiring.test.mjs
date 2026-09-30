@@ -11,13 +11,13 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
-  notifyViews, runNotifyActions, newNotifyTrack, notifyPass, endAlertAction, withinMs, workerEnv,
+  notifyViews, runNotifyActions, newNotifyTrack, notifyPass, endAlertAction, withinMs,
   NOTIFY_EXIT_WAIT_MS, remoteWanted, startCoordinator, endAlertPass, finisherOneShot,
 } from './coordinate.mjs';
 import { newNotifyState, notifyExit } from '../core/notify.mjs';
 import { createFakePlatform, FAKE_REMOTE_URL } from './fake/platform.mjs';
 import { createFakeWorktree } from './fake/worktree.mjs';
-import { writeNotifyConfig, notifyPaths } from './notify-config.mjs';
+import { writeNotifyConfig, notifyPaths, workerEnv } from './notify-config.mjs';
 
 const TOPIC = 'pir-secrettopicabcdefghijklmn';
 const CONFIG = { server: 'https://ntfy.sh', topic: TOPIC };

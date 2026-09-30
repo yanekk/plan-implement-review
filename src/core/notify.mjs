@@ -95,6 +95,13 @@ export function endAlert({ slug, ready, taskCount, reason, unresolved, base = 'm
   return { title: `${slug} · not ready`, message, tags: ['warning'] };
 }
 
+// singleEndAlert({ name, base }) → { title, message, tags } for the one alert when a single run finishes
+// `ready` (single-runs DESIGN §2.10). A single run has no task count, so the message is the merge command
+// alone. A `dropped` run has no alert: dropping is agreed with the person in the conversation.
+export function singleEndAlert({ name, base } = {}) {
+  return { title: `${name} · ready to merge`, message: `git switch ${base} && git merge pir/${name}`, tags: ['tada'] };
+}
+
 // ---- The finisher's alerts (finisher DESIGN §2.9, §2.12) ----
 
 // The rules file's source as chooseRules names it (finisher-policy.mjs), in the person's words. The engine's
