@@ -23,6 +23,7 @@ import { dirname, join } from 'node:path';
 import { readEntry, userMessage, allowResult, denyResult } from '../core/stream.mjs';
 import { terminate } from './terminate.mjs';
 import { writeJsonAtomic } from './atomic-write.mjs';
+import { defaultUsageReporter } from './usage-report.mjs';
 
 // How long an exit report waits for the SDK's message stream to drain, so the last messages the
 // worker wrote are logged before its `exited` note. The SDK ends the stream on process exit; the cap
@@ -118,6 +119,11 @@ function inputQueue() {
 // DESIGN §3.4): a verdict answers the request at once, from `pir`, and logs it `decided-by-gate`; null
 // parks it for an answer as before. A gate that throws denies: it exists to fence a session in, so its
 // own failure must not open the fence. `denyMessage(toolName, input)` words a gate's refusal.
+//
+// `reportUsage(message, t)` is handed every SDK message and the `t` of its log entry, and saves the
+// subscription usage readings among them (plans/api-service DESIGN §2.4). It is a default, not
+// something a caller passes: this is the one place every session pir holds goes through, so no caller
+// has to know. The default is null outside a run started by `pir` and under the test runner.
 export function startWorker({
   cwd,
   sessionId: freshId,
@@ -134,6 +140,7 @@ export function startWorker({
   decide = null,
   denyMessage = (toolName) => `${toolName} is not allowed in this session.`,
   env = null,
+  reportUsage = defaultUsageReporter(),
 }) {
   mkdirSync(dirname(logPath), { recursive: true });
   // A resumed session runs under the id it was saved with; every message pir sends carries that id.
@@ -284,7 +291,19 @@ export function startWorker({
 
   const streamDone = (async () => {
     try {
-      for await (const m of q) log({ dir: 'in', event: m });
+      for await (const m of q) {
+        const entry = log({ dir: 'in', event: m });
+        // After the log, so a reading's `observed_at` is this entry's `t` and the API's value can be
+        // matched against the log exactly. The default reporter never throws; an injected one might,
+        // and a throw here would land in the catch below and end the worker as an SDK error.
+        if (reportUsage) {
+          try {
+            reportUsage(m, entry.t);
+          } catch {
+            // the reporter's own failure
+          }
+        }
+      }
     } catch (err) {
       note('sdk-error', { message: String(err?.message ?? err) });
       // The worker is handled as exited (DESIGN §2.14): stop feeding it and make sure the process goes.
