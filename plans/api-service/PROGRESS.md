@@ -17,7 +17,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 |---|---|---|---|---|
 | T01 | usage-core | — | ✅ | `src/core/usage.mjs`, 76 tests. Review: one fix. `parseReading` let a file through when `now` was null, a numeric string or Infinity; reproduced by running it, fixed, test locks it. Both recorded deviations accepted. Probed: 14 mutations all killed, `1e999` in the file, half-way rounding, the boundary test. Suite green on the second run (rig flake, FINDINGS). |
 | T02 | api-core | — | ⬜ | |
-| T03 | service-core | — | ⬜ | |
+| T03 | service-core | — | ✅ | |
 | T04 | usage-report | T01, T02 | ⬜ | |
 | T05 | api-service | T01, T02 | ⬜ | |
 | T06 | service-ctl | T02, T03 | ⬜ | |
