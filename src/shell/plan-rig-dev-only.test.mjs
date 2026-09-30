@@ -8,7 +8,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { PLAN_RIG_SLUG, PLAN_RIG_QUESTION } from './plan-rig.mjs';
+import { PLAN_RIG_SLUG, PLAN_RIG_QUESTION, SINGLE_RIG_TEST_LINE } from './plan-rig.mjs';
 import { git, BRIEF, SIZES, esc, LEFT, ENTER, rigWithTeardown } from './plan-rig-helpers.mjs';
 
 // ---- base-branch T09: the whole flow in a repo with only `dev`, whose remote dev is ahead (DESIGN §1, §2.9).
@@ -19,7 +19,7 @@ const DEV_RIG = { base: 'dev', remoteAhead: true, holdReportMs: 3000 };
 test('startPlanRig({ base: dev, remoteAhead }) builds a dev-only repo whose origin/dev is one commit ahead', (t) => {
   const rig = rigWithTeardown(t, { base: 'dev', remoteAhead: true });
   assert.equal(git(rig.repoDir, 'branch', '--format=%(refname:short)'), 'dev');
-  assert.equal(git(rig.repoDir, 'show', 'dev:.pir/settings.json'), '{"baseBranch":"dev","setup":[],"test":["true"]}');
+  assert.equal(git(rig.repoDir, 'show', 'dev:.pir/settings.json'), JSON.stringify({ baseBranch: 'dev', setup: [], test: [SINGLE_RIG_TEST_LINE] }));
   assert.equal(git(rig.repoDir, 'ls-remote', '--heads', 'origin'), `${rig.remote.ahead}\trefs/heads/dev`);
   assert.equal(git(rig.repoDir, '--git-dir', rig.remote.path, 'rev-parse', `${rig.remote.ahead}^`), git(rig.repoDir, 'rev-parse', 'dev'));
   assert.equal(git(rig.repoDir, 'status', '--porcelain'), '');
