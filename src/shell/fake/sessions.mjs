@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // Canned scripts for every Claude session of a planning run and the build it starts (pir-plan-command
-// DESIGN §4, §5 End to end), and for the builder and reviewer of a single run (single-runs T08). Each returns steps for the fake (claude-stream.mjs); put them in a
-// PIR_FAKE_CLAUDE_SCRIPTS file behind writeClaudeShim, keyed by the opening message:
+// DESIGN §4, §5 End to end), and for the builder and reviewer of a single run (single-runs T08). Each
+// returns steps for the fake (claude-stream.mjs); put them in a PIR_FAKE_CLAUDE_SCRIPTS file behind
+// writeClaudeShim, keyed by the opening message:
 //
 //   [{ match: PLANNER_MATCH, script: plannerScript({ slug, question }) },
 //    { match: REVIEWER_MATCH, script: reviewerScript({ slug }) },
