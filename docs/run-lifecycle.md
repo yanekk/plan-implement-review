@@ -277,10 +277,10 @@ With the coordinator agent on (the default), reaching the end gate does not end 
 gives red tests one attempt by a test-fix worker in the feature worktree, prepares the run's base
 (fetching it from the remote) and merges it into the feature branch (a conflict is finished by a main-sync worker), reruns the tests if anything
 merged (red there, and no fix attempt yet, gets the one attempt then), has the agent write the delivery report's sections, commits
-`plans/{slug}/REPORT.md` on the feature branch. On a green branch it then closes the agent and starts
+`plans/{slug}/REPORT.md` on the feature branch. On a green branch whose base is `main` it then closes the agent and starts
 the **finisher**, which prepares the merge and the project's after-merge steps, asks the person one go
 question, and after their `Go` carries them out; its `done` ends the run as `finished`
-([finisher.md](finisher.md)). On red, or if the finisher cannot start or gives up, the run waits in
+([finisher.md](finisher.md)). On red, on any other base, or if the finisher cannot start or gives up, the run waits in
 **ready to merge** instead: the footer reads `✔ ready to merge · git switch {base} && git merge pir/{slug}`
 and names the report, or `✗ not ready · tests red …` on red. That wait lasts until the person merges
 `pir/{slug}` into the base (the command sees the local base, or the remote's copy it fetches every 5

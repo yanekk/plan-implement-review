@@ -40,9 +40,10 @@ end-of-run sync, and moves the person's local copy forward only when that is saf
 never merges into the base and never pushes. Without the coordinator agent it stops at a green feature
 branch and hands the person `git switch {base} && git merge pir/{slug}` to run by hand. With the agent
 on (the default), it first merges the base into the feature branch and commits a delivery report; on a
-green branch it then starts the finisher, a session that prepares the merge and the project's
+green branch whose base is `main` it then starts the finisher, a session that prepares the merge and the project's
 after-merge steps and, after the person's one `Go`, carries them out, so the merge is the finisher's,
-never the command's (see [finisher.md](finisher.md)). A project opts into parallel mode per run; nothing about the classic
+never the command's (see [finisher.md](finisher.md)); on any other base it waits in `ready to merge`
+for the person's merge. A project opts into parallel mode per run; nothing about the classic
 flow changes.
 
 A person launches parallel mode with `pir start {slug}`, run from inside the target repo — it starts
@@ -104,7 +105,7 @@ and it had no conversation view. `install.sh` removes an installed copy it finds
   commands for the person in code (`src/core/coordinator-policy.mjs`). Its base definition is the
   `pir-coordinator` skill; a project may add `.claude/pir-coordinator.md`. It never merges into
   the base branch and never pushes (see [coordinator-agent.md](coordinator-agent.md)).
-- **The finisher** — one Claude session per green build run with the agent on, started when the agent
+- **The finisher** — one Claude session per green build run with the agent on and `main` as its base, started when the agent
   is closed at the end (`src/shell/finisher-agent.mjs`). It follows one finishing rules file
   (`.pir/rules/on-finish.md` in the repo, else `~/.pir/{repo}/rules/on-finish.md`, else
   `~/.pir/default/rules/on-finish.md`), only looks until the person answers its go question with `Go`,

@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   PHASES, LOOK_ONLY, isLookOnly, finisherVerdict, readStatus, checkStatus, isGoAnswer, afterRestart,
-  RESTARTED_MID_FINISH, chooseRules,
+  RESTARTED_MID_FINISH, chooseRules, finisherServes,
 } from './finisher-policy.mjs';
 
 // ---- isLookOnly ----
@@ -244,6 +244,11 @@ test('afterRestart: finishing drops to stuck; others kept; unknown reads as prep
   for (const phase of ['preparing', 'awaiting-go', 'stuck', 'done']) assert.deepEqual(afterRestart(phase), { phase, stuckSummary: null });
   assert.deepEqual(afterRestart(undefined), { phase: 'preparing', stuckSummary: null });
   assert.deepEqual(afterRestart('bogus'), { phase: 'preparing', stuckSummary: null });
+});
+
+test('finisherServes: only a run whose base is main gets a finisher', () => {
+  assert.equal(finisherServes('main'), true);
+  for (const base of ['dev', 'master', '', null, undefined]) assert.equal(finisherServes(base), false, String(base));
 });
 
 // ---- chooseRules ----

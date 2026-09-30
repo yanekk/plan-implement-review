@@ -27,7 +27,7 @@ You act as product manager: you own *what* gets built and why. The sessions own 
 pir plan "what to build"   →  pir/{slug} branch        planned, then read back by a fresh session,
                                                         all answered in pir's screen
     ↵ at "Start the build?" →  pir/{slug} branch, green every task built and reviewed in parallel
-Go, to the finisher        →  {base}                    your one go: it merges and runs your after-merge steps
+Go, to the finisher        →  main                      your one go: it merges and runs your after-merge steps
 ```
 
 `pir plan` runs the two planning steps for you, one after the other, as sessions inside `pir` (see
@@ -38,7 +38,7 @@ slash commands inside Claude Code, and then start the build:
 /pir-plan                  →  plans/{slug}/            a reviewed-ready plan, split into tasks
 /pir-review-plan {slug}    →  plan marked reviewed      fresh eyes before a line is built
 pir start {slug}           →  pir/{slug} branch, green  every task built and reviewed in parallel
-Go, to the finisher        →  {base}                    your one go: it merges and runs your after-merge steps
+Go, to the finisher        →  main                      your one go: it merges and runs your after-merge steps
 ```
 
 `{base}` is the repo's base branch, `main` or `dev` or whichever the repo names; `pir` needs it set
@@ -143,7 +143,7 @@ What that gets you:
 
 - **Your base branch stays clean.** The plan is written on its own branch, `pir/{slug}`, which the
   build then uses as its feature branch; the plan reaches the base with its code, in the one merge you
-  say go to. `pir`
+  say go to or run yourself. `pir`
   never deletes a branch.
 - **Nothing to carry between sessions.** No slug to copy, no second session to open for the review.
 - **It survives the terminal closing.** Like a build, it runs in the background. The dashboard shows
@@ -312,10 +312,10 @@ once you say go.
   back to waiting for you to merge by hand, and prints the `git switch {base} && git merge pir/{slug}`
   to run.
 
-The finisher merges into `main` today: in a repo whose base branch is another one, merge by hand
-instead. You can still merge by hand before you say go; the run sees it and ends. Tell the finisher "close the
+You can still merge by hand before you say go; the run sees it and ends. Tell the finisher "close the
 run" to end it without finishing. A red build, and a build started with `--no-coordinator`, never get a
-finisher.
+finisher. Nor, for now, does a build in a repo whose base branch is not `main`: the finisher merges
+into `main` only, so there the run shows the merge command and waits for you to merge by hand.
 
 **Your finishing rules** are a plain-English file, `on-finish.md`. The finisher uses the first of these
 that exists, and names which one in what it shows you:
@@ -672,8 +672,8 @@ session. The ones that bite most often:
   `worker`, `ask` or `person` bin you approved at plan review, enforced as a permission rule; an
   action with no bin is `ask`.
 - **Your base branch is yours.** A run builds on its own feature branch, one branch and worktree
-  per task, and the finisher merges into it only after your `Go` (without the coordinator agent,
-  you get the `git merge` to run yourself). Nothing merges into the base without you, the coordinator
+  per task, and the finisher merges into it only after your `Go` (without the coordinator agent, or
+  on a base other than `main`, you get the `git merge` to run yourself). Nothing merges into the base without you, the coordinator
   agent included, and `pir` itself never pushes.
 
 ## Layout of this repo

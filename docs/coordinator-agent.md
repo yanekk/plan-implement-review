@@ -5,8 +5,8 @@ the person's stand-in. It sees every worker question and permission request befo
 and either answers it on the person's behalf or passes it on with a pointer. When every task is
 done it writes the delivery report's sections and hands the person a feature branch that merges
 into the repo's base branch cleanly (the one its settings name, see
-[branch-model.md](branch-model.md#the-base-branch)). On a green branch it is then closed and the
-**finisher** takes over the merge ([finisher.md](finisher.md)). It never merges into the base and never
+[branch-model.md](branch-model.md#the-base-branch)). On a green branch whose base is `main` it is then
+closed and the **finisher** takes over the merge ([finisher.md](finisher.md)). It never merges into the base and never
 pushes.
 
 Naming: "the coordinator agent" is this session. "The coordinator" alone is still the command
@@ -315,18 +315,19 @@ that moved the step on wakes the loop, so the next step follows after the 250 ms
    whether a test-fix worker fixed the tests or left them red, and the tests result). The decisions section is rendered by the command from the ledger's notable
    lines and adoptions, not written by the agent, so no decision can drop out of it. The report reaches
    the base with the merge.
-5. **Hand-off.** On a green branch the command sends the agent the report and tells it that the
+5. **Hand-off.** On a green branch whose base is `main` the command sends the agent the report and tells it that the
    finisher takes over, with no merge line (`handoffFor` with `finisher: true`); the agent presents the
    report in its reply, and on the next pass the command closes the agent and starts the **finisher**,
    which prepares the merge and the project's after-merge steps and carries them out after the person's
-   go ([finisher.md](finisher.md)). On red the agent is sent the report and the reason no merge is
-   offered, presents them, and the run waits.
+   go ([finisher.md](finisher.md)). On a green branch with any other base the agent is sent the report
+   and `git switch {base} && git merge pir/{slug}`, presents them, and the run waits. On red the agent is
+   sent the report and the reason no merge is offered, presents them, and the run waits.
 
 ### Ready to merge
 
-A green run reaches this wait only when the finisher cannot take it: it failed to start or gave up
-([finisher.md](finisher.md#when-it-fails)), and the run falls back to the wait below with the merge line
-printed once. A red run always waits here. Otherwise the finisher's own phases replace it
+A green run whose base is `main` reaches this wait only when the finisher cannot take it: it failed to
+start or gave up ([finisher.md](finisher.md#when-it-fails)), and the run falls back to the wait below
+with the merge line printed once. A red run, and a run on any other base, always waits here. Otherwise the finisher's own phases replace it
 ([finisher.md](finisher.md#on-screen)).
 
 The live view's footer reads `✔ ready to merge · git switch {base} && git merge pir/{slug}` with `report:

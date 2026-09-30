@@ -342,6 +342,11 @@ export function afterRestart(phase) {
   return { phase, stuckSummary: null };
 }
 
+// finisherServes(base) → whether a run on this base branch gets a finisher. Its skill, its briefs and the
+// default rules merge into `main` by name, so a run whose base is another branch (base-branch plan) keeps
+// the ready-to-merge wait and the person's hand merge (user, 2026-09-30).
+export const finisherServes = (base) => base === 'main';
+
 // ---- The rules file (DESIGN §2.2) ----
 
 const RULES_FILE = 'on-finish.md';

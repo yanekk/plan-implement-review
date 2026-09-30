@@ -22,7 +22,8 @@ look-only list, status shapes, go recognition, the rules-file choice), `src/core
 
 ## When it comes in
 
-On a build run with the coordinator agent on, when the end sequence settles `ready` (green tests, `main`
+On a build run with the coordinator agent on and `main` as its base branch
+([Known limitations](#known-limitations)), when the end sequence settles `ready` (green tests, `main`
 merged into the feature branch, `REPORT.md` committed; [coordinator-agent.md](coordinator-agent.md#the-end-of-the-run)),
 the agent is told the report is committed and that the finisher takes over, with no merge line
 (`handoffFor` with `finisher: true` in `coordinator-brief.mjs`). On the next pass `pir` closes the agent
@@ -324,10 +325,11 @@ All under the run's gitignored control folder ([control-folder.md](control-folde
 
 ## Known limitations
 
-- **The finisher is written for `main`.** Its skill, its messages and the default rules name `main` as
-  the branch to merge into, whatever the run's base branch is. `pir` itself watches and re-syncs the
-  run's base. In a repo whose base is another branch, merge by hand before the go (`git switch {base} &&
-  git merge pir/{slug}`); the run sees it and ends.
+- **Only a run whose base branch is `main` gets a finisher** (`finisherServes` in
+  `src/core/finisher-policy.mjs`). Its skill, its messages and the default rules name `main` as the
+  branch to merge into. A run on any other base ends as it does without one: it waits in `ready to
+  merge` for the person's `git switch {base} && git merge pir/{slug}`
+  ([coordinator-agent.md](coordinator-agent.md#ready-to-merge)).
 - **A repo named `default`**, or matching another name `pir` keeps directly in `~/.pir/`, shares that
   folder with `pir`'s own files: `~/.pir/default/rules/on-finish.md` is then both the default and that
   repo's own rules. Accepted (user, 2026-09-29).

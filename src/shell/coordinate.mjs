@@ -53,7 +53,7 @@ import { reapRecorded } from './reap.mjs';
 import { planHome } from './plan-home.mjs';
 import { startCoordinatorAgent, withAgent, closingAnswer, readLogEntries, readJson } from './coordinator-agent.mjs';
 import { startFinisher as startFinisherSession } from './finisher-agent.mjs';
-import { chooseRules } from '../core/finisher-policy.mjs';
+import { chooseRules, finisherServes } from '../core/finisher-policy.mjs';
 import { startWorker } from './worker-proc.mjs';
 import { alertText, endAlert, holdAlert, notifyStep, notifyExit, newNotifyState, finisherAlert, finisherNotifyView } from '../core/notify.mjs';
 import { holdText } from '../core/basebranch.mjs';
@@ -253,8 +253,9 @@ export function startCoordinator({
   // reportPath })` → a Finisher (finisher-agent.mjs), called once the end sequence settles `ready`; only
   // with the agent on. `priorFinisher()` → the stored `finisher/state.json` of this run, or null: present
   // means pir restarted over a finisher, which is resumed instead of the agent. `handoff.finisher` is
-  // null | 'starting' | 'on' | 'fallback' (today's ready-to-merge wait, for good).
-  const withFinisher = endOfRun && startFinisher !== null;
+  // null | 'starting' | 'on' | 'fallback' (today's ready-to-merge wait, for good). A run whose base is not
+  // `main` has none (finisherServes): the finisher merges into `main` by name.
+  const withFinisher = endOfRun && startFinisher !== null && finisherServes(RUN_BASE);
   const prior = withFinisher ? priorFinisher() ?? null : null;
   let finisher = null;
   let agentClosedForFinisher = false;
@@ -2409,9 +2410,10 @@ async function main(argv) {
             env: () => workerEnv(),
           });
         };
-  // The finisher (finisher DESIGN §2.1, §2.2): only with the agent on. Its rules are the first of the
-  // project's, the person's for this repo and the default that exists, else the engine's own copy.
-  const startFinisher = !startAgent
+  // The finisher (finisher DESIGN §2.1, §2.2): only with the agent on, and only on a `main` base
+  // (finisherServes). Its rules are the first of the project's, the person's for this repo and the default
+  // that exists, else the engine's own copy.
+  const startFinisher = !startAgent || !finisherServes(base)
     ? null
     : ({ featurePath, askRules, reportPath }) => {
         const rules = chooseRules({ featurePath, home: homedir(), repo: root, engineDir: ENGINE_DIR, exists: existsSync });
