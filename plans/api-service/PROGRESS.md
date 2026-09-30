@@ -20,14 +20,14 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T03 | service-core | — | ✅ | |
 | T04 | usage-report | T01, T02 | ⬜ | |
 | T05 | api-service | T01, T02 | ⬜ | |
-| T06 | service-ctl | T02, T03 | ⬜ | |
+| T06 | service-ctl | T02, T03 | 🔍 | `service-ctl.mjs`, 35 tests. Deviations: `off` prints only `pir service: off` (§2.7), not the status check's two lines; added an `exec` option and exports `resolveNodePath`, `httpGet`, `realLaunchctl`, `main`; the CLI also takes `on`, `off`, `status`; an `api.json` with no usable pid is removed as stale; the import scan strips comments. Reasons in the commit. |
 | T07 | service-command | T06 | ⬜ | |
 | T08 | usage-e2e | T04, T05 | ⬜ | |
 | T09 | launchd-check | T05, T06 | ⬜ | |
 | T10 | live-usage-check | T08 | ⬜ | |
 | T11 | docs-and-readme | T07, T09, T10 | ⬜ | |
 
-**Review queue:** *(empty)*
+**Review queue:** T06
 
 ## Blocked on the user
 
