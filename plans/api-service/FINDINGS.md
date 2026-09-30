@@ -7,6 +7,7 @@ Legend: 🐞 defect found · ✅ verified by hand with the user · 📌 worth kn
 
 | Date | | Finding |
 |---|---|---|
+| 2026-09-30 | 🐞 | T10 review: a harness killed from outside left its coordinator and sessions running, with no time limit. Reproduced with a real process tree, fixed, test locks it. Reviewer's live run, worker-driven, exited 0: 8 events, 5 distinct `observed_at`, folder removed. |
 | 2026-09-30 | 📌 | T10, worker-driven: `node src/shell/harness/usage-live-check.mjs --into /tmp/usage-live` exited 0 in 90 s. 8 `rate_limit_event`s in 4 logs, all with `unifiedWindows`; 6 distinct `observed_at` over 18 polls; final API equal to the newest event. Folder removed, no worker left. |
 | 2026-09-30 | 📌 | T10: the auto-mode classifier refused the live check wrapped in `cd … && … > file` (`Real-World Transactions`). The bare command, matching its `allow` rule in `.claude/settings.json`, ran. Run §5.3 commands exactly as written. |
 | 2026-09-30 | 📌 | T08: a before-and-after mtime check of the real `~/.pir/usage.json` would fail during any live run once this is installed. The test refuses only the fake reading, known by five-hour `resets_at` 1790334600 (`USAGE_RESETS` in `plan-rig.mjs`). |
