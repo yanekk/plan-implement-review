@@ -11,6 +11,7 @@ Legend: 🐞 defect found · ✅ verified by hand with the user · 📌 worth kn
 
 | Date | | Finding |
 |---|---|---|
+| 2026-09-30 | ✅ | Live check `run.mjs finisher-live-branch` PASS: base `release`, checkout on `main`, rules naming `main`. Ledger `go` by `phone`; switch and merge only after it; build in `release`, not `main`. User saw no ready alert at first; arrival unconfirmed. |
 | 2026-09-30 | 🔄 | The finisher serves any base (user): `pir` passes the run's `pirBase` as `Target branch`, the skill switches a clean checkout as a listed step, the target wins over the rules file. `finisherServes` removed; `install.sh` refreshes an unedited old default. |
 | 2026-09-30 | 📌 | `docs/detached-runs.md` still says `handoff.mainSha` and `git merge pir/{slug}`; the code has `baseSha` and `git switch {base} && git merge`. Stale on main since base-branch, left alone. |
 | 2026-09-30 | 📌 | T10 review: the live bundle sat in the scratch control folder and went with teardown. The finisher's transcript under `~/.claude/projects/-private-tmp-pir-finisher-live--…` confirms the PASS: no merge before the Go answer (05:24:40Z), merge and FINISHED after. |
