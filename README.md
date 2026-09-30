@@ -338,6 +338,14 @@ What it tells you at a glance:
   tell it to carry on); one waiting on its own tests or build in the background still reads as
   working. The same holds for the planner and plan reviewer in `pir plan`. See
   [human-flow.md](docs/human-flow.md#when-a-row-reads-asking-you).
+- **What its helpers are doing.** When a worker, planner or the coordinator agent starts helper agents
+  of its own, its conversation shows each helper as one line that updates as it works (its current
+  step, how many steps, how long) and says when it finished, stopped or failed; the helper's own chatter
+  stays out of the way until you press Tab, and a permission it asks for names the helper. Pressing Esc
+  while helpers run warns first and names them, because interrupting stops them too; a second Esc
+  interrupts, and your next message tells the worker which helpers were stopped. A worker whose helper
+  is still running reads as working, not as waiting on you. Helpers are not shown on the task rows
+  or over Remote Control. See [human-flow.md](docs/human-flow.md#helpers).
 - **Or answer from your phone.** While a worker waits on you, its session is also opened to
   Claude's Remote Control, so you can answer on claude.ai or your phone instead of in `pir`. Once you
   have answered and the worker is back at work, it is closed again. Start a run with
