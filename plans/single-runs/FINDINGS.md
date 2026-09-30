@@ -7,6 +7,8 @@ Legend: 🐞 defect found · ✅ verified by hand with the user · 📌 worth kn
 
 | Date | | Finding |
 |---|---|---|
+| 2026-09-30 | 📌 | T11, T12: the fake ntfy is `ntfyPublish` and `ntfyClear` in `runSingle`'s deps, which a detached program cannot be given. The pty rig's scratch `PIR_HOME` has no `notify.json`, so a rig run sends nothing. |
+| 2026-09-30 | 📌 | T13: the end alert is sent on the `finish` action only. A program killed between writing `outcome: ready` and the send never sends it: `--resume` takes the nothing-to-resume exit. A resumed session's alert reuses seq `pir-{sessionId}-1`. |
 | 2026-09-30 | 📌 | T09, T11: a second `startSingle` in one rig names `rig-fix` again; pir refuses the taken name and the build step parks `asking`. Use a fresh rig per single run. Seen in T08 review. |
 | 2026-09-30 | 📌 | T10: the screen test in `plan-rig-single.test.mjs` only waits for the `rig-fix` row, which reads `work ◌ finished` today, and asserts the snapshot's runState. Tighten it to `single` and `ready to merge`. |
 | 2026-09-30 | 📌 | T09, T11: a rig run's record and control folder carry git's resolved path (`/private/var/…`); `rig.repoDir` does not. Build control-folder paths from `started.record.repoPath`, as `controlOf` in `plan-rig-single.test.mjs` does. |
@@ -28,7 +30,7 @@ Legend: 🐞 defect found · ✅ verified by hand with the user · 📌 worth kn
 | 2026-09-30 | 📌 | T03 did not run `./install.sh`: from a task worktree it would put unreviewed code into the engine the live run uses. The engine is installed once `pir/single-runs` is merged. |
 | 2026-09-30 | 📌 | A malformed `setup` or `test` makes the whole settings file `bad-settings`, so a plan or build start refuses on it too. Follows from the shared `parseSettings`; pinned by a T01 review test. T13 documents it. |
 | 2026-09-30 | 📌 | `commandsRefusalText` for `no-commands` is one line and names only the missing keys, first sentence included (`has no test commands`). Decided with the user in T01; the task doc gave only the both-missing text. |
-| 2026-09-30 | 📌 | The pty end-to-end tests (`plan-rig-planning-drill`, `plan-rig-brief-box`, `plan-rig-mouse`, `conversation-rig`) fail on timing when sibling workers push the load average past 30; each passes alone. `the helpers scenario drives the real pir screen` fails most often, on code without T05 or T07. |
+| 2026-09-30 | 📌 | Pty end-to-end tests (`plan-rig-*`, `conversation-rig`) fail under sibling-worker load and pass alone: timing past load average 30; `plan-rig-box-start` once with `ENOTEMPTY` in rig cleanup at load 14. `the helpers scenario drives the real pir screen` fails most often. |
 | 2026-09-30 | 📌 | Orphaned `coordinate.mjs helper` (pid 85261) and fake sessions from worktree `pir-reliable-notifications-T03` have run since 2026-09-28. Not this plan's; left alone. |
 | 2026-09-29 | 📌 | Planned on `main` before base-branch landed; its settings files, `prepareBase` and hand-off text are cited by that plan's task-doc names. Read the merged code first. |
 | 2026-09-29 | 📌 | `npm test` takes about 5 minutes on this machine, which is why the baseline test run happens only on the first red (DESIGN §2.5). |

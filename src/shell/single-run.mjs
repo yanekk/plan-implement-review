@@ -14,6 +14,10 @@
 // rename, and then either reopens the current step's last session by id or starts again the command run
 // the last program died in.
 //
+// Phone alerts (§2.10) go through the build's machinery: each loop turn the asking session becomes a view
+// for core/notify's episode machine, whose sends and clears coordinate.mjs's runner publishes; one more
+// alert when the run finishes `ready`. With no ~/.pir/notify.json nothing is sent.
+//
 // Under PIR_RUN=1 (set only by the launcher) it writes status.json on every change of what the screen
 // would show, and the final status to the snapshot and the index entry, as plan-run.mjs does. Without it
 // neither is touched, so a bare run in a test leaves no dashboard trace.
@@ -21,6 +25,7 @@
 import { spawn as spawnLine } from 'node:child_process';
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmdirSync, rmSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
+import { alertText, newNotifyState, notifyExit, notifyStep, singleEndAlert } from '../core/notify.mjs';
 import { resumeInstruction } from '../core/planflow.mjs';
 import { parseRecord } from '../core/runrecord.mjs';
 import {
@@ -34,12 +39,15 @@ import {
 import { workerActivity } from '../core/stream.mjs';
 import { writeJsonAtomic } from './atomic-write.mjs';
 import { startLines as startLinesReal } from './commands.mjs';
+import { NOTIFY_EXIT_WAIT_MS, endAlertAction, newNotifyTrack, runNotifyActions, withinMs } from './coordinate.mjs';
 import { drainDropFolder } from './drop-folder.mjs';
 import { isAlive as isAliveReal, startTimeOf as startTimeOfReal } from './identity.mjs';
 import { STOP_CLOSE, createSessionHolder, sessionAsking, trackStoppedAt } from './held-session.mjs';
 import { indexDir as indexDirOf, recordPath, removeRecord, renameRecord, updateRecord } from './index-store.mjs';
+import { notifyIcon, readNotifyConfig, workerEnv } from './notify-config.mjs';
+import { clear as ntfyClearReal, publish as ntfyPublishReal } from './ntfy.mjs';
 import { startPersonInbox } from './person-inbox.mjs';
-import { resolveClaudePath } from './platform.mjs';
+import { lastAssistantText, resolveClaudePath } from './platform.mjs';
 import { reapRecorded } from './reap.mjs';
 import { writeSnapshot as writeSnapshotReal } from './snapshot-store.mjs';
 import {
@@ -226,6 +234,29 @@ export function singleRunState(state, { label = null, sessions = [], since = {},
   };
 }
 
+// singleNotifyViews(runState, sessions, { id, remoteOn }) → the episode machine's views (core/notify.mjs),
+// one per step whose live session asks the person (§2.10). Pure. It reads `asking` off the run state the
+// row is painted from, so the phone and the row cannot disagree: a session idle while pir tests has no
+// view. `sessions` are [{ id, activity, lastText, url, remoteRefused }]; `id` is the run id, which names
+// the run in the title when it has neither a name nor a label (a run started without PIR_RUN).
+export function singleNotifyViews(runState, sessions = [], { id = null, remoteOn = true } = {}) {
+  const views = [];
+  for (const step of runState?.steps ?? []) {
+    if (!step.asking || !step.worker?.live) continue;
+    const s = sessions.find((x) => x.id === step.worker.id);
+    if (!s) continue;
+    const { title, message } = alertText({
+      plan: runState.name ?? runState.label ?? id,
+      name: ROLE[step.id],
+      kind: step.asking,
+      lastText: s.lastText ?? null,
+      pending: s.activity?.pending,
+    });
+    views.push({ id: s.id, waiting: step.asking, title, message, remote: s.remoteRefused ? 'refused' : remoteOn ? 'wanted' : 'off', url: s.url ?? null });
+  }
+  return views;
+}
+
 // nextTestsLogPath(controlDir) → tests-{n}.log, n one past the highest there (§3.5), counted from the
 // folder so a resumed program never overwrites the log a message already named.
 export function nextTestsLogPath(controlDir, { readdir = readdirSync } = {}) {
@@ -281,7 +312,8 @@ export function reapCommand(controlDir, { kill = process.kill, isAlive = isAlive
 // resumable), 2 when the run cannot start. deps, all optional, as runPlanning's:
 //   env, now, log, signal (an AbortSignal: a stop), claudePath, startWorker, startTimeOf, reap, git,
 //   slugTaken, renamePlanBranch, writeSnapshot, updateRecord, watch, uuid, pollMs
-// plus startLines (commands.mjs), openBaseline, removeBaseline (worktree.mjs).
+// plus startLines (commands.mjs), openBaseline, removeBaseline (worktree.mjs), and ntfyPublish, ntfyClear
+// (ntfy.mjs), which a test replaces so no alert reaches the network.
 export async function runSingle({ controlDir: givenControlDir, resume = false, deps = {} }) {
   const {
     env = process.env,
@@ -299,6 +331,8 @@ export async function runSingle({ controlDir: givenControlDir, resume = false, d
     updateRecord: updateRecordFn = updateRecord,
     watch,
     pollMs = POLL_MS,
+    ntfyPublish = ntfyPublishReal,
+    ntfyClear = ntfyClearReal,
   } = deps;
 
   // Every path below is re-pointed when the control folder moves at the rename (§2.4 step 4).
@@ -393,6 +427,8 @@ export async function runSingle({ controlDir: givenControlDir, resume = false, d
         ? builderInstruction({ reportsDir, base: state.base, baseSha: state.baseSha, prompt, setupNote })
         : reviewerInstruction({ reportsDir, name: state.name, base: state.base, baseSha: state.baseSha, prompt }),
     remote,
+    // Read at each spawn, so a `pir notify` during the run reaches the reviewer (§2.10).
+    env: () => workerEnv(env),
     claudePath,
     log,
     now,
@@ -528,9 +564,9 @@ export async function runSingle({ controlDir: givenControlDir, resume = false, d
   };
   const branchNow = () => (state.name && branchExists(`pir/${state.name}`) ? `pir/${state.name}` : `pir/${state.id}`);
   let lastPainted = null;
-  const paint = (finalState = null) => {
+  const paint = (finalState = null, rs = null) => {
     if (!selfReport) return;
-    const rs = runState();
+    rs ??= runState();
     const text = JSON.stringify([rs, finalState, controlDir]);
     if (text === lastPainted && finalState === null) return;
     lastPainted = text;
@@ -558,6 +594,48 @@ export async function runSingle({ controlDir: givenControlDir, resume = false, d
   };
 
   let personInbox = startPersonInbox({ controlDir, platform, grants, watch, log });
+
+  // ---- Phone alerts (§2.10). The config is read per action, so `pir notify off` stops the alerts of a
+  // run already going. Retry waits are unref'd: a send still retrying must not hold the process open. ----
+  const notifyTrack = newNotifyTrack();
+  const unrefSleep = (ms) => new Promise((r) => setTimeout(r, ms).unref());
+  const runNotify = (actions) =>
+    runNotifyActions(actions, {
+      readConfig: () => readNotifyConfig(env),
+      icon: notifyIcon(env),
+      publish: (fields) => ntfyPublish(fields, { sleep: unrefSleep }),
+      clear: (fields) => ntfyClear(fields),
+      note: (id, kind, fields) => platform.note(id, kind, fields),
+      log,
+      track: notifyTrack,
+    });
+  let notifyState = newNotifyState();
+  // One pass: the asking session → notifyStep → the runner, not awaited. A failure here never ends the run.
+  const alertPass = (rs) => {
+    try {
+      const sessions = holder.sessions
+        .filter((x) => x.live && x.worker)
+        .map((x) => ({
+          id: x.id,
+          activity: workerActivity(x.worker.entries()),
+          lastText: lastAssistantText(x.worker.entries()),
+          url: x.worker.remoteUrl ?? null,
+          remoteRefused: !!x.worker.remoteRefused,
+        }));
+      const step = notifyStep(notifyState, singleNotifyViews(rs, sessions, { id: state.id, remoteOn: remote }), now());
+      notifyState = step.state;
+      if (step.actions.length) runNotify(step.actions);
+    } catch (err) {
+      log(`notify pass failed: ${err?.message ?? err}`);
+    }
+  };
+  // The clears for every open episode (and the end alert, when given), awaited at most 2 s: the process
+  // ends soon after every exit path, and an unawaited request dies with it.
+  const notifyExitNow = (extra = null) => {
+    const clears = notifyExit(notifyState);
+    notifyState = newNotifyState();
+    return withinMs(Promise.all([runNotify(clears), ...(extra ? [extra] : [])]), NOTIFY_EXIT_WAIT_MS);
+  };
 
   // ---- The rename (§2.4 step 4), one sub-step at a time; each is a no-op when already done. It is
   // planning's rename (plan-run.mjs renameStep) on the single run's control folder. ----
@@ -618,8 +696,11 @@ export async function runSingle({ controlDir: givenControlDir, resume = false, d
         // killed before the close for the same reason: it must not outlive a program that is SIGKILLed
         // while it waits on the session. state.json keeps `running`, so a resume starts that run again.
         recordFinal('stopped');
+        // The clears go out while the session closes: the close may take the whole 4 s.
+        const cleared = notifyExitNow();
         killCommand();
         await holder.closeCurrent(STOP_CLOSE);
+        await cleared;
         paint('stopped');
         log('stopped');
         return 0;
@@ -741,6 +822,10 @@ export async function runSingle({ controlDir: givenControlDir, resume = false, d
           killCommand();
           recordFinal('finished');
           log(`finished: ${a.outcome}`);
+          // The one end alert (§2.10): only `ready`. It is sent here and nowhere else, so a `--resume` of a
+          // finished run, which takes the nothing-to-resume exit above, never sends it again.
+          const alert = a.outcome === 'ready' ? singleEndAlert({ name: state.name, base: state.base }) : null;
+          await notifyExitNow(alert ? runNotify([endAlertAction(alert)]) : null);
           return 0;
         } else if (a.type === 'exitCrashed') {
           paint();
@@ -753,7 +838,9 @@ export async function runSingle({ controlDir: givenControlDir, resume = false, d
       // in between: for that one turn the report is neither accepted nor refused, and an idle session
       // would flash as asking.
       if (checked) continue;
-      paint();
+      const rs = runState();
+      paint(null, rs);
+      alertPass(rs);
       if (again) continue;
       await waker.wait([reportsDir, personInbox.inboxDir], pollMs, { watch, signal, unref: true });
     }
@@ -764,6 +851,7 @@ export async function runSingle({ controlDir: givenControlDir, resume = false, d
   } finally {
     killCommand();
     personInbox.stop();
+    await notifyExitNow();
   }
 }
 
