@@ -7,7 +7,7 @@ import { spawn } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync, mkdirSync } from 'node:fs';
 import { request } from 'node:http';
 import { createServer as createTcpServer } from 'node:net';
-import { tmpdir } from 'node:os';
+import { networkInterfaces, tmpdir } from 'node:os';
 import { dirname, join, resolve as resolvePath } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { EXIT_PORT_TAKEN, discoveryRecord } from '../core/api.mjs';
@@ -308,15 +308,23 @@ test('the listening address is 127.0.0.1 and the url names the bound port', asyn
     req.end();
   });
   assert.equal(res, '127.0.0.1');
-  // Not bound on the wildcard address: the same port can still be taken on another loopback name only
-  // if the service holds 127.0.0.1 alone. `::1` is a different address family and must be refused.
-  await assert.rejects(
+  const connect = (host) =>
     new Promise((resolve, reject) => {
-      const req = request({ host: '::1', port: service.port, path: '/health', agent: false }, resolve);
+      const req = request({ host, port: service.port, path: '/health', agent: false }, resolve);
       req.on('error', reject);
       req.end();
-    }),
-  );
+    });
+  // `::1` is refused: not Node's default bind, which is the IPv6 wildcard.
+  await assert.rejects(connect('::1'));
+  // And not the IPv4 wildcard either, which the two checks above cannot tell from 127.0.0.1: the port
+  // is closed on every routable address this machine has. A machine with no network up has none, and
+  // the loop then proves nothing.
+  const routable = Object.values(networkInterfaces())
+    .flat()
+    .filter((address) => address.family === 'IPv4' && !address.internal);
+  for (const { address } of routable) {
+    await assert.rejects(connect(address), (err) => err.code === 'ECONNREFUSED', address);
+  }
 });
 
 test('api.json exists once startApiService resolves, equals discoveryRecord, no .tmp left', async (t) => {
@@ -349,6 +357,24 @@ test('api.json deleted, or overwritten with another pid, is rewritten within rea
   await until(() => existsSync(discovery), 'api.json to come back with its folder');
   assert.deepEqual(readJson(discovery), own);
   assert.deepEqual(readdirSync(dirname(discovery)), ['api.json']);
+});
+
+test('an api.json that cannot be replaced leaves no temp files, however long it lasts', async (t) => {
+  // A directory where the file belongs: the temp is written and the rename onto it fails, every tick.
+  // Left alone, the folder would gain a temp file every 30 s for as long as it lasted.
+  const scratch = scratchHome(t);
+  mkdirSync(scratch.discovery, { recursive: true });
+  const service = await startApiService({ env: scratch.env, now: () => NOW, pid: 4711, reassertMs: 5 });
+  t.after(() => service.close());
+  const pirDir = dirname(scratch.discovery);
+  const temps = () => readdirSync(pirDir).filter((name) => name !== 'api.json');
+  await sleep(150);
+  assert.deepEqual(temps(), []);
+  // The service answers all the while, and claims the name once it can.
+  assert.equal((await getJson(service.port, '/health')).status, 200);
+  rmSync(scratch.discovery, { recursive: true });
+  await until(() => readJson(scratch.discovery)?.pid === 4711, 'api.json to be written once the name is free');
+  assert.deepEqual(readdirSync(pirDir), ['api.json']);
 });
 
 test('close() removes api.json, stops answering and stops the timer', async (t) => {

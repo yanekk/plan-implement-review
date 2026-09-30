@@ -104,6 +104,11 @@ export function startApiService({
     });
 
     let recordText = '';
+    // One temp name for the life of the process, not writeFileAtomic's random one. A write can get as
+    // far as the temp and then fail at the rename (a directory sitting where `api.json` belongs, a
+    // full disk), and the timer retries for as long as that lasts: a fresh name each time would leave
+    // a file behind every 30 s.
+    const tempPath = `${files.discovery}.${pid}.tmp`;
     // Best effort, and never a throw: with `~/.pir` unwritable the service still answers (§2.9), and
     // the timer below writes the file as soon as it can. A throw from the timer would kill the process.
     const assertDiscovery = () => {
@@ -114,9 +119,14 @@ export function startApiService({
         } catch {
           // Missing or unreadable: rewritten below.
         }
-        if (current !== recordText) writeFileAtomic(files.discovery, recordText);
+        if (current !== recordText) writeFileAtomic(files.discovery, recordText, { tempPath });
       } catch {
-        // Tried again at the next tick.
+        // Tried again at the next tick. The temp of the failed write is not left lying about.
+        try {
+          rmSync(tempPath, { force: true });
+        } catch {
+          // Overwritten by the next attempt.
+        }
       }
     };
 
