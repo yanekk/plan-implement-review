@@ -31,7 +31,7 @@ Your opening instruction carries everything a plan would have given you:
 - the **reports folder**, an absolute path. The sentence ends with a full stop after it
   (`Reports folder: /…/reports. Starting point: …`); the stop is not part of the path;
 - the **starting point**, `{base} at {sha}`: the base branch and the commit the run's branch was cut
-  from;
+  from. The stop that closes that sentence is not part of the commit either;
 - the **change**, the person's own words, after `The change:` or `The change that was asked for:`.
 
 ## What binds both sessions
@@ -68,9 +68,10 @@ use an option's `preview` field: `pir` does not show it. Then end your turn and 
 runs the setup and test commands itself after each report, from settings the person chose. Green is
 `pir`'s word, never yours: you may run a test to check your own work, in the foreground, leaving
 nothing running and no file behind that git does not ignore, but do not tell the person the tests
-pass on the strength of it. If your opening instruction ends with a note that the setup failed, read
-it, get the worktree ready yourself (usually by re-running the failing line), and carry on; ask the
-person only when the fix lies outside the worktree.
+pass on the strength of it. If the builder's opening instruction carries a note that the setup
+failed (it stands between the starting point and `The change:`), read it, get the worktree ready
+yourself (usually by re-running the failing line), and carry on; ask the person only when the fix
+lies outside the worktree.
 
 **Commit before you report, and leave the worktree clean.** `pir` never commits for you. Before any
 `built` or `reviewed` report, `git status --porcelain` prints nothing.
@@ -139,11 +140,11 @@ costs a whole further test run. What arrives next is one of:
 - **Red tests**, beginning `pir ran the tests on your commit … and they failed`, with the round
   number, a log path and the last lines of the log. It also says whether the tests fail on the
   untouched starting point: if they pass there, this change broke them; if they fail there too, the
-  failure may be older than the change, and you say so to the person rather than widening the change
-  to repair it. Fix it, commit, and report again with the same header.
-- **Red tests past the limit.** A step gets 3 rounds. From round 4 the message ends `past the limit
-  of 3`: stop, tell the person what fails and what you tried, and ask how to go on. Report again only
-  after they answer.
+  failure may be older than the change, and you say so to the person and ask, rather than widening
+  the change to repair it. Fix it, commit, and report again with the same header.
+- **Red tests past the limit.** A step gets 3 rounds. From round 4 the message's last line says
+  `past the limit of 3`: stop, tell the person what fails and what you tried, and ask how to go on.
+  Report again only after they answer.
 
 The person may also write to you at any time; answer them and act on what they say.
 

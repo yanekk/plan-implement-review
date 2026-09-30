@@ -17,6 +17,8 @@ import { tmpdir } from 'node:os';
 import {
   RED_LIMIT,
   builderInstruction,
+  decideSingleStep,
+  initialSingleState,
   isValidSingleName,
   parseSingleReport,
   redMessage,
@@ -94,6 +96,32 @@ test('it is keyed on the sentence both opening instructions carry, and on the ro
   // The instruction puts a full stop straight after the reports path; the skill must say it is not part of it.
   assert.ok(builder.includes('/r/reports. Starting point'));
   assert.match(skill, /the stop is not part of the path/);
+  // The same goes for the stop straight after the starting commit.
+  assert.ok(builder.includes('main at abc1234.') && reviewer.includes('main at abc1234.'));
+  assert.match(skill, /The stop that closes that sentence is not part of the commit either/);
+});
+
+test('it says where the failed-setup note stands in the builder\'s instruction: before the change, not at the end', () => {
+  const noted = builderInstruction({ reportsDir: '/r/reports', base: 'main', baseSha: 'abc1234', prompt: 'fix it', setupNote: 'SETUP NOTE' });
+  const at = noted.indexOf('SETUP NOTE');
+  assert.ok(at > noted.indexOf('Starting point:') && at < noted.indexOf('The change:'));
+  assert.ok(!noted.endsWith('SETUP NOTE'));
+  const s = flat(section('What binds both sessions'));
+  assert.match(s, /carries a note that the setup failed \(it stands between the starting point and `The change:`\)/);
+  assert.doesNotMatch(flat(SKILL), /instruction ends with a note/);
+});
+
+test('the failed-check message it tells a session to recognise is the one decideSingleStep sends', () => {
+  let r = decideSingleStep(initialSingleState({ id: 'single-0a1f', base: 'main', baseSha: 'abc1234', commands: { setup: [], test: ['t'] } }), {});
+  r = decideSingleStep(r.state, { reports: [{ kind: 'built', name: 'fix-typo', body: '' }] });
+  r = decideSingleStep(r.state, { checks: { ok: false, failures: ['the worktree is not clean'] } });
+  const sent = r.actions.find((a) => a.type === 'send');
+  assert.ok(sent, 'a failed check is sent to the session');
+  // The skill quotes the opening with `…` standing for the report kind.
+  const quoted = flat(section('After you report')).match(/beginning `(pir did not accept your … report)`/);
+  assert.ok(quoted, 'the skill quotes how a failed-check message begins');
+  const [before, after] = quoted[1].split('…');
+  assert.ok(sent.text.startsWith(`${before}\`built\`${after}`), `pir sends: ${sent.text}`);
 });
 
 test('every report header it shows parses with parseSingleReport, and it shows exactly the three kinds', () => {
@@ -157,6 +185,10 @@ test('it names the red limit as RED_LIMIT and quotes the messages pir really sen
   const limit = `past the limit of ${RED_LIMIT}`;
   assert.ok(past.includes(limit) && !inLimit.includes(limit));
   assert.ok(after.includes(limit));
+  // The limit is named in the message's last line, which goes on after it: the skill must not say the
+  // message ends with the phrase.
+  assert.ok(past.split('\n').at(-1).includes(limit) && !past.endsWith(limit));
+  assert.ok(after.includes(`the message's last line says \`${limit}\``));
   assert.match(after, /Report again only after they answer/);
   assert.match(after, /untouched starting point/);
 });
