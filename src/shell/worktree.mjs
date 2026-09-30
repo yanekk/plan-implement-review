@@ -33,7 +33,7 @@
 // the feature branch. Found building T05; the user chose the dash (2026-09-08). Do not tidy it back.
 
 import { execFileSync } from 'node:child_process';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { progressPathFor, parseProgress, adoptNewTaskRows } from '../core/progress.mjs';
 import { prepareBase } from './base-branch.mjs';
@@ -470,4 +470,35 @@ export function renamePlanBranch(runId, slug, { root = process.cwd() } = {}) {
     if (!r.ok) throw new Error(`renamePlanBranch: worktree move failed: ${r.stderr}`);
   }
   return { path: newPath, branch: to, done: { branch: !branchDone, worktree: !worktreeDone } };
+}
+
+// ---- Single-run baseline worktree (single-runs T04, DESIGN §2.5) ----
+//
+// The first red test run of a single run is checked against the untouched starting point: the same
+// setup and test lines, in a throwaway worktree at the run's starting commit. It is detached, so it
+// creates no branch and cannot be mistaken for a run's own worktree.
+
+const baselinePath = (root, runId) => join(worktreesBase(root), `pir-${runId}-base`);
+
+// A detached worktree at `from` in <primary>/.claude/worktrees/pir-{runId}-base. A leftover one from a
+// killed program is removed first, so the baseline always runs on a fresh checkout. Throws when `from`
+// does not resolve or git refuses the add; the caller words that as "could not be tested".
+export function openBaseline(runId, { root = process.cwd(), from } = {}) {
+  const sha = from ? commitOf(root, from) : null;
+  if (!sha) throw new Error(`openBaseline: ${from} does not resolve to a commit`);
+  removeBaseline(runId, { root });
+  const path = baselinePath(root, runId);
+  const add = git(root, ['worktree', 'add', '--detach', path, sha]);
+  if (!add.ok) throw new Error(`openBaseline: worktree add failed: ${add.stderr.trim()}`);
+  return { path };
+}
+
+// Remove that worktree; a no-op when there is none. `--force` twice for the reason `remove` gives. A
+// folder git no longer lists (the add died half-way, or the registration was pruned) is deleted
+// outright: the path is pir's own throwaway and nothing else is ever written there.
+export function removeBaseline(runId, { root = process.cwd() } = {}) {
+  const path = baselinePath(root, runId);
+  git(root, ['worktree', 'remove', '--force', '--force', path]);
+  if (existsSync(path)) rmSync(path, { recursive: true, force: true });
+  git(root, ['worktree', 'prune']);
 }

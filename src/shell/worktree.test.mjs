@@ -18,6 +18,8 @@ import {
   taskBranchState,
   taskWorktreeHandle,
   createWorktree,
+  openBaseline,
+  removeBaseline,
 } from './worktree.mjs';
 import { progressPathFor } from '../core/progress.mjs';
 import { createFakeWorktree } from './fake/worktree.mjs';
@@ -574,4 +576,53 @@ test('syncBase: a conflict is left in progress with its files; re-asked, it is t
   assert.equal(w.syncPending(f.path), false);
   assert.equal(readFileSync(join(f.path, 'shared.txt'), 'utf8'), 'feature\n');
   assert.equal(w.baseTip({ ref: MAIN[0] }), mainSha);
+});
+
+// ---- single-runs T04: the throwaway baseline worktree ----
+
+const worktreePaths = (repo) =>
+  git(repo, ['worktree', 'list', '--porcelain']).stdout.split('\n').filter((l) => l.startsWith('worktree ')).map((l) => l.slice(9));
+
+test('openBaseline: a detached worktree at the given commit, no branch made, the checkout not moved', (t) => {
+  const s = scratchRepo({ 'a.txt': 'one\n' });
+  t.after(s.cleanup);
+  const start = git(s.repo, ['rev-parse', 'HEAD']).stdout.trim();
+  writeFileSync(join(s.repo, 'a.txt'), 'two\n');
+  git(s.repo, ['commit', '-am', 'later']);
+  const branches = git(s.repo, ['branch', '--list']).stdout;
+
+  const b = openBaseline('single-ab12', { root: s.repo, from: start });
+  assert.equal(realpathSync(b.path), realpathSync(join(s.repo, '.claude', 'worktrees', 'pir-single-ab12-base')));
+  assert.equal(git(b.path, ['rev-parse', 'HEAD']).stdout.trim(), start);
+  assert.equal(git(b.path, ['symbolic-ref', '-q', 'HEAD']).ok, false, 'detached');
+  assert.equal(readFileSync(join(b.path, 'a.txt'), 'utf8'), 'one\n', 'the starting point, not the later commit');
+  assert.equal(git(s.repo, ['branch', '--list']).stdout, branches, 'no branch was created');
+  assert.equal(headOf(s.repo), 'main');
+
+  removeBaseline('single-ab12', { root: s.repo });
+  assert.equal(existsSync(b.path), false);
+  assert.equal(worktreePaths(s.repo).length, 1, 'only the primary worktree is left');
+  assert.doesNotThrow(() => removeBaseline('single-ab12', { root: s.repo }), 'idempotent');
+});
+
+test('openBaseline: a leftover worktree, dirty or unregistered, is replaced; a commit that does not resolve throws', (t) => {
+  const s = scratchRepo();
+  t.after(s.cleanup);
+  const start = git(s.repo, ['rev-parse', 'HEAD']).stdout.trim();
+  const first = openBaseline('single-ab12', { root: s.repo, from: start });
+  writeFileSync(join(first.path, 'stray.txt'), 'left by a killed test run\n');
+  const second = openBaseline('single-ab12', { root: s.repo, from: start });
+  assert.equal(second.path, first.path);
+  assert.equal(existsSync(join(second.path, 'stray.txt')), false, 'a fresh checkout');
+
+  // A folder git does not list: the registration is gone but the files stayed.
+  git(s.repo, ['worktree', 'remove', '--force', second.path]);
+  mkdirSync(second.path, { recursive: true });
+  writeFileSync(join(second.path, 'junk'), 'x');
+  const third = openBaseline('single-ab12', { root: s.repo, from: start });
+  assert.equal(git(third.path, ['rev-parse', 'HEAD']).stdout.trim(), start);
+  removeBaseline('single-ab12', { root: s.repo });
+
+  assert.throws(() => openBaseline('single-ab12', { root: s.repo, from: 'f'.repeat(40) }), /does not resolve to a commit/);
+  assert.equal(existsSync(first.path), false, 'nothing is created on a refusal');
 });

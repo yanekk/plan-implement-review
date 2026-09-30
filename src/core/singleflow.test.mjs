@@ -10,6 +10,7 @@ import {
   reviewerInstruction,
   parseSingleReport,
   redMessage,
+  leftoverMessage,
   initialSingleState,
   decideSingleStep,
   singleProgress,
@@ -364,10 +365,34 @@ test('green but the head moved → the tests run again on the new head', () => {
   assert.equal(next.state.step, 'review');
 });
 
-test('green but the tree is dirty → the tests run again', () => {
-  const r = decideSingleStep(buildTesting(), { commandDone: green(H1, { clean: false }), idle: true });
-  assert.deepEqual(r.actions, [{ type: 'runTests', head: H1 }]);
+test('green on the same head but the tree is dirty → the session is told once, no rerun', () => {
+  const dirty = '?? coverage/\n M README.md\n';
+  const r = decideSingleStep(buildTesting(), { commandDone: green(H1, { clean: false, dirty }), idle: true });
+  assert.deepEqual(r.actions, [{ type: 'send', text: leftoverMessage({ sha: H1, dirty }) }]);
   assert.equal(r.state.step, 'build');
+  assert.equal(r.state.accepted, null);
+  assert.equal(r.state.tested, null);
+  assert.equal(r.state.running, null);
+  assert.equal(r.state.rounds.build, 0, 'a green run counts no red round');
+  // Nothing more happens until the session reports again.
+  assert.deepEqual(decideSingleStep(r.state, { idle: true }).actions, []);
+  const again = decideSingleStep(r.state, { reports: [{ kind: 'built', name: 'fix-typo', body: '' }] });
+  assert.deepEqual(types(again.actions), ['check']);
+});
+
+test('green with the head moved and the tree dirty → the tests run on the new head first', () => {
+  const r = decideSingleStep(buildTesting(), { commandDone: green(H2, { clean: false, dirty: '?? x\n' }), idle: true });
+  assert.deepEqual(r.actions, [{ type: 'runTests', head: H2 }]);
+});
+
+test('leftoverMessage: the listing between the two lines, dropped when empty', () => {
+  assert.equal(
+    leftoverMessage({ sha: H1, dirty: '?? coverage/\n' }),
+    'pir ran the tests on your commit aaaaaaa and they passed, but the worktree is not clean afterwards:\n' +
+      '?? coverage/\n' +
+      'If these are your edits, commit them. If the tests made them, make git ignore them (.gitignore) and commit that. Then report again.',
+  );
+  assert.equal(leftoverMessage({ sha: H1, dirty: '' }).split('\n').length, 2);
 });
 
 test('a command result that is not the run in flight is ignored', () => {
