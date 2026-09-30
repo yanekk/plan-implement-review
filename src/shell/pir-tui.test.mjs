@@ -9,6 +9,7 @@
 import { test } from 'node:test';
 import { EventEmitter } from 'node:events';
 import assert from 'node:assert/strict';
+import { createLivenessCache } from './identity.mjs';
 import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -402,6 +403,45 @@ test('loadDashboard classifies each run and reads its snapshot for progress and 
 
   // Tidy the scratch index entry so a re-run does not accrete files (the control dirs are OS temp).
   writeFileSync(recordPath('my-repo', 'demo', { dir }), '', { flag: 'w' });
+});
+
+// The dashboard reads every run on each keypress and tick; with the loop's liveness cache a live run costs
+// one `ps` per ttl, not one per read (identity.mjs createLivenessCache).
+test('loadDashboard with a liveness cache asks ps once across reads; without one, once per read', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'pir-index-'));
+  const controlDir = mkdtempSync(join(tmpdir(), 'pir-control-'));
+  const record = {
+    version: 1, slug: 'demo', repo: 'my-repo', repoPath: '/x/my-repo', controlDir, pid: 4242,
+    startTime: 'Tue Sep 22 08:27:37 2026', startedAt: null, branch: 'pir/demo', finalState: null, updatedAt: null,
+  };
+  writeRecord(record, { dir });
+  let ps = 0;
+  const kill = () => {};
+  const exec = () => ((ps += 1), { ok: true, stdout: `${record.startTime}\n` });
+
+  const liveness = createLivenessCache({ kill, exec, now: () => NOW });
+  for (let i = 0; i < 5; i++) assert.equal(loadDashboard({ dir, now: NOW, kill, exec, liveness }).rows[0].state, 'running');
+  assert.equal(ps, 1, 'five cached reads, one ps');
+
+  ps = 0;
+  for (let i = 0; i < 5; i++) loadDashboard({ dir, now: NOW, kill, exec });
+  assert.equal(ps, 5, 'the default stays uncached');
+});
+
+test('the dashboard loop hands every read the same liveness cache', async () => {
+  const stdin = { setRawMode: () => {}, on: () => {}, off: () => {}, resume: () => {}, pause: () => {} };
+  const given = [];
+  const makeScreen = () => ({
+    paint: () => {
+      throw new Error('stop after the first read');
+    },
+    close: () => {},
+  });
+  const load = (opts) => (given.push(opts.liveness), buildDashboard([]));
+  await assert.rejects(openDashboard({ stdin, stdout: {}, makeScreen, load }), /stop after the first read/);
+  assert.ok(given.length >= 1, 'the loop read the dashboard');
+  assert.equal(typeof given[0], 'function', 'a liveness resolver is passed to the read');
+  assert.ok(given.every((g) => g === given[0]), 'one cache for the life of the loop');
 });
 
 test('the watch view wraps a long run.log path so it survives painting at a narrow width (regression)', () => {

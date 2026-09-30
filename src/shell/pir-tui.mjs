@@ -28,7 +28,7 @@ import { buildDashboard, dashboardReducer, displayName, findOpen, goOpen, initia
 import { buildPlanDisplay } from '../core/plandisplay.mjs';
 import { styledLines } from './render.mjs';
 import { classifyRun } from '../core/runstate.mjs';
-import { resolveLiveness } from './identity.mjs';
+import { resolveLiveness, createLivenessCache } from './identity.mjs';
 import { indexDir, listRecords } from './index-store.mjs';
 import { readSnapshot } from './snapshot-store.mjs';
 import { stopRun, removeRun } from './control-run.mjs';
@@ -884,16 +884,18 @@ export function createScreen({ stream = process.stdout, colour, terminal, copy =
   };
 }
 
-// loadDashboard({ dir, now, kill, exec, fs }) → { rows, counts }. The read half of a refresh (DESIGN §3.4):
+// loadDashboard({ dir, now, kill, exec, fs, liveness }) → { rows, counts }. The read half of a refresh (DESIGN §3.4):
 // enumerate every index entry (T06), resolve each run's liveness (T05) and classify it (T01), read its
 // snapshot (T07) for the progress/worker detail, then project the lot through buildDashboard (T04). Each
 // row carries its record and snapshot alongside the fields the list needs, so the loop can act (stop/remove)
 // and paint the watch view from the same read. Rows are sorted by repo then slug for a stable list order,
 // since listRecords returns them in no guaranteed order.
-export function loadDashboard({ dir = indexDir(), now = Date.now(), kill, exec, fs } = {}) {
+// `liveness` (pid → { alive, liveStartTime }) defaults to an uncached resolveLiveness; runTui passes its
+// createLivenessCache so a keypress does not spawn a `ps` per run.
+export function loadDashboard({ dir = indexDir(), now = Date.now(), kill, exec, fs, liveness = (pid) => resolveLiveness(pid, { kill, exec }) } = {}) {
   const records = listRecords({ dir, fs });
   const views = records.map((record) => {
-    const { alive, liveStartTime } = resolveLiveness(record.pid, { kill, exec });
+    const { alive, liveStartTime } = liveness(record.pid);
     const state = classifyRun({
       recordedStartTime: record.startTime,
       finalState: record.finalState,
@@ -1065,7 +1067,8 @@ async function runTui({
   // it was built from, which turn a hit's index into a run key or a task id before a fresh read.
   let painted = null;
 
-  const read = () => load({ dir, now: now(), kill, exec, fs });
+  const liveness = createLivenessCache({ kill, exec, now });
+  const read = () => load({ dir, now: now(), kill, exec, fs, liveness });
 
   // The open worker's conversation view (T13), created on entering the 'worker' view and disposed on
   // leaving it. It takes every key while it is open: its own table (§2.11) replaces Esc-quits and

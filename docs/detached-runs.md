@@ -68,6 +68,9 @@ its process's exact launch time (`ps -p {pid} -o lstart=`) at start; a process t
 whose launch time no longer matches is a different process on a reused number, so the run is crashed.
 Liveness and launch time come from the shell (`src/shell/identity.mjs`); the classifier reads no
 clock and no process, so the reused-number rule is tested exhaustively without a live process.
+The dashboard, which reads every run on each keypress and refresh tick, checks liveness every time but
+re-reads a live process's launch time at most every 5 s (and afresh once it has seen the number dead), so
+its displayed state can trail a reused number by that long; stop and remove always re-check uncached.
 
 Task state is **not** here. It stays in `PROGRESS.md` on the feature branch, owned by the coordinator
 ([task-state.md](task-state.md)). The state files this front-end reads describe the process, never
