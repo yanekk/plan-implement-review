@@ -197,6 +197,15 @@ test('servicePlan: off when already off still runs its steps', () => {
   assert.deepEqual(names(plan), ['remove-plist', 'remove-stale-discovery', 'write-off']);
 });
 
+test('servicePlan: an unknown action throws rather than planning a refresh', () => {
+  for (const action of ['restart', '', undefined]) {
+    // Off macOS too: the check comes before every refusal, so a typo never reads as a clean no-op.
+    for (const facts of [{ ...REAL, loaded: true }, { ...REAL, platform: 'linux' }]) {
+      assert.throws(() => servicePlan(action, facts), /servicePlan: unknown action/, String(action));
+    }
+  }
+});
+
 // --- statusText --------------------------------------------------------------------------------
 
 const NOW = 1_790_669_408_699;
@@ -326,6 +335,13 @@ test('statusText: a null window reads unknown', () => {
   assert.equal(
     line({ five_hour: BOTH.five_hour, seven_day: null }),
     'last usage reading 2 min ago: 5-hour 97%, weekly unknown',
+  );
+});
+
+test('statusText: both windows null under a reading → both unknown', () => {
+  assert.equal(
+    running(usageBody({ five_hour: null, seven_day: null })).text.split('\n')[1],
+    'last usage reading 2 min ago: 5-hour unknown, weekly unknown',
   );
 });
 

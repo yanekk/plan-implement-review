@@ -64,6 +64,10 @@ const refused = (message, code) => ({ steps: [], message, code });
 // the first that applies wins. `code` is the exit code of a plan with no steps; a plan with steps ends
 // in the status check's code, so its own `code` is 0 and unused.
 export function servicePlan(action, facts) {
+  // Without this an unknown action falls through to the `refresh` steps and registers the login item.
+  if (action !== 'on' && action !== 'off' && action !== 'refresh') {
+    throw new Error(`servicePlan: unknown action ${JSON.stringify(action)}`);
+  }
   const { kind, platform, installedEngine, off, loaded } = facts;
   // `refresh` is what install.sh runs: it must not report a failure where nothing could start.
   if (platform !== 'darwin') return refused(NEEDS_MACOS, action === 'refresh' ? 0 : 1);
