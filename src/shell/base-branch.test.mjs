@@ -164,6 +164,24 @@ test('resolveSettings: a broken key is bad-settings naming its file, even with a
   });
 });
 
+// parseSettings is shared, so a malformed command key breaks the whole file: a plan or a build start
+// refuses on it too, though neither uses the commands (single-runs DESIGN §2.2, "a key of the wrong shape").
+test('resolveBaseSetting: a malformed setup or test refuses the base too, naming the file', (t) => {
+  const w = settingsWorld(t);
+  w.writeRepo('{"baseBranch": "dev", "setup": "npm ci", "test": ["npm test"]}');
+  assert.deepEqual(resolveBaseSetting(w.root, { env: w.env }), {
+    ok: false, reason: 'bad-settings', file: '.pir/settings.json', why: '"setup" must be a list of commands', repo: 'proj',
+  });
+  w.writeRepo('{"baseBranch": "dev", "setup": [], "test": ["npm test"]}');
+  w.writeUser('{"test": []}');
+  const r = resolveBaseSetting(w.root, { env: w.env });
+  assert.equal(r.reason, 'bad-settings');
+  assert.equal(r.file, w.userFile);
+  // Well-formed commands leave the base resolution as it was.
+  w.writeUser('{"test": ["npm run quick"]}');
+  assert.deepEqual(resolveBaseSetting(w.root, { env: w.env }), { ok: true, base: 'dev', file: '.pir/settings.json' });
+});
+
 test("this repo's own .pir/settings.json parses and yields npm test", (t) => {
   // Two levels up from src/shell. A scratch PIR_HOME keeps the person's own user file out of it.
   const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
