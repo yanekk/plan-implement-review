@@ -164,6 +164,8 @@ export async function usageLiveCheck({
   let exited = null;
   let polls = 0;
   let api = null;
+  // Whether the answer to compare was asked for at all: an interrupted or overlong run is never asked.
+  let asked = false;
   const seen = new Set();
   let failure = null;
 
@@ -208,7 +210,10 @@ export async function usageLiveCheck({
     }
     if (interruptedBy) failure = `interrupted by ${interruptedBy}`;
     // The answer that is compared: asked after the run has exited, so no reading can follow it.
-    if (exit) api = await poll();
+    if (exit) {
+      asked = true;
+      api = await poll();
+    }
   } finally {
     try {
       if (child && !exit) {
@@ -223,11 +228,12 @@ export async function usageLiveCheck({
         const grace = new AbortController();
         await Promise.race([exited, sleep(haltGraceMs, { signal: grace.signal }).catch(() => {})]);
         grace.abort();
-        if (!exit) {
-          child.kill('SIGTERM');
-          await teardown({ controlDir });
-        }
+        if (!exit) child.kill('SIGTERM');
       }
+      // A harness that was killed, by this check or by anything else, never ran its own teardown: its
+      // coordinator is a separate process that lives on, and the 20 minute limit died with the harness.
+      // HALT stops that coordinator and the reap ends the workers it recorded.
+      if (child && (!exit || exit.signal)) await teardown({ controlDir });
     } finally {
       // Closed last and whatever happened: a service left alive rewrites its api.json every 30 s and
       // would bring the scratch folder back after it is removed.
@@ -254,6 +260,8 @@ export async function usageLiveCheck({
   if (!runOk && exit) problems.push(`the harness run failed (${run})`);
   if (!events.length) {
     problems.push('no rate_limit_event in any conversation log: this login sends none. Check it with: claude auth status (expect loggedIn true, authMethod claude.ai)');
+  } else if (!asked) {
+    // Nothing to compare, and the reason is already among the problems.
   } else if (!api) {
     problems.push('GET /v1/usage did not answer after the run');
   } else if (api.observed_at !== newest.observed_at) {

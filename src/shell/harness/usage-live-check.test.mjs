@@ -293,7 +293,30 @@ test('a signal stops the polling, halts the run and fails the check', async (t) 
   assert.equal(result.polls, 2, 'no poll after the signal');
   assert.deepEqual(r.seen.halted, [controlOf(r.into)]);
   assert.equal(r.seen.closed, 1);
-  assert.match(result.text, /^usage-live-check: FAILED: interrupted by SIGINT; the harness run failed \(exit 1\)/m);
+  // The answer after the run was never asked for, so the text does not say it went unanswered.
+  assert.match(result.text, /^usage-live-check: FAILED: interrupted by SIGINT; the harness run failed \(exit 1\)$/m);
+  assert.match(result.text, /^api: {10}no answer$/m);
+  // The harness stopped on HALT and tore its own run down.
+  assert.deepEqual(r.seen.teardowns, []);
+});
+
+test('a harness killed from outside leaves its coordinator running: the check halts it and reaps its workers', async (t) => {
+  const r = rig(t, {
+    answers: [body(100, 20, 11), body(200, 21, 11), body(200, 21, 11), body(200, 21, 11)],
+    logs: { 'T01-implement-1.ndjson': [entry(100, 0.2, 0.11), entry(200, 0.21, 0.11)] },
+    onGet: (i, { child }) => {
+      if (i === 1) child.emit('exit', null, 'SIGKILL');
+    },
+  });
+  const result = await usageLiveCheck(r.opts);
+  assert.equal(result.ok, false);
+  assert.deepEqual(r.seen.teardowns, [{ controlDir: controlOf(r.into) }]);
+  // Already dead: nothing to halt by grace and nothing to kill.
+  assert.deepEqual(r.seen.halted, []);
+  assert.deepEqual(r.seen.killed, []);
+  assert.equal(r.seen.closed, 1);
+  assert.match(result.text, /^harness run: FAILED \(killed by SIGKILL\)$/m);
+  assert.match(result.text, /FAILED: the harness run failed \(killed by SIGKILL\)$/);
 });
 
 test('a harness still running at the limit is halted and the check fails', async (t) => {
