@@ -4,7 +4,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { parseSettings, effectiveBase, validBranchName, decideBase, refusalText, holdText } from './basebranch.mjs';
+import {
+  parseSettings, effectiveBase, effectiveCommands, commandsRefusalText, validBranchName, decideBase, refusalText, holdText,
+} from './basebranch.mjs';
 
 const REPO_FILE = '/r/app/.pir/settings.json';
 const USER_FILE = '/home/me/.pir/app/settings.json';
@@ -58,6 +60,136 @@ test('effectiveBase: a broken file refuses even when the other is good; repo che
   assert.deepEqual(effectiveBase({ repo: badRepo, user: set('dev'), ...files }), badRepo);
   assert.deepEqual(effectiveBase({ repo: set('dev'), user: badUser, ...files }), badUser);
   assert.equal(effectiveBase({ repo: badRepo, user: badUser, ...files }).file, REPO_FILE);
+});
+
+// ── parseSettings: setup / test (single-runs T01, DESIGN §2.2) ──────────────────────────────────
+
+test('parseSettings: setup may be empty or a list of lines', () => {
+  assert.deepEqual(parseSettings('{"setup":[]}', REPO_FILE), { ok: true, settings: { setup: [] } });
+  assert.deepEqual(parseSettings('{"setup":["a","b"]}', REPO_FILE), { ok: true, settings: { setup: ['a', 'b'] } });
+});
+
+test('parseSettings: a setup of the wrong shape is bad-settings with its why', () => {
+  for (const value of ['"npm ci"', '3', '[""]', '["  "]', '[1]', '["a",null]', '{}', 'null']) {
+    const text = `{"baseBranch":"dev","setup":${value}}`;
+    assert.deepEqual(
+      parseSettings(text, REPO_FILE),
+      { ok: false, reason: 'bad-settings', file: REPO_FILE, why: '"setup" must be a list of commands' },
+      text,
+    );
+  }
+});
+
+test('parseSettings: test must be a non-empty list of lines', () => {
+  assert.deepEqual(parseSettings('{"test":["npm test"]}', REPO_FILE), { ok: true, settings: { test: ['npm test'] } });
+  for (const value of ['[]', '"npm test"', '[""]', '[7]', 'null']) {
+    const text = `{"setup":[],"test":${value}}`;
+    assert.deepEqual(
+      parseSettings(text, USER_FILE),
+      { ok: false, reason: 'bad-settings', file: USER_FILE, why: '"test" must be a non-empty list of commands' },
+      text,
+    );
+  }
+});
+
+test('parseSettings: all three keys together; unknown keys still ignored; absent keys stay absent', () => {
+  assert.deepEqual(
+    parseSettings('{"baseBranch":"main","setup":["npm ci"],"test":["npm test"],"later":{"x":1}}', REPO_FILE),
+    { ok: true, settings: { baseBranch: 'main', setup: ['npm ci'], test: ['npm test'] } },
+  );
+  assert.deepEqual(parseSettings('{"baseBranch":"main"}', REPO_FILE), { ok: true, settings: { baseBranch: 'main' } });
+});
+
+test('parseSettings: a bad baseBranch is reported before a bad setup', () => {
+  assert.match(parseSettings('{"baseBranch":3,"setup":"x"}', REPO_FILE).why, /baseBranch must be a string/);
+});
+
+// ── effectiveCommands ──────────────────────────────────────────────────────────────────────────
+
+const cmds = (settings = {}) => ({ ok: true, settings });
+
+test('effectiveCommands: repo only; user only', () => {
+  assert.deepEqual(
+    effectiveCommands({ repo: cmds({ setup: ['npm ci'], test: ['npm test'] }), user: cmds(), ...files }),
+    { ok: true, setup: ['npm ci'], test: ['npm test'] },
+  );
+  assert.deepEqual(
+    effectiveCommands({ repo: cmds(), user: cmds({ setup: [], test: ['make check'] }), ...files }),
+    { ok: true, setup: [], test: ['make check'] },
+  );
+});
+
+test('effectiveCommands: the user file overrides key by key, setup and test independently', () => {
+  const repo = cmds({ baseBranch: 'main', setup: ['npm ci'], test: ['npm test'] });
+  assert.deepEqual(
+    effectiveCommands({ repo, user: cmds({ test: ['npm run quick'] }), ...files }),
+    { ok: true, setup: ['npm ci'], test: ['npm run quick'] },
+  );
+  // An empty setup in the user file is a value ("no setup"), so it wins over the repo's.
+  assert.deepEqual(
+    effectiveCommands({ repo, user: cmds({ setup: [] }), ...files }),
+    { ok: true, setup: [], test: ['npm test'] },
+  );
+  // Each key may come from a different file.
+  assert.deepEqual(
+    effectiveCommands({ repo: cmds({ setup: ['npm ci'] }), user: cmds({ test: ['npm test'] }), ...files }),
+    { ok: true, setup: ['npm ci'], test: ['npm test'] },
+  );
+});
+
+test('effectiveCommands: a key missing after the merge → no-commands naming what is missing', () => {
+  assert.deepEqual(effectiveCommands({ repo: cmds(), user: cmds(), ...files }), { ok: false, reason: 'no-commands', missing: ['setup', 'test'] });
+  assert.deepEqual(
+    effectiveCommands({ repo: cmds({ baseBranch: 'main' }), user: cmds({ baseBranch: 'dev' }), ...files }),
+    { ok: false, reason: 'no-commands', missing: ['setup', 'test'] },
+  );
+  assert.deepEqual(
+    effectiveCommands({ repo: cmds({ setup: [] }), user: cmds({ setup: ['npm ci'] }), ...files }),
+    { ok: false, reason: 'no-commands', missing: ['test'] },
+  );
+  assert.deepEqual(
+    effectiveCommands({ repo: cmds({ test: ['npm test'] }), user: cmds(), ...files }),
+    { ok: false, reason: 'no-commands', missing: ['setup'] },
+  );
+});
+
+test('effectiveCommands: a broken file refuses even when the other is good; repo checked first', () => {
+  const good = cmds({ setup: [], test: ['npm test'] });
+  const badRepo = parseSettings('{"test":[]}', REPO_FILE);
+  const badUser = parseSettings('{oops', USER_FILE);
+  assert.deepEqual(effectiveCommands({ repo: badRepo, user: good, ...files }), badRepo);
+  assert.equal(effectiveCommands({ repo: badRepo, user: good, ...files }).file, REPO_FILE);
+  assert.deepEqual(effectiveCommands({ repo: good, user: badUser, ...files }), badUser);
+  assert.equal(effectiveCommands({ repo: badRepo, user: badUser, ...files }).file, REPO_FILE);
+});
+
+// ── commandsRefusalText ────────────────────────────────────────────────────────────────────────
+
+const refusalCtx = { repo: 'app', repoFile: '.pir/settings.json', userFile: USER_FILE };
+
+test('commandsRefusalText: no-commands names both files and the line to add', () => {
+  assert.equal(
+    commandsRefusalText({ ok: false, reason: 'no-commands', missing: ['setup', 'test'] }, refusalCtx),
+    'app has no setup/test commands for a single run. Add to .pir/settings.json (or /home/me/.pir/app/settings.json): "setup": ["<install command>"], "test": ["<test command>"]',
+  );
+});
+
+test('commandsRefusalText: no-commands names only the missing keys', () => {
+  assert.equal(
+    commandsRefusalText({ ok: false, reason: 'no-commands', missing: ['test'] }, refusalCtx),
+    'app has no test commands for a single run. Add to .pir/settings.json (or /home/me/.pir/app/settings.json): "test": ["<test command>"]',
+  );
+  assert.equal(
+    commandsRefusalText({ ok: false, reason: 'no-commands', missing: ['setup'] }, refusalCtx),
+    'app has no setup commands for a single run. Add to .pir/settings.json (or /home/me/.pir/app/settings.json): "setup": ["<install command>"]',
+  );
+});
+
+test('commandsRefusalText: bad-settings is the file and what is wrong', () => {
+  assert.equal(
+    commandsRefusalText(parseSettings('{"setup":"npm ci"}', USER_FILE), refusalCtx),
+    '/home/me/.pir/app/settings.json: "setup" must be a list of commands',
+  );
 });
 
 // ── validBranchName ────────────────────────────────────────────────────────────────────────────

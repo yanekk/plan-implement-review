@@ -19,7 +19,7 @@ const DEV_RIG = { base: 'dev', remoteAhead: true, holdReportMs: 3000 };
 test('startPlanRig({ base: dev, remoteAhead }) builds a dev-only repo whose origin/dev is one commit ahead', (t) => {
   const rig = rigWithTeardown(t, { base: 'dev', remoteAhead: true });
   assert.equal(git(rig.repoDir, 'branch', '--format=%(refname:short)'), 'dev');
-  assert.equal(git(rig.repoDir, 'show', 'dev:.pir/settings.json'), '{"baseBranch":"dev"}');
+  assert.equal(git(rig.repoDir, 'show', 'dev:.pir/settings.json'), '{"baseBranch":"dev","setup":[],"test":["true"]}');
   assert.equal(git(rig.repoDir, 'ls-remote', '--heads', 'origin'), `${rig.remote.ahead}\trefs/heads/dev`);
   assert.equal(git(rig.repoDir, '--git-dir', rig.remote.path, 'rev-parse', `${rig.remote.ahead}^`), git(rig.repoDir, 'rev-parse', 'dev'));
   assert.equal(git(rig.repoDir, 'status', '--porcelain'), '');

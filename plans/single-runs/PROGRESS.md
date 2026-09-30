@@ -16,7 +16,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 
 | # | Task | Depends on | State | Notes |
 |---|---|---|---|---|
-| T01 | settings-commands | — | ⬜ | |
+| T01 | settings-commands | — | ✅ | |
 | T02 | single-flow | — | ⬜ | |
 | T03 | held-sessions | — | ✅ | Review clean, no fix commit. Planning path read line by line against the old inline code; the question-set guard mutated and the grants test went red. `npm test` red under load (pty drills, pass alone), green at load 5, as was the feature branch. Extras beyond the doc: `since`, `activity`, `views`, `workedMs`, `controlMoved`, function `env`. `./install.sh` not run. |
 | T04 | single-program | T02, T03 | ⬜ | |
