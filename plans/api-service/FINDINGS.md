@@ -7,6 +7,8 @@ Legend: 🐞 defect found · ✅ verified by hand with the user · 📌 worth kn
 
 | Date | | Finding |
 |---|---|---|
+| 2026-09-30 | 📌 | T05 review: the service imports shell `atomic-write.mjs` and `index-store.mjs`, as §3.4 prescribes, though DESIGN §2.6 says built-ins and `src/core/` only. What holds is no npm package, enforced by the graph test. T11 should document it that way. |
+| 2026-09-30 | 📌 | T05: a comment in `index-store.mjs` holds the word `from` then a quoted phrase, so the boundary `SPECIFIER` pattern reports a bare import. T05's graph walk drops whole-line comments first; T06's walk reaches the same file through `indexDir`. |
 | 2026-09-30 | 📌 | T04 review: worker sessions inherit `PIR_RUN=1` and the real `HOME`. A plain `node` script a worker runs with the fake claude emitting a `rate_limit_event` would write the real `~/.pir/usage.json`; only `node --test` or a scratch home stops it. T08, T10. |
 | 2026-09-30 | 📌 | T04: `writeFileAtomic` leaves its `.tmp` behind when the rename fails. If `usage.json` is ever a folder, each reading adds one `.tmp` to `.pir`, silently. Not handled; nothing removes them. |
 | 2026-09-30 | 📌 | T06 review: `serviceOn`, `serviceOff` and `serviceRefresh` reject when a write fails (an unwritable `~/Library/LaunchAgents`). `service-ctl.mjs` `main` prints one line and exits 1; T07's `pir service` calls them directly and needs its own catch. |
