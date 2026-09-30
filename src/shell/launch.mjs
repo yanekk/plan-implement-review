@@ -24,7 +24,9 @@ import { readReviewGate, readTestBlockGate } from './coordinate.mjs';
 import { startTimeOf, resolveLiveness } from './identity.mjs';
 import { indexDir, listRecords, recordPath, updateRecord, writeRecord } from './index-store.mjs';
 import { planHome } from './plan-home.mjs';
-import { openPlanBranch } from './worktree.mjs';
+import { openPlanBranch, cutFeatureBranch } from './worktree.mjs';
+import { prepareBase as prepareBaseReal, resolveBaseSetting, resolveRunBase } from './base-branch.mjs';
+import { refusalText } from '../core/basebranch.mjs';
 import { writeFileAtomic, writeJsonAtomic } from './atomic-write.mjs';
 import { classifyRun } from '../core/runstate.mjs';
 import { initialPlanState, runIdFrom } from '../core/planflow.mjs';
@@ -39,6 +41,8 @@ const DEFAULT_FS = { mkdirSync, openSync };
 //   { started:true, pid, record } | { started:false, reason, alreadyRunning? }
 //   { started:false, reason:'no-test-block', detail }   // detail: the parser's reason
 //   reason: 'no-plan' | 'not-reviewed' | 'no-test-block' | 'already-running'
+//   { started:false, reason, message }   // a base-branch refusal (base-branch DESIGN §2.9): reason is
+//     'no-base-setting' | 'bad-settings' | 'no-base-branch' | 'fetch-failed' | 'diverged', message the text
 //
 // cwd is the target repo's root: `pir` is invoked from inside the repo whose plan is being run, so its
 // basename is the repo name the index entry and the coordinator's worker names share (DESIGN §2.8), and
@@ -59,6 +63,7 @@ export function startRun(
     now = () => new Date(),
     env = process.env,
     coordinator = true,
+    resolveBase = resolveRunBase,
   } = {},
 ) {
   const repoRoot = cwd;
@@ -106,6 +111,15 @@ export function startRun(
   // The caller opens the live view instead of starting a second run (DESIGN §2.5).
   if (running()) return { started: false, reason: 'already-running', alreadyRunning: true };
 
+  // 4: the run's base (base-branch DESIGN §2.5, §2.7). An existing pir/{slug} keeps the base it records;
+  // a hand-made plan's build resolves the settings, prepares the base (the fetch runs here, bounded, so a
+  // refusal reaches the person rather than a detached run.log) and has its feature branch cut now, from
+  // the prepared commit, with pirBase recorded. The coordinator is told the base and holds it.
+  const runBase = resolveBase(repoRoot, slug, { env });
+  if (!runBase.ok) return { started: false, reason: runBase.reason, message: runBase.message };
+  const { base, baseSha } = runBase;
+  if (!runBase.existing) cutFeatureBranch(slug, { root: repoRoot, base, from: baseSha });
+
   // Launch. The coordinator path is the engine's own sibling coordinate.mjs, resolved from this file's
   // URL — NOT the bare relative 'src/shell/coordinate.mjs', which would look under the target repo's
   // cwd rather than the installed engine.
@@ -121,7 +135,7 @@ export function startRun(
   // lets the parent (`pir`) exit into the TUI without waiting on the child. PIR_RUN switches the
   // coordinator into its self-reporting/snapshot mode (DESIGN §3.5); PARALLEL_LIVE is the live seatbelt
   // that lets it actually spawn workers (DESIGN §5.2).
-  const child = spawn('node', [coordinatorPath, slug], {
+  const child = spawn('node', [coordinatorPath, slug, '--base', base, ...(baseSha ? ['--base-sha', baseSha] : [])], {
     cwd: repoRoot,
     detached: true,
     stdio: ['ignore', logFd, logFd],
@@ -142,6 +156,7 @@ export function startRun(
     startTime,
     startedAt: now().toISOString(),
     branch,
+    baseBranch: base,
     finalState: null,
     updatedAt: null,
     ...(coordinator ? {} : { coordinator: false }),
@@ -182,11 +197,17 @@ function gitOk(cwd, args) {
   }
 }
 
-// planPreflight({ cwd }) → { ok: true, root, repo } | { ok: false, reason: 'not-a-repo'|'no-main' }
-// DESIGN §2.2 steps 1–2, in order, touching nothing. There is no repo-name check: the canonical-repo
-// guard was removed (dashboard-plan-box DESIGN §2.8), so planning works in any checkout. The brief (step 4) is the caller's: the brief box
-// runs this before the person has typed one (§2.13).
-export function planPreflight({ cwd = process.cwd() } = {}) {
+// planPreflight({ cwd, env, prepareBase }) → { ok: true, root, repo, base, baseSha, remote, file }
+//   | { ok: false, reason, message?, base?, remote? }       (file: the settings file that named the base)
+//   reason: 'not-a-repo'|'no-base-setting'|'bad-settings'|'no-base-branch'|'fetch-failed'|'diverged'
+// pir-plan-command DESIGN §2.2 steps 1–2 and base-branch DESIGN §2.6, in order. There is no repo-name
+// check: the canonical-repo guard was removed (dashboard-plan-box DESIGN §2.8), so planning works in any
+// checkout. The brief is the caller's: bare `pir plan` runs this before the person has typed one
+// (§2.13). A base refusal carries `message`, the §2.9 refusal text, and creates nothing; the only
+// changes a pre-flight may leave are the remote-tracking ref the fetch updated and a local base branch
+// §2.3 created or moved forward, both safe (base-branch §2.6). The fetch runs here, synchronously in
+// pir's own process, so a refusal reaches the person before the detached planning program starts.
+export function planPreflight({ cwd = process.cwd(), env = process.env, prepareBase = prepareBaseReal } = {}) {
   // 1. Inside a work tree. The root is the MAIN worktree, whichever folder or linked worktree `pir plan`
   // was typed in: `git worktree list` names the main one first from anywhere in the repo.
   const inside = gitOk(cwd, ['rev-parse', '--is-inside-work-tree']);
@@ -196,10 +217,23 @@ export function planPreflight({ cwd = process.cwd() } = {}) {
   const root = first.slice('worktree '.length).trim();
   const repo = basename(root);
 
-  // 2. A local main. Never created here: ensureMain's `checkout -B main` would move the person's checkout.
-  if (!gitOk(root, ['rev-parse', '--verify', '--quiet', 'refs/heads/main']).ok) return { ok: false, reason: 'no-main' };
+  // 2. The base branch, stated in the settings (base-branch §2.1, §2.2), never guessed.
+  const setting = resolveBaseSetting(root, { env });
+  if (!setting.ok) return { ok: false, reason: setting.reason, message: refusalText(setting, { repo }) };
+  const base = setting.base;
 
-  return { ok: true, root, repo };
+  // 3. The newest commit of that base (§2.3). Never checks anything out: the person's checkout stays put.
+  const prep = prepareBase(root, base, { env });
+  if (!prep.ok) {
+    return {
+      ok: false,
+      reason: prep.reason,
+      message: refusalText(prep, { repo, base, file: setting.file }),
+      base,
+      remote: prep.remote ?? null,
+    };
+  }
+  return { ok: true, root, repo, base, baseSha: prep.sha, remote: prep.remote ?? null, file: setting.file };
 }
 
 function defaultRandom() {
@@ -237,17 +271,29 @@ function keepAwake(pid, spawn) {
 
 // startPlanRun(brief, { cwd, spawn, exec, fs, now, env, random }) →
 //   { started: true, runId, pid, record, controlDir }
-//   | { started: false, reason: 'not-a-repo'|'no-main'|'empty-brief' }
+//   | { started: false, reason: 'not-a-repo'|'empty-brief'|<a planPreflight base reason>, message?, base?, remote? }
 // `random()` returns four lowercase hex characters. `fs` is node:fs-shaped (existsSync, mkdirSync,
 // openSync, closeSync, writeFileSync, renameSync) and defaults to the real one.
 export function startPlanRun(
   brief,
-  { cwd = process.cwd(), spawn = realSpawn, exec, fs = nodeFs, now = () => new Date(), env = process.env, random = defaultRandom } = {},
+  {
+    cwd = process.cwd(),
+    spawn = realSpawn,
+    exec,
+    fs = nodeFs,
+    now = () => new Date(),
+    env = process.env,
+    random = defaultRandom,
+    prepareBase = prepareBaseReal,
+  } = {},
 ) {
-  const pre = planPreflight({ cwd });
-  if (!pre.ok) return { started: false, reason: pre.reason };
+  const pre = planPreflight({ cwd, env, prepareBase });
+  if (!pre.ok) {
+    const { ok, ...refusal } = pre;
+    return { started: false, ...refusal };
+  }
   if (typeof brief !== 'string' || brief.trim() === '') return { started: false, reason: 'empty-brief' };
-  const { root, repo } = pre;
+  const { root, repo, base, baseSha } = pre;
   const dir = indexDir({ env });
 
   let runId = null;
@@ -259,10 +305,15 @@ export function startPlanRun(
 
   let branch;
   try {
-    ({ branch } = openPlanBranch(runId, { root }));
+    // Cut from the commit the pre-flight chose, not the local base's tip: that may be behind the
+    // remote's (base-branch §2.3, §2.6). openPlanBranch records pirBase on the new branch (§2.5).
+    ({ branch } = openPlanBranch(runId, { root, base, from: baseSha }));
   } catch (err) {
-    // main vanished between the pre-flight and here: the same refusal, still nothing created.
-    if (err && err.code === 'no-main') return { started: false, reason: 'no-main' };
+    // The chosen commit vanished between the pre-flight and here: still nothing created.
+    if (err && err.code === 'no-base-branch') {
+      const refusal = { reason: 'no-base-branch', remote: pre.remote };
+      return { started: false, ...refusal, base, message: refusalText(refusal, { repo, base, file: pre.file }) };
+    }
     throw err;
   }
 
@@ -287,6 +338,7 @@ export function startPlanRun(
     startTime: startTimeOf(child.pid, { exec }),
     startedAt: now().toISOString(),
     branch,
+    baseBranch: base,
     finalState: null,
     updatedAt: null,
   };
@@ -312,7 +364,8 @@ export function resumeRun(
     // The run's coordinator choice is kept across a resume (pir-coordinator DESIGN §2.1).
     const choice = record.coordinator === false ? { coordinator: false } : {};
     const r = startRun(record.slug, { cwd: record.repoPath, spawn, exec, kill, fs, now, env, ...choice });
-    return r.started ? { resumed: true, pid: r.pid } : { resumed: false, reason: r.reason };
+    // startRun reads the base from pir/{slug}'s pirBase, so a resumed build keeps the base it started on.
+    return r.started ? { resumed: true, pid: r.pid } : { resumed: false, reason: r.reason, ...(r.message ? { message: r.message } : {}) };
   }
 
   const child = spawnDetached([planRunPath(), '--control', record.controlDir, '--resume'], {

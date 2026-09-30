@@ -6,7 +6,8 @@
 // on the person, a crash-and-restart, a stop-and-restart mid-review and mid-implement, and a worker
 // introducing a task the coordinator adopts and dispatches, and the real asking state (a report dropped
 // mid-work, a wake-up while parked), and the coordinator agent answering, passing on and handing over
-// (pir-coordinator), and several of its briefs at once with the hold limit firing (pir-coordinator-concurrent), and real phone alerts for a passed question and the end of the run (notify-live), and the finisher taking a green run over and finishing on the person's go from the phone (finisher-live). The old `hands-on` and `blog-app` fixtures
+// (pir-coordinator), and several of its briefs at once with the hold limit firing (pir-coordinator-concurrent), and real phone alerts for a passed question and the end of the run (notify-live), and the finisher taking a green run over and finishing on the person's go from the phone (finisher-live), and a repo with only
+// `dev` whose remote is ahead (dev-base). The old `hands-on` and `blog-app` fixtures
 // exercised the `you`/hands-on model, which was removed with the down-channel (DESIGN §2.5, T05); they
 // went with it.
 //
@@ -16,7 +17,7 @@
 // unit-testable, and means the loader's only job is to WRITE those strings and run git — the one place
 // I/O lives (this module is shell, DESIGN §3.1; the descriptors and common.mjs are pure string work).
 //
-// What install lays down (all committed on `main`, so a task-branch worktree cut from the feature
+// What install lays down (all committed on the fixture's base, `main` unless it names `base`, so a task-branch worktree cut from the feature
 // branch carries them — DESIGN §2.9):
 //   - the runnable scaffold (package.json + a green smoke test + .gitignore), from common.repoScaffold;
 //   - the plan tree plans/{slug}/ (PROGRESS.md marked reviewed, DESIGN/PLAN/FINDINGS, tasks/);
@@ -37,12 +38,15 @@ import {
   readdirSync,
   cpSync,
   symlinkSync,
+  mkdtempSync,
+  rmSync,
 } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join, dirname, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
 
-import { commonPlanFiles, repoScaffold } from './fixtures/common.mjs';
+import { REMOTE_DIR, commonPlanFiles, repoScaffold } from './fixtures/common.mjs';
 import single from './fixtures/single.mjs';
 import parallel from './fixtures/parallel.mjs';
 import reviewQueue from './fixtures/review-queue.mjs';
@@ -61,6 +65,7 @@ import pirCoordinator from './fixtures/pir-coordinator.mjs';
 import pirCoordinatorConcurrent from './fixtures/pir-coordinator-concurrent.mjs';
 import notifyLive from './fixtures/notify-live.mjs';
 import finisherLive from './fixtures/finisher-live.mjs';
+import devBase from './fixtures/dev-base.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -98,6 +103,7 @@ const FIXTURES = Object.freeze({
   [pirCoordinatorConcurrent.id]: pirCoordinatorConcurrent,
   [notifyLive.id]: notifyLive,
   [finisherLive.id]: finisherLive,
+  [devBase.id]: devBase,
 });
 
 // listFixtures() → the fixture ids, in registry order.
@@ -200,30 +206,68 @@ function carryModules(srcDir, into) {
   return true;
 }
 
-// seedGit(dir, runGit, date) → init on `main`, stage everything, one commit. Deterministic: fixed
-// identity, fixed author/committer date, gpgsign forced off (an automated seed has no one to sign or
-// type a passphrase, and a global commit.gpgsign=true would otherwise hang it). `-c` overrides are
-// per-invocation, so the user's own git config is untouched.
-function seedGit(dir, runGit, date) {
-  const ident = [
-    '-c',
-    'user.name=PIR Fixture',
-    '-c',
-    'user.email=fixture@pir.local',
-    '-c',
-    'commit.gpgsign=false',
-  ];
-  const init = runGit(['init', '-b', 'main'], { cwd: dir });
+// seedGit(dir, runGit, date, base) → init on the fixture's base branch (`main` unless it names another),
+// stage everything, one commit. Deterministic: fixed identity, fixed author/committer date, gpgsign forced
+// off (an automated seed has no one to sign or type a passphrase, and a global commit.gpgsign=true would
+// otherwise hang it). `-c` overrides are per-invocation, so the user's own git config is untouched.
+const SEED_IDENT = ['-c', 'user.name=PIR Fixture', '-c', 'user.email=fixture@pir.local', '-c', 'commit.gpgsign=false'];
+
+function seedGit(dir, runGit, date, base = 'main') {
+  const init = runGit(['init', '-b', base], { cwd: dir });
   if (!init.ok) throw new Error(`fixture seed: git init failed: ${init.stderr}`);
+  // The seeded repo names its base, as pir requires (base-branch DESIGN §2.1, §5).
+  mkdirSync(join(dir, '.pir'), { recursive: true });
+  writeFileSync(join(dir, '.pir', 'settings.json'), JSON.stringify({ baseBranch: base }) + '\n');
   runGit(['add', '-A'], { cwd: dir });
   const env = { GIT_AUTHOR_DATE: date, GIT_COMMITTER_DATE: date };
-  const commit = runGit([...ident, 'commit', '-m', 'fixture: scratch plan seed', '--no-edit'], { cwd: dir, env });
+  const commit = runGit([...SEED_IDENT, 'commit', '-m', 'fixture: scratch plan seed', '--no-edit'], { cwd: dir, env });
   if (!commit.ok) throw new Error(`fixture seed: git commit failed: ${commit.stderr}`);
 }
 
-// installFixture(id, opts) → { id, slug, dir, files, skills, source, modules }. Lay the fixture down as a
+// REMOTE_DIR (common.mjs, where a fixture can import it without a cycle): the folder a fixture's bare
+// remote is made in, inside the scratch repo so it goes with it; the fixture's .gitignore must name it.
+export { REMOTE_DIR };
+
+// seedRemote(dir, runGit, date, base, remote) → { path, seeded, ahead }. A local bare repository as the
+// scratch repo's `origin` (base-branch DESIGN §4: a file-path remote exercises the same fetch, ancestry and
+// fast-forward code as a network one, with no network). The seed is pushed to it, then `remote.ahead`'s
+// files are committed on the remote's base only, through a throwaway clone, so the remote's base is one
+// commit ahead of the local one: the stale clone pir must start from the newest copy of (§2.3). No upstream
+// is set on the local base, so the remote is picked as `origin` (§2.4).
+function seedRemote(dir, runGit, date, base, remote) {
+  const path = join(dir, REMOTE_DIR);
+  const env = { GIT_AUTHOR_DATE: date, GIT_COMMITTER_DATE: date };
+  const must = (r, what) => {
+    if (!r.ok) throw new Error(`fixture remote: ${what} failed: ${r.stderr}`);
+    return r;
+  };
+  must(runGit(['init', '--bare', '-q', '-b', base, path], { cwd: dir }), 'git init --bare');
+  must(runGit(['remote', 'add', 'origin', path], { cwd: dir }), 'git remote add');
+  must(runGit(['push', '-q', 'origin', `refs/heads/${base}:refs/heads/${base}`], { cwd: dir }), 'the seed push');
+  const seeded = must(runGit(['rev-parse', `refs/heads/${base}`], { cwd: dir }), 'rev-parse').stdout.trim();
+  let ahead = null;
+  if (remote.ahead) {
+    const clone = mkdtempSync(join(tmpdir(), 'pir-fixture-remote-'));
+    try {
+      must(runGit(['clone', '-q', '--branch', base, path, clone], { cwd: dir }), 'the remote clone');
+      for (const [rel, content] of Object.entries(remote.ahead.files)) {
+        mkdirSync(dirname(join(clone, rel)), { recursive: true });
+        writeFileSync(join(clone, rel), content);
+      }
+      must(runGit(['add', '-A'], { cwd: clone }), 'git add');
+      must(runGit([...SEED_IDENT, 'commit', '-q', '-m', remote.ahead.message ?? `${base}: moved on the remote`], { cwd: clone, env }), 'the remote commit');
+      must(runGit(['push', '-q', 'origin', base], { cwd: clone }), 'the remote push');
+      ahead = must(runGit(['rev-parse', 'HEAD'], { cwd: clone }), 'rev-parse').stdout.trim();
+    } finally {
+      rmSync(clone, { recursive: true, force: true });
+    }
+  }
+  return { path, seeded, ahead };
+}
+
+// installFixture(id, opts) → { id, slug, dir, base, files, skills, source, modules, remote }. Lay the fixture down as a
 // self-contained scratch repo at `into` and seed its git state. The T17 live runner calls this, then opens
-// the feature branch off the seeded `main` and drives real workers; a test calls it against a temp dir
+// the feature branch off the seeded base and drives real workers; a test calls it against a temp dir
 // with real git.
 //
 //   into       — the scratch repo root to create (required). Must not be the real project (a T17
@@ -255,7 +299,9 @@ export function installFixture(
   // A fixture whose programs run from the engine checkout (plan-command) opts out of the src/ copy.
   const source = fixture.carrySource === false ? false : carrySource(srcDir, join(into, 'src'));
   const modules = source ? carryModules(srcDir, into) : false;
-  seedGit(into, runGit, date);
+  const base = fixture.base ?? 'main';
+  seedGit(into, runGit, date, base);
+  const remote = fixture.remote ? seedRemote(into, runGit, date, base, fixture.remote) : null;
 
-  return { id, slug: fixture.slug, dir: into, files: written, skills, source, modules };
+  return { id, slug: fixture.slug, dir: into, base, files: written, skills, source, modules, remote };
 }

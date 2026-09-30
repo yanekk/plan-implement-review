@@ -309,15 +309,24 @@ test('the hand-off block with the agent: preparing, ready to merge with the repo
   const done = [task({ done: true })];
   const at = (handoff, over = {}) => buildDisplay({ branch: 'pir/demo', ceiling: 4, tasks: done, handoff, ...over }, { now: NOW }).footer;
 
-  assert.deepEqual(at({ state: 'preparing', reportPath: null, mainSha: null }), { kind: 'handoff', branch: 'pir/demo', state: 'preparing', reportPath: null });
+  assert.deepEqual(at({ state: 'preparing', reportPath: null, baseSha: null }), { kind: 'handoff', branch: 'pir/demo', state: 'preparing', reportPath: null });
   assert.deepEqual(
-    at({ state: 'ready', reportPath: 'plans/demo/REPORT.md', mainSha: 'abc' }, { complete: true, readyToMerge: true }),
+    at({ state: 'ready', reportPath: 'plans/demo/REPORT.md', baseSha: 'abc' }, { complete: true, readyToMerge: true }),
     { kind: 'handoff', branch: 'pir/demo', state: 'ready', reportPath: 'plans/demo/REPORT.md' },
   );
   assert.deepEqual(
-    at({ state: 'red', reportPath: 'plans/demo/REPORT.md', mainSha: 'abc' }, { complete: true, testsReason: { reason: 'test `npm test` exited 1', logPath: '/c/tests.log' } }),
+    at({ state: 'red', reportPath: 'plans/demo/REPORT.md', baseSha: 'abc' }, { complete: true, testsReason: { reason: 'test `npm test` exited 1', logPath: '/c/tests.log' } }),
     { kind: 'handoff', branch: 'pir/demo', state: 'red', reportPath: 'plans/demo/REPORT.md', reason: 'test `npm test` exited 1', logPath: '/c/tests.log' },
   );
+  // A held sync (base-branch T07, DESIGN §2.8) puts its reason on the preparing footer; the base rides on
+  // the hand-off footers, from the run state or the hand-off.
+  const hold = { reason: 'fetch-failed', text: "can't reach origin, retrying", since: 1, nextTry: 2 };
+  assert.deepEqual(at({ state: 'preparing', reportPath: null, base: 'dev', hold }), {
+    kind: 'handoff', branch: 'pir/demo', base: 'dev', state: 'preparing', reportPath: null, hold: { reason: 'fetch-failed', text: "can't reach origin, retrying" },
+  });
+  assert.equal(at({ state: 'ready', reportPath: null, base: 'dev', hold: null }, { complete: true, readyToMerge: true }).hold, undefined);
+  assert.equal(at(null, { complete: true, readyToMerge: true, base: 'dev' }).base, 'dev');
+  assert.equal(at(null, { interrupted: true, base: 'dev' }).base, 'dev');
   // With --no-coordinator there is no handoff, and the footers are today's.
   assert.deepEqual(at(null, { complete: true, readyToMerge: true }), { kind: 'handoff', branch: 'pir/demo' });
   assert.deepEqual(at(null, { complete: true, readyToMerge: false }), { kind: 'red', branch: 'pir/demo', reason: null, logPath: null });
@@ -350,7 +359,7 @@ test('a helper whose question is the person\'s reads asking you, is counted, and
     ceiling: 2,
     tasks: [task({ id: 'T01', done: true })],
     helpers: [helperRow({ id: 'main-sync', slug: 'resolve-main-merge', asking: 'questions', holder: 'person', stoppedAt: NOW - 1000 })],
-    handoff: { state: 'preparing', reportPath: null, mainSha: null },
+    handoff: { state: 'preparing', reportPath: null, baseSha: null },
   };
   const d = buildDisplay(rs, { now: NOW });
   const row = d.rows.find((r) => r.id === 'main-sync');

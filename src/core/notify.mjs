@@ -81,14 +81,15 @@ export const reminderText = (message) => `Still waiting: ${message}`;
 
 // endAlert(...) → { title, message, tags } for the one alert when the run waits on the person's merge
 // (§2.4). Red names what failed: an unresolved main-sync outranks the test reason, since the tests never
-// ran against main.
-export function endAlert({ slug, ready, taskCount, reason, unresolved } = {}) {
+// ran against the base. `base` is the run's base branch (base-branch DESIGN §2.9), default `main`; the
+// ready line switches to it first so the command is right whichever branch is checked out.
+export function endAlert({ slug, ready, taskCount, reason, unresolved, base = 'main' } = {}) {
   if (ready) {
-    return { title: `${slug} · ready to merge`, message: `All ${taskCount} tasks merged. git merge pir/${slug}`, tags: ['tada'] };
+    return { title: `${slug} · ready to merge`, message: `All ${taskCount} tasks merged. git switch ${base} && git merge pir/${slug}`, tags: ['tada'] };
   }
   const cut = excerpt(reason ?? '');
   let message;
-  if (unresolved) message = `Merge with main unresolved on pir/${slug}`;
+  if (unresolved) message = `Merge with ${base} unresolved on pir/${slug}`;
   else if (cut !== '') message = `Tests red on pir/${slug}: ${cut}`;
   else message = `Tests red on pir/${slug}`;
   return { title: `${slug} · not ready`, message, tags: ['warning'] };
@@ -104,9 +105,10 @@ const steps = (n) => `${n} step${n === 1 ? '' : 's'}`;
 
 // finisherAlert({ slug, phase, summary, steps, rulesSource }) → { title, message, tags? } for the finisher's
 // phase alerts, or null for a phase with none. `phase` is `awaiting-go`, `stuck`, `done` or `gave-up` (the
-// fourth exit, §2.12). The ready alert's count and source sit outside the cut, so a long first step never
+// fourth exit, §2.12). `base` is the run's base branch, default `main`, named in the gave-up merge line as the
+// end alert names it. The ready alert's count and source sit outside the cut, so a long first step never
 // hides how many steps the go approves or whose rules they came from.
-export function finisherAlert({ slug, phase, summary, steps: list, rulesSource } = {}) {
+export function finisherAlert({ slug, phase, summary, steps: list, rulesSource, base = 'main' } = {}) {
   const all = Array.isArray(list) ? list.filter(nonBlank) : [];
   if (phase === 'awaiting-go') {
     const head = `${steps(all.length)} from ${RULES_WORDS[rulesSource] ?? 'rules'}`;
@@ -120,7 +122,7 @@ export function finisherAlert({ slug, phase, summary, steps: list, rulesSource }
     return { title: `${slug} · finished`, message: excerpt(summary ?? '') || 'the finisher is done', tags: ['tada'] };
   }
   if (phase === 'gave-up') {
-    return { title: `${slug} · finisher gave up`, message: `Merge by hand: git merge pir/${slug}`, tags: ['warning'] };
+    return { title: `${slug} · finisher gave up`, message: `Merge by hand: git switch ${base} && git merge pir/${slug}`, tags: ['warning'] };
   }
   return null;
 }
@@ -145,6 +147,14 @@ export function finisherNotifyView({ slug, view, pending = [], url = null, remot
   if (!kind) return null;
   const { title, message } = alertText({ plan: slug, name: 'finisher', why: kind === 'permission' ? 'reserved' : null, kind, pending: list });
   return { ...base, waiting: kind, key: 'asking', title, message };
+}
+
+// holdAlert({ slug, hold }) → { title, message, tags } for the one alert when the end-of-run sync is held
+// (base-branch DESIGN §2.8): the base could not be fetched, or the local and remote bases split apart.
+// `hold.text` is holdText's short reason, read on the lock screen as `{slug} · waiting` over the reason.
+export function holdAlert({ slug, hold } = {}) {
+  const reason = excerpt(hold?.text ?? '');
+  return { title: `${slug ?? ''} · waiting`, message: reason === '' ? 'the end of the run is held' : reason, tags: ['hourglass'] };
 }
 
 // ---- The episode machine (§2.1, §2.2, §3.2) ----

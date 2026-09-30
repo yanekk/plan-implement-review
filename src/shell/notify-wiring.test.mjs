@@ -83,7 +83,7 @@ test('views: a report-less question uses the worker\'s last text; none gives the
   assert.deepEqual(views.map((v) => [v.title, v.message]), [
     ['demo · T01 implement', 'asks: Should the port be 8080?'],
     ['demo · T02 implement', 'is waiting for you'],
-    ['demo · main-sync resolve-main-merge', 'asks: Keep main\'s version?'],
+    ['demo · main-sync resolve-base-merge', 'asks: Keep main\'s version?'],
   ]);
 });
 

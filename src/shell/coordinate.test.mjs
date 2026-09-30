@@ -2,18 +2,18 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, renameSync, rmSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 import {
   startCoordinator,
+  parseCoordinateArgs,
   readReviewGate,
   readTestBlockGate,
   testBlockRefusal,
   createReportInbox,
   teardownRun,
-  ensureMain,
   renderHandoff,
   runFeatureTests,
   runawayVerdict,
@@ -21,7 +21,6 @@ import {
   passProgressed,
   PRODUCTIVE_ACTIONS,
   PASS_MIN_GAP_MS,
-  gitRun,
   clearTransientFeeds,
   startupControlHygiene,
   fileControl,
@@ -513,26 +512,77 @@ test('teardownRun closes every live worker of the run at once (immediate SIGTERM
   assert.ok(platform.removed.includes(parkedId), 'teardown calls remove on a finish path');
 });
 
-// --- 16. P4/P5: the ported bin guards (ensureMain, promotion guard, runaway breaker) ---------------
+// --- 16. P4/P5: the ported bin guards (the run's base, promotion guard, runaway breaker) ---------------
+//
+// The old guard that created a local `main` at HEAD is gone (base-branch T06, DESIGN §2.7): the bin resolves the
+// run's base instead, and a missing local base is created from the remote's copy by prepareBase.
 
-test('ensureMain creates a local main at HEAD when a checkout has none, and is a no-op otherwise (P4, T12)', (t) => {
-  const dir = mkdtempSync(join(tmpdir(), 'pir-nomain-'));
-  t.after(() => rmSync(dir, { recursive: true, force: true }));
-  const g = (args) => gitRun(dir, args);
-  g(['init', '-b', 'side']);
-  g(['config', 'user.email', 'x@test.local']);
-  g(['config', 'user.name', 'PIR Test']);
-  g(['config', 'commit.gpgsign', 'false']);
-  writeFileSync(join(dir, 'f.txt'), 'hi');
-  g(['add', '-A']);
-  g(['commit', '-m', 'init', '--no-edit']);
+test('parseCoordinateArgs: slug, --base and --base-sha; bad shapes refused', () => {
+  assert.deepEqual(parseCoordinateArgs(['demo']), { ok: true, slug: 'demo', base: null, baseSha: null });
+  assert.deepEqual(parseCoordinateArgs(['demo', '--base', 'dev']), { ok: true, slug: 'demo', base: 'dev', baseSha: null });
+  assert.deepEqual(parseCoordinateArgs(['demo', '--base', 'dev', '--base-sha', 'abc']), { ok: true, slug: 'demo', base: 'dev', baseSha: 'abc' });
+  assert.deepEqual(parseCoordinateArgs(['--base', 'dev', 'demo']), { ok: true, slug: 'demo', base: 'dev', baseSha: null });
+  assert.equal(parseCoordinateArgs([]).ok, false);
+  assert.equal(parseCoordinateArgs(['demo', '--base']).ok, false);
+  assert.equal(parseCoordinateArgs(['demo', '--base', '--base-sha', 'x']).ok, false);
+  assert.equal(parseCoordinateArgs(['demo', '--base-sha', 'abc']).ok, false, 'a commit with no base name');
+  assert.equal(parseCoordinateArgs(['demo', '--frob']).ok, false);
+  assert.equal(parseCoordinateArgs(['demo', 'extra']).ok, false);
+});
 
-  assert.equal(g(['rev-parse', '--verify', '--quiet', 'refs/heads/main']).ok, false, 'a side-branch clone has no local main');
-  const res = ensureMain(dir);
-  assert.equal(res.created, true);
-  assert.equal(res.from, 'side');
-  assert.equal(g(['rev-parse', '--verify', '--quiet', 'refs/heads/main']).ok, true, 'main now exists at HEAD');
-  assert.equal(ensureMain(dir).created, false, 'a second call is a no-op — main already exists');
+// The bin on its LIVE path, seatbelted: PATH holds only `git`, so even a regression past the base check
+// stops at "no `claude` on PATH" before any worker could spawn, and PIR_HOME is a scratch folder.
+function runBinLiveSeatbelted(root, args, home) {
+  const bin = fileURLToPath(new URL('./coordinate.mjs', import.meta.url));
+  const onlyGit = join(home, 'bin');
+  mkdirSync(onlyGit, { recursive: true });
+  const gitPath = execFileSync('/bin/sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim();
+  writeFileSync(join(onlyGit, 'git'), `#!/bin/sh\nexec ${gitPath} "$@"\n`, { mode: 0o755 });
+  const env = { PATH: `${onlyGit}:/bin`, HOME: home, PIR_HOME: home, PARALLEL_LIVE: '1', PARALLEL_MAX_WORKERS: '1' };
+  return spawnSync(process.execPath, [bin, ...args], { cwd: root, env, encoding: 'utf8', timeout: 30000 });
+}
+
+test('the coordinator bin started without --base resolves the base itself: no settings → the §2.9 refusal, nothing created', (t) => {
+  const { root, g } = scratchGitPlan('---\nsetup: none\ntest:\n  - true\n---\n# Design\n');
+  const home = mkdtempSync(join(tmpdir(), 'pir-bin-home-'));
+  t.after(() => {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(home, { recursive: true, force: true });
+  });
+  const r = runBinLiveSeatbelted(root, ['demo'], home);
+  assert.equal(r.status, 1, r.stdout + r.stderr);
+  assert.match(r.stderr, /pir: no base branch is set for pir-bin-\w+\. Add \.pir\/settings\.json with \{"baseBranch": "<branch>"\}/);
+  assert.ok(!/no `claude` on PATH/.test(r.stderr), 'refused at the base, before anything else');
+  assert.equal(String(g('branch', '--list', 'pir/*')).trim(), '', 'no feature branch cut');
+  assert.equal(existsSync(join(root, 'plans', 'demo', '.parallel')), false, 'no control folder written');
+});
+
+test('the coordinator bin started without --base resolves the settings base the same way as pir start', (t) => {
+  const { root, g } = scratchGitPlan('---\nsetup: none\ntest:\n  - true\n---\n# Design\n');
+  const home = mkdtempSync(join(tmpdir(), 'pir-bin-home-'));
+  t.after(() => {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(home, { recursive: true, force: true });
+  });
+  g('branch', '-m', 'main', 'dev');
+  mkdirSync(join(home, '.pir', basename(root)), { recursive: true });
+  writeFileSync(join(home, '.pir', basename(root), 'settings.json'), '{"baseBranch": "dev"}');
+  const r = runBinLiveSeatbelted(root, ['demo'], home);
+  assert.match(r.stdout, /base branch: dev/, r.stdout + r.stderr);
+  // The seatbelt: with no claude on PATH the live run stops right after, before any spawn.
+  assert.match(r.stderr, /no `claude` on PATH/);
+
+  // And a base passed in is taken as given, with no settings read at all.
+  rmSync(join(home, '.pir', basename(root)), { recursive: true, force: true });
+  const passed = runBinLiveSeatbelted(root, ['demo', '--base', 'dev'], home);
+  assert.match(passed.stdout, /base branch: dev/, passed.stdout + passed.stderr);
+});
+
+test('the main-at-HEAD guard is gone: nothing under src/ names it', () => {
+  const srcDir = fileURLToPath(new URL('..', import.meta.url));
+  // Spelled in two halves so this test does not itself name it.
+  const out = spawnSync('grep', ['-rl', 'ensure' + 'Main', srcDir], { encoding: 'utf8' });
+  assert.deepEqual(out.stdout.split('\n').filter(Boolean), []);
 });
 
 test('renderHandoff: a green plan hands off `git merge pir/{slug}`; a red one prints the failure with no merge line (DESIGN §2.4, §2.8)', () => {
@@ -2161,7 +2211,7 @@ import { AGENT_UNAVAILABLE } from '../core/coordinator-report.mjs';
 const REPORT_REL = `plans/${SLUG}/REPORT.md`;
 const SECTIONS = { delivered: 'The greeting works.', checkByHand: 'Run it once.', risks: 'None known.' };
 
-function endRun(t, { rows = [{ num: 'T01' }], behaviors = {}, files = {}, runTests, worktree, controlDir, startAgent, control } = {}) {
+function endRun(t, { rows = [{ num: 'T01' }], behaviors = {}, files = {}, runTests, worktree, controlDir, startAgent, control, opts = {} } = {}) {
   const wt = worktree ?? createFakeWorktree({ progress: progressDoc(rows), files, slug: SLUG });
   if (!worktree) t.after(() => wt.cleanup());
   const platform = createFakePlatform({ behaviors });
@@ -2170,7 +2220,7 @@ function endRun(t, { rows = [{ num: 'T01' }], behaviors = {}, files = {}, runTes
   const stub = stubSessions();
   const clock = { t: Date.parse('2026-09-27T10:00:00Z') };
   const coordinator = startCoordinator({
-    slug: SLUG, repo: REPO, platform, worktree: wt, runTests, control, now: () => clock.t,
+    slug: SLUG, repo: REPO, platform, worktree: wt, runTests, control, now: () => clock.t, ...opts,
     startAgent: startAgent ?? (({ featurePath, askRules }) => startCoordinatorAgent({
       controlDir: cdir, featurePath, repoRoot: featurePath, slug: SLUG, platform, askRules,
       startWorker: stub.startWorker, claudePath: '/nonexistent/claude', skillsDir: cdir, now: () => clock.t,
@@ -2226,7 +2276,7 @@ test('end: main moved cleanly → merged in, tests, briefed, report committed on
 
   run.decide({ kind: 'report', sections: SECTIONS });
   const r = run.coordinator.pass();
-  assert.deepEqual(r.handoff, { state: 'ready', reportPath: REPORT_REL, mainSha });
+  assert.deepEqual(r.handoff, { state: 'ready', reportPath: REPORT_REL, baseSha: mainSha, base: 'main', hold: null, lastWatch: null, lastWatchFailure: null });
   assert.equal(r.complete, true);
   assert.deepEqual(r.readyToMerge, { branch: `pir/${SLUG}` });
   const text = run.report();
@@ -2428,7 +2478,7 @@ test('end: red after the fix; main moves in waiting and the re-sync is green →
   run.until((x) => x.handoff.state === 'red');
   assert.match(run.report().stdout, /stayed red/);
   const moved = run.moveMain('later.txt', 'main fixed it\n');
-  run.until((x) => x.handoff.state === 'ready' && x.handoff.mainSha === moved);
+  run.until((x) => x.handoff.state === 'ready' && x.handoff.baseSha === moved);
   const text = run.report().stdout;
   assert.match(text, /Tests: green\./);
   assert.doesNotMatch(text, /stayed red/, 'the footer describes this sync, not the earlier fix');
@@ -2448,11 +2498,11 @@ test('end: close mid-build refused and the run carries on; main moves in ready �
   assert.ok(run.told().filter((m) => /still building/.test(m)).length === 2, 'a close while preparing is refused too');
   run.decide({ kind: 'report', sections: SECTIONS });
   const ready = run.until((x) => x.handoff.state === 'ready');
-  const firstSha = ready.handoff.mainSha;
+  const firstSha = ready.handoff.baseSha;
 
   run.clock.t = Date.parse('2026-09-27T12:00:00Z');
   const moved = run.moveMain('later.txt', 'another run merged first\n');
-  run.until((x) => x.handoff.state === 'ready' && x.handoff.mainSha === moved);
+  run.until((x) => x.handoff.state === 'ready' && x.handoff.baseSha === moved);
   assert.notEqual(moved, firstSha);
   const text = run.report().stdout;
   assert.match(text, new RegExp(`at \`${moved.slice(0, 12)}\` on 2026-09-27T12:00:00Z`));
@@ -2623,7 +2673,7 @@ test('buildRunState: an end-of-run helper with a worker gets a row entry in `hel
   assert.equal(buildDisplay(passed, { now: 20 }).footer.task, 'tests-fix');
 
   const sync = buildRunState({ passTasks, stateTasks: { 'main-sync': { ...stateTasks['tests-fix'], role: 'sync', workerId: 'ws' } }, workers: [], branch: 'b', ceiling: 2 });
-  assert.equal(sync.helpers[0].slug, 'resolve-main-merge');
+  assert.equal(sync.helpers[0].slug, 'resolve-base-merge');
   assert.equal(sync.helpers[0].phase, 'building');
   assert.equal('helpers' in buildRunState({ passTasks, stateTasks: {}, branch: 'b', ceiling: 2 }), false, 'no helper, no key');
 });
@@ -2641,7 +2691,7 @@ test('advanceTiming: a helper spawned again under its label starts a fresh clock
 
 // --- pir-coordinator T13: the hold limit (DESIGN §2.11) --------------------------------------------------
 
-import { holdLimitMs, DEFAULT_HOLD_MS } from './coordinate.mjs';
+import { holdLimitMs, DEFAULT_HOLD_MS, baseWatchMs, DEFAULT_BASE_WATCH_MS } from './coordinate.mjs';
 import { askingCount } from '../core/display.mjs';
 
 // holdRun(t, behaviors, opts) → agentRun on a hand-set clock, a hold limit, and a captured control.log.
@@ -3216,12 +3266,12 @@ test('end alert: sent once when the handoff first reads ready, with the agent\'s
   run.decide({ kind: 'report', sections: SECTIONS });
   a.until((x) => x.handoff.state === 'ready');
   assert.deepEqual(a.sends, [{
-    title: `${SLUG} · ready to merge`, message: `All 1 tasks merged. git merge pir/${SLUG}`, tags: ['tada'],
+    title: `${SLUG} · ready to merge`, message: `All 1 tasks merged. git switch main && git merge pir/${SLUG}`, tags: ['tada'],
     click: run.coordinator.agent.remoteUrl(),
   }]);
   a.step();
   const moved = run.moveMain('later.txt', 'another run merged first\n');
-  a.until((x) => x.handoff.state === 'ready' && x.handoff.mainSha === moved);
+  a.until((x) => x.handoff.state === 'ready' && x.handoff.baseSha === moved);
   assert.equal(a.sends.length, 1, 'the re-sync is the same wait');
 });
 
@@ -3238,7 +3288,7 @@ test('end alert: red names the test reason; a re-sync that turns ready sends not
   assert.equal(a.sends[0].message, `Tests red on pir/${SLUG}: test exit 1`);
   assert.deepEqual(a.sends[0].tags, ['warning']);
   const moved = run.moveMain('later.txt', 'main fixed it\n');
-  a.until((x) => x.handoff.state === 'ready' && x.handoff.mainSha === moved);
+  a.until((x) => x.handoff.state === 'ready' && x.handoff.baseSha === moved);
   assert.equal(a.sends.length, 1);
 });
 
@@ -3274,4 +3324,302 @@ test('end alert: not sent on a pass with r.finished (a restart finding main alre
   const sends = [];
   assert.equal(endAlertPass({ r: { finished: 'merged', handoff: { state: 'ready' }, tasks: [] }, slug: SLUG, send: (x) => sends.push(x) }), false);
   assert.deepEqual(sends, []);
+});
+
+// base-branch T04 (DESIGN §2.9): the printed hand-off and finished lines name the base, and the merge
+// command switches to it first; the default base is main.
+test('renderHandoff and renderFinished name the base branch; the default is main', () => {
+  const green = renderHandoff({ readyToMerge: true, taskCount: 2, slug: 'demo', base: 'dev' });
+  assert.match(green, /\n {2}git switch dev && git merge pir\/demo\n$/);
+  assert.match(renderHandoff({ readyToMerge: true, taskCount: 2, slug: 'demo' }), /\n {2}git switch main && git merge pir\/demo\n$/);
+  assert.equal(renderFinished({ by: 'merged', slug: 'demo', base: 'dev' }), '✔ pir/demo is in dev. The run is finished.');
+  assert.equal(renderFinished({ by: 'merged', slug: 'demo' }), '✔ pir/demo is in main. The run is finished.');
+  const closed = renderFinished({ by: 'closed', slug: 'demo', ready: true, base: 'dev' });
+  assert.match(closed, /\n {2}git switch dev && git merge pir\/demo\n$/);
+  for (const t of [green, closed]) assert.doesNotMatch(t, /\bmain\b/);
+});
+
+// --- base-branch T07 (DESIGN §2.8, §2.9): the end of a build fetches its base, holds while it cannot, ---
+// and watches the remote while it waits for the merge. A scratch repo whose one branch is `dev`, with a local
+// bare repository as `origin` (DESIGN §4: no test touches the network) and a second clone standing in for
+// the team pushing to it. An unreachable remote is `origin` pointed at a path that does not exist.
+
+import { holdAlertPass, holdAlertAction } from './coordinate.mjs';
+import { createRenderer } from './render.mjs';
+
+const RETRY = 1_000;
+const WATCH = 5_000;
+
+function devRun(t, { runTests, dirty = false } = {}) {
+  const wt = createFakeWorktree({ progress: progressDoc([{ num: 'T01' }]), slug: SLUG, base: 'dev' });
+  t.after(() => wt.cleanup());
+  const remote = join(wt.dir, 'origin.git');
+  const unreachable = join(wt.dir, 'nowhere.git');
+  git(wt.dir, ['clone', '-q', '--bare', wt.repo, remote]);
+  git(wt.repo, ['remote', 'add', 'origin', remote]);
+  git(wt.repo, ['fetch', '-q', 'origin']);
+  const other = join(wt.dir, 'other');
+  git(wt.dir, ['clone', '-q', remote, other]);
+  for (const [k, v] of [['user.email', 'team@test.local'], ['user.name', 'Team'], ['commit.gpgsign', 'false']]) git(other, ['config', k, v]);
+  if (dirty) writeFileSync(join(wt.repo, progressPathFor(SLUG)), 'the person is editing this\n');
+  // pushRemote(path, content) → the sha a teammate pushed to origin's dev.
+  const pushRemote = (path, content) => {
+    git(other, ['pull', '-q', '--no-rebase', 'origin', 'dev']);
+    writeFileSync(join(other, path), content);
+    git(other, ['add', '-A']);
+    git(other, ['commit', '-q', '-m', `team: ${path}`]);
+    git(other, ['push', '-q', 'origin', 'HEAD:dev']);
+    return git(other, ['rev-parse', 'HEAD']).stdout.trim();
+  };
+  const setUrl = (url) => git(wt.repo, ['remote', 'set-url', 'origin', url]);
+  const run = endRun(t, { worktree: wt, runTests, opts: { base: 'dev', retryMs: RETRY, watchMs: WATCH } });
+  // toReady() → drives past the gate to `ready`, playing the agent's report.
+  const toReady = () => {
+    run.until(() => run.told().some((m) => m.startsWith('Every task is done')));
+    run.decide({ kind: 'report', sections: SECTIONS });
+    return run.until((x) => x.handoff.state === 'ready');
+  };
+  return { ...run, remote, unreachable, other, pushRemote, setUrl, toReady };
+}
+
+const isAncestor = (repo, a, b) => git(repo, ['merge-base', '--is-ancestor', a, b]).ok;
+
+test('end sync fetches: origin/dev ahead of the local dev → the remote commit is merged, and every hand-off text names dev', (t) => {
+  const run = devRun(t);
+  run.coordinator.pass();
+  const remoteSha = run.pushRemote('remote.txt', 'from origin\n');
+  const localBefore = git(run.worktree.repo, ['rev-parse', 'dev']).stdout.trim();
+  assert.notEqual(localBefore, remoteSha);
+  run.toGate();
+  run.until((r) => r.actions.some((a) => a.type === 'main-sync' && a.state === 'merged'));
+  assert.ok(isAncestor(run.worktree.repo, remoteSha, `pir/${SLUG}`), 'the remote commit is in the feature branch');
+  assert.equal(git(run.worktree.repo, ['rev-parse', 'dev']).stdout.trim(), remoteSha, 'the clean checked-out dev is fast-forwarded');
+  const brief = () => run.told().find((m) => m.startsWith('Every task is done'));
+  run.until(() => !!brief());
+  assert.match(brief(), /dev merged in cleanly/);
+  const r = run.toReady();
+  assert.equal(r.handoff.baseSha, remoteSha);
+  assert.equal(r.handoff.base, 'dev');
+  assert.equal(r.handoff.hold, null);
+  assert.match(run.report().stdout, new RegExp(`Synced with \`dev\` at \`${remoteSha.slice(0, 12)}\``));
+  const handoff = run.told().at(-1);
+  assert.match(handoff, /git switch dev && git merge pir\/demo/);
+  assert.doesNotMatch(handoff, /\bmain\b/);
+  // The person merges into their dev: the run finishes.
+  git(run.worktree.repo, ['merge', '-q', '--no-edit', `pir/${SLUG}`]);
+  assert.equal(run.coordinator.pass().finished, 'merged');
+});
+
+test('end sync: an unreachable remote holds the run in preparing (no hand-off, no helper); it retries only after the interval, then hands off', (t) => {
+  const run = devRun(t);
+  run.toGate();
+  run.setUrl(run.unreachable);
+  const held = run.coordinator.pass();
+  assert.equal(held.handoff.state, 'preparing');
+  assert.deepEqual(held.handoff.hold, { reason: 'fetch-failed', text: "can't reach origin, retrying", since: run.clock.t, nextTry: run.clock.t + RETRY });
+  assert.ok(held.actions.some((a) => a.type === 'base-hold' && a.reason === 'fetch-failed'));
+  assert.equal(held.complete, false);
+  assert.equal(held.readyToMerge, null);
+
+  // Reachable again, but the interval has not passed: no retry, so the hold stands.
+  run.setUrl(run.remote);
+  for (let i = 0; i < 3; i++) {
+    const r = run.coordinator.pass();
+    assert.equal(r.handoff.hold?.reason, 'fetch-failed', `pass ${i}: no retry before the interval`);
+    assert.ok(!r.actions.some((a) => a.type === 'main-sync' || a.type === 'base-hold'));
+  }
+  assert.equal(run.platform.spawns.filter((s) => s.task === 'main-sync').length, 0, 'no worker for a hold');
+  assert.equal(run.report().ok, false, 'no report while held');
+
+  run.clock.t += RETRY;
+  const retried = run.coordinator.pass();
+  assert.equal(retried.handoff.hold, null);
+  assert.ok(retried.actions.some((a) => a.type === 'main-sync'));
+  const r = run.toReady();
+  assert.equal(r.handoff.state, 'ready');
+  assert.match(run.told().at(-1), /git switch dev && git merge pir\/demo/);
+});
+
+test('end sync: a hold keeps retrying every interval while the remote stays unreachable, keeping its start time', (t) => {
+  const run = devRun(t);
+  run.toGate();
+  run.setUrl(run.unreachable);
+  const first = run.coordinator.pass().handoff.hold;
+  run.clock.t += RETRY;
+  const again = run.coordinator.pass().handoff.hold;
+  assert.equal(again.reason, 'fetch-failed');
+  assert.equal(again.since, first.since, 'the same hold');
+  assert.equal(again.nextTry, run.clock.t + RETRY, 'the retry ran and set the next one');
+});
+
+test('end sync: local dev and origin/dev split apart → held diverged with its text', (t) => {
+  const run = devRun(t);
+  run.coordinator.pass();
+  run.pushRemote('theirs.txt', 'remote side\n');
+  writeFileSync(join(run.worktree.repo, 'mine.txt'), 'local side\n');
+  git(run.worktree.repo, ['add', '-A']);
+  git(run.worktree.repo, ['commit', '-q', '-m', 'local only']);
+  run.toGate();
+  const r = run.coordinator.pass();
+  assert.equal(r.handoff.state, 'preparing');
+  assert.equal(r.handoff.hold.reason, 'diverged');
+  assert.equal(r.handoff.hold.text, 'your dev and origin/dev have split apart');
+  assert.equal(run.platform.spawns.filter((s) => s.task === 'main-sync').length, 0);
+});
+
+test('end sync: a dirty checked-out dev behind origin is left alone, the remote commit is used, and the wait does not re-sync over it', (t) => {
+  const run = devRun(t, { dirty: true });
+  run.coordinator.pass();
+  const localBefore = git(run.worktree.repo, ['rev-parse', 'dev']).stdout.trim();
+  const remoteSha = run.pushRemote('remote.txt', 'from origin\n');
+  run.toGate();
+  const r = run.toReady();
+  assert.equal(r.handoff.baseSha, remoteSha);
+  assert.equal(git(run.worktree.repo, ['rev-parse', 'dev']).stdout.trim(), localBefore, 'the person\'s dev did not move');
+  for (let i = 0; i < 3; i++) assert.equal(run.coordinator.pass().handoff.state, 'ready');
+  run.clock.t += WATCH;
+  assert.equal(run.coordinator.pass().handoff.state, 'ready', 'the watch sees what was merged: nothing to do');
+  assert.deepEqual(run.reportCommits(), [`report(${SLUG}): delivery report`]);
+});
+
+test('waiting: a merge that landed only on origin/dev is seen after the watch interval and finishes the run', (t) => {
+  const run = devRun(t);
+  run.toGate();
+  run.toReady();
+  git(run.other, ['pull', '-q', '--no-rebase', 'origin', 'dev']);
+  git(run.other, ['fetch', '-q', run.worktree.repo, `pir/${SLUG}`]);
+  git(run.other, ['merge', '-q', '--no-ff', '--no-edit', 'FETCH_HEAD']);
+  git(run.other, ['push', '-q', 'origin', 'HEAD:dev']);
+  run.clock.t += WATCH - 1;
+  assert.equal(run.coordinator.pass().finished, null, 'not fetched before the interval');
+  run.clock.t += 1;
+  const r = run.coordinator.pass();
+  assert.equal(r.finished, 'merged');
+  assert.equal(r.handoff.lastWatch, run.clock.t);
+});
+
+test('waiting: a failed fetch sets lastWatchFailure and changes nothing else', (t) => {
+  const run = devRun(t);
+  run.toGate();
+  const ready = run.toReady();
+  run.setUrl(run.unreachable);
+  run.clock.t += WATCH;
+  const r = run.coordinator.pass();
+  assert.equal(r.handoff.lastWatchFailure, run.clock.t);
+  assert.equal(r.handoff.lastWatch, null);
+  assert.equal(r.handoff.state, 'ready');
+  assert.equal(r.handoff.hold, null);
+  assert.equal(r.handoff.baseSha, ready.handoff.baseSha);
+  assert.equal(r.finished, null);
+});
+
+test('waiting: origin/dev moved without the tip → re-synced, committed as `re-synced with dev`, agent told', (t) => {
+  const run = devRun(t);
+  run.toGate();
+  const ready = run.toReady();
+  const moved = run.pushRemote('later.txt', 'another run merged first\n');
+  run.clock.t += WATCH;
+  const r = run.until((x) => x.handoff.state === 'ready' && x.handoff.baseSha === moved);
+  assert.notEqual(moved, ready.handoff.baseSha);
+  assert.ok(isAncestor(run.worktree.repo, moved, `pir/${SLUG}`));
+  assert.deepEqual(run.reportCommits(), [`report(${SLUG}): re-synced with dev`, `report(${SLUG}): delivery report`]);
+  assert.match(run.told().at(-1), new RegExp(`^dev moved to ${moved.slice(0, 12)}`));
+  assert.equal(r.finished, null);
+});
+
+test('hold alerts: one when a hold begins, none on its retries, a second when fetch-failed turns diverged', (t) => {
+  const run = devRun(t);
+  run.coordinator.pass();
+  run.toGate();
+  run.setUrl(run.unreachable);
+  const sends = [];
+  let sent = null;
+  const step = () => {
+    const r = run.coordinator.pass();
+    sent = holdAlertPass({ r, slug: SLUG, sentReason: sent, send: (a) => sends.push(a) });
+    return r;
+  };
+  step();
+  assert.deepEqual(sends, [{ title: 'demo · waiting', message: "can't reach origin, retrying", tags: ['hourglass'] }]);
+  for (let i = 0; i < 3; i++) {
+    run.clock.t += RETRY;
+    step();
+  }
+  assert.equal(sends.length, 1, 'retries send nothing');
+  // Reachable again, but the bases have split meanwhile.
+  run.pushRemote('theirs.txt', 'remote\n');
+  writeFileSync(join(run.worktree.repo, 'mine.txt'), 'local\n');
+  git(run.worktree.repo, ['add', '-A']);
+  git(run.worktree.repo, ['commit', '-q', '-m', 'local only']);
+  run.setUrl(run.remote);
+  run.clock.t += RETRY;
+  step();
+  assert.equal(sends.length, 2);
+  assert.equal(sends[1].message, 'your dev and origin/dev have split apart');
+  assert.deepEqual(holdAlertAction(sends[1], { noteTo: 'sess-1' }), { type: 'send', id: 'hold', seq: null, title: 'demo · waiting', message: 'your dev and origin/dev have split apart', click: null, reminder: false, tags: ['hourglass'], noteTo: 'sess-1' });
+  // A finished pass or a cleared hold resets, so a later hold alerts again.
+  assert.equal(holdAlertPass({ r: { handoff: { hold: null } }, slug: SLUG, sentReason: 'diverged', send: () => assert.fail() }), null);
+  assert.equal(holdAlertPass({ r: { finished: 'merged', handoff: { hold: { reason: 'diverged' } } }, slug: SLUG, sentReason: null, send: () => assert.fail() }), null);
+});
+
+// End to end (T07 "End to end"): the live view of a coordinator-agent run in a dev repo, painted through the
+// real renderer at 80×24 from the same run state the bin builds each pass.
+test('e2e 80×24: origin unreachable at the end → `preparing: can\'t reach origin, retrying`; restored → ready to merge with the dev hand-off', (t) => {
+  const run = devRun(t);
+  const frames = [];
+  const paint = (r) => {
+    const chunks = [];
+    const stream = { isTTY: true, columns: 80, rows: 24, write: (s) => (chunks.push(s), true) };
+    const renderer = createRenderer({ stream, colour: false });
+    const runState = buildRunState({
+      passTasks: r.tasks,
+      stateTasks: run.coordinator.state.tasks,
+      workers: run.platform.workers(),
+      branch: `pir/${SLUG}`,
+      base: 'dev',
+      ceiling: 4,
+      complete: r.handoff ? r.handoff.state !== 'preparing' : r.complete,
+      readyToMerge: r.handoff ? r.handoff.state === 'ready' : !!r.readyToMerge,
+      testsReason: r.testsReason,
+      handoff: r.handoff,
+      heldByAgent: run.coordinator.heldByAgent(),
+      coordinator: run.coordinator.agentView(),
+    });
+    renderer.paint(buildDisplay(runState, { now: run.clock.t }));
+    renderer.close();
+    // eslint-disable-next-line no-control-regex
+    const text = chunks.join('').replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '');
+    frames.push(text);
+    return text;
+  };
+  run.toGate();
+  run.setUrl(run.unreachable);
+  const held = paint(run.coordinator.pass());
+  assert.match(held, /all 1 task\(s\) merged · preparing: can't reach origin, retrying/);
+  assert.doesNotMatch(held, /git merge/);
+  run.setUrl(run.remote);
+  run.clock.t += RETRY;
+  paint(run.coordinator.pass());
+  run.until(() => run.told().some((m) => m.startsWith('Every task is done')));
+  run.decide({ kind: 'report', sections: SECTIONS });
+  let ready = null;
+  for (let i = 0; i < 20 && !ready; i++) {
+    const r = run.coordinator.pass();
+    const text = paint(r);
+    if (r.handoff.state === 'ready') ready = text;
+  }
+  assert.ok(ready, 'reached ready');
+  assert.match(ready, /✔ ready to merge · git switch dev && git merge pir\/demo/);
+  for (const f of frames) {
+    for (const line of f.split('\n')) assert.ok([...line].length <= 80, `fits 80 columns: ${JSON.stringify(line)}`);
+    assert.doesNotMatch(f, /\bmain\b/, 'nothing names main in a dev run');
+  }
+});
+
+test('baseWatchMs: 5 minutes, or PARALLEL_BASE_WATCH_MS when it is a positive number (base-branch T09)', () => {
+  assert.equal(DEFAULT_BASE_WATCH_MS, 300000);
+  assert.equal(baseWatchMs({}), 300000);
+  assert.equal(baseWatchMs({ PARALLEL_BASE_WATCH_MS: '1500' }), 1500);
+  assert.equal(baseWatchMs({ PARALLEL_BASE_WATCH_MS: '0' }), 300000);
+  assert.equal(baseWatchMs({ PARALLEL_BASE_WATCH_MS: 'soon' }), 300000);
 });

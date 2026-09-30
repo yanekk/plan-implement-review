@@ -209,12 +209,13 @@ Each pass with the finisher on, `finisherWaiting` in `coordinate.mjs`:
   finisher is done.` instead of offering a merge.
 - **`close`** (the finisher passing on the person's "don't finish, close the run"): the run ends as
   `finished` (`by: 'closed'`), prints `✔ run closed.` with the merge line still offered.
-- **The person merges by hand** before any go: the existing `mainContains` check ends the run as
+- **The person merges by hand** before any go: the same watch as the plain wait (`watchBase`: the local
+  base every pass, the remote's copy every 5 minutes) sees the base hold the tip and ends the run as
   `merged` and closes the finisher. Once any go has been given (`goGiven` in `state.json`) it no longer
   ends the run, in any phase: the finisher's own merge makes it true, and a `stuck` after that merge (the
   install failed) must still reach the person. After a go the run ends only on `done` or `close`.
-- **`main` moves before any go** (in `preparing`, `awaiting-go`, or `stuck` before any go; another run
-  merged): on the pass `pir` sees it, the finisher drops to `preparing` and no go counts
+- **The base moves before any go** (in `preparing`, `awaiting-go`, or `stuck` before any go; another run
+  merged, locally or on the remote): on the pass `pir` sees it, the finisher drops to `preparing` and no go counts
   (`resyncing()`); `pir` re-syncs the branch as it does without the finisher
   ([coordinator-agent.md](coordinator-agent.md#ready-to-merge)), and once that settles tells the finisher
   in one message to re-check and write a fresh `ready` (`resynced()`, `finisherResynced`). If the branch
@@ -236,7 +237,7 @@ After a go, the finisher's own merge moves `main`, so no re-sync is done.
 - **It gives up** (a fourth exit within the hour, `finisher-given-up`) **or fails to start**
   (`finisher failed to start: …` in `control.log`): the run falls back to today's `ready to merge` wait
   (`fallBack`), printing once `✗ the finisher could not go on; nothing more will run for you.` with
-  `git merge pir/{slug}` to run by hand. The footer and the dashboard read `ready to merge` again, and the
+  `git switch {base} && git merge pir/{slug}` to run by hand. The footer and the dashboard read `ready to merge` again, and the
   run ends when the person merges.
 - **`pir` restarts.** A stored `control/finisher/state.json` means the run had reached the finisher:
   the coordinator agent is not started (`coordinator agent not started: the finisher is resumed`), and
@@ -263,7 +264,7 @@ With `pir notify` set up, the finisher alerts the person's phone (`finisherAlert
 | phase enters `stuck` | `{slug} · finisher stuck` | the stuck summary, cut to 150 characters | one after 15 min if still stuck |
 | a request parks in another phase (a reserved action after the go) | `{slug} · finisher` | worded as for workers (`Needs your yes: …`) | as for workers |
 | `done` | `{slug} · finished` | the done summary, cut to 150 characters | none |
-| it gave up | `{slug} · finisher gave up` | `Merge by hand: git merge pir/{slug}` | none |
+| it gave up | `{slug} · finisher gave up` | `Merge by hand: git switch {base} && git merge pir/{slug}` | none |
 
 Each alert's tap opens the finisher's chat (its Remote Control link), sent once the link is known or
 after 20 s without one; the gave-up alert carries no link. The ready and stuck alerts are
@@ -323,6 +324,10 @@ All under the run's gitignored control folder ([control-folder.md](control-folde
 
 ## Known limitations
 
+- **The finisher is written for `main`.** Its skill, its messages and the default rules name `main` as
+  the branch to merge into, whatever the run's base branch is. `pir` itself watches and re-syncs the
+  run's base. In a repo whose base is another branch, merge by hand before the go (`git switch {base} &&
+  git merge pir/{slug}`); the run sees it and ends.
 - **A repo named `default`**, or matching another name `pir` keeps directly in `~/.pir/`, shares that
   folder with `pir`'s own files: `~/.pir/default/rules/on-finish.md` is then both the default and that
   repo's own rules. Accepted (user, 2026-09-29).

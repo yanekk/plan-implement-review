@@ -13,7 +13,7 @@ by sessions that alternate between building and reviewing. These commands drive 
 | `/pir-plan` | Brainstorm, settle the requirements, show a throwaway mock to confirm the direction when the thing has a feel to it, get the tech right, check what the code already does before planning to build it again, split the work into tasks, and write it all down under `plans/{slug}/` |
 | `/pir-review-plan {slug}` | Read that plan back with fresh eyes, before a line of it is built — the gaps, the contradictions, and anything the machine does not actually support. Runs once, and `/pir-work` will not start until it has |
 | `/pir-work {slug}` | Do exactly one unit of work on that plan — implement the next task, or review the last one — then stop |
-| `pir plan` | The same planning and plan review, run for you inside `pir`: it holds the planner and then a fresh reviewer, you answer both in `pir`'s screen, the plan stays on its own branch off `main`, and when it is reviewed `pir` asks whether to start the parallel build |
+| `pir plan` | The same planning and plan review, run for you inside `pir`: it holds the planner and then a fresh reviewer, you answer both in `pir`'s screen, the plan stays on its own branch off the base branch, and when it is reviewed `pir` asks whether to start the parallel build |
 | `pir start {slug}` | Start (or open) the parallel build of a reviewed plan |
 
 **Read `plans/{slug}/DESIGN.md` before changing behaviour.** Every rule in it was decided
@@ -293,11 +293,19 @@ fix by name and every decision with its reason. All the others stay short.
 
 ### Where sessions run
 
-**Work in the main checkout, on the main branch. Always.** One checkout, one branch, commits
+**Work in the main checkout, on the base branch. Always.** One checkout, one branch, commits
 straight onto it — no worktrees, no branch per task, and so nothing to merge, ever. The
 review boundary here is the *session*, not the branch: `pir-work` already guarantees that
 whoever reviews a task did not write it, and a branch per task buys nothing on top of that
 while costing a merge every time.
+
+**The base branch is the one this repo names.** It is set by `baseBranch` in
+`.pir/settings.json` at the root of the repo (committed, for everyone), and a person can override it
+for their own machine in `~/.pir/{repo}/settings.json` (`{repo}` being the repo's folder name). In a
+repo with `dev`, `stage` and `prod` it is usually `dev`. `pir` refuses to plan or to start a build
+until one of the two files names it, whatever branches the repo has: it never guesses the branch.
+A classic session works on that branch; a `pir` run records which branch it was cut from and keeps to
+it for the rest of the run.
 
 **If you nevertheless find yourself on a branch or in a worktree, stop and say so.** Folding
 it back is a decision about history and it is mine to make — never reach for a merge, a
@@ -307,18 +315,18 @@ rebase or a reset on your own initiative.
 *coordinator command* — a plain foreground program (`node src/shell/coordinate.mjs {slug}`),
 not a session you talk to — that spawns many *worker* sessions to build the same plan at once,
 each worker in its own worktree. That mode runs by design on a feature branch and one branch per
-task, in worktrees — so the rule above ("main checkout, main branch, always; stop if you find
+task, in worktrees — so the rule above ("main checkout, base branch, always; stop if you find
 yourself in a worktree") binds the **classic single-stream flow only**. A worker driven by
 `pir-implement` in its own task-branch worktree is where it is meant to be and does not halt;
 the command merges each task into the feature branch and, when the plan is green, hands you
-`git merge pir/{slug}` to run by hand — with the coordinator agent on, after merging `main` into the
-feature branch and committing a delivery report there. Neither the command nor the agent ever merges
-to `main`. If you are a classic
+`git switch {base} && git merge pir/{slug}` to run by hand — with the coordinator agent on, after
+merging the base branch into the feature branch and committing a delivery report there. Neither the
+command nor the agent ever merges into the base branch or pushes. If you are a classic
 session, the base rule still binds you in full.
 
 **Planning sessions run by `pir plan` are the same exception.** `pir plan` runs the planner and
 then a fresh plan reviewer as sessions it holds, on a side branch `pir/…` in its own worktree, so an
-unbuilt plan never lands on `main`; the reviewed plan's branch then becomes the build's feature
+unbuilt plan never lands on the base branch; the reviewed plan's branch then becomes the build's feature
 branch. A `pir-plan` or `pir-review-plan` session whose opening instruction says it is run by
 `pir plan` is where it is meant to be and does not halt: it follows its skill's "Run by pir plan"
 section, commits on that branch, and reports back to `pir` instead of naming the next command. A

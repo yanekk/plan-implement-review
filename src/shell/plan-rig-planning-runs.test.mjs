@@ -21,7 +21,7 @@ test('startPlanRig builds a scratch repo on main with one commit, and cleanup re
   t.after(() => rig.cleanup());
   assert.equal(git(rig.repoDir, 'branch', '--show-current'), 'main');
   assert.equal(git(rig.repoDir, 'rev-list', '--count', 'HEAD'), '1');
-  assert.deepEqual(git(rig.repoDir, 'ls-files').split('\n').sort(), ['README.md', 'package.json']);
+  assert.deepEqual(git(rig.repoDir, 'ls-files').split('\n').sort(), ['.pir/settings.json', 'README.md', 'package.json']);
   assert.equal(JSON.parse(readFileSync(join(rig.repoDir, 'package.json'), 'utf8')).scripts.test, 'node -e 0');
   assert.equal(git(rig.repoDir, 'status', '--porcelain'), '');
 

@@ -91,7 +91,7 @@ test('endBriefFor: the task table, ledger, findings, unverified tasks, sync and 
     ledger: [{ kind: 'answers', task: 'T01', item: 'JSON?', answer: 'JSON', reason: 'design', notable: true }],
     findings: ['| 2026-09-27 | 🐞 | a bug |'],
     unverified: ['T01'],
-    sync: { state: 'resolved', mainSha: 'abcdef1234567890', files: ['a.txt'] },
+    sync: { state: 'resolved', baseSha: 'abcdef1234567890', files: ['a.txt'] },
     tests: 'green',
   });
   assert.match(text, /- T01 probe ✅/);
@@ -123,9 +123,9 @@ test('handoffFor: ready with the finisher taking over — the report, no merge l
 });
 
 test('resyncedFor: main moved, the new sha, green keeps the merge line, red and unresolved do not', () => {
-  assert.match(resyncedFor({ slug: 'demo', mainSha: 'abcdef1234567890', tests: 'green' }), /main moved to abcdef123456.*git merge pir\/demo/);
-  assert.doesNotMatch(resyncedFor({ slug: 'demo', mainSha: 'a', tests: 'red' }), /git merge/);
-  assert.match(resyncedFor({ slug: 'demo', mainSha: 'a', tests: 'red', unresolved: true }), /conflicted and was not resolved/);
+  assert.match(resyncedFor({ slug: 'demo', baseSha: 'abcdef1234567890', tests: 'green' }), /main moved to abcdef123456.*git merge pir\/demo/);
+  assert.doesNotMatch(resyncedFor({ slug: 'demo', baseSha: 'a', tests: 'red' }), /git merge/);
+  assert.match(resyncedFor({ slug: 'demo', baseSha: 'a', tests: 'red', unresolved: true }), /conflicted and was not resolved/);
 });
 
 test('endBriefFor: says whether a test-fix worker ran and what came of it (T10)', () => {
@@ -154,4 +154,32 @@ test('holdWords: whole minutes as minutes, a shortened limit in seconds', () => 
   assert.equal(holdWords(90000), '90 seconds');
   assert.equal(holdWords(1000), '1 second');
   assert.equal(holdWords(250), '1 second');
+});
+
+// base-branch T04 (DESIGN §2.9): the end brief, the hand-off and the re-sync name the run's base.
+test('syncWords, endBriefFor, handoffFor and resyncedFor with a dev base say dev and never main', async () => {
+  const { syncWords } = await import('./coordinator-brief.mjs');
+  for (const words of Object.values(syncWords('dev'))) assert.doesNotMatch(words, /\bmain\b/);
+  assert.equal(syncWords('dev').merged, 'dev merged in cleanly');
+  assert.equal(syncWords().merged, 'main merged in cleanly');
+
+  const brief = endBriefFor({ base: 'dev', sync: { state: 'merged', baseSha: 'abcdef1234567890' }, tests: 'green' });
+  assert.match(brief, /Sync with dev: dev merged in cleanly, dev at abcdef123456\./);
+  assert.doesNotMatch(brief, /\bmain\b/);
+  assert.match(endBriefFor({ sync: { state: 'merged', baseSha: 'abc' } }), /Sync with main: main merged in cleanly, main at abc\./);
+
+  const ready = handoffFor({ slug: 'demo', reportPath: 'plans/demo/REPORT.md', ready: true, base: 'dev' });
+  assert.match(ready, /\n {2}git switch dev && git merge pir\/demo$/m);
+  const red = handoffFor({ slug: 'demo', reportPath: 'plans/demo/REPORT.md', ready: false, base: 'dev' });
+  assert.match(red, /dev could not be merged in/);
+  for (const t of [ready, red]) assert.doesNotMatch(t, /\bmain\b/);
+
+  const moved = resyncedFor({ slug: 'demo', baseSha: 'abcdef1234567890', base: 'dev', tests: 'green' });
+  assert.match(moved, /^dev moved to abcdef123456 .*git switch dev && git merge pir\/demo/);
+  assert.doesNotMatch(moved, /\bmain\b/);
+});
+
+test('handoffFor and resyncedFor default to main, with the switch-first merge line', () => {
+  assert.match(handoffFor({ slug: 'demo', reportPath: 'r', ready: true }), /\n {2}git switch main && git merge pir\/demo$/m);
+  assert.match(resyncedFor({ slug: 'demo', baseSha: 'abc', tests: 'green' }), /^main moved to abc .*unchanged: git switch main && git merge pir\/demo\./);
 });

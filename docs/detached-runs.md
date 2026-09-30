@@ -83,7 +83,8 @@ repos never collides). The entry is a pointer plus what is needed to classify th
 the repo: the slug, the repo and its path, the control-folder path, the process number and launch
 time, and the final status once set. It also carries `kind` — `plan` for a planning run, `work` for a
 build, absent read as `work` — and, for a planning run, its `label` before the rename and `go`, the
-person's answer to the go question ([planning-runs.md](planning-runs.md)). A build started with
+person's answer to the go question ([planning-runs.md](planning-runs.md)). Both kinds carry `baseBranch`, the run's base branch, a copy for display; the base a run
+actually uses is the one recorded on its branch in git config ([branch-model.md](branch-model.md#the-run-remembers-its-base)). A build started with
 `--no-coordinator` carries `coordinator: false`, so a resume from the dashboard (`Ctrl+R Ctrl+R`)
 starts it without the agent again; the field is absent otherwise, and absent reads as on. `pir start
 {slug}` typed again takes the flag as typed, not from the record. A build writes its record
@@ -407,13 +408,25 @@ coordinator enforce), its `DESIGN.md` opens with a valid setup/test block (the c
 **home** (`planHome` in `src/shell/plan-home.mjs`): the main checkout's `plans/{slug}/` when it has a
 `PROGRESS.md`, else the committed tree of branch `pir/{slug}`, where `pir plan` leaves a reviewed plan
 (see [run-lifecycle.md](run-lifecycle.md)). No plan in either place is refused as `no plan '{slug}'`.
-An unreviewed plan on `main` is refused with the same pointer to `/pir-review-plan`; one that lives
+An unreviewed plan in the main checkout is refused with the same pointer to `/pir-review-plan`; one that lives
 only on its branch is refused with `'{slug}' is not reviewed — resume its planning run in pir
 (Ctrl+R)`; a plan without a valid block is refused as `no-test-block`, and `pir` prints the
 coordinator's own message — the parser's reason, that the plan counts as not reviewed, and
 `/pir-review-plan {slug}` as the fix. The review gate is checked first, so an unreviewed plan reports
-that, not the block. Either way nothing is spawned — a pre-flight failure that only surfaced after
-detaching would show a crashed run instead of a clean error.
+that, not the block.
+
+Last, the pre-flight settles the run's **base branch** (`resolveRunBase` in `src/shell/base-branch.mjs`;
+see [branch-model.md](branch-model.md#the-base-branch)). If `pir/{slug}` exists (a plan made by `pir
+plan`, or a restart), its base is the one it records in `branch.pir/{slug}.pirBase`, with no fetch. If
+it does not (a plan made by hand on the base branch), `pir start` reads the repo's settings, fetches and
+prepares the base, cuts `pir/{slug}` from the prepared commit and records `pirBase`, all before the
+coordinator is spawned. No settings, broken settings, a base missing locally and on the remote, a remote
+that cannot be reached, or a local base split from the remote's is refused with the full message naming
+the cause and the fix. The coordinator is spawned with `--base <name>` (and `--base-sha <sha>` for a
+branch it just cut), and the run record gains `baseBranch`, a copy for display.
+
+Either way nothing is spawned on a refusal — a pre-flight failure that only surfaced after detaching
+would show a crashed run instead of a clean error.
 
 On a clean pre-flight the spawn detaches the coordinator from the terminal — a new session and process
 group, its stdout and stderr to `run.log` in the control folder, and the parent returns at once. A

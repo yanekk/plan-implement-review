@@ -471,9 +471,10 @@ the rules below replace only the parts that assumed a session the person opened 
 stage above and this section disagree, this section wins.
 
 **Where you run.** You are in a worktree on the plan's branch `pir/{slug}`, not in the main checkout,
-and the plan exists only on that branch. `CLAUDE.md § Where sessions run` ("main checkout, main
+and the plan exists only on that branch. `CLAUDE.md § Where sessions run` ("main checkout, base
 branch, always; stop if you find yourself in a worktree") does not bind a planning session run by
-`pir plan`, exactly as it does not bind a build worker. Do not stop, do not switch to `main`, and do
+`pir plan`, exactly as it does not bind a build worker. Do not stop, do not switch to the base branch
+(the branch the run was cut from), and do
 not rename, merge or delete the branch or the worktree; the build later runs on this same branch. A
 project installed before this carve-out has an older `CLAUDE.md` without it; this section is the
 carve-out there. Do not create or edit a file under `.git` yourself (no Write or Edit there, no redirect into it),

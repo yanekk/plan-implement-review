@@ -126,6 +126,8 @@ test('neither: none, and startRun refuses no-plan without spawning', (t) => {
 test('a branch-home plan passes startRun\'s pre-flight', (t) => {
   const root = scratch(t);
   commitOnBranch(t, root, 'demo');
+  // pir/demo carries no pirBase, so startRun reads the base from the settings (base-branch T06).
+  git(root, 'config', 'branch.pir/demo.pirBase', 'main');
   const home = realpathSync(mkdtempSync(join(tmpdir(), 'pir-planhome-home-')));
   t.after(() => rmSync(home, { recursive: true, force: true }));
   const calls = [];

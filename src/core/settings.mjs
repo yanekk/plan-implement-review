@@ -17,7 +17,8 @@
 // `Bash(git merge:*)` IS here: a worker's integrate step runs `git merge pir/{slug}` to fold
 // the run's feature branch into its own task branch before it signals done (pir-worker SKILL.md,
 // branch-model.md § Merges). That merge writes only the worker's own task branch, never a peer's
-// and never main, so it is trusted like the worker's other git; without it the classifier gates
+// and never the run's base branch (whatever the repo's .pir/settings.json names: main, dev, …), so
+// it is trusted like the worker's other git; without it the classifier gates
 // the integrate as "Modify Shared Resources" and parks the worker at its finish line. The engine's
 // own task→feature merge (worktree.mjs) is child-process git and never classifier-gated; that is a
 // separate path, not the reason merge is listed here. Deliberately NOT here: `SendMessage` (the
@@ -46,7 +47,8 @@ export const AUTO_MODE_DEFAULTS = '$defaults';
 // an LLM classifier (validate wording with `claude auto-mode critique`). It names only the
 // worker's own git on the run's own branches, `merge` included — the integrate step is spelled
 // out so the classifier reads the merge as touching only the worker's own task branch. This rule
-// mirrors WORKER_PERMISSIONS. That `permissions.allow` alone may already clear these, making this
+// mirrors WORKER_PERMISSIONS. It says "the base branch", not a name, because the base differs per
+// repo (dev in a dev/stage/prod repo) and one rule is installed user-wide for every repo. That `permissions.allow` alone may already clear these, making this
 // rule belt-and-suspenders, is confirmed live in T09; the integrate merge is gated in practice, so
 // merge is carried in both.
 export const PIR_AUTOMODE_RULE =
@@ -55,7 +57,8 @@ export const PIR_AUTOMODE_RULE =
   'repository is trusted work on the session’s own branches, not Modify Shared Resources. This ' +
   'includes the integrate step, where the worker runs `git merge pir/{slug}` to fold the run’s ' +
   'feature branch into its own checked-out task branch pir/{slug}-T{nn}: the merge only writes ' +
-  "the worker's own task branch, never main and never a branch another worker holds.";
+  "the worker's own task branch, never the repository's base branch (the branch the run was cut " +
+  'from, such as main or dev) and never a branch another worker holds.';
 
 function asObject(value) {
   return value && typeof value === 'object' && !Array.isArray(value) ? value : {};

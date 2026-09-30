@@ -5,7 +5,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, realpathSync } from 'node:fs';
+import { mkdirSync, realpathSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { startPlanRig, PLAN_RIG_QUESTION } from './plan-rig.mjs';
 import { indexDir, listRecords } from './index-store.mjs';
@@ -16,10 +16,17 @@ import { esc, startRigPlan, UP, ENTER, rigWithTeardown, CTRL_S, TAB, DOWN, BS, T
 // FINDINGS.md (worker-driven, 2026-09-27).
 
 // A git repo on `main` with one commit, for the box's scan.
-function makeRepo(path) {
+// A repo with one commit on `branch`, carrying .pir/settings.json naming `base` (default `branch`), as
+// every repo pir plans in needs (base-branch DESIGN §2.1); `base: null` leaves the settings out.
+function makeRepo(path, { branch = 'main', base = branch } = {}) {
   mkdirSync(path, { recursive: true });
-  execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: path });
-  execFileSync('git', ['-c', 'user.name=pir rig', '-c', 'user.email=rig@pir.invalid', 'commit', '-q', '--allow-empty', '-m', 'rig'], { cwd: path });
+  execFileSync('git', ['init', '-q', '-b', branch], { cwd: path });
+  if (base !== null) {
+    mkdirSync(join(path, '.pir'));
+    writeFileSync(join(path, '.pir', 'settings.json'), JSON.stringify({ baseBranch: base }) + '\n');
+    execFileSync('git', ['add', '-A'], { cwd: path });
+  }
+  execFileSync('git', ['-c', 'user.name=pir rig', '-c', 'user.email=rig@pir.invalid', '-c', 'commit.gpgsign=false', 'commit', '-q', '--allow-empty', '-m', 'rig'], { cwd: path });
 }
 
 test('end to end at 80×12: nine runs, ↓ through all and ↑ back — the selection always shows, and ↑/↓ n more count the cut rows', async (t) => {
@@ -86,6 +93,7 @@ test('end to end at 80×24: every §2.5 refusal starts nothing and shows its exa
   const src = join(rig.home, 'src');
   const work = join(rig.home, 'work');
   for (const p of [join(src, 'repo'), join(src, 'twin'), join(work, 'twin')]) makeRepo(p);
+  makeRepo(join(src, 'nobase'), { base: null });
   const env = { ...rig.env, PIR_REPOS: '~/src:~/work' };
   const screen = rig.openScreen({ cols: 80, rows: 24, env });
   const cases = [
@@ -95,9 +103,11 @@ test('end to end at 80×24: every §2.5 refusal starts nothing and shows its exa
     { keys: ['twin', '/plan ', 'brief'], note: /^@twin is in more than one folder: (~\/src\/twin, ~\/work\/twin|~\/work\/twin, ~\/src\/twin)$/, text: '@twin/plan brief' },
     { keys: ['repo', ' ', 'brief'], note: 'pick a command: @repo/plan or @repo/start', text: '@repo brief' },
     { keys: ['repo', '/plan', ' '], note: 'say what to plan after @repo/plan', text: '@repo/plan' },
-    // startPlanRun's own refusal: `main` renamed between the pick and Enter.
+    // startPlanRun's own refusals (base-branch §2.9 short form): a repo with no settings is listed and
+    // refused on pick; a settings file naming `main` after `main` was renamed between the pick and Enter.
+    { keys: ['nobase', '/plan ', 'a brief'], note: 'Could not start planning in nobase: no base branch is set', text: '@nobase/plan a brief' },
     { keys: ['repo', '/plan ', 'a brief'], before: () => execFileSync('git', ['branch', '-m', 'main', 'trunk'], { cwd: join(src, 'repo') }),
-      note: 'Could not start planning in repo: it has no local main branch', text: '@repo/plan a brief' },
+      note: 'Could not start planning in repo: main does not exist', text: '@repo/plan a brief' },
   ];
   try {
     await screen.waitFor(/new {2}start with @repo/);
@@ -142,6 +152,34 @@ test('end to end at 80×24: a repo named plan-implement-review under PIR_REPOS p
   const [record] = listRecords({ dir: indexDir({ env: rig.env }) });
   assert.equal(realpathSync(record.repoPath), realpathSync(pir), 'planned in the plan-implement-review checkout');
 });
+
+// base-branch T05: a repo with only `dev` and settings naming it plans from the box, at both sizes.
+for (const [cols, rows] of [[80, 24], [120, 40]]) {
+  test(`end to end at ${cols}×${rows}: @devrepo/plan in a dev-only repo opens the planner's conversation, cut from dev`, async (t) => {
+    const rig = rigWithTeardown(t);
+    const dev = join(rig.home, 'src', 'devrepo');
+    makeRepo(dev, { branch: 'dev' });
+    const devHead = execFileSync('git', ['rev-parse', 'dev'], { cwd: dev, encoding: 'utf8' }).trim();
+    const env = { ...rig.env, PIR_REPOS: '~/src' };
+    const screen = rig.openScreen({ cols, rows, env });
+    try {
+      await screen.waitFor(/new {2}start with @repo/);
+      await typeSettled(screen, 'devrepo', '/plan ', 'a brief');
+      screen.send(ENTER);
+      await screen.waitFor(new RegExp(esc(PLAN_RIG_QUESTION)), 20000);
+      assert.equal(screen.overflows(), 0);
+    } finally {
+      await screen.close();
+    }
+    const [record] = listRecords({ dir: indexDir({ env: rig.env }) });
+    assert.equal(realpathSync(record.repoPath), realpathSync(dev));
+    assert.equal(record.baseBranch, 'dev');
+    const branch = record.branch;
+    assert.equal(execFileSync('git', ['config', '--get', `branch.${branch}.pirBase`], { cwd: dev, encoding: 'utf8' }).trim(), 'dev');
+    assert.equal(execFileSync('git', ['merge-base', '--is-ancestor', devHead, branch], { cwd: dev }).length, 0, 'the plan branch grows from dev');
+    assert.equal(execFileSync('git', ['for-each-ref', '--format=%(refname:short)', 'refs/heads/main'], { cwd: dev, encoding: 'utf8' }), '', 'no main was invented');
+  });
+}
 
 test('end to end at 80×24: Ctrl+S Ctrl+S on a running row with a brief typed stops it and keeps the brief; typing disarms a half-press', async (t) => {
   const { rig, dir } = await startRigPlan(t);

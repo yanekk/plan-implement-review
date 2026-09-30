@@ -4,8 +4,10 @@ A build run can have a **coordinator agent**: one Claude session `pir` holds bes
 the person's stand-in. It sees every worker question and permission request before the person does,
 and either answers it on the person's behalf or passes it on with a pointer. When every task is
 done it writes the delivery report's sections and hands the person a feature branch that merges
-into `main` cleanly. On a green branch it is then closed and the **finisher** takes over the merge
-([finisher.md](finisher.md)). It never merges into `main` and never pushes.
+into the repo's base branch cleanly (the one its settings name, see
+[branch-model.md](branch-model.md#the-base-branch)). On a green branch it is then closed and the
+**finisher** takes over the merge ([finisher.md](finisher.md)). It never merges into the base and never
+pushes.
 
 Naming: "the coordinator agent" is this session. "The coordinator" alone is still the command
 (`src/shell/coordinate.mjs`), a plain program that runs the build. The agent is not a relay: a
@@ -46,7 +48,7 @@ person's; the run's `log` says `coordinator agent failed to start`. Its session 
    report.
 2. **The project's rules**, `.claude/pir-coordinator.md`, if the file exists in the feature worktree.
    Free prose the person edits ("never approve anything touching payments"). It is read from the
-   feature branch, so it must be committed on `main` before the run starts; a project without one runs
+   feature branch, so it must be committed on the base branch before the run starts; a project without one runs
    on the base alone. It covers every plan in that repo.
 
 The person's own instructions in the agent's conversation win over both, for the rest of the run
@@ -214,7 +216,7 @@ pinned below the tasks under a separator line and above any end-of-run helper ro
   ⠋ T02  api-routes             building                 2:00
   ────────────────────────────────────────────────────────────────
   ◆ coordinator agent           holding 1 question
-  ⠋ main-sync resolve-main-merge working                 0:03
+  ⠋ main-sync resolve-base-merge working                 0:03
 ```
 
 The row says what the agent is doing: `on duty` (up, holding nothing), `holding N question(s)` (N counts
@@ -278,14 +280,25 @@ that moved the step on wakes the loop, so the next step follows after the 250 ms
    (`buildConflictPrompt` kind `tests-red`: the gate's reason and log path, fix only the cause, run the
    test block, commit, report `done`, or `question` if it cannot). Its questions route through the agent
    like any worker's. On its `done` (or exit) it is closed and the tests rerun; then the sync below.
-1. **Merge `main` into the feature branch**, in the feature worktree (`syncMain` in `worktree.mjs`;
-   commit `sync main into pir/{slug}`). Up to date: nothing to do. Merged cleanly: the tests run again.
-   Conflicted: a **main-sync worker** is spawned in the feature worktree with the main-sync conflict
+1. **Prepare the base and merge it into the feature branch.** The base is the run's recorded
+   `pirBase`. The command first prepares it as at the start of a run (`prepareBase`: fetch it from the
+   remote, bounded to 30 seconds; compare the local and remote copies; fast-forward the local one only
+   when safe; see [branch-model.md](branch-model.md#which-commit-is-the-base-fetch-compare-move-the-local-copy-when-safe)),
+   then merges the commit it chose in the feature worktree (`syncBase` in `worktree.mjs`; commit
+   `sync {base} into pir/{slug}`). If the base cannot be prepared (the remote cannot be reached or
+   fetched, or the local base has split from the remote's) the run **holds** in `preparing` instead: the
+   footer reads `preparing: can't reach origin, retrying` or `preparing: your dev and origin/dev have
+   split apart` (`holdText`), the status snapshot carries it as `handoff.hold`, and the command retries
+   every 60 seconds. No hand-off is given while it holds and no worker is spawned, since neither is a
+   conflict a session can resolve; it continues on its own once the base can be prepared. With phone
+   alerts set up, a hold sends one alert when it begins (`{slug} · waiting` over the reason, `holdAlert`),
+   none on its retries, and a new one only if its reason changes. Up to date: nothing to do. Merged cleanly: the tests run again.
+   Conflicted: a **main-sync worker** (the label is kept whatever the base is called) is spawned in the feature worktree with the main-sync conflict
    prompt (`buildConflictPrompt` kind `main-sync`); it finishes the merge keeping both sides' intent,
    runs the test block, commits and reports `done`, and the tests run again. Its questions route
    through the agent like any worker's. If it reports done without finishing the merge, or exits, the
-   merge is aborted so the branch is clean, and the branch is marked not ready. The person's own
-   checkout of `main` is never written. If the tests rerun after a clean or resolved merge are red and
+   merge is aborted so the branch is clean, and the branch is marked not ready. The person's base is
+   never merged into; it is only fast-forwarded when that is safe. If the tests rerun after a clean or resolved merge are red and
    no test-fix worker has run in this end sequence, one is spawned now, as in step 0. **One attempt per
    end sequence**, whichever fires first: still red after it, the run ends red. A re-sync while waiting
    in `ready to merge` is a new sequence and gets its own attempt; an unresolved sync gets none, since
@@ -298,10 +311,10 @@ that moved the step on wakes the loop, so the next step follows after the 250 ms
    was not, what to check by hand, risks and follow-ups.
 4. **The command assembles and commits `plans/{slug}/REPORT.md`** on the feature branch (`report({slug}):
    delivery report`), in this order: what was delivered, **Decisions made for you**, what to check by
-   hand, risks and follow-ups, and a `## Branch` footer (the `main` commit it was synced against, when,
+   hand, risks and follow-ups, and a `## Branch` footer (``Synced with `{base}` at {sha}``, when,
    whether a test-fix worker fixed the tests or left them red, and the tests result). The decisions section is rendered by the command from the ledger's notable
    lines and adoptions, not written by the agent, so no decision can drop out of it. The report reaches
-   `main` with the person's merge.
+   the base with the merge.
 5. **Hand-off.** On a green branch the command sends the agent the report and tells it that the
    finisher takes over, with no merge line (`handoffFor` with `finisher: true`); the agent presents the
    report in its reply, and on the next pass the command closes the agent and starts the **finisher**,
@@ -316,20 +329,20 @@ A green run reaches this wait only when the finisher cannot take it: it failed t
 printed once. A red run always waits here. Otherwise the finisher's own phases replace it
 ([finisher.md](finisher.md#on-screen)).
 
-The live view's footer reads `✔ ready to merge · git merge pir/{slug}` with `report:
+The live view's footer reads `✔ ready to merge · git switch {base} && git merge pir/{slug}` with `report:
 plans/{slug}/REPORT.md` under it, and the dashboard lists the run as `● ready to merge` in amber,
-counted in `waiting for you`. A red branch (the tests still fail after the test-fix worker's attempt, or the main sync could not be
+counted in `waiting for you`. A red branch (the tests still fail after the test-fix worker's attempt, or the base sync could not be
 resolved)
 gets `✗ not ready · tests red on pir/{slug} — no merge offered` with the reason; the report is still
 written and says so, and the run waits the same way. While it prepares, the footer reads `all N
-task(s) merged · preparing: syncing main, writing the report`. With phone alerts set up, the first pass
+task(s) merged · preparing: syncing {base}, writing the report` (or the hold's reason, above). With phone alerts set up, the first pass
 that reads ready or red sends one alert (`{slug} · ready to merge` or `{slug} · not ready`) whose tap
-opens the agent's chat; it is not repeated when `main` moves. A run the finisher takes over sends no
+opens the agent's chat; it is not repeated when the base moves. A run the finisher takes over sends no
 `ready to merge` alert: the finisher's `ready for your go` replaces it
 ([human-flow.md](human-flow.md#phone-alerts--pir-notify)).
 
 **The helpers' rows.** While a test-fix or main-sync worker runs, it has a row below the agent's row (and so below the tasks), keyed by
-its label: `tests-fix  fix-red-tests` or `main-sync  resolve-main-merge` (`runState.helpers`, built by
+its label: `tests-fix  fix-red-tests` or `main-sync  resolve-base-merge` (`runState.helpers`, built by
 `buildRunState` from `state.tasks`). It reads like a task's row, `working` (then `finishing` once it has
 reported), `asking coordinator` or `asking you`, with its clock stopped while it asks. It is not counted in
 `n/m done`, running or waiting; it is counted in the `asking you` tally and takes the `asking you`
@@ -339,23 +352,27 @@ when the worker is closed.
 
 A run waiting here stays open, its agent reachable in `pir` and on the phone (while it has one), until:
 
-- **the person merges**: the command sees `main` contains the feature tip (`git merge-base
-  --is-ancestor pir/{slug} main`); or
+- **the person merges**: the command sees the base contains the feature tip (`baseContains`: `git
+  merge-base --is-ancestor pir/{slug} <ref>`). Every pass checks the local base; every 5 minutes the
+  command also fetches the base (moving only the remote-tracking ref) and checks the remote's copy, so a
+  merge done on GitHub is seen. A fetch that fails while waiting changes nothing but the snapshot's
+  `handoff.lastWatchFailure` time; or
 - **the person tells the agent to close the run**: the agent writes `close`.
 
-Either ends the run as `finished`, prints `✔ pir/{slug} is in main. The run is finished.` or
+Either ends the run as `finished`, prints `✔ pir/{slug} is in {base}. The run is finished.` or
 `✔ run closed.` with the merge line still offered, and closes the agent. A `close` asked for while the
 run is still building is refused; the skill has the agent tell the person that stopping a run is the
 dashboard's.
 
-**`main` moving while it waits.** (The finisher's own handling is in
-[finisher.md](finisher.md#the-end-of-the-run).) When `main` moves without containing the feature tip (the person
-merged another run first), the command merges `main` in again as in step 1, rewrites only the report's
-`## Branch` footer, commits it (`report({slug}): re-synced with main`), and tells the agent, which tells
+**The base moving while it waits.** (The finisher's own handling is in
+[finisher.md](finisher.md#the-end-of-the-run).) When the base moves without containing the feature tip (the person
+merged another run first, locally or on the remote), the command prepares and merges the base in again
+as in step 1, rewrites only the report's `## Branch` footer, commits it (`report({slug}): re-synced with
+{base}`), and tells the agent, which tells
 the person in one line.
 
 **Without the agent** (`--no-coordinator`) the end is the one described in
-[run-lifecycle.md](run-lifecycle.md#end): no main sync, no report, the `git merge` line printed and the
+[run-lifecycle.md](run-lifecycle.md#end): no base sync and no fetch, no report, the `git switch {base} && git merge pir/{slug}` line printed and the
 run finished.
 
 ## When the agent fails
@@ -376,7 +393,7 @@ run finished.
   ([finisher.md](finisher.md#when-it-fails)).
 - **pir restarts a run in `ready to merge`.** Reconciliation finds every task `✅`; the command finds
   `REPORT.md` committed, re-checks the sync, and returns to its wait without rewriting the
-  report (only the footer, if `main` moved). If the person merged while pir was down, the run finishes
+  report (only the footer, if the base moved). If the person merged while pir was down, the run finishes
   as merged. A green branch is then handed to the finisher, even one whose finisher had fallen back;
   it waits in `ready to merge` again only if the finisher falls back again
   ([finisher.md](finisher.md#known-limitations)).
@@ -384,7 +401,7 @@ run finished.
   one. The hold limit ([Answer first](#answer-first)) hands any item held 5 minutes without a decision
   to the person, so a held item never waits unseen.
 - **A misbehaving agent.** Stop the run and resume it with `pir start {slug} --no-coordinator`. Every
-  decision it made is in the ledger, and it can never have touched `main`.
+  decision it made is in the ledger, and it can never have touched the base branch.
 
 ## Storage
 

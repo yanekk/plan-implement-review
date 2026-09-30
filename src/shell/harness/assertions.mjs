@@ -138,7 +138,8 @@ export function loadRestartPoint(bundle, { readFile = (p) => readFileSync(p, 'ut
 // loadPlanRun(bundle, { readFile }) → a new bundle with `planRun` attached, read from the bundle's
 // `plan-run.json` (written by the plan-scenario runner at seal, pir-plan-command T17): what the planning
 // run and its build left behind, captured while the scratch repo still stood.
-//   { runId, slug, outcome, planFinalState, mainBefore, mainAfter, progress, records }
+//   { runId, slug, outcome, planFinalState, base, baseBefore, baseAfter, remoteBefore, remoteAfter, cutFromRemote,
+//     progress, records }
 // `progress` is plans/{slug}/PROGRESS.md as committed on pir/{slug} (null when git could not show it);
 // `records` is every index record of the scratch repo, parsed. A missing or malformed file yields null,
 // so each plan fact reports "no plan-run capture" from data rather than throwing.
@@ -501,7 +502,7 @@ function promotionMergeLines(gitLog, plan) {
 //     and git look identical for a red and a green finish, so this is the only signal of the end-of-run
 //     gate's verdict; a missing capture fails rather than passing unseen (declared-test-command T10).
 export function handedOffGreenBranch() {
-  return fact('handed-off-green-branch', 'The run handed off a green feature branch and left main untouched (§2.4)', (bundle) => {
+  return fact('handed-off-green-branch', 'The run handed off a green feature branch and left the base untouched (§2.4)', (bundle) => {
     const evidence = [];
     // No promotion: a `promote` flow line would be the coordinator merging to main (the removed model).
     const promotes = flowOf(bundle, 'promote');
@@ -545,15 +546,28 @@ export function handedOffGreenBranch() {
     // The merge line must follow `Yours to merge:` (renderHandoff, blank line between). A bare
     // `git merge pir/{plan}` also appears in the conflict-resolution prompt printed mid-run, so a run that
     // conflicted and then stalled would otherwise read as green.
+    // The offer switches to the run's base first (base-branch DESIGN §2.9: `git switch {base} && git merge
+    // pir/{plan}`); any base is accepted here, since which base a run used is not this fact's question.
     const mergeLine = `git merge pir/${plan}`;
+    const isOffer = (l) => {
+      const t = l?.trim() ?? '';
+      return t === mergeLine || (t.startsWith('git switch ') && t.endsWith(` && ${mergeLine}`));
+    };
     const nextNonBlank = (i) => outLines.slice(i + 1).find((l) => l.trim() !== '');
-    const offerAt = outLines.findLastIndex((l, i) => l.includes('Yours to merge:') && nextNonBlank(i)?.trim() === mergeLine.trim());
-    const green = offerAt === -1 ? null : nextNonBlank(offerAt);
+    const offerAt = outLines.findLastIndex((l, i) => l.includes('Yours to merge:') && isOffer(nextNonBlank(i)));
+    // With the coordinator agent on, the run does not print renderHandoff: it waits in `ready to merge`,
+    // whose footer (display.mjs) carries the offer on one line, `✔ ready to merge · git switch … && git
+    // merge pir/{plan}`, shown only on a green branch with its report committed (base-branch T09).
+    const readyLine = outLines.findLast((l) => {
+      const m = /^✔ ready to merge · (.*)$/.exec(l.trim());
+      return !!m && isOffer(m[1]);
+    });
+    const green = offerAt === -1 ? readyLine ?? null : nextNonBlank(offerAt);
     if (!green) {
       return { pass: false, evidence, detail: `coordinator.out has no \`${mergeLine.trim()}\` hand-off line — the run did not hand off a green branch` };
     }
     evidence.push(`coordinator.out: ${green.trim()}`);
-    return { pass: true, evidence, detail: `${taskMerges.length} task merge(s) on the feature branch, zero promotes, main untouched, tests green — a clean hand-off` };
+    return { pass: true, evidence, detail: `${taskMerges.length} task merge(s) on the feature branch, zero promotes, the base untouched, tests green — a clean hand-off` };
   });
 }
 
@@ -1108,8 +1122,9 @@ export function readyWithReport({ conflict = true } = {}) {
     if (!heads.includes('## Decisions made for you') || !heads.includes('## Branch')) {
       return { pass: false, evidence, detail: 'REPORT.md lacks its decisions section or its branch footer' };
     }
-    const finished = (bundle.coordinatorOut ?? '').split('\n').find((l) => l.includes('is in main. The run is finished.'));
-    if (!finished) return { pass: false, evidence, detail: 'the command did not finish on the merge (no "is in main" line in coordinator.out)' };
+    // The finished line names the run's base, whichever it is (base-branch DESIGN §2.9).
+    const finished = (bundle.coordinatorOut ?? '').split('\n').find((l) => / is in \S+\. The run is finished\./.test(l));
+    if (!finished) return { pass: false, evidence, detail: 'the command did not finish on the merge (no "is in {base}" line in coordinator.out)' };
     evidence.push(`coordinator.out: ${finished.trim()}`);
     return { pass: true, evidence, detail: `${conflict ? 'conflict resolved, ' : ''}ready to merge with REPORT.md committed, finished on the merge` };
   });
@@ -1356,7 +1371,7 @@ export function statementsMatchRecord() {
 //
 // A plan scenario starts from a repo with no plan, so what it must show is the whole of `pir plan`'s
 // promise: a reviewed plan on pir/{slug}, a build that finished every task on that branch (its green
-// hand-off is handedOffGreenBranch above), `main` exactly where the seed left it, and the dashboard's one
+// hand-off is handedOffGreenBranch above), the base branch exactly where the seed left it, and the dashboard's one
 // row for the slug turned into the build's. Each reads `bundle.planRun` (loadPlanRun) and nothing else.
 
 const NO_PLAN_RUN = { pass: false, evidence: [], detail: 'no plan-run capture in the bundle (plan-run.json)' };
@@ -1397,16 +1412,96 @@ export function everyTaskDone() {
   });
 }
 
-// `main` points at the commit it pointed at before the planning run started: planning and building both
-// happen on pir/… branches, and the person merges (§1, §8).
-export function mainUntouched() {
-  return fact('main-untouched', "main's head is unchanged by the planning run and its build", (bundle) => {
+// The run's base branch (`main` unless the fixture names another, base-branch T09) points where it pointed
+// before the planning run started, or at the remote's copy pir fast-forwarded it to when it started from
+// the newest commit (base-branch DESIGN §2.3): planning and building both happen on pir/… branches, and
+// the person merges (§1, §8).
+export function baseUntouched() {
+  return fact('base-untouched', "The base branch's head is unchanged by the planning run and its build", (bundle) => {
     const pr = bundle.planRun;
     if (!pr) return NO_PLAN_RUN;
-    const evidence = [`main before: ${pr.mainBefore ?? '(unread)'}`, `main after: ${pr.mainAfter ?? '(unread)'}`];
-    if (!pr.mainBefore || !pr.mainAfter) return { pass: false, evidence, detail: "main's head was not read at both ends" };
-    if (pr.mainBefore !== pr.mainAfter) return { pass: false, evidence, detail: 'main moved' };
-    return { pass: true, evidence, detail: 'main is where the seed left it' };
+    const base = pr.base ?? 'main';
+    const evidence = [`${base} before: ${pr.baseBefore ?? '(unread)'}`, `${base} after: ${pr.baseAfter ?? '(unread)'}`];
+    if (pr.remoteBefore) evidence.push(`origin/${base} at the start: ${pr.remoteBefore}`);
+    if (!pr.baseBefore || !pr.baseAfter) return { pass: false, evidence, detail: `${base}'s head was not read at both ends` };
+    if (pr.baseAfter === pr.baseBefore) return { pass: true, evidence, detail: `${base} is where the seed left it` };
+    if (pr.remoteBefore && pr.baseAfter === pr.remoteBefore) {
+      return { pass: true, evidence, detail: `${base} only moved forward to origin/${base}'s commit at the start (§2.3)` };
+    }
+    return { pass: false, evidence, detail: `${base} moved` };
+  });
+}
+
+// The planning branch holds the remote's newest base at the start (base-branch DESIGN §2.3, §2.6): pir cut
+// it from origin/{base}, not from the stale local copy. Only meaningful for a fixture with a remote.
+export function cutFromRemote() {
+  return fact('cut-from-remote', "pir/{slug} was cut from the remote's newest base, not the stale local one", (bundle) => {
+    const pr = bundle.planRun;
+    if (!pr) return NO_PLAN_RUN;
+    const base = pr.base ?? 'main';
+    const evidence = [`origin/${base} at the start: ${pr.remoteBefore ?? '(unread)'}`, `local ${base} before: ${pr.baseBefore ?? '(unread)'}`];
+    if (!pr.remoteBefore) return { pass: false, evidence, detail: 'no remote head was read at the start' };
+    if (pr.remoteBefore === pr.baseBefore) return { pass: false, evidence, detail: `the remote was not ahead of the local ${base}: the check proves nothing` };
+    if (pr.cutFromRemote !== true) return { pass: false, evidence, detail: `pir/${pr.slug ?? '{slug}'} does not hold origin/${base}'s commit` };
+    return { pass: true, evidence, detail: `pir/${pr.slug} holds origin/${base}'s commit` };
+  });
+}
+
+// Every line the person reads at the end names the run's base (base-branch DESIGN §2.9): the hand-off is
+// `git switch {base} && git merge pir/{slug}`, the report footer says `Synced with `{base}` at {sha}` with
+// the remote's commit, and nothing the command printed says `main` (apart from the kept `main-sync` label)
+// unless the base is main.
+export function handedOffOnBase() {
+  return fact('handed-off-on-base', 'The hand-off, the report footer and the finished line name the run\'s base', (bundle) => {
+    const pr = bundle.planRun;
+    if (!pr) return NO_PLAN_RUN;
+    const base = pr.base ?? 'main';
+    const slug = pr.slug;
+    const evidence = [];
+    const out = bundle.coordinatorOut ?? '';
+    const offer = `git switch ${base} && git merge pir/${slug}`;
+    // renderHandoff's own line, or the agent's `✔ ready to merge · {offer}` footer.
+    if (!out.split('\n').some((l) => l.trim() === offer || l.trim().endsWith(` · ${offer}`))) {
+      return { pass: false, evidence, detail: `coordinator.out has no \`${offer}\` line` };
+    }
+    evidence.push(`coordinator.out: ${offer}`);
+    const report = bundle.steps?.merged?.report ?? '';
+    const footer = report.split('\n').find((l) => l.startsWith('Synced with '));
+    if (!footer) return { pass: false, evidence, detail: 'the report read at the merge has no `Synced with` footer' };
+    evidence.push(`REPORT.md: ${footer}`);
+    const m = /^Synced with `([^`]+)` at `([0-9a-f]+)`/.exec(footer);
+    if (!m || m[1] !== base) return { pass: false, evidence, detail: `the footer does not name ${base}` };
+    if (pr.remoteBefore && !pr.remoteBefore.startsWith(m[2])) return { pass: false, evidence, detail: `the footer's commit is not origin/${base}'s ${pr.remoteBefore.slice(0, 12)}` };
+    if (base !== 'main') {
+      const saysMain = out.split('\n').filter((l) => /\bmain\b/.test(l.replaceAll('main-sync', '')));
+      if (saysMain.length) {
+        evidence.push(...saysMain.map((l) => `coordinator.out: ${l.trim()}`));
+        return { pass: false, evidence, detail: `${saysMain.length} line(s) of coordinator.out say main` };
+      }
+    }
+    return { pass: true, evidence, detail: `every end line names ${base}` };
+  });
+}
+
+// The person merged on the remote only (the harness's `mergeWhenReady: 'remote'`, as a merge done on GitHub):
+// the local base never gained the feature branch, and the command still saw the merge and finished
+// (base-branch DESIGN §2.8's watch).
+export function finishedOnRemoteMerge() {
+  return fact('finished-on-remote-merge', 'A merge done on the remote only was seen and the run finished', (bundle) => {
+    const pr = bundle.planRun;
+    if (!pr) return NO_PLAN_RUN;
+    const base = pr.base ?? 'main';
+    const merged = bundle.steps?.merged;
+    const evidence = [];
+    if (merged?.into !== `origin's ${base}`) return { pass: false, evidence, detail: `the harness did not merge on origin's ${base}` };
+    evidence.push(`merged ${merged.branch} into ${merged.into} at ${merged.at}`);
+    evidence.push(`origin/${base} after: ${pr.remoteAfter ?? '(unread)'}`, `local ${base} after: ${pr.baseAfter ?? '(unread)'}`);
+    if (!pr.remoteAfter || pr.remoteAfter === pr.remoteBefore) return { pass: false, evidence, detail: `origin/${base} did not move` };
+    if (pr.baseAfter === pr.remoteAfter) return { pass: false, evidence, detail: `the local ${base} moved too: the merge was not on the remote only` };
+    const finished = (bundle.coordinatorOut ?? '').split('\n').find((l) => l.includes(`is in ${base}. The run is finished.`));
+    if (!finished) return { pass: false, evidence, detail: `the command did not finish on the merge (no "is in ${base}" line)` };
+    evidence.push(`coordinator.out: ${finished.trim()}`);
+    return { pass: true, evidence, detail: `the remote-only merge was seen; the run finished` };
   });
 }
 

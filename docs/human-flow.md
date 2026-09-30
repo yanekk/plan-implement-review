@@ -298,7 +298,7 @@ other. Planning sessions (`pir plan`) never alert, and their Claude app push is 
   on the worker's question (5 s is only its backstop timer), so an alert follows the question within
   about a second; a question held by the agent alerts
   only when the hold limit (5 minutes) hands it over.
-- **Wording.** Title `{plan} · {task} {role}` (a helper: `{plan} · main-sync resolve-main-merge`). The
+- **Wording.** Title `{plan} · {task} {role}` (a helper: `{plan} · main-sync resolve-base-merge`). The
   message opens with why it is the person's — `Agent passed it on: `, `Agent didn't answer in time: `,
   `Needs your yes: `, `Agent unavailable: `, or nothing when the run has no agent — then `asks: ` and
   the question (the first of a question set, with `(+N more)`), or `wants to run ` and the tool and its
@@ -324,11 +324,11 @@ other. Planning sessions (`pir plan`) never alert, and their Claude app push is 
   asking gets a fresh alert.
 
 **The end-of-run alert.** One alert when the run starts waiting on the person's merge: `{plan} · ready
-to merge` with `All {n} tasks merged. git merge pir/{slug}`, or `{plan} · not ready` with `Tests red
-on pir/{slug}: ` and the reason, or `Merge with main unresolved on pir/{slug}`. With the agent its tap
+to merge` with `All {n} tasks merged. git switch {base} && git merge pir/{slug}`, or `{plan} · not ready` with `Tests red
+on pir/{slug}: ` and the reason, or `Merge with {base} unresolved on pir/{slug}`. With the agent its tap
 opens the agent's chat, where the report and the merge are presented (seen 2026-09-28), and it is noted
 `notified` in the agent's conversation. Without the agent it is sent as the run ends, without a link.
-It has no reminder and is not cleared; `main` moving and the branch re-synced does not send it again,
+It has no reminder and is not cleared; the base moving and the branch re-synced does not send it again,
 but restarting pir into `ready to merge` does. A green run the finisher takes over sends no `ready to
 merge` alert; the finisher's own alerts below replace it. A red run, a run without the agent, and a run
 whose finisher failed to start still send it.
@@ -345,10 +345,17 @@ and retry behave the same, and `control.log` reads `notify send finisher …`):
 - `{slug} · finisher` when a request parks for the person in another phase (a reserved action after the
   go), worded as for a worker (`Needs your yes: wants to run …`).
 - `{slug} · finished` with its done summary, once, as the run ends.
-- `{slug} · finisher gave up` with `Merge by hand: git merge pir/{slug}`, once, when it gives up.
+- `{slug} · finisher gave up` with `Merge by hand: git switch {base} && git merge pir/{slug}`, once, when it gives up.
 
 Each tap opens the finisher's chat through its Remote Control link, which is on for its whole session;
 the gave-up alert carries no link, since that session is gone.
+
+**The hold alert.** When the end-of-run sync is held because the base cannot be fetched or the local
+base has split from the remote's (see
+[coordinator-agent.md](coordinator-agent.md#the-end-of-the-run)), one alert goes when the hold begins:
+`{plan} · waiting` over the reason (`your dev and origin/dev have split apart`). The minute-by-minute
+retries send nothing; a new alert goes only if the hold's reason changes, or a later hold begins after
+this one cleared.
 
 ## A task that needs the person is an ordinary worker that asks
 
@@ -419,8 +426,8 @@ finished run, which says the branch is not ready to merge instead of offering `g
 [run-lifecycle.md](run-lifecycle.md), [detached-runs.md](detached-runs.md)). The person fixes the
 feature branch and merges it themselves.
 
-With the coordinator agent on there is a third place: at the end of the run the command merges the
-current `main` into the feature branch, so the person's merge goes through cleanly. If that conflicts,
+With the coordinator agent on there is a third place: at the end of the run the command fetches the
+run's base branch and merges it into the feature branch, so the person's merge goes through cleanly. If that conflicts,
 a **main-sync worker** is spawned in the feature worktree to finish the merge, test and report `done`;
 its questions go to the agent first like any worker's. Red tests at the end get the same treatment: one
 **test-fix worker** in the feature worktree, one attempt, and the branch is handed over red only if the

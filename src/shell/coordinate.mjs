@@ -48,13 +48,15 @@ import { createGrants, startPersonInbox } from './person-inbox.mjs';
 import { writeSnapshot } from './snapshot-store.mjs';
 import { updateRecord } from './index-store.mjs';
 import { createWorktree } from './worktree.mjs';
+import { resolveRunBase } from './base-branch.mjs';
 import { reapRecorded } from './reap.mjs';
 import { planHome } from './plan-home.mjs';
 import { startCoordinatorAgent, withAgent, closingAnswer, readLogEntries, readJson } from './coordinator-agent.mjs';
 import { startFinisher as startFinisherSession } from './finisher-agent.mjs';
 import { chooseRules } from '../core/finisher-policy.mjs';
 import { startWorker } from './worker-proc.mjs';
-import { alertText, endAlert, notifyStep, notifyExit, newNotifyState, finisherAlert, finisherNotifyView } from '../core/notify.mjs';
+import { alertText, endAlert, holdAlert, notifyStep, notifyExit, newNotifyState, finisherAlert, finisherNotifyView } from '../core/notify.mjs';
+import { holdText } from '../core/basebranch.mjs';
 import { publish as ntfyPublish, clear as ntfyClear } from './ntfy.mjs';
 import { readNotifyConfig, ensurePresenceMarker, notifyIcon } from './notify-config.mjs';
 
@@ -179,8 +181,18 @@ export function startCoordinator({
   readLog = readLogEntries,
   now = () => Date.now(),
   holdMs = holdLimitMs(),
+  // The run's base branch (base-branch DESIGN §2.5): the bin passes the one it resolved at start and the
+  // end of the run syncs with it. The default serves only the tests that drive a `main` scratch repo.
+  base = 'main',
+  // The end-of-run sync's two clocks (base-branch DESIGN §2.8): a held sync retries every `retryMs`, and
+  // while the run waits for the person's merge the remote is fetched every `watchMs`. Compared against
+  // `now()`, so a test steps them without waiting.
+  retryMs = 60_000,
+  watchMs = DEFAULT_BASE_WATCH_MS,
 } = {}) {
   if (!slug) throw new Error('startCoordinator: no slug');
+  const RUN_BASE = base;
+  const RUN_BASE_REF = `refs/heads/${base}`;
   if (!repo) throw new Error('startCoordinator: no repo (worker names are built from it, DESIGN §2.8)');
   if (!platform || !worktree) throw new Error('startCoordinator: platform and worktree must be injected');
 
@@ -484,7 +496,17 @@ export function startCoordinator({
       lastTasks = r.tasks;
       // A red gate gets its one test-fix worker before the sync (T10, user 2026-09-27).
       const gate = r.testsPassed ? 'green' : 'red';
-      handoff = { state: 'preparing', step: gate === 'red' ? 'fix' : 'sync', gate, gateReason: r.testsReason ?? null, tests: null, testsReason: null, sync: null, mainSha: null, reportPath: null, finished: null, fix: null, fixUsed: false, fixAfter: null, finisher: null, fallback: null, resynced: false };
+      handoff = {
+        state: 'preparing', step: gate === 'red' ? 'fix' : 'sync', gate, gateReason: r.testsReason ?? null, tests: null, testsReason: null,
+        sync: null, baseSha: null, reportPath: null, finished: null, fix: null, fixUsed: false, fixAfter: null,
+        // The base-branch sync (base-branch DESIGN §2.8): the hold while the base cannot be prepared, the
+        // remote it was fetched from, the local base's tip at the last sync (a move of it re-syncs), and
+        // the watch clock while waiting for the merge.
+        hold: null, remote: null, localSeen: null, watchFrom: null, lastWatch: null, lastWatchFailure: null,
+        // The finisher (finisher DESIGN §2.1, §2.12): null until the hand-over, then 'starting', 'on' or
+        // 'fallback' with its reason; `resynced` marks a re-sync it has yet to be told of.
+        finisher: null, fallback: null, resynced: false,
+      };
     }
 
     return {
@@ -535,7 +557,16 @@ export function startCoordinator({
     // `unresolved` (main-sync left unresolved) is what the end-of-run alert names as the red cause
     // (reliable-notifications DESIGN §2.4). Only present when true, so the view's shape (and status.json)
     // is unchanged for every other run.
-    const view = { state: handoff.state, reportPath: handoff.reportPath, mainSha: handoff.mainSha };
+    const view = {
+      state: handoff.state,
+      reportPath: handoff.reportPath,
+      baseSha: handoff.baseSha,
+      base: RUN_BASE,
+      // Why the run is held in `preparing` (base-branch DESIGN §2.8), or null; the live view shows its text.
+      hold: handoff.hold ? { ...handoff.hold } : null,
+      lastWatch: handoff.lastWatch,
+      lastWatchFailure: handoff.lastWatchFailure,
+    };
     if (handoff.sync?.state === 'unresolved') view.unresolved = true;
     // Only once the finisher is in play, so a run without one keeps the view's old shape.
     if (handoff.finisher) view.finisher = handoff.finisher;
@@ -559,12 +590,44 @@ export function startCoordinator({
   const branchReady = () => handoff.tests === 'green' && handoff.sync?.state !== 'unresolved';
   const fixResult = () => (handoff.fix === 'green' || handoff.fix === 'red' ? handoff.fix : null);
   const footerNow = () =>
-    branchFooter({ mainSha: handoff.sync?.mainSha ?? null, tests: handoff.tests, syncedAt: isoNow(), unresolved: handoff.sync?.state === 'unresolved', fix: fixResult() });
+    branchFooter({ baseSha: handoff.sync?.baseSha ?? null, base: RUN_BASE, tests: handoff.tests, syncedAt: isoNow(), unresolved: handoff.sync?.state === 'unresolved', fix: fixResult() });
   const settle = () => {
     handoff.state = branchReady() ? 'ready' : 'red';
-    handoff.mainSha = handoff.sync?.mainSha ?? handoff.mainSha;
+    handoff.baseSha = handoff.sync?.baseSha ?? handoff.baseSha;
     handoff.step = 'waiting';
+    // The first remote check of the wait is one watch interval from now.
+    handoff.watchFrom = now();
   };
+
+  // prepareRunBase(mode) → prepareBase's result for the run's base (base-branch DESIGN §2.3). A worktree
+  // without prepareBase (a hand-built stub) has no remote to ask, so its local base is the answer. A throw
+  // is held like an unreachable remote: the run waits and retries rather than dying at its last step.
+  const prepareRunBase = (mode) => {
+    try {
+      if (worktree.prepareBase) return worktree.prepareBase(RUN_BASE, { mode });
+      const sha = worktree.baseTip({ ref: RUN_BASE_REF });
+      return sha ? { ok: true, sha, remote: null, local: 'keep' } : { ok: false, reason: 'no-base-branch', remote: null };
+    } catch (err) {
+      return { ok: false, reason: 'fetch-failed', remote: handoff.remote, error: String(err?.message ?? err) };
+    }
+  };
+  const trackingRef = () => (handoff.remote ? `refs/remotes/${handoff.remote}/${RUN_BASE}` : null);
+
+  // holdSync(prep, rec) → the base could not be prepared (fetch-failed, diverged): stay in `preparing`
+  // with the reason, retry after retryMs (DESIGN §2.8). `since` is kept while the reason stays the same,
+  // so the view and the one alert per reason see one hold, not a new one every minute.
+  function holdSync(prep, rec) {
+    const t = now();
+    const same = handoff.hold?.reason === prep.reason;
+    if (prep.remote) handoff.remote = prep.remote;
+    handoff.hold = { reason: prep.reason, text: holdText(prep, { base: RUN_BASE }), since: same ? handoff.hold.since : t, nextTry: t + retryMs };
+    handoff.state = 'preparing';
+    handoff.step = 'sync';
+    if (!same) {
+      rec('base-hold', { reason: prep.reason });
+      if (prep.error) control?.log?.(`base-hold ${prep.reason}: ${prep.error}`);
+    }
+  }
 
   // An end-of-run helper worker (main-sync, tests-fix): spawned in the feature worktree under its task
   // label, held in state.tasks under that label so its reports and parks are read like a task worker's.
@@ -591,7 +654,7 @@ export function startCoordinator({
   }
 
   function spawnSyncWorker(files) {
-    return spawnHelper(MAIN_SYNC_TASK, 'sync', buildConflictPrompt({ kind: 'main-sync', slug, plan: slug, files, audience: 'worker' }));
+    return spawnHelper(MAIN_SYNC_TASK, 'sync', buildConflictPrompt({ kind: 'main-sync', slug, plan: slug, files, base: RUN_BASE, audience: 'worker' }));
   }
 
   // The one test-fix worker of an end sequence (T10, DESIGN §2.9 step 1, user 2026-09-27). `after` is
@@ -608,7 +671,7 @@ export function startCoordinator({
 
   function endFix(rec) {
     // A restart after the person merged while pir was down: nothing to fix, endSync finishes it as merged.
-    if (existsSync(join(state.feature.path, reportRel)) && worktree.mainContains(state.feature.branch)) {
+    if (existsSync(join(state.feature.path, reportRel)) && worktree.baseContains(state.feature.branch, { refs: [RUN_BASE_REF] })) {
       handoff.step = 'sync';
       return;
     }
@@ -627,32 +690,50 @@ export function startCoordinator({
   function endSync(rec) {
     const existing = existsSync(join(state.feature.path, reportRel));
     handoff.rewrite = existing;
-    // A restart after the person merged while pir was down: main already holds the tip. Syncing now would
-    // merge main back into the branch, move its tip past main, and wait in ready for a merge already done.
-    if (existing && worktree.mainContains(state.feature.branch)) {
+    // A restart after the person merged while pir was down: the base already holds the tip. Syncing now
+    // would merge the base back into the branch, move its tip past the base, and wait in ready for a merge
+    // already done.
+    const mergedInto = (refs) => {
+      if (!existing || !worktree.baseContains(state.feature.branch, { refs })) return false;
       handoff.reportPath = reportRel;
-      handoff.mainSha = worktree.mainTip?.() ?? handoff.mainSha;
+      handoff.baseSha = worktree.baseTip?.({ ref: refs[0] }) ?? handoff.baseSha;
+      handoff.hold = null;
       handoff.tests ??= handoff.gate;
       handoff.state = handoff.tests === 'green' ? 'ready' : 'red';
       handoff.step = 'waiting';
-      // After a go the finisher's own merge put the tip in main; the run ends only on its done or close
+      // After a go the finisher's own merge put the tip in the base; the run ends only on its done or close
       // (finisher DESIGN §2.8), so the restarted run waits in ready and resumes it.
-      if (prior?.goGiven === true && handoff.finisher === null) return;
+      if (prior?.goGiven === true && handoff.finisher === null) return true;
       finish('merged', rec);
+      return true;
+    };
+    if (mergedInto([RUN_BASE_REF])) return;
+    // Held: nothing until the retry interval has passed (DESIGN §2.8).
+    if (handoff.hold && now() < handoff.hold.nextTry) return;
+    // Never merge a base this sync did not just try to fetch (DESIGN §2.8, §2.3).
+    const prep = prepareRunBase('start');
+    if (!prep.ok) {
+      holdSync(prep, rec);
       return;
     }
+    if (handoff.hold) rec('base-hold', { reason: null });
+    handoff.hold = null;
+    if (prep.remote) handoff.remote = prep.remote;
+    // The merge may have been done on the remote only (a pull request merged on GitHub): its copy holds it.
+    if (mergedInto([prep.sha])) return;
+    handoff.localSeen = worktree.baseTip({ ref: RUN_BASE_REF });
     let res;
     try {
-      res = worktree.syncMain(state.feature.path);
+      res = worktree.syncBase(state.feature.path, { baseSha: prep.sha, base: RUN_BASE });
     } catch (err) {
       control?.log?.(`main-sync failed: ${err?.message ?? err}`);
-      handoff.sync = { state: 'unresolved', mainSha: worktree.mainTip?.() ?? null, files: [] };
+      handoff.sync = { state: 'unresolved', baseSha: prep.sha, files: [] };
       handoff.tests = 'red';
       handoff.step = existing ? 'footer' : 'brief';
       return;
     }
     rec('main-sync', { state: res.state });
-    handoff.sync = { state: res.state, mainSha: res.mainSha, files: res.files ?? [] };
+    handoff.sync = { state: res.state, baseSha: res.baseSha, files: res.files ?? [] };
     if (res.state === 'up-to-date') {
       handoff.tests ??= handoff.gate;
       if (existing && handoff.fix) {
@@ -719,11 +800,11 @@ export function startCoordinator({
       // gone from the worktree: rewritten below with only the footer, as the branch had it
     }
     writeFileSync(path, replaceFooter(text, footerNow()));
-    worktree.commitFeature(`report(${slug}): re-synced with main`);
+    worktree.commitFeature(`report(${slug}): re-synced with ${RUN_BASE}`);
     rec('report', { resync: true });
     handoff.reportPath = reportRel;
     settle();
-    if (agent?.alive()) agent.tell(resyncedFor({ slug, mainSha: handoff.sync?.mainSha, tests: handoff.tests, unresolved: handoff.sync?.state === 'unresolved' }));
+    if (agent?.alive()) agent.tell(resyncedFor({ slug, baseSha: handoff.sync?.baseSha, base: RUN_BASE, tests: handoff.tests, unresolved: handoff.sync?.state === 'unresolved' }));
   }
 
   function endBrief() {
@@ -736,6 +817,7 @@ export function startCoordinator({
         sync: handoff.sync,
         tests: handoff.tests,
         fix: fixResult(),
+        base: RUN_BASE,
       });
       if (agent.briefEnd(facts)) handoff.step = 'report';
       return;
@@ -753,7 +835,7 @@ export function startCoordinator({
     handoff.reportPath = reportRel;
     settle();
     const ready = handoff.state === 'ready';
-    if (agent?.alive()) agent.tell(handoffFor({ slug, reportPath: reportRel, ready, report: text, finisher: ready && withFinisher }));
+    if (agent?.alive()) agent.tell(handoffFor({ slug, reportPath: reportRel, ready, report: text, base: RUN_BASE, finisher: ready && withFinisher }));
   }
 
   function finish(by, rec) {
@@ -813,8 +895,8 @@ export function startCoordinator({
       finish('finisher', rec);
       return;
     }
-    // pir was down while main moved and this start re-synced the branch: the finisher's old steps are void.
-    if (prior && (handoff.sync?.state === 'merged' || handoff.sync?.state === 'resolved')) finisher.resynced(handoff.mainSha);
+    // pir was down while the base moved and this start re-synced the branch: the finisher's old steps are void.
+    if (prior && (handoff.sync?.state === 'merged' || handoff.sync?.state === 'resolved')) finisher.resynced(handoff.baseSha);
   }
 
   // Each pass with the finisher on (DESIGN §2.8): its statuses end the run; a hand merge ends it only
@@ -827,7 +909,7 @@ export function startCoordinator({
         fallBack('red', rec);
         return;
       }
-      finisher.resynced(handoff.mainSha);
+      finisher.resynced(handoff.baseSha);
     }
     if (finisher.givenUp()) {
       control?.log?.('finisher gave up');
@@ -840,8 +922,9 @@ export function startCoordinator({
       if (st.kind === 'close') return finish('closed', rec);
     }
     if (finisher.goGiven()) return; // after a go only done or close end the run
-    if (worktree.mainContains(state.feature.branch)) finish('merged', rec);
-    else if (worktree.mainTip() !== handoff.mainSha) {
+    const seen = watchBase();
+    if (seen === 'merged') finish('merged', rec);
+    else if (seen === 'moved') {
       // The old go is void from this pass, not from the re-sync's end, which may be minutes of sync or fix
       // worker away (review T05).
       finisher.resyncing();
@@ -850,7 +933,7 @@ export function startCoordinator({
     }
   }
 
-  // main moved without the feature tip: re-sync so the hand-off still merges cleanly (§2.10).
+  // The base moved without the feature tip: re-sync so the hand-off still merges cleanly (§2.10).
   function resync(rec) {
     handoff.state = 'preparing';
     handoff.rewrite = true;
@@ -859,7 +942,41 @@ export function startCoordinator({
     // "Tests: green" would contradict itself.
     handoff.fixUsed = false;
     handoff.fix = null;
+    handoff.step = 'sync';
     endSync(rec);
+  }
+
+  // watchBase() → 'merged' | 'moved' | null: one look at the base while the run waits for the merge
+  // (base-branch DESIGN §2.8), shared by the plain wait and the finisher's before its go. Each pass reads
+  // the local base; every watchMs the remote is fetched too (moving nothing but its remote-tracking ref),
+  // so a merge done on GitHub is seen. A failed fetch is only noted.
+  function watchBase() {
+    const t = now();
+    let watched = null;
+    if (handoff.watchFrom == null) handoff.watchFrom = t;
+    if (t - handoff.watchFrom >= watchMs) {
+      handoff.watchFrom = t;
+      watched = prepareRunBase('watch');
+      if (watched.remote) handoff.remote = watched.remote;
+      if (!watched.ok && watched.reason === 'fetch-failed') handoff.lastWatchFailure = t;
+      else handoff.lastWatch = t;
+    }
+    const refs = [RUN_BASE_REF, trackingRef()].filter(Boolean);
+    if (worktree.baseContains(state.feature.branch, { refs })) return 'merged';
+    // Moved: the local base is not where the last sync left it, or the remote's newer copy is not what was
+    // merged. Compared with the local tip at the sync, not the merged commit, since that may be the
+    // remote's copy while the local branch stays behind it (a checked-out base with changes, §2.3).
+    const localMoved = worktree.baseTip({ ref: RUN_BASE_REF }) !== handoff.localSeen;
+    const remoteMoved = !!watched?.ok && watched.sha !== handoff.baseSha;
+    return localMoved || remoteMoved ? 'moved' : null;
+  }
+
+  // The wait for the person's merge: the base holding the tip ends the run, the base moving without it
+  // re-syncs.
+  function endWait(rec) {
+    const seen = watchBase();
+    if (seen === 'merged') finish('merged', rec);
+    else if (seen === 'moved') resync(rec);
   }
 
   function endPass() {
@@ -916,8 +1033,7 @@ export function startCoordinator({
         if (handoff.finisher === 'on') finisherWaiting(rec);
         else if (handoff.finisher === null && withFinisher && handoff.state === 'ready') handOver(rec);
         else if (routed.close) finish('closed', rec);
-        else if (worktree.mainContains(state.feature.branch)) finish('merged', rec);
-        else if (worktree.mainTip() !== handoff.mainSha) resync(rec);
+        else endWait(rec);
         break;
       default:
         break;
@@ -1072,7 +1188,7 @@ export function startCoordinator({
 // The end-of-run helper workers' task labels (pir-coordinator T05, T10): each holds no task of the plan.
 const HELPERS = [MAIN_SYNC_TASK, TESTS_FIX_TASK];
 // What each helper does, as its row's slug: kebab like a task's, and within the row's 22-column slug field.
-const HELPER_SLUG = { [MAIN_SYNC_TASK]: 'resolve-main-merge', [TESTS_FIX_TASK]: 'fix-red-tests' };
+const HELPER_SLUG = { [MAIN_SYNC_TASK]: 'resolve-base-merge', [TESTS_FIX_TASK]: 'fix-red-tests' };
 
 // mainSyncOpening(prompt) → the opening instruction of an end-of-run helper worker: main-sync (T05) or
 // tests-fix (T10). It runs under the pir-worker contract for asking the person and dropping its report,
@@ -1092,6 +1208,15 @@ export const DEFAULT_HOLD_MS = 5 * 60 * 1000;
 export function holdLimitMs(env = process.env) {
   const v = Number(env?.PARALLEL_COORDINATOR_HOLD_MS);
   return Number.isFinite(v) && v > 0 ? v : DEFAULT_HOLD_MS;
+}
+
+// baseWatchMs(env) → how often the wait for the person's merge fetches the remote (base-branch DESIGN §2.8):
+// 5 minutes, or PARALLEL_BASE_WATCH_MS when it is a positive number. A test lever only: the harness's
+// dev-base scenario merges on the remote and must see it within its budget (base-branch T09).
+export const DEFAULT_BASE_WATCH_MS = 5 * 60 * 1000;
+export function baseWatchMs(env = process.env) {
+  const v = Number(env?.PARALLEL_BASE_WATCH_MS);
+  return Number.isFinite(v) && v > 0 ? v : DEFAULT_BASE_WATCH_MS;
 }
 
 // coordinatorEnabled(env) → whether this run has a coordinator agent (pir-coordinator DESIGN §2.1): on by
@@ -1410,16 +1535,17 @@ export function passProgressed({ stepBefore = null, stateBefore = null, handoff 
 // by hand — the one irreversible act, the merge to main, is the person's `what`, not the program's
 // (CLAUDE.md, §2.4). renderHandoff builds the line(s) main() prints from the loop's complete result.
 // Pure, so the green/red wording is asserted without running the bin (DESIGN §2.3's pure-display
-// stance). On green it hands over `git merge pir/{slug}`; on red it names the failure and offers NO
-// merge line, because telling the person a red branch is ready would be a lie the tests caught (§2.8).
-// `why` is the red gate's reason and log path (loop.mjs 3f), printed so the person can tell a failing
-// suite from a command that never ran.
-export function renderHandoff({ readyToMerge, taskCount, slug, why } = {}) {
+// stance). On green it hands over `git switch {base} && git merge pir/{slug}` (switching first, so it is
+// right whichever branch the person has checked out; base-branch DESIGN §2.9); on red it names the
+// failure and offers NO merge line, because telling the person a red branch is ready would be a lie the
+// tests caught (§2.8). `why` is the red gate's reason and log path (loop.mjs 3f), printed so the person
+// can tell a failing suite from a command that never ran.
+export function renderHandoff({ readyToMerge, taskCount, slug, why, base = 'main' } = {}) {
   const branch = `pir/${slug}`;
   if (readyToMerge) {
     return (
       `✔ all ${taskCount} task(s) green on ${branch} · tests pass. Yours to merge:\n\n` +
-      `  git merge ${branch}\n`
+      `  git switch ${base} && git merge ${branch}\n`
     );
   }
   return (
@@ -1429,15 +1555,15 @@ export function renderHandoff({ readyToMerge, taskCount, slug, why } = {}) {
   );
 }
 
-// renderFinished({ by, slug, ready, reportPath, summary }) → the line printed when a run with the agent
+// renderFinished({ by, slug, ready, reportPath, summary, base }) → the line printed when a run with the agent
 // ends (pir-coordinator DESIGN §2.10): the person merged, or told the agent (or the finisher) to close the
 // run; `finisher`: the finisher wrote done (finisher DESIGN §2.8), `summary` its done summary. Also
 // `finisher-gave-up`, printed while the run goes on: the finisher could not start or gave up, and the run
 // falls back to today's ready-to-merge wait with the merge line (DESIGN §2.12).
-export function renderFinished({ by, slug, ready = false, reportPath = null, summary = null } = {}) {
+export function renderFinished({ by, slug, ready = false, reportPath = null, summary = null, base = 'main' } = {}) {
   const branch = `pir/${slug}`;
   const report = reportPath ? ` The report is ${reportPath}.` : '';
-  if (by === 'merged') return `✔ ${branch} is in main. The run is finished.${report}`;
+  if (by === 'merged') return `✔ ${branch} is in ${base}. The run is finished.${report}`;
   if (by === 'finisher') {
     const first = String(summary ?? '').split('\n').map((l) => l.trim()).find(Boolean) ?? 'the finisher is done';
     return `✔ finished: ${first}${report}`;
@@ -1445,12 +1571,12 @@ export function renderFinished({ by, slug, ready = false, reportPath = null, sum
   if (by === 'finisher-gave-up') {
     return (
       `✗ the finisher could not go on; nothing more will run for you.${report}\n` +
-      `${branch} is ready to merge; it is yours to merge by hand:\n\n  git merge ${branch}\n`
+      `${branch} is ready to merge; it is yours to merge by hand:\n\n  git switch ${base} && git merge ${branch}\n`
     );
   }
   return (
     `✔ run closed.${report}\n` +
-    (ready ? `${branch} is not merged; it is yours to merge when you want:\n\n  git merge ${branch}\n` : `${branch} is not merged and not ready to merge.`)
+    (ready ? `${branch} is not merged; it is yours to merge when you want:\n\n  git switch ${base} && git merge ${branch}\n` : `${branch} is not merged and not ready to merge.`)
   );
 }
 
@@ -1471,36 +1597,33 @@ function gitStdout(cwd, args) {
   }
 }
 
-// A git runner that reports success/failure (unlike gitStdout, which swallows it), so ensureMain can
-// tell "no local main" from "the checkout is broken". Injected into ensureMain so a test drives it
-// against a scratch repo.
-export function gitRun(cwd, args) {
-  try {
-    const stdout = execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] });
-    return { ok: true, stdout, stderr: '' };
-  } catch (e) {
-    return { ok: false, stdout: e.stdout ?? '', stderr: e.stderr ?? String(e) };
+// parseCoordinateArgs(argv) → { ok: true, slug, base: string|null, baseSha: string|null } | { ok: false, error }
+// `{slug} [--base <branch> [--base-sha <sha>]]`: `pir start` passes the base it resolved (and, for a
+// feature branch it just cut, the commit), so the coordinator never re-reads the settings (base-branch
+// DESIGN §2.7). A --base-sha without --base is refused: a commit with no branch name is not a base.
+export function parseCoordinateArgs(argv = []) {
+  let slug = null;
+  let base = null;
+  let baseSha = null;
+  for (let i = 0; i < argv.length; i += 1) {
+    const a = argv[i];
+    if (a === '--base' || a === '--base-sha') {
+      const v = argv[i + 1];
+      if (!v || v.startsWith('--')) return { ok: false, error: `${a} needs a value` };
+      if (a === '--base') base = v;
+      else baseSha = v;
+      i += 1;
+    } else if (a.startsWith('--')) {
+      return { ok: false, error: `unknown option ${a}` };
+    } else if (slug === null) {
+      slug = a;
+    } else {
+      return { ok: false, error: `unexpected argument ${a}` };
+    }
   }
-}
-
-// Ensure a checkout has a local `main` (DESIGN §2.9; T12 Problem 4). worktree.mjs cuts the feature
-// branch with `git branch pir/{plan} main` — `main` hardcoded, as the real project always has one — so
-// a local main must exist for openFeature to branch off it (the run never merges back to main, §2.4;
-// main is only the base the feature branch is cut from). A scratch clone taken off a side branch has
-// only origin/main and no local `main`, so pass 1 throws "not a valid object name: 'main'" (the drill
-// created one by hand). When there is no local main, create it at the current HEAD and check it out; a
-// checkout that already has main is left exactly as it is. Runs only on the LIVE path, which the
-// branch-safety guard confines to a scratch checkout, so pointing main at HEAD is safe (mirrors
-// ensureMainCheckedOut, verified with the user 2026-09-09). `-B main HEAD` pins main to the exact
-// commit, never a same-named origin/main.
-export function ensureMain(root, { git = gitRun } = {}) {
-  if (git(root, ['rev-parse', '--verify', '--quiet', 'refs/heads/main']).ok) {
-    return { created: false };
-  }
-  const from = git(root, ['rev-parse', '--abbrev-ref', 'HEAD']).stdout.trim();
-  const r = git(root, ['checkout', '-B', 'main', 'HEAD']);
-  if (!r.ok) throw new Error(`ensureMain: could not create a local main at HEAD: ${r.stderr}`);
-  return { created: true, from };
+  if (!slug) return { ok: false, error: null };
+  if (baseSha && !base) return { ok: false, error: '--base-sha needs --base' };
+  return { ok: true, slug, base, baseSha };
 }
 
 // The main (primary) worktree of the repo, whose basename is the repo name the agent names are built
@@ -1733,6 +1856,7 @@ export function buildRunState({
   heldByAgent = new Set(),
   coordinator = null,
   finisher = null,
+  base = null,
 } = {}) {
   // One row entry: a plan task, or an end-of-run helper (`st` its state.tasks entry, keyed by its label).
   const entryFor = ({ id, slug: rowSlug, deps, done }) => {
@@ -1773,7 +1897,9 @@ export function buildRunState({
     helper: true,
   }));
   // handoff is the end of the run with the agent on (pir-coordinator T05): { state: 'preparing'|'ready'|'red',
-  // reportPath, mainSha }, null otherwise.
+  // reportPath, baseSha, base, hold, lastWatch, lastWatchFailure }, null otherwise (base-branch DESIGN §2.8).
+  // base is the run's base branch (base-branch DESIGN §2.9), for the hand-off footers and a stale frame's
+  // hand-off line; absent when not given, so a snapshot without it reads `main` as before.
   // coordinator is the run's agent for the screen to open and its row (pir-coordinator §2.8, T12):
   // { id, live, logPath, state, holding }, null with `--no-coordinator` or when it never started.
   return {
@@ -1788,6 +1914,7 @@ export function buildRunState({
     // The finisher's view() (finisher-agent.mjs) while it is the run's (finisher T05); absent otherwise,
     // so a run without one keeps the old shape.
     ...(finisher ? { finisher } : {}),
+    ...(base ? { base } : {}),
     tasks,
     ...(helpers.length ? { helpers } : {}),
   };
@@ -2088,7 +2215,7 @@ export function endAlertPass({ r, coordinator, slug, sent = false, send, takesOv
   if (sent || r?.finished) return sent;
   const state = r?.handoff?.state;
   if (takesOver && r?.handoff?.fallback === 'gave-up') {
-    sendFinisher?.(finisherAlert({ slug, phase: 'gave-up' }));
+    sendFinisher?.(finisherAlert({ slug, phase: 'gave-up', base: r.handoff.base ?? 'main' }));
     return true;
   }
   if (state !== 'ready' && state !== 'red') return sent;
@@ -2099,9 +2226,27 @@ export function endAlertPass({ r, coordinator, slug, sent = false, send, takesOv
     taskCount: Array.isArray(r.tasks) ? r.tasks.length : 0,
     reason: r.testsReason?.reason ?? null,
     unresolved: !!r.handoff.unresolved,
+    base: r.handoff.base ?? 'main',
   });
   send({ ...alert, click: coordinator?.agent?.remoteUrl?.() ?? null });
   return true;
+}
+
+// holdAlertPass({ r, slug, sentReason, send }) → the reason last alerted, or null. A held end sync
+// (base-branch DESIGN §2.8) sends one alert when the hold begins, none on its retries, and a new one only
+// when its reason changes; once the hold clears, a later hold alerts again.
+export function holdAlertPass({ r, slug, sentReason = null, send }) {
+  const hold = r?.finished ? null : r?.handoff?.hold ?? null;
+  if (!hold) return null;
+  if (hold.reason === sentReason) return sentReason;
+  send(holdAlert({ slug, hold }));
+  return hold.reason;
+}
+
+// holdAlertAction(alert, { noteTo }) → the runner's send for a hold alert: like the end alert, never
+// cleared or reminded, under its own id.
+export function holdAlertAction(alert, opts = {}) {
+  return { ...endAlertAction(alert, opts), id: 'hold' };
 }
 
 // endAlertAction(alert, { noteTo }) → the runner's send for the end-of-run alert: no episode, no seq (it is
@@ -2122,11 +2267,12 @@ export function withinMs(promise, ms) {
 }
 
 async function main(argv) {
-  const slug = argv[0];
-  if (!slug) {
-    console.error('usage: node src/shell/coordinate.mjs {slug}');
+  const args = parseCoordinateArgs(argv);
+  if (!args.ok) {
+    console.error(`${args.error ? `${args.error}\n` : ''}usage: node src/shell/coordinate.mjs {slug} [--base <branch> [--base-sha <sha>]]`);
     process.exit(2);
   }
+  const { slug } = args;
 
   const root = mainWorktree(process.cwd()) || process.cwd();
   const repo = basename(root);
@@ -2178,10 +2324,16 @@ async function main(argv) {
 
   console.log('LIVE: spawning real workers (PARALLEL_LIVE=1).');
 
-  // Ensure a local `main` exists (DESIGN §2.9; T12 Problem 4): a scratch clone off a side branch has
-  // only origin/main, and openFeature would throw on pass 1 without this.
-  const mained = ensureMain(root);
-  if (mained.created) console.log(`prepared a local main at HEAD (checkout was on "${mained.from}", which had none).`);
+  // The run's base (base-branch DESIGN §2.5, §2.7). `pir start` resolved it before spawning this and
+  // passes it in; a coordinator started by hand resolves it here the same way, refusing before anything
+  // is created. A missing local base is created from the remote's copy by prepareBase, never at HEAD.
+  const runBase = args.base ? { ok: true, base: args.base, baseSha: args.baseSha } : resolveRunBase(root, slug);
+  if (!runBase.ok) {
+    console.error(runBase.message);
+    process.exit(1);
+  }
+  const { base, baseSha } = runBase;
+  console.log(`base branch: ${base}`);
 
   const control = fileControl(root, slug);
 
@@ -2226,7 +2378,7 @@ async function main(argv) {
   // forwards to it by id once it has started (currentAgent is set when the controller exists).
   let currentAgent = () => null;
   const personInbox = startPersonInbox({ controlDir: control.dir, platform: withAgent(platform, () => currentAgent()), grants, log: control.log, onActivity: wake });
-  const worktree = createWorktree({ root });
+  const worktree = createWorktree({ root, base, ...(baseSha ? { from: baseSha } : {}) });
   // No DESIGN.md reads as '': makePrepare sees no block and runs no setup.
   const design = planHome(slug, { root }).read('DESIGN.md') ?? '';
   const prepare = makePrepare({ design, setupDir: join(control.dir, 'setup'), onSettled: wake });
@@ -2281,7 +2433,7 @@ async function main(argv) {
         });
       };
   const priorFinisher = () => readJson(join(control.dir, 'finisher', 'state.json'));
-  const coordinator = startCoordinator({ slug, repo, platform, worktree, maxWorkers, control, startAgent, startFinisher, priorFinisher,
+  const coordinator = startCoordinator({ slug, repo, platform, worktree, maxWorkers, control, startAgent, startFinisher, priorFinisher, base, watchMs: baseWatchMs(),
     runTests: (featurePath, { tasks } = {}) => {
       showTesting(tasks ?? []);
       return runFeatureTests(featurePath, { slug, root, logPath: join(control.dir, 'tests.log') });
@@ -2362,7 +2514,7 @@ async function main(argv) {
   // The last run state painted, so an exit path (a signal, a stall, completion) can write it as the final
   // snapshot. Seeded with an empty-but-valid run state so a stop arriving before the first pass still
   // writes a snapshot parseSnapshot accepts.
-  let lastRunState = buildRunState({ passTasks: [], branch, ceiling: CEILING, interrupted: true });
+  let lastRunState = buildRunState({ passTasks: [], branch, base, ceiling: CEILING, interrupted: true });
 
   // Tear down every live worker of this run on any exit that is not a clean hand-off or a kill-switch
   // halt (both of which the loop already handled). This is the orphan-guard: a stall, a
@@ -2429,6 +2581,7 @@ async function main(argv) {
   const notifyStepOpts = remindMs > 0 ? { remindMs } : {};
   let notifyState = newNotifyState();
   let endAlertSent = false;
+  let holdAlertReason = null; // the reason of the last hold alert sent, null while no hold (base-branch §2.8)
   // The exit clears for every open episode (and the no-agent end alert, when given), awaited at most 2 s:
   // every exit path ends the process soon after, and an unawaited request dies with it (§3.3).
   const notifyExitNow = (extra = null) => {
@@ -2468,7 +2621,7 @@ async function main(argv) {
     const since = Date.now();
     trackTiming({}, passTasks.map((t) => t.num)); // the last merge's duration, before the pass ends
     const runState = testingRunState(
-      buildRunState({ passTasks, workers: platform.workers(), branch, ceiling: CEILING, doneMsByTask, coordinator: coordinator.agentView() }),
+      buildRunState({ passTasks, workers: platform.workers(), branch, base, ceiling: CEILING, doneMsByTask, coordinator: coordinator.agentView() }),
       { since },
     );
     lastRunState = runState;
@@ -2555,6 +2708,7 @@ async function main(argv) {
         stateTasks: coordinator.state.tasks,
         workers: platform.workers(),
         branch,
+        base,
         ceiling: CEILING,
         sinceByTask,
         stoppedAtByTask,
@@ -2577,7 +2731,7 @@ async function main(argv) {
       renderer.paint(buildDisplay(runState, { now: Date.now() }));
 
       // The end of the run with the agent (pir-coordinator DESIGN §2.9, §2.10): the passes after the end
-      // gate sync main, get the report committed and wait in `ready to merge` until the person merges or
+      // gate sync the base, get the report committed and wait in `ready to merge` until the person merges or
       // tells the agent to close. The run's own waiting is not a stall.
       if (coordinator.handoff) {
         // The one end-of-run alert, the first pass the run waits on the person's merge (DESIGN §2.4).
@@ -2594,12 +2748,19 @@ async function main(argv) {
         // run waits in today's ready to merge (finisher DESIGN §2.12). Not for a branch that turned red.
         if (!fallbackPrinted && (r.handoff?.fallback === 'failed' || r.handoff?.fallback === 'gave-up')) {
           fallbackPrinted = true;
-          renderer.line('\n' + renderFinished({ by: 'finisher-gave-up', slug, reportPath: r.handoff?.reportPath }));
+          renderer.line('\n' + renderFinished({ by: 'finisher-gave-up', slug, base, reportPath: r.handoff?.reportPath }));
         }
+        // A held end sync alerts once per reason (base-branch DESIGN §2.8): the diverged case needs the person.
+        holdAlertReason = holdAlertPass({
+          r,
+          slug,
+          sentReason: holdAlertReason,
+          send: (alert) => runNotify([holdAlertAction(alert, { noteTo: coordinator.agent?.id ?? null })]),
+        });
         if (r.finished) {
           finishRun('complete'); // merged, closed or the finisher's done: `finished` (DESIGN §2.10)
           renderer.close();
-          renderer.line('\n' + renderFinished({ by: r.finished, slug, ready: r.handoff?.state === 'ready', reportPath: r.handoff?.reportPath, summary: lastFinisherSummary }));
+          renderer.line('\n' + renderFinished({ by: r.finished, slug, base, ready: r.handoff?.state === 'ready', reportPath: r.handoff?.reportPath, summary: lastFinisherSummary }));
           // The finisher's done alert (finisher DESIGN §2.9): one-shot, awaited with the exit clears, bounded.
           const done = r.finished === 'finisher'
             ? runNotify([finisherOneShot(finisherAlert({ slug, phase: 'done', summary: lastFinisherSummary }), { click: lastFinisherUrl })])
@@ -2624,6 +2785,7 @@ async function main(argv) {
           readyToMerge: r.readyToMerge,
           taskCount: r.tasks.length,
           slug,
+          base,
           why: r.surfaces.find((s) => s.kind === 'red-feature')?.text,
         }));
         // Without the agent the run ends on this pass, so its end alert is awaited, bounded (DESIGN §2.4).
@@ -2633,6 +2795,7 @@ async function main(argv) {
           taskCount: r.tasks.length,
           reason: r.surfaces.find((s) => s.kind === 'red-feature')?.text ?? null,
           unresolved: false,
+          base,
         });
         await notifyExitNow(runNotify([endAlertAction(alert)]));
         return;

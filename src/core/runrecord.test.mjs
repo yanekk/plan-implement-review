@@ -258,3 +258,14 @@ test('coordinator: false round-trips; absent or true writes and reads no field; 
   assert.equal(parseRecord(JSON.stringify({ ...validRecord(), coordinator: 'no' })), null);
   assert.equal(parseRecord(JSON.stringify({ ...validRecord(), coordinator: true })).coordinator, undefined);
 });
+
+// plans/base-branch T01 (DESIGN §2.5): the run's base branch is an optional display copy.
+test('baseBranch round-trips; a record without it parses unchanged; a non-string or empty one is refused', () => {
+  const withBase = { ...validRecord(), baseBranch: 'dev' };
+  assert.deepEqual(parseRecord(serializeRecord(withBase)), withBase);
+  const without = parseRecord(serializeRecord(validRecord()));
+  assert.deepEqual(without, validRecord());
+  assert.equal('baseBranch' in without, false);
+  assert.equal(parseRecord(JSON.stringify({ ...validRecord(), baseBranch: 7 })), null);
+  assert.equal(parseRecord(JSON.stringify({ ...validRecord(), baseBranch: '' })), null);
+});

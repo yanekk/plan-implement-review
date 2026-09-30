@@ -33,12 +33,16 @@ and the skills, and it is unchanged. Parallel mode is an added way to run the **
 plan**: a single **coordinator command** — a plain program, not a session the person
 talks to — spawns many **worker** sessions at once, each in its own worktree, so independent tasks
 build and review concurrently. The plan runs on one **feature branch** with a **task branch** per
-task. The command itself never merges to `main`. Without the coordinator agent it stops at a green
-feature branch and hands the person a `git merge` to run by hand. With the agent on (the default), it first merges `main` into
-the feature branch and commits a delivery report; on a green branch it then starts the finisher, a
-session that prepares the merge and the project's after-merge steps and, after the person's one `Go`,
-carries them out, so the merge into `main` is the finisher's, never the command's (see
-[finisher.md](finisher.md)). A project opts into parallel mode per run; nothing about the classic
+task. The feature branch is cut from the repo's **base branch** (`dev`, `main`, …), which the repo
+names in `.pir/settings.json` or the person in `~/.pir/{repo}/settings.json`; with neither, `pir`
+refuses to plan or build. `pir` fetches the base from the remote before cutting from it and before the
+end-of-run sync, and moves the person's local copy forward only when that is safe. The command itself
+never merges into the base and never pushes. Without the coordinator agent it stops at a green feature
+branch and hands the person `git switch {base} && git merge pir/{slug}` to run by hand. With the agent
+on (the default), it first merges the base into the feature branch and commits a delivery report; on a
+green branch it then starts the finisher, a session that prepares the merge and the project's
+after-merge steps and, after the person's one `Go`, carries them out, so the merge is the finisher's,
+never the command's (see [finisher.md](finisher.md)). A project opts into parallel mode per run; nothing about the classic
 flow changes.
 
 A person launches parallel mode with `pir start {slug}`, run from inside the target repo — it starts
@@ -64,8 +68,8 @@ and it had no conversation view. `install.sh` removes an installed copy it finds
   workers, holds a live line to each one, prints a live status display, and hands the person the
   finished feature branch to merge. It has no agent name and never appears in `claude agents`. It
   starts the run's coordinator agent, briefs it, and checks and applies its decisions, and at a green
-  end starts the finisher and holds its phase. It never merges to `main` itself and never writes
-  product code. Run by hand, it is dry by default and only
+  end starts the finisher and holds its phase. It never merges into the base branch itself and never
+  writes product code. Run by hand, it is dry by default and only
   spawns real workers under `PARALLEL_LIVE=1`; `pir` always sets it (see
   [run-lifecycle.md](run-lifecycle.md)).
 - **Workers** — `claude` processes the command starts as its own **child processes**, one per task
@@ -99,7 +103,7 @@ and it had no conversation view. `install.sh` removes an installed copy it finds
   decision files; the command checks and applies them, and keeps `ask`-bin actions and destructive
   commands for the person in code (`src/core/coordinator-policy.mjs`). Its base definition is the
   `pir-coordinator` skill; a project may add `.claude/pir-coordinator.md`. It never merges into
-  `main` and never pushes (see [coordinator-agent.md](coordinator-agent.md)).
+  the base branch and never pushes (see [coordinator-agent.md](coordinator-agent.md)).
 - **The finisher** — one Claude session per green build run with the agent on, started when the agent
   is closed at the end (`src/shell/finisher-agent.mjs`). It follows one finishing rules file
   (`.pir/rules/on-finish.md` in the repo, else `~/.pir/{repo}/rules/on-finish.md`, else
@@ -118,8 +122,8 @@ and it had no conversation view. `install.sh` removes an installed copy it finds
 
 - [run-lifecycle.md](run-lifecycle.md) — a run start to finish, the pass, and the live display.
 - [task-state.md](task-state.md) — `PROGRESS.md` as the state, the glyphs, the task slug.
-- [branch-model.md](branch-model.md) — feature branch, task branches, worktrees, the hand-off (no
-  promotion), agent names.
+- [branch-model.md](branch-model.md) — the base branch (settings, fetch, `pirBase`), feature branch,
+  task branches, worktrees, the hand-off (no promotion), agent names.
 - [control-folder.md](control-folder.md) — the per-run `.parallel/control/` folder.
 - [human-flow.md](human-flow.md) — questions, question sets and permission requests answered in the
   `pir` screen, merge conflicts, the kill switch, the worker ceiling.
@@ -127,7 +131,7 @@ and it had no conversation view. `install.sh` removes an installed copy it finds
 - [detached-runs.md](detached-runs.md) — the `pir` front-end: start a run detached, the cross-repo
   dashboard to watch, stop, clear and resume runs, and a worker's conversation view.
 - [coordinator-agent.md](coordinator-agent.md) — the coordinator agent: answer first, what is reserved
-  for the person, passing on, its conversation, the ledger, the end-of-run main sync, `REPORT.md` and
+  for the person, passing on, its conversation, the ledger, the end-of-run base sync and its hold, `REPORT.md` and
   `ready to merge`, `--no-coordinator`.
 - [finisher.md](finisher.md) — the finisher: when it takes over, the rules file, its phases, the fence,
   the go, status files, the end of the run, failure, phone alerts, its row, storage.

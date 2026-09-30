@@ -41,7 +41,10 @@ import {
   loadPlanRun,
   planReviewedOnBranch,
   everyTaskDone,
-  mainUntouched,
+  baseUntouched,
+  cutFromRemote,
+  handedOffOnBase,
+  finishedOnRemoteMerge,
   indexRowIsWork,
   agentAnswered,
   reservedToPerson,
@@ -454,7 +457,18 @@ test('handedOffGreenBranch passes when a task merged, nothing was promoted, and 
   const r = handedOffGreenBranch().check(b);
   assert.equal(r.pass, true, r.detail);
   assert.ok(r.evidence.includes('git log: no promotion merge into main'));
-  assert.ok(r.evidence.includes('coordinator.out: git merge pir/scratch'));
+  assert.ok(r.evidence.includes('coordinator.out: git switch main && git merge pir/scratch'));
+});
+
+// With the coordinator agent on the run prints no renderHandoff: its `ready to merge` footer carries the offer
+// (base-branch T09). A `preparing` footer carries none, so it does not pass.
+test('handedOffGreenBranch passes on the agent\'s `✔ ready to merge · git switch dev && git merge` footer', () => {
+  const b = (out) => bundle({ flow: [fl('t5', 'merge', 'T01')], gitLog: '* T01 (pir/scratch)\n* seed\n', timeline: [tick('t1', [wagent('T01', 'busy')])], coordinatorOut: out });
+  const r = handedOffGreenBranch().check(b('⠴ all 1 task(s) merged · preparing: syncing dev\n✔ ready to merge · git switch dev && git merge pir/scratch\n  report: plans/scratch/REPORT.md\n'));
+  assert.equal(r.pass, true, r.detail);
+  assert.ok(r.evidence.includes('coordinator.out: ✔ ready to merge · git switch dev && git merge pir/scratch'));
+  assert.equal(handedOffGreenBranch().check(b('⠴ all 1 task(s) merged · preparing: syncing dev\n')).pass, false);
+  assert.equal(handedOffGreenBranch().check(b('✔ ready to merge · git switch dev && git merge pir/other\n')).pass, false);
 });
 
 // declared-test-command T10: the flow and git look the same for a red finish as a green one, so a run
@@ -1058,8 +1072,8 @@ function planBundle(planRun = {}, over = {}) {
       slug: 'slugify',
       outcome: 'reviewed',
       planFinalState: 'finished',
-      mainBefore: 'abc123',
-      mainAfter: 'abc123',
+      baseBefore: 'abc123',
+      baseAfter: 'abc123',
       progress: planProgress(),
       records: [workRecord],
       ...planRun,
@@ -1067,7 +1081,7 @@ function planBundle(planRun = {}, over = {}) {
     ...over,
   });
 }
-const PLAN_FACTS = () => [planReviewedOnBranch(), everyTaskDone(), handedOffGreenBranch(), mainUntouched(), indexRowIsWork()];
+const PLAN_FACTS = () => [planReviewedOnBranch(), everyTaskDone(), handedOffGreenBranch(), baseUntouched(), indexRowIsWork()];
 
 test('the plan-command facts all pass over a finished run: reviewed on the branch, all ✅, green, main still, one work row', () => {
   const report = checkScenario({ id: 'plan-command', facts: PLAN_FACTS() }, planBundle());
@@ -1090,9 +1104,63 @@ test('everyTaskDone fails while any task is short of ✅, and on a plan with no 
   assert.equal(everyTaskDone().check(planBundle({ progress: planProgress([]) })).pass, false);
 });
 
-test('mainUntouched fails when main moved or was not read', () => {
-  assert.equal(mainUntouched().check(planBundle({ mainAfter: 'def456' })).pass, false);
-  assert.equal(mainUntouched().check(planBundle({ mainBefore: null })).pass, false);
+test('baseUntouched fails when the base moved or was not read, and names the run\'s base', () => {
+  assert.equal(baseUntouched().check(planBundle({ baseAfter: 'def456' })).pass, false);
+  assert.equal(baseUntouched().check(planBundle({ baseBefore: null })).pass, false);
+  const dev = baseUntouched().check(planBundle({ base: 'dev', baseAfter: 'def456' }));
+  assert.equal(dev.detail, 'dev moved');
+  assert.ok(dev.evidence.includes('dev before: abc123'));
+});
+
+test('baseUntouched passes a base pir only fast-forwarded to the remote\'s commit at the start (base-branch §2.3)', () => {
+  const r = baseUntouched().check(planBundle({ base: 'dev', baseAfter: 'r1', remoteBefore: 'r1' }));
+  assert.equal(r.pass, true, r.detail);
+  assert.match(r.detail, /moved forward to origin\/dev/);
+  assert.equal(baseUntouched().check(planBundle({ base: 'dev', baseAfter: 'r2', remoteBefore: 'r1' })).pass, false);
+});
+
+// A dev-only run whose remote was ahead: pir cut from origin/dev, synced with it, and the person merged on
+// the remote only (base-branch T09).
+const REMOTE_SHA = 'feedc0de1234feedc0de1234feedc0de12345678';
+const devReport = `# Report\n\n## Decisions made for you\n\nNone.\n\n## Branch\n\nSynced with \`dev\` at \`${REMOTE_SHA.slice(0, 12)}\`. Tests: green.\n`;
+function devBundle(planRun = {}, over = {}) {
+  return planBundle(
+    { base: 'dev', baseBefore: 'old1', baseAfter: REMOTE_SHA, remoteBefore: REMOTE_SHA, remoteAfter: 'merged9', cutFromRemote: true, ...planRun },
+    {
+      coordinatorOut: `pass 9\n✔ ready to merge · git switch dev && git merge pir/slugify\n  report: plans/slugify/REPORT.md\n\n✔ pir/slugify is in dev. The run is finished.\n`,
+      steps: { merged: { at: 't', branch: 'pir/slugify', into: "origin's dev", reportPath: 'plans/slugify/REPORT.md', report: devReport } },
+      ...over,
+    },
+  );
+}
+
+test('cutFromRemote passes only when the remote was ahead and pir/{slug} holds its commit', () => {
+  assert.equal(cutFromRemote().check(devBundle()).pass, true);
+  assert.equal(cutFromRemote().check(devBundle({ cutFromRemote: false })).pass, false);
+  assert.match(cutFromRemote().check(devBundle({ baseBefore: REMOTE_SHA })).detail, /not ahead/);
+  assert.equal(cutFromRemote().check(devBundle({ remoteBefore: null })).pass, false);
+});
+
+test('handedOffOnBase: the dev hand-off, a footer naming dev at the remote commit, and no line saying main', () => {
+  assert.equal(handedOffOnBase().check(devBundle()).pass, true, handedOffOnBase().check(devBundle()).detail);
+  const noOffer = devBundle({}, { coordinatorOut: 'git merge pir/slugify\n' });
+  assert.match(handedOffOnBase().check(noOffer).detail, /git switch dev && git merge pir\/slugify/);
+  const mainFooter = devBundle({}, { steps: { merged: { report: devReport.replace('`dev`', '`main`') } } });
+  assert.match(handedOffOnBase().check(mainFooter).detail, /does not name dev/);
+  const oldSha = devBundle({}, { steps: { merged: { report: devReport.replace(REMOTE_SHA.slice(0, 12), '0123456789ab') } } });
+  assert.match(handedOffOnBase().check(oldSha).detail, /not origin\/dev/);
+  const saysMain = devBundle({}, { coordinatorOut: `${devBundle().coordinatorOut}preparing: syncing main\nmain-sync row\n` });
+  const r = handedOffOnBase().check(saysMain);
+  assert.equal(r.pass, false);
+  assert.match(r.detail, /1 line\(s\) of coordinator.out say main/);
+});
+
+test('finishedOnRemoteMerge: merged on origin only, the remote moved, the local base did not, and the run finished', () => {
+  assert.equal(finishedOnRemoteMerge().check(devBundle()).pass, true);
+  assert.equal(finishedOnRemoteMerge().check(devBundle({}, { steps: { merged: { into: 'dev' } } })).pass, false);
+  assert.match(finishedOnRemoteMerge().check(devBundle({ remoteAfter: REMOTE_SHA })).detail, /did not move/);
+  assert.match(finishedOnRemoteMerge().check(devBundle({ baseAfter: 'merged9' })).detail, /local dev moved too/);
+  assert.match(finishedOnRemoteMerge().check(devBundle({}, { coordinatorOut: '' })).detail, /is in dev/);
 });
 
 test('indexRowIsWork fails on a plan row, a leftover run-id row, or no row', () => {

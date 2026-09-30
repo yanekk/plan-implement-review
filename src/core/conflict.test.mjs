@@ -131,3 +131,17 @@ test('tests-red prompt: the failing branch, the reason and log, fix only the cau
   const bare = buildConflictPrompt({ kind: 'tests-red', slug: 'demo', audience: 'worker' });
   assert.doesNotMatch(bare, /What failed|Full output/);
 });
+
+// base-branch T04 (DESIGN §2.9): the end-of-run prompts name the run's base, and default to `main`.
+test('main-sync and tests-red prompts name the base branch; the default is main', () => {
+  for (const kind of ['main-sync', 'tests-red']) {
+    const dev = buildConflictPrompt({ kind, slug: 'demo', plan: 'demo', files: ['a.txt'], audience: 'worker', base: 'dev' });
+    assert.match(dev, /never merge into dev or push/, kind);
+    assert.doesNotMatch(dev, /\bmain\b(?!-sync)/, `${kind}: a dev run never says main`);
+    const def = buildConflictPrompt({ kind, slug: 'demo', plan: 'demo', files: ['a.txt'], audience: 'worker' });
+    assert.match(def, /never merge into main or push/, kind);
+  }
+  const sync = buildConflictPrompt({ kind: 'main-sync', slug: 'demo', plan: 'demo', files: ['a.txt'], audience: 'worker', base: 'dev' });
+  assert.match(sync, /merged the current `dev` into pir\/demo/);
+  assert.match(sync, /what dev changed and what this plan built/);
+});

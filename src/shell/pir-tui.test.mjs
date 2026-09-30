@@ -169,7 +169,7 @@ test('a stale/final run renders its last frame with a stale marker (§2.4)', () 
     { slug: 'gamma', state: 'finished', repo: 'repoC', snap, record: { pid: 9, branch: 'pir/gamma' } },
     { now: NOW },
   );
-  assert.match(frameText(finished), /finished · this frame is stale.*git merge pir\/gamma/s, 'a finished run shows the hand-off');
+  assert.match(frameText(finished), /finished · this frame is stale.*git switch main && git merge\s+pir\/gamma/s, 'a finished run shows the hand-off');
   assert.equal(findSpan(finished, 'this frame is stale').style, 'ended', 'a finished run\'s marker is dim');
 
   const stopped = buildWatchFrame(
@@ -191,7 +191,11 @@ test('a finished red frame says not ready to merge and never offers `git merge`;
   assert.match(red, /test `make test` exited 2 · output: \/p\/tests\.log/, 'the footer above carries the reason');
 
   const green = frameFor({ branch: 'pir/gamma', ceiling: 2, complete: true, readyToMerge: true, tasks });
-  assert.match(green, /finished · this frame is stale\. Hand-off: git merge pir\/gamma/);
+  assert.match(green, /finished · this frame is stale\. Hand-off: git switch main && git merge pir\/gamma/);
+  // A dev run's snapshot carries its base (base-branch T07): the stale line and the footer both switch to dev.
+  const dev = frameFor({ branch: 'pir/gamma', base: 'dev', ceiling: 2, complete: true, readyToMerge: true, tasks });
+  assert.match(dev, /finished · this frame is stale\. Hand-off: git switch dev && git merge pir\/gamma/);
+  assert.doesNotMatch(dev, /\bmain\b/);
 });
 
 test('a finished run with no snapshot does not guess green: no merge offer, it points at run.log (DESIGN §2.8)', () => {
@@ -1662,13 +1666,13 @@ test('box: every §2.5 refusal starts nothing, keeps the text and shows the note
   }
 });
 
-test('box: startPlan refusing (no-main, in plain words) or throwing both give the start-failed note, the text kept', async () => {
-  for (const plan of [() => ({ started: false, reason: 'no-main' }), () => { throw new Error('spawn failed'); }]) {
+test('box: startPlan refusing (no-base-setting, in plain words) or throwing both give the start-failed note, the text kept', async () => {
+  for (const plan of [() => ({ started: false, reason: 'no-base-setting', message: 'pir: no base branch is set for repo. …' }), () => { throw new Error('spawn failed'); }]) {
     const t = driveBox({ plan });
     await t.type('repo/plan a brief');
     await t.key('\r');
     assert.equal(t.calls.length, 1);
-    const reason = plan.toString().includes('no-main') ? 'it has no local main branch' : 'spawn failed';
+    const reason = plan.toString().includes('no-base-setting') ? 'no base branch is set' : 'spawn failed';
     assert.ok(t.screen().includes(`Could not start planning in repo: ${reason}`), t.screen());
     assert.match(t.boxLine(), /^@repo\/plan a brief/);
     assert.doesNotMatch(t.screen(), /starting the planner/);
@@ -1676,6 +1680,16 @@ test('box: startPlan refusing (no-main, in plain words) or throwing both give th
     await t.key('\x1b');
     await t.done;
   }
+});
+
+test('box: a refusal naming its base and remote shows them in the note (base-branch §2.9 short form)', async () => {
+  const t = driveBox({ plan: () => ({ started: false, reason: 'diverged', base: 'dev', remote: 'origin' }) });
+  await t.type('repo/plan a brief');
+  await t.key('\r');
+  assert.ok(t.screen().includes('Could not start planning in repo: dev split from origin/dev'), t.screen());
+  await t.key('\x1b');
+  await t.key('\x1b');
+  await t.done;
 });
 
 test('box: on a bare box ↓ and → reach the list (open a run); ← back shows the box at @', async () => {

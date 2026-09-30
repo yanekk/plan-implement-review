@@ -471,7 +471,9 @@ export function buildWatchFrame(view, { now, spinnerChar = SPINNER[0], ui = init
         // A run the finisher ended has had its merge done for the person (finisher DESIGN §2.8), so the
         // stale note must not offer it again (same rule as the finisher's footer, user 2026-09-29, T07).
         const byFinisher = snap.runState?.finisher?.state === 'done';
-        const end = red ? `Not ready to merge — fix ${branch}, see the output above.` : byFinisher ? 'The finisher is done.' : `Hand-off: git merge ${branch}`;
+        // The run's base rides in the snapshot (base-branch DESIGN §2.9); one written before it reads `main`.
+        const base = snap.runState?.base ?? snap.runState?.handoff?.base ?? 'main';
+        const end = red ? `Not ready to merge — fix ${branch}, see the output above.` : byFinisher ? 'The finisher is done.' : `Hand-off: git switch ${base} && git merge ${branch}`;
         note(`— finished · this frame is stale. ${end}`, 'ended', '');
       } else if (state === 'stopped') {
         note(`— stopped · this frame is stale. \`pir start ${slug}\` resumes from committed work.`, 'ended', '');
@@ -1156,7 +1158,7 @@ async function runTui({
       return;
     }
     if (!s?.started) {
-      lv.update({ note: startFailedNote(r.repo.name, s?.reason ?? 'unknown') });
+      lv.update({ note: startFailedNote(r.repo.name, s?.reason ?? 'unknown', s) });
       return;
     }
     lv.reset();

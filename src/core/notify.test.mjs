@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { alertText, reminderText, excerpt, endAlert, newNotifyState, notifyStep, notifyExit, finisherAlert, finisherNotifyView } from './notify.mjs';
+import { alertText, reminderText, excerpt, endAlert, holdAlert, newNotifyState, notifyStep, notifyExit, finisherAlert, finisherNotifyView } from './notify.mjs';
 
 const cp = (s) => [...s].length;
 const base = { plan: 'screen-time', task: 'T04', role: 'implement' };
@@ -153,7 +153,7 @@ test('reminderText prefixes Still waiting', () => {
 test('endAlert: ready', () => {
   assert.deepEqual(endAlert({ slug: 'screen-time', ready: true, taskCount: 9 }), {
     title: 'screen-time · ready to merge',
-    message: 'All 9 tasks merged. git merge pir/screen-time',
+    message: 'All 9 tasks merged. git switch main && git merge pir/screen-time',
     tags: ['tada'],
   });
 });
@@ -374,7 +374,8 @@ test('finisherAlert: stuck cuts the summary to 150; done is `finished`; gave up 
   assert.deepEqual(finisherAlert({ slug: 'demo', phase: 'done', summary: 'Merged and installed.' }),
     { title: 'demo · finished', message: 'Merged and installed.', tags: ['tada'] });
   assert.deepEqual(finisherAlert({ slug: 'demo', phase: 'gave-up' }),
-    { title: 'demo · finisher gave up', message: 'Merge by hand: git merge pir/demo', tags: ['warning'] });
+    { title: 'demo · finisher gave up', message: 'Merge by hand: git switch main && git merge pir/demo', tags: ['warning'] });
+  assert.equal(finisherAlert({ slug: 'demo', phase: 'gave-up', base: 'dev' }).message, 'Merge by hand: git switch dev && git merge pir/demo');
   assert.equal(finisherAlert({ slug: 'demo', phase: 'preparing' }), null);
   assert.equal(finisherAlert({ slug: 'demo', phase: 'finishing' }), null);
 });
@@ -446,4 +447,25 @@ test('notifyStep: a view whose key changes mid-episode clears the old alert and 
   let w = notifyStep(newNotifyState(), [view()], 0, opts);
   w = notifyStep(w.state, [view({ waiting: 'permission', message: 'other' })], 10, opts);
   assert.deepEqual(w.actions, []);
+});
+
+// base-branch T04 (DESIGN §2.9): the end alert names the run's base; the hand-off switches to it first.
+test('endAlert: a dev base names dev and never main; the default is main', () => {
+  const ready = endAlert({ slug: 'demo', ready: true, taskCount: 3, base: 'dev' });
+  assert.equal(ready.message, 'All 3 tasks merged. git switch dev && git merge pir/demo');
+  const red = endAlert({ slug: 'demo', ready: false, unresolved: true, base: 'dev' });
+  assert.equal(red.message, 'Merge with dev unresolved on pir/demo');
+  for (const a of [ready, red]) assert.doesNotMatch(`${a.title} ${a.message}`, /\bmain\b/);
+  assert.equal(endAlert({ slug: 'demo', ready: false, unresolved: true }).message, 'Merge with main unresolved on pir/demo');
+  assert.equal(endAlert({ slug: 'demo', ready: true, taskCount: 3 }).message, 'All 3 tasks merged. git switch main && git merge pir/demo');
+});
+
+// base-branch T07 (DESIGN §2.8): the one alert of a held end-of-run sync names its reason.
+test('holdAlert: `{slug} · waiting` over the hold\'s reason; a missing text still says the run is held', () => {
+  assert.deepEqual(holdAlert({ slug: 'demo', hold: { reason: 'diverged', text: 'your dev and origin/dev have split apart' } }), {
+    title: 'demo · waiting',
+    message: 'your dev and origin/dev have split apart',
+    tags: ['hourglass'],
+  });
+  assert.equal(holdAlert({ slug: 'demo', hold: { reason: 'fetch-failed' } }).message, 'the end of the run is held');
 });

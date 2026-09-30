@@ -222,8 +222,8 @@ export function createFakePlatform({ behaviors = {} } = {}) {
     }
 
     if (w.role === 'sync') {
-      // The end-of-run main-sync worker (pir-coordinator T05), spawned in the feature worktree with a merge
-      // of main in progress. It resolves each conflicted file to `resolve[file]` (else keeps the feature's
+      // The end-of-run main-sync worker (pir-coordinator T05; the label is kept, base-branch §2.9), spawned in the feature worktree with a merge
+      // of the base in progress. It resolves each conflicted file to `resolve[file]` (else keeps the feature's
       // side), commits the merge and reports done. `unresolved: true` reports done without resolving;
       // `crash: true` exits first.
       if (w.stage !== 'fresh') return;
@@ -239,7 +239,7 @@ export function createFakePlatform({ behaviors = {} } = {}) {
           else git(w.cwd, ['checkout', '--ours', '--', f]);
         }
         git(w.cwd, ['add', '-A']);
-        git(w.cwd, ['commit', '--no-edit', '-m', 'resolve main sync']);
+        git(w.cwd, ['commit', '--no-edit', '-m', 'resolve base sync']);
       }
       emit(w, 'done');
       w.stage = 'done';

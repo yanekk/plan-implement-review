@@ -142,10 +142,11 @@ const EXPECT = {
 
 // --- The registry ---------------------------------------------------------------------------------
 
-// The fixtures that seed no plan (pir-plan-command T17): checked on their own below, not by the loops.
-const PLANLESS = ['plan-command'];
+// The fixtures that seed no plan (pir-plan-command T17; dev-base, base-branch T09): a planning run writes
+// it. Checked on their own, not by the loops.
+const PLANLESS = ['plan-command', 'dev-base'];
 
-test('listFixtures returns exactly the DESIGN §4.1 fixtures, and the plan-command one', () => {
+test('listFixtures returns exactly the DESIGN §4.1 fixtures, and the planless ones', () => {
   assert.deepEqual(new Set(listFixtures()), new Set([...Object.keys(EXPECT), ...PLANLESS]));
   assert.equal(listFixtures().length, Object.keys(EXPECT).length + PLANLESS.length);
 });
@@ -345,7 +346,7 @@ test('pir-coordinator: the agent runs, the push is reserved and denied, main mov
   assert.equal(sc.statusSnapshots, true, 'the answerer reads who holds an item from status.json');
   assert.equal(sc.seatbelts.timeoutMs, 20 * 60 * 1000);
   assert.deepEqual(sc.answerPending.permissions, { T02: 'deny' });
-  assert.equal(sc.mainCommit.after, 'T01');
+  assert.equal(sc.baseCommit.after, 'T01');
   assert.equal(sc.mergeWhenReady, true);
   const files = fixtureFiles(fx);
   assert.deepEqual(JSON.parse(files['.claude/settings.json']), { permissions: { ask: ['Bash(git push:*)'] } });
@@ -356,7 +357,7 @@ test('pir-coordinator: the agent runs, the push is reserved and denied, main mov
   // T01 changes the line the main commit changes differently, so the end sync conflicts.
   assert.equal(files['notes.txt'], 'status: seeded\n');
   assert.match(fx.tasks['T01-greeting.md'], /from `status: seeded` to `status: greeting added`/);
-  assert.notEqual(sc.mainCommit.files['notes.txt'], 'status: greeting added\n');
+  assert.notEqual(sc.baseCommit.files['notes.txt'], 'status: greeting added\n');
   assert.match(fx.tasks['T01-greeting.md'], /\*\*AskUserQuestion\s+tool\*\*/);
   const t02 = fx.tasks['T02-version.md'];
   assert.match(t02, /Run exactly `git push origin HEAD`/);
@@ -371,7 +372,7 @@ test('pir-coordinator-concurrent: three askers at once, a 3-minute hold, the rul
   assert.equal(sc.coordinatorHoldMs, 180000);
   assert.equal(sc.answerPending.personDelayMs, 60000);
   assert.equal(sc.seatbelts.timeoutMs, 20 * 60 * 1000);
-  assert.equal(sc.mainCommit, null, 'main does not move: no end-sync conflict');
+  assert.equal(sc.baseCommit, null, 'main does not move: no end-sync conflict');
   assert.equal(sc.mergeWhenReady, true);
   const files = fixtureFiles(fx);
   assert.match(files['.claude/pir-coordinator.md'], /release date, write no decision and do not pass them on; wait/);
@@ -393,7 +394,7 @@ test('notify-live: the agent runs, real alerts go to the person\'s topic, nobody
   assert.equal(sc.statusSnapshots, true);
   assert.equal(sc.realNotify, true);
   assert.equal(sc.answerPending, false, 'the person answers T02 on the phone');
-  assert.equal(sc.mainCommit, null);
+  assert.equal(sc.baseCommit, null);
   assert.equal(sc.mergeWhenReady, true, 'the end alert fires and the run finishes');
   assert.equal(sc.seatbelts.timeoutMs, 30 * 60 * 1000);
   const files = fixtureFiles(fx);
@@ -720,7 +721,7 @@ test('plan-command: a plan scenario with the §5.2 seatbelts and the plan-comman
   assert.match(fx.brief, /^Add a slugify\(text\) function to src\/slug\.mjs: .*at most three tasks\.$/);
   assert.deepEqual(
     s.facts.map((f) => f.id),
-    ['plan-reviewed-on-branch', 'every-task-done', 'handed-off-green-branch', 'main-untouched', 'index-row-is-work'],
+    ['plan-reviewed-on-branch', 'every-task-done', 'handed-off-green-branch', 'base-untouched', 'index-row-is-work'],
   );
   assert.ok(!Object.keys(fixtureFiles(fx)).some((p) => p.startsWith('plans/')), 'no plan is laid down');
 });

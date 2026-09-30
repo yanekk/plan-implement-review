@@ -6,7 +6,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { existsSync, readFileSync, realpathSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { startPlanRig, PLAN_RIG_QUESTION } from './plan-rig.mjs';
 import { indexDir, listRecords, writeRecord } from './index-store.mjs';
@@ -91,15 +91,34 @@ test('end to end at 80×24: `pir plan` then esc → back to the shell, exit 0, n
   assert.ok(!existsSync(join(rig.repoDir, 'plans')), 'no plans/ folder');
 });
 
-test('end to end: `pir plan` in a repo without main → the refusal line, and no box', (t) => {
-  const rig = rigWithTeardown(t);
-  git(rig.repoDir, 'branch', '-m', 'main', 'trunk');
-  const pir = fileURLToPath(new URL('./pir.mjs', import.meta.url));
-  const r = spawnSync(process.execPath, [pir, 'plan'], { cwd: rig.repoDir, env: rig.env, encoding: 'utf8', timeout: 10000 });
-  assert.equal(r.status, 1);
-  assert.equal(r.stderr, "pir plan: this repo has no local 'main' branch — a plan is cut from main\n");
-  assert.doesNotMatch(r.stdout, /esc cancel|new plan in/);
-});
+// base-branch §2.9: each refusal reachable from `pir plan` prints its text, opens no box and leaves the
+// repo as it was. The rig's HOME/PIR_HOME are scratch, so no real user settings file is read.
+for (const [label, setup, text] of [
+  ['a base branch that exists nowhere', (rig) => git(rig.repoDir, 'branch', '-m', 'main', 'trunk'),
+    'pir: the base branch main (set in .pir/settings.json) does not exist locally, and this repo has no remote.\n'],
+  ['no settings', (rig) => rmSync(join(rig.repoDir, '.pir'), { recursive: true }),
+    'pir: no base branch is set for repo. Add .pir/settings.json with {"baseBranch": "<branch>"} (committed, for everyone), or ~/.pir/repo/settings.json (this machine only).\n'],
+  ['a broken user settings file', (rig) => {
+    mkdirSync(join(rig.home, '.pir', 'repo'), { recursive: true });
+    writeFileSync(join(rig.home, '.pir', 'repo', 'settings.json'), '[]');
+  }, (rig) => `pir: ${join(rig.home, '.pir', 'repo', 'settings.json')} is not usable: it is not a JSON object.\n`],
+  ['an unreachable remote', (rig) => git(rig.repoDir, 'remote', 'add', 'origin', join(rig.root, 'gone.git')), /^pir: could not fetch main from origin: .+\. Nothing was created; try again when origin is reachable\.\n$/],
+]) {
+  test(`end to end: \`pir plan\` with ${label} → the §2.9 refusal line, no box, nothing created`, (t) => {
+    const rig = rigWithTeardown(t);
+    setup(rig);
+    const heads = git(rig.repoDir, 'for-each-ref', '--format=%(refname)', 'refs/heads');
+    const pir = fileURLToPath(new URL('./pir.mjs', import.meta.url));
+    const r = spawnSync(process.execPath, [pir, 'plan'], { cwd: rig.repoDir, env: rig.env, encoding: 'utf8', timeout: 20000 });
+    assert.equal(r.status, 1);
+    if (text instanceof RegExp) assert.match(r.stderr, text);
+    else assert.equal(r.stderr, typeof text === 'function' ? text(rig) : text);
+    assert.doesNotMatch(r.stdout, /esc cancel|new plan in/);
+    assert.equal(git(rig.repoDir, 'for-each-ref', '--format=%(refname)', 'refs/heads'), heads, 'no branch created');
+    assert.ok(!existsSync(join(rig.repoDir, 'plans')), 'no plans/ folder');
+    assert.deepEqual(listRecords({ dir: indexDir({ env: rig.env }) }), [], 'no run recorded');
+  });
+}
 
 // ---- dashboard-plan-box T05: the new-plan box on the runs list starts a planning run (DESIGN §2.3–§2.5). ----
 

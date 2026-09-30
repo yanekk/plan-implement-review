@@ -374,8 +374,8 @@ test('seal copies the coordinator agent\'s ledger, and loadBundle reads it and s
     const bundle = capture(ws, procs()).seal();
     assert.deepEqual(bundle.ledger, lines, 'a torn last line is dropped');
     assert.equal(bundle.steps, null, 'no steps.json yet');
-    writeFileSync(join(ws.bundle, 'steps.json'), JSON.stringify({ mainCommit: { after: 'T01' }, merged: null }));
-    assert.deepEqual(loadBundle(ws.bundle).steps, { mainCommit: { after: 'T01' }, merged: null });
+    writeFileSync(join(ws.bundle, 'steps.json'), JSON.stringify({ baseCommit: { after: 'T01' }, merged: null }));
+    assert.deepEqual(loadBundle(ws.bundle).steps, { baseCommit: { after: 'T01' }, merged: null });
   } finally {
     ws.cleanup();
   }

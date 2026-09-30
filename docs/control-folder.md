@@ -152,7 +152,9 @@ the same way: an adopted task's `blocks` clause named a task that had already st
 task was built without the new work and the person decides whether it needs redoing (see
 [task-state.md](task-state.md)). With the coordinator agent on, the log also carries `coordinator agent
 started` (or `coordinator agent failed to start: …`), `coordinator-pass Txx` when the agent passes an
-item on, and the end sequence's `main-sync` (or `main-sync failed: …`), `spawn main-sync` for a
+item on, and the end sequence's `base-hold` when the base cannot be prepared and again when the hold
+clears (with `base-hold {reason}: {git's error}` when git gave one), `main-sync` for the merge of the
+run's base, whatever it is called (or `main-sync failed: …`), `spawn main-sync` for a
 main-sync worker, `spawn tests-fix` and `tests-fix` for a test-fix worker, `tests`, `report plans/{slug}/REPORT.md` (a bare `report` for a footer rewrite) and
 `finished` lines (see [coordinator-agent.md](coordinator-agent.md)), and for the finisher `finisher
 rules: <path> (<source>)`, `finisher started` or `finisher resumed`, `finisher failed to start: …`,
@@ -166,8 +168,8 @@ human-readable record of what a run did, and the durable signal the test harness
 and merges nothing, and it closes every live worker, the coordinator agent and the finisher — ends its input queue, then SIGTERM after 5 s and
 SIGKILL after 10 s if it has not exited (`platform.close`, `worker-proc.mjs`) — and kills every worker
 setup still running. It is hard-stop only; there is no pause or resume. A HALT-closed worker's
-conversation log, worktree, and branch are deliberately **left** for forensics — removal is reserved for workers that finished normally. `main` is untouched, because nothing in this system ever merges
-to `main` (see [branch-model.md](branch-model.md)). To continue, the person removes the flag and
+conversation log, worktree, and branch are deliberately **left** for forensics — removal is reserved for workers that finished normally. The base branch is untouched, because nothing in this system ever
+merges into it (see [branch-model.md](branch-model.md)). To continue, the person removes the flag and
 re-runs the command (see [restart-recovery.md](restart-recovery.md)).
 
 The person raises it directly — `touch plans/{slug}/.parallel/control/HALT` — and the command prints
