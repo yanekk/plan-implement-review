@@ -535,7 +535,7 @@ export function startRig({ into = null, scenario = 'tour', keep = false, env = p
   const passTasks = [{ num: RIG_TASK, name: scenario, deps: [], state: finisher ? '✅' : '⬜' }];
   // The coordinator scenario's run: T01's request is the agent's until pass(), and the end is ready().
   const held = new Set(agent ? [`${workerId}:perm-1`] : []);
-  let handoff = finisher ? { state: 'ready', reportPath: `plans/${RIG_SLUG}/REPORT.md`, mainSha: '0000000' } : null;
+  let handoff = finisher ? { state: 'ready', reportPath: `plans/${RIG_SLUG}/REPORT.md`, baseSha: '0000000' } : null;
   let ended = false;
   const snapshot = () => {
     if (ended) return;

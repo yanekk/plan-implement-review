@@ -447,7 +447,7 @@ const fin = (over) => ({
 });
 const doneRun = (over) => ({
   branch: 'pir/p', ceiling: 2, complete: true, readyToMerge: true, coordinator: null,
-  handoff: { state: 'ready', reportPath: 'plans/p/REPORT.md', mainSha: 'abc' },
+  handoff: { state: 'ready', reportPath: 'plans/p/REPORT.md', baseSha: 'abc' },
   tasks: [task({ id: 'T01', done: true }), task({ id: 'T02', done: true })],
   ...over,
 });

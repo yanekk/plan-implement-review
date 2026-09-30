@@ -478,8 +478,8 @@ test('endAlertPass with the finisher: no `ready to merge`; red still `not ready`
   assert.deepEqual([sent, fin], [[], []]);
   assert.equal(call(r({ state: 'red', finisher: 'fallback', fallback: 'red' }, { testsReason: { reason: 'T03 failed' } })), true);
   assert.deepEqual(sent.map((a) => [a.title, a.message]), [['demo · not ready', 'Tests red on pir/demo: T03 failed']]);
-  assert.equal(call(r({ state: 'ready', finisher: 'fallback', fallback: 'gave-up' })), true);
-  assert.deepEqual(fin.map((a) => [a.title, a.message]), [['demo · finisher gave up', 'Merge by hand: git merge pir/demo']]);
+  assert.equal(call(r({ state: 'ready', finisher: 'fallback', fallback: 'gave-up', base: 'dev' })), true);
+  assert.deepEqual(fin.map((a) => [a.title, a.message]), [['demo · finisher gave up', 'Merge by hand: git switch dev && git merge pir/demo']]);
   assert.equal(call(r({ state: 'ready', finisher: 'fallback', fallback: 'gave-up' }), true), true, 'sent once');
   assert.equal(fin.length, 1);
   assert.equal(call(r({ state: 'ready', finisher: 'fallback', fallback: 'failed' })), true);

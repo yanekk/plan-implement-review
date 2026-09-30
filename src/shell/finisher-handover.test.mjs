@@ -326,7 +326,7 @@ test('main moving in awaiting-go re-syncs as today, then sends the finisher back
   const r = run.until((x) => x.handoff.state === 'ready' && told());
   assert.equal(run.coordinator.finisher.phase(), 'preparing');
   assert.equal(run.fins.latest().told.filter((m) => m.text.startsWith('main moved to')).length, 1, 'told once, when settled');
-  assert.equal(r.handoff.mainSha, mainSha);
+  assert.equal(r.handoff.baseSha, mainSha);
   assert.deepEqual(run.reportCommits(), [`report(${SLUG}): re-synced with main`, `report(${SLUG}): delivery report`]);
   assert.ok(run.fins.latest().told.some((m) => m.text.startsWith(`main moved to ${mainSha.slice(0, 12)}`)));
   // A go given for the old steps opens nothing.
@@ -509,7 +509,8 @@ test('renderFinished: the finisher\'s done line, and the give-up fallback with t
   assert.equal(renderFinished({ by: 'finisher', slug: SLUG }), '✔ finished: the finisher is done');
   const gave = renderFinished({ by: 'finisher-gave-up', slug: SLUG, reportPath: REPORT_REL });
   assert.match(gave, /could not go on/);
-  assert.match(gave, /\n\n {2}git merge pir\/demo\n$/);
+  assert.match(gave, /\n\n {2}git switch main && git merge pir\/demo\n$/);
+  assert.match(renderFinished({ by: 'finisher-gave-up', slug: SLUG, base: 'dev' }), /\n\n {2}git switch dev && git merge pir\/demo\n$/);
 });
 
 test('main moving in awaiting-go: a Go on the old question answered while the re-sync runs does not count (review T05)', (t) => {
