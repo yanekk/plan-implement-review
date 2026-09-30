@@ -7,7 +7,7 @@ lives in [FINDINGS.md](FINDINGS.md). Sixty words to a Notes cell, counted.
 
 **Status:** In progress.
 **Last updated:** 2026-09-30
-**Next `pir-work` will:** review T02 api-core.
+**Next `pir-work` will:** implement the next ⬜ task whose dependencies are ✅.
 
 ## Tasks
 
@@ -16,7 +16,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | # | Task | Depends on | State | Notes |
 |---|---|---|---|---|
 | T01 | usage-core | — | ⬜ | |
-| T02 | api-core | — | 🔍 | `src/core/api.mjs`: `homeKind`, `portFor`, `apiFiles`, `discoveryRecord`, `healthBody`, `route`; 29 tests. Deviations: `homeKind` is `test-real` when `osHome` is not a string (doc silent). `route` answers 500 when the body is undefined or not serialisable (doc names only a throw). `apiFiles` strips one trailing slash. |
+| T02 | api-core | — | ✅ | `src/core/api.mjs`, 30 tests. Review: one fix, reproduced by running it: an async handler's promise went out as 200 `{}`; any non-object result is now 500. The three recorded deviations stand. Probed: 16 mutations all caught, prototype paths, absolute-form and odd urls, `PIR_HOME` precedence against `indexDir`. |
 | T03 | service-core | — | ⬜ | |
 | T04 | usage-report | T01, T02 | ⬜ | |
 | T05 | api-service | T01, T02 | ⬜ | |
@@ -27,7 +27,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T10 | live-usage-check | T08 | ⬜ | |
 | T11 | docs-and-readme | T07, T09, T10 | ⬜ | |
 
-**Review queue:** T02
+**Review queue:** *(empty)*
 
 ## Blocked on the user
 
