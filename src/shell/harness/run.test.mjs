@@ -940,3 +940,54 @@ test('createScenarioSteps merges once the run is ready and the branch holds main
     ws.cleanup();
   }
 });
+
+test('createScenarioSteps with watchFinisher looks once when the finisher waits for the go, and again with the ledger at the end (finisher T10)', () => {
+  const ws = workspace();
+  try {
+    const control = join(ws.dir, 'control');
+    mkdirSync(control, { recursive: true });
+    let mainSha = 'seed1234';
+    let inMain = false;
+    const calls = [];
+    const gitRun = (args) => {
+      calls.push(args);
+      if (args[0] === 'rev-parse') return { ok: true, stdout: `${mainSha}\n` };
+      if (args[0] === 'merge-base') return { ok: inMain, stdout: '' };
+      return { ok: true, stdout: '' };
+    };
+    const steps = createScenarioSteps({ spec: { watchFinisher: true }, repoDir: ws.dir, controlDir: control, slug: 'x', gitRun });
+    const status = (phase) =>
+      writeSnapshot(control, { proc: { pid: 1 }, finalState: null, runState: { tasks: [], handoff: { state: 'ready' }, finisher: { phase } } });
+    steps.tick('');
+    assert.equal(steps.record.finisher.mainAtStart, 'seed1234');
+    assert.equal(steps.record.finisher.beforeGo, null, 'no finisher yet');
+    status('preparing');
+    steps.tick('');
+    assert.equal(steps.record.finisher.beforeGo, null, 'preparing is not waiting for the go');
+    status('awaiting-go');
+    steps.tick('');
+    const b = steps.record.finisher.beforeGo;
+    assert.deepEqual({ phase: b.phase, mainMoved: b.mainMoved, branchInMain: b.branchInMain, finishedFile: b.finishedFile }, { phase: 'awaiting-go', mainMoved: false, branchInMain: false, finishedFile: false });
+    assert.ok(calls.some((a) => a[0] === 'merge-base' && a.includes('refs/heads/pir/x') && a.at(-1) === 'refs/heads/main'), 'asks whether the branch is in main');
+    // The finisher's go and work: main moves, FINISHED appears. A later look does not replace the first.
+    mainSha = 'merged99';
+    inMain = true;
+    writeFileSync(join(ws.dir, 'FINISHED'), 'finished\n');
+    steps.tick('');
+    assert.equal(steps.record.finisher.beforeGo.mainSha, 'seed1234');
+    mkdirSync(join(control, 'finisher'), { recursive: true });
+    writeFileSync(join(control, 'finisher', 'ledger.jsonl'), '{"t":"2026-01-01T00:01:00.000Z","kind":"go","by":"phone"}\nnot json\n{"kind":"status","status":"done"}\n');
+    steps.final();
+    const a = steps.record.finisher.afterRun;
+    assert.deepEqual({ mainMoved: a.mainMoved, branchInMain: a.branchInMain, finishedFile: a.finishedFile }, { mainMoved: true, branchInMain: true, finishedFile: true });
+    assert.deepEqual(a.ledger.map((l) => l.kind), ['go', 'status'], 'a cut line is skipped');
+  } finally {
+    ws.cleanup();
+  }
+});
+
+test('createScenarioSteps without watchFinisher keeps its old record and final() does nothing', () => {
+  const steps = createScenarioSteps({ spec: { mergeWhenReady: true }, repoDir: '/nonexistent', controlDir: '/nonexistent', slug: 'x', gitRun: () => ({ ok: false, stdout: '' }) });
+  steps.final();
+  assert.deepEqual(steps.record, { mainCommit: null, merged: null });
+});

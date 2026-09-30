@@ -11,6 +11,10 @@ Legend: 🐞 defect found · ✅ verified by hand with the user · 📌 worth kn
 
 | Date | | Finding |
 |---|---|---|
+| 2026-09-30 | 📌 | T10 review: the live bundle sat in the scratch control folder and went with teardown. The finisher's transcript under `~/.claude/projects/-private-tmp-pir-finisher-live--…` confirms the PASS: no merge before the Go answer (05:24:40Z), merge and FINISHED after. |
+| 2026-09-30 | 📌 | T10 review: `finisherWaitedForGo` looks once, the first poll in `awaiting-go`. A change to main between that look and the go would not fail it. Left as is. |
+| 2026-09-30 | ✅ | T10 live check `run.mjs finisher-live` PASS, run by the user from their terminal: ready alert opened the finisher's chat on the phone, user answered Go there (ledger `go` by `phone`), finisher merged and wrote FINISHED, finished alert arrived. |
+| 2026-09-30 | 📌 | Remote Control from a sandboxed worker session fails, `remote-control-failed` "Session creation failed", every time (probed); ntfy still sends. A live phone check must run from the person's terminal. |
 | 2026-09-29 | 📌 | T09 drill, worker-driven, 80×24 and 120×40: go, `Not yet` then go, stuck then a second go, and a reserved request after the go read as §2.11 says; alerts match §2.9. User kept the 15-minute reminder after `Not yet`. |
 | 2026-09-29 | 📌 | T09 drill: a stuck finisher lists as `● asking you` on the dashboard, not `ready for your go`; its conversation ends `· the worker exited (code 0)`, calling the finisher a worker. Left as is. |
 | 2026-09-29 | 🔄 | T07: the live-view footer while the finisher is on is one line per phase, each naming `c`: `◆ finisher preparing · c to watch`, `finishing · c to watch`, `stuck · c to review and say go`, `asking you · c to answer` (user, 2026-09-29). T08 carries it to docs. |
