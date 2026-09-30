@@ -5,9 +5,9 @@ lives in [FINDINGS.md](FINDINGS.md). Sixty words to a Notes cell, counted.
 
 **Plan reviewed:** 2026-09-29 — 3 fixed, 4 decided with the user
 
-**Status:** Building. T01–T03 done; T04 implemented, awaiting review.
+**Status:** Building. T01–T04 done.
 **Last updated:** 2026-09-30
-**Next `pir-work` will:** review T04 single-program.
+**Next `pir-work` will:** implement the next ⬜ whose dependencies are ✅ (T05, T06, T07).
 
 ## Tasks
 
@@ -18,7 +18,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T01 | settings-commands | — | ✅ | |
 | T02 | single-flow | — | ✅ | |
 | T03 | held-sessions | — | ✅ | |
-| T04 | single-program | T02, T03 | 🔍 | `single-run.mjs` with `runSingle`, `singleChecks`, `singleRunState`; `openBaseline`/`removeBaseline`; 26 tests. Deviations: `singleflow.mjs` changed (green but dirty tells the session, user decision); own setup note `formatSingleSetupNote` (user decision); accepted claim re-checked at the idle gate; running command recorded in `command.json` and killed on restart. See commit. |
+| T04 | single-program | T02, T03 | ✅ | Reviewed. One defect fixed: a `built` name whose control folder a removed run left behind split this run's folder at the rename; `singleChecks` now refuses it (reproduced, test locks it). Probed stop and resume during setup, baseline and review: three tests added, all passed. The four recorded deviations read and accepted. `npm test` green at load 7; 29 tests. |
 | T05 | single-launch | T01, T02 | ⬜ | |
 | T06 | single-alerts | T04 | ⬜ | |
 | T07 | single-skill | T02 | ⬜ | |
@@ -29,7 +29,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T12 | single-live | T07, T11 | ⬜ | |
 | T13 | docs-and-readme | T12 | ⬜ | |
 
-**Review queue:** T04
+**Review queue:** *(empty)*
 
 ## Blocked on the user
 

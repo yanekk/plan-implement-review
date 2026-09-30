@@ -7,11 +7,13 @@ Legend: 🐞 defect found · ✅ verified by hand with the user · 📌 worth kn
 
 | Date | | Finding |
 |---|---|---|
+| 2026-09-30 | 🐞 | T07, T13: `singleChecks` also refuses a `built` name whose `plans/{name}/.parallel/single` exists. A removed run leaves it, and the rename then split the control folder in two. Reproduced by a scratch run, fixed in T04 review, test locks it. |
+| 2026-09-30 | 📌 | `plan-run.mjs` has the same rename code: a leftover `plans/{slug}/.parallel/plan/state.json` of a removed planning run reads as this run's folder already moved. Not this plan's file; left alone. |
 | 2026-09-30 | 📌 | T13, T05: the command line in flight is recorded in the control folder's `command.json` (pid, startTime); `single-run.mjs` kills it at its next start. `pir` stop reaps `workers.json` only, and DESIGN §6 recovery does not name the file. |
 | 2026-09-30 | 📌 | T08: the fake's `{{reportsDir}}` reads to the end of the line, and the single instructions go on after the path, so it is wrong there. `single-run.test.mjs` cuts the folder out of `FAKE_OPENING` (`REPORT_JS`). |
 | 2026-09-30 | 📌 | T10: the snapshot step entries are planning's plus `round` and `testingSince`; phases `building`, `reviewing`, `testing`, `asking`, `done`, `failed`, `pending`; the `merge` entry is `ready` or `pending`. `merged` is not in the snapshot. |
 | 2026-09-30 | 📌 | T07, T12: `resumeInstruction()` is reused unchanged (DESIGN §2.6) and tells a resumed single session to check "the plan files", which a single run has none of. |
-| 2026-09-30 | 🔄 | Tests that pass on the reported commit but leave the tree dirty: the session gets `leftoverMessage` and the step waits for a new report, no rerun (user, T04). Changed in `decideSingleStep`; a moved head still reruns. |
+| 2026-09-30 | 🔄 | T07, T13: tests green on the reported commit but the tree dirty: the session gets `leftoverMessage` and the step waits for a new report (user, T04). DESIGN §2.4 step 3 still says rerun; a moved head still reruns. |
 | 2026-09-30 | 📌 | A commit or edit after a green result, unreported: `single-run.mjs` re-reads head and status at the idle gate and puts the accepted claim through `singleChecks` again, so the step never closes on an untested commit. |
 | 2026-09-30 | 📌 | T10: a dropped report's body stays in `state.accepted.body` of state.json for the footer; the snapshot's runState does not carry it. |
 | 2026-09-30 | 🔄 | The failed-setup note of a single run is `formatSingleSetupNote` (single-run.mjs): no plan wording, last line names the setup lines pir runs (user, T04). `formatSetupNote` stays the build's. |
