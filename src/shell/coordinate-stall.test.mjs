@@ -29,6 +29,9 @@ test('a stalled run (nothing live, nothing to do) ends after STALL_GRACE backsto
       join(plan, 'PROGRESS.md'),
       '# Progress\n\n**Plan reviewed:** yes\n\n## Tasks\n\n| # | Task | Depends on | State | Notes |\n|---|---|---|---|---|\n| T01 | stuck | — | ⛔ | |\n',
     );
+    // coordinate.mjs refuses to start until the repo names its base branch (base-branch DESIGN §2.1).
+    mkdirSync(join(repo, '.pir'));
+    writeFileSync(join(repo, '.pir', 'settings.json'), '{"baseBranch": "main"}\n');
     const git = (...a) => execFileSync('git', a, { cwd: repo, stdio: 'pipe' });
     git('init', '-q', '-b', 'main');
     git('add', '-A');
