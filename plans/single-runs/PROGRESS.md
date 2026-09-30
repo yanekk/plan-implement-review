@@ -18,7 +18,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 |---|---|---|---|---|
 | T01 | settings-commands | — | ⬜ | |
 | T02 | single-flow | — | ⬜ | |
-| T03 | held-sessions | — | ⬜ | |
+| T03 | held-sessions | — | 🔍 | `held-session.mjs` holds the sessions and `runPlanning` uses it; planning tests untouched, 11 new tests. Deviations: the holder also returns `since`, `activity`, `views`, `workedMs`, `controlMoved`; `env` may be a function; `STOP_CLOSE` and `readLogEntries` are exported; no `plan-rig.test.mjs` exists, the `plan-rig-*.test.mjs` files ran instead; `./install.sh` not run from the task branch. |
 | T04 | single-program | T02, T03 | ⬜ | |
 | T05 | single-launch | T01, T02 | ⬜ | |
 | T06 | single-alerts | T04 | ⬜ | |
@@ -30,7 +30,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T12 | single-live | T07, T11 | ⬜ | |
 | T13 | docs-and-readme | T12 | ⬜ | |
 
-**Review queue:** *(empty)*
+**Review queue:** T03
 
 ## Blocked on the user
 
