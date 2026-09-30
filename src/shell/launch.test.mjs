@@ -5,9 +5,10 @@ import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, realpath
 import { tmpdir } from 'node:os';
 import { join, basename } from 'node:path';
 
-import { planPreflight, resumeRun, startPlanRun, startRun } from './launch.mjs';
+import { planPreflight, resumeRun, singleRunPath, startPlanRun, startRun, startSingleRun } from './launch.mjs';
 import { indexDir, listRecords, recordPath, writeRecord } from './index-store.mjs';
 import { initialPlanState } from '../core/planflow.mjs';
+import { initialSingleState } from '../core/singleflow.mjs';
 
 // The launch tests never touch a real coordinator, a real caffeinate, the real ~/.pir, or the real
 // Mac's power state. Only readReviewGate reads the real filesystem, so each test builds a scratch repo
@@ -919,4 +920,279 @@ test('resumeRun passes a base-branch refusal on with its message', (t) => {
   assert.equal(r.resumed, false);
   assert.equal(r.reason, 'no-base-setting');
   assert.match(r.message, /no base branch is set for proj/);
+});
+
+// ---- Single runs (single-runs T05, DESIGN §2.3, §2.11) ----
+//
+// Real git in a scratch repo, a scratch $PIR_HOME, an injected spawn: no single program and no caffeinate
+// is ever started. The repo's committed settings name the base and both command lists unless a test
+// rewrites them.
+
+const COMMANDS = { setup: ['npm ci'], test: ['npm test', 'npm run lint'] };
+
+// Rewrite the scratch repo's own settings file in the working tree (it is read from there, not from a
+// commit) and return the scratch.
+function repoSettings(s, settings) {
+  writeFileSync(join(s.root, '.pir', 'settings.json'), JSON.stringify(settings));
+  return s;
+}
+
+function singleRepo(t, opts = {}) {
+  return repoSettings(gitRepo(t, opts), { baseBranch: opts.branch ?? 'main', ...COMMANDS });
+}
+
+function userSettings(s, settings) {
+  const dir = join(s.home, '.pir', basename(s.root));
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, 'settings.json'), typeof settings === 'string' ? settings : JSON.stringify(settings));
+}
+
+const startSingle = (s, prompt, extra = {}) => {
+  const { spawn, calls, unrefs } = makeSpawn();
+  const r = startSingleRun(prompt, { cwd: s.root, spawn, exec: execAlive, env: s.env, now: fixedNow, random: seq('3f9a'), ...extra });
+  return { r, calls, unrefs };
+};
+
+for (const [label, arrange, reason, check = () => {}] of [
+  ['outside a git repo', (s) => ({ cwd: s.base }), 'not-a-repo'],
+  ['no base branch set', (s) => { repoSettings(s, COMMANDS); return {}; }, 'no-base-setting', (r) => assert.match(r.message, /^pir: no base branch is set for proj\./)],
+  ['a base branch that does not exist', (s) => { repoSettings(s, { baseBranch: 'dev', ...COMMANDS }); return {}; }, 'no-base-branch', (r) => assert.match(r.message, /^pir: the base branch dev /)],
+  ['a settings file that is not JSON', (s) => { writeFileSync(join(s.root, '.pir', 'settings.json'), '{oops'); return {}; }, 'bad-settings', (r) => assert.match(r.message, /\.pir\/settings\.json.*not valid JSON/)],
+  ['a test key of the wrong shape, though the user file has a good one', (s) => {
+    repoSettings(s, { baseBranch: 'main', setup: [], test: 'npm test' });
+    userSettings(s, { test: ['npm test'] });
+    return {};
+  }, 'bad-settings', (r) => assert.match(r.message, /\.pir\/settings\.json.*"test" must be a non-empty list of commands/)],
+  ['a user file with an empty test list', (s) => { userSettings(s, { test: [] }); return {}; }, 'bad-settings', (r, s) => assert.ok(r.message.includes(join(s.home, '.pir', 'proj', 'settings.json')), r.message)],
+  ['no commands in either file', (s) => { repoSettings(s, { baseBranch: 'main' }); return {}; }, 'no-commands', (r, s) => assert.equal(
+    r.message,
+    `proj has no setup/test commands for a single run. Add to .pir/settings.json (or ${join(s.home, '.pir', 'proj', 'settings.json')}): "setup": ["<install command>"], "test": ["<test command>"]`,
+  )],
+  ['setup set but no test', (s) => { repoSettings(s, { baseBranch: 'main', setup: [] }); return {}; }, 'no-commands', (r) => assert.match(r.message, /^proj has no test commands for a single run\. Add to \.pir\/settings\.json \(or .+\): "test": \["<test command>"\]$/)],
+  ['an empty prompt', () => ({ prompt: ' \n\t ' }), 'empty-prompt'],
+  ['a prompt that is not text', () => ({ prompt: null }), 'empty-prompt'],
+]) {
+  test(`startSingleRun refuses ${label} → ${reason}, nothing created`, (t) => {
+    const s = singleRepo(t);
+    const extra = arrange(s);
+    const before = footprint(s);
+    const { r, calls } = startSingle(s, 'prompt' in extra ? extra.prompt : 'fix the typo', extra.cwd ? { cwd: extra.cwd } : {});
+    assert.equal(r.started, false);
+    assert.equal(r.reason, reason);
+    check(r, s);
+    assert.equal(calls.length, 0, 'nothing spawned');
+    assert.deepEqual(footprint(s), before, 'no branch, worktree, folder or index entry');
+  });
+}
+
+test('startSingleRun refusal order: repo, then base, then settings, then commands, then the prompt (§2.3)', (t) => {
+  const s = gitRepo(t, { base: null });
+  mkdirSync(join(s.root, '.pir'));
+  const before = footprint(s);
+  const reasonOf = (cwd = s.root) => startSingleRun('', { cwd, spawn: makeSpawn().spawn, env: s.env }).reason;
+  // Everything is wrong at once: no repo at cwd, no settings, no commands, no prompt.
+  assert.equal(reasonOf(s.base), 'not-a-repo');
+  assert.equal(reasonOf(), 'no-base-setting');
+  repoSettings(s, { baseBranch: 'dev' });
+  assert.equal(reasonOf(), 'no-base-branch');
+  repoSettings(s, { baseBranch: 'main' });
+  assert.equal(reasonOf(), 'no-commands');
+  repoSettings(s, { baseBranch: 'main', ...COMMANDS });
+  assert.equal(reasonOf(), 'empty-prompt');
+  assert.deepEqual(footprint(s), before);
+});
+
+test('startSingleRun: a settings file broken after the pre-flight read it still refuses bad-settings, nothing created', (t) => {
+  const s = singleRepo(t);
+  const before = footprint(s);
+  const sha = g(s.root, 'rev-parse', 'main').trim();
+  // The base resolved from a good file; the file is broken by the time the commands are read.
+  const prepareBase = () => {
+    repoSettings(s, { baseBranch: 'main', setup: 'npm ci', test: ['npm test'] });
+    return { ok: true, sha, remote: null };
+  };
+  const { r, calls } = startSingle(s, 'a change', { prepareBase });
+  assert.deepEqual(r, { started: false, reason: 'bad-settings', message: '.pir/settings.json: "setup" must be a list of commands' });
+  assert.equal(calls.length, 0);
+  assert.deepEqual(footprint(s), before);
+});
+
+test('startSingleRun: a clean start creates branch, worktree, control folder, index record, and spawns', (t) => {
+  const s = singleRepo(t);
+  const mainHead = g(s.root, 'rev-parse', 'HEAD').trim();
+  const prompt = 'Fix the typo in the README heading\n\nIt says "teh".';
+  const { r, calls, unrefs } = startSingle(s, prompt);
+
+  assert.equal(r.started, true);
+  assert.equal(r.runId, 'single-3f9a');
+  assert.equal(r.pid, CHILD_PID);
+
+  // Branch cut from the base commit, in its own worktree; the person's checkout stays on main.
+  assert.equal(g(s.root, 'rev-parse', 'pir/single-3f9a').trim(), mainHead);
+  const wt = join(s.root, '.claude', 'worktrees', 'pir-single-3f9a');
+  assert.equal(g(wt, 'symbolic-ref', '--short', 'HEAD').trim(), 'pir/single-3f9a');
+  assert.equal(g(s.root, 'symbolic-ref', '--short', 'HEAD').trim(), 'main');
+  assert.equal(g(s.root, 'config', '--get', 'branch.pir/single-3f9a.pirBase').trim(), 'main', 'pirBase recorded');
+
+  // Control folder under plans/{runId}/.parallel/single, holding the prompt as sent and a fresh state.
+  const controlDir = join(s.root, 'plans', 'single-3f9a', '.parallel', 'single');
+  assert.equal(r.controlDir, controlDir);
+  assert.equal(readFileSync(join(controlDir, 'prompt.md'), 'utf8'), prompt);
+  const state = JSON.parse(readFileSync(join(controlDir, 'state.json'), 'utf8'));
+  assert.deepEqual(state, initialSingleState({ id: 'single-3f9a', base: 'main', baseSha: mainHead, commands: COMMANDS }));
+  assert.deepEqual(state.commands, COMMANDS, 'the commands are stored with the run');
+  assert.ok(existsSync(join(controlDir, 'run.log')), 'run.log opened for the program output');
+  assert.deepEqual(readdirSync(controlDir).filter((n) => n.endsWith('.tmp')), [], 'no temp left behind');
+
+  // The single program, detached, with its control folder; PIR_RUN on, the caller's env carried.
+  const prog = calls[0];
+  assert.equal(prog.cmd, 'node');
+  assert.equal(prog.args[0], singleRunPath());
+  assert.ok(singleRunPath().endsWith(join('src', 'shell', 'single-run.mjs')), singleRunPath());
+  assert.deepEqual(prog.args.slice(1), ['--control', controlDir]);
+  assert.equal(prog.opts.cwd, s.root);
+  assert.equal(prog.opts.detached, true);
+  assert.equal(prog.opts.stdio[0], 'ignore');
+  assert.equal(typeof prog.opts.stdio[1], 'number');
+  assert.equal(prog.opts.stdio[1], prog.opts.stdio[2], 'stdout and stderr share run.log');
+  assert.equal(prog.opts.env.PIR_RUN, '1');
+  assert.equal(prog.opts.env.KEEP, 'yes');
+  assert.equal(prog.opts.env.PARALLEL_LIVE, undefined, 'a single run is not a live build');
+
+  // Keep-awake tied to the program's pid.
+  assert.equal(calls.length, 2);
+  assert.equal(calls[1].cmd, 'caffeinate');
+  assert.deepEqual(calls[1].args, ['-i', '-w', String(CHILD_PID)]);
+  assert.equal(calls[1].opts.detached, true);
+  assert.equal(unrefs(), 2);
+
+  // Index record kind 'single', keyed by run id, labelled from the prompt's first line.
+  const dir = join(s.home, '.pir', 'runs');
+  const records = listRecords({ dir });
+  assert.equal(records.length, 1);
+  assert.ok(existsSync(recordPath('proj', 'single-3f9a', { dir })));
+  assert.deepEqual(records[0], {
+    version: 1,
+    kind: 'single',
+    label: 'Fix the typo in the REA…',
+    go: null,
+    slug: 'single-3f9a',
+    repo: 'proj',
+    repoPath: s.root,
+    controlDir,
+    pid: CHILD_PID,
+    startTime: LSTART,
+    startedAt: '2026-09-22T08:27:37.000Z',
+    branch: 'pir/single-3f9a',
+    baseBranch: 'main',
+    finalState: null,
+    updatedAt: null,
+  });
+  assert.deepEqual(r.record, records[0]);
+
+  // Nothing tracked changed in the person's checkout.
+  assert.equal(g(s.root, 'status', '--porcelain', '--untracked-files=no'), ' M .pir/settings.json\n', 'only the settings this test rewrote');
+});
+
+test('startSingleRun: commands merge key by key, the user file winning, and the base is the remote newest commit', (t) => {
+  const s = singleRepo(t, { branch: 'dev' });
+  const bare = addBareRemote(s);
+  g(s.root, 'push', '-q', 'origin', 'dev');
+  const ahead = pushAhead(s, bare, 'dev');
+  userSettings(s, { test: ['make check'], setup: [] });
+
+  const { r } = startSingle(s, 'a change', { random: seq('d0d0') });
+  assert.equal(r.started, true);
+  assert.equal(g(s.root, 'rev-parse', 'pir/single-d0d0').trim(), ahead, 'cut from the commit the pre-flight chose');
+  const state = JSON.parse(readFileSync(join(r.controlDir, 'state.json'), 'utf8'));
+  assert.deepEqual(state.commands, { setup: [], test: ['make check'] });
+  assert.deepEqual([state.base, state.baseSha], ['dev', ahead]);
+  assert.equal(r.record.baseBranch, 'dev');
+});
+
+test('startSingleRun from a linked worktree: root is the main worktree', (t) => {
+  const s = singleRepo(t);
+  const linked = join(s.base, 'linked');
+  g(s.root, 'worktree', 'add', '-q', '-b', 'side', linked);
+  const { r, calls } = startSingle(s, 'a change', { cwd: linked });
+  assert.equal(r.record.repoPath, s.root);
+  assert.equal(r.controlDir, join(s.root, 'plans', 'single-3f9a', '.parallel', 'single'));
+  assert.equal(calls[0].opts.cwd, s.root);
+});
+
+test('startSingleRun: a run id taken by a branch, an index entry or a plans/ folder is drawn again', (t) => {
+  const s = singleRepo(t);
+  const dir = join(s.home, '.pir', 'runs');
+  g(s.root, 'branch', 'pir/single-0001');
+  writeRecord({ version: 1, kind: 'single', slug: 'single-0002', repo: 'proj', repoPath: s.root, controlDir: '/x', pid: 1, startTime: LSTART, branch: 'pir/single-0002' }, { dir });
+  mkdirSync(join(s.root, 'plans', 'single-0003'), { recursive: true });
+  // A planning run's id does not take a single run's: the two are different names.
+  g(s.root, 'branch', 'pir/plan-0004');
+
+  const drawn = [];
+  const random = () => {
+    const v = ['0001', '0002', '0003', '0004'][drawn.length];
+    drawn.push(v);
+    return v;
+  };
+  const { r } = startSingle(s, 'a change', { random });
+  assert.equal(r.runId, 'single-0004');
+  assert.deepEqual(drawn, ['0001', '0002', '0003', '0004']);
+  // The taken ones were left exactly as they were.
+  assert.equal(g(s.root, 'rev-parse', 'pir/single-0001').trim(), g(s.root, 'rev-parse', 'main').trim());
+  assert.equal(listRecords({ dir }).find((x) => x.slug === 'single-0002').controlDir, '/x');
+  assert.deepEqual(readdirSync(join(s.root, 'plans', 'single-0003')), []);
+});
+
+test('startSingleRun: a random source that never yields a free id throws rather than loop', (t) => {
+  const s = singleRepo(t);
+  g(s.root, 'branch', 'pir/single-0001');
+  assert.throws(() => startSingle(s, 'a change', { random: seq('0001') }), /startSingleRun: no free run id after 64 tries/);
+});
+
+function singleRecord(s, overrides = {}) {
+  return planRecord(s, {
+    kind: 'single',
+    label: 'fix the typo',
+    slug: 'fix-typo',
+    branch: 'pir/fix-typo',
+    baseBranch: 'main',
+    controlDir: join(s.root, 'plans', 'fix-typo', '.parallel', 'single'),
+    ...overrides,
+  });
+}
+
+test('resumeRun on a single record: single-run.mjs --resume on its control folder; finalState cleared', (t) => {
+  const s = gitRepo(t);
+  const dir = join(s.home, '.pir', 'runs');
+  // stopped, and crashed (no final status, the process gone).
+  for (const finalState of ['stopped', null]) {
+    const rec = singleRecord(s, { finalState });
+    writeRecord(rec, { dir });
+    const { spawn, calls } = makeSpawn();
+    const r = resumeRun(rec, { spawn, exec: execAlive, kill: dead, env: s.env });
+    assert.deepEqual(r, { resumed: true, pid: CHILD_PID }, `from finalState ${finalState}`);
+    assert.equal(calls[0].cmd, 'node');
+    assert.deepEqual(calls[0].args, [singleRunPath(), '--control', rec.controlDir, '--resume']);
+    assert.equal(calls[0].opts.cwd, s.root);
+    assert.equal(calls[0].opts.detached, true);
+    assert.equal(calls[0].opts.env.PIR_RUN, '1');
+    assert.equal(calls[0].opts.env.PARALLEL_LIVE, undefined);
+    assert.ok(existsSync(join(rec.controlDir, 'run.log')));
+    assert.equal(calls[1].cmd, 'caffeinate');
+    assert.deepEqual(calls[1].args, ['-i', '-w', String(CHILD_PID)]);
+    assert.equal(calls.length, 2);
+
+    const after = listRecords({ dir });
+    assert.equal(after.length, 1);
+    assert.deepEqual(after[0], { ...rec, pid: CHILD_PID, startTime: LSTART, finalState: null, updatedAt: null });
+  }
+});
+
+test('resumeRun on a running single record refuses already-running, nothing spawned', (t) => {
+  const s = gitRepo(t);
+  const rec = singleRecord(s, { finalState: null, startTime: LSTART });
+  const { spawn, calls } = makeSpawn();
+  assert.deepEqual(resumeRun(rec, { spawn, exec: execAlive, kill: () => {}, env: s.env }), { resumed: false, reason: 'already-running' });
+  assert.equal(calls.length, 0);
 });

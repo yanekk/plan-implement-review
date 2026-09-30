@@ -25,12 +25,13 @@ import { startTimeOf, resolveLiveness } from './identity.mjs';
 import { indexDir, listRecords, recordPath, updateRecord, writeRecord } from './index-store.mjs';
 import { planHome } from './plan-home.mjs';
 import { openPlanBranch, cutFeatureBranch } from './worktree.mjs';
-import { prepareBase as prepareBaseReal, resolveBaseSetting, resolveRunBase } from './base-branch.mjs';
-import { refusalText } from '../core/basebranch.mjs';
+import { prepareBase as prepareBaseReal, resolveBaseSetting, resolveRunBase, resolveSettings } from './base-branch.mjs';
+import { commandsRefusalText, effectiveCommands, refusalText } from '../core/basebranch.mjs';
 import { writeFileAtomic, writeJsonAtomic } from './atomic-write.mjs';
 import { classifyRun } from '../core/runstate.mjs';
 import { initialPlanState, runIdFrom } from '../core/planflow.mjs';
 import { labelFromBrief } from '../core/runrecord.mjs';
+import { initialSingleState, singleIdFrom } from '../core/singleflow.mjs';
 
 // The filesystem calls startRun makes directly — only to prepare the coordinator's run.log. The index
 // writes go through index-store's own fs (a scratch dir via $PIR_HOME in tests); this pair is what a
@@ -240,12 +241,22 @@ function defaultRandom() {
   return randomBytes(2).toString('hex');
 }
 
-// A run id is taken when anything the run would create under it already exists: its branch, its index
-// entry (the file, parseable or not, since writeRecord would overwrite it) or its plans/ folder.
+// A run id (plan-{hex4} or single-{hex4}) is taken when anything the run would create under it already
+// exists: its branch, its index entry (the file, parseable or not, since writeRecord would overwrite it)
+// or its plans/ folder.
 function runIdTaken(runId, { root, repo, dir, fs }) {
   if (gitOk(root, ['rev-parse', '--verify', '--quiet', `refs/heads/pir/${runId}`]).ok) return true;
   if (fs.existsSync(recordPath(repo, runId, { dir }))) return true;
   return fs.existsSync(join(root, 'plans', runId));
+}
+
+// Draw run ids (`idFrom` of four random hex characters) until one is free.
+function drawRunId(idFrom, { random, root, repo, dir, fs, who }) {
+  for (let i = 0; i < MAX_ID_TRIES; i += 1) {
+    const candidate = idFrom(random());
+    if (!runIdTaken(candidate, { root, repo, dir, fs })) return candidate;
+  }
+  throw new Error(`${who}: no free run id after ${MAX_ID_TRIES} tries`);
 }
 
 // Spawn a detached node program with its output appended to <controlDir>/run.log, plus the caffeinate
@@ -296,12 +307,7 @@ export function startPlanRun(
   const { root, repo, base, baseSha } = pre;
   const dir = indexDir({ env });
 
-  let runId = null;
-  for (let i = 0; i < MAX_ID_TRIES && runId === null; i += 1) {
-    const candidate = runIdFrom(random());
-    if (!runIdTaken(candidate, { root, repo, dir, fs })) runId = candidate;
-  }
-  if (runId === null) throw new Error(`startPlanRun: no free run id after ${MAX_ID_TRIES} tries`);
+  const runId = drawRunId(runIdFrom, { random, root, repo, dir, fs, who: 'startPlanRun' });
 
   let branch;
   try {
@@ -347,9 +353,106 @@ export function startPlanRun(
   return { started: true, runId, pid: child.pid, record, controlDir };
 }
 
+// ---- Single runs (single-runs T05, DESIGN §2.3, §2.11, §3.5) ----
+
+// The single program, resolved from this file like the planning program: the installed engine's copy.
+export function singleRunPath() {
+  return fileURLToPath(new URL('./single-run.mjs', import.meta.url));
+}
+
+// startSingleRun(prompt, { cwd, spawn, exec, fs, now, env, random }) →
+//   { started: true, runId, pid, record, controlDir }
+//   | { started: false, reason, message?, base?, remote? }
+//   reason: 'not-a-repo' | <a planPreflight base reason> | 'bad-settings' | 'no-commands' | 'empty-prompt'
+// The one call the dashboard box makes for `@repo/single <prompt>`. The refusals come in that order and
+// before anything is created (§2.3). `message` is the full line for a caller that shows one: refusalText
+// for a base refusal, commandsRefusalText for the commands. The commands are read here, once, and stored
+// in state.json, so a settings edit mid-run does not change what green means for this run (§2.2).
+export function startSingleRun(
+  prompt,
+  {
+    cwd = process.cwd(),
+    spawn = realSpawn,
+    exec,
+    fs = nodeFs,
+    now = () => new Date(),
+    env = process.env,
+    random = defaultRandom,
+    prepareBase = prepareBaseReal,
+  } = {},
+) {
+  const pre = planPreflight({ cwd, env, prepareBase });
+  if (!pre.ok) {
+    const { ok, ...refusal } = pre;
+    return { started: false, ...refusal };
+  }
+  const { root, repo, base, baseSha } = pre;
+
+  // A broken settings file has normally refused in the pre-flight already (the base is read from the
+  // same two files); this read can still see one if a file changed in between.
+  const files = resolveSettings(root, { env });
+  const commands = effectiveCommands(files);
+  if (!commands.ok) {
+    const message = commandsRefusalText(commands, { repo, repoFile: files.repoFile, userFile: files.userFile });
+    return { started: false, reason: commands.reason, message };
+  }
+  if (typeof prompt !== 'string' || prompt.trim() === '') return { started: false, reason: 'empty-prompt' };
+
+  const dir = indexDir({ env });
+  const runId = drawRunId(singleIdFrom, { random, root, repo, dir, fs, who: 'startSingleRun' });
+
+  let branch;
+  try {
+    // openPlanBranch is id-agnostic: pir/{runId} cut from the pre-flight's commit, pirBase recorded,
+    // checked out in .claude/worktrees/pir-{runId}.
+    ({ branch } = openPlanBranch(runId, { root, base, from: baseSha }));
+  } catch (err) {
+    // The chosen commit vanished between the pre-flight and here: still nothing created.
+    if (err && err.code === 'no-base-branch') {
+      const refusal = { reason: 'no-base-branch', remote: pre.remote };
+      return { started: false, ...refusal, base, message: refusalText(refusal, { repo, base, file: pre.file }) };
+    }
+    throw err;
+  }
+
+  // Under plans/{runId}/ for the planning run's reason: the sessions write their reports here and Claude
+  // Code never auto-approves a write under .git (§2.3). Ignored by plans/*/.parallel/.
+  const controlDir = join(root, 'plans', runId, '.parallel', 'single');
+  fs.mkdirSync(controlDir, { recursive: true });
+  writeFileAtomic(join(controlDir, 'prompt.md'), prompt, { fs });
+  const state = initialSingleState({ id: runId, base, baseSha, commands: { setup: commands.setup, test: commands.test } });
+  writeJsonAtomic(join(controlDir, 'state.json'), state, { fs });
+
+  const child = spawnDetached([singleRunPath(), '--control', controlDir], { cwd: root, controlDir, spawn, fs, env });
+  const record = {
+    version: 1,
+    kind: 'single',
+    label: labelFromBrief(prompt),
+    go: null,
+    slug: runId,
+    repo,
+    repoPath: root,
+    controlDir,
+    pid: child.pid,
+    startTime: startTimeOf(child.pid, { exec }),
+    startedAt: now().toISOString(),
+    branch,
+    baseBranch: base,
+    finalState: null,
+    updatedAt: null,
+  };
+  writeRecord(record, { dir });
+  keepAwake(child.pid, spawn);
+  return { started: true, runId, pid: child.pid, record, controlDir };
+}
+
+// The detached program a record of this kind resumes with; a work record has none (startRun resumes it).
+const RESUME_PROGRAMS = { plan: planRunPath, single: singleRunPath };
+
 // resumeRun(record, { spawn, exec, kill, fs, now, env }) → { resumed: true, pid } | { resumed: false, reason }
 // A plan record: the planning program again, detached, with --resume on the record's control folder
-// (it reads state.json and resumes the step's last session, §2.14). A work record: startRun, exactly
+// (it reads state.json and resumes the step's last session, §2.14). A single record: the single program
+// the same way (single-runs DESIGN §2.11). A work record: startRun, exactly
 // `pir start {slug}`, whose own refusals come back as the reason. A run still running is refused for
 // either kind: two programs on one control folder would fight over it.
 export function resumeRun(
@@ -360,7 +463,8 @@ export function resumeRun(
   const state = classifyRun({ recordedStartTime: record.startTime, finalState: record.finalState, alive, liveStartTime });
   if (state === 'running') return { resumed: false, reason: 'already-running' };
 
-  if (record.kind !== 'plan') {
+  const program = Object.hasOwn(RESUME_PROGRAMS, record.kind) ? RESUME_PROGRAMS[record.kind] : null;
+  if (!program) {
     // The run's coordinator choice is kept across a resume (pir-coordinator DESIGN §2.1).
     const choice = record.coordinator === false ? { coordinator: false } : {};
     const r = startRun(record.slug, { cwd: record.repoPath, spawn, exec, kill, fs, now, env, ...choice });
@@ -368,7 +472,7 @@ export function resumeRun(
     return r.started ? { resumed: true, pid: r.pid } : { resumed: false, reason: r.reason, ...(r.message ? { message: r.message } : {}) };
   }
 
-  const child = spawnDetached([planRunPath(), '--control', record.controlDir, '--resume'], {
+  const child = spawnDetached([program(), '--control', record.controlDir, '--resume'], {
     cwd: record.repoPath,
     controlDir: record.controlDir,
     spawn,
