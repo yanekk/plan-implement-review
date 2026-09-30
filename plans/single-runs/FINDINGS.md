@@ -7,6 +7,10 @@ Legend: 🐞 defect found · ✅ verified by hand with the user · 📌 worth kn
 
 | Date | | Finding |
 |---|---|---|
+| 2026-09-30 | 📌 | T10 drill, worker-driven: list and steps view of `single-happy` and `single-red` at 80×24 and 120×40, `→` on merge, `c`. Nothing clipped. Fixed: a full label lost its closing quote at 80 columns. |
+| 2026-09-30 | 📌 | The merged check asks about `refs/heads/pir/{name}` and keeps its yes in memory. A branch deleted after the merge reads `ready to merge` again once `pir` restarts. Not decided in DESIGN §2.8. |
+| 2026-09-30 | 📌 | T13: `PIR_DASHBOARD_STATE` now publishes `run.kind` `single`, and a builder as role `implement`. `docs/detached-runs.md` still says `"plan" \| "work"`. |
+| 2026-09-30 | 📌 | T11: the rig's sessions and test line are instant. `pace()` in `plan-rig-single-row.test.mjs` adds sleeps to the scripts file and a slower test line in the scratch home's settings, so a state stays on screen. |
 | 2026-09-30 | 📌 | T09, T11: a second `startSingle` in one rig names `rig-fix` again; pir refuses the taken name and the build step parks `asking`. Use a fresh rig per single run. Seen in T08 review. |
 | 2026-09-30 | 📌 | T10: the screen test in `plan-rig-single.test.mjs` only waits for the `rig-fix` row, which reads `work ◌ finished` today, and asserts the snapshot's runState. Tighten it to `single` and `ready to merge`. |
 | 2026-09-30 | 📌 | T09, T11: a rig run's record and control folder carry git's resolved path (`/private/var/…`); `rig.repoDir` does not. Build control-folder paths from `started.record.repoPath`, as `controlOf` in `plan-rig-single.test.mjs` does. |

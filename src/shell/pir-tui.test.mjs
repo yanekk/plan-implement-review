@@ -2668,3 +2668,330 @@ test('a run the finisher ended: the stale note offers no merge (T07)', () => {
   assert.match(text, /finished · this frame is stale\. The finisher is done\./);
   assert.match(text, /◆ finisher +done/);
 });
+
+// --- single runs in the list and their steps view (single-runs T10, DESIGN §2.8, §2.11) ---------------
+
+import { buildSingleWatchFrame, createMergedCheck, listColumns, MERGED_CHECK_MS } from './pir-tui.mjs';
+import { initialSingleState } from '../core/singleflow.mjs';
+import { singleRunState } from './single-run.mjs';
+
+const S_NAMED = { name: 'fix-typo', step: 'review', renamed: { branch: true, worktree: true, control: true, index: true } };
+const sSess = (step, activity, live = true) => ({ id: `${step}-sess`, step, n: 1, logPath: `/c/conversations/${step}-1.ndjson`, cwd: '/wt', live, activity: { state: activity, background: [] } });
+
+// A single row as loadDashboard builds it, its snapshot the one single-run.mjs writes.
+function singleRow({ state = 'running', over = {}, sessions = [], extra = {}, merged, repo = 'shop', label = 'Fix the typo in the REA…', name = null } = {}) {
+  const st = { ...initialSingleState({ id: 'single-ab12', base: 'main', baseSha: 'abc1234def', commands: { setup: [], test: ['npm test'] } }), step: 'build', ...over, ...(name ? { ...S_NAMED, name, ...over } : {}) };
+  const slug = st.name ?? 'single-ab12';
+  return {
+    key: `${repo}__${slug}`,
+    slug,
+    state,
+    repo,
+    progress: { done: 0, total: 0 },
+    workers: sessions.filter((s) => s.live).length,
+    record: { kind: 'single', label: st.name ? null : label, repo, slug, branch: `pir/${slug}`, baseBranch: 'main', repoPath: '/x/shop', controlDir: '/x/shop/plans/x/.parallel/single' },
+    snap: { runState: singleRunState(st, { label: st.name ? null : label, sessions, ...extra }) },
+    ...(merged === undefined ? {} : { merged }),
+  };
+}
+const TESTS = { running: { kind: 'tests', since: NOW - 5000 } };
+const held = (kind, name = 'fix-typo') => ({ running: 'tests', accepted: { kind, name, head: 'h1' } });
+const SINGLE_VIEWS = [
+  singleRow({ sessions: [sSess('build', 'busy')] }),
+  singleRow({ name: 'in-tests', over: { step: 'build', ...held('built', 'in-tests') }, sessions: [sSess('build', 'idle')], extra: TESTS }),
+  singleRow({ name: 'in-review', sessions: [sSess('review', 'busy')] }),
+  singleRow({ name: 'asks', sessions: [sSess('review', 'questions')] }),
+  singleRow({ name: 'fix-typo', state: 'finished', over: { outcome: 'ready' }, merged: false }),
+  singleRow({ name: 'landed', state: 'finished', over: { outcome: 'ready' }, merged: true }),
+  singleRow({ name: 'too-big', state: 'finished', over: { outcome: 'dropped' } }),
+  { key: 'shop__invoice-import', slug: 'invoice-import', state: 'running', repo: 'shop', progress: { done: 6, total: 10 }, workers: 3 },
+  planRow({ slug: 'csv-export', state: 'running', step: 'review' }),
+];
+
+test('the list frame: a single row reads TYPE single, its label until it is named, every §2.8 state and its steps', () => {
+  const frame = buildListFrame(buildDashboard(SINGLE_VIEWS), initialUi(), { columns: 120 });
+  const text = frameText(frame);
+  assert.match(text, /SLUG +TYPE +STATE +REPO +PROGRESS +WK/);
+  assert.match(text, /"Fix the typo in the REA…" +single +● building +shop +build … +1$/m);
+  assert.match(text, /in-tests +single +● testing +shop +build · tests … +1$/m);
+  assert.match(text, /in-review +single +● reviewing +shop +build ✓ review … +1$/m);
+  assert.match(text, /asks +single +● asking you +shop +build ✓ review … +1$/m);
+  assert.match(text, /fix-typo +single +● ready to merge +shop +build ✓ review ✓ +·$/m);
+  assert.match(text, /landed +single +◌ merged +shop +build ✓ review ✓ +·$/m);
+  assert.match(text, /too-big +single +◌ finished +shop +build ✓ review ✗ +·$/m);
+  assert.match(text, /invoice-import +work +● running +shop +▰+▱+ 6\/10 +3$/m, 'a build beside them is painted as ever');
+  assert.match(text, /csv-export +plan +● reviewing +shop +plan ✓ review … +1$/m);
+  assert.match(text, /9 runs · 5 running · 2 finished · 0 crashed · 2 waiting for you/, 'asking and ready to merge wait; merged and dropped are finished');
+
+  assert.equal(findSpan(frame, 'single ').style, 'active', 'TYPE single has a colour of its own');
+  assert.equal(findSpan(frame, '● building').style, 'running');
+  assert.equal(findSpan(frame, '● testing').style, 'running');
+  assert.equal(findSpan(frame, '● ready to merge').style, 'your-go', 'ready to merge is amber bold');
+  assert.equal(findSpan(frame, '● asking you').style, 'your-go');
+  assert.equal(findSpan(frame, '◌ merged').style, 'ended', 'merged is dim, as finished');
+  assert.equal(findSpan(frame, '"Fix the typo').style, 'dim', 'the label is dimmed');
+  assert.equal(findSpan(frame, 'fix-typo').style, 'dim', 'a finished run\'s name is dimmed, as any ended run\'s');
+});
+
+test('the list frame: a red round shows after the step\'s tests, and a crashed single row paints its steps red', () => {
+  const red = singleRow({ over: { running: 'tests', rounds: { build: 1, review: 0 } }, sessions: [sSess('build', 'idle')], extra: TESTS });
+  const crashed = singleRow({ name: 'died', state: 'crashed' });
+  const stopped = singleRow({ name: 'halted', state: 'stopped' });
+  const frame = buildListFrame(buildDashboard([red, crashed, stopped]), initialUi(), { columns: 120 });
+  const text = frameText(frame);
+  assert.match(text, /single +● testing +shop +build · tests \(red 1\) … +1$/m);
+  assert.match(text, /died +single +✕ crashed +shop +build ✓ review …/);
+  assert.match(text, /halted +single +◼ stopped +shop +build ✓ review …/);
+  assert.equal(findSpan(frame, 'build ✓ review …').style, 'bar-crash');
+});
+
+test('listColumns: a list with no single run keeps its widths; with one, TYPE and PROGRESS widen, SLUG pays, and a row never outgrows the terminal', () => {
+  // No single run: exactly the widths the list always had, at every state width.
+  assert.deepEqual(listColumns(buildDashboard(VIEWS).rows, 80), { marker: 2, slug: 27, type: 6, state: 14, progress: 16, wk: 3, repo: 12 });
+  assert.deepEqual(listColumns(buildDashboard(PLAN_VIEWS).rows, 120), { marker: 2, slug: 27, type: 6, state: 14, progress: 16, wk: 3, repo: 24 });
+
+  // WK is last, so what is drawn of it is its two header characters, not its padded width.
+  const width = (c) => c.marker + c.slug + c.type + c.state + c.repo + c.progress + 2;
+  const ready = buildDashboard([singleRow({ name: 'fix-typo', state: 'finished', over: { outcome: 'ready' } })]).rows;
+  const at80 = listColumns(ready, 80);
+  assert.deepEqual([at80.type, at80.state, at80.progress, at80.slug, at80.repo], [7, 17, 17, 23, 12], '`build ✓ review ✓` whole, beside `● ready to merge` whole');
+  assert.equal(width(at80), 80);
+  const at120 = listColumns(ready, 120);
+  assert.deepEqual([at120.slug, at120.progress, at120.repo], [27, 17, 24], 'a wider terminal gives SLUG back first, then REPO');
+
+  // The longest cell there is: at 80 columns SLUG stops at its floor and PROGRESS is cut; at 120 it is whole.
+  const longest = buildDashboard([singleRow({ name: 'fix-typo', over: { ...held('reviewed'), rounds: { build: 0, review: 1 } }, sessions: [sSess('review', 'idle')], extra: TESTS })]).rows;
+  const tight = listColumns(longest, 80);
+  assert.deepEqual([tight.slug, tight.progress, tight.repo], [12, 31, 12]);
+  assert.equal(width(tight), 80);
+  assert.match(frameText(buildListFrame({ rows: longest, counts: {} }, initialUi(), { columns: 80 })), /fix-typo +single +● testing +shop +build ✓ review · tests \(red 1… 1$/m);
+  const wide = listColumns(longest, 120);
+  assert.deepEqual([wide.slug, wide.progress], [27, 33]);
+  assert.match(frameText(buildListFrame({ rows: longest, counts: {} }, initialUi(), { columns: 120 })), /build ✓ review · tests \(red 1\) … +1$/m);
+
+  // A label of full length keeps its closing quote at 80 columns, as a planning run's does.
+  const labelled = buildDashboard([singleRow({ sessions: [sSess('build', 'busy')] })]).rows;
+  assert.equal(listColumns(labelled, 80).slug, 27);
+  assert.match(frameText(buildListFrame({ rows: labelled, counts: {} }, initialUi(), { columns: 80 })), /^▎ "Fix the typo in the REA…" single ● building +shop +build … +1$/m);
+
+  for (const columns of [80, 120]) {
+    const frame = buildListFrame(buildDashboard(SINGLE_VIEWS), initialUi(), { columns });
+    for (const line of frame) assert.ok(visibleWidth(line.map((s) => s.text).join('')) <= columns, `${columns}: ${line.map((s) => s.text).join('')}`);
+  }
+});
+
+const stepsOf = (view, opts = {}) => frameText(buildWatchFrame(view, { now: NOW, ui: { ...initialUi(), view: 'watch' }, columns: 80, ...opts }));
+
+test('the steps view of a single run: the header, a row per step painted as a planning step, the asking footer and the stop hint', () => {
+  const building = stepsOf(singleRow({ sessions: [sSess('build', 'busy')], extra: { since: { build: NOW - 65_000 } } }), { spinnerChar: '⠙' });
+  assert.match(building, /^"Fix the typo in the REA…" · building · pir\/single-ab12$/m);
+  assert.match(building, /^▎ ⠙ build +builder +building +1:05$/m);
+  assert.match(building, /^ {2}○ review +reviewer +waits on build$/m);
+  assert.match(building, /^ {2}○ merge +— +waits on review$/m);
+  assert.match(building, /↑↓ pick a step · → open it · ← back · Ctrl\+S Ctrl\+S stop this run · esc quit/);
+
+  const testing = stepsOf(singleRow({ name: 'fix-typo', over: { step: 'build', ...held('built') }, sessions: [sSess('build', 'idle')], extra: TESTS }), { spinnerChar: '⠙' });
+  assert.match(testing, /^fix-typo · testing · pir\/fix-typo$/m);
+  assert.match(testing, /^▎ ⠙ build +builder +testing… +0:05$/m);
+  assert.doesNotMatch(testing, /asking you/);
+
+  const red = stepsOf(singleRow({ over: { rounds: { build: 2, review: 0 } }, sessions: [sSess('build', 'busy')] }));
+  assert.match(red, /build +builder +tests red · round 2/);
+
+  const asking = buildWatchFrame(singleRow({ name: 'fix-typo', sessions: [sSess('build', 'exited', false), sSess('review', 'permission')], extra: { since: { review: NOW - 9000 }, stoppedAt: { review: NOW - 4000 }, took: { build: 61_000 } } }), { now: NOW, ui: { ...initialUi(), view: 'watch', taskSel: 1 }, columns: 80 });
+  const asked = frameText(asking);
+  assert.match(asked, /^fix-typo · reviewing · pir\/fix-typo$/m);
+  assert.match(asked, /^ {2}✔ build +builder +built +1:01$/m);
+  assert.match(asked, /^▎ ● review +reviewer +asking you · allow a command\? +0:05$/m);
+  assert.match(asked, /^● review — asking you; open it \(→\) to answer$/m);
+  assert.equal(findSpan(asking, '● review   ').style, 'asking');
+  assert.equal(findSpan(asking, '✔ build').style, 'done');
+  assert.deepEqual(asking.map((l) => l.hit?.index).filter((i) => i != null), [0, 1, 2], 'each step row carries its index for the mouse');
+  assert.deepEqual(hitAt(asking, 3), { kind: 'step', index: 1 });
+});
+
+test('the steps view of a single run: ready shows the hand-off on the merge row, merged says so, dropped gives the reason, and an ended run offers no stop', () => {
+  const ready = singleRow({ name: 'fix-typo', state: 'finished', over: { outcome: 'ready' }, merged: false });
+  const frame = buildWatchFrame(ready, { now: NOW, ui: { ...initialUi(), view: 'watch', taskSel: 2 }, columns: 80 });
+  const text = frameText(frame);
+  assert.match(text, /^fix-typo · ready to merge · pir\/fix-typo$/m);
+  assert.match(text, /^ {2}✔ build +builder +built$/m);
+  assert.match(text, /^ {2}✔ review +reviewer +reviewed$/m);
+  assert.match(text, /^▎ ● merge +— +git switch main && git merge pir\/fix-typo$/m);
+  assert.equal(findSpan(frame, 'git switch main').style, 'asking', 'the hand-off is the person\'s: amber, as asking');
+  assert.doesNotMatch(text, /Hand-off:/, 'the merge row shows the line whole, so it is not said twice');
+  assert.match(text, /↑↓ pick a step · → open it · ← back · esc quit/);
+  assert.doesNotMatch(text, /Ctrl\+S/);
+
+  // A name too long for the merge row at this width: the command is never clipped, it is wrapped below.
+  const long = singleRow({ name: 'fix-the-typo-in-the-readme-and-the-changelog', state: 'finished', over: { outcome: 'ready' } });
+  const narrow = frameText(buildWatchFrame(long, { now: NOW, ui: { ...initialUi(), view: 'watch' }, columns: 80 }));
+  assert.match(narrow.replace(/\n/g, ' '), /Hand-off: git switch main && git merge pir\/fix-the-typo-in-the-readme-and-the-changelog/);
+  assert.doesNotMatch(frameText(buildWatchFrame(long, { now: NOW, ui: { ...initialUi(), view: 'watch' }, columns: 120 })), /Hand-off:/);
+
+  const merged = stepsOf({ ...ready, merged: true });
+  assert.match(merged, /^fix-typo · merged · pir\/fix-typo$/m);
+  assert.match(merged, /✔ merge +— +merged$/m);
+  assert.doesNotMatch(merged, /git switch/);
+
+  const dropped = singleRow({ state: 'finished', over: { outcome: 'dropped' }, sessions: [sSess('build', 'exited', false)] });
+  const why = stepsOf(dropped, { dropped: 'Too big for a single run: use /plan.\nMore.' });
+  assert.match(why, /^"Fix the typo in the REA…" · finished · pir\/single-ab12$/m);
+  assert.match(why, /✗ build +builder +dropped$/m);
+  assert.match(why, /○ review +reviewer +not started$/m);
+  assert.match(why, /○ merge +— +not started$/m);
+  assert.match(why, /^Dropped: Too big for a single run: use \/plan\.$/m);
+  assert.match(stepsOf(dropped), /^Dropped\.$/m, 'a reason that could not be read');
+});
+
+test('the steps view of a single run: stopped and crashed are stale, name the resume, and crashed shows run.log', () => {
+  const stopped = stepsOf(singleRow({ state: 'stopped', sessions: [sSess('build', 'busy')] }));
+  assert.match(stopped, /✗ build +builder +stopped$/m);
+  assert.match(stopped, /^— stopped · this frame is stale\. Ctrl\+R Ctrl\+R on the list resumes it\.$/m);
+  assert.doesNotMatch(stopped, /Ctrl\+S/);
+  const crashed = stepsOf(singleRow({ name: 'fix-typo', state: 'crashed', sessions: [sSess('review', 'busy')] }), { logTail: ['boom', 'at single-run.mjs:1'] });
+  assert.match(crashed, /✔ build +builder +built$/m);
+  assert.match(crashed, /✗ review +reviewer +crashed$/m);
+  assert.match(crashed, /the single run's program died; this frame is stale\. Ctrl\+R Ctrl\+R on the list/);
+  assert.match(crashed, /last lines of run\.log:\n {4}boom\n {4}at single-run\.mjs:1/);
+  // A note from the reducer (a step with no session) shows above the hint, as for a planning run.
+  const noted = frameText(buildSingleWatchFrame(singleRow({}), { now: NOW, ui: { ...initialUi(), view: 'watch', note: 'merge has no conversation — the merge is yours to run by hand.' }, columns: 80 }));
+  assert.match(noted, /^merge has no conversation — the merge is yours to run by hand\.$/m);
+});
+
+test('mergedCheck asks git at most once per 30 s per row, and stops asking once the answer is yes', () => {
+  const calls = [];
+  let answer = false;
+  const check = createMergedCheck({ contains: (branch, opts) => (calls.push([branch, opts]), answer) });
+  const row = singleRow({ name: 'fix-typo', state: 'finished', over: { outcome: 'ready' } });
+  const other = singleRow({ name: 'other-fix', state: 'finished', over: { outcome: 'ready' }, repo: 'blog' });
+  assert.equal(MERGED_CHECK_MS, 30000);
+
+  assert.equal(check(row, { now: 0 }), false);
+  assert.deepEqual(calls, [['pir/fix-typo', { root: '/x/shop', refs: ['refs/heads/main'] }]], 'the local base, in the run\'s repo');
+  answer = true; // the person merges a second later
+  assert.equal(check(row, { now: 1000 }), false, 'the cached no stands inside the interval');
+  assert.equal(check(row, { now: 29999 }), false);
+  assert.equal(calls.length, 1);
+  // Each row has its own clock.
+  assert.equal(check(other, { now: 2000 }), true);
+  assert.equal(calls.length, 2);
+  assert.equal(check(row, { now: 30000 }), true, 'asked again once the interval is over');
+  assert.equal(calls.length, 3);
+  // Yes is final: never asked again, whatever git would say now.
+  answer = false;
+  for (const now of [30001, 60000, 10_000_000]) assert.equal(check(row, { now }), true);
+  assert.equal(check(other, { now: 10_000_000 }), true);
+  assert.equal(calls.length, 3);
+
+  // A no is asked again every interval, not only once.
+  const stays = createMergedCheck({ contains: () => (calls.push('x'), false), intervalMs: 10 });
+  calls.length = 0;
+  for (const now of [0, 5, 10, 15, 20]) assert.equal(stays(row, { now }), false);
+  assert.equal(calls.length, 3);
+  // Nothing to ask with: no base, no branch or no repo on record. A git failure reads not merged.
+  const never = createMergedCheck({ contains: () => assert.fail('not asked') });
+  assert.equal(never({ ...row, record: { ...row.record, baseBranch: null }, snap: null }, { now: 0 }), false);
+  assert.equal(never({ ...other, record: { ...other.record, repoPath: null } }, { now: 0 }), false);
+  assert.equal(createMergedCheck({ contains: () => { throw new Error('no repo'); } })(row, { now: 0 }), false);
+  // The base falls back to the snapshot's when the record names none.
+  const seen = [];
+  createMergedCheck({ contains: (b, o) => (seen.push(o.refs), true) })({ ...row, record: { ...row.record, baseBranch: undefined } }, { now: 0 });
+  assert.deepEqual(seen, [['refs/heads/main']]);
+});
+
+// A single record and snapshot on disk, as the single program leaves them.
+function seedSingle({ finalState = 'finished', over = {}, sessions = [] } = {}) {
+  const dir = mkdtempSync(join(tmpdir(), 'pir-index-'));
+  const controlDir = mkdtempSync(join(tmpdir(), 'pir-control-'));
+  const st = { ...initialSingleState({ id: 'single-ab12', base: 'main', baseSha: 'abc1234def', commands: { setup: [], test: ['true'] } }), step: 'build', ...over };
+  const slug = st.name ?? 'single-ab12';
+  const record = {
+    version: 1, kind: 'single', label: st.name ? null : 'Fix the typo', go: null, slug, repo: 'blog', repoPath: '/x/blog', controlDir, baseBranch: 'main',
+    pid: 4242, startTime: 'Wed Sep 30 10:00:00 2026', startedAt: null, branch: `pir/${slug}`, finalState, updatedAt: null,
+  };
+  writeRecord(record, { dir });
+  writeSnapshot(controlDir, { proc: { pid: 4242, startTime: record.startTime, slug, repo: 'blog', branch: record.branch }, finalState, runState: singleRunState(st, { label: record.label, sessions }) });
+  writeFileSync(join(controlDir, 'state.json'), JSON.stringify(st));
+  return { dir, controlDir, record };
+}
+const DEAD = () => {
+  const e = new Error('no such process');
+  e.code = 'ESRCH';
+  throw e;
+};
+
+test('loadDashboard on a single run: WK is its live sessions, only a finished ready row asks the merged check, and the answer decides the row', () => {
+  const asked = [];
+  const merged = (answer) => (view, { now }) => (asked.push([view.key, now]), answer);
+  const alive = { kill: () => {}, exec: () => ({ ok: true, stdout: 'Wed Sep 30 10:00:00 2026\n' }) };
+
+  const live = seedSingle({ finalState: null, sessions: [sSess('build', 'busy')] });
+  const running = loadDashboard({ dir: live.dir, now: NOW, ...alive, merged: merged(true) });
+  assert.deepEqual([running.rows[0].state, running.rows[0].display, running.rows[0].workers, running.rows[0].merged], ['running', 'building', 1, undefined]);
+  assert.match(frameText(buildListFrame(running, initialUi())), /"Fix the typo" +single +● building +blog +build … +1/);
+  assert.deepEqual(asked, [], 'a running run has nothing merged to find');
+
+  const ready = seedSingle({ over: { ...S_NAMED, outcome: 'ready' } });
+  const waiting = loadDashboard({ dir: ready.dir, now: NOW, kill: DEAD, merged: merged(false) });
+  assert.deepEqual([waiting.rows[0].display, waiting.rows[0].merged], ['ready-to-merge', false]);
+  assert.deepEqual(waiting.counts, { running: 0, finished: 0, crashed: 0, stopped: 0, waiting: 1, total: 1 });
+  const landed = loadDashboard({ dir: ready.dir, now: NOW + 1, kill: DEAD, merged: merged(true) });
+  assert.deepEqual([landed.rows[0].display, landed.rows[0].merged], ['merged', true]);
+  assert.deepEqual(landed.counts, { running: 0, finished: 1, crashed: 0, stopped: 0, waiting: 0, total: 1 });
+  assert.match(frameText(buildListFrame(landed, initialUi())), /fix-typo +single +◌ merged +blog +build ✓ review ✓/);
+  assert.deepEqual(asked, [['blog__fix-typo', NOW], ['blog__fix-typo', NOW + 1]]);
+
+  asked.length = 0;
+  const dropped = seedSingle({ over: { outcome: 'dropped' } });
+  assert.equal(loadDashboard({ dir: dropped.dir, now: NOW, kill: DEAD, merged: merged(true) }).rows[0].display, 'finished');
+  const crashed = seedSingle({ finalState: null, over: { ...S_NAMED, outcome: 'ready' } });
+  assert.equal(loadDashboard({ dir: crashed.dir, now: NOW, kill: DEAD, merged: merged(true) }).rows[0].display, 'crashed');
+  assert.deepEqual(asked, [], 'a dropped run and a crashed one are never asked about');
+});
+
+test('the dashboard loop keeps one merged check across refreshes, and reads a dropped run\'s reason from state.json for its steps view', async () => {
+  // Merged: the loop's own check is cached, so three reads ask git once.
+  const ready = seedSingle({ over: { ...S_NAMED, outcome: 'ready' } });
+  const calls = [];
+  let onData = null;
+  const frames = [];
+  const open = (extra) => openDashboard({
+    stdin: { on: (_e, fn) => (onData = fn), off: () => {} },
+    stdout: { columns: 80 },
+    now: () => NOW,
+    kill: DEAD,
+    refreshMs: 60_000,
+    makeScreen: () => ({ paint: (f) => frames.push(f), close: () => {} }),
+    makePublisher: () => null,
+    ...extra,
+  });
+  const tick = () => new Promise((r) => setImmediate(r));
+
+  const done = open({
+    load: (deps) => loadDashboard({ ...deps, dir: ready.dir }),
+    mergedCheck: createMergedCheck({ contains: (b) => (calls.push(b), false) }),
+  });
+  await tick();
+  onData('\x1b[B');
+  await tick();
+  onData('\x1b[A');
+  await tick();
+  assert.match(frameText(frames.at(-1)), /fix-typo +single +● ready to merge/);
+  assert.deepEqual(calls, ['pir/fix-typo'], 'one question to git for every read inside the interval');
+  onData('\x1b');
+  await done;
+
+  // Dropped: the reason is in state.json, not in the snapshot.
+  const dropped = seedSingle({ over: { outcome: 'dropped', accepted: { kind: 'dropped', name: null, body: 'Nothing to change: the typo is already fixed.\nSee commit abc.' } } });
+  frames.length = 0;
+  const again = open({ load: (deps) => loadDashboard({ ...deps, dir: dropped.dir, merged: () => assert.fail('not asked') }) });
+  await tick();
+  onData('\r');
+  await tick();
+  const steps = frameText(frames.at(-1));
+  assert.match(steps, /^"Fix the typo" · finished · pir\/single-ab12$/m);
+  assert.match(steps, /^Dropped: Nothing to change: the typo is already fixed\.$/m);
+  onData('\x1b');
+  await again;
+});

@@ -37,6 +37,26 @@ export function isPlan(view) {
   return view?.snap?.runState?.kind === 'plan';
 }
 
+// isSingle(view) → whether a view is a single run (single-runs DESIGN §2.8), decided as isPlan decides:
+// the index record's `kind`, else the snapshot's.
+export function isSingle(view) {
+  const kind = view?.record?.kind;
+  if (kind) return kind === 'single';
+  return view?.snap?.runState?.kind === 'single';
+}
+
+// A single run's snapshot state, or null before its program wrote one.
+function singleState(view) {
+  const rs = view?.snap?.runState;
+  return rs && rs.kind === 'single' ? rs : null;
+}
+
+// singleStepState(runState) → `building` or `reviewing`, by the snapshot's step alone: the rename between
+// the two already has the builder closed, so it reads `reviewing`, as a planning run's does.
+export function singleStepState(rs) {
+  return rs && (rs.step === 'rename' || rs.step === 'review') ? 'reviewing' : 'building';
+}
+
 // The planning run's snapshot state, or null before its program wrote one.
 function planState(view) {
   const rs = view?.snap?.runState;
@@ -60,8 +80,24 @@ export function planStepState(rs) {
 // question set pending (planRunState's step phase `asking`, user 2026-09-27), `your-go` once finished `reviewed` with no go recorded (§2.8), `finished` for any other
 // finished outcome or a declined go, and `stopped`/`crashed` as classified. Any other classification (an
 // unreachable entry) passes through as it came.
+//
+// A single run (single-runs DESIGN §2.8, §2.9) shows `building` or `reviewing` while it runs, `testing`
+// instead while pir's tests or the baseline run, and `asking-you` over all three while a step's live
+// session asks. The snapshot already keeps the two apart: during a test run only a pending request reads
+// asking, never the stopped-session rule, so a step phase of `asking` is trusted as it comes. Finished
+// `ready` it reads `ready-to-merge` until `view.merged` (the shell's merged check) says the person's
+// merge landed, then `merged`; any other finished outcome (`dropped`) reads `finished`.
 export function runDisplayState(view) {
   const state = view?.state;
+  if (isSingle(view)) {
+    const rs = singleState(view);
+    if (state === 'running') {
+      if ((rs?.steps ?? []).some((st) => st.phase === 'asking')) return 'asking-you';
+      return rs?.phase === 'testing' ? 'testing' : singleStepState(rs);
+    }
+    if (state === 'finished' && rs?.outcome === 'ready') return view.merged ? 'merged' : 'ready-to-merge';
+    return state;
+  }
   if (!isPlan(view)) {
     if (state !== 'running') return state;
     const rs = view?.snap?.runState;
@@ -95,19 +131,21 @@ export function planProgress(runState) {
   return step === 'plan' ? 'plan …' : 'plan ✓ review …';
 }
 
-// canResume(view) → whether Ctrl+R Ctrl+R is offered on a row (§2.14): a stopped or crashed run of either
-// type, and a finished planning run whose review ended not-reviewed (the person stopped to think).
+// canResume(view) → whether Ctrl+R Ctrl+R is offered on a row (§2.14): a stopped or crashed run of any
+// type, and a finished planning run whose review ended not-reviewed (the person stopped to think). A
+// finished single run, `ready` or `dropped`, is final (single-runs DESIGN §2.11); resumeRun does not
+// refuse one itself, so this is the guard.
 export function canResume(view) {
   if (!view) return false;
   if (view.state === 'stopped' || view.state === 'crashed') return true;
   return view.state === 'finished' && isPlan(view) && planState(view)?.outcome === 'not-reviewed';
 }
 
-// displayName(view) → how a row names its run: the planning run's label in quotes while it has no slug
-// (the index clears `label` at the rename, §2.6), else the slug. The armed resume line uses it too, so a
+// displayName(view) → how a row names its run: a planning or single run's label in quotes while it has no
+// name of its own (the index clears `label` at the rename, §2.6), else the slug. The armed resume line uses it too, so a
 // person confirming a resume sees the name the row shows.
 export function displayName(view) {
-  const label = isPlan(view) ? view?.record?.label : null;
+  const label = isPlan(view) || isSingle(view) ? view?.record?.label : null;
   return label ? `"${label}"` : view?.slug ?? '';
 }
 
@@ -124,7 +162,8 @@ export function displayName(view) {
 // Each row gains `display` (runDisplayState) and the tallies count by it: `planning`/`reviewing` are
 // running, and a `your-go` row is counted in `waiting` rather than `finished`, as the prototype's counts
 // line reads (pir-plan-command §2.10). A build's `asking-you` row counts in `waiting` too, not `running`:
-// the one tally says how many runs need the person, whichever kind.
+// the one tally says how many runs need the person, whichever kind. A single run's `building` and `testing`
+// are running, its `ready-to-merge` waits on the person, and `merged` is finished (single-runs §2.8).
 export function buildDashboard(views = []) {
   const counts = { running: 0, finished: 0, crashed: 0, stopped: 0, waiting: 0, total: views.length };
   const rows = views.map((v) => ({ ...v, display: runDisplayState(v) }));
@@ -142,7 +181,10 @@ const TALLY = {
   running: 'running',
   planning: 'running',
   reviewing: 'running',
+  building: 'running',
+  testing: 'running',
   finished: 'finished',
+  merged: 'finished',
   crashed: 'crashed',
   stopped: 'stopped',
   'your-go': 'waiting',
@@ -177,13 +219,21 @@ function planSteps(view) {
   return STEP_IDS.map((id) => steps.find((s) => s.id === id) ?? { id, phase: 'pending', worker: null });
 }
 
+// The steps a single run's view lists (single-runs DESIGN §2.8), in row order; `merge` never has a session.
+const SINGLE_STEP_IDS = ['build', 'review', 'merge'];
+function singleSteps(view) {
+  const steps = singleState(view)?.steps ?? [];
+  return SINGLE_STEP_IDS.map((id) => steps.find((s) => s.id === id) ?? { id, phase: 'pending', worker: null });
+}
+
 // openTasks(views, ui) → the open run's rows, in the live view's row order: a build's tasks, then the
 // separator and its coordinator agent's row once the agent has started (T12), then its end-of-run helpers
 // while they run (rowEntries, which buildDisplay draws one row each, in order; pir-coordinator T11), or []
-// when it has no snapshot yet; a planning run's steps. The separator is never selected (moveRow).
+// when it has no snapshot yet; a planning or single run's steps. The separator is never selected (moveRow).
 export function openTasks(views, ui) {
   const open = findOpen(views, ui);
   if (open && isPlan(open)) return planSteps(open);
+  if (open && isSingle(open)) return singleSteps(open);
   return rowEntries(open?.snap?.runState);
 }
 
@@ -202,11 +252,18 @@ export function noSessionNote(step) {
   return 'plan has no session yet — the planner is starting.';
 }
 
+// The same for a single run's step rows (single-runs DESIGN §2.8).
+export function singleNoSessionNote(step) {
+  if (step?.id === 'merge') return 'merge has no conversation — the merge is yours to run by hand.';
+  if (step?.id === 'review') return 'review has no session yet — the reviewer starts when the change is built and its tests pass.';
+  return 'build has no session yet — the builder is starting.';
+}
+
 // The coordinator agent of the open build (pir-coordinator §2.8): the run state's `coordinator`, or null
-// with `--no-coordinator`, before it started, or for a planning run.
+// with `--no-coordinator`, before it started, or for a planning or single run.
 export function openCoordinator(views, ui) {
   const open = findOpen(views, ui);
-  if (!open || isPlan(open)) return null;
+  if (!open || isPlan(open) || isSingle(open)) return null;
   const c = open.snap?.runState?.coordinator;
   return c?.id ? c : null;
 }
@@ -215,7 +272,7 @@ export function openCoordinator(views, ui) {
 // run's, else the coordinator agent's, as { taskId, workerId, logPath, live } for openWorker; else null.
 export function openAgent(views, ui) {
   const open = findOpen(views, ui);
-  if (!open || isPlan(open)) return null;
+  if (!open || isPlan(open) || isSingle(open)) return null;
   const pinned = rowEntries(open.snap?.runState).find((e) => e.finisher);
   if (pinned?.worker?.id) return { taskId: pinned.id, workerId: pinned.worker.id, logPath: pinned.worker.logPath, live: pinned.worker.live };
   const c = openCoordinator(views, ui);
@@ -226,6 +283,7 @@ export function openAgent(views, ui) {
 export function noCoordinatorNote(views, ui) {
   const open = findOpen(views, ui);
   if (open && isPlan(open)) return 'a planning run has no coordinator agent.';
+  if (open && isSingle(open)) return 'a single run has no coordinator agent.';
   return 'this run has no coordinator agent — it was started with --no-coordinator, or the agent has not started yet.';
 }
 
@@ -341,9 +399,12 @@ export function dashboardReducer(ui, event, views = []) {
         const task = tasks[ui.taskSel ?? 0];
         if (!task) return { ui: { ...ui, armed: null }, intent: null };
         const w = task.worker;
-        const plan = isPlan(findOpen(views, ui));
+        const open = findOpen(views, ui);
         if ((task.agent || task.finisher) && !w?.id) return { ui: { ...ui, note: noCoordinatorNote(views, ui), armed: null }, intent: null };
-        if (!w?.id) return { ui: { ...ui, note: plan ? noSessionNote(task) : noWorkerNote(task, tasks), armed: null }, intent: null };
+        if (!w?.id) {
+          const note = isSingle(open) ? singleNoSessionNote(task) : isPlan(open) ? noSessionNote(task) : noWorkerNote(task, tasks);
+          return { ui: { ...ui, note, armed: null }, intent: null };
+        }
         const openWorker = { taskId: task.id, workerId: w.id, logPath: w.logPath ?? null, live: !!w.live };
         return { ui: { ...ui, view: 'worker', openWorker, armed: null }, intent: null };
       }

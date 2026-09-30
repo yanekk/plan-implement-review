@@ -8,7 +8,7 @@
 // worktree folder exists yet — so they arrive as injected functions and this module stays testable
 // without a filesystem or git.
 
-import { findOpen, openTasks, isPlan } from './dashboard.mjs';
+import { findOpen, openTasks, isPlan, isSingle } from './dashboard.mjs';
 
 export const DASHBOARD_STATE_VERSION = 1;
 
@@ -16,15 +16,17 @@ export const DASHBOARD_STATE_VERSION = 1;
 const VIEW = { list: 'list', watch: 'run', worker: 'worker' };
 
 // A planning run's sessions are the planner and the reviewer (plan-run.mjs ROLE); the file speaks the
-// build's two roles, so the planner, the session that writes, publishes as `implement`.
-const ROLE = { implement: 'implement', review: 'review', planner: 'implement', reviewer: 'review' };
+// build's two roles, so the planner, the session that writes, publishes as `implement`. A single run's
+// builder does likewise, and its reviewer is `review` (single-run.mjs ROLE).
+const ROLE = { implement: 'implement', review: 'review', planner: 'implement', reviewer: 'review', builder: 'implement' };
 
 // runWorktreeNames(view) → the folder names under `<main>/.claude/worktrees` the run's shared worktree may
 // have, most likely first. A build's is `pir-{slug}` (worktree.mjs). A planning run's is `pir-{runId}` until
 // the rename and `pir-{slug}` after, and the rename moves the folder, the branch and the index entry in
 // separate steps (plan-run.mjs §2.6), so every name any of them currently implies is a candidate: the
 // record's slug (the run id before the index moves), the snapshot's slug (set as soon as it is chosen),
-// and the branch's `pir/x` spelled as a folder.
+// and the branch's `pir/x` spelled as a folder. A single run is renamed the same way (single-runs DESIGN
+// §2.4 step 4), from `pir-{runId}` to `pir-{name}`, and its snapshot carries the name as `name`.
 export function runWorktreeNames(view) {
   const r = view?.record ?? {};
   const names = [];
@@ -33,6 +35,7 @@ export function runWorktreeNames(view) {
   };
   if (r.slug ?? view?.slug) add(`pir-${r.slug ?? view.slug}`);
   if (isPlan(view) && view?.snap?.runState?.slug) add(`pir-${view.snap.runState.slug}`);
+  if (isSingle(view) && view?.snap?.runState?.name) add(`pir-${view.snap.runState.name}`);
   if (typeof r.branch === 'string' && r.branch.startsWith('pir/')) add(`pir-${r.branch.slice(4)}`);
   return names;
 }
@@ -70,7 +73,7 @@ export function buildDashboardState({ ui, rows = [], pid, updatedAt, mainWorktre
       const r = open.record ?? {};
       run = {
         key: open.key ?? `${r.repo ?? open.repo}__${r.slug ?? open.slug}`,
-        kind: isPlan(open) ? 'plan' : 'work',
+        kind: isPlan(open) ? 'plan' : isSingle(open) ? 'single' : 'work',
         slug: r.slug ?? open.slug ?? null,
         repo: r.repo ?? open.repo ?? null,
         repoPath: r.repoPath ?? null,

@@ -7,7 +7,7 @@ lives in [FINDINGS.md](FINDINGS.md). Sixty words to a Notes cell, counted.
 
 **Status:** Planned, not started. The build waits for `pir/base-branch` to be merged into `main` and
 `main` into `pir/single-runs`.
-**Last updated:** 2026-09-29
+**Last updated:** 2026-09-30
 **Next `pir-work` will:** T02 single-flow, the first task on the critical path.
 
 ## Tasks
@@ -25,12 +25,12 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T07 | single-skill | T02 | ✅ | |
 | T08 | single-rig | T04, T05 | ✅ | |
 | T09 | box-single | T05, T08 | ⬜ | |
-| T10 | single-row | T04, T08 | ⬜ | |
+| T10 | single-row | T04, T08 | 🔍 | Row, steps view, merged check, chords; 27 pure tests, 4 rig tests at both sizes. Deviations: `buildSingleDisplay` takes `dropped` (pir-tui reads state.json). `createMergedCheck` makes `mergedCheck`. Rig cases in new `plan-rig-single-row.test.mjs`. `listColumns` widens TYPE and PROGRESS. `render.mjs` untouched. Published state kind `single`. Wording choices in the commit. |
 | T11 | single-drill | T06, T09, T10 | ⬜ | |
 | T12 | single-live | T07, T11 | ⬜ | |
 | T13 | docs-and-readme | T12 | ⬜ | |
 
-**Review queue:** *(empty)*
+**Review queue:** T10
 
 ## Blocked on the user
 

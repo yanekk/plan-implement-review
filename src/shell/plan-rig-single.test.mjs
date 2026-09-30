@@ -202,22 +202,22 @@ test('single-taken: pir refuses the taken name in a message, the builder names t
 
 // ---- On the real screen. ----
 
-// The dashboard does not know the `single` kind until T10, which paints the row (`single`, `ready to
-// merge`) and tightens this test; until then the run's own snapshot says where it got to, and the screen
-// is only asked to list the run under the builder's name without wrapping a line.
-test('end to end: a single run started in the rig is listed by the real `pir` and reaches ready to merge', async (t) => {
+// The row T10 paints: TYPE `single`, `ready to merge`, both steps ticked, and it waits on the person. Its
+// states on the way there, its steps view and the merged check are driven in plan-rig-single-row.test.mjs.
+test('end to end: a single run started in the rig is listed by the real `pir` as a single row that reaches ready to merge', async (t) => {
   const { rig, started, mainBefore } = begin(t, 'single-happy');
+  const row = new RegExp(`${SINGLE_RIG_NAME} +single +● ready to merge +repo +build ✓ review ✓`);
   const screen = rig.openScreen({ cols: 80, rows: 24 });
   try {
-    await screen.waitFor(new RegExp(`${SINGLE_RIG_NAME} .* repo `), RUN_MS);
+    await screen.waitFor(row, RUN_MS);
     await assertReady(rig, started, mainBefore);
     assert.equal(screen.overflows(), 0);
   } finally {
     await screen.close();
   }
   for (const [cols, rows] of SIZES) {
-    const { screens, overflows } = await rig.driveScreen({ cols, rows, first: new RegExp(`${SINGLE_RIG_NAME} .* repo `) });
-    assert.match(screens[0].rows.join('\n'), /1 run · /, `${cols}×${rows}`);
+    const { screens, overflows } = await rig.driveScreen({ cols, rows, first: row });
+    assert.match(screens[0].rows.join('\n'), /1 run · 0 running · 0 finished · 0 crashed · 1 waiting for you/, `${cols}×${rows}`);
     assert.equal(overflows, 0, `${cols}×${rows}: nothing wraps`);
   }
 });
