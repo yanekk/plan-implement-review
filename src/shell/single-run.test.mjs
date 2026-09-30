@@ -1055,3 +1055,54 @@ test('singleNotifyViews: one view per asking live session, worded by alertText; 
   assert.deepEqual(views(st({ step: 'review', name: 'n', outcome: 'ready' }), sess('review', stopped)), []);
   assert.deepEqual(views(st({}), sess('build', stopped, false)), [], 'an exited session asks nothing');
 });
+
+test('alerts: red rounds send nothing until the builder stops on the person past the limit; a reviewer asking is titled by the run name', async (t) => {
+  const again = turn(report('built', 'never-green'), ...say('Reported again.'));
+  const s = setup(
+    t,
+    [{ match: BUILDER_MATCH, script: builder('never-green', { after: [...again, ...again, ...again, ...turn(...say('It still fails. How should I go on?'))] }) }],
+    { commands: { setup: [], test: ['test -f never.txt'] } },
+  );
+  const env = { PIR_HOME: s.home, PIR_RUN: '1' };
+  writeNotifyConfig(NTFY, env);
+  const ntfy = fakeNtfy();
+  const run = start(s, { env, deps: ntfy.deps });
+  t.after(() => run.stop.abort());
+  // Remote Control is off, so a session read as asking for even one turn between rounds would alert at once.
+  await waitFor(() => ntfy.pubs.length > 0 && run.snaps.at(-1)?.runState.steps[0].round === 4, 'the alert at round 4');
+  await new Promise((r) => setTimeout(r, 1200));
+  assert.deepEqual(ntfy.pubs.map((p) => [p.title, p.message]), [['Fix the typo in the READ · builder', 'asks: It still fails. How should I go on?']]);
+  assert.deepEqual(ntfy.clears, []);
+
+  // After the rename the reviewer's alert carries the name, and its note lands in the moved folder.
+  const name = 'fix-typo';
+  const r = setup(t, [
+    { match: BUILDER_MATCH, script: builder(name) },
+    { match: REVIEWER_MATCH, script: [...opening(), ...say('Is the second typo in scope?'), ...turn(report('reviewed', name), ...say('Reported reviewed.'))] },
+  ]);
+  const renv = { PIR_HOME: r.home, PIR_RUN: '1' };
+  writeNotifyConfig(NTFY, renv);
+  const rn = fakeNtfy();
+  const rrun = start(r, { env: renv, deps: rn.deps });
+  t.after(() => rrun.stop.abort());
+  await waitFor(() => rn.pubs.length === 1, 'the reviewer asking alert');
+  const moved = controlAfter(r, name);
+  const reviewerId = stateIn(moved).sessions.review[0];
+  assert.deepEqual([rn.pubs[0].title, rn.pubs[0].message, rn.pubs[0].seq], ['fix-typo · reviewer', 'asks: Is the second typo in scope?', `pir-${reviewerId}-1`]);
+  assert.deepEqual(dropPersonInput(moved, { to: reviewerId, kind: 'message', text: 'No.' }, { coordinatorAlive: true }), { ok: true });
+  assert.equal(await rrun.done, 0, rrun.lines.join('\n'));
+  assert.deepEqual(rn.clears.map((c) => c.seq), [`pir-${reviewerId}-1`]);
+  assert.deepEqual(rn.pubs.slice(1).map((p) => p.title), ['fix-typo · ready to merge']);
+  assert.deepEqual(convLog(moved, 'review').filter((e) => e.dir === 'note' && e.kind === 'notified').length, 1);
+});
+
+test('alerts: a session that exits while it asks has its alert cleared on the crashed exit', async (t) => {
+  const s = setup(t, [{ match: BUILDER_MATCH, script: [...opening(), ...say('Which file?'), { sh: 'sleep 1.5' }, { exit: 1 }] }]);
+  const env = { PIR_HOME: s.home };
+  writeNotifyConfig(NTFY, env);
+  const ntfy = fakeNtfy();
+  const run = start(s, { env, deps: ntfy.deps });
+  assert.equal(await run.done, 1, run.lines.join('\n'));
+  assert.equal(ntfy.pubs.length, 1);
+  assert.deepEqual(ntfy.clears, [{ ...NTFY, seq: ntfy.pubs[0].seq }]);
+});
