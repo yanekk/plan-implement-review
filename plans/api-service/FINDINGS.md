@@ -7,6 +7,7 @@ Legend: 🐞 defect found · ✅ verified by hand with the user · 📌 worth kn
 
 | Date | | Finding |
 |---|---|---|
+| 2026-09-30 | 📌 | T11 review: on a scratch home with no `api.json`, bare `pir service` prints `registered but not answering` and the off-then-on hint, though nothing is registered and `on` is refused there. Documented in `docs/api-service.md`; wording left as it is. |
 | 2026-09-30 | 📌 | T11: `docs/detached-runs.md` § The commands lists neither `pir service` nor `pir notify`, and says any other word is an unknown command. Outside T11's files, left as it is. |
 | 2026-09-30 | 📌 | T11, worker-driven: the service started on a scratch home answered every row of the contract as `docs/api-service.md` states it. A `HEAD` gets the 405 and its headers with no body. Folder removed. |
 | 2026-09-30 | 🐞 | T10 review: a harness killed from outside left its coordinator and sessions running, with no time limit. Reproduced with a real process tree, fixed, test locks it. Reviewer's live run, worker-driven, exited 0: 8 events, 5 distinct `observed_at`, folder removed. |

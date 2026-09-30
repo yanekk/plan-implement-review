@@ -5,9 +5,9 @@ lives in [FINDINGS.md](FINDINGS.md). Sixty words to a Notes cell, counted.
 
 **Plan reviewed:** 2026-09-30 — 10 fixed, 8 decided with the user
 
-**Status:** T01 to T10 done; T11 awaiting review.
+**Status:** All 11 tasks done. The after-merge checklist remains (PLAN § After the merge).
 **Last updated:** 2026-09-30
-**Next `pir-work` will:** review T11 docs-and-readme.
+**Next `pir-work` will:** nothing to pick; every task is ✅.
 
 ## Tasks
 
@@ -25,9 +25,9 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T08 | usage-e2e | T04, T05 | ✅ | |
 | T09 | launchd-check | T05, T06 | ✅ | |
 | T10 | live-usage-check | T08 | ✅ | |
-| T11 | docs-and-readme | T07, T09, T10 | 🔍 | `docs/api-service.md`, README section, install line and command list, `docs/README.md`. 10 doc tests in the three core test files. Contract copied from a scratch-home run of the service. Deviations: a `What has been checked` section added; Known limitations holds seven entries beyond the task's six, from FINDINGS; tests also check the README's examples. |
+| T11 | docs-and-readme | T07, T09, T10 | ✅ | Review: README and docs page said pir shows the numbers nowhere, though `pir service` prints them; fixed, with the scratch-home `pir service` case added. Probed: contract re-run on a scratch home, eight page mutations each failed a doc test, T09 and T10 figures against FINDINGS. Real install and log-out check stay unseen until after the merge. |
 
-**Review queue:** T11
+**Review queue:** *(empty)*
 
 ## Blocked on the user
 
