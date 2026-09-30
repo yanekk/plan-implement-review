@@ -572,6 +572,8 @@ test('pir service on a scratch home prints a §2.7 text; on is skipped and chang
   const on = pir('on');
   assert.equal(on.stderr, '');
   assert.equal(on.stdout, mac ? 'skipped the API service (not the real home)\n' : needsMac);
+  // A skip is not a failure (0); off macOS `on` is refused (1).
+  assert.equal(on.status, mac ? 0 : 1);
   assert.equal(existsSync(join(home, 'Library')), false, 'no plist written');
   assert.equal(existsSync(join(home, '.pir')), false, 'no marker, no discovery file');
 
