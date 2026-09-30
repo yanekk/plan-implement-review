@@ -21,7 +21,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T03 | held-sessions | — | ✅ | |
 | T04 | single-program | T02, T03 | ✅ | |
 | T05 | single-launch | T01, T02 | ✅ | |
-| T06 | single-alerts | T04 | ⬜ | |
+| T06 | single-alerts | T04 | 🔍 | `singleEndAlert`, `workerEnv` moved to `notify-config.mjs`, `singleNotifyViews` and the alert pass in `single-run.mjs`; 5 tests. Deviations: the runner (`runNotifyActions`, `endAlertAction`, `withinMs`) is imported from `coordinate.mjs`, not copied; the title falls back to the run id with no name or label; `notify-wiring.test.mjs` imports `workerEnv` from its new home. |
 | T07 | single-skill | T02 | ✅ | |
 | T08 | single-rig | T04, T05 | ⬜ | |
 | T09 | box-single | T05, T08 | ⬜ | |
@@ -30,7 +30,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T12 | single-live | T07, T11 | ⬜ | |
 | T13 | docs-and-readme | T12 | ⬜ | |
 
-**Review queue:** *(empty)*
+**Review queue:** T06
 
 ## Blocked on the user
 

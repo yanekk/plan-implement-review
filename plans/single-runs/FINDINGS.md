@@ -7,6 +7,8 @@ Legend: 🐞 defect found · ✅ verified by hand with the user · 📌 worth kn
 
 | Date | | Finding |
 |---|---|---|
+| 2026-09-30 | 📌 | T11, T12: the fake ntfy is `ntfyPublish` and `ntfyClear` in `runSingle`'s deps, which a detached program cannot be given. The pty rig's scratch `PIR_HOME` has no `notify.json`, so a rig run sends nothing. |
+| 2026-09-30 | 📌 | T13: the end alert is sent on the `finish` action only. A program killed between writing `outcome: ready` and the send never sends it: `--resume` takes the nothing-to-resume exit. A resumed session's alert reuses seq `pir-{sessionId}-1`. |
 | 2026-09-30 | 🐞 | T13: `singleChecks` also refuses a `built` name whose `plans/{name}/.parallel/single` exists. A removed run leaves it, and the rename then split the control folder in two. Reproduced by a scratch run, fixed in T04 review, test locks it. |
 | 2026-09-30 | 📌 | `plan-run.mjs` has the same rename code: a leftover `plans/{slug}/.parallel/plan/state.json` of a removed planning run reads as this run's folder already moved. Not this plan's file; left alone. |
 | 2026-09-30 | 📌 | T10: `resumeRun` does not refuse a finished single record; it spawns `single-run.mjs --resume` as it does for a plan record. Not offering resume on `ready` and `dropped` rows is `canResume`'s job (DESIGN §2.11). |

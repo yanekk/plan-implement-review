@@ -58,7 +58,7 @@ import { startWorker } from './worker-proc.mjs';
 import { alertText, endAlert, holdAlert, notifyStep, notifyExit, newNotifyState, finisherAlert, finisherNotifyView } from '../core/notify.mjs';
 import { holdText } from '../core/basebranch.mjs';
 import { publish as ntfyPublish, clear as ntfyClear } from './ntfy.mjs';
-import { readNotifyConfig, ensurePresenceMarker, notifyIcon } from './notify-config.mjs';
+import { readNotifyConfig, notifyIcon, workerEnv } from './notify-config.mjs';
 
 // The engine's own root (this file is {engine}/src/shell/coordinate.mjs): the built-in rules' home
 // (finisher DESIGN §2.2), for the installed engine and a checkout alike.
@@ -2017,16 +2017,6 @@ export function testingRunState(runState, { since } = {}) {
 // `pir notify off` stops alerts in a run already going (§2.6). Only the exit sends are awaited, bounded.
 
 export const NOTIFY_EXIT_WAIT_MS = 2000;
-
-// workerEnv(env, { fs }) → { CLAUDE_CLIENT_PRESENCE_FILE } | null (DESIGN §2.7): with ntfy configured when a
-// build worker or the agent is spawned, the session is told the person is "present" so the Claude app
-// skips its own push; the marker file is made to exist. No config (or a corrupt one): null, today's env.
-export function workerEnv(env = process.env, { fs } = {}) {
-  const opts = fs ? { fs } : {};
-  const config = readNotifyConfig(env, opts);
-  if (!config || config.corrupt) return null;
-  return { CLAUDE_CLIENT_PRESENCE_FILE: ensurePresenceMarker(env, opts) };
-}
 
 // notifyViews({ plan, workers, stateTasks, heldByAgent, why, remoteOn }) → the episode machine's views
 // (DESIGN §3.2), one per live worker something is waiting on. `waiting` is read from exactly the predicate

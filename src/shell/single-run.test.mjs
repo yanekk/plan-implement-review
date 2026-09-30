@@ -16,6 +16,8 @@ import { writeClaudeShim } from './fake/claude-shim.mjs';
 import { initEvent, assistantText, resultEvent } from './fake/claude-stream.mjs';
 import { startTimeOf } from './identity.mjs';
 import { recordPath, writeRecord } from './index-store.mjs';
+import { notifyPaths, writeNotifyConfig } from './notify-config.mjs';
+import { dropPersonInput } from './person-inbox.mjs';
 import { readSnapshot } from './snapshot-store.mjs';
 import { git, openBaseline, openPlanBranch } from './worktree.mjs';
 import {
@@ -28,6 +30,7 @@ import {
   rootOf,
   runSingle,
   singleChecks,
+  singleNotifyViews,
   singleRunState,
 } from './single-run.mjs';
 
@@ -882,4 +885,173 @@ test('nextTestsLogPath counts from the folder; rootOf; parseArgs; findControlDir
   assert.equal(findControlDir(moved), moved);
   const other = join(dir, 'repo', 'plans', 'single-ffff', '.parallel', 'single');
   assert.equal(findControlDir(other), other);
+});
+
+// ---- Phone alerts (T06, DESIGN §2.10). No test here reaches the network: publish and clear are fakes. ----
+
+const TOPIC = 'pir-secrettopicabcdefghijklmn';
+const NTFY = { server: 'https://ntfy.sh', topic: TOPIC };
+const ICON = 'https://example.test/icon.png';
+
+function fakeNtfy() {
+  const pubs = [];
+  const clears = [];
+  return {
+    pubs,
+    clears,
+    deps: {
+      ntfyPublish: async (fields) => {
+        pubs.push(fields);
+        return { ok: true, status: 200 };
+      },
+      ntfyClear: async (fields) => {
+        clears.push(fields);
+        return { ok: true, status: 200 };
+      },
+    },
+  };
+}
+
+// A builder that writes down the presence variable it was started with, asks the person in plain text,
+// and builds once it is answered.
+const askingBuilder = (p, name) => [
+  ...opening(),
+  { sh: `printf %s "$CLAUDE_CLIENT_PRESENCE_FILE" > ${q(join(p.dir, 'presence-seen'))}` },
+  ...say('Which file has the typo?'),
+  ...turn(commit('change.txt'), report('built', name), ...say('Reported built.')),
+];
+
+test('alerts: an asking builder sends one alert, one reminder after 15 minutes, the answer clears it, and ready sends the end alert once', async (t) => {
+  const name = 'fix-typo';
+  const s = setup(t, (p) => [
+    { match: BUILDER_MATCH, script: askingBuilder(p, name) },
+    { match: REVIEWER_MATCH, script: reviewer(name) },
+  ]);
+  const env = { PIR_HOME: s.home, PIR_RUN: '1', PIR_NOTIFY_ICON: ICON };
+  writeNotifyConfig(NTFY, env);
+  const ntfy = fakeNtfy();
+  let skew = 0;
+  const run = start(s, { env, deps: { ...ntfy.deps, now: () => Date.now() + skew } });
+  t.after(() => run.stop.abort());
+
+  await waitFor(() => ntfy.pubs.length === 1, 'the asking alert');
+  const sessionId = stateIn(s.controlDir).sessions.build[0];
+  const seq = `pir-${sessionId}-1`;
+  // Remote Control is off here (PARALLEL_REMOTE=0), so there is no link to wait for or to tap.
+  assert.deepEqual(ntfy.pubs[0], { ...NTFY, title: 'Fix the typo in the READ · builder', message: 'asks: Which file has the typo?', click: null, seq, icon: ICON });
+  assert.equal(run.snaps.at(-1).runState.steps[0].asking, 'question', 'the row says the same');
+
+  // Two more turns of the loop send nothing; fifteen minutes on, exactly one reminder.
+  await new Promise((r) => setTimeout(r, 1200));
+  assert.equal(ntfy.pubs.length, 1);
+  skew = 900_000;
+  await waitFor(() => ntfy.pubs.length === 2, 'the reminder');
+  assert.deepEqual(ntfy.pubs[1], { ...ntfy.pubs[0], message: 'Still waiting: asks: Which file has the typo?' });
+  skew = 2 * 900_000;
+  await new Promise((r) => setTimeout(r, 1200));
+  assert.equal(ntfy.pubs.length, 2, 'one reminder per episode');
+  assert.deepEqual(ntfy.clears, []);
+
+  // The answer ends the episode: the phone is told to clear it, and the run goes on to ready.
+  assert.deepEqual(dropPersonInput(s.controlDir, { to: sessionId, kind: 'message', text: 'README.md' }, { coordinatorAlive: true }), { ok: true });
+  await waitFor(() => ntfy.clears.length === 1, 'the clear');
+  assert.deepEqual(ntfy.clears[0], { ...NTFY, seq });
+  assert.equal(await run.done, 0, run.lines.join('\n'));
+  assert.equal(ntfy.pubs.length, 3, 'the reviewer never asked: only the end alert followed');
+  assert.deepEqual(ntfy.pubs[2], { ...NTFY, title: 'fix-typo · ready to merge', message: 'git switch main && git merge pir/fix-typo', click: null, seq: null, icon: ICON, tags: ['tada'] });
+  assert.equal(ntfy.clears.length, 1, 'nothing left to clear at the exit');
+
+  // The session was started with the Claude app's own push silenced, the marker made to exist.
+  const { presence } = notifyPaths(env);
+  assert.equal(readFileSync(join(s.dir, 'presence-seen'), 'utf8'), presence);
+  assert.ok(existsSync(presence));
+
+  // Each send is noted in the session's conversation and logged without the topic.
+  const moved = controlAfter(s, name);
+  assert.deepEqual(convLog(moved, 'build').filter((e) => e.dir === 'note' && e.kind === 'notified').map((e) => e.reminder), [false, true]);
+  assert.ok(run.lines.includes(`notify send ${sessionId} ${seq} ok 200`), run.lines.join('\n'));
+  assert.ok(run.lines.includes(`notify clear ${sessionId} ${seq} ok 200`));
+  assert.ok(run.lines.includes('notify send end - ok 200'));
+  assert.ok(!run.lines.some((l) => l.includes(TOPIC)), 'the topic is never logged');
+
+  // A resume of the finished run sends nothing more.
+  const again = start(s, { env, resume: true, controlDir: moved, deps: ntfy.deps });
+  assert.equal(await again.done, 0);
+  assert.equal(ntfy.pubs.length, 3);
+});
+
+test('alerts: a stop while a session asks clears its alert; a dropped run sends nothing', async (t) => {
+  const s = setup(t, (p) => [{ match: BUILDER_MATCH, script: askingBuilder(p, 'never-built') }]);
+  const env = { PIR_HOME: s.home };
+  writeNotifyConfig(NTFY, env);
+  const ntfy = fakeNtfy();
+  const run = start(s, { env, deps: ntfy.deps });
+  t.after(() => run.stop.abort());
+  await waitFor(() => ntfy.pubs.length === 1, 'the asking alert');
+  assert.equal(ntfy.pubs[0].title, `${ID} · builder`, 'with no label on record the run id names the run');
+  run.stop.abort();
+  assert.equal(await run.done, 0);
+  assert.deepEqual(ntfy.clears, [{ ...NTFY, seq: ntfy.pubs[0].seq }]);
+  assert.equal(ntfy.pubs.length, 1);
+
+  const d = setup(t, [{ match: BUILDER_MATCH, script: [...opening(), report('dropped', '-', 'Too big for a single run.'), ...say('Dropped, as agreed.')] }]);
+  const denv = { PIR_HOME: d.home };
+  writeNotifyConfig(NTFY, denv);
+  const none = fakeNtfy();
+  const dropped = start(d, { env: denv, deps: none.deps });
+  assert.equal(await dropped.done, 0, dropped.lines.join('\n'));
+  assert.equal(stateIn(d.controlDir).outcome, 'dropped');
+  assert.deepEqual([none.pubs, none.clears], [[], []]);
+});
+
+test('alerts: with no notify.json nothing is sent, asking or ready, and the session environment is left alone', async (t) => {
+  const name = 'quiet';
+  const s = setup(t, (p) => [
+    { match: BUILDER_MATCH, script: askingBuilder(p, name) },
+    { match: REVIEWER_MATCH, script: reviewer(name) },
+  ]);
+  const ntfy = fakeNtfy();
+  const run = start(s, { env: { PIR_RUN: '1' }, deps: ntfy.deps });
+  t.after(() => run.stop.abort());
+  await waitFor(() => run.snaps.at(-1)?.runState.steps[0].phase === 'asking', 'the build step asking');
+  const sessionId = stateIn(s.controlDir).sessions.build[0];
+  assert.deepEqual(dropPersonInput(s.controlDir, { to: sessionId, kind: 'message', text: 'README.md' }, { coordinatorAlive: true }), { ok: true });
+  assert.equal(await run.done, 0, run.lines.join('\n'));
+  assert.equal(stateIn(controlAfter(s, name)).outcome, 'ready');
+  assert.deepEqual([ntfy.pubs, ntfy.clears], [[], []]);
+  // The session inherits whatever this process has (a pir worker running the suite has the variable set).
+  assert.equal(readFileSync(join(s.dir, 'presence-seen'), 'utf8'), process.env.CLAUDE_CLIENT_PRESENCE_FILE ?? '');
+  assert.equal(existsSync(notifyPaths({ PIR_HOME: s.home }).presence), false);
+  assert.ok(!run.lines.some((l) => l.startsWith('notify ')), 'nothing logged either');
+});
+
+test('singleNotifyViews: one view per asking live session, worded by alertText; none while pir tests or once the run is finished', () => {
+  const st = (over) => ({ ...initialSingleState({ id: ID, base: 'main', baseSha: 'abc', commands: { setup: [], test: ['true'] } }), step: 'build', ...over });
+  const stopped = { state: 'idle', background: [], pending: [] };
+  const sess = (step, activity, live = true) => ({ id: `${step}-1`, step, n: 1, logPath: null, cwd: '/w', live, activity });
+  const views = (state, session, extra = {}, opts = {}) =>
+    singleNotifyViews(singleRunState(state, { label: 'A change', sessions: [session] }), [{ id: session.id, activity: session.activity, lastText: 'Which file?', url: null, remoteRefused: false, ...extra }], { id: ID, ...opts });
+
+  // A plain-text question, before the run has a name: the label names it; the link is waited for.
+  assert.deepEqual(views(st({}), sess('build', stopped)), [
+    { id: 'build-1', waiting: 'question', title: 'A change · builder', message: 'asks: Which file?', remote: 'wanted', url: null },
+  ]);
+  // A permission request from the reviewer, by the run's name, with its link.
+  const pending = [{ kind: 'permission', requestId: 'r1', toolName: 'Bash', input: { command: 'npm ci' } }];
+  assert.deepEqual(views(st({ step: 'review', name: 'fix-typo' }), sess('review', { state: 'permission', background: [], pending }), { url: 'https://claude.ai/code/x' }), [
+    { id: 'review-1', waiting: 'permission', title: 'fix-typo · reviewer', message: 'wants to run Bash npm ci', remote: 'wanted', url: 'https://claude.ai/code/x' },
+  ]);
+  const questions = [{ kind: 'questions', requestId: 'q1', questions: [{ question: 'Tabs or spaces?' }, { question: 'Which port?' }] }];
+  const [v] = views(st({}), sess('build', { state: 'questions', background: [], pending: questions }), { remoteRefused: true });
+  assert.deepEqual([v.waiting, v.message, v.remote], ['questions', 'asks: Tabs or spaces? (+1 more)', 'refused']);
+  assert.equal(views(st({}), sess('build', stopped), {}, { remoteOn: false })[0].remote, 'off');
+  // With neither a name nor a label, the run id.
+  assert.equal(singleNotifyViews(singleRunState(st({}), { sessions: [sess('build', stopped)] }), [{ id: 'build-1', activity: stopped, lastText: null }], { id: ID })[0].title, `${ID} · builder`);
+
+  // Waiting on pir, not the person (§2.9): no view, so no alert and an open episode ends.
+  assert.deepEqual(views(st({ running: 'tests', accepted: { kind: 'built', name: 'x', head: 'h' } }), sess('build', stopped)), []);
+  assert.deepEqual(views(st({ accepted: { kind: 'built', name: 'x', head: 'h' } }), sess('build', stopped)), []);
+  assert.deepEqual(views(st({}), sess('build', { state: 'busy', background: [], pending: [] })), []);
+  assert.deepEqual(views(st({ step: 'review', name: 'n', outcome: 'ready' }), sess('review', stopped)), []);
+  assert.deepEqual(views(st({}), sess('build', stopped, false)), [], 'an exited session asks nothing');
 });
