@@ -40,14 +40,17 @@ export function settingsPaths(root, env = process.env) {
   return { repo, repoFile: join(root, REPO_SETTINGS), userFile: join(home, '.pir', repo, 'settings.json') };
 }
 
-// resolveBaseSetting(root, { env, fs }) → effectiveBase result ({ ok, base, file } or a refusal).
-// The primary checkout's working tree is read, not a committed tree: the setting decides which branch
-// to read, so it cannot be read from that branch (§2.1). The refusal's `file` is the path a person can
-// open: the repo file relative to the repo, the user file in full.
-export function resolveBaseSetting(root, { env = process.env, fs = nodeFs } = {}) {
-  const { repo, repoFile, userFile } = settingsPaths(root, env);
-  const repoLabel = REPO_SETTINGS;
-  const userLabel = userFile;
+// resolveSettings(root, { env, fs }) → { repo, user, repoFile, userFile }.
+// Both settings files read and parsed, not yet merged: repo and user are parseSettings results, which
+// effectiveBase and effectiveCommands (single-runs DESIGN §2.2) each merge for their own keys. The
+// primary checkout's working tree is read, not a committed tree: the setting decides which branch to
+// read, so it cannot be read from that branch (§2.1). repoFile and userFile are the paths a person can
+// open, and the `file` of a bad-settings result: the repo file relative to the repo, the user file in
+// full. An absent file reads as empty settings.
+export function resolveSettings(root, { env = process.env, fs = nodeFs } = {}) {
+  const paths = settingsPaths(root, env);
+  const repoFile = REPO_SETTINGS;
+  const userFile = paths.userFile;
   const read = (path, label) => {
     let text;
     try {
@@ -59,13 +62,14 @@ export function resolveBaseSetting(root, { env = process.env, fs = nodeFs } = {}
     }
     return parseSettings(text, label);
   };
-  const result = effectiveBase({
-    repo: read(repoFile, repoLabel),
-    user: read(userFile, userLabel),
-    repoFile: repoLabel,
-    userFile: userLabel,
-  });
-  return result.ok ? result : { ...result, repo };
+  return { repo: read(paths.repoFile, repoFile), user: read(userFile, userFile), repoFile, userFile };
+}
+
+// resolveBaseSetting(root, { env, fs }) → effectiveBase result ({ ok, base, file } or a refusal, which
+// also carries the repo's name for refusalText).
+export function resolveBaseSetting(root, { env = process.env, fs = nodeFs } = {}) {
+  const result = effectiveBase(resolveSettings(root, { env, fs }));
+  return result.ok ? result : { ...result, repo: settingsPaths(root, env).repo };
 }
 
 // pickRemote(root, base, { git }) → string|null (§2.4). The base's configured upstream if it names a

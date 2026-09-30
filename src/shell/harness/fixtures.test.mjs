@@ -487,7 +487,7 @@ test('finisher-live-branch: the same check on a run based on release, the checko
     const git = (...args) => execFileSync('git', args, { cwd: into, encoding: 'utf8' }).trim();
     assert.equal(git('branch', '--show-current'), 'main', 'the main checkout sits on main');
     assert.equal(git('rev-parse', 'main'), git('rev-parse', 'release'), 'both at the seed');
-    assert.equal(git('show', 'release:.pir/settings.json'), '{"baseBranch":"release"}');
+    assert.equal(git('show', 'release:.pir/settings.json'), '{"baseBranch":"release","setup":[],"test":["true"]}');
     assert.equal(git('status', '--porcelain'), '');
   } finally {
     rmSync(into, { recursive: true, force: true });

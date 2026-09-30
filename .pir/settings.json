@@ -1,1 +1,1 @@
-{"baseBranch": "main"}
+{"baseBranch": "main", "setup": ["test ! -f package-lock.json || npm ci"], "test": ["npm test"]}

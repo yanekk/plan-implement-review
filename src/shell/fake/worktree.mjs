@@ -70,9 +70,10 @@ export function createFakeWorktree({ progress, files = {}, slug = 'demo', base =
   configure(repo);
   mkdirSync(join(repo, dirname(progressRel)), { recursive: true });
   writeFileSync(join(repo, progressRel), progress ?? '');
-  // Every scratch repo names its base in the committed settings, as pir requires (base-branch §2.1, §5).
+  // Every scratch repo names its base in the committed settings, as pir requires (base-branch §2.1, §5),
+  // and the setup/test commands a single run needs (single-runs §2.2): no setup, a test that passes.
   mkdirSync(join(repo, '.pir'), { recursive: true });
-  writeFileSync(join(repo, '.pir', 'settings.json'), JSON.stringify({ baseBranch: base }) + '\n');
+  writeFileSync(join(repo, '.pir', 'settings.json'), JSON.stringify({ baseBranch: base, setup: [], test: ['true'] }) + '\n');
   for (const [p, content] of Object.entries(files)) {
     mkdirSync(dirname(join(repo, p)), { recursive: true }); // a nested path (`.claude/settings.json`)
     writeFileSync(join(repo, p), content);
