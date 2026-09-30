@@ -882,3 +882,208 @@ test('dashboardReducer: `c` and → on the finisher row open the finisher; with 
   assert.equal(r.ui.view, 'watch');
   assert.equal(r.ui.openWorker ?? null, null);
 });
+
+// ---- Single runs beside plans and builds (single-runs T10, DESIGN §2.8, §2.9, §2.11). ----
+
+import { isSingle, noCoordinatorNote, singleNoSessionNote, singleStepState } from './dashboard.mjs';
+import { initialSingleState, singleProgress } from './singleflow.mjs';
+import { singleRunState } from '../shell/single-run.mjs';
+
+const SINGLE_REC = { kind: 'single', label: 'Fix the typo in the REA…', go: null, repo: 'blog', slug: 'single-ab12', branch: 'pir/single-ab12', baseBranch: 'main', pid: 5151, startTime: 'Wed Sep 30 10:00:00 2026' };
+// `idle` is a session that ended its turn with no job of its own running: stopped (stoppedOnPerson).
+const sSession = (step, activity, live = true) => ({ id: `${step}-sess`, step, n: 1, logPath: `/c/conversations/${step}-1.ndjson`, cwd: '/wt', live, activity: { state: activity, background: [] } });
+
+// A single row whose snapshot is the one single-run.mjs writes, so the model is tested against the real shape.
+function singleView({ state = 'running', over = {}, sessions = [], running = null, merged, record = {}, snap = true } = {}) {
+  const st = { ...initialSingleState({ id: 'single-ab12', base: 'main', baseSha: 'abc1234def', commands: { setup: [], test: ['npm test'] } }), step: 'build', ...over };
+  const renamed = !!st.name;
+  const rec = { ...SINGLE_REC, ...(renamed ? { slug: st.name, label: null, branch: `pir/${st.name}` } : {}), ...record };
+  return {
+    key: `blog__${rec.slug}`,
+    slug: rec.slug,
+    state,
+    repo: 'blog',
+    progress: { done: 0, total: 0 },
+    workers: 0,
+    record: rec,
+    snap: snap ? { runState: singleRunState(st, { label: renamed ? null : rec.label, sessions, running }) } : null,
+    ...(merged === undefined ? {} : { merged }),
+  };
+}
+const NAMED = { name: 'fix-typo', step: 'review', renamed: { branch: true, worktree: true, control: true, index: true } };
+
+test('isSingle: by the record kind, else by the snapshot; a plan and a build are not', () => {
+  assert.equal(isSingle(singleView()), true);
+  assert.equal(isSingle(singleView({ snap: false })), true);
+  const { record, ...bare } = singleView();
+  void record;
+  assert.equal(isSingle(bare), true, 'no record, a single snapshot');
+  assert.equal(isSingle(planView()), false);
+  assert.equal(isSingle(view({ state: 'running' })), false);
+  assert.equal(isSingle({ record: { kind: 'work' }, snap: { runState: { kind: 'single' } } }), false, 'the record decides first');
+  assert.equal(isSingle(undefined), false);
+});
+
+test('runDisplayState: every single state of DESIGN §2.8', () => {
+  const tests = { kind: 'tests', since: 5 };
+  // Running: the step while its session works (setup included), testing while pir's commands run.
+  assert.equal(runDisplayState(singleView({ snap: false })), 'building', 'no snapshot yet');
+  assert.equal(runDisplayState(singleView({ over: { step: 'setup', running: 'setup' }, running: { kind: 'setup', since: 1 } })), 'building', 'setup reads building');
+  assert.equal(runDisplayState(singleView({ sessions: [sSession('build', 'busy')] })), 'building');
+  assert.equal(runDisplayState(singleView({ over: { running: 'tests', accepted: { kind: 'built', name: 'fix-typo', head: 'h1' } }, sessions: [sSession('build', 'idle')], running: tests })), 'testing');
+  assert.equal(runDisplayState(singleView({ over: { running: 'baseline', red: { sha: 'h1' } }, sessions: [sSession('build', 'idle')], running: { kind: 'baseline', since: 5 } })), 'testing', 'the baseline is testing');
+  assert.equal(runDisplayState(singleView({ over: { ...NAMED, step: 'rename' } })), 'reviewing', 'the rename already has the builder closed');
+  assert.equal(runDisplayState(singleView({ over: NAMED, sessions: [sSession('build', 'exited', false), sSession('review', 'busy')] })), 'reviewing');
+  assert.equal(runDisplayState(singleView({ over: { ...NAMED, running: 'tests', accepted: { kind: 'reviewed', name: 'fix-typo', head: 'h2' } }, sessions: [sSession('review', 'idle')], running: tests })), 'testing');
+  // Asking: a request, a question set, or the session stopped on the person.
+  for (const activity of ['permission', 'questions', 'idle']) {
+    assert.equal(runDisplayState(singleView({ sessions: [sSession('build', activity)] })), 'asking-you', `build ${activity}`);
+    assert.equal(runDisplayState(singleView({ over: NAMED, sessions: [sSession('review', activity)] })), 'asking-you', `review ${activity}`);
+  }
+  // Finished.
+  const ready = { ...NAMED, outcome: 'ready' };
+  assert.equal(runDisplayState(singleView({ state: 'finished', over: ready })), 'ready-to-merge', 'no merged check yet');
+  assert.equal(runDisplayState(singleView({ state: 'finished', over: ready, merged: false })), 'ready-to-merge');
+  assert.equal(runDisplayState(singleView({ state: 'finished', over: ready, merged: true })), 'merged');
+  assert.equal(runDisplayState(singleView({ state: 'finished', over: { outcome: 'dropped' } })), 'finished', 'dropped in build');
+  assert.equal(runDisplayState(singleView({ state: 'finished', over: { ...NAMED, outcome: 'dropped' }, merged: true })), 'finished', 'dropped in review, whatever merged says');
+  assert.equal(runDisplayState(singleView({ state: 'finished', snap: false })), 'finished');
+  // Stopped and crashed pass through, whatever the snapshot last said.
+  for (const state of ['stopped', 'crashed', 'unreachable']) {
+    assert.equal(runDisplayState(singleView({ state, sessions: [sSession('build', 'questions')] })), state);
+    assert.equal(runDisplayState(singleView({ state, over: ready, merged: true })), state);
+  }
+});
+
+test('runDisplayState: testing is never asking by the stopped-session rule, but a pending request during a test run still asks', () => {
+  const held = { running: 'tests', accepted: { kind: 'built', name: 'fix-typo', head: 'h1' } };
+  const tests = { kind: 'tests', since: 5 };
+  // The session is idle, waiting on pir's tests: that is not a question (§2.9).
+  assert.equal(runDisplayState(singleView({ over: held, sessions: [sSession('build', 'idle')], running: tests })), 'testing');
+  // A red run sent back, the baseline still running, the session idle: still testing.
+  assert.equal(runDisplayState(singleView({ over: { running: 'baseline', rounds: { build: 1, review: 0 } }, sessions: [sSession('build', 'idle')], running: { kind: 'baseline', since: 5 } })), 'testing');
+  // A permission request or a question set is the person's to answer even while the tests run.
+  for (const activity of ['permission', 'questions']) {
+    assert.equal(runDisplayState(singleView({ over: held, sessions: [sSession('build', activity)], running: tests })), 'asking-you', activity);
+  }
+  assert.equal(singleStepState({ step: 'build' }), 'building');
+  assert.equal(singleStepState({ step: 'setup' }), 'building');
+  assert.equal(singleStepState({ step: 'rename' }), 'reviewing');
+  assert.equal(singleStepState(null), 'building');
+});
+
+test('buildDashboard: single rows count building, testing and reviewing as running, asking and ready to merge as waiting, merged and dropped as finished', () => {
+  const ready = { ...NAMED, outcome: 'ready' };
+  const { rows, counts } = buildDashboard([
+    singleView({ sessions: [sSession('build', 'busy')] }),
+    singleView({ over: { running: 'tests', accepted: { kind: 'built', name: 'x', head: 'h' } }, sessions: [sSession('build', 'idle')], running: { kind: 'tests', since: 1 } }),
+    singleView({ over: NAMED, sessions: [sSession('review', 'busy')] }),
+    singleView({ sessions: [sSession('build', 'questions')] }),
+    singleView({ state: 'finished', over: ready, merged: false }),
+    singleView({ state: 'finished', over: ready, merged: true }),
+    singleView({ state: 'finished', over: { outcome: 'dropped' } }),
+    singleView({ state: 'stopped' }),
+    singleView({ state: 'crashed' }),
+  ]);
+  assert.deepEqual(rows.map((r) => r.display), ['building', 'testing', 'reviewing', 'asking-you', 'ready-to-merge', 'merged', 'finished', 'stopped', 'crashed']);
+  assert.deepEqual(counts, { running: 3, finished: 2, crashed: 1, stopped: 1, waiting: 2, total: 9 });
+});
+
+test('singleProgress drives PROGRESS from the snapshot, and SLUG shows the quoted label before the rename', () => {
+  const progress = (v) => singleProgress(v.snap?.runState);
+  assert.equal(progress(singleView({ snap: false })), 'build …');
+  assert.equal(progress(singleView({ sessions: [sSession('build', 'busy')] })), 'build …');
+  assert.equal(progress(singleView({ over: { running: 'tests' }, running: { kind: 'tests', since: 1 } })), 'build · tests …');
+  assert.equal(progress(singleView({ over: { running: 'tests', rounds: { build: 1, review: 0 } }, running: { kind: 'tests', since: 1 } })), 'build · tests (red 1) …');
+  assert.equal(progress(singleView({ over: NAMED })), 'build ✓ review …');
+  assert.equal(progress(singleView({ over: { ...NAMED, running: 'tests', rounds: { build: 1, review: 2 } }, running: { kind: 'tests', since: 1 } })), 'build ✓ review · tests (red 2) …');
+  assert.equal(progress(singleView({ state: 'finished', over: { ...NAMED, outcome: 'ready' } })), 'build ✓ review ✓');
+  assert.equal(progress(singleView({ state: 'finished', over: { outcome: 'dropped' } })), 'build ✗');
+  assert.equal(progress(singleView({ state: 'finished', over: { ...NAMED, outcome: 'dropped' } })), 'build ✓ review ✗');
+
+  assert.equal(displayName(singleView()), '"Fix the typo in the REA…"');
+  assert.equal(displayName(singleView({ over: NAMED })), 'fix-typo', 'the index clears the label at the rename');
+});
+
+test('canResume: a stopped or crashed single run yes; running, ready, merged and dropped no', () => {
+  const ready = { ...NAMED, outcome: 'ready' };
+  assert.equal(canResume(singleView({ state: 'stopped' })), true);
+  assert.equal(canResume(singleView({ state: 'crashed', over: NAMED })), true);
+  assert.equal(canResume(singleView({ state: 'running' })), false);
+  assert.equal(canResume(singleView({ state: 'finished', over: ready })), false);
+  assert.equal(canResume(singleView({ state: 'finished', over: ready, merged: true })), false);
+  assert.equal(canResume(singleView({ state: 'finished', over: { outcome: 'dropped' } })), false);
+  assert.equal(canResume(singleView({ state: 'finished', over: { ...NAMED, outcome: 'dropped' } })), false);
+});
+
+test('the chords on a single row: stop while running, resume and remove once stopped, remove alone once finished', () => {
+  const press = (views, type) => {
+    const armed = dashboardReducer(initialUi(), { type }, views);
+    return dashboardReducer(armed.ui, { type }, views).intent;
+  };
+  const running = [singleView({ sessions: [sSession('build', 'busy')] })];
+  assert.deepEqual(press(running, 'ctrlS'), { type: 'stop', slug: 'single-ab12', key: 'blog__single-ab12' });
+  assert.equal(press(running, 'ctrlX'), null, 'a running run is stopped before it is removed');
+  assert.equal(press(running, 'ctrlR'), null);
+  const stopped = [singleView({ state: 'stopped' })];
+  assert.deepEqual(press(stopped, 'ctrlR'), { type: 'resume', slug: 'single-ab12', key: 'blog__single-ab12' });
+  assert.deepEqual(press(stopped, 'ctrlX'), { type: 'remove', slug: 'single-ab12', key: 'blog__single-ab12' });
+  assert.equal(press(stopped, 'ctrlS'), null);
+  for (const v of [singleView({ state: 'finished', over: { ...NAMED, outcome: 'ready' } }), singleView({ state: 'finished', over: { outcome: 'dropped' } })]) {
+    assert.equal(press([v], 'ctrlR'), null, 'a finished single run is final');
+    assert.equal(press([v], 'ctrlS'), null);
+    assert.equal(press([v], 'ctrlX').type, 'remove');
+  }
+});
+
+test('a single run opens on its steps: build, review, merge; → opens a step\'s session, and a step without one says why', () => {
+  const views = [singleView({ over: NAMED, sessions: [sSession('build', 'exited', false), sSession('review', 'busy')] })];
+  let ui = dashboardReducer(initialUi(), { type: 'open' }, views).ui;
+  assert.deepEqual([ui.view, ui.taskSel, ui.openKey], ['watch', 0, 'blog__fix-typo']);
+  assert.deepEqual(openTasks(views, ui).map((s) => s.id), ['build', 'review', 'merge']);
+  assert.equal(goOpen(views, ui), false);
+  // The builder's finished session opens read-only (live false), the reviewer's live.
+  const built = dashboardReducer(ui, { type: 'open' }, views).ui;
+  assert.deepEqual([built.view, built.openWorker], ['worker', { taskId: 'build', workerId: 'build-sess', logPath: '/c/conversations/build-1.ndjson', live: false }]);
+  ui = dashboardReducer(ui, { type: 'down' }, views).ui;
+  assert.equal(dashboardReducer(ui, { type: 'open' }, views).ui.openWorker.live, true);
+  // The merge row is the person's own step: no conversation, a note.
+  ui = dashboardReducer(ui, { type: 'down' }, views).ui;
+  const merge = dashboardReducer(ui, { type: 'open' }, views).ui;
+  assert.deepEqual([merge.view, merge.note], ['watch', singleNoSessionNote({ id: 'merge' })]);
+  assert.equal(dashboardReducer(ui, { type: 'down' }, views).ui.taskSel, 2, 'clamped at the last step');
+  // `c` has nothing to open on a single run.
+  const c = dashboardReducer(ui, { type: 'key', key: 'c' }, views).ui;
+  assert.deepEqual([c.view, c.note], ['watch', 'a single run has no coordinator agent.']);
+  assert.equal(noCoordinatorNote(views, ui), 'a single run has no coordinator agent.');
+
+  // No snapshot yet: the three steps are there, and none opens.
+  const fresh = [singleView({ snap: false })];
+  const f = dashboardReducer(initialUi(), { type: 'open' }, fresh).ui;
+  assert.deepEqual(openTasks(fresh, f).map((s) => [s.id, s.phase]), [['build', 'pending'], ['review', 'pending'], ['merge', 'pending']]);
+  assert.equal(dashboardReducer(f, { type: 'open' }, fresh).ui.note, 'build has no session yet — the builder is starting.');
+  assert.match(singleNoSessionNote({ id: 'review' }), /^review has no session yet — the reviewer starts when/);
+});
+
+test('a dropped single run: → on the review step it never reached says the run was dropped, not that a reviewer is coming', () => {
+  const views = [singleView({ state: 'finished', over: { outcome: 'dropped' }, sessions: [sSession('build', 'exited', false)] })];
+  let ui = dashboardReducer(initialUi(), { type: 'open' }, views).ui;
+  ui = dashboardReducer(ui, { type: 'down' }, views).ui;
+  const review = dashboardReducer(ui, { type: 'open' }, views).ui;
+  assert.deepEqual([review.view, review.note], ['watch', 'review has no session — the run was dropped before the reviewer started.']);
+  ui = dashboardReducer(ui, { type: 'down' }, views).ui;
+  assert.equal(dashboardReducer(ui, { type: 'open' }, views).ui.note, 'merge has no conversation — the run was dropped, so there is nothing to merge.');
+  // A stopped run is resumable: its reviewer may still start, and its merge is still to come.
+  const stopped = [singleView({ state: 'stopped', sessions: [sSession('build', 'exited', false)] })];
+  let s = dashboardReducer(initialUi(), { type: 'open' }, stopped).ui;
+  s = dashboardReducer(s, { type: 'down' }, stopped).ui;
+  assert.match(dashboardReducer(s, { type: 'open' }, stopped).ui.note, /^review has no session yet/);
+});
+
+test('an open single run is followed through its rename by the program behind it', () => {
+  const before = [singleView({ sessions: [sSession('build', 'busy')] })];
+  const ui = dashboardReducer(initialUi(), { type: 'open' }, before).ui;
+  const after = [singleView({ over: NAMED, sessions: [sSession('review', 'busy')] })];
+  assert.equal(findOpen(after, ui).slug, 'fix-typo');
+  assert.deepEqual([repinOpen(ui, after).openKey, repinOpen(ui, after).openSlug], ['blog__fix-typo', 'fix-typo']);
+});

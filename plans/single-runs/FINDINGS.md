@@ -7,10 +7,15 @@ Legend: 🐞 defect found · ✅ verified by hand with the user · 📌 worth kn
 
 | Date | | Finding |
 |---|---|---|
+| 2026-09-30 | 🐞 | T10 review drill, worker-driven: `single-dropped` at 80×24 and 120×40, list, steps view, `c`, `→` on each step, Ctrl+R, Ctrl+X. `→` on a dropped run's review row promised a reviewer. Fixed in `singleNoSessionNote`, test locks it. |
+| 2026-09-30 | 📌 | The armed `Ctrl+S` and `Ctrl+X` lines name a single run by its id (`single-02c3`) while its row shows the label; only the resume line uses `displayName`. A planning run does the same. Left alone. |
+| 2026-09-30 | 📌 | T10 drill, worker-driven: list and steps view of `single-happy` and `single-red` at 80×24 and 120×40, `→` on merge, `c`. Nothing clipped. Fixed: a full label lost its closing quote at 80 columns. |
+| 2026-09-30 | 📌 | The merged check asks about `refs/heads/pir/{name}` and keeps its yes in memory. A branch deleted after the merge reads `ready to merge` again once `pir` restarts. Not decided in DESIGN §2.8. |
+| 2026-09-30 | 📌 | T13: `PIR_DASHBOARD_STATE` now publishes `run.kind` `single`, and a builder as role `implement`. `docs/detached-runs.md` still says `"plan" \| "work"`. |
+| 2026-09-30 | 📌 | T11: the rig's sessions and test line are instant. `pace()` in `plan-rig-single-row.test.mjs` adds sleeps to the scripts file and a slower test line in the scratch home's settings, so a state stays on screen. |
 | 2026-09-30 | 📌 | T09 review drill, worker-driven, both sizes: broken JSON and no-base notes, a 200-character prompt, ← and → from the builder's conversation. No overflow. T10: before the rename the conversation header and the list row show `single-{hex4}`, not the quoted label. |
 | 2026-09-30 | 🔄 | A box note wider than the screen wraps at a word, up to three lines (`NOTE_ROWS`, list-view.mjs), for every note (user, T09). DESIGN §2.1's `no setup/test commands` note is 84 characters at a 4-letter repo name. |
 | 2026-09-30 | 📌 | T09 drill, worker-driven: `@repo/single` in the rig at 80×24 and 120×40: pop-up, Tab, refusals, the builder's question answered, the follow. No overflow. `starting the builder…` passed too fast to see; it is unit-tested. |
-| 2026-09-30 | 📌 | T10: pir-tui reads a single run's steps itself (`isSingleRun`, `openSteps`) for the landing and the follow. Fold them into `isSingle` and `openTasks`. Until then `←` from the builder's conversation shows the build's live view. |
 | 2026-09-30 | 📌 | T13: `docs/planning-runs.md` and `docs/detached-runs.md` still say two commands and quote the old `/plan or /start` texts. `BARE_HINT_SUFFIX` and `EMPTY_LIST_BOX` still read `to plan or build`; DESIGN §2.1 does not reword them. |
 | 2026-09-30 | 📌 | T11, T12: the fake ntfy is `ntfyPublish` and `ntfyClear` in `runSingle`'s deps, which a detached program cannot be given. The pty rig's scratch `PIR_HOME` has no `notify.json`, so a rig run sends nothing. |
 | 2026-09-30 | 📌 | T13: the end alert is sent on the `finish` action only. A program killed between writing `outcome: ready` and the send never sends it: `--resume` takes the nothing-to-resume exit. A resumed session's alert reuses seq `pir-{sessionId}-1`. |

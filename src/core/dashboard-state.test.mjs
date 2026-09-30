@@ -125,3 +125,40 @@ test('sameDashboardState ignores updatedAt and nothing else', () => {
   assert.ok(!sameDashboardState(a, { ...a, run: { ...a.run, cwd: null } }));
   assert.ok(!sameDashboardState(null, a), 'nothing written yet is always a change');
 });
+
+// ---- A single run (single-runs T10). ----
+
+const single = (over = {}) => ({
+  key: 'shop__single-ab12',
+  slug: 'single-ab12',
+  repo: 'shop',
+  state: 'running',
+  record: { kind: 'single', slug: 'single-ab12', repo: 'shop', repoPath: MAIN, branch: 'pir/single-ab12' },
+  snap: {
+    runState: {
+      kind: 'single',
+      name: null,
+      steps: [
+        { id: 'build', worker: { id: 's-build', live: true, cwd: `${WT}/pir-single-ab12` }, workers: [{ id: 's-build', role: 'builder', cwd: `${WT}/pir-single-ab12` }] },
+        { id: 'review', worker: { id: 's-rev', live: true, cwd: `${WT}/pir-fix-typo` }, workers: [{ id: 's-rev', role: 'reviewer', cwd: `${WT}/pir-fix-typo` }] },
+        { id: 'merge', worker: null, workers: [] },
+      ],
+    },
+  },
+  ...over,
+});
+
+test('a single run publishes kind single, its worktree across the rename, and its builder and reviewer as implement and review', () => {
+  const ui = { ...initialUi(), view: 'watch', openSlug: 'single-ab12', openKey: 'shop__single-ab12' };
+  const before = state(ui, [single()], existing(`${WT}/pir-single-ab12`));
+  assert.deepEqual(before.run, { key: 'shop__single-ab12', kind: 'single', slug: 'single-ab12', repo: 'shop', repoPath: MAIN, branch: 'pir/single-ab12', cwd: `${WT}/pir-single-ab12` });
+  // Mid-rename: the folder has moved, the index entry has not. The snapshot's name finds it.
+  const mid = single({ snap: { runState: { kind: 'single', name: 'fix-typo', steps: [] } } });
+  assert.deepEqual(runWorktreeNames(mid), ['pir-single-ab12', 'pir-fix-typo']);
+  assert.equal(state(ui, [mid], existing(`${WT}/pir-fix-typo`)).run.cwd, `${WT}/pir-fix-typo`);
+
+  const inBuild = state({ ...ui, view: 'worker', openWorker: { taskId: 'build', workerId: 's-build' } }, [single()], existing(`${WT}/pir-single-ab12`));
+  assert.deepEqual(inBuild.worker, { id: 's-build', task: 'build', role: 'implement', cwd: `${WT}/pir-single-ab12` });
+  const inReview = state({ ...ui, view: 'worker', openWorker: { taskId: 'review', workerId: 's-rev' } }, [single()], existing(`${WT}/pir-single-ab12`));
+  assert.deepEqual(inReview.worker, { id: 's-rev', task: 'review', role: 'review', cwd: `${WT}/pir-fix-typo` });
+});

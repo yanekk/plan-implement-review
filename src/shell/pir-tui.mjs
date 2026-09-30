@@ -18,14 +18,17 @@
 // unchanged alongside the list's), which keeps the watch frame byte-for-byte the coordinator's display.
 
 import { basename, join, resolve as resolvePath } from 'node:path';
+import { readFileSync } from 'node:fs';
 import { execFile } from 'node:child_process';
 import { constants as osConstants, homedir } from 'node:os';
 import { readLogTail } from './commands.mjs';
 
 import { buildDisplay, rowEntries } from '../core/display.mjs';
 import { wrapLine } from '../core/text.mjs';
-import { buildDashboard, dashboardReducer, displayName, findOpen, goOpen, initialUi, isPlan, openTasks, planProgress, repinOpen, runKey, moveRow } from '../core/dashboard.mjs';
-import { buildPlanDisplay } from '../core/plandisplay.mjs';
+import { buildDashboard, dashboardReducer, displayName, findOpen, goOpen, initialUi, isPlan, isSingle, openTasks, planProgress, repinOpen, runKey, moveRow } from '../core/dashboard.mjs';
+import { buildPlanDisplay, buildSingleDisplay } from '../core/plandisplay.mjs';
+import { singleProgress } from '../core/singleflow.mjs';
+import { baseContains } from './worktree.mjs';
 import { styledLines } from './render.mjs';
 import { classifyRun } from '../core/runstate.mjs';
 import { resolveLiveness, createLivenessCache } from './identity.mjs';
@@ -76,6 +79,38 @@ function repoWidth(columns) {
   return Math.max(REPO_MIN, Math.min(REPO_MAX, (columns | 0 || DEFAULT_COLS) - fixed));
 }
 
+// The least SLUG keeps beside a single run's PROGRESS, enough for a short name or the start of a label.
+const SLUG_MIN = 12;
+// TYPE with a single run listed: `single` and the space before STATE.
+const TYPE_SINGLE = 7;
+
+// listColumns(rows, columns) → the list's column widths, `repo` included. A list with no single run has
+// exactly the widths it always had. A single run (single-runs DESIGN §2.8) needs more: TYPE one wider for
+// `single`, and PROGRESS as wide as the longest single cell on the screen (`build ✓ review · tests (red 1) …`
+// is twice a build's bar). SLUG pays for both, down to SLUG_MIN and never below REPO's minimum; past that
+// PROGRESS is cut, since its head (`build ✓ review`) is the part a scan reads. What a wider terminal has
+// left goes to REPO, as before. WK is the last column, so only its two header characters are ever drawn
+// (a row's count is shorter); counting it as two here is what lets a full-length label keep its closing
+// quote at 80 columns beside the wider TYPE.
+const WK_DRAWN = 2;
+export function listColumns(rows, columns) {
+  const base = rows.some((v) => v.display === 'ready-for-your-go') ? COL_GO : rows.some((v) => v.display === 'ready-to-merge') ? COL_READY : COL_BASE;
+  const singles = rows.filter(isSingle);
+  if (singles.length === 0) return { ...base, repo: repoWidth(columns) };
+  const longest = Math.max(...singles.map((v) => [...singleProgress(v.snap?.runState)].length));
+  const rest = (columns | 0 || DEFAULT_COLS) - base.marker - TYPE_SINGLE - base.state - WK_DRAWN;
+  let progress = Math.max(base.progress, longest + 1);
+  // SLUG's full width is the plain list's: what `ready to merge` takes from it on a build's list is
+  // already counted in `rest` here.
+  let slug = Math.min(COL_BASE.slug, rest - progress - REPO_MIN);
+  if (slug < SLUG_MIN) {
+    slug = SLUG_MIN;
+    progress = Math.max(base.progress, Math.min(progress, rest - slug - REPO_MIN));
+  }
+  const repo = Math.max(REPO_MIN, Math.min(REPO_MAX, rest - slug - progress));
+  return { ...base, type: TYPE_SINGLE, slug, progress, repo };
+}
+
 // span(text, style) / lineOf(text, style) — the two shapes a frame is built from. A frame is an array of
 // LINES; a line is an array of SPANS; a span is `{ text, style }` where style is a key into pir-view.mjs's SGR (or null
 // for plain). One line can carry several differently-coloured spans (a list row does); a single-colour
@@ -103,8 +138,17 @@ export { readLogTail };
 // A planning run's row shows its display state (runDisplayState, pir-plan-command §2.10): planning and
 // reviewing green as running, `your go` amber bold (the colour of asking), the rest as a build's. A running
 // build with a worker waiting on the person reads `asking you` in the same amber bold.
+//
+// A single run (single-runs DESIGN §2.8): building and testing green as running, `merged` dim as finished,
+// which is the tally it counts in.
 function stateCell(state) {
   switch (state) {
+    case 'building':
+      return { text: '● building', style: 'running' };
+    case 'testing':
+      return { text: '● testing', style: 'running' };
+    case 'merged':
+      return { text: '◌ merged', style: 'ended' };
     case 'running':
       return { text: '● running', style: 'running' };
     case 'planning':
@@ -191,9 +235,9 @@ function footerLine(context, ui, rows = []) {
 // the frame is exactly today's: the non-TTY path has no box, so it keeps its footer and its get-started
 // line, which there still points at `pir start`.
 export function buildListFrame(dashboard, ui = initialUi(), { columns = DEFAULT_COLS, rows: budget } = {}) {
-  const repoCol = repoWidth(columns);
   const { rows = [], counts = { running: 0, finished: 0, crashed: 0, stopped: 0, waiting: 0, total: 0 } } = dashboard ?? {};
-  const COL = rows.some((v) => v.display === 'ready-for-your-go') ? COL_GO : rows.some((v) => v.display === 'ready-to-merge') ? COL_READY : COL_BASE;
+  const COL = listColumns(rows, columns);
+  const repoCol = COL.repo;
   const title = [span('pir', 'head'), span('  runs on this machine', 'dim')];
   const header = lineOf(
     '  ' + pad('SLUG', COL.slug) + pad('TYPE', COL.type) + pad('STATE', COL.state) + pad('REPO', repoCol) + pad('PROGRESS', COL.progress) + 'WK',
@@ -208,14 +252,20 @@ export function buildListFrame(dashboard, ui = initialUi(), { columns = DEFAULT_
     // A planning run (pir-plan-command §2.10): TYPE `plan` magenta, its label dimmed in quotes until it has
     // a slug, its display state, and its steps in PROGRESS. A record without `kind` is a build, `work`.
     // isPlan is the rule runDisplayState uses, so TYPE, STATE and PROGRESS never disagree on a row.
+    // A single run (single-runs DESIGN §2.8) is painted the same way: TYPE `single`, its label until the
+    // builder has named it, and its steps in PROGRESS (singleProgress).
     const plan = isPlan(v);
-    const labelled = plan && !!v.record?.label;
+    const single = isSingle(v);
+    const labelled = (plan || single) && !!v.record?.label;
     const st = stateCell(v.display ?? v.state);
-    const prog = plan ? { text: planProgress(v.snap?.runState), style: v.state === 'crashed' ? 'bar-crash' : null } : progressCell(v.state, v.progress);
+    const steps = plan ? planProgress(v.snap?.runState) : single ? singleProgress(v.snap?.runState) : null;
+    const prog = steps != null ? { text: steps, style: v.state === 'crashed' ? 'bar-crash' : null } : progressCell(v.state, v.progress);
     return [
       span(selected ? '▎ ' : '  ', selected ? 'selected' : null), // the selected-row mark (paintLine)
       span(pad(displayName(v), COL.slug), live && !labelled ? null : 'dim'),
-      span(pad(plan ? 'plan' : 'work', COL.type), plan ? 'type-plan' : 'type-work'),
+      // `single` takes the step rows' cyan: a third colour beside magenta and blue, from a key both
+      // colour tables already have.
+      span(pad(plan ? 'plan' : single ? 'single' : 'work', COL.type), plan ? 'type-plan' : single ? 'active' : 'type-work'),
       span(pad(st.text, COL.state), st.style),
       span(pad(v.repo, repoCol), 'dim'),
       span(pad(prog.text, COL.progress), prog.style),
@@ -373,9 +423,11 @@ export function watchDisplayLines(snap, { now, spinnerChar = SPINNER[0] } = {}) 
 // resumes it (§2.4: painting a stale snapshot plainly is more honest than a blank screen). A crashed run
 // also shows the tail of its log and the full log path. A run with no snapshot yet shows a waiting line.
 // The spinner ticks only while the run is running; a stale frame's glyph is a static dot.
-export function buildWatchFrame(view, { now, spinnerChar = SPINNER[0], ui = initialUi(), columns = DEFAULT_COLS, logTail = null, progress = null } = {}) {
+export function buildWatchFrame(view, { now, spinnerChar = SPINNER[0], ui = initialUi(), columns = DEFAULT_COLS, logTail = null, progress = null, dropped = null } = {}) {
   // A planning run has steps, not tasks: its own frame (pir-plan-command §2.11), reached the same way.
   if (isPlan(view)) return buildPlanWatchFrame(view, { now, spinnerChar, ui, columns, logTail, progress });
+  // So has a single run (single-runs DESIGN §2.8).
+  if (isSingle(view)) return buildSingleWatchFrame(view, { now, spinnerChar, ui, columns, logTail, dropped });
   const { slug, state, repo, snap, record } = view ?? {};
   const lines = [];
   const cols = Math.max(20, columns | 0 || DEFAULT_COLS);
@@ -517,11 +569,7 @@ export function buildPlanWatchFrame(view, { now, spinnerChar = SPINNER[0], ui = 
   lines.push([span(d.header.name, 'head'), span(` · ${d.header.state}${d.header.branch ? ` · ${d.header.branch}` : ''}`, 'dim')]);
   lines.push([]);
   const sel = Math.max(0, Math.min(ui.taskSel ?? 0, d.rows.length - 1));
-  d.rows.forEach((r, i) => {
-    const glyph = r.kind === 'active' ? (alive ? spinnerChar : '·') : STEP_GLYPH[r.kind];
-    const text = `${glyph} ${r.id.padEnd(8)} ${r.role.padEnd(12)} ${r.text.padEnd(30)} ${fmtClock(r.clock)}`.replace(/\s+$/, '');
-    lines.push(withHit([span(i === sel ? '▎ ' : '  ', i === sel ? 'selected' : null), span(text, STEP_STYLE[r.kind] ?? null)], 'step', i));
-  });
+  d.rows.forEach((r, i) => lines.push(stepLine(r, i, { sel, alive, spinnerChar })));
   lines.push([]);
 
   const f = d.footer;
@@ -555,6 +603,65 @@ export function buildPlanWatchFrame(view, { now, spinnerChar = SPINNER[0], ui = 
   lines.push([]);
   if (ui.note) note(ui.note, 'dim', '');
   lines.push(footerLine(d.go ? 'go' : alive ? 'steps' : 'steps-ended', ui));
+  return lines;
+}
+
+// One step row of a planning or single run's steps view, tagged with its index for the mouse.
+function stepLine(r, i, { sel, alive, spinnerChar }) {
+  const glyph = r.kind === 'active' ? (alive ? spinnerChar : '·') : STEP_GLYPH[r.kind];
+  const text = `${glyph} ${r.id.padEnd(8)} ${r.role.padEnd(12)} ${r.text.padEnd(30)} ${fmtClock(r.clock)}`.replace(/\s+$/, '');
+  return withHit([span(i === sel ? '▎ ' : '  ', i === sel ? 'selected' : null), span(text, STEP_STYLE[r.kind] ?? null)], 'step', i);
+}
+// What a step row's text starts at: the mark, the glyph, the id and the role columns (stepLine).
+const STEP_TEXT_AT = 2 + 2 + 9 + 13;
+
+// buildSingleWatchFrame(view, { now, spinnerChar, ui, columns, logTail, dropped }) → frame (single-runs
+// DESIGN §2.8). A single run's steps view: the header (name, state, branch), the rows build, review and
+// merge painted as a planning run's steps are, then the one note the run's state calls for. `view.merged`
+// is the shell's merged check; `dropped` is the `dropped` report's body, read by the shell from state.json.
+export function buildSingleWatchFrame(view, { now, spinnerChar = SPINNER[0], ui = initialUi(), columns = DEFAULT_COLS, logTail = null, dropped = null } = {}) {
+  const { state, snap, record } = view ?? {};
+  const d = buildSingleDisplay(snap?.runState ?? null, { now, record: record ?? { slug: view?.slug }, state, merged: !!view?.merged, dropped });
+  const lines = [];
+  const cols = Math.max(20, columns | 0 || DEFAULT_COLS);
+  const note = (text, style, indent = '  ') => {
+    const width = Math.max(1, cols - [...indent].length);
+    for (const seg of wrapLine(text, width)) lines.push(lineOf(indent + seg, style));
+  };
+  const alive = state === 'running';
+  lines.push([span(d.header.name, 'head'), span(` · ${d.header.state}${d.header.branch ? ` · ${d.header.branch}` : ''}`, 'dim')]);
+  lines.push([]);
+  const sel = Math.max(0, Math.min(ui.taskSel ?? 0, d.rows.length - 1));
+  d.rows.forEach((r, i) => lines.push(stepLine(r, i, { sel, alive, spinnerChar })));
+  lines.push([]);
+
+  const f = d.footer;
+  if (f?.kind === 'asking') {
+    note(`● ${f.step} — asking you; open it (→) to answer`, 'asking', '');
+  } else if (f?.kind === 'ready') {
+    // The merge row carries the hand-off line; a frame too narrow for it would clip the command, so there
+    // it is said again, wrapped, in the words a finished build's frame uses.
+    if (STEP_TEXT_AT + [...f.line].length > cols) note(`Hand-off: ${f.line}`, 'your-go', '');
+  } else if (f?.kind === 'dropped') {
+    note(f.reason ? `Dropped: ${f.reason}` : 'Dropped.', 'ended', '');
+  } else if (f?.kind === 'stale') {
+    if (f.state === 'crashed') {
+      note('— the single run\'s program died; this frame is stale. Ctrl+R Ctrl+R on the list resumes it.', 'crashed', '');
+      if (logTail && logTail.length) {
+        lines.push([]);
+        lines.push(lineOf('  last lines of run.log:', 'dim'));
+        for (const raw of logTail) note(raw.replace(/\s+$/, ''), 'dim', '    ');
+      }
+    } else if (f.state === 'stopped') {
+      note('— stopped · this frame is stale. Ctrl+R Ctrl+R on the list resumes it.', 'ended', '');
+    } else {
+      note(`— ${f.state} · this frame is stale.`, 'ended', '');
+    }
+  }
+
+  lines.push([]);
+  if (ui.note) note(ui.note, 'dim', '');
+  lines.push(footerLine(alive ? 'steps' : 'steps-ended', ui));
   return lines;
 }
 
@@ -884,15 +991,47 @@ export function createScreen({ stream = process.stdout, colour, terminal, copy =
   };
 }
 
-// loadDashboard({ dir, now, kill, exec, fs, liveness }) → { rows, counts }. The read half of a refresh (DESIGN §3.4):
+// How long a `no` from the merged check stands before git is asked again (single-runs DESIGN §2.8).
+export const MERGED_CHECK_MS = 30000;
+
+// createMergedCheck({ contains, intervalMs }) → mergedCheck(view, { now }) → boolean: whether a finished
+// `ready` single run's branch is in its base branch, so the row can stop calling for the person once
+// their merge lands, with no process kept alive to watch (single-runs DESIGN §2.8). It asks
+// baseContains(pir/{name}, { root, refs: [refs/heads/{base}] }) at most once per intervalMs per row and
+// keeps the answer in memory; a yes is final and is never asked again. Only the local base is read: the
+// hand-off merges there. A row with no base, branch or repo path on record reads not merged without
+// asking. `contains` is injected so a test counts the calls; `now` is the caller's clock (ms).
+export function createMergedCheck({ contains = baseContains, intervalMs = MERGED_CHECK_MS } = {}) {
+  const cache = new Map();
+  return function mergedCheck(view, { now }) {
+    const key = runKey(view);
+    const hit = cache.get(key);
+    if (hit && (hit.merged || now - hit.at < intervalMs)) return hit.merged;
+    const r = view?.record ?? {};
+    const base = r.baseBranch ?? view?.snap?.runState?.base ?? null;
+    let merged = false;
+    if (base && r.branch && r.repoPath) {
+      try {
+        merged = !!contains(r.branch, { root: r.repoPath, refs: [`refs/heads/${base}`] });
+      } catch {
+        merged = false; // a repo that has gone reads as not merged, and is asked again next interval
+      }
+    }
+    cache.set(key, { at: now, merged });
+    return merged;
+  };
+}
+
+// loadDashboard({ dir, now, kill, exec, fs, liveness, merged }) → { rows, counts }. The read half of a refresh (DESIGN §3.4):
 // enumerate every index entry (T06), resolve each run's liveness (T05) and classify it (T01), read its
 // snapshot (T07) for the progress/worker detail, then project the lot through buildDashboard (T04). Each
 // row carries its record and snapshot alongside the fields the list needs, so the loop can act (stop/remove)
 // and paint the watch view from the same read. Rows are sorted by repo then slug for a stable list order,
 // since listRecords returns them in no guaranteed order.
 // `liveness` (pid → { alive, liveStartTime }) defaults to an uncached resolveLiveness; runTui passes its
-// createLivenessCache so a keypress does not spawn a `ps` per run.
-export function loadDashboard({ dir = indexDir(), now = Date.now(), kill, exec, fs, liveness = (pid) => resolveLiveness(pid, { kill, exec }) } = {}) {
+// createLivenessCache so a keypress does not spawn a `ps` per run. `merged` (mergedCheck) likewise
+// defaults to an uncached one, and runTui passes the one it keeps.
+export function loadDashboard({ dir = indexDir(), now = Date.now(), kill, exec, fs, liveness = (pid) => resolveLiveness(pid, { kill, exec }), merged = createMergedCheck() } = {}) {
   const records = listRecords({ dir, fs });
   const views = records.map((record) => {
     const { alive, liveStartTime } = liveness(record.pid);
@@ -909,6 +1048,15 @@ export function loadDashboard({ dir = indexDir(), now = Date.now(), kill, exec, 
       const live = (snap?.runState?.steps ?? []).filter((st) => st.worker?.live).length;
       const key = `${record.repo}__${record.slug}`;
       return { key, slug: record.slug, state, repo: record.repo, progress: { done: 0, total: 0 }, workers: live, snap, record, controlDir: record.controlDir };
+    }
+    // A single run's snapshot has steps too (single-runs DESIGN §3.5). Only a finished `ready` row asks
+    // whether its branch is in the base (§2.8); every other state has nothing merged to find.
+    if (record.kind === 'single' || snap?.runState?.kind === 'single') {
+      const live = (snap?.runState?.steps ?? []).filter((st) => st.worker?.live).length;
+      const key = `${record.repo}__${record.slug}`;
+      const view = { key, slug: record.slug, state, repo: record.repo, progress: { done: 0, total: 0 }, workers: live, snap, record, controlDir: record.controlDir };
+      if (state === 'finished' && snap?.runState?.outcome === 'ready') view.merged = merged(view, { now });
+      return view;
     }
     const display = snap ? buildDisplay(snap.runState, { now }) : null;
     const progress = display
@@ -962,20 +1110,6 @@ export function openBuilder(key, deps = {}) {
   return runTui({ ...deps, initial: { ...initialUi(), view: 'watch', openSlug: key, openStep: 'build' } });
 }
 
-// Whether a view is a single run, by isPlan's rule: the index record's kind, else the snapshot's.
-function isSingleRun(view) {
-  const kind = view?.record?.kind;
-  return kind ? kind === 'single' : view?.snap?.runState?.kind === 'single';
-}
-
-// openSteps(views, ui) → the open run's step rows. A planning run's are openTasks'; a single run's are read
-// from its snapshot here (build, review, merge, shaped as planning's), because the dashboard model only
-// knows plans and builds until T10 teaches it the `single` kind.
-function openSteps(views, ui) {
-  const open = findOpen(views, ui);
-  return isSingleRun(open) ? open.snap?.runState?.steps ?? [] : openTasks(views, ui);
-}
-
 // The step's session as the 'worker' view opens it (dashboardReducer's `open` on a step row), or null.
 function stepWorker(step) {
   const w = step?.worker;
@@ -987,7 +1121,7 @@ function stepWorker(step) {
 // step row selected. Any other ui passes through unchanged.
 export function landStep(ui, views) {
   if (!ui?.openStep || ui.view !== 'watch') return ui;
-  const steps = openSteps(views, ui);
+  const steps = openTasks(views, ui);
   const i = steps.findIndex((s) => s.id === ui.openStep);
   const openWorker = stepWorker(steps[i]);
   if (!openWorker) return ui;
@@ -1005,7 +1139,7 @@ export const SINGLE_FOLLOW_LINE = 'the builder finished; the reviewer has starte
 // followFrom(view) → the step a run's reviewer follows and the line that heads the move, or null for a build.
 function followFrom(view) {
   if (isPlan(view)) return { step: 'plan', line: FOLLOW_LINE };
-  if (isSingleRun(view)) return { step: 'build', line: SINGLE_FOLLOW_LINE };
+  if (isSingle(view)) return { step: 'build', line: SINGLE_FOLLOW_LINE };
   return null;
 }
 
@@ -1013,7 +1147,7 @@ export function followStep(ui, views, seenReviewId = null) {
   if (ui?.view !== 'worker') return null;
   const from = followFrom(findOpen(views, ui));
   if (!from || ui.openWorker?.taskId !== from.step) return null;
-  const steps = openSteps(views, ui);
+  const steps = openTasks(views, ui);
   const i = steps.findIndex((s) => s.id === 'review');
   const openWorker = stepWorker(steps[i]);
   if (!openWorker || openWorker.workerId === seenReviewId) return null;
@@ -1044,12 +1178,12 @@ export function buildLandingFrame(view, step = 'plan') {
   ];
 }
 
-// isBuilding(rows, repo, slug) → whether the dashboard rows hold a build (not a planning run) of that slug, in
+// isBuilding(rows, repo, slug) → whether the dashboard rows hold a build (not a planning or single run) of that slug, in
 // that repo, running now: the slug pop-up's ` · building` (box-commands §2.2, §3.4). The repo is matched as
 // startRun records it, the folder's basename, since two repos can share a slug.
 export function isBuilding(rows, repo, slug) {
   const name = basename(repo?.path ?? '');
-  return (rows ?? []).some((r) => !isPlan(r) && r.state === 'running' && r.slug === slug && r.repo === name);
+  return (rows ?? []).some((r) => !isPlan(r) && !isSingle(r) && r.state === 'running' && r.slug === slug && r.repo === name);
 }
 
 // runTui — the input/paint loop (DESIGN §2.3, §2.4, §5.1). It paints a first frame, then repaints on every
@@ -1079,6 +1213,9 @@ async function runTui({
   start = startRun,
   decline = (record, { dir }) => updateRecord({ repo: record.repo, slug: record.slug }, { go: 'declined' }, { dir }),
   readProgress = (record) => planHome(record.slug, { root: record.repoPath }).read('PROGRESS.md'),
+  // A dropped single run's report body (single-runs DESIGN §2.8): state.json keeps it, the snapshot does not.
+  readDropped = (record) => JSON.parse((fs ?? { readFileSync }).readFileSync(join(record.controlDir, 'state.json'), 'utf8'))?.accepted?.body ?? null,
+  mergedCheck = createMergedCheck(),
   drop,
   follow,
   publisher = null,
@@ -1112,7 +1249,7 @@ async function runTui({
   let painted = null;
 
   const liveness = createLivenessCache({ kill, exec, now });
-  const read = () => load({ dir, now: now(), kill, exec, fs, liveness });
+  const read = () => load({ dir, now: now(), kill, exec, fs, liveness, merged: mergedCheck });
 
   // The open worker's conversation view (T13), created on entering the 'worker' view and disposed on
   // leaving it. It takes every key while it is open: its own table (§2.11) replaces Esc-quits and
@@ -1326,6 +1463,21 @@ async function runTui({
     return progressCache.get(key);
   }
 
+  // A dropped single run's reason, read once per run and kept: a finished run's state.json does not change.
+  // A read that fails (the folder was removed) is tried again on the next paint.
+  const droppedCache = new Map();
+  function droppedReason(view) {
+    const key = runKey(view);
+    if (!droppedCache.has(key)) {
+      try {
+        droppedCache.set(key, readDropped(view.record));
+      } catch {
+        return null;
+      }
+    }
+    return droppedCache.get(key);
+  }
+
   function repaint(dashboard) {
     const dash = dashboard ?? read();
     // Follow the open run through a rename (its index key changes under the open view, §2.6).
@@ -1356,7 +1508,7 @@ async function runTui({
     // The planner's conversation about to be built: note the reviewer already there, before followStep reads
     // it, so opening a finished run's planner does not bounce the person into its old reviewer.
     if (!conv && ui.view === 'worker' && ui.openWorker?.taskId === followFrom(findOpen(dash.rows, ui))?.step) {
-      seenReviewId = stepWorker(openSteps(dash.rows, ui).find((st) => st.id === 'review'))?.workerId ?? null;
+      seenReviewId = stepWorker(openTasks(dash.rows, ui).find((st) => st.id === 'review'))?.workerId ?? null;
     }
     const followed = followStep(ui, dash.rows, seenReviewId);
     if (followed) moved(followed);
@@ -1374,7 +1526,8 @@ async function runTui({
       const logTail = view.state === 'crashed' ? readLogTail(view.record?.controlDir ? join(view.record.controlDir, 'run.log') : null, 5, fs ? { fs } : {}) : null;
       const columns = Math.max(20, stdout.columns || DEFAULT_COLS);
       const progress = goOpen(dash.rows, ui) && view.record ? goProgress(view) : null;
-      const frame = buildWatchFrame(view, { now: now(), spinnerChar, ui, columns, logTail, progress });
+      const dropped = isSingle(view) && view.record && view.state === 'finished' && view.snap?.runState?.outcome === 'dropped' ? droppedReason(view) : null;
+      const frame = buildWatchFrame(view, { now: now(), spinnerChar, ui, columns, logTail, progress, dropped });
       painted = { frame, rows: dash.rows };
       screen.paint(frame);
     } else if (boxed) {

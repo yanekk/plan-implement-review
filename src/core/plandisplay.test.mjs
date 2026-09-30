@@ -147,3 +147,138 @@ test('a step an ended run never reached reads not started, not what it waits on'
   const stopped = buildPlanDisplay(rs({}, [session('plan', 'exited', false)]), { now: NOW, record: RECORD_UNNAMED, state: 'stopped' });
   assert.equal(byId(stopped).review.text, 'starts when the plan is written');
 });
+
+// ---- A single run's steps view (single-runs T10, DESIGN §2.8). ----
+
+import { buildSingleDisplay } from './plandisplay.mjs';
+import { initialSingleState } from './singleflow.mjs';
+import { singleRunState } from '../shell/single-run.mjs';
+
+const S_UNNAMED = { slug: 'single-ab12', label: 'Fix the typo in the REA…', branch: 'pir/single-ab12', baseBranch: 'main' };
+const S_NAMED = { slug: 'fix-typo', label: null, branch: 'pir/fix-typo', baseBranch: 'main' };
+const NAMED_STATE = { name: 'fix-typo', step: 'review', renamed: { branch: true, worktree: true, control: true, index: true } };
+const HANDOFF = 'git switch main && git merge pir/fix-typo';
+
+// A runState as single-run.mjs writes it. `idle` is a session stopped with no job of its own running.
+function srs(over = {}, sessions = [], extra = {}) {
+  const st = { ...initialSingleState({ id: 'single-ab12', base: 'main', baseSha: 'abc1234def', commands: { setup: [], test: ['npm test'] } }), step: 'build', ...over };
+  return singleRunState(st, { label: st.name ? null : S_UNNAMED.label, sessions, ...extra });
+}
+const sSess = (step, activity, live = true) => ({ id: `${step}-sess`, step, n: 1, logPath: `/c/conversations/${step}-1.ndjson`, live, activity: { state: activity, background: [] } });
+
+test('single: the builder at work — build active with its clock, review waits on build, merge waits on review', () => {
+  const d = buildSingleDisplay(srs({}, [sSess('build', 'busy')], { since: { build: 40_000 } }), { now: NOW, record: S_UNNAMED, state: 'running' });
+  const r = byId(d);
+  assert.deepEqual(d.header, { name: '"Fix the typo in the REA…"', state: 'building', branch: 'pir/single-ab12' });
+  assert.deepEqual(r.build, { id: 'build', role: 'builder', kind: 'active', text: 'building', clock: 60_000 });
+  assert.deepEqual(r.review, { id: 'review', role: 'reviewer', kind: 'pending', text: 'waits on build', clock: null });
+  assert.deepEqual(r.merge, { id: 'merge', role: '—', kind: 'pending', text: 'waits on review', clock: null });
+  assert.equal(d.footer, null);
+});
+
+test('single: no snapshot yet — the builder is starting', () => {
+  const d = buildSingleDisplay(null, { now: NOW, record: S_UNNAMED, state: 'running' });
+  assert.deepEqual(d.header, { name: '"Fix the typo in the REA…"', state: 'building', branch: 'pir/single-ab12' });
+  assert.deepEqual(byId(d).build, { id: 'build', role: 'builder', kind: 'active', text: 'starting the builder…', clock: null });
+  assert.equal(byId(d).review.text, 'waits on build');
+});
+
+test('single: pir\'s tests running — the step reads testing… with the test run\'s clock, never asking', () => {
+  const held = { running: 'tests', accepted: { kind: 'built', name: 'fix-typo', head: 'h1' } };
+  const d = buildSingleDisplay(srs(held, [sSess('build', 'idle')], { since: { build: 10_000 }, running: { kind: 'tests', since: 95_000 } }), { now: NOW, record: S_UNNAMED, state: 'running' });
+  assert.equal(d.header.state, 'testing');
+  assert.deepEqual(byId(d).build, { id: 'build', role: 'builder', kind: 'active', text: 'testing…', clock: 5_000 });
+  assert.equal(d.footer, null, 'a session idle on pir\'s tests asks nothing');
+  // The baseline after a first red is a test run too.
+  const base = buildSingleDisplay(srs({ running: 'baseline', rounds: { build: 1, review: 0 } }, [sSess('build', 'idle')], { running: { kind: 'baseline', since: 98_000 } }), { now: NOW, record: S_UNNAMED, state: 'running' });
+  assert.deepEqual([byId(base).build.text, byId(base).build.clock], ['testing…', 2_000]);
+});
+
+test('single: a red round — the step back at work reads tests red · round n, in either step', () => {
+  const b = buildSingleDisplay(srs({ rounds: { build: 2, review: 0 } }, [sSess('build', 'busy')], { since: { build: 40_000 } }), { now: NOW, record: S_UNNAMED, state: 'running' });
+  assert.deepEqual(byId(b).build, { id: 'build', role: 'builder', kind: 'active', text: 'tests red · round 2', clock: 60_000 });
+  assert.equal(b.header.state, 'building');
+  const sessions = [sSess('build', 'exited', false), sSess('review', 'busy')];
+  const r = buildSingleDisplay(srs({ ...NAMED_STATE, rounds: { build: 2, review: 1 } }, sessions, { since: { review: 90_000 }, took: { build: 30_000 } }), { now: NOW, record: S_NAMED, state: 'running' });
+  assert.deepEqual(byId(r).build, { id: 'build', role: 'builder', kind: 'done', text: 'built', clock: 30_000 }, 'a done step shows how long it took, not its red rounds');
+  assert.deepEqual(byId(r).review, { id: 'review', role: 'reviewer', kind: 'active', text: 'tests red · round 1', clock: 10_000 });
+  assert.deepEqual(r.header, { name: 'fix-typo', state: 'reviewing', branch: 'pir/fix-typo' });
+  assert.equal(byId(r).merge.text, 'waits on review');
+});
+
+test('single: a step asking — amber row, clock stopped at stoppedAt, the footer names the step, the header keeps the step', () => {
+  for (const [activity, text] of [['questions', 'asking you · a question'], ['permission', 'asking you · allow a command?'], ['idle', 'asking you · a question']]) {
+    const state = srs({}, [sSess('build', activity)], { since: { build: 40_000 }, stoppedAt: { build: 70_000 } });
+    const early = buildSingleDisplay(state, { now: NOW, record: S_UNNAMED, state: 'running' });
+    const late = buildSingleDisplay(state, { now: NOW + 500_000, record: S_UNNAMED, state: 'running' });
+    assert.deepEqual(byId(early).build, { id: 'build', role: 'builder', kind: 'asking', text, clock: 30_000 }, activity);
+    assert.equal(byId(late).build.clock, 30_000);
+    assert.deepEqual(early.footer, { kind: 'asking', step: 'build' });
+    assert.equal(early.header.state, 'building');
+  }
+  // Past the red limit the session stops and asks: asking outranks the red round's text.
+  const past = buildSingleDisplay(srs({ rounds: { build: 4, review: 0 } }, [sSess('build', 'idle')]), { now: NOW, record: S_UNNAMED, state: 'running' });
+  assert.equal(byId(past).build.text, 'asking you · a question');
+});
+
+const readyState = () => srs({ ...NAMED_STATE, outcome: 'ready' }, [sSess('build', 'exited', false), sSess('review', 'exited', false)], { took: { build: 30_000, review: 12_000 } });
+
+test('single: ready — both steps done with their times, the merge row is the hand-off line with the base, the footer repeats it', () => {
+  const d = buildSingleDisplay(readyState(), { now: NOW, record: S_NAMED, state: 'finished', merged: false });
+  const r = byId(d);
+  assert.deepEqual(d.header, { name: 'fix-typo', state: 'ready to merge', branch: 'pir/fix-typo' });
+  assert.deepEqual(r.build, { id: 'build', role: 'builder', kind: 'done', text: 'built', clock: 30_000 });
+  assert.deepEqual(r.review, { id: 'review', role: 'reviewer', kind: 'done', text: 'reviewed', clock: 12_000 });
+  assert.deepEqual(r.merge, { id: 'merge', role: '—', kind: 'asking', text: HANDOFF, clock: null });
+  assert.deepEqual(d.footer, { kind: 'ready', line: HANDOFF });
+  // The base is the run's own, from the snapshot, else the record.
+  const dev = buildSingleDisplay({ ...readyState(), base: 'dev' }, { now: NOW, record: S_NAMED, state: 'finished' });
+  assert.equal(byId(dev).merge.text, 'git switch dev && git merge pir/fix-typo');
+  const fromRecord = buildSingleDisplay({ ...readyState(), base: null }, { now: NOW, record: { ...S_NAMED, baseBranch: 'stage' }, state: 'finished' });
+  assert.equal(byId(fromRecord).merge.text, 'git switch stage && git merge pir/fix-typo');
+});
+
+test('single: merged — the merge row reads merged, no footer', () => {
+  const d = buildSingleDisplay(readyState(), { now: NOW, record: S_NAMED, state: 'finished', merged: true });
+  assert.equal(d.header.state, 'merged');
+  assert.deepEqual(byId(d).merge, { id: 'merge', role: '—', kind: 'done', text: 'merged', clock: null });
+  assert.equal(d.footer, null);
+});
+
+test('single: dropped — the step it ended in reads dropped, the rest not started, the footer carries the first line of the report body', () => {
+  const inBuild = buildSingleDisplay(srs({ outcome: 'dropped' }, [sSess('build', 'exited', false)], { took: { build: 9_000 } }), {
+    now: NOW,
+    record: S_UNNAMED,
+    state: 'finished',
+    dropped: '\nToo big for a single run: use /plan.\nIt touches six files.',
+  });
+  const r = byId(inBuild);
+  assert.equal(inBuild.header.state, 'finished');
+  assert.deepEqual(r.build, { id: 'build', role: 'builder', kind: 'failed', text: 'dropped', clock: 9_000 });
+  assert.deepEqual([r.review.kind, r.review.text], ['pending', 'not started']);
+  assert.deepEqual([r.merge.kind, r.merge.text], ['pending', 'not started']);
+  assert.deepEqual(inBuild.footer, { kind: 'dropped', reason: 'Too big for a single run: use /plan.' });
+
+  const inReview = buildSingleDisplay(srs({ ...NAMED_STATE, outcome: 'dropped' }, [sSess('build', 'exited', false), sSess('review', 'exited', false)]), { now: NOW, record: S_NAMED, state: 'finished' });
+  assert.deepEqual([byId(inReview).build.text, byId(inReview).review.text, byId(inReview).merge.text], ['built', 'dropped', 'not started']);
+  assert.deepEqual(inReview.footer, { kind: 'dropped', reason: null }, 'a body the shell could not read');
+  // Merged is never read off a dropped run.
+  assert.equal(buildSingleDisplay(srs({ outcome: 'dropped' }), { now: NOW, record: S_UNNAMED, state: 'finished', merged: true }).header.state, 'finished');
+});
+
+test('single: stopped or crashed (stale) — the live-looking step names how the run ended, without a clock', () => {
+  for (const state of ['stopped', 'crashed']) {
+    const testing = srs({ running: 'tests', accepted: { kind: 'built', name: 'x', head: 'h' } }, [sSess('build', 'idle')], { since: { build: 1000 }, running: { kind: 'tests', since: 2000 } });
+    const d = buildSingleDisplay(testing, { now: NOW, record: S_UNNAMED, state });
+    assert.equal(d.header.state, state);
+    assert.deepEqual(byId(d).build, { id: 'build', role: 'builder', kind: 'failed', text: state, clock: null });
+    assert.equal(byId(d).review.text, 'waits on build');
+    assert.deepEqual(d.footer, { kind: 'stale', state });
+    const inReview = buildSingleDisplay(srs(NAMED_STATE, [sSess('review', 'questions')]), { now: NOW, record: S_NAMED, state });
+    assert.deepEqual([byId(inReview).build.kind, byId(inReview).review.kind, byId(inReview).review.text], ['done', 'failed', state]);
+  }
+  // Finished with no snapshot to say how: stale, and nothing to merge is claimed.
+  const bare = buildSingleDisplay(null, { now: NOW, record: S_UNNAMED, state: 'finished' });
+  assert.deepEqual(bare.footer, { kind: 'stale', state: 'finished' });
+  assert.equal(byId(bare).merge.text, 'waits on review');
+});
