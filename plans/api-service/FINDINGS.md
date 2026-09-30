@@ -9,6 +9,7 @@ Legend: 🐞 defect found · ✅ verified by hand with the user · 📌 worth kn
 |---|---|---|
 | 2026-09-30 | 📌 | `homeKind` compares strings. The real home spelled `/users/me`, `/Users/me/.` or through a symlink reads `scratch`, so the test-runner guard does not fire. T04, T05 and T06 should pass `env` and `os.userInfo().homedir` unaltered. |
 | 2026-09-30 | 📌 | `npm test` fails on pty drill tests (`plan-rig-*`, `coordinator-drill`, helpers) when several workers run the suite at once: load 40 on 10 cores, a different set each run. Green at load 5. Rerun when quiet before suspecting the code. |
+| 2026-09-30 | 🐞 | T03: rig tests (`plan-rig-planning-drill.test.mjs`, header `finished, read only` not `live`; `the helpers scenario`) fail some full `npm test` runs under load 20 to 50 from parallel builds, a different one each time. Green alone. Not investigated. |
 | 2026-09-30 | 📌 | Plan review, scratch agent: a job exiting 78 is restarted every 10 s. launchd also prints `last exit code = 78: EX_CONFIG` for a program path that does not exist, so the port-taken code became 47. |
 | 2026-09-30 | 📌 | `writeFileAtomic` creates the target's folders recursively, so a reading written after a scratch home was deleted recreates that home. T04, T08 and T10 stop their sessions before removing one. |
 | 2026-09-30 | 📌 | Not measured at planning: what Login Items shows for the agent, whether `ProcessType` `Background` changes anything, and telling "port held" from "not answering" on a real clash. T09 and the after-merge checklist are where they surface. |
