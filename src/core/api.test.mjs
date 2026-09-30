@@ -251,10 +251,30 @@ test('route: a body that cannot be written as JSON is 500 internal', () => {
     '/loop': () => loop,
     '/big': () => ({ version: 1, n: 10n }),
     '/nothing': () => undefined,
+    '/no-json': () => ({ version: 1, toJSON: () => undefined }),
   };
   for (const url of Object.keys(table)) {
     const r = ask('GET', url, table);
     assert.equal(r.status, 500, url);
+    assert.equal(r.body, INTERNAL, url);
+  }
+});
+
+test('route: a handler that returns anything but a body object is 500 internal', () => {
+  // An async handler is the likely slip: its promise serialises as `{}`, a 200 with no version.
+  const table = {
+    '/async': async () => ({ version: 1 }),
+    '/thenable': () => ({ version: 1, then: () => {} }),
+    '/null': () => null,
+    '/text': () => 'ok',
+    '/number': () => 1,
+    '/list': () => [{ version: 1 }],
+    '/not-a-function': 5,
+  };
+  for (const url of Object.keys(table)) {
+    const r = ask('GET', url, table);
+    assert.equal(r.status, 500, url);
+    assert.deepEqual(r.headers, BASE_HEADERS, url);
     assert.equal(r.body, INTERNAL, url);
   }
 });

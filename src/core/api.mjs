@@ -99,9 +99,16 @@ export function route({ method, url }, { endpoints }) {
   // HEAD and OPTIONS included: no preflight is answered, so no page is let in by accident.
   if (method !== 'GET') return respond(405, errorBody('method_not_allowed'), { Allow: 'GET' });
   try {
-    const body = JSON.stringify(endpoints[path]());
-    // stringify returns undefined, not a string, for a handler that returned nothing.
-    if (typeof body !== 'string') throw new Error('endpoint returned no body');
+    const value = endpoints[path]();
+    // A body is a plain object, nothing else. The case that matters is an async handler: its promise
+    // serialises as `{}`, which would go out as a 200 with no `version`. null, a string and an array
+    // serialise just as quietly, and route is synchronous, so none of them can be a body.
+    if (value === null || typeof value !== 'object' || Array.isArray(value) || typeof value.then === 'function') {
+      throw new Error('endpoint returned no body object');
+    }
+    const body = JSON.stringify(value);
+    // An object whose toJSON returns nothing stringifies to undefined, not to a string.
+    if (typeof body !== 'string') throw new Error('endpoint body did not serialise');
     return respond(200, body);
   } catch {
     return respond(500, errorBody('internal'));
