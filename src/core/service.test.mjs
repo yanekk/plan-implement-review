@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { SERVICE_LABEL, ageText, plistText, servicePlan, statusText } from './service.mjs';
 
@@ -392,4 +393,78 @@ test('ageText: each unit and its edges', () => {
 test('ageText: a negative age (clock moved back) → just now', () => {
   assert.equal(ageText(-1), 'just now');
   assert.equal(ageText(-5 * 3_600_000), 'just now');
+});
+
+// --- docs/api-service.md (api-service T11) --------------------------------------------------------
+// The page quotes every text the person can be shown. It reads the real file, so a wording changed
+// here or there fails until the two agree. Convention: a fence marked `text` in the page holds one
+// printed text, whole, and nothing else uses that mark.
+
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
+const DOC = readFileSync(join(ROOT, 'docs/api-service.md'), 'utf8');
+const README = readFileSync(join(ROOT, 'README.md'), 'utf8');
+
+function fenced(text, mark) {
+  return [...text.matchAll(new RegExp(`^\`\`\`${mark}\\n([\\s\\S]*?)\\n\`\`\`$`, 'gm'))].map((m) => m[1]);
+}
+
+// The usage answer the page shows is the one its `running` text is worded from.
+const DOC_USAGE = fenced(DOC, 'json')
+  .map((block) => JSON.parse(block))
+  .find((body) => body.rate_limits);
+const DOC_NOW = DOC_USAGE.observed_at + 2 * 60_000;
+const DOC_URL = 'http://127.0.0.1:47717';
+
+function printedTexts() {
+  const status = (facts) => statusText(facts, DOC_NOW).text;
+  const real = { kind: 'real', platform: 'darwin', installedEngine: true, off: false, loaded: false };
+  return [
+    status({ state: 'running', url: DOC_URL, pid: 4711, usage: DOC_USAGE }),
+    status({ state: 'running', url: DOC_URL, pid: 4711, usage: null }),
+    status({ state: 'off' }),
+    status({ state: 'not-installed' }),
+    status({ state: 'port-held', url: DOC_URL }),
+    status({ state: 'not-answering', lastExit: 78 }),
+    status({ state: 'not-answering', lastExit: null }),
+    status({ state: 'register-failed', detail: 'Bootstrap failed: 5: Input/output error\nTry re-running the command as root for richer errors.\n' }),
+    status({ state: 'needs-macos' }),
+    // What `pir service off` prints is the first line of the `off` state (service-ctl.mjs).
+    status({ state: 'off' }).split('\n')[0],
+    servicePlan('refresh', { ...real, kind: 'scratch' }).message,
+    servicePlan('refresh', { ...real, off: true }).message,
+    servicePlan('on', { ...real, installedEngine: false }).message,
+  ];
+}
+
+test('docs/api-service.md: every printed text it quotes is one the code prints, and none is missing', () => {
+  const quoted = fenced(DOC, 'text');
+  const printed = printedTexts();
+  for (const block of quoted) assert.ok(printed.includes(block), `the page quotes a text the code does not print:\n${block}`);
+  for (const text of printed) assert.ok(quoted.includes(text), `the page does not quote:\n${text}`);
+  assert.equal(quoted.length, printed.length, 'a text is quoted twice');
+});
+
+test('docs/api-service.md: the ages and the unknown windows read as the code words them', () => {
+  const minute = 60_000;
+  // A quoted phrase may wrap across two lines of the page.
+  const flat = DOC.replace(/\s+/g, ' ');
+  for (const ms of [0, 12 * minute, 3 * 60 * minute, 24 * 60 * minute, 4 * 24 * 60 * minute]) {
+    assert.ok(flat.includes(`\`${ageText(ms)}\``), `the page does not give the age ${ageText(ms)}`);
+  }
+  const unknown = statusText(
+    { state: 'running', url: DOC_URL, pid: 1, usage: { observed_at: 1, rate_limits: { five_hour: null, seven_day: null } } },
+    1,
+  ).text;
+  assert.ok(unknown.endsWith('5-hour unknown, weekly unknown'));
+  assert.ok(DOC.includes('`5-hour unknown`') && DOC.includes('`weekly unknown`'));
+});
+
+test('docs/api-service.md: the line the installer adds is the one install.sh prints', () => {
+  const line = 'could not start the API service (see: pir service)';
+  assert.ok(readFileSync(join(ROOT, 'install.sh'), 'utf8').includes(`echo "  ${line}"`));
+  assert.ok(DOC.replace(/\s+/g, ' ').includes(line));
+});
+
+test('README.md: the pir service text it shows is the running text', () => {
+  assert.ok(README.includes(statusText({ state: 'running', url: DOC_URL, pid: 4711, usage: DOC_USAGE }, DOC_NOW).text));
 });

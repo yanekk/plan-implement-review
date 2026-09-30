@@ -5,7 +5,8 @@ workflow behaves: its components, the lifecycle of a run, where task state lives
 and worktree model, the control folder, the human decision flow, the kill switch, the worker
 ceiling, restart and recovery, the detached `pir` front-end that starts a run outliving its
 terminal and watches every run on the machine, and `pir plan`, which runs the planning and the plan
-review inside that front-end, and the coordinator agent that stands in for the person during a build.
+review inside that front-end, and the coordinator agent that stands in for the person during a build,
+and the local API service that tells other programs how much of the Claude subscription limit is used.
 It is the behavioural spec — nouns, states, data
 flows, and guarantees.
 
@@ -106,6 +107,14 @@ and it had no conversation view. `install.sh` removes an installed copy it finds
   outcome. The pure step machine is `src/core/planflow.mjs`; the steps view and the go question are
   `src/core/plandisplay.mjs`; the brief box is `src/shell/brief-box.mjs`. `src/shell/plan-home.mjs`
   tells a build where its plan lives: the main checkout, else the committed branch `pir/{slug}`.
+- **The API service** (`src/shell/api-service.mjs`) — a small HTTP server on `127.0.0.1:47717` that
+  launchd starts at login and keeps alive, outside any run. It answers `GET /v1/usage` (how much of the
+  5-hour and weekly subscription limit is used) and `GET /health`. It never talks to a run: every
+  session a run holds saves the usage numbers it hears to `~/.pir/usage.json`
+  (`src/shell/usage-report.mjs`, wired into `worker-proc.mjs`), and the service answers from that file.
+  `pir service`, `on` and `off` show, start and stop it (`src/shell/service-ctl.mjs`); the pure rules
+  are `src/core/api.mjs`, `usage.mjs` and `service.mjs`. macOS only (see
+  [api-service.md](api-service.md)).
 
 ## The documents
 
@@ -124,3 +133,5 @@ and it had no conversation view. `install.sh` removes an installed copy it finds
   `ready to merge`, `--no-coordinator`.
 - [planning-runs.md](planning-runs.md) — `pir plan`: the planner and the plan reviewer run inside `pir`,
   the rename, the go that starts the build, resume.
+- [api-service.md](api-service.md) — the local API service: the contract (`api.json`, `GET /v1/usage`,
+  `GET /health`), the port, where a reading comes from, the login item, `pir service`, scratch homes.

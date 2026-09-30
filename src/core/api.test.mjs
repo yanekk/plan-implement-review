@@ -3,6 +3,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 
 import {
   API_VERSION,
@@ -311,4 +312,49 @@ test('route: every body parses as JSON and carries version 1, under the same thr
   }
   // The check means nothing unless every row of the §2.1 table went through it.
   assert.deepEqual([...statuses].sort(), [200, 404, 405, 500]);
+});
+
+// ── docs/api-service.md and the README (api-service T11) ───────────────────────────────────────
+// A test file may read the page (boundary.test.mjs excludes tests). The examples are compared with
+// what this module builds, so the page cannot drift from the contract.
+
+const DOC = readFileSync(new URL('../../docs/api-service.md', import.meta.url), 'utf8');
+const DOC_JSON = [...DOC.matchAll(/^```json\n([\s\S]*?)\n```$/gm)].map((m) => JSON.parse(m[1]));
+
+test('docs/api-service.md: the health example equals healthBody and the discovery example equals discoveryRecord', () => {
+  const health = DOC_JSON.find((value) => value.status !== undefined);
+  assert.equal(JSON.stringify(health), JSON.stringify(healthBody({ pid: health.pid })));
+  const discovery = DOC_JSON.find((value) => value.url !== undefined);
+  assert.equal(JSON.stringify(discovery), JSON.stringify(discoveryRecord({ port: API_PORT, pid: discovery.pid })));
+});
+
+test('docs/api-service.md: the three error bodies, the headers, the port and the exit code are the code’s', () => {
+  const table = { '/v1/usage': () => { throw new Error('boom'); }, '/health': () => healthBody({ pid: 1 }) };
+  const answers = [
+    route({ method: 'GET', url: '/nope' }, { endpoints: table }),
+    route({ method: 'POST', url: '/health' }, { endpoints: table }),
+    route({ method: 'GET', url: '/v1/usage' }, { endpoints: table }),
+  ];
+  assert.deepEqual(answers.map((a) => a.status), [404, 405, 500]);
+  for (const { status, headers, body } of answers) {
+    assert.ok(DOC.includes(`| ${status}`), `the page has a row for ${status}`);
+    assert.ok(DOC.includes(`\`${body}\``), `the page quotes ${body}`);
+    for (const [name, value] of Object.entries(headers)) {
+      assert.ok(DOC.replace(/\s+/g, ' ').includes(`\`${name}: ${value}\``), `the page names ${name}: ${value}`);
+    }
+  }
+  assert.ok(DOC.includes(`**${API_PORT}**`));
+  assert.ok(DOC.includes(`exits with code ${EXIT_PORT_TAKEN}`));
+  // Both served paths have their own heading on the page.
+  for (const path of Object.keys(table)) assert.ok(DOC.includes(`\`GET {url}${path}\``), path);
+});
+
+test('docs/README.md links api-service.md; README.md links it and names pir service', () => {
+  const index = readFileSync(new URL('../../docs/README.md', import.meta.url), 'utf8');
+  assert.match(index, /\[api-service\.md\]\(api-service\.md\)/);
+  const readme = readFileSync(new URL('../../README.md', import.meta.url), 'utf8');
+  assert.match(readme, /\]\(docs\/api-service\.md\)/);
+  assert.match(readme, /`pir service`/);
+  assert.match(readme, /`pir service on`/);
+  assert.match(readme, /`pir service off`/);
 });
