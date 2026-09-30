@@ -119,6 +119,12 @@ function resolve(opts = {}) {
   const label = opts.label ?? SERVICE_LABEL;
   const scratchItem = opts.scratchItem === true;
   const scriptPath = opts.scriptPath ?? fileURLToPath(new URL('./api-service.mjs', import.meta.url));
+  // `scratchItem` switches off both rules that keep a checkout and a test process away from the login
+  // item. With the defaults left in place it would register the real label from the real LaunchAgents
+  // folder, so it is accepted only with a label and a plist of its own (§5.2).
+  if (scratchItem && (label === SERVICE_LABEL || typeof opts.plistPath !== 'string')) {
+    throw new Error('a scratch item needs its own label and plistPath');
+  }
   return {
     env,
     osHome,

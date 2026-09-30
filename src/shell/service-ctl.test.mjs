@@ -515,6 +515,22 @@ test('scratchItem: registers the given label from a scratch home, url read from 
   assert.equal(existsSync(m.marker), true);
 });
 
+test('scratchItem with the real label, or with no plistPath of its own, is refused before any call or write', async (t) => {
+  const own = { label: 'com.pir.api-service.check', plistPath: '/nowhere/check.plist' };
+  for (const missing of ['label', 'plistPath']) {
+    for (const action of [serviceOn, serviceOff, serviceRefresh, serviceStatus]) {
+      const m = machine(t, { scratchItem: true, ...own, [missing]: undefined });
+      await assert.rejects(action(m.opts), /a scratch item needs its own label and plistPath/, `${missing} ${action.name}`);
+      assert.deepEqual(m.fake.calls, [], `${missing} ${action.name}`);
+      assert.deepEqual(filesUnder(m.home), [], `${missing} ${action.name}`);
+    }
+  }
+  // Naming the real label outright is the same mistake as leaving it out.
+  const m = machine(t, { scratchItem: true, ...own, label: LABEL });
+  await assert.rejects(serviceOn(m.opts), /a scratch item needs its own label and plistPath/);
+  assert.deepEqual(m.fake.calls, []);
+});
+
 // ── the real get ────────────────────────────────────────────────────────────────────────────────
 
 // A real server on an OS-chosen port of the loopback address; never the fixed one.
