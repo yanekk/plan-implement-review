@@ -71,6 +71,12 @@ const KINDS = Object.freeze(['build', 'plan']);
 // PIR_NOTIFY_CONFIG on the person's own `~/.pir/notify.json` (run.mjs notifyEnv), because
 // `statusSnapshots` moves PIR_HOME to a scratch folder and would hide it. It sends real alerts, so it
 // needs the agent and the snapshots it is judged by.
+//
+// One for the live check of the finisher (finisher T10): `watchFinisher` has the runner record the scratch
+// repo's main, its FINISHED file and the finisher's phase the first time the finisher waits for the go, and
+// again with the finisher's ledger once the run is over (run.mjs createScenarioSteps). It reads the
+// finisher's phase from status.json, so it needs the agent and `statusSnapshots`, and cannot be combined with
+// `mergeWhenReady`: the finisher, not the runner, does the merge.
 export function defineScenario(spec = {}) {
   const {
     id,
@@ -92,6 +98,7 @@ export function defineScenario(spec = {}) {
     baseWatchMs = null,
     coordinatorHoldMs = null,
     realNotify = false,
+    watchFinisher = false,
   } = spec;
 
   if (!id || typeof id !== 'string') {
@@ -136,6 +143,9 @@ export function defineScenario(spec = {}) {
   if (realNotify && (!coordinator || !statusSnapshots)) {
     throw new Error(`defineScenario(${id}): realNotify needs the coordinator agent and statusSnapshots`);
   }
+  if (watchFinisher && (!coordinator || !statusSnapshots || mergeWhenReady)) {
+    throw new Error(`defineScenario(${id}): watchFinisher needs the coordinator agent and statusSnapshots, and not mergeWhenReady`);
+  }
   if (!EXPECTED_TERMINALS.includes(expectedTerminal)) {
     throw new Error(`defineScenario(${id}): expectedTerminal must be one of ${EXPECTED_TERMINALS.join(', ')}`);
   }
@@ -172,5 +182,6 @@ export function defineScenario(spec = {}) {
     baseWatchMs: baseWatchMs ?? null,
     coordinatorHoldMs: coordinatorHoldMs ?? null,
     realNotify: !!realNotify,
+    watchFinisher: !!watchFinisher,
   };
 }

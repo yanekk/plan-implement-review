@@ -122,3 +122,13 @@ test('defineScenario: realNotify needs the agent and statusSnapshots (reliable-n
   assert.throws(() => defineScenario({ ...base, statusSnapshots: true, realNotify: true }), /realNotify needs/);
   assert.throws(() => defineScenario({ ...base, coordinator: true, realNotify: true }), /realNotify needs/);
 });
+
+test('defineScenario: watchFinisher needs the agent and statusSnapshots, and not mergeWhenReady (finisher T10)', () => {
+  const base = { id: 'a', fixture: 'f', facts: [noHelloEver()] };
+  const on = { ...base, coordinator: true, statusSnapshots: true };
+  assert.equal(defineScenario(base).watchFinisher, false);
+  assert.equal(defineScenario({ ...on, watchFinisher: true }).watchFinisher, true);
+  assert.throws(() => defineScenario({ ...base, statusSnapshots: true, watchFinisher: true }), /watchFinisher needs/);
+  assert.throws(() => defineScenario({ ...base, coordinator: true, watchFinisher: true }), /watchFinisher needs/);
+  assert.throws(() => defineScenario({ ...on, mergeWhenReady: true, watchFinisher: true }), /not mergeWhenReady/);
+});

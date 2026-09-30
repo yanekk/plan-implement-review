@@ -841,3 +841,44 @@ test('select in the worker view stays inert', () => {
   assert.equal(next.taskSel, 1);
   assert.equal(next.sel, 1);
 });
+
+// --- the finisher (finisher DESIGN §2.11, T07) --------------------------------------------------------
+
+const finView = (over) => ({ id: 'sess-f', logPath: '/c/conversations/finisher-1.ndjson', state: 'awaiting-go', phase: 'awaiting-go', asking: true, ...over });
+const finRun = (f, extra = {}) =>
+  view({ slug: 'plan', key: 'r1__plan', state: 'running', snap: { runState: { tasks: [task('T01', { done: true })], handoff: { state: 'ready', reportPath: 'plans/fin/REPORT.md' }, coordinator: null, finisher: f, ...extra } } });
+
+test('runDisplayState: waiting for the go reads ready-for-your-go; stuck reads asking-you; both count in waiting (T07)', () => {
+  const { rows, counts } = buildDashboard([
+    finRun(finView()),
+    finRun(finView({ state: 'stuck', phase: 'stuck' })),
+    finRun(finView({ state: 'finishing', phase: 'finishing', asking: true })),
+    finRun(finView({ state: 'preparing', phase: 'preparing', asking: false })),
+    finRun(finView({ state: 'finishing', phase: 'finishing', asking: false })),
+  ]);
+  assert.deepEqual(rows.map((r) => r.display), ['ready-for-your-go', 'asking-you', 'asking-you', 'running', 'running']);
+  assert.deepEqual(counts, { running: 2, finished: 0, crashed: 0, stopped: 0, waiting: 3, total: 5 });
+  // Without a finisher (a snapshot from before, or a fallback) the hand-off reads as today.
+  assert.equal(runDisplayState(finRun(undefined)), 'ready-to-merge');
+  assert.equal(runDisplayState({ ...finRun(finView()), state: 'finished' }), 'finished');
+});
+
+test('dashboardReducer: `c` and → on the finisher row open the finisher; with neither agent nor finisher `c` does nothing (T07)', () => {
+  const run = finRun(finView());
+  // Rows: T01, separator, finisher.
+  const viaC = dashboardReducer(watchingTasks({ sel: 0 }), { type: 'key', key: 'c' }, [run]);
+  assert.equal(viaC.ui.view, 'worker');
+  assert.deepEqual(viaC.ui.openWorker, { taskId: 'finisher', workerId: 'sess-f', logPath: '/c/conversations/finisher-1.ndjson', live: true });
+  let ui = dashboardReducer(watchingTasks({ sel: 0, taskSel: 0 }), { type: 'down' }, [run]).ui;
+  assert.equal(ui.taskSel, 2, '↓ skips the separator to the finisher');
+  assert.deepEqual(dashboardReducer(ui, { type: 'open' }, [run]).ui.openWorker, viaC.ui.openWorker);
+  assert.deepEqual(dashboardReducer(ui, { type: 'key', key: 'enter' }, [run]).ui.openWorker, viaC.ui.openWorker);
+  // A stale agent in the same snapshot is not what `c` opens.
+  const both = finRun(finView(), { coordinator: { id: 'sess-a', live: true, logPath: '/a', state: 'up', holding: 0 } });
+  assert.equal(dashboardReducer(watchingTasks({ sel: 0 }), { type: 'key', key: 'c' }, [both]).ui.openWorker.workerId, 'sess-f');
+
+  const none = finRun(undefined);
+  const r = dashboardReducer(watchingTasks({ sel: 0 }), { type: 'key', key: 'c' }, [none]);
+  assert.equal(r.ui.view, 'watch');
+  assert.equal(r.ui.openWorker ?? null, null);
+});

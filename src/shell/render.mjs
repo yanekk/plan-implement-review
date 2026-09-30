@@ -120,6 +120,12 @@ const ROW_STYLE = {
   agent: 'active',
   'agent-given-up': 'idle',
   separator: 'idle',
+  // The finisher's row in the agent's place (finisher DESIGN §2.11): amber while it waits on the person
+  // (the go, stuck, a request), green once done, idle while down.
+  finisher: 'active',
+  'finisher-asking': 'asking',
+  'finisher-done': 'done',
+  'finisher-idle': 'idle',
 };
 
 // The agent row's glyph, set apart from every task glyph (pir-coordinator T12).
@@ -195,7 +201,7 @@ function rowLine(r, spinnerChar, labelWidth = LABEL_MIN, idWidth = ID_MIN) {
   return { text, style: ROW_STYLE[r.kind] ?? null };
 }
 
-const isPinned = (r) => r.kind === 'separator' || r.kind === 'agent' || r.kind === 'agent-given-up';
+const isPinned = (r) => r.kind === 'separator' || r.kind === 'agent' || r.kind === 'agent-given-up' || !!r.finisher;
 
 // The separator and the coordinator agent's row (pir-coordinator T12). The separator spans a task row's
 // width up to the end of its label column; the agent's name sits where a task's id and slug do, so its
@@ -246,6 +252,10 @@ function footerLines(footer, summary, spinnerChar = SPINNER[0]) {
       const text = `${spinnerChar} all ${summary.total} task(s) merged · running the plan's setup and tests on ${footer.branch}${el ? ` · ${el}` : ''}`;
       return [blank, { text, style: 'active' }];
     }
+    case 'finisher':
+      // The finisher once it is the run's session (finisher DESIGN §2.11): one line per phase, pointing at
+      // `c`; amber while it waits on the person. It does the merge, so no merge line is drawn.
+      return [blank, { text: footer.text, style: footer.asks ? 'asking' : footer.state === 'done' ? 'done' : 'active' }];
     case 'interrupted':
       return [blank, { text: `^C — closing workers… ${baseOf(footer)} is untouched. Re-run to resume from committed work.`, style: 'red' }];
     default:

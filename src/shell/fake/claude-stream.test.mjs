@@ -381,6 +381,7 @@ test('coordinatorReact answers the real briefs: allow a routine request, pass a 
   assert.equal(decisions().at(-1).kind, 'report');
   assert.equal(readDecision(decisions().at(-1)).ok, true);
   assert.equal(react(handoffFor({ slug: 'drill', reportPath: 'plans/drill/REPORT.md', ready: true })), 'The branch is ready. Merge it yourself with: git merge pir/drill');
+  assert.equal(react(handoffFor({ slug: 'drill', reportPath: 'plans/drill/REPORT.md', ready: true, finisher: true })), 'The branch is ready. The finisher takes the merge from here.');
   assert.equal(react('where are we?'), 'Noted: where are we?');
   assert.equal(decisions().length, 4, 'a hand-off or a person\'s message writes no decision');
 });

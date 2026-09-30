@@ -65,7 +65,13 @@ export function runDisplayState(view) {
   if (!isPlan(view)) {
     if (state !== 'running') return state;
     const rs = view?.snap?.runState;
+    // The finisher's end (finisher DESIGN §2.11): waiting for the person's go reads `ready-for-your-go`,
+    // replacing `ready-to-merge` for these runs; stuck or holding a request is `asking-you` by the count
+    // below; any other phase is the run still working, though its hand-off already reads ready.
+    const f = rs?.finisher;
+    if (f && (f.state ?? f.phase) === 'awaiting-go' && askingCount({ tasks: rs.tasks, helpers: rs.helpers }) === 0) return 'ready-for-your-go';
     if (askingCount(rs) > 0) return 'asking-you';
+    if (f) return state;
     // The end of a run with the coordinator agent (pir-coordinator §2.10): the branch is prepared, the
     // report committed, and the run waits for the person to merge or close it.
     if (rs?.handoff?.state === 'ready') return 'ready-to-merge';
@@ -142,6 +148,7 @@ const TALLY = {
   'your-go': 'waiting',
   'asking-you': 'waiting',
   'ready-to-merge': 'waiting',
+  'ready-for-your-go': 'waiting',
 };
 
 // runKey(view) → the identity of one run. A slug alone is not unique: the same plan slug can run in two
@@ -204,6 +211,17 @@ export function openCoordinator(views, ui) {
   return c?.id ? c : null;
 }
 
+// openAgent(views, ui) → the session `c` opens (finisher DESIGN §2.11): the finisher's while it is the
+// run's, else the coordinator agent's, as { taskId, workerId, logPath, live } for openWorker; else null.
+export function openAgent(views, ui) {
+  const open = findOpen(views, ui);
+  if (!open || isPlan(open)) return null;
+  const pinned = rowEntries(open.snap?.runState).find((e) => e.finisher);
+  if (pinned?.worker?.id) return { taskId: pinned.id, workerId: pinned.worker.id, logPath: pinned.worker.logPath, live: pinned.worker.live };
+  const c = openCoordinator(views, ui);
+  return c ? { taskId: 'coordinator', workerId: c.id, logPath: c.logPath ?? null, live: !!c.live } : null;
+}
+
 // Why `c` opened nothing: the open run has no coordinator agent to show.
 export function noCoordinatorNote(views, ui) {
   const open = findOpen(views, ui);
@@ -260,7 +278,8 @@ export function noWorkerNote(task, tasks = []) {
 //     {type:'key', key:'enter'|'n'} while the open planning run waits for the go (goOpen): intent start
 //                                   or decline (pir-plan-command §2.8); otherwise Enter is `open` and `n` inert
 //     {type:'key', key:'c'}         in a build's live view: open its coordinator agent's conversation as the
-//                                   'worker' view (openWorker.taskId 'coordinator'), else a footer `note`
+//                                   'worker' view (openWorker.taskId 'coordinator'), or the finisher's once
+//                                   it is the run's (taskId 'finisher', finisher T07), else a footer `note`
 //   intent = null | {type:'quit'} | {type:'stop', slug, key} | {type:'remove', slug, key} | {type:'resume', slug, key}
 //            | {type:'start', slug, key} | {type:'decline', slug, key}
 //           key is runKey of the target run; the caller resolves the run by it, never by slug alone.
@@ -286,9 +305,8 @@ export function dashboardReducer(ui, event, views = []) {
   // opens a task's worker; ← comes back to the live view. With no agent it says so and opens nothing.
   if (event?.type === 'key' && event.key === 'c') {
     if (ui.view !== 'watch') return { ui: { ...ui, note: null, armed: null }, intent: null };
-    const c = openCoordinator(views, ui);
-    if (!c) return { ui: { ...ui, note: noCoordinatorNote(views, ui), armed: null }, intent: null };
-    const openWorker = { taskId: 'coordinator', workerId: c.id, logPath: c.logPath ?? null, live: !!c.live };
+    const openWorker = openAgent(views, ui);
+    if (!openWorker) return { ui: { ...ui, note: noCoordinatorNote(views, ui), armed: null }, intent: null };
     return { ui: { ...ui, view: 'worker', openWorker, note: null, armed: null }, intent: null };
   }
   // `note` is one-shot like `armed`: whatever the next event is, it clears.
@@ -324,7 +342,7 @@ export function dashboardReducer(ui, event, views = []) {
         if (!task) return { ui: { ...ui, armed: null }, intent: null };
         const w = task.worker;
         const plan = isPlan(findOpen(views, ui));
-        if (task.agent && !w?.id) return { ui: { ...ui, note: noCoordinatorNote(views, ui), armed: null }, intent: null };
+        if ((task.agent || task.finisher) && !w?.id) return { ui: { ...ui, note: noCoordinatorNote(views, ui), armed: null }, intent: null };
         if (!w?.id) return { ui: { ...ui, note: plan ? noSessionNote(task) : noWorkerNote(task, tasks), armed: null }, intent: null };
         const openWorker = { taskId: task.id, workerId: w.id, logPath: w.logPath ?? null, live: !!w.live };
         return { ui: { ...ui, view: 'worker', openWorker, armed: null }, intent: null };

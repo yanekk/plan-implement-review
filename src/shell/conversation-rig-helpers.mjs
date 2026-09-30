@@ -8,7 +8,7 @@ import assert from 'node:assert/strict';
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { startRig, openScreen, mouseBytes } from './conversation-rig.mjs';
+import { startRig, openScreen, mouseBytes, RIG_DONE_SUMMARY, RIG_STUCK_SUMMARY, RIG_RESERVED_COMMAND } from './conversation-rig.mjs';
 
 export function scratchHome(t) {
   const home = mkdtempSync(join(tmpdir(), 'pir-rig-home-'));
@@ -220,6 +220,225 @@ export function defineGroupLinesTest([cols, rows]) {
       await screen.waitFor(OPENING_GROUP);
       for (const r of screen.text().split('\n')) assert.ok([...r].length <= cols);
       assert.equal(screen.overflows(), 0, 'no frame was clipped to fit the window');
+    } finally {
+      await screen.close();
+    }
+  });
+}
+
+// finisher T07, end to end at 80×24 and 120×40: the run waits at its end on the finisher. The list reads
+// `● ready for your go`, the live view pins the finisher's row in amber with the footer naming `c`, `c` opens
+// its conversation with the ready summary, the steps and the go question, and `Go` there takes the row
+// through `finishing` to `done` and the run to `finished`.
+export function defineFinisherTest([cols, rows]) {
+  test(`the finisher on the real pir screen at ${cols}×${rows}`, { timeout: 90000 }, async (t) => {
+    const env = scratchHome(t);
+    const rig = startRig({ env, scenario: 'finisher', paceMs: 0, workMs: 300, finishingMs: 5000 });
+    t.after(() => rig.stop());
+    await waitFor(() => rig.finisher.view().state === 'awaiting-go', { what: 'the finisher to be ready', timeoutMs: 15000 });
+    const ESC = '\x1b';
+    const screen = openScreen({ cols, rows, env: { ...process.env, ...env } });
+    try {
+      let s = (await screen.waitFor(/rig +work +● ready for your go/)).join('\n');
+      assert.match(s, /1 waiting for you/, 'the dashboard counts it as waiting');
+
+      screen.send('\r');
+      s = (await screen.waitFor(/◆ finisher +waiting for your go/)).join('\n');
+      assert.match(s, /◆ finisher ready · c to review and say go/, 'the footer names c');
+      assert.match(s, /c finisher/, 'the hint offers the finisher');
+      assert.doesNotMatch(s, /git merge|coordinator agent/, 'no merge line and no agent row beside the finisher');
+      // The amber itself is the renderer's (render.test.mjs); the suite runs with NO_COLOR, so none is drawn here.
+
+      screen.send('c');
+      s = (await screen.waitFor(/Ready to finish\? 2 steps from project rules/)).join('\n');
+      assert.match(s, /^finisher {2}agent /m, 'the finisher\'s conversation is open');
+      assert.match(s, /main has not moved/, 'the ready summary');
+      assert.match(s, /merge pir\/rig/, 'the steps');
+
+      screen.send('\r'); // one Enter picks the highlighted option, Go
+      await screen.waitFor(/Ready to finish\? 2 steps from project rules → Go/);
+      screen.send(`${ESC}[D`);
+      s = (await screen.waitFor(/◆ finisher +finishing/)).join('\n');
+      assert.match(s, /◆ finisher finishing · c to watch/);
+      s = (await screen.waitFor(/◆ finisher +done/, 20000)).join('\n');
+      s = (await screen.waitFor(/finished · this frame is stale\. The finisher is done\./, 20000)).join('\n');
+      assert.doesNotMatch(s, /git merge/);
+
+      screen.send(`${ESC}[D`);
+      s = (await screen.waitFor(/rig +work +◌ finished/)).join('\n');
+      for (const r of s.split('\n')) assert.ok([...r].length <= cols);
+      assert.equal(screen.overflows(), 0, 'no frame was clipped to fit the window');
+      const sent = rig.finisher.ledger().map((l) => l.kind);
+      assert.ok(sent.includes('go'), `the person's Go reached the finisher: ${sent}`);
+      // finisher T09: what the phone was told (DESIGN §2.9).
+      const ready = assertReadyAlert(rig);
+      assert.ok(cleared(rig, ready.seq), 'the ready alert is cleared once the go is in');
+      assertDoneAlert(rig);
+    } finally {
+      await screen.close();
+    }
+  });
+}
+
+// finisher T09, the drill's cases kept as tests at 80×24 and 120×40 (DESIGN §2.7–§2.9, §2.11). Each drives
+// the real pir screen through the conversation rig and checks what the pretend phone was sent: the ready
+// alert names the step count, the rules' source and the first step; the stuck alert carries the stuck
+// summary; a reserved request is `{slug} · finisher` with the permission wording; each phase alert is cleared
+// once the phase leaves it; the done alert carries the done summary. No `ready to merge` alert is ever sent.
+const sends = (rig) => rig.alerts().filter((a) => a.type === 'send');
+const cleared = (rig, seq) => rig.alerts().some((a) => a.type === 'clear' && a.seq === seq);
+function assertReadyAlert(rig) {
+  const ready = sends(rig).find((a) => a.title === 'rig · ready for your go');
+  assert.ok(ready, `the ready alert was sent: ${JSON.stringify(rig.alerts())}`);
+  assert.match(ready.message, /^2 steps from project rules: git -C \S+ merge pir\/rig$/);
+  return ready;
+}
+function assertDoneAlert(rig) {
+  const done = sends(rig).at(-1);
+  assert.deepEqual({ title: done.title, message: done.message, tags: done.tags }, { title: 'rig · finished', message: RIG_DONE_SUMMARY, tags: ['tada'] });
+  assert.ok(!sends(rig).some((a) => /ready to merge/.test(a.title)), 'no ready-to-merge alert for a run the finisher takes over');
+}
+async function openFinisher(screen, cols) {
+  await screen.waitFor(/rig +work +● ready for your go/);
+  screen.send('\r');
+  await screen.waitFor(/◆ finisher +waiting for your go/);
+  screen.send('c');
+  return (await screen.waitFor(/Ready to finish\? 2 steps from project rules \(pick one\)/)).join('\n');
+}
+function assertFits(screen, s, cols) {
+  for (const r of s.split('\n')) assert.ok([...r].length <= cols, `a line fits ${cols} columns: ${r}`);
+  assert.equal(screen.overflows(), 0, 'no frame was clipped to fit the window');
+}
+
+export function defineFinisherDrillTests([cols, rows]) {
+  test(`finisher drill: a Not yet leaves the row waiting, and a later Go finishes, at ${cols}×${rows}`, { timeout: 90000 }, async (t) => {
+    const env = scratchHome(t);
+    const rig = startRig({ env, scenario: 'finisher-notyet', paceMs: 0, workMs: 300, finishingMs: 1500 });
+    t.after(() => rig.stop());
+    await waitFor(() => rig.finisher.view().state === 'awaiting-go', { what: 'the finisher to be ready', timeoutMs: 15000 });
+    const ESC = '\x1b';
+    const screen = openScreen({ cols, rows, env: { ...process.env, ...env } });
+    try {
+      await openFinisher(screen, cols);
+      screen.send(`${ESC}[B`); // down to Not yet
+      screen.send('\r');
+      // The screen draws the picked answer itself, a frame before the finisher's reply can arrive: wait for
+      // the frame that holds both, not the first one with the answer (it failed on a loaded machine).
+      let s = (await screen.waitFor((text) => /project rules → Not yet/.test(text) && /Not yet, then\. Nothing has changed/.test(text))).join('\n');
+      assert.equal(rig.finisher.phase(), 'awaiting-go', 'a Not yet is not a go');
+      await waitFor(() => rig.finisher.ledger().some((l) => l.kind === 'not-yet'), { what: 'the Not yet in the ledger (the next pass drains it)' });
+      assert.equal(rig.finisher.phase(), 'awaiting-go', 'still no go once it is drained');
+
+      screen.send(`${ESC}[D`);
+      s = (await screen.waitFor(/◆ finisher +waiting for your go/)).join('\n');
+      assert.match(s, /◆ finisher ready · c to review and say go/, 'the row and footer are unchanged');
+      screen.send(`${ESC}[D`);
+      await screen.waitFor(/rig +work +● ready for your go/);
+      screen.send('\r');
+      await screen.waitFor(/◆ finisher +waiting for your go/);
+
+      screen.send('c');
+      await screen.waitFor(/project rules → Not yet/);
+      screen.send('ask me again');
+      await screen.waitFor(/ask me again/);
+      screen.send('\r');
+      await screen.waitFor((text) => /Asking again\./.test(text) && /\(pick one\)/.test(text));
+      screen.send('\r'); // Go
+      await screen.waitFor(/project rules → Go/);
+      screen.send(`${ESC}[D`);
+      s = (await screen.waitFor(/finished · this frame is stale\. The finisher is done\./, 20000)).join('\n');
+      assertFits(screen, s, cols);
+
+      assert.deepEqual(rig.finisher.ledger().filter((l) => l.kind !== 'status').map((l) => l.kind), ['not-yet', 'go']);
+      const ready = assertReadyAlert(rig);
+      assert.equal(sends(rig).filter((a) => a.title === ready.title).length, 1, 'asking again is the same wait: one ready alert');
+      assert.ok(cleared(rig, ready.seq), 'the ready alert is cleared once the go is in');
+      assertDoneAlert(rig);
+    } finally {
+      await screen.close();
+    }
+  });
+
+  test(`finisher drill: a failed step turns the row stuck, and a second Go finishes, at ${cols}×${rows}`, { timeout: 90000 }, async (t) => {
+    const env = scratchHome(t);
+    const rig = startRig({ env, scenario: 'finisher-stuck', paceMs: 0, workMs: 300, finishingMs: 2500 });
+    t.after(() => rig.stop());
+    await waitFor(() => rig.finisher.view().state === 'awaiting-go', { what: 'the finisher to be ready', timeoutMs: 15000 });
+    const ESC = '\x1b';
+    const screen = openScreen({ cols, rows, env: { ...process.env, ...env } });
+    try {
+      await openFinisher(screen, cols);
+      screen.send('\r'); // Go
+      await screen.waitFor(/project rules → Go/);
+      screen.send(`${ESC}[D`);
+      let s = (await screen.waitFor(/◆ finisher +stuck · needs you/, 20000)).join('\n');
+      assert.match(s, /◆ finisher stuck · c to review and say go/, 'the footer says so and names c');
+      assert.equal(rig.finisher.phase(), 'stuck');
+      screen.send(`${ESC}[D`);
+      s = (await screen.waitFor(/rig +work +● asking you/)).join('\n');
+      assert.match(s, /1 waiting for you/, 'the dashboard counts the stuck run as waiting');
+
+      screen.send('\r');
+      await screen.waitFor(/◆ finisher +stuck/);
+      screen.send('c');
+      s = (await screen.waitFor(/Retry the install\? 1 step from project rules \(pick one\)/)).join('\n');
+      assert.match(s, /install\.sh failed/, 'the stuck summary is in the conversation');
+      screen.send('\r'); // the second Go
+      await screen.waitFor(/Retry the install\? 1 step from project rules → Go/);
+      screen.send(`${ESC}[D`);
+      s = (await screen.waitFor(/finished · this frame is stale\. The finisher is done\./, 20000)).join('\n');
+      assertFits(screen, s, cols);
+
+      assert.deepEqual(rig.finisher.ledger().map((l) => (l.kind === 'status' ? `${l.from}→${l.to}` : `${l.kind} ${l.from}→${l.to}`)), [
+        'preparing→awaiting-go', 'go awaiting-go→finishing', 'finishing→stuck', 'go stuck→finishing', 'finishing→done',
+      ]);
+      const ready = assertReadyAlert(rig);
+      const stuck = sends(rig).find((a) => a.title === 'rig · finisher stuck');
+      assert.ok(stuck, 'the stuck alert was sent');
+      assert.equal(stuck.message, RIG_STUCK_SUMMARY);
+      assert.ok(cleared(rig, ready.seq) && cleared(rig, stuck.seq), 'each phase alert is cleared when its phase ends');
+      assertDoneAlert(rig);
+    } finally {
+      await screen.close();
+    }
+  });
+
+  test(`finisher drill: a reserved request after the go reads asking you and is answered in the conversation, at ${cols}×${rows}`, { timeout: 90000 }, async (t) => {
+    const env = scratchHome(t);
+    const rig = startRig({ env, scenario: 'finisher-reserved', paceMs: 0, workMs: 300, finishingMs: 1500 });
+    t.after(() => rig.stop());
+    await waitFor(() => rig.finisher.view().state === 'awaiting-go', { what: 'the finisher to be ready', timeoutMs: 15000 });
+    const ESC = '\x1b';
+    const screen = openScreen({ cols, rows, env: { ...process.env, ...env } });
+    try {
+      await openFinisher(screen, cols);
+      screen.send('\r'); // Go
+      await screen.waitFor(/project rules → Go/);
+      screen.send(`${ESC}[D`);
+      let s = (await screen.waitFor(/◆ finisher +asking you/, 20000)).join('\n');
+      assert.match(s, /◆ finisher asking you · c to answer/);
+      assert.equal(rig.finisher.phase(), 'finishing', 'the go stands; only the request waits');
+      screen.send(`${ESC}[D`);
+      s = (await screen.waitFor(/rig +work +● asking you/)).join('\n');
+      assert.match(s, /1 waiting for you/);
+
+      screen.send('\r');
+      await screen.waitFor(/◆ finisher +asking you/);
+      screen.send('c');
+      s = (await screen.waitFor(/↵ allow · n refuse/)).join('\n');
+      assert.match(s, new RegExp(RIG_RESERVED_COMMAND.replace(/[/-]/g, '\\$&')));
+      screen.send('\r'); // allow
+      await screen.waitFor(/Cleared\. Running the install\./, 20000);
+      screen.send(`${ESC}[D`);
+      s = (await screen.waitFor(/finished · this frame is stale\. The finisher is done\./, 20000)).join('\n');
+      assertFits(screen, s, cols);
+
+      const reserved = sends(rig).find((a) => a.title === 'rig · finisher');
+      assert.ok(reserved, `the reserved request was alerted: ${JSON.stringify(rig.alerts())}`);
+      assert.equal(reserved.message, `Needs your yes: wants to run Bash ${RIG_RESERVED_COMMAND}`);
+      const ready = assertReadyAlert(rig);
+      assert.ok(cleared(rig, ready.seq) && cleared(rig, reserved.seq), 'both alerts are cleared once answered');
+      assertDoneAlert(rig);
     } finally {
       await screen.close();
     }

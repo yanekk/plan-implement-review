@@ -68,3 +68,30 @@ export function resolveLiveness(pid, { kill = process.kill, exec } = {}) {
   const liveStartTime = alive ? startTimeOf(pid, { exec }) : null;
   return { alive, liveStartTime };
 }
+
+// createLivenessCache({ kill, exec, now, ttlMs = 5000 }) → (pid) → { alive, liveStartTime }
+//
+// resolveLiveness for a caller that asks many times a second: the dashboard reads every run on each
+// keypress and each 500 ms tick, and a `ps` spawn per live run was nearly all of its CPU (≈2.5 ms each,
+// far more on a machine loaded by the runs themselves) — cursor moves lagged with four runs going.
+// `kill(pid, 0)` is a syscall and still runs every time; only the `ps` is memoised. A process's launch
+// time cannot change while it lives, so the cached value can only go wrong if the process dies and its
+// number is reused unseen: the entry is dropped whenever the number reads dead and re-read once it is
+// `ttlMs` old, which bounds that window. Display only — stop and remove re-resolve uncached (launch.mjs).
+// A failed read is not cached, so a process caught between fork and exec is asked again next time.
+export function createLivenessCache({ kill = process.kill, exec, now = Date.now, ttlMs = 5000 } = {}) {
+  const seen = new Map(); // pid → { at, liveStartTime }
+  return (pid) => {
+    if (!isAlive(pid, { kill })) {
+      seen.delete(pid);
+      return { alive: false, liveStartTime: null };
+    }
+    const hit = seen.get(pid);
+    const t = now();
+    if (hit && t - hit.at < ttlMs) return { alive: true, liveStartTime: hit.liveStartTime };
+    const liveStartTime = startTimeOf(pid, { exec });
+    if (liveStartTime == null) seen.delete(pid);
+    else seen.set(pid, { at: t, liveStartTime });
+    return { alive: true, liveStartTime };
+  };
+}

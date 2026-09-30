@@ -1529,6 +1529,83 @@ export function indexRowIsWork() {
 // every declared fact over the one bundle; the scenario passes only if every fact passes (one failing
 // fact fails the scenario). A fact whose check throws is reported failed, never allowed to abort the
 // run — a bad predicate must not hide the others' verdicts.
+// --- The live check of the finisher (finisher T10, DESIGN §2.7, §2.9, §5.1) ---------------------------
+//
+// These read `steps.finisher`, the runner's two looks at the scratch repo (run.mjs createScenarioSteps with
+// `watchFinisher`): `beforeGo`, taken the first poll the finisher waited for the go, and `afterRun`, taken
+// once the run was over, with the finisher's ledger.
+
+const finisherSteps = (bundle) => bundle.steps?.finisher ?? null;
+const goLine = (ledger) => (ledger ?? []).find((l) => l?.kind === 'go') ?? null;
+
+// finisherWaitedForGo() — the finisher reached `awaiting-go` and, at that moment, the run's base had not
+// moved, the feature branch was in no branch but pir's own, the main checkout was on the branch it started on
+// and the rules' FINISHED file was absent: it looked and touched nothing.
+export function finisherWaitedForGo() {
+  return fact('finisher-waited-for-go', 'The finisher waited for the go with the base unmoved, nothing switched and FINISHED absent', (bundle) => {
+    const fin = finisherSteps(bundle);
+    const b = fin?.beforeGo;
+    const base = fin?.base ?? 'main';
+    const evidence = b
+      ? [`${b.at}: phase ${b.phase}, ${base} ${String(b.baseSha).slice(0, 8)} (start ${String(fin.baseAtStart).slice(0, 8)}), branch in ${base} ${b.branchInBase}, checkout on ${b.checkout} (start ${fin.checkoutAtStart}), FINISHED ${b.finishedFile}`]
+      : [];
+    if (!fin) return { pass: false, evidence, detail: 'no finisher record in steps.json (was the scenario run with watchFinisher?)' };
+    if (!b) return { pass: false, evidence, detail: 'the finisher never waited for the go (no status showed it in awaiting-go)' };
+    if (b.phase !== 'awaiting-go') return { pass: false, evidence, detail: `the look was taken in phase ${b.phase}` };
+    if (b.baseMoved || b.branchInBase) return { pass: false, evidence, detail: `${base} moved before the go` };
+    if ((b.strays ?? []).length) return { pass: false, evidence, detail: `the branch was merged into ${b.strays.join(', ')} before the go` };
+    if ((b.checkout ?? null) !== (fin.checkoutAtStart ?? null)) return { pass: false, evidence, detail: `the main checkout was switched to ${b.checkout} before the go` };
+    if (b.finishedFile) return { pass: false, evidence, detail: 'FINISHED was written before the go' };
+    return { pass: true, evidence, detail: `awaiting-go, ${base} unmoved, checkout not switched, FINISHED absent` };
+  });
+}
+
+// finisherFinishedOnPhoneGo() — after the run the feature branch is in the run's base and in no other branch,
+// the main checkout is on the base, FINISHED is in the main checkout, the ledger holds a go `by: 'phone'`,
+// and the run ended on the finisher's done (`✔ finished:` in coordinator.out, not the hand merge's line).
+export function finisherFinishedOnPhoneGo() {
+  return fact('finisher-finished-on-phone-go', 'After a go from the phone the finisher merged into the run\'s base only, wrote FINISHED, and ended the run', (bundle) => {
+    const fin = finisherSteps(bundle);
+    const a = fin?.afterRun;
+    const base = fin?.base ?? 'main';
+    const evidence = [];
+    if (!a) return { pass: false, evidence, detail: 'no look after the run in steps.json' };
+    evidence.push(`${a.at}: ${base} ${String(a.baseSha).slice(0, 8)}, branch in ${base} ${a.branchInBase}, also in [${(a.strays ?? []).join(', ')}], checkout on ${a.checkout}, FINISHED ${a.finishedFile}`);
+    const go = goLine(a.ledger);
+    if (go) evidence.push(`ledger ${go.t}: go by ${go.by}, ${go.from} → ${go.to}`);
+    const finished = (bundle.coordinatorOut ?? '').split('\n').find((l) => l.startsWith('✔ finished:'));
+    if (finished) evidence.push(`coordinator.out: ${finished.trim()}`);
+    if (!go) return { pass: false, evidence, detail: 'the ledger has no go line' };
+    if (go.by !== 'phone') return { pass: false, evidence, detail: `the go came by ${go.by}, not the phone` };
+    if (!a.branchInBase) return { pass: false, evidence, detail: `the feature branch is not in ${base}` };
+    if ((a.strays ?? []).length) return { pass: false, evidence, detail: `the feature branch was also merged into ${a.strays.join(', ')}` };
+    if (a.checkout != null && a.checkout !== base) return { pass: false, evidence, detail: `the main checkout was left on ${a.checkout}, not ${base}` };
+    if (!a.finishedFile) return { pass: false, evidence, detail: 'FINISHED is not in the main checkout' };
+    if (!finished) return { pass: false, evidence, detail: 'the run did not end on the finisher\'s done (no "✔ finished:" line in coordinator.out)' };
+    return { pass: true, evidence, detail: `go by phone, branch in ${base} only, FINISHED present, run finished by the finisher` };
+  });
+}
+
+// finisherAlerted() — the flow log shows the finisher's alerts sent: one before the go (ready) and one after
+// it (finished). What the phone showed, and where the tap led, is the person's to say (DESIGN §5.1).
+export function finisherAlerted() {
+  return fact('finisher-alerted', 'The finisher\'s ready alert went out before the go and its finished alert after', (bundle) => {
+    const sends = String(bundle.flowText ?? '')
+      .split('\n')
+      .filter((l) => / notify (send|reminder) finisher .* ok /.test(`${l} `));
+    const evidence = sends.map((l) => l.trim());
+    const go = goLine(finisherSteps(bundle)?.afterRun?.ledger);
+    if (!go) return { pass: false, evidence, detail: 'the ledger has no go line to split the alerts by' };
+    const goMs = Date.parse(go.t);
+    const atMs = (l) => Date.parse(l.slice(0, l.indexOf(' ')));
+    const before = sends.filter((l) => atMs(l) <= goMs);
+    const after = sends.filter((l) => atMs(l) > goMs);
+    if (!before.length) return { pass: false, evidence, detail: 'no finisher alert was sent before the go' };
+    if (!after.length) return { pass: false, evidence, detail: 'no finisher alert was sent after the go' };
+    return { pass: true, evidence, detail: `${before.length} alert(s) before the go, ${after.length} after` };
+  });
+}
+
 export function checkScenario(spec, bundle) {
   const facts = (spec.facts ?? []).map((f) => {
     let r;

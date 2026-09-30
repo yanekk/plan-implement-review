@@ -118,6 +118,15 @@ wrong — you do two things and then **wait** (DESIGN §2.2):
    in your own session and you continue from it. Those are the only places the person reaches you
    (live-workers DESIGN §2.4, §2.7; `docs/human-flow.md`).
 
+   **The question stands alone.** The person reads the messages you write and the question form, and
+   nothing else: your reasoning is never shown to them, however clearly you laid something out in it.
+   So whatever they are choosing between (each wording, each value, each option) is spelled out in the
+   question or its options, or in a message you wrote in the same turn, just before the form. Never ask
+   about "the table", "the list above" or "these as proposed" unless that text is in a message you
+   wrote. Do not use an option's `preview` field: `pir` does not show it. If the person says they
+   cannot see something, check whether you wrote it as a message before you answer, and say which it
+   was: "I never wrote it out" when that is the case, not that it failed to reach them.
+
    **Address the person, and no one else.** Nothing relays your question to anyone, so never say — to
    the person, or in your own session — that you are "waiting" on anything to come back or that
    anything "will reply". The report you dropped in step 1 is only a signal that you are stuck; it is

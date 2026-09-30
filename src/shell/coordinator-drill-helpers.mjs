@@ -14,7 +14,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { startPlanRig } from './plan-rig.mjs';
 import { indexDir, listRecords } from './index-store.mjs';
@@ -138,22 +138,31 @@ export function coordinatorDrill(cols, rows) {
       screen.send(LEFT);
       await screen.waitFor((x) => !/T03 +passed-question +asking/.test(x) && /c coordinator/.test(x));
 
-      // 5. The end: preparing while main is synced and the report written, then ready to merge.
+      // 5. The end: preparing while main is synced and the report written, then the finisher takes over.
       s = (await screen.waitFor(/preparing: syncing main, writing the report\n/, 60000)).join('\n');
-      s = (await screen.waitFor(/ready to merge · git switch main && git merge pir\/drill/, 60000)).join('\n');
-      assert.match(s, /report: plans\/drill\/REPORT\.md/);
-      for (const task of ['T01', 'T02', 'T03']) assert.match(rowOf(s, task) ?? '', /merged/, `${task} merged`);
 
-      screen.send('c');
-      s = (await screen.waitFor(said('The branch is ready. Merge it yourself with: git merge pir/drill'), 20000)).join('\n');
+      // finisher T05: the pass after ready closes the agent and starts the finisher. The agent's hand-off
+      // carries no merge line, and its row and `c` go with it. finisher T07: the finisher's row takes the
+      // agent's place and the footer points at `c`. The drill's fake has no finisher script (T09 adds it),
+      // so it stays `preparing`.
+      // The `ready to merge` frame in between is not waited for: settling ready wakes the loop (fast-tests
+      // DESIGN §2.3), so the hand-over pass runs one pass gap (250 ms) later, inside the screen's 500 ms refresh.
+      s = (await screen.waitFor((x) => !AGENT_ROW.test(x) && !/c coordinator/.test(x) && /◆ finisher +preparing/.test(x), 60000)).join('\n');
+      for (const task of ['T01', 'T02', 'T03']) assert.match(rowOf(s, task) ?? '', /merged/, `${task} merged`);
+      assert.ok(git(rig.repoDir, 'show', `pir/${DRILL_SLUG}:plans/${DRILL_SLUG}/REPORT.md`).length > 0, 'the report is committed on the feature branch');
+      assert.match(s, /◆ finisher preparing · c to watch/);
+      assert.match(s, /c finisher/);
+      assert.doesNotMatch(s, /git merge/, 'no merge line beside the finisher');
+      const conv = join(rig.repoDir, 'plans', DRILL_SLUG, '.parallel', 'control', 'conversations');
+      const agentLog = readdirSync(conv).filter((f) => f.startsWith('coordinator-')).map((f) => readFileSync(join(conv, f), 'utf8')).join('\n');
+      assert.match(agentLog, /The branch is ready\. The finisher takes the merge from here\./);
+      assert.doesNotMatch(agentLog, /Merge it yourself/);
+      assert.ok(readdirSync(conv).some((f) => f.startsWith('finisher-')), 'the finisher was started');
       screen.send(LEFT);
-      await screen.waitFor(/c coordinator/);
-      screen.send(LEFT);
-      s = (await screen.waitFor(/● ready to merge/)).join('\n');
-      assert.match(s, /drill +work +● ready to merge/, 'the dashboard row waits on the person');
+      s = (await screen.waitFor(/drill +work +● running/)).join('\n');
+      assert.doesNotMatch(s, /ready to merge/, 'the finisher is working, not waiting on the person');
       screen.send(RIGHT);
-      s = (await screen.waitFor(/ready to merge · git switch main && git merge pir\/drill/)).join('\n');
-      assert.match(assertAgentRow(s, 'in ready to merge'), /on duty$/, 'it holds nothing once every question is answered');
+      await screen.waitFor(/◆ finisher +preparing/);
 
       rec.stop();
       // PIR_DRILL_DUMP=<prefix> writes every frame to <prefix>-{cols}x{rows}.txt, for judging them by eye.
@@ -217,7 +226,7 @@ export function noCoordinatorDrill(cols, rows) {
 // The end-of-run helper's row (pir-coordinator T11): the one-task plan's tests are red at the end, so the
 // run spawns its tests-fix helper. The helper asks a question, the agent passes it on, and the person finds
 // the helper as a row below the tasks, opens it with → and answers there, as for any task. The helper then
-// commits the fix and the run ends in `ready to merge`.
+// commits the fix, the run settles `ready to merge` and the finisher takes over (finisher T05).
 export function endHelperDrill(cols, rows) {
   test(`end-helper drill at ${cols}×${rows}: the tests-fix helper's passed-on question is answered from its row in pir`, { timeout: 180000 }, async (t) => {
     const rig = drillRig(t, 'end-helper');
@@ -246,9 +255,11 @@ export function endHelperDrill(cols, rows) {
       await screen.waitFor(/→ Add it/);
       screen.send(LEFT);
 
-      s = (await screen.waitFor(/ready to merge · git switch main && git merge pir\/helper/, 60000)).join('\n');
+      // The `ready to merge` frame is one pass gap long (see the coordinator drill), so the end waited for is
+      // the finisher's row in the agent's place.
+      s = (await screen.waitFor((x) => !AGENT_ROW.test(x) && /◆ finisher +preparing/.test(x), 60000)).join('\n');
       assert.equal(rowOf(s, 'tests-fix'), null, 'the helper\'s row is gone once it has finished');
-      assertAgentRow(s, 'in ready to merge after the helper');
+      assert.doesNotMatch(s, /git merge/, 'no merge line beside the finisher');
       assert.match(rowOf(s, 'T01') ?? '', /merged/);
 
       rec.stop();

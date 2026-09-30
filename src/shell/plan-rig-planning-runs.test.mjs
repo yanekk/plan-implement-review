@@ -245,11 +245,14 @@ test('end to end at 120×40: ↵ on the go starts the build on the same row, whi
     await until(() => /T01 +first-task +/.test(screen.text()), "the fake plan's task on the build's view", 30000);
     const record = listRecords({ dir }).find((r) => r.slug === PLAN_RIG_SLUG);
     assert.equal(record.kind, 'work', 'the row flipped from plan to work');
-    const done = (await screen.waitFor(new RegExp(`git merge pir/${PLAN_RIG_SLUG}`), 90000)).join('\n');
-    // With the agent on the end reads `ready to merge` and names the report (pir-coordinator T06).
-    assert.match(done, new RegExp(`✔ ready to merge · git switch main && git merge pir/${PLAN_RIG_SLUG}\\n  report: plans/${PLAN_RIG_SLUG}/REPORT\\.md`));
+    // With the agent on the run settles `ready to merge` and the next pass hands over to the finisher
+    // (finisher T05). That pass is one pass gap (250 ms) later (fast-tests DESIGN §2.3), inside the screen's
+    // 500 ms refresh, so the end waited for is the finisher's row, not the `ready to merge` frame.
+    const done = (await screen.waitFor(/◆ finisher +preparing/, 90000)).join('\n');
+    assert.match(done, /T01 +first-task +merged/);
+    assert.doesNotMatch(done, /git merge/, 'no merge line beside the finisher');
     assert.equal(git(rig.repoDir, 'rev-parse', 'main'), mainBefore, 'main is untouched');
-    // With the agent on (the default), the merge is offered only once the delivery report is committed on
+    // With the agent on (the default), the finisher starts only once the delivery report is committed on
     // the feature branch (pir-coordinator T05): the fake agent's sections, the rendered decisions, the footer.
     const report = git(rig.repoDir, 'show', `pir/${PLAN_RIG_SLUG}:plans/${PLAN_RIG_SLUG}/REPORT.md`);
     assert.match(report, /## What was delivered\n\nThe fake plan's one task\./);

@@ -23,7 +23,9 @@
 
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
-import { basename, dirname, join } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
+import { homedir } from 'node:os';
+import { fileURLToPath } from 'node:url';
 
 import { parseProgress, reconcileTaskRow, progressPathFor } from '../core/progress.mjs';
 import { workerName, isWorkerOf } from '../core/naming.mjs';
@@ -49,12 +51,18 @@ import { createWorktree } from './worktree.mjs';
 import { resolveRunBase } from './base-branch.mjs';
 import { reapRecorded } from './reap.mjs';
 import { planHome } from './plan-home.mjs';
-import { startCoordinatorAgent, withAgent, closingAnswer, readLogEntries } from './coordinator-agent.mjs';
+import { startCoordinatorAgent, withAgent, closingAnswer, readLogEntries, readJson } from './coordinator-agent.mjs';
+import { startFinisher as startFinisherSession } from './finisher-agent.mjs';
+import { chooseRules } from '../core/finisher-policy.mjs';
 import { startWorker } from './worker-proc.mjs';
-import { alertText, endAlert, holdAlert, notifyStep, notifyExit, newNotifyState } from '../core/notify.mjs';
+import { alertText, endAlert, holdAlert, notifyStep, notifyExit, newNotifyState, finisherAlert, finisherNotifyView } from '../core/notify.mjs';
 import { holdText } from '../core/basebranch.mjs';
 import { publish as ntfyPublish, clear as ntfyClear } from './ntfy.mjs';
 import { readNotifyConfig, ensurePresenceMarker, notifyIcon } from './notify-config.mjs';
+
+// The engine's own root (this file is {engine}/src/shell/coordinate.mjs): the built-in rules' home
+// (finisher DESIGN §2.2), for the installed engine and a checkout alike.
+const ENGINE_DIR = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
 // The least time between two passes' starts (fast-tests DESIGN §2.2): wakes inside it coalesce into one pass
 // at its end, so a flood of worker output cannot run passes back to back. Below the `pir` screen's 500 ms
@@ -167,6 +175,8 @@ export function startCoordinator({
   prepare,
   holdMerges = false,
   startAgent = null,
+  startFinisher = null,
+  priorFinisher = () => null,
   lastWords = lastWordsOf,
   readLog = readLogEntries,
   now = () => Date.now(),
@@ -239,6 +249,15 @@ export function startCoordinator({
   // `--no-coordinator` the end is today's. `handoff` is null until the end gate has run.
   const endOfRun = startAgent !== null;
   let handoff = null;
+  // The finisher (finisher DESIGN §2.1, §2.8, §2.12, T05): `startFinisher({ featurePath, askRules,
+  // reportPath, base })` → a Finisher (finisher-agent.mjs), called once the end sequence settles `ready`; only
+  // with the agent on. `priorFinisher()` → the stored `finisher/state.json` of this run, or null: present
+  // means pir restarted over a finisher, which is resumed instead of the agent. `handoff.finisher` is
+  // null | 'starting' | 'on' | 'fallback' (today's ready-to-merge wait, for good).
+  const withFinisher = endOfRun && startFinisher !== null;
+  const prior = withFinisher ? priorFinisher() ?? null : null;
+  let finisher = null;
+  let agentClosedForFinisher = false;
   let lastTasks = [];
   const adopted = []; // tasks adopted into the plan while the agent was alive, for the report
 
@@ -415,6 +434,13 @@ export function startCoordinator({
     const of = (type) => r.actions.filter((a) => a.type === type);
 
     // Started once the feature worktree is open, so its settings and plan files are the current ones.
+    // A restart over a finisher resumes the finisher, not the agent: the agent's work ended with the report.
+    if (startAgent && !agentTried && state.feature && prior) {
+      agentTried = true;
+      agentClosedForFinisher = true;
+      askRules = readAskRules(state.feature.path);
+      control?.log?.('coordinator agent not started: the finisher is resumed');
+    }
     if (startAgent && !agentTried && state.feature) {
       agentTried = true;
       askRules = readAskRules(state.feature.path);
@@ -477,6 +503,9 @@ export function startCoordinator({
         // remote it was fetched from, the local base's tip at the last sync (a move of it re-syncs), and
         // the watch clock while waiting for the merge.
         hold: null, remote: null, localSeen: null, watchFrom: null, lastWatch: null, lastWatchFailure: null,
+        // The finisher (finisher DESIGN §2.1, §2.12): null until the hand-over, then 'starting', 'on' or
+        // 'fallback' with its reason; `resynced` marks a re-sync it has yet to be told of.
+        finisher: null, fallback: null, resynced: false,
       };
     }
 
@@ -539,6 +568,9 @@ export function startCoordinator({
       lastWatchFailure: handoff.lastWatchFailure,
     };
     if (handoff.sync?.state === 'unresolved') view.unresolved = true;
+    // Only once the finisher is in play, so a run without one keeps the view's old shape.
+    if (handoff.finisher) view.finisher = handoff.finisher;
+    if (handoff.fallback) view.fallback = handoff.fallback;
     return view;
   }
 
@@ -669,6 +701,9 @@ export function startCoordinator({
       handoff.tests ??= handoff.gate;
       handoff.state = handoff.tests === 'green' ? 'ready' : 'red';
       handoff.step = 'waiting';
+      // After a go the finisher's own merge put the tip in the base; the run ends only on its done or close
+      // (finisher DESIGN §2.8), so the restarted run waits in ready and resumes it.
+      if (prior?.goGiven === true && handoff.finisher === null) return true;
       finish('merged', rec);
       return true;
     };
@@ -799,19 +834,123 @@ export function startCoordinator({
     control?.log?.(`report ${reportRel}`);
     handoff.reportPath = reportRel;
     settle();
-    if (agent?.alive()) agent.tell(handoffFor({ slug, reportPath: reportRel, ready: handoff.state === 'ready', report: text, base: RUN_BASE }));
+    const ready = handoff.state === 'ready';
+    if (agent?.alive()) agent.tell(handoffFor({ slug, reportPath: reportRel, ready, report: text, base: RUN_BASE, finisher: ready && withFinisher }));
   }
 
   function finish(by, rec) {
     handoff.finished = by;
     rec('finished', { by });
     closeAgent();
+    closeFinisher();
   }
 
-  // The wait for the person's merge (base-branch DESIGN §2.8). Each pass reads the local base; every
-  // watchMs the remote is fetched too (moving nothing but its remote-tracking ref), so a merge done on
-  // GitHub is seen. A base that moved to a commit without the tip re-syncs; a failed fetch is only noted.
-  function endWait(rec) {
+  // closeFinisher({ immediate }) → the finisher's session ended (the run's end, HALT, teardown), as
+  // closeAgent does for the agent.
+  function closeFinisher({ immediate = false } = {}) {
+    if (!finisher) return;
+    const f = finisher;
+    const pid = f.session?.pid ?? null;
+    f.close(immediate ? { graceMs: 0 } : undefined).catch(() => {});
+    if (immediate && pid) {
+      try {
+        process.kill(pid, 'SIGTERM');
+      } catch {
+        // already gone
+      }
+    }
+  }
+
+  // today's ready-to-merge wait, for good (DESIGN §2.12): the finisher failed to start, gave up, or the
+  // branch turned red under it (user 2026-09-29: close it; the run waits as a red run does today).
+  function fallBack(why, rec) {
+    handoff.finisher = 'fallback';
+    handoff.fallback = why;
+    rec('finisher-fallback', { why });
+    closeFinisher();
+  }
+
+  // The hand-over (DESIGN §2.1): the first pass the run waits in a green `ready` with the agent on.
+  function handOver(rec) {
+    closeAgent();
+    agentClosedForFinisher = true;
+    handoff.finisher = 'starting';
+    try {
+      finisher = startFinisher({ featurePath: state.feature.path, askRules, reportPath: reportRel, base: RUN_BASE });
+    } catch (err) {
+      control?.log?.(`finisher failed to start: ${err?.message ?? err}`);
+      fallBack('failed', rec);
+      return;
+    }
+    handoff.finisher = 'on';
+    control?.log?.(prior ? 'finisher resumed' : 'finisher started');
+    rec('finisher', { state: 'started' });
+    if (finisher.givenUp?.()) {
+      control?.log?.('finisher gave up');
+      fallBack('gave-up', rec);
+      return;
+    }
+    // A restart that died between the finisher's done and the run's end: nothing is left for it to do.
+    if (finisher.phase?.() === 'done') {
+      finish('finisher', rec);
+      return;
+    }
+    // pir was down while the base moved and this start re-synced the branch: the finisher's old steps are void.
+    if (prior && (handoff.sync?.state === 'merged' || handoff.sync?.state === 'resolved')) finisher.resynced(handoff.baseSha);
+  }
+
+  // Each pass with the finisher on (DESIGN §2.8): its statuses end the run; a hand merge ends it only
+  // before the first go; the base moving before a go re-syncs as today, then sends it back to preparing.
+  function finisherWaiting(rec) {
+    if (handoff.resynced) {
+      handoff.resynced = false;
+      if (handoff.state !== 'ready') {
+        control?.log?.('finisher closed: the branch is not ready after the re-sync');
+        fallBack('red', rec);
+        return;
+      }
+      finisher.resynced(handoff.baseSha);
+    }
+    if (finisher.givenUp()) {
+      control?.log?.('finisher gave up');
+      fallBack('gave-up', rec);
+      return;
+    }
+    const out = finisher.drain();
+    for (const st of out.accepted ?? []) {
+      if (st.kind === 'done') return finish('finisher', rec);
+      if (st.kind === 'close') return finish('closed', rec);
+    }
+    if (finisher.goGiven()) return; // after a go only done or close end the run
+    const seen = watchBase();
+    if (seen === 'merged') finish('merged', rec);
+    else if (seen === 'moved') {
+      // The old go is void from this pass, not from the re-sync's end, which may be minutes of sync or fix
+      // worker away (review T05).
+      finisher.resyncing();
+      handoff.resynced = true;
+      resync(rec);
+    }
+  }
+
+  // The base moved without the feature tip: re-sync so the hand-off still merges cleanly (§2.10).
+  function resync(rec) {
+    handoff.state = 'preparing';
+    handoff.rewrite = true;
+    // A re-sync whose tests turn red gets one fix attempt of its own (T10). The last sequence's fix
+    // result is cleared too: the rewritten footer describes this sync, and a stale "stayed red" over
+    // "Tests: green" would contradict itself.
+    handoff.fixUsed = false;
+    handoff.fix = null;
+    handoff.step = 'sync';
+    endSync(rec);
+  }
+
+  // watchBase() → 'merged' | 'moved' | null: one look at the base while the run waits for the merge
+  // (base-branch DESIGN §2.8), shared by the plain wait and the finisher's before its go. Each pass reads
+  // the local base; every watchMs the remote is fetched too (moving nothing but its remote-tracking ref),
+  // so a merge done on GitHub is seen. A failed fetch is only noted.
+  function watchBase() {
     const t = now();
     let watched = null;
     if (handoff.watchFrom == null) handoff.watchFrom = t;
@@ -823,26 +962,21 @@ export function startCoordinator({
       else handoff.lastWatch = t;
     }
     const refs = [RUN_BASE_REF, trackingRef()].filter(Boolean);
-    if (worktree.baseContains(state.feature.branch, { refs })) {
-      finish('merged', rec);
-      return;
-    }
+    if (worktree.baseContains(state.feature.branch, { refs })) return 'merged';
     // Moved: the local base is not where the last sync left it, or the remote's newer copy is not what was
     // merged. Compared with the local tip at the sync, not the merged commit, since that may be the
     // remote's copy while the local branch stays behind it (a checked-out base with changes, §2.3).
     const localMoved = worktree.baseTip({ ref: RUN_BASE_REF }) !== handoff.localSeen;
     const remoteMoved = !!watched?.ok && watched.sha !== handoff.baseSha;
-    if (!localMoved && !remoteMoved) return;
-    // The base moved without the feature tip: re-sync so the hand-off still merges cleanly (§2.10).
-    handoff.state = 'preparing';
-    handoff.rewrite = true;
-    // A re-sync whose tests turn red gets one fix attempt of its own (T10). The last sequence's fix
-    // result is cleared too: the rewritten footer describes this sync, and a stale "stayed red" over
-    // "Tests: green" would contradict itself.
-    handoff.fixUsed = false;
-    handoff.fix = null;
-    handoff.step = 'sync';
-    endSync(rec);
+    return localMoved || remoteMoved ? 'moved' : null;
+  }
+
+  // The wait for the person's merge: the base holding the tip ends the run, the base moving without it
+  // re-syncs.
+  function endWait(rec) {
+    const seen = watchBase();
+    if (seen === 'merged') finish('merged', rec);
+    else if (seen === 'moved') resync(rec);
   }
 
   function endPass() {
@@ -855,6 +989,7 @@ export function startCoordinator({
         if (t) platform.close(t.workerId);
       }
       closeAgent();
+      closeFinisher();
       return endResult({ actions, halted: true, routed: { passed: [], report: null, close: false } });
     }
 
@@ -895,7 +1030,9 @@ export function startCoordinator({
         else if (!agent || agent.givenUp?.()) endWrite(null);
         break;
       case 'waiting':
-        if (routed.close) finish('closed', rec);
+        if (handoff.finisher === 'on') finisherWaiting(rec);
+        else if (handoff.finisher === null && withFinisher && handoff.state === 'ready') handOver(rec);
+        else if (routed.close) finish('closed', rec);
         else endWait(rec);
         break;
       default:
@@ -930,7 +1067,15 @@ export function startCoordinator({
       done: waitingNow,
       tasks: lastTasks,
       agent: routed,
+      finisher: finisherView(),
     };
+  }
+
+  // finisherView() → the finisher for the run state (buildRunState's `finisher`): its view() while it is
+  // the run's, null before the hand-over and once it has fallen back.
+  function finisherView() {
+    if (!finisher || handoff?.finisher !== 'on') return null;
+    return finisher.view?.() ?? null;
   }
 
   // There is no answer() any more (DESIGN §2.2, T03). The coordinator used to route the person's
@@ -997,10 +1142,22 @@ export function startCoordinator({
     defer,
     drive,
     closeAgent,
+    closeFinisher,
+    // closeAll({ immediate }) → every session the controller holds (teardown, a signal).
+    closeAll(opts) {
+      closeAgent(opts);
+      closeFinisher(opts);
+    },
     // The agent, or null (not started, disabled, or failed to start).
     get agent() {
       return agent;
     },
+    // The finisher while it is the run's session (DESIGN §2.1), else null: `pir`'s conversation view and
+    // the notifier reach it through withAgent in its place once it has replaced the agent.
+    get finisher() {
+      return handoff?.finisher === 'on' ? finisher : null;
+    },
+    finisherView,
     // The keys of the items the agent holds now; empty while it is down, so every item is the person's.
     // The end-of-run state (T05) — null until the end gate has run with the agent on.
     get handoff() {
@@ -1020,6 +1177,8 @@ export function startCoordinator({
     // waiting items it holds, for its row (T12). Counted from `held`, not the agent's own `briefed` map,
     // which also keeps reserved and already-answered items; `justSettled` is answered, so not held.
     agentView() {
+      // Closed for the finisher: its row is gone (DESIGN §2.11), and runState.coordinator is null.
+      if (agentClosedForFinisher) return null;
       const v = agent?.view?.();
       return v ? { ...v, holding: v.state === 'up' && agent.alive() ? held.size : 0 } : null;
     },
@@ -1396,12 +1555,25 @@ export function renderHandoff({ readyToMerge, taskCount, slug, why, base = 'main
   );
 }
 
-// renderFinished({ by, slug, ready, reportPath, base }) → the line printed when a run with the agent ends
-// (pir-coordinator DESIGN §2.10): the person merged, or told the agent to close the run.
-export function renderFinished({ by, slug, ready = false, reportPath = null, base = 'main' } = {}) {
+// renderFinished({ by, slug, ready, reportPath, summary, base }) → the line printed when a run with the agent
+// ends (pir-coordinator DESIGN §2.10): the person merged, or told the agent (or the finisher) to close the
+// run; `finisher`: the finisher wrote done (finisher DESIGN §2.8), `summary` its done summary. Also
+// `finisher-gave-up`, printed while the run goes on: the finisher could not start or gave up, and the run
+// falls back to today's ready-to-merge wait with the merge line (DESIGN §2.12).
+export function renderFinished({ by, slug, ready = false, reportPath = null, summary = null, base = 'main' } = {}) {
   const branch = `pir/${slug}`;
   const report = reportPath ? ` The report is ${reportPath}.` : '';
   if (by === 'merged') return `✔ ${branch} is in ${base}. The run is finished.${report}`;
+  if (by === 'finisher') {
+    const first = String(summary ?? '').split('\n').map((l) => l.trim()).find(Boolean) ?? 'the finisher is done';
+    return `✔ finished: ${first}${report}`;
+  }
+  if (by === 'finisher-gave-up') {
+    return (
+      `✗ the finisher could not go on; nothing more will run for you.${report}\n` +
+      `${branch} is ready to merge; it is yours to merge by hand:\n\n  git switch ${base} && git merge ${branch}\n`
+    );
+  }
   return (
     `✔ run closed.${report}\n` +
     (ready ? `${branch} is not merged; it is yours to merge when you want:\n\n  git switch ${base} && git merge ${branch}\n` : `${branch} is not merged and not ready to merge.`)
@@ -1506,7 +1678,9 @@ export function clearTransientFeeds(controlDir) {
   // previous run's worker must never reach a new one, so it is cleared with reports/. The coordinator
   // agent's decisions/ are the same kind of feed, naming workers and requests of a run that is gone
   // (pir-coordinator DESIGN §3.5); the rest of coordinator/ (ledger.jsonl, session.json) is durable.
-  for (const feed of ['reports', 'inbox', join('coordinator', 'decisions')]) {
+  // The finisher's status/ is the same kind of feed (finisher DESIGN §3.5); its state.json, session.json and
+  // ledger.jsonl are durable.
+  for (const feed of ['reports', 'inbox', join('coordinator', 'decisions'), join('finisher', 'status')]) {
     const feedDir = join(controlDir, feed);
     try {
       if (!existsSync(feedDir)) continue;
@@ -1681,6 +1855,7 @@ export function buildRunState({
   handoff = null,
   heldByAgent = new Set(),
   coordinator = null,
+  finisher = null,
   base = null,
 } = {}) {
   // One row entry: a plan task, or an end-of-run helper (`st` its state.tasks entry, keyed by its label).
@@ -1736,6 +1911,9 @@ export function buildRunState({
     interrupted: !!interrupted,
     handoff: handoff ?? null,
     coordinator: coordinator ?? null,
+    // The finisher's view() (finisher-agent.mjs) while it is the run's (finisher T05); absent otherwise,
+    // so a run without one keeps the old shape.
+    ...(finisher ? { finisher } : {}),
     ...(base ? { base } : {}),
     tasks,
     ...(helpers.length ? { helpers } : {}),
@@ -1988,9 +2166,40 @@ export function notifyPass({ plan, platform, coordinator, notifyState, remote = 
     why: coordinator.whyPerson(),
     remoteOn: remote,
   });
+  const fin = finisherViewFor(plan, coordinator, remote);
+  if (fin) views.push(fin);
   const { state, actions } = notifyStep(notifyState, views, now, stepOpts);
-  if (actions.length) run(actions);
+  // The finisher's episodes are keyed `finisher` (the flow log's `notify send finisher …`); their notes go
+  // to its conversation, found by its session id through withAgent.
+  const finisherId = coordinator.finisher?.id ?? null;
+  if (actions.length) run(actions.map((a) => (a.id === 'finisher' && a.type === 'send' ? { ...a, noteTo: finisherId } : a)));
   return state;
+}
+
+// finisherViewFor(plan, coordinator, remote) → the finisher's notify view (finisher DESIGN §2.9), or null
+// while no finisher is the run's. Its link is its Remote Control URL, waited for 20 s as for a worker.
+function finisherViewFor(plan, coordinator, remote) {
+  const f = coordinator.finisher;
+  if (!f) return null;
+  let pending = [];
+  try {
+    pending = f.alive?.() ? f.session?.pending?.() ?? [] : [];
+  } catch {
+    pending = [];
+  }
+  return finisherNotifyView({
+    slug: plan,
+    view: coordinator.finisherView?.() ?? null,
+    pending,
+    url: f.remoteUrl?.() ?? null,
+    remote: f.session?.remoteRefused ? 'refused' : remote ? 'wanted' : 'off',
+  });
+}
+
+// finisherOneShot(alert, { click, noteTo }) → the runner's send for the finisher's done or gave-up alert
+// (finisher DESIGN §2.9, §2.12): no episode and no reminder, logged under `finisher`.
+export function finisherOneShot({ title, message, tags }, { click = null, noteTo = null } = {}) {
+  return { type: 'send', id: 'finisher', seq: null, title, message, click, reminder: false, ...(tags ? { tags } : {}), noteTo };
 }
 
 // endAlertPass({ r, coordinator, slug, sent, send }) → sent. With the agent, the one end-of-run alert
@@ -1998,10 +2207,19 @@ export function notifyPass({ plan, platform, coordinator, notifyState, remote = 
 // 'waiting'`), never on a pass that finished the run (a restart finding main already holding the tip must
 // not announce a merge that is done), and never again for this process — a re-sync after main moves is the
 // same wait. The tap opens the agent's chat, where the report and the merge are presented.
-export function endAlertPass({ r, coordinator, slug, sent = false, send }) {
+//
+// With the finisher (`takesOver`, finisher DESIGN §2.9, §2.12): a green run sends no `ready to merge`, the
+// finisher's own ready alert replaces it; a finisher that gave up sends `{slug} · finisher gave up` instead;
+// one that failed to start falls back to today's wait and so to today's alert. A red run is unchanged.
+export function endAlertPass({ r, coordinator, slug, sent = false, send, takesOver = false, sendFinisher = null }) {
   if (sent || r?.finished) return sent;
   const state = r?.handoff?.state;
+  if (takesOver && r?.handoff?.fallback === 'gave-up') {
+    sendFinisher?.(finisherAlert({ slug, phase: 'gave-up', base: r.handoff.base ?? 'main' }));
+    return true;
+  }
   if (state !== 'ready' && state !== 'red') return sent;
+  if (takesOver && state === 'ready' && r?.handoff?.fallback !== 'failed') return sent;
   const alert = endAlert({
     slug,
     ready: state === 'ready',
@@ -2191,7 +2409,33 @@ async function main(argv) {
             env: () => workerEnv(),
           });
         };
-  const coordinator = startCoordinator({ slug, repo, platform, worktree, maxWorkers, control, startAgent, base, watchMs: baseWatchMs(),
+  // The finisher (finisher DESIGN §2.1, §2.2): only with the agent on. Its rules are the first of the
+  // project's, the person's for this repo and the default that exists, else the engine's own copy. `base`
+  // is the run's recorded base (`pirBase`), the one branch it merges into, whatever the rules file names.
+  const startFinisher = !startAgent
+    ? null
+    : ({ featurePath, askRules, reportPath, base }) => {
+        const rules = chooseRules({ featurePath, home: homedir(), repo: root, engineDir: ENGINE_DIR, exists: existsSync });
+        control.log(`finisher rules: ${rules.path} (${rules.source})`);
+        return startFinisherSession({
+          controlDir: control.dir,
+          featurePath,
+          repoRoot: root,
+          slug,
+          mainCheckout: root,
+          base,
+          rules,
+          reportPath: join(featurePath, reportPath),
+          askRules,
+          platform,
+          startWorker,
+          claudePath,
+          remote: REMOTE,
+          env: () => workerEnv(),
+        });
+      };
+  const priorFinisher = () => readJson(join(control.dir, 'finisher', 'state.json'));
+  const coordinator = startCoordinator({ slug, repo, platform, worktree, maxWorkers, control, startAgent, startFinisher, priorFinisher, base, watchMs: baseWatchMs(),
     runTests: (featurePath, { tasks } = {}) => {
       showTesting(tasks ?? []);
       return runFeatureTests(featurePath, { slug, root, logPath: join(control.dir, 'tests.log') });
@@ -2201,7 +2445,9 @@ async function main(argv) {
     // live run reaches the coordinator-side conflict deterministically. No person has a reason to.
     holdMerges: process.env.PARALLEL_HOLD_MERGES === '1',
   });
-  currentAgent = () => coordinator.agent;
+  // Once the finisher replaces the agent, the person's replies (the go included) and the notifier's notes
+  // reach the finisher's session instead (finisher T05).
+  currentAgent = () => coordinator.finisher ?? coordinator.agent;
   const renderer = createRenderer({ stream: process.stdout });
 
   console.log(`ceiling: ${maxWorkers}   control: ${control.dir}`);
@@ -2277,7 +2523,7 @@ async function main(argv) {
   // Ctrl-C or an error must not leave a paid session running (DESIGN §2.6). Idempotent (close is safe
   // twice). A re-run reaps whatever a second Ctrl-C during teardown left behind (§2.6, §2.8).
   const teardown = () => {
-    coordinator.closeAgent({ immediate: true });
+    coordinator.closeAll({ immediate: true });
     return teardownRun({ platform, state: coordinator.state, repo, slug, control });
   };
   let tornDown = false;
@@ -2299,7 +2545,7 @@ async function main(argv) {
     if (tornDown) return;
     tornDown = true;
     renderer.close();
-    coordinator.closeAgent({ immediate: true });
+    coordinator.closeAll({ immediate: true });
     const { closed } = teardownRun({ platform, state: coordinator.state, repo, slug, control });
     writeRunFinal({ controlDir: control.dir, proc, runState: lastRunState, reason: 'stop', updateIndex, log: control.log });
     renderer.line(
@@ -2396,6 +2642,9 @@ async function main(argv) {
   let over = 0;
   let overSince = null;
   let idle = 0;
+  let fallbackPrinted = false;
+  let lastFinisherSummary = null;
+  let lastFinisherUrl = null;
   let idleSince = null;
   try {
     // No pass cap: the run's only ends are the hand-off, a halt, the runaway breaker, a stall, or a signal.
@@ -2411,6 +2660,10 @@ async function main(argv) {
       const stepBefore = coordinator.handoffStep;
       const stateBefore = coordinator.handoff?.state ?? null;
       const r = coordinator.pass();
+      // The done summary, kept from the pass's view: the pass that ends the run closes the finisher.
+      if (r.finisher?.summary) lastFinisherSummary = r.finisher.summary;
+      // Its link too, for the done alert's tap: that pass closes the session, and a closed session has none.
+      lastFinisherUrl = coordinator.finisher?.remoteUrl?.() ?? lastFinisherUrl;
       // A pass that moved the run on wakes the loop once, so the next step runs after the pass gap rather
       // than the backstop (fast-tests DESIGN §2.3). The flag it sets is consumed by this pass's closing wait.
       if (passProgressed({ stepBefore, stateBefore, handoff: { step: coordinator.handoffStep, state: coordinator.handoff?.state ?? null }, actions: r.actions })) {
@@ -2470,6 +2723,7 @@ async function main(argv) {
         handoff: r.handoff,
         heldByAgent: coordinator.heldByAgent(),
         coordinator: coordinator.agentView(),
+        finisher: r.finisher ?? null,
       });
       lastRunState = runState;
       // Feed the detached live view (DESIGN §2.4): write this pass's run state to the snapshot the
@@ -2489,7 +2743,15 @@ async function main(argv) {
           slug,
           sent: endAlertSent,
           send: (alert) => runNotify([endAlertAction(alert, { noteTo: coordinator.agent?.id ?? null })]),
+          takesOver: startFinisher !== null,
+          sendFinisher: (alert) => runNotify([finisherOneShot(alert)]),
         });
+        // The finisher could not start or gave up: the merge line scrolls above the live block once, and the
+        // run waits in today's ready to merge (finisher DESIGN §2.12). Not for a branch that turned red.
+        if (!fallbackPrinted && (r.handoff?.fallback === 'failed' || r.handoff?.fallback === 'gave-up')) {
+          fallbackPrinted = true;
+          renderer.line('\n' + renderFinished({ by: 'finisher-gave-up', slug, base, reportPath: r.handoff?.reportPath }));
+        }
         // A held end sync alerts once per reason (base-branch DESIGN §2.8): the diverged case needs the person.
         holdAlertReason = holdAlertPass({
           r,
@@ -2498,10 +2760,14 @@ async function main(argv) {
           send: (alert) => runNotify([holdAlertAction(alert, { noteTo: coordinator.agent?.id ?? null })]),
         });
         if (r.finished) {
-          finishRun('complete'); // merged or closed: `finished` (DESIGN §2.10)
+          finishRun('complete'); // merged, closed or the finisher's done: `finished` (DESIGN §2.10)
           renderer.close();
-          renderer.line('\n' + renderFinished({ by: r.finished, slug, base, ready: r.handoff?.state === 'ready', reportPath: r.handoff?.reportPath }));
-          await notifyExitNow();
+          renderer.line('\n' + renderFinished({ by: r.finished, slug, base, ready: r.handoff?.state === 'ready', reportPath: r.handoff?.reportPath, summary: lastFinisherSummary }));
+          // The finisher's done alert (finisher DESIGN §2.9): one-shot, awaited with the exit clears, bounded.
+          const done = r.finished === 'finisher'
+            ? runNotify([finisherOneShot(finisherAlert({ slug, phase: 'done', summary: lastFinisherSummary }), { click: lastFinisherUrl })])
+            : null;
+          await notifyExitNow(done);
           return;
         }
         await waker.wait([inbox.reportsDir, personInbox.inboxDir], POLL_MS);

@@ -3,7 +3,7 @@
 // worker behaves like a live one, so the conversation view (T13) can be driven end to end with no paid
 // worker. Nothing here calls a model: the worker is the real Agent SDK talking to fake/claude-stream.mjs.
 //
-//   node src/shell/conversation-rig.mjs [--into <scratch>] [--scenario tour|long|coordinator|helpers] [--keep]
+//   node src/shell/conversation-rig.mjs [--into <scratch>] [--scenario tour|long|coordinator|helpers|finisher|finisher-notyet|finisher-stuck|finisher-reserved] [--keep]
 //
 // It stays in the foreground until Ctrl+C, SIGTERM (pir's Ctrl+S stop sends one to the run's pid) or a
 // HALT file in the run's control folder. While it runs, open the screen from another terminal:
@@ -40,6 +40,20 @@
 //         "Check the tests", which report progress and steps of their own every `stepMs`; A asks a
 //         permission (its `agentId`) and waits; B finishes; the worker ends its turn while A keeps going;
 //         an interrupt kills A (no `result`: the worker was idle), then a reply to every typed message.
+//   finisher  (finisher T07) T01 is already merged and the run waits at its end, held by the finisher: the
+//         real finisher-agent session on its own fake script (finisherScript). It writes a `ready` status
+//         and asks the `Go` question (`c` in the live view opens it); on `Go` it runs its merge step, stays
+//         `finishing` a few seconds, then writes `done` and the run ends `finished`.
+//   finisher-notyet  (finisher T09) the same, but a `Not yet` leaves it waiting: it ends its turn and asks
+//         the go question again only when the person writes to it, then goes on as `finisher`.
+//   finisher-stuck  (finisher T09) after the go its merge runs and its install "fails": it writes `stuck`
+//         with a retry proposal and asks the go question again; a second go runs the install and it is done.
+//   finisher-reserved  (finisher T09) after the go it asks for a destructive command (`rm -rf dist/`), which
+//         pir parks for the person (DESIGN §2.5): the row reads `asking you` until it is answered in the
+//         finisher's conversation, then it writes `done`.
+//   Every finisher scenario also runs the run's alert pass (notifyPass, and the done alert as coordinate.mjs
+//   sends it) against a pretend phone: rig.alerts() is every send and clear, and each is appended to
+//   control/fake-notify.ndjson.
 //
 // Teardown on exit: the worker closed, the inbox stopped, the index record removed, and the scratch
 // folder deleted unless --keep.
@@ -48,25 +62,30 @@
 // no npm package, DESIGN §5), sends keys and returns the screen as text after each one.
 
 import { spawn } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { visibleWidth } from '@earendil-works/pi-tui';
-import { buildRunState, writeRunSnapshot } from './coordinate.mjs';
+import { buildRunState, writeRunSnapshot, notifyPass, runNotifyActions, finisherOneShot } from './coordinate.mjs';
+import { finisherAlert } from '../core/notify.mjs';
 import {
   fakeClaudeSpawner, initEvent, assistantText, resultEvent, canUseTool, toolUse, toolResult,
   agentCall, agentLaunched, backgroundAgents, taskStarted, taskProgress, taskUpdated, agentNotification, helperFrame,
 } from './fake/claude-stream.mjs';
 import { startTimeOf } from './identity.mjs';
 import { indexDir, removeRecord, writeRecord } from './index-store.mjs';
+import { writeSnapshot } from './snapshot-store.mjs';
 import { createGrants, startPersonInbox } from './person-inbox.mjs';
 import { createPlatform } from './platform.mjs';
 import { startWorker } from './worker-proc.mjs';
 import { startCoordinatorAgent, withAgent } from './coordinator-agent.mjs';
+import { startFinisher } from './finisher-agent.mjs';
 import { handoffFor } from '../core/coordinator-brief.mjs';
 
 export const RIG_SLUG = 'rig';
+// The scenarios whose run waits at its end on the finisher (finisher T07, T09).
+export const FINISHER_SCENARIOS = ['finisher', 'finisher-notyet', 'finisher-stuck', 'finisher-reserved'];
 export const RIG_TASK = 'T01';
 const PIR = fileURLToPath(new URL('./pir.mjs', import.meta.url));
 
@@ -177,8 +196,103 @@ export function scenarioScript(name = 'tour', { paceMs = 300, workMs = 4000, ste
       { chat: { workMs, init: RIG_INIT } },
     ];
   }
+  if (FINISHER_SCENARIOS.includes(name)) {
+    // T01 was merged before the finisher came in: its worker only has its opening to show.
+    return [...opening, { emit: assistantText('T01 is built and merged.') }, { emit: resultEvent('success', 'merged') }, { chat: { workMs, init: RIG_INIT } }];
+  }
   if (name === 'helpers') return helpersScript({ stepMs, workMs });
-  throw new Error(`unknown scenario "${name}" (tour, long, coordinator, helpers)`);
+  throw new Error(`unknown scenario "${name}" (tour, long, coordinator, helpers, ${FINISHER_SCENARIOS.join(', ')})`);
+}
+
+// The finisher scenario's finisher (finisher T07): the real finisher-agent session on the fake. The fake
+// writes its own status files (a `sh` step, outside the fence, which is the fake's and not what is tested)
+// into `statusDir`, named in order, each written aside and renamed so pir never reads half of one.
+export const RIG_GO_QUESTION = 'Ready to finish? 2 steps from project rules';
+export const RIG_FINISHER_SUMMARY = 'The branch is clean and its tests pass; main has not moved.';
+export const RIG_RETRY_QUESTION = 'Retry the install? 1 step from project rules';
+export const RIG_STUCK_SUMMARY = 'Merged pir/rig into main; ./install.sh failed: npm ci exited 1 (network unreachable). Nothing else ran.';
+export const RIG_DONE_SUMMARY = 'Merged pir/rig into main and ran ./install.sh.';
+export const RIG_RESERVED_COMMAND = 'rm -rf dist/';
+export function finisherScript({ statusDir, repoRoot, finishingMs = 3000, variant = 'finisher' }) {
+  const writeStatus = (name, status) => {
+    const json = JSON.stringify(status).replace(/'/g, `'\\''`);
+    const dest = join(statusDir, name);
+    return { sh: `printf '%s' '${json}' > '${dest}.tmp' && mv '${dest}.tmp' '${dest}'` };
+  };
+  const steps = [`git -C ${repoRoot} merge ${`pir/${RIG_SLUG}`}`, './install.sh'];
+  const say = (text) => [{ emit: assistantText(text) }];
+  // The go question (DESIGN §2.7): header and options exactly `Go` and `Not yet`.
+  const goQuestion = (id, question, n) => ({
+    tool: {
+      id,
+      name: 'AskUserQuestion',
+      input: { questions: [{ question, header: 'Go', multiSelect: false, options: [{ label: 'Go', description: `run the ${n} step${n === 1 ? '' : 's'}` }, { label: 'Not yet', description: 'change nothing' }] }] },
+    },
+  });
+  const bash = (id, command, description) => ({ tool: { id, name: 'Bash', input: { command, description } } });
+  const done = [
+    writeStatus('9-done.json', { kind: 'done', summary: RIG_DONE_SUMMARY }),
+    ...say('Done: merged and installed.'),
+    { emit: resultEvent('success', 'finished') },
+    { chat: { workMs: 300, init: RIG_INIT } },
+  ];
+  const opening = [
+    { await: 'user' },
+    { emit: RIG_INIT },
+    ...say("I'm the rig's pretend finisher. I looked at the branch and main without changing anything."),
+    writeStatus('1-ready.json', { kind: 'ready', rules: join(repoRoot, '.pir', 'rules', 'on-finish.md'), summary: RIG_FINISHER_SUMMARY, steps }),
+    ...say(`${RIG_FINISHER_SUMMARY}\n\nThe steps, once you say go:\n1. ${steps[0]}\n2. ${steps[1]}`),
+    goQuestion('go1', RIG_GO_QUESTION, 2),
+  ];
+  // What the finisher does once the go is in: the merge, then the variant's own end.
+  const merge = [bash('merge1', steps[0], 'Merge the branch into main'), ...say('Merged. Running the install.'), { sleep: finishingMs }];
+  if (variant === 'finisher') return [...opening, ...merge, ...done];
+  if (variant === 'finisher-notyet') {
+    // A `Not yet` is not a go (DESIGN §2.7): the finisher ends its turn and waits for the person to write.
+    return [
+      ...opening,
+      ...say("Not yet, then. Nothing has changed; tell me when you want me to ask again."),
+      { emit: resultEvent('success', 'waiting') },
+      { await: 'user' },
+      { emit: RIG_INIT },
+      ...say('Asking again.'),
+      goQuestion('go2', RIG_GO_QUESTION, 2),
+      ...merge,
+      ...done,
+    ];
+  }
+  if (variant === 'finisher-stuck') {
+    // A step fails after the go (DESIGN §2.12): stuck with a proposal, the go question again, and only the
+    // second go runs the retry.
+    return [
+      ...opening,
+      bash('merge1', steps[0], 'Merge the branch into main'),
+      ...say('Merged. Running the install.'),
+      bash('install1', steps[1], 'Install the engine and skills'),
+      { sleep: finishingMs },
+      writeStatus('2-stuck.json', { kind: 'stuck', summary: RIG_STUCK_SUMMARY, proposal: 'retry the install once the network is back', steps: [steps[1]] }),
+      ...say(`${RIG_STUCK_SUMMARY}\n\nI propose to retry the install. The step, once you say go:\n1. ${steps[1]}`),
+      goQuestion('go2', RIG_RETRY_QUESTION, 1),
+      bash('install2', steps[1], 'Install the engine and skills'),
+      ...say('Installed.'),
+      { sleep: finishingMs },
+      ...done,
+    ];
+  }
+  if (variant === 'finisher-reserved') {
+    // A destructive command after the go is still the person's (DESIGN §2.5): parked, answered in the
+    // finisher's conversation.
+    return [
+      ...opening,
+      bash('merge1', steps[0], 'Merge the branch into main'),
+      ...say('Merged. The old build folder is in the way of the install; clearing it.'),
+      bash('clear1', RIG_RESERVED_COMMAND, 'Delete the old build folder'),
+      ...say('Cleared. Running the install.'),
+      { sleep: finishingMs },
+      ...done,
+    ];
+  }
+  throw new Error(`unknown finisher variant "${variant}"`);
 }
 
 // The helpers scenario's two helpers, with ids shaped like the real ones (plan-0339).
@@ -296,7 +410,7 @@ function writePlan(repoRoot, scenario) {
 // request, and returns three levers the real run pulls on its own: pass() — the agent passes the request on
 // (it is briefed and replies with its pointer; the row turns `asking you`); ready() — every task merged, the
 // report committed and the run waiting in `ready to merge`; and agent, the CoordinatorAgent itself.
-export function startRig({ into = null, scenario = 'tour', keep = false, env = process.env, paceMs, workMs, stepMs, snapshotMs = 500 } = {}) {
+export function startRig({ into = null, scenario = 'tour', keep = false, env = process.env, paceMs, workMs, stepMs, snapshotMs = 500, finishingMs = 3000 } = {}) {
   const script = scenarioScript(scenario, { paceMs, workMs, stepMs });
   let repoRoot;
   if (into) {
@@ -323,7 +437,8 @@ export function startRig({ into = null, scenario = 'tour', keep = false, env = p
   const branch = `pir/${RIG_SLUG}`;
   const startTime = startTimeOf(process.pid);
   const startedAt = new Date().toISOString();
-  writeRecord({ version: 1, slug: RIG_SLUG, repo, repoPath: repoRoot, controlDir, pid: process.pid, startTime, startedAt, branch, finalState: null, updatedAt: null }, { dir });
+  const record = { version: 1, slug: RIG_SLUG, repo, repoPath: repoRoot, controlDir, pid: process.pid, startTime, startedAt, branch, finalState: null, updatedAt: null };
+  writeRecord(record, { dir });
 
   const spawnProcess = fakeClaudeSpawner({ script: scriptPath, received });
   const grants = createGrants();
@@ -353,17 +468,85 @@ export function startRig({ into = null, scenario = 'tour', keep = false, env = p
       remote: false,
     });
   }
-  const inbox = startPersonInbox({ controlDir, platform: withAgent(platform, () => agent), grants });
+  // The finisher, as the run starts it at its end (coordinate.mjs handOver), on its own fake script. The
+  // coordinator agent is closed by then, so the run has none.
+  let finisher = null;
+  if (FINISHER_SCENARIOS.includes(scenario)) {
+    const statusDir = join(controlDir, 'finisher', 'status');
+    const finScriptPath = join(controlDir, 'fake-finisher-script.json');
+    writeFileSync(finScriptPath, JSON.stringify(finisherScript({ statusDir, repoRoot, finishingMs, variant: scenario })));
+    const finSpawn = fakeClaudeSpawner({ script: finScriptPath, received: join(controlDir, 'fake-finisher-received.ndjson') });
+    const scratchRoot = join(controlDir, 'finisher-roots');
+    finisher = startFinisher({
+      controlDir,
+      featurePath: repoRoot,
+      repoRoot,
+      slug: RIG_SLUG,
+      base: 'main',
+      rules: { path: join(repoRoot, '.pir', 'rules', 'on-finish.md'), source: 'project' },
+      reportPath: `plans/${RIG_SLUG}/REPORT.md`,
+      askRules: [],
+      startWorker: (opts) => startWorker({ ...opts, spawnProcess: finSpawn }),
+      claudePath: 'claude-fake',
+      remote: false,
+      skillsDir: join(scratchRoot, 'skills'),
+      engineDir: join(scratchRoot, 'engine'),
+      pirHome: join(scratchRoot, 'pir'),
+    });
+  }
+  const person = withAgent(platform, () => agent ?? finisher);
+  const inbox = startPersonInbox({ controlDir, platform: person, grants });
+
+  // The run's alerts while the finisher waits (finisher T09, DESIGN §2.9): coordinate.mjs's own notifyPass
+  // and runNotifyActions, over a stand-in for the coordinator carrying only what the finisher's pass reads,
+  // with a pretend phone that records what it was sent. The rig runs with Remote Control off, so an alert
+  // goes the pass it is due rather than after the 20 s wait for a link.
+  const alerts = [];
+  const notifyLog = join(controlDir, 'fake-notify.ndjson');
+  const phone = (entry) => {
+    alerts.push(entry);
+    try {
+      appendFileSync(notifyLog, JSON.stringify(entry) + '\n');
+    } catch {
+      // the file is a courtesy for a person running the rig by hand; alerts() is what tests read
+    }
+    return { ok: true, status: 200 };
+  };
+  const runNotify = (actions) =>
+    runNotifyActions(actions, {
+      readConfig: () => ({ server: 'https://ntfy.invalid', topic: 'rig' }),
+      publish: async ({ title, message, click, seq, tags }) => phone({ type: 'send', title, message, click: click ?? null, seq: seq ?? null, ...(tags ? { tags } : {}) }),
+      clear: async ({ seq }) => phone({ type: 'clear', seq }),
+      note: (id, kind, fields) => person.note(id, kind, fields),
+      log: () => {},
+    });
+  const notifyCoordinator = finisher && {
+    state: { tasks: {} },
+    heldByAgent: () => new Set(),
+    whyPerson: () => new Map(),
+    get finisher() {
+      return finisher;
+    },
+    finisherView: () => finisher.view(),
+  };
+  let notifyState = null;
 
   const proc = { pid: process.pid, startTime, slug: RIG_SLUG, repo, branch, startedAt };
   const since = Date.now();
-  const passTasks = [{ num: RIG_TASK, name: scenario, deps: [], state: '⬜' }];
+  const passTasks = [{ num: RIG_TASK, name: scenario, deps: [], state: finisher ? '✅' : '⬜' }];
   // The coordinator scenario's run: T01's request is the agent's until pass(), and the end is ready().
   const held = new Set(agent ? [`${workerId}:perm-1`] : []);
-  let handoff = null;
+  let handoff = finisher ? { state: 'ready', reportPath: `plans/${RIG_SLUG}/REPORT.md`, baseSha: '0000000' } : null;
+  let ended = false;
   const snapshot = () => {
+    if (ended) return;
     try {
-      const stateTasks = { [RIG_TASK]: { role: 'implement', phase: 'running', ...(agent ? { workerId } : {}) } };
+      // The run's pass with the finisher on (coordinate.mjs finisherWaiting): drain its statuses and the
+      // go; its done ends the run `finished`, recorded as the run records it (writeRunFinal).
+      const out = finisher ? finisher.drain() : null;
+      const doneStatus = out?.accepted?.find((st) => st.kind === 'done') ?? null;
+      const doneNow = !!doneStatus;
+      const stateTasks = finisher ? {} : { [RIG_TASK]: { role: 'implement', phase: 'running', ...(agent ? { workerId } : {}) } };
       const runState = buildRunState({
         passTasks,
         stateTasks,
@@ -372,7 +555,19 @@ export function startRig({ into = null, scenario = 'tour', keep = false, env = p
         ceiling: 1,
         sinceByTask: { [RIG_TASK]: since },
         ...(agent ? { heldByAgent: held, coordinator: agent.view() && { ...agent.view(), holding: held.size }, handoff, complete: !!handoff, readyToMerge: handoff?.state === 'ready' } : {}),
+        ...(finisher ? { coordinator: null, finisher: finisher.view(), handoff, complete: true, readyToMerge: true } : {}),
       });
+      if (finisher) notifyState = notifyPass({ plan: RIG_SLUG, platform, coordinator: notifyCoordinator, notifyState, remote: false, now: Date.now(), run: runNotify });
+      if (doneNow) {
+        ended = true;
+        // The run's end as coordinate.mjs has it: the pass above cleared the finisher's open episode (its
+        // phase is done, so it has no view), then the one-shot done alert.
+        runNotify([finisherOneShot(finisherAlert({ slug: RIG_SLUG, phase: 'done', summary: doneStatus.summary }))]);
+        writeSnapshot(controlDir, { proc, finalState: 'finished', runState });
+        writeRecord({ ...record, finalState: 'finished', updatedAt: new Date().toISOString() }, { dir });
+        finisher.close().catch(() => {});
+        return;
+      }
       writeRunSnapshot({ controlDir, proc, runState });
     } catch {
       // a failed write is retried on the next tick
@@ -391,6 +586,9 @@ export function startRig({ into = null, scenario = 'tour', keep = false, env = p
       const agentPid = agent?.session?.pid ?? null;
       if (agent) await agent.close({ graceMs: 0 }).catch(() => {});
       if (agentPid) await waitPid(agentPid);
+      const finisherPid = finisher?.session?.pid ?? null;
+      if (finisher) await finisher.close({ graceMs: 0 }).catch(() => {});
+      if (finisherPid) await waitPid(finisherPid);
       const rec = platform.workers().find((w) => w.id === workerId);
       // A pretend worker has nothing to finish, so it gets its SIGTERM now rather than after the 5 s grace.
       if (rec?.live) platform.close(workerId, { immediate: true });
@@ -418,7 +616,7 @@ export function startRig({ into = null, scenario = 'tour', keep = false, env = p
   }
 
   const pid = platform.list().find((w) => w.id === workerId)?.pid ?? null;
-  return { repoRoot, repo, slug: RIG_SLUG, controlDir, workerId, logPath, received, platform, pid, shimDir, clipboard, stop, agent, ...(agent ? { pass, ready } : {}) };
+  return { repoRoot, repo, slug: RIG_SLUG, controlDir, workerId, logPath, received, platform, pid, shimDir, clipboard, stop, agent, finisher, alerts: () => alerts.slice(), ...(agent ? { pass, ready } : {}) };
 }
 
 async function waitPid(pid, { timeoutMs = 15000 } = {}) {
@@ -751,7 +949,7 @@ function parseArgs(argv) {
     if (a === '--into') opts.into = argv[++i];
     else if (a === '--scenario') opts.scenario = argv[++i];
     else if (a === '--keep') opts.keep = true;
-    else throw new Error(`unknown argument ${a}\nusage: conversation-rig.mjs [--into <scratch>] [--scenario tour|long|coordinator|helpers] [--keep]`);
+    else throw new Error(`unknown argument ${a}\nusage: conversation-rig.mjs [--into <scratch>] [--scenario tour|long|coordinator|helpers|${FINISHER_SCENARIOS.join('|')}] [--keep]`);
   }
   return opts;
 }

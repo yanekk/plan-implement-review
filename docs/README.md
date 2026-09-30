@@ -5,8 +5,9 @@ workflow behaves: its components, the lifecycle of a run, where task state lives
 and worktree model, the control folder, the human decision flow, the kill switch, the worker
 ceiling, restart and recovery, the detached `pir` front-end that starts a run outliving its
 terminal and watches every run on the machine, and `pir plan`, which runs the planning and the plan
-review inside that front-end, and the coordinator agent that stands in for the person during a build,
-and the local API service that tells other programs how much of the Claude subscription limit is used.
+review inside that front-end, the coordinator agent that stands in for the person during a build,
+the finisher that merges a green build after the person's go, and the local API service that tells
+other programs how much of the Claude subscription limit is used.
 It is the behavioural spec — nouns, states, data
 flows, and guarantees.
 
@@ -21,7 +22,7 @@ These docs describe the **actual current behaviour**, verified against the code 
 `src/core/` and `src/shell/`. Where current behaviour has a known gap, it is called out under a
 **Known limitations** heading rather than papered over. `plans/parallel-pir/DESIGN.md`,
 `plans/non-agentic-coordinator/DESIGN.md`, `plans/live-workers/DESIGN.md` and
-`plans/pir-coordinator/DESIGN.md` are the build-time
+`plans/pir-coordinator/DESIGN.md` and `plans/finisher/DESIGN.md` are the build-time
 rationale that produced this system and are retained as history; where a DESIGN and these docs
 disagree on what the code does today, these docs win.
 
@@ -36,11 +37,13 @@ build and review concurrently. The plan runs on one **feature branch** with a **
 task. The feature branch is cut from the repo's **base branch** (`dev`, `main`, …), which the repo
 names in `.pir/settings.json` or the person in `~/.pir/{repo}/settings.json`; with neither, `pir`
 refuses to plan or build. `pir` fetches the base from the remote before cutting from it and before the
-end-of-run sync, and moves the person's local copy forward only when that is safe. It never merges into
-the base and never pushes: the command stops at a green feature branch and hands the person `git switch
-{base} && git merge pir/{slug}` to run by hand. With the coordinator agent on (the default), it first
-merges the base into the feature branch, commits a delivery report, and waits in `ready to merge` until the person merges
-or closes the run. A project opts into parallel mode per run; nothing about the classic
+end-of-run sync, and moves the person's local copy forward only when that is safe. The command itself
+never merges into the base and never pushes. Without the coordinator agent it stops at a green feature
+branch and hands the person `git switch {base} && git merge pir/{slug}` to run by hand. With the agent
+on (the default), it first merges the base into the feature branch and commits a delivery report; on a
+green branch it then starts the finisher, a session that prepares the merge and the project's
+after-merge steps and, after the person's one `Go`, carries them out, so the merge is the finisher's,
+never the command's (see [finisher.md](finisher.md)). A project opts into parallel mode per run; nothing about the classic
 flow changes.
 
 A person launches parallel mode with `pir start {slug}`, run from inside the target repo — it starts
@@ -65,8 +68,9 @@ and it had no conversation view. `install.sh` removes an installed copy it finds
   the feature branch in its own worktree, decides which task each worker builds, spawns and closes
   workers, holds a live line to each one, prints a live status display, and hands the person the
   finished feature branch to merge. It has no agent name and never appears in `claude agents`. It
-  starts the run's coordinator agent, briefs it, and checks and applies its decisions. It never merges
-  into the base branch and never writes product code. Run by hand, it is dry by default and only
+  starts the run's coordinator agent, briefs it, and checks and applies its decisions, and at a green
+  end starts the finisher and holds its phase. It never merges into the base branch itself and never
+  writes product code. Run by hand, it is dry by default and only
   spawns real workers under `PARALLEL_LIVE=1`; `pir` always sets it (see
   [run-lifecycle.md](run-lifecycle.md)).
 - **Workers** — `claude` processes the command starts as its own **child processes**, one per task
@@ -101,6 +105,13 @@ and it had no conversation view. `install.sh` removes an installed copy it finds
   commands for the person in code (`src/core/coordinator-policy.mjs`). Its base definition is the
   `pir-coordinator` skill; a project may add `.claude/pir-coordinator.md`. It never merges into
   the base branch and never pushes (see [coordinator-agent.md](coordinator-agent.md)).
+- **The finisher** — one Claude session per green build run with the agent on, started when the agent
+  is closed at the end (`src/shell/finisher-agent.mjs`). It follows one finishing rules file
+  (`.pir/rules/on-finish.md` in the repo, else `~/.pir/{repo}/rules/on-finish.md`, else
+  `~/.pir/default/rules/on-finish.md`), only looks until the person answers its go question with `Go`,
+  then merges into `main` and runs the after-merge steps. Its phase is held by the command and its
+  fence is code (`src/core/finisher-policy.mjs`). Its base definition is the `pir-finisher` skill (see
+  [finisher.md](finisher.md)).
 - **The planning program** (`src/shell/plan-run.mjs`) — the detached program behind `pir plan`. It
   holds one planning session at a time through the same worker line, checks each report against git,
   renames the run's branch, worktree and control folder once the plan has a name, and records the
@@ -131,6 +142,8 @@ and it had no conversation view. `install.sh` removes an installed copy it finds
 - [coordinator-agent.md](coordinator-agent.md) — the coordinator agent: answer first, what is reserved
   for the person, passing on, its conversation, the ledger, the end-of-run base sync and its hold, `REPORT.md` and
   `ready to merge`, `--no-coordinator`.
+- [finisher.md](finisher.md) — the finisher: when it takes over, the rules file, its phases, the fence,
+  the go, status files, the end of the run, failure, phone alerts, its row, storage.
 - [planning-runs.md](planning-runs.md) — `pir plan`: the planner and the plan reviewer run inside `pir`,
   the rename, the go that starts the build, resume.
 - [api-service.md](api-service.md) — the local API service: the contract (`api.json`, `GET /v1/usage`,

@@ -7,7 +7,8 @@ when the run starts. The base branch is the one the repo names in its settings (
 branch never receives the plan from the command: when every task is done and the feature branch is
 green, the command **hands the person `git switch {base} && git merge pir/{slug}` to run by hand**.
 With the coordinator agent on, it first merges the base into the feature branch and commits a delivery
-report there, so that merge goes through cleanly (below). The branch work is in
+report there, so that merge goes through cleanly, and hands a green branch to the finisher, which
+merges it only after the person's go (below). The branch work is in
 `src/shell/worktree.mjs`; choosing and preparing the base is in `src/shell/base-branch.mjs` and the pure
 `src/core/basebranch.mjs`.
 
@@ -190,18 +191,22 @@ the agent-name separator is a different `/`, below.)
   [coordinator-agent.md](coordinator-agent.md#the-end-of-the-run)). A conflict is left in
   progress for a **main-sync worker**, spawned in the feature worktree, to finish; if it cannot, the
   merge is aborted and the branch is marked not ready. The same sync runs again whenever the base
-  moves while the run waits in `ready to merge`. The person's base is only ever fast-forwarded as above,
-  never merged into. The
+  moves while the run waits in `ready to merge`, or before the finisher's go. The person's base is only
+  ever fast-forwarded as above, never merged into, by the sync. The
   command then commits `plans/{slug}/REPORT.md` on the feature branch (`report({slug}): delivery
   report`, and `report({slug}): re-synced with {base}` for a footer rewrite), so the report lands in
-  the base with the person's merge (see [coordinator-agent.md](coordinator-agent.md#the-end-of-the-run)).
-- **Feature branch → base**: not a command action. When the feature branch is green, the command
-  offers `git switch {base} && git merge pir/{slug}`; the person runs that merge in their own checkout, in their own time.
-  Without the agent the command prints it and exits; with the agent it waits in `ready to merge` until
-  it sees the base contains the feature tip (the local base, or the remote's copy, fetched every 5
-  minutes so a merge done on GitHub is seen), or the person closes the run. Merging the finished plan
-  into the base is the one irreversible act in the system, and it belongs to the person, not an automated
-  command or the coordinator agent. A red feature branch gets no `git merge` line.
+  the base with the merge (see [coordinator-agent.md](coordinator-agent.md#the-end-of-the-run)).
+- **Feature branch → base**: never a command action. Without the agent the command prints
+  `git switch {base} && git merge pir/{slug}` for a green branch and exits; the person runs that merge
+  in their own checkout. With the agent, a green branch is handed to the **finisher**, which prepares
+  the merge (and the project's after-merge steps) looking only, asks the person one go question, and runs
+  `git -C <main checkout> merge pir/{slug}` only after the person answers `Go`
+  ([finisher.md](finisher.md)). If the finisher cannot start or gives up, the run falls back to waiting
+  in `ready to merge` until it sees the base contains the feature tip (the local base, or the remote's
+  copy, fetched every 5 minutes so a merge done on GitHub is seen), or the person closes the run.
+  Merging the finished plan into the base is the one irreversible act in the system, and it happens only
+  on the person's own merge or their go, never on the command's or the coordinator agent's say. A red
+  feature branch gets no `git merge` line and no finisher.
 
 Every commit-creating git call the command makes forces `commit.gpgsign=false` per-invocation,
 because the automated run has no one to type a passphrase. It does not change the repo's config, so
@@ -235,6 +240,8 @@ role:
 - **The command has no agent name at all**, because it is a plain process, not a Claude session.
 - **The coordinator agent:** `{repo} / {plan} / coordinator agent`. It is not one of the workers the
   loop lists, so `isWorkerOf` and `parseAgentName` never see it.
+- **The finisher:** `{repo} / {plan} / finisher`, in the feature worktree; like the agent, not one of
+  the workers the loop lists.
 - **The main-sync worker** at the end of a run: `{repo} / {plan} / main-sync`, in the feature worktree.
   It resolves a conflicted merge of the base, whatever the base is called; the `main-sync` label is kept
   so a restart still recognises a helper recorded under it, and its row slug is `resolve-base-merge`.

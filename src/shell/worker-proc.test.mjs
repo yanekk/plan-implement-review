@@ -301,6 +301,31 @@ test('a gate verdict answers a request at once, logged decided-by-gate; null par
   await waitFor(hasResult(worker), 'the turn to finish');
 });
 
+test('workerOptions passes hooks only when given (finisher T04)', () => {
+  const hooks = { PreToolUse: [{ hooks: [async () => ({})] }] };
+  assert.equal(workerOptions({ cwd: '/w', sessionId: SESSION, name: NAME, claudePath: '/bin/claude', hooks }).hooks, hooks);
+  assert.equal('hooks' in workerOptions({ cwd: '/w', sessionId: SESSION, name: NAME, claudePath: '/bin/claude' }), false);
+});
+
+test('the gate gets what the CLI said about the request; a `person` verdict parks (finisher T04)', async (t) => {
+  const seen = [];
+  const decide = (toolName, input, info) => {
+    seen.push(info);
+    return 'person';
+  };
+  const { worker } = setup([
+    { await: 'user' }, { emit: initEvent() },
+    { emit: canUseTool('p-1', 'Bash', { command: 'npm publish' }, { default_to_no: true, decision_reason: 'ask rule' }) }, { await: 'control_response' },
+    { emit: resultEvent('success', 'ok') },
+  ], t, { decide });
+  worker.send('go');
+  await waitFor(() => worker.pending().length === 1, 'parked');
+  assert.deepEqual(seen, [{ defaultToNo: true, reason: 'ask rule', suggestions: [] }]);
+  assert.equal(worker.entries().filter((e) => e.kind === 'decided-by-gate').length, 0);
+  worker.answer('p-1', allowResult(worker.pending()[0]), { from: 'person' });
+  await waitFor(hasResult(worker), 'the turn to finish');
+});
+
 test('a gate that throws denies', async (t) => {
   const { worker, receivedLines } = setup([
     { await: 'user' }, { emit: initEvent() }, { emit: canUseTool('g-9', 'Read', { file_path: '/x' }) }, { await: 'control_response' }, { emit: resultEvent('success', 'ok') },

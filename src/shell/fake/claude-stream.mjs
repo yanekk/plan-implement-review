@@ -72,6 +72,17 @@
 //                             message). A non-zero exit emits an error result carrying the stderr tail
 //                             and ends the script there (the fake then idles until EOF), so a resume
 //                             re-runs the failed step.
+//   {"tool": {"id": "<requestId>", "name": "<Tool>", "input": {...}, "allowRuled": <bool>, "request": {...}}}  one tool call
+//                             as the real CLI handles it in `default` mode (finisher T00, DESIGN §3.3):
+//                             the tool_use, then every PreToolUse hook callback the SDK registered at
+//                             `initialize` (a `hook_callback` control request, its reply awaited). A hook
+//                             `deny` ends it with the error result `PreToolUse:<Tool> hook error: <reason>`;
+//                             `allow` runs it; `ask` sends it to `can_use_tool` whatever the rules say. With
+//                             no hook decision the settings decide: `allowRuled` runs it unseen, otherwise
+//                             `can_use_tool` asks, pir's reply is awaited and its tool_result emitted. A
+//                             run tool's result is `ran <name>`. `request` adds fields to the
+//                             `can_use_tool` request (`default_to_no`, `decision_reason`). Each outcome is recorded in the received
+//                             file as {"tool": id, "outcome": "hook-deny" | "ran" | "asked"}.
 // In `emit` and `sh` steps `{{reportsDir}}` is replaced with the path after `Reports folder: ` in the
 // opening message (pir-plan-command DESIGN §2.3), which is how a scripted session finds where to drop
 // its report.
@@ -402,6 +413,7 @@ async function main() {
       waiters[kind].push(w);
     });
   const responses = new Map(); // request_id → the PermissionResult pir sent for it
+  let preToolUse = []; // the PreToolUse hook callback ids the SDK registered at `initialize`
 
   process.on('SIGTERM', () => {
     record({ signal: 'SIGTERM' });
@@ -433,6 +445,9 @@ async function main() {
       }
       if (msg.type === 'control_request') {
         const subtype = msg.request?.subtype;
+        if (subtype === 'initialize') {
+          preToolUse = (msg.request.hooks?.PreToolUse ?? []).flatMap((m) => m?.hookCallbackIds ?? []);
+        }
         const response =
           subtype === 'initialize' ? INITIALIZE_RESPONSE
           : subtype === 'interrupt' ? { still_queued: [] }
@@ -496,7 +511,8 @@ async function main() {
     } else if ('resultFor' in step) {
       const r = resultFor(step, responses.get(step.resultFor) ?? {});
       out(step.parent ? { ...r, parent_tool_use_id: step.parent } : r);
-    } else if ('repeat' in step) {
+    } else if ('tool' in step) await runTool(step.tool, { out, take, record, responses, hooks: preToolUse });
+    else if ('repeat' in step) {
       let stopped = false;
       for (const round of step.repeat) {
         if (await takeWithin('interrupt', 0)) {
@@ -510,8 +526,7 @@ async function main() {
         }
       }
       if (!stopped) await take('interrupt');
-    }
-    else if ('chat' in step) await chat(step.chat ?? {}, { out, take, takeWithin, queues });
+    } else if ('chat' in step) await chat(step.chat ?? {}, { out, take, takeWithin, queues });
     else if ('react' in step) await react(fill(step.react), { out, take, opening: () => opening ?? '' });
     else if ('sleep' in step) await new Promise((r) => setTimeout(r, step.sleep));
     else if ('exit' in step) process.exit(step.exit);
@@ -567,6 +582,50 @@ async function react(command, { out, take, opening }) {
     out(assistantText(reply));
     out(resultEvent('success', reply));
   }
+}
+
+// The tool step: one tool call through the hooks, the settings' rules and `can_use_tool`, in the order
+// T00 measured on the real CLI (finisher DESIGN §3.3).
+let hookSeq = 0;
+async function runTool({ id, name, input = {}, allowRuled = false, request = {} }, { out, take, record, responses, hooks }) {
+  const toolUseId = `toolu_${id}`;
+  out(toolUse(toolUseId, name, input));
+  let decision = null;
+  let reason = '';
+  for (const callbackId of hooks) {
+    const requestId = `hook_req_${++hookSeq}`;
+    out({
+      type: 'control_request', request_id: requestId,
+      request: {
+        subtype: 'hook_callback', callback_id: callbackId, tool_use_id: toolUseId,
+        input: { hook_event_name: 'PreToolUse', session_id: '{{session}}', tool_name: name, tool_input: input, tool_use_id: toolUseId },
+      },
+    });
+    const reply = await take('control_response');
+    const hso = reply?.response?.response?.hookSpecificOutput;
+    const d = hso?.permissionDecision;
+    if (d === 'deny' || (d && decision === null) || (d === 'ask' && decision === 'allow')) {
+      decision = d;
+      reason = hso.permissionDecisionReason ?? '';
+    }
+    if (decision === 'deny') break;
+  }
+  if (decision === 'deny') {
+    record({ tool: id, outcome: 'hook-deny' });
+    out(toolResult(toolUseId, `PreToolUse:${name} hook error: ${reason}`, true));
+    return;
+  }
+  if (decision === 'allow' || (decision === null && allowRuled)) {
+    record({ tool: id, outcome: 'ran' });
+    out(toolResult(toolUseId, `ran ${name}`));
+    return;
+  }
+  record({ tool: id, outcome: 'asked' });
+  out(canUseTool(id, name, input, request));
+  const msg = await take('control_response');
+  const r = msg?.response;
+  if (r?.request_id) responses.set(r.request_id, r.response ?? {});
+  out(resultFor({ resultFor: id, allowed: `ran ${name}` }, responses.get(id) ?? {}));
 }
 
 // The tool_result for an answered `canUseTool`. An allowed AskUserQuestion reads back its answers in

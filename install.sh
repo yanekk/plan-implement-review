@@ -26,7 +26,7 @@ SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MARKER="Appended by plan-implement-review"
 DEST="$HOME/.claude/skills"
 ENGINE_DEST="$HOME/.claude/pir-engine"
-SKILLS=(pir-plan pir-review-plan pir-work pir-implement pir-review pir-install pir-worker pir-e2e pir-coordinator)
+SKILLS=(pir-plan pir-review-plan pir-work pir-implement pir-review pir-install pir-worker pir-e2e pir-coordinator pir-finisher)
 # The user-facing launchers, installed onto the PATH by install_launcher. pir (T13) starts a run
 # detached and opens the cross-repo dashboard; it is the only one since pir-coordinate was sunset
 # (live-workers §2.13).
@@ -140,7 +140,46 @@ install_engine() {
     mkdir -p "$ENGINE_DEST"
     cp -R "$SRC/src" "$ENGINE_DEST/src"
     echo "  refreshed $ENGINE_DEST/src (parallel coordinator engine)"
+    # The finisher's built-in rules live beside src/: pir falls back to
+    # {engine}/rules/default/on-finish.md when no rules file exists (finisher DESIGN §2.2).
+    cp -R "$SRC/rules" "$ENGINE_DEST/rules"
+    echo "  refreshed $ENGINE_DEST/rules (the finisher's built-in rules)"
+    seed_default_rules
     install_engine_deps
+}
+
+# Seed the person's default finishing rules only when absent, so their edits survive a reinstall
+# (finisher DESIGN §2.2). An edited file is never overwritten; to take a newer default, delete it and
+# re-run. A file still byte-identical to a default an older pir shipped was never edited, so it is
+# replaced: the first shipped default named `main` as the branch to merge into, which the finisher now
+# reports as a mismatch on every run whose base is another branch.
+PIR_DEFAULT_RULES="$HOME/.pir/default/rules/on-finish.md"
+# sha256 of every default this repo has shipped before the current one.
+SUPERSEDED_DEFAULT_RULES=(
+    5d2883ce0680ba5e8846ce2cb4805fe3a1e59bdbc78ba798a2394b2fe2f83cd0
+)
+sha256_of() {
+    if command -v shasum >/dev/null 2>&1; then shasum -a 256 "$1" | cut -d' ' -f1
+    elif command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | cut -d' ' -f1
+    fi
+}
+seed_default_rules() {
+    if [[ -e "$PIR_DEFAULT_RULES" ]]; then
+        local have old
+        have="$(sha256_of "$PIR_DEFAULT_RULES")"
+        for old in "${SUPERSEDED_DEFAULT_RULES[@]}"; do
+            if [[ -n "$have" && "$have" == "$old" ]]; then
+                cp "$SRC/rules/default/on-finish.md" "$PIR_DEFAULT_RULES"
+                echo "  refreshed $PIR_DEFAULT_RULES (it was an older default, unedited)"
+                return 0
+            fi
+        done
+        echo "  kept your $PIR_DEFAULT_RULES"
+        return 0
+    fi
+    mkdir -p "$(dirname "$PIR_DEFAULT_RULES")"
+    cp "$SRC/rules/default/on-finish.md" "$PIR_DEFAULT_RULES"
+    echo "  seeded $PIR_DEFAULT_RULES (the finisher's default rules)"
 }
 
 # The engine's two runtime packages (pi-tui, the Agent SDK; live-workers DESIGN §5) go in a

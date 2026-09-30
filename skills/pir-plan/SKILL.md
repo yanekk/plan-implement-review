@@ -566,6 +566,16 @@ Stage 2 says. It stays there as the parked prototype if they approve it.
 **Asking.** Ask the person in this conversation, with AskUserQuestion when the answer is a choice
 between options. Questions are never reported as files; `pir` shows the person that you are asking.
 
+**Every question stands alone.** `pir`'s screen shows the person the messages you write and the
+question form, and nothing else: your reasoning is never shown to them, however clearly you laid
+something out in it. So whatever they are choosing between (each wording, each value, each option)
+is spelled out in the question or its options, or in a message you wrote in the same turn, just
+before the form. Never ask about "the table", "the list above" or "these three as proposed" unless
+that text is in a message you wrote. Do not use an option's `preview` field: `pir` does not show it.
+If the person says they cannot see something, check whether you wrote it as a message before you
+answer, and say which it was: "I never wrote it out" when that is the case, not that it failed to
+reach them.
+
 **Commit everything, and leave the worktree clean.** Stage 7's commit goes on your branch and must
 hold every file you wrote, the prototype included. Before you report, `git status --porcelain` prints
 nothing.

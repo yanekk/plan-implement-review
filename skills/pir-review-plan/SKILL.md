@@ -397,7 +397,8 @@ real work: the fixes that hurt are the ones that felt mechanical.
 
 **First, the shape of it**, in plain English, no jargon: how many decisions there are, and one
 line each naming them. The user needs to see the size of the problem before answering any part
-of it — an answer given without knowing what else is coming is often the wrong one.
+of it — an answer given without knowing what else is coming is often the wrong one. Write it as
+a message of its own, before the first question; it is not something to fold into a question form.
 
 **Then one decision at a time**, in the format `CLAUDE.md` sets:
 
@@ -405,6 +406,15 @@ of it — an answer given without knowing what else is coming is often the wrong
 - the options in plain words, with what each one costs
 - **your recommendation**, because you know the machine and they do not
 - what you will do if they say nothing
+
+**Every question stands alone.** The user reads the messages you write and the question form, and
+nothing else: your reasoning is never shown to them, however clearly you laid something out in it.
+So whatever they are choosing between (each wording, each value, each option) is spelled out in
+the question or its options, or in a message you wrote in the same turn, just before the form.
+Never ask about "the table", "the list above" or "these four as proposed" unless that text is in a
+message you wrote. If the user says they cannot see something, check whether you wrote it as a
+message before you answer, and say which it was: "I never wrote it out" when that is the case, not
+that it failed to reach them.
 
 **Wait for each answer.** Do everything that does not depend on it while you wait — the
 mechanical fixes, the rest of the passes. Do not batch the questions to save time, and do not
@@ -486,6 +496,9 @@ commands are fine: `git commit`, and Pass 3's `git worktree add` for the fresh c
 
 **Asking.** Ask the person in this conversation, with AskUserQuestion when the answer is a choice
 between options. Questions are never reported as files; `pir` shows the person that you are asking.
+Stage 4's "every question stands alone" binds each form: `pir`'s screen shows the person your
+messages and the form, never your reasoning, so Stage 4's opening list is a message you write before
+the first form. Do not use an option's `preview` field: `pir` does not show it.
 
 **Permission rules (Stage 5).** Write the §5.3 rules into `.claude/settings.json` in this worktree and
 commit them on this branch. That is where the build will run, so every build worker's worktree

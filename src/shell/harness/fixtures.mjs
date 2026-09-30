@@ -6,7 +6,7 @@
 // on the person, a crash-and-restart, a stop-and-restart mid-review and mid-implement, and a worker
 // introducing a task the coordinator adopts and dispatches, and the real asking state (a report dropped
 // mid-work, a wake-up while parked), and the coordinator agent answering, passing on and handing over
-// (pir-coordinator), and several of its briefs at once with the hold limit firing (pir-coordinator-concurrent), and real phone alerts for a passed question and the end of the run (notify-live), and a repo with only
+// (pir-coordinator), and several of its briefs at once with the hold limit firing (pir-coordinator-concurrent), and real phone alerts for a passed question and the end of the run (notify-live), and the finisher taking a green run over and finishing on the person's go from the phone (finisher-live), and a repo with only
 // `dev` whose remote is ahead (dev-base), and real sessions reporting subscription usage (usage-live,
 // api-service T10). The old `hands-on` and `blog-app` fixtures
 // exercised the `you`/hands-on model, which was removed with the down-channel (DESIGN §2.5, T05); they
@@ -65,6 +65,8 @@ import stoppedAsking from './fixtures/stopped-asking.mjs';
 import pirCoordinator from './fixtures/pir-coordinator.mjs';
 import pirCoordinatorConcurrent from './fixtures/pir-coordinator-concurrent.mjs';
 import notifyLive from './fixtures/notify-live.mjs';
+import finisherLive from './fixtures/finisher-live.mjs';
+import finisherLiveBranch from './fixtures/finisher-live-branch.mjs';
 import devBase from './fixtures/dev-base.mjs';
 import usageLive from './fixtures/usage-live.mjs';
 
@@ -103,6 +105,8 @@ const FIXTURES = Object.freeze({
   [pirCoordinator.id]: pirCoordinator,
   [pirCoordinatorConcurrent.id]: pirCoordinatorConcurrent,
   [notifyLive.id]: notifyLive,
+  [finisherLive.id]: finisherLive,
+  [finisherLiveBranch.id]: finisherLiveBranch,
   [devBase.id]: devBase,
   [usageLive.id]: usageLive,
 });
@@ -266,7 +270,7 @@ function seedRemote(dir, runGit, date, base, remote) {
   return { path, seeded, ahead };
 }
 
-// installFixture(id, opts) → { id, slug, dir, base, files, skills, source, modules, remote }. Lay the fixture down as a
+// installFixture(id, opts) → { id, slug, dir, base, parkedOn, files, skills, source, modules, remote }. Lay the fixture down as a
 // self-contained scratch repo at `into` and seed its git state. The T17 live runner calls this, then opens
 // the feature branch off the seeded base and drives real workers; a test calls it against a temp dir
 // with real git.
@@ -303,6 +307,12 @@ export function installFixture(
   const base = fixture.base ?? 'main';
   seedGit(into, runGit, date, base);
   const remote = fixture.remote ? seedRemote(into, runGit, date, base, fixture.remote) : null;
+  // A fixture may leave the main checkout on another branch than the run's base (`parkOn`), cut at the
+  // seed: the person's folder sitting elsewhere when the finisher comes in (finisher-live-branch).
+  if (fixture.parkOn) {
+    const park = runGit(['switch', '-q', '-c', fixture.parkOn], { cwd: into });
+    if (!park.ok) throw new Error(`fixture seed: git switch -c ${fixture.parkOn} failed: ${park.stderr}`);
+  }
 
-  return { id, slug: fixture.slug, dir: into, base, files: written, skills, source, modules, remote };
+  return { id, slug: fixture.slug, dir: into, base, parkedOn: fixture.parkOn ?? null, files: written, skills, source, modules, remote };
 }

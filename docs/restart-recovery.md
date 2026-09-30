@@ -49,11 +49,18 @@ is refused before anything is reconciled (see [run-lifecycle.md](run-lifecycle.m
   afresh. An agent given up (four exits within an hour) stays given up across a re-run inside that
   hour. A re-run keeps the run's `--no-coordinator` choice (see
   [coordinator-agent.md](coordinator-agent.md#when-the-agent-fails)).
+- **A run that reached the finisher.** A stored `finisher/state.json` means the finisher had taken
+  over: the coordinator agent is not started, and the finisher is resumed by id at the end, with its
+  phase kept, except that `finishing` drops to `stuck` and waits for a fresh go
+  ([finisher.md](finisher.md#when-it-fails)). A run the finisher had already merged does not end as
+  merged: it waits for the finisher's `done` or `close`.
 - **A run waiting in `ready to merge`.** Reconciliation finds every task `✅` and the end gate runs
   again; the command then finds `REPORT.md` already committed on the feature branch, re-checks the
-  sync with the base (fetching it), and returns to `ready to merge` without rewriting the report (only its `## Branch`
+  sync with the base (fetching it), and returns to its wait without rewriting the report (only its `## Branch`
   footer, if the base moved). If the person merged the feature branch while pir was down, the run ends
-  as merged instead of syncing the base back in.
+  as merged instead of syncing the base back in. With the agent on, a green branch is then handed to the
+  finisher, even one whose finisher had fallen back; the run waits in `ready to merge` again only if the
+  finisher falls back again ([finisher.md](finisher.md#known-limitations)).
 
 ## Reconciliation — git is the ground truth
 

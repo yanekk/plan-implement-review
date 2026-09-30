@@ -266,12 +266,56 @@ export function readyToMerge(status) {
 // The fixed identity every harness commit uses, as the fixture seed does: nobody is there to sign.
 const HARNESS_IDENT = ['-c', 'user.name=PIR Fixture', '-c', 'user.email=fixture@pir.local', '-c', 'commit.gpgsign=false'];
 
+// finisherLook({ git, repoDir, branch, base, baseAtStart }) → what the finisher's work shows in the scratch
+// repo right now: the run's base's tip, whether it moved since the run began, whether the feature branch is
+// in it, the branch the main checkout is on, `strays` (local branches other than the base and pir's own that
+// hold the feature branch: a merge that went to the wrong branch), and whether the rules' FINISHED file is
+// in the main checkout (finisher T10).
+export const FINISHED_FILE = 'FINISHED';
+function finisherLook({ git, repoDir, branch, base, baseAtStart }) {
+  const tip = git(['rev-parse', `refs/heads/${base}`]);
+  const baseSha = tip.ok ? tip.stdout.trim() : null;
+  const on = git(['branch', '--show-current']);
+  const holders = git(['for-each-ref', '--format=%(refname:short)', '--contains', `refs/heads/${branch}`, 'refs/heads']);
+  const strays = holders.ok
+    ? holders.stdout.split('\n').map((n) => n.trim()).filter((n) => n && n !== base && !n.startsWith('pir/'))
+    : [];
+  return {
+    baseSha,
+    baseMoved: baseSha !== baseAtStart,
+    branchInBase: git(['merge-base', '--is-ancestor', `refs/heads/${branch}`, `refs/heads/${base}`]).ok,
+    checkout: on.ok ? on.stdout.trim() : null,
+    strays,
+    finishedFile: existsSync(join(repoDir, FINISHED_FILE)),
+  };
+}
+
+// The finisher's ledger (finisher-agent.mjs), one JSON object a line; an unreadable line is skipped.
+function readLedger(controlDir) {
+  const text = safeRead(join(controlDir, 'finisher', 'ledger.jsonl'));
+  const out = [];
+  for (const line of text.split('\n')) {
+    if (!line.trim()) continue;
+    try {
+      out.push(JSON.parse(line));
+    } catch {
+      // a line cut by a crash: nothing to learn from it
+    }
+  }
+  return out;
+}
+
 // createScenarioSteps({ spec, repoDir, controlDir, slug, base, gitRun, readStatus, log }) → { tick(flowText), record }.
 // tick runs whichever step is due this poll; record is what happened, with times, for the bundle's
 // steps.json (the evidence a fact or a person reads afterwards). A step whose git call fails is logged
 // and retried next poll, not marked done. `readStatus` is (controlDir) → the status snapshot or null.
+// `watchFinisher` (finisher T10) adds `record.finisher`: `base` (the run's base, the finisher's target),
+// `baseAtStart` and `checkoutAtStart` (the base's tip and the main checkout's branch at the first poll,
+// before the run can have touched them), `beforeGo` (finisherLook plus the phase, the first poll status.json
+// shows the finisher in `awaiting-go`) and, from `final()` once the run is over, `afterRun` (finisherLook plus
+// the ledger). Only the finisher merges in that scenario, so a base that moved before the go is its fence failing.
 export function createScenarioSteps({ spec, repoDir, controlDir, slug, base = 'main', gitRun = defaultRunGit, readStatus = readSnapshot, now = () => new Date(), log = () => {} } = {}) {
-  const record = { baseCommit: null, merged: null };
+  const record = { baseCommit: null, merged: null, ...(spec?.watchFinisher ? { finisher: { base, baseAtStart: null, checkoutAtStart: null, beforeGo: null, afterRun: null } } : {}) };
   const git = (args, cwd = repoDir) => gitRun(args, { cwd });
   const branch = `pir/${slug}`;
   const onRemote = spec?.mergeWhenReady === 'remote';
@@ -305,7 +349,29 @@ export function createScenarioSteps({ spec, repoDir, controlDir, slug, base = 'm
 
   return {
     record,
+    final() {
+      const fin = record.finisher;
+      if (!fin) return;
+      fin.afterRun = { at: now().toISOString(), ...finisherLook({ git, repoDir, branch, base, baseAtStart: fin.baseAtStart }), ledger: readLedger(controlDir) };
+      log(`after the run: ${base} ${fin.afterRun.branchInBase ? 'holds' : 'does not hold'} ${branch}; ${FINISHED_FILE} ${fin.afterRun.finishedFile ? 'present' : 'absent'}`);
+    },
     tick(flowText = '') {
+      const fin = record.finisher;
+      if (fin && fin.baseAtStart === null) {
+        const tip = git(['rev-parse', `refs/heads/${base}`]);
+        if (tip.ok) {
+          fin.baseAtStart = tip.stdout.trim();
+          const on = git(['branch', '--show-current']);
+          fin.checkoutAtStart = on.ok ? on.stdout.trim() : null;
+        }
+      }
+      if (fin && fin.baseAtStart !== null && !fin.beforeGo) {
+        const phase = readStatus(controlDir)?.runState?.finisher?.phase ?? null;
+        if (phase === 'awaiting-go') {
+          fin.beforeGo = { at: now().toISOString(), phase, ...finisherLook({ git, repoDir, branch, base, baseAtStart: fin.baseAtStart }) };
+          log(`the finisher waits for the go: ${base} ${fin.beforeGo.baseMoved ? 'MOVED' : 'unmoved'}, ${FINISHED_FILE} ${fin.beforeGo.finishedFile ? 'PRESENT' : 'absent'}`);
+        }
+      }
       const bc = spec?.baseCommit;
       if (bc && !record.baseCommit && taskMerged(flowText, bc.after)) {
         for (const [rel, content] of Object.entries(bc.files)) {
@@ -522,7 +588,7 @@ export async function runScenario({
         log,
       })
     : null;
-  const steps = spec.baseCommit || spec.mergeWhenReady ? createScenarioSteps({ spec, repoDir, controlDir, slug, base: fixture.base ?? 'main', gitRun, now, log }) : null;
+  const steps = spec.baseCommit || spec.mergeWhenReady || spec.watchFinisher ? createScenarioSteps({ spec, repoDir, controlDir, slug, base: fixture.base ?? 'main', gitRun, now, log }) : null;
 
   log(`installing fixture "${fixtureId}" into ${repoDir}`);
   install(fixtureId, { into: repoDir, runGit: gitRun });
@@ -611,6 +677,13 @@ export async function runScenario({
   }
 
   // What the scenario's own steps did, and when (pir-coordinator T09), for the facts and the person.
+  if (steps) {
+    try {
+      steps.final?.();
+    } catch (e) {
+      log(`steps final look failed: ${e.message}`);
+    }
+  }
   if (steps && bundle?.dir) {
     try {
       writeFileSync(join(bundle.dir, 'steps.json'), `${JSON.stringify(steps.record, null, 2)}\n`);

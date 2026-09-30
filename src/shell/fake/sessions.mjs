@@ -316,6 +316,8 @@ export function coordinatorReact(message, dropDir, { now = Date.now } = {}) {
   }
   const merge = /git merge (pir\/\S+)/.exec(message);
   if (/^The delivery report is committed/.test(message)) {
+    // A ready branch the finisher takes over carries no merge line (finisher T05).
+    if (/starts the finisher/.test(message)) return 'The branch is ready. The finisher takes the merge from here.';
     return merge ? `The branch is ready. Merge it yourself with: git merge ${merge[1]}` : 'The branch is not ready to merge; the report says why.';
   }
   return `Noted: ${message.split('\n')[0].slice(0, 120)}`;

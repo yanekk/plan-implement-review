@@ -114,6 +114,14 @@ test('handoffFor: the report and the merge line when ready; no merge line when r
   assert.match(red, /not ready to merge/);
 });
 
+test('handoffFor: ready with the finisher taking over — the report, no merge line, the finisher named (finisher T05)', () => {
+  const text = handoffFor({ slug: 'demo', reportPath: 'plans/demo/REPORT.md', ready: true, finisher: true, report: '# demo — delivery report' });
+  assert.match(text, /# demo — delivery report/);
+  assert.doesNotMatch(text, /git merge/);
+  assert.match(text, /starts the finisher/);
+  assert.doesNotMatch(text, /waits until they merge/);
+});
+
 test('resyncedFor: main moved, the new sha, green keeps the merge line, red and unresolved do not', () => {
   assert.match(resyncedFor({ slug: 'demo', baseSha: 'abcdef1234567890', tests: 'green' }), /main moved to abcdef123456.*git merge pir\/demo/);
   assert.doesNotMatch(resyncedFor({ slug: 'demo', baseSha: 'a', tests: 'red' }), /git merge/);

@@ -277,21 +277,26 @@ With the coordinator agent on (the default), reaching the end gate does not end 
 gives red tests one attempt by a test-fix worker in the feature worktree, prepares the run's base
 (fetching it from the remote) and merges it into the feature branch (a conflict is finished by a main-sync worker), reruns the tests if anything
 merged (red there, and no fix attempt yet, gets the one attempt then), has the agent write the delivery report's sections, commits
-`plans/{slug}/REPORT.md` on the feature branch, and waits in **ready to merge**: the footer reads
-`✔ ready to merge · git switch {base} && git merge pir/{slug}` and names the report, or `✗ not ready · tests red …` on red.
-The run stays open until the person merges `pir/{slug}` into the base (the command sees the local base,
-or the remote's copy it fetches every 5 minutes, contains its tip) or tells the agent to close it; either
-ends it as `finished`. If the base moves meanwhile, the branch is re-synced and the report's footer
-rewritten. A base that cannot be fetched or has split from the remote's holds the run in `preparing`
-and retries every minute. The command still never merges into the base. The
-steps, the report and the failure paths are in [coordinator-agent.md](coordinator-agent.md#the-end-of-the-run).
+`plans/{slug}/REPORT.md` on the feature branch. On a green branch it then closes the agent and starts
+the **finisher**, which prepares the merge and the project's after-merge steps, asks the person one go
+question, and after their `Go` carries them out; its `done` ends the run as `finished`
+([finisher.md](finisher.md)). On red, or if the finisher cannot start or gives up, the run waits in
+**ready to merge** instead: the footer reads `✔ ready to merge · git switch {base} && git merge pir/{slug}`
+and names the report, or `✗ not ready · tests red …` on red. That wait lasts until the person merges
+`pir/{slug}` into the base (the command sees the local base, or the remote's copy it fetches every 5
+minutes, contains its tip) or closes the run; either ends it as `finished`. If the base moves meanwhile
+(before any go, with the finisher), the branch is re-synced and the report's footer rewritten. A base
+that cannot be fetched or has split from the remote's holds the run in `preparing` and retries every
+minute. The command itself never merges into the base. The steps, the report and the failure
+paths are in [coordinator-agent.md](coordinator-agent.md#the-end-of-the-run).
 
-With phone alerts set up, reaching ready to merge (or red) sends one end-of-run alert, on the first pass
+With phone alerts set up, reaching ready to merge (or red) sends one end-of-run alert (a run the
+finisher takes over sends the finisher's alerts instead), on the first pass
 that reads it and never on a pass that also finishes the run (`endAlertPass`). Without the agent the
 end alert goes on the pass that ends the run, awaited at most 2 s before the process returns (see
 [human-flow.md](human-flow.md#phone-alerts--pir-notify)).
 
-A run ends in one of three ways. With the agent on, the first is the ready-to-merge end above;
+A run ends in one of three ways. With the agent on, the first is the finisher's or ready-to-merge end above;
 without it (`pir start {slug} --no-coordinator`), it is:
 
 - **Handed off** — every task reached `✅`, the feature branch is green, and the command prints the
