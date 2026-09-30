@@ -10,13 +10,13 @@
 // exceptions reaches `canUseTool`, and the `decide` gate below, which answers every request itself and
 // never parks one for the person.
 
-import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, realpathSync, statSync, unlinkSync } from 'node:fs';
+import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, realpathSync, statSync, unlinkSync, watch as fsWatch } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { readDecision, checkDecision, describeItem } from '../core/coordinator-policy.mjs';
 import { briefFor, refusalFor, answeredElsewhereFor, closedWhy, openingFor, resumedFor, endBriefFor, timedOutFor, holdWords } from '../core/coordinator-brief.mjs';
-import { readEntry, DEFAULT_REFUSAL } from '../core/stream.mjs';
+import { readEntry, DEFAULT_REFUSAL, wakesLoop } from '../core/stream.mjs';
 import { writeJsonAtomic } from './atomic-write.mjs';
 
 // DESIGN §3.4. The allowlist is what actually holds (T00); `disallowedTools` is the second fence.
@@ -340,6 +340,11 @@ export function closingAnswer(entries, item, { since = 0 } = {}) {
 // `skillsDir` and `uuid` are injectable for tests. `env() → object | null` is platform.mjs's `workerEnv`
 // contract (reliable-notifications DESIGN §2.7), read at each launch, a resume included: an object is merged
 // over `process.env` as the session's environment; null leaves it inheriting.
+// `onActivity()` is the coordinator loop's wake-up (fast-tests DESIGN §2.1): called on the agent session's
+// log entries that wakesLoop accepts, on its exit, and when a decision file lands in decisions/. The folder
+// is watched here, by a watcher that lives as long as the agent, rather than added to the dirs the loop
+// waits on: the loop's wait re-arms its watch after every pass, and a decision written in between would
+// wait out the backstop; a standing watcher sees it whenever it lands. `watch` is injectable for the tests.
 export function startCoordinatorAgent({
   controlDir,
   featurePath,
@@ -355,6 +360,8 @@ export function startCoordinatorAgent({
   skillsDir = join(homedir(), '.claude', 'skills'),
   uuid = randomUUID,
   env = null,
+  onActivity = () => {},
+  watch = fsWatch,
 }) {
   const coordDir = join(controlDir, 'coordinator');
   const decisionsDir = join(coordDir, 'decisions');
@@ -362,6 +369,42 @@ export function startCoordinatorAgent({
   const ledgerPath = join(coordDir, 'ledger.jsonl');
   const convDir = join(controlDir, 'conversations');
   mkdirSync(decisionsDir, { recursive: true });
+  const activity = () => {
+    try {
+      onActivity();
+    } catch {
+      /* the loop's backstop still runs the next pass */
+    }
+  };
+  // Only a decision file wakes the loop: the drain's own unlink and the agent's Write temp-names do not,
+  // or each drain would schedule a pass that has nothing to read. A watcher that fails at start or later
+  // leaves the loop's backstop to pick decisions up, as before.
+  const landed = (name) => {
+    if (typeof name !== 'string' || name === '') {
+      try {
+        return readdirSync(decisionsDir).some((f) => f.endsWith('.json'));
+      } catch {
+        return false;
+      }
+    }
+    return name.endsWith('.json') && existsSync(join(decisionsDir, name));
+  };
+  let decisionsWatcher = null;
+  try {
+    decisionsWatcher = watch(decisionsDir, (_event, name) => {
+      if (landed(name == null ? null : String(name))) activity();
+    });
+    decisionsWatcher.unref?.();
+    decisionsWatcher.on?.('error', () => {
+      try {
+        decisionsWatcher.close();
+      } catch {
+        /* already closed */
+      }
+    });
+  } catch {
+    decisionsWatcher = null;
+  }
 
   const decide = gateFor({
     cwd: featurePath,
@@ -411,7 +454,13 @@ export function startCoordinatorAgent({
     });
     up = true;
     const w = worker;
-    w.onExit((info) => onExit(w, info));
+    w.onEvent((entry) => {
+      if (wakesLoop(entry)) activity();
+    });
+    w.onExit((info) => {
+      onExit(w, info);
+      activity();
+    });
     if (resume) w.send(resumedFor(), { from: 'pir' });
     else w.send(openingFor({ slug, projectRulesPath, dropDir: decisionsDir }), { from: 'pir' });
     if (remote) w.remoteControl(true).catch(() => {});
@@ -654,6 +703,11 @@ export function startCoordinatorAgent({
     },
     async close(opts) {
       closing = true;
+      try {
+        decisionsWatcher?.close();
+      } catch {
+        /* already closed */
+      }
       if (worker) await worker.close(opts);
     },
   };

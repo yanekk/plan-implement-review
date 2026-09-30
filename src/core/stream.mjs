@@ -50,6 +50,16 @@ export function readEntry(entry) {
   }
 }
 
+// wakesLoop(entry) → true when a conversation-log entry is something the coordinator's next pass would
+// act on or show, so it wakes the loop at once (fast-tests DESIGN §2.1). A `note` is written by the
+// coordinator's own pass (remote-control, delivered-by-grant, undelivered), so waking on one would make a
+// pass schedule the next; everything else wakes, streaming output included, because the screen's view of
+// a live worker is written by the pass. Anything that is not an entry object does not wake.
+export function wakesLoop(entry) {
+  if (!isObject(entry)) return false;
+  return entry.dir !== 'note';
+}
+
 // One SDK message, exactly as query() yielded it.
 function readMessage(m, entry) {
   if (!isObject(m) || typeof m.type !== 'string') return [{ kind: 'raw', raw: entry }];
@@ -120,6 +130,9 @@ function resultText(content) {
 function readRequest(entry) {
   if (typeof entry.requestId !== 'string' || typeof entry.toolName !== 'string') return [{ kind: 'raw', raw: entry }];
   const input = isObject(entry.input) ? entry.input : {};
+  // The tool use the request is about (group-commands DESIGN §2.2), so a refusal can be told from a failure.
+  // Logs written before it was recorded have none, and the event then carries no field.
+  const tie = typeof entry.toolUseId === 'string' ? { toolUseId: entry.toolUseId } : {};
   if (entry.toolName === ASK_TOOL) {
     const questions = (Array.isArray(input.questions) ? input.questions : []).filter(isObject).map((q) => ({
       question: str(q.question),
@@ -127,11 +140,12 @@ function readRequest(entry) {
       multiSelect: q.multiSelect === true,
       options: (Array.isArray(q.options) ? q.options : []).filter(isObject).map((o) => ({ label: str(o.label), description: str(o.description) })),
     }));
-    return [{ kind: 'questions', requestId: entry.requestId, questions, input }];
+    return [{ kind: 'questions', requestId: entry.requestId, ...tie, questions, input }];
   }
   return [{
     kind: 'permission',
     requestId: entry.requestId,
+    ...tie,
     toolName: entry.toolName,
     input,
     description: str(entry.description),

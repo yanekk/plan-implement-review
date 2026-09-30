@@ -182,6 +182,7 @@ test('a can_use_tool becomes a request entry and a pending request; answer sends
 
   const req = worker.entries().find((e) => e.dir === 'request');
   assert.equal(req.requestId, 'req-1');
+  assert.equal(req.toolUseId, 'toolu_req-1', "canUseTool's toolUseID, so a refusal is tied to its step (group-commands §2.2)");
   assert.equal(req.toolName, 'Bash');
   assert.deepEqual(req.input, { command: 'rm x' });
   assert.equal(req.description, 'Remove x');

@@ -1,3 +1,8 @@
+// Shared by the coordinator-drill-*.test.mjs files (fast-tests T03, DESIGN §2.4): the drill used to be one
+// file whose six tests ran one after another; each drill × size is now its own file so node runs them side by
+// side. The three drills are defined here once, taking the window size, and each file calls one of them for
+// one size. Not a test file itself.
+//
 // The coordinator drill (pir-coordinator T07, DESIGN §2.3–§2.10 as seen on screen): the whole flow on the
 // real `pir` screen, as the person would use it, at 80×24 and 120×40. `pir start drill` in the planning rig
 // runs the real coordinator command, the real coordinator-agent session and three real worker sessions,
@@ -16,7 +21,6 @@ import { indexDir, listRecords } from './index-store.mjs';
 import { stopRun } from './control-run.mjs';
 import { DRILL_QUESTION, DRILL_SLUG, HELPER_DRILL_QUESTION, HELPER_DRILL_SLUG } from './fake/sessions.mjs';
 
-const SIZES = [[80, 24], [120, 40]];
 const DOWN = '\x1b[B';
 const UP = '\x1b[A';
 const RIGHT = '\x1b[C';
@@ -74,7 +78,8 @@ async function select(screen, task) {
   throw new Error(`could not select ${task}:\n${screen.text()}`);
 }
 
-for (const [cols, rows] of SIZES) {
+// The coordinator drill proper: agent answers, passes on, the person answers and talks to it.
+export function coordinatorDrill(cols, rows) {
   test(`coordinator drill at ${cols}×${rows}: agent answers, passes on, the person answers and talks to it, ready to merge`, { timeout: 180000 }, async (t) => {
     const rig = drillRig(t);
     const screen = rig.openScreen({ cols, rows, args: ['start', DRILL_SLUG] });
@@ -189,7 +194,7 @@ for (const [cols, rows] of SIZES) {
 }
 
 // Both sizes, as the flow above (T07 review: the task names 80×24 and 120×40 for every step, step 6 too).
-for (const [cols, rows] of SIZES) {
+export function noCoordinatorDrill(cols, rows) {
   test(`coordinator drill with --no-coordinator at ${cols}×${rows}: every request is the person's and the end is today's`, { timeout: 180000 }, async (t) => {
     const rig = drillRig(t);
     const screen = rig.openScreen({ cols, rows, args: ['start', DRILL_SLUG, '--no-coordinator'] });
@@ -224,7 +229,7 @@ for (const [cols, rows] of SIZES) {
 // run spawns its tests-fix helper. The helper asks a question, the agent passes it on, and the person finds
 // the helper as a row below the tasks, opens it with → and answers there, as for any task. The helper then
 // commits the fix and the run ends in `ready to merge`.
-for (const [cols, rows] of SIZES) {
+export function endHelperDrill(cols, rows) {
   test(`end-helper drill at ${cols}×${rows}: the tests-fix helper's passed-on question is answered from its row in pir`, { timeout: 180000 }, async (t) => {
     const rig = drillRig(t, 'end-helper');
     const screen = rig.openScreen({ cols, rows, args: ['start', HELPER_DRILL_SLUG] });

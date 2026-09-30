@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
   readEntry, workerActivity, userMessage, allowResult, denyResult, answersResult, declineQuestionsResult,
-  DEFAULT_REFUSAL,
+  DEFAULT_REFUSAL, wakesLoop,
 } from './stream.mjs';
 
 // The committed recording: one real SDK-driven conversation (T01 probe, Claude Code 2.1.282, SDK
@@ -153,6 +153,18 @@ test('an AskUserQuestion request becomes questions, any other tool becomes permi
   assert.equal(flagged.defaultToNo, true);
   assert.equal(flagged.suppressAlwaysAllowRule, true);
   assert.equal(flagged.reason, 'This command requires approval');
+});
+
+// group-commands T01 (DESIGN §2.2): the request's toolUseId, so a refused step can be told from a failed one.
+test('a request carries its toolUseId onto the permission and questions events; absent, no field', () => {
+  const perm = readEntry(at({ dir: 'request', requestId: 'r', toolUseId: 'toolu_1', toolName: 'Bash', input: {} }))[0];
+  assert.equal(perm.toolUseId, 'toolu_1');
+  const q = readEntry(at({ dir: 'request', requestId: 'r', toolUseId: 'toolu_2', toolName: 'AskUserQuestion', input: { questions: [] } }))[0];
+  assert.equal(q.toolUseId, 'toolu_2');
+  for (const tool of ['Bash', 'AskUserQuestion']) {
+    assert.ok(!('toolUseId' in readEntry(request('r', tool))[0]), `${tool}: no toolUseId logged, no field`);
+    assert.ok(!('toolUseId' in readEntry(at({ dir: 'request', requestId: 'r', toolUseId: 7, toolName: tool, input: {} }))[0]), `${tool}: not a string`);
+  }
 });
 
 // ---- result builders, against the shapes the probe sent and Claude accepted ----
@@ -527,4 +539,18 @@ test('a coordinator send opens a `coordinator` turn and is counted apart from th
   assert.deepEqual(a.turnCauses, ['pir', 'coordinator']);
   assert.equal(a.coordinatorSends, 1);
   assert.equal(a.personSends, 0);
+});
+
+// ---- wakesLoop (fast-tests T01, DESIGN §2.1) ----
+
+test('wakesLoop: a note does not wake the loop; a request, output, a turn end, pir/person input do; a non-object does not', () => {
+  assert.equal(wakesLoop(at({ dir: 'note', kind: 'remote-control', on: true })), false, 'the pass writes notes itself');
+  assert.equal(wakesLoop(request('r1')), true, 'a permission request');
+  assert.equal(wakesLoop(result()), true, 'a turn ending (result)');
+  assert.equal(wakesLoop(inMsg({ type: 'assistant', message: { content: [{ type: 'text', text: 'hi' }] } })), true, 'streaming text');
+  assert.equal(wakesLoop(sent()), true, 'an out message');
+  assert.equal(wakesLoop(reply('r1')), true, 'an out reply');
+  for (const v of [null, undefined, 'a raw line', 42, ['dir', 'in']]) assert.equal(wakesLoop(v), false, `not an entry: ${JSON.stringify(v)}`);
+  // Every real entry in the recording except its notes wakes.
+  for (const e of sample) assert.equal(wakesLoop(e), e.dir !== 'note');
 });

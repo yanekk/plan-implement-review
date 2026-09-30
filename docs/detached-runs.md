@@ -196,13 +196,42 @@ to a worker; once the finisher has replaced the agent, `c` opens the finisher's 
 reads `c finisher`; with no agent, `c` leaves a note in the footer
 ([coordinator-agent.md](coordinator-agent.md#the-agents-own-conversation)).
 
-The view reads the worker's conversation log from the control folder (the last 256 KB, then every
-append; `log-follow.mjs`), so a closed `pir` loses nothing and two open screens agree. By default each
-tool step is one line: the tool name, its main argument and the last line of its result; Tab switches
-to full detail. Messages from pir, from the person and from the worker are marked and coloured
+The view reads the worker's conversation log from the control folder (the last 256 KB plus any request
+still pending from before it, then every append; `log-follow.mjs`), so a closed `pir` loses nothing and two open screens agree. Messages from pir, from the person and from the worker are marked and coloured
 differently. A pending permission request or question set is highlighted and pinned above the typing
 box (see [human-flow.md](human-flow.md)). Text Claude injects itself (a loaded skill's body, marked
 `isSynthetic`) is not drawn.
+
+**Tool steps fold into groups** (`plans/group-commands`). Every run of consecutive tool steps, whatever
+the tool, is one group; anything drawn between two steps (a message, a permission request or question
+set in the history, an interrupt, a failed turn, a `· …` note, a `↳` background line) ends it, and
+nothing that draws no line does. A group's finished steps (those whose result is in the log) take one
+line that counts them per kind, in the order each kind first appeared: `▸ Ran 2 shell commands, read 3
+files, edited 1 file`. A single finished step folds too (`▸ Ran 1 shell command`). The kinds are `ran N
+shell commands` (Bash), `read N files` (Read), `wrote N files` (Write), `edited N files` (Edit,
+MultiEdit, NotebookEdit), `searched N times` (Grep, Glob), `fetched N pages` (WebFetch), `searched the
+web N times` (WebSearch), `ran N agents` (Task, Agent), `loaded N skills` (Skill), `updated the to-do
+list N times` (TodoWrite), `asked N question sets` (AskUserQuestion), `started N monitors` (Monitor),
+and `used {Tool} N times` for any other tool, singular for one. If any of the group's steps failed the
+line ends in ` · N failed` in red; a step whose request was answered no (a refused permission, a
+typed reply that refuses, a question set answered in text, whoever answered) is not counted as failed
+but adds a dim ` · N refused`. The line is clipped at the width with `…`, the label first, so the
+failed and refused counts always stay visible. A step still running is drawn on its own line,
+`  ⎿ Bash npm test`, after its group's line, and joins the count when its result arrives; a group whose
+steps are all running has no group line yet. In a read-only view a step whose result never came stays
+on its own line.
+
+A click on a group line opens it: the marker turns `▾` and each finished step is drawn under it as a
+one-line step, the tool name, its main argument and the last line of its result, indented two more
+columns, a failed or refused one in red; another click folds it. The clicked line stays on its screen
+row, except that the view scrolls just enough to show the last opened step if it would fall below the
+history, never so far that the clicked line leaves the top. A group line brightens under the pointer.
+Which groups are open lasts while the person stays in the conversation, across Tab, and is forgotten
+on leaving it (`←`, or the view being replaced): reopened, every group is folded. Tab switches to full
+detail, exactly as before grouping: every step with every result line, no group lines, nothing to
+click; Tab again shows the groups. While the person is scrolled up, a running step folding into its
+group at the end does not move the text they are reading. There is no key to open one group (the view
+has no cursor) and no open-all; full detail is the way to see everything.
 
 Background work gets a dim `↳` line when a command or a Monitor moves to the background and another
 when it ends (`running in the background: …`, `finished in the background: …`, `monitor started`,
@@ -232,7 +261,7 @@ top of them; see [The mouse](#the-mouse)):
 | Steps (a planning run) | `↑↓` pick a step · `→` or `↵` open its conversation · `←` back to the list · `Ctrl+S Ctrl+S` stop this run (while it runs) · `esc` quit |
 | The go question | `↵` start the build · `n` not now · `←` back to the list · `esc` quit, leaving the question in place |
 | Brief box (`pir plan`) | typing · `↵` start planning · `shift+↵` or `ctrl+j` new line · `esc` or `Ctrl+C` cancel |
-| Conversation | typing, `↵` send · `esc` interrupt the worker · `Ctrl+C` clear the box, or interrupt when it is empty · `←` with an empty box back to the live view · `Tab` one line per step ⇄ full detail · `↵`/`n`/`a` answer a pending permission, and `↑↓` `space` `↵` drive a pending question set (one `↵` answers a pick-one question), both only while the box is empty, and typing while a question set is pending goes to its Other line, where `←`/`→` move the cursor and `←` goes back only once the line is empty · `PgUp`/`PgDn` scroll |
+| Conversation | typing, `↵` send · `esc` interrupt the worker · `Ctrl+C` clear the box, or interrupt when it is empty · `←` with an empty box back to the live view · `Tab` grouped steps ⇄ full detail (every step with its whole result; open groups stay open on the way back) · `↵`/`n`/`a` answer a pending permission, and `↑↓` `space` `↵` drive a pending question set (one `↵` answers a pick-one question), both only while the box is empty, and typing while a question set is pending goes to its Other line, where `←`/`→` move the cursor and `←` goes back only once the line is empty · `PgUp`/`PgDn` scroll |
 
 `←` steps back one view; `esc` quits `pir` outright from the list and the live view, but in the
 conversation view it interrupts the worker, as in Claude's own screen: the open turn ends at once, and
@@ -256,7 +285,7 @@ Every key above keeps its meaning; the mouse only adds these:
 | List | a run's row opens it | the run's row brightens | one `↑`/`↓` |
 | Live view (a build) | a task's row opens its worker; the coordinator agent's row opens its conversation; an end-of-run helper's row opens its worker | the row brightens | one `↑`/`↓` |
 | Steps (a planning run), go question included | a step's row opens its conversation | the row brightens | one `↑`/`↓` |
-| Conversation | in the typing box, moves the cursor there | — | scrolls the history three lines |
+| Conversation | in the typing box, moves the cursor there; on a group of tool steps (`▸ Ran …`), opens it, and on an open one (`▾`) folds it | a group line brightens | scrolls the history three lines |
 | New-plan box | moves the cursor; on the `@repo` pop-up, picks that repo | — | moves the list, as anywhere on the list screen; over the open `@repo` pop-up it moves the pop-up's highlight instead |
 
 A click on a row is exactly selecting it and pressing `↵`: the selection lands on that row, so `←`
@@ -265,8 +294,11 @@ worker yet shows the footer note; `noCoordinatorNote` when the agent has no sess
 step under the go question opens the step; it never answers the go question. A double click is two
 clicks, each on the screen it lands on: on a run it opens the run, then opens the live-view row now
 under the pointer. A click anywhere else does nothing: the title, the column header, the `↑ n more`
-markers, the separator above the agent's row (which `↑↓` also steps over), notes, the counts line and
-the hint line. Right and middle clicks do nothing. The wheel goes through the same path as `↑↓`, so it
+markers, the separator above the agent's row (which `↑↓` also steps over), notes, the counts line,
+the hint line, and in the conversation view every line of the history but a group line
+(`plans/group-commands` amends mouse-navigation's "a click outside the typing box does nothing" for
+group lines only). Two quick clicks on a group line are an open and a fold, never a word selection, and
+a drag across one still selects and copies text without opening it. Right and middle clicks do nothing. The wheel goes through the same path as `↑↓`, so it
 cancels an armed `Ctrl+R/S/X` chord and steps over the separator; on the `starting the planner…`
 screen it does nothing.
 

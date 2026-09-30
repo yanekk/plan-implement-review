@@ -74,7 +74,8 @@ What travels down, all of it appended to the worker's conversation log with who 
   `inbox/`, temp-then-rename (`dropPersonInput`), and only while the run is `running` as the
   dashboard's `classifyRun` decides it; otherwise nothing is written and the view says the run is not
   running. The command watches the folder and forwards each drop the moment it lands, outside the
-  5 s pass, with a drain at each pass as a backstop (`startPersonInbox`). A drop for a worker that is
+  pass, then wakes the loop so the next pass shows it, with a drain at each pass as a backstop
+  (`startPersonInbox`). A drop for a worker that is
   gone, or answering a request that is no longer pending, is logged as an `undelivered` note in that
   worker's conversation, so a lost answer is never silent. Every drop also gets a line in `log`.
 
@@ -96,7 +97,9 @@ line (`worker-proc.mjs`):
   in the agent's log) and `notify-failed` (a phone alert that failed after its retries, once per
   question, with `status` and `error`; see [human-flow.md](human-flow.md#phone-alerts--pir-notify)).
 
-The `pir` screen reads the last 256 KB and follows appends (`log-follow.mjs`); a line that does not
+The `pir` screen reads the last 256 KB and follows appends (`log-follow.mjs`), and brings back any
+request still pending from before that tail, judged on the whole log, so a question pushed out by a busy
+log stays pinned (`carryPending` in `conversation-view.mjs`); a line that does not
 parse (a crash mid-append) is shown raw and never stops the reader. A worker's state — busy, idle,
 waiting on a permission, waiting on a question set — is derived from this log (`workerActivity` in
 `src/core/stream.mjs`). The logs are kept across a restart, and a new worker for the same task gets
