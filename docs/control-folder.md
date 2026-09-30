@@ -73,7 +73,8 @@ What travels down, all of it appended to the worker's conversation log with who 
   `inbox/`, temp-then-rename (`dropPersonInput`), and only while the run is `running` as the
   dashboard's `classifyRun` decides it; otherwise nothing is written and the view says the run is not
   running. The command watches the folder and forwards each drop the moment it lands, outside the
-  5 s pass, with a drain at each pass as a backstop (`startPersonInbox`). A drop for a worker that is
+  pass, then wakes the loop so the next pass shows it, with a drain at each pass as a backstop
+  (`startPersonInbox`). A drop for a worker that is
   gone, or answering a request that is no longer pending, is logged as an `undelivered` note in that
   worker's conversation, so a lost answer is never silent. Every drop also gets a line in `log`.
 

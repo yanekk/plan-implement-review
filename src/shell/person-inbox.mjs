@@ -72,8 +72,11 @@ export function createGrants() {
 // wait uses) and drains the moment a file lands; the coordinator also calls drain() once per pass as a
 // backstop. drain() reads every *.json in name order, validates it, forwards it, logs the outcome and has
 // already deleted it; it returns the outcomes, for the tests. `platform` is createPlatform's: send,
-// interrupt, answer, pending, note, logPathOf. `log` is the run log's line writer.
-export function startPersonInbox({ controlDir, platform, grants = createGrants(), watch, log = () => {} }) {
+// interrupt, answer, pending, note, logPathOf. `log` is the run log's line writer. `onActivity()` is the
+// coordinator loop's wake-up (fast-tests DESIGN §2.1): called after a forwarder drain that handled at least
+// one valid input, so the pass that shows it runs now, not on the 5 s backstop. The loop's own drain()
+// runs inside a pass and never calls it.
+export function startPersonInbox({ controlDir, platform, grants = createGrants(), watch, log = () => {}, onActivity = () => {} }) {
   const inboxDir = inboxDirOf(controlDir);
   // The folder must exist for fs.watch to watch it; the screen's first drop would create it too late.
   mkdirSync(inboxDir, { recursive: true });
@@ -175,9 +178,10 @@ export function startPersonInbox({ controlDir, platform, grants = createGrants()
       await waitForDrop(inboxDir, BACKSTOP_MS, { signal: abort.signal, unref: true, ...(watch ? { watch } : {}) });
       if (abort.signal.aborted) break;
       try {
-        drain();
+        // An invalid drop was only deleted and logged: nothing the next pass would show.
+        if (drain().some((o) => o.outcome !== 'invalid')) onActivity();
       } catch {
-        /* drain already contains its own failures; never let the forwarder die */
+        /* drain already contains its own failures, and a throwing hook must never kill the forwarder */
       }
     }
   })();

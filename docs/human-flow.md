@@ -294,8 +294,9 @@ other. Planning sessions (`pir plan`) never alert, and their Claude app push is 
 
 - **Timing.** The alert is sent as soon as the worker's Remote Control link is known, so tapping it
   opens that worker's chat in the Claude app (seen on the iPhone, 2026-09-28). It goes without a link
-  under `PARALLEL_REMOTE=0`, when Remote Control was refused, or after 20 s with no link. The loop polls
-  every 5 s, so an alert follows the question by a few seconds; a question held by the agent alerts
+  under `PARALLEL_REMOTE=0`, when Remote Control was refused, or after 20 s with no link. The loop wakes
+  on the worker's question (5 s is only its backstop timer), so an alert follows the question within
+  about a second; a question held by the agent alerts
   only when the hold limit (5 minutes) hands it over.
 - **Wording.** Title `{plan} · {task} {role}` (a helper: `{plan} · main-sync resolve-main-merge`). The
   message opens with why it is the person's — `Agent passed it on: `, `Agent didn't answer in time: `,

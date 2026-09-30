@@ -267,7 +267,8 @@ starts a fresh line after it.
 ## The end of the run
 
 With the agent on, the run no longer ends at the green end gate. After every task is `✅` and the
-feature-branch tests have run, the command takes one step per pass, so the live view stays live:
+feature-branch tests have run, the command takes one step per pass, so the live view stays live. A pass
+that moved the step on wakes the loop, so the next step follows after the 250 ms pass gap, not the backstop:
 
 0. **Red gate: one test-fix worker.** If the end gate's tests are red, a **test-fix worker** is spawned
    in the feature worktree first (task label `tests-fix`, role `fix`) with the tests-red prompt

@@ -278,6 +278,8 @@ What it tells you at a glance:
   stops and waits, highlighted in amber, and its clock stops while it waits. Select its row and
   open it (→ or Enter): the worker's conversation opens inside `pir`, and you answer there in plain
   English, or pick from its question or allow its command; it carries on by itself. Every other task keeps moving meanwhile.
+  The run reacts to its workers as things happen: a question, a finished step or an exit shows on the
+  screen within a fraction of a second, not on a timer (see [run-lifecycle.md](docs/run-lifecycle.md#between-passes)).
   A row says `asking you` only when the worker has actually stopped for you, and it stays that way
   until you answer: a worker still finishing the turn it asked in reads as working, and a background
   job waking it up does not count as your answer. Any worker that stops before its task is done, with nothing left
@@ -613,6 +615,12 @@ It runs Node's built-in test runner over `src/**/*.test.mjs` with the dot report
 green run is a few lines and the exit code carries the result. Colour is forced off
 (`FORCE_COLOR=0`) because a green dot run should be plain text on any machine — including
 this one, where `FORCE_COLOR=3` is set in the environment.
+
+On a quiet machine the whole suite takes a little over a minute. Most of that is the end-to-end
+tests that drive the real `pir` screen through a pseudo-terminal, so those are split across
+several files (`plan-rig-*`, `coordinator-drill-*`, `conversation-rig-*`): the runner runs
+files side by side, one process each, and the slowest file sets the finish. A second test run
+on the same machine at the same time slows both.
 
 To see a full line per test while debugging, turn the reporter verbose:
 

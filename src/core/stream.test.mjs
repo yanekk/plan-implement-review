@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
   readEntry, workerActivity, userMessage, allowResult, denyResult, answersResult, declineQuestionsResult,
-  DEFAULT_REFUSAL,
+  DEFAULT_REFUSAL, wakesLoop,
 } from './stream.mjs';
 
 // The committed recording: one real SDK-driven conversation (T01 probe, Claude Code 2.1.282, SDK
@@ -622,4 +622,18 @@ test('recorded plan-0339: background holds the helper until the interrupt\'s res
   const end = workerActivity(helperSample);
   assert.deepEqual(end.background, []);
   assert.equal(end.state, 'idle');
+});
+
+// ---- wakesLoop (fast-tests T01, DESIGN §2.1) ----
+
+test('wakesLoop: a note does not wake the loop; a request, output, a turn end, pir/person input do; a non-object does not', () => {
+  assert.equal(wakesLoop(at({ dir: 'note', kind: 'remote-control', on: true })), false, 'the pass writes notes itself');
+  assert.equal(wakesLoop(request('r1')), true, 'a permission request');
+  assert.equal(wakesLoop(result()), true, 'a turn ending (result)');
+  assert.equal(wakesLoop(inMsg({ type: 'assistant', message: { content: [{ type: 'text', text: 'hi' }] } })), true, 'streaming text');
+  assert.equal(wakesLoop(sent()), true, 'an out message');
+  assert.equal(wakesLoop(reply('r1')), true, 'an out reply');
+  for (const v of [null, undefined, 'a raw line', 42, ['dir', 'in']]) assert.equal(wakesLoop(v), false, `not an entry: ${JSON.stringify(v)}`);
+  // Every real entry in the recording except its notes wakes.
+  for (const e of sample) assert.equal(wakesLoop(e), e.dir !== 'note');
 });

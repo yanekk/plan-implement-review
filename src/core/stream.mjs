@@ -56,6 +56,16 @@ export function readEntry(entry) {
   }
 }
 
+// wakesLoop(entry) → true when a conversation-log entry is something the coordinator's next pass would
+// act on or show, so it wakes the loop at once (fast-tests DESIGN §2.1). A `note` is written by the
+// coordinator's own pass (remote-control, delivered-by-grant, undelivered), so waking on one would make a
+// pass schedule the next; everything else wakes, streaming output included, because the screen's view of
+// a live worker is written by the pass. Anything that is not an entry object does not wake.
+export function wakesLoop(entry) {
+  if (!isObject(entry)) return false;
+  return entry.dir !== 'note';
+}
+
 // One SDK message, exactly as query() yielded it.
 function readMessage(m, entry) {
   if (!isObject(m) || typeof m.type !== 'string') return [{ kind: 'raw', raw: entry }];
