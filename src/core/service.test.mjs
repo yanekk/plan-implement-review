@@ -305,6 +305,20 @@ test('statusText: macOS would not register it, with launchctl’s message', () =
   });
 });
 
+test('statusText: macOS would not register it shows only the first line launchctl printed', () => {
+  const expected = {
+    text:
+      'pir service: macOS would not register it: Bootstrap failed: 5: Input/output error\n' +
+      'try: pir service off, then pir service on',
+    code: 1,
+  };
+  // What launchctl really prints: its second line sends the person to root, the wrong domain for an agent.
+  const real = 'Bootstrap failed: 5: Input/output error\nTry re-running the command as root for richer errors.\n';
+  assert.deepEqual(statusText({ state: 'register-failed', detail: real }, NOW), expected);
+  const padded = '\n  Bootstrap failed: 5: Input/output error  \r\nmore\n';
+  assert.deepEqual(statusText({ state: 'register-failed', detail: padded }, NOW), expected);
+});
+
 test('statusText: needs macOS', () => {
   assert.deepEqual(statusText({ state: 'needs-macos' }, NOW), {
     text: 'pir service needs macOS (launchd)',

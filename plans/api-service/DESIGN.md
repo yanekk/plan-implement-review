@@ -251,7 +251,9 @@ try: pir service off, then pir service on
 
 The seventh is the sixth when launchd has no exit code for the service (it never exited, or the line
 is absent). The eighth is printed by `on` when `bootstrap` still fails after its retries (§2.9). Both
-wordings: user 2026-09-30, at plan review.
+wordings: user 2026-09-30, at plan review. `{launchctl's message}` is the first line of its stderr only
+(user 2026-09-30, at T03 review). Reason: the second line is `Try re-running the command as root for
+richer errors.`, which is wrong for a per-user agent and would sit above pir's own hint.
 
 The age reads `just now` under a minute, then `N min ago`, `N h ago`, `N days ago`. A percentage is
 the API's `used_percentage` rounded to a whole number (user 2026-09-30, at plan review). A null window

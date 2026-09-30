@@ -147,9 +147,13 @@ export function statusText(facts, now) {
       const bracket = Number.isFinite(lastExit) ? ` (last exit code ${lastExit})` : '';
       return failed(`pir service: registered but not answering${bracket}`, RETRY_HINT);
     }
-    case 'register-failed':
-      // launchctl's stderr ends in a newline; without the trim the hint would sit after a blank line.
-      return failed(`pir service: macOS would not register it: ${String(detail ?? '').trim()}`, RETRY_HINT);
+    case 'register-failed': {
+      // Only the first line of launchctl's stderr (user 2026-09-30, at T03 review). Its second line is
+      // "Try re-running the command as root for richer errors.": root is the wrong domain for a
+      // per-user agent, and the line would sit right above our own hint.
+      const first = String(detail ?? '').trim().split(/\r?\n/)[0].trim();
+      return failed(`pir service: macOS would not register it: ${first}`, RETRY_HINT);
+    }
     case 'needs-macos':
       return failed(NEEDS_MACOS);
     default:
