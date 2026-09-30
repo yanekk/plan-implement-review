@@ -7,6 +7,7 @@ Legend: 🐞 defect found · ✅ verified by hand with the user · 📌 worth kn
 
 | Date | | Finding |
 |---|---|---|
+| 2026-09-30 | 📌 | T08: a before-and-after mtime check of the real `~/.pir/usage.json` would fail during any live run once this is installed. The test refuses only the fake reading, known by five-hour `resets_at` 1790334600 (`USAGE_RESETS` in `plan-rig.mjs`). |
 | 2026-09-30 | 📌 | T05 review: the service imports shell `atomic-write.mjs` and `index-store.mjs`, as §3.4 prescribes, though DESIGN §2.6 says built-ins and `src/core/` only. What holds is no npm package, enforced by the graph test. T11 should document it that way. |
 | 2026-09-30 | 📌 | T05: a comment in `index-store.mjs` holds the word `from` then a quoted phrase, so the boundary `SPECIFIER` pattern reports a bare import. T05's graph walk drops whole-line comments first; T06's walk reaches the same file through `indexDir`. |
 | 2026-09-30 | 📌 | T04 review: worker sessions inherit `PIR_RUN=1` and the real `HOME`. A plain `node` script a worker runs with the fake claude emitting a `rate_limit_event` would write the real `~/.pir/usage.json`; only `node --test` or a scratch home stops it. T08, T10. |
