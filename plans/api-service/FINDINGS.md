@@ -7,6 +7,8 @@ Legend: 🐞 defect found · ✅ verified by hand with the user · 📌 worth kn
 
 | Date | | Finding |
 |---|---|---|
+| 2026-09-30 | 📌 | `homeKind` compares strings. The real home spelled `/users/me`, `/Users/me/.` or through a symlink reads `scratch`, so the test-runner guard does not fire. T04, T05 and T06 should pass `env` and `os.userInfo().homedir` unaltered. |
+| 2026-09-30 | 📌 | `npm test` fails on pty drill tests (`plan-rig-*`, `coordinator-drill`, helpers) when several workers run the suite at once: load 40 on 10 cores, a different set each run. Green at load 5. Rerun when quiet before suspecting the code. |
 | 2026-09-30 | 📌 | T01: with several workers running `npm test` at once (load average 20 to 48) the pty rig tests time out, different ones each run: `conversation-rig`, `plan-rig-brief-box`, `plan-rig-planning-drill`. Green at load under 10. Re-run before suspecting the change. |
 | 2026-09-30 | 📌 | T01: `boundary.test.mjs` matches its import pattern in comments too. The word `from` followed by a quoted phrase in a core file's comment fails as `bare import '…'`. Reword the comment; T02 and T03 write core files. |
 | 2026-09-30 | 🐞 | T03: rig tests (`plan-rig-planning-drill.test.mjs`, header `finished, read only` not `live`; `the helpers scenario`) fail some full `npm test` runs under load 20 to 50 from parallel builds, a different one each time. Green alone. Not investigated. |
