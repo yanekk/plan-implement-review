@@ -476,3 +476,79 @@ test('lastAssistantText: the last assistant text block, skipping user text and t
   ];
   assert.equal(lastAssistantText(entries), 'three');
 });
+
+// ---- fast-tests T01: onActivity wakes the coordinator loop (DESIGN §2.1) ----
+
+// stubWorkers() → a startWorker whose workers are driven by hand: emit(i, entry) plays a log entry to
+// worker i's listeners, exit(i) plays its exit. No process, so the hook's calls are counted exactly.
+function stubWorkers() {
+  const made = [];
+  const startWorker = () => {
+    const ev = [];
+    const ex = [];
+    const w = {
+      pid: null,
+      answered: [],
+      send: () => true,
+      note: () => {},
+      answer: (requestId) => (w.answered.push(requestId), true),
+      onEvent: (fn) => ev.push(fn),
+      onExit: (fn) => ex.push(fn),
+      entries: () => [],
+      close: async () => {},
+    };
+    // Like worker-proc: an event listener that throws is contained; an exit listener is not.
+    w.emit = (entry) => ev.forEach((fn) => {
+      try {
+        fn(entry);
+      } catch {
+        /* contained by worker-proc */
+      }
+    });
+    w.exit = () => ex.splice(0).forEach((fn) => fn({ code: 0 }));
+    made.push(w);
+    return w;
+  };
+  return { made, startWorker };
+}
+
+test('onActivity: a worker request, output and exit each call it; a note does not', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'pir-platform-activity-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const { made, startWorker: start } = stubWorkers();
+  let calls = 0;
+  const platform = createPlatform({ controlDir: dir, transport: { drain: () => [] }, startWorker: start, claudePath: CLAUDE, onActivity: () => (calls += 1) });
+  platform.spawn({ cwd: tmpdir(), name: NAME('T05'), phase: 'implement' });
+  const [w] = made;
+  const base = calls;
+  w.emit({ dir: 'request', requestId: 'r1', toolName: 'Bash', input: { command: 'ls' } });
+  assert.equal(calls, base + 1, 'a permission request');
+  w.emit({ dir: 'in', event: { type: 'assistant', message: { content: [{ type: 'text', text: 'hi' }] } } });
+  assert.equal(calls, base + 2, 'streaming output');
+  w.emit({ dir: 'in', event: { type: 'result', subtype: 'success', result: '' } });
+  assert.equal(calls, base + 3, 'a turn ending');
+  w.emit({ dir: 'note', kind: 'remote-control', on: true });
+  assert.equal(calls, base + 3, 'a note written by the pass does not wake');
+  w.exit();
+  assert.equal(calls, base + 4, 'an exit');
+  assert.deepEqual(platform.list(), [], 'the exit bookkeeping ran before the wake');
+});
+
+test('onActivity that throws: a grant still answers, and the exit still rewrites workers.json', async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'pir-platform-activity-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const { made, startWorker: start } = stubWorkers();
+  const grants = { decide: () => 'allow-by-grant' };
+  const platform = createPlatform({ controlDir: dir, transport: { drain: () => [] }, startWorker: start, claudePath: CLAUDE, grants, onActivity: () => {
+    throw new Error('boom');
+  } });
+  const id = platform.spawn({ cwd: tmpdir(), name: NAME('T05'), phase: 'implement' });
+  const [w] = made;
+  w.emit({ dir: 'request', requestId: 'r1', toolName: 'Bash', input: { command: 'ls' } });
+  await new Promise((r) => setTimeout(r, 0));
+  assert.deepEqual(w.answered, ['r1'], 'the grant answered the request');
+  const workersFile = () => JSON.parse(readFileSync(join(dir, 'workers.json'), 'utf8'));
+  assert.deepEqual(workersFile().map((x) => x.id), [id]);
+  assert.doesNotThrow(() => w.exit(), 'a throwing hook never escapes the exit listener');
+  assert.deepEqual(workersFile(), [], 'workers.json rewritten on the exit');
+});

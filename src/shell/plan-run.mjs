@@ -35,7 +35,7 @@ import { parseRecord } from '../core/runrecord.mjs';
 import { stoppedOnPerson } from '../core/asking.mjs';
 import { allowResult, workerActivity } from '../core/stream.mjs';
 import { writeJsonAtomic } from './atomic-write.mjs';
-import { drainDropFolder, waitForDrop } from './drop-folder.mjs';
+import { createWaker, drainDropFolder } from './drop-folder.mjs';
 import { startTimeOf as startTimeOfReal } from './identity.mjs';
 import { indexDir as indexDirOf, recordPath, removeRecord, renameRecord, updateRecord } from './index-store.mjs';
 import { createGrants, startPersonInbox } from './person-inbox.mjs';
@@ -236,41 +236,6 @@ export function planRunState(state, { label = null, sessions = [], since = {}, s
       stepRow('review'),
       { id: 'build', phase: 'pending', since: null, stoppedAt: null, tookMs: null, asking: null, worker: null, workers: [] },
     ],
-  };
-}
-
-// A wake-up the loop waits on: a drop in either folder, any entry in the live session's log, the
-// session's exit, a stop, or the backstop timeout.
-function createWaker() {
-  let pending = null;
-  let early = false;
-  return {
-    wake() {
-      if (pending) {
-        const r = pending;
-        pending = null;
-        r();
-      } else {
-        early = true;
-      }
-    },
-    async wait(dirs, ms, { watch, signal } = {}) {
-      if (early || signal?.aborted) {
-        early = false;
-        return;
-      }
-      const ac = new AbortController();
-      const onAbort = () => ac.abort();
-      signal?.addEventListener('abort', onAbort, { once: true });
-      await Promise.race([
-        waitForDrop(dirs, ms, { signal: ac.signal, unref: true, ...(watch ? { watch } : {}) }),
-        new Promise((r) => (pending = r)),
-      ]);
-      pending = null;
-      early = false;
-      ac.abort();
-      signal?.removeEventListener('abort', onAbort);
-    },
   };
 }
 
@@ -501,6 +466,8 @@ export async function runPlanning({ controlDir: givenControlDir, resume = false,
   const since = {};
   const stoppedAt = {};
   const took = {};
+  // Wakes on a drop in either folder, any entry in the live session's log, its exit, or a stop; the
+  // shared waker (drop-folder.mjs) with no pass gap, so this loop behaves as it always has.
   const waker = createWaker();
   const grants = createGrants();
   const byId = (id) => sessions.find((s) => s.id === id) ?? null;
@@ -828,7 +795,7 @@ export async function runPlanning({ controlDir: givenControlDir, resume = false,
       paint();
       // A fresh session's id is recorded by the next call; take it at once rather than after a wait.
       if (spawned) continue;
-      await waker.wait([reportsDir, personInbox.inboxDir], pollMs, { watch, signal });
+      await waker.wait([reportsDir, personInbox.inboxDir], pollMs, { watch, signal, unref: true });
     }
   } catch (err) {
     log(`error: ${err?.stack ?? err}`);

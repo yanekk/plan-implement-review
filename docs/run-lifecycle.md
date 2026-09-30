@@ -77,6 +77,24 @@ included, with no environment flag. The old canonical-repo guard (`canPromoteHer
 (`src/shell/harness/run.mjs`) still refuses to run a paid scenario from a checkout named
 `plan-implement-review`, and `--into <dir>` is its only override.
 
+## Between passes
+
+The loop runs a pass as soon as something happens that the pass would act on or show, and otherwise
+sleeps on a 5 s backstop timer (`PARALLEL_POLL_MS`). What wakes it (one waker, `createWaker` in
+`src/shell/drop-folder.mjs`): a file in `reports/` or `inbox/`; any entry in a worker's conversation log
+except a `note` (a permission request or question set, output, a turn ending; `wakesLoop` in
+`src/core/stream.mjs`); a worker exiting; the coordinator agent's own log entries, its exit and a decision
+file landing in `coordinator/decisions/`; the person's input being forwarded; and a worker setup
+finishing. The loop also wakes itself after a pass that made progress (it spawned, handed to review,
+merged or closed a worker, or moved the end of the run a step; `passProgressed` in `coordinate.mjs`), since
+the pass after it often has work that nothing else would wake it for. A quiet pass does not, so an idle run
+still sleeps on the backstop. A wake that arrives while a pass is running makes the next wait return at once, so none is
+lost. Passes start at least 250 ms apart (`PASS_MIN_GAP_MS`); wakes inside that gap are served by the one
+pass at its end. The timer is only a backstop for a missed filesystem event: correctness never depends
+on a wake. The two pass-counted graces keep their wall-clock meaning: the run ends as stalled only after
+three quiet passes spanning 3 × `PARALLEL_POLL_MS`, and the runaway breaker tolerates one worker over the
+ceiling for three passes and 3 × `PARALLEL_POLL_MS` (`stallVerdict`, `runawayVerdict` in `coordinate.mjs`).
+
 ## Each pass
 
 A pass does, in order:
