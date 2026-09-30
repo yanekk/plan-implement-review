@@ -7,6 +7,7 @@ Legend: 🐞 defect found · ✅ verified by hand with the user · 📌 worth kn
 
 | Date | | Finding |
 |---|---|---|
+| 2026-09-30 | 🐞 | T03: rig tests (`plan-rig-planning-drill.test.mjs`, header `finished, read only` not `live`; `the helpers scenario`) fail some full `npm test` runs under load 20 to 50 from parallel builds, a different one each time. Green alone. Not investigated. |
 | 2026-09-30 | 📌 | Plan review, scratch agent: a job exiting 78 is restarted every 10 s. launchd also prints `last exit code = 78: EX_CONFIG` for a program path that does not exist, so the port-taken code became 47. |
 | 2026-09-30 | 📌 | `writeFileAtomic` creates the target's folders recursively, so a reading written after a scratch home was deleted recreates that home. T04, T08 and T10 stop their sessions before removing one. |
 | 2026-09-30 | 📌 | Not measured at planning: what Login Items shows for the agent, whether `ProcessType` `Background` changes anything, and telling "port held" from "not answering" on a real clash. T09 and the after-merge checklist are where they surface. |
