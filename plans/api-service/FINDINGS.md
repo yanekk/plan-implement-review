@@ -7,6 +7,8 @@ Legend: 🐞 defect found · ✅ verified by hand with the user · 📌 worth kn
 
 | Date | | Finding |
 |---|---|---|
+| 2026-09-30 | 📌 | T01: with several workers running `npm test` at once (load average 20 to 48) the pty rig tests time out, different ones each run: `conversation-rig`, `plan-rig-brief-box`, `plan-rig-planning-drill`. Green at load under 10. Re-run before suspecting the change. |
+| 2026-09-30 | 📌 | T01: `boundary.test.mjs` matches its import pattern in comments too. The word `from` followed by a quoted phrase in a core file's comment fails as `bare import '…'`. Reword the comment; T02 and T03 write core files. |
 | 2026-09-30 | 🐞 | T03: rig tests (`plan-rig-planning-drill.test.mjs`, header `finished, read only` not `live`; `the helpers scenario`) fail some full `npm test` runs under load 20 to 50 from parallel builds, a different one each time. Green alone. Not investigated. |
 | 2026-09-30 | 📌 | Plan review, scratch agent: a job exiting 78 is restarted every 10 s. launchd also prints `last exit code = 78: EX_CONFIG` for a program path that does not exist, so the port-taken code became 47. |
 | 2026-09-30 | 📌 | `writeFileAtomic` creates the target's folders recursively, so a reading written after a scratch home was deleted recreates that home. T04, T08 and T10 stop their sessions before removing one. |
