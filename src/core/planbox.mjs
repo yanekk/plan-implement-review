@@ -13,23 +13,27 @@ export function isBare(text) {
   return text === BARE_TEXT || text === '' || text == null;
 }
 
-// The box's two commands (box-commands DESIGN §2.1), in the order the command pop-up lists them: `plan`
-// above `start`, so `@sk` ↵ ↓ ↵ reaches start with one ↓ (user, plan review 2026-09-28). Lower case, exact.
+// The box's three commands (box-commands DESIGN §2.1, single-runs DESIGN §2.1), in the order the command
+// pop-up lists them: `plan` above `start`, so `@sk` ↵ ↓ ↵ reaches start with one ↓ (user, plan review
+// 2026-09-28), and `single` last so that stays true. Lower case, exact.
 export const COMMANDS = [
   { name: 'plan', description: 'plan something new' },
   { name: 'start', description: 'build a reviewed plan' },
+  { name: 'single', description: 'change something small' },
 ];
 const COMMAND_NAMES = new Set(COMMANDS.map((c) => c.name));
 
-// The notes Enter leaves when it starts nothing — box-commands DESIGN §2.4's table, verbatim. Exported so
-// the shell's tests assert on the same strings rather than retyping them.
+// The notes Enter leaves when it starts nothing — box-commands DESIGN §2.4's table, verbatim, with the
+// texts that name the commands as single-runs DESIGN §2.1 rewords them. Exported so the shell's tests
+// assert on the same strings rather than retyping them.
 export const NOTES = {
-  noAt: () => 'start with @repo/plan or @repo/start',
+  noAt: () => 'start with @repo/plan, /start or /single',
   unknownRepo: (name, roots) => `no repo @${name} in ${roots} — pick one from the list`,
   ambiguousRepo: (name, paths) => `@${name} is in more than one folder: ${paths.join(', ')}`,
-  noCommand: (name) => `pick a command: @${name}/plan or @${name}/start`,
-  unknownCommand: (name, cmd) => `@${name}/${cmd} is not a command — use /plan or /start`,
+  noCommand: (name) => `pick a command: @${name}/plan, /start or /single`,
+  unknownCommand: (name, cmd) => `@${name}/${cmd} is not a command — use /plan, /start or /single`,
   emptyBrief: (name) => `say what to plan after @${name}/plan`,
+  emptyPrompt: (name) => `say what to change after @${name}/single`,
   noSlug: (name) => `name a plan to build after @${name}/start`,
   extraWords: (name) => `@${name}/start takes one plan name`,
   unknownSlug: (name, slug) => `${slug} is not a reviewed, unfinished plan in ${name}`,
@@ -55,6 +59,27 @@ const START_REFUSALS = {
 export function startFailedNote(name, reason, detail = {}) {
   const short = Object.hasOwn(START_REFUSALS, reason) ? START_REFUSALS[reason](detail ?? {}) : reason;
   return `Could not start planning in ${name}: ${short}`;
+}
+
+// startSingleRun's refusal codes in plain words (single-runs DESIGN §2.1). The base-branch codes and
+// not-a-repo read as they do for `/plan`; a broken settings file also says what is wrong with it, since
+// the box is the only way into a single run and no shell command prints the full text.
+const SINGLE_REFUSALS = {
+  'not-a-repo': START_REFUSALS['not-a-repo'],
+  'no-base-setting': START_REFUSALS['no-base-setting'],
+  'no-base-branch': START_REFUSALS['no-base-branch'],
+  'fetch-failed': START_REFUSALS['fetch-failed'],
+  diverged: START_REFUSALS.diverged,
+  'bad-settings': (d) => (d.why ? `its pir settings are broken: ${d.why}` : START_REFUSALS['bad-settings']()),
+  'no-commands': () => 'no setup/test commands in its .pir/settings.json',
+  'empty-prompt': () => 'the change is empty',
+};
+
+// §2.1's `startSingleRun` row: startSingleRun refused or threw. detail is the refusal ({ base, remote, why }).
+// A reason not listed, e.g. a thrown error's message, is shown as it came.
+export function startSingleFailedNote(name, reason, detail = {}) {
+  const short = Object.hasOwn(SINGLE_REFUSALS, reason) ? SINGLE_REFUSALS[reason](detail ?? {}) : reason;
+  return `Could not start the change in ${name}: ${short}`;
 }
 
 // startRun's refusal codes in plain words (box-commands DESIGN §2.4); anything else as it came.
@@ -90,7 +115,8 @@ function matching(repos, name) {
 
 // parseBoxText(text, repos, { roots, plansOf }) → what Enter would do with this text (§2.4).
 // The checks run in §2.4's table order, so the first that applies wins (`@nope/bogus` is unknown-repo).
-// A brief is the rest trimmed at both ends, its inner newlines kept. A slug must be exactly one of
+// A brief is the rest trimmed at both ends, its inner newlines kept; a /single prompt is read the same way
+// (single-runs DESIGN §2.1). A slug must be exactly one of
 // plansOf(repo)'s, never a prefix (§2.4, planner). plansOf is a scan of the disk, so it is called only for
 // a /start text with a single word, after the repo resolved.
 export function parseBoxText(text, repos, { roots, plansOf = () => [] } = {}) {
@@ -112,6 +138,10 @@ export function parseBoxText(text, repos, { roots, plansOf = () => [] } = {}) {
   if (command === 'plan') {
     if (arg === '') return { ok: false, reason: 'empty-brief', name, command, note: NOTES.emptyBrief(name) };
     return { ok: true, command, repo, brief: arg };
+  }
+  if (command === 'single') {
+    if (arg === '') return { ok: false, reason: 'empty-prompt', name, command, note: NOTES.emptyPrompt(name) };
+    return { ok: true, command, repo, prompt: arg };
   }
   if (arg === '') return { ok: false, reason: 'no-slug', name, command, note: NOTES.noSlug(name) };
   if (/\s/.test(arg)) return { ok: false, reason: 'extra-words', name, command, note: NOTES.extraWords(name) };
@@ -154,9 +184,10 @@ export function headLine(text, repos, { roots, plansOf = () => [] } = {}) {
   const { name, command } = head;
   const found = matching(repos, name);
   if (found.length === 0) return { text: `@${name} is not a repo in ${roots}`, style: 'your-go' };
-  if (!command) return { text: `in ${name} — /plan or /start`, style: 'dim' };
-  if (!COMMAND_NAMES.has(command)) return { text: `/${command} is not a command — /plan or /start`, style: 'your-go' };
+  if (!command) return { text: `in ${name} — /plan, /start or /single`, style: 'dim' };
+  if (!COMMAND_NAMES.has(command)) return { text: `/${command} is not a command — /plan, /start or /single`, style: 'your-go' };
   if (command === 'plan') return { text: `plan in ${name}`, style: 'dim' };
+  if (command === 'single') return { text: `change in ${name}`, style: 'dim' };
   const buildable = found.some((r) => (plansOf(r) ?? []).length > 0);
   return buildable ? { text: `build in ${name}`, style: 'dim' } : { text: `nothing to build in ${name}`, style: 'your-go' };
 }

@@ -97,11 +97,11 @@ test('end to end at 80×24: every §2.5 refusal starts nothing and shows its exa
   const env = { ...rig.env, PIR_REPOS: '~/src:~/work' };
   const screen = rig.openScreen({ cols: 80, rows: 24, env });
   const cases = [
-    { keys: [BS, 'hello'], note: 'start with @repo/plan or @repo/start', text: 'hello' },
-    { keys: [' hello'], note: 'start with @repo/plan or @repo/start', text: '@ hello' },
+    { keys: [BS, 'hello'], note: 'start with @repo/plan, /start or /single', text: 'hello' },
+    { keys: [' hello'], note: 'start with @repo/plan, /start or /single', text: '@ hello' },
     { keys: ['nope/plan ', 'x'], note: 'no repo @nope in ~/src, ~/work — pick one from the list', text: '@nope/plan x' },
     { keys: ['twin', '/plan ', 'brief'], note: /^@twin is in more than one folder: (~\/src\/twin, ~\/work\/twin|~\/work\/twin, ~\/src\/twin)$/, text: '@twin/plan brief' },
-    { keys: ['repo', ' ', 'brief'], note: 'pick a command: @repo/plan or @repo/start', text: '@repo brief' },
+    { keys: ['repo', ' ', 'brief'], note: 'pick a command: @repo/plan, /start or /single', text: '@repo brief' },
     { keys: ['repo', '/plan', ' '], note: 'say what to plan after @repo/plan', text: '@repo/plan' },
     // startPlanRun's own refusals (base-branch §2.9 short form): a repo with no settings is listed and
     // refused on pick; a settings file naming `main` after `main` was renamed between the pick and Enter.
