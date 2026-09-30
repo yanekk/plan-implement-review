@@ -7,6 +7,8 @@ Legend: 🐞 defect found · ✅ verified by hand with the user · 📌 worth kn
 
 | Date | | Finding |
 |---|---|---|
+| 2026-09-30 | 🐞 | T10 review drill, worker-driven: `single-dropped` at 80×24 and 120×40, list, steps view, `c`, `→` on each step, Ctrl+R, Ctrl+X. `→` on a dropped run's review row promised a reviewer. Fixed in `singleNoSessionNote`, test locks it. |
+| 2026-09-30 | 📌 | The armed `Ctrl+S` and `Ctrl+X` lines name a single run by its id (`single-02c3`) while its row shows the label; only the resume line uses `displayName`. A planning run does the same. Left alone. |
 | 2026-09-30 | 📌 | T10 drill, worker-driven: list and steps view of `single-happy` and `single-red` at 80×24 and 120×40, `→` on merge, `c`. Nothing clipped. Fixed: a full label lost its closing quote at 80 columns. |
 | 2026-09-30 | 📌 | The merged check asks about `refs/heads/pir/{name}` and keeps its yes in memory. A branch deleted after the merge reads `ready to merge` again once `pir` restarts. Not decided in DESIGN §2.8. |
 | 2026-09-30 | 📌 | T13: `PIR_DASHBOARD_STATE` now publishes `run.kind` `single`, and a builder as role `implement`. `docs/detached-runs.md` still says `"plan" \| "work"`. |
