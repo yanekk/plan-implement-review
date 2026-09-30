@@ -75,11 +75,21 @@ async function startService(home) {
   const exited = new Promise((resolve) => child.once('exit', (code, signal) => resolve({ code, signal })));
   let gone = false;
   exited.then(() => (gone = true));
-  const record = await until(() => {
-    if (gone) throw new Error(`the service exited before it was up: ${stderr}`);
-    const r = readJson(discovery);
-    return r?.pid === child.pid ? r : null;
-  }, 'api.json naming the service');
+  let record;
+  try {
+    record = await until(() => {
+      if (gone) throw new Error(`the service exited before it was up: ${stderr}`);
+      const r = readJson(discovery);
+      return r?.pid === child.pid ? r : null;
+    }, 'api.json naming the service');
+  } catch (err) {
+    // Nobody holds this child yet, so no teardown would stop it: left alone it outlives the suite, keeps
+    // the test process from exiting (its stderr pipe), and rewrites api.json every 30 s, which recreates
+    // the temp home after it was removed.
+    if (!gone) child.kill('SIGKILL');
+    await exited;
+    throw err;
+  }
   return {
     child,
     pid: child.pid,
