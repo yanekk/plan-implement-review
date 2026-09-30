@@ -20,7 +20,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T03 | service-core | — | ✅ | |
 | T04 | usage-report | T01, T02 | ✅ | `usage-report.mjs` and the `reportUsage` default on `startWorker`, called after each `in` entry is logged. Review: one fix. No test held the default parameter (`null` there passed all, found by mutation); added a child-process test on a scratch home. Gate, log order and `t` tests read and hold. Deviation accepted: guarded `osHome` lookup. 14 tests. |
 | T05 | api-service | T01, T02 | ⬜ | |
-| T06 | service-ctl | T02, T03 | ⬜ | |
+| T06 | service-ctl | T02, T03 | ✅ | |
 | T07 | service-command | T06 | ⬜ | |
 | T08 | usage-e2e | T04, T05 | ⬜ | |
 | T09 | launchd-check | T05, T06 | ⬜ | |
