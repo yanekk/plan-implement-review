@@ -330,6 +330,17 @@ export function decideSingleStep(state, facts = {}) {
 
   const dropping = () => s.accepted?.kind === 'dropped';
 
+  // The report this step acts on: a `dropped` if one was drained, else the last of the step's kinds.
+  // A drop ends the run, so it outranks a `built` or `reviewed` drained with it whatever their order,
+  // and it is taken before the command result below: a red that lands in the same call must not count
+  // a round, start the baseline or reopen a session only to tell it of tests nobody will fix.
+  const relevant = (facts.reports ?? []).filter((r) => r && STEP_KINDS[step].includes(r.kind));
+  const report = relevant.findLast((r) => r.kind === 'dropped') ?? relevant.at(-1);
+  if (report?.kind === 'dropped') {
+    s.accepted = { kind: 'dropped', name: report.name ?? null, body: report.body ?? '' };
+    s.pending = null;
+  }
+
   // A finished command run. One that is not the run in flight is stale and ignored.
   if (done && done.kind === s.running) {
     if (done.kind === 'tests') {
@@ -375,13 +386,8 @@ export function decideSingleStep(state, facts = {}) {
     actions.push({ type: 'runBaseline' });
   }
 
-  // The last report this step acts on.
-  const report = (facts.reports ?? []).filter((r) => r && STEP_KINDS[step].includes(r.kind)).at(-1);
   if (report) {
-    if (report.kind === 'dropped') {
-      s.accepted = { kind: 'dropped', name: report.name ?? null, body: report.body ?? '' };
-      s.pending = null;
-    } else if (!dropping()) {
+    if (!dropping()) {
       s.pending = { kind: report.kind, name: report.name };
       actions.push({ type: 'check', kind: report.kind, name: report.name });
     }

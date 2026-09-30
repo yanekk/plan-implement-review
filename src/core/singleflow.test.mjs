@@ -533,6 +533,31 @@ test('dropped waits for the idle gate, and a test run in flight is forgotten', (
   assert.equal(end.state.running, null);
 });
 
+test('a dropped report wins over any other report drained with it, whatever the order', () => {
+  for (const reports of [
+    [{ kind: 'dropped', name: null, body: 'x' }, { kind: 'built', name: 'fix-typo', body: '' }],
+    [{ kind: 'built', name: 'fix-typo', body: '' }, { kind: 'dropped', name: null, body: 'x' }],
+  ]) {
+    const r = decideSingleStep(building(), { reports, idle: true });
+    assert.deepEqual(r.actions, [{ type: 'closeWhenIdle' }, { type: 'finish', outcome: 'dropped' }]);
+    assert.equal(r.state.accepted.body, 'x');
+  }
+});
+
+test('a dropped report drained with a red result: no round, no baseline, no message', () => {
+  const dropped = { kind: 'dropped', name: null, body: 'x' };
+  const r = decideSingleStep(buildTesting(), { reports: [dropped], commandDone: red(), idle: true });
+  assert.deepEqual(r.actions, [{ type: 'closeWhenIdle' }, { type: 'finish', outcome: 'dropped' }]);
+  assert.equal(r.state.rounds.build, 0);
+  assert.equal(r.state.baseline, null);
+
+  // The baseline returning in the same call must not reopen a session that is gone to tell it of a red.
+  let s = decideSingleStep(buildTesting(), { commandDone: red() }).state;
+  s = decideSingleStep(s, { exited: true }).state;
+  const b = decideSingleStep(s, { reports: [dropped], commandDone: { kind: 'baseline', ok: true, logPath: '/c/baseline.log' }, idle: true });
+  assert.deepEqual(b.actions, [{ type: 'finish', outcome: 'dropped' }]);
+});
+
 // --- ignored reports, exits ---------------------------------------------------------------------
 
 test("a report of the other step's kind is ignored", () => {
