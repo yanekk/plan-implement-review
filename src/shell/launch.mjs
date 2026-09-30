@@ -189,6 +189,11 @@ const planRunPath = () => fileURLToPath(new URL('./plan-run.mjs', import.meta.ur
 // is broken (a stuck injected one), not that the repo is full.
 const MAX_ID_TRIES = 64;
 
+// The file and cause of a bad-settings result, for a refusal that carries them beside its message.
+function settingsCause(result) {
+  return result.reason === 'bad-settings' ? { file: result.file, why: result.why } : {};
+}
+
 function gitOk(cwd, args) {
   try {
     const stdout = execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
@@ -200,6 +205,7 @@ function gitOk(cwd, args) {
 
 // planPreflight({ cwd, env, prepareBase }) → { ok: true, root, repo, base, baseSha, remote, file }
 //   | { ok: false, reason, message?, base?, remote? }       (file: the settings file that named the base)
+//   | { ok: false, reason: 'bad-settings', message, file, why }   (file: the broken one; why: what is wrong)
 //   reason: 'not-a-repo'|'no-base-setting'|'bad-settings'|'no-base-branch'|'fetch-failed'|'diverged'
 // pir-plan-command DESIGN §2.2 steps 1–2 and base-branch DESIGN §2.6, in order. There is no repo-name
 // check: the canonical-repo guard was removed (dashboard-plan-box DESIGN §2.8), so planning works in any
@@ -220,7 +226,9 @@ export function planPreflight({ cwd = process.cwd(), env = process.env, prepareB
 
   // 2. The base branch, stated in the settings (base-branch §2.1, §2.2), never guessed.
   const setting = resolveBaseSetting(root, { env });
-  if (!setting.ok) return { ok: false, reason: setting.reason, message: refusalText(setting, { repo }) };
+  // A broken file's name and cause also travel on their own: the box words that refusal itself, as
+  // `its pir settings are broken: {why}` (single-runs DESIGN §2.1), and cannot cut it out of `message`.
+  if (!setting.ok) return { ok: false, reason: setting.reason, message: refusalText(setting, { repo }), ...settingsCause(setting) };
   const base = setting.base;
 
   // 3. The newest commit of that base (§2.3). Never checks anything out: the person's checkout stays put.
@@ -362,8 +370,9 @@ export function singleRunPath() {
 
 // startSingleRun(prompt, { cwd, spawn, exec, fs, now, env, random }) →
 //   { started: true, runId, pid, record, controlDir }
-//   | { started: false, reason, message?, base?, remote? }
+//   | { started: false, reason, message?, base?, remote?, file?, why? }
 //   reason: 'not-a-repo' | <a planPreflight base reason> | 'bad-settings' | 'no-commands' | 'empty-prompt'
+// A bad-settings refusal carries `file` and `why` whichever read met the broken file.
 // The one call the dashboard box makes for `@repo/single <prompt>`. The refusals come in that order and
 // before anything is created (§2.3). `message` is the full line for a caller that shows one: refusalText
 // for a base refusal, commandsRefusalText for the commands. The commands are read here, once, and stored
@@ -394,7 +403,7 @@ export function startSingleRun(
   const commands = effectiveCommands(files);
   if (!commands.ok) {
     const message = commandsRefusalText(commands, { repo, repoFile: files.repoFile, userFile: files.userFile });
-    return { started: false, reason: commands.reason, message };
+    return { started: false, reason: commands.reason, message, ...settingsCause(commands) };
   }
   if (typeof prompt !== 'string' || prompt.trim() === '') return { started: false, reason: 'empty-prompt' };
 

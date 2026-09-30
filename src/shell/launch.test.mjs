@@ -953,21 +953,28 @@ const startSingle = (s, prompt, extra = {}) => {
   return { r, calls, unrefs };
 };
 
-for (const [label, arrange, reason, check = () => {}] of [
+for (const [label, arrange, reason, check = () => {}, alsoCheck = () => {}] of [
   ['outside a git repo', (s) => ({ cwd: s.base }), 'not-a-repo'],
   ['no base branch set', (s) => { repoSettings(s, COMMANDS); return {}; }, 'no-base-setting', (r) => assert.match(r.message, /^pir: no base branch is set for proj\./)],
   ['a base branch that does not exist', (s) => { repoSettings(s, { baseBranch: 'dev', ...COMMANDS }); return {}; }, 'no-base-branch', (r) => assert.match(r.message, /^pir: the base branch dev /)],
-  ['a settings file that is not JSON', (s) => { writeFileSync(join(s.root, '.pir', 'settings.json'), '{oops'); return {}; }, 'bad-settings', (r) => assert.match(r.message, /\.pir\/settings\.json.*not valid JSON/)],
+  ['a settings file that is not JSON', (s) => { writeFileSync(join(s.root, '.pir', 'settings.json'), '{oops'); return {}; }, 'bad-settings', (r) => {
+    assert.match(r.message, /\.pir\/settings\.json.*not valid JSON/);
+    // The box words this refusal as `its pir settings are broken: {why}` (§2.1), so the cause travels alone too.
+    assert.deepEqual([r.file, r.why], ['.pir/settings.json', 'it is not valid JSON']);
+  }],
   ['a test key of the wrong shape, though the user file has a good one', (s) => {
     repoSettings(s, { baseBranch: 'main', setup: [], test: 'npm test' });
     userSettings(s, { test: ['npm test'] });
     return {};
   }, 'bad-settings', (r) => assert.match(r.message, /\.pir\/settings\.json.*"test" must be a non-empty list of commands/)],
-  ['a user file with an empty test list', (s) => { userSettings(s, { test: [] }); return {}; }, 'bad-settings', (r, s) => assert.ok(r.message.includes(join(s.home, '.pir', 'proj', 'settings.json')), r.message)],
+  ['a user file with an empty test list', (s) => { userSettings(s, { test: [] }); return {}; }, 'bad-settings', (r, s) => {
+    assert.ok(r.message.includes(join(s.home, '.pir', 'proj', 'settings.json')), r.message);
+    assert.deepEqual([r.file, r.why], [join(s.home, '.pir', 'proj', 'settings.json'), '"test" must be a non-empty list of commands']);
+  }],
   ['no commands in either file', (s) => { repoSettings(s, { baseBranch: 'main' }); return {}; }, 'no-commands', (r, s) => assert.equal(
     r.message,
     `proj has no setup/test commands for a single run. Add to .pir/settings.json (or ${join(s.home, '.pir', 'proj', 'settings.json')}): "setup": ["<install command>"], "test": ["<test command>"]`,
-  )],
+  ), (r) => assert.ok(!('why' in r) && !('file' in r), 'only a broken file carries a cause')],
   ['setup set but no test', (s) => { repoSettings(s, { baseBranch: 'main', setup: [] }); return {}; }, 'no-commands', (r) => assert.match(r.message, /^proj has no test commands for a single run\. Add to \.pir\/settings\.json \(or .+\): "test": \["<test command>"\]$/)],
   ['an empty prompt', () => ({ prompt: ' \n\t ' }), 'empty-prompt'],
   ['a prompt that is not text', () => ({ prompt: null }), 'empty-prompt'],
@@ -980,6 +987,7 @@ for (const [label, arrange, reason, check = () => {}] of [
     assert.equal(r.started, false);
     assert.equal(r.reason, reason);
     check(r, s);
+    alsoCheck(r, s);
     assert.equal(calls.length, 0, 'nothing spawned');
     assert.deepEqual(footprint(s), before, 'no branch, worktree, folder or index entry');
   });
@@ -1012,7 +1020,13 @@ test('startSingleRun: a settings file broken after the pre-flight read it still 
     return { ok: true, sha, remote: null };
   };
   const { r, calls } = startSingle(s, 'a change', { prepareBase });
-  assert.deepEqual(r, { started: false, reason: 'bad-settings', message: '.pir/settings.json: "setup" must be a list of commands' });
+  assert.deepEqual(r, {
+    started: false,
+    reason: 'bad-settings',
+    message: '.pir/settings.json: "setup" must be a list of commands',
+    file: '.pir/settings.json',
+    why: '"setup" must be a list of commands',
+  });
   assert.equal(calls.length, 0);
   assert.deepEqual(footprint(s), before);
 });

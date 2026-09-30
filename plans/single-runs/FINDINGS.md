@@ -8,7 +8,7 @@ Legend: 🐞 defect found · ✅ verified by hand with the user · 📌 worth kn
 | Date | | Finding |
 |---|---|---|
 | 2026-09-30 | 📌 | T10: `resumeRun` does not refuse a finished single record; it spawns `single-run.mjs --resume` as it does for a plan record. Not offering resume on `ready` and `dropped` rows is `canResume`'s job (DESIGN §2.11). |
-| 2026-09-30 | 📌 | T09: a broken settings file refuses in `planPreflight` first, so `startSingleRun` returns `bad-settings` with `refusalText`'s `message` (`pir: {file} is not usable: {why}.`) and no `why` field. DESIGN §2.1's box text wants `{why}` alone. |
+| 2026-09-30 | 📌 | T09: `startSingleRun`'s `bad-settings` refusal carries `file` and `why` beside `message` (added in T05 review, also on `planPreflight`). Word the box's `its pir settings are broken: {why}` from `why`; `message` is `refusalText`'s full line. |
 | 2026-09-30 | 🐞 | T04, needs a decision: tests that leave a file git does not ignore make every green run read dirty, so `decideSingleStep` reruns the tests without end and tells nobody. DESIGN §2.4 step 3 names no exit. Found in T02 review. |
 | 2026-09-30 | 📌 | T04: a commit the session makes after a green result without reporting is not seen by `decideSingleStep`; the step closes at the idle gate on the tested head. In review that ends `ready` with an untested commit. |
 | 2026-09-30 | 📌 | T04: `facts.exited` and `facts.live` must describe the session held now. After a `resumeSession` that a `send` forced, a stale `exited: true` on the next call reads as a crash (`exitCrashed`). |
