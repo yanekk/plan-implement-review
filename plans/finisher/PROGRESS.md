@@ -12,9 +12,9 @@ past.
 
 **Plan reviewed:** 2026-09-29 — 11 fixed, 2 decided with the user
 
-**Status:** Planned 2026-09-29. Nothing built.
+**Status:** All eleven tasks built and reviewed.
 **Last updated:** 2026-09-30
-**Next `pir-work` will:** review T10 finisher-live.
+**Next `pir-work` will:** nothing; every task is ✅.
 
 ## Tasks
 
@@ -33,9 +33,9 @@ done · ⛔ blocked, needs a human.
 | T07 | finisher-row | T05 | ✅ | |
 | T08 | finisher-docs | T03, T05, T06, T07 | ✅ | |
 | T09 | finisher-drill | T03, T06, T07 | ✅ | |
-| T10 | finisher-live | T08, T09 | 🔍 | `finisher-live` fixture (T01 seeded ✅), scenario `watchFinisher`, runner looks before go and after run, 3 facts. Live PASS 2026-09-30, run by the user: my sandbox blocks Remote Control (FINDINGS). Loop test takes a per-fixture starting state. |
+| T10 | finisher-live | T08, T09 | ✅ | `finisher-live` fixture, scenario `watchFinisher`, 3 facts. Live PASS 2026-09-30, run by the user; phone half verified by hand (FINDINGS). Review clean, no fix commit: suite green, fact formats checked against `finisher-agent.mjs` and `coordinate.mjs`, PASS corroborated from the finisher's session transcript, scratch gone, this repo's main untouched. Bundle not kept. |
 
-**Review queue:** T10
+**Review queue:** empty
 
 ## Blocked on the user
 
