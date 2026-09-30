@@ -22,7 +22,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T04 | single-program | T02, T03 | ⬜ | |
 | T05 | single-launch | T01, T02 | ⬜ | |
 | T06 | single-alerts | T04 | ⬜ | |
-| T07 | single-skill | T02 | 🔍 | Skill `pir-single` (builder, reviewer), in `install.sh` `SKILLS`; 10 tests, one runs the drop command for real. Deviations: the drop command takes the role as a second argument, not a literal `from`; name check 1 reads `{base}` from the opening instruction, not `pirBase`; frontmatter adds `user-invocable: false`. `./install.sh` not run from the task worktree. |
+| T07 | single-skill | T02 | ✅ | Review fixed three skill statements that differed from `singleflow.mjs` (setup note position, the past-limit line, the stop after the starting commit), each confirmed by printing the real message; 12 tests. Deviations accepted. Probed the name checks in a scratch repo and an install into a scratch HOME. `npm test` red only in pty tests that fail the same without T07. |
 | T08 | single-rig | T04, T05 | ⬜ | |
 | T09 | box-single | T05, T08 | ⬜ | |
 | T10 | single-row | T04, T08 | ⬜ | |
@@ -30,7 +30,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T12 | single-live | T07, T11 | ⬜ | |
 | T13 | docs-and-readme | T12 | ⬜ | |
 
-**Review queue:** T07
+**Review queue:** *(empty)*
 
 ## Blocked on the user
 
