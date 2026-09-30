@@ -7,6 +7,8 @@ Legend: 🐞 defect found · ✅ verified by hand with the user · 📌 worth kn
 
 | Date | | Finding |
 |---|---|---|
+| 2026-09-30 | 📌 | T11: `docs/detached-runs.md` § The commands lists neither `pir service` nor `pir notify`, and says any other word is an unknown command. Outside T11's files, left as it is. |
+| 2026-09-30 | 📌 | T11, worker-driven: the service started on a scratch home answered every row of the contract as `docs/api-service.md` states it. A `HEAD` gets the 405 and its headers with no body. Folder removed. |
 | 2026-09-30 | 🐞 | T10 review: a harness killed from outside left its coordinator and sessions running, with no time limit. Reproduced with a real process tree, fixed, test locks it. Reviewer's live run, worker-driven, exited 0: 8 events, 5 distinct `observed_at`, folder removed. |
 | 2026-09-30 | 📌 | T10, worker-driven: `node src/shell/harness/usage-live-check.mjs --into /tmp/usage-live` exited 0 in 90 s. 8 `rate_limit_event`s in 4 logs, all with `unifiedWindows`; 6 distinct `observed_at` over 18 polls; final API equal to the newest event. Folder removed, no worker left. |
 | 2026-09-30 | 📌 | T10: the auto-mode classifier refused the live check wrapped in `cd … && … > file` (`Real-World Transactions`). The bare command, matching its `allow` rule in `.claude/settings.json`, ran. Run §5.3 commands exactly as written. |

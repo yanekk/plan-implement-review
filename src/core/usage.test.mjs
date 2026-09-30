@@ -315,3 +315,44 @@ test('usageBody: the recorded event, end to end through the file', () => {
     },
   });
 });
+
+// ---- docs/api-service.md (api-service T11) ----
+// The page's examples are one reading shown three ways: the event, the file, the answer. Each is
+// derived here from the one before, so an example edited by hand fails until the chain agrees again.
+
+const DOC = readFileSync(new URL('../../docs/api-service.md', import.meta.url), 'utf8');
+const README = readFileSync(new URL('../../README.md', import.meta.url), 'utf8');
+const jsonBlocks = (text) => [...text.matchAll(/^```json\n([\s\S]*?)\n```$/gm)].map((m) => m[1]);
+const DOC_JSON = jsonBlocks(DOC);
+
+test('docs/api-service.md: every JSON example parses', () => {
+  assert.ok(DOC_JSON.length >= 6, `found ${DOC_JSON.length} examples`);
+  for (const block of DOC_JSON) assert.doesNotThrow(() => JSON.parse(block), block);
+});
+
+test('docs/api-service.md: the file example is the event example saved, and the usage example is its answer', () => {
+  const parsed = DOC_JSON.map((block) => ({ block, value: JSON.parse(block) }));
+  const eventExample = parsed.find((e) => e.value.type === 'rate_limit_event');
+  const fileExample = parsed.find((e) => e.value.five_hour !== undefined);
+  const answers = parsed.filter((e) => 'rate_limits' in e.value);
+  assert.ok(eventExample && fileExample, 'the page shows the event and the file');
+  assert.equal(answers.length, 2, 'the page shows the answer with a reading and the answer without');
+
+  const heard = readingFromEvent(eventExample.value, fileExample.value.observed_at);
+  assert.deepEqual(JSON.parse(serializeReading(heard)), fileExample.value);
+  // Key order is part of what a reader sees, so the texts are compared, not only the values.
+  assert.equal(JSON.stringify(fileExample.value), serializeReading(heard).trimEnd());
+
+  // Read back the way the service does, from the text the page shows.
+  const read = parseReading(fileExample.block, fileExample.value.observed_at);
+  assert.deepEqual(read, heard);
+  const [withReading, without] = answers[0].value.rate_limits ? answers : [answers[1], answers[0]];
+  assert.equal(JSON.stringify(withReading.value), JSON.stringify(usageBody(read)));
+  assert.equal(JSON.stringify(without.value), JSON.stringify(usageBody(null)));
+});
+
+test('README.md: the usage answer it shows is the one the docs page shows', () => {
+  const [shown] = jsonBlocks(README).filter((block) => block.includes('rate_limits'));
+  const inDoc = DOC_JSON.map((block) => JSON.parse(block)).find((value) => value.rate_limits);
+  assert.equal(shown, JSON.stringify(inDoc));
+});
