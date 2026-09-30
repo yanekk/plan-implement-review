@@ -26,12 +26,13 @@ export function startApiService({ env = process.env, osHome, now = Date.now, por
 // close() stops the timer, removes api.json if its pid is ours, and closes the server.
 
 // As a program: `node src/shell/api-service.mjs`. SIGTERM or SIGINT → close(), exit 0.
-// EADDRINUSE → exit 78 (EXIT_PORT_TAKEN), nothing printed. Any other start failure → one line on
+// EADDRINUSE → exit 47 (EXIT_PORT_TAKEN), nothing printed. Any other start failure → one line on
 // stderr, exit 1.
 ```
 
-Each request: build `{ method, url, host: req.headers.host }`, call `route` with
-`endpoints = { '/v1/usage': () => usageBody(parseReading(cachedText(), now())) }`, write the result.
+Each request: build `{ method, url }`, call `route` with
+`endpoints = { '/health': () => healthBody({ pid }), '/v1/usage': () => usageBody(parseReading(cachedText(), now())) }`,
+write the result. `/health` touches no file.
 The cache holds the file's text and is refreshed when `statSync` shows a different size or mtime; a
 missing or unreadable file is empty text. Request bodies are never read.
 
@@ -40,14 +41,15 @@ Reason: DESIGN §2.6, it must start when `npm ci` failed.
 
 ## Tests
 
-All on a temp `PIR_HOME` and an OS-chosen port, through real HTTP requests (`node:http`, so the
-`Host` header can be set).
+All on a temp `PIR_HOME` and an OS-chosen port, through real HTTP requests (`node:http`).
 
 - [ ] no `usage.json` → 200 with nulls
 - [ ] a valid `usage.json` → the body of DESIGN §2.1 with the file's numbers
 - [ ] the file replaced with a newer reading → the next request serves it, with no restart
 - [ ] the file replaced by garbage, by a future-dated reading, then deleted → 200 with nulls each time
-- [ ] `Host: evil.example` → 403; `POST /v1/usage` → 405; `/nope` → 404; headers as §2.1, no `Access-Control-*`
+- [ ] `GET /health` → 200 `{ version: 1, status: 'ok', pid }` with the service's pid: with no `usage.json`, with a valid one and with garbage in it
+- [ ] `POST /v1/usage`, `POST /health` → 405; `/nope` → 404; headers as §2.1, no `Access-Control-*`
+- [ ] a request with `Host: evil.example` is answered like any other (§2.1 checks no `Host`)
 - [ ] the listening address is `127.0.0.1`
 - [ ] `api.json` exists once `startApiService` resolves, equals `discoveryRecord`, and no `.tmp` is left
 - [ ] `api.json` deleted, or overwritten with another pid → rewritten within `reassertMs` (use 20 ms)
@@ -55,7 +57,7 @@ All on a temp `PIR_HOME` and an OS-chosen port, through real HTTP requests (`nod
 - [ ] a second service on the same explicit port → rejects `EADDRINUSE` and does not touch the first one's `api.json`
 - [ ] `env` with the real home and `NODE_TEST_CONTEXT` → rejects `TEST_REAL`, nothing bound
 - [ ] as a child process with a scratch `PIR_HOME`: answers; SIGTERM → exit 0 and `api.json` gone
-- [ ] as a child process with the port forced to one a test server holds → exit 78, no `api.json`
+- [ ] as a child process with the port forced to one a test server holds → exit 47, no `api.json`
 - [ ] the import graph from `api-service.mjs` holds no bare specifier (walk it with the `SPECIFIER` approach of `src/core/boundary.test.mjs`)
 
 ## Outside actions
@@ -65,5 +67,5 @@ All on a temp `PIR_HOME` and an OS-chosen port, through real HTTP requests (`nod
 ## Done when
 
 - [ ] `npm test` is green with the cases above.
-- [ ] `PIR_HOME=$(mktemp -d) node src/shell/api-service.mjs` answers `curl` on the url in that folder's `.pir/api.json`, and Ctrl-C removes the file.
+- [ ] `PIR_HOME=$(mktemp -d) node src/shell/api-service.mjs` answers `curl` on `/health` and `/v1/usage` at the url in that folder's `.pir/api.json`, and SIGINT removes the file.
 - [ ] No test in this task binds port 47717: `grep -n 47717 src/shell/api-service.test.mjs` prints nothing.

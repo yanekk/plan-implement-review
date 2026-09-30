@@ -3,7 +3,7 @@
 **Update this whenever a task changes state.** It is the handoff between sessions. What the build taught
 lives in [FINDINGS.md](FINDINGS.md). Sixty words to a Notes cell, counted.
 
-**Plan reviewed:** not yet — run `/pir-review-plan` before the first `/pir-work`
+**Plan reviewed:** 2026-09-30 — 10 fixed, 8 decided with the user
 
 **Status:** Planned, not started.
 **Last updated:** 2026-09-30

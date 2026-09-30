@@ -16,25 +16,28 @@ DESIGN §2 as built; `CLAUDE.md § The README follows every major feature`.
 - `docs/api-service.md` (new)
 - `docs/README.md`: the opening list of what the folder covers, and the components section
 - `README.md`: a section for the service and the command, a line in `## Install`, the command list near line 54
+- `src/core/service.test.mjs`, `src/core/usage.test.mjs`, `src/core/api.test.mjs`: the doc tests below
 
 ## Interface
 
 `docs/api-service.md`, in this order: what it is for; the contract (discovery file, `GET /v1/usage`,
-the 403, 404, 405 and 500 answers, the headers) copied from the code's behaviour, not from DESIGN;
+`GET /health`, the 404, 405 and 500 answers, the headers, no `Host` check and no CORS grant) copied
+from the code's behaviour, not from DESIGN;
 the port and what happens when it is taken; where a reading comes from and the `usage.json` hand-off;
 who reports and who does not; the login item, the plist and what `install.sh` does; `pir service`,
 `on`, `off`, with each printed text; scratch homes and what tests may not touch; **Known limitations**
 (a run on the old engine, a run not started by `pir`, no events off a claude.ai subscription,
 `unifiedWindows` undocumented in the SDK, macOS only, a moved `node`).
 
-The README section says what the person gets (the cockpit footer stays current during a pir run; any
-local program can read the numbers), the one command to look at it, the curl line, and links to the
-docs page.
+The README section says what the person gets (any local program can read how much of the 5-hour and
+weekly limit is used, fed by pir's runs), the one command to look at it, the curl line, and links to
+the docs page. It does not promise the cockpit's footer: that reader is agentic-ide's own plan and is
+not built here (`CLAUDE.md`: say only what the code does today).
 
 ## Tests
 
 - [ ] every printed text quoted in `docs/api-service.md` is asserted against `statusText` and `servicePlan` by a test that reads the doc (add to `src/core/service.test.mjs`), so the page cannot drift from the code
-- [ ] the JSON examples in the doc parse, and the usage example equals `usageBody` of the reading it shows
+- [ ] the JSON examples in the doc parse, the usage example equals `usageBody` of the reading it shows, and the health example equals `healthBody`
 - [ ] `docs/README.md` links `api-service.md`; `README.md` links it and names `pir service`
 
 ## Done when

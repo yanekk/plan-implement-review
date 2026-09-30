@@ -31,7 +31,8 @@ export async function serviceLiveCheck({ launchctl, get, kill, sleep, tmp, log }
 
 The sequence, each step a printed line with its measured time:
 
-1. `serviceOn` with `scratchItem: true` → `api.json` appears, `GET /v1/usage` answers 200 with nulls.
+1. `serviceOn` with `scratchItem: true` → `api.json` appears, `GET /health` answers with the pid in it,
+   `GET /v1/usage` answers 200 with nulls.
 2. Wait until the service has been up 11 s (launchd's 10 s minimum runtime), `kill -9` its pid →
    a new pid in `api.json` within 5 s, and it answers.
 3. `kill -9` again at once → back within 15 s (the throttled restart).

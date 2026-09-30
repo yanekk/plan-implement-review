@@ -77,7 +77,7 @@ built by an autonomous worker. No task has a surface, so there is no rig task an
 |---|---|---|
 | A worker hears a usage event and it becomes a reading | T01 | T04, in `worker-proc.mjs` |
 | The reading is saved | T04 | T04; proven through the real launch path in T08 |
-| The service answers `GET /v1/usage` | T01, T02, T05 | T05, its own entry point; the plist names it (T03, T06) |
+| The service answers `GET /v1/usage` and `GET /health` | T01, T02, T05 | T05, its own entry point; the plist names it (T03, T06) |
 | `api.json` is kept current | T02, T05 | T05 |
 | The service starts at login and is kept alive | T03, T06 | T07, in `install.sh` and `pir.mjs` |
 | An upgrade restarts it | T06 (`refresh`) | T07, in `install.sh` |
@@ -94,9 +94,10 @@ merged. Each answer goes in FINDINGS with the date.
 1. `./install.sh` (§5.3 `ask`), then `pir service` reads `running at http://127.0.0.1:47717`.
 2. During a real run: `curl -s "$(jq -r .url ~/.pir/api.json)/v1/usage"` matches the newest
    `rate_limit_event` in that run's conversation log, and `observed_at` moves.
-3. `kill -9 "$(jq -r .pid ~/.pir/api.json)"`, then `pir service` reads running with a new pid.
+3. `kill -9 "$(jq -r .pid ~/.pir/api.json)"` (§5.3 `worker`), then `pir service` reads running with a
+   new pid.
 4. Log out and in: `pir service` reads running without anyone starting it (person).
-5. Tell the agentic-ide plan what §2.1 settled: port 47717, the 403 on a foreign `Host`, the error
+5. Tell the agentic-ide plan what §2.1 settled: port 47717, `GET /health`, no `Host` check, the error
    bodies.
 
 ## Critical path
@@ -133,5 +134,4 @@ plan needs to know about the reporter (DESIGN §2.4).
 
 ## Decisions still open
 
-None blocks. For the plan review to settle with the user: whether `Bash(./install.sh)` stays under
-`permissions.allow` now that it registers a login item (DESIGN §5.3).
+None. The plan review settled `Bash(./install.sh)`: it is under `permissions.ask` (DESIGN §5.3).

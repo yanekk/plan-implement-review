@@ -25,7 +25,6 @@
       "Bash(node src/shell/harness/run.mjs worker-death --into:*)",
       "Bash(node src/shell/harness/run.mjs worker-death-twice --into:*)",
       "Bash(PARALLEL_MAX_WORKERS=1 node src/shell/pir.mjs worker-death)",
-      "Bash(./install.sh)",
       "Bash(git worktree add --detach:*)",
       "Bash(git worktree remove --force:*)",
       "Bash(PARALLEL_MAX_WORKERS=1 node src/shell/pir.mjs single)",
@@ -52,7 +51,11 @@
       "Bash(PIR_NOTIFY_REMIND_MS=120000 PIR_NOTIFY_ICON=https://raw.githubusercontent.com/yanekk/plan-implement-review/pir/reliable-notifications/assets/pir-notify-icon.png node src/shell/harness/run.mjs notify-live --into /tmp/notify-live)",
       "Bash(curl -sI https://raw.githubusercontent.com/yanekk/plan-implement-review/pir/reliable-notifications/assets/pir-notify-icon.png)",
       "Bash(gh auth status)",
-      "Bash(node src/shell/harness/real-fetch-check.mjs)"
+      "Bash(node src/shell/harness/real-fetch-check.mjs)",
+      "Bash(node src/shell/harness/service-live-check.mjs)",
+      "Bash(node src/shell/harness/usage-live-check.mjs --into /tmp/usage-live)",
+      "Bash(rm -rf /tmp/usage-live)",
+      "Bash(curl -s http://127.0.0.1:*)"
     ],
     "ask": [
       "Bash(npm i @earendil-works/pi-tui@0.87.1)",
@@ -61,7 +64,8 @@
       "Bash(PARALLEL_MAX_WORKERS=2 node /Users/jan.krolikowski/src/plan-implement-review/.claude/worktrees/:*)",
       "Bash(cp -R skills/pir-plan skills/pir-review-plan \"$HOME/.claude/skills/\")",
       "Bash(node src/shell/harness/run.mjs plan-command --into:*)",
-      "Bash(git push origin pir/reliable-notifications)"
+      "Bash(git push origin pir/reliable-notifications)",
+      "Bash(./install.sh)"
     ]
   }
 }

@@ -30,10 +30,12 @@ export function plistText({ label, node, script, env }) // → string
 // action: 'on' | 'off' | 'refresh'
 // Step.do: 'remove-off' | 'write-off' | 'write-plist' | 'remove-plist' | 'bootout' | 'bootstrap'
 //          | 'remove-stale-discovery' | 'await-answer'
-export function servicePlan(action, facts) // → { steps: Step[], message: string | null }
+// `code` is the exit code when there are no steps (a plan with steps ends in the status check's code).
+export function servicePlan(action, facts) // → { steps: Step[], message: string | null, code: 0 | 1 }
 
-// state: 'running' | 'off' | 'not-installed' | 'port-held' | 'not-answering'
-// facts: { state, url, pid, reading /* core/usage Reading | null */, lastExit }
+// state: 'running' | 'off' | 'not-installed' | 'port-held' | 'not-answering' | 'register-failed' | 'needs-macos'
+// facts: { state, url, pid, usage /* the /v1/usage body as the service answered it, or null */,
+//          lastExit /* number | null */, detail /* launchctl's stderr, for 'register-failed' */ }
 export function statusText(facts, now) // → { text: string, code: 0 | 1 }
 
 export function ageText(ms) // → 'just now' | 'N min ago' | 'N h ago' | '1 day ago' | 'N days ago'
@@ -41,16 +43,22 @@ export function ageText(ms) // → 'just now' | 'N min ago' | 'N h ago' | '1 day
 
 `servicePlan` rules:
 
-- platform not `darwin` → no steps, message `pir service needs macOS (launchd)`.
-- kind not `real` → no steps, message `skipped the API service (not the real home)`.
+- platform not `darwin` → no steps, message `pir service needs macOS (launchd)`; code 0 for `refresh`,
+  1 for `on` and `off`. Reason: the install step must not report a failure where nothing could start.
+- kind not `real` → no steps, message `skipped the API service (not the real home)`, code 0.
 - `on` or `refresh` with `installedEngine` false → no steps, message
-  `pir service: run the installed pir (./install.sh first)`.
-- `refresh` with `off` true → no steps, message `the API service is off (pir service on turns it on)`.
+  `pir service: run the installed pir (./install.sh first)`, code 1.
+- `refresh` with `off` true → no steps, message `the API service is off (pir service on turns it on)`,
+  code 0.
 - `on`: `remove-off`, `write-plist`, `bootout` if loaded, `bootstrap`, `await-answer`.
 - `refresh`: `write-plist`, `bootout` if loaded, `bootstrap`, `await-answer`.
 - `off`: `bootout` if loaded, `remove-plist`, `remove-stale-discovery`, `write-off`.
 
-`statusText` returns the six texts of DESIGN §2.7 verbatim; code 0 only for `running`.
+`statusText` returns the eight texts of DESIGN §2.7 verbatim, and the needs-macOS line for
+`needs-macos`; code 0 only for `running`. `not-answering` with `lastExit` null is the seventh text (no
+bracket). A percentage is `Math.round(used_percentage)`. It takes the API body, not a `core/usage`
+Reading, because the status check has only what the service answered; this module imports nothing
+from `usage.mjs`.
 
 ## Tests
 
@@ -59,8 +67,10 @@ export function ageText(ms) // → 'just now' | 'N min ago' | 'N h ago' | '1 day
 - [ ] `env` absent → no `EnvironmentVariables` key; present → the key with each pair
 - [ ] `servicePlan`: every rule above, one case each, including `off` when not loaded and `on` when already loaded
 - [ ] `servicePlan('off')` on a scratch home and under `test-real` → no steps
-- [ ] `statusText`: each of the six texts of §2.7, compared as whole strings
-- [ ] `statusText` with one null window → `5-hour unknown` or `weekly unknown`
+- [ ] `statusText`: each of the eight texts of §2.7 and the needs-macOS line, compared as whole strings
+- [ ] `statusText`: `used_percentage` 96.53 → `97%`, 0.4 → `0%`, 100 → `100%`
+- [ ] `statusText` with one null window → `5-hour unknown` or `weekly unknown`; `usage` null or with `rate_limits` null → the `no usage reading yet` text
+- [ ] `servicePlan`: the `code` of every no-steps rule, `refresh` and `on` off macOS included
 - [ ] `ageText`: 0 and 59 999 ms → `just now`; 60 000 ms → `1 min ago`; 59 min → `59 min ago`; 60 min → `1 h ago`; 23 h → `23 h ago`; 24 h → `1 day ago`; 48 h → `2 days ago`
 - [ ] `ageText` of a negative age (clock moved back) → `just now`
 

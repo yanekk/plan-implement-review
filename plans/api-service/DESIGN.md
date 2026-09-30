@@ -20,7 +20,8 @@ footer goes stale, although every pir worker receives the same numbers as `rate_
 messages.
 
 This plan gives pir a permanent local service that answers a REST API over HTTP, started at login and
-kept alive by launchd, with subscription usage as its first and only endpoint. Run processes save
+kept alive by launchd, with subscription usage as its first data endpoint and a health check beside
+it. Run processes save
 each reading they hear to one file; the service answers from that file. The cockpit polls it.
 
 ### Success criteria
@@ -83,21 +84,25 @@ from a live service. The reader reads the file before each poll and never assume
 - A reading is returned as it was heard even if a `resets_at` has since passed; the reader handles it.
 - A query string is ignored. `/v1/usage/` is an unknown path.
 
+**`GET {url}/health`** answers 200 with `{ "version": 1, "status": "ok", "pid": 4711 }`, `pid` being the
+answering process (user 2026-09-30, at plan review). It reads no file, so it answers whatever state
+`usage.json` is in. Reason: `pir service`, and any reader, asks "is the service up" here rather than
+through the usage endpoint. A query string is ignored; `/health/` is an unknown path.
+
 **Everything else.** Checked in this order, each with a small JSON body and the same headers:
 
 | Case | Status | Body |
 |---|---|---|
-| `Host` header is not `127.0.0.1:{port}` or `localhost:{port}` (case-insensitive), or is missing | 403 | `{"version":1,"error":"forbidden_host"}` |
 | Unknown path, any method | 404 | `{"version":1,"error":"not_found"}` |
 | Known path, method not `GET` (`HEAD` and `OPTIONS` included) | 405, `Allow: GET` | `{"version":1,"error":"method_not_allowed"}` |
 | The handler threw | 500 | `{"version":1,"error":"internal"}` |
 
 Every response carries `Content-Type: application/json`, `Cache-Control: no-store` and
-`X-Content-Type-Options: nosniff`, and never an `Access-Control-*` header. Reason for the Host check
-and the absent CORS headers: together they keep a web page in a browser from reading the API (a DNS
-rebinding page sends its own host name; a cross-origin fetch needs a CORS grant). The numbers are not
-secret, but the API is meant to grow and the rule is cheaper to set at the first endpoint. The cockpit
-is a Node program, not a page, so neither rule touches it.
+`X-Content-Type-Options: nosniff`, and no `Access-Control-*` header. The `Host` header is not checked.
+Reason (user 2026-09-30, at plan review): no special rule for or against browsers. A browser's default
+already keeps an ordinary page from reading the answer, since no CORS grant is sent; the person dropped
+the planned `Host` check knowingly, so a DNS-rebinding page is not guarded against. Letting pages in
+(a CORS grant) would be a separate decision.
 
 The service binds `127.0.0.1` only, never a routable address. No authentication.
 
@@ -105,9 +110,12 @@ The service binds `127.0.0.1` only, never a routable address. No authentication.
 
 Fixed: **47717**, fail if taken (user 2026-09-30). The number is below macOS's ephemeral range
 (49152 and up, measured), so no outgoing connection is ever handed it, and it was free on this machine.
-If another program holds it, the service exits with code 78 and writes no `api.json`; launchd starts
+If another program holds it, the service exits with code 47 and writes no `api.json`; launchd starts
 it again every 10 seconds (its default throttle, measured), so it comes up once the port is free.
 Reason the throttle is left at its default: a port clash is then a slow retry, not a busy loop.
+Reason for 47: launchd itself reports `last exit code = 78: EX_CONFIG` when it cannot start the
+program (measured at plan review), so 78 could not tell a held port from a moved `node`; 47 is outside
+the sysexits range, Node's own codes and the signal codes.
 
 The fixed port is also the single-instance lock on the real machine: a second real service cannot bind.
 
@@ -203,7 +211,9 @@ code just installed (user 2026-09-30). It does this after the engine and its pac
 and a failure here prints one line and does not fail the install. On a scratch `HOME` it prints
 `skipped the API service (not the real home)`.
 
-`pir service` prints the state and exits 0 only when the service answers:
+`pir service` prints the state and exits 0 only when the service answers `GET /health` with a
+version-1 body (user 2026-09-30, at plan review: health, not usage, is what it checks). The reading
+line then comes from `GET /v1/usage`; if that fails it prints the `no usage reading yet` line.
 
 ```
 pir service: running at http://127.0.0.1:47717 (pid 4711)
@@ -230,18 +240,35 @@ pir service: registered but not answering (last exit code 1)
 try: pir service off, then pir service on
 ```
 
-The age reads `just now` under a minute, then `N min ago`, `N h ago`, `N days ago`. A null window
+```
+pir service: registered but not answering
+try: pir service off, then pir service on
+```
+```
+pir service: macOS would not register it: {launchctl's message}
+try: pir service off, then pir service on
+```
+
+The seventh is the sixth when launchd has no exit code for the service (it never exited, or the line
+is absent). The eighth is printed by `on` when `bootstrap` still fails after its retries (§2.9). Both
+wordings: user 2026-09-30, at plan review.
+
+The age reads `just now` under a minute, then `N min ago`, `N h ago`, `N days ago`. A percentage is
+the API's `used_percentage` rounded to a whole number (user 2026-09-30, at plan review). A null window
 reads `5-hour unknown` or `weekly unknown`.
 
 `pir service off` stops and unregisters the service, removes the plist and a stale `api.json`, and
 leaves a marker `~/.pir/api-service.off`. It prints `pir service: off`. While the marker exists,
-`./install.sh` leaves the service off and says so. `pir service on` removes the marker, registers and
+`./install.sh` leaves the service off and prints `the API service is off (pir service on turns it on)`. `pir service on` removes the marker, registers and
 starts it, waits up to 5 s for it to answer and prints the `pir service` text. Reason for the marker:
 off must stay off across installs (user 2026-09-30), and the absence of a plist alone cannot tell
 "turned off" from "never installed".
 
-On a platform other than macOS `on`, `off` and the install step print
-`pir service needs macOS (launchd)` and change nothing.
+`on`, or the install step, run from a copy of the engine that is not the installed one (§2.6) prints
+`pir service: run the installed pir (./install.sh first)` and changes nothing.
+
+On a platform other than macOS every form of `pir service`, the bare one included (user 2026-09-30,
+at plan review), and the install step print `pir service needs macOS (launchd)` and change nothing.
 
 ### 2.8 Scratch homes and tests
 
@@ -252,11 +279,12 @@ function (`homeKind`), decides all three from the environment:
 |---|---|---|---|---|
 | `real` | `PIR_HOME ?? HOME` is the OS account's home, and `NODE_TEST_CONTEXT` is unset | written | 47717 | allowed |
 | `scratch` | `PIR_HOME ?? HOME` is any other folder | written, in that folder | OS-chosen | refused |
-| `test-real` | the home is the real one and `NODE_TEST_CONTEXT` is set | not written | service refuses to start | refused |
+| `test-real` | the home is the real one and `NODE_TEST_CONTEXT` is set, or neither `PIR_HOME` nor `HOME` is set | not written | service refuses to start | refused |
 
 `node --test` sets `NODE_TEST_CONTEXT=child-v8` in each test process and children inherit it
 (measured). Reason for the third row: a test that forgot to set a scratch home must fail closed
-rather than feed fake numbers to the person's cockpit. The OS account's home comes from the user
+rather than feed fake numbers to the person's cockpit. An environment with no home at all is in the
+same row because `indexDir` falls back to the real home there. The OS account's home comes from the user
 database (`os.userInfo().homedir`), not from `HOME`. Reason: drills run `HOME=/tmp/... ./install.sh`,
 and launchd's domain is per user whatever `HOME` says.
 
@@ -267,12 +295,13 @@ and launchd's domain is per user whatever `HOME` says.
 | Service down, slow or absent | The run writes its file regardless; nothing waits on the service |
 | `~/.pir` missing or not writable | The run's write fails silently; the service reports nulls |
 | `usage.json` corrupt, half a version, or future-dated | Reads as no reading: 200 with nulls |
-| Port 47717 held | Exit 78, no `api.json`, launchd retries every 10 s; `pir service` names the cause |
+| Port 47717 held | Exit 47, no `api.json`, launchd retries every 10 s; `pir service` names the cause, from a foreign answer on the port or from launchd's last exit code 47 |
 | Service killed | launchd restarts it (0.2 s after ≥ 10 s up, 10 s otherwise, measured); `api.json` is rewritten with the new pid |
 | Crash leaves a stale `api.json` | Overwritten at the next start; `pir service off` removes one whose pid is dead |
-| `node` moved or removed after registration | The service cannot start; `pir service` says registered but not answering; `./install.sh` or `pir service on` rewrites the plist |
+| `node` moved or removed after registration | The service cannot start; `pir service` says registered but not answering (last exit code 78, launchd's own); `./install.sh` or `pir service on` rewrites the plist |
 | Engine replaced mid-run of the service | The running process keeps its loaded code until `install.sh` restarts it at the end |
 | `bootstrap` right after `bootout` | May fail with code 5 while the old instance is torn down (a second `bootstrap` of a loaded label measured code 5); retried up to 10 times, 300 ms apart |
+| launchd refuses the registration (every retry failed) | `pir service on` prints the `macOS would not register it` text of §2.7 and exits 1; the install step prints it and carries on |
 
 ---
 
@@ -290,7 +319,7 @@ If it fails, move the code to `shell/`; never relax the test.
 | Module | Side | Holds |
 |---|---|---|
 | `src/core/usage.mjs` | core | event → reading, the file format, the response body (§2.3–§2.5) |
-| `src/core/api.mjs` | core | the router, the discovery record, `homeKind`, the port, the file names (§2.1, §2.2, §2.8) |
+| `src/core/api.mjs` | core | the router, the health body, the discovery record, `homeKind`, the port, the file names (§2.1, §2.2, §2.8) |
 | `src/core/service.mjs` | core | the plist text, the on/off/refresh step plans, the status wording (§2.6, §2.7) |
 | `src/shell/usage-report.mjs` | shell | the run-side writer; wired into `worker-proc.mjs` |
 | `src/shell/api-service.mjs` | shell | the HTTP server, `api.json`, the file cache; the program launchd runs |
@@ -388,11 +417,14 @@ check's request.
 | Temporary login item (T09) | `node src/shell/harness/service-live-check.mjs` | `worker` | Scratch label, plist in a temp folder, removes itself; moved down from `ask` by the user 2026-09-30 | `launchctl bootout gui/$(id -u)/com.pir.api-service.check` | none | none |
 | Live harness run with real workers (T10) | `node src/shell/harness/usage-live-check.mjs --into /tmp/usage-live` | `worker` | Same as prior live checks; scratch repo and scratch home | The harness tears down; `HALT` file | plan usage, minutes | `claude auth status` reads `loggedIn: true`, `authMethod: claude.ai` |
 | Remove T10's scratch folder | `rm -rf /tmp/usage-live` | `worker` | A folder the check made | none needed | none | none |
-| Read the local API | `curl -s http://127.0.0.1:{port}/v1/usage` | `worker` | Read-only, this machine | nothing changed | none | none |
+| Read the local API | `curl -s http://127.0.0.1:{port}/health`, `curl -s http://127.0.0.1:{port}/v1/usage` | `worker` | Read-only, this machine | nothing changed | none | none |
+| Kill the real service once, after the merge | `kill -9 "$(jq -r .pid ~/.pir/api.json)"` | `worker` | Only after the approved install; placed here by the user 2026-09-30: it undoes itself and the reading is a file | launchd restarts it (0.2 s, or 10 s) | none | none |
 | `./install.sh`, after `pir/api-service` is merged | registers the login item and restarts the service | `ask` | Changes what starts at login on the person's Mac; macOS shows a background-item notice the first time | `pir service off` | none | none |
 
-`Bash(./install.sh)` is already under `permissions.allow` in `.claude/settings.json`, from before it
-registered anything. The plan review decides with the user whether that rule stays as it is.
+`Bash(./install.sh)` was under `permissions.allow` in `.claude/settings.json`, from before it
+registered anything. The plan review moved it to `permissions.ask` (user 2026-09-30): every session in
+this repo now stops for the person before the real installer runs, a build worker included. Installs
+into a scratch `HOME` keep their own `allow` rules and skip the service (§2.7).
 
 Credentials: none. The service has no login; T10 uses the person's existing Claude login.
 
@@ -411,7 +443,7 @@ off`. A reader that finds no `api.json`, or one whose `pid` is dead, treats the 
 
 | Decision | Reason | When |
 |---|---|---|
-| REST over HTTP, polled; a permanent service started at login; usage the only endpoint; read-only | The API is meant to grow; decided before this plan | user 2026-09-30, in the brief |
+| REST over HTTP, polled; a permanent service started at login; usage the only data endpoint; read-only | The API is meant to grow; decided before this plan | user 2026-09-30, in the brief |
 | Hand-off by one shared file | The run never talks to the service; the reading survives restarts; no write endpoint on a read-only API | user 2026-09-30 |
 | Fixed port 47717, fail if taken | The person wants one number; launchd's retry makes the failure self-healing | user 2026-09-30 |
 | `install.sh` registers; `pir service`, `on`, `off`; off stays off across installs | The service arrives with pir; one plain way to see and stop it | user 2026-09-30 |
@@ -420,7 +452,10 @@ off`. A reader that finds no `api.json`, or one whose `pid` is dead, treats the 
 | The real install and the login check are a checklist after the merge, not a task | `./install.sh` may not run while a run is live | user 2026-09-30 |
 | T09's temporary login item runs without a prompt | Scratch label, self-removing | user 2026-09-30 |
 | No prototype | No screen; `pir service` prints lines | 2026-09-30 |
-| Refuse a foreign `Host`; send no CORS headers | Keeps a browser page out of an API that will grow | 2026-09-30 |
+| No `Host` check, no CORS headers | No special rule for or against browsers; the planned refusal of a foreign `Host` was dropped | user 2026-09-30, plan review |
+| `GET /health`, and `pir service` checks it instead of usage | "Is it up" should not depend on the usage endpoint | user 2026-09-30, plan review |
+| `./install.sh` is `ask` in the settings; the after-merge kill is `worker` | The installer now changes what starts at login; the kill undoes itself | user 2026-09-30, plan review |
+| Port-taken exit code is 47, not 78 | launchd reports 78 itself for a program it cannot start | measured 2026-09-30, plan review |
 | The reporter is a default of `startWorker`, gated on `PIR_RUN=1` | One choke point covers every session kind, including those of in-flight plans | 2026-09-30 |
 | Extend `atomic-write.mjs`, `indexDir`, the fake `claude`, the harness and the `pir notify` verb pattern; build the server, the launchd handling and the event reading new | The first five exist and fit; nothing in the repo serves HTTP, drives launchd or reads `rate_limit_event` | 2026-09-30 |
 | Utilization above 1 reads as 100 % | The contract says 0–100; dropping the reading would hide being over the limit | 2026-09-30 |
@@ -430,7 +465,8 @@ off`. A reader that finds no `api.json`, or one whose `pid` is dead, treats the 
 
 ## 8. Explicitly out of scope
 
-- Any other endpoint, and any endpoint that changes something. Reason: decided in the brief.
+- Any endpoint beyond `/v1/usage` and `/health`, and any endpoint that changes something. Reason:
+  decided in the brief; `/health` was added by the user at plan review.
 - Authentication, and access from another machine.
 - Any change to the dashboard's screen.
 - agentic-ide's side; its reader is planned in `~/src/agentic-ide`, `plans/pir-usage-api/`.
