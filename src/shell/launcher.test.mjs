@@ -170,6 +170,60 @@ test('install.sh puts the engine runtime packages beside the installed src/', ()
   assert.match(install, /MSG\nreport_engine_deps\n?$/, 'the project closing reports it too');
 });
 
+// --- The API service step (api-service T07, DESIGN §2.7) -------------------------------------------------
+// Read-of-the-file checks: install.sh is never run by a test, since it replaces the installed engine
+// and, from this task on, registers a login item.
+
+// The body of a shell function declared at column 0, without its comment lines.
+function shellFunction(name) {
+  const m = install.match(new RegExp(`\\n${name}\\(\\) \\{\\n([\\s\\S]*?)\\n\\}\\n`));
+  assert.ok(m, `install.sh must define ${name}()`);
+  return m[1].split('\n').filter((l) => !/^\s*#/.test(l)).join('\n');
+}
+
+test('install.sh refreshes the API service from the installed engine, after the launcher', () => {
+  const body = shellFunction('refresh_service');
+  assert.match(body, /node "\$ENGINE_DEST\/src\/shell\/service-ctl\.mjs" refresh\b/, 'runs the installed service-ctl with `refresh`');
+  // The plist must name the installed engine, and service-ctl refuses any other copy (§2.6), so the
+  // checkout's copy is named on no runnable line anywhere in the script.
+  const runnable = install.split('\n').filter((l) => !/^\s*#/.test(l)).join('\n');
+  assert.doesNotMatch(runnable, /\$\{?SRC\}?\/src\/shell\/service-ctl\.mjs/, 'never the checkout copy');
+  assert.equal((runnable.match(/service-ctl\.mjs/g) ?? []).length, 1, 'service-ctl is run from exactly one place');
+
+  // Called once, as the last step of install_skills: after the engine is copied and the launcher is on
+  // the PATH, and with no condition on npm ci having worked (the service needs no packages).
+  const steps = shellFunction('install_skills').split('\n').map((l) => l.trim());
+  assert.equal(steps.at(-1), 'refresh_service', 'the last step of install_skills');
+  assert.ok(steps.indexOf('install_engine') !== -1 && steps.indexOf('install_engine') < steps.indexOf('install_launcher'));
+  assert.ok(steps.indexOf('install_launcher') < steps.indexOf('refresh_service'), 'after install_launcher');
+  const calls = runnable.split('\n').filter((l) => l.trim() === 'refresh_service');
+  assert.equal(calls.length, 1, 'called from one place only');
+});
+
+test('install.sh cannot be failed by the API service step, and both closing messages name pir service', () => {
+  // Under `set -e` a failing node would end the script; the `||` fallback is what keeps the exit code.
+  assert.match(install, /\nset -euo pipefail\n/);
+  const body = shellFunction('refresh_service');
+  assert.match(
+    body,
+    /^\s*node "\$ENGINE_DEST\/src\/shell\/service-ctl\.mjs" refresh \\\n\s*\|\| echo "  could not start the API service \(see: pir service\)" >&2$/,
+    'the refresh line carries its own fallback, which only prints',
+  );
+  assert.doesNotMatch(body, /\bexit\b|\breturn [1-9]/, 'the step itself never fails the script');
+
+  const lines = install.split('\n').filter((l) => /pir service\s+# the local API service: is it up/.test(l));
+  assert.equal(lines.length, 2, 'one line in each closing message');
+  assert.ok(lines.some((l) => /^\s*echo "/.test(l)), 'the --global closing (echo lines)');
+  assert.ok(lines.some((l) => !/echo/.test(l)), 'the project closing (heredoc)');
+  // Each sits directly under the dashboard line of its message, with the comment in the same column.
+  const all = install.split('\n');
+  for (const l of lines) {
+    const above = all[all.indexOf(l) - 1];
+    assert.match(above, /pir\s+# the cross-repo dashboard/);
+    assert.equal(l.indexOf('#'), above.indexOf('#'), 'the comments line up');
+  }
+});
+
 // --- install.sh run for real, into a scratch HOME (finisher T03) --------------------------------------
 // The one test here that executes install.sh. npm is stubbed on PATH so the engine's package install
 // neither needs the network nor takes a minute; everything else install.sh does lands under the scratch

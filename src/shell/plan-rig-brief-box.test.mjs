@@ -67,7 +67,9 @@ test("end to end at 120×40: still in the planner's conversation when it finishe
     assert.match(conv, /^the planner finished; the reviewer has started\nreview +worker \w+/, 'the line heads the view');
     assert.equal(screen.overflows(), 0);
     screen.send(LEFT);
-    const steps = (await screen.waitFor(/pick a step|Start the parallel build now\?/, 30000)).join('\n');
+    // The fake reviewer finishes on its own a moment after it starts; under load ← can land while it still
+    // reads `reviewing`, so the steps view is waited for with the review done, not read on its first frame.
+    const steps = (await screen.waitFor((x) => /pick a step|Start the parallel build now\?/.test(x) && /✔ review +reviewer/.test(x), 30000)).join('\n');
     assert.match(steps, /  ✔ plan +planner +plan written/);
     assert.match(steps, /▎ ✔ review +reviewer/, 'the row of the conversation just left is selected');
   } finally {

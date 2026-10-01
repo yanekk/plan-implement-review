@@ -137,9 +137,10 @@ const QUESTIONS = [
 ];
 
 // scenarioScript(name, { paceMs, workMs, stepMs }) → the fake's script (fake/claude-stream.mjs). paceMs spaces
-// the opening steps so a person sees them arrive; workMs is how long each chat reply works before answering;
+// the opening steps so a person sees them arrive; workMs is how long each chat reply works before answering
+// (the tour's reply to holdFor works until interrupted);
 // stepMs is how often a helper of the helpers scenario reports a step.
-export function scenarioScript(name = 'tour', { paceMs = 300, workMs = 4000, stepMs = 700 } = {}) {
+export function scenarioScript(name = 'tour', { paceMs = 300, workMs = 4000, stepMs = 700, holdFor = null } = {}) {
   const pace = paceMs ? [{ sleep: paceMs }] : [];
   const opening = [
     { emit: RIG_INIT },
@@ -168,7 +169,7 @@ export function scenarioScript(name = 'tour', { paceMs = 300, workMs = 4000, ste
       { resultFor: 'ask-1' },
       { emit: assistantText("Thanks, that's the tour. Type me a message and I'll answer it; press Esc while I'm working to interrupt me.") },
       { emit: resultEvent('success', 'tour done') },
-      { chat: { workMs, init: RIG_INIT } },
+      { chat: { workMs, init: RIG_INIT, ...(holdFor ? { holdFor } : {}) } },
     ];
   }
   if (name === 'long') {
@@ -398,7 +399,7 @@ function writePlan(repoRoot, scenario) {
   writeFileSync(join(plan, 'tasks', `${RIG_TASK}-${scenario}.md`), `# ${RIG_TASK} — ${scenario}\n\nThe rig's pretend task.\n`);
 }
 
-// startRig({ into, scenario, keep, env, paceMs, workMs, stepMs, snapshotMs }) → the running rig:
+// startRig({ into, scenario, keep, env, paceMs, workMs, stepMs, holdFor, snapshotMs }) → the running rig:
 //   { repoRoot, repo, slug, controlDir, workerId, logPath, received, platform, pid, shimDir, clipboard, stop() }
 // shimDir holds a `pbcopy` that writes what it is given to `clipboard` (absent until a copy), as
 // plan-rig.mjs's does (group-commands DESIGN §5.2). startRig does not launch pir, so whoever does puts
@@ -410,8 +411,8 @@ function writePlan(repoRoot, scenario) {
 // request, and returns three levers the real run pulls on its own: pass() — the agent passes the request on
 // (it is briefed and replies with its pointer; the row turns `asking you`); ready() — every task merged, the
 // report committed and the run waiting in `ready to merge`; and agent, the CoordinatorAgent itself.
-export function startRig({ into = null, scenario = 'tour', keep = false, env = process.env, paceMs, workMs, stepMs, snapshotMs = 500, finishingMs = 3000 } = {}) {
-  const script = scenarioScript(scenario, { paceMs, workMs, stepMs });
+export function startRig({ into = null, scenario = 'tour', keep = false, env = process.env, paceMs, workMs, stepMs, holdFor, snapshotMs = 500, finishingMs = 3000 } = {}) {
+  const script = scenarioScript(scenario, { paceMs, workMs, stepMs, holdFor });
   let repoRoot;
   if (into) {
     repoRoot = resolve(into);

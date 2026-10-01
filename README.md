@@ -53,7 +53,7 @@ once per repo ([below](#one-setting-per-repo-the-base-branch)).
 
 `/pir-plan` and `/pir-review-plan` are slash commands inside Claude Code. `pir` is a shell command,
 installed on your PATH by `./install.sh`: `pir` alone opens the dashboard, `pir plan` plans, `pir start
-{slug}` builds, `pir notify` sets up alerts on your phone ([human-flow.md](docs/human-flow.md#phone-alerts--pir-notify)). The old `pir {slug}` is gone; typed now, it tells you to use `pir start {slug}`.
+{slug}` builds, `pir notify` sets up alerts on your phone ([human-flow.md](docs/human-flow.md#phone-alerts--pir-notify)), `pir service` shows the local service that tells other programs how much of your Claude limit is used ([below](#your-claude-usage-for-other-programs--pir-service)). The old `pir {slug}` is gone; typed now, it tells you to use `pir start {slug}`.
 
 How far the agents may go on their own outside the code — deploys, paid calls, anything other
 people see — is yours to set, action by action, in the plan. See
@@ -474,6 +474,54 @@ The full behaviour — the run lifecycle, task state, the branch and worktree mo
 recovery, known limitations — is in [`docs/`](docs/README.md), starting with
 [detached-runs.md](docs/detached-runs.md) for `pir` itself.
 
+## Your Claude usage, for other programs — `pir service`
+
+Claude tells every session on a subscription how much of the 5-hour and the weekly limit is used.
+An ordinary Claude Code session can show that in its status line; the sessions `pir` runs have no
+status line, so during a long run those numbers would go unseen. `pir` keeps them instead: every
+session it holds (workers, the coordinator agent, the planner and the plan reviewer) saves the numbers
+as it hears them, and a small service on your Mac hands them to any local program that asks.
+
+```sh
+pir service
+```
+
+```
+pir service: running at http://127.0.0.1:47717 (pid 4711)
+last usage reading 2 min ago: 5-hour 97%, weekly 77%
+```
+
+A program reads them over plain HTTP; the address is in `~/.pir/api.json`:
+
+```sh
+curl -s "$(jq -r .url ~/.pir/api.json)/v1/usage"
+```
+
+```json
+{"version":1,"observed_at":1790669288699,"rate_limits":{"five_hour":{"used_percentage":97,"resets_at":1790673000},"seven_day":{"used_percentage":77,"resets_at":1790830800}}}
+```
+
+- **It starts itself.** `./install.sh` registers the service to start when you log in, macOS starts
+  it again if it stops, and every later install restarts it onto the new code. `pir service off` stops
+  it and keeps it off across installs; `pir service on` brings it back.
+- **It only reads.** It answers on this machine only (`127.0.0.1`, port 47717), with no login, and
+  nothing it offers changes anything. Besides the usage there is `GET /health`, which says whether it
+  is up.
+- **It knows only what `pir` heard.** The numbers move while a run started with `pir start` or `pir
+  plan` is working. Between runs it keeps answering with the last reading and the time it was heard,
+  and before the first one it answers with empty values. A run that was already going when you
+  installed this reports once it is stopped and started again.
+- **The limits.** macOS only. Only on a Claude subscription login: an API key, Bedrock or Vertex
+  yields no numbers. Any program on your Mac can read it. Apart from the line `pir service`
+  prints, `pir` does not display the numbers: the dashboard does not show them, and no reader ships
+  with it.
+- **What has been checked.** macOS starting and restarting the service, and real sessions feeding it,
+  were each run once under a temporary test setup. The first real install, and the service being up
+  after logging out and in, have not been seen yet.
+
+The contract, each text `pir service` prints, and the known limitations are in
+[api-service.md](docs/api-service.md).
+
 ## The plan can grow while it runs
 
 A run does not need a perfect plan up front. When a worker finds that the plan is missing a task
@@ -565,6 +613,11 @@ account skills are present and amends this project's `CLAUDE.md`:
 Every form is idempotent: re-running refreshes the skills in place and never appends
 `CLAUDE.md` twice. If the folder `pir` lands in is not on your PATH, the installer prints the
 exact `export PATH` line to add. Skills are read at session start — install, then start a **new** session.
+
+On macOS both `./install.sh` forms also register the local API service to start at login, and restart
+it onto the code just installed ([`pir service`](#your-claude-usage-for-other-programs--pir-service)).
+This adds a login item to your Mac. `pir service off` removes it, and the installer then leaves it off.
+A problem with the service never fails the install.
 
 Parallel mode needs one per-user setting so a worker's own `git`/`npm test` clear the
 auto-mode safety classifier: a `permissions.allow` list (shipped in a project's

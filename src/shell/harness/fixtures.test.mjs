@@ -145,6 +145,12 @@ const EXPECT = {
     factIds: ['finisher-waited-for-go', 'finisher-finished-on-phone-go', 'finisher-alerted'],
     state: '✅',
   },
+  'usage-live': {
+    taskCount: 2,
+    deps: { T01: [], T02: [] },
+    ceiling: 2,
+    factIds: ['no-hello-ever', 'ceiling-held:2', 'handed-off-green-branch'],
+  },
 };
 
 // --- The registry ---------------------------------------------------------------------------------
@@ -530,6 +536,19 @@ test('finisher-live facts read the runner\'s looks, the ledger, the flow log and
   assert.equal(alerted.check({ ...bundle(), flowText: flowText.split('\n')[0] }).pass, false, 'no finished alert');
   assert.equal(alerted.check({ ...bundle(), flowText: flowText.split('\n')[1] }).pass, false, 'no ready alert');
   assert.equal(alerted.check({ ...bundle(), flowText: flowText.replaceAll('ok 200', 'failed HTTP 500') }).pass, false, 'failed sends do not count');
+});
+
+test('usage-live: two independent tasks run as pir runs them, with no agent, no question and 20 minutes (api-service T10)', () => {
+  const fx = getFixture('usage-live');
+  assert.ok(listFixtures().includes('usage-live'), 'registered');
+  const sc = fx.scenario;
+  // PIR_RUN=1 turns the usage reporter on, and the scratch PIR_HOME keeps it off the real usage.json.
+  assert.equal(sc.statusSnapshots, true);
+  assert.equal(sc.coordinator, false, 'no coordinator agent');
+  assert.equal(sc.answerPending, false, 'nothing to answer');
+  assert.equal(sc.killSwitchDrill, false, 'the run works to its hand-off');
+  assert.equal(sc.seatbelts.timeoutMs, 20 * 60 * 1000);
+  for (const doc of Object.values(fx.tasks)) assert.match(doc, /do not ask; the newline is specified/);
 });
 
 test('parallel: at least two independent tasks so workers run concurrently', () => {

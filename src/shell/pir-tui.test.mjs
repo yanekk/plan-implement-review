@@ -28,6 +28,7 @@ import {
   readLogTail,
   landStep,
   followStep,
+  reliveWorker,
   buildLandingFrame,
   FOLLOW_LINE,
   SINGLE_FOLLOW_LINE,
@@ -1465,6 +1466,20 @@ test('followStep: the steps view, the list, and the reviewer\'s own conversation
   assert.equal(followStep({ ...initialUi(), view: 'watch', openSlug: 'csv-export' }, after, null), null);
   assert.equal(followStep({ ...initialUi(), view: 'list' }, after, null), null);
   assert.equal(followStep({ ...initialUi(), view: 'worker', openSlug: 'csv-export', openWorker: { taskId: 'review', workerId: 'r1' } }, after, null), null);
+});
+
+test('reliveWorker: a conversation opened on a session that was not live turns live once the snapshot says so', () => {
+  const opened = { taskId: 'review', workerId: 'r1', logPath: '/c/review-1.ndjson', live: false };
+  const ui = { ...initialUi(), view: 'worker', openSlug: 'csv-export', taskSel: 1, openWorker: opened };
+  const run = (worker) => [landingRun([planStep('plan', { id: 'p1', live: false }), planStep('review', worker), planStep('build')])];
+  assert.equal(reliveWorker(ui, run({ id: 'r1', live: false })), null, 'still not live: unchanged');
+  assert.equal(reliveWorker(ui, run({ id: 'r2', live: true })), null, 'another session is not this conversation');
+  const next = reliveWorker(ui, run({ id: 'r1', live: true }));
+  assert.deepEqual(next.openWorker, { ...opened, live: true });
+  assert.equal(next.taskSel, 1);
+  assert.equal(reliveWorker(next, run({ id: 'r1', live: true })), null, 'already live: no second move');
+  assert.equal(reliveWorker(next, run({ id: 'r1', live: false })), null, 'a session that ends is not moved');
+  assert.equal(reliveWorker({ ...ui, view: 'watch', openWorker: null }, run({ id: 'r1', live: true })), null);
 });
 
 test('buildLandingFrame: the run by its label and branch, and the starting line', () => {

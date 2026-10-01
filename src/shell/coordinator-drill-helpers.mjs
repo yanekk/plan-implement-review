@@ -19,6 +19,7 @@ import { join } from 'node:path';
 import { startPlanRig } from './plan-rig.mjs';
 import { indexDir, listRecords } from './index-store.mjs';
 import { stopRun } from './control-run.mjs';
+import { waitFor } from './conversation-rig-helpers.mjs';
 import { DRILL_QUESTION, DRILL_SLUG, HELPER_DRILL_QUESTION, HELPER_DRILL_SLUG } from './fake/sessions.mjs';
 
 const DOWN = '\x1b[B';
@@ -154,7 +155,14 @@ export function coordinatorDrill(cols, rows) {
       assert.match(s, /c finisher/);
       assert.doesNotMatch(s, /git merge/, 'no merge line beside the finisher');
       const conv = join(rig.repoDir, 'plans', DRILL_SLUG, '.parallel', 'control', 'conversations');
-      const agentLog = readdirSync(conv).filter((f) => f.startsWith('coordinator-')).map((f) => readFileSync(join(conv, f), 'utf8')).join('\n');
+      const readAgentLog = () => readdirSync(conv).filter((f) => f.startsWith('coordinator-')).map((f) => readFileSync(join(conv, f), 'utf8')).join('\n');
+      // The hand-over closes the agent gracefully (worker-proc close: input ended, SIGTERM only after its
+      // grace), and its reply to the hand-off lands inside that grace, after the finisher's row is already
+      // drawn. Under load that is later than this frame, so the log is waited for, not read once.
+      const agentLog = await waitFor(() => {
+        const log = readAgentLog();
+        return /The branch is ready\. The finisher takes the merge from here\./.test(log) ? log : null;
+      }, { what: "the agent's reply to the hand-off", timeoutMs: 15000 }).catch(() => readAgentLog());
       assert.match(agentLog, /The branch is ready\. The finisher takes the merge from here\./);
       assert.doesNotMatch(agentLog, /Merge it yourself/);
       assert.ok(readdirSync(conv).some((f) => f.startsWith('finisher-')), 'the finisher was started');

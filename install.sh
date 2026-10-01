@@ -56,6 +56,7 @@ install_skills() {
     remove_orphan_skills
     install_engine
     install_launcher
+    refresh_service
 }
 
 # True when $1 is a directory on the current PATH.
@@ -118,6 +119,15 @@ install_launcher() {
   (put that line in your shell profile to make it stick.)
 STEP
     fi
+}
+
+# Register the API service at login and restart it onto the code just installed (api-service DESIGN
+# §2.7). The INSTALLED copy is run, never this checkout's: the login item must name the installed engine, and
+# service-ctl refuses to register from any other copy (§2.6). It imports only Node built-ins, so it runs
+# even when npm ci failed. A failure here prints one line and never fails the install.
+refresh_service() {
+    node "$ENGINE_DEST/src/shell/service-ctl.mjs" refresh \
+        || echo "  could not start the API service (see: pir service)" >&2
 }
 
 install_engine() {
@@ -286,6 +296,7 @@ if [[ -z "$TARGET" || "$TARGET" == "--global" ]]; then
     echo "    pir plan \"brief\"      # plan something new, answered in pir's own screen"
     echo "    pir start {slug}      # build a reviewed plan: start detached, drop into its live view"
     echo "    pir                   # the cross-repo dashboard"
+    echo "    pir service           # the local API service: is it up"
     report_engine_deps
     exit 0
 fi
@@ -322,5 +333,6 @@ Done. One thing left, by hand:
       pir plan "brief"      # plan something new, answered in pir's own screen
       pir start {slug}      # build a reviewed plan: start detached, drop into its live view
       pir                   # the cross-repo dashboard
+      pir service           # the local API service: is it up
 MSG
 report_engine_deps

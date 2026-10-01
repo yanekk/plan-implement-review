@@ -17,7 +17,7 @@ import { indexDir, listRecords } from './index-store.mjs';
 import { dropPersonInput } from './person-inbox.mjs';
 
 const RIG = fileURLToPath(new URL('./conversation-rig.mjs', import.meta.url));
-import { scratchHome, waitFor, logOf } from './conversation-rig-helpers.mjs';
+import { scratchHome, waitFor, logOf, HELPERS_ROW } from './conversation-rig-helpers.mjs';
 
 const events = (rig) => logOf(rig).filter((e) => e.dir === 'in').map((e) => e.event);
 const toolResultOf = (rig, id) =>
@@ -55,7 +55,9 @@ test("the rig's run is listed by loadDashboard as running, with one task whose w
 
 test('each tour step reaches the log in order, and the fake answers replies and an interrupt as a real worker', async (t) => {
   const env = scratchHome(t);
-  const rig = startRig({ env, paceMs: 0, workMs: 400 });
+  // `stop me` works until the interrupt: the interrupt's trip (inbox, platform, SDK) outlasted a 400 ms turn
+  // under load, the turn replied, and no interrupted result ever came.
+  const rig = startRig({ env, paceMs: 0, workMs: 400, holdFor: 'stop me' });
   t.after(() => rig.stop());
   const drop = (input) => assert.deepEqual(dropPersonInput(rig.controlDir, { to: rig.workerId, ...input }, { coordinatorAlive: true }), { ok: true });
   const pendingIs = (id) => waitFor(() => rig.platform.pending(rig.workerId)[0]?.requestId === id, { what: `${id} to be pending` });
@@ -353,7 +355,7 @@ test('the driver walks the tour on the real pir screen', { timeout: 90000 }, asy
   assert.deepEqual(sent, ['reply', 'reply', 'reply', 'reply', 'message', 'message', 'interrupt'], 'every answer the screen gave went through the inbox to the worker');
 });
 
-// visible-helpers T02: the helpers scenario on the real pir screen. The run is listed running, and T01's
+// visible-helpers T02: the helpers scenario on the real pir screen. The run is listed live (HELPERS_ROW), and T01's
 // conversation opens on the worker's opening message and its first helper's Agent step. What the screen
 // then makes of the helpers is T03's and T05's to test on this same scenario.
 test('the helpers scenario drives the real pir screen', { timeout: 60000 }, async (t) => {
@@ -362,7 +364,7 @@ test('the helpers scenario drives the real pir screen', { timeout: 60000 }, asyn
   t.after(() => rig.stop());
   const screen = openScreen({ cols: 100, rows: 30, env: { ...process.env, ...env } });
   try {
-    await screen.waitFor(/rig +work +● running/);
+    await screen.waitFor(HELPERS_ROW);
     screen.send('\r');
     await screen.waitFor(/pick a task/);
     screen.send('\x1b[C');

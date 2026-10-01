@@ -1154,6 +1154,19 @@ export function followStep(ui, views, seenReviewId = null) {
   return { ...ui, openWorker: { ...openWorker, headLine: from.line }, taskSel: i };
 }
 
+// reliveWorker(ui, views) → ui with the open conversation marked live, or null for no move. The conversation
+// view takes `live` once, when it is built, and one opened on a session that was not live has no box. After
+// Ctrl+R Ctrl+R the row reads running as soon as the index names the new program, but the snapshot still
+// says the session is not live until that program has reopened it: a → in that gap opened the resumed
+// session read only, and it stayed so. Only the same session turning live moves it; one that ends is told
+// by its log's `exited` note (conversation-view hasEnded).
+export function reliveWorker(ui, views) {
+  const w = ui?.openWorker;
+  if (ui?.view !== 'worker' || !w || w.live) return null;
+  const row = openTasks(views, ui).find((t) => t.id === w.taskId && t.worker?.id === w.workerId);
+  return row?.worker.live ? { ...ui, openWorker: { ...w, live: true } } : null;
+}
+
 // The landing frame's words by the step it waits on: the state the row reads while that step works, and the
 // line (pir-plan-command §2.12; single-runs DESIGN §2.1 for the builder).
 const LANDING = {
@@ -1512,6 +1525,9 @@ async function runTui({
     }
     const followed = followStep(ui, dash.rows, seenReviewId);
     if (followed) moved(followed);
+    // The open conversation is rebuilt with its box once its session is live (reliveWorker).
+    const relived = reliveWorker(ui, dash.rows);
+    if (relived) moved(relived);
 
     spin += 1;
     const spinnerChar = SPINNER[spin % SPINNER.length];

@@ -7,7 +7,8 @@
 // introducing a task the coordinator adopts and dispatches, and the real asking state (a report dropped
 // mid-work, a wake-up while parked), and the coordinator agent answering, passing on and handing over
 // (pir-coordinator), and several of its briefs at once with the hold limit firing (pir-coordinator-concurrent), and real phone alerts for a passed question and the end of the run (notify-live), and the finisher taking a green run over and finishing on the person's go from the phone (finisher-live), and a repo with only
-// `dev` whose remote is ahead (dev-base). The old `hands-on` and `blog-app` fixtures
+// `dev` whose remote is ahead (dev-base), and real sessions reporting subscription usage (usage-live,
+// api-service T10). The old `hands-on` and `blog-app` fixtures
 // exercised the `you`/hands-on model, which was removed with the down-channel (DESIGN §2.5, T05); they
 // went with it.
 //
@@ -67,6 +68,7 @@ import notifyLive from './fixtures/notify-live.mjs';
 import finisherLive from './fixtures/finisher-live.mjs';
 import finisherLiveBranch from './fixtures/finisher-live-branch.mjs';
 import devBase from './fixtures/dev-base.mjs';
+import usageLive from './fixtures/usage-live.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -106,6 +108,7 @@ const FIXTURES = Object.freeze({
   [finisherLive.id]: finisherLive,
   [finisherLiveBranch.id]: finisherLiveBranch,
   [devBase.id]: devBase,
+  [usageLive.id]: usageLive,
 });
 
 // listFixtures() → the fixture ids, in registry order.
