@@ -28,7 +28,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T10 | single-row | T04, T08 | ✅ | |
 | T11 | single-drill | T06, T09, T10 | ✅ | |
 | T12 | single-live | T07, T11 | ✅ | |
-| T13 | docs-and-readme | T12 | ⬜ | |
+| T13 | docs-and-readme | T12 | ✅ | |
 
 **Review queue:** *(empty)*
 
