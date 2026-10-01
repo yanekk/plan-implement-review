@@ -5,7 +5,9 @@ workflow behaves: its components, the lifecycle of a run, where task state lives
 and worktree model, the control folder, the human decision flow, the kill switch, the worker
 ceiling, restart and recovery, the detached `pir` front-end that starts a run outliving its
 terminal and watches every run on the machine, and `pir plan`, which runs the planning and the plan
-review inside that front-end, the coordinator agent that stands in for the person during a build,
+review inside that front-end, single runs that make one small change without a plan (a builder,
+then a fresh reviewer, with pir running the tests), the coordinator agent that stands in for the person
+during a build,
 the finisher that merges a green build after the person's go, and the local API service that tells
 other programs how much of the Claude subscription limit is used.
 It is the behavioural spec — nouns, states, data
@@ -118,6 +120,12 @@ and it had no conversation view. `install.sh` removes an installed copy it finds
   outcome. The pure step machine is `src/core/planflow.mjs`; the steps view and the go question are
   `src/core/plandisplay.mjs`; the brief box is `src/shell/brief-box.mjs`. `src/shell/plan-home.mjs`
   tells a build where its plan lives: the main checkout, else the committed branch `pir/{slug}`.
+- **The single program** (`src/shell/single-run.mjs`) — the detached program behind `@repo/single` in
+  the dashboard box. It runs the repo's setup lines, holds a builder and then a fresh reviewer through
+  the planning program's session holder (`src/shell/held-session.mjs`), runs the repo's tests itself
+  after each, checks each report against git, renames the run to the builder's name, and records the
+  outcome. The pure step machine is `src/core/singleflow.mjs`; the sessions follow the `pir-single`
+  skill (see [single-runs.md](single-runs.md)).
 - **The API service** (`src/shell/api-service.mjs`) — a small HTTP server on `127.0.0.1:47717` that
   launchd starts at login and keeps alive, outside any run. It answers `GET /v1/usage` (how much of the
   5-hour and weekly subscription limit is used) and `GET /health`. It never talks to a run: every
@@ -146,5 +154,8 @@ and it had no conversation view. `install.sh` removes an installed copy it finds
   the go, status files, the end of the run, failure, phone alerts, its row, storage.
 - [planning-runs.md](planning-runs.md) — `pir plan`: the planner and the plan reviewer run inside `pir`,
   the rename, the go that starts the build, resume.
+- [single-runs.md](single-runs.md) — `@repo/single`: one small change without a plan, the `setup` and
+  `test` settings, the builder and the fresh reviewer, red rounds and the baseline, the row and its
+  steps view, alerts, stop, remove and resume, known limitations.
 - [api-service.md](api-service.md) — the local API service: the contract (`api.json`, `GET /v1/usage`,
   `GET /health`), the port, where a reading comes from, the login item, `pir service`, scratch homes.

@@ -15,6 +15,7 @@ by sessions that alternate between building and reviewing. These commands drive 
 | `/pir-work {slug}` | Do exactly one unit of work on that plan — implement the next task, or review the last one — then stop |
 | `pir plan` | The same planning and plan review, run for you inside `pir`: it holds the planner and then a fresh reviewer, you answer both in `pir`'s screen, the plan stays on its own branch off the base branch, and when it is reviewed `pir` asks whether to start the parallel build |
 | `pir start {slug}` | Start (or open) the parallel build of a reviewed plan |
+| `@repo/single {prompt}` in `pir` | A small change with no plan, typed in `pir`'s dashboard box: `pir` holds a builder that makes and commits it, runs the repo's tests itself, then holds a fresh reviewer that fixes what it finds, and hands over the merge command. Needs `setup` and `test` lines in the repo's `.pir/settings.json` |
 
 **Read `plans/{slug}/DESIGN.md` before changing behaviour.** Every rule in it was decided
 deliberately and most carry a rationale. If you disagree with one, say so — do not quietly
@@ -331,6 +332,12 @@ branch. A `pir-plan` or `pir-review-plan` session whose opening instruction says
 `pir plan` is where it is meant to be and does not halt: it follows its skill's "Run by pir plan"
 section, commits on that branch, and reports back to `pir` instead of naming the next command. A
 `/pir-plan` or `/pir-review-plan` you type by hand is a classic session, bound by the base rule.
+
+**Single-run sessions are the same exception.** `@repo/single` in `pir` runs a builder and then a fresh
+reviewer as sessions `pir` holds, on a branch `pir/…` in the run's own worktree, with no plan. A session
+whose opening instruction says it is run by `pir single` is where it is meant to be and does not halt: it
+follows the `pir-single` skill, commits on that branch, and reports to `pir`; it never merges, pushes or
+touches the base branch.
 
 ---
 

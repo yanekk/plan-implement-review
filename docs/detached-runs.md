@@ -84,9 +84,10 @@ can list runs across every repo, a small per-run entry is also written under `~/
 file per run named `{repo}__{slug}.json` (the repo name in the filename is why the same slug in two
 repos never collides). The entry is a pointer plus what is needed to classify the run without opening
 the repo: the slug, the repo and its path, the control-folder path, the process number and launch
-time, and the final status once set. It also carries `kind` — `plan` for a planning run, `work` for a
-build, absent read as `work` — and, for a planning run, its `label` before the rename and `go`, the
-person's answer to the go question ([planning-runs.md](planning-runs.md)). Both kinds carry `baseBranch`, the run's base branch, a copy for display; the base a run
+time, and the final status once set. It also carries `kind` — `plan` for a planning run, `single` for
+a single run, `work` for a build, absent read as `work` — and, for a planning or single run, its `label`
+before the rename and `go` (the person's answer to a planning run's go question, always `null` on a
+single run; [planning-runs.md](planning-runs.md), [single-runs.md](single-runs.md)). Every kind carries `baseBranch`, the run's base branch, a copy for display; the base a run
 actually uses is the one recorded on its branch in git config ([branch-model.md](branch-model.md#the-run-remembers-its-base)). A build started with
 `--no-coordinator` carries `coordinator: false`, so a resume from the dashboard (`Ctrl+R Ctrl+R`)
 starts it without the agent again; the field is absent otherwise, and absent reads as on. `pir start
@@ -131,8 +132,11 @@ The snapshot is gitignored with the rest of the control folder (below).
 
 ## The dashboard and the live view
 
-`pir` paints a full-screen list, one row per run: slug, TYPE (`plan` or `work`), state, repo, progress
-(done/total from the snapshot), and live-worker count. A planning row's state, progress and slug read
+`pir` paints a full-screen list, one row per run: slug, TYPE (`plan`, `work`, or `single`), state, repo,
+progress (done/total from the snapshot), and live-worker count. A single run's row reads `building`,
+`testing`, `reviewing`, `asking you`, `ready to merge`, `merged` or `finished`, and its progress
+`build ✓ review …` and the like ([single-runs.md](single-runs.md#on-the-screen)); its `ready to merge`
+and `asking you` count in `waiting for you`. A planning row's state, progress and slug read
 differently — `planning`, `reviewing`, `your go`; `plan ✓ review …`; the brief's label in quotes before
 the plan has a name — and a `your go` row adds `· N waiting for you` to the counts line (see
 [planning-runs.md](planning-runs.md)). A running build with any task waiting on the person — a question
@@ -159,8 +163,10 @@ does not read as broken.
 Below the list sits the **dashboard box**, a small command line whose text starts as `@`: `@repo/plan`
 and a brief starts a planning run in that repo and opens its planner's conversation, as `pir plan` does;
 `@repo/start` and a plan's name starts, or opens, that plan's build and shows its live view, as `pir
-start` does. A pop-up guides each step: the repos, then the two commands, then the repo's reviewed,
-unfinished plans with their progress (the rules, the lists and the refusals are in
+start` does; `@repo/single` and what to change starts a single run, a builder and then a fresh
+reviewer making one small change without a plan, and opens the builder's conversation
+([single-runs.md](single-runs.md)). A pop-up guides each step: the repos, then the three commands, then
+the repo's reviewed, unfinished plans with their progress (the rules, the lists and the refusals are in
 [planning-runs.md](planning-runs.md#the-dashboard-box)).
 While the box is bare the list's keys work as before. A list longer than the rows the box leaves
 scrolls to keep the selected run visible, with `↑ n more` / `↓ n more` where rows are cut. A click on
@@ -186,7 +192,9 @@ its `run.log` tail and the log's full path instead, so a run that failed to star
 
 Opening a planning run shows its **steps view** instead — one row each for `plan`, `review` and `build`
 — and, when the plan is reviewed and waiting, the go question that starts the build (see
-[planning-runs.md](planning-runs.md)).
+[planning-runs.md](planning-runs.md)). Opening a single run shows its own steps view, one row each for
+`build`, `review` and `merge`, the last carrying `git switch {base} && git merge pir/{name}` once the run
+is ready (see [single-runs.md](single-runs.md#on-the-screen)).
 
 ### The conversation view
 
@@ -376,7 +384,7 @@ it writes nothing. `pir plan` and `pir start` never write it, even though they l
   "version": 1,
   "pid": 12345,
   "view": "list" | "run" | "worker",
-  "run": null | { "key": "{repo}__{slug}", "kind": "plan" | "work", "slug": "…", "repo": "…",
+  "run": null | { "key": "{repo}__{slug}", "kind": "plan" | "single" | "work", "slug": "…", "repo": "…",
                   "repoPath": "/abs", "branch": "pir/…", "cwd": "/abs" | null },
   "worker": null | { "id": "<worker uuid>", "task": "T03", "role": "implement" | "review", "cwd": "/abs" | null },
   "updatedAt": "<ISO timestamp>"
@@ -393,7 +401,9 @@ it writes nothing. `pir plan` and `pir start` never write it, even though they l
   (which carry `cwd` alongside `workers.json`), so a finished worker still names its folder. A planning
   run's sessions all name the planning worktree under its current name. `null` for a snapshot written
   before `cwd` was recorded. A planning run's worker has `task` `plan` or `review`; its planner publishes
-  role `implement` and its reviewer `review`.
+  role `implement` and its reviewer `review`. A single run's sessions name its worktree likewise
+  (`pir-single-{hex4}`, then `pir-{name}`); its builder publishes role `implement` and its reviewer
+  `review`.
 - The file is rewritten only when what it says changes — the view, the open run or worker, or a path
   in it (a planning worktree renamed, a worktree created) — never on a refresh tick or a cursor move,
   because the reader moves panes on every write. Each write is a temp file beside it, then a rename.
@@ -460,7 +470,8 @@ still alive with its recorded start time is sent SIGTERM, then SIGKILL after 3 s
 `src/shell/reap.mjs`). A wedged coordinator cannot strand a run half-stopped with its workers still
 burning tokens. The grace period is what separates a stop from a crash — never force-kill a run
 without it. A planning run stops the same way: its program closes its session and records `stopped`,
-with the same grace, force-kill and reap.
+with the same grace, force-kill and reap; so does a single run, which also kills the setup, test or
+baseline run it has in flight.
 
 ## Remove
 
@@ -482,7 +493,9 @@ the same selection carries it out; any other key cancels the arm. Both are irrev
 `pir start {slug}`, and the coordinator reconciles from committed work
 ([restart-recovery.md](restart-recovery.md)). On a planning run — also offered on a finished one whose
 review ended not reviewed — it reopens the same planner or reviewer conversation
-([planning-runs.md](planning-runs.md)). A refusal (the run came back to life meanwhile, or `startRun`
+([planning-runs.md](planning-runs.md)). On a stopped or crashed single run it reopens the builder's or
+reviewer's conversation, or restarts the test run it was stopped in; a finished single run is not
+resumable ([single-runs.md](single-runs.md#stop-remove-resume)). A refusal (the run came back to life meanwhile, or `startRun`
 refused the plan) is shown under the list (`resumeRun` in `launch.mjs`).
 
 ## Keep-awake
@@ -501,7 +514,8 @@ the dashboard already shows plainly.)
   folder, written temp-then-rename each pass by the coordinator (the single writer). Already
   gitignored via `plans/*/.parallel/` (see `.gitignore` and [control-folder.md](control-folder.md)),
   so it never rides a task branch or the feature branch. A planning run's snapshot is in its own
-  `plans/{slug}/.parallel/plan/` ([planning-runs.md](planning-runs.md)).
+  `plans/{slug}/.parallel/plan/` ([planning-runs.md](planning-runs.md)), a single run's in
+  `plans/{name}/.parallel/single/` ([single-runs.md](single-runs.md)).
 - **Index entry** — `~/.pir/runs/{repo}__{slug}.json`, one small JSON file per run, written
   temp-then-rename. `~/.pir/` is outside any repo and is never committed, so nothing gitignores it.
 
