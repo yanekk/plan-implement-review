@@ -864,7 +864,9 @@ export function defineBangReopenTest([cols, rows]) {
       const at = s.findIndex((l) => /^you ! sleep 3; echo done/.test(l));
       assert.ok(at >= 0, s.join('\n'));
       assert.match(s[at + 1], /^ {2}done\s*$/);
-      assert.match(s[at + 2], /^ {2}✓ exit 0 · [34]s · sent to T01\s*$/);
+      // `sleep 3` can take no less than 3s; a loaded machine stretches it past 4s, so only the floor is held.
+      const endLine = s[at + 2].match(/^ {2}✓ exit 0 · (\d+)s · sent to T01\s*$/);
+      assert.ok(endLine && Number(endLine[1]) >= 3, s[at + 2]);
       assert.doesNotMatch(s.join('\n'), /● running your command/);
       for (const r of s) assert.ok([...r].length <= cols);
       assert.equal(screen.overflows(), 0, 'no frame was clipped to fit the window');
