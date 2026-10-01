@@ -8,7 +8,7 @@ Legend: 🐞 defect found · ✅ verified by hand with the user · 📌 worth kn
 | Date | | Finding |
 |---|---|---|
 | 2026-10-01 | 📌 | T12 live run, worker-run with real Claude: `single-run-live` PASS in 40 s. Builder fixed `addAll` in one commit as `fix-add-all-off-by-one`; reviewer committed nothing; `ready`, index kind single under the name, nothing left running. Scratch removed. |
-| 2026-10-01 | 📌 | The harness answerer sent `go ahead` to the live reviewer between its `reviewed` report and `finished: ready`; `holdPlanReplies` did not hold it. The run was unaffected. A planning run's last session can get the same. |
+| 2026-10-01 | 📌 | The harness answerer sends `go ahead` to a session idle after its report (reviewer before `finished: ready`; builder after `built`, undelivered). `holdPlanReplies` does not hold it. Runs unaffected; planning runs likewise. |
 | 2026-10-01 | 📌 | The live builder said its fix was committed on `pir/fix-add-all-off-by-one` before pir renamed `pir/single-6986`. Wording only; the report and checks were right. |
 | 2026-10-01 | 🐞 | T11 drill, worker-driven, 80×24, 120×40, 60×20: whole flow, dropped, taken, beside plan and builds, stop and resume. Fixed: a step's clock cut at 60 columns (`0:1`); a merged run's merge row still said the merge was yours. Tests lock both. |
 | 2026-10-01 | 📌 | At 60 columns the list's counts line and every view's key-hint line are cut at the edge, mid-word (`Ctrl+X remo`, `stop thi`). Planning runs and builds too; no rule in DESIGN. Left alone. |

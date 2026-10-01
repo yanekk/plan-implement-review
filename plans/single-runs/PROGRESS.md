@@ -5,10 +5,9 @@ lives in [FINDINGS.md](FINDINGS.md). Sixty words to a Notes cell, counted.
 
 **Plan reviewed:** 2026-09-29 — 3 fixed, 4 decided with the user
 
-**Status:** Planned, not started. The build waits for `pir/base-branch` to be merged into `main` and
-`main` into `pir/single-runs`.
-**Last updated:** 2026-09-29
-**Next `pir-work` will:** T02 single-flow, the first task on the critical path.
+**Status:** Building; T01–T12 done, T13 left.
+**Last updated:** 2026-10-01
+**Next `pir-work` will:** T13 docs-and-readme.
 
 ## Tasks
 
@@ -27,10 +26,10 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T09 | box-single | T05, T08 | ✅ | |
 | T10 | single-row | T04, T08 | ✅ | |
 | T11 | single-drill | T06, T09, T10 | ✅ | |
-| T12 | single-live | T07, T11 | 🔍 | `single-run-live` fixture, `runSingleScenario`, four single facts; 16 tests incl. a fake-Claude dry pass. Live run PASS in 40 s, recorded in FINDINGS. Beyond the file list: facts in `assertions.mjs`, fixture `settings` in `seedGit`, `scenario.mjs` kind `single`, `parseLogName` reads `build-N`. `install.sh` not run: no installed `pir-single` to shadow. |
+| T12 | single-live | T07, T11 | ✅ | Review clean, no fix commit. `npm test` green; reviewer re-ran the live `single-run-live` with real Claude: PASS in 44 s as `fix-addall-off-by-one`, scratch removed, no process left. Probed fact failure per defect, record lookup across the rename, capture read before teardown, crash and timeout paths. |
 | T13 | docs-and-readme | T12 | ⬜ | |
 
-**Review queue:** T12
+**Review queue:** *(empty)*
 
 ## Blocked on the user
 
