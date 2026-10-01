@@ -8,10 +8,9 @@ they walk past.
 
 **Plan reviewed:** 2026-10-01 — 9 fixed, 4 decided with the user
 
-**Status:** Plan written 2026-10-01. Nothing built. The red `notify-wiring.test.mjs` cases on `main` are to
-be fixed there before the build starts (DESIGN §4).
+**Status:** T00–T09 ✅; T10 left. The 10 red `notify-wiring.test.mjs` cases are known, from `main` (DESIGN §4).
 **Last updated:** 2026-10-01
-**Next `pir-work` will:** T00, the spike its later tasks depend on.
+**Next `pir-work` will:** T10, docs and README.
 
 ## Tasks
 
@@ -28,11 +27,11 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T05 | hand-tool | T00, T03, T04 | ✅ | |
 | T06 | bang-view | T02, T03 | ✅ | |
 | T07 | hand-view | T05, T06 | ✅ | |
-| T08 | bang-drill | T06, T07 | 🔍 | Drill in plan-rig-bang-drill-{60x20,80x24,120x40}.test.mjs, 12 pty tests: planner, single builder, build with agent, close-and-reopen. Fix: hand tool's step hidden by default (person's choice), 1 unit test. Deviation: split per size, not one file; reopen test in conversation-rig-helpers. New fake sets bang-plan, bang-single, bang-build. |
+| T08 | bang-drill | T06, T07 | ✅ | Review: one fix, the reopen drill asserted `sleep 3` ends in 3–4s; reproduced 5s twice under full npm test, now holds the ≥3s floor. Probed the hidden hand step (no helper line lost, unit test goes red with the fix gutted), all 12 drill tests alone and in the suite. Drill split per size accepted. |
 | T09 | agent-rules | T05 | ✅ | |
 | T10 | docs-readme | T08, T09 | ⬜ | |
 
-**Review queue:** T08
+**Review queue:** *(empty)*
 
 ## Blocked on the user
 
