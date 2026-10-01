@@ -8,10 +8,10 @@ they walk past.
 
 **Plan reviewed:** 2026-10-01 — 9 fixed, 4 decided with the user
 
-**Status:** Plan written 2026-10-01. Nothing built. The red `notify-wiring.test.mjs` cases on `main` are to
+**Status:** Plan written 2026-10-01. T00 done. The red `notify-wiring.test.mjs` cases on `main` are to
 be fixed there before the build starts (DESIGN §4).
 **Last updated:** 2026-10-01
-**Next `pir-work` will:** review T00.
+**Next `pir-work` will:** implement T01 or T02 (both unblocked).
 
 ## Tasks
 
@@ -20,7 +20,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 
 | # | Task | Depends on | State | Notes |
 |---|---|---|---|---|
-| T00 | hand-tool-spike | — | 🔍 | Four real sessions measured; answers in FINDINGS. `auto` needs the PreToolUse `ask` hook (DESIGN §2.6 fallback, no contradiction); `pirResult` routes by tool-use id map. Spike folder deleted, nothing committed but the row. No code changed, so the suite was not run. |
+| T00 | hand-tool-spike | — | ✅ | Four real sessions measured; answers in FINDINGS. Review clean, no fix commit: corroborated in SDK 0.3.282 code that SDK servers skip `--mcp-config` and travel in `initialize`/`mcp_message`, and that the CLI binary carries `claudecode/toolUseId`; spike folder confirmed deleted. Markdown only, suite not run. |
 | T01 | shell-runner | — | ⬜ | |
 | T02 | bang-rules | — | ⬜ | |
 | T03 | bang-forwarding | T01, T02 | ⬜ | |
@@ -32,7 +32,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T09 | agent-rules | T05 | ⬜ | |
 | T10 | docs-readme | T08, T09 | ⬜ | |
 
-**Review queue:** T00
+**Review queue:** empty
 
 ## Blocked on the user
 
