@@ -500,6 +500,16 @@ Stage 4's "every question stands alone" binds each form: `pir`'s screen shows th
 messages and the form, never your reasoning, so Stage 4's opening list is a message you write before
 the first form. Do not use an option's `preview` field: `pir` does not show it.
 
+**Handing a command.** When a command only the person can run here is needed (their login, their
+account, their credentials, their device; for example the login a failing Pass 3 login check asks for),
+hand it with your `hand_command` tool (`mcp__pir__hand_command`): `command` is the exact line, seatbelt included, and
+`reason` is one plain sentence the person can judge, saying why only they can run it. `pir` pins it
+above their box; they run it, edit it first, or decline, and the tool's result is what it printed, with
+its exit status. Never hand what your own tools and permission rules let you run, never hand an `ask`
+row's command in place of its permission prompt, and never hand a command you were refused. No report
+file: the request already reads `asking you`. A decline is an answer: ask in words what they want
+instead. A result saying they allowed it from outside pir means nobody ran it: ask them in words.
+
 **Permission rules (Stage 5).** Write the §5.3 rules into `.claude/settings.json` in this worktree and
 commit them on this branch. That is where the build will run, so every build worker's worktree
 inherits them from here; do not touch the main checkout's copy.

@@ -64,6 +64,16 @@ you write and the question form and nothing else, never your reasoning, so whate
 between is spelled out in the question, its options, or a message you wrote just before it. Do not
 use an option's `preview` field: `pir` does not show it. Then end your turn and wait for the answer.
 
+**Handing a command.** When a command only the person can run here is needed (their login, their
+account, their credentials, their device; for example a login check), hand it with your
+`hand_command` tool (`mcp__pir__hand_command`): `command` is the exact line, seatbelt included, and
+`reason` is one plain sentence the person can judge, saying why only they can run it. `pir` pins it
+above their box; they run it, edit it first, or decline, and the tool's result is what it printed, with
+its exit status. Never hand what your own tools and permission rules let you run, never hand an `ask`
+row's command in place of its permission prompt, and never hand a command you were refused. No report
+file: the request already reads `asking you`. A decline is an answer: ask in words what they want
+instead. A result saying they allowed it from outside pir means nobody ran it: ask them in words.
+
 **The tests are pir's.** `pir` ran the project's setup in this worktree before you started, and it
 runs the setup and test commands itself after each report, from settings the person chose. Green is
 `pir`'s word, never yours: you may run a test to check your own work, in the foreground, leaving

@@ -163,6 +163,9 @@ with the exact command and its seatbelt, **the moment you need it, then wait for
 rather than left as homework at the end. Mark that half unverified in `PROGRESS.md` and in the
 report. Never run the unbounded dangerous version to find out for yourself. See `CLAUDE.md`
 for the handover format and `DESIGN.md § Environment` for this project's table and seatbelts.
+In a `pir` run, a command only the person can run (their login, their account, their device) is
+handed with the `hand_command` tool, never round a permission or an `ask` row, and always with a
+reason the person can judge: see `pir-worker § Handing the person a command`.
 
 The test command stays the only evidence this session asserts on its own, and a handover stays
 the *last* resort, not the first — reached when the tools are written and the gap that is left
