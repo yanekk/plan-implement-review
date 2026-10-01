@@ -34,10 +34,14 @@ A new section `## The helpers (resolve and fix)` in the skill, engaged when the 
 - Neither helper reports `dropped`. After reporting, change nothing until pir's word arrives.
 - The report format and the one-Bash-command drop are the builder's, with the new kinds.
 
+Also § What a single run is, step 4 ("shows the person the command that merges the branch"): it now reads
+that pir syncs the base in and hands the branch to the finisher, which asks the person `Go`.
+
 ## Tests
 
 - [ ] The skill names both roles, both report headers exactly, and the "never touch the base" rule.
 - [ ] The skill says a helper never reports `dropped`.
+- [ ] § What a single run is no longer says pir shows the person the merge command.
 - [ ] The opening phrases the skill keys on ("as the resolve helper of", "as the fix helper of") match T03's `helperInstruction` text (assert both strings appear in the skill; T05 cross-checks against the function).
 
 ## Done when
@@ -48,4 +52,4 @@ A new section `## The helpers (resolve and fix)` in the skill, engaged when the 
 
 ## Outside actions
 
-- Refresh the installed engine and skills — `worker` (DESIGN §5.3)
+- Refresh the installed engine and skills — `ask` (DESIGN §5.3)

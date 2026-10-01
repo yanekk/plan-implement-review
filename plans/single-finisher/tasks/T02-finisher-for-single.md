@@ -31,7 +31,8 @@ export function finisherOpening({ kind = 'build', slug, branch, base, rulesPath,
 
 // finisher-agent.mjs: two new optional args; everything else unchanged.
 startFinisher({ ..., kind = 'build', promptPath = null, reportPath = null, ... })
-// kind 'single': session name `${basename(repoRoot)} / ${slug} / single / finisher`; reportPath may be null.
+// kind 'single': session name `${basename(repoRoot)} / ${slug} / single / finisher` (today hard-coded
+// `${basename(repoRoot)} / ${slug} / finisher`); reportPath may be null and is never rendered (no `Report:` line).
 // The opening passes kind and promptPath through. The fence, gate, phases, drain, go scan, ledger,
 // state.json and resume do not read kind.
 ```
@@ -39,8 +40,9 @@ startFinisher({ ..., kind = 'build', promptPath = null, reportPath = null, ... }
 Skill: the description and opening paragraph cover "a parallel PIR build run or a single run"; § Your
 opening instruction lists `Change asked for` as the single run's counterpart of the report; § What to
 check, step 5 says: for a build read `plans/{slug}/REPORT.md`; for a single run read the `Change asked
-for` file and `git log --oneline <target>..pir/{slug}`, and say in the summary what is being delivered.
-Nothing else in the skill changes.
+for` file and `git log --oneline <target>..pir/{slug}`, and say in the summary what is being delivered;
+the status-folder line (today "ends in `control/finisher/status/`") also names a single run's
+`.parallel/single/finisher/status/`. Nothing else in the skill changes.
 
 ## Tests
 
@@ -48,6 +50,7 @@ Nothing else in the skill changes.
 - [ ] `kind: 'single'` names the single run, has `Change asked for:`, has no `Plan:` and no `Report:`, keeps `Target branch:`, `Rules file:`, `Main checkout:`, `Status folder:`, and the go-question line; stays under 1500 characters.
 - [ ] `startFinisher({ kind: 'single', reportPath: null, promptPath })` starts with the single opening and the single session name (fake spawner).
 - [ ] A single-kind finisher in `preparing` is refused a `git merge` and allowed `git log` exactly as a build's (the gate does not read kind).
+- [ ] Skill test: the status-folder line names both folders.
 - [ ] Skill test: the skill mentions the single run's `Change asked for` and the `git log` check, and still names `REPORT.md` for builds.
 - [ ] Every existing finisher, finisher-brief, finisher-skill and hand-over test passes unchanged.
 
@@ -59,4 +62,4 @@ Nothing else in the skill changes.
 
 ## Outside actions
 
-- Refresh the installed engine and skills — `worker` (DESIGN §5.3)
+- Refresh the installed engine and skills — `ask` (DESIGN §5.3)

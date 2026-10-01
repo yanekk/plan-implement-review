@@ -18,8 +18,10 @@ DESIGN §2.2–§2.10, §2.13, §3.3, §3.4.
 - `src/shell/single-run.mjs`, `src/shell/single-run.test.mjs`
 - `src/core/singleflow.mjs` (remove T03's `endSequence` option; the ending is always on)
 - `src/shell/launch.mjs` (`resumeRun` for a run in `sync` or `wait`, if it needs anything)
-- `src/core/dashboard.mjs` (`canResume`: a running-then-stopped run in `sync`/`wait` is resumable; finished stays final)
+- `src/core/dashboard.mjs`: no change expected; `canResume` already returns true for any stopped or crashed run and false for a finished single run. The test below pins it.
 - `src/shell/fake/sessions.mjs` (+ its test): `singleResolveScript`, `singleFixScript`, `singleFinisherScript`
+  (the last extends `finisherScript` in `conversation-rig.mjs`, which already writes `ready`, asks `Go`,
+  merges and writes `done`; move or share it, do not copy it)
 
 ## Interface
 
@@ -27,17 +29,25 @@ Executing T03's actions in `runSingle`'s loop:
 
 | Action | Shell |
 |---|---|
-| `prepareBase` | `prepareBase(root, state.base, { mode })` from `base-branch.mjs`; also reads the local tip (`baseTip`) → `facts.base` |
-| `syncBase` | `syncBase(worktree, { baseSha, base })`; a throw → `{ state: 'error', error }` |
+| `prepareBase` | `prepareBase(root, state.base, { mode })` from `base-branch.mjs` (a throw → `fetch-failed`, as `prepareRunBase` does); adds `text: holdText(result, { base, remote })` (`core/basebranch.mjs`) and `localTip: baseTip(...)` → `facts.base` |
+| `syncBase` | `syncBase(worktree, { baseSha, base })`; a throw → `{ state: 'error', error }` (there is no `error` state in `syncBase` itself) |
 | `abortSync` | `abortSync(worktree)` |
 | `spawn resolve/fix` | the holder, with `helperInstruction(...)` and names `{repo} / {name} / single / resolve` (`/ fix`) |
-| `startFinisher` | `startFinisher({ kind: 'single', controlDir, featurePath: worktree, repoRoot: root, slug: name, base, rules: chooseRules(...), reportPath: null, promptPath, askRules, startWorker, claudePath, remote, env })`; a throw → `facts.finisher.failed` next pass, logged `finisher failed to start: …` |
+| `startFinisher` | `startFinisher({ kind: 'single', controlDir, featurePath: worktree, repoRoot: root, slug: name, base, rules: chooseRules(...), reportPath: null, promptPath: {controlDir}/prompt.md (written by `launch.mjs` today), askRules: readAskRules(worktree), startWorker, claudePath, remote, env: () => … })`; a throw → `facts.finisher.failed` next pass, logged `finisher failed to start: …` |
 | `finisherResyncing` / `finisherResynced` / `closeFinisher` | the Finisher's methods |
 | `finish` | as today; `recordFinal('finished')`; the program exits |
 
 Each pass in `wait` the shell computes `facts.watch` with `watchDue` and `baseWatchVerdict` (T01),
 `facts.finisher` from `finisher.drain()`, `phase()`, `goGiven()`, `givenUp()`, and `facts.syncPending`
 from `syncPending(worktree)`.
+
+The loop's `waker.wait([...])` also watches the finisher's `status/` folder and its conversation log,
+so a status or a go wakes the pass rather than waiting out `POLL_MS` (`startFinisher` has no `onActivity`
+hook).
+
+`single-run.mjs`'s own lists grow `resolve` and `fix`: `STEPS`, `STEP_KINDS`, `ROLE`, `holder.load(state.sessions,
+STEPS)`, and `instructionOf` (today anything not `build` gets the reviewer's instruction; the helpers get
+`helperInstruction`). `nextTestsLogPath` counts `tests-{n}.log` and `sync-tests-{n}.log` (DESIGN §3.4).
 
 The person inbox is started with `withAgent(holder.platform, () => finisher)` and restarted with the same
 wrap at the rename (DESIGN §2.7).
@@ -81,4 +91,4 @@ line, T02).
 
 ## Outside actions
 
-- Refresh the installed engine and skills — `worker` (DESIGN §5.3)
+- Refresh the installed engine and skills — `ask` (DESIGN §5.3)

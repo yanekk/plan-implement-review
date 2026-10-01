@@ -72,8 +72,13 @@ export function helperInstruction({ role: 'resolve' | 'fix', name, base, reports
 // Names the pir-single skill and the role ("as the resolve helper of pir/{name}"), "You are run by `pir single`.",
 // the reports folder, the base; resolve: the conflicted files, one per line; fix: the reason and the log path.
 
-export function singleProgress(runState)   // DESIGN §2.11 PROGRESS cells, legacy 'ready' unchanged
+export function singleProgress(runState)   // exists today (build/review, legacy 'ready', 'dropped'): extend it
+                                           // with the DESIGN §2.11 cells; legacy 'ready' unchanged
 ```
+
+Lists that name only `build` and `review` today and must grow `resolve` and `fix`: `STEP_KINDS`,
+`ROLES`, `singleSessionName` (throws on any other step; gains `{repo} / {name} / single / resolve|fix`),
+`initialSingleState`'s `sessions`, and `clone()` (drops any other `sessions` key and has no `end`).
 
 ## Tests
 
@@ -98,6 +103,8 @@ Each a `decideSingleStep` walk from a state and facts:
 - [ ] Red wait: `moved` → new sequence; green → `startFinisher` (finisher never started).
 - [ ] Resume in `sync` with `syncPending` and no live helper → `abortSync` then `prepareBase('start')`; resume with a live helper step → `resumeSession` for `resolve`/`fix`; tests in flight → started again.
 - [ ] Resume in `wait` with `end.finisher: 'on'` → `startFinisher`; with `finisher.phase: 'done'` → `finish('finished')`.
+- [ ] Right after `startFinisher` (DESIGN §2.10 last item): `givenUp` → fallback `gave-up`; `phase: 'done'` → `finish('finished')`; a resume whose last sync was `merged`/`resolved` → `finisherResynced(baseSha)`.
+- [ ] `prepareBase` result `no-base-branch` holds like `fetch-failed`.
 - [ ] A finished run (any outcome, `ready` included) returns no actions.
 - [ ] Old `state.json` without `end`, `resolve`, `fix` loads with defaults.
 - [ ] `helperInstruction` for both roles: names the skill, the role, `pir single`, the reports folder; resolve lists files; fix has reason and log.

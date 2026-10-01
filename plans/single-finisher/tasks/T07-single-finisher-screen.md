@@ -15,10 +15,10 @@ DESIGN §2.11.
 ## Files
 
 - `src/shell/single-run.mjs` (`singleRunState`: the `sync` step entry, the `merge` entry from the finisher view)
-- `src/core/plandisplay.mjs` (`buildSingleDisplay`), `src/core/display.mjs` (reuse the finisher row words; export what is needed, no copy)
-- `src/core/dashboard.mjs` (`runDisplayState` for single, `openAgent`/`openCoordinator` for a single run with a finisher, no-session notes)
+- `src/core/plandisplay.mjs` (`buildSingleDisplay`; its row list `['build','review','merge']` gains `sync`), `src/core/display.mjs` (reuse the finisher row words: `FINISHER_WORDS`, `finisherLabel`, `finisherRow` are module-private today; export what is needed, no copy)
+- `src/core/dashboard.mjs` (`runDisplayState` for single, `SINGLE_STEP_IDS` gains `sync`, `openAgent`/`openCoordinator` for a single run with a finisher (both return null for any single run today), the `c` reducer and `noCoordinatorNote`, no-session notes)
 - `src/core/singleflow.mjs` (`singleProgress`, if T03's cells need adjusting to the snapshot)
-- `src/shell/pir-tui.mjs` (state words and colours for `syncing`, `ready-for-your-go`, `finishing`, `not-ready`, `closed`), `src/shell/conversation-view.mjs` (header `agent` for the finisher of a single run)
+- `src/shell/pir-tui.mjs` (`stateCell` words and colours for `syncing`, `finishing`, `not-ready`, `closed`; `ready-for-your-go` and `ready-to-merge` exist), `src/shell/conversation-view.mjs` (header `agent`: open the finisher with task id `FINISHER_ID`, not `merge`)
 - tests beside each, and `src/shell/plan-rig-single-*.test.mjs` / `plan-rig-single-drill-helpers.mjs`
 
 ## Interface
@@ -28,6 +28,7 @@ DESIGN §2.11.
 { id: 'sync', phase: 'pending'|'working'|'testing'|'asking'|'held'|'done'|'failed', text, since, worker, workers }
 { id: 'merge', phase: 'pending'|'finisher'|'ready'|'done', finisher: <finisher view> | null, text }
 // runState.finisher: the finisher's view() while it is on, else null (T05)
+// singleRunState's row list (today build, review, merge) gains sync.
 ```
 
 Words and styles: DESIGN §2.11 tables, exactly. The `merge` row's finisher words come from the same
@@ -58,4 +59,4 @@ function the build's pinned row uses in `display.mjs`.
 
 ## Outside actions
 
-- Refresh the installed engine and skills — `worker` (DESIGN §5.3)
+- Refresh the installed engine and skills — `ask` (DESIGN §5.3)

@@ -19,8 +19,13 @@ DESIGN §2.2, §2.5, §2.7, §5.1.
   `.pir/settings.json` (`baseBranch`, `setup`, `test`), a `.pir/rules/on-finish.md` saying "merge into the
   target branch and write a file FINISHED in the main checkout", a prompt for a one-line change, and a
   commit on the base made after the build starts (not touching the same file).
+- `src/shell/harness/run.mjs` `runSingleScenario`, extended for this fixture: it counts outcome `finished`
+  (not only `ready`) as completed; its answerer (`typed: { '*': spec.reply }`) never answers the finisher,
+  so nobody stands in for the person's `Go` (as `finisher-live` does: no answerer on the finisher); it makes
+  the base commit once the build has started; and once the finisher waits for the go it prints the
+  dashboard command below and the finisher's Remote Control link.
 - its checks in `src/shell/harness/assertions.mjs`, and a dry pass with the fake in `run-single.test.mjs`
-  or a new `run-single-finisher.test.mjs`.
+  or a new `run-single-finisher.test.mjs`, including that the answerer left the go question unanswered.
 
 ## Environment (the worker owns this)
 
@@ -32,7 +37,7 @@ rm -rf /tmp/pir-single-finisher-live    # teardown; confirm it is gone and this 
 
 ## Outside actions
 
-- Refresh the installed engine and skills — `worker` (DESIGN §5.3)
+- Refresh the installed engine and skills — `ask` (DESIGN §5.3)
 - Real single run with a real finisher — `worker` (DESIGN §5.3)
 - Scratch teardown — `worker` (DESIGN §5.3)
 
@@ -47,11 +52,15 @@ rm -rf /tmp/pir-single-finisher-live    # teardown; confirm it is gone and this 
 
 ## Needs a person
 
+The run lives in a scratch pir home, so the person's everyday `pir` does not list it, and there is no
+phone alert on this machine (`~/.pir/notify.json` absent). Hand them, in another terminal:
+
 ```
-The run is waiting in /tmp/pir-single-finisher-live, in pir's dashboard (or on your phone via the
-finisher's Remote Control link). Open the single run's row, → on `merge`, read the steps, and answer
-the Go question with "Go".
+PIR_HOME=/tmp/pir-single-finisher-live/.pir-home pir
 ```
+
+then: open the single run's row, → on `merge`, read the steps, and answer the Go question with "Go"; or
+open the Remote Control link the harness printed and answer there. Within the 25-minute seatbelt.
 
 Expect: before your Go nothing is merged; after it the row reads `◌ finished`.
 Tell me: did you answer Go, and where (pir or phone)?

@@ -43,7 +43,7 @@ export function watchDue({ now, watchFrom, watchMs }) // → { due: boolean, wat
 - [ ] nothing changed → `null`.
 - [ ] `watchDue`: first call starts the clock and is not due; due at exactly `watchMs`; not due just before.
 - [ ] `boundary.test.mjs` passes with the new module.
-- [ ] Every existing coordinator, finisher and hand-over test passes unchanged (`coordinate*.test.mjs`, `finisher-handover.test.mjs`).
+- [ ] Every existing coordinator, finisher and hand-over test passes unchanged (`coordinate.test.mjs`, where the base-watch tests live, `coordinate-stall.test.mjs`, `finisher-handover.test.mjs`).
 
 ## Done when
 

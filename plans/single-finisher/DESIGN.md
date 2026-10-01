@@ -60,8 +60,10 @@ tree. That point now starts the **sync** step instead. The sync mirrors the buil
 (`endSync`, `endSyncing`, `endTests`, `startFix`, `endFixing` in `coordinate.mjs`), with these steps:
 
 1. **Prepare the base.** `prepareBase(root, base, { mode: 'start' })` (`base-branch.mjs`), as a build's
-   end does: fetch the remote's copy and decide which commit is the base. A failure (`fetch-failed`,
-   `diverged`) holds the sync with `holdText`'s reason and retries every 60 s, as `holdSync` does.
+   end does: fetch the remote's copy and decide which commit is the base. Any non-ok result
+   (`fetch-failed`, `diverged`, `no-base-branch`) holds the sync with `holdText`'s reason
+   (`src/core/basebranch.mjs`) and retries every 60 s, as `holdSync` does. `prepareBase` returns no
+   `text` or `localTip`: the shell adds them (`holdText`, `baseTip`) to `facts.base`.
    Reason: never merge a base this sync did not just try to fetch (base-branch DESIGN §2.3, §2.8).
 2. **Already merged?** If the base (local ref, or the commit just prepared) already contains
    `pir/{name}`'s tip, the person merged by hand: the run ends `merged`.
@@ -69,7 +71,7 @@ tree. That point now starts the **sync** step instead. The sync mirrors the buil
    - `up-to-date`: the tested head stands; go to the wait (§2.4) with tests green.
    - `merged` (a merge commit `sync {base} into pir/{name}`): run the tests (§2.3).
    - `conflict`: hold a **resolve** helper (§2.3). `syncBase` throwing (git refused before merging):
-     logged, the sync is `unresolved`, the run waits red.
+     logged, the shell reports `facts.sync.state: 'error'`, the sync is `unresolved`, the run waits red.
 4. **Tests.** Setup then test lines, as every single-run test run (`runLines`). Green: the wait.
    Red, and this sequence has had no fix helper: hold a **fix** helper (§2.3), then test again. Red
    after the fix: the wait, red (§2.6).
@@ -130,19 +132,20 @@ now has things to do there (watch the base, hold the finisher), as a build's coo
 
 ### 2.5 While the finisher waits for the go
 
-Each pass with the finisher on, in the order `finisherWaiting` uses:
+Each pass with the finisher on, in the order `finisherWaiting` (`coordinate.mjs`) uses:
 
-1. Drain its statuses (`finisher.drain()`): `done` → the run ends `finished`; `close` → the run ends
+1. A re-sync just settled (step 5): green → `finisher.resynced(baseSha)` (the finisher re-checks and
+   writes a fresh `ready`); red → the finisher is closed for good (fallback `red`) and the run waits red.
+   It is never handed over again in this run (user 2026-09-29 for builds, kept here).
+2. `finisher.givenUp()` → fallback `gave-up` (§2.8).
+3. Drain its statuses (`finisher.drain()`): `done` → the run ends `finished`; `close` → the run ends
    `closed`.
-2. After any go (`finisher.goGiven()`), nothing else: the run ends only on `done` or `close`. Reason:
+4. After any go (`finisher.goGiven()`), nothing else: the run ends only on `done` or `close`. Reason:
    the finisher's own merge moves the base, and a `stuck` after that merge must still reach the person
    (finisher DESIGN §2.8).
-3. Before any go, watch the base (§2.9): `merged` → the run ends `merged` and the finisher is closed;
-   `moved` → `finisher.resyncing()` (no go counts from this pass), then a new sync sequence (§2.2).
-   When it settles green, `finisher.resynced(baseSha)` (the finisher re-checks and writes a fresh
-   `ready`); when it settles red, the finisher is closed for good (fallback `red`) and the run waits red.
-   It is never handed over again in this run (user 2026-09-29 for builds, kept here).
-4. `finisher.givenUp()` → fallback `gave-up` (§2.8).
+5. Before any go, watch the base (§2.9): `merged` → the run ends `merged` and the finisher is closed;
+   `moved` → `finisher.resyncing()` (no go counts from this pass), then a new sync sequence (§2.2),
+   whose settling step 1 reads.
 
 ### 2.6 Red: not ready, and waiting
 
@@ -167,8 +170,8 @@ the finisher, unless the finisher already fell back in this run. A hand merge by
 | `rules` | `chooseRules({ featurePath, home, repo, engineDir, exists })`, unchanged: the same `on-finish.md` and order (user, 2026-10-01) |
 | `reportPath` | `null` |
 | `promptPath` | `{controlDir}/prompt.md` (new) |
-| `askRules` | the worktree's `.claude/settings.json` ask rules, as builds read them |
-| `startWorker`, `claudePath`, `remote`, `env` | the single run's own, as it passes them to its holder |
+| `askRules` | `readAskRules(worktree)` (`coordinate.mjs`), as builds read them |
+| `startWorker`, `claudePath`, `remote`, `env` | the single run's own, as it passes them to its holder (`startWorker`: `deps.startWorker`, else `worker-proc.mjs`'s); `env` is a function, as `startFinisher` calls `env?.()` |
 
 What changes for `kind: 'single'`:
 
@@ -200,7 +203,7 @@ The build's `watchBase` decision moves to a pure function in core (T01) used by 
 
 ```
 baseWatchVerdict({ containsTip, localTip, localSeen, watched, baseSha }) → 'merged' | 'moved' | null
-watchDue({ now, watchFrom, watchMs }) → boolean
+watchDue({ now, watchFrom, watchMs }) → { due, watchFrom }
 ```
 
 Each pass in the wait (finisher before any go, red, or fallback) the shell reads the local base; every
@@ -229,6 +232,9 @@ A finished run is final, as today. A run stopped or crashed in `sync` or `wait` 
   `afterRestart` moves `finishing` to `stuck` (finisher DESIGN §2.12). With `finisher/state.json` present
   and `phase: 'done'` → the run ends `finished` at once.
 - `wait` red or fallback → the watch carries on.
+- Right after any `startFinisher` (first start or resume), the checks `handOver` (`coordinate.mjs`) makes
+  for builds: `givenUp` → fallback `gave-up`; `phase: 'done'` → `finished`; on a resume whose last sync
+  was `merged` or `resolved`, `finisher.resynced(baseSha)`.
 
 ### 2.11 On screen
 
@@ -261,7 +267,9 @@ finisher's row.
 `→`/`↵` on `sync` opens the current (or last) helper's conversation, or says `sync has no session — pir
 brought {base} in itself.`; on `merge` opens the finisher's conversation, or the existing no-session
 notes. `c` opens the finisher while it is on; otherwise `a single run has no coordinator agent.` as
-today. The conversation header reads `agent` for the finisher, as in builds.
+today. The conversation header reads `agent` for the finisher, as in builds: `conversation-view.mjs` shows
+`agent` only for task id `coordinator` or `finisher`, so the `merge` row opens it with `FINISHER_ID`
+(`display.mjs`), not `merge`.
 
 The runs list (dashboard): STATE adds `● syncing` (sync step working), `● ready for your go` (amber,
 counted, finisher in `awaiting-go` and nothing else asking), `● finishing` (finisher `preparing` or
@@ -280,7 +288,8 @@ Through the existing machinery (`notifyStep`, `notify.mjs`), only when `pir noti
 | When | Alert |
 |---|---|
 | a helper asks | as the builder's and reviewer's: `{name} · resolve` / `· fix` |
-| finisher phases | the build finisher's set (`finisherNotifyView`) with `{name}` as the slug: `ready for your go`, `finisher stuck`, `finisher`, `finished`, `finisher gave up` |
+| finisher phases | the build finisher's, with `{name}` as the slug: `ready for your go`, `finisher stuck` and a parked request (`finisherNotifyView`, id `finisher`); `finished` and `finisher gave up` as one-shots (`finisherAlert`, as `finisherOneShot` sends them for builds) |
+| the sync is held (§2.2 step 1) | `holdAlert({ slug: name, hold })`: `{name} · waiting` with `holdText`'s reason, once per reason, as `holdAlertPass` does for builds (user, 2026-10-01: a held run must not sit unnoticed) |
 | the run settles red | `endAlert({ slug: name, ready: false, reason, unresolved, base })`: `{name} · not ready` |
 | fallback after the finisher failed to start | `singleEndAlert`: `{name} · ready to merge` |
 
@@ -326,9 +335,9 @@ relax the test.
 | `skills/pir-finisher/SKILL.md` | skill | T02: covers a single run (prompt and log in place of REPORT.md) |
 | `src/core/singleflow.mjs` | core | T03: `sync`/`wait` steps, helper roles, new actions and facts, outcomes, `helperInstruction`, `singleProgress` |
 | `skills/pir-single/SKILL.md` | skill | T04: the resolve and fix roles and their reports |
-| `src/shell/single-run.mjs` | shell | T05: executes the new actions, holds helpers, the finisher, the watch; T06 alerts; T07 `singleRunState` rows |
+| `src/shell/single-run.mjs` | shell | T05: executes the new actions, holds helpers, the finisher, the watch; T06 alerts (its `ROLE` map); T07 `singleRunState` rows |
 | `src/shell/launch.mjs`, `src/core/dashboard.mjs` | shell/core | T05: resume of `sync`/`wait`; T07: display states |
-| `src/core/plandisplay.mjs`, `src/shell/pir-tui.mjs`, `src/shell/conversation-view.mjs` | core/shell | T07: rows, `c`, `→` |
+| `src/core/plandisplay.mjs`, `src/core/display.mjs`, `src/shell/pir-tui.mjs`, `src/shell/conversation-view.mjs` | core/shell | T07: rows, state words, header; `c` and `→` live in `dashboard.mjs` (`openAgent`, `openCoordinator`, `noCoordinatorNote`) |
 | `src/shell/fake/sessions.mjs` | test | T05: fake resolve/fix helpers and a single-run finisher script |
 
 ### 3.3 The decision function
@@ -340,6 +349,7 @@ relax the test.
 { type: 'syncBase', baseSha }                    → facts.sync: { state: 'up-to-date'|'merged'|'conflict'|'error', files, error }
 { type: 'abortSync' }
 { type: 'spawn', step: 'resolve'|'fix' }         (helpers, held like build/review)
+{ type: 'resumeSession', step: 'resolve'|'fix', sessionId }
 { type: 'startFinisher' }                        (start or resume; the shell builds its args, §2.7)
 { type: 'finisherResyncing' } / { type: 'finisherResynced', baseSha }
 { type: 'closeFinisher' }
@@ -347,17 +357,17 @@ relax the test.
 ```
 
 New facts: `base`, `sync`, `syncPending`, `watch: 'merged'|'moved'|null` (the shell computes it with
-`baseWatchVerdict`), `finisher: { started, phase, goGiven, givenUp, accepted: [{ kind }] }`, `now` for
-the hold's retry. State gains `end: { seq, sync: { state, baseSha, files }, tests, testsReason, fixUsed,
-resolveUsed, hold, localSeen, remote, finisher: null|'on'|'fallback', fallback }`, and `sessions` gains
-`resolve` and `fix`. `step` values: `setup`, `build`, `rename`, `review`, `sync`, `wait`.
+`baseWatchVerdict`), `finisher: { started, phase, goGiven, givenUp, failed, accepted: [{ kind }] }`, `now`
+for the hold's retry. State gains `end` and `sessions` gains `resolve` and `fix`; the exact shapes are
+T03's Interface. `step` values: `setup`, `build`, `rename`, `review`, `sync`, `wait`.
 
 ### 3.4 Storage
 
 All in the run's control folder, gitignored, written temp-then-rename as today: `state.json` (new fields
 above), `finisher/` (the build finisher's `state.json`, `session.json`, `status/`, `ledger.jsonl`),
 `conversations/resolve-{n}.ndjson`, `fix-{n}.ndjson`, `finisher-{n}.ndjson`, `sync-tests-{n}.log`
-continue `tests-{n}.log`'s numbering. A crash mid-sync leaves a merge in progress in the worktree;
+continue `tests-{n}.log`'s numbering (`nextTestsLogPath` in `single-run.mjs` counts only `tests-{n}.log`
+today; T05 extends it to count both). A crash mid-sync leaves a merge in progress in the worktree;
 resume aborts it (§2.10).
 
 ---
@@ -431,11 +441,11 @@ T07 change installed code or skills; T10 runs against the installed copy.
 | Action | Command (exact, wrapped) | Bin | Why this bin | Way back | Expected cost | Login check |
 |---|---|---|---|---|---|---|
 | Install the locked packages | `test ! -f package-lock.json \|\| npm ci` | worker | exact locked versions | delete `node_modules` | none | none |
-| Refresh the installed engine and skills | `./install.sh` | worker | CLAUDE.md requires it after engine or skill changes; local, idempotent | re-run on the previous commit | none | none |
+| Refresh the installed engine and skills | `./install.sh` | ask | CLAUDE.md requires it after engine or skill changes; it replaces the pir the person uses daily, open runs included, so it stops for their yes (user, 2026-10-01, keeping the repo's existing `ask` rule) | re-run on the previous commit | none | none |
 | Real single run with a real finisher (T10) | `perl -e 'alarm 1500; exec @ARGV' node src/shell/harness/run.mjs single-finisher-live --into /tmp/pir-single-finisher-live` | worker | plan limits only, no paid API; a scratch repo | delete `/tmp/pir-single-finisher-live` | three or four short sessions | `claude auth status` (measured logged in, claude.ai, 2026-10-01) |
 | Scratch teardown | `rm -rf /tmp/pir-single-finisher-live` | worker | local scratch only | none needed | none | none |
 
-No `ask` rows. The finisher's runtime actions (the person's merge, install) are not build actions of
+One `ask` row, `./install.sh`; a coordinator agent cannot answer it. The finisher's runtime actions (the person's merge, install) are not build actions of
 this plan; in T10 they land in the scratch repo after the person's `Go`.
 
 ---
