@@ -3,7 +3,7 @@
 // worker behaves like a live one, so the conversation view (T13) can be driven end to end with no paid
 // worker. Nothing here calls a model: the worker is the real Agent SDK talking to fake/claude-stream.mjs.
 //
-//   node src/shell/conversation-rig.mjs [--into <scratch>] [--scenario tour|long|coordinator|helpers|finisher|finisher-notyet|finisher-stuck|finisher-reserved] [--keep]
+//   node src/shell/conversation-rig.mjs [--into <scratch>] [--scenario tour|long|coordinator|helpers|bang|finisher|finisher-notyet|finisher-stuck|finisher-reserved] [--keep]
 //
 // It stays in the foreground until Ctrl+C, SIGTERM (pir's Ctrl+S stop sends one to the run's pid) or a
 // HALT file in the run's control folder. While it runs, open the screen from another terminal:
@@ -51,6 +51,8 @@
 //   finisher-reserved  (finisher T09) after the go it asks for a destructive command (`rm -rf dist/`), which
 //         pir parks for the person (DESIGN §2.5): the row reads `asking you` until it is answered in the
 //         finisher's conversation, then it writes `done`.
+//   bang  (bang-commands T03) one idle worker that answers every message, the result of a person's `!`
+//         included, with the fixed line RIG_BANG_REPLY.
 //   Every finisher scenario also runs the run's alert pass (notifyPass, and the done alert as coordinate.mjs
 //   sends it) against a pretend phone: rig.alerts() is every send and clear, and each is appended to
 //   control/fake-notify.ndjson.
@@ -76,7 +78,7 @@ import {
 import { startTimeOf } from './identity.mjs';
 import { indexDir, removeRecord, writeRecord } from './index-store.mjs';
 import { writeSnapshot } from './snapshot-store.mjs';
-import { createGrants, startPersonInbox } from './person-inbox.mjs';
+import { createGrants, shellsDirOf, startPersonInbox } from './person-inbox.mjs';
 import { createPlatform } from './platform.mjs';
 import { startWorker } from './worker-proc.mjs';
 import { startCoordinatorAgent, withAgent } from './coordinator-agent.mjs';
@@ -87,6 +89,9 @@ export const RIG_SLUG = 'rig';
 // The scenarios whose run waits at its end on the finisher (finisher T07, T09).
 export const FINISHER_SCENARIOS = ['finisher', 'finisher-notyet', 'finisher-stuck', 'finisher-reserved'];
 export const RIG_TASK = 'T01';
+// What the bang scenario's worker answers to every message (bang-commands T03).
+export const RIG_BANG_REPLY = 'Thanks, I read the output.';
+const shQuote = (t) => `'${String(t).replace(/'/g, `'\\''`)}'`;
 const PIR = fileURLToPath(new URL('./pir.mjs', import.meta.url));
 
 // The commands Claude Code lists as terminal-only (DESIGN §2.9): the box drops them from its offer.
@@ -202,7 +207,18 @@ export function scenarioScript(name = 'tour', { paceMs = 300, workMs = 4000, ste
     return [...opening, { emit: assistantText('T01 is built and merged.') }, { emit: resultEvent('success', 'merged') }, { chat: { workMs, init: RIG_INIT } }];
   }
   if (name === 'helpers') return helpersScript({ stepMs, workMs });
-  throw new Error(`unknown scenario "${name}" (tour, long, coordinator, helpers, ${FINISHER_SCENARIOS.join(', ')})`);
+  if (name === 'bang') {
+    // One idle worker for the person's `!` (bang-commands T03, T06): it says hello, ends its turn, and
+    // answers every message it gets, a command's result included, with RIG_BANG_REPLY.
+    return [
+      { emit: RIG_INIT },
+      { await: 'user' },
+      { emit: assistantText("I'm the pretend worker of the bang scenario. Run a command with ! and I'll answer.") },
+      { emit: resultEvent('success', 'ready') },
+      { react: `printf '%s' ${shQuote(RIG_BANG_REPLY)}` },
+    ];
+  }
+  throw new Error(`unknown scenario "${name}" (tour, long, coordinator, helpers, bang, ${FINISHER_SCENARIOS.join(', ')})`);
 }
 
 // The finisher scenario's finisher (finisher T07): the real finisher-agent session on the fake. The fake
@@ -496,7 +512,8 @@ export function startRig({ into = null, scenario = 'tour', keep = false, env = p
     });
   }
   const person = withAgent(platform, () => agent ?? finisher);
-  const inbox = startPersonInbox({ controlDir, platform: person, grants });
+  // With the shells folder, as the hosts start it, so a `!` leaves its record (bang-commands DESIGN §2.4).
+  const inbox = startPersonInbox({ controlDir, platform: person, grants, shellsDir: shellsDirOf(controlDir) });
 
   // The run's alerts while the finisher waits (finisher T09, DESIGN §2.9): coordinate.mjs's own notifyPass
   // and runNotifyActions, over a stand-in for the coordinator carrying only what the finisher's pass reads,
@@ -582,6 +599,7 @@ export function startRig({ into = null, scenario = 'tour', keep = false, env = p
   function stop() {
     stopping ??= (async () => {
       clearInterval(timer);
+      inbox.stopAll('session-closed');
       inbox.stop();
       removeRecord({ repo, slug: RIG_SLUG }, { dir });
       const agentPid = agent?.session?.pid ?? null;
@@ -950,7 +968,7 @@ function parseArgs(argv) {
     if (a === '--into') opts.into = argv[++i];
     else if (a === '--scenario') opts.scenario = argv[++i];
     else if (a === '--keep') opts.keep = true;
-    else throw new Error(`unknown argument ${a}\nusage: conversation-rig.mjs [--into <scratch>] [--scenario tour|long|coordinator|helpers|${FINISHER_SCENARIOS.join('|')}] [--keep]`);
+    else throw new Error(`unknown argument ${a}\nusage: conversation-rig.mjs [--into <scratch>] [--scenario tour|long|coordinator|helpers|bang|${FINISHER_SCENARIOS.join('|')}] [--keep]`);
   }
   return opts;
 }

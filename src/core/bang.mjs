@@ -74,9 +74,13 @@ export function shellStatusLine({ code, signal, stopped, ms } = {}) {
 //   [(output cut: the first {n} characters are not shown)]
 //   {output, or "(no output)"}
 // Trailing newlines of the output are dropped: the command's last `\n` is not part of what it said.
-export function bangMessage({ command, output, code, signal, stopped, ms, lead = LEAD_RAN } = {}) {
+// `alreadyCut` is how many characters the caller dropped from the front before handing over `output`: the
+// forwarder keeps only a bounded tail of a long command's output, and the note must count the whole cut.
+export function bangMessage({ command, output, code, signal, stopped, ms, lead = LEAD_RAN, alreadyCut = 0 } = {}) {
   const clean = plainText(output ?? '').replace(/\n+$/, '');
-  const { text, cut } = capForAgent(clean);
+  const capped = capForAgent(clean);
+  const text = capped.text;
+  const cut = capped.cut + (Number.isInteger(alreadyCut) && alreadyCut > 0 ? alreadyCut : 0);
   const lines = [`[pir] ${lead}`, `$ ${command ?? ''}`, shellStatusLine({ code, signal, stopped, ms })];
   if (cut > 0) lines.push(`(output cut: the first ${cut} characters are not shown)`);
   lines.push(text === '' ? '(no output)' : text);

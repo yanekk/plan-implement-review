@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawn as spawnChild } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -836,4 +836,47 @@ test('stepWorkedMs sums each log segment between resumes, and is null with nothi
   assert.equal(stepWorkedMs([[]]), null);
   assert.equal(stepWorkedMs([[{ t: 7 }]]), null);
   assert.equal(stepWorkedMs([]), null);
+});
+
+// ---- The person's `!` in a planning run (bang-commands T03, DESIGN §2.2–§2.5). ----
+
+test('planner: a `!` drop runs in the plan worktree and its result reaches the planner; a stop kills a running one as session-closed', async (t) => {
+  const idle = [{ await: 'user' }, { emit: initEvent() }, { emit: assistantText('Waiting.') }, { emit: resultEvent('success', 'Waiting.') }, { chat: { workMs: 10 } }];
+  const s = setup(t, [{ match: PLANNER_MATCH, script: idle }]);
+  const run = start(s);
+  t.after(() => run.stop.abort());
+  await waitFor(() => planLog(s).some((e) => e.dir === 'in' && e.event.type === 'result'), 'the planner to go idle');
+  const sessionId = workersOf(s)[0].id;
+  const drop = (input) => assert.deepEqual(dropPersonInput(s.controlDir, { to: sessionId, ...input }, { coordinatorAlive: true }), { ok: true });
+
+  drop({ kind: 'shell', command: 'pwd' });
+  const end = await waitFor(() => planLog(s).find((e) => e.dir === 'shell' && e.kind === 'end'), 'the command to end');
+  const begun = planLog(s).find((e) => e.dir === 'shell' && e.kind === 'start');
+  assert.equal(realpathSync(begun.cwd), realpathSync(s.worktree));
+  const output = planLog(s).filter((e) => e.dir === 'shell' && e.kind === 'output').map((e) => e.text).join('');
+  assert.ok(output.trim().endsWith(s.worktree.split('/').at(-1)), `pwd printed the plan worktree: ${output}`);
+  assert.deepEqual([end.code, end.sent], [0, 'message']);
+  const out = planLog(s).find((e) => e.dir === 'out' && e.shell === end.id);
+  assert.equal(out.from, 'person');
+  assert.match(out.text, /^\[pir\] The person ran a command in your working folder:\n\$ pwd\nexit 0 · /);
+
+  drop({ kind: 'shell', command: 'sleep 30' });
+  const record = join(s.controlDir, 'shells', `${sessionId}.json`);
+  await waitFor(() => existsSync(record), 'the running record');
+  const { pid } = JSON.parse(readFileSync(record, 'utf8'));
+  run.stop.abort();
+  assert.equal(await run.done, 0);
+  const ends = planLog(s).filter((e) => e.dir === 'shell' && e.kind === 'end');
+  assert.equal(ends.length, 2);
+  assert.deepEqual([ends[1].stopped, ends[1].sent], ['session-closed', 'none']);
+  assert.equal(planLog(s).filter((e) => e.dir === 'out' && e.shell).length, 1, 'nothing sent for the stopped one');
+  assert.equal(existsSync(record), false);
+  await waitFor(() => {
+    try {
+      process.kill(pid, 0);
+      return false;
+    } catch {
+      return true;
+    }
+  }, 'the sleep to die');
 });

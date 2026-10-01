@@ -36,7 +36,7 @@ import { writeJsonAtomic } from './atomic-write.mjs';
 import { drainDropFolder } from './drop-folder.mjs';
 import { STOP_CLOSE, createSessionHolder, nextSessionLogPath, sessionAsking, trackStoppedAt } from './held-session.mjs';
 import { indexDir as indexDirOf, recordPath, removeRecord, renameRecord, updateRecord } from './index-store.mjs';
-import { startPersonInbox } from './person-inbox.mjs';
+import { createShellTable, reapPersonShells, shellsDirOf, startPersonInbox } from './person-inbox.mjs';
 import { resolveClaudePath } from './platform.mjs';
 import { reapRecorded } from './reap.mjs';
 import { writeSnapshot as writeSnapshotReal } from './snapshot-store.mjs';
@@ -323,7 +323,11 @@ export async function runPlanning({ controlDir: givenControlDir, resume = false,
   // controlDir, reportsDir, brief and state are read at each spawn: the rename moves the first two and
   // the reviewer's instruction names the slug the planner chose. startWorker, startTimeOf and uuid are
   // passed only when a test swaps them, so the holder's own defaults stand otherwise.
+  // A session's exit kills the person's `!` still running in it (bang-commands DESIGN §2.4); set once the
+  // forwarder exists below.
+  let stopShellsOf = () => {};
   const holder = createSessionHolder({
+    onSessionExit: (id) => stopShellsOf(id),
     controlDir: () => controlDir,
     cwd: worktreeNow,
     taskLabel: 'plan',
@@ -411,7 +415,14 @@ export async function runPlanning({ controlDir: givenControlDir, resume = false,
     writeJsonAtomic(statePath, state);
   };
 
-  let personInbox = startPersonInbox({ controlDir, platform, grants, watch, log });
+  // The person's `!` commands live in one table for the whole program, so a command started before the
+  // rename keeps its busy check, its stop and its record when the forwarder restarts on the moved folder
+  // (bang-commands DESIGN §3.3). A command a killed program left running is reaped first (§2.4).
+  const shells = createShellTable();
+  reapPersonShells({ controlDir, shells, now, log });
+  const inboxOpts = () => ({ controlDir, platform, grants, watch, log, shells, shellsDir: shellsDirOf(controlDir) });
+  let personInbox = startPersonInbox(inboxOpts());
+  stopShellsOf = (id) => personInbox.stopAll('session-closed', id);
 
   // ---- The rename (§2.6), one sub-step at a time; each is a no-op when already done. ----
   const renameStep = (substep) => {
@@ -445,7 +456,7 @@ export async function runPlanning({ controlDir: givenControlDir, resume = false,
       controlDir = to;
       statePath = statePathOf(to);
       reportsDir = reportsDirOf(to);
-      personInbox = startPersonInbox({ controlDir, platform, grants, watch, log });
+      personInbox = startPersonInbox(inboxOpts());
       holder.controlMoved(from, to);
       log(`moved the control folder to ${to}`);
     } else if (substep === 'index') {
@@ -572,6 +583,7 @@ export async function runPlanning({ controlDir: givenControlDir, resume = false,
     await holder.closeCurrent(STOP_CLOSE);
     return 1;
   } finally {
+    personInbox.stopAll('session-closed');
     personInbox.stop();
   }
 }

@@ -46,7 +46,7 @@ import { STOP_CLOSE, createSessionHolder, sessionAsking, trackStoppedAt } from '
 import { indexDir as indexDirOf, recordPath, removeRecord, renameRecord, updateRecord } from './index-store.mjs';
 import { notifyIcon, readNotifyConfig, workerEnv } from './notify-config.mjs';
 import { clear as ntfyClearReal, publish as ntfyPublishReal } from './ntfy.mjs';
-import { startPersonInbox } from './person-inbox.mjs';
+import { createShellTable, reapPersonShells, shellsDirOf, startPersonInbox } from './person-inbox.mjs';
 import { lastAssistantText, resolveClaudePath } from './platform.mjs';
 import { reapRecorded } from './reap.mjs';
 import { writeSnapshot as writeSnapshotReal } from './snapshot-store.mjs';
@@ -416,7 +416,11 @@ export async function runSingle({ controlDir: givenControlDir, resume = false, d
   // ---- The sessions this program holds, through the shared holder. ----
   // The failed setup's note is held for the one spawn it belongs to: the builder's opening.
   let setupNote = null;
+  // A session's exit kills the person's `!` still running in it (bang-commands DESIGN §2.4); set once the
+  // forwarder exists below.
+  let stopShellsOf = () => {};
   const holder = createSessionHolder({
+    onSessionExit: (id) => stopShellsOf(id),
     controlDir: () => controlDir,
     cwd: worktreeNow,
     taskLabel: 'single',
@@ -593,7 +597,14 @@ export async function runSingle({ controlDir: givenControlDir, resume = false, d
     writeJsonAtomic(statePath, state);
   };
 
-  let personInbox = startPersonInbox({ controlDir, platform, grants, watch, log });
+  // The person's `!` commands live in one table for the whole program, so a command started before the
+  // rename keeps its busy check, its stop and its record when the forwarder restarts on the moved folder
+  // (bang-commands DESIGN §3.3). A command a killed program left running is reaped first (§2.4).
+  const shells = createShellTable();
+  reapPersonShells({ controlDir, shells, now, log });
+  const inboxOpts = () => ({ controlDir, platform, grants, watch, log, shells, shellsDir: shellsDirOf(controlDir) });
+  let personInbox = startPersonInbox(inboxOpts());
+  stopShellsOf = (id) => personInbox.stopAll('session-closed', id);
 
   // ---- Phone alerts (§2.10). The config is read per action, so `pir notify off` stops the alerts of a
   // run already going. Retry waits are unref'd: a send still retrying must not hold the process open. ----
@@ -670,7 +681,7 @@ export async function runSingle({ controlDir: givenControlDir, resume = false, d
       controlDir = to;
       statePath = statePathOf(to);
       reportsDir = reportsDirOf(to);
-      personInbox = startPersonInbox({ controlDir, platform, grants, watch, log });
+      personInbox = startPersonInbox(inboxOpts());
       holder.controlMoved(from, to);
       log(`moved the control folder to ${to}`);
     } else if (substep === 'index') {
@@ -850,6 +861,7 @@ export async function runSingle({ controlDir: givenControlDir, resume = false, d
     return 1;
   } finally {
     killCommand();
+    personInbox.stopAll('session-closed');
     personInbox.stop();
     await notifyExitNow();
   }
