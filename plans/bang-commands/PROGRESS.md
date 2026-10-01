@@ -30,7 +30,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T07 | hand-view | T05, T06 | ✅ | |
 | T08 | bang-drill | T06, T07 | ✅ | |
 | T09 | agent-rules | T05 | ✅ | |
-| T10 | docs-readme | T08, T09 | ⬜ | |
+| T10 | docs-readme | T08, T09 | ✅ | |
 
 **Review queue:** empty
 
