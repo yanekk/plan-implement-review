@@ -11,7 +11,7 @@ they walk past.
 **Status:** Plan written 2026-10-01. Nothing built. The red `notify-wiring.test.mjs` cases on `main` are to
 be fixed there before the build starts (DESIGN §4).
 **Last updated:** 2026-10-01
-**Next `pir-work` will:** T08 bang-drill or T09 agent-rules.
+**Next `pir-work` will:** T08 bang-drill.
 
 ## Tasks
 
@@ -29,7 +29,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T06 | bang-view | T02, T03 | ✅ | |
 | T07 | hand-view | T05, T06 | ✅ | Reviewed: one fix. A hand run the host refused (busy) or that ended undelivered left the pin stuck on `answer sent`; reproduced by a red view test, fixed, test locks it. Probed run-while-busy, typed decline, helper asker, read-only, e2e at three sizes. Deviations accepted: running request unpinned, `later, please`, `hand-drill` scenario. |
 | T08 | bang-drill | T06, T07 | ⬜ | |
-| T09 | agent-rules | T05 | ⬜ | |
+| T09 | agent-rules | T05 | ✅ | |
 | T10 | docs-readme | T08, T09 | ⬜ | |
 
 **Review queue:** empty

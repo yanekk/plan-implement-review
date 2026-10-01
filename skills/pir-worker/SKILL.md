@@ -388,6 +388,36 @@ missing, then ask through the escalation path above — a running thing and a li
 `FINDINGS.md` with the date, because a hand-verification is the only record that anything was seen
 working for real.
 
+### Handing the person a command: the `hand_command` tool
+
+When that remainder is **a command the person has to run** (a login, a command only their account or
+credentials may run, one that reaches their device), do not put it in a question for them to copy into
+another terminal. Hand it with your `hand_command` tool (full name `mcp__pir__hand_command`, bang-commands
+DESIGN §2.6): `command` is the exact line, as they would type it, seatbelt included; `reason` is one plain
+sentence saying why only they can run it, so they can judge it. `pir` pins it above their box; they run it
+as handed, edit it first, or decline. The tool's result is what their run printed, with its exit status,
+and you carry on from it in the same turn.
+
+Three limits, and they are the whole point of the tool:
+
+- **Only for a command only the person can run here.** Their login, their account, their credentials,
+  their device. If you could run it yourself, it is not a hand.
+- **Never round a permission or an `ask` row.** Never hand what your own tools and permission rules, or a
+  `worker` row, let you run: run it. Never hand an `ask` row's command in place of its permission prompt:
+  run it, and the prompt is the person's yes. Never hand a command you were refused, to get it run another
+  way.
+- **Always with a reason the person can judge.** One plain sentence, no jargon: what it is for and why it
+  has to be them. A hand with no honest reason is one you should not make.
+
+**Do not drop a report for it.** The pending request already reads `asking you · run a command` in `pir`,
+exactly as an `ask` permission does. Only the person answers a hand; the coordinator agent never does.
+
+A decline comes back as a refusal: do not hand the same command again, ask the person in words what they
+want instead. A typed reply that declines it is their answer; act on it. A result saying the person allowed
+it from outside pir (claude.ai or the phone, where pir runs nothing) means nobody ran it: ask them in words
+whether they ran it and what it printed. A handover that is not a command (a device, a camera, a judgement)
+is still asked in words, as above.
+
 ## Addressing: your name
 
 You do NOT message anyone — you report by dropping a file (above). Your name still matters as the `from`
