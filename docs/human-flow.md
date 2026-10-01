@@ -264,7 +264,8 @@ reviewer), a line starting with `!` runs as a shell command and its output joins
 - **One at a time per session.** A second `!` while one runs is refused: the view says `a command is
   already running · esc stops it`, and a stale screen whose drop gets through anyway is refused by the
   run (`your command was not run: a command is already running`). Typed messages still go to the
-  session meanwhile. There is no timeout.
+  session meanwhile. There is no timeout, no queue of commands and no tab completion of shell words;
+  the box's own history recalls an earlier `!` line as it does a message.
 - **What the session gets.** When the command ends, the session is sent one message from the person,
   which starts its turn at once:
 
@@ -412,8 +413,9 @@ single run that finishes `ready` sends `{name} · ready to merge` ([single-runs.
   message opens with why it is the person's — `Agent passed it on: `, `Agent didn't answer in time: `,
   `Needs your yes: `, `Agent unavailable: `, or nothing when the run has no agent — then `asks: ` and
   the question (the first of a question set, with `(+N more)`), or `wants to run ` and the tool and its
-  command for a permission request, or, for a [handed command](#a-command-an-agent-hands-you--hand_command),
-  `Needs your yes: asks you to run: {command} (open pir to run it)`, cut to 150 characters. Those 150 characters pass through ntfy.sh.
+  command for a permission request, or `asks you to run: {command} (open pir to run it)` for a
+  [handed command](#a-command-an-agent-hands-you--hand_command) (reserved, so `Needs your yes: ` when the
+  run has an agent; the tail is kept outside the cut), cut to 150 characters. Those 150 characters pass through ntfy.sh.
 - **Reminder.** One, 15 minutes after the alert if the question is still the person's, prefixed
   `Still waiting: `. It shares the first alert's sequence id, so a phone that supports updates replaces
   the first alert with it rather than stacking them. Never more than one.
