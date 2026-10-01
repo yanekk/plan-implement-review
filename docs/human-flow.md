@@ -282,7 +282,8 @@ reviewer), a line starting with `!` runs as a shell command and its output joins
   the session has ended by then the message is not delivered and the block says so.
 - **Stopping.** Esc, or Ctrl+C on an empty box, stops the running command, not the session; no
   interrupt is sent, so no [helper](#helpers) is stopped and there is no warning. pir sends the
-  command's process group SIGHUP and SIGTERM, then SIGKILL after 3 s. The session is told `stopped by
+  command's process group SIGHUP, SIGTERM once the shell has exited (at most 250 ms later), then SIGKILL
+  after 3 s. The session is told `stopped by
   the person` with whatever output there was. A command still running when its session closes (task
   finished, run stopped) is killed and nothing is sent.
 - **Restart.** A run program that dies with a command running leaves its record in the control

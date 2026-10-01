@@ -9,7 +9,7 @@ import { mkdirSync, realpathSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { startPlanRig, PLAN_RIG_QUESTION } from './plan-rig.mjs';
 import { indexDir, listRecords } from './index-store.mjs';
-import { esc, startRigPlan, UP, ENTER, rigWithTeardown, CTRL_S, TAB, DOWN, BS, TYPED, seedRuns, typeSettled, lastLine } from './plan-rig-helpers.mjs';
+import { esc, startRigPlan, UP, ENTER, rigWithTeardown, CTRL_S, TAB, DOWN, BS, TYPED, seedRuns, typeSettled, lastLine, SPAWNED_MS } from './plan-rig-helpers.mjs';
 
 // ---- dashboard-plan-box T06: the drill, kept as end-to-end tests (DESIGN §2, §5 End to end). ----
 // Each case below is an interaction the drill drove through the real `pir` under a pty; what it judged is in
@@ -145,7 +145,7 @@ test('end to end at 80×24: a repo named plan-implement-review under PIR_REPOS p
     await typeSettled(screen, TAB, 'plan something here');
     assert.equal(lastLine(await screen.waitFor(/new {2}plan in plan-implement-review/)), TYPED);
     screen.send(ENTER);
-    await screen.waitFor(new RegExp(esc(PLAN_RIG_QUESTION)), 20000);
+    await screen.waitFor(new RegExp(esc(PLAN_RIG_QUESTION)), SPAWNED_MS);
   } finally {
     await screen.close();
   }
@@ -166,7 +166,7 @@ for (const [cols, rows] of [[80, 24], [120, 40]]) {
       await screen.waitFor(/new {2}start with @repo/);
       await typeSettled(screen, 'devrepo', '/plan ', 'a brief');
       screen.send(ENTER);
-      await screen.waitFor(new RegExp(esc(PLAN_RIG_QUESTION)), 20000);
+      await screen.waitFor(new RegExp(esc(PLAN_RIG_QUESTION)), SPAWNED_MS);
       assert.equal(screen.overflows(), 0);
     } finally {
       await screen.close();
@@ -186,7 +186,7 @@ test('end to end at 80×24: Ctrl+S Ctrl+S on a running row with a brief typed st
   const screen = rig.openScreen({ cols: 80, rows: 24 });
   const boxLine = (rows) => rows[rows.findIndex((l) => l.startsWith('new  ')) + 2];
   try {
-    await screen.waitFor(/▎ .*● asking you/, 20000);
+    await screen.waitFor(/▎ .*● asking you/, SPAWNED_MS);
     screen.send(CTRL_S);
     assert.match(lastLine(await screen.waitFor(/⚠ Ctrl\+S again/)), /^⚠ Ctrl\+S again to stop plan-\w+ now/);
     await typeSettled(screen, 'repo', ' ', 'my brief');
@@ -197,7 +197,7 @@ test('end to end at 80×24: Ctrl+S Ctrl+S on a running row with a brief typed st
     assert.match(lastLine(armed), /^⚠ Ctrl\+S again to stop plan-\w+ now/, 'the warning shows over the typed box');
     assert.equal(boxLine(armed).trimEnd(), '@repo my brief');
     screen.send(CTRL_S);
-    const stopped = await screen.waitFor(/▎ .*◼ stopped/, 20000);
+    const stopped = await screen.waitFor(/▎ .*◼ stopped/, SPAWNED_MS);
     assert.equal(boxLine(stopped).trimEnd(), '@repo my brief', 'the brief survives the stop');
     assert.equal(lastLine(stopped), TYPED);
     assert.equal(screen.overflows(), 0);

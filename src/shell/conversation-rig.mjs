@@ -499,19 +499,24 @@ function writePlan(repoRoot, scenario) {
   writeFileSync(join(plan, 'tasks', `${RIG_TASK}-${scenario}.md`), `# ${RIG_TASK} — ${scenario}\n\nThe rig's pretend task.\n`);
 }
 
-// startRig({ into, scenario, keep, env, paceMs, workMs, stepMs, holdFor, snapshotMs }) → the running rig:
+// startRig({ into, scenario, keep, env, shellEnv, paceMs, workMs, stepMs, holdFor, snapshotMs }) → the running rig:
 //   { repoRoot, repo, slug, controlDir, workerId, logPath, received, platform, pid, shimDir, clipboard, stop() }
 // shimDir holds a `pbcopy` that writes what it is given to `clipboard` (absent until a copy), as
 // plan-rig.mjs's does (group-commands DESIGN §5.2). startRig does not launch pir, so whoever does puts
 // shimDir first on pir's PATH: a drag or a double click then never reaches the person's real clipboard.
 // `env` supplies PIR_HOME (the index folder, indexDir's rule), so a test points the index at a scratch
-// folder. stop() is the teardown, idempotent; it resolves once the worker has exited.
+// folder. `shellEnv` is the environment the person's `!` runs under (startPersonInbox's `env`): by default this
+// process's, so a person driving the rig by hand gets their own shell and rc file, as in a real run. A test
+// passes one with ZDOTDIR and HOME on an empty folder: the person's real rc file measured 3–9 s per `zsh -i`
+// start on an idle machine (2026-10-01), and under a loaded `npm test` a `printf` was still "running" at
+// 29 s; a test of pir's screen must not wait on, or print, whatever the person's own rc file does.
+// stop() is the teardown, idempotent; it resolves once the worker has exited.
 //
 // The `coordinator` scenario (pir-coordinator T06) also starts the run's coordinator agent, holding T01's
 // request, and returns three levers the real run pulls on its own: pass() — the agent passes the request on
 // (it is briefed and replies with its pointer; the row turns `asking you`); ready() — every task merged, the
 // report committed and the run waiting in `ready to merge`; and agent, the CoordinatorAgent itself.
-export function startRig({ into = null, scenario = 'tour', keep = false, env = process.env, paceMs, workMs, stepMs, holdFor, snapshotMs = 500, finishingMs = 3000 } = {}) {
+export function startRig({ into = null, scenario = 'tour', keep = false, env = process.env, shellEnv = process.env, paceMs, workMs, stepMs, holdFor, snapshotMs = 500, finishingMs = 3000 } = {}) {
   const script = scenarioScript(scenario, { paceMs, workMs, stepMs, holdFor });
   let repoRoot;
   if (into) {
@@ -597,7 +602,7 @@ export function startRig({ into = null, scenario = 'tour', keep = false, env = p
   }
   const person = withAgent(platform, () => agent ?? finisher);
   // With the shells folder, as the hosts start it, so a `!` leaves its record (bang-commands DESIGN §2.4).
-  const inbox = startPersonInbox({ controlDir, platform: person, grants, shellsDir: shellsDirOf(controlDir) });
+  const inbox = startPersonInbox({ controlDir, platform: person, grants, shellsDir: shellsDirOf(controlDir), env: shellEnv });
 
   // The run's alerts while the finisher waits (finisher T09, DESIGN §2.9): coordinate.mjs's own notifyPass
   // and runNotifyActions, over a stand-in for the coordinator carrying only what the finisher's pass reads,
@@ -940,6 +945,9 @@ export function createScreenModel({ rows = 24, cols = 80 } = {}) {
   };
 }
 
+// How long pir may take to draw its first frame under openScreen; see waitFor.
+const STARTUP_MS = 60000;
+
 // openScreen({ cols, rows, args, cwd, env, settleMs }) → { send(bytes), waitFor(until, limit) → rows, text(),
 // close() → exit code, exited() → whether pir has exited by itself, overflows(), modes(), boldAt(row, col), fgAt(row, col) }. Runs `node pir.mjs ...args` under a pty of cols×rows and keeps its
 // screen. waitFor holds until output has been quiet for settleMs and `until` (a RegExp or a function of the
@@ -953,12 +961,15 @@ export function openScreen({ cols = 100, rows = 30, args = [], cwd = process.cwd
     stdio: ['pipe', 'pipe', 'pipe'],
   });
   const model = createScreenModel({ rows, cols });
-  let lastOutput = Date.now();
+  const spawnedAt = Date.now();
+  let lastOutput = spawnedAt;
+  let firstOutput = null;
   let stderr = '';
   child.stdout.setEncoding('utf8');
   child.stdout.on('data', (d) => {
     model.write(d);
     lastOutput = Date.now();
+    firstOutput ??= lastOutput;
   });
   child.stderr.setEncoding('utf8');
   child.stderr.on('data', (d) => (stderr += d));
@@ -975,13 +986,18 @@ export function openScreen({ cols = 100, rows = 30, args = [], cwd = process.cwd
       lastOutput = Date.now();
     },
     async waitFor(until = null, limit = 15000) {
-      const deadline = Date.now() + limit;
+      const called = Date.now();
       for (;;) {
         await new Promise((r) => setTimeout(r, 25));
         const quiet = Date.now() - lastOutput >= settleMs;
         if (quiet && holds(until)) return model.rows();
         if (gone && !holds(until)) throw new Error(`pir exited before the screen showed ${until}\n${stderr}\n${text()}`);
-        if (Date.now() > deadline) throw new Error(`timed out waiting for ${until} after ${limit} ms; the screen:\n${text()}\n${stderr}`);
+        // `limit` is how long pir may take to draw what is waited for, so it runs from pir's first frame. Until
+        // then the wait is on pir starting at all (python's pty, then node loading pir), which a loaded machine
+        // stretched past 15 s with the window still blank (four `npm test` at once, 2026-10-01); that start
+        // gets its own ceiling, STARTUP_MS from the spawn.
+        const expired = firstOutput === null ? Date.now() - spawnedAt > Math.max(limit, STARTUP_MS) : Date.now() - Math.max(called, firstOutput) > limit;
+        if (expired) throw new Error(`timed out waiting for ${until} after ${limit} ms${firstOutput === null ? ' (pir never drew a frame)' : ''}; the screen:\n${text()}\n${stderr}`);
       }
     },
     async close() {

@@ -22,8 +22,8 @@
 //   - The fake's single-script variables are dropped, so an outer test's setting cannot leak in. A stale
 //     PARALLEL_ALLOW_HERE is dropped too, harmlessly: its guard is gone (dashboard-plan-box DESIGN §2.8).
 
-import { execFileSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { execFile, execFileSync } from 'node:child_process';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -252,8 +252,29 @@ function seedRemote(root, repoDir, base) {
   return { path, ahead };
 }
 
+// pidsWorkingIn(dir) → the pids (not this process) whose working folder is `dir` or inside it, read from
+// lsof; [] when lsof cannot be run. lsof exits 1 when it could not read some process, with what it read on stdout.
+function pidsWorkingIn(dir) {
+  return new Promise((res) => {
+    execFile('lsof', ['-d', 'cwd', '-F', 'pn'], { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024, timeout: 30000 }, (_err, stdout) => {
+      const pids = [];
+      let pid = null;
+      for (const line of (stdout ?? '').split('\n')) {
+        if (line.startsWith('p')) pid = Number(line.slice(1));
+        else if (line.startsWith('n') && pid !== process.pid && (line.slice(1) === dir || line.startsWith(`n${dir}/`))) pids.push(pid);
+      }
+      res([...new Set(pids)]);
+    });
+  });
+}
+
+// How long settle() waits for the rig's programs to leave before it ends them. A stopped run's stragglers
+// (a reaped worker's fake and the git it ran, the coordinator's own git) are children of programs the stop
+// signalled without waiting for them, and on a machine busy with the other test files they take seconds to go.
+const SETTLE_MS = 30000;
+
 // startPlanRig({ into, scripts, keep, base, remoteAhead, settings, holdReportMs }) → { root, repoDir, home,
-//   env, shimDir, scriptsFile, received, clipboard, slug, base, remote, cleanup(), openScreen(opts),
+//   env, shimDir, scriptsFile, received, clipboard, slug, base, remote, cleanup(), settle(), openScreen(opts),
 //   driveScreen(opts) }
 //
 // `base` (default `main`) is the only branch the repo has and the one its settings name; `remoteAhead`
@@ -271,7 +292,7 @@ function seedRemote(root, repoDir, base) {
 //                 the `pbcopy` shim with `clipboard.txt`, the last text it was given (absent until a copy)
 // Worktrees a run adds sit under repo/.claude/worktrees, so removing the root removes them too.
 // cleanup() deletes the root unless `keep`; idempotent. It does not stop programs a test started: a test
-// that launches a run stops it first, as pir's own stop would.
+// that launches a run stops it first, as pir's own stop would, then awaits settle() for the stragglers.
 export function startPlanRig({ into = null, scripts = 'happy', keep = false, baseEnv = process.env, base = 'main', remoteAhead = false, settings = true, holdReportMs = 0 } = {}) {
   const entries = holdReportMs > 0 ? withReportHold(scriptSet(scripts), holdReportMs) : scriptSet(scripts);
   let root;
@@ -338,6 +359,31 @@ export function startPlanRig({ into = null, scripts = 'happy', keep = false, bas
     rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 
+  // settle() → resolves once no program is working inside the rig any more, so cleanup() does not remove the
+  // scratch repo under a git or a fake that is still writing into it (ENOTEMPTY on repo/.git, seen under load in
+  // the bang drill's build). A program still there after SETTLE_MS is sent SIGKILL: the rig is going away, and a
+  // straggler left running would only load the machine for the tests after it. Call it after stopping the runs.
+  async function settle() {
+    if (cleaned || keep || !existsSync(root)) return;
+    const real = realpathSync(root);
+    const deadline = Date.now() + SETTLE_MS;
+    for (;;) {
+      const pids = await pidsWorkingIn(real);
+      if (pids.length === 0) return;
+      if (Date.now() > deadline) {
+        for (const pid of pids) {
+          try {
+            process.kill(pid, 'SIGKILL');
+          } catch {
+            // already gone
+          }
+        }
+        return;
+      }
+      await new Promise((r) => setTimeout(r, 200));
+    }
+  }
+
   return {
     root,
     repoDir,
@@ -351,8 +397,28 @@ export function startPlanRig({ into = null, scripts = 'happy', keep = false, bas
     base,
     remote,
     cleanup,
-    openScreen: (opts = {}) => openScreenRaw({ cwd: repoDir, env, ...opts }),
+    settle,
+    openScreen: (opts = {}) => patientFirstFrame(openScreenRaw({ cwd: repoDir, env, ...opts })),
     driveScreen: (opts = {}) => driveScreenRaw({ cwd: repoDir, env, ...opts }),
+  };
+}
+
+// The least a screen's first waitFor allows. That first wait is on pir itself starting (node, its imports, the
+// repo scan) under a pty, which alone takes a second but on a machine busy with the other test files was seen to
+// draw nothing for over 15 s, the default ceiling. Later waits are on a running pir and keep their own ceiling.
+const FIRST_FRAME_MS = 60000;
+
+// patientFirstFrame(screen) → the same screen, whose first waitFor allows at least FIRST_FRAME_MS.
+function patientFirstFrame(screen) {
+  let first = true;
+  const waitFor = screen.waitFor;
+  return {
+    ...screen,
+    waitFor(until = null, limit = 15000) {
+      const ms = first ? Math.max(limit, FIRST_FRAME_MS) : limit;
+      first = false;
+      return waitFor(until, ms);
+    },
   };
 }
 

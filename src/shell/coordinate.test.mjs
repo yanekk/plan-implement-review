@@ -1633,7 +1633,8 @@ function livePlatform(t, { script = [{ await: 'user' }, ...turn('ok')] } = {}) {
   });
   t.after(async () => {
     for (const w of platform.list()) platform.close(w.id, { immediate: true });
-    await until(() => platform.list().length === 0, 'every child to exit');
+    // Waits on real child processes exiting, which a loaded machine slows well past the 10s default.
+    await until(() => platform.list().length === 0, 'every child to exit', 30000);
     rmSync(dir, { recursive: true, force: true });
   });
   const workersFile = () => JSON.parse(readFileSync(join(controlDir, 'workers.json'), 'utf8'));
@@ -1659,13 +1660,17 @@ test('the coordinator drives two workers from spawn to done through the real pla
   const coordinator = startCoordinator({ slug: SLUG, repo: REPO, platform, worktree, maxWorkers: 2 });
 
   // pass() is synchronous and the children answer in their own time, so the test paces the passes.
+  // The ceiling is generous because the whole wait is real child processes: four fake-`claude` node
+  // launches plus every pass's synchronous git (worktree adds, commits, merges) and the end-gate test
+  // run. Measured: ~1-2s alone, 7-10s with several suites at once (right at the old 10s default, hence
+  // the flake) and 40-50s on a saturated machine, always in the same 6-7 passes, so it is slow, not stuck.
   let result;
   const completed = [];
   await until(() => {
     result = coordinator.pass();
     completed.push(...result.completed);
     return result.complete;
-  }, 'the plan to complete');
+  }, 'the plan to complete', 120000);
 
   assert.equal(result.testsPassed, true);
   assert.deepEqual(result.readyToMerge, { branch: `pir/${SLUG}` });
@@ -1675,7 +1680,8 @@ test('the coordinator drives two workers from spawn to done through the real pla
 
   const logs = readdirSync(join(controlDir, 'conversations')).sort();
   assert.deepEqual(logs, ['T01-implement-1.ndjson', 'T01-review-1.ndjson', 'T02-implement-1.ndjson', 'T02-review-1.ndjson']);
-  await until(() => platform.list().length === 0, 'every merged worker to exit after its close');
+  // A closed child's exit is a real process teardown; give it the same headroom under load.
+  await until(() => platform.list().length === 0, 'every merged worker to exit after its close', 30000);
 });
 
 test('teardownRun SIGTERMs every live child at once and workers.json empties as they exit (live-workers T05)', async (t) => {

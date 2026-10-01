@@ -15,6 +15,12 @@ import { isSameProcess as isSameProcessReal, startTimeOf as startTimeOfReal } fr
 const FLUSH_MS = 250;
 const FLUSH_BYTES = 8192;
 const KILL_AFTER_MS = 3000;
+// How long stop() lets SIGHUP work before SIGTERM follows, unless the shell exits first. Sent in the same
+// tick, TERM could kill macOS /bin/bash 3.2 -i before its HUP handler had passed HUP on to its `cmd &` jobs,
+// which sit in groups of their own, so the group kill never reached them and they outlived the stop
+// (person-shell.test.mjs, 3-4 runs in 40, measured 2026-10-01). Short, so a HUP-ignoring command still ends
+// well within a second.
+const TERM_AFTER_MS = 250;
 // After the shell exits, how long its pipes may stay open before the end is reported anyway. A command
 // that backgrounds a child (`server &`) hands that child the pipe, and 'close' would wait for it for
 // ever; the person's background child is theirs, so it is left running rather than killed.
@@ -57,7 +63,7 @@ function cutUtf8(text, maxBytes) {
 //   spawn, now, startTimeOf, flushMs, flushBytes, killAfterMs   injected for the tests
 //
 // stdin is /dev/null (DESIGN §2.2: plain only). The shell is spawned detached, in its own process group,
-// so stop() reaches whatever it forked: SIGHUP and SIGTERM to the group, then SIGKILL after killAfterMs.
+// so stop() reaches whatever it forked: SIGHUP to the group, SIGTERM once the shell exits or after termAfterMs, then SIGKILL after killAfterMs.
 export function startShell({
   command,
   cwd,
@@ -74,6 +80,7 @@ export function startShell({
   flushMs = FLUSH_MS,
   flushBytes = FLUSH_BYTES,
   killAfterMs = KILL_AFTER_MS,
+  termAfterMs = TERM_AFTER_MS,
   endGraceMs = END_GRACE_MS,
 }) {
   const t0 = now();
@@ -81,6 +88,7 @@ export function startShell({
   let pending = '';
   let flushTimer = null;
   let killTimer = null;
+  let termTimer = null;
   let graceTimer = null;
   let stopped = null;
   let exit = null; // { code, signal } once the shell has exited
@@ -143,12 +151,30 @@ export function startShell({
     }
   };
 
+  // The TERM that follows a stop's HUP, sent once: at the shell's exit or after termAfterMs, whichever is
+  // first. After the shell has exited only its group is signalled, never the bare pid, which may be reused.
+  const sendTerm = () => {
+    if (!termTimer) return;
+    clearTimeout(termTimer);
+    termTimer = null;
+    if (!exit) groupKill(pid, 'SIGTERM');
+    else if (groupAlive(pid)) {
+      try {
+        process.kill(-pid, 'SIGTERM');
+      } catch {
+        // the group left in between
+      }
+    }
+  };
+
   let child;
+  let pid = null;
   const finish = (result) => {
     if (ended) return;
     flush();
     ended = true;
     if (graceTimer) clearTimeout(graceTimer);
+    if (termTimer) sendTerm();
     // A stopped group may still hold a TERM-ignoring member after its shell left; the kill timer stays
     // armed only while that group still exists, so a number freed and reused is never signalled.
     if (killTimer && !(stopped && groupAlive(child?.pid))) {
@@ -183,7 +209,7 @@ export function startShell({
     return { id, pid: null, stop() {} };
   }
 
-  const pid = child.pid ?? null;
+  pid = child.pid ?? null;
   if (pid && recordPath) {
     try {
       writeJsonAtomic(recordPath, { id, to, pid, startTime: startTimeOf(pid), command, ...(requestId ? { requestId } : {}) });
@@ -209,6 +235,7 @@ export function startShell({
   });
   child.on('exit', (code, signal) => {
     exit = { code, signal };
+    sendTerm();
     if (open > 0) graceTimer = setTimeout(() => finish(exit), endGraceMs);
     maybeEnd();
   });
@@ -223,9 +250,9 @@ export function startShell({
       // 2026-10-01: zsh -i killed only the running `sleep` of `sleep 30; echo after` and then ran
       // `echo after`, and ignored TERM outright while its rc file loaded), but exits on HUP, and bash
       // passes HUP on to the `cmd &` jobs it put in groups of their own. TERM still follows for any
-      // member of the group that ignores HUP.
+      // member of the group that ignores HUP, once the HUP has had its chance (TERM_AFTER_MS).
       groupKill(pid, 'SIGHUP');
-      groupKill(pid, 'SIGTERM');
+      termTimer = setTimeout(sendTerm, termAfterMs);
       killTimer = setTimeout(() => {
         killTimer = null;
         groupKill(pid, 'SIGKILL');

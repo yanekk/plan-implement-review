@@ -78,7 +78,9 @@ test('end to end at 80×24: an 18-character slug with · building fits the pop-u
     await typeSettled(screen, 'repo/start ');
     await screen.waitFor(new RegExp(`→ ${SLUG_18} +0/3 done`));
     await typeSettled(screen, 'an', ENTER, ENTER);
-    await screen.waitFor((s) => new RegExp(`^${SLUG_18} {2}● running`, 'm').test(s) && !/^new {2}/m.test(s), 20000);
+    // The row reads running once the spawned coordinator has started and written its first snapshot, which on a
+    // machine busy with the other test files takes far longer than a screen redraw.
+    await screen.waitFor((s) => new RegExp(`^${SLUG_18} {2}● running`, 'm').test(s) && !/^new {2}/m.test(s), 60000);
     screen.send(LEFT);
     await screen.waitFor(/new {2}start with @repo/);
     await typeSettled(screen, 'repo/start ');
