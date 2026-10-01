@@ -7,6 +7,9 @@ Legend: 🐞 defect found · ✅ verified by hand with the user · 📌 worth kn
 
 | Date | | Finding |
 |---|---|---|
+| 2026-10-01 | 📌 | T12 live run, worker-run with real Claude: `single-run-live` PASS in 40 s. Builder fixed `addAll` in one commit as `fix-add-all-off-by-one`; reviewer committed nothing; `ready`, index kind single under the name, nothing left running. Scratch removed. |
+| 2026-10-01 | 📌 | The harness answerer sent `go ahead` to the live reviewer between its `reviewed` report and `finished: ready`; `holdPlanReplies` did not hold it. The run was unaffected. A planning run's last session can get the same. |
+| 2026-10-01 | 📌 | The live builder said its fix was committed on `pir/fix-add-all-off-by-one` before pir renamed `pir/single-6986`. Wording only; the report and checks were right. |
 | 2026-10-01 | 🐞 | T11 drill, worker-driven, 80×24, 120×40, 60×20: whole flow, dropped, taken, beside plan and builds, stop and resume. Fixed: a step's clock cut at 60 columns (`0:1`); a merged run's merge row still said the merge was yours. Tests lock both. |
 | 2026-10-01 | 📌 | At 60 columns the list's counts line and every view's key-hint line are cut at the edge, mid-word (`Ctrl+X remo`, `stop thi`). Planning runs and builds too; no rule in DESIGN. Left alone. |
 | 2026-10-01 | 📌 | The red-round message names its log under the run's first folder (`plans/single-{hex4}/…/tests-1.log`); after the rename that path no longer exists. Correct when sent; stale when read back in the conversation. |
@@ -38,7 +41,7 @@ Legend: 🐞 defect found · ✅ verified by hand with the user · 📌 worth kn
 | 2026-09-30 | 📌 | A commit or edit after a green result, unreported: `single-run.mjs` re-reads head and status at the idle gate and puts the accepted claim through `singleChecks` again, so the step never closes on an untested commit. |
 | 2026-09-30 | 📌 | T10: a dropped report's body stays in `state.accepted.body` of state.json for the footer; the snapshot's runState does not carry it. |
 | 2026-09-30 | 🔄 | The failed-setup note of a single run is `formatSingleSetupNote` (single-run.mjs): no plan wording, last line names the setup lines pir runs (user, T04). `formatSetupNote` stays the build's. |
-| 2026-09-30 | 📌 | T12: DESIGN §2.6 puts a full stop straight after the reports folder path (`…/reports. Starting point`). The `pir-single` skill says the stop is not part of the path; watch that a real session obeys. |
+| 2026-09-30 | 📌 | DESIGN §2.6 puts a full stop straight after the reports folder path (`…/reports. Starting point`). Both real T12 sessions dropped into the right folder. |
 | 2026-09-30 | 📌 | `docs/planning-runs.md` says `sessionAsking` is in `plan-run.mjs`; since T03 it is defined in `held-session.mjs` and re-exported from there. T13 should name the new file. |
 | 2026-09-30 | 📌 | T03 did not run `./install.sh`: from a task worktree it would put unreviewed code into the engine the live run uses. The engine is installed once `pir/single-runs` is merged. |
 | 2026-09-30 | 📌 | A malformed `setup` or `test` makes the whole settings file `bad-settings`, so a plan or build start refuses on it too. Follows from the shared `parseSettings`; pinned by a T01 review test. T13 documents it. |

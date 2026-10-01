@@ -8,7 +8,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -156,8 +156,9 @@ const EXPECT = {
 // --- The registry ---------------------------------------------------------------------------------
 
 // The fixtures that seed no plan (pir-plan-command T17; dev-base, base-branch T09): a planning run writes
-// it. Checked on their own, not by the loops.
-const PLANLESS = ['plan-command', 'dev-base'];
+// it. Checked on their own, not by the loops. single-run-live (single-runs T12) seeds no plan either: a
+// single run has none.
+const PLANLESS = ['plan-command', 'dev-base', 'single-run-live'];
 
 test('listFixtures returns exactly the DESIGN §4.1 fixtures, and the planless ones', () => {
   assert.deepEqual(new Set(listFixtures()), new Set([...Object.keys(EXPECT), ...PLANLESS]));
@@ -797,6 +798,60 @@ test('plan-command installs a scratch repo with no plans/, the skills but not sr
     const out = execFileSync('npm', ['test'], { cwd: dir, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
     assert.match(out, /pass 1/);
     assert.match(out, /fail 0/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// --- single-run-live: one single run with real Claude (single-runs T12) ---------------------------
+
+test('single-run-live: a single scenario with the canned reply, the §5.2 clock and the T12 facts', () => {
+  const fx = getFixture('single-run-live');
+  const s = fx.scenario;
+  assert.equal(s.kind, 'single');
+  assert.equal(s.fixture, 'single-run-live');
+  assert.equal(fx.prompt, 'fix the failing test in add.mjs');
+  assert.equal(s.reply, 'go ahead');
+  assert.ok(Number.isInteger(s.replyCap) && s.replyCap > 0);
+  // Inside the 1200 s alarm the live command runs under, so the runner's own stop and capture come first.
+  assert.ok(s.seatbelts.timeoutMs < 1200_000, `timeoutMs ${s.seatbelts.timeoutMs}`);
+  assert.deepEqual(
+    s.facts.map((f) => f.id),
+    ['single-ready', 'single-builder-commit-green', 'single-index-under-name', 'single-no-session-left', 'base-untouched'],
+  );
+  assert.deepEqual(fx.settings, { setup: [], test: ['node --test'] });
+  assert.equal(fx.carrySource, false);
+  assert.ok(!Object.keys(fixtureFiles(fx)).some((p) => p.startsWith('plans/')), 'no plan is laid down');
+});
+
+test('single-run-live installs a clean repo whose settings name node --test, and whose test fails on the seeded off-by-one', () => {
+  const dir = tmp('pir-fix-single-live-');
+  try {
+    const res = installFixture('single-run-live', { into: dir });
+    assert.equal(res.source, false, 'the engine runs from the harness checkout, not a copy');
+    assert.equal(existsSync(join(dir, 'src')), false, 'the framework is not carried');
+    assert.ok(existsSync(join(dir, '.claude/skills/pir-single/SKILL.md')), 'the pir-single skill is carried');
+    assert.deepEqual(JSON.parse(readFileSync(join(dir, '.pir/settings.json'), 'utf8')), { baseBranch: 'main', setup: [], test: ['node --test'] });
+    assert.equal(git(dir, ['status', '--porcelain']).trim(), '', 'the seeded tree is clean');
+    assert.equal(git(dir, ['rev-parse', '--abbrev-ref', 'HEAD']).trim(), 'main');
+    const { NODE_TEST_CONTEXT, ...env } = process.env;
+    const red = spawnSync('node', ['--test'], { cwd: dir, env, encoding: 'utf8' });
+    assert.notEqual(red.status, 0, 'the seeded defect fails the test');
+    assert.match(red.stdout, /fail 1/);
+    // The one-character fix turns it green: the fixture asks for a small change, not a rewrite.
+    writeFileSync(join(dir, 'add.mjs'), readFileSync(join(dir, 'add.mjs'), 'utf8').replace('let i = 1', 'let i = 0'));
+    const green = spawnSync('node', ['--test'], { cwd: dir, env, encoding: 'utf8' });
+    assert.equal(green.status, 0, green.stdout);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('a fixture without settings still seeds the default single-run commands', () => {
+  const dir = tmp('pir-fix-settings-default-');
+  try {
+    installFixture('plan-command', { into: dir });
+    assert.deepEqual(JSON.parse(readFileSync(join(dir, '.pir/settings.json'), 'utf8')), { baseBranch: 'main', setup: [], test: ['true'] });
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

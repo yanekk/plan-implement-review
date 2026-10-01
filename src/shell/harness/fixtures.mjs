@@ -8,7 +8,7 @@
 // mid-work, a wake-up while parked), and the coordinator agent answering, passing on and handing over
 // (pir-coordinator), and several of its briefs at once with the hold limit firing (pir-coordinator-concurrent), and real phone alerts for a passed question and the end of the run (notify-live), and the finisher taking a green run over and finishing on the person's go from the phone (finisher-live), and a repo with only
 // `dev` whose remote is ahead (dev-base), and real sessions reporting subscription usage (usage-live,
-// api-service T10). The old `hands-on` and `blog-app` fixtures
+// api-service T10), and one single run with real sessions (single-run-live, single-runs T12). The old `hands-on` and `blog-app` fixtures
 // exercised the `you`/hands-on model, which was removed with the down-channel (DESIGN §2.5, T05); they
 // went with it.
 //
@@ -69,6 +69,7 @@ import finisherLive from './fixtures/finisher-live.mjs';
 import finisherLiveBranch from './fixtures/finisher-live-branch.mjs';
 import devBase from './fixtures/dev-base.mjs';
 import usageLive from './fixtures/usage-live.mjs';
+import singleRunLive from './fixtures/single-run-live.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -109,6 +110,7 @@ const FIXTURES = Object.freeze({
   [finisherLiveBranch.id]: finisherLiveBranch,
   [devBase.id]: devBase,
   [usageLive.id]: usageLive,
+  [singleRunLive.id]: singleRunLive,
 });
 
 // listFixtures() → the fixture ids, in registry order.
@@ -217,13 +219,14 @@ function carryModules(srcDir, into) {
 // otherwise hang it). `-c` overrides are per-invocation, so the user's own git config is untouched.
 const SEED_IDENT = ['-c', 'user.name=PIR Fixture', '-c', 'user.email=fixture@pir.local', '-c', 'commit.gpgsign=false'];
 
-function seedGit(dir, runGit, date, base = 'main') {
+function seedGit(dir, runGit, date, base = 'main', settings = {}) {
   const init = runGit(['init', '-b', base], { cwd: dir });
   if (!init.ok) throw new Error(`fixture seed: git init failed: ${init.stderr}`);
   // The seeded repo names its base, as pir requires (base-branch DESIGN §2.1, §5), and the setup/test
-  // commands a single run needs (single-runs DESIGN §2.2): no setup, a test that passes.
+  // commands a single run needs (single-runs DESIGN §2.2): no setup, a test that passes, unless the
+  // fixture names its own (`settings`, single-run-live: its package's tests are pir's test line).
   mkdirSync(join(dir, '.pir'), { recursive: true });
-  writeFileSync(join(dir, '.pir', 'settings.json'), JSON.stringify({ baseBranch: base, setup: [], test: ['true'] }) + '\n');
+  writeFileSync(join(dir, '.pir', 'settings.json'), JSON.stringify({ baseBranch: base, setup: [], test: ['true'], ...settings }) + '\n');
   runGit(['add', '-A'], { cwd: dir });
   const env = { GIT_AUTHOR_DATE: date, GIT_COMMITTER_DATE: date };
   const commit = runGit([...SEED_IDENT, 'commit', '-m', 'fixture: scratch plan seed', '--no-edit'], { cwd: dir, env });
@@ -306,7 +309,7 @@ export function installFixture(
   const source = fixture.carrySource === false ? false : carrySource(srcDir, join(into, 'src'));
   const modules = source ? carryModules(srcDir, into) : false;
   const base = fixture.base ?? 'main';
-  seedGit(into, runGit, date, base);
+  seedGit(into, runGit, date, base, fixture.settings);
   const remote = fixture.remote ? seedRemote(into, runGit, date, base, fixture.remote) : null;
   // A fixture may leave the main checkout on another branch than the run's base (`parkOn`), cut at the
   // seed: the person's folder sitting elsewhere when the finisher comes in (finisher-live-branch).

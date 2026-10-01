@@ -27,10 +27,10 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T09 | box-single | T05, T08 | ✅ | |
 | T10 | single-row | T04, T08 | ✅ | |
 | T11 | single-drill | T06, T09, T10 | ✅ | |
-| T12 | single-live | T07, T11 | ⬜ | |
+| T12 | single-live | T07, T11 | 🔍 | `single-run-live` fixture, `runSingleScenario`, four single facts; 16 tests incl. a fake-Claude dry pass. Live run PASS in 40 s, recorded in FINDINGS. Beyond the file list: facts in `assertions.mjs`, fixture `settings` in `seedGit`, `scenario.mjs` kind `single`, `parseLogName` reads `build-N`. `install.sh` not run: no installed `pir-single` to shadow. |
 | T13 | docs-and-readme | T12 | ⬜ | |
 
-**Review queue:** *(empty)*
+**Review queue:** T12
 
 ## Blocked on the user
 
