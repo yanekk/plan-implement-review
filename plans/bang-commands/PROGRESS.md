@@ -21,7 +21,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | # | Task | Depends on | State | Notes |
 |---|---|---|---|---|
 | T00 | hand-tool-spike | — | ✅ | |
-| T01 | shell-runner | — | ⬜ | |
+| T01 | shell-runner | — | ✅ | |
 | T02 | bang-rules | — | ✅ | |
 | T03 | bang-forwarding | T01, T02 | ⬜ | |
 | T04 | hand-rules | T00, T02 | ✅ | Reviewed clean, no fix commit. `command` kind through stream, asking, policy, brief, display, plandisplay, notify; tests in one file, `HAND_TOOL` in stream.mjs (import cycle), `holderOf` excludes reserved items. Probed: malformed hand request still reserved and refused, interrupt and resume clear it, shell readers and `grantFrom` left to T05/T07 as planned. Suite green but the 10 `notify-wiring` cases. |

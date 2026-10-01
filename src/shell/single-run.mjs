@@ -41,7 +41,7 @@ import { writeJsonAtomic } from './atomic-write.mjs';
 import { startLines as startLinesReal } from './commands.mjs';
 import { NOTIFY_EXIT_WAIT_MS, endAlertAction, newNotifyTrack, runNotifyActions, withinMs } from './coordinate.mjs';
 import { drainDropFolder } from './drop-folder.mjs';
-import { isAlive as isAliveReal, startTimeOf as startTimeOfReal } from './identity.mjs';
+import { isAlive as isAliveReal, isSameProcess, startTimeOf as startTimeOfReal } from './identity.mjs';
 import { STOP_CLOSE, createSessionHolder, sessionAsking, trackStoppedAt } from './held-session.mjs';
 import { indexDir as indexDirOf, recordPath, removeRecord, renameRecord, updateRecord } from './index-store.mjs';
 import { notifyIcon, readNotifyConfig, workerEnv } from './notify-config.mjs';
@@ -291,7 +291,7 @@ export function reapCommand(controlDir, { kill = process.kill, isAlive = isAlive
     return null;
   }
   let reaped = null;
-  if (Number.isInteger(rec?.pid) && rec.pid > 0 && rec.startTime != null && isAlive(rec.pid) && startTimeOf(rec.pid) === rec.startTime) {
+  if (isSameProcess(rec?.pid, rec?.startTime, { isAlive, startTimeOf })) {
     try {
       kill(-rec.pid, 'SIGKILL');
     } catch {
