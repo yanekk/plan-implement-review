@@ -20,7 +20,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 
 | # | Task | Depends on | State | Notes |
 |---|---|---|---|---|
-| T00 | hand-tool-spike | — | ⬜ | |
+| T00 | hand-tool-spike | — | ✅ | |
 | T01 | shell-runner | — | ⬜ | |
 | T02 | bang-rules | — | ✅ | Reviewed clean, no fix commit. Accepted deviations: trailing newlines dropped, caps by code point, `validateDrop` trims `command`, any truthy `stopped` reads as the person. Probed `plainText` idempotence (T03 may pass cleaned or raw output), lone surrogates, null code and signal (`exit ?`), pre-T03 inbox handling of a `shell` drop. 10 known `notify-wiring` failures only. |
 | T03 | bang-forwarding | T01, T02 | ⬜ | |
