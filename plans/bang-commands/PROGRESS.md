@@ -21,7 +21,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | # | Task | Depends on | State | Notes |
 |---|---|---|---|---|
 | T00 | hand-tool-spike | — | ⬜ | |
-| T01 | shell-runner | — | ⬜ | |
+| T01 | shell-runner | — | 🔍 | person-shell.mjs, 20 tests; `isSameProcess` extracted to identity.mjs, `reapCommand` uses it unchanged. Deviations: `reapShells` returns every readable record with `killed`, not only killed ones (host closes each block, §2.4); `onEnd` adds `error` on spawn failure; end reported 500 ms after exit when a background child holds the pipe, child left running. Suite red only on known notify-wiring. |
 | T02 | bang-rules | — | ⬜ | |
 | T03 | bang-forwarding | T01, T02 | ⬜ | |
 | T04 | hand-rules | T00, T02 | ⬜ | |
@@ -32,7 +32,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T09 | agent-rules | T05 | ⬜ | |
 | T10 | docs-readme | T08, T09 | ⬜ | |
 
-**Review queue:** empty
+**Review queue:** T01
 
 ## Blocked on the user
 
