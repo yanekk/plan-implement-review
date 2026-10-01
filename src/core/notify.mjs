@@ -19,6 +19,7 @@ const REASON_PREFIX = {
 };
 
 const FALLBACK = 'is waiting for you';
+const HAND_TAIL = ' (open pir to run it)';
 
 const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 const nonBlank = (s) => typeof s === 'string' && s.trim() !== '';
@@ -54,6 +55,13 @@ function kindPart({ kind, decisionText, lastText, pending }) {
     if (!first) return FALLBACK;
     const more = qs.length > 1 ? ` (+${qs.length - 1} more)` : '';
     return excerpt(`asks: ${first.question}`, EXCERPT_MAX - more.length) + more;
+  }
+  if (kind === 'command') {
+    // A command an agent handed the person (bang-commands DESIGN §2.7). The phone cannot run it, so the tail
+    // says where to go, and it sits outside the cut so a long command never hides it.
+    const req = list.find((p) => p?.kind === 'command');
+    if (!shows(req?.command)) return FALLBACK;
+    return excerpt(`asks you to run: ${req.command}`, EXCERPT_MAX - HAND_TAIL.length) + HAND_TAIL;
   }
   if (kind === 'permission') {
     const req = list.find((p) => p?.kind === 'permission');
