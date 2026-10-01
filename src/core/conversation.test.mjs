@@ -1210,6 +1210,19 @@ test('a pending hand request is pinned with its command, why and keys; the !s an
   for (const l of promptLines(pinned, { width: 30, taskId: 'T05' })) assert.ok([...textOf(l)].length <= 30, textOf(l));
 });
 
+// T08 drill (the person, 2026-10-01): the hand tool's own step is not drawn by default. Its pin and its
+// `! T05 asked you to run:` line already say it in plain words; Tab's full detail still shows the step.
+test('the hand tool\'s step is hidden by default and shown in full detail; it leaves a group of steps open', () => {
+  const log = [say('I need you to log in.'), ...step('r1', 'Read', { file_path: 'a.mjs' }), use('h1', HAND_TOOL, HAND_INPUT), res('h1', 'ran'), ...step('r2', 'Read', { file_path: 'b.mjs' })];
+  const grouped = all(buildConversation(log, { taskId: 'T05' }).lines);
+  assert.ok(!grouped.some((l) => l.includes('hand_command')), grouped.join('\n'));
+  assert.deepEqual(grouped.filter((l) => /Read|Used/.test(l)).length, 1, `one group of the two reads:\n${grouped.join('\n')}`);
+  const pending = all(buildConversation([say('I need you to log in.'), use('h1', HAND_TOOL, HAND_INPUT), handReq()], { taskId: 'T05' }).lines);
+  assert.deepEqual(pending, ['T05 ▸ I need you to log in.']);
+  const full = all(buildConversation(log, { taskId: 'T05', full: true }).lines);
+  assert.ok(full.some((l) => l.includes(`⎿ ${HAND_TOOL}`)), full.join('\n'));
+});
+
 test('a helper\'s hand request names the helper; one with no reason has no why line', () => {
   const helperLog = [use('ag', 'Agent', { description: 'Survey the code' }), hStart('a1', 'ag', 'Survey the code'), handReq('h1', { agentId: 'a1', input: { command: 'ls' } })];
   const { pinned } = buildConversation(helperLog, { taskId: 'T05' });

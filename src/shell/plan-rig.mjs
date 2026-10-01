@@ -29,7 +29,7 @@ import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { openScreen as openScreenRaw, driveScreen as driveScreenRaw } from './conversation-rig.mjs';
 import { writeClaudeShim } from './fake/claude-shim.mjs';
-import { BUILDER_MATCH, COORDINATOR_MATCH, DRILL_SLUG, HELPER_DRILL_SLUG, PLANNER_MATCH, REVIEWER_MATCH, SINGLE_RED_FILE, SINGLE_REVIEWER_MATCH, coordinatorScript, drillPlanFiles, drillScripts, helperDrillPlanFiles, helperDrillScripts, noPlanScript, plannerScript, reviewerScript, singleBuilderScript, singleReviewerScript, workerScripts } from './fake/sessions.mjs';
+import { BANG_HAND_SLUG, BUILDER_MATCH, COORDINATOR_MATCH, DRILL_SLUG, HELPER_DRILL_SLUG, PLANNER_MATCH, REVIEWER_MATCH, SINGLE_RED_FILE, SINGLE_REVIEWER_MATCH, bangBuildPlanFiles, bangBuildScripts, bangBuilderScript, bangPlannerScript, coordinatorScript, drillPlanFiles, drillScripts, helperDrillPlanFiles, helperDrillScripts, noPlanScript, plannerScript, reviewerScript, singleBuilderScript, singleReviewerScript, workerScripts } from './fake/sessions.mjs';
 import { startSingleRun } from './launch.mjs';
 import { assistantText, canUseTool, initEvent, resultEvent, toolUse } from './fake/claude-stream.mjs';
 
@@ -43,6 +43,8 @@ export const PLAN_RIG_QUESTION = 'Which way should the plan go?';
 export const PLAN_RIG_REVIEW_ASK = 'Is the name rig-plan fine before I mark it reviewed?';
 export const PLAN_RIG_REVIEW_COMMAND = 'git log --oneline -3';
 export const SCRIPT_SETS = ['happy', 'no-plan', 'taken-slug', 'crash-planner', 'reviewer-asks', 'usage']; // planning sets; 'coordinator-drill' and 'end-helper' plan nothing
+// The bang drill's sets (bang-commands T08): a planner, a single run's builder and a build, each waiting on the person.
+export const BANG_SCRIPT_SETS = ['bang-plan', 'bang-single', 'bang-build'];
 
 // Single runs (single-runs T08). The fake builder names its branch SINGLE_RIG_NAME in every single set;
 // 'single-taken' has it name SINGLE_RIG_TAKEN first, which startPlanRig takes by its branch.
@@ -117,6 +119,11 @@ export function withUsageEvent(entries, match, event = usageEvent()) {
 //   end-helper     no planning: startPlanRig commits the reviewed one-task plan HELPER_DRILL_SLUG, whose
 //                  tests are red at the end until its tests-fix helper, after asking the person one
 //                  question the agent passes on, commits the fix (pir-coordinator T11; helperDrillScripts)
+//   bang-plan      the planner waits for the person's `!`, answers it, then hands the person a command
+//                  (bangPlannerScript); it never plans
+//   bang-single    a single run whose builder answers every message and never builds (bangBuilderScript)
+//   bang-build     no planning: startPlanRig commits the reviewed one-task plan BANG_HAND_SLUG, whose
+//                  implementer hands the person a command before it builds (bang-commands T08)
 //
 // The single-run sets (single-runs T08) script the builder and reviewer of `@repo/single`, and carry the
 // `happy` planning entries after them, so one rig can also plan:
@@ -131,6 +138,9 @@ export function withUsageEvent(entries, match, event = usageEvent()) {
 export function scriptSet(name = 'happy') {
   if (name === 'coordinator-drill') return drillScripts();
   if (name === 'end-helper') return helperDrillScripts();
+  if (name === 'bang-build') return bangBuildScripts();
+  if (name === 'bang-plan') return [{ match: PLANNER_MATCH, script: bangPlannerScript() }, ...scriptSet('happy').filter((e) => e.match !== PLANNER_MATCH)];
+  if (name === 'bang-single') return [{ match: BUILDER_MATCH, script: bangBuilderScript() }, ...scriptSet('single-happy').filter((e) => e.match !== BUILDER_MATCH)];
   if (SINGLE_SCRIPT_SETS.includes(name)) {
     const builder = {
       'single-happy': {},
@@ -294,7 +304,7 @@ export function startPlanRig({ into = null, scripts = 'happy', keep = false, bas
   writeFileSync(join(repoDir, '.git', 'info', 'exclude'), '.claude/worktrees/\n');
   git(repoDir, 'add', '-A');
   git(repoDir, 'commit', '-q', '-m', 'rig: scratch repo');
-  const committedPlan = { 'coordinator-drill': [DRILL_SLUG, drillPlanFiles, 'coordinator'], 'end-helper': [HELPER_DRILL_SLUG, helperDrillPlanFiles, 'end-helper'] }[scripts];
+  const committedPlan = { 'coordinator-drill': [DRILL_SLUG, drillPlanFiles, 'coordinator'], 'end-helper': [HELPER_DRILL_SLUG, helperDrillPlanFiles, 'end-helper'], 'bang-build': [BANG_HAND_SLUG, bangBuildPlanFiles, 'bang'] }[scripts];
   if (committedPlan) {
     const [planSlug, files, drill] = committedPlan;
     for (const [path, content] of Object.entries(files(planSlug))) {

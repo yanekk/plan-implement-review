@@ -5,6 +5,9 @@ for ever.
 
 | Date | Finding |
 |---|---|
+| 2026-10-01 | T08 drill, worker-driven: `!`, the hand pin, Esc and close-and-reopen judged on screen at 60×20, 80×24, 120×40 in planner, single builder, build worker and coordinator agent. One fix: the hand tool's raw step hidden (the person). |
+| 2026-10-01 | T08: the end line's `sent to` uses the header's label, so it reads `sent to plan`, `sent to build`, `sent to coordinator`, not DESIGN §2.8's examples `planner`, `agent`. The rule (header label) was followed. |
+| 2026-10-01 | T08: an idle planner's step reads `asking you · a question` (it waits on the person's words), also right after a `!` reply; only a pending hand request reads `run a command`. Existing planning rule, unchanged. |
 | 2026-10-01 | T09 review: `person-shell.test.mjs` "`/bin/bash -i`: a backgrounded child dies on stop()" is flaky, 1 failure in 3 runs alone and 1 in the full suite, at `ab673d7`. T01's code; left alone. |
 | 2026-10-01 | T07: on an empty box `n` and `e` are the hand pin's keys, so a typed decline starting with n or e (`not now`) never types: the first letter declines or edits. The person kept the keys 2026-10-01, as with a permission's `n`. |
 | 2026-10-01 | T06 review: `plan-run.test.mjs` "a `!` drop runs in the plan worktree" timed out (`timed out waiting for the command to end`) in the full `npm test` and passed alone. Load-sensitive, like the notify-wiring cases. |

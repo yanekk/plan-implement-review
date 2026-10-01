@@ -10,7 +10,7 @@
 // Widths count code points (text.mjs). Exact clipping of wide characters is the painter's job in the
 // shell (pi-tui `truncateToWidth`): core may not import a package (DESIGN §3.1).
 
-import { readEntry, workerActivity, DEFAULT_REFUSAL, HAND_DECLINED } from './stream.mjs';
+import { readEntry, workerActivity, DEFAULT_REFUSAL, HAND_DECLINED, HAND_TOOL } from './stream.mjs';
 import { grantFrom } from './person-input.mjs';
 import { wrapLine, clipText, plainText } from './text.mjs';
 import { helpersOf } from './helpers.mjs';
@@ -275,6 +275,9 @@ export function buildConversation(entries, { full = false, width = 80, taskId = 
             break;
           }
           if (full) emit(stepLines(ev, results.get(ev.toolUseId), { full, width: w }));
+          // The hand tool's own step draws nothing by default (bang-commands T08, the person 2026-10-01): its pin
+          // and its `! T05 asked you to run:` line say it in plain words. Drawing nothing, it ends no group.
+          else if (ev.name === HAND_TOOL) break;
           else {
             group ??= { id: ev.toolUseId, steps: [] };
             group.steps.push({ use: ev, result: results.get(ev.toolUseId) });

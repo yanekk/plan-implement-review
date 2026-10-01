@@ -20,6 +20,7 @@ import { execFileSync } from 'node:child_process';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { assistantText, canUseTool, initEvent, resultEvent, toolUse } from './claude-stream.mjs';
+import { HAND_TOOL } from '../../core/bang.mjs';
 
 const SELF = fileURLToPath(import.meta.url);
 
@@ -356,6 +357,75 @@ export function drillPlanFiles(slug = DRILL_SLUG) {
   return files;
 }
 
+// ---- The bang drill (bang-commands T08). ----
+//
+// One session of each kind that waits for the person: a `!` in its conversation, and (planner, build worker) a
+// command it hands the person through `hand_command`. Every reply is a fixed line, so a test can wait for it.
+export const BANG_REPLY = 'Thanks, I read the output.';
+export const BANG_HAND_COMMAND = 'printf handed';
+export const BANG_HAND_REASON = 'the drill needs your pretend login';
+export const BANG_HAND_REPLY = 'Got the result of the command I handed you.';
+export const BANG_HAND_SLUG = 'handed';
+export const BANG_HAND_TASK = { num: 'T01', slug: 'hand-ask' };
+const reactWith = (text) => ({ react: `printf '%s' ${q(text)}` });
+const handCall = (id) => ({ tool: { id, name: HAND_TOOL, input: { command: BANG_HAND_COMMAND, reason: BANG_HAND_REASON } } });
+
+// bangPlannerScript() → the planner greets and ends its turn; the first message it gets (the person's `!`) it
+// answers with BANG_REPLY and then hands the person BANG_HAND_COMMAND; once that is answered it says
+// BANG_HAND_REPLY, and from there answers every message with BANG_REPLY. It never writes a plan.
+export function bangPlannerScript() {
+  return [
+    { await: 'user' },
+    { emit: initEvent() },
+    ...say("I'm the drill's pretend planner. Run a command with ! and I'll answer."),
+    { await: 'user' },
+    { emit: initEvent() },
+    { emit: assistantText(BANG_REPLY) },
+    handCall('plan-hand'),
+    ...say(BANG_HAND_REPLY),
+    reactWith(BANG_REPLY),
+  ];
+}
+
+// bangBuilderScript() → a single run's builder that greets, ends its turn and answers every message with
+// BANG_REPLY. It never builds, so the run waits on it until the test stops it.
+export function bangBuilderScript() {
+  return [{ await: 'user' }, { emit: initEvent() }, ...say("I'm the drill's pretend builder. Run a command with ! and I'll answer."), reactWith(BANG_REPLY)];
+}
+
+// bangBuildScripts() → the build of BANG_HAND_SLUG: T01's implementer hands the person BANG_HAND_COMMAND
+// before it builds, the run's coordinator agent reacts (coordinatorReact), and the generic reviewer follows.
+export function bangBuildScripts() {
+  const implementer = [
+    { await: 'user' },
+    { emit: initEvent() },
+    { emit: assistantText('Running pir-implement for T01. I need you to run a command first.') },
+    handCall('t01-hand'),
+    { emit: assistantText(BANG_HAND_REPLY) },
+    { sh: `${run('mark', '🔍')} && ${GIT} commit -q -am "$(${run('commit-message', 'pir-implement')})"` },
+    { sh: run('worker-report', 'implemented') },
+    ...say('pir-implement finished.'),
+  ];
+  return [
+    { match: `nothing else: pir-implement ${BANG_HAND_TASK.num}\\b`, script: implementer },
+    ...workerScripts(),
+    { match: COORDINATOR_MATCH, script: [{ react: run('coordinator-react') }] },
+  ];
+}
+
+export function bangBuildPlanFiles(slug = BANG_HAND_SLUG) {
+  const { num, slug: task } = BANG_HAND_TASK;
+  return {
+    [`plans/${slug}/DESIGN.md`]: `---\nsetup: none\ntest:\n  - true\n---\n\n# ${slug} — Design\n\nThe bang drill's plan (src/shell/fake/sessions.mjs).\n`,
+    [`plans/${slug}/PLAN.md`]: `# ${slug} — Plan\n\n| # | Task | Depends on |\n|---|---|---|\n| ${num} | ${task} | — |\n`,
+    [`plans/${slug}/PROGRESS.md`]:
+      `# Progress\n\n**Plan reviewed:** yes — the drill's plan\n\n**Status:** Planned. Nothing built.\n\n` +
+      `## Tasks\n\n| # | Task | Depends on | State | Notes |\n|---|---|---|---|---|\n| ${num} | ${task} | — | ⬜ | |\n\n**Review queue:** *(empty)*\n`,
+    [`plans/${slug}/FINDINGS.md`]: '# Findings log\n\n| Date | | Finding |\n|---|---|---|\n',
+    [`plans/${slug}/tasks/${num}-${task}.md`]: `# ${num} — ${task}\n\n## Goal\n\nNothing; the fake builds it.\n`,
+  };
+}
+
 // coordinatorReact(message, dropDir) → the agent's reply to one message, writing a decision file first
 // when the message is a brief it answers (DESIGN §2.3, §2.5, §2.9).
 export function coordinatorReact(message, dropDir, { now = Date.now } = {}) {
@@ -369,6 +439,11 @@ export function coordinatorReact(message, dropDir, { now = Date.now } = {}) {
     writeFileSync(`${f}.tmp`, JSON.stringify(decision));
     renameSync(`${f}.tmp`, f);
   };
+  if (worker && /^A worker has handed the person a command/.test(message)) {
+    // Reserved for the person (bang-commands DESIGN §2.6): the agent may only add its note.
+    drop({ kind: 'pass', worker, requestId: requestId ?? undefined, reason: 'a handed command is only the person\'s to run', suggestion: 'run it' });
+    return `${task} handed you a command to run, and only you run it. Answer it in ${task}'s conversation.`;
+  }
   if (worker && /This one is the person's/.test(message)) {
     drop({ kind: 'pass', worker, requestId: requestId ?? undefined, reason: 'a destructive command is yours to approve', suggestion: 'allow it: the task branch is the worker\'s own' });
     return `${task} wants to force-push its task branch, and that is yours: it is a destructive command. Answer it in ${task}'s conversation; I would allow it.`;

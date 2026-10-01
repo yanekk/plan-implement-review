@@ -28,11 +28,11 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T05 | hand-tool | T00, T03, T04 | ✅ | |
 | T06 | bang-view | T02, T03 | ✅ | |
 | T07 | hand-view | T05, T06 | ✅ | |
-| T08 | bang-drill | T06, T07 | ⬜ | |
+| T08 | bang-drill | T06, T07 | 🔍 | Drill in plan-rig-bang-drill-{60x20,80x24,120x40}.test.mjs, 12 pty tests: planner, single builder, build with agent, close-and-reopen. Fix: hand tool's step hidden by default (person's choice), 1 unit test. Deviation: split per size, not one file; reopen test in conversation-rig-helpers. New fake sets bang-plan, bang-single, bang-build. |
 | T09 | agent-rules | T05 | ✅ | |
 | T10 | docs-readme | T08, T09 | ⬜ | |
 
-**Review queue:** empty
+**Review queue:** T08
 
 ## Blocked on the user
 
