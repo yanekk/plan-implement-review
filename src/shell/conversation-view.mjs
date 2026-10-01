@@ -10,7 +10,7 @@
 // worker is not live, or its log says it exited) has no box and takes only ←, scrolling and Tab.
 
 import { Editor, CombinedAutocompleteProvider, isKeyRelease, parseKey } from '@earendil-works/pi-tui';
-import { buildConversation, gateReducer, pickerReducer, promptLines, onOther, shellRunningLine } from '../core/conversation.mjs';
+import { buildConversation, gateReducer, handReducer, pickerReducer, promptLines, onOther, shellRunningLine } from '../core/conversation.mjs';
 import { parseBang } from '../core/bang.mjs';
 import { readEntry, workerActivity } from '../core/stream.mjs';
 import { runningHelpers, stoppedByInterrupt, helpersNote, interruptGate, gateWarning } from '../core/helpers.mjs';
@@ -124,6 +124,21 @@ export const SHELL_BUSY = 'a command is already running · esc stops it';
 //   onBack — called on ← with an empty box: the caller steps back to the run's live view.
 //   tui    — the pi-tui screen (requestRender, terminal.rows); a stub when there is none.
 //   now    — the clock the running command's elapsed time is read from.
+// handRunCameToNothing(entries, requestId, from) → true when, after log index `from`, the host refused a run
+// (a `shell-refused` note) or a run carrying `requestId` ended. Called only while the request is still
+// pending, so either means the run did not answer it.
+function handRunCameToNothing(entries, requestId, from) {
+  const ours = new Set();
+  for (let i = from; i < entries.length; i++) {
+    const e = entries[i];
+    if (!e || typeof e !== 'object') continue;
+    if (e.dir === 'note' && e.kind === 'shell-refused') return true;
+    if (e.dir === 'shell' && e.kind === 'start' && e.requestId === requestId) ours.add(e.id);
+    if (e.dir === 'shell' && e.kind === 'end' && ours.has(e.id)) return true;
+  }
+  return false;
+}
+
 export function createConversationView({
   run,
   worker,
@@ -146,6 +161,10 @@ export function createConversationView({
   let lastHeight = null; // the scrollback's height at the last paint
   let prompt = null; // the pinned request's gate or picker, as the person has driven it
   const answered = new Set(); // requestIds this view dropped an answer for, until the log shows the reply
+  // A hand request answered by a run (requestId → the log length at the drop). Unlike a reply, a run can come
+  // to nothing with the request still pending: the host refuses it (a `shell-refused` note), or its end could
+  // not deliver the answer. Either releases it from `answered`, so the pin comes back to be run again.
+  const handRuns = new Map();
   let status = null; // a one-shot { text, style } line
   let escGate = null; // the armed Esc warning while helpers run (visible-helpers DESIGN §2.5); null when not armed
   let focused = false;
@@ -210,6 +229,13 @@ export function createConversationView({
     if (!pinned) prompt = null;
     else if (pinned.requestId !== prompt?.requestId) prompt = pinned;
     for (const id of [...answered]) if (!activity.pending.some((r) => r.requestId === id)) answered.delete(id);
+    for (const [id, from] of [...handRuns]) {
+      if (!answered.has(id)) handRuns.delete(id);
+      else if (handRunCameToNothing(entries, id, from)) {
+        answered.delete(id);
+        handRuns.delete(id);
+      }
+    }
     if (editor && !readOnly) {
       const names = slashCommandsOf(entries);
       if (names.join('\n') !== offered) {
@@ -248,6 +274,21 @@ export function createConversationView({
     if (r.send) interrupt();
   }
 
+  // A `shell` drop, refused here while this session's command runs (bang-commands §2.2). `requestId` ties it to
+  // the pinned hand request it answers (§2.6). false, with the reason on the status line, when nothing went.
+  function runCommand(command, requestId) {
+    if (workerActivity(entries).shell) {
+      status = { text: SHELL_BUSY, style: 'bad' };
+      return false;
+    }
+    if (!send({ kind: 'shell', command, ...(requestId ? { requestId } : {}) }, 'your command')) return false;
+    if (requestId) {
+      answered.add(requestId);
+      handRuns.set(requestId, entries.length);
+    }
+    return true;
+  }
+
   // The box's Enter. Typed text refuses a pending permission with the text (§2.6) or is a message. Text
   // already in the box when a question set arrives moves onto the question's Other line to be confirmed
   // there (user 2026-09-26: typed text only ever answers). A drop that fails puts the text back in the box.
@@ -262,23 +303,20 @@ export function createConversationView({
     const bang = parseBang(text);
     if (bang) {
       // A `!` line runs the command, and a pinned permission stays pinned: a command is not a reply (§2.1).
+      // With a hand request pinned it is the answer to it, edited or not (bang-commands §2.6).
       if (bang.command === '') {
         editor.setText('!');
         return;
       }
-      if (workerActivity(entries).shell) {
-        status = { text: SHELL_BUSY, style: 'bad' };
-        editor.setText(text);
-        return;
-      }
-      if (!send({ kind: 'shell', command: bang.command }, 'your command')) {
+      if (!runCommand(bang.command, p?.kind === 'command' ? p.requestId : undefined)) {
         editor.setText(text);
         return;
       }
       editor.addToHistory(text);
       return;
     }
-    if (p?.kind === 'permission') ok = send({ kind: 'permission', requestId: p.requestId, decision: 'deny', text }, 'your reply');
+    // A typed reply declines a hand request with the text, as it refuses a permission (bang-commands §2.6).
+    if (p?.kind === 'permission' || p?.kind === 'command') ok = send({ kind: 'permission', requestId: p.requestId, decision: 'deny', text }, 'your reply');
     else {
       // Only a typed message carries the note naming helpers an interrupt stopped; a reply to a request
       // does not (visible-helpers DESIGN §2.6). The log is the record of what was already reported.
@@ -298,11 +336,21 @@ export function createConversationView({
     scrollBack = Math.max(0, scrollBack + by);
   }
 
-  // A key while the box is empty and a request is pinned: Enter/n/a for a permission; ↑↓ space Enter,
+  // A key while the box is empty and a request is pinned: Enter/n/a for a permission; Enter/e/n for a handed
+  // command; ↑↓ space Enter,
   // backspace and any typing for a question set. true when the prompt took the key.
   function promptKey(key, data) {
     const p = livePrompt();
     if (!p) return false;
+    // A hand request (bang-commands §2.6): Enter runs it as handed, `e` puts it in the box to edit, `n` declines.
+    if (p.kind === 'command') {
+      const r = handReducer(p, key);
+      if (!r) return false;
+      if (r.edit) editor.setText(r.edit);
+      else if (r.send.kind === 'shell') runCommand(r.send.command, r.send.requestId);
+      else if (send(r.send, 'your answer')) answered.add(p.requestId);
+      return true;
+    }
     if (p.kind === 'permission') {
       const { gate, send: decision } = gateReducer(p, key);
       prompt = gate;

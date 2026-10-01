@@ -721,3 +721,106 @@ export function defineBangTest([cols, rows]) {
     }
   });
 }
+
+// bang-commands T07, end to end at 60×20, 80×24 and 120×40 (DESIGN §2.6, §2.7, §2.8): a command the worker hands
+// the person, on the real pir screen. The hand-drill worker hands `printf handed` four times in one turn; the person
+// runs it, edits and runs it, declines it with `n`, and declines it with a typed reply, and the live view row reads
+// `asking you · run a command` while a request is pending and stops once the last is answered.
+export const HAND_DECLINE_TEXT = 'later, please';
+export function defineHandTest([cols, rows]) {
+  test(`a command the worker hands the person, on the pir screen at ${cols}×${rows}`, { timeout: 120000 }, async (t) => {
+    const home = scratchHome(t);
+    const rig = startRig({ env: home, scenario: 'hand-drill', paceMs: 0 });
+    t.after(() => rig.stop());
+    const { NO_COLOR: _nc, COLORTERM: _ct, ...base } = process.env;
+    const screen = openScreen({ cols, rows, env: { ...base, ...home } });
+    const ESC = '\x1b';
+    const PINK = BASIC_SGR.shell.slice(2, -1);
+    const wire = () =>
+      (existsSync(rig.received) ? readFileSync(rig.received, 'utf8') : '')
+        .split('\n')
+        .filter(Boolean)
+        .map((l) => JSON.parse(l))
+        .filter((x) => x.line)
+        .map((x) => JSON.parse(x.line));
+    const answerTo = (id) => wire().find((m) => m.type === 'control_response' && m.response?.request_id === id)?.response?.response;
+    const pending = () => rig.platform.pending(rig.workerId).map((r) => r.requestId);
+    const PIN = /^! T01 asks you to run a command\s*$/m;
+    try {
+      await screen.waitFor(/rig +work/);
+      screen.send('\r');
+      await screen.waitFor(/pick a task/);
+      let s = (await screen.waitFor(/T01 +hand-drill +asking you · run a command/, 20000)).join('\n');
+      assert.match(s, /T01 +hand-drill +asking you · run a command/, 'the live view row asks');
+      screen.send(`${ESC}[C`);
+
+      // The pin: head (its ! pink), the command, why, the keys.
+      s = await screen.waitFor(PIN, 20000);
+      let y = s.findIndex((l) => /^! T01 asks you to run a command/.test(l));
+      assert.match(s[y + 1], /^ {2}printf handed\s*$/);
+      assert.match(s[y + 2], /^ {2}why: the rig needs your pretend login\s*$/);
+      assert.match(s.slice(y + 3).join(' '), /↵ run · e edit first · n decline · or type a reply/);
+      assert.equal(screen.fgAt(y, 0), PINK, 'the pinned ! is in the shell style');
+      assert.equal(screen.fgAt(y + 1, 2), PINK, 'the command is in the shell style');
+
+      // ↵: the command runs as handed; the agent gets pirResult as the tool's result and replies.
+      screen.send('\r');
+      s = await screen.waitFor(/✓ exit 0 · \d+s · sent to T01[\s\S]*T01 ▸ Got the result of the command I handed you\. \(1\)/, 30000);
+      let at = s.findIndex((l) => /^! T01 asked you to run: printf handed/.test(l));
+      assert.ok(at >= 0, s.join('\n'));
+      assert.deepEqual(s.slice(at + 1, at + 3).map((l) => l.trimEnd()), ['you ! printf handed', '  handed']);
+      const first = answerTo('hand-1');
+      assert.equal(first.behavior, 'allow');
+      assert.match(first.updatedInput.pirResult, /^\[pir\] The person ran your command:\n\$ printf handed\nexit 0/);
+      await waitFor(() => pending().join() === 'hand-2', { what: 'the second hand request' });
+      await screen.waitFor(PIN);
+
+      // `e`: the box holds `! printf handed`, the pin stays; edited and run, the lead says it was edited.
+      screen.send('e');
+      s = await screen.waitFor(/^! printf handed\s*$/m);
+      assert.match(s.join('\n'), PIN, 'still pinned while editing');
+      screen.send('\x7f'.repeat('handed'.length));
+      screen.send('edited');
+      await screen.waitFor(/^! printf edited\s*$/m);
+      screen.send('\r');
+      s = await screen.waitFor(/T01 ▸ Got the result of the command I handed you\. \(2\)/, 30000);
+      at = s.findIndex((l) => /^you ! printf edited/.test(l));
+      assert.ok(at >= 0, s.join('\n'));
+      assert.match(s[at + 1], /^ {2}edited\s*$/);
+      const second = answerTo('hand-2');
+      assert.equal(second.behavior, 'allow');
+      assert.match(second.updatedInput.pirResult, /^\[pir\] The person edited your command and ran it:\n\$ printf edited\nexit 0/);
+      await waitFor(() => pending().join() === 'hand-3', { what: 'the third hand request' });
+      await screen.waitFor(PIN);
+
+      // `n`: declined in the scrollback; the deny reached the fake.
+      screen.send('n');
+      s = await screen.waitFor(/T01 ▸ Got the result of the command I handed you\. \(3\)/, 30000);
+      at = s.findLastIndex((l) => /^! T01 asked you to run: printf handed/.test(l));
+      assert.match(s[at + 1], /^ {2}· declined\s*$/);
+      assert.deepEqual([answerTo('hand-3').behavior, answerTo('hand-3').message], ['deny', 'The person declined to run it.']);
+      await waitFor(() => pending().join() === 'hand-4', { what: 'the fourth hand request' });
+      await screen.waitFor(PIN);
+
+      // A typed reply declines with its words.
+      screen.send(HAND_DECLINE_TEXT);
+      await screen.waitFor(new RegExp(`^${HAND_DECLINE_TEXT}\\s*$`, 'm'));
+      screen.send('\r');
+      s = await screen.waitFor(/T01 ▸ Got the result of the command I handed you\. \(4\)/, 30000);
+      assert.match(s.join('\n'), new RegExp(`^! T01 asked you to run: printf handed\\s*\\n {2}· declined: ${HAND_DECLINE_TEXT}\\s*$`, 'm'));
+      assert.deepEqual([answerTo('hand-4').behavior, answerTo('hand-4').message], ['deny', `The person declined to run it. They said: ${HAND_DECLINE_TEXT}`]);
+      assert.doesNotMatch(s.join('\n'), PIN, 'nothing is pinned once the last is answered');
+      assert.deepEqual(pending(), []);
+
+      // Back in the live view the row no longer asks.
+      screen.send(`${ESC}[D`);
+      s = (await screen.waitFor((text) => /T01 +hand-drill/.test(text) && !/asking you/.test(text), 20000)).join('\n');
+      assert.match(s, /T01 +hand-drill +building/, s);
+
+      for (const r of screen.text().split('\n')) assert.ok([...r].length <= cols);
+      assert.equal(screen.overflows(), 0, 'no frame was clipped to fit the window');
+    } finally {
+      await screen.close();
+    }
+  });
+}

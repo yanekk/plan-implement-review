@@ -1248,3 +1248,107 @@ test('a question set pinned while a command runs: the hint says Esc stops the co
   t.v.handleInput(KEY.esc);
   assert.deepEqual(t.drops, [{ to: 'w-1', kind: 'shell-stop' }]);
 });
+
+// ---- A command the agent hands the person (bang-commands T07, DESIGN §2.6) ----
+
+const hand = (over = {}) => entry({ dir: 'request', requestId: 'h1', toolName: 'mcp__pir__hand_command', input: { command: 'printf handed', reason: 'the rig needs your login' }, ...over });
+const handStart = (id, command) => entry({ dir: 'shell', kind: 'start', id, command, cwd: '/w', requestId: 'h1' });
+
+test('a hand request is pinned with the command, why and its keys, and no `a`', () => {
+  const t = makeView({ log: [init(), opening, hand()] });
+  const s = t.text();
+  assert.match(s, /^! T05 asks you to run a command\n {2}printf handed\n {2}why: the rig needs your login\n {2}↵ run · e edit first · n decline · or type a reply to decline with it$/m);
+  assert.doesNotMatch(s, /don't ask again/);
+  t.v.handleInput('a');
+  assert.deepEqual(t.drops, [], '`a` is no key here');
+  assert.equal(t.v.state.text, 'a', 'it went to the box');
+});
+
+test('Enter on the empty box drops shell with the requestId, once', () => {
+  const t = makeView({ log: [init(), opening, hand()] });
+  t.v.handleInput(KEY.enter);
+  assert.deepEqual(t.drops, [{ to: 'w-1', kind: 'shell', command: 'printf handed', requestId: 'h1' }]);
+  assert.match(t.text(), /answer sent — waiting for pir to deliver it/);
+  t.v.handleInput(KEY.enter);
+  assert.equal(t.drops.length, 1, 'not run twice');
+  // Once its run starts the pin goes: the block under the request's line is its answer.
+  t.push(handStart('sh-1', 'printf handed'));
+  const s = t.text();
+  assert.doesNotMatch(s, /asks you to run a command|answer sent/);
+  assert.match(s, /^! T05 asked you to run: printf handed\nyou ! printf handed$/m);
+});
+
+test('`e` fills the box with ! and the command and keeps the pin; the edited Enter carries the requestId', () => {
+  const t = makeView({ log: [init(), opening, hand()] });
+  t.v.handleInput('e');
+  assert.equal(t.v.state.text, '! printf handed');
+  assert.equal(t.v.state.commandMode, true);
+  assert.deepEqual(t.drops, []);
+  assert.match(t.text(), /! T05 asks you to run a command/, 'still pinned');
+  for (let i = 0; i < 'handed'.length; i++) t.v.handleInput('\x7f');
+  t.type('edited');
+  t.v.handleInput(KEY.enter);
+  assert.deepEqual(t.drops, [{ to: 'w-1', kind: 'shell', command: 'printf edited', requestId: 'h1' }]);
+});
+
+test('`n` declines; a typed reply declines with its text; a `!` typed by hand answers it too', () => {
+  let t = makeView({ log: [init(), opening, hand()] });
+  t.v.handleInput('n');
+  assert.deepEqual(t.drops, [{ to: 'w-1', kind: 'permission', requestId: 'h1', decision: 'deny' }]);
+  assert.equal(t.v.state.text, '');
+
+  t = makeView({ log: [init(), opening, hand()] });
+  // A reply's first letter must not be a key: `n` and `e` on the empty box are the pin's (as `n` is a permission's).
+  t.type('later, thanks');
+  t.v.handleInput(KEY.enter);
+  assert.deepEqual(t.drops, [{ to: 'w-1', kind: 'permission', requestId: 'h1', decision: 'deny', text: 'later, thanks' }]);
+
+  t = makeView({ log: [init(), opening, hand()] });
+  t.type('!ls');
+  t.v.handleInput(KEY.enter);
+  assert.deepEqual(t.drops, [{ to: 'w-1', kind: 'shell', command: 'ls', requestId: 'h1' }]);
+});
+
+test('with text in the box Enter, e and n are the box\'s, not the pin\'s', () => {
+  const t = makeView({ log: [init(), opening, hand()] });
+  t.type('x');
+  t.v.handleInput('e');
+  t.v.handleInput('n');
+  assert.equal(t.v.state.text, 'xen');
+  assert.deepEqual(t.drops, []);
+});
+
+test('Enter on a hand request while another command runs is refused here, and drops nothing', () => {
+  const t = makeView({ log: [init(), opening, shStart('sh-0', 'sleep 30'), hand()] });
+  t.v.handleInput(KEY.enter);
+  assert.deepEqual(t.drops, []);
+  assert.match(t.text(), /a command is already running · esc stops it/);
+  assert.match(t.text(), /! T05 asks you to run a command/, 'still pinned');
+});
+
+test('declined, the scrollback reads `· declined: {text}` once the reply is logged', () => {
+  const t = makeView({ log: [init(), opening, hand()] });
+  t.push(entry({ dir: 'out', from: 'person', kind: 'reply', requestId: 'h1', result: { behavior: 'deny', message: 'The person declined to run it. They said: not now' } }));
+  assert.match(t.text(), /^! T05 asked you to run: printf handed\n {2}· declined: not now$/m);
+  assert.doesNotMatch(t.text(), /asks you to run a command/);
+});
+
+test('a hand run the host refused, or one that ended with the request still pending, brings the pin back', () => {
+  let t = makeView({ log: [init(), opening, hand()] });
+  t.v.handleInput(KEY.enter);
+  assert.equal(t.drops.length, 1);
+  t.push(entry({ dir: 'note', kind: 'shell-refused', command: 'printf handed', reason: 'busy' }));
+  let s = t.text();
+  assert.doesNotMatch(s, /answer sent/);
+  assert.match(s, /! T05 asks you to run a command/);
+  t.v.handleInput(KEY.enter);
+  assert.equal(t.drops.length, 2, 'Enter runs it again');
+
+  t = makeView({ log: [init(), opening, hand()] });
+  t.v.handleInput(KEY.enter);
+  t.push(handStart('sh-1', 'printf handed'));
+  t.push(entry({ dir: 'shell', kind: 'end', id: 'sh-1', code: 0, signal: null, stopped: null, ms: 1000, sent: 'undelivered' }));
+  s = t.text();
+  assert.doesNotMatch(s, /answer sent/);
+  assert.match(s, /! T05 asks you to run a command/);
+});

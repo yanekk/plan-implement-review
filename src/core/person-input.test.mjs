@@ -89,6 +89,12 @@ test('grantFrom: the recorded requests yield their addRules suggestion only', ()
   assert.ok(recorded.some((r) => r.suggestions.some((s) => s.type === 'addDirectories')));
 });
 
+test('grantFrom: a command handed to the person never yields a grant, even with an addRules suggestion (bang-commands §2.6)', () => {
+  const suggestions = [{ type: 'addRules', behavior: 'allow', destination: 'session', rules: [{ toolName: 'mcp__pir__hand_command' }] }];
+  assert.equal(grantFrom({ toolName: 'mcp__pir__hand_command', input: { command: 'ls', reason: 'r' }, suggestions }), null);
+  assert.deepEqual(grantFrom({ toolName: 'Bash', input: { command: 'ls' }, suggestions: [{ ...suggestions[0], rules: [{ toolName: 'Bash' }] }] }), { rules: [{ toolName: 'Bash' }] });
+});
+
 test('grantFrom: a recorded grant covers its own family of commands', () => {
   const [echoGrant] = recorded.map(grantFrom).filter(Boolean);
   assert.equal(grantMatches(echoGrant, bashReq('echo probe-one')), true);

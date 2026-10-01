@@ -8,15 +8,15 @@
 import { plainText } from './text.mjs';
 import { helperTime } from './conversation.mjs';
 
-// The hand tool's full name (DESIGN §2.6). Defined in stream.mjs, which reads its requests, to keep this
-// module's import of conversation.mjs (which imports stream.mjs) free of a cycle.
-export { HAND_TOOL } from './stream.mjs';
+import { HAND_DECLINED } from './stream.mjs';
+
+// The hand tool's full name and its decline message (DESIGN §2.6). Defined in stream.mjs, which reads its
+// requests, to keep this module's import of conversation.mjs (which imports stream.mjs) free of a cycle.
+export { HAND_TOOL, HAND_DECLINED } from './stream.mjs';
 
 // What the hand tool's handler returns when it runs with no result from pir: the person allowed the request
 // from outside pir (claude.ai or the phone), where pir runs nothing (DESIGN §2.6).
 export const HAND_FALLBACK = 'The person allowed this from outside pir, so pir did not run it. Ask them in words whether they ran it and what it printed.';
-
-export const HAND_DECLINED = 'The person declined to run it.';
 
 // handDeclineMessage(text?) → the deny message for a declined hand request (DESIGN §3.2): the fixed line,
 // then what the person typed when they declined by replying. Blank text is the bare line.
