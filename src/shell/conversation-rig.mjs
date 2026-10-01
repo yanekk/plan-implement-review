@@ -57,6 +57,8 @@
 //         call asks (the row reads asking you · run a command) until the person runs it (a `shell` drop
 //         with its requestId, RIG_HAND_ID) or declines it; it then replies RIG_HAND_REPLY to the tool's result
 //         and, from there on, answers every message with RIG_BANG_REPLY.
+//   hand-drill  (bang-commands T07) the hand scenario's call made RIG_HAND_DRILL_TIMES times in one turn, ids
+//         hand-1…, each answered by `{RIG_HAND_REPLY} ({n})`, so one screen drives run, edit and both declines.
 //   Every finisher scenario also runs the run's alert pass (notifyPass, and the done alert as coordinate.mjs
 //   sends it) against a pretend phone: rig.alerts() is every send and clear, and each is appended to
 //   control/fake-notify.ndjson.
@@ -101,6 +103,9 @@ export const RIG_HAND_COMMAND = 'printf handed';
 export const RIG_HAND_REASON = 'the rig needs your pretend login';
 export const RIG_HAND_ID = 'hand-1';
 export const RIG_HAND_REPLY = 'Got the result of the command I handed you.';
+// The hand-drill scenario hands the same command this many times in one turn, ids hand-1…hand-N (T07): one rig
+// drives run, edit, decline and a typed decline in turn.
+export const RIG_HAND_DRILL_TIMES = 4;
 const shQuote = (t) => `'${String(t).replace(/'/g, `'\\''`)}'`;
 const PIR = fileURLToPath(new URL('./pir.mjs', import.meta.url));
 
@@ -242,7 +247,23 @@ export function scenarioScript(name = 'tour', { paceMs = 300, workMs = 4000, ste
       { react: `printf '%s' ${shQuote(RIG_BANG_REPLY)}` },
     ];
   }
-  throw new Error(`unknown scenario "${name}" (tour, long, coordinator, helpers, bang, hand, ${FINISHER_SCENARIOS.join(', ')})`);
+  if (name === 'hand-drill') {
+    // The hand scenario's call made RIG_HAND_DRILL_TIMES times in a row (bang-commands T07): each blocks until
+    // the person answers it, then the worker says RIG_HAND_REPLY and hands the next.
+    const calls = Array.from({ length: RIG_HAND_DRILL_TIMES }, (_, i) => [
+      { tool: { id: `hand-${i + 1}`, name: HAND_TOOL, input: { command: RIG_HAND_COMMAND, reason: RIG_HAND_REASON } } },
+      { emit: assistantText(`${RIG_HAND_REPLY} (${i + 1})`) },
+    ]).flat();
+    return [
+      { emit: RIG_INIT },
+      { await: 'user' },
+      { emit: assistantText("I'm the pretend worker of the hand-drill scenario. I need you to run a command for me.") },
+      ...calls,
+      { emit: resultEvent('success', RIG_HAND_REPLY) },
+      { react: `printf '%s' ${shQuote(RIG_BANG_REPLY)}` },
+    ];
+  }
+  throw new Error(`unknown scenario "${name}" (tour, long, coordinator, helpers, bang, hand, hand-drill, ${FINISHER_SCENARIOS.join(', ')})`);
 }
 
 // The finisher scenario's finisher (finisher T07): the real finisher-agent session on the fake. The fake
@@ -992,7 +1013,7 @@ function parseArgs(argv) {
     if (a === '--into') opts.into = argv[++i];
     else if (a === '--scenario') opts.scenario = argv[++i];
     else if (a === '--keep') opts.keep = true;
-    else throw new Error(`unknown argument ${a}\nusage: conversation-rig.mjs [--into <scratch>] [--scenario tour|long|coordinator|helpers|bang|hand|${FINISHER_SCENARIOS.join('|')}] [--keep]`);
+    else throw new Error(`unknown argument ${a}\nusage: conversation-rig.mjs [--into <scratch>] [--scenario tour|long|coordinator|helpers|bang|hand|hand-drill|${FINISHER_SCENARIOS.join('|')}] [--keep]`);
   }
   return opts;
 }

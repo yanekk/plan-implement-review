@@ -27,12 +27,12 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T04 | hand-rules | T00, T02 | ✅ | |
 | T05 | hand-tool | T00, T03, T04 | ✅ | |
 | T06 | bang-view | T02, T03 | ✅ | |
-| T07 | hand-view | T05, T06 | ⬜ | |
+| T07 | hand-view | T05, T06 | 🔍 | Pin, keys, scrollback forms, view routing; 9 core, 7 view, 3 e2e tests. Deviations: a hand request whose run has started is not pinned; decline examples use `later, please` (person kept `n`/`e`, FINDINGS); new rig scenario `hand-drill`; `HAND_DECLINED` moved to stream.mjs. |
 | T08 | bang-drill | T06, T07 | ⬜ | |
 | T09 | agent-rules | T05 | ⬜ | |
 | T10 | docs-readme | T08, T09 | ⬜ | |
 
-**Review queue:** empty
+**Review queue:** T07
 
 ## Blocked on the user
 

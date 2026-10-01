@@ -18,6 +18,9 @@ const ASK_TOOL = 'AskUserQuestion';
 // request is read, and re-exported from bang.mjs as its public home: bang.mjs imports conversation.mjs,
 // which imports this module, so defining it there would make this import a cycle.
 export const HAND_TOOL = 'mcp__pir__hand_command';
+// The deny message of a declined hand request (bang-commands DESIGN §2.6), here for the same reason: the
+// conversation reads it back to draw `· declined`.
+export const HAND_DECLINED = 'The person declined to run it.';
 
 export const DEFAULT_REFUSAL = 'The person refused.';
 

@@ -10,7 +10,7 @@
 // Widths count code points (text.mjs). Exact clipping of wide characters is the painter's job in the
 // shell (pi-tui `truncateToWidth`): core may not import a package (DESIGN §3.1).
 
-import { readEntry, workerActivity, DEFAULT_REFUSAL } from './stream.mjs';
+import { readEntry, workerActivity, DEFAULT_REFUSAL, HAND_DECLINED } from './stream.mjs';
 import { grantFrom } from './person-input.mjs';
 import { wrapLine, clipText, plainText } from './text.mjs';
 import { helpersOf } from './helpers.mjs';
@@ -132,10 +132,12 @@ function senderPrefix(from, taskId) {
 // running helpers (visible-helpers DESIGN §2.2). A helper's own frames and its background commands are left
 // out of the default view and drawn labelled `helper` in `full` (DESIGN §2.3). A helper's line, like any
 // `↳` line, ends the group its Agent step closes (group-commands §2.1).
-// `pinned` is the oldest pending request as a fresh prompt (gateFor / pickerFor), kept out of `lines`;
+// `pinned` is the oldest pending request as a fresh prompt (gateFor / pickerFor / handGateFor), kept out of `lines`;
 // the view keeps its own prompt state and paints it with promptLines. Once answered, a request is drawn
 // in `lines` where it was asked, with its answer. A read-only view (a worker no longer live) pins
 // nothing and shows an unanswered request as never answered.
+// A handed command the person's run is answering (a `shell` start carrying its requestId, not yet ended) is
+// not pinned: it is answered already, and the block under its line is the answer (bang-commands §2.8).
 export function buildConversation(entries, { full = false, width = 80, taskId = 'worker', readOnly = false, open = new Set() } = {}) {
   // A raw log line (a string) is parsed once here, so pass 1 can read a reply's `result` off the entry;
   // one that does not parse stays a string and readEntry keeps it as `raw`.
@@ -185,7 +187,7 @@ export function buildConversation(entries, { full = false, width = 80, taskId = 
         else if (typeof ev.text === 'string') sh.output += ev.text;
       } else if (ev.kind === 'shell-end' && shells.has(ev.id)) shells.get(ev.id).end = ev;
       if (ev.kind === 'tool-use') toolNames.set(ev.toolUseId, ev.name);
-      if (ev.kind === 'permission' || ev.kind === 'questions') requests.push(ev);
+      if (ev.kind === 'permission' || ev.kind === 'questions' || ev.kind === 'command') requests.push(ev);
       if (ev.kind === 'system') {
         const task = backgroundEvent(ev);
         // A helper (local_agent) is not background work: it has its own line (DESIGN §2.2).
@@ -204,12 +206,14 @@ export function buildConversation(entries, { full = false, width = 80, taskId = 
   });
   const pending = workerActivity(list).pending;
   const pendingIds = new Set(pending.map((r) => r.requestId));
-  const pinnedRequest = !readOnly && pending.length ? pending[0] : null;
+  const beingRun = new Set([...shells.values()].filter((sh) => !sh.end && typeof sh.start.requestId === 'string').map((sh) => sh.start.requestId));
+  const pinnedRequest = readOnly ? null : (pending.find((r) => !(r.kind === 'command' && beingRun.has(r.requestId))) ?? null);
   // A request with no reply, no grant and no longer pending was cancelled by an interrupt (stream.mjs).
   const resolution = (id) => {
     if (answers.has(id)) return { by: 'reply', ...answers.get(id) };
     if (byGrant.has(id)) return { by: 'grant' };
     if (remotely.has(id)) return { by: 'remote' };
+    if (pendingIds.has(id) && beingRun.has(id)) return { by: 'running' };
     if (pendingIds.has(id)) return { by: readOnly ? 'never' : 'waiting' };
     if (lost.has(id)) return { by: 'never' };
     return { by: 'interrupt' };
@@ -284,6 +288,7 @@ export function buildConversation(entries, { full = false, width = 80, taskId = 
         }
         case 'permission':
         case 'questions':
+        case 'command':
           if (pinnedRequest && ev.requestId === pinnedRequest.requestId) break;
           emit(requestLines(ev, resolution(ev.requestId), { width: w, taskId, helpers }));
           break;
@@ -348,7 +353,11 @@ export function buildConversation(entries, { full = false, width = 80, taskId = 
   flush();
 
   let pinned = null;
-  if (pinnedRequest) pinned = pinnedRequest.kind === 'questions' ? pickerFor(pinnedRequest, helpers) : gateFor(pinnedRequest, helpers);
+  if (pinnedRequest) {
+    if (pinnedRequest.kind === 'questions') pinned = pickerFor(pinnedRequest, helpers);
+    else if (pinnedRequest.kind === 'command') pinned = handGateFor(pinnedRequest, helpers);
+    else pinned = gateFor(pinnedRequest, helpers);
+  }
   // How many background commands and monitors the parent started are still running: started, not ended.
   const running = [...background.values()].filter((b) => !b.ended && !b.ofHelper).length;
   return { lines, pinned, background: running, helpers: helpers.filter((h) => h.state === 'running').length };
@@ -574,6 +583,7 @@ function lastLine(text) {
 
 // A request drawn in the scrollback: answered, cancelled, never answered, or waiting behind the pinned one.
 function requestLines(req, res, { width, taskId, helpers }) {
+  if (req.kind === 'command') return handRequestLines(req, res, { width, taskId, helpers });
   const out = req.kind === 'questions' ? questionsHead(pickerFor(req, helpers), taskId, width) : gateHead(gateFor(req, helpers), taskId, width);
   const answer = (text, style) => out.push(...wrapped('  → ', text, style, width));
   switch (res.by) {
@@ -606,6 +616,46 @@ function requestLines(req, res, { width, taskId, helpers }) {
     default:
       answer('waiting: answer the request above first', 'prompt');
   }
+  return out;
+}
+
+// A handed command in the scrollback (bang-commands §2.8): `! T05 asked you to run: {command}`, then, run,
+// the block that follows it in the log is its answer; declined, `· declined` or `· declined: {text}`.
+function handRequestLines(req, res, { width, taskId, helpers }) {
+  const gate = handGateFor(req, helpers);
+  const out = bangLines(`${askerOf(gate, taskId)} asked you to run: ${gate.command}`, 'prompt', width);
+  const answer = (text, style) => out.push(...wrapped('  ', text, style, width));
+  const status = (text, style) => out.push(...wrapped('  → ', text, style, width));
+  switch (res.by) {
+    case 'reply': {
+      const r = res.result;
+      if (r.behavior === 'allow') break; // the person's run: its block follows
+      const message = typeof r.message === 'string' ? r.message : '';
+      const said = message.startsWith(`${HAND_DECLINED} They said: `) ? message.slice(HAND_DECLINED.length + ' They said: '.length).trim() : '';
+      answer(said ? `· declined: ${said}` : '· declined', 'bad');
+      break;
+    }
+    case 'running':
+    case 'grant':
+      break; // a grant never covers a hand request (grantFrom); a run's block follows
+    case 'remote':
+      break; // the `answered-remotely` note that follows is its answer
+    case 'interrupt':
+      status('cancelled by the interrupt', 'dim');
+      break;
+    case 'never':
+      status('never answered', 'dim');
+      break;
+    default:
+      status('waiting: answer the request above first', 'prompt');
+  }
+  return out;
+}
+
+// `! {text}` wrapped, with the `!` in the shell style as in the box (§2.1) and the rest in `style`.
+function bangLines(text, style, width) {
+  const out = wrapped('! ', text, style, width);
+  out[0] = [span('!', 'shell'), span(out[0][0].text.slice(1), style)];
   return out;
 }
 
@@ -706,6 +756,31 @@ export function gateReducer(gate, key) {
   if (key === 'enter') return approve('allow');
   if (key === 'a' && gate.canAlwaysAllow) return approve('allow-always');
   return { gate: disarmed, send: null };
+}
+
+// ---- A command an agent hands the person (bang-commands DESIGN §2.6). ----
+
+// handGateFor(request, helpers) → the prompt for a pending hand request (a stream.mjs `command` event).
+// There is no `a`: grantFrom never yields a grant for it, and none is offered.
+export function handGateFor(request, helpers = []) {
+  return {
+    kind: 'command',
+    requestId: request.requestId,
+    command: typeof request.command === 'string' ? request.command : typeof request.input?.command === 'string' ? request.input.command : '',
+    reason: typeof request.reason === 'string' ? request.reason : typeof request.input?.reason === 'string' ? request.input.reason : '',
+    helper: helperOf(request.agentId, helpers),
+  };
+}
+
+// handReducer(gate, key) → what a key on the empty box does to a pinned hand request: Enter runs the command
+// exactly as handed (a `shell` drop carrying the requestId), `e` puts `! {command}` in the box to edit first,
+// `n` declines. Any other key is null, and goes to the box.
+export function handReducer(gate, key) {
+  if (!gate || gate.kind !== 'command') return null;
+  if (key === 'enter') return { send: { kind: 'shell', command: gate.command, requestId: gate.requestId } };
+  if (key === 'e') return { edit: `! ${gate.command}` };
+  if (key === 'n') return { send: { kind: 'permission', requestId: gate.requestId, decision: 'deny' } };
+  return null;
 }
 
 // ---- The question-set picker (DESIGN §2.7). ----
@@ -822,6 +897,14 @@ export function pickerReducer(picker, event) {
 // promptLines(prompt, { width, taskId }) → styled lines for a gate or a picker in its current state.
 export function promptLines(prompt, { width = 80, taskId = 'worker' } = {}) {
   const w = Math.max(10, width | 0);
+  if (prompt?.kind === 'command') {
+    // The mock (prototype tab 4): the head, the command in the shell style, why, the keys.
+    const out = bangLines(`${askerOf(prompt, taskId)} asks you to run a command`, 'prompt', w);
+    for (const l of String(prompt.command).split('\n')) out.push(...wrapped('  ', l, 'shell', w));
+    if (prompt.reason) out.push(...wrapped('  ', `why: ${prompt.reason}`, 'dim', w));
+    out.push(...wrapped('  ', '↵ run · e edit first · n decline · or type a reply to decline with it', 'prompt', w));
+    return out;
+  }
   if (prompt?.kind === 'permission') {
     const out = gateHead(prompt, taskId, w);
     let keys;

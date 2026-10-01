@@ -25,6 +25,8 @@
 // reading its anchor as Claude does (§ Read and Edit): `//path` names `/path`; a `/path` (relative to the
 // settings source) or `~/path` rule never matches, since pir does not know those roots.
 
+import { HAND_TOOL } from './stream.mjs';
+
 const KINDS = ['message', 'interrupt', 'permission', 'answers', 'decline-questions', 'shell', 'shell-stop'];
 const DECISIONS = ['allow', 'deny', 'allow-always'];
 
@@ -113,9 +115,11 @@ const fail = (error) => ({ ok: false, error });
 // Claude itself suggested, every rule of it; other suggestion types (`setMode`, `addDirectories`) are
 // never taken. null — and so no `a` key — when there is no such suggestion, or when Claude flagged
 // that the rule would grant more than this request (`suppressAlwaysAllowRule`).
+// A command an agent hands the person (bang-commands DESIGN §2.6) never yields a grant, whatever Claude
+// suggests: a grant would let the agent run commands as the person without the person.
 // Grant = { rules: [{ toolName, ruleContent? }] }
 export function grantFrom(request) {
-  if (!isObject(request) || request.suppressAlwaysAllowRule === true) return null;
+  if (!isObject(request) || request.suppressAlwaysAllowRule === true || request.toolName === HAND_TOOL) return null;
   const suggestions = Array.isArray(request.suggestions) ? request.suggestions : [];
   const rules = [];
   for (const s of suggestions) {

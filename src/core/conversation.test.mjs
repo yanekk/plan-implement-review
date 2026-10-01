@@ -6,7 +6,9 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
-import { buildConversation, gateFor, gateReducer, pickerFor, pickerReducer, promptLines, mainArg, onOther, helperTime, stepKind, groupLabel, shellEndLine, shellRunningLine } from './conversation.mjs';
+import { buildConversation, gateFor, gateReducer, pickerFor, pickerReducer, promptLines, mainArg, onOther, helperTime, stepKind, groupLabel, shellEndLine, shellRunningLine, handGateFor, handReducer } from './conversation.mjs';
+import { grantFrom } from './person-input.mjs';
+import { HAND_TOOL, handDeclineMessage } from './bang.mjs';
 
 const SAMPLE = readFileSync(fileURLToPath(new URL('./fixtures/stream-sample.ndjson', import.meta.url)), 'utf8')
   .split('\n')
@@ -1165,4 +1167,101 @@ test('shellRunningLine: the status part with its elapsed time, read from the giv
 test('shellEndLine is ok only for a clean exit that reached the session', () => {
   assert.deepEqual(shellEndLine({ code: 0, signal: null, stopped: null, ms: 1000, sent: 'message' }, 'agent'), { text: '✓ exit 0 · 1s · sent to agent', ok: true });
   assert.equal(shellEndLine({ code: 0, stopped: 'person', ms: 1000, sent: 'message' }).ok, false);
+});
+
+// ---- A command an agent hands the person (bang-commands T07; DESIGN §2.6, §2.8) ----
+
+const HAND_INPUT = { command: 'gcloud auth login --no-launch-browser', reason: 'the deploy check needs your Google login' };
+const handReq = (requestId = 'h1', extra = {}) => request(requestId, HAND_TOOL, HAND_INPUT, extra);
+
+test('a hand request has no grant, so no `a`; its keys line is the run/edit/decline one', () => {
+  assert.equal(grantFrom({ toolName: HAND_TOOL, input: HAND_INPUT, suggestions: [{ type: 'addRules', behavior: 'allow', rules: [{ toolName: HAND_TOOL }] }] }), null);
+  const { pinned } = buildConversation([handReq()], { taskId: 'T05' });
+  const lines = all(promptLines(pinned, { width: 80, taskId: 'T05' }));
+  assert.equal(lines.at(-1), '  ↵ run · e edit first · n decline · or type a reply to decline with it');
+  assert.ok(!lines.some((l) => /don't ask again/.test(l)));
+});
+
+test('handReducer: enter runs it as handed, e edits first, n declines, anything else is null', () => {
+  const gate = handGateFor({ requestId: 'h1', command: 'printf handed', reason: 'why' });
+  assert.deepEqual(gate, { kind: 'command', requestId: 'h1', command: 'printf handed', reason: 'why', helper: null });
+  assert.deepEqual(handReducer(gate, 'enter'), { send: { kind: 'shell', command: 'printf handed', requestId: 'h1' } });
+  assert.deepEqual(handReducer(gate, 'e'), { edit: '! printf handed' });
+  assert.deepEqual(handReducer(gate, 'n'), { send: { kind: 'permission', requestId: 'h1', decision: 'deny' } });
+  for (const key of ['a', 'y', 'space', 'escape', 'up', '!']) assert.equal(handReducer(gate, key), null, key);
+  assert.equal(handReducer(null, 'enter'), null);
+});
+
+test('a pending hand request is pinned with its command, why and keys; the !s and the command take the shell style', () => {
+  const { lines, pinned } = buildConversation([say('I need you to log in.'), use('h1', HAND_TOOL, HAND_INPUT), handReq()], { taskId: 'T05' });
+  assert.equal(pinned.kind, 'command');
+  assert.ok(!all(lines).some((l) => l.includes('asks you to run')), 'pinned, not in the scrollback');
+  const p = promptLines(pinned, { width: 80, taskId: 'T05' });
+  assert.deepEqual(all(p), [
+    '! T05 asks you to run a command',
+    '  gcloud auth login --no-launch-browser',
+    '  why: the deploy check needs your Google login',
+    '  ↵ run · e edit first · n decline · or type a reply to decline with it',
+  ]);
+  assert.deepEqual(p[0].map((s) => s.style), ['shell', 'prompt']);
+  assert.equal(styleOf(p[1]), 'shell');
+  assert.equal(styleOf(p[2]), 'dim');
+  // A narrow screen wraps it, never past the width.
+  for (const l of promptLines(pinned, { width: 30, taskId: 'T05' })) assert.ok([...textOf(l)].length <= 30, textOf(l));
+});
+
+test('a helper\'s hand request names the helper; one with no reason has no why line', () => {
+  const helperLog = [use('ag', 'Agent', { description: 'Survey the code' }), hStart('a1', 'ag', 'Survey the code'), handReq('h1', { agentId: 'a1', input: { command: 'ls' } })];
+  const { pinned } = buildConversation(helperLog, { taskId: 'T05' });
+  assert.deepEqual(all(promptLines(pinned, { taskId: 'T05' })), [
+    '! helper "Survey the code" asks you to run a command',
+    '  ls',
+    '  ↵ run · e edit first · n decline · or type a reply to decline with it',
+  ]);
+});
+
+test('answered: run, the line then its block; declined, `· declined` or `· declined: {text}`', () => {
+  const ran = buildConversation([
+    handReq('h1'),
+    shStart('sh-1', HAND_INPUT.command, { requestId: 'h1' }),
+    shOut('sh-1', 'ok\n'),
+    shEnd('sh-1', { sent: 'answer' }),
+    reply('h1', { behavior: 'allow', updatedInput: { ...HAND_INPUT, pirResult: 'x' } }),
+    say('Thanks.'),
+  ], { taskId: 'T05' });
+  assert.equal(ran.pinned, null);
+  assert.deepEqual(all(ran.lines), [
+    `! T05 asked you to run: ${HAND_INPUT.command}`,
+    `you ! ${HAND_INPUT.command}`,
+    '  ok',
+    '  ✓ exit 0 · 6s · sent to T05',
+    'T05 ▸ Thanks.',
+  ]);
+  assert.deepEqual(ran.lines[0].map((s) => s.style), ['shell', 'prompt']);
+
+  const declined = buildConversation([handReq('h1'), reply('h1', { behavior: 'deny', message: handDeclineMessage() })], { taskId: 'T05' });
+  assert.deepEqual(all(declined.lines), [`! T05 asked you to run: ${HAND_INPUT.command}`, '  · declined']);
+  assert.equal(styleOf(declined.lines[1]), 'bad');
+  const said = buildConversation([handReq('h1'), reply('h1', { behavior: 'deny', message: handDeclineMessage('not now') })], { taskId: 'T05' });
+  assert.deepEqual(all(said.lines), [`! T05 asked you to run: ${HAND_INPUT.command}`, '  · declined: not now']);
+});
+
+test('a hand request the person\'s run is answering is not pinned while it runs; it is again if still pending after', () => {
+  const running = buildConversation([handReq('h1'), shStart('sh-1', 'printf edited', { requestId: 'h1', edited: true }), shOut('sh-1', 'edited')], { taskId: 'T05' });
+  assert.equal(running.pinned, null);
+  assert.deepEqual(all(running.lines), [`! T05 asked you to run: ${HAND_INPUT.command}`, 'you ! printf edited', '  edited']);
+  // A permission behind it is pinned meanwhile.
+  const behind = buildConversation([handReq('h1'), shStart('sh-1', 'x', { requestId: 'h1' }), request('p2')], { taskId: 'T05' });
+  assert.equal(behind.pinned?.requestId, 'p2');
+  // Ended with the request still pending (its answer did not land): it is pinned again.
+  const after = buildConversation([handReq('h1'), shStart('sh-1', 'x', { requestId: 'h1' }), shEnd('sh-1', { sent: 'answer' })], { taskId: 'T05' });
+  assert.equal(after.pinned?.kind, 'command');
+});
+
+test('a hand request read-only and never answered, and one waiting behind another', () => {
+  const ro = buildConversation([handReq('h1')], { taskId: 'T05', readOnly: true });
+  assert.deepEqual(all(ro.lines), [`! T05 asked you to run: ${HAND_INPUT.command}`, '  → never answered']);
+  const two = buildConversation([request('p1'), handReq('h1')], { taskId: 'T05' });
+  assert.equal(two.pinned.requestId, 'p1');
+  assert.deepEqual(all(two.lines), [`! T05 asked you to run: ${HAND_INPUT.command}`, '  → waiting: answer the request above first']);
 });

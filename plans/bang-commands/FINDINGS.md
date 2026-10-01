@@ -5,6 +5,7 @@ for ever.
 
 | Date | Finding |
 |---|---|
+| 2026-10-01 | T07: on an empty box `n` and `e` are the hand pin's keys, so a typed decline starting with n or e (`not now`) never types: the first letter declines or edits. The person kept the keys 2026-10-01, as with a permission's `n`. |
 | 2026-10-01 | T06 review: `plan-run.test.mjs` "a `!` drop runs in the plan worktree" timed out (`timed out waiting for the command to end`) in the full `npm test` and passed alone. Load-sensitive, like the notify-wiring cases. |
 | 2026-10-01 | T06: the 60-column hint is clipped: the command-mode hint is 61 characters, like the existing `↵ send` hint (64). Only 80 columns is promised to fit. |
 | 2026-10-01 | T04: `notify-wiring.test.mjs` fails its 10 cases run alone too, on Node 22.17.1 in the T04 worktree at `1ca1822`, with T04's edits set aside; not only under load. |
