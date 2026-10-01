@@ -25,7 +25,7 @@
 // reading its anchor as Claude does (§ Read and Edit): `//path` names `/path`; a `/path` (relative to the
 // settings source) or `~/path` rule never matches, since pir does not know those roots.
 
-const KINDS = ['message', 'interrupt', 'permission', 'answers', 'decline-questions'];
+const KINDS = ['message', 'interrupt', 'permission', 'answers', 'decline-questions', 'shell', 'shell-stop'];
 const DECISIONS = ['allow', 'deny', 'allow-always'];
 
 const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
@@ -83,6 +83,23 @@ export function validateDrop(obj) {
       if (!nonEmpty(obj.requestId)) return fail('missing `requestId`');
       if (typeof obj.text !== 'string') return fail('a decline-questions needs `text`');
       return ok({ ...base, requestId: obj.requestId, text: obj.text });
+    // The person's own command, run by the host in the session's folder (bang-commands DESIGN §3.2).
+    // `requestId` ties it to a hand request it answers. A `decision` is refused rather than dropped:
+    // it means the screen took a `!` line for a permission answer, and running it anyway would act on
+    // a drop whose meaning is in doubt.
+    case 'shell': {
+      if (!nonEmpty(obj.command)) return fail('a shell drop needs a non-empty `command`');
+      if (obj.decision !== undefined) return fail('a shell drop carries no `decision`');
+      const input = { ...base, command: obj.command.trim() };
+      if (obj.requestId !== undefined) {
+        if (!nonEmpty(obj.requestId)) return fail('`requestId` must be a non-empty string');
+        input.requestId = obj.requestId;
+      }
+      return ok(input);
+    }
+    case 'shell-stop':
+      if (obj.decision !== undefined) return fail('a shell-stop drop carries no `decision`');
+      return ok(base);
   }
 }
 

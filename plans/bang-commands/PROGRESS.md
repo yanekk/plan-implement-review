@@ -20,9 +20,9 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 
 | # | Task | Depends on | State | Notes |
 |---|---|---|---|---|
-| T00 | hand-tool-spike | — | ⬜ | |
+| T00 | hand-tool-spike | — | ✅ | |
 | T01 | shell-runner | — | ✅ | person-shell.mjs; `isSameProcess` in identity.mjs. Deviations accepted: `reapShells` returns every record with `killed`, `onEnd` `error`, 500 ms end grace. Review: interactive zsh/bash ignore TERM (zsh ran the rest of `a; b`, bash jobs survived), reproduced with the real shells; stop now sends SIGHUP+SIGTERM, DESIGN §2.4 updated with the person, tests lock it. |
-| T02 | bang-rules | — | ⬜ | |
+| T02 | bang-rules | — | ✅ | |
 | T03 | bang-forwarding | T01, T02 | ⬜ | |
 | T04 | hand-rules | T00, T02 | ⬜ | |
 | T05 | hand-tool | T00, T03, T04 | ⬜ | |
