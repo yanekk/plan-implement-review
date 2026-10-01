@@ -21,7 +21,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | # | Task | Depends on | State | Notes |
 |---|---|---|---|---|
 | T00 | hand-tool-spike | — | ✅ | |
-| T01 | shell-runner | — | ⬜ | |
+| T01 | shell-runner | — | ✅ | |
 | T02 | bang-rules | — | ✅ | |
 | T03 | bang-forwarding | T01, T02 | ⬜ | |
 | T04 | hand-rules | T00, T02 | ⬜ | |
