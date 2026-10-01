@@ -9,6 +9,8 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { startRig, openScreen, mouseBytes, RIG_DONE_SUMMARY, RIG_STUCK_SUMMARY, RIG_RESERVED_COMMAND } from './conversation-rig.mjs';
+import { BASIC_SGR } from './palette.mjs';
+import { indexDir, updateRecord } from './index-store.mjs';
 
 // The helpers scenario's run row, listed live. The script runs on its own clock from the opening message:
 // A asks its permission a few steps (5 × stepMs) after the start, and the row turns from `running` to
@@ -589,6 +591,130 @@ export function defineEscWarnsTest([cols, rows]) {
       assert.deepEqual(outs.map((e) => [e.text, e.helpersStopped ?? null]), [['continue', ['a0fake00000000a01']], ['again', null]]);
 
       for (const r of s.split('\n')) assert.ok([...r].length <= cols);
+      assert.equal(screen.overflows(), 0, 'no frame was clipped to fit the window');
+    } finally {
+      await screen.close();
+    }
+  });
+}
+
+// bang-commands T06, end to end at 60×20, 80×24 and 120×40 (DESIGN §2.1, §2.2, §2.4, §2.8): the person's `!` on
+// the real pir screen, run by the rig's real forwarder in a real shell, its result reaching the fake worker.
+// Colour is on (NO_COLOR and COLORTERM dropped: the basic table), so the `!`'s shell style can be read.
+export function defineBangTest([cols, rows]) {
+  test(`the person's ! runs a command in the conversation at ${cols}×${rows}`, { timeout: 120000 }, async (t) => {
+    const home = scratchHome(t);
+    const rig = startRig({ env: home, scenario: 'bang', paceMs: 0 });
+    t.after(() => rig.stop());
+    const { NO_COLOR: _nc, COLORTERM: _ct, ...base } = process.env;
+    const screen = openScreen({ cols, rows, env: { ...base, ...home } });
+    const ESC = '\x1b';
+    const PINK = BASIC_SGR.shell.slice(2, -1); // '38;5;212', as fgAt reports it
+    const wire = () =>
+      (existsSync(rig.received) ? readFileSync(rig.received, 'utf8') : '')
+        .split('\n')
+        .filter(Boolean)
+        .map((l) => JSON.parse(l))
+        .filter((x) => x.line)
+        .map((x) => JSON.parse(x.line));
+    const interrupts = () => wire().filter((m) => m.type === 'control_request' && m.request?.subtype === 'interrupt').length;
+    const ends = () => logOf(rig).filter((e) => e.dir === 'shell' && e.kind === 'end');
+    const boxRow = (s, re) => s.findLastIndex((l) => re.test(l));
+    try {
+      await screen.waitFor(/rig +work/);
+      screen.send('\r');
+      await screen.waitFor(/pick a task/);
+      screen.send(`${ESC}[C`);
+      await screen.waitFor(/pretend worker/, 20000);
+      await waitFor(() => rig.platform.list()[0]?.state === 'idle', { what: 'the opening turn to end' });
+
+      // `!` puts the box in command mode: the hint, and the `!` and the border in the shell style.
+      screen.send('!');
+      let s = await screen.waitFor((text) => text.split('\n').at(-1).startsWith('! command'));
+      if (cols >= 80) assert.equal(s.at(-1).trimEnd(), "! command · ↵ run in this session's folder · ⌫ the ! to leave");
+      assert.match(s.at(-1), /^! command · ↵ run in this session/);
+      const y = boxRow(s, /^!\s*$/);
+      assert.ok(y > 0, `the box holds the !:\n${s.join('\n')}`);
+      assert.equal(screen.fgAt(y, 0), PINK, 'the ! is in the shell style');
+      assert.equal(screen.fgAt(y - 1, 0), PINK, 'the box border is in the shell style');
+
+      // A command with two lines of output: the block, its end line, then the worker's reply.
+      screen.send(" printf 'one\\ntwo\\n'");
+      await screen.waitFor(/printf 'one\\ntwo\\n'/);
+      screen.send('\r');
+      s = await screen.waitFor(/✓ exit 0 · \d+s · sent to T01[\s\S]*T01 ▸ Thanks, I read the output\./, 30000);
+      let at = s.findIndex((l) => l.startsWith("you ! printf 'one\\ntwo\\n'"));
+      assert.ok(at >= 0, s.join('\n'));
+      assert.deepEqual(s.slice(at + 1, at + 4).map((l) => l.trimEnd()), ['  one', '  two', s[at + 3].trimEnd()]);
+      assert.match(s[at + 3], /^ {2}✓ exit 0 · \d+s · sent to T01\s*$/);
+      assert.match(s.slice(at + 4).join('\n'), /T01 ▸ Thanks, I read the output\./);
+      assert.doesNotMatch(s.join('\n'), /you ▸ \[pir\] The person ran/, 'the message sent is not drawn a second time');
+      assert.match(s.at(-1), /^↵ send · esc interrupt/, 'out of command mode once sent');
+
+      // 200 lines: the last 12 under the count; Tab shows every one, by scrolling.
+      screen.send('! seq 1 200');
+      await screen.waitFor(/! seq 1 200/);
+      screen.send('\r');
+      await waitFor(() => ends().length === 2, { what: 'seq to end', timeoutMs: 20000 });
+      s = await screen.waitFor(/ {2}200\s*\n {2}✓ exit 0/, 20000);
+      const shown = () => new Set(screen.text().split('\n').map((l) => l.match(/^ {2}(\d+)\s*$/)?.[1]).filter(Boolean).map(Number));
+      // Up from the end until the count line shows; nothing before 189 is ever drawn grouped.
+      const grouped = new Set();
+      for (let i = 0; i < 5 && !/… 188 earlier lines · Tab shows all/.test(screen.text()); i++) {
+        for (const n of shown()) grouped.add(n);
+        screen.send(`${ESC}[5~`);
+        await screen.waitFor(null);
+      }
+      for (const n of shown()) grouped.add(n);
+      assert.match(screen.text(), /… 188 earlier lines · Tab shows all/);
+      assert.deepEqual([...grouped].filter((n) => n <= 200 && n > 2).sort((a, b) => a - b), Array.from({ length: 12 }, (_, i) => 189 + i), 'the last 12 lines and no others');
+      screen.send(`${ESC}[6~`.repeat(5));
+      await screen.waitFor((text) => !/more below/.test(text));
+      screen.send('\t');
+      await screen.waitFor(/ {2}200\s*\n {2}✓ exit 0/);
+      const all = new Set();
+      for (let i = 0; i < 40 && !all.has(1); i++) {
+        for (const n of shown()) all.add(n);
+        screen.send(`${ESC}[5~`);
+        await screen.waitFor(null);
+        for (const n of shown()) all.add(n);
+      }
+      for (let n = 1; n <= 200; n++) assert.ok(all.has(n), `line ${n} was shown in full detail`);
+      screen.send('\t');
+      screen.send(`${ESC}[6~`.repeat(40));
+      await screen.waitFor((text) => !/more below/.test(text));
+
+      // A long command: the status line; a second `!` is refused; Esc stops the command, not the worker.
+      screen.send('! sleep 30');
+      await screen.waitFor(/! sleep 30/);
+      screen.send('\r');
+      s = await screen.waitFor(/● running your command · \d+s · esc stops it/, 20000);
+      assert.match(s.at(-1), /esc stops it/);
+      screen.send('!ls');
+      await screen.waitFor(/^!ls\s*$/m);
+      screen.send('\r');
+      s = await screen.waitFor(/a command is already running · esc stops it/);
+      assert.ok(s.some((l) => /^!ls\s*$/.test(l)), 'the text stays in the box');
+      screen.send('\x03'); // Ctrl+C with text only clears the box
+      await screen.waitFor((text) => !/^!ls\s*$/m.test(text));
+      assert.equal(ends().length, 2, 'clearing the box did not stop the command');
+      screen.send(ESC);
+      s = await screen.waitFor(/✗ stopped by you · \d+s · sent to T01/, 20000);
+      assert.doesNotMatch(s.join('\n'), /● running your command/);
+      await waitFor(() => logOf(rig).filter((e) => e.dir === 'in' && e.event?.type === 'result' && e.event.result === 'Thanks, I read the output.').length === 3, { what: 'the reply to the stopped command', timeoutMs: 20000 });
+      assert.equal(interrupts(), 0, 'the worker was never interrupted');
+      assert.equal(logOf(rig).filter((e) => e.dir === 'out' && e.kind === 'interrupt').length, 0);
+
+      // The run stopped (its index record no longer running): the not-running refusal, the text kept.
+      updateRecord({ repo: rig.repo, slug: rig.slug }, { finalState: 'stopped' }, { dir: indexDir({ env: home }) });
+      screen.send('! ls');
+      await screen.waitFor(/^! ls\s*$/m);
+      screen.send('\r');
+      s = await screen.waitFor(/the run is not running — your command was not sent/);
+      assert.ok(s.some((l) => /^! ls\s*$/.test(l)), 'the text stays in the box');
+      assert.equal(ends().length, 3, 'nothing ran');
+
+      for (const r of screen.text().split('\n')) assert.ok([...r].length <= cols);
       assert.equal(screen.overflows(), 0, 'no frame was clipped to fit the window');
     } finally {
       await screen.close();

@@ -2,6 +2,7 @@
 // file, like the other sizes (fast-tests T05), so node --test runs it side by side with them.
 // The test body is in conversation-rig-helpers.mjs.
 
-import { defineHelperLinesTest } from './conversation-rig-helpers.mjs';
+import { defineHelperLinesTest, defineBangTest } from './conversation-rig-helpers.mjs';
 
 defineHelperLinesTest([60, 20]);
+defineBangTest([60, 20]);

@@ -33,6 +33,7 @@ const MOCHA = {
   dim: '#7f849c',
   selected: '#313244',
   subtext1: '#bac2de',
+  pink: '#f5c2e7',
 };
 
 // The basic table: the codes pir painted before the palette, one per style.
@@ -71,6 +72,8 @@ export const BASIC_SGR = {
   prompt: '\x1b[1;33m',
   ok: '\x1b[32m',
   bad: '\x1b[31m',
+  // the person's own `!` command (bang-commands §2.1, §2.8): the box border, the `!` and the running line, pink.
+  shell: '\x1b[38;5;212m',
 };
 
 // The selected row's band on the basic table: a dark grey background (256-colour 236, user 2026-09-26).
@@ -108,6 +111,7 @@ export const MOCHA_SGR = {
   prompt: fg(MOCHA.yellow, true),
   ok: fg(MOCHA.green),
   bad: fg(MOCHA.red),
+  shell: fg(MOCHA.pink),
 };
 
 export const MOCHA_SELECTED_BG = bg(MOCHA.selected);

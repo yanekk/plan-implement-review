@@ -26,13 +26,13 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T03 | bang-forwarding | T01, T02 | ✅ | |
 | T04 | hand-rules | T00, T02 | ✅ | |
 | T05 | hand-tool | T00, T03, T04 | ⬜ | |
-| T06 | bang-view | T02, T03 | ⬜ | |
+| T06 | bang-view | T02, T03 | 🔍 | Block, status line, `!` mode, Esc stop, refusals; 22 unit tests, e2e at 3 sizes. Block drawn whole at its start. Hint reads `esc stops it` while a command runs; running line also under a pinned prompt. Unspecified wordings (session-closed end, 1 MB clip, `shell-refused` note, `stop sent`) approved by the person 2026-10-01. |
 | T07 | hand-view | T05, T06 | ⬜ | |
 | T08 | bang-drill | T06, T07 | ⬜ | |
 | T09 | agent-rules | T05 | ⬜ | |
 | T10 | docs-readme | T08, T09 | ⬜ | |
 
-**Review queue:** empty
+**Review queue:** T06
 
 ## Blocked on the user
 

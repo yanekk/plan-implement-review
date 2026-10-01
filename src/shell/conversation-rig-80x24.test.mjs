@@ -4,7 +4,7 @@
 
 import {
   defineCoordinatorAgentTest, defineWheelTest, defineGroupLinesTest, defineFinisherTest, defineFinisherDrillTests,
-  defineHelperLinesTest, defineEscWarnsTest,
+  defineHelperLinesTest, defineEscWarnsTest, defineBangTest,
 } from './conversation-rig-helpers.mjs';
 
 defineCoordinatorAgentTest([80, 24]);
@@ -14,3 +14,4 @@ defineFinisherTest([80, 24]);
 defineFinisherDrillTests([80, 24]);
 defineHelperLinesTest([80, 24]);
 defineEscWarnsTest([80, 24]);
+defineBangTest([80, 24]);

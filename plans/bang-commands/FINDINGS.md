@@ -5,6 +5,7 @@ for ever.
 
 | Date | Finding |
 |---|---|
+| 2026-10-01 | T06: the 60-column hint is clipped: the command-mode hint is 61 characters, like the existing `↵ send` hint (64). Only 80 columns is promised to fit. |
 | 2026-10-01 | T04: `notify-wiring.test.mjs` fails its 10 cases run alone too, on Node 22.17.1 in the T04 worktree at `1ca1822`, with T04's edits set aside; not only under load. |
 | 2026-10-01 | T03: `coordinate.test.mjs` "a restart run exposes a plain-English reconciliation summary" fails its cleanup with `ENOTEMPTY` rmdir of the fake repo's `.git`, also on untouched `pir/bang-commands` (3 of 3 runs). Load-sensitive or environmental, not this plan's. |
 | 2026-10-01 | T01 review: `reapShells` matches only the group leader's pid and start time, so a group whose shell already died (a TERM-ignoring child left after a stop, then a host crash) is not reaped. Left as designed. |
