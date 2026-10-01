@@ -14,6 +14,10 @@
 // - An interrupt ends the open turn with `result` subtype `error_during_execution` (T00).
 
 const ASK_TOOL = 'AskUserQuestion';
+// The tool an agent hands the person a command with (bang-commands DESIGN §2.6). Defined here, where the
+// request is read, and re-exported from bang.mjs as its public home: bang.mjs imports conversation.mjs,
+// which imports this module, so defining it there would make this import a cycle.
+export const HAND_TOOL = 'mcp__pir__hand_command';
 
 export const DEFAULT_REFUSAL = 'The person refused.';
 
@@ -134,7 +138,8 @@ function resultText(content) {
 }
 
 // One `canUseTool` call, as pir recorded it (DESIGN §2.3). AskUserQuestion is a question set
-// (DESIGN §2.7); every other tool is a permission request (DESIGN §2.6). A helper's request carries
+// (DESIGN §2.7); a hand_command with a command is a `command` (bang-commands DESIGN §2.6); every other
+// tool is a permission request (DESIGN §2.6). A helper's request carries
 // `agentId` (the SDK's `agentID`, the helper's task_id), which attributes it: it reaches canUseTool before
 // the helper's own tool_use frame, so frame order cannot (visible-helpers DESIGN §2.1).
 function readRequest(entry) {
@@ -152,6 +157,12 @@ function readRequest(entry) {
       options: (Array.isArray(q.options) ? q.options : []).filter(isObject).map((o) => ({ label: str(o.label), description: str(o.description) })),
     }));
     return [{ kind: 'questions', requestId: entry.requestId, ...tie, questions, input, ...agent }];
+  }
+  // A command an agent hands the person (bang-commands DESIGN §2.6, §2.7) is its own asking kind, so the row,
+  // the alert and the coordinator agent can tell it from a permission. One with no command to run is read as
+  // the plain permission it then is: there would be nothing for the person to run.
+  if (entry.toolName === HAND_TOOL && typeof input.command === 'string' && input.command.trim() !== '') {
+    return [{ kind: 'command', requestId: entry.requestId, ...tie, toolName: entry.toolName, input, command: input.command, reason: str(input.reason), ...agent }];
   }
   return [{
     kind: 'permission',
@@ -262,7 +273,8 @@ const SEND_CAUSES = { person: 'person', pir: 'pir', coordinator: 'coordinator' }
 //   starting   nothing has been sent and the worker has not spoken
 //   busy       a turn is open: a message went in, or the worker began one, and no `result` came back
 //   idle       the last turn ended and nothing is pending
-//   permission / questions   the oldest unanswered request is a permission request / a question set
+//   permission / questions / command   the oldest unanswered request is a permission request / a question
+//              set / a command an agent handed the person (bang-commands DESIGN §2.7)
 // A pending request outranks busy and idle: a background job may ask after its turn's `result`.
 // An interrupt cancels the requests pending when it was sent: the SDK aborts their `canUseTool` signal
 // and the turn ends with no reply ever logged (T01 review probe), so they are dropped at that `result`.
@@ -333,6 +345,7 @@ export function workerActivity(entries) {
           break;
         case 'permission':
         case 'questions':
+        case 'command':
           pending.set(ev.requestId, ev);
           started = true;
           break;

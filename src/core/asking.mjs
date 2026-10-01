@@ -4,7 +4,8 @@
 import { reservedFor } from './coordinator-policy.mjs';
 
 const AWAITING = 'awaiting-answer'; // loop.mjs AWAITING: a task parked on its worker's own report
-const REQUEST_KINDS = new Set(['permission', 'questions']);
+// `command` is a command an agent handed the person (bang-commands DESIGN §2.7): a request like the others.
+const REQUEST_KINDS = new Set(['permission', 'questions', 'command']);
 const WORKING = new Set(['implementing', 'reviewing']); // loop phases where a stop can only mean the person
 
 // stoppedOnPerson(activity) → boolean (stopped-worker-asking DESIGN §2.1, §2.3)
@@ -18,7 +19,7 @@ export function stoppedOnPerson(activity) {
   return activity?.state === 'idle' && Array.isArray(activity.background) && activity.background.length === 0;
 }
 
-// waitingOn(task, activity) → null | 'question' | 'permission' | 'questions'
+// waitingOn(task, activity) → null | 'question' | 'permission' | 'questions' | 'command'
 //   task:     { phase, decision } from coordinator.state.tasks, or undefined
 //   activity: the task's live worker's workerActivity fold, or undefined when pir cannot see the worker
 //
@@ -67,10 +68,11 @@ export const itemKey = (item) => `${item.worker}:${item.requestId ?? 'report'}`;
 
 // waitingItems(stateTasks, workers, { askRules }) → T01 `waiting` entries, one per pending request and
 // one per report park, for every live worker:
-//   { worker, task, kind: 'permission'|'questions'|'report', requestId?, request?, reserved?, text? }
+//   { worker, task, kind: 'permission'|'questions'|'command'|'report', requestId?, request?, reserved?, text? }
 // A report park counts only for the worker holding the task (the one the loop tracks) and only once
 // its asking turn has ended, as waitingOn reads it. `reserved` is set, from reservedFor, on a
-// permission request the person keeps (DESIGN §2.4); `askRules` are the project's permissions.ask.
+// permission request the person keeps (DESIGN §2.4), and always on a `command` (only the person runs a
+// command an agent hands them, bang-commands DESIGN §2.6); `askRules` are the project's permissions.ask.
 export function waitingItems(stateTasks = {}, workers = [], { askRules = [] } = {}) {
   const items = [];
   for (const w of Array.isArray(workers) ? workers : []) {
@@ -87,7 +89,7 @@ function itemsOf(worker, taskNum, task, activity, askRules = []) {
   for (const ev of Array.isArray(activity?.pending) ? activity.pending : []) {
     if (!REQUEST_KINDS.has(ev?.kind) || typeof ev.requestId !== 'string') continue;
     const item = { worker, task: taskNum, kind: ev.kind, requestId: ev.requestId, request: ev };
-    if (ev.kind === 'permission') {
+    if (ev.kind === 'permission' || ev.kind === 'command') {
       const reserved = reservedFor(ev, askRules);
       if (reserved) item.reserved = reserved;
     }
@@ -101,10 +103,11 @@ function itemsOf(worker, taskNum, task, activity, askRules = []) {
 
 // holderOf(items, heldByAgent) → 'coordinator' | 'person' | null for one worker's waiting items: null
 // when nothing waits, 'coordinator' only when the agent holds every one, since a single item the person
-// must answer is enough to make the task the person's.
+// must answer is enough to make the task the person's. A reserved item is the person's whatever the set
+// says: the shell never holds one, and this keeps a handed command the person's even if it did.
 export function holderOf(items, heldByAgent = new Set()) {
   if (!items?.length) return null;
-  return items.every((i) => heldByAgent.has(itemKey(i))) ? 'coordinator' : 'person';
+  return items.every((i) => !i.reserved && heldByAgent.has(itemKey(i))) ? 'coordinator' : 'person';
 }
 
 // waitingFor(task, activity, { workerId, heldByAgent }) → null | { kind, holder }: waitingOn's kind and who

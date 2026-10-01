@@ -8,7 +8,7 @@
 // question, a false negative costs exactly the action the person reserved.
 
 import { ruleMatches } from './person-input.mjs';
-import { allowResult, denyResult, answersResult } from './stream.mjs';
+import { allowResult, denyResult, answersResult, HAND_TOOL } from './stream.mjs';
 
 const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 const nonEmpty = (v) => typeof v === 'string' && v.trim() !== '';
@@ -90,14 +90,20 @@ export function commandTails(parts) {
 
 const ruleText = (r) => (r.ruleContent === undefined ? r.toolName : `${r.toolName}(${r.ruleContent})`);
 
-// reservedFor(request, askRules) → null | { kind: 'ask-rule' | 'destructive', why }
+// reservedFor(request, askRules) → null | { kind: 'hand' | 'ask-rule' | 'destructive', why }
 //   request:  a permission request as stream.mjs readRequest normalises it, plus `matchedAskRule` /
 //             `defaultToNo` when the SDK sent them. A question set (no toolName) is never reserved.
 //   askRules: the strings of the project's `.claude/settings.json` permissions.ask; the shell reads it.
 // Both the SDK's flag and our own match are checked: T00 measured `matchedAskRule` absent even when an
 // ask rule forced the prompt (CLI 2.1.283), so the settings match is what actually carries the bin.
+// A command an agent hands the person (`mcp__pir__hand_command`, bang-commands DESIGN §2.6) is reserved by
+// its tool name alone, a malformed one included: only the person runs it, and the agent never runs a command.
+export const HAND_RESERVED = Object.freeze({ kind: 'hand', why: 'a command an agent hands the person is only the person\'s to run' });
 export function reservedFor(request, askRules = []) {
   if (!isObject(request) || !nonEmpty(request.toolName)) return null;
+  if (request.toolName === HAND_TOOL) {
+    return { ...HAND_RESERVED };
+  }
   const input = isObject(request.input) ? request.input : {};
 
   if (isObject(request.matchedAskRule)) {
@@ -192,7 +198,7 @@ const ANSWERS_ITEM = { permission: 'permission', answers: 'questions', message: 
 
 // checkDecision(decision, waiting, { ready, answered }) → { ok: true, apply } | { ok: false, why, passOn }
 //   decision: a normalised decision from readDecision.
-//   waiting:  [{ worker, task, kind: 'permission'|'questions'|'report', requestId?, request?, reserved?, text? }]
+//   waiting:  [{ worker, task, kind: 'permission'|'questions'|'command'|'report', requestId?, request?, reserved?, text? }]
 //             — every item waiting now, as the shell sees it this pass. An item already answered by the
 //             person is not in it, so a late decision for it is refused as not waiting (first answer wins).
 //   ready:    the run is in `ready to merge` (the caller knows; this module has no run state).
@@ -238,6 +244,14 @@ export function checkDecision(decision, waiting, { ready = false, answered = new
     if (item.requestId !== undefined) apply.requestId = item.requestId;
     apply.ledger = ledgerLine(decision, item, `passed on (would pick: ${decision.suggestion})`);
     return { ok: true, apply };
+  }
+
+  // A handed command answers to nothing the agent may write (bang-commands DESIGN §2.6). A `permission` for it
+  // is passed on with the agent's note, as for any reserved item; a `pass` was handled above.
+  if (item.kind === 'command') {
+    const why = item.reserved?.why ?? HAND_RESERVED.why;
+    if (decision.kind === 'permission') return { ok: false, passOn: true, why: `this request is the person's (${why}); it has been passed on with your note` };
+    return refuse(`a ${decision.kind} decision does not answer a handed command; it is the person's (${why}), so pass it on with a note`);
   }
 
   const want = ANSWERS_ITEM[decision.kind];
@@ -287,6 +301,10 @@ export function describeItem(item) {
   if (item?.kind === 'questions') {
     const qs = Array.isArray(r.questions) ? r.questions.map((q) => q?.question).filter(nonEmpty) : [];
     return qs.length ? qs.join(' / ') : 'a question set';
+  }
+  if (item?.kind === 'command') {
+    const command = typeof r.command === 'string' ? r.command : isObject(r.input) ? r.input.command : undefined;
+    return nonEmpty(command) ? `a command for the person to run: ${command}` : 'a command for the person to run';
   }
   if (item?.kind === 'permission') {
     const input = isObject(r.input) ? r.input : {};
