@@ -34,6 +34,11 @@ export function scratchHome(t) {
   return { PIR_HOME: home };
 }
 
+// The env the rig's `!` runs under in a test (startRig's shellEnv): the person's own SHELL, but ZDOTDIR and HOME
+// on the scratch folder, which holds no rc file, so `zsh -i` / `bash -i` start in a fraction of a second
+// instead of waiting on the person's real rc file (seconds idle, tens of seconds under a loaded npm test).
+export const quietShellEnv = (home) => ({ ...process.env, ZDOTDIR: home.PIR_HOME, HOME: home.PIR_HOME });
+
 export async function waitFor(fn, { timeoutMs = 10000, what = 'the condition' } = {}) {
   const until = Date.now() + timeoutMs;
   for (;;) {
@@ -42,6 +47,18 @@ export async function waitFor(fn, { timeoutMs = 10000, what = 'the condition' } 
     if (Date.now() > until) throw new Error(`timed out waiting for ${what}`);
     await new Promise((r) => setTimeout(r, 25));
   }
+}
+
+// pageUp(screen, done) sends one PgUp and resolves once pir has drawn it: the hint's `↓ N more below` grows with
+// every page up, or `done(text)` holds (the top, or what the caller scrolls for, is in view). A bare settle or a
+// fixed sleep returned the old frame whenever pir took longer than that to answer under load, so the next PgUp
+// went out before this one was drawn: a page was never seen, or the view overshot what it was looking for. A
+// redraw that only Tab caused does not move the count, so it is never mistaken for the page.
+const below = (text) => Number(text.match(/↓ (\d+) more below/)?.[1] ?? 0);
+export async function pageUp(screen, done) {
+  const before = below(screen.text());
+  screen.send('\x1b[5~');
+  return screen.waitFor((text) => below(text) > before || done(text));
 }
 
 export const logOf = (rig) => readFileSync(rig.logPath, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
@@ -227,10 +244,7 @@ export function defineGroupLinesTest([cols, rows]) {
       screen.send('\t');
       await screen.waitFor(/⎿ Bash rm -rf build\/\s*\n\s*The person refused\./);
       const npmTest = /⎿ Bash npm test\s*\n\s*✖ conversation-view/;
-      for (let i = 0; i < 6 && !npmTest.test(screen.text()); i++) {
-        screen.send('\x1b[5~');
-        await settle();
-      }
+      for (let i = 0; i < 6 && !npmTest.test(screen.text()); i++) await pageUp(screen, (text) => npmTest.test(text));
       s = await screen.waitFor(npmTest);
       assert.match(s.join('\n'), /expected 80, got 90/);
       assert.doesNotMatch(s.join('\n'), /^ {2}[▸▾] /m);
@@ -604,7 +618,7 @@ export function defineEscWarnsTest([cols, rows]) {
 export function defineBangTest([cols, rows]) {
   test(`the person's ! runs a command in the conversation at ${cols}×${rows}`, { timeout: 120000 }, async (t) => {
     const home = scratchHome(t);
-    const rig = startRig({ env: home, scenario: 'bang', paceMs: 0 });
+    const rig = startRig({ env: home, shellEnv: quietShellEnv(home), scenario: 'bang', paceMs: 0 });
     t.after(() => rig.stop());
     const { NO_COLOR: _nc, COLORTERM: _ct, ...base } = process.env;
     const screen = openScreen({ cols, rows, env: { ...base, ...home } });
@@ -662,8 +676,7 @@ export function defineBangTest([cols, rows]) {
       const grouped = new Set();
       for (let i = 0; i < 5 && !/… 188 earlier lines · Tab shows all/.test(screen.text()); i++) {
         for (const n of shown()) grouped.add(n);
-        screen.send(`${ESC}[5~`);
-        await screen.waitFor(null);
+        await pageUp(screen, (text) => /… 188 earlier lines · Tab shows all/.test(text));
       }
       for (const n of shown()) grouped.add(n);
       assert.match(screen.text(), /… 188 earlier lines · Tab shows all/);
@@ -675,8 +688,7 @@ export function defineBangTest([cols, rows]) {
       const all = new Set();
       for (let i = 0; i < 40 && !all.has(1); i++) {
         for (const n of shown()) all.add(n);
-        screen.send(`${ESC}[5~`);
-        await screen.waitFor(null);
+        await pageUp(screen, (text) => /^ {2}1\s*$/m.test(text));
         for (const n of shown()) all.add(n);
       }
       for (let n = 1; n <= 200; n++) assert.ok(all.has(n), `line ${n} was shown in full detail`);
@@ -730,7 +742,7 @@ export const HAND_DECLINE_TEXT = 'later, please';
 export function defineHandTest([cols, rows]) {
   test(`a command the worker hands the person, on the pir screen at ${cols}×${rows}`, { timeout: 120000 }, async (t) => {
     const home = scratchHome(t);
-    const rig = startRig({ env: home, scenario: 'hand-drill', paceMs: 0 });
+    const rig = startRig({ env: home, shellEnv: quietShellEnv(home), scenario: 'hand-drill', paceMs: 0 });
     t.after(() => rig.stop());
     const { NO_COLOR: _nc, COLORTERM: _ct, ...base } = process.env;
     const screen = openScreen({ cols, rows, env: { ...base, ...home } });
@@ -831,7 +843,7 @@ export function defineHandTest([cols, rows]) {
 export function defineBangReopenTest([cols, rows]) {
   test(`a command keeps running with the pir screen closed, and reads done on reopening, at ${cols}×${rows}`, { timeout: 120000 }, async (t) => {
     const home = scratchHome(t);
-    const rig = startRig({ env: home, scenario: 'bang', paceMs: 0 });
+    const rig = startRig({ env: home, shellEnv: quietShellEnv(home), scenario: 'bang', paceMs: 0 });
     t.after(() => rig.stop());
     const env = { ...process.env, ...home };
     const ends = () => logOf(rig).filter((e) => e.dir === 'shell' && e.kind === 'end');
