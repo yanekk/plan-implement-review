@@ -22,7 +22,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 |---|---|---|---|---|
 | T00 | hand-tool-spike | — | ⬜ | |
 | T01 | shell-runner | — | ⬜ | |
-| T02 | bang-rules | — | 🔍 | `bang.mjs` (interface plus LEAD_* constants), `shell`/`shell-stop` drops, `readShell`, `activity.shell`, `sent.shell`; 31 tests. Deviations: output's trailing newlines dropped in the message; caps count code points; `validateDrop` trims `command`. Suite green except the 10 known `notify-wiring` cases. |
+| T02 | bang-rules | — | ✅ | Reviewed clean, no fix commit. Accepted deviations: trailing newlines dropped, caps by code point, `validateDrop` trims `command`, any truthy `stopped` reads as the person. Probed `plainText` idempotence (T03 may pass cleaned or raw output), lone surrogates, null code and signal (`exit ?`), pre-T03 inbox handling of a `shell` drop. 10 known `notify-wiring` failures only. |
 | T03 | bang-forwarding | T01, T02 | ⬜ | |
 | T04 | hand-rules | T00, T02 | ⬜ | |
 | T05 | hand-tool | T00, T03, T04 | ⬜ | |
@@ -32,7 +32,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T09 | agent-rules | T05 | ⬜ | |
 | T10 | docs-readme | T08, T09 | ⬜ | |
 
-**Review queue:** T02
+**Review queue:** empty
 
 ## Blocked on the user
 
