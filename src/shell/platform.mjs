@@ -217,6 +217,9 @@ const NOT_BUSY = new Set(['idle', 'permission', 'questions']);
 // every worker that wakesLoop accepts (a request, output, a turn's end; never a note) and on each exit,
 // after the bookkeeping, so a worker's question reaches the person's screen without waiting out the 5 s
 // backstop.
+//
+// `onWorkerExit(id)` is called once per worker when its process exits, after the bookkeeping: the host
+// kills the person's command still running in that session (bang-commands DESIGN §2.4, session-closed).
 export function createPlatform({
   controlDir = null,
   transport,
@@ -227,6 +230,7 @@ export function createPlatform({
   grants = null,
   workerEnv = null,
   onActivity = () => {},
+  onWorkerExit = () => {},
 } = {}) {
   const messaging = createMessaging({ transport });
   const live = new Map(); // id → record, while the child has not exited
@@ -299,6 +303,11 @@ export function createPlatform({
         live.delete(id);
         gone.set(id, rec);
         writeWorkers();
+        try {
+          onWorkerExit(id);
+        } catch {
+          /* the host's own failure must not break the exit path */
+        }
         activity(); // after the bookkeeping, so the pass it wakes already sees the worker gone
       });
       writeWorkers();
@@ -358,10 +367,11 @@ export function createPlatform({
     // open turn if one is running (DESIGN §2.2). A dead worker logs it `undelivered`; an unknown id has
     // no log to write to.
     // `preface` and `helpersStopped` carry the note naming helpers an interrupt stopped (visible-helpers §2.6).
-    send(id, text, { from = 'pir', preface, helpersStopped } = {}) {
+    // `shell` ties a person's command result to its command block (bang-commands DESIGN §3.2).
+    send(id, text, { from = 'pir', preface, helpersStopped, shell } = {}) {
       const rec = recordOf(id);
       if (!rec) return { ok: false };
-      return { ok: rec.worker.send(text, { from, preface, helpersStopped }) };
+      return { ok: rec.worker.send(text, { from, preface, helpersStopped, shell }) };
     },
 
     // interrupt(id, { from }) → { ok }. The SDK's interrupt() (DESIGN §2.8); its acknowledgement arrives
@@ -431,6 +441,20 @@ export function createPlatform({
       if (!rec) return { ok: false };
       rec.worker.note(kind, fields);
       return { ok: true };
+    },
+
+    // cwdOf(id) → the folder a live worker runs in, where the person's `!` runs (bang-commands DESIGN
+    // §2.2); null for an exited or unknown worker, which the forwarder refuses `no-session`.
+    cwdOf(id) {
+      const rec = live.get(id);
+      return rec ? rec.worker.cwd ?? rec.cwd ?? null : null;
+    },
+
+    // log(id, entry) → the entry as logged in that worker's conversation, live or exited (a command's end
+    // after its worker closed still closes its block); null for an id never spawned here.
+    log(id, entry) {
+      const rec = recordOf(id);
+      return rec?.worker.logEntry?.(entry) ?? null;
     },
 
     // logPathOf(id) → the worker's conversation log, live or exited; null for an id never spawned here.

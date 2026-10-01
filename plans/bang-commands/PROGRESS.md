@@ -11,7 +11,7 @@ they walk past.
 **Status:** Plan written 2026-10-01. Nothing built. The red `notify-wiring.test.mjs` cases on `main` are to
 be fixed there before the build starts (DESIGN §4).
 **Last updated:** 2026-10-01
-**Next `pir-work` will:** T00, the spike its later tasks depend on.
+**Next `pir-work` will:** review T03.
 
 ## Tasks
 
@@ -23,7 +23,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T00 | hand-tool-spike | — | ✅ | |
 | T01 | shell-runner | — | ✅ | |
 | T02 | bang-rules | — | ✅ | |
-| T03 | bang-forwarding | T01, T02 | ⬜ | |
+| T03 | bang-forwarding | T01, T02 | 🔍 | Forwarder runs `shell`/`shell-stop`, shell table survives rename, shared `reapPersonShells`, `cwdOf`/`log` on three platforms, rig `bang`. 24 tests. Deviations: `stopAll(reason, to?)`; end logged after the send; `bangMessage` gains `alreadyCut`; host exit hooks `onWorkerExit`/`onSessionExit`; build host start path untested end to end. |
 | T04 | hand-rules | T00, T02 | ⬜ | |
 | T05 | hand-tool | T00, T03, T04 | ⬜ | |
 | T06 | bang-view | T02, T03 | ⬜ | |
@@ -32,7 +32,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T09 | agent-rules | T05 | ⬜ | |
 | T10 | docs-readme | T08, T09 | ⬜ | |
 
-**Review queue:** empty
+**Review queue:** T03
 
 ## Blocked on the user
 

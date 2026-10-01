@@ -754,5 +754,17 @@ export function withAgent(platform, getAgent) {
       const a = sessionFor(id);
       return a ? a.logPath : platform.logPathOf(id);
     },
+    // The agent's (or finisher's) feature worktree while it is alive, where the person's `!` runs
+    // (bang-commands DESIGN §2.2); a session restarting has none, so a `!` then is refused `no-session`.
+    cwdOf(id) {
+      const a = sessionFor(id);
+      if (!a) return platform.cwdOf?.(id) ?? null;
+      return a.alive() ? a.session.cwd ?? null : null;
+    },
+    log(id, entry) {
+      const a = sessionFor(id);
+      if (!a) return platform.log?.(id, entry) ?? null;
+      return a.session.logEntry?.(entry) ?? null;
+    },
   };
 }

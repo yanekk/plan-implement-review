@@ -44,7 +44,7 @@ import {
 import { createPlatform, resolveClaudePath } from './platform.mjs';
 import { createRenderer } from './render.mjs';
 import { createWaker, drainDropFolder, waitForDrop } from './drop-folder.mjs';
-import { createGrants, startPersonInbox } from './person-inbox.mjs';
+import { createGrants, createShellTable, reapPersonShells, shellsDirOf, startPersonInbox } from './person-inbox.mjs';
 import { writeSnapshot } from './snapshot-store.mjs';
 import { updateRecord } from './index-store.mjs';
 import { createWorktree } from './worktree.mjs';
@@ -2369,11 +2369,19 @@ async function main(argv) {
   // the next pass would act on or show calls wake(), and passes are spaced PASS_MIN_GAP_MS apart.
   const waker = createWaker({ minGapMs: PASS_MIN_GAP_MS });
   const wake = () => waker.wake();
-  const platform = createPlatform({ root, controlDir: control.dir, transport: inbox.transport, claudePath, grants, onActivity: wake, workerEnv: () => workerEnv() });
+  // A worker's exit kills the person's `!` still running in it (bang-commands DESIGN §2.4); the forwarder
+  // exists only below, and no worker can exit before it does.
+  let stopShellsOf = () => {};
+  const platform = createPlatform({ root, controlDir: control.dir, transport: inbox.transport, claudePath, grants, onActivity: wake, workerEnv: () => workerEnv(), onWorkerExit: (id) => stopShellsOf(id) });
   // The person may type to the coordinator agent in its own conversation (pir-coordinator §2.8): the inbox
   // forwards to it by id once it has started (currentAgent is set when the controller exists).
   let currentAgent = () => null;
-  const personInbox = startPersonInbox({ controlDir: control.dir, platform: withAgent(platform, () => currentAgent()), grants, log: control.log, onActivity: wake });
+  // A `!` command a dead coordinator left running is killed and its block closed before the forwarder
+  // starts (bang-commands DESIGN §2.4); a session that comes back (the agent, resumed) is told.
+  const shells = createShellTable();
+  reapPersonShells({ controlDir: control.dir, shells, log: control.log });
+  const personInbox = startPersonInbox({ controlDir: control.dir, platform: withAgent(platform, () => currentAgent()), grants, log: control.log, onActivity: wake, shells, shellsDir: shellsDirOf(control.dir) });
+  stopShellsOf = (id) => personInbox.stopAll('session-closed', id);
   const worktree = createWorktree({ root, base, ...(baseSha ? { from: baseSha } : {}) });
   // No DESIGN.md reads as '': makePrepare sees no block and runs no setup.
   const design = planHome(slug, { root }).read('DESIGN.md') ?? '';
@@ -2519,6 +2527,7 @@ async function main(argv) {
   // Ctrl-C or an error must not leave a paid session running (DESIGN §2.6). Idempotent (close is safe
   // twice). A re-run reaps whatever a second Ctrl-C during teardown left behind (§2.6, §2.8).
   const teardown = () => {
+    personInbox.stopAll('session-closed');
     coordinator.closeAll({ immediate: true });
     return teardownRun({ platform, state: coordinator.state, repo, slug, control });
   };
@@ -2541,6 +2550,7 @@ async function main(argv) {
     if (tornDown) return;
     tornDown = true;
     renderer.close();
+    personInbox.stopAll('session-closed');
     coordinator.closeAll({ immediate: true });
     const { closed } = teardownRun({ platform, state: coordinator.state, repo, slug, control });
     writeRunFinal({ controlDir: control.dir, proc, runState: lastRunState, reason: 'stop', updateIndex, log: control.log });
@@ -2842,6 +2852,8 @@ async function main(argv) {
     await notifyExitNow();
     throw e;
   } finally {
+    // Every session ends with the host: a `!` still running in one is killed, its block closed.
+    personInbox.stopAll('session-closed');
     personInbox.stop();
   }
 }

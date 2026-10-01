@@ -695,6 +695,24 @@ test('parked: a turn opened by a person send in pir resumes the task', (t) => {
   assert.equal(state.tasks.T01.phase, 'implementing');
 });
 
+test('parked: the result of the person\'s `!` command, sent from the person, un-parks the task (bang-commands T03)', (t) => {
+  const { state, pass } = parkedWorker(t);
+  pass(RESULT); // the asking turn ends
+  assert.equal(state.tasks.T01.phase, 'awaiting-answer');
+  const shell = [
+    { dir: 'shell', kind: 'start', id: 'sh-1-abcd', command: 'gcloud auth login', cwd: '/wt' },
+    { dir: 'shell', kind: 'output', id: 'sh-1-abcd', text: 'You are now logged in.\n' },
+  ];
+  assert.equal(resumedIn(pass(...shell)), false, 'a command running is not an answer');
+  const r = pass(
+    { dir: 'out', from: 'person', kind: 'message', text: '[pir] The person ran a command in your working folder:\n$ gcloud auth login\nexit 0 · 6s\nYou are now logged in.', shell: 'sh-1-abcd' },
+    { dir: 'shell', kind: 'end', id: 'sh-1-abcd', code: 0, signal: null, stopped: null, ms: 6000, sent: 'message' },
+    INIT,
+  );
+  assert.ok(resumedIn(r));
+  assert.equal(state.tasks.T01.phase, 'implementing');
+});
+
 test('parked: a coordinator agent `message` un-parks the task like the person\'s (pir-coordinator T04)', (t) => {
   const { state, pass } = parkedWorker(t);
   pass(RESULT); // the asking turn ends

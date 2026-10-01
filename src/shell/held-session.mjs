@@ -10,7 +10,7 @@
 // are the caller's (`roleOf`, `nameOf`, `instructionOf`); the holder decides nothing about the run.
 
 import { randomUUID } from 'node:crypto';
-import { readdirSync, readFileSync } from 'node:fs';
+import { appendFileSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { stoppedOnPerson } from '../core/asking.mjs';
 import { allowResult, workerActivity } from '../core/stream.mjs';
@@ -165,6 +165,8 @@ export function readLogEntries(path, { readFile = readFileSync } = {}) {
 //                     SDK's Options.env replaces rather than merges), or a function returning either,
 //                     read at each spawn. The holder does not know what they are for.
 //   claudePath, log, now, uuid, startWorker, startTimeOf
+//   onSessionExit(id)  called when a session's process exits: the host kills the person's command still
+//                     running in it (bang-commands DESIGN §2.4)
 // It returns:
 //   sessions          [{ id, step, n, logPath, worker, live, startTime }], in spawn order, earlier
 //                     programs' first. The records are the holder's own: a caller reads them.
@@ -177,7 +179,7 @@ export function readLogEntries(path, { readFile = readFileSync } = {}) {
 //   views() → [{ id, step, n, logPath, cwd, live, activity }], what sessionAsking and a snapshot read
 //   workedMs(step) → stepWorkedMs over that step's logs
 //   controlMoved(from, to)   re-point the log paths and rewrite workers.json after the folder moved
-//   platform          send/interrupt/answer/pending/note/logPathOf, for startPersonInbox
+//   platform          send/interrupt/answer/pending/note/logPathOf/cwdOf/log, for startPersonInbox
 //   waker, grants
 export function createSessionHolder({
   controlDir,
@@ -194,6 +196,7 @@ export function createSessionHolder({
   startWorker = startWorkerReal,
   startTimeOf = startTimeOfReal,
   env: extraEnv = null,
+  onSessionExit = () => {},
 }) {
   const sessions = [];
   const since = {};
@@ -233,6 +236,25 @@ export function createSessionHolder({
       return { ok: true };
     },
     logPathOf: (id) => byId(id)?.logPath ?? null,
+    // The run's one worktree, under its current name, while the session is live (bang-commands §2.2).
+    cwdOf: (id) => (byId(id)?.live ? cwd() : null),
+    // log(id, entry) → the entry as written to that session's conversation, or null. A live session logs
+    // through its worker; a closed one is appended to by path, because the path is re-pointed when the
+    // rename moves the control folder and a closed worker's own path is not (a command stopped at the
+    // planner's close ends after the move).
+    log: (id, entry) => {
+      const s = byId(id);
+      if (!s) return null;
+      if (s.live && s.worker?.logEntry) return s.worker.logEntry(entry);
+      if (!s.logPath) return null;
+      const full = { t: now(), ...entry };
+      try {
+        appendFileSync(s.logPath, JSON.stringify(full) + '\n');
+      } catch {
+        return null;
+      }
+      return full;
+    },
   };
 
   // A session from an earlier program is listed closed, with its log, so the screen can still open its
@@ -288,6 +310,11 @@ export function createSessionHolder({
     worker.onExit(() => {
       if (rec.worker === worker) rec.live = false;
       writeWorkers();
+      try {
+        if (rec.worker === worker) onSessionExit(id);
+      } catch {
+        /* the host's own failure must not break the exit path */
+      }
       waker.wake();
     });
     writeWorkers();

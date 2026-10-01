@@ -5,7 +5,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn as spawnChild } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -1105,4 +1105,34 @@ test('alerts: a session that exits while it asks has its alert cleared on the cr
   assert.equal(await run.done, 1, run.lines.join('\n'));
   assert.equal(ntfy.pubs.length, 1);
   assert.deepEqual(ntfy.clears, [{ ...NTFY, seq: ntfy.pubs[0].seq }]);
+});
+
+// ---- The person's `!` in a single run (bang-commands T03, DESIGN §2.2–§2.5). ----
+
+test('builder: a `!` drop runs in the run worktree and its result reaches the builder; a stop kills a running one as session-closed', async (t) => {
+  const idle = [{ await: 'user' }, { emit: initEvent() }, { emit: assistantText('Waiting.') }, { emit: resultEvent('success', 'Waiting.') }, { chat: { workMs: 10 } }];
+  const s = setup(t, [{ match: BUILDER_MATCH, script: idle }]);
+  const run = start(s);
+  t.after(() => run.stop.abort());
+  const log = () => convLog(s.controlDir, 'build');
+  await waitFor(() => log().some((e) => e.dir === 'in' && e.event.type === 'result'), 'the builder to go idle');
+  const sessionId = workersIn(s.controlDir)[0].id;
+  const drop = (input) => assert.deepEqual(dropPersonInput(s.controlDir, { to: sessionId, ...input }, { coordinatorAlive: true }), { ok: true });
+
+  drop({ kind: 'shell', command: 'printf hi' });
+  const end = await waitFor(() => log().find((e) => e.dir === 'shell' && e.kind === 'end'), 'the command to end');
+  assert.equal(realpathSync(log().find((e) => e.dir === 'shell' && e.kind === 'start').cwd), realpathSync(s.worktree));
+  assert.deepEqual([end.code, end.sent], [0, 'message']);
+  assert.match(log().find((e) => e.dir === 'out' && e.shell === end.id).text, /\nexit 0 · \d+s\nhi$/);
+
+  drop({ kind: 'shell', command: 'sleep 30' });
+  const record = join(s.controlDir, 'shells', `${sessionId}.json`);
+  await waitFor(() => existsSync(record), 'the running record');
+  const { pid } = JSON.parse(readFileSync(record, 'utf8'));
+  run.stop.abort();
+  await run.done;
+  const ends = log().filter((e) => e.dir === 'shell' && e.kind === 'end');
+  assert.deepEqual([ends.length, ends[1].stopped, ends[1].sent], [2, 'session-closed', 'none']);
+  assert.equal(existsSync(record), false);
+  await waitFor(() => gone(pid), 'the sleep to die');
 });

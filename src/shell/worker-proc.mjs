@@ -377,14 +377,17 @@ export function startWorker({
     // `preface` is pir's note naming the helpers an interrupt stopped (visible-helpers DESIGN §2.6): the model
     // reads it first, a blank line, then the person's text, in one user message. The log keeps `text` as the
     // person typed it and the note beside it, so the conversation draws both and never repeats a helper.
-    send(text, { from = 'pir', preface, helpersStopped } = {}) {
+    // `shell` ties a message to the person's command it reports (bang-commands DESIGN §2.8, §3.2): the view
+    // draws that command's block in its place, so it is kept on the log entry only, never sent to the model.
+    send(text, { from = 'pir', preface, helpersStopped, shell } = {}) {
       if (exitInfo || queue.closed) {
-        undelivered('message', { from, text });
+        undelivered('message', { from, text, ...(typeof shell === 'string' && shell ? { shell } : {}) });
         return false;
       }
       const extra = {};
       if (typeof preface === 'string' && preface) extra.preface = preface;
       if (Array.isArray(helpersStopped)) extra.helpersStopped = helpersStopped;
+      if (typeof shell === 'string' && shell) extra.shell = shell;
       log({ dir: 'out', from, kind: 'message', text, ...extra });
       queue.push(userMessage(extra.preface ? `${extra.preface}\n\n${text}` : text, sessionId));
       return true;
@@ -448,6 +451,17 @@ export function startWorker({
     },
 
     note,
+
+    // logEntry(entry) → the entry as logged, `t` stamped: an entry the host writes into this session's
+    // conversation (the person's command, bang-commands DESIGN §3.2). The same log() as every SDK message,
+    // so the two never interleave mid-line and the listeners see it. Works after the exit too: the file is
+    // still the session's.
+    logEntry(entry) {
+      return log({ ...entry });
+    },
+
+    // The folder the session runs in, where the person's `!` runs (bang-commands DESIGN §2.2).
+    cwd,
 
     onEvent(fn) {
       eventFns.push(fn);
