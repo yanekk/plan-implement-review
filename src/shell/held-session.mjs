@@ -23,10 +23,11 @@ import { startWorker as startWorkerReal, writeWorkersFile } from './worker-proc.
 // go on its own input closing and 3 s after its SIGTERM; the reap covers anything left.
 export const STOP_CLOSE = { graceMs: 1000, killMs: 3000 };
 
-// A pending request is the session asking the person (a permission prompt or a question set).
-const REQUEST_KINDS = new Set(['permission', 'questions']);
+// A pending request is the session asking the person (a permission prompt, a question set, or a command
+// it handed them, bang-commands DESIGN §2.7).
+const REQUEST_KINDS = new Set(['permission', 'questions', 'command']);
 
-// sessionAsking(state, live) → null | 'permission' | 'questions' | 'question' (stopped-worker-asking §2.3)
+// sessionAsking(state, live) → null | 'permission' | 'questions' | 'command' | 'question' (stopped-worker-asking §2.3)
 //   What a step's live session is asking the person, read the same way by the row and by its clock. A
 //   pending request names its kind. A stopped session (stoppedOnPerson: idle, no background job) asks a
 //   plain-text 'question' only while no report of the current step is accepted: a planner idle after its
@@ -285,6 +286,9 @@ export function createSessionHolder({
       logPath,
       claudePath,
       ...(extra ? { env: { ...process.env, ...extra } } : {}),
+      // The planner, the plan reviewer and a single run's builder and reviewer may hand the person a
+      // command (bang-commands DESIGN §2.6).
+      handTool: true,
     });
     const rec = prior ?? { id, step, n, logPath, worker: null, live: false, startTime: null };
     Object.assign(rec, { n, logPath, worker, live: true });

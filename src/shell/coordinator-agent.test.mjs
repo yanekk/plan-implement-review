@@ -132,6 +132,10 @@ test('the agent starts fenced: default mode, the allowlist, its opening, Remote 
   assert.equal(args[args.indexOf('--tools') + 1], AGENT_TOOLS.join(','));
   assert.match(args[args.indexOf('--disallowedTools') + 1], /Bash/);
   assert.equal(spawner.calls[0].cwd, s.featurePath);
+  // Never handed the hand tool (bang-commands §2.6): the SDK listed no in-process MCP server at initialize.
+  const rec = readFileSync(join(s.dir, 'received.ndjson'), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
+  assert.ok(rec.some((r) => r.line && JSON.parse(r.line).request?.subtype === 'initialize'), 'initialize was sent');
+  assert.equal(rec.some((r) => r.sdkMcpServers), false);
   const [opening] = told(agent);
   assert.match(opening, /pir-coordinator skill/);
   assert.ok(opening.includes(`Drop folder: ${s.decisionsDir}`));

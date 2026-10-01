@@ -192,10 +192,11 @@ function remoteState(worker) {
   return worker.remote ? 'on' : 'off';
 }
 
-// A worker waiting on the person — a permission request or a question set — is parked, not busy
-// (DESIGN §2.4), exactly as a question report parks it; so is one whose last turn has ended. `starting`
-// (nothing said yet, the opening instruction not yet taken) counts as busy: it has work in hand.
-const NOT_BUSY = new Set(['idle', 'permission', 'questions']);
+// A worker waiting on the person — a permission request, a question set or a command it handed them
+// (bang-commands DESIGN §2.6) — is parked, not busy (DESIGN §2.4), exactly as a question report parks it; so
+// is one whose last turn has ended. `starting` (nothing said yet, the opening instruction not yet taken)
+// counts as busy: it has work in hand.
+const NOT_BUSY = new Set(['idle', 'permission', 'questions', 'command']);
 
 // createPlatform({ root, controlDir, transport, startWorker, uuid, claudePath, startTimeOf, grants }) → the
 // platform object the loop injects. Every worker is a child of this process, so the platform holds them
@@ -290,7 +291,9 @@ export function createPlatform({
       const logPath = nextLogPath(controlDir, task, phase);
       const extra = workerEnv?.() ?? null;
       const env = extra ? { ...process.env, ...extra } : null;
-      const worker = startWorker({ cwd, sessionId: id, name, logPath, claudePath: claude, ...(env ? { env } : {}) });
+      // Every session spawned here (build workers and end-of-run helpers) may hand the person a command
+      // (bang-commands DESIGN §2.6).
+      const worker = startWorker({ cwd, sessionId: id, name, logPath, claudePath: claude, ...(env ? { env } : {}), handTool: true });
       const rec = { id, worker, name, cwd, task, role: phase, logPath, pid: worker.pid, startTime: null };
       rec.startTime = rec.pid ? startTimeOf(rec.pid) : null;
       live.set(id, rec);
