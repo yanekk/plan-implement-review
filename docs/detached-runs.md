@@ -194,7 +194,8 @@ The run's live view has a selectable task row (the same grey band). ↑↓ move 
 click on the row, [The mouse](#the-mouse)) opens that task's worker in a third view, the worker's **conversation** (`src/shell/conversation-view.mjs`,
 drawn with `@earendil-works/pi-tui`; the rules for what each line says are in
 `src/core/conversation.mjs`). A task with no worker yet says so in the footer instead. The view opens
-the task's live worker; with none live, its latest one, read-only, with no typing box. In a build with a
+the task's live worker; with none live, its latest one, read-only, with no typing box; if that same worker
+turns live while the view is open, the box appears. In a build with a
 coordinator agent, `c` opens the agent's conversation in the same view, and the person types to it as
 to a worker; once the finisher has replaced the agent, `c` opens the finisher's instead, and the hint
 reads `c finisher`; with no agent, `c` leaves a note in the footer

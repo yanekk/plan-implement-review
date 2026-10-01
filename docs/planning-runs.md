@@ -276,7 +276,8 @@ list is not moved.
 spins, a step asking the person is amber (`asking you · a question`, `asking you · allow a command?`),
 a done step is green and shows how long it worked, a pending one is dim and names what it waits on.
 `↑↓` pick a step, `→` or `↵` open its conversation (its latest session, read-only when not live), `←`
-back to the list. `pir start {slug}` on a live planning run opens this view.
+back to the list. A conversation opened read-only gains its typing box once its session is live, as one
+opened straight after a resume does. `pir start {slug}` on a live planning run opens this view.
 
 ## The go
 

@@ -82,7 +82,9 @@ test('end to end at 80×24: stop mid-review, Ctrl+R Ctrl+R, and the reviewer\'s 
     screen.send(ENTER);
     await screen.waitFor(/▎ \S+ review +reviewer +reviewing/);
     screen.send(RIGHT);
-    const resumed = (await screen.waitFor(/· resumed[\s\S]*remote control on/, 20000)).join('\n');
+    // A → before the resumed program's first snapshot opens it read only; pir turns it live on a later
+    // refresh (reliveWorker), so the header is waited for, not read from the first frame.
+    const resumed = (await screen.waitFor((x) => /· resumed[\s\S]*remote control on/.test(x) && /^review +worker \w+ · live/m.test(x), 20000)).join('\n');
     assert.match(resumed, /^review +worker \w+ · live/m, 'the resumed session is live, not read only');
     assert.match(resumed, /^pir ▸ You were stopped and have been resumed in the same worktree\. Whatever you$/m);
     assert.match(resumed, /^ {6}were doing when you stopped may not have finished: check `git status` and$/m, 'one paragraph, wrapped only by the screen');
@@ -129,7 +131,7 @@ test('end to end at 120×40: a planner stopped mid-question reads never answered
     screen.send(ENTER);
     await screen.waitFor(/pick a step/);
     screen.send(RIGHT);
-    const live = (await screen.waitFor(/You were stopped/, 20000)).join('\n');
+    const live = (await screen.waitFor((x) => /You were stopped/.test(x) && /^plan +worker \w+ · live/m.test(x), 20000)).join('\n');
     assert.match(live, /^plan +worker \w+ · live/m);
     assert.match(live, /→ never answered/);
     assert.doesNotMatch(live, /↑↓ move · ↵ choose and send/, 'the lost question is not offered for an answer');

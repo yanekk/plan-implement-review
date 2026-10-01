@@ -24,9 +24,34 @@ const STREAM = fileURLToPath(new URL('./claude-stream.mjs', import.meta.url));
 const S1 = '11111111-1111-4111-8111-111111111111';
 const S2 = '22222222-2222-4222-8222-222222222222';
 
+// defer(t, fn) → fn runs when the test ends, after every fn deferred later (last in, first out), each one
+// even if an earlier one threw. node:test runs t.after hooks first in, first out and skips the rest once one
+// throws: the scratch dir, made first, was removed while the fake in it was still alive and saving its
+// progress file, the rm failed with ENOTEMPTY, the fake's kill never ran, and the open fake held the test
+// file, and the whole `npm test`, forever (seen under load: claude-stream.test.mjs hung for 12+ minutes).
+const deferred = new WeakMap();
+function defer(t, fn) {
+  if (!deferred.has(t)) {
+    const stack = [];
+    deferred.set(t, stack);
+    t.after(async () => {
+      let first = null;
+      while (stack.length) {
+        try {
+          await stack.pop()();
+        } catch (err) {
+          first ??= err;
+        }
+      }
+      if (first) throw first;
+    });
+  }
+  deferred.get(t).push(fn);
+}
+
 function scratch(t, prefix = 'pir-fake-') {
   const dir = realpathSync(mkdtempSync(join(tmpdir(), prefix)));
-  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  defer(t, () => rmSync(dir, { recursive: true, force: true }));
   return dir;
 }
 
@@ -70,7 +95,13 @@ function runFake(t, { env = {}, args = [], cwd }) {
   child.stderr.on('data', (d) => (stderr += d));
   child.stdin.on('error', () => {});
   const exit = new Promise((r) => child.on('exit', (code) => r(code)));
-  t.after(() => child.kill('SIGKILL'));
+  // Killed and gone before its scratch dir is removed (defer): a live fake can still be writing into it.
+  defer(t, async () => {
+    if (child.exitCode === null && child.signalCode === null) {
+      child.kill('SIGKILL');
+      await exit;
+    }
+  });
   return {
     child,
     lines,
@@ -220,7 +251,7 @@ test('the shim on PATH is what resolveClaudePath returns, and startWorker comple
   assert.equal(claudePath, shim);
 
   const worker = startWorker({ cwd: dir, sessionId: S1, name: 'fake / shim / test', logPath: join(dir, 'log.ndjson'), claudePath });
-  t.after(() => worker.close({ graceMs: 100, killMs: 300 }));
+  defer(t, () => worker.close({ graceMs: 100, killMs: 300 }));
   worker.send('hello there', { from: 'pir' });
   await waitFor(() => worker.entries().find((e) => e.dir === 'in' && e.event.type === 'result'), 'the turn to finish');
   const said = worker.entries().filter((e) => e.dir === 'in' && e.event.type === 'assistant').map((e) => e.event.message.content[0].text);
@@ -426,7 +457,7 @@ test('a permission step with agentId reaches the real SDK canUseTool as opts.age
       },
     },
   });
-  t.after(() => {
+  defer(t, () => {
     release();
     q.close?.();
   });

@@ -57,7 +57,8 @@
 //                             steps answer. An interrupt already queued ends it before the first round.
 //   {"chat": {"workMs": <ms>, "init": <object>}}  from here on, answer every user message the way a
 //                             worker replies to the person: a turn that says what it was sent, works for
-//                             workMs (a tool step), then replies. An interrupt during the work ends the
+//                             workMs (a tool step), then replies; with "holdFor": "<text>", the turn for
+//                             that exact message works until interrupted. An interrupt during the work ends the
 //                             turn as the real CLI does (`[Request interrupted by user]`, then a result
 //                             `error_during_execution`). Never returns; stdin EOF still exits.
 //   {"react": "<command>"}    from here on, answer every user message by running `/bin/sh -c <command>`
@@ -66,7 +67,8 @@
 //                             answer whatever arrives, in whatever order (the coordinator agent of the
 //                             pir-coordinator T07 drill), decides in the command. A non-zero exit replies
 //                             with an error result carrying the stderr tail and keeps reacting. Never
-//                             returns; stdin EOF still exits.
+//                             returns; stdin EOF exits once the turn under way, and any message already
+//                             received, is answered, as the real CLI finishes its turn.
 //   {"sh": "<command>"}       run `/bin/sh -c <command>` in the session's cwd and wait for it. Its env
 //                             adds FAKE_CWD (that cwd) and FAKE_OPENING (the text of the first user
 //                             message). A non-zero exit emits an error result carrying the stderr tail
@@ -421,10 +423,26 @@ async function main() {
   });
   let sigterm = 'exit';
 
-  const onEnd = () => {
-    eof = true;
+  const exitOnEof = () => {
     if (onEof === 'exit') process.exit(0);
     if (typeof onEof === 'number') process.exit(onEof);
+  };
+  // A react turn under way when stdin ends is finished first, with every message already received, as the
+  // real CLI finishes its turn on EOF; pir's close gives it that grace before SIGTERM (worker-proc close).
+  // Exiting at once dropped the coordinator agent's reply to the hand-off whenever pir closed it on the next
+  // pass before the reply's command had run, which under load is most of the time.
+  let replying = false;
+  const turn = {
+    begin: () => (replying = true),
+    end: () => {
+      replying = false;
+      // stdout to a pipe is asynchronous on macOS: the reply is flushed before the exit, or it is lost.
+      if (eof && !queues.user.length) process.stdout.write('', exitOnEof);
+    },
+  };
+  const onEnd = () => {
+    eof = true;
+    if (!replying && !queues.user.length) exitOnEof();
   };
 
   let buf = '';
@@ -527,7 +545,7 @@ async function main() {
       }
       if (!stopped) await take('interrupt');
     } else if ('chat' in step) await chat(step.chat ?? {}, { out, take, takeWithin, queues });
-    else if ('react' in step) await react(fill(step.react), { out, take, opening: () => opening ?? '' });
+    else if ('react' in step) await react(fill(step.react), { out, take, turn, opening: () => opening ?? '' });
     else if ('sleep' in step) await new Promise((r) => setTimeout(r, step.sleep));
     else if ('exit' in step) process.exit(step.exit);
     else if ('onEof' in step) {
@@ -569,18 +587,20 @@ function runSh(command, opening, { env = {}, stdout: keep = false } = {}) {
 }
 
 // The react step: one turn per user message, for ever, the reply being what the command printed.
-async function react(command, { out, take, opening }) {
+async function react(command, { out, take, turn, opening }) {
   for (;;) {
     const msg = await take('user');
+    turn.begin();
     out(initEvent());
     const r = await runSh(command, opening(), { env: { FAKE_MESSAGE: userText(msg) }, stdout: true });
     if (r.code !== 0) {
       out({ ...resultEvent('error_during_execution'), errors: [`react exited ${r.code}: ${r.stderr.slice(-2000)}`] });
-      continue;
+    } else {
+      const reply = r.stdout.trim() || '(nothing to say)';
+      out(assistantText(reply));
+      out(resultEvent('success', reply));
     }
-    const reply = r.stdout.trim() || '(nothing to say)';
-    out(assistantText(reply));
-    out(resultEvent('success', reply));
+    turn.end();
   }
 }
 
@@ -643,7 +663,7 @@ function resultFor(step, response) {
 
 // The chat step: one turn per user message, for ever. The opening line names what was sent, so a
 // driver sees its own message come back; the work in the middle is where an interrupt lands.
-async function chat({ workMs = 1000, init = initEvent() }, { out, take, takeWithin, queues }) {
+async function chat({ workMs = 1000, init = initEvent(), holdFor = null }, { out, take, takeWithin, queues }) {
   for (let n = 1; ; n++) {
     const msg = await take('user');
     queues.interrupt.length = 0; // an interrupt sent while idle belongs to no turn
@@ -652,7 +672,9 @@ async function chat({ workMs = 1000, init = initEvent() }, { out, take, takeWith
     out(assistantText(`You said: ${text}. Working on it.`));
     const id = `toolu_chat_${n}`;
     out(toolUse(id, 'Bash', { command: `sleep ${Math.ceil(workMs / 1000)}`, description: 'Pretend to work' }));
-    if (await takeWithin('interrupt', workMs)) {
+    // holdFor: the turn for that exact message works until it is interrupted, so a driver's interrupt lands
+    // in it however long the trip through pir takes; a fixed workMs lost that race under load.
+    if (await (text === holdFor ? take('interrupt') : takeWithin('interrupt', workMs))) {
       out(interruptedText());
       out(resultEvent('error_during_execution'));
       continue;

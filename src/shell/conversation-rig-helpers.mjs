@@ -10,9 +10,25 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { startRig, openScreen, mouseBytes, RIG_DONE_SUMMARY, RIG_STUCK_SUMMARY, RIG_RESERVED_COMMAND } from './conversation-rig.mjs';
 
+// The helpers scenario's run row, listed live. The script runs on its own clock from the opening message:
+// A asks its permission a few steps (5 × stepMs) after the start, and the row turns from `running` to
+// `asking you`. Under load pir draws its first list later than that, so the row is waited for in either
+// live state; the test needs only the row to open, and what follows is waited for on its own screen.
+export const HELPERS_ROW = /rig +work +● (running|asking you)/;
+
 export function scratchHome(t) {
   const home = mkdtempSync(join(tmpdir(), 'pir-rig-home-'));
-  t.after(() => rmSync(home, { recursive: true, force: true }));
+  // Registered before the caller's `t.after(() => rig.stop())`, so it runs first (node:test runs after hooks
+  // first in, first out) while the rig may still be writing its index here. node:test skips every later
+  // hook once one throws, and a skipped rig.stop leaves the rig's timer and fakes holding the file open
+  // forever, so a failed rm is retried and then left behind, never thrown: a stray temp dir is harmless.
+  t.after(() => {
+    try {
+      rmSync(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    } catch {
+      /* left in the temp dir */
+    }
+  });
   return { PIR_HOME: home };
 }
 
@@ -458,7 +474,7 @@ export function defineHelperLinesTest([cols, rows]) {
     const screen = openScreen({ cols, rows, env: { ...process.env, ...env }, settleMs: 100 });
     const lineOfA = (s) => s.match(/↳ helper · Survey the code · .*/)?.[0] ?? null;
     try {
-      await screen.waitFor(/rig +work +● running/);
+      await screen.waitFor(HELPERS_ROW);
       screen.send('\r');
       await screen.waitFor(/pick a task/);
       screen.send('\x1b[C');
@@ -519,7 +535,7 @@ export function defineEscWarnsTest([cols, rows]) {
     const interrupts = () => wire().filter((m) => m.type === 'control_request' && m.request?.subtype === 'interrupt').length;
     const userTexts = () => wire().filter((m) => m.type === 'user').map((m) => m.message.content);
     try {
-      await screen.waitFor(/rig +work +● running/);
+      await screen.waitFor(HELPERS_ROW);
       screen.send('\r');
       await screen.waitFor(/pick a task/);
       screen.send(`${ESC}[C`);

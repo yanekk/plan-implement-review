@@ -282,7 +282,10 @@ export function startPlanRig({ into = null, scripts = 'happy', keep = false, bas
   function cleanup() {
     if (cleaned || keep) return;
     cleaned = true;
-    rmSync(root, { recursive: true, force: true });
+    // A stopped run's last children (a reaped worker's fake, the git it ran) can still be writing into the
+    // scratch repo for a moment after stopRun returns, and a recursive rm racing a new file fails with
+    // ENOTEMPTY (seen under load: plan-rig-mouse's drill teardown). rmSync's own retry covers that gap.
+    rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 
   return {

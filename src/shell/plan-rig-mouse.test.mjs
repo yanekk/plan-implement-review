@@ -159,6 +159,9 @@ test('end to end at 80×24: after SIGTERM, and after esc, no mouse mode, bracket
     if (how === 'esc') {
       screen.send('\x1b');
       await until(() => !screen.modes().has(1049), 'pir to leave the alternate screen on esc');
+      // pir restores the screen before it exits, and close() is a SIGTERM: sent in that gap it kills pir
+      // with its handler already gone, and the relay reports 241 (-15 & 0xff) for a clean esc.
+      await until(() => screen.exited(), 'pir to exit by itself on esc');
     }
     const code = await screen.close();
     assert.equal(code, how === 'esc' ? 0 : 143, `${how}: exit code`);
