@@ -26,11 +26,11 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T08 | single-rig | T04, T05 | ✅ | |
 | T09 | box-single | T05, T08 | ✅ | |
 | T10 | single-row | T04, T08 | ✅ | |
-| T11 | single-drill | T06, T09, T10 | ⬜ | |
+| T11 | single-drill | T06, T09, T10 | 🔍 | Drill in `plan-rig-single-drill*.test.mjs` (one file per size, run side by side; doc said `plan-rig.test.mjs`): 11 pty tests. Fixes: step clock kept whole on narrow frames (`stepLine`), merged run's merge-row note (`singleNoSessionNote`), 2 unit tests. No two-answer choices arose. |
 | T12 | single-live | T07, T11 | ⬜ | |
 | T13 | docs-and-readme | T12 | ⬜ | |
 
-**Review queue:** *(empty)*
+**Review queue:** T11
 
 ## Blocked on the user
 

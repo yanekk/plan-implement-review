@@ -569,7 +569,7 @@ export function buildPlanWatchFrame(view, { now, spinnerChar = SPINNER[0], ui = 
   lines.push([span(d.header.name, 'head'), span(` · ${d.header.state}${d.header.branch ? ` · ${d.header.branch}` : ''}`, 'dim')]);
   lines.push([]);
   const sel = Math.max(0, Math.min(ui.taskSel ?? 0, d.rows.length - 1));
-  d.rows.forEach((r, i) => lines.push(stepLine(r, i, { sel, alive, spinnerChar })));
+  d.rows.forEach((r, i) => lines.push(stepLine(r, i, { sel, alive, spinnerChar, cols })));
   lines.push([]);
 
   const f = d.footer;
@@ -606,14 +606,22 @@ export function buildPlanWatchFrame(view, { now, spinnerChar = SPINNER[0], ui = 
   return lines;
 }
 
-// One step row of a planning or single run's steps view, tagged with its index for the mouse.
-function stepLine(r, i, { sel, alive, spinnerChar }) {
-  const glyph = r.kind === 'active' ? (alive ? spinnerChar : '·') : STEP_GLYPH[r.kind];
-  const text = `${glyph} ${r.id.padEnd(8)} ${r.role.padEnd(12)} ${r.text.padEnd(30)} ${fmtClock(r.clock)}`.replace(/\s+$/, '');
-  return withHit([span(i === sel ? '▎ ' : '  ', i === sel ? 'selected' : null), span(text, STEP_STYLE[r.kind] ?? null)], 'step', i);
-}
 // What a step row's text starts at: the mark, the glyph, the id and the role columns (stepLine).
 const STEP_TEXT_AT = 2 + 2 + 9 + 13;
+// The text column's width where the frame has room for it.
+const STEP_TEXT_WIDTH = 30;
+
+// One step row of a planning or single run's steps view, tagged with its index for the mouse. On a frame
+// narrower than the full row the text column gives way, down to the text itself, so the clock is drawn
+// whole: the terminal cut `0:17` to `0:1` at 60 columns, which reads as another time (single-runs T11 drill).
+function stepLine(r, i, { sel, alive, spinnerChar, cols = DEFAULT_COLS }) {
+  const glyph = r.kind === 'active' ? (alive ? spinnerChar : '·') : STEP_GLYPH[r.kind];
+  const clock = fmtClock(r.clock);
+  const room = cols - STEP_TEXT_AT - 1 - [...clock].length;
+  const width = Math.max([...r.text].length, Math.min(STEP_TEXT_WIDTH, room));
+  const text = `${glyph} ${r.id.padEnd(8)} ${r.role.padEnd(12)} ${r.text.padEnd(width)} ${clock}`.replace(/\s+$/, '');
+  return withHit([span(i === sel ? '▎ ' : '  ', i === sel ? 'selected' : null), span(text, STEP_STYLE[r.kind] ?? null)], 'step', i);
+}
 
 // buildSingleWatchFrame(view, { now, spinnerChar, ui, columns, logTail, dropped }) → frame (single-runs
 // DESIGN §2.8). A single run's steps view: the header (name, state, branch), the rows build, review and
@@ -632,7 +640,7 @@ export function buildSingleWatchFrame(view, { now, spinnerChar = SPINNER[0], ui 
   lines.push([span(d.header.name, 'head'), span(` · ${d.header.state}${d.header.branch ? ` · ${d.header.branch}` : ''}`, 'dim')]);
   lines.push([]);
   const sel = Math.max(0, Math.min(ui.taskSel ?? 0, d.rows.length - 1));
-  d.rows.forEach((r, i) => lines.push(stepLine(r, i, { sel, alive, spinnerChar })));
+  d.rows.forEach((r, i) => lines.push(stepLine(r, i, { sel, alive, spinnerChar, cols })));
   lines.push([]);
 
   const f = d.footer;

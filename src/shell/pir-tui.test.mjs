@@ -3062,6 +3062,27 @@ test('the steps view of a single run: stopped and crashed are stale, name the re
   assert.match(noted, /^merge has no conversation — the merge is yours to run by hand\.$/m);
 });
 
+// single-runs T11 drill: at 60 columns the terminal cut a step's clock, `0:17` reading `0:1`.
+test('a step row on a narrow frame gives its text column up so the clock is drawn whole; at 62 columns and wider it is as before', () => {
+  const asking = singleRow({ sessions: [sSess('build', 'permission')], extra: { since: { build: NOW - 65_000 } } });
+  const wide = stepsOf(asking).split('\n')[2];
+  assert.match(wide, /^▎ ● build {4}builder {6}asking you · allow a command\? {2}1:05$/, 'the longest text a clock follows, padded to 30');
+  assert.equal(stepsOf(asking, { columns: 62 }).split('\n')[2], wide, 'the full row is 61 or 62 wide');
+  for (const columns of [60, 61]) {
+    const narrow = stepsOf(asking, { columns }).split('\n')[2];
+    assert.match(narrow, /^▎ ● build {4}builder {6}asking you · allow a command\? +1:05$/);
+    assert.ok([...narrow].length <= columns, `${columns}: ${narrow}`);
+  }
+  // A planning run's step rows are the same rows.
+  const planning = planRow({ slug: 'csv-export', state: 'running', step: 'plan' });
+  planning.snap.runState.steps = [{ id: 'plan', phase: 'asking', asking: 'permission', since: NOW - 65_000, stoppedAt: null }];
+  const plan = stepsOf(planning, { columns: 60 }).split('\n')[2];
+  assert.match(plan, /^▎ ● plan {5}planner {6}asking you · allow a command\? 1:05$/);
+  assert.ok([...plan].length <= 60, plan);
+  // Narrower than the text itself: the text is kept whole and the terminal cuts the row, as it always did.
+  assert.match(stepsOf(asking, { columns: 40 }).split('\n')[2], /asking you · allow a command\? 1:05$/);
+});
+
 test('mergedCheck asks git at most once per 30 s per row, and stops asking once the answer is yes', () => {
   const calls = [];
   let answer = false;

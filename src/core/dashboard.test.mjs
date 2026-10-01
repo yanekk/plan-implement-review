@@ -1080,6 +1080,21 @@ test('a dropped single run: → on the review step it never reached says the run
   assert.match(dashboardReducer(s, { type: 'open' }, stopped).ui.note, /^review has no session yet/);
 });
 
+// single-runs T11 drill: the merge row of a merged run still said the merge was the person's to run.
+test('a single run\'s merge row: → says the merge is yours while it is ready, and that the branch is merged once it is', () => {
+  const done = { ...NAMED, outcome: 'ready' };
+  const noteOn = (views) => {
+    let ui = dashboardReducer(initialUi(), { type: 'open' }, views).ui;
+    ui = dashboardReducer(ui, { type: 'down' }, views).ui;
+    ui = dashboardReducer(ui, { type: 'down' }, views).ui;
+    return dashboardReducer(ui, { type: 'open' }, views).ui.note;
+  };
+  assert.equal(noteOn([singleView({ state: 'finished', over: done, merged: false })]), 'merge has no conversation — the merge is yours to run by hand.');
+  assert.equal(noteOn([singleView({ state: 'finished', over: done, merged: true })]), 'merge has no conversation — the branch is already merged.');
+  assert.equal(singleNoSessionNote({ id: 'merge' }, { dropped: true, merged: true }), 'merge has no conversation — the run was dropped, so there is nothing to merge.');
+  assert.match(singleNoSessionNote({ id: 'review' }, { merged: true }), /^review has no session yet/, 'only the merge row changes');
+});
+
 test('an open single run is followed through its rename by the program behind it', () => {
   const before = [singleView({ sessions: [sSession('build', 'busy')] })];
   const ui = dashboardReducer(initialUi(), { type: 'open' }, before).ui;
