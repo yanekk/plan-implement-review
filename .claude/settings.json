@@ -61,7 +61,10 @@
       "Bash(node src/shell/harness/service-live-check.mjs)",
       "Bash(node src/shell/harness/usage-live-check.mjs --into /tmp/usage-live)",
       "Bash(rm -rf /tmp/usage-live)",
-      "Bash(curl -s http://127.0.0.1:*)"
+      "Bash(curl -s http://127.0.0.1:*)",
+      "Bash(perl -e 'alarm 300; exec @ARGV' node /tmp/pir-hand-spike/spike.mjs)",
+      "Bash(npm i zod@4.6.5)",
+      "Bash(rm -rf /tmp/pir-hand-spike)"
     ],
     "ask": [
       "Bash(npm i @earendil-works/pi-tui@0.87.1)",

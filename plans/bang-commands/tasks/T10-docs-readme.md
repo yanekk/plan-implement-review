@@ -4,13 +4,14 @@
 
 ## Goal
 
-Make `/docs` and `README.md` say what the build does, as built and seen in the drill, and make it live
-with `./install.sh`. `/docs` is canonical for how parallel mode behaves, and a feature missing from the
+Make `/docs` and `README.md` say what the build does, as built and seen in the drill. Making it live is
+not this task's: the finishing rules run `./install.sh` after the merge (DESIGN §5.3, the person
+2026-10-01), and it must never run inside this live run. `/docs` is canonical for how parallel mode behaves, and a feature missing from the
 README does not exist for a new reader.
 
 ## Design sections this implements
 
-DESIGN §2, §8 (the limits), CLAUDE.md "The README follows every major feature".
+DESIGN §2, §4 (zod), §8 (the limits), CLAUDE.md "The README follows every major feature".
 
 ## Files
 
@@ -24,10 +25,6 @@ DESIGN §2, §8 (the limits), CLAUDE.md "The README follows every major feature"
 - `docs/README.md` if it indexes these pages; `README.md` — a short user-facing paragraph and link.
 - `src/shell/single-docs.test.mjs` or other doc tests, if they pin edited text.
 
-## Outside actions
-
-- `./install.sh` — `worker`
-
 ## Tests
 
 - [ ] doc tests that pin wording still pass, updated where the wording changed on purpose.
@@ -35,4 +32,4 @@ DESIGN §2, §8 (the limits), CLAUDE.md "The README follows every major feature"
 ## Done when
 
 - [ ] Every behaviour of DESIGN §2 and every limit of §8 is in `/docs`, and the README has a sentence and a link.
-- [ ] `./install.sh` ran and `grep -n hand_command ~/.claude/pir-engine/src/shell/worker-proc.mjs` finds the tool.
+- [ ] `./install.sh` was not run by this task.

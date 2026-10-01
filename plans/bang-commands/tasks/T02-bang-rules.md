@@ -10,7 +10,7 @@ forwarder agree on one definition of each.
 
 ## Design sections this implements
 
-DESIGN §2.1 (parse), §2.3 (message, caps), §3.2 (drops, entries).
+DESIGN §2.1 (parse), §2.2 (plain text), §2.3 (message, caps), §3.2 (drops, entries), §7 (reuse).
 
 ## Files
 
@@ -26,9 +26,10 @@ DESIGN §2.1 (parse), §2.3 (message, caps), §3.2 (drops, entries).
 export const AGENT_OUTPUT_CAP = 30000;
 export const LOG_OUTPUT_CAP = 1024 * 1024;
 export function parseBang(text) → null | { command }   // null unless text starts with '!'; command trimmed, may be ''
-export function stripAnsi(text) → string               // CSI, OSC, and lone ESC sequences; keeps \n and \t; drops \r before \n
 export function capForAgent(output, cap = AGENT_OUTPUT_CAP) → { text, cut /* chars dropped */ }
 export function shellStatusLine({ code, signal, stopped, ms }) → 'exit 0 · 6s' | 'killed by SIGTERM · 2s' | 'stopped by the person · 1m 12s'
+//   the duration is conversation.mjs helperTime(ms), reused (DESIGN §7); output is cleaned by
+//   core/text.mjs plainText, reused, not by a new stripper
 export function bangMessage({ command, output, code, signal, stopped, ms, lead }) → string
 //   lead: 'The person ran a command in your working folder:' (default) | 'The person ran your command:' |
 //   'The person edited your command and ran it:'. Format exactly as DESIGN §2.3.
@@ -49,10 +50,10 @@ as far as the view can tell; T03 ends it properly).
 ## Tests
 
 - [ ] `parseBang`: `'!ls'`, `'! ls -la '`, `'!'` → `''`, `'ls'` → null, `' !ls'` → null (leading space is not command mode), multi-line kept.
-- [ ] `stripAnsi`: colour codes, cursor moves, OSC 8 links, `\r\n` → `\n`, a progress bar's `\r` overwrites keep the last segment of the line.
+- [ ] `plainText` (reused) on a chunked stream: colour codes, OSC 8 links and a progress bar's `\r` overwrites come out as DESIGN §2.2 says when applied per coalesced chunk; if a chunk boundary splits an escape or a `\r` line, T03 applies it per completed line instead (test both).
 - [ ] `capForAgent` under, at and over the cap; keeps the tail; reports `cut`.
 - [ ] `bangMessage` for exit 0 with output, exit 1, empty output `(no output)`, stopped, signal, cut output with the note, each `lead`.
-- [ ] `shellStatusLine` durations: 0.4 s → `0s`, 6 s, 72 s → `1m 12s`, over an hour.
+- [ ] `shellStatusLine` durations through `helperTime`: 0.4 s → `0s`, 6 s, 72 s → `1m 12s`, over an hour → `72m 0s`.
 - [ ] `validateDrop`: accepts both kinds; rejects empty/whitespace command, non-string requestId, extra `decision`.
 - [ ] `workerActivity.shell`: start → running; start+end → null; start+exited → null; two starts with one end → the open one.
 - [ ] `readOut` of `{dir:'out', kind:'message', shell:'sh-…'}` keeps `shell`.

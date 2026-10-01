@@ -6,12 +6,12 @@ taught lives in [FINDINGS.md](FINDINGS.md); read the rows touching your task and
 Sixty words to a Notes cell, counted. Flat prose. Whoever writes a cell also fixes the over-budget cell
 they walk past.
 
-**Plan reviewed:** not yet — run `/pir-review-plan` before the first `/pir-work`
+**Plan reviewed:** 2026-10-01 — 9 fixed, 4 decided with the user
 
-**Status:** Plan written 2026-10-01. Nothing built. The red `notify-wiring.test.mjs` case on `main` is to
+**Status:** Plan written 2026-10-01. Nothing built. The red `notify-wiring.test.mjs` cases on `main` are to
 be fixed there before the build starts (DESIGN §4).
 **Last updated:** 2026-10-01
-**Next `pir-work` will:** T00, the spike its later tasks depend on, once the plan is reviewed.
+**Next `pir-work` will:** T00, the spike its later tasks depend on.
 
 ## Tasks
 

@@ -19,10 +19,14 @@ DESIGN §2.6 (reservation), §2.7.
 - `src/core/bang.mjs` — `HAND_TOOL = 'mcp__pir__hand_command'`, `HAND_FALLBACK`, `handDeclineMessage(text?)`.
 - `src/core/stream.mjs` — `readRequest` reads a `HAND_TOOL` request as `{ kind:'command', command, reason, requestId, agentId? }`.
 - `src/core/asking.mjs` — `waitingOn` → `'command'`; `itemsOf` marks it reserved.
-- `src/core/coordinator-policy.mjs` — `reservedFor` reserves it (`'hand'`); the agent's decision check rejects an answer to it.
+- `src/core/coordinator-policy.mjs` — `reservedFor` reserves it (`{ kind: 'hand', why }`, the shape it already returns); the agent's decision check rejects an answer to it.
 - `src/core/coordinator-brief.mjs` — the agent is told it is the person's and may only note it.
 - `src/core/display.mjs` (`ASKING_LABEL`), `src/core/plandisplay.mjs` (`ASKING_TEXT`) — `asking you · run a command`.
 - `src/core/notify.mjs` — `kindPart`: `asks you to run: {command} (open pir to run it)`, `Needs your yes: ` prefix.
+- `src/core/stream.mjs` `workerActivity` (its `case 'permission'` pending fold), `src/core/display.mjs`
+  (its `asking === 'permission' || 'questions'` check), `src/core/planflow.mjs` (the activity it treats as
+  asking): every core reader that switches on `'permission'` treats a pending `'command'` as a pending
+  request. The shell readers are T05's and the conversation's T07's.
 - The tests beside each.
 
 ## Interface
@@ -31,7 +35,7 @@ DESIGN §2.6 (reservation), §2.7.
 HAND_TOOL = 'mcp__pir__hand_command'
 readRequest(entry) → { kind:'command', requestId, command, reason, agentId? }   // for HAND_TOOL
 waitingOn(task, activity) → … | 'command'
-reservedFor(item) → … | 'hand'
+reservedFor(request, askRules) → … | { kind: 'hand', why }
 kindPart({ kind:'command', command }) → 'asks you to run: {command} (open pir to run it)'
 ```
 
@@ -48,5 +52,5 @@ follow T00's FINDINGS row.
 
 ## Done when
 
-- [ ] A logged hand request reads `asking you · run a command` in a build row and a planning row, and its alert text matches DESIGN §2.7.
+- [ ] A logged hand request reads `asking you · run a command` in a build row and through `ASKING_TEXT` for a planning row (the planning and single rows' `sessionAsking` is wired in T05), and its alert text matches DESIGN §2.7.
 - [ ] Nothing lets the coordinator agent answer it.

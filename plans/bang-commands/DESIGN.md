@@ -61,7 +61,8 @@ below names its reason.
   (`commands.mjs`), so pir's own `PARALLEL_*` and `PIR_RUN` do not leak into the person's command.
 - Stdin is `/dev/null`. Plain only, as the person chose: a command that waits for input sits until the
   person stops it. Handing over the terminal for interactive commands is out of scope (§8).
-- stdout and stderr are merged in arrival order, ANSI escape sequences stripped, and logged into the
+- stdout and stderr are merged in arrival order, reduced to plain text by `plainText` (`core/text.mjs`:
+  escapes stripped, `\r` overwrites kept to their last segment, tabs expanded), and logged into the
   session's conversation log in coalesced chunks (at most every 250 ms or 8 KB), so the view streams
   them and two open screens show the same thing. The log keeps at most 1 MB of a command's output, then
   one `clipped` marker; the agent's message is capped separately (§2.3).
@@ -87,7 +88,7 @@ below names its reason.
   ```
 
   The status line is `exit {n}`, `killed by {signal}`, or `stopped by the person` with the elapsed
-  time. Output over 30 000 characters keeps its last 30 000, preceded by `(output cut: the first {n}
+  time, written by `helperTime` (`conversation.mjs`). Output over 30 000 characters keeps its last 30 000, preceded by `(output cut: the first {n}
   characters are not shown)`. The cap matches Claude Code's own Bash output cap, and the tail is kept
   because errors and summaries come last.
 - Being `from: 'person'`, the message counts as an answer: a parked or stopped worker un-parks
@@ -106,8 +107,9 @@ below names its reason.
   its end entry reads `stopped: 'session-closed'`, and nothing is sent.
 - A host that dies with a command running (crash, `kill -9`) leaves its record in
   `{controlDir}/shells/{sessionId}.json`. The next host start in that control folder kills a still-live
-  group whose pid and start time match (the `reapCommand` rule of single runs) and deletes the record;
-  if that session is live again in the new host, it is sent `[pir] A command the person ran was cut off
+  group whose pid and start time match (the `reapCommand` rule of single runs), appends that command's
+  `end` entry (`stopped: 'pir-restart'`, `sent: 'none'`) to its session's conversation log so its block
+  closes whether or not the session comes back, and deletes the record; if that session is live again in the new host, it is sent `[pir] A command the person ran was cut off
   when pir restarted: $ {command}`. Without the record, a restarted coordinator would leave an orphan
   `tail -f` running for ever.
 
@@ -151,7 +153,9 @@ below names its reason.
 - When the person's run of it ends, the forwarder answers the request instead of sending a message:
   `allow` with `updatedInput = { command, reason, pirResult }`, where `pirResult` is the `bangMessage`
   text (with `The person ran your command` or `The person edited your command and ran it` in its first
-  line). The tool's handler returns `pirResult` as its result. The agent therefore reacts at once, inside
+  line). The tool's handler returns `pirResult` as its result. The SDK strips any argument the tool's zod
+  shape does not declare, so T00 settles how `pirResult` reaches the handler; whichever way, the handler
+  never returns a `pirResult` the model supplied itself. The agent therefore reacts at once, inside
   its open turn, which is the "straight away" the person chose; and the request leaves `pending` on the
   logged reply, so the row stops asking.
 - The handler, run with no `pirResult` (the person allowed it on claude.ai or the phone, where pir runs
@@ -201,7 +205,7 @@ code, the fix is to move the code, never to relax the test.
 
 | Module | Side | What it holds |
 |---|---|---|
-| `src/core/bang.mjs` (new) | pure | `parseBang(text)`, `stripAnsi`, `capForAgent`, `bangMessage`, `shellStatusLine`, `HAND_TOOL` name and the handler's fallback text |
+| `src/core/bang.mjs` (new) | pure | `parseBang(text)`, `capForAgent`, `bangMessage`, `shellStatusLine` (over `plainText` and `helperTime`, reused), `HAND_TOOL` name and the handler's fallback text |
 | `src/core/person-input.mjs` | pure | drop kinds `shell`, `shell-stop` |
 | `src/core/stream.mjs` | pure | reading `dir:'shell'` entries; `workerActivity` gains `shell: {id, command, t} \| null`; `readRequest` reads a hand request as `kind:'command'` |
 | `src/core/conversation.mjs` | pure | the command block, the status part, the hand gate and its reducer |
@@ -240,7 +244,7 @@ Conversation log entries, written by the host through `platform.log(to, entry)` 
 
 ```
 { dir: 'shell', kind: 'start',  id, command, cwd, requestId?, edited?: true }
-{ dir: 'shell', kind: 'output', id, text }                 // ANSI stripped, coalesced
+{ dir: 'shell', kind: 'output', id, text }                 // plainText, coalesced
 { dir: 'shell', kind: 'output', id, text: '', clipped: true }  // once, past 1 MB
 { dir: 'shell', kind: 'end', id, code: number|null, signal: string|null,
   stopped: null|'person'|'session-closed'|'pir-restart', ms, sent: 'message'|'answer'|'undelivered'|'none' }
@@ -262,21 +266,31 @@ Two `pir` screens may both drop `shell`; the second is refused `busy`. Output ch
 events append to the same ndjson file through the one `log()` in `worker-proc.mjs`, which already
 serialises them in that process.
 
+`plan-run.mjs` and `single-run.mjs` stop and restart the forwarder when the rename moves the control
+folder. The running-command map and its shells records therefore live outside one forwarder instance and
+follow the move, so a command started before the rename keeps its `busy` check, its stop and its record.
+
 ## 4. Environment
 
-- Node v22 (`engines: >=22.19`), `@anthropic-ai/claude-agent-sdk` 0.3.282, `@earendil-works/pi-tui`
-  0.87.1, Claude Code 2.1.286, macOS (Darwin 25.6), `$SHELL=/bin/zsh`. Measured 2026-10-01.
+- Node v22.17.1 on the PATH (nvm; below `engines: >=22.19`, and the suite runs on it), `@anthropic-ai/claude-agent-sdk`
+  0.3.282, `@earendil-works/pi-tui` 0.87.1, Claude Code 2.1.286 logged in through Bedrock (`apiKeyHelper`),
+  macOS (Darwin 25.6), `$SHELL=/bin/zsh`. Measured 2026-10-01.
 - The SDK exports `createSdkMcpServer` and `tool` (`sdk.d.ts`); whether an in-process tool reaches
-  `canUseTool` under `permissionMode: 'auto'` is T00's question.
+  `canUseTool` under `permissionMode: 'auto'` is T00's question. `tool()`'s input schema must be a zod raw
+  shape (a JSON-schema object throws `inputSchema must be a Zod schema or raw shape`), and zod is a peer
+  the `.npmrc` `omit[]=peer` never installs, so `zod` 4.6.5 becomes a direct dependency (T05). Measured at
+  plan review 2026-10-01: an external zod 4.6.5 shape works with the SDK's bundled MCP server, and an
+  argument the shape does not declare is stripped before the handler sees it.
 - Test command: `npm test`, which is `FORCE_COLOR=0 NO_COLOR=1 node --test --test-reporter=dot
   'src/**/*.test.mjs'` and prints `TESTS PASSED` or `TESTS FAILED`. Quiet on green (dot reporter),
   colour forced off inside the command because `COLORTERM=truecolor` is set here, full failures on red.
   For detail run one file with `node --test {file}`. A full run takes about 3 minutes.
 - Setup: `test ! -f package-lock.json || npm ci`, measured in a fresh worktree 2026-10-01: exit 0,
   `git status --porcelain` empty afterwards.
-- **Known red on the base when this plan was written:** `src/shell/notify-wiring.test.mjs`, "main: the
-  end alert knows the finisher takes over, and the done alert is sent with the exit", fails 3/3 in a
-  fresh worktree at `3a607f6` (`Promise resolution is still pending`). The person decided (2026-10-01)
+- **Known red on the base when this plan was written:** `src/shell/notify-wiring.test.mjs` fails in a
+  fresh worktree at `3a607f6`: 10 of its cases, every one `Promise resolution is still pending`, on Node
+  22.17.1 and 22.22.3 alike (re-measured at plan review; the plan first named only "main: the end alert
+  knows the finisher takes over, and the done alert is sent with the exit"). The person decided (2026-10-01)
   it is fixed on `main` separately, before this build starts; it is not this plan's task.
 - End-to-end tooling, reused: `src/shell/conversation-rig.mjs` (`startRig` scenarios, `openScreen` over a
   python3 pty relay, real SDK against `fake/claude-stream.mjs`, real `startPersonInbox`) with tests in
@@ -284,8 +298,10 @@ serialises them in that process.
   `src/shell/plan-rig.mjs` (`startPlanRig`, `startSingle`, the `claude` shim) for planning and single
   runs. No new rig is planned. A `!` in the rig runs a real shell command (`printf`, `sleep`) in the
   scratch folder, which is free and harmless.
-- No new dependency. The SDK and pi-tui already carry everything needed; adding a pty library would only
-  serve the interactive mode the person declined.
+- One new dependency, `zod` 4.6.5 (no dependencies of its own), because the SDK's `tool()` takes nothing
+  else (above; the person, 2026-10-01). The peer policy stays: the MCP SDK and the rest of the ~95 peer
+  packages are still never installed. No pty library: it would only serve the interactive mode the person
+  declined.
 
 ## 5. Verification
 
@@ -310,8 +326,12 @@ executed by the spike (it answers the request itself).
 
 | Action | Command | Bin | Why this bin | Way back | Cost |
 |---|---|---|---|---|---|
-| One real Claude session for the spike (T00) | `perl -e 'alarm 300; exec @ARGV' node {spike}.mjs` in `/tmp/pir-hand-spike` | worker | draws plan limits only, no paid API, scratch repo, nothing others see | delete `/tmp/pir-hand-spike` | one short session |
-| `./install.sh` (T10) | `./install.sh` | worker | local, idempotent; never while a run is live | re-run from the previous commit | none |
+| One real Claude session for the spike (T00) | `perl -e 'alarm 300; exec @ARGV' node /tmp/pir-hand-spike/spike.mjs`, after `npm i zod@4.6.5` in that folder | worker | one short session billed through Bedrock like any worker's, scratch repo, nothing others see; approved by the person at plan review 2026-10-01 | delete `/tmp/pir-hand-spike` | one short Bedrock session |
+| Delete the spike folder (T00) | `rm -rf /tmp/pir-hand-spike` | worker | a scratch folder this plan made | none needed | none |
+| Add zod (T05) | `npm i zod@4.6.5` | worker | local; package.json and the lock only; approved 2026-10-01 | revert the commit | none |
+
+`./install.sh` is no task's: the repo's finishing rules (`.pir/rules/on-finish.md`) run it after the merge
+and check the installed copy, and it must never run while this build's own run is live.
 
 ## 6. Recovery
 
@@ -340,6 +360,13 @@ commits and run `./install.sh`. A shells record left by a reverted build is igno
 - **The pinned decline wording and `e`** — the person chose a pinned prompt with run, edit and decline;
   typed-reply-declines mirrors the permission prompt so one rule covers both.
 - **The failing finisher test is fixed on `main` separately** — the person, 2026-10-01.
+- **zod as a direct dependency** — the person, plan review 2026-10-01: the SDK's `tool()` needs it, and one
+  package with no dependencies costs less than a hand-written stdio MCP server.
+- **Reuse `plainText` and `helperTime`** — the person, plan review 2026-10-01: `core/text.mjs` `plainText`
+  already strips CSI/OSC/two-byte escapes and keeps the last `\r` segment, and `conversation.mjs`
+  `helperTime` already writes `6s`/`1m 12s`; a second copy of either would need every fix made twice.
+- **No install inside the build** — the person, plan review 2026-10-01: the finishing rules install after
+  the merge; installing from T10 would replace the engine and skills under the live run.
 
 ## 8. Out of scope, and limits
 

@@ -16,7 +16,8 @@ DESIGN §2.6, §4, §5.2, §5.3.
 
 ## Files
 
-- A throwaway script under `/tmp/pir-hand-spike/` (never committed).
+- A throwaway script under `/tmp/pir-hand-spike/` (never committed), with `npm i zod@4.6.5` run in that
+  folder: the SDK's `tool()` needs a zod shape and the repo's `.npmrc` never installs peers (DESIGN §4).
 - `plans/bang-commands/FINDINGS.md` — one row with the measured answers.
 - `src/shell/fake/claude-stream.mjs` — read only: note in the FINDINGS row what the fake would need to
   tolerate when `workerOptions` carries `mcpServers` (an extra flag, `mcp_message` control requests).
@@ -27,8 +28,12 @@ DESIGN §2.6, §4, §5.2, §5.3.
    relies on it. No → T05 adds a `PreToolUse` hook returning `ask` for that tool (the finisher's
    `ASK_EVERY_CALL` pattern); measure that the hook makes it reach `canUseTool`.
 2. Does `{behavior:'allow', updatedInput:{…, pirResult}}` reach the handler's `args`, and does the
-   handler's text come back to the model as the tool result? No → T05 keeps the result in a per-request
-   map in `worker-proc.mjs` keyed by tool-use id instead of `updatedInput`.
+   handler's text come back to the model as the tool result? Measured at plan review without a CLI: the
+   SDK's MCP server strips every argument the zod shape does not declare, so `pirResult` reaches the
+   handler only if the shape declares it (then the model sees it as a parameter and could fill it), or
+   through a per-request map in `worker-proc.mjs` keyed by something the handler's `extra` carries
+   (record what `extra` holds: `signal`, `requestId`, any tool-use id in `_meta`). Record which route
+   works; either way the handler must never return a `pirResult` the model supplied itself.
 3. Does a request left unanswered for 3 minutes still accept the answer (no MCP or permission timeout)?
    No → record the limit; T05 documents it and T10 states it.
 4. Under `permissionMode: 'default'` (the agent's and finisher's), does the same hold? Recorded only, so
@@ -48,3 +53,5 @@ None committed; this is a measurement. The FINDINGS row is the deliverable.
 ## Outside actions
 
 - One real Claude session for the spike — `worker`
+- `npm i zod@4.6.5` in the spike folder, part of the same row — `worker`
+- `rm -rf /tmp/pir-hand-spike` — `worker`

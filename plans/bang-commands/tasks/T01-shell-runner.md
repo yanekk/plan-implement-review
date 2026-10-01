@@ -37,8 +37,8 @@ export function startShell({ command, cwd, env, id, to, requestId, recordPath, o
 export function reapShells(dir, { isSameProcess, kill }) → [{ id, to, command, requestId? }]
 ```
 
-`stop` sends SIGTERM to `-pid`, then SIGKILL after `killAfterMs` if it has not ended. ANSI stripping and
-caps are not here (T02's `stripAnsi`, T03 applies them), so this module stays a pipe.
+`stop` sends SIGTERM to `-pid`, then SIGKILL after `killAfterMs` if it has not ended. Plain-texting and
+caps are not here (`plainText` and T02's caps, applied by T03), so this module stays a pipe.
 
 ## Tests
 

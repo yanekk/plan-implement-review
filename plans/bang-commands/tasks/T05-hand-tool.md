@@ -17,11 +17,20 @@ DESIGN §2.6, §3.1.
 
 - `src/shell/worker-proc.mjs` and test — `workerOptions` gains `handTool`; with it, `mcpServers: { pir:
   createSdkMcpServer({ name:'pir', tools:[tool('hand_command', DESCRIPTION, { command, reason }, handler)] }) }`.
-  The handler returns `args.pirResult ?? HAND_FALLBACK`. If T00 said so, a `PreToolUse` hook returning
-  `ask` for `HAND_TOOL`, and/or the result carried in a per-tool-use map.
+  The shape is zod (`import { z } from 'zod'`). The handler returns the person's result, carried as T00's
+  FINDINGS row says (declared in the shape, or a per-request map), else `HAND_FALLBACK`; never a
+  `pirResult` the model supplied itself. If T00 said so, a `PreToolUse` hook returning `ask` for
+  `HAND_TOOL`.
+- `package.json`, `package-lock.json` — `zod` 4.6.5 as a direct dependency (`npm i zod@4.6.5`, exact by
+  `.npmrc`); `src/shell/deps.test.mjs` asserts `zod` imports from `src/shell/` with peers omitted, so the
+  installed engine (`npm ci --omit=peer`) is shown to carry it.
 - `src/shell/platform.mjs` (`spawn` for build workers and end-of-run helpers), `src/shell/held-session.mjs`
   (planner, plan reviewer, single builder and reviewer) — pass `handTool: true`. `coordinator-agent.mjs`
   and `finisher-agent.mjs` do not.
+- The shell readers that switch on `'permission'` treat a pending `'command'` the same:
+  `held-session.mjs` `REQUEST_KINDS` (`sessionAsking`, the planning and single rows), `platform.mjs`
+  `NOT_BUSY` (a worker waiting on a hand request is parked, not busy), and `person-inbox.mjs`'s
+  `wantKind` (a `permission` deny and a `shell` drop's `requestId` both answer a `command` request).
 - `src/shell/person-inbox.mjs` and test — on the end of a run whose drop carried a `requestId` that is
   still pending: `platform.answer(to, requestId, { behavior:'allow', updatedInput: { ...input, pirResult } },
   { from:'person' })`, `sent:'answer'`; `lead` chosen by whether the command was edited. A `requestId` no
@@ -39,12 +48,18 @@ reserved for the person's yes; the person runs it in `pir` and its output is the
 
 - [ ] `workerOptions({handTool:true})` carries the `pir` server; without the flag it does not; the agent's
       and finisher's options never do.
-- [ ] handler returns `pirResult`, and `HAND_FALLBACK` with none.
+- [ ] handler returns the person's result, and `HAND_FALLBACK` with none; a `pirResult` the model put in its own call is never returned.
+- [ ] `deps.test.mjs`: `zod` imports; a fresh `npm ci` leaves `git status --porcelain` empty.
+- [ ] a pending hand request: `sessionAsking` → `'command'`, the worker counts as not busy.
 - [ ] forwarder: a run with a pending `requestId` answers allow with `pirResult` and sends no message; an
       edited command says so in the lead; a stale `requestId` sends the plain message; a deny is worded.
 - [ ] rig `hand` scenario, real SDK, fake `claude` scripted to emit a `canUseTool` for `HAND_TOOL`: the request is
       logged and pending; a `shell` drop with its `requestId` produces the control response with
       `updatedInput.pirResult` in `rig.received`; a deny drop produces the worded deny.
+
+## Outside actions
+
+- `npm i zod@4.6.5` — `worker`
 
 ## Done when
 

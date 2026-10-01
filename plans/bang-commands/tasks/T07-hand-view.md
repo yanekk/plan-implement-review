@@ -14,8 +14,10 @@ DESIGN §2.6 (the pin and its keys), §2.7 (row), §2.8 (scrollback). Mock: `pro
 
 ## Files
 
-- `src/core/conversation.mjs` and test — `grantFrom` null for `HAND_TOOL` (so `a` is never offered and
-  no grant covers it); `handGateFor(request)`, `handReducer(gate, key)` and `promptLines` for it; pin it
+- `src/core/person-input.mjs` and test — `grantFrom` null for `HAND_TOOL` (so `a` is never offered and
+  no grant covers it).
+- `src/core/conversation.mjs` and test — its pending-request collection (`ev.kind === 'permission' ||
+  'questions'`) takes `'command'` too; `handGateFor(request)`, `handReducer(gate, key)` and `promptLines` for it; pin it
   for a pending `command` request; the answered
   form in the scrollback (`! T05 asked you to run: …`, `· declined`, `· declined: {text}`).
 - `src/shell/conversation-view.mjs` and test — route ↵/e/n through `handReducer` while the box is empty;

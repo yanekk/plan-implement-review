@@ -23,9 +23,12 @@ DESIGN §2.2, §2.3, §2.4, §2.5, §3.1–§3.3.
 - `src/shell/platform.mjs`, `src/shell/held-session.mjs`, `src/shell/coordinator-agent.mjs` (`withAgent`)
   and tests — `cwdOf(to)` and `log(to, entry)` on each platform.
 - `src/shell/coordinate.mjs`, `src/shell/plan-run.mjs`, `src/shell/single-run.mjs` — pass
-  `shellsDir: {controlDir}/shells` to `startPersonInbox`; call `reapShells` before it starts and send the
-  restart message to a reaped session that is live again; call `stopAll('session-closed')` for a session
-  on its close and for all on exit.
+  `shellsDir: {controlDir}/shells` to `startPersonInbox`; call `reapShells` before it starts, append each
+  reaped command's `end` (`stopped:'pir-restart'`, `sent:'none'`) to its session's conversation log, and
+  send the restart message to a reaped session once it is live again; call `stopAll('session-closed')` for
+  a session on its close and for all on exit. `plan-run.mjs` and `single-run.mjs` restart the forwarder
+  when the rename moves the control folder (their `renameStep` `control`): the running-command map is held
+  outside the forwarder instance and the shells dir follows the move (DESIGN §3.3).
 - `src/shell/conversation-rig.mjs` — a `bang` scenario (one idle worker that replies to each message it
   gets with a fixed line), for this task's integration test and T06's screen tests.
 
@@ -41,7 +44,7 @@ platform.log(to, entry) → entry | null  // appends to that session's conversat
 ```
 
 Forwarding `shell`: refuse with a `shell-refused` note when `running(to)` (`busy`) or `cwdOf(to)` is null
-(`no-session`); else log `start`, stream `output` entries (ANSI stripped, 1 MB cap then one `clipped`),
+(`no-session`); else log `start`, stream `output` entries (`plainText`, 1 MB cap then one `clipped`),
 and on end log `end` then send `bangMessage(…)` with `{ from: 'person', shell: id }`, recording `sent`.
 A drop carrying `requestId` is forwarded the same way here; T05 changes its end to answer the request.
 
@@ -59,6 +62,10 @@ A drop carrying `requestId` is forwarded the same way here; T05 changes its end 
 - [ ] host start with a leftover record for a live `sleep` group kills it and deletes the record (one
       test per host's start path, or one shared helper tested once and called by all three).
 - [ ] a parked build worker (report park, asking turn ended) un-parks when the result message is sent.
+- [ ] a reaped command's block gets its `pir-restart` end entry; the session, once live again, receives
+      `[pir] A command the person ran was cut off when pir restarted: $ {command}`.
+- [ ] a command running across a control-folder rename (planning and single runs) still refuses a second
+      `!` as `busy`, still stops on `shell-stop`, and its record is deleted at its end in the moved folder.
 
 ## Done when
 

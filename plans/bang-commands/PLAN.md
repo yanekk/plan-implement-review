@@ -4,7 +4,7 @@
 interfaces it defines, and what "done" means. Track state in [PROGRESS.md](PROGRESS.md). Read
 [DESIGN.md](DESIGN.md) first.
 
-Before the build starts, the red `notify-wiring.test.mjs` case on `main` (DESIGN §4) is fixed on `main`
+Before the build starts, the red `notify-wiring.test.mjs` cases on `main` (DESIGN §4) is fixed on `main`
 separately and `main` is merged into this branch; otherwise the end gate fails for a reason outside
 this plan.
 
@@ -82,7 +82,7 @@ T10 is the only leaf.
 | hand request read, labelled, alerted, reserved | T04 | already wired: `coordinate.mjs` `workerFields`, `sessionAsking`, `notify` read `waitingOn`/`kindPart` |
 | hand request pinned, run, edited, declined | T07 | T07 |
 | hand request answered with the output | T05 (`person-inbox.mjs`) | T05 |
-| agents told when to hand | T09 (skills) | `./install.sh` in T10 |
+| agents told when to hand | T09 (skills) | `./install.sh` by the finishing rules after the merge, never inside the run (DESIGN §5.3) |
 
 ## Critical path
 
