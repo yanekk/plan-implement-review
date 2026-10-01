@@ -160,6 +160,13 @@ grey band across the full width, its dim text brightened (with colour off it is 
 replaced by one line — `No runs yet — type after @ below to plan or build` — so a first open
 does not read as broken.
 
+**A dashboard left open across `./install.sh` says so.** Node keeps the code a process loaded, so an
+open `pir` goes on drawing with the old engine after a reinstall, and may misread a newer run (one
+older than the finisher showed a finisher's run as `ready to merge`, 2026-10-01). Every 5 s the dashboard
+checks its own engine file (`createEngineCheck` in `pir-tui.mjs`); install.sh deletes and recopies the
+engine, so a new inode or mtime means a reinstall. From then on the list's title and a build's live
+view carry `pir was updated · quit and reopen pir to use it` in amber. It does not restart itself.
+
 Below the list sits the **dashboard box**, a small command line whose text starts as `@`: `@repo/plan`
 and a brief starts a planning run in that repo and opens its planner's conversation, as `pir plan` does;
 `@repo/start` and a plan's name starts, or opens, that plan's build and shows its live view, as `pir

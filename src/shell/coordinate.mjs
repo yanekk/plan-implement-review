@@ -870,7 +870,8 @@ export function startCoordinator({
     closeFinisher();
   }
 
-  // The hand-over (DESIGN §2.1): the first pass the run waits in a green `ready` with the agent on.
+  // The hand-over (DESIGN §2.1): the pass that settles a green `ready` with the agent on, or the first
+  // waiting pass of a restart that settled it before.
   function handOver(rec) {
     closeAgent();
     agentClosedForFinisher = true;
@@ -1038,6 +1039,11 @@ export function startCoordinator({
       default:
         break;
     }
+    // The pass that settles a green `ready` hands over at once (the report written, or a restart's sync
+    // finding the base already holds the tip after a go). Left to the next pass, this pass's snapshot and
+    // frame read `ready to merge` with the merge line, which a dashboard shows as the person's to run while
+    // the finisher is about to take it (2026-10-01: the person merged by hand on it).
+    if (handoff.step === 'waiting' && !handoff.finished && handoff.finisher === null && withFinisher && handoff.state === 'ready') handOver(rec);
     return endResult({ actions, halted: false, routed, listed });
   }
 

@@ -471,6 +471,15 @@ test('handedOffGreenBranch passes on the agent\'s `✔ ready to merge · git swi
   assert.equal(handedOffGreenBranch().check(b('✔ ready to merge · git switch dev && git merge pir/other\n')).pass, false);
 });
 
+// With the finisher the run hands over in the pass that settles ready and prints no merge line (finisher
+// DESIGN §2.1): its row is the green hand-off.
+test('handedOffGreenBranch passes on the finisher taking over, with no merge line printed', () => {
+  const b = (out) => bundle({ flow: [fl('t5', 'merge', 'T01')], gitLog: '* T01 (pir/scratch)\n* seed\n', timeline: [tick('t1', [wagent('T01', 'busy')])], coordinatorOut: out });
+  const r = handedOffGreenBranch().check(b('⠴ all 1 task(s) merged · preparing: syncing dev\n  ◆ finisher                    preparing\n\n◆ finisher preparing · c to watch\n'));
+  assert.equal(r.pass, true, r.detail);
+  assert.ok(r.evidence.includes('coordinator.out: ◆ finisher preparing · c to watch'));
+});
+
 // declared-test-command T10: the flow and git look the same for a red finish as a green one, so a run
 // whose end-of-run gate went red must FAIL on the coordinator's own printed verdict, naming the reason.
 test('handedOffGreenBranch fails when the coordinator printed the red hand-off', () => {
@@ -1145,6 +1154,11 @@ test('handedOffOnBase: the dev hand-off, a footer naming dev at the remote commi
   assert.equal(handedOffOnBase().check(devBundle()).pass, true, handedOffOnBase().check(devBundle()).detail);
   const noOffer = devBundle({}, { coordinatorOut: 'git merge pir/slugify\n' });
   assert.match(handedOffOnBase().check(noOffer).detail, /git switch dev && git merge pir\/slugify/);
+  // The finisher took over: no offer is printed, and the finished line names dev.
+  const byFinisher = devBundle({}, { coordinatorOut: 'pass 9\n  ◆ finisher                    preparing\n◆ finisher preparing · c to watch\n\n✔ pir/slugify is in dev. The run is finished.\n' });
+  assert.equal(handedOffOnBase().check(byFinisher).pass, true, handedOffOnBase().check(byFinisher).detail);
+  const finisherNoEnd = devBundle({}, { coordinatorOut: '◆ finisher preparing · c to watch\n' });
+  assert.equal(handedOffOnBase().check(finisherNoEnd).pass, false, 'the finisher alone, with no finished line naming dev, is not enough');
   const mainFooter = devBundle({}, { steps: { merged: { report: devReport.replace('`dev`', '`main`') } } });
   assert.match(handedOffOnBase().check(mainFooter).detail, /does not name dev/);
   const oldSha = devBundle({}, { steps: { merged: { report: devReport.replace(REMOTE_SHA.slice(0, 12), '0123456789ab') } } });

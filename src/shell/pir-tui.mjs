@@ -18,8 +18,9 @@
 // unchanged alongside the list's), which keeps the watch frame byte-for-byte the coordinator's display.
 
 import { basename, join, resolve as resolvePath } from 'node:path';
-import { readFileSync } from 'node:fs';
+import { readFileSync, statSync } from 'node:fs';
 import { execFile } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { constants as osConstants, homedir } from 'node:os';
 import { readLogTail } from './commands.mjs';
 
@@ -239,6 +240,9 @@ export function buildListFrame(dashboard, ui = initialUi(), { columns = DEFAULT_
   const COL = listColumns(rows, columns);
   const repoCol = COL.repo;
   const title = [span('pir', 'head'), span('  runs on this machine', 'dim')];
+  // The engine was reinstalled under this process (createEngineCheck): amber, like a run waiting on the
+  // person, since what this screen shows may be the old code's reading.
+  if (dashboard?.updated) title.push(span('  · ', 'dim'), span(ENGINE_UPDATED_NOTE, 'your-go'));
   const header = lineOf(
     '  ' + pad('SLUG', COL.slug) + pad('TYPE', COL.type) + pad('STATE', COL.state) + pad('REPO', repoCol) + pad('PROGRESS', COL.progress) + 'WK',
     'dim',
@@ -423,7 +427,7 @@ export function watchDisplayLines(snap, { now, spinnerChar = SPINNER[0] } = {}) 
 // resumes it (§2.4: painting a stale snapshot plainly is more honest than a blank screen). A crashed run
 // also shows the tail of its log and the full log path. A run with no snapshot yet shows a waiting line.
 // The spinner ticks only while the run is running; a stale frame's glyph is a static dot.
-export function buildWatchFrame(view, { now, spinnerChar = SPINNER[0], ui = initialUi(), columns = DEFAULT_COLS, logTail = null, progress = null, dropped = null } = {}) {
+export function buildWatchFrame(view, { now, spinnerChar = SPINNER[0], ui = initialUi(), columns = DEFAULT_COLS, logTail = null, progress = null, dropped = null, updated = false } = {}) {
   // A planning run has steps, not tasks: its own frame (pir-plan-command §2.11), reached the same way.
   if (isPlan(view)) return buildPlanWatchFrame(view, { now, spinnerChar, ui, columns, logTail, progress });
   // So has a single run (single-runs DESIGN §2.8).
@@ -458,6 +462,8 @@ export function buildWatchFrame(view, { now, spinnerChar = SPINNER[0], ui = init
   const alive = state === 'running';
   const tail = `  · ${repo ?? ''}${alive && record?.pid ? ` · pid ${record.pid} · holding Mac awake` : ''}`;
   lines.push([span(slug ?? '', 'head'), span('  ', null), span(st.text, st.style), span(tail, 'dim')]);
+  // Its own line under the header; hits ride on their lines (withHit), so the rows below still map.
+  if (updated) lines.push(lineOf(ENGINE_UPDATED_NOTE, 'your-go'));
   lines.push([]);
 
   if (snap == null) {
@@ -1030,6 +1036,41 @@ export function createMergedCheck({ contains = baseContains, intervalMs = MERGED
   };
 }
 
+// How often the dashboard looks at its own engine file for a reinstall.
+export const ENGINE_CHECK_MS = 5000;
+
+// The line the list and the build's live view show once the engine was reinstalled under this process.
+export const ENGINE_UPDATED_NOTE = 'pir was updated · quit and reopen pir to use it';
+
+// createEngineCheck({ path, stat, intervalMs }) → engineCheck(now) → boolean: whether the engine this
+// process loaded has been reinstalled since it started. Node keeps the modules it loaded, so a dashboard
+// left open across `./install.sh` goes on drawing with the old code; on 2026-10-01 one that predated the
+// finisher showed a finisher's run as `ready to merge`, and the person merged by hand under it.
+// install.sh deletes the engine folder and copies it afresh, so this module's own file comes back with a
+// new inode and mtime; that is the whole signal, and it needs no stamp from the installer. A yes is final.
+// A failed stat (the folder mid-copy, or gone) reads as no change and is asked again next interval.
+export function createEngineCheck({ path = fileURLToPath(import.meta.url), stat = statSync, intervalMs = ENGINE_CHECK_MS } = {}) {
+  const id = (s) => `${s.ino}:${s.mtimeMs}`;
+  let first = null;
+  try {
+    first = id(stat(path));
+  } catch {
+    first = null; // nothing to compare against: never claims an update
+  }
+  let at = -Infinity;
+  let updated = false;
+  return function engineCheck(now) {
+    if (updated || first === null || now - at < intervalMs) return updated;
+    at = now;
+    try {
+      updated = id(stat(path)) !== first;
+    } catch {
+      updated = false;
+    }
+    return updated;
+  };
+}
+
 // loadDashboard({ dir, now, kill, exec, fs, liveness, merged }) → { rows, counts }. The read half of a refresh (DESIGN §3.4):
 // enumerate every index entry (T06), resolve each run's liveness (T05) and classify it (T01), read its
 // snapshot (T07) for the progress/worker detail, then project the lot through buildDashboard (T04). Each
@@ -1237,6 +1278,7 @@ async function runTui({
   // A dropped single run's report body (single-runs DESIGN §2.8): state.json keeps it, the snapshot does not.
   readDropped = (record) => JSON.parse((fs ?? { readFileSync }).readFileSync(join(record.controlDir, 'state.json'), 'utf8'))?.accepted?.body ?? null,
   mergedCheck = createMergedCheck(),
+  engineCheck = createEngineCheck(),
   drop,
   follow,
   publisher = null,
@@ -1270,7 +1312,7 @@ async function runTui({
   let painted = null;
 
   const liveness = createLivenessCache({ kill, exec, now });
-  const read = () => load({ dir, now: now(), kill, exec, fs, liveness, merged: mergedCheck });
+  const read = () => ({ ...load({ dir, now: now(), kill, exec, fs, liveness, merged: mergedCheck }), updated: engineCheck(now()) });
 
   // The open worker's conversation view (T13), created on entering the 'worker' view and disposed on
   // leaving it. It takes every key while it is open: its own table (§2.11) replaces Esc-quits and
@@ -1551,7 +1593,7 @@ async function runTui({
       const columns = Math.max(20, stdout.columns || DEFAULT_COLS);
       const progress = goOpen(dash.rows, ui) && view.record ? goProgress(view) : null;
       const dropped = isSingle(view) && view.record && view.state === 'finished' && view.snap?.runState?.outcome === 'dropped' ? droppedReason(view) : null;
-      const frame = buildWatchFrame(view, { now: now(), spinnerChar, ui, columns, logTail, progress, dropped });
+      const frame = buildWatchFrame(view, { now: now(), spinnerChar, ui, columns, logTail, progress, dropped, updated: !!dash.updated });
       painted = { frame, rows: dash.rows };
       screen.paint(frame);
     } else if (boxed) {

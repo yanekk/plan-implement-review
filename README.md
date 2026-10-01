@@ -476,6 +476,9 @@ planner or reviewer is waiting on you; one waiting for the finisher's go reads `
 one waiting for your merge by hand reads `ready to merge`, so you can see
 from the list which runs need you; the counts line adds up those and every `your go` as `N waiting for you`. Under the
 list is the box that plans something new, or builds a reviewed plan, in any of your repos (above).
+A dashboard left open while `pir` is reinstalled keeps running the old version; it notices and says
+`pir was updated · quit and reopen pir to use it` until you do
+([detached-runs.md](docs/detached-runs.md#the-dashboard-and-the-live-view)).
 
 Every `pir` screen is drawn in [Catppuccin Mocha](https://catppuccin.com) colours on your terminal's own
 background, when your terminal supports full colour (most modern ones say so via `COLORTERM=truecolor`);

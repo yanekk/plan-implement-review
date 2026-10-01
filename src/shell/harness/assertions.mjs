@@ -576,7 +576,10 @@ export function handedOffGreenBranch() {
       const m = /^✔ ready to merge · (.*)$/.exec(l.trim());
       return !!m && isOffer(m[1]);
     });
-    const green = offerAt === -1 ? readyLine ?? null : nextNonBlank(offerAt);
+    // With the finisher (finisher DESIGN §2.1) the run hands over in the pass that settles `ready`: no merge
+    // line is printed unless it falls back, and its row is the hand-off. It only ever takes a green branch.
+    const finisherLine = outLines.findLast((l) => /^◆ finisher\b/.test(l.trim()));
+    const green = offerAt === -1 ? readyLine ?? finisherLine ?? null : nextNonBlank(offerAt);
     if (!green) {
       return { pass: false, evidence, detail: `coordinator.out has no \`${mergeLine.trim()}\` hand-off line — the run did not hand off a green branch` };
     }
@@ -1475,11 +1478,14 @@ export function handedOffOnBase() {
     const evidence = [];
     const out = bundle.coordinatorOut ?? '';
     const offer = `git switch ${base} && git merge pir/${slug}`;
-    // renderHandoff's own line, or the agent's `✔ ready to merge · {offer}` footer.
-    if (!out.split('\n').some((l) => l.trim() === offer || l.trim().endsWith(` · ${offer}`))) {
-      return { pass: false, evidence, detail: `coordinator.out has no \`${offer}\` line` };
-    }
-    evidence.push(`coordinator.out: ${offer}`);
+    // renderHandoff's own line, or the agent's `✔ ready to merge · {offer}` footer. A run the finisher took
+    // over prints no offer (finisher DESIGN §2.1; the finisher is told the base itself): its finished line
+    // `✔ pir/{slug} is in {base}.` is then the end line that must name the base.
+    const outLines = out.split('\n').map((l) => l.trim());
+    const finished = `✔ pir/${slug} is in ${base}.`;
+    if (outLines.some((l) => l === offer || l.endsWith(` · ${offer}`))) evidence.push(`coordinator.out: ${offer}`);
+    else if (outLines.some((l) => /^◆ finisher\b/.test(l)) && outLines.some((l) => l.startsWith(finished))) evidence.push(`coordinator.out: ${finished} (the finisher took over)`);
+    else return { pass: false, evidence, detail: `coordinator.out has no \`${offer}\` line` };
     const report = bundle.steps?.merged?.report ?? '';
     const footer = report.split('\n').find((l) => l.startsWith('Synced with '));
     if (!footer) return { pass: false, evidence, detail: 'the report read at the merge has no `Synced with` footer' };

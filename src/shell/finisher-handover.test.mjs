@@ -177,14 +177,12 @@ function finRun(t, { worktree, controlDir, runTests, startFinisher, finisherStub
 
 // ---- The hand-over (DESIGN §2.1) ----
 
-test('green end with the agent: ready, then the next pass closes the agent and starts the finisher', (t) => {
+test('green end with the agent: the pass that settles ready closes the agent and starts the finisher', (t) => {
   const run = finRun(t);
-  const ready = run.toReady();
-  assert.equal(ready.handoff.state, 'ready');
-  assert.equal(run.started.length, 0, 'not on the pass that settles ready');
-  assert.equal(run.coordinator.agent.alive(), true);
-
-  const r = run.coordinator.pass();
+  // Handed over in the settling pass itself: a pass left reading `ready` with no finisher would paint and
+  // snapshot `ready to merge` with the merge line, the person's to run (2026-10-01).
+  const r = run.toReady();
+  assert.equal(r.handoff.state, 'ready');
   assert.equal(run.started.length, 1, 'the finisher started');
   assert.deepEqual(run.started[0].reportPath, REPORT_REL);
   assert.equal(run.started[0].base, 'main', 'the run\'s base is handed to the finisher');
@@ -201,6 +199,9 @@ test('green end with the agent: ready, then the next pass closes the agent and s
   assert.equal(rs.coordinator, null);
   assert.equal(rs.finisher.phase, 'preparing');
   assert.equal(buildRunState({ passTasks: [] }).finisher, undefined, 'no finisher: the old shape');
+
+  run.coordinator.pass();
+  assert.equal(run.started.length, 1, 'the next pass starts no second finisher');
 });
 
 test('with the finisher taking over, the agent\'s hand-off message carries the report and no git merge line', (t) => {

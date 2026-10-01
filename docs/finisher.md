@@ -27,8 +27,10 @@ On a build run with the coordinator agent on, whatever its base branch, when the
 `ready` (green tests, the base merged into the feature branch, `REPORT.md` committed;
 [coordinator-agent.md](coordinator-agent.md#the-end-of-the-run)),
 the agent is told the report is committed and that the finisher takes over, with no merge line
-(`handoffFor` with `finisher: true` in `coordinator-brief.mjs`). On the next pass `pir` closes the agent
-and starts the finisher (`handOver` in `coordinate.mjs`, from the `waiting` step of `endPass`). The
+(`handoffFor` with `finisher: true` in `coordinator-brief.mjs`). In that same pass `pir` closes the agent
+and starts the finisher (`handOver` in `coordinate.mjs`, called at the end of `endPass` whenever a pass
+leaves a green `waiting` with no finisher yet), so no frame or snapshot ever reads `ready to merge` with
+the merge line while the finisher is about to take it. The
 agent's row is gone from then on; its ledger, report and conversation file stay as they are.
 
 - A run that settles **red** ends as it does without the finisher: `✗ not ready`, no merge offered, the
