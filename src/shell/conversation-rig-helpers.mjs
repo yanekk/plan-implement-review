@@ -5,10 +5,10 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { startRig, openScreen, mouseBytes, RIG_DONE_SUMMARY, RIG_STUCK_SUMMARY, RIG_RESERVED_COMMAND } from './conversation-rig.mjs';
+import { startRig, openScreen, mouseBytes, BURIED_LAST_WORDS, RIG_DONE_SUMMARY, RIG_STUCK_SUMMARY, RIG_RESERVED_COMMAND } from './conversation-rig.mjs';
 import { BASIC_SGR } from './palette.mjs';
 import { indexDir, updateRecord } from './index-store.mjs';
 
@@ -510,6 +510,36 @@ export function defineHelperLinesTest([cols, rows]) {
       assert.doesNotMatch(s, /^\s*⎿ Read/m, 'every helper step is labelled');
       for (const r of s.split('\n')) assert.ok([...r].length <= cols);
       assert.equal(screen.overflows(), 0, 'no frame was clipped to fit the window');
+    } finally {
+      await screen.close();
+    }
+  });
+}
+
+// fix-empty-session-view (pir/single-e809), end to end: the worker's words, both helpers' starts and B's end
+// are all before the 256 KB the view reads, behind A's own frames. The screen opened after that still shows
+// the whole default conversation: the parent's last words, a line per helper and the running count.
+export function defineBuriedHelpersTest([cols, rows]) {
+  test(`a conversation whose tail is all one helper's frames opens whole on the real pir screen at ${cols}×${rows}`, { timeout: 60000 }, async (t) => {
+    const env = scratchHome(t);
+    const rig = startRig({ env, scenario: 'helpers-buried', workMs: 300 });
+    t.after(() => rig.stop());
+    // The buried part is written in one burst after the parent's result; open only once it is all there.
+    await waitFor(() => existsSync(rig.logPath) && statSync(rig.logPath).size > 300 * 1024, { what: "A's frames to fill the tail" });
+    const text = readFileSync(rig.logPath, 'utf8');
+    assert.ok(Buffer.byteLength(text.slice(text.indexOf(BURIED_LAST_WORDS))) > 262144, "the parent's last words are behind the cut");
+    const screen = openScreen({ cols, rows, env: { ...process.env, ...env }, settleMs: 100 });
+    try {
+      await screen.waitFor(/rig +work +● running/);
+      screen.send('\r');
+      await screen.waitFor(/pick a task/);
+      screen.send('\x1b[C');
+      const s = (await screen.waitFor(/◌ 1 helper running/)).join('\n');
+      assert.match(s, /↳ helper · Survey the code · /, "A's line");
+      assert.match(s, /↳ helper finished · Check the tests/, "B's line, finished before the cut");
+      assert.match(s.replace(/\s+/g, ' '), /Both helpers are started and Check the tests is done; I will wait for Survey the code\./, "the parent's last words");
+      assert.doesNotMatch(s, /line 1 of a long file/, "none of a helper's own frames");
+      assert.equal(screen.overflows(), 0);
     } finally {
       await screen.close();
     }

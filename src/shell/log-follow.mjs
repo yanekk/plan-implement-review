@@ -1,6 +1,6 @@
 // Tail and follow a worker's conversation log (plans/live-workers DESIGN §2.3, §2.14; T13). The view reads
-// the last 256 KB of the file, so a huge conversation opens at once, then follows what the coordinator
-// appends. The coordinator writes one `write` per line (§2.3), but a read can still land between two
+// the last 256 KB of the file, so a huge conversation opens at once, plus what its `carry` picks out of the
+// lines before the cut, then follows what the coordinator appends. The coordinator writes one `write` per line (§2.3), but a read can still land between two
 // appends' bytes arriving, so a partial last line is held back until its newline is there: the view never
 // parses half a line and then the rest as a second one.
 //

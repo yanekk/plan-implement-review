@@ -1,6 +1,6 @@
 // The conversation view: the third view of the `pir` screen, one worker's conversation (plans/live-workers
-// DESIGN §2.5–§2.9, §2.11, §2.14; T13). It reads the worker's log (log-follow.mjs: the last 256 KB, plus any
-// still-pending request from before it, then every append), paints core/conversation.mjs's lines, and turns the person's keys into inbox drops
+// DESIGN §2.5–§2.9, §2.11, §2.14; T13). It reads the worker's log (log-follow.mjs: the last 256 KB, plus everything
+// before it but a helper's own frames (carryHistory), then every append), paints core/conversation.mjs's lines, and turns the person's keys into inbox drops
 // (person-inbox.mjs's dropPersonInput). Every rule about what a line says is core's; this file decides
 // only layout and which key does what, after §2.11's key table.
 //
@@ -96,6 +96,8 @@ function parseLine(line) {
 // output can push a question the person has not answered out of it within a minute (plan-0077: the row
 // read `asking you` from the full log while the view showed no question). Pending is judged on the whole
 // log, the way the row judges it, so a request answered or cancelled anywhere is not brought back.
+// The view now carries carryHistory, which keeps every request and so everything this returns; this stays
+// as the statement of that guarantee, and its tests hold carryHistory to it.
 export function carryPending(skipped, tail) {
   const skippedEntries = skipped.map(parseLine);
   const pending = new Set(workerActivity([...skippedEntries, ...tail.map(parseLine)]).pending.map((r) => r.requestId));
@@ -103,6 +105,56 @@ export function carryPending(skipped, tail) {
   return skipped.filter((_, i) => {
     const e = skippedEntries[i];
     return e?.dir === 'request' && pending.has(e.requestId);
+  });
+}
+
+// carryHistory(skipped, tail) → the skipped lines the default view draws or reads, in log order, for
+// followLog's `carry`. The 256 KB tail alone can hold nothing but a helper's own frames: pir/single-e809's
+// builder started four helpers and ended its turn, and 490 KB of helper frames later the view opened blank,
+// with no parent text, no helper line and no `helpers running` (the helpers' task_started were cut too).
+// So the view opens on the whole conversation, as if it had been open throughout, and only what the
+// default view never shows is left behind: a helper's own frames (`parent_tool_use_id` set). Kept from
+// those is exactly what the fold and the render read off them (core/helpers.mjs, core/conversation.mjs):
+//   - a helper frame making a call that a task_started names as a helper (local_agent) or as background
+//     work: that call is how a nested helper rolls up into its outer one and a helper's background command
+//     is told from the parent's;
+//   - the system events the helper and background folds read (task_started, task_notification,
+//     task_updated, background_tasks_changed), whoever's frame they arrive in;
+//   - of task_progress, per task, only the last event setting each field the fold reads (the step, the
+//     tool-use count, the duration): each is last-write-wins, so the result is the same.
+// Everything else (parent frames, `out` entries, notes, shell entries, every request, an unreadable line)
+// is kept, so carryPending's guarantee holds: every request, pending or not, comes back. Helper frames
+// before the cut are lost to the Tab view's full detail only (docs/detached-runs.md).
+const FOLD_SUBTYPES = new Set(['task_started', 'task_notification', 'task_updated', 'background_tasks_changed']);
+export function carryHistory(skipped, tail) {
+  const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
+  const systemOf = (e) => (e?.dir === 'in' && isObj(e.event) && e.event.type === 'system' ? e.event : null);
+  const skippedEntries = skipped.map(parseLine);
+  // The calls a helper or a background task was started by, over the whole log: a task_started can follow
+  // the call's frame by any distance, the cut included.
+  const tasksFrom = new Set();
+  for (const e of [...skippedEntries, ...tail.map(parseLine)]) {
+    const m = systemOf(e);
+    if (m?.subtype === 'task_started' && typeof m.tool_use_id === 'string' && (m.task_type === 'local_agent' || m.is_backgrounded === true)) tasksFrom.add(m.tool_use_id);
+  }
+  const lastProgress = new Map(); // `${task_id}|field` → index of the last task_progress setting it
+  skippedEntries.forEach((e, i) => {
+    const m = systemOf(e);
+    if (m?.subtype !== 'task_progress' || typeof m.task_id !== 'string') return;
+    if (typeof m.description === 'string') lastProgress.set(`${m.task_id}|step`, i);
+    if (Number.isFinite(m.usage?.tool_uses)) lastProgress.set(`${m.task_id}|steps`, i);
+    if (Number.isFinite(m.usage?.duration_ms)) lastProgress.set(`${m.task_id}|duration`, i);
+  });
+  const progressKept = new Set(lastProgress.values());
+  return skipped.filter((_, i) => {
+    const e = skippedEntries[i];
+    const m = systemOf(e);
+    if (m?.subtype === 'task_progress') return progressKept.has(i);
+    if (m && FOLD_SUBTYPES.has(m.subtype)) return true;
+    const helper = e?.dir === 'in' && isObj(e.event) ? e.event.parent_tool_use_id : null;
+    if (typeof helper !== 'string' || !helper) return true;
+    const content = e.event.message?.content;
+    return Array.isArray(content) && content.some((b) => b?.type === 'tool_use' && tasksFrom.has(b.id));
   });
 }
 
@@ -201,7 +253,7 @@ export function createConversationView({
 
   const follower = worker?.logPath
     ? follow(worker.logPath, {
-        carry: carryPending,
+        carry: carryHistory,
         ...followOptions,
         onEntries(lines) {
           for (const l of lines) entries.push(parseLine(l));

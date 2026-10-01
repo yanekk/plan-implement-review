@@ -216,8 +216,10 @@ to a worker; once the finisher has replaced the agent, `c` opens the finisher's 
 reads `c finisher`; with no agent, `c` leaves a note in the footer
 ([coordinator-agent.md](coordinator-agent.md#the-agents-own-conversation)).
 
-The view reads the worker's conversation log from the control folder (the last 256 KB plus any request
-still pending from before it, then every append; `log-follow.mjs`), so a closed `pir` loses nothing and two open screens agree. Messages from pir, from the person and from the worker are marked and coloured
+The view reads the worker's conversation log from the control folder (the last 256 KB, plus everything
+before it except a helper's own frames, then every append; `log-follow.mjs`, `carryHistory`), so it
+opens on the whole conversation even when helpers have written far more than 256 KB since the worker
+last spoke, and a closed `pir` loses nothing and two open screens agree. Messages from pir, from the person and from the worker are marked and coloured
 differently. A pending permission request or question set is highlighted and pinned above the typing
 box (see [human-flow.md](human-flow.md)). Text Claude injects itself (a loaded skill's body, marked
 `isSynthetic`) is not drawn.
@@ -278,10 +280,13 @@ last progress report, which arrives every few seconds while it works, so the lin
 own. Stopped and failed read in the error colour. When the line is too wide, the step text is
 shortened first so the step count and time stay on screen; past that the line is clipped at the edge,
 never wrapped. A helper nested inside a helper shares its outer helper's line. A helper whose start is
-not in the log (a log that begins mid-run) gets no line. None of a helper's own words, tool steps or
+not in the log gets no line; since the view brings back every helper's start from before the 256 KB it
+reads, that now only happens with a log that truly begins mid-run. None of a helper's own words, tool steps or
 background commands appear in the default view; Tab's full detail draws them where they happened,
 labelled so they cannot be read as the worker's: its text after `helper ▸ `, its steps as
-`helper ⎿ Read src/core/notify.mjs`, its background commands as `helper ↳ …`. A helper's permission
+`helper ⎿ Read src/core/notify.mjs`, its background commands as `helper ↳ …`. Tab's detail can be
+missing a helper's words and steps from before the last 256 KB of the log, which the view does not
+bring back. A helper's permission
 request or question set names the helper (see [human-flow.md](human-flow.md#helpers)).
 
 Running helpers are counted apart from background commands in the line above the box:

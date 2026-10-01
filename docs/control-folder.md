@@ -107,9 +107,14 @@ line (`worker-proc.mjs`):
   in the agent's log) and `notify-failed` (a phone alert that failed after its retries, once per
   question, with `status` and `error`; see [human-flow.md](human-flow.md#phone-alerts--pir-notify)).
 
-The `pir` screen reads the last 256 KB and follows appends (`log-follow.mjs`), and brings back any
-request still pending from before that tail, judged on the whole log, so a question pushed out by a busy
-log stays pinned (`carryPending` in `conversation-view.mjs`); a line that does not
+The `pir` screen reads the last 256 KB and follows appends (`log-follow.mjs`), and on opening also reads
+everything before that tail once and brings it back except a helper's own frames (`carryHistory` in
+`conversation-view.mjs`): the view opens on the whole conversation, as if it had been open throughout,
+however many helper frames came after the worker's last words. Every request is brought back, so a
+question pushed out by a busy log stays pinned. Of a helper's frames before the tail only what the
+default view reads is kept (its start and end events, its latest progress, and a call that started a
+nested helper or a background command), so Tab's full detail can be missing a helper's steps from
+before it. A line that does not
 parse (a crash mid-append) is shown raw and never stops the reader. A worker's state — busy, idle,
 waiting on a permission, waiting on a question set — is derived from this log (`workerActivity` in
 `src/core/stream.mjs`). The logs are kept across a restart, and a new worker for the same task gets

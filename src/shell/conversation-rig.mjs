@@ -3,7 +3,7 @@
 // worker behaves like a live one, so the conversation view (T13) can be driven end to end with no paid
 // worker. Nothing here calls a model: the worker is the real Agent SDK talking to fake/claude-stream.mjs.
 //
-//   node src/shell/conversation-rig.mjs [--into <scratch>] [--scenario tour|long|coordinator|helpers|bang|hand|finisher|finisher-notyet|finisher-stuck|finisher-reserved] [--keep]
+//   node src/shell/conversation-rig.mjs [--into <scratch>] [--scenario tour|long|coordinator|helpers|helpers-buried|bang|hand|finisher|finisher-notyet|finisher-stuck|finisher-reserved] [--keep]
 //
 // It stays in the foreground until Ctrl+C, SIGTERM (pir's Ctrl+S stop sends one to the run's pid) or a
 // HALT file in the run's control folder. While it runs, open the screen from another terminal:
@@ -40,6 +40,9 @@
 //         "Check the tests", which report progress and steps of their own every `stepMs`; A asks a
 //         permission (its `agentId`) and waits; B finishes; the worker ends its turn while A keeps going;
 //         an interrupt kills A (no `result`: the worker was idle), then a reply to every typed message.
+//   helpers-buried  (fix-empty-session-view, pir/single-e809) the worker starts both helpers, B finishes, the
+//         worker ends its turn, and A then writes over 256 KB of its own frames at once: the parent's last
+//         frame and both helpers' starts are behind the cut the view opens on. A works on until an interrupt.
 //   finisher  (finisher T07) T01 is already merged and the run waits at its end, held by the finisher: the
 //         real finisher-agent session on its own fake script (finisherScript). It writes a `ready` status
 //         and asks the `Go` question (`c` in the live view opens it); on `Go` it runs its merge step, stays
@@ -222,6 +225,7 @@ export function scenarioScript(name = 'tour', { paceMs = 300, workMs = 4000, ste
     return [...opening, { emit: assistantText('T01 is built and merged.') }, { emit: resultEvent('success', 'merged') }, { chat: { workMs, init: RIG_INIT } }];
   }
   if (name === 'helpers') return helpersScript({ stepMs, workMs });
+  if (name === 'helpers-buried') return helpersBuriedScript({ workMs });
   if (name === 'bang') {
     // One idle worker for the person's `!` (bang-commands T03, T06): it says hello, ends its turn, and
     // answers every message it gets, a command's result included, with RIG_BANG_REPLY.
@@ -263,7 +267,7 @@ export function scenarioScript(name = 'tour', { paceMs = 300, workMs = 4000, ste
       { react: `printf '%s' ${shQuote(RIG_BANG_REPLY)}` },
     ];
   }
-  throw new Error(`unknown scenario "${name}" (tour, long, coordinator, helpers, bang, hand, hand-drill, ${FINISHER_SCENARIOS.join(', ')})`);
+  throw new Error(`unknown scenario "${name}" (tour, long, coordinator, helpers, bang, hand, hand-drill, helpers-buried, ${FINISHER_SCENARIOS.join(', ')})`);
 }
 
 // The finisher scenario's finisher (finisher T07): the real finisher-agent session on the fake. The fake
@@ -423,6 +427,41 @@ function helpersScript({ stepMs = 700, workMs = 4000 }) {
     ...script,
     { repeat: idleRounds, everyMs: stepMs || 50, until: 'interrupt' },
     // The interrupt kills A in the order plan-0339 logged it; the worker was idle, so no result follows.
+    { emit: backgroundAgents([]) },
+    { emit: taskUpdated(HELPER_A, 'killed') },
+    { emit: agentNotification(HELPER_A, 'stopped') },
+    { chat: { workMs, init: RIG_INIT } },
+  ];
+}
+
+// The helpers-buried scenario (fix-empty-session-view): pir/single-e809's builder started four helpers and
+// ended its turn, and its view opened blank once their frames filled the 256 KB tail. Here A's 120 steps of
+// ~2.5 KB results land at once after the parent's `result`, so the screen opening afterwards has the parent's
+// words, both helpers' starts and B's end only before the cut.
+export const BURIED_LAST_WORDS = 'Both helpers are started and Check the tests is done; I will wait for Survey the code.';
+function helpersBuriedScript({ workMs = 4000 }) {
+  const filler = Array.from({ length: 40 }, (_, i) => `line ${i + 1} of a long file the pretend helper read`).join('\n');
+  const work = (agent, n) => [
+    { emit: taskProgress(agent, `Reading src/f${n}.mjs`, { toolUses: n, durationMs: n * 1000, lastTool: 'Read' }) },
+    { emit: helperFrame(agent, toolUse(`toolu_${agent === HELPER_A ? 'a' : 'b'}${n}`, 'Read', { file_path: `src/f${n}.mjs` })) },
+    { emit: helperFrame(agent, toolResult(`toolu_${agent === HELPER_A ? 'a' : 'b'}${n}`, filler)) },
+  ];
+  const start = (agent, running) => [{ emit: agentCall(agent) }, { emit: backgroundAgents(running) }, { emit: taskStarted(agent) }, { emit: agentLaunched(agent) }];
+  const idle = Array.from({ length: 200 }, (_, i) => work(HELPER_A, 1000 + i).map((s) => s.emit));
+  return [
+    { emit: RIG_INIT },
+    { await: 'user' },
+    { emit: assistantText("I'm the pretend worker of the buried-helpers rig. I'll start two helpers.") },
+    ...start(HELPER_A, [HELPER_A]),
+    ...start(HELPER_B, [HELPER_A, HELPER_B]),
+    ...work(HELPER_B, 1),
+    { emit: taskUpdated(HELPER_B, 'completed') },
+    { emit: agentNotification(HELPER_B, 'completed') },
+    { emit: backgroundAgents([HELPER_A]) },
+    { emit: assistantText(BURIED_LAST_WORDS) },
+    { emit: resultEvent('success', 'waiting for Survey the code') },
+    ...Array.from({ length: 120 }, (_, i) => work(HELPER_A, i + 1)).flat(),
+    { repeat: idle, everyMs: 500, until: 'interrupt' },
     { emit: backgroundAgents([]) },
     { emit: taskUpdated(HELPER_A, 'killed') },
     { emit: agentNotification(HELPER_A, 'stopped') },
@@ -1013,7 +1052,7 @@ function parseArgs(argv) {
     if (a === '--into') opts.into = argv[++i];
     else if (a === '--scenario') opts.scenario = argv[++i];
     else if (a === '--keep') opts.keep = true;
-    else throw new Error(`unknown argument ${a}\nusage: conversation-rig.mjs [--into <scratch>] [--scenario tour|long|coordinator|helpers|bang|hand|hand-drill|${FINISHER_SCENARIOS.join('|')}] [--keep]`);
+    else throw new Error(`unknown argument ${a}\nusage: conversation-rig.mjs [--into <scratch>] [--scenario tour|long|coordinator|helpers|helpers-buried|bang|hand|hand-drill|${FINISHER_SCENARIOS.join('|')}] [--keep]`);
   }
   return opts;
 }
