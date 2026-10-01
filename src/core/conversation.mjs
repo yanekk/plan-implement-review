@@ -4,7 +4,8 @@
 // these reducers, so every rule about what the person sees is decided and tested here.
 //
 // Lines follow render.mjs's convention: a line is an array of `{ text, style }` spans. Styles: 'pir',
-// 'person', 'worker', 'step', 'step-error', 'dim', 'prompt', 'ok', 'bad', or null for plain.
+// 'person', 'worker', 'step', 'step-error', 'dim', 'prompt', 'ok', 'bad', 'shell' (the person's `!`), or null for
+// plain.
 //
 // Widths count code points (text.mjs). Exact clipping of wide characters is the painter's job in the
 // shell (pi-tui `truncateToWidth`): core may not import a package (DESIGN §3.1).
@@ -174,8 +175,15 @@ export function buildConversation(entries, { full = false, width = 80, taskId = 
   const toolNames = new Map(); // toolUseId → tool name, so a background task knows it is a Monitor
   const background = new Map(); // task_id → { description, tool, ended } for work moved to the background
   const requests = []; // every permission and questions event, to tie a refusal to its step (§2.2)
+  const shells = new Map(); // the person's commands (bang-commands §2.8): id → { start, output, clipped, end }
   list.forEach((entry, i) => {
     for (const ev of readEntry(entry)) {
+      if (ev.kind === 'shell-start') shells.set(ev.id, { start: ev, output: '', clipped: false, end: null });
+      else if (ev.kind === 'shell-output' && shells.has(ev.id)) {
+        const sh = shells.get(ev.id);
+        if (ev.clipped === true) sh.clipped = true;
+        else if (typeof ev.text === 'string') sh.output += ev.text;
+      } else if (ev.kind === 'shell-end' && shells.has(ev.id)) shells.get(ev.id).end = ev;
       if (ev.kind === 'tool-use') toolNames.set(ev.toolUseId, ev.name);
       if (ev.kind === 'permission' || ev.kind === 'questions') requests.push(ev);
       if (ev.kind === 'system') {
@@ -236,6 +244,9 @@ export function buildConversation(entries, { full = false, width = 80, taskId = 
     for (const ev of readEntry(entry)) {
       switch (ev.kind) {
         case 'sent': {
+          // The message a person's command sent the agent is drawn as its block, not a second time (§2.8). A
+          // block not in these entries (its start before the tail the view opened on) leaves the text to show.
+          if (ev.shell && shells.has(ev.shell)) break;
           const { prefix, style } = senderPrefix(ev.from, taskId);
           emit(wrapped(prefix, ev.text, style, w));
           // The model read the note first; the person reads it under their own words (visible-helpers §2.6).
@@ -292,6 +303,11 @@ export function buildConversation(entries, { full = false, width = 80, taskId = 
         case 'note':
           emit(noteLines(ev, w));
           break;
+        case 'shell-start':
+          // The whole block is drawn where the command started, its output and end gathered in pass 1, so
+          // the agent's own lines while it runs never split it (bang-commands §2.8).
+          emit(shellBlockLines(shells.get(ev.id), { full, width: w, taskId }));
+          break;
         case 'raw':
           emit([[span('· an unreadable log line', 'dim')]]);
           break;
@@ -324,7 +340,7 @@ export function buildConversation(entries, { full = false, width = 80, taskId = 
           break;
         }
         default:
-          // init, tool-result (drawn on its step).
+          // init, tool-result (drawn on its step), shell-output and shell-end (drawn in their block).
           break;
       }
     }
@@ -343,6 +359,58 @@ export function helperTime(ms) {
   if (!Number.isFinite(ms)) return '';
   const total = Math.max(0, Math.floor(ms / 1000));
   return total < 60 ? `${total}s` : `${Math.floor(total / 60)}m ${total % 60}s`;
+}
+
+// ---- The person's own command (bang-commands DESIGN §2.8). ----
+
+// How many of a block's output lines the grouped view shows; the rest sit under one `… n earlier lines`.
+export const SHELL_TAIL_LINES = 12;
+
+// shellEndLine(end, taskId) → { text, ok } for a finished command's last line. `taskId` is the session's label
+// as the header names it. Only a clean exit that reached the session reads ✓; a stop, a failure, a signal or a
+// message that never arrived reads ✗.
+export function shellEndLine(end, taskId = 'worker') {
+  if (end?.stopped === 'pir-restart') return { text: '✗ cut off by a pir restart', ok: false };
+  if (end?.sent === 'undelivered' || end?.stopped === 'session-closed') return { text: '✗ not sent: the session has ended', ok: false };
+  let what;
+  if (end?.stopped) what = 'stopped by you';
+  else if (typeof end?.signal === 'string' && end.signal) what = `killed by ${end.signal}`;
+  else what = `exit ${Number.isInteger(end?.code) ? end.code : '?'}`;
+  const delivered = end?.sent === 'message' || end?.sent === 'answer';
+  const parts = [what, helperTime(end?.ms), delivered ? `sent to ${taskId}` : 'not sent'].filter(Boolean);
+  const ok = delivered && !end?.stopped && !end?.signal && end?.code === 0;
+  return { text: `${ok ? '✓' : '✗'} ${parts.join(' · ')}`, ok };
+}
+
+// shellRunningLine(shell, now) → the status part while a command runs: `● running your command · 4s · esc
+// stops it`. `shell` is workerActivity's `shell`; `now` is the caller's clock (core reads none).
+export function shellRunningLine(shell, now) {
+  if (!shell) return '';
+  const time = Number.isFinite(shell.t) && Number.isFinite(now) ? helperTime(now - shell.t) : '';
+  return ['● running your command', time, 'esc stops it'].filter(Boolean).join(' · ');
+}
+
+// One command's block: `you ! {command}`, its output indented two columns (in the grouped view only the last
+// SHELL_TAIL_LINES, under a dim count), then its end line once it has ended.
+function shellBlockLines(sh, { full, width, taskId }) {
+  if (!sh) return [];
+  const out = wrapped('you ! ', sh.start.command ?? '', 'person', width);
+  // The `!` takes the shell style, as it does in the box (§2.1).
+  out[0] = [span('you ', 'person'), span('!', 'shell'), span(out[0][0].text.slice(5), 'person')];
+  const text = sh.output.replace(/\n$/, '');
+  let rows = text === '' ? [] : text.split('\n');
+  if (!full && rows.length > SHELL_TAIL_LINES) {
+    const earlier = rows.length - SHELL_TAIL_LINES;
+    out.push([span(`  … ${earlier} earlier line${earlier === 1 ? '' : 's'} · Tab shows all`, 'dim')]);
+    rows = rows.slice(-SHELL_TAIL_LINES);
+  }
+  for (const row of rows) out.push(...wrapped('  ', row, null, width));
+  if (sh.clipped) out.push(...wrapped('  ', '· the rest of the output was not kept (over 1 MB)', 'dim', width));
+  if (sh.end) {
+    const end = shellEndLine(sh.end, taskId);
+    out.push(...wrapped('  ', end.text, end.ok ? 'ok' : 'bad', width));
+  }
+  return out;
 }
 
 // helperLine(helper, width) → the helper's one line (DESIGN §2.2), clipped, never wrapped: it is a status.
@@ -584,6 +652,10 @@ function noteLines(note, width) {
     // What the phone was told (reliable-notifications DESIGN §2.8), so the person can see it in `pir`.
     case 'notified':
       text = note.reminder ? 'reminder sent to your phone' : 'alert sent to your phone';
+      break;
+    // The forwarder refused a `!` the view let through (a second screen, a stale one): bang-commands §2.2.
+    case 'shell-refused':
+      text = `your command was not run: ${note.reason === 'busy' ? 'a command is already running' : 'the session has ended'}${note.command ? ` (${note.command})` : ''}`;
       break;
     case 'notify-failed': {
       const why = typeof note.error === 'string' && note.error !== '' ? note.error : note.status != null ? `HTTP ${note.status}` : 'unknown error';

@@ -8,6 +8,7 @@ import { carryPending, createConversationView, hasEnded, slashCommandsOf, slashP
 import { followLog } from './log-follow.mjs';
 import { dropPersonInput } from './person-inbox.mjs';
 import { withHeadLine } from './pir-tui.mjs';
+import { SGR } from './pir-view.mjs';
 
 // ---- followLog ----
 
@@ -1102,4 +1103,148 @@ test('carryPending: only still-pending requests come back; one an interrupt canc
   assert.deepEqual(carryPending([q, JSON.stringify(said('hi'))], [JSON.stringify(said('more'))]), [q]);
   assert.deepEqual(carryPending([q], [interrupt, result]), [], 'cancelled by an interrupt in the tail');
   assert.deepEqual(carryPending([q, p, 'not json'], []), [q, p], 'both pending, in log order; a bad line is skipped');
+});
+
+// ---- The person's `!` (bang-commands T06, DESIGN §2.1, §2.2, §2.4) ----
+
+const shStart = (id, command) => entry({ dir: 'shell', kind: 'start', id, command, cwd: '/w' });
+const shEnd = (id) => entry({ dir: 'shell', kind: 'end', id, code: 0, signal: null, stopped: null, ms: 1000, sent: 'message' });
+
+test('typing ! sets command mode and its hint; backspace over it leaves the mode', () => {
+  const t = makeView();
+  t.type('!');
+  assert.equal(t.v.state.commandMode, true);
+  assert.equal(t.screen().at(-1), "! command · ↵ run in this session's folder · ⌫ the ! to leave");
+  t.v.handleInput('\x7f');
+  assert.equal(t.v.state.text, '');
+  assert.equal(t.v.state.commandMode, false);
+  assert.match(t.screen().at(-1), /^↵ send · esc interrupt/);
+  t.type(' !ls');
+  assert.equal(t.v.state.commandMode, false, 'a leading space is not command mode');
+});
+
+test('the command hint fits 80 columns, scrolled up as well', () => {
+  const t = makeView({ log: [init(), opening, ...Array.from({ length: 80 }, (_, i) => said(`line ${i}`))] });
+  t.type('!');
+  t.v.handleInput(KEY.pgUp);
+  for (const l of t.screen()) assert.ok([...l].length <= 80, l);
+  assert.match(t.screen().at(-1), /more below · ! command/);
+});
+
+test('Enter with ! alone sends nothing and keeps the !; Enter with ! ls drops a shell input', () => {
+  const t = makeView();
+  t.type('!');
+  t.v.handleInput(KEY.enter);
+  assert.deepEqual(t.drops, []);
+  assert.equal(t.v.state.text, '!');
+  t.type(' ls');
+  t.v.handleInput(KEY.enter);
+  assert.deepEqual(t.drops, [{ to: 'w-1', kind: 'shell', command: 'ls' }]);
+  assert.equal(t.v.state.text, '', 'the box is cleared once sent');
+});
+
+test('Esc with a command running drops shell-stop, not interrupt; Esc with none interrupts as before', () => {
+  const t = makeView({ log: [init(), opening, shStart('sh-1', 'sleep 30')] });
+  t.v.handleInput(KEY.esc);
+  assert.deepEqual(t.drops, [{ to: 'w-1', kind: 'shell-stop' }]);
+  t.v.handleInput(KEY.ctrlC);
+  assert.deepEqual(t.drops.at(-1), { to: 'w-1', kind: 'shell-stop' }, 'Ctrl+C on an empty box does the same');
+  t.push(shEnd('sh-1'));
+  t.v.handleInput(KEY.esc);
+  assert.deepEqual(t.drops.at(-1), { to: 'w-1', kind: 'interrupt' });
+});
+
+test('a running command shows its status line with the elapsed time, and the hint says Esc stops it', () => {
+  let clock = 0;
+  const log = [init(), opening, entry({ dir: 'in', event: { type: 'result', subtype: 'success' } }), shStart('sh-1', 'sleep 30')];
+  const drops = [];
+  const v = createConversationView({
+    run: { slug: 'plan', controlDir: '/nowhere' },
+    worker: { taskId: 'T05', workerId: 'w-1', logPath: '/nowhere/x.ndjson', live: true },
+    follow: (_p, { onEntries }) => (onEntries(log.map((e) => JSON.stringify(e))), { stop() {} }),
+    drop: (_d, input) => (drops.push(input), { ok: true }),
+    alive: () => true,
+    tui: { requestRender() {}, terminal: { rows: 30 } },
+    colour: false,
+    now: () => clock,
+  });
+  clock = log[3].t + 4200;
+  let lines = v.render(80).map((l) => stripTerminalSequences(l));
+  assert.ok(lines.includes('● running your command · 4s · esc stops it'), lines.join('\n'));
+  assert.equal(lines.at(-1), '↵ send · esc stops it · ← back · Tab detail · PgUp/PgDn scroll');
+  clock += 68000;
+  lines = v.render(80).map((l) => stripTerminalSequences(l));
+  assert.ok(lines.includes('● running your command · 1m 12s · esc stops it'));
+  v.dispose();
+  // Busy as well, the worker's own work is named after it.
+  const t = makeView({ log: [init(), opening, shStart('sh-1', 'sleep 30')] });
+  assert.match(t.text(), /^● running your command · .* · esc stops it · working…$/m);
+  t.v.dispose();
+});
+
+test('a helper running and a command running: Esc stops the command with no helper warning', () => {
+  const hStart2 = entry({ dir: 'in', event: { type: 'system', subtype: 'task_started', task_id: 'h1', tool_use_id: 'c1', description: 'Survey the code', task_type: 'local_agent' } });
+  const t = makeView({ log: [init(), opening, hStart2, entry({ dir: 'in', event: { type: 'result', subtype: 'success' } }), shStart('sh-1', 'sleep 30')] });
+  t.v.handleInput(KEY.esc);
+  assert.equal(t.v.state.warning, '', 'no warning: no interrupt is sent, so no helper is stopped');
+  assert.deepEqual(t.drops, [{ to: 'w-1', kind: 'shell-stop' }]);
+});
+
+test('a second ! while one runs is refused in the view with the status text, and the text stays', () => {
+  const t = makeView({ log: [init(), opening, shStart('sh-1', 'sleep 30')] });
+  t.type('!ls');
+  t.v.handleInput(KEY.enter);
+  assert.deepEqual(t.drops, []);
+  assert.equal(t.v.state.text, '!ls');
+  assert.match(t.text(), /a command is already running · esc stops it/);
+  t.v.handleInput(KEY.ctrlC); // clears the box
+  t.type('hello');
+  t.v.handleInput(KEY.enter);
+  assert.deepEqual(t.drops, [{ to: 'w-1', kind: 'message', text: 'hello' }], 'a typed message still sends while a command runs');
+});
+
+test('a ! while a permission is pinned runs the command and leaves the request pinned', () => {
+  const t = makeView({ log: [init(), opening, permission()] });
+  t.type('!ls');
+  t.v.handleInput(KEY.enter);
+  assert.deepEqual(t.drops, [{ to: 'w-1', kind: 'shell', command: 'ls' }], 'not a refusal of the request');
+  assert.match(t.text(), /⚑ T05 wants to use Bash/);
+  assert.match(t.text(), /↵ allow · n refuse/);
+  t.v.handleInput(KEY.enter);
+  assert.deepEqual(t.drops.at(-1), { to: 'w-1', kind: 'permission', requestId: 'r1', decision: 'allow' }, 'the request still answers');
+});
+
+test('a ! with the run not running: the not-running refusal, and the text stays in the box', () => {
+  const t = makeView({ alive: false });
+  t.type('! ls');
+  t.v.handleInput(KEY.enter);
+  assert.deepEqual(t.drops, []);
+  assert.equal(t.v.state.text, '! ls');
+  assert.match(t.text(), /the run is not running — your command was not sent/);
+});
+
+test('colour on: the box border and the ! take the shell style in command mode; off it, the border is dim', () => {
+  const t = makeView({ colour: true });
+  const boxOf = () => t.v.render(80).slice(-4, -1);
+  const dimBorder = boxOf()[0];
+  t.type('!ls');
+  const [top, text, bottom] = boxOf();
+  const pink = SGR.shell;
+  assert.ok(pink, 'the palette has a shell style');
+  assert.ok(top.startsWith(pink), 'the top border is pink');
+  assert.ok(bottom.startsWith(pink), 'the bottom border is pink');
+  assert.ok(text.includes(`${pink}!`), 'the ! is pink');
+  assert.notEqual(top, dimBorder);
+  t.v.handleInput('\x7f');
+  t.v.handleInput('\x7f');
+  t.v.handleInput('\x7f');
+  assert.equal(boxOf()[0], dimBorder, 'out of command mode the border is back');
+});
+
+test('a question set pinned while a command runs: the hint says Esc stops the command, and Esc does', () => {
+  const t = makeView({ log: [init(), opening, shStart('sh-1', 'sleep 30'), questions()] });
+  assert.match(t.screen().at(-1), /esc stops it/);
+  assert.doesNotMatch(t.screen().at(-1), /esc to talk instead/);
+  t.v.handleInput(KEY.esc);
+  assert.deepEqual(t.drops, [{ to: 'w-1', kind: 'shell-stop' }]);
 });

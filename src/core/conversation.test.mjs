@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
-import { buildConversation, gateFor, gateReducer, pickerFor, pickerReducer, promptLines, mainArg, onOther, helperTime, stepKind, groupLabel } from './conversation.mjs';
+import { buildConversation, gateFor, gateReducer, pickerFor, pickerReducer, promptLines, mainArg, onOther, helperTime, stepKind, groupLabel, shellEndLine, shellRunningLine } from './conversation.mjs';
 
 const SAMPLE = readFileSync(fileURLToPath(new URL('./fixtures/stream-sample.ndjson', import.meta.url)), 'utf8')
   .split('\n')
@@ -1071,4 +1071,98 @@ test('full mode is unchanged: identical to the output before grouping, no group 
 test('read-only: a step that never got a result stays its own line', () => {
   const log = [...step('a', 'Read'), use('b', 'Bash', { command: 'npm test' }), { t: t++, dir: 'note', kind: 'exited', signal: 'SIGKILL' }];
   assert.deepEqual(all(buildConversation(log, { readOnly: true }).lines), ['  ▸ Read 1 file', '  ⎿ Bash npm test', '· the worker exited (signal SIGKILL)']);
+});
+
+// ---- The person's own command, its block (bang-commands T06, DESIGN §2.8). ----
+
+const shStart = (id, command, extra = {}) => ({ t: t++, dir: 'shell', kind: 'start', id, command, cwd: '/w', ...extra });
+const shOut = (id, text, extra = {}) => ({ t: t++, dir: 'shell', kind: 'output', id, text, ...extra });
+const shEnd = (id, extra = {}) => ({ t: t++, dir: 'shell', kind: 'end', id, code: 0, signal: null, stopped: null, ms: 6000, sent: 'message', ...extra });
+const shSent = (id, text = '[pir] The person ran a command in your working folder:\n$ x\nexit 0 · 6s\nhi') => ({ t: t++, dir: 'out', from: 'person', kind: 'message', text, shell: id });
+
+test('a finished command block: you ! command, its output indented, the end line, and the agent\'s reply after it', () => {
+  const { lines } = buildConversation([out('pir', 'Build T05.'), shStart('sh-1', "printf 'one\\ntwo\\n'"), shOut('sh-1', 'one\ntwo\n'), shSent('sh-1'), shEnd('sh-1'), say('Thanks.')], { taskId: 'T05' });
+  assert.deepEqual(all(lines), ['pir ▸ Build T05.', "you ! printf 'one\\ntwo\\n'", '  one', '  two', '  ✓ exit 0 · 6s · sent to T05', 'T05 ▸ Thanks.']);
+  const head = lines[1];
+  assert.deepEqual(head.map((s) => [s.text, s.style]), [['you ', 'person'], ['!', 'shell'], [" printf 'one\\ntwo\\n'", 'person']]);
+  assert.equal(styleOf(lines[2]), null, 'output is plain');
+  assert.equal(styleOf(lines[4]), 'ok');
+});
+
+test('the message a command sent is not drawn a second time; one whose block is not in the entries still shows', () => {
+  const { lines } = buildConversation([shStart('sh-1', 'ls'), shSent('sh-1', 'the text'), shEnd('sh-1')], { taskId: 'T05' });
+  assert.ok(!all(lines).some((l) => l.includes('the text')), 'hidden: the block is its representation');
+  const orphan = buildConversation([shSent('sh-9', 'the text')], { taskId: 'T05' }).lines;
+  assert.deepEqual(all(orphan), ['you ▸ the text'], 'its start was cut off the tail: the text is all there is');
+});
+
+test('a running block has no end line; agent lines while it runs come after the whole block', () => {
+  const { lines } = buildConversation([shStart('sh-1', 'sleep 30'), shOut('sh-1', 'a\n'), say('still here'), shOut('sh-1', 'b')], { taskId: 'T05' });
+  assert.deepEqual(all(lines), ['you ! sleep 30', '  a', '  b', 'T05 ▸ still here']);
+});
+
+test('an empty-output block shows only its head and end', () => {
+  const { lines } = buildConversation([shStart('sh-1', 'true'), shEnd('sh-1', { ms: 400 })], { taskId: 'T05' });
+  assert.deepEqual(all(lines), ['you ! true', '  ✓ exit 0 · 0s · sent to T05']);
+});
+
+test('the end line for a failure, a stop, a signal and each sent value', () => {
+  const endText = (extra) => all(buildConversation([shStart('s', 'x'), shEnd('s', extra)], { taskId: 'T05' }).lines).at(-1);
+  assert.equal(endText({ code: 1, ms: 2000 }), '  ✗ exit 1 · 2s · sent to T05');
+  assert.equal(endText({ code: null, signal: 'SIGHUP', stopped: 'person', ms: 72000 }), '  ✗ stopped by you · 1m 12s · sent to T05');
+  assert.equal(endText({ code: null, signal: 'SIGKILL', ms: 2000 }), '  ✗ killed by SIGKILL · 2s · sent to T05');
+  assert.equal(endText({ sent: 'answer' }), '  ✓ exit 0 · 6s · sent to T05', 'a hand request answered is sent too');
+  assert.equal(endText({ sent: 'undelivered' }), '  ✗ not sent: the session has ended');
+  assert.equal(endText({ code: null, stopped: 'session-closed', sent: 'none' }), '  ✗ not sent: the session has ended');
+  assert.equal(endText({ code: null, stopped: 'pir-restart', sent: 'none', ms: undefined }), '  ✗ cut off by a pir restart');
+  assert.equal(endText({ sent: 'none' }), '  ✗ exit 0 · 6s · not sent');
+  const bad = buildConversation([shStart('s', 'x'), shEnd('s', { code: 1 })], { taskId: 'T05' }).lines.at(-1);
+  assert.equal(styleOf(bad), 'bad');
+  assert.equal(all(buildConversation([shStart('s', 'x'), shEnd('s')], { taskId: 'planner' }).lines).at(-1), '  ✓ exit 0 · 6s · sent to planner', 'the session\'s label');
+});
+
+test('a clipped block says the rest was not kept', () => {
+  const { lines } = buildConversation([shStart('s', 'yes'), shOut('s', 'y\ny\n'), shOut('s', '', { clipped: true }), shEnd('s', { code: null, stopped: 'person' })], { taskId: 'T05' });
+  assert.deepEqual(all(lines), ['you ! yes', '  y', '  y', '  · the rest of the output was not kept (over 1 MB)', '  ✗ stopped by you · 6s · sent to T05']);
+  assert.equal(styleOf(lines[3]), 'dim');
+});
+
+test('grouped, a long block shows its last 12 lines under the count; full detail shows every line', () => {
+  const seq = Array.from({ length: 200 }, (_, i) => `${i + 1}\n`).join('');
+  const entries = [shStart('s', 'seq 1 200'), shOut('s', seq), shEnd('s')];
+  const grouped = all(buildConversation(entries, { taskId: 'T05' }).lines);
+  assert.deepEqual(grouped, ['you ! seq 1 200', '  … 188 earlier lines · Tab shows all', ...Array.from({ length: 12 }, (_, i) => `  ${189 + i}`), '  ✓ exit 0 · 6s · sent to T05']);
+  const full = all(buildConversation(entries, { taskId: 'T05', full: true }).lines);
+  assert.equal(full.length, 202);
+  assert.equal(full[1], '  1');
+  assert.equal(full[200], '  200');
+  const thirteen = all(buildConversation([shStart('s', 'x'), shOut('s', Array.from({ length: 13 }, (_, i) => `l${i}`).join('\n'))], { taskId: 'T05' }).lines);
+  assert.equal(thirteen[1], '  … 1 earlier line · Tab shows all');
+  const twelve = all(buildConversation([shStart('s', 'x'), shOut('s', Array.from({ length: 12 }, (_, i) => `l${i}`).join('\n'))], { taskId: 'T05' }).lines);
+  assert.equal(twelve.length, 13, 'exactly 12 lines need no count');
+});
+
+test('a command block ends an open group of steps, and a step after it starts a new one', () => {
+  const { lines } = buildConversation([...step('a', 'Read', { file_path: 'x' }), shStart('s', 'ls'), shEnd('s'), ...step('b', 'Read', { file_path: 'y' })], { taskId: 'T05' });
+  assert.deepEqual(all(lines), ['  ▸ Read 1 file', 'you ! ls', '  ✓ exit 0 · 6s · sent to T05', '  ▸ Read 1 file']);
+});
+
+test('a forwarder refusal is drawn as a note', () => {
+  const note = (reason) => ({ t: t++, dir: 'note', kind: 'shell-refused', command: 'ls', reason });
+  assert.deepEqual(all(buildConversation([note('busy'), note('no-session')]).lines), [
+    '· your command was not run: a command is already running (ls)',
+    '· your command was not run: the session has ended (ls)',
+  ]);
+});
+
+test('shellRunningLine: the status part with its elapsed time, read from the given clock', () => {
+  assert.equal(shellRunningLine({ id: 's', command: 'x', t: 1000 }, 5400), '● running your command · 4s · esc stops it');
+  assert.equal(shellRunningLine({ id: 's', command: 'x', t: 0 }, 72000), '● running your command · 1m 12s · esc stops it');
+  assert.equal(shellRunningLine({ id: 's', command: 'x', t: null }, 5), '● running your command · esc stops it');
+  assert.equal(shellRunningLine(null, 5), '');
+});
+
+test('shellEndLine is ok only for a clean exit that reached the session', () => {
+  assert.deepEqual(shellEndLine({ code: 0, signal: null, stopped: null, ms: 1000, sent: 'message' }, 'agent'), { text: '✓ exit 0 · 1s · sent to agent', ok: true });
+  assert.equal(shellEndLine({ code: 0, stopped: 'person', ms: 1000, sent: 'message' }).ok, false);
 });
