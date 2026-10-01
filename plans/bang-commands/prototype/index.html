@@ -1,0 +1,83 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>bang-commands — throwaway mock</title>
+<style>
+body{background:#11111b;color:#cdd6f4;font:14px/1.45 Menlo,monospace;margin:24px}
+h2{font:600 15px system-ui;color:#f9e2af;margin:28px 0 6px}
+p.note{font:13px system-ui;color:#a6adc8;margin:0 0 8px;max-width:820px}
+.term{background:#1e1e2e;border:1px solid #45475a;border-radius:6px;padding:10px 14px;width:820px;white-space:pre}
+.dim{color:#6c7086}.you{color:#89b4fa}.w{color:#cdd6f4}.pir{color:#94e2d5}
+.bang{color:#f5c2e7}.out{color:#bac2de}.err{color:#f38ba8}.ok{color:#a6e3a1}.amber{color:#f9e2af;font-weight:bold}
+.box{border-top:1px solid #45475a;border-bottom:1px solid #45475a;display:block}
+.tabs button{font:13px system-ui;margin-right:6px;padding:4px 10px;background:#313244;color:#cdd6f4;border:1px solid #45475a;border-radius:4px;cursor:pointer}
+.tabs button.on{background:#f5c2e7;color:#11111b}
+.state{display:none}.state.on{display:block}
+</style></head><body>
+<p class="note">Throwaway mock, not a spec. A worker's conversation in pir (80 columns). Click through the states.</p>
+<div class="tabs">
+<button class="on" onclick="show(0)">1 · typing a ! command</button>
+<button onclick="show(1)">2 · running, output streams</button>
+<button onclick="show(2)">3 · finished, sent to agent</button>
+<button onclick="show(3)">4 · agent hands you a command</button>
+<button onclick="show(4)">5 · live view row</button>
+</div>
+
+<div class="state on"><h2>1 · Typing "!" switches the box to command mode</h2>
+<p class="note">The box border and a "!" marker turn pink. Backspace on an empty box goes back to talking to the agent.</p>
+<div class="term"><span class="dim">acme / screen-time / T05 / budget-ledger / implement · worker</span>
+<span class="w">T05 ▸ The ledger tests are green. Next I need the staging bucket listed.</span>
+<span class="dim">  ▸ Ran 3 shell commands, read 2 files</span>
+
+<span class="dim">◌ idle</span>
+<span class="box bang">! gsutil ls gs://acme-staging/ledger█                                            </span>
+<span class="dim">! command mode · ↵ run in the worker's folder · ⌫ on empty box leaves · esc clear</span></div></div>
+
+<div class="state"><h2>2 · Running — output streams in, Esc stops the command (not the agent)</h2>
+<div class="term"><span class="dim">acme / screen-time / T05 / budget-ledger / implement · worker</span>
+<span class="w">T05 ▸ The ledger tests are green. Next I need the staging bucket listed.</span>
+<span class="dim">  ▸ Ran 3 shell commands, read 2 files</span>
+<span class="bang">you ! gsutil ls gs://acme-staging/ledger</span>
+<span class="out">  gs://acme-staging/ledger/2026-09-29.json</span>
+<span class="out">  gs://acme-staging/ledger/2026-09-30.json</span>
+<span class="out">  gs://acme-staging/ledger/2026-10-01.json</span>
+
+<span class="bang">● running your command · 4s · esc stops it</span>
+<span class="box">█                                                                               </span>
+<span class="dim">esc stop the command · typing waits until it ends</span></div></div>
+
+<div class="state"><h2>3 · Finished — the agent gets it at once and reacts</h2>
+<div class="term"><span class="bang">you ! gsutil ls gs://acme-staging/ledger</span>
+<span class="out">  gs://acme-staging/ledger/2026-09-29.json</span>
+<span class="out">  gs://acme-staging/ledger/2026-09-30.json</span>
+<span class="out">  gs://acme-staging/ledger/2026-10-01.json</span>
+<span class="ok">  ✓ exit 0 · 6s · sent to T05</span>
+<span class="w">T05 ▸ Three days are there. I'll point the import at the 10-01 file.</span>
+
+<span class="dim">● working…</span>
+<span class="box">█                                                                               </span>
+<span class="dim">↵ send · ! command · esc interrupt · ← back</span>
+
+<span class="dim">(stopped instead:)</span>
+<span class="err">  ✗ stopped by you · 1m 12s · sent to T05</span>
+<span class="dim">(failed:)</span>
+<span class="err">  ✗ exit 1 · 2s · sent to T05</span></div></div>
+
+<div class="state"><h2>4 · The agent hands you a command — pinned like a permission</h2>
+<p class="note">Enter runs it exactly as shown, e puts "! gcloud auth login" in the box to edit, n declines and tells the agent. Typing a reply instead declines with your words.</p>
+<div class="term"><span class="w">T05 ▸ I need the staging credentials and only you can log in.</span>
+
+<span class="amber">! T05 asks you to run a command</span>
+<span class="bang">  gcloud auth login --no-launch-browser</span>
+<span class="dim">  why: the deploy check needs your Google login; I can't do it from here</span>
+<span class="dim">  ↵ run · e edit first · n decline · or type a reply to decline with it</span>
+<span class="box">█                                                                               </span></div></div>
+
+<div class="state"><h2>5 · The run's live view row</h2>
+<div class="term"><span class="dim">  T04  policy-decision     ✅ done</span>
+<span class="amber">▸ T05  budget-ledger       asking you · run a command</span>
+<span class="dim">  T06  warning-banner      building · 3m</span>
+
+<span class="dim">● T05 budget-ledger — asking you; open it (→) to answer</span>
+
+<span class="dim">phone: </span><span class="w">screen-time · T05 implement — asks you to run: gcloud auth login --no-launch-browser (open pir to run it)</span></div></div>
+<script>function show(i){document.querySelectorAll('.state').forEach((e,j)=>e.classList.toggle('on',i==j));document.querySelectorAll('.tabs button').forEach((e,j)=>e.classList.toggle('on',i==j))}</script>
+</body></html>
