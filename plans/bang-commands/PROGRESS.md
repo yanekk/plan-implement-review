@@ -26,7 +26,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T03 | bang-forwarding | T01, T02 | ✅ | |
 | T04 | hand-rules | T00, T02 | ✅ | |
 | T05 | hand-tool | T00, T03, T04 | ✅ | |
-| T06 | bang-view | T02, T03 | ⬜ | |
+| T06 | bang-view | T02, T03 | ✅ | |
 | T07 | hand-view | T05, T06 | ⬜ | |
 | T08 | bang-drill | T06, T07 | ⬜ | |
 | T09 | agent-rules | T05 | ✅ | Review clean, no fix commit. Six skills checked against DESIGN §2.6 and the tool's own description in `worker-proc.mjs`: limits, decline text, outside-pir fallback, coordinator never answers. Coordinator and finisher silent. New `hand-skills.test.mjs` instead of editing old tests accepted. Probed: tests fail when a limit phrase is removed. |

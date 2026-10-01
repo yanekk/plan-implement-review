@@ -10,7 +10,8 @@
 // worker is not live, or its log says it exited) has no box and takes only ←, scrolling and Tab.
 
 import { Editor, CombinedAutocompleteProvider, isKeyRelease, parseKey } from '@earendil-works/pi-tui';
-import { buildConversation, gateReducer, pickerReducer, promptLines, onOther } from '../core/conversation.mjs';
+import { buildConversation, gateReducer, pickerReducer, promptLines, onOther, shellRunningLine } from '../core/conversation.mjs';
+import { parseBang } from '../core/bang.mjs';
 import { readEntry, workerActivity } from '../core/stream.mjs';
 import { runningHelpers, stoppedByInterrupt, helpersNote, interruptGate, gateWarning } from '../core/helpers.mjs';
 import { dropPersonInput } from './person-inbox.mjs';
@@ -111,13 +112,18 @@ function refusal(reason, what) {
   return `${what} was not sent: ${reason}`;
 }
 
-// createConversationView({ run, worker, follow, drop, alive, onBack, tui, colour, followOptions })
+// The box's hint in command mode (bang-commands DESIGN §2.1), and the view's refusal of a second `!` (§2.2).
+export const COMMAND_HINT = "! command · ↵ run in this session's folder · ⌫ the ! to leave";
+export const SHELL_BUSY = 'a command is already running · esc stops it';
+
+// createConversationView({ run, worker, follow, drop, alive, onBack, tui, colour, followOptions, now })
 //   → a pi-tui Component (render, handleInput, invalidate, focused) plus dispose() and a read-only `state`.
 //   run    — { slug, controlDir }: the open run; drops land in its controlDir's inbox.
 //   worker — dashboard's openWorker: { taskId, workerId, logPath, live }.
 //   follow — followLog's signature; drop — dropPersonInput's; alive() — the open run is `running` (§2.5).
 //   onBack — called on ← with an empty box: the caller steps back to the run's live view.
 //   tui    — the pi-tui screen (requestRender, terminal.rows); a stub when there is none.
+//   now    — the clock the running command's elapsed time is read from.
 export function createConversationView({
   run,
   worker,
@@ -128,6 +134,7 @@ export function createConversationView({
   tui = STUB_HOST,
   colour = true,
   followOptions = {},
+  now = Date.now,
 }) {
   const taskId = worker?.taskId ?? 'worker';
   const entries = [];
@@ -154,9 +161,13 @@ export function createConversationView({
   const paint = (spans, width) => paintLine(spans, width, colour);
   const style = (s, text) => (colour && SGR[s] ? `${SGR[s]}${text}${RESET}` : text);
 
+  // Command mode is the box's text starting with `!` (bang-commands DESIGN §2.1): no flag of its own, so
+  // backspace over the `!` leaves it and a pasted `!ls` is a command.
+  const commandMode = () => !!editor && parseBang(editor.getText()) !== null;
+  let ticker = null; // repaints once a second while a command runs, so its elapsed time moves
   const editor = worker?.live
     ? new Editor(tui, {
-        borderColor: (s) => style('dim', s),
+        borderColor: (s) => style(commandMode() ? 'shell' : 'dim', s),
         selectList: {
           selectedPrefix: (s) => style('prompt', s),
           selectedText: (s) => style('prompt', s),
@@ -222,6 +233,12 @@ export function createConversationView({
     if (send({ kind: 'interrupt' }, 'the interrupt')) status = { text: 'interrupt sent', style: 'dim' };
   }
 
+  // Esc, or Ctrl+C on an empty box, while this session's command runs: it stops the command, never the agent,
+  // so no interrupt is sent and no helper is stopped (bang-commands DESIGN §2.4).
+  function stopShell() {
+    if (send({ kind: 'shell-stop' }, 'the stop')) status = { text: 'stop sent', style: 'dim' };
+  }
+
   // Esc, or Ctrl+C on an empty box: with helpers running, the first press only arms a warning naming them
   // and the second interrupts (visible-helpers DESIGN §2.5). The running list is read when the key is
   // pressed, so a helper that has ended since is not named.
@@ -242,6 +259,25 @@ export function createConversationView({
       return;
     }
     let ok;
+    const bang = parseBang(text);
+    if (bang) {
+      // A `!` line runs the command, and a pinned permission stays pinned: a command is not a reply (§2.1).
+      if (bang.command === '') {
+        editor.setText('!');
+        return;
+      }
+      if (workerActivity(entries).shell) {
+        status = { text: SHELL_BUSY, style: 'bad' };
+        editor.setText(text);
+        return;
+      }
+      if (!send({ kind: 'shell', command: bang.command }, 'your command')) {
+        editor.setText(text);
+        return;
+      }
+      editor.addToHistory(text);
+      return;
+    }
     if (p?.kind === 'permission') ok = send({ kind: 'permission', requestId: p.requestId, decision: 'deny', text }, 'your reply');
     else {
       // Only a typed message carries the note naming helpers an interrupt stopped; a reply to a request
@@ -311,7 +347,10 @@ export function createConversationView({
       const gateKey = key === 'escape' && !completing ? 'escape' : key === 'ctrl+c' && empty ? 'ctrl+c-empty' : null;
       // Any other key disarms the Esc warning and then does what it always does (§2.5, gateReducer's rule).
       if (!gateKey) escGate = null;
-      if (gateKey) interruptKey(gateKey);
+      if (gateKey && m.activity.shell) {
+        escGate = null;
+        stopShell();
+      } else if (gateKey) interruptKey(gateKey);
       else if (key === 'ctrl+c') editor.setText('');
       else if (key === 'tab' && !completing) full = !full;
       else if (key === 'left' && empty && !typingOther()) return onBack();
@@ -400,13 +439,17 @@ export function createConversationView({
   // ways, and with a request pending the scroll key is only `PgUp/PgDn`.
   // Scrolled up, `↓ N more below · ` leads the hint, so the live hints shed a phrase to keep it within 80
   // (user 2026-09-26, T20 review): the pending request is pinned in view, and the person has just used PgUp.
+  // In command mode the box's own hint replaces it (bang-commands §2.1); while a command runs, Esc stops it.
   function hint(m, scrolled) {
     if (m.readOnly) return `← back · PgUp/PgDn scroll · Tab detail · ${m.ended ? 'exited' : 'finished'}, read only`;
+    if (livePrompt()?.kind !== 'questions' && commandMode()) return COMMAND_HINT;
+    const esc = m.activity.shell ? 'esc stops it' : 'esc interrupt';
     // ← goes back only with an empty box, and Enter/n/a answer only then.
     // With a question set pinned, typing answers it, so talking instead is Esc (user 2026-09-26, T18 drill).
-    if (livePrompt()?.kind === 'questions') return `${scrolled ? '' : 'answer above · '}esc to talk instead · ← back · Tab detail · PgUp/PgDn`;
-    if (livePrompt()) return `${scrolled ? '' : 'answer above or type a reply · '}esc interrupt · ← back · Tab detail · PgUp/PgDn`;
-    return `↵ send · esc interrupt · ← back · Tab detail · PgUp/PgDn${scrolled ? '' : ' scroll'}`;
+    // A running command takes Esc even with a question set pinned (bang-commands §2.4), so the hint says so.
+    if (livePrompt()?.kind === 'questions') return `${scrolled ? '' : 'answer above · '}${m.activity.shell ? esc : 'esc to talk instead'} · ← back · Tab detail · PgUp/PgDn`;
+    if (livePrompt()) return `${scrolled ? '' : 'answer above or type a reply · '}${esc} · ← back · Tab detail · PgUp/PgDn`;
+    return `↵ send · ${esc} · ← back · Tab detail · PgUp/PgDn${scrolled ? '' : ' scroll'}`;
   }
 
   function render(width) {
@@ -430,6 +473,16 @@ export function createConversationView({
     // name every helper the interrupt would stop, and two already overflow 80 columns (user 2026-09-29).
     const warning = m.readOnly ? '' : gateWarning(escGate);
     const warningLines = warning ? wrapLine(warning, w).map((l) => paint([span(l, 'prompt')], w)) : [];
+    // The person's command running in this session (bang-commands DESIGN §2.8), read against the clock here.
+    const shell = m.readOnly ? null : m.activity.shell;
+    if (shell && !ticker) {
+      ticker = setInterval(() => tui.requestRender(), 1000);
+      ticker.unref?.();
+    } else if (!shell && ticker) {
+      clearInterval(ticker);
+      ticker = null;
+    }
+    const shellLine = shell ? [span(shellRunningLine(shell, now()), 'shell')] : null;
     if (p && answered.has(p.requestId)) bottom.push(paint([span('⚑ answer sent — waiting for pir to deliver it', 'prompt')], w));
     else if (p) for (const l of promptLines(p, { width: w, taskId })) bottom.push(paint(l, w));
     else if (!m.readOnly) {
@@ -437,13 +490,21 @@ export function createConversationView({
       // Its helpers are named apart from its background commands (visible-helpers DESIGN §2.2).
       const parts = statusParts(m.conv);
       if (warning) bottom.push(...warningLines);
+      else if (shellLine) bottom.push(paint([...shellLine, ...(m.activity.state === 'busy' ? [span(' · working…', 'active')] : []), ...(parts ? [span(` · ${parts}`, 'dim')] : [])], w));
       else if (m.activity.state === 'busy') bottom.push(paint([span('● working…', 'active'), ...(parts ? [span(` · ${parts}`, 'dim')] : [])], w));
       else if (parts) bottom.push(paint([span(`◌ ${parts}`, 'dim')], w));
     }
     if (warning && p) bottom.push(...warningLines);
+    // Under a pinned prompt, which has no status line, the running command still says it runs (§2.1).
+    if (shellLine && p) bottom.push(paint(shellLine, w));
     if (status) bottom.push(paint([span(status.text, status.style)], w));
     const boxAt = bottom.length;
-    if (!m.readOnly) bottom.push(...editor.render(w));
+    if (!m.readOnly) {
+      const boxLines = editor.render(w);
+      // The `!` itself in the shell style; with colour off the `!` alone marks the mode (§2.1).
+      if (colour && SGR.shell && commandMode() && editor.scrollOffset === 0 && boxLines[1]) boxLines[1] = boxLines[1].replace('!', `${SGR.shell}!${RESET}`);
+      bottom.push(...boxLines);
+    }
 
     const height = Math.max(1, rows - out.length - bottom.length - 1); // the last 1 is the hint line
     // Scrolled up, the scrollback losing rows to a prompt or `● working…` below it (or getting them back)
@@ -482,10 +543,12 @@ export function createConversationView({
     },
     dispose() {
       follower?.stop();
+      if (ticker) clearInterval(ticker);
+      ticker = null;
     },
     // For the tests: what the view holds right now.
     get state() {
-      return { text: editor?.getText() ?? null, prompt, status, warning: gateWarning(escGate), full, scrollBack, entries: entries.length, readOnly: model(lastWidth).readOnly, open: [...open] };
+      return { text: editor?.getText() ?? null, commandMode: commandMode(), prompt, status, warning: gateWarning(escGate), full, scrollBack, entries: entries.length, readOnly: model(lastWidth).readOnly, open: [...open] };
     },
   };
 }

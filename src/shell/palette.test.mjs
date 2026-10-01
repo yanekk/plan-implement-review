@@ -22,6 +22,8 @@ test('Mocha paints Catppuccin Mocha foregrounds and never a page background', ()
   assert.equal(MOCHA_SGR.crashed, '\x1b[38;2;243;139;168m', 'crashed is Mocha red');
   assert.equal(MOCHA_SGR.asking, '\x1b[1;38;2;249;226;175m', 'asking stays bold, in Mocha yellow');
   assert.equal(MOCHA_SGR.pir, '\x1b[38;2;250;179;135m', 'pir is Mocha peach');
+  assert.equal(MOCHA_SGR.shell, '\x1b[38;2;245;194;231m', 'the person\'s ! is Mocha pink (bang-commands §2.1)');
+  assert.equal(BASIC_SGR.shell, '\x1b[38;5;212m', 'and a 256-colour pink on the basic table');
   assert.equal(MOCHA_SELECTED_BG, '\x1b[48;2;49;50;68m', 'the selected band is Mocha surface0');
   // Every code is bold and/or a 24-bit foreground, nothing else: no background, so the terminal's shows through.
   for (const [style, code] of Object.entries(MOCHA_SGR)) assert.match(code, /^\x1b\[(1|(1;)?38;2;\d+;\d+;\d+)m$/, style);
