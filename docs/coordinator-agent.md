@@ -161,7 +161,7 @@ person answered first, the agent is told who answered and what, as above, and it
 
 ## What always goes to the person
 
-Two kinds of item are **reserved**, whatever the agent's rules say (`reservedFor` in
+Three kinds of item are **reserved**, whatever the agent's rules say (`reservedFor` in
 `coordinator-policy.mjs`). The command enforces this, not the agent: a `permission` decision for a
 reserved item is refused and the item passed on with the agent's text as its note.
 
@@ -170,6 +170,10 @@ reserved item is refused and the item passed on with the agent's text as its not
   with the same matcher "do not ask again" grants use. A compound Bash command is split on `&&`, `||`,
   `;`, `|` and newlines, `$()` and backtick bodies are read too, and the request is reserved if any
   part matches. A request carrying the SDK's `matchedAskRule` or `defaultToNo` is reserved as well.
+- **A command a worker hands the person.** A `hand_command` request (`mcp__pir__hand_command`,
+  [human-flow.md](human-flow.md#a-command-an-agent-hands-you--hand_command)) is the person's to run,
+  always: its row reads `asking you · run a command` from the start, and the agent is briefed on it
+  only to add a note with a `pass`. A `permission` decision for it is refused, and no grant covers it.
 - **A destructive command.** A Bash command matching the destructive list (`DESTRUCTIVE` in
   `coordinator-policy.mjs`): `rm` with `-r` or `-f` (or `--recursive`, `--force`), `git push` with
   `--force`, `-f`, `--force-with-lease` or a `+refspec`, `git reset --hard`, `git clean -f`,
@@ -232,7 +236,10 @@ Enter, or a click on the row) opens its conversation; **`c`** opens the same con
 names `c` only when the run has an agent. The state comes from the agent's `view().state`, the count
 from the command's `held` map (`agentView()` in `coordinate.mjs`, carried in `runState.coordinator`). The person may type to
 it there: ask where things stand, why it answered something, or give it an instruction for the rest
-of the run. Typing reaches it through the same `inbox/` as a worker's input. Its pointers and its
+of the run. Typing reaches it through the same `inbox/` as a worker's input. A `!` line there runs a
+command in the feature worktree and sends the agent its output, as in any conversation
+([human-flow.md](human-flow.md#running-a-command-yourself--)); the agent itself has no `hand_command`
+and never hands the person a command. Its pointers and its
 hand-off appear in this conversation.
 
 Its Remote Control is on for its whole session, so the person can reach it from claude.ai or the

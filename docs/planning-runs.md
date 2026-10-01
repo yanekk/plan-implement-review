@@ -166,6 +166,9 @@ Answering the planner in `pir` is the same act as answering a worker (see
 - **Names** are `{repo} / {runId-or-slug} / plan / planner` and `{repo} / {slug} / plan / reviewer`.
   They have no `T{nn}`, so no coordinator ever counts or closes them.
 - **Working directory** is the plan branch's worktree.
+- **`!` and handed commands** work here as in a build: a `!` line runs in the plan worktree, and the
+  planner and reviewer can hand the person a command with `hand_command`, which their step reads as
+  `asking you · run a command` ([human-flow.md](human-flow.md#running-a-command-yourself--)).
 - **Remote Control is on for the whole session**, not only while it waits on the person as for a build
   worker: a planning session is a conversation with the person from start to finish, so it can be
   followed on claude.ai or the phone throughout. `PARALLEL_REMOTE=0` turns it off, as for a build.
@@ -256,6 +259,7 @@ auto-approves a write under `.git`, which would stall the planner at its last st
 | `reports/` | the sessions' report files |
 | `conversations/` | `plan-{n}.ndjson` and `review-{n}.ndjson`, one per session. A resumed session appends to its own log after a `resumed` note, so the person reads one conversation |
 | `inbox/` | the person's input on its way to the session, as for a build |
+| `shells/` | the record of a `!` command running in a session, for reaping after a crash, as for a build ([control-folder.md](control-folder.md#what-is-in-it)) |
 | `workers.json` | the live session's pid, start time and worktree (`cwd`), for reaping |
 | `status.json`, `run.log` | the snapshot the screen paints, and the program's output |
 

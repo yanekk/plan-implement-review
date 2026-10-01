@@ -440,6 +440,20 @@ What it tells you at a glance:
   interrupts, and your next message tells the worker which helpers were stopped. A worker whose helper
   is still running reads as working, not as waiting on you. Helpers are not shown on the task rows
   or over Remote Control. See [human-flow.md](docs/human-flow.md#helpers).
+- **Run a command yourself with `!`.** In any conversation in `pir` (a worker, the planner, a single
+  run, the coordinator agent), start a line with `!` and it runs as a shell command in that session's
+  folder, with your own shell and aliases. The output streams into the conversation, and when it ends
+  the session gets the command, how it ended and its output, and replies to it, as if you had pasted
+  it in. Esc stops it. It keeps running if you close `pir`. Commands are plain: one that waits for you
+  to type something just sits until you press Esc, and `!` does not work from your phone. See
+  [human-flow.md](docs/human-flow.md#running-a-command-yourself--).
+- **Or run the one an agent hands you.** When a worker, planner or single-run session needs you to run
+  something (a login, a command only your account can run), it can hand you the command ready to go:
+  its row reads `asking you · run a command`, and in its conversation you press Enter to run it, `e` to
+  edit it first, or `n` to decline. The agent gets the output straight back. The coordinator agent
+  never answers one of these for you. On your phone it shows as an ordinary permission prompt, and
+  allowing it there runs nothing; the agent is told to ask you what happened. See
+  [human-flow.md](docs/human-flow.md#a-command-an-agent-hands-you--hand_command).
 - **Or answer from your phone.** While a worker waits on you, its session is also opened to
   Claude's Remote Control, so you can answer on claude.ai or your phone instead of in `pir`. Once you
   have answered and the worker is back at work, it is closed again. Start a run with
@@ -632,8 +646,9 @@ a copy that goes stale. The parallel coordinator engine installs the same way, u
 `~/.claude/pir-engine/`, so it runs a plan in **any** repo — it reads its target from the
 coordinator's working directory. Re-running the installer refreshes both in place.
 
-The engine is `src/` plus its two npm packages, `@earendil-works/pi-tui` (the `pir` screen) and
-`@anthropic-ai/claude-agent-sdk` (the line to each worker), pinned in the committed
+The engine is `src/` plus its npm packages, `@earendil-works/pi-tui` (the `pir` screen),
+`@anthropic-ai/claude-agent-sdk` (the line to each worker), `zod` (the shape of the `hand_command` tool
+an agent uses to hand you a command) and `uqr` (the QR code `pir notify` prints), pinned in the committed
 `package-lock.json`. The installer runs `npm ci` beside the installed engine with dev, peer and
 optional packages omitted, so it needs npm and the network on every run; if that fails it says so
 and exits non-zero, since `pir` cannot start without them. In a checkout, `npm ci` once before

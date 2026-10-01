@@ -30,9 +30,9 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T07 | hand-view | T05, T06 | ✅ | |
 | T08 | bang-drill | T06, T07 | ✅ | |
 | T09 | agent-rules | T05 | ✅ | |
-| T10 | docs-readme | T08, T09 | ⬜ | |
+| T10 | docs-readme | T08, T09 | 🔍 | Docs only: `!` and `hand_command` in human-flow, detached-runs, control-folder (`shells/`), coordinator-agent (reserved), planning/single, docs index, README. Also corrected the engine's package list to four (zod, uqr). No doc test pinned the changed text; suite red only on the known notify-wiring and ENOTEMPTY cases. `./install.sh` not run. |
 
-**Review queue:** empty
+**Review queue:** T10
 
 ## Blocked on the user
 

@@ -64,8 +64,9 @@ Control is on (below) — when any of these holds, and the coordinator agent doe
 item reads `asking coordinator`; its clock is stopped too, and Remote Control stays off) (`waitingOn` in `src/core/asking.mjs`, the one predicate the
 row, the clock and Remote Control all read, so they cannot disagree):
 
-- its live worker has a permission request or a question set pending (the row reads `asking you ·
-  allow a command?` or `asking you · a question`), or
+- its live worker has a permission request, a question set or a [handed command](#a-command-an-agent-hands-you--hand_command)
+  pending (the row reads `asking you · allow a command?`, `asking you · a question` or `asking you · run
+  a command`), or
 - it is parked on its own `question` or `decision` report, and its worker is **not inside the asking
   turn** — the turn it dropped the report in. The report is only a real park once that turn has ended; or
 - it is building or reviewing and its worker has **stopped**: its last turn has ended, nothing is
@@ -233,6 +234,113 @@ reading the worker's own state. A phone alert (`pir notify`) and the coordinator
 helper's permission request name the worker or planner, not the helper. What a model does with the
 note (restart the helper or do the work itself) is its own choice and is not tested.
 
+## Running a command yourself — `!`
+
+In any conversation with a typing box (a build worker implementing or reviewing, an end-of-run helper,
+the coordinator agent, the finisher, the planner, the plan reviewer, a single run's builder or
+reviewer), a line starting with `!` runs as a shell command and its output joins the conversation, as
+`!` does in Claude's own screen (`plans/bang-commands`).
+
+- **The mode follows the text.** While the box's text starts with `!` the box and the `!` turn pink and
+  the hint reads `! command · ↵ run in this session's folder · ⌫ the ! to leave`. Deleting the `!`
+  leaves the mode; a pasted `!ls` is a command. Slash autocomplete does not fire. While a question set
+  is pinned, typing goes to its Other line, so `!` is not available until it is answered; while a
+  permission request is pinned, a `!` line runs and leaves the request pinned (running `ls` is not a
+  reply to it).
+- **Enter** sends the text after the `!`, trimmed; an empty command sends nothing. A multi-line
+  command goes to the shell whole. In a run that is not `running` nothing is sent, the view says so and
+  the text stays in the box, as for a typed message. A read-only view has no box and so no `!`.
+- **Where and how it runs.** In the session's own working folder: the worker's task worktree, the
+  planning or single run's worktree, the agent's or finisher's feature worktree. With the person's own
+  shell, `$SHELL -i -c` when `$SHELL` is zsh or bash (so their aliases and functions work), else
+  `/bin/sh -c`. The environment is pir's own with its `PARALLEL_*` and `PIR_RUN` variables removed.
+  Stdin is empty: a command that waits for input sits until the person stops it. The command is not
+  checked against the plan's bins or any permission rule; it is the person's own hands.
+- **It runs in the run's own program**, not in the `pir` screen (the coordinator for a build,
+  `plan-run.mjs` or `single-run.mjs` otherwise), so closing `pir` does not stop it and its result still
+  reaches the session. Output (stdout and stderr together, escapes stripped) streams into the
+  session's conversation log, so every open screen shows the same; the log keeps at most 1 MB of one
+  command's output and then marks it clipped.
+- **One at a time per session.** A second `!` while one runs is refused: the view says `a command is
+  already running · esc stops it`, and a stale screen whose drop gets through anyway is refused by the
+  run (`your command was not run: a command is already running`). Typed messages still go to the
+  session meanwhile. There is no timeout.
+- **What the session gets.** When the command ends, the session is sent one message from the person,
+  which starts its turn at once:
+
+  ```
+  [pir] The person ran a command in your working folder:
+  $ gsutil ls gs://acme-staging/ledger
+  exit 0 · 6s
+  <output, or "(no output)">
+  ```
+
+  The status line is `exit {n}`, `killed by {signal}` or `stopped by the person`, with the time. Output
+  over 30 000 characters keeps its last 30 000, after `(output cut: the first {n} characters are not
+  shown)`. Being the person's message it counts as an answer: a parked or stopped worker un-parks. If
+  the session has ended by then the message is not delivered and the block says so.
+- **Stopping.** Esc, or Ctrl+C on an empty box, stops the running command, not the session; no
+  interrupt is sent, so no [helper](#helpers) is stopped and there is no warning. pir sends the
+  command's process group SIGHUP and SIGTERM, then SIGKILL after 3 s. The session is told `stopped by
+  the person` with whatever output there was. A command still running when its session closes (task
+  finished, run stopped) is killed and nothing is sent.
+- **Restart.** A run program that dies with a command running leaves its record in the control
+  folder's `shells/`. The next start of that run kills the command if it is still alive (matched by pid
+  and start time), closes its block as `cut off by a pir restart`, and, if its session is live again,
+  sends it `[pir] A command the person ran was cut off when pir restarted: $ {command}`.
+
+How a command block is drawn is in [detached-runs.md](detached-runs.md#the-conversation-view).
+
+## A command an agent hands you — `hand_command`
+
+An agent that needs the person to run something (a login, a command only their account can run) can
+hand it over ready to run, instead of asking in words. Build workers, end-of-run helpers, the planner,
+the plan reviewer and a single run's builder and reviewer have one extra tool, `hand_command`
+(`mcp__pir__hand_command`, from an in-process MCP server `pir`), taking a command and a reason. The
+coordinator agent and the finisher do not have it.
+
+A call is an ordinary permission request (logged as a `request` entry), so the row reads `asking you ·
+run a command`, its clock stops, Remote Control comes on, a phone alert goes out where the session
+alerts at all (planning sessions never do) and the request is pinned above the box:
+
+```
+! T05 asks you to run a command
+  gcloud auth login --no-launch-browser
+  why: the deploy check needs your Google login
+  ↵ run · e edit first · n decline · or type a reply to decline with it
+```
+
+On an empty box:
+
+- **↵** runs the command exactly as handed, as a `!` would.
+- **e** puts `! {command}` in the box to edit; the request stays pinned, and Enter runs the edited
+  command as the answer.
+- **n** declines: the agent is told `The person declined to run it.`
+- **A typed reply** (not starting with `!`) declines with the text: `The person declined to run it.
+  They said: {text}`.
+
+There is no allow-always and no double press: a grant would let the agent run commands as the person
+without the person. Because `n` and `e` are keys while the box is empty, a typed decline that starts
+with either letter (`not now`) cannot be typed from an empty box: its first letter declines or edits.
+
+When the run ends, the agent gets the same text a `!` would send, opening `The person ran your command:`
+or `The person edited your command and ran it:`, as the tool's result, inside its open turn, and the
+row stops asking. The answered request stays in the scrollback as `! T05 asked you to run: {command}`
+followed by its block, or `· declined` / `· declined: {text}`. If the run comes to nothing (the run
+program refused it), the request stays pinned and can be answered again.
+
+**Only the person runs a handed command.** The coordinator agent never answers one: it is reserved for
+the person like an `ask`-bin action ([coordinator-agent.md](coordinator-agent.md#what-always-goes-to-the-person)),
+so the row goes straight to `asking you` and the agent may only add a note. A "do not ask again" grant
+never covers it.
+
+**Away from `pir`** the request shows on claude.ai and the phone as Claude's own permission prompt, and
+pir runs nothing there. Allowing it there gives the agent `The person allowed this from outside pir, so
+pir did not run it. Ask them in words whether they ran it and what it printed.`; refusing it declines;
+a reply in words un-parks the worker as any answer does. How that prompt looks on the phone was not
+checked by hand. A `!` cannot be typed from claude.ai or the phone either: that input never passes
+through pir.
+
 ## Answering away from the terminal — Remote Control
 
 While a worker waits on the person — a question or decision report whose asking turn has ended, a
@@ -304,7 +412,8 @@ single run that finishes `ready` sends `{name} · ready to merge` ([single-runs.
   message opens with why it is the person's — `Agent passed it on: `, `Agent didn't answer in time: `,
   `Needs your yes: `, `Agent unavailable: `, or nothing when the run has no agent — then `asks: ` and
   the question (the first of a question set, with `(+N more)`), or `wants to run ` and the tool and its
-  command for a permission request, cut to 150 characters. Those 150 characters pass through ntfy.sh.
+  command for a permission request, or, for a [handed command](#a-command-an-agent-hands-you--hand_command),
+  `Needs your yes: asks you to run: {command} (open pir to run it)`, cut to 150 characters. Those 150 characters pass through ntfy.sh.
 - **Reminder.** One, 15 minutes after the alert if the question is still the person's, prefixed
   `Still waiting: `. It shares the first alert's sequence id, so a phone that supports updates replaces
   the first alert with it rather than stacking them. Never more than one.

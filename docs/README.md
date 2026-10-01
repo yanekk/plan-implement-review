@@ -57,7 +57,7 @@ when the plan is reviewed (see [planning-runs.md](planning-runs.md)). The person
 opening the worker's conversation (see [human-flow.md](human-flow.md)), unless the run's coordinator
 agent answers it first (see [coordinator-agent.md](coordinator-agent.md)). The one-time setup is
 `./install.sh`, which puts the `pir` command on the PATH and installs the coordinator engine, with its
-two npm packages, where it can run against any set-up repo.
+npm packages, where it can run against any set-up repo.
 
 `pir-coordinate`, the old foreground launcher, is gone (`plans/live-workers` §2.13, user 2026-09-24):
 its live mode would strand a worker's question, since workers are no longer `claude agents` sessions
@@ -143,7 +143,7 @@ and it had no conversation view. `install.sh` removes an installed copy it finds
   task branches, worktrees, the hand-off (no promotion), agent names.
 - [control-folder.md](control-folder.md) — the per-run `.parallel/control/` folder.
 - [human-flow.md](human-flow.md) — questions, question sets and permission requests answered in the
-  `pir` screen, merge conflicts, the kill switch, the worker ceiling.
+  `pir` screen, the person's `!` commands and commands an agent hands them, merge conflicts, the kill switch, the worker ceiling.
 - [restart-recovery.md](restart-recovery.md) — what a restart picks up, and the known limitations.
 - [detached-runs.md](detached-runs.md) — the `pir` front-end: start a run detached, the cross-repo
   dashboard to watch, stop, clear and resume runs, and a worker's conversation view.

@@ -296,6 +296,31 @@ worker's own slash commands, minus the four that do not work over the line (`/do
 by the coordinator (see [control-folder.md](control-folder.md)); if the run is not `running`, nothing
 is sent, the view says so, and the typed text stays in the box.
 
+**A line starting with `!` is a shell command, not a message** (`plans/bang-commands`; the rules are in
+[human-flow.md](human-flow.md#running-a-command-yourself--)). While the text starts with `!` the box
+border and the `!` are pink and the hint reads `! command · ↵ run in this session's folder · ⌫ the ! to
+leave` (clipped by one column at 60 columns; it fits from 80). The command runs in the session's folder,
+in the run's program, and is drawn in the history as one block:
+
+```
+you ! gsutil ls gs://acme-staging/ledger
+  gs://acme-staging/ledger/2026-09-30.csv
+  gs://acme-staging/ledger/2026-10-01.csv
+✓ exit 0 · 6s · sent to T05
+```
+
+The output is indented two columns. The end line is one of `✓ exit 0 · {time} · sent to {name}`,
+`✗ exit 1 · {time} · sent to {name}`, `✗ stopped by you · {time} · sent to {name}`, `✗ cut off by a pir
+restart` or `✗ not sent: the session has ended`, where `{name}` is the session's label as the header
+names it (`T05`, and for the other sessions their header's label, such as `plan`, `build` or
+`coordinator`). In the grouped view a block shows its last 12 output lines under a dim `… {n} earlier
+lines · Tab shows all`; Tab's full detail shows every line. The message the session was sent is not
+drawn again as a `you ▸` line: the block stands for it. While the command runs the line above the box
+reads `● running your command · {time} · esc stops it`. A command a session [handed to the
+person](human-flow.md#a-command-an-agent-hands-you--hand_command) is pinned above the box like a
+permission request, and stays in the history as `! T05 asked you to run: {command}` followed by its
+block, or `· declined` / `· declined: {text}`.
+
 ### Key bindings
 
 The keys, as built, are shown in the footer of each view (the mouse adds clicks, hover and the wheel on
@@ -309,7 +334,7 @@ top of them; see [The mouse](#the-mouse)):
 | Steps (a planning run) | `↑↓` pick a step · `→` or `↵` open its conversation · `←` back to the list · `Ctrl+S Ctrl+S` stop this run (while it runs) · `esc` quit |
 | The go question | `↵` start the build · `n` not now · `←` back to the list · `esc` quit, leaving the question in place |
 | Brief box (`pir plan`) | typing · `↵` start planning · `shift+↵` or `ctrl+j` new line · `esc` or `Ctrl+C` cancel |
-| Conversation | typing, `↵` send · `esc` interrupt the worker · `Ctrl+C` clear the box, or interrupt when it is empty · while helpers run, the first `esc` (or `Ctrl+C` on an empty box) only shows `esc again to interrupt · this also stops N helpers: …` and a second interrupts; any other key cancels the warning and does what it normally does · `←` with an empty box back to the live view · `Tab` grouped steps ⇄ full detail (every step with its whole result; open groups stay open on the way back) · `↵`/`n`/`a` answer a pending permission, and `↑↓` `space` `↵` drive a pending question set (one `↵` answers a pick-one question), both only while the box is empty, and typing while a question set is pending goes to its Other line, where `←`/`→` move the cursor and `←` goes back only once the line is empty · `PgUp`/`PgDn` scroll |
+| Conversation | typing, `↵` send · `!` at the start of the box makes the line a shell command, `↵` runs it in the session's folder, `⌫` over the `!` leaves the mode · while a command runs, `esc` (or `Ctrl+C` on an empty box) stops the command, not the session · `↵`/`e`/`n` run, edit or decline a handed command while the box is empty · `esc` interrupt the worker · `Ctrl+C` clear the box, or interrupt when it is empty · while helpers run, the first `esc` (or `Ctrl+C` on an empty box) only shows `esc again to interrupt · this also stops N helpers: …` and a second interrupts; any other key cancels the warning and does what it normally does · `←` with an empty box back to the live view · `Tab` grouped steps ⇄ full detail (every step with its whole result; open groups stay open on the way back) · `↵`/`n`/`a` answer a pending permission, and `↑↓` `space` `↵` drive a pending question set (one `↵` answers a pick-one question), both only while the box is empty, and typing while a question set is pending goes to its Other line, where `←`/`→` move the cursor and `←` goes back only once the line is empty · `PgUp`/`PgDn` scroll |
 
 `←` steps back one view; `esc` quits `pir` outright from the list and the live view, but in the
 conversation view it interrupts the worker, as in Claude's own screen: the open turn ends at once, and
@@ -546,8 +571,10 @@ wrapper on the PATH (preferring `~/.local/bin`, falling back to `~/.claude/bin` 
 PATH` step printed), baking the installed engine path into it. So `pir` runs against whatever repo it
 is invoked from, driving a detached run in the current repo. See `bin/pir` and `install.sh`.
 
-The engine has two npm packages, `@earendil-works/pi-tui` (the screen) and
-`@anthropic-ai/claude-agent-sdk` (the line to workers), pinned in the committed `package-lock.json`.
+The engine has four npm packages, `@earendil-works/pi-tui` (the screen),
+`@anthropic-ai/claude-agent-sdk` (the line to workers), `zod` (the input shape of the in-process
+`hand_command` tool, which the SDK's `tool()` requires; `plans/bang-commands`) and `uqr` (the QR code of
+`pir notify`), pinned in the committed `package-lock.json`.
 The installer copies `package.json`, the lockfile and `.npmrc` beside the engine and runs `npm ci`
 there with dev, peer and optional packages omitted, so neither the SDK's peers nor its bundled
 `claude` binary is installed: workers run the `claude` already on the PATH. Every install re-fetches
