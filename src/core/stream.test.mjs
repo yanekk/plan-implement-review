@@ -637,3 +637,64 @@ test('wakesLoop: a note does not wake the loop; a request, output, a turn end, p
   // Every real entry in the recording except its notes wakes.
   for (const e of sample) assert.equal(wakesLoop(e), e.dir !== 'note');
 });
+
+// ---- the person's own command (bang-commands DESIGN §3.2) ----
+
+const shStart = (id, command = 'ls', extra = {}) => at({ dir: 'shell', kind: 'start', id, command, cwd: '/w', ...extra });
+const shOut = (id, text) => at({ dir: 'shell', kind: 'output', id, text });
+const shEnd = (id, extra = {}) => at({ dir: 'shell', kind: 'end', id, code: 0, signal: null, stopped: null, ms: 10, sent: 'message', ...extra });
+
+test('readEntry: shell entries read as shell-start, shell-output and shell-end with their fields and t', () => {
+  const s = shStart('sh-1-abcd', 'gcloud auth login', { requestId: 'r1', edited: true });
+  assert.deepEqual(readEntry(s), [{ kind: 'shell-start', t: s.t, id: 'sh-1-abcd', command: 'gcloud auth login', cwd: '/w', requestId: 'r1', edited: true }]);
+  const o = shOut('sh-1-abcd', 'hi\n');
+  assert.deepEqual(readEntry(o), [{ kind: 'shell-output', t: o.t, id: 'sh-1-abcd', text: 'hi\n' }]);
+  const c = at({ dir: 'shell', kind: 'output', id: 'sh-1-abcd', text: '', clipped: true });
+  assert.deepEqual(readEntry(c), [{ kind: 'shell-output', t: c.t, id: 'sh-1-abcd', text: '', clipped: true }]);
+  const e = shEnd('sh-1-abcd', { code: null, signal: 'SIGTERM', stopped: 'person', ms: 72000, sent: 'undelivered' });
+  assert.deepEqual(readEntry(e), [{ kind: 'shell-end', t: e.t, id: 'sh-1-abcd', code: null, signal: 'SIGTERM', stopped: 'person', ms: 72000, sent: 'undelivered' }]);
+  // Read from a raw log line too.
+  assert.equal(readEntry(JSON.stringify(s))[0].kind, 'shell-start');
+});
+
+test('readEntry: a shell entry with an unknown kind or no id is raw; a shell-refused note is a note', () => {
+  for (const bad of [{ dir: 'shell', kind: 'paused', id: 'sh-1' }, { dir: 'shell', kind: 'start', command: 'ls' }, { dir: 'shell', kind: 'end', id: '' }]) {
+    assert.deepEqual(readEntry(bad), [{ kind: 'raw', raw: bad }]);
+  }
+  assert.deepEqual(readEntry({ t: 1, dir: 'note', kind: 'shell-refused', command: 'ls', reason: 'busy' }),
+    [{ kind: 'note', note: 'shell-refused', command: 'ls', reason: 'busy' }]);
+});
+
+test('readOut keeps the shell id on a sent message; a message without one has no field', () => {
+  const [ev] = readEntry({ t: 1, dir: 'out', from: 'person', kind: 'message', text: '[pir] The person ran…', shell: 'sh-1-abcd' });
+  assert.deepEqual(ev, { kind: 'sent', from: 'person', text: '[pir] The person ran…', shell: 'sh-1-abcd' });
+  assert.equal('shell' in readEntry({ t: 1, dir: 'out', from: 'person', kind: 'message', text: 'hi' })[0], false);
+});
+
+test('activity.shell: null before any command; a start is running; its end clears it', () => {
+  assert.equal(workerActivity([init(), result()]).shell, null);
+  const s = shStart('sh-1', 'tail -f log', { requestId: 'r9' });
+  assert.deepEqual(workerActivity([init(), result(), s]).shell, { id: 'sh-1', command: 'tail -f log', t: s.t, requestId: 'r9' });
+  const plain = shStart('sh-2', 'ls');
+  assert.deepEqual(workerActivity([plain, shOut('sh-2', 'a\n')]).shell, { id: 'sh-2', command: 'ls', t: plain.t });
+  assert.equal(workerActivity([shStart('sh-3'), shOut('sh-3', 'a'), shEnd('sh-3')]).shell, null);
+});
+
+test('activity.shell: an exited note clears a running command', () => {
+  assert.equal(workerActivity([shStart('sh-1'), at({ dir: 'note', kind: 'exited', code: 0, signal: null })]).shell, null);
+});
+
+test('activity.shell: two starts with one end leave the open one', () => {
+  const a = shStart('sh-a', 'one');
+  const b = shStart('sh-b', 'two');
+  assert.equal(workerActivity([a, b, shEnd('sh-a')]).shell.id, 'sh-b');
+  assert.equal(workerActivity([a, b, shEnd('sh-b')]).shell.id, 'sh-a');
+  assert.equal(workerActivity([a, b, shEnd('sh-b'), shEnd('sh-a')]).shell, null);
+});
+
+test('activity.shell does not open a turn or change the state', () => {
+  const act = workerActivity([init(), result(), shStart('sh-1'), shOut('sh-1', 'x'), shEnd('sh-1')]);
+  assert.equal(act.state, 'idle');
+  assert.equal(act.open, false);
+  assert.deepEqual(act.turnCauses.length, 1);
+});

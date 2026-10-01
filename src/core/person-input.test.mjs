@@ -285,3 +285,27 @@ test('validateDrop: a message keeps `preface` and `helpersStopped`; one without 
   // Only a message carries them: an interrupt drop is stripped to its own fields, as every kind is.
   assert.deepEqual(validateDrop({ to: 'w1', kind: 'interrupt', preface: 'x' }), { ok: true, input: { to: 'w1', kind: 'interrupt' } });
 });
+
+// ---- the person's own command (bang-commands DESIGN §3.2) ----
+
+test('validateDrop: shell and shell-stop are accepted', () => {
+  assert.deepEqual(validateDrop({ to: 'w1', kind: 'shell', command: 'ls -la' }), { ok: true, input: { to: 'w1', kind: 'shell', command: 'ls -la' } });
+  assert.deepEqual(validateDrop({ to: 'w1', kind: 'shell', command: 'gcloud auth login', requestId: 'r7' }),
+    { ok: true, input: { to: 'w1', kind: 'shell', command: 'gcloud auth login', requestId: 'r7' } });
+  assert.deepEqual(validateDrop({ to: 'w1', kind: 'shell', command: '  echo a\necho b \n' }),
+    { ok: true, input: { to: 'w1', kind: 'shell', command: 'echo a\necho b' } });
+  assert.deepEqual(validateDrop({ to: 'w1', kind: 'shell-stop' }), { ok: true, input: { to: 'w1', kind: 'shell-stop' } });
+  assert.deepEqual(validateDrop({ to: 'w1', kind: 'shell-stop', text: 'x' }), { ok: true, input: { to: 'w1', kind: 'shell-stop' } });
+});
+
+test('validateDrop: a shell drop needs a command, a string requestId, and no decision', () => {
+  for (const command of [undefined, '', '   ', '\n\t', 42]) {
+    assert.equal(validateDrop({ to: 'w1', kind: 'shell', command }).ok, false, JSON.stringify(command));
+  }
+  for (const requestId of [42, '', '  ', null, {}]) {
+    assert.equal(validateDrop({ to: 'w1', kind: 'shell', command: 'ls', requestId }).ok, false, JSON.stringify(requestId));
+  }
+  assert.equal(validateDrop({ to: 'w1', kind: 'shell', command: 'ls', decision: 'allow' }).ok, false);
+  assert.equal(validateDrop({ to: 'w1', kind: 'shell-stop', decision: 'deny' }).ok, false);
+  assert.equal(validateDrop({ kind: 'shell', command: 'ls' }).ok, false);
+});
