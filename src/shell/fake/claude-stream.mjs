@@ -84,7 +84,9 @@
 //                             `can_use_tool` asks, pir's reply is awaited and its tool_result emitted. A
 //                             run tool's result is `ran <name>`. `request` adds fields to the
 //                             `can_use_tool` request (`default_to_no`, `decision_reason`). Each outcome is recorded in the received
-//                             file as {"tool": id, "outcome": "hook-deny" | "ran" | "asked"}.
+//                             file as {"tool": id, "outcome": "hook-deny" | "ran" | "asked"}. A hook runs
+//                             only for a tool its matcher names. A tool of an in-process SDK MCP server
+//                             (`mcp__pir__hand_command`) is run through the SDK (`mcp_message`, see runTool).
 // In `emit` and `sh` steps `{{reportsDir}}` is replaced with the path after `Reports folder: ` in the
 // opening message (pir-plan-command DESIGN §2.3), which is how a scripted session finds where to drop
 // its report.
@@ -415,7 +417,8 @@ async function main() {
       waiters[kind].push(w);
     });
   const responses = new Map(); // request_id → the PermissionResult pir sent for it
-  let preToolUse = []; // the PreToolUse hook callback ids the SDK registered at `initialize`
+  let preToolUse = []; // the PreToolUse hooks the SDK registered at `initialize`: [{ matcher, id }]
+  let sdkServers = []; // the in-process MCP servers the SDK listed at `initialize` (bang-commands T00)
 
   process.on('SIGTERM', () => {
     record({ signal: 'SIGTERM' });
@@ -464,7 +467,10 @@ async function main() {
       if (msg.type === 'control_request') {
         const subtype = msg.request?.subtype;
         if (subtype === 'initialize') {
-          preToolUse = (msg.request.hooks?.PreToolUse ?? []).flatMap((m) => m?.hookCallbackIds ?? []);
+          preToolUse = (msg.request.hooks?.PreToolUse ?? []).flatMap((m) => (m?.hookCallbackIds ?? []).map((id) => ({ matcher: m?.matcher ?? null, id })));
+          sdkServers = Array.isArray(msg.request.sdkMcpServers) ? msg.request.sdkMcpServers : [];
+          // No flag on the argv carries an SDK server: initialize lists it (T00). Recorded only when present.
+          if (sdkServers.length) record({ sdkMcpServers: sdkServers, sdkMcpServerManifests: msg.request.sdkMcpServerManifests ?? null });
         }
         const response =
           subtype === 'initialize' ? INITIALIZE_RESPONSE
@@ -529,7 +535,7 @@ async function main() {
     } else if ('resultFor' in step) {
       const r = resultFor(step, responses.get(step.resultFor) ?? {});
       out(step.parent ? { ...r, parent_tool_use_id: step.parent } : r);
-    } else if ('tool' in step) await runTool(step.tool, { out, take, record, responses, hooks: preToolUse });
+    } else if ('tool' in step) await runTool(step.tool, { out, take, record, responses, hooks: preToolUse, sdkServers });
     else if ('repeat' in step) {
       let stopped = false;
       for (const round of step.repeat) {
@@ -606,13 +612,52 @@ async function react(command, { out, take, turn, opening }) {
 
 // The tool step: one tool call through the hooks, the settings' rules and `can_use_tool`, in the order
 // T00 measured on the real CLI (finisher DESIGN §3.3).
+//
+// A tool named `mcp__<server>__<tool>` whose server the SDK listed in `sdkMcpServers` is run the way Claude
+// Code 2.1.286 runs an in-process SDK MCP tool (bang-commands T00): a `mcp_message` control request carrying
+// the JSON-RPC `tools/call`, with the arguments pir's reply settled (`updatedInput`, else the call's input)
+// and the tool use id in `_meta['claudecode/toolUseId']`; the SDK's `mcp_response` becomes the tool_result.
+// The outcome is recorded as {"tool": id, "mcp": <the mcp_response>}.
 let hookSeq = 0;
-async function runTool({ id, name, input = {}, allowRuled = false, request = {} }, { out, take, record, responses, hooks }) {
+let mcpSeq = 0;
+// The CLI matches a hook's matcher as a pattern over the whole tool name; no matcher is every tool.
+const hookMatches = (matcher, name) => {
+  if (!matcher || matcher === '*') return true;
+  try {
+    return new RegExp(`^(?:${matcher})$`).test(name);
+  } catch {
+    return matcher === name;
+  }
+};
+async function runTool({ id, name, input = {}, allowRuled = false, request = {} }, { out, take, record, responses, hooks, sdkServers = [] }) {
   const toolUseId = `toolu_${id}`;
   out(toolUse(toolUseId, name, input));
+  const mcp = /^mcp__(.+?)__(.+)$/.exec(name);
+  const server = mcp && sdkServers.includes(mcp[1]) ? { name: mcp[1], tool: mcp[2] } : null;
+  const run = async (args) => {
+    if (!server) {
+      out(toolResult(toolUseId, `ran ${name}`));
+      return;
+    }
+    const requestId = `mcp_req_${++mcpSeq}`;
+    out({
+      type: 'control_request', request_id: requestId,
+      request: {
+        subtype: 'mcp_message', server_name: server.name,
+        message: { jsonrpc: '2.0', id: mcpSeq, method: 'tools/call', params: { name: server.tool, arguments: args, _meta: { 'claudecode/toolUseId': toolUseId } } },
+      },
+    });
+    const reply = await take('control_response');
+    const resp = reply?.response?.response?.mcp_response ?? null;
+    record({ tool: id, mcp: resp });
+    const result = resp?.result ?? {};
+    const text = (Array.isArray(result.content) ? result.content : []).map((c) => c?.text ?? '').join('\n');
+    out(toolResult(toolUseId, resp?.error ? String(resp.error.message ?? 'MCP error') : text, !!(resp?.error || result.isError)));
+  };
   let decision = null;
   let reason = '';
-  for (const callbackId of hooks) {
+  for (const { matcher, id: callbackId } of hooks) {
+    if (!hookMatches(matcher, name)) continue;
     const requestId = `hook_req_${++hookSeq}`;
     out({
       type: 'control_request', request_id: requestId,
@@ -637,7 +682,7 @@ async function runTool({ id, name, input = {}, allowRuled = false, request = {} 
   }
   if (decision === 'allow' || (decision === null && allowRuled)) {
     record({ tool: id, outcome: 'ran' });
-    out(toolResult(toolUseId, `ran ${name}`));
+    await run(input);
     return;
   }
   record({ tool: id, outcome: 'asked' });
@@ -645,7 +690,9 @@ async function runTool({ id, name, input = {}, allowRuled = false, request = {} 
   const msg = await take('control_response');
   const r = msg?.response;
   if (r?.request_id) responses.set(r.request_id, r.response ?? {});
-  out(resultFor({ resultFor: id, allowed: `ran ${name}` }, responses.get(id) ?? {}));
+  const answer = responses.get(id) ?? {};
+  if (server && answer.behavior === 'allow') await run(answer.updatedInput ?? input);
+  else out(resultFor({ resultFor: id, allowed: `ran ${name}` }, answer));
 }
 
 // The tool_result for an answered `canUseTool`. An allowed AskUserQuestion reads back its answers in

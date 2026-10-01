@@ -10,7 +10,8 @@ import { tmpdir } from 'node:os';
 import { join, dirname, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { query as sdkQuery } from '@anthropic-ai/claude-agent-sdk';
-import { startWorker, workerOptions, writeWorkersFile } from './worker-proc.mjs';
+import { startWorker, workerOptions, writeWorkersFile, handServer, ASK_HAND_TOOL, TOOL_USE_META, HAND_DESCRIPTION } from './worker-proc.mjs';
+import { HAND_TOOL, HAND_FALLBACK } from '../core/bang.mjs';
 import { fakeClaudeSpawner, turn, wakeUp, backgroundTasks, remoteInputTurn, canUseTool, initEvent, assistantText, resultEvent, REMOTE_CONTROL_RESPONSE } from './fake/claude-stream.mjs';
 import { workerActivity, allowResult } from '../core/stream.mjs';
 import { defaultUsageReporter } from './usage-report.mjs';
@@ -760,4 +761,115 @@ test('a PIR_RUN=1 process on a scratch home saves the newest reading with no rep
     seven_day: { utilization: 0.77, resets_at: 1790830800 },
   });
   assert.deepEqual(readdirSync(join(home, '.pir')), ['usage.json']);
+});
+
+// ---- bang-commands T05: the hand tool (DESIGN §2.6). ----
+
+test('workerOptions with handTool carries the pir server and the ask hook; without it, neither', () => {
+  const opts = workerOptions({ cwd: '/w', sessionId: SESSION, name: NAME, claudePath: '/bin/claude', handTool: true });
+  assert.deepEqual(Object.keys(opts.mcpServers), ['pir']);
+  assert.equal(opts.mcpServers.pir.type, 'sdk');
+  assert.equal(opts.mcpServers.pir.name, 'pir');
+  assert.deepEqual(opts.hooks.PreToolUse.map((m) => m.matcher), [HAND_TOOL]);
+  const plain = workerOptions({ cwd: '/w', sessionId: SESSION, name: NAME, claudePath: '/bin/claude' });
+  assert.equal('mcpServers' in plain, false);
+  assert.equal('hooks' in plain, false);
+  // A caller's own hooks are kept, the hand hook after them.
+  const own = { hooks: [async () => ({})] };
+  const merged = workerOptions({ cwd: '/w', sessionId: SESSION, name: NAME, claudePath: '/bin/claude', hooks: { PreToolUse: [own], PostToolUse: [own] }, handTool: true });
+  assert.equal(merged.hooks.PreToolUse[0], own);
+  assert.equal(merged.hooks.PreToolUse[1].matcher, HAND_TOOL);
+  assert.deepEqual(merged.hooks.PostToolUse, [own]);
+});
+
+test('the ask hook answers ask for the hand tool only', async () => {
+  assert.deepEqual(await ASK_HAND_TOOL({ tool_name: HAND_TOOL }), { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'ask' } });
+  assert.deepEqual(await ASK_HAND_TOOL({ tool_name: 'Bash' }), {});
+});
+
+test('the tool description fences the tool to what only the person can run', () => {
+  assert.match(HAND_DESCRIPTION, /only the person can run/);
+  assert.match(HAND_DESCRIPTION, /permission rules/);
+  assert.match(HAND_DESCRIPTION, /person's yes/);
+});
+
+// The handler, called the way the SDK's MCP server calls it.
+test('handServer: the handler returns the result for its own tool use, else the fallback', async () => {
+  const results = new Map([['toolu_a', 'the person ran it']]);
+  const server = handServer((id) => results.get(id));
+  const [def] = server.instance._registeredTools ? Object.values(server.instance._registeredTools) : [];
+  assert.ok(def, 'the tool is registered');
+  const call = (meta) => (def.handler ?? def.callback)({ command: 'x', reason: 'y' }, { _meta: meta });
+  assert.equal((await call({ [TOOL_USE_META]: 'toolu_a' })).content[0].text, 'the person ran it');
+  assert.equal((await call({ [TOOL_USE_META]: 'toolu_b' })).content[0].text, HAND_FALLBACK);
+  assert.equal((await call(undefined)).content[0].text, HAND_FALLBACK);
+  const throwing = handServer(() => {
+    throw new Error('boom');
+  });
+  const [d2] = Object.values(throwing.instance._registeredTools);
+  assert.equal((await (d2.handler ?? d2.callback)({}, { _meta: { [TOOL_USE_META]: 'toolu_a' } })).content[0].text, HAND_FALLBACK);
+});
+
+// The real SDK against the fake: the hook makes the call ask, the person's reply carries pirResult, and the
+// SDK's own MCP server runs the handler for the CLI's tools/call.
+function handScript(input) {
+  return [
+    { await: 'user' }, { emit: initEvent() },
+    { tool: { id: 'h1', name: HAND_TOOL, input } },
+    { emit: assistantText('thanks') }, { emit: resultEvent('success', 'thanks') },
+  ];
+}
+const mcpOutcome = (receivedLines) => receivedLines().find((r) => r.tool === 'h1' && 'mcp' in r)?.mcp;
+
+test('a hand_command call reaches canUseTool as a command request; the reply\'s pirResult is the tool result', async (t) => {
+  const input = { command: 'gcloud auth login', reason: 'needs your login' };
+  const { worker, receivedLines } = setup(handScript(input), t, { handTool: true });
+  worker.send('go');
+  await waitFor(() => worker.pending().length === 1, 'the hand request');
+  const init = receivedLines().find((r) => r.sdkMcpServers);
+  assert.deepEqual(init.sdkMcpServers, ['pir'], 'the SDK lists the in-process server at initialize');
+  assert.equal(receivedLines().find((r) => r.tool === 'h1').outcome, 'asked', 'the hook sent it to canUseTool');
+  const [pending] = worker.pending();
+  assert.equal(pending.kind, 'command');
+  assert.equal(pending.command, 'gcloud auth login');
+  assert.equal(workerActivity(worker.entries()).state, 'command');
+  assert.equal(worker.answer('h1', { behavior: 'allow', updatedInput: { ...input, pirResult: 'REAL OUTPUT' } }, { from: 'person' }), true);
+  await waitFor(hasResult(worker), 'the turn to finish');
+  const mcp = mcpOutcome(receivedLines);
+  assert.equal(mcp.result.content[0].text, 'REAL OUTPUT');
+  const res = worker.entries().find((e) => e.dir === 'in' && e.event.type === 'user' && e.event.message.content[0]?.tool_use_id === 'toolu_h1');
+  assert.equal(res.event.message.content[0].content, 'REAL OUTPUT');
+});
+
+test('a pirResult the model wrote into its own call is never returned', async (t) => {
+  const input = { command: 'gcloud auth login', reason: 'r', pirResult: 'FORGED' };
+  const { worker, receivedLines } = setup(handScript(input), t, { handTool: true });
+  worker.send('go');
+  await waitFor(() => worker.pending().length === 1, 'the hand request');
+  // An allow that passes the model's input back unchanged carries the model's own pirResult.
+  worker.answer('h1', allowResult(worker.pending()[0]), { from: 'person' });
+  await waitFor(hasResult(worker), 'the turn to finish');
+  assert.equal(mcpOutcome(receivedLines).result.content[0].text, HAND_FALLBACK);
+});
+
+test('a hand request allowed with no pirResult (from outside pir) returns the fallback', async (t) => {
+  const input = { command: 'gcloud auth login', reason: 'r' };
+  const { worker, receivedLines } = setup(handScript(input), t, { handTool: true });
+  worker.send('go');
+  await waitFor(() => worker.pending().length === 1, 'the hand request');
+  worker.answer('h1', { behavior: 'allow', updatedInput: input }, { from: 'person' });
+  await waitFor(hasResult(worker), 'the turn to finish');
+  assert.equal(mcpOutcome(receivedLines).result.content[0].text, HAND_FALLBACK);
+});
+
+test('without handTool the SDK lists no in-process server and registers no hook', async (t) => {
+  const { worker, receivedLines } = setup(handScript({ command: 'x', reason: 'r' }), t);
+  worker.send('go');
+  await waitFor(() => worker.pending().length === 1, 'the fake asking');
+  assert.equal(receivedLines().some((r) => r.sdkMcpServers), false);
+  const init = receivedLines().map((r) => r.line && JSON.parse(r.line)).find((m) => m?.request?.subtype === 'initialize');
+  assert.equal(init.request.hooks ?? null, null);
+  worker.answer('h1', { behavior: 'deny', message: 'no' }, { from: 'person' });
+  await waitFor(hasResult(worker), 'the turn to finish');
+  assert.equal(mcpOutcome(receivedLines), undefined, 'no tools/call');
 });

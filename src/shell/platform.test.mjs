@@ -21,7 +21,7 @@ import {
 } from './platform.mjs';
 import { startWorker } from './worker-proc.mjs';
 import { fakeClaudeSpawner, turn, canUseTool, initEvent } from './fake/claude-stream.mjs';
-import { allowResult } from '../core/stream.mjs';
+import { allowResult, HAND_TOOL } from '../core/stream.mjs';
 
 // --- the wire format --------------------------------------------------------------------------
 
@@ -563,4 +563,18 @@ test('onActivity that throws: a grant still answers, and the exit still rewrites
   assert.deepEqual(workersFile().map((x) => x.id), [id]);
   assert.doesNotThrow(() => w.exit(), 'a throwing hook never escapes the exit listener');
   assert.deepEqual(workersFile(), [], 'workers.json rewritten on the exit');
+});
+
+// bang-commands T05 (DESIGN §2.6, §2.7): every session the platform spawns is offered the hand tool, and one
+// waiting on a command it handed the person is parked, not busy.
+test('a spawned worker is offered the hand tool; waiting on a hand request it is listed idle in state command', async (t) => {
+  const { platform, spawned } = setupPlatform(t, {
+    T05: [{ await: 'user' }, { emit: initEvent() }, { tool: { id: 'h1', name: HAND_TOOL, input: { command: 'gcloud auth login', reason: 'login' } } }, ...turn('ok').slice(1)],
+  });
+  const id = platform.spawn({ cwd: tmpdir(), name: NAME('T05'), phase: 'implement' });
+  assert.equal(spawned[0].opts.handTool, true);
+  await waitFor(() => platform.list()[0]?.state === 'command', 'the hand request to be pending');
+  assert.equal(platform.list()[0].status, 'idle');
+  assert.deepEqual(platform.answer(id, 'h1', { behavior: 'deny', message: 'no' }), { ok: true });
+  await waitFor(() => platform.list()[0]?.state === 'idle', 'the turn to end');
 });

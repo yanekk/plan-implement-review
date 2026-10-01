@@ -113,6 +113,7 @@ test('fence: started with the hook T00 chose, default mode and the tool allowlis
   assert.equal(o.permissionMode, 'default');
   assert.deepEqual(o.tools, FINISHER_TOOLS);
   assert.equal(o.hooks, FINISHER_HOOKS);
+  assert.equal(o.handTool, undefined, 'the finisher is never handed the hand tool (bang-commands §2.6)');
   assert.equal(FINISHER_HOOKS.PreToolUse.length, 1);
   assert.equal(FINISHER_HOOKS.PreToolUse[0].matcher, undefined, 'no matcher: every tool');
   for (const tool of ['Bash', 'Read', 'Write', 'AskUserQuestion', 'Agent', 'CronCreate']) {

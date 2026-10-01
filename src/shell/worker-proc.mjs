@@ -16,11 +16,13 @@
 // Tests run the real SDK against src/shell/fake/claude-stream.mjs by passing its `fakeClaudeSpawner`
 // as `spawnProcess`; nothing here knows it is a fake.
 
-import { query as sdkQuery } from '@anthropic-ai/claude-agent-sdk';
+import { query as sdkQuery, createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
+import { z } from 'zod';
 import { spawn } from 'node:child_process';
 import { appendFileSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { readEntry, userMessage, allowResult, denyResult } from '../core/stream.mjs';
+import { HAND_TOOL, HAND_FALLBACK } from '../core/bang.mjs';
 import { terminate } from './terminate.mjs';
 import { writeJsonAtomic } from './atomic-write.mjs';
 import { defaultUsageReporter } from './usage-report.mjs';
@@ -33,6 +35,63 @@ const DRAIN_MS = 2000;
 // How much of the worker's stderr is kept for its `exited` note. The SDK does not read stderr from a
 // custom spawn, so pir drains it (an unread pipe fills and blocks the child) and keeps the tail.
 const STDERR_TAIL = 4096;
+
+// ---- The hand tool (bang-commands DESIGN §2.6). ----
+
+// What the model reads about `hand_command`. It is the one way an agent asks the person to run something,
+// so the description fences it: only for what only the person can run, never a way round a permission or a
+// step reserved for the person's yes.
+export const HAND_DESCRIPTION = [
+  'Hand the person a shell command to run themselves, in your working folder, from pir.',
+  'Use it only for a command that only the person can run here: one that needs their login, their account,',
+  'their credentials or their device (for example `gcloud auth login`, or a command only their account may run).',
+  'Never use it for anything your own tools and permission rules let you run yourself, and never to get round',
+  'a step that is reserved for the person\'s yes or a permission you were refused.',
+  'The person sees the command and your reason, may run it as handed, edit it first, or decline.',
+  'The tool\'s result is what their run printed, with its exit status; a decline comes back as a refusal.',
+].join(' ');
+
+// The `_meta` key the CLI puts the tool use id under in a tools/call (T00, Claude Code 2.1.286): it equals
+// canUseTool's `toolUseID`, which is how the handler finds the person's result for its own call.
+export const TOOL_USE_META = 'claudecode/toolUseId';
+
+// handServer(resultFor) → the in-process MCP server `pir` with its one tool. `resultFor(toolUseId)` is the
+// person's result for that call, or undefined. The SDK's MCP server strips every argument the zod shape
+// does not declare (measured at plan review), so a `pirResult` the model put in its own call never reaches
+// the handler; the result is only ever the one pir recorded when the person's run answered the request.
+export function handServer(resultFor = () => undefined) {
+  const handler = async (_args, extra) => {
+    const id = extra?._meta?.[TOOL_USE_META];
+    let text;
+    try {
+      text = typeof id === 'string' ? resultFor(id) : undefined;
+    } catch {
+      text = undefined;
+    }
+    return { content: [{ type: 'text', text: typeof text === 'string' ? text : HAND_FALLBACK }] };
+  };
+  return createSdkMcpServer({
+    name: 'pir',
+    tools: [
+      tool(
+        'hand_command',
+        HAND_DESCRIPTION,
+        {
+          command: z.string().describe('The exact shell command for the person to run, as they would type it.'),
+          reason: z.string().describe('One plain sentence: why you need the person to run it.'),
+        },
+        handler,
+      ),
+    ],
+  });
+}
+
+// T00: under `permissionMode: 'auto'` the CLI runs an SDK MCP tool without asking `canUseTool`; a PreToolUse
+// hook answering `ask` for the tool makes it ask, as the finisher's ASK_EVERY_CALL does. The hook checks the
+// tool name itself as well as the matcher, so it never answers for any other tool.
+export const ASK_HAND_TOOL = async (input) =>
+  input?.tool_name === HAND_TOOL ? { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'ask' } } : {};
+const HAND_HOOK = { matcher: HAND_TOOL, hooks: [ASK_HAND_TOOL] };
 
 // workerOptions(...) → the SDK Options, exactly DESIGN §2.1. `settingSources` is left at its default so
 // CLAUDE.md, skills and the auto-mode exception load as for a `--bg` worker. Passing `canUseTool` is
@@ -56,7 +115,12 @@ const STDERR_TAIL = 4096;
 // `hooks` is the SDK's hook map, passed through unchanged (finisher DESIGN §3.3): the finisher's
 // PreToolUse hook answers `ask` for every call so the settings' allow rules cannot answer before
 // `canUseTool` does (T00). Absent, the options carry no `hooks` key.
-export function workerOptions({ cwd, sessionId, resume, name, claudePath, canUseTool, spawnProcess, permissionMode, tools, disallowedTools, env, hooks }) {
+//
+// `handTool` offers the session `hand_command` (bang-commands DESIGN §2.6): the `pir` MCP server, whose
+// handler reads the person's result through `handResult(toolUseId)`, and the PreToolUse hook that makes the
+// call reach `canUseTool` (T00), added after any hooks the caller passed. Absent, neither is there.
+export function workerOptions({ cwd, sessionId, resume, name, claudePath, canUseTool, spawnProcess, permissionMode, tools, disallowedTools, env, hooks, handTool, handResult }) {
+  if (handTool) hooks = { ...(hooks ?? {}), PreToolUse: [...(hooks?.PreToolUse ?? []), HAND_HOOK] };
   return {
     cwd,
     ...(resume ? { resume } : { sessionId }),
@@ -65,6 +129,7 @@ export function workerOptions({ cwd, sessionId, resume, name, claudePath, canUse
     ...(disallowedTools ? { disallowedTools } : {}),
     ...(env ? { env } : {}),
     ...(hooks ? { hooks } : {}),
+    ...(handTool ? { mcpServers: { pir: handServer(handResult) } } : {}),
     pathToClaudeCodeExecutable: claudePath,
     extraArgs: { name },
     canUseTool,
@@ -150,6 +215,7 @@ export function startWorker({
   env = null,
   reportUsage = defaultUsageReporter(),
   hooks = null,
+  handTool = false,
 }) {
   mkdirSync(dirname(logPath), { recursive: true });
   // A resumed session runs under the id it was saved with; every message pir sends carries that id.
@@ -160,6 +226,13 @@ export function startWorker({
   const eventFns = [];
   const exitFns = [];
   const pendingById = new Map(); // requestId → { entry, resolve }
+  // toolUseId → the person's result for a hand request, recorded by answer() and taken once by the handler.
+  const handResults = new Map();
+  const takeHandResult = (toolUseId) => {
+    const r = handResults.get(toolUseId);
+    handResults.delete(toolUseId);
+    return r;
+  };
   const queue = inputQueue();
   let child = null;
   let exitInfo = null; // set once, when the exit is reported
@@ -293,7 +366,7 @@ export function startWorker({
 
   const q = query({
     prompt: queue,
-    options: workerOptions({ cwd, sessionId, resume, name, claudePath, canUseTool, spawnProcess: spawnWrapped, permissionMode, tools, disallowedTools, env, hooks }),
+    options: workerOptions({ cwd, sessionId, resume, name, claudePath, canUseTool, spawnProcess: spawnWrapped, permissionMode, tools, disallowedTools, env, hooks, handTool, handResult: takeHandResult }),
   });
 
   const startedAt = now();
@@ -418,6 +491,13 @@ export function startWorker({
       }
       pendingById.delete(requestId);
       log({ dir: 'out', from, kind: 'reply', requestId, result });
+      // The person's run of a handed command (bang-commands DESIGN §2.6): its `pirResult` is what the tool
+      // returns. One equal to a `pirResult` the model wrote into its own call is not pir's, so an allow that
+      // only passed the model's input back (allowResult) can never hand the model its own words as output.
+      const handed = result?.behavior === 'allow' ? result.updatedInput?.pirResult : undefined;
+      if (p.entry.toolName === HAND_TOOL && typeof handed === 'string' && typeof p.entry.toolUseId === 'string' && handed !== p.entry.input?.pirResult) {
+        handResults.set(p.entry.toolUseId, handed);
+      }
       p.resolve(result);
       return true;
     },

@@ -11,7 +11,7 @@ they walk past.
 **Status:** Plan written 2026-10-01. Nothing built. The red `notify-wiring.test.mjs` cases on `main` are to
 be fixed there before the build starts (DESIGN §4).
 **Last updated:** 2026-10-01
-**Next `pir-work` will:** T05, hand-tool; T07 waits on it.
+**Next `pir-work` will:** T07 hand-view or T09 agent-rules.
 
 ## Tasks
 
@@ -25,7 +25,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T02 | bang-rules | — | ✅ | |
 | T03 | bang-forwarding | T01, T02 | ✅ | |
 | T04 | hand-rules | T00, T02 | ✅ | |
-| T05 | hand-tool | T00, T03, T04 | ⬜ | |
+| T05 | hand-tool | T00, T03, T04 | ✅ | |
 | T06 | bang-view | T02, T03 | ✅ | Reviewed: one fix. With a question set pinned and a command running the hint said `esc to talk instead` though Esc stops the command; reproduced by a red view test, fixed. Probed odd commands, blank output lines, the hidden sent message. Wordings approved by the person 2026-10-01. |
 | T07 | hand-view | T05, T06 | ⬜ | |
 | T08 | bang-drill | T06, T07 | ⬜ | |
