@@ -824,3 +824,54 @@ export function defineHandTest([cols, rows]) {
     }
   });
 }
+
+// bang-commands T08, the drill (DESIGN §2.2): the screen is a reader, so a command keeps running with it closed
+// and its result still reaches the worker. The person starts `sleep 3; echo done`, closes pir while it runs, and
+// on reopening the conversation the block holds `done` and its end line says it was sent.
+export function defineBangReopenTest([cols, rows]) {
+  test(`a command keeps running with the pir screen closed, and reads done on reopening, at ${cols}×${rows}`, { timeout: 120000 }, async (t) => {
+    const home = scratchHome(t);
+    const rig = startRig({ env: home, scenario: 'bang', paceMs: 0 });
+    t.after(() => rig.stop());
+    const env = { ...process.env, ...home };
+    const ends = () => logOf(rig).filter((e) => e.dir === 'shell' && e.kind === 'end');
+    const open = async () => {
+      const screen = openScreen({ cols, rows, env });
+      await screen.waitFor(/rig +work/);
+      screen.send('\r');
+      await screen.waitFor(/pick a task/);
+      screen.send('\x1b[C');
+      await screen.waitFor(/pretend worker/, 20000);
+      return screen;
+    };
+    let screen = await open();
+    try {
+      await waitFor(() => rig.platform.list()[0]?.state === 'idle', { what: 'the opening turn to end' });
+      screen.send('! sleep 3; echo done');
+      await screen.waitFor(/^! sleep 3; echo done\s*$/m);
+      screen.send('\r');
+      await screen.waitFor(/● running your command/, 20000);
+    } finally {
+      await screen.close();
+    }
+    assert.equal(ends().length, 0, 'still running when the screen closed');
+    const [end] = await waitFor(() => (ends().length ? ends() : null), { what: 'the command to end with no screen open', timeoutMs: 20000 });
+    assert.deepEqual([end.code, end.stopped, end.sent], [0, null, 'message']);
+    await waitFor(() => logOf(rig).some((e) => e.dir === 'in' && e.event?.type === 'result' && e.event.result === 'Thanks, I read the output.'), { what: "the worker's reply", timeoutMs: 20000 });
+    screen = await open();
+    try {
+      const s = await screen.waitFor(/T01 ▸ Thanks, I read the output\./, 20000);
+      const at = s.findIndex((l) => /^you ! sleep 3; echo done/.test(l));
+      assert.ok(at >= 0, s.join('\n'));
+      assert.match(s[at + 1], /^ {2}done\s*$/);
+      // `sleep 3` can take no less than 3s; a loaded machine stretches it past 4s, so only the floor is held.
+      const endLine = s[at + 2].match(/^ {2}✓ exit 0 · (\d+)s · sent to T01\s*$/);
+      assert.ok(endLine && Number(endLine[1]) >= 3, s[at + 2]);
+      assert.doesNotMatch(s.join('\n'), /● running your command/);
+      for (const r of s) assert.ok([...r].length <= cols);
+      assert.equal(screen.overflows(), 0, 'no frame was clipped to fit the window');
+    } finally {
+      await screen.close();
+    }
+  });
+}
