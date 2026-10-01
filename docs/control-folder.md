@@ -16,8 +16,17 @@ conversations stay with the plan. Before the planner names the plan the folder i
 `plans/plan-{hex4}/` is removed. It is under `plans/`, not `.git`, because Claude Code never
 auto-approves a write under `.git` and the planner writes its report there. It holds `brief.md`,
 `state.json`, `reports/`, `conversations/plan-{n}.ndjson` and `review-{n}.ndjson`, `inbox/`,
-`workers.json`, `status.json` and `run.log` — see [planning-runs.md](planning-runs.md). The rest of
-this page is the build's folder.
+`workers.json`, `status.json` and `run.log` — see [planning-runs.md](planning-runs.md).
+
+A **single run** (`@repo/single`) keeps its folder at `plans/single-{hex4}/.parallel/single/` until
+the builder names the change, then at `plans/{name}/.parallel/single/`, moved the same way and for the
+same reason. It holds `prompt.md`, `state.json`, the planning run's `reports/`, `conversations/`
+(`build-{n}.ndjson`, `review-{n}.ndjson`), `inbox/`, `workers.json`, `status.json` and `run.log`, plus
+the logs of the commands pir runs itself (`setup.log`, `tests-{n}.log`, `baseline.log`) and
+`command.json`, the command run in flight — see [single-runs.md](single-runs.md#the-control-folder). A
+single run's `plans/{name}/` holds nothing but `.parallel/`; it is not a plan.
+
+The rest of this page is the build's folder.
 
 ## What is in it
 

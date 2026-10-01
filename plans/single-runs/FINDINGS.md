@@ -7,6 +7,7 @@ Legend: 🐞 defect found · ✅ verified by hand with the user · 📌 worth kn
 
 | Date | | Finding |
 |---|---|---|
+| 2026-10-01 | 🔄 | T13 did not run `./install.sh` from its task worktree: it would put the unmerged branch into the engine live runs use. The installed-copy checks wait for the merge, whose finishing rules install (user, T13). |
 | 2026-10-01 | 📌 | T12 live run, worker-run with real Claude: `single-run-live` PASS in 40 s. Builder fixed `addAll` in one commit as `fix-add-all-off-by-one`; reviewer committed nothing; `ready`, index kind single under the name, nothing left running. Scratch removed. |
 | 2026-10-01 | 📌 | The harness answerer sends `go ahead` to a session idle after its report (reviewer before `finished: ready`; builder after `built`, undelivered). `holdPlanReplies` does not hold it. Runs unaffected; planning runs likewise. |
 | 2026-10-01 | 📌 | The live builder said its fix was committed on `pir/fix-add-all-off-by-one` before pir renamed `pir/single-6986`. Wording only; the report and checks were right. |
