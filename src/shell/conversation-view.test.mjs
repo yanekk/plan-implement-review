@@ -1240,3 +1240,11 @@ test('colour on: the box border and the ! take the shell style in command mode; 
   t.v.handleInput('\x7f');
   assert.equal(boxOf()[0], dimBorder, 'out of command mode the border is back');
 });
+
+test('a question set pinned while a command runs: the hint says Esc stops the command, and Esc does', () => {
+  const t = makeView({ log: [init(), opening, shStart('sh-1', 'sleep 30'), questions()] });
+  assert.match(t.screen().at(-1), /esc stops it/);
+  assert.doesNotMatch(t.screen().at(-1), /esc to talk instead/);
+  t.v.handleInput(KEY.esc);
+  assert.deepEqual(t.drops, [{ to: 'w-1', kind: 'shell-stop' }]);
+});

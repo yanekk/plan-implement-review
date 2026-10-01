@@ -446,7 +446,8 @@ export function createConversationView({
     const esc = m.activity.shell ? 'esc stops it' : 'esc interrupt';
     // ← goes back only with an empty box, and Enter/n/a answer only then.
     // With a question set pinned, typing answers it, so talking instead is Esc (user 2026-09-26, T18 drill).
-    if (livePrompt()?.kind === 'questions') return `${scrolled ? '' : 'answer above · '}esc to talk instead · ← back · Tab detail · PgUp/PgDn`;
+    // A running command takes Esc even with a question set pinned (bang-commands §2.4), so the hint says so.
+    if (livePrompt()?.kind === 'questions') return `${scrolled ? '' : 'answer above · '}${m.activity.shell ? esc : 'esc to talk instead'} · ← back · Tab detail · PgUp/PgDn`;
     if (livePrompt()) return `${scrolled ? '' : 'answer above or type a reply · '}${esc} · ← back · Tab detail · PgUp/PgDn`;
     return `↵ send · ${esc} · ← back · Tab detail · PgUp/PgDn${scrolled ? '' : ' scroll'}`;
   }
