@@ -51,6 +51,8 @@ export function readEntry(entry) {
       const { t, dir, kind, ...rest } = entry;
       return [{ ...rest, kind: 'note', note: kind }];
     }
+    case 'shell':
+      return readShell(entry);
     default:
       return [{ kind: 'raw', raw: entry }];
   }
@@ -166,6 +168,16 @@ function readRequest(entry) {
   }];
 }
 
+// The person's own command, logged by the host (bang-commands DESIGN §3.2). Its fields pass through as
+// written; `t` is kept, since the block's running time is read from its start's stamp.
+const SHELL_KINDS = { start: 'shell-start', output: 'shell-output', end: 'shell-end' };
+function readShell(entry) {
+  const kind = SHELL_KINDS[entry.kind];
+  if (!kind || typeof entry.id !== 'string' || !entry.id) return [{ kind: 'raw', raw: entry }];
+  const { dir, kind: _k, ...rest } = entry;
+  return [{ ...rest, kind }];
+}
+
 // Something pir sent the worker (DESIGN §2.2, §2.6–§2.8).
 function readOut(entry) {
   switch (entry.kind) {
@@ -174,6 +186,9 @@ function readOut(entry) {
       // The note pir put before the person's text, and the helpers it names (visible-helpers DESIGN §2.6).
       if (typeof entry.preface === 'string' && entry.preface) ev.preface = entry.preface;
       if (Array.isArray(entry.helpersStopped)) ev.helpersStopped = entry.helpersStopped.filter((id) => typeof id === 'string');
+      // The command block this message represents, so the view draws the block and not the text again
+      // (bang-commands DESIGN §2.8).
+      if (typeof entry.shell === 'string' && entry.shell) ev.shell = entry.shell;
       return [ev];
     }
     case 'interrupt':
@@ -243,7 +258,7 @@ const REMOTE_OPEN_STATES = new Set(['queued', 'started']);
 const SEND_CAUSES = { person: 'person', pir: 'pir', coordinator: 'coordinator' };
 
 // workerActivity(entries) → { state, open, pending, turns, lastEventAt, slashCommands, turnCauses,
-//                             personSends, remoteSends, background, coordinatorSends }.
+//                             personSends, remoteSends, background, coordinatorSends, shell }.
 //   starting   nothing has been sent and the worker has not spoken
 //   busy       a turn is open: a message went in, or the worker began one, and no `result` came back
 //   idle       the last turn ended and nothing is pending
@@ -265,6 +280,10 @@ const SEND_CAUSES = { person: 'person', pir: 'pir', coordinator: 'coordinator' }
 // the CLI sends the shrunken list, then the notification, then the turn's `init` (fixture case 5), and in
 // that gap the worker would otherwise read as stopped with nothing running. One that ends inside an open
 // turn is held to that turn's `result`. `[]` before any such event; a `resumed` note clears it.
+// `shell` is the person's command still running (bang-commands DESIGN §2.2): `{ id, command, t, requestId? }`
+// for the latest start with no end, else null. An `exited` note clears it too: the host kills a command
+// whose session closes, and until its end entry lands the view should not show a dead worker's command
+// as running.
 export function workerActivity(entries) {
   let open = false;
   let started = false;
@@ -280,6 +299,7 @@ export function workerActivity(entries) {
   const remoteCommands = new Set();
   let listed = [];
   const held = new Set(); // ids that left the list since the last turn opened or ended
+  const shells = new Map(); // the person's commands started and not yet ended, by id, in start order
   const openTurn = (cause) => {
     if (!open) {
       turnCauses.push(cause);
@@ -326,6 +346,7 @@ export function workerActivity(entries) {
           // A session resumed into the same log (pir-plan-command §2.14) is a new process: whatever was
           // pending or under way died with the old one, and its questions are lost (the resumed session is
           // told to ask again), so nothing before the note is still waiting.
+          if (ev.note === 'exited') shells.clear();
           if (ev.note === 'resumed') {
             pending.clear();
             cancelled = null;
@@ -334,6 +355,16 @@ export function workerActivity(entries) {
             listed = [];
             held.clear();
           }
+          break;
+        case 'shell-start': {
+          const sh = { id: ev.id, command: str(ev.command), t: Number.isFinite(ev.t) ? ev.t : null };
+          if (typeof ev.requestId === 'string' && ev.requestId) sh.requestId = ev.requestId;
+          shells.delete(ev.id);
+          shells.set(ev.id, sh);
+          break;
+        }
+        case 'shell-end':
+          shells.delete(ev.id);
           break;
         case 'background': {
           const now = new Set(ev.ids);
@@ -368,5 +399,6 @@ export function workerActivity(entries) {
   return {
     state, open, pending: waiting, turns, lastEventAt, slashCommands, turnCauses, personSends,
     remoteSends: remoteCommands.size, background: [...listed, ...held], coordinatorSends,
+    shell: [...shells.values()].at(-1) ?? null,
   };
 }

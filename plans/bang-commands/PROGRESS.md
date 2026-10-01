@@ -22,7 +22,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 |---|---|---|---|---|
 | T00 | hand-tool-spike | — | ⬜ | |
 | T01 | shell-runner | — | ⬜ | |
-| T02 | bang-rules | — | ⬜ | |
+| T02 | bang-rules | — | 🔍 | `bang.mjs` (interface plus LEAD_* constants), `shell`/`shell-stop` drops, `readShell`, `activity.shell`, `sent.shell`; 31 tests. Deviations: output's trailing newlines dropped in the message; caps count code points; `validateDrop` trims `command`. Suite green except the 10 known `notify-wiring` cases. |
 | T03 | bang-forwarding | T01, T02 | ⬜ | |
 | T04 | hand-rules | T00, T02 | ⬜ | |
 | T05 | hand-tool | T00, T03, T04 | ⬜ | |
@@ -32,7 +32,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T09 | agent-rules | T05 | ⬜ | |
 | T10 | docs-readme | T08, T09 | ⬜ | |
 
-**Review queue:** empty
+**Review queue:** T02
 
 ## Blocked on the user
 
