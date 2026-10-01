@@ -5,9 +5,9 @@ lives in [FINDINGS.md](FINDINGS.md). Sixty words to a Notes cell, counted.
 
 **Plan reviewed:** 2026-09-29 — 3 fixed, 4 decided with the user
 
-**Status:** T01–T12 ✅, T13 awaiting review.
+**Status:** T01–T13 ✅; install after merge pending.
 **Last updated:** 2026-10-01
-**Next `pir-work` will:** review T13.
+**Next `pir-work` will:** nothing; plan complete. Run `./install.sh` after merging, then check the installed copy.
 
 ## Tasks
 
@@ -27,9 +27,9 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T10 | single-row | T04, T08 | ✅ | |
 | T11 | single-drill | T06, T09, T10 | ✅ | |
 | T12 | single-live | T07, T11 | ✅ | |
-| T13 | docs-and-readme | T12 | 🔍 | New docs/single-runs.md; box, control folder, dashboard, alerts pages; README section, row, skills tree; CLAUDE.md row and carve-out. single-docs.test.mjs, 7 tests. Deviations: also human-flow.md alerts line. `./install.sh` not run, user 2026-10-01: the merge installs; installed-copy check unverified until then. |
+| T13 | docs-and-readme | T12 | ✅ | Review: tests green; fix commit corrects nine doc claims against code (head-moved not re-checked, bad settings refuse `pir start` only without pirBase, stop order, resume restarts setup, label, rejection layout, steps-view texts, alert title) and README override wording. `./install.sh` deferred to the merge (user); installed-copy check unverified until then. |
 
-**Review queue:** T13
+**Review queue:** empty
 
 ## Blocked on the user
 
