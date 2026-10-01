@@ -23,7 +23,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T00 | hand-tool-spike | — | ✅ | |
 | T01 | shell-runner | — | ✅ | |
 | T02 | bang-rules | — | ✅ | |
-| T03 | bang-forwarding | T01, T02 | ⬜ | |
+| T03 | bang-forwarding | T01, T02 | ✅ | |
 | T04 | hand-rules | T00, T02 | ✅ | |
 | T05 | hand-tool | T00, T03, T04 | ⬜ | |
 | T06 | bang-view | T02, T03 | ⬜ | |
