@@ -24,7 +24,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T01 | shell-runner | — | ⬜ | |
 | T02 | bang-rules | — | ✅ | |
 | T03 | bang-forwarding | T01, T02 | ⬜ | |
-| T04 | hand-rules | T00, T02 | 🔍 | `command` kind through stream, asking, policy, brief, display, plandisplay, notify; 12 tests in `hand-rules.test.mjs`, not beside each. `HAND_TOOL` defined in stream.mjs, re-exported by bang.mjs (import cycle). `holderOf` never gives a reserved item to the agent. Suite green but the 10 known `notify-wiring` cases. |
+| T04 | hand-rules | T00, T02 | ✅ | Reviewed clean, no fix commit. `command` kind through stream, asking, policy, brief, display, plandisplay, notify; tests in one file, `HAND_TOOL` in stream.mjs (import cycle), `holderOf` excludes reserved items. Probed: malformed hand request still reserved and refused, interrupt and resume clear it, shell readers and `grantFrom` left to T05/T07 as planned. Suite green but the 10 `notify-wiring` cases. |
 | T05 | hand-tool | T00, T03, T04 | ⬜ | |
 | T06 | bang-view | T02, T03 | ⬜ | |
 | T07 | hand-view | T05, T06 | ⬜ | |
@@ -32,7 +32,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T09 | agent-rules | T05 | ⬜ | |
 | T10 | docs-readme | T08, T09 | ⬜ | |
 
-**Review queue:** T04
+**Review queue:** —
 
 ## Blocked on the user
 
