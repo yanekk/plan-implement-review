@@ -5,6 +5,7 @@ for ever.
 
 | Date | Finding |
 |---|---|
+| 2026-10-01 | T01 review: `reapShells` matches only the group leader's pid and start time, so a group whose shell already died (a TERM-ignoring child left after a stop, then a host crash) is not reaped. Left as designed. |
 | 2026-10-01 | T01: `notify-wiring.test.mjs` still fails its 10 cases in the full `npm test` on `pir/bang-commands` (main not yet fixed) but passes 14/14 run alone, so it is load-sensitive, not a fixed break. |
 | 2026-10-01 | Plan review: the SDK's `tool()` rejects a JSON-schema input (`inputSchema must be a Zod schema or raw shape`), needs zod, which `.npmrc` omits as a peer; an external zod 4.6.5 works; undeclared arguments such as `pirResult` are stripped. |
 | 2026-10-01 | Plan review: Claude Code here is logged in through Bedrock (`apiKeyHelper`), so a real session is billed API usage, not plan limits. Node on the PATH is v22.17.1, below `engines` >=22.19. |
