@@ -5,10 +5,9 @@ lives in [FINDINGS.md](FINDINGS.md). Sixty words to a Notes cell, counted.
 
 **Plan reviewed:** 2026-09-29 — 3 fixed, 4 decided with the user
 
-**Status:** Planned, not started. The build waits for `pir/base-branch` to be merged into `main` and
-`main` into `pir/single-runs`.
-**Last updated:** 2026-09-29
-**Next `pir-work` will:** T02 single-flow, the first task on the critical path.
+**Status:** T01–T12 ✅, T13 awaiting review.
+**Last updated:** 2026-10-01
+**Next `pir-work` will:** review T13.
 
 ## Tasks
 
@@ -28,9 +27,9 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T10 | single-row | T04, T08 | ✅ | |
 | T11 | single-drill | T06, T09, T10 | ✅ | |
 | T12 | single-live | T07, T11 | ✅ | |
-| T13 | docs-and-readme | T12 | ⬜ | |
+| T13 | docs-and-readme | T12 | 🔍 | New docs/single-runs.md; box, control folder, dashboard, alerts pages; README section, row, skills tree; CLAUDE.md row and carve-out. single-docs.test.mjs, 7 tests. Deviations: also human-flow.md alerts line. `./install.sh` not run, user 2026-10-01: the merge installs; installed-copy check unverified until then. |
 
-**Review queue:** *(empty)*
+**Review queue:** T13
 
 ## Blocked on the user
 
