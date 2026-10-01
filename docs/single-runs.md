@@ -148,6 +148,9 @@ conversation log format, `workers.json` for reaping, and Remote Control on for t
 and permission request. `c` on a single run says `a single run has no coordinator agent.`
 
 - **One at a time.** The reviewer starts only after the builder is closed.
+- **`!` and handed commands** work here as in a build: a `!` line runs in the run's worktree, and the
+  builder and reviewer can hand the person a command with `hand_command`, which their step reads as
+  `asking you · run a command` ([human-flow.md](human-flow.md#running-a-command-yourself--)).
 - **Names**: `{repo} / {id-or-name} / single / builder` and `{repo} / {name} / single / reviewer`. No
   `T{nn}`, so no coordinator ever counts them.
 - **Opening instructions** (`builderInstruction`, `reviewerInstruction`) name the `pir-single` skill and
@@ -316,7 +319,7 @@ checkout; it is invisible to git and is not a plan.
 |---|---|
 | `prompt.md` | the prompt, as sent |
 | `state.json` | `{ version, id, name, step, sessions: { build, review }, commands: { setup, test }, base, baseSha, rounds: { build, review }, tested, baseline, outcome, renamed, live, accepted, rejected, running, pending, red }`, written temp-then-rename after every transition. `step` is `setup`, `build`, `rename` or `review`; a finished run keeps the step it ended in and carries `outcome` (`ready` or `dropped`). A dropped run's report body stays in `accepted.body` |
-| `reports/`, `conversations/` (`build-{n}.ndjson`, `review-{n}.ndjson`), `inbox/`, `workers.json`, `status.json`, `run.log` | as for a planning run |
+| `reports/`, `conversations/` (`build-{n}.ndjson`, `review-{n}.ndjson`), `inbox/`, `shells/`, `workers.json`, `status.json`, `run.log` | as for a planning run |
 | `setup.log`, `tests-{n}.log`, `baseline.log` | the command logs; `tests-{n}` counts up across resumes |
 | `command.json` | the command run in flight (`{ kind, pid, startTime }`), so a resumed program can kill one a killed program left |
 
