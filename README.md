@@ -176,7 +176,8 @@ the tests again. The row then reads `ready to merge`, and the run shows the one 
 `git switch {base} && git merge pir/{name}`. Once your merge lands, the row turns `merged`.
 
 It needs the repo's install and test commands, beside the base branch in `.pir/settings.json` (or in
-your own `~/.pir/{repo}/settings.json`, which wins line by line):
+your own `~/.pir/{repo}/settings.json`, whose `setup` or `test` list, when it has one, replaces the
+repo's):
 
 ```json
 { "baseBranch": "main", "setup": ["npm ci"], "test": ["npm test"] }

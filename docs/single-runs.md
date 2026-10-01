@@ -45,8 +45,9 @@ settings files that name the base branch ([branch-model.md](branch-model.md#the-
 - A file that is not valid JSON, or a `setup` or `test` of the wrong shape (`"setup" must be a list of
   commands`, `"test" must be a non-empty list of commands`), refuses with `bad-settings`, naming the
   file and what is wrong, even when the other file would supply a good value. Because the base branch
-  is read from the same files, a malformed `setup` or `test` also refuses `pir plan` and `pir start` in
-  that repo.
+  is read from the same files, a malformed `setup` or `test` also refuses `pir plan` in that repo, and
+  `pir start` of a plan whose branch `pir/{slug}` does not yet record its base (a plan made by hand);
+  a plan made by `pir plan` already records it, and its build does not read the settings.
 - The commands are read once, at the start, and stored in the run's `state.json`, so a settings edit
   mid-run does not change what green means for a run already going.
 
@@ -91,7 +92,7 @@ the base-branch refusals (`planPreflight`, which fetches and prepares the base a
 - spawns `src/shell/single-run.mjs --control <dir>` detached, as the planning program is: its own
   process group, output to `run.log`, `PIR_RUN=1`, and `caffeinate -i -w {pid}` holding the Mac awake;
 - writes the index entry `~/.pir/runs/{repo}__single-{hex4}.json` with `kind: 'single'`, `label` (the
-  prompt's first line cut to 24 characters with `…`), `baseBranch` and `go: null`.
+  prompt's first non-blank line, trimmed, cut to 23 characters and `…` when longer than 24), `baseBranch` and `go: null`.
 
 On `started` the box resets to `@` and the screen lands in the builder's conversation, reading
 `starting the builder…` until the program has named it.
@@ -109,8 +110,8 @@ On `started` the box resets to `@` and the screen lands in the builder's convers
    setup then the test lines in the worktree (`tests-{n}.log`), because the change may have altered the
    dependencies.
    - Green, at the recorded head, with a clean worktree: the step is done.
-   - Green, but the head has moved (the session went on committing): the report is checked again and the
-     tests run again on the new head.
+   - Green, but the head has moved (the session went on committing): the tests run again on the new
+     head. The report's checks are not run again; adding commits cannot make them fail.
    - Green on the recorded head with a dirty worktree: pir does not rerun. It tells the session
      `pir ran the tests on your commit {sha7} and they passed, but the worktree is not clean afterwards:`,
      the `git status --porcelain` listing, and to commit its edits or make git ignore files the tests
@@ -181,8 +182,8 @@ claim, checked against git (`singleChecks` in `single-run.mjs`):
 - **`reviewed`**: `{name}` is the run's name, and the worktree is clean.
 
 A failed check is sent to the session as one message from pir, `pir did not accept your `{kind}`
-report for pir/{name}:` and one line per failure naming what failed and what to do (for example
-`nothing is committed on the branch yet. Commit the change, then drop the `built` report again.`). The
+report for pir/{name}:` then what failed and what to do: on the same line for one failure, one `- `
+line each for several (for example `nothing is committed on the branch yet. Commit the change, then drop the `built` report again.`). The
 same failure is sent once. pir never commits for a session. A session that exits without a report the
 step can act on leaves the run crashed, and resumable.
 
@@ -239,7 +240,7 @@ The dashboard ([detached-runs.md](detached-runs.md)) lists single runs beside pl
   run. `asking you` and `ready to merge` count in `N waiting for you`.
 - **PROGRESS**: `build …`, `build · tests …`, `build ✓ review …`, `build ✓ review · tests …`,
   `build ✓ review ✓`, `build ✗` (dropped in build), `build ✓ review ✗` (dropped in review). While a
-  test run follows a red one, `tests` reads `tests (red {n})`.
+  test or baseline run follows a red one, `tests` reads `tests (red {n})`.
 - **merged**: for a finished `ready` row, the list asks git whether `pir/{name}` is in the local base
   (`refs/heads/{base}`) at most once every 30 s per row, and keeps the answer in memory; a yes is never
   asked again (`createMergedCheck` in `pir-tui.mjs`). No process stays alive to watch.
@@ -249,8 +250,9 @@ painted as the planning steps view's: a working step spins with `building` or `r
 tests run reads `testing…` with the test run's clock, a step back at work after a red run reads `tests
 red · round {n}`, an asking step is amber (`asking you · a question`, `asking you · allow a command?`),
 a done step reads `built` or `reviewed` with how long it worked, and a dropped step reads `dropped`.
-Pending rows read `starting the builder…`, `waits on build` and `waits on review`, or `not started` once
-the run has finished. The `merge` row shows the hand-off line once the run is `ready`, and `merged`
+Before the program has written its first snapshot the build row reads `starting the builder…`.
+Pending rows read `waits on build` (the review row, through the rename too) and `waits on review`, or
+`not started` once the run has finished. The `merge` row shows the hand-off line once the run is `ready`, and `merged`
 once the merge has landed. A `dropped` run's footer says `Dropped: {first line of the report body}`.
 `→`/`↵` opens a step's conversation, `←` goes back. A row with no session says why: `review has no
 session yet — the reviewer starts when the change is built and its tests pass.`, `merge has no
@@ -283,8 +285,8 @@ when `pir notify` is set up; otherwise nothing is sent.
 
 As for a planning run ([planning-runs.md](planning-runs.md#stop-remove-resume)):
 
-- **Stop** (`Ctrl+S Ctrl+S`) sends SIGTERM to the program, which closes its session and kills any
-  setup, test or baseline run in flight, records `stopped` and exits; SIGKILL after 4 s; then the
+- **Stop** (`Ctrl+S Ctrl+S`) sends SIGTERM to the program, which records `stopped`, kills any
+  setup, test or baseline run in flight, closes its session and exits; SIGKILL after 4 s; then the
   sessions in `workers.json` are reaped.
 - **Remove** (`Ctrl+X Ctrl+X`) clears the index entry, the snapshot and `conversations/`. The branch,
   the worktree and the commits stay.
@@ -292,7 +294,7 @@ As for a planning run ([planning-runs.md](planning-runs.md#stop-remove-resume)):
   or `dropped`) is final. `resumeRun` spawns `single-run.mjs --resume`, which kills a command run a
   killed program left behind (recorded in `command.json`), removes a leftover baseline worktree,
   finishes a half-done rename, and then either reopens the current step's last session by its id, sending
-  it the planning run's resume message, or, when the run was stopped during a test or baseline run,
+  it the planning run's resume message, or, when the run was stopped during a setup, test or baseline run,
   starts that run again.
 
 **By hand**, if `pir` is unavailable: kill each pid in the control folder's `workers.json` whose `ps -p

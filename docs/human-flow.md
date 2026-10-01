@@ -291,7 +291,7 @@ for any reason: the agent passed it on, the agent held it past the hold limit, i
 destructive request, the agent is down or failed, or the run has no agent. The same worker asking again
 later is a new alert; two workers asking at once give two. End-of-run helper workers alert like any
 other. Planning sessions (`pir plan`) never alert, and their Claude app push is left as it is. A
-single run's builder and reviewer alert like a worker, titled `{name} · builder` or `· reviewer`, and a
+single run's builder and reviewer alert like a worker, titled `{name} · builder` or `· reviewer` (the label, or the run id, before the rename), and a
 single run that finishes `ready` sends `{name} · ready to merge` ([single-runs.md](single-runs.md#phone-alerts)).
 
 - **Timing.** The alert is sent as soon as the worker's Remote Control link is known, so tapping it

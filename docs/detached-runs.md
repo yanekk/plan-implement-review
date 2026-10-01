@@ -494,7 +494,7 @@ the same selection carries it out; any other key cancels the arm. Both are irrev
 ([restart-recovery.md](restart-recovery.md)). On a planning run — also offered on a finished one whose
 review ended not reviewed — it reopens the same planner or reviewer conversation
 ([planning-runs.md](planning-runs.md)). On a stopped or crashed single run it reopens the builder's or
-reviewer's conversation, or restarts the test run it was stopped in; a finished single run is not
+reviewer's conversation, or restarts the setup, test or baseline run it was stopped in; a finished single run is not
 resumable ([single-runs.md](single-runs.md#stop-remove-resume)). A refusal (the run came back to life meanwhile, or `startRun`
 refused the plan) is shown under the list (`resumeRun` in `launch.mjs`).
 
