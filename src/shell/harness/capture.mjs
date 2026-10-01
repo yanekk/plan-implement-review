@@ -37,12 +37,18 @@ import { isAlive as isAliveReal, startTimeOf as startTimeOfReal } from '../ident
 // session's `plan-{n}.ndjson` / `review-{n}.ndjson` (pir-plan-command DESIGN §2.3), else null. A planning
 // log reads as task `plan` with role `planner` or `reviewer`, the same pair plan-run.mjs writes into its
 // workers.json, so locateLog matches a planning session to its log exactly as it matches a worker.
+// A single run's builder writes `build-{n}.ndjson` (single-runs T12) and reads as task `plan`, role
+// `builder`: task `plan` means a session held by its own program, which the answerer gives the canned
+// reply. Its reviewer's `review-{n}` cannot be told from a planning reviewer's by the name alone, and
+// needs not be: both are answered alike.
+const HELD_ROLES = { plan: 'planner', review: 'reviewer', build: 'builder' };
+
 export function parseLogName(file) {
   const name = String(file ?? '');
   const m = /^(T\d+)-(implement|review)-(\d+)\.ndjson$/.exec(name);
   if (m) return { task: m[1], role: m[2], n: Number(m[3]) };
-  const p = /^(plan|review)-(\d+)\.ndjson$/.exec(name);
-  return p ? { task: 'plan', role: p[1] === 'plan' ? 'planner' : 'reviewer', n: Number(p[2]) } : null;
+  const p = /^(plan|review|build)-(\d+)\.ndjson$/.exec(name);
+  return p ? { task: 'plan', role: HELD_ROLES[p[1]], n: Number(p[2]) } : null;
 }
 
 // parseLog(text) → the log's entries, one per non-blank line. A line that does not parse (a crash

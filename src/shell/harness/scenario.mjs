@@ -28,8 +28,11 @@ const EXPECTED_TERMINALS = Object.freeze(['completed', 'parked']);
 // How a scenario is driven (pir-plan-command T17). `build` — the default — seeds a reviewed plan and
 // launches the coordinator on it. `plan` starts from a repo with no plan: the runner starts a planning
 // run (`pir plan`'s startPlanRun), plays the person through planning and review with the canned `reply`
-// (at most `replyCap` times, DESIGN §5.2), gives the go (`startRun`) and waits for the build.
-const KINDS = Object.freeze(['build', 'plan']);
+// (at most `replyCap` times, DESIGN §5.2), gives the go (`startRun`) and waits for the build. `single`
+// (single-runs T12) starts a single run (`@repo/single`'s startSingleRun) with the fixture's prompt and
+// plays the person through its builder and reviewer with the same `reply` and `replyCap`.
+const KINDS = Object.freeze(['build', 'plan', 'single']);
+const REPLY_KINDS = new Set(['plan', 'single']);
 
 // defineScenario(spec) → a normalized, validated scenario spec. Throws on the mistakes that would make
 // a scenario meaningless: no id, no fixture, or no facts (a scenario that asserts nothing proves
@@ -118,8 +121,8 @@ export function defineScenario(spec = {}) {
   if (!KINDS.includes(kind)) {
     throw new Error(`defineScenario(${id}): kind must be one of ${KINDS.join(', ')}`);
   }
-  if (kind === 'plan' && (typeof reply !== 'string' || !reply.trim() || !Number.isInteger(replyCap) || replyCap < 1)) {
-    throw new Error(`defineScenario(${id}): a plan scenario needs a reply text and a positive whole replyCap`);
+  if (REPLY_KINDS.has(kind) && (typeof reply !== 'string' || !reply.trim() || !Number.isInteger(replyCap) || replyCap < 1)) {
+    throw new Error(`defineScenario(${id}): a ${kind} scenario needs a reply text and a positive whole replyCap`);
   }
   if (coordinator && answerPending && !statusSnapshots) {
     throw new Error(`defineScenario(${id}): with the coordinator agent, answerPending needs statusSnapshots (it reads who holds an item)`);
@@ -161,8 +164,8 @@ export function defineScenario(spec = {}) {
     expectedTerminal,
     holdMerges: !!holdMerges,
     kind,
-    reply: kind === 'plan' ? reply : null,
-    replyCap: kind === 'plan' ? replyCap : null,
+    reply: REPLY_KINDS.has(kind) ? reply : null,
+    replyCap: REPLY_KINDS.has(kind) ? replyCap : null,
     answerPending: answerPending
       ? {
           typed: { ...(answerPending.typed ?? {}) },

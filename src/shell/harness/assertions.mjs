@@ -154,6 +154,20 @@ export function loadPlanRun(bundle, { readFile = (p) => readFileSync(p, 'utf8') 
   return { ...bundle, planRun };
 }
 
+// loadSingleRun(bundle, { readFile }) → a new bundle with `singleRun`, read from the bundle's
+// single-run.json (run.mjs runSingleScenario writes it while the scratch repo still stands). A missing or
+// malformed file gives `singleRun: null`, so each single fact reports that from data (single-runs T12).
+export function loadSingleRun(bundle, { readFile = (p) => readFileSync(p, 'utf8') } = {}) {
+  let singleRun = null;
+  try {
+    const parsed = JSON.parse(readFile(join(bundle.dir, 'single-run.json')));
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) singleRun = parsed;
+  } catch {
+    singleRun = null;
+  }
+  return { ...bundle, singleRun };
+}
+
 // parseTranscript(text) → the NDJSON lines parsed to objects, malformed lines skipped (never a throw).
 export function parseTranscript(text) {
   return String(text ?? '')
@@ -1417,8 +1431,9 @@ export function everyTaskDone() {
 // the newest commit (base-branch DESIGN §2.3): planning and building both happen on pir/… branches, and
 // the person merges (§1, §8).
 export function baseUntouched() {
-  return fact('base-untouched', "The base branch's head is unchanged by the planning run and its build", (bundle) => {
-    const pr = bundle.planRun;
+  return fact('base-untouched', "The base branch's head is unchanged by the run", (bundle) => {
+    // A single run's capture carries the same base fields (single-runs T12).
+    const pr = bundle.planRun ?? bundle.singleRun;
     if (!pr) return NO_PLAN_RUN;
     const base = pr.base ?? 'main';
     const evidence = [`${base} before: ${pr.baseBefore ?? '(unread)'}`, `${base} after: ${pr.baseAfter ?? '(unread)'}`];
@@ -1520,6 +1535,81 @@ export function indexRowIsWork() {
     const kind = mine[0].kind ?? 'work';
     if (kind !== 'work') return { pass: false, evidence, detail: `the row for ${pr.slug} is kind ${kind}` };
     return { pass: true, evidence, detail: `one row for ${pr.slug}, kind work` };
+  });
+}
+
+// --- The live check of a single run (single-runs T12, DESIGN §5.1) ---------------------------------
+//
+// Each reads `bundle.singleRun` (loadSingleRun) and nothing else.
+
+const NO_SINGLE_RUN = { pass: false, evidence: [], detail: 'no single-run capture in the bundle (single-run.json)' };
+
+// The program recorded its own end, and that end is `ready`: the builder's change and the reviewer's pass
+// both went green under pir's tests (§2.4).
+export function singleReady() {
+  return fact('single-ready', 'The single run finished `ready` (§2.4)', (bundle) => {
+    const sr = bundle.singleRun;
+    if (!sr) return NO_SINGLE_RUN;
+    const evidence = [`outcome: ${sr.outcome ?? '(none)'}`, `final status: ${sr.finalState ?? '(none)'}`, `ended: ${sr.end ?? '(unknown)'}`];
+    if (sr.outcome !== 'ready') return { pass: false, evidence, detail: `the run ended ${sr.outcome ?? 'without an outcome'}, not ready` };
+    if (sr.finalState !== 'finished') return { pass: false, evidence, detail: `the program recorded ${sr.finalState ?? 'no final status'}, not finished` };
+    return { pass: true, evidence, detail: `ready, as ${sr.name}` };
+  });
+}
+
+// pir/{name} carries at least one commit the builder made (the commits up to the head pir tested green
+// before it renamed the run and opened the reviewer), and the fixture's test passes at the branch's tip.
+// The seeded test failing on the base is required too: otherwise the run proved nothing was fixed.
+export function singleBuilderCommitGreen() {
+  return fact('single-builder-commit-green', 'pir/{name} has a builder commit and the test passes on it', (bundle) => {
+    const sr = bundle.singleRun;
+    if (!sr) return NO_SINGLE_RUN;
+    const builder = Array.isArray(sr.builderCommits) ? sr.builderCommits : [];
+    const evidence = [
+      `builder head: ${sr.builderHead ?? '(not found in the program log)'}`,
+      ...builder.map((c) => `builder commit: ${c}`),
+      `test on the base: ${sr.testAtBase?.ok == null ? '(not run)' : sr.testAtBase.ok ? 'green' : 'red'}`,
+      `test at pir/${sr.name ?? '?'}'s tip: ${sr.testAtTip?.ok == null ? '(not run)' : sr.testAtTip.ok ? 'green' : 'red'}`,
+    ];
+    if (builder.length === 0) return { pass: false, evidence, detail: 'no commit by the builder on the branch' };
+    if (sr.testAtBase?.ok !== false) return { pass: false, evidence, detail: 'the seeded test did not fail on the base, so nothing was shown fixed' };
+    if (sr.testAtTip?.ok !== true) return { pass: false, evidence, detail: `the test does not pass at pir/${sr.name}'s tip` };
+    return { pass: true, evidence, detail: `${builder.length} builder commit(s); red on the base, green at the tip` };
+  });
+}
+
+// The index holds one entry for the run, `kind: 'single'`, under the builder's name, and none is left
+// under the run id (the rename, §2.4 step 4).
+export function singleIndexUnderName() {
+  return fact('single-index-under-name', "The run's index entry is kind single under the builder's name", (bundle) => {
+    const sr = bundle.singleRun;
+    if (!sr) return NO_SINGLE_RUN;
+    const records = Array.isArray(sr.records) ? sr.records : [];
+    const evidence = records.map((r) => `${r?.slug}: kind ${r?.kind ?? 'work'}, final ${r?.finalState ?? 'none'}`);
+    if (!sr.name) return { pass: false, evidence, detail: 'the run never took a name' };
+    const leftover = sr.runId ? records.filter((r) => r?.slug === sr.runId) : [];
+    if (leftover.length) return { pass: false, evidence, detail: `an entry is still under the run id ${sr.runId}` };
+    const mine = records.filter((r) => r?.slug === sr.name);
+    if (mine.length !== 1) return { pass: false, evidence, detail: `${mine.length} entries for ${sr.name}, expected one` };
+    if (mine[0].kind !== 'single') return { pass: false, evidence, detail: `the entry for ${sr.name} is kind ${mine[0].kind ?? 'work'}` };
+    return { pass: true, evidence, detail: `one entry for ${sr.name}, kind single` };
+  });
+}
+
+// Once the program had ended on its own, nothing it started still ran: no session it recorded in
+// workers.json at any point, no test run it recorded in command.json, and not the program itself. Read
+// before the runner's own teardown reaps anything, so the teardown cannot make it pass.
+export function singleNoSessionLeft() {
+  return fact('single-no-session-left', 'No session or command of the run was left running', (bundle) => {
+    const sr = bundle.singleRun;
+    if (!sr) return NO_SINGLE_RUN;
+    const seen = Array.isArray(sr.seen) ? sr.seen : [];
+    const survivors = Array.isArray(sr.survivors) ? sr.survivors : null;
+    const evidence = seen.map((p) => `${p.what} pid ${p.pid}`);
+    if (survivors == null) return { pass: false, evidence, detail: 'what was left running was not read' };
+    if (!seen.some((p) => p.what !== 'program')) return { pass: false, evidence, detail: 'no session was ever recorded, so none was shown closed' };
+    if (survivors.length) return { pass: false, evidence: [...evidence, ...survivors.map((p) => `still running: ${p.what} pid ${p.pid}`)], detail: `${survivors.length} left running` };
+    return { pass: true, evidence, detail: `${seen.length} process(es) seen, none left running` };
   });
 }
 

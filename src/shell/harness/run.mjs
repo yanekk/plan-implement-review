@@ -36,12 +36,12 @@ import { tmpdir, homedir } from 'node:os';
 
 import { getFixture, installFixture } from './fixtures.mjs';
 import { createCapture, bundleDirFor } from './capture.mjs';
-import { checkScenario, loadTranscripts, loadFinalFiles, loadControlFeeds, loadRestartPoint, loadPlanRun, formatReport } from './assertions.mjs';
+import { checkScenario, loadTranscripts, loadFinalFiles, loadControlFeeds, loadRestartPoint, loadPlanRun, loadSingleRun, formatReport } from './assertions.mjs';
 import { reapRecorded, readWorkersFile } from '../reap.mjs';
 import { isAlive as isAliveReal, startTimeOf as startTimeOfReal } from '../identity.mjs';
 import { createWorktree } from '../worktree.mjs';
 import { createAnswerer } from './answerer.mjs';
-import { startPlanRun, startRun } from '../launch.mjs';
+import { startPlanRun, startRun, startSingleRun } from '../launch.mjs';
 import { stopRun } from '../control-run.mjs';
 import { indexDir, listRecords } from '../index-store.mjs';
 import { readSnapshot } from '../snapshot-store.mjs';
@@ -1455,6 +1455,259 @@ export async function runPlanScenario({
   return { scenario: spec.id, ok, reason: timedOut ? 'timeout' : reason, bundleDir: bundle?.dir ?? null, report };
 }
 
+// --- The single runner (single-runs DESIGN §5.1, §5.2, T12) ---------------------------------------
+//
+// A `kind: 'single'` scenario starts a single run on the fixture's scratch repo with startSingleRun, the
+// call `@repo/single <prompt>` makes, and plays the person through the builder and the reviewer with the
+// scenario's canned reply (its question forms get it typed on their Other line). The single program is the
+// engine's own, from this checkout, with the scratch repo as its cwd. It ends itself: the runner waits for
+// the final status it records in the index, then reads what it left while the scratch still stands.
+//
+// The seatbelts (§5.2): the scratch repo; PIR_HOME inside it; one wall-clock timeout and the reply cap,
+// either of which stops the program as `pir`'s stop does (control-run stopRun). Before any teardown the
+// runner reads whether anything the program started still runs, so the reap cannot make that fact pass.
+
+// singleRecordOf(records, { repo, runId, name }) → this single run's index record: under the builder's
+// name once renamed, else under the run id. Pure.
+export function singleRecordOf(records = [], { repo, runId, name = null } = {}) {
+  const mine = records.filter((r) => r?.repo === repo && r.kind === 'single');
+  return (name && mine.find((r) => r.slug === name)) || mine.find((r) => r.slug !== runId) || mine.find((r) => r.slug === runId) || null;
+}
+
+// builderHeadFrom(logText) → the short head of the last green test run before the program renamed the
+// run, i.e. the builder's commit pir accepted (single-run.mjs logs `tests run green (head abc1234, clean)`
+// and then `renamed branch and worktree to pir/{name}`); null when either line is missing. Pure.
+export function builderHeadFrom(logText = '') {
+  let head = null;
+  for (const line of String(logText).split('\n')) {
+    const green = /tests run green \(head ([0-9a-f]+),/.exec(line);
+    if (green) head = green[1];
+    if (/renamed branch and worktree to pir\//.test(line)) return head;
+  }
+  return null;
+}
+
+// noteProcs(seen, controlDir, { readWorkers, readJson }) → adds to `seen` (a Map keyed by pid) every session
+// in the control folder's workers.json and the command run in its command.json. Called every tick, so a
+// session closed and dropped from workers.json before the end is still checked at the end.
+export function noteProcs(seen, controlDir, { readWorkers = readWorkersFile, readJson = readJsonOr } = {}) {
+  if (!controlDir) return seen;
+  for (const w of readWorkers(controlDir)) {
+    if (!seen.has(w.pid)) seen.set(w.pid, { pid: w.pid, startTime: w.startTime ?? null, what: w.role ?? 'session' });
+  }
+  const cmd = readJson(join(controlDir, 'command.json'), null);
+  if (Number.isInteger(cmd?.pid) && !seen.has(cmd.pid)) seen.set(cmd.pid, { pid: cmd.pid, startTime: cmd.startTime ?? null, what: 'command' });
+  return seen;
+}
+
+// runTestAt({ repoDir, ref, gitRun, exec }) → { ok, output }: the fixture's `node --test` run on a detached
+// throwaway worktree of `ref`, then the worktree removed. NODE_TEST_CONTEXT is dropped: inherited from an
+// outer `node --test` it turns the child into a subtest reporter and hides its exit status.
+function runTestAt({ repoDir, ref, gitRun, exec = execFileSync, env = process.env }) {
+  const dir = mkdtempSync(join(tmpdir(), 'pir-single-test-'));
+  rmSync(dir, { recursive: true, force: true });
+  const add = gitRun(['worktree', 'add', '--detach', '-q', dir, ref], { cwd: repoDir });
+  if (!add.ok) return { ok: null, output: `worktree add failed: ${add.stderr}` };
+  try {
+    const childEnv = { ...env };
+    delete childEnv.NODE_TEST_CONTEXT;
+    const output = exec('node', ['--test'], { cwd: dir, env: childEnv, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 120_000 });
+    return { ok: true, output: String(output).slice(-2000) };
+  } catch (e) {
+    return { ok: false, output: `${e.stdout ?? ''}${e.stderr ?? ''}`.slice(-2000) || String(e.message) };
+  } finally {
+    gitRun(['worktree', 'remove', '--force', dir], { cwd: repoDir });
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+// runSingleScenario(opts) → { scenario, ok, reason, bundleDir, report }, the shape runScenario returns.
+// Platform pieces are injectable as in runPlanScenario; `startSingle` defaults to launch.mjs's
+// startSingleRun and `stopSingle` to control-run's stopRun. `exitWaitMs` is how long the program may take
+// to exit after it recorded its final status before what is left running is read.
+export async function runSingleScenario({
+  fixtureId,
+  scratchDir,
+  pollMs = 2000,
+  timeoutMs,
+  exitWaitMs = 30_000,
+  baseEnv = process.env,
+  spawn = nodeSpawn,
+  procs = REAL_PROCS,
+  reap,
+  gitRun = defaultRunGit,
+  install = installFixture,
+  startSingle = startSingleRun,
+  stopSingle,
+  testAt = runTestAt,
+  makeAnswerer = createAnswerer,
+  timers = { setTimeout, clearTimeout },
+  now = () => new Date(),
+  log = () => {},
+} = {}) {
+  const fixture = getFixture(fixtureId);
+  const spec = fixture.scenario;
+  if (spec.kind !== 'single') throw new Error(`runSingleScenario: fixture "${fixtureId}" is not a single scenario`);
+  const timeout = timeoutMs ?? spec.seatbelts?.timeoutMs;
+
+  const repoDir = scratchDir ?? mkdtempSync(join(tmpdir(), `pir-single-${fixtureId}-`));
+  const repo = basename(repoDir);
+  const reapWorkers = reap ?? ((dir) => reapRecorded(dir, procs));
+  const stopRunning = stopSingle ?? ((record) => stopRun(record, { kill: procs.kill, reap: reapWorkers }));
+
+  log(`installing fixture "${fixtureId}" into ${repoDir}`);
+  install(fixtureId, { into: repoDir, runGit: gitRun });
+  const pirHome = join(repoDir, fixture.pirHome ?? '.pir-home');
+  mkdirSync(pirHome, { recursive: true });
+  // planEnv's PIR_HOME and the dropped PARALLEL_ALLOW_HERE; a single run starts no coordinator.
+  const env = planEnv({ baseEnv, pirHome });
+  const dir = indexDir({ env });
+  const base = fixture.base ?? 'main';
+  const baseHead = () => {
+    const r = gitRun(['rev-parse', '--verify', '--quiet', `refs/heads/${base}`], { cwd: repoDir });
+    return r.ok ? r.stdout.trim() : null;
+  };
+  const baseBefore = baseHead();
+
+  let timedOut = false;
+  const timeoutHandle =
+    timeout != null
+      ? timers.setTimeout(() => {
+          timedOut = true;
+          log(`\n=== timeout after ${timeout}ms (seatbelt §5.2) ===`);
+        }, timeout)
+      : null;
+  if (timeoutHandle && typeof timeoutHandle.unref === 'function') timeoutHandle.unref();
+
+  const startedAt = Date.now();
+  let reason = 'error';
+  let runId = null;
+  let firstControl = null;
+  let control = null;
+  let record = null;
+  let state = null;
+  let end = null;
+  let stopped = false;
+  let survivors = null;
+  const seen = new Map();
+  const liveOf = (r) => {
+    if (!r?.pid || !procs.isAlive(r.pid)) return false;
+    return r.startTime == null || procs.startTimeOf(r.pid) === r.startTime;
+  };
+  const currentRecord = () => singleRecordOf(listRecords({ dir }), { repo, runId, name: state?.name ?? null });
+
+  try {
+    log(`starting the single run: ${fixture.prompt}`);
+    const started = startSingle(fixture.prompt, { cwd: repoDir, env, spawn });
+    if (!started.started) {
+      reason = `single-refused:${started.reason}`;
+    } else {
+      runId = started.runId;
+      firstControl = control = started.controlDir;
+      seen.set(started.pid, { pid: started.pid, startTime: started.record?.startTime ?? null, what: 'program' });
+      log(`single run ${runId} started (pid ${started.pid})`);
+      const answerer = makeAnswerer({
+        controlDir: () => control,
+        typed: { '*': spec.reply },
+        replies: { text: spec.reply, cap: spec.replyCap },
+        holdReplies: () => holdPlanReplies(control),
+        log,
+      });
+      for (;;) {
+        record = currentRecord() ?? record;
+        if (record?.controlDir) control = record.controlDir;
+        state = readJsonOr(join(control, 'state.json'), state);
+        noteProcs(seen, control);
+        try {
+          answerer.tick();
+        } catch (e) {
+          log(`answerer failed: ${e.message}`);
+        }
+        end = planEnd({ record, alive: liveOf(record), capReached: answerer.capReached(), timedOut });
+        if (end) break;
+        await delay(timers, pollMs);
+      }
+      state = readJsonOr(join(control, 'state.json'), state);
+      log(`single run ended: ${end}${state?.outcome ? ` (${state.outcome})` : ''}${state?.name ? ` as ${state.name}` : ''}`);
+      if (end === 'reply-cap' || end === 'timeout') {
+        stopped = true;
+        await stopRunning(record);
+        reason = end;
+      } else if (end !== 'finished') {
+        reason = `single-${end}`;
+      } else {
+        reason = state?.outcome === 'ready' ? 'completed' : `single-${state?.outcome ?? 'no-outcome'}`;
+        // The program exits on its own after its final status; give it the time to, then read what is left.
+        const program = seen.get(started.pid);
+        const deadline = Date.now() + exitWaitMs;
+        while (liveOf(program) && Date.now() < deadline) await delay(timers, Math.min(pollMs, 500));
+        noteProcs(seen, control);
+        survivors = [...seen.values()].filter((p) => liveOf(p)).map(({ pid, what }) => ({ pid, what }));
+        if (survivors.length) log(`left running after the end: ${survivors.map((p) => `${p.what} ${p.pid}`).join(', ')}`);
+      }
+    }
+  } finally {
+    if (timeoutHandle) timers.clearTimeout(timeoutHandle);
+    try {
+      const rec = currentRecord() ?? record;
+      if (rec && !stopped && liveOf(rec)) await stopRunning(rec);
+      if (control) {
+        const t = await reapWorkers(control);
+        if (t?.reaped?.length) log(`teardown: reaped ${t.reaped.length} session(s)`);
+      }
+    } catch (e) {
+      log(`teardown failed: ${e.message}`);
+    }
+  }
+
+  // What the facts read, captured while the scratch still stands (loadSingleRun).
+  const bundleDir = bundleDirFor(control ? dirname(control) : join(repoDir, 'plans'), now());
+  try {
+    mkdirSync(bundleDir, { recursive: true });
+    const name = state?.name ?? null;
+    const branch = name ? `pir/${name}` : null;
+    // run.log moves with the control folder at the rename (its open descriptor follows the file).
+    const runLog = [control, firstControl].filter(Boolean).map((d) => safeRead(join(d, 'run.log'))).find(Boolean) ?? '';
+    const short = builderHeadFrom(runLog);
+    const builderHead = short ? (gitRun(['rev-parse', '--verify', '--quiet', `${short}^{commit}`], { cwd: repoDir }).stdout?.trim() || null) : null;
+    const listed = (range) => {
+      const r = gitRun(['log', '--format=%h %s', range], { cwd: repoDir });
+      return r.ok ? r.stdout.split('\n').filter(Boolean) : [];
+    };
+    const records = listRecords({ dir }).filter((r) => r.repo === repo);
+    const singleRun = {
+      runId,
+      name,
+      end,
+      outcome: state?.outcome ?? null,
+      finalState: currentRecord()?.finalState ?? record?.finalState ?? null,
+      durationMs: Date.now() - startedAt,
+      base,
+      baseBefore,
+      baseAfter: baseHead(),
+      baseSha: state?.baseSha ?? null,
+      builderHead,
+      builderCommits: builderHead && state?.baseSha ? listed(`${state.baseSha}..${builderHead}`) : [],
+      branchCommits: branch && state?.baseSha ? listed(`${state.baseSha}..${branch}`) : [],
+      testAtBase: state?.baseSha ? testAt({ repoDir, ref: state.baseSha, gitRun }) : null,
+      testAtTip: branch ? testAt({ repoDir, ref: branch, gitRun }) : null,
+      seen: [...seen.values()].map(({ pid, what }) => ({ pid, what })),
+      survivors,
+      records,
+    };
+    writeFileSync(join(bundleDir, 'single-run.json'), `${JSON.stringify(singleRun, null, 2)}\n`);
+    if (runLog) writeFileSync(join(bundleDir, 'run.log'), runLog);
+    const conv = control ? join(control, 'conversations') : null;
+    if (conv && existsSync(conv)) cpSync(conv, join(bundleDir, 'conversations'), { recursive: true });
+  } catch (e) {
+    log(`single-run capture failed: ${e.message}`);
+  }
+
+  const report = checkScenario(spec, loadSingleRun({ dir: bundleDir, manifest: {} }));
+  const ok = report.pass && reason === 'completed';
+  return { scenario: spec.id, ok, reason: timedOut ? 'timeout' : reason, bundleDir, report };
+}
+
 // --- The `run {fixtureId}` bin entry -------------------------------------------------------------
 //
 // The live launcher (T09 "Needs a person"): the user starts this on the scratch harness, it spawns a real
@@ -1496,11 +1749,13 @@ async function main(argv) {
   // fixture runs the straight-through scenario. Both take the same options and return the same shape.
   // A plan scenario (pir-plan-command T17) starts from a repo with no plan and runs `pir plan` first.
   const isRestart = !!getFixture(fixtureId).restart;
-  const isPlan = getFixture(fixtureId).scenario?.kind === 'plan';
+  const kind = getFixture(fixtureId).scenario?.kind;
+  const isPlan = kind === 'plan';
+  const isSingle = kind === 'single';
   console.log(
-    `=== live ${isRestart ? 'restart ' : isPlan ? 'plan ' : ''}scenario: ${fixtureId} (real paid workers; seatbelted §5.2) ===`,
+    `=== live ${isRestart ? 'restart ' : isPlan ? 'plan ' : isSingle ? 'single ' : ''}scenario: ${fixtureId} (real paid workers; seatbelted §5.2) ===`,
   );
-  const runner = isPlan ? runPlanScenario : isRestart ? runRestartScenario : runScenario;
+  const runner = isSingle ? runSingleScenario : isPlan ? runPlanScenario : isRestart ? runRestartScenario : runScenario;
   const result = await runner({ fixtureId, scratchDir, log: (m) => console.log(m) });
 
   console.log(`\nbundle: ${result.bundleDir}`);
