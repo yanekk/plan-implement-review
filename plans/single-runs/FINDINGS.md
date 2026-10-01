@@ -7,6 +7,9 @@ Legend: 🐞 defect found · ✅ verified by hand with the user · 📌 worth kn
 
 | Date | | Finding |
 |---|---|---|
+| 2026-10-01 | 🐞 | T11 drill, worker-driven, 80×24, 120×40, 60×20: whole flow, dropped, taken, beside plan and builds, stop and resume. Fixed: a step's clock cut at 60 columns (`0:1`); a merged run's merge row still said the merge was yours. Tests lock both. |
+| 2026-10-01 | 📌 | At 60 columns the list's counts line and every view's key-hint line are cut at the edge, mid-word (`Ctrl+X remo`, `stop thi`). Planning runs and builds too; no rule in DESIGN. Left alone. |
+| 2026-10-01 | 📌 | The red-round message names its log under the run's first folder (`plans/single-{hex4}/…/tests-1.log`); after the rename that path no longer exists. Correct when sent; stale when read back in the conversation. |
 | 2026-09-30 | 🐞 | T10 review drill, worker-driven: `single-dropped` at 80×24 and 120×40, list, steps view, `c`, `→` on each step, Ctrl+R, Ctrl+X. `→` on a dropped run's review row promised a reviewer. Fixed in `singleNoSessionNote`, test locks it. |
 | 2026-09-30 | 📌 | The armed `Ctrl+S` and `Ctrl+X` lines name a single run by its id (`single-02c3`) while its row shows the label; only the resume line uses `displayName`. A planning run does the same. Left alone. |
 | 2026-09-30 | 📌 | T10 drill, worker-driven: list and steps view of `single-happy` and `single-red` at 80×24 and 120×40, `→` on merge, `c`. Nothing clipped. Fixed: a full label lost its closing quote at 80 columns. |
