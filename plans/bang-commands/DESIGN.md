@@ -101,7 +101,9 @@ below names its reason.
 - Esc in the conversation view while this session's command runs stops the command, not the agent;
   Ctrl+C on an empty box does the same. Both drop `shell-stop`. The helper warning of
   `visible-helpers` does not apply: no interrupt is sent, so no helper is stopped.
-- Stop is SIGTERM to the command's process group, then SIGKILL after 3 s. The agent's message says
+- Stop is SIGHUP and SIGTERM to the command's process group, then SIGKILL after 3 s. HUP because an
+  interactive zsh or bash ignores TERM: with TERM alone a stopped `a; b` ran `b`, and bash's `cmd &` jobs
+  survived (measured at T01 review; the person, 2026-10-01). The agent's message says
   `stopped by the person` with whatever output there was.
 - When the session closes while its command runs (task finished, run stopped), the command is killed,
   its end entry reads `stopped: 'session-closed'`, and nothing is sent.

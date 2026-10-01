@@ -95,3 +95,13 @@ export function createLivenessCache({ kill = process.kill, exec, now = Date.now,
     return { alive: true, liveStartTime };
   };
 }
+
+// isSameProcess(pid, startTime, { isAlive, startTimeOf }) → boolean
+//
+// True only while a process lives at `pid` AND it still carries the recorded launch time: macOS reuses
+// numbers, so a pid alone is never an identity. A record with no startTime (the read failed when it was
+// written) can never match, so an unverifiable pid is never signalled. Shared by every reaper of a
+// recorded pid (single-run.mjs `reapCommand`, person-shell.mjs `reapShells`).
+export function isSameProcess(pid, startTime, { isAlive: alive = isAlive, startTimeOf: lstart = startTimeOf } = {}) {
+  return Number.isInteger(pid) && pid > 0 && startTime != null && alive(pid) && lstart(pid) === startTime;
+}
