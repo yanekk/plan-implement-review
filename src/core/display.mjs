@@ -53,9 +53,10 @@ const ASKING_LABEL = {
   question: 'asking you · a question',
   questions: 'asking you · a question',
   permission: 'asking you · allow a command?',
+  command: 'asking you · run a command', // a command an agent handed the person (bang-commands DESIGN §2.7)
 };
 function isRequest(t) {
-  return t.asking === 'permission' || t.asking === 'questions';
+  return t.asking === 'permission' || t.asking === 'questions' || t.asking === 'command';
 }
 function askingKind(t) {
   if (isRequest(t)) return t.asking;
@@ -70,6 +71,9 @@ const COORDINATOR_LABEL = {
   question: 'asking coordinator · a question',
   questions: 'asking coordinator · a question',
   permission: 'asking coordinator · allow a command?',
+  // Never held in practice (a handed command is reserved for the person, asking.mjs holderOf); named so a
+  // row could not read `undefined`.
+  command: 'asking coordinator · run a command',
 };
 const heldByCoordinator = (t) => t.holder === 'coordinator';
 // The task waits on the person: something is asking and the coordinator agent does not hold it.
@@ -229,7 +233,7 @@ function agentRow(t) {
 //     question— the parked worker's rendered question, shown on the asking row's footer.
 //     conflictSent — a merge-conflict fix went to the task's live worker (live-workers §2.10): row kind
 //               `fixing-conflict` in the active style, counted as running, no footer.
-//     asking  — null | 'question' | 'permission' | 'questions' (live-workers §2.4): the kind of answer the
+//     asking  — null | 'question' | 'permission' | 'questions' | 'command' (live-workers §2.4): the kind of answer the
 //               task's worker wants. A pending request makes the row `asking` whatever its phase.
 //     holder  — null | 'coordinator' | 'person' (pir-coordinator §2.5): who holds the waiting items. A
 //               coordinator-held task reads `asking coordinator` (row kind `asking-coordinator`) and is

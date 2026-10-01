@@ -3,6 +3,8 @@
 // decision files exactly (skills/pir-coordinator/SKILL.md § Writing a decision), so every brief names
 // both on lines of their own, in backticks, with nothing else on the line to mis-copy.
 
+import { HAND_RESERVED } from './coordinator-policy.mjs';
+
 const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 const nonEmpty = (v) => typeof v === 'string' && v.trim() !== '';
 
@@ -31,6 +33,11 @@ export function briefFor(item) {
     parts.push('A worker is asking permission to use a tool.', header(i), `Tool: ${r.toolName ?? 'unknown'}`, `Input:\n${json(isObject(r.input) ? r.input : {})}`);
     if (nonEmpty(r.reason)) parts.push(`Why Claude Code asked: ${r.reason}`);
     if (nonEmpty(r.description)) parts.push(`Description: ${r.description}`);
+  } else if (i.kind === 'command') {
+    // A command an agent hands the person (bang-commands DESIGN §2.6): only the person runs it, so it is
+    // briefed as reserved even when the item came without `reserved`.
+    parts.push('A worker has handed the person a command to run.', header(i), `Command: ${r.command ?? r.input?.command ?? ''}`);
+    if (nonEmpty(r.reason)) parts.push(`Why the worker wants it run: ${r.reason}`);
   } else if (i.kind === 'questions') {
     parts.push('A worker is asking a set of questions.', header(i));
     const qs = Array.isArray(r.questions) ? r.questions.filter(isObject) : [];
@@ -46,9 +53,10 @@ export function briefFor(item) {
     if (nonEmpty(i.lastWords)) parts.push(`Its last words:\n${i.lastWords.trim()}`);
   }
 
-  if (isObject(i.reserved)) {
+  const reserved = isObject(i.reserved) ? i.reserved : i.kind === 'command' ? HAND_RESERVED : null;
+  if (reserved) {
     parts.push(
-      `This one is the person's (${i.reserved.why}); add your note. Write a \`pass\` decision whose \`reason\` is your note ` +
+      `This one is the person's (${reserved.why}); add your note. Write a \`pass\` decision whose \`reason\` is your note ` +
         'and whose `suggestion` is what you would pick, and give the person the pointer in your reply. ' +
         'A `permission` decision for it is refused.',
     );

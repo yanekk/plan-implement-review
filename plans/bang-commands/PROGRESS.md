@@ -11,7 +11,7 @@ they walk past.
 **Status:** Plan written 2026-10-01. Nothing built. The red `notify-wiring.test.mjs` cases on `main` are to
 be fixed there before the build starts (DESIGN §4).
 **Last updated:** 2026-10-01
-**Next `pir-work` will:** implement T04.
+**Next `pir-work` will:** implement T05.
 
 ## Tasks
 
@@ -24,7 +24,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T01 | shell-runner | — | ✅ | |
 | T02 | bang-rules | — | ✅ | |
 | T03 | bang-forwarding | T01, T02 | ✅ | Review: one fix. stopAll deleted the shells record while a HUP/TERM-ignoring command still ran, so a host exiting first left an unreapable orphan; reproduced with a real `trap '' HUP TERM` command, fixed, two tests lock it; reap skips blocks already closed. Probed rename, cut-off ids, agent routing. |
-| T04 | hand-rules | T00, T02 | ⬜ | |
+| T04 | hand-rules | T00, T02 | ✅ | |
 | T05 | hand-tool | T00, T03, T04 | ⬜ | |
 | T06 | bang-view | T02, T03 | ⬜ | |
 | T07 | hand-view | T05, T06 | ⬜ | |

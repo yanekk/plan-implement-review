@@ -154,14 +154,15 @@ function clone(state) {
 // facts = {
 //   resume:    true on the first call of a `--resume` start (§2.14)
 //   reports:   parsed reports (parsePlanReport) drained since the last call
-//   activity:  the live session's activity: 'starting'|'busy'|'idle'|'permission'|'questions'|'exited'|'none'
+//   activity:  the live session's activity: 'starting'|'busy'|'idle'|'permission'|'questions'|'command'|'exited'|'none'
 //   checks:    { ok, reason } — the §2.5/§2.7 git checks the shell ran for the last actionable report, or null
 //   renamed:   { branch, worktree, control, index } — the §2.6 sub-steps already done on disk
 //   sessionId: the id of the live session, once the shell knows it (recorded in state.sessions[step])
 // }
 //
 // A session is closed only when `idle` (or already `exited`): that is the coordinator's idle gate, and
-// it is what stops a final commit being cut off. `permission` and `questions` are the session asking the
+// it is what stops a final commit being cut off. `permission`, `questions` and `command` (a command the
+// session handed the person, bang-commands DESIGN §2.7) are the session asking the
 // person, so they are not idle either.
 export function decidePlanStep(state, facts = {}) {
   const s = clone(state);

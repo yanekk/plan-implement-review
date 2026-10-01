@@ -16,7 +16,7 @@ import { parseProgress } from './progress.mjs';
 const ROLE = { plan: 'planner', review: 'reviewer', build: '—' };
 
 // The label of an asking step, the same words workerActivity's kinds get on a task row (display.mjs).
-const ASKING_TEXT = { questions: 'asking you · a question', question: 'asking you · a question', permission: 'asking you · allow a command?' };
+const ASKING_TEXT = { questions: 'asking you · a question', question: 'asking you · a question', permission: 'asking you · allow a command?', command: 'asking you · run a command' };
 
 // What a done, failed or pending step says. A pending step names what it waits on.
 const DONE_TEXT = { plan: 'plan written', review: 'reviewed' };
