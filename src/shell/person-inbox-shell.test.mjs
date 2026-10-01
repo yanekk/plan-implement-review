@@ -13,14 +13,14 @@ import { join } from 'node:path';
 import {
   createShellTable, cutOffMessage, dropPersonInput, reapPersonShells, shellsDirOf, startPersonInbox,
 } from './person-inbox.mjs';
-import { bangMessage, LOG_OUTPUT_CAP } from '../core/bang.mjs';
+import { bangMessage, LOG_OUTPUT_CAP, LEAD_HANDED, LEAD_EDITED, HAND_TOOL, HAND_DECLINED } from '../core/bang.mjs';
 import { createPlatform } from './platform.mjs';
 import { createSessionHolder } from './held-session.mjs';
 import { withAgent } from './coordinator-agent.mjs';
 import { startWorker } from './worker-proc.mjs';
 import { startTimeOf } from './identity.mjs';
 import { fakeClaudeSpawner, turn } from './fake/claude-stream.mjs';
-import { RIG_BANG_REPLY, startRig } from './conversation-rig.mjs';
+import { RIG_BANG_REPLY, RIG_HAND_COMMAND, RIG_HAND_ID, RIG_HAND_REASON, RIG_HAND_REPLY, startRig } from './conversation-rig.mjs';
 import { scratchHome } from './conversation-rig-helpers.mjs';
 
 async function waitFor(pred, what, ms = 8000) {
@@ -149,7 +149,108 @@ test('a drop carrying requestId is forwarded the same way, the id on its start e
   assert.equal(runs[0].o.requestId, 'req-1');
   assert.equal(shellEntries(platform)[0].requestId, 'req-1');
   runs[0].o.onEnd({ code: 0, signal: null, stopped: null, ms: 10 });
-  assert.equal(platform.sent.length, 1, 'T05 turns this end into the answer; here it is a message');
+  assert.equal(platform.sent.length, 1, 'no such request is pending, so the end is the plain message');
+});
+
+// ---- A command the agent handed the person (bang-commands T05, DESIGN §2.6). ----
+
+// handPlatform() → the fake platform with one pending hand request `req-1`, recording every answer.
+function handPlatform(command = 'gcloud auth login') {
+  const platform = fakePlatform();
+  const input = { command, reason: 'needs your login' };
+  const request = { kind: 'command', requestId: 'req-1', toolUseId: 'toolu_req-1', toolName: HAND_TOOL, input, command, reason: input.reason };
+  let pending = [request];
+  platform.answers = [];
+  platform.pending = (id) => (id === 'W1' ? pending : []);
+  platform.answer = (id, requestId, result, opts) => {
+    platform.answers.push({ id, requestId, result, opts });
+    const hit = pending.some((r) => r.requestId === requestId);
+    pending = pending.filter((r) => r.requestId !== requestId);
+    return { ok: hit };
+  };
+  platform.dropPending = () => (pending = []);
+  return { platform, input };
+}
+
+test('the run of a pending handed command answers it allow with pirResult and sends no message', (t) => {
+  const { platform, input } = handPlatform();
+  const { drop, runs } = setup(t, { platform });
+  drop({ kind: 'shell', command: 'gcloud auth login', requestId: 'req-1' });
+  assert.equal(shellEntries(platform)[0].edited, undefined, 'run as handed');
+  runs[0].o.onOutput('You are now logged in.\n');
+  runs[0].o.onEnd({ code: 0, signal: null, stopped: null, ms: 6000 });
+  assert.equal(platform.sent.length, 0);
+  assert.equal(platform.answers.length, 1);
+  const [a] = platform.answers;
+  assert.equal(a.requestId, 'req-1');
+  assert.deepEqual(a.opts, { from: 'person' });
+  const pirResult = bangMessage({ command: 'gcloud auth login', output: 'You are now logged in.\n', code: 0, signal: null, stopped: null, ms: 6000, lead: LEAD_HANDED });
+  assert.deepEqual(a.result, { behavior: 'allow', updatedInput: { ...input, pirResult } });
+  assert.match(pirResult, /^\[pir\] The person ran your command:\n\$ gcloud auth login\nexit 0 · 6s\nYou are now logged in\.$/);
+  assert.equal(shellEntries(platform).at(-1).sent, 'answer');
+});
+
+test('an edited handed command says so in the lead and on its start entry', (t) => {
+  const { platform } = handPlatform();
+  const { drop, runs } = setup(t, { platform });
+  drop({ kind: 'shell', command: 'gcloud auth login --no-launch-browser', requestId: 'req-1' });
+  assert.equal(shellEntries(platform)[0].edited, true);
+  runs[0].o.onEnd({ code: 1, signal: null, stopped: null, ms: 2000 });
+  const { pirResult } = platform.answers[0].result.updatedInput;
+  assert.ok(pirResult.startsWith(`[pir] ${LEAD_EDITED}\n$ gcloud auth login --no-launch-browser\nexit 1 · 2s`), pirResult);
+  assert.equal(platform.answers[0].result.updatedInput.command, 'gcloud auth login', 'the input is the call the agent made');
+});
+
+test('a stopped handed command still answers, saying the person stopped it', (t) => {
+  const { platform } = handPlatform('tail -f log');
+  const { drop, runs } = setup(t, { platform });
+  drop({ kind: 'shell', command: 'tail -f log', requestId: 'req-1' });
+  runs[0].o.onEnd({ code: null, signal: 'SIGTERM', stopped: 'person', ms: 72000 });
+  assert.match(platform.answers[0].result.updatedInput.pirResult, /\nstopped by the person · 1m 12s\n/);
+});
+
+test('a handed command whose request is no longer pending sends the plain message', (t) => {
+  const { platform } = handPlatform();
+  const { drop, runs } = setup(t, { platform });
+  drop({ kind: 'shell', command: 'gcloud auth login', requestId: 'req-1' });
+  platform.dropPending(); // answered on the phone meanwhile, or interrupted
+  runs[0].o.onEnd({ code: 0, signal: null, stopped: null, ms: 10 });
+  assert.equal(platform.answers.length, 0);
+  assert.equal(platform.sent.length, 1);
+  assert.ok(platform.sent[0].text.startsWith('[pir] The person ran a command in your working folder:'));
+  assert.equal(shellEntries(platform).at(-1).sent, 'message');
+});
+
+test('a handed command closed with its session answers nothing and sends nothing', (t) => {
+  const { platform } = handPlatform();
+  const { drop, inbox } = setup(t, { platform });
+  drop({ kind: 'shell', command: 'gcloud auth login', requestId: 'req-1' });
+  inbox.stopAll('session-closed');
+  assert.equal(platform.answers.length, 0);
+  assert.equal(platform.sent.length, 0);
+});
+
+test('a permission deny of a hand request is worded; with text it carries what the person said', (t) => {
+  const { platform } = handPlatform();
+  const { drop } = setup(t, { platform });
+  const [o] = drop({ kind: 'permission', requestId: 'req-1', decision: 'deny' });
+  assert.equal(o.outcome, 'delivered');
+  assert.deepEqual(platform.answers[0].result, { behavior: 'deny', message: HAND_DECLINED });
+
+  const second = handPlatform();
+  const s2 = setup(t, { platform: second.platform });
+  s2.drop({ kind: 'permission', requestId: 'req-1', decision: 'deny', text: 'I am not logged in to that account' });
+  assert.deepEqual(second.platform.answers[0].result, { behavior: 'deny', message: `${HAND_DECLINED} They said: I am not logged in to that account` });
+});
+
+test('a permission allow of a hand request is refused: only the person\'s run answers it', (t) => {
+  for (const decision of ['allow', 'allow-always']) {
+    const { platform } = handPlatform();
+    const { drop } = setup(t, { platform });
+    const [o] = drop({ kind: 'permission', requestId: 'req-1', decision });
+    assert.deepEqual([o.outcome, o.reason], ['undelivered', 'the request is a command, not a permission']);
+    assert.equal(platform.answers.length, 0);
+  }
 });
 
 test('a second command while one runs is refused busy, in a note, and nothing starts', (t) => {
@@ -539,4 +640,52 @@ test('rig bang: a hand-written shell drop of printf hi reaches the log and the a
   const msgs = rigLog(rig).filter((e) => e.dir === 'out' && e.shell === end2.id);
   assert.equal(msgs.length, 1);
   assert.match(msgs[0].text, /^\[pir\] The person ran a command in your working folder:\n\$ sleep 30\nstopped by the person · \d+s\n\(no output\)$/);
+});
+
+// ---- The hand scenario (bang-commands T05): the real SDK against the fake, the real forwarder. ----
+
+const receivedLines = (rig) => (existsSync(rig.received) ? readLog(rig.received) : []);
+const controlReplyTo = (rig, requestId) =>
+  receivedLines(rig).map((r) => r.line && JSON.parse(r.line)).find((m) => m?.type === 'control_response' && m.response?.request_id === requestId);
+
+async function handRig(t) {
+  const env = scratchHome(t);
+  const rig = startRig({ env, scenario: 'hand', paceMs: 0 });
+  t.after(() => rig.stop());
+  const drop = (input) => assert.deepEqual(dropPersonInput(rig.controlDir, { to: rig.workerId, ...input }, { coordinatorAlive: true }), { ok: true });
+  const req = await waitFor(() => rigLog(rig).find((e) => e.dir === 'request' && e.requestId === RIG_HAND_ID), 'the hand request');
+  assert.equal(req.toolName, HAND_TOOL);
+  assert.deepEqual(req.input, { command: RIG_HAND_COMMAND, reason: RIG_HAND_REASON });
+  await waitFor(() => rig.platform.list()[0]?.state === 'command', 'the worker asking');
+  assert.equal(rig.platform.list()[0].status, 'idle', 'a worker waiting on a hand request is parked, not busy');
+  assert.deepEqual(rig.platform.pending(rig.workerId).map((r) => [r.kind, r.requestId, r.command]), [['command', RIG_HAND_ID, RIG_HAND_COMMAND]]);
+  return { rig, drop };
+}
+
+test('rig hand: the person running the handed command answers it with pirResult, and the agent gets it as the tool result', async (t) => {
+  const { rig, drop } = await handRig(t);
+  drop({ kind: 'shell', command: RIG_HAND_COMMAND, requestId: RIG_HAND_ID });
+  const reply = await waitFor(() => controlReplyTo(rig, RIG_HAND_ID), 'the control response');
+  const { behavior, updatedInput } = reply.response.response;
+  assert.equal(behavior, 'allow');
+  assert.equal(updatedInput.command, RIG_HAND_COMMAND);
+  assert.match(updatedInput.pirResult, /^\[pir\] The person ran your command:\n\$ printf handed\nexit 0 · \d+(ms|s)?\S*\nhanded$/);
+  // The SDK's MCP server ran the handler for the CLI's tools/call: the tool result is the person's run.
+  const mcp = await waitFor(() => receivedLines(rig).find((r) => r.tool === RIG_HAND_ID && 'mcp' in r)?.mcp, 'the tools/call');
+  assert.equal(mcp.result.content[0].text, updatedInput.pirResult);
+  await waitFor(() => rigLog(rig).some((e) => e.dir === 'in' && e.event?.type === 'result' && e.event.result === RIG_HAND_REPLY), 'the reply');
+  const end = rigLog(rig).find((e) => e.dir === 'shell' && e.kind === 'end');
+  assert.equal(end.sent, 'answer');
+  assert.equal(rigLog(rig).some((e) => e.dir === 'out' && e.shell === end.id), false, 'no message: the answer was the result');
+  assert.equal(rig.platform.pending(rig.workerId).length, 0);
+});
+
+test('rig hand: a deny drop declines it worded, and the agent gets the refusal', async (t) => {
+  const { rig, drop } = await handRig(t);
+  drop({ kind: 'permission', requestId: RIG_HAND_ID, decision: 'deny', text: 'not now' });
+  const reply = await waitFor(() => controlReplyTo(rig, RIG_HAND_ID), 'the control response');
+  const { behavior, message } = reply.response.response;
+  assert.deepEqual({ behavior, message }, { behavior: 'deny', message: 'The person declined to run it. They said: not now' });
+  await waitFor(() => rigLog(rig).some((e) => e.dir === 'in' && e.event?.type === 'result' && e.event.result === RIG_HAND_REPLY), 'the reply');
+  assert.equal(receivedLines(rig).some((r) => r.tool === RIG_HAND_ID && 'mcp' in r), false, 'a declined call never runs');
 });

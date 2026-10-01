@@ -9,7 +9,7 @@ import { join } from 'node:path';
 import { writeClaudeShim } from './fake/claude-shim.mjs';
 import { canUseTool, initEvent, toolUse, turn } from './fake/claude-stream.mjs';
 import { startPersonInbox, dropPersonInput } from './person-inbox.mjs';
-import { STOP_CLOSE, createSessionHolder, findSessionLog, nextSessionLogPath, readLogEntries } from './held-session.mjs';
+import { STOP_CLOSE, createSessionHolder, findSessionLog, nextSessionLogPath, readLogEntries, sessionAsking } from './held-session.mjs';
 
 const OPENING = { build: 'Build the thing. Reports folder: /nowhere.', review: 'Review the thing. Reports folder: /nowhere.' };
 const ROLE = { build: 'builder', review: 'reviewer' };
@@ -290,7 +290,7 @@ test('env: null passes no environment; an object or a function is merged over pr
       startWorker: (opts) => (calls.push(opts), fakeWorker()),
     });
   make(null).spawn('build');
-  assert.deepEqual(calls[0], { cwd: '/w', sessionId: 'id-1', name: 'name build', logPath: '/c/conversations/build-1.ndjson', claudePath: '/claude' });
+  assert.deepEqual(calls[0], { cwd: '/w', sessionId: 'id-1', name: 'name build', logPath: '/c/conversations/build-1.ndjson', claudePath: '/claude', handTool: true });
   make({ PIR_X: '1' }).spawn('build');
   assert.equal(calls[1].env.PIR_X, '1');
   assert.equal(calls[1].env.PATH, process.env.PATH, 'merged over process.env, not instead of it');
@@ -323,4 +323,12 @@ test('nextSessionLogPath numbers {step}-{n}.ndjson per step prefix; findSessionL
 test('readLogEntries skips a torn line and reads a missing log as empty', () => {
   assert.deepEqual(readLogEntries('/x', { readFile: () => '{"t":1}\n\n{"t":2}\n{"t":' }), [{ t: 1 }, { t: 2 }]);
   assert.deepEqual(readLogEntries('/x', { readFile: () => { throw new Error('ENOENT'); } }), []);
+});
+
+// bang-commands T05 (DESIGN §2.7): a pending hand request is the session asking, as a permission is.
+test('sessionAsking reads a pending hand request as command', () => {
+  const live = (state) => ({ activity: { state } });
+  assert.equal(sessionAsking({}, live('command')), 'command');
+  assert.equal(sessionAsking({}, live('permission')), 'permission');
+  assert.equal(sessionAsking({ accepted: true }, live('command')), 'command', 'a pending request asks whatever was accepted');
 });

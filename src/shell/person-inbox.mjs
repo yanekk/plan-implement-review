@@ -13,7 +13,7 @@ import { appendFileSync, mkdirSync, readdirSync, readFileSync, rmSync } from 'no
 import { join } from 'node:path';
 import { validateDrop, grantFrom, decidePermission } from '../core/person-input.mjs';
 import { allowResult, denyResult, answersResult, declineQuestionsResult } from '../core/stream.mjs';
-import { AGENT_OUTPUT_CAP, LOG_OUTPUT_CAP, bangMessage, shellId } from '../core/bang.mjs';
+import { AGENT_OUTPUT_CAP, LOG_OUTPUT_CAP, LEAD_HANDED, LEAD_EDITED, bangMessage, shellId, handDeclineMessage } from '../core/bang.mjs';
 import { plainText } from '../core/text.mjs';
 import { writeJsonAtomic } from './atomic-write.mjs';
 import { drainDropFolder, waitForDrop } from './drop-folder.mjs';
@@ -272,8 +272,10 @@ export function startPersonInbox({
 
     const request = platform.pending(to).find((r) => r.requestId === input.requestId);
     // Answering what is not pending: the request was answered already (twice, or from two screens,
-    // DESIGN §2.14), cancelled by an interrupt, or died with its worker.
-    const wantKind = kind === 'permission' ? 'permission' : 'questions';
+    // DESIGN §2.14), cancelled by an interrupt, or died with its worker. A command the agent handed the
+    // person (bang-commands DESIGN §2.6) is answered by the person's run of it (a `shell` drop) or declined by
+    // a permission deny; a permission allow would tell the agent it ran when nothing did, so it is refused.
+    const wantKind = kind === 'permission' ? (request?.kind === 'command' && input.decision === 'deny' ? 'command' : 'permission') : 'questions';
     if (!request || request.kind !== wantKind) {
       const reason = !request ? 'the request is no longer pending' : `the request is a ${request.kind}, not a ${wantKind}`;
       platform.note(to, 'undelivered', { what: 'reply', from: 'person', requestId: input.requestId, input: kind, reason });
@@ -281,7 +283,9 @@ export function startPersonInbox({
     }
 
     let result;
-    if (kind === 'permission') {
+    if (request.kind === 'command') {
+      result = denyResult(request, handDeclineMessage(input.text));
+    } else if (kind === 'permission') {
       result = input.decision === 'deny' ? denyResult(request, input.text) : allowResult(request);
     } else if (kind === 'answers') {
       result = answersResult(request, input.answers);
@@ -309,9 +313,13 @@ export function startPersonInbox({
     const cwd = platform.cwdOf?.(to) ?? null;
     if (!cwd) return refuse(to, command, 'no-session');
     const id = shellId(now(), Math.random());
-    const run = { id, to, command, requestId: requestId ?? null, ended: false, t0: now(), partial: '', partialTimer: null, logged: 0, clipped: false, tail: '', dropped: 0, handle: null };
+    // A run of a command the agent handed the person answers that request when it ends (DESIGN §2.6). Whether
+    // the person edited it is fixed now, against the command as handed, for the block and the agent's lead.
+    const handed = requestId ? pendingCommand(to, requestId) : null;
+    const edited = !!handed && handed.command.trim() !== command.trim();
+    const run = { id, to, command, requestId: requestId ?? null, edited, ended: false, t0: now(), partial: '', partialTimer: null, logged: 0, clipped: false, tail: '', dropped: 0, handle: null };
     shells.running.set(to, run);
-    logTo(run, { dir: 'shell', kind: 'start', id, command, cwd, ...(requestId ? { requestId } : {}) });
+    logTo(run, { dir: 'shell', kind: 'start', id, command, cwd, ...(requestId ? { requestId } : {}), ...(edited ? { edited: true } : {}) });
     try {
       run.handle = startShell({
         command,
@@ -426,19 +434,44 @@ export function startPersonInbox({
     const { platform: p, say: sayNow } = shells.ctx;
     let sent = 'none';
     if (stopped !== 'session-closed') {
-      const text = bangMessage({ command: run.command, output: run.tail, code, signal, stopped, ms: elapsed, alreadyCut: run.dropped });
-      // Sent before the end entry is logged, so the entry records what the send did. The agent's reply
-      // comes from another process, so it can never land between the two.
-      let ok = false;
-      try {
-        ok = !!p.send(run.to, text, { from: 'person', shell: run.id })?.ok;
-      } catch {
-        ok = false;
+      const message = (lead) => bangMessage({ command: run.command, output: run.tail, code, signal, stopped, ms: elapsed, alreadyCut: run.dropped, ...(lead ? { lead } : {}) });
+      // A handed command still pending is answered: the tool returns `pirResult` inside the agent's open turn
+      // (DESIGN §2.6). One no longer pending (answered on the phone, interrupted, its worker gone) falls back to
+      // the plain message, so the person's run still reaches the agent.
+      const handed = run.requestId ? pendingCommand(run.to, run.requestId, p) : null;
+      if (handed) {
+        const pirResult = message(run.edited ? LEAD_EDITED : LEAD_HANDED);
+        let ok = false;
+        try {
+          ok = !!p.answer(run.to, run.requestId, { behavior: 'allow', updatedInput: { ...handed.input, pirResult } }, { from: 'person' })?.ok;
+        } catch {
+          ok = false;
+        }
+        if (ok) sent = 'answer';
       }
-      sent = ok ? 'message' : 'undelivered';
+      if (sent !== 'answer') {
+        // Sent before the end entry is logged, so the entry records what the send did. The agent's reply
+        // comes from another process, so it can never land between the two.
+        let ok = false;
+        try {
+          ok = !!p.send(run.to, message(null), { from: 'person', shell: run.id })?.ok;
+        } catch {
+          ok = false;
+        }
+        sent = ok ? 'message' : 'undelivered';
+      }
     }
     logTo(run, { dir: 'shell', kind: 'end', id: run.id, code, signal, stopped, ms: elapsed, sent });
     sayNow(`shell ${run.id} for ${run.to} ended: ${stopped ? `stopped (${stopped})` : signal ? signal : `exit ${code}`}, sent ${sent}`);
+  }
+
+  // pendingCommand(to, requestId, p) → the session's pending hand request with that id, or null.
+  function pendingCommand(to, requestId, p = platform) {
+    try {
+      return p.pending(to).find((r) => r.requestId === requestId && r.kind === 'command') ?? null;
+    } catch {
+      return null;
+    }
   }
 
   // stopAll(reason, to?) — the session closed or the host is going (DESIGN §2.4): each running command

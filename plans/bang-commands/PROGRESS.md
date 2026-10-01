@@ -25,14 +25,14 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T02 | bang-rules | — | ✅ | |
 | T03 | bang-forwarding | T01, T02 | ✅ | |
 | T04 | hand-rules | T00, T02 | ✅ | |
-| T05 | hand-tool | T00, T03, T04 | ⬜ | |
+| T05 | hand-tool | T00, T03, T04 | 🔍 | `pir` MCP server, ask hook, toolUseId result map, forwarder answer/decline, rig `hand`; 19 tests. Deviations: `npm ci` porcelain checked by hand, test asserts lock instead; a permission allow of a hand request is refused; answer() ignores a pirResult equal to the model's; fake honours hook matchers. Suite red only on known notify-wiring. |
 | T06 | bang-view | T02, T03 | ⬜ | |
 | T07 | hand-view | T05, T06 | ⬜ | |
 | T08 | bang-drill | T06, T07 | ⬜ | |
 | T09 | agent-rules | T05 | ⬜ | |
 | T10 | docs-readme | T08, T09 | ⬜ | |
 
-**Review queue:** empty
+**Review queue:** T05
 
 ## Blocked on the user
 
