@@ -263,6 +263,43 @@ test('a command whose session ended before it did is sent undelivered, and its e
 
 // ---- Real processes: the record, the rename, the restart reap. ----
 
+test('stopAll keeps the record of a command that outlives its stop, so a host that exits first leaves it for the reap', async (t) => {
+  const dir = join(mkdtempSync(join(tmpdir(), 'pir-bang-keep-')), 'control');
+  t.after(() => rmSync(join(dir, '..'), { recursive: true, force: true }));
+  const platform = fakePlatform();
+  const inbox = startPersonInbox({ controlDir: dir, platform, watch: quietWatch(), shellsDir: shellsDirOf(dir), env: { ...process.env, SHELL: '/bin/sh' } });
+  t.after(() => inbox.stop());
+  // Ignored signals are inherited, so the sleep ignores HUP and TERM as its shell does.
+  dropPersonInput(dir, { to: 'W1', kind: 'shell', command: "trap '' HUP TERM; echo ready; sleep 30" }, { coordinatorAlive: true });
+  inbox.drain();
+  const record = join(shellsDirOf(dir), 'W1.json');
+  await waitFor(() => shellEntries(platform).some((e) => e.kind === 'output'), 'the trap to be set');
+  const { pid } = JSON.parse(readFileSync(record, 'utf8'));
+  inbox.stopAll('session-closed');
+  assert.equal(shellEntries(platform).filter((e) => e.kind === 'end').length, 1, 'the block is closed at once');
+  assert.equal(inbox.running('W1'), null);
+  await new Promise((r) => setTimeout(r, 300));
+  assert.ok(alive(pid), 'the command ignored its stop');
+  assert.ok(existsSync(record), 'its record stays while it runs');
+  // A host start now finds the record and kills the command.
+  const shells = createShellTable();
+  const reaped = reapPersonShells({ controlDir: dir, shells, log: () => {} });
+  assert.deepEqual(reaped.map((r) => r.killed), [true]);
+  await waitFor(() => !alive(pid), 'the reap to kill it');
+});
+
+test('the reap of a block already closed appends no second end and tells nobody', (t) => {
+  const controlDir = mkdtempSync(join(tmpdir(), 'pir-bang-closed-'));
+  t.after(() => rmSync(controlDir, { recursive: true, force: true }));
+  const l = leftover(controlDir);
+  writeFileSync(l.logPath, readFileSync(l.logPath, 'utf8') + JSON.stringify({ t: 2200, dir: 'shell', kind: 'end', id: l.id, code: null, signal: null, stopped: 'session-closed', ms: 200, sent: 'none' }) + '\n');
+  const shells = createShellTable();
+  reapPersonShells({ controlDir, shells, now: () => 5000 });
+  const ends = readFileSync(l.logPath, 'utf8').trim().split('\n').map((x) => JSON.parse(x)).filter((e) => e.kind === 'end');
+  assert.deepEqual(ends.map((e) => e.stopped), ['session-closed']);
+  assert.equal(shells.cutOff.size, 0);
+});
+
 test('a real command: its record exists while it runs and is gone after; the agent gets its output', async (t) => {
   const dir = join(mkdtempSync(join(tmpdir(), 'pir-bang-real-')), 'control');
   t.after(() => rmSync(join(dir, '..'), { recursive: true, force: true }));

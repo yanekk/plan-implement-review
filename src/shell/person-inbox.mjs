@@ -88,7 +88,7 @@ export function createShellTable() {
   return { running: new Map(), dir: null, ctx: null, cutOff: new Map() };
 }
 
-// appendToCommandLog(controlDir, id, entry, now) → true when written: appends `entry` to the conversation
+// appendToCommandLog(controlDir, id, entry, now) → true when written, 'closed' when the block has its end: appends `entry` to the conversation
 // log holding the command's `start`, found by scanning conversations/. A reaped command's session belongs
 // to the dead host, so this host's platform does not know it; the start entry is in exactly the right file
 // whichever kind of session it was. The end's `ms` runs from that start.
@@ -111,16 +111,21 @@ function appendToCommandLog(controlDir, id, entry, now) {
     }
     if (!text.includes(needle)) continue;
     let startT = null;
+    let closed = false;
     for (const line of text.split('\n')) {
       if (!line.includes(needle)) continue;
       try {
         const e = JSON.parse(line);
         if (e?.dir === 'shell' && e.kind === 'start' && e.id === id) startT = e.t;
+        if (e?.dir === 'shell' && e.kind === 'end' && e.id === id) closed = true;
       } catch {
         // a torn line
       }
     }
     if (startT == null) continue;
+    // Closed already: the host stopped it (session-closed) and exited before the command did. The block
+    // keeps that end, and its session has nothing to be told.
+    if (closed) return 'closed';
     const t = now();
     try {
       // A torn last line (the host died mid-append) must not swallow the end entry.
@@ -150,8 +155,8 @@ export function reapPersonShells({ controlDir, shells, now = Date.now, reap = re
   for (const r of reaped) {
     const entry = { dir: 'shell', kind: 'end', id: r.id, code: null, signal: null, stopped: 'pir-restart', sent: 'none' };
     const closed = appendToCommandLog(controlDir, r.id, entry, now);
-    if (r.to) shells?.cutOff.set(r.to, r.command ?? '');
-    log(`person input: reaped command ${r.id} of ${r.to}${r.killed ? ' (killed)' : ''}${closed ? '' : ' (no log found)'}`);
+    if (r.to && closed !== 'closed') shells?.cutOff.set(r.to, r.command ?? '');
+    log(`person input: reaped command ${r.id} of ${r.to}${r.killed ? ' (killed)' : ''}${closed === 'closed' ? ' (block already closed)' : closed ? '' : ' (no log found)'}`);
   }
   return reaped;
 }
@@ -386,19 +391,37 @@ export function startPersonInbox({
     }
   }
 
-  const forget = (run) => {
-    if (shells.running.get(run.to) === run) shells.running.delete(run.to);
-    // The record is deleted where the folder is now: startShell's own path is the one it started under.
-    if (shells.dir) rmSync(join(shells.dir, `${run.to}.json`), { force: true });
+  // The record is deleted where the folder is now: startShell's own path is the one it started under. Only
+  // this command's: a later command of the same session may have written its own record there since.
+  const dropRecord = (run) => {
+    if (!shells.dir) return;
+    const path = join(shells.dir, `${run.to}.json`);
+    try {
+      if (JSON.parse(readFileSync(path, 'utf8'))?.id !== run.id) return;
+    } catch {
+      // gone already, or torn: nothing of another command's to keep
+    }
+    rmSync(path, { force: true });
   };
 
-  function onEnd(run, { code = null, signal = null, stopped = null, ms, error } = {}) {
-    if (run.ended) return;
+  // `early` is stopAll's end, logged before the shell has gone: its record stays until the shell's own end
+  // arrives, so a host that exits first (a command ignoring HUP and TERM, the SIGKILL 3 s away) leaves the
+  // record for the next start's reap instead of an orphan nobody can find (DESIGN §2.4).
+  function onEnd(run, { code = null, signal = null, stopped = null, ms, error } = {}, { early = false } = {}) {
+    if (run.ended) {
+      if (!early && run.recordKept) {
+        run.recordKept = false;
+        dropRecord(run);
+      }
+      return;
+    }
     flushPartial(run);
     // The shell never started (the folder went away, no /bin/sh): say why, in the block and to the agent.
     if (error) emitClean(run, `pir could not start the command: ${error}\n`);
     run.ended = true;
-    forget(run);
+    if (shells.running.get(run.to) === run) shells.running.delete(run.to);
+    if (early) run.recordKept = true;
+    else dropRecord(run);
     const elapsed = Number.isFinite(ms) ? ms : now() - run.t0;
     const { platform: p, say: sayNow } = shells.ctx;
     let sent = 'none';
@@ -429,7 +452,7 @@ export function startPersonInbox({
       } catch {
         // already gone
       }
-      onEnd(run, { code: null, signal: null, stopped: reason, ms: now() - run.t0 });
+      onEnd(run, { code: null, signal: null, stopped: reason, ms: now() - run.t0 }, { early: true });
     }
   }
 
