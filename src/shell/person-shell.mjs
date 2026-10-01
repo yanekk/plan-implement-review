@@ -57,7 +57,7 @@ function cutUtf8(text, maxBytes) {
 //   spawn, now, startTimeOf, flushMs, flushBytes, killAfterMs   injected for the tests
 //
 // stdin is /dev/null (DESIGN §2.2: plain only). The shell is spawned detached, in its own process group,
-// so stop() reaches whatever it forked: SIGTERM to the group, then SIGKILL after killAfterMs.
+// so stop() reaches whatever it forked: SIGHUP and SIGTERM to the group, then SIGKILL after killAfterMs.
 export function startShell({
   command,
   cwd,
@@ -219,6 +219,12 @@ export function startShell({
     stop(reason = 'person') {
       if (ended || stopped || !pid) return;
       stopped = reason;
+      // HUP first, as a closed terminal would: an interactive zsh or bash ignores TERM (measured
+      // 2026-10-01: zsh -i killed only the running `sleep` of `sleep 30; echo after` and then ran
+      // `echo after`, and ignored TERM outright while its rc file loaded), but exits on HUP, and bash
+      // passes HUP on to the `cmd &` jobs it put in groups of their own. TERM still follows for any
+      // member of the group that ignores HUP.
+      groupKill(pid, 'SIGHUP');
       groupKill(pid, 'SIGTERM');
       killTimer = setTimeout(() => {
         killTimer = null;

@@ -99,7 +99,7 @@ test('stop() ends a sleeping command within 1 s with stopped person', async () =
   const res = await r.end;
   assert.ok(Date.now() - t < 1000, `took ${Date.now() - t} ms`);
   assert.equal(res.stopped, 'person');
-  assert.equal(res.signal, 'SIGTERM');
+  assert.equal(res.signal, 'SIGHUP');
   assert.equal(alive(r.handle.pid), false);
 });
 
@@ -111,8 +111,19 @@ test('stop() carries a non-default reason through to onEnd', async () => {
   assert.equal(res.stopped, 'session-closed');
 });
 
-test('a command that traps TERM is killed after killAfterMs', async () => {
-  const r = run("trap '' TERM; echo ready; while :; do sleep 0.05; done", { killAfterMs: 300 });
+test('a command that ignores HUP still ends at once, by the TERM that follows it', async () => {
+  const r = run("trap '' HUP; echo ready; while :; do sleep 0.05; done", { killAfterMs: 3000 });
+  await waitFor(() => r.chunks.join('').includes('ready'));
+  const t = Date.now();
+  r.handle.stop();
+  const res = await r.end;
+  assert.ok(Date.now() - t < 1000, `took ${Date.now() - t} ms`);
+  assert.equal(res.signal, 'SIGTERM');
+  assert.equal(alive(r.handle.pid), false);
+});
+
+test('a command that traps HUP and TERM is killed after killAfterMs', async () => {
+  const r = run("trap '' HUP TERM; echo ready; while :; do sleep 0.05; done", { killAfterMs: 300 });
   await waitFor(() => r.chunks.join('').includes('ready'));
   const t = Date.now();
   r.handle.stop();
@@ -199,6 +210,39 @@ test("zsh -i -c runs the command (the person's shell path, end to end)", { skip:
   assert.equal(res.code, 0);
   assert.match(r.chunks.join(''), /zsh ok\n$/);
 });
+
+// The person's real shells, interactive, with no rc file of theirs (ZDOTDIR and HOME point at an empty
+// folder). An interactive zsh or bash ignores SIGTERM: with TERM alone, a stopped `sleep; echo after` killed
+// the sleep and zsh then ran `echo after`, and bash -i put `cmd &` in its own group, out of the group kill.
+for (const sh of ['/bin/zsh', '/bin/bash']) {
+  test(`${sh} -i: stop() ends the whole command at once and runs nothing after it`, { skip: !existsSync(sh) }, async () => {
+    const home = tmp();
+    const r = run('echo ready; sleep 30; echo after', { env: { ...ENV, SHELL: sh, ZDOTDIR: home, HOME: home } });
+    await waitFor(() => r.chunks.join('').includes('ready'), 5000);
+    const t = Date.now();
+    r.handle.stop();
+    const res = await r.end;
+    assert.ok(Date.now() - t < 1000, `took ${Date.now() - t} ms`);
+    assert.equal(res.stopped, 'person');
+    await new Promise((res) => setTimeout(res, 100));
+    assert.doesNotMatch(r.chunks.join(''), /after/);
+    assert.equal(alive(r.handle.pid), false);
+  });
+
+  test(`${sh} -i: a backgrounded child dies on stop()`, { skip: !existsSync(sh) }, async () => {
+    const home = tmp();
+    const r = run('sleep 30 & echo "bg $!"; sleep 30', { env: { ...ENV, SHELL: sh, ZDOTDIR: home, HOME: home } });
+    await waitFor(() => /bg \d+/.test(r.chunks.join('')), 5000);
+    const bg = Number(r.chunks.join('').match(/bg (\d+)/)[1]);
+    r.handle.stop();
+    await r.end;
+    try {
+      await waitFor(() => !alive(bg), 1000);
+    } finally {
+      if (alive(bg)) process.kill(bg, 'SIGKILL');
+    }
+  });
+}
 
 test('the record exists while running with the interface fields, and is gone after the end', async () => {
   const dir = tmp();
