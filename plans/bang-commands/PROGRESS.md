@@ -11,7 +11,7 @@ they walk past.
 **Status:** Plan written 2026-10-01. Nothing built. The red `notify-wiring.test.mjs` cases on `main` are to
 be fixed there before the build starts (DESIGN §4).
 **Last updated:** 2026-10-01
-**Next `pir-work` will:** T00, the spike its later tasks depend on.
+**Next `pir-work` will:** nothing; every task is ✅.
 
 ## Tasks
 
@@ -30,9 +30,9 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T07 | hand-view | T05, T06 | ✅ | |
 | T08 | bang-drill | T06, T07 | ✅ | |
 | T09 | agent-rules | T05 | ✅ | |
-| T10 | docs-readme | T08, T09 | 🔍 | Docs only: `!` and `hand_command` in human-flow, detached-runs, control-folder (`shells/`), coordinator-agent (reserved), planning/single, docs index, README. Also corrected the engine's package list to four (zod, uqr). No doc test pinned the changed text; suite red only on the known notify-wiring and ENOTEMPTY cases. `./install.sh` not run. |
+| T10 | docs-readme | T08, T09 | ✅ | Reviewed: one fix commit. The handed-command alert was documented as always `Needs your yes:`; the prefix comes only from an agent's reservation. Added §8's no-queue, no-tab-completion limit. Probed every quoted string, anchor and key against the code; suite red only on known notify-wiring. `./install.sh` not run. |
 
-**Review queue:** T10
+**Review queue:** empty
 
 ## Blocked on the user
 
