@@ -20,16 +20,20 @@ import { startPlanRig } from './plan-rig.mjs';
 import { indexDir, listRecords } from './index-store.mjs';
 import { stopRun } from './control-run.mjs';
 import { waitFor } from './conversation-rig-helpers.mjs';
+import { selectRow } from './plan-rig-helpers.mjs';
 import { DRILL_QUESTION, DRILL_SLUG, HELPER_DRILL_QUESTION, HELPER_DRILL_SLUG } from './fake/sessions.mjs';
 
-const DOWN = '\x1b[B';
-const UP = '\x1b[A';
 const RIGHT = '\x1b[C';
 const LEFT = '\x1b[D';
 const ENTER = '\r';
 // A sentence the conversation view may wrap at any space, and indent on the next line.
 const said = (text) => new RegExp(text.split(' ').map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('\\s+'));
 const git = (cwd, ...a) => execFileSync('git', a, { cwd, encoding: 'utf8' }).trim();
+// The ceiling for a wait on the run's spawned programs. The first asks wait on the whole run starting: pir
+// spawns the coordinator, which adds a worktree per task and spawns the agent and three workers (each a fake
+// claude), and every one of them must start and reach its ask. On a machine busy with the other test files that
+// alone has taken all of 30 s, so these waits, and those on the agent's replies, get a minute.
+const SPAWNED_MS = 60000;
 
 function drillRig(t, scripts = 'coordinator-drill') {
   const rig = startPlanRig({ scripts });
@@ -37,6 +41,7 @@ function drillRig(t, scripts = 'coordinator-drill') {
     for (const record of listRecords({ dir: indexDir({ env: rig.env }) })) {
       if (record.finalState === null) await stopRun(record).catch(() => {});
     }
+    await rig.settle();
     rig.cleanup();
   });
   return rig;
@@ -66,18 +71,9 @@ function assertAgentRow(text, what) {
   return lines[i];
 }
 
-// Move the run view's cursor (▎) to `task`; the view is at most six rows (three tasks, the separator, the
-// agent's row, a helper), so a bounded walk down then up finds it.
-async function select(screen, task) {
-  for (const key of [null, ...Array(6).fill(DOWN), ...Array(7).fill(UP)]) {
-    if (key) {
-      screen.send(key);
-      await screen.waitFor();
-    }
-    if (rowOf(screen.text(), task)?.startsWith('▎')) return;
-  }
-  throw new Error(`could not select ${task}:\n${screen.text()}`);
-}
+// Move the run view's cursor (▎) to `task` (selectRow: each key waited for, so a loaded machine's late frame
+// cannot make the walk overshoot).
+const select = selectRow;
 
 // The coordinator drill proper: agent answers, passes on, the person answers and talks to it.
 export function coordinatorDrill(cols, rows) {
@@ -88,9 +84,9 @@ export function coordinatorDrill(cols, rows) {
     try {
       // 1–3. All three ask. T02's force-push is the person's from the first frame it asks; T03's question is
       // the agent's until it passes it; T01's routine request is allowed without the person.
-      await screen.waitFor(/T02 +reserved-ask +asking you · allow a command\?/, 30000);
-      let s = (await screen.waitFor(/T03 +passed-question +asking you · a question/, 30000)).join('\n');
-      await screen.waitFor((x) => /T01 +routine-ask +(building|reviewing|merging|merged)/.test(x), 30000);
+      await screen.waitFor(/T02 +reserved-ask +asking you · allow a command\?/, SPAWNED_MS);
+      let s = (await screen.waitFor(/T03 +passed-question +asking you · a question/, SPAWNED_MS)).join('\n');
+      await screen.waitFor((x) => /T01 +routine-ask +(building|reviewing|merging|merged)/.test(x), SPAWNED_MS);
       s = screen.text();
       assert.match(s, /2 asking you/, 'the header counts the two the person holds, not T01');
       assert.match(s, /c coordinator/, 'the hint offers the agent');
@@ -118,7 +114,7 @@ export function coordinatorDrill(cols, rows) {
       screen.send("don't approve new tasks tonight");
       await screen.waitFor(/don't approve new tasks tonight/);
       screen.send(ENTER);
-      await screen.waitFor(/Noted: don't approve new tasks tonight/, 20000);
+      await screen.waitFor(/Noted: don't approve new tasks tonight/, SPAWNED_MS);
       screen.send(LEFT);
       await screen.waitFor(/c coordinator/);
 
@@ -129,7 +125,7 @@ export function coordinatorDrill(cols, rows) {
       screen.send(ENTER);
       await screen.waitFor(/→ allowed/);
       screen.send(LEFT);
-      await screen.waitFor((x) => !/T02 +reserved-ask +asking/.test(x) && /c coordinator/.test(x));
+      await screen.waitFor((x) => !/T02 +reserved-ask +asking/.test(x) && /c coordinator/.test(x), SPAWNED_MS);
 
       await select(screen, 'T03');
       screen.send(RIGHT);
@@ -137,7 +133,7 @@ export function coordinatorDrill(cols, rows) {
       screen.send(ENTER);
       await screen.waitFor(/→ Keep it/);
       screen.send(LEFT);
-      await screen.waitFor((x) => !/T03 +passed-question +asking/.test(x) && /c coordinator/.test(x));
+      await screen.waitFor((x) => !/T03 +passed-question +asking/.test(x) && /c coordinator/.test(x), SPAWNED_MS);
 
       // 5. The end: preparing while main is synced and the report written, then the finisher takes over.
       s = (await screen.waitFor(/preparing: syncing main, writing the report\n/, 60000)).join('\n');
@@ -162,7 +158,7 @@ export function coordinatorDrill(cols, rows) {
       const agentLog = await waitFor(() => {
         const log = readAgentLog();
         return /The branch is ready\. The finisher takes the merge from here\./.test(log) ? log : null;
-      }, { what: "the agent's reply to the hand-off", timeoutMs: 15000 }).catch(() => readAgentLog());
+      }, { what: "the agent's reply to the hand-off", timeoutMs: SPAWNED_MS }).catch(() => readAgentLog());
       assert.match(agentLog, /The branch is ready\. The finisher takes the merge from here\./);
       assert.doesNotMatch(agentLog, /Merge it yourself/);
       assert.ok(readdirSync(conv).some((f) => f.startsWith('finisher-')), 'the finisher was started');
@@ -205,7 +201,7 @@ export function noCoordinatorDrill(cols, rows) {
     const rig = drillRig(t);
     const screen = rig.openScreen({ cols, rows, args: ['start', DRILL_SLUG, '--no-coordinator'] });
     try {
-      let s = (await screen.waitFor(/3 asking you/, 30000)).join('\n');
+      let s = (await screen.waitFor(/3 asking you/, SPAWNED_MS)).join('\n');
       assert.match(s, /T01 +routine-ask +asking you · allow a command\?/);
       assert.match(s, /T02 +reserved-ask +asking you · allow a command\?/);
       assert.match(s, /T03 +passed-question +asking you · a question/);
@@ -246,12 +242,12 @@ export function endHelperDrill(cols, rows) {
       assertAgentRow(s, 'while a helper runs');
       assert.ok(s.indexOf('◆ coordinator agent') < s.indexOf(rowOf(s, 'tests-fix')), 'the helper is below the agent');
       assert.ok(s.indexOf(rowOf(s, 'T01')) < s.indexOf('◆ coordinator agent'), 'the task is above it');
-      s = (await screen.waitFor(/● tests-fix fix-red-tests — asking you; open it \(→\) to answer/, 20000)).join('\n');
+      s = (await screen.waitFor(/● tests-fix fix-red-tests — asking you; open it \(→\) to answer/, SPAWNED_MS)).join('\n');
       assert.match(s, /1\/1 done/, 'the header counts the plan task only');
 
       // The agent's pointer names the helper's conversation.
       screen.send('c');
-      await screen.waitFor(said("Answer it in tests-fix's conversation; I would add the file."), 20000);
+      await screen.waitFor(said("Answer it in tests-fix's conversation; I would add the file."), SPAWNED_MS);
       screen.send(LEFT);
       await screen.waitFor(/c coordinator/);
 

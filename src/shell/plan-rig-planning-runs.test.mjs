@@ -12,7 +12,7 @@ import { startPlanRig, scriptSet, SCRIPT_SETS, PLAN_RIG_SLUG, PLAN_RIG_SLUG_2, P
 import { PLANNER_MATCH, REVIEWER_MATCH } from './fake/sessions.mjs';
 import { indexDir, listRecords, writeRecord } from './index-store.mjs';
 import { dropPersonInput } from './person-inbox.mjs';
-import { git, LABEL, SIZES, esc, until, startRigPlan, RIGHT, LEFT, ENTER } from './plan-rig-helpers.mjs';
+import { git, LABEL, SIZES, esc, until, startRigPlan, RIGHT, LEFT, ENTER, SPAWNED_MS } from './plan-rig-helpers.mjs';
 
 const inside = (path, dir) => realpathSync(path).startsWith(realpathSync(dir) + '/');
 
@@ -135,7 +135,7 @@ test('end to end: a planning run whose planner asks lists as asking you with its
   const workers = JSON.parse(readFileSync(join(started.controlDir, 'workers.json'), 'utf8'));
   const dropped = dropPersonInput(started.controlDir, { to: workers[0].id, kind: 'answers', requestId: request.requestId, answers: { [PLAN_RIG_QUESTION]: 'Small' } }, { coordinatorAlive: true });
   assert.deepEqual(dropped, { ok: true });
-  await until(() => listRecords({ dir }).find((r) => r.slug === PLAN_RIG_SLUG && r.finalState === 'finished'), 'the reviewed run finished', 30000);
+  await until(() => listRecords({ dir }).find((r) => r.slug === PLAN_RIG_SLUG && r.finalState === 'finished'), 'the reviewed run finished', SPAWNED_MS);
 
   const yourGo = new RegExp(`${PLAN_RIG_SLUG} +plan +● your go +repo +plan ✓ review ✓`);
   for (const [cols, rows] of SIZES) {
@@ -155,13 +155,13 @@ test('end to end: Ctrl+S Ctrl+S stops a planning run mid-planner, and Ctrl+R Ctr
     screen.send('\x13');
     await screen.waitFor(/⚠ Ctrl\+S again to stop/);
     screen.send('\x13');
-    await screen.waitFor(new RegExp(`"${esc(LABEL)}" +plan +◼ stopped`), 20000);
+    await screen.waitFor(new RegExp(`"${esc(LABEL)}" +plan +◼ stopped`), SPAWNED_MS);
     assert.equal(listRecords({ dir }).find((r) => r.slug === started.runId).finalState, 'stopped');
 
     screen.send('\x12');
     await screen.waitFor(new RegExp(`⚠ Ctrl\\+R again to resume "${esc(LABEL)}"`));
     screen.send('\x12');
-    await screen.waitFor(new RegExp(`"${esc(LABEL)}" +plan +● (planning|asking you) +repo +plan …`), 20000);
+    await screen.waitFor(new RegExp(`"${esc(LABEL)}" +plan +● (planning|asking you) +repo +plan …`), SPAWNED_MS);
     const record = listRecords({ dir }).find((r) => r.slug === started.runId);
     assert.equal(record.finalState, null, 'the resumed run is live again');
     assert.notEqual(record.pid, started.pid, 'a new planning program');
@@ -198,10 +198,10 @@ async function toTheGo(rig, screen) {
   screen.send(RIGHT);
   await screen.waitFor(new RegExp(esc(PLAN_RIG_QUESTION)));
   screen.send(ENTER); // the first option is selected: answer it
-  await screen.waitFor(new RegExp(`plan ${PLAN_RIG_SLUG} is committed`), 30000);
+  await screen.waitFor(new RegExp(`plan ${PLAN_RIG_SLUG} is committed`), SPAWNED_MS);
   screen.send(LEFT);
   // The rename moved the run's key under the open view; the steps view is still this run.
-  const rows = await screen.waitFor(/Start the parallel build now\?/, 30000);
+  const rows = await screen.waitFor(/Start the parallel build now\?/, SPAWNED_MS);
   return rows.join('\n');
 }
 
@@ -242,7 +242,7 @@ test('end to end at 120×40: ↵ on the go starts the build on the same row, whi
     // The build's view, with the fake plan's task on it. The fake task is worked on for a moment only and
     // can be done between two polls of the screen, so its row is waited for in any state, merged included
     // (FINDINGS 2026-09-26: requiring a running state failed about half the runs).
-    await until(() => /T01 +first-task +/.test(screen.text()), "the fake plan's task on the build's view", 30000);
+    await until(() => /T01 +first-task +/.test(screen.text()), "the fake plan's task on the build's view", SPAWNED_MS);
     const record = listRecords({ dir }).find((r) => r.slug === PLAN_RIG_SLUG);
     assert.equal(record.kind, 'work', 'the row flipped from plan to work');
     // With the agent on the run settles `ready to merge` and the next pass hands over to the finisher

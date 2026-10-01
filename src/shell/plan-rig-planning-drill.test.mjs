@@ -16,9 +16,12 @@ import { BRIEF, LABEL, esc, ndjson, RIGHT, UP, LEFT, ENTER, rigWithTeardown, CTR
 // drill paths the earlier tasks' tests did not already drive. ----
 
 const CTRL_R = '\x12';
+// Every wait here is on a spawned program, the planning run and its fake sessions, which on a machine busy with
+// the other test files take far longer to start and answer than alone (20 s was seen to run out).
+const SLOW = 60000;
 
 // From the list to the list again through a chord pressed twice.
-async function chordTwice(screen, key, armed, then, limit = 20000) {
+async function chordTwice(screen, key, armed, then, limit = SLOW) {
   screen.send(key);
   await screen.waitFor(armed);
   screen.send(key);
@@ -29,13 +32,16 @@ test('end to end at 120×40: the reviewer asking a permission reads `allow a com
   const rig = rigWithTeardown(t, { scripts: 'reviewer-asks' });
   const screen = rig.openScreen({ cols: 120, rows: 40, args: ['plan', BRIEF] });
   try {
-    await screen.waitFor(new RegExp(esc(PLAN_RIG_QUESTION)), 20000);
+    await screen.waitFor(new RegExp(esc(PLAN_RIG_QUESTION)), SLOW);
     screen.send(ENTER);
-    const conv = (await screen.waitFor(/review wants to use Bash/, 30000)).join('\n');
+    const conv = (await screen.waitFor(/review wants to use Bash/, SLOW)).join('\n');
     assert.match(conv, new RegExp(`^ +${esc(PLAN_RIG_REVIEW_COMMAND)}$`, 'm'));
     assert.match(conv, /↵ allow · n refuse/);
     screen.send(LEFT);
-    const steps = (await screen.waitFor(/pick a step/)).join('\n');
+    // The conversation reads the reviewer's log as it is written; the steps view reads the run's status, which
+    // the planning program writes a moment later, so on a loaded machine the first steps frame can still read
+    // `reviewing`. Wait for the frame that shows the ask.
+    const steps = (await screen.waitFor((x) => /pick a step/.test(x) && /▎ ● review +reviewer +asking you · allow a command\? +\d+:\d\d/.test(x) && /● review — asking you; open it \(→\) to answer/.test(x), SLOW)).join('\n');
     assert.match(steps, new RegExp(`${PLAN_RIG_SLUG} · reviewing · pir/${PLAN_RIG_SLUG}`));
     assert.match(steps, /▎ ● review +reviewer +asking you · allow a command\? +\d+:\d\d/);
     assert.match(steps, /● review — asking you; open it \(→\) to answer/);
@@ -46,7 +52,7 @@ test('end to end at 120×40: the reviewer asking a permission reads `allow a com
     screen.send(RIGHT);
     await screen.waitFor(/review wants to use Bash/);
     screen.send(ENTER);
-    const allowed = (await screen.waitFor(new RegExp(esc(PLAN_RIG_REVIEW_ASK)), 20000)).join('\n');
+    const allowed = (await screen.waitFor(new RegExp(esc(PLAN_RIG_REVIEW_ASK)), SLOW)).join('\n');
     assert.match(allowed, /→ allowed/);
     assert.equal(screen.overflows(), 0);
   } finally {
@@ -61,11 +67,11 @@ test('end to end at 80×24: stop mid-review, Ctrl+R Ctrl+R, and the reviewer\'s 
   const rig = rigWithTeardown(t, { scripts: 'reviewer-asks' });
   const screen = rig.openScreen({ cols: 80, rows: 24, args: ['plan', BRIEF] });
   try {
-    await screen.waitFor(new RegExp(esc(PLAN_RIG_QUESTION)), 20000);
+    await screen.waitFor(new RegExp(esc(PLAN_RIG_QUESTION)), SLOW);
     screen.send(ENTER);
-    await screen.waitFor(/review wants to use Bash/, 30000);
+    await screen.waitFor(/review wants to use Bash/, SLOW);
     screen.send(ENTER);
-    await screen.waitFor(new RegExp(esc(PLAN_RIG_REVIEW_ASK)), 20000);
+    await screen.waitFor(new RegExp(esc(PLAN_RIG_REVIEW_ASK)), SLOW);
     screen.send(LEFT);
     await screen.waitFor(/pick a step/);
     screen.send(LEFT);
@@ -80,20 +86,20 @@ test('end to end at 80×24: stop mid-review, Ctrl+R Ctrl+R, and the reviewer\'s 
     await screen.waitFor(/SLUG/);
     await chordTwice(screen, CTRL_R, new RegExp(`Ctrl\\+R again to resume ${PLAN_RIG_SLUG}`), new RegExp(`${PLAN_RIG_SLUG} +plan +● reviewing`));
     screen.send(ENTER);
-    await screen.waitFor(/▎ \S+ review +reviewer +reviewing/);
+    await screen.waitFor(/▎ \S+ review +reviewer +reviewing/, SLOW);
     screen.send(RIGHT);
     // A → before the resumed program's first snapshot opens it read only; pir turns it live on a later
     // refresh (reliveWorker), so the header is waited for, not read from the first frame.
-    const resumed = (await screen.waitFor((x) => /· resumed[\s\S]*remote control on/.test(x) && /^review +worker \w+ · live/m.test(x), 20000)).join('\n');
+    const resumed = (await screen.waitFor((x) => /· resumed[\s\S]*remote control on/.test(x) && /^review +worker \w+ · live/m.test(x), SLOW)).join('\n');
     assert.match(resumed, /^review +worker \w+ · live/m, 'the resumed session is live, not read only');
     assert.match(resumed, /^pir ▸ You were stopped and have been resumed in the same worktree\. Whatever you$/m);
     assert.match(resumed, /^ {6}were doing when you stopped may not have finished: check `git status` and$/m, 'one paragraph, wrapped only by the screen');
     assert.match(resumed, /↵ send · esc interrupt/);
     screen.send('yes, the name is fine');
     screen.send(ENTER);
-    await screen.waitFor(new RegExp(`Plan ${PLAN_RIG_SLUG} is reviewed`), 30000);
+    await screen.waitFor(new RegExp(`Plan ${PLAN_RIG_SLUG} is reviewed`), SLOW);
     screen.send(LEFT);
-    const go = (await screen.waitFor(/Start the parallel build now\?/, 30000)).join('\n');
+    const go = (await screen.waitFor(/Start the parallel build now\?/, SLOW)).join('\n');
     assert.match(go, /✔ plan +planner +plan written +\d+:\d\d/, 'a finished step shows its time');
     assert.match(go, /✔ review +reviewer +reviewed +\d+:\d\d/);
     assert.equal(screen.overflows(), 0);
@@ -111,7 +117,7 @@ test('end to end at 120×40: a planner stopped mid-question reads never answered
   const rig = rigWithTeardown(t);
   const screen = rig.openScreen({ cols: 120, rows: 40, args: ['plan', BRIEF] });
   try {
-    await screen.waitFor(new RegExp(esc(PLAN_RIG_QUESTION)), 20000);
+    await screen.waitFor(new RegExp(esc(PLAN_RIG_QUESTION)), SLOW);
     screen.send(LEFT);
     await screen.waitFor(/pick a step/);
     screen.send(LEFT);
@@ -131,7 +137,7 @@ test('end to end at 120×40: a planner stopped mid-question reads never answered
     screen.send(ENTER);
     await screen.waitFor(/pick a step/);
     screen.send(RIGHT);
-    const live = (await screen.waitFor((x) => /You were stopped/.test(x) && /^plan +worker \w+ · live/m.test(x), 20000)).join('\n');
+    const live = (await screen.waitFor((x) => /You were stopped/.test(x) && /^plan +worker \w+ · live/m.test(x), SLOW)).join('\n');
     assert.match(live, /^plan +worker \w+ · live/m);
     assert.match(live, /→ never answered/);
     assert.doesNotMatch(live, /↑↓ move · ↵ choose and send/, 'the lost question is not offered for an answer');
@@ -146,11 +152,11 @@ test('end to end at 80×24: taken slug — pir tells the planner once what to do
   const rig = rigWithTeardown(t, { scripts: 'taken-slug' });
   const screen = rig.openScreen({ cols: 80, rows: 24, args: ['plan', BRIEF] });
   try {
-    await screen.waitFor(new RegExp(esc(PLAN_RIG_QUESTION)), 20000);
+    await screen.waitFor(new RegExp(esc(PLAN_RIG_QUESTION)), SLOW);
     screen.send(ENTER);
-    await screen.waitFor(/^review +worker/m, 30000);
+    await screen.waitFor(/^review +worker/m, SLOW);
     screen.send(LEFT);
-    await screen.waitFor(/Start the parallel build now\?/, 30000);
+    await screen.waitFor(/Start the parallel build now\?/, SLOW);
     screen.send(UP);
     await screen.waitFor(/▎ ✔ plan/);
     screen.send(RIGHT);
@@ -175,9 +181,9 @@ test('end to end at 120×40: no-plan — plan ✗ on the row, review not started
   const rig = rigWithTeardown(t, { scripts: 'no-plan' });
   const screen = rig.openScreen({ cols: 120, rows: 40, args: ['plan', BRIEF] });
   try {
-    await screen.waitFor(/No plan, as you asked/, 20000);
+    await screen.waitFor(/No plan, as you asked/, SLOW);
     screen.send(LEFT);
-    const steps = (await screen.waitFor(/the planner ended without a plan/, 20000)).join('\n');
+    const steps = (await screen.waitFor(/the planner ended without a plan/, SLOW)).join('\n');
     assert.match(steps, new RegExp(`"${esc(LABEL)}" · finished · pir/plan-[0-9a-f]{4}`));
     assert.match(steps, /✗ plan +planner +no plan/);
     assert.match(steps, /○ review +reviewer +not started/);
@@ -197,17 +203,17 @@ test('end to end at 80×24: crash-planner — the row reads crashed, the steps s
   const rig = rigWithTeardown(t, { scripts: 'crash-planner' });
   const screen = rig.openScreen({ cols: 80, rows: 24, args: ['plan', BRIEF] });
   try {
-    await screen.waitFor(new RegExp(esc(PLAN_RIG_QUESTION)), 20000);
+    await screen.waitFor(new RegExp(esc(PLAN_RIG_QUESTION)), SLOW);
     screen.send(ENTER);
-    await screen.waitFor(/the worker exited \(code 1\)/, 30000);
+    await screen.waitFor(/the worker exited \(code 1\)/, SLOW);
     screen.send(LEFT);
-    const steps = (await screen.waitFor(/the planning program died/, 20000)).join('\n');
+    const steps = (await screen.waitFor(/the planning program died/, SLOW)).join('\n');
     assert.match(steps, /✗ plan +planner +crashed/);
     assert.match(steps, /last lines of run\.log:/);
     assert.doesNotMatch(steps, /Ctrl\+S/);
     screen.send(LEFT);
     await screen.waitFor(new RegExp(`"${esc(LABEL)}" +plan +✕ crashed`));
-    await chordTwice(screen, CTRL_R, /Ctrl\+R again to resume/, new RegExp(`${PLAN_RIG_SLUG} +plan +● your go`), 30000);
+    await chordTwice(screen, CTRL_R, /Ctrl\+R again to resume/, new RegExp(`${PLAN_RIG_SLUG} +plan +● your go`), SLOW);
     assert.equal(screen.overflows(), 0);
   } finally {
     await screen.close();
@@ -220,13 +226,15 @@ test('end to end at 80×24: `pir start {slug}` opens the steps view while its re
   const rig = rigWithTeardown(t, { scripts: 'reviewer-asks' });
   const planning = rig.openScreen({ cols: 80, rows: 24, args: ['plan', BRIEF] });
   try {
-    await planning.waitFor(new RegExp(esc(PLAN_RIG_QUESTION)), 20000);
+    await planning.waitFor(new RegExp(esc(PLAN_RIG_QUESTION)), SLOW);
     planning.send(ENTER);
-    await planning.waitFor(/review wants to use Bash/, 30000);
+    await planning.waitFor(/review wants to use Bash/, SLOW);
   } finally {
     await planning.close();
   }
-  const { screens } = await rig.driveScreen({ cols: 80, rows: 24, args: ['start', PLAN_RIG_SLUG], first: /pick a step/ });
+  // The status the steps view reads can lag the conversation the planning screen saw, so the first frame waited
+  // for is the one that shows the reviewer's ask, not merely the steps view.
+  const { screens } = await rig.driveScreen({ cols: 80, rows: 24, args: ['start', PLAN_RIG_SLUG], first: (x) => /pick a step/.test(x) && /● review +reviewer +asking you · allow a command\?/.test(x), timeoutMs: SLOW });
   const text = screens[0].rows.join('\n');
   assert.match(text, new RegExp(`${PLAN_RIG_SLUG} · reviewing · pir/${PLAN_RIG_SLUG}`));
   assert.match(text, /● review +reviewer +asking you · allow a command\?/);

@@ -10,7 +10,7 @@ import { DRILL_SLUG } from './fake/sessions.mjs';
 import { mouseBytes } from './conversation-rig.mjs';
 import { indexDir, listRecords } from './index-store.mjs';
 import { stopRun } from './control-run.mjs';
-import { until, startRigPlan, LEFT, CTRL_S, seedRuns } from './plan-rig-helpers.mjs';
+import { until, startRigPlan, LEFT, CTRL_S, seedRuns, SPAWNED_MS } from './plan-rig-helpers.mjs';
 
 // --- the mouse on the real screen (mouse-navigation T05, DESIGN §2.1–§2.3): T01's SGR bytes to the real pir ---
 
@@ -93,7 +93,7 @@ test('end to end at 80×24: Ctrl+S, then a click on another run — no ⚠ line 
   seedRuns(rig, 1);
   const screen = rig.openScreen({ cols: 80, rows: 24 });
   try {
-    await screen.waitFor(/▎ .*● asking you/, 20000);
+    await screen.waitFor(/▎ .*● asking you/, SPAWNED_MS);
     screen.send(CTRL_S);
     const armed = await screen.waitFor(/⚠ Ctrl\+S again/);
     clickRow(screen, armed, /^ {2}rig-run-0 /);
@@ -115,6 +115,7 @@ function drillRig(t) {
     for (const record of listRecords({ dir: indexDir({ env: rig.env }) })) {
       if (record.finalState === null) await stopRun(record).catch(() => {});
     }
+    await rig.settle();
     rig.cleanup();
   });
   return rig;
@@ -124,8 +125,8 @@ test('end to end at 120×40: in the drill\'s live view a click on a task with a 
   const rig = drillRig(t);
   const screen = rig.openScreen({ cols: 120, rows: 40, args: ['start', DRILL_SLUG] });
   try {
-    let shot = await screen.waitFor(/T02 +reserved-ask +asking you · allow a command\?/, 30000);
-    shot = await screen.waitFor(/◆ coordinator agent/, 30000);
+    let shot = await screen.waitFor(/T02 +reserved-ask +asking you · allow a command\?/, SPAWNED_MS);
+    shot = await screen.waitFor(/◆ coordinator agent/, SPAWNED_MS);
     clickRow(screen, shot, /^[▎ ] . T02 /);
     await screen.waitFor(/git push --force origin HEAD/);
     screen.send(LEFT);
@@ -218,8 +219,8 @@ test('end to end at 120×40: the pointer over an asking task turns its amber bri
   const { NO_COLOR: _off, COLORTERM: _ct, ...env } = rig.env;
   const screen = rig.openScreen({ cols: 120, rows: 40, args: ['start', DRILL_SLUG], env });
   try {
-    await screen.waitFor(/T03 +passed-question +asking you/, 30000);
-    const shot = await screen.waitFor(/T02 +reserved-ask +asking you/, 30000);
+    await screen.waitFor(/T03 +passed-question +asking you/, SPAWNED_MS);
+    const shot = await screen.waitFor(/T02 +reserved-ask +asking you/, SPAWNED_MS);
     const y2 = rowOf(shot, /^ {2}● T02 /);
     const y3 = rowOf(shot, /^ {2}● T03 /);
     const idAt = (y) => screen.fgAt(y, 4); // the `T` of the task id

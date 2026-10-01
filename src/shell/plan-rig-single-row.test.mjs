@@ -201,7 +201,9 @@ test('end to end at 120×40: Ctrl+S twice stops a running single run, Ctrl+R twi
     screen.send(ENTER);
     await screen.waitFor(/pick a step/, SLOW);
     screen.send(RIGHT);
-    const resumed = (await screen.waitFor(/You were stopped and have been resumed/, SLOW)).join('\n');
+    // A → before the resumed program's first snapshot opens it read only; pir turns it live on a later refresh
+    // (reliveWorker), so the live header is waited for with the resume message, not read from the first frame.
+    const resumed = (await screen.waitFor((x) => /You were stopped and have been resumed/.test(x) && /^build +worker \w+ · live/m.test(x), SLOW)).join('\n');
     assert.match(resumed, /^build +worker \w+ · live/m, 'the resumed session is live, not read only');
     // The conversation it left is the one it is back in: the question it had open (lost with the old
     // process) is above the resume, not in a second log.
