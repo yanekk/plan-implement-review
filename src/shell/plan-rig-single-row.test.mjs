@@ -157,8 +157,10 @@ test('end to end at 80×24 and 120×40: single-red — the steps view shows test
     const red = await both.all(/^▎ \S build +builder +tests red · round 1 +\d+:\d\d$/m);
     for (const text of red) assert.match(text, new RegExp(`^${esc(LABEL)} · building · pir/single-`, 'm'));
     // Then green: the build step is done and the reviewer takes over under the builder's name.
-    const green = await both.all(/^▎ ✔ build +builder +built +\d+:\d\d$/m);
-    for (const text of green) assert.match(text, new RegExp(`^${SINGLE_RIG_NAME} · `, 'm'));
+    // The build reads `built` from the moment the rename starts, but the header keeps the label until the
+    // rename's last sub-step (the index entry) is done; on a loaded machine a frame lands in between. So wait
+    // for the frame that shows both, rather than asserting the name on the first `built` frame.
+    await both.all(new RegExp(`^${SINGLE_RIG_NAME} · [\\s\\S]*^▎ ✔ build +builder +built +\\d+:\\d\\d$`, 'm'));
     await both.all(new RegExp(`● merge +— +git switch main && git merge pir/${SINGLE_RIG_NAME}$`, 'm'));
     both.send(LEFT);
     await both.all(new RegExp(`${SINGLE_RIG_NAME} +single +● ready to merge +repo +build ✓ review ✓`));
